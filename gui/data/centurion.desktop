@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Centurion
+Comment=Legion laptop power profile, firmware attribute, GPU and CPU curve tuning
+Comment[tr]=Legion dizüstü güç profili, firmware özniteliği, GPU ve CPU eğri ayarları
+Exec=centurion --window
+Icon=centurion
+Terminal=false
+Categories=System;Settings;HardwareSettings;
+Actions=Tray;
+
+[Desktop Action Tray]
+Name=Start in tray
+Name[tr]=Tepsiye başlat
+Exec=centurion

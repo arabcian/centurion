@@ -1,0 +1,184 @@
+#pragma once
+// Home tab: power-profile switcher + hardware inventory + live sensors.
+// Port of home_tab.py.
+#include "platformprofile.h"
+#include <QHash>
+#include <QWidget>
+#include <functional>
+#include <optional>
+
+class QButtonGroup;
+class QCheckBox;
+class QComboBox;
+class QLineEdit;
+class QGridLayout;
+class QGroupBox;
+class QFrame;
+class QLabel;
+class QProcess;
+class QPushButton;
+class QTimer;
+
+class SceneEngine;
+
+class HomeTab : public QWidget {
+    Q_OBJECT
+public:
+    explicit HomeTab(QWidget *parent = nullptr);
+    ~HomeTab() override;
+    void setSceneEngine(SceneEngine *eng);  // pause banner
+
+    static QString profileLabel(const QString &profile);
+    static QString helperPath();
+
+    /// Also used by the tray menu.
+    void applyProfile(const QString &profile);
+    QStringList offeredProfiles() const { return pp::offeredProfiles(handler_); }
+    std::optional<QString> currentProfile() const { return pp::currentProfile(handler_); }
+
+    // Fan control for the tray menu (same sysfs writes / EC rules as the Home tab rows).
+    struct FanInfo { QString key; QString name; int min; int max; int target; };  // target 0 = Auto
+    QList<FanInfo> fanInfo() const;
+    bool fansMaxMode() const { return maxMode_; }
+    bool fanBusy() const { return devicePending_ > 0; }
+    void setAllFansMax();
+    void setAllFansAuto() { exitMaxMode(); }
+    void setFanTarget(const QString &key, int rpm);  // rpm 0 = Auto (EC all-or-nothing rule applies)
+
+Q_SIGNALS:
+    /// Emitted after a successful switch (Firmware Attributes tab unlocks on "custom").
+    void profileChanged(const QString &profile);
+    /// The NVIDIA dGPU was rescanned and its driver loaded again.
+    void dgpuRestored();
+
+protected:
+    void showEvent(QShowEvent *e) override;
+    void hideEvent(QHideEvent *e) override;
+
+private:
+    QVector<std::function<void()>> onFirstShow_;  // helper reads deferred until the tab is first shown
+    void rebuild();
+    // GPU mode (MUX): read once on first show, switched through legion-gpu-helper.
+    void readGpuMode();
+    void setGpuMode(const QString &mode, bool force);
+    QComboBox *gpuMode_ = nullptr;
+    QTimer *live_ = nullptr;  // runs only while the tab is on screen
+    bool gpuModeRead_ = false;
+    // Banner when centurion-boot-guard / the login guard paused presets after a crash.
+    void refreshGuard();
+    QFrame *guardBanner_ = nullptr;
+    QFrame *pauseBanner_ = nullptr;
+    QPushButton *resumeScenes_ = nullptr;
+    QLabel *guardText_ = nullptr;
+    QPushButton *resumeBoot_ = nullptr, *resumeLogin_ = nullptr;
+    void refreshSelection();
+    void refreshLive();
+    void showStatus(const QString &msg, int timeoutMs = 4000);
+    void updateDescription(const std::optional<QString> &profile);
+    QGroupBox *buildHardwareBox();
+    QGroupBox *buildLiveBox();
+    QGroupBox *buildDeviceBox();  // nullptr when the machine exposes none of it
+    // The device rows' values come from EC-backed attributes (lenovo_wmi_other
+    // fan*_input/fan*_target and ideapad toggles are ACPI/WMI method calls,
+    // tens of ms each on a busy EC). They are read once per poll into a
+    // snapshot — on the Live sweep's worker thread for the 2 s poll — and the
+    // widgets are updated from it on the GUI thread.
+    struct DeviceSnap {
+        QString charge;                       // raw charge_types line ("[Standard] Fast …")
+        QList<QPair<QString, bool>> toggles;  // ideapad attribute → "1"
+        QList<QPair<int, int>> fans;          // per fans_ row: (fanN_input, target); -1 = unreadable
+        std::optional<QString> fullSpeedRaw;  // fullSpeedFile_ content (sysfs flag), unset when not read
+        int kbdLevel = -1;                    // white keyboard backlight level, -1 = no LED / unreadable
+    };
+    struct DevicePaths {
+        QString chargeFile, ideapadDir, fanHwmon, fullSpeedFile;
+        QStringList toggleKeys, fanKeys;
+        QString kbdLed;
+    };
+    DevicePaths devicePaths() const;
+    static DeviceSnap readDevice(const DevicePaths &p);
+    bool hasDeviceRows() const { return charge_ || !toggles_.isEmpty() || !fans_.isEmpty() || fullSpeed_ || kbdBl_; }
+    void refreshDevice();                          // synchronous read + apply (after a user action)
+    void applyDevice(const DeviceSnap &snap);
+    void setDevice(const QString &key, const QString &value);
+
+    std::optional<pp::Handler> handler_;
+    QHash<QString, QPushButton *> buttons_;
+    QButtonGroup *group_ = nullptr;
+    QGridLayout *grid_ = nullptr;
+    QLabel *description_ = nullptr;
+    QLabel *status_ = nullptr;
+    QTimer *statusTimer_ = nullptr;
+    bool applying_ = false;
+
+    struct LiveRow { QLabel *key; QLabel *value; std::function<std::optional<QString>()> getter; };
+    QList<LiveRow> liveRows_;
+    QLabel *gpuLiveKey_ = nullptr, *gpuLiveValue_ = nullptr;
+    QLabel *gpuHwKey_ = nullptr, *gpuHwValue_ = nullptr;
+    bool liveBusy_ = false;            // a sensor sweep is running on the thread pool
+    // dGPU row: runtime-PM state from sysfs, temperature from the EC. The
+    // NVIDIA driver is never queried here (see hometab.cpp).
+    QString dgpuRuntimeStatus_;        // <pci>/power/runtime_status of the NVIDIA dGPU
+    bool dgpuProbed_ = false;
+    void refreshGpuLive();
+    // EC-side dGPU temperature (legion-ec-sensors root stream, only while the
+    // tab is visible): the GPU temperature without asking the driver.
+    QProcess *ecStream_ = nullptr;
+    bool ecFailed_ = false;            // unsupported firmware / not authorized: don't retry
+    int ecGpuTemp_ = 0;                // °C, 0 = no reading
+    qint64 ecAt_ = 0;                  // monotonic ms of the last EC reading
+    void startEcStream();
+    void stopEcStream();
+    // Extra EC readings on the same stream (firmware capability list permitting):
+    // fan speeds where no fan hwmon exists, and the "charger too weak" verdict.
+    bool ecFansWanted_ = false;
+    QLabel *ecFansKey_ = nullptr, *ecFansValue_ = nullptr, *chargerKey_ = nullptr, *chargerValue_ = nullptr;
+    void applyEcExtras(const QJsonObject &o);
+
+    // Device box (battery charge mode, ideapad toggles, fan targets)
+    QString chargeFile_, ideapadDir_, fanHwmon_;
+    QComboBox *charge_ = nullptr;
+    QHash<QString, QCheckBox *> toggles_;
+    bool fnLockInverted_ = false;        // IdeaPad Gaming: the EC bit is "F-keys primary"
+    QString kbdLed_;                     // white keyboard backlight LED directory
+    QComboBox *kbdBl_ = nullptr;
+    struct FanRow { QString key; QLabel *rpm; QLineEdit *target; QCheckBox *autoBox; QCheckBox *maxBox; QPushButton *set; int max; };
+    QList<FanRow> fans_;
+    // EC "Full Speed" flag: separate from fanN_target and persistent across
+    // reboots (e.g. switched on in Windows). fullSpeedFile_ is empty when the
+    // running kernel exposes no interface for it.
+    QString fullSpeedFile_;
+    bool fullSpeedPwm_ = false;          // pwm1_enable (0 = full) vs legion fan_fullspeed (1 = full)
+    QCheckBox *fullSpeed_ = nullptr;
+    QLabel *fanWarn_ = nullptr;
+    bool fullSpeedOn_ = false;           // last known / suspected state
+    int fullSpeedGuess_ = 0;             // consecutive polls that look like Full Speed
+    // The RPM heuristic only means "firmware Full Speed" before this session has
+    // written any fan target: after our own Max → Auto the EC resets the
+    // targets to 0 while the fans are still spinning down, which looks the same.
+    bool fanTouched_ = false;
+    bool fullSpeedAtStart_ = false;      // detected before any write; sticky until the fans actually slow
+    // WMAE fallback (Legion EC FNST via acpi_call): root-only, so the state is
+    // cached and re-read through the helper only when the RPMs disagree with it.
+    bool fullSpeedWmae_ = false;
+    std::optional<bool> wmaeFullSpeed_;
+    bool fsQueryPending_ = false;
+    qint64 nextFsQueryAt_ = 0;
+    void queryFullSpeed();
+    void clearFullSpeed();
+    // The Legion EC only returns fans to its own curve when every fan target is
+    // 0: with any fan still manual, a fan set to 0 just keeps its last speed.
+    void setFanAuto(const QString &key);
+    int autoAllChoice_ = 0;
+    // "Max fans" mode: every fan at its maximum (or EC Full Speed on). The per-fan
+    // controls are greyed out behind a banner; one button returns all to Auto.
+    QLabel *maxBannerText_ = nullptr;
+    QPushButton *maxBannerBtn_ = nullptr;
+    QPushButton *maxAllBtn_ = nullptr;
+    bool maxMode_ = false;
+    void setMaxMode(bool on, bool ecFullSpeed);
+    void exitMaxMode();              // session memory: 0 ask, 1 all fans, 2 only this one
+    int devicePending_ = 0;
+    quint64 deviceGen_ = 0;            // bumped when a device write starts and when it ends: a sweep started before that is stale
+    QList<QPair<QString, QString>> deviceQueue_;  // writes clicked while one is in flight
+};
