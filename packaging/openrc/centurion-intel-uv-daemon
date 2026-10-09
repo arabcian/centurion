@@ -1,0 +1,35 @@
+#!/sbin/openrc-run
+# Centurion — Intel undervolt daemon (optional, instead of centurion-intel-uv).
+#
+# Keeps /etc/centurion/intel-uv-boot.json applied: AC / battery
+# profile switching, full re-apply after resume, periodic re-apply of power
+# limits / TCC / BD PROCHOT / cTDP (firmware and the EC restore their own),
+# hwphint EPP switching. Reloads the file on change or SIGHUP.
+#
+#   rc-update add centurion-intel-uv-daemon default
+
+description="Centurion Intel undervolt daemon"
+command="@BINDIR@/centurion-intel-uv"
+command_args="daemon"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/centurion-intel-uv.log"
+error_log="/var/log/centurion-intel-uv.log"
+extra_started_commands="reload"
+
+depend() {
+	need localmount centurion-boot-guard
+	after modules
+}
+
+reload() {
+	ebegin "Reloading ${RC_SVCNAME}"
+	start-stop-daemon --signal HUP --pidfile "${pidfile}"
+	eend $?
+}
+
+start_pre() {
+	"@LIBEXEC@/centurion-boot-guard" check 2>/dev/null && return 0
+	ewarn "Centurion boot presets are paused after a crashed boot — resume them in the app (Home)"
+	return 1
+}

@@ -1,0 +1,9 @@
+#!/bin/sh
+# elogind system-sleep hook (same idea as intel-undervolt.elogind):
+# re-apply the Intel undervolt boot profile after resume.
+# Not while centurion-boot-guard has the boot presets paused after a crashed boot.
+if [ "$1" = "post" ] && [ -f /etc/centurion/intel-uv-boot.json ] \
+   && @LIBEXEC@/centurion-boot-guard check 2>/dev/null; then
+	printf '%s' '{"op":"boot"}' | @LIBEXEC@/intel-uv-helper >/dev/null 2>&1
+fi
+exit 0

@@ -1,0 +1,32 @@
+# Centurion — calibration at boot (systemd). Counterpart of packaging/openrc/centurion-calibrate-boot.
+# Does nothing unless a calibration was scheduled (Optimizations → Autotune → "Calibrate at next boot",
+# or `sudo centurion-calibrate --schedule-boot`); see the OpenRC script for what it does then.
+#
+#   systemctl enable centurion-calibrate-boot.service
+
+[Unit]
+Description=Centurion scheduled calibration at boot
+Documentation=file:///usr/share/doc/centurion/README.md
+ConditionPathExists=/var/lib/centurion/calibrate-on-boot.json
+Wants=centurion-boot-guard.service
+After=local-fs.target systemd-modules-load.service systemd-sysctl.service centurion-boot-guard.service centurion-tune.service
+Before=display-manager.service
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/centurion-calibrate --boot-run
+# SIGINT: every session restores what it changed and keeps what it measured.
+KillSignal=SIGINT
+TimeoutStopSec=150
+# Writes /sys and /proc/sys (the knobs under test), reads /dev/input (activity only) and the
+# scene's owner's ~/.config (read-only).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

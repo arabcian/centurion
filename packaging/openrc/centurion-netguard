@@ -1,0 +1,31 @@
+#!/sbin/openrc-run
+# Centurion — network guard daemon (Health → Network).
+#
+# Enforces the IP blacklist (nftables table inet centurion_netguard) and, when the
+# guard is switched on, cuts off Wine/.exe programs that are not whitelisted
+# (NFQUEUE). Rules: /etc/centurion/netguard.json (edited in the
+# app; the helper sends SIGHUP). Stopping the service removes the table.
+# `nft flush ruleset` (e.g. a restart of the nftables service) removes it too:
+# `rc-service centurion-netguard reload` puts it back.
+#
+#   rc-update add centurion-netguard default
+
+description="Centurion network guard (IP blacklist, Wine/.exe guard)"
+command="@BINDIR@/centurion-netguard"
+command_args="daemon"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/centurion-netguard.log"
+error_log="/var/log/centurion-netguard.log"
+extra_started_commands="reload"
+
+depend() {
+	need localmount
+	after modules nftables iptables ip6tables firewall
+}
+
+reload() {
+	ebegin "Reloading ${RC_SVCNAME}"
+	start-stop-daemon --signal HUP --pidfile "${pidfile}"
+	eend $?
+}

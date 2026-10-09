@@ -1,0 +1,26 @@
+# Centurion — network guard daemon (Health → Network).
+# Counterpart of packaging/openrc/centurion-netguard.
+#
+#   systemctl enable --now centurion-netguard.service
+
+[Unit]
+Description=Centurion network guard (IP blacklist, Wine/.exe guard)
+After=systemd-modules-load.service nftables.service network-pre.target
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/centurion-netguard daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

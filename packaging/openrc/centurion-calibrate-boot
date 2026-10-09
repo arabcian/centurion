@@ -1,0 +1,40 @@
+#!/sbin/openrc-run
+# Centurion — calibration at boot (Optimizations → Autotune → "Calibrate at next boot",
+# or `sudo centurion-calibrate --schedule-boot`).
+#
+# Does nothing unless a calibration was scheduled. Then it holds scenes and the boot preset from
+# boot on (the calibration hold), waits for AC power and a machine nobody has touched for five
+# minutes, runs the scheduled centurion-calibrate sessions (a key press or mouse move stops the running
+# one cleanly; it resumes after the next quiet stretch), applies the boot preset and releases the
+# hold. Status: centurion-calibrate --status; log: /var/log/centurion/calibrate-boot.log
+#
+#   rc-update add centurion-calibrate-boot default
+
+description="Centurion: scheduled calibration at boot"
+command="@BINDIR@/centurion-calibrate"
+command_args="--boot-run"
+pidfile="/run/${RC_SVCNAME}.pid"
+retry="INT/120/KILL/5"
+
+depend() {
+	need localmount centurion-boot-guard
+	after centurion-tune modules sysctl
+	before xdm display-manager
+}
+
+start() {
+	if [ ! -e /var/lib/centurion/calibrate-on-boot.json ]; then
+		einfo "No calibration scheduled for this boot"
+		return 0
+	fi
+	ebegin "Starting the scheduled Centurion calibration (waits for AC and an idle machine)"
+	start-stop-daemon --start --background --make-pidfile --pidfile "${pidfile}" --exec "${command}" -- ${command_args}
+	eend $?
+}
+
+stop() {
+	[ -f "${pidfile}" ] || return 0
+	ebegin "Stopping the Centurion boot calibration (measured runs are kept)"
+	start-stop-daemon --stop --pidfile "${pidfile}" --retry "${retry}"
+	eend $?
+}

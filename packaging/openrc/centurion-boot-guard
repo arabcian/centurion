@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+# Centurion boot guard. Pulled in by the preset services (need).
+# Arms at boot, disarms after 3 minutes of stable uptime or on a clean
+# shutdown (stop); a boot that dies armed pauses the preset services until
+# they are resumed in the app (Home) or with `centurion-boot-guard reset`.
+
+description="Pause Centurion boot presets after a crashed boot"
+GUARD="@LIBEXEC@/centurion-boot-guard"
+
+depend() {
+	need localmount
+	# The boot-default snapshot must see the user's sysctl.conf but not TLP.
+	after sysctl
+	before tlp centurion-tune nvcurve-autoload centurion-intel-uv centurion-intel-uv-daemon
+}
+
+start() {
+	ebegin "Arming Centurion boot guard"
+	"${GUARD}" arm
+	eend $?
+	# Disarm once the boot has been stable for the window (180 s).
+	( sleep 180; "${GUARD}" disarm ) >/dev/null 2>&1 &
+}
+
+stop() {
+	# Clean shutdown / reboot: this boot did not crash (also recorded for the
+	# GUI's login guard, so a quick reboot after login is not taken for a crash).
+	"${GUARD}" shutdown >/dev/null 2>&1
+	return 0
+}

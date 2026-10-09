@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+# Applies the default ("auto-load") NVIDIA V/F curve profile at boot.
+# Set from the NVIDIA tab's ★ Default button (/etc/nvcurve/config.json).
+
+description="Apply the nvcurve auto-load GPU profile"
+command="@BINDIR@/nvcurve"
+
+depend() {
+	need localmount centurion-boot-guard
+	after modules udev nvidia-persistenced
+}
+
+start() {
+	if ! "@LIBEXEC@/centurion-boot-guard" check 2>/dev/null; then
+		ewarn "Centurion boot presets are paused after a crashed boot — resume them in the app (Home)"
+		return 0
+	fi
+	ebegin "Applying nvcurve auto-load profile"
+	NVCURVE_LOG=info "${command}" autoload
+	eend $?
+}

@@ -1,0 +1,114 @@
+/*
+ * 49-centurion.rules
+ *
+ * Grants the Centurion actions without a password prompt to a
+ * member of `wheel` sitting at the machine (local + active session);
+ * everyone else -- SSH, another seat, a fast-user-switched session, service
+ * accounts -- gets auth_admin.
+ *
+ * Why a .rules file rather than only <allow_active> in the .policy:
+ *
+ *   - The .policy defaults are only consulted when no rule matches, and some
+ *     distributions ship rules of their own (50-default.rules, vendor
+ *     packages) that match first and force auth_admin_keep for anything run
+ *     through org.freedesktop.policykit.exec. A 49-* file sorts ahead of them.
+ *
+ *   - It also covers the generic org.freedesktop.policykit.exec fallback
+ *     pkexec uses when it cannot match a helper to a pinned action -- matched
+ *     here only for the exact helper paths below.
+ *
+ * Scope: only the fixed programs under @LIBEXEC@/, which install.sh and the
+ * ebuild create root:root 0755 (0700 for the nvcurve helper). A non-root
+ * user cannot add or alter a file there. The helpers re-validate every
+ * request themselves (fixed target paths, allowlisted sysfs shapes, realpath
+ * containment, ranges re-read live from the kernel), so the prompt is not
+ * what keeps a bad value out.
+ *
+ * The .policy defaults are auth_admin_keep: if this file is missing or not
+ * loaded, nobody gets a silent grant.
+ *
+ * Exception: legion-firmware-helper (com.centurion.firmware.write).
+ * It writes settings that persist in firmware -- BIOS memory timings, BIOS CPU
+ * overclocking, the GPU MUX mode -- where one bad value can stop the machine
+ * from booting. Any process running as the user could otherwise trigger that
+ * without the user noticing, so it always gets AUTH_ADMIN (password every
+ * time, no keep), for wheel members at the machine too.
+ *
+ * Exception: netguard-helper (com.centurion.netguard) changes the
+ * network guard's whitelist/blacklist. The programs it guards run as the same
+ * user, so a silent grant would let one of them whitelist itself: it always
+ * gets AUTH_ADMIN_KEEP (password, then polkit's cache window), at every level.
+ *
+ * Exception: backup-helper (com.centurion.backup) writes a system
+ * image (a copy of every file, /etc/shadow included) and restores one over a
+ * chosen directory, / included. Like the firmware helper it always gets
+ * AUTH_ADMIN: the password every time, no keep, at every level.
+ *
+ * Security level (chosen at install time, install.sh --security-level=N):
+ *   1  the behaviour described above: wheel + local + active session is silent.
+ *   2  no silent grants: the same session gets auth_admin_keep (one password,
+ *      then polkit's own cache window) for every helper except the read-only
+ *      sensor streams, the Health tab's event reader and keyboard lighting. Scenes, power modes, presets and
+ *      game hooks therefore ask for the password too; a game hook without a
+ *      polkit agent times out and skips the tuning instead of hanging.
+ *  3  as 2, except tune-profile-helper (com.centurion.tune.profile): applying an Optimizations
+ *      preset the user approved earlier is served from a root-owned store BY NAME, so it cannot carry a value
+ *      nobody approved. Approving/saving presets (tune-helper) and every other helper still ask. Scenes and
+ *      game hooks keep their tuning step silent; their other steps (Ryzen/NVIDIA/... helpers) ask.
+ * Changing the level = rerun install.sh (the rules file is root-owned in /etc).
+ *
+ * Distributions without a `wheel` group (Debian/Ubuntu use `sudo`): add
+ * `|| subject.isInGroup("sudo")` to the condition below.
+ */
+
+// Only a local, active session of a wheel member is granted silently;
+// everyone else (SSH, other seats, service accounts) gets auth_admin.
+var HELPERS = ["fwattr-helper", "legion-profile-helper", "ryzen-co-helper",
+               "tune-helper", "tune-profile-helper", "nvcurve-root-helper", "intel-uv-helper", "legion-gpu-helper",
+               "lighting-helper", "amdgpu-helper", "nvcurve-sensors", "legion-ec-sensors", "health-reader"].map(function (h) {
+    return "@LIBEXEC@/" + h;
+});
+var SECURITY_LEVEL = @SECLEVEL@;
+// Read-only / non-power helpers that stay silent at every level.
+var SILENT_IDS = ["com.centurion.nvcurve.sensors", "com.centurion.lighting.write",
+                  "com.centurion.ec.sensors", "com.centurion.health.read"];
+var SILENT_HELPERS = ["@LIBEXEC@/nvcurve-sensors", "@LIBEXEC@/lighting-helper", "@LIBEXEC@/legion-ec-sensors", "@LIBEXEC@/health-reader"];
+// Level 3 only: applying an already approved Optimizations preset by name (scenes, game hooks, restore).
+var PROFILE_ID = "com.centurion.tune.profile";
+var PROFILE_HELPER = "@LIBEXEC@/tune-profile-helper";
+var FIRMWARE_ACTION = "com.centurion.firmware.write";
+var FIRMWARE_HELPER = "@LIBEXEC@/legion-firmware-helper";
+var BACKUP_ACTION = "com.centurion.backup";
+var BACKUP_HELPER = "@LIBEXEC@/backup-helper";
+var NETGUARD_ACTION = "com.centurion.netguard";
+var NETGUARD_HELPER = "@LIBEXEC@/netguard-helper";
+
+polkit.addRule(function (action, subject) {
+    // Firmware-persistent writes: always the password, never cached.
+    if (action.id === FIRMWARE_ACTION ||
+        (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === FIRMWARE_HELPER)) {
+        return polkit.Result.AUTH_ADMIN;
+    }
+    // System backup / restore: always the password, never cached.
+    if (action.id === BACKUP_ACTION ||
+        (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === BACKUP_HELPER)) {
+        return polkit.Result.AUTH_ADMIN;
+    }
+    // Network guard rules: never silent, the password is kept for polkit's cache window.
+    if (action.id === NETGUARD_ACTION ||
+        (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === NETGUARD_HELPER)) {
+        return (subject.local && subject.active && subject.isInGroup("wheel")) ? polkit.Result.AUTH_ADMIN_KEEP : polkit.Result.AUTH_ADMIN;
+    }
+    var ours = action.id.indexOf("com.centurion.") === 0 ||
+        (action.id === "org.freedesktop.policykit.exec" &&
+         HELPERS.indexOf(action.lookup("program")) >= 0);
+    if (!ours) { return; }
+    if (subject.local && subject.active && subject.isInGroup("wheel")) {
+        var silent = SILENT_IDS.indexOf(action.id) >= 0 ||
+            (action.id === "org.freedesktop.policykit.exec" && SILENT_HELPERS.indexOf(action.lookup("program")) >= 0);
+        if (SECURITY_LEVEL >= 3 && (action.id === PROFILE_ID ||
+            (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === PROFILE_HELPER))) { silent = true; }
+        return (SECURITY_LEVEL >= 2 && !silent) ? polkit.Result.AUTH_ADMIN_KEEP : polkit.Result.YES;
+    }
+    return polkit.Result.AUTH_ADMIN;
+});

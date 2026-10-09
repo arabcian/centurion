@@ -1,0 +1,35 @@
+# Centurion — Intel undervolt boot/resume profile (systemd).
+# Counterpart of packaging/openrc/centurion-intel-uv.
+#
+# Same pattern as intel-undervolt.service: a oneshot without
+# RemainAfterExit that is also wanted by the sleep targets, so it runs again
+# after every resume (the OC mailbox offsets are lost on S3/hibernate).
+#
+#   systemctl enable centurion-intel-uv.service
+
+[Unit]
+Wants=centurion-boot-guard.service
+Description=Centurion Intel undervolt profile
+ConditionPathExists=/etc/centurion/intel-uv-boot.json
+After=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target centurion-boot-guard.service
+
+[Service]
+# Skipped (not failed) while centurion-boot-guard has the boot presets paused.
+ExecCondition=@LIBEXEC@/centurion-boot-guard check
+Type=oneshot
+ExecStart=/bin/sh -c "echo '{\"op\":\"boot\"}' | @LIBEXEC@/intel-uv-helper"
+# Needs /dev/cpu/*/msr, /dev/mem (MCHBAR) and /sys/module/msr: no device or
+# kernel-tunable sandboxing; the rest is closed.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=full
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

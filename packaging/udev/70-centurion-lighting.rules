@@ -1,0 +1,15 @@
+# Centurion — keyboard lighting.
+#
+#   Spectrum per-key RGB (ITE 8258): USB 048d:c1xx (Gen10), c9xx (Gen7-9,
+#   Legion 9), c6xx (LOQ Gen10, Legion 5 Gen11)
+#   4-zone RGB keyboard:             USB 048d:c9xx
+#
+# Grants the active local session access to the controller's hidraw node
+# (uaccess: systemd-logind or elogind), so the Lighting tab, the tray and
+# scenes change lighting without pkexec. Without this rule lighting-helper
+# still works through pkexec. Sorted before 73-seat-late.rules, which is
+# where the uaccess tag is acted on. The helper itself only ever talks to the
+# interface whose HID descriptor declares the expected feature report.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c1??", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c6??", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c9??", TAG+="uaccess"

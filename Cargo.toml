@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/centurion-helpers", "crates/centurion-spectrum", "crates/nvcurve"]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
