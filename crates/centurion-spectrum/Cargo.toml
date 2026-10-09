@@ -1,0 +1,10 @@
+[package]
+name = "centurion-spectrum"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Lenovo Legion keyboards over hidraw: Spectrum per-key RGB (ITE 8258) and the 4-zone RGB keyboard"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+libc = "0.2"

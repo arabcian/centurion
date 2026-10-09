@@ -1,0 +1,51 @@
+//! Root helper for the experimental Legion GPU power tab (pkexec).
+//!   {"op": "status"}                      add "envelope": true for nvidia-smi's power range (wakes the dGPU)
+//!   {"op": "apply", "values": {"ctgp": 140, "boost_up": 25, ...}}
+//!   {"op": "panel_extras"}   Over Drive + iGPU-mode state (only what the firmware supports)
+//!   {"op": "set_panel_od", "on": bool}   {"op": "set_igpu_mode", "mode": 0|1|2}  (guarded; force → legion-firmware-helper)
+//!   {"op": "dgpu_status"} / {"op": "dgpu_release"} / {"op": "dgpu_restore"}   NVIDIA driver hand-over (see dgpu.rs)
+//!   {"op": "gpu_mode"}                     MUX state: active now / next boot
+//!   {"op": "fw_oc"}                        firmware CPU OC values (read-only)
+//! Writes that persist in firmware (set_gpu_mode, set_fw_oc, forced set_igpu_mode)
+//! live in legion-firmware-helper, which always asks for the administrator password.
+use centurion_helpers::legion_wmi;
+use centurion_helpers::*;
+use serde_json::{json, Value};
+
+fn run() -> Value {
+    let req = match read_request(8192) { Ok(v) => v, Err(e) => return e };
+    let Some(o) = req.as_object() else { return json!({"ok": false, "error": "payload must be an object"}) };
+    if matches!(o.get("op").and_then(Value::as_str), Some("apply" | "set_panel_od" | "set_gpu_mode" | "set_igpu_mode" | "set_fw_oc")) {
+        if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
+    }
+    match o.get("op").and_then(Value::as_str) {
+        Some("status") => legion_wmi::status(o.get("envelope").and_then(Value::as_bool).unwrap_or(false)),
+        Some("apply") => match o.get("values").and_then(Value::as_object) {
+            Some(v) => legion_wmi::apply(v),
+            None => json!({"ok": false, "error": "apply needs a 'values' object"}),
+        },
+        Some("gpu_mode") => legion_wmi::gpu_mode_status(),
+        Some("dgpu_status") => centurion_helpers::dgpu::status(),
+        Some("dgpu_release") => match centurion_helpers::dgpu::release() { Ok(v) => { let mut v = v; v["ok"] = json!(true); v } Err(v) => v },
+        Some("dgpu_restore") => centurion_helpers::dgpu::restore(),
+        Some("fw_oc") => legion_wmi::fw_oc_status(),
+        Some("panel_extras") => legion_wmi::panel_extras(),
+        Some("set_panel_od") => match o.get("on").and_then(Value::as_bool) {
+            Some(on) => legion_wmi::set_panel_od(on),
+            None => json!({"ok": false, "error": "set_panel_od needs 'on' (bool)"}),
+        },
+        // The guarded path only: the forced override (black-screen risk) needs
+        // the password and goes through legion-firmware-helper.
+        Some("set_igpu_mode") if o.get("force").and_then(Value::as_bool).unwrap_or(false) => moved("set_igpu_mode with force"),
+        Some("set_igpu_mode") => legion_wmi::set_igpu_mode(o.get("mode").and_then(Value::as_u64).unwrap_or(99), false),
+        Some(op @ ("set_gpu_mode" | "set_fw_oc")) => moved(op),
+        other => json!({"ok": false, "error": format!("unknown op: {}", other.unwrap_or("None"))}),
+    }
+}
+/// Firmware-persistent operations moved to legion-firmware-helper (always
+/// password-protected); refused here so they have no silent path.
+fn moved(op: &str) -> Value {
+    json!({"ok": false, "error": format!("{op} is handled by legion-firmware-helper (administrator password required)")})
+}
+
+fn main() { init(); std::process::exit(finish(run())); }
