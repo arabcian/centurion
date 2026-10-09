@@ -34,7 +34,7 @@ rm -f "$PREFIX/bin/centurion" "$PREFIX/bin/nvcurve" "$PREFIX/bin/centurion-gamem
       "$PREFIX/share/polkit-1/actions/com.centurion.policy" \
       /etc/xdg/autostart/centurion.desktop \
       /etc/polkit-1/rules.d/49-centurion.rules /etc/init.d/nvcurve-autoload
-rm -f "${UDEVDIR:-$PREFIX/lib/udev/rules.d}/70-centurion-lighting.rules"
+rm -f "${UDEVDIR:-$PREFIX/lib/udev/rules.d}/70-centurion-lighting.rules" "${UDEVDIR:-$PREFIX/lib/udev/rules.d}/90-centurion-dgpu.rules"
 command -v udevadm >/dev/null && udevadm control --reload 2>/dev/null || true
 rm -f "$UNITDIR/nvcurve-autoload.service" "$UNITDIR/centurion-tune.service" "$UNITDIR/centurion-intel-uv.service" "$UNITDIR/centurion-intel-uv-daemon.service" "$UNITDIR/centurion-boot-guard.service"
 # Boot-guard state goes; the BIOS memory-timing backups (AodSetupRpl-*) stay:

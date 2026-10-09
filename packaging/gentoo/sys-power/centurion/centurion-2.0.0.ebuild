@@ -90,6 +90,9 @@ src_install() {
 	exeopts -m0755
 	doexe "${T}"/50-centurion-intel-uv
 	udev_dorules packaging/udev/70-centurion-lighting.rules
+	sed -e "s|@LIBEXEC@|${EPREFIX}/usr/libexec/centurion|g" \
+		packaging/udev/90-centurion-dgpu.rules > "${T}"/90-centurion-dgpu.rules || die
+	udev_dorules "${T}"/90-centurion-dgpu.rules
 	keepdir /etc/nvcurve/profiles
 
 	dodoc README.md NOTICE DISCLAIMER.md docs/TECHNICAL.md

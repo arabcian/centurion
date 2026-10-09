@@ -1,0 +1,6 @@
+# Centurion — "Keep the dGPU awake" (Health → dGPU power).
+#
+# Re-applies the switch whenever an NVIDIA PCI function appears or a driver
+# binds to it (the nvidia driver's own rules set power/control=auto on bind).
+# Does nothing while the switch is off (no /etc/centurion/dgpu-awake).
+ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", RUN+="@LIBEXEC@/centurion-boot-guard dgpu-awake"

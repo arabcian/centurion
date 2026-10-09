@@ -27,6 +27,7 @@
 #   /usr/bin/centurion-netguard                           network guard daemon (IP blacklist, Wine/.exe guard, connection log)
 #   /usr/libexec/centurion/*-helper      pkexec targets (root:root)
 #   $PREFIX/lib/udev/rules.d/70-centurion-lighting.rules   keyboard lighting (uaccess)
+#   $PREFIX/lib/udev/rules.d/90-centurion-dgpu.rules       "Keep the dGPU awake" re-apply
 #   /usr/share/polkit-1/actions/com.centurion.policy
 #   /etc/polkit-1/rules.d/49-centurion.rules
 #   /etc/init.d/nvcurve-autoload                    OpenRC boot-time GPU profile
@@ -170,6 +171,8 @@ sed -e "s|@LIBEXEC@|$LIBEXEC|g" -e "s|@SECLEVEL@|$SECLEVEL|g" packaging/polkit/4
 UDEVDIR=${UDEVDIR:-$PREFIX/lib/udev/rules.d}
 install -d "${own[@]}" -m 0755 "$DESTDIR$UDEVDIR"
 install "${own[@]}" -m 0644 packaging/udev/70-centurion-lighting.rules "$DESTDIR$UDEVDIR/"
+sed -e "s|@LIBEXEC@|$LIBEXEC|g" packaging/udev/90-centurion-dgpu.rules > "$DESTDIR$UDEVDIR/90-centurion-dgpu.rules"
+chmod 0644 "$DESTDIR$UDEVDIR/90-centurion-dgpu.rules"
 if [[ -z "$DESTDIR" ]] && command -v udevadm >/dev/null; then
     udevadm control --reload 2>/dev/null || true
     udevadm trigger --subsystem-match=hidraw --action=change 2>/dev/null || true
