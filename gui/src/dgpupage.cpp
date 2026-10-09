@@ -1,7 +1,11 @@
 #include "dgpupage.h"
+#include "privileged.h"
 #include "theme.h"
 
+#include <QCheckBox>
 #include <QClipboard>
+#include <QJsonObject>
+#include <QMessageBox>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -15,6 +19,7 @@
 #include <QPushButton>
 #include <QSet>
 #include <QShowEvent>
+#include <QSignalBlocker>
 #include <QThreadPool>
 #include <QTimer>
 #include <QTreeWidget>
@@ -276,6 +281,16 @@ DgpuPage::DgpuPage(QWidget *parent) : QWidget(parent) {
     top->addWidget(bCopy, 0, Qt::AlignTop);
     root->addLayout(top);
 
+    // Master switch: pin the dGPU in D0 (workaround for a card that cannot wake from D3cold).
+    awake_ = new QCheckBox(QStringLiteral("Keep the dGPU awake"));
+    awake_->setToolTip(QStringLiteral(
+        "Turns runtime PM off for the NVIDIA GPU, its sibling functions and upstream port, and forbids D3cold, "
+        "so the card is never powered down. Use it when the GPU fails to wake from D3cold "
+        "(\"Unable to change power state from D3cold to D0\"). Survives reboots (udev rule); costs idle power."));
+    awake_->setChecked(QFile::exists(QStringLiteral("/etc/centurion/dgpu-awake")));
+    connect(awake_, &QCheckBox::toggled, this, &DgpuPage::setAwake);
+    root->addWidget(awake_);
+
     tree_ = new QTreeWidget;
     tree_->setColumnCount(2);
     tree_->setHeaderHidden(true);
@@ -297,8 +312,23 @@ DgpuPage::DgpuPage(QWidget *parent) : QWidget(parent) {
     connect(timer_, &QTimer::timeout, this, [this] { ++tick_; refresh(tick_ % HOLDER_EVERY == 0); });
 }
 
+void DgpuPage::setAwake(bool on) {
+    awake_->setEnabled(false);
+    privileged::run(privileged::helperPath(QStringLiteral("legion-gpu-helper")), QJsonObject{{"op", "dgpu_awake"}, {"on", on}}, this,
+                    [this](const privileged::Result &r) {
+        awake_->setEnabled(true);
+        if (!r.ok()) {
+            const bool flag = QFile::exists(QStringLiteral("/etc/centurion/dgpu-awake"));
+            if (flag != awake_->isChecked()) { const QSignalBlocker b(awake_); awake_->setChecked(flag); }
+            QMessageBox::warning(this, QStringLiteral("Keep the dGPU awake"), r.message());
+        }
+        refresh(false);
+    });
+}
+
 void DgpuPage::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
+    { const QSignalBlocker b(awake_); awake_->setChecked(QFile::exists(QStringLiteral("/etc/centurion/dgpu-awake"))); }
     tick_ = 0;
     refresh(true);
     timer_->start();

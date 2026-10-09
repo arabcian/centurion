@@ -12,6 +12,7 @@
 #include <QString>
 #include <QWidget>
 
+class QCheckBox;
 class QLabel;
 class QTimer;
 class QTreeWidget;
@@ -33,6 +34,9 @@ private:
     void refresh(bool scanHolders);
     void apply(const Report &r);
 
+    void setAwake(bool on);
+
+    QCheckBox *awake_;
     QLabel *verdict_;
     QTreeWidget *tree_;
     QTimer *timer_;
