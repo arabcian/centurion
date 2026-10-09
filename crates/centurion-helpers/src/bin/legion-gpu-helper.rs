@@ -4,6 +4,7 @@
 //!   {"op": "panel_extras"}   Over Drive + iGPU-mode state (only what the firmware supports)
 //!   {"op": "set_panel_od", "on": bool}   {"op": "set_igpu_mode", "mode": 0|1|2}  (guarded; force → legion-firmware-helper)
 //!   {"op": "dgpu_status"} / {"op": "dgpu_release"} / {"op": "dgpu_restore"}   NVIDIA driver hand-over (see dgpu.rs)
+//!   {"op": "dgpu_awake", "on": bool}      keep the dGPU out of runtime D3cold (persists; omit "on" to query)
 //!   {"op": "gpu_mode"}                     MUX state: active now / next boot
 //!   {"op": "fw_oc"}                        firmware CPU OC values (read-only)
 //! Writes that persist in firmware (set_gpu_mode, set_fw_oc, forced set_igpu_mode)
@@ -28,6 +29,7 @@ fn run() -> Value {
         Some("dgpu_status") => centurion_helpers::dgpu::status(),
         Some("dgpu_release") => match centurion_helpers::dgpu::release() { Ok(v) => { let mut v = v; v["ok"] = json!(true); v } Err(v) => v },
         Some("dgpu_restore") => centurion_helpers::dgpu::restore(),
+        Some("dgpu_awake") => centurion_helpers::dgpu::awake_op(o.get("on").and_then(Value::as_bool)),
         Some("fw_oc") => legion_wmi::fw_oc_status(),
         Some("panel_extras") => legion_wmi::panel_extras(),
         Some("set_panel_od") => match o.get("on").and_then(Value::as_bool) {

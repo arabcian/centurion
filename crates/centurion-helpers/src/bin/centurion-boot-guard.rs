@@ -8,6 +8,8 @@
 //!   centurion-boot-guard check    exit 0 = apply presets, 1 = skip (reason on stderr) — for
 //!                           systemd ExecCondition= and the OpenRC scripts
 //!   centurion-boot-guard status   print the state as JSON
+//!   centurion-boot-guard dgpu-awake (root) re-apply the "Keep the dGPU awake" switch if it is on
+//!                           (udev 90-centurion-dgpu.rules, whenever the NVIDIA GPU appears)
 //!   centurion-boot-guard reset    (root) resume the presets after a trip
 //!
 //! See bootguard.rs for the state machine.
@@ -92,7 +94,11 @@ fn main() {
         },
         Some("status") => { println!("{}", bootguard::read()); 0 }
         Some("reset") => bootguard::reset().map_or_else(fail, |v| { println!("{v}"); 0 }),
-        _ => { eprintln!("usage: centurion-boot-guard arm|watch|disarm|shutdown|check|status|reset"); 2 }
+        Some("dgpu-awake") => {
+            if !centurion_helpers::dgpu::awake_enabled() { 0 }
+            else { centurion_helpers::dgpu::awake_apply(true).map_or_else(fail, |_| 0) }
+        }
+        _ => { eprintln!("usage: centurion-boot-guard arm|watch|disarm|shutdown|check|status|reset|dgpu-awake"); 2 }
     };
     std::process::exit(code);
 }

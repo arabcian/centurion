@@ -1310,8 +1310,8 @@ fn main() {
     }
     if unsafe { libc::geteuid() } != 0 { die("needs root (sudo centurion-calibrate)"); }
     if flag("--restore") {
+        fan_unlock();  // before the scene's originals (see Teardown)
         for e in centurion_helpers::calctx::restore_scene_power() { eprintln!("scene power context: {e}"); }
-        fan_unlock();
         centurion_helpers::stability::inflight_clear();
         if centurion_helpers::calibration_hold().is_none() { let _ = std::fs::remove_file(centurion_helpers::CALIBRATION_HOLD); centurion_helpers::stability::record_calibration(false); }
         let mut j = Journal::load();
@@ -1548,8 +1548,10 @@ struct Teardown { hold: bool, scene: bool, fan: Option<bool>, exposure: bool }
 
 impl Drop for Teardown {
     fn drop(&mut self) {
-        if self.scene { for e in centurion_helpers::calctx::restore_scene_power() { eprintln!("scene power context: {e}"); } }
+        // Reverse order of setup: the fan lock (taken on top of the scene) first, then the scene's
+        // originals — the other way round the lock's journal (the scene's fan state) won.
         if self.fan.is_some() { fan_unlock(); }
+        if self.scene { for e in centurion_helpers::calctx::restore_scene_power() { eprintln!("scene power context: {e}"); } }
         centurion_helpers::stability::inflight_clear();
         if self.exposure { centurion_helpers::stability::record_calibration(false); }
         if self.hold { let _ = std::fs::remove_file(centurion_helpers::CALIBRATION_HOLD); }
@@ -1663,8 +1665,17 @@ fn boot_blocker() -> Option<String> {
 /// resumes after the next quiet stretch), then applies the boot preset and releases the hold.
 fn boot_run() -> i32 {
     let Some(v) = centurion_helpers::read_root_file(BOOT_FLAG, 4096).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return 0 };
-    // Consumed at once: a crash during it must not start it again at every boot.
-    if std::fs::rename(BOOT_FLAG, BOOT_TAKEN).is_err() { return 1; }
+    // Consumed at once: a crash during it must not start it again at every boot. The taken copy
+    // carries this boot's id, so it holds the boot preset during this boot only.
+    let mut taken = v.clone();
+    taken["boot_id"] = json!(centurion_helpers::bootguard::boot_id());
+    if centurion_helpers::write_root_file(BOOT_TAKEN, taken.to_string().as_bytes()).is_err() || std::fs::remove_file(BOOT_FLAG).is_err() { return 1; }
+    // Service stop / shutdown (SIGINT from both init systems, SIGTERM): end the wait or the running
+    // session cleanly instead of being killed with the hold and the taken flag left behind.
+    unsafe {
+        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+    }
     let sessions = v["sessions"].as_u64().unwrap_or(2).clamp(1, 12);
     let budget = v["budget"].as_f64().unwrap_or(15.0).clamp(5.0, 60.0);
     let scene = v["scene"].as_str().map(str::to_owned);
@@ -1679,6 +1690,7 @@ fn boot_run() -> i32 {
     };
     log(&format!("boot calibration: {sessions} session(s) of {budget:.0} min{}", scene.as_deref().map(|s| format!(" in scene \"{s}\"")).unwrap_or_default()));
     while done < sessions && now() - t0 < BOOT_DEADLINE_S {
+        if STOP.load(Ordering::SeqCst) { break; }
         if let Some(why) = boot_blocker() {
             set_status(json!({"state": "waiting", "why": why, "done": done, "sessions": sessions, "stopped": stopped}));
             std::thread::sleep(Duration::from_secs(10));
@@ -1712,9 +1724,13 @@ fn boot_run() -> i32 {
         done += 1;
     }
     let _ = std::fs::remove_file(BOOT_TAKEN);
-    // Back to the normal state: the boot preset (held this boot), then scenes (the GUI re-applies its
-    // scene when the hold goes away).
-    if done > 0 || stopped > 0 {
+    // Back to the normal state: the boot preset (held this boot whether or not a session ran — the
+    // deadline can pass while waiting, a session can fail), then scenes (the GUI re-applies its
+    // scene when the hold goes away). Not while the service is being stopped (shutdown).
+    // Same gate as the centurion-tune service: presets paused by centurion-boot-guard stay paused.
+    let guard = centurion_helpers::bootguard::should_skip();
+    if let Some(why) = &guard { log(&format!("boot preset not applied: boot presets are paused ({why})")); }
+    if !STOP.load(Ordering::SeqCst) && guard.is_none() {
         match centurion_helpers::calctx::run_helper("tune-helper", &json!({"op": "boot"})) {
             Ok(v) => log(&format!("boot preset: {}", v["note"].as_str().or(v["error"].as_str()).unwrap_or(if v["ok"] == true { "applied" } else { "failed" }))),
             Err(e) => log(&format!("boot preset not applied: {e}")),

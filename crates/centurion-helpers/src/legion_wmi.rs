@@ -784,16 +784,18 @@ pub fn set_igpu_mode(mode: u64, force: bool) -> Value {
                 "error": format!("this kernel has no {} driver: with the dGPU cut off nothing could drive the display.", igpu_driver_name(kind))});
         }
     }
-    // Both iGPU-only and Auto (on battery) make the EC eject the dGPU's slot. The
-    // NVIDIA driver must be gone by then, or its remove hangs holding the PCI lock.
-    if mode != 0 && igpu_present().is_some() {
-        if let Err(v) = crate::dgpu::release() { return v; }
-    }
+    // Support check first: the driver release below must not happen for a request
+    // the firmware is going to refuse anyway.
     if !acpi_available() { modprobe_acpi_call(); }
     match wmaa(0x3F, 0) {
         Ok(3) => {}
         Ok(_) => return json!({"ok": false, "error": "iGPU mode not supported by this firmware"}),
         Err(e) => return json!({"ok": false, "error": e}),
+    }
+    // Both iGPU-only and Auto (on battery) make the EC eject the dGPU's slot. The
+    // NVIDIA driver must be gone by then, or its remove hangs holding the PCI lock.
+    if mode != 0 && igpu_present().is_some() {
+        if let Err(v) = crate::dgpu::release() { return v; }
     }
     if let Err(e) = wmaa(0x41, mode) { return json!({"ok": false, "error": e}); }
     json!({"ok": true, "igpu_mode": wmaa(0x40, 0).ok()})

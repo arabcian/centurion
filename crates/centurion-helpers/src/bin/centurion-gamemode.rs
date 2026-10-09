@@ -220,9 +220,12 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
     // other launch of a game runs at the boot defaults (A) under the same game scene.
     let ab = if first { ab_turn(&cfg, game) } else { None };
     if first {
-        let values = name.and_then(store_values).unwrap_or(Value::Null);
+        // The preset this launch really applies: without a name, apply() takes the GUI's game preset. Recording
+        // null there made every such B launch look like an A (boot defaults) session to --field.
+        let eff = name.map(str::to_owned).or_else(default_preset);
+        let values = eff.as_deref().and_then(store_values).unwrap_or(Value::Null);
         let id = format!("{}-{}", now_s(), std::process::id());
-        log_session(&json!({"id": id, "start": now_s(), "game": game, "preset": if ab == Some("A") { Value::Null } else { json!(name) },
+        log_session(&json!({"id": id, "start": now_s(), "game": game, "preset": if ab == Some("A") { Value::Null } else { json!(eff) },
                             "values": if ab == Some("A") { json!({}) } else { values }, "ab": ab}));
         update_scene_state(|st| st["game_session"] = json!(id));
     }
@@ -354,8 +357,9 @@ fn user_lock(name: &str) -> Option<std::fs::File> {
 
 static OWNER: AtomicI32 = AtomicI32::new(0);
 
+/// comm is cut to 15 bytes (TASK_COMM_LEN - 1): this tool itself reads back as "centurion-gamem".
 const WRAPPER_COMMS: &[&str] = &["sh", "bash", "dash", "zsh", "fish", "ksh", "mksh", "busybox", "env", "timeout",
-                                 "nice", "ionice", "stdbuf", "xargs", "setsid", "flock", "centurion-gamemode"];
+                                 "nice", "ionice", "stdbuf", "xargs", "setsid", "flock", "centurion-gamem"];
 
 /// (comm, ppid) of `pid` from /proc/<pid>/stat.
 fn proc_comm_ppid(pid: i32) -> Option<(String, i32)> {

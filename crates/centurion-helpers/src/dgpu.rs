@@ -230,3 +230,65 @@ pub fn restore() -> Value {
     }
     json!({"ok": true, "note": note.join("; "), "gpus_listed": std::fs::read_dir("/proc/driver/nvidia/gpus").map(|d| d.count()).unwrap_or(0)})
 }
+
+// ---- "Keep the dGPU awake" master switch ----------------------------------
+//
+// Workaround for a dGPU that drops into runtime D3cold and then cannot come
+// back ("Unable to change power state from D3cold to D0, device inaccessible").
+// While on: runtime PM is off (power/control = on) for every NVIDIA function
+// and the upstream port, and d3cold_allowed = 0 on them, so the slot is never
+// powered down. The choice persists in AWAKE_FLAG; the udev rule
+// 90-centurion-dgpu.rules re-applies it whenever the card (re)appears, via
+// `centurion-boot-guard dgpu-awake`. Off restores the kernel defaults (auto / 1).
+
+pub const AWAKE_FLAG: &str = "/etc/centurion/dgpu-awake";
+
+/// NVIDIA functions (display, audio, USB-C …) plus their upstream ports.
+fn awake_targets() -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(PCI).into_iter().flatten().flatten().map(|e| e.path())
+        .filter(|d| rd(&d.join("vendor")).as_deref() == Some("0x10de")).collect();
+    let mut ports = Vec::new();
+    for c in cards() {
+        if let Some(p) = std::fs::canonicalize(&c).ok().and_then(|r| r.parent().map(Path::to_path_buf)) {
+            if p.join("vendor").exists() && !ports.contains(&p) { ports.push(p); }
+        }
+    }
+    v.extend(ports);
+    v
+}
+
+fn put(p: &Path, val: &str) -> Result<(), String> {
+    if !p.exists() { return Ok(()); }
+    if rd(p).as_deref() == Some(val) { return Ok(()); }
+    crate::wlog::log("sysfs", &format!("{} = {val} (dgpu_awake)", p.display()));
+    std::fs::write(p, val).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// Apply the switch to the hardware now (does not touch the flag).
+pub fn awake_apply(on: bool) -> Result<usize, String> {
+    let t = awake_targets();
+    let mut errs = Vec::new();
+    for d in &t {
+        // Order matters when turning on: forbid D3cold first, then pin D0 (resumes the device).
+        let (a, b) = if on { (("d3cold_allowed", "0"), ("power/control", "on")) } else { (("power/control", "auto"), ("d3cold_allowed", "1")) };
+        for (f, val) in [a, b] { if let Err(e) = put(&d.join(f), val) { errs.push(e); } }
+    }
+    if errs.is_empty() { Ok(t.len()) } else { Err(errs.join("; ")) }
+}
+
+pub fn awake_enabled() -> bool { Path::new(AWAKE_FLAG).exists() }
+
+/// Helper op `dgpu_awake`: {"on": bool} sets and applies; without "on" just reports.
+pub fn awake_op(on: Option<bool>) -> Value {
+    let Some(on) = on else { return json!({"ok": true, "on": awake_enabled()}) };
+    let flag = if on {
+        std::fs::create_dir_all("/etc/centurion").and_then(|_| std::fs::write(AWAKE_FLAG, "1\n"))
+    } else {
+        match std::fs::remove_file(AWAKE_FLAG) { Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e), _ => Ok(()) }
+    };
+    if let Err(e) = flag { return json!({"ok": false, "error": format!("{AWAKE_FLAG}: {e}")}); }
+    match awake_apply(on) {
+        Ok(n) => json!({"ok": true, "on": on, "devices": n}),
+        Err(e) => json!({"ok": false, "on": on, "error": e}),
+    }
+}

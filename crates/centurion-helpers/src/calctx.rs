@@ -155,8 +155,15 @@ pub const BOOT_FLAG: &str = "/var/lib/centurion/calibrate-on-boot.json";
 pub const BOOT_TAKEN: &str = "/var/lib/centurion/calibrate-on-boot.json.taken";
 pub const BOOT_STATUS: &str = "/run/centurion/calibrate-status.json";
 
-/// A boot calibration is scheduled or under way (the boot preset waits for it).
-pub fn boot_calibration_pending() -> bool { Path::new(BOOT_FLAG).exists() || Path::new(BOOT_TAKEN).exists() }
+/// A boot calibration is scheduled or under way (the boot preset waits for it). The taken flag
+/// counts only in the boot that took it: one left behind by a shutdown or crash mid-calibration
+/// would otherwise hold the boot preset at every later boot (the boot service only starts when
+/// the plain flag exists, so nothing would ever remove it).
+pub fn boot_calibration_pending() -> bool {
+    if Path::new(BOOT_FLAG).exists() { return true; }
+    crate::read_root_file(BOOT_TAKEN, 4096).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map_or(false, |v| v["boot_id"].as_str() == Some(crate::bootguard::boot_id().as_str()))
+}
 
 /// Schedules (or cancels) a calibration at the next boot. `user`: whose scene `scene` is.
 pub fn schedule_boot(on: bool, sessions: u64, budget: f64, scene: Option<&str>, user: Option<&str>) -> Result<String, String> {

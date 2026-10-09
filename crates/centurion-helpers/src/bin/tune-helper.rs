@@ -125,7 +125,8 @@ fn lock() -> Result<Lock, String> {
             Some(libc::EWOULDBLOCK) => {
                 let holder = fs::read_to_string(LOCK_FILE).unwrap_or_default();
                 if let Some(pid) = holder.trim().strip_prefix("calibrate ").and_then(|p| p.parse::<i32>().ok()) {
-                    if fs::read_to_string(format!("/proc/{pid}/comm")).map_or(false, |c| c.trim().starts_with("centurion-calibrate")) {
+                    // comm is cut to 15 bytes: "centurion-calibrate" reads back as "centurion-calib".
+                    if fs::read_to_string(format!("/proc/{pid}/comm")).map_or(false, |c| c.trim() == &"centurion-calibrate"[..15]) {
                         return Err(format!("centurion-calibrate is measuring (pid {pid}) and holds the tuning until it ends; \
                                             try again when it has finished, or stop it (Ctrl-C restores its changes)"));
                     }
