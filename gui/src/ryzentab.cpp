@@ -225,6 +225,41 @@ ryzen::Layout ryzen::detect() {
     return out;
 }
 
+// CPPC highest_perf is the firmware's preferred-core rank: the per-core silicon hint CO offsets are
+// started from. With amd_x3d_mode = cache the firmware lifts the whole V-Cache CCD above the other one
+// (that is how the mode steers the scheduler), so the live numbers stop describing the silicon: CCD0 then
+// showed values only the frequency CCD reaches, and initial offsets picked from them were wrong. The
+// ranking seen outside cache mode is kept per BIOS (a BIOS update can re-rank) and shown in cache mode.
+static QString cppcDir() { return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/centurion"); }
+static QString cppcFile() { return cppcDir() + QStringLiteral("/cppc-ranking.json"); }
+static QString biosVersion() { return pp::readText(QStringLiteral("/sys/class/dmi/id/bios_version")).value_or(QString()); }
+
+static QMap<int, int> loadCppcRanking() {
+    QMap<int, int> out;
+    QFile f(cppcFile());
+    if (!f.open(QIODevice::ReadOnly) || f.size() > 65536) return out;
+    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+    if (biosVersion().isEmpty() || o.value("bios").toString() != biosVersion()) return out;
+    const QJsonObject cpus = o.value("cpus").toObject();
+    for (auto it = cpus.begin(); it != cpus.end(); ++it) {
+        bool ok = false;
+        const int n = it.key().toInt(&ok);
+        if (ok && it.value().isDouble()) out[n] = it.value().toInt();
+    }
+    return out;
+}
+
+static void saveCppcRanking(const QMap<int, int> &m) {
+    if (biosVersion().isEmpty()) return;
+    QJsonObject cpus;
+    for (auto it = m.cbegin(); it != m.cend(); ++it) cpus[QString::number(it.key())] = it.value();
+    QDir().mkpath(cppcDir());
+    QSaveFile f(cppcFile());
+    if (!f.open(QIODevice::WriteOnly)) return;
+    f.write(QJsonDocument(QJsonObject{{"bios", biosVersion()}, {"cpus", cpus}}).toJson(QJsonDocument::Compact));
+    f.commit();
+}
+
 QString ryzen::profilesDir() {
     // Same location as the standalone applet so existing profiles carry over.
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
@@ -407,9 +442,9 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
             auto *h = new QLabel(QString::fromLatin1(heads[c]));
             h->setProperty("role", "muted");
             h->setAlignment(Qt::AlignCenter);
-            if (c == 3) h->setToolTip(QStringLiteral("Firmware preferred-core rank (CPPC highest_perf), read live.\n"
-                "On X3D chips the 3D V-Cache mode (Optimizations) lifts one CCD's ranks above the other's,\n"
-                "so compare cores within a CCD only. It says nothing about which die a column is."));
+            if (c == 3) h->setToolTip(QStringLiteral("Firmware preferred-core rank (CPPC highest_perf): the per-core silicon hint.\n"
+                "In 3D V-Cache mode 'cache' the firmware lifts the V-Cache CCD's live ranks above the other CCD's;\n"
+                "the column then shows the ranking recorded outside cache mode instead. Compare cores within a CCD."));
             g->addWidget(h, 1, c);
         }
         auto *line = new QFrame;
@@ -831,44 +866,63 @@ QString RyzenTab::ccdName(int ccd) const {
 }
 
 void RyzenTab::refreshCppc() {
-    // highest_perf is live: amd_x3d_mode, prefcore and firmware rewrite it at runtime, so it is
-    // re-read on every show instead of being trusted from construction time.
-    for (int ccd = 0; ccd < ccdCount_; ++ccd) {
-        auto &cores = layout_.cores[ccd];
-        for (auto &c : cores) {
+    QString mode;
+    const QDir drv(QStringLiteral("/sys/bus/platform/drivers/amd_x3d_vcache"));
+    for (const QString &d : drv.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
+        if (auto m = pp::readText(drv.filePath(d) + "/amd_x3d_mode")) { mode = *m; break; }
+    const bool shifted = mode == QLatin1String("cache");
+    // highest_perf is live (amd_x3d_mode, prefcore and firmware rewrite it): re-read on every show.
+    QMap<int, int> native = loadCppcRanking();
+    bool changed = false;
+    for (int ccd = 0; ccd < ccdCount_; ++ccd)
+        for (auto &c : layout_.cores[ccd]) {
             if (parkedNow_.contains(ccd)) { c.highestPerf.reset(); continue; }
             bool ok = false;
             const int hp = pp::readText(QStringLiteral("/sys/devices/system/cpu/cpu%1/acpi_cppc/highest_perf").arg(c.cpus.first()))
                                .value_or(QString()).toInt(&ok);
             c.highestPerf = ok ? std::optional(hp) : std::nullopt;
+            if (!shifted && ok && native.value(c.cpus.first(), -1) != hp) { native[c.cpus.first()] = hp; changed = true; }
         }
+    if (changed) saveCppcRanking(native);
+    // Shown value: live outside cache mode; in cache mode the recorded silicon ranking, never the shifted one.
+    auto shown = [&](const ryzen::PhysCore &c) -> std::optional<int> {
+        if (!c.highestPerf) return std::nullopt;
+        if (!shifted) return c.highestPerf;
+        const auto it = native.constFind(c.cpus.first());
+        return it != native.cend() ? std::optional(*it) : std::nullopt;
+    };
+    int unrecorded = 0;
+    for (int ccd = 0; ccd < ccdCount_; ++ccd) {
+        const auto &cores = layout_.cores[ccd];
         QList<int> perf;
-        for (const auto &c : cores) if (c.highestPerf) perf << *c.highestPerf;
+        for (const auto &c : cores) if (const auto v = shown(c)) perf << *v;
         std::sort(perf.begin(), perf.end(), std::greater<>());
         const int bestCut = perf.size() >= 2 ? perf[1] : (perf.isEmpty() ? INT_MAX : perf[0]);
         for (const Slot &s : std::as_const(slots_)) {
             if (s.ccd != ccd) continue;
             const ryzen::PhysCore *pc = s.slot < cores.size() ? &cores[s.slot] : nullptr;
-            const bool hasHp = pc && pc->highestPerf;
-            const bool best = hasHp && *pc->highestPerf >= bestCut;
-            s.cppc->setText(hasHp ? QString::number(*pc->highestPerf) + (best ? QStringLiteral(" ★") : QString()) : QStringLiteral("–"));
+            const std::optional<int> v = pc ? shown(*pc) : std::nullopt;
+            const bool best = v && *v >= bestCut;
+            if (pc && pc->highestPerf && !v) ++unrecorded;
+            s.cppc->setText(v ? QString::number(*v) + (best ? QStringLiteral(" ★") : QString()) : QStringLiteral("–"));
             s.cppc->setStyleSheet(QStringLiteral("color:%1;%2 background:transparent;")
-                                      .arg(hasHp ? (best ? theme::WARN : theme::FG_DIM) : theme::MUTED, best ? " font-weight:700;" : ""));
-            s.cppc->setToolTip(QStringLiteral("Firmware preferred-core rank (CPPC highest_perf)") +
-                               (hasHp ? ": " + QString::number(*pc->highestPerf) : QStringLiteral(" (not available)")) +
-                               "\n★ marks the two best on this CCD. Ranks are only comparable within a CCD:\n"
-                               "the 3D V-Cache mode shifts one whole CCD above the other.");
+                                      .arg(v ? (best ? theme::WARN : theme::FG_DIM) : theme::MUTED, best ? " font-weight:700;" : ""));
+            QString tip = QStringLiteral("Firmware preferred-core rank (CPPC highest_perf)");
+            if (v) tip += ": " + QString::number(*v);
+            if (shifted && pc && pc->highestPerf)
+                tip += v ? QStringLiteral("\nRecorded outside cache mode. Live value in cache mode: %1 (shifted, not the silicon ranking).").arg(*pc->highestPerf)
+                         : QStringLiteral("\nNot recorded yet: cache mode shifts the live value (%1). Set the 3D V-Cache mode to frequency once\n"
+                                          "(Optimizations) and reopen this tab to record the silicon ranking.").arg(*pc->highestPerf);
+            else if (!v) tip += QStringLiteral(" (not available)");
+            s.cppc->setToolTip(tip + QStringLiteral("\n★ marks the two best on this CCD. Compare cores within a CCD only."));
         }
     }
-    // Say when the X3D mode moved the ranks, so a column swap in CPPC is not mistaken for a CCD swap.
-    QString mode;
-    const QDir drv(QStringLiteral("/sys/bus/platform/drivers/amd_x3d_vcache"));
-    for (const QString &d : drv.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
-        if (auto m = pp::readText(drv.filePath(d) + "/amd_x3d_mode")) { mode = *m; break; }
     if (!mode.isEmpty() && mode != x3dMode_) {
-        if (log_) log(QStringLiteral("3D V-Cache mode: %1 — firmware ranks the %2 CCD's cores first, so the CPPC column "
-                                     "favours it. CCD identity comes from L3 id/size and does not change.")
-                          .arg(mode, mode == QLatin1String("cache") ? "V-Cache" : "frequency"), "cmd");
+        if (log_) log(shifted
+            ? QStringLiteral("3D V-Cache mode: cache — the firmware lifts the V-Cache CCD's live CPPC ranks above the other CCD's. "
+                             "The CPPC column shows the ranking recorded outside cache mode instead%1.")
+                  .arg(unrecorded ? QStringLiteral(" (%1 core(s) not recorded yet: set the mode to frequency once and reopen this tab)").arg(unrecorded) : QString())
+            : QStringLiteral("3D V-Cache mode: %1 — CPPC column shows the live ranking (kept for cache mode).").arg(mode), "cmd");
         x3dMode_ = mode;
     }
 }
