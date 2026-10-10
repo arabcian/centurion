@@ -230,6 +230,10 @@ in `~/.local/state/centurion/game-sessions.jsonl`. With *A/B field comparison*
 (Optimizations → Game launch; tune.json `"field_ab": true` or a list of game names) every
 other launch of a game runs at the boot defaults (A: no game preset, no launch boost; the
 game scene - the power context - stays the same), the others with the preset (B).
+An A launch opens no tune-helper session, so its launcher (pid + start time) is kept in
+`$XDG_RUNTIME_DIR/centurion/scene.json` (`ab_a`, `ab_owner`): the GUI counts it as a running
+game (no orphan clean-up ~15 s in, no AC / battery switch under it), and once the launcher is
+gone without POST the flag no longer blocks the next game's start.
 
 `sudo centurion-calibrate --field LOG... [--game NAME]` imports frame-time logs - FLM's CSV
 (`interval_ns`), MangoHud's CSV (`frametime`) or one number per line in ms - matched to the
