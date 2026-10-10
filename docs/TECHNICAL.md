@@ -613,6 +613,11 @@ Differences:
   Apply All-Core and Apply Per-Core share one width and right edge. Each CCD is
   a card with a single aligned grid (Slot · Offset · Disable · CPPC, header in
   the same grid), columns spread evenly, ★ marks the two best CPPC cores per CCD.
+  CPPC is the firmware's preferred-core rank; in 3D V-Cache mode `cache` the
+  firmware lifts the whole V-Cache CCD's live ranks above the other CCD's, so
+  the column then shows the ranking recorded outside cache mode
+  (`~/.cache/centurion/cppc-ranking.json`, per BIOS version) — or `–` until it
+  has been seen once — never the shifted value.
   The grid scrolls instead of being squeezed on short windows.
 - The tab's private Gruvbox sheet is gone; it uses the app theme.
 
