@@ -634,6 +634,11 @@ pub fn apply(values: &serde_json::Map<String, Value>) -> Value {
         return json!({"ok": false, "results": results, "error": "request rejected; nothing was written"});
     }
 
+    // Keys arrive alphabetically (fppt, spl, sppt): write the CPU limits in firmware-safe order.
+    let keys: Vec<(&str, Option<i64>, i64)> = plan.iter().map(|(_, f, v)| (f.attr, read_value(f).ok(), *v)).collect();
+    let order = crate::fw_write_order(&keys);
+    let plan: Vec<_> = order.into_iter().map(|i| plan[i]).collect();
+
     for (key, f, v) in plan {
         let r = (|| {
             if use_wmae(f) {

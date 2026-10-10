@@ -8,7 +8,8 @@
 
 use centurion_helpers::*;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const MAX_STDIN_BYTES: usize = 64 * 1024;
 const MAX_BATCH: usize = 256;
@@ -50,9 +51,14 @@ fn read_i64(p: &Path) -> Option<i64> {
     read_trimmed(p).ok()?.parse().ok()
 }
 
-fn write_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Value {
-    let path_json = path_v.cloned().unwrap_or(Value::Null);
-    let err = |m: String| json!({"path": path_json.clone(), "ok": false, "error": m});
+/// `<attr>` of a shape-checked .../attributes/<attr>/current_value path.
+fn attr_of(p: &str) -> &str { p.rsplit('/').nth(1).unwrap_or_default() }
+
+/// Validated write target: canonical current_value file, attribute name, value.
+struct Target { real: PathBuf, attr: String, value: i64 }
+
+fn check_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Result<Target, String> {
+    let err = |m: String| Err(m);
 
     let Some(path) = path_v.and_then(Value::as_str).filter(|p| path_shape_ok(p)) else {
         return err("path does not match the expected firmware-attributes shape".into());
@@ -107,11 +113,58 @@ fn write_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Value {
         return err(format!("value {value} outside sanity range [0, {UNRANGED_HARD_CAP}]"));
     }
 
-    // Write the canonical target we validated, not the (re-resolvable) input path.
-    if let Err(e) = sysfs_write(&real, value.to_string().as_bytes()) {
-        return err(format!("write failed: {e}"));
+    Ok(Target { real, attr: attr_of(path).to_owned(), value })
+}
+
+/// Gap before the read-back: the EC can drop or clamp a limit a moment after the WMI call returned.
+const SETTLE: Duration = Duration::from_millis(150);
+
+/// Writes the targets in firmware-safe order (`fw_write_order`), reads every one back, and
+/// writes the ones that did not stick once more after the rest are final (a limit refused
+/// because another one was still on its old value). `None` = applied, `Some(err)` otherwise.
+fn write_verified(targets: &[&Target]) -> Vec<Option<String>> {
+    if targets.is_empty() { return Vec::new(); }
+    let cur: Vec<Option<i64>> = targets.iter().map(|t| read_i64(&t.real)).collect();
+    let keys: Vec<(&str, Option<i64>, i64)> = targets.iter().zip(&cur).map(|(t, c)| (t.attr.as_str(), *c, t.value)).collect();
+    let order = fw_write_order(&keys);
+    let mut out: Vec<Option<String>> = vec![None; targets.len()];
+    let mut todo = order.clone();
+    for pass in 0..2 {
+        for &i in &todo {
+            // Write the canonical target we validated, not the (re-resolvable) input path.
+            out[i] = sysfs_write(&targets[i].real, targets[i].value.to_string().as_bytes()).err()
+                .map(|e| format!("write failed: {e}"));
+        }
+        std::thread::sleep(SETTLE * (pass + 1));
+        todo.retain(|&i| {
+            let t = targets[i];
+            match read_i64(&t.real) {
+                Some(b) if b == t.value => { out[i] = None; false }
+                back => {
+                    if out[i].is_none() {
+                        out[i] = Some(match back {
+                            Some(b) => format!("{}: firmware kept {b} (asked {}) — read back after writing", t.attr, t.value),
+                            None => format!("{}: could not read the value back", t.attr),
+                        });
+                    }
+                    true
+                }
+            }
+        });
+        if todo.is_empty() { break; }
     }
-    json!({"path": path, "ok": true})
+    out
+}
+
+fn write_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Value {
+    let path_json = path_v.cloned().unwrap_or(Value::Null);
+    match check_one(path_v, value_v) {
+        Err(m) => json!({"path": path_json, "ok": false, "error": m}),
+        Ok(t) => match write_verified(&[&t]).pop().flatten() {
+            None => json!({"path": path_json, "ok": true}),
+            Some(m) => json!({"path": path_json, "ok": false, "error": m}),
+        },
+    }
 }
 
 fn run() -> Value {
@@ -125,9 +178,21 @@ fn run() -> Value {
             if items.len() > MAX_BATCH {
                 return json!({"ok": false, "error": format!("batch too large (max {MAX_BATCH})")});
             }
-            let results: Vec<Value> = items.iter().map(|it| match it.as_object() {
-                Some(o) => write_one(o.get("path"), o.get("value")),
-                None => json!({"path": null, "ok": false, "error": "malformed batch item"}),
+            // Validate every item, then write the valid ones together in firmware-safe order.
+            // Results stay in request order (the GUI maps them by index).
+            let checked: Vec<Result<Target, String>> = items.iter().map(|it| match it.as_object() {
+                Some(o) => check_one(o.get("path"), o.get("value")),
+                None => Err("malformed batch item".into()),
+            }).collect();
+            let valid: Vec<&Target> = checked.iter().filter_map(|c| c.as_ref().ok()).collect();
+            let mut written = write_verified(&valid).into_iter();
+            let results: Vec<Value> = items.iter().zip(&checked).map(|(it, c)| {
+                let path = it.get("path").cloned().unwrap_or(Value::Null);
+                match c.as_ref().map(|_| written.next().flatten()) {
+                    Ok(None) => json!({"path": path, "ok": true}),
+                    Ok(Some(m)) => json!({"path": path, "ok": false, "error": m}),
+                    Err(m) => json!({"path": path, "ok": false, "error": m}),
+                }
             }).collect();
             let all_ok = results.iter().all(|r| r["ok"] == true);
             json!({"ok": all_ok, "results": results})
@@ -152,6 +217,7 @@ mod tests {
         assert!(!path_shape_ok("/sys/class/firmware-attributes/d/attributes/a.b/current_value"));
         assert!(!path_shape_ok("/sys/class/firmware-attributes/d/attributes/a/b/current_value"));
         assert!(!path_shape_ok("/sys/class/firmware-attributes/d/attributes/a/min_value"));
+        assert_eq!(attr_of("/sys/class/firmware-attributes/lenovo-wmi-other-0/attributes/ppt_cpu_cl/current_value"), "ppt_cpu_cl");
     }
     #[test]
     fn values() {

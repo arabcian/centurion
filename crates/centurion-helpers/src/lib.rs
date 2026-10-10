@@ -375,9 +375,53 @@ pub fn refuse_during_calibration() -> Option<serde_json::Value> {
         "error": format!("centurion-calibrate (pid {pid}) is measuring: power profile, firmware limits, fan and curves stay as they are until it ends")}))
 }
 
+/// CPU power limits the firmware keeps ordered, low to high: SPL (PL1, long) ≤ SPPT (PL2, short)
+/// ≤ FPPT (PL3, peak). A write that would break the order is dropped silently by the EC
+/// (lenovo-wmi-other does not check the WMI return value, so sysfs reports success).
+const FW_PL_CHAIN: [&str; 3] = ["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt"];
+/// Written after the chain: bounded by / recomputed from the limits above when those change,
+/// so a value written before them was lost (alphabetical order put it first).
+const FW_PL_AFTER: [&str; 1] = ["ppt_cpu_cl"];
+
+/// Write order (indices into `items`) for firmware-attribute changes `(attr, current, target)`:
+/// unrelated attributes first in request order, then the chain raises top-down (FPPT, SPPT, SPL),
+/// then the chain lowers bottom-up (SPL, SPPT, FPPT), then the cross-loading limit. Every
+/// intermediate state keeps SPL ≤ SPPT ≤ FPPT when the start and the target both do.
+pub fn fw_write_order(items: &[(&str, Option<i64>, i64)]) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..items.len()).collect();
+    idx.sort_by_key(|&i| {
+        let (attr, cur, new) = items[i];
+        match FW_PL_CHAIN.iter().position(|a| *a == attr) {
+            Some(p) if cur.map_or(false, |c| new > c) => (1, 2 - p),
+            Some(p) => (2, p),
+            None if FW_PL_AFTER.contains(&attr) => (3, 0),
+            None => (0, 0),
+        }
+    });
+    idx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fw_order() {
+        let (spl, sppt, fppt) = ("ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt");
+        let names = |items: &[(&str, Option<i64>, i64)]| -> Vec<String> {
+            fw_write_order(items).into_iter().map(|i| items[i].0.to_owned()).collect()
+        };
+        // Raise all (alphabetical request order): peak first, long-term last, cross-loading after.
+        let up = [("cpu_temp", Some(90), 95), ("ppt_cpu_cl", Some(60), 90), (spl, Some(60), 120), (sppt, Some(80), 140), (fppt, Some(100), 160)];
+        assert_eq!(names(&up), ["cpu_temp", fppt, sppt, spl, "ppt_cpu_cl"]);
+        // Lower all: long-term first.
+        let down = [(spl, Some(120), 60), (sppt, Some(140), 80), (fppt, Some(160), 100)];
+        assert_eq!(names(&down), [spl, sppt, fppt]);
+        // Mixed: SPL up past the old SPPT while FPPT drops — every step must keep the chain ordered.
+        let mixed = [(spl, Some(60), 100), (sppt, Some(80), 120), (fppt, Some(200), 130)];
+        let order = fw_write_order(&mixed);
+        let mut v = [60, 80, 200];
+        for i in order { v[i] = mixed[i].2; assert!(v[0] <= v[1] && v[1] <= v[2], "{v:?}"); }
+    }
     #[test]
     fn session_liveness() {
         let me = std::process::id() as i32;
