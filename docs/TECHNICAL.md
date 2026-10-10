@@ -206,6 +206,12 @@ notification when the window is hidden.
   part is skipped while playing: the ★ game preset owns tuning. Automatic
   AC / battery switching waits until the last game has exited.
   `centurion-gamemode SCENE <name>` applies a scene from a script.
+  Helper timeouts: only a pkexec still waiting for polkit is cancelled (after
+  60 s). An authorized helper runs as root and cannot be cancelled, so it is
+  waited for (up to 180 s) instead of being reported as failed — before, a
+  slow game-preset apply made PRE leave the game scene while the helper went
+  on and opened the game session, and the game ran on the pre-game scene.
+  RUN waits for a live PRE (start lock) up to 10 min.
 
 Files: `~/.config/centurion/scenes/<name>.json` and
 `~/.config/centurion/scenes.json` (automatic switching); the
