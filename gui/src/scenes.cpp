@@ -255,16 +255,20 @@ int gameSessions() {
     // /run/centurion/tune/state.json is root-owned but world-readable.
     // Sessions whose launcher has exited are not counted: tune-helper ends
     // them itself at its next call (same rule as centurion_helpers::live_game_sessions).
+    auto alive = [](const QJsonObject &o) {
+        if (!o.value("pid").isDouble() || !o.value("start").isDouble()) return true;  // untracked
+        const auto start = procStart(o.value("pid").toInteger());
+        return start && *start == quint64(o.value("start").toInteger());
+    };
     const QJsonObject st = readObject(QStringLiteral("/run/centurion/tune/state.json"));
     const QJsonValue ss = st.value("sessions");
-    if (!ss.isArray()) return st.value("refcount").toInt();
     int n = 0;
-    for (const QJsonValue &v : ss.toArray()) {
-        const QJsonObject o = v.toObject();
-        if (!o.value("pid").isDouble() || !o.value("start").isDouble()) { ++n; continue; }  // untracked
-        const auto start = procStart(o.value("pid").toInteger());
-        if (start && *start == quint64(o.value("start").toInteger())) ++n;
-    }
+    if (!ss.isArray()) n = st.value("refcount").toInt();
+    else for (const QJsonValue &v : ss.toArray()) if (alive(v.toObject())) ++n;
+    // A/B "A" launch (boot defaults) opens no tune-helper session: centurion-gamemode records its
+    // launcher in scene.json instead. Not counting it left the game scene ~15 s into every A launch.
+    const QJsonObject sc = readObject(stateFile());
+    if (sc.value("ab_a").toBool() && alive(sc.value("ab_owner").toObject())) ++n;
     return n;
 }
 
@@ -721,6 +725,8 @@ void SceneEngine::checkGameEnd() {
         before = st.value("before_game").toString();
         st["game_scene"] = QJsonValue::Null;
         st["before_game"] = QJsonValue::Null;
+        st.remove("ab_a");      // a dead A launch: the next game is a first game again
+        st.remove("ab_owner");
         writeObject(stateFile(), st, nullptr);
     }
     Q_EMIT finished(QString(), true, {QStringLiteral("the game launcher exited without its POST hook — leaving the game scene")});
