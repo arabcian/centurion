@@ -173,6 +173,16 @@ Custom). A failing component is reported and the rest still run. Applying
 never opens a dialog: results show in the Scenes tab, or as a tray
 notification when the window is hidden.
 
+- **CPU power limits are written in firmware order.** The EC keeps
+  SPL (PL1) ≤ SPPT (PL2) ≤ FPPT (PL3) and silently drops a write that breaks
+  it (lenovo-wmi-other ignores the WMI return code, so sysfs says "ok").
+  `fwattr-helper` (and the WMAE fallback in `legion-gpu-helper`) therefore
+  writes raises top-down (FPPT → SPPT → SPL), then lowers bottom-up, and the
+  cross-loading limit `ppt_cpu_cl` last; every value is read back after a
+  short settle, values that did not stick are written once more, and anything
+  still different is reported as "firmware kept X (asked Y)". Before this the
+  batch went alphabetically (`ppt_cpu_cl`, `ppt_pl1_spl`, …).
+
 - **Optimizations presets are switched, not stacked.** A scene's preset is
   applied with `replace`: every knob the new preset does not set goes back to
   its original value, so nothing from the previous scene lingers.
