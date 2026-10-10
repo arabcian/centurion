@@ -221,18 +221,22 @@ fn post() -> Result<bool, String> {
         let id = update_scene_state(|st| { let id = st["game_session"].as_str().map(str::to_owned); st["game_session"] = Value::Null; id });
         if let Some(id) = id { log_session(&json!({"id": id, "end": now_s()})); }
     };
-    if st["ab_a"] == true {
+    // The A launch's POST: the only game running, or its own launcher. The POST of a second game started
+    // during an A launch used to take this path too and leave the scene under the A game.
+    let owner = OWNER.load(Ordering::SeqCst) as i64;
+    if st["ab_a"] == true && (game_refcount() == 0 || st["ab_owner"].is_null() || st["ab_owner"]["pid"].as_i64() == Some(owner)) {
         // An A launch opened no game session: nothing to release, only the game scene to leave.
-        update_scene_state(|st| st["ab_a"] = Value::Null);
-        end_session();
-        leave_game_scene();
+        update_scene_state(|st| { st["ab_a"] = Value::Null; st["ab_owner"] = Value::Null; });
+        // A game started during it keeps the scene until its own POST.
+        if game_refcount() == 0 { end_session(); leave_game_scene(); }
         return Ok(true);
     }
-    let v = pkexec(&json!({"op": "release", "owner_pid": OWNER.load(Ordering::SeqCst)}))?;
+    let v = pkexec(&json!({"op": "release", "owner_pid": owner}))?;
     let ok = report("POST", &v);
     // Also when the session was already gone (launcher pruned by an earlier helper call, GUI not
     // running to clean up): no live session left and a game scene still set means it is ours to leave.
-    if v["restored"] == true || v["state"]["refcount"] == 0 { end_session(); leave_game_scene(); }
+    // A running A launch has no session to count, so it is checked on its own.
+    if (v["restored"] == true || v["state"]["refcount"] == 0) && !ab_launch_live(&read_scene_state()) { end_session(); leave_game_scene(); }
     Ok(ok)
 }
 
@@ -244,7 +248,10 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
     // and both switch scenes: serialise the start sequence per user.
     let _start_lock = user_lock("gamemode-start.lock");
     let cfg = read_json(&config_dir().join("tune.json")).unwrap_or(Value::Null);
-    let first = game_refcount() == 0 && read_scene_state()["ab_a"] != true;
+    let st0 = read_scene_state();
+    let first = game_refcount() == 0 && !ab_launch_live(&st0);
+    // An A launch whose launcher died without POST: its flag no longer blocks "first game".
+    if first && st0["ab_a"] == true { update_scene_state(|st| { st["ab_a"] = Value::Null; st["ab_owner"] = Value::Null; }); }
     // Field record (centurion-calibrate --field): which game ran with which values; with A/B on, every
     // other launch of a game runs at the boot defaults (A) under the same game scene.
     let ab = if first { ab_turn(&cfg, game) } else { None };
@@ -269,7 +276,12 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
     }
     if ab == Some("A") {
         log!("centurion-gamemode: A/B comparison - this launch of {game} runs at the boot defaults (no game preset)");
-        update_scene_state(|st| st["ab_a"] = json!(true));
+        // No tune-helper session tracks an A launch: its launcher is recorded here instead, so the GUI
+        // (gameSessions) and the next PRE see it as a running game — and as gone once the launcher is.
+        let pid = OWNER.load(Ordering::SeqCst);
+        let ab_owner = (pid > 1).then(|| centurion_helpers::proc_start_time(pid)).flatten()
+            .map_or(Value::Null, |t| json!({"pid": pid, "start": t}));
+        update_scene_state(|st| { st["ab_a"] = json!(true); st["ab_owner"] = ab_owner; });
         return (true, 0);
     }
     match apply(name, "game") {
@@ -291,6 +303,11 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
             (false, 1)
         }
     }
+}
+
+/// The A/B "A" launch recorded in scene.json is still running (its launcher lives; untracked = yes).
+fn ab_launch_live(st: &Value) -> bool {
+    st["ab_a"] == true && centurion_helpers::session_alive(st["ab_owner"]["pid"].as_i64(), st["ab_owner"]["start"].as_u64())
 }
 
 fn pre(name: Option<&str>) -> i32 { game_start(name, &game_name(None)).1 }
@@ -1055,6 +1072,8 @@ fn wait_for_start(preset: &Value) {
     let mut active_since: Option<std::time::Instant> = None;
     loop {
         let held = start_lock_held();
+        // An A launch (boot defaults) applies no preset: nothing to wait for once PRE is done.
+        if !held && ab_launch_live(&read_scene_state()) { return; }
         // tune-helper's world-readable state file: no helper process (full sysfs describe) every 200 ms while the game starts.
         let active = !held && read_json(Path::new("/run/centurion/tune/state.json"))
             .map_or(false, |st| st["source"] == "game" && centurion_helpers::live_game_sessions(&st) > 0);
