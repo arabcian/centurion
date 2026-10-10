@@ -58,12 +58,22 @@ const MAX_PRESET_BYTES: u64 = 256 * 1024;
 const UNDERVOLT_PROFILE: &str = "GAMING";
 /// RUN: how long to look for a PRE that has not taken the start lock yet.
 const START_DETECT: std::time::Duration = std::time::Duration::from_secs(3);
-/// RUN: upper bound for PRE's start sequence (scene, undervolt, preset).
-const START_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+/// RUN: upper bound for PRE's start sequence (scene, undervolt, preset). Only a live PRE holds the
+/// start lock (flock goes with the process), and PRE itself is bounded by HELPER_TIMEOUT per helper,
+/// so this is a safety net, not a guess at how long a start takes (90 s cut slow starts short).
+const START_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 /// RUN: once game mode is active, how long to wait for a preset's SMT-off to show up. The helper has
 /// returned by then, so a still-active SMT means the knob was not applied (refused, not offered).
 const SMT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+/// pkexec still waiting for polkit (real uid still ours, helper not started): cancelled after this.
 const PKEXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// An authorized helper runs as root and can no longer be cancelled; it is working (CPU hot-plug, a
+/// dGPU waking from D3cold, a game loading next to it) and changes the machine whether we wait or
+/// not. Giving up on it at PKEXEC_TIMEOUT made PRE leave the game scene while the helper went on and
+/// opened the game session: the game then ran on the pre-game scene.
+const HELPER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+/// Marks the error of a helper that was still running when HELPER_TIMEOUT ran out.
+const STILL_RUNNING: &str = "still running";
 const UNDERVOLT_GAP: std::time::Duration = std::time::Duration::from_secs(2);
 /// Same directory nvcurve-root-helper applies from.
 const NVCURVE_PROFILES: &str = "/etc/nvcurve/profiles";
@@ -136,12 +146,23 @@ fn pkexec_helper(helper: &str, req: &Value) -> Result<Value, String> {
     let pid = child.id() as libc::pid_t;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || { let _ = tx.send(child.wait_with_output()); });
-    let out = match rx.recv_timeout(PKEXEC_TIMEOUT) {
-        Ok(r) => r.map_err(|e| format!("pkexec: {e}"))?,
-        Err(_) => {
-            // Still waiting for authorization -> pkexec keeps the caller's real uid and can be signalled.
-            unsafe { libc::kill(pid, libc::SIGTERM); }
-            return Err(format!("{short}: no answer within {} s (authorization pending?) — skipped", PKEXEC_TIMEOUT.as_secs()));
+    let t0 = std::time::Instant::now();
+    let out = loop {
+        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            Ok(r) => break r.map_err(|e| format!("pkexec: {e}"))?,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(format!("pkexec: lost {short}")),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let waited = t0.elapsed();
+                if awaiting_authorization(pid) {
+                    // pkexec keeps the caller's real uid until polkit says yes: it can still be signalled.
+                    if waited >= PKEXEC_TIMEOUT {
+                        unsafe { libc::kill(pid, libc::SIGTERM); }
+                        return Err(format!("{short}: not authorized within {} s — skipped", PKEXEC_TIMEOUT.as_secs()));
+                    }
+                } else if waited >= HELPER_TIMEOUT {
+                    return Err(format!("{short}: {STILL_RUNNING} after {} s — its result is unknown", HELPER_TIMEOUT.as_secs()));
+                }
+            }
         }
     };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -153,6 +174,14 @@ fn pkexec_helper(helper: &str, req: &Value) -> Result<Value, String> {
             _ => format!("{short} failed: {}", String::from_utf8_lossy(&out.stderr).trim()),
         }),
     }
+}
+
+/// `pid` is still pkexec under our real uid (asking polkit), not the helper it execs as root.
+fn awaiting_authorization(pid: libc::pid_t) -> bool {
+    let Ok(s) = std::fs::read_to_string(format!("/proc/{pid}/status")) else { return false };
+    let field = |k: &str| s.lines().find_map(|l| l.strip_prefix(k)).map(str::trim);
+    field("Name:") == Some("pkexec")
+        && field("Uid:").and_then(|u| u.split_whitespace().next()).and_then(|u| u.parse::<u32>().ok()) == Some(unsafe { libc::getuid() })
 }
 
 /// Prints helper messages and per-key failures to stderr; returns `ok`.
@@ -245,6 +274,12 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
     }
     match apply(name, "game") {
         Ok(ok) => (true, (!ok) as i32),
+        Err(e) if e.contains(STILL_RUNNING) => {
+            // The helper may still open the session: the scene stays, POST (or the GUI's orphan
+            // clean-up, if no session ever appears) leaves it. `true` so WRAP still runs POST.
+            log!("centurion-gamemode: {e} — the game scene stays");
+            (true, 1)
+        }
         Err(e) => {
             log!("centurion-gamemode: {e}");
             // No game session exists, so nothing will ever call POST / release: do not leave the
