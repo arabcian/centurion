@@ -76,4 +76,8 @@ private:
     double groupStartY_ = 0;
     int groupApplied_ = 0;
     double dragFreq_ = 0;
+    int anchor_ = 0;          // Shift+click range start (last plain / Ctrl click)
+    bool band_ = false;       // Ctrl/Shift + drag on empty space: rubber-band selection
+    QPointF bandStart_, bandEnd_;
+    QSet<int> bandBase_;      // selection before the band (the band adds to it)
 };

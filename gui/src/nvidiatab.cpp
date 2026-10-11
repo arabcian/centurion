@@ -341,7 +341,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     cv->addLayout(ih);
     vf_ = new VfCurveWidget;
     vf_->setToolTip("Click a point to select it, drag a selected point to move it.\n"
-                    "Ctrl+click adds to the selection; Ctrl+A selects all, then drag empty space to shift the whole curve.\n"
+                    "Ctrl+click toggles a point, Shift+click selects a range, Ctrl/Shift+drag on empty space box-selects.\n"
+                    "Ctrl+A selects all, then drag empty space to shift the whole curve.\n"
                     "←/→ extend the selection, ↑/↓ nudge by 1 MHz (Shift: 15), Space toggles, Esc clears.\n"
                     "Wheel zooms at the cursor, Shift+wheel pans, +/− zoom, 0 fits.");
     connect(vf_, &VfCurveWidget::selectionChanged, this, &NvidiaTab::onSelectionChanged);

@@ -451,7 +451,7 @@ void OptimizeTab::buildUi() {
     calBtn->setToolTip(QStringLiteral("Schedule centurion-calibrate sessions for the next boot: the boot preset and scenes are held, and the\n"
                                       "sessions run once the machine is on AC and nobody has touched it for 5 minutes (a key press\n"
                                       "stops the running one cleanly; it resumes after the next quiet stretch). Then the boot preset\n"
-                                      "and the scene for the power source come back. Needs the centurion-calibrate-boot service."));
+                                      "and the scene for the power source come back. The one-shot centurion-calibrate-boot service is added for that boot only."));
     connect(calBtn, &QPushButton::clicked, this, &OptimizeTab::scheduleBootCalibration);
     calLabel_ = muted({});
     autoRow->addWidget(autoLbl);
@@ -1603,7 +1603,7 @@ void OptimizeTab::scheduleBootCalibration() {
                                       "and the sessions run once it is on AC and nobody has touched it for 5 minutes.\n"
                                       "A key press or mouse move stops the running session cleanly (its runs are kept); it resumes\n"
                                       "after the next quiet stretch. Afterwards the boot preset and the scene for the power source return.\n"
-                                      "Turn off screen dimming/blanking for it; needs the centurion-calibrate-boot service enabled.")));
+                                      "Turn off screen dimming/blanking for it. The centurion-calibrate-boot service is added for that boot only.")));
     auto *sessions = new QSpinBox;
     sessions->setRange(1, 12);
     sessions->setValue(4);

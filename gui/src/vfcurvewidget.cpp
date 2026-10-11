@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QWheelEvent>
+#include <algorithm>
 #include <cmath>
 
 static QColor C(const char *s) { return QColor(QString::fromLatin1(s)); }
@@ -100,7 +101,7 @@ void VfCurveWidget::wheelEvent(QWheelEvent *e) {
 void VfCurveWidget::setPoints(const QVector<QPointF> &pts) {
     const bool reshaped = pts.size() != pts_.size();
     pts_ = pts;
-    if (reshaped) { sel_.clear(); cur_ = 0; fitAxes(); }
+    if (reshaped) { sel_.clear(); cur_ = 0; anchor_ = 0; band_ = false; fitAxes(); }
     else if (zoom_ > 1.0001 && dragIndex_ < 0 && !groupDrag_) applyView();  // keep edited points in frame
     update();
     Q_EMIT selectionChanged();
@@ -217,6 +218,13 @@ void VfCurveWidget::paintEvent(QPaintEvent *) {
         p.setBrush(sel_.contains(hover_) ? C(theme::WARN) : C(theme::ACCENT));
         p.drawEllipse(toPixel(pts_[hover_]), 7.5, 7.5);
     }
+    if (band_) {
+        QColor fill = C(theme::ACCENT);
+        fill.setAlpha(40);
+        p.setPen(QPen(C(theme::ACCENT), 1, Qt::DashLine));
+        p.setBrush(fill);
+        p.drawRect(QRectF(bandStart_, bandEnd_).normalized());
+    }
     if (hasFocus() && cur_ < pts_.size()) {
         p.setPen(QPen(C(theme::FG), 1, Qt::DotLine));
         p.setBrush(Qt::NoBrush);
@@ -227,18 +235,38 @@ void VfCurveWidget::paintEvent(QPaintEvent *) {
 void VfCurveWidget::mousePressEvent(QMouseEvent *e) {
     setFocus();
     const int hit = hitTest(e->position());
+    const bool ctrl = e->modifiers() & Qt::ControlModifier;
+    const bool shift = e->modifiers() & Qt::ShiftModifier;
     dragIndex_ = -1;
     groupDrag_ = false;
-    if (hit >= 0) {
+    band_ = false;
+    if (hit >= 0 && shift && e->button() == Qt::LeftButton) {
+        // Shift+click: every point from the anchor to this one (Ctrl+Shift adds to the selection).
+        if (!ctrl) sel_.clear();
+        const int a = std::clamp(anchor_, 0, int(pts_.size()) - 1);
+        for (int i = std::min(a, hit); i <= std::max(a, hit); ++i) sel_.insert(i);
+        cur_ = hit;
+        Q_EMIT selectionChanged();
+    } else if (hit >= 0 && ctrl && e->button() == Qt::LeftButton) {
+        // Ctrl+click toggles one point.
+        if (sel_.contains(hit)) sel_.remove(hit); else sel_.insert(hit);
+        cur_ = anchor_ = hit;
+        Q_EMIT selectionChanged();
+    } else if (hit >= 0) {
         if (sel_.contains(hit)) {
             dragIndex_ = hit;
             dragFreq_ = pts_[hit].y();
         } else {
-            if (!(e->modifiers() & Qt::ControlModifier)) sel_.clear();
+            sel_.clear();
             sel_.insert(hit);
             Q_EMIT selectionChanged();
         }
-        cur_ = hit;
+        cur_ = anchor_ = hit;
+    } else if ((ctrl || shift) && e->button() == Qt::LeftButton && !pts_.isEmpty()) {
+        // Ctrl/Shift + drag on empty space: rubber band, added to the current selection.
+        band_ = true;
+        bandStart_ = bandEnd_ = e->position();
+        bandBase_ = sel_;
     } else if (sel_.size() == pts_.size() && !pts_.isEmpty()) {
         groupDrag_ = true;
     } else {
@@ -247,6 +275,7 @@ void VfCurveWidget::mousePressEvent(QMouseEvent *e) {
     }
     if (groupDrag_) { groupStartY_ = toValue(e->position()).y(); groupApplied_ = 0; setCursor(Qt::ClosedHandCursor); }
     if (dragIndex_ >= 0) setCursor(Qt::ClosedHandCursor);
+    if (band_) setCursor(Qt::CrossCursor);
     update();
 }
 
@@ -258,6 +287,15 @@ void VfCurveWidget::mouseMoveEvent(QMouseEvent *e) {
             if (h >= 0) setCursor(Qt::PointingHandCursor); else unsetCursor();
             update();
         }
+        return;
+    }
+    if (band_) {
+        bandEnd_ = e->position();
+        const QRectF box = QRectF(bandStart_, bandEnd_).normalized();
+        QSet<int> s = bandBase_;
+        for (int i = 0; i < pts_.size(); ++i) if (box.contains(toPixel(pts_[i]))) s.insert(i);
+        if (s != sel_) { sel_ = s; Q_EMIT selectionChanged(); }
+        update();
         return;
     }
     const double y = toValue(e->position()).y();
@@ -280,6 +318,11 @@ void VfCurveWidget::mouseReleaseEvent(QMouseEvent *) {
     if (dragIndex_ >= 0) Q_EMIT pointEdited(dragIndex_, int(std::lround(dragFreq_)));
     dragIndex_ = -1;
     groupDrag_ = false;
+    if (band_) {
+        band_ = false;
+        if (!sel_.isEmpty() && !sel_.contains(cur_)) cur_ = anchor_ = *std::min_element(sel_.cbegin(), sel_.cend());
+        update();
+    }
     unsetCursor();
     if (zoom_ > 1.0001) applyView();
 }
