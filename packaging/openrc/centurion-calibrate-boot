@@ -8,7 +8,9 @@
 # one cleanly; it resumes after the next quiet stretch), applies the boot preset and releases the
 # hold. Status: centurion-calibrate --status; log: /var/log/centurion/calibrate-boot.log
 #
-#   rc-update add centurion-calibrate-boot default
+# One-shot: scheduling adds it to the default runlevel, and it removes itself from there as soon
+# as it has taken the schedule (or finds none), so it exists for that one boot only. No manual
+# rc-update needed.
 
 description="Centurion: scheduled calibration at boot"
 command="@BINDIR@/centurion-calibrate"
@@ -25,6 +27,7 @@ depend() {
 start() {
 	if [ ! -e /var/lib/centurion/calibrate-on-boot.json ]; then
 		einfo "No calibration scheduled for this boot"
+		rc-update del "${RC_SVCNAME}" default >/dev/null 2>&1
 		return 0
 	fi
 	ebegin "Starting the scheduled Centurion calibration (waits for AC and an idle machine)"

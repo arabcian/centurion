@@ -230,10 +230,6 @@ in `~/.local/state/centurion/game-sessions.jsonl`. With *A/B field comparison*
 (Optimizations → Game launch; tune.json `"field_ab": true` or a list of game names) every
 other launch of a game runs at the boot defaults (A: no game preset, no launch boost; the
 game scene - the power context - stays the same), the others with the preset (B).
-An A launch opens no tune-helper session, so its launcher (pid + start time) is kept in
-`$XDG_RUNTIME_DIR/centurion/scene.json` (`ab_a`, `ab_owner`): the GUI counts it as a running
-game (no orphan clean-up ~15 s in, no AC / battery switch under it), and once the launcher is
-gone without POST the flag no longer blocks the next game's start.
 
 `sudo centurion-calibrate --field LOG... [--game NAME]` imports frame-time logs - FLM's CSV
 (`interval_ns`), MangoHud's CSV (`frametime`) or one number per line in ms - matched to the
@@ -284,8 +280,9 @@ kept); it resumes after the next quiet stretch (at most six stops, four hours in
 Afterwards it applies the boot preset and releases the hold; the GUI applies the scene for
 the power source. The flag is consumed at the start, so a crash does not repeat it at
 every boot. Status: `centurion-calibrate --status` (and the Optimizations tab); log:
-`/var/log/centurion/calibrate-boot.log`. Enable the service once:
-`rc-update add centurion-calibrate-boot default` / `systemctl enable centurion-calibrate-boot`.
+`/var/log/centurion/calibrate-boot.log`. The service is one-shot: scheduling adds it to the boot
+(`rc-update add … default` / `systemctl enable`), and it removes itself as soon as it has taken
+the schedule (cancelling removes it too), so it exists for that one boot only.
 
 ## Alternatives and sensitivity
 

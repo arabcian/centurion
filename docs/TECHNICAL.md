@@ -613,11 +613,6 @@ Differences:
   Apply All-Core and Apply Per-Core share one width and right edge. Each CCD is
   a card with a single aligned grid (Slot · Offset · Disable · CPPC, header in
   the same grid), columns spread evenly, ★ marks the two best CPPC cores per CCD.
-  CPPC is the firmware's preferred-core rank; in 3D V-Cache mode `cache` the
-  firmware lifts the whole V-Cache CCD's live ranks above the other CCD's, so
-  the column then shows the ranking recorded outside cache mode
-  (`~/.cache/centurion/cppc-ranking.json`, per BIOS version) — or `–` until it
-  has been seen once — never the shifted value.
   The grid scrolls instead of being squeezed on short windows.
 - The tab's private Gruvbox sheet is gone; it uses the app theme.
 
@@ -645,7 +640,8 @@ Port of `nvcurve_gui.py` (embedded mode), same nvcurve-root-helper ops and
   show, not at startup.
 - "Apply Profile" button applies a saved profile directly (`apply_named_profile`);
   selecting a profile in the combo only loads it into the editor, as before.
-- Ctrl+click extends the selection, Ctrl+A selects all, Shift+↑/↓ steps 15 MHz.
+- Ctrl+click toggles a point, Shift+click selects the range from the last clicked point
+  (Ctrl+Shift adds it), Ctrl/Shift+drag on empty space box-selects (added to the selection), Ctrl+A selects all, Shift+↑/↓ steps 15 MHz.
 - `CENTURION_NVCURVE_FAKE=/path/read.json` renders a canned curve (dev only).
 
 ## Optimizations tab — lutris-game-tune, integrated

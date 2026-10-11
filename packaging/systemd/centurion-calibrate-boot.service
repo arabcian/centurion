@@ -1,8 +1,7 @@
 # Centurion — calibration at boot (systemd). Counterpart of packaging/openrc/centurion-calibrate-boot.
 # Does nothing unless a calibration was scheduled (Optimizations → Autotune → "Calibrate at next boot",
 # or `sudo centurion-calibrate --schedule-boot`); see the OpenRC script for what it does then.
-#
-#   systemctl enable centurion-calibrate-boot.service
+# One-shot: scheduling enables it, and it disables itself once it has taken the schedule.
 
 [Unit]
 Description=Centurion scheduled calibration at boot
