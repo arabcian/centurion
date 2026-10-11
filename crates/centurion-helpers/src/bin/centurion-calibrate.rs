@@ -1670,6 +1670,9 @@ fn boot_run() -> i32 {
     let mut taken = v.clone();
     taken["boot_id"] = json!(centurion_helpers::bootguard::boot_id());
     if centurion_helpers::write_root_file(BOOT_TAKEN, taken.to_string().as_bytes()).is_err() || std::fs::remove_file(BOOT_FLAG).is_err() { return 1; }
+    // One-shot: out of the boot again as soon as the schedule is taken (a crash or shutdown mid-run
+    // must not leave it enabled; the next "Calibrate at next boot" adds it back).
+    let unlinked = centurion_helpers::tune::service_boot(centurion_helpers::calctx::BOOT_SERVICE, false);
     // Service stop / shutdown (SIGINT from both init systems, SIGTERM): end the wait or the running
     // session cleanly instead of being killed with the hold and the taken flag left behind.
     unsafe {
@@ -1689,6 +1692,7 @@ fn boot_run() -> i32 {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(BOOT_LOG) { let _ = writeln!(f, "[{}] {m}", now()); }
     };
     log(&format!("boot calibration: {sessions} session(s) of {budget:.0} min{}", scene.as_deref().map(|s| format!(" in scene \"{s}\"")).unwrap_or_default()));
+    if !unlinked { log("could not remove the boot service from the boot (rc-update / systemctl): remove it by hand"); }
     while done < sessions && now() - t0 < BOOT_DEADLINE_S {
         if STOP.load(Ordering::SeqCst) { break; }
         if let Some(why) = boot_blocker() {

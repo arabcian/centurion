@@ -154,6 +154,9 @@ pub fn scene_file(name: &str) -> Result<PathBuf, String> {
 pub const BOOT_FLAG: &str = "/var/lib/centurion/calibrate-on-boot.json";
 pub const BOOT_TAKEN: &str = "/var/lib/centurion/calibrate-on-boot.json.taken";
 pub const BOOT_STATUS: &str = "/run/centurion/calibrate-status.json";
+/// The one-shot boot service: added to the boot when a calibration is scheduled, removed again
+/// by the service itself once it has taken the schedule (or when the schedule is cancelled).
+pub const BOOT_SERVICE: &str = "centurion-calibrate-boot";
 
 /// A boot calibration is scheduled or under way (the boot preset waits for it). The taken flag
 /// counts only in the boot that took it: one left behind by a shutdown or crash mid-calibration
@@ -169,6 +172,7 @@ pub fn boot_calibration_pending() -> bool {
 pub fn schedule_boot(on: bool, sessions: u64, budget: f64, scene: Option<&str>, user: Option<&str>) -> Result<String, String> {
     if !on {
         let _ = std::fs::remove_file(BOOT_FLAG);
+        crate::tune::service_boot(BOOT_SERVICE, false);
         return Ok("boot calibration cancelled".into());
     }
     let sessions = sessions.clamp(1, 12);
@@ -181,6 +185,10 @@ pub fn schedule_boot(on: bool, sessions: u64, budget: f64, scene: Option<&str>, 
     let body = json!({"sessions": sessions, "budget": budget, "scene": scene, "user": user, "t": now});
     crate::secure_dir(crate::defaults::DIR)?;
     crate::write_root_file(BOOT_FLAG, body.to_string().as_bytes())?;
+    if !crate::tune::service_boot(BOOT_SERVICE, true) {
+        let _ = std::fs::remove_file(BOOT_FLAG);
+        return Err(format!("could not add the {BOOT_SERVICE} service to the boot (rc-update / systemctl)"));
+    }
     Ok(format!("next boot: the boot preset and scenes are held, and {sessions} calibration session(s) of {budget:.0} min run once the machine is on AC and \
                 nobody has touched it for 5 min (status: centurion-calibrate --status)"))
 }

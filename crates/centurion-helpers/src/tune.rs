@@ -1210,6 +1210,23 @@ pub fn service_ctl(name: &str, action: &str) -> bool {
     } else { false }
 }
 
+/// Adds / removes a service from the boot (`rc-update add|del <name> default` /
+/// `systemctl enable|disable <name>.service`). Already in the wanted state counts as success.
+pub fn service_boot(name: &str, on: bool) -> bool {
+    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') { return false; }
+    let bin = |c: &[&str]| c.iter().map(PathBuf::from).find(|p| crate::trusted_path(p));
+    let unit = format!("{name}.service");
+    let t = std::time::Duration::from_secs(15);
+    if Path::new("/run/systemd/system").is_dir() {
+        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[if on { "enable" } else { "disable" }, &unit], t)).map_or(false, |(ok, _)| ok)
+    } else if Path::new("/run/openrc").is_dir() {
+        let linked = Path::new("/etc/runlevels/default").join(name).exists();
+        if linked == on { return true; }
+        bin(&["/sbin/rc-update", "/usr/sbin/rc-update", "/bin/rc-update", "/usr/bin/rc-update"])
+            .and_then(|b| run_tool(&b, &[if on { "add" } else { "del" }, name, "default"], t)).map_or(false, |(ok, _)| ok)
+    } else { false }
+}
+
 /// True for a hot-plug write that takes CPUs offline (park "0", SMT "off").
 pub fn offlines_cpus(key: &str, data: &str) -> bool {
     is_hotplug(key) && matches!(data, "0" | "off" | "forceoff")
