@@ -36,6 +36,7 @@ class RyzenTab : public QWidget {
     Q_OBJECT
 public:
     explicit RyzenTab(QWidget *parent = nullptr);
+    ~RyzenTab() override;
 
     QStringList savedProfileNames() const;
     /// Load + apply in one step (tray). All-core then per-core, chained.
@@ -44,6 +45,7 @@ public:
 
 protected:
     void showEvent(QShowEvent *e) override;
+    void hideEvent(QHideEvent *e) override;
     void changeEvent(QEvent *e) override;
 
 private:
@@ -56,6 +58,7 @@ private:
         QCheckBox *disable;
         QWidget *row;
         QLabel *cppc;
+        QLabel *mhz, *volt, *watt;  // live monitor
     };
     void updateParked();
     void refreshCppc();
@@ -90,6 +93,23 @@ private:
     QMap<int, QLabel *> ccdTitles_;
     QSet<int> parkedNow_;
     QString x3dMode_;
+    QString cppcPrevMode_;                                      // mode at the previous refresh
+    QMap<int, QList<std::optional<int>>> cppcPrevLive_;         // per CCD: live ranks at the previous refresh
+
+    // Live monitor (no CoreFreq module): MHz / temperatures / boost from sysfs+procfs every
+    // tick; VID volts and RAPL watts from ryzen-co-helper's monitor_stream (root, MSRs).
+    void monitorTick();
+    void startMsrStream();
+    void stopMsrStream();
+    void showMsr(const QJsonObject &s);
+    class QTimer *monTimer_ = nullptr;
+    QCheckBox *msrOn_ = nullptr;
+    QLabel *monLbl_ = nullptr;
+    QMap<int, QLabel *> ccdTemps_;
+    class QProcess *msrStream_ = nullptr;  // parented to qApp (root child: exits on stdin EOF)
+    bool msrGotSample_ = false;
+    QJsonObject msr_;                      // latest helper sample
+    QString boostText_, tempText_;
     class QRadioButton *rAll_ = nullptr;
     QComboBox *profileCombo_ = nullptr;
     QPlainTextEdit *log_ = nullptr;

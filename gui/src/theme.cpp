@@ -209,18 +209,18 @@ QComboBox QAbstractItemView { background: @BG2; color: @FG; border: 1px solid @B
   selection-background-color: @BG4; selection-color: @FG; outline: none; }
 QComboBox QAbstractItemView::item { min-height: 22px; padding: 0 6px; border-radius: 5px; }
 QSpinBox, QDoubleSpinBox, Int64SpinBox { padding-right: 18px; }
-QSpinBox::up-button, QDoubleSpinBox, Int64SpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right;
+QSpinBox::up-button, QDoubleSpinBox::up-button, Int64SpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right;
   width: 17px; border: none; border-top-right-radius: 6px; background: transparent; }
-QSpinBox::down-button, QDoubleSpinBox, Int64SpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right;
+QSpinBox::down-button, QDoubleSpinBox::down-button, Int64SpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right;
   width: 17px; border: none; border-bottom-right-radius: 6px; background: transparent; }
 QSpinBox::up-button:hover, QSpinBox::down-button:hover,
-QDoubleSpinBox, Int64SpinBox::up-button:hover, QDoubleSpinBox, Int64SpinBox::down-button:hover { background: @BG3; }
-QSpinBox::up-arrow, QDoubleSpinBox, Int64SpinBox::up-arrow { image: url(:/theme/chev-up.png); width: 8px; height: 8px; }
-QSpinBox::down-arrow, QDoubleSpinBox, Int64SpinBox::down-arrow { image: url(:/theme/chev-down.png); width: 8px; height: 8px; }
+QDoubleSpinBox::up-button:hover, Int64SpinBox::up-button:hover, QDoubleSpinBox::down-button:hover, Int64SpinBox::down-button:hover { background: @BG3; }
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, Int64SpinBox::up-arrow { image: url(:/theme/chev-up.png); width: 8px; height: 8px; }
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, Int64SpinBox::down-arrow { image: url(:/theme/chev-down.png); width: 8px; height: 8px; }
 QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off,
-QDoubleSpinBox, Int64SpinBox::up-arrow:disabled, QDoubleSpinBox, Int64SpinBox::up-arrow:off { image: url(:/theme/chev-up-off.png); }
+QDoubleSpinBox::up-arrow:disabled, Int64SpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off, Int64SpinBox::up-arrow:off { image: url(:/theme/chev-up-off.png); }
 QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off,
-QDoubleSpinBox, Int64SpinBox::down-arrow:disabled, QDoubleSpinBox, Int64SpinBox::down-arrow:off { image: url(:/theme/chev-down-off.png); }
+QDoubleSpinBox::down-arrow:disabled, Int64SpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off, Int64SpinBox::down-arrow:off { image: url(:/theme/chev-down-off.png); }
 QPlainTextEdit#terminal { background: @WELL; color: @FG_DIM; border: 1px solid @BORDER_SOFT; border-radius: 8px; font-family: monospace; }
 
 /* ── lists and tables ── */

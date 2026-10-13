@@ -2,6 +2,7 @@
 #include "privileged.h"
 #include "theme.h"
 #include "vfcurvewidget.h"
+#include <QPointer>
 
 #include <QComboBox>
 #include <QDateTime>
@@ -645,18 +646,23 @@ void NvidiaTab::startSensorStream() {
             parts << QStringLiteral("%1 %2°").arg(x.toArray().at(0).toString()).arg(x.toArray().at(1).toInt());
         vram_->setToolTip(parts.isEmpty() ? QString() : QStringLiteral("Hottest memory sensor. All: ") + parts.join("  "));
     });
-    connect(p, &QProcess::finished, p, [this, p](int code) {
-        if (sensorStream_ == p) {
-            sensorStream_ = nullptr;
+    // Context is `p` (it outlives the tab: the helper exits only once its stdin closes, after
+    // ~NvidiaTab): `self` guards every touch of the tab, as in the Ryzen / Intel tabs.
+    QPointer<NvidiaTab> self(this);
+    connect(p, &QProcess::finished, p, [self, p](int code) {
+        if (self && self->sensorStream_ == p) {
+            self->sensorStream_ = nullptr;
             if (code != 0) {  // denied / no agent: don't ask again until the tab is reopened
-                streamFailed_ = true;
-                hotspot_->setToolTip("Blackwell hotspot needs root and the sensor helper was not authorized");
+                self->streamFailed_ = true;
+                self->hotspot_->setToolTip("Blackwell hotspot needs root and the sensor helper was not authorized");
             }
         }
         p->deleteLater();
     });
-    connect(p, &QProcess::errorOccurred, p, [this, p](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart) { if (sensorStream_ == p) sensorStream_ = nullptr; streamFailed_ = true; p->deleteLater(); }
+    connect(p, &QProcess::errorOccurred, p, [self, p](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart) return;
+        if (self) { if (self->sensorStream_ == p) self->sensorStream_ = nullptr; self->streamFailed_ = true; }
+        p->deleteLater();
     });
     p->start();
 }

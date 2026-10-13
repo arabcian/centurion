@@ -327,7 +327,8 @@ void AmdGpuTab::rebuildForm() {
         row(pg, QStringLiteral("Power limit"), w, snap_.capDefaultW
             ? QStringLiteral("Default %1 W. Lower = cooler and quieter at a small FPS cost.").arg(int(*snap_.capDefaultW)) : QString());
     }
-    if (pg->rowCount() == 0) pg->parentWidget()->hide();
+    // QGridLayout::rowCount() is never 0 (a new grid already has one row): count the items instead.
+    if (pg->count() == 0) pg->parentWidget()->hide();
 
     // Overdrive
     const Od &od = snap_.od;

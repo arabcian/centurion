@@ -251,14 +251,25 @@ static std::optional<quint64> procStart(qint64 pid) {
     return ok ? std::optional<quint64>(v) : std::nullopt;
 }
 
+/// An A/B "A" launch (boot defaults) opens no game session: centurion-gamemode records its launcher in
+/// scene.json instead. Without this the game scene of an A launch looked orphaned and was left ~15 s in.
+static bool abLaunchLive() {
+    const QJsonObject st = readObject(stateFile());
+    if (!st.value("ab_a").toBool()) return false;
+    const QJsonObject o = st.value("ab_owner").toObject();
+    if (!o.value("pid").isDouble() || !o.value("start").isDouble()) return true;  // untracked: only its POST ends it
+    const auto start = procStart(o.value("pid").toInteger());
+    return start && *start == quint64(o.value("start").toInteger());
+}
+
 int gameSessions() {
     // /run/centurion/tune/state.json is root-owned but world-readable.
     // Sessions whose launcher has exited are not counted: tune-helper ends
     // them itself at its next call (same rule as centurion_helpers::live_game_sessions).
     const QJsonObject st = readObject(QStringLiteral("/run/centurion/tune/state.json"));
     const QJsonValue ss = st.value("sessions");
-    if (!ss.isArray()) return st.value("refcount").toInt();
-    int n = 0;
+    if (!ss.isArray()) return st.value("refcount").toInt() + (abLaunchLive() ? 1 : 0);
+    int n = abLaunchLive() ? 1 : 0;
     for (const QJsonValue &v : ss.toArray()) {
         const QJsonObject o = v.toObject();
         if (!o.value("pid").isDouble() || !o.value("start").isDouble()) { ++n; continue; }  // untracked
@@ -721,6 +732,8 @@ void SceneEngine::checkGameEnd() {
         before = st.value("before_game").toString();
         st["game_scene"] = QJsonValue::Null;
         st["before_game"] = QJsonValue::Null;
+        st["ab_a"] = QJsonValue::Null;     // a dead A launch (gameSessions() no longer counts it)
+        st["ab_owner"] = QJsonValue::Null;
         writeObject(stateFile(), st, nullptr);
     }
     Q_EMIT finished(QString(), true, {QStringLiteral("the game launcher exited without its POST hook — leaving the game scene")});
