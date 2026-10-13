@@ -16,6 +16,7 @@ struct FwAttr {
     QString device, name, path, displayName;
     int current = 0, def = 0, min = 0, max = 0, step = 1;
     bool ranged = true;
+    bool readOnly = false;       // status / identity attribute, or one whose write is a hardware action
     // Unranged attributes the kernel refuses to write through sysfs, handled
     // instead through the Lenovo WMI method via acpi_call (legion-gpu-helper).
     QString wmiKey;              // helper knob key; empty = normal sysfs attribute

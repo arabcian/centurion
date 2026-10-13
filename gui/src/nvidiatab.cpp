@@ -751,6 +751,7 @@ void NvidiaTab::applyMemOffset(const QJsonObject &result) {
 /// driver-clamped), so they must never feed the mem spin — see applyMemOffset().
 void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
     QVector<QPointF> base;
+    QVector<int> freqs;
     QHash<int, int> offs;
     for (const auto &v : pts) {
         const QJsonObject p = v.toObject();
@@ -758,11 +759,19 @@ void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
         const int off = floorDiv(qint64(p.value("freq_offset_kHz").toDouble()), 1000);
         const int cur = floorDiv(qint64(p.value("freq_kHz").toDouble()), 1000);
         const int mv = floorDiv(qint64(p.value("volt_uV").toDouble()), 1000);
+        // freq − delta is the stock clock only while the driver runs the point at
+        // stock + delta. It doesn't for deep negative offsets (held ~1000 MHz below
+        // stock) or capped tops, and then every edit (drag, flatten, spin) was
+        // computed against a wrong base: offsets grew on each read/apply round.
+        // The driver's offset-free base frequency (V3 base tuple) is used when present.
+        const qint64 baseK = qint64(p.value("base_kHz").toDouble());
         offs[base.size()] = off;
-        base.append(QPointF(mv, cur - off));
+        freqs.append(cur);
+        base.append(QPointF(mv, baseK > 0 ? floorDiv(baseK, 1000) : cur - off));
     }
     if (base.isEmpty()) { log("❌ No GPU points found in vf_curve."); return; }
     base_ = base;
+    readFreq_ = freqs;
     readOffsets_ = keepOffsets ? offs : QHash<int, int>();
     vf_->setPoints({});  // force re-fit for the new base
     resetGraphToLastRead();
@@ -1101,7 +1110,7 @@ void NvidiaTab::reportClamping(const QVector<QPointF> &baseBefore, const QHash<i
     int lowestGot = 0;
     for (int i = 0; i < base_.size(); ++i) {
         const int want = requested.value(i), stored = readOffsets_.value(i);
-        const int wantFreq = int(baseBefore[i].y()) + want, gotFreq = int(base_[i].y()) + stored;
+        const int wantFreq = int(baseBefore[i].y()) + want, gotFreq = readFreq_.value(i, int(base_[i].y()) + stored);
         int kind = 0;
         if (std::abs(stored - want) > 2) kind = 1;               // delta clamped
         else if (std::abs(gotFreq - wantFreq) > 15) kind = 2;    // clock did not follow

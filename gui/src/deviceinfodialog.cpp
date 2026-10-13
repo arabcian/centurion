@@ -72,6 +72,22 @@ void DeviceInfoDialog::load() {
         line("SmartFan version", num("smartfan_version"));
         line("Legion Zone version", num("legion_zone_version"));
         line("Thermal mode (raw)", num("thermal_mode"));
+        line("GameZone version", num("gamezone_version"));
+        line("HW info version", num("hwinfo_version"));
+        line("Product info (raw)", num("product_info"));
+        line("Keyboard features", j.value("keyboard_features").toString());
+        const auto pair = [&](const char *k, const char *unit) {
+            const QJsonArray a = j.value(QLatin1String(k)).toArray();
+            if (a.size() != 2) return QString();
+            const int hi = a.at(0).toInt(), lo = a.at(1).toInt();
+            return (hi == lo ? QString::number(lo) : QStringLiteral("%1 / %2").arg(lo).arg(hi)) + QLatin1String(unit);
+        };
+        line("CPU frequency (firmware)", pair("cpu_frequency", " MHz"));
+        line("Memory OC info (raw)", pair("memory_oc_info", ""));
+        line("dGPU hardware id", j.value("dgpu_hwid").toString());
+        line("Fan cooling", j.value("fan_cooling_support").isDouble()
+                                ? (j.value("fan_cooling_support").toInt() ? QStringLiteral("supported") : QStringLiteral("not supported")) : QString());
+        line("Y-log changed", num("y_log_changed"));
         line("Power modes", strList(j.value("power_modes")).join(QStringLiteral(", ")));
         line("Note", j.value("note").toString());
         const QJsonArray caps = j.value("capabilities").toArray();

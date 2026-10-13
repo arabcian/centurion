@@ -920,6 +920,8 @@ QGroupBox *HomeTab::buildDeviceBox() {
                 {"flip_to_start", "Flip to start", "Power on when the lid is opened."},
                 {"super_key_lock", "Super key lock", "Disable the Super (Windows) key of the built-in keyboard — e.g. while gaming."},
                 {"touchpad_lock", "Touchpad lock", "Disable the touchpad in the embedded controller."},
+                {"fan_cooling", "Fan cooling", "Firmware fan-cooling run (GameZone SetFanCooling).\n"
+                 "The firmware may end it by itself; the switch then reads off again."},
                 {"usb_charge_battery", "USB charging on battery",
                  "Keep the always-on USB port powered while the laptop is off or asleep on battery too\n"
                  "(needs \"USB charging when off\")."},

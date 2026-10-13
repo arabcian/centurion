@@ -105,6 +105,7 @@ private:
     QVector<QPointF> base_;          // (mV, base MHz) of GPU-domain points
     QHash<int, int> pointOffsets_;   // per-point MHz, on top of coreOffset_
     QHash<int, int> readOffsets_;
+    QVector<int> readFreq_;          // MHz each GPU point actually ran at in the last read
     int coreOffset_ = 0;
     bool curveModified_ = false;
     bool busy_ = false;

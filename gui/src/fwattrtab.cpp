@@ -48,6 +48,14 @@ static const WmiKnob WMI_KNOBS[] = {
     {"gpu_nv_ppab", "boost_up", 1, 25},
     {"gpu_nv_cpu_boost", "boost_down", 1, 25},
 };
+// Shown, never written (not even by a scene): dgpu_enable is the same firmware call as
+// GameZone NotifyDGPUStatus — a write runs \_SB.GZFD.HTPL, which ejects the dGPU from the
+// bus or bus-checks it back (a hot-unplug, not a setting); dgpu_didvid is an identifier;
+// gpu_mode is computed by the firmware from the GPU limits (and its read pokes the EC).
+static bool readOnlyAttr(const QString &n) {
+    return n == QLatin1String("dgpu_enable") || n == QLatin1String("dgpu_didvid") || n == QLatin1String("gpu_mode");
+}
+
 // Sysfs-backed limits that legion-gpu-helper can also reach over WMAE; used
 // only when the attribute has vanished from sysfs AND the WMAE read-back was
 // seen to match sysfs on this machine (recorded in the range cache).
@@ -106,6 +114,7 @@ QList<FwAttr> FwattrTab::discover() {
             f.current = *cur; f.def = *def; f.min = *mn; f.max = *mx; f.step = std::max(*st, 1);
             // Some BIOS revisions report min=max=step=0 (gpu_nv_ctgp etc.): no usable range.
             f.ranged = !(*mn == 0 && *mx == 0 && *st == 0);
+            if (readOnlyAttr(name)) { f.readOnly = true; f.ranged = false; out.append(f); continue; }
             if (!f.ranged)
                 for (const WmiKnob &k : WMI_KNOBS)
                     if (name == QLatin1String(k.attr)) { f.wmiKey = QString::fromLatin1(k.key); f.wmiMin = k.lo; f.wmiMax = k.hi; }
@@ -347,6 +356,7 @@ void FwattrTab::rebuild() {
                 QString tip = QStringLiteral("%1\nmin=%2  max=%3  step=%4  default=%5")
                                   .arg(a.name).arg(a.min).arg(a.max).arg(a.step).arg(a.def);
                 if (a.viaWmi()) tip += QStringLiteral("\n⚙ no firmware range — written via Lenovo WMI (acpi_call), range %1–%2").arg(a.wmiMin).arg(a.wmiMax);
+                else if (a.readOnly) tip += QStringLiteral("\n🔒 read-only here: a status value, or a write that is a hardware action (dgpu_enable hot-unplugs the GPU)");
                 else if (!a.ranged) tip += QStringLiteral("\n⚠ firmware reports no valid range for this attribute");
                 label->setToolTip(tip);
                 g->addWidget(label, r, 0);
