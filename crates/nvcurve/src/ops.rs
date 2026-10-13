@@ -17,6 +17,9 @@ pub fn curve_json(gpu_name: &str, state: &CurveState, voltage: Option<u32>) -> V
     let pts: Vec<Value> = state.points.iter().filter(|p| p.freq_khz > 0 || p.volt_uv > 0).map(|p| json!({
         "index": p.index, "freq_kHz": p.freq_khz, "volt_uV": p.volt_uv,
         "freq_offset_kHz": p.delta_khz, "domain": p.domain,
+        // Offset-free stock clock (V3 base tuple, null without it). freq_kHz − delta is
+        // NOT the stock clock where the driver clamps the point; the GUI edits against this.
+        "base_kHz": p.base_khz,
     })).collect();
     json!({"gpu": gpu_name, "current_voltage_uV": voltage, "vf_curve": pts, "domain_source": state.domain_source})
 }

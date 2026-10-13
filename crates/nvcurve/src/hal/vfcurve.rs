@@ -258,7 +258,10 @@ pub fn floor_delta_khz(p: &VfPoint) -> i64 {
         Some(b) => i64::from(b),
         None => (p.freq_khz as i64).min(p.freq_khz as i64 - p.delta_khz as i64),
     };
-    1000 - base
+    // Never positive: with a base under 1 MHz (bad/garbled read) the "floor"
+    // turned a requested negative delta into a positive one — an undervolt
+    // silently written as an overclock.
+    (1000 - base).min(0)
 }
 
 /// Raises every delta that would drive its point to 0 MHz or below up to the
@@ -486,5 +489,12 @@ mod tests {
         let mut ok = PointDeltas::new();
         ok.insert(0, -100_000);
         assert!(clamp_to_floor(&mut ok, &st).is_empty());
+        // a sub-1-MHz base must never flip a negative delta positive
+        let bad = CurveState { points: vec![pt(500, 0, Some(500))], timestamp: 0.0,
+                               gpu_name: String::new(), domain_source: "flags" };
+        let mut neg = PointDeltas::new();
+        neg.insert(0, -50_000);
+        clamp_to_floor(&mut neg, &bad);
+        assert!(neg[&0] <= 0);
     }
 }

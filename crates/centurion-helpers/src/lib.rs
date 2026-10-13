@@ -378,25 +378,34 @@ pub fn refuse_during_calibration() -> Option<serde_json::Value> {
 }
 
 /// CPU power limits the firmware keeps ordered, low to high: SPL (PL1, long) ≤ SPPT (PL2, short)
-/// ≤ FPPT (PL3, peak). A write that would break the order is dropped silently by the EC
-/// (lenovo-wmi-other does not check the WMI return value, so sysfs reports success).
-const FW_PL_CHAIN: [&str; 3] = ["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt"];
-/// Written after the chain: bounded by / recomputed from the limits above when those change,
+/// ≤ FPPT (PL3, peak) ≤ IPL (PL4, instantaneous; Intel boards). A write that would break the
+/// order is dropped silently by the EC (lenovo-wmi-other does not check the WMI return value,
+/// so sysfs reports success). The cross-loading (CPU+GPU load) limits form a second chain with
+/// the same order; boards that expose them get the same treatment. Attributes a board lacks
+/// simply never appear in the request.
+const FW_PL_CHAINS: [&[&str]; 2] = [
+    &["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt", "ppt_pl4_ipl"],
+    &["ppt_pl1_spl_cl", "ppt_pl2_sppt_cl", "ppt_pl3_fppt_cl", "ppt_pl4_ipl_cl"],
+];
+/// Written after the chains: bounded by / recomputed from the limits above when those change,
 /// so a value written before them was lost (alphabetical order put it first).
 const FW_PL_AFTER: [&str; 1] = ["ppt_cpu_cl"];
 
 /// Write order (indices into `items`) for firmware-attribute changes `(attr, current, target)`:
-/// unrelated attributes first in request order, then the chain raises top-down (FPPT, SPPT, SPL),
-/// then the chain lowers bottom-up (SPL, SPPT, FPPT), then the cross-loading limit. Every
-/// intermediate state keeps SPL ≤ SPPT ≤ FPPT when the start and the target both do.
+/// unrelated attributes first in request order; then per chain (normal limits, then
+/// cross-loading) the raises top-down (IPL, FPPT, SPPT, SPL) followed by the lowers bottom-up
+/// (SPL, SPPT, FPPT, IPL); then the CPU cross-loading limit. Every intermediate state keeps
+/// each chain ordered when the start and the target both are.
 pub fn fw_write_order(items: &[(&str, Option<i64>, i64)]) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..items.len()).collect();
     idx.sort_by_key(|&i| {
         let (attr, cur, new) = items[i];
-        match FW_PL_CHAIN.iter().position(|a| *a == attr) {
-            Some(p) if cur.map_or(false, |c| new > c) => (1, 2 - p),
-            Some(p) => (2, p),
-            None if FW_PL_AFTER.contains(&attr) => (3, 0),
+        let hit = FW_PL_CHAINS.iter().enumerate()
+            .find_map(|(c, ch)| ch.iter().position(|a| *a == attr).map(|p| (c, p, ch.len())));
+        match hit {
+            Some((c, p, n)) if cur.map_or(false, |v| new > v) => (1 + 2 * c, n - 1 - p),
+            Some((c, p, _)) => (2 + 2 * c, p),
+            None if FW_PL_AFTER.contains(&attr) => (9, 0),
             None => (0, 0),
         }
     });
@@ -423,6 +432,13 @@ mod tests {
         let order = fw_write_order(&mixed);
         let mut v = [60, 80, 200];
         for i in order { v[i] = mixed[i].2; assert!(v[0] <= v[1] && v[1] <= v[2], "{v:?}"); }
+        // Intel PL4 joins the chain; cross-loading chain comes after it, ppt_cpu_cl last.
+        let ipl = "ppt_pl4_ipl";
+        let (scl, fcl) = ("ppt_pl1_spl_cl", "ppt_pl3_fppt_cl");
+        let intel = [("ppt_cpu_cl", Some(50), 70), (scl, Some(40), 90), (fcl, Some(80), 120), (ipl, Some(150), 200), (fppt, Some(140), 180)];
+        assert_eq!(names(&intel), [ipl, fppt, fcl, scl, "ppt_cpu_cl"]);
+        let low = [(ipl, Some(200), 100), (fppt, Some(180), 90), (scl, Some(90), 40), (fcl, Some(120), 60)];
+        assert_eq!(names(&low), [fppt, ipl, scl, fcl]);
     }
     #[test]
     fn session_liveness() {

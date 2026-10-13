@@ -73,6 +73,13 @@ fn check_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Result<Target, 
         return err("0 is refused: the firmware treats it as \"feature off\" and the attribute disappears from sysfs".into());
     }
 
+    // Never written: dgpu_enable runs the firmware's dGPU eject / bus-check path
+    // (\_SB.GZFD.HTPL), dgpu_didvid is an identifier, gpu_mode is firmware-computed.
+    // Also stops an older saved scene that captured them from replaying them.
+    if matches!(attr_of(path), "dgpu_enable" | "dgpu_didvid" | "gpu_mode") {
+        return err(format!("{} is read-only in Centurion (a write is a hardware action, not a setting)", attr_of(path)));
+    }
+
     let p = Path::new(path);
     if !p.exists() {
         return err("attribute does not exist".into());

@@ -201,7 +201,7 @@ fn acpi_is_read(expr: &str) -> bool {
     if path.ends_with(".WQA6") { return true; }
     if path == w.other { return method == Some(0x11); }
     if path == w.gamezone {
-        return matches!(method, Some(0x15 | 0x17 | 0x18 | 0x1A | 0x28 | 0x29 | 0x2B | 0x2D | 0x2F | 0x31 | 0x32 | 0x37 | 0x38 | 0x3E | 0x3F | 0x40));
+        return matches!(method, Some(0x0B | 0x0C | 0x14 | 0x15 | 0x17 | 0x18 | 0x1A | 0x1E | 0x1F | 0x28 | 0x29 | 0x2B | 0x2D | 0x2F | 0x30 | 0x31 | 0x32 | 0x37 | 0x38 | 0x3B | 0x3C | 0x3E | 0x3F | 0x40 | 0x43 | 0x44));
     }
     if path.ends_with(".HALS") { return true; }  // VPC2004 status word
     // LENOVO_FAN_METHOD: Fan_Get_FullSpeed, Fan_Get_Table
@@ -710,6 +710,8 @@ mod tests {
         assert_eq!((w.sup, w.get, w.set), (21, 23, 22));
         let t = GZ_TOGGLES.iter().find(|t| t.key == "touchpad_lock").unwrap();
         assert_eq!((t.sup, t.get, t.set), (24, 26, 25));
+        let f = GZ_TOGGLES.iter().find(|t| t.key == "fan_cooling").unwrap();
+        assert_eq!((f.sup, f.get, f.set), (12, 20, 13));
         assert_eq!(WMAE_TOGGLES.iter().find(|t| t.key == "flip_to_start").map(|t| (t.id, t.verified)), Some((0x0003_0000, false)));
         assert_eq!((HALS_USB_SUPPORT, HALS_USB_STATE, HALS_USB_BATTERY), (0x40, 0x80, 0x8000));
         assert_eq!((FANM_GET_FULLSPEED, FANM_SET_FULLSPEED), (1, 2));
@@ -780,6 +782,21 @@ pub fn set_panel_od(on: bool) -> Value {
     }
 }
 
+/// GameZone NotifyDGPUStatus (WMAA 0x42; same path as WMAE feature 0x02070000 = the kernel's
+/// `dgpu_enable`). Not a passive notice: it sets the EC "dGPU in use" bit (GSTA = 1 for
+/// in_use, 0 for idle) and runs \_SB.GZFD.HTPL at once. HTPL acts only while the slot is
+/// powered off (PG00._STA = 0, i.e. D3cold or gone) and not in dGPU-direct mode:
+///   in use → Bus Check on GPP0.PEGP (the firmware re-attaches a cut-off dGPU);
+///   idle   → Eject Request in iGPU-only mode, or in Auto mode on battery.
+/// The same HTPL runs on every AC plug/unplug (EC _Q37/_Q38), so an "in use" bit left set
+/// keeps Auto mode from cutting the dGPU off on battery. Only offered where the firmware
+/// has the iGPU-mode interface (WMAA 0x3F = 3), which this call belongs to.
+pub fn notify_dgpu(in_use: bool) -> Result<(), String> {
+    if !acpi_available() { modprobe_acpi_call(); }
+    if wmaa(0x3F, 0)? != 3 { return Err("no iGPU-mode interface on this firmware".into()); }
+    wmaa(0x42, if in_use { 0 } else { 1 }).map(|_| ())
+}
+
 pub fn set_igpu_mode(mode: u64, force: bool) -> Value {
     if mode > 2 { return json!({"ok": false, "error": "mode must be 0 (default), 1 (iGPU only) or 2 (auto)"}); }
     // iGPU-only cuts the dGPU off. In dGPU (MUX direct) mode the panel hangs on
@@ -807,6 +824,9 @@ pub fn set_igpu_mode(mode: u64, force: bool) -> Value {
     // NVIDIA driver must be gone by then, or its remove hangs holding the PCI lock.
     if mode != 0 && igpu_present().is_some() {
         if let Err(v) = crate::dgpu::release() { return v; }
+        // A "dGPU in use" bit left by "Bring NVIDIA back" would make HTPL skip the
+        // eject this mode asks for. The driver is gone now, so idle is the truth.
+        if let Err(e) = notify_dgpu(false) { crate::wlog::log("wmi", &format!("NotifyDGPUStatus(idle): {e}")); }
     }
     if let Err(e) = wmaa(0x41, mode) { return json!({"ok": false, "error": e}); }
     json!({"ok": true, "igpu_mode": wmaa(0x40, 0).ok()})
@@ -1002,6 +1022,10 @@ fn cap_usable(id: u32, need: u32) -> bool { cap_usable_in(capabilities(), id, ne
 //     super_key_lock   21 IsSupportDisableWinKey / 23 GetWinKeyStatus / 22 SetWinKeyStatus
 //     touchpad_lock    24 IsSupportDisableTP     / 26 GetTPStatus     / 25 SetTPStatus
 //       (1 = key / touchpad disabled)
+//     fan_cooling      12 IsSupportFanCooling    / 20 GetFanCoolingStatus / 13 SetFanCooling
+//       (firmware fan-cooling run; its end is signalled by the GameZone "fan cooling
+//        finish" event BC72A435-…, so the status may drop back to 0 by itself.
+//        SMCN20WW answers 0 = unsupported and has no 13/20 bodies: never offered there)
 //   VPC2004 (the ACPI device behind ideapad_laptop), HALS status / SALS command:
 //     usb_charge_battery  HALS bit 15, SALS 0x13 on / 0x12 off — "always-on USB"
 //       also while the laptop runs on battery. The kernel exposes bits 6/7
@@ -1019,6 +1043,7 @@ struct GzToggle { key: &'static str, sup: u8, get: u8, set: u8 }
 const GZ_TOGGLES: &[GzToggle] = &[
     GzToggle { key: "super_key_lock", sup: 0x15, get: 0x17, set: 0x16 },
     GzToggle { key: "touchpad_lock", sup: 0x18, get: 0x1A, set: 0x19 },
+    GzToggle { key: "fan_cooling", sup: 0x0C, get: 0x14, set: 0x0D },
 ];
 
 const KEY_USB_BATTERY: &str = "usb_charge_battery";
@@ -1267,12 +1292,15 @@ fn cap_name(id: u32) -> Option<&'static str> {
         0x0007_0000 => "Supported power modes", 0x0009_0000 => "Legion Zone interface version",
         0x000A_0000 => "Auto refresh-rate switching", 0x000E_0000 => "Lenovo AI chip", 0x000F_0000 => "iGPU mode change status",
         0x0010_0000 => "Custom mode in Fn+Q", 0x001A_0000 => "Panel Over Drive",
+        0x001E_0200 => "Balanced sub-level (1-5)", 0x001E_0300 => "Performance sub-level (1-5)",
+        0x0027_0000 => "Keyboard id",
         0x0101_0000 => "CPU short-term power limit", 0x0102_0000 => "CPU long-term power limit",
         0x0103_0000 => "CPU peak power limit", 0x0104_0000 => "CPU temperature limit",
         0x0105_0000 => "APU sPPT power limit", 0x0106_0000 => "CPU cross-loading power limit",
         0x0107_0000 => "CPU PL1 tau", 0x0108_0000 => "CPU overclocking enable",
         0x0201_0000 => "GPU power boost", 0x0202_0000 => "GPU configurable TGP", 0x0203_0000 => "GPU temperature limit",
-        0x0204_0000 => "GPU total power target offset (AC)", 0x0207_0000 => "GPU status", 0x0208_0000 => "Re-evaluate power budgets",
+        0x0204_0000 => "GPU total power target offset (AC)", 0x0205_0000 => "GPU base power limit",
+        0x020A_0000 => "GPU base TGP", 0x0207_0000 => "GPU status", 0x0208_0000 => "Re-evaluate power budgets",
         0x0209_0000 => "GPU device id", 0x020B_0000 => "GPU to CPU dynamic boost",
         0x0301_0001 => "Instant boot (AC)", 0x0301_0002 => "Instant boot (USB-PD)",
         0x0402_0000 => "Fan full speed", 0x0403_0001 => "CPU fan speed", 0x0403_0002 => "GPU fan speed", 0x0403_0004 => "PCH fan speed",
@@ -1285,6 +1313,14 @@ fn cap_name(id: u32) -> Option<&'static str> {
 fn power_modes(v: u64) -> Vec<&'static str> {
     [(0, "quiet"), (1, "balanced"), (2, "performance"), (4, "extreme"), (16, "custom")].iter()
         .filter(|&&(b, _)| v >> b & 1 == 1).map(|&(_, n)| n).collect()
+}
+
+/// GameZone 68 GetDGPUHWId: a string (SMCN20WW: ToString(DGPT)), e.g. a PCI hardware id.
+fn dgpu_hwid() -> Option<String> {
+    let out = acpi_raw(&format!("{} 0x0 0x44 0x0", wmi().gamezone)).ok()?;
+    let s: String = out.trim().trim_matches('"').chars().filter(|c| !c.is_control()).collect();
+    let s = s.trim().to_owned();
+    (!s.is_empty() && !s.starts_with("0x") && !s.starts_with("Error") && s.chars().all(|c| c.is_ascii_graphic() || c == ' ')).then_some(s)
 }
 
 pub fn device_report() -> Value {
@@ -1310,6 +1346,18 @@ pub fn device_report() -> Value {
     if wmi_blocks.contains(&"GameZone") {
         out["smartfan_version"] = json!(wmaa(0x2B, 0).ok());
         out["thermal_mode"] = json!(wmaa(0x37, 0).ok());
+        // Read-only GameZone getters (kernel lenovo-wmi-gamezone MOF). Plain value
+        // returns on SMCN20WW; the 32-bit pairs carry two 16-bit halves (hi, lo).
+        let pair = |m: u8| wmaa(m, 0).ok().map(|v| json!([(v >> 16) & 0xFFFF, v & 0xFFFF]));
+        out["gamezone_version"] = json!(wmaa(0x0B, 0).ok());          // 11 GetVersion
+        out["hwinfo_version"] = json!(wmaa(0x3B, 0).ok());            // 59 GetHardwareInfoSupportVersion
+        out["product_info"] = json!(wmaa(0x30, 0).ok());              // 48 GetProductInfo
+        out["keyboard_features"] = json!(wmaa(0x1E, 0).ok().map(|v| format!("0x{v:X}")));  // 30
+        out["memory_oc_info"] = json!(pair(0x1F));                    // 31 GetMemoryOCInfo
+        out["cpu_frequency"] = json!(pair(0x3C));                     // 60 GetCpuFrequency (MHz)
+        out["fan_cooling_support"] = json!(wmaa(0x0C, 0).ok());       // 12 IsSupportFanCooling
+        out["y_log_changed"] = json!(wmaa(0x43, 0).ok());             // 67 IsChangedYLog
+        out["dgpu_hwid"] = json!(dgpu_hwid());                        // 68 GetDGPUHWId
     }
     if let Some(caps) = capabilities() {
         if cap_usable_in(Some(caps), 0x0007_0000, CAP_GET) {

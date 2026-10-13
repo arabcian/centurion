@@ -207,6 +207,14 @@ pub fn restore() -> Value {
     }
     let mut note = Vec::<String>::new();
     if cards().is_empty() {
+        // First ask the firmware: "dGPU in use" makes \_SB.GZFD.HTPL send a Bus Check to
+        // the slot it cut off (see legion_wmi::notify_dgpu). No PCI lock is taken.
+        if crate::legion_wmi::notify_dgpu(true).is_ok() {
+            for _ in 0..30 { if !cards().is_empty() { break; } std::thread::sleep(Duration::from_millis(100)); }
+            if !cards().is_empty() { note.push("the firmware re-attached the GPU (NotifyDGPUStatus)".into()); }
+        }
+    }
+    if cards().is_empty() {
         let r = in_child(10, || match std::fs::write("/sys/bus/pci/rescan", "1") { Ok(()) => 0, Err(_) => 1 });
         match r {
             Ok(0) => {}
