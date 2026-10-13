@@ -44,10 +44,15 @@ pub struct ProfileData {
     /// point more than ~1000 MHz below stock, whatever freqDelta it stores, so
     /// only a cap holds the flat top. None = no cap (an active one is removed).
     pub gpu_clock_cap_mhz: Option<i64>,
+    /// Added to the core cap when it is applied. On Blackwell the GPU runs
+    /// ~90-115 MHz below a locked clock / flat top; this makes the cap land
+    /// on the value the user entered. None = 0.
+    pub gpu_clock_comp_mhz: Option<i64>,
 }
 
 const KNOWN: &[&str] = &["name", "curve_deltas", "gpu_name", "mem_offset_mhz", "power_limit_w",
-                         "mem_locked_min_mhz", "mem_locked_max_mhz", "gpu_clock_cap_mhz"];
+                         "mem_locked_min_mhz", "mem_locked_max_mhz", "gpu_clock_cap_mhz",
+                         "gpu_clock_comp_mhz"];
 const OBSOLETE: &[&str] = &["gpu_locked_min_mhz", "gpu_locked_max_mhz", "vram_p0_offset_mhz"];
 
 fn opt_int(m: &Map<String, Value>, k: &str) -> Result<Option<i64>, String> {
@@ -86,6 +91,7 @@ impl ProfileData {
             mem_locked_min_mhz: opt_int(&m, "mem_locked_min_mhz")?,
             mem_locked_max_mhz: opt_int(&m, "mem_locked_max_mhz")?,
             gpu_clock_cap_mhz: opt_int(&m, "gpu_clock_cap_mhz")?,
+            gpu_clock_comp_mhz: opt_int(&m, "gpu_clock_comp_mhz")?,
         })
     }
 
@@ -94,7 +100,7 @@ impl ProfileData {
             "name": self.name, "curve_deltas": self.curve_deltas, "gpu_name": self.gpu_name,
             "mem_offset_mhz": self.mem_offset_mhz, "power_limit_w": self.power_limit_w,
             "mem_locked_min_mhz": self.mem_locked_min_mhz, "mem_locked_max_mhz": self.mem_locked_max_mhz,
-            "gpu_clock_cap_mhz": self.gpu_clock_cap_mhz,
+            "gpu_clock_cap_mhz": self.gpu_clock_cap_mhz, "gpu_clock_comp_mhz": self.gpu_clock_comp_mhz,
         })
     }
 

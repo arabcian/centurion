@@ -278,7 +278,7 @@ fn cmd_write(a: &Args, cfg: &Config) {
         for i in x..=y { deltas.insert(i, dk); }
         format!("Target: points {x}–{y} ({} points), delta {delta:+.0} MHz", deltas.len())
     } else if glob {
-        format!("Target: all active points (global), delta {delta:+.0} MHz")
+        format!("Target: GPU points from 30 % of the curve up (global, as LACT), delta {delta:+.0} MHz")
     } else {
         die(2, "Error: specify --point N, --range A-B, --global, or --reset");
     };
@@ -301,7 +301,7 @@ fn cmd_write(a: &Args, cfg: &Config) {
     let (g, name) = open_gpu(a);
     let (state, raw) = vfcurve::read_curve_with_raw_ct(g, &name).unwrap_or_else(|e| die(1, format!("Failed to read curve: {e}")));
     if glob {
-        deltas = state.points.iter().filter(|p| p.domain == Domain::Gpu).map(|p| (p.index as i64, dk)).collect();
+        deltas = vfcurve::global_offset_deltas(&state, dk);
     }
     let errs = validate_write(&deltas, max_override.unwrap_or(cfg.max_delta_khz));
     if !errs.is_empty() {
@@ -405,6 +405,7 @@ fn cmd_profile(a: &Args, cfg: &Config) {
                 mem_locked_min_mhz: existing.as_ref().and_then(|e| e.mem_locked_min_mhz),
                 mem_locked_max_mhz: existing.as_ref().and_then(|e| e.mem_locked_max_mhz),
                 gpu_clock_cap_mhz: existing.as_ref().and_then(|e| e.gpu_clock_cap_mhz),
+                gpu_clock_comp_mhz: existing.as_ref().and_then(|e| e.gpu_clock_comp_mhz),
             };
             match save_profile(&cfg.profile_dir, &data) {
                 Ok(p) => println!("Saved profile '{n}' to {}", p.display()),

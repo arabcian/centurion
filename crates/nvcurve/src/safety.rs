@@ -58,6 +58,9 @@ pub fn check_negative_freq_warnings(deltas: &BTreeMap<i64, i64>, vfp_freqs_khz: 
     }).collect()
 }
 
+/// Upper bound for the core cap compensation (profile field gpu_clock_comp_mhz).
+pub const MAX_CLOCK_COMP_MHZ: i64 = 500;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitField { PowerLimit, MemOffset, MemLocked, GpuCap }
 

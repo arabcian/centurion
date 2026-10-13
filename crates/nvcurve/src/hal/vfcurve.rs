@@ -338,9 +338,24 @@ fn write_domain(gpu: Gpu, filter: Option<Domain>, delta: i64, dry_run: bool, emp
     write_offsets(gpu, &deltas, dry_run, false, Some(raw.bytes()))
 }
 
-/// Uniform offset on every GPU-core point.
+/// Position (among the GPU-core points) from which a global core offset applies — LACT's curve
+/// shift works on the points from 30 % of the curve up (127 → 38): idle/low-voltage points stay stock.
+pub fn core_offset_start(gpu_points: usize) -> usize { gpu_points * 30 / 100 }
+
+/// Global core offset: every GPU-core point from `core_offset_start` up (the ones below get 0).
+pub fn global_offset_deltas(curve: &CurveState, delta_khz: i64) -> PointDeltas {
+    let gpu: Vec<i64> = curve.points.iter().filter(|p| p.domain == Domain::Gpu).map(|p| p.index as i64).collect();
+    let start = core_offset_start(gpu.len());
+    gpu.iter().enumerate().map(|(k, &i)| (i, if k >= start { delta_khz } else { 0 })).collect()
+}
+
+/// Global core offset (see `global_offset_deltas`).
 pub fn write_global_offset(gpu: Gpu, delta_khz: i64, dry_run: bool) -> (i32, String) {
-    write_domain(gpu, Some(Domain::Gpu), delta_khz, dry_run, None)
+    let (curve, raw) = match read_curve_with_raw_ct(gpu, "") {
+        Ok(v) => v,
+        Err(e) => return (-999, format!("Failed to read curve: {e}")),
+    };
+    write_offsets(gpu, &global_offset_deltas(&curve, delta_khz), dry_run, false, Some(raw.bytes()))
 }
 
 /// Uniform offset on every memory-domain point (discovered, never assumed).

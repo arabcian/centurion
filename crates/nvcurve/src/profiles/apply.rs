@@ -5,7 +5,7 @@
 use super::native::{load_profile, profile_path};
 use crate::config::Config;
 use crate::hal::{gpu, limits, monitoring, snapshot, vfcurve};
-use crate::safety::{validate_limits, validate_write, LimitField, Limits};
+use crate::safety::{validate_limits, validate_write, LimitField, Limits, MAX_CLOCK_COMP_MHZ};
 use log::{error, info, warn};
 use std::collections::BTreeMap;
 
@@ -57,7 +57,11 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
         }
         None => { let _ = limits::reset_mem_locked_clocks(idx); }
     }
-    match p.gpu_clock_cap_mhz.and_then(to_u32) {
+    let comp = match p.gpu_clock_comp_mhz.unwrap_or(0) {
+        c @ 0..=MAX_CLOCK_COMP_MHZ => c,
+        c => { out.warnings.push(format!("Rejected: gpu_clock_comp_mhz {c} is outside 0-{MAX_CLOCK_COMP_MHZ} MHz")); 0 }
+    };
+    match p.gpu_clock_cap_mhz.map(|c| (c + comp).min(4000)).and_then(to_u32) {
         Some(cap) => if let Err(e) = limits::set_gpu_locked_clocks(0, cap, idx) {
             out.warnings.push(format!("Core clock cap: {e}"));
         },
