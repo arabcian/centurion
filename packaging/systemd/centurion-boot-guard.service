@@ -22,6 +22,9 @@ ProtectHome=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/centurion
 StateDirectory=centurion
+# The boot-state / shutdown-state lines of /var/log/centurion/writes.log (the point of
+# that log): with ProtectSystem=strict and no writable log directory they were dropped.
+LogsDirectory=centurion
 
 [Install]
 WantedBy=multi-user.target
