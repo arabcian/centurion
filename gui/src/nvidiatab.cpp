@@ -23,7 +23,9 @@
 #include <QPushButton>
 #include "nvregdialog.h"
 #include <QSlider>
+#include <QSettings>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <array>
@@ -227,6 +229,12 @@ static QLabel *lbl(const QString &t, const char *color, bool bold = false) {
     return l;
 }
 
+/// Per-user GUI state (not a profile): the cap compensation the user measured.
+static QString nvStatePath() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+           + QStringLiteral("/centurion/nvidia-state.ini");
+}
+
 static QSpinBox *spin(int lo, int hi, const QString &suffix, int w) {
     auto *s = new QSpinBox;
     s->setRange(lo, hi);
@@ -317,17 +325,19 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         flattenSpin_->interpretText();
         const int s = flattenSpin_->value();
         if (s < 0 || s >= base_.size()) return;
+        // LACT's "Flatten right" (VfCurveEditorMsg::FlattenCurve), one to one: the target is the
+        // anchor point's current frequency, and from the anchor to the last point every point gets
+        // offset = target − its base frequency. No clock lock, no compensation.
         const int target = int(base_[s].y()) + offsetOf(s);
-        for (int i = s + 1; i < base_.size(); ++i) setOffsetClamped(i, target - int(base_[i].y()));
-        if (coreCapSpin_) coreCapSpin_->setValue(target);  // applied with Apply Offsets / saved in the profile
+        for (int i = s; i < base_.size(); ++i) setOffsetClamped(i, target - int(base_[i].y()));
         // The driver never runs a point more than ~1000 MHz below stock (it
         // stores deeper offsets but ignores them): say so before applying.
         int first = -1, last = -1;
         for (int i = s + 1; i < base_.size(); ++i)
             if (target - int(base_[i].y()) < -1000) { if (first < 0) first = i; last = i; }
         if (first >= 0)
-            log(QStringLiteral("ℹ️ Points %1–%2 would need more than -1000 MHz; the driver will not take them that low. "
-                               "Core cap is set to %3 MHz so the top still holds.").arg(first).arg(last).arg(target));
+            log(QStringLiteral("ℹ️ Points %1–%2 would need more than -1000 MHz; the driver will not take them that low, "
+                               "so the top may not stay flat there (a Core cap of %3 MHz would hold it).").arg(first).arg(last).arg(target));
         curveModified_ = true;
         updateCoreOffsetUi();
         recompute();
@@ -421,6 +431,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     cvl->addLayout(ch2);
     ch->addWidget(lbl("Core:", theme::MUTED));
     coreSpin_ = spin(CORE_MIN, CORE_MAX, " MHz", 96);
+    coreSpin_->setToolTip("Core offset for the V/F curve. Like LACT's curve shift it is applied from 30 % of the curve up\n"
+                          "(point 38 of 127): the idle / low-voltage points keep their stock clocks.");
     connect(coreSpin_, &QSpinBox::valueChanged, this, [this](int v) { coreOffset_ = v; recompute(); });
     ch->addWidget(coreSpin_);
     ch->addSpacing(8);
@@ -456,12 +468,23 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     coreCapSpin_->setToolTip("Highest core clock the GPU may use (NVML locked clocks). The driver keeps every curve\n"
                              "point within ~1000 MHz of stock whatever offset it stores, so a flatten cannot pull the\n"
                              "top points all the way down — the cap does: the GPU then runs the lowest-voltage point\n"
-                             "that reaches it. Flatten fills it in; it is saved with the profile and applied with\n"
+                             "that reaches it. It is saved with the profile and applied with\n"
                              "Apply Offsets. Cap / Uncap change it right away.");
     ch2->addWidget(coreCapSpin_);
+    ch2->addWidget(lbl("+", theme::MUTED));
+    capCompSpin_ = spin(0, 500, " MHz", 80);
+    capCompSpin_->setToolTip("Compensation added to the core cap when it is written.\n"
+                             "Blackwell GPUs run ~90-115 MHz below a locked clock: measure the gap\n"
+                             "(target − clock under load) and enter it here, so the GPU lands on the value you set.\n"
+                             "Saved with the profile; 0 = off.");
+    capCompSpin_->setValue(std::clamp(QSettings(nvStatePath(), QSettings::IniFormat).value("core_cap_comp_mhz", 0).toInt(), 0, 500));
+    connect(capCompSpin_, &QSpinBox::valueChanged, this, [](int v) {
+        QSettings(nvStatePath(), QSettings::IniFormat).setValue("core_cap_comp_mhz", v);
+    });
+    ch2->addWidget(capCompSpin_);
     auto *bCap = new QPushButton("Cap"), *bUncap = new QPushButton("Uncap");
     connect(bCap, &QPushButton::clicked, this, [this] {
-        const int mx = coreCapSpin_->value();
+        const int mx = capSent();
         if (mx < 210) { log("⚠️ Enter a core clock cap in MHz first."); return; }
         runHelper({{"op", "set_gpu_clocklock"}, {"min_mhz", 0}, {"max_mhz", mx}}, QString(), "Failed to cap the core clock");
     });
@@ -787,7 +810,7 @@ void NvidiaTab::setOffsetClamped(int i, int total) {
     // a large positive offset nobody asked for.)
     total = std::clamp(total, MIN_OFFSET, MAX_OFFSET);
     if (i < base_.size()) total = std::max(total, -int(base_[i].y()));
-    pointOffsets_[i] = total - coreOffset_;
+    pointOffsets_[i] = total - coreAt(i);
 }
 
 void NvidiaTab::recompute() {
@@ -795,6 +818,11 @@ void NvidiaTab::recompute() {
     pts.reserve(base_.size());
     for (int i = 0; i < base_.size(); ++i) pts.append(QPointF(base_[i].x(), std::max(0, int(base_[i].y()) + offsetOf(i))));
     vf_->setPoints(pts);
+}
+
+int NvidiaTab::capSent() const {
+    const int cap = coreCapSpin_->value();
+    return cap >= 210 ? std::min(cap + capCompSpin_->value(), 4000) : 0;
 }
 
 void NvidiaTab::updateCoreOffsetUi() {
@@ -818,11 +846,15 @@ void NvidiaTab::updateCoreOffsetUi() {
 /// Uniform offsets collapse into the Core box — but only if it can show them
 /// (it used to clamp, e.g. -600 → -500, while Apply still sent -600).
 void NvidiaTab::adoptOffsets(const QHash<int, int> &offs) {
-    QSet<int> uniq;
-    for (int i = 0; i < base_.size(); ++i) uniq.insert(offs.value(i, 0));
+    // A core offset is one value from coreStart() up; the points below are 0 (or carry the same
+    // value: curves written by earlier builds shifted every point — the next apply drops those).
+    QSet<int> uniq, low;
+    for (int i = coreStart(); i < base_.size(); ++i) uniq.insert(offs.value(i, 0));
+    for (int i = 0; i < coreStart() && i < base_.size(); ++i) low.insert(offs.value(i, 0));
     pointOffsets_.clear();
     const int single = uniq.isEmpty() ? 0 : *uniq.begin();
-    if (uniq.size() <= 1 && single >= CORE_MIN && single <= CORE_MAX) {
+    const bool lowOk = low.isEmpty() || (low.size() == 1 && (*low.begin() == 0 || *low.begin() == single));
+    if (uniq.size() <= 1 && lowOk && single >= CORE_MIN && single <= CORE_MAX) {
         coreOffset_ = single;
         curveModified_ = false;
     } else {
@@ -907,7 +939,8 @@ void NvidiaTab::applyOffsets() {
                            {"mem_offset_mhz", mem}, {"power_limit_w", QJsonValue()},  // 0 must be sent: absent = 'leave the old offset'
                            {"mem_locked_min_mhz", lmax ? QJsonValue(lmin) : QJsonValue()},
                            {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
-                           {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()}};
+                           {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
+                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()}};
     const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
     QHash<int, int> requested;
     for (int i = 0; i < base_.size(); ++i) requested.insert(i, offsetOf(i));
@@ -1013,6 +1046,7 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
     lockMinSpin_->setValue(data.value("mem_locked_min_mhz").toInt());
     lockMaxSpin_->setValue(data.value("mem_locked_max_mhz").toInt());
     coreCapSpin_->setValue(data.value("gpu_clock_cap_mhz").toInt());
+    if (data.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(data.value("gpu_clock_comp_mhz").toInt());
     flattenSel_.clear();
     {
         const QSignalBlocker b(flattenSpin_);
@@ -1038,7 +1072,8 @@ void NvidiaTab::saveProfileAs() {
                            {"power_limit_w", QJsonValue()},
                            {"mem_locked_min_mhz", lmax ? QJsonValue(lmin) : QJsonValue()},
                            {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
-                           {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()}};
+                           {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
+                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()}};
     runHelper({{"op", "write_nvcurve_profile"}, {"name", name},
                {"content", QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Indented))}},
               "Profile '" + name + "' saved.", "Profile '" + name + "' could not be saved", [this, name](bool ok, const QJsonObject &) {
@@ -1092,6 +1127,7 @@ void NvidiaTab::mirrorProfileLimits(const QString &name) {
     if (!f.open(QIODevice::ReadOnly) || f.size() > 256 * 1024) return;
     const QJsonObject d = QJsonDocument::fromJson(f.readAll()).object();
     coreCapSpin_->setValue(d.value("gpu_clock_cap_mhz").toInt());
+    if (d.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(d.value("gpu_clock_comp_mhz").toInt());
     if (d.value("mem_locked_max_mhz").toInt() > 0) {
         lockMinSpin_->setValue(d.value("mem_locked_min_mhz").toInt());
         lockMaxSpin_->setValue(d.value("mem_locked_max_mhz").toInt());

@@ -53,8 +53,12 @@ private:
     // model
     void recompute();
     // Never below -base: the graph clamps there too, so what Apply sends is what the graph shows.
+    /// First point the core offset applies to — LACT's curve shift: its editor works on the
+    /// points from 30 % of the curve up (127 points → 38), so idle/low-voltage points keep stock.
+    int coreStart() const { return int(base_.size()) * 30 / 100; }
+    int coreAt(int i) const { return i >= coreStart() ? coreOffset_ : 0; }
     int offsetOf(int i) const {
-        return std::max(pointOffsets_.value(i, 0) + coreOffset_, i < base_.size() ? -int(base_[i].y()) : INT_MIN);
+        return std::max(pointOffsets_.value(i, 0) + coreAt(i), i < base_.size() ? -int(base_[i].y()) : INT_MIN);
     }
     void setOffsetClamped(int i, int total);
     void updateCoreOffsetUi();
@@ -89,6 +93,8 @@ private:
     QLabel *selLabel_, *voltLabel_, *freqLabel_, *offLabel_;
     QSpinBox *pointSpin_, *flattenSpin_, *coreSpin_, *memSpin_, *lockMinSpin_, *lockMaxSpin_;
     QSpinBox *coreCapSpin_ = nullptr;  // NVML core clock cap (MHz, 0 = none)
+    QSpinBox *capCompSpin_ = nullptr;  // added to the cap / flat top when sent (MHz, Blackwell runs below them)
+    int capSent() const;               // cap as written to the driver (cap + compensation), 0 = none
     void reportClamping(const QVector<QPointF> &baseBefore, const QHash<int, int> &requested);
     QComboBox *profiles_;
     QPlainTextEdit *log_;
