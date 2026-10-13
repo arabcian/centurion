@@ -359,6 +359,9 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         "zswap.max_pool_percent" => v(&[10, 20, 30]),
         // 0/1/2 are the whole range: the generic halve/double rule would only offer 1.
         "kernel.sched_burst_inherit_type" => v(&[0, 1, 2]),
+        // Infinity SMT slice divisor (1-16, stock 2): 1 = no halving is a mode, 4/8 bracket the
+        // shorter-slice side, 2 brings a changed boot value back to stock; halve/double would never try 8.
+        "kernel.infinity_smt_divisor" => v(&[1, 2, 4, 8].into_iter().filter(|x| *x != r).collect::<Vec<_>>()),
         "sched.migration_cost_ns" => v(&[r / 2, r * 2, 5_000_000]),
         "sched.nr_migrate" => v(&[8, 32, 128]),
         // up/tasks are test modes with wrong weight distribution, not candidates.

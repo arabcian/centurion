@@ -551,6 +551,9 @@ pub const TUNABLES: &[Tunable] = &[
     t("kernel.sched_burst_cache_lifetime", "Scheduler", "BORE burst cache lifetime (ns)",
       "How long (ns) the averaged penalty of a process tree or thread group is cached before it is recomputed for the next fork (stock 75000000 = 75 ms). Longer = cheaper forks, staler averages; shorter = fresher averages, more scanning work per fork under heavy fork rates. Only relevant with burst inheritance on.",
       int(0, 4_294_967_295), NO, Target::File("/proc/sys/kernel/sched_burst_cache_lifetime")),
+    t("kernel.infinity_smt_divisor", "Scheduler", "Infinity SMT slice divisor",
+      "Infinity scheduler, v4.x series (galpt/infinity-scheduler kernel patch; the later infinity-sched-new rewrite has no knobs and no such file): EMA-based interactivity on top of EEVDF/CFS and RT, no BPF): the slice of a task running on an SMT sibling whose twin thread is busy is divided by this value (1-16; stock 2, 1 = no halving). Higher = shorter slices on shared cores, so interactive work on the other sibling gets the core back sooner, at the cost of more context switches for the CPU-bound task; lower = longer slices, better throughput on SMT pairs. Out-of-range writes are refused by the kernel. Only exists on an Infinity kernel (kernel.infinity_running = 1; version in kernel.infinity_version, counters in /proc/sys/kernel/infinity_stats).",
+      int(1, 16), NO, Target::File("/proc/sys/kernel/infinity_smt_divisor")),
     dbg(t("sched.feat_preempt_short", "Scheduler", "PREEMPT_SHORT (debugfs)",
       "Lets a waking task with a shorter slice than the running one cancel RUN_TO_PARITY and preempt it at once (default on). It is the exception that keeps latency-sensitive tasks (the ones that asked for a short slice) responsive while RUN_TO_PARITY protects everyone else's slice; turning it off makes RUN_TO_PARITY absolute. Leave on for interactive and game loads.",
       Kind::Bool, NO, Target::SchedFeature("PREEMPT_SHORT"))),
@@ -2108,9 +2111,21 @@ fn zswap_compressors() -> Vec<String> {
     v
 }
 
+/// Infinity scheduler rewrite (infinity-sched-new, CachyOS tuned-eevdf 7.2.6+): its fair class is a
+/// bounded-LIFO queue with a frozen base quantum and exposes no knob, only these debugfs stats.
+/// debugfs, like the rows it hides: unprivileged callers cannot tell, root re-checks at write time.
+const INFINITY_NEW_STATS: &str = "/sys/kernel/debug/infinity_fair";
+fn infinity_new() -> bool { Path::new(INFINITY_NEW_STATS).exists() }
+
+/// EEVDF features whose sched_feat() checks the Infinity rewrite removed from fair.c: still listed
+/// in sched/features and writable, but flipping them changes nothing.
+const INFINITY_NEW_DEAD_FEATS: &[&str] = &["RUN_TO_PARITY", "PREEMPT_SHORT", "NEXT_BUDDY"];
+
 /// Target::File rows that exist but must not be offered in some states.
 fn file_usable(p: &str) -> bool {
     match p {
+        // The Infinity rewrite never reads sysctl_sched_base_slice (both files feed it): writes do nothing.
+        "/sys/kernel/debug/sched/base_slice_ns" | "/sys/kernel/debug/sched/min_base_slice_ns" if infinity_new() => false,
         // Ratio rows only while the system is in ratio mode (the bytes twin reads 0):
         // restoring a ratio of 0 over a bytes configuration would zero both.
         "/proc/sys/vm/dirty_ratio" => read(Path::new("/proc/sys/vm/dirty_bytes")).as_deref() == Some("0"),
@@ -2198,6 +2213,7 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
             let f = PathBuf::from("/sys/kernel/debug/sched/features");
             // Unreadable (unprivileged) = cannot tell; root re-checks at write time.
             match read(&f) {
+                _ if INFINITY_NEW_DEAD_FEATS.contains(&name) && infinity_new() => vec![],
                 Some(raw) if !sched_feature_state(&raw, name).is_some() => vec![],
                 _ => existing(f),
             }
@@ -2825,7 +2841,7 @@ mod tests {
                   "net.default_qdisc", "net.wifi_power_save", "pci.aspm_links", "sched.ext",
                   "disk.apm_0", "pm.ahci_runtime_timeout", "pm.ahci_disk_runtime", "pm.ahci_port_runtime",
                   "net.wol", "rf.bluetooth", "rf.wlan", "rf.wwan", "gpu.amdgpu_abm", "usb.autosuspend_ms",
-                  "vm.defrag_mode", "kernel.sched_bore", "sched.feat_preempt_short", "blk.rq_affinity", "net.eee"] {
+                  "vm.defrag_mode", "kernel.sched_bore", "kernel.infinity_smt_divisor", "sched.feat_preempt_short", "blk.rq_affinity", "net.eee"] {
             assert!(find(k).is_some(), "{k}");
         }
         assert!(best_effort(find("pci.aspm_links").unwrap()));

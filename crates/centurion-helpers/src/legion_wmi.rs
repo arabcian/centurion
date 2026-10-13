@@ -530,6 +530,7 @@ fn read_value(f: &Feat) -> Result<i64, String> {
 /// stops exposing the attribute, and only a power-profile reset from Windows
 /// brought it back.
 const ZERO_REFUSED: &str = "0 is refused: the firmware treats it as \"feature off\" and the attribute disappears from sysfs";
+const GPU_OFF: &str = "skipped: the NVIDIA dGPU is off (iGPU-only mode or driver unloaded), its WMI limits are not touched";
 
 // ── operations ──────────────────────────────────────────────────────────────
 
@@ -542,6 +543,9 @@ pub fn status(want_envelope: bool) -> Value {
         "custom": in_custom(),
     });
     let mut vals = serde_json::Map::new();
+    // GPU knobs only while the dGPU is usable (see read_feature): in iGPU-only mode a WMI GPU call
+    // can hang in the kernel, and the Firmware tab asks for this status every time it is shown.
+    let gpu_ok = crate::dgpu_usable();
     for f in FEATURES {
         let sys = sysfs_read(f.attr);
         let mut o = json!({"label": f.label, "unit": f.unit, "via_acpi": f.via_acpi, "attr": f.attr,
@@ -554,7 +558,8 @@ pub fn status(want_envelope: bool) -> Value {
             }
         }
         // Same channel rule as read_value(), reusing the sysfs read above.
-        let value = if f.via_acpi || (f.id != 0 && sys.is_none()) { wmae_get(f.id) } else {
+        let value = if f.via_acpi && !gpu_ok { Err(GPU_OFF.to_owned()) }
+            else if f.via_acpi || (f.id != 0 && sys.is_none()) { wmae_get(f.id) } else {
             sys.as_ref().map(|r| r.cur).ok_or_else(|| format!("{}: not present", f.attr))
         };
         match value {
@@ -599,6 +604,7 @@ pub fn apply(values: &serde_json::Map<String, Value>) -> Value {
             let f = feat(key).ok_or_else(|| format!("unknown knob '{key}'"))?;
             let v = jv.as_i64().ok_or_else(|| format!("{key}: not an integer"))?;
             if v < 1 { return Err(format!("{}: {ZERO_REFUSED}", f.label)); }
+            if f.via_acpi && !crate::dgpu_usable() { return Err(format!("{}: {GPU_OFF}", f.label)); }
             if !f.via_acpi && use_wmae(f) && !verified_ids().contains(&f.id) {
                 return Err(format!("{}: sysfs attribute missing and the WMAE fallback was never verified \
                     against it on this machine/BIOS; refusing", f.label));

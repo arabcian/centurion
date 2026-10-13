@@ -223,9 +223,9 @@ fn post() -> Result<bool, String> {
     };
     if st["ab_a"] == true {
         // An A launch opened no game session: nothing to release, only the game scene to leave.
-        update_scene_state(|st| st["ab_a"] = Value::Null);
-        end_session();
-        leave_game_scene();
+        update_scene_state(|st| { st["ab_a"] = Value::Null; st["ab_owner"] = Value::Null; });
+        // A game started next to the A launch took a real session: the scene is its POST's to leave.
+        if game_refcount() == 0 { end_session(); leave_game_scene(); }
         return Ok(true);
     }
     let v = pkexec(&json!({"op": "release", "owner_pid": OWNER.load(Ordering::SeqCst)}))?;
@@ -244,7 +244,13 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
     // and both switch scenes: serialise the start sequence per user.
     let _start_lock = user_lock("gamemode-start.lock");
     let cfg = read_json(&config_dir().join("tune.json")).unwrap_or(Value::Null);
-    let first = game_refcount() == 0 && read_scene_state()["ab_a"] != true;
+    // An A launch whose launcher died without POST left ab_a behind: every later launch then counted
+    // as a second game (no game scene, no field record) and its POST released nothing.
+    let st0 = read_scene_state();
+    if st0["ab_a"] == true && !ab_launch_live(&st0) {
+        update_scene_state(|st| { st["ab_a"] = Value::Null; st["ab_owner"] = Value::Null; });
+    }
+    let first = game_refcount() == 0 && !ab_launch_live(&read_scene_state());
     // Field record (centurion-calibrate --field): which game ran with which values; with A/B on, every
     // other launch of a game runs at the boot defaults (A) under the same game scene.
     let ab = if first { ab_turn(&cfg, game) } else { None };
@@ -269,7 +275,11 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
     }
     if ab == Some("A") {
         log!("centurion-gamemode: A/B comparison - this launch of {game} runs at the boot defaults (no game preset)");
-        update_scene_state(|st| st["ab_a"] = json!(true));
+        // No game session is opened, so the launcher is recorded here: the GUI counts a live A launch as a
+        // running game (it used to take the game scene for an orphan and leave it ~15 s into the game).
+        let owner = OWNER.load(Ordering::SeqCst);
+        let rec = centurion_helpers::proc_start_time(owner).map_or(Value::Null, |t| json!({"pid": owner, "start": t}));
+        update_scene_state(|st| { st["ab_a"] = json!(true); st["ab_owner"] = rec; });
         return (true, 0);
     }
     match apply(name, "game") {
@@ -294,6 +304,12 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
 }
 
 fn pre(name: Option<&str>) -> i32 { game_start(name, &game_name(None)).1 }
+
+/// An A/B "A" launch is running: ab_a set and its recorded launcher still alive (unrecorded = untracked,
+/// only its POST ends it — same rule as tune-helper's sessions).
+fn ab_launch_live(st: &Value) -> bool {
+    st["ab_a"] == true && centurion_helpers::session_alive(st["ab_owner"]["pid"].as_i64(), st["ab_owner"]["start"].as_u64())
+}
 
 fn now_s() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 

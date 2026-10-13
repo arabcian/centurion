@@ -201,10 +201,12 @@ impl Hwp {
                 if !r.force && cur != r.load_hint && cur != r.normal_hint { continue; }
                 let load = match &r.algo {
                     HwpAlgo::Load { multi, threshold } => (if *multi { self.stat.multi } else { self.stat.single }) >= *threshold,
-                    HwpAlgo::Power(terms) => terms.iter().fold(false, |acc, t| {
+                    // The first term's connective is ignored (see HwpAlgo::Power): folding from
+                    // `false` made a first term with "and": true always false.
+                    HwpAlgo::Power(terms) => terms.iter().enumerate().fold(false, |acc, (i, t)| {
                         let w = self.rapl.get(&t.domain);
                         let c = if t.greater { w > t.watts } else { w < t.watts };
-                        if t.and { acc & c } else { acc | c }
+                        if i == 0 { c } else if t.and { acc & c } else { acc | c }
                     }),
                 };
                 let hint = if load { &r.load_hint } else { &r.normal_hint };

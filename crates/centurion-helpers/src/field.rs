@@ -131,7 +131,7 @@ pub fn rows(recs: &[Value], kernel: &str) -> Vec<Row> {
             let thr = -(m / m0).ln();
             let lat = -((t / t0).ln() + (p / p0).ln()) / 2.0;
             let st = r["start"].as_u64().unwrap_or(0);
-            out.push(Row { phase: Phase::Load, sess, pos: (st - start0) as f64 / span, t: st, kernel: kernel.to_owned(), cfg: cfg_of(r),
+            out.push(Row { phase: Phase::Load, sess, pos: st.saturating_sub(start0) as f64 / span, t: st, kernel: kernel.to_owned(), cfg: cfg_of(r),
                            y: [lat.clamp(-0.5, 0.5), thr.clamp(-0.5, 0.5), f64::NAN, f64::NAN], w: FIELD_WEIGHT,
                            bv: crate::calib::BENCH_VERSION, src: PowerSrc::Rapl, cx: String::new(), tc: f64::NAN, field: true });
         }

@@ -3,12 +3,17 @@
 //!   {"op": "set_coall", "params": {"value": -20}}
 //!   {"op": "set_coper_batch", "params": {"entries": [{ccd,ccx,core,coper}, ...]}}
 //!   {"op": "reset"}
+//!   {"op": "monitor_stream", "params": {"interval_ms": n}}
+//!       read-only: one line of per-CPU VID volts / core watts + package watts
+//!       (ryzen_mon) every interval (500..10000 ms) until stdin reaches EOF.
+//!       The request line must end with '\n' so stdin can stay open.
 //!
 //! ryzenadj is resolved from a fixed list, must be root-owned and not
 //! group/world-writable, runs with a cleared environment and a timeout.
 //! Out-of-range values are rejected, never clamped.
 
 use centurion_helpers::*;
+use centurion_helpers::stream;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::ffi::CString;
@@ -177,12 +182,33 @@ fn op_reset(_: &Map<String, Value>) -> Result<Value, Invalid> {
     Ok(json!({"ok": ok, "message": msg}))
 }
 
+/// Samples until the GUI closes stdin (tab hidden / app gone) or stdout goes away.
+fn monitor_stream(p: &Map<String, Value>) -> Value {
+    let mut s = match centurion_helpers::ryzen_mon::Sampler::open() {
+        Ok(s) => s,
+        Err(e) => return json!({"ok": false, "error": e}),
+    };
+    let interval = p.get("interval_ms").and_then(Value::as_u64).unwrap_or(1000).clamp(500, 10_000);
+    let mut pending = Vec::new();
+    // Hard ceiling: a GUI that hangs with the pipe open cannot keep a root sampler alive forever.
+    let stop_at = Instant::now() + Duration::from_secs(4 * 3600);
+    loop {
+        if !stream::emit_line(&s.sample()) || Instant::now() >= stop_at { break; }
+        if stream::wait_stdin(interval, &mut pending).is_none() { break; }
+    }
+    json!({"ok": true, "stream_end": true})
+}
+
 fn run() -> Value {
-    let req = match read_request(MAX_STDIN_BYTES) { Ok(v) => v, Err(e) => return e };
+    let req = match stream::read_request_line(MAX_STDIN_BYTES) { Ok(v) => v, Err(e) => return e };
     let Some(obj) = req.as_object() else {
         return json!({"ok": false, "error": "payload must be a JSON object"});
     };
     let op = obj.get("op");
+    if op.and_then(Value::as_str) == Some("monitor_stream") {  // read-only: allowed during calibration
+        let empty = Map::new();
+        return monitor_stream(obj.get("params").and_then(Value::as_object).unwrap_or(&empty));
+    }
     let handler: fn(&Map<String, Value>) -> Result<Value, Invalid> =
         match op.and_then(Value::as_str) {
             Some("set_coall") => op_set_coall,
