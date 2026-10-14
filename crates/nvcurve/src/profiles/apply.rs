@@ -15,6 +15,8 @@ pub struct ApplyOutcome {
     pub errors: Vec<String>,
     /// Secondary settings that were rejected or failed — non-fatal.
     pub warnings: Vec<String>,
+    /// Curve deltas actually sent (flatten resolved): what a read-back must find.
+    pub deltas: BTreeMap<i64, i64>,
 }
 
 fn to_u32(v: i64) -> Option<u32> { u32::try_from(v).ok() }
@@ -94,15 +96,21 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
         }
     }
 
-    if p.curve_deltas.is_empty() {
+    if p.curve_deltas.is_empty() && p.flatten().is_none() {
         let (rc, d) = vfcurve::reset_offsets(g, false);
         if rc != 0 { out.errors.push(format!("Curve reset failed ({rc}): {d}")); }
         return Ok(out);
     }
-    let deltas = match p.deltas() {
+    let mut deltas = match p.deltas() {
         Ok(d) => d,
         Err(e) => { out.errors.push(format!("Curve: malformed curve_deltas in profile {name:?}: {e}")); return Ok(out); }
     };
+    if let Some((from, mhz)) = p.flatten() {
+        match vfcurve::read_curve(g, "") {
+            Ok(state) => deltas.extend(vfcurve::flatten_deltas(&state, from, mhz)),
+            Err(e) => { out.errors.push(format!("Curve: flatten needs the live curve: {e}")); return Ok(out); }
+        }
+    }
     let errs = validate_write(&deltas, cfg.max_delta_khz);
     if !errs.is_empty() {
         out.errors.push(format!("Curve: {}", errs.join("; ")));
@@ -118,6 +126,7 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
     }
     let (rc, d) = vfcurve::write_offsets(g, &deltas, false, false, Some(raw.bytes()));
     if rc != 0 { out.errors.push(format!("Curve write failed ({rc}): {d}")); }
+    out.deltas = deltas;
     Ok(out)
 }
 
@@ -127,15 +136,16 @@ pub fn apply_with_retry(gpu_index: usize, name: &str, cfg: &Config, max_retries:
         warn!("Auto-load profile name {name:?} is invalid — skipping GPU {gpu_index}");
         return false;
     };
-    let expected: BTreeMap<i64, i64> = match load_profile(&path) {
-        Ok(p) => p.deltas().unwrap_or_else(|e| { warn!("Profile {name:?} has malformed curve_deltas: {e}"); BTreeMap::new() }),
-        Err(e) => { warn!("Auto-load profile {name:?} unavailable ({e}) — skipping GPU {gpu_index}"); return false; }
-    };
+    if let Err(e) = load_profile(&path) {
+        warn!("Auto-load profile {name:?} unavailable ({e}) — skipping GPU {gpu_index}");
+        return false;
+    }
 
     for attempt in 1..=max_retries {
-        let (errs, warns) = match apply_profile(gpu_index, name, cfg) {
-            Ok(o) => (o.errors, o.warnings),
-            Err(e) => (vec![e], vec![]),
+        // verified against what was written (a flatten is resolved at apply time)
+        let (errs, warns, expected) = match apply_profile(gpu_index, name, cfg) {
+            Ok(o) => (o.errors, o.warnings, o.deltas),
+            Err(e) => (vec![e], vec![], BTreeMap::new()),
         };
         if !warns.is_empty() {
             warn!("Auto-load attempt {attempt}/{max_retries} non-fatal warnings: {}", warns.join("; "));

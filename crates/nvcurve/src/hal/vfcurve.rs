@@ -349,6 +349,22 @@ pub fn global_offset_deltas(curve: &CurveState, delta_khz: i64) -> PointDeltas {
     gpu.iter().enumerate().map(|(k, &i)| (i, if k >= start { delta_khz } else { 0 })).collect()
 }
 
+/// LACT's "Flatten right" resolved against `curve` (read just before the write): every GPU point
+/// from index `from` up gets delta = target − its base, so it runs at exactly `mhz`. The base is
+/// the driver's offset-free V3 base tuple (freq − delta without it). Computing this at write time
+/// instead of from an earlier read is what keeps the top flat: the base curve moves in 7.5/15 MHz
+/// steps with temperature, and stale bases left the top points 8–23 MHz above the target.
+pub fn flatten_deltas(curve: &CurveState, from: i64, mhz: i64) -> PointDeltas {
+    let target = mhz * 1000;
+    curve.points.iter()
+        .filter(|p| p.domain == Domain::Gpu && p.index as i64 >= from && p.freq_khz > 0)
+        .map(|p| {
+            let base = p.base_khz.map_or(i64::from(p.freq_khz) - i64::from(p.delta_khz), i64::from);
+            (p.index as i64, target - base)
+        })
+        .collect()
+}
+
 /// Global core offset (see `global_offset_deltas`).
 pub fn write_global_offset(gpu: Gpu, delta_khz: i64, dry_run: bool) -> (i32, String) {
     let (curve, raw) = match read_curve_with_raw_ct(gpu, "") {
@@ -475,6 +491,28 @@ mod tests {
         d[V3_BASE_SUPPORTED] = 1;
         d[V3_HEADER + V3_STRIDE + V3_BASE_FREQ..][..4].copy_from_slice(&1_500_000u32.to_le_bytes());
         assert_eq!(parse_v3_base(&d).unwrap()[1], 1_500_000);
+    }
+
+    #[test]
+    fn flatten_uses_live_base() {
+        // RTX 5080 read after a stale flatten at point 72 → 2752 MHz: the base moved, the top ran 8–23 MHz high
+        let pt = |index: usize, freq: u32, base: Option<u32>, delta: i32, domain: Domain| VfPoint {
+            index, freq_khz: freq, base_khz: base, volt_uv: 900_000, delta_khz: delta, domain };
+        let st = CurveState { points: vec![
+            pt(71, 2_730_000, Some(2_430_000), 300_000, Domain::Gpu),
+            pt(72, 2_752_000, Some(2_452_000), 300_000, Domain::Gpu),
+            pt(75, 2_760_000, Some(2_520_000), 240_000, Domain::Gpu),
+            pt(126, 2_775_000, Some(3_157_000), -390_000, Domain::Gpu),
+            pt(127, 405_000, Some(405_000), 0, Domain::Memory),
+        ], timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info" };
+        let d = flatten_deltas(&st, 72, 2752);
+        assert_eq!(d.len(), 3);                       // 71 below the anchor and the memory point untouched
+        assert_eq!(d[&72], 300_000);
+        assert_eq!(d[&75], 232_000);                  // 2520 + 232 = 2752, not the stale +240
+        assert_eq!(d[&126], -405_000);
+        // no V3 base: freq − delta
+        let nob = CurveState { points: vec![pt(80, 2_760_000, None, 240_000, Domain::Gpu)], ..st };
+        assert_eq!(flatten_deltas(&nob, 72, 2752)[&80], 232_000);
     }
 
     #[test]

@@ -48,11 +48,16 @@ pub struct ProfileData {
     /// ~90-115 MHz below a locked clock / flat top; this makes the cap land
     /// on the value the user entered. None = 0.
     pub gpu_clock_comp_mhz: Option<i64>,
+    /// Flatten (LACT "Flatten right"): every GPU point from `flatten_from` up runs at
+    /// `flatten_mhz`. Resolved at apply time against the live base curve, so the flat top
+    /// lands exactly on the target even though the base curve moves with temperature.
+    pub flatten_from: Option<i64>,
+    pub flatten_mhz: Option<i64>,
 }
 
 const KNOWN: &[&str] = &["name", "curve_deltas", "gpu_name", "mem_offset_mhz", "power_limit_w",
                          "mem_locked_min_mhz", "mem_locked_max_mhz", "gpu_clock_cap_mhz",
-                         "gpu_clock_comp_mhz"];
+                         "gpu_clock_comp_mhz", "flatten_from", "flatten_mhz"];
 const OBSOLETE: &[&str] = &["gpu_locked_min_mhz", "gpu_locked_max_mhz", "vram_p0_offset_mhz"];
 
 fn opt_int(m: &Map<String, Value>, k: &str) -> Result<Option<i64>, String> {
@@ -92,8 +97,13 @@ impl ProfileData {
             mem_locked_max_mhz: opt_int(&m, "mem_locked_max_mhz")?,
             gpu_clock_cap_mhz: opt_int(&m, "gpu_clock_cap_mhz")?,
             gpu_clock_comp_mhz: opt_int(&m, "gpu_clock_comp_mhz")?,
+            flatten_from: opt_int(&m, "flatten_from")?,
+            flatten_mhz: opt_int(&m, "flatten_mhz")?,
         })
     }
+
+    /// Both flatten fields, or None.
+    pub fn flatten(&self) -> Option<(i64, i64)> { self.flatten_from.zip(self.flatten_mhz) }
 
     pub fn to_value(&self) -> Value {
         json!({
@@ -101,6 +111,7 @@ impl ProfileData {
             "mem_offset_mhz": self.mem_offset_mhz, "power_limit_w": self.power_limit_w,
             "mem_locked_min_mhz": self.mem_locked_min_mhz, "mem_locked_max_mhz": self.mem_locked_max_mhz,
             "gpu_clock_cap_mhz": self.gpu_clock_cap_mhz, "gpu_clock_comp_mhz": self.gpu_clock_comp_mhz,
+            "flatten_from": self.flatten_from, "flatten_mhz": self.flatten_mhz,
         })
     }
 
@@ -172,6 +183,8 @@ mod tests {
         let p = ProfileData { name: "flat".into(), gpu_clock_cap_mhz: Some(2047), ..Default::default() };
         let back = ProfileData::from_value(p.to_value(), "test").unwrap();
         assert_eq!(back.gpu_clock_cap_mhz, Some(2047));
+        let f = ProfileData { name: "f".into(), flatten_from: Some(72), flatten_mhz: Some(2752), ..Default::default() };
+        assert_eq!(ProfileData::from_value(f.to_value(), "test").unwrap().flatten(), Some((72, 2752)));
         // the obsolete Python-era lock fields are still dropped, not mistaken for the cap
         let old = serde_json::json!({"name": "x", "gpu_locked_max_mhz": 1900});
         assert_eq!(ProfileData::from_value(old, "test").unwrap().gpu_clock_cap_mhz, None);

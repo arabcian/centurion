@@ -56,7 +56,7 @@ pub fn apply_profile_verified(gpu_index: usize, name: &str, cfg: &Config, max_re
     // wipe the curve that is currently applied.
     let path = profile_path(&cfg.profile_dir, name).ok_or_else(|| format!("Invalid profile name: {name:?}"))?;
     if !path.is_file() { return Err(format!("Profile not found: {name}")); }
-    let expected = load_profile(&path)?.deltas().map_err(|e| format!("Malformed curve_deltas in profile: {e}"))?;
+    load_profile(&path)?.deltas().map_err(|e| format!("Malformed curve_deltas in profile: {e}"))?;
     let (rc, d) = vfcurve::reset_all_offsets(g, false);
     if rc != 0 { return Err(format!("Reset failed: {d}")); }
     let max_retries = max_retries.max(1);  // 0 attempts would report success without applying anything
@@ -67,6 +67,7 @@ pub fn apply_profile_verified(gpu_index: usize, name: &str, cfg: &Config, max_re
         let out = apply_profile(gpu_index, name, cfg)?;
         errs = out.errors;
         warns = out.warnings;
+        let expected = out.deltas;  // what was written (a flatten is resolved at apply time)
         if errs.is_empty() && !expected.is_empty() {
             match vfcurve::read_clock_offsets(g) {
                 Err(e) => errs = vec![format!("Read-back failed: {e}")],

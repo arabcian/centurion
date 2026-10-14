@@ -406,6 +406,8 @@ fn cmd_profile(a: &Args, cfg: &Config) {
                 mem_locked_max_mhz: existing.as_ref().and_then(|e| e.mem_locked_max_mhz),
                 gpu_clock_cap_mhz: existing.as_ref().and_then(|e| e.gpu_clock_cap_mhz),
                 gpu_clock_comp_mhz: existing.as_ref().and_then(|e| e.gpu_clock_comp_mhz),
+                // a snapshot of the GPU's deltas, not a flatten request
+                flatten_from: None, flatten_mhz: None,
             };
             match save_profile(&cfg.profile_dir, &data) {
                 Ok(p) => println!("Saved profile '{n}' to {}", p.display()),

@@ -70,6 +70,7 @@ fn validate_profile_data(d: &Obj) -> Result<(), String> {
         ("mem_offset_mhz", -100_000, 100_000), ("power_limit_w", 1, 2_000),
         ("mem_locked_min_mhz", 1, 100_000), ("mem_locked_max_mhz", 1, 100_000),
         ("gpu_clock_cap_mhz", 210, 4_000), ("gpu_clock_comp_mhz", 0, nvcurve::safety::MAX_CLOCK_COMP_MHZ),
+        ("flatten_from", 0, MAX_CURVE_POINTS - 1), ("flatten_mhz", 1, 10_000),
     ];
     for (k, v) in d {
         if v.is_null() { continue; }
