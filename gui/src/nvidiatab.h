@@ -118,4 +118,9 @@ private:
     bool firstShow_ = true;
     int readMem_ = 0;                // memory offset last reported by NVML
     QSet<int> flattenSel_;           // selection the Flatten box was last filled from
+    // Pending flatten (LACT "Flatten right"): sent with Apply / saved with the profile, so the helper
+    // resolves it against the live base curve at write time. -1 = none; any edit at/above it drops it.
+    int flatFrom_ = -1, flatMhz_ = 0;
+    void touchFlatten(int i) { if (flatFrom_ >= 0 && i >= flatFrom_) flatFrom_ = -1; }
+    bool flattenPending() const { return flatFrom_ >= 0 && flatFrom_ < base_.size(); }
 };

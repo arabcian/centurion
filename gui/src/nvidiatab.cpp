@@ -309,7 +309,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     pointSpin_->setEnabled(false);
     pointSpin_->setToolTip("Total offset for the selected point(s)");
     connect(pointSpin_, &QSpinBox::valueChanged, this, [this](int v) {
-        for (int i : vf_->selection()) setOffsetClamped(i, v);
+        for (int i : vf_->selection()) { touchFlatten(i); setOffsetClamped(i, v); }
         curveModified_ = true;
         updateCoreOffsetUi();
         recompute();
@@ -328,8 +328,12 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         // LACT's "Flatten right" (VfCurveEditorMsg::FlattenCurve), one to one: the target is the
         // anchor point's current frequency, and from the anchor to the last point every point gets
         // offset = target − its base frequency. No clock lock, no compensation.
+        // The offsets below are only the preview: Apply / the profile send (s, target) and the helper
+        // recomputes them from the base it reads right before the write (the base moves with temperature).
         const int target = int(base_[s].y()) + offsetOf(s);
         for (int i = s; i < base_.size(); ++i) setOffsetClamped(i, target - int(base_[i].y()));
+        flatFrom_ = s;
+        flatMhz_ = target;
         // The driver never runs a point more than ~1000 MHz below stock (it
         // stores deeper offsets but ignores them): say so before applying.
         int first = -1, last = -1;
@@ -359,13 +363,14 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(vf_, &VfCurveWidget::selectionChanged, this, &NvidiaTab::onSelectionChanged);
     connect(vf_, &VfCurveWidget::pointEdited, this, [this](int i, int f) {
         if (i < 0 || i >= base_.size()) return;
+        touchFlatten(i);
         setOffsetClamped(i, f - int(base_[i].y()));
         curveModified_ = true;
         updateCoreOffsetUi();
         recompute();
     });
     connect(vf_, &VfCurveWidget::selectionShifted, this, [this](int d) {
-        for (int i : vf_->selection()) setOffsetClamped(i, offsetOf(i) + d);
+        for (int i : vf_->selection()) { touchFlatten(i); setOffsetClamped(i, offsetOf(i) + d); }
         curveModified_ = true;
         updateCoreOffsetUi();
         recompute();
@@ -433,7 +438,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     coreSpin_ = spin(CORE_MIN, CORE_MAX, " MHz", 96);
     coreSpin_->setToolTip("Core offset for the V/F curve. Like LACT's curve shift it is applied from 30 % of the curve up\n"
                           "(point 38 of 127): the idle / low-voltage points keep their stock clocks.");
-    connect(coreSpin_, &QSpinBox::valueChanged, this, [this](int v) { coreOffset_ = v; recompute(); });
+    connect(coreSpin_, &QSpinBox::valueChanged, this, [this](int v) { coreOffset_ = v; flatFrom_ = -1; recompute(); });
     ch->addWidget(coreSpin_);
     ch->addSpacing(8);
     ch->addWidget(lbl("Memory:", theme::MUTED));
@@ -916,6 +921,7 @@ void NvidiaTab::readCurve() {
         readBtn_->setText("Read Curve");
         QJsonArray pts;
         if (!ok || !loadCurveFile("nvcurve_read.json", t0, &pts)) return;
+        flatFrom_ = -1;
         takeGpuPoints(pts, true);
         log(QStringLiteral("✅ V/F curve loaded (%1 GPU points, %2).")
                 .arg(base_.size()).arg(curveModified_ ? QStringLiteral("per-point offsets")
@@ -940,18 +946,26 @@ void NvidiaTab::applyOffsets() {
                            {"mem_locked_min_mhz", lmax ? QJsonValue(lmin) : QJsonValue()},
                            {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
                            {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
-                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()}};
+                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()},
+                           {"flatten_from", flattenPending() ? QJsonValue(flatFrom_) : QJsonValue()},
+                           {"flatten_mhz", flattenPending() ? QJsonValue(flatMhz_) : QJsonValue()}};
     const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+    const int flatFrom = flattenPending() ? flatFrom_ : -1, flatMhz = flatMhz_;
     QHash<int, int> requested;
     for (int i = 0; i < base_.size(); ++i) requested.insert(i, offsetOf(i));
     const QVector<QPointF> baseBefore = base_;
     runHelper({{"op", "apply_gpu_offsets"}, {"profile_name", SCRATCH}, {"profile_data", data}},
-              "Offsets applied.", "Apply failed", [this, t0, requested, baseBefore](bool ok, const QJsonObject &) {
+              "Offsets applied.", "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz](bool ok, const QJsonObject &) {
         QJsonArray pts;
         if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts)) return;
         takeGpuPoints(pts, true);
         log("✅ Curve re-read from the GPU after apply.");
-        reportClamping(baseBefore, requested);
+        // Flattened points were asked for the target on the base the helper read, not on the old one.
+        QHash<int, int> req = requested;
+        QVector<QPointF> before = baseBefore;
+        if (flatFrom >= 0 && before.size() == base_.size())
+            for (int i = flatFrom; i < base_.size(); ++i) { before[i] = base_[i]; req[i] = flatMhz - int(base_[i].y()); }
+        reportClamping(before, req);
     });
 }
 
@@ -962,6 +976,7 @@ void NvidiaTab::resetCurve() {
     runHelper({{"op", "reset_gpu_curve"}}, "Reset successful.", "Reset failed", [this, t0](bool ok, const QJsonObject &) {
         resetBtn_->setText("Reset Curve");
         if (!ok) return;
+        flatFrom_ = -1;
         profiles_->setCurrentIndex(-1);
         // The op resets the curve and the core cap. Memory offset and VRAM lock are untouched on the GPU,
         // so the memory box follows NVML (below) and the lock boxes keep showing the lock that is still active.
@@ -1047,6 +1062,9 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
     lockMaxSpin_->setValue(data.value("mem_locked_max_mhz").toInt());
     coreCapSpin_->setValue(data.value("gpu_clock_cap_mhz").toInt());
     if (data.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(data.value("gpu_clock_comp_mhz").toInt());
+    flatFrom_ = data.value("flatten_from").toInt(-1);
+    flatMhz_ = data.value("flatten_mhz").toInt();
+    if (flatMhz_ <= 0) flatFrom_ = -1;
     flattenSel_.clear();
     {
         const QSignalBlocker b(flattenSpin_);
@@ -1073,7 +1091,9 @@ void NvidiaTab::saveProfileAs() {
                            {"mem_locked_min_mhz", lmax ? QJsonValue(lmin) : QJsonValue()},
                            {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
                            {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
-                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()}};
+                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()},
+                           {"flatten_from", flattenPending() ? QJsonValue(flatFrom_) : QJsonValue()},
+                           {"flatten_mhz", flattenPending() ? QJsonValue(flatMhz_) : QJsonValue()}};
     runHelper({{"op", "write_nvcurve_profile"}, {"name", name},
                {"content", QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Indented))}},
               "Profile '" + name + "' saved.", "Profile '" + name + "' could not be saved", [this, name](bool ok, const QJsonObject &) {
@@ -1128,6 +1148,8 @@ void NvidiaTab::mirrorProfileLimits(const QString &name) {
     const QJsonObject d = QJsonDocument::fromJson(f.readAll()).object();
     coreCapSpin_->setValue(d.value("gpu_clock_cap_mhz").toInt());
     if (d.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(d.value("gpu_clock_comp_mhz").toInt());
+    flatFrom_ = d.value("flatten_mhz").toInt() > 0 ? d.value("flatten_from").toInt(-1) : -1;
+    flatMhz_ = d.value("flatten_mhz").toInt();
     if (d.value("mem_locked_max_mhz").toInt() > 0) {
         lockMinSpin_->setValue(d.value("mem_locked_min_mhz").toInt());
         lockMaxSpin_->setValue(d.value("mem_locked_max_mhz").toInt());
