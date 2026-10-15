@@ -44,7 +44,12 @@ keep a benchmark that cannot see a knob from voting on it:
   this goal's utility by 2 posterior standard deviations in the joint model. Only
   then do measured effects replace the rule's estimates (in proportion to the
   evidence, as before). For a knob the benchmarks do not see, "measured: no
-  effect" is the benchmark's blindness: the estimate stays.
+  effect" is the benchmark's blindness: the estimate stays. The same holds for the knobs a
+  rule decides when no measurement does (swappiness, page_cluster, the elevator, read-ahead,
+  preemption, THP defrag): on a knob the benchmarks cannot see, the rule decides, and the joint
+  pass takes its value back only on credible contrary evidence. (Before, the zero-effect
+  measured values lost to the boot value and the rule was skipped: "measured: no effect"
+  overturned the rule.)
 - **A rule's choice needs credible evidence against it.** In the joint pass a
   value chosen by a rule pays neither margin nor modesty and goes back to the
   reference only when the model puts it below the reference with confidence
@@ -100,6 +105,11 @@ below), each by at most half, upwards only, and only with five hours of history:
 | footprint | share of uptime some task stalled on memory | 1 % |
 | storage | share of uptime some task waited on I/O | 4 % |
 | load | share of uptime a runnable task waited for a CPU | 20 % |
+
+For the gaming goal the **heat** share leans the same way on how the machine is actually
+played: the share of recorded game time (centurion-gamemode's session log, the newest 40
+finished sessions, at least 5 sessions and 2 h) that ran past a 5-minute heat-soak ramp, half
+the distance at most. Two-hour evenings move it from 0.5 towards 0.95, quick matches towards 0.
 
 Every change is a line in the report's notes. A weight you set is used as given.
 
@@ -163,6 +173,29 @@ On battery the session first measures the reading's update period, and every idl
 window then lasts at least four updates, drops the first one (it may straddle the knob
 change) and averages fresh updates only.
 
+**Drive temperature (IO phase).** The storage suite heats the drive, not the die: a PCIe 4/5
+NVMe drive warms by tens of °C over a few runs and throttles near its warning temperature
+(WCTEMP, the NVMe hwmon's `temp1_max`; drivetemp for ATA disks). IO rows now carry the
+*drive's* start temperature as their temperature covariate (they carried the CPU's, which says
+nothing about a drive; older IO rows lose theirs when the file is read), every IO run waits
+(at most 20 s, and never longer than the drive keeps cooling) until the drive is back within
+5 °C of the phase's first start and 8 °C under its warning temperature, and a run that ends at
+or above the warning temperature counts 30 %.
+
+**Forced idle and hidden samplers.** The firmware can park CPUs in forced idle through the ACPI
+processor aggregator (`acpi_pad`, `ACPI000C`, a platform power-capping request); the scheduler
+does not see those CPUs as busy, so the run meter cannot either. `idlecpus` is read before and
+after every run: a run measured while CPUs were forced idle counts 10 %, and the session and
+autotune say so. Kernel-side samplers that wake every CPU from kernel timers are named at the
+start of a session (CoreFreq's driver while corefreqd holds it): the per-run CPU meter counts
+user-space programs only.
+
+**Power adapter.** On a USB-C (USB-PD) charger the firmware caps CPU and GPU power whatever the
+power profile and the limits read. The charger ("usb-c 140 W") is part of the session's context
+and of the `ctx.limits` pseudo-knob; on the barrel adapter nothing is added, so the contexts of
+earlier sessions keep their ids. Autotune reads AC decisions in a barrel-adapter session's
+context first.
+
 **Display.** Backlight level and panel DPMS state are recorded per run; a run measured
 under another display state than its session's first run (dimmed, blanked) counts 20 %
 and the session says so once - turn screen dimming off for a calibration.
@@ -203,7 +236,7 @@ autotune credits the power objective as throughput: the power weight grows by
 - `c` = the share of a CPU watt the GPU gets, `eps` = the GPU clock gained per relative
   GPU watt, both measured by `sudo centurion-calibrate --gpu-coupling` while a GPU-bound game or
   benchmark runs (the CPU is switched between two power levels - EPP performance / power,
-  else boost on / off - in 15 s blocks; GPU power and clock are read with nvidia-smi; the
+  else - and while dynamic EPP owns EPP - boost on / off - in 15 s blocks; GPU power and clock are read with nvidia-smi; the
   result is marked rough when the GPU was not fully busy in both states);
 - until then `c` comes from the firmware's Dynamic Boost ceiling (at most what the boost
   can move for a 30 % CPU saving) and `eps` = 0.35 is an assumption, which the report says;
