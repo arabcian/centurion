@@ -6,6 +6,7 @@ use super::native::{load_profile, profile_path};
 use crate::config::Config;
 use crate::hal::{gpu, limits, monitoring, snapshot, vfcurve};
 use crate::safety::{validate_limits, validate_write, LimitField, Limits, MAX_CLOCK_COMP_MHZ};
+use crate::types::Domain;
 use log::{error, info, warn};
 use std::collections::BTreeMap;
 
@@ -105,22 +106,35 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
         Ok(d) => d,
         Err(e) => { out.errors.push(format!("Curve: malformed curve_deltas in profile {name:?}: {e}")); return Ok(out); }
     };
+    // One live read serves the domain filter, the flatten, the snapshot and the write baseline.
+    let (state, raw) = match vfcurve::read_curve_with_raw_ct(g, "") {
+        Ok(v) => v,
+        Err(e) => { out.errors.push(format!("Curve: cannot read the live curve: {e}")); return Ok(out); }
+    };
+    // The memory clock is set only through NVML (mem_offset_mhz). ClockBoostTable deltas on
+    // memory-domain points are a second, separate offset that the driver ADDS to the NVML one —
+    // legacy (pre-NVML) profiles and `nvcurve profile save` carry them, so every autoload /
+    // gamemode / scene apply overclocked the VRAM twice. Never write them.
+    let mem_pts: Vec<i64> = deltas.keys().copied().filter(|&i| usize::try_from(i).ok()
+        .and_then(|i| state.points.get(i)).map_or(false, |pt| pt.domain == Domain::Memory)).collect();
+    if !mem_pts.is_empty() {
+        for i in &mem_pts { deltas.remove(i); }
+        out.warnings.push(format!("Ignored memory-domain curve_deltas (points {mem_pts:?}): the memory \
+                                   offset is mem_offset_mhz only — re-save this profile to drop them"));
+    }
     if let Some((from, mhz)) = p.flatten() {
-        match vfcurve::read_curve(g, "") {
-            Ok(state) => deltas.extend(vfcurve::flatten_deltas(&state, from, mhz)),
-            Err(e) => { out.errors.push(format!("Curve: flatten needs the live curve: {e}")); return Ok(out); }
-        }
+        deltas.extend(vfcurve::flatten_deltas(&state, from, mhz));
+    }
+    if deltas.is_empty() {
+        let (rc, d) = vfcurve::reset_offsets(g, false);
+        if rc != 0 { out.errors.push(format!("Curve reset failed ({rc}): {d}")); }
+        return Ok(out);
     }
     let errs = validate_write(&deltas, cfg.max_delta_khz);
     if !errs.is_empty() {
         out.errors.push(format!("Curve: {}", errs.join("; ")));
         return Ok(out);
     }
-    // One table read serves both the snapshot and the write baseline.
-    let raw = match vfcurve::read_clock_table_raw(g) {
-        Ok(r) => r,
-        Err(e) => { out.errors.push(format!("Curve write failed: cannot read ClockBoostTable: {e}")); return Ok(out); }
-    };
     if cfg.auto_snapshot && snapshot::save(g, &gname, &cfg.snapshot_dir, cfg.max_snapshots, Some(raw.bytes())).is_none() {
         warn!("Auto-snapshot failed");
     }

@@ -98,11 +98,33 @@ fn register_temp(gpu: Gpu, offset: u32) -> Option<i32> {
 /// Per-partition memory sensors: up to 9 partitions, two slot pairs each;
 /// a status bit says which slot holds data; clamshell boards carry a second
 /// (back-side) reading in the upper byte.
+/// Partitions that answered with a real status word, and the clamshell bit, per GPU. Probed
+/// once: polling the status register of an absent / floorswept partition every 2 s is a
+/// priv-ring access to a unit that does not exist (0xBADF… PRI error) — on GSP drivers a
+/// stream of those is a GPU fault source. Re-probed only while no partition has answered
+/// (the FB can be clock-gated at idle and poison every read).
+struct PartCache { clamshell: bool, parts: Vec<u32> }
+static PARTS: Mutex<Option<HashMap<Gpu, PartCache>>> = Mutex::new(None);
+
+fn partition_layout(gpu: Gpu) -> (bool, Vec<u32>) {
+    if let Some(c) = PARTS.lock().unwrap_or_else(|p| p.into_inner()).as_ref().and_then(|m| m.get(&gpu)) {
+        return (c.clamshell, c.parts.clone());
+    }
+    let clamshell = read_register(gpu, REG_GDDR_CLAMSHELL).map_or(false, |v| (v >> 22) & 1 == 1);
+    let parts: Vec<u32> = (0..=8u32).filter(|&p| read_register(gpu, REG_GDDR_TEMP_STATUS + p * 0x4000)
+        .map_or(false, |s| s & POISON_MASK != POISON)).collect();
+    if !parts.is_empty() {
+        PARTS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new)
+            .insert(gpu, PartCache { clamshell, parts: parts.clone() });
+    }
+    (clamshell, parts)
+}
+
 fn vram_partitions(gpu: Gpu) -> Vec<(String, i32)> {
     let parse = |v: u64| (2 * v.min(0x50) as i32) - 40;
-    let clamshell = read_register(gpu, REG_GDDR_CLAMSHELL).map_or(false, |v| (v >> 22) & 1 == 1);
+    let (clamshell, parts) = partition_layout(gpu);
     let mut out = Vec::new();
-    for part in 0..=8u32 {
+    for part in parts {
         let Ok(status) = read_register(gpu, REG_GDDR_TEMP_STATUS + part * 0x4000) else { continue };
         if status & POISON_MASK == POISON { continue; }
         let letter = char::from(b'A' + part as u8);

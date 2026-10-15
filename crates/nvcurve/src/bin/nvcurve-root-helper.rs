@@ -328,6 +328,12 @@ fn run() -> Value {
     let Some(handler) = dispatch(op) else {
         return json!({"ok": false, "error": format!("Unknown or disallowed op: {}", obj.get("op").cloned().unwrap_or(Value::Null))});
     };
+    let _lock = if op == "read_sensors" { None } else {
+        match ops::gpu_write_lock() {
+            Ok(f) => Some(f),
+            Err(e) => return json!({"ok": false, "error": e}),
+        }
+    };
     match handler(obj) {
         Ok(m) => json!({"ok": true, "message": m}),
         Err(e) => json!({"ok": false, "error": e}),

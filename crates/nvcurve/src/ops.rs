@@ -11,6 +11,26 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::time::Duration;
 
+const WRITE_LOCK: &str = "/run/nvcurve.lock";
+
+/// Cross-process lock around GPU writes. The root helper (GUI, scenes, centurion-gamemode) and
+/// `nvcurve autoload` / CLI writes are separate processes: two of them interleaving a reset with
+/// another's apply (or NVML lock/offset changes with a curve write) left a mixed state no profile
+/// describes. Held until the returned File is dropped; waits up to 60 s for the other writer.
+pub fn gpu_write_lock() -> Result<std::fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(WRITE_LOCK)
+        .map_err(|e| format!("cannot open {WRITE_LOCK}: {e}"))?;
+    for _ in 0..600 {
+        if unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&f), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(f);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err("another nvcurve GPU write is still running (waited 60 s)".into())
+}
+
 /// `{gpu, current_voltage_uV, vf_curve:[{index,freq_kHz,volt_uV,freq_offset_kHz,domain}]}`
 /// — the shape the GUI reads from /run/nvcurve-gui/*.json.
 pub fn curve_json(gpu_name: &str, state: &CurveState, voltage: Option<u32>) -> Value {

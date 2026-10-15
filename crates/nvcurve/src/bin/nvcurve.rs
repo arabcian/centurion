@@ -394,7 +394,9 @@ fn cmd_profile(a: &Args, cfg: &Config) {
             let idx = a.gpu();
             let (g, gname) = open_gpu(a);
             let s = vfcurve::read_curve(g, &gname).unwrap_or_else(|e| die(1, format!("Failed to read curve: {e}")));
-            let curve_deltas: Map<String, Value> = s.points.iter().filter(|p| p.delta_khz != 0)
+            // GPU-core points only: the memory offset is saved as mem_offset_mhz (NVML); memory-domain
+            // ClockBoostTable deltas would be applied on top of it.
+            let curve_deltas: Map<String, Value> = s.points.iter().filter(|p| p.domain == Domain::Gpu && p.delta_khz != 0)
                 .map(|p| (p.index.to_string(), json!(p.delta_khz))).collect();
             // NVML can't report an active mem lock; carry it over from an existing profile.
             let existing = profile_path(&cfg.profile_dir, n).filter(|p| p.exists()).and_then(|p| load_profile(&p).ok());
@@ -541,6 +543,13 @@ fn main() {
     let default_level = if a.pos.first().map(String::as_str) == Some("autoload") { log::Level::Info } else { log::Level::Warn };
     logging::init(logging::level_from_env(default_level), false);
     let cfg = Config::load(Path::new(PERSISTENT_CONFIG_FILE));
+    // GPU writes take the same lock as nvcurve-root-helper (non-root runs re-exec through sudo first).
+    let (c0, c1) = (a.pos.first().map(String::as_str), a.pos.get(1).map(String::as_str));
+    let writes = matches!((c0, c1), (Some("write" | "reset-all" | "autoload"), _)
+        | (Some("snapshot"), Some("restore")) | (Some("profile"), Some("apply"))
+        | (Some("memlock"), Some("set" | "reset")) | (Some("powermizer"), Some("set")));
+    let _lock = (writes && !a.flag("--dry-run") && unsafe { libc::geteuid() } == 0)
+        .then(|| ops::gpu_write_lock().unwrap_or_else(|e| die(1, format!("nvcurve: {e}"))));
     match a.pos.first().map(String::as_str) {
         Some("read") => cmd_read(&a),
         Some("inspect") => cmd_inspect(&a),
