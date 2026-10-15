@@ -29,6 +29,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <array>
+#include <vector>
 #include <cmath>
 #include <dlfcn.h>
 
@@ -180,10 +181,18 @@ private:
     }
     std::optional<int> partitionsMax() {
         std::optional<int> best;
-        const bool clamshell = reg(0x00900200).value_or(0) >> 22 & 1;
         auto parse = [](unsigned long long v) { return 2 * int(std::min<unsigned long long>(v, 0x50)) - 40; };
         auto poisoned = [](unsigned long long v) { return (v & 0xFFFF0000ull) == 0xBADF0000ull; };
-        for (unsigned p = 0; p <= 8; ++p) {
+        // Probe the partition layout once (see hal/sensors.rs partition_layout): absent /
+        // floorswept partitions are not read again on every poll.
+        if (parts_.empty()) {
+            clamshell_ = reg(0x00900200).value_or(0) >> 22 & 1;
+            for (unsigned p = 0; p <= 8; ++p)
+                if (auto st = reg(0x009024D0 + p * 0x4000); st && !poisoned(*st)) parts_.push_back(p);
+            if (parts_.empty()) return std::nullopt;
+        }
+        const bool clamshell = clamshell_;
+        for (unsigned p : parts_) {
             auto st = reg(0x009024D0 + p * 0x4000);
             if (!st || poisoned(*st)) continue;
             for (const auto &pair : {std::array{std::pair{0x0u, 24u}, std::pair{0x8u, 26u}},
@@ -210,6 +219,8 @@ private:
     int (*therm_)(void *, Therm *) = nullptr;
     int (*reg_)(void *, RegOps *) = nullptr;
     int mask_ = 0;
+    std::vector<unsigned> parts_;
+    bool clamshell_ = false;
 };
 
 static QString throttleText(unsigned long long m) {
@@ -486,6 +497,13 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(capCompSpin_, &QSpinBox::valueChanged, this, [](int v) {
         QSettings(nvStatePath(), QSettings::IniFormat).setValue("core_cap_comp_mhz", v);
     });
+    // Graph overlay: how far up the curve the compensation lets the GPU climb.
+    auto syncCapComp = [this] {
+        vf_->setCapComp(coreCapSpin_->value() >= 210 ? coreCapSpin_->value() : 0, capCompSpin_->value());
+    };
+    connect(coreCapSpin_, &QSpinBox::valueChanged, this, syncCapComp);
+    connect(capCompSpin_, &QSpinBox::valueChanged, this, syncCapComp);
+    syncCapComp();
     ch2->addWidget(capCompSpin_);
     auto *bCap = new QPushButton("Cap"), *bUncap = new QPushButton("Uncap");
     connect(bCap, &QPushButton::clicked, this, [this] {

@@ -107,6 +107,46 @@ void VfCurveWidget::setPoints(const QVector<QPointF> &pts) {
     Q_EMIT selectionChanged();
 }
 
+void VfCurveWidget::setCapComp(int capMhz, int compMhz) {
+    if (capMhz == capMhz_ && compMhz == compMhz_) return;
+    capMhz_ = capMhz;
+    compMhz_ = compMhz;
+    update();
+}
+
+bool VfCurveWidget::compSpan(double *ref, int *from, int *to) const {
+    if (compMhz_ <= 0 || pts_.isEmpty()) return false;
+    const int n = pts_.size();
+    int s = -1;
+    if (!sel_.isEmpty()) {
+        s = sel_.contains(cur_) ? cur_ : *std::min_element(sel_.begin(), sel_.end());
+        if (s >= n) return false;
+        *ref = pts_[s].y();
+    } else if (capMhz_ >= 210) {
+        *ref = capMhz_;
+        // The cap lands on the lowest-voltage point that reaches it (or the top of the curve).
+        int top = 0;
+        for (int i = 0; i < n; ++i) {
+            if (pts_[i].y() > pts_[top].y()) top = i;
+            if (s < 0 && pts_[i].y() >= capMhz_) s = i;
+        }
+        if (s < 0) s = top;
+    } else {
+        return false;
+    }
+    // With the clock locked at ref+comp the GPU runs the lowest-voltage point that reaches
+    // it; if none does, it tops out at the highest point of the curve.
+    const double want = *ref + compMhz_;
+    int e = -1, top = s;
+    for (int i = s; i < n; ++i) {
+        if (pts_[i].y() > pts_[top].y()) top = i;
+        if (pts_[i].y() >= want) { e = i; break; }
+    }
+    *from = s;
+    *to = e < 0 ? top : e;
+    return true;
+}
+
 void VfCurveWidget::selectAll() {
     sel_.clear();
     for (int i = 0; i < pts_.size(); ++i) sel_.insert(i);
@@ -201,15 +241,49 @@ void VfCurveWidget::paintEvent(QPaintEvent *) {
         return;
     }
     p.setClipRect(r.adjusted(-6, -6, 6, 6));
+    double cRef = 0;
+    int cFrom = -1, cTo = -1;
+    const bool comp = compSpan(&cRef, &cFrom, &cTo);
+    if (comp) {
+        // Band between the reference and reference + compensation.
+        const double y0 = toPixel({0, cRef}).y(), y1 = toPixel({0, cRef + compMhz_}).y();
+        QColor band = C(theme::WARN);
+        band.setAlpha(26);
+        p.fillRect(QRectF(QPointF(r.left(), y1), QPointF(r.right(), y0)), band);
+        p.setPen(QPen(C(theme::MUTED), 1, Qt::DashLine));
+        p.drawLine(QPointF(r.left(), y0), QPointF(r.right(), y0));
+        p.setPen(QPen(C(theme::WARN), 1.3, Qt::DashLine));
+        p.drawLine(QPointF(r.left(), y1), QPointF(r.right(), y1));
+        p.drawText(QRectF(r.right() - 64, y1 - 14, 60, 12), Qt::AlignRight | Qt::AlignBottom,
+                   QStringLiteral("+%1").arg(compMhz_));
+    }
     QPainterPath path(toPixel(pts_[0]));
     for (int i = 1; i < pts_.size(); ++i) path.lineTo(toPixel(pts_[i]));
     p.setPen(QPen(C(theme::ACCENT), 2.2));
     p.setBrush(Qt::NoBrush);
     p.drawPath(path);
+    if (comp && cTo > cFrom) {
+        // Curve stretch the compensation adds on top of the reference point.
+        QPainterPath seg(toPixel(pts_[cFrom]));
+        for (int i = cFrom + 1; i <= cTo; ++i) seg.lineTo(toPixel(pts_[i]));
+        QPen sp(C(theme::WARN), 4.5);
+        sp.setCapStyle(Qt::RoundCap);
+        p.setPen(sp);
+        p.drawPath(seg);
+    }
 
     p.setPen(QPen(C(theme::BG0), 1.2));
     p.setBrush(C(theme::INFO));
     for (const QPointF &v : pts_) p.drawEllipse(toPixel(v), 4.2, 4.2);
+    if (comp) {
+        p.setPen(QPen(C(theme::BG0), 1.2));
+        p.setBrush(C(theme::WARN));
+        for (int i = cFrom + 1; i <= cTo; ++i) p.drawEllipse(toPixel(pts_[i]), 4.6, 4.6);
+        // Point the GPU actually reaches with the compensated cap.
+        p.setPen(QPen(C(theme::DANGER), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(toPixel(pts_[cTo]), 9.5, 9.5);
+    }
     p.setPen(QPen(C(theme::DANGER), 2));
     p.setBrush(C(theme::WARN));
     for (int i : sel_) if (i < pts_.size()) p.drawEllipse(toPixel(pts_[i]), 6.5, 6.5);

@@ -35,6 +35,12 @@ public:
     /// Zooms keeping voltage `anchorMv` under the same pixel.
     void zoomAt(double factor, double anchorMv);
 
+    /// Core cap compensation overlay. Reference = the selected point's frequency
+    /// (the current point), else `capMhz` (0 = off). The overlay shows the band
+    /// ref … ref+comp and the curve stretch the compensation lets the GPU climb:
+    /// up to the lowest-voltage point that reaches ref+comp.
+    void setCapComp(int capMhz, int compMhz);
+
 public Q_SLOTS:
     void selectAll();
     void clearSelection();
@@ -80,4 +86,7 @@ private:
     bool band_ = false;       // Ctrl/Shift + drag on empty space: rubber-band selection
     QPointF bandStart_, bandEnd_;
     QSet<int> bandBase_;      // selection before the band (the band adds to it)
+    int capMhz_ = 0, compMhz_ = 0;
+    /// ref frequency, first point at ref, point reached at ref+comp; false = no overlay.
+    bool compSpan(double *ref, int *from, int *to) const;
 };
