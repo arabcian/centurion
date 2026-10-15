@@ -180,6 +180,58 @@ impl Weights {
         }
         (self, notes)
     }
+    /// The gaming goal's heat share leaned towards how this machine is actually played
+    /// (`game_heat_share`: the share of recorded game time past the heat-soak ramp), half the
+    /// distance at most. The default 0.5 assumes hour-long sessions; quick matches between other
+    /// work run mostly cool, long evenings mostly heat-soaked. Other goals keep theirs.
+    pub fn adapted_heat(mut self, goal: Goal, share: Option<GameHeat>) -> (Weights, Option<String>) {
+        let Some(h) = share.filter(|_| goal == Goal::Gaming) else { return (self, None) };
+        let old = self.heat;
+        let new = round2((old + (h.share - old) * 0.5).clamp(0.0, 1.0));
+        if (new - old).abs() < 0.05 { return (self, None); }
+        self.heat = new;
+        (self, Some(format!("Weights: heat {old:.2} -> {new:.2}: {:.0} % of {:.0} h of recorded play ({} game sessions) ran past the {} min heat-soak ramp.",
+                            h.share * 100.0, h.hours, h.sessions, HEAT_RAMP_S / 60)))
+    }
+}
+
+/// A die and its heat pipes take minutes to soak: the first part of a game session runs cool.
+const HEAT_RAMP_S: u64 = 300;
+
+/// How heat-soaked this machine's games run (see `game_heat_share`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GameHeat { pub share: f64, pub sessions: usize, pub hours: f64 }
+
+/// Share of recorded game time past the heat-soak ramp, from centurion-gamemode's session log
+/// (`field::sessions`): the newest 40 finished sessions, launches shorter than a minute left out,
+/// a session counted at most 12 h. None below 5 sessions or 2 h of play.
+pub fn game_heat_share(sessions: &[Value]) -> Option<GameHeat> {
+    let mut d: Vec<(u64, u64)> = sessions.iter().filter_map(|s| {
+        let (a, b) = (s["start"].as_u64()?, s["end"].as_u64()?);
+        (b > a + 60).then(|| (a, (b - a).min(12 * 3600)))
+    }).collect();
+    d.sort();
+    let d = &d[d.len().saturating_sub(40)..];
+    let total: u64 = d.iter().map(|x| x.1).sum();
+    if d.len() < 5 || total < 2 * 3600 { return None; }
+    let hot: u64 = d.iter().map(|x| x.1.saturating_sub(HEAT_RAMP_S)).sum();
+    Some(GameHeat { share: hot as f64 / total as f64, sessions: d.len(), hours: total as f64 / 3600.0 })
+}
+
+/// The game-session log of the user autotune runs for (pkexec caller, sudo user, else the caller).
+fn game_sessions() -> Vec<Value> {
+    let home = std::env::var("PKEXEC_UID").ok().or_else(|| std::env::var("SUDO_USER").ok()).filter(|u| !u.is_empty())
+        .and_then(|u| crate::calctx::home_of(&u))
+        .or_else(|| (unsafe { libc::geteuid() } != 0).then(|| std::env::var("HOME").ok()).flatten());
+    let Some(home) = home else { return Vec::new() };
+    // A regular file only, read with a cap (may run as root through pkexec: a symlink to a device
+    // must not make it read forever).
+    use std::io::Read;
+    let Ok(f) = std::fs::File::open(crate::field::session_log(Path::new(&home))) else { return Vec::new() };
+    if !f.metadata().map_or(false, |m| m.is_file()) { return Vec::new(); }
+    let mut text = String::new();
+    if f.take(8 << 20).read_to_string(&mut text).is_err() { return Vec::new(); }
+    crate::field::sessions(&text)
 }
 
 /// Effect of one candidate relative to the reference, per objective. Positive
@@ -1026,6 +1078,13 @@ impl<'a> Rules<'a> {
         self.choose(key, leave(), alts);
         true
     }
+    /// `calibrated_choice` for a knob a rule knows (swappiness, page_cluster, elevator,
+    /// read-ahead, preemption, defrag): the measurements decide only where the benchmarks can see
+    /// the knob. On a blind knob every measured value scores zero, so the boot value won and the
+    /// rule was skipped - "measured: no effect" overturned the rule, the opposite of what
+    /// `SEEN_Z` promises. The rule decides then; the joint pass still takes its value back on
+    /// credible contrary evidence.
+    fn measured_rule(&mut self, key: &'static str) -> bool { self.seen(key) && self.calibrated_choice(key) }
     /// Value in effect after this rule set: decided, else live.
     fn eff(&self, key: &str) -> Option<String> {
         self.out.iter().find(|d| d.key == key).map(|d| vstr(&d.value)).or_else(|| self.p.cur(key).map(str::to_owned))
@@ -1422,7 +1481,7 @@ fn thp_rules(r: &mut Rules) {
         }
     }
     // Synchronous compaction on every fault stalls the faulting thread.
-    if r.calibrated_choice("thp.defrag") {
+    if r.measured_rule("thp.defrag") {
     } else if p.cur("thp.defrag") == Some("always") {
         r.set("thp.defrag", "madvise", "defrag=always stalls every faulting thread on compaction; madvise (kernel default) limits that to opted-in ranges.");
     }
@@ -1537,18 +1596,18 @@ fn memory_rules(r: &mut Rules) {
     // Swap cost model (kernel doc: swappiness = relative I/O cost, > 100 for in-memory swap).
     match p.swap {
         SwapKind::Zram => {
-            if !r.calibrated_choice("vm.swappiness") {
+            if !r.measured_rule("vm.swappiness") {
                 r.set_live("vm.swappiness", 150, "zram swap costs a compression, not I/O: cold anonymous pages go there before hot page cache (kernel doc: > 100 for in-memory swap).");
             }
-            if !r.calibrated_choice("vm.page_cluster") { r.set_live("vm.page_cluster", 0, "zram has no seek cost: no swap readahead."); }
+            if !r.measured_rule("vm.page_cluster") { r.set_live("vm.page_cluster", 0, "zram has no seek cost: no swap readahead."); }
             r.set_live("zswap.enabled", "0", "zram is the swap device: zswap in front of it would compress twice.");
         }
         SwapKind::None => {}
         k => {
             let hdd = k == SwapKind::Hdd;
-            if !r.calibrated_choice("vm.swappiness") { r.set_live("vm.swappiness", if hdd { 60 } else { 100 }, if hdd { "Swap on a spinning disk: keep swap-outs rarer than cache drops (kernel default)." }
+            if !r.measured_rule("vm.swappiness") { r.set_live("vm.swappiness", if hdd { 60 } else { 100 }, if hdd { "Swap on a spinning disk: keep swap-outs rarer than cache drops (kernel default)." }
                        else { "zswap absorbs swap-outs in RAM: equal cost for anon and file pages." }); }
-            if !r.calibrated_choice("vm.page_cluster") { r.set_live("vm.page_cluster", if hdd { 3 } else { 1 }, "Swap readahead sized for the device (8 pages on HDD, 2 on flash)."); }
+            if !r.measured_rule("vm.page_cluster") { r.set_live("vm.page_cluster", if hdd { 3 } else { 1 }, "Swap readahead sized for the device (8 pages on HDD, 2 on flash)."); }
             r.set_live("zswap.enabled", "1", "Disk swap present: zswap keeps most swapped pages compressed in RAM.");
             r.set_live("zswap.shrinker_enabled", "1", "Cold pool pages move on to disk proactively.");
             if r.is(Gaming) { r.set_live("zswap.compressor", "lz4", "lz4: fastest decompression when a swapped page is touched again."); }
@@ -1568,7 +1627,7 @@ fn io_rules(r: &mut Rules) {
     use Goal::*;
     let p = r.p;
     // Measured on this machine: pick by score instead of by rule.
-    if r.calibrated_choice("blk.scheduler") {
+    if r.measured_rule("blk.scheduler") {
     } else if p.rotational {
         r.set_live("blk.scheduler", if matches!(r.g, Gaming | Desktop) { "bfq" } else { "mq-deadline" },
               if matches!(r.g, Gaming | Desktop) { "A spinning disk is present: bfq keeps interactive reads responsive under competing I/O." }
@@ -1576,7 +1635,7 @@ fn io_rules(r: &mut Rules) {
     } else {
         r.set_live("blk.scheduler", "none", "Flash only: no reordering, lowest per-request latency and CPU cost.");
     }
-    if !r.calibrated_choice("blk.read_ahead_kb") {
+    if !r.measured_rule("blk.read_ahead_kb") {
         match r.g {
             Throughput => r.set("blk.read_ahead_kb", if p.rotational { 2048 } else { 512 }, "Larger read-ahead for sequential reads (sources, archives); costs page cache on random access."),
             Gaming => r.set("blk.read_ahead_kb", 256, "Games stream assets sequentially from large packs: 256 KiB read-ahead."),
@@ -1966,7 +2025,7 @@ fn sched_rules(r: &mut Rules) {
         Desktop => (if lazy { "lazy" } else { "full" }, "Lazy preemption keeps full's wake-up latency for RT/interactive work with fewer forced switches."),
         Throughput | PowerSave => (if lazy { "lazy" } else { "voluntary" }, "Fewer involuntary context switches: more work per slice."),
     };
-    if !r.calibrated_choice("sched.preempt") { r.set("sched.preempt", pre, pw); }
+    if !r.measured_rule("sched.preempt") { r.set("sched.preempt", pre, pw); }
     // EEVDF base slice stays at the kernel default: EEVDF already gives
     // latency-sensitive tasks earlier deadlines, and no measured source backs
     // a fixed shorter/longer global slice for these goals.
@@ -2246,10 +2305,16 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let mut p = Profile::gather();
     p.load_field_risk();
     p.target_profile = opts["profile"].as_str().filter(|s| !s.is_empty() && s.len() <= 32).map(str::to_owned);
-    let (w, notes) = Weights::for_goal(goal).adapted(&p.evidence);
+    let (w, mut notes) = Weights::for_goal(goal).adapted(&p.evidence);
+    let heat = if goal == Goal::Gaming { game_heat_share(&game_sessions()) } else { None };
+    let (w, hn) = w.adapted_heat(goal, heat);
+    if let Some(n) = hn { notes.push(("heat", n)); }
     let w = w.with_overrides(weights);
     let mut out = autotune_weighted(goal, &p, w);
-    let notes: Vec<Value> = notes.into_iter().filter(|(k, _)| weights.get(k).is_none()).map(|(_, n)| Value::String(n)).collect();
+    let mut notes: Vec<Value> = notes.into_iter().filter(|(k, _)| weights.get(k).is_none()).map(|(_, n)| Value::String(n)).collect();
+    if let Some(n) = crate::bench::forced_idle_cpus().filter(|n| *n > 0) {
+        notes.push(Value::String(format!("Firmware is forcing {n} CPU(s) idle right now (ACPI processor aggregator, a platform power-capping request): while it lasts it overrules the CPU settings here - check the power adapter and the firmware power limits.")));
+    }
     if let (false, Some(c)) = (notes.is_empty(), out["constraints"].as_array_mut()) { c.splice(0..0, notes); }
     if opts["explore"] != false && p.calibration.as_ref().map_or(false, |c| !c.rows.is_empty()) {
         let (alts, sens, pred, cut) = explore(goal, &p, w);
@@ -2950,6 +3015,41 @@ mod tests {
     }
 
     #[test]
+    fn blind_benchmarks_do_not_overturn_a_rule_backed_knob() {
+        // zram swap: the rule wants swappiness 150; the calibration measured 150 against the boot 60
+        // and saw nothing (noise only). Before, the zero-effect candidates lost to the boot value and
+        // the rule was skipped: swappiness went back to 60.
+        let p = gaining_signature(&[("vm.swappiness", "60", "150"), ("vm.page_lock_unfairness", "5", "3")], 0.0);
+        let (d, _, notes) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
+        assert_eq!(get(&d, "vm.swappiness"), Some(&json!(150)), "{notes:?}");
+        // Seen and credibly harmful: the measurement decides.
+        let p = gaining_signature(&[("vm.swappiness", "60", "150"), ("vm.page_lock_unfairness", "5", "3")], -0.2);
+        let (d, _, _) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
+        assert_ne!(get(&d, "vm.swappiness"), Some(&json!(150)), "{d:?}");
+    }
+
+    #[test]
+    fn game_sessions_set_the_gaming_heat_share() {
+        let s = |start: u64, mins: u64| json!({"id": format!("s{start}"), "start": start, "end": start + mins * 60, "game": "g"});
+        // Ten two-hour evenings: almost all of it heat-soaked.
+        let long: Vec<Value> = (0..10).map(|i| s(i * 86_400, 120)).collect();
+        let h = game_heat_share(&long).unwrap();
+        assert!((h.share - 115.0 / 120.0).abs() < 1e-9 && h.sessions == 10 && (h.hours - 20.0).abs() < 1e-9);
+        let (w, n) = Weights::for_goal(Goal::Gaming).adapted_heat(Goal::Gaming, Some(h));
+        assert!(w.heat > 0.7 && w.heat < 0.75 && n.is_some(), "{w:?}");
+        // Only the gaming goal; too little play says nothing.
+        assert_eq!(Weights::for_goal(Goal::Desktop).adapted_heat(Goal::Desktop, Some(h)).0, Weights::for_goal(Goal::Desktop));
+        assert!(game_heat_share(&long[..4]).is_none());
+        // Quick 8-minute matches: mostly cool. Launches under a minute and open sessions are left out.
+        let mut quick: Vec<Value> = (0..30).map(|i| s(i * 3600, 8)).collect();
+        quick.push(json!({"id": "open", "start": 1}));
+        quick.push(s(5, 0));
+        let q = game_heat_share(&quick).unwrap();
+        assert!((q.share - 3.0 / 8.0).abs() < 1e-9 && q.sessions == 30);
+        assert!(Weights::for_goal(Goal::Gaming).adapted_heat(Goal::Gaming, Some(q)).0.heat < 0.5);
+    }
+
+    #[test]
     fn keys_out_of_the_plan_are_context_not_decisions() {
         // Rows an older version logged for a frequency cap and for dynamic EPP: never a decision of their own.
         let p = gaining_signature(&[("cpu.max_freq_ccd1", "5450000", "3800000"), ("cpu.dynamic_epp", "disabled", "enabled"), ("vm.page_lock_unfairness", "5", "3")], 0.2);
@@ -3040,6 +3140,9 @@ mod tests {
         let kv = [("vm.swappiness", "60"), ("vm.page_cluster", "3"), ("vm.vfs_cache_pressure", "100"), ("vm.page_lock_unfairness", "5")];
         let mut p = with_defaults(legion(), &kv);
         for (k, v) in kv { p.current.insert(k.into(), v.into()); }
+        // Disk swap without a swap rule in play: the swap rules' own values (zram: 150 / 0) are not in
+        // this synthetic log, and a rule's unmeasured value is never searched over.
+        p.swap = SwapKind::None;
         let facs = vec![model::Factor { key: "vm.swappiness".into(), reference: "60".into(), values: vec!["100".into()] },
                         model::Factor { key: "vm.page_cluster".into(), reference: "3".into(), values: vec!["1".into()] },
                         model::Factor { key: "vm.vfs_cache_pressure".into(), reference: "100".into(), values: vec!["50".into()] },

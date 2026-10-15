@@ -55,6 +55,21 @@ pub fn on_ac() -> Option<bool> {
     if any_bat { Some(!discharging) } else { None }
 }
 
+/// A USB-C (USB-PD) charger supplying the machine, as "usb-c N W" (N from the negotiated voltage and
+/// current limits, rounded to 5 W). None = the barrel adapter, on battery, or unknown. Laptop
+/// firmware caps CPU and GPU power on a USB-C charger whatever the power profile says, so a
+/// calibration measured on one is another power context than one on the barrel adapter.
+pub fn usb_pd_source() -> Option<String> {
+    for e in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
+        let rd = |f: &str| std::fs::read_to_string(e.path().join(f)).ok().map(|s| s.trim().to_owned());
+        if rd("type").as_deref() != Some("USB") || rd("online").as_deref() != Some("1") || rd("scope").as_deref() == Some("Device") { continue; }
+        let num = |f: &str| rd(f).and_then(|s| s.parse::<f64>().ok()).filter(|v| *v > 0.0);
+        let w = num("voltage_max").or_else(|| num("voltage_now")).zip(num("current_max")).map(|(v, i)| v * i / 1e12);
+        return Some(match w.filter(|w| (5.0..=500.0).contains(w)) { Some(w) => format!("usb-c {} W", ((w / 5.0).round() * 5.0) as u32), None => "usb-c".to_owned() });
+    }
+    None
+}
+
 /// on_ac() that rides out a busy EC: a few tries, 200 ms apart, before giving up.
 pub fn on_ac_settled() -> Option<bool> {
     for i in 0..5 {

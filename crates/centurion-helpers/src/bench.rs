@@ -552,11 +552,14 @@ pub fn cpu_temp_c() -> Option<f64> {
 /// Waits (at most `max`) until the die is no warmer than `target` °C, or has stopped cooling
 /// (less than 0.15 °C/s over the last second: a loaded phase sits at its own equilibrium, and
 /// waiting longer only wastes the budget). Returns the temperature then and the seconds waited.
-pub fn thermal_gate(target: f64, max: Duration) -> (Option<f64>, f64) {
+pub fn thermal_gate(target: f64, max: Duration) -> (Option<f64>, f64) { gate_on(&cpu_temp_c, target, max) }
+
+/// `thermal_gate` on any temperature sensor (the CPU die, a drive).
+pub fn gate_on(read: &dyn Fn() -> Option<f64>, target: f64, max: Duration) -> (Option<f64>, f64) {
     let t0 = Instant::now();
     let mut hist: std::collections::VecDeque<(f64, f64)> = std::collections::VecDeque::new();
     loop {
-        let Some(t) = cpu_temp_c() else { return (None, t0.elapsed().as_secs_f64()) };
+        let Some(t) = read() else { return (None, t0.elapsed().as_secs_f64()) };
         let now = t0.elapsed().as_secs_f64();
         hist.push_back((now, t));
         while hist.front().map_or(false, |(a, _)| now - a > 1.05) { hist.pop_front(); }
@@ -564,6 +567,61 @@ pub fn thermal_gate(target: f64, max: Duration) -> (Option<f64>, f64) {
         if t <= target || !cooling || t0.elapsed() >= max { return (Some(t), now); }
         std::thread::sleep(Duration::from_millis(250));
     }
+}
+
+/// Temperature sensor of a whole disk (`nvme0n1`, `sda`): the NVMe composite temperature (the
+/// controller's hwmon), or drivetemp's for an ATA disk. Returns (temp*_input, warning threshold °C):
+/// the drive's own warning composite temperature (WCTEMP, temp1_max) - where the controller starts
+/// to throttle - else its critical one minus 5, else 70 °C.
+fn disk_sensor(disk: &str) -> Option<(std::path::PathBuf, f64)> {
+    if disk.is_empty() || disk.contains('/') || disk.starts_with('.') { return None; }
+    let dev = std::path::Path::new("/sys/block").join(disk).join("device");
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    for base in [dev.clone(), dev.join("hwmon")] {
+        for e in std::fs::read_dir(&base).into_iter().flatten().flatten() {
+            if e.file_name().to_string_lossy().starts_with("hwmon") && e.path().join("temp1_input").is_file() { dirs.push(e.path()); }
+        }
+    }
+    dirs.sort();
+    let d = dirs.into_iter().next()?;
+    let milli = |f: &str| std::fs::read_to_string(d.join(f)).ok()?.trim().parse::<f64>().ok().map(|v| v / 1000.0).filter(|v| (40.0..=110.0).contains(v));
+    let warn = milli("temp1_max").or_else(|| milli("temp1_crit").map(|c| c - 5.0)).unwrap_or(70.0);
+    Some((d.join("temp1_input"), warn))
+}
+
+/// A disk's temperature in °C (None without a sensor).
+pub fn disk_temp_c(disk: &str) -> Option<f64> {
+    let (p, _) = disk_sensor(disk)?;
+    let v: f64 = std::fs::read_to_string(p).ok()?.trim().parse().ok()?;
+    Some(v / 1000.0).filter(|t| (-20.0..150.0).contains(t))
+}
+
+/// The temperature at which the disk starts to protect itself (see `disk_sensor`).
+pub fn disk_temp_warn(disk: &str) -> Option<f64> { disk_sensor(disk).map(|s| s.1) }
+
+/// CPUs the firmware is forcing idle right now through the ACPI processor aggregator (acpi_pad,
+/// `ACPI000C`): on a platform request (_PUR) it parks CPUs in a forced-idle loop the scheduler does
+/// not see as busy. A run measured during it reads as a knob that lost clock or throughput. None =
+/// no such device. `idlecpus` is a hex CPU mask ("00000000,0000000f" = 4 CPUs).
+pub fn forced_idle_cpus() -> Option<u32> {
+    for dir in ["/sys/bus/platform/drivers/processor_aggregator", "/sys/bus/acpi/drivers/processor_aggregator", "/sys/bus/acpi/drivers/acpi_pad"] {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let Ok(s) = std::fs::read_to_string(e.path().join("idlecpus")) else { continue };
+            return Some(parse_cpumask(&s));
+        }
+    }
+    None
+}
+
+fn parse_cpumask(s: &str) -> u32 { s.trim().chars().filter_map(|c| c.to_digit(16)).map(|d| d.count_ones()).sum() }
+
+/// Kernel-side samplers that wake every CPU from kernel timers - invisible to the run's CPU meter,
+/// which counts user-space programs only. CoreFreq's driver samples while its daemon holds it.
+pub fn kernel_samplers() -> Vec<String> {
+    let mut v = Vec::new();
+    let refs = |m: &str| std::fs::read_to_string(format!("/sys/module/{m}/refcnt")).ok().and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(0);
+    if refs("corefreqk") > 0 { v.push("CoreFreq (corefreqk is in use - stop corefreqd)".to_owned()); }
+    v
 }
 
 /// Keeps every CPU busy for `dur` (a heat soak before a "hot" run).
@@ -757,6 +815,11 @@ mod tests {
         assert_eq!(mean_of_updates(&[(0.0, 5.0), (1.0, 5.0)], 1), None);
         assert!(display_state().len() < 4096);
         if let Some(t) = cpu_temp_c() { assert!((-20.0..150.0).contains(&t)); }
+        assert_eq!((parse_cpumask("00000000,00000000\n"), parse_cpumask("00000000,0000000f"), parse_cpumask("3,1")), (0, 4, 3));
+        assert!(disk_sensor("../sda").is_none() && disk_temp_c("").is_none());
+        let n = std::cell::Cell::new(0);
+        let falling = || { n.set(n.get() + 1); Some(60.0 - n.get() as f64) };
+        assert_eq!(gate_on(&falling, 58.0, Duration::from_secs(5)).0, Some(58.0), "stops once the sensor is at the target");
     }
 
     #[test]

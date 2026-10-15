@@ -707,8 +707,10 @@ struct Runner<'a> { j: Journal, c: &'a Ctx, rate: u64, ram: u64, ballast: Option
                     last_hot: Option<Instant>,
                     /// Display state of the phase's first run, and how many runs differed from it.
                     disp0: Option<String>, disp_off: usize,
-                    /// Seconds spent waiting for the die to cool.
-                    gate_s: f64 }
+                    /// Seconds spent waiting for the die (or, in the IO phase, the drive) to cool.
+                    gate_s: f64,
+                    /// Runs measured while the firmware forced CPUs idle / while the drive was at its warning temperature.
+                    forced: usize, disk_hot: usize }
 
 impl Runner<'_> {
     fn need_ballast(&mut self) -> Result<(), String> {
@@ -753,13 +755,33 @@ impl Runner<'_> {
         let disp = bench::display_state();
         let skip: Vec<u32> = self.ballast.as_ref().map(|b| b.pid).into_iter().collect();
         let (fg, t1) = (bench::Foreign::snapshot(&skip), Instant::now());
+        let idle0 = bench::forced_idle_cpus().unwrap_or(0);
         let r = match phase { Phase::Idle => run_idle(b, self.c).map(|s| (s, false)), Phase::Load => run_load(b, self.c),
                               Phase::Io => run_io(self.c).map(|s| (s, false)), Phase::Dev => run_dev(self.c).map(|s| (s, false)) };
         let busy = fg.busy_cpus(&skip, t1.elapsed().as_secs_f64());
+        let forced = idle0.max(bench::forced_idle_cpus().unwrap_or(0));
+        // Read before the restore: what the drive reached during the storage suite.
+        let disk_hot = match (phase, self.c.disk.as_deref()) {
+            (Phase::Io, Some(d)) => bench::disk_temp_c(d).zip(bench::disk_temp_warn(d)).filter(|(t, w)| t >= w),
+            _ => None,
+        };
         for e in self.j.restore() { eprintln!("\nrestore: {e}"); }
         // Other programs keeping more than 0.6 CPU busy disturb the figures: such a run counts less.
         let mut w = if busy > 0.6 { (0.6 / busy).clamp(0.1, 1.0) } else { 1.0 };
         if w < 1.0 { self.busy += 1; if self.busy <= 3 || self.busy % 10 == 0 { eprintln!("\nother programs kept {busy:.1} CPU(s) busy: run counted at {:.0} % ({} such run(s))", w * 100.0, self.busy); } }
+        // The firmware parked CPUs in forced idle (ACPI processor aggregator) during the run: its
+        // clock and throughput figures are the platform's power capping, not the knobs'.
+        if forced > 0 {
+            w *= 0.1;
+            self.forced += 1;
+            if self.forced <= 2 || self.forced % 10 == 0 { eprintln!("\nthe firmware forced {forced} CPU(s) idle during the run (ACPI processor aggregator): run counted at 10 % ({} such run(s)) - check the power adapter and the firmware power limits", self.forced); }
+        }
+        // The drive reached its warning temperature: it may have throttled mid-suite.
+        if let Some((t, lim)) = disk_hot {
+            w *= 0.3;
+            self.disk_hot += 1;
+            if self.disk_hot <= 2 || self.disk_hot % 10 == 0 { eprintln!("\nthe drive reached {t:.0} °C (its warning temperature is {lim:.0} °C) during the storage suite: it may have throttled, run counted at 30 % ({} such run(s))", self.disk_hot); }
+        }
         // The display changed under the run (dimmed, blanked, brightness keys): its power is not comparable.
         match &self.disp0 {
             None => self.disp0 = Some(disp),
@@ -776,7 +798,26 @@ impl Runner<'_> {
     /// was hot as well). Cool: wait until the die is back near the phase's cool start or has stopped
     /// cooling; the phase's first cool run sets that start. Returns the die temperature the run starts at.
     fn conditions(&mut self, phase: Phase, hot: bool) -> Option<f64> {
-        if phase == Phase::Io { return bench::cpu_temp_c(); }
+        // The storage suite heats the drive, not the die: a PCIe 4/5 NVMe drive warms by tens of °C over a
+        // few runs and throttles near its warning temperature. Its start temperature is what the IO rows
+        // carry (it was the CPU's, which says nothing about a drive), and every run waits for the drive to
+        // come back near the phase's first start, below its warning temperature.
+        if phase == Phase::Io {
+            let Some(disk) = self.c.disk.clone() else { return None };
+            let read = || bench::disk_temp_c(&disk);
+            let warn = bench::disk_temp_warn(&disk).unwrap_or(70.0);
+            let pi = phase.idx();
+            let (t, w) = match self.cool[pi] {
+                None => {
+                    let r = bench::gate_on(&read, warn - 10.0, Duration::from_secs(20));
+                    self.cool[pi] = r.0;
+                    r
+                }
+                Some(base) => bench::gate_on(&read, (base + 5.0).min(warn - 8.0), Duration::from_secs_f64(20.0 * self.c.scale)),
+            };
+            self.gate_s += w;
+            return t;
+        }
         if hot {
             let top_up = self.last_hot.map_or(false, |t| t.elapsed() < Duration::from_secs(8));
             bench::preheat(if top_up { ms(self.c, 4000) } else { Duration::from_secs_f64(self.c.heat_secs) });
@@ -1160,7 +1201,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
     let phases = split(items, ctx.scale, budget);
     if phases.is_empty() { eprintln!("nothing to design: fewer than two testable knobs"); return; }
     let mut rn = Runner { j: Journal { entries: Vec::new() }, c: ctx, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
-                          cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0 };
+                          cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0 };
     for (ph, its, secs) in &phases {
         let pdp = if progressive {
             let p = progress(cal, *ph, &phase_factors(its));
@@ -1173,7 +1214,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
     if let Some(b) = rn.ballast.take() { b.stop(); }
     centurion_helpers::stability::inflight_clear();
     cal.prune_contexts(&ctx.cx);
-    if rn.gate_s >= 10.0 { eprintln!("\nwaited {:.0} s in all for the die to cool back to its starting temperature between runs", rn.gate_s); }
+    if rn.gate_s >= 10.0 { eprintln!("\nwaited {:.0} s in all for the die (and the drive in the IO phase) to cool back to its starting temperature between runs", rn.gate_s); }
     save(cal);
     eprintln!();
     if STOP.load(Ordering::SeqCst) { println!("interrupted: measured runs are saved, everything is restored"); }
@@ -1426,8 +1467,17 @@ fn main() {
     if cal.migrated { eprintln!("note: the stored idle/load measurements came from an older benchmark set that could not see most CPU and scheduler knobs; those phases start over (storage rows and unsafe values are kept)"); }
     if src != "battery" { eprintln!("note: on AC — power is RAPL (CPU package) only; device power states (the DEV phase) and whole-machine power need a session on battery"); }
     match &ctx.disk {
-        Some(d) => eprintln!("storage suite: {} on {d} ({} MiB written per IO run, unlinked temp files)", ctx.dir, ctx.io_size * 3 / 2 >> 20),
+        Some(d) => eprintln!("storage suite: {} on {d} ({} MiB written per IO run, unlinked temp files){}", ctx.dir, ctx.io_size * 3 / 2 >> 20,
+                             match (bench::disk_temp_c(d), bench::disk_temp_warn(d)) {
+                                 (Some(t), Some(w)) => format!("; drive at {t:.0} °C, warning temperature {w:.0} °C: IO runs wait for it to cool"),
+                                 _ => "; no drive temperature sensor".to_owned(),
+                             }),
         None => eprintln!("storage suite off: {}", disk.as_ref().err().map_or("", String::as_str)),
+    }
+    // Disturbances the run meter cannot see: kernel-side samplers, firmware idle injection.
+    for s in bench::kernel_samplers() { eprintln!("note: {s}: it wakes every CPU from kernel timers, which no run meter sees - idle power and wake-up figures are disturbed"); }
+    if let Some(n) = bench::forced_idle_cpus().filter(|n| *n > 0) {
+        eprintln!("note: the firmware is forcing {n} CPU(s) idle right now (ACPI processor aggregator): runs measured while it does count 10 %");
     }
     cal.on_battery = src == "battery";
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
@@ -1822,7 +1872,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     eprintln!("verify \"{name}\" ({} change(s){}) against the boot state for {}: {rounds} ABBA round(s)",
               cfg.len(), if skipped.is_empty() { String::new() } else { format!("; not written: {}", skipped.join(", ")) }, goal.label());
     let mut rn = Runner { j: Journal { entries: Vec::new() }, c: ctx, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
-                          cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0 };
+                          cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0 };
     let bs = Benches { cpu_mem: true, cpu: true, idle: true, io: false };
     let none: Cfg = Vec::new();
     let mut runs: BTreeMap<usize, Vec<Run>> = BTreeMap::new();
@@ -1922,7 +1972,11 @@ fn coupling_main(cal: &mut Calibration, secs: u64) -> Result<(), String> {
     if !centurion_helpers::dgpu_usable() { return Err("the NVIDIA dGPU is off or not usable".into()); }
     let (_, _, util) = nvidia_sample().ok_or("nvidia-smi gives no reading")?;
     if util < 70.0 { return Err(format!("GPU utilisation {util:.0} %: start a GPU-bound game or benchmark first (windowed is fine), then run this")); }
-    let (key, hi, lo) = if tune::find("cpu.epp").map_or(false, |t| !tune::files(t).is_empty()) { ("cpu.epp", "performance", "power") } else { ("cpu.boost", "1", "0") };
+    // While dynamic EPP is on the kernel owns EPP (writes are refused or undone at the next power event):
+    // the boost switch is the lever then.
+    let epp_ok = tune::find("cpu.epp").map_or(false, |t| !tune::files(t).is_empty())
+        && tune::find("cpu.dynamic_epp").and_then(tune::current).as_deref() != Some("enabled");
+    let (key, hi, lo) = if epp_ok { ("cpu.epp", "performance", "power") } else { ("cpu.boost", "1", "0") };
     let mut j = Journal { entries: Vec::new() };
     let blocks = ((secs / 15).max(4) / 2 * 2) as usize;
     eprintln!("coupling: {blocks} blocks of 15 s, {key} {hi} / {lo} alternating; keep the game running");

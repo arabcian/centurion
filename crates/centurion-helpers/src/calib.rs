@@ -615,8 +615,11 @@ impl Calibration {
         // GPU limits (cTGP, Dynamic Boost) do not change what a CPU knob does, and they are only readable
         // while the dGPU is on: they stay out of the id (the budget credit reads them from the description).
         let cpu_lim: Map<String, Value> = desc["limits"].as_object().map(|m| m.iter().filter(|(k, _)| !k.starts_with("gpu_nv_")).map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
-        let lim = json!({"limits": cpu_lim, "fan": desc["fan"], "co": desc["co"]});
-        if !(desc["limits"].is_null() && desc["fan"].is_null() && desc["co"].is_null()) {
+        let mut lim = json!({"limits": cpu_lim, "fan": desc["fan"], "co": desc["co"]});
+        // A USB-C charger caps the CPU like a lower limit does (only present then: the barrel adapter's
+        // contexts keep the ids earlier sessions were recorded under).
+        if let Some(a) = desc["adapter"].as_str() { lim["adapter"] = json!(a); }
+        if !(desc["limits"].is_null() && desc["fan"].is_null() && desc["co"].is_null() && desc["adapter"].is_null()) {
             out.push(("ctx.limits".to_owned(), format!("L{:06x}", crate::model::fnv(lim.to_string().as_bytes()) & 0xFF_FFFF)));
         }
         out
@@ -803,12 +806,15 @@ impl Calibration {
     pub fn set_target(&self, t: Vec<(f64, Cfg)>) { *self.target.borrow_mut() = t.into_iter().filter(|(w, _)| *w > 0.0).collect(); }
     /// The measured context most like a power profile + power source (the newest such session's):
     /// its firmware limits stand in for "this profile's limits" when the caller cannot read them.
+    /// Sessions on the barrel adapter come first: a USB-C charger's capped context is not where a
+    /// preset for AC is meant to run.
     pub fn context_like(&self, profile: Option<&str>, power: &str) -> Option<Value> {
-        let mut best: Option<(u64, &Value)> = None;
+        let mut best: Option<((bool, u64), &Value)> = None;
         for r in &self.rows {
             let Some(d) = self.contexts.get(&r.cx) else { continue };
             if d["power"].as_str() != Some(power) || (profile.is_some() && d["profile"].as_str() != profile) { continue; }
-            if best.map_or(true, |b| r.t > b.0) { best = Some((r.t, d)); }
+            let k = (d["adapter"].is_null(), r.t);
+            if best.map_or(true, |b| k > b.0) { best = Some((k, d)); }
         }
         best.map(|b| b.1.clone())
     }
@@ -925,7 +931,7 @@ impl Calibration {
             if r.field { o["fd"] = json!(true); }
             o
         }).collect();
-        json!({"version": 7, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
+        json!({"version": 8, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "coupling": self.coupling,
                "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
@@ -974,6 +980,8 @@ impl Calibration {
         for (k, x) in v["ref_w"].as_object().into_iter().flatten() { if let Some(f) = x.as_f64() { c.ref_w.insert(k.clone(), f); } }
         c.verify = v["verify"].as_array().cloned().unwrap_or_default();
         c.field_sessions = v["fs"].as_array().cloned().unwrap_or_default();
+        // Format <= 7: IO rows carried the CPU's start temperature; since 8 they carry the drive's.
+        if version < 8 { for r in c.rows.iter_mut().filter(|r| r.phase == Phase::Io) { r.tc = f64::NAN; } }
         // Format 4 logged vm.dirty design rows against the live limits while labelling them window "1".
         if version < 5 { c.rows.retain(|r| !r.cfg.iter().any(|(k, _)| k == "vm.dirty")); }
         // Format 6 = benchmark set 4. The storage suite is the same, so its rows are kept and
@@ -1325,6 +1333,22 @@ mod tests {
         let back = Calibration::from_json(&c.to_json());
         assert_eq!(back.contexts.len(), 2);
         assert_eq!(back.rows.iter().filter(|r| r.cx == perf).count(), 96);
+    }
+
+    #[test]
+    fn a_usb_c_charger_is_its_own_context_and_the_barrel_one_comes_first() {
+        let barrel = json!({"profile": "performance", "power": "ac", "limits": {"ppt_pl1_spl": 115}, "fan": "full", "co": "reset"});
+        let mut usb = barrel.clone();
+        usb["adapter"] = json!("usb-c 140 W");
+        let lim = |d: &Value| Calibration::ctx_dims(d).into_iter().find(|(k, _)| k == "ctx.limits").map(|x| x.1);
+        assert_ne!(lim(&barrel), lim(&usb));
+        // Barrel contexts keep the id they had before the adapter was recorded.
+        assert_eq!(lim(&barrel).unwrap(), format!("L{:06x}", crate::model::fnv(json!({"limits": {"ppt_pl1_spl": 115}, "fan": "full", "co": "reset"}).to_string().as_bytes()) & 0xFF_FFFF));
+        let mut c = Calibration::default();
+        let (a, b) = (c.add_context(barrel.clone()), c.add_context(usb.clone()));
+        c.rows.push(Row { cx: a, t: 10, ..Default::default() });
+        c.rows.push(Row { cx: b, t: 20, ..Default::default() });
+        assert_eq!(c.context_like(Some("performance"), "ac"), Some(barrel), "the newer USB-C session does not stand for AC");
     }
 
     #[test]

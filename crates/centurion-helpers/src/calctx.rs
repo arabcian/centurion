@@ -78,6 +78,9 @@ pub fn capture(scene: Option<&str>) -> Value {
         "fan": fan, "co": co,
     });
     if let Some(s) = scene { d["scene"] = json!(s); }
+    // On a USB-C charger the firmware caps the power whatever the limits read (kept out of the
+    // description on the barrel adapter, so the contexts of earlier sessions stay the same).
+    if d["power"] == "ac" { if let Some(a) = crate::power::usb_pd_source() { d["adapter"] = json!(a); } }
     d
 }
 
@@ -89,6 +92,7 @@ pub fn describe(d: &Value) -> String {
         p.push(format!("PL1/PL2/PL3 {}/{}/{} W", g("ppt_pl1_spl"), g("ppt_pl2_sppt"), g("ppt_pl3_fppt")));
         if l.contains_key("gpu_nv_ctgp") { p.push(format!("cTGP {} W + boost {} W", g("gpu_nv_ctgp"), g("gpu_nv_ppab"))); }
     }
+    if let Some(a) = d["adapter"].as_str() { p.push(a.to_owned()); }
     if let Some(f) = d["fan"].as_str() { p.push(format!("fan {f}")); }
     match &d["co"] { Value::Null => {}, v => p.push(format!("CPU curve {}", if v == "reset" { "0".to_owned() } else { v.to_string().chars().take(40).collect() })) }
     if let Some(s) = d["scene"].as_str() { p.push(format!("scene \"{s}\"")); }
