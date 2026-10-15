@@ -61,7 +61,7 @@ static QLabel *muted(const QString &t) {
 
 ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     auto *root = new QHBoxLayout(this);
-    root->setContentsMargins(12, 10, 12, 10);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(10);
 
     // ── left: scene list ──
@@ -115,7 +115,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     left->addWidget(listBox, 1);
     auto *leftHost = new QWidget;
     leftHost->setLayout(left);
-    leftHost->setFixedWidth(216);
+    leftHost->setFixedWidth(190);
     root->addWidget(leftHost);
 
     // ── right: editor + automatic switching ──

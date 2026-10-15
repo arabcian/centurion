@@ -77,7 +77,7 @@ static QDoubleSpinBox *dspin(double lo, double hi, double step, int dec, const Q
 IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     QDir().mkpath(inteluv::profilesDir());
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 10, 12, 10);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
     // ── top: profile + global ──
@@ -154,7 +154,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     });
 
     auto *mid = new QHBoxLayout;
-    mid->setSpacing(8);
+    mid->setSpacing(5);
     auto *left = new QVBoxLayout, *right = new QVBoxLayout;
     left->setSpacing(6);
     right->setSpacing(6);

@@ -158,7 +158,7 @@ static QString category(const QString &n) {
 
 FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
     auto *lay = new QVBoxLayout(this);
-    lay->setContentsMargins(12, 10, 12, 10);
+    lay->setContentsMargins(8, 6, 8, 6);
     lay->setSpacing(6);
 
     banner_ = new QLabel;

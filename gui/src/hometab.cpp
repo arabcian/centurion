@@ -142,23 +142,25 @@ static QPushButton *profileButton(const QString &label, const QString &accent) {
     b->setIconSize(QSize(10, 10));
     // Rows grow a little into the card's height instead of leaving it empty.
     b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    b->setMinimumHeight(28);
-    b->setMaximumHeight(36);
+    b->setMinimumHeight(24);
+    b->setMaximumHeight(30);
     const QByteArray a = accent.toLatin1();
     b->setStyleSheet(QStringLiteral(
-        "QPushButton { background: %1; color: %2; border: 1px solid %3; border-radius: 7px;"
-        " padding: 3px 12px; font-weight: 500; text-align: left; }"
-        "QPushButton:hover { background: %4; color: %5; border-color: %6; }"
-        "QPushButton:checked { background: %7; color: %5; border-color: %8; font-weight: 600; }")
+        "QPushButton { background: %1; color: %2; border: 1px solid %3; border-left: 3px solid %9; border-radius: 6px;"
+        " padding: 2px 10px 2px 8px; font-weight: 500; text-align: left; }"
+        "QPushButton:hover { background: %4; color: %5; border-color: %6; border-left-color: %8; }"
+        "QPushButton:checked { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %7, stop:1 %10);"
+        " color: %5; border-color: %11; border-left-color: %8; font-weight: 700; }")
         .arg(theme::BG2, theme::FG_DIM, theme::BORDER_SOFT, theme::BG3, theme::FG, theme::BORDER,
-             theme::rgba(a.constData(), 0.15), theme::rgba(a.constData(), 0.70)));
+             theme::rgba(a.constData(), 0.24), theme::rgba(a.constData(), 1.0), theme::rgba(a.constData(), 0.45),
+             theme::rgba(a.constData(), 0.04), theme::rgba(a.constData(), 0.40)));
     return b;
 }
 
 HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler()) {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 10, 12, 10);
-    root->setSpacing(8);
+    root->setContentsMargins(8, 6, 8, 6);
+    root->setSpacing(5);
 
     // Header
     auto *title = new QLabel(sysinfo::dmi("product_version").value_or(sysinfo::dmi("product_name").value_or("Lenovo Legion")));
@@ -239,7 +241,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     auto *profileBox = new QGroupBox("Power Profile");
     profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     grid_ = new QGridLayout(profileBox);
-    grid_->setContentsMargins(8, 4, 8, 6);
+    grid_->setContentsMargins(6, 2, 6, 4);
     grid_->setHorizontalSpacing(8);
     grid_->setVerticalSpacing(4);
 
@@ -250,7 +252,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
 
     // 2×2 grid, every cell the same size.
     auto *cells = new QGridLayout;
-    cells->setSpacing(10);
+    cells->setSpacing(6);
     QGroupBox *dev = buildDeviceBox();  // hosts status_ when present
     const QList<QWidget *> boxes{buildHardwareBox(), buildLiveBox(), profileBox, dev};
     for (int i = 0; i < boxes.size(); ++i) {
@@ -294,7 +296,7 @@ QGroupBox *HomeTab::buildHardwareBox() {
     auto *box = new QGroupBox("Hardware");
     box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     auto *g = new QGridLayout(box);
-    g->setContentsMargins(8, 4, 8, 6);
+    g->setContentsMargins(6, 2, 6, 4);
     g->setHorizontalSpacing(10);
     g->setVerticalSpacing(6);
 
@@ -369,7 +371,7 @@ QGroupBox *HomeTab::buildLiveBox() {
     auto *box = new QGroupBox("Live");
     box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     auto *g = new QGridLayout(box);
-    g->setContentsMargins(8, 4, 8, 6);
+    g->setContentsMargins(6, 2, 6, 4);
     g->setHorizontalSpacing(10);
     g->setVerticalSpacing(6);
 
@@ -581,7 +583,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
 
     auto *box = new QGroupBox("Device");
     auto *g = new QGridLayout(box);
-    g->setContentsMargins(8, 4, 8, 6);
+    g->setContentsMargins(6, 2, 6, 4);
     g->setHorizontalSpacing(8);
     g->setVerticalSpacing(4);
     int row = 0;
@@ -706,7 +708,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         const QList<QPair<QString, QString>> spec{
             {"fn_lock", "Fn lock"}, {"camera_power", "Camera"}, {"usb_charging", "USB charging when off"}};
         auto *h = new QHBoxLayout;
-        h->setSpacing(12);
+        h->setSpacing(8);
         // IdeaPad-style keyboards: the EC bit means "F1–F12 primary" there, the opposite of Fn lock.
         fnLockInverted_ = sysinfo::fnLockInverted();
         for (const auto &[key, label] : spec) {
@@ -800,7 +802,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
             g->addWidget(label("Fan " + n), row, 0);
             g->addWidget(rpm, row, 1);
             auto *modes = new QHBoxLayout;
-            modes->setSpacing(8);
+            modes->setSpacing(5);
             modes->addWidget(autoBox);
             modes->addWidget(maxBox);
             g->addLayout(modes, row, 2);

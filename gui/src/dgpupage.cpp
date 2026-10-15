@@ -266,7 +266,7 @@ static QString reportText(const Report &r) {
 
 DgpuPage::DgpuPage(QWidget *parent) : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(10, 8, 10, 8);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
     auto *top = new QHBoxLayout;

@@ -22,7 +22,7 @@ inline const char *BG0 = "#121316", *BG1 = "#191a1e", *BG2 = "#202126", *BG3 = "
     *FG_DIM = "#b4b2ae", *MUTED = "#86868d", *ACCENT = "#eba55b", *ACCENT_SOFT = "#a9773f",
     *OK = "#8fc486", *WARN = "#e6c065", *DANGER = "#e8776c", *DANGER_SOFT = "#8e4841",
     *INFO = "#7fb1d5", *PURPLE = "#b79be2";
-inline constexpr int FONT_PT = 10, RADIUS = 9;
+inline constexpr int FONT_PT = 9, RADIUS = 8;
 
 /// Per-profile colour, after the Legion power-button LED: Quiet/Power Saver
 /// blue, Balanced white, Performance red, Custom purple (Extreme: magenta).

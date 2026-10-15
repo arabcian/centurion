@@ -285,7 +285,7 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
     auto *page = new QWidget;
     auto *v = new QVBoxLayout(page);
     v->setContentsMargins(8, 8, 8, 8);
-    v->setSpacing(8);
+    v->setSpacing(5);
 
     cmdline_ = muted(QString());
     cmdline_->setTextInteractionFlags(Qt::TextSelectableByMouse);

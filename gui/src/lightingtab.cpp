@@ -95,8 +95,8 @@ void KeyboardView::setSelection(const QSet<int> &s) {
     Q_EMIT selectionChanged();
 }
 
-QSize KeyboardView::sizeHint() const { return {640, heightForWidth(640)}; }
-QSize KeyboardView::minimumSizeHint() const { return {360, heightForWidth(360)}; }
+QSize KeyboardView::sizeHint() const { return {520, heightForWidth(520)}; }
+QSize KeyboardView::minimumSizeHint() const { return {300, heightForWidth(300)}; }
 
 int KeyboardView::heightForWidth(int w) const {
     if (map_.isEmpty()) return 160;
@@ -294,7 +294,7 @@ LightingTab::LightingTab(QWidget *parent) : QWidget(parent) {
 
 void LightingTab::buildUi() {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 10, 12, 10);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
     auto *bannerFrame = new QFrame;
@@ -314,7 +314,7 @@ void LightingTab::buildUi() {
     // ── device: profile / brightness / logo ──
     auto *dev = new QGroupBox("Keyboard");
     auto *dl = new QHBoxLayout(dev);
-    dl->setSpacing(8);
+    dl->setSpacing(5);
     profile_ = new QComboBox;
     for (int p = MIN_PROFILE; p <= MAX_PROFILE; ++p) profile_->addItem(QStringLiteral("Profile %1").arg(p), p);
     profile_->setToolTip("The controller keeps six lighting profiles (shared with Windows / Legion Space). "
@@ -343,7 +343,7 @@ void LightingTab::buildUi() {
 
     // ── keyboard + effects ──
     auto *mid = new QHBoxLayout;
-    mid->setSpacing(8);
+    mid->setSpacing(5);
 
     auto *kbBox = new QGroupBox("Layout");
     auto *kl = new QVBoxLayout(kbBox);
@@ -376,7 +376,7 @@ void LightingTab::buildUi() {
     mid->addWidget(kbBox, 1);
 
     auto *fxBox = new QGroupBox("Effects in this profile");
-    fxBox->setFixedWidth(316);
+    fxBox->setFixedWidth(260);
     auto *fl = new QVBoxLayout(fxBox);
     fl->setSpacing(4);
     list_ = new QListWidget;

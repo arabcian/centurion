@@ -77,7 +77,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     connect(backup, &BackupPage::alert, this, &HealthTab::alert);
     sub->addTab(backup, QStringLiteral("Backup"));
     auto *root = new QVBoxLayout(monitor);
-    root->setContentsMargins(10, 8, 10, 8);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
     auto *top = new QHBoxLayout;

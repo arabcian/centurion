@@ -306,7 +306,7 @@ OptimizeTab::OptimizeTab(QWidget *parent) : QWidget(parent) {
 
 void OptimizeTab::buildUi() {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 10, 12, 10);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
     // State banner: is anything changed right now, by whom, and the way back.
@@ -379,7 +379,7 @@ void OptimizeTab::buildUi() {
     auto *pl = new QGridLayout(pbox);
     pl->setHorizontalSpacing(6);
     presetCombo_ = new QComboBox;
-    presetCombo_->setMinimumWidth(220);
+    presetCombo_->setMinimumWidth(160);
     auto *bLoad = new QPushButton("Load"), *bSave = new QPushButton("Save as…"), *bDel = new QPushButton("Delete");
     bDel->setObjectName("btnDanger");
     gameBtn_ = new QPushButton("★ Use for games");
@@ -513,7 +513,7 @@ QWidget *OptimizeTab::buildLaunchPage() {
     auto *page = new QWidget;
     auto *v = new QVBoxLayout(page);
     v->setContentsMargins(2, 6, 2, 2);
-    v->setSpacing(8);
+    v->setSpacing(5);
 
     auto *runBox = box("Launch boost  (saved in the preset's \"run\" block)", "box_green");
     auto *g = new QGridLayout(runBox);
@@ -530,7 +530,7 @@ QWidget *OptimizeTab::buildLaunchPage() {
     g->addWidget(autogroup_, 1, 1, 1, 2);
     g->addWidget(new QLabel("CPU affinity"), 2, 0);
     affinity_ = new QComboBox;
-    affinity_->setMinimumWidth(260);
+    affinity_->setMinimumWidth(180);
     g->addWidget(affinity_, 2, 1);
     g->addWidget(muted(sysinfo::isIntel()
         ? QStringLiteral("Pins the game to the P-cores (or E-cores). Pair it with \"Unbound workqueue CPUs\" / \"IRQ affinity\" on the E-cores.")
@@ -551,7 +551,7 @@ QWidget *OptimizeTab::buildLaunchPage() {
     const QJsonObject cfg = readJsonFile(configFile());
     ug->addWidget(new QLabel("Scene"), 0, 0);
     gameScene_ = new QComboBox;
-    gameScene_->setMinimumWidth(220);
+    gameScene_->setMinimumWidth(160);
     gameScene_->setToolTip("The first game to start switches the machine to this scene; when the last game exits it goes "
                            "back to the scene active before (or to the AC / battery scene if automatic switching is on).\n"
                            "The scene's Optimizations preset is not used while playing — the ★ game preset handles tuning.");
@@ -954,12 +954,12 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             r.name->setToolTip(tip);
             r.name->setTextFormat(Qt::PlainText);
             r.cur = new QLabel(page);
-            r.cur->setMinimumWidth(140);
+            r.cur->setMinimumWidth(110);
             r.cur->setTextInteractionFlags(Qt::TextSelectableByMouse);
             QWidget *editor;
             if (r.kind == "int") {
                 r.spin = new Int64SpinBox(page);
-                r.spin->setMinimumWidth(170);
+                r.spin->setMinimumWidth(120);
                 r.spin->setAccelerated(true);
                 // Keyboard tracking off means valueChanged only fires on Enter/focus-out,
                 // not per keystroke - correct for the wheel/arrow case, but it left a gap
@@ -980,7 +980,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
                 });
             } else {
                 r.combo = new QComboBox(page);
-                r.combo->setMinimumWidth(170);
+                r.combo->setMinimumWidth(120);
                 r.combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
                 editor = r.combo;
                 connect(r.combo, &QComboBox::activated, this, [this, key] {

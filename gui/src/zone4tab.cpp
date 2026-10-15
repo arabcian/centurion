@@ -23,8 +23,8 @@ static QString storePath() {
 
 Zone4Tab::Zone4Tab(QWidget *parent) : QWidget(parent) {
     auto *v = new QVBoxLayout(this);
-    v->setContentsMargins(10, 8, 10, 8);
-    v->setSpacing(8);
+    v->setContentsMargins(8, 6, 8, 6);
+    v->setSpacing(5);
 
     auto *box = new QGroupBox("Keyboard backlight (4 zones)");
     auto *g = new QGridLayout(box);

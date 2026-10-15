@@ -90,8 +90,8 @@ static QString kindName(Od::Kind k) {
 AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
     cards_ = cards();
     auto *outer = new QVBoxLayout(this);
-    outer->setContentsMargins(12, 10, 12, 10);
-    outer->setSpacing(8);
+    outer->setContentsMargins(8, 6, 8, 6);
+    outer->setSpacing(5);
 
     auto *top = new QHBoxLayout;
     top->addWidget(new QLabel(QStringLiteral("GPU")));
@@ -315,7 +315,7 @@ void AmdGpuTab::rebuildForm() {
         auto *h = new QHBoxLayout(w);
         h->setContentsMargins(0, 0, 0, 0);
         const int lo = int(std::ceil(*snap_.capMinW)), hi = int(std::floor(*snap_.capMaxW));
-        w->setMinimumWidth(360);
+        w->setMinimumWidth(280);
         capSlider_ = new QSlider(Qt::Horizontal);
         capSlider_->setRange(lo, hi);
         cap_ = spin(lo, hi, int(*snap_.capW), QStringLiteral(" W"));

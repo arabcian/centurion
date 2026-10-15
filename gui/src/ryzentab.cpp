@@ -259,7 +259,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         if (layout_.cores.contains(c) && layout_.cores[c].size() != SLOTS_PER_CCD) mismatch << c;
 
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 10, 12, 10);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
     if (!mismatch.isEmpty()) {
@@ -286,7 +286,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     constexpr int APPLY_W = 132;
 
     auto *top = new QHBoxLayout;
-    top->setSpacing(8);
+    top->setSpacing(5);
     auto *profBox = box("Profile", "box_purple");
     auto *pl = new QHBoxLayout(profBox);
     profileCombo_ = new QComboBox;
@@ -342,7 +342,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     // Per-core
     auto *coreBox = box("Per-Core Offsets  (fixed SMU slot layout)", "box_green");
     auto *cl = new QVBoxLayout(coreBox);
-    cl->setSpacing(8);
+    cl->setSpacing(5);
     auto *hdr = new QHBoxLayout;
     auto *modeBox = new QWidget;
     auto *ml = new QHBoxLayout(modeBox);
@@ -390,7 +390,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
 
     const QString accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
     auto *cards = new QHBoxLayout;
-    cards->setSpacing(12);
+    cards->setSpacing(8);
     slots_.reserve(ccdCount_ * SLOTS_PER_CCD);
     for (int ccd = 0; ccd < ccdCount_; ++ccd) {
         const QString accent = accents[ccd % 4];
@@ -401,7 +401,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
                                 .arg(theme::BG2, theme::BORDER_SOFT, accent));
         auto *g = new QGridLayout(card);
-        g->setContentsMargins(12, 8, 12, 10);
+        g->setContentsMargins(8, 6, 8, 6);
         g->setHorizontalSpacing(14);
         g->setVerticalSpacing(1);
 

@@ -30,8 +30,8 @@ static void trimHeap() { ::malloc_trim(0); }
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Centurion");
     setWindowIcon(appIcon(128));
-    resize(1040, 720);
-    setMinimumSize(820, 520);
+    resize(880, 580);
+    setMinimumSize(620, 420);
 
     tabs_ = new QTabWidget;
     tabs_->setObjectName("mainTabs");  // header-band styling in theme.cpp
@@ -45,7 +45,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // widget moves the page's top rule up through the tab labels.
     mark_ = new QLabel(tabs_);
     mark_->setObjectName("appMark");
-    mark_->setPixmap(appIcon(64).pixmap(QSize(18, 18)));
+    mark_->setPixmap(appIcon(64).pixmap(QSize(16, 16)));
     mark_->setToolTip(QStringLiteral("Centurion " CENTURION_VERSION));
     mark_->adjustSize();
 
@@ -128,20 +128,7 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
 // Main tabs are equal boxes: each as wide as the widest label, or wider so
 // the row fills the band. Stepped by 4 px so a window drag re-polishes the
 // tab bar only now and then, not on every pixel.
-void MainWindow::fitTabs() {
-    QTabBar *bar = tabs_->tabBar();
-    QFont f = bar->font();
-    f.setWeight(QFont::DemiBold);  // the selected tab is drawn semi-bold
-    const QFontMetrics fm(f);
-    int text = 0;
-    for (int i = 0; i < tabs_->count(); ++i) text = std::max(text, fm.horizontalAdvance(tabs_->tabText(i)));
-    constexpr int CHROME = 2 * (8 + 1 + 2), BAND_LEFT = 36, SLACK = 12;  // padding+border+margin per side
-    const int share = (tabs_->width() - BAND_LEFT - SLACK) / std::max(1, int(tabs_->count())) - CHROME;
-    const int w = std::max(text + 4, share / 4 * 4);
-    if (w == tabW_) return;
-    tabW_ = w;
-    bar->setStyleSheet(QStringLiteral("QTabBar::tab { min-width: %1px; max-width: %1px; }").arg(w));
-}
+void MainWindow::fitTabs() {}  // text tabs size themselves; the bar scrolls when the window is narrow
 
 void MainWindow::resizeEvent(QResizeEvent *e) {
     QMainWindow::resizeEvent(e);

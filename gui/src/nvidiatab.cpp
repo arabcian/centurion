@@ -256,7 +256,7 @@ static QSpinBox *spin(int lo, int hi, const QString &suffix, int w) {
 
 NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 8, 12, 8);
+    root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(5);
 
     // Status + profiles
