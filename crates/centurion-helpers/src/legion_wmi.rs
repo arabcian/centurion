@@ -478,7 +478,7 @@ fn nvidia_power_limits() -> Option<(i64, i64)> {
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) if start.elapsed() < TIMEOUT => std::thread::sleep(std::time::Duration::from_millis(20)),
-            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+            _ => { crate::kill_reap(&mut child); return None; }
         }
     }
     let text = String::from_utf8_lossy(&reader.join().ok()?).into_owned();

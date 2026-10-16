@@ -32,7 +32,7 @@ fn capture(bin: &Path, args: &[&str], secs: u64) -> String {
         match rx.recv_timeout(left) {
             Ok((0, v)) => so = v,
             Ok((_, v)) => se = v,
-            Err(_) => { let _ = child.kill(); let _ = child.wait(); return format!("{}: timed out after {secs} s\n", bin.display()); }
+            Err(_) => { crate::kill_reap(&mut child); return format!("{}: timed out after {secs} s\n", bin.display()); }
         }
     }
     let _ = child.wait();

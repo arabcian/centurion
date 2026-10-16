@@ -49,8 +49,13 @@ pub const MSR_CORE_PERF_LIMIT_REASONS: u64 = 0x64F;
 pub const MSR_GRAPHICS_PERF_LIMIT_REASONS: u64 = 0x6B0;
 pub const MSR_RING_PERF_LIMIT_REASONS: u64 = 0x6B1;
 /// undervolt.py --force allows any positive offset; capped here (overvolting
-/// beyond this has no stability use and only adds heat/wear).
-pub const UV_MAX_POSITIVE_MV: f64 = 250.0;
+/// beyond this has no stability use and only adds heat/wear). The flag comes
+/// from the request, and level 1 runs this helper without a password, so the
+/// cap itself has to be harmless.
+pub const UV_MAX_POSITIVE_MV: f64 = 100.0;
+/// PL1/PL2 ceiling. Above any client part's real limit; 1000 W let a silent
+/// request lift the package limit to "unlimited".
+pub const PL_MAX_W: f64 = 500.0;
 
 pub const TICKS_PER_MV: f64 = 1.024;
 pub const UV_MIN_MV: f64 = -1000.0; // -1024 ticks, signed 11-bit floor (throttled)
@@ -572,7 +577,7 @@ pub fn parse_profile(v: &Value) -> Result<Profile, String> {
             if let Some(t) = obj(pw.get(key), &format!("power.{key}"))? {
                 let w = num(t.get("watts").unwrap_or(&Value::Null), &format!("power.{key}.watts"))?
                     .ok_or_else(|| format!("power.{key}.watts is required"))?;
-                if !(1.0..=1000.0).contains(&w) { return Err(format!("power.{key}.watts must be 1..1000 W")); }
+                if !(1.0..=PL_MAX_W).contains(&w) { return Err(format!("power.{key}.watts must be 1..{PL_MAX_W} W")); }
                 let s = num(t.get("seconds").unwrap_or(&Value::Null), &format!("power.{key}.seconds"))?;
                 if let Some(s) = s { if !(0.0005..=1.0e5).contains(&s) { return Err(format!("power.{key}.seconds out of range")); } }
                 *slot = Some(PlReq { watts: w, seconds: s });
@@ -1024,7 +1029,7 @@ mod tests {
     #[test]
     fn extras_parse() {
         assert!(parse_profile(&json!({"voltage": {"core": 20}, "allow_positive": true})).is_ok());
-        assert!(parse_profile(&json!({"voltage": {"core": 300}, "allow_positive": true})).is_err());
+        assert!(parse_profile(&json!({"voltage": {"core": 150}, "allow_positive": true})).is_err());
         assert!(parse_profile(&json!({"ctdp": 3})).is_err());
         assert!(parse_profile(&json!({"lock_power": true})).is_err());
         let p = parse_profile(&json!({"disable_bdprochot": true, "ctdp": 1, "hwphint": [

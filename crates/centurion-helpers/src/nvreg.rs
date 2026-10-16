@@ -70,7 +70,14 @@ pub fn validate(p: &Param, v: &str) -> Result<String, String> {
         Kind::Path => {
             let ok = v.starts_with('/') && v.len() <= 200 && !v.split('/').any(|c| c == "..")
                 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b"/_.-".contains(&b));
-            if ok { Ok(v.into()) } else { Err(format!("{}: absolute path of letters, digits, / _ . - only", p.name)) }
+            if !ok { return Err(format!("{}: absolute path of letters, digits, / _ . - only", p.name)); }
+            // The driver dumps video memory there at suspend: the directory and every parent must be
+            // root-owned, and a world-writable one sticky (/var/tmp passes, a user's directory does not).
+            if !root_dir_chain(Path::new(v)) {
+                return Err(format!("{}: {v} must be an existing directory that only root controls (root-owned, \
+                                    not writable by other users unless sticky, like /var/tmp)", p.name));
+            }
+            Ok(v.into())
         }
         Kind::Dwords => {
             let ok = !v.is_empty() && v.len() <= 512 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b"_=;,".contains(&b))
@@ -78,6 +85,18 @@ pub fn validate(p: &Param, v: &str) -> Result<String, String> {
             if ok { Ok(v.into()) } else { Err(format!("{}: expected Key=Value;Key=Value with numeric values", p.name)) }
         }
     }
+}
+
+/// `dir` (resolved) and all its parents are root-owned directories that no other user can
+/// rename or replace entries in.
+fn root_dir_chain(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(real) = std::fs::canonicalize(dir) else { return false };
+    real.ancestors().all(|d| std::fs::metadata(d).map_or(false, |m| {
+        m.is_dir() && m.uid() == 0
+            && (m.mode() & 0o020 == 0 || m.gid() == 0)
+            && (m.mode() & 0o002 == 0 || m.mode() & 0o1000 != 0)
+    }))
 }
 
 /// Value as the running module reports it, normalised like validate().
@@ -140,8 +159,8 @@ pub fn describe() -> Value {
     let params: Vec<Value> = PARAMS.iter().map(|p| {
         let srcs: Vec<Value> = conf.iter().filter(|c| c.1 == p.module && c.2 == p.name)
             .map(|c| json!({"source": c.0, "value": c.3})).collect();
-        let centurion = conf.iter().filter(|c| c.0 == CENTURION_FILE && c.1 == p.module && c.2 == p.name).last().map(|c| c.3.clone());
-        let next = conf.iter().filter(|c| c.1 == p.module && c.2 == p.name).last().map(|c| c.3.clone());
+        let centurion = conf.iter().rfind(|c| c.0 == CENTURION_FILE && c.1 == p.module && c.2 == p.name).map(|c| c.3.clone());
+        let next = conf.iter().rfind(|c| c.1 == p.module && c.2 == p.name).map(|c| c.3.clone());
         let (kind, extra) = match p.kind {
             Kind::Bool => ("bool", json!(null)),
             Kind::Choice(o) => ("choice", json!(o.iter().map(|(v, l)| json!([v, l])).collect::<Vec<_>>())),

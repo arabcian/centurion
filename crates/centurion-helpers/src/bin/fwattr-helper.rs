@@ -116,8 +116,17 @@ fn check_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Result<Target, 
         if step > 1 && (value - minv) % step != 0 {
             return err(format!("value {value} is not on the firmware's {step}-step grid from {minv}"));
         }
-    } else if !(0..=UNRANGED_HARD_CAP).contains(&value) {
-        return err(format!("value {value} outside sanity range [0, {UNRANGED_HARD_CAP}]"));
+    } else {
+        // No range from the firmware: never above what the firmware itself holds now or as its
+        // default (the GUI offers the same bound), and never above the sanity ceiling.
+        let cap = [read_i64(&dir.join("current_value")), read_i64(&dir.join("default_value"))]
+            .into_iter().flatten().max();
+        let Some(cap) = cap.map(|c| c.min(UNRANGED_HARD_CAP)) else {
+            return err("attribute reports no range and no current/default value; refusing".into());
+        };
+        if !(0..=cap).contains(&value) {
+            return err(format!("value {value} outside [0, {cap}] (no firmware range: bounded by the current/default value)"));
+        }
     }
 
     Ok(Target { real, attr: attr_of(path).to_owned(), value })

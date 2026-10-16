@@ -269,6 +269,18 @@ fn module_installed(module: &str) -> bool {
 /// kernel actually has it: a status poll on a machine without (say) acpi_call
 /// no longer spawns a failing modprobe every time. Returns true if the module
 /// is loaded afterwards (or was already).
+/// SIGKILL + a bounded reap. A child stuck in D state (nvidia-smi on a dGPU that fell off the bus,
+/// hdparm on a hung disk) ignores SIGKILL, and the plain `kill(); wait()` after a timeout then hung
+/// the helper -- and the GUI or game hook waiting on it -- for good. Gives up after ~1 s (zombie
+/// at worst, reaped when the short-lived helper exits).
+pub fn kill_reap(child: &mut std::process::Child) {
+    let _ = child.kill();
+    for _ in 0..50 {
+        if !matches!(child.try_wait(), Ok(None)) { return; }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 pub fn modprobe(module: &str) -> bool {
     static TRIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     let loaded = || Path::new("/sys/module").join(module.replace('-', "_")).exists();

@@ -529,7 +529,10 @@ pub fn verify(req: &Value) -> Value {
     crate::emit(&json!({"event": "start", "phase": "verify", "archive": archive}));
     let r = match read_archive(&archive, None, req["low_priority"].as_bool().unwrap_or(true)) { Ok(r) => r, Err(e) => return fail(e) };
     let side = sidecar(&archive);
-    let mut info = fs::read_to_string(&side).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    // As root only a root-owned, non-symlink sidecar counts (the archive's directory may be the
+    // user's: a link there must not make root read, and then copy, another root file).
+    let text = if is_root() { crate::read_root_file(&side, 1 << 20) } else { fs::read_to_string(&side).ok() };
+    let mut info = text.and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object);
     if let Some(expect) = info.as_ref().and_then(|i| i["files"].as_u64()) {
         if expect != r.files { return fail(format!("{} entries recorded when the backup was made, {} read back", expect, r.files)); }
     }
@@ -771,11 +774,34 @@ pub fn config_restore_user(req: &Value) -> Value {
         let archive = abs_file(&req["archive"])?;
         let Some(stage) = unpack(&archive, "user", &std::env::temp_dir())? else { return Ok(json!({"ok": true, "files": 0})) };
         let dst = config_home().ok_or("no home directory")?;
+        // A scene's "command" step runs a program at the next scene switch: one that arrives from
+        // an archive is dropped (the user re-enters it in the scene editor if it is theirs).
+        let dropped = strip_scene_commands(&stage.0.join("user/config/centurion/scenes"));
         let mut c = Copier::default();
         for d in USER_CONFIG_DIRS { c.copy(&stage.0.join("user/config").join(d), &dst.join(d), 0); }
-        Ok(json!({"ok": true, "files": c.files, "dir": dst, "skipped": c.skipped}))
+        Ok(json!({"ok": true, "files": c.files, "dir": dst, "skipped": c.skipped, "commands_dropped": dropped}))
     })();
     r.unwrap_or_else(fail)
+}
+
+/// Removes the "command" field from the staged scene files; returns the scenes that had one.
+/// A scene with a command that cannot be rewritten is removed from the stage, not restored as is.
+fn strip_scene_commands(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    if !fs::symlink_metadata(dir).map_or(false, |m| m.is_dir()) { return out; }
+    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if !fs::symlink_metadata(&p).map_or(false, |m| m.is_file()) { continue; }
+        let Ok(text) = fs::read_to_string(&p) else { let _ = fs::remove_file(&p); continue };
+        let Ok(mut v) = serde_json::from_str::<Value>(&text) else { continue };
+        let Some(o) = v.as_object_mut() else { continue };
+        if o.remove("command").is_some() {
+            let ok = serde_json::to_vec_pretty(&v).ok().map_or(false, |b| fs::write(&p, b).is_ok());
+            if !ok { let _ = fs::remove_file(&p); }
+            out.push(e.file_name().to_string_lossy().trim_end_matches(".json").to_owned());
+        }
+    }
+    out
 }
 
 fn safe_name(n: &std::ffi::OsStr) -> Option<&str> {

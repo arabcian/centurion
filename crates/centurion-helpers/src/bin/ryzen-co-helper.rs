@@ -113,8 +113,8 @@ fn run_ryzenadj(arg: &str) -> (bool, String) {
         match child.try_wait() {
             Ok(Some(s)) => break s,
             Ok(None) if start.elapsed() >= RYZENADJ_TIMEOUT => {
-                let _ = child.kill();
-                let _ = child.wait();
+                // Bounded reap: a ryzenadj stuck in an SMU call sits in D state and ignores SIGKILL.
+                centurion_helpers::kill_reap(&mut child);
                 return (false, format!("ryzenadj timed out after {}s", RYZENADJ_TIMEOUT.as_secs()));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),

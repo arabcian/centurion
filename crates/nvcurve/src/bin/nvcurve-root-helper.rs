@@ -67,7 +67,9 @@ fn is_int(v: &Value) -> Option<i64> { v.as_i64().filter(|_| v.is_i64() || v.is_u
 /// Schema for profile_data (port of _validate_profile_data).
 fn validate_profile_data(d: &Obj) -> Result<(), String> {
     const BOUNDS: &[(&str, i64, i64)] = &[
-        ("mem_offset_mhz", -100_000, 100_000), ("power_limit_w", 1, 2_000),
+        // Plausibility only: power limit and memory offset are re-checked against the
+        // driver's live range at apply time (safety::validate_limits).
+        ("mem_offset_mhz", -10_000, 10_000), ("power_limit_w", 1, 1_000),
         ("mem_locked_min_mhz", 1, 100_000), ("mem_locked_max_mhz", 1, 100_000),
         ("gpu_clock_cap_mhz", 210, 4_000), ("gpu_clock_comp_mhz", 0, nvcurve::safety::MAX_CLOCK_COMP_MHZ),
         ("flatten_from", 0, MAX_CURVE_POINTS - 1), ("flatten_mhz", 1, 10_000),
@@ -94,6 +96,9 @@ fn validate_profile_data(d: &Obj) -> Result<(), String> {
         if !is_canonical_profile_name(n) { return Err("profile_data 'name' field has an invalid name".into()); }
     }
     if let Some(Value::Object(deltas)) = d.get("curve_deltas") {
+        // The helper's own overclock cap, independent of the GUI: root-owned config, never
+        // above the driver's +1000 MHz.
+        let up = config().max_delta_khz.min(nvcurve::nvapi::MAX_DELTA_KHZ);
         if deltas.len() as i64 > MAX_CURVE_POINTS {
             return Err(format!("curve_deltas has too many entries (max {MAX_CURVE_POINTS})"));
         }
@@ -107,8 +112,10 @@ fn validate_profile_data(d: &Obj) -> Result<(), String> {
                 _ => return Err(format!("curve_deltas point index {pk} out of range")),
             }
             let dl = is_int(dv).ok_or_else(|| format!("curve_deltas value for point {pk} must be an integer"))?;
-            if !(-2_000_000..=2_000_000).contains(&dl) {
-                return Err(format!("curve_deltas delta for point {pk} is implausible: {dl}"));
+            if !(nvcurve::nvapi::MIN_DELTA_KHZ..=up).contains(&dl) {
+                return Err(format!("curve_deltas delta for point {pk} ({dl} kHz) is outside {}..{up} kHz \
+                                    (overclock cap: max_delta_khz in {})", nvcurve::nvapi::MIN_DELTA_KHZ,
+                                   nvcurve::config::PERSISTENT_CONFIG_FILE));
             }
         }
     }

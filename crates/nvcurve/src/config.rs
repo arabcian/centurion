@@ -25,7 +25,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            max_delta_khz: 1_000_000,
+            // +500 MHz/point (the Core offset box's own range). The driver takes +1000, but
+            // offsets that high are what produces Xid 31/79/109/154 crashes; raising it needs
+            // root (root-owned /etc/nvcurve/config.json).
+            max_delta_khz: 500_000,
             auto_snapshot: true,
             max_snapshots: 20,
             poll_interval_s: 1.0,

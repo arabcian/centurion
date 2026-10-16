@@ -50,7 +50,9 @@ pub fn run(bin: &str, args: &[String], timeout: Duration) -> Result<Output, RunE
             Ok(Some(s)) => break s,
             Ok(None) if start.elapsed() >= timeout => {
                 let _ = child.kill();
-                let _ = child.wait();
+                // Bounded reap: nvidia-smi on a dGPU that fell off the bus sits in D state and ignores
+                // SIGKILL; an unbounded wait() turned the timeout into a hang of the whole helper.
+                for _ in 0..50 { if !matches!(child.try_wait(), Ok(None)) { break; } std::thread::sleep(Duration::from_millis(20)); }
                 return Err(RunError::Timeout);
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),

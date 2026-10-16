@@ -37,7 +37,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -725,11 +725,30 @@ struct Guard {
 /// One new flow waiting for its connection-log line.
 struct Seen { ts: u64, inbound: bool, f: Flow, host: String, blocked: bool, open: bool, inode: u32, uid: Option<u32>, pid: i32, exe: String }
 
+/// Group allowed to read the guard's logs (the GUI reads them directly): `wheel`, as in the polkit
+/// rules. Without it the logs stay root-only.
+fn log_gid() -> Option<u32> {
+    static GID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *GID.get_or_init(|| std::fs::read_to_string("/etc/group").ok()?.lines().find_map(|l| {
+        let f: Vec<&str> = l.split(':').collect();
+        (f.len() >= 3 && f[0] == "wheel").then(|| f[2].parse().ok()).flatten()
+    }))
+}
+
+/// Connection history and DNS names of every user: 0640 root:wheel (0600 without a wheel
+/// group), never world-readable. Files created 0644 by older versions are tightened on the next write.
 fn append_log(file: &str, max: u64, text: &str) {
+    use std::os::unix::fs::MetadataExt;
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o755).create(LOG_DIR);
     if std::fs::metadata(file).map_or(false, |m| m.len() > max) { let _ = std::fs::rename(file, format!("{file}.1")); }
-    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o644)
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(file) {
+        let gid = log_gid();
+        let mode = if gid.is_some() { 0o640 } else { 0o600 };
+        if let Ok(m) = f.metadata() {
+            if let Some(g) = gid { if m.gid() != g || m.uid() != 0 { unsafe { libc::fchown(f.as_raw_fd(), 0, g); } } }
+            if m.mode() & 0o777 != mode { let _ = f.set_permissions(std::fs::Permissions::from_mode(mode)); }
+        }
         let _ = f.write_all(text.as_bytes());
     }
 }
@@ -1128,6 +1147,8 @@ pub fn handle(req: &Value) -> Value {
         "blacklist" => {
             let label = req["label"].as_str().map(|l| l.chars().filter(|c| !c.is_control()).take(64).collect::<String>().trim().to_owned())
                 .filter(|l| !l.is_empty());
+            // Clear first: "replace the list" must keep what this same request adds.
+            if req["remove_all"] == true { cfg.blacklist.clear(); }
             let mut have: HashSet<String> = cfg.blacklist.iter().map(Net::to_string).collect();
             let mut added = Vec::new();
             for s in strings(&req["add"]) {
@@ -1140,7 +1161,6 @@ pub fn handle(req: &Value) -> Value {
                     if let Some(l) = &label { cfg.labels.insert(n.to_string(), l.clone()); }
                 }
             }
-            if req["remove_all"] == true { cfg.blacklist.clear(); }
             let del: HashSet<String> = strings(&req["remove"]).iter().filter_map(|s| Net::parse(s)).map(|n| n.to_string()).collect();
             cfg.blacklist.retain(|n| !del.contains(&n.to_string()));
             let have: HashSet<String> = cfg.blacklist.iter().map(Net::to_string).collect();
@@ -1227,7 +1247,7 @@ fn whois_summary(text: &str, last: bool) -> Vec<[String; 2]> {
     let f = whois_fields(text);
     let pick = |keys: &[&str]| keys.iter().find_map(|k| {
         let mut hits = f.iter().filter(|(key, _)| key == k).map(|(_, v)| *v);
-        if last { hits.last() } else { hits.next() }
+        if last { hits.next_back() } else { hits.next() }
     });
     let mut out: Vec<[String; 2]> = Vec::new();
     for (label, keys) in [("Range", &["inetnum", "inet6num", "netrange"][..]), ("CIDR", &["cidr", "route", "route6"]),

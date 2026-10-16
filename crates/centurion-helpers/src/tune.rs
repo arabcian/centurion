@@ -1550,14 +1550,14 @@ fn run_tool(bin: &Path, args: &[&str], timeout: std::time::Duration) -> Option<(
         let _ = (&mut out).take(64 * 1024).read_to_end(&mut v);
         let _ = tx.send(v);
     });
-    let Ok(bytes) = rx.recv_timeout(timeout) else { let _ = child.kill(); let _ = child.wait(); return None; };
+    let Ok(bytes) = rx.recv_timeout(timeout) else { crate::kill_reap(&mut child); return None; };
     // stdout closed; the exit follows at once (or it closed stdout early and hangs: bounded).
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     let status = loop {
         match child.try_wait() {
             Ok(Some(st)) => break st,
             Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(10)),
-            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+            _ => { crate::kill_reap(&mut child); return None; }
         }
     };
     Some((status.success(), String::from_utf8_lossy(&bytes).into_owned()))

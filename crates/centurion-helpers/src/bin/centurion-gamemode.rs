@@ -140,7 +140,12 @@ fn pkexec_helper(helper: &str, req: &Value) -> Result<Value, String> {
     let mut child = Command::new(pk).arg(helper)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().map_err(|e| format!("pkexec: {e}"))?;
-    child.stdin.take().unwrap().write_all(req.to_string().as_bytes()).map_err(|e| format!("pkexec stdin: {e}"))?;
+    if let Err(e) = child.stdin.take().map_or(Ok(()), |mut s| s.write_all(req.to_string().as_bytes())) {
+        // pkexec/helper closed its stdin (EPIPE): reap it if it is already gone, never block on it.
+        let _ = child.kill();
+        let _ = child.try_wait();
+        return Err(format!("pkexec stdin: {e}"));
+    }
     // Game hooks run without a terminal and often without a polkit agent in
     // reach: never let a stuck authorization block the game launch forever.
     let pid = child.id() as libc::pid_t;

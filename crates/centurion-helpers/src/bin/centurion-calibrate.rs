@@ -1573,8 +1573,18 @@ fn main() {
     td.exposure = true;
     let scene = opt("--scene");
     if let Some(sc) = &scene {
-        let v = centurion_helpers::calctx::scene_file(sc).and_then(|p| std::fs::read_to_string(&p).map_err(|e| e.to_string()))
-            .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()));
+        // Boot run: the power part stored root-side when the calibration was scheduled.
+        let v = if flag("--boot-scene") {
+            centurion_helpers::read_root_file(BOOT_TAKEN, centurion_helpers::calctx::BOOT_FLAG_MAX)
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .filter(|t| t["scene"].as_str() == Some(sc.as_str()) && t["scene_power"].is_object())
+                .map(|t| t["scene_power"].clone())
+                .ok_or_else(|| "the scheduled scene's stored power context is missing (schedule the calibration again)".to_string())
+        } else {
+            std::env::var("SUDO_USER").ok().filter(|u| !u.is_empty() && u != "root")
+                .ok_or_else(|| "--scene needs the scene owner's account: run it with sudo from that account".to_string())
+                .and_then(|u| centurion_helpers::calctx::read_scene_for(&u, sc))
+        };
         match v {
             Ok(v) => {
                 td.scene = true;
@@ -1820,7 +1830,7 @@ const BOOT_IDLE_S: u64 = 300;
 
 fn boot_status() -> String {
     if let Some(s) = std::fs::read_to_string(BOOT_STATUS).ok().filter(|s| !s.trim().is_empty()) { return s.trim().to_owned(); }
-    match centurion_helpers::read_root_file(BOOT_FLAG, 4096).and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+    match centurion_helpers::read_root_file(BOOT_FLAG, centurion_helpers::calctx::BOOT_FLAG_MAX).and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
         Some(v) => json!({"state": "scheduled", "sessions": v["sessions"], "budget": v["budget"], "scene": v["scene"]}).to_string(),
         None => json!({"state": "none"}).to_string(),
     }
@@ -1876,7 +1886,7 @@ fn boot_blocker() -> Option<String> {
 /// runs the sessions as children (a key press or mouse move stops the running one cleanly; it
 /// resumes after the next quiet stretch), then applies the boot preset and releases the hold.
 fn boot_run() -> i32 {
-    let Some(v) = centurion_helpers::read_root_file(BOOT_FLAG, 4096).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return 0 };
+    let Some(v) = centurion_helpers::read_root_file(BOOT_FLAG, centurion_helpers::calctx::BOOT_FLAG_MAX).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return 0 };
     // Consumed at once: a crash during it must not start it again at every boot. The taken copy
     // carries this boot's id, so it holds the boot preset during this boot only.
     let mut taken = v.clone();
@@ -1917,7 +1927,7 @@ fn boot_run() -> i32 {
         let out = std::fs::OpenOptions::new().create(true).append(true).open(BOOT_LOG);
         let mut cmd = std::process::Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/centurion-calibrate")));
         cmd.args(["--sessions", "1", "--budget", &format!("{budget}")]).env("CENTURION_CALIBRATE_OWNER", &me);
-        if let Some(sc) = &scene { cmd.args(["--scene", sc]); if let Some(u) = v["user"].as_str() { cmd.env("SUDO_USER", u); } }
+        if let Some(sc) = &scene { cmd.args(["--scene", sc, "--boot-scene"]); }
         if let Ok(f) = out { if let Ok(f2) = f.try_clone() { cmd.stdout(f).stderr(f2); } }
         let started = now();
         let Ok(mut child) = cmd.spawn() else { log("could not start a session"); break };

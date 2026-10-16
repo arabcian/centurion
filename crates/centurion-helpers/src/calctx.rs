@@ -136,13 +136,51 @@ pub fn valid_scene_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || " _-.".contains(c)) && !name.starts_with('.')
 }
 
+/// Uid of a user name (or numeric uid string), from passwd.
+fn uid_of(user: &str) -> Option<u32> {
+    std::fs::read_to_string("/etc/passwd").ok()?.lines().find_map(|l| {
+        let f: Vec<&str> = l.split(':').collect();
+        (f.len() >= 3 && (f[0] == user || f[2] == user)).then(|| f[2].parse().ok()).flatten()
+    })
+}
+
 /// A user's scene file (scenes are per user: ~/.config/centurion/scenes).
+/// The file itself must not be a symlink (root reads it).
 pub fn scene_file_for(user: &str, name: &str) -> Result<PathBuf, String> {
     if !valid_scene_name(name) { return Err(format!("invalid scene name '{name}'")); }
     let home = home_of(user).ok_or_else(|| format!("no home directory for {user}"))?;
     let p = Path::new(&home).join(".config/centurion/scenes").join(format!("{name}.json"));
-    if !p.is_file() { return Err(format!("scene \"{name}\" not found ({})", p.display())); }
+    if !std::fs::symlink_metadata(&p).map_or(false, |m| m.is_file()) {
+        return Err(format!("scene \"{name}\" not found or not a regular file ({})", p.display()));
+    }
     Ok(p)
+}
+
+/// Reads and parses a user's scene as root: O_NOFOLLOW, regular file owned by that user (or
+/// root), size-capped. The open fd is checked, so a swap after `scene_file_for` cannot redirect it.
+pub fn read_scene_for(user: &str, name: &str) -> Result<Value, String> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    const MAX: u64 = 1024 * 1024;
+    let p = scene_file_for(user, name)?;
+    let uid = uid_of(user).ok_or_else(|| format!("unknown user {user}"))?;
+    let f = std::fs::OpenOptions::new().read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK).open(&p)
+        .map_err(|e| format!("{}: {e}", p.display()))?;
+    let m = f.metadata().map_err(|e| format!("{}: {e}", p.display()))?;
+    if !m.is_file() || (m.uid() != uid && m.uid() != 0) || m.len() > MAX {
+        return Err(format!("{}: not a regular file owned by {user} (or too large)", p.display()));
+    }
+    let mut s = String::new();
+    (&f).take(MAX + 1).read_to_string(&mut s).map_err(|e| format!("{}: {e}", p.display()))?;
+    serde_json::from_str(&s).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// The scene-shaped power part of a scene (what `apply_scene_power` reads), for storing it
+/// root-side at schedule time.
+pub fn scene_power_part(scene: &Value) -> Value {
+    let (profile, fw, fan) = scene_power(scene);
+    json!({"platform_profile": profile, "firmware": fw, "fan_fullspeed": fan})
 }
 
 /// The scene file of the user who ran sudo.
@@ -157,6 +195,8 @@ pub fn scene_file(name: &str) -> Result<PathBuf, String> {
 
 pub const BOOT_FLAG: &str = "/var/lib/centurion/calibrate-on-boot.json";
 pub const BOOT_TAKEN: &str = "/var/lib/centurion/calibrate-on-boot.json.taken";
+/// Size cap of the boot flag (it carries the scene's power part).
+pub const BOOT_FLAG_MAX: u64 = 64 * 1024;
 pub const BOOT_STATUS: &str = "/run/centurion/calibrate-status.json";
 /// The one-shot boot service: added to the boot when a calibration is scheduled, removed again
 /// by the service itself once it has taken the schedule (or when the schedule is cancelled).
@@ -168,7 +208,7 @@ pub const BOOT_SERVICE: &str = "centurion-calibrate-boot";
 /// the plain flag exists, so nothing would ever remove it).
 pub fn boot_calibration_pending() -> bool {
     if Path::new(BOOT_FLAG).exists() { return true; }
-    crate::read_root_file(BOOT_TAKEN, 4096).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    crate::read_root_file(BOOT_TAKEN, BOOT_FLAG_MAX).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .map_or(false, |v| v["boot_id"].as_str() == Some(crate::bootguard::boot_id().as_str()))
 }
 
@@ -181,12 +221,17 @@ pub fn schedule_boot(on: bool, sessions: u64, budget: f64, scene: Option<&str>, 
     }
     let sessions = sessions.clamp(1, 12);
     let budget = budget.clamp(5.0, 60.0);
-    if let Some(sc) = scene {
-        let u = user.ok_or("a scene needs its owner's account")?;
-        scene_file_for(u, sc)?;
-    }
+    // The scene's power part is copied into the root-owned flag now (the moment the request was
+    // authorised): the boot run never re-reads the user's file, which may change after approval.
+    let scene_pw = match scene {
+        Some(sc) => {
+            let u = user.ok_or("a scene needs its owner's account")?;
+            Some(scene_power_part(&read_scene_for(u, sc)?))
+        }
+        None => None,
+    };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let body = json!({"sessions": sessions, "budget": budget, "scene": scene, "user": user, "t": now});
+    let body = json!({"sessions": sessions, "budget": budget, "scene": scene, "user": user, "scene_power": scene_pw, "t": now});
     crate::secure_dir(crate::defaults::DIR)?;
     crate::write_root_file(BOOT_FLAG, body.to_string().as_bytes())?;
     if !crate::tune::service_boot(BOOT_SERVICE, true) {

@@ -61,7 +61,16 @@ pub fn holders() -> Vec<Value> {
             if hit && !what.contains(&t) { what.push(t); }
         }
         if what.is_empty() { continue; }
-        out.push(json!({"pid": pid, "comm": rd(&e.path().join("comm")).unwrap_or_default(), "files": what}));
+        // Names of other users' processes are not the caller's business (the pid stays: release
+        // still has to say that something holds the GPU). Root and the caller are shown.
+        let comm = {
+            use std::os::unix::fs::MetadataExt;
+            let owner = std::fs::metadata(e.path()).map(|m| m.uid()).ok();
+            let caller = std::env::var("PKEXEC_UID").ok().and_then(|u| u.parse::<u32>().ok());
+            if caller.is_none() || owner == Some(0) || owner == caller { rd(&e.path().join("comm")).unwrap_or_default() }
+            else { "(another user's process)".to_owned() }
+        };
+        out.push(json!({"pid": pid, "comm": comm, "files": what}));
     }
     out
 }
@@ -290,7 +299,9 @@ pub fn awake_enabled() -> bool { Path::new(AWAKE_FLAG).exists() }
 pub fn awake_op(on: Option<bool>) -> Value {
     let Some(on) = on else { return json!({"ok": true, "on": awake_enabled()}) };
     let flag = if on {
-        std::fs::create_dir_all("/etc/centurion").and_then(|_| std::fs::write(AWAKE_FLAG, "1\n"))
+        // Root-owned dir check + atomic, no-symlink write (like every other flag in /etc/centurion).
+        crate::secure_dir("/etc/centurion").and_then(|_| crate::write_root_file(AWAKE_FLAG, b"1\n"))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     } else {
         match std::fs::remove_file(AWAKE_FLAG) { Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e), _ => Ok(()) }
     };
