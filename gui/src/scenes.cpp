@@ -358,7 +358,13 @@ static constexpr int VERIFY_DELAY_MS = 8000;
 static bool calibrationHold() {
     const QJsonObject o = readObject(QStringLiteral("/run/centurion/calibrating.json"));
     const qint64 pid = o.value(QStringLiteral("pid")).toInteger(0);
-    return pid > 0 && QFile::exists(QStringLiteral("/proc/%1").arg(pid));
+    if (pid <= 0 || !QFile::exists(QStringLiteral("/proc/%1").arg(pid))) return false;
+    // Same rule as centurion_helpers::calibration_hold(): with a recorded start time the pid must still
+    // be that process. A hold left by a calibration that died (panic = abort skips its teardown) whose pid
+    // was reused deferred every scene switch here while the root helpers no longer refused anything.
+    if (!o.value(QStringLiteral("start")).isDouble()) return true;
+    const auto start = procStart(pid);
+    return start && *start == quint64(o.value(QStringLiteral("start")).toInteger());
 }
 
 SceneEngine::SceneEngine(MainWindow *win) : QObject(win), win_(win), auto_(loadAuto()) {

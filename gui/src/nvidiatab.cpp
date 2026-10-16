@@ -353,6 +353,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         if (first >= 0)
             log(QStringLiteral("ℹ️ Points %1–%2 would need more than -1000 MHz; the driver will not take them that low, "
                                "so the top may not stay flat there (a Core cap of %3 MHz would hold it).").arg(first).arg(last).arg(target));
+        // The flat top goes into the Core cap box (written with Cap / Apply Offsets, + compensation).
+        coreCapSpin_->setValue(target);
         curveModified_ = true;
         updateCoreOffsetUi();
         recompute();

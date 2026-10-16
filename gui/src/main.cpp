@@ -14,8 +14,13 @@
 #include "theme.h"
 #include "tray.h"
 #include <QApplication>
+#include <QAbstractSpinBox>
 #include <QComboBox>
+#include <QLineEdit>
 #include <QWheelEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QPointer>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QLockFile>
@@ -113,6 +118,66 @@ protected:
     }
 };
 
+// A left click into a spin box or line edit selects its whole value, so the
+// next key replaces it — when the click gives the field focus, or when its
+// value was just committed with Enter (focus stays there after Enter). Other
+// clicks place the cursor as usual. Covers every spin box (Int64SpinBox
+// included) and every plain QLineEdit; editable combo boxes are left alone.
+class SpinSelectAll final : public QObject {
+public:
+    using QObject::QObject;
+protected:
+    bool eventFilter(QObject *obj, QEvent *e) override {
+        const QEvent::Type t = e->type();
+        if (t != QEvent::MouseButtonPress && t != QEvent::MouseMove && t != QEvent::MouseButtonRelease
+            && t != QEvent::KeyPress && t != QEvent::FocusIn)
+            return false;
+        if (!obj->isWidgetType()) return false;
+        auto *w = static_cast<QWidget *>(obj);
+
+        // Field owner: the spin box for its inner line edit, else the line edit.
+        auto *le = qobject_cast<QLineEdit *>(w);
+        auto *sb = qobject_cast<QAbstractSpinBox *>(le ? w->parentWidget() : w);
+        if (!le && !sb) return false;
+        if (le && !sb && qobject_cast<QComboBox *>(w->parentWidget())) return false;
+        QWidget *owner = sb ? static_cast<QWidget *>(sb) : le;
+
+        // Qt gives focus on a press before app event filters see the press, so a
+        // click into an unfocused field arrives here as a mouse FocusIn first.
+        if (t == QEvent::FocusIn) {
+            if (static_cast<QFocusEvent *>(e)->reason() == Qt::MouseFocusReason) owner->setProperty(kArmed, true);
+            return false;
+        }
+        if (t == QEvent::KeyPress) {
+            const int k = static_cast<QKeyEvent *>(e)->key();
+            owner->setProperty(kArmed, k == Qt::Key_Return || k == Qt::Key_Enter);
+            return false;
+        }
+        if (!le) return false;  // mouse on the spin box frame/arrows: Qt's own handling
+
+        // The rest of a click whose press we took: a 1 px jitter during it would
+        // otherwise turn the full selection into a partial one.
+        if (t != QEvent::MouseButtonPress) {
+            if (m_eaten != le) return false;
+            if (t == QEvent::MouseButtonRelease) m_eaten = nullptr;
+            return true;
+        }
+
+        if (static_cast<QMouseEvent *>(e)->button() != Qt::LeftButton) return false;
+        const bool readOnly = sb ? sb->isReadOnly() : le->isReadOnly();
+        if (!owner->isEnabled() || readOnly) return false;
+        if (!owner->property(kArmed).toBool()) return false;
+        owner->setProperty(kArmed, false);
+        owner->setFocus(Qt::MouseFocusReason);
+        if (sb) sb->selectAll(); else le->selectAll();
+        m_eaten = le;
+        return true;  // no cursor placement: the selection stays
+    }
+private:
+    static constexpr const char *kArmed = "_centurionSelectAllArmed";
+    QPointer<QLineEdit> m_eaten;
+};
+
 // SIGTERM (shutdown, `kill`), SIGHUP (terminal/session gone) and SIGINT used
 // to end the process on the spot, skipping aboutToQuit: the login guard was
 // then left "applying" and the next login reported a crash that never was.
@@ -146,6 +211,7 @@ int main(int argc, char **argv) {
     app.setWindowIcon(appIcon(128));
     app.setQuitOnLastWindowClosed(false);  // the window is a view onto a tray app
     app.installEventFilter(new NoComboWheel(&app));  // deliberate, see NoComboWheel — keep it
+    app.installEventFilter(new SpinSelectAll(&app));
 
     const QStringList args = app.arguments();
     if (args.contains("--version") || args.contains("-V")) { std::printf("centurion %s\n", CENTURION_VERSION); return 0; }
