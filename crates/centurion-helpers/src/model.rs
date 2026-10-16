@@ -388,10 +388,18 @@ pub struct Fit {
     pub loo_rmse: f64,
     pub loo_r2: f64,
     pub cover90: f64,
+    /// Calibration of the posterior variance (>= 1): how much wider the leave-one-out residuals
+    /// are than the model's own predictive spread says (median z² against that of a standard
+    /// normal, shrunk towards 1 for small fits). Every posterior variance is multiplied by it, so a
+    /// misspecified model (an interaction it has no term for, a drift it cannot see) does not
+    /// make decisions with confidence it has not earned.
+    pub var_scale: f64,
     /// Posterior-mean coefficients of every term the data touched.
     main: Vec<Vec<f64>>,
     pair: FxMap<f64>,
     tri: FxMap<f64>,
+    /// `tri` indexed by its first two terms (k2): the third terms and their coefficients.
+    tri_ix: FxMap<Vec<(u64, f64)>>,
 }
 
 fn chol(a: &mut [f64], n: usize) -> bool {
@@ -498,11 +506,23 @@ pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -
     }
     let d = inv_diag(&res.1, n);
     let (mut sse, mut cover) = (0.0, 0.0);
+    let mut z2: Vec<f64> = Vec::with_capacity(n);
     for i in 0..n {
         let r = res.2[i] / d[i];
         sse += r * r;
-        if (res.2[i] / d[i].sqrt()).abs() < 1.645 { cover += 1.0; }
+        let z = res.2[i] / d[i].sqrt();
+        if z.abs() < 1.645 { cover += 1.0; }
+        if z.is_finite() { z2.push(z * z); }
     }
+    // Median of chi-square(1) = 0.4549. Robust to the outliers the reweighting already handled;
+    // shrunk towards 1 with few rows (a median of 20 squares is itself noisy). Never below 1:
+    // a model that is more accurate than it claims keeps its intervals.
+    let var_scale = {
+        z2.sort_by(|a, b| a.total_cmp(b));
+        let med = if z2.is_empty() { 0.4549 } else { z2[z2.len() / 2] };
+        let raw = (med / 0.4549).clamp(1.0, 4.0);
+        1.0 + (raw - 1.0) * n as f64 / (n as f64 + 60.0)
+    };
     let sst: f64 = y.iter().map(|v| (v - mean_y).powi(2)).sum::<f64>().max(1e-12);
     let s = h.scales();
     let alpha = &res.2;
@@ -540,9 +560,11 @@ pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -
     }
     pair.retain(|_, b| *b != 0.0);
     tri.retain(|_, b| *b != 0.0);
+    let mut tri_ix: FxMap<Vec<(u64, f64)>> = FxMap::default();
+    for (k, b) in &tri { tri_ix.entry(k >> 19).or_default().push((k & 0x7FFFF, *b)); }
     let alpha = res.2.clone();
     Some(Fit { space, nobs: n, x: obs.iter().map(|o| o.x.clone()).collect(), l: res.1, alpha, scales: s, hyper: h, loglik: res.0,
-               loo_rmse: (sse / n as f64).sqrt(), loo_r2: 1.0 - sse / sst, cover90: cover / n as f64, main, pair, tri })
+               loo_rmse: (sse / n as f64).sqrt(), loo_r2: 1.0 - sse / sst, cover90: cover / n as f64, var_scale, main, pair, tri, tri_ix })
 }
 
 impl Fit {
@@ -559,12 +581,18 @@ impl Fit {
                 } }
             } }
         }
-        if !self.tri.is_empty() {
-            for p in 0..e.len() { for q in p + 1..e.len() { for r in q + 1..e.len() {
-                for (sa, va) in &e[p].1 { for (sb, vb) in &e[q].1 { for (sc, vc) in &e[r].1 {
-                    if let Some(b) = self.tri.get(&k3(k1(e[p].0, *sa), k1(e[q].0, *sb), k1(e[r].0, *sc))) { s += va * vb * vc * b; }
-                } } }
-            } } }
+        // Triples through the index of their first two terms: only the triples the data touched are
+        // visited, not every triple of the configuration (that was cubic in the number of changed
+        // knobs and made each search step of a many-change configuration up to ~20x slower).
+        // Terms are stored with ascending factors, the order `e` is sorted in.
+        if !self.tri_ix.is_empty() && e.len() >= 3 {
+            let val: FxMap<f64> = e.iter().flat_map(|(f, st)| st.iter().map(move |(k, v)| (k1(*f, *k), *v))).collect();
+            for p in 0..e.len() { for q in p + 1..e.len() {
+                for (sa, va) in &e[p].1 { for (sb, vb) in &e[q].1 {
+                    let Some(l) = self.tri_ix.get(&k2(k1(e[p].0, *sa), k1(e[q].0, *sb))) else { continue };
+                    for (c, b) in l { if let Some(vc) = val.get(c) { s += va * vb * vc * b; } }
+                } }
+            } }
         }
         s
     }
@@ -581,9 +609,10 @@ impl Fit {
         fwd(&self.l, self.nobs, &mut u);
         u
     }
+    /// Posterior variance, calibrated (`var_scale`).
     pub fn var(&self, f: &Func) -> f64 {
         let p = self.proj(f);
-        (self.prior(f, f) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0)
+        (self.prior(f, f) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0) * self.var_scale
     }
     pub fn sigma(&self) -> f64 { self.hyper.sigma }
     /// Sum of |coefficients| per knob pair (triples count towards each of their pairs).
@@ -642,17 +671,32 @@ impl PhaseSet {
     pub fn nrows(&self) -> usize { self.rows.len() }
     pub fn rows(&self) -> &[Row] { &self.rows }
     /// Observations of one objective (None = the sum of the objectives a row measured).
+    ///
+    /// Heteroscedastic sessions: one noise level is fitted for all rows, but a session measured
+    /// with a busy background, a thermal event or a flaky sensor scatters far more than a quiet
+    /// one, and at equal weight its rows pull the effects (or inflate the noise every other
+    /// session is judged with). A session's own scatter is read from its reference runs (robust
+    /// sd, at least 4 of them); a session noisier than the typical one counts by the variance
+    /// ratio (down to a fifth). Never more than its weight: a quiet session is not promoted.
     fn obs(&self, o: Option<usize>) -> Vec<Obs> {
         let mut sess: Vec<u64> = self.rows.iter().map(|r| r.sess).collect();
         sess.sort(); sess.dedup();
-        self.rows.iter().filter_map(|r| {
-            let y = match o {
+        let yv = |r: &Row| -> f64 {
+            match o {
                 Some(o) => r.y[o],
                 None => { let v: Vec<f64> = r.y.iter().copied().filter(|x| !x.is_nan()).collect(); if v.is_empty() { f64::NAN } else { v.iter().sum() } }
-            };
+            }
+        };
+        // A session's reference runs: no knob changed (its context pseudo-knobs are the same for all of
+        // its runs), cool start - a heat-soaked reference sits at another level, not at another noise.
+        let is_ref = |r: &Row| r.cfg.iter().all(|(k, v)| is_ctx(k) && !(k == "ctx.heat" && v == "hot"));
+        let factor = session_noise_factors(self.rows.iter().filter(|r| is_ref(r)).map(|r| (r.sess, yv(r))));
+        self.rows.iter().filter_map(|r| {
+            let y = yv(r);
             if y.is_nan() { return None; }
             let tc = if r.tc.is_finite() { r.tc.clamp(-25.0, 25.0) } else { 0.0 };
-            Some(Obs { x: self.space.parse(&r.cfg, true)?, sess: sess.iter().position(|s| *s == r.sess)?, pos: r.pos, t: r.t, w: r.w, y, tc })
+            let w = r.w * factor.get(&r.sess).copied().unwrap_or(1.0);
+            Some(Obs { x: self.space.parse(&r.cfg, true)?, sess: sess.iter().position(|s| *s == r.sess)?, pos: r.pos, t: r.t, w, y, tc })
         }).collect()
     }
     /// One objective on its own (rows that did not measure it are left out).
@@ -664,6 +708,37 @@ impl PhaseSet {
         let fits: [Option<Arc<Fit>>; 4] = std::array::from_fn(|o| if wts[o] != 0.0 { self.fit_obj(o, None, 2) } else { None });
         Model::new(self.space.clone(), fits, wts)
     }
+}
+
+/// Per session: the weight factor from its reference runs' scatter (see `PhaseSet::obs`).
+/// `refs` = (session, value) of reference runs; sessions with fewer than 4 get no factor (1).
+pub fn session_noise_factors(refs: impl Iterator<Item = (u64, f64)>) -> HashMap<u64, f64> {
+    let mut by: HashMap<u64, Vec<f64>> = HashMap::new();
+    for (s, y) in refs { if y.is_finite() { by.entry(s).or_default().push(y); } }
+    let robust_sd = |v: &[f64]| -> f64 {
+        let mut a = v.to_vec();
+        a.sort_by(|x, y| x.total_cmp(y));
+        let med = a[a.len() / 2];
+        let mut d: Vec<f64> = a.iter().map(|x| (x - med).abs()).collect();
+        d.sort_by(|x, y| x.total_cmp(y));
+        1.4826 * d[d.len() / 2]
+    };
+    let sds: Vec<(u64, f64, usize)> = by.iter().filter(|(_, v)| v.len() >= 4).map(|(s, v)| (*s, robust_sd(v), v.len())).collect();
+    if sds.len() < 2 { return HashMap::new(); }
+    let mut pool: Vec<f64> = sds.iter().map(|x| x.1).collect();
+    pool.sort_by(|a, b| a.total_cmp(b));
+    let typical = pool[pool.len() / 2];
+    if typical <= 1e-9 { return HashMap::new(); }
+    // A scatter read from a handful of reference runs is itself noisy (the MAD of 6 values easily
+    // differs 2x by chance): the session's variance is shrunk towards the typical one with the
+    // degrees of freedom the MAD really carries (~37 % efficiency) against a prior worth 8. Only a
+    // session whose references credibly scatter more is weighed down.
+    const PRIOR_DF: f64 = 8.0;
+    sds.into_iter().map(|(s, sd, n)| {
+        let df = 0.37 * (n as f64 - 1.0);
+        let var = (df * sd * sd + PRIOR_DF * typical * typical) / (df + PRIOR_DF);
+        (s, (typical * typical / var).clamp(0.2, 1.0))
+    }).collect()
 }
 
 /// Weighted sum of per-objective fits (independent outputs): mean = sum w_o mu_o, var = sum w_o^2 var_o.
@@ -701,7 +776,7 @@ impl Model {
         for (o, w, m) in self.parts() {
             let p = m.proj(f);
             mu += w * m.mean(f);
-            var += w * w * (m.prior(f, f) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0);
+            var += w * w * (m.prior(f, f) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0) * m.var_scale;
             pr.push((o, p));
         }
         (mu, var, pr)
@@ -1385,6 +1460,32 @@ mod tests {
         let prior: Vec<Cfg> = (0..40).map(|_| vec![(factors[0].key.clone(), "1".into())]).collect();
         let d3 = design(&factors, 40, &mut Rng::new(9), &Mix::lean(), &prior);
         assert!(count(&d3, &factors[0].key) < count(&d3, &factors[1].key), "gaps of earlier runs are filled first");
+    }
+
+    /// A session whose reference runs credibly scatter more counts less; a handful of references
+    /// that differ by chance do not; a misspecified model widens its own intervals.
+    #[test]
+    fn noisy_sessions_weigh_less_and_misfit_widens_intervals() {
+        let mut rng = Rng::new(17);
+        let gauss = |rng: &mut Rng| (0..6).map(|_| rng.unit()).sum::<f64>() - 3.0;
+        let mut refs: Vec<(u64, f64)> = Vec::new();
+        for s in 0..4u64 { for _ in 0..40 { refs.push((s, 0.01 * gauss(&mut rng) * if s == 3 { 3.0 } else { 1.0 })); } }
+        for _ in 0..5 { refs.push((9, 0.02 * gauss(&mut rng))); }
+        let f = session_noise_factors(refs.into_iter());
+        assert!(f[&3] < 0.3, "40 references at 3x the scatter: {f:?}");
+        assert!((0..3).all(|s| f[&s] > 0.8), "typical sessions keep their weight: {f:?}");
+        assert!(f[&9] > 0.6, "5 references are not enough to condemn a session: {f:?}");
+        assert!(session_noise_factors([(1u64, 0.1), (1, 0.2)].into_iter()).is_empty());
+        // Truth has a pure pair effect; a mains-only model cannot express it and must say so.
+        let fs: Vec<Factor> = ["vm.a", "vm.b", "cpu.c", "cpu.d"].iter().map(|k| fac(k, "0", &["1"])).collect();
+        let tru = |c: &Cfg| { let on = |k: &str| c.iter().any(|(a, _)| a == k); if on("vm.a") && on("vm.b") { 0.3 } else { 0.0 } };
+        let mut d = design(&fs, 160, &mut rng, &Mix { cluster: 0.5, cluster_k: (2, 3), spread_k: (1, 3), crowd: 0.0, crowd_k: (2, 3) }, &[]);
+        for _ in 0..20 { d.push(Vec::new()); }
+        let rows = rows_of(&d, tru, &mut rng, 0.01);
+        let mains = PhaseSet::build_with(fs.clone(), rows.clone(), Some(1)).unwrap().fit_obj(0, None, 2).unwrap();
+        let pairs = PhaseSet::build_with(fs, rows, Some(2)).unwrap().fit_obj(0, None, 2).unwrap();
+        assert!(mains.var_scale > 1.3, "misspecified: {}", mains.var_scale);
+        assert!(pairs.var_scale < 1.15, "well specified: {}", pairs.var_scale);
     }
 
     /// Fit time at the size of a large calibration (`cargo test --release -- --ignored --nocapture perf`).

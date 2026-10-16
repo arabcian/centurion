@@ -69,7 +69,15 @@ pub fn classify(msg: &str) -> Option<Value> {
         return ev("gsp", "critical", "NVIDIA GSP firmware timeout");
     }
     if has("[Hardware Error]") || has("Machine check events logged") || has("Machine Check Exception") {
-        let level = if has("Corrected") || has("events logged") { "warn" } else { "critical" };
+        // One machine check is printed as several records: the decoder's verdict line ("Corrected
+        // error, …" / "Uncorrected, …"), the MCx_STATUS line (CE / UE flag) and detail lines (address,
+        // IPID, syndrome, cache level, ext. error code; the kernel's own print adds TSC / PROCESSOR /
+        // RIP). Only the verdict and status lines say what happened: every detail line of a corrected
+        // error used to count as a critical machine check of its own (tray alerts, field stability).
+        const DETAIL: &[&str] = &["Error Addr", "IPID:", "Syndrome:", "cache level", "Ext. Error Code", "TSC ", "PROCESSOR ", "RIP", "PPIN "];
+        if !has("Machine Check") && !has("STATUS") && DETAIL.iter().any(|d| has(d)) { return None; }
+        let corrected = has("Corrected") || has("events logged") || has("|CE|") || mce_status_corrected(msg);
+        let level = if corrected && !has("Exception") { "warn" } else { "critical" };
         return ev("mce", level, "CPU machine check (unstable Curve Optimizer / RAM timings, or hardware)");
     }
     if has("AER:") || has("PCIe Bus Error") {
@@ -89,6 +97,15 @@ pub fn classify(msg: &str) -> Option<Value> {
         return ev("amdgpu", "error", "AMD iGPU hang / reset");
     }
     None
+}
+
+/// The kernel's generic MCE line ("CPU 0: Machine Check: 0 Bank 5: be00000000800400"): status
+/// valid (bit 63) and not uncorrected (UC, bit 61).
+fn mce_status_corrected(msg: &str) -> bool {
+    let Some(i) = msg.find(" Bank ") else { return false };
+    let Some(j) = msg[i..].find(": ") else { return false };
+    let hex = msg[i + j + 2..].split_whitespace().next().unwrap_or("");
+    u64::from_str_radix(hex.trim_start_matches("0x"), 16).map_or(false, |s| s >> 63 & 1 == 1 && s >> 61 & 1 == 0)
 }
 
 /// Reads every /dev/kmsg record with seq > since. Err("EPERM") when the caller
@@ -224,6 +241,19 @@ mod tests {
         assert!(classify("NVRM: loading NVIDIA UNIX Open Kernel Module").is_none());
         assert_eq!(classify("pcieport 0000:00:01.1: AER: Corrected error message received from 0000:01:00.0").unwrap()["kind"], "aer");
         assert_eq!(classify("mce: [Hardware Error]: Machine check events logged").unwrap()["level"], "warn");
+        // One corrected error, decoded over several records: one warning, no critical detail lines.
+        assert_eq!(classify("[Hardware Error]: Corrected error, no action required.").unwrap()["level"], "warn");
+        assert_eq!(classify("[Hardware Error]: CPU:2 (1a:44:0) MC1_STATUS[-|CE|MiscV|AddrV|-|-|SyndV|-|-|-]: 0x9c2040000000011b").unwrap()["level"], "warn");
+        assert!(classify("[Hardware Error]: Error Addr: 0x00000000a1b2c3c0").is_none());
+        assert!(classify("[Hardware Error]: IPID: 0x0001000100000000, Syndrome: 0x000000005a020001").is_none());
+        assert!(classify("[Hardware Error]: Instruction Fetch Unit Ext. Error Code: 0, Microtag probe port parity error.").is_none());
+        assert!(classify("[Hardware Error]: cache level: L1, tx: INSN").is_none());
+        assert_eq!(classify("[Hardware Error]: Uncorrected, software restartable error.").unwrap()["level"], "critical");
+        assert_eq!(classify("[Hardware Error]: CPU:0 (1a:44:0) MC5_STATUS[Over|UE|MiscV|AddrV|PCC|-|SyndV|-|-|-]: 0xfe20000000000135").unwrap()["level"], "critical");
+        assert_eq!(classify("mce: [Hardware Error]: CPU 0: Machine Check: 0 Bank 7: 8c00004000010090").unwrap()["level"], "warn");
+        assert_eq!(classify("mce: [Hardware Error]: CPU 0: Machine Check: 0 Bank 7: be00000000800400").unwrap()["level"], "critical");
+        assert_eq!(classify("mce: [Hardware Error]: CPU 3: Machine Check Exception: 5 Bank 0: 8c00004000010090").unwrap()["level"], "critical");
+        assert!(classify("mce: [Hardware Error]: TSC 0 ADDR 1ffffffe0 MISC d012000101000000 SYND 4d000000 IPID 1000b000000000").is_none());
         assert_eq!(classify("watchdog: BUG: soft lockup - CPU#3 stuck for 22s!").unwrap()["kind"], "lockup");
         assert_eq!(classify("nvidia 0000:01:00.0: Unable to change power state from D3cold to D0, device inaccessible").unwrap()["kind"], "d3cold");
     }

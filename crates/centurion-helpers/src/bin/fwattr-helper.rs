@@ -76,7 +76,7 @@ fn check_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Result<Target, 
     // Never written: dgpu_enable runs the firmware's dGPU eject / bus-check path
     // (\_SB.GZFD.HTPL), dgpu_didvid is an identifier, gpu_mode is firmware-computed.
     // Also stops an older saved scene that captured them from replaying them.
-    if matches!(attr_of(path), "dgpu_enable" | "dgpu_didvid" | "gpu_mode") {
+    if centurion_helpers::FW_READ_ONLY.contains(&attr_of(path)) {
         return err(format!("{} is read-only in Centurion (a write is a hardware action, not a setting)", attr_of(path)));
     }
 

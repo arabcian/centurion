@@ -221,7 +221,9 @@ fn post() -> Result<bool, String> {
         let id = update_scene_state(|st| { let id = st["game_session"].as_str().map(str::to_owned); st["game_session"] = Value::Null; id });
         if let Some(id) = id { log_session(&json!({"id": id, "end": now_s()})); }
     };
-    if st["ab_a"] == true {
+    // Only the A launch's own POST takes this path: the POST of a game started next to it (another
+    // launcher) used to clear ab_a and skip its release, leaving its session to the stale-owner prune.
+    if ab_launch_of(&st, OWNER.load(Ordering::SeqCst)) {
         // An A launch opened no game session: nothing to release, only the game scene to leave.
         update_scene_state(|st| { st["ab_a"] = Value::Null; st["ab_owner"] = Value::Null; });
         // A game started next to the A launch took a real session: the scene is its POST's to leave.
@@ -232,7 +234,9 @@ fn post() -> Result<bool, String> {
     let ok = report("POST", &v);
     // Also when the session was already gone (launcher pruned by an earlier helper call, GUI not
     // running to clean up): no live session left and a game scene still set means it is ours to leave.
-    if v["restored"] == true || v["state"]["refcount"] == 0 { end_session(); leave_game_scene(); }
+    // Not while an A launch is still running: the scene and the field session are its POST's to end
+    // (the mirror of the A path above, which leaves them to a real session's POST).
+    if (v["restored"] == true || v["state"]["refcount"] == 0) && !ab_launch_live(&read_scene_state()) { end_session(); leave_game_scene(); }
     Ok(ok)
 }
 
@@ -309,6 +313,13 @@ fn pre(name: Option<&str>) -> i32 { game_start(name, &game_name(None)).1 }
 /// only its POST ends it — same rule as tune-helper's sessions).
 fn ab_launch_live(st: &Value) -> bool {
     st["ab_a"] == true && centurion_helpers::session_alive(st["ab_owner"]["pid"].as_i64(), st["ab_owner"]["start"].as_u64())
+}
+
+/// The recorded A launch belongs to `owner` (this launcher). ab_a is one flag for the whole user, so
+/// a game started next to an A launch read it as its own: no launch boost / affinity for it, and its
+/// POST skipped the release. An unrecorded owner is untracked: taken for any launcher, as before.
+fn ab_launch_of(st: &Value, owner: i32) -> bool {
+    st["ab_a"] == true && st["ab_owner"]["pid"].as_i64().map_or(true, |p| p == i64::from(owner))
 }
 
 fn now_s() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
@@ -634,6 +645,9 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
             let (mut batch, mut wmi, mut unknown) = (Vec::new(), serde_json::Map::new(), 0);
             for (attr, val) in fw {
                 let Some(v) = val.as_i64() else { unknown += 1; continue };
+                // Never written (the GUI skips them the same way): an older scene that captured one used to
+                // fail this whole step here, and the GPU (WMI) limits below were then not applied either.
+                if centurion_helpers::FW_READ_ONLY.contains(&attr.as_str()) { unknown += 1; continue; }
                 if let Some((_, key)) = WMI_KNOBS.iter().find(|(a, _)| a == attr) { wmi.insert((*key).into(), json!(v)); continue; }
                 let dir = std::fs::read_dir("/sys/class/firmware-attributes").into_iter().flatten().flatten()
                     .map(|d| d.path().join("attributes").join(attr)).find(|d| d.join("current_value").is_file());
@@ -1015,7 +1029,7 @@ fn wrap(args: &[String]) -> i32 {
     // The refcount is taken as soon as the helper was reached, even if a knob failed.
     let (entered, _) = game_start(Some(&pname), &game_name(Some(&cmd)));
     // An A launch of the A/B comparison runs exactly at the boot state: no launch boost either.
-    if read_scene_state()["ab_a"] != true { prepare_run(&preset, parked.as_deref()); }
+    if !ab_launch_of(&read_scene_state(), OWNER.load(Ordering::SeqCst)) { prepare_run(&preset, parked.as_deref()); }
     // Forward termination so POST still runs when the launcher stops us.
     // `as *const ()` first: casting a function item straight to an integer type is
     // deprecated (function pointers aren't guaranteed integer-representable), even
@@ -1110,7 +1124,8 @@ fn run_exec(args: &[String]) -> i32 {
         Ok((_, mut p)) => {
             let parked = soft_park(&mut p);
             wait_for_start(&p);
-            if read_scene_state()["ab_a"] != true { prepare_run(&p, parked.as_deref()) }
+            // PRE recorded its launcher as the A launch's owner; RUN finds the same one above itself.
+            if !ab_launch_of(&read_scene_state(), launcher_pid()) { prepare_run(&p, parked.as_deref()) }
         }
         Err(e) => log!("centurion-gamemode: {e} — starting without boost"),
     }
@@ -1236,6 +1251,14 @@ mod tests {
         assert!(is_lutris_wrapper("python3.13", b"/usr/bin/python3.13\0/usr/share/lutris/bin/lutris-wrapper\0/usr/bin/centurion-gamemode\01\00\0"));
         assert!(!is_lutris_wrapper("lutris", b"/usr/bin/python3.13\0/usr/bin/lutris\0"));
         assert!(!is_lutris_wrapper("steam", b"/home/u/.steam/steam\0"));
+    }
+    #[test]
+    fn ab_launch_owner() {
+        let st = json!({"ab_a": true, "ab_owner": {"pid": 4242, "start": 7}});
+        assert!(ab_launch_of(&st, 4242));
+        assert!(!ab_launch_of(&st, 5151));                                   // a game started next to it
+        assert!(ab_launch_of(&json!({"ab_a": true, "ab_owner": null}), 5151)); // untracked: any launcher
+        assert!(!ab_launch_of(&json!({"ab_owner": {"pid": 4242}}), 4242));   // no A launch at all
     }
     #[test]
     fn split_like_qt() {

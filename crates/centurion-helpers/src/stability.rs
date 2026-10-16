@@ -161,9 +161,16 @@ pub fn on_boot() -> Vec<String> {
     let cur = boot_id();
     let mut v = load();
     let mut unclean_prev: Option<String> = None;
+    // Runs before bootguard::arm(): the guard file still names the last boot centurion-boot-guard
+    // watched. Only that boot can be judged - it was armed and its clean shutdown would have closed
+    // its entry here. Entries tune-helper opened in boots the guard did not run in (service not
+    // enabled yet) are left open, as field_risk expects: closing them as unclean charged every knob
+    // of those boots with a crash the first time the guard ran.
+    let watched = crate::bootguard::read()["boot_id"].as_str().map(str::to_owned);
     if let Some(boots) = v["boots"].as_array_mut() {
         for b in boots.iter_mut() {
             if b["boot"] == json!(cur) || !b["clean"].is_null() { continue; }
+            if b["boot"].as_str() != watched.as_deref() { continue; }
             // Last moment known alive: the last segment (or the boot's start).
             let last = b["segs"].as_array().and_then(|s| s.last()).and_then(|s| s["t"].as_u64()).or(b["start"].as_u64()).unwrap_or(0);
             b["clean"] = json!(false);
@@ -183,8 +190,7 @@ pub fn on_boot() -> Vec<String> {
             if !clean_shutdown && !cfg.is_empty() {
                 if let Some(mut cal) = crate::calib::Calibration::load() {
                     cal.add_unsafe_set(cfg.clone());
-                    let _ = crate::secure_dir(crate::defaults::DIR)
-                        .and_then(|_| crate::write_root_file(crate::calib::FILE, &serde_json::to_vec(&cal.to_json()).unwrap_or_default()));
+                    let _ = cal.save();
                 }
                 msgs.push(format!("the previous boot died during a calibration run ({}): that combination is now an unsafe set and is never picked again",
                                   cfg.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")));

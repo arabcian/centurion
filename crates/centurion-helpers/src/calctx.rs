@@ -200,7 +200,9 @@ pub fn schedule_boot(on: bool, sessions: u64, budget: f64, scene: Option<&str>, 
 /// What a scene asks of the power context: (profile, firmware limits, fan full speed).
 pub fn scene_power(scene: &Value) -> (Option<String>, Map<String, Value>, Option<bool>) {
     let profile = scene["platform_profile"].as_str().filter(|p| !p.is_empty() && p.len() <= 32).map(str::to_owned);
-    let fw = scene["firmware"].as_object().cloned().unwrap_or_default();
+    let mut fw = scene["firmware"].as_object().cloned().unwrap_or_default();
+    // Never written (fwattr-helper refuses them): an older scene that captured one is not an error.
+    fw.retain(|k, _| !crate::FW_READ_ONLY.contains(&k.as_str()));
     (profile, fw, scene["fan_fullspeed"].as_bool())
 }
 

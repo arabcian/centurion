@@ -377,6 +377,12 @@ pub fn refuse_during_calibration() -> Option<serde_json::Value> {
         "error": format!("centurion-calibrate (pid {pid}) is measuring: power profile, firmware limits, fan and curves stay as they are until it ends")}))
 }
 
+/// Firmware attributes that are shown but never written (fwattr-helper refuses them, the GUI's
+/// FwattrTab marks them read-only): dgpu_enable runs the firmware's dGPU eject / bus-check path,
+/// dgpu_didvid is an identifier, gpu_mode is firmware-computed. Scenes captured before that rule
+/// can still name them; every scene writer skips them like an attribute that is not present.
+pub const FW_READ_ONLY: [&str; 3] = ["dgpu_enable", "dgpu_didvid", "gpu_mode"];
+
 /// CPU power limits the firmware keeps ordered, low to high: SPL (PL1, long) ≤ SPPT (PL2, short)
 /// ≤ FPPT (PL3, peak) ≤ IPL (PL4, instantaneous; Intel boards). A write that would break the
 /// order is dropped silently by the EC (lenovo-wmi-other does not check the WMI return value,

@@ -37,8 +37,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 pub const FILE: &str = "/var/lib/centurion/signature.json";
+/// The signature as it was before this process first wrote it (one step of undo; read back
+/// automatically when the main file is damaged).
+pub const BACKUP: &str = "/var/lib/centurion/signature.json.bak";
 /// Earlier single-run format (still read once, then superseded).
 pub const OLD_FILE: &str = "/var/lib/centurion/calibration.json";
+/// Largest signature file that is read back; `save` keeps the file well under it.
+pub const MAX_FILE: u64 = 8 << 20;
+/// Sessions' quality records kept (newest last).
+const KEEP_QUALITY: usize = 64;
 const KEEP: usize = 10;
 const HALF_LIFE_DAYS: f64 = 90.0;
 
@@ -341,7 +348,8 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         "vm.watermark_boost_factor" => v(&[0, 5000, 15000]),
         "vm.compaction_proactiveness" => v(&[0, 10, 20, 40]),
         "vm.watermark_scale_factor" => Some(vec!["@wsf".into()]),
-        "vm.min_free_kbytes" => v(&[r / 2, r * 2].map(|x| x.clamp(16_384, (ram_kb / 100) as i64))),
+        // Upper bound never below the lower one (clamp panics otherwise: RAM under 1.6 GB).
+        "vm.min_free_kbytes" => v(&[r / 2, r * 2].map(|x| x.clamp(16_384, ((ram_kb / 100) as i64).max(16_384)))),
         "mm.lru_gen_min_ttl" => v(&[0, 1000]),
         // Storage (IO phase). Doses stay inside autotune's 2x (+1 doubling with evidence) trust
         // region around the boot value: a level it could never pick is a wasted run.
@@ -483,10 +491,19 @@ impl Clone for ModelCache { fn clone(&self) -> Self { ModelCache::default() } }
 impl PartialEq for ModelCache { fn eq(&self, _: &Self) -> bool { true } }
 impl std::fmt::Debug for ModelCache { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("ModelCache") } }
 
-const MAX_ROWS: usize = 1600;
+/// Design rows kept per phase (idle, load, io, dev), oldest dropped first. One shared cap used to
+/// let a few long idle/load sessions push out every IO and DEV row - the storage suite and the
+/// battery-only device runs are the rarest measurements in the log and the hardest to redo.
+/// Field rows (game sessions) are bounded by their own record and never trimmed here.
+const PHASE_ROWS: [usize; 4] = [1100, 1100, 600, 300];
 
 fn pidx(phase: Phase) -> usize { phase.idx() }
-fn hyp_key(phase: Phase, o: usize) -> String { format!("{}{o}", phase.name()) }
+/// Key of the kept prior scales of one phase and objective. The power objective's noise depends on
+/// what it was read from (the battery's slow, coarse reading scatters several times more than RAPL),
+/// so a power model fitted on battery rows keeps its own scales ("idle2b"); RAPL keeps the old key.
+fn hyp_key(phase: Phase, o: usize, src: Option<PowerSrc>) -> String {
+    if o == 2 && src == Some(PowerSrc::Battery) && matches!(phase, Phase::Idle | Phase::Load) { format!("{}{o}b", phase.name()) } else { format!("{}{o}", phase.name()) }
+}
 
 /// The machine signature.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -520,6 +537,9 @@ pub struct Calibration {
     pub verify: Vec<Value>,
     /// Imported game sessions (`centurion-calibrate --field`): {game, start, cfg, med, tail, pacing, n}.
     pub field_sessions: Vec<Value>,
+    /// Quality record of every design session (phase, runs, reference-run noise per objective,
+    /// disturbed runs, unwritable values, interruptions), newest last.
+    pub quality: Vec<Value>,
     /// The file held idle/load data of an older benchmark set, which was dropped on reading.
     pub migrated: bool,
     /// Current kernel (major.minor) and time used to weight records.
@@ -743,7 +763,9 @@ impl Calibration {
         PhaseSet::build(factors, rows)
     }
     /// Kept prior scales of one phase/objective.
-    pub fn hyper(&self, phase: Phase, o: usize) -> Option<Hyper> { self.hyp.get(&hyp_key(phase, o)).and_then(|v| Hyper::from_slice(v)) }
+    /// Kept prior scales of one phase/objective, for the power source the phase's power model uses now
+    /// (they were shared by both sources: a battery-fitted power model ran on RAPL's noise level).
+    pub fn hyper(&self, phase: Phase, o: usize) -> Option<Hyper> { self.hyp.get(&hyp_key(phase, o, self.pwr_source(phase))).and_then(|v| Hyper::from_slice(v)) }
     /// `passes`: None = kept hyperparameters as they are (a search only where none are kept).
     fn build_phase(&self, phase: Phase, passes: Option<usize>) -> Option<PhaseFit> {
         let set = self.build_set(phase)?;
@@ -765,7 +787,23 @@ impl Calibration {
     pub fn retune(&mut self, phase: Phase, passes: usize) -> Option<Arc<PhaseFit>> {
         let v = self.build_phase(phase, Some(passes)).map(Arc::new);
         if let Some(pf) = &v {
-            for (o, f) in pf.fits.iter().enumerate() { if let Some(f) = f { self.hyp.insert(hyp_key(phase, o), f.hyper.to_vec()); } }
+            let src = self.pwr_source(phase);
+            for (o, f) in pf.fits.iter().enumerate() { if let Some(f) = f { self.hyp.insert(hyp_key(phase, o, src), f.hyper.to_vec()); } }
+        }
+        // The power model of the other source keeps its own scales (`hyp_key`): without them every
+        // power-saving autotune (battery source) ran a full hyperparameter search on idle and load.
+        if matches!(phase, Phase::Idle | Phase::Load) {
+            let (pref, cur) = (self.pwr_pref.get(), self.pwr_source(phase));
+            for alt in [PowerSrc::Rapl, PowerSrc::Battery] {
+                if Some(alt) == cur { continue; }
+                self.pwr_pref.set(Some(alt));
+                if self.pwr_source(phase) != Some(alt) { continue; }
+                let init = self.hyper(phase, 2);
+                if let Some(f) = self.build_set(phase).and_then(|s| s.fit_obj(2, init, passes)) {
+                    self.hyp.insert(hyp_key(phase, 2, Some(alt)), f.hyper.to_vec());
+                }
+            }
+            self.pwr_pref.set(pref);
         }
         *self.cache.0[pidx(phase)].borrow_mut() = Some(v.clone());
         v
@@ -859,14 +897,24 @@ impl Calibration {
     pub fn put_session(&mut self, phase: Phase, sess: u64, rows: Vec<Row>) {
         self.rows.retain(|r| !(r.phase == phase && r.sess == sess));
         self.rows.extend(rows);
-        if self.rows.len() > MAX_ROWS {
-            let drop = self.rows.len() - MAX_ROWS;
-            self.rows.sort_by_key(|r| r.t);
-            self.rows.drain(..drop);
-            self.invalidate();
-        } else {
-            *self.cache.0[pidx(phase)].borrow_mut() = None;
-        }
+        if self.trim_rows(PHASE_ROWS) { self.invalidate(); } else { *self.cache.0[pidx(phase)].borrow_mut() = None; }
+    }
+    /// Keeps at most `cap[phase]` design rows per phase (the newest); field rows are left alone.
+    /// Returns whether anything was dropped.
+    fn trim_rows(&mut self, cap: [usize; 4]) -> bool {
+        let mut over = [0usize; 4];
+        for r in self.rows.iter().filter(|r| !r.field) { over[pidx(r.phase)] += 1; }
+        for (o, c) in over.iter_mut().zip(cap) { *o = o.saturating_sub(c); }
+        if over.iter().all(|o| *o == 0) { return false; }
+        // Oldest first within each phase; the relative order of the kept rows does not matter.
+        self.rows.sort_by_key(|r| r.t);
+        self.rows.retain(|r| {
+            let i = pidx(r.phase);
+            if r.field || over[i] == 0 { return true; }
+            over[i] -= 1;
+            false
+        });
+        true
     }
     /// A knob's reference changed: rows that changed it were measured against another baseline.
     pub fn forget_key(&mut self, key: &str) { self.rows.retain(|r| !r.cfg.iter().any(|(k, _)| k == key)); self.invalidate(); }
@@ -933,7 +981,7 @@ impl Calibration {
         }).collect();
         json!({"version": 8, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "coupling": self.coupling,
-               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions,
+               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
     }
     pub fn from_json(v: &Value) -> Calibration {
@@ -980,6 +1028,7 @@ impl Calibration {
         for (k, x) in v["ref_w"].as_object().into_iter().flatten() { if let Some(f) = x.as_f64() { c.ref_w.insert(k.clone(), f); } }
         c.verify = v["verify"].as_array().cloned().unwrap_or_default();
         c.field_sessions = v["fs"].as_array().cloned().unwrap_or_default();
+        c.quality = v["quality"].as_array().cloned().unwrap_or_default();
         // Format <= 7: IO rows carried the CPU's start temperature; since 8 they carry the drive's.
         if version < 8 { for r in c.rows.iter_mut().filter(|r| r.phase == Phase::Io) { r.tc = f64::NAN; } }
         // Format 4 logged vm.dirty design rows against the live limits while labelling them window "1".
@@ -1024,17 +1073,123 @@ impl Calibration {
         self.strategies.get(phase.name()).map_or(&[], |v| v.as_slice())
     }
     /// The signature of this machine (older single-run results are migrated;
-    /// a signature of other hardware is ignored).
+    /// a signature of other hardware is ignored). A damaged file falls back to the backup.
     pub fn load() -> Option<Calibration> {
-        let text = crate::read_root_file(FILE, 4 << 20).or_else(|| crate::read_root_file(OLD_FILE, 512 * 1024))?;
-        let mut c = Calibration::from_json(&serde_json::from_str(&text).ok()?);
-        let fp = Fingerprint::current();
-        if !c.fingerprint.product.is_empty() && !c.fingerprint.matches(&fp) { return None; }
-        c.fingerprint = fp;
-        c.kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
-        c.now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        Some(c)
+        match Calibration::load_checked() {
+            Loaded::Ok(c) | Loaded::FromBackup(c, _) => Some(c),
+            _ => None,
+        }
     }
+    /// What is on disk: this machine's signature, nothing, another machine's, or a file that cannot
+    /// be read (then the backup, when it is this machine's). Callers that rename a file away must
+    /// tell these apart: a damaged file used to be set aside as "other hardware" and the
+    /// calibration started from nothing.
+    pub fn load_checked() -> Loaded { Calibration::load_checked_at(FILE, OLD_FILE, BACKUP, &Fingerprint::current()) }
+    fn load_checked_at(file: &str, old_file: &str, backup: &str, fp: &Fingerprint) -> Loaded {
+        let parse = |p: &str, max: u64| -> Result<Option<Calibration>, String> {
+            let meta = match std::fs::symlink_metadata(p) { Ok(m) => m, Err(_) => return Ok(None) };
+            if meta.len() > max { return Err(format!("{p}: {} bytes, larger than {max}", meta.len())); }
+            let text = crate::read_root_file(p, max).ok_or_else(|| format!("{p}: unreadable (owner/mode/type)"))?;
+            let v: Value = serde_json::from_str(&text).map_err(|e| format!("{p}: {e}"))?;
+            if !v.is_object() { return Err(format!("{p}: not a signature")); }
+            Ok(Some(Calibration::from_json(&v)))
+        };
+        let finish = |mut c: Calibration| -> Option<Calibration> {
+            if !c.fingerprint.product.is_empty() && !c.fingerprint.matches(fp) { return None; }
+            c.fingerprint = fp.clone();
+            c.kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
+            c.now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            Some(c)
+        };
+        let main = match parse(file, MAX_FILE) {
+            Ok(None) => parse(old_file, 512 * 1024),
+            r => r,
+        };
+        match main {
+            Ok(None) => Loaded::Missing,
+            Ok(Some(c)) => match finish(c) { Some(c) => Loaded::Ok(c), None => Loaded::OtherHardware },
+            Err(why) => match parse(backup, MAX_FILE) {
+                Ok(Some(b)) => match finish(b) { Some(b) => Loaded::FromBackup(b, why), None => Loaded::Damaged(why) },
+                _ => Loaded::Damaged(why),
+            },
+        }
+    }
+    /// Writes the signature (atomic). The first write of a process keeps the file it replaces as
+    /// `BACKUP` (when that one still parses), so a bad session or a bug can be undone by hand and a
+    /// file damaged later is recovered by `load`. A signature that would come near `MAX_FILE` drops
+    /// its oldest design rows first (the reader refuses anything larger, which would read as "no
+    /// signature" and start the calibration over).
+    pub fn save(&self) -> Result<(), String> {
+        static BACKED_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        crate::secure_dir(crate::defaults::DIR)?;
+        if !BACKED_UP.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if let Some(old) = crate::read_root_file(FILE, MAX_FILE).filter(|t| serde_json::from_str::<Value>(t).map_or(false, |v| v.is_object())) {
+                let _ = crate::write_root_file(BACKUP, old.as_bytes());
+            }
+        }
+        let mut body = serde_json::to_vec(&self.to_json()).map_err(|e| e.to_string())?;
+        if body.len() as u64 > MAX_FILE * 3 / 4 {
+            let mut c = self.clone();
+            let mut cap = PHASE_ROWS;
+            while body.len() as u64 > MAX_FILE * 3 / 4 && cap.iter().any(|x| *x > 50) {
+                cap = cap.map(|x| (x * 4 / 5).max(50));
+                c.trim_rows(cap);
+                body = serde_json::to_vec(&c.to_json()).map_err(|e| e.to_string())?;
+            }
+        }
+        crate::write_root_file(FILE, &body)
+    }
+    /// Notes the quality record of a finished design session (the last `KEEP_QUALITY` are kept).
+    pub fn note_quality(&mut self, q: Value) {
+        self.quality.push(q);
+        let drop = self.quality.len().saturating_sub(KEEP_QUALITY);
+        self.quality.drain(..drop);
+    }
+    /// One line per phase about what the model rests on: runs and sessions, fit quality, how much
+    /// its intervals had to be widened to stay honest, and how old the newest measurement is.
+    /// Empty without design rows.
+    pub fn evidence_lines(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mm = major_minor(&self.kernel);
+        for ph in Phase::ALL {
+            let rows: Vec<&Row> = self.rows.iter().filter(|r| r.phase == ph && !r.field).collect();
+            if rows.is_empty() { continue; }
+            let sess: BTreeSet<u64> = rows.iter().map(|r| r.sess).collect();
+            let newest = rows.iter().map(|r| r.t).max().unwrap_or(0);
+            let age_d = self.now.saturating_sub(newest) as f64 / 86_400.0;
+            let other_k = rows.iter().filter(|r| !self.kernel.is_empty() && major_minor(&r.kernel) != mm).count();
+            let mut s = format!("{}: {} run(s) in {} session(s), newest {}", ph.name(), rows.len(), sess.len(),
+                                if self.now == 0 || newest == 0 { "?".to_owned() } else if age_d < 1.0 { "today".to_owned() } else { format!("{age_d:.0} day(s) old") });
+            if let Some(pf) = self.phase_fit(ph) {
+                let fits: Vec<&Arc<Fit>> = pf.fits.iter().flatten().collect();
+                if !fits.is_empty() {
+                    let n = fits.len() as f64;
+                    let r2 = fits.iter().map(|f| f.loo_r2).sum::<f64>() / n;
+                    let cov = fits.iter().map(|f| f.cover90).sum::<f64>() / n;
+                    let infl = fits.iter().map(|f| f.var_scale).fold(1.0f64, f64::max);
+                    s.push_str(&format!(", model R² {r2:.2}, 90 % intervals hold {:.0} %", cov * 100.0));
+                    if infl > 1.05 { s.push_str(&format!(", uncertainty widened x{:.2} (the model is less sure than its fit claims)", infl.sqrt())); }
+                }
+            }
+            if other_k > 0 { s.push_str(&format!("; {other_k} run(s) on another kernel count half")); }
+            if age_d > 120.0 { s.push_str("; old - a fresh calibration session is due"); }
+            out.push(s);
+        }
+        out
+    }
+}
+
+/// Result of reading the signature file (see `Calibration::load_checked`).
+pub enum Loaded {
+    Ok(Calibration),
+    /// No signature yet.
+    Missing,
+    /// A signature of other hardware (product, CPU or RAM differ).
+    OtherHardware,
+    /// The file cannot be used (reason); the backup was this machine's and is returned instead.
+    FromBackup(Calibration, String),
+    /// The file cannot be used and there is no usable backup.
+    Damaged(String),
 }
 
 /// Dose-response curve of a numeric knob: measured points (value, effects)
@@ -1371,6 +1526,51 @@ mod tests {
         c.invalidate();
         let without = c.get("cpu.a", "0", "1", Blend { load: 0.0, io: 1.0 }).unwrap().pwr.unwrap();
         assert!(with.abs() < 0.03 && without < -0.05, "with the temperature term {with}, without {without}");
+    }
+
+    #[test]
+    fn rare_phases_survive_long_idle_logs_and_quality_round_trips() {
+        let mut c = Calibration::default();
+        let row = |phase: Phase, t: u64| Row { phase, sess: t / 100, t, y: [0.0; 4], w: 1.0, bv: BENCH_VERSION, ..Default::default() };
+        c.put_session(Phase::Io, 1, (0..50).map(|i| row(Phase::Io, i)).collect());
+        c.put_session(Phase::Dev, 2, (0..20).map(|i| row(Phase::Dev, 100 + i)).collect());
+        for s in 0..30u64 { c.put_session(Phase::Idle, 10 + s, (0..80).map(|i| row(Phase::Idle, 1000 + s * 100 + i)).collect()); }
+        let n = |p: Phase| c.rows.iter().filter(|r| r.phase == p).count();
+        assert_eq!((n(Phase::Io), n(Phase::Dev), n(Phase::Idle)), (50, 20, PHASE_ROWS[0]), "one shared cap used to push the storage and device runs out");
+        // 2400 idle rows, 1300 too many: sessions 0..15 (1280 rows) and the first 20 of session 16 went.
+        assert_eq!(c.rows.iter().filter(|r| r.phase == Phase::Idle).map(|r| r.t).min(), Some(1000 + 16 * 100 + 20), "the oldest idle rows went");
+        c.note_quality(json!({"sess": 1, "phase": "io", "runs": 50}));
+        for i in 0..80 { c.note_quality(json!({"sess": 100 + i})); }
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.quality.len(), KEEP_QUALITY);
+        assert_eq!(back.quality.last().unwrap()["sess"], json!(179));
+    }
+
+    /// Damaged file -> backup; other hardware -> set aside; nothing -> missing. (Root only: the reader
+    /// accepts root-owned files alone.)
+    #[test]
+    fn load_tells_damage_from_other_hardware() {
+        if unsafe { libc::geteuid() } != 0 { return; }
+        let d = std::env::temp_dir().join(format!("centurion-sig-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let (f, o, b) = (d.join("s.json"), d.join("old.json"), d.join("s.json.bak"));
+        let ps = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        let me = Fingerprint { product: "Legion".into(), cpu: "X3D".into(), ram_mib: 32000, bios: String::new() };
+        let load = || Calibration::load_checked_at(&ps(&f), &ps(&o), &ps(&b), &me);
+        assert!(matches!(load(), Loaded::Missing));
+        let mut c = Calibration::new(me.clone());
+        c.refs.insert("vm.a".into(), "1".into());
+        std::fs::write(&b, c.to_json().to_string()).unwrap();
+        std::fs::write(&f, "{\"version\": 8, \"rows\": [").unwrap();
+        match load() { Loaded::FromBackup(x, why) => assert!(x.refs.contains_key("vm.a") && why.contains("s.json"), "{why}"), _ => panic!("damaged file must fall back to the backup") }
+        let _ = std::fs::remove_file(&b);
+        assert!(matches!(load(), Loaded::Damaged(_)));
+        let other = Calibration::new(Fingerprint { product: "ThinkPad".into(), ..me.clone() });
+        std::fs::write(&f, other.to_json().to_string()).unwrap();
+        assert!(matches!(load(), Loaded::OtherHardware));
+        std::fs::write(&f, c.to_json().to_string()).unwrap();
+        assert!(matches!(load(), Loaded::Ok(_)));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

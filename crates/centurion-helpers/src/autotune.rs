@@ -1924,9 +1924,14 @@ fn cpu_rules(r: &mut Rules) {
     // Idle floor: below amd_pstate_lowest_nonlinear_freq the CPU is less
     // efficient per unit of work; power saving still wants the hardware minimum
     // for trickle loads, where absolute power matters more than efficiency.
-    r.set("cpu.min_freq", if r.is(PowerSave) { "cpuinfo_min" } else { "lowest_nonlinear" },
-          if r.is(PowerSave) { "Hardware minimum floor: lowest absolute power for trickle loads." }
-          else { "Efficient floor: frequencies below lowest_nonlinear cost wake-up latency for almost no saving." });
+    // lowest_nonlinear exists on amd-pstate only (intel_pstate offers cpuinfo_min alone; HWP stays out of
+    // the inefficient range by itself): on Intel the non-power goals leave the floor as it is instead of
+    // emitting a value the row refuses (it ended up in the report's "not offered" list).
+    if r.is(PowerSave) {
+        r.set("cpu.min_freq", "cpuinfo_min", "Hardware minimum floor: lowest absolute power for trickle loads.");
+    } else if p.amd() {
+        r.set("cpu.min_freq", "lowest_nonlinear", "Efficient floor: frequencies below lowest_nonlinear cost wake-up latency for almost no saving.");
+    }
 
     if p.intel() {
         match r.g {
@@ -2312,6 +2317,11 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let w = w.with_overrides(weights);
     let mut out = autotune_weighted(goal, &p, w);
     let mut notes: Vec<Value> = notes.into_iter().filter(|(k, _)| weights.get(k).is_none()).map(|(_, n)| Value::String(n)).collect();
+    // What the measured part of the decision rests on (rows, sessions, fit quality, widened
+    // uncertainty, age): a decision is only as good as its evidence, and the report says so.
+    if let Some(cal) = p.calibration.as_ref() {
+        for l in cal.evidence_lines() { notes.push(Value::String(format!("Signature: {l}."))); }
+    }
     if let Some(n) = crate::bench::forced_idle_cpus().filter(|n| *n > 0) {
         notes.push(Value::String(format!("Firmware is forcing {n} CPU(s) idle right now (ACPI processor aggregator, a platform power-capping request): while it lasts it overrules the CPU settings here - check the power adapter and the firmware power limits.")));
     }
