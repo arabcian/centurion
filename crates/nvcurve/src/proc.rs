@@ -66,13 +66,25 @@ pub fn run(bin: &str, args: &[String], timeout: Duration) -> Result<Output, RunE
     })
 }
 
-/// First existing candidate that is root-owned, not group/world-writable
-/// and executable. Used for any binary a root process executes.
+/// First existing candidate that is root-owned, executable, not setuid and not
+/// group/world-writable — and the same for every directory above the real path.
+/// A user-owned directory would let the caller swap the binary after this check.
 pub fn find_trusted(candidates: &[&'static str]) -> Option<&'static str> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::fs::MetadataExt;
     candidates.iter().copied().find(|p| {
-        let Ok(md) = std::fs::metadata(p) else { return false };
-        md.is_file() && md.uid() == 0 && md.permissions().mode() & 0o6022 == 0
-            && md.permissions().mode() & 0o111 != 0
+        let Ok(real) = std::fs::canonicalize(p) else { return false };
+        let Ok(md) = std::fs::metadata(&real) else { return false };
+        if !md.is_file() || md.uid() != 0 || md.mode() & 0o6022 != 0 || md.mode() & 0o111 == 0 {
+            return false;
+        }
+        let mut dir = real.parent();
+        while let Some(d) = dir {
+            match std::fs::metadata(d) {
+                Ok(m) if m.is_dir() && m.uid() == 0 && m.mode() & 0o022 == 0 => {}
+                _ => return false,
+            }
+            dir = d.parent();
+        }
+        true
     })
 }

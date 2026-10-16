@@ -282,6 +282,12 @@ pub fn kill_reap(child: &mut std::process::Child) {
 }
 
 pub fn modprobe(module: &str) -> bool {
+    // Callers pass fixed names. Reject anything modprobe could treat as an option or a path.
+    if module.is_empty() || module.len() > 64 || module.starts_with('-')
+        || !module.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return false;
+    }
     static TRIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     let loaded = || Path::new("/sys/module").join(module.replace('-', "_")).exists();
     if loaded() { return true; }
@@ -292,7 +298,7 @@ pub fn modprobe(module: &str) -> bool {
     }
     if !module_installed(module) { return false; }
     for p in ["/sbin/modprobe", "/usr/sbin/modprobe", "/usr/bin/modprobe", "/bin/modprobe"] {
-        if Path::new(p).is_file() {
+        if trusted_path(Path::new(p)) {
             let _ = std::process::Command::new(p).arg(module).env_clear()
                 .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
                 .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
@@ -474,14 +480,20 @@ mod tests {
     fn module_lookup_is_quiet() {
         assert!(!modprobe("centurion_no_such_module_xyz"));
         assert!(!modprobe("centurion_no_such_module_xyz"));  // second call: no second spawn
+        assert!(!modprobe("-c") && !modprobe("../acpi_call") && !modprobe("acpi call"));
     }
     #[test]
     fn trusted_path_rejects_tmp() {
-        let p = std::env::temp_dir().join(format!("centurion-trust-{}", std::process::id()));
+        use std::os::unix::fs::PermissionsExt;
+        // Do not assume /tmp is 1777: some build sandboxes ship a private root-owned temp.
+        let base = std::env::temp_dir().join(format!("centurion-trustdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o1777)).unwrap();
+        let p = base.join("x");
         std::fs::write(&p, b"x").unwrap();
-        // /tmp is world-writable (sticky): never a trusted parent.
-        assert!(!trusted_path(&p));
-        std::fs::remove_file(&p).unwrap();
+        assert!(!trusted_path(&p), "a world-writable parent must never be trusted");
+        std::fs::remove_dir_all(&base).unwrap();
         assert!(!trusted_path(Path::new("/nonexistent/centurion")));
     }
 }

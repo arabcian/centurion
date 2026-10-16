@@ -103,7 +103,9 @@ pub fn describe(d: &Value) -> String {
 /// helpers' calibration hold lets this process through.
 pub fn run_helper(name: &str, req: &Value) -> Result<Value, String> {
     let exe = format!("{HELPER_DIR}/{name}");
-    if !Path::new(&exe).is_file() { return Err(format!("{exe} not installed")); }
+    if !crate::trusted_path(Path::new(&exe)) {
+        return Err(format!("{exe} is missing or not a root-owned helper (parent directories must not be writable)"));
+    }
     let mut child = Command::new(&exe).env_clear().env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         .env("CENTURION_CALIBRATE_OWNER", std::env::var("CENTURION_CALIBRATE_OWNER").unwrap_or_else(|_| std::process::id().to_string()))
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("{name}: {e}"))?;

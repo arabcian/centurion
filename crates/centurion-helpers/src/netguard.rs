@@ -1213,10 +1213,50 @@ pub fn handle(req: &Value) -> Value {
 
 // ── whois ──────────────────────────────────────────────────────────────────
 
+/// A whois hostname we are willing to dial: a real DNS name whose first label is `whois`.
+/// Stops a registry `refer:` from pointing this process at an arbitrary host on port 43.
+fn whois_host_ok(host: &str) -> bool {
+    if !(4..254).contains(&host.len()) || host.starts_with('.') || host.ends_with('.') || host.contains("..") {
+        return false;
+    }
+    let mut labels = host.split('.');
+    let Some(first) = labels.next() else { return false };
+    if first != "whois" { return false; }
+    let mut n = 1;
+    for l in labels {
+        n += 1;
+        if l.is_empty() || l.len() > 63 || l.starts_with('-') || l.ends_with('-')
+            || !l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return false;
+        }
+    }
+    n >= 2
+}
+
+/// Resolved address of a whois server. Private, loopback, link-local and multicast
+/// answers are refused so a poisoned referral cannot probe the LAN or localhost.
+fn public_whois_ip(ip: IpAddr) -> bool {
+    let ip = unmap(ip);
+    if ip.is_loopback() || ip.is_unspecified() || is_lan(ip) { return false; }
+    match ip {
+        IpAddr::V4(v) => {
+            let o = v.octets();
+            o[0] != 0 && o[0] < 224
+                && !(o[0] == 192 && o[1] == 0 && o[2] == 2)
+                && !(o[0] == 198 && o[1] == 51 && o[2] == 100)
+                && !(o[0] == 203 && o[1] == 0 && o[2] == 113)
+        }
+        IpAddr::V6(v) => { let s = v.segments(); !(s[0] == 0x2001 && s[1] == 0x0db8) }
+    }
+}
+
 /// One query to a whois server (TCP 43): bounded in time and size.
 fn whois_query(server: &str, q: &str) -> Result<String, String> {
     use std::net::{TcpStream, ToSocketAddrs};
-    let addr = (server, 43).to_socket_addrs().map_err(|e| format!("{server}: {e}"))?.next().ok_or_else(|| format!("{server}: no address"))?;
+    if !whois_host_ok(server) { return Err(format!("{server}: refused whois server")); }
+    let addr = (server, 43).to_socket_addrs().map_err(|e| format!("{server}: {e}"))?
+        .find(|a| public_whois_ip(a.ip())).ok_or_else(|| format!("{server}: no public address"))?;
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(2500)).map_err(|e| format!("{server}: {e}"))?;
     let _ = s.set_read_timeout(Some(Duration::from_millis(2500)));
     let _ = s.set_write_timeout(Some(Duration::from_millis(2500)));
@@ -1238,8 +1278,7 @@ fn whois_fields(text: &str) -> Vec<(String, &str)> {
 fn whois_referral(text: &str) -> Option<String> {
     let v = whois_fields(text).into_iter().find(|(k, _)| k == "refer" || k == "referralserver")?.1.to_lowercase();
     let host = v.strip_prefix("whois://").unwrap_or(&v).trim_end_matches('/').trim_end_matches(":43");
-    (!v.starts_with("rwhois") && host.contains('.') && host.len() < 128 && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'))
-        .then(|| host.to_owned())
+    (!v.starts_with("rwhois") && whois_host_ok(host)).then(|| host.to_owned())
 }
 
 /// The handful of fields worth a glance. ARIN lists the covering networks first, the other registries the closest one first.
@@ -1376,7 +1415,19 @@ mod tests {
     fn whois_parse() {
         assert_eq!(whois_referral("% IANA WHOIS server\nrefer:        whois.ripe.net\n\ninetnum: 1.0.0.0\n").as_deref(), Some("whois.ripe.net"));
         assert_eq!(whois_referral("ReferralServer:  whois://whois.apnic.net:43\n").as_deref(), Some("whois.apnic.net"));
-        assert!(whois_referral("ReferralServer: rwhois://rwhois.example.net:4321\n").is_none() && whois_referral("refer: bad host;x\n").is_none());
+        assert_eq!(whois_referral("refer: whois.nic.ad.jp\n").as_deref(), Some("whois.nic.ad.jp"));
+        assert!(whois_referral("ReferralServer: rwhois://rwhois.example.net:4321\n").is_none());
+        assert!(whois_referral("refer: bad host;x\n").is_none());
+        assert!(whois_referral("refer: evil.example.net\n").is_none());
+        assert!(whois_referral("refer: whois.ripe.net.\n").is_none());
+        assert!(whois_referral("refer: whois..ripe.net\n").is_none());
+        assert!(whois_referral("refer: whois.-bad.net\n").is_none());
+        assert!(!public_whois_ip("127.0.0.1".parse().unwrap()));
+        assert!(!public_whois_ip("10.1.2.3".parse().unwrap()));
+        assert!(!public_whois_ip("169.254.169.254".parse().unwrap()));
+        assert!(!public_whois_ip("192.168.1.1".parse().unwrap()));
+        assert!(!public_whois_ip("::1".parse().unwrap()));
+        assert!(public_whois_ip("193.0.6.135".parse().unwrap()));
         let ripe = "% Abuse contact for '1.2.3.0 - 1.2.3.255' is 'abuse@example.net'\n\ninetnum:  1.2.3.0 - 1.2.3.255\nnetname:  EX-NET\ndescr:    Example\ncountry:  TR\n\nroute:    1.2.0.0/16\ndescr:    other\norigin:   AS64500\n";
         let s = whois_summary(ripe, false);
         assert_eq!(s, [["Range", "1.2.3.0 - 1.2.3.255"], ["CIDR", "1.2.0.0/16"], ["Network", "EX-NET"], ["Organisation", "Example"],
