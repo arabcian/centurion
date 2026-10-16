@@ -17,11 +17,13 @@ ExecStart=@BINDIR@/centurion-calibrate --boot-run
 # SIGINT: every session restores what it changed and keeps what it measured.
 KillSignal=SIGINT
 TimeoutStopSec=150
-# Writes /sys and /proc/sys (the knobs under test), reads /dev/input (activity only) and the
-# scene's owner's ~/.config (read-only).
+# Writes /sys and /proc/sys (the knobs under test), /etc/centurion and /var; reads /dev/input
+# (activity only). A scheduled scene's power context is stored in the root-owned flag when it is
+# scheduled, so no home directory is read.
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectHome=read-only
+ProtectSystem=yes
+ProtectHome=yes
 ProtectClock=yes
 ProtectHostname=yes
 LockPersonality=yes

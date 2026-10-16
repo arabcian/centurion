@@ -1,0 +1,49 @@
+--- a/crates/centurion-helpers/src/model.rs	2026-10-15 22:51:02.000000000 +0300
++++ b/crates/centurion-helpers/src/model.rs	2026-10-16 01:15:41.337910180 +0300
+@@ -398,6 +398,8 @@
+     main: Vec<Vec<f64>>,
+     pair: FxMap<f64>,
+     tri: FxMap<f64>,
++    /// `tri` indexed by its first two terms (k2): the third terms and their coefficients.
++    tri_ix: FxMap<Vec<(u64, f64)>>,
+ }
+ 
+ fn chol(a: &mut [f64], n: usize) -> bool {
+@@ -558,9 +560,11 @@
+     }
+     pair.retain(|_, b| *b != 0.0);
+     tri.retain(|_, b| *b != 0.0);
++    let mut tri_ix: FxMap<Vec<(u64, f64)>> = FxMap::default();
++    for (k, b) in &tri { tri_ix.entry(k >> 19).or_default().push((k & 0x7FFFF, *b)); }
+     let alpha = res.2.clone();
+     Some(Fit { space, nobs: n, x: obs.iter().map(|o| o.x.clone()).collect(), l: res.1, alpha, scales: s, hyper: h, loglik: res.0,
+-               loo_rmse: (sse / n as f64).sqrt(), loo_r2: 1.0 - sse / sst, cover90: cover / n as f64, var_scale, main, pair, tri })
++               loo_rmse: (sse / n as f64).sqrt(), loo_r2: 1.0 - sse / sst, cover90: cover / n as f64, var_scale, main, pair, tri, tri_ix })
+ }
+ 
+ impl Fit {
+@@ -577,12 +581,18 @@
+                 } }
+             } }
+         }
+-        if !self.tri.is_empty() {
+-            for p in 0..e.len() { for q in p + 1..e.len() { for r in q + 1..e.len() {
+-                for (sa, va) in &e[p].1 { for (sb, vb) in &e[q].1 { for (sc, vc) in &e[r].1 {
+-                    if let Some(b) = self.tri.get(&k3(k1(e[p].0, *sa), k1(e[q].0, *sb), k1(e[r].0, *sc))) { s += va * vb * vc * b; }
+-                } } }
+-            } } }
++        // Triples through the index of their first two terms: only the triples the data touched are
++        // visited, not every triple of the configuration (that was cubic in the number of changed
++        // knobs and made each search step of a many-change configuration up to ~20x slower).
++        // Terms are stored with ascending factors, the order `e` is sorted in.
++        if !self.tri_ix.is_empty() && e.len() >= 3 {
++            let val: FxMap<f64> = e.iter().flat_map(|(f, st)| st.iter().map(move |(k, v)| (k1(*f, *k), *v))).collect();
++            for p in 0..e.len() { for q in p + 1..e.len() {
++                for (sa, va) in &e[p].1 { for (sb, vb) in &e[q].1 {
++                    let Some(l) = self.tri_ix.get(&k2(k1(e[p].0, *sa), k1(e[q].0, *sb))) else { continue };
++                    for (c, b) in l { if let Some(vc) = val.get(c) { s += va * vb * vc * b; } }
++                } }
++            } }
+         }
+         s
+     }

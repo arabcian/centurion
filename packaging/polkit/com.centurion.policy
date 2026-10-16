@@ -3,7 +3,7 @@
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
   <vendor>centurion</vendor>
-  <!-- Eleven Rust root helpers, each pinned by exec.path; installed root:root 0755
+  <!-- Sixteen actions, one per Rust root helper, each pinned by exec.path; installed root:root 0755
        (nvcurve-root-helper 0700) under /usr/libexec/centurion.
        The password-less grant (wheel, local active session) comes only from
        /etc/polkit-1/rules.d/49-centurion.rules; the defaults below

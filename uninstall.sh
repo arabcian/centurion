@@ -42,6 +42,11 @@ rm -f "$UNITDIR/nvcurve-autoload.service" "$UNITDIR/centurion-tune.service" "$UN
 rm -f /var/lib/centurion/boot-guard.json /var/lib/centurion/boot-guard.json.tmp \
       /var/lib/centurion/gpu-mode-pending.json /var/lib/centurion/gpu-mode-pending.json.tmp
 rm -rf /var/cache/centurion   # probed values only, rebuilt on demand
+# Wi-Fi power-save drop-in written by the tuning (the restore above normally removes it).
+if [[ -f /etc/NetworkManager/conf.d/90-centurion-wifi-powersave.conf ]]; then
+    rm -f /etc/NetworkManager/conf.d/90-centurion-wifi-powersave.conf
+    echo "removed the NetworkManager Wi-Fi power-save drop-in (restart NetworkManager to apply)"
+fi
 rmdir /var/lib/centurion 2>/dev/null || true
 [[ -d /run/systemd/system ]] && systemctl daemon-reload 2>/dev/null || true
 [[ -L /run/centurion ]] && rm -f /run/centurion || rm -rf /run/centurion
@@ -52,6 +57,10 @@ left /etc/nvcurve                  "NVIDIA curve profiles and the default-profil
 left /etc/centurion     "boot presets, approved Optimizations presets, network guard rules"
 left /var/lib/centurion "BIOS memory-timing backups (AodSetupRpl-*), calibration signature, boot defaults"
 left /var/log/centurion "writes.log, network guard and connection logs"
+# NVIDIA module options stay: dropping them under a loaded driver (VRAM preservation for suspend)
+# would only change the behaviour at the next module load, unnoticed.
+left /etc/modprobe.d/zz-centurion-nvidia.conf "NVIDIA module options set from the NVIDIA tab (applies at module load)"
+left /etc/modprobe.d/nvidia-centurion.conf    "NVIDIA module options migrated from Legion Power Manager"
 for b in /backup-*.tar.*; do left "$b" "system backup made from Health > Backup (others may be where you saved them)"; done
 echo "  per user: ~/.config/centurion, ~/.config/ryzen-curve-optimizer (scenes, presets, profiles)"
 echo "            ~/.local/state/centurion (Health and kernel-log history)"

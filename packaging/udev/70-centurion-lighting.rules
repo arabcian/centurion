@@ -10,6 +10,9 @@
 # still works through pkexec. Sorted before 73-seat-late.rules, which is
 # where the uaccess tag is acted on. The helper itself only ever talks to the
 # interface whose HID descriptor declares the expected feature report.
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c1??", TAG+="uaccess"
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c6??", TAG+="uaccess"
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c9??", TAG+="uaccess"
+# Limited to Lenovo machines (DMI sys_vendor): an external ITE device on another
+# machine does not get uaccess. The PID families stay wildcards because the
+# exact PIDs vary per generation; the helper/GUI filter by family the same way.
+SUBSYSTEM=="hidraw", ATTR{[dmi/id]sys_vendor}=="LENOVO", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c1??", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTR{[dmi/id]sys_vendor}=="LENOVO", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c6??", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTR{[dmi/id]sys_vendor}=="LENOVO", ATTRS{idVendor}=="048d", ATTRS{idProduct}=="c9??", TAG+="uaccess"

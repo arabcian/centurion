@@ -14,6 +14,9 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
+# nft + nfqueue + SOCK_DESTROY (NET_ADMIN), /proc/<pid>/{exe,fd,maps} of every user (SYS_PTRACE,
+# DAC_*), the root:wheel log files (CHOWN/FOWNER), SIGHUP to itself (KILL).
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_KILL
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=full
