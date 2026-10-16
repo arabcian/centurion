@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QDir>
+#include <QFile>
 #include <QElapsedTimer>
 #include <QLockFile>
 #include <QMessageBox>
@@ -38,18 +39,30 @@
 #include <fcntl.h>
 #include <cstdio>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static constexpr int TRAY_RETRY_MS = 400, TRAY_MAX_RETRIES = 15;
 static constexpr int PING_WINDOW_MS = 3000;  // the running copy may still be starting up
 
-static QString instanceKey() { return QStringLiteral("centurion-%1").arg(getuid()); }
-
-/// Per-user lock: $XDG_RUNTIME_DIR (0700, per user) or the temp dir with the uid in the name.
-static QString lockPath() {
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    if (dir.isEmpty() || !QDir(dir).exists()) dir = QDir::tempPath();
-    return dir + '/' + instanceKey() + QStringLiteral(".lock");
+/// Per-user directory for the lock and the socket: $XDG_RUNTIME_DIR (0700, per user), else a
+/// 0700 directory in the user's cache dir. Never the shared temp dir: there another user could
+/// pre-create the predictable lock/socket names and keep Centurion from starting.
+static QString instanceDir() {
+    static const QString dir = [] {
+        // The variable itself: without it Qt falls back to /tmp/runtime-<user>, the shared temp dir again.
+        QString d = qEnvironmentVariable("XDG_RUNTIME_DIR");
+        if (!d.isEmpty() && QDir(d).exists()) return d;
+        d = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/centurion");
+        QDir().mkpath(d);
+        ::chmod(QFile::encodeName(d).constData(), 0700);
+        return d;
+    }();
+    return dir;
 }
+
+static QString instanceKey() { return instanceDir() + QStringLiteral("/centurion-%1.sock").arg(getuid()); }
+
+static QString lockPath() { return instanceDir() + QStringLiteral("/centurion-%1.lock").arg(getuid()); }
 
 /// Asks the running instance to show itself (or just pings it). Retries for a
 /// short while because it may hold the lock but not be listening yet.

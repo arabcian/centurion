@@ -39,7 +39,7 @@
 // Limits mirror intel_uv.rs; the helper re-checks everything.
 static constexpr double UV_MIN = -300.0;  // GUI floor (helper accepts down to -1000)
 static constexpr double ICC_MAX = 511.75;  // 11-bit field (not throttled's 10-bit 255.75)
-static constexpr double UV_MAX_POSITIVE = 250.0;  // helper cap for allow_positive
+static constexpr double UV_MAX_POSITIVE = 100.0;  // helper cap for allow_positive
 static constexpr int MONITOR_MS = 2000;
 static const char *BOOT_FILE = "/etc/centurion/intel-uv-boot.json";
 static constexpr int PKEXEC_TIMEOUT_MS = 300000;
@@ -210,7 +210,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     auto *xBox = box("Extras", "box_purple");
     auto *xg = new QGridLayout(xBox);
     xg->setVerticalSpacing(3);
-    positive_ = new QCheckBox("Allow positive offsets (overvolt, max +250 mV)");
+    positive_ = new QCheckBox("Allow positive offsets (overvolt, max +100 mV)");
     positive_->setToolTip("undervolt.py --force. Only for stabilising a marginal chip; throttled refuses positive offsets.");
     connect(positive_, &QCheckBox::toggled, this, &IntelTab::setPositive);
     xg->addWidget(positive_, 0, 0, 1, 2);
@@ -331,7 +331,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
 
     lg->addWidget(muted("Package power (MSR 0x610)"), r++, 0, 1, 4);
     auto mkPl = [&](const QString &label, double w, double s, const QString &tip) {
-        PlRow p{new QCheckBox(label), dspin(1, 1000, 1, 0, " W"), dspin(0.001, 1000, 0.5, 3, " s"), new QLabel("–")};
+        PlRow p{new QCheckBox(label), dspin(1, 500, 1, 0, " W"), dspin(0.001, 1000, 0.5, 3, " s"), new QLabel("–")};
         p.w->setValue(w);
         p.s->setValue(s);
         p.s->setFixedWidth(96);

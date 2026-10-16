@@ -469,9 +469,13 @@ void HomeTab::refreshGpuLive() {
     }
     if (dgpuRuntimeStatus_.isEmpty()) return;  // no NVIDIA dGPU: row stays hidden
     // sysfs + EC only — the driver is never queried, so this cannot keep the GPU awake.
-    const QString st = pp::readText(dgpuRuntimeStatus_).value_or(QString());
+    const std::optional<QString> raw = pp::readText(dgpuRuntimeStatus_);
+    const QString st = raw.value_or(QString());
     QString t;
-    if (st == QLatin1String("suspended")) {
+    if (!raw && !QFileInfo::exists(dgpuRuntimeStatus_)) {
+        // iGPU-only mode / released dGPU: the device left the PCI bus. This used to read as "awake".
+        t = QStringLiteral("off (not on the PCI bus)");
+    } else if (st == QLatin1String("suspended")) {
         t = QStringLiteral("asleep (runtime suspended, ~0 W)");
     } else if (st == QLatin1String("active") || st.isEmpty()) {
         t = ecGpuTemp_ > 0 && monoMs() - ecAt_ < 5000 ? QStringLiteral("%1°C  ·  awake").arg(ecGpuTemp_) : QStringLiteral("awake");

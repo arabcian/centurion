@@ -42,6 +42,7 @@ static constexpr int DEBOUNCE_MS = 1500;     // one scan for a burst of kernel l
 static constexpr int POLL_ROOT_MS = 300000;  // restricted kernel log: pkexec, rarely
 static constexpr int MAX_ROWS = 500;
 static constexpr qint64 LOG_MAX_BYTES = 8 << 20;  // then health.log -> health.log.1
+static constexpr qint64 TAIL_BYTES = 512 << 10;    // resume point: only the tail is scanned (same as KlogPage)
 
 static QString helperPath() { return privileged::helperPath(QStringLiteral("tune-profile-helper")); }
 
@@ -175,6 +176,8 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         QFile f(logPath());
         const QString tag = QStringLiteral("boot=") + savedBoot_.left(8) + QStringLiteral(" seq=");
         if (!savedBoot_.isEmpty() && f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            // The whole file (up to 8 MiB) used to be decoded line by line on the GUI thread at every start.
+            if (f.size() > TAIL_BYTES) { f.seek(f.size() - TAIL_BYTES); f.readLine(); }
             while (!f.atEnd()) {
                 const QString l = QString::fromUtf8(f.readLine());
                 const int i = l.indexOf(tag);

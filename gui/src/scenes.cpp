@@ -594,8 +594,15 @@ void SceneEngine::watchUevents() {
         static constexpr char KEY[] = "SUBSYSTEM=power_supply";
         char buf[8192];
         bool power = false;
-        for (ssize_t len; (len = ::recv(fd, buf, sizeof buf, 0)) > 0;)
-            power |= ::memmem(buf, size_t(len), KEY, sizeof KEY - 1) != nullptr;
+        for (;;) {
+            const ssize_t len = ::recv(fd, buf, sizeof buf, 0);
+            if (len > 0) { power |= ::memmem(buf, size_t(len), KEY, sizeof KEY - 1) != nullptr; continue; }
+            if (len < 0 && errno == EINTR) continue;
+            // ENOBUFS: the socket overflowed (a uevent storm at resume / dock) and events were dropped --
+            // possibly the power_supply one. Re-read the source instead of missing a plug/unplug.
+            if (len < 0 && errno == ENOBUFS) { power = true; continue; }
+            break;  // EAGAIN: drained
+        }
         if (!power) return;
         // Coalesced: a plug/unplug (and every battery % change) sends several events within a few ms;
         // each used to be a full sysfs sweep on the GUI thread, i.e. more ACPI/EC calls while the EC is busy.

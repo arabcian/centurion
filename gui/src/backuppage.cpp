@@ -532,6 +532,8 @@ void BackupPage::configRestore() {
                     run({{"op", "config_restore_user"}, {"archive", archive}}, false, QStringLiteral("Restoring user files…"),
                         [this, rootFiles](const QJsonObject &u) {
                             if (!u.value("ok").toBool()) { finished(QStringLiteral("Restoring the user files failed: ") + str(u, "error"), false); return; }
+                            for (const QJsonValue &d : u.value("commands_dropped").toArray())
+                                log(QStringLiteral("scene \"%1\": its Command step was not restored (re-enter it in the scene editor)").arg(d.toString()));
                             finished(QStringLiteral("Restored %1 user and %2 system file(s).").arg(num(u, "files")).arg(rootFiles), true);
                             QMessageBox ask(QMessageBox::Information, QStringLiteral("Configuration restored"),
                                             QStringLiteral("Centurion has to restart to load the restored configuration."),
