@@ -12,11 +12,13 @@
 #                 offscreen training
 #                 run over every tab, then the final build with the profile)
 #   --no-harden   drop stack protector / FORTIFY=3 / CET / full RELRO / PIE on the GUI
-#   --security-level=N   1 (default): wheel+local+active session is silent for the helpers;
-#                 2: every helper asks for the admin password (polkit keeps it for its cache
-#                 window); firmware-persistent writes always ask;
-#                 3: as 2, except applying an approved Optimizations preset by name (tune-profile-helper). Asked interactively when
-#                 not given (CENTURION_SECURITY_LEVEL works too); DESTDIR/non-tty installs use 1.
+#   --security-level=N   3 (default): password for raw values; an already approved
+#                 Optimizations preset (scenes, game hooks) stays password-free.
+#                 1: wheel/sudo + local + active session is silent for the helpers.
+#                 2: every helper asks (polkit caches it briefly). Firmware writes,
+#                 backups and netguard rules always ask, at every level.
+#                 Asked interactively when not given (CENTURION_SECURITY_LEVEL works
+#                 too). DESTDIR and non-tty installs use 3.
 #   --clang       build the GUI with clang++ (+ lld when present) and link the Rust
 #                 helpers with clang; same as ./install-clang.sh
 #
@@ -61,14 +63,14 @@ done
 [[ -n "$DESTDIR" || $EUID -eq 0 ]] || { echo "run as root (or set DESTDIR)" >&2; exit 1; }
 
 if [[ -z $SECLEVEL ]]; then
-    SECLEVEL=1
+    SECLEVEL=3
     if [[ -z $DESTDIR && -t 0 ]]; then
         echo "Polkit security level for the root helpers:"
-        echo "  1) password-free for an administrator (wheel) at the machine   [default]"
+        echo "  1) password-free for an administrator (wheel or sudo) at the machine"
         echo "  2) every helper asks for the administrator password (polkit caches it briefly)"
-        echo "  3) like 2, but applying an already approved Optimizations preset (scenes, game hooks) stays password-free;"
-        echo "     saving/approving presets, typed values and every other helper ask"
-        ans=""; read -r -p "Level [1]: " ans || true
+        echo "  3) like 2, but applying an already approved Optimizations preset stays password-free  [default]"
+        echo "     saving presets, typed values and every other helper still ask"
+        ans=""; read -r -p "Level [3]: " ans || true
         [[ -n $ans ]] && SECLEVEL=$ans
     fi
 fi
@@ -323,7 +325,7 @@ migrate_legacy() {
 if [[ -z "$DESTDIR" ]]; then
     command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q "$PREFIX/share/icons/hicolor" || true
     echo
-    echo "Installed. Optional boot services (each pulls in centurion-boot-guard, which pauses them"
+    echo "Installed (polkit security level $SECLEVEL). Optional boot services (each pulls in centurion-boot-guard, which pauses them"
     echo "after a boot that crashed right after applying them):"
     if [[ -d /run/systemd/system ]]; then
         systemctl daemon-reload || true

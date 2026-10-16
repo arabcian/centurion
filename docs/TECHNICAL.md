@@ -87,11 +87,15 @@ preset from the GUI — enabling the service early is harmless.
     /usr/lib/systemd/system/centurion-tune.service         systemd (tuning boot preset)
     /usr/lib/systemd/system/centurion-calibrate-boot.service systemd (calibration scheduled for the next boot)
 
-Authorization (polkit): a `wheel` member at the machine (local, active
-session) runs the everyday helpers without a password — profiles, fan table,
-firmware-attribute limits, tuning, curves, undervolt. Everyone else (SSH,
-other seats) is asked for the administrator password.
-`legion-firmware-helper` is the exception: it writes settings that persist in
+Authorization (polkit): install defaults to security level 3. A `wheel` or
+`sudo` member at the machine (local, active session) must enter the
+administrator password before a helper writes a raw value. Applying an
+Optimizations preset that was already approved, by name, stays silent so
+scenes and game hooks still work without a polkit agent. Level 1 (chosen at
+install) is the old password-free grant for that same session; level 2 asks
+for every helper. Everyone else (SSH, other seats) is always asked.
+Sensor streams, the Health event reader and keyboard lighting stay silent at
+every level. `legion-firmware-helper` is the exception on top of that: it writes settings that persist in
 firmware and can keep the laptop from booting — BIOS memory timings
 (AodSetupRpl, including restoring a backup), BIOS CPU overclocking (PBO scalar,
 boost override, all-core CO), the GPU MUX mode, and the forced "iGPU only"

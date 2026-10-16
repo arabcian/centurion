@@ -105,9 +105,9 @@ Chosen at install time (`--security-level=N` or asked interactively):
 
 | Level | Behaviour |
 |---|---|
-| 1 (default) | local, active `wheel` user runs helpers without a password |
+| 1 | local, active `wheel` or `sudo` user runs helpers without a password |
 | 2 | every helper asks for the admin password (polkit caches it briefly) |
-| 3 | as 2, except applying an already-approved Optimizations preset by name |
+| 3 (default) | as 2, except applying an already-approved Optimizations preset by name |
 
 ## Supported hardware
 
@@ -315,8 +315,11 @@ packaging/              OpenRC / systemd units, polkit, udev, Gentoo ebuild
 docs/                   HANDBOOK, TECHNICAL, AUTOTUNE
 ```
 
-The GUI runs as your user. polkit lets a `wheel` user at the machine run the
-everyday helpers without a password; firmware-persistent changes always ask.
+The GUI runs as your user. The default polkit level asks for the administrator
+password before a helper applies a value you did not already approve; applying
+a saved Optimizations preset (scenes, game hooks) stays password-free.
+Firmware-persistent changes, backups and network-guard rules always ask.
+Debian/Ubuntu admins are in `sudo`; Gentoo and most others use `wheel`.
 The lighting helper normally runs as you through a udev `uaccess` rule.
 
 Data lives in `~/.config/centurion/` (scenes, presets, AMD GPU

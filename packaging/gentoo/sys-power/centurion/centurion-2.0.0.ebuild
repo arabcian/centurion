@@ -69,8 +69,10 @@ src_install() {
 	insinto /usr/share/polkit-1/actions
 	sed -i "s|@LIBEXEC@|${EPREFIX}/usr/libexec/centurion|g" packaging/polkit/* || die
 	doins packaging/polkit/com.centurion.policy
-	# Security level 1 (silent for wheel at the machine); for level 2 or 3 edit SECURITY_LEVEL in the installed rules file.
-	sed -i "s|@SECLEVEL@|1|g" packaging/polkit/49-centurion.rules || die
+	# Security level 3: password for raw helper values; applying an already
+	# approved Optimizations preset by name stays silent. Level 1 or 2: edit
+	# SECURITY_LEVEL in the installed rules file, or rebuild with install.sh.
+	sed -i "s|@SECLEVEL@|3|g" packaging/polkit/49-centurion.rules || die
 	insinto /etc/polkit-1/rules.d
 	doins packaging/polkit/49-centurion.rules
 	local s
