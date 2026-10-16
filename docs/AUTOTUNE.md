@@ -200,6 +200,23 @@ context first.
 under another display state than its session's first run (dimmed, blanked) counts 20 %
 and the session says so once - turn screen dimming off for a calibration.
 
+**Power source interruptions.** A session watches its power source before and after every run. A
+charger pulled during an AC session (or plugged in during a battery session) moves the firmware
+limits and the power reading: the run in flight is thrown away and the session waits up to two
+minutes for the source to come back (then settles 5 s). If it does not, the session ends cleanly
+with exit status 75; the boot calibration takes that as "wait for AC and run the session again"
+instead of giving up.
+
+**Values the kernel refuses.** A value whose write fails (or whose files cannot be read back, so
+nothing would really change) is left out of the rest of the session: designs, doubt-driven picks,
+dose refinement and confirmation no longer offer it. It used to be tried again and again, and a run
+whose files were all skipped measured the reference under the candidate's label - a silent
+"no effect".
+
+**Session quality.** Every design session keeps a quality record (`--show`, last 64): runs and
+reference runs, the reference runs' scatter per objective, runs that counted less (busy machine,
+forced idle, display or drive state), refused values, runs thrown away, power-source waits.
+
 ## Heat as a design factor
 
 Every benchmark window is shorter than a second: what the calibration saw was a cool,
@@ -284,7 +301,8 @@ show it, at no cost while the machine runs (`/var/lib/centurion/exposure.json`):
   marked as its own (`@calibrate`);
 - events: at a clean shutdown the boot's classified kernel events (Xid, GSP timeouts,
   uncorrectable AER and machine checks, lockups, D3cold wake failures, amdgpu resets); a
-  boot that never reached its shutdown counts as an unclean end (weights: unclean 3,
+  boot centurion-boot-guard watched that never reached its shutdown counts as an unclean end
+  (a boot without the guard stays open: exposure only, no events) (weights: unclean 3,
   lockup / GSP / D3cold / other critical 2, amdgpu reset 1, corrected errors 0; at most 6
   per boot);
 - per knob, the weighted event rate while it was changed is compared with the rate while
@@ -473,7 +491,8 @@ each phase's stage and what the log holds.
    window) become new levels and are measured inside that optimum.
 4. *Confirmation.* The best configuration the models predict per goal is
    measured (2–4×) and compared with the prediction: `as predicted` or
-   `SURPRISE`; either way it joins the data.
+   `SURPRISE` (tolerance: twice the prediction's sd combined with the goal's run-to-run noise
+   as the model measured it - it was a fixed 2 %); either way it joins the data.
 
 Every run measures **all four objectives** (latency, throughput, power, memory;
 union of the benches the phase's knobs need), so any goal or custom weights are
@@ -637,13 +656,29 @@ process per objective (Bayesian regression in kernel form):
   the noise level come from evidence maximisation and are kept in the signature
   (re-tuned every few batches), outlier runs are down-weighted (Student-t
   style, from leave-one-out residuals);
+- **sessions are not equally good**: a session's own noise is read from its reference runs
+  (robust sd, shrunk towards the typical session's with the few degrees of freedom a handful of
+  references carry); a session that credibly scattered more counts by the variance ratio (down to
+  a fifth). A busy or thermally unsettled session used to pull the effects - or inflate the noise
+  every other session was judged with - at full weight;
+- **honest intervals**: the leave-one-out residuals are checked against the model's own predictive
+  spread (median z² against a standard normal's 0.455, shrunk towards 1 for small fits). When they
+  are wider - an interaction the model has no term for, a drift it cannot see - every posterior
+  variance is widened by that factor (never narrowed). Decisions, "seen" tests, the evidence weight
+  `n` and the doubt that drives the next experiments all use the widened variance; `--show` and the
+  autotune report say when it happened;
+- the power objective keeps separate prior scales for battery and RAPL rows (`idle2b` / `idle2`):
+  the battery's coarse reading scatters several times more, and a battery-fitted power model used
+  to run on RAPL's noise level;
 - diagnostics: leave-one-out R² and the share of 90 % intervals that hold;
   the strongest credible interactions — pairs and triples, per objective, as
   **synergy** (more together), **overlap** (both help, less together) or
   **conflict** (together credibly worse than the better one alone) — are
   printed after a calibration and by `--show`. Rows decay with a 90-day
   half-life, another kernel (major.minor) counts half, rows from an older
-  benchmark version 0.6, at most 1600 rows kept (1100 fitted). The old
+  benchmark version 0.6, at most 1100 idle / 1100 load / 600 IO / 300 DEV rows kept per phase
+  (oldest first; one shared cap of 1600 used to let long idle/load logs push out the rare IO and
+  battery-only DEV runs), 1100 fitted per phase. The old
   one-at-a-time records stay valid: they join as single-knob rows worth half
   their evidence. Idle/load rows of an older benchmark set that changed an
   I/O knob stay out of the idle/load models (their objectives mixed storage
@@ -681,6 +716,19 @@ process per objective (Bayesian regression in kernel form):
   weighed modesty and rollback history only, so a measured gain alone could buy a
   value whose risk no benchmark sees. A value the rule itself chose is not
   charged twice.
+
+**Signature file.** `/var/lib/centurion/signature.json` is written atomically; the first write of
+every process keeps the file it replaces as `signature.json.bak`. A file that cannot be read
+(damaged, too large, wrong owner) is set aside as `signature.json.damaged-TIME` and the session
+continues from the backup when that is this machine's; a signature of other hardware is set aside as
+`signature.json.other-TIME` (before, a damaged file was treated as other hardware and the
+calibration silently started from nothing). A file that would come near the 8 MiB read limit drops
+its oldest design rows first.
+
+**Evidence in the report.** Autotune notes, per phase, what its measured part rests on: runs and
+sessions, model R², the share of 90 % intervals that hold, whether the uncertainty had to be
+widened, rows of another kernel, and the age of the newest run (a fresh session is suggested past
+120 days).
 
 **Safety:** refuses while an Optimizations preset is active (Restore
 originals first), holds the tune lock, journals every original before
