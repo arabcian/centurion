@@ -12,13 +12,13 @@
 #                 offscreen training
 #                 run over every tab, then the final build with the profile)
 #   --no-harden   drop stack protector / FORTIFY=3 / CET / full RELRO / PIE on the GUI
-#   --security-level=N   3 (default): password for raw values; an already approved
-#                 Optimizations preset (scenes, game hooks) stays password-free.
-#                 1: wheel/sudo + local + active session is silent for the helpers.
+#   --security-level=N   1 (default): wheel/sudo + local + active session is silent for the helpers.
 #                 2: every helper asks (polkit caches it briefly). Firmware writes,
 #                 backups and netguard rules always ask, at every level.
+#                 3: password for raw values; an already approved
+#                 Optimizations preset (scenes, game hooks) stays password-free.
 #                 Asked interactively when not given (CENTURION_SECURITY_LEVEL works
-#                 too). DESTDIR and non-tty installs use 3.
+#                 too). DESTDIR and non-tty installs use 1.
 #   --clang       build the GUI with clang++ (+ lld when present) and link the Rust
 #                 helpers with clang; same as ./install-clang.sh
 #
@@ -63,14 +63,14 @@ done
 [[ -n "$DESTDIR" || $EUID -eq 0 ]] || { echo "run as root (or set DESTDIR)" >&2; exit 1; }
 
 if [[ -z $SECLEVEL ]]; then
-    SECLEVEL=3
+    SECLEVEL=1
     if [[ -z $DESTDIR && -t 0 ]]; then
         echo "Polkit security level for the root helpers:"
-        echo "  1) password-free for an administrator (wheel or sudo) at the machine"
+        echo "  1) password-free for an administrator (wheel or sudo) at the machine  [default]"
         echo "  2) every helper asks for the administrator password (polkit caches it briefly)"
-        echo "  3) like 2, but applying an already approved Optimizations preset stays password-free  [default]"
+        echo "  3) like 2, but applying an already approved Optimizations preset stays password-free"
         echo "     saving presets, typed values and every other helper still ask"
-        ans=""; read -r -p "Level [3]: " ans || true
+        ans=""; read -r -p "Level [1]: " ans || true
         [[ -n $ans ]] && SECLEVEL=$ans
     fi
 fi
