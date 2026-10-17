@@ -85,7 +85,27 @@ pub const PLANES: &[(&str, u64, &str)] = &[
 /// Domains that exist only on Arrow Lake; elsewhere they are never touched.
 pub const ARL_PLANES: &[&str] = &["memss", "ngu"];
 
-pub fn is_arrow_lake() -> bool { cpu_id().map_or(false, |c| codename(c.model) == "Arrow Lake") }
+/// Arrow Lake-S/HX (model 198) only: the MemSS/NGU domains and the 0x607/0x608 VR mailbox were
+/// verified there (285K, 255HX). Arrow Lake-H (197) and -U (181) are a different die (Meteor
+/// Lake-style SoC tile); on them 0x607 is not this mailbox. Family 6 only: a family 18/19 part
+/// with the same model number is something else.
+pub fn is_arrow_lake() -> bool { cpu_id_ref().map_or(false, |c| c.family == 6 && c.model == 198) }
+
+/// Generations whose OC-mailbox domain map (0 core, 1 iGPU, 2 cache, 3 SA, 4 analog I/O) is the
+/// one intel-undervolt / undervolt.py / throttled use (Haswell .. Raptor Lake), plus Arrow Lake-S/HX
+/// mapped on real hardware. Elsewhere (Sandy/Ivy Bridge, Meteor/Lunar Lake, Arrow Lake-H/U,
+/// Panther Lake, Atom, Xeon, unknown) the same index may name a different rail: read-only there.
+pub fn uv_map_verified() -> bool {
+    cpu_id_ref().map_or(false, |c| c.family == 6 && matches!(c.model,
+        60 | 69 | 70 | 61 | 71 | 78 | 94 | 142 | 158 | 102 | 126 | 140 | 141 | 165 | 166 | 167
+        | 151 | 154 | 183 | 186 | 191 | 198))
+}
+
+fn uv_map_refusal() -> String {
+    let c = cpu_id_ref();
+    format!("voltage-domain map not verified for {} (family {} model {}) — nothing written",
+        c.map_or("?", |c| codename(c.model)), c.map_or(0, |c| c.family), c.map_or(0, |c| c.model))
+}
 
 /// Planes this CPU has: Arrow Lake-only ones dropped on other CPUs.
 pub fn cpu_planes() -> impl Iterator<Item = &'static (&'static str, u64, &'static str)> {
@@ -121,6 +141,16 @@ pub fn uv_write_cmd(plane: u64, ticks: i64) -> u64 {
     0x8000_0011_0000_0000 | (plane << 40) | encode_offset(ticks)
 }
 pub fn uv_read_cmd(plane: u64) -> u64 { 0x8000_0010_0000_0000 | (plane << 40) }
+
+/// Bits 20:0 of the 0x10/0x11 data word: max ratio (7:0), target voltage (19:8), mode (20).
+/// Writing them as 0 (what the reference tools do) silently sets ratio 0 / adaptive mode on the
+/// domain — harmless on the core plane, but on Arrow Lake's NGU/MemSS domains the ratio byte is
+/// the live fabric ratio. The write keeps the values the read just returned.
+pub const UV_KEEP_BITS: u64 = 0x1F_FFFF;
+pub fn uv_write_cmd_keep(plane: u64, ticks: i64, cur: u64) -> u64 { uv_write_cmd(plane, ticks) | (cur & UV_KEEP_BITS) }
+
+/// Response status byte (bits 39:32): 0 = success.
+pub fn mb_status(resp: u64) -> u64 { (resp >> 32) & 0xFF }
 
 /// Offset in mV from a mailbox response. Only the low 32 bits carry data
 /// (throttled masks them; undervolt.py only strips the plane bits, which is
@@ -237,13 +267,16 @@ fn vr_read(m: &Msr, cmd: u64) -> io::Result<u64> {
     if !VR_READ_COMMANDS.iter().any(|c| c.0 == cmd) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a known VR mailbox read command"));
     }
-    let _g = m.txn()?;
-    m.write(MSR_VR_MAILBOX_IF, cmd | VR_RUN)?;
-    for _ in 0..1000 {
-        if m.read(MSR_VR_MAILBOX_IF)? & VR_RUN == 0 { return m.read(MSR_VR_MAILBOX_DATA); }
-        std::thread::sleep(std::time::Duration::from_micros(10));
+    // 0x607 is MSR_PKGC3_IRTL on every other generation: the guard lives here, not only in the caller.
+    if !is_arrow_lake() {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "VR mailbox 0x607/0x608 exists only on Arrow Lake"));
     }
-    Err(io::Error::new(io::ErrorKind::TimedOut, "VR mailbox busy"))
+    let _g = m.txn()?;
+    // Never overwrite a command another agent (BIOS/SMM, other tool) still has in flight.
+    m.wait_idle(MSR_VR_MAILBOX_IF, VR_RUN)?;
+    m.write(MSR_VR_MAILBOX_IF, cmd | VR_RUN)?;
+    m.wait_idle(MSR_VR_MAILBOX_IF, VR_RUN)?;
+    m.read(MSR_VR_MAILBOX_DATA)
 }
 
 pub fn probe_fabric() -> Value {
@@ -291,6 +324,14 @@ impl Msr {
         if !crate::cpuinfo_head().lines().any(|l| l.starts_with("vendor_id") && l.contains("GenuineIntel")) {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "not an Intel CPU: MSR access refused"));
         }
+        // Every address used here (0x150, 0x194, 0x1A2, 0x1FC, 0x606.., 0x64B, 0x64F ...) is a
+        // family-6 model-specific register; newer families may reuse them for something else.
+        match cpu_id_ref() {
+            Some(c) if c.family == 6 => {}
+            Some(c) => return Err(io::Error::new(io::ErrorKind::Unsupported,
+                format!("Intel family {} is not family 6: these MSR addresses are not defined for it, access refused", c.family))),
+            None => return Err(io::Error::new(io::ErrorKind::Unsupported, "/proc/cpuinfo unreadable: CPU family unknown, MSR access refused")),
+        }
         let dev = Path::new("/dev/cpu/0/msr");
         if !dev.exists() { let _ = modprobe_msr(); }
         let f = OpenOptions::new().read(true).write(write)
@@ -306,27 +347,57 @@ impl Msr {
         if self.f.write_at(&v.to_ne_bytes(), addr)? != 8 { return Err(io::Error::new(io::ErrorKind::WriteZero, "short MSR write")); }
         Ok(())
     }
-    /// One OC-mailbox round trip (command write → response read), atomic
-    /// against every other user of this lock (GUI helper, daemon, CLI).
+    /// Polls `reg` until `busy` is clear (bounded, ~1 ms of spinning then short sleeps).
+    fn wait_idle(&self, reg: u64, busy: u64) -> io::Result<u64> {
+        for i in 0..1000 {
+            let v = self.read(reg)?;
+            if v & busy == 0 { return Ok(v); }
+            if i < 100 { std::hint::spin_loop(); } else { std::thread::sleep(std::time::Duration::from_micros(10)); }
+        }
+        Err(io::Error::new(io::ErrorKind::TimedOut, "mailbox stays busy (bit 63) — command not sent"))
+    }
+    /// One OC-mailbox transaction with the run/busy protocol (bit 63) the kernel's
+    /// intel_turbo_max_3 driver uses: wait idle → write → wait for completion → response.
+    /// Writing over a busy mailbox, or reading before completion, could pair the wrong
+    /// response with a command — or replace another agent's in-flight command.
+    fn oc_cmd(&self, cmd: u64) -> io::Result<u64> {
+        self.wait_idle(MSR_OC_MAILBOX, 1 << 63)?;
+        self.write(MSR_OC_MAILBOX, cmd)?;
+        self.wait_idle(MSR_OC_MAILBOX, 1 << 63)
+    }
+    /// One OC-mailbox round trip, atomic against every other user of this
+    /// lock (GUI helper, daemon, CLI).
     pub fn mailbox(&self, cmd: u64) -> io::Result<u64> {
         let _g = self.txn()?;
-        self.write(MSR_OC_MAILBOX, cmd)?;
-        self.read(MSR_OC_MAILBOX)
+        self.oc_cmd(cmd)
     }
-    /// Write-command → read-back pair under one lock hold (voltage/IccMax
-    /// set + verify). Without it the daemon's periodic apply could slip its
-    /// own mailbox command in between and the verify would compare against
-    /// the wrong plane's reply — a spurious "voltage control locked".
-    pub fn mailbox_set_verify(&self, set: u64, verify: u64) -> io::Result<u64> {
+    /// read → write → read-back under one lock hold. The read comes first: a domain
+    /// whose read answers with a non-zero status does not exist (or is refused) on this
+    /// CPU, and then *nothing* is written to it. `build` gets the read response, so the
+    /// write can keep the bits it does not own, and can veto the write (None) on what it read.
+    pub fn mailbox_rmw(&self, read: u64, build: impl FnOnce(u64) -> Option<u64>) -> io::Result<Rmw> {
         let _g = self.txn()?;
-        self.write(MSR_OC_MAILBOX, set)?;
-        self.write(MSR_OC_MAILBOX, verify)?;
-        self.read(MSR_OC_MAILBOX)
+        let cur = self.oc_cmd(read)?;
+        if mb_status(cur) != 0 { return Ok(Rmw::Absent(mb_status(cur))); }
+        let Some(cmd) = build(cur) else { return Ok(Rmw::Vetoed(cur)); };
+        let r = self.oc_cmd(cmd)?;
+        // A rejected write: report its status instead of a read-back that would look unchanged.
+        let back = if mb_status(r) != 0 { r } else { self.oc_cmd(read)? };
+        Ok(Rmw::Done { cur, cmd, back })
     }
     /// flock() on the msr device descriptor: separate opens (separate
     /// processes) conflict, so this serialises mailbox transactions system-wide
     /// among cooperating tools without any extra lock file.
     fn txn(&self) -> io::Result<crate::FdLock> { crate::FdLock::exclusive(&self.f) }
+}
+
+/// Result of `Msr::mailbox_rmw`.
+pub enum Rmw {
+    /// The read was refused with this status: nothing was written.
+    Absent(u64),
+    /// `build` refused after seeing this read response: nothing was written.
+    Vetoed(u64),
+    Done { cur: u64, cmd: u64, back: u64 },
 }
 
 fn modprobe_msr() -> bool { crate::modprobe("msr") }
@@ -399,7 +470,7 @@ pub fn codename(model: u32) -> &'static str {
         78 | 94 => "Skylake", 142 | 158 => "Kaby/Coffee/Whiskey Lake", 102 => "Cannon Lake",
         126 => "Ice Lake", 140 | 141 => "Tiger Lake", 165 | 166 => "Comet Lake", 167 => "Rocket Lake",
         151 | 154 => "Alder Lake", 183 | 186 | 191 => "Raptor Lake", 170 => "Meteor Lake",
-        189 => "Lunar Lake", 181 | 197 | 198 => "Arrow Lake", 204 => "Panther Lake",
+        189 => "Lunar Lake", 181 => "Arrow Lake-U", 197 => "Arrow Lake-H", 198 => "Arrow Lake", 204 => "Panther Lake",
         _ => "unknown",
     }
 }
@@ -445,16 +516,44 @@ pub fn mchbar_base() -> Result<u64, String> {
 
 pub struct Mmio { ptr: *mut u8, len: usize, off: usize }
 
+/// Some(true) if [phys, phys+len) overlaps a "System RAM" range in /proc/iomem, Some(false) if
+/// not, None if that cannot be told (unreadable, or addresses hidden as 0 for non-root).
+fn overlaps_system_ram(phys: u64, len: u64) -> Option<bool> {
+    let s = std::fs::read_to_string("/proc/iomem").ok()?;
+    let end = phys.checked_add(len - 1)?;
+    let mut real = false;
+    for l in s.lines() {
+        let Some((range, name)) = l.trim_start().split_once(" : ") else { continue };
+        let Some((a, b)) = range.split_once('-') else { continue };
+        let (Ok(a), Ok(b)) = (u64::from_str_radix(a, 16), u64::from_str_radix(b, 16)) else { continue };
+        if b != 0 { real = true; }
+        if name.starts_with("System RAM") && phys <= b && end >= a { return Some(true); }
+    }
+    real.then_some(false)
+}
+
 impl Mmio {
-    pub fn open(phys: u64) -> io::Result<Mmio> {
+    /// `write` = false maps read-only (status reads). Refuses an address that is not 8-byte
+    /// aligned, crosses a page, or lies in System RAM — a wrong MCHBAR decode must never
+    /// turn into a write to kernel memory (STRICT_DEVMEM is a kernel option, not a given).
+    pub fn open(phys: u64, write: bool) -> io::Result<Mmio> {
+        let bad = |m: String| io::Error::new(io::ErrorKind::InvalidInput, m);
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+        if phys & 7 != 0 { return Err(bad(format!("{phys:#x} is not 8-byte aligned"))); }
         let aligned = phys & !(page - 1);
         let off = (phys - aligned) as usize;
+        if off + 8 > page as usize { return Err(bad(format!("{phys:#x} crosses a page boundary"))); }
+        match overlaps_system_ram(phys, 8) {
+            Some(false) => {}
+            Some(true) => return Err(bad(format!("{phys:#x} is System RAM, not MCHBAR — refused"))),
+            None => return Err(bad("/proc/iomem unreadable: cannot verify the MCHBAR address — refused".into())),
+        }
         let len = off + 8;
-        let f = OpenOptions::new().read(true).write(true)
+        let f = OpenOptions::new().read(true).write(write)
             .custom_flags(libc::O_SYNC | libc::O_CLOEXEC).open("/dev/mem")?;
         use std::os::fd::AsRawFd;
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE,
+        let prot = if write { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot,
                                     libc::MAP_SHARED, f.as_raw_fd(), aligned as libc::off_t) };
         if p == libc::MAP_FAILED { return Err(io::Error::last_os_error()); }
         Ok(Mmio { ptr: p as *mut u8, len, off })
@@ -656,6 +755,7 @@ pub fn read_status() -> Value {
         "cpu": id.as_ref().map(|c| json!({"vendor": c.vendor, "name": c.name, "family": c.family,
             "model": c.model, "stepping": c.stepping, "codename": codename(c.model)})),
         "lockdown": lockdown(),
+        "uv_map_verified": uv_map_verified(),
     });
     if id.as_ref().map(|c| c.vendor.as_str()) != Some("GenuineIntel") {
         out["ok"] = json!(false);
@@ -727,7 +827,7 @@ pub fn read_status() -> Value {
             let t = |t: Term| json!({"watts": t.watts, "seconds": t.seconds, "enabled": t.enabled, "clamp": t.clamp});
             let mut pw = json!({"pl1": t(a), "pl2": t(b), "locked": locked, "raw": format!("{raw:#018x}")});
             match mchbar_base() {
-                Ok(base) => match Mmio::open(base + MCHBAR_PKG_LIMIT_OFFSET) {
+                Ok(base) => match Mmio::open(base + MCHBAR_PKG_LIMIT_OFFSET, false) {
                     Ok(m) => {
                         let mv = m.read64();
                         let (ma, mb, ml) = decode_pl(mv, units);
@@ -767,9 +867,20 @@ pub fn apply(p: &Profile) -> Value {
 
     for &(k, idx, mv) in &p.voltage {
         let r = (|| {
+            // Defence in depth: only domains this CPU has (parse_profile checks too, but
+            // Profiles are also built in code: reset, full_apply, hold).
+            if !uv_map_verified() { return Err(uv_map_refusal()); }
+            if !cpu_planes().any(|p| p.1 == idx) { return Err(format!("domain {idx} does not exist on this CPU — not written")); }
             let ticks = mv_to_ticks_ex(mv, p.allow_positive)?;
-            let cmd = uv_write_cmd(idx, ticks);
-            let back = msr.mailbox_set_verify(cmd, uv_read_cmd(idx)).map_err(|e| err_str(&e))?;
+            let (cmd, back) = match msr.mailbox_rmw(uv_read_cmd(idx), |cur| Some(uv_write_cmd_keep(idx, ticks, cur))).map_err(|e| err_str(&e))? {
+                Rmw::Absent(st) if ticks == 0 => return Ok(format!("not present on this CPU (status {st:#04x}) — skipped")),
+                Rmw::Absent(st) => return Err(format!("mailbox status {st:#04x} on read: domain not present or refused — nothing written")),
+                Rmw::Done { cmd, back, .. } => (cmd, back),
+                Rmw::Vetoed(_) => unreachable!("voltage write is never vetoed"),
+            };
+            if mb_status(back) != 0 {
+                return Err(format!("mailbox status {:#04x} — write refused (voltage control locked)", mb_status(back)));
+            }
             if back & 0xFFFF_FFFF != cmd & 0xFFFF_FFFF {
                 return Err(format!("readback {:.2} mV ≠ requested {:.2} mV (raw {back:#018x}) — voltage control \
                     locked (Plundervolt/CVE-2019-11157 BIOS lock, or no OC mailbox on this CPU)",
@@ -782,9 +893,21 @@ pub fn apply(p: &Profile) -> Value {
 
     for &(k, idx, a) in &p.iccmax {
         let r = (|| {
+            if !uv_map_verified() { return Err(uv_map_refusal()); }
             let f = amps_to_icc_field(a)?;
-            let resp = msr.mailbox_set_verify(icc_write_cmd(idx, f), icc_read_cmd(idx)).map_err(|e| err_str(&e))?;
-            if (resp >> 32) & 0xFF != 0 { return Err(format!("mailbox status {:#04x} after write", (resp >> 32) & 0xFF)); }
+            // Bit 10 of the field is verified only on Arrow Lake-S/HX. Elsewhere a value above
+            // 255.75 A is written only if the CPU's own reading already has bit 10 set (a stock
+            // IccMax above 255.75 A proves the 11-bit field); otherwise a 10-bit part could take
+            // the low 10 bits alone (300 A → 44 A) or a reserved bit.
+            let resp = match msr.mailbox_rmw(icc_read_cmd(idx), |cur| {
+                (f <= 0x3FF || is_arrow_lake() || cur & 0x400 != 0).then(|| icc_write_cmd(idx, f))
+            }).map_err(|e| err_str(&e))? {
+                Rmw::Absent(st) => return Err(format!("mailbox status {st:#04x} on read: IccMax not available here — nothing written")),
+                Rmw::Vetoed(cur) => return Err(format!("{a} A needs bit 10 of the IccMax field, which this CPU has not shown it uses \
+                    (current {:.2} A) — max 255.75 A here, nothing written", (cur & ICC_MAX_FIELD) as f64 / 4.0)),
+                Rmw::Done { back, .. } => back,
+            };
+            if mb_status(resp) != 0 { return Err(format!("mailbox status {:#04x} after write", mb_status(resp))); }
             let back = resp & ICC_MAX_FIELD;
             if back != f { return Err(format!("readback {:.2} A ≠ requested {:.2} A", back as f64 / 4.0, f as f64 / 4.0)); }
             Ok(format!("{:.2} A", back as f64 / 4.0))
@@ -830,7 +953,7 @@ pub fn apply(p: &Profile) -> Value {
             if p.mchbar {
                 // Both originals mirror the same value to MCHBAR+0x59A0: the
                 // effective limit is the lower of the MSR and MMIO copies.
-                match mchbar_base().and_then(|base| Mmio::open(base + MCHBAR_PKG_LIMIT_OFFSET).map_err(|e| format!("/dev/mem: {e}"))) {
+                match mchbar_base().and_then(|base| Mmio::open(base + MCHBAR_PKG_LIMIT_OFFSET, true).map_err(|e| format!("/dev/mem: {e}"))) {
                     Ok(m) => {
                         let old = m.read64();
                         if old >> 63 == 1 { msg += "; MCHBAR copy is locked, left alone"; }
@@ -963,6 +1086,12 @@ mod tests {
         assert_eq!(uv_read_cmd(0), 0x8000001000000000);
         assert_eq!(uv_read_cmd(1), 0x8000011000000000);
         assert_eq!(encode_offset(0), 0);
+        // RMW keeps ratio/target/mode (20:0) from the read, replaces only the offset field.
+        let cur = 0x0000_0000_F9B2_3455u64; // offset -50 mV, mode 1, target 0x234, ratio 0x55
+        let w = uv_write_cmd_keep(7, mv_to_ticks(-5.0).unwrap(), cur);
+        assert_eq!(w & UV_KEEP_BITS, cur & UV_KEEP_BITS);
+        assert_eq!(w >> 32, 0x8000_0711);
+        assert_eq!(decode_mv(w), decode_mv(uv_write_cmd(7, mv_to_ticks(-5.0).unwrap())));
     }
 
     #[test]
@@ -1077,6 +1206,7 @@ pub fn probe_uv_lock() -> Value {
         Err(e) => return json!({"ok": false, "error": format!("/dev/cpu/0/msr: {}", err_str(&e))}),
     };
     let oc_lock = msr.read(MSR_FLEX_RATIO).ok().map(|v| (v >> 20) & 1 == 1);
+    if !uv_map_verified() { return json!({"ok": false, "error": uv_map_refusal(), "oc_lock": oc_lock}); }
     let plane = 0u64;  // CPU Core
     let cur = match msr.mailbox(uv_read_cmd(plane)) {
         Ok(r) if (r >> 32) & 0xFF != 0 => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock,
@@ -1087,14 +1217,18 @@ pub fn probe_uv_lock() -> Value {
     let raw = (((cur & 0xFFFF_FFFF) >> 21) & 0x7FF) as i64;
     let ticks = if raw >= 0x400 { raw - 0x800 } else { raw };
     let test = if ticks < 0 { ticks + 1 } else if ticks > 0 { ticks - 1 } else { -1 };
-    let cmd = uv_write_cmd(plane, test);
-    let back = msr.mailbox_set_verify(cmd, uv_read_cmd(plane));
+    // Ratio/target/mode bits (20:0) are carried over from the read in both writes.
+    let cmd = uv_write_cmd_keep(plane, test, cur);
+    let back = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, test, c)));
     // Always restore, whatever happened.
-    let restore = msr.mailbox_set_verify(uv_write_cmd(plane, ticks), uv_read_cmd(plane));
-    let restored = matches!(restore, Ok(r) if r & 0xFFFF_FFFF == uv_write_cmd(plane, ticks) & 0xFFFF_FFFF);
+    let restore = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, ticks, c)));
+    let restored = matches!(restore, Ok(Rmw::Done { cmd: rc, back: rb, .. }) if mb_status(rb) == 0 && rb & 0xFFFF_FFFF == rc & 0xFFFF_FFFF);
     let back = match back {
-        Ok(b) => b,
-        Err(e) => return json!({"ok": false, "error": format!("mailbox write: {}", err_str(&e)), "oc_lock": oc_lock}),
+        Ok(Rmw::Done { back, .. }) => back,
+        Ok(Rmw::Vetoed(_)) => unreachable!("probe write is never vetoed"),
+        Ok(Rmw::Absent(st)) => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock, "restored": restored,
+            "message": format!("OC mailbox read refused (status {st:#04x}) — nothing written")}),
+        Err(e) => return json!({"ok": false, "error": format!("mailbox write: {}", err_str(&e)), "oc_lock": oc_lock, "restored": restored}),
     };
     let status = (back >> 32) & 0xFF;
     let accepted = status == 0 && back & 0xFFFF_FFFF == cmd & 0xFFFF_FFFF;
