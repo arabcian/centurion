@@ -37,6 +37,7 @@ pub mod netguard;
 pub mod nvreg;
 pub mod power;
 pub mod ryzen_mon;
+pub mod smu;
 pub mod stream;
 pub mod tools;
 pub mod tune;

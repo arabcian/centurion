@@ -3,40 +3,31 @@
 //!   {"op": "set_coall", "params": {"value": -20}}
 //!   {"op": "set_coper_batch", "params": {"entries": [{ccd,ccx,core,coper}, ...]}}
 //!   {"op": "reset"}
+//!   {"op": "probe"}
+//!       read-only: detected family, SMN backend, allowed offset range (no CO write).
 //!   {"op": "monitor_stream", "params": {"interval_ms": n}}
 //!       read-only: one line of per-CPU VID volts / core watts + package watts
 //!       (ryzen_mon) every interval (500..10000 ms) until stdin reaches EOF.
 //!       The request line must end with '\n' so stdin can stay open.
 //!
-//! ryzenadj is resolved from a fixed list, must be root-owned and not
-//! group/world-writable, runs with a cleared environment and a timeout.
-//! Out-of-range values are rejected, never clamped.
+//! The SMU is driven natively (centurion_helpers::smu): family table, mailbox addresses and
+//! opcodes are fixed constants cross-checked against RyzenAdj, the answer is polled for at most
+//! one second, and no opcode ever comes from the request. Out-of-range values are rejected,
+//! never clamped.
 
 use centurion_helpers::*;
+use centurion_helpers::smu::{Smu, SmuError};
 use centurion_helpers::stream;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
-use std::ffi::CString;
-use std::io::Read;
-use std::os::unix::fs::PermissionsExt;
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const MAX_STDIN_BYTES: usize = 64 * 1024;
-const RYZENADJ_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ENTRIES: usize = 64;
-const MAX_OUTPUT: u64 = 64 * 1024;
 const FIELD_MAX: i64 = 0xF;
+// Outer sanity bounds only; the per-family range (smu::Spec) is authoritative.
 const CO_MIN: i64 = -50;
 const CO_MAX: i64 = 20;
-
-const RYZENADJ_CANDIDATES: &[&str] = &[
-    "/usr/bin/ryzenadj",
-    "/usr/sbin/ryzenadj",
-    "/usr/local/bin/ryzenadj",
-    "/usr/local/sbin/ryzenadj",
-    "/opt/ryzenadj/ryzenadj",
-];
 
 struct Invalid(String);
 
@@ -59,89 +50,33 @@ fn require_int(v: Option<&Value>, name: &str, lo: i64, hi: i64) -> Result<i64, I
     }
 }
 
-/// Root-owned, not group/world-writable, no setuid/setgid bit — for the
-/// binary *and every directory above it* (a user-owned /opt/ryzenadj/ would
-/// otherwise let the user swap the binary after this check), and executable.
-fn is_safe_executable(path: &str) -> bool {
-    if !trusted_path(std::path::Path::new(path)) { return false; }
-    let Ok(md) = std::fs::metadata(path) else { return false };
-    if md.permissions().mode() & 0o111 == 0 { return false; }
-    let Ok(c) = CString::new(path) else { return false };
-    unsafe { libc::access(c.as_ptr(), libc::X_OK) == 0 }
+fn open_smu() -> Result<Smu, Value> {
+    Smu::open().map_err(|e| json!({"ok": false, "error": e, "message": e}))
 }
 
-fn find_ryzenadj() -> Option<&'static str> {
-    RYZENADJ_CANDIDATES.iter().copied().find(|p| is_safe_executable(p))
-}
-
-fn drain<R: Read + Send + 'static>(r: Option<R>) -> std::thread::JoinHandle<String> {
-    std::thread::spawn(move || {
-        let mut s = Vec::new();
-        if let Some(mut r) = r {
-            let _ = (&mut r).take(MAX_OUTPUT).read_to_end(&mut s);
-            let _ = std::io::copy(&mut r, &mut std::io::sink()); // keep the pipe drained
+fn op_probe(_: &Map<String, Value>) -> Result<Value, Invalid> {
+    Ok(match open_smu() {
+        Ok(smu) => {
+            let s = smu.spec();
+            json!({"ok": true, "family": s.name, "mailbox": s.mailbox, "backend": smu.backend(),
+                   "per_core": s.per_core, "max_ccd": s.max_ccd, "co_min": s.co_min, "co_max": s.co_max})
         }
-        String::from_utf8_lossy(&s).trim().to_owned()
+        Err(e) => e,
     })
-}
-
-fn run_ryzenadj(arg: &str) -> (bool, String) {
-    let Some(bin) = find_ryzenadj() else {
-        return (false, format!(
-            "no usable ryzenadj binary found (searched: {}). It must exist, be root-owned \
-             and not group/world-writable.", RYZENADJ_CANDIDATES.join(", ")));
-    };
-    let mut child = match Command::new(bin)
-        .arg(arg)
-        .env_clear()
-        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
-        .env("LC_ALL", "C")
-        .current_dir("/")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => return (false, format!("failed to execute ryzenadj: {e}")),
-    };
-    let out_t = drain(child.stdout.take());
-    let err_t = drain(child.stderr.take());
-
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if start.elapsed() >= RYZENADJ_TIMEOUT => {
-                // Bounded reap: a ryzenadj stuck in an SMU call sits in D state and ignores SIGKILL.
-                centurion_helpers::kill_reap(&mut child);
-                return (false, format!("ryzenadj timed out after {}s", RYZENADJ_TIMEOUT.as_secs()));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => return (false, format!("failed to wait for ryzenadj: {e}")),
-        }
-    };
-    let out = out_t.join().unwrap_or_default();
-    let err = err_t.join().unwrap_or_default();
-
-    if !status.success() {
-        let msg = if !err.is_empty() { err } else if !out.is_empty() { out } else {
-            format!("ryzenadj exited with code {}", status.code().unwrap_or(-1))
-        };
-        return (false, msg);
-    }
-    (true, if out.is_empty() { "OK".into() } else { out })
-}
-
-/// ((ccd << 4 | ccx) << 4 | core) << 20 | (coper & 0xFFFF)
-fn encode_coper(ccd: i64, ccx: i64, core: i64, coper: i64) -> u64 {
-    ((((ccd << 4 | ccx) << 4 | core) as u64) << 20) | ((coper as u64) & 0xFFFF)
 }
 
 fn op_set_coall(p: &Map<String, Value>) -> Result<Value, Invalid> {
     let v = require_int(p.get("value"), "value", CO_MIN, CO_MAX)?;
-    let (ok, msg) = run_ryzenadj(&format!("--set-coall={v}"));
-    Ok(json!({"ok": ok, "message": msg, "applied": {"coall": v}}))
+    Ok(apply_coall(v))
+}
+
+fn apply_coall(v: i64) -> Value {
+    let mut smu = match open_smu() { Ok(s) => s, Err(e) => return e };
+    if let Err(e) = smu.spec().check_coall(v) { return json!({"ok": false, "error": e, "message": e}); }
+    match smu.set_coall(v) {
+        Ok(()) => json!({"ok": true, "message": "OK", "applied": {"coall": v}}),
+        Err(e) => json!({"ok": false, "error": e.message(), "message": e.message(), "applied": {"coall": v}}),
+    }
 }
 
 fn op_set_coper_batch(p: &Map<String, Value>) -> Result<Value, Invalid> {
@@ -168,9 +103,25 @@ fn op_set_coper_batch(p: &Map<String, Value>) -> Result<Value, Invalid> {
         validated.push((ccd, ccx, core, coper));
     }
 
+    let mut smu = match open_smu() { Ok(s) => s, Err(e) => return Ok(e) };
+    for (i, &(ccd, ccx, core, coper)) in validated.iter().enumerate() {
+        smu.spec().check_coper(ccd, ccx, core, coper).map_err(|m| Invalid(format!("entry[{i}]: {m}")))?;
+    }
+
     let mut all_ok = true;
+    let mut dead: Option<String> = None; // bus/SMU stopped answering: do not keep writing
     let results: Vec<Value> = validated.into_iter().map(|(ccd, ccx, core, coper)| {
-        let (ok, msg) = run_ryzenadj(&format!("--set-coper={}", encode_coper(ccd, ccx, core, coper)));
+        let r = match &dead {
+            Some(m) => Err(SmuError::Fatal(format!("skipped: {m}"))),
+            None => smu.set_coper(ccd, ccx, core, coper),
+        };
+        let (ok, msg) = match r {
+            Ok(()) => (true, "OK".to_owned()),
+            Err(e) => {
+                if e.is_fatal() && dead.is_none() { dead = Some(e.message().to_owned()); }
+                (false, e.message().to_owned())
+            }
+        };
         all_ok &= ok;
         json!({"ok": ok, "message": msg, "ccd": ccd, "ccx": ccx, "core": core, "coper": coper})
     }).collect();
@@ -178,8 +129,7 @@ fn op_set_coper_batch(p: &Map<String, Value>) -> Result<Value, Invalid> {
 }
 
 fn op_reset(_: &Map<String, Value>) -> Result<Value, Invalid> {
-    let (ok, msg) = run_ryzenadj("--set-coall=0");
-    Ok(json!({"ok": ok, "message": msg}))
+    Ok(apply_coall(0))
 }
 
 /// Samples until the GUI closes stdin (tab hidden / app gone) or stdout goes away.
@@ -214,6 +164,7 @@ fn run() -> Value {
             Some("set_coall") => op_set_coall,
             Some("set_coper_batch") => op_set_coper_batch,
             Some("reset") => op_reset,
+            Some("probe") => op_probe,
             _ => return json!({"ok": false, "error": format!("unknown op: {}",
                      op.map(|v| v.to_string()).unwrap_or_else(|| "None".into()))}),
         };
@@ -259,13 +210,6 @@ fn main() {
 mod tests {
     use super::*;
     #[test]
-    fn encoding_matches_python() {
-        // Python: (((1<<4|0)<<4|3)<<20) | (-20 & 0xFFFF)
-        assert_eq!(encode_coper(1, 0, 3, -20), 0x10300000 | 0xFFEC);
-        assert_eq!(encode_coper(0, 0, 0, 5), 5);
-        assert_eq!(encode_coper(15, 15, 15, -50), 0xFFF00000 | 0xFFCE);
-    }
-    #[test]
     fn ints_strict() {
         assert!(require_int(Some(&json!(true)), "v", -50, 20).is_err());
         assert!(require_int(Some(&json!(-20.0)), "v", -50, 20).is_err());
@@ -273,7 +217,7 @@ mod tests {
         assert_eq!(require_int(Some(&json!(-50)), "v", -50, 20).ok(), Some(-50));
     }
     #[test]
-    fn duplicate_rejected_before_exec() {
+    fn duplicate_rejected_before_hardware() {
         let p = json!({"entries": [{"ccd":0,"ccx":0,"core":1,"coper":-10},
                                     {"ccd":0,"ccx":0,"core":1,"coper":-5}]});
         assert!(op_set_coper_batch(p.as_object().unwrap()).is_err());
