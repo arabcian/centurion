@@ -52,7 +52,8 @@ MemoryDialog::MemoryDialog(const QString &helper, QWidget *parent) : QDialog(par
         return f.open(QIODevice::ReadOnly) ? QString::fromLatin1(f.readAll()).trimmed() : QString();
     };
     edit->setVisible((dmi("product_version") + ' ' + dmi("product_family")).contains(QLatin1String("16AFR10H"))
-                     && dmi("bios_version").startsWith(QLatin1String("SMCN")));
+                     && (dmi("bios_version").startsWith(QLatin1String("SMCN19WW"))
+                         || dmi("bios_version").startsWith(QLatin1String("SMCN20WW"))));  // keep in step with AOD_VERIFIED_BIOS
     auto *close = new QPushButton("Close");
     h->addWidget(reload);
     h->addWidget(edit);
