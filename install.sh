@@ -362,7 +362,7 @@ if [[ -z "$DESTDIR" ]]; then
     dep "acpi_call"                        "kmod acpi_call"                            "GPU limits, fan curve, GPU mode, EC temps"
     dep "NVIDIA proprietary driver (NVML)" "lib libnvidia-ml.so"     "NVIDIA tab"
     dep "amdgpu (ppfeaturemask 0x4000)"    "(( \$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo 0) & 0x4000 ))" "AMD GPU tab Overdrive"
-    dep "ryzenadj (root-owned)"            "for p in /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /opt/ryzenadj; do [[ -x \$p/ryzenadj && \$(stat -c %u \$p/ryzenadj) == 0 ]] && exit 0; done; exit 1" "Ryzen tab"
+    dep "ryzen_smu or writable PCI config" "kmod ryzen_smu || [[ -w /sys/bus/pci/devices/0000:00:00.0/config ]]" "Ryzen tab"
     dep "ryzen_smu"                        "kmod ryzen_smu"                            "optional — live memory timings"
     dep "zenpower / zenergy"               "kmod zenpower || kmod zenergy"             "optional — extra CPU sensors"
     dep "efivarfs"                         "[[ -d /sys/firmware/efi/efivars ]]"        "BIOS memory timings"

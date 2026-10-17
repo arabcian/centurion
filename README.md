@@ -295,7 +295,7 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 | GPU power limits, fan curve, GPU mode, instant boot, EC temps | `acpi_call` kernel module |
 | NVIDIA tab | proprietary NVIDIA driver (NvAPI / NVML are loaded at runtime) |
 | AMD GPU tab | `amdgpu` with `ppfeaturemask` bit `0x4000` for Overdrive |
-| Ryzen tab | root-owned `ryzenadj` in `/usr/bin`, `/usr/sbin`, `/usr/local/{bin,sbin}` or `/opt/ryzenadj` |
+| Ryzen tab | `ryzen_smu` ≥ 0.1.7, or root write access to PCI config (kernel lockdown off); no `ryzenadj` needed. Cezanne, Rembrandt, Phoenix, Hawk Point, Dragon Range, Fire Range, Strix Halo: all-core + per-core; Strix Point, Krackan: all-core only |
 | live memory timings, extra CPU sensors *(optional)* | `ryzen_smu`, `zenpower` / `zenergy` |
 | BIOS memory timings | efivarfs (`/sys/firmware/efi/efivars`) |
 | Lighting tab without a password | udev + systemd-logind or elogind (`uaccess`) |
