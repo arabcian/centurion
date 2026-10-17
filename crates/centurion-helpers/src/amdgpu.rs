@@ -341,6 +341,8 @@ fn tune_owns_level() -> bool {
 }
 
 const FAN_DIR: &str = "gpu_od/fan_ctrl";
+/// (hotspot °C, minimum fan %) a custom fan curve must keep: a curve may not leave the fan low when hot.
+const FAN_MIN_AT_HOT: &[(i64, i64)] = &[(80, 50), (95, 80)];
 const FAN_VALUES: &[(&str, &str)] = &[
     ("zero_rpm", "fan_zero_rpm_enable"), ("zero_rpm_stop", "fan_zero_rpm_stop_temperature"),
     ("min_pwm", "fan_minimum_pwm"), ("target_temp", "fan_target_temperature"),
@@ -371,6 +373,11 @@ fn fan_commands(card: &Card, f: &Map<String, Value>) -> Result<Vec<(String, Vec<
             check(&format!("fan.curve[{i}] speed"), *p, Some(srange), (0, 100))?;
             if i > 0 && (*t < want[i - 1].0 || *p < want[i - 1].1) {
                 return Err("fan curve must not fall".into());
+            }
+            // The last point holds for every hotter temperature, so it needs the highest minimum.
+            let need = FAN_MIN_AT_HOT.iter().filter(|h| *t >= h.0 || i + 1 == want.len()).map(|h| h.1).max().unwrap_or(0);
+            if *p < need {
+                return Err(format!("fan.curve[{i}]: {p}% at {t}°C is below the {need}% minimum for hot points"));
             }
             cmds.push(format!("{i} {t} {p}"));
         }

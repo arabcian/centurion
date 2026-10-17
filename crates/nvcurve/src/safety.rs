@@ -1,11 +1,18 @@
 //! Centralised write validation (port of safety.py).
 
-use crate::hal::limits::{get_mem_offset_range, get_power_limit};
+use crate::hal::limits::{get_max_mem_clock, get_mem_offset_range, get_power_limit};
 use crate::nvapi::{CT_POINTS, MAX_DELTA_KHZ, MIN_DELTA_KHZ};
 use std::collections::BTreeMap;
 
-/// Upper plausibility bound for a memory locked clock (MHz).
-pub const MAX_MEM_CLOCK_MHZ: i64 = 100_000;
+/// Upper plausibility bound for a memory locked clock (MHz), used only when the driver cannot report
+/// its supported clocks. (GDDR7 reports ~15 000 MHz; 100 000 let a typo through unchecked.)
+pub const MAX_MEM_CLOCK_MHZ: i64 = 30_000;
+
+/// Highest memory clock a lock may name: the driver's top supported clock when NVML reports one,
+/// otherwise the plausibility bound.
+pub fn mem_clock_ceiling(gpu_index: u32) -> i64 {
+    get_max_mem_clock(gpu_index).map_or(MAX_MEM_CLOCK_MHZ, i64::from).min(MAX_MEM_CLOCK_MHZ)
+}
 
 fn mhz(khz: i64) -> f64 { khz as f64 / 1000.0 }
 
@@ -101,11 +108,12 @@ pub fn validate_limits(gpu_index: u32, l: &Limits) -> Vec<LimitError> {
                 r.min_mem_offset_mhz, r.max_mem_offset_mhz));
         }
     }
+    let mem_ceiling = mem_clock_ceiling(gpu_index);
     for (label, v) in [("mem_locked_min_mhz", l.mem_locked_min_mhz), ("mem_locked_max_mhz", l.mem_locked_max_mhz)] {
         if let Some(v) = v {
-            if !(1..=MAX_MEM_CLOCK_MHZ).contains(&v) {
+            if !(1..=mem_ceiling).contains(&v) {
                 push(LimitField::MemLocked, format!(
-                    "{label} {v} is outside the plausible range (1-{MAX_MEM_CLOCK_MHZ} MHz)"));
+                    "{label} {v} is outside the supported range (1-{mem_ceiling} MHz)"));
             }
         }
     }

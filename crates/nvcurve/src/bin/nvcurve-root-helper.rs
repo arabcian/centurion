@@ -70,7 +70,7 @@ fn validate_profile_data(d: &Obj) -> Result<(), String> {
         // Plausibility only: power limit and memory offset are re-checked against the
         // driver's live range at apply time (safety::validate_limits).
         ("mem_offset_mhz", -10_000, 10_000), ("power_limit_w", 1, 1_000),
-        ("mem_locked_min_mhz", 1, 100_000), ("mem_locked_max_mhz", 1, 100_000),
+        ("mem_locked_min_mhz", 1, nvcurve::safety::MAX_MEM_CLOCK_MHZ), ("mem_locked_max_mhz", 1, nvcurve::safety::MAX_MEM_CLOCK_MHZ),
         ("gpu_clock_cap_mhz", 210, 4_000), ("gpu_clock_comp_mhz", 0, nvcurve::safety::MAX_CLOCK_COMP_MHZ),
         ("flatten_from", 0, MAX_CURVE_POINTS - 1), ("flatten_mhz", 1, 10_000),
     ];
@@ -175,7 +175,7 @@ fn op_set_vram_memlock(p: &Obj) -> OpResult {
     let (Some(lo), Some(hi)) = (p.get("min_mhz").and_then(is_int), p.get("max_mhz").and_then(is_int)) else {
         return Err("min_mhz/max_mhz must be integers".into());
     };
-    if lo <= 0 || hi <= 0 || lo > hi || hi > nvcurve::safety::MAX_MEM_CLOCK_MHZ {
+    if lo <= 0 || hi <= 0 || lo > hi || hi > nvcurve::safety::mem_clock_ceiling(0) {
         return Err("Invalid min_mhz/max_mhz range".into());
     }
     limits::set_mem_locked_clocks(lo as u32, hi as u32, 0)?;

@@ -464,6 +464,8 @@ fn cmd_memlock(a: &Args) {
             };
             let min: u32 = a.num("--min").unwrap_or(max);
             if min == 0 || min > max { die(2, "Error: need 0 < --min <= --max"); }
+            let ceiling = nvcurve::safety::mem_clock_ceiling(idx);
+            if i64::from(max) > ceiling { die(2, format!("Error: --max {max} MHz exceeds the supported maximum of {ceiling} MHz")); }
             limits::set_mem_locked_clocks(min, max, idx).unwrap_or_else(|e| die(1, format!("Error: {e}")));
             match limits::get_current_mem_clock(idx) {
                 Some(act) if act != max => println!("Requested lock: {min}–{max} MHz — driver resolved to {act} MHz \

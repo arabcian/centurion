@@ -331,10 +331,16 @@ mod aod_range_tests {
     }
 }
 
+/// BIOS releases whose AodSetupRpl layout was mapped/checked. A newer release may move the records,
+/// so it stays view-only until it is verified and added here (keep in step with gui/src/memorydialog.cpp).
+const AOD_VERIFIED_BIOS: &[&str] = &["SMCN19WW", "SMCN20WW"];
+
 fn aod_supported() -> Result<(), String> {
     let model = format!("{} {}", dmi("product_version"), dmi("product_family"));
-    if !model.contains("16AFR10H") || !dmi("bios_version").starts_with("SMCN") {
-        return Err("editing is only mapped for Legion Pro 7 16AFR10H (SMCN BIOS); this machine is view-only".into());
+    let bios = dmi("bios_version");
+    if !model.contains("16AFR10H") || !AOD_VERIFIED_BIOS.iter().any(|v| bios.starts_with(v)) {
+        return Err(format!("editing is only mapped for Legion Pro 7 16AFR10H with BIOS {} (this one: {}); \
+            this machine is view-only", AOD_VERIFIED_BIOS.join(" / "), if bios.is_empty() { "unknown" } else { &bios }));
     }
     Ok(())
 }

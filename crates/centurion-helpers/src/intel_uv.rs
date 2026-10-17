@@ -52,10 +52,10 @@ pub const MSR_RING_PERF_LIMIT_REASONS: u64 = 0x6B1;
 /// beyond this has no stability use and only adds heat/wear). The flag comes
 /// from the request, and level 1 runs this helper without a password, so the
 /// cap itself has to be harmless.
-pub const UV_MAX_POSITIVE_MV: f64 = 100.0;
-/// PL1/PL2 ceiling. Above any client part's real limit; 1000 W let a silent
-/// request lift the package limit to "unlimited".
-pub const PL_MAX_W: f64 = 500.0;
+pub const UV_MAX_POSITIVE_MV: f64 = 50.0;
+/// PL1/PL2 ceiling. Above any mobile client part's real limit (HX max turbo ≈ 160 W); 1000 W let a silent
+/// request lift the package limit to "unlimited", and 500 W was still far beyond any laptop's supply.
+pub const PL_MAX_W: f64 = 250.0;
 
 pub const TICKS_PER_MV: f64 = 1.024;
 pub const UV_MIN_MV: f64 = -1000.0; // -1024 ticks, signed 11-bit floor (throttled)
