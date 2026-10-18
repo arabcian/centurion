@@ -331,9 +331,20 @@ impl Smu {
 
     fn send(&mut self, opcode: u32, arg0: u32) -> Result<(), SmuError> {
         let _g = self.bus.guard().map_err(SmuError::Fatal)?;
-        match mailbox(&mut self.bus, self.spec.mbox, opcode, arg0, SMU_TIMEOUT)? {
-            RSP_OK => Ok(()),
-            r => Err(SmuError::Rejected(rsp_text(r))),
+        // A response that is neither OK nor a defined error code (e.g. 0x59808 seen mid-batch) or
+        // "busy" means the answer was read while another SMU client was using the mailbox. The
+        // CO messages are idempotent, so the same message is re-sent a few times before giving up.
+        // Defined rejections (0xFF/0xFE/0xFD) are final and never retried.
+        let mut attempt = 0u32;
+        loop {
+            match mailbox(&mut self.bus, self.spec.mbox, opcode, arg0, SMU_TIMEOUT)? {
+                RSP_OK => return Ok(()),
+                r if attempt < 3 && (r == 0xFC || !matches!(r, 0xFF | 0xFE | 0xFD)) => {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(10 << attempt));
+                }
+                r => return Err(SmuError::Rejected(rsp_text(r))),
+            }
         }
     }
 

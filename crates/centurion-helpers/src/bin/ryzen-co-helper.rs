@@ -111,10 +111,22 @@ fn op_set_coper_batch(p: &Map<String, Value>) -> Result<Value, Invalid> {
     // The SMU cannot be read back, so the value to restore is the caller's "prev" (the last applied
     // offset it knows of) and otherwise 0 = stock.
     let prevs: Vec<Option<i64>> = entries.iter().map(|e| e.get("prev").and_then(Value::as_i64).filter(|v| (CO_MIN..=CO_MAX).contains(v))).collect();
+    // Stock first: cores the batch does not name must not keep the previous profile's offsets.
+    // ("reset": false opts out.) Rolling back then means all-core 0, since the old state is gone.
+    let reset_first = p.get("reset").and_then(Value::as_bool).unwrap_or(true);
+    if reset_first {
+        if let Err(e) = smu.set_coall(0) {
+            return Ok(json!({"ok": false, "error": format!("reset to stock failed: {}", e.message()), "state": "unknown"}));
+        }
+        // The SMU needs a moment to finish applying the all-core reset; the first per-core message
+        // sent right behind it can be answered with garbage or ignored.
+        std::thread::sleep(Duration::from_millis(150));
+    }
     let mut all_ok = true;
     let mut touched: Vec<usize> = Vec::new(); // entries that may have reached the SMU
     let mut results: Vec<Value> = Vec::new();
     for (i, &(ccd, ccx, core, coper)) in validated.iter().enumerate() {
+        if i > 0 { std::thread::sleep(Duration::from_millis(3)); } // keep the SMU's command pace
         let (ok, msg) = match smu.set_coper(ccd, ccx, core, coper) {
             Ok(()) => { touched.push(i); (true, "OK".to_owned()) }
             Err(e) => {
@@ -129,6 +141,12 @@ fn op_set_coper_batch(p: &Map<String, Value>) -> Result<Value, Invalid> {
     if all_ok { return Ok(json!({"ok": true, "results": results})); }
     for &(ccd, ccx, core, coper) in validated.iter().skip(results.len()) {
         results.push(json!({"ok": false, "skipped": true, "message": "not written (earlier entry failed)", "ccd": ccd, "ccx": ccx, "core": core, "coper": coper}));
+    }
+    if reset_first {
+        let r = smu.set_coall(0);
+        return Ok(json!({"ok": false, "results": results, "state": if r.is_ok() { "stock" } else { "unknown" },
+                         "rollback": [{"ok": r.is_ok(), "message": r.err().map_or("OK".to_owned(), |e| e.message().to_owned()), "coall": 0}],
+                         "note": "profile reset all cores to stock first; undo returns to stock, not to the offsets before this call"}));
     }
     let mut rolled: Vec<Value> = Vec::new();
     let mut explicit = true;

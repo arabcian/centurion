@@ -135,6 +135,9 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
         out.errors.push(format!("Curve: {}", errs.join("; ")));
         return Ok(out);
     }
+    // Stock first: every GPU-domain point the profile does not name goes back to 0, so a profile
+    // lands on defaults and not on top of the previous profile's offsets.
+    for pt in state.points.iter().filter(|pt| pt.domain == Domain::Gpu) { deltas.entry(pt.index as i64).or_insert(0); }
     if cfg.auto_snapshot && snapshot::save(g, &gname, &cfg.snapshot_dir, cfg.max_snapshots, Some(raw.bytes())).is_none() {
         warn!("Auto-snapshot failed");
     }

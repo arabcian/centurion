@@ -867,6 +867,16 @@ pub fn apply(p: &Profile) -> Value { apply_ex(p, false) }
 pub fn apply_atomic(p: &Profile) -> Value { apply_ex(p, true) }
 
 fn apply_ex(p: &Profile, rollback: bool) -> Value {
+    // A profile that sets voltage starts from stock: planes it does not name go back to 0 mV, so
+    // consecutive profiles do not stack on the previous one's offsets (IccMax/power have no
+    // knowable stock and are left to the profile).
+    let full;
+    let p = if p.voltage.is_empty() { p } else {
+        let mut q = p.clone();
+        for &(k, i, _) in cpu_planes() { if !q.voltage.iter().any(|v| v.1 == i) { q.voltage.push((k, i, 0.0)); } }
+        full = q;
+        &full
+    };
     let mut results = Vec::new();
     let mut all = true;
     let mut undo: Vec<(String, Undo)> = Vec::new();
