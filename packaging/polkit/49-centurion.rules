@@ -58,6 +58,11 @@
  *      game hooks keep their tuning step silent; their other steps (Ryzen/NVIDIA/... helpers) ask.
  * install.sh and the Gentoo ebuild default to level 3. Rerun install.sh to change it.
  *
+ * Action ids are matched against an explicit allowlist (ACTION_IDS plus the three
+ * exceptions above), not by the com.centurion. prefix; unlisted ids in that
+ * namespace get AUTH_ADMIN. When adding an action to com.centurion.policy, add its
+ * id here too (install.sh checks this).
+ *
  * Distributions without a `wheel` group are covered: `sudo` is checked too.
  */
 
@@ -73,6 +78,18 @@ var HELPERS = ["fwattr-helper", "legion-profile-helper", "ryzen-co-helper",
     return "@LIBEXEC@/" + h;
 });
 var SECURITY_LEVEL = @SECLEVEL@;
+// Explicit allowlist of the action ids this file may treat as "ours" (the ones
+// in com.centurion.policy, minus the firmware / backup / netguard actions that
+// are handled first above). There is deliberately no com.centurion.* prefix
+// match: a new action that is not listed here -- or an id someone else
+// registers under the namespace -- never inherits the silent / auth_admin_keep
+// grant. install.sh refuses to install if the policy has an id missing from
+// this list or from the special ones below.
+var ACTION_IDS = ["com.centurion.fwattr.write", "com.centurion.nvcurve.set-params",
+                  "com.centurion.nvcurve.sensors", "com.centurion.ec.sensors", "com.centurion.health.read",
+                  "com.centurion.amdgpu.tune", "com.centurion.ryzen.set-curve", "com.centurion.intel.undervolt", "com.centurion.gpu.power",
+                  "com.centurion.profile.set", "com.centurion.tune.apply",
+                  "com.centurion.tune.profile", "com.centurion.lighting.write"];
 // Read-only / non-power helpers that stay silent at every level.
 var SILENT_IDS = ["com.centurion.nvcurve.sensors", "com.centurion.lighting.write",
                   "com.centurion.ec.sensors", "com.centurion.health.read"];
@@ -103,7 +120,11 @@ polkit.addRule(function (action, subject) {
         (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === NETGUARD_HELPER)) {
         return adminAtConsole(subject) ? polkit.Result.AUTH_ADMIN_KEEP : polkit.Result.AUTH_ADMIN;
     }
-    var ours = action.id.indexOf("com.centurion.") === 0 ||
+    // Any other com.centurion.* id is unknown to this file: password, never cached, never silent.
+    if (action.id.indexOf("com.centurion.") === 0 && ACTION_IDS.indexOf(action.id) < 0) {
+        return polkit.Result.AUTH_ADMIN;
+    }
+    var ours = ACTION_IDS.indexOf(action.id) >= 0 ||
         (action.id === "org.freedesktop.policykit.exec" &&
          HELPERS.indexOf(action.lookup("program")) >= 0);
     if (!ours) { return; }

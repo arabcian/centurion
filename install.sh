@@ -62,6 +62,12 @@ for a in "$@"; do
 done
 [[ -n "$DESTDIR" || $EUID -eq 0 ]] || { echo "run as root (or set DESTDIR)" >&2; exit 1; }
 
+# Upgrade: keep the level of the rules file being replaced (no prompt, no silent reset to 1).
+OLDRULES="$DESTDIR/etc/polkit-1/rules.d/49-centurion.rules"
+if [[ -z $SECLEVEL && -f $OLDRULES ]]; then
+    SECLEVEL=$(sed -n 's/^var SECURITY_LEVEL = \([123]\);.*/\1/p' "$OLDRULES" | head -n1)
+    [[ -n $SECLEVEL ]] && echo "Keeping polkit security level $SECLEVEL from the installed rules."
+fi
 if [[ -z $SECLEVEL ]]; then
     SECLEVEL=1
     if [[ -z $DESTDIR && -t 0 ]]; then
@@ -165,6 +171,11 @@ DESTDIR="$DESTDIR" cmake --install gui/build --strip
 
 install -d "${own[@]}" -m 0755 "$DESTDIR$PREFIX/share/polkit-1/actions" "$DESTDIR/etc/polkit-1/rules.d" \
     "$DESTDIR/etc/init.d" "$DESTDIR/etc/nvcurve/profiles"
+# Every action id in the policy must be known to the rules file (allowlist, not a namespace prefix).
+for id in $(grep -o 'action id="com\.centurion\.[^"]*"' packaging/polkit/com.centurion.policy | cut -d'"' -f2); do
+    grep -qF "\"$id\"" <(grep -v '^ *\*' packaging/polkit/49-centurion.rules) || [[ $id == com.centurion.firmware.write || $id == com.centurion.backup || $id == com.centurion.netguard ]] \
+        || { echo "polkit action $id is in com.centurion.policy but not in the rules allowlist (49-centurion.rules)" >&2; exit 2; }
+done
 sed "s|@LIBEXEC@|$LIBEXEC|g" packaging/polkit/com.centurion.policy > "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"
 [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"; chmod 0644 "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"
 sed -e "s|@LIBEXEC@|$LIBEXEC|g" -e "s|@SECLEVEL@|$SECLEVEL|g" packaging/polkit/49-centurion.rules > "$DESTDIR/etc/polkit-1/rules.d/49-centurion.rules"

@@ -103,6 +103,13 @@ src_install() {
 pkg_postinst() {
 	xdg_pkg_postinst
 	udev_reload
+	# Upgrade from a version whose rules matched every com.centurion.* id: CONFIG_PROTECT
+	# keeps the old /etc file until etc-update, so the broad rule would stay active.
+	if grep -qF 'indexOf("com.centurion.") === 0' "${EROOT}"/etc/polkit-1/rules.d/49-centurion.rules 2>/dev/null; then
+		ewarn "The installed /etc/polkit-1/rules.d/49-centurion.rules still matches the whole"
+		ewarn "  com.centurion.* namespace. Run etc-update / dispatch-conf and take the new file"
+		ewarn "  (explicit action allowlist); the old one stays active until then."
+	fi
 	elog "Keyboard lighting (Spectrum / 4-zone RGB): re-login or re-plug once so the"
 	elog "  uaccess udev rule applies to the keyboard's hidraw node; until then the"
 	elog "  Lighting tab goes through pkexec."
