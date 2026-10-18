@@ -1252,23 +1252,49 @@ pub fn fw_oc_status() -> Value {
     json!({"ok": true, "bios_oc_mode": mode, "tunes": tunes})
 }
 
-pub fn set_fw_oc(key: &str, value: i64) -> Value {
-    let Some(&(_, id)) = OC_TUNES.iter().find(|(k, _)| *k == key) else { return json!({"ok": false, "error": format!("unknown tune '{key}'")}) };
-    let st = fw_oc_status();
-    let Some(t) = st.get("tunes").and_then(|t| t.get(key)) else { return json!({"ok": false, "error": format!("{key} not reported by firmware")}) };
-    let (lo, hi) = (t["min"].as_i64().unwrap_or(0), t["max"].as_i64().unwrap_or(0));
-    if value < lo || value > hi { return json!({"ok": false, "error": format!("{key}: {value} outside {lo}..{hi}")}); }
+fn fw_oc_write(id: u32, value: i64) -> Result<(), String> {
     let raw: u32 = if value < 0 { 0x8000_0000 | value.unsigned_abs() as u32 } else { value as u32 };
     let mut b = Vec::with_capacity(12);
     b.extend_from_slice(&0x11u32.to_le_bytes());
     b.extend_from_slice(&id.to_le_bytes());
     b.extend_from_slice(&raw.to_le_bytes());
     let hex: String = b.iter().map(|x| format!("{x:02X}")).collect();
-    if let Err(e) = acpi_raw(&format!("{}.WMAC 0x0 0x0E b{hex}", wmi().dev)) { return json!({"ok": false, "error": e}); }
-    let now = fw_oc_status();
-    let got = now.get("tunes").and_then(|t| t.get(key)).and_then(|t| t["value"].as_i64());
-    if got != Some(value) { return json!({"ok": false, "error": format!("{key}: read-back {got:?}")}); }
-    json!({"ok": true, "key": key, "value": value, "reboot_required": true})
+    acpi_raw(&format!("{}.WMAC 0x0 0x0E b{hex}", wmi().dev)).map(|_| ())
+}
+fn fw_oc_read(key: &str) -> Option<i64> {
+    fw_oc_status().get("tunes").and_then(|t| t.get(key)).and_then(|t| t["value"].as_i64())
+}
+
+/// One tune with a per-field record: value before, write result, read-back and
+/// rollback result. A failed WMAC call does not prove the firmware is unchanged,
+/// so after any failure the value is re-read and, if it differs from `before`,
+/// written back and verified. `state` = original | requested | unknown.
+pub fn set_fw_oc(key: &str, value: i64) -> Value {
+    let Some(&(_, id)) = OC_TUNES.iter().find(|(k, _)| *k == key) else { return json!({"ok": false, "key": key, "state": "original", "error": format!("unknown tune '{key}'")}) };
+    let st = fw_oc_status();
+    let Some(t) = st.get("tunes").and_then(|t| t.get(key)) else { return json!({"ok": false, "key": key, "state": "original", "error": format!("{key} not reported by firmware")}) };
+    let (lo, hi) = (t["min"].as_i64().unwrap_or(0), t["max"].as_i64().unwrap_or(0));
+    let before = t["value"].as_i64();
+    if value < lo || value > hi { return json!({"ok": false, "key": key, "before": before, "state": "original", "error": format!("{key}: {value} outside {lo}..{hi}")}); }
+    if before == Some(value) { return json!({"ok": true, "key": key, "before": before, "value": value, "changed": false, "reboot_required": false}); }
+    let w = fw_oc_write(id, value);
+    let got = fw_oc_read(key);
+    if w.is_ok() && got == Some(value) {
+        return json!({"ok": true, "key": key, "before": before, "write": "ok", "readback": got, "value": value, "changed": true, "reboot_required": true});
+    }
+    // Failed or unverified: find out what the firmware actually holds and put it back.
+    let (rollback, after) = if got == before && got.is_some() { ("not needed".to_string(), got) } else if let Some(b0) = before {
+        let r = fw_oc_write(id, b0);
+        let again = fw_oc_read(key);
+        (if r.is_ok() && again == Some(b0) { "ok".to_string() } else { format!("failed: {}", r.err().unwrap_or_else(|| format!("read-back {again:?}"))) }, again)
+    } else { ("failed: no original value".to_string(), got) };
+    let state = if after == before && after.is_some() { "original" } else if after == Some(value) { "requested" } else { "unknown" };
+    let werr = w.err();
+    json!({"ok": false, "key": key, "before": before, "requested": value,
+           "write": werr.clone().map_or("ok".to_string(), |e| format!("error: {e}")),
+           "readback": got, "rollback": rollback, "after": after, "state": state,
+           "error": match werr { Some(e) => format!("{key}: write failed ({e}); firmware now {state}"), None => format!("{key}: read-back {got:?}, expected {value}; firmware now {state}") },
+           "reboot_required": state != "original"})
 }
 
 /// Logs the BIOS-side state (profile + firmware OC tunes + BIOS OC mode) so a

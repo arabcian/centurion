@@ -80,7 +80,7 @@ fn run() -> Value {
         // "hold" (scenes): tell centurion-intel-uv-daemon this profile now owns the CPU (see intel_uv_daemon).
         Some("apply") => match profile() {
             Ok((v, p)) => {
-                let mut out = intel_uv::apply(&p);
+                let mut out = intel_uv::apply_atomic(&p);
                 if hold { if let Err(e) = write_hold(Some(&v)) { out["hold_error"] = json!(e); } }
                 out
             }

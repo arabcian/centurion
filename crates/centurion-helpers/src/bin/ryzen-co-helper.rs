@@ -16,7 +16,7 @@
 //! never clamped.
 
 use centurion_helpers::*;
-use centurion_helpers::smu::{Smu, SmuError};
+use centurion_helpers::smu::Smu;
 use centurion_helpers::stream;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
@@ -108,24 +108,43 @@ fn op_set_coper_batch(p: &Map<String, Value>) -> Result<Value, Invalid> {
         smu.spec().check_coper(ccd, ccx, core, coper).map_err(|m| Invalid(format!("entry[{i}]: {m}")))?;
     }
 
+    // The SMU cannot be read back, so the value to restore is the caller's "prev" (the last applied
+    // offset it knows of) and otherwise 0 = stock.
+    let prevs: Vec<Option<i64>> = entries.iter().map(|e| e.get("prev").and_then(Value::as_i64).filter(|v| (CO_MIN..=CO_MAX).contains(v))).collect();
     let mut all_ok = true;
-    let mut dead: Option<String> = None; // bus/SMU stopped answering: do not keep writing
-    let results: Vec<Value> = validated.into_iter().map(|(ccd, ccx, core, coper)| {
-        let r = match &dead {
-            Some(m) => Err(SmuError::Fatal(format!("skipped: {m}"))),
-            None => smu.set_coper(ccd, ccx, core, coper),
-        };
-        let (ok, msg) = match r {
-            Ok(()) => (true, "OK".to_owned()),
+    let mut touched: Vec<usize> = Vec::new(); // entries that may have reached the SMU
+    let mut results: Vec<Value> = Vec::new();
+    for (i, &(ccd, ccx, core, coper)) in validated.iter().enumerate() {
+        let (ok, msg) = match smu.set_coper(ccd, ccx, core, coper) {
+            Ok(()) => { touched.push(i); (true, "OK".to_owned()) }
             Err(e) => {
-                if e.is_fatal() && dead.is_none() { dead = Some(e.message().to_owned()); }
+                if e.is_fatal() { touched.push(i); } // bus died mid-write: may have landed
                 (false, e.message().to_owned())
             }
         };
         all_ok &= ok;
-        json!({"ok": ok, "message": msg, "ccd": ccd, "ccx": ccx, "core": core, "coper": coper})
-    }).collect();
-    Ok(json!({"ok": all_ok, "results": results}))
+        results.push(json!({"ok": ok, "message": msg, "ccd": ccd, "ccx": ccx, "core": core, "coper": coper}));
+        if !ok { break; } // all-or-nothing: stop at the first failure and undo
+    }
+    if all_ok { return Ok(json!({"ok": true, "results": results})); }
+    for &(ccd, ccx, core, coper) in validated.iter().skip(results.len()) {
+        results.push(json!({"ok": false, "skipped": true, "message": "not written (earlier entry failed)", "ccd": ccd, "ccx": ccx, "core": core, "coper": coper}));
+    }
+    let mut rolled: Vec<Value> = Vec::new();
+    let mut explicit = true;
+    let mut clean = true;
+    for &i in touched.iter().rev() {
+        let (ccd, ccx, core, _) = validated[i];
+        let back = prevs[i].unwrap_or_else(|| { explicit = false; 0 });
+        let r = smu.set_coper(ccd, ccx, core, back);
+        clean &= r.is_ok();
+        rolled.push(json!({"ok": r.is_ok(), "message": r.err().map_or("OK".to_owned(), |e| e.message().to_owned()), "ccd": ccd, "ccx": ccx, "core": core, "coper": back}));
+    }
+    // "original" only when every undo went to a value the caller named; otherwise the cores are at
+    // stock (0), which may differ from what was active before this call.
+    let state = if !clean { "unknown" } else if explicit { "original" } else { "stock" };
+    Ok(json!({"ok": false, "results": results, "rollback": rolled, "state": state,
+              "note": "SMU offsets cannot be read back; undo writes the caller's 'prev' per entry, else 0 (stock)"}))
 }
 
 fn op_reset(_: &Map<String, Value>) -> Result<Value, Invalid> {

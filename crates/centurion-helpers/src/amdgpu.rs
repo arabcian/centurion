@@ -443,6 +443,11 @@ pub fn apply(card: &Card, s: &Map<String, Value>) -> Result<Vec<String>, String>
     let od_write = od_present && (!od.is_empty() || Path::new(&marker).exists());
     let prev_level = if has_level { read(card, "power_dpm_force_performance_level").map(|s| s.trim().to_owned()) } else { None };
     let went_manual = has_level && (od_write || profile_write.is_some());
+    // What the closure may leave behind, so a failure can put it back.
+    let mut cap_prev: Option<String> = None;
+    let mut fan_touched: Vec<String> = Vec::new();
+    let prof_prev = profile_write.and_then(|_| list.iter().find(|p| p.2).map(|p| p.0));
+    let mut prof_written = false;
     let res = (|| -> Result<Vec<String>, String> {
     let mut done = Vec::new();
     if went_manual {
@@ -461,14 +466,17 @@ pub fn apply(card: &Card, s: &Map<String, Value>) -> Result<Vec<String>, String>
     }
     if let (Some(uw), Some(hw)) = (cap_uw, card.hwmon.as_ref()) {
         let p = canonical_in_sysfs(&hw.join("power1_cap")).filter(|r| r.starts_with(&card.dev)).ok_or("power1_cap missing")?;
+        cap_prev = read_trimmed(&p).ok();
         sysfs_write(&p, uw.to_string().as_bytes()).map_err(|e| format!("power1_cap: {e}"))?;
         done.push(format!("power limit {} W", uw / 1_000_000));
     }
     for (file, cmds) in &fan {
+        fan_touched.push(file.to_string());
         for c in cmds { put(card, file, c)?; }
         done.push(format!("{}: {}", file.rsplit('/').next().unwrap_or(file), cmds[..cmds.len() - 1].join(", ")));
     }
     if let Some(idx) = profile_write {
+        prof_written = true;
         put(card, "pp_power_profile_mode", &idx.to_string())?;
         done.push(format!("power profile {}", profile.as_ref().map_or(String::new(), |p| p.1.to_lowercase())));
     }
@@ -492,7 +500,28 @@ pub fn apply(card: &Card, s: &Map<String, Value>) -> Result<Vec<String>, String>
     }
     Ok(done)
     })();
+    let mut res = res;
     if res.is_err() {
+        // A failed write must not leave a half-applied state behind: undo newest first and say what
+        // could and could not be put back (fan files go back to the driver default, not to a
+        // previous custom curve, which cannot be read back).
+        let mut undo: Vec<String> = Vec::new();
+        if prof_written {
+            match prof_prev {
+                Some(i) => undo.push(match put(card, "pp_power_profile_mode", &i.to_string()) { Ok(()) => format!("power profile {i} restored"), Err(e) => format!("power profile NOT restored ({e})") }),
+                None => undo.push("power profile NOT restored (previous one unknown)".into()),
+            }
+        }
+        for f in fan_touched.iter().rev() {
+            undo.push(match put(card, f, "r").and_then(|_| put(card, f, "c")) { Ok(()) => format!("{} reset to default", f.rsplit('/').next().unwrap_or(f)), Err(e) => format!("{f} NOT reset ({e})") });
+        }
+        if let (Some(old), Some(hw)) = (cap_prev.as_ref(), card.hwmon.as_ref()) {
+            let ok = canonical_in_sysfs(&hw.join("power1_cap")).filter(|r| r.starts_with(&card.dev))
+                .map_or(false, |p| sysfs_write(&p, old.as_bytes()).is_ok());
+            undo.push(if ok { "power limit restored".into() } else { "power limit NOT restored".into() });
+        }
+        if od_write { undo.push("overdrive reset to stock".into()); }
+        if let Err(e) = res.as_mut() { if !undo.is_empty() { e.push_str(&format!(" — rollback: {}", undo.join("; "))); } }
         // A failed write must not leave a half-applied overdrive/manual state behind.
         if od_write { od_reset(card); }
         if went_manual { let _ = put(card, "power_dpm_force_performance_level", prev_level.as_deref().filter(|l| PERF_LEVELS.contains(l)).unwrap_or("auto")); }

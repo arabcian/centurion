@@ -68,7 +68,31 @@ pub fn read_curve_retry(gpu_index: usize, retries: u32) -> Result<Value, String>
 }
 
 /// Reset → apply → read-back verify → retry. Ok(message) / Err(reason).
+/// On failure the offsets that were live before the call are written back (they are read first),
+/// and the error says whether that worked. NVML offsets (memory, power, ...) are not touched here.
 pub fn apply_profile_verified(gpu_index: usize, name: &str, cfg: &Config, max_retries: u32)
+    -> Result<String, String>
+{
+    let prev = gpu::get_gpu(gpu_index).ok().and_then(|(g, _)| vfcurve::read_clock_offsets(g).ok());
+    let err = match apply_profile_verified_inner(gpu_index, name, cfg, max_retries) {
+        Ok(m) => return Ok(m),
+        Err(e) => e,
+    };
+    let Some(prev) = prev else { return Err(format!("{err} — rollback impossible: previous curve could not be read")) };
+    let Ok((g, _)) = gpu::get_gpu(gpu_index) else { return Err(format!("{err} — rollback failed: GPU unavailable")) };
+    if vfcurve::read_clock_offsets(g).map_or(false, |now| now == prev) {
+        return Err(format!("{err} — curve unchanged (previous offsets still active)"));
+    }
+    let Ok(state) = vfcurve::read_curve(g, "") else { return Err(format!("{err} — rollback failed: curve unreadable")) };
+    let deltas: vfcurve::PointDeltas = state.points.iter()
+        .filter_map(|p| prev.get(p.index as usize).map(|&d| (p.index as i64, d as i64))).collect();
+    let (rc, d) = vfcurve::write_offsets(g, &deltas, false, false, None);
+    let ok = rc == 0 && vfcurve::read_clock_offsets(g).map_or(false, |now| now == prev);
+    Err(if ok { format!("{err} — previous curve restored") }
+        else { format!("{err} — rollback FAILED ({rc}: {d}); GPU curve state is unknown, check `nvcurve` or load a snapshot") })
+}
+
+fn apply_profile_verified_inner(gpu_index: usize, name: &str, cfg: &Config, max_retries: u32)
     -> Result<String, String>
 {
     let (g, _) = gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?;

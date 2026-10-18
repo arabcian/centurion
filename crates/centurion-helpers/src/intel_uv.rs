@@ -852,10 +852,24 @@ fn step(results: &mut Vec<Value>, what: String, r: Result<String, String>) -> bo
     ok
 }
 
+/// What `apply_ex` must write back to undo one successful (or unverified) write.
+enum Undo { Volt(u64, u64), Icc(u64, u64), Msr(u64, u64), Mchbar(u64) }
+
 /// Applies a pre-validated profile: voltage, IccMax, TCC offset, then power.
-pub fn apply(p: &Profile) -> Value {
+/// Fields are independent here (the daemon re-applies every tick, so one locked field must not
+/// undo the rest); the GUI/CLI path uses `apply_atomic`.
+pub fn apply(p: &Profile) -> Value { apply_ex(p, false) }
+
+/// Like `apply`, but when any field fails the fields already written are put back (reverse order)
+/// from the values read just before each write. Reported as "rollback" results plus "state":
+/// "original" (everything undone / nothing written) or "unknown" (an undo failed or is impossible,
+/// e.g. a power limit already locked by `lock_power` stays until reset/reboot).
+pub fn apply_atomic(p: &Profile) -> Value { apply_ex(p, true) }
+
+fn apply_ex(p: &Profile, rollback: bool) -> Value {
     let mut results = Vec::new();
     let mut all = true;
+    let mut undo: Vec<(String, Undo)> = Vec::new();
     if cpu_id().map(|c| c.vendor) != Some("GenuineIntel".into()) {
         return json!({"ok": false, "error": "not an Intel CPU"});
     }
@@ -866,6 +880,7 @@ pub fn apply(p: &Profile) -> Value {
     };
 
     for &(k, idx, mv) in &p.voltage {
+        let mut prior = None;
         let r = (|| {
             // Defence in depth: only domains this CPU has (parse_profile checks too, but
             // Profiles are also built in code: reset, full_apply, hold).
@@ -875,7 +890,7 @@ pub fn apply(p: &Profile) -> Value {
             let (cmd, back) = match msr.mailbox_rmw(uv_read_cmd(idx), |cur| Some(uv_write_cmd_keep(idx, ticks, cur))).map_err(|e| err_str(&e))? {
                 Rmw::Absent(st) if ticks == 0 => return Ok(format!("not present on this CPU (status {st:#04x}) — skipped")),
                 Rmw::Absent(st) => return Err(format!("mailbox status {st:#04x} on read: domain not present or refused — nothing written")),
-                Rmw::Done { cmd, back, .. } => (cmd, back),
+                Rmw::Done { cur, cmd, back } => { prior = Some(cur); (cmd, back) }
                 Rmw::Vetoed(_) => unreachable!("voltage write is never vetoed"),
             };
             if mb_status(back) != 0 {
@@ -888,10 +903,12 @@ pub fn apply(p: &Profile) -> Value {
             }
             Ok(format!("{:.2} mV", decode_mv(back)))
         })();
+        if let Some(c) = prior { undo.push((format!("voltage.{k}"), Undo::Volt(idx, c))); }
         all &= step(&mut results, format!("voltage.{k}"), r);
     }
 
     for &(k, idx, a) in &p.iccmax {
+        let mut prior = None;
         let r = (|| {
             if !uv_map_verified() { return Err(uv_map_refusal()); }
             let f = amps_to_icc_field(a)?;
@@ -900,6 +917,7 @@ pub fn apply(p: &Profile) -> Value {
             // IccMax above 255.75 A proves the 11-bit field); otherwise a 10-bit part could take
             // the low 10 bits alone (300 A → 44 A) or a reserved bit.
             let resp = match msr.mailbox_rmw(icc_read_cmd(idx), |cur| {
+                prior = Some(cur);
                 (f <= 0x3FF || is_arrow_lake() || cur & 0x400 != 0).then(|| icc_write_cmd(idx, f))
             }).map_err(|e| err_str(&e))? {
                 Rmw::Absent(st) => return Err(format!("mailbox status {st:#04x} on read: IccMax not available here — nothing written")),
@@ -912,10 +930,13 @@ pub fn apply(p: &Profile) -> Value {
             if back != f { return Err(format!("readback {:.2} A ≠ requested {:.2} A", back as f64 / 4.0, f as f64 / 4.0)); }
             Ok(format!("{:.2} A", back as f64 / 4.0))
         })();
+        // `prior` is also set when the build closure vetoed: only keep it if a write happened.
+        if let (Some(c), true) = (prior, r.is_ok() || !r.as_ref().err().map_or(false, |e| e.contains("nothing written"))) { undo.push((format!("iccmax.{k}"), Undo::Icc(idx, c))); }
         all &= step(&mut results, format!("iccmax.{k}"), r);
     }
 
     if let Some(off) = p.tjoffset {
+        let mut prior = None;
         let r = (|| {
             // throttled checks PLATFORM_INFO bit 30 first; undervolt.py writes
             // (100-T)<<24 blind (assumes TjMax 100, clobbers the register);
@@ -927,15 +948,18 @@ pub fn apply(p: &Profile) -> Value {
             // throttled keeps the trip point ≥ 40 °C.
             if tjmax > 0 && tjmax.saturating_sub(off) < 40 { return Err(format!("offset {off} would put the target below 40 °C (TjMax {tjmax})")); }
             let new = (cur & !(0x3Fu64 << 24)) | (off << 24);
+            prior = Some(cur);
             msr.write(MSR_TEMPERATURE_TARGET, new).map_err(|e| err_str(&e))?;
             let back = (msr.read(MSR_TEMPERATURE_TARGET).map_err(|e| err_str(&e))? >> 24) & 0x3F;
             if back != off { return Err(format!("readback offset {back} ≠ {off}")); }
             Ok(format!("offset {off} °C → target {} °C", tjmax.saturating_sub(off)))
         })();
+        if let Some(c) = prior { undo.push(("tjoffset".into(), Undo::Msr(MSR_TEMPERATURE_TARGET, c))); }
         all &= step(&mut results, "tjoffset".into(), r);
     }
 
     if p.pl1.is_some() || p.pl2.is_some() {
+        let (mut prior, mut prior_mm) = (None, None);
         let r = (|| {
             let units = decode_units(msr.read(MSR_RAPL_POWER_UNIT).map_err(|e| err_str(&e))?);
             let cur = msr.read(MSR_PKG_POWER_LIMIT).map_err(|e| err_str(&e))?;
@@ -945,6 +969,7 @@ pub fn apply(p: &Profile) -> Value {
             if let Some(t) = &p.pl2 { v = encode_pl_term(v, true, t.watts, t.seconds, units)?; }
             let mmio_val = v;  // the MMIO copy is never locked by us
             if p.lock_power { v |= 1u64 << 63; }
+            prior = Some(cur);
             msr.write(MSR_PKG_POWER_LIMIT, v).map_err(|e| err_str(&e))?;
             let back = msr.read(MSR_PKG_POWER_LIMIT).map_err(|e| err_str(&e))?;
             if back != v { return Err(format!("MSR readback {back:#x} ≠ {v:#x}")); }
@@ -958,6 +983,7 @@ pub fn apply(p: &Profile) -> Value {
                         let old = m.read64();
                         if old >> 63 == 1 { msg += "; MCHBAR copy is locked, left alone"; }
                         else {
+                            prior_mm = Some(old);
                             m.write64(mmio_val);
                             let mb = m.read64();
                             msg += if mb == mmio_val { "; MCHBAR mirrored" } else { "; MCHBAR write did not stick" };
@@ -969,22 +995,28 @@ pub fn apply(p: &Profile) -> Value {
             if p.lock_power { msg += "; MSR LOCKED until reset"; }
             Ok(msg)
         })();
+        if let Some(c) = prior_mm { undo.push(("power.mchbar".into(), Undo::Mchbar(c))); }
+        if let Some(c) = prior { undo.push(("power".into(), Undo::Msr(MSR_PKG_POWER_LIMIT, c))); }
         all &= step(&mut results, "power".into(), r);
     }
 
     if let Some(dis) = p.disable_bdprochot {
+        let mut prior = None;
         let r = (|| {
             let cur = msr.read(MSR_POWER_CTL).map_err(|e| err_str(&e))?;
             let new = if dis { cur & !1 } else { cur | 1 };
+            prior = Some(cur);
             msr.write(MSR_POWER_CTL, new).map_err(|e| err_str(&e))?;
             let back = msr.read(MSR_POWER_CTL).map_err(|e| err_str(&e))? & 1;
             if back != new & 1 { return Err("readback differs (firmware keeps BD PROCHOT)".into()); }
             Ok(if dis { "BD PROCHOT disabled".into() } else { "BD PROCHOT enabled".into() })
         })();
+        if let Some(c) = prior { undo.push(("bdprochot".into(), Undo::Msr(MSR_POWER_CTL, c))); }
         all &= step(&mut results, "bdprochot".into(), r);
     }
 
     if let Some(level) = p.ctdp {
+        let mut prior = None;
         let r = (|| {
             // throttled: needs PLATFORM_INFO bit 29 and enough extra levels
             // (bits 34:33). It writes the level over the whole MSR; bit 31 is
@@ -994,15 +1026,44 @@ pub fn apply(p: &Profile) -> Value {
             if (pi >> 33) & 3 < level { return Err(format!("cTDP level {level} not offered (only {} extra)", (pi >> 33) & 3)); }
             let cur = msr.read(MSR_CONFIG_TDP_CONTROL).map_err(|e| err_str(&e))?;
             if (cur >> 31) & 1 == 1 { return Err("MSR_CONFIG_TDP_CONTROL is locked".into()); }
+            prior = Some(cur);
             msr.write(MSR_CONFIG_TDP_CONTROL, (cur & !3) | level).map_err(|e| err_str(&e))?;
             let back = msr.read(MSR_CONFIG_TDP_CONTROL).map_err(|e| err_str(&e))? & 3;
             if back != level { return Err(format!("readback level {back} ≠ {level}")); }
             Ok(format!("cTDP level {level} ({})", ["nominal", "down", "up"][level as usize]))
         })();
+        if let Some(c) = prior { undo.push(("ctdp".into(), Undo::Msr(MSR_CONFIG_TDP_CONTROL, c))); }
         all &= step(&mut results, "ctdp".into(), r);
     }
 
-    json!({"ok": all, "results": results})
+    if all || !rollback { return json!({"ok": all, "results": results}); }
+    // Put back what was written, newest first; report each undo.
+    let mut rolled = Vec::new();
+    for (what, u) in undo.into_iter().rev() {
+        let r: Result<String, String> = match u {
+            Undo::Volt(idx, cur) => mv_to_ticks_ex(decode_mv(cur), true).and_then(|t| {
+                match msr.mailbox_rmw(uv_read_cmd(idx), |c| Some(uv_write_cmd_keep(idx, t, c))).map_err(|e| err_str(&e))? {
+                    Rmw::Done { back, .. } if mb_status(back) == 0 && back & 0xFFFF_FFFF == cur & 0xFFFF_FFFF => Ok(format!("{:.2} mV restored", decode_mv(cur))),
+                    Rmw::Done { back, .. } => Err(format!("readback {:.2} mV, wanted {:.2} mV", decode_mv(back), decode_mv(cur))),
+                    _ => Err("mailbox refused the undo".into()),
+                }
+            }),
+            Undo::Icc(idx, cur) => match msr.mailbox_rmw(icc_read_cmd(idx), |_| Some(icc_write_cmd(idx, cur & ICC_MAX_FIELD))).map_err(|e| err_str(&e)) {
+                Ok(Rmw::Done { back, .. }) if mb_status(back) == 0 && back & ICC_MAX_FIELD == cur & ICC_MAX_FIELD => Ok(format!("{:.2} A restored", (cur & ICC_MAX_FIELD) as f64 / 4.0)),
+                Ok(_) => Err("readback differs after undo".into()),
+                Err(e) => Err(e),
+            },
+            Undo::Msr(reg, val) => msr.write(reg, val).map_err(|e| err_str(&e))
+                .and_then(|_| if msr.read(reg).map_err(|e| err_str(&e))? == val { Ok(format!("{reg:#x} restored")) } else { Err(format!("{reg:#x}: readback differs (locked?)")) }),
+            Undo::Mchbar(val) => mchbar_base().and_then(|b| Mmio::open(b + MCHBAR_PKG_LIMIT_OFFSET, true).map_err(|e| format!("/dev/mem: {e}")))
+                .and_then(|m| { m.write64(val); if m.read64() == val { Ok("MCHBAR restored".into()) } else { Err("MCHBAR readback differs".into()) } }),
+        };
+        step(&mut rolled, what, r);
+    }
+    let clean = rolled.iter().all(|r| r["ok"] == json!(true)) && !p.lock_power;
+    json!({"ok": false, "results": results, "rollback": rolled,
+           "state": if clean { "original" } else { "unknown" },
+           "note": if p.lock_power { "lock_power may already have locked the power limit: it stays until reset/reboot" } else { "" }})
 }
 
 /// The part of a profile the daemon re-applies every interval (intel-undervolt

@@ -510,24 +510,47 @@ pub(crate) fn efivar_write(path: &str, body: &[u8]) -> Result<(), String> {
     w.map_err(|e| format!("{path}: the firmware refused the write ({e}); nothing changed"))
 }
 
-/// Writes the whole variable (attributes + data), clearing and restoring the
-/// immutable flag efivarfs puts on it, then reads it back.
-fn aod_write(b: &[u8], backup: &str) -> Result<(), String> {
-    crate::wlog::log("efivar", &format!("AodSetupRpl write {} bytes (backup {backup})", b.len()));
-    set_immutable(AOD_VAR, false)?;
-    let w = fs::OpenOptions::new().write(true).open(AOD_VAR)
-        .and_then(|mut f| { use std::io::Write; f.write_all(b) });
+/// Raw write of the whole variable (immutable flag cleared and restored).
+fn aod_raw_write(b: &[u8]) -> Result<(), std::io::Error> {
+    set_immutable(AOD_VAR, false).map_err(std::io::Error::other)?;
+    let w = fs::OpenOptions::new().write(true).open(AOD_VAR).and_then(|mut f| { use std::io::Write; f.write_all(b) });
     let _ = set_immutable(AOD_VAR, true);
-    w.map_err(|e| if e.raw_os_error() == Some(libc::EROFS) || e.raw_os_error() == Some(libc::EPERM) {
+    w
+}
+
+/// Writes the whole variable (attributes + data), reads it back and, if the
+/// result is not exactly `b`, puts `prev` back and verifies that too. An error
+/// from the write does not prove the firmware is unchanged (it may have stored
+/// part of it), so the variable is always re-read. Returns a record
+/// {write, readback, rollback, state: original|requested|unknown}; Err carries
+/// the same record plus "error".
+fn aod_write(b: &[u8], prev: &[u8], backup: &str) -> Result<Value, Value> {
+    crate::wlog::log("efivar", &format!("AodSetupRpl write {} bytes (backup {backup})", b.len()));
+    let w = aod_raw_write(b);
+    let now = aod_load().ok();
+    let readback = match &now { Some(n) if n == b => "match", Some(_) => "differs", None => "unreadable" };
+    if w.is_ok() && readback == "match" {
+        // First write of this boot: `backup` is what the firmware booted with (see aod_verify).
+        if !Path::new(PENDING).exists() && crate::secure_dir("/run/centurion").is_ok() {
+            let _ = crate::write_root_file(PENDING, backup.as_bytes());
+        }
+        return Ok(json!({"write": "ok", "readback": readback, "rollback": "not needed", "state": "requested"}));
+    }
+    let wtxt = match &w { Ok(()) => "ok".to_string(), Err(e) => format!("error: {e}") };
+    let (rollback, after) = if now.as_deref() == Some(prev) { ("not needed".to_string(), now.clone()) } else {
+        let r = aod_raw_write(prev);
+        let again = aod_load().ok();
+        let ok = r.is_ok() && again.as_deref() == Some(prev);
+        (if ok { "ok".to_string() } else { format!("failed: {}", r.err().map_or("read-back differs".to_string(), |e| e.to_string())) }, again)
+    };
+    let state = match after.as_deref() { Some(a) if a == prev => "original", Some(a) if a == b => "requested", _ => "unknown" };
+    crate::wlog::log("efivar", &format!("AodSetupRpl write failed: write={wtxt} readback={readback} rollback={rollback} state={state}"));
+    let prot = w.as_ref().err().map_or(false, |e| e.raw_os_error() == Some(libc::EROFS) || e.raw_os_error() == Some(libc::EPERM));
+    let msg = if prot && state == "original" {
         "the firmware refused the write: AMD Variable Protection is on. Disable it in the BIOS \
          (advanced menu) and try again — it cannot be turned off from the OS. Nothing changed.".to_string()
-    } else { format!("writing AodSetupRpl failed ({e}); nothing changed, backup at {backup}") })?;
-    // First write of this boot: `backup` is what the firmware booted with (see aod_verify).
-    if !Path::new(PENDING).exists() && crate::secure_dir("/run/centurion").is_ok() {
-        let _ = crate::write_root_file(PENDING, backup.as_bytes());
-    }
-    if aod_load()? != b { return Err(format!("read-back differs; backup at {backup}")); }
-    Ok(())
+    } else { format!("writing AodSetupRpl failed (write {wtxt}, read-back {readback}, rollback {rollback}); variable is now {state}; backup at {backup}") };
+    Err(json!({"ok": false, "error": msg, "write": wtxt, "readback": readback, "rollback": rollback, "state": state}))
 }
 
 /// `below_safe_ok`: the caller confirmed, separately, every value below its safe floor (see safe_floor).
@@ -576,8 +599,14 @@ pub fn aod_set(values: Option<&Value>, below_safe_ok: bool) -> Value {
                  and the machine may not start. Nothing was written; confirm these values separately to write them.")}));
         }
         let backup = save_backup(&orig, "")?;
-        aod_write(&b, &backup)?;
-        Ok(json!({"ok": true, "changed": true, "backup": backup}))
+        let rep = match aod_write(&b, &orig, &backup) { Ok(r) => r, Err(r) => return Ok(r) };
+        // Per field: value before, requested, and what the firmware returns now.
+        let after = aod_load().unwrap_or_default();
+        let fields: Vec<Value> = vals.keys().filter_map(|n| AOD_FIELDS.iter().find(|f| f.0 == n)).map(|f| {
+            let (bm, bv) = rec(&orig, f.1);
+            json!({"name": f.0, "before": {"manual": bm == 1, "value": bv}, "requested": rec(&b, f.1).1, "readback": rec(&after, f.1).1})
+        }).collect();
+        Ok(json!({"ok": true, "changed": true, "backup": backup, "write": rep["write"], "readback": rep["readback"], "fields": fields}))
     })();
     res.unwrap_or_else(|e| json!({"ok": false, "error": e}))
 }
@@ -607,7 +636,7 @@ pub fn aod_restore() -> Value {
         // Kept out of the restore chain (.prerestore): a second Restore steps
         // further back instead of undoing the first one.
         let backup = save_backup(&cur, ".prerestore")?;
-        aod_write(&data, &backup)?;
+        if let Err(r) = aod_write(&data, &cur, &backup) { return Ok(r); }
         // The restored image is now current: retire it so a second restore
         // steps back further instead of re-applying the same file.
         let _ = fs::rename(&src, src.with_extension("bin.restored"));
