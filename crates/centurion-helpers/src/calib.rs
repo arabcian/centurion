@@ -48,6 +48,19 @@ pub const MAX_FILE: u64 = 8 << 20;
 const KEEP_QUALITY: usize = 64;
 const KEEP: usize = 10;
 const HALF_LIFE_DAYS: f64 = 90.0;
+/// Rows age in steps of this many seconds, counted from the phase's newest row (`age_ref`). A row's
+/// weight halves in 90 days, so a one-day step moves every weight by under 0.8 % (all of them
+/// alike: the uncertainty still widens as the signature ages, a day at a time); without it the model
+/// input changed every second and no fitted model could be kept between two autotune runs
+/// (`FitStore`). Counted from the newest row, the first day after a calibration reads exactly the
+/// input that calibration fitted (`keep_system_fits`), whatever the time of day.
+const AGE_STEP: u64 = 24 * 3600;
+/// Fits the calibration made, kept for autotune (root-written, world-readable; see `FitStore`).
+pub const SYS_FIT_STORE: &str = "/var/lib/centurion/fit-store.json";
+const MAX_FIT_STORE: u64 = 16 * 1024 * 1024;
+/// Fitted models kept between autotune runs (`FitStore`), newest first.
+const KEEP_FITS: usize = 8;
+const FIT_STORE_VERSION: u64 = 1;
 
 /// One benchmark metric and its direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -498,6 +511,48 @@ impl std::fmt::Debug for ModelCache { fn fmt(&self, f: &mut std::fmt::Formatter<
 const PHASE_ROWS: [usize; 4] = [1100, 1100, 600, 300];
 
 fn pidx(phase: Phase) -> usize { phase.idx() }
+
+/// Fitted models kept between autotune runs. Every autotune run is its own process and the models
+/// it reads depend on the rows only, never on the objective weights: before, each run - a goal, a
+/// changed weight, a scene - refitted every phase from scratch (hyperparameter search, screening
+/// fit, outlier reweighting: up to five factorisations and three leave-one-out sweeps per
+/// objective), seconds per phase on a large signature. A kept build holds what that work found
+/// (screening heredity, interaction order, per objective the hyperparameters, final weights and
+/// leave-one-out statistics), bound to the exact model input by `model::input_hash`; a run with the
+/// same input rebuilds each fit with one factorisation and gets the same fit. Any change of the
+/// rows, references, kernel, power source or kept scales changes the input: the build is redone.
+/// Per user (`~/.cache/centurion/fit-store.json`), bound to the machine fingerprint.
+#[derive(Default)]
+struct FitStore(RefCell<FitStoreState>);
+#[derive(Default, Clone)]
+struct FitStoreState {
+    on: bool,
+    file: Option<Vec<Value>>,
+    /// Builds of this process to keep (phase index -> entry).
+    fresh: BTreeMap<usize, Value>,
+    /// Per phase: kept or built, and the time it took.
+    log: BTreeMap<usize, (bool, f64)>,
+}
+impl Clone for FitStore { fn clone(&self) -> Self { FitStore(RefCell::new(self.0.borrow().clone())) } }
+impl PartialEq for FitStore { fn eq(&self, _: &Self) -> bool { true } }
+impl std::fmt::Debug for FitStore { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("FitStore") } }
+
+/// A kept build of one phase (see `FitStore`).
+fn store_entry(key: &str, phase: Phase, pf: &PhaseFit) -> Value {
+    let fits: Vec<Value> = pf.fits.iter().map(|f| f.as_ref().map_or(Value::Null, |f| {
+        let m = f.meta();
+        json!({"h": bits(&m.hyper.to_vec()), "w": bits(&m.w), "s": bits(&[m.loo_rmse, m.loo_r2, m.cover90, m.var_scale])})
+    })).collect();
+    json!({"key": key, "phase": phase.name(), "order": pf.set.space.order, "heredity": bits(&pf.set.space.heredity),
+           "screen": pf.set.screen.map_or(Value::Null, |h| bits(&h.to_vec())), "fits": fits})
+}
+fn bits(v: &[f64]) -> Value { Value::Array(v.iter().map(|x| json!(x.to_bits())).collect()) }
+fn unbits(v: &Value) -> Option<Vec<f64>> { v.as_array()?.iter().map(|x| x.as_u64().map(f64::from_bits)).collect() }
+fn fit_store_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+    Some(base.join("centurion").join("fit-store.json"))
+}
 /// Key of the kept prior scales of one phase and objective. The power objective's noise depends on
 /// what it was read from (the battery's slow, coarse reading scatters several times more than RAPL),
 /// so a power model fitted on battery rows keeps its own scales ("idle2b"); RAPL keeps the old key.
@@ -521,6 +576,8 @@ pub struct Calibration {
     /// oldest first: progressive lean sessions pick what has not been done yet.
     pub strategies: BTreeMap<String, Vec<String>>,
     cache: ModelCache,
+    /// Fitted models kept between processes (autotune only; see `FitStore`).
+    fits: FitStore,
     /// The last session ran on battery (display only: every row carries its own power source).
     pub on_battery: bool,
     /// Measurement contexts by id (power profile, AC/battery, firmware limits, fan, CPU curve, scene).
@@ -578,7 +635,7 @@ impl Calibration {
             .or_else(|| gs.iter().max_by_key(|g| g.values.values().map(|s| s.idle.len() + s.load.len()).sum::<usize>()))
     }
     fn agg(&self, s: &Slot, phase: Phase) -> Option<Measured> {
-        match phase { Phase::Idle => aggregate(&s.idle, self.now, &self.kernel), Phase::Load => aggregate(&s.load, self.now, &self.kernel), Phase::Io | Phase::Dev => None }
+        match phase { Phase::Idle => aggregate(&s.idle, self.age_ref(phase), &self.kernel), Phase::Load => aggregate(&s.load, self.age_ref(phase), &self.kernel), Phase::Io | Phase::Dev => None }
     }
     /// Effects of `value` relative to `reference` in one phase (re-based through the stored reference).
     pub fn get_phase(&self, key: &str, reference: &str, value: &str, phase: Phase) -> Option<Measured> {
@@ -712,12 +769,13 @@ impl Calibration {
         let mm = major_minor(&self.kernel);
         let ctx = self.ctx_refs(phase);
         let src = self.pwr_source(phase);
+        let age_ref = self.age_ref(phase);
         let designed: BTreeSet<&str> = self.rows.iter().filter(|r| r.phase == phase && !r.field)
             .flat_map(|r| r.cfg.iter().map(|(k, _)| k.as_str())).collect();
         let mut out: Vec<model::Row> = Vec::new();
         for r in self.rows.iter().filter(|r| r.phase == phase) {
             if r.cfg.iter().any(|(k, _)| !same_family(phase, k)) { continue; }
-            let age = self.now.saturating_sub(r.t) as f64 / 86_400.0;
+            let age = age_ref.saturating_sub(r.t) as f64 / 86_400.0;
             let k = if self.kernel.is_empty() || major_minor(&r.kernel) == mm { 1.0 } else { 0.5 };
             let b = if r.bv == BENCH_VERSION || r.field { 1.0 } else { 0.6 };
             let mut cfg = r.cfg.clone();
@@ -748,7 +806,20 @@ impl Calibration {
         }
         out
     }
-    fn build_set(&self, phase: Phase) -> Option<PhaseSet> {
+    /// Key of the kept screening hyperparameters (they fit the sum of the objectives, power included).
+    fn screen_key(&self, phase: Phase) -> String {
+        format!("{}h{}", phase.name(), if self.pwr_source(phase) == Some(PowerSrc::Battery) && matches!(phase, Phase::Idle | Phase::Load) { "b" } else { "" })
+    }
+    fn build_set(&self, phase: Phase) -> Option<PhaseSet> { self.build_set_with(phase, None) }
+    /// `passes`: None = kept screening hyperparameters as they are (a search only where none are kept).
+    fn build_set_with(&self, phase: Phase, passes: Option<usize>) -> Option<PhaseSet> {
+        let (factors, rows) = self.set_input(phase)?;
+        let init = self.hyp.get(&self.screen_key(phase)).and_then(|v| Hyper::from_slice(v));
+        let passes = passes.unwrap_or(if init.is_some() { 0 } else { 1 });
+        PhaseSet::build_screened(factors, rows, None, init, passes)
+    }
+    /// The phase model's input: its factors and the rows that change only them.
+    fn set_input(&self, phase: Phase) -> Option<(Vec<Factor>, Vec<model::Row>)> {
         let rows = self.pre_rows(phase);
         let ctx = self.ctx_refs(phase);
         let mut vals: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -760,7 +831,7 @@ impl Calibration {
         }).collect();
         let keep: BTreeSet<&str> = factors.iter().map(|f| f.key.as_str()).collect();
         let rows: Vec<model::Row> = rows.into_iter().filter(|r| r.cfg.iter().all(|(k, _)| keep.contains(k.as_str()))).collect();
-        PhaseSet::build(factors, rows)
+        Some((factors, rows))
     }
     /// Kept prior scales of one phase/objective.
     /// Kept prior scales of one phase/objective, for the power source the phase's power model uses now
@@ -768,7 +839,7 @@ impl Calibration {
     pub fn hyper(&self, phase: Phase, o: usize) -> Option<Hyper> { self.hyp.get(&hyp_key(phase, o, self.pwr_source(phase))).and_then(|v| Hyper::from_slice(v)) }
     /// `passes`: None = kept hyperparameters as they are (a search only where none are kept).
     fn build_phase(&self, phase: Phase, passes: Option<usize>) -> Option<PhaseFit> {
-        let set = self.build_set(phase)?;
+        let set = self.build_set_with(phase, passes)?;
         let fits = std::array::from_fn(|o| {
             let init = self.hyper(phase, o);
             set.fit_obj(o, init, passes.unwrap_or(if init.is_some() { 0 } else { 1 }))
@@ -779,9 +850,129 @@ impl Calibration {
     pub fn phase_fit(&self, phase: Phase) -> Option<Arc<PhaseFit>> {
         let cell = &self.cache.0[pidx(phase)];
         if let Some(v) = cell.borrow().as_ref() { return v.clone(); }
-        let v = self.build_phase(phase, None).map(Arc::new);
+        let v = if self.fits.0.borrow().on { self.stored_phase(phase) } else { self.build_phase(phase, None) }.map(Arc::new);
         *cell.borrow_mut() = Some(v.clone());
         v
+    }
+    /// Turns the kept fitted models on for this process (autotune: it reads the models and never
+    /// changes the rows; a calibration changes them after every batch and does not use the store).
+    pub fn use_fit_store(&self) { self.fits.0.borrow_mut().on = true; }
+    /// The phase's model from a kept build of the same input, else built and kept.
+    fn stored_phase(&self, phase: Phase) -> Option<PhaseFit> {
+        let t0 = std::time::Instant::now();
+        let (factors, rows, inits, key) = self.store_input(phase)?;
+        let screen_init = inits[0];
+        let entry = {
+            let mut st = self.fits.0.borrow_mut();
+            if st.file.is_none() { st.file = Some(self.read_fit_store()); }
+            st.file.as_ref().and_then(|f| f.iter().find(|e| e["key"] == key.as_str()).cloned())
+        };
+        let kept = entry.as_ref().and_then(|e| {
+            let set = PhaseSet::build_kept(factors.clone(), rows.clone(), unbits(&e["heredity"])?, e["order"].as_u64()? as u8,
+                                           unbits(&e["screen"]).and_then(|v| Hyper::from_slice(&v)))?;
+            let fits = e["fits"].as_array().filter(|a| a.len() == 4)?;
+            let mut out: [Option<Arc<Fit>>; 4] = Default::default();
+            for (o, f) in fits.iter().enumerate() {
+                if f.is_null() { continue; }
+                let s = unbits(&f["s"]).filter(|s| s.len() == 4)?;
+                let h = unbits(&f["h"]).filter(|h| h.len() == 6)?;
+                let meta = model::FitMeta { hyper: Hyper { sigma: h[0], main: h[1], pin: h[2], px: h[3], tri: h[4], ou: h[5] }, w: unbits(&f["w"])?,
+                                            loo_rmse: s[0], loo_r2: s[1], cover90: s[2], var_scale: s[3] };
+                out[o] = Some(set.refit_obj(o, &meta)?);
+            }
+            Some(PhaseFit { set, fits: out })
+        });
+        let hit = kept.is_some();
+        let pf = match kept {
+            Some(pf) => Some(pf),
+            None => {
+                let set = PhaseSet::build_screened(factors, rows, None, screen_init, if screen_init.is_some() { 0 } else { 1 })?;
+                let fits = std::array::from_fn(|o| { let init = inits[o + 1]; set.fit_obj(o, init, if init.is_some() { 0 } else { 1 }) });
+                Some(PhaseFit { set, fits })
+            }
+        };
+        let mut st = self.fits.0.borrow_mut();
+        st.log.insert(pidx(phase), (hit, t0.elapsed().as_secs_f64()));
+        if let (false, Some(pf)) = (hit, pf.as_ref()) { st.fresh.insert(pidx(phase), store_entry(&key, phase, pf)); }
+        pf
+    }
+    /// The phase model's input as the store keys it: factors, rows, starting hyperparameters
+    /// (screening, then one per objective) and their fingerprint.
+    fn store_input(&self, phase: Phase) -> Option<(Vec<Factor>, Vec<model::Row>, Vec<Option<Hyper>>, String)> {
+        let (factors, rows) = self.set_input(phase)?;
+        let screen_init = self.hyp.get(&self.screen_key(phase)).and_then(|v| Hyper::from_slice(v));
+        let inits: Vec<Option<Hyper>> = std::iter::once(screen_init).chain((0..4).map(|o| self.hyper(phase, o))).collect();
+        let key = format!("{:016x}", model::input_hash(&factors, &rows, &inits));
+        Some((factors, rows, inits, key))
+    }
+    /// Kept builds: the user's own (`fit_store_path`), then those the calibration left (`SYS_FIT_STORE`).
+    fn read_fit_store(&self) -> Vec<Value> {
+        let mut out = fit_store_path().and_then(|p| std::fs::read_to_string(p).ok()).map_or_else(Vec::new, |t| self.store_entries(&t));
+        if let Some(t) = crate::read_root_file(SYS_FIT_STORE, MAX_FIT_STORE) {
+            for e in self.store_entries(&t) { if !out.iter().any(|x| x["key"] == e["key"]) { out.push(e); } }
+        }
+        out
+    }
+    fn store_entries(&self, text: &str) -> Vec<Value> {
+        let Ok(v) = serde_json::from_str::<Value>(text) else { return Vec::new() };
+        if v["v"].as_u64() != Some(FIT_STORE_VERSION) || v["fingerprint"] != self.fingerprint.to_json() { return Vec::new(); }
+        v["entries"].as_array().cloned().unwrap_or_default()
+    }
+    /// Keeps the phase models this calibration holds right now (its retunes) for autotune: an entry
+    /// is bound to the exact input the model was fitted on (`store_input`), which is the input
+    /// autotune reads until the rows, kept scales, kernel or power source change or a day passes
+    /// (`age_ref`). The first autotune after a calibration then rebuilds each fit with one
+    /// factorisation instead of fitting every phase again. Root only; failures are silent (the
+    /// store is a shortcut, never needed).
+    pub fn keep_system_fits(&self) {
+        if unsafe { libc::geteuid() } != 0 { return; }
+        let mut entries: Vec<Value> = Vec::new();
+        for ph in [Phase::Idle, Phase::Load, Phase::Io, Phase::Dev] {
+            let Some(Some(pf)) = self.cache.0[pidx(ph)].borrow().clone() else { continue };
+            let Some((.., key)) = self.store_input(ph) else { continue };
+            entries.push(store_entry(&key, ph, &pf));
+        }
+        if entries.is_empty() { return; }
+        if let Some(t) = crate::read_root_file(SYS_FIT_STORE, MAX_FIT_STORE) {
+            for e in self.store_entries(&t) {
+                if entries.len() >= KEEP_FITS { break; }
+                if !entries.iter().any(|x| x["key"] == e["key"]) { entries.push(e); }
+            }
+        }
+        let out = json!({"v": FIT_STORE_VERSION, "fingerprint": self.fingerprint.to_json(), "entries": entries});
+        let _ = crate::write_root_file(SYS_FIT_STORE, out.to_string().as_bytes());
+    }
+    /// Writes the builds of this process to the store (newest first, `KEEP_FITS` in all).
+    pub fn save_fit_store(&self) {
+        let st = self.fits.0.borrow();
+        if !st.on || st.fresh.is_empty() { return; }
+        let Some(p) = fit_store_path() else { return };
+        let mut entries: Vec<Value> = st.fresh.values().cloned().collect();
+        for e in self.read_fit_store() {
+            if entries.len() >= KEEP_FITS { break; }
+            if !entries.iter().any(|x| x["key"] == e["key"]) { entries.push(e); }
+        }
+        let out = json!({"v": FIT_STORE_VERSION, "fingerprint": self.fingerprint.to_json(), "entries": entries});
+        if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
+        let tmp = p.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(&tmp, out.to_string()).is_ok() && std::fs::rename(&tmp, &p).is_err() { let _ = std::fs::remove_file(&tmp); }
+    }
+    /// One line on how the models of this run were made (kept or built, and how long it took).
+    pub fn fit_store_line(&self) -> Option<String> {
+        let st = self.fits.0.borrow();
+        if st.log.is_empty() { return None; }
+        let ph = [Phase::Idle, Phase::Load, Phase::Io, Phase::Dev];
+        let parts: Vec<String> = st.log.iter().map(|(i, (hit, s))| format!("{} {} {:.1} s", ph[*i].name(), if *hit { "kept" } else { "fitted" }, s)).collect();
+        let total: f64 = st.log.values().map(|x| x.1).sum();
+        Some(format!("models {} (total {total:.1} s; a fit is kept until the signature's rows change)", parts.join(", ")))
+    }
+    /// Rows of one phase age from this time: the phase's newest row plus whole `AGE_STEP`s up to now
+    /// (no rows: now in whole steps). Other phases' new rows leave it alone, so a phase's kept fit
+    /// stays valid while the calibration measures the others.
+    fn age_ref(&self, phase: Phase) -> u64 {
+        let newest = self.rows.iter().filter(|r| r.phase == phase).map(|r| r.t).max().unwrap_or(0);
+        if newest == 0 { return self.now - self.now % AGE_STEP; }
+        newest + self.now.saturating_sub(newest) / AGE_STEP * AGE_STEP
     }
     /// Refits one phase with a hyperparameter search warm-started from the kept values, and keeps the result.
     pub fn retune(&mut self, phase: Phase, passes: usize) -> Option<Arc<PhaseFit>> {
@@ -789,6 +980,7 @@ impl Calibration {
         if let Some(pf) = &v {
             let src = self.pwr_source(phase);
             for (o, f) in pf.fits.iter().enumerate() { if let Some(f) = f { self.hyp.insert(hyp_key(phase, o, src), f.hyper.to_vec()); } }
+            if let Some(h) = pf.set.screen { self.hyp.insert(self.screen_key(phase), h.to_vec()); }
         }
         // The power model of the other source keeps its own scales (`hyp_key`): without them every
         // power-saving autotune (battery source) ran a full hyperparameter search on idle and load.
@@ -892,6 +1084,59 @@ impl Calibration {
         k.into_iter().collect()
     }
     pub fn has_key(&self, key: &str) -> bool { self.keys.contains_key(key) || self.rows.iter().any(|r| r.cfg.iter().any(|(k, _)| k == key)) }
+    /// A copy that shares the fitted models built so far (a plain clone starts with none): parallel
+    /// decisions each get one, so the fits are made once and read by all of them.
+    pub fn share_fits(&self) -> Calibration {
+        let c = self.clone();
+        for i in 0..4 { *c.cache.0[i].borrow_mut() = self.cache.0[i].borrow().clone(); }
+        c
+    }
+    /// Per-user cache of fitted prior scales the signature does not hold yet (autotune runs without
+    /// write access to the signature: before this, a signature without kept scales - one older than
+    /// the screening key, or a power source no session retuned - paid the full hyperparameter search
+    /// on every autotune run). The signature's own scales always win; centurion-calibrate's retune
+    /// replaces them. Bound to the machine fingerprint.
+    fn hyp_cache_path() -> Option<std::path::PathBuf> {
+        let base = std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+        Some(base.join("centurion").join("fit-scales.json"))
+    }
+    /// Takes the cached scales for the keys the signature lacks.
+    pub fn merge_hyp_cache(&mut self) {
+        let Some(p) = Calibration::hyp_cache_path() else { return };
+        let Ok(t) = std::fs::read_to_string(&p) else { return };
+        let Ok(v) = serde_json::from_str::<Value>(&t) else { return };
+        if v["fingerprint"] != self.fingerprint.to_json() { return; }
+        for (k, h) in v["hyp"].as_object().into_iter().flatten() {
+            if self.hyp.contains_key(k) { continue; }
+            let h: Vec<f64> = h.as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
+            if Hyper::from_slice(&h).is_some() { self.hyp.insert(k.clone(), h); }
+        }
+    }
+    /// Writes the scales of the models fitted in this process that the signature lacks.
+    pub fn save_hyp_cache(&self) {
+        let mut add: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+        for ph in [Phase::Idle, Phase::Load, Phase::Io, Phase::Dev] {
+            let Some(Some(pf)) = self.cache.0[pidx(ph)].borrow().clone() else { continue };
+            let src = self.pwr_source(ph);
+            if let Some(h) = pf.set.screen { add.insert(self.screen_key(ph), h.to_vec()); }
+            for (o, f) in pf.fits.iter().enumerate() { if let Some(f) = f { add.insert(hyp_key(ph, o, src), f.hyper.to_vec()); } }
+        }
+        add.retain(|k, _| !self.hyp.contains_key(k));
+        if add.is_empty() { return; }
+        let Some(p) = Calibration::hyp_cache_path() else { return };
+        let mut m = Map::new();
+        if let Some(v) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+            if v["fingerprint"] == self.fingerprint.to_json() { if let Some(o) = v["hyp"].as_object() { m = o.clone(); } }
+        }
+        for (k, h) in add { m.insert(k, json!(h)); }
+        let out = json!({"fingerprint": self.fingerprint.to_json(), "hyp": m});
+        if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
+        let tmp = p.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(&tmp, out.to_string()).is_ok() && std::fs::rename(&tmp, &p).is_err() { let _ = std::fs::remove_file(&tmp); }
+    }
+    /// Builds every phase model the rows support now (decisions then only read them).
+    pub fn prefit(&self) { for ph in [Phase::Idle, Phase::Load, Phase::Io, Phase::Dev] { let _ = self.phase_fit(ph); } }
     pub fn invalidate(&mut self) { for c in &self.cache.0 { *c.borrow_mut() = None; } }
     /// Replaces the rows of one session/phase (a design in progress is re-derived after every batch).
     pub fn put_session(&mut self, phase: Phase, sess: u64, rows: Vec<Row>) {
@@ -1394,6 +1639,36 @@ mod tests {
         assert_eq!(back.rows.iter().filter(|r| r.phase == Phase::Io).count(), 40);
     }
 
+    #[test]
+    fn calibration_fits_serve_autotune_for_a_day() {
+        // A calibration's retune, later read by an autotune process: same input key while the day
+        // after the phase's newest row lasts (whatever the clock said when each process started),
+        // and the kept build is the same model as a fresh fit.
+        let mut c = Calibration::default();
+        synthetic(&mut c);
+        c.now = 100; // the calibration process started before its rows were written
+        c.retune(Phase::Load, 1);
+        let pf = c.cache.0[pidx(Phase::Load)].borrow().clone().flatten().unwrap();
+        let key = c.store_input(Phase::Load).unwrap().3;
+        let entry = store_entry(&key, Phase::Load, &pf);
+        let mut a = Calibration::from_json(&c.to_json());
+        a.invalidate();
+        a.now = 295 + 20 * 3600;
+        assert_eq!(a.store_input(Phase::Load).unwrap().3, key, "same day: the calibration's input");
+        a.fits.0.borrow_mut().on = true;
+        a.fits.0.borrow_mut().file = Some(vec![entry]);
+        let kept = a.phase_fit(Phase::Load).unwrap();
+        assert_eq!(a.fits.0.borrow().log.get(&pidx(Phase::Load)).map(|x| x.0), Some(true), "taken from the store");
+        let mut f = Calibration::from_json(&c.to_json());
+        f.invalidate();
+        f.now = a.now;
+        let fresh = f.phase_fit(Phase::Load).unwrap();
+        for o in 0..4 {
+            assert_eq!(kept.fits[o].as_ref().map(|x| x.meta()), fresh.fits[o].as_ref().map(|x| x.meta()));
+        }
+        a.now = 295 + 30 * 3600;
+        assert_ne!(a.store_input(Phase::Load).unwrap().3, key, "a day later the rows have aged");
+    }
     #[test]
     fn joint_blends_phases_by_share() {
         let mut c = Calibration::default();

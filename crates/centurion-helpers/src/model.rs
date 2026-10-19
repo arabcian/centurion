@@ -379,6 +379,8 @@ pub struct Fit {
     pub space: Arc<Space>,
     pub nobs: usize,
     x: Vec<PCfg>,
+    /// Cholesky factor, lower triangle packed by rows (row i at i(i+1)/2): half the memory of the
+    /// square matrix, and every projection (`term_proj`) streams it contiguously.
     l: Vec<f64>,
     #[allow(dead_code)]
     alpha: Vec<f64>,
@@ -394,67 +396,267 @@ pub struct Fit {
     /// misspecified model (an interaction it has no term for, a drift it cannot see) does not
     /// make decisions with confidence it has not earned.
     pub var_scale: f64,
+    /// Final observation weights (after the outlier reweighting): with `hyper` they fix the
+    /// factorisation, so a kept fit is rebuilt by one evaluation (`FitMeta`, `refit`).
+    w: Vec<f64>,
     /// Posterior-mean coefficients of every term the data touched.
     main: Vec<Vec<f64>>,
     pair: FxMap<f64>,
     tri: FxMap<f64>,
     /// `tri` indexed by its first two terms (k2): the third terms and their coefficients.
     tri_ix: FxMap<Vec<(u64, f64)>>,
+    /// Posterior mean/variance of functionals already evaluated. A fit's posterior never changes and
+    /// does not depend on the objective weights, so the many decisions of one autotune run (main,
+    /// trade-offs, sensitivity, each search step) share them: exact values, computed once.
+    memo: Arc<Memo>,
+    /// L^-1 k(X, p) of every configuration term p already projected (`proj`). A functional is a
+    /// short sum of terms and the decisions keep reusing the same few (the context mixture, the
+    /// configuration a contrast is taken against): one autotune decision solved ~1800 triangular
+    /// systems for ~150 distinct terms. Shared like `memo`.
+    tproj: Arc<TermProj>,
 }
 
-fn chol(a: &mut [f64], n: usize) -> bool {
-    for i in 0..n {
-        for j in 0..=i {
-            let (ri, rj) = (i * n, j * n);
-            let mut s = a[ri + j];
-            for k in 0..j { s -= a[ri + k] * a[rj + k]; }
-            if i == j { if s <= 1e-12 { return false; } a[ri + i] = s.sqrt(); } else { a[ri + j] = s / a[rj + j]; }
+/// Per-term projections, sharded for parallel readers (`Fit::tproj`).
+#[derive(Default)]
+pub struct TermProj { shards: [std::sync::Mutex<HashMap<Vec<u64>, Arc<Vec<f64>>>>; 16] }
+impl std::fmt::Debug for TermProj { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("TermProj") } }
+/// Kept terms per shard (n doubles each: at most ~140 MB for 1100 rows, in practice a few MB).
+const TPROJ_CAP: usize = 1000;
+impl TermProj {
+    fn key(p: &PCfg) -> Vec<u64> {
+        let mut k = Vec::with_capacity(8);
+        for (fi, st) in &p.0 {
+            k.push(((*fi as u64) << 32) | st.len() as u64);
+            for (s, v) in st { k.push(*s as u64); k.push(v.to_bits()); }
         }
+        k
     }
-    true
+}
+
+/// Exact-key memo (the key is the functional's full bit pattern), sharded for parallel readers.
+#[derive(Default)]
+pub struct Memo { shards: [std::sync::Mutex<HashMap<Vec<u64>, (f64, f64)>>; 16] }
+impl std::fmt::Debug for Memo { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("Memo") } }
+const MEMO_CAP: usize = 40_000;
+impl Memo {
+    fn key(f: &Func) -> Vec<u64> {
+        let mut k = Vec::with_capacity(16);
+        for (p, c) in &f.0 {
+            k.push(c.to_bits());
+            k.push(p.0.len() as u64);
+            for (fi, st) in &p.0 {
+                k.push(((*fi as u64) << 32) | st.len() as u64);
+                for (s, v) in st { k.push(*s as u64); k.push(v.to_bits()); }
+            }
+        }
+        k
+    }
+    fn shard(k: &[u64]) -> usize { (k.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, x| (h ^ x).wrapping_mul(0x100_0000_01b3)) >> 60) as usize }
+    /// slot 0 = mean, 1 = variance (NaN = not computed yet).
+    fn get_or(&self, f: &Func, slot: usize, calc: impl FnOnce() -> f64) -> f64 {
+        let k = Memo::key(f);
+        let sh = &self.shards[Memo::shard(&k)];
+        if let Some(v) = sh.lock().ok().and_then(|m| m.get(&k).map(|e| if slot == 0 { e.0 } else { e.1 })) { if !v.is_nan() { return v; } }
+        let v = calc();
+        if let Ok(mut m) = sh.lock() {
+            if m.len() >= MEMO_CAP { m.clear(); }
+            let e = m.entry(k).or_insert((f64::NAN, f64::NAN));
+            if slot == 0 { e.0 = v } else { e.1 = v }
+        }
+        v
+    }
+}
+
+// ── dense linear algebra (lower triangle, row-major; the upper triangle is never read) ──
+//
+// The fit is O(n^3) in the rows of a phase (up to MAX_FIT_ROWS): the factorisation, the
+// leave-one-out diagonal and the kernel matrix are spread over every CPU (`crate::par`), and the
+// inner products run on eight independent accumulators so the compiler vectorises them.
+
+/// Inner product, 8 independent partial sums (vectorisable; the order of the additions differs
+/// from a running sum only in rounding).
+#[inline]
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    let n = a.len().min(b.len());
+    let (a, b) = (&a[..n], &b[..n]);
+    let (ca, cb) = (a.chunks_exact(8), b.chunks_exact(8));
+    let (ra, rb) = (ca.remainder(), cb.remainder());
+    let mut acc = [0.0f64; 8];
+    for (x, y) in ca.zip(cb) { for k in 0..8 { acc[k] += x[k] * y[k]; } }
+    let mut s = ((acc[0] + acc[4]) + (acc[1] + acc[5])) + ((acc[2] + acc[6]) + (acc[3] + acc[7]));
+    for (x, y) in ra.iter().zip(rb) { s += x * y; }
+    s
+}
+
+/// Raw pointer shared by the workers of one factorisation. Every worker writes only the rows it
+/// owns (row i belongs to worker i % w) and reads other rows only in column ranges no one writes
+/// before the next barrier.
+#[derive(Clone, Copy)]
+struct Shared(*mut f64);
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+unsafe fn sl<'a>(p: Shared, off: usize, len: usize) -> &'a [f64] { std::slice::from_raw_parts(p.0.add(off), len) }
+unsafe fn sl_mut<'a>(p: Shared, off: usize, len: usize) -> &'a mut [f64] { std::slice::from_raw_parts_mut(p.0.add(off), len) }
+
+/// Column block of the factorisation.
+const CHOL_BS: usize = 48;
+
+/// In-place Cholesky factor (lower) of the SPD matrix in `a`. false = not positive definite.
+/// Right-looking, blocked: factor the diagonal block, solve the panel below it, update the
+/// trailing matrix; rows are dealt out cyclically so the triangular work stays balanced.
+fn chol(a: &mut [f64], n: usize) -> bool {
+    let w = if n >= 160 { crate::par::threads_for(n / 32) } else { 1 };
+    let ptr = Shared(a.as_mut_ptr());
+    let ok = std::sync::atomic::AtomicBool::new(true);
+    let barrier = std::sync::Barrier::new(w);
+    let work = |t: usize| {
+        // SAFETY: see `Shared`; all accesses stay inside a[..n*n].
+        let row = |i: usize, c0: usize, c1: usize| -> &[f64] { unsafe { sl(ptr, i * n + c0, c1 - c0) } };
+        let row_mut = |i: usize| -> &mut [f64] { unsafe { sl_mut(ptr, i * n, n) } };
+        let mut k0 = 0;
+        while k0 < n {
+            let k1 = (k0 + CHOL_BS).min(n);
+            // 1. Diagonal block (one worker; earlier columns were subtracted by the trailing updates).
+            if t == 0 {
+                'diag: for i in k0..k1 {
+                    for j in k0..=i {
+                        let s = row(i, j, j + 1)[0] - dot(row(i, k0, j), row(j, k0, j));
+                        if i == j {
+                            if s <= 1e-12 { ok.store(false, std::sync::atomic::Ordering::Relaxed); break 'diag; }
+                            row_mut(i)[i] = s.sqrt();
+                        } else {
+                            let d = row(j, j, j + 1)[0];
+                            row_mut(i)[j] = s / d;
+                        }
+                    }
+                }
+            }
+            if w > 1 { barrier.wait(); }
+            if !ok.load(std::sync::atomic::Ordering::Relaxed) || k1 == n { return; }
+            // 2. Panel below the block: own rows, columns k0..k1.
+            let mut i = k1 + (t + w - k1 % w) % w;
+            while i < n {
+                for j in k0..k1 {
+                    let s = row(i, j, j + 1)[0] - dot(row(i, k0, j), row(j, k0, j));
+                    let d = row(j, j, j + 1)[0];
+                    row_mut(i)[j] = s / d;
+                }
+                i += w;
+            }
+            if w > 1 { barrier.wait(); }
+            // 3. Trailing update: own rows, columns k1..=i, from the finished panel.
+            let mut i = k1 + (t + w - k1 % w) % w;
+            while i < n {
+                let pi: Vec<f64> = row(i, k0, k1).to_vec();
+                let r = row_mut(i);
+                for j in k1..=i { r[j] -= dot(&pi, row(j, k0, k1)); }
+                i += w;
+            }
+            if w > 1 { barrier.wait(); }
+            k0 = k1;
+        }
+    };
+    if w <= 1 { work(0); } else {
+        std::thread::scope(|s| {
+            let hs: Vec<_> = (1..w).map(|t| { let work = &work; s.spawn(move || crate::par::as_worker(|| work(t))) }).collect();
+            crate::par::as_worker(|| work(0));
+            for h in hs { if let Err(e) = h.join() { std::panic::resume_unwind(e); } }
+        });
+    }
+    ok.load(std::sync::atomic::Ordering::Relaxed)
 }
 fn fwd(l: &[f64], n: usize, b: &mut [f64]) {
-    for i in 0..n { let mut s = b[i]; for k in 0..i { s -= l[i * n + k] * b[k]; } b[i] = s / l[i * n + i]; }
+    for i in 0..n { let s = b[i] - dot(&l[i * n..i * n + i], &b[..i]); b[i] = s / l[i * n + i]; }
+}
+/// `fwd` on a factor packed by rows (`Fit::l`): the same arithmetic, the same result.
+fn fwd_packed(l: &[f64], n: usize, b: &mut [f64]) {
+    let mut o = 0;
+    for i in 0..n { let s = b[i] - dot(&l[o..o + i], &b[..i]); b[i] = s / l[o + i]; o += i + 1; }
+}
+fn pack_lower(a: &[f64], n: usize) -> Vec<f64> {
+    let mut p = Vec::with_capacity(n * (n + 1) / 2);
+    for i in 0..n { p.extend_from_slice(&a[i * n..i * n + i + 1]); }
+    p
 }
 fn bwd(l: &[f64], n: usize, b: &mut [f64]) {
     for i in (0..n).rev() { let mut s = b[i]; for k in i + 1..n { s -= l[k * n + i] * b[k]; } b[i] = s / l[i * n + i]; }
 }
-/// diag(K^-1) from K's Cholesky factor.
+/// diag(K^-1) from K's Cholesky factor: column j of L^-1 by forward substitution. Columns go in
+/// blocks of 16 per task, so each row of L is read once per block instead of once per column (the
+/// sweep was memory-bound); every column's arithmetic is the same as solving it alone.
 fn inv_diag(l: &[f64], n: usize) -> Vec<f64> {
-    let mut d = vec![0.0; n];
-    let mut u = vec![0.0; n];
-    for j in 0..n {
-        u[j] = 1.0 / l[j * n + j];
-        for i in j + 1..n { let mut s = 0.0; for k in j..i { s -= l[i * n + k] * u[k]; } u[i] = s / l[i * n + i]; }
-        d[j] = u[j..].iter().map(|x| x * x).sum();
+    const CB: usize = 16;
+    let blocks = (n + CB - 1) / CB;
+    let parts = crate::par::map(blocks, |b| {
+        let (j0, j1) = (b * CB, ((b + 1) * CB).min(n));
+        let mut u: Vec<Vec<f64>> = (j0..j1).map(|j| vec![0.0; n - j]).collect();
+        for i in j0..n {
+            let row = &l[i * n..i * n + i + 1];
+            let lii = row[i];
+            for (c, j) in (j0..j1.min(i + 1)).enumerate() {
+                let uc = &mut u[c];
+                if i == j { uc[0] = 1.0 / lii; } else { let v = -dot(&row[j..i], &uc[..i - j]) / lii; uc[i - j] = v; }
+            }
+        }
+        u.into_iter().map(|c| c.iter().map(|x| x * x).sum::<f64>()).collect::<Vec<f64>>()
+    });
+    parts.into_iter().flatten().collect()
+}
+
+/// What a fit is besides its data: the hyperparameters, the final observation weights and the
+/// leave-one-out statistics. The search and the outlier reweighting (five factorisations and three
+/// leave-one-out sweeps) depend only on the rows, never on the objective weights; with this kept,
+/// a fit of the same rows is rebuilt by one factorisation and is the same fit, bit for bit (every
+/// step is deterministic).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FitMeta { pub hyper: Hyper, pub w: Vec<f64>, pub loo_rmse: f64, pub loo_r2: f64, pub cover90: f64, pub var_scale: f64 }
+
+impl Fit {
+    pub fn meta(&self) -> FitMeta {
+        FitMeta { hyper: self.hyper, w: self.w.clone(), loo_rmse: self.loo_rmse, loo_r2: self.loo_r2, cover90: self.cover90, var_scale: self.var_scale }
     }
-    d
 }
 
 /// Fits one objective. `init`: starting (or, with `passes` = 0, final) hyperparameters.
-pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -> Option<Fit> {
+pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -> Option<Fit> { fit_core(space, obs, init, passes, None) }
+
+/// Rebuilds a kept fit of the same observations (None when they do not match it).
+pub fn refit(space: Arc<Space>, obs: &[Obs], meta: &FitMeta) -> Option<Fit> {
+    if meta.w.len() != obs.len() { return None; }
+    fit_core(space, obs, Some(meta.hyper), 0, Some(meta))
+}
+
+fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, known: Option<&FitMeta>) -> Option<Fit> {
     let n = obs.len();
     if n < 6 { return None; }
     let order = space.order;
     let active = |c: usize| match c { 0 => true, 1 | 2 => order >= 2, _ => order >= 3 };
+    // Kernel parts per class, nuisance and temperature matrices: lower triangle, one row per task.
+    let temp = obs.iter().any(|o| o.tc != 0.0);
     let mut kc: Vec<Option<Vec<f64>>> = (0..NC).map(|c| active(c).then(|| vec![0.0; n * n])).collect();
     let (mut kn, mut ko) = (vec![0.0; n * n], vec![0.0; n * n]);
     // Start-temperature nuisance: a linear term in the run's temperature deviation, shared by every
     // session (the physics is the machine's, not the session's). Never part of a prediction (tc = 0).
-    let temp = obs.iter().any(|o| o.tc != 0.0);
     let mut kt = if temp { vec![0.0; n * n] } else { Vec::new() };
-    for i in 0..n {
-        for j in 0..=i {
-            let p = space.kparts(&obs[i].x, &obs[j].x);
-            for c in 0..NC { if let Some(m) = kc[c].as_mut() { m[i * n + j] = p[c]; m[j * n + i] = p[c]; } }
-            if temp { let v = obs[i].tc * obs[j].tc; kt[i * n + j] = v; kt[j * n + i] = v; }
-            if obs[i].sess == obs[j].sess {
-                let v = 1.0 + (obs[i].pos - 0.5) * (obs[j].pos - 0.5);
-                let o = (-(obs[i].t - obs[j].t).abs() / OU_TAU).exp();
-                kn[i * n + j] = v; kn[j * n + i] = v;
-                ko[i * n + j] = o; ko[j * n + i] = o;
+    {
+        let pc: Vec<Option<Shared>> = kc.iter_mut().map(|m| m.as_mut().map(|m| Shared(m.as_mut_ptr()))).collect();
+        let (pn, po) = (Shared(kn.as_mut_ptr()), Shared(ko.as_mut_ptr()));
+        let pt = temp.then(|| Shared(kt.as_mut_ptr()));
+        let space = &*space;
+        crate::par::map(n, |i| {
+            // SAFETY: task i writes only row i (lower part) of each matrix.
+            let put = |p: Shared, j: usize, v: f64| unsafe { *p.0.add(i * n + j) = v };
+            for j in 0..=i {
+                let p = space.kparts(&obs[i].x, &obs[j].x);
+                for c in 0..NC { if let Some(m) = pc[c] { put(m, j, p[c]); } }
+                if let Some(t) = pt { put(t, j, obs[i].tc * obs[j].tc); }
+                if obs[i].sess == obs[j].sess {
+                    put(pn, j, 1.0 + (obs[i].pos - 0.5) * (obs[j].pos - 0.5));
+                    put(po, j, (-(obs[i].t - obs[j].t).abs() / OU_TAU).exp());
+                }
             }
-        }
+        });
     }
     let y: Vec<f64> = obs.iter().map(|o| o.y).collect();
     let w0: Vec<f64> = obs.iter().map(|o| o.w.max(1e-3)).collect();
@@ -462,10 +664,17 @@ pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -
         let s = h.scales();
         let d2 = DRIFT_SD * DRIFT_SD;
         let o2 = h.ou * h.ou;
-        let mut k: Vec<f64> = kn.iter().zip(&ko).map(|(a, b)| d2 * a + o2 * b).collect();
-        if temp { let t2 = TEMP_SD * TEMP_SD; for (a, b) in k.iter_mut().zip(&kt) { *a += t2 * b; } }
-        for c in 0..NC { if let Some(m) = &kc[c] { if s[c] != 0.0 { for (a, b) in k.iter_mut().zip(m) { *a += s[c] * b; } } } }
-        for i in 0..n { k[i * n + i] += h.sigma * h.sigma / w[i]; }
+        let t2 = TEMP_SD * TEMP_SD;
+        let mut k = vec![0.0; n * n];
+        crate::par::rows(&mut k, n, |i| i as f64 + 1.0, |r0, blk| for (q, row) in blk.chunks_mut(n).enumerate() {
+            let i = r0 + q;
+            let (lo, hi) = (i * n, i * n + i + 1);
+            let row = &mut row[..=i];
+            for (a, (x, y)) in row.iter_mut().zip(kn[lo..hi].iter().zip(&ko[lo..hi])) { *a = d2 * x + o2 * y; }
+            if temp { for (a, b) in row.iter_mut().zip(&kt[lo..hi]) { *a += t2 * b; } }
+            for c in 0..NC { if let Some(m) = &kc[c] { if s[c] != 0.0 { for (a, b) in row.iter_mut().zip(&m[lo..hi]) { *a += s[c] * b; } } } }
+            row[i] += h.sigma * h.sigma / w[i];
+        });
         if !chol(&mut k, n) { return None; }
         let mut a = y.clone();
         fwd(&k, n, &mut a); bwd(&k, n, &mut a);
@@ -480,10 +689,17 @@ pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -
         let m = refs.iter().sum::<f64>() / refs.len() as f64;
         (refs.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (refs.len() - 1) as f64).sqrt()
     } else { 0.6 * sd_y };
+    if let Some(m) = known {
+        let res = eval(&m.hyper, &m.w)?;
+        return Some(finish(space, obs, m.hyper, m.w.clone(), res, m.loo_rmse, m.loo_r2, m.cover90, m.var_scale));
+    }
     let mut h = init.unwrap_or(Hyper { sigma: sigma0.max(0.005), ..Hyper::START }).clamp();
     let mut res = eval(&h, &w0);
     if res.is_none() { h = Hyper { sigma: (sigma0.max(0.005)).max(h.sigma * 2.0), ..h }.clamp(); res = eval(&h, &w0); }
-    let mut best = res?.0;
+    // The evaluation of the best hyperparameters at the starting weights is kept: the reweighting
+    // starts from exactly it (before, it was factorised a second time, an n^3 step per fit).
+    let mut best_res = res?;
+    let mut best = best_res.0;
     for _ in 0..passes {
         for which in 0..6 {
             match which { 2 | 3 if order < 2 => continue, 4 if order < 3 => continue, _ => {} }
@@ -492,13 +708,13 @@ pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -
                 let mut c = base;
                 match which { 0 => c.sigma *= m, 1 => c.main *= m, 2 => c.pin *= m, 3 => c.px *= m, 4 => c.tri *= m, _ => c.ou *= m }
                 let c = c.clamp();
-                if let Some((ll, ..)) = eval(&c, &w0) { if ll > best { best = ll; h = c; } }
+                if let Some(r) = eval(&c, &w0) { if r.0 > best { best = r.0; h = c; best_res = r; } }
             }
         }
     }
     // Outlier runs count less (Student-t style reweighting from leave-one-out residuals).
     let mut w = w0.clone();
-    let mut res = eval(&h, &w)?;
+    let mut res = best_res;
     for _ in 0..2 {
         let d = inv_diag(&res.1, n);
         for i in 0..n { let z = res.2[i] / d[i].sqrt(); let f = (2.5 / z.abs().max(1e-9)).min(1.0); w[i] = w0[i] * f * f; }
@@ -524,6 +740,14 @@ pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -
         1.0 + (raw - 1.0) * n as f64 / (n as f64 + 60.0)
     };
     let sst: f64 = y.iter().map(|v| (v - mean_y).powi(2)).sum::<f64>().max(1e-12);
+    Some(finish(space, obs, h, w, res, (sse / n as f64).sqrt(), 1.0 - sse / sst, cover / n as f64, var_scale))
+}
+
+/// The fit from its factorisation: explicit posterior-mean coefficients and the statistics.
+#[allow(clippy::too_many_arguments)]
+fn finish(space: Arc<Space>, obs: &[Obs], h: Hyper, w: Vec<f64>, res: (f64, Vec<f64>, Vec<f64>), loo_rmse: f64, loo_r2: f64, cover90: f64, var_scale: f64) -> Fit {
+    let n = obs.len();
+    let order = space.order;
     let s = h.scales();
     let alpha = &res.2;
     // Explicit posterior-mean coefficients: beta_term = prior_var(term) * sum_i phi_term(x_i) alpha_i.
@@ -563,8 +787,8 @@ pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -
     let mut tri_ix: FxMap<Vec<(u64, f64)>> = FxMap::default();
     for (k, b) in &tri { tri_ix.entry(k >> 19).or_default().push((k & 0x7FFFF, *b)); }
     let alpha = res.2.clone();
-    Some(Fit { space, nobs: n, x: obs.iter().map(|o| o.x.clone()).collect(), l: res.1, alpha, scales: s, hyper: h, loglik: res.0,
-               loo_rmse: (sse / n as f64).sqrt(), loo_r2: 1.0 - sse / sst, cover90: cover / n as f64, var_scale, main, pair, tri, tri_ix })
+    Fit { space, nobs: n, x: obs.iter().map(|o| o.x.clone()).collect(), l: pack_lower(&res.1, n), alpha, scales: s, hyper: h, loglik: res.0,
+          loo_rmse, loo_r2, cover90, var_scale, w, main, pair, tri, tri_ix, memo: Arc::new(Memo::default()), tproj: Arc::new(TermProj::default()) }
 }
 
 impl Fit {
@@ -596,7 +820,7 @@ impl Fit {
         }
         s
     }
-    pub fn mean(&self, f: &Func) -> f64 { f.0.iter().map(|(p, c)| c * self.mean_pc(p)).sum() }
+    pub fn mean(&self, f: &Func) -> f64 { self.memo.get_or(f, 0, || f.0.iter().map(|(p, c)| c * self.mean_pc(p)).sum()) }
     /// Prior covariance of two functionals.
     pub fn prior(&self, a: &Func, b: &Func) -> f64 {
         let mut s = 0.0;
@@ -604,15 +828,37 @@ impl Fit {
         s
     }
     /// L^-1 k(X, f): what the data already explain of this functional.
+    /// The projection is linear in the functional: the sum of its terms' projections, each solved
+    /// once per fit (`tproj`) - the same vector up to rounding.
     pub fn proj(&self, f: &Func) -> Vec<f64> {
-        let mut u: Vec<f64> = self.x.iter().map(|x| f.0.iter().map(|(p, c)| if *c == 0.0 { 0.0 } else { c * self.k(x, p) }).sum()).collect();
-        fwd(&self.l, self.nobs, &mut u);
+        let mut u = vec![0.0; self.nobs];
+        for (p, c) in &f.0 {
+            if *c == 0.0 { continue; }
+            let v = self.term_proj(p);
+            for (a, b) in u.iter_mut().zip(v.iter()) { *a += c * b; }
+        }
         u
+    }
+    /// L^-1 k(X, p) of one term, from the cache or solved and kept.
+    fn term_proj(&self, p: &PCfg) -> Arc<Vec<f64>> {
+        let k = TermProj::key(p);
+        let sh = &self.tproj.shards[Memo::shard(&k)];
+        if let Some(v) = sh.lock().ok().and_then(|m| m.get(&k).cloned()) { return v; }
+        let mut u: Vec<f64> = self.x.iter().map(|x| self.k(x, p)).collect();
+        fwd_packed(&self.l, self.nobs, &mut u);
+        let v = Arc::new(u);
+        if let Ok(mut m) = sh.lock() {
+            if m.len() >= TPROJ_CAP { m.clear(); }
+            m.insert(k, v.clone());
+        }
+        v
     }
     /// Posterior variance, calibrated (`var_scale`).
     pub fn var(&self, f: &Func) -> f64 {
-        let p = self.proj(f);
-        (self.prior(f, f) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0) * self.var_scale
+        self.memo.get_or(f, 1, || {
+            let p = self.proj(f);
+            (self.prior(f, f) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0) * self.var_scale
+        })
     }
     pub fn sigma(&self) -> f64 { self.hyper.sigma }
     /// Sum of |coefficients| per knob pair (triples count towards each of their pairs).
@@ -645,29 +891,43 @@ pub struct Row { pub cfg: Cfg, pub y: [f64; 4], pub w: f64, pub sess: u64, pub p
 
 /// All rows of one phase with their space (heredity and interaction order decided on build).
 #[derive(Clone, Debug)]
-pub struct PhaseSet { pub space: Arc<Space>, rows: Vec<Row> }
+pub struct PhaseSet { pub space: Arc<Space>, rows: Vec<Row>,
+                      /// Hyperparameters of the screening fit that set the heredity weights (kept by
+                      /// `Calibration::retune`, so a later build skips the screening search).
+                      pub screen: Option<Hyper> }
 
 impl PhaseSet {
     pub fn build(factors: Vec<Factor>, rows: Vec<Row>) -> Option<PhaseSet> { PhaseSet::build_with(factors, rows, None) }
     /// `order`: None = decided by the amount of data (pairs always, triples from max(150, 4 x knobs) rows).
-    pub fn build_with(factors: Vec<Factor>, mut rows: Vec<Row>, order: Option<u8>) -> Option<PhaseSet> {
+    pub fn build_with(factors: Vec<Factor>, rows: Vec<Row>, order: Option<u8>) -> Option<PhaseSet> { PhaseSet::build_screened(factors, rows, order, None, 1) }
+    /// `screen`: kept screening hyperparameters; `passes`: their search passes (0 = use as they are).
+    pub fn build_screened(factors: Vec<Factor>, mut rows: Vec<Row>, order: Option<u8>, screen: Option<Hyper>, passes: usize) -> Option<PhaseSet> {
         if factors.is_empty() || rows.len() < 6 { return None; }
-        if rows.len() > MAX_FIT_ROWS {
-            rows.sort_by(|a, b| b.w.total_cmp(&a.w).then(b.t.total_cmp(&a.t)));
-            rows.truncate(MAX_FIT_ROWS);
-        }
+        trim_fit_rows(&mut rows);
         let nf = factors.len();
         let order = order.unwrap_or(if rows.len() >= 150.max(4 * nf) { 3 } else { 2 });
         // Screening fit (mains only, all objectives summed): knobs that respond carry more interaction prior.
+        let screen_h = screen;
         let screen = Arc::new(Space::new(factors.clone(), None, 1));
-        let tmp = PhaseSet { space: screen.clone(), rows };
-        let heredity = fit(screen, &tmp.obs(None), None, 1).map(|m| {
+        let tmp = PhaseSet { space: screen.clone(), rows, screen: None };
+        let sfit = fit(screen, &tmp.obs(None), screen_h, if screen_h.is_some() { passes } else { passes.max(1) });
+        let screen_h = sfit.as_ref().map(|m| m.hyper);
+        let heredity = sfit.map(|m| {
             let s = m.main_strength();
             let mean = s.iter().sum::<f64>() / s.len().max(1) as f64;
             s.iter().map(|x| if mean > 1e-12 { (0.2 + 0.8 * x / mean).sqrt().clamp(0.35, 2.5) } else { 1.0 }).collect()
         });
-        Some(PhaseSet { space: Arc::new(Space::new(factors, heredity, order)), rows: tmp.rows })
+        Some(PhaseSet { space: Arc::new(Space::new(factors, heredity, order)), rows: tmp.rows, screen: screen_h })
     }
+    /// The same set from a kept build of the same input (`heredity` and `order` of that build): the
+    /// screening fit is skipped.
+    pub fn build_kept(factors: Vec<Factor>, mut rows: Vec<Row>, heredity: Vec<f64>, order: u8, screen: Option<Hyper>) -> Option<PhaseSet> {
+        if factors.is_empty() || rows.len() < 6 || heredity.len() != factors.len() || !(1..=3).contains(&order) { return None; }
+        trim_fit_rows(&mut rows);
+        Some(PhaseSet { space: Arc::new(Space::new(factors, Some(heredity), order)), rows, screen })
+    }
+    /// One objective rebuilt from a kept fit of the same rows.
+    pub fn refit_obj(&self, o: usize, meta: &FitMeta) -> Option<Arc<Fit>> { refit(self.space.clone(), &self.obs(Some(o)), meta).map(Arc::new) }
     pub fn nrows(&self) -> usize { self.rows.len() }
     pub fn rows(&self) -> &[Row] { &self.rows }
     /// Observations of one objective (None = the sum of the objectives a row measured).
@@ -708,6 +968,34 @@ impl PhaseSet {
         let fits: [Option<Arc<Fit>>; 4] = std::array::from_fn(|o| if wts[o] != 0.0 { self.fit_obj(o, None, 2) } else { None });
         Model::new(self.space.clone(), fits, wts)
     }
+}
+
+/// At most MAX_FIT_ROWS rows are fitted: the heaviest, then the newest.
+fn trim_fit_rows(rows: &mut Vec<Row>) {
+    if rows.len() > MAX_FIT_ROWS {
+        rows.sort_by(|a, b| b.w.total_cmp(&a.w).then(b.t.total_cmp(&a.t)));
+        rows.truncate(MAX_FIT_ROWS);
+    }
+}
+
+/// Fingerprint of a model input (factors, rows, starting hyperparameters): two builds with the same
+/// fingerprint are the same build. Exact bit patterns, so nothing that changes the fit is lost.
+pub fn input_hash(factors: &[Factor], rows: &[Row], inits: &[Option<Hyper>]) -> u64 {
+    let mut b: Vec<u8> = Vec::with_capacity(64 * rows.len() + 64);
+    let mut put = |x: &[u8]| { b.extend_from_slice(&(x.len() as u32).to_le_bytes()); b.extend_from_slice(x); };
+    put(&[MAX_FIT_ROWS as u8, (MAX_FIT_ROWS >> 8) as u8, NC as u8]);
+    for f in factors { put(f.key.as_bytes()); put(f.reference.as_bytes()); for v in &f.values { put(v.as_bytes()); } put(b"|"); }
+    for r in rows {
+        for (k, v) in &r.cfg { put(k.as_bytes()); put(v.as_bytes()); }
+        let mut n: Vec<u8> = Vec::with_capacity(72);
+        for x in r.y.iter().chain([r.w, r.pos, r.t, r.tc].iter()) { n.extend_from_slice(&x.to_bits().to_le_bytes()); }
+        n.extend_from_slice(&r.sess.to_le_bytes());
+        put(&n);
+    }
+    for h in inits {
+        match h { Some(h) => { let v: Vec<u8> = h.to_vec().iter().flat_map(|x| x.to_bits().to_le_bytes()).collect(); put(&v); } None => put(b"-") }
+    }
+    fnv(&b)
 }
 
 /// Per session: the weight factor from its reference runs' scatter (see `PhaseSet::obs`).
@@ -1274,6 +1562,39 @@ pub fn initial_design(factors: &[Factor], n: usize, rng: &mut Rng) -> Vec<Cfg> {
 mod tests {
     use super::*;
 
+    /// The blocked, threaded factorisation and LOO diagonal agree with the textbook versions.
+    #[test]
+    fn parallel_linear_algebra_matches_reference() {
+        fn chol_ref(a: &mut [f64], n: usize) -> bool {
+            for i in 0..n { for j in 0..=i {
+                let mut s = a[i * n + j];
+                for k in 0..j { s -= a[i * n + k] * a[j * n + k]; }
+                if i == j { if s <= 1e-12 { return false; } a[i * n + i] = s.sqrt(); } else { a[i * n + j] = s / a[j * n + j]; }
+            } }
+            true
+        }
+        let mut rng = Rng::new(3);
+        for n in [7usize, 161, 333] {
+            let g: Vec<f64> = (0..n * n).map(|_| rng.unit() - 0.5).collect();
+            let mut a = vec![0.0; n * n];
+            for i in 0..n { for j in 0..n { a[i * n + j] = (0..n).map(|k| g[i * n + k] * g[j * n + k]).sum::<f64>() + if i == j { 0.5 } else { 0.0 }; } }
+            let (mut x, mut y) = (a.clone(), a.clone());
+            assert!(chol(&mut x, n) && chol_ref(&mut y, n));
+            for i in 0..n { for j in 0..=i { assert!((x[i * n + j] - y[i * n + j]).abs() < 1e-9 * (1.0 + y[i * n + j].abs()), "{n} {i} {j}"); } }
+            let d = inv_diag(&x, n);
+            // diag(K^-1) by solving K z = e_j.
+            for j in [0, n / 2, n - 1] {
+                let mut e = vec![0.0; n]; e[j] = 1.0;
+                fwd(&y, n, &mut e); bwd(&y, n, &mut e);
+                assert!((d[j] - e[j]).abs() < 1e-8 * e[j].abs().max(1.0), "{n} {j}: {} vs {}", d[j], e[j]);
+            }
+        }
+        // Not positive definite: refused.
+        let mut z = vec![0.0; 200 * 200];
+        for i in 0..200 { z[i * 200 + i] = if i == 150 { -1.0 } else { 1.0 }; }
+        assert!(!chol(&mut z, 200));
+    }
+
     fn fac(key: &str, r: &str, v: &[&str]) -> Factor { Factor { key: key.into(), reference: r.into(), values: v.iter().map(|s| s.to_string()).collect() } }
     fn c(k: &str, v: &str) -> (String, String) { (k.into(), v.into()) }
     fn rows_of(design: &[Cfg], truth: impl Fn(&Cfg) -> f64, rng: &mut Rng, sd: f64) -> Vec<Row> {
@@ -1303,6 +1624,37 @@ mod tests {
         }
         if has("cpu.f", "1") { y -= 0.06; }
         y
+    }
+
+    /// A kept build (heredity, order, per objective hyperparameters + final weights + LOO stats)
+    /// rebuilds the very same fit with one factorisation, and the input fingerprint sees every change.
+    #[test]
+    fn kept_fit_is_the_same_fit() {
+        let factors = vec![fac("vm.a", "0", &["1"]), fac("vm.b", "0", &["1"]), fac("vm.c", "0", &["1"]), fac("cpu.e", "8", &["16", "32", "64"])];
+        let mut rng = Rng::new(11);
+        let design = initial_design(&factors, 160, &mut rng);
+        let mut rows = rows_of(&design, truth, &mut rng, 0.02);
+        for (i, r) in rows.iter_mut().enumerate() { r.tc = (i % 7) as f64 - 3.0; if i == 5 { r.y[0] += 0.4; } }
+        let set = PhaseSet::build_screened(factors.clone(), rows.clone(), None, None, 1).unwrap();
+        let a = set.fit_obj(0, None, 1).unwrap();
+        let kept = PhaseSet::build_kept(factors.clone(), rows.clone(), set.space.heredity.clone(), set.space.order, set.screen).unwrap();
+        assert_eq!(kept.space, set.space);
+        let b = kept.refit_obj(0, &a.meta()).unwrap();
+        assert_eq!(a.loglik.to_bits(), b.loglik.to_bits());
+        assert_eq!(a.meta(), b.meta());
+        for cfg in [vec![c("vm.a", "1"), c("vm.b", "1")], vec![c("cpu.e", "32")], vec![c("vm.c", "1"), c("cpu.e", "64"), c("vm.a", "1")]] {
+            let f = Func::of(set.space.parse(&cfg, false).unwrap());
+            assert_eq!(a.mean(&f).to_bits(), b.mean(&f).to_bits());
+            assert_eq!(a.var(&f).to_bits(), b.var(&f).to_bits());
+        }
+        // Another number of observations: refused, not misread.
+        let mut m = a.meta(); m.w.pop();
+        assert!(kept.refit_obj(0, &m).is_none());
+        let h0 = input_hash(&factors, &rows, &[None]);
+        assert_eq!(h0, input_hash(&factors, &rows.clone(), &[None]));
+        let mut r2 = rows.clone(); r2[3].w *= 1.0 + 1e-12;
+        assert_ne!(h0, input_hash(&factors, &r2, &[None]));
+        assert_ne!(h0, input_hash(&factors, &rows, &[Some(Hyper::START)]));
     }
 
     #[test]

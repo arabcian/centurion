@@ -746,6 +746,16 @@ pub fn is_hotplug(key: &str) -> bool { HOTPLUG_KEYS.contains(&key) }
 
 fn read(p: &Path) -> Option<String> { read_trimmed(p).ok() }
 
+/// Hardware top clock of one CPU in kHz, independent of the live boost state: amd-pstate lowers
+/// cpuinfo_max_freq to the nominal clock while boost is off (a power-saving scene), which made
+/// roles and caps derived from it scene-dependent. amd_pstate_max_freq stays at the highest-perf clock.
+pub fn cpu_max_khz(c: usize) -> u64 {
+    let d = Path::new(CPU_DIR).join(format!("cpu{c}/cpufreq"));
+    ["amd_pstate_max_freq", "cpuinfo_max_freq"].iter()
+        .find_map(|f| read(&d.join(f)).and_then(|s| s.parse::<u64>().ok()).filter(|v| *v > 0))
+        .unwrap_or(0)
+}
+
 /// "always [madvise] never" -> ("madvise", [always, madvise, never]).
 /// Also accepts sched/preempt's "none voluntary (full) lazy".
 pub fn parse_bracketed(s: &str) -> (Option<String>, Vec<String>) {
@@ -832,9 +842,7 @@ fn hybrid_group(ct: CoreType) -> Option<Ccx> {
     let online = online_cpus();
     let cpus: Vec<usize> = core_type_cpus(ct).into_iter().filter(|c| online.is_empty() || online.contains(c)).collect();
     if cpus.is_empty() { return None; }
-    let max_khz = cpus.iter()
-        .filter_map(|c| read(&Path::new(CPU_DIR).join(format!("cpu{c}/cpufreq/cpuinfo_max_freq"))))
-        .filter_map(|s| s.parse().ok()).max().unwrap_or(0);
+    let max_khz = cpus.iter().map(|&c| cpu_max_khz(c)).max().unwrap_or(0);
     let l3_kib = cpus.first().and_then(|c| read(&Path::new(CPU_DIR).join(format!("cpu{c}/cache/index3/size")))).map_or(0, |s| size_kib(&s));
     Some(Ccx { index: if ct == CoreType::P { 0 } else { 1 }, cpus, l3_kib, max_khz })
 }
@@ -1021,9 +1029,7 @@ fn ccx_groups_uncached() -> Vec<Ccx> {
     }
     let mut out = group_l3(l3, &online);
     for g in &mut out {
-        g.max_khz = g.cpus.iter()
-            .filter_map(|c| read(&Path::new(CPU_DIR).join(format!("cpu{c}/cpufreq/cpuinfo_max_freq"))))
-            .filter_map(|s| s.parse().ok()).max().unwrap_or(0);
+        g.max_khz = g.cpus.iter().map(|&c| cpu_max_khz(c)).max().unwrap_or(0);
     }
     // CCD order = L3 cache id (the die order the SMU's Curve Optimizer slots follow), the rule the
     // Ryzen tab uses. First-CPU order only when an id is unreadable. The two used to be separate
@@ -2751,9 +2757,7 @@ pub fn describe_topology() -> Value {
         "online": fmt_cpu_list(&online_cpus()), "present": fmt_cpu_list(&present_cpus()),
         "vendor": cpu_vendor().as_str(),
         "hybrid": hybrid().map(|h| {
-            let max = |set: &[usize]| set.iter()
-                .filter_map(|c| read(&Path::new(CPU_DIR).join(format!("cpu{c}/cpufreq/cpuinfo_max_freq"))))
-                .filter_map(|s| s.parse::<u64>().ok()).max().unwrap_or(0);
+            let max = |set: &[usize]| set.iter().map(|&c| cpu_max_khz(c)).max().unwrap_or(0);
             json!({"pcores": fmt_cpu_list(&h.pcores), "ecores": fmt_cpu_list(&h.ecores),
                    "pcore_max_khz": max(&h.pcores), "ecore_max_khz": max(&h.ecores)})
         }),

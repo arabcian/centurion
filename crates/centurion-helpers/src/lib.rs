@@ -33,6 +33,7 @@ pub mod legion_wmi;
 pub mod lighting;
 pub mod machine;
 pub mod model;
+pub mod par;
 pub mod netguard;
 pub mod nvreg;
 pub mod power;

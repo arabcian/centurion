@@ -14,6 +14,18 @@
 //! Zen 2 parts (Renoir/Lucienne/Mendocino/VanGogh) are deliberately absent: no per-core CO in
 //! their firmware (the GUI already hides the tab below family 0x19).
 //!
+//! Transport (chosen in `Smu::open`, first that passes the self-test wins):
+//!  1. ryzen_smu's own mailbox (`smu_args` + `rsmu_cmd`/`mp1_smu_cmd`). The driver runs the whole
+//!     transaction in the kernel under its `amd_smu_mutex`, the same lock its PM-table refresh takes,
+//!     so a CO message can never interleave with a TransferTableToDram on the RSMU mailbox. It works
+//!     with kernel lockdown (Secure Boot): the PCI config writes happen inside the signed module.
+//!     Used only when the driver's codename for this CPU maps to the same mailbox as our `Spec`.
+//!  2. ryzen_smu's raw `smn` window, mailbox driven from here (what RyzenAdj's kmod backend and
+//!     zenmaster's ryzen_smu backend do). Also works under lockdown, but is not serialised with the
+//!     driver's own mailbox traffic.
+//!  3. PCI config space of 00:00.0 (0xB8/0xBC), only when the kernel is not locked down.
+//! Every path takes /run/lock/access_pci.lock (zenmaster/ZenTune use the same file).
+//!
 //! Safety rules: opcode and mailbox come only from `Spec` (no caller-supplied opcode), the SMU
 //! answer is polled for at most one second (upstream loops forever), the self-test of RyzenAdj
 //! (`smu_service_test`) must pass before the first CO write, and every bus transaction runs under
@@ -28,6 +40,7 @@ use std::time::{Duration, Instant};
 const SMU_TIMEOUT: Duration = Duration::from_secs(1);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const KMOD_DIR: &str = "/sys/kernel/ryzen_smu_drv";
+const LOCKDOWN: &str = "/sys/kernel/security/lockdown";
 const PCI_CFG: &str = "/sys/bus/pci/devices/0000:00:00.0/config";
 const PCI_LOCKS: [&str; 2] = ["/run/lock/access_pci.lock", "/run/centurion/access_pci.lock"];
 const NB_INDEX: u64 = 0xB8;
@@ -99,6 +112,18 @@ pub fn spec_for(f: Family) -> &'static Spec {
     SPECS.iter().find(|s| s.family == f).expect("every Family has a Spec")
 }
 
+/// ryzen_smu `enum smu_processor_codename` (smu.h, 0.1.7) value its `codename` file prints for
+/// this CPU, i.e. what smu_resolve_cpu_class() picks from the same CPUID. Fire Range (1Ah/44h) is
+/// "GraniteRidge" and Dragon Range (19h/61h) "Raphael" there; Krackan (1Ah/60h) is "StrixPoint".
+/// The driver's mailbox for each of these equals our `Spec::mbox` (see test `driver_mailboxes_match`).
+fn driver_codename(f: Family) -> u32 {
+    use Family::*;
+    match f {
+        Rembrandt => 11, Cezanne => 14, DragonRange => 20, Phoenix => 21,
+        StrixPoint | KrackanPoint => 22, FireRange => 23, HawkPoint => 24, StrixHalo => 26,
+    }
+}
+
 impl Spec {
     pub fn check_coall(&self, v: i64) -> Result<(), String> {
         if (self.co_min..=self.co_max).contains(&v) { Ok(()) }
@@ -140,7 +165,7 @@ enum Kind { Kmod, Pci }
 pub struct Bus {
     kind: Kind,
     dev: File,
-    lock: Option<File>, // PCI path only; the ryzen_smu path locks its own smn descriptor
+    lock: File, // shared /run/lock/access_pci.lock; the smn path also locks its descriptor (memory_spd)
 }
 
 struct Guard(libc::c_int);
@@ -156,6 +181,17 @@ fn lock_bounded(f: &File) -> Result<Guard, String> {
         if t.elapsed() >= LOCK_TIMEOUT { return Err("SMN bus busy: another tool holds the lock".into()); }
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// Kernel lockdown state from securityfs: Some(true) = PCI config writes from user space are
+/// blocked (integrity/confidentiality), Some(false) = "[none]", None = securityfs not readable.
+pub fn lockdown_active() -> Option<bool> {
+    std::fs::read_to_string(LOCKDOWN).ok().and_then(|t| parse_lockdown(&t))
+}
+
+fn parse_lockdown(t: &str) -> Option<bool> {
+    let sel = t.split_whitespace().find(|w| w.starts_with('[') && w.ends_with(']'))?;
+    Some(sel != "[none]")
 }
 
 /// ryzen_smu >= 0.1.7 (same floor as RyzenAdj's osdep_linux.c).
@@ -187,8 +223,12 @@ impl Bus {
     pub fn open() -> Result<Bus, String> {
         if kmod_usable() {
             if let Ok(dev) = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(format!("{KMOD_DIR}/smn")) {
-                return Ok(Bus { kind: Kind::Kmod, dev, lock: None });
+                return Ok(Bus { kind: Kind::Kmod, dev, lock: open_lock()? });
             }
+        }
+        if lockdown_active() == Some(true) {
+            return Err("kernel lockdown is active (Secure Boot): user-space PCI config writes are blocked; \
+                        load a signed ryzen_smu >= 0.1.7".into());
         }
         let dev = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(PCI_CFG).map_err(|e| format!(
             "no SMN access: ryzen_smu >= 0.1.7 not loaded and {PCI_CFG}: {e} \
@@ -199,12 +239,17 @@ impl Bus {
         if u16::from_le_bytes([id[0], id[1]]) != 0x1022 || id[11] != 0x06 || id[10] != 0x00 {
             return Err("00:00.0 is not an AMD host bridge; refusing to use its config space".into());
         }
-        Ok(Bus { kind: Kind::Pci, dev, lock: Some(open_lock()?) })
+        Ok(Bus { kind: Kind::Pci, dev, lock: open_lock()? })
     }
 
-    pub fn backend(&self) -> &'static str { if self.kind == Kind::Kmod { "ryzen_smu" } else { "pci" } }
+    pub fn backend(&self) -> &'static str { if self.kind == Kind::Kmod { "ryzen_smu smn" } else { "pci" } }
 
-    fn guard(&self) -> Result<Guard, String> { lock_bounded(self.lock.as_ref().unwrap_or(&self.dev)) }
+    /// Shared tool lock first, then (smn path) the smn inode that memory_spd also locks.
+    fn guard(&self) -> Result<(Guard, Option<Guard>), String> {
+        let g = lock_bounded(&self.lock)?;
+        let s = if self.kind == Kind::Kmod { Some(lock_bounded(&self.dev)?) } else { None };
+        Ok((g, s))
+    }
 }
 
 impl Smn for Bus {
@@ -212,8 +257,16 @@ impl Smn for Bus {
         let mut b = [0u8; 4];
         match self.kind {
             Kind::Kmod => {
-                self.dev.write_all_at(&addr.to_le_bytes(), 0)?;
-                self.dev.read_exact_at(&mut b, 0)?;
+                // The smn result slot belongs to the last writer (ryzen_smu >= 0.1.9 returns EAGAIN
+                // to anyone else); a tool outside our flock can steal it between the two steps.
+                let mut attempt = 0;
+                loop {
+                    self.dev.write_all_at(&addr.to_le_bytes(), 0)?;
+                    match self.dev.read_exact_at(&mut b, 0) {
+                        Err(e) if attempt < 3 && is_race(&e) => attempt += 1,
+                        r => break r?,
+                    }
+                }
             }
             Kind::Pci => {
                 self.dev.write_all_at(&(addr & !3).to_le_bytes(), NB_INDEX)?;
@@ -300,9 +353,111 @@ fn selftest<S: Smn>(s: &mut S, mb: Mbox, timeout: Duration) -> Result<(), String
     }
 }
 
+// ── ryzen_smu driver mailbox ─────────────────────────────────────────────────
+
+/// Status codes ryzen_smu adds on top of the SMU's own (smu.h `enum smu_return_val`).
+const DRV_TIMEOUT: u32 = 0xFB;
+const DRV_INVALID_ARG: u32 = 0xFA;
+const DRV_UNSUPPORTED: u32 = 0xF9;
+const DRV_PCI_FAILED: u32 = 0xF6;
+
+/// The driver's answer: timeouts and PCI failures leave the mailbox state unknown (fatal, like a
+/// raw-path timeout); "unsupported"/"invalid argument" mean nothing was sent (final rejection).
+fn driver_status(r: u32) -> Result<u32, SmuError> {
+    match r {
+        DRV_TIMEOUT => Err(SmuError::Fatal("ryzen_smu: SMU command timed out (0xFB)".into())),
+        DRV_PCI_FAILED => Err(SmuError::Fatal("ryzen_smu: PCI access to the SMN failed (0xF6)".into())),
+        DRV_UNSUPPORTED => Err(SmuError::Rejected("ryzen_smu: this mailbox is not defined for the CPU (0xF9)".into())),
+        DRV_INVALID_ARG => Err(SmuError::Rejected("ryzen_smu: invalid argument (0xFA)".into())),
+        r => Ok(r),
+    }
+}
+
+fn drv_io(what: &str, e: io::Error) -> SmuError {
+    if e.raw_os_error() == Some(libc::EPERM) {
+        // Stock ryzen_smu never refuses root. The Centurion fork (0.1.9+) refuses under kernel lockdown
+        // every mailbox message except TestMessage/GetVersion and this CPU's CO opcodes; an EPERM here
+        // means a build that blocks all SMU access under lockdown, or a missing CAP_SYS_RAWIO.
+        SmuError::Fatal(format!("ryzen_smu {what}: operation not permitted (missing CAP_SYS_RAWIO, or this \
+                                 ryzen_smu build refuses the message under kernel lockdown; the Centurion fork \
+                                 allows the Curve Optimizer messages there)"))
+    } else {
+        SmuError::Fatal(format!("ryzen_smu {what}: {e}"))
+    }
+}
+
+/// ryzen_smu >= 0.1.9 answers EBUSY/EAGAIN when another process took over smu_args or smn
+/// between our two steps; the step is safe to redo.
+fn is_race(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(libc::EBUSY) | Some(libc::EAGAIN))
+}
+
+/// Commands go through the driver: `smu_args` (6 x u32) then the opcode to `rsmu_cmd` or
+/// `mp1_smu_cmd`; the store runs smu_send_command() synchronously and the same file then reads
+/// back its status. smu_args/smu_rsp are driver globals, so the whole sequence runs under the
+/// shared tool lock.
+pub struct DriverMb { args: File, cmd: File, lock: File }
+
+impl DriverMb {
+    fn open(spec: &Spec) -> Result<DriverMb, String> {
+        if !kmod_usable() { return Err("ryzen_smu >= 0.1.7 not loaded".into()); }
+        let code: u32 = std::fs::read_to_string(format!("{KMOD_DIR}/codename")).ok()
+            .and_then(|t| t.trim().parse().ok()).ok_or("ryzen_smu: codename unreadable")?;
+        let want = driver_codename(spec.family);
+        if code != want {
+            return Err(format!("ryzen_smu reports codename {code}, expected {want} for {}: its mailbox table \
+                                is not the verified one", spec.name));
+        }
+        let attr = if spec.mailbox == "RSMU" { "rsmu_cmd" } else { "mp1_smu_cmd" };
+        let rw = |n: &str| OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC)
+            .open(format!("{KMOD_DIR}/{n}")).map_err(|e| format!("ryzen_smu {n}: {e}"));
+        let cmd = rw(attr).map_err(|e| if attr == "rsmu_cmd" {
+            format!("{e} (the driver hides rsmu_cmd when RSMU did not answer at probe)") } else { e })?;
+        Ok(DriverMb { args: rw("smu_args")?, cmd, lock: open_lock()? })
+    }
+
+    fn transact(&mut self, opcode: u32, arg0: u32) -> Result<u32, SmuError> {
+        let _g = lock_bounded(&self.lock).map_err(SmuError::Fatal)?;
+        let mut a = [0u8; 24];
+        a[..4].copy_from_slice(&arg0.to_le_bytes());
+        // ryzen_smu >= 0.1.9 ties smu_args/status to the writing process: a tool outside our flock
+        // (RyzenAdj, a monitor) that writes smu_args in between makes the command store return
+        // EBUSY (nothing sent) or the status read EAGAIN (sent, answer taken). Both re-run the
+        // whole transaction; every opcode sent here is idempotent.
+        let mut attempt = 0u32;
+        loop {
+            let r = (|| -> Result<u32, (&'static str, io::Error)> {
+                self.args.write_all_at(&a, 0).map_err(|e| ("smu_args", e))?;
+                self.cmd.write_all_at(&opcode.to_le_bytes(), 0).map_err(|e| ("command", e))?;
+                let mut b = [0u8; 4];
+                self.cmd.read_exact_at(&mut b, 0).map_err(|e| ("status", e))?;
+                Ok(u32::from_le_bytes(b))
+            })();
+            match r {
+                Ok(v) => return driver_status(v),
+                Err((_, e)) if attempt < 3 && is_race(&e) => {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(5 << attempt));
+                }
+                Err((what, e)) => return Err(drv_io(what, e)),
+            }
+        }
+    }
+
+    fn selftest(&mut self) -> Result<(), String> {
+        match self.transact(TEST_MSG, TEST_ARG) {
+            Ok(RSP_OK) => Ok(()),
+            Ok(r) => Err(format!("SMU self-test via ryzen_smu failed: {}", rsp_text(r))),
+            Err(e) => Err(format!("SMU self-test via ryzen_smu failed: {}", e.message())),
+        }
+    }
+}
+
+enum Link { Driver(DriverMb), Raw(Bus) }
+
 // ── public API ───────────────────────────────────────────────────────────────
 
-pub struct Smu { spec: &'static Spec, bus: Bus }
+pub struct Smu { spec: &'static Spec, link: Link }
 
 fn cpu_ids() -> Option<(u32, u32)> {
     let info = crate::cpuinfo_head();
@@ -313,31 +468,58 @@ fn cpu_ids() -> Option<(u32, u32)> {
 }
 
 impl Smu {
-    /// Detects the family, opens the SMN bus and runs the self-test. Writes nothing to the CO state.
+    /// Detects the family, picks the transport (see module docs) and runs the self-test on it.
+    /// Writes nothing to the CO state.
     pub fn open() -> Result<Smu, String> {
         let (fam, model) = cpu_ids().ok_or("not an AMD CPU")?;
         let spec = detect(fam, model).map(spec_for).ok_or_else(|| format!(
             "CPU family {fam:#x} model {model}: no verified Curve Optimizer interface (supported: Cezanne, \
              Rembrandt, Phoenix, Hawk Point, Dragon Range, Krackan, Strix Point, Strix Halo, Fire Range)"))?;
-        let mut bus = Bus::open()?;
-        let _g = bus.guard()?;
-        selftest(&mut bus, spec.mbox, SMU_TIMEOUT)?;
-        drop(_g);
-        Ok(Smu { spec, bus })
+        let mut why: Vec<String> = Vec::new();
+        if kmod_usable() {
+            match DriverMb::open(spec) {
+                Ok(mut d) => match d.selftest() {
+                    Ok(()) => return Ok(Smu { spec, link: Link::Driver(d) }),
+                    Err(e) => why.push(e),
+                },
+                Err(e) => why.push(e),
+            }
+        }
+        let raw = Bus::open().and_then(|mut bus| {
+            let g = bus.guard()?;
+            selftest(&mut bus, spec.mbox, SMU_TIMEOUT)?;
+            drop(g);
+            Ok(bus)
+        });
+        match raw {
+            Ok(bus) => Ok(Smu { spec, link: Link::Raw(bus) }),
+            Err(e) => { why.push(e); Err(why.join("; ")) }
+        }
     }
 
     pub fn spec(&self) -> &'static Spec { self.spec }
-    pub fn backend(&self) -> &'static str { self.bus.backend() }
+    pub fn backend(&self) -> &'static str {
+        match &self.link { Link::Driver(_) => "ryzen_smu mailbox", Link::Raw(b) => b.backend() }
+    }
+
+    fn transact(&mut self, opcode: u32, arg0: u32) -> Result<u32, SmuError> {
+        match &mut self.link {
+            Link::Driver(d) => d.transact(opcode, arg0),
+            Link::Raw(bus) => {
+                let _g = bus.guard().map_err(SmuError::Fatal)?;
+                mailbox(bus, self.spec.mbox, opcode, arg0, SMU_TIMEOUT)
+            }
+        }
+    }
 
     fn send(&mut self, opcode: u32, arg0: u32) -> Result<(), SmuError> {
-        let _g = self.bus.guard().map_err(SmuError::Fatal)?;
         // A response that is neither OK nor a defined error code (e.g. 0x59808 seen mid-batch) or
-        // "busy" means the answer was read while another SMU client was using the mailbox. The
-        // CO messages are idempotent, so the same message is re-sent a few times before giving up.
-        // Defined rejections (0xFF/0xFE/0xFD) are final and never retried.
+        // "busy" means the answer was read while another SMU client was using the mailbox (on the
+        // raw paths, typically ryzen_smu's own PM-table refresh). The CO messages are idempotent,
+        // so the same message is re-sent a few times before giving up. Defined rejections are final.
         let mut attempt = 0u32;
         loop {
-            match mailbox(&mut self.bus, self.spec.mbox, opcode, arg0, SMU_TIMEOUT)? {
+            match self.transact(opcode, arg0)? {
                 RSP_OK => return Ok(()),
                 r if attempt < 3 && (r == 0xFC || !matches!(r, 0xFF | 0xFE | 0xFD)) => {
                     attempt += 1;
@@ -481,5 +663,46 @@ mod tests {
         }
         let s = spec_for(Family::FireRange);
         assert!(selftest(&mut Ro(s.mbox), s.mbox, Duration::from_millis(20)).unwrap_err().contains("not writable"));
+    }
+
+    #[test]
+    fn driver_mailboxes_match() {
+        // ryzen_smu 0.1.7 smu_init(): codename -> (RSMU or MP1 mailbox our Spec uses). Must equal Spec::mbox,
+        // otherwise the driver path would deliver the opcode to a different mailbox.
+        let drv: [(u32, &str, [u32; 3]); 8] = [
+            (11, "MP1",  [0x3B10528, 0x3B10578, 0x3B10998]), // Rembrandt
+            (14, "MP1",  [0x3B10528, 0x3B10564, 0x3B10998]), // Cezanne
+            (20, "RSMU", [0x3B10524, 0x3B10570, 0x3B10A40]), // Raphael
+            (21, "MP1",  [0x3B10528, 0x3B10578, 0x3B10998]), // Phoenix
+            (22, "MP1",  [0x3B10928, 0x3B10978, 0x3B10998]), // StrixPoint
+            (23, "RSMU", [0x3B10524, 0x3B10570, 0x3B10A40]), // GraniteRidge
+            (24, "MP1",  [0x3B10528, 0x3B10578, 0x3B10998]), // HawkPoint
+            (26, "MP1",  [0x3B10928, 0x3B10978, 0x3B10998]), // StrixHalo
+        ];
+        for s in SPECS.iter() {
+            let c = driver_codename(s.family);
+            let (_, mb, a) = drv.iter().find(|d| d.0 == c).unwrap_or_else(|| panic!("{:?}: codename {c} not in table", s.family));
+            assert_eq!(*mb, s.mailbox, "{:?}", s.family);
+            assert_eq!([s.mbox.msg, s.mbox.rsp, s.mbox.arg], *a, "{:?}", s.family);
+        }
+    }
+
+    #[test]
+    fn driver_status_classes() {
+        assert_eq!(driver_status(1).unwrap(), 1);
+        assert_eq!(driver_status(0xFE).unwrap(), 0xFE); // SMU's own code: handled by send()
+        assert!(driver_status(DRV_TIMEOUT).unwrap_err().is_fatal());
+        assert!(driver_status(DRV_PCI_FAILED).unwrap_err().is_fatal());
+        assert!(!driver_status(DRV_UNSUPPORTED).unwrap_err().is_fatal());
+        assert!(!driver_status(DRV_INVALID_ARG).unwrap_err().is_fatal());
+        assert!(drv_io("command", io::Error::from_raw_os_error(libc::EPERM)).message().contains("lockdown"));
+    }
+
+    #[test]
+    fn lockdown_parse() {
+        assert_eq!(parse_lockdown("[none] integrity confidentiality\n"), Some(false));
+        assert_eq!(parse_lockdown("none [integrity] confidentiality\n"), Some(true));
+        assert_eq!(parse_lockdown("none integrity [confidentiality]"), Some(true));
+        assert_eq!(parse_lockdown(""), None);
     }
 }

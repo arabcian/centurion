@@ -4,7 +4,7 @@
 //!   {"op": "set_coper_batch", "params": {"entries": [{ccd,ccx,core,coper}, ...]}}
 //!   {"op": "reset"}
 //!   {"op": "probe"}
-//!       read-only: detected family, SMN backend, allowed offset range (no CO write).
+//!       read-only: detected family, SMU transport, kernel lockdown, allowed offset range (no CO write).
 //!   {"op": "monitor_stream", "params": {"interval_ms": n}}
 //!       read-only: one line of per-CPU VID volts / core watts + package watts
 //!       (ryzen_mon) every interval (500..10000 ms) until stdin reaches EOF.
@@ -59,6 +59,7 @@ fn op_probe(_: &Map<String, Value>) -> Result<Value, Invalid> {
         Ok(smu) => {
             let s = smu.spec();
             json!({"ok": true, "family": s.name, "mailbox": s.mailbox, "backend": smu.backend(),
+                   "lockdown": centurion_helpers::smu::lockdown_active(),
                    "per_core": s.per_core, "max_ccd": s.max_ccd, "co_min": s.co_min, "co_max": s.co_max})
         }
         Err(e) => e,

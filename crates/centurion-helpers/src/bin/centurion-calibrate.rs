@@ -1022,7 +1022,9 @@ fn cool_first(v: Vec<Cfg>) -> Vec<Cfg> {
 }
 
 fn save(cal: &Calibration) {
-    if let Err(e) = cal.save() { eprintln!("\nsignature not saved: {e}"); }
+    if let Err(e) = cal.save() { eprintln!("\nsignature not saved: {e}"); return; }
+    // The fits the retunes just made, for the next autotune (it then skips fitting).
+    cal.keep_system_fits();
 }
 
 /// Benchmarks of a phase's runs: idle/load measure CPU, memory and (idle) power on every run,

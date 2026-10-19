@@ -945,10 +945,12 @@ impl<'a> Rules<'a> {
         self.out.retain(|d| d.key != key);
         self.out.push(Decision { key, value: value.into(), why: why.into() });
     }
-    /// Like `set`, but skipped when the live value already matches.
+    /// Like `set`, but skipped when the live value already matches. Only for a preset meant for the
+    /// live context: one for another scene's profile must carry the value, since the live value is
+    /// whatever the current scene set and is gone once the target scene is active.
     fn set_live(&mut self, key: &'static str, value: impl Into<Value>, why: impl Into<String>) {
         let value = value.into();
-        if self.p.cur(key) == Some(vstr(&value).as_str()) { self.out.retain(|d| d.key != key); return; }
+        if self.p.target_profile.is_none() && self.p.cur(key) == Some(vstr(&value).as_str()) { self.out.retain(|d| d.key != key); return; }
         self.set(key, value, why);
     }
     fn is(&self, g: Goal) -> bool { self.g == g }
@@ -2315,20 +2317,29 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let (w, hn) = w.adapted_heat(goal, heat);
     if let Some(n) = hn { notes.push(("heat", n)); }
     let w = w.with_overrides(weights);
-    let mut out = autotune_weighted(goal, &p, w);
+    let want_explore = opts["explore"] != false && p.calibration.as_ref().map_or(false, |c| !c.rows.is_empty());
+    // The models depend on the rows, never on the weights: fitted once (every CPU), then the main
+    // decision and the explored trade-offs all read them in parallel.
+    if let Some(c) = p.calibration.as_mut() { c.merge_hyp_cache(); c.use_fit_store(); }
+    prefit(goal, &p);
+    if let Some(c) = p.calibration.as_ref() { c.save_hyp_cache(); c.save_fit_store(); }
+    let t_decide = std::time::Instant::now();
+    let (main, ex) = if want_explore { let (m, e) = explore(goal, &p, w); (m, Some(e)) } else { (decide_weighted(goal, &p, w), None) };
+    let mut out = assemble(goal, &p, w, main);
     let mut notes: Vec<Value> = notes.into_iter().filter(|(k, _)| weights.get(k).is_none()).map(|(_, n)| Value::String(n)).collect();
     // What the measured part of the decision rests on (rows, sessions, fit quality, widened
     // uncertainty, age): a decision is only as good as its evidence, and the report says so.
     if let Some(cal) = p.calibration.as_ref() {
         for l in cal.evidence_lines() { notes.push(Value::String(format!("Signature: {l}."))); }
+        if let Some(l) = cal.fit_store_line() {
+            notes.push(Value::String(format!("Signature: {l}; decisions {:.1} s.", t_decide.elapsed().as_secs_f64())));
+        }
     }
     if let Some(n) = crate::bench::forced_idle_cpus().filter(|n| *n > 0) {
         notes.push(Value::String(format!("Firmware is forcing {n} CPU(s) idle right now (ACPI processor aggregator, a platform power-capping request): while it lasts it overrules the CPU settings here - check the power adapter and the firmware power limits.")));
     }
     if let (false, Some(c)) = (notes.is_empty(), out["constraints"].as_array_mut()) { c.splice(0..0, notes); }
-    if opts["explore"] != false && p.calibration.as_ref().map_or(false, |c| !c.rows.is_empty()) {
-        let (alts, sens, pred, cut) = explore(goal, &p, w);
-        if cut { out["explore_truncated"] = Value::Bool(true); }
+    if let Some((alts, sens, pred)) = ex {
         out["alternatives"] = Value::Array(alts);
         out["sensitivity"] = Value::Array(sens);
         if !pred.is_null() { out["predicted"] = pred; }
@@ -2362,67 +2373,93 @@ fn predict(goal: Goal, p: &Profile, w: Weights, d: &[Decision]) -> Value {
 
 fn round3(x: f64) -> f64 { (x * 1000.0).round() / 1000.0 }
 
-/// Alternatives (the same machine data under other trade-offs) and the decisions that depend on a
-/// weight: every weight 30 % down and up, and three labelled trade-offs. Each re-decides from the
-/// same fitted models (no refit); each re-decision still runs the joint optimizer (about a second
-/// on a full signature), so the whole pass stops at EXPLORE_BUDGET and reports the cut (the last
-/// value is true then) - unbounded, it pushed the reply past the GUI's timeout.
-const EXPLORE_BUDGET: std::time::Duration = std::time::Duration::from_secs(12);
-fn explore(goal: Goal, p: &Profile, w: Weights) -> (Vec<Value>, Vec<Value>, Value, bool) {
-    let t0 = std::time::Instant::now();
-    let mut cut = false;
-    let (base, _, _) = decide_weighted(goal, p, w);
-    let pred = predict(goal, p, w, &base);
-    let val = |d: &[Decision], k: &str| d.iter().find(|x| x.key == k).map(|x| vstr(&x.value));
-    let diff = |d: &[Decision]| -> Vec<Value> {
-        let keys: BTreeSet<&str> = d.iter().map(|x| x.key).chain(base.iter().map(|x| x.key)).collect();
-        keys.into_iter().filter_map(|k| {
-            let (a, b) = (val(&base, k), val(d, k));
-            (a != b).then(|| json!({"key": k, "value": b, "from": a}))
-        }).collect()
-    };
+/// Puts the goal's measurement frame (power source) on the signature and fits every phase model
+/// once, so parallel decisions share the fits instead of each refitting.
+fn prefit(goal: Goal, p: &Profile) {
+    let Some(cal) = p.calibration.as_ref() else { return };
+    cal.set_power_pref(if goal == Goal::PowerSave { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl });
+    cal.prefit();
+}
+
+/// A copy for one parallel decision: same data, fitted models shared.
+fn share(p: &Profile) -> Profile {
+    let mut q = p.clone();
+    q.calibration = p.calibration.as_ref().map(calib::Calibration::share_fits);
+    q
+}
+
+type Decided = (Vec<Decision>, Map<String, Value>, Vec<String>);
+type Explored = (Vec<Value>, Vec<Value>, Value);
+
+/// The main decision, plus the alternatives (the same machine data under other trade-offs) and the
+/// decisions that depend on a weight: every weight 30 % down and up, and three labelled trade-offs.
+/// All of them re-decide from the same fitted models (no refit) and run in parallel, one decision
+/// per CPU: the wall time is about that of the main decision alone.
+fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
     let variants: [(&str, Weights); 3] = [
         ("Cooler and quieter (power x2.5)", Weights { power: (w.power * 2.5).min(3.0), ..w }),
         ("More performance (latency, throughput x1.3; power x0.4)", Weights { latency: (w.latency * 1.3).min(3.0), throughput: (w.throughput * 1.3).min(3.0), power: w.power * 0.4, ..w }),
         ("Leaner memory (footprint x2)", Weights { footprint: (w.footprint * 2.0).min(3.0), ..w }),
     ];
-    let mut alts = Vec::new();
-    for (label, wv) in variants {
-        if t0.elapsed() >= EXPLORE_BUDGET { cut = true; break; }
-        let (d, _, _) = decide_weighted(goal, p, wv);
-        let ch = diff(&d);
-        if ch.is_empty() { continue; }
-        alts.push(json!({"label": label, "weights": wv.to_json(), "changes": ch, "predicted": predict(goal, p, wv, &d)}));
-    }
-    let mut flips: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let fields: [(&str, fn(&mut Weights) -> &mut f64, f64); 6] = [
         ("latency", |w| &mut w.latency, 3.0), ("throughput", |w| &mut w.throughput, 3.0), ("power", |w| &mut w.power, 3.0),
         ("footprint", |w| &mut w.footprint, 3.0), ("load", |w| &mut w.load, 1.0), ("heat", |w| &mut w.heat, 1.0)];
-    'fields: for (name, f, max) in fields {
+    // Jobs: 0 = main, then the trade-offs, then the sensitivity steps (name, -30 % / +30 %).
+    let mut jobs: Vec<(Weights, Option<(&str, bool)>)> = vec![(w, None)];
+    for (_, wv) in &variants { jobs.push((*wv, None)); }
+    for (name, f, max) in fields {
         for m in [0.7, 1.3] {
-            if t0.elapsed() >= EXPLORE_BUDGET { cut = true; break 'fields; }
             let mut wv = w;
             let x = f(&mut wv);
             if *x == 0.0 { continue; }
             *x = (*x * m).min(max);
-            let (d, _, _) = decide_weighted(goal, p, wv);
-            for c in diff(&d) {
-                let k = c["key"].as_str().unwrap_or("").to_owned();
-                flips.entry(k).or_default().push(format!("{name} {} -> {}", if m < 1.0 { "-30 %" } else { "+30 %" },
-                                                          c["value"].as_str().unwrap_or("(leave)")));
-            }
+            jobs.push((wv, Some((name, m < 1.0))));
         }
     }
-    // Restore the frame of the main decision (explore re-ran it with other weights).
-    let _ = decide_weighted(goal, p, w);
-    let sens = flips.into_iter().map(|(k, f)| json!({"key": k, "value": val(&base, &k), "flips": f})).collect();
-    (alts, sens, pred, cut)
+    let profs: Vec<std::sync::Mutex<Option<Profile>>> = jobs.iter().map(|_| std::sync::Mutex::new(Some(share(p)))).collect();
+    let mut res: Vec<Option<(Decided, Value)>> = crate::par::map(jobs.len(), |i| {
+        let q = profs[i].lock().ok().and_then(|mut g| g.take())?;
+        let d = decide_weighted(goal, &q, jobs[i].0);
+        // Sensitivity steps need only the decisions; the main one and the trade-offs also their prediction.
+        let pred = if jobs[i].1.is_none() { predict(goal, &q, jobs[i].0, &d.0) } else { Value::Null };
+        Some((d, pred))
+    }).into_iter().collect();
+    let (main, pred) = res[0].take().unwrap_or_else(|| (decide_weighted(goal, p, w), Value::Null));
+    let base = &main.0;
+    let val = |d: &[Decision], k: &str| d.iter().find(|x| x.key == k).map(|x| vstr(&x.value));
+    let diff = |d: &[Decision]| -> Vec<Value> {
+        let keys: BTreeSet<&str> = d.iter().map(|x| x.key).chain(base.iter().map(|x| x.key)).collect();
+        keys.into_iter().filter_map(|k| {
+            let (a, b) = (val(base, k), val(d, k));
+            (a != b).then(|| json!({"key": k, "value": b, "from": a}))
+        }).collect()
+    };
+    let mut alts = Vec::new();
+    for (i, (label, wv)) in variants.iter().enumerate() {
+        let Some(((d, _, _), pr)) = res[1 + i].take() else { continue };
+        let ch = diff(&d);
+        if ch.is_empty() { continue; }
+        alts.push(json!({"label": label, "weights": wv.to_json(), "changes": ch, "predicted": pr}));
+    }
+    let mut flips: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (i, job) in jobs.iter().enumerate().skip(1 + variants.len()) {
+        let (Some((name, down)), Some(((d, _, _), _))) = (job.1, res[i].take()) else { continue };
+        for c in diff(&d) {
+            let k = c["key"].as_str().unwrap_or("").to_owned();
+            flips.entry(k).or_default().push(format!("{name} {} -> {}", if down { "-30 %" } else { "+30 %" },
+                                                      c["value"].as_str().unwrap_or("(leave)")));
+        }
+    }
+    let sens = flips.into_iter().map(|(k, f)| json!({"key": k, "value": val(base, &k), "flips": f})).collect();
+    (main, (alts, sens, pred))
 }
 
 pub fn autotune_with(goal: Goal, p: &Profile) -> Value { autotune_weighted(goal, p, Weights::for_goal(goal)) }
 
-pub fn autotune_weighted(goal: Goal, p: &Profile, w: Weights) -> Value {
-    let (decisions, scores, notes) = decide_weighted(goal, p, w);
+pub fn autotune_weighted(goal: Goal, p: &Profile, w: Weights) -> Value { assemble(goal, p, w, decide_weighted(goal, p, w)) }
+
+/// The reply for a decision set: availability filter, audit, rationale.
+fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Decided) -> Value {
     let mut values = Map::new();
     let mut why = Map::new();
     let mut skipped = Vec::new();
@@ -2481,7 +2518,7 @@ fn validate_static(t: &tune::Tunable, v: &Value) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    fn legion() -> Profile {
+    pub(super) fn legion() -> Profile {
         Profile {
             vendor: tune::Vendor::Amd, model: "AMD Ryzen 9 9955HX3D 16-Core Processor".into(), logical: 32, cores: 16, smt_active: true,
             ccds: vec![
@@ -2681,7 +2718,7 @@ mod tests {
     }
 
 
-    fn with_defaults(mut p: Profile, kv: &[(&str, &str)]) -> Profile {
+    pub(super) fn with_defaults(mut p: Profile, kv: &[(&str, &str)]) -> Profile {
         p.defaults = Some(defaults::Defaults { values: kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), clean: true, kernel: "7.2.8".into() });
         p
     }
@@ -3255,7 +3292,7 @@ mod tests {
         let w = Weights::for_goal(Goal::Gaming);
         let (d, _, _) = decide_weighted(Goal::Gaming, &p, w);
         assert_eq!(get(&d, "vm.page_lock_unfairness"), Some(&json!(3)), "gaming takes the throughput");
-        let (alts, sens, pred, _) = explore(Goal::Gaming, &p, w);
+        let (_, (alts, sens, pred)) = explore(Goal::Gaming, &p, w);
         let cool = alts.iter().find(|a| a["label"].as_str().unwrap().starts_with("Cooler")).expect("a cooler alternative");
         assert!(cool["changes"].as_array().unwrap().iter().any(|c| c["key"] == "vm.page_lock_unfairness" && c["from"] == "3"), "{cool}");
         assert!(pred["throughput"][0].as_f64().unwrap() > 0.2 && pred["power"][0].as_f64().unwrap() < -0.3, "{pred}");
@@ -3263,5 +3300,130 @@ mod tests {
         // The main decision's frame is back in place after exploring.
         let (d2, _, _) = decide_weighted(Goal::Gaming, &p, w);
         assert_eq!(d, d2);
+    }
+}
+
+#[cfg(test)]
+mod perf_bench {
+    use super::*;
+
+    /// A full-size signature (every phase at its row cap, ~30 knobs, every objective measured).
+    pub(crate) fn big_profile(retuned: bool) -> Profile {
+        let idle_load: &[(&str, &str, &[&str])] = &[
+            ("vm.swappiness", "60", &["100", "133", "150", "180"]), ("vm.page_cluster", "3", &["0", "1"]),
+            ("vm.vfs_cache_pressure", "100", &["50", "200"]), ("vm.watermark_boost_factor", "15000", &["0", "5000"]),
+            ("vm.compaction_proactiveness", "20", &["0", "10", "40"]), ("vm.min_free_kbytes", "67584", &["33792", "135168"]),
+            ("mm.lru_gen_min_ttl", "0", &["1000"]), ("vm.stat_interval", "1", &["10"]), ("vm.page_lock_unfairness", "5", &["1", "20"]),
+            ("zswap.max_pool_percent", "20", &["10", "30"]), ("sched.migration_cost_ns", "500000", &["250000", "1000000", "5000000"]),
+            ("sched.nr_migrate", "32", &["8", "128"]), ("vm.percpu_pagelist_high_fraction", "0", &["8", "32", "128"]),
+            ("vm.extfrag_threshold", "500", &["250", "750"]), ("kernel.split_lock_mitigate", "1", &["0"]),
+            ("kernel.nmi_watchdog", "1", &["0"]), ("kernel.sched_autogroup_enabled", "1", &["0"]),
+            ("vm.max_map_count", "65530", &["131060", "1048576"]), ("vm.dirty_expire_centisecs", "3000", &["1500", "6000"]),
+            ("vm.dirty_writeback_centisecs", "500", &["250", "1000"]),
+        ];
+        let io: &[(&str, &str, &[&str])] = &[
+            ("blk.read_ahead_kb", "128", &["32", "64", "256", "512"]), ("blk.wbt_lat_usec", "2000", &["0", "1000", "4000", "8000"]),
+            ("blk.nomerges", "0", &["1", "2"]), ("blk.rq_affinity", "1", &["0", "2"]), ("blk.nr_requests", "256", &["64", "128"]),
+            ("blk.max_sectors_kb", "1280", &["320", "640"]),
+        ];
+        let dev: &[(&str, &str, &[&str])] = &[
+            ("snd.hda_power_save", "1", &["0", "10"]), ("usb.autosuspend_ms", "2000", &["-1", "500", "10000"]),
+            ("pm.nvme_latency_us", "100000", &["0", "10000"]), ("gpu.amdgpu_abm", "0", &["1", "3"]),
+        ];
+        let all: Vec<(&str, &str, &[&str])> = idle_load.iter().chain(io).chain(dev).copied().filter(|(k, _, _)| tune::find(k).is_some()).collect();
+        let kv: Vec<(&str, &str)> = all.iter().map(|(k, r, _)| (*k, *r)).collect();
+        let mut p = super::tests::with_defaults(super::tests::legion(), &kv);
+        for (k, v) in &kv { p.current.insert(k.to_string(), v.to_string()); }
+        let mut cal = calib::Calibration::default();
+        let mut rng = model::Rng::new(77);
+        let mut t = 1_000u64;
+        for (phase, set, n, per) in [(calib::Phase::Idle, idle_load, 1100usize, 100usize), (calib::Phase::Load, idle_load, 1100, 100),
+                                     (calib::Phase::Io, io, 600, 100), (calib::Phase::Dev, dev, 300, 60)] {
+            let facs: Vec<model::Factor> = set.iter().filter(|(k, _, _)| tune::find(k).is_some())
+                .map(|(k, r, v)| model::Factor { key: k.to_string(), reference: r.to_string(), values: v.iter().map(|s| s.to_string()).collect() }).collect();
+            let eff: BTreeMap<(String, String), [f64; 4]> = facs.iter().flat_map(|f| f.values.iter().map(|v| (f.key.clone(), v.clone()))).map(|kv| {
+                let e = [(rng.unit() - 0.5) * 0.08, (rng.unit() - 0.5) * 0.08, (rng.unit() - 0.5) * 0.08, (rng.unit() - 0.5) * 0.08];
+                (kv, e)
+            }).collect();
+            let design = model::initial_design(&facs, n, &mut rng);
+            let mut rows = Vec::new();
+            for (i, c) in design.iter().enumerate() {
+                let c = if i % 8 == 0 { Vec::new() } else { c.clone() };
+                let mut y = [0.0; 4];
+                for kv in &c { if let Some(e) = eff.get(kv) { for o in 0..4 { y[o] += e[o]; } } }
+                for o in 0..4 { y[o] += ((rng.unit() + rng.unit() + rng.unit()) - 1.5) * 0.04; }
+                if phase == calib::Phase::Dev { y[0] = f64::NAN; y[1] = f64::NAN; y[3] = f64::NAN; }
+                t += 7;
+                rows.push(calib::Row { phase, sess: (phase.idx() * 1000 + i / per) as u64, pos: (i % per) as f64 / per as f64, t, kernel: String::new(), cfg: c,
+                                       y, w: 1.0, bv: calib::BENCH_VERSION, ..Default::default() });
+            }
+            let mut by: BTreeMap<u64, Vec<calib::Row>> = BTreeMap::new();
+            for r in rows { by.entry(r.sess).or_default().push(r); }
+            for (s, r) in by { cal.put_session(phase, s, r); }
+            for f in &facs { cal.refs.insert(f.key.clone(), f.reference.clone()); }
+        }
+        cal.now = t;
+        if retuned { for ph in [calib::Phase::Idle, calib::Phase::Load, calib::Phase::Io, calib::Phase::Dev] { cal.retune(ph, 1); } }
+        // Like a file read back: no cached fits.
+        let mut cal = calib::Calibration::from_json(&cal.to_json());
+        cal.invalidate();
+        p.calibration = Some(cal);
+        p
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_big_signature() {
+        for retuned in [true, false] {
+            let t = std::time::Instant::now();
+            let p = big_profile(retuned);
+            eprintln!("build (retuned={retuned}): {:?}", t.elapsed());
+            {
+                let c = p.calibration.as_ref().unwrap();
+                for ph in [calib::Phase::Idle, calib::Phase::Load, calib::Phase::Io, calib::Phase::Dev] {
+                    let t = std::time::Instant::now();
+                    let pf = c.phase_fit(ph);
+                    eprintln!("  fit {:?}: {:?} ({} rows)", ph, t.elapsed(), pf.map_or(0, |f| f.set.nrows()));
+                }
+                let w = Weights::for_goal(Goal::Gaming);
+                let t = std::time::Instant::now();
+                let _ = decide_weighted(Goal::Gaming, &p, w);
+                eprintln!("  warm decide: {:?}", t.elapsed());
+            }
+            for (label, w) in [("default", Weights::for_goal(Goal::Gaming)),
+                               ("custom", Weights::for_goal(Goal::Gaming).with_overrides(&json!({"power": 0.8, "storage": 1.0, "heat": 0.3, "footprint": 0.7})))] {
+                let p = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); } q };
+                let t = std::time::Instant::now();
+                prefit(Goal::Gaming, &p);
+                let t1 = t.elapsed();
+                let (main, _) = explore(Goal::Gaming, &p, w);
+                let out = assemble(Goal::Gaming, &p, w, main);
+                eprintln!("  {label}: fit {:?}, decide + explore {:?}, {} values", t1, t.elapsed(), out["preset"]["values"].as_object().map_or(0, |m| m.len()));
+            }
+            // Two autotune runs in a row (separate processes): the second takes the kept fits.
+            let dir = std::env::temp_dir().join(format!("ct-fitstore-{}", std::process::id()));
+            std::env::set_var("XDG_CACHE_HOME", &dir);
+            let mut outs = Vec::new();
+            for (label, w) in [("store: first", Weights::for_goal(Goal::Gaming)),
+                               ("store: custom weights", Weights::for_goal(Goal::Gaming).with_overrides(&json!({"power": 0.8, "storage": 1.0})))] {
+                let p = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); c.use_fit_store(); } q };
+                let t = std::time::Instant::now();
+                prefit(Goal::Gaming, &p);
+                p.calibration.as_ref().unwrap().save_fit_store();
+                let t1 = t.elapsed();
+                let out = assemble(Goal::Gaming, &p, w, decide_weighted(Goal::Gaming, &p, w));
+                eprintln!("  {label}: fit {:?} [{}], total {:?}", t1, p.calibration.as_ref().unwrap().fit_store_line().unwrap_or_default(), t.elapsed());
+                outs.push((w, p));
+                let _ = out;
+            }
+            // The kept fits decide exactly as fresh ones.
+            let (w, kept) = (outs[1].0, &outs[1].1);
+            let fresh = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); } q };
+            prefit(Goal::Gaming, &fresh);
+            assert_eq!(assemble(Goal::Gaming, kept, w, decide_weighted(Goal::Gaming, kept, w))["preset"],
+                       assemble(Goal::Gaming, &fresh, w, decide_weighted(Goal::Gaming, &fresh, w))["preset"]);
+            let _ = std::fs::remove_dir_all(&dir);
+            std::env::remove_var("XDG_CACHE_HOME");
+        }
     }
 }

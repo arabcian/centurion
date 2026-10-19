@@ -144,14 +144,21 @@ fn smn_read(addr: u32) -> Result<u32, String> {
     let f = fs::OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(SMN)
         .map_err(|e| format!("smn open: {e}"))?;
     let _lock = crate::FdLock::exclusive(&f).map_err(|e| format!("smn lock: {e}"))?;
-    if f.write_at(&addr.to_le_bytes(), 0).map_err(|e| format!("smn write: {e}"))? != 4 {
-        return Err("smn write: short write".into());
+    // ryzen_smu >= 0.1.9 gives the result only to the process that wrote the address (EAGAIN
+    // otherwise) and fails the address write itself (EIO) when the SMN read failed.
+    for attempt in 0.. {
+        if f.write_at(&addr.to_le_bytes(), 0).map_err(|e| format!("smn write: {e}"))? != 4 {
+            return Err("smn write: short write".into());
+        }
+        let mut b = [0u8; 4];
+        match f.read_at(&mut b, 0) {
+            Ok(4) => return Ok(u32::from_le_bytes(b)),
+            Ok(_) => return Err("smn read: short read".into()),
+            Err(e) if attempt < 3 && e.raw_os_error() == Some(libc::EAGAIN) => continue,
+            Err(e) => return Err(format!("smn read: {e}")),
+        }
     }
-    let mut b = [0u8; 4];
-    if f.read_at(&mut b, 0).map_err(|e| format!("smn read: {e}"))? != 4 {
-        return Err("smn read: short read".into());
-    }
-    Ok(u32::from_le_bytes(b))
+    unreachable!()
 }
 
 /// The SMN node exists only once ryzen_smu's PCI driver has probed, which can
