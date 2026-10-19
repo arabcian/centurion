@@ -52,7 +52,7 @@
 #include <algorithm>
 #include <climits>
 
-static constexpr int POLL_MS = 4000, DESCRIBE_TIMEOUT_MS = 8000, PKEXEC_TIMEOUT_MS = 120000, AUTOTUNE_TIMEOUT_MS = 180000;
+static constexpr int POLL_MS = 4000, DESCRIBE_TIMEOUT_MS = 8000, PKEXEC_TIMEOUT_MS = 120000, AUTOTUNE_TIMEOUT_MS = 600000;
 static constexpr qint64 MAX_PRESET_BYTES = 256 * 1024;
 static const char *GROUPS[] = {"CPU", "Memory", "Scheduler", "Storage", "Network", "Devices", "Power", "Stability"};
 static const QString GAMEMODE = QStringLiteral("/usr/bin/centurion-gamemode");
