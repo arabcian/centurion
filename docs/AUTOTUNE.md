@@ -335,6 +335,38 @@ every boot. Status: `centurion-calibrate --status` (and the Optimizations tab); 
 (`rc-update add … default` / `systemctl enable`), and it removes itself as soon as it has taken
 the schedule (cancelling removes it too), so it exists for that one boot only.
 
+## Kept models between runs
+
+The models depend on the signature's rows, never on the weights. Every autotune run (a goal, a
+changed weight, a scene) is its own process, and each refitted every phase from scratch -
+hyperparameter search, screening fit, outlier reweighting: seconds per phase on a large signature.
+Autotune now keeps what that work found in `~/.cache/centurion/fit-store.json` (per objective the
+hyperparameters, final observation weights and leave-one-out statistics; per phase the screening
+heredity and interaction order), bound to the machine fingerprint and to a fingerprint of the exact
+model input. A run with the same input rebuilds each fit with one factorisation - the same fit, bit
+for bit, so the same decisions. Any change of rows, references, kernel, power source or kept scales
+is another input and is fitted again. Rows age in one-day steps counted from the phase's newest row
+(under 0.8 % of a weight, all weights alike) so the input does not change every second.
+
+The calibration leaves its own fits too: after every save `centurion-calibrate` writes the phase
+models its retunes hold to `/var/lib/centurion/fit-store.json` (root-owned, world-readable, same
+format and input binding), and autotune reads it after the user's store. Because the age steps
+start at each phase's newest row, the first autotune within a day of a calibration has exactly the
+input that calibration fitted and skips the fitting altogether (no hyperparameter search, no
+screening, no reweighting) - before, the first run after every calibration, and the first run of
+every new 6-hour step, paid the whole fit.
+
+The report notes per phase whether its model was kept or fitted and how long that and the decisions
+took. On a 3100-row signature: 4.5 s -> 0.9 s (kept scales), 19 s -> 0.9 s (none kept).
+
+Within one run: a fresh fit no longer factorises the best hyperparameters' kernel twice (the
+search's evaluation is reused by the outlier reweighting: three factorisations per objective instead
+of four, same result), and every fit caches the projection L⁻¹k(X, p) of each configuration term it
+has solved, so the decisions' posterior variances (most of a decision's time: one triangular solve
+per term) reuse the terms the context mixture and the contrasts keep repeating - across the main
+decision, the trade-offs and the sensitivity steps alike. The factor is kept packed (half the
+memory). Decisions are unchanged (checked preset for preset on a 3100-row signature).
+
 ## Alternatives and sensitivity
 
 The fits are per objective, so other trade-offs cost no new measurement. Every autotune

@@ -40,7 +40,8 @@ rm -f "$UNITDIR/nvcurve-autoload.service" "$UNITDIR/centurion-tune.service" "$UN
 # Boot-guard state goes; the BIOS memory-timing backups (AodSetupRpl-*) stay:
 # they are the only copy of the variable from before an edit.
 rm -f /var/lib/centurion/boot-guard.json /var/lib/centurion/boot-guard.json.tmp \
-      /var/lib/centurion/gpu-mode-pending.json /var/lib/centurion/gpu-mode-pending.json.tmp
+      /var/lib/centurion/gpu-mode-pending.json /var/lib/centurion/gpu-mode-pending.json.tmp \
+      /var/lib/centurion/fit-store.json
 rm -rf /var/cache/centurion   # probed values only, rebuilt on demand
 # Wi-Fi power-save drop-in written by the tuning (the restore above normally removes it).
 if [[ -f /etc/NetworkManager/conf.d/90-centurion-wifi-powersave.conf ]]; then
