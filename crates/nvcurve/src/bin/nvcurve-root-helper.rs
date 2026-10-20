@@ -301,6 +301,27 @@ fn dispatch(op: &str) -> Option<fn(&Obj) -> OpResult> {
     })
 }
 
+/// Ops that change the GPU's live state. While centurion-calibrate holds the machine
+/// (/run/centurion/calibrating.json) they are refused, like the other hardware helpers do
+/// (centurion_helpers::refuse_during_calibration; this crate does not link that one).
+const CURVE_WRITES: &[&str] = &["apply_gpu_offsets", "apply_named_profile", "reset_gpu_curve", "reset_all", "set_powermizer",
+                                "set_vram_memlock", "reset_vram_memlock", "set_gpu_clocklock", "reset_gpu_clocklock"];
+
+/// Pid of a live calibration hold: same rule as centurion_helpers::calibration_hold() (a recorded
+/// start time must still match, so a recycled pid is no hold).
+fn calibration_hold() -> Option<i64> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string("/run/centurion/calibrating.json").ok()?).ok()?;
+    let pid = v["pid"].as_i64().filter(|p| *p > 1)?;
+    let start = || -> Option<u64> {
+        let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        s[s.rfind(')')? + 1..].split_whitespace().nth(19)?.parse().ok()
+    };
+    match v["start"].as_u64() {
+        Some(st) => (start() == Some(st)).then_some(pid),
+        None => Path::new(&format!("/proc/{pid}")).exists().then_some(pid),
+    }
+}
+
 fn run() -> Value {
     if unsafe { libc::geteuid() } != 0 {
         return json!({"ok": false, "error": "root_helper must run as root"});
@@ -335,6 +356,12 @@ fn run() -> Value {
     let Some(handler) = dispatch(op) else {
         return json!({"ok": false, "error": format!("Unknown or disallowed op: {}", obj.get("op").cloned().unwrap_or(Value::Null))});
     };
+    if CURVE_WRITES.contains(&op) {
+        if let Some(pid) = calibration_hold() {
+            return json!({"ok": false, "calibrating": true, "error": format!(
+                "centurion-calibrate (pid {pid}) is measuring: power profile, firmware limits, fan and curves stay as they are until it ends")});
+        }
+    }
     let _lock = if op == "read_sensors" { None } else {
         match ops::gpu_write_lock() {
             Ok(f) => Some(f),

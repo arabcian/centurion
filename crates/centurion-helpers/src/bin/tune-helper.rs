@@ -427,7 +427,7 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
         let (key, f, orig) = &items[i];
         // Master switch: the radios' originals are dropped, not written back.
         if let Some(w) = &wireless {
-            if key == "net.wifi_power_save" || w.iter().any(|d| f.starts_with(d.join("power"))) { continue; }
+            if key == "net.wifi_power_save" || w.iter().any(|d| f.starts_with(d.join("power")) || f.starts_with(d.join("link"))) { continue; }
         }
         // CPUs come back first: give them time before their cpufreq files are written.
         if !hotplug_done && !tune::is_hotplug(key) {

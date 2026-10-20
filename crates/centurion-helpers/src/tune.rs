@@ -1650,8 +1650,9 @@ fn without_wireless(v: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 /// Forces Wi-Fi and Bluetooth power management off while the master switch is on:
-/// 802.11 power save, runtime PM of the radios' PCI/USB devices, and btusb autosuspend
-/// for adapters that appear later. Returns what could not be written.
+/// 802.11 power save, runtime PM and PCIe ASPM (L1 and its substates) of the radios'
+/// PCI/USB devices, and btusb autosuspend for adapters that appear later.
+/// Returns what could not be written.
 pub fn enforce_wireless_pm() -> Vec<String> {
     let Some(devs) = wireless_lock() else { return vec![] };
     let mut errs = Vec::new();
@@ -1664,6 +1665,12 @@ pub fn enforce_wireless_pm() -> Vec<String> {
         let c = d.join("power/control");
         if read(&c).as_deref() == Some("auto") {
             if let Err(e) = write_checked(&c, "on") { errs.push(e); }
+        }
+        // l1_aspm=0 sets the link's aspm_disable bit (L1 + L1.1/L1.2), which the global
+        // policy (TLP, pcie_aspm.policy) cannot re-enable. Only the endpoint has link/.
+        let link = d.join("link");
+        if ASPM_FILES.iter().any(|n| read(&link.join(n)).as_deref() == Some("1")) {
+            if let Err(e) = write_checked(&link.join("l1_aspm"), "0") { errs.push(e); }
         }
     }
     let p = Path::new("/sys/module/btusb/parameters/enable_autosuspend");
@@ -1979,7 +1986,8 @@ fn pci_aspm_files() -> Vec<PathBuf> {
     }
     v.sort();
     v.dedup();
-    v
+    // Under the master switch the radios' links are enforce_wireless_pm()'s, not this row's.
+    without_wireless(v)
 }
 
 // ── runtime PM / SATA / NVMe discovery ────────────────────────────────────
