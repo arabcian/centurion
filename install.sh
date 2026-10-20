@@ -292,10 +292,12 @@ migrate_legacy() {
     rm -f "$UDEVDIR/70-$OLD-lighting.rules" /etc/udev/rules.d/70-$OLD-lighting.rules
     [[ -n ${ELOGIND_SLEEP:-} ]] && rm -f "$ELOGIND_SLEEP/50-lpm-intel-uv"
 
-    # 4. Per-user data, plus game-launch hooks that call the old binary.
-    for home in /root /home/*; do
-        [[ -d $home ]] || continue
-        user=$(stat -c %U "$home")
+    # 4. Per-user data, plus game-launch hooks that call the old binary. Runs as the owner of the
+    #    home: run as root, a symlink planted by that user (~/.config/centurion -> /etc, a Steam
+    #    userdata link) turned the cp -a / mv / sed -i below into root writes anywhere on the system.
+    mig_user() {
+        local home=$1 OLD=$2 user u
+        user=$(id -un)
         mig_move "$home/.config/$OLD" "$home/.config/centurion"
         mig_move "$home/.cache/$OLD" "$home/.cache/centurion"
         mig_move "$home/.local/state/$OLD" "$home/.local/state/centurion"
@@ -316,7 +318,18 @@ migrate_legacy() {
                 cp -p "$u" "$u.pre-centurion" && sed -i 's/lpm-gamemode/centurion-gamemode/g' "$u" && echo "  updated launch options in $u"
             done < <(find -L "$home/.local/share/Steam/userdata" "$home/.steam/steam/userdata" -name localconfig.vdf -print0 2>/dev/null | sort -zu)
         fi
-        chown -R "$user:" "$home/.config/centurion" "$home/.cache/centurion" "$home/.local/state/centurion" 2>/dev/null || true
+    }
+    for home in /root /home/*; do
+        [[ -d $home && ! -L $home ]] || continue
+        user=$(stat -c %U "$home")
+        if [[ $user == root ]]; then
+            [[ $home == /root ]] && mig_user "$home" "$OLD"
+        elif [[ $user != UNKNOWN ]]; then
+            runuser -u "$user" -- bash -c "$(declare -f mig_move mig_user); mig_user \"\$1\" \"\$2\"" bash "$home" "$OLD" ||
+                echo "  !! could not migrate $home as $user (runuser)" >&2
+            # Files an older root-run migration left root-owned. -P/-h: a symlink is changed itself, never followed.
+            chown -R -P -h "$user:" "$home/.config/centurion" "$home/.cache/centurion" "$home/.local/state/centurion" 2>/dev/null || true
+        fi
     done
 
     # 5. Re-enable the new services exactly where the old ones were.

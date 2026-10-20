@@ -1,0 +1,50 @@
+diff -ru -x target a/crates/centurion-helpers/src/bin/tune-helper.rs b/crates/centurion-helpers/src/bin/tune-helper.rs
+--- a/crates/centurion-helpers/src/bin/tune-helper.rs	2026-10-19 11:54:25.000000000 +0300
++++ b/crates/centurion-helpers/src/bin/tune-helper.rs	2026-10-20 17:08:20.517404860 +0300
+@@ -427,7 +427,7 @@
+         let (key, f, orig) = &items[i];
+         // Master switch: the radios' originals are dropped, not written back.
+         if let Some(w) = &wireless {
+-            if key == "net.wifi_power_save" || w.iter().any(|d| f.starts_with(d.join("power"))) { continue; }
++            if key == "net.wifi_power_save" || w.iter().any(|d| f.starts_with(d.join("power")) || f.starts_with(d.join("link"))) { continue; }
+         }
+         // CPUs come back first: give them time before their cpufreq files are written.
+         if !hotplug_done && !tune::is_hotplug(key) {
+diff -ru -x target a/crates/centurion-helpers/src/tune.rs b/crates/centurion-helpers/src/tune.rs
+--- a/crates/centurion-helpers/src/tune.rs	2026-10-19 11:54:25.000000000 +0300
++++ b/crates/centurion-helpers/src/tune.rs	2026-10-20 17:08:19.193404781 +0300
+@@ -1650,8 +1650,9 @@
+ }
+ 
+ /// Forces Wi-Fi and Bluetooth power management off while the master switch is on:
+-/// 802.11 power save, runtime PM of the radios' PCI/USB devices, and btusb autosuspend
+-/// for adapters that appear later. Returns what could not be written.
++/// 802.11 power save, runtime PM and PCIe ASPM (L1 and its substates) of the radios'
++/// PCI/USB devices, and btusb autosuspend for adapters that appear later.
++/// Returns what could not be written.
+ pub fn enforce_wireless_pm() -> Vec<String> {
+     let Some(devs) = wireless_lock() else { return vec![] };
+     let mut errs = Vec::new();
+@@ -1665,6 +1666,12 @@
+         if read(&c).as_deref() == Some("auto") {
+             if let Err(e) = write_checked(&c, "on") { errs.push(e); }
+         }
++        // l1_aspm=0 sets the link's aspm_disable bit (L1 + L1.1/L1.2), which the global
++        // policy (TLP, pcie_aspm.policy) cannot re-enable. Only the endpoint has link/.
++        let link = d.join("link");
++        if ASPM_FILES.iter().any(|n| read(&link.join(n)).as_deref() == Some("1")) {
++            if let Err(e) = write_checked(&link.join("l1_aspm"), "0") { errs.push(e); }
++        }
+     }
+     let p = Path::new("/sys/module/btusb/parameters/enable_autosuspend");
+     if read(p).as_deref() == Some("Y") {
+@@ -1979,7 +1986,8 @@
+     }
+     v.sort();
+     v.dedup();
+-    v
++    // Under the master switch the radios' links are enforce_wireless_pm()'s, not this row's.
++    without_wireless(v)
+ }
+ 
+ // ── runtime PM / SATA / NVMe discovery ────────────────────────────────────
