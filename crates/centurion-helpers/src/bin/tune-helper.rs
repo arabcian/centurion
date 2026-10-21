@@ -28,7 +28,8 @@
 //!   {"op":"set_boot","values":{..}|null,"preset":".."} store/clear the boot preset (root-owned file)
 //!   {"op":"set_wireless_pm_lock","on":bool}            tune-helper only: master switch — Wi-Fi/Bluetooth power management stays off
 //!       (root-owned /etc/centurion/wireless-pm-lock; scenes, presets and autotune cannot turn it back on)
-//!   {"op":"boot"}                                      apply the boot preset (OpenRC service)
+//!   {"op":"boot"}                                      apply the boot preset (OpenRC service) + saved wake sources
+//!   {"op":"wakeup_set","device":"XHC0","enabled":bool} tune-helper only: ACPI wake source on/off, remembered for every boot
 //!   {"op":"apply_preset","preset":"name","mode":"manual"|"game","replace":bool,"soft_park":bool,"owner_pid":N}
 //!       like apply, but the values are read from the root-owned store /etc/centurion/presets/<name>.json,
 //!       never from the request ("preset":null with replace:true = no preset: restore what the previous one set)
@@ -994,6 +995,9 @@ fn boot_preset() -> Option<Value> {
 fn op_boot() -> Value {
     // Fallback snapshot when centurion-boot-guard is not enabled (runs before the preset).
     let _ = centurion_helpers::defaults::capture();
+    // Wake sources the user switched off in Health → Sleep (the kernel forgets them at every boot).
+    let wake_errs = centurion_helpers::wakeup::apply_saved();
+    if !wake_errs.is_empty() { eprintln!("tune-helper boot: wake sources: {}", wake_errs.join("; ")); }
     // A calibration scheduled for this boot measures from the boot state: the preset waits for it
     // (centurion-calibrate --boot-run applies it when it is done).
     if centurion_helpers::calctx::boot_calibration_pending() {
@@ -1063,6 +1067,10 @@ fn run() -> Value {
             None => json!({"ok": false, "error": "values must be an object"}),
         },
         "set_boot" => op_set_boot(&req),
+        "wakeup_set" => match (req["device"].as_str(), req["enabled"].as_bool()) {
+            (Some(d), Some(on)) => centurion_helpers::wakeup::set(d, on),
+            _ => json!({"ok": false, "error": "wakeup_set needs 'device' (string) and 'enabled' (bool)"}),
+        },
         "set_wireless_pm_lock" => op_set_wireless_pm_lock(&req),
         "boot" => op_boot(),
         "guard_reset" => match centurion_helpers::bootguard::reset() {
@@ -1112,7 +1120,7 @@ mod tests {
     use super::*;
     #[test]
     fn profile_role_cannot_take_values() {
-        for op in ["apply", "set_boot", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot"] {
+        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot"] {
             assert!(!PROFILE_OPS.contains(&op), "{op} must stay tune-helper only");
         }
     }

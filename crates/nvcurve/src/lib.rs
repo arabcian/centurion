@@ -12,6 +12,7 @@ pub mod logging;
 pub mod ops;
 pub mod nvapi;
 pub mod nvml;
+pub mod ocjournal;
 pub mod proc;
 pub mod profiles;
 pub mod safety;

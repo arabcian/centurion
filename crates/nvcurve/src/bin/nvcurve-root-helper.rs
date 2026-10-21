@@ -369,7 +369,16 @@ fn run() -> Value {
         }
     };
     match handler(obj) {
-        Ok(m) => json!({"ok": true, "message": m}),
+        Ok(m) => {
+            // Curve journal (Health → Curve stability): which curve is in effect from now on.
+            match op {
+                "apply_gpu_offsets" => nvcurve::ocjournal::record("custom"),
+                "apply_named_profile" => nvcurve::ocjournal::record(&format!("profile:{}", obj.get("name").and_then(Value::as_str).unwrap_or("?"))),
+                "reset_gpu_curve" | "reset_all" => nvcurve::ocjournal::record("reset"),
+                _ => {}
+            }
+            json!({"ok": true, "message": m})
+        }
         Err(e) => json!({"ok": false, "error": e}),
     }
 }

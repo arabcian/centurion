@@ -5,7 +5,7 @@
 //!   {"op": "reset"}
 //!   {"op": "probe"}
 //!       read-only: detected family, SMU transport, kernel lockdown, allowed offset range (no CO write).
-//!   {"op": "monitor_stream", "params": {"interval_ms": n}}
+//!   {"op": "monitor_stream", "params": {"interval_ms": n, "limits": bool}}   ("limits": + PM table head, see pmtable)
 //!       read-only: one line of per-CPU VID volts / core watts + package watts
 //!       (ryzen_mon) every interval (500..10000 ms) until stdin reaches EOF.
 //!       The request line must end with '\n' so stdin can stay open.
@@ -181,7 +181,10 @@ fn monitor_stream(p: &Map<String, Value>) -> Value {
     // Hard ceiling: a GUI that hangs with the pipe open cannot keep a root sampler alive forever.
     let stop_at = Instant::now() + Duration::from_secs(4 * 3600);
     loop {
-        if !stream::emit_line(&s.sample()) || Instant::now() >= stop_at { break; }
+        // The SMU's limit view (PPT / TDC / EDC / THM) rides along when ryzen_smu exports its PM table.
+        let mut v = s.sample();
+        if p.get("limits").and_then(Value::as_bool).unwrap_or(false) { v["pm"] = centurion_helpers::pmtable::sample(); }
+        if !stream::emit_line(&v) || Instant::now() >= stop_at { break; }
         if stream::wait_stdin(interval, &mut pending).is_none() { break; }
     }
     json!({"ok": true, "stream_end": true})
@@ -214,7 +217,21 @@ fn run() -> Value {
         Some(_) => return json!({"ok": false, "error": "params must be a JSON object"}),
     };
     let out = handler(params).unwrap_or_else(|Invalid(m)| json!({"ok": false, "error": format!("invalid request: {m}")}));
-    if out["ok"] == true { record_state(op.and_then(Value::as_str).unwrap_or(""), params); }
+    if out["ok"] == true {
+        let op = op.and_then(Value::as_str).unwrap_or("");
+        record_state(op, params);
+        // Curve journal (Health → Curve stability).
+        match op {
+            "reset" => centurion_helpers::ocjournal::record("cpu_co", "reset"),
+            "set_coall" => match params.get("value").and_then(Value::as_i64) {
+                Some(0) => centurion_helpers::ocjournal::record("cpu_co", "reset"),
+                Some(v) => centurion_helpers::ocjournal::record("cpu_co", &format!("all-core {v}")),
+                None => {}
+            },
+            "set_coper_batch" => centurion_helpers::ocjournal::record("cpu_co", "per-core"),
+            _ => {}
+        }
+    }
     out
 }
 

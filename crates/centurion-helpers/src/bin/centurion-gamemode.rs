@@ -470,6 +470,16 @@ fn is_lutris_wrapper(comm: &str, cmdline: &[u8]) -> bool {
         })
 }
 
+/// CENTURION_OWNER_PID: the process that owns the game session when PRE / POST are not run by the
+/// launcher itself (the GUI's Heroic / Bottles watcher starts them detached and names itself). Only a
+/// live process of this user is accepted (tune-helper checks the uid again).
+fn owner_override() -> Option<i32> {
+    let pid = std::env::var("CENTURION_OWNER_PID").ok()?.trim().parse::<i32>().ok().filter(|p| *p > 1)?;
+    let st = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let uid = st.lines().find_map(|l| l.strip_prefix("Uid:"))?.split_whitespace().next()?.parse::<u32>().ok()?;
+    (uid == unsafe { libc::getuid() }).then_some(pid)
+}
+
 fn launcher_pid() -> i32 {
     let mut pid = unsafe { libc::getppid() };
     for _ in 0..16 {
@@ -759,6 +769,40 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
         });
     }
 
+    // 6a. 4-zone RGB keyboard (same request as the Lighting tab's Apply).
+    if let Some(z) = s["zone4"].as_object().filter(|z| !z.is_empty()) {
+        let mut req = Value::Object(z.clone());
+        req["op"] = json!("z4_set");
+        if !centurion_spectrum::zone4::present() {
+            line("4-zone lighting", Ok("no 4-zone keyboard here; skipped".into()));
+        } else {
+            let mut v = lighting::handle(&req);
+            if v["denied"] == true {
+                v = pkexec_helper(&format!("{HELPER_DIR}/lighting-helper"), &req).unwrap_or_else(|e| json!({"ok": false, "error": e}));
+            }
+            line("4-zone lighting", if v["ok"] == true { Ok(req["effect"].as_str().unwrap_or("set").to_owned()) }
+                                    else { Err(v["error"].as_str().unwrap_or("failed").to_owned()) });
+        }
+    }
+
+    // 6b. white keyboard backlight level (ideapad LED) and 6c. panel Over Drive.
+    if let Some(n) = s["kbd_backlight"].as_u64().filter(|n| *n <= 10) {
+        let v = pkexec_helper(&format!("{HELPER_DIR}/legion-profile-helper"), &json!({"device": "kbd_backlight", "value": n.to_string()}))
+            .unwrap_or_else(|e| json!({"ok": false, "error": e}));
+        line("keyboard light", if v["ok"] == true { Ok(format!("level {n}")) } else { Err(v["error"].as_str().unwrap_or("failed").to_owned()) });
+    }
+    if let Some(on) = s["panel_od"].as_bool() {
+        let v = pkexec_helper(&format!("{HELPER_DIR}/legion-gpu-helper"), &json!({"op": "set_panel_od", "on": on}))
+            .unwrap_or_else(|e| json!({"ok": false, "error": e}));
+        line("panel Over Drive", if v["ok"] == true { Ok(if on { "on".into() } else { "off".into() }) }
+                                 else { Err(v["error"].as_str().unwrap_or("failed").to_owned()) });
+    }
+
+    // 6d. internal panel refresh rate — as the user, through the desktop's own tool.
+    if let Some(hz) = s["display"]["refresh"].as_f64().filter(|h| *h > 0.0) {
+        line("display", centurion_helpers::display::set_refresh(hz));
+    }
+
     // 7. user command — as the user, no shell, detached
     if let Some(cmd) = s["command"].as_str().map(str::trim).filter(|c| !c.is_empty()) {
         // Same quoting rules as the GUI (QProcess::splitCommand).
@@ -1026,6 +1070,8 @@ extern "C" fn forward(sig: libc::c_int) {
 }
 
 fn wrap(args: &[String]) -> i32 {
+    // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
+    std::env::set_var("CENTURION_WRAPPED", "1");
     OWNER.store(std::process::id() as i32, Ordering::SeqCst);
     let (name, cmd) = split_cmd(args);
     if cmd.is_empty() { log!("centurion-gamemode WRAP: no command"); return 2; }
@@ -1123,6 +1169,8 @@ fn read_json_str(p: &str) -> Option<String> { std::fs::read_to_string(p).ok().ma
 
 
 fn run_exec(args: &[String]) -> i32 {
+    // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
+    std::env::set_var("CENTURION_WRAPPED", "1");
     let (name, cmd) = split_cmd(args);
     if cmd.is_empty() { log!("centurion-gamemode RUN: no command"); return 2; }
     match load_preset(name.as_deref()) {
@@ -1213,8 +1261,8 @@ fn main() {
     }
     let fail = |e: String| { log!("centurion-gamemode: {e}"); 1 };
     let code = match args.first().map(|s| s.to_ascii_uppercase()).as_deref() {
-        Some("PRE") => { OWNER.store(launcher_pid(), Ordering::SeqCst); pre(args.get(1).map(String::as_str)) }
-        Some("POST") => { OWNER.store(launcher_pid(), Ordering::SeqCst); post().map_or_else(fail, |ok| (!ok) as i32) }
+        Some("PRE") => { OWNER.store(owner_override().unwrap_or_else(launcher_pid), Ordering::SeqCst); pre(args.get(1).map(String::as_str)) }
+        Some("POST") => { OWNER.store(owner_override().unwrap_or_else(launcher_pid), Ordering::SeqCst); post().map_or_else(fail, |ok| (!ok) as i32) }
         Some("APPLY") if args.len() == 2 => apply(Some(&args[1]), "manual").map_or_else(fail, |ok| (!ok) as i32),
         Some("APPROVE") => approve(&args[1..]),
         Some("RESTORE") => pkexec(&json!({"op": "restore"})).map_or_else(fail, |v| (!report("RESTORE", &v)) as i32),

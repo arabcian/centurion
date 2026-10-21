@@ -16,6 +16,7 @@ pub mod autotune;
 pub mod backup;
 pub mod bootguard;
 pub mod dgpu;
+pub mod display;
 pub mod fan_table;
 pub mod health;
 pub mod memory_spd;
@@ -34,14 +35,17 @@ pub mod lighting;
 pub mod machine;
 pub mod model;
 pub mod par;
+pub mod pmtable;
 pub mod netguard;
 pub mod nvreg;
+pub mod ocjournal;
 pub mod power;
 pub mod ryzen_mon;
 pub mod smu;
 pub mod stream;
 pub mod tools;
 pub mod tune;
+pub mod wakeup;
 pub mod wlog;
 
 /// The first processor block of /proc/cpuinfo (vendor, family, model, name are

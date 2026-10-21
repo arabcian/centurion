@@ -563,7 +563,7 @@ fn main() {
         Some("sensors") => cmd_sensors(&a),
         Some("powermizer") => cmd_powermizer(&a),
         Some("reset-all") => cmd_reset_all(&a),
-        Some("autoload") => exit(run_autoload(&cfg)),
+        Some("autoload") => { let c = run_autoload(&cfg); if c == 0 { nvcurve::ocjournal::record("boot default (autoload)"); } exit(c) }
         Some(c @ ("serve" | "daemon" | "verify" | "setup" | "service")) =>
             die(2, format!("nvcurve: '{c}' is not ported yet in the Rust build")),
         Some(c) => die(2, format!("nvcurve: unknown command '{c}'\n\n{USAGE}")),
