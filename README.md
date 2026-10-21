@@ -28,16 +28,16 @@ Tabs appear only when the hardware, driver or tool behind them exists.
 
 | Tab | What you get |
 |---|---|
-| **Home** | Power profile cards (Quiet / Balanced / Performance / Custom). *Hardware* box (system, kernel, CPU, GPU, RAM, BIOS, EC firmware) and *Live* box (CPU per CCD, dGPU state, iGPU, fans, NVMe, power rails, battery). *Device* box: battery charge mode, GPU mode (MUX), iGPU-only mode, Panel Overdrive, Fn lock, camera, USB charging when off (and on battery), white keyboard backlight level, Instant Boot, Custom in Fn+Q, Flip to start, Super-key lock, touchpad lock — each only where the firmware reports it. **Device info…** shows the model series, firmware interfaces and capability list. Fans: per-fan Auto / Max / set, **Turbo fan** (EC full speed), custom **Fan curve** editor. **Memory timings** viewer and BIOS editor. Boot-guard status with *Resume boot presets* / *Resume login scene*. |
-| **Scenes** | One name for the whole machine: power profile, firmware limits, CPU curve (Ryzen / Intel), NVIDIA curve, Optimizations preset, keyboard lighting, fan boost, Custom-mode fan curve, a run command. AC / battery auto-switching, pause switch, game-start scene, export / import. |
+| **Home** | Power profile cards (Quiet / Balanced / Performance / Custom). *Hardware* box (system, kernel, CPU, GPU, RAM, BIOS, EC firmware) and *Live* box (CPU per CCD, dGPU state, iGPU, fans, NVMe, power rails, battery). *Device* box: battery charge mode, GPU mode (MUX), iGPU-only mode, Panel Overdrive, Fn lock, camera, USB charging when off (and on battery), white keyboard backlight level, Instant Boot, Custom in Fn+Q, Flip to start, Super-key lock, touchpad lock — each only where the firmware reports it. **Device info…** shows the model series, firmware interfaces and capability list. Fans: per-fan Auto / Max / set, **Turbo fan** (EC full speed), custom **Fan curve** editor with a goal-based **assistant** (quick, or measured under load). **Memory timings** viewer and BIOS editor. Boot-guard status with *Resume boot presets* / *Resume login scene*. |
+| **Scenes** | One name for the whole machine: power profile, firmware limits, CPU curve (Ryzen / Intel), NVIDIA curve, Optimizations preset, keyboard lighting (Spectrum or 4-zone), white keyboard light, panel Over Drive, panel refresh rate, fan boost, Custom-mode fan curve, a run command. AC / battery auto-switching, pause switch, game-start scene (Lutris / Steam hooks, or Heroic / Bottles detected automatically), export / import. |
 | **Firmware** | CPU PL1 / PL2 / PL3 and temperature target, GPU cTGP, Dynamic Boost ceiling / floor (written over WMI where the kernel refuses), BIOS CPU overclocking (applied next boot). |
-| **NVIDIA Curve** | Drag-and-edit V/F curve with zoom and pan, core / memory offsets, VRAM clock lock, GPU core clock cap, named profiles, ★ default applied at boot, driver module options, full reset. Status: temps (incl. VRAM / hotspot), throttle reasons, PowerMizer. |
-| **Ryzen Curve** *(AMD)* | Per-core and all-core Curve Optimizer (CPPC-ranked, CCD-aware layout), profiles; *Reset* clears both. |
+| **NVIDIA Curve** | Drag-and-edit V/F curve with zoom and pan, core / memory offsets, VRAM clock lock, GPU core clock cap, named profiles, ★ default applied at boot, driver module options, full reset, trial apply. Status: temps (incl. VRAM / hotspot), throttle reasons, PowerMizer. |
+| **Ryzen Curve** *(AMD)* | Per-core and all-core Curve Optimizer (CPPC-ranked, CCD-aware layout), profiles; *Reset* clears both. Trial apply. Live limit reasons (PPT / TDC / EDC / THM from the SMU PM table, with ryzen_smu). |
 | **Intel Undervolt** *(Intel)* | Voltage offsets, IccMax, TCC offset, PL1 / PL2, AC / battery profiles, ThrottleStop.ini import, limit-reason counter, live monitor, boot / resume apply. |
 | **AMD GPU** *(amdgpu)* | Overdrive clocks / voltage per GPU generation, power limit, fan curve (RDNA3+), power profile. Every Apply is a **trial** — reverts in 20 s unless you press *Keep*; one-click undervolt steps. |
 | **Optimizations** | 100+ documented CPU / memory / scheduler / storage / network / device / power knobs in 8 groups, built-in presets, **Autotune**, game launch hooks (Lutris, Steam), boot-parameter advisor, *Restore originals* and *↺ Return to boot-guard defaults*. |
 | **Lighting** *(Spectrum, or 4-zone RGB)* | Spectrum keyboards: per-key RGB on a drawing of your own keyboard, firmware effects, 6 hardware profiles, brightness, lid logo, accent lights. 4-zone RGB keyboards: effect, speed, brightness and four zone colours. |
-| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore). |
+| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
 
 The **tray menu** carries the everyday actions: Scene (with auto-switch and
 pause), Power Profile, CPU Curve, CPU Undervolt (Intel), GPU Curve,
@@ -61,6 +61,7 @@ tab (which does wake it).
 | `centurion-boot-guard status\|reset\|…` | Boot-crash protection state |
 | `centurion-netguard daemon\|status\|list\|whois IP` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
+| `centurion-display list\|set-refresh HZ` | Internal panel refresh rate as the user (KDE kscreen-doctor, wlr-randr or xrandr) — used by Scenes |
 
 ## Boot services
 
@@ -299,6 +300,9 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 | live memory timings, extra CPU sensors *(optional)* | `ryzen_smu`, `zenpower` / `zenergy` |
 | BIOS memory timings | efivarfs (`/sys/firmware/efi/efivars`) |
 | Lighting tab without a password | udev + systemd-logind or elogind (`uaccess`) |
+| Health → Sleep (per-sleep log) | the `centurion-sleep-log` system-sleep hook (installed for systemd and elogind) |
+| Scenes → refresh rate | `kscreen-doctor` (KDE), `wlr-randr` (wlroots) or `xrandr` (X11) |
+| Ryzen tab limit reasons | `ryzen_smu` with a PM table (desktop-derived and mobile-APU layouts; other versions are reported, not guessed) |
 | Health → Backup (system image) | GNU `tar` with ACL / xattr support; `pigz` (falls back to `gzip`), optionally `zstd`, `xz` |
 | Health → Network | `nft` and the `centurion-netguard` service; kernel: `NETFILTER_NETLINK_QUEUE`, `NF_TABLES`, `NF_TABLES_INET`, `NFT_QUEUE`, `NF_CONNTRACK`, `NFT_CT`, `INET_DIAG`, `INET_TCP_DIAG`, `INET_UDP_DIAG`, `INET_DIAG_DESTROY` |
 

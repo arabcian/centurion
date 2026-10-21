@@ -1,0 +1,74 @@
+#!/bin/sh
+# Centurion sleep log (systemd / elogind system-sleep hook): one JSON line per sleep in
+# /var/log/centurion/sleep.log for Health → Sleep — how long, how much battery it cost, which
+# source woke the machine, the hardware sleep residency and the NVIDIA dGPU state on the way in and out.
+# Reads sysfs only, writes nothing else, and never holds up a suspend (every read is a plain file read).
+#   $1 = pre | post     $2 = suspend | hibernate | hybrid-sleep | suspend-then-hibernate
+STATE=/run/centurion/sleep-pre
+LOG=/var/log/centurion/sleep.log
+MAX=262144
+
+rd() { [ -r "$1" ] && head -c 256 "$1" 2>/dev/null | tr -d '\n"\\' ; }
+
+bat() {
+	for b in /sys/class/power_supply/*; do
+		[ "$(rd "$b/type")" = Battery ] || continue
+		[ "$(rd "$b/scope")" = Device ] && continue
+		e=$(rd "$b/energy_now"); f=$(rd "$b/energy_full"); u=uWh
+		[ -n "$e" ] || { e=$(rd "$b/charge_now"); f=$(rd "$b/charge_full"); u=uAh; }
+		# "-" for an empty field: the post hook splits this line on spaces, an empty capacity shifted the status.
+		c=$(rd "$b/capacity"); s=$(rd "$b/status" | tr ' ' '_')
+		printf '%s %s %s %s %s' "${e:-0}" "${f:-0}" "$u" "${c:--}" "${s:--}"
+		return
+	done
+}
+
+dgpu() {
+	for d in /sys/bus/pci/devices/*; do
+		[ "$(rd "$d/vendor")" = 0x10de ] || continue
+		case "$(rd "$d/class")" in 0x03*) printf '%s' "$(rd "$d/power/runtime_status")"; return ;; esac
+	done
+	printf 'none'
+}
+
+# "name count" per wakeup source (counts only grow; the post hook diffs them).
+wakecounts() {
+	for w in /sys/class/wakeup/wakeup*; do
+		[ -r "$w/wakeup_count" ] || continue
+		printf '%s %s\n' "$(rd "$w/name" | tr ' ' '_')" "$(rd "$w/wakeup_count")"
+	done
+}
+
+mkdir -p /run/centurion /var/log/centurion 2>/dev/null
+
+case "$1" in
+pre)
+	{
+		printf '%s\n' "$(date +%s)" "$2" "$(bat)" "$(dgpu)" "$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/power/mem_sleep 2>/dev/null)"
+		wakecounts
+	} > "$STATE.tmp" 2>/dev/null && mv -f "$STATE.tmp" "$STATE"
+	;;
+post)
+	[ -r "$STATE" ] || exit 0
+	t0=$(sed -n 1p "$STATE"); kind=$(sed -n 2p "$STATE"); b0=$(sed -n 3p "$STATE"); g0=$(sed -n 4p "$STATE"); mode=$(sed -n 5p "$STATE")
+	t1=$(date +%s); b1=$(bat); g1=$(dgpu)
+	woke=$(wakecounts | awk -v f="$STATE" 'BEGIN { while ((getline l < f) > 0) { n++; if (n > 5) { split(l, a, " "); c[a[1]] = a[2] } } }
+		{ if (($1 in c) && $2 > c[$1]) { printf "%s%s", s, $1; s = "," } }')
+	set -- $b0; e0=${1:-0}; full=${2:-0}; unit=${3:-uWh}; c0=${4:-}; st0=${5:-}
+	set -- $b1; e1=${1:-0}; c1=${4:-}
+	[ "$c0" = - ] && c0=; [ "$c1" = - ] && c1=; [ "$st0" = - ] && st0=
+	st0=$(printf '%s' "$st0" | tr '_' ' ')
+	hw=$(rd /sys/power/suspend_stats/last_hw_sleep)
+	fails=$(rd /sys/power/suspend_stats/fail)
+	irq=$(rd /sys/power/pm_wakeup_irq)
+	line=$(printf '{"start":%s,"end":%s,"kind":"%s","mode":"%s","energy_before":%s,"energy_after":%s,"full":%s,"unit":"%s","cap_before":"%s","cap_after":"%s","status_before":"%s","dgpu_before":"%s","dgpu_after":"%s","hw_sleep_us":"%s","fail_total":"%s","wake_irq":"%s","woke_by":"%s"}' \
+		"${t0:-0}" "$t1" "$kind" "$mode" "$e0" "$e1" "$full" "$unit" "$c0" "$c1" "$st0" "$g0" "$g1" "$hw" "$fails" "$irq" "$woke")
+	if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt "$MAX" ]; then
+		tail -n 400 "$LOG" > "$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG"
+	fi
+	printf '%s\n' "$line" >> "$LOG" 2>/dev/null
+	chmod 0644 "$LOG" 2>/dev/null
+	rm -f "$STATE"
+	;;
+esac
+exit 0

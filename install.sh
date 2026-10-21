@@ -166,7 +166,7 @@ install -d "${own[@]}" -m 0755 "$DESTDIR$LIBEXEC" "$DESTDIR$PREFIX/bin"
 install "${own[@]}" -m 0755 "$T/legion-profile-helper" "$T/fwattr-helper" "$T/ryzen-co-helper" "$T/tune-helper" "$T/tune-profile-helper" "$T/intel-uv-helper" "$T/legion-gpu-helper" "$T/legion-firmware-helper" "$T/lighting-helper" "$T/amdgpu-helper" "$T/nvcurve-sensors" "$T/legion-ec-sensors" "$T/health-reader" "$T/centurion-boot-guard" "$T/netguard-helper" "$T/backup-helper" \
     "$DESTDIR$LIBEXEC/"
 install "${own[@]}" -m 0700 "$T/nvcurve-root-helper" "$DESTDIR$LIBEXEC/"
-install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$DESTDIR$PREFIX/bin/"
+install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$DESTDIR$PREFIX/bin/"
 DESTDIR="$DESTDIR" cmake --install gui/build --strip
 
 install -d "${own[@]}" -m 0755 "$DESTDIR$PREFIX/share/polkit-1/actions" "$DESTDIR/etc/polkit-1/rules.d" \
@@ -214,6 +214,16 @@ if [[ -n $ELOGIND_SLEEP ]]; then
     subst packaging/sleep/centurion-intel-uv > "$DESTDIR$ELOGIND_SLEEP/50-centurion-intel-uv"
     chmod 0755 "$DESTDIR$ELOGIND_SLEEP/50-centurion-intel-uv"
     [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR$ELOGIND_SLEEP/50-centurion-intel-uv"
+    # Sleep log for Health → Sleep (duration, battery used, wake source, dGPU state).
+    install "${own[@]}" -m 0755 packaging/sleep/centurion-sleep-log "$DESTDIR$ELOGIND_SLEEP/40-centurion-sleep-log"
+fi
+SYSTEMD_SLEEP=${SYSTEMD_SLEEP:-}
+if [[ -z $SYSTEMD_SLEEP ]]; then
+    for d in /usr/lib/systemd /lib/systemd; do [[ -d $d/system ]] && { SYSTEMD_SLEEP=$d/system-sleep; break; }; done
+fi
+if [[ -n $SYSTEMD_SLEEP ]]; then
+    install -d "${own[@]}" -m 0755 "$DESTDIR$SYSTEMD_SLEEP"
+    install "${own[@]}" -m 0755 packaging/sleep/centurion-sleep-log "$DESTDIR$SYSTEMD_SLEEP/centurion-sleep-log"
 fi
 
 if (( LEGACY )) && [[ -z "$DESTDIR" ]]; then

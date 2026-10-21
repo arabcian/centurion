@@ -62,7 +62,7 @@ src_install() {
 	doexe "${r}"/{legion-profile-helper,fwattr-helper,ryzen-co-helper,tune-helper,tune-profile-helper,intel-uv-helper,legion-gpu-helper,legion-firmware-helper,lighting-helper,amdgpu-helper,nvcurve-sensors,legion-ec-sensors,health-reader,centurion-boot-guard,netguard-helper,backup-helper}
 	exeopts -m0700
 	doexe "${r}"/nvcurve-root-helper
-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard}
+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display}
 
 	cmake_src_install
 
@@ -91,6 +91,9 @@ src_install() {
 	exeinto /$(get_libdir)/elogind/system-sleep
 	exeopts -m0755
 	doexe "${T}"/50-centurion-intel-uv
+	newexe packaging/sleep/centurion-sleep-log 40-centurion-sleep-log
+	exeinto "$(systemd_get_utildir)"/system-sleep
+	newexe packaging/sleep/centurion-sleep-log centurion-sleep-log
 	udev_dorules packaging/udev/70-centurion-lighting.rules
 	sed -e "s|@LIBEXEC@|${EPREFIX}/usr/libexec/centurion|g" \
 		packaging/udev/90-centurion-dgpu.rules > "${T}"/90-centurion-dgpu.rules || die

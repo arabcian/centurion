@@ -27,6 +27,7 @@ if [[ -x "$PREFIX/libexec/centurion/tune-helper" ]]; then
     fi
 fi
 rm -rf "$PREFIX/libexec/centurion"
+rm -f {/lib64,/usr/lib64,/lib,/usr/lib}/elogind/system-sleep/40-centurion-sleep-log {/usr/lib,/lib}/systemd/system-sleep/centurion-sleep-log "$PREFIX/bin/centurion-display"
 rm -f "$PREFIX/bin/centurion" "$PREFIX/bin/nvcurve" "$PREFIX/bin/centurion-gamemode" "$PREFIX/bin/centurion-intel-uv" "$PREFIX/bin/centurion-autotune" "$PREFIX/bin/centurion-calibrate" "$PREFIX/bin/centurion-netguard" /etc/init.d/centurion-netguard "$UNITDIR/centurion-netguard.service" /etc/init.d/centurion-calibrate-boot "$UNITDIR/centurion-calibrate-boot.service" \
       /etc/init.d/centurion-tune /etc/init.d/centurion-intel-uv /etc/init.d/centurion-intel-uv-daemon /etc/init.d/centurion-boot-guard {/lib64,/usr/lib64,/lib,/usr/lib}/elogind/system-sleep/50-centurion-intel-uv \
       "$PREFIX/share/applications/centurion.desktop" \

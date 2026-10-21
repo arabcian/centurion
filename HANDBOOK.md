@@ -38,17 +38,17 @@ Use the tray for daily switching; use the tabs when you tune.
 ## 3. Home
 
 - **Power profile** — click a card. Applies instantly. *Custom* unlocks firmware limits and the fan curve.
-- **Live box** — temps, fans, power, battery. Updates only while the Home tab is visible (saves power). The dGPU row shows *asleep* or its temperature without waking it.
+- **Live box** — temps, fans, power, battery (with draw and time left / to full). Updates only while the Home tab is visible (saves power). The dGPU row shows *asleep* or its temperature without waking it.
 - **Device box** — battery charge mode, GPU mode (Hybrid / dGPU only, takes effect next boot), iGPU-only mode, Panel Overdrive, Fn lock, camera, USB charging when off / on battery, keyboard backlight level (white keyboards), Instant Boot, Custom in Fn+Q, Flip to start, Super-key lock, touchpad lock. A switch your firmware does not report is simply not shown.
   - **Device info…** (Hardware box) lists what the firmware reports: series, BIOS, interfaces, capability list. Use *Copy report* when filing a bug for another model.
   - **iGPU-only mode** unloads the NVIDIA driver. If the dGPU does not return, press **Bring NVIDIA back**.
-- **Fans** — per fan: *Auto*, *Max*, or set a value and press *Set*. **Turbo fan** = EC full speed. **Fan curve…** edits the table used in Custom mode (AC power).
+- **Fans** — per fan: *Auto*, *Max*, or set a value and press *Set*. **Turbo fan** = EC full speed. **Fan curve…** edits the table used in Custom mode (AC power). **Assistant…** proposes a table for a goal (Quiet / Balanced / Cool): *Quick* shapes it on the firmware's temperature steps, *Measure* (~6 min, Custom profile, on AC) runs a full CPU load at three fan levels and finds the level that holds the goal temperature on your machine. Your table is written back afterwards (also after a crash: the dialog offers it the next time). The proposal lands in the editor — press *Apply* to keep it.
 - **Memory timings** — *Reload* reads live timings; *Edit timings…* → *Write to BIOS* (admin password; applies next boot; *Restore previous…* undoes it). Wrong timings can stop the laptop from booting — change small steps only.
 - **Boot guard box** — appears when a crashed boot paused presets. Fix the cause (usually an undervolt that is too deep), then *Resume boot presets* / *Resume login scene*.
 
 ## 4. Scenes
 
-A scene is a **name for a whole setup**. It stores power profile, firmware limits, CPU curve, NVIDIA curve, Optimizations preset, lighting, fan boost, Custom-mode fan curve and an optional command. Each part can stay *Unchanged*.
+A scene is a **name for a whole setup**. It stores power profile, firmware limits, CPU curve, NVIDIA curve, Optimizations preset, lighting (Spectrum profile / brightness, or the 4-zone keyboard's effect and colours via *Capture*), white keyboard light level, panel Over Drive, the internal panel's **refresh rate**, fan boost, Custom-mode fan curve and an optional command. Each part can stay *Unchanged*; rows only appear where the machine has the thing behind them. The refresh rate is set as you through the desktop's own tool (KDE `kscreen-doctor`, `wlr-randr`, or `xrandr` on X11) at the current resolution — e.g. 60 Hz in the battery scene.
 
 **Make one:** Scenes → *New…* → *Capture current* (copies firmware limits and the fan table) → pick profiles per component → *Save*. *Apply* tests it.
 
@@ -124,6 +124,10 @@ Results accumulate in `/var/lib/centurion/signature.json`. After a BIOS / hardwa
 
 Game mode is reference-counted: the first game applies, the last exit restores. If the preset is not approved yet: `centurion-gamemode APPROVE "Name"`.
 
+**Heroic and Bottles** have no hook like Lutris: tick *Detect games started from Heroic and Bottles* (System at game start). Centurion then notices their games itself (Heroic: `HEROIC_APP_NAME` in the game's environment; Bottles: a Windows program running in a bottle) and runs the same PRE / POST — game scene, ★ game preset, session record. It only looks at processes while Heroic or Bottles runs; games you already wrap with `centurion-gamemode WRAP` are left alone.
+
+**Drift banner:** when TLP, power-profiles-daemon, tuned, auto-cpufreq or a script changes a setting Centurion applied, a banner at the top of Optimizations lists it (what it is now, what it was) and the tools found running; *Re-apply* puts the active scene (or preset) back. A tray notification says the same.
+
 ### 7.5 Boot options
 Shows kernel parameters that help (ASPM, THP, amdgpu mask…) as copy-paste text. Nothing edits your bootloader.
 
@@ -147,6 +151,15 @@ Apply when finished — do not apply in a loop (writes go to non-volatile memory
 ### Monitor
 *Scan now* lists NVIDIA Xid / GSP, MCE, AER, lockups and guard rollbacks with uptime. Events are saved across boots — **Open saved log** / **Clear saved log**. Use it first when games crash after tuning.
 
+### Curve stability
+Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journaled by the helpers; this page lays the saved Xid / GSP / D3cold and machine-check / lockup errors over it: hours in effect, errors, errors per 10 h per profile, highlighted when clearly worse than stock. Optional guard: *Take the GPU curve back to stock after an Xid* and the same for the CPU curve after a machine check — otherwise you only get a notification naming the curve. The curve tabs also have **Trial apply**: after Apply you have 30 s to press *Keep*, else the curve goes back to stock.
+
+### Sleep
+Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`).
+
+### Battery use
+Time left at the current draw, battery drain per scene (energy actually taken from the battery while each scene was active, sleep excluded) with "full charge lasts ~", and a daily capacity / health history.
+
 ### dGPU power
 Why the NVIDIA GPU is awake: runtime-PM state, sibling functions, upstream port, open handles. **Copy report** for bug reports.
 
@@ -167,6 +180,7 @@ Warnings or worse, kept across boots.
 ### Backup
 - **Centurion configuration** — scenes, presets, curves, lighting, boot profiles, network rules, calibration. Optional *System profile* (Portage config, kernel config, fstab, package list — reference only) and *Logs*. Saving needs no password; restoring the root-owned part does. A safety copy is made before every restore.
 - **System image** — choose folder and compressor, options *Low priority*, *Verify*, *Include /home*, retention. Writes `backup-DATE.tar.gz` of `/`. **Restore** to any target path (type `RESTORE` for `/`). Admin password every time.
+- **Automatic** — the configuration is backed up on its own when the newest one in the folder is older than the set interval (default 7 days; no password; only `…-auto` archives are pruned, keep-newest count). A system image needs the password, so Centurion only **reminds** you (tray, at most once a day) when the newest image is older than the interval you set (default 30 days, 0 = off).
 
 ## 10. Command-line cheat sheet
 
