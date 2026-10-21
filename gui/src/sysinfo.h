@@ -22,6 +22,15 @@ Opt cpuModel();
 /// (crates/centurion-helpers/src/machine.rs). `reason` is set when it returns false.
 bool supportedMachine(QString *reason = nullptr);
 
+/// Whitelist on top of supportedMachine(): the marketing name contains one of
+/// LenovoLegionToolkit's AllowedModelsPrefix entries (Compatibility.cs) — the
+/// models whose firmware interfaces are known. False = a Legion-family machine
+/// nobody has reported yet; the GUI asks for a GitHub report but still runs.
+bool knownModel();
+
+/// Plain-text DMI / CPU / kernel summary for a support report (no serial numbers).
+QString reportInfo();
+
 /// IdeaPad-style keyboards: the EC's Fn-lock bit is "F1–F12 primary", the
 /// opposite of what the Fn-lock switch means on Legion / LOQ (same rule as
 /// machine.rs fn_lock_inverted).

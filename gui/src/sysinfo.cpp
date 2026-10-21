@@ -52,6 +52,42 @@ bool supportedMachine(QString *reason) {
     return false;
 }
 
+bool knownModel() {
+    // LenovoLegionToolkit Compatibility.cs AllowedModelsPrefix, same substring
+    // match (case-insensitive, anywhere in the model). ThinkBook is left out:
+    // supportedMachine() refuses it before this is asked.
+    static const char *const prefixes[] = {
+        "8APU1",                                                    // Legion Go
+        "17ACH", "17ARH", "17ITH", "17IMH", "17ITL",
+        "16ACH", "16ADR", "16AFR", "16AHP", "16APH", "16ARH", "16ARP", "16ARX",
+        "16IAH", "16IAX", "16IMH", "16IRH", "16IRX", "16ITH",
+        "18IAX", "NX",
+        "15ACH", "15AHP", "15ALC", "15IPH", "15AKP", "15APH", "15ARH", "15ARP",
+        "15IAH", "15IAX", "15IHU", "15IMH", "15IRH", "15IRX", "15ITH",
+        "14AHP", "14APH", "14IRP", "14AKP", "14IRH",
+        "G5000", "R9000", "R7000", "Y9000", "Y7000",                // China market
+        "17IR", "15IR", "15IC", "15IK",                             // limited compatibility
+    };
+    for (const char *f : {"product_version", "product_family"}) {
+        const QString name = dmi(QLatin1String(f)).value_or(QString());
+        for (const char *p : prefixes)
+            if (name.contains(QLatin1String(p), Qt::CaseInsensitive)) return true;
+    }
+    return false;
+}
+
+QString reportInfo() {
+    QStringList out;
+    auto add = [&out](const char *k, const Opt &v) { out << QStringLiteral("%1: %2").arg(QLatin1String(k), v.value_or(QStringLiteral("-"))); };
+    for (const char *f : {"sys_vendor", "product_name", "product_version", "product_family", "product_sku",
+                          "board_name", "bios_version", "bios_date", "ec_firmware_release"})
+        add(f, dmiClean(QLatin1String(f)));
+    add("cpu", cpuModel());
+    add("kernel", kernel());
+    out << QStringLiteral("centurion: %1").arg(QLatin1String(CENTURION_VERSION));
+    return out.join('\n');
+}
+
 bool fnLockInverted() {
     for (const char *f : {"product_version", "product_family"})
         if (dmi(QLatin1String(f)).value_or(QString()).contains(QLatin1String("ideapad gaming"), Qt::CaseInsensitive)) return true;

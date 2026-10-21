@@ -26,6 +26,13 @@
 #include <QElapsedTimer>
 #include <QLockFile>
 #include <QMessageBox>
+#include <QCheckBox>
+#include <QClipboard>
+#include <QDesktopServices>
+#include <QPushButton>
+#include <QSettings>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QStandardPaths>
@@ -215,6 +222,51 @@ static void installQuitSignals(QCoreApplication &app) {
     for (int s : {SIGTERM, SIGHUP, SIGINT}) ::sigaction(s, &sa, nullptr);
 }
 
+/// Legion-family machine outside the known-model whitelist (sysinfo::knownModel):
+/// say so and ask for a GitHub report, then keep running. "Don't show again" is
+/// remembered per model name, so a different machine asks again.
+static void warnUnknownModel() {
+    const QString model = sysinfo::dmiClean(QStringLiteral("product_version"))
+                              .value_or(sysinfo::dmiClean(QStringLiteral("product_family"))
+                                            .value_or(sysinfo::dmiClean(QStringLiteral("product_name")).value_or(QStringLiteral("unknown"))));
+    std::fprintf(stderr, "centurion: model %s is not in the supported-model list; please report it on GitHub\n", qPrintable(model));
+    QSettings st(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/gui.ini"),
+                 QSettings::IniFormat);
+    if (st.value(QStringLiteral("unknown_model/dismissed")).toString() == model) return;
+
+    const QString info = sysinfo::reportInfo();
+    QMessageBox box(QMessageBox::Warning, QStringLiteral("Centurion — model not supported"),
+                    QStringLiteral("This model (%1) is not supported yet.\n\n"
+                                   "Centurion has not been tested on it, and some firmware features may be "
+                                   "missing or behave differently. Please send your system information on GitHub "
+                                   "so support can be added.").arg(model));
+    box.setDetailedText(info);
+    auto *report = box.addButton(QStringLiteral("Report on GitHub"), QMessageBox::AcceptRole);
+    auto *copy = box.addButton(QStringLiteral("Copy system info"), QMessageBox::ActionRole);
+    auto *cont = box.addButton(QStringLiteral("Continue"), QMessageBox::RejectRole);
+    box.setDefaultButton(report);
+    box.setEscapeButton(cont);
+    auto *dontAsk = new QCheckBox(QStringLiteral("Don't show again for this model"));
+    box.setCheckBox(dontAsk);
+
+    for (;;) {
+        box.exec();
+        if (box.clickedButton() == copy) { QApplication::clipboard()->setText(info); continue; }
+        if (box.clickedButton() == report) {
+            QApplication::clipboard()->setText(info);  // in case the browser drops a long query
+            QUrl url(QStringLiteral(CENTURION_ISSUES_URL));
+            QUrlQuery q;
+            q.addQueryItem(QStringLiteral("title"), QStringLiteral("Model support: %1").arg(model));
+            q.addQueryItem(QStringLiteral("body"),
+                           QStringLiteral("Centurion reported this model as not supported.\n\n```\n%1\n```\n").arg(info));
+            url.setQuery(q);
+            QDesktopServices::openUrl(url);
+        }
+        break;
+    }
+    if (dontAsk->isChecked()) st.setValue(QStringLiteral("unknown_model/dismissed"), model);
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("Centurion");
@@ -264,6 +316,7 @@ int main(int argc, char **argv) {
     theme::applyBase(app);
     MainWindow win;
     theme::applySheet(app);  // after the build: see theme.h
+    if (!qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN") && !sysinfo::knownModel()) warnUnknownModel();
 
     // We own the lock, so any socket left behind is from a dead instance.
     QLocalServer::removeServer(instanceKey());

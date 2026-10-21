@@ -73,8 +73,11 @@ qt_add_resources(centurion appicon
     BASE data
     FILES data/centurion.svg)
 
+set(CENTURION_ISSUES_URL "https://github.com/arabcian/centurion/issues/new" CACHE STRING
+    "GitHub 'new issue' URL the unknown-model warning opens")
 target_compile_definitions(centurion PRIVATE
     CENTURION_VERSION="${PROJECT_VERSION}"
+    CENTURION_ISSUES_URL="${CENTURION_ISSUES_URL}"
     CENTURION_HELPER_DIR="${CENTURION_HELPER_DIR}"
     QT_NO_KEYWORDS)
 target_compile_options(centurion PRIVATE -Wall -Wextra -Wpedantic)
