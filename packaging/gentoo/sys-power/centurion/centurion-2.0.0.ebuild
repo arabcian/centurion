@@ -6,7 +6,7 @@ EAPI=8
 inherit cmake linux-info systemd udev xdg
 
 DESCRIPTION="Power profile, firmware attribute and CPU/GPU curve tuning for Lenovo Legion laptops"
-HOMEPAGE="https://localhost/centurion"
+HOMEPAGE="https://github.com/arabcian/centurion"
 # Self-contained tarball from ./make-dist.sh (crates vendored, offline build).
 SRC_URI="${P}.tar.xz"
 
