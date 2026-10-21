@@ -11,7 +11,14 @@
 #include "ryzentab.h"
 #include "theme.h"
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QCheckBox>
+#include <QColor>
+#include <QFileInfo>
+#include <QProcess>
+#include <QSettings>
+#include <QStandardPaths>
+#include <cmath>
 #include <QDate>
 #include <QDir>
 #include <QFileDialog>
@@ -201,10 +208,57 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         addRow("Keyboard lighting", lh, "A lighting profile of the keyboard controller (edit them in the Lighting tab) "
                                         "and its brightness. Off turns the backlight off.");
     }
+    if (lighting::zone4Present()) {
+        zone4Label_ = new QLabel;
+        zone4Label_->setWordWrap(true);
+        zone4Capture_ = new QPushButton("Capture");
+        zone4Capture_->setObjectName("btnMini");
+        zone4Capture_->setToolTip("Store the 4-zone settings the Lighting tab last applied (effect, colours, speed, brightness).");
+        zone4Clear_ = new QPushButton("Clear");
+        zone4Clear_->setObjectName("btnMini");
+        g->addWidget(muted("4-zone lighting"), row, 0);
+        g->addWidget(zone4Label_, row, 1);
+        g->addWidget(zone4Capture_, row, 2);
+        g->addWidget(zone4Clear_, row++, 3);
+        connect(zone4Capture_, &QPushButton::clicked, this, [this] {
+            const QString ini = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/zone4.ini");
+            if (!QFileInfo::exists(ini)) { setStatus("Apply a 4-zone setting in the Lighting tab first.", theme::WARN); return; }
+            QSettings st(ini, QSettings::IniFormat);
+            QJsonArray cols;
+            for (int i = 0; i < 4; ++i) cols.append(QColor(st.value(QStringLiteral("zone4/color%1").arg(i), QStringLiteral("#ffffff")).toString()).name().mid(1));
+            zone4_ = QJsonObject{{"effect", st.value("zone4/effect", "static").toString()},
+                                 {"brightness", st.value("zone4/brightness", 2).toInt()},
+                                 {"speed", st.value("zone4/speed", 2).toInt()},
+                                 {"right_to_left", st.value("zone4/right_to_left", false).toBool()},
+                                 {"colors", cols}};
+            updateZone4Label();
+            updateDirty();
+        });
+        connect(zone4Clear_, &QPushButton::clicked, this, [this] { zone4_ = {}; updateZone4Label(); updateDirty(); });
+    }
+    if (const int max = HomeTab::kbdBacklightMax(); max > 0) {
+        kbdLevel_ = new QComboBox;
+        kbdLevel_->addItem("Unchanged", -1);
+        kbdLevel_->addItem("Off", 0);
+        for (int i = 1; i <= max; ++i) kbdLevel_->addItem(max == 1 ? QStringLiteral("On") : QStringLiteral("Level %1").arg(i), i);
+        addRow("Keyboard light", kbdLevel_, "White keyboard backlight level (the same setting Fn+Space cycles).");
+    }
+    // Always laid out; shown when the firmware reported Over Drive (Home probes it) or the scene already sets it.
+    panelOd_ = new QComboBox;
+    panelOd_->addItem("Unchanged", -1);
+    panelOd_->addItem("On", 1);
+    panelOd_->addItem("Off", 0);
+    addRow("Panel Over Drive", panelOd_, "Faster pixel response of the internal panel (less ghosting, a little overshoot). "
+                                         "Offered where the firmware reports it.");
+    panelOdLabel_ = g->itemAtPosition(row - 1, 0)->widget();
+    refresh_ = new QComboBox;
+    addRow("Refresh rate", refresh_, "Internal panel refresh rate at its current resolution, set as you through the desktop's own tool "
+                                     "(KDE kscreen-doctor, wlr-randr or X11 xrandr). A lower rate saves noticeable power on battery.");
+    refreshLabel_ = g->itemAtPosition(row - 1, 0)->widget();
     command_ = new QLineEdit;
-    command_->setPlaceholderText("optional, e.g.  kscreen-doctor output.eDP-1.mode.2560x1600@60");
+    command_->setPlaceholderText("optional, e.g.  pactl set-card-profile …");
     addRow("Run command", command_, "Runs as you, without a shell, after everything else — for things this app "
-                                    "does not manage itself (display refresh rate, audio profile…).");
+                                    "does not manage itself (audio profile, a script…).");
 
     auto *eb = new QHBoxLayout;
     eb->addWidget(dup_);
@@ -282,7 +336,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(fwCapture_, &QPushButton::clicked, this, &ScenesTab::captureFirmware);
     connect(fanClear_, &QPushButton::clicked, this, [this] { fanTable_.clear(); updateFanTableLabel(); updateDirty(); });
     connect(fwClear_, &QPushButton::clicked, this, [this] { firmware_.clear(); updateFirmwareLabel(); updateDirty(); });
-    for (QComboBox *c : {profile_, cpu_, gpu_, tuning_, lightProfile_, lightBright_, fan_})
+    for (QComboBox *c : {profile_, cpu_, gpu_, tuning_, lightProfile_, lightBright_, fan_, panelOd_, kbdLevel_, refresh_})
         if (c) connect(c, &QComboBox::currentIndexChanged, this, [this] { if (!filling_) updateDirty(); });
     connect(command_, &QLineEdit::textChanged, this, [this] { if (!filling_) updateDirty(); });
     connect(auto_, &QCheckBox::toggled, this, [this](bool on) { resume_->setEnabled(on); if (!filling_) storeAuto(); });
@@ -326,6 +380,8 @@ void ScenesTab::showEvent(QShowEvent *e) {
     updateDirty();
     reloadAuto();
     updatePowerLabel();
+    queryRates();      // once: the panel's refresh rates (as the user, through the desktop's tool)
+    syncExtraRows();   // Over Drive support may have been probed by Home meanwhile
 }
 
 void ScenesTab::fillOptions() {
@@ -358,6 +414,14 @@ void ScenesTab::setEditor(const Scene &s) {
         lightBright_->setCurrentIndex(std::max(0, lightBright_->findData(s.lightBrightness)));
     }
     fan_->setCurrentIndex(std::max(0, fan_->findData(s.fanFullSpeed)));
+    panelOd_->setCurrentIndex(std::max(0, panelOd_->findData(s.panelOd)));
+    if (kbdLevel_) {
+        if (kbdLevel_->findData(s.kbdLevel) < 0) kbdLevel_->addItem(QStringLiteral("Level %1  (not offered)").arg(s.kbdLevel), s.kbdLevel);
+        kbdLevel_->setCurrentIndex(std::max(0, kbdLevel_->findData(s.kbdLevel)));
+    }
+    zone4_ = s.zone4;
+    updateZone4Label();
+    fillRefresh(s.refresh);
     command_->setText(s.command);
     firmware_ = s.firmware;
     fanTable_ = s.fanTable;
@@ -365,6 +429,7 @@ void ScenesTab::setEditor(const Scene &s) {
     editor_->setTitle(s.name.isEmpty() ? QStringLiteral("Scene") : s.name);
     filling_ = false;
     loaded_ = s;
+    syncExtraRows();
     updateFirmwareLabel();
     updateDirty();
 }
@@ -386,8 +451,66 @@ Scene ScenesTab::fromEditor() const {
         s.lightBrightness = loaded_.lightBrightness;
     }
     s.fanFullSpeed = fan_->currentData().toInt();
+    s.panelOd = panelOd_->currentData().toInt();
+    s.kbdLevel = kbdLevel_ ? kbdLevel_->currentData().toInt() : loaded_.kbdLevel;
+    s.zone4 = zone4Label_ ? zone4_ : loaded_.zone4;
+    s.refresh = refresh_->currentData().toDouble();
     s.command = command_->text().trimmed();
     return s;
+}
+
+void ScenesTab::updateZone4Label() {
+    if (!zone4Label_) return;
+    zone4Clear_->setEnabled(!zone4_.isEmpty());
+    if (zone4_.isEmpty()) { zone4Label_->setText(QStringLiteral("<span style='color:%1'>Unchanged</span>").arg(theme::MUTED)); return; }
+    QString sw;
+    for (const QJsonValue &c : zone4_.value("colors").toArray()) sw += QStringLiteral("<span style='color:#%1'>■</span>").arg(c.toString());
+    zone4Label_->setText(zone4_.value("effect").toString() + QStringLiteral(" · brightness %1  ").arg(zone4_.value("brightness").toInt()) + sw);
+}
+
+/// Refresh combo: Unchanged + the rates the panel offers now; the scene's own value stays selectable when it is not offered.
+void ScenesTab::fillRefresh(double keep) {
+    const bool was = filling_;
+    filling_ = true;
+    refresh_->clear();
+    refresh_->addItem("Unchanged", 0.0);
+    for (double r : rates_) refresh_->addItem(QStringLiteral("%1 Hz").arg(r, 0, 'f', r == std::floor(r) ? 0 : 2), r);
+    int i = 0;
+    if (keep > 0) {
+        for (int k = 1; k < refresh_->count(); ++k) if (std::abs(refresh_->itemData(k).toDouble() - keep) < 0.5) i = k;
+        if (i == 0) { refresh_->addItem(QStringLiteral("%1 Hz  (not offered now)").arg(keep, 0, 'f', 0), keep); i = refresh_->count() - 1; }
+    }
+    refresh_->setCurrentIndex(i);
+    filling_ = was;
+    syncExtraRows();
+}
+
+void ScenesTab::queryRates() {
+    if (ratesAsked_) return;
+    ratesAsked_ = true;
+    auto *p = new QProcess(this);
+    connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
+        const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed()).object();
+        p->deleteLater();
+        if (!o.value("ok").toBool()) return;
+        rates_.clear();
+        for (const QJsonValue &v : o.value("rates").toArray()) rates_ << v.toDouble();
+        const double keep = refresh_->currentData().toDouble();
+        const bool dirty = fromEditor() != loaded_;
+        fillRefresh(keep);
+        if (!dirty) updateDirty();
+    });
+    connect(p, &QProcess::errorOccurred, p, [p](QProcess::ProcessError e) { if (e == QProcess::FailedToStart) p->deleteLater(); });
+    p->start(scenes::displayTool(), {QStringLiteral("list")});
+}
+
+void ScenesTab::syncExtraRows() {
+    const bool od = HomeTab::panelOdSupported().value_or(false) || loaded_.panelOd >= 0;
+    panelOd_->setVisible(od);
+    panelOdLabel_->setVisible(od);
+    const bool rr = rates_.size() > 1 || loaded_.refresh > 0;
+    refresh_->setVisible(rr);
+    refreshLabel_->setVisible(rr);
 }
 
 // Active scene in the theme's accent (amber in Graphite, each palette's own equivalent elsewhere), the selected

@@ -53,7 +53,7 @@ private:
     FanCurveWidget *curve_;
     QTableWidget *table_;
     QLabel *status_;
-    QPushButton *reload_, *stock_, *apply_;
+    QPushButton *reload_, *stock_, *apply_, *assist_ = nullptr;
     QVector<FanCurveFan> fans_;
     QVector<int> hw_;  // what the EC holds
 };

@@ -577,6 +577,30 @@ static bool wmiHas(const char *guid) {
                                                                    QDir::Dirs | QDir::System | QDir::NoDotAndDotDot).isEmpty();
 }
 
+static QString panelCacheFile() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/centurion/panel.json");
+}
+
+std::optional<bool> HomeTab::panelOdSupported() {
+    QFile f(panelCacheFile());
+    if (!f.open(QIODevice::ReadOnly) || f.size() > 4096) return std::nullopt;
+    const QJsonValue v = QJsonDocument::fromJson(f.readAll()).object().value("od_supported");
+    return v.isBool() ? std::optional<bool>(v.toBool()) : std::nullopt;
+}
+
+void HomeTab::notePanelOd(bool supported) {
+    if (panelOdSupported() == supported) return;
+    QDir().mkpath(QFileInfo(panelCacheFile()).absolutePath());
+    QFile f(panelCacheFile());
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(QJsonDocument(QJsonObject{{"od_supported", supported}}).toJson(QJsonDocument::Compact));
+}
+
+int HomeTab::kbdBacklightMax() {
+    const QString led = QStringLiteral("/sys/class/leds/platform::kbd_backlight");
+    const int max = rdText(led + "/max_brightness").toInt();
+    return max >= 1 && max <= 10 && QFileInfo(led + "/brightness").isFile() && !lighting::present() && !lighting::zone4Present() ? max : 0;
+}
+
 QGroupBox *HomeTab::buildDeviceBox() {
     const QString bat = findDir("/sys/class/power_supply", [](const QString &p) {
         return rdText(p + "/type") == "Battery" && QFileInfo(p + "/charge_types").isFile(); });
@@ -655,6 +679,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         const QString gh = privileged::helperPath("legion-gpu-helper");
         onFirstShow_.append([this, gh, igLabel, ig, od, nvBack] { privileged::run(gh, QJsonObject{{"op", "panel_extras"}}, this, [igLabel, ig, od, nvBack](const privileged::Result &r) {
             if (!r.ok()) return;
+            HomeTab::notePanelOd(r.json.value("od_supported").toBool());
             if (r.json.value("igpu_supported").toBool() && r.json.value("igpu_mode").isDouble()) {
                 ig->setCurrentIndex(ig->findData(r.json.value("igpu_mode").toInt()));
                 ig->setProperty("applied", ig->currentIndex());

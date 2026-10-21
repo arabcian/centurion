@@ -5,6 +5,8 @@ class AmdGpuTab;
 class FwattrTab;
 class HealthTab;
 class HomeTab;
+class LauncherWatch;
+class DriftWatch;
 class SceneEngine;
 class IntelTab;
 class LightingTab;
@@ -28,6 +30,8 @@ public:
     LightingTab *lighting() const { return lighting_; }  // nullptr without a Spectrum keyboard
     SceneEngine *scenes() const { return scenes_; }
     HealthTab *health() const { return health_; }
+    LauncherWatch *launchers() const { return launchers_; }
+    DriftWatch *drift() const { return drift_; }
     /// Creates the NVIDIA tab if the dGPU has appeared since start-up (after
     /// "Bring NVIDIA back" / leaving iGPU-only). Returns the tab, or nullptr.
     NvidiaTab *ensureNvidiaTab();
@@ -59,5 +63,7 @@ private:
     LightingTab *lighting_ = nullptr;
     SceneEngine *scenes_;
     HealthTab *health_;
+    LauncherWatch *launchers_ = nullptr;
+    DriftWatch *drift_ = nullptr;
     bool forceQuit_ = false, hideOnClose_ = false;
 };

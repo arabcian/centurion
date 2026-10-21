@@ -1,4 +1,5 @@
 #include "ryzentab.h"
+#include "trialbar.h"
 #include <QShowEvent>
 #include "platformprofile.h"
 #include "privileged.h"
@@ -44,6 +45,7 @@ static constexpr int SLOTS_PER_CCD = 8, CCD_FALLBACK = 2;
 static constexpr int CO_MIN = -50, CO_MAX = 20;
 static constexpr int PKEXEC_TIMEOUT_MS = 300000;  // covers reading/typing the polkit prompt
 static constexpr int MONITOR_MS = 1000;
+static constexpr double LIMIT_PCT = 95.0;  // a limit counts as holding the CPU at this share of it
 static constexpr int COLS = 7;  // Slot, Offset, Disable, CPPC, MHz, V, W
 
 static QString helperPath() { return privileged::helperPath(QStringLiteral("ryzen-co-helper")); }
@@ -259,6 +261,8 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         if (layout_.cores.contains(c) && layout_.cores[c].size() != SLOTS_PER_CCD) mismatch << c;
 
     auto *root = new QVBoxLayout(this);
+    trial_ = new TrialBar(QStringLiteral("ryzen/trial"));
+    root->addWidget(trial_);
     root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
@@ -632,6 +636,13 @@ bool RyzenTab::applyAllCore(std::function<void()> then) {
 
 void RyzenTab::applyReset() { runOp("reset", {}); }
 
+// Trial time-out: back to stock (0) — after the operation in flight, if there is one.
+void RyzenTab::revertTrial() {
+    if (busy_) { QTimer::singleShot(1500, this, &RyzenTab::revertTrial); return; }
+    log("Trial over: resetting Curve Optimizer to 0.", "cmd");
+    applyReset();
+}
+
 bool RyzenTab::applyPerCore(std::function<void()> then) {
     QJsonArray entries;
     QStringList problems;
@@ -665,9 +676,12 @@ void RyzenTab::runOp(const QString &op, const QJsonObject &params, std::function
     if (busy_) { log("Previous operation still running, please wait.", "err"); return; }
     log("Sending '" + op + "' via pkexec... (you may be prompted for a password)", "cmd");
     setBusy(true);
+    if (op == QLatin1String("reset")) trial_->cancel();
     privileged::run(helperPath(), QJsonObject{{"op", op}, {"params", params}}, this,
-        [this, then](const privileged::Result &r) {
+        [this, then, op](const privileged::Result &r) {
             setBusy(false);
+            if (r.ok() && (op == QLatin1String("set_coall") || op == QLatin1String("set_coper_batch")))
+                trial_->offer([this] { revertTrial(); });
             if (!r.reached) { log(r.error, "err"); return; }
             if (r.ok()) log("Operation applied successfully.", "ok");
             else log("Operation failed: " + (r.message().isEmpty() ? QStringLiteral("see per-core results below") : r.message()), "err");
@@ -1114,6 +1128,8 @@ void RyzenTab::monitorTick() {
 }
 
 void RyzenTab::showMsr(const QJsonObject &s) {
+    // monitorTick() re-shows the last sample every second: count limit time only for a new helper sample.
+    const bool fresh = &s != &msr_;
     msr_ = s;
     const QJsonObject cpus = s.value("cpus").toObject();
     QHash<int, double> ccdW;
@@ -1138,6 +1154,36 @@ void RyzenTab::showMsr(const QJsonObject &s) {
     for (auto it = ccdW.cbegin(); it != ccdW.cend(); ++it)
         text += QStringLiteral(" · CCD%1 cores %2 W").arg(it.key()).arg(it.value(), 0, 'f', 1);
     if (s.contains("error")) text += QStringLiteral(" · <span style='color:%1'>%2</span>").arg(theme::DANGER, s.value("error").toString().toHtmlEscaped());
+    // Limit reasons (SMU PM table through ryzen_smu): which limit is holding the clocks right now, and
+    // how many seconds each one has held them since the monitor started.
+    const QJsonObject pm = s.value("pm").toObject();
+    if (!pm.isEmpty()) {
+        QStringList parts, binding;
+        for (const QJsonValue &v : pm.value("limits").toArray()) {
+            const QJsonObject l = v.toObject();
+            const QString n = l.value("name").toString();
+            const double pct = l.value("pct").toDouble();
+            const bool at = pct >= LIMIT_PCT;
+            if (at && fresh) limitSecs_[n] += MONITOR_MS / 1000.0;
+            if (at) binding << n;
+            parts << QStringLiteral("<span style='color:%1'>%2 %3/%4 %5</span>")
+                         .arg(at ? theme::WARN : theme::FG_DIM, n.toHtmlEscaped())
+                         .arg(l.value("value").toDouble(), 0, 'f', 0).arg(l.value("limit").toDouble(), 0, 'f', 0)
+                         .arg(l.value("unit").toString());
+        }
+        if (!parts.isEmpty()) {
+            text += QStringLiteral("<br>Limits: ") + parts.join(QStringLiteral(" · "));
+            text += binding.isEmpty() ? QStringLiteral(" — <span style='color:%1'>none binding</span>").arg(theme::OK)
+                                      : QStringLiteral(" — <b style='color:%1'>held by %2</b>").arg(theme::WARN, binding.join('+'));
+            QStringList held;
+            for (auto it = limitSecs_.cbegin(); it != limitSecs_.cend(); ++it)
+                if (it.value() >= 1) held << QStringLiteral("%1 %2 s").arg(it.key()).arg(it.value(), 0, 'f', 0);
+            if (!held.isEmpty()) text += QStringLiteral(" · at limit since start: ") + held.join(QStringLiteral(", "));
+        } else if (pm.contains("error")) {
+            text += QStringLiteral("<br><span style='color:%1'>Limits: %2%3</span>").arg(theme::MUTED, pm.value("error").toString().toHtmlEscaped(),
+                        pm.contains("version") ? QStringLiteral(" (PM table %1)").arg(pm.value("version").toString()) : QString());
+        }
+    }
     monLbl_->setText(text);
 }
 
@@ -1153,6 +1199,7 @@ void RyzenTab::startMsrStream() {
     auto *p = new QProcess(QCoreApplication::instance());
     msrStream_ = p;
     msrGotSample_ = false;
+    limitSecs_.clear();
     p->setProgram(pkexec);
     p->setArguments({helperPath()});
     p->setProcessChannelMode(QProcess::SeparateChannels);
@@ -1191,7 +1238,7 @@ void RyzenTab::startMsrStream() {
         p->deleteLater();
     });
     p->start();
-    p->write(QJsonDocument(QJsonObject{{"op", "monitor_stream"}, {"params", QJsonObject{{"interval_ms", MONITOR_MS}}}})
+    p->write(QJsonDocument(QJsonObject{{"op", "monitor_stream"}, {"params", QJsonObject{{"interval_ms", MONITOR_MS}, {"limits", true}}}})
                  .toJson(QJsonDocument::Compact) + '\n');
 }
 

@@ -24,6 +24,8 @@ public:
 Q_SIGNALS:
     /// A new error/critical event (not the history found at start-up).
     void alert(const QString &title, const QString &message);
+    /// Every new classified kernel event of this session (not the history found at start-up).
+    void fault(const QJsonObject &event);
 
 private:
     void scan();

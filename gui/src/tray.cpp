@@ -1,4 +1,6 @@
 #include "tray.h"
+#include "launcherwatch.h"
+#include "driftwatch.h"
 #include "healthtab.h"
 #include "hometab.h"
 #include "inteltab.h"
@@ -56,6 +58,26 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
 
     // Hardware/driver faults found by the Health tab's background scan.
     connect(win_->health(), &HealthTab::alert, this, [this](const QString &t, const QString &m) { notify(t, m); });
+
+    // Heroic / Bottles games noticed by the launcher watch.
+    if (LauncherWatch *lw = win_->launchers()) {
+        connect(lw, &LauncherWatch::gameStarted, this, [this](const QString &g, const QString &src) {
+            notify(src + QStringLiteral(" game detected"), g + QStringLiteral(" — game mode started."));
+        });
+        connect(lw, &LauncherWatch::gameEnded, this, [this](const QString &g, const QString &src) {
+            notify(src + QStringLiteral(" game closed"), g + QStringLiteral(" — game mode ended."));
+        });
+    }
+
+    if (DriftWatch *dw = win_->drift()) {
+        connect(dw, &DriftWatch::drift, this, [this](const QStringList &lines, const QString &culprits) {
+            if (lines.isEmpty()) return;
+            notify(QStringLiteral("Settings changed outside Centurion"),
+                   lines.mid(0, 3).join('\n') + (lines.size() > 3 ? QStringLiteral("\n…") : QString())
+                       + (culprits.isEmpty() ? QString() : QStringLiteral("\nRunning: ") + culprits)
+                       + QStringLiteral("\nOptimizations tab → Re-apply."));
+        });
+    }
 
     // Scene results: a notification when nobody is looking at the Scenes tab
     // (tray pick, charger plugged/pulled); the tab shows its own status line.

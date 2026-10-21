@@ -61,6 +61,7 @@ static const QString UNDERVOLT_PROFILE = QStringLiteral("GAMING");
 static const QString NVCURVE_PROFILES = QStringLiteral("/etc/nvcurve/profiles");
 
 static QString helperPath() { return privileged::helperPath(QStringLiteral("tune-helper")); }
+QString OptimizeTab::helperPathForDescribe() { return helperPath(); }
 
 // Ops that can only put saved originals back or apply an *approved* preset by name go to tune-profile-helper;
 // raw values, the boot preset, the preset store and driver options go to tune-helper (install.sh security level 3
@@ -334,6 +335,27 @@ void OptimizeTab::buildUi() {
     bl->addWidget(restoreBtn_);
     root->addWidget(bannerFrame);
 
+    // Drift banner: hidden until DriftWatch finds a setting changed behind Centurion's back.
+    driftBar_ = new QFrame;
+    driftBar_->setObjectName("driftBar");
+    driftBar_->setStyleSheet(theme::banner(theme::WARN, QStringLiteral("#driftBar")));
+    auto *dl = new QHBoxLayout(driftBar_);
+    dl->setContentsMargins(10, 4, 8, 4);
+    driftText_ = new QLabel;
+    driftText_->setWordWrap(true);
+    driftText_->setTextFormat(Qt::RichText);
+    dl->addWidget(driftText_, 1);
+    auto *dRe = new QPushButton(QStringLiteral("Re-apply"));
+    dRe->setToolTip(QStringLiteral("Apply the active scene again (or the preset, without a scene)."));
+    connect(dRe, &QPushButton::clicked, this, [this] { if (driftReapply_) driftReapply_(); driftBar_->hide(); });
+    auto *dHide = new QPushButton(QStringLiteral("Dismiss"));
+    dHide->setObjectName("btnMini");
+    connect(dHide, &QPushButton::clicked, driftBar_, &QWidget::hide);
+    dl->addWidget(dRe);
+    dl->addWidget(dHide);
+    driftBar_->hide();
+    root->addWidget(driftBar_);
+
     // Master switch: outranks every scene, preset and autotune result.
     wirelessLock_ = new QCheckBox(QStringLiteral("Forcefully disable Wi-Fi and Bluetooth power management"));
     wirelessLock_->setToolTip(QStringLiteral(
@@ -591,6 +613,23 @@ QWidget *OptimizeTab::buildLaunchPage() {
                       : QStringLiteral("A/B comparison off."), theme::OK, 6000);
     });
     ug->addWidget(fieldAb_, 3, 0, 1, 3);
+    detectLaunchers_ = new QCheckBox(QStringLiteral("Detect games started from Heroic and Bottles (no launch options needed)"));
+    detectLaunchers_->setChecked(cfg.value("detect_launchers").toBool());
+    detectLaunchers_->setToolTip(QStringLiteral("Heroic and Bottles have no pre/post hook like Lutris. With this on, Centurion notices their games itself\n"
+                                                "(Heroic: HEROIC_APP_NAME in the game's environment; Bottles: a Windows program running in a bottle) and\n"
+                                                "runs the same game start / end as the Lutris hook: game scene, ★ game preset, session record.\n"
+                                                "Costs a process-name sweep every 15 s; game processes are only looked at while Heroic or Bottles runs.\n"
+                                                "Games you already wrap with centurion-gamemode WRAP are left alone."));
+    connect(detectLaunchers_, &QCheckBox::toggled, this, [this](bool on) {
+        QJsonObject cfg = readJsonFile(configFile());
+        if (on) cfg["detect_launchers"] = true; else cfg.remove("detect_launchers");
+        QString err;
+        if (!writeJsonFile(configFile(), cfg, &err)) { showStatus("Could not save: " + err, theme::DANGER); return; }
+        Q_EMIT detectLaunchersChanged(on);
+        showStatus(on ? QStringLiteral("Heroic / Bottles games now start game mode on their own.")
+                      : QStringLiteral("Heroic / Bottles detection off."), theme::OK, 6000);
+    });
+    ug->addWidget(detectLaunchers_, 4, 0, 1, 3);
     ug->setColumnStretch(2, 1);
     v->addWidget(uvBox);
     fillGameScenes();
@@ -2003,4 +2042,16 @@ void OptimizeTab::showStatus(const QString &msg, const char *color, int ms) {
     status_->setText(msg);
     status_->setStyleSheet(QStringLiteral("color:%1; background:transparent;").arg(color ? color : theme::FG_DIM));
     if (ms > 0) statusTimer_->start(ms); else statusTimer_->stop();
+}
+
+void OptimizeTab::setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply) {
+    if (!driftBar_) return;
+    driftReapply_ = std::move(reapply);
+    if (lines.isEmpty()) { driftBar_->hide(); return; }
+    QStringList esc;
+    for (const QString &l : lines.mid(0, 8)) esc << l.toHtmlEscaped();
+    if (lines.size() > 8) esc << QStringLiteral("… and %1 more").arg(lines.size() - 8);
+    driftText_->setText(QStringLiteral("<b>Changed by something other than Centurion since it applied them:</b><br>") + esc.join(QStringLiteral("<br>"))
+                        + (culprits.isEmpty() ? QString() : QStringLiteral("<br><i>Running / enabled: ") + culprits.toHtmlEscaped() + QStringLiteral("</i>")));
+    driftBar_->show();
 }

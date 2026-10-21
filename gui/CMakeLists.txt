@@ -46,6 +46,13 @@ add_executable(centurion
     src/dgpupage.cpp     src/dgpupage.h
     src/netpage.cpp      src/netpage.h
     src/backuppage.cpp   src/backuppage.h
+    src/launcherwatch.cpp src/launcherwatch.h
+    src/batterypage.cpp  src/batterypage.h
+    src/trialbar.cpp     src/trialbar.h
+    src/curvepage.cpp    src/curvepage.h
+    src/driftwatch.cpp   src/driftwatch.h
+    src/sleeppage.cpp    src/sleeppage.h
+    src/fanassist.cpp    src/fanassist.h
 )
 # Theme glyphs (checkbox tick, spin/combo chevrons), @2x for HiDPI. Compiled
 # with qt_add_resources, not AUTORCC: CMake's Makefile generator runs the

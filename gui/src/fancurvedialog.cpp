@@ -1,4 +1,6 @@
 #include "fancurvedialog.h"
+#include "fanassist.h"
+#include <QTimer>
 #include "privileged.h"
 #include "theme.h"
 #include <QDir>
@@ -153,8 +155,11 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
     apply_ = new QPushButton("Apply");
     apply_->setObjectName("btnAccent");
     auto *close = new QPushButton("Close");
+    assist_ = new QPushButton("Assistant…");
+    assist_->setToolTip("Propose a curve for a goal (Quiet / Balanced / Cool), from the firmware's temperature steps or measured on this machine.");
     h->addWidget(reload_);
     h->addWidget(stock_);
+    h->addWidget(assist_);
     h->addStretch(1);
     h->addWidget(apply_);
     h->addWidget(close);
@@ -166,10 +171,38 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
         apply_->setEnabled(STOCK != hw_);
     });
     connect(apply_, &QPushButton::clicked, this, &FanCurveDialog::apply);
+    connect(assist_, &QPushButton::clicked, this, [this] {
+        auto *a = new FanAssistDialog(helper_, hw_, fans_, this);
+        a->setAttribute(Qt::WA_DeleteOnClose);
+        connect(a, &QDialog::accepted, this, [this, a] {
+            if (a->result().size() != 10) return;
+            curve_->setLevels(a->result());
+            refreshTable();
+            apply_->setEnabled(curve_->levels() != hw_);
+            status("Assistant's proposal is in the editor — press Apply to write it.", theme::ACCENT);
+        });
+        a->open();
+    });
     connect(close, &QPushButton::clicked, this, &QDialog::close);
 
     refreshTable();
-    load();
+    // A measurement that was interrupted (app closed / crashed) left a flat table in the EC: offer the saved one.
+    // Asked before the first read: a read still in flight could otherwise land after the write and show the
+    // flat table as the EC's.
+    if (const QVector<int> b = FanAssistDialog::pendingBackup(); b.size() == 10) {
+        setBusy(true);
+        QTimer::singleShot(0, this, [this, b] {
+            if (QMessageBox::question(this, windowTitle(), "A fan curve measurement was interrupted. Write your saved table back now?") != QMessageBox::Yes) { load(); return; }
+            QJsonArray a;
+            for (int x : b) a << x;
+            privileged::run(helper_, QJsonObject{{"fan_table", "set"}, {"levels", a}}, this, [this](const privileged::Result &r) {
+                if (r.ok()) { FanAssistDialog::clearBackup(); takeReply(r.json); status("Saved table written back.", theme::OK); setBusy(false); }
+                else { status("Write failed: " + r.message() + " — press Reload to read the EC's table.", theme::DANGER); setBusy(false); }
+            });
+        });
+    } else {
+        load();
+    }
 }
 
 void FanCurveDialog::setBusy(bool b) {

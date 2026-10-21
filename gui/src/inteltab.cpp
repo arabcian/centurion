@@ -1,4 +1,5 @@
 #include "inteltab.h"
+#include "trialbar.h"
 #include "privileged.h"
 #include "theme.h"
 
@@ -77,6 +78,8 @@ static QDoubleSpinBox *dspin(double lo, double hi, double step, int dec, const Q
 IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     QDir().mkpath(inteluv::profilesDir());
     auto *root = new QVBoxLayout(this);
+    trial_ = new TrialBar(QStringLiteral("intel/trial"));
+    root->addWidget(trial_);
     root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
 
@@ -854,6 +857,7 @@ void IntelTab::runOp(const QJsonObject &req, std::function<void(const QJsonObjec
     if (busy_) { log("Previous operation still running, please wait.", "err"); return; }
     const QString op = req.value("op").toString();
     if (op != "status") log("Sending '" + op + "' via pkexec…", "cmd");
+    if (op == QLatin1String("reset")) trial_->cancel();
     setBusy(true);
     privileged::run(helperPath(), req, this, [this, op, then](const privileged::Result &r) {
         setBusy(false);
@@ -870,6 +874,7 @@ void IntelTab::runOp(const QJsonObject &req, std::function<void(const QJsonObjec
         if (op == "status") { if (!r.ok()) log(r.message(), "err"); showStatus(j); }
         else if (r.ok()) log(j.value("message").toString(op + " done."), "ok");
         else log(op + " failed" + (r.message().isEmpty() ? QString() : ": " + r.message()), "err");
+        if (r.ok() && op == QLatin1String("apply")) trial_->offer([this] { revertTrial(); });
         if (then) then(j);
     }, PKEXEC_TIMEOUT_MS);
 }
@@ -970,6 +975,12 @@ void IntelTab::showStatus(const QJsonObject &s) {
 }
 
 // ── public (tray / game mode) ───────────────────────────────────────────────
+
+void IntelTab::revertTrial() {
+    if (busy_) { QTimer::singleShot(1500, this, &IntelTab::revertTrial); return; }
+    log("Trial over: voltage offsets back to 0 mV.", "cmd");
+    applyReset();
+}
 
 void IntelTab::applyReset() { runOp({{"op", "reset"}}, [this](const QJsonObject &) { readStatus(); }); }
 

@@ -1,4 +1,5 @@
 #include "sysinfo.h"
+#include <cmath>
 #include <QElapsedTimer>
 #include <QMutex>
 #include <QHash>
@@ -300,6 +301,45 @@ Opt igpu() {
     return std::nullopt;
 }
 
+BatteryState batteryState() {
+    BatteryState b;
+    const QStringList bats = cachedDirs(QStringLiteral("/sys/class/power_supply"), [](const QString &p, const QString &) {
+        return rd(p + QStringLiteral("/type")) == QStringLiteral("Battery") && rd(p + QStringLiteral("/scope")).value_or(QString()) != QStringLiteral("Device");
+    });
+    if (bats.isEmpty()) return b;
+    const QString p = bats.first();
+    b.present = true;
+    b.status = rd(p + "/status").value_or(QString());
+    if (auto c = rdInt(p + "/capacity")) b.capacity = int(*c);
+    if (auto c = rdInt(p + "/cycle_count"); c && *c > 0) b.cycles = int(*c);
+    const auto uv = rdInt(p + "/voltage_now");
+    auto vmin = rdInt(p + "/voltage_min_design");
+    if (!vmin) vmin = uv;
+    auto wh = [&](const char *e, const char *c, std::optional<long long> volt) -> double {
+        if (auto x = rdInt(p + '/' + QLatin1String(e)); x && *x >= 0) return *x / 1e6;
+        if (auto x = rdInt(p + '/' + QLatin1String(c)); x && *x >= 0 && volt && *volt > 0) return *x / 1e6 * (*volt / 1e6);
+        return -1;
+    };
+    b.energyWh = wh("energy_now", "charge_now", vmin);
+    b.fullWh = wh("energy_full", "charge_full", vmin);
+    b.designWh = wh("energy_full_design", "charge_full_design", vmin);
+    if (auto pw = rdInt(p + "/power_now"); pw && *pw > 0) b.powerW = *pw / 1e6;
+    else if (auto cur = rdInt(p + "/current_now"); cur && uv && *cur != 0) b.powerW = std::abs(double(*cur)) / 1e6 * (*uv / 1e6);
+    return b;
+}
+
+int BatteryState::minutesLeft() const {
+    if (powerW < 0.5 || energyWh < 0) return -1;
+    if (status == QLatin1String("Discharging")) return int(energyWh / powerW * 60);
+    if (status == QLatin1String("Charging") && fullWh > energyWh) return int((fullWh - energyWh) / powerW * 60);
+    return -1;
+}
+
+QString formatMinutes(int m) {
+    if (m < 0) return QString();
+    return m >= 60 ? QStringLiteral("%1 h %2 min").arg(m / 60).arg(m % 60, 2, 10, QLatin1Char('0')) : QStringLiteral("%1 min").arg(m);
+}
+
 Opt battery() {
     const QStringList bats = cachedDirs(QStringLiteral("/sys/class/power_supply"), [](const QString &p, const QString &) {
         return rd(p + QStringLiteral("/type")) == QStringLiteral("Battery");
@@ -311,7 +351,14 @@ Opt battery() {
         auto full = rdInt(p + "/energy_full"); if (!full) full = rdInt(p + "/charge_full");
         auto design = rdInt(p + "/energy_full_design"); if (!design) design = rdInt(p + "/charge_full_design");
         if (full && design && *design > 0) b << QStringLiteral("health %1%").arg(100.0 * *full / *design, 0, 'f', 0);
-        if (auto uv = rdInt(p + "/voltage_now")) b << QStringLiteral("%1V").arg(*uv / 1e6, 0, 'f', 2);
+        // Draw and time left / to full at the current rate.
+        const BatteryState st = batteryState();
+        if (st.powerW >= 0.1 && (st.status == QLatin1String("Discharging") || st.status == QLatin1String("Charging")))
+            b << QStringLiteral("%1 W").arg(st.powerW, 0, 'f', 1);
+        if (const int m = st.minutesLeft(); m >= 0 && m < 48 * 60)
+            b << (st.status == QLatin1String("Charging") ? QStringLiteral("full in ~") : QStringLiteral("~")) + formatMinutes(m)
+                     + (st.status == QLatin1String("Charging") ? QString() : QStringLiteral(" left"));
+        else if (auto uv = rdInt(p + "/voltage_now")) b << QStringLiteral("%1V").arg(*uv / 1e6, 0, 'f', 2);
         return joined(b);
     }
     return std::nullopt;

@@ -1,4 +1,5 @@
 #pragma once
+#include <QHash>
 // Ryzen Curve Optimizer tab — port of ryzen_curve_optimizer.py.
 // Per-slot CO offsets on the fixed 8-slot-per-CCD SMU grid, all-core
 // offset, reset, and per-user profiles; writes via ryzen-co-helper.
@@ -32,6 +33,7 @@ Layout detect();
 QString profilesDir();
 }
 
+class TrialBar;
 class RyzenTab : public QWidget {
     Q_OBJECT
 public:
@@ -108,10 +110,13 @@ private:
     QMap<int, QLabel *> ccdTemps_;
     class QProcess *msrStream_ = nullptr;  // parented to qApp (root child: exits on stdin EOF)
     bool msrGotSample_ = false;
+    QHash<QString, double> limitSecs_;  // seconds each PM-table limit was binding since the monitor started
     QJsonObject msr_;                      // latest helper sample
     QString boostText_, tempText_;
     class QRadioButton *rAll_ = nullptr;
     QComboBox *profileCombo_ = nullptr;
     QPlainTextEdit *log_ = nullptr;
     bool busy_ = false, profilesReady_ = true;
+    TrialBar *trial_ = nullptr;
+    void revertTrial();  // "Trial apply": auto-revert unless kept
 };

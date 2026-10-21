@@ -44,6 +44,20 @@ Opt storage();
 Opt power();
 Opt igpu();
 Opt battery();
+
+/// One battery's numbers in watts / watt-hours (charge_* × voltage where the driver reports µAh).
+struct BatteryState {
+    bool present = false;
+    QString status;                 // Charging / Discharging / Full / Not charging
+    int capacity = -1;              // %
+    double powerW = -1;             // instantaneous draw / charge rate, -1 = unknown
+    double energyWh = -1, fullWh = -1, designWh = -1;
+    int cycles = -1;
+    /// Minutes until empty (discharging) or full (charging) at the current rate; -1 = unknown.
+    int minutesLeft() const;
+};
+BatteryState batteryState();
+QString formatMinutes(int m);
 Opt cpuPackagePower();  // powercap RAPL energy delta between calls
 Opt usbcInputs();       // UCSI power-delivery sources that are online
 Opt gpuMode();          // "Hybrid" / "dGPU only (MUX)"

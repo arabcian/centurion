@@ -15,6 +15,9 @@
 #include "tray.h"
 #include "zone4tab.h"
 #include "healthtab.h"
+#include "launcherwatch.h"
+#include "driftwatch.h"
+#include "trialbar.h"
 #include <QCloseEvent>
 #include <QLabel>
 #include <QTabBar>
@@ -111,6 +114,27 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     home_->setSceneEngine(scenes_);
     optimize_->setSceneEngine(scenes_);
     tabs_->insertTab(scenesAt, new ScenesTab(this), "Scenes");
+    // A scene (ours or a game's) that sets a curve ends a running trial: otherwise the trial's time-out
+    // would reset the scene's curve to stock.
+    auto endTrials = [this](const QString &name) {
+        const auto s = scenes::load(name);
+        if (!s) return;
+        auto cancelIn = [](QWidget *tab) { if (tab) for (TrialBar *t : tab->findChildren<TrialBar *>()) t->cancel(); };
+        if (s->gpu.kind != scenes::Choice::Unchanged) cancelIn(nvidia_);
+        if (s->cpu.kind != scenes::Choice::Unchanged) { cancelIn(ryzen_); cancelIn(intel_); }
+    };
+    connect(scenes_, &SceneEngine::started, this, endTrials);
+    connect(scenes_, &SceneEngine::activeSceneChanged, this, [endTrials](const QString &n, bool) { endTrials(n); });
+
+    // Heroic / Bottles game detection (opt-in; no timer while off).
+    launchers_ = new LauncherWatch(this);
+    connect(optimize_, &OptimizeTab::detectLaunchersChanged, launchers_, &LauncherWatch::setEnabled);
+
+    // Drift detector: settings Centurion applied that something else changed since.
+    drift_ = new DriftWatch(this);
+    connect(drift_, &DriftWatch::drift, this, [this](const QStringList &lines, const QString &culprits) {
+        optimize_->setDrift(lines, culprits, [this] { drift_->reapply(); });
+    });
 }
 
 NvidiaTab *MainWindow::ensureNvidiaTab() {

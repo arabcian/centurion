@@ -40,6 +40,10 @@ public:
     void forgetGameScene(const QString &name);
     /// Load + apply as a manual change (tray). false if busy or unknown.
     bool applyNamedPreset(const QString &name);
+    /// tune-helper, run as the user for "describe" (DriftWatch).
+    static QString helperPathForDescribe();
+    /// Drift banner (DriftWatch): settings changed by something else since Centurion applied them.
+    void setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply);
     void restoreAll(bool confirm = true);
     /// Pauses Scenes, then writes every knob to the value centurion-boot-guard captured at boot (calibration baseline).
     void returnToBootDefaults();
@@ -54,6 +58,10 @@ public:
 
     static QString presetsDir();
     static QString configFile();
+
+Q_SIGNALS:
+    /// Optimizations → Game launch "Detect games started from Heroic and Bottles" toggled.
+    void detectLaunchersChanged(bool on);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -81,6 +89,9 @@ private:
     void buildRows(const QJsonArray &rows);
     void updateRow(Row &r, const QJsonObject &o);
     void updateStateBanner();
+    class QFrame *driftBar_ = nullptr;
+    QLabel *driftText_ = nullptr;
+    std::function<void()> driftReapply_;
     void updateLaunchPreview();
     void saveUndervolt();
 
@@ -146,6 +157,7 @@ private:
     QComboBox *gameScene_ = nullptr;   // scene the first game switches to (tune.json "game_scene")
     QComboBox *autoCtx_ = nullptr;     // power profile autotune decides for (a scene's, or the live one)
     QLabel *calLabel_ = nullptr;       // boot calibration status
+    QCheckBox *detectLaunchers_ = nullptr;  // tune.json "detect_launchers": Heroic / Bottles game detection
     QCheckBox *fieldAb_ = nullptr;     // tune.json "field_ab": A/B comparison of the game preset in real games
     void fillGameScenes();
     QLineEdit *lutrisPre_ = nullptr, *lutrisPost_ = nullptr, *lutrisPrefix_ = nullptr, *steam_ = nullptr;

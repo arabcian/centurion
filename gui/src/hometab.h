@@ -30,6 +30,12 @@ public:
 
     static QString profileLabel(const QString &profile);
     static QString helperPath();
+    /// Panel Over Drive support as the root helper last reported it (cached per user, so the Scenes tab
+    /// can offer the row without a privileged call). nullopt = never probed yet.
+    static std::optional<bool> panelOdSupported();
+    static void notePanelOd(bool supported);
+    /// White keyboard backlight (ideapad LED) on a keyboard without RGB: its maximum level, 0 = none.
+    static int kbdBacklightMax();
 
     /// Also used by the tray menu.
     void applyProfile(const QString &profile);

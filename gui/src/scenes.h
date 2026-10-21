@@ -46,6 +46,10 @@ struct Scene {
     int lightBrightness = -1;      // keyboard brightness 0-9; -1 = unchanged
     QVector<int> fanTable;         // Custom-mode EC fan table (10 levels, 1..10); empty = unchanged
     int fanFullSpeed = -1;         // EC fan boost (Full Speed): 1 on, 0 auto; -1 = unchanged
+    int panelOd = -1;              // panel Over Drive: 1 on, 0 off; -1 = unchanged
+    int kbdLevel = -1;             // white keyboard backlight level (ideapad LED); -1 = unchanged
+    QJsonObject zone4;             // 4-zone RGB keyboard state (Lighting tab request fields); empty = unchanged
+    double refresh = 0;            // internal panel refresh rate in Hz (current resolution); 0 = unchanged
     QString command;               // optional; run as the user, no shell
     bool operator==(const Scene &) const = default;
 };
@@ -63,6 +67,8 @@ QStringList names();
 std::optional<Scene> load(const QString &name);
 bool save(const Scene &s, QString *err = nullptr);
 bool remove(const QString &name);
+/// centurion-display (internal-panel refresh rate; runs as the user).
+QString displayTool();
 Auto loadAuto();
 bool saveAuto(const Auto &a, QString *err = nullptr);
 

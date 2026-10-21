@@ -1,4 +1,5 @@
 #include "backuppage.h"
+#include <QTimer>
 
 #include "privileged.h"
 #include "sysinfo.h"
@@ -130,6 +131,27 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     connect(action("Back up now", cr, "btnAccent"), &QPushButton::clicked, this, &BackupPage::configBackup);
     connect(action("Restore selected…", cr), &QPushButton::clicked, this, &BackupPage::configRestore);
     cv->addLayout(cr);
+    // Automatic: made by the tray app itself (as you, no password), when the newest configuration backup is older than this.
+    auto *ar = new QHBoxLayout;
+    autoDays_ = new QSpinBox;
+    autoDays_->setRange(0, 365);
+    autoDays_->setSpecialValueText(QStringLiteral("off"));
+    autoDays_->setSuffix(QStringLiteral(" days"));
+    autoDays_->setValue(st.value(QStringLiteral("auto_days"), 7).toInt());
+    autoDays_->setToolTip(QStringLiteral("Centurion makes a configuration backup on its own when the newest one in the folder is this old\n"
+                                         "(checked a few minutes after login and every 6 hours while it runs). Same options as Back up now."));
+    autoKeep_ = new QSpinBox;
+    autoKeep_->setRange(1, 99);
+    autoKeep_->setValue(st.value(QStringLiteral("auto_keep"), 8).toInt());
+    autoKeep_->setToolTip(QStringLiteral("Only automatic backups (…-auto.tar.gz) are pruned; the ones you make by hand are never deleted."));
+    ar->addWidget(new QLabel(QStringLiteral("Automatic backup every")));
+    ar->addWidget(autoDays_);
+    ar->addWidget(new QLabel(QStringLiteral("keep newest")));
+    ar->addWidget(autoKeep_);
+    autoNote_ = new QLabel;
+    autoNote_->setProperty("role", "muted");
+    ar->addWidget(autoNote_, 1);
+    cv->addLayout(ar);
     v->addWidget(cb);
 
     // ── System image ──
@@ -209,6 +231,20 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     connect(action("Verify selected", rr), &QPushButton::clicked, this, &BackupPage::verifySelected);
     connect(action("Restore selected…", rr, "btnDanger"), &QPushButton::clicked, this, &BackupPage::systemRestore);
     sv->addLayout(rr);
+    // A system image needs the password and minutes of I/O: Centurion only reminds, at the interval you set.
+    auto *rm = new QHBoxLayout;
+    remindDays_ = new QSpinBox;
+    remindDays_->setRange(0, 365);
+    remindDays_->setSpecialValueText(QStringLiteral("off"));
+    remindDays_->setSuffix(QStringLiteral(" days"));
+    remindDays_->setValue(st.value(QStringLiteral("remind_days"), 30).toInt());
+    remindDays_->setToolTip(QStringLiteral("A notification when the newest system image in the folder is older than this (at most once a day)."));
+    rm->addWidget(new QLabel(QStringLiteral("Remind me when the newest image is older than")));
+    rm->addWidget(remindDays_);
+    remindNote_ = new QLabel;
+    remindNote_->setProperty("role", "muted");
+    rm->addWidget(remindNote_, 1);
+    sv->addLayout(rm);
     v->addWidget(sb);
 
     // ── Archives ──
@@ -257,6 +293,79 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     for (QLineEdit *e : {cfgDir_, sysDir_})
         connect(e, &QLineEdit::editingFinished, this, [this] { saveSettings(); refreshList(); updateFree(); });
     connect(target_, &QLineEdit::editingFinished, this, &BackupPage::saveSettings);
+    for (QSpinBox *s : {autoDays_, autoKeep_, remindDays_})
+        connect(s, &QSpinBox::valueChanged, this, [this] { saveSettings(); updateAutoNote(); });
+
+    autoTimer_ = new QTimer(this);
+    autoTimer_->setTimerType(Qt::VeryCoarseTimer);
+    autoTimer_->setInterval(6 * 3600 * 1000);
+    connect(autoTimer_, &QTimer::timeout, this, &BackupPage::autoTick);
+    if (!qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN")) {
+        autoTimer_->start();
+        QTimer::singleShot(3 * 60 * 1000, this, &BackupPage::autoTick);  // after login settles
+    }
+    updateAutoNote();
+}
+
+QDateTime BackupPage::newest(const QString &dir, bool image) const {
+    QDateTime t;
+    if (dir.isEmpty()) return t;
+    for (const QFileInfo &fi : QDir(dir).entryInfoList(QDir::Files | QDir::System, QDir::NoSort)) {
+        if (image ? !isImageName(fi.fileName()) : !isConfigName(fi.fileName())) continue;
+        if (!t.isValid() || fi.lastModified() > t) t = fi.lastModified();
+    }
+    return t;
+}
+
+void BackupPage::updateAutoNote() {
+    auto age = [](const QDateTime &t) {
+        if (!t.isValid()) return QStringLiteral("none yet");
+        const qint64 d = t.daysTo(QDateTime::currentDateTime());
+        return d == 0 ? QStringLiteral("newest: today") : QStringLiteral("newest: %1 day(s) ago").arg(d);
+    };
+    if (autoNote_) autoNote_->setText(age(newest(cfgDir_->text().trimmed(), false)));
+    if (remindNote_) remindNote_->setText(age(newest(sysDir_->text().trimmed(), true)));
+}
+
+/// Only "-auto" archives are pruned, oldest first, beyond `keep`.
+void BackupPage::pruneAuto(const QString &dir, int keep) {
+    QFileInfoList autos;
+    for (const QFileInfo &fi : QDir(dir).entryInfoList(QDir::Files, QDir::Time))
+        if (isConfigName(fi.fileName()) && fi.fileName().endsWith(QLatin1String("-auto.tar.gz"))) autos << fi;
+    for (int i = keep; i < autos.size(); ++i)
+        if (QFile::remove(autos.at(i).absoluteFilePath())) log(QStringLiteral("removed old automatic backup ") + autos.at(i).fileName(), theme::MUTED);
+}
+
+void BackupPage::autoTick() {
+    QSettings st(settingsPath(), QSettings::IniFormat);
+    st.beginGroup(QStringLiteral("backup"));
+    const QDateTime now = QDateTime::currentDateTime();
+    // System image reminder: at most once a day.
+    if (const int rd = remindDays_->value(); rd > 0) {
+        const QDateTime img = newest(sysDir_->text().trimmed(), true);
+        const QDateTime last = st.value(QStringLiteral("last_reminder")).toDateTime();
+        if ((!img.isValid() || img.daysTo(now) >= rd) && (!last.isValid() || last.secsTo(now) >= 20 * 3600)) {
+            st.setValue(QStringLiteral("last_reminder"), now);
+            Q_EMIT alert(QStringLiteral("Backup reminder"),
+                         img.isValid() ? QStringLiteral("The newest system image is %1 days old. Health → Backup → Create image.").arg(img.daysTo(now))
+                                       : QStringLiteral("No system image yet. Health → Backup → Create image."));
+        }
+    }
+    // Automatic configuration backup.
+    const int days = autoDays_->value();
+    const QString dir = cfgDir_->text().trimmed();
+    if (days <= 0 || proc_ || !QDir::isAbsolutePath(dir)) { updateAutoNote(); return; }
+    const QDateTime cfg = newest(dir, false);
+    if (cfg.isValid() && cfg.secsTo(now) < qint64(days) * 86400 - 3600) { updateAutoNote(); return; }
+    const int keep = autoKeep_->value();
+    run({{"op", "config_backup"}, {"dest_dir", dir}, {"include_profile", cfgProfile_->isChecked()}, {"include_logs", cfgLogs_->isChecked()},
+         {"tag", "auto"}, {"centurion_version", QStringLiteral(CENTURION_VERSION)}},
+        false, QStringLiteral("Automatic configuration backup…"), [this, dir, keep](const QJsonObject &r) {
+            if (!r.value("ok").toBool()) { finished(QStringLiteral("Automatic configuration backup failed: ") + str(r, "error"), false); return; }
+            pruneAuto(dir, keep);
+            finished(QStringLiteral("Automatic configuration backup saved: %1 (%2).").arg(QFileInfo(str(r, "archive")).fileName(), human(num(r, "bytes"))), true);
+            updateAutoNote();
+        });
 }
 
 BackupPage::~BackupPage() {
@@ -279,12 +388,18 @@ void BackupPage::saveSettings() {
     st.setValue(QStringLiteral("keep"), keep_->value());
     st.setValue(QStringLiteral("excludes"), excludes_->toPlainText());
     st.setValue(QStringLiteral("restore_target"), target_->text());
+    if (autoDays_) {
+        st.setValue(QStringLiteral("auto_days"), autoDays_->value());
+        st.setValue(QStringLiteral("auto_keep"), autoKeep_->value());
+        st.setValue(QStringLiteral("remind_days"), remindDays_->value());
+    }
 }
 
 void BackupPage::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
     refreshList();
     updateFree();
+    updateAutoNote();
 }
 
 void BackupPage::updateFree() {

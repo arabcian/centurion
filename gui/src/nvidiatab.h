@@ -22,6 +22,7 @@ class VfCurveWidget;
 class Nvml;
 class NvApiTemps;
 
+class TrialBar;
 class NvidiaTab : public QWidget {
     Q_OBJECT
 public:
@@ -123,4 +124,6 @@ private:
     int flatFrom_ = -1, flatMhz_ = 0;
     void touchFlatten(int i) { if (flatFrom_ >= 0 && i >= flatFrom_) flatFrom_ = -1; }
     bool flattenPending() const { return flatFrom_ >= 0 && flatFrom_ < base_.size(); }
+    TrialBar *trial_ = nullptr;  // "Trial apply": auto-revert unless kept
+    void revertTrial();
 };

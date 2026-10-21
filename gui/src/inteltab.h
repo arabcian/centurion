@@ -22,6 +22,7 @@ namespace inteluv {
 QString profilesDir();  // ~/.config/centurion/intel-uv-profiles
 }
 
+class TrialBar;
 class IntelTab : public QWidget {
     Q_OBJECT
 public:
@@ -101,4 +102,6 @@ private:
     class QProcess *monStream_ = nullptr;  // parented to qApp (root child: exits on stdin EOF)
     bool monStreamFailed_ = false;         // helper predates monitor_stream → per-sample polling
     bool monStreamGotSample_ = false;
+    TrialBar *trial_ = nullptr;
+    void revertTrial();  // "Trial apply": auto-revert unless kept
 };

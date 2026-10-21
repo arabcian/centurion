@@ -118,6 +118,10 @@ std::optional<Scene> load(const QString &name) {
         for (const QJsonValue &v : ft) lv << v.toInt(0);
         if (std::all_of(lv.begin(), lv.end(), [](int x) { return x >= 1 && x <= 10; })) s.fanTable = lv;
     }
+    if (const QJsonValue od = o.value("panel_od"); od.isBool()) s.panelOd = od.toBool() ? 1 : 0;
+    if (const int k = o.value("kbd_backlight").toInt(-1); k >= 0 && k <= 10) s.kbdLevel = k;
+    if (const QJsonObject z = o.value("zone4").toObject(); !z.value("effect").toString().isEmpty()) s.zone4 = z;
+    if (const double hz = o.value("display").toObject().value("refresh").toDouble(0); hz >= 20 && hz <= 1000) s.refresh = hz;
     s.command = o.value("command").toString().trimmed();
     return s;
 }
@@ -141,11 +145,20 @@ bool save(const Scene &s, QString *err) {
     }
     if (s.fanFullSpeed >= 0) o["fan_fullspeed"] = s.fanFullSpeed == 1;
     if (s.fanTable.size() == 10) { QJsonArray a; for (int x : s.fanTable) a << x; o["fan_table"] = a; }
+    if (s.panelOd >= 0) o["panel_od"] = s.panelOd == 1;
+    if (s.kbdLevel >= 0) o["kbd_backlight"] = s.kbdLevel;
+    if (!s.zone4.isEmpty()) o["zone4"] = s.zone4;
+    if (s.refresh > 0) o["display"] = QJsonObject{{"refresh", s.refresh}};
     if (!s.command.isEmpty()) o["command"] = s.command;
     return writeObject(sceneFile(s.name), o, err);
 }
 
 bool remove(const QString &name) { return validName(name) && QFile::remove(sceneFile(name)); }
+
+QString displayTool() {
+    const QString p = QStandardPaths::findExecutable(QStringLiteral("centurion-display"));
+    return p.isEmpty() ? QStringLiteral("/usr/bin/centurion-display") : p;
+}
 
 Auto loadAuto() {
     const QJsonObject o = readObject(autoFile());
@@ -1067,6 +1080,51 @@ void SceneEngine::start(const Scene &s) {
                 done(true, QStringLiteral("profile %1 · brightness %2").arg(r.json.value("profile").toInt())
                                .arg(r.json.value("brightness").toInt()));
             });
+        });
+    }
+
+    // 6a. 4-zone RGB keyboard — the same request as the Lighting tab's Apply.
+    if (!s.zone4.isEmpty()) {
+        addStep("4-zone lighting", [this, z = s.zone4](Done done) {
+            if (!lighting::zone4Present()) { done(true, "no 4-zone keyboard here; skipped"); return; }
+            QJsonObject req = z;
+            req["op"] = "z4_set";
+            lighting::run(req, this, [done, eff = z.value("effect").toString()](const privileged::Result &r) {
+                done(r.ok(), r.ok() ? eff : (r.message().isEmpty() ? QStringLiteral("failed") : r.message()));
+            });
+        });
+    }
+
+    // 6b. White keyboard backlight level, 6c. panel Over Drive.
+    if (s.kbdLevel >= 0) {
+        addStep("Keyboard light", [this, n = s.kbdLevel](Done done) {
+            helper("legion-profile-helper", {{"device", "kbd_backlight"}, {"value", QString::number(n)}}, done,
+                   [n](const QJsonObject &) { return QStringLiteral("level %1").arg(n); });
+        });
+    }
+    if (s.panelOd >= 0) {
+        addStep("Panel Over Drive", [this, on = s.panelOd == 1](Done done) {
+            helper("legion-gpu-helper", {{"op", "set_panel_od"}, {"on", on}}, done,
+                   [on](const QJsonObject &) { return on ? QStringLiteral("on") : QStringLiteral("off"); });
+        });
+    }
+
+    // 6d. Internal panel refresh rate — as the user, through the desktop's own tool (centurion-display).
+    if (s.refresh > 0) {
+        addStep("Display", [this, hz = s.refresh](Done done) {
+            auto *p = new QProcess(this);
+            connect(p, &QProcess::finished, this, [p, done](int, QProcess::ExitStatus) {
+                const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
+                p->deleteLater();
+                done(o.value("ok").toBool(), o.value("ok").toBool() ? o.value("message").toString()
+                                                                    : o.value("error").toString(QStringLiteral("centurion-display failed")));
+            });
+            connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
+                if (e != QProcess::FailedToStart) return;
+                p->deleteLater();
+                done(false, QStringLiteral("centurion-display not found"));
+            });
+            p->start(displayTool(), {QStringLiteral("set-refresh"), QString::number(hz, 'f', 2)});
         });
     }
 

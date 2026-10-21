@@ -1,5 +1,8 @@
 #include "healthtab.h"
 #include "backuppage.h"
+#include "batterypage.h"
+#include "curvepage.h"
+#include "sleeppage.h"
 #include "klogpage.h"
 #include "dgpupage.h"
 #include "netpage.h"
@@ -71,6 +74,13 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *net = new NetPage;
     connect(net, &NetPage::alert, this, &HealthTab::alert);
     sub->addTab(net, QStringLiteral("Network"));
+    // Curve stability: built now, its guard reacts to new kernel errors with the window hidden.
+    auto *curves = new CurvePage;
+    connect(curves, &CurvePage::alert, this, &HealthTab::alert);
+    connect(this, &HealthTab::fault, curves, &CurvePage::onFault);
+    sub->addTab(curves, QStringLiteral("Curve stability"));
+    sub->addTab(new SleepPage, QStringLiteral("Sleep"));
+    if (BatteryPage::present()) sub->addTab(new BatteryPage, QStringLiteral("Battery use"));
     systools::addPages(sub);
     sub->addTab(new KlogPage, QStringLiteral("Kernel log"));
     // Backup: Centurion configuration + system image (tar). Idle until a button is pressed.
@@ -267,6 +277,7 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
     for (const QJsonValue &v : ev) {
         const QJsonObject e = v.toObject();
         addEvent(e);
+        if (!first_) Q_EMIT fault(e);
         const QString lvl = e.value(QStringLiteral("level")).toString();
         if (lvl == QLatin1String("critical") || lvl == QLatin1String("error")) {
             if (!newBad++) firstBad = e.value(QStringLiteral("title")).toString();

@@ -13,6 +13,7 @@
 // One job at a time; the helper streams progress lines. Cancel closes its
 // stdin (a root child cannot be killed from here). Nothing runs in the
 // background: the list is re-read when the page is shown and after a job.
+#include <QDateTime>
 #include <QJsonObject>
 #include <QPointer>
 #include <QWidget>
@@ -62,6 +63,14 @@ private:
     void systemBackup();
     void systemRestore();
     void verifySelected();
+    // Automatic configuration backup + system image reminder (the GUI lives in the tray, so no scheduler is needed).
+    void autoTick();
+    QDateTime newest(const QString &dir, bool image) const;
+    void pruneAuto(const QString &dir, int keep);
+    void updateAutoNote();
+    QSpinBox *autoDays_ = nullptr, *autoKeep_ = nullptr, *remindDays_ = nullptr;
+    QLabel *autoNote_ = nullptr, *remindNote_ = nullptr;
+    class QTimer *autoTimer_ = nullptr;
 
     QLineEdit *cfgDir_, *sysDir_, *target_;
     QCheckBox *cfgProfile_, *cfgLogs_, *low_, *verify_, *home_;

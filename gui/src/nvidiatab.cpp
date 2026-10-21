@@ -1,4 +1,5 @@
 #include "nvidiatab.h"
+#include "trialbar.h"
 #include "privileged.h"
 #include "theme.h"
 #include "vfcurvewidget.h"
@@ -256,6 +257,8 @@ static QSpinBox *spin(int lo, int hi, const QString &suffix, int w) {
 
 NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
+    trial_ = new TrialBar(QStringLiteral("nvidia/trial"));
+    root->addWidget(trial_);
     root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(5);
 
@@ -977,6 +980,7 @@ void NvidiaTab::applyOffsets() {
     runHelper({{"op", "apply_gpu_offsets"}, {"profile_name", SCRATCH}, {"profile_data", data}},
               "Offsets applied.", "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz](bool ok, const QJsonObject &) {
         QJsonArray pts;
+        if (ok) trial_->offer([this] { revertTrial(); });
         if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts)) return;
         takeGpuPoints(pts, true);
         log("✅ Curve re-read from the GPU after apply.");
@@ -989,8 +993,16 @@ void NvidiaTab::applyOffsets() {
     });
 }
 
+// resetCurve() refuses while another op runs: retry until it can, or the time-out would revert nothing.
+void NvidiaTab::revertTrial() {
+    if (busy_) { QTimer::singleShot(1500, this, &NvidiaTab::revertTrial); return; }
+    log("Trial over: GPU curve back to stock.");
+    resetCurve();
+}
+
 void NvidiaTab::resetCurve() {
     if (busy_) { log("⏳ Another operation is still running — please wait."); return; }  // tray can call this while busy
+    trial_->cancel();
     resetBtn_->setText("Resetting…");
     const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
     runHelper({{"op", "reset_gpu_curve"}}, "Reset successful.", "Reset failed", [this, t0](bool ok, const QJsonObject &) {
@@ -1147,6 +1159,7 @@ void NvidiaTab::applyNamedProfile(const QString &name) {
     runHelper({{"op", "apply_named_profile"}, {"name", name}}, QString(), "Could not apply '" + name + "'",
               [this, t0, name](bool ok, const QJsonObject &) {
         if (!ok) return;
+        trial_->offer([this] { revertTrial(); });
         selectProfile(name);        // tray quick-apply: the box still showed the previous pick
         mirrorProfileLimits(name);  // core cap / VRAM lock the profile just set (NVML cannot read them back)
         QJsonArray pts;
