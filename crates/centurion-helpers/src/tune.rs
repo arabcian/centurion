@@ -1531,6 +1531,14 @@ pub fn firmware_owned(t: &Tunable, err: &str) -> bool {
     matches!(t.target, Target::File(p) if p.ends_with("pcie_aspm/parameters/policy")) && err.contains("os error 1)")
 }
 
+/// Radio on/off switches (rfkill). Their early-boot state is not a default: the kernel brings Wi-Fi /
+/// Bluetooth up soft-blocked or unblocked depending on driver load order, and the real state is
+/// restored later by systemd-rfkill / the rfkill service / NetworkManager (and changed by the user with
+/// the airplane-mode key). A boot snapshot taken before that holds "radio off", and a preset filled
+/// from it switched Wi-Fi off at every scene change. They are never part of the boot defaults: a
+/// preset sets them only when the user checks the row on purpose, otherwise they are left as they are.
+pub fn user_switch(t: &Tunable) -> bool { matches!(t.target, Target::Rfkill(_)) }
+
 pub fn best_effort(t: &Tunable) -> bool {
     matches!(t.target, Target::Irq | Target::PciLatency | Target::PciAspm | Target::PciRuntimePm | Target::UsbRuntimePm | Target::UsbAutosuspendMs | Target::AhciPortRuntime | Target::AhciDisk(_))
 }
@@ -2798,7 +2806,7 @@ pub fn describe_with(light: bool) -> Value {
             "options": opts, "min": min, "max": max,
             // debugfs is root-only (0700): unprivileged callers cannot tell; root checks at write time.
             "available": !fs.is_empty() || (t.debugfs && debugfs_snapshot_has(t.key).unwrap_or(true)),
-            "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key),
+            "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t),
             "files": fs.len(), "slow": slow_to_read(t),
             "current": current_with(t, fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
         });
@@ -2857,6 +2865,8 @@ mod tests {
             assert!(find(k).is_some(), "{k}");
         }
         assert!(best_effort(find("pci.aspm_links").unwrap()));
+        for k in ["rf.wlan", "rf.bluetooth", "rf.wwan"] { assert!(user_switch(find(k).unwrap()), "{k}"); }
+        assert!(!user_switch(find("net.wifi_power_save").unwrap()));
     }
     #[test]
     fn bracketed() {

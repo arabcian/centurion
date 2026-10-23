@@ -5,6 +5,8 @@
 //!   preset. Captured by `centurion-boot-guard arm` (and by the centurion-tune boot op as
 //!   a fallback). "clean" = no Centurion state existed and TLP had not run yet.
 //!   A clean snapshot is never replaced by a dirty one of the same kernel.
+//!   Radio switches (rf.*, tune::user_switch) are never part of it: their early-boot state is
+//!   whatever rfkill had before systemd-rfkill / NetworkManager restored it, not a default.
 //! * outcomes.json - per key: how often a changed value was applied and how
 //!   often the pressure guard rolled it back. Autotune turns rollbacks into a
 //!   stability cost; two rollbacks retire every non-default candidate of that key.
@@ -50,7 +52,7 @@ pub fn capture() -> Result<Value, String> {
     }
     let mut values = Map::new();
     for t in tune::TUNABLES {
-        if tune::best_effort(t) || !tune::vendor_ok(t) { continue; }
+        if tune::best_effort(t) || tune::user_switch(t) || !tune::vendor_ok(t) { continue; }
         // Only what can be written back: "mixed" (per-file values differ) and a byte-form dirty limit of 0
         // (the system runs the ratio form) are states, not values. Stored, they made every return to the
         // boot defaults report those knobs as failed.
@@ -67,7 +69,11 @@ pub fn load() -> Option<Defaults> {
 }
 
 pub fn parse_defaults(v: &Value) -> Option<Defaults> {
-    let values = v["values"].as_object()?.iter().filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_owned()))).collect();
+    // Snapshots written before capture() skipped the radio switches can hold rf.wlan = 0 (captured
+    // before the Wi-Fi was unblocked): ignored, so nothing anchors at or returns to "radio off".
+    let values = v["values"].as_object()?.iter()
+        .filter(|(k, _)| !tune::find(k).map_or(false, tune::user_switch))
+        .filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_owned()))).collect();
     Some(Defaults { values, clean: v["clean"].as_bool().unwrap_or(false), kernel: v["kernel"].as_str().unwrap_or("").to_owned() })
 }
 
@@ -93,5 +99,17 @@ pub fn record(keys: &[String], rollback: bool) {
     let body: Map<String, Value> = all.iter().map(|(k, o)| (k.clone(), json!({"applies": o.applies, "rollbacks": o.rollbacks}))).collect();
     if crate::secure_dir(DIR).is_ok() {
         let _ = crate::write_root_file(OUTCOMES_FILE, &serde_json::to_vec_pretty(&Value::Object(body)).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn radio_switches_are_not_defaults() {
+        let d = parse_defaults(&json!({"clean": true, "kernel": "7.2",
+            "values": {"vm.swappiness": "60", "rf.wlan": "0", "rf.bluetooth": "0", "rf.wwan": "1"}})).unwrap();
+        assert_eq!(d.values.len(), 1);
+        assert_eq!(d.values["vm.swappiness"], "60");
     }
 }

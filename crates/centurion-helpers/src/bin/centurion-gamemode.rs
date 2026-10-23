@@ -807,11 +807,17 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
     if let Some(cmd) = s["command"].as_str().map(str::trim).filter(|c| !c.is_empty()) {
         // Same quoting rules as the GUI (QProcess::splitCommand).
         let argv = split_command(cmd);
-        if argv.is_empty() { return ok; }
-        let mut c = Command::new(&argv[0]);
-        c.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        unsafe { c.pre_exec(|| { libc::setsid(); Ok(()) }); }
-        line("command", c.spawn().map(|_| argv[0].clone()).map_err(|e| format!("{}: {e}", argv[0])));
+        if !argv.is_empty() {
+            let mut c = Command::new(&argv[0]);
+            c.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            unsafe { c.pre_exec(|| { libc::setsid(); Ok(()) }); }
+            line("command", c.spawn().map(|_| argv[0].clone()).map_err(|e| format!("{}: {e}", argv[0])));
+        }
+    }
+
+    // 8. screen brightness — after the command (it may switch display mode / GPU and reset the backlight).
+    if let Some(pct) = s["display"]["brightness"].as_u64().filter(|p| (1..=100).contains(p)) {
+        line("brightness", centurion_helpers::display::set_brightness(pct as u32));
     }
     ok
 }

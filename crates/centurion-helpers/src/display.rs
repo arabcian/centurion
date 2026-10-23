@@ -9,9 +9,15 @@
 //!
 //! Only the internal panel (eDP / LVDS / DSI) is touched, and only its refresh rate: the resolution stays
 //! the current one and the closest offered rate at that resolution is picked.
+//!
+//! Screen brightness (Scenes, after the run command) is the internal panel's backlight in
+//! /sys/class/backlight, stored as a percentage so a scene means the same on any panel. Still as the user:
+//! the sysfs file when it is writable, otherwise systemd-logind / elogind's Session.SetBrightness (the call
+//! desktops use themselves; allowed for the active local session), otherwise brightnessctl.
 
 use serde_json::{json, Value};
 use std::io::Read;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -213,6 +219,88 @@ pub fn list_json() -> Value {
     }
 }
 
+// ── internal-panel backlight ───────────────────────────────────────────────
+
+pub const BACKLIGHT_DIR: &str = "/sys/class/backlight";
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Backlight { pub name: String, pub kind: String, pub max: u32, pub cur: u32, pub active: bool }
+
+fn read_trim(p: &Path) -> Option<String> { std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned()) }
+
+/// Every backlight device under `root` (normally /sys/class/backlight).
+pub fn backlights_in(root: &Path) -> Vec<Backlight> {
+    let mut v: Vec<Backlight> = std::fs::read_dir(root).into_iter().flatten().flatten().filter_map(|e| {
+        let d = e.path();
+        let max = read_trim(&d.join("max_brightness"))?.parse::<u32>().ok().filter(|m| *m > 0)?;
+        let cur = read_trim(&d.join("brightness")).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        // A raw (GPU) backlight sits under its DRM connector; a disabled connector (the other GPU's eDP on a
+        // MUX machine) is not the panel being shown.
+        let active = read_trim(&d.join("device/enabled")).map_or(true, |s| s != "disabled");
+        Some(Backlight { name: e.file_name().to_string_lossy().into_owned(), kind: read_trim(&d.join("type")).unwrap_or_default(), max, cur, active })
+    }).collect();
+    v.sort_by(|a, b| a.name.cmp(&b.name));
+    v
+}
+
+/// The backlight that drives the panel: active ones first, then firmware > platform > raw (the order
+/// systemd-backlight and the desktops use — the kernel registers a firmware/platform interface only when it
+/// is the one in charge), then the finer scale.
+pub fn pick_backlight(v: &[Backlight]) -> Option<&Backlight> {
+    let rank = |k: &str| match k { "firmware" => 0, "platform" => 1, "raw" => 2, _ => 3 };
+    v.iter().min_by_key(|b| (!b.active, rank(&b.kind), std::cmp::Reverse(b.max)))
+}
+
+pub fn percent_to_raw(pct: u32, max: u32) -> u32 { ((pct.min(100) as u64 * max as u64 + 50) / 100).max(1) as u32 }
+pub fn raw_to_percent(raw: u32, max: u32) -> u32 { if max == 0 { 0 } else { ((raw.min(max) as u64 * 100 + max as u64 / 2) / max as u64) as u32 } }
+
+/// Current panel brightness: (device, percent).
+pub fn brightness() -> Result<(String, u32), String> {
+    let all = backlights_in(Path::new(BACKLIGHT_DIR));
+    let b = pick_backlight(&all).ok_or("no backlight device (/sys/class/backlight is empty)")?;
+    Ok((b.name.clone(), raw_to_percent(b.cur, b.max)))
+}
+
+/// Sets the internal panel's backlight to `pct` percent (1-100; never 0, which turns some panels off).
+pub fn set_brightness(pct: u32) -> Result<String, String> {
+    if !(1..=100).contains(&pct) { return Err(format!("brightness {pct} % is out of range (1-100)")); }
+    let all = backlights_in(Path::new(BACKLIGHT_DIR));
+    let b = pick_backlight(&all).ok_or("no backlight device (/sys/class/backlight is empty)")?;
+    let raw = percent_to_raw(pct, b.max);
+    let done = || format!("{} → {pct} % ({raw}/{})", b.name, b.max);
+    if b.cur == raw { return Ok(format!("{} already at {pct} %", b.name)); }
+
+    // 1. Writable sysfs (a udev rule or group grants it on some systems).
+    if std::fs::write(Path::new(BACKLIGHT_DIR).join(&b.name).join("brightness"), raw.to_string()).is_ok() { return Ok(done()); }
+
+    // 2. logind / elogind: Session.SetBrightness("backlight", NAME, RAW) on the caller's session.
+    let limit = Duration::from_secs(4);
+    let mut errs: Vec<String> = Vec::new();
+    for session in ["auto", "self"] {
+        let path = format!("/org/freedesktop/login1/session/{session}");
+        let r = if in_path("dbus-send") {
+            run("dbus-send", &["--system", "--print-reply", "--dest=org.freedesktop.login1", &path,
+                               "org.freedesktop.login1.Session.SetBrightness", "string:backlight",
+                               &format!("string:{}", b.name), &format!("uint32:{raw}")], limit)
+        } else if in_path("busctl") {
+            run("busctl", &["call", "org.freedesktop.login1", &path, "org.freedesktop.login1.Session",
+                            "SetBrightness", "ssu", "backlight", &b.name, &raw.to_string()], limit)
+        } else { break };
+        match r { Ok(_) => return Ok(done()), Err(e) => errs.push(e) }
+    }
+
+    // 3. brightnessctl (setuid or logind-backed on most distributions).
+    if in_path("brightnessctl") {
+        match run("brightnessctl", &["--quiet", "--device", &b.name, "set", &raw.to_string()], limit) {
+            Ok(_) => return Ok(done()),
+            Err(e) => errs.push(e),
+        }
+    }
+    Err(if errs.is_empty() {
+        format!("cannot write {} (no writable sysfs file, no dbus-send / busctl for logind, no brightnessctl)", b.name)
+    } else { errs.join("; ") })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +345,33 @@ mod tests {
     #[test]
     fn internal() {
         assert!(is_internal("eDP-1") && is_internal("LVDS1") && is_internal("DSI-1") && !is_internal("DP-2"));
+    }
+
+    #[test]
+    fn backlight_pick_and_scale() {
+        let bl = |name: &str, kind: &str, max: u32, active: bool| Backlight { name: name.into(), kind: kind.into(), max, cur: 0, active };
+        let v = vec![bl("intel_backlight", "raw", 96000, true), bl("nvidia_wmi_ec_backlight", "firmware", 100, true)];
+        assert_eq!(pick_backlight(&v).unwrap().name, "nvidia_wmi_ec_backlight");
+        let v = vec![bl("amdgpu_bl1", "raw", 255, false), bl("nvidia_0", "raw", 100, true)];
+        assert_eq!(pick_backlight(&v).unwrap().name, "nvidia_0");
+        assert!(pick_backlight(&[]).is_none());
+        assert_eq!(percent_to_raw(50, 255), 128);
+        assert_eq!(percent_to_raw(1, 10), 1);   // never 0
+        assert_eq!(percent_to_raw(100, 96000), 96000);
+        assert_eq!(raw_to_percent(128, 255), 50);
+        assert_eq!(raw_to_percent(96000, 96000), 100);
+    }
+
+    #[test]
+    fn backlight_sysfs() {
+        let root = std::env::temp_dir().join(format!("centurion-bl-{}", std::process::id()));
+        let d = root.join("intel_backlight");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("max_brightness"), "480\n").unwrap();
+        std::fs::write(d.join("brightness"), "240\n").unwrap();
+        std::fs::write(d.join("type"), "raw\n").unwrap();
+        let v = backlights_in(&root);
+        assert_eq!(v, vec![Backlight { name: "intel_backlight".into(), kind: "raw".into(), max: 480, cur: 240, active: true }]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
