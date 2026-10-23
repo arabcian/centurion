@@ -18,13 +18,17 @@
 #include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
+#include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <tuple>
 #include <QDate>
 #include <QDir>
 #include <QFileDialog>
 #include <QComboBox>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
@@ -33,6 +37,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QShowEvent>
+#include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -146,16 +151,19 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     addRow("Power profile", profile_, "Platform profile set first. Firmware limits below only take effect in Custom.");
 
     fwLabel_ = new QLabel;
-    fwLabel_->setWordWrap(true);
+    // A rich-text table: no word wrap (QLabel under-measures a wrapped table and cut its last row off).
+    fwLabel_->setWordWrap(false);
+    fwLabel_->setTextFormat(Qt::RichText);
     fwCapture_ = new QPushButton("Capture current");
     fwCapture_->setObjectName("btnMini");
     fwCapture_->setToolTip("Store the firmware attributes as they are right now (set them in Firmware Attributes first).");
     fwClear_ = new QPushButton("Clear");
     fwClear_->setObjectName("btnMini");
-    g->addWidget(muted("Firmware limits"), row, 0);
-    g->addWidget(fwLabel_, row, 1);
-    g->addWidget(fwCapture_, row, 2);
-    g->addWidget(fwClear_, row++, 3);
+    // One row per captured value: label and buttons stay at the top of the list.
+    g->addWidget(muted("Firmware limits"), row, 0, Qt::AlignTop);
+    g->addWidget(fwLabel_, row, 1, Qt::AlignTop);
+    g->addWidget(fwCapture_, row, 2, Qt::AlignTop);
+    g->addWidget(fwClear_, row++, 3, Qt::AlignTop);
     fan_ = new QComboBox;
     fan_->addItem("Unchanged", -1);
     fan_->addItem("Auto (EC fan curve)", 0);
@@ -257,8 +265,31 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     refreshLabel_ = g->itemAtPosition(row - 1, 0)->widget();
     command_ = new QLineEdit;
     command_->setPlaceholderText("optional, e.g.  pactl set-card-profile …");
-    addRow("Run command", command_, "Runs as you, without a shell, after everything else — for things this app "
-                                    "does not manage itself (audio profile, a script…).");
+    addRow("Run command", command_, "Runs as you, without a shell, after everything else except the screen brightness — for things "
+                                    "this app does not manage itself (audio profile, a script…).");
+    // Screen brightness: the very last step, after the command. Shown where there is a backlight (or the scene sets one).
+    screenBright_ = new QSpinBox;
+    screenBright_->setRange(0, 100);
+    screenBright_->setSingleStep(5);
+    screenBright_->setSuffix(QStringLiteral(" %"));
+    screenBright_->setSpecialValueText(QStringLiteral("Unchanged"));
+    auto *sbCapture = new QPushButton("Capture");
+    sbCapture->setObjectName("btnMini");
+    sbCapture->setToolTip("Store the screen brightness as it is right now.");
+    auto *sbClear = new QPushButton("Clear");
+    sbClear->setObjectName("btnMini");
+    screenBrightRow_ = new QWidget;
+    auto *sbl = new QHBoxLayout(screenBrightRow_);
+    sbl->setContentsMargins(0, 0, 0, 0);
+    sbl->addWidget(screenBright_, 1);
+    sbl->addWidget(sbCapture);
+    sbl->addWidget(sbClear);
+    addRow("Screen brightness", screenBrightRow_, "Internal panel backlight, set as you after the run command has been started "
+                                                  "(the command may change display mode and reset it). Unchanged leaves it alone.");
+    screenBright_->setToolTip(screenBrightRow_->toolTip());
+    screenBrightLabel_ = g->itemAtPosition(row - 1, 0)->widget();
+    connect(sbCapture, &QPushButton::clicked, this, &ScenesTab::captureScreenBrightness);
+    connect(sbClear, &QPushButton::clicked, this, [this] { screenBright_->setValue(0); });
 
     auto *eb = new QHBoxLayout;
     eb->addWidget(dup_);
@@ -339,6 +370,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     for (QComboBox *c : {profile_, cpu_, gpu_, tuning_, lightProfile_, lightBright_, fan_, panelOd_, kbdLevel_, refresh_})
         if (c) connect(c, &QComboBox::currentIndexChanged, this, [this] { if (!filling_) updateDirty(); });
     connect(command_, &QLineEdit::textChanged, this, [this] { if (!filling_) updateDirty(); });
+    connect(screenBright_, &QSpinBox::valueChanged, this, [this] { if (!filling_) updateDirty(); });
     connect(auto_, &QCheckBox::toggled, this, [this](bool on) { resume_->setEnabled(on); if (!filling_) storeAuto(); });
     connect(resume_, &QCheckBox::toggled, this, [this] { if (!filling_) storeAuto(); });
     for (QComboBox *c : {onAc_, onBattery_})
@@ -423,6 +455,7 @@ void ScenesTab::setEditor(const Scene &s) {
     updateZone4Label();
     fillRefresh(s.refresh);
     command_->setText(s.command);
+    screenBright_->setValue(s.screenBrightness > 0 ? s.screenBrightness : 0);
     firmware_ = s.firmware;
     fanTable_ = s.fanTable;
     updateFanTableLabel();
@@ -456,6 +489,7 @@ Scene ScenesTab::fromEditor() const {
     s.zone4 = zone4Label_ ? zone4_ : loaded_.zone4;
     s.refresh = refresh_->currentData().toDouble();
     s.command = command_->text().trimmed();
+    s.screenBrightness = screenBright_->value() > 0 ? screenBright_->value() : -1;
     return s;
 }
 
@@ -511,6 +545,27 @@ void ScenesTab::syncExtraRows() {
     const bool rr = rates_.size() > 1 || loaded_.refresh > 0;
     refresh_->setVisible(rr);
     refreshLabel_->setVisible(rr);
+    const bool sb = !QDir(QStringLiteral("/sys/class/backlight")).entryList(QDir::Dirs | QDir::NoDotAndDotDot).isEmpty()
+                    || loaded_.screenBrightness > 0;
+    screenBrightRow_->setVisible(sb);
+    screenBrightLabel_->setVisible(sb);
+}
+
+void ScenesTab::captureScreenBrightness() {
+    auto *p = new QProcess(this);
+    connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
+        const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
+        p->deleteLater();
+        if (!o.value("ok").toBool()) { setStatus("Could not read the screen brightness: " + o.value("error").toString("centurion-display failed"), theme::WARN); return; }
+        screenBright_->setValue(std::clamp(o.value("percent").toInt(), 1, 100));
+        setStatus(QStringLiteral("Screen brightness %1 % captured (%2).").arg(screenBright_->value()).arg(o.value("device").toString()), theme::OK);
+    });
+    connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart) return;
+        p->deleteLater();
+        setStatus("centurion-display not found.", theme::DANGER);
+    });
+    p->start(scenes::displayTool(), {QStringLiteral("brightness")});
 }
 
 // Active scene in the theme's accent (amber in Graphite, each palette's own equivalent elsewhere), the selected
@@ -576,6 +631,40 @@ void ScenesTab::updateDirty() {
         setStatus("Firmware limits only apply in the Custom power profile — pick Custom above or they will be skipped.", theme::WARN);
 }
 
+// Readable name and unit of a firmware attribute for the scene summary.
+struct FwShown { QString name, unit; };
+static FwShown fwShown(const QString &key) {
+    static const struct { const char *key, *name; } KNOWN[] = {
+        {"ppt_pl1_spl", "CPU PL1 · sustained"}, {"ppt_pl2_sppt", "CPU PL2 · short boost"}, {"ppt_pl3_fppt", "CPU PL3 · fast peak"},
+        {"cpu_temp", "CPU temperature target"}, {"gpu_nv_ctgp", "GPU cTGP"}, {"gpu_nv_ppab", "GPU Dynamic Boost ceiling"},
+        {"gpu_nv_cpu_boost", "GPU Dynamic Boost floor"}, {"gpu_temp", "GPU temperature target"},
+        {"ppt_cpu_cl", "CPU cross-load limit"}, {"gpu_nv_ac_offset", "GPU AC baseline offset"},
+    };
+    // The firmware's own display names (sysfs), read once: they do not change while the app runs.
+    static const QHash<QString, QString> display = [] {
+        QHash<QString, QString> h;
+        for (const FwAttr &a : FwattrTab::discover()) {
+            QString n = a.displayName;
+            if (const int i = n.indexOf(QStringLiteral("  (")); i > 0) n.truncate(i);  // "(missing from sysfs — via WMI)"
+            n = n.trimmed();
+            // Firmware names are phrased as commands ("Set the CPU cross loading power limit"): keep the noun.
+            if (n.startsWith(QLatin1String("Set the "), Qt::CaseInsensitive)) n = n.mid(8);
+            else if (n.startsWith(QLatin1String("Set "), Qt::CaseInsensitive)) n = n.mid(4);
+            if (!n.isEmpty()) n[0] = n[0].toUpper();
+            if (!n.isEmpty() && n != a.name) h.insert(a.name, n);
+        }
+        return h;
+    }();
+    FwShown f{display.value(key, key), QString()};
+    for (const auto &k : KNOWN)
+        if (key == QLatin1String(k.key)) { f.name = QString::fromUtf8(k.name); break; }
+    if (key.contains(QLatin1String("temp"))) f.unit = QStringLiteral("°C");
+    else if (key.contains(QLatin1String("tau")) || key.endsWith(QLatin1String("_time"))) f.unit = QStringLiteral("s");
+    else if (key.startsWith(QLatin1String("ppt_")) || key == QLatin1String("gpu_nv_ctgp") || key == QLatin1String("gpu_nv_ppab")
+             || key == QLatin1String("gpu_nv_cpu_boost")) f.unit = QStringLiteral("W");
+    return f;
+}
+
 void ScenesTab::updateFirmwareLabel() {
     fwClear_->setEnabled(!firmware_.isEmpty());
     if (firmware_.isEmpty()) {
@@ -583,14 +672,43 @@ void ScenesTab::updateFirmwareLabel() {
         fwLabel_->setToolTip(QString());
         return;
     }
-    QStringList all, head;
-    for (auto it = firmware_.cbegin(); it != firmware_.cend(); ++it) all << it.key() + " = " + QString::number(it.value());
-    // The three numbers people actually compare scenes by.
-    for (const auto &[key, shortName] : {std::pair{"ppt_pl1_spl", "PL1"}, {"ppt_pl2_sppt", "PL2"}, {"gpu_nv_ctgp", "cTGP"}})
-        if (const auto it = firmware_.constFind(QLatin1String(key)); it != firmware_.cend())
-            head << QStringLiteral("%1 %2 W").arg(QLatin1String(shortName)).arg(*it);
-    fwLabel_->setText(QStringLiteral("%1 value(s)%2").arg(firmware_.size()).arg(head.isEmpty() ? QString() : " — " + head.join(", ")));
-    fwLabel_->setToolTip(all.join('\n'));
+    // Every captured value, one row each: CPU limits, then GPU, then the rest (known names first, in a fixed order).
+    struct Line { int group, rank; QString key; FwShown f; int value; };
+    QList<Line> lines;
+    static const char *const ORDER[] = {"ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt", "cpu_temp",
+                                        "gpu_nv_ctgp", "gpu_nv_ppab", "gpu_nv_cpu_boost", "gpu_temp"};
+    for (auto it = firmware_.cbegin(); it != firmware_.cend(); ++it) {
+        const QString &k = it.key();
+        const int group = k.startsWith(QLatin1String("cpu")) || k.startsWith(QLatin1String("ppt")) ? 0
+                        : k.startsWith(QLatin1String("gpu")) || k.startsWith(QLatin1String("dgpu")) ? 1 : 2;
+        int rank = int(std::size(ORDER));
+        for (int i = 0; i < int(std::size(ORDER)); ++i) if (k == QLatin1String(ORDER[i])) { rank = i; break; }
+        lines.append({group, rank, k, fwShown(k), it.value()});
+    }
+    std::stable_sort(lines.begin(), lines.end(), [](const Line &a, const Line &b) {
+        return std::tie(a.group, a.rank, a.key) < std::tie(b.group, b.rank, b.key);
+    });
+    // Two columns, filled top to bottom (CPU limits on the left, GPU on the right when both are there):
+    // half the height of one row per value, so a Custom scene is not much taller than the others.
+    const int n = int(lines.size()), rows = (n + 1) / 2;
+    auto cells = [](const Line &l, bool gap) {
+        const QString val = l.f.unit.isEmpty() ? QString::number(l.value) : QStringLiteral("%1 %2").arg(l.value).arg(l.f.unit);
+        return QStringLiteral("<td style='white-space:nowrap; padding-left:%1px'>%2</td>"
+                              "<td align='right' style='white-space:nowrap; padding-left:10px'><b>%3</b></td>"
+                              "<td style='white-space:nowrap; padding-left:8px; color:%4; font-size:small'>%5</td>")
+            .arg(gap ? 28 : 0).arg(l.f.name.toHtmlEscaped(), val.toHtmlEscaped(), QString::fromLatin1(theme::MUTED), l.key.toHtmlEscaped());
+    };
+    QString html = QStringLiteral("<table cellspacing='0' cellpadding='0'>");
+    for (int r = 0; r < rows; ++r) {
+        html += QStringLiteral("<tr>") + cells(lines[r], false);
+        if (r + rows < n) html += cells(lines[r + rows], true);
+        html += QStringLiteral("</tr>");
+    }
+    html += QStringLiteral("</table>");
+    QStringList tip;
+    for (const Line &l : lines) tip << l.key + " = " + QString::number(l.value);
+    fwLabel_->setText(html);
+    fwLabel_->setToolTip(QStringLiteral("%1 firmware value(s) stored in this scene (attribute = value):\n").arg(firmware_.size()) + tip.join('\n'));
 }
 
 void ScenesTab::updateFanTableLabel() {

@@ -74,6 +74,7 @@ private:
         QList<Option> options;
         qint64 min = 0, max = 0;
         bool available = false, debugfs = false, caution = false, hotplug = false;
+        bool userSwitch = false;  // radio on/off (rf.*): never filled in from the boot snapshot
         bool touched = false;  // user edited the editor since the last sync
         QCheckBox *include = nullptr;
         QLabel *name = nullptr, *cur = nullptr;
@@ -106,7 +107,7 @@ private:
     QJsonObject collectValues() const;
     QJsonObject collectRun() const;
     /// How a preset's rows were filled by loadPresetObject.
-    struct Fill { int preset = 0, boot = 0, live = 0, unchecked = 0; };
+    struct Fill { int preset = 0, boot = 0, live = 0, unchecked = 0, radios = 0; };
     /// Loads a preset into the rows. With `fillDefaults` every row the preset leaves out is checked
     /// too, at its boot-guard default (bootValueFor): a preset then describes the whole state, not
     /// just the rows it changes. Returns the number of rows the preset itself set.
@@ -117,8 +118,16 @@ private:
     /// (/var/lib/centurion/defaults.json, `defs`); for a row the snapshot does not hold, the live
     /// value while Centurion has not changed it (*live = true). Empty: nothing trustworthy.
     QString bootValueFor(const Row &r, const QJsonObject &defs, bool *live = nullptr) const;
-    /// The "values" object of the boot-guard snapshot ({} when it was never captured).
+    /// The "values" object of the boot-guard snapshot ({} when it was never captured), without the
+    /// radio switches (snapshots from older versions hold rf.wlan = 0, captured before the Wi-Fi was up).
     static QJsonObject bootDefaults();
+    /// One-time repair of presets saved while the fill still took the radio switches from the boot
+    /// snapshot (it turned Wi-Fi off at every scene change). Returns the presets it rewrote.
+    static QStringList repairRadioFill();
+    /// Offers (once) to re-approve the root-owned copies of the repaired presets and the boot preset.
+    void offerRadioRepairApproval();
+    QStringList radioRepaired_;
+    bool radioRepairOffered_ = false;
     QString fillSummary(const Fill &f) const;
     bool writeUserPreset(const QString &name, const QJsonObject &p, QString *err = nullptr);
 

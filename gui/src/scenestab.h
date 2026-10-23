@@ -68,6 +68,9 @@ private:
     void queryRates();
     void syncExtraRows();
     QLineEdit *command_;
+    class QSpinBox *screenBright_ = nullptr;   // 0 = Unchanged, 1-100 %
+    QWidget *screenBrightRow_ = nullptr, *screenBrightLabel_ = nullptr;
+    void captureScreenBrightness();
     QPushButton *save_, *apply_, *dup_, *del_;
     QCheckBox *auto_;
     QCheckBox *resume_ = nullptr;

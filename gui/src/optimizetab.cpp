@@ -75,6 +75,11 @@ static QString helperForOp(const QString &op) {
 static QString storeFile(const QString &name) { return QStringLiteral("/etc/centurion/presets/") + name + QStringLiteral(".json"); }
 static bool storeHas(const QString &name) { return QFile::exists(storeFile(name)); }
 
+// Radio on/off rows (rf.wlan / rf.bluetooth / rf.wwan; tune::user_switch in the helper). Their early-boot
+// state is not a default (rfkill is restored later by systemd-rfkill / NetworkManager), so no fill puts them
+// into a preset: they change only when the user checks the row.
+static bool isRadioSwitch(const QString &key) { return key.startsWith(QLatin1String("rf.")); }
+
 // ── built-in presets ────────────────────────────────────────────────────────
 // Templates only: values a machine does not offer are skipped on load. Keep
 // the names valid for centurion-gamemode (letters, digits, space, _ - .).
@@ -297,6 +302,8 @@ static QLabel *muted(const QString &t) {
 }
 
 OptimizeTab::OptimizeTab(QWidget *parent) : QWidget(parent) {
+    // Before anything (a login scene) applies a preset by name.
+    radioRepaired_ = repairRadioFill();
     buildUi();
     reloadPresets();
     poll_ = new QTimer(this);
@@ -918,6 +925,8 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     updateLaunchPreview();
     updateStateBanner();
     reloadPresets(presetCombo_->currentData().toString(), true);
+    // Out of the describe callback: it may open a question.
+    if (!radioRepairOffered_) QTimer::singleShot(0, this, &OptimizeTab::offerRadioRepairApproval);
 }
 
 void OptimizeTab::buildRows(const QJsonArray &rows) {
@@ -948,6 +957,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         r.debugfs = o.value("debugfs").toBool();
         r.caution = o.value("caution").toBool();
         r.hotplug = o.value("hotplug").toBool();
+        r.userSwitch = o.value("user_switch").toBool() || isRadioSwitch(r.key);
         rows_.append(r);
     }
 
@@ -1330,12 +1340,102 @@ QJsonObject OptimizeTab::collectRun() const {
 QJsonObject OptimizeTab::bootDefaults() {
     QFile f(QStringLiteral("/var/lib/centurion/defaults.json"));
     if (f.size() > 512 * 1024 || !f.open(QIODevice::ReadOnly)) return {};
-    return QJsonDocument::fromJson(f.readAll()).object().value("values").toObject();
+    QJsonObject v = QJsonDocument::fromJson(f.readAll()).object().value("values").toObject();
+    for (const QString &k : v.keys()) if (isRadioSwitch(k)) v.remove(k);
+    return v;
+}
+
+static const QString RADIO_REPAIR_DONE = QStringLiteral("migrations/radioFill1");
+static const QString RADIO_REPAIR_PENDING = QStringLiteral("migrations/radioFill1Pending");
+static QString jsonText(const QJsonValue &v) { return v.isDouble() ? QString::number(v.toVariant().toLongLong()) : v.toVariant().toString(); }
+
+QStringList OptimizeTab::repairRadioFill() {
+    QSettings st;
+    if (st.value(RADIO_REPAIR_DONE).toBool()) return {};
+    // The raw snapshot, radio rows included (older captures stored them): a radio value equal to it in a
+    // preset is what the fill put there.
+    QJsonObject raw;
+    {
+        QFile f(QStringLiteral("/var/lib/centurion/defaults.json"));
+        if (f.size() <= 512 * 1024 && f.open(QIODevice::ReadOnly)) raw = QJsonDocument::fromJson(f.readAll()).object().value("values").toObject();
+    }
+    QStringList fixed;
+    const QDir dir(presetsDir());
+    for (const QString &fn : dir.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name)) {
+        const QString path = dir.filePath(fn);
+        QJsonObject p = readJsonFile(path);
+        QJsonObject values = p.value("values").toObject();
+        // Autotune never decides a radio: in an autotuned preset every radio row came from the fill.
+        const bool autotuned = p.value("autotune").isObject();
+        bool changed = false;
+        for (const QString &k : values.keys()) {
+            if (!isRadioSwitch(k)) continue;
+            const QJsonValue snap = raw.value(k);
+            if (autotuned || (!snap.isUndefined() && jsonText(snap) == jsonText(values.value(k)))) { values.remove(k); changed = true; }
+        }
+        if (!changed) continue;
+        p["values"] = values;
+        if (writeJsonFile(path, p, nullptr)) fixed << QFileInfo(fn).completeBaseName();
+    }
+    st.setValue(RADIO_REPAIR_DONE, true);
+    if (!fixed.isEmpty()) {
+        QStringList pending = st.value(RADIO_REPAIR_PENDING).toStringList();
+        for (const QString &n : fixed) if (!pending.contains(n)) pending << n;
+        st.setValue(RADIO_REPAIR_PENDING, pending);
+    }
+    return fixed;
+}
+
+void OptimizeTab::offerRadioRepairApproval() {
+    if (radioRepairOffered_ || busy_ || !isVisible()) return;
+    radioRepairOffered_ = true;
+    QSettings st;
+    const QStringList pending = st.value(RADIO_REPAIR_PENDING).toStringList();
+    if (pending.isEmpty()) return;
+    // Root-owned copies (scenes, centurion-gamemode) that still hold the radio rows.
+    QJsonObject presets;
+    for (const QString &n : pending) {
+        const QJsonObject values = presetObject(n).value("values").toObject();
+        if (!values.isEmpty() && storeHas(n) && !storeFresh(n, values)) presets[n] = values;
+    }
+    // The boot preset, when it was stored from one of the repaired presets.
+    QJsonObject bootValues = boot_.value("values").toObject();
+    const QString bootName = boot_.value("preset").toString();
+    bool bootFix = false;
+    if (pending.contains(bootName))
+        for (const QString &k : bootValues.keys()) if (isRadioSwitch(k)) { bootValues.remove(k); bootFix = true; }
+    if (presets.isEmpty() && !bootFix) { st.remove(RADIO_REPAIR_PENDING); return; }
+    QStringList what;
+    if (!presets.isEmpty()) what << QStringLiteral("the approved copies of: ") + presets.keys().join(QStringLiteral(", "));
+    if (bootFix) what << QStringLiteral("the boot preset \"%1\"").arg(bootName);
+    const QString msg = QStringLiteral(
+        "Earlier versions filled the Wi-Fi / Bluetooth radio rows of a preset from the boot-guard snapshot, which is taken "
+        "before the radios are switched on — so these presets turned Wi-Fi off at every scene change.\n\n"
+        "Your preset files are repaired (the radio rows are left as they are now). Still holding the old values: %1.\n\n"
+        "Approve the repaired versions now? (Administrator password, once. Otherwise Scenes ask at their next switch, "
+        "and the game preset and boot preset keep the old values until you save them again.)").arg(what.join(QStringLiteral("; ")));
+    if (QMessageBox::question(this, QStringLiteral("Presets switched Wi-Fi off"), msg) != QMessageBox::Yes) { st.remove(RADIO_REPAIR_PENDING); return; }
+    auto fixBoot = [this, bootFix, bootValues, bootName] {
+        if (!bootFix) { QSettings().remove(RADIO_REPAIR_PENDING); return; }
+        runOp({{"op", "set_boot"}, {"values", bootValues}, {"preset", bootName}}, QStringLiteral("Boot preset"), [this](const QJsonObject &res) {
+            if (!res.value("ok").toBool()) return;
+            QSettings().remove(RADIO_REPAIR_PENDING);
+            showStatus(QStringLiteral("Repaired presets approved; Wi-Fi is no longer switched off by them."), theme::OK, 10000);
+        });
+    };
+    if (presets.isEmpty()) { fixBoot(); return; }
+    runOp({{"op", "preset_save"}, {"presets", presets}}, QStringLiteral("Approve repaired presets"), [this, presets, fixBoot](const QJsonObject &res) {
+        if (!res.value("ok").toBool()) return;
+        for (auto it = presets.begin(); it != presets.end(); ++it) noteApproved(it.key(), it->toObject());
+        showStatus(QStringLiteral("Repaired presets approved; Wi-Fi is no longer switched off by them."), theme::OK, 10000);
+        // runOp has cleared busy_ before calling back: the boot preset can follow right away.
+        fixBoot();
+    });
 }
 
 QString OptimizeTab::bootValueFor(const Row &r, const QJsonObject &defs, bool *live) const {
     if (live) *live = false;
-    if (!r.available) return {};
+    if (!r.available || r.userSwitch) return {};  // radios: left as they are, never a "default"
     const QJsonValue d = defs.value(r.key);
     const QString raw = d.isString() ? d.toString() : d.isDouble() ? QString::number(d.toVariant().toLongLong()) : QString();
     const QString boot = isCcdRoleKey(r.key) ? canonicalCcd(raw) : raw;
@@ -1366,6 +1466,7 @@ QString OptimizeTab::fillSummary(const Fill &f) const {
     QString s = QStringLiteral("%1 from the preset, %2 at the boot-guard default").arg(f.preset).arg(f.boot);
     if (f.live) s += QStringLiteral(", %1 at the live value (no boot-guard default)").arg(f.live);
     if (f.unchecked) s += QStringLiteral(", %1 left unchecked (no trustworthy default)").arg(f.unchecked);
+    if (f.radios) s += QStringLiteral(", %1 radio switch(es) left as they are").arg(f.radios);
     return s;
 }
 
@@ -1400,6 +1501,7 @@ int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped, bo
         const QJsonObject defs = bootDefaults();
         for (Row &r : rows_) {
             if (!r.include || !r.available || set.contains(r.key)) continue;
+            if (r.userSwitch) { ++f.radios; continue; }  // Wi-Fi / Bluetooth on-off is the user's, not the snapshot's
             bool live = false;
             const QString v = bootValueFor(r, defs, &live);
             if (v.isEmpty() || !setEditorValue(r, v)) { ++f.unchecked; continue; }
@@ -2040,8 +2142,8 @@ void OptimizeTab::returnToBootDefaults() {
     }
     QString msg = QStringLiteral("Scenes will be paused (no automatic scene changes until you resume them in the Scenes tab), game mode ends, and "
                                  "all %1 Optimizations settings are written back to the values centurion-boot-guard captured at the start of this boot.\n\n"
-                                 "Power profile, firmware limits, curves and lighting are not part of that snapshot and stay as they are.")
-                      .arg(snap.value("values").toObject().size());
+                                 "Power profile, firmware limits, curves, lighting and the Wi-Fi / Bluetooth radio switches are not part of that snapshot and stay as they are.")
+                      .arg(bootDefaults().size());
     if (!snap.value("clean").toBool())
         msg += QStringLiteral("\n\nNote: that snapshot was taken after TLP or Centurion had already run, so it may not be the pristine kernel default.");
     if (QMessageBox::question(this, title, msg) != QMessageBox::Yes) return;

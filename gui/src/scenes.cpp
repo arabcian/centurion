@@ -122,6 +122,7 @@ std::optional<Scene> load(const QString &name) {
     if (const int k = o.value("kbd_backlight").toInt(-1); k >= 0 && k <= 10) s.kbdLevel = k;
     if (const QJsonObject z = o.value("zone4").toObject(); !z.value("effect").toString().isEmpty()) s.zone4 = z;
     if (const double hz = o.value("display").toObject().value("refresh").toDouble(0); hz >= 20 && hz <= 1000) s.refresh = hz;
+    if (const int b = o.value("display").toObject().value("brightness").toInt(-1); b >= 1 && b <= 100) s.screenBrightness = b;
     s.command = o.value("command").toString().trimmed();
     return s;
 }
@@ -148,7 +149,12 @@ bool save(const Scene &s, QString *err) {
     if (s.panelOd >= 0) o["panel_od"] = s.panelOd == 1;
     if (s.kbdLevel >= 0) o["kbd_backlight"] = s.kbdLevel;
     if (!s.zone4.isEmpty()) o["zone4"] = s.zone4;
-    if (s.refresh > 0) o["display"] = QJsonObject{{"refresh", s.refresh}};
+    if (s.refresh > 0 || s.screenBrightness > 0) {
+        QJsonObject d;
+        if (s.refresh > 0) d["refresh"] = s.refresh;
+        if (s.screenBrightness > 0) d["brightness"] = s.screenBrightness;
+        o["display"] = d;
+    }
     if (!s.command.isEmpty()) o["command"] = s.command;
     return writeObject(sceneFile(s.name), o, err);
 }
@@ -1135,6 +1141,26 @@ void SceneEngine::start(const Scene &s) {
             if (argv.isEmpty()) { done(false, "empty command"); return; }
             const QString prog = argv.takeFirst();
             done(QProcess::startDetached(prog, argv), prog);
+        });
+    }
+
+    // 8. Screen brightness — last, after the command (which may switch display mode or GPU and reset the
+    // backlight). As the user, through centurion-display (sysfs / logind SetBrightness / brightnessctl).
+    if (s.screenBrightness > 0) {
+        addStep("Screen brightness", [this, pct = s.screenBrightness](Done done) {
+            auto *p = new QProcess(this);
+            connect(p, &QProcess::finished, this, [p, done](int, QProcess::ExitStatus) {
+                const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
+                p->deleteLater();
+                done(o.value("ok").toBool(), o.value("ok").toBool() ? o.value("message").toString()
+                                                                    : o.value("error").toString(QStringLiteral("centurion-display failed")));
+            });
+            connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
+                if (e != QProcess::FailedToStart) return;
+                p->deleteLater();
+                done(false, QStringLiteral("centurion-display not found"));
+            });
+            p->start(displayTool(), {QStringLiteral("set-brightness"), QString::number(pct)});
         });
     }
 

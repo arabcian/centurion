@@ -2,7 +2,7 @@
 // Scenes: one named state for the whole machine, built from the profiles the
 // tabs already save — platform profile, firmware limits, CPU curve (Ryzen CO
 // or Intel undervolt), NVIDIA curve, Optimizations preset, and an optional
-// user command, plus the keyboard lighting profile/brightness. A scene only *references* those profiles by name, so there is
+// user command, plus the keyboard lighting profile/brightness and the screen brightness. A scene only *references* those profiles by name, so there is
 // no second copy of any setting to drift out of sync.
 //
 // SceneEngine applies a scene step by step through the same root helpers the
@@ -51,6 +51,7 @@ struct Scene {
     QJsonObject zone4;             // 4-zone RGB keyboard state (Lighting tab request fields); empty = unchanged
     double refresh = 0;            // internal panel refresh rate in Hz (current resolution); 0 = unchanged
     QString command;               // optional; run as the user, no shell
+    int screenBrightness = -1;     // internal panel backlight 1-100 %, set after the command; -1 = unchanged
     bool operator==(const Scene &) const = default;
 };
 
@@ -67,7 +68,7 @@ QStringList names();
 std::optional<Scene> load(const QString &name);
 bool save(const Scene &s, QString *err = nullptr);
 bool remove(const QString &name);
-/// centurion-display (internal-panel refresh rate; runs as the user).
+/// centurion-display (internal-panel refresh rate and brightness; runs as the user).
 QString displayTool();
 Auto loadAuto();
 bool saveAuto(const Auto &a, QString *err = nullptr);
