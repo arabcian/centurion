@@ -29,7 +29,7 @@ Tabs appear only when the hardware, driver or tool behind them exists.
 | Tab | What you get |
 |---|---|
 | **Home** | Power profile cards (Quiet / Balanced / Performance / Custom). *Hardware* box (system, kernel, CPU, GPU, RAM, BIOS, EC firmware) and *Live* box (CPU per CCD, dGPU state, iGPU, fans, NVMe, power rails, battery). *Device* box: battery charge mode, GPU mode (MUX), iGPU-only mode, Panel Overdrive, Fn lock, camera, USB charging when off (and on battery), white keyboard backlight level, Instant Boot, Custom in Fn+Q, Flip to start, Super-key lock, touchpad lock — each only where the firmware reports it. **Device info…** shows the model series, firmware interfaces and capability list. Fans: per-fan Auto / Max / set, **Turbo fan** (EC full speed), custom **Fan curve** editor with a goal-based **assistant** (quick, or measured under load). **Memory timings** viewer and BIOS editor. Boot-guard status with *Resume boot presets* / *Resume login scene*. |
-| **Scenes** | One name for the whole machine: power profile, firmware limits, CPU curve (Ryzen / Intel), NVIDIA curve, Optimizations preset, keyboard lighting (Spectrum or 4-zone), white keyboard light, panel Over Drive, panel refresh rate, fan boost, Custom-mode fan curve, a run command. AC / battery auto-switching, pause switch, game-start scene (Lutris / Steam hooks, or Heroic / Bottles detected automatically), export / import. |
+| **Scenes** | One name for the whole machine: power profile, firmware limits, CPU curve (Ryzen / Intel), NVIDIA curve, Optimizations preset, keyboard lighting (Spectrum or 4-zone), white keyboard light, panel Over Drive, panel refresh rate, fan boost, Custom-mode fan curve, a run command, and the screen brightness (applied last, after the command). AC / battery auto-switching, pause switch, game-start scene (Lutris / Steam hooks, or Heroic / Bottles detected automatically), export / import. |
 | **Firmware** | CPU PL1 / PL2 / PL3 and temperature target, GPU cTGP, Dynamic Boost ceiling / floor (written over WMI where the kernel refuses), BIOS CPU overclocking (applied next boot). |
 | **NVIDIA Curve** | Drag-and-edit V/F curve with zoom and pan, core / memory offsets, VRAM clock lock, GPU core clock cap, named profiles, ★ default applied at boot, driver module options, full reset, trial apply. Status: temps (incl. VRAM / hotspot), throttle reasons, PowerMizer. |
 | **Ryzen Curve** *(AMD)* | Per-core and all-core Curve Optimizer (CPPC-ranked, CCD-aware layout), profiles; *Reset* clears both. Trial apply. Live limit reasons (PPT / TDC / EDC / THM from the SMU PM table, with ryzen_smu). |
@@ -61,7 +61,7 @@ tab (which does wake it).
 | `centurion-boot-guard status\|reset\|…` | Boot-crash protection state |
 | `centurion-netguard daemon\|status\|list\|whois IP` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
-| `centurion-display list\|set-refresh HZ` | Internal panel refresh rate as the user (KDE kscreen-doctor, wlr-randr or xrandr) — used by Scenes |
+| `centurion-display list\|set-refresh HZ\|brightness\|set-brightness PCT` | Internal panel refresh rate (KDE kscreen-doctor, wlr-randr or xrandr) and backlight brightness (sysfs, logind SetBrightness or brightnessctl) as the user — used by Scenes |
 
 ## Boot services
 
@@ -302,6 +302,7 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 | Lighting tab without a password | udev + systemd-logind or elogind (`uaccess`) |
 | Health → Sleep (per-sleep log) | the `centurion-sleep-log` system-sleep hook (installed for systemd and elogind) |
 | Scenes → refresh rate | `kscreen-doctor` (KDE), `wlr-randr` (wlroots) or `xrandr` (X11) |
+| Scenes → screen brightness | `dbus-send` or `busctl` (logind / elogind SetBrightness), or `brightnessctl` |
 | Ryzen tab limit reasons | `ryzen_smu` with a PM table (desktop-derived and mobile-APU layouts; other versions are reported, not guessed) |
 | Health → Backup (system image) | GNU `tar` with ACL / xattr support; `pigz` (falls back to `gzip`), optionally `zstd`, `xz` |
 | Health → Network | `nft` and the `centurion-netguard` service; kernel: `NETFILTER_NETLINK_QUEUE`, `NF_TABLES`, `NF_TABLES_INET`, `NFT_QUEUE`, `NF_CONNTRACK`, `NFT_CT`, `INET_DIAG`, `INET_TCP_DIAG`, `INET_UDP_DIAG`, `INET_DIAG_DESTROY` |

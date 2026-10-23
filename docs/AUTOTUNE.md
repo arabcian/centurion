@@ -411,6 +411,10 @@ have run, but before TLP and before any preset
 a clean snapshot of a kernel is never replaced by a dirty one). Enable it once:
 `rc-update add centurion-boot-guard boot` / `systemctl enable centurion-boot-guard`.
 Without it the centurion-tune boot op takes the snapshot, else the kernel defaults are the reference.
+The radio switches (`rf.wlan`, `rf.bluetooth`, `rf.wwan`) are never in the snapshot: early in boot
+rfkill still holds whatever the drivers came up with, and systemd-rfkill / NetworkManager restore the
+real state later, so a snapshot value of "radio off" is an accident of timing, not a default
+(older snapshots that hold them are read without them).
 
 For every scored knob:
 

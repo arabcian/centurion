@@ -706,7 +706,11 @@ A preset stores the checked rows and a `run` block (nice, autogroup,
 CCD affinity). Loading skips values the machine does not offer and says which,
 and checks every other row at its boot-guard default (`/var/lib/centurion/defaults.json`;
 a row the snapshot lacks takes its live value while Centurion has not changed it), so a
-loaded preset - and a preset saved from it - describes the whole state. The tray and the
+loaded preset - and a preset saved from it - describes the whole state. The Wi-Fi / Bluetooth /
+WWAN radio rows are the exception: they are never filled in (left as they are) and change only
+when you check them yourself. Presets saved by earlier versions, whose fill took the radios from a
+snapshot taken before the Wi-Fi was unblocked (Wi-Fi off at every scene change), are repaired
+once at start-up, and the app offers to re-approve their root-owned copies and the boot preset. The tray and the
 drift re-apply send the same full set.
 ★ *Use for games* makes it centurion-gamemode's default; ⏻ *Apply at boot* stores the
 checked rows (validated by root) in `/etc/centurion/tune-boot.json`.
