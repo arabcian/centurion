@@ -838,6 +838,24 @@ centurion-helpers --bin centurion-calibrate sequential`; the noise/budget sweep 
 | `clock.source` | structural: switched back to `tsc` when another clock is in use and the kernel still lists the TSC. Never benchmarked |
 | launch block `timerslack_ns` | Gaming: 1 ns for the game's process tree (`centurion-gamemode RUN` / `WRAP`); in the GUI: Game launch → *Precise timers* |
 
+## C-state caps
+
+`cpu.cstate_max` (and `cpu.wake_latency_us`, its PM QoS sibling) is calibrated like any CPU knob,
+but a calibration window is shorter than a second and starts from a cooled die: it sees the faster
+wake-up and none of the sustained cost - cores that never sleep burn idle power all day, heat the
+package and leave the busy cores less boost headroom (on a laptop the shared power limit is reached
+sooner). That cost is charged as stability whatever the measurements say, in the per-knob choice and
+in the joint pass:
+
+| value | cost (desktop / laptop) |
+|---|---|
+| `≤ POLL` (no idle state at all), or a wake-latency limit below the shallowest real C-state | -0.9 / -1.2 |
+| deepest state disabled | -0.10 / -0.15 |
+| each further state disabled | another -0.08 / -0.12 |
+
+`≤ POLL` therefore needs an overwhelming measured gain (about +1 weighted utility) before autotune
+picks it; a shallow cap with a real measured latency gain can still win for gaming.
+
 ## Memory and writeback
 
 | knob | rule |
@@ -863,7 +881,15 @@ queue depth × throttling × dirty window), weighed by the storage weight.
 ## Devices
 
 Runtime PM, ASPM, USB autosuspend, NVMe APST, HDA power save, Wi-Fi power save
-and suspend mode are scored with a stability cost. Boot parameters win:
+and suspend mode are scored with a stability cost.
+
+**Suspend mode leans towards s2idle.** It is the path current laptop firmware and drivers are
+validated on and it resumes in about a second; S3 (`deep`) saves drain but its firmware path is
+rarely tested on new machines (and riskier still with `pcie_aspm=force`). Both values are scored
+against a neutral point, so whichever is the boot default the other is weighed against it: from a
+`deep` boot default gaming, desktop and throughput move to s2idle and power saving keeps deep; from
+an s2idle boot default no goal moves to deep with its default weights (a power weight of about 2.5
+or more still can). Boot parameters win:
 `usbcore.autosuspend=` → USB autosuspend is never touched; `pcie_aspm=force` →
 deeper ASPM states carry a larger risk; `pcie_aspm=off` → no ASPM rows.
 `kernel.watchdog` is never turned off (a hang would leave no log).

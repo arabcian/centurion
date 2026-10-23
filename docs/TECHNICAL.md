@@ -703,7 +703,11 @@ mode first (it resets per-policy files); SMT and CCD parking last on apply
 **Presets.** Six built-ins — Gaming X3D, Competitive, Low latency desktop,
 Compile throughput, CO validation, Quiet battery — plus your own (Save as…).
 A preset stores the checked rows and a `run` block (nice, autogroup,
-CCD affinity). Loading skips values the machine does not offer and says which.
+CCD affinity). Loading skips values the machine does not offer and says which,
+and checks every other row at its boot-guard default (`/var/lib/centurion/defaults.json`;
+a row the snapshot lacks takes its live value while Centurion has not changed it), so a
+loaded preset - and a preset saved from it - describes the whole state. The tray and the
+drift re-apply send the same full set.
 ★ *Use for games* makes it centurion-gamemode's default; ⏻ *Apply at boot* stores the
 checked rows (validated by root) in `/etc/centurion/tune-boot.json`.
 

@@ -91,6 +91,10 @@ Change values → *Apply*. It is a **trial**: unless you press **Keep** within 2
 
 ### 7.1 Presets
 Top bar: choose a preset → **Load** → review the checked rows → **Apply checked**.
+Loading a preset (or an autotune result) checks **every** row: the preset's own values, and every row it leaves out at the
+value `centurion-boot-guard` captured at boot. Applying a preset therefore also puts back whatever an earlier preset or a
+manual change left behind, and a preset you save holds the whole state. (Rows the snapshot does not cover take their live
+value while Centurion has not changed them; the status line says how many rows came from where.)
 **Save as…** keeps your own preset. **Restore originals** undoes everything applied this session.
 **↺ Return to boot-guard defaults** pauses Scenes and rewrites all knobs to the values captured at boot — use it as a clean baseline.
 
@@ -99,7 +103,7 @@ Rows are grouped: **CPU · Memory · Scheduler · Storage · Network · Devices 
 ### 7.2 Autotune (let the program choose)
 1. Optional but recommended: enable `centurion-boot-guard` and reboot once (it records the boot defaults).
 2. Press **⚙ Autotune** → pick a goal: *power saving*, *gaming*, *throughput*, *desktop*.
-3. Review the filled rows (changed rows are checked). **Weights…** shifts priorities (latency, throughput, power, footprint, stability).
+3. Review the filled rows (every row is checked: autotune's values, the rest at their boot-guard defaults; changed rows are bold). **Weights…** shifts priorities (latency, throughput, power, footprint, stability).
 4. **Apply checked**. A 120 s guard rolls memory settings back if the system stalls.
 
 ### 7.3 Calibration (teach the program your machine)
