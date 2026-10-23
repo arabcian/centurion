@@ -105,7 +105,21 @@ private:
 
     QJsonObject collectValues() const;
     QJsonObject collectRun() const;
-    int loadPresetObject(const QJsonObject &p, QStringList *skipped);
+    /// How a preset's rows were filled by loadPresetObject.
+    struct Fill { int preset = 0, boot = 0, live = 0, unchecked = 0; };
+    /// Loads a preset into the rows. With `fillDefaults` every row the preset leaves out is checked
+    /// too, at its boot-guard default (bootValueFor): a preset then describes the whole state, not
+    /// just the rows it changes. Returns the number of rows the preset itself set.
+    int loadPresetObject(const QJsonObject &p, QStringList *skipped, bool fillDefaults = true, Fill *fill = nullptr);
+    /// `values` plus every other available row at its boot-guard default (bootValueFor).
+    QJsonObject withBootDefaults(const QJsonObject &values) const;
+    /// Value for a row a preset leaves out: the one centurion-boot-guard captured early in this boot
+    /// (/var/lib/centurion/defaults.json, `defs`); for a row the snapshot does not hold, the live
+    /// value while Centurion has not changed it (*live = true). Empty: nothing trustworthy.
+    QString bootValueFor(const Row &r, const QJsonObject &defs, bool *live = nullptr) const;
+    /// The "values" object of the boot-guard snapshot ({} when it was never captured).
+    static QJsonObject bootDefaults();
+    QString fillSummary(const Fill &f) const;
     bool writeUserPreset(const QString &name, const QJsonObject &p, QString *err = nullptr);
 
     void reloadPresets(const QString &select = {}, bool poll = false);

@@ -1069,8 +1069,10 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         QTimer::singleShot(0, this, [this, n] { const int i = presetCombo_->findData(n); if (i >= 0) { presetCombo_->setCurrentIndex(i); loadSelected(); } });
 
     if (!values.isEmpty() || !run.isEmpty()) {
+        // Restores exactly what was checked before the rebuild: no boot-default fill, or a row the
+        // user had unchecked would come back checked.
         QJsonObject p{{"values", values}, {"run", run}};
-        loadPresetObject(p, nullptr);
+        loadPresetObject(p, nullptr, false);
     }
 }
 
@@ -1325,7 +1327,49 @@ QJsonObject OptimizeTab::collectRun() const {
     return run;
 }
 
-int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped) {
+QJsonObject OptimizeTab::bootDefaults() {
+    QFile f(QStringLiteral("/var/lib/centurion/defaults.json"));
+    if (f.size() > 512 * 1024 || !f.open(QIODevice::ReadOnly)) return {};
+    return QJsonDocument::fromJson(f.readAll()).object().value("values").toObject();
+}
+
+QString OptimizeTab::bootValueFor(const Row &r, const QJsonObject &defs, bool *live) const {
+    if (live) *live = false;
+    if (!r.available) return {};
+    const QJsonValue d = defs.value(r.key);
+    const QString raw = d.isString() ? d.toString() : d.isDouble() ? QString::number(d.toVariant().toLongLong()) : QString();
+    const QString boot = isCcdRoleKey(r.key) ? canonicalCcd(raw) : raw;
+    if (validFor(r, boot)) return boot;
+    // Not in the snapshot (the guard skips best-effort rows: IRQs, PCI, USB and AHCI power states), or
+    // not a value this row offers right now: the live value is still the boot state while Centurion
+    // has not changed the key. One Centurion changed has no trustworthy default here.
+    if (state_.value("keys").toArray().contains(r.key)) return {};
+    const QString cur = isCcdRoleKey(r.key) ? canonicalCcd(r.current) : r.current;
+    if (!validFor(r, cur)) return {};
+    if (live) *live = true;
+    return cur;
+}
+
+QJsonObject OptimizeTab::withBootDefaults(const QJsonObject &values) const {
+    QJsonObject out = values;
+    const QJsonObject defs = bootDefaults();
+    for (const Row &r : rows_) {
+        if (!r.include || out.contains(r.key)) continue;
+        const QString v = bootValueFor(r, defs);
+        if (v.isEmpty()) continue;
+        out[r.key] = r.kind == "int" ? QJsonValue(v.toLongLong()) : QJsonValue(v);
+    }
+    return out;
+}
+
+QString OptimizeTab::fillSummary(const Fill &f) const {
+    QString s = QStringLiteral("%1 from the preset, %2 at the boot-guard default").arg(f.preset).arg(f.boot);
+    if (f.live) s += QStringLiteral(", %1 at the live value (no boot-guard default)").arg(f.live);
+    if (f.unchecked) s += QStringLiteral(", %1 left unchecked (no trustworthy default)").arg(f.unchecked);
+    return s;
+}
+
+int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped, bool fillDefaults, Fill *fill) {
     const QJsonObject values = p.value("values").toObject();
     int n = 0;
     for (Row &r : rows_) {
@@ -1335,6 +1379,7 @@ int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped) {
         r.touched = false;
         setEditorValue(r, r.current);
     }
+    QSet<QString> set;
     for (auto it = values.begin(); it != values.end(); ++it) {
         Row *r = row(it.key());
         const QString raw = it->isString() ? it->toString() : QString::number(it->toVariant().toLongLong());
@@ -1343,8 +1388,28 @@ int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped) {
         r->touched = true;
         const QSignalBlocker b(r->include);
         r->include->setChecked(true);
+        set.insert(r->key);
         ++n;
     }
+    Fill f;
+    f.preset = n;
+    if (fillDefaults) {
+        // Every row the preset leaves alone is checked as well, at the value centurion-boot-guard
+        // captured at boot: applying the preset then also puts back whatever an earlier preset, a
+        // manual edit or another tool left behind, and a saved copy holds the whole state.
+        const QJsonObject defs = bootDefaults();
+        for (Row &r : rows_) {
+            if (!r.include || !r.available || set.contains(r.key)) continue;
+            bool live = false;
+            const QString v = bootValueFor(r, defs, &live);
+            if (v.isEmpty() || !setEditorValue(r, v)) { ++f.unchecked; continue; }
+            r.touched = true;
+            const QSignalBlocker b(r.include);
+            r.include->setChecked(true);
+            ++(live ? f.live : f.boot);
+        }
+    }
+    if (fill) *fill = f;
     for (Row &r : rows_) markRow(r);
     const QJsonObject run = p.value("run").toObject();
     if (nice_ && !run.isEmpty()) {
@@ -1362,9 +1427,11 @@ void OptimizeTab::loadSelected() {
     const QJsonObject p = presetObject(name);
     if (p.isEmpty()) { QMessageBox::warning(this, "Load preset", "Cannot read preset \"" + name + "\"."); return; }
     QStringList skipped;
-    const int n = loadPresetObject(p, &skipped);
+    Fill f;
+    loadPresetObject(p, &skipped, true, &f);
     loadedPreset_ = name;
-    QString msg = QStringLiteral("Loaded \"%1\": %2 setting(s) checked").arg(name).arg(n);
+    QString msg = QStringLiteral("Loaded \"%1\": every row checked — %2").arg(name, fillSummary(f));
+    if (bootDefaults().isEmpty()) msg += QStringLiteral(" (no boot-guard snapshot yet: enable centurion-boot-guard and reboot once)");
     if (!skipped.isEmpty()) msg += QStringLiteral(", %1 not offered here (%2)").arg(skipped.size()).arg(skipped.join(", "));
     showStatus(msg + ". Review, then Apply checked.", skipped.isEmpty() ? theme::OK : theme::WARN, 10000);
 }
@@ -1440,10 +1507,14 @@ void OptimizeTab::deleteSelected() {
 
 void OptimizeTab::useForGames() {
     const QString name = presetCombo_->currentData().toString();
-    const QJsonObject p = presetObject(name);
+    QJsonObject p = presetObject(name);
     if (p.isEmpty()) return;
     QString err;
-    if (!QFile::exists(presetsDir() + '/' + name + ".json") && !writeUserPreset(name, p, &err)) {
+    const bool copy = !QFile::exists(presetsDir() + '/' + name + ".json");
+    // A built-in copied for centurion-gamemode carries every row (the others at their boot-guard
+    // defaults), the same state loading it in the tab shows.
+    if (copy) p["values"] = withBootDefaults(p.value("values").toObject());
+    if (copy && !writeUserPreset(name, p, &err)) {
         QMessageBox::critical(this, "Use for games", err);
         return;
     }
@@ -1514,10 +1585,11 @@ void OptimizeTab::runAutotune() {
             return;
         }
         QStringList notLoaded;
-        const int n = loadPresetObject(d.value("preset").toObject(), &notLoaded);
+        Fill f;
+        loadPresetObject(d.value("preset").toObject(), &notLoaded, true, &f);
         loadedPreset_ = d.value("name").toString();
-        showStatus(QStringLiteral("Autotune · %1: %2 setting(s) checked. Review, then Apply checked or Save.")
-                       .arg(d.value("goal_label").toString()).arg(n), theme::OK, 12000);
+        showStatus(QStringLiteral("Autotune · %1: every row checked — %2. Review, then Apply checked or Save.")
+                       .arg(d.value("goal_label").toString(), fillSummary(f)), theme::OK, 12000);
         showAutotuneReport(d, notLoaded);
     });
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
@@ -1832,8 +1904,8 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     for (const auto &s : d.value("skipped").toArray()) off << s.toObject().value("key").toString();
     off << notLoaded;
     off.removeDuplicates();
-    auto *foot = muted(QStringLiteral("%1 row(s) checked, %2 of them change the live value (bold). Nothing has been written yet: "
-                                      "review in the tab, then Apply checked.%3")
+    auto *foot = muted(QStringLiteral("%1 row(s) set by autotune, %2 of them change the live value (bold); every other row is checked at its "
+                                      "boot-guard default. Nothing has been written yet: review in the tab, then Apply checked.%3")
                            .arg(values.size() - notLoaded.size()).arg(changing)
                            .arg(off.isEmpty() ? QString() : QStringLiteral("\nNot offered on this machine/kernel: ") + off.join(QStringLiteral(", "))));
     v->addWidget(foot);
@@ -1927,7 +1999,8 @@ bool OptimizeTab::applyNamedPreset(const QString &name) {
     if (values.isEmpty()) return false;
     loadPresetObject(p, nullptr);
     loadedPreset_ = name;
-    applyValues(values, name);
+    // Like Apply checked after loading it: the preset's rows, every other row at its boot-guard default.
+    applyValues(collectValues(), name);
     return true;
 }
 
