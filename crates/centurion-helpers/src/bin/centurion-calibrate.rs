@@ -300,6 +300,7 @@ fn run_idle(b: Benches, c: &Ctx) -> Result<Sample, String> {
         s.insert(Metric::CpuMulti, k.rate);
         if let Some(e) = k.eff { s.insert(Metric::CpuEff, e); }
         if let Some(f) = k.frame_tail { s.insert(Metric::BusyFrameP99Us, f); }
+        if let Some(t) = bench::burst_job_tail_ms(&c.exe, ms(c, 450)) { s.insert(Metric::BurstJobTailMs, t); }
     }
     if b.cpu || b.cpu_mem { if let Some(j) = bench::jobs_per_sec(&c.exe, ms(c, 450)) { s.insert(Metric::JobsPerSec, j); } }
     if b.cpu_mem { bench::probe_child(&c.exe, 512, &mut s)?; }
@@ -322,6 +323,7 @@ fn run_load(b: Benches, c: &Ctx) -> Result<(Sample, bool), String> {
             let k = bench::contended(ms(c, 450));
             s.insert(Metric::CpuMulti, k.rate);
             if let Some(f) = k.frame_tail { s.insert(Metric::BusyFrameP99Us, f); }
+            if let Some(t) = bench::burst_job_tail_ms(&c.exe, ms(c, 450)) { s.insert(Metric::BurstJobTailMs, t); }
         }
         // Short jobs under memory pressure: every fresh heap is paid for by reclaim.
         if let Some(j) = bench::jobs_per_sec(&c.exe, ms(c, 450)) { s.insert(Metric::JobsPerSec, j); }
@@ -361,8 +363,8 @@ fn est_secs(ph: Phase, b: Benches, scale: f64) -> f64 {
     let s = match ph {
         Phase::Dev => 13.5,
         Phase::Idle => 0.3 + if b.io || b.cpu_mem { 0.8 } else { 0.0 } + if b.idle { 2.8 } else { 0.0 } + if b.cpu || b.cpu_mem { 1.1 } else { 0.0 }
-            + if b.cpu { 3.2 } else { 0.0 } + if b.cpu_mem { 1.8 } else { 0.0 } + if b.io { 4.0 } else { 0.0 },
-        Phase::Load => 1.9 + if b.cpu { 3.0 } else { 0.0 } + if b.cpu_mem { 1.0 } else { 0.0 } + if b.io { 2.0 } else { 0.0 },
+            + if b.cpu { 3.7 } else { 0.0 } + if b.cpu_mem { 1.8 } else { 0.0 } + if b.io { 4.0 } else { 0.0 },
+        Phase::Load => 1.9 + if b.cpu { 3.5 } else { 0.0 } + if b.cpu_mem { 1.0 } else { 0.0 } + if b.io { 2.0 } else { 0.0 },
         Phase::Io => 0.6 + 4.0,
     };
     s * scale
@@ -397,6 +399,7 @@ fn selects(x: &str, key: &str, group: &str) -> bool {
         "@mem" => group == "Memory",
         "@cpu" => group == "CPU",
         "@sched" => group == "Scheduler",
+        "@bore" => key == "kernel.sched_bore" || key.starts_with("kernel.sched_burst_"),
         "@dev" | "@devices" => calib::dev_key(key),
         _ => x == key,
     }
@@ -430,6 +433,9 @@ fn plan(rounds: usize, scale: f64, ram: u64, only: &Option<Vec<String>>, phase: 
     for (key, group) in keys {
         if only.as_ref().map_or(false, |o| !o.iter().any(|x| selects(x, &key, group))) { continue; }
         if calib::io_key(&key) { if let Err(e) = disk { skipped.push((key, format!("no storage suite: {e} (--dir PATH on a local disk)"))); continue; } }
+        if key.starts_with("kernel.sched_burst_") && live_label("kernel.sched_bore", None).as_deref() == Some("0") {
+            skipped.push((key, "BORE is off (kernel.sched_bore 0): its tunables change nothing".into())); continue;
+        }
         let Some(reference) = live_label(&key, disk.as_ref().ok().map(String::as_str)) else { skipped.push((key, "live value unreadable".into())); continue };
         let t = tune::find(&key);
         let opts: Vec<String> = t.map(|t| tune::options(t).into_iter().map(|(v, _)| v).collect()).unwrap_or_default();
@@ -972,6 +978,8 @@ fn analyse(models: Vec<(Goal, Model)>, phase: Phase, factors: &[Factor], bad: &[
         (g, single(m.clone(), mix), single(m, cool))
     }).collect();
     let keys: Vec<String> = factors.iter().filter(|f| !model::is_ctx(&f.key)).map(|f| f.key.clone()).collect();
+    // Every value of every knob refused by the kernel this session: nothing left to decide or to try.
+    if keys.is_empty() { return None; }
     let cands: Vec<Vec<(String, f64)>> = factors.iter().filter(|f| !model::is_ctx(&f.key)).map(|f| {
         let mut v = vec![(f.reference.clone(), 0.0)];
         for x in &f.values { v.push((x.clone(), model::modest_cost(&f.reference, x))); }
@@ -1547,7 +1555,7 @@ fn main() {
     }
     if !Journal::load().entries.is_empty() { die("an interrupted run left changes: sudo centurion-calibrate --restore first"); }
     let state_active = std::fs::read_to_string(TUNE_STATE).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .map_or(false, |v| v["baseline"].as_array().map_or(false, |a| !a.is_empty()));
+        .map_or(false, |v| preset_baseline(&v));
     if state_active { die("an Optimizations preset is active: Restore originals first, so every knob is measured from the boot state"); }
     let _ = centurion_helpers::secure_dir("/run/centurion");
     if let Err(e) = centurion_helpers::secure_dir("/run/centurion/tune") { die(&format!("lock dir: {e}")); }
@@ -1830,6 +1838,13 @@ const BOOT_DEADLINE_S: u64 = 4 * 3600;
 /// Quiet time (no keyboard/mouse/touchpad event) before a session starts.
 const BOOT_IDLE_S: u64 = 300;
 
+/// A preset's saved originals that could bias a measurement. pci.latency_timer stays out: PCIe
+/// functions hardwire the register to 0, the knob is never measured, and its restore is refused
+/// while the device is suspended (GPU tree / runtime PM), which left the entry behind for good.
+fn preset_baseline(st: &Value) -> bool {
+    st["baseline"].as_array().map_or(false, |a| a.iter().any(|e| e[0] != "pci.latency_timer"))
+}
+
 fn boot_status() -> String {
     if let Some(s) = std::fs::read_to_string(BOOT_STATUS).ok().filter(|s| !s.trim().is_empty()) { return s.trim().to_owned(); }
     match centurion_helpers::read_root_file(BOOT_FLAG, centurion_helpers::calctx::BOOT_FLAG_MAX).and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
@@ -1879,7 +1894,7 @@ fn boot_blocker() -> Option<String> {
     if psi > 10.0 { return Some(format!("waiting for a quiet machine (CPU pressure {psi:.0} %)")); }
     let st: Value = std::fs::read_to_string(TUNE_STATE).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
     if centurion_helpers::live_game_sessions(&st) > 0 { return Some("waiting: a game is running".into()); }
-    if st["baseline"].as_array().map_or(false, |a| !a.is_empty()) { return Some("waiting: an Optimizations preset is active (Restore originals)".into()); }
+    if preset_baseline(&st) { return Some("waiting: an Optimizations preset is active (Restore originals)".into()); }
     None
 }
 

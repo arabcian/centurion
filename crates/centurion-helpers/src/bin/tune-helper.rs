@@ -447,6 +447,10 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
             Ok(()) => n += 1,
             // Per-policy files vanish when the pstate mode is restored first; not an error.
             Err(_) if !f.exists() => {}
+            // The latency byte of a device in the GPU tree or in runtime suspend is never written (apply
+            // refuses it the same way) and PCIe hardwires it to 0: nothing to give back, and keeping the
+            // entry would block restore, boot defaults and calibration for good.
+            Err(e) if matches!(tune::find(key).map(|t| &t.target), Some(tune::Target::PciLatency)) && e.contains("skipped (GPU tree or suspended device)") => {}
             // Best-effort rows (IRQs, PCI/USB devices): not an error, but the
             // original stays recorded for the next restore instead of being lost.
             Err(_) if tune::find(key).map_or(false, tune::best_effort) => { failed.insert(i); deferred += 1; }

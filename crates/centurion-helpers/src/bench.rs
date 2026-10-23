@@ -1318,6 +1318,38 @@ pub fn contended(dur: Duration) -> Contended {
     Contended { rate, eff: w.filter(|w| *w > 0.0).map(|w| rate / w), frame_tail: tail(&mut lat) }
 }
 
+/// Short processes while every CPU is taken, the ground BORE acts on: 1.5 spinning threads per CPU
+/// have long bursts (BORE penalises them), 4 launcher threads keep starting `exe __job` and time
+/// each child from spawn to exit (a build system, a launcher tree, a shader-compile child). A
+/// new process inherits its relatives' penalty (`sched_burst_inherit_type`), so the tail shows
+/// whether children of a busy tree start behind the hogs or ahead of them. Returns the tail in ms.
+pub fn burst_job_tail_ms(exe: &std::path::Path, dur: Duration) -> Option<f64> {
+    let iters = (unit() * 2).to_string();
+    let run = |exe: &std::path::Path, iters: &str| -> Option<f64> {
+        let t = Instant::now();
+        let ok = std::process::Command::new(exe).arg("__job").arg(iters)
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .status().map_or(false, |s| s.success());
+        ok.then(|| t.elapsed().as_secs_f64() * 1e3)
+    };
+    run(exe, &iters)?;  // brings the binary back into the page cache
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let t0 = Instant::now();
+    let hogs: Vec<_> = (0..cpus + cpus / 2).map(|i| std::thread::spawn(move || {
+        let buf = vec![1u8; 128 * 1024];
+        let (mut n, mut acc) = (0u64, i as u64);
+        while t0.elapsed() < dur { acc = work(100_000, acc ^ n, &buf); n += 100_000; }
+        std::hint::black_box(acc);
+    })).collect();
+    let launchers: Vec<_> = (0..4).map(|_| {
+        let (exe, iters) = (exe.to_path_buf(), iters.clone());
+        std::thread::spawn(move || { let mut v = Vec::new(); while t0.elapsed() < dur { if let Some(x) = run(&exe, &iters) { v.push(x); } } v })
+    }).collect();
+    let mut all: Vec<f64> = launchers.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect();
+    for h in hogs { let _ = h.join(); }
+    tail(&mut all)
+}
+
 /// The short job (`centurion-calibrate __job <iters>`): a fresh 8 MiB heap touched page by page,
 /// then `iters` of integer work - a compiler or a shader-compile child in miniature.
 pub fn job_main(iters: u64) {

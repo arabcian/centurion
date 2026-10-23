@@ -101,6 +101,7 @@ pub enum Metric {
     CacheTailMs,    // cache-bound game loop: frame-time tail - a thread on the wrong L3, a migration (latency, lower better)
     GameJitterUs,   // game loop: mean frame-to-frame change of the frame time, every frame counts (latency: pacing, lower better)
     GameW,          // CPU package power while the game loop delivers its fixed frames (power, lower better)
+    BurstJobTailMs, // short processes started while every CPU is taken: start-to-exit tail - what BORE's penalty and its inheritance decide (latency, lower better)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,18 +157,18 @@ impl PowerSrc {
 const MIN_PWR_ROWS: usize = 12;
 
 impl Metric {
-    pub const ALL: [Metric; 36] = [Metric::WakeP99Us, Metric::FaultP99Us, Metric::FsyncP99Ms, Metric::RandReadP99Us,
+    pub const ALL: [Metric; 37] = [Metric::WakeP99Us, Metric::FaultP99Us, Metric::FsyncP99Ms, Metric::RandReadP99Us,
         Metric::PingPongP99Us, Metric::StallsPerSec, Metric::MemBwGbs, Metric::AllocMs, Metric::WriteMbs, Metric::ReadMbs,
         Metric::ThpPct, Metric::CpuSingle, Metric::CpuMulti, Metric::IdleW, Metric::PkgW, Metric::CpuEff, Metric::ProbeRssMib,
         Metric::TlbRandNs, Metric::TlbHugeNs, Metric::ShmRandNs, Metric::FaultHugeP99Us, Metric::FrameP99Us, Metric::MixedReadP99Us,
         Metric::MmapFaultP99Us, Metric::IopsK, Metric::IoCpuUs, Metric::RaFootprintMib, Metric::FrameMedUs, Metric::GameFrameMs,
         Metric::GameTailMs, Metric::BusyFrameP99Us, Metric::JobsPerSec, Metric::CacheFrameMs, Metric::CacheTailMs, Metric::GameJitterUs,
-        Metric::GameW];
+        Metric::GameW, Metric::BurstJobTailMs];
     pub fn objective(self) -> Objective {
         use Metric::*;
         match self {
             WakeP99Us | FaultP99Us | FsyncP99Ms | RandReadP99Us | PingPongP99Us | StallsPerSec | FaultHugeP99Us | FrameP99Us
-            | MixedReadP99Us | MmapFaultP99Us | FrameMedUs | GameTailMs | BusyFrameP99Us | CacheTailMs | GameJitterUs => Objective::Lat,
+            | MixedReadP99Us | MmapFaultP99Us | FrameMedUs | GameTailMs | BusyFrameP99Us | CacheTailMs | GameJitterUs | BurstJobTailMs => Objective::Lat,
             MemBwGbs | AllocMs | WriteMbs | ReadMbs | ThpPct | CpuSingle | CpuMulti | TlbRandNs | TlbHugeNs | ShmRandNs | IopsK
             | GameFrameMs | JobsPerSec | CacheFrameMs => Objective::Thr,
             IdleW | PkgW | CpuEff | IoCpuUs | GameW => Objective::Pwr,
@@ -179,7 +180,7 @@ impl Metric {
     pub fn noise_floor(self) -> f64 {
         use Metric::*;
         match self { WakeP99Us | FaultP99Us | FsyncP99Ms | RandReadP99Us | PingPongP99Us | FaultHugeP99Us | FrameP99Us | MixedReadP99Us
-                     | MmapFaultP99Us | GameTailMs | BusyFrameP99Us | CacheTailMs => 0.05, _ => 0.02 }
+                     | MmapFaultP99Us | GameTailMs | BusyFrameP99Us | CacheTailMs | BurstJobTailMs => 0.05, _ => 0.02 }
     }
     /// Offset that keeps log-ratios finite for counters that can be zero.
     pub fn eps(self) -> f64 { match self { Metric::StallsPerSec | Metric::ThpPct => 1.0, _ => 0.0 } }
@@ -200,7 +201,7 @@ impl Metric {
             FrameMedUs => "frame typical", GameFrameMs => "game frame time", GameTailMs => "game frame tail",
             BusyFrameP99Us => "frame tail, CPUs taken", JobsPerSec => "short jobs",
             CacheFrameMs => "cache-bound frame time", CacheTailMs => "cache-bound frame tail", GameJitterUs => "game frame pacing",
-            GameW => "game-loop power",
+            GameW => "game-loop power", BurstJobTailMs => "short-job tail, CPUs taken",
         }
     }
 }
@@ -380,6 +381,12 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         "zswap.max_pool_percent" => v(&[10, 20, 30]),
         // 0/1/2 are the whole range: the generic halve/double rule would only offer 1.
         "kernel.sched_burst_inherit_type" => v(&[0, 1, 2]),
+        // BORE doses: halving/doubling would test penalty_offset 48 (= no burst is ever penalised, the
+        // same as sched_bore 0) and a smoothness of 2 only; these bracket the stock value on both sides.
+        "kernel.sched_burst_smoothness" => v(&[0, 2, 3]),
+        "kernel.sched_burst_penalty_offset" => v(&[r - 4, r + 4].map(|x| x.clamp(0, 40))),
+        "kernel.sched_burst_penalty_scale" => v(&[r / 2, r * 2].map(|x| x.clamp(1, 4095))),
+        "kernel.sched_burst_cache_lifetime" => v(&[r / 4, r * 4].map(|x| x.clamp(1_000_000, 4_294_967_295))),
         // Infinity SMT slice divisor (1-16, stock 2): 1 = no halving is a mode, 4/8 bracket the
         // shorter-slice side, 2 brings a changed boot value back to stock; halve/double would never try 8.
         "kernel.infinity_smt_divisor" => v(&[1, 2, 4, 8].into_iter().filter(|x| *x != r).collect::<Vec<_>>()),

@@ -997,6 +997,9 @@ impl<'a> Rules<'a> {
             self.p.cur(key).map(str::to_owned).or_else(|| self.p.calibration.as_ref().and_then(|c| c.values(key, "")).map(|(r, _)| r))
         };
         alts.retain(|c| !self.p.measured_unsafe(key, &vstr(&c.value)));
+        // Costs no calibration run can see (sustained idle power and heat of capped C-states): every
+        // candidate pays them, whether its effects are estimates or measurements.
+        for c in alts.iter_mut() { c.fx.risk += unseen_cost(self.p, key, &vstr(&c.value)); }
         let learned = self.p.learned_risk(key).unwrap_or(0.0);
         for c in &alts { if c.fx.risk - learned < -1e-9 { self.risk.insert((key.to_owned(), vstr(&c.value)), c.fx.risk - learned); } }
         // Measurements replace the estimates only where the benchmarks can see the knob.
@@ -1101,6 +1104,40 @@ fn seen_in(j: &model::Joint, key: &str) -> bool {
         let (m, var) = j.eval_diff(&[(key.to_owned(), val.clone())], &[]);
         var > 0.0 && m.abs() >= SEEN_Z * var.sqrt()
     })
+}
+
+/// Stability-objective cost of a value whose real price no calibration run can see (<= 0).
+///
+/// Capping C-states: every calibration window is shorter than a second and starts from a cooled die,
+/// so it sees the faster wake-up and none of what follows - cores that never sleep burn idle power all
+/// day, heat the package and leave the busy cores less boost headroom under a sustained load (on a
+/// laptop the shared power limit is reached sooner; the fans run more). `≤ POLL` is the extreme: no
+/// idle state at all, every idle CPU spins. It is priced so that only an overwhelming, measured gain
+/// can buy it; shallower caps pay less, more the more states they take away.
+/// `cpu.wake_latency_us` below the shallowest real C-state's exit latency is the same POLL-only
+/// state reached through PM QoS, and pays the same.
+fn unseen_cost(p: &Profile, key: &str, value: &str) -> f64 {
+    const POLL_DESKTOP: f64 = -0.9;
+    const POLL_LAPTOP: f64 = -1.2;
+    let laptop = if p.battery { 1.5 } else { 1.0 };
+    let poll = if p.battery { POLL_LAPTOP } else { POLL_DESKTOP };
+    match key {
+        "cpu.cstate_max" => {
+            let Ok(i) = value.trim().parse::<usize>() else { return 0.0 };  // "all" = no cap
+            let n = p.cstates.len();
+            if n == 0 || i + 1 >= n { return 0.0; }
+            if p.cstates[..=i].iter().all(|c| c.name.eq_ignore_ascii_case("POLL")) { return poll; }
+            let cut = (n - 1 - i) as f64;
+            -(0.10 + 0.08 * (cut - 1.0)) * laptop
+        }
+        "cpu.wake_latency_us" => {
+            let Ok(us) = value.trim().parse::<i64>() else { return 0.0 };
+            if us <= 0 { return 0.0; }  // 0 = no constraint
+            let shallowest = p.cstates.iter().filter(|c| !c.name.eq_ignore_ascii_case("POLL")).map(|c| c.latency_us).min();
+            match shallowest { Some(s) if (us as u64) < s => poll, _ => 0.0 }
+        }
+        _ => 0.0,
+    }
 }
 
 /// log2 distance of two numeric values; None for text and for 0 against a non-zero value:
@@ -1243,8 +1280,11 @@ impl<'a> Rules<'a> {
         }
         out
     }
-    /// Stability cost the rules gave `key` = `value` (0 when no rule priced it).
-    fn intrinsic_risk(&self, key: &str, value: &str) -> f64 { self.risk.get(&(key.to_owned(), value.to_owned())).copied().unwrap_or(0.0) }
+    /// Stability cost the rules gave `key` = `value`; without a rule's price, the cost no benchmark
+    /// sees ([`unseen_cost`], 0 for most keys). A price set by `choose` already holds that cost.
+    fn intrinsic_risk(&self, key: &str, value: &str) -> f64 {
+        self.risk.get(&(key.to_owned(), value.to_owned())).copied().unwrap_or_else(|| unseen_cost(self.p, key, value))
+    }
     /// Value in effect for a model knob that the rules already decided (context for the joint search).
     fn context_value(&self, key: &str) -> Option<String> {
         if key == "thp" {
@@ -1706,10 +1746,18 @@ fn device_rules(r: &mut Rules) {
             cand(100_000, fx(-0.02, 0.0, 0.15, 0.0, -0.03), 0.3, "Every APST state allowed: deepest NVMe idle; wake cost mostly hidden by the page cache."),
         ]);
     }
+    // Suspend mode leans towards s2idle: it is the path current laptop firmware and drivers are
+    // validated on (Windows ships modern standby only), it resumes in about a second and it needs no
+    // firmware S3 code that may never have been tested. Both values carry their effects against a
+    // neutral point, so whichever the boot default is, the other is weighed against it: from a deep
+    // boot default every goal but power saving moves to s2idle; from an s2idle boot default deep
+    // only wins under power weights well above the defaults.
     if p.battery {
         r.choose("pm.mem_sleep", leave(), vec![
-            cand("deep", fx(0.0, 0.0, 0.20, 0.0, if force_aspm { -0.15 } else { -0.08 }), 0.3,
-                 "S3 suspend where firmware offers it: lowest drain in the bag; resume paths are less tested than s2idle on new laptops."),
+            cand("s2idle", fx(0.08, 0.0, 0.0, 0.0, 0.0), 0.3,
+                 "s2idle (modern standby): resumes in about a second, the suspend path current laptops and their drivers are validated on; drains more overnight than S3."),
+            cand("deep", fx(0.0, 0.0, 0.12, 0.0, if force_aspm { -0.22 } else { -0.12 }), 0.3,
+                 "S3 suspend where firmware offers it: lowest drain in the bag; slower resume, and on recent laptops a rarely tested firmware path (devices lost, black screen, failed resume)."),
         ]);
     }
     match r.g {
@@ -2785,6 +2833,75 @@ mod tests {
         let off = Weights { storage: 0.0, ..w };
         assert!(get(&decide_weighted(Goal::Throughput, &p, off).0, "blk.nomerges").is_none(), "storage weight 0: the I/O gain counts for nothing");
         assert_eq!(Weights::for_goal(Goal::Gaming).with_overrides(&json!({"storage": 2.5})).storage, 2.5);
+    }
+
+    #[test]
+    fn suspend_mode_leans_to_s2idle() {
+        let deep_boot = |cmdline: &str| {
+            let mut p = with_defaults(legion(), &[("pm.mem_sleep", "deep")]);
+            p.cmdline = cmdline.into();
+            p.current.insert("pm.mem_sleep".into(), "deep".into());
+            p
+        };
+        let p = deep_boot("root=/dev/nvme0n1p2");
+        for g in [Goal::Gaming, Goal::Desktop, Goal::Throughput] {
+            let (d, sc, _) = decide_weighted(g, &p, Weights::for_goal(g));
+            assert_eq!(get(&d, "pm.mem_sleep"), Some(&json!("s2idle")), "{g:?}: {:?}", sc.get("pm.mem_sleep"));
+        }
+        // Power saving keeps a deep boot default (lowest drain is its goal)...
+        assert!(get(&decide(Goal::PowerSave, &p), "pm.mem_sleep").map_or(true, |v| v == "deep"));
+        // ...unless pcie_aspm=force makes the S3 resume path riskier still.
+        assert_eq!(get(&decide(Goal::PowerSave, &deep_boot("pcie_aspm=force")), "pm.mem_sleep"), Some(&json!("s2idle")));
+        // From an s2idle boot default no goal moves to deep with its default weights.
+        let mut q = with_defaults(legion(), &[("pm.mem_sleep", "s2idle")]);
+        q.cmdline = "root=/dev/nvme0n1p2".into();
+        q.current.insert("pm.mem_sleep".into(), "s2idle".into());
+        for g in Goal::ALL {
+            let (d, sc, _) = decide_weighted(g, &q, Weights::for_goal(g));
+            assert!(get(&d, "pm.mem_sleep").map_or(true, |v| v == "s2idle"), "{g:?}: {:?}", sc.get("pm.mem_sleep"));
+        }
+        // A user who weighs power far above the default still can get deep.
+        let w = Weights { power: 2.5, ..Weights::for_goal(Goal::PowerSave) };
+        assert_eq!(get(&decide_weighted(Goal::PowerSave, &q, w).0, "pm.mem_sleep"), Some(&json!("deep")));
+    }
+
+    #[test]
+    fn poll_only_c_state_needs_an_overwhelming_gain() {
+        // legion(): POLL, C1, C2, C3. "0" = only POLL left (no idle state at all), "2" = C3 disabled.
+        let p = legion();
+        assert!(unseen_cost(&p, "cpu.cstate_max", "0") <= -1.0);
+        assert!(unseen_cost(&p, "cpu.cstate_max", "2") > -0.2 && unseen_cost(&p, "cpu.cstate_max", "2") < 0.0);
+        assert!(unseen_cost(&p, "cpu.cstate_max", "1") < unseen_cost(&p, "cpu.cstate_max", "2"), "more states cut, more cost");
+        assert_eq!(unseen_cost(&p, "cpu.cstate_max", "all"), 0.0);
+        assert_eq!(unseen_cost(&p, "cpu.wake_latency_us", "0"), 0.0);
+        assert_eq!(unseen_cost(&p, "cpu.wake_latency_us", "20"), 0.0, "C1 and C2 still wake within 20 µs");
+        let mut q = legion();
+        q.cstates[1].latency_us = 2;
+        assert!(unseen_cost(&q, "cpu.wake_latency_us", "1") <= -1.0, "below C1's exit latency only POLL is left");
+
+        // A calibration in which POLL measured a large latency gain and the C3 cap a smaller one.
+        let mut p = legion();
+        p.current.insert("cpu.cstate_max".into(), "all".into());
+        let mut cal = calib::Calibration::default();
+        let mut rng = model::Rng::new(9);
+        let rows: Vec<calib::Row> = (0..90).map(|i| {
+            let v = ["", "0", "2"][i % 3];
+            let cfg: model::Cfg = if v.is_empty() { vec![] } else { vec![("cpu.cstate_max".into(), v.into())] };
+            let lat = match v { "0" => 0.45, "2" => 0.30, _ => 0.0 };
+            let n = |rng: &mut model::Rng| ((rng.unit() + rng.unit()) - 1.0) * 0.01;
+            calib::Row { phase: calib::Phase::Idle, sess: 1, pos: i as f64 / 90.0, t: i as u64, kernel: String::new(), cfg,
+                         y: [lat + n(&mut rng), n(&mut rng), n(&mut rng), f64::NAN], w: 1.0, bv: calib::BENCH_VERSION, ..Default::default() }
+        }).collect();
+        cal.put_session(calib::Phase::Idle, 1, rows);
+        cal.refs.insert("cpu.cstate_max".into(), "all".into());
+        p.calibration = Some(cal);
+        for g in Goal::ALL {
+            let (d, _, _) = decide_weighted(g, &p, Weights::for_goal(g));
+            assert_ne!(get(&d, "cpu.cstate_max").map(vstr).as_deref(), Some("0"), "{g:?}: POLL only: {d:?}");
+        }
+        // The shallower cap's measured gain is large enough for gaming to buy it.
+        let (d, _, _) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
+        assert_eq!(get(&d, "cpu.cstate_max").map(vstr).as_deref(), Some("2"), "{d:?}");
     }
 
     #[test]

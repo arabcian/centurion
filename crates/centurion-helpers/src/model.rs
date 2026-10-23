@@ -1457,6 +1457,7 @@ impl<'a> Problem<'a> {
     /// current optimum itself (a confirmation).
     pub fn pool(&self, sel: &[usize], targets: &[Target], n: usize, rng: &mut Rng) -> Vec<Cfg> {
         let k = self.keys.len();
+        if k == 0 { return Vec::new(); }
         let mut sels: Vec<Vec<usize>> = vec![sel.to_vec()];
         let mut doubt: Vec<&Target> = targets.iter().filter(|t| t.pwrong > 0.05).collect();
         doubt.sort_by(|a, b| b.pwrong.total_cmp(&a.pwrong));
