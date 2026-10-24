@@ -41,7 +41,9 @@ evidence); a calibration run is a measurement with a field of view. Two things
 keep a benchmark that cannot see a knob from voting on it:
 
 - **Seen or not.** A knob counts as *seen* when at least one of its values moves
-  this goal's utility by 2 posterior standard deviations in the joint model. Only
+  one of the objectives this goal weighs by 2 posterior standard deviations in the joint
+  model (per objective, not on the weighted utility: a measured trade-off - latency up,
+  throughput down - can sum to nothing and is still measured, not blindness). Only
   then do measured effects replace the rule's estimates (in proportion to the
   evidence, as before). For a knob the benchmarks do not see, "measured: no
   effect" is the benchmark's blindness: the estimate stays. The same holds for the knobs a
@@ -140,6 +142,25 @@ on AC (on battery for power saving), with the firmware limits of the newest sess
 measured there. A context value never measured is ignored (an unmeasured value says
 nothing), and a signature measured in one context behaves exactly as before.
 
+The *reference* value of each context dimension (the context the pseudo-knobs are measured
+against) is fixed per phase when the phase first sees a second value, and kept in the signature
+(`ctx_ref`). It moves only when no row of it is left. It used to be recomputed as the value with
+the most rows, so a few sessions in another profile could flip it and change the coding of every
+row of the phase; signatures without the record compute it that way once and then keep it.
+
+**Knob references per context.** A knob's reference (its live value when a session started) is
+kept per measurement context (`refs_cx`: context id -> knob -> value; `refs` keeps the newest
+session's and stands in for contexts without a record). A knob whose live value follows the power
+context - EPP is `balance_performance` under one profile and `performance` under another - simply
+has two references: each session's rows mean "left alone = at *this context's* reference", and the
+model input reads a row of another context's reference as having that knob at its own level
+(nothing is rewritten on disk). The models are coded against the reference of the context the
+decision is for (autotune: the target context; calibration and `--show`: the newest), and
+`Calibration::get` / the joint pass ask for effects relative to that reference. Only a reference
+that moves *inside* one context (a new kernel default) re-codes that context's rows (`rebase_key`).
+Before, every reference change anywhere re-coded all rows, so a session in another profile
+rewrote the meaning of every other context's runs.
+
 `sudo centurion-calibrate --scene NAME` measures in a scene's power context: its power profile,
 firmware limits and fan mode are written before the session (through the same root
 helpers) and put back afterwards; its Optimizations preset is not applied (those knobs are
@@ -228,7 +249,9 @@ soak (every CPU busy; consecutive hot runs only top it up), balanced against eve
 like a knob, so the model learns which knob effects change with heat (knob × heat pairs).
 Hot runs of a batch go last; a cool run after them waits for the die. Decisions mix the
 cool and hot context by the goal's **heat** weight; the optima the calibration confirms are
-the cool ones.
+the cool ones. The doubt-driven runs no longer get their heat state by a coin flip (30 % hot):
+every candidate is offered both cool and heat-soaked, and the value per second of run time
+(below) decides - a hot run pays its soak.
 
 ## Devices (DEV phase, battery only)
 
@@ -265,12 +288,20 @@ autotune credits the power objective as throughput: the power weight grows by
 
 `sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--goal G]` measures a whole preset
 from the approved store against the boot state, ABBA-interleaved (drift cancels), on the
-idle benchmark suite (and the storage suite with `--io`). It reports the gain per objective
-with its standard error, the weighted gain for the goal (from `--goal` or the preset's
-name) and what the joint model predicted for the preset's calibrated part - `as predicted`,
+idle benchmark suite (and the storage suite with `--io`). Every run is tagged with its ABBA
+round and position; the gains are **paired**: per round one difference B − A (mean of the
+block's preset runs minus mean of its boot-state runs), and the gain is the mean of those
+differences with its standard error and a 95 % Student-t interval (degrees of freedom = blocks − 1).
+Drift between blocks cancels instead of inflating the error, and with `--io` the two phases'
+utilities are summed slot by slot - only slots both phases measured (they were summed by index,
+so one dropped run paired the rest with another round's). A block missing a side counts for
+nothing. It reports the paired gain per objective, the weighted gain for the goal (from `--goal`
+or the preset's name) with its interval (better / worse only when the interval excludes 0) and
+what the joint model predicted for the preset's calibrated part - `as predicted`,
 or `SURPRISE` when the uncalibrated part or interactions the model has not seen matter. CPU
 offlining, driver switches, firmware limits and radios are never written by a verification.
-The result is kept in the signature (`verify`, last 20); when every change is a calibrated
+The result is kept in the signature (`verify`, last 20: `gain` = [mean, se] of the paired
+differences, `ci95`, `rounds` = complete blocks, `paired: true`); when every change is a calibrated
 knob the runs also join the design log.
 
 ## Field evidence: real games (A/B)
@@ -315,7 +346,10 @@ show it, at no cost while the machine runs (`/var/lib/centurion/exposure.json`):
 A calibration run in flight when the machine died is the prime suspect: its
 configuration is written to `/var/lib/centurion/calibrate-inflight.json`
 (fsynced) before each run, and centurion-boot-guard turns it into an unsafe set of the signature
-at the next boot when that boot did not end cleanly.
+at the next boot when that boot did not end cleanly. Such a freeze set is pinned
+(`unsafe_pinned`): the cap of 50 unsafe sets never drops it. Over the cap the largest
+combinations go first (they forbid the least), oldest first among equals, and single values and
+freeze sets always stay; every drop is reported on stderr (the oldest set used to go silently).
 
 ## Calibrating at the next boot
 
@@ -342,8 +376,11 @@ changed weight, a scene) is its own process, and each refitted every phase from 
 hyperparameter search, screening fit, outlier reweighting: seconds per phase on a large signature.
 Autotune now keeps what that work found in `~/.cache/centurion/fit-store.json` (per objective the
 hyperparameters, final observation weights and leave-one-out statistics; per phase the screening
-heredity and interaction order), bound to the machine fingerprint and to a fingerprint of the exact
-model input. A run with the same input rebuilds each fit with one factorisation - the same fit, bit
+heredity, the four screening fits' hyperparameters and the interaction order; store format 2),
+bound to the machine fingerprint and to a fingerprint of the exact model input - and of the model
+itself: `model::MODEL_VERSION` and the model's constants (drift and OU priors, temperature prior,
+risk z) are part of the key, so fits kept by another version of the model code are refitted, never
+read back. A run with the same input rebuilds each fit with one factorisation - the same fit, bit
 for bit, so the same decisions. Any change of rows, references, kernel, power source or kept scales
 is another input and is fitted again. Rows age in one-day steps counted from the phase's newest row
 (under 0.8 % of a weight, all weights alike) so the input does not change every second.
@@ -507,7 +544,12 @@ each phase's stage and what the log holds.
 1. *Space-filling start.* Every run changes a random set of knobs together,
    balanced so every knob, every value and every **pair** of knobs appears
    about equally often — counting the runs already in the log, so a new
-   session fills the gaps of earlier ones. Part of the runs change several
+   session fills the gaps of earlier ones. Values too: a knob's value deck holds
+   only its least-measured values (log included), so a value the log lacks is
+   drawn until it has caught up (the decks used to start over blind each session,
+   while the Base stage waits for every value to have 6 runs); a drawn
+   configuration that repeats an earlier one is not run, and its values go back
+   to the bottom of their decks instead of being lost. Part of the runs change several
    knobs of one coupled cluster (memory/reclaim/THP/writeback, or CPU
    frequency + scheduler); crowded runs (deep/max) change many knobs at once —
    saturation and higher-order effects live there, and so does the optimum.
@@ -517,18 +559,35 @@ each phase's stage and what the log holds.
    which decisions ("change this knob / leave it") are still uncertain and —
    deep/max — which **interactions** among the knobs that matter are still in
    doubt (the 2×2 contrast of two knobs in the context of the goal's optimum),
-   and picks the next runs by how much they would reduce that doubt (posterior
-   covariance with the doubtful contrasts, squared, over the run's own
-   variance, per objective). The phase stops early when the expected number of
+   and picks the next runs by the **expected drop in the chance of a wrong call**
+   per second of run time. For every doubtful contrast a one-step Gaussian update
+   gives its posterior variance after the run (per objective: covariance with the
+   run, squared, over the run's predictive variance plus the noise; the run's
+   variance and the covariance are widened by the fit's `var_scale` like the
+   contrast's own variance - before, only the contrast's was); the expected
+   probability of a wrong call afterwards averages over where its mean may move
+   (preposterior, so a contrast sitting on its margin gains most, not nothing).
+   The sum over contrasts and goals is divided by the run's expected duration (a
+   heat-soaked run adds its soak). Measured on the offline simulator
+   (`sim::sweep`, 16 seeds x 6 noise/budget cases, two seed sets): the decision
+   quality is unchanged within noise (0.6436 vs 0.6457 before; ±0.01 between seed
+   sets). The phase stops early when the expected number of
    wrong decisions drops below 0.35 and no interaction is left in doubt.
 3. *Dose refinement* (deep/max). For numeric knobs of the predicted optima the
-   geometric midpoints between the chosen dose and its measured neighbours
+   geometric midpoints between the chosen dose and its measured neighbours (never between
+   "off" - 0 or -1 - and a setting: that is a mode, not a dose)
    (rounded to the knob's grid: 100 MHz, thousands, hundredths of the dirty
    window) become new levels and are measured inside that optimum.
 4. *Confirmation.* The best configuration the models predict per goal is
    measured (2–4×) and compared with the prediction: `as predicted` or
    `SURPRISE` (tolerance: twice the prediction's sd combined with the goal's run-to-run noise
-   as the model measured it - it was a fixed 2 %); either way it joins the data.
+   as the model measured it - it was a fixed 2 %); either way it joins the data. The count is
+   kept in the session's quality record (`checks`, `surprises`). **Rule:** when more than 30 %
+   of the phase's checks in its last 4 sessions with confirmations (at least 3 checks) were
+   surprises, the next progressive session of that phase chases doubt - the
+   `lean/polish-doubt` shape (doubtful interactions and triples) - as soon as the coverage
+   stages are done (from the crowd stage on), out of turn. A surprise says the model misses
+   something; more random coverage does not find it, chasing its doubtful interactions does.
 
 Every run measures **all four objectives** (latency, throughput, power, memory;
 union of the benches the phase's knobs need), so any goal or custom weights are
@@ -561,7 +620,14 @@ Brakes: the ballast dies at once if MemAvailable < 256 MiB or PSI memory
 full > 40 %; it is the OOM killer's first target. A run that caused an OOM kill
 is bisected (halves, at most 6 extra runs) to the smallest set of changes that
 still does; a single value is stored as **unsafe**, a combination as an
-**unsafe set** — neither is ever picked (subsets of an unsafe set are fine).
+**unsafe set** — neither is ever picked (subsets of an unsafe set are fine). Every half run of
+the search counts as an attempt in the phase's time budget (they were timed but not counted, so
+the cost per run looked higher and the phase ended early), and a half that ran without an OOM kill
+is an ordinary run of the design. A loaded run the memory brake stopped is thrown away, but the
+event is kept (`brakes`, last 40): when the brake fires under the same configuration again, or
+under one that contains it or is contained in it, the smaller one becomes **soft-unsafe**
+(`soft_unsafe`): left out of the calibration's designs, and in autotune a configuration holding it
+pays a stability cost of 0.25 × the stability weight (a price, not a ban).
 
 **THP.** Tested as its own family: the `thp` group (enabled never / madvise /
 always, each with or without 16–64 KiB mTHP), `thp.defrag`, `thp.shmem_enabled`
@@ -629,7 +695,7 @@ The calibrator runs its probes with a timer slack of 1 ns. With the default
 constant the size of the effects the idle governor, C-state and timer settings
 have on a wake-up.
 
-A CPU run now takes about 7.4 s idle and 4.9 s loaded (0.7 s more); the plan has
+A CPU run now takes about 7.9 s idle and 5.4 s loaded (with the burst-job tail); the plan has
 fewer levels to cover. Rows of benchmark set 4 are kept and count 60 %.
 
 **Storage suite** (IO phase, `size` = 256 MiB, 512 with `--thorough`; unlinked
@@ -686,7 +752,14 @@ process per objective (Bayesian regression in kernel form):
   as kernel terms (elementary symmetric polynomials — no term list to
   enumerate); pairs inside a coupled cluster, pairs across clusters, triples
   inside and across each have their own prior scale; a knob that responds on
-  its own carries more interaction prior (heredity, from a screening fit);
+  its own carries more interaction prior (heredity): one mains-only screening fit per objective,
+  a knob's strength per objective in units of that objective's noise (squared main coefficients
+  per prior length over σ²), the strongest of them relative to the mean over the knobs. The
+  screening used to fit the sum of the objectives, where a knob trading +0.10 latency for −0.10
+  throughput summed to nothing and got the heredity of an inert knob (0.45 vs 1.61 for a
+  latency-only knob; now 1.75 / 1.16 against 0.45). The screening scales are kept per objective
+  (`idleh0` .. `loadh3`, the battery power one `…h2b`); the single key of older signatures
+  (`idleh`) only starts each objective's search;
 - each session has its own offset and trend, plus a slow drift over wall-clock
   time (thermal, background) that the reference runs pin down; prior scales and
   the noise level come from evidence maximisation and are kept in the signature
