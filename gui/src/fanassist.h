@@ -1,76 +1,57 @@
 #pragma once
-// Fan curve assistant (Home → Fan curve → Assistant…): proposes a Custom-mode table for a goal
-// (Quiet / Balanced / Cool) instead of hand-dragging ten points.
+// Fan curve assistant (Home → Fan curve → Assistant…): sets the firmware's CPU and GPU temperature limits
+// (firmware-attributes cpu_temp / gpu_temp, honoured in the Custom profile) and proposes a Custom-mode table
+// for a noise preset instead of hand-dragging ten points.
 //
-//  Quick    shapes the curve on the EC's own temperature steps (the CPU fan's sensor thresholds the
-//           firmware reports): fans stay at level 1 below the goal's start temperature, ramp up to
-//           the level that holds the goal temperature, and go to 10 well above it.
-//  Measure  (~6 min, Custom profile, on AC) finds that "holding" level on this machine: a full CPU
-//           load runs while the table is held flat at three levels in turn, the steady CPU
-//           temperature at each is recorded, and the lowest level that keeps the goal temperature
-//           under sustained load is interpolated. The original table is saved first
-//           (~/.local/state/centurion/fan-assist-backup.json) and written back at the end, on
-//           cancel and — if the app died meanwhile — the next time the fan curve dialog opens.
+// Presets come from ~/.config/centurion/fan-presets.json, written the first time from the stock presets: the
+// repository's fan-presets.json, compiled into the program:
+//     {"presets": [{"name": "Quiet", "level": 5, "cpu_min": 85, "cpu_max": 89, "ramp_from": 3}, ...]}
+// level: fan level at the CPU limit (1–10); cpu_min..cpu_max: the CPU limits the preset offers (within the
+// firmware's range); ramp_from: a temperature step (0–9, as in the editor); steps up to it stay at level 1. Or, instead of level / ramp_from, the curve
+// itself: "curve": [10 levels, one per temperature step as in the editor], never going down, last three ≥ 3 / 5 / 7.
 //
-// The result only goes into the editor; nothing is kept until you press Apply there.
+// The CPU throttles at its limit, so under sustained load it sits there: the curve is shaped on the EC's own
+// temperature steps (those of the fan whose thresholds reach the hottest — the CPU's) so the step the EC is on
+// at the limit gets the preset's level, steps below ramp up to it from level 1 at step ramp_from, and steps above it
+// hold it up to limit + 8 °C, then 10.
+//
+// The limits are written when you put the proposal in the editor; the curve is kept only when you press Apply there.
 #include "fancurvedialog.h"
 #include <QDialog>
 #include <QVector>
-#include <atomic>
-#include <thread>
-#include <vector>
 
 class QComboBox;
 class QLabel;
-class QProgressBar;
 class QPushButton;
-class QRadioButton;
-class QTimer;
+class QSpinBox;
+
+struct FanPreset { QString name; int level, cpuMin, cpuMax, rampFrom; QVector<int> curve; };  // curve: empty = shaped
 
 class FanAssistDialog : public QDialog {
     Q_OBJECT
 public:
-    FanAssistDialog(const QString &helper, const QVector<int> &current, const QVector<FanCurveFan> &fans, QWidget *parent = nullptr);
-    ~FanAssistDialog() override;
+    explicit FanAssistDialog(const QVector<FanCurveFan> &fans, QWidget *parent = nullptr);
     QVector<int> result() const { return result_; }
 
-    /// Saved table of an interrupted measurement (empty = none).
-    static QVector<int> pendingBackup();
-    static void clearBackup();
-    /// Builds the table for `goal` (0 quiet, 1 balanced, 2 cool) holding `hold` (1..10) at the goal temperature.
-    static QVector<int> shape(int goal, int hold, const QVector<int> &stepTemps);
-
-protected:
-    void reject() override;
+    /// Builds the table that holds fan level `hold` (1..10) at the CPU limit `limit` °C, level 1 up to step `rampFrom` (0..9).
+    static QVector<int> shape(double limit, int hold, int rampFrom, const QVector<int> &stepTemps);
 
 private:
-    void startMeasure();
-    void nextLevel();
-    void tick();
-    void finishMeasure(bool ok, const QString &why);
-    void writeTable(const QVector<int> &lv, std::function<void(bool, const QString &)> done);
-    void startLoad();
-    void stopLoad();
-    QVector<int> stepTemps() const;
-    static double cpuTemp();
+    struct Limit {
+        QString path;              // firmware-attributes current_value; empty = not exposed here
+        int current = 0, min = 0, max = 0, step = 1;  // the firmware's range and grid
+        QSpinBox *spin = nullptr;
+    };
+    void propose();
+    void apply();
+    void applyPreset();  // the CPU limit's range follows the preset
+    const FanCurveFan *cpuFan() const;
 
-    QString helper_;
-    QVector<int> current_;
     QVector<FanCurveFan> fans_;
+    QVector<FanPreset> presets_;
     QVector<int> result_;
-    QComboBox *goal_;
-    QRadioButton *quick_, *measure_;
+    Limit cpu_, gpu_;
+    QComboBox *noise_;
     QLabel *status_;
-    QProgressBar *bar_;
-    QPushButton *run_, *use_;
-
-    // Measurement
-    QTimer *timer_ = nullptr;
-    QVector<int> levels_{3, 6, 9};
-    int idx_ = -1, elapsed_ = 0;
-    QVector<double> samples_;
-    QVector<double> steady_;       // °C per measured level
-    bool measuring_ = false, writing_ = false, touched_ = false;  // touched_: a flat table was written
-    std::atomic<bool> stop_{false};
-    std::vector<std::thread> workers_;
+    QPushButton *use_;
 };

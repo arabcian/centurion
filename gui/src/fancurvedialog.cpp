@@ -1,6 +1,5 @@
 #include "fancurvedialog.h"
 #include "fanassist.h"
-#include <QTimer>
 #include "privileged.h"
 #include "theme.h"
 #include <QDir>
@@ -9,7 +8,6 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
@@ -175,7 +173,7 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
     });
     connect(apply_, &QPushButton::clicked, this, &FanCurveDialog::apply);
     connect(assist_, &QPushButton::clicked, this, [this] {
-        auto *a = new FanAssistDialog(helper_, hw_, fans_, this);
+        auto *a = new FanAssistDialog(fans_, this);
         a->setAttribute(Qt::WA_DeleteOnClose);
         connect(a, &QDialog::accepted, this, [this, a] {
             if (a->result().size() != 10) return;
@@ -189,23 +187,7 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
     connect(close, &QPushButton::clicked, this, &QDialog::close);
 
     refreshTable();
-    // A measurement that was interrupted (app closed / crashed) left a flat table in the EC: offer the saved one.
-    // Asked before the first read: a read still in flight could otherwise land after the write and show the
-    // flat table as the EC's.
-    if (const QVector<int> b = FanAssistDialog::pendingBackup(); b.size() == 10) {
-        setBusy(true);
-        QTimer::singleShot(0, this, [this, b] {
-            if (QMessageBox::question(this, windowTitle(), "A fan curve measurement was interrupted. Write your saved table back now?") != QMessageBox::Yes) { load(); return; }
-            QJsonArray a;
-            for (int x : b) a << x;
-            privileged::run(helper_, QJsonObject{{"fan_table", "set"}, {"levels", a}}, this, [this](const privileged::Result &r) {
-                if (r.ok()) { FanAssistDialog::clearBackup(); takeReply(r.json); status("Saved table written back.", theme::OK); setBusy(false); }
-                else { status("Write failed: " + r.message() + " — press Reload to read the EC's table.", theme::DANGER); setBusy(false); }
-            });
-        });
-    } else {
-        load();
-    }
+    load();
 }
 
 void FanCurveDialog::setBusy(bool b) {
