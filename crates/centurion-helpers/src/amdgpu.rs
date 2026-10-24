@@ -622,10 +622,12 @@ mod tests {
         assert_eq!(od_commands(&t, &obj(json!({"vddc_curve": [[800, 750], [1432, 800], [2000, 1100]]}))).unwrap(),
                    vec!["vc 0 800 750", "vc 1 1432 800", "vc 2 2000 1100"]);
         assert!(od_commands(&t, &obj(json!({"mclk_min": 700}))).is_err());            // only state 1
-        // stock point below its own range (716 < 750) is accepted unchanged, not lowered further
-        let navi = parse_od(&NAVI10.replace("0: 800MHz 716mV", "0: 800MHz 716mV"));
-        assert!(od_commands(&navi, &obj(json!({"vddc_curve": [[800, 716], [1432, 811], [2064, 1190]]}))).is_ok());
-        assert!(od_commands(&navi, &obj(json!({"vddc_curve": [[800, 700], [1432, 811], [2064, 1190]]}))).is_err());
+        // The fixture's stock point 0 sits below its own range (716 < 750): accepted unchanged, never lowered
+        // further. (A `replace` of that line with itself stood here - the fixture already is the case.)
+        assert!(t.curve[0].2 < t.range("VDDC_CURVE_VOLT[0]").unwrap().0, "fixture: stock point below its range");
+        assert!(od_commands(&t, &obj(json!({"vddc_curve": [[800, 716], [1432, 811], [2064, 1190]]}))).is_ok());
+        assert!(od_commands(&t, &obj(json!({"vddc_curve": [[800, 700], [1432, 811], [2064, 1190]]}))).is_err());
+        assert!(od_commands(&t, &obj(json!({"vddc_curve": [[800, 740], [1432, 811], [2064, 1190]]}))).is_err(), "between stock and range: refused");
         let t = parse_od(POLARIS);
         assert_eq!(od_commands(&t, &obj(json!({"sclk_states": [[300, 750], [600, 760], [1340, 1100]]}))).unwrap(),
                    vec!["s 0 300 750", "s 1 600 760", "s 2 1340 1100"]);

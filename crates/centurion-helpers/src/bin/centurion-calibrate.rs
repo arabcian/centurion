@@ -530,6 +530,19 @@ impl Stage {
     }
 }
 
+/// Share of the phase's recent confirmation checks (the last `SURPRISE_SESSIONS` sessions that ran
+/// any) whose measurement missed the prediction (SURPRISE). None with fewer than 3 checks.
+fn surprise_rate(cal: &Calibration, phase: Phase) -> Option<f64> {
+    let recent: Vec<&Value> = cal.quality.iter().rev().filter(|q| q["phase"] == json!(phase.name()) && q["checks"].as_u64().unwrap_or(0) > 0)
+        .take(SURPRISE_SESSIONS).collect();
+    let checks: u64 = recent.iter().map(|q| q["checks"].as_u64().unwrap_or(0)).sum();
+    let hits: u64 = recent.iter().map(|q| q["surprises"].as_u64().unwrap_or(0)).sum();
+    (checks >= 3).then(|| hits as f64 / checks as f64)
+}
+const SURPRISE_SESSIONS: usize = 4;
+/// Surprise rate above which progressive sessions chase doubt first (`Depth::progressive`).
+const SURPRISE_HIGH: f64 = 0.3;
+
 /// What the log holds for one phase's knobs.
 struct Progress { runs: usize, sessions: usize, main_min: usize, pairs2: f64, crowded: usize, crowd_need: usize, refined: usize, numeric: usize,
                   refine_done: bool, polish: [usize; 3] }
@@ -591,12 +604,16 @@ impl Progress {
 impl Depth {
     /// A lean session's shape for its stage (time decides the run count). `explore`: once the
     /// decisions are settled the rest of the time keeps gathering coverage instead of stopping.
-    /// `polish`: how often each polish strategy ran (the least-run one goes next).
-    fn progressive(stage: Stage, nf: usize, polish: [usize; 3]) -> Depth {
+    /// `polish`: how often each polish strategy ran (the least-run one goes next). `surprising`: the
+    /// phase's recent confirmations missed their predictions too often (`surprise_rate`): once every
+    /// value is covered and the pairs are seen (from the crowd stage on), the session chases doubt
+    /// (polish-doubt: doubtful interactions and triples) instead of following the rotation.
+    fn progressive(stage: Stage, nf: usize, polish: [usize; 3], surprising: bool) -> Depth {
         let f = nf.max(4);
         let deep = Mix { cluster: 0.35, cluster_k: (2, 5), spread_k: (4, 9), crowd: 0.2, crowd_k: (8.min(f), 14.min(f)) };
         let crowd = Mix { cluster: 0.2, cluster_k: (2, 5), spread_k: (4, 9), crowd: 0.5, crowd_k: (8.min(f), 14.min(f)) };
         let d = |name, mix, init, batch, reps, pairs, crowd, ladder| Depth { name, mix, cap: 240, init, batch, reps, pairs, crowd, ladder, explore: true };
+        if surprising && stage >= Stage::Crowd { return d("lean/polish-doubt", deep, 0.15, 6, 3, 16, 14, 2); }
         match stage {
             Stage::Base => d("lean/base", Mix::lean(), 0.55, 5, 2, 0, 6, 0),
             Stage::Pairs => d("lean/pairs", Mix { cluster: 0.3, cluster_k: (2, 5), spread_k: (4, 9), crowd: 0.0, crowd_k: (8, 12) }, 0.6, 5, 2, 6, 8, 0),
@@ -733,7 +750,10 @@ struct Runner<'a> { j: Journal, c: &'a Ctx, rate: u64, ram: u64, ballast: Option
                     ac0: Option<bool>, power_lost: bool, power_waits: usize,
                     /// Values the kernel refused to take this session (never designed or picked again in it),
                     /// and runs thrown away because a value could not be written or the power source changed mid-run.
-                    unwritable: Vec<(String, String)>, dropped: usize }
+                    unwritable: Vec<(String, String)>, dropped: usize,
+                    /// Configurations of loaded runs the memory brake stopped, not yet noted in the signature
+                    /// (`Design::exec` hands them to `Calibration::note_brake`).
+                    braked: Vec<Cfg> }
 
 /// How long a session waits for its power source to come back before it ends.
 const POWER_WAIT: Duration = Duration::from_secs(120);
@@ -742,7 +762,7 @@ impl Runner<'_> {
     fn new<'a>(c: &'a Ctx, rate: u64, ram: u64) -> Runner<'a> {
         Runner { j: Journal { entries: Vec::new() }, c, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
                  cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0,
-                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0 }
+                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new() }
     }
     /// The session's power source must still be there: a charger pulled on AC (or plugged in on
     /// battery) moves the firmware limits, the power reading's source and the context every row is
@@ -774,7 +794,7 @@ impl Runner<'_> {
     /// Configurations to leave out of this session's designs and picks: the signature's unsafe
     /// sets and the values the kernel refused to take.
     fn bad(&self, cal: &Calibration) -> Vec<Cfg> {
-        cal.unsafe_sets.iter().cloned().chain(self.unwritable.iter().map(|kv| vec![kv.clone()])).collect()
+        cal.unsafe_sets.iter().chain(&cal.soft_unsafe).cloned().chain(self.unwritable.iter().map(|kv| vec![kv.clone()])).collect()
     }
     fn refused(&self, cfg: &[(String, String)]) -> bool { cfg.iter().any(|kv| self.unwritable.contains(kv)) }
     fn need_ballast(&mut self) -> Result<(), String> {
@@ -806,9 +826,16 @@ impl Runner<'_> {
         let _ = std::io::stderr().flush();
         let mut todo: Vec<(String, String)> = self.base.iter().filter(|(k, _)| !cfg.iter().any(|(c, _)| c == k)).cloned().collect();
         // Context pseudo-knobs (the heat state) are conditions of the run, never written.
-        todo.extend(cfg.iter().filter(|(k, _)| !model::is_ctx(k)).cloned());
+        let knobs: Vec<(String, String)> = cfg.iter().filter(|(k, _)| !model::is_ctx(k)).cloned().collect();
+        todo.extend(knobs.iter().cloned());
         // The elevator first: switching it resets nr_requests and (bfq) writeback throttling.
         todo.sort_by_key(|(k, _)| k != "blk.scheduler");
+        // The run in flight survives a hard hang: centurion-boot-guard turns it into an unsafe set on the
+        // next boot. Recorded *before* the writes (a write itself can hang the machine - runtime PM, link
+        // power) and only with the run's own changes: the session's starting point (the dirty window's
+        // reference label) is not a change, and an unsafe set holding it would never match a decision.
+        // Before, it was written after the writes, so a hang during them blamed the previous run.
+        centurion_helpers::stability::inflight_set(phase.name(), &knobs);
         for (k, v) in &todo {
             if let Err(e) = apply(&mut self.j, k, v, self.rate, self.ram) {
                 // Remembered for the session: designs and picks leave it out from now on (it used to be
@@ -824,8 +851,6 @@ impl Runner<'_> {
                 return Ok(None);
             }
         }
-        // The run in flight survives a hard hang: centurion-boot-guard turns it into an unsafe set on the next boot.
-        centurion_helpers::stability::inflight_set(phase.name(), &todo);
         let temp = self.conditions(phase, is_hot(cfg));
         let disp = bench::display_state();
         let skip: Vec<u32> = self.ballast.as_ref().map(|b| b.pid).into_iter().collect();
@@ -845,6 +870,17 @@ impl Runner<'_> {
         // Thrown away; the next run waits for the source to come back (power_check).
         if let (Some(want), Some(now)) = (self.ac0, centurion_helpers::power::on_ac()) {
             if now != want { self.dropped += 1; return Ok(None); }
+        }
+        // The brakes stopped the ballast while this loaded run measured: part of it ran without the memory
+        // pressure the load phase is about (its knobs would read as having relieved it). Thrown away; the
+        // next run builds the ballast again (need_ballast). An OOM kill is kept: that is the knob's doing.
+        let oom = matches!(&r, Ok((_, true)));
+        if phase == Phase::Load && !oom && !self.ballast.as_mut().map_or(false, |b| b.alive()) {
+            eprintln!("\nthe ballast stopped during the run (memory brake): run thrown away");
+            self.dropped += 1;
+            // Evidence all the same: the brake fired while these knobs held memory short.
+            self.braked.push(cfg.clone());
+            return Ok(None);
         }
         // Other programs keeping more than 0.6 CPU busy disturb the figures: such a run counts less.
         let mut w = if busy > 0.6 { (0.6 / busy).clamp(0.1, 1.0) } else { 1.0 };
@@ -923,7 +959,12 @@ impl Runner<'_> {
 }
 
 /// A run that caused an OOM kill: halve its changes until the smallest set that still does is found.
-fn oom_cull(cal: &mut Calibration, rn: &mut Runner, phase: Phase, b: Benches, cfg: &Cfg, left: &mut usize, refs: &BTreeMap<String, String>, kernel: &str) -> Result<(), String> {
+/// `run` measures one half. Every half run is an attempt (`tries`: the design's cost per run counts it);
+/// a half that ran without an OOM kill is an ordinary measured run and is handed back in `kept` (it
+/// used to be thrown away, its time still charged to the session).
+#[allow(clippy::too_many_arguments)]
+fn oom_cull(cal: &mut Calibration, run: &mut dyn FnMut(&Cfg) -> Result<Option<Done>, String>, phase: Phase, cfg: &Cfg, left: &mut usize,
+            refs: &BTreeMap<String, String>, kernel: &str, kept: &mut Vec<(Cfg, Done)>, tries: &mut usize) -> Result<(), String> {
     if cfg.len() == 1 {
         let (k, v) = &cfg[0];
         cal.add(k, refs.get(k).map_or("", String::as_str), v, phase, None, true, now(), kernel);
@@ -936,7 +977,12 @@ fn oom_cull(cal: &mut Calibration, rn: &mut Runner, phase: Phase, b: Benches, cf
     for half in [cfg[..mid].to_vec(), cfg[mid..].to_vec()] {
         if *left == 0 { break; }
         *left -= 1;
-        if let Some(Done { oom: true, .. }) = rn.run(phase, b, &half, "(OOM search)")? { found = true; oom_cull(cal, rn, phase, b, &half, left, refs, kernel)?; }
+        *tries += 1;
+        match run(&half)? {
+            Some(Done { oom: true, .. }) => { found = true; oom_cull(cal, run, phase, &half, left, refs, kernel, kept, tries)?; }
+            Some(d) => kept.push((half, d)),
+            None => {}
+        }
     }
     if !found { cal.add_unsafe_set(cfg.clone()); eprintln!("\n{} changes together caused an OOM kill: that combination is never picked", cfg.len()); }
     Ok(())
@@ -958,10 +1004,18 @@ fn goal_models(space: &Arc<model::Space>, fits: &[Option<Arc<model::Fit>>; 4], p
     Goal::ALL.iter().filter_map(|&g| Model::new(space.clone(), fits.clone(), goal_wts(g, phase)).map(|m| (g, m))).collect()
 }
 
+/// How one candidate run is chosen: its expected cost in seconds (`cost`), and whether the design varies
+/// heat (`heat`: every candidate also enters heat-soaked, and the choice decides which state is run).
+struct Choice<'a> { cost: &'a dyn Fn(&Cfg) -> f64, heat: bool }
+
 /// Per goal: the best combination, how much doubt is left in its decisions (and, with
 /// `pair_k`, in the interactions among the knobs that matter), and which experiments would
-/// remove the most of it. `crowd`: largest random experiment in the candidate pool.
-fn analyse(models: Vec<(Goal, Model)>, phase: Phase, factors: &[Factor], bad: &[Cfg], want: usize, pair_k: usize, crowd: usize, rng: &mut Rng, base: &Cfg) -> Option<Analysis> {
+/// remove the most of it per second of run time: the expected drop in the chance of a wrong call
+/// (`Problem::acquisition`) over the run's expected duration (a heat-soaked run pays its soak).
+/// `crowd`: largest random experiment in the candidate pool.
+#[allow(clippy::too_many_arguments)]
+fn analyse(models: Vec<(Goal, Model)>, phase: Phase, factors: &[Factor], bad: &[Cfg], want: usize, pair_k: usize, crowd: usize, rng: &mut Rng, base: &Cfg,
+           ch: &Choice) -> Option<Analysis> {
     let (r2, cover) = (models.first()?.1.r2(), models.first()?.1.cover90());
     let heat_cfg: Cfg = base.iter().cloned().chain(std::iter::once(("ctx.heat".to_owned(), "hot".to_owned()))).collect();
     let single = |m: Model, ctxs: Vec<(f64, Cfg)>| {
@@ -988,6 +1042,7 @@ fn analyse(models: Vec<(Goal, Model)>, phase: Phase, factors: &[Factor], bad: &[
     let probs: Vec<Problem> = joints.iter().map(|(_, j, _)| {
         let mut p = Problem::new(j, keys.clone(), cands.clone(), Vec::new(), model::RISK_Z, MARGIN, bad.to_vec());
         p.crowd = crowd;
+        p.obs_ctx = base.clone();
         p
     }).collect();
     let (mut risk, mut doubt_pairs, mut optima, mut targets, mut pool) = (0.0, 0, Vec::new(), Vec::new(), Vec::<Cfg>::new());
@@ -1007,9 +1062,13 @@ fn analyse(models: Vec<(Goal, Model)>, phase: Phase, factors: &[Factor], bad: &[
         targets.push(t);
     }
     pool.retain(|c| !c.is_empty());
+    // Heat as a design factor: every candidate is also offered heat-soaked; the value per second
+    // decides the state (it used to be a coin flip, 30 % of the picks heated).
+    if ch.heat { let hot: Vec<Cfg> = pool.iter().filter(|c| !is_hot(c)).map(|c| { let mut h = c.clone(); h.push(("ctx.heat".into(), "hot".into())); h }).collect(); pool.extend(hot); }
     pool.sort(); pool.dedup();
     let mut score = vec![0.0; pool.len()];
     for (p, t) in probs.iter().zip(&targets) { for (i, a) in p.acquisition(t, &pool).into_iter().enumerate() { score[i] += a; } }
+    for (s, c) in score.iter_mut().zip(&pool) { *s /= (ch.cost)(c).max(0.1); }
     let mut picks = Vec::new();
     for _ in 0..want {
         let Some((bi, &bv)) = score.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)) else { break };
@@ -1071,7 +1130,12 @@ fn ladder(factors: &mut [Factor], optima: &[(Goal, Cfg, f64, f64)], bad: &[Cfg],
             let Some(i) = lv.iter().position(|l| (l - x).abs() < 1e-9) else { continue };
             for n in [i.checked_sub(1), Some(i + 1)].into_iter().flatten().filter(|&n| n < lv.len()) {
                 let (a, b) = (lv[n].min(x), lv[n].max(x));
-                let m = if a > 0.0 { (a * b).sqrt() } else { (a + b) / 2.0 };
+                // 0 (and -1) switch a feature off: a mode, not the end of a dose ladder (model::with_mids,
+                // calib::curve and autotune's trust region treat it so). A "midpoint" between off and a
+                // setting is just another setting the design never asked for (or one the kernel refuses:
+                // percpu_pagelist_high_fraction 4).
+                if a <= 0.0 { continue; }
+                let m = (a * b).sqrt();
                 let Some(mv) = round_dose(k, m) else { continue };
                 let Ok(mx) = mv.parse::<f64>() else { continue };
                 if lv.iter().any(|l| (l - mx).abs() < 1e-9) || f.values.contains(&mv) || mv == f.reference { continue; }
@@ -1114,13 +1178,28 @@ impl Design<'_> {
                 let mut left = start;
                 // Heat is a condition, not a cause of an OOM kill: the knobs alone are bisected.
                 let knobs: Cfg = cfg.iter().filter(|(k, _)| !model::is_ctx(k)).cloned().collect();
-                if !knobs.is_empty() { oom_cull(cal, rn, self.phase, self.bs, &knobs, &mut left, self.refs, self.kernel)?; }
+                let mut kept: Vec<(Cfg, Done)> = Vec::new();
+                let (phase, bs) = (self.phase, self.bs);
+                let mut run = |c: &Cfg| rn.run(phase, bs, c, "(OOM search)");
+                if !knobs.is_empty() { oom_cull(cal, &mut run, self.phase, &knobs, &mut left, self.refs, self.kernel, &mut kept, &mut self.tries)?; }
                 self.oom_left -= start - left;
+                self.keep_runs(kept);
             }
             None => {}
         }
+        // Brake events: twice under the same configuration (or one inside the other) makes it soft-unsafe.
+        for c in std::mem::take(&mut rn.braked) {
+            if let Some(u) = cal.note_brake(&c) {
+                eprintln!("\nthe memory brake fired twice under {}: soft-unsafe (left out of designs, a stability cost in autotune)",
+                          u.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "));
+            }
+        }
         self.spent += t.elapsed().as_secs_f64();
         Ok(())
+    }
+    /// Measured runs from outside the design's own list (the OOM search's halves): ordinary runs.
+    fn keep_runs(&mut self, kept: Vec<(Cfg, Done)>) {
+        for (cfg, Done { s, w, t, temp, .. }) in kept { let order = self.runs.len(); self.runs.push(Run { cfg, s, order, t, w, temp }); }
     }
     /// Runs that still fit in the phase's time (measured cost per run, not the estimate).
     fn left(&self) -> usize {
@@ -1142,10 +1221,11 @@ impl Design<'_> {
     }
 }
 
-fn phase_analysis(cal: &Calibration, phase: Phase, factors: &[Factor], dp: &Depth, want: usize, rng: &mut Rng, cx: &str, bad: &[Cfg]) -> Option<Analysis> {
+#[allow(clippy::too_many_arguments)]
+fn phase_analysis(cal: &Calibration, phase: Phase, factors: &[Factor], dp: &Depth, want: usize, rng: &mut Rng, cx: &str, bad: &[Cfg], ch: &Choice) -> Option<Analysis> {
     let pf = cal.phase_fit(phase)?;
     let base = cal.ctx_cfg(phase, cx);
-    analyse(goal_models(&pf.set.space, &pf.fits, phase), phase, factors, bad, want, dp.pairs, dp.crowd, rng, &base)
+    analyse(goal_models(&pf.set.space, &pf.fits, phase), phase, factors, bad, want, dp.pairs, dp.crowd, rng, &base, ch)
 }
 
 /// The factors without the values the kernel refused this session (a factor left without values goes).
@@ -1171,6 +1251,9 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let dirty_ok = tune::find("vm.dirty_bytes").map_or(false, |t| !tune::files(t).is_empty());
     rn.base = factors.iter().filter(|f| f.key == "vm.dirty" && dirty_ok).map(|f| (f.key.clone(), f.reference.clone())).collect();
     let cost = est_secs(phase, bs, rn.c.scale).max(1.0);
+    let heat_secs = rn.c.heat_secs;
+    let run_cost = move |c: &Cfg| cost + if is_hot(c) { heat_secs } else { 0.0 };
+    let ch = Choice { cost: &run_cost, heat };
     let n_total = ((budget / cost) as usize).clamp(12, dp.cap);
     let n_init = ((n_total as f64 * dp.init) as usize).clamp(8, n_total);
     let sess = now() + phase.idx() as u64;
@@ -1190,7 +1273,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     // 1. Space-filling: balanced over knobs, values and knob pairs, crowded runs with the depth.
     d.exec(cal, rn, &none)?;
     let mut since = 0;
-    let init: Vec<Cfg> = model::design(&design_factors(&factors, &rn.unwritable), n_init, &mut rng, &dp.mix, &prior).into_iter().filter(|c| !cal.unsafe_cfg(c)).collect();
+    let init: Vec<Cfg> = model::design(&design_factors(&factors, &rn.unwritable), n_init, &mut rng, &dp.mix, &prior).into_iter().filter(|c| !cal.avoid_cfg(c)).collect();
     'init: for chunk in init.chunks(6) {
         for cfg in cool_first(chunk.to_vec()) {
             if d.secs.is_finite() && d.t0.elapsed().as_secs_f64() > d.secs * (dp.init + 0.1) { break 'init; }
@@ -1209,7 +1292,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let reserve = confirm_runs + if dp.ladder > 0 { dp.ladder * 2 + 1 } else { 0 };
     let (mut batches, mut exploring) = (0, false);
     while d.runs.len() + dp.batch + 1 + reserve <= dp.cap && d.left() >= dp.batch + 1 + reserve {
-        let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, dp.batch, &mut rng, &rn.c.cx, &rn.bad(cal)) else { break };
+        let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, dp.batch, &mut rng, &rn.c.cx, &rn.bad(cal), &ch) else { break };
         eprintln!("\n{name}: {} runs, decision doubt {:.2}{}, model R² {:.2}, 90 % interval coverage {:.0} %", d.runs.len(), an.risk,
                   if dp.pairs > 0 { format!(" ({} doubtful interaction(s))", an.doubt_pairs) } else { String::new() }, an.r2, an.cover * 100.0);
         let settled = an.risk < 0.35 && an.doubt_pairs == 0;
@@ -1218,12 +1301,12 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
         let picks = if settled || an.picks.is_empty() {
             if settled && !exploring { eprintln!("{name}: decisions are settled; the rest of the session fills gaps ({})", dp.name); exploring = true; }
             let seen: Vec<Cfg> = prior.iter().cloned().chain(d.runs.iter().map(|r| r.cfg.clone())).collect();
-            model::design(&design_factors(&factors, &rn.unwritable), dp.batch, &mut rng, &dp.mix, &seen).into_iter().filter(|c| !cal.unsafe_cfg(c)).collect()
+            model::design(&design_factors(&factors, &rn.unwritable), dp.batch, &mut rng, &dp.mix, &seen).into_iter().filter(|c| !cal.avoid_cfg(c)).collect()
         } else {
-            // Doubt-driven runs: part of them heat-soaked, so the hot side keeps up with the cool one.
-            an.picks.into_iter().map(|mut c| { if heat && rng.unit() < 0.3 { c.push(("ctx.heat".into(), "hot".into())); } c }).collect()
+            // Doubt-driven runs, heat-soaked where that state is worth its soak (`analyse`).
+            an.picks
         };
-        for cfg in cool_first(picks) { if !cal.unsafe_cfg(&cfg) && !rn.refused(&cfg) { d.exec(cal, rn, &cfg)?; } }
+        for cfg in cool_first(picks) { if !cal.avoid_cfg(&cfg) && !rn.refused(&cfg) { d.exec(cal, rn, &cfg)?; } }
         d.exec(cal, rn, &none)?;
         d.commit(cal, rn);
         batches += 1;
@@ -1232,7 +1315,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
 
     // 3. Dose refinement: midpoints of numeric ladders around the chosen doses.
     if dp.ladder > 0 && d.left() >= dp.ladder + confirm_runs {
-        if let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, 0, &mut rng, &rn.c.cx, &rn.bad(cal)) {
+        if let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, 0, &mut rng, &rn.c.cx, &rn.bad(cal), &ch) {
             let tries = ladder(&mut factors, &an.optima, &rn.bad(cal), dp.ladder);
             if !tries.is_empty() {
                 eprintln!("\n{name}: refining {} dose(s) between measured levels", tries.len());
@@ -1250,7 +1333,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     // 4. Confirmation: measure what the models believe is best, per goal.
     if confirm && (d.left() >= 4 || !d.secs.is_finite()) {
         cal.retune(phase, 1);
-        if let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, 0, &mut rng, &rn.c.cx, &rn.bad(cal)) {
+        if let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, 0, &mut rng, &rn.c.cx, &rn.bad(cal), &ch) {
             let mut uniq: Vec<(Cfg, Vec<(Goal, f64, f64)>)> = Vec::new();
             for (g, cfg, mu, sd) in an.optima.iter().filter(|o| !o.1.is_empty()) {
                 match uniq.iter_mut().find(|(c, _)| c == cfg) { Some(u) => u.1.push((*g, *mu, *sd)), None => uniq.push((cfg.clone(), vec![(*g, *mu, *sd)])) }
@@ -1263,6 +1346,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
                 d.exec(cal, rn, &none)?;
                 d.commit(cal, rn);
                 let rows = compute_rows(&d.runs, phase, sess, kernel, n_total, &d.meta);
+                let (mut checks, mut surprises) = (0u64, 0u64);
                 for (cfg, gs) in &uniq {
                     for (g, mu, sd) in gs {
                         let ws = goal_wts(*g, phase);
@@ -1272,10 +1356,14 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
                         // Run-to-run noise of this goal's utility as the model measured it (was a fixed 0.02).
                         let noise = cal.phase_model(phase, goal_wts(*g, phase)).map_or(0.02, |m| m.noise());
                         let tol = 2.0 * (sd * sd + noise * noise / obs.len() as f64).sqrt();
+                        checks += 1;
+                        if (m - mu).abs() > tol { surprises += 1; }
                         eprintln!("  {:<30} {} change(s): predicted {:+.3} ± {:.3}, measured {:+.3} ({} runs) {}", g.label(), cfg.len(), mu, sd, m, obs.len(),
                                   if (m - mu).abs() <= tol { "as predicted" } else { "SURPRISE (now part of the data)" });
                     }
                 }
+                // Into the session's quality record: the next progressive sessions read it (`surprise_rate`).
+                note_surprises(cal, sess, phase, checks, surprises);
             }
         }
     }
@@ -1284,6 +1372,14 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     save(cal);
     if let Some(q) = cal.quality.iter().rev().find(|x| x["sess"] == json!(sess) && x["phase"] == json!(name)) { eprintln!("\n{}", quality_line(q)); }
     Ok(())
+}
+
+/// Confirmation outcome of a session into its quality record (`quality["checks"]`, `["surprises"]`).
+fn note_surprises(cal: &mut Calibration, sess: u64, phase: Phase, checks: u64, surprises: u64) {
+    if let Some(q) = cal.quality.iter_mut().rev().find(|x| x["sess"] == json!(sess) && x["phase"] == json!(phase.name())) {
+        q["checks"] = json!(checks);
+        q["surprises"] = json!(surprises);
+    }
 }
 
 /// Robust sd (MAD x 1.4826) of finite values; None with fewer than 4.
@@ -1318,6 +1414,7 @@ fn quality_line(q: &Value) -> String {
     if refused > 0 || dropped > 0 { s.push_str(&format!("; {refused} value(s) refused by the kernel, {dropped} run(s) thrown away")); }
     if q["power_waits"].as_u64().unwrap_or(0) > 0 { s.push_str(&format!("; waited {} time(s) for the power source", q["power_waits"])); }
     if q["ended_early"] == true { s.push_str("; ended early: the power source did not come back"); }
+    if let (Some(c), Some(n)) = (q["checks"].as_u64().filter(|c| *c > 0), q["surprises"].as_u64()) { s.push_str(&format!("; {n} of {c} confirmation(s) SURPRISE")); }
     s
 }
 
@@ -1338,8 +1435,14 @@ fn phase_factors(its: &[&Item]) -> Vec<Factor> { its.iter().map(|i| Factor { key
 fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram: u64, kernel: &str, budget: f64, dp: &Depth, progressive: bool, seed: u64, confirm: bool) -> bool {
     let refs: BTreeMap<String, String> = items.iter().map(|i| (i.key.clone(), i.reference.clone())).collect();
     for (k, r) in &refs {
-        if let Some(old) = cal.refs.get(k) { if old != r { eprintln!("{k}: reference changed ({old} -> {r}): earlier design rows of this knob are dropped"); cal.forget_key(k); } }
-        cal.refs.insert(k.clone(), r.clone());
+        // References are kept per measurement context: a knob whose live value follows the power
+        // context (EPP under another profile) has another reference there, and each session's rows are
+        // read against their own. Only a move inside the same context (a new kernel default) re-codes
+        // that context's earlier rows: they ran with the knob at the old reference, which becomes one
+        // more level of it (rows that set the new reference now leave the knob alone).
+        if let Some(old) = cal.set_reference(k, &ctx.cx, r) {
+            eprintln!("{k}: reference changed in this context ({old} -> {r}): its earlier design rows are re-coded against the new reference");
+        }
     }
     let phases = split(items, ctx.scale, budget);
     if phases.is_empty() { eprintln!("nothing to design: fewer than two testable knobs"); return true; }
@@ -1348,7 +1451,10 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
         let pdp = if progressive {
             let p = progress(cal, *ph, &phase_factors(its));
             eprintln!("\n{}: progressive stage {:?} - {}\n  log: {}", ph.name(), p.stage(), p.stage().what(), p.line());
-            Depth::progressive(p.stage(), its.len(), p.polish)
+            let sr = surprise_rate(cal, *ph);
+            let surprising = sr.map_or(false, |r| r > SURPRISE_HIGH);
+            if surprising { eprintln!("{}: {:.0} % of the recent confirmations were SURPRISES: this session chases doubt first", ph.name(), sr.unwrap_or(0.0) * 100.0); }
+            Depth::progressive(p.stage(), its.len(), p.polish, surprising)
         } else { *dp };
         if let Err(e) = design_phase(cal, &mut rn, *ph, its, *secs, &pdp, kernel, seed, confirm, &refs) { eprintln!("\n{e}"); if STOP.load(Ordering::SeqCst) || rn.power_lost { break; } }
     }
@@ -1364,7 +1470,8 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
         let its: Vec<&Item> = items.iter().filter(|i| i.phase == ph).collect();
         let Some(pf) = cal.phase_fit(ph) else { continue };
         let factors: Vec<Factor> = its.iter().map(|i| Factor { key: i.key.clone(), reference: i.reference.clone(), values: i.values.clone() }).collect();
-        let Some(an) = analyse(goal_models(&pf.set.space, &pf.fits, ph), ph, &factors, &cal.unsafe_sets, 0, dp.pairs, dp.crowd, &mut Rng::new(seed), &cal.ctx_cfg(ph, &ctx.cx)) else { continue };
+        let Some(an) = analyse(goal_models(&pf.set.space, &pf.fits, ph), ph, &factors, &cal.unsafe_sets, 0, dp.pairs, dp.crowd, &mut Rng::new(seed), &cal.ctx_cfg(ph, &ctx.cx),
+                               &Choice { cost: &|_| 1.0, heat: false }) else { continue };
         println!("{}: {} run(s), model R² {:.2}, 90 % interval coverage {:.0} %, decision doubt {:.2}, interactions up to {}", ph.name(),
                  pf.set.nrows(), an.r2, an.cover * 100.0, an.risk, if pf.set.space.order >= 3 { "triples" } else { "pairs" });
         for (g, cfg, mu, sd) in &an.optima { println!("  {:<30} {} change(s), predicted {:+.3} ± {:.3}", g.label(), cfg.len(), mu, sd); }
@@ -1485,7 +1592,7 @@ fn main() {
             if progressive {
                 for (ph, its, _) in split(&items, scale, budget) {
                     let p = progress(&cal, ph, &phase_factors(&its));
-                    let d = Depth::progressive(p.stage(), its.len(), p.polish);
+                    let d = Depth::progressive(p.stage(), its.len(), p.polish, surprise_rate(&cal, ph).map_or(false, |r| r > SURPRISE_HIGH));
                     println!("  {:<5} progressive stage {:?} ({}): {}\n        log: {}", ph.name(), p.stage(), d.name, p.stage().what(), p.line());
                 }
                 println!("  (lean sessions build on each other; --depth lean runs the fixed lean shape)");
@@ -1617,6 +1724,11 @@ fn main() {
     let cdesc = centurion_helpers::calctx::capture(scene.as_deref());
     eprintln!("context: {}", centurion_helpers::calctx::describe(&cdesc));
     let cx = cal.add_context(cdesc);
+    // The plan above read every knob's reference (its live value) before the scene's power context was
+    // written. A profile change can move live values (EPP follows the platform profile under dynamic EPP or
+    // power-profiles-daemon): the references must be those of the context the session measures in, or a
+    // "change" to the value that is live now would be measured as an effect of nothing.
+    let items = if scene.is_some() { plan(rounds, scale, ram, &only, &phase, &cal, &disk, src == "battery").0 } else { items };
     let heat_opt = if flag("--heat") { Some(true) } else if flag("--no-heat") { Some(false) } else { None };
     let ctx = Ctx {
         exe,
@@ -2065,24 +2177,28 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     // is the calibration's reference for every knob the idle model holds: a knob whose live value
     // drifted from it (a new kernel default, a tool) would turn every row into a measurement against
     // another baseline under the old labels.
-    let drifted: Vec<String> = cal.refs.iter().filter(|(k, _)| !calib::io_key(k) && !calib::dev_key(k))
-        .filter(|(k, r)| live_label(k, ctx.disk.as_deref()).map_or(false, |v| v != **r)).map(|(k, _)| k.clone()).collect();
+    let drifted: Vec<String> = cal.refs.keys().filter(|k| !calib::io_key(k) && !calib::dev_key(k))
+        .filter(|k| match (live_label(k, ctx.disk.as_deref()), cal.ref_for(k, &ctx.cx)) { (Some(v), Some(r)) => v != r, _ => false })
+        .cloned().collect();
     eprintln!("verify \"{name}\" ({} change(s){}) against the boot state for {}: {rounds} ABBA round(s)",
               cfg.len(), if skipped.is_empty() { String::new() } else { format!("; not written: {}", skipped.join(", ")) }, goal.label());
     let mut rn = Runner::new(ctx, rate, ram);
     let bs = Benches { cpu_mem: true, cpu: true, idle: true, io: false };
     let none: Cfg = Vec::new();
     let mut runs: BTreeMap<usize, Vec<Run>> = BTreeMap::new();
+    // (round, ABBA position) of every run kept, per phase: a run that drops out must not shift the pairing.
+    let mut tags: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
     let phases: Vec<Phase> = if with_io && ctx.disk.is_some() { vec![Phase::Idle, Phase::Io] } else { vec![Phase::Idle] };
     'r: for r in 0..rounds {
         let order: [&Cfg; 4] = if r % 2 == 0 { [&none, &cfg, &cfg, &none] } else { [&cfg, &none, &none, &cfg] };
-        for c in order {
+        for (pos, c) in order.into_iter().enumerate() {
             for ph in &phases {
                 if STOP.load(Ordering::SeqCst) { break 'r; }
                 if let Some(Done { s, oom: false, w, t, temp }) = rn.run(*ph, bs, c, "(verify)")? {
                     let e = runs.entry(ph.idx()).or_default();
                     let order = e.len();
                     e.push(Run { cfg: c.clone(), s, order, t, w, temp });
+                    tags.entry(ph.idx()).or_default().push((r, pos));
                 }
             }
         }
@@ -2093,33 +2209,34 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     let meta = Meta { src: if ctx.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, cx: ctx.cx.clone() };
     let sess = now() + 7;
     let mut objectives = serde_json::Map::new();
-    let (mut u_rows, mut stored) = (Vec::<f64>::new(), false);
+    let mut stored = false;
     let names = ["latency", "throughput", "power", "memory"];
+    // Every kept run of every phase as (round, position, is B, goal utility of the phase, objectives).
+    let mut tagged: Vec<Vec<VRun>> = Vec::new();
     for (pi, rs) in &runs {
         let ph = Phase::from_idx(*pi as u64);
         let rows = compute_rows(rs, ph, sess, kernel, rs.len(), &meta);
-        let b: Vec<&Row> = rows.iter().filter(|r| !r.cfg.is_empty()).collect();
         let wts = goal_wts(goal, ph);
+        let tg = tags.get(pi).map_or(&[][..], |v| v.as_slice());
+        let vr: Vec<VRun> = rows.iter().zip(tg).map(|(r, &(round, pos))| VRun { round, pos, b: !r.cfg.is_empty(), y: r.y,
+            u: (0..4).filter(|o| r.y[*o].is_finite()).map(|o| wts[o] * r.y[o]).sum() }).collect();
+        // Per objective: one B-A difference per ABBA block (drift inside the block cancels).
         for o in 0..4 {
-            let v: Vec<f64> = b.iter().map(|r| r.y[o]).filter(|x| x.is_finite()).collect();
-            if v.len() < 2 { continue; }
-            let m = v.iter().sum::<f64>() / v.len() as f64;
-            let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() - 1) as f64).sqrt();
-            objectives.insert(format!("{}{}", if ph == Phase::Io { "io " } else { "" }, names[o]), json!([round3(m), round3(sd / (v.len() as f64).sqrt())]));
+            let d = block_diffs(vr.iter().filter(|x| x.y[o].is_finite()).map(|x| (x.round, x.b, x.y[o])));
+            if let Some(st) = paired_stats(&d) {
+                objectives.insert(format!("{}{}", if ph == Phase::Io { "io " } else { "" }, names[o]), json!([round3(st.mean), round3(st.se)]));
+            }
         }
-        for (i, r) in b.iter().enumerate() {
-            let u: f64 = (0..4).filter(|o| r.y[*o].is_finite()).map(|o| wts[o] * r.y[o]).sum();
-            if u_rows.len() <= i { u_rows.push(u); } else { u_rows[i] += u; }
-        }
+        tagged.push(vr);
         // The runs join the design log when every change is a knob the model calibrates from the same reference.
         if ph == Phase::Idle && drifted.is_empty() && cfg.iter().all(|(k, _)| cal.refs.contains_key(k) && calib::phases_for(k, tune::find(k).map_or("", |t| t.group)).iter().any(|p| p.0 == Phase::Idle)) {
             cal.put_session(ph, sess, rows.clone());
             stored = true;
         }
     }
-    let n = u_rows.len().max(1) as f64;
-    let um = u_rows.iter().sum::<f64>() / n;
-    let use_ = if u_rows.len() >= 2 { (u_rows.iter().map(|x| (x - um).powi(2)).sum::<f64>() / (n - 1.0)).sqrt() / n.sqrt() } else { f64::NAN };
+    let gain = paired_stats(&block_diffs(joint_utility(&tagged).into_iter()));
+    let (um, use_) = gain.as_ref().map_or((f64::NAN, f64::NAN), |g| (g.mean, g.se));
+    let blocks = gain.as_ref().map_or(0, |g| g.n);
     // What the model predicts for the calibrated part of the preset (idle phase, the session's context).
     cal.set_target(vec![(1.0, cal.ctx_cfg(Phase::Idle, &ctx.cx))]);
     let pred = cal.phase_model(Phase::Idle, goal_wts(goal, Phase::Idle)).map(|m| {
@@ -2129,10 +2246,13 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
         let (mu, var) = j.eval(&keys);
         (keys.len(), mu, var.sqrt())
     });
-    println!("\nverify \"{name}\" for {} ({} run(s) per side):", goal.label(), u_rows.len());
+    println!("\nverify \"{name}\" for {}: {blocks} ABBA block(s), gains as paired B-A differences per block:", goal.label());
     for (k, x) in &objectives { println!("  {k:<16} {:+6.1} % ± {:.1}", x[0].as_f64().unwrap_or(0.0) * 100.0, x[1].as_f64().unwrap_or(0.0) * 100.0); }
-    println!("  weighted gain    {um:+.3} ± {:.3}  -> {}", use_,
-             if use_.is_finite() && um - 2.0 * use_ > 0.0 { "better than the boot state" } else if use_.is_finite() && um + 2.0 * use_ < 0.0 { "WORSE than the boot state" } else { "no credible difference" });
+    match &gain {
+        Some(g) => println!("  weighted gain    {um:+.3} ± {use_:.3} (95 % CI {:+.3} .. {:+.3}, t with {} df)  -> {}", g.lo, g.hi, g.n - 1,
+                            if g.lo > 0.0 { "better than the boot state" } else if g.hi < 0.0 { "WORSE than the boot state" } else { "no credible difference" }),
+        None => println!("  weighted gain    not measurable: fewer than two complete ABBA blocks"),
+    }
     if let Some((k, mu, sd)) = pred {
         let agree = use_.is_finite() && (um - mu).abs() <= 2.0 * (use_ * use_ + sd * sd).sqrt();
         println!("  model predicted  {mu:+.3} ± {sd:.3} for its {k} calibrated change(s) of {} -> {}", cfg.len(),
@@ -2140,8 +2260,9 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     }
     if stored { println!("  the runs joined the design log (every change is a calibrated knob)"); }
     else if !drifted.is_empty() { println!("  the runs stay out of the design log: {} differ(s) from the calibration's reference now", drifted.join(", ")); }
-    cal.verify.push(json!({"t": now(), "preset": name, "goal": goal.key(), "changes": cfg.len(), "rounds": u_rows.len(), "objectives": objectives,
-                           "gain": [round3(um), round3(use_)], "predicted": pred.map(|p| json!([p.0, round3(p.1), round3(p.2)])), "cx": ctx.cx}));
+    cal.verify.push(json!({"t": now(), "preset": name, "goal": goal.key(), "changes": cfg.len(), "rounds": blocks, "paired": true, "objectives": objectives,
+                           "gain": [round3(um), round3(use_)], "ci95": gain.as_ref().map(|g| json!([round3(g.lo), round3(g.hi)])),
+                           "predicted": pred.map(|p| json!([p.0, round3(p.1), round3(p.2)])), "cx": ctx.cx}));
     let drop = cal.verify.len().saturating_sub(20);
     cal.verify.drain(..drop);
     save(cal);
@@ -2149,6 +2270,45 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
 }
 
 fn round3(x: f64) -> f64 { if x.is_finite() { (x * 1000.0).round() / 1000.0 } else { f64::NAN } }
+
+/// One kept verify run of one phase: its ABBA round and position (0..4), the side (B = the preset),
+/// its objectives and its goal utility in that phase.
+struct VRun { round: usize, pos: usize, b: bool, y: [f64; 4], u: f64 }
+
+/// The goal utility of every run slot (round, position) summed over the phases - only slots every
+/// phase measured: summing by index paired one phase's run with another round's run of the next
+/// once a run dropped out.
+fn joint_utility(phases: &[Vec<VRun>]) -> Vec<(usize, bool, f64)> {
+    let mut by: BTreeMap<(usize, usize), (bool, f64, usize)> = BTreeMap::new();
+    for ph in phases { for r in ph { let e = by.entry((r.round, r.pos)).or_insert((r.b, 0.0, 0)); e.1 += r.u; e.2 += 1; } }
+    by.into_iter().filter(|(_, v)| v.2 == phases.len()).map(|((round, _), (b, u, _))| (round, b, u)).collect()
+}
+
+/// One B-A difference per ABBA block (round): mean of its B runs minus mean of its A runs; a block
+/// missing either side gives none.
+fn block_diffs(xs: impl Iterator<Item = (usize, bool, f64)>) -> Vec<f64> {
+    let mut by: BTreeMap<usize, [(f64, usize); 2]> = BTreeMap::new();
+    for (r, b, v) in xs { let e = &mut by.entry(r).or_insert([(0.0, 0); 2])[b as usize]; e.0 += v; e.1 += 1; }
+    by.values().filter(|s| s[0].1 > 0 && s[1].1 > 0).map(|s| s[1].0 / s[1].1 as f64 - s[0].0 / s[0].1 as f64).collect()
+}
+
+/// Mean of paired differences, its standard error and a 95 % t interval. None with fewer than 2.
+struct Paired { mean: f64, se: f64, lo: f64, hi: f64, n: usize }
+fn paired_stats(d: &[f64]) -> Option<Paired> {
+    let n = d.len();
+    if n < 2 { return None; }
+    let mean = d.iter().sum::<f64>() / n as f64;
+    let se = (d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64).sqrt() / (n as f64).sqrt();
+    let h = t975(n - 1) * se;
+    Some(Paired { mean, se, lo: mean - h, hi: mean + h, n })
+}
+
+/// Two-sided 95 % quantile of Student's t with `df` degrees of freedom.
+fn t975(df: usize) -> f64 {
+    const T: [f64; 30] = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.160, 2.145, 2.131,
+                          2.120, 2.110, 2.101, 2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042];
+    if df == 0 { f64::INFINITY } else if df <= 30 { T[df - 1] } else { 1.96 + 2.4 / df as f64 }
+}
 
 // ── CPU-GPU power coupling ───────────────────────────────────────────────────
 
@@ -2236,9 +2396,104 @@ mod tests {
         assert!(is_hot(&hot) && !is_hot(&runs[0].cfg));
         assert_eq!(cool_first(vec![hot.clone(), Vec::new(), hot.clone()]), vec![Vec::new(), hot.clone(), hot]);
         assert!(!Depth::pick(15.0, 20, None).heat() && Depth::pick(40.0, 20, None).heat());
-        assert!(!Depth::progressive(Stage::Pairs, 20, [0; 3]).heat() && Depth::progressive(Stage::Crowd, 20, [0; 3]).heat());
+        assert!(!Depth::progressive(Stage::Pairs, 20, [0; 3], false).heat() && Depth::progressive(Stage::Crowd, 20, [0; 3], false).heat());
         let lv = ref_levels(&runs, Phase::Idle, calib::PowerSrc::Battery);
         assert_eq!(lv, vec![("idle_w_battery".to_owned(), 10.0)]);
+    }
+    /// The OOM search's half runs are attempts (the design's cost per run counts them), and a half that
+    /// ran without an OOM kill is kept as an ordinary run: here a+b together kill, each alone does not.
+    #[test]
+    fn oom_search_counts_its_runs_and_keeps_the_clean_halves() {
+        let kv = |k: &str| (k.to_string(), "1".to_string());
+        let cfg: Cfg = vec![kv("vm.a"), kv("vm.b"), kv("vm.c"), kv("vm.d")];
+        let mut seen: Vec<Cfg> = Vec::new();
+        let mut run = |c: &Cfg| -> Result<Option<Done>, String> {
+            seen.push(c.clone());
+            let oom = c.contains(&kv("vm.a")) && c.contains(&kv("vm.b"));
+            Ok(Some(Done { s: [(Metric::WakeP99Us, 100.0)].into_iter().collect(), oom, w: 1.0, t: 1, temp: None }))
+        };
+        let (mut cal, mut left, mut kept, mut tries) = (Calibration::default(), 6usize, Vec::new(), 0usize);
+        oom_cull(&mut cal, &mut run, Phase::Load, &cfg, &mut left, &BTreeMap::new(), "", &mut kept, &mut tries).unwrap();
+        assert_eq!(seen.len(), 4, "{seen:?}");
+        assert_eq!(tries, 4, "every half run is an attempt");
+        assert_eq!(kept.iter().map(|k| k.0.clone()).collect::<Vec<_>>(), vec![vec![kv("vm.a")], vec![kv("vm.b")], vec![kv("vm.c"), kv("vm.d")]]);
+        assert!(cal.unsafe_cfg(&[kv("vm.a"), kv("vm.b")]) && !cal.unsafe_cfg(&[kv("vm.a")]));
+        assert_eq!(left, 2);
+    }
+    /// Runs are chosen by expected value per second: every candidate is also offered heat-soaked when
+    /// the design varies heat, and the soak's price decides whether that state is worth it (it used to
+    /// be a coin flip for 30 % of the picks); without heat no run is heated.
+    #[test]
+    fn runs_are_chosen_by_value_per_second_and_heat_by_its_price() {
+        use centurion_helpers::model::PhaseSet;
+        let fs = vec![Factor { key: "cpu.a".into(), reference: "0".into(), values: vec!["1".into()] },
+                      Factor { key: "cpu.b".into(), reference: "0".into(), values: vec!["1".into()] },
+                      Factor { key: "vm.c".into(), reference: "0".into(), values: vec!["1".into()] }];
+        let heat = Factor { key: "ctx.heat".into(), reference: "cool".into(), values: vec!["hot".into()] };
+        let mut rng = Rng::new(6);
+        let mut all = fs.clone(); all.push(heat);
+        // A few runs only, cpu.a's effect flips once heat-soaked: much is still in doubt on the hot side.
+        let mut d = model::design(&all, 26, &mut rng, &Mix::lean(), &[]);
+        for _ in 0..6 { d.push(Vec::new()); }
+        let rows: Vec<model::Row> = d.iter().enumerate().map(|(i, c)| {
+            let on = |k: &str| c.iter().any(|(x, _)| x == k);
+            let y = if on("cpu.a") { if on("ctx.heat") { -0.06 } else { 0.06 } } else { 0.0 } + if on("ctx.heat") { -0.03 } else { 0.0 } + (rng.unit() - 0.5) * 0.03;
+            model::Row { cfg: c.clone(), y: [y, y, f64::NAN, f64::NAN], w: 1.0, sess: 1, pos: i as f64 / d.len() as f64, t: i as f64 * 6.0, tc: 0.0 }
+        }).collect();
+        let ps = PhaseSet::build(all.clone(), rows).unwrap();
+        let fits = std::array::from_fn(|o| ps.fit_obj(o, None, 1));
+        let an = |ch: &Choice| analyse(goal_models(&ps.space, &fits, Phase::Load), Phase::Load, &fs, &[], 6, 4, 3, &mut Rng::new(1), &Vec::new(), ch).unwrap();
+        let hot = |a: &Analysis| a.picks.iter().filter(|c| is_hot(c)).count();
+        let cheap = an(&Choice { cost: &|c: &Cfg| if is_hot(c) { 6.0 } else { 5.0 }, heat: true });
+        assert!(hot(&cheap) >= 1, "a cheap soak is worth it here: {:?}", cheap.picks);
+        let dear = an(&Choice { cost: &|c: &Cfg| if is_hot(c) { 1e4 } else { 5.0 }, heat: true });
+        assert_eq!(hot(&dear), 0, "{:?}", dear.picks);
+        assert_eq!(hot(&an(&Choice { cost: &|_| 5.0, heat: false })), 0);
+    }
+    /// --verify pairs by (round, ABBA position): a dropped run takes only its own slot out of the
+    /// cross-phase sum (summing by index paired runs of different rounds after it), and the gain is the
+    /// mean of one B-A difference per block with a t interval - drift between blocks cancels.
+    #[test]
+    fn verify_pairs_runs_by_round_and_position() {
+        // Two phases, 3 rounds; a strong drift between rounds (+1 per round), the preset is +0.1.
+        let mk = |drop: Option<(usize, usize)>| -> Vec<VRun> {
+            let mut v = Vec::new();
+            for r in 0..3usize { for pos in 0..4usize {
+                if Some((r, pos)) == drop { continue; }
+                let b = if r % 2 == 0 { pos == 1 || pos == 2 } else { pos == 0 || pos == 3 };
+                let u = r as f64 + if b { 0.1 } else { 0.0 };
+                v.push(VRun { round: r, pos, b, y: [u, f64::NAN, f64::NAN, f64::NAN], u });
+            } }
+            v
+        };
+        let (idle, io) = (mk(None), mk(Some((0, 1))));
+        let j = joint_utility(&[idle, io]);
+        assert_eq!(j.len(), 11, "the slot io lost is left out of the sum");
+        let d = block_diffs(j.into_iter());
+        assert_eq!(d.len(), 3);
+        assert!(d.iter().all(|x| (x - 0.2).abs() < 1e-12), "{d:?}: 0.1 per phase, never a round's drift");
+        // Summing by index (the old pairing) mixed rounds once a run dropped out.
+        let (a, b) = (mk(None), mk(Some((0, 1))));
+        let by_index: Vec<f64> = a.iter().zip(&b).map(|(x, y)| x.u + y.u).collect();
+        assert!(by_index.iter().zip(a.iter().zip(&b)).any(|(_, (x, y))| (x.round, x.pos) != (y.round, y.pos)));
+        let st = paired_stats(&[0.10, 0.14, 0.06, 0.12]).unwrap();
+        assert!((st.mean - 0.105).abs() < 1e-12 && st.n == 4);
+        assert!((st.hi - st.mean - 3.182 * st.se).abs() < 1e-12 && st.lo < st.mean);
+        assert!(paired_stats(&[0.1]).is_none());
+        assert_eq!(block_diffs([(0, true, 1.0), (1, false, 0.0), (1, true, 0.5)].into_iter()), vec![0.5], "a block without an A side gives nothing");
+        assert!(t975(1) > 12.0 && (t975(1000) - 1.96).abs() < 0.01);
+    }
+    #[test]
+    fn dose_refinement_never_interpolates_from_off() {
+        // Optimum 5000 between "off" (0) and the boot value 15000: only the geometric midpoint on the dose side.
+        let mut fs = vec![Factor { key: "vm.watermark_boost_factor".into(), reference: "15000".into(), values: vec!["0".into(), "5000".into()] }];
+        let optima = vec![(Goal::Gaming, vec![("vm.watermark_boost_factor".to_string(), "5000".to_string())], 0.0, 0.0)];
+        let tries = ladder(&mut fs, &optima, &[], 4);
+        assert_eq!(tries, vec![vec![("vm.watermark_boost_factor".to_string(), "8660".to_string())]], "{tries:?}");
+        // "never autosuspend" (-1) is a mode too.
+        let mut fs = vec![Factor { key: "usb.autosuspend_ms".into(), reference: "2000".into(), values: vec!["-1".into(), "500".into()] }];
+        let optima = vec![(Goal::PowerSave, vec![("usb.autosuspend_ms".to_string(), "500".to_string())], 0.0, 0.0)];
+        assert!(ladder(&mut fs, &optima, &[], 4).iter().all(|c| c[0].1.parse::<f64>().unwrap() > 500.0));
     }
     #[test]
     fn refused_values_leave_the_design_and_quality_reads_back() {
@@ -2253,6 +2508,8 @@ mod tests {
                        "power_waits": 1, "ended_early": true});
         let l = quality_line(&q);
         assert!(l.contains("latency ±1.2 %") && l.contains("power ±3.0 %") && l.contains("2 disturbed") && l.contains("ended early"), "{l}");
+        let mut q2 = q.clone(); q2["checks"] = json!(4); q2["surprises"] = json!(1);
+        assert!(quality_line(&q2).contains("1 of 4 confirmation(s) SURPRISE"));
     }
     #[test]
     fn schedule() {
@@ -2262,9 +2519,11 @@ mod tests {
         assert_eq!(runs_for(3, 1), 5);
         assert_eq!(runs_for(3, 2), 9);
         let cpu = Benches { cpu: true, idle: true, ..Default::default() };
-        // A CPU knob with 3 candidates: 5 runs x 7.4 s (frame loop, game loop, cache-bound loop, contended window and short jobs included).
-        assert!(est_secs(Phase::Idle, cpu, 1.0) * runs_for(3, 1) as f64 <= 37.5);
-        assert!(est_secs(Phase::Load, Benches { cpu: true, ..Default::default() }, 1.0) <= 5.0);
+        // A CPU knob with 3 candidates: 5 runs x 7.9 s (frame loop, game loop, cache-bound loop, contended window, short jobs
+        // and the burst-job tail included; the windows alone add up to ~7.6 s).
+        assert!(est_secs(Phase::Idle, cpu, 1.0) * runs_for(3, 1) as f64 <= 40.0);
+        // Loaded CPU run: ~5.2 s of windows (the burst-job tail joined the suite), estimated at 5.4 s.
+        assert!(est_secs(Phase::Load, Benches { cpu: true, ..Default::default() }, 1.0) <= 5.5);
         assert!(est_secs(Phase::Io, Benches { io: true, ..Default::default() }, 1.0) < 6.0);
         assert!(selects("@io", "blk.read_ahead_kb", "Storage") && selects("@io", "vm.dirty", "Memory") && !selects("@io", "vm.swappiness", "Memory"));
         assert_eq!(union_benches(Phase::Io, &[]), Benches { io: true, ..Default::default() });
@@ -2326,6 +2585,27 @@ mod tests {
         assert_eq!(fs[0].values.len(), 5);
         assert!(ladder(&mut fs, &[(Goal::Gaming, vec![("vm.dirty".into(), "0.5".into())], 0.1, 0.01)], &[], 4).len() <= 2, "no level twice");
     }
+    /// Confirmations that miss their predictions are kept per session; when more than 30 % of the
+    /// recent ones did, a progressive session past the coverage stages chases doubt (polish-doubt)
+    /// instead of the next stage or rotation; before coverage is done, nothing changes.
+    #[test]
+    fn surprises_send_progressive_sessions_after_doubt() {
+        let mut cal = Calibration::default();
+        assert_eq!(surprise_rate(&cal, Phase::Idle), None);
+        for s in 1..=3u64 { cal.note_quality(json!({"sess": s, "phase": "idle", "runs": 40})); note_surprises(&mut cal, s, Phase::Idle, 2, if s == 3 { 2 } else { 0 }); }
+        cal.note_quality(json!({"sess": 9, "phase": "load", "runs": 40}));
+        note_surprises(&mut cal, 9, Phase::Load, 4, 4);
+        let r = surprise_rate(&cal, Phase::Idle).unwrap();
+        assert!((r - 2.0 / 6.0).abs() < 1e-12, "{r}");
+        assert_eq!(surprise_rate(&cal, Phase::Load), Some(1.0));
+        let back = Calibration::from_json(&cal.to_json());
+        assert_eq!(surprise_rate(&back, Phase::Idle), Some(r));
+        assert_eq!(Depth::progressive(Stage::Crowd, 20, [0; 3], true).name, "lean/polish-doubt");
+        assert_eq!(Depth::progressive(Stage::Polish, 20, [0, 1, 1], false).name, "lean/polish-doubt");
+        assert_eq!(Depth::progressive(Stage::Polish, 20, [3, 0, 1], true).name, "lean/polish-doubt", "out of turn");
+        assert_eq!(Depth::progressive(Stage::Polish, 20, [3, 0, 1], false).name, "lean/polish-crowd");
+        assert_eq!(Depth::progressive(Stage::Base, 20, [0; 3], true).name, "lean/base", "coverage first");
+    }
     #[test]
     fn lean_sessions_progress_through_the_stages() {
         let mut fs: Vec<Factor> = (0..12).map(|i| Factor { key: format!("{}.k{i}", if i % 2 == 0 { "vm" } else { "cpu" }), reference: "0".into(), values: vec!["1".into()] }).collect();
@@ -2339,7 +2619,7 @@ mod tests {
             let st = p.stage();
             assert!(seen.last().map_or(true, |l| *l <= st), "stages only move forward: {seen:?} then {st:?}");
             seen.push(st);
-            let dp = Depth::progressive(st, fs.len(), p.polish);
+            let dp = Depth::progressive(st, fs.len(), p.polish, false);
             assert!(dp.explore && dp.cap == 240);
             let prior: Vec<Cfg> = cal.rows.iter().map(|r| r.cfg.clone()).collect();
             let mut cfgs = model::design(&fs, 40, &mut rng, &dp.mix, &prior);
@@ -2426,7 +2706,7 @@ mod sim {
         let an_of = |runs: &[(Cfg, f64)], want: usize, rng: &mut Rng| -> Option<Analysis> {
             let ps = PhaseSet::build(fs.to_vec(), rows(runs))?;
             let fits = std::array::from_fn(|o| ps.fit_obj(o, None, 1));
-            analyse(goal_models(&ps.space, &fits, Phase::Load), Phase::Load, fs, &[], want, 0, 6, rng, &Vec::new())
+            analyse(goal_models(&ps.space, &fits, Phase::Load), Phase::Load, fs, &[], want, 0, 6, rng, &Vec::new(), &Choice { cost: &|_| 1.0, heat: false })
         };
         let mut last: Option<Cfg> = None;
         while runs.len() + 6 <= budget {

@@ -44,6 +44,10 @@ pub const BACKUP: &str = "/var/lib/centurion/signature.json.bak";
 pub const OLD_FILE: &str = "/var/lib/centurion/calibration.json";
 /// Largest signature file that is read back; `save` keeps the file well under it.
 pub const MAX_FILE: u64 = 8 << 20;
+/// Brake events kept (`Calibration::note_brake`).
+const KEEP_BRAKES: usize = 40;
+/// Unsafe combinations kept (see `Calibration::cap_unsafe_sets`).
+const MAX_UNSAFE: usize = 50;
 /// Sessions' quality records kept (newest last).
 const KEEP_QUALITY: usize = 64;
 const KEEP: usize = 10;
@@ -60,7 +64,8 @@ pub const SYS_FIT_STORE: &str = "/var/lib/centurion/fit-store.json";
 const MAX_FIT_STORE: u64 = 16 * 1024 * 1024;
 /// Fitted models kept between autotune runs (`FitStore`), newest first.
 const KEEP_FITS: usize = 8;
-const FIT_STORE_VERSION: u64 = 1;
+/// 2 = screening hyperparameters per objective ("screen" holds four entries).
+const FIT_STORE_VERSION: u64 = 2;
 
 /// One benchmark metric and its direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -551,8 +556,9 @@ fn store_entry(key: &str, phase: Phase, pf: &PhaseFit) -> Value {
         json!({"h": bits(&m.hyper.to_vec()), "w": bits(&m.w), "s": bits(&[m.loo_rmse, m.loo_r2, m.cover90, m.var_scale])})
     })).collect();
     json!({"key": key, "phase": phase.name(), "order": pf.set.space.order, "heredity": bits(&pf.set.space.heredity),
-           "screen": pf.set.screen.map_or(Value::Null, |h| bits(&h.to_vec())), "fits": fits})
+           "screen": pf.set.screen.iter().map(|h| h.map_or(Value::Null, |h| bits(&h.to_vec()))).collect::<Vec<_>>(), "fits": fits})
 }
+fn cfgs_json(v: &[Cfg]) -> Value { Value::Array(v.iter().map(|u| Value::Array(u.iter().map(|(k, x)| json!([k, x])).collect())).collect()) }
 fn bits(v: &[f64]) -> Value { Value::Array(v.iter().map(|x| json!(x.to_bits())).collect()) }
 fn unbits(v: &Value) -> Option<Vec<f64>> { v.as_array()?.iter().map(|x| x.as_u64().map(f64::from_bits)).collect() }
 fn fit_store_path() -> Option<std::path::PathBuf> {
@@ -576,7 +582,22 @@ pub struct Calibration {
     /// combinations that caused an OOM kill.
     pub rows: Vec<Row>,
     pub refs: BTreeMap<String, String>,
+    /// Reference of every knob per measurement context (context id -> key -> value): a session's rows
+    /// mean "the knobs not listed were at this context's reference". `refs` holds the newest
+    /// session's references and stands in for a context that has none recorded (older signatures).
+    pub refs_cx: BTreeMap<String, BTreeMap<String, String>>,
+    /// The context decisions are made for (autotune: the target context's id). The models are coded
+    /// against its references (`model_ref`); None = `refs`.
+    pub target_cx: RefCell<Option<String>>,
     pub unsafe_sets: Vec<Cfg>,
+    /// Unsafe sets that are never dropped by the cap (`add_unsafe_set`): the machine froze or crashed
+    /// while they ran (`stability::on_boot`). Each is also in `unsafe_sets`.
+    pub unsafe_pinned: Vec<Cfg>,
+    /// Configurations of the loaded runs the memory brake stopped (newest last, `KEEP_BRAKES`).
+    pub brakes: Vec<Cfg>,
+    /// Soft-unsafe combinations: the brake stopped the ballast twice under them (`note_brake`). Left
+    /// out of the calibration's designs; autotune charges them a stability cost instead of forbidding them.
+    pub soft_unsafe: Vec<Cfg>,
     /// Fitted prior scales per phase and objective ("idle0" .. "load3").
     pub hyp: BTreeMap<String, Vec<f64>>,
     /// Strategy of every design session per phase ("idle"/"load" -> "lean/base", "deep", ...),
@@ -589,6 +610,9 @@ pub struct Calibration {
     pub on_battery: bool,
     /// Measurement contexts by id (power profile, AC/battery, firmware limits, fan, CPU curve, scene).
     pub contexts: BTreeMap<String, Value>,
+    /// Reference value of every context dimension per phase ("load" -> "ctx.profile" -> "performance"),
+    /// fixed when the phase first saw the dimension take a second value (`pin_ctx_refs`).
+    pub ctx_ref: BTreeMap<String, BTreeMap<String, String>>,
     /// Preferred power source for the idle/load power models (autotune sets it per goal).
     pub pwr_pref: std::cell::Cell<Option<PowerSrc>>,
     /// Context mixture decisions are read in (autotune sets it: the goal's context, heat share).
@@ -688,6 +712,42 @@ impl Calibration {
     fn ref_of(&self, key: &str) -> Option<String> {
         self.refs.get(key).cloned().or_else(|| self.group(key, "").map(|g| g.reference.clone()))
     }
+    /// A knob's reference in one measurement context: what the rows of that context's sessions mean by
+    /// "left alone". A context without a record of its own has the signature-wide one (`refs`).
+    pub fn ref_for(&self, key: &str, cx: &str) -> Option<String> {
+        self.refs_cx.get(cx).and_then(|m| m.get(key)).cloned().or_else(|| self.ref_of(key))
+    }
+    /// The reference the models code a knob against: the target context's (`target_cx`), else `refs`.
+    /// Effects are asked for and decided relative to it.
+    pub fn model_ref(&self, key: &str) -> Option<String> {
+        match self.target_cx.borrow().as_deref() { Some(cx) => self.ref_for(key, cx), None => self.ref_of(key) }
+    }
+    /// Sets the context decisions are made for (drops the fits when it changes: the coding follows it).
+    pub fn set_target_cx(&self, cx: Option<String>) {
+        if *self.target_cx.borrow() == cx { return; }
+        *self.target_cx.borrow_mut() = cx;
+        for c in &self.cache.0 { *c.borrow_mut() = None; }
+    }
+    /// Id of a context description (as `add_context` stores it).
+    pub fn context_id(desc: &Value) -> String { format!("c{:08x}", model::fnv(desc.to_string().as_bytes()) & 0xFFFF_FFFF) }
+    /// A session in context `cx` measured `key` against `r`. Within the same context a moved reference
+    /// (another kernel default) re-codes that context's rows (`rebase_key`); another context simply has
+    /// its own reference - its rows keep theirs and are read against it (`pre_rows`). Before the first
+    /// per-context record, every context the rows know is given the signature-wide reference they were
+    /// coded against. Returns the context's previous reference when it moved.
+    pub fn set_reference(&mut self, key: &str, cx: &str, r: &str) -> Option<String> {
+        if let Some(old) = self.refs.get(key).cloned() {
+            let ids: BTreeSet<String> = self.rows.iter().filter(|x| !x.field).map(|x| x.cx.clone()).collect();
+            for id in ids { self.refs_cx.entry(id).or_default().entry(key.to_owned()).or_insert_with(|| old.clone()); }
+        }
+        let own = self.refs_cx.get(cx).and_then(|m| m.get(key)).cloned();
+        let moved = own.filter(|o| o != r);
+        if let Some(o) = &moved { self.rebase_key(key, cx, o, r); }
+        self.refs_cx.entry(cx.to_owned()).or_default().insert(key.to_owned(), r.to_owned());
+        self.refs.insert(key.to_owned(), r.to_owned());
+        self.invalidate();
+        moved
+    }
     /// Context dimensions a context description contributes as pseudo-knobs.
     pub fn ctx_dims(desc: &Value) -> Vec<(String, String)> {
         let mut out = Vec::new();
@@ -708,16 +768,30 @@ impl Calibration {
         }
         out
     }
-    /// Per context dimension of one phase: the reference value (most rows) when the phase's rows saw
-    /// more than one value. Rows of an unknown context count as the reference.
+    /// Per context dimension of one phase: the reference value when the phase's rows saw more than one
+    /// value. Rows of an unknown context count as the reference. The reference is the one fixed for the
+    /// phase (`ctx_ref`) while any row still has it; else (first time, or its rows are gone) the value
+    /// with the most rows. It used to be the most rows every time: a session in another context could
+    /// move it, and with it the coding of every row of the phase.
     fn ctx_refs(&self, phase: Phase) -> BTreeMap<String, String> {
         let mut cnt: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
         for r in self.rows.iter().filter(|r| r.phase == phase) {
             let Some(d) = self.contexts.get(&r.cx) else { continue };
             for (k, v) in Self::ctx_dims(d) { *cnt.entry(k).or_default().entry(v).or_default() += 1; }
         }
-        cnt.into_iter().filter(|(_, m)| m.len() >= 2)
-            .filter_map(|(k, m)| m.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|(v, _)| (k, v))).collect()
+        let kept = self.ctx_ref.get(phase.name());
+        cnt.into_iter().filter(|(_, m)| m.len() >= 2).filter_map(|(k, m)| {
+            if let Some(v) = kept.and_then(|x| x.get(&k)).filter(|v| m.get(*v).map_or(false, |n| *n > 0)) { return Some((k, v.clone())); }
+            m.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|(v, _)| (k, v))
+        }).collect()
+    }
+    /// Fixes the context references the phases use now (`ctx_refs`), so later sessions do not move them.
+    fn pin_ctx_refs(&mut self) {
+        for ph in Phase::ALL {
+            let r = self.ctx_refs(ph);
+            if r.is_empty() { continue; }
+            self.ctx_ref.entry(ph.name().to_owned()).or_default().extend(r);
+        }
     }
     /// The context pseudo-knobs of one row (dimensions at their reference are left out).
     fn row_ctx(&self, r: &Row, refs: &BTreeMap<String, String>) -> Cfg {
@@ -763,7 +837,7 @@ impl Calibration {
     fn ref_in(&self, key: &str, ctx: &BTreeMap<String, String>) -> Option<String> {
         if key == "ctx.heat" { return Some("cool".into()); }
         if crate::model::is_ctx(key) { return ctx.get(key).cloned(); }
-        self.ref_of(key)
+        self.model_ref(key)
     }
     /// Rows of one phase as model input: weights carry recency and kernel age; the one-at-a-time
     /// records join as single-knob rows worth half their evidence.
@@ -779,6 +853,11 @@ impl Calibration {
         let age_ref = self.age_ref(phase);
         let designed: BTreeSet<&str> = self.rows.iter().filter(|r| r.phase == phase && !r.field)
             .flat_map(|r| r.cfg.iter().map(|(k, _)| k.as_str())).collect();
+        // Per-context references: a row of a context whose reference of a knob is not the model's had
+        // that knob at its own reference, a level of its own here; a row that set it to the model's
+        // reference left it alone in the model's coding (`rebase_key`, read-only and per context).
+        let mrefs: Vec<(&str, String)> = designed.iter().filter(|k| !crate::model::is_ctx(k) && same_family(phase, k))
+            .filter_map(|k| Some((*k, self.model_ref(k)?))).collect();
         let mut out: Vec<model::Row> = Vec::new();
         for r in self.rows.iter().filter(|r| r.phase == phase) {
             if r.cfg.iter().any(|(k, _)| !same_family(phase, k)) { continue; }
@@ -786,6 +865,15 @@ impl Calibration {
             let k = if self.kernel.is_empty() || major_minor(&r.kernel) == mm { 1.0 } else { 0.5 };
             let b = if r.bv == BENCH_VERSION || r.field { 1.0 } else { 0.6 };
             let mut cfg = r.cfg.clone();
+            if !r.field {
+                for (key, mr) in &mrefs {
+                    let Some(own) = self.ref_for(key, &r.cx).filter(|o| o != mr) else { continue };
+                    match cfg.iter().position(|(k, _)| k == key) {
+                        Some(i) => if cfg[i].1 == *mr { cfg.remove(i); },
+                        None => cfg.push((key.to_string(), own)),
+                    }
+                }
+            }
             let mut w = r.w * 0.5f64.powf(age / HALF_LIFE_DAYS) * k * b;
             if r.field {
                 let n = cfg.len().max(1);
@@ -813,17 +901,38 @@ impl Calibration {
         }
         out
     }
-    /// Key of the kept screening hyperparameters (they fit the sum of the objectives, power included).
-    fn screen_key(&self, phase: Phase) -> String {
+    /// Key of the kept screening hyperparameters of one objective ("idleh0" .. "loadh3"; the power
+    /// objective's own on battery, like `hyp_key`).
+    fn screen_key(&self, phase: Phase, o: usize) -> String {
+        let b = o == 2 && self.pwr_source(phase) == Some(PowerSrc::Battery) && matches!(phase, Phase::Idle | Phase::Load);
+        format!("{}h{o}{}", phase.name(), if b { "b" } else { "" })
+    }
+    /// The single screening key of signatures written before the screening went per objective (it
+    /// fitted the sum of the objectives): only a starting point for each objective's own search.
+    fn legacy_screen_key(&self, phase: Phase) -> String {
         format!("{}h{}", phase.name(), if self.pwr_source(phase) == Some(PowerSrc::Battery) && matches!(phase, Phase::Idle | Phase::Load) { "b" } else { "" })
+    }
+    /// Starting screening hyperparameters per objective and their search passes: an objective's own
+    /// kept ones are used as they are (`passes` None) or searched `passes` times; the legacy summed
+    /// ones only start a search (at least one pass); none at all: one pass from the default start.
+    /// The third value tells which objectives started from the legacy key.
+    fn screen_inits(&self, phase: Phase, passes: Option<usize>) -> (model::Screen, [usize; 4], [bool; 4]) {
+        let legacy = self.hyp.get(&self.legacy_screen_key(phase)).and_then(|v| Hyper::from_slice(v));
+        let (mut init, mut ps, mut old) = ([None; 4], [1usize; 4], [false; 4]);
+        for o in 0..4 {
+            match self.hyp.get(&self.screen_key(phase, o)).and_then(|v| Hyper::from_slice(v)) {
+                Some(h) => { init[o] = Some(h); ps[o] = passes.unwrap_or(0); }
+                None => { init[o] = legacy; old[o] = legacy.is_some(); ps[o] = passes.unwrap_or(1).max(1); }
+            }
+        }
+        (init, ps, old)
     }
     fn build_set(&self, phase: Phase) -> Option<PhaseSet> { self.build_set_with(phase, None) }
     /// `passes`: None = kept screening hyperparameters as they are (a search only where none are kept).
     fn build_set_with(&self, phase: Phase, passes: Option<usize>) -> Option<PhaseSet> {
         let (factors, rows) = self.set_input(phase)?;
-        let init = self.hyp.get(&self.screen_key(phase)).and_then(|v| Hyper::from_slice(v));
-        let passes = passes.unwrap_or(if init.is_some() { 0 } else { 1 });
-        PhaseSet::build_screened(factors, rows, None, init, passes)
+        let (init, ps, _) = self.screen_inits(phase, passes);
+        PhaseSet::build_screened(factors, rows, None, init, ps)
     }
     /// The phase model's input: its factors and the rows that change only them.
     fn set_input(&self, phase: Phase) -> Option<(Vec<Factor>, Vec<model::Row>)> {
@@ -868,15 +977,16 @@ impl Calibration {
     fn stored_phase(&self, phase: Phase) -> Option<PhaseFit> {
         let t0 = std::time::Instant::now();
         let (factors, rows, inits, key) = self.store_input(phase)?;
-        let screen_init = inits[0];
+        let (screen_init, screen_passes, _) = self.screen_inits(phase, None);
         let entry = {
             let mut st = self.fits.0.borrow_mut();
             if st.file.is_none() { st.file = Some(self.read_fit_store()); }
             st.file.as_ref().and_then(|f| f.iter().find(|e| e["key"] == key.as_str()).cloned())
         };
         let kept = entry.as_ref().and_then(|e| {
-            let set = PhaseSet::build_kept(factors.clone(), rows.clone(), unbits(&e["heredity"])?, e["order"].as_u64()? as u8,
-                                           unbits(&e["screen"]).and_then(|v| Hyper::from_slice(&v)))?;
+            let sc = e["screen"].as_array().filter(|a| a.len() == 4)?;
+            let screen: model::Screen = std::array::from_fn(|o| unbits(&sc[o]).and_then(|v| Hyper::from_slice(&v)));
+            let set = PhaseSet::build_kept(factors.clone(), rows.clone(), unbits(&e["heredity"])?, e["order"].as_u64()? as u8, screen)?;
             let fits = e["fits"].as_array().filter(|a| a.len() == 4)?;
             let mut out: [Option<Arc<Fit>>; 4] = Default::default();
             for (o, f) in fits.iter().enumerate() {
@@ -893,8 +1003,8 @@ impl Calibration {
         let pf = match kept {
             Some(pf) => Some(pf),
             None => {
-                let set = PhaseSet::build_screened(factors, rows, None, screen_init, if screen_init.is_some() { 0 } else { 1 })?;
-                let fits = std::array::from_fn(|o| { let init = inits[o + 1]; set.fit_obj(o, init, if init.is_some() { 0 } else { 1 }) });
+                let set = PhaseSet::build_screened(factors, rows, None, screen_init, screen_passes)?;
+                let fits = std::array::from_fn(|o| { let init = inits[o + 4]; set.fit_obj(o, init, if init.is_some() { 0 } else { 1 }) });
                 Some(PhaseFit { set, fits })
             }
         };
@@ -904,12 +1014,15 @@ impl Calibration {
         pf
     }
     /// The phase model's input as the store keys it: factors, rows, starting hyperparameters
-    /// (screening, then one per objective) and their fingerprint.
+    /// (screening per objective, then one fit per objective) and their fingerprint. A screening that
+    /// starts from the legacy summed key is searched, not used as it is: it is keyed apart.
     fn store_input(&self, phase: Phase) -> Option<(Vec<Factor>, Vec<model::Row>, Vec<Option<Hyper>>, String)> {
         let (factors, rows) = self.set_input(phase)?;
-        let screen_init = self.hyp.get(&self.screen_key(phase)).and_then(|v| Hyper::from_slice(v));
-        let inits: Vec<Option<Hyper>> = std::iter::once(screen_init).chain((0..4).map(|o| self.hyper(phase, o))).collect();
-        let key = format!("{:016x}", model::input_hash(&factors, &rows, &inits));
+        let (screen, _, legacy) = self.screen_inits(phase, None);
+        let inits: Vec<Option<Hyper>> = screen.into_iter().chain((0..4).map(|o| self.hyper(phase, o))).collect();
+        let mut keyed = inits.clone();
+        if legacy.iter().any(|x| *x) { keyed.extend(legacy.iter().map(|l| l.then_some(Hyper::START))); }
+        let key = format!("{:016x}", model::input_hash(&factors, &rows, &keyed));
         Some((factors, rows, inits, key))
     }
     /// Kept builds: the user's own (`fit_store_path`), then those the calibration left (`SYS_FIT_STORE`).
@@ -987,7 +1100,7 @@ impl Calibration {
         if let Some(pf) = &v {
             let src = self.pwr_source(phase);
             for (o, f) in pf.fits.iter().enumerate() { if let Some(f) = f { self.hyp.insert(hyp_key(phase, o, src), f.hyper.to_vec()); } }
-            if let Some(h) = pf.set.screen { self.hyp.insert(self.screen_key(phase), h.to_vec()); }
+            for (o, h) in pf.set.screen.iter().enumerate() { if let Some(h) = h { self.hyp.insert(self.screen_key(phase, o), h.to_vec()); } }
         }
         // The power model of the other source keeps its own scales (`hyp_key`): without them every
         // power-saving autotune (battery source) ran a full hyperparameter search on idle and load.
@@ -1010,7 +1123,7 @@ impl Calibration {
     /// Stand-alone effect of one value from the joint model (posterior mean per objective;
     /// `n` = how much the data narrowed the prior: prior variance / posterior variance - 1).
     fn model_effect(&self, key: &str, reference: &str, value: &str, phase: Phase) -> Option<Measured> {
-        if self.rows.is_empty() || self.refs.get(key).map(String::as_str) != Some(reference) { return None; }
+        if self.rows.is_empty() || self.model_ref(key).as_deref() != Some(reference) { return None; }
         let pf = self.phase_fit(phase)?;
         let f = model::ctx_func(&pf.set.space, &[(key.to_owned(), value.to_owned())], &self.target.borrow())?;
         let (mut m, mut n, mut any) = (Measured::default(), f64::MAX, false);
@@ -1057,7 +1170,7 @@ impl Calibration {
     }
     /// Registers a measurement context, returns its id.
     pub fn add_context(&mut self, desc: Value) -> String {
-        let id = format!("c{:08x}", model::fnv(desc.to_string().as_bytes()) & 0xFFFF_FFFF);
+        let id = Calibration::context_id(&desc);
         self.contexts.insert(id.clone(), desc);
         id
     }
@@ -1074,6 +1187,7 @@ impl Calibration {
         let n = rows.len();
         self.rows.retain(|r| !r.field);
         self.rows.extend(rows);
+        self.pin_ctx_refs();
         self.invalidate();
         n
     }
@@ -1126,7 +1240,7 @@ impl Calibration {
         for ph in [Phase::Idle, Phase::Load, Phase::Io, Phase::Dev] {
             let Some(Some(pf)) = self.cache.0[pidx(ph)].borrow().clone() else { continue };
             let src = self.pwr_source(ph);
-            if let Some(h) = pf.set.screen { add.insert(self.screen_key(ph), h.to_vec()); }
+            for (o, h) in pf.set.screen.iter().enumerate() { if let Some(h) = h { add.insert(self.screen_key(ph, o), h.to_vec()); } }
             for (o, f) in pf.fits.iter().enumerate() { if let Some(f) = f { add.insert(hyp_key(ph, o, src), f.hyper.to_vec()); } }
         }
         add.retain(|k, _| !self.hyp.contains_key(k));
@@ -1150,6 +1264,7 @@ impl Calibration {
         self.rows.retain(|r| !(r.phase == phase && r.sess == sess));
         self.rows.extend(rows);
         if self.trim_rows(PHASE_ROWS) { self.invalidate(); } else { *self.cache.0[pidx(phase)].borrow_mut() = None; }
+        self.pin_ctx_refs();
     }
     /// Keeps at most `cap[phase]` design rows per phase (the newest); field rows are left alone.
     /// Returns whether anything was dropped.
@@ -1170,14 +1285,86 @@ impl Calibration {
     }
     /// A knob's reference changed: rows that changed it were measured against another baseline.
     pub fn forget_key(&mut self, key: &str) { self.rows.retain(|r| !r.cfg.iter().any(|(k, _)| k == key)); self.invalidate(); }
-    pub fn unsafe_cfg(&self, cfg: &[(String, String)]) -> bool { self.unsafe_sets.iter().any(|u| u.iter().all(|kv| cfg.contains(kv))) }
-    pub fn add_unsafe_set(&mut self, mut set: Cfg) {
-        set.sort();
-        if self.unsafe_sets.iter().any(|u| u.iter().all(|kv| set.contains(kv))) { return; }
-        self.unsafe_sets.retain(|u| !set.iter().all(|kv| u.contains(kv)));
-        self.unsafe_sets.push(set);
-        if self.unsafe_sets.len() > 50 { self.unsafe_sets.remove(0); }
+    /// A knob's reference moved from `old` to `new` (another kernel default, another power context): the
+    /// design rows keep their meaning when they are re-coded against the new reference. Every run of the
+    /// earlier sessions that left the knob alone ran it at `old`, which becomes a level of its own; a run
+    /// that set it to `new` now leaves it at the reference. Only the phases whose rows changed the knob are
+    /// touched (adding a knob of another family would take a row out of its phase); field rows carry
+    /// their own configuration against the boot defaults and are left alone.
+    ///
+    /// Only the rows of context `cx`: since references are kept per context (`refs_cx`), a different
+    /// reference in another context is not a move - those rows are read against their own (`pre_rows`).
+    pub fn rebase_key(&mut self, key: &str, cx: &str, old: &str, new: &str) {
+        let phases: BTreeSet<usize> = self.rows.iter().filter(|r| !r.field && r.cx == cx && r.cfg.iter().any(|(k, _)| k == key)).map(|r| pidx(r.phase)).collect();
+        for r in self.rows.iter_mut().filter(|r| !r.field && r.cx == cx && phases.contains(&pidx(r.phase))) {
+            match r.cfg.iter().position(|(k, _)| k == key) {
+                Some(i) => if r.cfg[i].1 == new { r.cfg.remove(i); },
+                None => r.cfg.push((key.to_owned(), old.to_owned())),
+            }
+        }
+        self.refs.insert(key.to_owned(), new.to_owned());
+        if let Some(m) = self.refs_cx.get_mut(cx) { if m.contains_key(key) { m.insert(key.to_owned(), new.to_owned()); } }
+        self.invalidate();
     }
+    pub fn unsafe_cfg(&self, cfg: &[(String, String)]) -> bool { self.unsafe_sets.iter().any(|u| u.iter().all(|kv| cfg.contains(kv))) }
+    /// An OOM-kill culprit (or any other unsafe combination): never picked again. A set already
+    /// covered by a smaller one is not added; sets it covers go.
+    pub fn add_unsafe_set(&mut self, set: Cfg) { self.add_unsafe(set, false) }
+    /// A combination the machine froze or crashed under (`stability::on_boot`): unsafe, and never
+    /// dropped by the cap.
+    pub fn add_freeze_set(&mut self, set: Cfg) { self.add_unsafe(set, true) }
+    fn add_unsafe(&mut self, mut set: Cfg, pinned: bool) {
+        set.sort();
+        if let Some(u) = self.unsafe_sets.iter().find(|u| u.iter().all(|kv| set.contains(kv))).cloned() {
+            // Already covered; a freeze still pins the covering set.
+            if pinned && !self.unsafe_pinned.contains(&u) { self.unsafe_pinned.push(u); }
+            return;
+        }
+        let covered = |u: &Cfg| set.iter().all(|kv| u.contains(kv));
+        let pin = pinned || self.unsafe_pinned.iter().any(&covered);
+        self.unsafe_sets.retain(|u| !covered(u));
+        self.unsafe_pinned.retain(|u| !covered(u));
+        if pin { self.unsafe_pinned.push(set.clone()); }
+        self.unsafe_sets.push(set);
+        self.cap_unsafe_sets();
+    }
+    /// At most `MAX_UNSAFE` sets. Single values and freeze sets always stay; over the cap the largest
+    /// sets go first (they forbid the least: only configurations holding all of their values), the
+    /// oldest of equal size first, and each one dropped is reported. It used to drop the oldest set
+    /// silently, whatever it was - a single OOM value or a combination that froze the machine.
+    fn cap_unsafe_sets(&mut self) {
+        while self.unsafe_sets.len() > MAX_UNSAFE {
+            let Some(i) = self.unsafe_sets.iter().enumerate()
+                .filter(|(_, u)| u.len() > 1 && !self.unsafe_pinned.contains(u))
+                .max_by(|a, b| a.1.len().cmp(&b.1.len()).then(b.0.cmp(&a.0))).map(|x| x.0) else { break };
+            let u = self.unsafe_sets.remove(i);
+            eprintln!("unsafe combinations: more than {MAX_UNSAFE} kept; dropped the least restrictive ({} values: {})", u.len(),
+                      u.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "));
+        }
+    }
+    /// The memory brake stopped the load ballast while `cfg` ran (the run was thrown away). The event is
+    /// kept; when an earlier event's configuration and this one contain each other, the smaller of the
+    /// two set off the brake twice: it becomes soft-unsafe (returned when newly marked). Context
+    /// pseudo-knobs are conditions, not causes; a reference run (no knobs) proves nothing about a knob.
+    pub fn note_brake(&mut self, cfg: &[(String, String)]) -> Option<Cfg> {
+        let mut c: Cfg = cfg.iter().filter(|(k, _)| !crate::model::is_ctx(k)).cloned().collect();
+        c.sort();
+        if c.is_empty() { return None; }
+        let within = |a: &Cfg, b: &Cfg| a.iter().all(|kv| b.contains(kv));
+        let twice = self.brakes.iter().filter_map(|b| if within(b, &c) { Some(b.clone()) } else if within(&c, b) { Some(c.clone()) } else { None })
+            .min_by_key(|x| x.len());
+        self.brakes.push(c);
+        let drop = self.brakes.len().saturating_sub(KEEP_BRAKES);
+        self.brakes.drain(..drop);
+        let s = twice?;
+        if self.soft_unsafe.iter().any(|u| within(u, &s)) || self.unsafe_cfg(&s) { return None; }
+        self.soft_unsafe.retain(|u| !within(&s, u));
+        self.soft_unsafe.push(s.clone());
+        Some(s)
+    }
+    pub fn soft_unsafe_cfg(&self, cfg: &[(String, String)]) -> bool { self.soft_unsafe.iter().any(|u| u.iter().all(|kv| cfg.contains(kv))) }
+    /// What a calibration design leaves out: unsafe and soft-unsafe combinations.
+    pub fn avoid_cfg(&self, cfg: &[(String, String)]) -> bool { self.unsafe_cfg(cfg) || self.soft_unsafe_cfg(cfg) }
     pub fn is_unsafe(&self, key: &str, value: &str) -> bool {
         self.keys.get(key).map_or(false, |gs| gs.iter().any(|g| g.values.get(value).map_or(false, |s| s.unsafe_)))
     }
@@ -1187,8 +1374,11 @@ impl Calibration {
         let mut stored = None;
         if let Some(g) = self.group(key, reference) { stored = Some(g.reference.clone()); vals.extend(g.values.keys().cloned()); }
         for r in &self.rows { for (k, v) in &r.cfg { if k == key { vals.insert(v.clone()); } } }
-        let stored = stored.or_else(|| self.refs.get(key).cloned())?;
-        if let Some(r) = self.refs.get(key) { vals.remove(r); }
+        let mr = self.model_ref(key);
+        let stored = stored.or_else(|| mr.clone())?;
+        if let Some(r) = &mr { vals.remove(r); }
+        // Other contexts' references are levels of the knob too (`pre_rows`).
+        for m in self.refs_cx.values() { if let Some(v) = m.get(key) { if Some(v) != mr.as_ref() { vals.insert(v.clone()); } } }
         Some((stored, vals.into_iter().collect()))
     }
     /// Adds one run's result.
@@ -1231,10 +1421,12 @@ impl Calibration {
             if r.field { o["fd"] = json!(true); }
             o
         }).collect();
-        json!({"version": 8, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
-               "refs": self.refs, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "coupling": self.coupling,
+        json!({"version": 9, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
+               "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
                "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality,
-               "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
+               "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
+               "brakes": cfgs_json(&self.brakes), "soft_unsafe": cfgs_json(&self.soft_unsafe),
+               "unsafe_pinned": self.unsafe_pinned.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
     }
     pub fn from_json(v: &Value) -> Calibration {
         let mut c = Calibration { fingerprint: Fingerprint::from_json(&v["fingerprint"]), on_battery: v["on_battery"].as_bool().unwrap_or(false), ..Default::default() };
@@ -1276,6 +1468,10 @@ impl Calibration {
                               field: r["fd"].as_bool().unwrap_or(false) });
         }
         for (k, x) in v["contexts"].as_object().into_iter().flatten() { if x.is_object() { c.contexts.insert(k.clone(), x.clone()); } }
+        for (ph, m) in v["ctx_ref"].as_object().into_iter().flatten() {
+            let m: BTreeMap<String, String> = m.as_object().into_iter().flatten().filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_owned()))).collect();
+            if !m.is_empty() { c.ctx_ref.insert(ph.clone(), m); }
+        }
         if v["coupling"].is_object() { c.coupling = Some(v["coupling"].clone()); }
         for (k, x) in v["ref_w"].as_object().into_iter().flatten() { if let Some(f) = x.as_f64() { c.ref_w.insert(k.clone(), f); } }
         c.verify = v["verify"].as_array().cloned().unwrap_or_default();
@@ -1305,7 +1501,19 @@ impl Calibration {
             c.keys.retain(|_, gs| !gs.is_empty());
         }
         for (k, x) in v["refs"].as_object().into_iter().flatten() { if let Some(x) = x.as_str() { c.refs.insert(k.clone(), x.to_owned()); } }
+        // Format <= 8: one reference per knob (`refs`), which every context then shares.
+        for (cx, m) in v["refs_cx"].as_object().into_iter().flatten() {
+            let m: BTreeMap<String, String> = m.as_object().into_iter().flatten().filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_owned()))).collect();
+            if !m.is_empty() { c.refs_cx.insert(cx.clone(), m); }
+        }
         for u in v["unsafe_sets"].as_array().into_iter().flatten() { c.unsafe_sets.push(u.as_array().into_iter().flatten().filter_map(pair).collect()); }
+        let cfgs = |x: &Value| -> Vec<Cfg> { x.as_array().into_iter().flatten().map(|u| u.as_array().into_iter().flatten().filter_map(pair).collect()).collect() };
+        c.brakes = cfgs(&v["brakes"]);
+        c.soft_unsafe = cfgs(&v["soft_unsafe"]);
+        for u in v["unsafe_pinned"].as_array().into_iter().flatten() {
+            let u: Cfg = u.as_array().into_iter().flatten().filter_map(pair).collect();
+            if c.unsafe_sets.contains(&u) && !c.unsafe_pinned.contains(&u) { c.unsafe_pinned.push(u); }
+        }
         for (k, x) in v["hyp"].as_object().into_iter().flatten().filter(|_| !old) {
             let h: Vec<f64> = x.as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
             if Hyper::from_slice(&h).is_some() { c.hyp.insert(k.clone(), h); }
@@ -1676,6 +1884,67 @@ mod tests {
         a.now = 295 + 30 * 3600;
         assert_ne!(a.store_input(Phase::Load).unwrap().3, key, "a day later the rows have aged");
     }
+    /// Over the cap of 50 the largest (least restrictive) combinations go, oldest first among equals;
+    /// single values and freeze sets stay whatever their age. The cap used to drop the oldest set.
+    #[test]
+    fn the_unsafe_cap_keeps_single_values_and_freezes() {
+        let mut c = Calibration::default();
+        let kv = |k: String, v: &str| (k, v.to_string());
+        c.add_unsafe_set(vec![kv("vm.single".into(), "1")]);
+        c.add_freeze_set(vec![kv("pm.x".into(), "1"), kv("pm.y".into(), "2"), kv("pm.z".into(), "3"), kv("pm.w".into(), "4")]);
+        for i in 0..60 { c.add_unsafe_set((0..2 + i % 3).map(|j| kv(format!("vm.k{i}_{j}"), "1")).collect()); }
+        assert_eq!(c.unsafe_sets.len(), 50);
+        assert!(c.unsafe_cfg(&[kv("vm.single".into(), "1")]), "the oldest set, a single value, stays");
+        assert!(c.unsafe_sets.iter().any(|u| u.len() == 4), "the freeze set stays (and it is the largest)");
+        // 62 sets: 12 go, all of them 4-value ones (20 such), the oldest first.
+        assert_eq!(c.unsafe_sets.iter().filter(|u| u.len() == 4).count(), 1 + 20 - 12, "the largest went first");
+        assert!(c.unsafe_sets.iter().filter(|u| u.len() == 2).count() == 20 && c.unsafe_sets.iter().filter(|u| u.len() == 3).count() == 20);
+        assert!(!c.unsafe_cfg(&(0..4).map(|j| kv(format!("vm.k2_{j}"), "1")).collect::<Vec<_>>()), "the oldest 4-value set went");
+        assert!(c.unsafe_cfg(&(0..4).map(|j| kv(format!("vm.k59_{j}"), "1")).collect::<Vec<_>>()), "the newest stays");
+        // A freeze covered by a smaller set later keeps its pin through it; the pin survives a round trip.
+        c.add_unsafe_set(vec![kv("pm.x".into(), "1")]);
+        assert!(c.unsafe_pinned == vec![vec![kv("pm.x".into(), "1")]]);
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!((back.unsafe_sets.len(), back.unsafe_pinned.len()), (c.unsafe_sets.len(), 1));
+    }
+    /// The brake stopping a configuration once is noted; the same configuration (or one that contains
+    /// it / is contained by it) a second time makes the smaller one soft-unsafe; reference runs and
+    /// heat do not count; both lists round-trip.
+    #[test]
+    fn two_brakes_make_a_combination_soft_unsafe() {
+        let kv = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let mut c = Calibration::default();
+        assert_eq!(c.note_brake(&[kv("ctx.heat", "hot")]), None);
+        assert_eq!(c.note_brake(&[kv("vm.a", "1"), kv("vm.b", "2"), kv("vm.c", "1")]), None);
+        assert_eq!(c.note_brake(&[kv("vm.x", "1")]), None, "an unrelated run");
+        let s = c.note_brake(&[kv("vm.b", "2"), kv("vm.a", "1"), kv("ctx.heat", "hot")]).expect("a and b were there both times");
+        assert_eq!(s, vec![kv("vm.a", "1"), kv("vm.b", "2")]);
+        assert!(c.soft_unsafe_cfg(&[kv("vm.a", "1"), kv("vm.b", "2"), kv("cpu.z", "0")]) && !c.soft_unsafe_cfg(&[kv("vm.a", "1")]));
+        assert!(c.avoid_cfg(&[kv("vm.a", "1"), kv("vm.b", "2")]) && !c.unsafe_cfg(&[kv("vm.a", "1"), kv("vm.b", "2")]), "soft, not hard");
+        assert_eq!(c.note_brake(&[kv("vm.a", "1"), kv("vm.b", "2")]), None, "already marked");
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!((back.brakes.len(), back.soft_unsafe), (4, c.soft_unsafe.clone()));
+    }
+    /// The screening's scales are kept per objective ("loadh0".."loadh3"); the single summed key of an
+    /// older signature only starts each objective's search, and such a build is keyed apart in the store.
+    #[test]
+    fn screening_scales_are_kept_per_objective() {
+        let mut c = Calibration::default();
+        synthetic(&mut c);
+        c.hyp.insert("loadh".into(), Hyper::START.to_vec());
+        let (init, passes, legacy) = c.screen_inits(Phase::Load, None);
+        assert!(init.iter().all(|h| *h == Some(Hyper::START)) && passes == [1; 4] && legacy == [true; 4]);
+        let k_legacy = c.store_input(Phase::Load).unwrap().3;
+        c.retune(Phase::Load, 1);
+        assert!(c.hyp.contains_key("loadh0") && c.hyp.contains_key("loadh3") && !c.hyp.contains_key("loadh1"), "objectives with rows: lat, mem");
+        let (_, passes, legacy) = c.screen_inits(Phase::Load, None);
+        assert_eq!((passes[0], legacy[0], passes[1], legacy[1]), (0, false, 1, true));
+        let mut fresh = c.clone();
+        fresh.hyp.remove("loadh");
+        assert_ne!(fresh.store_input(Phase::Load).unwrap().3, k_legacy);
+        let entry = store_entry("k", Phase::Load, &c.phase_fit(Phase::Load).unwrap());
+        assert_eq!(entry["screen"].as_array().map(|a| a.len()), Some(4));
+    }
     #[test]
     fn joint_blends_phases_by_share() {
         let mut c = Calibration::default();
@@ -1772,6 +2041,36 @@ mod tests {
         assert_eq!(back.rows.iter().filter(|r| r.cx == perf).count(), 96);
     }
 
+    /// The reference context of a phase stays where it was first fixed: more sessions in another
+    /// profile do not move it (they did: the most rows won, and every row's coding changed with it);
+    /// it moves only when its own rows are gone. Files without the record compute it as before.
+    #[test]
+    fn context_reference_is_stable() {
+        let mut c = Calibration::default();
+        let perf = c.add_context(json!({"profile": "performance", "power": "ac"}));
+        let quiet = c.add_context(json!({"profile": "quiet", "power": "ac"}));
+        let rows = |cx: &str, sess: u64, n: usize| -> Vec<Row> { (0..n).map(|i| Row { phase: Phase::Load, sess, t: sess * 1000 + i as u64, cx: cx.into(), y: [0.0; 4], w: 1.0,
+                                                                                   bv: BENCH_VERSION, ..Default::default() }).collect() };
+        c.put_session(Phase::Load, 1, rows(&perf, 1, 60));
+        assert!(c.ctx_cfg(Phase::Load, &quiet).is_empty() && c.ctx_ref.is_empty(), "one context: nothing to fix yet");
+        c.put_session(Phase::Load, 2, rows(&quiet, 2, 30));
+        assert_eq!(c.ctx_refs(Phase::Load).get("ctx.profile").map(String::as_str), Some("performance"));
+        for s in 3..8 { c.put_session(Phase::Load, s, rows(&quiet, s, 40)); }
+        assert_eq!(c.ctx_refs(Phase::Load).get("ctx.profile").map(String::as_str), Some("performance"), "230 quiet rows against 60 do not move it");
+        assert_eq!(c.ctx_cfg(Phase::Load, &quiet), vec![("ctx.profile".to_string(), "quiet".to_string())]);
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.ctx_refs(Phase::Load), c.ctx_refs(Phase::Load));
+        let mut old = c.clone();
+        old.ctx_ref.clear();
+        assert_eq!(old.ctx_refs(Phase::Load).get("ctx.profile").map(String::as_str), Some("quiet"), "without the record: most rows (the old rule)");
+        // Its rows gone: chosen again.
+        let mut gone = c.clone();
+        gone.rows.retain(|r| r.cx != perf);
+        gone.put_session(Phase::Load, 9, rows(&perf, 9, 0));
+        let third = gone.add_context(json!({"profile": "balanced", "power": "ac"}));
+        gone.put_session(Phase::Load, 10, rows(&third, 10, 5));
+        assert_eq!(gone.ctx_refs(Phase::Load).get("ctx.profile").map(String::as_str), Some("quiet"));
+    }
     #[test]
     fn a_usb_c_charger_is_its_own_context_and_the_barrel_one_comes_first() {
         let barrel = json!({"profile": "performance", "power": "ac", "limits": {"ppt_pl1_spl": 115}, "fan": "full", "co": "reset"});
@@ -1855,6 +2154,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[test]
+    fn a_moved_reference_recodes_rows_instead_of_dropping_them() {
+        let mut c = Calibration::default();
+        synthetic(&mut c);
+        let n0 = c.rows.len();
+        let before = c.get("vm.a", "8", "64", Blend { load: 1.0, io: 1.0 }).unwrap().lat.unwrap();
+        let before16 = c.get("vm.a", "8", "16", Blend { load: 1.0, io: 1.0 }).unwrap().lat.unwrap();
+        // The live value moved to 16 (another context): nothing is lost, 8 becomes a level.
+        c.rebase_key("vm.a", "", "8", "16");
+        assert_eq!(c.rows.len(), n0);
+        assert!(c.rows.iter().filter(|r| r.phase == Phase::Load).all(|r| r.cfg.iter().all(|(k, v)| k != "vm.a" || v != "16")));
+        assert!(c.rows.iter().any(|r| r.cfg.contains(&("vm.a".to_string(), "8".to_string()))));
+        let after = c.get("vm.a", "16", "64", Blend { load: 1.0, io: 1.0 }).unwrap().lat.unwrap();
+        let back = c.get("vm.a", "16", "8", Blend { load: 1.0, io: 1.0 }).unwrap().lat.unwrap();
+        assert!((after - (before - before16)).abs() < 0.02 && (back + before16).abs() < 0.02, "{before} {before16} -> {after} {back}");
+    }
+    /// A knob whose reference follows the context (EPP: "balance" under one profile, "performance"
+    /// under another): each context's rows are read against their own reference, nothing is re-coded
+    /// when a session runs in the other context, effects are asked for against the target context's
+    /// reference, and only a move inside one context re-codes that context's rows.
+    #[test]
+    fn references_are_kept_per_context() {
+        let mut c = Calibration::default();
+        let a = c.add_context(json!({"profile": "balanced", "power": "ac"}));
+        let b = c.add_context(json!({"profile": "performance", "power": "ac"}));
+        let lvl = |v: &str| match v { "performance" => 0.10, "power" => -0.05, _ => 0.0 };
+        let mut rng = crate::model::Rng::new(4);
+        let mut rows_of = |cx: &str, own: &str, vals: &[&str], sess: u64| -> Vec<Row> {
+            (0..48).map(|i| {
+                let v = vals[i % vals.len()];
+                let cfg: Cfg = if v == own { Vec::new() } else { vec![kv("cpu.epp", v)] };
+                Row { phase: Phase::Load, sess, pos: i as f64 / 48.0, t: sess * 1000 + i as u64, cx: cx.into(), cfg,
+                      y: [lvl(v) + noise(&mut rng, 0.005), f64::NAN, f64::NAN, f64::NAN], w: 1.0, bv: BENCH_VERSION, ..Default::default() }
+            }).collect()
+        };
+        assert_eq!(c.set_reference("cpu.epp", &a, "balance"), None);
+        c.put_session(Phase::Load, 1, rows_of(&a, "balance", &["balance", "power", "performance"], 1));
+        let before: Vec<Cfg> = c.rows.iter().map(|r| r.cfg.clone()).collect();
+        assert_eq!(c.set_reference("cpu.epp", &b, "performance"), None, "another context: not a move");
+        assert_eq!(c.rows.iter().map(|r| r.cfg.clone()).collect::<Vec<_>>(), before, "context A's rows keep their coding");
+        c.put_session(Phase::Load, 2, rows_of(&b, "performance", &["performance", "balance"], 2));
+        let bl = Blend { load: 1.0, io: 1.0 };
+        let eff = |c: &Calibration, r: &str, v: &str| c.get("cpu.epp", r, v, bl).and_then(|m| m.lat);
+        // Newest reference (B's) when no target context is set.
+        assert!((eff(&c, "performance", "balance").unwrap() + 0.10).abs() < 0.02);
+        assert!((eff(&c, "performance", "power").unwrap() + 0.15).abs() < 0.02, "A's rows say what power does");
+        c.set_target_cx(Some(a.clone()));
+        assert_eq!(c.model_ref("cpu.epp").as_deref(), Some("balance"));
+        assert!((eff(&c, "balance", "performance").unwrap() - 0.10).abs() < 0.02, "{:?}", eff(&c, "balance", "performance"));
+        assert!(eff(&c, "performance", "balance").is_none(), "asked against a reference that is not the target's");
+        let vals = c.values("cpu.epp", "balance").unwrap().1;
+        assert!(vals.contains(&"performance".to_string()) && !vals.contains(&"balance".to_string()), "{vals:?}");
+        // A move inside A (a new kernel default) re-codes A's rows only.
+        c.set_target_cx(None);
+        assert_eq!(c.set_reference("cpu.epp", &a, "power").as_deref(), Some("balance"));
+        assert!(c.rows.iter().filter(|r| r.cx == a).all(|r| !r.cfg.contains(&kv("cpu.epp", "power"))));
+        assert!(c.rows.iter().filter(|r| r.cx == b).all(|r| !r.cfg.contains(&kv("cpu.epp", "power"))));
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.refs_cx, c.refs_cx);
+        assert_eq!(back.ref_for("cpu.epp", &b).as_deref(), Some("performance"));
+        // An older file (one reference) reads as before: every context shares it.
+        let mut v = c.to_json();
+        v.as_object_mut().unwrap().remove("refs_cx");
+        let old = Calibration::from_json(&v);
+        assert!(old.refs_cx.is_empty() && old.ref_for("cpu.epp", &a) == old.refs.get("cpu.epp").cloned());
+    }
     #[test]
     fn device_phase_adds_whole_machine_power() {
         let mut c = Calibration::default();

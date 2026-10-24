@@ -189,7 +189,7 @@ pub fn on_boot() -> Vec<String> {
             let clean_shutdown = crate::bootguard::read()["clean_shutdown"] == json!(prev);
             if !clean_shutdown && !cfg.is_empty() {
                 if let Some(mut cal) = crate::calib::Calibration::load() {
-                    cal.add_unsafe_set(cfg.clone());
+                    cal.add_freeze_set(cfg.clone());
                     let _ = cal.save();
                 }
                 msgs.push(format!("the previous boot died during a calibration run ({}): that combination is now an unsafe set and is never picked again",

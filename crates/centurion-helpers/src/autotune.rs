@@ -43,6 +43,10 @@ const GIB: u64 = 1 << 30;
 const MODESTY: f64 = 0.10;
 /// A candidate must beat the reference by this much to be written.
 pub const MARGIN: f64 = 0.03;
+/// Stability cost (x the stability weight) of a configuration holding a soft-unsafe combination: the
+/// calibration's memory brake stopped its load twice under it (`calib::Calibration::note_brake`). Half the
+/// largest field-stability charge: a warning sign under artificial pressure, not a crash.
+const SOFT_UNSAFE_COST: f64 = -0.25;
 /// The benchmarks "see" a knob when at least one of its values moves this goal's utility by
 /// this many posterior standard deviations. Below it a measured "no effect" is the benchmark's
 /// blindness, not knowledge: the rule's estimate stays.
@@ -224,14 +228,21 @@ fn game_sessions() -> Vec<Value> {
         .and_then(|u| crate::calctx::home_of(&u))
         .or_else(|| (unsafe { libc::geteuid() } != 0).then(|| std::env::var("HOME").ok()).flatten());
     let Some(home) = home else { return Vec::new() };
-    // A regular file only, read with a cap (may run as root through pkexec: a symlink to a device
-    // must not make it read forever).
+    read_regular(&crate::field::session_log(Path::new(&home)), 8 << 20).map_or_else(Vec::new, |t| crate::field::sessions(&t))
+}
+
+/// A user-owned file read by a process that may run as root (pkexec): a regular file only, at most
+/// `cap` bytes. Opened with O_NONBLOCK (a FIFO planted there would block a plain open until a writer
+/// appears), O_NOFOLLOW (no symlink to a device or another user's file) and O_CLOEXEC; the type is
+/// checked on the open descriptor (fstat), not on the path, so nothing can be swapped in between.
+fn read_regular(path: &Path, cap: u64) -> Option<String> {
     use std::io::Read;
-    let Ok(f) = std::fs::File::open(crate::field::session_log(Path::new(&home))) else { return Vec::new() };
-    if !f.metadata().map_or(false, |m| m.is_file()) { return Vec::new(); }
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC).open(path).ok()?;
+    if !f.metadata().ok()?.is_file() { return None; }
     let mut text = String::new();
-    if f.take(8 << 20).read_to_string(&mut text).is_err() { return Vec::new(); }
-    crate::field::sessions(&text)
+    f.take(cap).read_to_string(&mut text).ok()?;
+    Some(text)
 }
 
 /// Effect of one candidate relative to the reference, per objective. Positive
@@ -936,6 +947,9 @@ struct Rules<'a> {
     /// key's reference and without the learned rollback risk. The joint pass charges it too:
     /// a benchmark measures what a value gains, never what it risks.
     risk: BTreeMap<(String, String), f64>,
+    /// The dirty window `dirty_rules` chose, in the calibration's labels ("0.25", "0.5", "1", "2"):
+    /// fixed context of the joint pass, where it interacts with the elevator, queue depth and throttling.
+    dirty_window: Option<String>,
 }
 
 fn vstr(v: &Value) -> String { match v { Value::String(s) => s.clone(), x => x.to_string() } }
@@ -1098,11 +1112,15 @@ impl<'a> Rules<'a> {
 
 fn round2(x: f64) -> f64 { (x * 100.0).round() / 100.0 }
 
-/// At least one value of `key` moves the joint utility by SEEN_Z posterior standard deviations.
+/// At least one value of `key` moves at least one objective this goal weighs by SEEN_Z posterior
+/// standard deviations. Judged per objective, not on the weighted utility: a knob that trades latency
+/// against throughput (or package power against clock) can sum to ~0 utility while every one of its
+/// effects is measured to a fraction of a percent - that is a measured trade-off, not blindness, and
+/// the measurements must replace the rule's estimates.
 fn seen_in(j: &model::Joint, key: &str) -> bool {
     j.values(key).iter().any(|val| {
-        let (m, var) = j.eval_diff(&[(key.to_owned(), val.clone())], &[]);
-        var > 0.0 && m.abs() >= SEEN_Z * var.sqrt()
+        let a = [(key.to_owned(), val.clone())];
+        (0..4).any(|o| j.eval_diff_obj(&a, &[], o).map_or(false, |(m, var)| var > 0.0 && m.abs() >= SEEN_Z * var.sqrt()))
     })
 }
 
@@ -1174,7 +1192,7 @@ pub fn decide_weighted(goal: Goal, p: &Profile, w: Weights) -> (Vec<Decision>, M
     let mut pre = Vec::new();
     let w = measurement_frame(goal, p, w, &mut pre);
     let mut r = Rules { p, g: goal, w, out: Vec::new(), scores: Map::new(), notes: pre, joint: None, jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()),
-                          measured_only: BTreeSet::new(), risk: BTreeMap::new() };
+                          measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None };
     r.joint = p.calibration.as_ref().and_then(|c| c.joint([w.latency, w.throughput, w.power, w.footprint], r.blend()));
     for k in p.field_risk.values().filter(|k| k.risk < 0.0) { r.notes.push(k.note()); }
     r.jkeys = r.joint.as_ref().map(|j| j.keys().into_iter().collect()).unwrap_or_default();
@@ -1215,6 +1233,8 @@ fn measurement_frame(goal: Goal, p: &Profile, mut w: Weights, notes: &mut Vec<St
         }
     }
     let desc = target_context(goal, p);
+    // The models are coded against this context's knob references (a no-op after `prefit`).
+    cal.set_target_cx(Some(calib::Calibration::context_id(&desc)));
     let dims = calib::Calibration::ctx_dims(&desc);
     let heat_known = cal.rows.iter().any(|r| r.cfg.iter().any(|(k, v)| k == "ctx.heat" && v == "hot"));
     let hot: model::Cfg = dims.iter().cloned().chain(std::iter::once(("ctx.heat".to_owned(), "hot".to_owned()))).collect();
@@ -1287,6 +1307,9 @@ impl<'a> Rules<'a> {
     }
     /// Value in effect for a model knob that the rules already decided (context for the joint search).
     fn context_value(&self, key: &str) -> Option<String> {
+        // Not a tunable row (it writes two of them): without this the joint pass read the I/O knobs at
+        // window "1" whatever dirty_rules chose, and the elevator x dirty-window terms never counted.
+        if key == "vm.dirty" { return self.dirty_window.clone(); }
         if key == "thp" {
             let m = self.eff("thp.enabled")?;
             if m != "always" && m != "madvise" { return None; }
@@ -1308,7 +1331,8 @@ fn joint_pass(r: &mut Rules) {
     let Some(joint) = r.joint.take() else { return };
     let (mut keys, mut cands, mut fixed) = (Vec::new(), Vec::new(), Vec::new());
     for key in joint.keys() {
-        let Some(reference) = cal.refs.get(&key).cloned() else { continue };
+        // The target context's reference (references are kept per measurement context).
+        let Some(reference) = cal.model_ref(&key) else { continue };
         let scoped = format!("{key}_");
         if tune::find(&key).is_none() || r.pinned(&key) || calib::excluded(&key) || r.out.iter().any(|d| d.key.starts_with(&scoped)) {
             if let Some(v) = r.context_value(&key) { if v != reference { fixed.push((key.clone(), v)); } }
@@ -1341,7 +1365,11 @@ fn joint_pass(r: &mut Rules) {
         let sd = joint.eval_diff(&[(keys[i].clone(), c[start[i]].0.clone())], &[]).1.max(0.0).sqrt();
         c[start[i]].1 = learned + MARGIN + (KEEP_Z + model::RISK_Z) * sd;
     }
-    let prob = model::Problem::new(&joint, keys.clone(), cands.clone(), fixed, model::RISK_Z, MARGIN, cal.unsafe_sets.clone());
+    let mut prob = model::Problem::new(&joint, keys.clone(), cands.clone(), fixed, model::RISK_Z, MARGIN, cal.unsafe_sets.clone());
+    // Soft-unsafe combinations (the calibration's memory brake fired twice under them): allowed, at a
+    // stability cost.
+    prob.soft = cal.soft_unsafe.clone();
+    prob.soft_cost = r.w.stability * SOFT_UNSAFE_COST;
     let mut rng = model::Rng::new(0x5EED);
     let mut sel = prob.optimize(&start, &mut rng, 8);
     if prob.score(&sel, 0.0) < prob.score(&start, 0.0) - 1e-9 { sel = start.clone(); }
@@ -1568,6 +1596,7 @@ fn dirty_rules(r: &mut Rules) {
     }
     let win = r.pick("vm.dirty_bytes", &reference, &alts);
     let (t, c) = match win { Some(i) => (alts[i].value.as_f64().unwrap_or(1.0), &alts[i]), None => (1.0, &reference) };
+    r.dirty_window = Some(format!("{t}"));
     let (bg, d) = dirty_pair(rate, ram, t);
     let score = format!("{}{}", c.fx.explain(&r.w, c.dev), c.why);
     let src = p.io.summary();
@@ -2426,6 +2455,7 @@ fn round3(x: f64) -> f64 { (x * 1000.0).round() / 1000.0 }
 fn prefit(goal: Goal, p: &Profile) {
     let Some(cal) = p.calibration.as_ref() else { return };
     cal.set_power_pref(if goal == Goal::PowerSave { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl });
+    cal.set_target_cx(Some(calib::Calibration::context_id(&target_context(goal, p))));
     cal.prefit();
 }
 
@@ -3178,6 +3208,24 @@ mod tests {
         assert_eq!(get(&d, "mm.lru_gen_min_ttl"), Some(&json!(1000)), "{notes:?}");
     }
 
+    /// A combination the calibration's memory brake stopped twice is soft-unsafe: a modest measured
+    /// gain no longer buys it, a large one still does (a price, not a ban like an OOM kill).
+    #[test]
+    fn soft_unsafe_combinations_pay_a_stability_cost() {
+        let knob = [("vm.page_lock_unfairness", "5", "3")];
+        let soft = vec![("vm.page_lock_unfairness".to_string(), "3".to_string())];
+        let mut p = gaining_signature(&knob, 0.1);
+        let (d, _, _) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
+        assert_eq!(get(&d, "vm.page_lock_unfairness"), Some(&json!(3)));
+        p.calibration.as_mut().unwrap().soft_unsafe = vec![soft.clone()];
+        let (d, _, notes) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
+        assert_ne!(get(&d, "vm.page_lock_unfairness"), Some(&json!(3)), "{notes:?}");
+        let mut p = gaining_signature(&knob, 0.4);
+        p.calibration.as_mut().unwrap().soft_unsafe = vec![soft];
+        let (d, _, notes) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
+        assert_eq!(get(&d, "vm.page_lock_unfairness"), Some(&json!(3)), "{notes:?}");
+    }
+
     #[test]
     fn blind_benchmarks_do_not_overturn_a_rule_backed_knob() {
         // zram swap: the rule wants swappiness 150; the calibration measured 150 against the boot 60
@@ -3192,6 +3240,38 @@ mod tests {
         assert_ne!(get(&d, "vm.swappiness"), Some(&json!(150)), "{d:?}");
     }
 
+    #[test]
+    fn the_chosen_dirty_window_is_context_of_the_joint_pass() {
+        let p = legion();
+        let mut r = Rules { p: &p, g: Goal::Gaming, w: Weights::for_goal(Goal::Gaming), out: Vec::new(), scores: Map::new(), notes: Vec::new(), joint: None,
+                            jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()), measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None };
+        assert_eq!(r.context_value("vm.dirty"), None);
+        dirty_rules(&mut r);
+        let w = r.context_value("vm.dirty").expect("window recorded");
+        assert!(["0.25", "0.5", "1", "2"].contains(&w.as_str()), "{w}");
+    }
+    /// The game-session log is read only when it is a regular file: a FIFO there returns at once (a
+    /// plain open blocked until a writer came - forever, under pkexec), a symlink is not followed.
+    #[test]
+    fn session_log_reader_refuses_fifos_and_symlinks() {
+        let d = std::env::temp_dir().join(format!("centurion-rr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (reg, fifo, link) = (d.join("log"), d.join("fifo"), d.join("link"));
+        std::fs::write(&reg, "0123456789").unwrap();
+        assert_eq!(read_regular(&reg, 4).as_deref(), Some("0123"), "capped");
+        let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let t = std::time::Instant::now();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let f2 = fifo.clone();
+        std::thread::spawn(move || { let _ = tx.send(read_regular(&f2, 1024)); });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)).expect("must not block on a FIFO"), None);
+        assert!(t.elapsed() < std::time::Duration::from_secs(5));
+        std::os::unix::fs::symlink(&reg, &link).unwrap();
+        assert_eq!(read_regular(&link, 1024), None, "symlinks are not followed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
     #[test]
     fn game_sessions_set_the_gaming_heat_share() {
         let s = |start: u64, mins: u64| json!({"id": format!("s{start}"), "start": start, "end": start + mins * 60, "game": "g"});

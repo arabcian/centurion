@@ -526,14 +526,16 @@ fn nft_script(cfg: &Config) -> String {
     s += &set("bl4", "ipv4_addr", true);
     s += &set("bl6", "ipv6_addr", false);
     let queue = format!("\t\tmeta l4proto {{ tcp, udp }} queue num {QUEUE_NUM} bypass\n");
-    s += "\tchain in {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tip saddr @bl4 drop\n\t\tip6 saddr @bl6 drop\n";
+    // Loopback first, before the blacklist drops: an entry or range that covers 127.0.0.0/8 or ::1
+    // (e.g. "0.0.0.0 - 255.255.255.254") must not cut the machine off from its own local services.
+    s += "\tchain in {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tiifname \"lo\" accept\n\t\tip saddr @bl4 drop\n\t\tip6 saddr @bl6 drop\n";
     if cfg.log_conns {
-        s += "\t\tiifname \"lo\" accept\n\t\tct state != new accept\n\t\tmeta pkttype { broadcast, multicast } accept\n";
+        s += "\t\tct state != new accept\n\t\tmeta pkttype { broadcast, multicast } accept\n";
         s += &queue;
     }
-    s += "\t}\n\tchain out {\n\t\ttype filter hook output priority 0; policy accept;\n\t\tip daddr @bl4 drop\n\t\tip6 daddr @bl6 drop\n";
+    s += "\t}\n\tchain out {\n\t\ttype filter hook output priority 0; policy accept;\n\t\toifname \"lo\" accept\n\t\tip daddr @bl4 drop\n\t\tip6 daddr @bl6 drop\n";
     if cfg.guard || cfg.log_conns {
-        s += "\t\toifname \"lo\" accept\n\t\tct state != new accept\n";
+        s += "\t\tct state != new accept\n";
         // With the connection log on, LAN flows must reach the daemon too; it applies the exemption itself.
         if cfg.allow_lan && !cfg.log_conns {
             s += "\t\tip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255 } accept\n";
@@ -1389,6 +1391,15 @@ mod tests {
         assert!(s.matches("queue num").count() == 2 && !s.contains("192.168.0.0/16") && s.contains("iifname \"lo\" accept"));
         c.guard = false;
         assert!(nft_script(&c).matches("queue num").count() == 2);
+        // Loopback is accepted before the blacklist drops in both chains, whatever is enabled.
+        for (guard, log) in [(false, false), (true, false), (false, true)] {
+            c.guard = guard;
+            c.log_conns = log;
+            let s = nft_script(&c);
+            assert!(s.find("iifname \"lo\" accept").unwrap() < s.find("ip saddr @bl4 drop").unwrap());
+            assert!(s.find("oifname \"lo\" accept").unwrap() < s.find("ip daddr @bl4 drop").unwrap());
+            assert_eq!(s.matches("ifname \"lo\" accept").count(), 2);
+        }
     }
 
     #[test]

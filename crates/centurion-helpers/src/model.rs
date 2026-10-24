@@ -60,6 +60,12 @@ const NC: usize = 5;
 /// the die temperature: a run that starts 8 °C warmer than its neighbours reads a few percent worse
 /// whatever its knobs do. Wide on purpose: the data decide how much of it is real.
 const TEMP_SD: f64 = 0.01;
+/// Version of the model code: part of every kept fit's key (`input_hash`), with the constants above.
+/// Bump it whenever a change alters what a fit of the same rows is - the kernel, the nuisance terms,
+/// the outlier reweighting, the `var_scale` formula, the screening - so fits kept by an older build
+/// are refitted instead of read back as if nothing had changed.
+/// 2 = per-objective screening (`PhaseSet::build_screened`).
+pub const MODEL_VERSION: u32 = 2;
 
 // ── small helpers ────────────────────────────────────────────────────────────
 
@@ -513,7 +519,12 @@ fn chol(a: &mut [f64], n: usize) -> bool {
     let work = |t: usize| {
         // SAFETY: see `Shared`; all accesses stay inside a[..n*n].
         let row = |i: usize, c0: usize, c1: usize| -> &[f64] { unsafe { sl(ptr, i * n + c0, c1 - c0) } };
-        let row_mut = |i: usize| -> &mut [f64] { unsafe { sl_mut(ptr, i * n, n) } };
+        // Writes never go through a `&mut` of a whole row: that slice would overlap the `&` slices of
+        // the same row (and the column ranges other workers read), which is undefined behaviour even
+        // when no element is touched twice. Single elements go through the raw pointer; the trailing
+        // update borrows exactly the columns it writes (k1..=i), disjoint from every range read then.
+        let put = |i: usize, j: usize, v: f64| unsafe { *ptr.0.add(i * n + j) = v };
+        let cols_mut = |i: usize, c0: usize, c1: usize| -> &mut [f64] { unsafe { sl_mut(ptr, i * n + c0, c1 - c0) } };
         let mut k0 = 0;
         while k0 < n {
             let k1 = (k0 + CHOL_BS).min(n);
@@ -524,10 +535,10 @@ fn chol(a: &mut [f64], n: usize) -> bool {
                         let s = row(i, j, j + 1)[0] - dot(row(i, k0, j), row(j, k0, j));
                         if i == j {
                             if s <= 1e-12 { ok.store(false, std::sync::atomic::Ordering::Relaxed); break 'diag; }
-                            row_mut(i)[i] = s.sqrt();
+                            put(i, i, s.sqrt());
                         } else {
                             let d = row(j, j, j + 1)[0];
-                            row_mut(i)[j] = s / d;
+                            put(i, j, s / d);
                         }
                     }
                 }
@@ -540,7 +551,7 @@ fn chol(a: &mut [f64], n: usize) -> bool {
                 for j in k0..k1 {
                     let s = row(i, j, j + 1)[0] - dot(row(i, k0, j), row(j, k0, j));
                     let d = row(j, j, j + 1)[0];
-                    row_mut(i)[j] = s / d;
+                    put(i, j, s / d);
                 }
                 i += w;
             }
@@ -549,8 +560,8 @@ fn chol(a: &mut [f64], n: usize) -> bool {
             let mut i = k1 + (t + w - k1 % w) % w;
             while i < n {
                 let pi: Vec<f64> = row(i, k0, k1).to_vec();
-                let r = row_mut(i);
-                for j in k1..=i { r[j] -= dot(&pi, row(j, k0, k1)); }
+                let r = cols_mut(i, k1, i + 1);
+                for j in k1..=i { r[j - k1] -= dot(&pi, row(j, k0, k1)); }
                 i += w;
             }
             if w > 1 { barrier.wait(); }
@@ -889,39 +900,47 @@ impl Fit {
 #[derive(Clone, Debug, Default)]
 pub struct Row { pub cfg: Cfg, pub y: [f64; 4], pub w: f64, pub sess: u64, pub pos: f64, pub t: f64, pub tc: f64 }
 
+/// Screening hyperparameters per objective (latency, throughput, power, footprint; None = none kept
+/// or the objective was not measured).
+pub type Screen = [Option<Hyper>; 4];
+
 /// All rows of one phase with their space (heredity and interaction order decided on build).
 #[derive(Clone, Debug)]
 pub struct PhaseSet { pub space: Arc<Space>, rows: Vec<Row>,
-                      /// Hyperparameters of the screening fit that set the heredity weights (kept by
-                      /// `Calibration::retune`, so a later build skips the screening search).
-                      pub screen: Option<Hyper> }
+                      /// Hyperparameters of the per-objective screening fits that set the heredity weights
+                      /// (kept by `Calibration::retune`, so a later build skips the screening search).
+                      pub screen: Screen }
 
 impl PhaseSet {
     pub fn build(factors: Vec<Factor>, rows: Vec<Row>) -> Option<PhaseSet> { PhaseSet::build_with(factors, rows, None) }
     /// `order`: None = decided by the amount of data (pairs always, triples from max(150, 4 x knobs) rows).
-    pub fn build_with(factors: Vec<Factor>, rows: Vec<Row>, order: Option<u8>) -> Option<PhaseSet> { PhaseSet::build_screened(factors, rows, order, None, 1) }
-    /// `screen`: kept screening hyperparameters; `passes`: their search passes (0 = use as they are).
-    pub fn build_screened(factors: Vec<Factor>, mut rows: Vec<Row>, order: Option<u8>, screen: Option<Hyper>, passes: usize) -> Option<PhaseSet> {
+    pub fn build_with(factors: Vec<Factor>, rows: Vec<Row>, order: Option<u8>) -> Option<PhaseSet> { PhaseSet::build_screened(factors, rows, order, [None; 4], [1; 4]) }
+    /// `screen`: kept screening hyperparameters per objective; `passes`: their search passes (0 = use
+    /// as they are; an objective without kept ones always searches at least once).
+    ///
+    /// Screening: one mains-only fit per objective. A knob's heredity (its prior share of the
+    /// interactions) follows the strongest of its per-objective effects, each in units of that
+    /// objective's noise (sum of squared main coefficients per prior length over sigma²), relative to
+    /// the mean over the knobs. The screening used to fit the objectives' sum: a knob that trades
+    /// latency for throughput summed to nothing and got the heredity of a knob that does nothing.
+    pub fn build_screened(factors: Vec<Factor>, mut rows: Vec<Row>, order: Option<u8>, screen: Screen, passes: [usize; 4]) -> Option<PhaseSet> {
         if factors.is_empty() || rows.len() < 6 { return None; }
         trim_fit_rows(&mut rows);
         let nf = factors.len();
         let order = order.unwrap_or(if rows.len() >= 150.max(4 * nf) { 3 } else { 2 });
-        // Screening fit (mains only, all objectives summed): knobs that respond carry more interaction prior.
-        let screen_h = screen;
-        let screen = Arc::new(Space::new(factors.clone(), None, 1));
-        let tmp = PhaseSet { space: screen.clone(), rows, screen: None };
-        let sfit = fit(screen, &tmp.obs(None), screen_h, if screen_h.is_some() { passes } else { passes.max(1) });
-        let screen_h = sfit.as_ref().map(|m| m.hyper);
-        let heredity = sfit.map(|m| {
-            let s = m.main_strength();
-            let mean = s.iter().sum::<f64>() / s.len().max(1) as f64;
-            s.iter().map(|x| if mean > 1e-12 { (0.2 + 0.8 * x / mean).sqrt().clamp(0.35, 2.5) } else { 1.0 }).collect()
+        let sspace = Arc::new(Space::new(factors.clone(), None, 1));
+        let tmp = PhaseSet { space: sspace.clone(), rows, screen: [None; 4] };
+        let sfits: [Option<Fit>; 4] = std::array::from_fn(|o| {
+            let h = screen[o];
+            fit(sspace.clone(), &tmp.obs(Some(o)), h, if h.is_some() { passes[o] } else { passes[o].max(1) })
         });
+        let screen_h: Screen = std::array::from_fn(|o| sfits[o].as_ref().map(|m| m.hyper));
+        let heredity = heredity_of(&sfits, nf);
         Some(PhaseSet { space: Arc::new(Space::new(factors, heredity, order)), rows: tmp.rows, screen: screen_h })
     }
     /// The same set from a kept build of the same input (`heredity` and `order` of that build): the
-    /// screening fit is skipped.
-    pub fn build_kept(factors: Vec<Factor>, mut rows: Vec<Row>, heredity: Vec<f64>, order: u8, screen: Option<Hyper>) -> Option<PhaseSet> {
+    /// screening fits are skipped.
+    pub fn build_kept(factors: Vec<Factor>, mut rows: Vec<Row>, heredity: Vec<f64>, order: u8, screen: Screen) -> Option<PhaseSet> {
         if factors.is_empty() || rows.len() < 6 || heredity.len() != factors.len() || !(1..=3).contains(&order) { return None; }
         trim_fit_rows(&mut rows);
         Some(PhaseSet { space: Arc::new(Space::new(factors, Some(heredity), order)), rows, screen })
@@ -970,6 +989,21 @@ impl PhaseSet {
     }
 }
 
+/// Heredity weights from the per-objective screening fits (see `PhaseSet::build_screened`). None when
+/// no objective could be fitted.
+fn heredity_of(sfits: &[Option<Fit>; 4], nf: usize) -> Option<Vec<f64>> {
+    let mut c = vec![0.0f64; nf];
+    let mut any = false;
+    for m in sfits.iter().flatten() {
+        let s2 = m.sigma().powi(2).max(1e-12);
+        for (x, st) in c.iter_mut().zip(m.main_strength()) { *x = x.max(st / s2); }
+        any = true;
+    }
+    if !any { return None; }
+    let mean = c.iter().sum::<f64>() / nf.max(1) as f64;
+    Some(c.iter().map(|x| if mean > 1e-12 { (0.2 + 0.8 * x / mean).sqrt().clamp(0.35, 2.5) } else { 1.0 }).collect())
+}
+
 /// At most MAX_FIT_ROWS rows are fitted: the heaviest, then the newest.
 fn trim_fit_rows(rows: &mut Vec<Row>) {
     if rows.len() > MAX_FIT_ROWS {
@@ -980,10 +1014,22 @@ fn trim_fit_rows(rows: &mut Vec<Row>) {
 
 /// Fingerprint of a model input (factors, rows, starting hyperparameters): two builds with the same
 /// fingerprint are the same build. Exact bit patterns, so nothing that changes the fit is lost.
-pub fn input_hash(factors: &[Factor], rows: &[Row], inits: &[Option<Hyper>]) -> u64 {
+/// The model's own version and constants are part of it (`model_stamp`): a fit kept by another
+/// version of the model code is never read back.
+pub fn input_hash(factors: &[Factor], rows: &[Row], inits: &[Option<Hyper>]) -> u64 { input_hash_at(&model_stamp(), factors, rows, inits) }
+
+/// What a fit depends on besides its input: the model code's version and its fixed constants.
+fn model_stamp() -> Vec<u8> {
+    let mut v: Vec<u8> = MODEL_VERSION.to_le_bytes().to_vec();
+    for x in [DRIFT_SD, OU_TAU, TEMP_SD, RISK_Z] { v.extend_from_slice(&x.to_bits().to_le_bytes()); }
+    v
+}
+
+fn input_hash_at(stamp: &[u8], factors: &[Factor], rows: &[Row], inits: &[Option<Hyper>]) -> u64 {
     let mut b: Vec<u8> = Vec::with_capacity(64 * rows.len() + 64);
     let mut put = |x: &[u8]| { b.extend_from_slice(&(x.len() as u32).to_le_bytes()); b.extend_from_slice(x); };
     put(&[MAX_FIT_ROWS as u8, (MAX_FIT_ROWS >> 8) as u8, NC as u8]);
+    put(stamp);
     for f in factors { put(f.key.as_bytes()); put(f.reference.as_bytes()); for v in &f.values { put(v.as_bytes()); } put(b"|"); }
     for r in rows {
         for (k, v) in &r.cfg { put(k.as_bytes()); put(v.as_bytes()); }
@@ -1239,6 +1285,21 @@ impl Joint {
         for w in 0..4 { if let Some(m) = self.model(w) { let f = sub(&self.feats(a, w), &self.feats(b, w)); mu += m.mean(&f); var += m.var(&f); } }
         (mu, var)
     }
+    /// `eval_diff` on one objective alone (its own scale, no goal weight), over the phases whose model
+    /// weighs that objective for this goal. None = no such model measured it.
+    pub fn eval_diff_obj(&self, a: &[(String, String)], b: &[(String, String)], o: usize) -> Option<(f64, f64)> {
+        let (mut mu, mut var, mut any) = (0.0, 0.0, false);
+        for w in 0..4 {
+            let Some(m) = self.model(w) else { continue };
+            if m.wts[o] == 0.0 { continue; }
+            let Some(fit) = m.fits[o].as_deref() else { continue };
+            let f = sub(&self.feats(a, w), &self.feats(b, w));
+            mu += fit.mean(&f);
+            var += fit.var(&f);
+            any = true;
+        }
+        any.then_some((mu, var))
+    }
     fn pair_strength(&self) -> HashMap<(String, String), f64> {
         let mut out = HashMap::new();
         for w in 0..4 { if let Some(m) = self.model(w) { for (k, s) in m.pair_strength() { *out.entry(k).or_insert(0.0) += s; } } }
@@ -1261,13 +1322,50 @@ pub struct Problem<'a> {
     pub bad: Vec<Cfg>,
     /// Largest number of changes in a random candidate experiment (the design's crowd size).
     pub crowd: usize,
+    /// The context a candidate experiment would really be measured in (the session's context
+    /// pseudo-knobs, cool start). A run observes f(cfg + context), not the context-mixture contrast
+    /// the decisions are read in (see `acquisition`).
+    pub obs_ctx: Cfg,
+    /// Soft-unsafe configurations (the memory brake stopped the load ballast twice while they ran):
+    /// allowed, but a configuration that contains one pays `soft_cost` (<= 0) once.
+    pub soft: Vec<Cfg>,
+    pub soft_cost: f64,
     pairs: Vec<(usize, usize)>,
 }
 
 /// A contrast whose sign/size is still in doubt: a decision (knob `i`: level `alt` vs the
 /// selection) or, with `pair`, an interaction of knobs i and j at levels (alt, pair.1).
 pub struct Target { pub i: usize, pub alt: usize, pub pair: Option<(usize, usize)>, pub mean: f64, pub sd: f64, pub pwrong: f64,
+                    /// The margin the decision (or the interaction's size) is judged against.
+                    pub margin: f64,
                     func: Func, proj: Vec<(usize, Vec<f64>)> }
+
+impl Target {
+    /// Probability that the call on this contrast is wrong at posterior (mean, sd): a decision is
+    /// "worth changing" when mean > margin, an interaction "matters" when |mean| > margin.
+    pub fn pwrong_at(&self, mean: f64, sd: f64) -> f64 {
+        let d = if self.pair.is_some() { mean.abs() - self.margin } else { mean - self.margin };
+        norm_cdf(-d.abs() / sd.max(1e-9))
+    }
+    /// Expected probability of a wrong call once the posterior variance is `var1` (from `t.sd²`): the
+    /// mean moves too, by N(0, sd² - var1) before the run (preposterior), so a contrast sitting right on
+    /// its margin gains as much as it can from the run instead of nothing.
+    pub fn pwrong_after(&self, var1: f64) -> f64 {
+        let var0 = self.sd * self.sd;
+        let var1 = var1.clamp(1e-14, var0.max(1e-14));
+        let move_sd = (var0 - var1).max(0.0).sqrt();
+        if move_sd <= 1e-12 { return self.pwrong_at(self.mean, var1.sqrt()); }
+        // Expectation over the move on a fixed grid of +-4 sd (normal weights, normalised).
+        let (mut acc, mut ws) = (0.0, 0.0);
+        for k in -16..=16 {
+            let z = k as f64 * 0.25;
+            let w = (-0.5 * z * z).exp();
+            acc += w * self.pwrong_at(self.mean + move_sd * z, var1.sqrt());
+            ws += w;
+        }
+        acc / ws
+    }
+}
 
 impl<'a> Problem<'a> {
     pub fn new(joint: &'a Joint, keys: Vec<String>, cands: Vec<Vec<(String, f64)>>, fixed: Cfg, kappa: f64, margin: f64, bad: Vec<Cfg>) -> Problem<'a> {
@@ -1283,7 +1381,7 @@ impl<'a> Problem<'a> {
         scored.sort_by(|x, y| y.0.total_cmp(&x.0));
         scored.truncate(60);
         let pairs = scored.into_iter().map(|(_, a, b)| (a, b)).collect();
-        Problem { joint, keys, cands, fixed, kappa, margin, bad, crowd: 6, pairs }
+        Problem { joint, keys, cands, fixed, kappa, margin, bad, crowd: 6, obs_ctx: Vec::new(), soft: Vec::new(), soft_cost: 0.0, pairs }
     }
     pub fn cfg(&self, sel: &[usize]) -> Cfg {
         let mut c = self.fixed.clone();
@@ -1291,12 +1389,16 @@ impl<'a> Problem<'a> {
         c
     }
     fn cost(&self, sel: &[usize]) -> f64 { sel.iter().enumerate().map(|(i, &s)| self.cands[i][s].1 - if s > 0 { self.margin } else { 0.0 }).sum() }
+    /// The soft-unsafe charge of a configuration (`soft`, `soft_cost`).
+    pub fn soft_of(&self, cfg: &[(String, String)]) -> f64 {
+        if self.soft.iter().any(|b| b.iter().all(|kv| cfg.contains(kv))) { self.soft_cost } else { 0.0 }
+    }
     pub fn violates(&self, cfg: &[(String, String)]) -> bool { self.bad.iter().any(|b| b.iter().all(|kv| cfg.contains(kv))) }
     pub fn score(&self, sel: &[usize], kappa: f64) -> f64 {
         let cfg = self.cfg(sel);
         if self.violates(&cfg) { return f64::NEG_INFINITY; }
         let (m, v) = if kappa == 0.0 { (self.joint.mean(&cfg), 0.0) } else { self.joint.eval(&cfg) };
-        m - kappa * v.sqrt() + self.cost(sel)
+        m - kappa * v.sqrt() + self.cost(sel) + self.soft_of(&cfg)
     }
     /// Best selection: coordinate ascent + joint moves of interacting pairs on the posterior mean (restarts),
     /// then a risk-aware polish (mean - kappa * sd).
@@ -1349,8 +1451,9 @@ impl<'a> Problem<'a> {
         let cfg = self.cfg(sel);
         sel.iter().enumerate().filter(|(_, &s)| s > 0).map(|(i, &s)| {
             let mut off = sel.to_vec(); off[i] = 0;
-            let (m, v) = self.joint.eval_diff(&cfg, &self.cfg(&off));
-            (i, m + self.cands[i][s].1, v.sqrt())
+            let cfg_off = self.cfg(&off);
+            let (m, v) = self.joint.eval_diff(&cfg, &cfg_off);
+            (i, m + self.cands[i][s].1 + self.soft_of(&cfg) - self.soft_of(&cfg_off), v.sqrt())
         }).collect()
     }
     /// Backward elimination inside the model. Returns the dropped changes (index, mean, sd).
@@ -1386,7 +1489,7 @@ impl<'a> Problem<'a> {
                 let sd = var.sqrt().max(1e-6);
                 if best.as_ref().map_or(true, |t| mean + sd > t.mean + t.sd) {
                     best = Some(Target { i, alt: if sel[i] > 0 { 0 } else { la }, pair: None, mean, sd,
-                                         pwrong: norm_cdf(-(mean - margin).abs() / sd), func, proj });
+                                         pwrong: norm_cdf(-(mean - margin).abs() / sd), margin, func, proj });
                 }
             }
             if let Some(t) = best { out.push(t); }
@@ -1424,32 +1527,48 @@ impl<'a> Problem<'a> {
             let func = sub(&sub(&f(&c11), &f(&corner(li, 0))), &sub(&f(&corner(0, lj)), &f(&corner(0, 0))));
             let (mean, var, proj) = model.post(&func);
             let sd = var.sqrt().max(1e-6);
-            out.push(Target { i, alt: li, pair: Some((j, lj)), mean, sd, pwrong: norm_cdf(-(mean.abs() - margin).abs() / sd), func, proj });
+            out.push(Target { i, alt: li, pair: Some((j, lj)), mean, sd, pwrong: norm_cdf(-(mean.abs() - margin).abs() / sd), margin, func, proj });
         } }
         out.sort_by(|a, b| b.pwrong.total_cmp(&a.pwrong));
         out.truncate(k);
         out
     }
-    /// Expected reduction of doubt by running each candidate configuration: per objective,
-    /// the posterior covariance of the run with every doubtful contrast, squared, over the
-    /// run's own predictive variance (independent objectives, all measured by one run).
-    pub fn acquisition(&self, targets: &[Target], pool: &[Cfg]) -> Vec<f64> {
-        let Some(which) = self.joint.single_phase() else { return vec![0.0; pool.len()] };
-        let Some(model) = self.joint.model(which) else { return vec![0.0; pool.len()] };
-        pool.iter().map(|c| {
-            let func = self.joint.feats(c, which);
-            let mut score = 0.0;
-            for (o, w, m) in model.parts() {
-                let p = m.proj(&func);
-                let vc = (m.prior(&func, &func) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0);
-                let s2 = m.sigma().powi(2);
-                for t in targets {
-                    let Some((_, tp)) = t.proj.iter().find(|(to, _)| *to == o) else { continue };
-                    let cov = m.prior(&t.func, &func) - tp.iter().zip(&p).map(|(a, b)| a * b).sum::<f64>();
-                    score += t.pwrong * w * w * cov * cov / (s2 + vc);
-                }
+    /// Variance every target's contrast loses when the configuration `c` is run once: a one-step
+    /// Gaussian update per objective (a run measures all of them, independently), the run's
+    /// predictive variance and its covariance with the contrast calibrated by `var_scale` like the
+    /// contrast's own variance (`Fit::var`; before, only the latter was widened, so a misspecified fit
+    /// overstated what a run would teach). Single-phase joint only (zeros otherwise).
+    pub fn shrink(&self, targets: &[Target], c: &Cfg) -> Vec<f64> {
+        let mut red = vec![0.0; targets.len()];
+        let Some(which) = self.joint.single_phase() else { return red };
+        let Some(model) = self.joint.model(which) else { return red };
+        // What the run would observe: the configuration as written (its own heat state included) in
+        // the session's context. The context-mixture contrast `feats` is what a decision is read in,
+        // not what one run measures: it dropped the run's heat state (a heat-soaked and a cool run of
+        // the same knobs scored the same) and subtracted a context term the run never sees.
+        let mut with: Cfg = c.clone();
+        for kv in &self.obs_ctx { if !with.iter().any(|(k, _)| *k == kv.0) { with.push(kv.clone()); } }
+        let func = self.joint.feats_raw(&with, which);
+        for (o, w, m) in model.parts() {
+            let p = m.proj(&func);
+            let vc = (m.prior(&func, &func) - p.iter().map(|v| v * v).sum::<f64>()).max(0.0) * m.var_scale;
+            let s2 = m.sigma().powi(2);
+            for (t, r) in targets.iter().zip(red.iter_mut()) {
+                let Some((_, tp)) = t.proj.iter().find(|(to, _)| *to == o) else { continue };
+                let cov = (m.prior(&t.func, &func) - tp.iter().zip(&p).map(|(a, b)| a * b).sum::<f64>()) * m.var_scale;
+                *r += w * w * cov * cov / (s2 + vc);
             }
-            score
+        }
+        red
+    }
+    /// Value of running each candidate configuration: the expected drop in the probability of a wrong
+    /// call, summed over the doubtful contrasts (decisions and interactions). Each contrast's posterior
+    /// variance after the run comes from `shrink`; its expected probability of a wrong call then from
+    /// `Target::pwrong_after`. The caller divides by what the run costs (`analyse`).
+    pub fn acquisition(&self, targets: &[Target], pool: &[Cfg]) -> Vec<f64> {
+        pool.iter().map(|c| {
+            let red = self.shrink(targets, c);
+            targets.iter().zip(&red).map(|(t, r)| (t.pwrong - t.pwrong_after(t.sd * t.sd - r)).max(0.0)).sum()
         }).collect()
     }
     /// Candidate experiments: each doubtful decision toggled (alone and with a companion), the
@@ -1500,15 +1619,23 @@ impl Mix {
 
 /// Balanced random design: every knob, every value and - greedily - every PAIR of knobs is
 /// drawn about equally often, counting what `prior` (earlier runs) already covered, so a new
-/// session fills the gaps of the old ones.
+/// session fills the gaps of the old ones. Values too: a knob's value deck holds only its
+/// least-measured values (earlier runs counted), so a value the log lacks is drawn until it has
+/// caught up; with equal counts the deck is every value, shuffled.
 pub fn design(factors: &[Factor], n: usize, rng: &mut Rng, mix: &Mix, prior: &[Cfg]) -> Vec<Cfg> {
     let f = factors.len();
     if f == 0 { return Vec::new(); }
     let idx: HashMap<&str, usize> = factors.iter().enumerate().map(|(i, x)| (x.key.as_str(), i)).collect();
     let (mut used, mut co) = (vec![0.0f64; f], vec![0.0f64; f * f]);
+    // Runs per value of every knob (earlier runs and this design's accepted ones).
+    let mut vcount: Vec<Vec<usize>> = factors.iter().map(|x| vec![0; x.values.len()]).collect();
     for c in prior {
         let ids: Vec<usize> = c.iter().filter_map(|(k, _)| idx.get(k.as_str()).copied()).collect();
         for &a in &ids { used[a] += 0.5; for &b in &ids { if a != b { co[a * f + b] += 0.5; } } }
+        for (k, v) in c {
+            let Some(&i) = idx.get(k.as_str()) else { continue };
+            if let Some(j) = factors[i].values.iter().position(|x| x == v) { vcount[i][j] += 1; }
+        }
     }
     let mut vdecks: Vec<Vec<usize>> = vec![Vec::new(); f];
     let mut out: Vec<Cfg> = Vec::new();
@@ -1540,15 +1667,27 @@ pub fn design(factors: &[Factor], n: usize, rng: &mut Rng, mix: &Mix, prior: &[C
             set.push(x);
         }
         let mut cfg: Cfg = Vec::new();
+        let mut drawn: Vec<(usize, usize)> = Vec::with_capacity(set.len());
         for &i in &set {
             if factors[i].values.is_empty() { continue; }
-            if vdecks[i].is_empty() { vdecks[i] = (0..factors[i].values.len()).collect(); rng.shuffle(&mut vdecks[i]); }
+            if vdecks[i].is_empty() {
+                let lo = vcount[i].iter().copied().min().unwrap_or(0);
+                vdecks[i] = (0..factors[i].values.len()).filter(|&j| vcount[i][j] == lo).collect();
+                rng.shuffle(&mut vdecks[i]);
+            }
             let v = vdecks[i].pop().unwrap();
+            drawn.push((i, v));
             cfg.push((factors[i].key.clone(), factors[i].values[v].clone()));
         }
         cfg.sort();
-        if cfg.is_empty() || !seen.insert(cfg.clone()) { continue; }
+        if cfg.is_empty() || !seen.insert(cfg.clone()) {
+            // A repeat is not run: its values go back to the bottom of their decks (they used to be
+            // lost, and a value that kept landing in repeats fell behind the others).
+            for (i, v) in drawn { vdecks[i].insert(0, v); }
+            continue;
+        }
         for &a in &set { used[a] += 1.0; for &b in &set { if a != b { co[a * f + b] += 1.0; } } }
+        for (i, v) in drawn { vcount[i][v] += 1; }
         out.push(cfg);
     }
     // Few knobs: fewer distinct combinations than runs, so the rest are replicates.
@@ -1596,6 +1735,26 @@ mod tests {
         assert!(!chol(&mut z, 200));
     }
 
+    /// The factorisation writes through raw pointers / column-disjoint slices (no `&mut` row overlapping
+    /// a row another reference reads): the result is the same, bit for bit, as the code it replaced
+    /// (fingerprints taken from that code), on one worker and on many.
+    #[test]
+    fn chol_writes_do_not_alias_and_keep_every_bit() {
+        let mut rng = Rng::new(29);
+        let mut prints = Vec::new();
+        for n in [7usize, 161, 333] {
+            let g: Vec<f64> = (0..n * n).map(|_| rng.unit() - 0.5).collect();
+            let mut a = vec![0.0; n * n];
+            for i in 0..n { for j in 0..n { a[i * n + j] = (0..n).map(|k| g[i * n + k] * g[j * n + k]).sum::<f64>() + if i == j { 0.5 } else { 0.0 }; } }
+            assert!(chol(&mut a, n));
+            let bits: Vec<u8> = (0..n).flat_map(|i| (0..=i).map(move |j| (i, j))).flat_map(|(i, j)| a[i * n + j].to_bits().to_le_bytes()).collect();
+            prints.push(fnv(&bits));
+        }
+        eprintln!("chol fingerprints {prints:x?}");
+        assert_eq!(prints, CHOL_PRINTS.to_vec());
+    }
+    const CHOL_PRINTS: [u64; 3] = [0xb13974b8e3875a99, 0x520644747ab6c0a2, 0xb52db45ef60e3fa2];
+
     fn fac(key: &str, r: &str, v: &[&str]) -> Factor { Factor { key: key.into(), reference: r.into(), values: v.iter().map(|s| s.to_string()).collect() } }
     fn c(k: &str, v: &str) -> (String, String) { (k.into(), v.into()) }
     fn rows_of(design: &[Cfg], truth: impl Fn(&Cfg) -> f64, rng: &mut Rng, sd: f64) -> Vec<Row> {
@@ -1636,7 +1795,7 @@ mod tests {
         let design = initial_design(&factors, 160, &mut rng);
         let mut rows = rows_of(&design, truth, &mut rng, 0.02);
         for (i, r) in rows.iter_mut().enumerate() { r.tc = (i % 7) as f64 - 3.0; if i == 5 { r.y[0] += 0.4; } }
-        let set = PhaseSet::build_screened(factors.clone(), rows.clone(), None, None, 1).unwrap();
+        let set = PhaseSet::build_screened(factors.clone(), rows.clone(), None, [None; 4], [1; 4]).unwrap();
         let a = set.fit_obj(0, None, 1).unwrap();
         let kept = PhaseSet::build_kept(factors.clone(), rows.clone(), set.space.heredity.clone(), set.space.order, set.screen).unwrap();
         assert_eq!(kept.space, set.space);
@@ -1656,6 +1815,63 @@ mod tests {
         let mut r2 = rows.clone(); r2[3].w *= 1.0 + 1e-12;
         assert_ne!(h0, input_hash(&factors, &r2, &[None]));
         assert_ne!(h0, input_hash(&factors, &rows, &[Some(Hyper::START)]));
+    }
+
+    /// A kept fit is bound to the model code that made it: another model version or another value of
+    /// one of its constants (drift, OU time, temperature prior, risk) is another key.
+    #[test]
+    fn kept_fit_key_carries_the_model_version_and_constants() {
+        let factors = vec![fac("vm.a", "0", &["1"])];
+        let rows: Vec<Row> = (0..8).map(|i| Row { cfg: if i % 2 == 0 { vec![c("vm.a", "1")] } else { Vec::new() }, y: [0.01 * i as f64, f64::NAN, f64::NAN, f64::NAN],
+                                                  w: 1.0, sess: 1, pos: 0.1 * i as f64, t: i as f64, tc: 0.0 }).collect();
+        let now = input_hash(&factors, &rows, &[None]);
+        assert_eq!(now, input_hash_at(&model_stamp(), &factors, &rows, &[None]));
+        let mut older = model_stamp(); older[..4].copy_from_slice(&(MODEL_VERSION - 1).to_le_bytes());
+        assert_ne!(now, input_hash_at(&older, &factors, &rows, &[None]), "another model version");
+        for at in 0..4 {
+            let mut st = model_stamp();
+            let o = 4 + 8 * at;
+            let x = f64::from_bits(u64::from_le_bytes(st[o..o + 8].try_into().unwrap()));
+            st[o..o + 8].copy_from_slice(&(x * 1.5).to_bits().to_le_bytes());
+            assert_ne!(now, input_hash_at(&st, &factors, &rows, &[None]), "constant {at}");
+        }
+        // Before the stamp a fit of the old code read back under the new one.
+        let no_stamp = input_hash_at(&[], &factors, &rows, &[None]);
+        assert_ne!(now, no_stamp);
+    }
+
+    /// Heredity follows what a knob does to each objective: a knob that trades latency for throughput
+    /// (+0.10 / -0.10) is as active as one that moves latency alone, and far from an inert one. The
+    /// screening of the summed objectives gave the trade-off knob the inert knob's weight (both 0.45,
+    /// the latency knob 1.61).
+    #[test]
+    fn screening_sees_trade_offs_per_objective() {
+        let fs: Vec<Factor> = ["vm.trade", "vm.none", "vm.lat", "cpu.x", "cpu.y"].iter().map(|k| fac(k, "0", &["1"])).collect();
+        let mut rng = Rng::new(5);
+        let mut d = initial_design(&fs, 120, &mut rng);
+        for _ in 0..12 { d.push(Vec::new()); }
+        let rows: Vec<Row> = d.iter().enumerate().map(|(i, cf)| {
+            let on = |k: &str| cf.iter().any(|(a, _)| a == k);
+            let mut n = || ((rng.unit() + rng.unit() + rng.unit()) - 1.5) * 0.02;
+            let lat = if on("vm.trade") { 0.10 } else { 0.0 } + if on("vm.lat") { 0.10 } else { 0.0 } + n();
+            let thr = if on("vm.trade") { -0.10 } else { 0.0 } + n();
+            Row { cfg: cf.clone(), y: [lat, thr, f64::NAN, f64::NAN], w: 1.0, sess: 1, pos: i as f64 / d.len() as f64, t: i as f64 * 5.0, tc: 0.0 }
+        }).collect();
+        let set = PhaseSet::build(fs.clone(), rows.clone()).unwrap();
+        let h = &set.space.heredity;
+        eprintln!("heredity per objective: {h:?}");
+        assert!(h[0] > 1.0 && h[2] > 1.0, "both active knobs carry interaction prior: {h:?}");
+        assert!(h[1] < 0.6 && h[0] > 2.0 * h[1], "the inert knob does not: {h:?}");
+        assert!((h[0] / h[2]).max(h[2] / h[0]) < 1.7, "trade-off and single-objective knob alike: {h:?}");
+        assert!(set.screen[0].is_some() && set.screen[1].is_some() && set.screen[2].is_none(), "one screening fit per measured objective");
+        // The summed screening (the old one) could not tell the trade-off from nothing.
+        let sp = Arc::new(Space::new(fs.clone(), None, 1));
+        let tmp = PhaseSet { space: sp.clone(), rows, screen: [None; 4] };
+        let sum = fit(sp, &tmp.obs(None), None, 1).unwrap().main_strength();
+        let mean = sum.iter().sum::<f64>() / sum.len() as f64;
+        let old: Vec<f64> = sum.iter().map(|x| (0.2 + 0.8 * x / mean).sqrt().clamp(0.35, 2.5)).collect();
+        eprintln!("heredity of the summed screening: {old:?}");
+        assert!(old[0] < 0.7 && old[2] > 1.4, "{old:?}");
     }
 
     #[test]
@@ -1704,6 +1920,36 @@ mod tests {
         assert!(ab.mean > 0.04 && ab.kind() == "synergy", "{ab:?}");
         let cd = top.iter().find(|i| i.label() == "vm.c=1 + vm.d=1").expect("c+d reported");
         assert!(cd.mean < -0.03 && cd.kind() == "overlap", "{cd:?}");
+    }
+
+    /// A soft-unsafe set (the memory brake stopped the ballast twice under it) is still allowed, but it
+    /// pays its stability charge: a combination that gains less than the charge is left out, one that
+    /// gains more is kept, and the marginal gain of its knobs carries the charge.
+    #[test]
+    fn soft_unsafe_sets_pay_their_charge() {
+        let fs = vec![fac("vm.a", "0", &["1"]), fac("vm.b", "0", &["1"])];
+        let mut rng = Rng::new(8);
+        let mut d = design(&fs, 60, &mut rng, &Mix::lean(), &[]);
+        for _ in 0..10 { d.push(Vec::new()); }
+        let tru = |cf: &Cfg| cf.iter().map(|(k, _)| if k == "vm.a" { 0.12 } else { 0.10 }).sum::<f64>();
+        let rows = rows_of(&d, tru, &mut rng, 0.01);
+        let j = joint_of(PhaseSet::build(fs.clone(), rows).unwrap().fit([1.0, 0.0, 0.0, 0.0]).unwrap());
+        let keys: Vec<String> = fs.iter().map(|f| f.key.clone()).collect();
+        let cands = vec![vec![("0".to_string(), 0.0), ("1".to_string(), 0.0)]; 2];
+        let mut p = Problem::new(&j, keys, cands, Vec::new(), RISK_Z, 0.03, Vec::new());
+        let free = p.optimize(&[0, 0], &mut rng, 2);
+        assert_eq!(free, vec![1, 1]);
+        p.soft = vec![vec![c("vm.b", "1")]];
+        p.soft_cost = -0.2;
+        let sel = p.optimize(&[0, 0], &mut rng, 2);
+        assert_eq!(sel, vec![1, 0], "b gains 0.10, less than its charge");
+        p.soft_cost = -0.02;
+        let mut sel = p.optimize(&[0, 0], &mut rng, 2);
+        assert_eq!(sel, vec![1, 1], "a small charge is paid");
+        let m = p.marginals(&sel);
+        assert!((m[1].1 - (j.eval_diff(&p.cfg(&sel), &p.cfg(&[1, 0])).0 - 0.02)).abs() < 1e-12, "{m:?}");
+        p.prune(&mut sel, RISK_Z, 0.03);
+        assert_eq!(sel, vec![1, 1]);
     }
 
     #[test]
@@ -1791,6 +2037,25 @@ mod tests {
         assert!(j.mean(&all3[..2]).abs() < 0.05, "a pair alone is not the effect: {}", j.mean(&all3[..2]));
     }
 
+    /// Values the log lacks come first: a knob whose value "1" ran 20 times before gets its other
+    /// values until they catch up. A repeat configuration (dropped by `seen`) gives its values back,
+    /// so the values stay balanced even when most draws are repeats.
+    #[test]
+    fn designs_fill_value_gaps_and_repeats_keep_values_balanced() {
+        let fs = vec![fac("vm.a", "0", &["1", "2", "3"]), fac("vm.b", "0", &["1"]), fac("cpu.c", "0", &["1"]), fac("cpu.d", "0", &["1"])];
+        let prior: Vec<Cfg> = (0..20).map(|_| vec![c("vm.a", "1")]).collect();
+        let d = design(&fs, 24, &mut Rng::new(4), &Mix::lean(), &prior);
+        let n = |v: &str| d.iter().filter(|cf| cf.contains(&c("vm.a", v))).count();
+        assert!(n("1") * 3 < n("2").min(n("3")), "the measured value waits: 1:{} 2:{} 3:{}", n("1"), n("2"), n("3"));
+        // Two knobs, few distinct configurations, many repeats: every value of the ladder still runs alike.
+        let fs = vec![fac("vm.a", "0", &["1", "2", "3", "4", "5", "6"]), fac("vm.b", "0", &["1", "2"])];
+        for seed in 0..12 {
+            let d = design(&fs, 18, &mut Rng::new(seed), &Mix::lean(), &[]);
+            let cnt: Vec<usize> = ["1", "2", "3", "4", "5", "6"].iter().map(|v| d[..d.len().min(18)].iter().filter(|cf| cf.contains(&c("vm.a", v))).count()).collect();
+            let (lo, hi) = (*cnt.iter().min().unwrap(), *cnt.iter().max().unwrap());
+            assert!(hi - lo <= 1, "seed {seed}: value counts {cnt:?}");
+        }
+    }
     #[test]
     fn designs_balance_knobs_pairs_and_grow_with_the_mix() {
         let factors: Vec<Factor> = (0..12).map(|i| fac(&format!("{}.k{i}", if i % 2 == 0 { "vm" } else { "cpu" }), "0", &["1", "2"])).collect();
@@ -1817,6 +2082,81 @@ mod tests {
 
     /// A session whose reference runs credibly scatter more counts less; a handful of references
     /// that differ by chance do not; a misspecified model widens its own intervals.
+    /// The acquisition scores what a run would observe: a heat-soaked run of the same knobs is another
+    /// experiment than a cool one, and per-objective effects of a trade-off knob are visible on their own.
+    #[test]
+    fn acquisition_sees_the_runs_heat_state_and_objectives_stand_alone() {
+        let fs = vec![fac("cpu.a", "0", &["1"]), fac("cpu.b", "0", &["1"]), fac("ctx.heat", "cool", &["hot"])];
+        let mut rng = Rng::new(3);
+        let mut d = design(&fs, 60, &mut rng, &Mix::lean(), &[]);
+        for _ in 0..10 { d.push(Vec::new()); }
+        let rows: Vec<Row> = d.iter().enumerate().map(|(i, c)| {
+            let on = |k: &str| c.iter().any(|(x, _)| x == k);
+            let mut n = || (rng.unit() - 0.5) * 0.02;
+            Row { cfg: c.clone(), y: [if on("cpu.a") { 0.10 } else { 0.0 } + n(), if on("cpu.a") { -0.10 } else { 0.0 } + if on("ctx.heat") { -0.05 } else { 0.0 } + n(), f64::NAN, f64::NAN],
+                  w: 1.0, sess: 1, pos: i as f64 / d.len() as f64, t: i as f64 * 7.0, tc: 0.0 }
+        }).collect();
+        let m = PhaseSet::build(fs, rows).unwrap().fit([1.0, 1.0, 0.0, 0.0]).unwrap();
+        let mut j = joint_of(m);
+        let a = vec![c("cpu.a", "1")];
+        // The weighted utility of the trade-off is ~0; each objective on its own is measured clearly.
+        let (mu, var) = j.eval_diff(&a, &[]);
+        let (ml, vl) = j.eval_diff_obj(&a, &[], 0).unwrap();
+        assert!(mu.abs() < 2.0 * var.sqrt() && ml > 5.0 * vl.sqrt(), "{mu} {var} {ml} {vl}");
+        j.ctxs = vec![(0.5, Vec::new()), (0.5, vec![c("ctx.heat", "hot")])];
+        let keys = vec!["cpu.a".to_string(), "cpu.b".to_string()];
+        let cands = vec![vec![("0".to_string(), 0.0), ("1".to_string(), -0.02)]; 2];
+        let p = Problem::new(&j, keys, cands, Vec::new(), RISK_Z, 0.03, Vec::new());
+        // A doubt target with a real spread (an interaction of a and b nobody measured much).
+        let t = p.pair_targets(&[0, 0], 0.0, 1);
+        let s = p.acquisition(&t, &[vec![c("cpu.a", "1"), c("cpu.b", "1")], vec![c("cpu.a", "1"), c("cpu.b", "1"), c("ctx.heat", "hot")]]);
+        assert!(s.iter().all(|x| x.is_finite() && *x >= 0.0) && s[0] != s[1], "{s:?}");
+    }
+    /// A misspecified fit widens its variances by `var_scale`; what one more run would teach must be
+    /// widened the same way. Running the target configuration itself is the textbook case: the
+    /// variance after one observation is var * s² / (s² + var). With only the target's own variance
+    /// scaled (the run's predictive variance and the covariance not), the shrink was wrong by the
+    /// scale; and the expected drop in the chance of a wrong call is positive, largest for the run that
+    /// measures the contrast, and never more than the chance itself.
+    #[test]
+    fn one_more_run_is_judged_with_the_fits_own_calibration() {
+        let mut rng = Rng::new(17);
+        // Same stream as `noisy_sessions_weigh_less_and_misfit_widens_intervals` (its misfit case).
+        for _ in 0..(4 * 40 + 5) * 6 { rng.unit(); }
+        let fs: Vec<Factor> = ["vm.a", "vm.b", "cpu.c", "cpu.d"].iter().map(|k| fac(k, "0", &["1"])).collect();
+        let tru = |c: &Cfg| { let on = |k: &str| c.iter().any(|(a, _)| a == k); if on("vm.a") && on("vm.b") { 0.3 } else { 0.0 } };
+        let mut d = design(&fs, 160, &mut rng, &Mix { cluster: 0.5, cluster_k: (2, 3), spread_k: (1, 3), crowd: 0.0, crowd_k: (2, 3) }, &[]);
+        for _ in 0..20 { d.push(Vec::new()); }
+        let rows = rows_of(&d, tru, &mut rng, 0.01);
+        let ps = PhaseSet::build_with(fs.clone(), rows, Some(1)).unwrap();
+        let fit = ps.fit_obj(0, None, 2).unwrap();
+        assert!(fit.var_scale > 1.3, "misspecified: {}", fit.var_scale);
+        let m = Model::new(ps.space.clone(), [Some(fit.clone()), None, None, None], [1.0, 0.0, 0.0, 0.0]).unwrap();
+        let j = joint_of(m.clone());
+        let keys: Vec<String> = fs.iter().map(|f| f.key.clone()).collect();
+        let cands = vec![vec![("0".to_string(), 0.0), ("1".to_string(), 0.0)]; 4];
+        let p = Problem::new(&j, keys, cands, Vec::new(), RISK_Z, 0.03, Vec::new());
+        let cfg = vec![c("vm.a", "1"), c("cpu.c", "1")];
+        let func = j.feats_raw(&cfg, 0);
+        let (mean, var, proj) = m.post(&func);
+        let sd = var.sqrt();
+        let t = Target { i: 0, alt: 1, pair: None, mean, sd, pwrong: norm_cdf(-(mean - 0.03).abs() / sd), margin: 0.03, func, proj };
+        let s2 = fit.sigma().powi(2);
+        let after = var - p.shrink(std::slice::from_ref(&t), &cfg)[0];
+        let want = var * s2 / (s2 + var);
+        assert!((after - want).abs() < 1e-9 * (1.0 + want), "after {after} want {want} (var {var}, scale {})", fit.var_scale);
+        // The unscaled run terms gave another answer: the bug this replaces.
+        let raw = var / fit.var_scale;
+        let old_after = var - raw * raw / (s2 + raw);
+        assert!((old_after - want).abs() > 1e-3 * want, "{old_after} vs {want}");
+        // Expected drop of a wrong call: positive, at most the chance itself; a run that measures
+        // the contrast is worth more than one that does not touch it.
+        let a = p.acquisition(std::slice::from_ref(&t), &[cfg.clone(), vec![c("cpu.d", "1")]]);
+        assert!(a[0] > 0.0 && a[0] <= t.pwrong + 1e-12 && a[0] > a[1], "{a:?} (pwrong {})", t.pwrong);
+        // A contrast right on its margin (pwrong 0.5) still gains from a run (preposterior mean move).
+        let on = Target { mean: 0.03, pwrong: 0.5, ..t };
+        assert!(on.pwrong_after(on.sd * on.sd * 0.25) < 0.45);
+    }
     #[test]
     fn noisy_sessions_weigh_less_and_misfit_widens_intervals() {
         let mut rng = Rng::new(17);

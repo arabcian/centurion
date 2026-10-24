@@ -8,6 +8,8 @@
 //!   {"op":"describe"}                                  any user: tunables, live values, state, topology
 //!   {"op":"autotune","goal":"gaming","weights":{..}}   any user: hardware profile + derived preset
 //!       (goal: powersave | gaming | throughput | desktop; optional objective weights; see centurion_helpers::autotune)
+//!   {"op":"autotune_defaults"}                         any user: every goal's default objective weights
+//!       ({"keys": Weights::KEYS, "goals": {goal: [weight per key]}}; the GUI's weight editor reads them)
 //!   {"op":"audit"}                                     any user: safety audit of the root preset store + boot preset
 //!   {"op":"capture_defaults"}                          tune-helper only: boot-default snapshot (normally done at boot)
 //!   {"op":"io_probe"}                                  tune-helper only: bounded write-rate probe for autotune
@@ -1019,6 +1021,16 @@ fn op_boot() -> Value {
     guard_after(out, base)
 }
 
+/// Every goal's default weights in `Weights::KEYS` order (read-only: the GUI used to keep a copy).
+fn autotune_defaults() -> Value {
+    use centurion_helpers::autotune::{Goal, Weights};
+    let goals: Map<String, Value> = Goal::ALL.iter().map(|g| {
+        let w = Weights::for_goal(*g).to_json();
+        (g.key().to_owned(), Value::Array(Weights::KEYS.iter().map(|k| w[*k].clone()).collect()))
+    }).collect();
+    json!({"ok": true, "keys": Weights::KEYS, "goals": goals})
+}
+
 fn run() -> Value {
     let req = match read_request(MAX_STDIN_BYTES) { Ok(v) => v, Err(e) => return e };
     let op = req["op"].as_str().unwrap_or("");
@@ -1040,6 +1052,7 @@ fn run() -> Value {
             Some(g) => centurion_helpers::autotune::autotune_req(g, &req["weights"], &req),
             None => json!({"ok": false, "error": "goal must be one of powersave, gaming, throughput, desktop"}),
         },
+        "autotune_defaults" => return autotune_defaults(),
         "audit" => return op_audit(),
         "profile" => {
             let p = centurion_helpers::autotune::Profile::gather();
@@ -1127,6 +1140,19 @@ mod tests {
         for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot"] {
             assert!(!PROFILE_OPS.contains(&op), "{op} must stay tune-helper only");
         }
+    }
+    #[test]
+    fn autotune_defaults_mirror_the_weights() {
+        use centurion_helpers::autotune::{Goal, Weights};
+        let v = autotune_defaults();
+        assert_eq!(v["keys"].as_array().unwrap().len(), Weights::KEYS.len());
+        for g in Goal::ALL {
+            let w = Weights::for_goal(g).to_json();
+            let row = v["goals"][g.key()].as_array().unwrap();
+            for (i, k) in Weights::KEYS.iter().enumerate() { assert_eq!(row[i], w[*k], "{g:?} {k}"); }
+        }
+        // The GUI's fallback table (gui/src/optimizetab.cpp, defaultWeights) must match: gaming, in KEYS order.
+        assert_eq!(v["goals"]["gaming"], json!([1.0, 0.6, 0.15, 0.4, 1.0, 0.5, 0.6, 0.5, 1.0]));
     }
     #[test]
     fn preset_names() {

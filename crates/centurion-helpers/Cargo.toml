@@ -2,7 +2,7 @@
 name = "centurion-helpers"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.74"
 description = "Centurion privileged root helpers (pkexec targets)"
 license = "GPL-3.0-or-later"
 
