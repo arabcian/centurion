@@ -28,8 +28,9 @@ const FAN_METHOD_GUID: &str = "92549549-4BDE-4F06-AC04-CE8BF898DBAA";
 const WMI_DEVICES: &str = "/sys/bus/wmi/devices";
 const DSDT: &str = "/sys/firmware/acpi/tables/DSDT";
 const LEVELS: usize = 10;
-/// Lowest allowed fan level for the hottest temperature step.
-pub const MIN_TOP_LEVEL: u8 = 7;
+/// Lowest allowed fan level for the three hottest temperature steps (third-last, second-last, last).
+/// Keep in step with gui/src/fancurvedialog.cpp and fanassist.cpp.
+pub const TAIL_FLOORS: [u8; 3] = [3, 5, 7];
 
 
 /// One acpi_call transaction through legion_wmi::acpi_raw: a single
@@ -161,10 +162,14 @@ pub fn validate(levels: &[u8]) -> Result<(), String> {
     if levels.windows(2).any(|w| w[1] < w[0]) {
         return Err("levels must not decrease (a hotter step may never get a slower fan)".into());
     }
-    // Thermal floor: the hottest step (the EC's last resort before throttling)
+    // Thermal floor: the hottest steps (the EC's last resort before throttling)
     // may never run a slow fan, however quiet the rest of the curve is.
-    if levels[LEVELS - 1] < MIN_TOP_LEVEL {
-        return Err(format!("the hottest step must be at least level {MIN_TOP_LEVEL} (thermal safety floor)"));
+    for (k, &floor) in TAIL_FLOORS.iter().enumerate() {
+        let step = LEVELS - TAIL_FLOORS.len() + k;
+        if levels[step] < floor {
+            return Err(format!("step {} must be at least level {floor} (thermal safety floor: the three hottest steps \
+                                need at least {} / {} / {})", step + 1, TAIL_FLOORS[0], TAIL_FLOORS[1], TAIL_FLOORS[2]));
+        }
     }
     Ok(())
 }
@@ -258,8 +263,11 @@ mod tests {
         assert!(validate(&[2, 1, 3, 4, 5, 6, 7, 8, 9, 10]).is_err());
         assert!(validate(&[0, 1, 3, 4, 5, 6, 7, 8, 9, 10]).is_err());
         assert!(validate(&[1, 2, 3]).is_err());
-        assert!(validate(&[1, 1, 1, 1, 1, 1, 1, 1, 1, 6]).is_err());
-        assert!(validate(&[1, 1, 1, 1, 1, 1, 1, 1, 1, 7]).is_ok());
+        assert!(validate(&[1, 1, 1, 1, 1, 1, 1, 3, 5, 6]).is_err());  // last < 7
+        assert!(validate(&[1, 1, 1, 1, 1, 1, 1, 1, 1, 7]).is_err());  // second-last and third-last too low
+        assert!(validate(&[1, 1, 1, 1, 1, 1, 1, 3, 4, 7]).is_err());  // second-last < 5
+        assert!(validate(&[1, 1, 1, 1, 1, 1, 1, 2, 5, 7]).is_err());  // third-last < 3
+        assert!(validate(&[1, 1, 1, 1, 1, 1, 1, 3, 5, 7]).is_ok());
     }
     #[test]
     fn acpi_paths() {

@@ -598,18 +598,23 @@ pub fn apply(values: &serde_json::Map<String, Value>) -> Value {
 
     // Validate the whole request first: a bad value anywhere means nothing
     // is written, instead of a half-applied set of EC power limits.
-    let mut plan: Vec<(&String, &'static Feat, i64)> = Vec::with_capacity(values.len());
+    // (key, knob, value, through WMAE, sysfs value read during validation)
+    let mut plan: Vec<(&String, &'static Feat, i64, bool, Option<i64>)> = Vec::with_capacity(values.len());
     for (key, jv) in values {
         let checked = (|| {
             let f = feat(key).ok_or_else(|| format!("unknown knob '{key}'"))?;
             let v = jv.as_i64().ok_or_else(|| format!("{key}: not an integer"))?;
             if v < 1 { return Err(format!("{}: {ZERO_REFUSED}", f.label)); }
             if f.via_acpi && !crate::dgpu_usable() { return Err(format!("{}: {GPU_OFF}", f.label)); }
-            if !f.via_acpi && use_wmae(f) && !verified_ids().contains(&f.id) {
+            // One sysfs read decides the channel (as use_wmae does) and gives the range: every
+            // current_value read of a firmware attribute is a WMI call into the EC.
+            let sys = if f.via_acpi { None } else { sysfs_read(f.attr) };
+            let wmae = f.via_acpi || (f.id != 0 && sys.is_none());
+            if !f.via_acpi && wmae && !verified_ids().contains(&f.id) {
                 return Err(format!("{}: sysfs attribute missing and the WMAE fallback was never verified \
                     against it on this machine/BIOS; refusing", f.label));
             }
-            if use_wmae(f) {
+            if wmae {
                 // No firmware range here; a sanity clamp so a typo can't send
                 // something absurd to the EC. cTGP: the GPU's own vBIOS maximum
                 // (nvidia-smi Max Power Limit, minus the Dynamic Boost headroom it
@@ -622,17 +627,17 @@ pub fn apply(values: &serde_json::Map<String, Value>) -> Value {
                 // Same check sysfs_write() does at write time, done here too so
                 // a bad sysfs value rejects the whole request before any WMAE
                 // knob (sorted earlier, e.g. ctgp before spl) has been written.
-                let r = sysfs_read(f.attr).ok_or_else(|| format!("{}: attribute not present", f.attr))?;
+                let r = sys.as_ref().ok_or_else(|| format!("{}: attribute not present", f.attr))?;
                 let (lo, hi) = if r.ranged { (r.min, r.max) } else { (f.lo, f.hi) };
                 if v < lo || v > hi { return Err(format!("{}: {v} outside {lo}..{hi} {}", f.label, f.unit)); }
                 if r.ranged && r.step > 1 && (v - r.min) % r.step != 0 {
                     return Err(format!("{}: {v} is not on the firmware's {}-step grid from {}", f.label, r.step, r.min));
                 }
             }
-            Ok((f, v))
+            Ok((f, v, wmae, sys.map(|r| r.cur)))
         })();
         match checked {
-            Ok((f, v)) => plan.push((key, f, v)),
+            Ok((f, v, wmae, cur)) => plan.push((key, f, v, wmae, cur)),
             Err(m) => { all = false; results.push(json!({"what": key, "ok": false, "message": m})); }
         }
     }
@@ -641,13 +646,14 @@ pub fn apply(values: &serde_json::Map<String, Value>) -> Value {
     }
 
     // Keys arrive alphabetically (fppt, spl, sppt): write the CPU limits in firmware-safe order.
-    let keys: Vec<(&str, Option<i64>, i64)> = plan.iter().map(|(_, f, v)| (f.attr, read_value(f).ok(), *v)).collect();
+    let keys: Vec<(&str, Option<i64>, i64)> = plan.iter()
+        .map(|(_, f, v, wmae, cur)| (f.attr, if *wmae { wmae_get(f.id).ok() } else { *cur }, *v)).collect();
     let order = crate::fw_write_order(&keys);
     let plan: Vec<_> = order.into_iter().map(|i| plan[i]).collect();
 
-    for (key, f, v) in plan {
+    for (key, f, v, wmae, _) in plan {
         let r = (|| {
-            if use_wmae(f) {
+            if wmae {
                 if !acpi_available() { return Err("acpi_call not available".into()); }
                 // Preflight: the id must answer a read on this firmware before it is written.
                 wmae_get(f.id).map_err(|e| format!("{}: WMAE id not readable on this firmware ({e}); refusing to write", f.label))?;
@@ -656,8 +662,8 @@ pub fn apply(values: &serde_json::Map<String, Value>) -> Value {
                 if back != v { return Err(format!("readback {back} ≠ {v}")); }
                 Ok(format!("{} = {} {} (WMAE)", f.label, back, f.unit))
             } else {
-                sysfs_write(f.attr, v)?;
-                let back = read_value(f)?;
+                sysfs_write(f.attr, v)?;  // re-validates against the live range at write time
+                let back = sysfs_read(f.attr).map(|r| r.cur).ok_or_else(|| format!("{}: not present", f.attr))?;
                 if back != v { return Err(format!("readback {back} ≠ {v}")); }
                 Ok(format!("{} = {} {}", f.label, back, f.unit))
             }

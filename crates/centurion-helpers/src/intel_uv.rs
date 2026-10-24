@@ -170,6 +170,33 @@ pub fn amps_to_icc_field(a: f64) -> Result<u64, String> {
     if !(1..=ICC_MAX_FIELD).contains(&f) { return Err(format!("IccMax {a} A quantises outside the 11-bit field")); }
     Ok(f)
 }
+/// IccMax ceiling by CPU class, from the model suffix in the CPU name: HX 300 A, Core Ultra H
+/// 140 A, other H 160 A. None = class not recognised (U/P/desktop/unknown).
+pub fn icc_class_cap_a(cpu_name: &str) -> Option<f64> {
+    let ultra = cpu_name.contains("Ultra");
+    for tok in cpu_name.split_whitespace() {
+        let tok = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        let model = tok.rsplit('-').next().unwrap_or(tok);  // "i7-13700H" → "13700H"
+        let digits = model.bytes().take_while(u8::is_ascii_digit).count();
+        let suffix = &model[digits..];
+        if digits == 0 || suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_alphabetic()) { continue; }
+        match suffix.to_ascii_uppercase().as_str() {
+            "HX" => return Some(300.0),
+            "H" if ultra => return Some(140.0),
+            "H" => return Some(160.0),
+            _ => {}  // "13th", "14900K", …: keep looking
+        }
+    }
+    None
+}
+
+/// Highest IccMax a write may set: the class ceiling, or the CPU's current value when that is
+/// higher (a stock IccMax above the class figure must stay writable); the current value alone
+/// when the class is unknown.
+pub fn icc_ceiling_a(cpu_name: &str, current_a: f64) -> f64 {
+    icc_class_cap_a(cpu_name).map_or(current_a, |c| c.max(current_a))
+}
+
 pub fn icc_read_cmd(plane: u64) -> u64 { 0x8000_0016_0000_0000 | (plane << 40) }
 pub fn icc_write_cmd(plane: u64, field: u64) -> u64 { 0x8000_0017_0000_0000 | (plane << 40) | (field & ICC_MAX_FIELD) }
 
@@ -922,15 +949,21 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
         let r = (|| {
             if !uv_map_verified() { return Err(uv_map_refusal()); }
             let f = amps_to_icc_field(a)?;
+            let cpu_name = cpu_id_ref().map_or("", |c| c.name.as_str());
+            let mut over = None;  // Some(ceiling) when the class / stock ceiling vetoed the write
             // Bit 10 of the field is verified only on Arrow Lake-S/HX. Elsewhere a value above
             // 255.75 A is written only if the CPU's own reading already has bit 10 set (a stock
             // IccMax above 255.75 A proves the 11-bit field); otherwise a 10-bit part could take
             // the low 10 bits alone (300 A → 44 A) or a reserved bit.
             let resp = match msr.mailbox_rmw(icc_read_cmd(idx), |cur| {
                 prior = Some(cur);
+                let ceil = icc_ceiling_a(cpu_name, (cur & ICC_MAX_FIELD) as f64 / 4.0);
+                if a > ceil { over = Some(ceil); return None; }
                 (f <= 0x3FF || is_arrow_lake() || cur & 0x400 != 0).then(|| icc_write_cmd(idx, f))
             }).map_err(|e| err_str(&e))? {
                 Rmw::Absent(st) => return Err(format!("mailbox status {st:#04x} on read: IccMax not available here — nothing written")),
+                Rmw::Vetoed(_) if over.is_some() => return Err(format!("{a} A is above the {:.2} A ceiling for this CPU \
+                    (its class limit, or its current value when higher) — nothing written", over.unwrap_or(0.0))),
                 Rmw::Vetoed(cur) => return Err(format!("{a} A needs bit 10 of the IccMax field, which this CPU has not shown it uses \
                     (current {:.2} A) — max 255.75 A here, nothing written", (cur & ICC_MAX_FIELD) as f64 / 4.0)),
                 Rmw::Done { back, .. } => back,
@@ -1178,6 +1211,20 @@ mod tests {
             assert_eq!(mv_to_ticks(decode_mv(encode_offset(t))).unwrap(), t);
         }
         assert!(mv_to_ticks(1.0).is_err() && mv_to_ticks(-1000.5).is_err());
+    }
+
+    #[test]
+    fn icc_ceiling_by_class() {
+        assert_eq!(icc_class_cap_a("Intel(R) Core(TM) Ultra 7 255HX"), Some(300.0));
+        assert_eq!(icc_class_cap_a("13th Gen Intel(R) Core(TM) i9-13980HX"), Some(300.0));
+        assert_eq!(icc_class_cap_a("Intel(R) Core(TM) Ultra 7 155H"), Some(140.0));
+        assert_eq!(icc_class_cap_a("Intel(R) Core(TM) i7-8750H CPU @ 2.20GHz"), Some(160.0));
+        assert_eq!(icc_class_cap_a("Intel(R) Core(TM) i7-1165G7 @ 2.80GHz"), None);
+        assert_eq!(icc_class_cap_a("Intel(R) Core(TM) i9-14900K"), None);
+        // Stock above the class figure stays writable; unknown class: never above the current value.
+        assert_eq!(icc_ceiling_a("Intel(R) Core(TM) Ultra 7 155H", 180.0), 180.0);
+        assert_eq!(icc_ceiling_a("Intel(R) Core(TM) Ultra 7 255HX", 263.0), 300.0);
+        assert_eq!(icc_ceiling_a("Intel(R) Core(TM) i9-14900K", 307.0), 307.0);
     }
 
     #[test]

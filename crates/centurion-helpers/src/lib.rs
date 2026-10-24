@@ -271,10 +271,6 @@ fn module_installed(module: &str) -> bool {
     })
 }
 
-/// Loads a kernel module at most once per process, and only when the running
-/// kernel actually has it: a status poll on a machine without (say) acpi_call
-/// no longer spawns a failing modprobe every time. Returns true if the module
-/// is loaded afterwards (or was already).
 /// SIGKILL + a bounded reap. A child stuck in D state (nvidia-smi on a dGPU that fell off the bus,
 /// hdparm on a hung disk) ignores SIGKILL, and the plain `kill(); wait()` after a timeout then hung
 /// the helper -- and the GUI or game hook waiting on it -- for good. Gives up after ~1 s (zombie
@@ -287,6 +283,10 @@ pub fn kill_reap(child: &mut std::process::Child) {
     }
 }
 
+/// Loads a kernel module at most once per process, and only when the running
+/// kernel actually has it: a status poll on a machine without (say) acpi_call
+/// no longer spawns a failing modprobe every time. Returns true if the module
+/// is loaded afterwards (or was already).
 pub fn modprobe(module: &str) -> bool {
     // Callers pass fixed names. Reject anything modprobe could treat as an option or a path.
     if module.is_empty() || module.len() > 64 || module.starts_with('-')

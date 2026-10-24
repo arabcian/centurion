@@ -12,6 +12,7 @@
 //!   centurion-gamemode SCENE name               apply a saved scene now (all components)
 //!   centurion-gamemode RESTORE                  restore everything now
 //!   centurion-gamemode STATUS                   live values and game-mode state
+//!   centurion-gamemode OVERLAY                  one line for MangoHud `exec=`: active scene · power profile
 //!
 //! Without a preset name, the game preset chosen in the GUI is used
 //! (~/.config/centurion/tune.json).
@@ -600,6 +601,18 @@ fn current_platform_profile() -> Option<String> {
     std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned())
 }
 
+/// OVERLAY: the line MangoHud shows next to `custom_text=Centurion` (its `exec=` re-runs this while
+/// the game runs, so it only reads two small files). Labels as on the Home tab.
+fn overlay_line(scene: Option<&str>, profile: Option<&str>) -> String {
+    let label = profile.map(|p| match p {
+        "low-power" => "Power Saver".to_owned(), "quiet" => "Quiet".into(), "cool" => "Cool".into(),
+        "balanced" => "Balanced".into(), "balanced-performance" => "Balanced Performance".into(),
+        "performance" => "Performance".into(), "max-power" => "Extreme".into(), "custom" => "Custom".into(),
+        other => other.replace('-', " "),
+    });
+    [scene.filter(|s| !s.is_empty()).map(str::to_owned), label].into_iter().flatten().collect::<Vec<_>>().join(" · ")
+}
+
 fn scene_choice(v: &Value) -> Option<Result<String, ()>> {
     if v["reset"] == true { return Some(Err(())); }
     v["profile"].as_str().filter(|n| valid_name(n)).map(|n| Ok(n.to_owned()))
@@ -1081,7 +1094,16 @@ fn wrap(args: &[String]) -> i32 {
     OWNER.store(std::process::id() as i32, Ordering::SeqCst);
     let (name, cmd) = split_cmd(args);
     if cmd.is_empty() { log!("centurion-gamemode WRAP: no command"); return 2; }
-    let (pname, mut preset) = match load_preset(name.as_deref()) { Ok(p) => p, Err(e) => { log!("centurion-gamemode: {e}"); return 2 } };
+    let (pname, mut preset) = match load_preset(name.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            // Like RUN: a missing or unapproved preset never blocks the launch.
+            log!("centurion-gamemode: {e} — starting without tuning");
+            let err = Command::new(&cmd[0]).args(&cmd[1..]).exec();
+            log!("centurion-gamemode: {}: {err}", cmd[0]);
+            return 127;
+        }
+    };
     let parked = soft_park(&mut preset);
     // The refcount is taken as soon as the helper was reached, even if a knob failed.
     let (entered, _) = game_start(Some(&pname), &game_name(Some(&cmd)));
@@ -1247,7 +1269,7 @@ fn approve(names: &[String]) -> i32 {
 
 fn usage() -> i32 {
     log!("usage: centurion-gamemode PRE [preset] | POST | RUN [preset] [--] cmd… | WRAP [preset] [--] cmd…\n\
-               \x20                   | APPLY preset | UNDERVOLT | SCENE name | RESTORE | STATUS | APPROVE [preset…]");
+               \x20                   | APPLY preset | UNDERVOLT | SCENE name | RESTORE | STATUS | OVERLAY | APPROVE [preset…]");
     2
 }
 
@@ -1284,6 +1306,10 @@ fn main() {
             (!ok) as i32
         }
         Some("STATUS") => status(),
+        Some("OVERLAY") => {
+            println!("{}", overlay_line(read_scene_state()["active"].as_str(), current_platform_profile().as_deref()));
+            0
+        }
         Some("RUN") => run_exec(&args[1..]),
         Some("WRAP") => wrap(&args[1..]),
         _ => usage(),
@@ -1326,6 +1352,14 @@ mod tests {
         assert_eq!(split_command(r#"notify-send "Game mode" 'x'"#), vec!["notify-send", "Game mode", "'x'"]);
         assert_eq!(split_command(r#"a """b""" c"#), vec!["a", "\"b\"", "c"]);
         assert!(split_command("   ").is_empty());
+    }
+    #[test]
+    fn overlay() {
+        assert_eq!(overlay_line(Some("Gaming"), Some("performance")), "Gaming · Performance");
+        assert_eq!(overlay_line(None, Some("low-power")), "Power Saver");
+        assert_eq!(overlay_line(Some(""), Some("new-mode")), "new mode");
+        assert_eq!(overlay_line(Some("Quiet night"), None), "Quiet night");
+        assert_eq!(overlay_line(None, None), "");
     }
     #[test]
     fn split() {

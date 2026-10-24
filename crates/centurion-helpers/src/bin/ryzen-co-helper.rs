@@ -2,6 +2,7 @@
 //! Port of ryzen_curve_optimizer_helper.py -- same JSON protocol:
 //!   {"op": "set_coall", "params": {"value": -20}}
 //!   {"op": "set_coper_batch", "params": {"entries": [{ccd,ccx,core,coper}, ...]}}
+//!       both take an optional "profile": NAME (≤ 64 bytes) — only the curve journal uses it
 //!   {"op": "reset"}
 //!   {"op": "probe"}
 //!       read-only: detected family, SMU transport, kernel lockdown, allowed offset range (no CO write).
@@ -220,15 +221,19 @@ fn run() -> Value {
     if out["ok"] == true {
         let op = op.and_then(Value::as_str).unwrap_or("");
         record_state(op, params);
-        // Curve journal (Health → Curve stability).
-        match op {
-            "reset" => centurion_helpers::ocjournal::record("cpu_co", "reset"),
-            "set_coall" => match params.get("value").and_then(Value::as_i64) {
-                Some(0) => centurion_helpers::ocjournal::record("cpu_co", "reset"),
-                Some(v) => centurion_helpers::ocjournal::record("cpu_co", &format!("all-core {v}")),
-                None => {}
+        // Curve journal (Health → Curve stability). A saved profile applied by name (scenes, tray) is
+        // journalled by that name, like the Intel and NVIDIA helpers, so the curve guard can offer it back.
+        let profile = params.get("profile").and_then(Value::as_str).filter(|n| !n.is_empty() && n.len() <= 64);
+        match (op, profile) {
+            ("reset", _) => centurion_helpers::ocjournal::record("cpu_co", "reset"),
+            ("set_coall", p) => match (params.get("value").and_then(Value::as_i64), p) {
+                (Some(0), _) => centurion_helpers::ocjournal::record("cpu_co", "reset"),
+                (Some(_), Some(n)) => centurion_helpers::ocjournal::record("cpu_co", &format!("profile:{n}")),
+                (Some(v), None) => centurion_helpers::ocjournal::record("cpu_co", &format!("all-core {v}")),
+                (None, _) => {}
             },
-            "set_coper_batch" => centurion_helpers::ocjournal::record("cpu_co", "per-core"),
+            ("set_coper_batch", Some(n)) => centurion_helpers::ocjournal::record("cpu_co", &format!("profile:{n}")),
+            ("set_coper_batch", None) => centurion_helpers::ocjournal::record("cpu_co", "per-core"),
             _ => {}
         }
     }

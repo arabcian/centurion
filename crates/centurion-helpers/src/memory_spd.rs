@@ -256,7 +256,11 @@ mod floor_tests {
         assert_eq!(safe_floor("tRAS", &spd, &stock), Some(90));     // 89.6 -> 90
         assert_eq!(safe_floor("tRFC1", &spd, &stock), Some(826));   // 295 ns at 357 ps
         assert_eq!(safe_floor("tRFCsb", &spd, &stock), Some(365));  // not reported by the controller: SPD only (364.1 rounds up)
-        assert_eq!(safe_floor("tRTP", &spd, &stock), None);         // nothing in the SPD
+        assert_eq!(safe_floor("tRTP", &spd, &stock), None);         // nothing in the SPD, not reported
+        // Not in the SPD but reported by the controller: what trained is the floor.
+        let with_faw = json!({"speed_mts": 5600, "timings": {"tFAW": 32, "tRTP": 21}});
+        assert_eq!(safe_floor("tFAW", &spd, &with_faw), Some(32));
+        assert_eq!(safe_floor("tRTP", &[], &with_faw), Some(21));
         // Hand-tuned and running: what already trained is the floor.
         let tuned = json!({"speed_mts": 5600, "timings": {"tCL": 38, "tRAS": 60, "tRFC1": 560}});
         assert_eq!(safe_floor("tCL", &spd, &tuned), Some(38));
@@ -411,11 +415,11 @@ const SPD_MIN_TIME: &[(&str, &str, bool)] = &[
 /// or the value the controller trained with on this boot when that is lower still (a tighter value that
 /// already works here is not a new risk). AOD_FIELDS' fixed minimums ignore the modules entirely — a value
 /// between that minimum and this floor can fail memory training, i.e. a machine that does not start —
-/// so anything below the floor needs its own confirmation. Fields the SPD says nothing about (and
-/// everything when no SPD can be read and the controller does not report the field) have no floor.
+/// so anything below the floor needs its own confirmation. Fields the SPD says nothing about use the
+/// running value alone; a field neither the SPD nor the controller reports has no floor.
 fn safe_floor(name: &str, spd: &[Value], live: &Value) -> Option<u64> {
     let running = live["timings"][name].as_u64().filter(|v| *v > 0);
-    let &(_, key, obj) = SPD_MIN_TIME.iter().find(|f| f.0 == name)?;
+    let Some(&(_, key, obj)) = SPD_MIN_TIME.iter().find(|f| f.0 == name) else { return running };
     let speed = live["speed_mts"].as_u64().filter(|v| *v > 0)?;
     let tck_ps = (2_000_000 / speed) as u32;
     let from_spd = spd.iter().filter_map(|m| {

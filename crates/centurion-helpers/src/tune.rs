@@ -299,10 +299,10 @@ pub const TUNABLES: &[Tunable] = &[
       int(400_000, 8_000_000), NO, Target::Uncore("min_freq_khz"))),
     warn(intel(t("cpu.rapl_pl1", "CPU", "RAPL PL1 · long term (W)",
       "Package sustained power limit, written to both RAPL interfaces (MSR intel-rapl and MMIO intel-rapl-mmio). On a Legion the EC also programs PL1 through the firmware attribute 'ppt_pl1_spl' and re-programs it on every platform-profile change, so prefer the Firmware Attributes tab (Custom profile) and use this row for testing or on machines without that attribute. Lower = cooler and quieter, higher = more sustained all-core clock if cooling allows.",
-      int(5, 400), NO, Target::RaplWatts("long_term")))),
+      int(5, 250), NO, Target::RaplWatts("long_term")))),
     warn(intel(t("cpu.rapl_pl2", "CPU", "RAPL PL2 · short term (W)",
       "Package short-term (turbo burst) power limit on both RAPL interfaces. Same caveat as PL1: the EC's 'ppt_pl2_sppt' firmware attribute rewrites it on a profile change. Keep it >= PL1.",
-      int(5, 400), NO, Target::RaplWatts("short_term")))),
+      int(5, 250), NO, Target::RaplWatts("short_term")))),
     intel(t("cpu.tcc_offset", "CPU", "TCC offset (°C below TjMax)",
       "Thermal Control Circuit activation offset (intel_tcc_cooling): the CPU starts throttling this many degrees below TjMax (e.g. 105 °C - 10 = 95 °C). Keeps a laptop's surface and fans calmer under sustained load and trims the hottest, least efficient turbo; 0 = stock. Not an undervolt: voltage is unchanged, the ceiling just arrives earlier.",
       int(0, 63), NO, Target::TccOffset)),
@@ -2579,7 +2579,17 @@ pub fn plan(t: &Tunable, value: &str) -> Result<Vec<(PathBuf, String)>, String> 
         Target::WifiPowerSave | Target::EthWol | Target::EthEee => fs.into_iter().map(|f| (f, value.to_owned())).collect(),
         Target::RaplWatts(_) => {
             let w: i64 = value.parse().map_err(|_| format!("'{value}' is not a wattage"))?;
-            fs.into_iter().map(|f| (f, (w * 1_000_000).to_string())).collect()
+            let uw = w * 1_000_000;
+            // The kernel does not clamp a limit to the constraint's own maximum: refuse above it.
+            fs.into_iter().map(|f| {
+                let max = f.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix("_power_limit_uw"))
+                    .and_then(|c| read(&f.with_file_name(format!("{c}_max_power_uw")))).and_then(|r| parse_int(&r))
+                    .filter(|&m| m > 0);
+                match max {
+                    Some(m) if uw > m => Err(format!("{w} W is above this package limit's maximum of {} W ({})", m / 1_000_000, f.display())),
+                    _ => Ok((f, uw.to_string())),
+                }
+            }).collect::<Result<Vec<_>, _>>()?
         }
         _ if t.kind == Kind::Bool => fs.into_iter().map(|f| {
             // no_turbo speaks the opposite of "boost".
