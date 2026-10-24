@@ -79,6 +79,12 @@ qt_add_resources(centurion appicon
     BASE data
     FILES data/centurion.svg)
 
+# Stock fan presets: the repository's fan-presets.json, compiled in (single source of truth).
+qt_add_resources(centurion fanpresets
+    PREFIX /
+    BASE ${CMAKE_CURRENT_SOURCE_DIR}/..
+    FILES ../fan-presets.json)
+
 set(CENTURION_ISSUES_URL "https://github.com/arabcian/centurion/issues/new" CACHE STRING
     "GitHub 'new issue' URL the unknown-model warning opens")
 target_compile_definitions(centurion PRIVATE
