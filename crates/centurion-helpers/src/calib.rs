@@ -348,6 +348,9 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     // run of the session started from another EPP than the reference.
     ("cpu.dynamic_epp", "hands EPP to the kernel: rewrites every EPP row (structural)"),
     ("clock.source", "repair only (structural)"),
+    // ITMT hands the preferred cores to whatever runs all the time: under load that is the ballast's
+    // spinners, so the probes got the lower-ranked cores and "on" measured worse than it is.
+    ("sched.itmt", "preferred cores go to the load phase's ballast, not to the probes (structural)"),
 ];
 
 /// A key the calibration never tests (see `EXCLUDED`). Measurements of such a key that an older
