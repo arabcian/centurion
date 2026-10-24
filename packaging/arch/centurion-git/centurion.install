@@ -1,0 +1,25 @@
+# Nothing is enabled here: every boot service is opt-in (Centurion's first-run wizard
+# shows the commands, so does the README's Boot services table).
+post_install() {
+    cat <<'MSG'
+==> Centurion installed (polkit security level 3).
+    Log out and back in once (keyboard-lighting udev rule, polkit rules).
+    Optional boot services — enable only what you use:
+      systemctl enable centurion-boot-guard.service     # records clean shutdowns (recommended)
+      systemctl enable nvcurve-autoload.service         # ★ default GPU curve
+      systemctl enable centurion-tune.service           # Optimizations boot preset
+      systemctl enable --now centurion-netguard.service # network guard (needs nftables)
+      systemctl enable centurion-intel-uv.service       # Intel undervolt boot/resume (Intel only)
+    Other polkit level: copy /usr/share/polkit-1/rules.d/49-centurion.rules to
+    /etc/polkit-1/rules.d/ and edit SECURITY_LEVEL there (the /etc copy wins).
+MSG
+}
+
+post_upgrade() {
+    systemctl daemon-reload 2>/dev/null || true
+}
+
+pre_remove() {
+    # Put every tuned value back while the helper is still there (same as uninstall.sh).
+    printf '%s' '{"op":"restore"}' | /usr/libexec/centurion/tune-helper >/dev/null 2>&1 || true
+}

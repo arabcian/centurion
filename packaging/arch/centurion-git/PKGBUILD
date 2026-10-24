@@ -1,0 +1,71 @@
+# Maintainer: Cihan <arabcian@users.noreply.github.com>
+# Built from the default branch. File layout: packaging/install-files.sh (same list as install.sh).
+pkgname=centurion-git
+pkgver=2.0.0.r0.g0000000
+pkgrel=1
+pkgdesc='Power profile, firmware attribute and CPU/GPU curve tuning for Lenovo Legion laptops'
+arch=('x86_64')
+url='https://github.com/arabcian/centurion'
+license=('GPL-3.0-or-later')
+depends=('qt6-base' 'qt6-svg' 'polkit' 'libxkbcommon' 'hicolor-icon-theme' 'gcc-libs' 'glibc')
+makedepends=('cargo' 'cmake' 'git')
+provides=('centurion')
+conflicts=('centurion')
+optdepends=('acpi_call: GPU power limits, fan curve, GPU mode, EC temperatures'
+            'nvidia-utils: NVIDIA Curve tab'
+            'nftables: Health → Network (centurion-netguard)'
+            'mangohud: active scene / power profile in games'
+            'pigz: faster Backup compression'
+            'zstd: Backup compression'
+            'xorg-xrandr: Scenes → refresh rate on X11'
+            'brightnessctl: Scenes → screen brightness without logind')
+install=centurion.install
+options=('!lto')  # the GUI does its own LTO (CENTURION_LTO), Cargo.toml sets fat LTO for the helpers
+source=("centurion::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd centurion
+  # Version from gui/CMakeLists.txt (the project's single version), plus commits since it last changed.
+  local v c
+  v=$(sed -n 's/^project(centurion VERSION \([0-9.]*\).*/\1/p' gui/CMakeLists.txt)
+  c=$(git log -1 --format=%H -G'^project.centurion VERSION' -- gui/CMakeLists.txt)
+  printf '%s.r%s.g%s' "$v" "$(git rev-list --count "$c"..HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd centurion
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd centurion
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+  # Portable binaries: no -march=native, no PGO (install.sh's local-build defaults).
+  # CENTURION_HELPER_DIR must match the polkit exec.path annotations (LIBEXEC below).
+  cmake -S gui -B gui/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCENTURION_HELPER_DIR=/usr/libexec/centurion -DCENTURION_NATIVE=OFF -DCENTURION_PGO=
+  cmake --build gui/build
+}
+
+check() {
+  cd centurion
+  cargo test --frozen --release
+}
+
+package() {
+  cd centurion
+  # Security level 3 by default for packages: password for raw values, approved presets stay silent.
+  DESTDIR="$pkgdir" PREFIX=/usr LIBEXEC=/usr/libexec/centurion UNITDIR=/usr/lib/systemd/system \
+    UDEVDIR=/usr/lib/udev/rules.d SYSTEMD_SLEEP=/usr/lib/systemd/system-sleep \
+    POLKIT_RULESDIR=/usr/share/polkit-1/rules.d CENTURION_SECURITY_LEVEL=3 \
+    bash packaging/install-files.sh
+  # Same owner/mode as polkit's own rules.d (102 = polkitd), so pacman sees no conflict.
+  chmod 750 "$pkgdir/usr/share/polkit-1/rules.d"
+  chgrp 102 "$pkgdir/usr/share/polkit-1/rules.d"
+  # OpenRC scripts are of no use on Arch.
+  rm -r "$pkgdir/etc/init.d"
+  install -Dm644 -t "$pkgdir/usr/share/doc/centurion" README.md NOTICE DISCLAIMER.md docs/*.md
+}

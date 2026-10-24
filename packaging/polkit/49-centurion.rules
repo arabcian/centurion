@@ -26,7 +26,8 @@
  * what keeps a bad value out.
  *
  * The .policy defaults are auth_admin_keep: if this file is missing or not
- * loaded, nobody gets a silent grant.
+ * loaded, nobody gets a silent grant -- except the three read-only actions
+ * (nvcurve.sensors, ec.sensors, health.read), whose allow_active is yes.
  *
  * Exception: legion-firmware-helper (com.centurion.firmware.write).
  * It writes settings that persist in firmware -- BIOS memory timings, BIOS CPU

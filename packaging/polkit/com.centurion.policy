@@ -7,7 +7,8 @@
        (nvcurve-root-helper 0700) under /usr/libexec/centurion.
        The password-less grant (wheel, local active session) comes only from
        /etc/polkit-1/rules.d/49-centurion.rules; the defaults below
-       are the safe fallback when that file is absent.
+       are the safe fallback when that file is absent (the read-only
+       nvcurve.sensors, ec.sensors and health.read stay allow_active=yes).
        com.centurion.firmware.write is never granted silently: it
        covers changes that persist in firmware (BIOS memory timings, BIOS CPU OC,
        GPU MUX mode) and asks for the administrator password every time. -->

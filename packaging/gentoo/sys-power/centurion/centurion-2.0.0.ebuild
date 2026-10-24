@@ -18,7 +18,7 @@ KEYWORDS="~amd64"
 RESTRICT="fetch"
 
 DEPEND="
-	dev-qt/qtbase:6[gui,network,widgets]
+	dev-qt/qtbase:6[dbus,gui,network,widgets]
 	dev-qt/qtsvg:6
 	x11-libs/libxkbcommon
 "

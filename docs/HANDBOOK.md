@@ -16,14 +16,17 @@ A short, task-by-task guide. For what each feature is, see the
 
 1. Install ([README → Install](../README.md#install)), log out and in once.
 2. Start the app from the menu. It sits in the **tray**; closing the window hides it, *Quit* in the tray menu exits.
-3. Enable the boot services you want (`centurion-boot-guard` first — it protects the rest):
-   ```sh
-   rc-update add centurion-boot-guard default     # OpenRC
-   systemctl enable centurion-boot-guard          # systemd
-   ```
+3. The first time the window opens, the **setup wizard** walks through the rest; every step can be skipped, and Home → *Setup wizard…* opens it again:
+   - *Your machine* — model, support status, the interfaces found.
+   - *Boot services* — tick the ones you want (`centurion-boot-guard` first — it protects the rest) and run the command it shows (root, so the wizard does not run it itself):
+     ```sh
+     rc-update add centurion-boot-guard boot        # OpenRC
+     systemctl enable centurion-boot-guard          # systemd
+     ```
+   - *First backup* — the Centurion configuration (same as Health → Backup → *Back up now*).
+   - *First scene* — *Capture current* saves the power profile and firmware limits as "Default", a restore point for the whole machine; optionally pick scenes for AC and battery. (The fan curve is captured from Scenes → *Capture current*.)
+   - *Extras* — a shortcut for that scene, the MangoHud line.
 4. Open **Home**, pick a power profile, look at the *Live* box to see sensors work.
-5. Open **Scenes → New…**, press *Capture current*, name it, *Save*. You now have a restore point for the whole machine.
-6. Health → Backup → *Centurion configuration* → make a first backup.
 
 ## 2. The window and the tray
 
@@ -56,7 +59,11 @@ A scene is a **name for a whole setup**. It stores power profile, firmware limit
 
 **Game start:** Optimizations → Game launch → *System at game start*: the first game switches to the chosen scene, the last exit switches back.
 
-**Scripts:** `centurion-gamemode SCENE "Name"`. Export / import scenes from the Scenes tab.
+**Shortcut:** click the *Shortcut* field of a scene, press a key combination (e.g. Ctrl+Alt+1) and *Save*. The key is registered with the desktop's global-shortcuts portal (KDE Plasma 5.27+, GNOME 48+, Hyprland); the desktop may ask you to confirm it and can change it later in its own shortcut settings — the line under the field shows the key it actually uses. Where the portal offers it (interface version 2), *Change on desktop…* next to the field opens that dialog directly. Without the portal, bind `centurion-gamemode SCENE "Name"` in the desktop's shortcut settings instead. A copied scene starts without a shortcut.
+
+**In games (MangoHud):** tick *Show the active scene and power profile in games* under Automatic switching. It adds a marked block to `~/.config/MangoHud/MangoHud.conf` (`custom_text=Centurion` + `exec=cat $XDG_RUNTIME_DIR/centurion-overlay`, a file Centurion keeps current while it runs — empty when it is not running), shown from the next game start. Blocks added by older versions run `centurion-gamemode OVERLAY` instead and keep working; untick and tick again for the new form. MangoHud runs `exec` only with `legacy_layout=0`, which draws only the listed elements, so when your file does not use that layout the block also lists MangoHud's defaults (GPU, CPU, FPS, frame time). Unticking removes the block and leaves the file as it was.
+
+**Scripts:** `centurion-gamemode SCENE "Name"`, or the D-Bus API (section 10). Export / import scenes from the Scenes tab.
 
 ## 5. Firmware tab
 
@@ -130,7 +137,7 @@ Game mode is reference-counted: the first game applies, the last exit restores. 
 
 **Heroic and Bottles** have no hook like Lutris: tick *Detect games started from Heroic and Bottles* (System at game start). Centurion then notices their games itself (Heroic: `HEROIC_APP_NAME` in the game's environment; Bottles: a Windows program running in a bottle) and runs the same PRE / POST — game scene, ★ game preset, session record. It only looks at processes while Heroic or Bottles runs; games you already wrap with `centurion-gamemode WRAP` are left alone.
 
-**Drift banner:** when TLP, power-profiles-daemon, tuned, auto-cpufreq or a script changes a setting Centurion applied, a banner at the top of Optimizations lists it (what it is now, what it was) and the tools found running; *Re-apply* puts the active scene (or preset) back. A tray notification says the same.
+**Drift banner:** when TLP, power-profiles-daemon, tuned, auto-cpufreq or a script changes a setting Centurion applied, a banner at the top of Optimizations lists it (what it is now, what it was) and the tools found running; *Re-apply* puts the active scene (or preset) back. A tray notification says the same, with a *Re-apply* button.
 
 ### 7.5 Boot options
 Shows kernel parameters that help (ASPM, THP, amdgpu mask…) as copy-paste text. Nothing edits your bootloader.
@@ -156,10 +163,10 @@ Apply when finished — do not apply in a loop (writes go to non-volatile memory
 *Scan now* lists NVIDIA Xid / GSP, MCE, AER, lockups and guard rollbacks with uptime. Events are saved across boots — **Open saved log** / **Clear saved log**. Use it first when games crash after tuning.
 
 ### Curve stability
-Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journaled by the helpers; this page lays the saved Xid / GSP / D3cold and machine-check / lockup errors over it: hours in effect, errors, errors per 10 h per profile, highlighted when clearly worse than stock. Optional guard: *Take the GPU curve back to stock after an Xid* and the same for the CPU curve after a machine check — otherwise you only get a notification naming the curve. The curve tabs also have **Trial apply**: after Apply you have 30 s to press *Keep*, else the curve goes back to stock.
+Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journaled by the helpers; this page lays the saved Xid / GSP / D3cold and machine-check / lockup errors over it: hours in effect, errors, errors per 10 h per profile, highlighted when clearly worse than stock. Optional guard: *Take the GPU curve back to stock after an Xid* and the same for the CPU curve after a machine check — otherwise you only get a notification naming the curve. After such a reset the notification has *Undo*, which applies the saved profile that was in effect again (not for unsaved edits). The curve tabs also have **Trial apply**: after Apply you have 30 s to press *Keep*, else the curve goes back to stock.
 
 ### Sleep
-Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`).
+Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`). **Suggestions**: an enabled wake source that woke the machine at least twice with the lid closed (neither the lid nor the power button among the wake sources) is listed with the battery the machine then spent awake before sleeping again, and a *Disable* button that does the same as unticking it. The battery cost is measured only on battery and when the next sleep came within 2 h.
 
 ### Battery use
 Time left at the current draw, battery drain per scene (energy actually taken from the battery while each scene was active, sleep excluded) with "full charge lasts ~", and a daily capacity / health history.
@@ -203,7 +210,24 @@ centurion-netguard status | list | whois 1.2.3.4
 sudo centurion-intel-uv read                   # Intel undervolt state
 nvcurve sensors                          # hotspot / VRAM temps, throttle reasons
 sudo nvcurve reset-all                   # everything NVIDIA back to stock
+centurion-gamemode OVERLAY                     # "Scene · Profile" line (MangoHud exec=)
 ```
+
+**D-Bus API** (session bus, while Centurion runs — for KDE Connect, Home Assistant, Stream Deck, scripts):
+
+```sh
+D="gdbus call --session -d com.centurion.Centurion -o /com/centurion/Centurion -m com.centurion.Centurion"
+$D.ListScenes                    # ['Gaming', 'Quiet']
+$D.ApplyScene Gaming             # queued like a tray click; signal SceneApplied(name, ok)
+$D.ActiveScene
+$D.PowerProfiles                 # profiles the firmware offers
+$D.SetPowerProfile performance   # signal PowerProfileChanged(profile)
+$D.PowerProfile
+$D.Sensors                       # Home's Live rows: cpu, fans, storage, power, igpu, battery
+$D.SensorValues                  # the same as numbers: cpu_temp_c, fan1_rpm, battery_percent, …
+```
+
+Any process of your user can call it, like `centurion-gamemode`; root work still asks polkit as usual.
 
 ## 11. When something goes wrong
 

@@ -4,18 +4,21 @@ set -euo pipefail
 PREFIX=${PREFIX:-/usr}
 UNITDIR=${UNITDIR:-$PREFIX/lib/systemd/system}
 if [[ -d /run/systemd/system ]]; then
-    systemctl disable nvcurve-autoload.service centurion-tune.service centurion-intel-uv.service centurion-intel-uv-daemon.service centurion-boot-guard.service 2>/dev/null || true
+    systemctl disable nvcurve-autoload.service centurion-tune.service centurion-intel-uv.service centurion-boot-guard.service 2>/dev/null || true
     systemctl disable --now centurion-netguard.service 2>/dev/null || true
+    systemctl disable --now centurion-intel-uv-daemon.service 2>/dev/null || true
     systemctl disable centurion-calibrate-boot.service 2>/dev/null || true
 else
-    rc-update del nvcurve-autoload default 2>/dev/null || true
-    rc-update del centurion-tune boot 2>/dev/null || true
-    rc-update del centurion-intel-uv boot 2>/dev/null || true
-    rc-update del centurion-intel-uv-daemon default 2>/dev/null || true
-    rc-update del centurion-boot-guard 2>/dev/null || true
+    # -a: every runlevel, wherever the service was added.
+    rc-update -a del nvcurve-autoload 2>/dev/null || true
+    rc-update -a del centurion-tune 2>/dev/null || true
+    rc-update -a del centurion-intel-uv 2>/dev/null || true
+    rc-service centurion-intel-uv-daemon stop 2>/dev/null || true
+    rc-update -a del centurion-intel-uv-daemon 2>/dev/null || true
+    rc-update -a del centurion-boot-guard 2>/dev/null || true
     rc-service centurion-netguard stop 2>/dev/null || true
-    rc-update del centurion-netguard default 2>/dev/null || true
-    rc-update del centurion-calibrate-boot default 2>/dev/null || true
+    rc-update -a del centurion-netguard 2>/dev/null || true
+    rc-update -a del centurion-calibrate-boot 2>/dev/null || true
 fi
 # Put every tuned value back before the helper disappears.
 if [[ -x "$PREFIX/libexec/centurion/tune-helper" ]]; then

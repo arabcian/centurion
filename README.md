@@ -29,7 +29,7 @@ Tabs appear only when the hardware, driver or tool behind them exists.
 | Tab | What you get |
 |---|---|
 | **Home** | Power profile cards (Quiet / Balanced / Performance / Custom). *Hardware* box (system, kernel, CPU, GPU, RAM, BIOS, EC firmware) and *Live* box (CPU per CCD, dGPU state, iGPU, fans, NVMe, power rails, battery). *Device* box: battery charge mode, GPU mode (MUX), iGPU-only mode, Panel Overdrive, Fn lock, camera, USB charging when off (and on battery), white keyboard backlight level, Instant Boot, Custom in Fn+Q, Flip to start, Super-key lock, touchpad lock — each only where the firmware reports it. **Device info…** shows the model series, firmware interfaces and capability list. Fans: per-fan Auto / Max / set, **Turbo fan** (EC full speed), custom **Fan curve** editor with a goal-based **assistant** (quick, or measured under load). **Memory timings** viewer and BIOS editor. Boot-guard status with *Resume boot presets* / *Resume login scene*. |
-| **Scenes** | One name for the whole machine: power profile, firmware limits, CPU curve (Ryzen / Intel), NVIDIA curve, Optimizations preset, keyboard lighting (Spectrum or 4-zone), white keyboard light, panel Over Drive, panel refresh rate, fan boost, Custom-mode fan curve, a run command, and the screen brightness (applied last, after the command). AC / battery auto-switching, pause switch, game-start scene (Lutris / Steam hooks, or Heroic / Bottles detected automatically), export / import. |
+| **Scenes** | One name for the whole machine: power profile, firmware limits, CPU curve (Ryzen / Intel), NVIDIA curve, Optimizations preset, keyboard lighting (Spectrum or 4-zone), white keyboard light, panel Over Drive, panel refresh rate, fan boost, Custom-mode fan curve, a run command, and the screen brightness (applied last, after the command). AC / battery auto-switching, pause switch, game-start scene (Lutris / Steam hooks, or Heroic / Bottles detected automatically), a global **shortcut** per scene (desktop global-shortcuts portal), active scene and power profile **in games** through MangoHud, export / import. |
 | **Firmware** | CPU PL1 / PL2 / PL3 and temperature target, GPU cTGP, Dynamic Boost ceiling / floor (written over WMI where the kernel refuses), BIOS CPU overclocking (applied next boot). |
 | **NVIDIA Curve** | Drag-and-edit V/F curve with zoom and pan, core / memory offsets, VRAM clock lock, GPU core clock cap, named profiles, ★ default applied at boot, driver module options, full reset, trial apply. Status: temps (incl. VRAM / hotspot), throttle reasons, PowerMizer. |
 | **Ryzen Curve** *(AMD)* | Per-core and all-core Curve Optimizer (CPPC-ranked, CCD-aware layout), profiles; *Reset* clears both. Trial apply. Live limit reasons (PPT / TDC / EDC / THM from the SMU PM table, with ryzen_smu). |
@@ -37,7 +37,7 @@ Tabs appear only when the hardware, driver or tool behind them exists.
 | **AMD GPU** *(amdgpu)* | Overdrive clocks / voltage per GPU generation, power limit, fan curve (RDNA3+), power profile. Every Apply is a **trial** — reverts in 20 s unless you press *Keep*; one-click undervolt steps. |
 | **Optimizations** | 100+ documented CPU / memory / scheduler / storage / network / device / power knobs in 8 groups, built-in presets, **Autotune**, game launch hooks (Lutris, Steam), boot-parameter advisor, *Restore originals* and *↺ Return to boot-guard defaults*. |
 | **Lighting** *(Spectrum, or 4-zone RGB)* | Spectrum keyboards: per-key RGB on a drawing of your own keyboard, firmware effects, 6 hardware profiles, brightness, lid logo, accent lights. 4-zone RGB keyboards: effect, speed, brightness and four zone colours. |
-| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
+| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches, suggestions for wake sources that keep waking the machine with the lid closed) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
 
 The **tray menu** carries the everyday actions: Scene (with auto-switch and
 pause), Power Profile, CPU Curve, CPU Undervolt (Intel), GPU Curve,
@@ -55,13 +55,22 @@ tab (which does wake it).
 |---|---|
 | `centurion [--window] [--version]` | GUI + tray (`--window` opens the window; a second launch just shows the first) |
 | `nvcurve read\|write\|profile\|memlock\|sensors\|powermizer\|reset-all` | NVIDIA V/F curve CLI (generic; not Legion-gated) |
-| `centurion-gamemode PRE\|POST\|RUN\|WRAP\|APPLY\|UNDERVOLT\|SCENE\|RESTORE\|STATUS\|APPROVE` | Game hook for Lutris / Steam, scripted scene switching |
+| `centurion-gamemode PRE\|POST\|RUN\|WRAP\|APPLY\|UNDERVOLT\|SCENE\|RESTORE\|STATUS\|OVERLAY\|APPROVE` | Game hook for Lutris / Steam, scripted scene switching, MangoHud line (`OVERLAY`) |
 | `centurion-autotune <powersave\|gaming\|throughput\|desktop>`, `probe`, `audit [--fix]`, `report [SEC]` | Autotune presets, disk probe, safety audit, memory report |
 | `centurion-calibrate [--budget MIN] [--all] [--depth lean\|deep\|max] [--scene NAME] [--list] [--show] [--restore]`, `--verify NAME`, `--field LOG...`, `--gpu-coupling`, `--schedule-boot` | Measure this machine's knobs (the "machine signature"), check presets, learn from real games |
 | `centurion-boot-guard status\|reset\|…` | Boot-crash protection state |
 | `centurion-netguard daemon\|status\|list\|whois IP` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
 | `centurion-display list\|set-refresh HZ\|brightness\|set-brightness PCT` | Internal panel refresh rate (KDE kscreen-doctor, wlr-randr or xrandr) and backlight brightness (sysfs, logind SetBrightness or brightnessctl) as the user — used by Scenes |
+
+## D-Bus API
+
+While Centurion runs it answers on the session bus as `com.centurion.Centurion`
+(object `/com/centurion/Centurion`): `ListScenes`, `ActiveScene`, `ApplyScene`,
+`PowerProfiles`, `PowerProfile`, `SetPowerProfile`, `Sensors` (text rows),
+`SensorValues` (numbers, unit in the key: `cpu_temp_c`, `fan1_rpm`, `battery_percent`, …), and the signals
+`SceneApplied` / `PowerProfileChanged` — for KDE Connect, Home Assistant, Stream
+Deck or your own scripts. Examples in the [Handbook](docs/HANDBOOK.md#10-command-line-cheat-sheet).
 
 ## Boot services
 
@@ -77,7 +86,7 @@ default / preset in the GUI.
 | `centurion-intel-uv` / `centurion-intel-uv-daemon` | Intel undervolt at boot / resume, or with AC switching (Intel only) | boot / default |
 
 ```sh
-rc-update add centurion-boot-guard default       # OpenRC
+rc-update add centurion-boot-guard boot          # OpenRC
 systemctl enable centurion-boot-guard            # systemd
 ```
 
@@ -172,6 +181,29 @@ detects the old install and migrates it automatically:
 
 Afterwards log out and back in once.
 
+### Arch Linux (AUR)
+
+PKGBUILDs for `centurion` (release tag) and `centurion-git` are in
+`packaging/arch/`. They install the same files as `install.sh` (portable build:
+no native CPU tuning, no PGO) with polkit security level 3, and enable no
+service — the install message lists them. Another level: copy
+`/usr/share/polkit-1/rules.d/49-centurion.rules` to `/etc/polkit-1/rules.d/`
+and edit `SECURITY_LEVEL` there (the `/etc` copy wins).
+
+### Fedora (COPR)
+
+`packaging/fedora/centurion.spec` builds from the `./make-dist.sh` tarball
+(crates vendored, so it builds offline as COPR requires); same layout and
+security level as the AUR package.
+
+### Packaging for another distribution
+
+Build (`cargo build --release`, `cmake -S gui -B gui/build …`), then
+`DESTDIR=… bash packaging/install-files.sh` installs the file layout
+`install.sh` uses; see the variables at the top of that script. The GUI's
+`CENTURION_HELPER_DIR` and `LIBEXEC` must be the same directory (polkit
+`exec.path`).
+
 ### Gentoo
 
 ```sh
@@ -186,7 +218,9 @@ Copy the tarball into your `DISTDIR` and emerge the ebuild from
 1. Log out and back in once (keyboard-lighting udev rule and polkit rules take effect).
 2. Start **Centurion** from the menu — it lives in the tray and
    starts at login. Missing tray → the window opens instead.
-3. Enable the [boot services](#boot-services) you want.
+3. The first time the window opens, a setup wizard shows what was found, the
+   commands for the [boot services](#boot-services), a first backup and a first
+   scene (all skippable; Home → *Setup wizard…* opens it again).
 
 ## Quick start
 
@@ -316,7 +350,7 @@ gui/                    Qt6 GUI + tray (C++20)
 crates/centurion-helpers/     root helpers, centurion-gamemode / autotune / calibrate / boot-guard / netguard
 crates/centurion-spectrum/    Spectrum keyboard protocol (hidraw)
 crates/nvcurve/         NVIDIA V/F curve core, CLI and root helper (NvAPI + NVML via dlopen)
-packaging/              OpenRC / systemd units, polkit, udev, Gentoo ebuild
+packaging/              OpenRC / systemd units, polkit, udev, install-files.sh, Gentoo ebuild, AUR, Fedora spec
 docs/                   HANDBOOK, TECHNICAL, AUTOTUNE
 ```
 
