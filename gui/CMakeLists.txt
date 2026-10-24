@@ -110,9 +110,11 @@ if(CENTURION_NATIVE)
     target_compile_options(centurion PRIVATE -march=native -mtune=native)
 endif()
 if(CENTURION_HARDEN)
-    include(CheckPIESupported)
-    check_pie_supported(LANGUAGES CXX)
-    set_property(TARGET centurion PROPERTY POSITION_INDEPENDENT_CODE ON)
+    # PIE via -pie on the link only. POSITION_INDEPENDENT_CODE put -fPIE on the link line, and with
+    # LTO the final codegen followed it: copy relocations of Qt data (staticMetaObject, ...), which
+    # Qt6 does not support -- the GUI crashed in the QApplication constructor. The objects are
+    # already -fPIC (Qt6::Core adds it), which a PIE executable accepts.
+    target_link_options(centurion PRIVATE -pie)
     target_compile_options(centurion PRIVATE
         -fstack-protector-strong -fstack-clash-protection
         $<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3>)

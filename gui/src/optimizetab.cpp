@@ -1710,15 +1710,51 @@ void OptimizeTab::runAutotune() {
     p->closeWriteChannel();
 }
 
-// Mirror of centurion_helpers::autotune::Weights::for_goal (only used to prefill the editor).
-static QList<double> defaultWeights(const QString &goal) {
+static const char *const WEIGHT_KEYS[] = {"latency", "throughput", "power", "footprint", "stability", "storage", "load", "heat", "budget"};
+static constexpr int N_WEIGHTS = int(sizeof(WEIGHT_KEYS) / sizeof(WEIGHT_KEYS[0]));
+
+// Fallback copy of centurion_helpers::autotune::Weights::for_goal, used only when tune-helper cannot
+// answer "autotune_defaults" (not installed yet, too old, timed out).
+static QList<double> fallbackWeights(const QString &goal) {
     if (goal == QLatin1String("gaming")) return {1.0, 0.6, 0.15, 0.4, 1.0, 0.5, 0.6, 0.5, 1.0};
     if (goal == QLatin1String("throughput")) return {0.2, 1.0, 0.2, 0.5, 1.0, 0.7, 0.7, 0.6, 0.0};
     if (goal == QLatin1String("powersave")) return {0.2, 0.1, 1.0, 0.5, 1.0, 0.4, 0.2, 0.0, 0.0};
     return {0.7, 0.3, 0.7, 0.6, 1.0, 0.6, 0.4, 0.15, 0.0};
 }
-static const char *const WEIGHT_KEYS[] = {"latency", "throughput", "power", "footprint", "stability", "storage", "load", "heat", "budget"};
-static constexpr int N_WEIGHTS = int(sizeof(WEIGHT_KEYS) / sizeof(WEIGHT_KEYS[0]));
+
+// The goal's default weights as the helper defines them (read-only op, no authentication; asked once
+// per run of the GUI). Keys the helper does not send keep the fallback value.
+static QList<double> defaultWeights(const QString &goal) {
+    static QJsonObject goals;
+    static QStringList keys;
+    static bool asked = false;
+    if (!asked) {
+        asked = true;
+        QProcess p;
+        p.start(helperPath(), {});
+        if (p.waitForStarted(2000)) {
+            p.write(R"({"op":"autotune_defaults"})");
+            p.closeWriteChannel();
+            if (p.waitForFinished(3000) && p.exitStatus() == QProcess::NormalExit) {
+                const QJsonObject r = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
+                if (r.value(QStringLiteral("ok")).toBool()) {
+                    goals = r.value(QStringLiteral("goals")).toObject();
+                    for (const auto &k : r.value(QStringLiteral("keys")).toArray()) keys << k.toString();
+                }
+            } else {
+                p.kill();
+                p.waitForFinished(500);
+            }
+        }
+    }
+    QList<double> out = fallbackWeights(goal);
+    const QJsonArray row = goals.value(goal).toArray();
+    for (int i = 0; i < N_WEIGHTS; ++i) {
+        const qsizetype j = keys.indexOf(QString::fromLatin1(WEIGHT_KEYS[i]));
+        if (j >= 0 && j < row.size() && row.at(j).isDouble()) out[i] = row.at(j).toDouble();
+    }
+    return out;
+}
 
 QJsonObject OptimizeTab::autotuneWeights(const QString &goal) const {
     const QByteArray raw = QSettings().value(QStringLiteral("autotune/weights/") + goal).toByteArray();
