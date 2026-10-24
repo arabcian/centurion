@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network Svg)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network Svg DBus)
 
 # Where the root helpers live. Must match the polkit exec.path annotations.
 set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root helper directory")
@@ -52,7 +52,13 @@ add_executable(centurion
     src/curvepage.cpp    src/curvepage.h
     src/driftwatch.cpp   src/driftwatch.h
     src/sleeppage.cpp    src/sleeppage.h
+    src/sleepadvice.cpp  src/sleepadvice.h
+    src/mangohud.cpp     src/mangohud.h
+    src/dbusapi.cpp      src/dbusapi.h
+    src/shortcuts.cpp    src/shortcuts.h
     src/fanassist.cpp    src/fanassist.h
+    src/notify.cpp       src/notify.h
+    src/firstrunwizard.cpp src/firstrunwizard.h
 )
 # Theme glyphs (checkbox tick, spin/combo chevrons), @2x for HiDPI. Compiled
 # with qt_add_resources, not AUTORCC: CMake's Makefile generator runs the
@@ -159,7 +165,7 @@ elseif(CENTURION_PGO STREQUAL "use")
 elseif(NOT CENTURION_PGO STREQUAL "")
     message(FATAL_ERROR "CENTURION_PGO must be '', 'generate' or 'use'")
 endif()
-target_link_libraries(centurion PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg ${CMAKE_DL_LIBS})
+target_link_libraries(centurion PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg Qt6::DBus ${CMAKE_DL_LIBS})
 
 # Lighting tab key legends from the active XKB layout (TR-Q İ/Ş/Ğ…). Optional:
 # without it the keyboard drawing uses fixed US legends.
@@ -192,4 +198,25 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-gui-tests PRIVATE Qt6::Widgets)
     target_compile_definitions(centurion-gui-tests PRIVATE QT_NO_KEYWORDS)
     add_test(NAME int64spinbox COMMAND centurion-gui-tests)
+    add_executable(centurion-sleepadvice-test tests/sleepadvice_test.cpp src/sleepadvice.cpp src/sleepadvice.h)
+    target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
+    add_executable(centurion-mangohud-test tests/mangohud_test.cpp src/mangohud.cpp src/mangohud.h)
+    target_link_libraries(centurion-mangohud-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-mangohud-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME mangohud COMMAND centurion-mangohud-test)
+    add_executable(centurion-shortcuts-test tests/shortcuts_test.cpp)
+    target_link_libraries(centurion-shortcuts-test PRIVATE Qt6::Gui Qt6::DBus)
+    target_compile_definitions(centurion-shortcuts-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME shortcuts COMMAND centurion-shortcuts-test)
+    # Notifications against a fake service on a private session bus (skipped without dbus-run-session).
+    find_program(DBUS_RUN_SESSION dbus-run-session)
+    if(DBUS_RUN_SESSION)
+        add_executable(centurion-notify-test tests/notify_test.cpp src/notify.cpp src/notify.h)
+        target_link_libraries(centurion-notify-test PRIVATE Qt6::DBus)
+        target_compile_definitions(centurion-notify-test PRIVATE QT_NO_KEYWORDS)
+        add_test(NAME notify COMMAND ${DBUS_RUN_SESSION} --config-file=${CMAKE_CURRENT_SOURCE_DIR}/tests/dbus-session.conf
+                 -- $<TARGET_FILE:centurion-notify-test>)
+    endif()
 endif()
