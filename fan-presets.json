@@ -1,0 +1,8 @@
+{
+    "presets": [
+        { "name": "Quiet",       "cpu_min": 85, "cpu_max": 89,  "curve": [1, 1, 1, 1, 2, 3, 4, 5, 6, 7] },
+        { "name": "Balanced",    "cpu_min": 85, "cpu_max": 92,  "curve": [1, 1, 1, 2, 3, 4, 5, 6, 7, 8] },
+        { "name": "Performance", "cpu_min": 85, "cpu_max": 95,  "curve": [1, 1, 2, 3, 4, 5, 6, 7, 8, 9] },
+        { "name": "Max",         "cpu_min": 85, "cpu_max": 100, "curve": [1, 1, 2, 3, 4, 6, 8, 9, 10, 10] }
+    ]
+}
