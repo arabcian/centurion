@@ -3241,6 +3241,17 @@ mod tests {
     }
 
     #[test]
+    fn preferred_core_scheduling_is_not_overturned_by_the_ballast_bias() {
+        // Load-phase rows logged before sched.itmt left the plan: the ballast's spinners took the
+        // preferred cores, so "0" measured better. Such rows must not switch preferred cores off.
+        let p = gaining_signature(&[("sched.itmt", "1", "0"), ("vm.page_lock_unfairness", "5", "3")], 0.15);
+        for g in [Goal::Gaming, Goal::Throughput, Goal::Desktop] {
+            let (d, _, notes) = decide_weighted(g, &p, Weights::for_goal(g));
+            assert_eq!(get(&d, "sched.itmt"), Some(&json!("1")), "{g:?}: {notes:?}");
+        }
+    }
+
+    #[test]
     fn the_chosen_dirty_window_is_context_of_the_joint_pass() {
         let p = legion();
         let mut r = Rules { p: &p, g: Goal::Gaming, w: Weights::for_goal(Goal::Gaming), out: Vec::new(), scores: Map::new(), notes: Vec::new(), joint: None,
