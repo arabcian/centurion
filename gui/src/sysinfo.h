@@ -5,6 +5,7 @@
 // asynchronously (see HomeTab) so the GUI thread never blocks on it.
 #include <QList>
 #include <QPair>
+#include <QMap>
 #include <QString>
 #include <optional>
 
@@ -48,11 +49,15 @@ Opt systemInfo();
 
 // Live (cheap sysfs reads)
 Opt cpuTemp();
+std::optional<double> cpuTempC();  // same sensor as cpuTemp(), as a number
 Opt fans();
 Opt storage();
 Opt power();
 Opt igpu();
 Opt battery();
+/// The same readings as numbers (D-Bus SensorValues): cpu_temp_c, fanN_rpm, nvmeN_temp_c, power_<hwmon>_w,
+/// igpu_temp_c, battery_percent, battery_power_w, battery_health_percent — each only when present.
+QMap<QString, double> sensorValues();
 
 /// One battery's numbers in watts / watt-hours (charge_* × voltage where the driver reports µAh).
 struct BatteryState {

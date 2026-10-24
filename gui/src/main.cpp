@@ -9,6 +9,7 @@
 // ask the running copy to show its window. A second launch with --window
 // raises the running one, without it exits quietly; if the lock cannot be
 // taken for any other reason the program refuses to start.
+#include "dbusapi.h"
 #include "mainwindow.h"
 #include "sysinfo.h"
 #include "theme.h"
@@ -336,6 +337,7 @@ int main(int argc, char **argv) {
                      qPrintable(server.errorString()));
     }
 
+    (new DbusApi(&win))->registerOnBus();
     installTray(&win, withWindow);
     if (withWindow) win.show();
 

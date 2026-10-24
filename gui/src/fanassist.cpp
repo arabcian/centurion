@@ -48,11 +48,11 @@ QVector<int> FanAssistDialog::pendingBackup() {
 
 void FanAssistDialog::clearBackup() { QFile::remove(backupFile()); }
 
-/// Non-decreasing, 1..10, hottest step at least 7 (legion-profile-helper's thermal floor).
+/// Non-decreasing, 1..10, three hottest steps at least 3 / 5 / 7 (legion-profile-helper's thermal floor).
 static QVector<int> legal(QVector<int> lv) {
     for (int &x : lv) x = std::clamp(x, 1, 10);
     for (int i = 1; i < lv.size(); ++i) lv[i] = std::max(lv[i], lv[i - 1]);
-    if (lv.size() == 10) lv[9] = std::max(lv[9], 7);
+    if (lv.size() == 10) { lv[7] = std::max(lv[7], 3); lv[8] = std::max(lv[8], 5); lv[9] = std::max(lv[9], 7); }
     return lv;
 }
 

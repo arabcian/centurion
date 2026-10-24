@@ -77,6 +77,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // Curve stability: built now, its guard reacts to new kernel errors with the window hidden.
     auto *curves = new CurvePage;
     connect(curves, &CurvePage::alert, this, &HealthTab::alert);
+    connect(curves, &CurvePage::curveReset, this, &HealthTab::curveReset);
     connect(this, &HealthTab::fault, curves, &CurvePage::onFault);
     sub->addTab(curves, QStringLiteral("Curve stability"));
     sub->addTab(new SleepPage, QStringLiteral("Sleep"));
@@ -84,9 +85,9 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     systools::addPages(sub);
     sub->addTab(new KlogPage, QStringLiteral("Kernel log"));
     // Backup: Centurion configuration + system image (tar). Idle until a button is pressed.
-    auto *backup = new BackupPage;
-    connect(backup, &BackupPage::alert, this, &HealthTab::alert);
-    sub->addTab(backup, QStringLiteral("Backup"));
+    backup_ = new BackupPage;
+    connect(backup_, &BackupPage::alert, this, &HealthTab::alert);
+    sub->addTab(backup_, QStringLiteral("Backup"));
     auto *root = new QVBoxLayout(monitor);
     root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);

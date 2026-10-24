@@ -46,7 +46,7 @@ QIcon appIcon(int size) {
     return icon;
 }
 
-Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(new QMenu) {
+Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(new QMenu), notifier_(new Notifier(this)) {
     setToolTip("Centurion");
     // Rebuilt on every open: profiles can change behind our back.
     connect(menu_, &QMenu::aboutToShow, this, &Tray::rebuild);
@@ -58,6 +58,24 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
 
     // Hardware/driver faults found by the Health tab's background scan.
     connect(win_->health(), &HealthTab::alert, this, [this](const QString &t, const QString &m) { notify(t, m); });
+    // Fan guard dropped fixed fan speeds after a temperature spike.
+    connect(win_->home(), &HomeTab::alert, this, [this](const QString &t, const QString &m) { notify(t, m); });
+    // Curve guard reset a curve after an error: offer to put the profile back (same path as the tray menu).
+    connect(win_->health(), &HealthTab::curveReset, this, [this](const QString &group, const QString &profile, const QString &m) {
+        const bool gpu = group == QLatin1String("gpu");
+        const QString title = gpu ? QStringLiteral("GPU curve guard") : QStringLiteral("CPU curve guard");
+        if (profile.isEmpty()) { notify(title, m); return; }
+        notify(title, m + QStringLiteral("\nWas: '") + profile + '\'', {{QStringLiteral("Undo"), [this, gpu, title, profile] {
+            if (!claimCooldown()) return;
+            if (gpu) {
+                if (NvidiaTab *nv = win_->nvidia()) { nv->applyNamedProfile(profile); notify(title, "Applying profile '" + profile + "'…"); }
+                return;
+            }
+            win_->scenes()->applyCpuProfile(profile, false, [this, title, profile](bool ok, const QString &r) {
+                notify(title, ok ? "Profile '" + profile + "' applied again." : "Profile '" + profile + "': " + r);
+            });
+        }}});
+    });
 
     // Heroic / Bottles games noticed by the launcher watch.
     if (LauncherWatch *lw = win_->launchers()) {
@@ -70,12 +88,13 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     }
 
     if (DriftWatch *dw = win_->drift()) {
-        connect(dw, &DriftWatch::drift, this, [this](const QStringList &lines, const QString &culprits) {
+        connect(dw, &DriftWatch::drift, this, [this, dw](const QStringList &lines, const QString &culprits) {
             if (lines.isEmpty()) return;
             notify(QStringLiteral("Settings changed outside Centurion"),
                    lines.mid(0, 3).join('\n') + (lines.size() > 3 ? QStringLiteral("\n…") : QString())
                        + (culprits.isEmpty() ? QString() : QStringLiteral("\nRunning: ") + culprits)
-                       + QStringLiteral("\nOptimizations tab → Re-apply."));
+                       + QStringLiteral("\nOptimizations tab → Re-apply."),
+                   {{QStringLiteral("Re-apply"), [dw] { dw->reapply(); }}});
         });
     }
 
@@ -86,10 +105,11 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
         if (win_->isVisible() && win_->isActiveWindow()) return;
         // Informational messages stay silent, except the ones that say automatic switching is NOT doing its job
         // (power source flapping, login apply skipped): nobody is looking at the tab when those happen.
-        if (n.isEmpty()) { if (!ok && !log.isEmpty()) notify(QStringLiteral("Scenes"), log.join('\n')); return; }
+        const QList<NotifyAction> details{{QStringLiteral("Details"), [this] { win_->showTab(QStringLiteral("Scenes")); }}};
+        if (n.isEmpty()) { if (!ok && !log.isEmpty()) notify(QStringLiteral("Scenes"), log.join('\n'), details); return; }
         QStringList bad;
         for (const QString &l : log) if (l.startsWith(QStringLiteral("✗"))) bad << l.mid(2);
-        notify("Scene: " + n, ok ? QStringLiteral("Applied.") : bad.join('\n'));
+        notify("Scene: " + n, ok ? QStringLiteral("Applied.") : bad.join('\n'), ok ? QList<NotifyAction>() : details);
     });
     connect(eng, &SceneEngine::activeSceneChanged, this, [this](const QString &n, bool game) {
         setToolTip("Centurion — scene: " + n);
@@ -115,8 +135,9 @@ bool Tray::claimCooldown() {
     return true;
 }
 
-void Tray::notify(const QString &t, const QString &m) {
-    if (supportsMessages()) showMessage(t, m, icon(), 2500);
+void Tray::notify(const QString &t, const QString &m, const QList<NotifyAction> &actions) {
+    // The title is the topic: a newer message with the same title replaces the older one.
+    notifier_->notify(t, t, m, actions, 2500, [this, t, m] { if (supportsMessages()) showMessage(t, m, icon(), 2500); });
 }
 
 static void disabledEntry(QMenu *m, const QString &t) { m->addAction(t)->setEnabled(false); }

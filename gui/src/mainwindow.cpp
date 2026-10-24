@@ -11,13 +11,18 @@
 #include "ryzentab.h"
 #include "scenes.h"
 #include "scenestab.h"
+#include "shortcuts.h"
 #include "sysinfo.h"
 #include "tray.h"
 #include "zone4tab.h"
 #include "healthtab.h"
 #include "launcherwatch.h"
 #include "driftwatch.h"
+#include "firstrunwizard.h"
+#include "mangohud.h"
+#include "platformprofile.h"
 #include "trialbar.h"
+#include <QApplication>
 #include <QCloseEvent>
 #include <QLabel>
 #include <QTabBar>
@@ -109,11 +114,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     // The dGPU can come back after start-up (iGPU-only → Default, "Bring NVIDIA back").
     connect(home_, &HomeTab::dgpuRestored, this, &MainWindow::ensureNvidiaTab);
+    connect(home_, &HomeTab::setupWizardRequested, this, [this] { FirstRunWizard::showFor(this); });
 
     scenes_ = new SceneEngine(this);
     home_->setSceneEngine(scenes_);
     optimize_->setSceneEngine(scenes_);
+    shortcuts_ = new GlobalShortcuts(scenes_, this);
+    shortcuts_->sync();  // talks to the portal only when a scene has a shortcut
     tabs_->insertTab(scenesAt, new ScenesTab(this), "Scenes");
+    // MangoHud overlay line: kept in a file the overlay's `exec=cat` reads (see mangohud.h).
+    connect(scenes_, &SceneEngine::finished, this, &MainWindow::updateOverlay);
+    connect(scenes_, &SceneEngine::activeSceneChanged, this, &MainWindow::updateOverlay);
+    connect(&pp::Watcher::instance(), &pp::Watcher::changed, this, &MainWindow::updateOverlay);
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [] { if (const QString f = mangohud::overlayFile(); !f.isEmpty()) QFile::remove(f); });
+    updateOverlay();
     // A scene (ours or a game's) that sets a curve ends a running trial: otherwise the trial's time-out
     // would reset the scene's curve to stock.
     auto endTrials = [this](const QString &name) {
@@ -166,6 +180,21 @@ void MainWindow::showEvent(QShowEvent *e) {
     mark_->adjustSize();  // the style sheet arrives after the constructor (theme.h)
     mark_->move(10, std::max(0, (tabs_->tabBar()->height() - mark_->height()) / 2));
     mark_->raise();
+    // First time the window opens (not the tray-only start): the setup wizard, once per user.
+    if (!wizardChecked_) { wizardChecked_ = true; QTimer::singleShot(0, this, [this] { FirstRunWizard::maybeShow(this); }); }
+}
+
+void MainWindow::updateOverlay() {
+    mangohud::updateOverlayFile(mangohud::overlayLine(scenes::activeScene(),
+                                                      HomeTab::profileLabel(pp::Watcher::instance().current().value_or(QString()))));
+}
+
+void MainWindow::showTab(const QString &label) {
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (tabs_->tabText(i) == label) { tabs_->setCurrentIndex(i); break; }
+    showNormal();
+    raise();
+    activateWindow();
 }
 
 void MainWindow::hideEvent(QHideEvent *e) {

@@ -62,6 +62,10 @@ QString CurvePage::currentState(const QString &group) {
     return st;
 }
 
+static QString profileOf(const QString &state) {
+    return state.startsWith(QLatin1String("profile:")) ? state.mid(8) : QString();
+}
+
 static QString pretty(const QString &state) {
     if (state.startsWith(QLatin1String("profile:"))) return "'" + state.mid(8) + "'";
     if (state == QLatin1String("custom")) return QStringLiteral("unsaved edits (Apply in the tab)");
@@ -257,9 +261,9 @@ void CurvePage::onFault(const QJsonObject &e) {
         if (gpuReset_->isChecked() && !gone && nowMs - lastGpuReset_ > RESET_BURST_MS && nvidiaUsable()) {
             lastGpuReset_ = nowMs;
             privileged::run(privileged::helperPath(QStringLiteral("nvcurve-root-helper")), QJsonObject{{"op", "reset_gpu_curve"}}, this,
-                            [this, title](const privileged::Result &r) {
-                                Q_EMIT alert(QStringLiteral("GPU curve guard"), r.ok() ? title + QStringLiteral("\nGPU curve reset to stock.")
-                                                                                       : QStringLiteral("Could not reset the GPU curve: ") + r.message());
+                            [this, title, st](const privileged::Result &r) {
+                                if (r.ok()) Q_EMIT curveReset(QStringLiteral("gpu"), profileOf(st), title + QStringLiteral("\nGPU curve reset to stock."));
+                                else Q_EMIT alert(QStringLiteral("GPU curve guard"), QStringLiteral("Could not reset the GPU curve: ") + r.message());
                                 if (isVisible()) recompute();
                             }, 120000);
             msg += QStringLiteral(" Resetting it to stock…");
@@ -277,9 +281,9 @@ void CurvePage::onFault(const QJsonObject &e) {
             const bool intel = sysinfo::isIntel();
             privileged::run(privileged::helperPath(intel ? QStringLiteral("intel-uv-helper") : QStringLiteral("ryzen-co-helper")),
                             QJsonObject{{"op", "reset"}}, this,
-                            [this](const privileged::Result &r) {
-                                Q_EMIT alert(QStringLiteral("CPU curve guard"), r.ok() ? QStringLiteral("CPU curve reset to stock.")
-                                                                                       : QStringLiteral("Could not reset the CPU curve: ") + r.message());
+                            [this, st](const privileged::Result &r) {
+                                if (r.ok()) Q_EMIT curveReset(QStringLiteral("cpu"), profileOf(st), QStringLiteral("CPU curve reset to stock."));
+                                else Q_EMIT alert(QStringLiteral("CPU curve guard"), QStringLiteral("Could not reset the CPU curve: ") + r.message());
                                 if (isVisible()) recompute();
                             }, 120000);
             msg += QStringLiteral(" Resetting it to stock…");

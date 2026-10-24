@@ -8,6 +8,7 @@ class HomeTab;
 class LauncherWatch;
 class DriftWatch;
 class SceneEngine;
+class GlobalShortcuts;
 class IntelTab;
 class LightingTab;
 class NvidiaTab;
@@ -29,6 +30,7 @@ public:
     FwattrTab *fwattr() const { return fwattr_; }
     LightingTab *lighting() const { return lighting_; }  // nullptr without a Spectrum keyboard
     SceneEngine *scenes() const { return scenes_; }
+    GlobalShortcuts *shortcuts() const { return shortcuts_; }
     HealthTab *health() const { return health_; }
     LauncherWatch *launchers() const { return launchers_; }
     DriftWatch *drift() const { return drift_; }
@@ -38,6 +40,10 @@ public:
     /// Set by the tray's Quit: closeEvent then really closes instead of hiding.
     void setForceQuit(bool v) { forceQuit_ = v; }
     void setHideOnClose(bool v) { hideOnClose_ = v; }
+    /// Shows (and raises) the window on the tab with this label.
+    void showTab(const QString &label);
+    /// Rewrites the MangoHud overlay file (active scene · power profile), or removes it when the overlay is off.
+    void updateOverlay();
 
 Q_SIGNALS:
     void nvidiaTabAdded();
@@ -62,8 +68,9 @@ private:
     FwattrTab *fwattr_ = nullptr;
     LightingTab *lighting_ = nullptr;
     SceneEngine *scenes_;
+    GlobalShortcuts *shortcuts_;
     HealthTab *health_;
     LauncherWatch *launchers_ = nullptr;
     DriftWatch *drift_ = nullptr;
-    bool forceQuit_ = false, hideOnClose_ = false;
+    bool forceQuit_ = false, hideOnClose_ = false, wizardChecked_ = false;
 };

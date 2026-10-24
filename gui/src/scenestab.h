@@ -18,6 +18,9 @@ class ScenesTab : public QWidget {
     Q_OBJECT
 public:
     explicit ScenesTab(MainWindow *win);
+    /// What *Capture current* stores: the writable firmware attributes as they read now. `wmiUnread`: the
+    /// GPU cTGP / boost values (WMI) were not read back this session, so they are missing.
+    static QMap<QString, int> firmwareSnapshot(MainWindow *win, bool *wmiUnread = nullptr);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -71,9 +74,14 @@ private:
     class QSpinBox *screenBright_ = nullptr;   // 0 = Unchanged, 1-100 %
     QWidget *screenBrightRow_ = nullptr, *screenBrightLabel_ = nullptr;
     void captureScreenBrightness();
+    class QKeySequenceEdit *shortcut_;
+    QLabel *shortcutNote_;
+    QPushButton *shortcutConfigure_;
+    void updateShortcutNote();
     QPushButton *save_, *apply_, *dup_, *del_;
     QCheckBox *auto_;
     QCheckBox *resume_ = nullptr;
+    QCheckBox *mangohud_ = nullptr;  // only where MangoHud is installed
     class QPushButton *pause_ = nullptr;
     QComboBox *onAc_, *onBattery_;
     QLabel *power_, *status_, *empty_;

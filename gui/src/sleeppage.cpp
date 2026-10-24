@@ -1,10 +1,12 @@
 #include "sleeppage.h"
 #include "privileged.h"
+#include "sleepadvice.h"
 #include "theme.h"
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonDocument>
@@ -63,6 +65,10 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
     root->addWidget(sleeps_, 2);
     hint_ = muted(QString());
     root->addWidget(hint_);
+    advice_ = new QWidget;
+    new QVBoxLayout(advice_);
+    advice_->layout()->setContentsMargins(0, 0, 0, 0);
+    root->addWidget(advice_);
 
     root->addWidget(new QLabel(QStringLiteral("<b>Wake sources (ACPI)</b>")));
     wake_ = table({QStringLiteral("Device"), QStringLiteral("Sleep state"), QStringLiteral("May wake"), QStringLiteral("Sysfs node")});
@@ -83,12 +89,16 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
             fillWake();
             return;
         }
-        privileged::run(privileged::helperPath(QStringLiteral("tune-helper")), QJsonObject{{"op", "wakeup_set"}, {"device", dev}, {"enabled", on}}, this,
-                        [this, dev](const privileged::Result &r) {
-                            if (!r.ok()) QMessageBox::warning(this, QStringLiteral("Wake sources"), dev + QStringLiteral(": ") + r.message());
-                            fillWake();
-                        });
+        setWake(dev, on);
     });
+}
+
+void SleepPage::setWake(const QString &dev, bool on) {
+    privileged::run(privileged::helperPath(QStringLiteral("tune-helper")), QJsonObject{{"op", "wakeup_set"}, {"device", dev}, {"enabled", on}}, this,
+                    [this, dev](const privileged::Result &r) {
+                        if (!r.ok()) QMessageBox::warning(this, QStringLiteral("Wake sources"), dev + QStringLiteral(": ") + r.message());
+                        refresh();
+                    });
 }
 
 void SleepPage::showEvent(QShowEvent *e) {
@@ -126,6 +136,7 @@ void SleepPage::fillSleeps() {
     if (!f.open(QIODevice::ReadOnly)) {
         hint_->setText(QStringLiteral("No sleep log yet. It is written by the centurion-sleep-log system-sleep hook (installed by install.sh / the ebuild) "
                                       "from the next suspend on."));
+        fillAdvice({});
         return;
     }
     if (f.size() > (1 << 20)) f.seek(f.size() - (1 << 20));
@@ -134,6 +145,7 @@ void SleepPage::fillSleeps() {
         const QJsonObject o = QJsonDocument::fromJson(l).object();
         if (!o.isEmpty()) rows << o;
     }
+    fillAdvice(rows);
     std::reverse(rows.begin(), rows.end());
     double drainSum = 0, hoursSum = 0;
     for (const QJsonObject &o : rows.mid(0, MAX_ROWS)) {
@@ -196,4 +208,52 @@ void SleepPage::fillWake() {
     QStringList l;
     for (const auto &[n, name] : top.mid(0, 6)) l << QStringLiteral("%1 ×%2").arg(name.toHtmlEscaped()).arg(n);
     sources_->setText(l.isEmpty() ? QStringLiteral("No wakeup events counted since boot.") : QStringLiteral("Wakeups since boot by source: ") + l.join(QStringLiteral(", ")));
+}
+
+/// Kernel wakeup-source name → the enabled ACPI wake device (/proc/acpi/wakeup) above it, "" if none:
+/// a PCI controller matches by its address, a USB device behind it through its sysfs ancestors.
+static std::function<QString(const QString &)> wakeResolver() {
+    QHash<QString, QString> byNode;  // "0000:00:14.0" → "XHC0"; enabled devices only
+    const QStringList lines = rd(QStringLiteral("/proc/acpi/wakeup"), 64 * 1024).split('\n');
+    for (int i = 1; i < lines.size(); ++i) {
+        const QStringList f = lines.at(i).simplified().split(' ');
+        if (f.size() >= 4 && f.at(2).contains(QLatin1String("enabled"))) byNode.insert(f.at(3).section(':', 1), f.at(0));
+    }
+    QHash<QString, QString> pathOf;  // wakeup-source name → its sysfs path (under the device that owns it)
+    for (const QString &w : QDir(QStringLiteral("/sys/class/wakeup")).entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::System))
+        pathOf.insert(rd("/sys/class/wakeup/" + w + "/name").replace(' ', '_'),  // as the sleep hook logs it
+                      QFileInfo("/sys/class/wakeup/" + w).canonicalFilePath());
+    return [byNode, pathOf](const QString &name) -> QString {
+        if (const QString d = byNode.value(name); !d.isEmpty()) return d;
+        for (QString p = pathOf.value(name); p.size() > 1; p = QFileInfo(p).path())
+            if (const QString d = byNode.value(QFileInfo(p).fileName()); !d.isEmpty()) return d;
+        return {};
+    };
+}
+
+void SleepPage::fillAdvice(const QList<QJsonObject> &rowsOldestFirst) {
+    qDeleteAll(advice_->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly));
+    QList<sleepadvice::Sleep> rows;
+    for (const QJsonObject &o : rowsOldestFirst) rows << sleepadvice::parse(o);
+    for (const sleepadvice::Advice &a : sleepadvice::analyse(rows, wakeResolver())) {
+        auto *line = new QWidget;
+        auto *h = new QHBoxLayout(line);
+        h->setContentsMargins(0, 0, 0, 0);
+        const QString cost = a.awakePct > 0
+            ? QStringLiteral("; afterwards the machine spent <b>%1%</b> of the battery awake before sleeping again").arg(a.awakePct, 0, 'f', 1)
+            : QString();
+        auto *l = new QLabel(QStringLiteral("<span style='color:%1'>Suggestion:</span> <b>%2</b> woke the machine %3 times with the lid closed%4. "
+                                            "Switch it off as a wake source?")
+                                 .arg(theme::WARN, a.device.toHtmlEscaped()).arg(a.wakes).arg(cost));
+        l->setWordWrap(true);
+        l->setTextFormat(Qt::RichText);
+        l->setToolTip(QStringLiteral("Counted from the sleep log: sleeps that ended without the lid or the power button among the wake sources. "
+                                     "Battery cost is measured only when the machine was on battery and fell asleep again within %1 h.")
+                          .arg(sleepadvice::MAX_AWAKE_S / 3600));
+        auto *b = new QPushButton(QStringLiteral("Disable %1").arg(a.device));
+        connect(b, &QPushButton::clicked, this, [this, dev = a.device] { setWake(dev, false); });
+        h->addWidget(l, 1);
+        h->addWidget(b, 0, Qt::AlignTop);
+        advice_->layout()->addWidget(line);
+    }
 }

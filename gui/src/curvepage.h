@@ -26,6 +26,9 @@ public:
 
 Q_SIGNALS:
     void alert(const QString &title, const QString &message);
+    /// The guard took a curve back to stock. `group` "gpu" / "cpu"; `profile` the saved profile that was in
+    /// effect ("" when it was unsaved edits or not a profile), so the notification can offer to put it back.
+    void curveReset(const QString &group, const QString &profile, const QString &message);
 
 protected:
     void showEvent(QShowEvent *e) override;

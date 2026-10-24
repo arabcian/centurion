@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QWidget>
 
+class BackupPage;
 class QLabel;
 class QTimer;
 class QTreeWidget;
@@ -20,10 +21,12 @@ class HealthTab : public QWidget {
 public:
     explicit HealthTab(QWidget *parent = nullptr);
     ~HealthTab() override;
+    BackupPage *backup() const { return backup_; }
 
 Q_SIGNALS:
     /// A new error/critical event (not the history found at start-up).
     void alert(const QString &title, const QString &message);
+    void curveReset(const QString &group, const QString &profile, const QString &message);  // CurvePage::curveReset
     /// Every new classified kernel event of this session (not the history found at start-up).
     void fault(const QJsonObject &event);
 
@@ -47,4 +50,5 @@ private:
     bool first_ = true, needsRoot_ = false, busy_ = false;
     int xid_ = 0, gsp_ = 0, mce_ = 0, aerN_ = 0, lockup_ = 0, other_ = 0;
     QString lastRootXid_;  // title of the Xid before an Xid 154
+    BackupPage *backup_ = nullptr;
 };

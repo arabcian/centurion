@@ -493,6 +493,7 @@ void BackupPage::finished(const QString &summary, bool good) {
     refreshList();
     updateFree();
     if (!isVisible()) Q_EMIT alert(QStringLiteral("Backup"), summary);
+    Q_EMIT jobFinished(summary, good);
 }
 
 void BackupPage::run(const QJsonObject &req, bool root, const QString &what, Done done) {

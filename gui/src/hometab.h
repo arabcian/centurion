@@ -3,6 +3,7 @@
 // Port of home_tab.py.
 #include "platformprofile.h"
 #include <QHash>
+#include <QSet>
 #include <QWidget>
 #include <functional>
 #include <optional>
@@ -56,6 +57,10 @@ Q_SIGNALS:
     void profileChanged(const QString &profile);
     /// The NVIDIA dGPU was rescanned and its driver loaded again.
     void dgpuRestored();
+    /// *Setup wizard…* next to Device info.
+    void setupWizardRequested();
+    /// Something the user must hear about even with the window hidden (tray notification).
+    void alert(const QString &title, const QString &message);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -176,6 +181,13 @@ private:
     // 0: with any fan still manual, a fan set to 0 just keeps its last speed.
     void setFanAuto(const QString &key);
     int autoAllChoice_ = 0;
+    // Fan guard: a fixed RPM switches the EC's own curve off. While any fan holds a manual
+    // target below its maximum, the CPU (and EC GPU) temperature is checked every few seconds,
+    // with the window hidden too; at the threshold every fan goes back to Auto.
+    QTimer *fanGuard_ = nullptr;
+    QSet<QString> lowManualFans_;         // fan keys with 0 < target < max
+    void noteFanTarget(const QString &key, int rpm);
+    void checkFanGuard();
     // "Max fans" mode: every fan at its maximum (or EC Full Speed on). The per-fan
     // controls are greyed out behind a banner; one button returns all to Auto.
     QLabel *maxBannerText_ = nullptr;

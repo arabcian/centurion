@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QKeySequence>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -124,6 +125,8 @@ std::optional<Scene> load(const QString &name) {
     if (const double hz = o.value("display").toObject().value("refresh").toDouble(0); hz >= 20 && hz <= 1000) s.refresh = hz;
     if (const int b = o.value("display").toObject().value("brightness").toInt(-1); b >= 1 && b <= 100) s.screenBrightness = b;
     s.command = o.value("command").toString().trimmed();
+    if (const QKeySequence k = QKeySequence::fromString(o.value("shortcut").toString(), QKeySequence::PortableText); !k.isEmpty())
+        s.shortcut = QKeySequence(k[0]).toString(QKeySequence::PortableText);
     return s;
 }
 
@@ -156,6 +159,7 @@ bool save(const Scene &s, QString *err) {
         o["display"] = d;
     }
     if (!s.command.isEmpty()) o["command"] = s.command;
+    if (!s.shortcut.isEmpty()) o["shortcut"] = s.shortcut;
     return writeObject(sceneFile(s.name), o, err);
 }
 
@@ -868,12 +872,12 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
         if (!coall.isDouble() && entries.isEmpty()) { done(false, "profile '" + name + "' has no offsets"); return; }
         auto perCore = [this, entries, done, name] {
             if (entries.isEmpty()) { done(true, "'" + name + "'"); return; }
-            helper("ryzen-co-helper", {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}}}},
+            helper("ryzen-co-helper", {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}, {"profile", name}}}},
                    [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); });
         };
         // All-core first, per-core on top — same order as the tab.
         if (coall.isDouble())
-            helper("ryzen-co-helper", {{"op", "set_coall"}, {"params", QJsonObject{{"value", coall.toInt()}}}},
+            helper("ryzen-co-helper", {{"op", "set_coall"}, {"params", QJsonObject{{"value", coall.toInt()}, {"profile", name}}}},
                    [perCore, done](bool ok, const QString &m) { if (ok) perCore(); else done(false, m); });
         else perCore();
         return;

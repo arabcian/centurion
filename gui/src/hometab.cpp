@@ -45,6 +45,9 @@
 #include <QVBoxLayout>
 
 static constexpr int LIVE_POLL_MS = 2000;
+// Fan guard (see noteFanTarget): temperature at which manual fan targets are dropped, and how often it is checked.
+static constexpr double FAN_GUARD_C = 90.0;
+static constexpr int FAN_GUARD_POLL_MS = 3000;
 // The Home tab never asks the NVIDIA driver anything (no nvidia-smi, no NVML):
 // every query powers the dGPU up or resets its idle timer, so a page that
 // polls keeps the GPU out of D3cold. The GPU row is built from the PCI
@@ -327,6 +330,10 @@ QGroupBox *HomeTab::buildHardwareBox() {
                             "Useful when reporting how Centurion behaves on another model.");
             connect(btn, &QPushButton::clicked, this, [this] { (new DeviceInfoDialog(helperPath(), this))->show(); });
             h->addWidget(btn);
+            auto *wiz = new QPushButton("Setup wizard…");
+            wiz->setToolTip("The first-run wizard again: hardware found, boot services, first backup, first scene, extras.");
+            connect(wiz, &QPushButton::clicked, this, &HomeTab::setupWizardRequested);
+            h->addWidget(wiz);
             g->addWidget(w, row - 1, 1);
         }
     }
@@ -1083,6 +1090,7 @@ void HomeTab::applyDevice(const DeviceSnap &snap) {
         fanWarn_->setVisible(suspect);
     }
 
+    for (int i = 0; i < fans_.size(); ++i) if (targetOf(i) >= 0) noteFanTarget(fans_[i].key, targetOf(i));
     bool allMax = !fans_.isEmpty();
     for (int i = 0; i < fans_.size(); ++i) allMax &= fans_[i].max > 0 && targetOf(i) >= fans_[i].max;
     setMaxMode(allMax || ecFs, ecFs && !allMax);
@@ -1238,6 +1246,7 @@ void HomeTab::clearFullSpeed() {
 
 void HomeTab::setDevice(const QString &key, const QString &value) {
     if (key.startsWith(QLatin1String("fan"))) fanTouched_ = true;  // also for queued writes
+    noteFanTarget(key, value.toInt());  // armed by the request; the next device read corrects it
     // One pkexec at a time: rapid clicks would otherwise stack polkit dialogs
     // and race on the same sysfs file. Later clicks on a key replace earlier ones.
     if (devicePending_ > 0) {
@@ -1271,6 +1280,40 @@ void HomeTab::setDevice(const QString &key, const QString &value) {
         }
         refreshDevice();  // shows what the hardware actually holds, success or not
     });
+}
+
+void HomeTab::noteFanTarget(const QString &key, int rpm) {
+    const auto row = std::find_if(fans_.cbegin(), fans_.cend(), [&](const FanRow &f) { return f.key == key; });
+    if (row == fans_.cend()) return;  // not a fan target (or rows not built yet)
+    if (rpm > 0 && (row->max <= 0 || rpm < row->max)) lowManualFans_.insert(key);
+    else lowManualFans_.remove(key);
+    if (!fanGuard_) {
+        fanGuard_ = new QTimer(this);
+        fanGuard_->setInterval(FAN_GUARD_POLL_MS);
+        connect(fanGuard_, &QTimer::timeout, this, &HomeTab::checkFanGuard);
+    }
+    if (lowManualFans_.isEmpty()) fanGuard_->stop();
+    else if (!fanGuard_->isActive()) fanGuard_->start();
+}
+
+void HomeTab::checkFanGuard() {
+    if (lowManualFans_.isEmpty()) { fanGuard_->stop(); return; }
+    const double cpu = sysinfo::cpuTempC().value_or(0);
+    const int gpu = ecGpuTemp_ > 0 && monoMs() - ecAt_ < 5000 ? ecGpuTemp_ : 0;  // fresh EC reading only
+    const double hottest = std::max(cpu, double(gpu));
+    if (hottest < FAN_GUARD_C) return;
+    // All targets to 0 together: the only state in which the EC takes the fans back.
+    for (const FanRow &f : std::as_const(fans_)) {
+        f.autoBox->setChecked(true);
+        f.maxBox->setChecked(false);
+        f.target->setEnabled(false);
+        f.set->setEnabled(false);
+        setDevice(f.key, "0");
+    }
+    const QString msg = QStringLiteral("%1 reached %2 °C with a fixed fan speed set: all fans are back on Auto (the EC curve).")
+        .arg(gpu > cpu ? QStringLiteral("GPU") : QStringLiteral("CPU")).arg(hottest, 0, 'f', 0);
+    showStatus(msg, 10000);
+    Q_EMIT alert(QStringLiteral("Fans back to Auto"), msg);
 }
 
 // ── Profile buttons ─────────────────────────────────────────────────────────

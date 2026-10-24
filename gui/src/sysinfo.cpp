@@ -281,6 +281,15 @@ Opt cpuTemp() {
     return std::nullopt;
 }
 
+std::optional<double> cpuTempC() {
+    const auto cs = chips();
+    for (const char *want : {"k10temp", "zenpower", "coretemp"})
+        for (const Chip &c : cs)
+            if (c.name == QLatin1String(want))
+                if (auto t = chipTemp(c)) return t;
+    return std::nullopt;
+}
+
 Opt fans() {
     QStringList l;
     for (const Chip &c : chips())
@@ -398,6 +407,37 @@ Opt battery() {
         return joined(b);
     }
     return std::nullopt;
+}
+
+QMap<QString, double> sensorValues() {
+    // The numbers behind the Live rows above, same sources; keys carry their unit.
+    QMap<QString, double> m;
+    const auto cs = chips();
+    for (const char *want : {"k10temp", "zenpower", "coretemp"}) {
+        if (m.contains(QStringLiteral("cpu_temp_c"))) break;
+        for (const Chip &c : cs)
+            if (c.name == QLatin1String(want))
+                if (auto t = chipTemp(c)) { m.insert(QStringLiteral("cpu_temp_c"), *t); break; }
+    }
+    int nvme = 0;
+    for (const Chip &c : cs) {
+        for (const Input &f : c.fan)
+            if (auto rpm = rdInt(f.path); rpm && *rpm >= 0) m.insert(QStringLiteral("fan%1_rpm").arg(f.index), double(*rpm));
+        if (c.name == QLatin1String("nvme")) {
+            ++nvme;
+            if (auto t = chipTemp(c)) m.insert(QStringLiteral("nvme%1_temp_c").arg(nvme), *t);
+        }
+        for (const Input &f : c.power)
+            if (auto uw = rdInt(f.path); uw && *uw > 0 && !m.contains(QStringLiteral("power_%1_w").arg(c.name)))
+                m.insert(QStringLiteral("power_%1_w").arg(c.name), *uw / 1e6);
+        if (c.name == QLatin1String("amdgpu") && !m.contains(QStringLiteral("igpu_temp_c")))
+            if (auto t = chipTemp(c)) m.insert(QStringLiteral("igpu_temp_c"), *t);
+    }
+    const BatteryState b = batteryState();
+    if (b.capacity >= 0) m.insert(QStringLiteral("battery_percent"), b.capacity);
+    if (b.powerW >= 0) m.insert(QStringLiteral("battery_power_w"), b.powerW);
+    if (b.fullWh > 0 && b.designWh > 0) m.insert(QStringLiteral("battery_health_percent"), 100.0 * b.fullWh / b.designWh);
+    return m;
 }
 
 Opt cpuPackagePower() {

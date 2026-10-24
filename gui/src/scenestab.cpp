@@ -1,6 +1,7 @@
 #include "scenestab.h"
 #include "privileged.h"
 #include "lighting.h"
+#include "mangohud.h"
 #include "bundle.h"
 #include "fwattrtab.h"
 #include "hometab.h"
@@ -9,6 +10,7 @@
 #include "nvidiatab.h"
 #include "optimizetab.h"
 #include "ryzentab.h"
+#include "shortcuts.h"
 #include "theme.h"
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -31,6 +33,7 @@
 #include <QHash>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -118,6 +121,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
             loaded_ = {};
             reloadList();
             reloadAuto();
+            win_->shortcuts()->sync();
         });
     });
     dup_ = new QPushButton("Copy…");
@@ -291,6 +295,39 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(sbCapture, &QPushButton::clicked, this, &ScenesTab::captureScreenBrightness);
     connect(sbClear, &QPushButton::clicked, this, [this] { screenBright_->setValue(0); });
 
+    // Global shortcut: not a step — the desktop's GlobalShortcuts portal applies the scene when it is pressed.
+    shortcut_ = new QKeySequenceEdit;
+    auto *scClear = new QPushButton("Clear");
+    scClear->setObjectName("btnMini");
+    shortcutNote_ = muted(QString());
+    shortcutNote_->setWordWrap(true);
+    auto *scRow = new QWidget;
+    auto *scv = new QVBoxLayout(scRow);
+    scv->setContentsMargins(0, 0, 0, 0);
+    scv->setSpacing(2);
+    // The desktop's own dialog for our shortcuts (portal v2): change keys where the desktop keeps them.
+    shortcutConfigure_ = new QPushButton("Change on desktop…");
+    shortcutConfigure_->setObjectName("btnMini");
+    shortcutConfigure_->setToolTip("Opens the desktop's shortcut dialog for Centurion's scene shortcuts.");
+    shortcutConfigure_->setVisible(false);
+    connect(shortcutConfigure_, &QPushButton::clicked, win_->shortcuts(), &GlobalShortcuts::configure);
+    auto *scl = new QHBoxLayout;
+    scl->addWidget(shortcut_, 1);
+    scl->addWidget(scClear);
+    scl->addWidget(shortcutConfigure_);
+    scv->addLayout(scl);
+    scv->addWidget(shortcutNote_);
+    addRow("Shortcut", scRow, "A key combination that applies this scene from anywhere. Click the field and press the keys, then Save. "
+                              "It is registered with the desktop (global-shortcuts portal), which may ask you to confirm it and "
+                              "can change it later in its own shortcut settings.");
+    connect(scClear, &QPushButton::clicked, shortcut_, &QKeySequenceEdit::clear);
+    // One combination only: the field would otherwise keep recording up to four.
+    connect(shortcut_, &QKeySequenceEdit::editingFinished, this, [this] {
+        if (const QKeySequence k = shortcut_->keySequence(); k.count() > 1) shortcut_->setKeySequence(QKeySequence(k[0]));
+    });
+    connect(shortcut_, &QKeySequenceEdit::keySequenceChanged, this, [this] { if (!filling_) updateDirty(); });
+    connect(win_->shortcuts(), &GlobalShortcuts::changed, this, &ScenesTab::updateShortcutNote);
+
     auto *eb = new QHBoxLayout;
     eb->addWidget(dup_);
     eb->addWidget(del_);
@@ -347,6 +384,27 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         if (!eng_->setPaused(on, &err)) { syncPause(!on); setStatus("Could not save the pause setting: " + err, theme::DANGER); }
     });
     right->addWidget(autoBox);
+
+    if (mangohud::available()) {
+        mangohud_ = new QCheckBox("Show the active scene and power profile in games (MangoHud)");
+        mangohud_->setToolTip("Adds a marked block to " + mangohud::configPath() + ": a \"Centurion\" line read from a small file "
+                              "Centurion keeps current (empty while Centurion is not running). MangoHud runs it only with legacy_layout=0, which draws just the listed "
+                              "elements, so the block also lists MangoHud's default ones when your file does not. "
+                              "Unticking removes the block and leaves the file as it was.");
+        mangohud_->setChecked(mangohud::enabled());
+        connect(mangohud_, &QCheckBox::toggled, this, [this](bool on) {
+            QString err;
+            if (!mangohud::setEnabled(on, &err)) {
+                const QSignalBlocker b(mangohud_);
+                mangohud_->setChecked(!on);
+                setStatus("Could not change the MangoHud config: " + err, theme::DANGER);
+                return;
+            }
+            win_->updateOverlay();
+            setStatus(on ? QStringLiteral("MangoHud shows the scene from the next game start.") : QStringLiteral("MangoHud line removed."), theme::OK);
+        });
+        right->addWidget(mangohud_);
+    }
 
     status_ = new QLabel;
     status_->setWordWrap(true);
@@ -406,9 +464,16 @@ void ScenesTab::showEvent(QShowEvent *e) {
     // Profiles may have been saved or deleted in other tabs meanwhile.
     const Scene cur = fromEditor();
     const Scene saved = loaded_;
+    // Scenes saved outside this tab (first-run wizard): the list follows, unsaved edits stay.
+    QStringList shown;
+    for (int i = 0; i < list_->count(); ++i) shown << list_->item(i)->data(Qt::UserRole).toString();
+    const bool listChanged = shown != scenes::names();
+    if (listChanged) reloadList();
     fillOptions();
-    setEditor(cur);
-    loaded_ = saved;
+    if (!listChanged || !saved.name.isEmpty()) {
+        setEditor(cur);
+        loaded_ = saved;
+    }
     updateDirty();
     reloadAuto();
     updatePowerLabel();
@@ -456,6 +521,7 @@ void ScenesTab::setEditor(const Scene &s) {
     fillRefresh(s.refresh);
     command_->setText(s.command);
     screenBright_->setValue(s.screenBrightness > 0 ? s.screenBrightness : 0);
+    shortcut_->setKeySequence(QKeySequence::fromString(s.shortcut, QKeySequence::PortableText));
     firmware_ = s.firmware;
     fanTable_ = s.fanTable;
     updateFanTableLabel();
@@ -464,7 +530,22 @@ void ScenesTab::setEditor(const Scene &s) {
     loaded_ = s;
     syncExtraRows();
     updateFirmwareLabel();
+    updateShortcutNote();
     updateDirty();
+}
+
+void ScenesTab::updateShortcutNote() {
+    GlobalShortcuts *g = win_->shortcuts();
+    QString t;
+    if (!g->available())
+        t = QStringLiteral("no global-shortcut portal on this desktop — bind  centurion-gamemode SCENE \"%1\"  in its shortcut settings").arg(loaded_.name);
+    else if (const QString bound = g->trigger(loaded_.name); !bound.isEmpty())
+        t = QStringLiteral("desktop: ") + bound;
+    else if (!loaded_.shortcut.isEmpty())
+        t = QStringLiteral("not registered yet");
+    shortcutNote_->setText(t);
+    shortcutNote_->setVisible(!t.isEmpty());
+    shortcutConfigure_->setVisible(g->canConfigure());
 }
 
 Scene ScenesTab::fromEditor() const {
@@ -490,6 +571,7 @@ Scene ScenesTab::fromEditor() const {
     s.refresh = refresh_->currentData().toDouble();
     s.command = command_->text().trimmed();
     s.screenBrightness = screenBright_->value() > 0 ? screenBright_->value() : -1;
+    if (const QKeySequence k = shortcut_->keySequence(); !k.isEmpty()) s.shortcut = QKeySequence(k[0]).toString(QKeySequence::PortableText);
     return s;
 }
 
@@ -717,15 +799,22 @@ void ScenesTab::updateFanTableLabel() {
     fanTableLabel_->setText(fanTable_.isEmpty() ? QStringLiteral("unchanged") : l.join(QStringLiteral(" · ")));
 }
 
-void ScenesTab::captureFirmware() {
+QMap<QString, int> ScenesTab::firmwareSnapshot(MainWindow *win, bool *wmiUnread) {
     QMap<QString, int> fw;
     bool hasWmi = false;
     for (const FwAttr &a : FwattrTab::discover()) {
         if (a.viaWmi()) { hasWmi = true; continue; }
         if (a.ranged) fw.insert(a.name, a.current);
     }
-    const QMap<QString, int> wmi = win_->fwattr() ? win_->fwattr()->wmiValues() : QMap<QString, int>();
+    const QMap<QString, int> wmi = win->fwattr() ? win->fwattr()->wmiValues() : QMap<QString, int>();
     for (auto it = wmi.cbegin(); it != wmi.cend(); ++it) fw.insert(it.key(), it.value());
+    if (wmiUnread) *wmiUnread = hasWmi && wmi.isEmpty();
+    return fw;
+}
+
+void ScenesTab::captureFirmware() {
+    bool wmiUnread = false;
+    const QMap<QString, int> fw = firmwareSnapshot(win_, &wmiUnread);
     if (fw.isEmpty()) {
         // No firmware attributes: the fan curve alone can still be captured.
         captureFanTable(QString());
@@ -734,7 +823,7 @@ void ScenesTab::captureFirmware() {
     }
     firmware_ = fw;
     QString note = QStringLiteral("Captured %1 firmware value(s).").arg(fw.size());
-    if (hasWmi && wmi.isEmpty()) note += " The GPU cTGP/boost values were not read yet — open Firmware Attributes once and capture again to include them.";
+    if (wmiUnread) note += " The GPU cTGP/boost values were not read yet — open Firmware Attributes once and capture again to include them.";
     if (profile_->currentData().toString() != QLatin1String("custom") && profile_->findData(QStringLiteral("custom")) >= 0) {
         profile_->setCurrentIndex(profile_->findData(QStringLiteral("custom")));
         note += " Power profile set to Custom (required for these).";
@@ -775,6 +864,7 @@ bool ScenesTab::saveCurrent() {
     if (!scenes::save(s, &err)) { setStatus("Could not save: " + err, theme::DANGER); return false; }
     loaded_ = s;
     updateDirty();
+    win_->shortcuts()->sync();
     return true;
 }
 
@@ -797,6 +887,7 @@ void ScenesTab::newScene(bool duplicate) {
     if (scenes::names().contains(name)) { QMessageBox::warning(this, title, "A scene named '" + name + "' already exists."); return; }
     Scene s = duplicate ? fromEditor() : Scene{};
     s.name = name;
+    s.shortcut.clear();  // a copy does not take the same key
     QString err;
     if (!scenes::save(s, &err)) { setStatus("Could not save: " + err, theme::DANGER); return; }
     loaded_ = {};  // no unsaved-changes prompt for the scene we are leaving (duplicate carries them)
@@ -810,6 +901,7 @@ void ScenesTab::deleteScene() {
                                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
     scenes::remove(n);
+    win_->shortcuts()->sync();
     win_->optimize()->forgetGameScene(n);
     auto a = eng_->autoConfig();
     if (a.onAc == n || a.onBattery == n) {

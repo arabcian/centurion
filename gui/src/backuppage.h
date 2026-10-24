@@ -35,10 +35,14 @@ class BackupPage : public QWidget {
 public:
     explicit BackupPage(QWidget *parent = nullptr);
     ~BackupPage() override;
+    /// *Back up now* of the Centurion configuration box (first-run wizard too); result in jobFinished.
+    void configBackup();
 
 Q_SIGNALS:
     /// A job finished while the page was not on screen (tray notification).
     void alert(const QString &title, const QString &message);
+    /// Every job's final summary line.
+    void jobFinished(const QString &summary, bool good);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -58,7 +62,6 @@ private:
     QString selected(QString *kind = nullptr) const;
     void select(const QString &path);
 
-    void configBackup();
     void configRestore();
     void systemBackup();
     void systemRestore();

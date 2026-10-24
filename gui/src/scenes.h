@@ -52,6 +52,7 @@ struct Scene {
     double refresh = 0;            // internal panel refresh rate in Hz (current resolution); 0 = unchanged
     QString command;               // optional; run as the user, no shell
     int screenBrightness = -1;     // internal panel backlight 1-100 %, set after the command; -1 = unchanged
+    QString shortcut;              // global shortcut that applies the scene (QKeySequence portable text, "Ctrl+Alt+1"); not a step
     bool operator==(const Scene &) const = default;
 };
 
