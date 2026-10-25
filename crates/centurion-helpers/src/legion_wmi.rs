@@ -45,13 +45,13 @@ fn ctgp_cap() -> i64 {
     // The GPU's maximum power limit is a property of the card: once probed, the cached value is used.
     // status() / apply used to run nvidia-smi on every call while the dGPU was awake, which reset its
     // idle timer each time (the GPU never reached D3cold with the Firmware tab polling).
-    let cached = std::fs::read_to_string(CTGP_CACHE).ok().and_then(|t| t.trim().parse::<i64>().ok())
+    let cached = crate::read_root_file(CTGP_CACHE, 64).and_then(|t| t.trim().parse::<i64>().ok())
         .filter(|&c| (CTGP_MIN..=300).contains(&c));
     if let Some(c) = cached { return c; }
     if let Some((_, maxp)) = nvidia_power_limits().filter(|&(_, m)| m > DYN_BOOST_MAX) {
         let cap = (maxp - DYN_BOOST_MAX).max(CTGP_MIN);
-        let _ = std::fs::create_dir_all("/var/cache/centurion");
-        let _ = std::fs::write(CTGP_CACHE, cap.to_string());
+        // Root-owned dir + atomic O_EXCL/O_NOFOLLOW write: never through a symlink someone planted there.
+        if crate::secure_dir("/var/cache/centurion").is_ok() { let _ = crate::write_root_file(CTGP_CACHE, cap.to_string().as_bytes()); }
         return cap;
     }
     CTGP_FALLBACK_MAX

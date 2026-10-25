@@ -814,11 +814,22 @@ fn ccd_policies(ccd: usize) -> Vec<PathBuf> {
 /// cpufreq policies whose CPUs all belong to `set`.
 fn policies_within(set: &[usize]) -> Vec<PathBuf> {
     if set.is_empty() { return vec![]; }
-    policies().into_iter().filter(|p| {
+    policy_cpus().into_iter().filter(|(_, cpus)| !cpus.is_empty() && cpus.iter().all(|c| set.contains(c))).map(|(p, _)| p).collect()
+}
+
+/// Each cpufreq policy with its `related_cpus`. Cached like [`policies`]: every per-CCD /
+/// per-core-type row of one `describe` would otherwise re-read every policy's file.
+fn policy_cpus() -> Vec<(PathBuf, Vec<usize>)> {
+    if let Some(v) = POLICY_CPUS.with(|t| t.borrow().as_ref().filter(|(at, _)| at.elapsed() < TOPO_TTL).map(|(_, v)| v.clone())) {
+        return v;
+    }
+    let v: Vec<(PathBuf, Vec<usize>)> = policies().into_iter().map(|p| {
         let cpus = read(&p.join("related_cpus")).map(|s| s.split_whitespace().filter_map(|c| c.parse().ok()).collect::<Vec<usize>>())
             .unwrap_or_default();
-        !cpus.is_empty() && cpus.iter().all(|c| set.contains(c))
-    }).collect()
+        (p, cpus)
+    }).collect();
+    POLICY_CPUS.with(|t| *t.borrow_mut() = Some((std::time::Instant::now(), v.clone())));
+    v
 }
 
 /// Intel hybrid core classes from the perf PMU nodes (cpu_core / cpu_atom).
@@ -992,12 +1003,14 @@ const TOPO_TTL: std::time::Duration = std::time::Duration::from_millis(250);
 thread_local! {
     static TOPO: std::cell::RefCell<Option<(std::time::Instant, Vec<Ccx>)>> = const { std::cell::RefCell::new(None) };
     static POLICIES: std::cell::RefCell<Option<(std::time::Instant, Vec<PathBuf>)>> = const { std::cell::RefCell::new(None) };
+    static POLICY_CPUS: std::cell::RefCell<Option<(std::time::Instant, Vec<(PathBuf, Vec<usize>)>)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Forget the cached topology (after writing cpu*/online or smt/control).
 pub fn invalidate_topology() {
     TOPO.with(|t| *t.borrow_mut() = None);
     POLICIES.with(|t| *t.borrow_mut() = None);
+    POLICY_CPUS.with(|t| *t.borrow_mut() = None);
 }
 
 /// L3 domains of the online CPUs, sorted by first CPU. A parked CCD has no
@@ -1919,7 +1932,7 @@ fn scx_current() -> Option<String> {
     if st != "enabled" { return Some("none".into()); }
     let ops = read(Path::new("/sys/kernel/sched_ext/root/ops")).unwrap_or_default();
     // ops is the BPF scheduler's own name ("lavd", "bpfland"…), sometimes with a suffix.
-    Some(SCX_NAMES.iter().find(|n| ops == **n || ops.starts_with(&format!("{n}_"))).map_or(ops.clone(), |n| n.to_string()))
+    Some(SCX_NAMES.iter().find(|n| ops == **n || ops.starts_with(&format!("{n}_"))).map_or(ops.clone(), |n| (*n).to_string()))
 }
 
 /// PIDs of running processes whose executable is one of our scx binaries.
@@ -2287,7 +2300,7 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
 pub fn options(t: &Tunable) -> Vec<(String, String)> {
     let same = |v: Vec<String>| v.into_iter().map(|s| (s.clone(), s)).collect();
     match (t.options, t.target) {
-        (Options::Fixed(o), _) => o.iter().map(|s| (s.to_string(), s.to_string())).collect(),
+        (Options::Fixed(o), _) => o.iter().map(|s| ((*s).to_string(), (*s).to_string())).collect(),
         (Options::ListFile(f), _) => {
             let p = policies().into_iter().next().map(|p| p.join(f));
             // "custom" is what EPP reads back after a raw numeric write; it cannot be written as a string.
@@ -2393,11 +2406,11 @@ fn parse_int(raw: &str) -> Option<i64> {
 }
 
 /// Current value in preset terms; "mixed" if per-file values differ; None if unreadable.
-pub fn current(t: &Tunable) -> Option<String> { current_with(t, files(t)) }
+pub fn current(t: &Tunable) -> Option<String> { current_with(t, &files(t)) }
 
 /// `current` for a caller that already resolved `files(t)` (describe: the
 /// file walk — PCI config, IRQs, Wi-Fi via iw — then runs once per tunable).
-fn current_with(t: &Tunable, fs: Vec<PathBuf>) -> Option<String> {
+fn current_with(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
     if fs.is_empty() { return None; }
     match t.target {
         Target::CState => {
@@ -2438,7 +2451,7 @@ fn current_with(t: &Tunable, fs: Vec<PathBuf>) -> Option<String> {
         Target::Irq => {
             let (groups, online) = (ccx_groups(), online_cpus());
             let mut seen: Option<String> = None;
-            for f in &fs {
+            for f in fs {
                 let Some(raw) = read(f) else { continue };
                 let set = cpu_list(&raw);
                 // Single-CPU IRQs (per-CPU timers, managed queues) say nothing about the policy.
@@ -2518,8 +2531,10 @@ pub fn validate(t: &Tunable, v: &Value) -> Result<String, String> {
 }
 
 /// The (file, bytes) writes for a validated value, computed against live sysfs.
-pub fn plan(t: &Tunable, value: &str) -> Result<Vec<(PathBuf, String)>, String> {
-    let fs = files(t);
+pub fn plan(t: &Tunable, value: &str) -> Result<Vec<(PathBuf, String)>, String> { plan_with(t, value, files(t)) }
+
+/// `plan` for a caller that already resolved `files(t)` (apply_values).
+pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(PathBuf, String)>, String> {
     if fs.is_empty() { return Err("not available on this kernel/hardware".into()); }
     let role = |v: &str| resolve_ccd(&ccx_groups(), v).ok_or_else(|| format!("'{v}' does not resolve to a CCD here"));
     let out = match t.target {
@@ -2818,7 +2833,7 @@ pub fn describe_with(light: bool) -> Value {
             "available": !fs.is_empty() || (t.debugfs && debugfs_snapshot_has(t.key).unwrap_or(true)),
             "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t),
             "files": fs.len(), "slow": slow_to_read(t),
-            "current": current_with(t, fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
+            "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
         });
         if !light { row["help"] = json!(t.help); }
         row

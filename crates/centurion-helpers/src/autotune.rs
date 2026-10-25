@@ -549,14 +549,18 @@ pub struct Pressure { pub io_full10: f64, pub mem_full10: f64, pub allocstall: u
 
 impl Pressure {
     pub fn sample() -> Pressure {
-        let mut e = Evidence::default();
-        e.parse_vmstat(&std::fs::read_to_string("/proc/vmstat").unwrap_or_default());
         Pressure {
             io_full10: psi_avg10(&rd("/proc/pressure/io").unwrap_or_default(), "full").unwrap_or(0.0),
             mem_full10: psi_avg10(&rd("/proc/pressure/memory").unwrap_or_default(), "full").unwrap_or(0.0),
-            allocstall: e.allocstall,
+            allocstall: allocstall_total(&std::fs::read_to_string("/proc/vmstat").unwrap_or_default()),
         }
     }
+}
+
+/// Sum of the `allocstall_*` counters: all the 1 Hz guard needs from /proc/vmstat
+/// (`Evidence::parse_vmstat` fills a dozen more fields).
+fn allocstall_total(vmstat: &str) -> u64 {
+    vmstat.lines().filter_map(|l| l.strip_prefix("allocstall_")?.split_once(' ')?.1.trim().parse::<u64>().ok()).sum()
 }
 
 /// Samples the guard watches after an apply, and the streaks that trip it.
@@ -1238,7 +1242,7 @@ fn measurement_frame(goal: Goal, p: &Profile, mut w: Weights, notes: &mut Vec<St
     let dims = calib::Calibration::ctx_dims(&desc);
     let heat_known = cal.rows.iter().any(|r| r.cfg.iter().any(|(k, v)| k == "ctx.heat" && v == "hot"));
     let hot: model::Cfg = dims.iter().cloned().chain(std::iter::once(("ctx.heat".to_owned(), "hot".to_owned()))).collect();
-    let t = if heat_known && w.heat > 0.0 { vec![(1.0 - w.heat, dims.clone()), (w.heat, hot)] } else { vec![(1.0, dims.clone())] };
+    let t = if heat_known && w.heat > 0.0 { vec![(1.0 - w.heat, dims), (w.heat, hot)] } else { vec![(1.0, dims)] };
     cal.set_target(t);
     if cal.contexts.len() > 1 { notes.push(format!("Context: decided for {} (the calibration measured {} context(s)).", crate::calctx::describe(&desc), cal.contexts.len())); }
     if heat_known && w.heat > 0.0 { notes.push(format!("Heat: {:.0} % of the weight on heat-soaked running (pre-heated calibration runs).", w.heat * 100.0)); }
@@ -1911,7 +1915,7 @@ fn cpu_rules(r: &mut Rules) {
             }
         } else {
             r.set("cpu.governor", "powersave", "Governor 'powersave' hands the decision to EPP.");
-            r.set("cpu.epp", epp, why.clone());
+            r.set("cpu.epp", epp, why);
         }
         if p.hybrid {
             let (pc, ec, w) = match r.g {
@@ -3083,6 +3087,15 @@ mod tests {
         }
         assert_eq!(parse_release("7.2.8-cachyos"), (7, 2));
         assert_eq!(Goal::parse("bare-throughput"), Some(Goal::Throughput));
+    }
+
+    #[test]
+    fn allocstall_total_matches_parse_vmstat() {
+        let text = "allocstall_dma 1\nallocstall_normal 10\nallocstall_movable 5\nallocstall_x notanumber\nallocstall_nospace\npgscan_direct 7\nfoo bar\n";
+        let mut e = Evidence::default();
+        e.parse_vmstat(text);
+        assert_eq!((allocstall_total(text), e.allocstall), (16, 16));
+        assert_eq!(allocstall_total(""), 0);
     }
 
     #[test]

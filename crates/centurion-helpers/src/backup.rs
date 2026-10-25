@@ -55,6 +55,8 @@ const SYS_CENTURION: &[&str] = &["etc/centurion", "etc/nvcurve", "var/lib/centur
 const SYS_CENTURION_LOGS: &[&str] = &["var/log/centurion"];
 /// /var/lib/centurion files worth restoring; the rest (boot guard
 /// state, boot-default snapshot, pending GPU mode) belongs to the boot it was made in.
+/// /etc/centurion files a restore may write (everything the helpers keep there); anything else in an archive is skipped.
+const ETC_RESTORE: &[&str] = &["tune-boot.json", "intel-uv-boot.json", "netguard.json", "wakeup.json", "dgpu-awake", "wireless-pm-lock"];
 const VARLIB_RESTORE: &[&str] = &["signature.json", "calibration.json", "outcomes.json", "io-probe.json", "wmae-verified.json"];
 /// "System profile": how this installation is put together. Reference only.
 const PROFILE: &[&str] = &[
@@ -823,6 +825,10 @@ fn install_dir(src: &Path, dst: &str, only: Option<&[&str]>, done: &mut Vec<Stri
         if !md.is_file() || md.len() > MAX_ROOT_FILE { continue; }
         if !made { crate::secure_dir(dst)?; made = true; }
         let body = read_nofollow(&e.path())?;
+        // Every restorable config file is JSON (the presets directory only holds presets): the consumers parse
+        // them again at use, but a file that is not even JSON is dropped here instead of being installed.
+        if (dst.ends_with("/presets") && !name.ends_with(".json"))
+            || (name.ends_with(".json") && serde_json::from_slice::<Value>(&body).is_err()) { continue; }
         let to = format!("{dst}/{name}");
         crate::write_root_file(&to, &body)?;
         done.push(to);
@@ -853,7 +859,7 @@ pub fn config_restore_root(req: &Value) -> Value {
         let s = stage.0.join("system");
         let mut done = Vec::new();
         crate::secure_dir("/etc/centurion")?;
-        install_dir(&s.join("etc/centurion"), "/etc/centurion", None, &mut done)?;
+        install_dir(&s.join("etc/centurion"), "/etc/centurion", Some(ETC_RESTORE), &mut done)?;
         install_dir(&s.join("etc/centurion/presets"), "/etc/centurion/presets", None, &mut done)?;
         if s.join("etc/nvcurve").is_dir() {
             crate::secure_dir("/etc/nvcurve")?;

@@ -144,7 +144,12 @@ impl CpuStat {
 }
 
 #[derive(Default)]
-struct Rapl { prev: HashMap<String, (u64, u64, Instant)>, power: HashMap<String, f64> }
+struct Rapl {
+    prev: HashMap<String, (u64, u64, Instant)>,
+    power: HashMap<String, f64>,
+    /// Zone dir name → (power key, max_energy_range_uj): both are constant, read once per zone.
+    zones: HashMap<String, (String, u64)>,
+}
 
 impl Rapl {
     /// powercap energy_uj deltas, every zone and subzone (package-0, core,
@@ -156,16 +161,21 @@ impl Rapl {
             let p = e.path();
             let fname = e.file_name().to_string_lossy().into_owned();
             if !fname.starts_with("intel-rapl:") { continue; } // MSR interface only; -mmio mirrors package
-            let (Ok(name), Ok(uj)) = (std::fs::read_to_string(p.join("name")), std::fs::read_to_string(p.join("energy_uj"))) else { continue };
+            if !self.zones.contains_key(&fname) {
+                let Ok(name) = std::fs::read_to_string(p.join("name")) else { continue };
+                let range = std::fs::read_to_string(p.join("max_energy_range_uj")).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(u64::MAX);
+                self.zones.insert(fname.clone(), (format!("{}#{fname}", name.trim()), range));
+            }
+            let Ok(uj) = std::fs::read_to_string(p.join("energy_uj")) else { continue };
             let Ok(uj) = uj.trim().parse::<u64>() else { continue };
-            let range = std::fs::read_to_string(p.join("max_energy_range_uj")).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(u64::MAX);
-            let key = format!("{}#{fname}", name.trim());
-            if let Some(&(pu, _, pt)) = self.prev.get(&key) {
+            let (key, range) = &self.zones[&fname];
+            let range = *range;
+            if let Some(&(pu, _, pt)) = self.prev.get(key) {
                 let dt = now.duration_since(pt).as_secs_f64();
                 let de = if uj >= pu { uj - pu } else { uj + range.saturating_sub(pu) };
                 if dt > 0.0 { self.power.insert(key.clone(), de as f64 / 1e6 / dt); }
             }
-            self.prev.insert(key, (uj, range, now));
+            self.prev.insert(key.clone(), (uj, range, now));
         }
     }
     /// rapl_lookup: name == domain or name starts with "domain-".

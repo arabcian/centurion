@@ -290,7 +290,8 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
             results.push(json!({"key": t.key, "ok": true, "skipped": "debugfs unavailable"}));
             continue;
         }
-        if tune::files(t).is_empty() {
+        let fs = tune::files(t);
+        if fs.is_empty() {
             // Absent hardware/kernel feature is not an error for a portable preset.
             results.push(json!({"key": t.key, "ok": true, "skipped": "not available"}));
             continue;
@@ -302,7 +303,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         // Label of the CCD being parked, taken while it is still resolvable.
         let park_label = (t.key == "cpu.ccd_park")
         .then(|| tune::options(t).into_iter().find(|(k, _)| *k == v).map(|(_, l)| l)).flatten();
-        let plan = match tune::plan(t, &v) {
+        let plan = match tune::plan_with(t, &v, fs) {
             Ok(p) => p,
             Err(e) => { results.push(json!({"key": t.key, "ok": false, "error": e})); all_ok = false; continue; }
         };

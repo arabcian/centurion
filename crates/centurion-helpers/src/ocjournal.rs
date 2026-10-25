@@ -12,7 +12,7 @@
 //! nvcurve-root-helper (crates/nvcurve/src/ocjournal.rs). Never fatal: a failed write is ignored.
 
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 
 pub const FILE: &str = "/var/lib/centurion/oc-journal.jsonl";
 const MAX_BYTES: u64 = 256 * 1024;
@@ -20,14 +20,16 @@ const KEEP_BYTES: usize = 128 * 1024;
 
 pub fn record(kind: &str, state: &str) {
     if unsafe { libc::geteuid() } != 0 { return; }
-    let _ = std::fs::DirBuilder::new().mode(0o755).recursive(true).create("/var/lib/centurion");
+    // The directory must be root-owned and not writable by others: a user-owned one would let that user
+    // plant symlinks that the rotation below would follow as root.
+    if crate::secure_dir("/var/lib/centurion").is_err() { return; }
     // Rotation: keep the newest half (whole lines) once the file passes MAX_BYTES.
     if std::fs::symlink_metadata(FILE).map_or(false, |m| m.file_type().is_file() && m.len() > MAX_BYTES) {
-        if let Ok(old) = std::fs::read(FILE) {
+        if let Some(old) = crate::read_root_file(FILE, 4 * MAX_BYTES) {
+            let old = old.as_bytes();
             let cut = old.len().saturating_sub(KEEP_BYTES);
             let start = old[cut..].iter().position(|b| *b == b'\n').map_or(old.len(), |i| cut + i + 1);
-            let tmp = format!("{FILE}.tmp{}", std::process::id());
-            if std::fs::write(&tmp, &old[start..]).is_ok() { let _ = std::fs::rename(&tmp, FILE); }
+            let _ = crate::write_root_file(FILE, &old[start..]);  // O_EXCL tmp, atomic rename
         }
     }
     let line = serde_json::json!({

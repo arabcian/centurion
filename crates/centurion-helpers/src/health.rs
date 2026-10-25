@@ -49,9 +49,31 @@ pub fn xid_info(code: u32) -> (&'static str, &'static str) {
     XIDS.iter().find(|x| x.0 == code).map(|x| (x.1, x.2)).unwrap_or(("error", "NVIDIA driver error (see NVIDIA's Xid catalog)"))
 }
 
+/// Kernel virtual addresses (0xffff… / ffff… + 12 hex digits) replaced by "<addr>": this text goes to callers who
+/// may not read the kernel log themselves (kernel.dmesg_restrict exists to keep exactly these away from them).
+/// MCx_STATUS / MISC values (not in the kernel's address range) stay readable.
+pub fn scrub(s: &str) -> String {
+    let b = s.as_bytes();
+    let (mut out, mut i) = (String::with_capacity(s.len()), 0);
+    while i < b.len() {
+        let st = if b[i..].starts_with(b"0x") { i + 2 } else { i };
+        let boundary = i == 0 || !b[i - 1].is_ascii_hexdigit();
+        let hex = b[st..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+        if boundary && hex >= 16 && b[st..st + 4].eq_ignore_ascii_case(b"ffff") {
+            out.push_str("<addr>");
+            i = st + hex;
+        } else {
+            let ch = s[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
 /// Classifies one kernel log message; None = not interesting.
 pub fn classify(msg: &str) -> Option<Value> {
-    let clip = |s: &str| s.chars().take(300).collect::<String>();
+    let clip = |s: &str| scrub(&s.chars().take(300).collect::<String>());
     if let Some(i) = msg.find("NVRM: Xid (") {
         let rest = &msg[i..];
         let after = rest.find("): ").map(|j| &rest[j + 3..])?;
@@ -168,6 +190,7 @@ fn klog_records(since: u64) -> Result<(Vec<Value>, u64), String> {
                 // lines (leading space) that dmesg does not print either.
                 let msg: String = body.lines().take_while(|l| !l.starts_with(' ')).collect::<Vec<_>>().join(" ⏎ ")
                     .chars().take(1000).collect();
+                let msg = scrub(&msg);
                 out.push(json!({"seq": seq, "ts_us": ts, "level": pri & 7, "msg": msg}));
             }
             Err(e) if e.raw_os_error() == Some(libc::EPIPE) => continue,
@@ -230,6 +253,12 @@ pub fn scan(since: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scrub_kernel_addresses() {
+        assert_eq!(scrub("RIP: 0010:foo+0x1/0x2 ffff8881234567ab and 0xffffffffc0123456 ok"), "RIP: 0010:foo+0x1/0x2 <addr> and <addr> ok");
+        assert_eq!(scrub("Bank 5: be00000000800400 IPID 0x000000000000abcd"), "Bank 5: be00000000800400 IPID 0x000000000000abcd");
+        assert_eq!(scrub("ünïcode ffff"), "ünïcode ffff");
+    }
     #[test]
     fn xid_lines() {
         let e = classify("NVRM: Xid (PCI:0000:01:00): 79, pid='<unknown>', name=<unknown>, GPU has fallen off the bus.").unwrap();

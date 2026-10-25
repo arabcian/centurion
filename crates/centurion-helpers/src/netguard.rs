@@ -198,11 +198,15 @@ impl Config {
         crate::write_root_file(CONF_FILE, &serde_json::to_vec_pretty(&self.to_json()).map_err(|e| e.to_string())?)
     }
 
+    /// An entry without a path separator matches the program's *file name*, so a program renamed to a listed
+    /// name matches too; an entry with a path (or a trailing '/') is compared as a whole. Whitelist full paths
+    /// for anything that must not be spoofable by renaming.
     pub fn whitelisted(&self, ident: &str) -> bool {
         let base = basename(ident).to_lowercase();
         self.whitelist.iter().any(|w| {
             if w.ends_with('/') { ident.starts_with(w.as_str()) }
             else if w.contains('/') || w.contains('\\') { w == ident }
+            else if w.is_ascii() { w.eq_ignore_ascii_case(&base) }
             else { w.to_lowercase() == base }
         })
     }
@@ -543,7 +547,8 @@ fn nft_script(cfg: &Config) -> String {
         }
         s += &queue;
     }
-    s + "\t}\n}\n"
+    s += "\t}\n}\n";
+    s
 }
 
 fn nft_run(script: &str) -> Result<(), String> {
@@ -1348,6 +1353,8 @@ mod tests {
         assert!(c.whitelisted("/home/u/pfx/drive_c/GAME.EXE") && c.whitelisted("C:\\dir\\game.exe"));
         assert!(c.whitelisted("/games/a/bin/launcher.exe") && c.whitelisted("/opt/x/tool.exe"));
         assert!(!c.whitelisted("/opt/y/tool.exe") && !c.whitelisted("/games/b/launcher.exe"));
+        let c = Config { whitelist: vec!["Çalis.exe".into()], ..Config::default() };
+        assert!(c.whitelisted("C:\\x\\ÇALIS.EXE") && !c.whitelisted("C:\\x\\calis.exe"));
     }
 
     #[test]
