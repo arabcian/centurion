@@ -24,6 +24,11 @@ RestrictAddressFamilies=AF_NETLINK AF_UNIX
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
 
 [Install]
 WantedBy=multi-user.target

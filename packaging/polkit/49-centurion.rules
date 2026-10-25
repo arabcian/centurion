@@ -46,18 +46,12 @@
  * chosen directory, / included. Like the firmware helper it always gets
  * AUTH_ADMIN: the password every time, no keep, at every level.
  *
- * Security level (chosen at install time, install.sh --security-level=N):
- *   1  the behaviour described above: wheel or sudo, local and active, is silent.
- *   2  no silent grants: the same session gets auth_admin_keep (one password,
- *      then polkit's own cache window) for every helper except the read-only
- *      sensor streams, the Health tab's event reader and keyboard lighting. Scenes, power modes, presets and
- *      game hooks therefore ask for the password too; a game hook without a
- *      polkit agent times out and skips the tuning instead of hanging.
- *  3  as 2, except tune-profile-helper (com.centurion.tune.profile): applying an Optimizations
- *      preset the user approved earlier is served from a root-owned store BY NAME, so it cannot carry a value
- *      nobody approved. Approving/saving presets (tune-helper) and every other helper still ask. Scenes and
- *      game hooks keep their tuning step silent; their other steps (Ryzen/NVIDIA/... helpers) ask.
- * install.sh and the Gentoo ebuild default to level 3. Rerun install.sh to change it.
+ * Single tier (no install-time choice): a wheel or sudo admin, local and
+ * active, runs the helpers without a password. There is no longer a "security
+ * level" knob -- the graduated auth_admin_keep / preset-only tiers were removed.
+ * The three exceptions above (firmware-persistent writes, system backup/restore,
+ * network-guard rules) still always ask, because they can brick the machine,
+ * expose /etc/shadow, or let a guarded program whitelist itself.
  *
  * Action ids are matched against an explicit allowlist (ACTION_IDS plus the three
  * exceptions above), not by the com.centurion. prefix; unlisted ids in that
@@ -78,7 +72,6 @@ var HELPERS = ["fwattr-helper", "legion-profile-helper", "ryzen-co-helper",
                "lighting-helper", "amdgpu-helper", "nvcurve-sensors", "legion-ec-sensors", "health-reader"].map(function (h) {
     return "@LIBEXEC@/" + h;
 });
-var SECURITY_LEVEL = @SECLEVEL@;
 // Explicit allowlist of the action ids this file may treat as "ours" (the ones
 // in com.centurion.policy, minus the firmware / backup / netguard actions that
 // are handled first above). There is deliberately no com.centurion.* prefix
@@ -91,13 +84,6 @@ var ACTION_IDS = ["com.centurion.fwattr.write", "com.centurion.nvcurve.set-param
                   "com.centurion.amdgpu.tune", "com.centurion.ryzen.set-curve", "com.centurion.intel.undervolt", "com.centurion.gpu.power",
                   "com.centurion.profile.set", "com.centurion.tune.apply",
                   "com.centurion.tune.profile", "com.centurion.lighting.write"];
-// Read-only / non-power helpers that stay silent at every level.
-var SILENT_IDS = ["com.centurion.nvcurve.sensors", "com.centurion.lighting.write",
-                  "com.centurion.ec.sensors", "com.centurion.health.read"];
-var SILENT_HELPERS = ["@LIBEXEC@/nvcurve-sensors", "@LIBEXEC@/lighting-helper", "@LIBEXEC@/legion-ec-sensors", "@LIBEXEC@/health-reader"];
-// Level 3 only: applying an already approved Optimizations preset by name (scenes, game hooks, restore).
-var PROFILE_ID = "com.centurion.tune.profile";
-var PROFILE_HELPER = "@LIBEXEC@/tune-profile-helper";
 var FIRMWARE_ACTION = "com.centurion.firmware.write";
 var FIRMWARE_HELPER = "@LIBEXEC@/legion-firmware-helper";
 var BACKUP_ACTION = "com.centurion.backup";
@@ -129,12 +115,10 @@ polkit.addRule(function (action, subject) {
         (action.id === "org.freedesktop.policykit.exec" &&
          HELPERS.indexOf(action.lookup("program")) >= 0);
     if (!ours) { return; }
+    // A wheel/sudo admin at the machine (local + active) runs every one of
+    // these helpers password-free. Everyone else is asked.
     if (adminAtConsole(subject)) {
-        var silent = SILENT_IDS.indexOf(action.id) >= 0 ||
-            (action.id === "org.freedesktop.policykit.exec" && SILENT_HELPERS.indexOf(action.lookup("program")) >= 0);
-        if (SECURITY_LEVEL >= 3 && (action.id === PROFILE_ID ||
-            (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === PROFILE_HELPER))) { silent = true; }
-        return (SECURITY_LEVEL >= 2 && !silent) ? polkit.Result.AUTH_ADMIN_KEEP : polkit.Result.YES;
+        return polkit.Result.YES;
     }
     return polkit.Result.AUTH_ADMIN;
 });

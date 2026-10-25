@@ -3,13 +3,12 @@
 # install.sh sources this after building; distribution packages (AUR, COPR) run it directly
 # so every package installs the same list:
 #
-#   DESTDIR=$pkgdir PREFIX=/usr CENTURION_SECURITY_LEVEL=3 bash packaging/install-files.sh
+#   DESTDIR=$pkgdir PREFIX=/usr bash packaging/install-files.sh
 #
 # Expects to run from the source tree root with target/release (cargo build --release) and
 # gui/build (cmake -S gui -B gui/build …) built. Knobs (environment): DESTDIR PREFIX LIBEXEC
-# UNITDIR UDEVDIR ELOGIND_SLEEP SYSTEMD_SLEEP (both detected on this machine when unset) and
-# CENTURION_SECURITY_LEVEL / SECLEVEL (polkit level 1–3, default 1). The polkit exec.path
-# annotations and the GUI's CENTURION_HELPER_DIR must both point at $LIBEXEC.
+# UNITDIR UDEVDIR ELOGIND_SLEEP SYSTEMD_SLEEP (both detected on this machine when unset).
+# The polkit exec.path annotations and the GUI's CENTURION_HELPER_DIR must both point at $LIBEXEC.
 # Nothing here enables a service or touches files outside $DESTDIR.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     set -euo pipefail
@@ -18,8 +17,6 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     DESTDIR=${DESTDIR:-}
     LIBEXEC=${LIBEXEC:-$PREFIX/libexec/centurion}
     UNITDIR=${UNITDIR:-$PREFIX/lib/systemd/system}
-    SECLEVEL=${SECLEVEL:-${CENTURION_SECURITY_LEVEL:-1}}
-    [[ $SECLEVEL == [123] ]] || { echo "invalid security level '$SECLEVEL' (use 1, 2 or 3)" >&2; exit 2; }
 fi
 own=(-o root -g root); [[ $EUID -eq 0 ]] || own=()
 T=target/release
@@ -42,7 +39,7 @@ for id in $(grep -o 'action id="com\.centurion\.[^"]*"' packaging/polkit/com.cen
 done
 sed "s|@LIBEXEC@|$LIBEXEC|g" packaging/polkit/com.centurion.policy > "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"
 [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"; chmod 0644 "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"
-sed -e "s|@LIBEXEC@|$LIBEXEC|g" -e "s|@SECLEVEL@|$SECLEVEL|g" packaging/polkit/49-centurion.rules > "$DESTDIR$POLKIT_RULESDIR/49-centurion.rules"
+sed -e "s|@LIBEXEC@|$LIBEXEC|g" packaging/polkit/49-centurion.rules > "$DESTDIR$POLKIT_RULESDIR/49-centurion.rules"
 [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR$POLKIT_RULESDIR/49-centurion.rules"; chmod 0644 "$DESTDIR$POLKIT_RULESDIR/49-centurion.rules"
 # Keyboard lighting: uaccess on the Spectrum controller's hidraw node.
 UDEVDIR=${UDEVDIR:-$PREFIX/lib/udev/rules.d}

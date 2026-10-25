@@ -69,10 +69,9 @@ src_install() {
 	insinto /usr/share/polkit-1/actions
 	sed -i "s|@LIBEXEC@|${EPREFIX}/usr/libexec/centurion|g" packaging/polkit/* || die
 	doins packaging/polkit/com.centurion.policy
-	# Security level 3: password for raw helper values; applying an already
-	# approved Optimizations preset by name stays silent. Level 1 or 2: edit
-	# SECURITY_LEVEL in the installed rules file, or rebuild with install.sh.
-	sed -i "s|@SECLEVEL@|3|g" packaging/polkit/49-centurion.rules || die
+	# The root helpers are password-free for a wheel/sudo admin at the machine;
+	# firmware-persistent writes, backups and netguard rules always ask. There
+	# is no security-level knob to substitute.
 	insinto /etc/polkit-1/rules.d
 	doins packaging/polkit/49-centurion.rules
 	local s

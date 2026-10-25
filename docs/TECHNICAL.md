@@ -87,15 +87,11 @@ preset from the GUI — enabling the service early is harmless.
     /usr/lib/systemd/system/centurion-tune.service         systemd (tuning boot preset)
     /usr/lib/systemd/system/centurion-calibrate-boot.service systemd (calibration scheduled for the next boot)
 
-Authorization (polkit): install defaults to security level 3. A `wheel` or
-`sudo` member at the machine (local, active session) must enter the
-administrator password before a helper writes a raw value. Applying an
-Optimizations preset that was already approved, by name, stays silent so
-scenes and game hooks still work without a polkit agent. Level 1 (chosen at
-install) is the old password-free grant for that same session; level 2 asks
-for every helper. Everyone else (SSH, other seats) is always asked.
-Sensor streams, the Health event reader and keyboard lighting stay silent at
-every level. `legion-firmware-helper` is the exception on top of that: it writes settings that persist in
+Authorization (polkit): a `wheel` or `sudo` member at the machine (local,
+active session) runs the helpers without a password. Everyone else (SSH, other
+seats) is always asked for the administrator password. There is no longer a
+graduated "security level" — the single tier is the password-free grant for a
+local admin. `legion-firmware-helper` is the exception on top of that: it writes settings that persist in
 firmware and can keep the laptop from booting — BIOS memory timings
 (AodSetupRpl, including restoring a backup), BIOS CPU overclocking (PBO scalar,
 boost override, all-core CO), the GPU MUX mode, and the forced "iGPU only"
@@ -418,7 +414,7 @@ request line on stdin, `{"event":"start"|"progress"}` lines while it works, one
 final `{"ok":…}` line. Stdin stays open; EOF cancels (tar and the compressor
 run in their own process groups and are terminated, the `.partial` archive is
 removed). polkit action `com.centurion.backup`: AUTH_ADMIN, never
-cached, at every security level.
+cached, for everyone (including a local admin).
 
 **System image** (`system_backup`, root):
 `tar --acls --xattrs --xattrs-include='*' --ignore-failed-read --exclude=… -cvpf - / | pigz -pN -6`
@@ -923,4 +919,4 @@ the helpers (`tune::cpu_vendor()`).
 
 **Automatic backups** (`gui/src/backuppage.cpp`): checked 3 min after start and every 6 h. When the newest configuration archive in the folder is older than *auto_days* (default 7), `backup-helper config_backup` runs as the user with tag `auto`; only `…-auto.tar.gz` beyond *auto_keep* are pruned. System images need root, so only a reminder (at most once per 20 h) when the newest `backup-*` image is older than *remind_days* (default 30, 0 = off).
 
-**Fan curve assistant** (`gui/src/fanassist.cpp`): CPU limit (the preset's `cpu_min`–`cpu_max`, within the firmware's `cpu_temp` range) and GPU limit (`gpu_temp` range), written through fwattr-helper in one batch, snapped onto the firmware's step grid, only when changed and only in the Custom profile; without `cpu_temp` the curve assumes 100 °C. Presets from `~/.config/centurion/fan-presets.json` (`{"presets": [{"name", "level", "cpu_min", "cpu_max", "ramp_from"}]}`, or `"curve": [10 levels]` in place of level / ramp_from, used as it is; written with the defaults Quiet / Balanced / Performance / Max = level 5 / 8 / 9 / 10, CPU 85–89 / 92 / 95 / 100 °C, ramp from 70 °C when missing; a file that does not parse or validate — level 1–10, 0 < cpu_min ≤ cpu_max, 0 < ramp_from < cpu_min, or a curve of 10 levels 1–10 that never goes down with its last three ≥ 3 / 5 / 7 — is reported and the defaults used): shaped on the EC temperature steps of the fan whose thresholds reach the hottest (the CPU's; sensor ids differ per model), the step in use at the limit (last threshold ≤ limit) gets the holding level, steps below ramp to it from level 1 at `ramp_from`, steps above hold it up to limit + 8 °C, then 10 (three hottest steps ≥ 3 / 5 / 7, as the helper requires). The curve only goes into the editor.
+**Fan curve assistant** (`gui/src/fanassist.cpp`): CPU limit (the preset's `cpu_min`–`cpu_max`, within the firmware's `cpu_temp` range) and GPU limit (`gpu_temp` range), written through fwattr-helper in one batch, snapped onto the firmware's step grid, only when changed and only in the Custom profile; without `cpu_temp` the curve assumes 100 °C. Presets built into the program, or from `~/.config/centurion/fan-presets.json` when the user creates one (`{"presets": [{"name", "level", "cpu_min", "cpu_max", "ramp_from"}]}`, or `"curve": [10 levels]` in place of level / ramp_from, used as it is; built-in: Quiet / Balanced / Performance / Max, each with its own `curve`, CPU 85–89 / 92 / 95 / 100 °C; a file that does not parse or validate — level 1–10, 0 < cpu_min ≤ cpu_max, 0 < ramp_from < cpu_min, or a curve of 10 levels 1–10 that never goes down with its last three ≥ 3 / 5 / 7 — is reported and the built-in presets used): shaped on the EC temperature steps of the fan whose thresholds reach the hottest (the CPU's; sensor ids differ per model), the step in use at the limit (last threshold ≤ limit) gets the holding level, steps below ramp to it from level 1 at `ramp_from`, steps above hold it up to limit + 8 °C, then 10 (three hottest steps ≥ 3 / 5 / 7, as the helper requires). The curve only goes into the editor.

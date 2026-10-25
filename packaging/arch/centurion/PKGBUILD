@@ -46,10 +46,11 @@ check() {
 
 package() {
   cd "$pkgname-$pkgver"
-  # Security level 3 by default for packages: password for raw values, approved presets stay silent.
+  # Root helpers are password-free for a wheel/sudo admin at the machine;
+  # firmware writes, backups and netguard rules always ask.
   DESTDIR="$pkgdir" PREFIX=/usr LIBEXEC=/usr/libexec/centurion UNITDIR=/usr/lib/systemd/system \
     UDEVDIR=/usr/lib/udev/rules.d SYSTEMD_SLEEP=/usr/lib/systemd/system-sleep \
-    POLKIT_RULESDIR=/usr/share/polkit-1/rules.d CENTURION_SECURITY_LEVEL=3 \
+    POLKIT_RULESDIR=/usr/share/polkit-1/rules.d \
     bash packaging/install-files.sh
   # Same owner/mode as polkit's own rules.d (102 = polkitd), so pacman sees no conflict.
   chmod 750 "$pkgdir/usr/share/polkit-1/rules.d"

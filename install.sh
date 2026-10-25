@@ -12,13 +12,9 @@
 #                 offscreen training
 #                 run over every tab, then the final build with the profile)
 #   --no-harden   drop stack protector / FORTIFY=3 / CET / full RELRO / PIE on the GUI
-#   --security-level=N   1 (default): wheel/sudo + local + active session is silent for the helpers.
-#                 2: every helper asks (polkit caches it briefly). Firmware writes,
-#                 backups and netguard rules always ask, at every level.
-#                 3: password for raw values; an already approved
-#                 Optimizations preset (scenes, game hooks) stays password-free.
-#                 Asked interactively when not given (CENTURION_SECURITY_LEVEL works
-#                 too). DESTDIR and non-tty installs use 1.
+#   (The root helpers are password-free for a wheel/sudo admin at the machine.
+#    Firmware-persistent writes, backups and netguard rules always ask for the
+#    password; there is no longer a --security-level option.)
 #   --clang       build the GUI with clang++ (+ lld when present) and link the Rust
 #                 helpers with clang; same as ./install-clang.sh
 #
@@ -44,7 +40,6 @@ PREFIX=${PREFIX:-/usr}
 DESTDIR=${DESTDIR:-}
 LIBEXEC="$PREFIX/libexec/centurion"
 UNITDIR=${UNITDIR:-$PREFIX/lib/systemd/system}
-SECLEVEL=${CENTURION_SECURITY_LEVEL:-}
 BUILD=1 LEGACY=0 NATIVE=1 LTO=1 PGO=1 HARDEN=1 CLANG=0
 for a in "$@"; do
     case "$a" in
@@ -56,31 +51,10 @@ for a in "$@"; do
         --no-pgo) PGO=0 ;;
         --no-harden) HARDEN=0 ;;
         --clang) CLANG=1 ;;
-        --security-level=*) SECLEVEL=${a#*=} ;;
         *) echo "unknown option: $a" >&2; exit 2 ;;
     esac
 done
 [[ -n "$DESTDIR" || $EUID -eq 0 ]] || { echo "run as root (or set DESTDIR)" >&2; exit 1; }
-
-# Upgrade: keep the level of the rules file being replaced (no prompt, no silent reset to 1).
-OLDRULES="$DESTDIR/etc/polkit-1/rules.d/49-centurion.rules"
-if [[ -z $SECLEVEL && -f $OLDRULES ]]; then
-    SECLEVEL=$(sed -n 's/^var SECURITY_LEVEL = \([123]\);.*/\1/p' "$OLDRULES" | head -n1)
-    [[ -n $SECLEVEL ]] && echo "Keeping polkit security level $SECLEVEL from the installed rules."
-fi
-if [[ -z $SECLEVEL ]]; then
-    SECLEVEL=1
-    if [[ -z $DESTDIR && -t 0 ]]; then
-        echo "Polkit security level for the root helpers:"
-        echo "  1) password-free for an administrator (wheel or sudo) at the machine  [default]"
-        echo "  2) every helper asks for the administrator password (polkit caches it briefly)"
-        echo "  3) like 2, but applying an already approved Optimizations preset stays password-free"
-        echo "     saving presets, typed values and every other helper still ask"
-        ans=""; read -r -p "Level [1]: " ans || true
-        [[ -n $ans ]] && SECLEVEL=$ans
-    fi
-fi
-[[ $SECLEVEL == [123] ]] || { echo "invalid security level '$SECLEVEL' (use 1, 2 or 3)" >&2; exit 2; }
 
 as_user() { if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then sudo -u "$SUDO_USER" "$@"; else "$@"; fi; }
 
@@ -275,7 +249,14 @@ migrate_legacy() {
             runuser -u "$user" -- bash -c "$(declare -f mig_move mig_user); mig_user \"\$1\" \"\$2\"" bash "$home" "$OLD" ||
                 echo "  !! could not migrate $home as $user (runuser)" >&2
             # Files an older root-run migration left root-owned. -P/-h: a symlink is changed itself, never followed.
-            chown -R -P -h "$user:" "$home/.config/centurion" "$home/.cache/centurion" "$home/.local/state/centurion" 2>/dev/null || true
+            # -P/-h only keep symlinks *below* the start path from being followed; a symlinked parent
+            # (~/.config -> /etc, planted by that user) is still resolved, so each start path must be its own
+            # canonical path under the real home before root touches it.
+            real_home=$(realpath -e -- "$home") || continue
+            for d in "$home/.config/centurion" "$home/.cache/centurion" "$home/.local/state/centurion"; do
+                [[ -d $d && ! -L $d && $(realpath -e -- "$d") == "$real_home${d#"$home"}" ]] || continue
+                chown -R -P -h "$user:" "$d" 2>/dev/null || true
+            done
         fi
     done
 
@@ -296,7 +277,7 @@ migrate_legacy() {
 if [[ -z "$DESTDIR" ]]; then
     command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q "$PREFIX/share/icons/hicolor" || true
     echo
-    echo "Installed (polkit security level $SECLEVEL). Optional boot services (each pulls in centurion-boot-guard, which pauses them"
+    echo "Installed. Optional boot services (each pulls in centurion-boot-guard, which pauses them"
     echo "after a boot that crashed right after applying them):"
     if [[ -d /run/systemd/system ]]; then
         systemctl daemon-reload || true

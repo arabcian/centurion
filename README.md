@@ -109,15 +109,14 @@ systemctl enable centurion-boot-guard            # systemd
 - **Machine gate.** Runs only on Lenovo Legion / LOQ / IdeaPad Gaming (see
   below).
 
-### Security levels
+### Authorization
 
-Chosen at install time (`--security-level=N` or asked interactively):
-
-| Level | Behaviour |
-|---|---|
-| 1 | local, active `wheel` or `sudo` user runs helpers without a password |
-| 2 | every helper asks for the admin password (polkit caches it briefly) |
-| 3 (default) | as 2, except applying an already-approved Optimizations preset by name |
+A local, active `wheel` or `sudo` user runs the helpers **without a password**.
+Everyone else (SSH, another seat, service accounts) is asked for the
+administrator password. Three actions always ask, for everyone: firmware-persistent
+writes (bad values can stop the laptop booting), system backup/restore (the
+image holds `/etc/shadow`) and network-guard rule changes (a guarded program
+could otherwise whitelist itself). There is no install-time level to choose.
 
 ## Supported hardware
 
@@ -159,8 +158,8 @@ sudo ./install.sh
 `install.sh` builds everything tuned for this machine (native CPU, LTO, PGO,
 hardening) and installs to `/usr`. Options: `--no-native` for portable
 binaries, `--no-lto`, `--no-pgo`, `--no-harden`, `--no-build`,
-`--remove-legacy` to remove the old Python version, `--clang`,
-`--security-level=N`. Remove with `sudo ./uninstall.sh`.
+`--remove-legacy` to remove the old Python version, `--clang`.
+Remove with `sudo ./uninstall.sh`.
 To build with clang/LLVM: `sudo ./install-clang.sh` (same options; uses lld
 when installed and `llvm-profdata` for PGO).
 
@@ -185,16 +184,18 @@ Afterwards log out and back in once.
 
 PKGBUILDs for `centurion` (release tag) and `centurion-git` are in
 `packaging/arch/`. They install the same files as `install.sh` (portable build:
-no native CPU tuning, no PGO) with polkit security level 3, and enable no
-service — the install message lists them. Another level: copy
-`/usr/share/polkit-1/rules.d/49-centurion.rules` to `/etc/polkit-1/rules.d/`
-and edit `SECURITY_LEVEL` there (the `/etc` copy wins).
+no native CPU tuning, no PGO), and enable no
+service — the install message lists them. The polkit rules give a local,
+active `wheel`/`sudo` admin password-free access (firmware writes, backups and
+netguard rules always ask); a copy of
+`/usr/share/polkit-1/rules.d/49-centurion.rules` placed in
+`/etc/polkit-1/rules.d/` overrides the packaged one if you want to tighten it.
 
 ### Fedora (COPR)
 
 `packaging/fedora/centurion.spec` builds from the `./make-dist.sh` tarball
 (crates vendored, so it builds offline as COPR requires); same layout and
-security level as the AUR package.
+authorization as the AUR package.
 
 ### Packaging for another distribution
 
@@ -354,10 +355,9 @@ packaging/              OpenRC / systemd units, polkit, udev, install-files.sh, 
 docs/                   HANDBOOK, TECHNICAL, AUTOTUNE
 ```
 
-The GUI runs as your user. The default polkit level asks for the administrator
-password before a helper applies a value you did not already approve; applying
-a saved Optimizations preset (scenes, game hooks) stays password-free.
-Firmware-persistent changes, backups and network-guard rules always ask.
+The GUI runs as your user. A local, active `wheel`/`sudo` admin runs the
+helpers without a password. Firmware-persistent changes, backups and
+network-guard rules always ask for the administrator password.
 Debian/Ubuntu admins are in `sudo`; Gentoo and most others use `wheel`.
 The lighting helper normally runs as you through a udev `uaccess` rule.
 

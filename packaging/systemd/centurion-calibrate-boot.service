@@ -28,6 +28,8 @@ ProtectClock=yes
 ProtectHostname=yes
 LockPersonality=yes
 SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
 
 [Install]
 WantedBy=multi-user.target

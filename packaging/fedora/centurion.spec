@@ -61,10 +61,11 @@ cargo test --release --frozen --offline
 desktop-file-validate %{buildroot}%{_datadir}/applications/centurion.desktop
 
 %install
-# Security level 3 by default for packages: password for raw values, approved presets stay silent.
+# Root helpers are password-free for a wheel/sudo admin at the machine;
+# firmware writes, backups and netguard rules always ask.
 DESTDIR=%{buildroot} PREFIX=%{_prefix} LIBEXEC=%{_libexecdir}/centurion UNITDIR=%{_unitdir} \
     UDEVDIR=%{_udevrulesdir} SYSTEMD_SLEEP=%{_prefix}/lib/systemd/system-sleep \
-    POLKIT_RULESDIR=%{_datadir}/polkit-1/rules.d CENTURION_SECURITY_LEVEL=3 \
+    POLKIT_RULESDIR=%{_datadir}/polkit-1/rules.d \
     bash packaging/install-files.sh
 # OpenRC scripts are of no use on Fedora.
 rm -r %{buildroot}%{_sysconfdir}/init.d
