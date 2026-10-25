@@ -49,6 +49,7 @@ protected:
 private:
     struct Cell { int code; QRectF rect; bool bar; QString label; QPainterPath shape; };
     void layoutCells();
+    void updateToolTip();
     void layoutMatrix();
     void layoutPhysical();
     QRectF physBounds() const;  // key units, perimeter included

@@ -20,7 +20,15 @@
 
 static QString readAll(const QString &p) {
     QFile f(p);
-    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.read(256 * 1024)).trimmed() : QString();
+    if (!f.open(QIODevice::ReadOnly)) return QString();
+    QByteArray data;
+    char buf[4096];
+    while (data.size() < 256 * 1024) {  // chunked: QFile::read(256 KiB) allocates the full size per call
+        const qint64 n = f.read(buf, sizeof buf);
+        if (n <= 0) break;
+        data.append(buf, int(n));
+    }
+    return QString::fromUtf8(data).trimmed();
 }
 
 // Read once per refresh (≈45 status checks consult it), not once per check.

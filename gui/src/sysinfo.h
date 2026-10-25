@@ -71,6 +71,7 @@ struct BatteryState {
     int minutesLeft() const;
 };
 BatteryState batteryState();
+bool batteryPresent();  // a system battery exists (no sysfs value read)
 QString formatMinutes(int m);
 Opt cpuPackagePower();  // powercap RAPL energy delta between calls
 Opt usbcInputs();       // UCSI power-delivery sources that are online

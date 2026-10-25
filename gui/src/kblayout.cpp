@@ -1,8 +1,10 @@
 #include "kblayout.h"
 #include <QDir>
+#include <QCoreApplication>
 #include <QProcess>
 #include <QSet>
 #include <QSettings>
+#include <QTimer>
 #include <algorithm>
 #include <utility>
 #ifdef CENTURION_HAVE_XKB
@@ -193,6 +195,36 @@ std::pair<QString, QString> firstOf(const QString &layouts, const QString &varia
     return {layouts.split(',').value(0).trimmed(), variants.split(',').value(0).trimmed()};
 }
 
+std::pair<QString, QString> &detected() {
+    static std::pair<QString, QString> l;
+    return l;
+}
+
+// setxkbmap -query without blocking the GUI thread (it can take a second on a busy X server).
+void queryX11Layout() {
+    auto *p = new QProcess(&notifier());
+    QObject::connect(p, &QProcess::finished, p, [p](int code, QProcess::ExitStatus st) {
+        if (st == QProcess::NormalExit && code == 0) {
+            QString layout, variant;
+            for (const QString &line : QString::fromLocal8Bit(p->readAllStandardOutput()).split('\n')) {
+                const QString v = line.section(':', 1).trimmed();
+                if (line.startsWith(QLatin1String("layout:"))) layout = v;
+                else if (line.startsWith(QLatin1String("variant:"))) variant = v;
+            }
+            if (const auto l = firstOf(layout, variant); !layout.isEmpty() && l != detected()) {
+                detected() = l;
+                Q_EMIT notifier().detected();
+            }
+        }
+        p->deleteLater();
+    });
+    QObject::connect(p, &QProcess::errorOccurred, p, [p](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) p->deleteLater();
+    });
+    QTimer::singleShot(1000, p, [p] { if (p->state() != QProcess::NotRunning) p->kill(); });
+    p->start(QStringLiteral("setxkbmap"), {QStringLiteral("-query")});
+}
+
 std::pair<QString, QString> detectLayout() {
     if (qEnvironmentVariableIsSet("CENTURION_XKB_LAYOUT"))
         return firstOf(qEnvironmentVariable("CENTURION_XKB_LAYOUT"), qEnvironmentVariable("CENTURION_XKB_VARIANT"));
@@ -203,30 +235,15 @@ std::pair<QString, QString> detectLayout() {
         if (!list.isEmpty() && kx.value(QStringLiteral("Use"), true).toBool())
             return firstOf(list, kx.value(QStringLiteral("VariantList")).toString());
     }
-    if (qEnvironmentVariableIsSet("DISPLAY")) {  // X11 / XWayland
-        QProcess p;
-        p.start(QStringLiteral("setxkbmap"), {QStringLiteral("-query")});
-        if (p.waitForFinished(1000) && p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
-            QString layout, variant;
-            for (const QString &line : QString::fromLocal8Bit(p.readAllStandardOutput()).split('\n')) {
-                const QString v = line.section(':', 1).trimmed();
-                if (line.startsWith(QLatin1String("layout:"))) layout = v;
-                else if (line.startsWith(QLatin1String("variant:"))) variant = v;
-            }
-            if (!layout.isEmpty()) return firstOf(layout, variant);
-        } else {
-            p.kill();
-            p.waitForFinished(200);
-        }
-    }
+    if (qEnvironmentVariableIsSet("DISPLAY")) queryX11Layout();  // X11 / XWayland; answers later
     if (qEnvironmentVariableIsSet("XKB_DEFAULT_LAYOUT"))
         return firstOf(qEnvironmentVariable("XKB_DEFAULT_LAYOUT"), qEnvironmentVariable("XKB_DEFAULT_VARIANT"));
     return {QStringLiteral("us"), QString()};
 }
 
 const std::pair<QString, QString> &layout() {
-    static const auto l = detectLayout();
-    return l;
+    [[maybe_unused]] static const bool init = [] { detected() = detectLayout(); return true; }();
+    return detected();
 }
 
 #ifdef CENTURION_HAVE_XKB
@@ -250,6 +267,11 @@ QString symLegend(xkb_keysym_t sym) {
 #endif
 
 } // namespace
+
+Notifier &notifier() {
+    static auto *n = new Notifier(QCoreApplication::instance());
+    return *n;
+}
 
 QString activeLayoutName() {
     const auto &[l, v] = layout();

@@ -346,13 +346,20 @@ Opt igpu() {
     return std::nullopt;
 }
 
-BatteryState batteryState() {
-    BatteryState b;
+/// The system battery (type Battery, not a peripheral's scope=Device one); empty when there is none.
+static QString batteryDir() {
     const QStringList bats = cachedDirs(QStringLiteral("/sys/class/power_supply"), [](const QString &p, const QString &) {
         return rd(p + QStringLiteral("/type")) == QStringLiteral("Battery") && rd(p + QStringLiteral("/scope")).value_or(QString()) != QStringLiteral("Device");
     });
-    if (bats.isEmpty()) return b;
-    const QString p = bats.first();
+    return bats.isEmpty() ? QString() : bats.first();
+}
+
+bool batteryPresent() { return !batteryDir().isEmpty(); }
+
+BatteryState batteryState() {
+    BatteryState b;
+    const QString p = batteryDir();
+    if (p.isEmpty()) return b;
     b.present = true;
     b.status = rd(p + "/status").value_or(QString());
     if (auto c = rdInt(p + "/capacity")) b.capacity = int(*c);
@@ -386,27 +393,21 @@ QString formatMinutes(int m) {
 }
 
 Opt battery() {
-    const QStringList bats = cachedDirs(QStringLiteral("/sys/class/power_supply"), [](const QString &p, const QString &) {
-        return rd(p + QStringLiteral("/type")) == QStringLiteral("Battery");
-    });
-    for (const QString &p : bats) {
-        QStringList b;
-        if (auto cap = rd(p + "/capacity")) b << *cap + '%';
-        if (auto st = rd(p + "/status"); st && !st->isEmpty()) b << *st;
-        auto full = rdInt(p + "/energy_full"); if (!full) full = rdInt(p + "/charge_full");
-        auto design = rdInt(p + "/energy_full_design"); if (!design) design = rdInt(p + "/charge_full_design");
-        if (full && design && *design > 0) b << QStringLiteral("health %1%").arg(100.0 * *full / *design, 0, 'f', 0);
-        // Draw and time left / to full at the current rate.
-        const BatteryState st = batteryState();
-        if (st.powerW >= 0.1 && (st.status == QLatin1String("Discharging") || st.status == QLatin1String("Charging")))
-            b << QStringLiteral("%1 W").arg(st.powerW, 0, 'f', 1);
-        if (const int m = st.minutesLeft(); m >= 0 && m < 48 * 60)
-            b << (st.status == QLatin1String("Charging") ? QStringLiteral("full in ~") : QStringLiteral("~")) + formatMinutes(m)
-                     + (st.status == QLatin1String("Charging") ? QString() : QStringLiteral(" left"));
-        else if (auto uv = rdInt(p + "/voltage_now")) b << QStringLiteral("%1V").arg(*uv / 1e6, 0, 'f', 2);
-        return joined(b);
-    }
-    return std::nullopt;
+    const QString p = batteryDir();
+    if (p.isEmpty()) return std::nullopt;
+    const BatteryState st = batteryState();
+    QStringList b;
+    if (st.capacity >= 0) b << QString::number(st.capacity) + '%';
+    if (!st.status.isEmpty()) b << st.status;
+    if (st.fullWh >= 0 && st.designWh > 0) b << QStringLiteral("health %1%").arg(100.0 * st.fullWh / st.designWh, 0, 'f', 0);
+    // Draw and time left / to full at the current rate.
+    if (st.powerW >= 0.1 && (st.status == QLatin1String("Discharging") || st.status == QLatin1String("Charging")))
+        b << QStringLiteral("%1 W").arg(st.powerW, 0, 'f', 1);
+    if (const int m = st.minutesLeft(); m >= 0 && m < 48 * 60)
+        b << (st.status == QLatin1String("Charging") ? QStringLiteral("full in ~") : QStringLiteral("~")) + formatMinutes(m)
+                 + (st.status == QLatin1String("Charging") ? QString() : QStringLiteral(" left"));
+    else if (auto uv = rdInt(p + "/voltage_now")) b << QStringLiteral("%1V").arg(*uv / 1e6, 0, 'f', 2);
+    return joined(b);
 }
 
 QMap<QString, double> sensorValues() {

@@ -33,7 +33,7 @@ QString BatteryPage::file() {
     return dir + QStringLiteral("/centurion/battery.json");
 }
 
-bool BatteryPage::present() { return sysinfo::batteryState().present; }
+bool BatteryPage::present() { return sysinfo::batteryPresent(); }
 
 static QLabel *muted(const QString &t) {
     auto *l = new QLabel(t);

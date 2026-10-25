@@ -3,8 +3,8 @@
 // (firmware-attributes cpu_temp / gpu_temp, honoured in the Custom profile) and proposes a Custom-mode table
 // for a noise preset instead of hand-dragging ten points.
 //
-// Presets come from ~/.config/centurion/fan-presets.json, written the first time from the stock presets: the
-// repository's fan-presets.json, compiled into the program:
+// The presets are built into the program (Quiet / Balanced / Performance / Max, each with its own curve). A
+// ~/.config/centurion/fan-presets.json, when the user creates one, replaces them:
 //     {"presets": [{"name": "Quiet", "level": 5, "cpu_min": 85, "cpu_max": 89, "ramp_from": 3}, ...]}
 // level: fan level at the CPU limit (1–10); cpu_min..cpu_max: the CPU limits the preset offers (within the
 // firmware's range); ramp_from: a temperature step (0–9, as in the editor); steps up to it stay at level 1. Or, instead of level / ramp_from, the curve

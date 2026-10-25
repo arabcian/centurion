@@ -13,6 +13,7 @@
 // empty list and the view falls back to the controller's matrix.
 #include "lighting.h"
 #include <QHash>
+#include <QObject>
 #include <QList>
 #include <QRectF>
 #include <QString>
@@ -44,5 +45,16 @@ QHash<int, QString> legends(const QList<Key> &keys);
 
 /// "tr", "tr(f)", "us"… — the layout legends() used (for a tooltip / status line).
 QString activeLayoutName();
+
+/// The X11 layout query (setxkbmap) runs in the background; until it answers, legends() and
+/// activeLayoutName() use the fallback. `detected` fires once if the answer differs.
+class Notifier : public QObject {
+    Q_OBJECT
+public:
+    using QObject::QObject;
+Q_SIGNALS:
+    void detected();
+};
+Notifier &notifier();
 
 } // namespace kblayout

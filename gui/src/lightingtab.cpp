@@ -66,20 +66,31 @@ KeyboardView::KeyboardView(QWidget *parent) : QWidget(parent) {
     sp.setHeightForWidth(true);
     setSizePolicy(sp);
     setToolTip("Click a key to select it · drag to select several · Ctrl/Shift-click to add or remove");
+    // The X11 layout arrives after the first legends were drawn with the fallback.
+    connect(&kblayout::notifier(), &kblayout::Notifier::detected, this, [this] {
+        legends_ = kblayout::legends(phys_);
+        updateToolTip();
+        layoutCells();
+        update();
+    });
 }
 
 void KeyboardView::setKeyMap(const KeyMap &m) {
     map_ = m;
     phys_ = kblayout::forMap(m);
     legends_ = kblayout::legends(phys_);
-    setToolTip(QStringLiteral("Click a key to select it · drag to select several · Ctrl/Shift-click to add or remove")
-               + (phys_.isEmpty() ? QStringLiteral("\nLayout: controller matrix (unknown board)")
-                                  : QStringLiteral("\nLayout: %1 · legends: %2")
-                                        .arg(kblayout::formName(kblayout::formOf(m)), kblayout::activeLayoutName())));
+    updateToolTip();
     sel_.clear();
     layoutCells();
     updateGeometry();
     update();
+}
+
+void KeyboardView::updateToolTip() {
+    setToolTip(QStringLiteral("Click a key to select it · drag to select several · Ctrl/Shift-click to add or remove")
+               + (phys_.isEmpty() ? QStringLiteral("\nLayout: controller matrix (unknown board)")
+                                  : QStringLiteral("\nLayout: %1 · legends: %2")
+                                        .arg(kblayout::formName(kblayout::formOf(map_)), kblayout::activeLayoutName())));
 }
 
 void KeyboardView::setPreview(const QHash<int, QColor> &c, const QSet<int> &a) {

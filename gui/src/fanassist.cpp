@@ -4,8 +4,7 @@
 #include "privileged.h"
 #include "theme.h"
 #include <QComboBox>
-#include <QDir>
-#include <QFileInfo>
+#include <QFile>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -13,7 +12,6 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
-#include <QSaveFile>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -23,9 +21,15 @@
 // Without cpu_temp the CPU throttles at its own TjMax, which the curve then assumes to be this.
 static constexpr int TJMAX_C = 100;
 
-// The stock presets: fan-presets.json from the repository root, compiled in. Written to the user's presets file
-// when it does not exist yet, and used when that file cannot be read.
-static const QString STOCK = QStringLiteral(":/fan-presets.json");
+// The built-in presets. Used when the user has no presets file, and when that file cannot be read.
+static QVector<FanPreset> stockPresets() {
+    return {
+        {QStringLiteral("Quiet"),       -1, 85,  89, -1, {1, 1, 1, 1, 2, 3, 4, 5, 6, 7}},
+        {QStringLiteral("Balanced"),    -1, 85,  92, -1, {1, 1, 1, 2, 3, 4, 5, 6, 7, 8}},
+        {QStringLiteral("Performance"), -1, 85,  95, -1, {1, 1, 2, 3, 4, 5, 6, 7, 8, 9}},
+        {QStringLiteral("Max"),         -1, 85, 100, -1, {1, 1, 2, 3, 4, 6, 8, 9, 10, 10}},
+    };
+}
 
 static QVector<int> legal(QVector<int> lv);
 
@@ -64,22 +68,14 @@ static QVector<FanPreset> parsePresets(const QByteArray &data, QString *error) {
     return out;
 }
 
-/// The presets file's presets; the stock ones (and `error` set) when it is missing — then it is written — or invalid.
+/// The user's presets file, when there is one; otherwise the built-in presets. An unreadable or invalid file sets
+/// `error` and the built-in presets are used.
 static QVector<FanPreset> loadPresets(QString *error) {
-    QFile stock(STOCK);
-    const QByteArray stockData = stock.open(QIODevice::ReadOnly) ? stock.readAll() : QByteArray();
-    QString ignored;
-    const QVector<FanPreset> defaults = parsePresets(stockData, &ignored);
     QFile f(presetsFile());
-    if (!f.exists()) {
-        QDir().mkpath(QFileInfo(f).absolutePath());
-        QSaveFile out(presetsFile());
-        if (out.open(QIODevice::WriteOnly)) { out.write(stockData); out.commit(); }
-        return defaults;
-    }
-    if (!f.open(QIODevice::ReadOnly) || f.size() > 64 * 1024) { *error = QStringLiteral("cannot be read"); return defaults; }
+    if (!f.exists()) return stockPresets();
+    if (!f.open(QIODevice::ReadOnly) || f.size() > 64 * 1024) { *error = QStringLiteral("cannot be read"); return stockPresets(); }
     const QVector<FanPreset> out = parsePresets(f.readAll(), error);
-    return error->isEmpty() ? out : defaults;
+    return error->isEmpty() ? out : stockPresets();
 }
 
 /// Non-decreasing, 1..10, three hottest steps at least 3 / 5 / 7 (legion-profile-helper's thermal floor).
@@ -160,15 +156,17 @@ FanAssistDialog::FanAssistDialog(const QVector<FanCurveFan> &fans, QWidget *pare
     presets_ = loadPresets(&error);
     noise_ = new QComboBox;
     for (const FanPreset &p : presets_)
-        noise_->addItem((p.curve.isEmpty() ? QStringLiteral("%1 — fan level %2 at the CPU limit").arg(p.name).arg(p.level)
-                                           : QStringLiteral("%1 — own curve").arg(p.name))
-                        + QStringLiteral(", CPU %1–%2 °C").arg(p.cpuMin).arg(p.cpuMax));
+        noise_->addItem((p.curve.isEmpty() ? QStringLiteral("%1 — fan level %2 at the CPU limit, ").arg(p.name).arg(p.level)
+                                           : p.name + QStringLiteral(", "))
+                        + QStringLiteral("CPU %1–%2 °C").arg(p.cpuMin).arg(p.cpuMax));
     noise_->setCurrentIndex(std::min<int>(1, presets_.size() - 1));
     applyPreset();
     form->addRow(QStringLiteral("Fan noise"), noise_);
     v->addLayout(form);
     auto *file = new QLabel(error.isEmpty()
-        ? QStringLiteral("Presets: %1 — edit it and reopen the assistant.").arg(presetsFile().toHtmlEscaped())
+        ? (QFile::exists(presetsFile())
+               ? QStringLiteral("Presets: %1 — edit it and reopen the assistant.").arg(presetsFile().toHtmlEscaped())
+               : QStringLiteral("Built-in presets. To use your own, create %1.").arg(presetsFile().toHtmlEscaped()))
         : QStringLiteral("<span style='color:%1'>%2: %3 — using the built-in presets.</span>")
               .arg(theme::WARN, presetsFile().toHtmlEscaped(), error.toHtmlEscaped()));
     file->setWordWrap(true);
@@ -211,7 +209,7 @@ void FanAssistDialog::propose() {
     QStringList l;
     for (int x : result_) l << QString::number(x);
     status_->setText(QStringLiteral("Proposed curve: <b>%1</b>%2").arg(l.join(QStringLiteral(" · ")),
-                     !p.curve.isEmpty() ? QStringLiteral(" (the preset's own curve)")
+                     !p.curve.isEmpty() ? QString()
                      : f ? QStringLiteral(" (on the steps of fan %1, sensor %2)").arg(f->id).arg(f->sensor)
                          : QStringLiteral(" (no per-fan temperature steps from the EC: generic spacing)")));
 }

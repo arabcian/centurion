@@ -72,7 +72,16 @@ static QList<int> ownPids() {
 
 static QByteArray readProc(int pid, const char *what, qint64 max = 4096) {
     QFile f(QStringLiteral("/proc/%1/%2").arg(pid).arg(QLatin1String(what)));
-    return f.open(QIODevice::ReadOnly) ? f.read(max) : QByteArray();
+    if (!f.open(QIODevice::ReadOnly)) return QByteArray();
+    // /proc files report size 0: read in small chunks (QFile::read(max) would allocate `max` up front).
+    QByteArray out;
+    char buf[4096];
+    while (out.size() < max) {
+        const qint64 n = f.read(buf, qMin<qint64>(sizeof buf, max - out.size()));
+        if (n <= 0) break;
+        out.append(buf, int(n));
+    }
+    return out;
 }
 
 bool LauncherWatch::launcherRunning() const {

@@ -38,7 +38,14 @@ static const QString PCI = QStringLiteral("/sys/bus/pci/devices");
 static QString rd(const QString &p) {
     QFile f(p);
     if (!f.open(QIODevice::ReadOnly)) return {};
-    return QString::fromUtf8(f.read(64 * 1024)).trimmed();
+    QByteArray data;
+    char buf[4096];
+    while (data.size() < 64 * 1024) {  // chunked: QFile::read(64 KiB) allocates the full size per call
+        const qint64 n = f.read(buf, sizeof buf);
+        if (n <= 0) break;
+        data.append(buf, int(n));
+    }
+    return QString::fromUtf8(data).trimmed();
 }
 
 /// PCI address of the NVIDIA display function, or empty.

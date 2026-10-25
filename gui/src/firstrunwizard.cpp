@@ -118,10 +118,16 @@ static QWizardPage *servicesPage(MainWindow *win) {
     // know, which would shift a combined answer); OpenRC keeps a link per runlevel.
     QSet<QString> enabled;
     if (systemd) {
+        // All queries start first, then are collected: a stuck systemd costs one wait, not one per unit.
+        QList<QProcess *> procs;
         for (const Service &s : list) {
-            QProcess pr;
-            pr.start(QStringLiteral("systemctl"), {QStringLiteral("is-enabled"), s.name + QStringLiteral(".service")});
-            if (pr.waitForFinished(2000) && pr.readAllStandardOutput().trimmed() == "enabled") enabled.insert(s.name);
+            auto *pr = new QProcess;
+            pr->start(QStringLiteral("systemctl"), {QStringLiteral("is-enabled"), s.name + QStringLiteral(".service")});
+            procs << pr;
+        }
+        for (int i = 0; i < list.size(); ++i) {
+            if (procs[i]->waitForFinished(2000) && procs[i]->readAllStandardOutput().trimmed() == "enabled") enabled.insert(list[i].name);
+            delete procs[i];
         }
     } else {
         for (const Service &s : list)
