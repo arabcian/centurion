@@ -438,7 +438,9 @@ fn plan(rounds: usize, scale: f64, ram: u64, only: &Option<Vec<String>>, phase: 
         }
         let Some(reference) = live_label(&key, disk.as_ref().ok().map(String::as_str)) else { skipped.push((key, "live value unreadable".into())); continue };
         let t = tune::find(&key);
-        let opts: Vec<String> = t.map(|t| tune::options(t).into_iter().map(|(v, _)| v).collect()).unwrap_or_default();
+        let mut opts: Vec<String> = t.map(|t| tune::options(t).into_iter().map(|(v, _)| v).collect()).unwrap_or_default();
+        // "≤ POLL" (no real idle state) is never benchmarked.
+        if key == "cpu.cstate_max" { let names = tune::cstate_names(); opts.retain(|o| !tune::poll_only_cstate(&names, o)); }
         let raw = match key.as_str() {
             "vm.dirty" => vec!["0.25".into(), "0.5".into(), "2".into()],
             "thp" => vec!["never".into(), "madvise".into(), "always".into(), "madvise+mthp".into(), "always+mthp".into()],

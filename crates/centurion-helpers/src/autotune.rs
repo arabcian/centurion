@@ -1015,6 +1015,8 @@ impl<'a> Rules<'a> {
             self.p.cur(key).map(str::to_owned).or_else(|| self.p.calibration.as_ref().and_then(|c| c.values(key, "")).map(|(r, _)| r))
         };
         alts.retain(|c| !self.p.measured_unsafe(key, &vstr(&c.value)));
+        // The POLL-only C-state cap is never a candidate (not benchmarked, not tuned).
+        if key == "cpu.cstate_max" { let names = self.poll_names(); alts.retain(|c| !tune::poll_only_cstate(&names, &vstr(&c.value))); }
         // Costs no calibration run can see (sustained idle power and heat of capped C-states): every
         // candidate pays them, whether its effects are estimates or measurements.
         for c in alts.iter_mut() { c.fx.risk += unseen_cost(self.p, key, &vstr(&c.value)); }
@@ -1073,7 +1075,9 @@ impl<'a> Rules<'a> {
     fn calibrated_choice(&mut self, key: &'static str) -> bool {
         let Some(cal) = self.p.calibration.as_ref() else { return false };
         let reference = self.p.boot_default(key).or_else(|| self.p.cur(key)).map(str::to_owned).unwrap_or_default();
-        let Some((stored_ref, vals)) = cal.values(key, &reference) else { return false };
+        let Some((stored_ref, mut vals)) = cal.values(key, &reference) else { return false };
+        // Measurements of the POLL-only cap (older runs) are context only, never a choice.
+        if key == "cpu.cstate_max" { let names = self.poll_names(); vals.retain(|v| !tune::poll_only_cstate(&names, v)); }
         let reference = if reference.is_empty() { stored_ref } else { reference };
         let share = self.blend();
         // Only values that were found unsafe are on record (nothing measured): the rule stands.
@@ -1281,6 +1285,7 @@ fn measurement_frame(goal: Goal, p: &Profile, mut w: Weights, notes: &mut Vec<St
 impl<'a> Rules<'a> {
     /// Candidate values of a calibrated knob with their cost, index 0 = reference. Same
     /// constraints as `anchor`: boot-default trust region, unsafe values, retired keys, learned risk.
+    fn poll_names(&self) -> Vec<&str> { self.p.cstates.iter().map(|c| c.name.as_str()).collect() }
     fn level_costs(&self, key: &str, reference: &str, values: &[String]) -> Vec<(String, f64)> {
         let mut out = vec![(reference.to_owned(), 0.0)];
         let Some(learned) = self.p.learned_risk(key) else { return out };
@@ -1291,6 +1296,7 @@ impl<'a> Rules<'a> {
         let max_dist = 1.0 + 2.0 * strength;
         for v in values {
             if v == reference || self.p.measured_unsafe(key, v) { continue; }
+            if key == "cpu.cstate_max" && tune::poll_only_cstate(&self.poll_names(), v) { continue; }
             let mut dev = 0.2;
             if let Some(d0) = &d0 {
                 let seen = cal.and_then(|c| c.get(key, d0, v, share)).map_or(0.0, |m| m.n);
@@ -2936,6 +2942,14 @@ mod tests {
         // The shallower cap's measured gain is large enough for gaming to buy it.
         let (d, _, _) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
         assert_eq!(get(&d, "cpu.cstate_max").map(vstr).as_deref(), Some("2"), "{d:?}");
+    }
+
+    #[test]
+    fn poll_only_cap_detection() {
+        let names = ["POLL", "C1", "C2", "C3"];
+        assert!(tune::poll_only_cstate(&names, "0"));
+        assert!(!tune::poll_only_cstate(&names, "1") && !tune::poll_only_cstate(&names, "all"));
+        assert!(!tune::poll_only_cstate(&["C1", "C2"], "0"), "no POLL state: index 0 is a real C-state");
     }
 
     #[test]

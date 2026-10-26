@@ -874,6 +874,12 @@ pub fn cstate_names() -> Vec<String> {
         .collect()
 }
 
+/// `cpu.cstate_max` = `value` leaves only the POLL pseudo-state (no real idle state: every idle CPU
+/// spins). Calibration and autotune never test or pick it; it stays selectable by hand.
+pub fn poll_only_cstate<S: AsRef<str>>(names: &[S], value: &str) -> bool {
+    value.trim().parse::<usize>().map_or(false, |i| i < names.len() && names[..=i].iter().all(|n| n.as_ref().eq_ignore_ascii_case("POLL")))
+}
+
 pub fn debugfs_mounted() -> bool {
     std::fs::read_to_string("/proc/self/mounts")
         .map(|m| m.lines().any(|l| l.split_whitespace().nth(1) == Some(DEBUGFS)))
