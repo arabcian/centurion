@@ -1,0 +1,84 @@
+#pragma once
+// Static hardware inventory and live sensor readouts for the Home tab —
+// port of the helper functions in home_tab.py. Everything is sysfs /
+// procfs; the only external process is nvidia-smi, which callers run
+// asynchronously (see HomeTab) so the GUI thread never blocks on it.
+#include <QList>
+#include <QPair>
+#include <QMap>
+#include <QString>
+#include <optional>
+
+namespace sysinfo {
+
+using Row = QPair<QString, QString>;
+using Opt = std::optional<QString>;
+
+std::optional<QString> dmi(const QString &field);         // raw
+std::optional<QString> dmiClean(const QString &field);    // placeholder strings filtered
+Opt cpuModel();
+
+/// Lenovo Legion, LOQ or IdeaPad Gaming laptop (DMI sys_vendor + marketing
+/// name) — the only machines this program runs on. Same rule as the helpers
+/// (crates/centurion-helpers/src/machine.rs). `reason` is set when it returns false.
+bool supportedMachine(QString *reason = nullptr);
+
+/// Whitelist on top of supportedMachine(): the marketing name contains one of
+/// LenovoLegionToolkit's AllowedModelsPrefix entries (Compatibility.cs) — the
+/// models whose firmware interfaces are known. False = a Legion-family machine
+/// nobody has reported yet; the GUI asks for a GitHub report but still runs.
+bool knownModel();
+
+/// Plain-text DMI / CPU / kernel summary for a support report (no serial numbers).
+QString reportInfo();
+
+/// IdeaPad-style keyboards: the EC's Fn-lock bit is "F1–F12 primary", the
+/// opposite of what the Fn-lock switch means on Legion / LOQ (same rule as
+/// machine.rs fn_lock_inverted).
+bool fnLockInverted();
+
+enum class CpuVendor { Amd, Intel, Other };
+/// vendor_id from /proc/cpuinfo (read once; CENTURION_CPU_VENDOR=amd|intel overrides, dev only).
+CpuVendor cpuVendor();
+inline bool isIntel() { return cpuVendor() == CpuVendor::Intel; }
+inline bool isAmd() { return cpuVendor() == CpuVendor::Amd; }
+Opt ramTotal();
+Opt kernel();
+Opt biosInfo();
+Opt systemInfo();
+
+// Live (cheap sysfs reads)
+Opt cpuTemp();
+std::optional<double> cpuTempC();  // same sensor as cpuTemp(), as a number
+Opt fans();
+Opt storage();
+Opt power();
+Opt igpu();
+Opt battery();
+/// The same readings as numbers (D-Bus SensorValues): cpu_temp_c, fanN_rpm, nvmeN_temp_c, power_<hwmon>_w,
+/// igpu_temp_c, battery_percent, battery_power_w, battery_health_percent — each only when present.
+QMap<QString, double> sensorValues();
+
+/// One battery's numbers in watts / watt-hours (charge_* × voltage where the driver reports µAh).
+struct BatteryState {
+    bool present = false;
+    QString status;                 // Charging / Discharging / Full / Not charging
+    int capacity = -1;              // %
+    double powerW = -1;             // instantaneous draw / charge rate, -1 = unknown
+    double energyWh = -1, fullWh = -1, designWh = -1;
+    int cycles = -1;
+    /// Minutes until empty (discharging) or full (charging) at the current rate; -1 = unknown.
+    int minutesLeft() const;
+};
+BatteryState batteryState();
+bool batteryPresent();  // a system battery exists (no sysfs value read)
+QString formatMinutes(int m);
+Opt cpuPackagePower();  // powercap RAPL energy delta between calls
+Opt usbcInputs();       // UCSI power-delivery sources that are online
+Opt gpuMode();          // "Hybrid" / "dGPU only (MUX)"
+
+// nvidia-smi output parsers (the process itself is run by the caller)
+Opt parseGpuName(const QByteArray &out);
+Opt parseGpuLive(const QByteArray &out);
+
+} // namespace sysinfo
