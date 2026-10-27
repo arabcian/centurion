@@ -26,6 +26,7 @@ pub mod iorate;
 pub mod defaults;
 pub mod calib;
 pub mod calctx;
+pub mod cooling;
 pub mod stability;
 pub mod field;
 pub mod bench;

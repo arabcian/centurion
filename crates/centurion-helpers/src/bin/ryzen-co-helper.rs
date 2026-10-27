@@ -282,4 +282,31 @@ mod tests {
                                     {"ccd":0,"ccx":0,"core":1,"coper":-5}]});
         assert!(op_set_coper_batch(p.as_object().unwrap()).is_err());
     }
+
+    // ── property tests ──────────────────────────────────────────────────────
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::default() })]
+
+        /// Only a JSON integer inside [lo, hi] is accepted - never a float, string, bool or null,
+        /// and never a value outside the bounds, for any bounds.
+        #[test]
+        fn require_int_is_strict(n in any::<i64>(), lo in -60i64..0, hi in 0i64..30, f in any::<f64>(), s in ".{0,8}") {
+            match require_int(Some(&json!(n)), "v", lo, hi) {
+                Ok(v) => { prop_assert_eq!(v, n); prop_assert!((lo..=hi).contains(&n)); }
+                Err(_) => prop_assert!(!(lo..=hi).contains(&n)),
+            }
+            if f.is_finite() { prop_assert!(require_int(Some(&json!(f)), "v", lo, hi).is_err()); }
+            prop_assert!(require_int(Some(&json!(s)), "v", lo, hi).is_err());
+            prop_assert!(require_int(Some(&Value::Null), "v", lo, hi).is_err());
+            prop_assert!(require_int(None, "v", lo, hi).is_err());
+        }
+
+        /// u64 beyond i64::MAX is refused, not wrapped into range.
+        #[test]
+        fn require_int_refuses_huge_u64(n in (i64::MAX as u64 + 1)..=u64::MAX) {
+            prop_assert!(require_int(Some(&json!(n)), "v", -50, 20).is_err());
+        }
+    }
 }

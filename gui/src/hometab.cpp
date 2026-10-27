@@ -1,6 +1,7 @@
 #include "hometab.h"
 #include <memory>
 #include "deviceinfodialog.h"
+#include "i18n.h"
 #include "fancurvedialog.h"
 #include "lighting.h"
 #include "memorydialog.h"
@@ -87,23 +88,32 @@ static std::optional<QString> nvidiaProcModel() {
     return std::nullopt;
 }
 
-static const QHash<QString, QString> LABELS{
-    {"low-power", "Power Saver"}, {"quiet", "Quiet"}, {"cool", "Cool"}, {"balanced", "Balanced"},
-    {"balanced-performance", "Balanced Performance"}, {"performance", "Performance"},
-    {"max-power", "Extreme"}, {"custom", "Custom"}};
+// Source texts, translated on use (QT_TRANSLATE_NOOP: the table is built before any translator exists).
+static const QHash<QString, const char *> LABELS{
+    {"low-power", QT_TRANSLATE_NOOP("HomeTab", "Power Saver")}, {"quiet", QT_TRANSLATE_NOOP("HomeTab", "Quiet")},
+    {"cool", QT_TRANSLATE_NOOP("HomeTab", "Cool")}, {"balanced", QT_TRANSLATE_NOOP("HomeTab", "Balanced")},
+    {"balanced-performance", QT_TRANSLATE_NOOP("HomeTab", "Balanced Performance")},
+    {"performance", QT_TRANSLATE_NOOP("HomeTab", "Performance")},
+    {"max-power", QT_TRANSLATE_NOOP("HomeTab", "Extreme")}, {"custom", QT_TRANSLATE_NOOP("HomeTab", "Custom")}};
 
-static const QHash<QString, QString> DESCRIPTIONS{
-    {"low-power", "Lowest power draw, longest battery life."},
-    {"quiet", "Keeps fan noise as low as possible."},
-    {"cool", "Prioritises low surface and internal temperatures."},
-    {"balanced", "Balanced mix of power, noise and performance."},
-    {"balanced-performance", "Leans towards performance."},
-    {"performance", "Maximum performance; fans run louder."},
-    {"max-power", "Unrestricted BIOS limits, mains power only."},
-    {"custom", "Hands the PPT and fan limits to you. Required by the Firmware Attributes tab."}};
+static const QHash<QString, const char *> DESCRIPTIONS{
+    {"low-power", QT_TRANSLATE_NOOP("HomeTab", "Lowest power draw, longest battery life.")},
+    {"quiet", QT_TRANSLATE_NOOP("HomeTab", "Keeps fan noise as low as possible.")},
+    {"cool", QT_TRANSLATE_NOOP("HomeTab", "Prioritises low surface and internal temperatures.")},
+    {"balanced", QT_TRANSLATE_NOOP("HomeTab", "Balanced mix of power, noise and performance.")},
+    {"balanced-performance", QT_TRANSLATE_NOOP("HomeTab", "Leans towards performance.")},
+    {"performance", QT_TRANSLATE_NOOP("HomeTab", "Maximum performance; fans run louder.")},
+    {"max-power", QT_TRANSLATE_NOOP("HomeTab", "Unrestricted BIOS limits, mains power only.")},
+    {"custom", QT_TRANSLATE_NOOP("HomeTab", "Hands the PPT and fan limits to you. Required by the Firmware Attributes tab.")}};
 
-QString HomeTab::profileLabel(const QString &p) {
-    if (auto it = LABELS.find(p); it != LABELS.end()) return *it;
+/// The description of a profile in the interface language; `fallback` for one that has none.
+static QString profileDescription(const QString &p, const QString &fallback = QString()) {
+    const auto it = DESCRIPTIONS.find(p);
+    return it == DESCRIPTIONS.end() ? fallback : QCoreApplication::translate("HomeTab", *it);
+}
+
+QString HomeTab::profileLabel(const QString &p, bool translated) {
+    if (auto it = LABELS.find(p); it != LABELS.end()) return translated ? tr(*it) : QString::fromLatin1(*it);
     QString t = p;
     t.replace('-', ' ');
     if (!t.isEmpty()) t[0] = t[0].toUpper();
@@ -168,8 +178,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     // Header
     auto *title = new QLabel(sysinfo::dmi("product_version").value_or(sysinfo::dmi("product_name").value_or("Lenovo Legion")));
     title->setProperty("role", "title");
-    QStringList sub{sysinfo::cpuModel().value_or("unknown CPU")};
-    if (handler_) sub << "driver: " + handler_->name;
+    QStringList sub{sysinfo::cpuModel().value_or(tr("unknown CPU"))};
+    if (handler_) sub << tr("driver: %1").arg(handler_->name);
     auto *head = new QVBoxLayout;
     head->setSpacing(1);
     head->setContentsMargins(2, 0, 0, 2);
@@ -178,21 +188,37 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     auto *headRow = new QHBoxLayout;
     headRow->addLayout(head, 1);
     auto *themeBox = new QComboBox;
-    themeBox->setToolTip("Colour theme. Applied by restarting the app (a few seconds).");
+    themeBox->setToolTip(tr("Colour theme. Applied by restarting the app (a few seconds)."));
     for (const auto &[id, name] : theme::themes()) themeBox->addItem(name, id);
     themeBox->setCurrentIndex(std::max(0, themeBox->findData(theme::currentTheme())));
     connect(themeBox, &QComboBox::activated, this, [this, themeBox](int i) {
         const QString id = themeBox->itemData(i).toString();
         if (id == theme::currentTheme()) return;
-        if (!theme::saveTheme(id)) { showStatus("Could not save the theme choice.", 6000); return; }
-        if (QMessageBox::question(this, "Theme", "Restart Centurion now to apply " + themeBox->itemText(i) + "?")
+        if (!theme::saveTheme(id)) { showStatus(tr("Could not save the theme choice."), 6000); return; }
+        if (QMessageBox::question(this, tr("Theme"), tr("Restart Centurion now to apply %1?").arg(themeBox->itemText(i)))
             == QMessageBox::Yes) theme::requestRestart();
-        else showStatus("Theme applies at the next start.", 6000);
+        else showStatus(tr("Theme applies at the next start."), 6000);
     });
-    auto *themeLabel = muted("Theme");
+    auto *themeLabel = muted(tr("Theme"));
     themeLabel->setWordWrap(false);
     headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
     headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
+    // Interface language: same mechanism as the theme (saved, applied at the next start).
+    auto *langBox = new QComboBox;
+    langBox->setToolTip(tr("Interface language. Applied by restarting the app (a few seconds)."));
+    for (const auto &[id, name] : i18n::languages()) langBox->addItem(id == QLatin1String("auto") ? tr("Auto") : name, id);
+    langBox->setCurrentIndex(std::max(0, langBox->findData(i18n::choice())));
+    connect(langBox, &QComboBox::activated, this, [this, langBox](int i) {
+        const QString id = langBox->itemData(i).toString();
+        if (id == i18n::choice()) return;
+        if (!i18n::saveChoice(id)) { showStatus(tr("Could not save the language choice."), 6000); return; }
+        if (QMessageBox::question(this, tr("Language"), tr("Restart Centurion now to change the language?")) == QMessageBox::Yes) theme::requestRestart();
+        else showStatus(tr("The language changes at the next start."), 6000);
+    });
+    auto *langLabel = muted(tr("Language"));
+    langLabel->setWordWrap(false);
+    headRow->addWidget(langLabel, 0, Qt::AlignVCenter);
+    headRow->addWidget(langBox, 0, Qt::AlignVCenter);
     root->addLayout(headRow);
 
     guardBanner_ = new QFrame;
@@ -204,10 +230,10 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     guardText_->setWordWrap(true);
     guardText_->setTextFormat(Qt::RichText);
     gb->addWidget(guardText_, 1);
-    resumeBoot_ = new QPushButton("Resume boot presets");
+    resumeBoot_ = new QPushButton(tr("Resume boot presets"));
     resumeBoot_->setToolTip("Apply the boot presets again from the next boot on. Fix or lower the offending\n"
                             "undervolt / curve first, or the machine may crash again.");
-    resumeLogin_ = new QPushButton("Resume login scene");
+    resumeLogin_ = new QPushButton(tr("Resume login scene"));
     resumeLogin_->setToolTip("Apply the automatic scene at login again. Fix the scene's curves first.");
     gb->addWidget(resumeBoot_);
     gb->addWidget(resumeLogin_);
@@ -219,8 +245,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         privileged::run(privileged::helperPath("tune-helper"), QJsonObject{{"op", "guard_reset"}}, this,
                         [this](const privileged::Result &r) {
             resumeBoot_->setEnabled(true);
-            if (!r.ok()) { showStatus("Could not resume: " + r.message(), 8000); return; }
-            showStatus("Boot presets resume from the next boot.", 6000);
+            if (!r.ok()) { showStatus(tr("Could not resume: %1").arg(r.message()), 8000); return; }
+            showStatus(tr("Boot presets resume from the next boot."), 6000);
             refreshGuard();
         });
     });
@@ -231,17 +257,17 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     pauseBanner_->setStyleSheet(theme::banner(theme::WARN, QStringLiteral("#pauseBanner")));
     auto *pb = new QHBoxLayout(pauseBanner_);
     pb->setContentsMargins(10, 6, 8, 6);
-    auto *pt = new QLabel(QStringLiteral("<b>⏸ Scenes paused</b> — no automatic scene changes (power source, login, game) until resumed."));
+    auto *pt = new QLabel(tr("<b>⏸ Scenes paused</b> — no automatic scene changes (power source, login, game) until resumed."));
     pt->setTextFormat(Qt::RichText);
     pt->setWordWrap(true);
     pb->addWidget(pt, 1);
-    resumeScenes_ = new QPushButton("▶ Resume scenes");
+    resumeScenes_ = new QPushButton(tr("▶ Resume scenes"));
     resumeScenes_->setObjectName("btnAccent");
     pb->addWidget(resumeScenes_);
     root->addWidget(pauseBanner_);
     pauseBanner_->hide();
 
-    auto *profileBox = new QGroupBox("Power Profile");
+    auto *profileBox = new QGroupBox(tr("Power Profile"));
     profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     grid_ = new QGridLayout(profileBox);
     grid_->setContentsMargins(6, 2, 6, 4);
@@ -273,8 +299,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     statusTimer_->setSingleShot(true);
     connect(statusTimer_, &QTimer::timeout, status_, [this] { status_->clear(); });
 
-    root->addWidget(muted("Per-component limits and undervolt curves live in the other tabs. "
-                          "Firmware Attributes only accepts writes while the profile is Custom."));
+    root->addWidget(muted(tr("Per-component limits and undervolt curves live in the other tabs. "
+                           "Firmware Attributes only accepts writes while the profile is Custom.")));
 
     group_ = new QButtonGroup(this);
     group_->setExclusive(true);
@@ -296,7 +322,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
 // ── Hardware box ────────────────────────────────────────────────────────────
 
 QGroupBox *HomeTab::buildHardwareBox() {
-    auto *box = new QGroupBox("Hardware");
+    auto *box = new QGroupBox(tr("Hardware"));
     box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     auto *g = new QGridLayout(box);
     g->setContentsMargins(6, 2, 6, 4);
@@ -317,7 +343,7 @@ QGroupBox *HomeTab::buildHardwareBox() {
     };
     {
         QLabel *sysVal = nullptr;
-        add("System", sysinfo::systemInfo(), nullptr, &sysVal);
+        add(tr("System"), sysinfo::systemInfo(), nullptr, &sysVal);
         if (sysVal) {
             // What the firmware reports about itself (series, WMI interfaces, capability list).
             auto *w = new QWidget;
@@ -325,24 +351,24 @@ QGroupBox *HomeTab::buildHardwareBox() {
             h->setContentsMargins(0, 0, 0, 0);
             g->removeWidget(sysVal);
             h->addWidget(sysVal, 1);
-            auto *btn = new QPushButton("Device info…");
+            auto *btn = new QPushButton(tr("Device info…"));
             btn->setToolTip("Model series, firmware interfaces and the capability list this machine reports (read-only).\n"
                             "Useful when reporting how Centurion behaves on another model.");
             connect(btn, &QPushButton::clicked, this, [this] { (new DeviceInfoDialog(helperPath(), this))->show(); });
             h->addWidget(btn);
-            auto *wiz = new QPushButton("Setup wizard…");
+            auto *wiz = new QPushButton(tr("Setup wizard…"));
             wiz->setToolTip("The first-run wizard again: hardware found, boot services, first backup, first scene, extras.");
             connect(wiz, &QPushButton::clicked, this, &HomeTab::setupWizardRequested);
             h->addWidget(wiz);
             g->addWidget(w, row - 1, 1);
         }
     }
-    add("Kernel", sysinfo::kernel());
+    add(tr("Kernel"), sysinfo::kernel());
     add("CPU", sysinfo::cpuModel());
-    add("GPU", QStringLiteral("…"), &gpuHwKey_, &gpuHwValue_);
+    add(tr("GPU"), QStringLiteral("…"), &gpuHwKey_, &gpuHwValue_);
     {
         QLabel *memVal = nullptr;
-        add("Memory", sysinfo::ramTotal(), nullptr, &memVal);
+        add(tr("Memory"), sysinfo::ramTotal(), nullptr, &memVal);
         if (memVal) {
             // Replace the plain value with value + a "Timings…" link to the SPD view.
             auto *w = new QWidget;
@@ -350,16 +376,16 @@ QGroupBox *HomeTab::buildHardwareBox() {
             h->setContentsMargins(0, 0, 0, 0);
             g->removeWidget(memVal);
             h->addWidget(memVal, 1);
-            auto *btn = new QPushButton("Timings…");
+            auto *btn = new QPushButton(tr("Timings…"));
             btn->setToolTip("Show each module's JEDEC timings from its SPD chip (read-only).");
             connect(btn, &QPushButton::clicked, this, [this] { (new MemoryDialog(helperPath(), this))->show(); });
             h->addWidget(btn);
             g->addWidget(w, row - 1, 1);
         }
     }
-    add("GPU mode", sysinfo::gpuMode());
+    add(tr("GPU mode"), sysinfo::gpuMode());
     add("BIOS", sysinfo::biosInfo());
-    add("EC Firmware", sysinfo::dmiClean("ec_firmware_release"));
+    add(tr("EC Firmware"), sysinfo::dmiClean("ec_firmware_release"));
     g->setColumnStretch(1, 1);
     g->setRowStretch(row, 1);
 
@@ -375,7 +401,7 @@ QGroupBox *HomeTab::buildHardwareBox() {
 // ── Live box ────────────────────────────────────────────────────────────────
 
 QGroupBox *HomeTab::buildLiveBox() {
-    auto *box = new QGroupBox("Live");
+    auto *box = new QGroupBox(tr("Live"));
     box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     auto *g = new QGridLayout(box);
     g->setContentsMargins(6, 2, 6, 4);
@@ -383,10 +409,10 @@ QGroupBox *HomeTab::buildLiveBox() {
     g->setVerticalSpacing(6);
 
     const QList<QPair<QString, std::function<std::optional<QString>()>>> spec{
-        {"CPU Temp", sysinfo::cpuTemp}, {"GPU", nullptr}, {"iGPU", sysinfo::igpu},
-        {"Fans", sysinfo::fans}, {"Storage", sysinfo::storage}, {"Power", sysinfo::power},
-        {"CPU Power", sysinfo::cpuPackagePower}, {"USB-C in", sysinfo::usbcInputs},
-        {"Battery", sysinfo::battery}};
+        {tr("CPU Temp"), sysinfo::cpuTemp}, {tr("GPU"), nullptr}, {tr("iGPU"), sysinfo::igpu},
+        {tr("Fans"), sysinfo::fans}, {tr("Storage"), sysinfo::storage}, {tr("Power"), sysinfo::power},
+        {tr("CPU Power"), sysinfo::cpuPackagePower}, {tr("USB-C in"), sysinfo::usbcInputs},
+        {tr("Battery"), sysinfo::battery}};
     int row = 0;
     for (const auto &[name, getter] : spec) {
         if (!getter) {  // dGPU: sysfs state + EC temperature, see refreshGpuLive()
@@ -411,9 +437,9 @@ QGroupBox *HomeTab::buildLiveBox() {
     // EC-side readings from the legion-ec-sensors stream. The fan row is only for
     // machines / kernels with no fan hwmon; the charger row only ever shows a warning.
     ecFansWanted_ = !sysinfo::fans().has_value();
-    ecFansKey_ = muted("Fans (EC)");
+    ecFansKey_ = muted(tr("Fans (EC)"));
     ecFansValue_ = new QLabel;
-    chargerKey_ = muted("Charger");
+    chargerKey_ = muted(tr("Charger"));
     chargerValue_ = new QLabel;
     chargerValue_->setWordWrap(true);
     chargerValue_->setTextFormat(Qt::RichText);
@@ -422,7 +448,7 @@ QGroupBox *HomeTab::buildLiveBox() {
     g->addWidget(ecFansValue_, row++, 1);
     g->addWidget(chargerKey_, row, 0, Qt::AlignTop);
     g->addWidget(chargerValue_, row++, 1);
-    if (liveRows_.isEmpty()) g->addWidget(muted("No live sensors found (hwmon, battery)."), row++, 0, 1, 2);
+    if (liveRows_.isEmpty()) g->addWidget(muted(tr("No live sensors found (hwmon, battery).")), row++, 0, 1, 2);
     g->setColumnStretch(1, 1);
     g->setRowStretch(row, 1);
     return box;
@@ -481,11 +507,11 @@ void HomeTab::refreshGpuLive() {
     QString t;
     if (!raw && !QFileInfo::exists(dgpuRuntimeStatus_)) {
         // iGPU-only mode / released dGPU: the device left the PCI bus. This used to read as "awake".
-        t = QStringLiteral("off (not on the PCI bus)");
+        t = tr("off (not on the PCI bus)");
     } else if (st == QLatin1String("suspended")) {
-        t = QStringLiteral("asleep (runtime suspended, ~0 W)");
+        t = tr("asleep (runtime suspended, ~0 W)");
     } else if (st == QLatin1String("active") || st.isEmpty()) {
-        t = ecGpuTemp_ > 0 && monoMs() - ecAt_ < 5000 ? QStringLiteral("%1°C  ·  awake").arg(ecGpuTemp_) : QStringLiteral("awake");
+        t = ecGpuTemp_ > 0 && monoMs() - ecAt_ < 5000 ? tr("%1°C  ·  awake").arg(ecGpuTemp_) : tr("awake");
     } else {
         t = st;  // suspending / resuming / error
     }
@@ -543,7 +569,7 @@ void HomeTab::applyEcExtras(const QJsonObject &o) {
         static const struct { const char *key, *name; } ORDER[] = {{"cpu", "CPU"}, {"gpu", "GPU"}, {"pch", "System"}};
         for (const auto &f : ORDER)
             if (fans.value(QLatin1String(f.key)).isDouble())
-                parts << QStringLiteral("%1 %2 RPM").arg(QLatin1String(f.name)).arg(fans.value(QLatin1String(f.key)).toInt());
+                parts << tr("%1 %2 RPM").arg(QLatin1String(f.name)).arg(fans.value(QLatin1String(f.key)).toInt());
     }
     const QString t = parts.join(QStringLiteral("  ·  "));
     if (ecFansValue_->text() != t) ecFansValue_->setText(t);
@@ -551,7 +577,7 @@ void HomeTab::applyEcExtras(const QJsonObject &o) {
     ecFansValue_->setVisible(!t.isEmpty());
     const bool weak = o.value("charger_weak").toBool(false);
     if (weak && chargerValue_->text().isEmpty())
-        chargerValue_->setText(QStringLiteral("<span style='color:%1'>low-wattage charger — the firmware limits CPU/GPU power</span>").arg(theme::WARN));
+        chargerValue_->setText(tr("<span style='color:%1'>low-wattage charger — the firmware limits CPU/GPU power</span>").arg(theme::WARN));
     chargerKey_->setVisible(weak);
     chargerValue_->setVisible(weak);
 }
@@ -616,7 +642,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         return QFileInfo(p).fileName().startsWith("VPC"); });
     fanHwmon_ = findDir("/sys/class/hwmon", [](const QString &p) { return rdText(p + "/name") == "lenovo_wmi_other"; });
 
-    auto *box = new QGroupBox("Device");
+    auto *box = new QGroupBox(tr("Device"));
     auto *g = new QGridLayout(box);
     g->setContentsMargins(6, 2, 6, 4);
     g->setHorizontalSpacing(8);
@@ -634,15 +660,15 @@ QGroupBox *HomeTab::buildDeviceBox() {
             charge_->addItem(QString(o).replace('_', ' '), o);
         }
         connect(charge_, &QComboBox::activated, this, [this](int i) { setDevice("charge_type", charge_->itemData(i).toString()); });
-        g->addWidget(label("Battery charge"), row, 0);
+        g->addWidget(label(tr("Battery charge")), row, 0);
         g->addWidget(charge_, row++, 1, 1, 4);
     }
 
     // GPU mode (MUX) — only where the Legion GameZone WMI interface exists.
     if (wmiHas("887B54E3-DDDC-4B2C-8B88-68A26A8835D0")) {
         gpuMode_ = new QComboBox;
-        gpuMode_->addItem("Hybrid (iGPU + NVIDIA)", "hybrid");
-        gpuMode_->addItem("dGPU only (MUX → NVIDIA)", "dgpu");
+        gpuMode_->addItem(tr("Hybrid (iGPU + NVIDIA)"), "hybrid");
+        gpuMode_->addItem(tr("dGPU only (MUX → NVIDIA)"), "dgpu");
         gpuMode_->setEnabled(false);
         gpuMode_->setToolTip("Which GPU drives the internal display — switched by the firmware at the next boot.\n"
                              "Hybrid: the iGPU drives the panel and the NVIDIA GPU can power off (much longer\n"
@@ -657,23 +683,23 @@ QGroupBox *HomeTab::buildDeviceBox() {
         }();
         gpuMode_->setCurrentIndex(amdNow ? 0 : 1);
         connect(gpuMode_, &QComboBox::activated, this, [this](int i) { setGpuMode(gpuMode_->itemData(i).toString(), false); });
-        g->addWidget(label("GPU mode"), row, 0);
+        g->addWidget(label(tr("GPU mode")), row, 0);
         g->addWidget(gpuMode_, row++, 1, 1, 4);
 
         // Firmware extras: shown only when WMAA says the machine supports them.
         // Over Drive is refused by the firmware itself on panels without it (OLED).
-        auto *igLabel = label("iGPU mode");
+        auto *igLabel = label(tr("iGPU mode"));
         auto *ig = new QComboBox;
-        ig->addItem("Default", 0);
-        ig->addItem("iGPU only (NVIDIA cut off)", 1);
-        ig->addItem("Auto (iGPU only on battery)", 2);
+        ig->addItem(tr("Default"), 0);
+        ig->addItem(tr("iGPU only (NVIDIA cut off)"), 1);
+        ig->addItem(tr("Auto (iGPU only on battery)"), 2);
         ig->setToolTip("Hybrid-mode behaviour of the NVIDIA GPU (firmware setting, Lenovo \"iGPU mode\").\n"
                        "iGPU only disconnects the dGPU entirely: best battery life, but no NVIDIA until you switch back.\n"
                        "Has no effect in dGPU-only (MUX) mode.");
-        auto *od = new QCheckBox("Panel Over Drive");
+        auto *od = new QCheckBox(tr("Panel Over Drive"));
         od->setToolTip("Faster pixel response on LCD panels (less ghosting, possible overshoot).\n"
                        "Only offered when the firmware reports the panel supports it — never on OLED.");
-        auto *nvBack = new QPushButton("Bring NVIDIA back");
+        auto *nvBack = new QPushButton(tr("Bring NVIDIA back"));
         nvBack->setToolTip("Rescans the PCI bus if the NVIDIA GPU is missing and loads its driver again.\n"
                            "Use it after switching iGPU mode back to Default or after plugging in AC.\n"
                            "iGPU only / Auto unload the NVIDIA driver first (the card is cut off by the firmware and a\n"
@@ -715,12 +741,12 @@ QGroupBox *HomeTab::buildDeviceBox() {
                 }
                 ig->setCurrentIndex(ig->property("applied").toInt());
                 if (r.reached && r.json.value("needs_force").toBool()
-                    && QMessageBox::warning(this, "iGPU mode", r.message() + "\n\nApply anyway? (asks for the administrator password)",
+                    && QMessageBox::warning(this, tr("iGPU mode"), r.message() + tr("\n\nApply anyway? (asks for the administrator password)"),
                                             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
                     if (auto f = weak.lock()) { ig->setCurrentIndex(i); (*f)(i, true); }
                     return;
                 }
-                if (!r.reached || !r.json.value("needs_force").toBool()) QMessageBox::warning(this, "iGPU mode", r.message());
+                if (!r.reached || !r.json.value("needs_force").toBool()) QMessageBox::warning(this, tr("iGPU mode"), r.message());
             }, force ? privileged::FIRMWARE_TIMEOUT_MS : 60000);
         };
         connect(ig, &QComboBox::activated, this, [setIgpu](int i) { (*setIgpu)(i, false); });
@@ -729,20 +755,20 @@ QGroupBox *HomeTab::buildDeviceBox() {
             privileged::run(gh, QJsonObject{{"op", "dgpu_restore"}}, this, [this, nvBack](const privileged::Result &r) {
                 nvBack->setEnabled(true);
                 if (r.ok()) Q_EMIT dgpuRestored();
-                if (r.ok()) QMessageBox::information(this, "NVIDIA", r.json.value("note").toString().isEmpty()
-                                                     ? QStringLiteral("NVIDIA driver loaded.") : r.json.value("note").toString() + QStringLiteral("; driver loaded."));
-                else QMessageBox::warning(this, "NVIDIA", r.message());
+                if (r.ok()) QMessageBox::information(this, QStringLiteral("NVIDIA"), r.json.value("note").toString().isEmpty()
+                                                     ? tr("NVIDIA driver loaded.") : tr("%1; driver loaded.").arg(r.json.value("note").toString()));
+                else QMessageBox::warning(this, QStringLiteral("NVIDIA"), r.message());
             }, 90000);
         });
         connect(od, &QCheckBox::clicked, this, [this, od, gh](bool on) {
             privileged::run(gh, QJsonObject{{"op", "set_panel_od"}, {"on", on}}, this, [this, od, on](const privileged::Result &r) {
-                if (!r.ok()) { od->setChecked(!on); QMessageBox::warning(this, "Panel Over Drive", r.message()); } });
+                if (!r.ok()) { od->setChecked(!on); QMessageBox::warning(this, tr("Panel Over Drive"), r.message()); } });
         });
     }
 
     if (!ideapadDir_.isEmpty()) {
         const QList<QPair<QString, QString>> spec{
-            {"fn_lock", "Fn lock"}, {"camera_power", "Camera"}, {"usb_charging", "USB charging when off"}};
+            {"fn_lock", tr("Fn lock")}, {"camera_power", tr("Camera")}, {"usb_charging", tr("USB charging when off")}};
         auto *h = new QHBoxLayout;
         h->setSpacing(8);
         // IdeaPad-style keyboards: the EC bit means "F1–F12 primary" there, the opposite of Fn lock.
@@ -757,7 +783,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         }
         h->addStretch(1);
         if (!toggles_.isEmpty()) {
-            g->addWidget(label("Switches"), row, 0);
+            g->addWidget(label(tr("Switches")), row, 0);
             g->addLayout(h, row++, 1, 1, 4);
         }
     }
@@ -771,13 +797,13 @@ QGroupBox *HomeTab::buildDeviceBox() {
         if (max >= 1 && max <= 10 && QFileInfo(led + "/brightness").isFile() && !lighting::present() && !lighting::zone4Present()) {
             kbdLed_ = led;
             kbdBl_ = new QComboBox;
-            kbdBl_->addItem("Off", 0);
-            if (max == 1) kbdBl_->addItem("On", 1);
-            else if (max == 2) { kbdBl_->addItem("Low", 1); kbdBl_->addItem("High", 2); }
-            else for (int i = 1; i <= max; ++i) kbdBl_->addItem(QStringLiteral("Level %1").arg(i), i);
+            kbdBl_->addItem(tr("Off"), 0);
+            if (max == 1) kbdBl_->addItem(tr("On"), 1);
+            else if (max == 2) { kbdBl_->addItem(tr("Low"), 1); kbdBl_->addItem(tr("High"), 2); }
+            else for (int i = 1; i <= max; ++i) kbdBl_->addItem(tr("Level %1").arg(i), i);
             kbdBl_->setToolTip("Keyboard backlight level (the same setting Fn+Space cycles).");
             connect(kbdBl_, &QComboBox::activated, this, [this](int i) { setDevice("kbd_backlight", QString::number(kbdBl_->itemData(i).toInt())); });
-            g->addWidget(label("Keyboard light"), row, 0);
+            g->addWidget(label(tr("Keyboard light")), row, 0);
             g->addWidget(kbdBl_, row++, 1, 1, 4);
         }
     }
@@ -790,27 +816,27 @@ QGroupBox *HomeTab::buildDeviceBox() {
             const int top = hi > 0 ? hi : 9999;
             auto *edit = new QLineEdit;
             edit->setValidator(new QIntValidator(1, top, edit));
-            edit->setPlaceholderText(QStringLiteral("RPM"));
+            edit->setPlaceholderText(tr("RPM"));
             edit->setMaximumWidth(80);
             edit->setToolTip(QStringLiteral("Type a target RPM (1–%1) and press Enter or Set.\n"
                                             "Firmware-reported range is %2–%1; below %2 the EC may clamp it —\n"
                                             "the RPM column shows what it really runs at.\n"
                                             "Fan targets are usually honoured only in the Custom profile.").arg(top).arg(lo));
-            auto *autoBox = new QCheckBox("Auto");
+            auto *autoBox = new QCheckBox(tr("Auto"));
             autoBox->setToolTip("Hand the fan back to the EC (writes 0). The EC resumes its own curve only when\n"
                                 "every fan is on Auto; while another fan is manual this one keeps its last speed.");
-            auto *set = new QPushButton("Set");
+            auto *set = new QPushButton(tr("Set"));
             set->setFixedWidth(46);
             auto *rpm = muted(QString());
             const QString key = f;
             auto apply = [this, key, edit] {
-                if (!edit->hasAcceptableInput()) { showStatus("Enter an RPM value first", 4000); return; }
+                if (!edit->hasAcceptableInput()) { showStatus(tr("Enter an RPM value first"), 4000); return; }
                 setDevice(key, QString::number(edit->text().toInt()));
                 edit->clearFocus();
             };
             connect(set, &QPushButton::clicked, this, apply);
             connect(edit, &QLineEdit::returnPressed, this, apply);
-            auto *maxBox = new QCheckBox("Max");
+            auto *maxBox = new QCheckBox(tr("Max"));
             maxBox->setToolTip(QStringLiteral("Run this fan at its maximum, %1 RPM.").arg(top));
             connect(maxBox, &QCheckBox::clicked, this, [this, key, edit, set, autoBox, top](bool on) {
                 if (on) {
@@ -835,7 +861,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
                 edit->setFocus();
                 edit->selectAll();
             });
-            g->addWidget(label("Fan " + n), row, 0);
+            g->addWidget(label(tr("Fan %1").arg(n)), row, 0);
             g->addWidget(rpm, row, 1);
             auto *modes = new QHBoxLayout;
             modes->setSpacing(5);
@@ -864,14 +890,14 @@ QGroupBox *HomeTab::buildDeviceBox() {
     // helper; the checkbox appears once the firmware answers.
     if (!fullSpeedFile_.isEmpty() || !fanHwmon_.isEmpty() || wmiHas("DC2A8805-3A8C-41BA-A6F7-092E0089CD3B")
         || wmiHas("92549549-4BDE-4F06-AC04-CE8BF898DBAA")) {
-        fullSpeed_ = new QCheckBox("Turbo fan (EC full speed)");
+        fullSpeed_ = new QCheckBox(tr("Turbo fan (EC full speed)"));
         fullSpeed_->setToolTip("The embedded controller's own Full Speed mode (the switch in Lenovo Vantage /\n"
                                "Legion Space). It overrides every fan target and stays on across reboots and OS\n"
                                "changes until it is turned off. Source: "
                                + (fullSpeedFile_.isEmpty() ? QStringLiteral("Lenovo firmware (capability 0x04020000, or the fan method on older models) via acpi_call")
                                                            : fullSpeedFile_));
         connect(fullSpeed_, &QCheckBox::clicked, this, [this](bool on) { setDevice("fan_fullspeed", on ? "1" : "0"); });
-        auto *fsLabel = label("Fans");
+        auto *fsLabel = label(tr("Fans"));
         g->addWidget(fsLabel, row, 0);
         g->addWidget(fullSpeed_, row++, 1, 1, 4);
         if (fullSpeedFile_.isEmpty()) {
@@ -898,19 +924,19 @@ QGroupBox *HomeTab::buildDeviceBox() {
         maxBannerText_ = new QLabel;
         maxBannerText_->setTextFormat(Qt::RichText);
         maxBannerText_->hide();
-        maxBannerBtn_ = new QPushButton("Disable max fans");
+        maxBannerBtn_ = new QPushButton(tr("Disable max fans"));
         maxBannerBtn_->setObjectName("btnAccent");
         maxBannerBtn_->setToolTip("Return every fan to Auto (the EC only resumes its curve when all targets are 0).");
         connect(maxBannerBtn_, &QPushButton::clicked, this, &HomeTab::exitMaxMode);
         maxBannerBtn_->hide();
 
         // Entry point: one click puts every fan at max (and so into the mode above).
-        maxAllBtn_ = new QPushButton("Max all fans");
+        maxAllBtn_ = new QPushButton(tr("Max all fans"));
         maxAllBtn_->setToolTip("Set every fan to its maximum RPM. Controls lock until you press Disable max fans.");
         connect(maxAllBtn_, &QPushButton::clicked, this, &HomeTab::setAllFansMax);
         QPushButton *curveBtn = nullptr;
         if (fanCurveSupported()) {
-        curveBtn = new QPushButton("Fan curve…");
+        curveBtn = new QPushButton(tr("Fan curve…"));
         curveBtn->setToolTip("Edit the Custom-mode fan curve the EC follows (all fans, 10 temperature steps).");
         connect(curveBtn, &QPushButton::clicked, this, [this] {
             const auto prof = currentProfile();
@@ -944,7 +970,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         wl->setContentsMargins(0, 0, 0, 0);
         wl->setHorizontalSpacing(12);
         wl->setVerticalSpacing(4);
-        auto *wLabel = label("Firmware");
+        auto *wLabel = label(tr("Firmware"));
         wrap->hide(); wLabel->hide();
         g->addWidget(wLabel, row, 0);
         g->addWidget(wrap, row++, 1, 1, 4);
@@ -952,22 +978,22 @@ QGroupBox *HomeTab::buildDeviceBox() {
             if (!r.ok()) return;
             const QJsonObject t = r.json.value("toggles").toObject();
             static const struct { const char *key, *text, *tip; } DEFS[] = {
-                {"instant_boot_ac", "Boot on AC", "Power on automatically when the charger is plugged in (lid open)."},
-                {"instant_boot_usbpd", "Boot on USB-PD", "Power on automatically from a USB-C PD charger."},
-                {"fnq_custom", "Custom in Fn+Q", "Include the Custom profile in the Fn+Q cycle."},
-                {"flip_to_start", "Flip to start", "Power on when the lid is opened."},
-                {"super_key_lock", "Super key lock", "Disable the Super (Windows) key of the built-in keyboard — e.g. while gaming."},
-                {"touchpad_lock", "Touchpad lock", "Disable the touchpad in the embedded controller."},
-                {"fan_cooling", "Fan cooling", "Firmware fan-cooling run (GameZone SetFanCooling).\n"
-                 "The firmware may end it by itself; the switch then reads off again."},
-                {"usb_charge_battery", "USB charging on battery",
-                 "Keep the always-on USB port powered while the laptop is off or asleep on battery too\n"
-                 "(needs \"USB charging when off\")."},
+                {"instant_boot_ac", QT_TRANSLATE_NOOP("HomeTab", "Boot on AC"), QT_TRANSLATE_NOOP("HomeTab", "Power on automatically when the charger is plugged in (lid open).")},
+                {"instant_boot_usbpd", QT_TRANSLATE_NOOP("HomeTab", "Boot on USB-PD"), QT_TRANSLATE_NOOP("HomeTab", "Power on automatically from a USB-C PD charger.")},
+                {"fnq_custom", QT_TRANSLATE_NOOP("HomeTab", "Custom in Fn+Q"), QT_TRANSLATE_NOOP("HomeTab", "Include the Custom profile in the Fn+Q cycle.")},
+                {"flip_to_start", QT_TRANSLATE_NOOP("HomeTab", "Flip to start"), QT_TRANSLATE_NOOP("HomeTab", "Power on when the lid is opened.")},
+                {"super_key_lock", QT_TRANSLATE_NOOP("HomeTab", "Super key lock"), QT_TRANSLATE_NOOP("HomeTab", "Disable the Super (Windows) key of the built-in keyboard — e.g. while gaming.")},
+                {"touchpad_lock", QT_TRANSLATE_NOOP("HomeTab", "Touchpad lock"), QT_TRANSLATE_NOOP("HomeTab", "Disable the touchpad in the embedded controller.")},
+                {"fan_cooling", QT_TRANSLATE_NOOP("HomeTab", "Fan cooling"), QT_TRANSLATE_NOOP("HomeTab", "Firmware fan-cooling run (GameZone SetFanCooling).\n"
+                 "The firmware may end it by itself; the switch then reads off again.")},
+                {"usb_charge_battery", QT_TRANSLATE_NOOP("HomeTab", "USB charging on battery"),
+                 QT_TRANSLATE_NOOP("HomeTab", "Keep the always-on USB port powered while the laptop is off or asleep on battery too\n"
+                 "(needs \"USB charging when off\").")},
             };
             for (const auto &d : DEFS) {
                 if (!t.contains(d.key)) continue;
-                auto *cb = new QCheckBox(d.text);
-                cb->setToolTip(d.tip);
+                auto *cb = new QCheckBox(tr(d.text));
+                cb->setToolTip(tr(d.tip));
                 cb->setChecked(t.value(d.key).toBool());
                 const QString key = d.key;
                 connect(cb, &QCheckBox::clicked, this, [this, cb, key](bool on) {
@@ -975,8 +1001,8 @@ QGroupBox *HomeTab::buildDeviceBox() {
                     privileged::run(helperPath(), QJsonObject{{"wmae_toggle", "set"}, {"key", key}, {"on", on}}, this,
                                     [this, cb, key, on](const privileged::Result &r) {
                         cb->setEnabled(true);
-                        if (!r.ok()) { QSignalBlocker b(cb); cb->setChecked(!on); showStatus(key + " failed: " + r.message(), 8000); }
-                        else showStatus(QStringLiteral("%1 → %2").arg(key, on ? "on" : "off"));
+                        if (!r.ok()) { QSignalBlocker b(cb); cb->setChecked(!on); showStatus(tr("%1 failed: %2").arg(key, r.message()), 8000); }
+                        else showStatus(tr("%1 → %2").arg(key, on ? tr("on") : tr("off")));
                     });
                 });
                 wl->addWidget(cb, wl->count() / 3, wl->count() % 3);
@@ -1081,7 +1107,7 @@ void HomeTab::applyDevice(const DeviceSnap &snap) {
     const bool ecFs = fs && *fs && currentProfile() == QStringLiteral("custom");
     if (fanWarn_) {
         if (suspect) {
-            fanWarn_->setText(QStringLiteral("<span style='color:%1'>The fans run at maximum with no target set: the EC's Full Speed "
+            fanWarn_->setText(tr("<span style='color:%1'>The fans run at maximum with no target set: the EC's Full Speed "
                 "mode is on (it survives reboots, e.g. switched on in Windows). This kernel has no interface to turn it off — "
                 "lenovo_wmi_other lacks pwm1_enable and legion_laptop is not loaded. Turn it off in Lenovo Vantage / Legion "
                 "Space, or load LenovoLegionLinux's legion_laptop module; an EC reset (power off, hold the power button "
@@ -1139,9 +1165,9 @@ void HomeTab::setMaxMode(bool on, bool ecFullSpeed) {
     if (maxAllBtn_) maxAllBtn_->setVisible(!on);
     if (on) {
         maxBannerText_->setText(ecFullSpeed
-            ? QStringLiteral("<span style='color:%1'><b>EC Full Speed on</b> — all fans at maximum</span>").arg(theme::WARN)
-            : QStringLiteral("<span style='color:%1'><b>Max fans on</b> — all fans at maximum</span>").arg(theme::WARN));
-        maxBannerBtn_->setText(ecFullSpeed ? "Disable full speed" : "Disable max fans");
+            ? tr("<span style='color:%1'><b>EC Full Speed on</b> — all fans at maximum</span>").arg(theme::WARN)
+            : tr("<span style='color:%1'><b>Max fans on</b> — all fans at maximum</span>").arg(theme::WARN));
+        maxBannerBtn_->setText(ecFullSpeed ? tr("Disable full speed") : tr("Disable max fans"));
     }
     // The banner stands in for every per-fan control (the RPM readout stays live).
     for (const FanRow &f : std::as_const(fans_)) {
@@ -1161,14 +1187,14 @@ void HomeTab::exitMaxMode() {
         setDevice(f.key, "0");
     }
     setMaxMode(false, false);
-    showStatus("All fans back to Auto — the EC curve takes over as they spin down.", 6000);
+    showStatus(tr("All fans back to Auto — the EC curve takes over as they spin down."), 6000);
 }
 
 QList<HomeTab::FanInfo> HomeTab::fanInfo() const {
     QList<FanInfo> out;
     for (const FanRow &f : fans_) {
         const QString n = f.key.mid(3, f.key.indexOf('_') - 3);
-        out.append({f.key, "Fan " + n, rdText(fanHwmon_ + "/fan" + n + "_min").toInt(), f.max,
+        out.append({f.key, tr("Fan %1").arg(n), rdText(fanHwmon_ + "/fan" + n + "_min").toInt(), f.max,
                     rdText(fanHwmon_ + '/' + f.key).toInt()});
     }
     return out;
@@ -1192,15 +1218,15 @@ void HomeTab::setFanAuto(const QString &key) {
         if (f.key != key && rdText(fanHwmon_ + '/' + f.key).toInt() > 0) manual << f.key;
     int choice = manual.isEmpty() ? 2 : autoAllChoice_;
     if (choice == 0) {
-        QMessageBox mb(QMessageBox::Question, "Fan to Auto",
-            "The EC hands the fans back to its own curve only when ALL fan targets are Auto.\n\n"
-            "While another fan stays manual, this fan keeps running at its current speed (e.g. max) "
-            "instead of slowing down. To slow only this fan, set a fixed RPM instead.",
+        QMessageBox mb(QMessageBox::Question, tr("Fan to Auto"),
+            tr("The EC hands the fans back to its own curve only when ALL fan targets are Auto.\n\n"
+               "While another fan stays manual, this fan keeps running at its current speed (e.g. max) "
+               "instead of slowing down. To slow only this fan, set a fixed RPM instead."),
             QMessageBox::NoButton, this);
-        auto *all = mb.addButton("All fans to Auto", QMessageBox::AcceptRole);
-        auto *one = mb.addButton("Only this fan", QMessageBox::ActionRole);
+        auto *all = mb.addButton(tr("All fans to Auto"), QMessageBox::AcceptRole);
+        auto *one = mb.addButton(tr("Only this fan"), QMessageBox::ActionRole);
         mb.addButton(QMessageBox::Cancel);
-        auto *remember = new QCheckBox("Remember for this session");
+        auto *remember = new QCheckBox(tr("Remember for this session"));
         mb.setCheckBox(remember);
         mb.setDefaultButton(all);
         mb.exec();
@@ -1221,7 +1247,7 @@ void HomeTab::setFanAuto(const QString &key) {
     }
     setDevice(key, "0");
     if (!manual.isEmpty())
-        showStatus("Fan set to Auto, but it keeps its last speed until every fan is on Auto (EC behaviour).", 8000);
+        showStatus(tr("Fan set to Auto, but it keeps its last speed until every fan is on Auto (EC behaviour)."), 8000);
 }
 
 void HomeTab::queryFullSpeed() {
@@ -1241,7 +1267,7 @@ void HomeTab::queryFullSpeed() {
 void HomeTab::clearFullSpeed() {
     if (!fullSpeedOn_) return;
     if (fullSpeed_ && (fullSpeedWmae_ || !fullSpeedFile_.isEmpty())) { setDevice("fan_fullspeed", "0"); return; }
-    showStatus("The EC's Full Speed mode is on and this kernel cannot turn it off — see the note under the fans.", 10000);
+    showStatus(tr("The EC's Full Speed mode is on and this kernel cannot turn it off — see the note under the fans."), 10000);
 }
 
 void HomeTab::setDevice(const QString &key, const QString &value) {
@@ -1269,10 +1295,10 @@ void HomeTab::setDevice(const QString &key, const QString &value) {
             // used to look like a success and then silently snap back.
             const int a = eff.indexOf('['), b = eff.indexOf(']');
             const QString got = (key == QLatin1String("charge_type") && a >= 0 && b > a) ? eff.mid(a + 1, b - a - 1) : value;
-            if (got != value) showStatus(QStringLiteral("%1: asked for %2, the firmware kept %3").arg(key, value, got), 10000);
+            if (got != value) showStatus(tr("%1: asked for %2, the firmware kept %3").arg(key, value, got), 10000);
             else showStatus(QStringLiteral("%1 → %2").arg(key, eff));
         }
-        else showStatus(QStringLiteral("%1 failed: %2").arg(key, r.message()), 8000);
+        else showStatus(tr("%1 failed: %2").arg(key, r.message()), 8000);
         if (!deviceQueue_.isEmpty()) {
             const auto next = deviceQueue_.takeFirst();
             setDevice(next.first, next.second);
@@ -1310,10 +1336,10 @@ void HomeTab::checkFanGuard() {
         f.set->setEnabled(false);
         setDevice(f.key, "0");
     }
-    const QString msg = QStringLiteral("%1 reached %2 °C with a fixed fan speed set: all fans are back on Auto (the EC curve).")
+    const QString msg = tr("%1 reached %2 °C with a fixed fan speed set: all fans are back on Auto (the EC curve).")
         .arg(gpu > cpu ? QStringLiteral("GPU") : QStringLiteral("CPU")).arg(hottest, 0, 'f', 0);
     showStatus(msg, 10000);
-    Q_EMIT alert(QStringLiteral("Fans back to Auto"), msg);
+    Q_EMIT alert(tr("Fans back to Auto"), msg);
 }
 
 // ── Profile buttons ─────────────────────────────────────────────────────────
@@ -1325,7 +1351,7 @@ void HomeTab::showStatus(const QString &msg, int timeoutMs) {
 }
 
 void HomeTab::updateDescription(const std::optional<QString> &p) {
-    if (description_) description_->setText(p ? DESCRIPTIONS.value(*p) : QString());
+    if (description_) description_->setText(p ? profileDescription(*p) : QString());
 }
 
 void HomeTab::rebuild() {
@@ -1340,8 +1366,8 @@ void HomeTab::rebuild() {
 
     if (!pp::available()) {
         grid_->addWidget(muted(
-            "No power-profile interface found. This usually means the lenovo-wmi-gamezone (or legion-laptop) "
-            "platform driver is not loaded. CPU and GPU limits can still be set from the Firmware Attributes tab."), 0, 0);
+            tr("No power-profile interface found. This usually means the lenovo-wmi-gamezone (or legion-laptop) "
+               "platform driver is not loaded. CPU and GPU limits can still be set from the Firmware Attributes tab.")), 0, 0);
         return;
     }
     const QStringList profiles = pp::offeredProfiles(handler_);
@@ -1350,7 +1376,7 @@ void HomeTab::rebuild() {
     for (const QString &name : profiles) {
         auto *b = profileButton(profileLabel(name), theme::profileAccent(name));
         b->setProperty("profile", name);
-        b->setToolTip(DESCRIPTIONS.value(name, name));
+        b->setToolTip(profileDescription(name, name));
         b->setChecked(current == name);
         group_->addButton(b);
         buttons_.insert(name, b);
@@ -1362,7 +1388,7 @@ void HomeTab::rebuild() {
     grid_->addWidget(description_, i, 0);
     grid_->setRowStretch(i + 1, 1);
     updateDescription(current);
-    if (!current) showStatus("Could not read the current power profile.");
+    if (!current) showStatus(tr("Could not read the current power profile."));
 }
 
 void HomeTab::refreshSelection() {
@@ -1384,7 +1410,7 @@ void HomeTab::applyProfile(const QString &profile) {
 
     applying_ = true;
     for (QPushButton *b : std::as_const(buttons_)) b->setEnabled(false);
-    showStatus("Switching to " + profileLabel(profile) + "…", 0);
+    showStatus(tr("Switching to %1…").arg(profileLabel(profile)), 0);
 
     privileged::run(helperPath(), req, this, [this, profile, previous](const privileged::Result &r) {
         applying_ = false;
@@ -1392,23 +1418,23 @@ void HomeTab::applyProfile(const QString &profile) {
         pp::Watcher::instance().check();  // don't wait for the notification to update everyone
         if (!r.reached) {
             showStatus(QString());
-            QMessageBox::critical(this, "Authorization failed", r.error);
+            QMessageBox::critical(this, tr("Authorization failed"), r.error);
             refreshSelection();
             return;
         }
         if (!r.ok()) {
             showStatus(QString());
-            QMessageBox::critical(this, "Could not switch profile", r.message().isEmpty() ? "unknown error" : r.message());
+            QMessageBox::critical(this, tr("Could not switch profile"), r.message().isEmpty() ? tr("unknown error") : r.message());
             rebuild();
             return;
         }
         QString effective = r.json.value("effective").toString();
         if (effective.isEmpty()) effective = profile;
         if (effective != profile) {
-            showStatus("Requested " + profileLabel(profile) + ", but the firmware settled on " + profileLabel(effective) + ".");
+            showStatus(tr("Requested %1, but the firmware settled on %2.").arg(profileLabel(profile), profileLabel(effective)));
             rebuild();
         } else {
-            showStatus("Power profile set to " + profileLabel(effective) + ".");
+            showStatus(tr("Power profile set to %1.").arg(profileLabel(effective)));
             if (QPushButton *b = buttons_.value(effective)) b->setChecked(true);
             updateDescription(effective);
         }
@@ -1445,40 +1471,40 @@ void HomeTab::setSceneEngine(SceneEngine *eng) {
     connect(eng, &SceneEngine::pausedChanged, pauseBanner_, &QWidget::setVisible);
     connect(resumeScenes_, &QPushButton::clicked, this, [this, eng] {
         QString err;
-        if (!eng->setPaused(false, &err)) showStatus("Could not resume scenes: " + err, 8000);
+        if (!eng->setPaused(false, &err)) showStatus(tr("Could not resume scenes: %1").arg(err), 8000);
     });
 }
 
 void HomeTab::refreshGuard() {
     const QString boot = scenes::bootGuardReason(), login = scenes::loginGuardReason();
     QStringList lines;
-    if (!boot.isEmpty()) lines << QStringLiteral("<b>Boot presets paused</b> — %1.").arg(boot.toHtmlEscaped());
-    if (!login.isEmpty()) lines << QStringLiteral("<b>Automatic login scene paused</b> — %1.").arg(login.toHtmlEscaped());
+    if (!boot.isEmpty()) lines << tr("<b>Boot presets paused</b> — %1.").arg(boot.toHtmlEscaped());
+    if (!login.isEmpty()) lines << tr("<b>Automatic login scene paused</b> — %1.").arg(login.toHtmlEscaped());
     guardText_->setText(lines.join("<br>") + (lines.isEmpty() ? QString()
-        : QStringLiteral("<br><span style='color:%1'>Lower the offending undervolt / curve, then resume.</span>").arg(theme::FG_DIM)));
+                : tr("<br><span style='color:%1'>Lower the offending undervolt / curve, then resume.</span>").arg(theme::FG_DIM)));
     resumeBoot_->setVisible(!boot.isEmpty());
     resumeLogin_->setVisible(!login.isEmpty());
     guardBanner_->setVisible(!lines.isEmpty());
 }
 
-static QString modeLabel(const QString &m) { return m == QLatin1String("dgpu") ? QStringLiteral("dGPU only") : QStringLiteral("hybrid"); }
+static QString modeLabel(const QString &m) { return m == QLatin1String("dgpu") ? HomeTab::tr("dGPU only") : HomeTab::tr("hybrid"); }
 
 void HomeTab::readGpuMode() {
     privileged::run(privileged::helperPath("legion-gpu-helper"), QJsonObject{{"op", "gpu_mode"}}, this,
                     [this](const privileged::Result &r) {
         const QJsonObject j = r.json;
         if (!r.ok() || !j.value("supported").toBool()) {
-            gpuMode_->setToolTip((r.ok() ? QStringLiteral("Not supported by this firmware.") : r.message()) + "\n\n" + gpuMode_->toolTip());
+            gpuMode_->setToolTip((r.ok() ? tr("Not supported by this firmware.") : r.message()) + "\n\n" + gpuMode_->toolTip());
             return;
         }
         const QString active = j.value("active").toString(), next = j.value("next_boot").toString(active);
         const bool pending = j.value("reboot_pending").toBool();
         {
             const QSignalBlocker b(gpuMode_);
-            gpuMode_->setItemText(0, QStringLiteral("Hybrid (iGPU + NVIDIA)"));
-            gpuMode_->setItemText(1, QStringLiteral("dGPU only (MUX → NVIDIA)"));
+            gpuMode_->setItemText(0, tr("Hybrid (iGPU + NVIDIA)"));
+            gpuMode_->setItemText(1, tr("dGPU only (MUX → NVIDIA)"));
             const int i = std::max(0, gpuMode_->findData(next));
-            if (pending) gpuMode_->setItemText(i, gpuMode_->itemText(i) + QStringLiteral("  — after reboot (running %1)").arg(modeLabel(active)));
+            if (pending) gpuMode_->setItemText(i, gpuMode_->itemText(i) + tr("  — after reboot (running %1)").arg(modeLabel(active)));
             gpuMode_->setCurrentIndex(i);
         }
         theme::setSheet(gpuMode_, pending ? QStringLiteral("QComboBox { color: %1; }").arg(theme::WARN) : QString());
@@ -1489,13 +1515,13 @@ void HomeTab::readGpuMode() {
 void HomeTab::setGpuMode(const QString &mode, bool force) {
     if (!force) {
         const QString msg = mode == QLatin1String("hybrid")
-            ? "Switch to Hybrid at the next boot?\n\nThe AMD iGPU will drive the internal display; the NVIDIA GPU can "
-              "power off when idle. Games run on NVIDIA via PRIME render offload (prime-run / __NV_PRIME_RENDER_OFFLOAD=1).\n\n"
-              "An X11 config that forces the NVIDIA GPU as primary can leave the desktop black in Hybrid — "
-              "Wayland sessions are unaffected. If anything goes wrong, the BIOS setup (F2) has the same switch."
-            : "Switch to dGPU only at the next boot?\n\nThe internal display is wired straight to the NVIDIA GPU (lowest "
-              "latency, G-SYNC on the panel). The iGPU is hidden and the NVIDIA GPU never powers off — shorter battery life.";
-        if (QMessageBox::question(this, "GPU mode", msg) != QMessageBox::Yes) { readGpuMode(); return; }
+            ? tr("Switch to Hybrid at the next boot?\n\nThe AMD iGPU will drive the internal display; the NVIDIA GPU can "
+                 "power off when idle. Games run on NVIDIA via PRIME render offload (prime-run / __NV_PRIME_RENDER_OFFLOAD=1).\n\n"
+                 "An X11 config that forces the NVIDIA GPU as primary can leave the desktop black in Hybrid — "
+                 "Wayland sessions are unaffected. If anything goes wrong, the BIOS setup (F2) has the same switch.")
+            : tr("Switch to dGPU only at the next boot?\n\nThe internal display is wired straight to the NVIDIA GPU (lowest "
+                 "latency, G-SYNC on the panel). The iGPU is hidden and the NVIDIA GPU never powers off — shorter battery life.");
+        if (QMessageBox::question(this, tr("GPU mode"), msg) != QMessageBox::Yes) { readGpuMode(); return; }
     }
     gpuMode_->setEnabled(false);
     // A MUX change persists in firmware: legion-firmware-helper, password every time.
@@ -1503,16 +1529,16 @@ void HomeTab::setGpuMode(const QString &mode, bool force) {
                     [this, mode](const privileged::Result &r) {
         gpuMode_->setEnabled(true);
         if (r.reached && r.json.value("needs_force").toBool()) {
-            const auto a = QMessageBox::warning(this, "GPU mode — iGPU driver missing", r.message() +
-                "\n\nSwitch anyway? Only do this if you are about to boot a kernel that has the iGPU driver, "
-                "or you know how to switch back in the BIOS setup (F2).", QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            const auto a = QMessageBox::warning(this, tr("GPU mode — iGPU driver missing"), r.message() +
+                tr("\n\nSwitch anyway? Only do this if you are about to boot a kernel that has the iGPU driver, "
+                   "or you know how to switch back in the BIOS setup (F2)."), QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
             if (a == QMessageBox::Yes) setGpuMode(mode, true); else readGpuMode();
             return;
         }
         // A dialog, not the 10 s status line: after a password prompt a failure
         // that only flashes by looks as if the switch was silently ignored.
-        if (!r.ok()) { QMessageBox::warning(this, "GPU mode", "The GPU mode was not changed:\n\n" + r.message()); readGpuMode(); return; }
-        showStatus(r.json.value("reboot_pending").toBool() ? "GPU mode set — reboot to switch." : "GPU mode unchanged.", 8000);
+        if (!r.ok()) { QMessageBox::warning(this, tr("GPU mode"), tr("The GPU mode was not changed:\n\n%1").arg(r.message())); readGpuMode(); return; }
+        showStatus(r.json.value("reboot_pending").toBool() ? tr("GPU mode set — reboot to switch.") : tr("GPU mode unchanged."), 8000);
         readGpuMode();
     }, privileged::FIRMWARE_TIMEOUT_MS);
 }

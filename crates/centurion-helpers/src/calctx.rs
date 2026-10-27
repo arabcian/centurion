@@ -32,7 +32,7 @@ fn fw_dir(attr: &str) -> Option<PathBuf> {
     std::fs::read_dir("/sys/class/firmware-attributes").ok()?.flatten()
         .map(|d| d.path().join("attributes").join(attr)).find(|d| d.join("current_value").is_file())
 }
-fn fw_read(attr: &str) -> Option<i64> { std::fs::read_to_string(fw_dir(attr)?.join("current_value")).ok()?.trim().parse().ok() }
+pub fn fw_read(attr: &str) -> Option<i64> { std::fs::read_to_string(fw_dir(attr)?.join("current_value")).ok()?.trim().parse().ok() }
 
 /// The platform-profile node the GUI and centurion-gamemode use (Custom-capable first).
 pub fn profile_node() -> Option<String> {

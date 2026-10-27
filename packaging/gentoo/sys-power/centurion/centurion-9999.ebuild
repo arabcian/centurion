@@ -30,6 +30,7 @@ RDEPEND="
 	netguard? ( net-firewall/nftables )
 "
 BDEPEND="
+	dev-qt/qttools:6[linguist]
 	xkb? ( virtual/pkgconfig )
 	test? ( sys-apps/dbus )
 "
@@ -142,7 +143,7 @@ src_install() {
 	exeopts -m0700
 	doexe "${r}"/nvcurve-root-helper
 	exeopts -m0755
-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display}
+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest}
 
 	cmake_src_install
 

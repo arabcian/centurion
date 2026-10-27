@@ -993,7 +993,7 @@ pub fn parse_cpumask(s: &str) -> Vec<usize> {
 
 pub fn size_kib(s: &str) -> u64 {
     let (n, mul) = match s.chars().last() { Some('K') => (&s[..s.len() - 1], 1), Some('M') => (&s[..s.len() - 1], 1024), _ => (s, 1) };
-    n.parse::<u64>().unwrap_or(0) * mul
+    n.parse::<u64>().unwrap_or(0).saturating_mul(mul)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -29,7 +29,8 @@ public:
     ~HomeTab() override;
     void setSceneEngine(SceneEngine *eng);  // pause banner
 
-    static QString profileLabel(const QString &profile);
+    /// `translated = false` gives the English name (the MangoHud overlay stays English).
+    static QString profileLabel(const QString &profile, bool translated = true);
     static QString helperPath();
     /// Panel Over Drive support as the root helper last reported it (cached per user, so the Scenes tab
     /// can offer the row without a privileged call). nullopt = never probed yet.

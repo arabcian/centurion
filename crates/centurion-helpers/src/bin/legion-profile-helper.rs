@@ -407,4 +407,22 @@ mod tests {
         let r = set_profile(None, "custom");
         assert!(r["error"].as_str().unwrap().contains("6.14+"));
     }
+
+    // ── property tests ──────────────────────────────────────────────────────
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::default() })]
+
+        /// Only "platform-profile-<1..6 digits>" is a valid node name: nothing that could
+        /// climb out of the class directory or name another file.
+        #[test]
+        fn node_names_are_confined(s in prop_oneof![".{0,30}", "platform-profile-[0-9a-z./]{0,9}"]) {
+            if valid_node(&s) {
+                let n = s.strip_prefix("platform-profile-").expect("prefix");
+                prop_assert!(!n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit()));
+                prop_assert!(!s.contains('/') && !s.contains(".."));
+            }
+        }
+    }
 }

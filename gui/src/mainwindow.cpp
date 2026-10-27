@@ -58,13 +58,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     mark_->adjustSize();
 
     home_ = new HomeTab;
-    tabs_->addTab(home_, "Home");
+    tabs_->addTab(home_, tr("Home"));
     const int scenesAt = tabs_->count();  // Scenes sits right after Home; built last (it reads every tab)
     // Every tab below exists only where its hardware/firmware interface does,
     // so nobody is offered a control their machine can't honour.
     if (FwattrTab::present()) {
         fwattr_ = new FwattrTab;
-        tabs_->addTab(fwattr_, "Firmware");
+        tabs_->addTab(fwattr_, tr("Firmware"));
         // Switching to Custom on Home unlocks this tab immediately (not after its poll).
         connect(home_, &HomeTab::profileChanged, fwattr_, &FwattrTab::refreshLockState);
     }
@@ -85,32 +85,32 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     }();
     if (sysinfo::isAmd() && cpuFamily >= 0x19) {
         ryzen_ = new RyzenTab;
-        tabs_->addTab(ryzen_, "Ryzen Curve");
+        tabs_->addTab(ryzen_, tr("Ryzen Curve"));
     } else if (sysinfo::isIntel()) {
         intel_ = new IntelTab;
-        tabs_->addTab(intel_, "Intel Undervolt");
+        tabs_->addTab(intel_, tr("Intel Undervolt"));
     }
     if (NvidiaTab::present()) {
         nvidia_ = new NvidiaTab;
-        tabs_->addTab(nvidia_, "NVIDIA Curve");
+        tabs_->addTab(nvidia_, tr("NVIDIA Curve"));
     }
     // AMD GPU tuning: discrete Radeon or the CPU's integrated graphics (Hybrid mode).
     if (AmdGpuTab::present()) {
         amdgpu_ = new AmdGpuTab;
-        tabs_->addTab(amdgpu_, "AMD GPU");
+        tabs_->addTab(amdgpu_, tr("AMD GPU"));
     }
     optimize_ = new OptimizeTab;
-    tabs_->addTab(optimize_, "Optimizations");
+    tabs_->addTab(optimize_, tr("Optimizations"));
     // Per-key RGB keyboard (Legion Gen10 Spectrum controller) — only when present.
     if (lighting::present()) {
         lighting_ = new LightingTab;
-        tabs_->addTab(lighting_, "Lighting");
+        tabs_->addTab(lighting_, tr("Lighting"));
     } else if (lighting::zone4Present()) {
         // Older 4-zone RGB keyboard: its own, much smaller page under the same tab name.
-        tabs_->addTab(new Zone4Tab, "Lighting");
+        tabs_->addTab(new Zone4Tab, tr("Lighting"));
     }
     health_ = new HealthTab;
-    tabs_->addTab(health_, "Health");
+    tabs_->addTab(health_, tr("Health"));
 
     // The dGPU can come back after start-up (iGPU-only → Default, "Bring NVIDIA back").
     connect(home_, &HomeTab::dgpuRestored, this, &MainWindow::ensureNvidiaTab);
@@ -121,7 +121,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     optimize_->setSceneEngine(scenes_);
     shortcuts_ = new GlobalShortcuts(scenes_, this);
     shortcuts_->sync();  // talks to the portal only when a scene has a shortcut
-    tabs_->insertTab(scenesAt, new ScenesTab(this), "Scenes");
+    tabs_->insertTab(scenesAt, new ScenesTab(this), tr("Scenes"));
     // MangoHud overlay line: kept in a file the overlay's `exec=cat` reads (see mangohud.h).
     connect(scenes_, &SceneEngine::finished, this, &MainWindow::updateOverlay);
     connect(scenes_, &SceneEngine::activeSceneChanged, this, &MainWindow::updateOverlay);
@@ -156,7 +156,7 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
     nvidia_ = new NvidiaTab;
     // Same place it has when present at start-up: before AMD GPU / Optimizations.
     const int at = tabs_->indexOf(amdgpu_ ? static_cast<QWidget *>(amdgpu_) : static_cast<QWidget *>(optimize_));
-    tabs_->insertTab(at, nvidia_, "NVIDIA Curve");
+    tabs_->insertTab(at, nvidia_, tr("NVIDIA Curve"));
     tabW_ = -1;
     fitTabs();
     Q_EMIT nvidiaTabAdded();
@@ -186,12 +186,13 @@ void MainWindow::showEvent(QShowEvent *e) {
 
 void MainWindow::updateOverlay() {
     mangohud::updateOverlayFile(mangohud::overlayLine(scenes::activeScene(),
-                                                      HomeTab::profileLabel(pp::Watcher::instance().current().value_or(QString()))));
+                                                      HomeTab::profileLabel(pp::Watcher::instance().current().value_or(QString()), false)));
 }
 
 void MainWindow::showTab(const QString &label) {
     for (int i = 0; i < tabs_->count(); ++i)
-        if (tabs_->tabText(i) == label) { tabs_->setCurrentIndex(i); break; }
+        // `label` is the English name; the tab shows its translation (the same tr() as in the constructor).
+        if (tabs_->tabText(i) == tr(label.toUtf8().constData())) { tabs_->setCurrentIndex(i); break; }
     showNormal();
     raise();
     activateWindow();

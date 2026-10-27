@@ -61,6 +61,7 @@ tab (which does wake it).
 | `centurion-boot-guard status\|reset\|…` | Boot-crash protection state |
 | `centurion-netguard daemon\|status\|list\|whois IP` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
+| `centurion-cooltest status\|run [--seconds N]\|baseline\|forget` | Cooling health test as the user (Health → Cooling): fixed CPU load, compared with a baseline of the same firmware settings |
 | `centurion-display list\|set-refresh HZ\|brightness\|set-brightness PCT` | Internal panel refresh rate (KDE kscreen-doctor, wlr-randr or xrandr) and backlight brightness (sysfs, logind SetBrightness or brightnessctl) as the user — used by Scenes |
 
 ## D-Bus API
@@ -299,6 +300,13 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
   removable as one named group); right-click menus (details, kill connection,
   whitelist, IP info, blacklist IP / subnet / owner's network); connection
   log with reverse-DNS and whois. Needs the `centurion-netguard` service and nftables.
+- **Cooling** — a fixed CPU load for 2–8 minutes (started by the button, never
+  in the background) records die temperature, fan speed and clock. The first clean
+  run under a set of firmware settings (PL1 / PL2 / PL3, temperature target, power
+  profile, power source) becomes its baseline; later runs are compared with it and a
+  hotter die, louder fans or, when the firmware pins the die at its temperature
+  target, lower clocks suggest dust or dried-out thermal paste. Runs disturbed by
+  other programs or started warm are reported as inconclusive, not as a verdict.
 - **Backup** — *Centurion configuration* (scenes, presets, curves, lighting, boot
   profiles, network rules, calibration; optional system profile of Portage
   config, kernel config, fstab, package list) and *System image*
@@ -320,7 +328,7 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 
 ## Requirements
 
-**Build:** Rust ≥ 1.75 (cargo), a C++20 compiler, CMake ≥ 3.19, Qt ≥ 6.4 (Widgets, Network, Svg).
+**Build:** Rust ≥ 1.75 (cargo), a C++20 compiler, CMake ≥ 3.19, Qt ≥ 6.4 (Widgets, Network, Svg; Linguist tools optional, for the Turkish translation).
 
 **Runtime:**
 
@@ -343,6 +351,20 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 | Health → Network | `nft` and the `centurion-netguard` service; kernel: `NETFILTER_NETLINK_QUEUE`, `NF_TABLES`, `NF_TABLES_INET`, `NFT_QUEUE`, `NF_CONNTRACK`, `NFT_CT`, `INET_DIAG`, `INET_TCP_DIAG`, `INET_UDP_DIAG`, `INET_DIAG_DESTROY` |
 
 Missing pieces only disable the tab or row that needs them.
+
+## Language
+
+The interface is English, with a Turkish translation of the main screens (Home, Scenes,
+Health tab names, Cooling, tray, setup wizard). Home → *Language* picks Auto (desktop
+language), English or Türkçe; it applies at the next start. `CENTURION_LANG=tr` overrides it
+for one run. Texts without a translation show in English. The catalogue is
+`gui/i18n/centurion_tr.ts`; `cmake --build <dir> --target update_translations` refreshes it.
+
+## Tests
+
+`cargo test --workspace` runs the unit and property tests (proptest checks the helpers' JSON
+validation limits); `ctest` in the GUI build directory runs the GUI tests. Both run in
+`.github/workflows/ci.yml`.
 
 ## How it works
 

@@ -22,3 +22,7 @@ path = "src/bin/tune-helper.rs"
 [[bin]]
 name = "tune-profile-helper"
 path = "src/bin/tune-profile-helper.rs"
+
+[dev-dependencies]
+# Property-based tests only (`cargo test`); nothing in a normal build links it.
+proptest = { version = "1", default-features = false, features = ["std"] }

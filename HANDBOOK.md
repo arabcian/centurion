@@ -161,6 +161,9 @@ Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journ
 ### Sleep
 Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`).
 
+### Cooling
+Does the laptop still cool as well as it did? **Run cooling test** loads every CPU thread for 2, 4 (recommended) or 8 minutes after a short cool-down, and records die temperature, the fastest fan and the clock. Nothing runs in the background; the fans will be loud. The first clean run under a set of firmware settings (PL1 / PL2 / PL3, CPU temperature target, power profile, power source) is the **baseline**; later runs are compared with it. A hotter die at the same load, louder fans or, when the firmware holds the die at its temperature target, a lower clock suggest dust in the heat sink or dried-out paste: clean the vents and fans first. A changed power limit or temperature target starts a new baseline, because it changes how much heat the load makes. Runs disturbed by other programs or started warm are marked and not compared. For a fair test: charger in, fans on Auto, other programs closed, same room, same length. After cleaning, **Use the latest run as baseline**. **Forget results for these settings** deletes the stored runs; they live in `~/.local/state/centurion/cooling.json`.
+
 ### Battery use
 Time left at the current draw, battery drain per scene (energy actually taken from the battery while each scene was active, sleep excluded) with "full charge lasts ~", and a daily capacity / health history.
 

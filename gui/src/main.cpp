@@ -10,6 +10,7 @@
 // raises the running one, without it exits quietly; if the lock cannot be
 // taken for any other reason the program refuses to start.
 #include "dbusapi.h"
+#include "i18n.h"
 #include "mainwindow.h"
 #include "sysinfo.h"
 #include "theme.h"
@@ -226,6 +227,9 @@ static void installQuitSignals(QCoreApplication &app) {
 /// Legion-family machine outside the known-model whitelist (sysinfo::knownModel):
 /// say so and ask for a GitHub report, then keep running. "Don't show again" is
 /// remembered per model name, so a different machine asks again.
+// Translation context for the free functions of this file.
+struct MainText { Q_DECLARE_TR_FUNCTIONS(MainText) };
+
 static void warnUnknownModel() {
     const QString model = sysinfo::dmiClean(QStringLiteral("product_version"))
                               .value_or(sysinfo::dmiClean(QStringLiteral("product_family"))
@@ -236,18 +240,18 @@ static void warnUnknownModel() {
     if (st.value(QStringLiteral("unknown_model/dismissed")).toString() == model) return;
 
     const QString info = sysinfo::reportInfo();
-    QMessageBox box(QMessageBox::Warning, QStringLiteral("Centurion — model not supported"),
-                    QStringLiteral("This model (%1) is not supported yet.\n\n"
-                                   "Centurion has not been tested on it, and some firmware features may be "
-                                   "missing or behave differently. Please send your system information on GitHub "
-                                   "so support can be added.").arg(model));
+    QMessageBox box(QMessageBox::Warning, MainText::tr("Centurion — model not supported"),
+                    MainText::tr("This model (%1) is not supported yet.\n\n"
+                                 "Centurion has not been tested on it, and some firmware features may be "
+                                 "missing or behave differently. Please send your system information on GitHub "
+                                 "so support can be added.").arg(model));
     box.setDetailedText(info);
-    auto *report = box.addButton(QStringLiteral("Report on GitHub"), QMessageBox::AcceptRole);
-    auto *copy = box.addButton(QStringLiteral("Copy system info"), QMessageBox::ActionRole);
-    auto *cont = box.addButton(QStringLiteral("Continue"), QMessageBox::RejectRole);
+    auto *report = box.addButton(MainText::tr("Report on GitHub"), QMessageBox::AcceptRole);
+    auto *copy = box.addButton(MainText::tr("Copy system info"), QMessageBox::ActionRole);
+    auto *cont = box.addButton(MainText::tr("Continue"), QMessageBox::RejectRole);
     box.setDefaultButton(report);
     box.setEscapeButton(cont);
-    auto *dontAsk = new QCheckBox(QStringLiteral("Don't show again for this model"));
+    auto *dontAsk = new QCheckBox(MainText::tr("Don't show again for this model"));
     box.setCheckBox(dontAsk);
 
     for (;;) {
@@ -274,6 +278,7 @@ int main(int argc, char **argv) {
     app.setApplicationVersion(CENTURION_VERSION);
     app.setDesktopFileName("centurion");
     theme::load();  // palette tokens first: the icon below is drawn in them
+    i18n::install(app);  // before any widget or dialog text exists
     app.setWindowIcon(appIcon(128));
     app.setQuitOnLastWindowClosed(false);  // the window is a view onto a tray app
     app.installEventFilter(new NoComboWheel(&app));  // deliberate, see NoComboWheel — keep it

@@ -243,4 +243,51 @@ mod tests {
         assert_eq!(parse_value(Some(&json!(45.5))), None);
         assert_eq!(parse_value(Some(&json!(true))), None);
     }
+
+    // ── property tests: what may reach a root write ─────────────────────────
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::default() })]
+
+        /// An accepted path is exactly <prefix>/<device>/attributes/<attr>/current_value with
+        /// clean segments: no "..", no extra or empty segments, no NUL, whatever the input.
+        #[test]
+        fn accepted_path_has_the_exact_shape(p in prop_oneof![
+            ".{0,80}",
+            "/sys/class/firmware-attributes/[a-z0-9_./-]{0,12}/attributes/[a-z0-9_./-]{0,12}/[a-z_.]{0,14}",
+            "/sys/class/firmware-attributes/[a-z0-9_.-]{1,10}/attributes/[a-z0-9_]{1,12}/current_value",
+        ]) {
+            if path_shape_ok(&p) {
+                let rest = p.strip_prefix(PREFIX).expect("prefix");
+                let parts: Vec<&str> = rest.split('/').collect();
+                prop_assert_eq!(parts.len(), 4);
+                prop_assert_eq!(parts[1], "attributes");
+                prop_assert_eq!(parts[3], "current_value");
+                prop_assert!(parts.iter().all(|s| !s.is_empty() && *s != "." && *s != ".."));
+                prop_assert!(!p.contains('\0'));
+                prop_assert!(parts[2].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'));
+            }
+        }
+
+        /// Well-formed paths are accepted (the shape check is not stricter than documented).
+        #[test]
+        fn wellformed_path_is_accepted(dev in "[A-Za-z0-9_][A-Za-z0-9_.-]{0,10}", attr in "[A-Za-z0-9_]{1,12}") {
+            prop_assume!(dev != "." && dev != "..");
+            let p = format!("{PREFIX}{dev}/attributes/{attr}/current_value");
+            prop_assert!(path_shape_ok(&p));
+        }
+
+        /// A value is only ever an integer: integers, integer strings and whole floats pass;
+        /// fractions, booleans, arrays and objects never do.
+        #[test]
+        fn values_are_integers_only(n in any::<i64>(), f in any::<f64>(), s in ".{0,12}") {
+            prop_assert_eq!(parse_value(Some(&json!(n))), Some(n));
+            prop_assert_eq!(parse_value(Some(&json!(n.to_string()))), Some(n));
+            if f.is_finite() && f.fract() != 0.0 { prop_assert_eq!(parse_value(Some(&json!(f))), None); }
+            if let Some(v) = parse_value(Some(&json!(s.clone()))) { prop_assert_eq!(s.trim().parse::<i64>().ok(), Some(v)); }
+            prop_assert_eq!(parse_value(Some(&json!([n]))), None);
+            prop_assert_eq!(parse_value(None), None);
+        }
+    }
 }

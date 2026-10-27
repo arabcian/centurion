@@ -63,16 +63,16 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     // Curve guard reset a curve after an error: offer to put the profile back (same path as the tray menu).
     connect(win_->health(), &HealthTab::curveReset, this, [this](const QString &group, const QString &profile, const QString &m) {
         const bool gpu = group == QLatin1String("gpu");
-        const QString title = gpu ? QStringLiteral("GPU curve guard") : QStringLiteral("CPU curve guard");
+        const QString title = gpu ? tr("GPU curve guard") : tr("CPU curve guard");
         if (profile.isEmpty()) { notify(title, m); return; }
-        notify(title, m + QStringLiteral("\nWas: '") + profile + '\'', {{QStringLiteral("Undo"), [this, gpu, title, profile] {
+        notify(title, m + tr("\nWas: '%1'").arg(profile), {{tr("Undo"), [this, gpu, title, profile] {
             if (!claimCooldown()) return;
             if (gpu) {
-                if (NvidiaTab *nv = win_->nvidia()) { nv->applyNamedProfile(profile); notify(title, "Applying profile '" + profile + "'…"); }
+                if (NvidiaTab *nv = win_->nvidia()) { nv->applyNamedProfile(profile); notify(title, tr("Applying profile '%1'…").arg(profile)); }
                 return;
             }
             win_->scenes()->applyCpuProfile(profile, false, [this, title, profile](bool ok, const QString &r) {
-                notify(title, ok ? "Profile '" + profile + "' applied again." : "Profile '" + profile + "': " + r);
+                notify(title, ok ? tr("Profile '%1' applied again.").arg(profile) : tr("Profile '%1': %2").arg(profile, r));
             });
         }}});
     });
@@ -80,21 +80,21 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     // Heroic / Bottles games noticed by the launcher watch.
     if (LauncherWatch *lw = win_->launchers()) {
         connect(lw, &LauncherWatch::gameStarted, this, [this](const QString &g, const QString &src) {
-            notify(src + QStringLiteral(" game detected"), g + QStringLiteral(" — game mode started."));
+            notify(tr("%1 game detected").arg(src), tr("%1 — game mode started.").arg(g));
         });
         connect(lw, &LauncherWatch::gameEnded, this, [this](const QString &g, const QString &src) {
-            notify(src + QStringLiteral(" game closed"), g + QStringLiteral(" — game mode ended."));
+            notify(tr("%1 game closed").arg(src), tr("%1 — game mode ended.").arg(g));
         });
     }
 
     if (DriftWatch *dw = win_->drift()) {
         connect(dw, &DriftWatch::drift, this, [this, dw](const QStringList &lines, const QString &culprits) {
             if (lines.isEmpty()) return;
-            notify(QStringLiteral("Settings changed outside Centurion"),
+            notify(tr("Settings changed outside Centurion"),
                    lines.mid(0, 3).join('\n') + (lines.size() > 3 ? QStringLiteral("\n…") : QString())
-                       + (culprits.isEmpty() ? QString() : QStringLiteral("\nRunning: ") + culprits)
-                       + QStringLiteral("\nOptimizations tab → Re-apply."),
-                   {{QStringLiteral("Re-apply"), [dw] { dw->reapply(); }}});
+                       + (culprits.isEmpty() ? QString() : tr("\nRunning: %1").arg(culprits))
+                       + tr("\nOptimizations tab → Re-apply."),
+                   {{tr("Re-apply"), [dw] { dw->reapply(); }}});
         });
     }
 
@@ -105,20 +105,20 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
         if (win_->isVisible() && win_->isActiveWindow()) return;
         // Informational messages stay silent, except the ones that say automatic switching is NOT doing its job
         // (power source flapping, login apply skipped): nobody is looking at the tab when those happen.
-        const QList<NotifyAction> details{{QStringLiteral("Details"), [this] { win_->showTab(QStringLiteral("Scenes")); }}};
-        if (n.isEmpty()) { if (!ok && !log.isEmpty()) notify(QStringLiteral("Scenes"), log.join('\n'), details); return; }
+        const QList<NotifyAction> details{{tr("Details"), [this] { win_->showTab(QStringLiteral("Scenes")); }}};
+        if (n.isEmpty()) { if (!ok && !log.isEmpty()) notify(tr("Scenes"), log.join('\n'), details); return; }
         QStringList bad;
         for (const QString &l : log) if (l.startsWith(QStringLiteral("✗"))) bad << l.mid(2);
-        notify("Scene: " + n, ok ? QStringLiteral("Applied.") : bad.join('\n'), ok ? QList<NotifyAction>() : details);
+        notify(tr("Scene: %1").arg(n), ok ? tr("Applied.") : bad.join('\n'), ok ? QList<NotifyAction>() : details);
     });
     connect(eng, &SceneEngine::activeSceneChanged, this, [this](const QString &n, bool game) {
-        setToolTip("Centurion — scene: " + n);
+        setToolTip(tr("Centurion — scene: %1").arg(n));
         if (win_->isVisible() && win_->isActiveWindow()) return;
-        notify(game ? QStringLiteral("Game scene: ") + n : QStringLiteral("Scene: ") + n,
-               game ? QStringLiteral("Game started — scene switched.") : QStringLiteral("Scene switched."));
+        notify(game ? tr("Game scene: %1").arg(n) : tr("Scene: %1").arg(n),
+               game ? tr("Game started — scene switched.") : tr("Scene switched."));
     });
-    connect(eng, &SceneEngine::started, this, [this](const QString &n) { setToolTip("Centurion — applying scene '" + n + "'…"); });
-    connect(eng, &SceneEngine::finished, this, [this](const QString &n) { if (!n.isEmpty()) setToolTip("Centurion — scene: " + n); });
+    connect(eng, &SceneEngine::started, this, [this](const QString &n) { setToolTip(tr("Centurion — applying scene '%1'…").arg(n)); });
+    connect(eng, &SceneEngine::finished, this, [this](const QString &n) { if (!n.isEmpty()) setToolTip(tr("Centurion — scene: %1").arg(n)); });
 }
 
 void Tray::toggleWindow() {
@@ -129,7 +129,7 @@ void Tray::toggleWindow() {
 }
 
 bool Tray::claimCooldown() {
-    if (cooldown_) { notify("Centurion", "Still applying the previous change — try again in a moment."); return false; }
+    if (cooldown_) { notify(QStringLiteral("Centurion"), tr("Still applying the previous change — try again in a moment.")); return false; }
     cooldown_ = true;
     QTimer::singleShot(APPLY_COOLDOWN_MS, this, [this] { cooldown_ = false; });
     return true;
@@ -150,7 +150,7 @@ void Tray::rebuild() {
     SceneEngine *eng = win_->scenes();
     const QStringList sceneNames = scenes::names();
     if (!sceneNames.isEmpty()) {
-        QMenu *sm = menu_->addMenu("Scene");
+        QMenu *sm = menu_->addMenu(tr("Scene"));
         for (const QString &n : sceneNames) {
             QAction *a = sm->addAction(n);
             a->setCheckable(true);
@@ -158,35 +158,35 @@ void Tray::rebuild() {
             connect(a, &QAction::triggered, this, [this, eng, n] {
                 if (!claimCooldown()) return;
                 eng->apply(n);
-                notify("Scene", "Applying '" + n + "'…");
+                notify(tr("Scene"), tr("Applying '%1'…").arg(n));
             });
         }
         sm->addSeparator();
-        QAction *au = sm->addAction("Switch with power source");
+        QAction *au = sm->addAction(tr("Switch with power source"));
         au->setCheckable(true);
         const scenes::Auto cfg = eng->autoConfig();
         au->setChecked(cfg.enabled);
         au->setEnabled(!cfg.onAc.isEmpty() || !cfg.onBattery.isEmpty());
-        if (!au->isEnabled()) au->setToolTip("Choose the AC / battery scenes in the Scenes tab first");
+        if (!au->isEnabled()) au->setToolTip(tr("Choose the AC / battery scenes in the Scenes tab first"));
         connect(au, &QAction::toggled, this, [eng](bool on) {
             scenes::Auto c = eng->autoConfig();
             c.enabled = on;
             eng->setAuto(c);
         });
-        QAction *pa = sm->addAction("Pause scenes");
+        QAction *pa = sm->addAction(tr("Pause scenes"));
         pa->setCheckable(true);
         pa->setChecked(eng->paused());
-        pa->setToolTip("No automatic scene changes (power source, login, game) until unchecked");
+        pa->setToolTip(tr("No automatic scene changes (power source, login, game) until unchecked"));
         connect(pa, &QAction::toggled, this, [eng](bool on) { eng->setPaused(on); });
         sm->setEnabled(!eng->busy());
         menu_->addSeparator();
     }
 
     // Power profile
-    QMenu *pm = menu_->addMenu("Power Profile");
+    QMenu *pm = menu_->addMenu(tr("Power Profile"));
     HomeTab *home = win_->home();
     const QStringList profiles = home->offeredProfiles();
-    if (profiles.isEmpty()) disabledEntry(pm, "(no platform-profile driver)");
+    if (profiles.isEmpty()) disabledEntry(pm, tr("(no platform-profile driver)"));
     const auto current = home->currentProfile();
     for (const QString &name : profiles) {
         QAction *a = pm->addAction(HomeTab::profileLabel(name));
@@ -200,106 +200,106 @@ void Tray::rebuild() {
 
     // Ryzen (AMD only — the window has no Ryzen tab on Intel)
     if (RyzenTab *ryzen = win_->ryzen()) {
-    QMenu *rm = menu_->addMenu("CPU Curve (Ryzen)");
+    QMenu *rm = menu_->addMenu(tr("CPU Curve (Ryzen)"));
     const QStringList rnames = ryzen->savedProfileNames();
-    if (rnames.isEmpty()) disabledEntry(rm, "(no saved profiles)");
+    if (rnames.isEmpty()) disabledEntry(rm, tr("(no saved profiles)"));
     for (const QString &n : rnames)
         connect(rm->addAction(n), &QAction::triggered, this, [this, n] {
             // Straight from the profile file, like a scene: loading it into the tab first replaced
             // unsaved values in the editor and could open a modal box behind the hidden window.
             if (!claimCooldown()) return;
             win_->scenes()->applyCpuProfile(n, false, [this, n](bool ok, const QString &m) {
-                notify("CPU curve", ok ? "Profile '" + n + "' applied." : "Profile '" + n + "': " + m);
+                notify(tr("CPU curve"), ok ? tr("Profile '%1' applied.").arg(n) : tr("Profile '%1': %2").arg(n, m));
             });
         });
     rm->addSeparator();
-    connect(rm->addAction("Reset curve"), &QAction::triggered, this, [this, ryzen] {
+    connect(rm->addAction(tr("Reset curve")), &QAction::triggered, this, [this, ryzen] {
         if (!claimCooldown()) return;
         ryzen->applyReset();
-        notify("CPU curve", "Resetting Curve Optimizer (coall=0)…");
+        notify(tr("CPU curve"), tr("Resetting Curve Optimizer (coall=0)…"));
     });
     }
 
     // Intel undervolt (Intel only)
     if (IntelTab *intel = win_->intel()) {
-        QMenu *im = menu_->addMenu("CPU Undervolt (Intel)");
+        QMenu *im = menu_->addMenu(tr("CPU Undervolt (Intel)"));
         const QStringList inames = intel->savedProfileNames();
-        if (inames.isEmpty()) disabledEntry(im, "(no saved profiles)");
+        if (inames.isEmpty()) disabledEntry(im, tr("(no saved profiles)"));
         for (const QString &n : inames)
             connect(im->addAction(n), &QAction::triggered, this, [this, n] {
                 if (!claimCooldown()) return;
                 win_->scenes()->applyCpuProfile(n, false, [this, n](bool ok, const QString &m) {
-                    notify("CPU undervolt", ok ? "Profile '" + n + "' applied." : "Profile '" + n + "': " + m);
+                    notify(tr("CPU undervolt"), ok ? tr("Profile '%1' applied.").arg(n) : tr("Profile '%1': %2").arg(n, m));
                 });
             });
         im->addSeparator();
-        connect(im->addAction("Reset voltages"), &QAction::triggered, this, [this, intel] {
+        connect(im->addAction(tr("Reset voltages")), &QAction::triggered, this, [this, intel] {
             if (!claimCooldown()) return;
             intel->applyReset();
-            notify("CPU undervolt", "Resetting voltage offsets to 0 mV…");
+            notify(tr("CPU undervolt"), tr("Resetting voltage offsets to 0 mV…"));
         });
     }
 
     // NVIDIA
     if (NvidiaTab *nv = win_->nvidia()) {  // no NVIDIA GPU → no menu
-    QMenu *nm = menu_->addMenu("GPU Curve (NVIDIA)");
+    QMenu *nm = menu_->addMenu(tr("GPU Curve (NVIDIA)"));
     const QStringList nnames = nv->profileNames();
     const QString def = nv->defaultProfileName();
-    if (nnames.isEmpty()) disabledEntry(nm, "(no saved profiles)");
+    if (nnames.isEmpty()) disabledEntry(nm, tr("(no saved profiles)"));
     for (const QString &n : nnames)
         connect(nm->addAction(n == def ? n + "  ★" : n), &QAction::triggered, this, [this, nv, n] {
             if (!claimCooldown()) return;
             nv->applyNamedProfile(n);
-            notify("GPU curve", "Applying profile '" + n + "'…");
+            notify(tr("GPU curve"), tr("Applying profile '%1'…").arg(n));
         });
     nm->addSeparator();
-    connect(nm->addAction("Reset curve"), &QAction::triggered, this, [this, nv] {
+    connect(nm->addAction(tr("Reset curve")), &QAction::triggered, this, [this, nv] {
         if (claimCooldown()) nv->resetCurve();
     });
     nm->setEnabled(!nv->busy());  // greyed while an NVIDIA helper call is in flight
     }
 
     // Optimizations
-    QMenu *om = menu_->addMenu("Optimizations");
+    QMenu *om = menu_->addMenu(tr("Optimizations"));
     OptimizeTab *opt = win_->optimize();
     const QString game = opt->gamePreset();
     for (const QString &n : opt->presetNames())
         connect(om->addAction(n == game ? n + "  ★" : n), &QAction::triggered, this, [this, opt, n] {
             if (!claimCooldown()) return;
-            if (opt->applyNamedPreset(n)) notify("Optimizations", "Applying preset '" + n + "'…");
-            else notify("Optimizations", "Preset '" + n + "' has nothing applicable here.");
+            if (opt->applyNamedPreset(n)) notify(tr("Optimizations"), tr("Applying preset '%1'…").arg(n));
+            else notify(tr("Optimizations"), tr("Preset '%1' has nothing applicable here.").arg(n));
         });
     om->addSeparator();
-    QAction *restore = om->addAction("Restore originals");
+    QAction *restore = om->addAction(tr("Restore originals"));
     restore->setEnabled(opt->tuningActive());
     connect(restore, &QAction::triggered, this, [this, opt] {
         if (!claimCooldown()) return;
         opt->restoreAll(false);
-        notify("Optimizations", "Restoring original values…");
+        notify(tr("Optimizations"), tr("Restoring original values…"));
     });
     om->setEnabled(!opt->busy());
 
     // Keyboard lighting (Spectrum controller) — immediate, no cooldown needed.
     if (LightingTab *lt = win_->lighting()) {
-        QMenu *lm = menu_->addMenu("Keyboard Lighting");
+        QMenu *lm = menu_->addMenu(tr("Keyboard Lighting"));
         if (!lt->ready()) {
-            disabledEntry(lm, "(keyboard not read — see the Lighting tab)");
+            disabledEntry(lm, tr("(keyboard not read — see the Lighting tab)"));
         } else {
             for (int p = lighting::MIN_PROFILE; p <= lighting::MAX_PROFILE; ++p) {
-                QAction *a = lm->addAction(QStringLiteral("Profile %1").arg(p));
+                QAction *a = lm->addAction(tr("Profile %1").arg(p));
                 a->setCheckable(true);
                 a->setChecked(p == lt->activeProfile());
                 connect(a, &QAction::triggered, this, [this, lt, p] {
-                    if (lt->hasUnappliedChanges()) { notify("Keyboard lighting", "The Lighting tab has changes not applied yet — apply or revert them first."); return; }
+                    if (lt->hasUnappliedChanges()) { notify(tr("Keyboard lighting"), tr("The Lighting tab has changes not applied yet — apply or revert them first.")); return; }
                     lt->activateProfile(p);
                 });
             }
             lm->addSeparator();
-            QAction *off = lm->addAction("Lights off");
+            QAction *off = lm->addAction(tr("Lights off"));
             off->setCheckable(true);
             off->setChecked(lt->brightness() == 0);
             connect(off, &QAction::triggered, this, [lt](bool checked) { lt->setLightsOn(!checked); });
-            QMenu *bm = lm->addMenu("Brightness");
+            QMenu *bm = lm->addMenu(tr("Brightness"));
             for (int b = 1; b <= lighting::MAX_BRIGHTNESS; ++b) {
                 QAction *a = bm->addAction(QString::number(b));
                 a->setCheckable(true);
@@ -313,24 +313,24 @@ void Tray::rebuild() {
     // Fans: all to max / Auto, or one fan at a fixed RPM (multiples of 100).
     const QList<HomeTab::FanInfo> fans = home->fanInfo();
     if (!fans.isEmpty()) {
-        QMenu *fm = menu_->addMenu("Fans");
+        QMenu *fm = menu_->addMenu(tr("Fans"));
         const bool maxMode = home->fansMaxMode();
-        QAction *mx = fm->addAction("Max all fans");
+        QAction *mx = fm->addAction(tr("Max all fans"));
         mx->setCheckable(true);
         mx->setChecked(maxMode);
         connect(mx, &QAction::triggered, this, [this, home, maxMode] {
             if (!claimCooldown()) return;
-            if (maxMode) { home->setAllFansAuto(); notify("Fans", "All fans back to Auto…"); }
-            else { home->setAllFansMax(); notify("Fans", "All fans to maximum…"); }
+            if (maxMode) { home->setAllFansAuto(); notify(tr("Fans"), tr("All fans back to Auto…")); }
+            else { home->setAllFansMax(); notify(tr("Fans"), tr("All fans to maximum…")); }
         });
-        connect(fm->addAction("All fans to Auto"), &QAction::triggered, this, [this, home] {
+        connect(fm->addAction(tr("All fans to Auto")), &QAction::triggered, this, [this, home] {
             if (!claimCooldown()) return;
             home->setAllFansAuto();
-            notify("Fans", "All fans back to Auto…");
+            notify(tr("Fans"), tr("All fans back to Auto…"));
         });
         fm->addSeparator();
         for (const HomeTab::FanInfo &f : fans) {
-            const QString cur = f.target > 0 ? QStringLiteral("%1 RPM").arg(f.target) : QStringLiteral("Auto");
+            const QString cur = f.target > 0 ? tr("%1 RPM").arg(f.target) : tr("Auto");
             QMenu *sub = fm->addMenu(f.name + "  (" + cur + ")");
             auto add = [this, home, sub, f](const QString &text, int rpm) {
                 QAction *a = sub->addAction(text);
@@ -340,22 +340,22 @@ void Tray::rebuild() {
                 connect(a, &QAction::triggered, this, [this, home, key, name, rpm] {
                     if (!claimCooldown()) return;
                     home->setFanTarget(key, rpm);
-                    notify("Fans", rpm > 0 ? QStringLiteral("%1 → %2 RPM").arg(name).arg(rpm) : name + " → Auto");
+                    notify(tr("Fans"), rpm > 0 ? tr("%1 → %2 RPM").arg(name).arg(rpm) : tr("%1 → Auto").arg(name));
                 });
             };
-            add("Auto", 0);
+            add(tr("Auto"), 0);
             sub->addSeparator();
             const int top = f.max > 0 && f.max < 9999 ? f.max : 6000;
             const int start = std::max(100, (f.min + 99) / 100 * 100);
-            for (int r = start; r <= top; r += 100) add(QStringLiteral("%1 RPM").arg(r), r);
-            if (top % 100) add(QStringLiteral("%1 RPM (max)").arg(top), top);
+            for (int r = start; r <= top; r += 100) add(tr("%1 RPM").arg(r), r);
+            if (top % 100) add(tr("%1 RPM (max)").arg(top), top);
         }
         fm->setEnabled(!home->fanBusy());
     }
 
     menu_->addSeparator();
-    connect(menu_->addAction(win_->isVisible() ? "Hide window" : "Show window"), &QAction::triggered, this, &Tray::toggleWindow);
-    connect(menu_->addAction("Quit"), &QAction::triggered, this, [this] {
+    connect(menu_->addAction(win_->isVisible() ? tr("Hide window") : tr("Show window")), &QAction::triggered, this, &Tray::toggleWindow);
+    connect(menu_->addAction(tr("Quit")), &QAction::triggered, this, [this] {
         win_->setForceQuit(true);
         hide();
         qApp->quit();

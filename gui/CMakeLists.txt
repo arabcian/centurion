@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network Svg DBus)
+# Qt Linguist (lrelease) compiles the translations into the executable. Optional: without it the
+# program builds in English only.
+find_package(Qt6 6.4 OPTIONAL_COMPONENTS LinguistTools)
 
 # Where the root helpers live. Must match the polkit exec.path annotations.
 set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root helper directory")
@@ -48,6 +51,8 @@ add_executable(centurion
     src/backuppage.cpp   src/backuppage.h
     src/launcherwatch.cpp src/launcherwatch.h
     src/batterypage.cpp  src/batterypage.h
+    src/coolingpage.cpp  src/coolingpage.h
+    src/i18n.cpp         src/i18n.h
     src/trialbar.cpp     src/trialbar.h
     src/curvepage.cpp    src/curvepage.h
     src/driftwatch.cpp   src/driftwatch.h
@@ -60,6 +65,14 @@ add_executable(centurion
     src/notify.cpp       src/notify.h
     src/firstrunwizard.cpp src/firstrunwizard.h
 )
+# Translations: i18n/centurion_<lang>.ts -> :/i18n/centurion_<lang>.qm inside the executable.
+# `cmake --build <dir> --target update_translations` refreshes the .ts files from the sources
+# (keeps existing translations). Also keep the language list in src/i18n.cpp (AVAILABLE) in step.
+if(Qt6LinguistTools_FOUND)
+    qt_add_translations(centurion TS_FILES i18n/centurion_tr.ts RESOURCE_PREFIX /i18n)
+else()
+    message(STATUS "Qt6 LinguistTools not found: building without translations (English only)")
+endif()
 # Theme glyphs (checkbox tick, spin/combo chevrons), @2x for HiDPI. Compiled
 # with qt_add_resources, not AUTORCC: CMake's Makefile generator runs the
 # AUTORCC step through /bin/sh without escaping '(' — a checkout under a path
@@ -202,6 +215,14 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
+    add_executable(centurion-cooling-test tests/coolingpage_test.cpp src/coolingpage.cpp src/coolingpage.h src/theme.cpp src/theme.h)
+    target_link_libraries(centurion-cooling-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-cooling-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME cooling COMMAND centurion-cooling-test)
+    add_executable(centurion-i18n-test tests/i18n_test.cpp src/i18n.cpp src/i18n.h)
+    target_link_libraries(centurion-i18n-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-i18n-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME i18n COMMAND centurion-i18n-test)
     add_executable(centurion-mangohud-test tests/mangohud_test.cpp src/mangohud.cpp src/mangohud.h)
     target_link_libraries(centurion-mangohud-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-mangohud-test PRIVATE QT_NO_KEYWORDS)

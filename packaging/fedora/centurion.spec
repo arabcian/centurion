@@ -28,6 +28,7 @@ BuildRequires:  cmake >= 3.19
 BuildRequires:  gcc-c++
 BuildRequires:  qt6-qtbase-devel
 BuildRequires:  qt6-qtsvg-devel
+BuildRequires:  qt6-linguist
 BuildRequires:  libxkbcommon-devel
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  desktop-file-utils
@@ -97,6 +98,7 @@ fi
 %{_bindir}/centurion-calibrate
 %{_bindir}/centurion-netguard
 %{_bindir}/centurion-display
+%{_bindir}/centurion-cooltest
 %dir %{_libexecdir}/centurion
 %{_libexecdir}/centurion/legion-profile-helper
 %{_libexecdir}/centurion/fwattr-helper

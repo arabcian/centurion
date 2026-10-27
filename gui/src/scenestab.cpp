@@ -24,6 +24,7 @@
 #include <cmath>
 #include <iterator>
 #include <tuple>
+#include <QCoreApplication>
 #include <QDate>
 #include <QDir>
 #include <QFileDialog>
@@ -61,7 +62,7 @@ static Choice decode(const QString &d) {
 /// has since been deleted — shown as missing instead of silently dropped.
 static void fillChoice(QComboBox *c, const QStringList &names, const QString &resetLabel, const Choice &keep) {
     c->clear();
-    c->addItem(QStringLiteral("Unchanged"), QStringLiteral("u"));
+    c->addItem(QCoreApplication::translate("ScenesTab", "Unchanged"), QStringLiteral("u"));
     if (!resetLabel.isEmpty()) c->addItem(resetLabel, QStringLiteral("r"));
     for (const QString &n : names) c->addItem(n, "p:" + n);
     if (keep.kind == Choice::Profile && !names.contains(keep.name)) c->addItem(keep.name + QStringLiteral("  (missing)"), "p:" + keep.name);
@@ -82,7 +83,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     // ── left: scene list ──
     auto *left = new QVBoxLayout;
     left->setSpacing(6);
-    auto *listBox = new QGroupBox("Scenes");
+    auto *listBox = new QGroupBox(tr("Scenes"));
     auto *ll = new QVBoxLayout(listBox);
     list_ = new QListWidget;
     list_->setFrameShape(QFrame::NoFrame);
@@ -94,12 +95,12 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
                                         "QListWidget::item:hover:!selected { background: %2; }")
                              .arg(theme::BG3, theme::BG2));
     ll->addWidget(list_, 1);
-    auto *add = new QPushButton("New scene…");
+    auto *add = new QPushButton(tr("New scene…"));
     ll->addWidget(add);
     auto *io = new QHBoxLayout;
     io->setSpacing(4);
-    auto *exp = new QPushButton("Export…");
-    auto *imp = new QPushButton("Import…");
+    auto *exp = new QPushButton(tr("Export…"));
+    auto *imp = new QPushButton(tr("Import…"));
     exp->setToolTip("Save scenes, Optimizations presets, game-launch settings and every CPU / GPU curve profile to one file");
     imp->setToolTip("Load a file made with Export… (backup, reinstall, another machine of the same model)");
     for (QPushButton *b : {exp, imp}) { b->setObjectName("btnMini"); io->addWidget(b); }
@@ -124,9 +125,9 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
             win_->shortcuts()->sync();
         });
     });
-    dup_ = new QPushButton("Copy…");
+    dup_ = new QPushButton(tr("Copy…"));
     dup_->setToolTip("Duplicate this scene under a new name");
-    del_ = new QPushButton("Delete");
+    del_ = new QPushButton(tr("Delete"));
     del_->setObjectName("btnDanger");
     left->addWidget(listBox, 1);
     auto *leftHost = new QWidget;
@@ -138,7 +139,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     auto *right = new QVBoxLayout;
     right->setSpacing(6);
 
-    editor_ = new QGroupBox("Scene");
+    editor_ = new QGroupBox(tr("Scene"));
     auto *g = new QGridLayout(editor_);
     g->setHorizontalSpacing(10);
     g->setVerticalSpacing(6);
@@ -152,36 +153,36 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         g->addWidget(w, row++, 1, 1, 3);
     };
     profile_ = new QComboBox;
-    addRow("Power profile", profile_, "Platform profile set first. Firmware limits below only take effect in Custom.");
+    addRow(tr("Power profile"), profile_, "Platform profile set first. Firmware limits below only take effect in Custom.");
 
     fwLabel_ = new QLabel;
     // A rich-text table: no word wrap (QLabel under-measures a wrapped table and cut its last row off).
     fwLabel_->setWordWrap(false);
     fwLabel_->setTextFormat(Qt::RichText);
-    fwCapture_ = new QPushButton("Capture current");
+    fwCapture_ = new QPushButton(tr("Capture current"));
     fwCapture_->setObjectName("btnMini");
     fwCapture_->setToolTip("Store the firmware attributes as they are right now (set them in Firmware Attributes first).");
-    fwClear_ = new QPushButton("Clear");
+    fwClear_ = new QPushButton(tr("Clear"));
     fwClear_->setObjectName("btnMini");
     // One row per captured value: label and buttons stay at the top of the list.
-    g->addWidget(muted("Firmware limits"), row, 0, Qt::AlignTop);
+    g->addWidget(muted(tr("Firmware limits")), row, 0, Qt::AlignTop);
     g->addWidget(fwLabel_, row, 1, Qt::AlignTop);
     g->addWidget(fwCapture_, row, 2, Qt::AlignTop);
     g->addWidget(fwClear_, row++, 3, Qt::AlignTop);
     fan_ = new QComboBox;
-    fan_->addItem("Unchanged", -1);
+    fan_->addItem(tr("Unchanged"), -1);
     fan_->addItem("Auto (EC fan curve)", 0);
     fan_->addItem("Turbo (EC full speed)", 1);
     fanTableLabel_ = new QLabel;
     fanTableLabel_->setWordWrap(true);
-    fanClear_ = new QPushButton("Clear");
+    fanClear_ = new QPushButton(tr("Clear"));
     fanClear_->setObjectName("btnMini");
     fanTableLabel_->setToolTip("Custom-mode EC fan curve (10 temperature steps, level 1-10). Stored by Capture current above; "
                                "applied only while the scene uses the Custom power profile.");
-    g->addWidget(muted("Fan curve"), row, 0);
+    g->addWidget(muted(tr("Fan curve")), row, 0);
     g->addWidget(fanTableLabel_, row, 1, 1, 2);
     g->addWidget(fanClear_, row++, 3);
-    addRow("Fan boost", fan_, "EC Full Speed flag (the Turbo fan switch). Applied after the power profile; Capture current reads it too.");
+    addRow(tr("Fan boost"), fan_, "EC Full Speed flag (the Turbo fan switch). Applied after the power profile; Capture current reads it too.");
 
     if (win_->ryzen() || win_->intel()) {
         cpu_ = new QComboBox;
@@ -191,7 +192,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     // Always laid out, shown only while there is an NVIDIA tab: the dGPU can
     // come back after start-up ("Bring NVIDIA back"), and the row with it.
     gpu_ = new QComboBox(this);
-    addRow("GPU curve (NVIDIA)", gpu_, "A profile saved in the NVIDIA tab. Reset clears the curve offsets.");
+    addRow(tr("GPU curve (NVIDIA)"), gpu_, "A profile saved in the NVIDIA tab. Reset clears the curve offsets.");
     gpuLabel_ = qobject_cast<QLabel *>(g->itemAtPosition(row - 1, 0)->widget());
     const auto showGpuRow = [this] {
         const bool on = win_->nvidia() != nullptr;
@@ -201,32 +202,32 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     showGpuRow();
     connect(win_, &MainWindow::nvidiaTabAdded, this, [this, showGpuRow] { showGpuRow(); fillOptions(); });
     tuning_ = new QComboBox;
-    addRow("Optimizations", tuning_,
+    addRow(tr("Optimizations"), tuning_,
            "An Optimizations preset. Switching presets restores every knob the new one does not set, "
            "so nothing from the previous scene lingers. A running game's tuning is never touched.");
     if (win_->lighting()) {
         lightProfile_ = new QComboBox;
-        lightProfile_->addItem("Unchanged", -1);
+        lightProfile_->addItem(tr("Unchanged"), -1);
         for (int p = lighting::MIN_PROFILE; p <= lighting::MAX_PROFILE; ++p) lightProfile_->addItem(QStringLiteral("Profile %1").arg(p), p);
         lightBright_ = new QComboBox;
-        lightBright_->addItem("Unchanged", -1);
-        lightBright_->addItem("Off", 0);
+        lightBright_->addItem(tr("Unchanged"), -1);
+        lightBright_->addItem(tr("Off"), 0);
         for (int b = 1; b <= lighting::MAX_BRIGHTNESS; ++b) lightBright_->addItem(QStringLiteral("Brightness %1").arg(b), b);
         auto *lh = new QWidget;
         auto *ll = new QHBoxLayout(lh);
         ll->setContentsMargins(0, 0, 0, 0);
         ll->addWidget(lightProfile_, 1);
         ll->addWidget(lightBright_, 1);
-        addRow("Keyboard lighting", lh, "A lighting profile of the keyboard controller (edit them in the Lighting tab) "
+        addRow(tr("Keyboard lighting"), lh, "A lighting profile of the keyboard controller (edit them in the Lighting tab) "
                                         "and its brightness. Off turns the backlight off.");
     }
     if (lighting::zone4Present()) {
         zone4Label_ = new QLabel;
         zone4Label_->setWordWrap(true);
-        zone4Capture_ = new QPushButton("Capture");
+        zone4Capture_ = new QPushButton(tr("Capture"));
         zone4Capture_->setObjectName("btnMini");
         zone4Capture_->setToolTip("Store the 4-zone settings the Lighting tab last applied (effect, colours, speed, brightness).");
-        zone4Clear_ = new QPushButton("Clear");
+        zone4Clear_ = new QPushButton(tr("Clear"));
         zone4Clear_->setObjectName("btnMini");
         g->addWidget(muted("4-zone lighting"), row, 0);
         g->addWidget(zone4Label_, row, 1);
@@ -250,37 +251,37 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     }
     if (const int max = HomeTab::kbdBacklightMax(); max > 0) {
         kbdLevel_ = new QComboBox;
-        kbdLevel_->addItem("Unchanged", -1);
-        kbdLevel_->addItem("Off", 0);
-        for (int i = 1; i <= max; ++i) kbdLevel_->addItem(max == 1 ? QStringLiteral("On") : QStringLiteral("Level %1").arg(i), i);
-        addRow("Keyboard light", kbdLevel_, "White keyboard backlight level (the same setting Fn+Space cycles).");
+        kbdLevel_->addItem(tr("Unchanged"), -1);
+        kbdLevel_->addItem(tr("Off"), 0);
+        for (int i = 1; i <= max; ++i) kbdLevel_->addItem(max == 1 ? tr("On") : tr("Level %1").arg(i), i);
+        addRow(tr("Keyboard light"), kbdLevel_, "White keyboard backlight level (the same setting Fn+Space cycles).");
     }
     // Always laid out; shown when the firmware reported Over Drive (Home probes it) or the scene already sets it.
     panelOd_ = new QComboBox;
-    panelOd_->addItem("Unchanged", -1);
-    panelOd_->addItem("On", 1);
-    panelOd_->addItem("Off", 0);
-    addRow("Panel Over Drive", panelOd_, "Faster pixel response of the internal panel (less ghosting, a little overshoot). "
+    panelOd_->addItem(tr("Unchanged"), -1);
+    panelOd_->addItem(tr("On"), 1);
+    panelOd_->addItem(tr("Off"), 0);
+    addRow(tr("Panel Over Drive"), panelOd_, "Faster pixel response of the internal panel (less ghosting, a little overshoot). "
                                          "Offered where the firmware reports it.");
     panelOdLabel_ = g->itemAtPosition(row - 1, 0)->widget();
     refresh_ = new QComboBox;
-    addRow("Refresh rate", refresh_, "Internal panel refresh rate at its current resolution, set as you through the desktop's own tool "
+    addRow(tr("Refresh rate"), refresh_, "Internal panel refresh rate at its current resolution, set as you through the desktop's own tool "
                                      "(KDE kscreen-doctor, wlr-randr or X11 xrandr). A lower rate saves noticeable power on battery.");
     refreshLabel_ = g->itemAtPosition(row - 1, 0)->widget();
     command_ = new QLineEdit;
     command_->setPlaceholderText("optional, e.g.  pactl set-card-profile …");
-    addRow("Run command", command_, "Runs as you, without a shell, after everything else except the screen brightness — for things "
+    addRow(tr("Run command"), command_, "Runs as you, without a shell, after everything else except the screen brightness — for things "
                                     "this app does not manage itself (audio profile, a script…).");
     // Screen brightness: the very last step, after the command. Shown where there is a backlight (or the scene sets one).
     screenBright_ = new QSpinBox;
     screenBright_->setRange(0, 100);
     screenBright_->setSingleStep(5);
     screenBright_->setSuffix(QStringLiteral(" %"));
-    screenBright_->setSpecialValueText(QStringLiteral("Unchanged"));
-    auto *sbCapture = new QPushButton("Capture");
+    screenBright_->setSpecialValueText(tr("Unchanged"));
+    auto *sbCapture = new QPushButton(tr("Capture"));
     sbCapture->setObjectName("btnMini");
     sbCapture->setToolTip("Store the screen brightness as it is right now.");
-    auto *sbClear = new QPushButton("Clear");
+    auto *sbClear = new QPushButton(tr("Clear"));
     sbClear->setObjectName("btnMini");
     screenBrightRow_ = new QWidget;
     auto *sbl = new QHBoxLayout(screenBrightRow_);
@@ -288,7 +289,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     sbl->addWidget(screenBright_, 1);
     sbl->addWidget(sbCapture);
     sbl->addWidget(sbClear);
-    addRow("Screen brightness", screenBrightRow_, "Internal panel backlight, set as you after the run command has been started "
+    addRow(tr("Screen brightness"), screenBrightRow_, "Internal panel backlight, set as you after the run command has been started "
                                                   "(the command may change display mode and reset it). Unchanged leaves it alone.");
     screenBright_->setToolTip(screenBrightRow_->toolTip());
     screenBrightLabel_ = g->itemAtPosition(row - 1, 0)->widget();
@@ -297,7 +298,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
 
     // Global shortcut: not a step — the desktop's GlobalShortcuts portal applies the scene when it is pressed.
     shortcut_ = new QKeySequenceEdit;
-    auto *scClear = new QPushButton("Clear");
+    auto *scClear = new QPushButton(tr("Clear"));
     scClear->setObjectName("btnMini");
     shortcutNote_ = muted(QString());
     shortcutNote_->setWordWrap(true);
@@ -306,7 +307,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     scv->setContentsMargins(0, 0, 0, 0);
     scv->setSpacing(2);
     // The desktop's own dialog for our shortcuts (portal v2): change keys where the desktop keeps them.
-    shortcutConfigure_ = new QPushButton("Change on desktop…");
+    shortcutConfigure_ = new QPushButton(tr("Change on desktop…"));
     shortcutConfigure_->setObjectName("btnMini");
     shortcutConfigure_->setToolTip("Opens the desktop's shortcut dialog for Centurion's scene shortcuts.");
     shortcutConfigure_->setVisible(false);
@@ -317,7 +318,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     scl->addWidget(shortcutConfigure_);
     scv->addLayout(scl);
     scv->addWidget(shortcutNote_);
-    addRow("Shortcut", scRow, "A key combination that applies this scene from anywhere. Click the field and press the keys, then Save. "
+    addRow(tr("Shortcut"), scRow, "A key combination that applies this scene from anywhere. Click the field and press the keys, then Save. "
                               "It is registered with the desktop (global-shortcuts portal), which may ask you to confirm it and "
                               "can change it later in its own shortcut settings.");
     connect(scClear, &QPushButton::clicked, shortcut_, &QKeySequenceEdit::clear);
@@ -332,8 +333,8 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     eb->addWidget(dup_);
     eb->addWidget(del_);
     eb->addStretch(1);
-    save_ = new QPushButton("Save");
-    apply_ = new QPushButton("Apply");
+    save_ = new QPushButton(tr("Save"));
+    apply_ = new QPushButton(tr("Apply"));
     apply_->setObjectName("btnAccent");
     apply_->setToolTip("Saves the scene if changed, then applies it");
     eb->addWidget(save_);
@@ -346,13 +347,13 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     empty_->setWordWrap(true);
     right->addWidget(empty_);
 
-    auto *autoBox = new QGroupBox("Automatic switching");
+    auto *autoBox = new QGroupBox(tr("Automatic switching"));
     auto *ag = new QGridLayout(autoBox);
     ag->setHorizontalSpacing(10);
     ag->setVerticalSpacing(6);
     ag->setColumnStretch(1, 1);
     ag->setColumnStretch(3, 1);
-    auto_ = new QCheckBox("Switch scenes with the power source");
+    auto_ = new QCheckBox(tr("Switch scenes with the power source"));
     auto_->setToolTip("Applies the chosen scene when the charger is plugged in or pulled (and at login). "
                       "A charger that stays connected under heavy load counts as AC even if the battery dips.");
     onAc_ = new QComboBox;
@@ -360,11 +361,11 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     ag->addWidget(auto_, 0, 0, 1, 3);
     ag->addWidget(muted("On AC"), 1, 0);
     ag->addWidget(onAc_, 1, 1);
-    ag->addWidget(muted("On battery"), 1, 2);
+    ag->addWidget(muted(tr("On battery")), 1, 2);
     ag->addWidget(onBattery_, 1, 3);
     power_ = muted(QString());
     ag->addWidget(power_, 2, 0, 1, 4);
-    resume_ = new QCheckBox("Reapply the scene after waking from suspend");
+    resume_ = new QCheckBox(tr("Reapply the scene after waking from suspend"));
     resume_->setToolTip("Firmware and the EC can reset limits during sleep. After a wake the scene for the current power source is "
                         "applied again (5 s after waking, once more 30 s later). Needs automatic switching; honours Pause and running games.");
     ag->addWidget(resume_, 3, 0, 1, 4);
@@ -381,12 +382,12 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(eng_, &SceneEngine::pausedChanged, this, syncPause);
     connect(pause_, &QPushButton::toggled, this, [this, syncPause](bool on) {
         QString err;
-        if (!eng_->setPaused(on, &err)) { syncPause(!on); setStatus("Could not save the pause setting: " + err, theme::DANGER); }
+        if (!eng_->setPaused(on, &err)) { syncPause(!on); setStatus(tr("Could not save the pause setting: %1").arg(err), theme::DANGER); }
     });
     right->addWidget(autoBox);
 
     if (mangohud::available()) {
-        mangohud_ = new QCheckBox("Show the active scene and power profile in games (MangoHud)");
+        mangohud_ = new QCheckBox(tr("Show the active scene and power profile in games (MangoHud)"));
         mangohud_->setToolTip("Adds a marked block to " + mangohud::configPath() + ": a \"Centurion\" line read from a small file "
                               "Centurion keeps current (empty while Centurion is not running). MangoHud runs it only with legacy_layout=0, which draws just the listed "
                               "elements, so the block also lists MangoHud's default ones when your file does not. "
@@ -397,7 +398,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
             if (!mangohud::setEnabled(on, &err)) {
                 const QSignalBlocker b(mangohud_);
                 mangohud_->setChecked(!on);
-                setStatus("Could not change the MangoHud config: " + err, theme::DANGER);
+                setStatus(tr("Could not change the MangoHud config: %1").arg(err), theme::DANGER);
                 return;
             }
             win_->updateOverlay();
@@ -485,7 +486,7 @@ void ScenesTab::fillOptions() {
     filling_ = true;
     const QString keepProfile = profile_->currentData().toString();
     profile_->clear();
-    profile_->addItem("Unchanged", QString());
+    profile_->addItem(tr("Unchanged"), QString());
     for (const QString &p : win_->home()->offeredProfiles()) profile_->addItem(HomeTab::profileLabel(p), p);
     profile_->setCurrentIndex(std::max(0, profile_->findData(keepProfile)));
     // Component combos are (re)filled by setEditor() with the scene's own choice kept.
@@ -504,8 +505,8 @@ void ScenesTab::setEditor(const Scene &s) {
         const QStringList names = win_->ryzen() ? win_->ryzen()->savedProfileNames() : win_->intel()->savedProfileNames();
         fillChoice(cpu_, names, win_->ryzen() ? "Reset (0 offset)" : "Reset (0 mV)", s.cpu);
     }
-    fillChoice(gpu_, win_->nvidia() ? win_->nvidia()->profileNames() : QStringList(), "Reset curve", s.gpu);
-    fillChoice(tuning_, win_->optimize()->presetNames(), "Restore originals", s.tuning);
+    fillChoice(gpu_, win_->nvidia() ? win_->nvidia()->profileNames() : QStringList(), tr("Reset curve"), s.gpu);
+    fillChoice(tuning_, win_->optimize()->presetNames(), tr("Restore originals"), s.tuning);
     if (lightProfile_) {
         lightProfile_->setCurrentIndex(std::max(0, lightProfile_->findData(s.lightProfile)));
         lightBright_->setCurrentIndex(std::max(0, lightBright_->findData(s.lightBrightness)));
@@ -525,7 +526,7 @@ void ScenesTab::setEditor(const Scene &s) {
     firmware_ = s.firmware;
     fanTable_ = s.fanTable;
     updateFanTableLabel();
-    editor_->setTitle(s.name.isEmpty() ? QStringLiteral("Scene") : s.name);
+    editor_->setTitle(s.name.isEmpty() ? tr("Scene") : s.name);
     filling_ = false;
     loaded_ = s;
     syncExtraRows();
@@ -589,7 +590,7 @@ void ScenesTab::fillRefresh(double keep) {
     const bool was = filling_;
     filling_ = true;
     refresh_->clear();
-    refresh_->addItem("Unchanged", 0.0);
+    refresh_->addItem(tr("Unchanged"), 0.0);
     for (double r : rates_) refresh_->addItem(QStringLiteral("%1 Hz").arg(r, 0, 'f', r == std::floor(r) ? 0 : 2), r);
     int i = 0;
     if (keep > 0) {
@@ -674,7 +675,7 @@ void ScenesTab::reloadList(const QString &selectName) {
         if (a.enabled && n == a.onBattery) tags << QStringLiteral("battery");
         auto *it = new QListWidgetItem(tags.isEmpty() ? n : n + QStringLiteral("  ·  ") + tags.join('/'));
         it->setData(Qt::UserRole, n);
-        if (n == eng_->active()) { QFont f = it->font(); f.setBold(true); it->setFont(f); it->setToolTip("Active"); }
+        if (n == eng_->active()) { QFont f = it->font(); f.setBold(true); it->setFont(f); it->setToolTip(tr("Active")); }
         list_->addItem(it);
     }
     filling_ = false;
@@ -692,7 +693,7 @@ void ScenesTab::reloadList(const QString &selectName) {
 void ScenesTab::select(const QString &name) {
     if (name.isEmpty() || name == loaded_.name) return;
     if (fromEditor() != loaded_ && !loaded_.name.isEmpty()) {
-        const auto r = QMessageBox::question(this, "Unsaved changes", "Save the changes to '" + loaded_.name + "' first?",
+        const auto r = QMessageBox::question(this, tr("Unsaved changes"), tr("Save the changes to '%1' first?").arg(loaded_.name),
                                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         if (r == QMessageBox::Cancel) {
             // Put the selection back — deferred: we are inside the list's own signal.
@@ -861,7 +862,7 @@ void ScenesTab::captureFanTable(const QString &note) {
 bool ScenesTab::saveCurrent() {
     const Scene s = fromEditor();
     QString err;
-    if (!scenes::save(s, &err)) { setStatus("Could not save: " + err, theme::DANGER); return false; }
+    if (!scenes::save(s, &err)) { setStatus(tr("Could not save: %1").arg(err), theme::DANGER); return false; }
     loaded_ = s;
     updateDirty();
     win_->shortcuts()->sync();
@@ -876,7 +877,7 @@ void ScenesTab::applyCurrent() {
 
 void ScenesTab::newScene(bool duplicate) {
     bool ok = false;
-    const QString title = duplicate ? "Duplicate scene" : "New scene";
+    const QString title = duplicate ? tr("Duplicate scene") : tr("New scene");
     const QString name = QInputDialog::getText(this, title, "Scene name:", QLineEdit::Normal,
                                                duplicate ? loaded_.name + " copy" : QString(), &ok).trimmed();
     if (!ok || name.isEmpty()) return;
@@ -889,7 +890,7 @@ void ScenesTab::newScene(bool duplicate) {
     s.name = name;
     s.shortcut.clear();  // a copy does not take the same key
     QString err;
-    if (!scenes::save(s, &err)) { setStatus("Could not save: " + err, theme::DANGER); return; }
+    if (!scenes::save(s, &err)) { setStatus(tr("Could not save: %1").arg(err), theme::DANGER); return; }
     loaded_ = {};  // no unsaved-changes prompt for the scene we are leaving (duplicate carries them)
     reloadList(name);
     setStatus(duplicate ? "Duplicated as '" + name + "'." : "Created '" + name + "'. Pick what it should set, then Save.", theme::OK);
@@ -897,7 +898,7 @@ void ScenesTab::newScene(bool duplicate) {
 
 void ScenesTab::deleteScene() {
     const QString n = loaded_.name;
-    if (n.isEmpty() || QMessageBox::question(this, "Delete scene", "Delete scene '" + n + "'?\n\nThe profiles it refers to are kept.",
+    if (n.isEmpty() || QMessageBox::question(this, tr("Delete scene"), tr("Delete scene '%1'?\n\nThe profiles it refers to are kept.").arg(n),
                                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
     scenes::remove(n);
@@ -940,7 +941,7 @@ void ScenesTab::storeAuto() {
     a.onAc = onAc_->currentData().toString();
     a.onBattery = onBattery_->currentData().toString();
     QString err;
-    if (!eng_->setAuto(a, &err)) { setStatus("Could not save the automatic switching setting: " + err, theme::DANGER); return; }
+    if (!eng_->setAuto(a, &err)) { setStatus(tr("Could not save the automatic switching setting: %1").arg(err), theme::DANGER); return; }
     if (a.enabled && a.onAc.isEmpty() && a.onBattery.isEmpty()) setStatus("Pick a scene for AC and/or battery.", theme::WARN);
     reloadList(loaded_.name);
     updatePowerLabel();
@@ -949,7 +950,7 @@ void ScenesTab::storeAuto() {
 void ScenesTab::updatePowerLabel() {
     const auto ac = eng_->powerSource();
     QString t = !ac ? QStringLiteral("Power source: unknown (no charger or battery reported)")
-                    : *ac ? QStringLiteral("Now on AC power") : QStringLiteral("Now on battery");
+                    : *ac ? tr("Now on AC power") : tr("Now on battery");
     if (!eng_->active().isEmpty()) t += "  ·  active scene: " + eng_->active();
     power_->setText(t);
 }

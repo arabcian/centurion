@@ -24,7 +24,7 @@ install -d "${own[@]}" -m 0755 "$DESTDIR$LIBEXEC" "$DESTDIR$PREFIX/bin"
 install "${own[@]}" -m 0755 "$T/legion-profile-helper" "$T/fwattr-helper" "$T/ryzen-co-helper" "$T/tune-helper" "$T/tune-profile-helper" "$T/intel-uv-helper" "$T/legion-gpu-helper" "$T/legion-firmware-helper" "$T/lighting-helper" "$T/amdgpu-helper" "$T/nvcurve-sensors" "$T/legion-ec-sensors" "$T/health-reader" "$T/centurion-boot-guard" "$T/netguard-helper" "$T/backup-helper" \
     "$DESTDIR$LIBEXEC/"
 install "${own[@]}" -m 0700 "$T/nvcurve-root-helper" "$DESTDIR$LIBEXEC/"
-install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$DESTDIR$PREFIX/bin/"
+install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$T/centurion-cooltest" "$DESTDIR$PREFIX/bin/"
 DESTDIR="$DESTDIR" cmake --install gui/build --strip
 
 # Packages put the rules under /usr/share (POLKIT_RULESDIR): /etc/polkit-1/rules.d belongs to polkit

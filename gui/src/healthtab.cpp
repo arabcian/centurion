@@ -1,6 +1,7 @@
 #include "healthtab.h"
 #include "backuppage.h"
 #include "batterypage.h"
+#include "coolingpage.h"
 #include "curvepage.h"
 #include "sleeppage.h"
 #include "klogpage.h"
@@ -67,27 +68,28 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *sub = new QTabWidget;
     outer->addWidget(sub);
     auto *monitor = new QWidget;
-    sub->addTab(monitor, QStringLiteral("Monitor"));
-    if (DgpuPage::present()) sub->addTab(new DgpuPage, QStringLiteral("dGPU power"));
+    sub->addTab(monitor, tr("Monitor"));
+    if (DgpuPage::present()) sub->addTab(new DgpuPage, tr("dGPU power"));
     // Network: connections, IP blacklist, Wine/.exe guard. Built now (not lazily):
     // its inotify watch on the block log is what raises the tray alert.
     auto *net = new NetPage;
     connect(net, &NetPage::alert, this, &HealthTab::alert);
-    sub->addTab(net, QStringLiteral("Network"));
+    sub->addTab(net, tr("Network"));
     // Curve stability: built now, its guard reacts to new kernel errors with the window hidden.
     auto *curves = new CurvePage;
     connect(curves, &CurvePage::alert, this, &HealthTab::alert);
     connect(curves, &CurvePage::curveReset, this, &HealthTab::curveReset);
     connect(this, &HealthTab::fault, curves, &CurvePage::onFault);
-    sub->addTab(curves, QStringLiteral("Curve stability"));
-    sub->addTab(new SleepPage, QStringLiteral("Sleep"));
-    if (BatteryPage::present()) sub->addTab(new BatteryPage, QStringLiteral("Battery use"));
+    sub->addTab(curves, tr("Curve stability"));
+    sub->addTab(new SleepPage, tr("Sleep"));
+    if (BatteryPage::present()) sub->addTab(new BatteryPage, tr("Battery use"));
+    sub->addTab(new CoolingPage, tr("Cooling"));
     systools::addPages(sub);
-    sub->addTab(new KlogPage, QStringLiteral("Kernel log"));
+    sub->addTab(new KlogPage, tr("Kernel log"));
     // Backup: Centurion configuration + system image (tar). Idle until a button is pressed.
     backup_ = new BackupPage;
     connect(backup_, &BackupPage::alert, this, &HealthTab::alert);
-    sub->addTab(backup_, QStringLiteral("Backup"));
+    sub->addTab(backup_, tr("Backup"));
     auto *root = new QVBoxLayout(monitor);
     root->setContentsMargins(8, 6, 8, 6);
     root->setSpacing(6);
