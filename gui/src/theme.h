@@ -22,7 +22,11 @@ inline const char *BG0 = "#121316", *BG1 = "#191a1e", *BG2 = "#202126", *BG3 = "
     *FG_DIM = "#b4b2ae", *MUTED = "#86868d", *ACCENT = "#eba55b", *ACCENT_SOFT = "#a9773f",
     *OK = "#8fc486", *WARN = "#e6c065", *DANGER = "#e8776c", *DANGER_SOFT = "#8e4841",
     *INFO = "#7fb1d5", *PURPLE = "#b79be2";
-inline constexpr int FONT_PT = 9, RADIUS = 8;
+inline constexpr int FONT_PT = 9, RADIUS = 10;
+/// Brand mark at the start of the header bezel (MainWindow): icon size, its x and
+/// the gap to the "Centurion" wordmark. The page rail starts at brandInset().
+inline constexpr int BRAND_X = 16, BRAND_ICON = 22, BRAND_GAP = 9;
+int brandInset();
 
 /// Per-profile colour, after the Legion power-button LED: Quiet/Power Saver
 /// blue, Balanced white, Performance red, Custom purple (Extreme: magenta).

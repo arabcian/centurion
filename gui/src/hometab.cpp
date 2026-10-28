@@ -155,18 +155,21 @@ static QPushButton *profileButton(const QString &label, const QString &accent) {
     b->setIconSize(QSize(10, 10));
     // Rows grow a little into the card's height instead of leaving it empty.
     b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    b->setMinimumHeight(24);
-    b->setMaximumHeight(30);
+    b->setMinimumHeight(28);
+    b->setMaximumHeight(38);
     const QByteArray a = accent.toLatin1();
+    // A plate per profile with its LED colour on the left edge; the active one is lit
+    // (a wash of its colour fading to the right, a matching hairline frame).
     b->setStyleSheet(QStringLiteral(
-        "QPushButton { background: %1; color: %2; border: 1px solid %3; border-left: 3px solid %9; border-radius: 6px;"
-        " padding: 2px 10px 2px 8px; font-weight: 500; text-align: left; }"
+        "QPushButton { background: %1; color: %2; border: 1px solid %3; border-left: 3px solid %9; border-radius: 7px;"
+        " padding: 3px 12px 3px 10px; font-weight: 500; text-align: left; }"
         "QPushButton:hover { background: %4; color: %5; border-color: %6; border-left-color: %8; }"
-        "QPushButton:checked { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %7, stop:1 %10);"
+        "QPushButton:checked { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %7, stop:0.55 %10, stop:1 %12);"
         " color: %5; border-color: %11; border-left-color: %8; font-weight: 700; }")
         .arg(theme::BG2, theme::FG_DIM, theme::BORDER_SOFT, theme::BG3, theme::FG, theme::BORDER,
-             theme::rgba(a.constData(), 0.24), theme::rgba(a.constData(), 1.0), theme::rgba(a.constData(), 0.45),
-             theme::rgba(a.constData(), 0.04), theme::rgba(a.constData(), 0.40)));
+             theme::rgba(a.constData(), 0.30), theme::rgba(a.constData(), 1.0), theme::rgba(a.constData(), 0.45),
+             theme::rgba(a.constData(), 0.10), theme::rgba(a.constData(), 0.55))
+        .arg(theme::rgba(a.constData(), 0.03)));
     return b;
 }
 
@@ -333,6 +336,7 @@ QGroupBox *HomeTab::buildHardwareBox() {
     auto add = [&](const QString &k, const std::optional<QString> &v, QLabel **keyOut = nullptr, QLabel **valOut = nullptr) {
         if (!v) return;
         auto *key = muted(k);
+        key->setWordWrap(false);  // "EC Firmware" / "GPU mode" broke over two lines
         auto *val = new QLabel(*v);
         val->setWordWrap(true);
         g->addWidget(key, row, 0, Qt::AlignTop);
@@ -418,6 +422,7 @@ QGroupBox *HomeTab::buildLiveBox() {
         if (!getter) {  // dGPU: sysfs state + EC temperature, see refreshGpuLive()
             gpuLiveKey_ = muted(name);
             gpuLiveValue_ = new QLabel;
+            gpuLiveValue_->setProperty("role", "value");
             gpuLiveValue_->setWordWrap(true);
             gpuLiveKey_->hide();
             gpuLiveValue_->hide();
@@ -428,7 +433,9 @@ QGroupBox *HomeTab::buildLiveBox() {
         auto v = getter();
         if (!v) continue;
         auto *key = muted(name);
+        key->setWordWrap(false);
         auto *val = new QLabel(*v);
+        val->setProperty("role", "value");  // a readout: brighter and heavier than its label
         val->setWordWrap(true);
         g->addWidget(key, row, 0, Qt::AlignTop);
         g->addWidget(val, row++, 1);
@@ -439,6 +446,7 @@ QGroupBox *HomeTab::buildLiveBox() {
     ecFansWanted_ = !sysinfo::fans().has_value();
     ecFansKey_ = muted(tr("Fans (EC)"));
     ecFansValue_ = new QLabel;
+    ecFansValue_->setProperty("role", "value");
     chargerKey_ = muted(tr("Charger"));
     chargerValue_ = new QLabel;
     chargerValue_->setWordWrap(true);

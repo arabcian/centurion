@@ -565,9 +565,18 @@ custom-painted views (V/F curve, fan curve, keyboard, tray icon) too.
   `BG4` hover. Text inputs sit in a recessed `WELL` (darker than the card);
   buttons are one step above it. Amber `ACCENT` marks only what is active.
 - Selectors: `btnAccent`, `btnDanger`, `btnMini`, `terminal`, `miniSlider`,
-  `box_<colour>` (group title colour), `role=muted|title`, `mainTabs`
+  `box_<colour>` (group title colour), `role=muted|title|value` (`value`: a
+  live readout, brighter and heavier than its label), `mainTabs`
   (the header band). A `QGroupBox` inside another renders as a divided
   sub-section, not a second card.
+- Header: the brand mark (icon + "Centurion" wordmark, `appMark` /
+  `appWordmark`) sits at `theme::BRAND_X`; the page tabs are a recessed rail
+  that starts at `theme::brandInset()` (measured with the wordmark's font).
+  `MainWindow::fitTabs()` caps the rail to its keys and to the window, so it
+  hugs the tabs and scrolls when the window is narrow. Rail keys keep one font
+  weight in every state, so the rail never changes width with the selection.
+- Surfaces derived per palette in `stylesheet()` (`mix()` of two palette
+  colours, never a fixed grey): bezel, page floor, rail, lit top edges.
 - `theme::banner(color, selector)` is the one callout style (profile lock,
   tuning state, crash guard, max fans, lighting access, AMD trial).
 - `theme::profileAccent()` follows the Legion power-button LED: Power Saver

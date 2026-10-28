@@ -493,7 +493,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
                              "Apply Offsets. Cap / Uncap change it right away.");
     ch2->addWidget(coreCapSpin_);
     ch2->addWidget(lbl("+", theme::MUTED));
-    capCompSpin_ = spin(0, 500, " MHz", 80);
+    capCompSpin_ = spin(0, 500, " MHz", 90);  // 80 clipped the "z" of "0 MHz"
     capCompSpin_->setToolTip("Compensation added to the core cap when it is written.\n"
                              "Blackwell GPUs run ~90-115 MHz below a locked clock: measure the gap\n"
                              "(target − clock under load) and enter it here, so the GPU lands on the value you set.\n"

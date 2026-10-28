@@ -14,7 +14,6 @@ class LightingTab;
 class NvidiaTab;
 class OptimizeTab;
 class RyzenTab;
-class QLabel;
 class QTabWidget;
 
 class MainWindow : public QMainWindow {
@@ -58,7 +57,7 @@ private:
     void fitTabs();
     QTabWidget *tabs_;
     int tabW_ = -1;
-    QLabel *mark_;
+    QWidget *mark_;  // brand: icon + wordmark, floated over the header bezel
     HomeTab *home_;
     RyzenTab *ryzen_ = nullptr;
     IntelTab *intel_ = nullptr;

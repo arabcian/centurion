@@ -13,6 +13,7 @@
 #include "scenestab.h"
 #include "shortcuts.h"
 #include "sysinfo.h"
+#include "theme.h"
 #include "tray.h"
 #include "zone4tab.h"
 #include "healthtab.h"
@@ -24,6 +25,7 @@
 #include "trialbar.h"
 #include <QApplication>
 #include <QCloseEvent>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QTabBar>
 #include <QTabWidget>
@@ -38,24 +40,35 @@ static void trimHeap() { ::malloc_trim(0); }
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Centurion");
     setWindowIcon(appIcon(128));
-    resize(880, 580);
+    // Room for the 2×2 Home grid and the curve tabs' control rows without clipping;
+    // still well inside a 1366×768 (or 1920×1080 at 150 %) desktop.
+    resize(1080, 700);
     setMinimumSize(620, 420);
 
     tabs_ = new QTabWidget;
     tabs_->setObjectName("mainTabs");  // header-band styling in theme.cpp
     tabs_->setAttribute(Qt::WA_StyledBackground, true);  // paint the band behind the tab bar
+    tabs_->tabBar()->setAttribute(Qt::WA_StyledBackground, true);  // ...and the selector rail behind the tabs
     tabs_->setDocumentMode(true);
     tabs_->setUsesScrollButtons(true);
     setCentralWidget(tabs_);
-    // App mark at the start of the tab band; the version lives in its tooltip
+    // Brand mark at the start of the header bezel; the version lives in its tooltip
     // (it used to take a whole status-bar row for four seconds). Floated over
     // the band rather than set as a corner widget: in document mode a corner
-    // widget moves the page's top rule up through the tab labels.
-    mark_ = new QLabel(tabs_);
+    // widget moves the page's top rule up through the tab labels. The rail
+    // starts at theme::brandInset(), measured with the wordmark's font.
+    mark_ = new QWidget(tabs_);
     mark_->setObjectName("appMark");
-    mark_->setPixmap(appIcon(64).pixmap(QSize(16, 16)));
     mark_->setToolTip(QStringLiteral("Centurion " CENTURION_VERSION));
-    mark_->adjustSize();
+    auto *markRow = new QHBoxLayout(mark_);
+    markRow->setContentsMargins(0, 0, 0, 0);
+    markRow->setSpacing(theme::BRAND_GAP);
+    auto *markIcon = new QLabel;
+    markIcon->setPixmap(appIcon(64).pixmap(QSize(theme::BRAND_ICON, theme::BRAND_ICON)));
+    auto *wordmark = new QLabel(QStringLiteral("Centurion"));
+    wordmark->setObjectName("appWordmark");
+    markRow->addWidget(markIcon);
+    markRow->addWidget(wordmark);
 
     home_ = new HomeTab;
     tabs_->addTab(home_, tr("Home"));
@@ -163,10 +176,17 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
     return nvidia_;
 }
 
-// Main tabs are equal boxes: each as wide as the widest label, or wider so
-// the row fills the band. Stepped by 4 px so a window drag re-polishes the
-// tab bar only now and then, not on every pixel.
-void MainWindow::fitTabs() {}  // text tabs size themselves; the bar scrolls when the window is narrow
+// The selector rail hugs its keys: document mode would stretch the tab bar (and
+// so the rail painted behind it) across the whole window. Text tabs size
+// themselves. The style sheet shifts the bar right by the brand inset without
+// shortening it, so a narrow window is capped here too: the bar then ends at
+// the window edge and shows its scroll buttons instead of running off-screen.
+void MainWindow::fitTabs() {
+    QTabBar *bar = tabs_->tabBar();
+    const int room = tabs_->width() - theme::brandInset() - 8;
+    const int w = std::max(120, std::min(bar->sizeHint().width(), room));
+    if (w != tabW_) { tabW_ = w; bar->setMaximumWidth(w); }
+}
 
 void MainWindow::resizeEvent(QResizeEvent *e) {
     QMainWindow::resizeEvent(e);
@@ -178,7 +198,7 @@ void MainWindow::showEvent(QShowEvent *e) {
     fitTabs();
     // Centred on the tab band (its height is known once the style has polished it).
     mark_->adjustSize();  // the style sheet arrives after the constructor (theme.h)
-    mark_->move(10, std::max(0, (tabs_->tabBar()->height() - mark_->height()) / 2));
+    mark_->move(theme::BRAND_X, std::max(0, (tabs_->tabBar()->height() - mark_->height()) / 2));
     mark_->raise();
     // First time the window opens (not the tray-only start): the setup wizard, once per user.
     if (!wizardChecked_) { wizardChecked_ = true; QTimer::singleShot(0, this, [this] { FirstRunWizard::maybeShow(this); }); }

@@ -1,5 +1,6 @@
 #include "theme.h"
 #include <QApplication>
+#include <QFontMetrics>
 #include <QHash>
 #include <QPalette>
 #include <QProxyStyle>
@@ -132,51 +133,82 @@ static QPalette palette() {
     return p;
 }
 
+/// `a` moved towards `b` by `t` (0..1), as #rrggbb: derived surfaces that stay
+/// inside each palette's own hue instead of a fixed grey.
+static QString mix(const char *a, const char *b, double t) {
+    const QColor x(QString::fromLatin1(a)), y(QString::fromLatin1(b));
+    auto ch = [t](int p, int q) { return int(p + (q - p) * t + 0.5); };
+    return QColor(ch(x.red(), y.red()), ch(x.green(), y.green()), ch(x.blue(), y.blue())).name();
+}
+
+int brandInset() {
+    // Same font the style sheet gives QLabel#appWordmark (family from the desktop).
+    QFont f = QApplication::font();
+    f.setPointSize(FONT_PT + 2);
+    f.setWeight(QFont::Bold);
+    return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion")) + 22;
+}
+
 // Selectors (objectName / dynamic properties) are the contract with the tabs:
 // btnAccent, btnDanger, btnMini, terminal, miniSlider, box_<colour>,
-// role=muted/title, mainTabs. Only the look behind them changes here.
+// role=muted/title/value, mainTabs. Only the look behind them changes here.
+//
+// Grammar: the window is an instrument panel. A darker bezel carries the brand
+// and a recessed selector rail whose current key is lit; cards are machined
+// plates (hairline edge, lighter top edge); controls sit one step above the
+// card, text you type into sits in a well below it. Radii follow the hierarchy:
+// panel 10, rail key / control 7, tick 4.
 static QString stylesheet() {
     QString s = QStringLiteral(R"QSS(
 QWidget { background: @BG0; color: @FG; font-size: @FONTpt; }
 /* Plain layout containers (exact class QWidget, not subclasses) take their
    parent's surface instead of punching a window-coloured hole into a card. */
 .QWidget { background: transparent; }
-QToolTip { background: @BG2; color: @FG; border: 1px solid @BORDER; border-left: 3px solid @ACCENT; border-radius: 6px; padding: 5px 9px; }
+QToolTip { background: @BG2; color: @FG; border: 1px solid @BORDER; border-left: 3px solid @ACCENT; border-radius: 7px; padding: 6px 10px; }
 
-/* ── main navigation: a header band; the current tab carries an amber rule ── */
-QTabWidget#mainTabs { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG2, stop:1 @BG1); }
-QTabWidget#mainTabs::pane { border: none; border-top: 1px solid @BORDER_SOFT;
-  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG0, stop:0.6 @BG0, stop:1 @WELL); top: 0; }
-QTabWidget#mainTabs::tab-bar { left: 30px; }
-QTabWidget#mainTabs > QTabBar { background: transparent; }
-/* The page switcher is a row of pills; the sub-tabs inside a page keep the underline,
-   so the two levels never read alike. */
+/* ── header bezel: brand mark, then the page selector rail ── */
+QTabWidget#mainTabs { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BEZEL_TOP, stop:1 @BEZEL_BOT); }
+QTabWidget#mainTabs::pane { border: none; border-top: 1px solid @BORDER;
+  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG0, stop:0.55 @BG0, stop:1 @PAGE_BOT); top: 0; }
+QTabWidget#mainTabs::tab-bar { left: @BRANDWpx; }
+/* The rail: a recessed track (dark, shadowed top edge, lit bottom edge). */
+QTabWidget#mainTabs > QTabBar { background: @RAIL; border: 1px solid @BORDER_SOFT; border-top-color: @RAIL_SHADE;
+  border-bottom-color: @EDGE; border-radius: 10px; margin: 8px 0; }
+/* Keys in the rail; the sub-tabs inside a page keep an underline, so the two levels never read alike.
+   One weight for every state: the rail is sized to its keys (MainWindow::fitTabs) and must not change width with the selection. */
 QTabWidget#mainTabs > QTabBar::tab { background: transparent; color: @MUTED; border: 1px solid transparent;
-  border-radius: 7px; padding: 3px 11px; margin: 5px 2px 5px 0; }
-QTabWidget#mainTabs > QTabBar::tab:hover:!selected { background: @HILITE; color: @FG; border-color: @HILITE2; }
-QTabWidget#mainTabs > QTabBar::tab:selected { color: @ACCENT_HI; font-weight: 600; border-color: @ACCENT_LINE; border-bottom-color: @ACCENT_SOFT;
-  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @ACCENT_TINT2, stop:1 @ACCENT_TINT); }
-QLabel#appMark { background: transparent; }
+  border-radius: 7px; padding: 4px 15px; margin: 11px 1px 11px 0; font-weight: 600; }
+QTabWidget#mainTabs > QTabBar::tab:first { margin-left: 3px; }
+QTabWidget#mainTabs > QTabBar::tab:last { margin-right: 3px; }
+QTabWidget#mainTabs > QTabBar::tab:hover:!selected { background: @HILITE; color: @FG; }
+/* The current page: a raised key with a lit amber edge. */
+QTabWidget#mainTabs > QTabBar::tab:selected { color: @ACCENT_HI;
+  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @KEY_TOP, stop:1 @BG3);
+  border-color: @BORDER; border-top-color: @EDGE; border-bottom: 2px solid @ACCENT; }
+QTabWidget#mainTabs > QTabBar::scroller { width: 48px; }
+QTabWidget#mainTabs > QTabBar QToolButton { background: @BG2; border: 1px solid @BORDER; border-radius: 7px; margin: 10px 2px; }
+QTabWidget#mainTabs > QTabBar QToolButton:hover { background: @BG3; border-color: @ACCENT_LINE; }
+QWidget#appMark { background: transparent; }
+QLabel#appWordmark { background: transparent; color: @FG; font-size: @BRANDPTpt; font-weight: 700; }
 
-/* ── sub-tabs (inside a page): quieter, same grammar ── */
+/* ── sub-tabs (inside a page): quieter, an underline ── */
 QTabWidget::pane { border: none; border-top: 1px solid @BORDER_SOFT; background: transparent; top: -1px; }
 QTabBar { qproperty-drawBase: 0; background: transparent; }
-QTabBar::tab { background: transparent; color: @MUTED; padding: 4px 9px 3px 9px; margin-right: 2px;
+QTabBar::tab { background: transparent; color: @MUTED; padding: 5px 11px 4px 11px; margin-right: 2px;
   border: none; border-bottom: 2px solid transparent; }
 QTabBar::tab:hover:!selected { color: @FG; border-bottom-color: @BORDER; }
 QTabBar::tab:selected { color: @FG; font-weight: 600; border-bottom-color: @ACCENT; }
 QTabBar::tab:disabled { color: @BG4; }
-QTabBar::scroller { width: 22px; }
+QTabBar::scroller { width: 24px; }
 QTabBar QToolButton { background: @BG1; border: none; border-radius: 5px; margin: 2px 0; }
 QTabBar QToolButton:hover { background: @BG3; }
 
-/* ── sections: a card with its title set inside, top left ── */
-/* Lit from above: a faint sheen on the top edge, the body fading into the card colour. */
-QGroupBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG2, stop:0.22 @BG1, stop:1 @BG1);
-  border: 1px solid @BORDER_SOFT; border-top-color: @HILITE2; border-bottom-color: @SHADE;
-  border-radius: @RADpx; margin-top: 0; padding: 22px 4px 3px 4px; font-weight: 600; color: @FG; }
-QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left; left: 10px; top: 6px;
-  padding: 0 0 0 7px; color: @ACCENT; background: transparent; font-size: 8pt; font-weight: 700;
+/* ── sections: a machined plate, its title set inside, top left ── */
+QGroupBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:0.16 @BG1, stop:1 @BG1);
+  border: 1px solid @BORDER; border-top-color: @EDGE; border-bottom-color: @BORDER_SOFT;
+  border-radius: @RADpx; margin-top: 0; padding: 27px 6px 5px 6px; font-weight: 600; color: @FG; }
+QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left; left: 12px; top: 8px;
+  padding: 0 0 0 8px; color: @ACCENT; background: transparent; font-size: @FONTpt; font-weight: 700;
   border-left: 3px solid @ACCENT; }
 QGroupBox#box_blue::title { color: @INFO; border-left-color: @INFO; } QGroupBox#box_purple::title { color: @PURPLE; border-left-color: @PURPLE; }
 QGroupBox#box_yellow::title { color: @WARN; border-left-color: @WARN; } QGroupBox#box_green::title { color: @OK; border-left-color: @OK; }
@@ -184,55 +216,59 @@ QGroupBox#box_grey::title { color: @FG_DIM; border-left-color: @MUTED; }
 QGroupBox#box_red::title { color: @DANGER; border-left-color: @DANGER; }
 /* A section inside a section is not another card: a divider and a heading. */
 QGroupBox QGroupBox { background: transparent; border: none; border-top: 1px solid @BORDER_SOFT;
-  border-radius: 0; padding: 22px 0 0 0; }
-QGroupBox QGroupBox::title { left: 2px; top: 6px; color: @ACCENT_SOFT; border-left: none; padding: 0; }
+  border-radius: 0; padding: 24px 0 0 0; }
+QGroupBox QGroupBox::title { left: 2px; top: 7px; color: @ACCENT_SOFT; border-left: none; padding: 0; font-size: 8pt; }
 
 QLabel { background: transparent; }
 QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
-QLabel[role="title"] { color: @FG; font-size: 13pt; font-weight: 700; }
+QLabel[role="title"] { color: @FG; font-size: 15pt; font-weight: 700; }
+QLabel[role="value"] { color: @FG; font-weight: 600; }
 QFrame[frameShape="4"], QFrame[frameShape="5"] { color: @BORDER_SOFT; }
 
-/* ── buttons: flat, raised one step above the card; amber = primary ── */
-QPushButton { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG3, stop:1 @BG2); color: @FG; border: 1px solid @BORDER; border-top-color: @HILITE2; border-radius: 6px;
-  padding: 1px 10px; font-weight: 500; min-height: 16px; }
-QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG4, stop:1 @BG3); border-color: @ACCENT_SOFT; }
-QPushButton:pressed { background: @BG1; border-color: @BORDER; }
+/* ── buttons: raised one step above the card (lit top edge); amber = primary ── */
+QPushButton { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @KEY_TOP, stop:1 @BG3); color: @FG;
+  border: 1px solid @BORDER; border-top-color: @EDGE; border-bottom-color: @BTN_SHADE; border-radius: 7px;
+  padding: 3px 10px; font-weight: 500; min-height: 16px; }
+QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG4, stop:1 @KEY_TOP); border-color: @ACCENT_LINE; border-top-color: @ACCENT_SOFT; }
+QPushButton:pressed { background: @BG2; border-color: @BORDER; border-top-color: @BTN_SHADE; }
 QPushButton:focus { border-color: @ACCENT_SOFT; border-bottom-color: @ACCENT; }
-QPushButton:disabled { background: transparent; border-top-color: @BORDER_SOFT; color: @MUTED; border-color: @BORDER_SOFT; }
+QPushButton:disabled { background: transparent; color: @MUTED; border-color: @BORDER_SOFT; }
 QPushButton:checked { background: @ACCENT_TINT; color: @ACCENT_HI; border-color: @ACCENT_SOFT; }
-QPushButton#btnAccent { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @ACCENT_HI, stop:1 @ACCENT); border-color: @ACCENT_SOFT; border-top-color: @ACCENT_TOP; color: @BG0; font-weight: 700; }
+QPushButton#btnAccent { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @ACCENT_HI, stop:1 @ACCENT); border-color: @ACCENT_SOFT;
+  border-top-color: @ACCENT_TOP; border-bottom-color: @ACCENT_DEEP; color: @ON_ACCENT; font-weight: 700; }
 QPushButton#btnAccent:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @ACCENT_TOP, stop:1 @ACCENT_HI); border-color: @ACCENT_HI; }
 QPushButton#btnAccent:pressed { background: @ACCENT_SOFT; border-color: @ACCENT_SOFT; }
 QPushButton#btnAccent:focus { border-color: @FG; }
-QPushButton#btnDanger { background: transparent; border-color: @DANGER_SOFT; color: @DANGER; }
+QPushButton#btnDanger { background: @DANGER_WASH; border-color: @DANGER_SOFT; color: @DANGER; }
 QPushButton#btnDanger:hover { background: @DANGER_TINT; border-color: @DANGER; }
 QPushButton#btnDanger:pressed { background: @DANGER_SOFT; color: @FG; }
 QPushButton#btnAccent:disabled, QPushButton#btnDanger:disabled { background: transparent; color: @MUTED; border-color: @BORDER_SOFT; }
-QPushButton#btnMini { padding: 0 7px; min-height: 13px; font-size: 8pt; }
-QToolButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px; }
-QToolButton:hover { background: @BG3; }
+QPushButton#btnMini { padding: 0 7px; min-height: 14px; font-size: 8pt; border-radius: 6px; }
+QToolButton { background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px; }
+QToolButton:hover { background: @BG3; border-color: @BORDER; }
 
-/* ── inputs: recessed wells; the frame lights up only on focus ── */
-QLineEdit, QSpinBox, QDoubleSpinBox, Int64SpinBox, QComboBox { background: @WELL; color: @FG; border: 1px solid @BORDER_SOFT; border-top-color: @BG0; border-bottom-color: @BORDER;
-  border-radius: 6px; padding: 1px 7px; min-height: 16px; selection-background-color: @ACCENT_SOFT; selection-color: @FG; }
-QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, Int64SpinBox:hover, QComboBox:hover { border-color: @BORDER; }
+/* ── inputs: recessed wells (shadowed top edge); the frame lights up only on focus ── */
+QLineEdit, QSpinBox, QDoubleSpinBox, Int64SpinBox, QComboBox { background: @WELL; color: @FG; border: 1px solid @BORDER_SOFT;
+  border-top-color: @RAIL_SHADE; border-bottom-color: @BORDER;
+  border-radius: 7px; padding: 3px 7px; min-height: 16px; selection-background-color: @ACCENT_SOFT; selection-color: @FG; }
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, Int64SpinBox:hover, QComboBox:hover { border-color: @BORDER; border-bottom-color: @EDGE; }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, Int64SpinBox:focus, QComboBox:focus, QComboBox:on { border-color: @ACCENT_SOFT; border-bottom-color: @ACCENT; }
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, Int64SpinBox:disabled, QComboBox:disabled { background: transparent; color: @MUTED; border-color: @BORDER_SOFT; }
 QLineEdit:read-only { background: @BG1; }
-QPlainTextEdit, QTextEdit { background: @WELL; color: @FG; border: 1px solid @BORDER_SOFT; border-radius: 8px;
-  padding: 5px 7px; selection-background-color: @ACCENT_SOFT; }
+QPlainTextEdit, QTextEdit { background: @WELL; color: @FG; border: 1px solid @BORDER_SOFT; border-top-color: @RAIL_SHADE; border-radius: 10px;
+  padding: 6px 8px; selection-background-color: @ACCENT_SOFT; }
 QComboBox { padding-right: 22px; }
 QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; border: none; width: 20px; }
 QComboBox::down-arrow { image: url(:/theme/chev-down.png); width: 10px; height: 10px; }
 QComboBox::down-arrow:disabled { image: url(:/theme/chev-down-off.png); }
-QComboBox QAbstractItemView { background: @BG2; color: @FG; border: 1px solid @BORDER; border-radius: 8px; padding: 4px;
+QComboBox QAbstractItemView { background: @BG2; color: @FG; border: 1px solid @BORDER; border-radius: 10px; padding: 5px;
   selection-background-color: @ACCENT_TINT; selection-color: @FG; outline: none; }
-QComboBox QAbstractItemView::item { min-height: 22px; padding: 0 6px; border-radius: 5px; }
+QComboBox QAbstractItemView::item { min-height: 24px; padding: 0 8px; border-radius: 6px; }
 QSpinBox, QDoubleSpinBox, Int64SpinBox { padding-right: 18px; }
 QSpinBox::up-button, QDoubleSpinBox::up-button, Int64SpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right;
-  width: 17px; border: none; border-top-right-radius: 6px; background: transparent; }
+  width: 17px; border: none; border-top-right-radius: 7px; background: transparent; }
 QSpinBox::down-button, QDoubleSpinBox::down-button, Int64SpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right;
-  width: 17px; border: none; border-bottom-right-radius: 6px; background: transparent; }
+  width: 17px; border: none; border-bottom-right-radius: 7px; background: transparent; }
 QSpinBox::up-button:hover, QSpinBox::down-button:hover,
 QDoubleSpinBox::up-button:hover, Int64SpinBox::up-button:hover, QDoubleSpinBox::down-button:hover, Int64SpinBox::down-button:hover { background: @BG3; }
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, Int64SpinBox::up-arrow { image: url(:/theme/chev-up.png); width: 8px; height: 8px; }
@@ -241,44 +277,46 @@ QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off,
 QDoubleSpinBox::up-arrow:disabled, Int64SpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off, Int64SpinBox::up-arrow:off { image: url(:/theme/chev-up-off.png); }
 QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off,
 QDoubleSpinBox::down-arrow:disabled, Int64SpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off, Int64SpinBox::down-arrow:off { image: url(:/theme/chev-down-off.png); }
-QPlainTextEdit#terminal { background: @WELL; color: @FG_DIM; border: 1px solid @BORDER_SOFT; border-radius: 8px; font-family: monospace; }
+QPlainTextEdit#terminal { background: @WELL; color: @FG_DIM; border: 1px solid @BORDER_SOFT; border-top-color: @RAIL_SHADE; border-radius: 10px; font-family: monospace; }
 
 /* ── lists and tables ── */
-QListView, QTreeView, QTableView { background: @WELL; color: @FG; border: 1px solid @BORDER_SOFT; border-radius: 8px;
-  padding: 3px; outline: none; alternate-background-color: @BG1; gridline-color: @BORDER_SOFT; }
-QListView::item { padding: 2px 6px; border-radius: 5px; }
+QListView, QTreeView, QTableView { background: @WELL; color: @FG; border: 1px solid @BORDER_SOFT; border-top-color: @RAIL_SHADE; border-radius: 10px;
+  padding: 4px; outline: none; alternate-background-color: @ROW_ALT; gridline-color: @BORDER_SOFT; }
+QListView::item { padding: 3px 7px; border-radius: 6px; }
 QListView::item:hover:!selected { background: @BG2; }
 QListView::item:selected { background: @ACCENT_TINT; color: @FG; border-left: 2px solid @ACCENT; }
-QTreeView::item, QTableView::item { padding: 1px 2px; }
+QTreeView::item, QTableView::item { padding: 2px 3px; }
 QTreeView::item:hover:!selected, QTableView::item:hover:!selected { background: @HILITE; }
 QTreeView::item:selected, QTableView::item:selected { background: @ACCENT_TINT; color: @FG; }
 QHeaderView { background: transparent; border: none; }
 QHeaderView::section { background: @BG1; color: @FG_DIM; border: none; border-bottom: 1px solid @BORDER;
-  border-right: 1px solid @BORDER_SOFT; padding: 4px 7px; font-size: 8pt; font-weight: 700; }
-QHeaderView::section:last { border-right: none; }
+  border-right: 1px solid @BORDER_SOFT; padding: 5px 8px; font-size: 8pt; font-weight: 700; }
+QHeaderView::section:first { border-top-left-radius: 7px; }
+QHeaderView::section:last { border-right: none; border-top-right-radius: 7px; }
+QHeaderView::section:only-one { border-top-left-radius: 7px; border-top-right-radius: 7px; }
 QHeaderView::section:hover { color: @FG; background: @BG2; }
 QTableCornerButton::section { background: @BG1; border: none; }
 
 /* ── toggles ── */
-QCheckBox, QRadioButton { background: transparent; spacing: 7px; }
-QCheckBox::indicator, QRadioButton::indicator { width: 14px; height: 14px; border: 1px solid @BORDER; background: @WELL; }
-QCheckBox::indicator { border-radius: 5px; } QRadioButton::indicator { border-radius: 8px; }
+QCheckBox, QRadioButton { background: transparent; spacing: 8px; }
+QCheckBox::indicator, QRadioButton::indicator { width: 15px; height: 15px; border: 1px solid @BORDER; border-top-color: @RAIL_SHADE; background: @WELL; }
+QCheckBox::indicator { border-radius: 4px; } QRadioButton::indicator { border-radius: 8px; }
 QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: @ACCENT; background: @ACCENT_TINT; }
-QCheckBox::indicator:checked { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @ACCENT_HI, stop:1 @ACCENT); border-color: @ACCENT_SOFT; image: url(:/theme/check.png); }
+QCheckBox::indicator:checked { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @ACCENT_HI, stop:1 @ACCENT); border-color: @ACCENT_SOFT; border-top-color: @ACCENT_TOP; image: url(:/theme/check.png); }
 QCheckBox::indicator:indeterminate { background: @ACCENT_SOFT; border-color: @ACCENT_SOFT; }
 QRadioButton::indicator:checked { border-color: @ACCENT;
-  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 @ACCENT, stop:0.42 @ACCENT, stop:0.52 @WELL, stop:1 @WELL); }
+  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 @ACCENT_HI, stop:0.40 @ACCENT, stop:0.50 @WELL, stop:1 @WELL); }
 QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { background: transparent; border-color: @BORDER_SOFT; }
 QCheckBox::indicator:checked:disabled { background: @BG4; border-color: @BG4; }
 QRadioButton::indicator:checked:disabled { border-color: @BG4;
   background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 @BG4, stop:0.42 @BG4, stop:0.52 @BG1, stop:1 @BG1); }
 QCheckBox:disabled, QRadioButton:disabled { color: @MUTED; }
 
-/* ── sliders: thin rail, amber fill, a small solid knob ── */
+/* ── sliders: a recessed rail, amber fill, a knob with a halo ── */
 QSlider { background: transparent; }
-QSlider::groove:horizontal { height: 4px; background: @WELL; border: 1px solid @BORDER_SOFT; border-radius: 3px; margin: 0; }
+QSlider::groove:horizontal { height: 5px; background: @WELL; border: 1px solid @BORDER_SOFT; border-top-color: @RAIL_SHADE; border-radius: 3px; margin: 0; }
 QSlider::sub-page:horizontal { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_SOFT, stop:1 @ACCENT_HI); border-radius: 3px; }
-QSlider::handle:horizontal { background: @ACCENT_HI; border: 3px solid @ACCENT_HALO; width: 6px; height: 6px; margin: -6px 0; border-radius: 6px; }
+QSlider::handle:horizontal { background: @ACCENT_HI; border: 3px solid @ACCENT_HALO; width: 8px; height: 8px; margin: -6px 0; border-radius: 7px; }
 QSlider::handle:horizontal:hover { background: @FG; border-color: @ACCENT_LINE; }
 QSlider::handle:horizontal:disabled { background: @MUTED; border-color: transparent; }
 QSlider::sub-page:horizontal:disabled { background: @BG4; }
@@ -289,36 +327,47 @@ QSlider#miniSlider::handle:horizontal { width: 4px; height: 4px; margin: -5px 0;
 /* ── scrolling ── */
 QScrollArea { border: none; background: transparent; }
 QScrollArea > QWidget > QWidget { background: transparent; }
-QScrollBar:vertical { background: transparent; width: 9px; margin: 3px 1px; }
-QScrollBar::handle:vertical { background: @BG4; border-radius: 4px; min-height: 28px; margin: 0 1px; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 3px 1px; }
+QScrollBar::handle:vertical { background: @BG4; border-radius: 4px; min-height: 32px; margin: 0 1px; }
 QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @ACCENT_SOFT; }
-QScrollBar:horizontal { background: transparent; height: 9px; margin: 1px 3px; }
-QScrollBar::handle:horizontal { background: @BG4; border-radius: 4px; min-width: 28px; margin: 1px 0; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 1px 3px; }
+QScrollBar::handle:horizontal { background: @BG4; border-radius: 4px; min-width: 32px; margin: 1px 0; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
-QProgressBar { background: @WELL; border: 1px solid @BORDER_SOFT; border-radius: 5px; text-align: center; color: @FG; font-size: 8pt; font-weight: 600; min-height: 12px; }
-QProgressBar::chunk { border-radius: 3px; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_SOFT, stop:1 @ACCENT_HI); }
-QStatusBar { background: @BG1; color: @MUTED; font-size: 8pt; border-top: 1px solid @BORDER_SOFT; } QStatusBar::item { border: none; }
+QProgressBar { background: @WELL; border: 1px solid @BORDER_SOFT; border-top-color: @RAIL_SHADE; border-radius: 6px; text-align: center; color: @FG; font-size: 8pt; font-weight: 600; min-height: 14px; }
+QProgressBar::chunk { border-radius: 5px; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_SOFT, stop:1 @ACCENT_HI); }
+QStatusBar { background: @BEZEL_BOT; color: @MUTED; font-size: 8pt; border-top: 1px solid @BORDER; } QStatusBar::item { border: none; }
 QDialog, QMessageBox { background: @BG0; }
 
 /* ── menus (tray) ── */
-QMenu { background: @BG2; color: @FG; border: 1px solid @BORDER; border-top-color: @HILITE2; border-radius: 8px; padding: 5px; }
-QMenu::item { padding: 5px 24px 5px 12px; border-radius: 5px; background: transparent; }
+QMenu { background: @BG2; color: @FG; border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 10px; padding: 6px; }
+QMenu::item { padding: 6px 26px 6px 12px; border-radius: 6px; background: transparent; }
 QMenu::item:selected { background: @ACCENT_TINT; color: @ACCENT_HI; }
 QMenu::right-arrow { image: url(:/theme/chev-down.png); width: 8px; height: 8px; }
 QMenu::item:disabled { color: @MUTED; }
-QMenu::separator { height: 1px; background: @BORDER_SOFT; margin: 4px 8px; }
-QMenu::indicator { width: 12px; height: 12px; left: 5px; }
+QMenu::separator { height: 1px; background: @BORDER_SOFT; margin: 5px 8px; }
+QMenu::indicator { width: 12px; height: 12px; left: 6px; }
 QMenu::indicator:checked { image: url(:/theme/check.png); background: @ACCENT; border-radius: 3px; }
 QMenuBar { background: @BG0; } QMenuBar::item:selected { background: @BG3; }
 )QSS");
+    const QColor accent(QString::fromLatin1(ACCENT));
+    // Text on the amber key: the darkest surface, unless the accent itself is dark.
+    const QString onAccent = accent.lightnessF() < 0.45 ? QString::fromLatin1(FG) : QString::fromLatin1(BG0);
     // Longest names first so @BG doesn't eat @BG0 etc.
     const std::pair<const char *, QString> toks[] = {
         {"@BORDER_SOFT", BORDER_SOFT}, {"@ACCENT_SOFT", ACCENT_SOFT}, {"@DANGER_SOFT", DANGER_SOFT},
-        {"@DANGER_TINT", rgba(DANGER, 0.14)}, {"@ACCENT_TINT2", rgba(ACCENT, 0.10)}, {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_WASH", rgba(ACCENT, 0.0)}, {"@HILITE2", "rgba(255, 255, 255, 0.09)"},
-        {"@HILITE", "rgba(255, 255, 255, 0.05)"}, {"@SHADE", "rgba(0, 0, 0, 0.35)"}, {"@ACCENT_HALO", rgba(ACCENT, 0.28)},
-        {"@ACCENT_TOP", QColor(QString::fromLatin1(ACCENT)).lighter(125).name()}, {"@ACCENT_HI", QColor(QString::fromLatin1(ACCENT)).lighter(112).name()},
+        {"@DANGER_TINT", rgba(DANGER, 0.14)}, {"@DANGER_WASH", rgba(DANGER, 0.05)}, {"@ACCENT_TINT2", rgba(ACCENT, 0.10)},
+        {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_DEEP", accent.darker(135).name()},
+        {"@HILITE2", "rgba(255, 255, 255, 0.09)"}, {"@HILITE", "rgba(255, 255, 255, 0.05)"}, {"@ACCENT_HALO", rgba(ACCENT, 0.28)},
+        {"@ACCENT_TOP", accent.lighter(125).name()}, {"@ACCENT_HI", accent.lighter(112).name()}, {"@ON_ACCENT", onAccent},
+        // Derived surfaces (each palette's own hue): bezel and page floor below the window colour,
+        // the rail and well shadows below that; edges are the border lifted towards the text colour.
+        {"@BEZEL_TOP", mix(BG1, BG0, 0.35)}, {"@BEZEL_BOT", mix(BG0, WELL, 0.55)}, {"@PAGE_BOT", mix(BG0, WELL, 0.65)},
+        {"@RAIL_SHADE", mix(WELL, "#000000", 0.35)}, {"@RAIL", mix(WELL, BG0, 0.25)},
+        {"@BTN_SHADE", mix(BORDER, "#000000", 0.35)}, {"@CARD_TOP", mix(BG1, BG2, 0.55)}, {"@ROW_ALT", mix(WELL, BG1, 0.6)},
+        {"@KEY_TOP", mix(BG3, BG4, 0.45)}, {"@EDGE", mix(BORDER, FG, 0.13)},
+        {"@BRANDW", QString::number(brandInset())}, {"@BRANDPT", QString::number(FONT_PT + 2)},
         {"@FG_DIM", FG_DIM}, {"@BORDER", BORDER}, {"@ACCENT", ACCENT}, {"@DANGER", DANGER},
         {"@MUTED", MUTED}, {"@PURPLE", PURPLE}, {"@INFO", INFO}, {"@WARN", WARN}, {"@WELL", WELL}, {"@OK", OK},
         {"@BG0", BG0}, {"@BG1", BG1}, {"@BG2", BG2}, {"@BG3", BG3}, {"@BG4", BG4}, {"@FG", FG},
