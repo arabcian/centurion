@@ -751,6 +751,7 @@ struct Acct {
     open: HashMap<u32, Conn>,              // conntrack id → owner, from NEW until DESTROY
     ledger: traffic::Ledger,
     dirty: Option<Instant>,                // totals changed and not written yet
+    lost_logged: Option<Instant>,          // last "events lost" line (at most one a minute)
 }
 
 struct Conn { exe: String, inbound: bool }
@@ -924,7 +925,7 @@ impl Guard {
         if self.acct.is_some() { return Ok(()); }
         enable_ct_accounting()?;
         let fd = ct_open().map_err(|e| format!("traffic accounting: conntrack events unavailable: {e} (kernel: NF_CT_NETLINK)"))?;
-        self.acct = Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None });
+        self.acct = Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None, lost_logged: None });
         Ok(())
     }
 
@@ -933,10 +934,22 @@ impl Guard {
     fn acct_read(&mut self) {
         let mut evs = Vec::new();
         {
-            let Some(a) = self.acct.as_ref() else { return };
+            let Some(a) = self.acct.as_mut() else { return };
             let mut buf = vec![0u8; 32768];
             for _ in 0..64 {
-                let Ok(n) = nl_recv(&a.fd, &mut buf, libc::MSG_DONTWAIT) else { break };
+                let n = match nl_recv(&a.fd, &mut buf, libc::MSG_DONTWAIT) {
+                    Ok(n) => n,
+                    // The kernel dropped events because the socket buffer was full (a burst of connections):
+                    // those connections are not counted. Said in the daemon log, then reading goes on.
+                    Err(e) if e.raw_os_error() == Some(libc::ENOBUFS) => {
+                        if a.lost_logged.map_or(true, |t| t.elapsed() >= Duration::from_secs(60)) {
+                            eprintln!("centurion-netguard: traffic accounting: conntrack events lost (receive buffer full); some connections are not counted");
+                            a.lost_logged = Some(Instant::now());
+                        }
+                        continue;
+                    }
+                    Err(_) => break,
+                };
                 nl_each(&buf[..n], |ty, p| if let Some(ev) = traffic::parse_ct(ty, p) { evs.push(ev) });
             }
         }
@@ -1019,6 +1032,10 @@ fn ct_open() -> io::Result<OwnedFd> {
     sa.nl_groups = (1 << (NFNLGRP_CONNTRACK_NEW - 1)) | (1 << (NFNLGRP_CONNTRACK_DESTROY - 1));
     let r = unsafe { libc::bind(raw, &sa as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t) };
     if r < 0 { return Err(io::Error::last_os_error()); }
+    // A larger receive buffer than the default (~200 KiB) so a burst of connections does not overflow it
+    // (ENOBUFS, events lost). The daemon is root: FORCE goes past net.core.rmem_max.
+    let size: libc::c_int = 4 << 20;
+    unsafe { libc::setsockopt(raw, libc::SOL_SOCKET, libc::SO_RCVBUFFORCE, &size as *const _ as *const libc::c_void, 4); }
     Ok(fd)
 }
 

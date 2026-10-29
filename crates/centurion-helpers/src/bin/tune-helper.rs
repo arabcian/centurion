@@ -14,6 +14,7 @@
 //!   {"op":"capture_defaults"}                          tune-helper only: boot-default snapshot (normally done at boot)
 //!   {"op":"io_probe"}                                  tune-helper only: bounded write-rate probe for autotune
 //!       (<= 512 MiB O_DIRECT into an unlinked O_TMPFILE on /var/tmp; result in /var/lib/centurion/io-probe.json)
+//!   {"op":"hibernate_check"}                           any user: what a hibernate needs (Health → Sleep), findings as codes
 //!   {"op":"profile"}                                   any user: the hardware profile autotune uses
 //!   {"op":"apply","values":{k:v,..},"mode":"manual"|"game","preset":"name"}
 //!       "replace":true (manual only): first restore every knob this request
@@ -1055,6 +1056,7 @@ fn run() -> Value {
         "battery_trend" => return centurion_helpers::trends::battery_request(&req),
         "event_days" => return centurion_helpers::trends::event_request(&req),
         "diag_report" => return centurion_helpers::diagreport::request(&req),
+        "hibernate_check" => return centurion_helpers::hibernate::run(std::path::Path::new("/")),
         "nvreg_describe" => return centurion_helpers::nvreg::describe(),
         "autotune" => return match req["goal"].as_str().and_then(centurion_helpers::autotune::Goal::parse) {
             Some(g) => centurion_helpers::autotune::autotune_req(g, &req["weights"], &req),

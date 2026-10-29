@@ -36,9 +36,11 @@ private:
     void diagnose();
     void showDiagnosis(const QJsonObject &r);
     static QString findingText(const QString &code, const QJsonValue &detail);
-    QLabel *summary_, *hint_, *sources_, *diagOut_;
+    void checkHibernate();
+    static QString hibernateText(const QString &code, const QJsonValue &detail);
+    QLabel *summary_, *hint_, *sources_, *diagOut_, *hibOut_;
     QWidget *advice_;
-    QPushButton *diag_;
+    QPushButton *diag_, *hib_;
     QTreeWidget *sleeps_, *wake_;
     bool filling_ = false;
 };

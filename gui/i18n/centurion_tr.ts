@@ -3047,6 +3047,50 @@ Başvurduğu profiller korunur.</translation>
 <context>
     <name>SleepPage</name>
     <message>
+        <source>Can this machine hibernate?</source>
+        <translation>Bu makine hazırda bekletebilir mi?</translation>
+    </message>
+    <message>
+        <source>Could not check: %1</source>
+        <translation>Denetlenemedi: %1</translation>
+    </message>
+    <message>
+        <source>The kernel does not offer hibernation (no &quot;disk&quot; in /sys/power/state): it was built without it or it is switched off.</source>
+        <translation>Çekirdek hazırda beklemeyi sunmuyor (/sys/power/state içinde &quot;disk&quot; yok): onsuz derlenmiş ya da kapatılmış.</translation>
+    </message>
+    <message>
+        <source>Kernel lockdown is in force (%1, usually because of Secure Boot): the kernel refuses to hibernate.</source>
+        <translation>Çekirdek kilidi (lockdown) etkin (%1, genellikle Secure Boot yüzünden): çekirdek hazırda beklemeyi reddeder.</translation>
+    </message>
+    <message>
+        <source>The only swap is zram, which lives in memory: hibernation needs a swap partition or swap file on disk.</source>
+        <translation>Tek takas alanı bellekte duran zram: hazırda bekleme için diskte bir takas bölümü ya da takas dosyası gerekir.</translation>
+    </message>
+    <message>
+        <source>There is no swap: hibernation needs a swap partition or swap file on disk.</source>
+        <translation>Takas alanı yok: hazırda bekleme için diskte bir takas bölümü ya da takas dosyası gerekir.</translation>
+    </message>
+    <message>
+        <source>Swap on disk (%1 GiB) is smaller than the memory (%2 GiB). Hibernation can fail when much of the memory is in use.</source>
+        <translation>Diskteki takas alanı (%1 GiB) bellekten (%2 GiB) küçük. Belleğin çoğu kullanımdayken hazırda bekleme başarısız olabilir.</translation>
+    </message>
+    <message>
+        <source>No resume= on the kernel command line, and systemd did not record a HibernateLocation: the next boot would not find the image.</source>
+        <translation>Çekirdek komut satırında resume= yok ve systemd HibernateLocation kaydetmemiş: bir sonraki açılış imajı bulamaz.</translation>
+    </message>
+    <message>
+        <source>Swap %1 is plain dm-crypt, usually with a new random key each boot: an image written there cannot be read back. Use LUKS with a fixed key instead.</source>
+        <translation>%1 takas alanı düz dm-crypt; genellikle her açılışta yeni rastgele anahtarla: oraya yazılan imaj geri okunamaz. Bunun yerine sabit anahtarlı LUKS kullanın.</translation>
+    </message>
+    <message>
+        <source>Swap %1 is LUKS-encrypted: the initramfs must unlock it before resuming.</source>
+        <translation>%1 takas alanı LUKS ile şifreli: devam etmeden önce initramfs onu açmalı.</translation>
+    </message>
+    <message>
+        <source>Nothing found that would stop a hibernate.</source>
+        <translation>Hazırda beklemeyi engelleyecek bir şey bulunmadı.</translation>
+    </message>
+    <message>
         <location filename="work/gui/src/sleeppage.cpp" line="81" />
         <source>Why doesn't the hardware sleep?</source>
         <translation>Donanım neden uyumuyor?</translation>
@@ -3794,6 +3838,10 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
 </context>
 <context>
     <name>BackupPage</name>
+    <message>
+        <source>After a successful image, older image sets in this folder beyond this count are deleted. A set is a full image with its increments, removed whole.</source>
+        <translation>Başarılı bir imajdan sonra bu klasörde bu sayıyı aşan eski imaj takımları silinir. Takım, tam imaj ile artımlarıdır ve bütün olarak silinir.</translation>
+    </message>
     <message>
         <source>Compare two…</source>
         <translation>İki yedeği karşılaştır…</translation>

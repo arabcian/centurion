@@ -254,6 +254,8 @@ PCI lists the live link of each GPU and NVMe drive. A link running with fewer la
 
 **Why doesn't the hardware sleep?** appears when the last three sleeps of at least 10 minutes each spent under 2 % of their time in the hardware (SoC) low-power state. One click reads the settings that usually keep it from being reached: the suspend mode, PCIe ASPM policy, NVMe power states and runtime power management, USB devices kept awake, whether the NVIDIA GPU is powered now, and the AMD / Intel power counters from debugfs (root; the password is not asked for an active session). It changes nothing. Findings are listed in plain words, and the raw counters are shown below them.
 
+**Can this machine hibernate?** (Sleep) checks, without a password and without changing anything, what a hibernate needs: the kernel offers it (`disk` in `/sys/power/state`), no kernel lockdown (Secure Boot usually turns it on, and the kernel then refuses), swap on disk at least as large as the memory (zram does not count: it lives in memory), `resume=` on the kernel command line or systemd's `HibernateLocation` EFI variable, and whether the swap is encrypted (plain dm-crypt with a random key cannot hold the image; LUKS must be unlocked by the initramfs).
+
 ### Kernel log
 Warnings or worse, kept across boots.
 

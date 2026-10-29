@@ -390,7 +390,7 @@ impl Drop for AgeAux {
 }
 
 /// Answers every passphrase prompt age writes to its terminal (age asks twice when encrypting), at most
-/// four times. The passphrase goes nowhere else; the terminal's echo is off while age reads it.
+/// four times. The passphrase goes nowhere else; the terminal's echo is off (age_command turns it off first).
 fn answer_prompts(master: OwnedFd, pass: Secret, stop: Arc<AtomicBool>) {
     let fd = master.as_raw_fd();
     let mut seen: Vec<u8> = Vec::new();
@@ -442,6 +442,13 @@ fn age_command(age: &Path, low: bool, decrypt: bool, recipient: Option<&str>, ke
             }
             let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
             for fd in [m, s] { unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC); } }
+            // Echo off from the start: the answer may arrive before age turns echo off itself, and an echoed
+            // passphrase would come back through the master into answer_prompts' buffer.
+            let mut t: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(s, &mut t) } == 0 {
+                t.c_lflag &= !(libc::ECHO | libc::ECHONL);
+                unsafe { libc::tcsetattr(s, libc::TCSANOW, &t) };
+            }
             let mut c = command_tty(age, low, s);
             c.arg(if decrypt { "-d" } else { "-p" });
             let stop = aux.stop.clone();
@@ -981,6 +988,8 @@ impl TryCloneFd for std::process::ChildStdout {
 /// increment are applied before tar writes into the new name.
 struct ChainRestore {
     root: OwnedFd,
+    /// File system of the target: renames and deletions never reach a directory on another one.
+    root_dev: libc::dev_t,
     hasher: std::collections::hash_map::RandomState,
     known: HashSet<u64>,
     deleted: u64,
@@ -998,7 +1007,9 @@ impl ChainRestore {
         let c = std::ffi::CString::new(target.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
         let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
         if fd < 0 { return Err(format!("{}: {}", target.display(), std::io::Error::last_os_error())); }
-        Ok(ChainRestore { root: unsafe { OwnedFd::from_raw_fd(fd) }, hasher: Default::default(), known: HashSet::new(),
+        let root = unsafe { OwnedFd::from_raw_fd(fd) };
+        let root_dev = fstat(&root).map(|s| s.st_dev).ok_or_else(|| format!("{}: {}", target.display(), std::io::Error::last_os_error()))?;
+        Ok(ChainRestore { root, root_dev, hasher: Default::default(), known: HashSet::new(),
                           deleted: 0, renamed: 0, notes: Vec::new(), partial: false })
     }
 
@@ -1043,19 +1054,31 @@ impl ChainRestore {
         self.known.extend(s.members);
     }
 
-    fn open_dir(&self, rel: &[u8]) -> Option<OwnedFd> {
-        let mut cur = dup(&self.root)?;
-        if rel.is_empty() { return Some(cur); }
-        if !tarscan::plain_path(rel) { return None; }
-        for comp in rel.split(|&b| b == b'/') { cur = open_at(&cur, comp)?; }
-        Some(cur)
+    /// A directory of the target by its archive path, on the target's own file system. Err(true): the path
+    /// goes through a mount point (another file system); Err(false): it cannot be opened.
+    fn open_dir(&self, rel: &[u8]) -> Result<OwnedFd, bool> {
+        let mut cur = dup(&self.root).ok_or(false)?;
+        if rel.is_empty() { return Ok(cur); }
+        if !tarscan::plain_path(rel) { return Err(false); }
+        for comp in rel.split(|&b| b == b'/') {
+            cur = open_at(&cur, comp).ok_or(false)?;
+            if fstat(&cur).map(|s| s.st_dev) != Some(self.root_dev) { return Err(true); }
+        }
+        Ok(cur)
     }
 
     /// Deletes the entries of directory `d.dir` that the chain restored earlier and that this increment's
     /// listing no longer has.
     fn purge(&mut self, d: &tarscan::Dumpdir) {
-        let Some(dir) = self.open_dir(&d.dir) else { return };
-        let Some(dev) = fstat(&dir).map(|s| s.st_dev) else { return };
+        let dir = match self.open_dir(&d.dir) {
+            Ok(dir) => dir,
+            Err(true) => {
+                self.note(format!("/{}: on another file system (a mount point): nothing deleted there", String::from_utf8_lossy(&d.dir)));
+                return;
+            }
+            Err(false) => return,
+        };
+        let dev = self.root_dev;
         let present: HashSet<&[u8]> = d.names.iter().map(|n| n.as_slice()).collect();
         for name in list_dir(&dir) {
             if present.contains(name.as_slice()) { continue; }
@@ -1105,7 +1128,7 @@ impl ChainRestore {
         let (Some((op, on)), Some((np, nn))) = (split(old), split(new)) else { return };
         let done = (|| {
             if !self.known.contains(&self.hash(old)) { return None; }
-            let (od, nd) = (self.open_dir(&op)?, self.open_dir(&np)?);
+            let (od, nd) = (self.open_dir(&op).ok()?, self.open_dir(&np).ok()?);
             let (oc, nc) = (std::ffi::CString::new(on).ok()?, std::ffi::CString::new(nn).ok()?);
             let st = fstatat(&od, &oc)?;
             if st.st_mode & libc::S_IFMT != libc::S_IFDIR || fstatat(&nd, &nc).is_some() { return Some(false); }
@@ -1113,7 +1136,7 @@ impl ChainRestore {
         })();
         if done == Some(true) {
             self.renamed += 1;
-            if let Some(fd) = self.open_dir(new) { self.rekey(&fd, old, new, 0); }
+            if let Ok(fd) = self.open_dir(new) { self.rekey(&fd, old, new, 0); }
         } else {
             self.note(format!("/{} → /{}: rename recorded by the image not applied (not restored by it, or the new name exists)", show(old), show(new)));
         }

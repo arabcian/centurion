@@ -222,7 +222,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     keep_->setRange(0, 99);
     keep_->setSpecialValueText(QStringLiteral("all"));
     keep_->setValue(st.value(QStringLiteral("keep"), 0).toInt());
-    keep_->setToolTip(QStringLiteral("After a successful image, older image sets in this folder beyond this count are deleted. A set is a full image with its increments, removed whole."));
+    keep_->setToolTip(tr("After a successful image, older image sets in this folder beyond this count are deleted. A set is a full image with its increments, removed whole."));
     o->addWidget(new QLabel(QStringLiteral("Compression")));
     o->addWidget(comp_);
     o->addWidget(new QLabel(QStringLiteral("Level")));

@@ -45,6 +45,8 @@ pub struct Scanner {
     pax_path: Option<Vec<u8>>,
     /// POSIX format (what GNU tar writes with --xattrs): the dumpdir travels as the pax record GNU.dumpdir.
     pax_dumpdir: Option<Vec<u8>>,
+    /// pax `size`: GNU tar writes 0 in the header of a member of 8 GiB or more and the real size here.
+    pax_size: Option<u64>,
     sparse_ext: bool,
     zeros: u8,
     pub broken: bool,
@@ -56,7 +58,7 @@ impl Default for Scanner { fn default() -> Self { Scanner::new() } }
 impl Scanner {
     pub fn new() -> Scanner {
         Scanner { hdr: Vec::with_capacity(BLOCK), left: 0, content: 0, data: Data::Skip, kind: 0, name: Vec::new(),
-                  long_name: None, pax_path: None, pax_dumpdir: None, sparse_ext: false, zeros: 0, broken: false, ended: false }
+                  long_name: None, pax_path: None, pax_dumpdir: None, pax_size: None, sparse_ext: false, zeros: 0, broken: false, ended: false }
     }
 
     /// Feeds the next bytes of the (decompressed) stream; events are reported as soon as they are complete.
@@ -100,8 +102,9 @@ impl Scanner {
         }
         self.zeros = 0;
         if !checksum_ok(h) { self.broken = true; return; }
-        let Some(size) = number(&h[124..136]) else { self.broken = true; return };
+        let Some(mut size) = number(&h[124..136]) else { self.broken = true; return };
         self.kind = h[156];
+        if !matches!(self.kind, b'x' | b'g' | b'L' | b'K') { if let Some(s) = self.pax_size.take() { size = s; } }
         self.content = size;
         self.data = Data::Skip;
         let keep = |max: u64| if size <= max { Some(Data::Keep(Vec::with_capacity(size as usize))) } else { None };
@@ -156,9 +159,10 @@ impl Scanner {
         match self.kind {
             b'L' => self.long_name = Some(cstr(&v).to_vec()),
             b'x' => {
-                let (p, d) = pax_records(&v);
+                let (p, d, n) = pax_records(&v);
                 self.pax_path = p;
                 self.pax_dumpdir = d;
+                self.pax_size = n;
             }
             b'D' => on(Event::Dumpdir(dumpdir(&norm(&self.name), &v))),
             _ => {}
@@ -191,21 +195,26 @@ fn checksum_ok(h: &[u8]) -> bool {
     unsigned == want || signed == want as i64
 }
 
-/// `path` and `GNU.dumpdir` of pax records: "<len> <key>=<value>\n"… (values may hold NULs).
-/// A malformed record list yields neither.
-fn pax_records(v: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+/// `path`, `GNU.dumpdir` and `size` of pax records: "<len> <key>=<value>\n"… (values may hold NULs).
+/// A malformed record list yields none of them.
+fn pax_records(v: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>) {
     let mut rest = v;
-    let (mut path, mut dd) = (None, None);
+    let (mut path, mut dd, mut size) = (None, None, None);
     while !rest.is_empty() {
-        let Some(sp) = rest.iter().position(|&b| b == b' ') else { return (None, None) };
-        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { return (None, None) };
-        if len <= sp + 1 || len > rest.len() || rest[len - 1] != b'\n' { return (None, None); }
+        let Some(sp) = rest.iter().position(|&b| b == b' ') else { return (None, None, None) };
+        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { return (None, None, None) };
+        if len <= sp + 1 || len > rest.len() || rest[len - 1] != b'\n' { return (None, None, None); }
         let rec = &rest[sp + 1..len - 1];
         if let Some(val) = rec.strip_prefix(b"path=") { path = Some(val.to_vec()); }
         if let Some(val) = rec.strip_prefix(b"GNU.dumpdir=") { dd = Some(val.to_vec()); }
+        if let Some(val) = rec.strip_prefix(b"size=") {
+            // A size that cannot be read would lose the member boundaries: the record list counts as malformed.
+            let Some(n) = std::str::from_utf8(val).ok().and_then(|s| s.parse::<u64>().ok()) else { return (None, None, None) };
+            size = Some(n);
+        }
         rest = &rest[len..];
     }
-    (path, dd)
+    (path, dd, size)
 }
 
 /// The dumpdir of `dir`: "<code><name>\0"… ending with an empty entry.
@@ -280,9 +289,41 @@ mod tests {
     #[test]
     fn pax_record_lists() {
         assert_eq!(pax_records(b"20 path=a/long/name\n").0.as_deref(), Some(&b"a/long/name"[..]));
-        assert_eq!(pax_records(b"9 x=yyyy\n"), (None, None));
-        assert_eq!(pax_records(b"99 path=x\n"), (None, None));
+        assert_eq!(pax_records(b"9 x=yyyy\n"), (None, None, None));
+        assert_eq!(pax_records(b"99 path=x\n"), (None, None, None));
+        assert_eq!(pax_records(b"19 size=9663676416\n").2, Some(9663676416));
         assert_eq!(pax_records(b"20 GNU.dumpdir=Yf\0\0\n").1.as_deref(), Some(&b"Yf\0\0"[..]));
+    }
+
+    /// A 512-byte header with a valid checksum.
+    fn hdr(name: &[u8], kind: u8, size: u64) -> Vec<u8> {
+        let mut h = vec![0u8; BLOCK];
+        h[..name.len()].copy_from_slice(name);
+        h[124..135].copy_from_slice(format!("{size:011o}").as_bytes());
+        h[156] = kind;
+        h[257..263].copy_from_slice(b"ustar\0");
+        h[148..156].copy_from_slice(b"        ");
+        let sum: u32 = h.iter().map(|&b| b as u32).sum();
+        h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
+        h
+    }
+
+    /// A member of 8 GiB or more (posix format): the header says 0, the pax record has the size. Its content
+    /// is skipped — even when it holds what looks like a tar header (a .tar inside a disk image).
+    #[test]
+    fn pax_size_overrides_the_header() {
+        let rec = b"13 size=1024\n";
+        let mut t = hdr(b"PaxHeaders/big", b'x', rec.len() as u64);
+        t.extend_from_slice(rec);
+        t.resize(2 * BLOCK, 0);
+        t.extend(hdr(b"big", b'0', 0));
+        t.extend(hdr(b"evil", b'0', 0));
+        t.resize(t.len() + BLOCK, 0x41);
+        t.extend(hdr(b"after", b'0', 0));
+        t.resize(t.len() + 2 * BLOCK, 0);
+        let (ev, broken) = scan(&t, 100);
+        assert!(!broken);
+        assert_eq!(ev, vec![Event::Member(b"big".to_vec()), Event::Member(b"after".to_vec())]);
     }
 
     #[test]

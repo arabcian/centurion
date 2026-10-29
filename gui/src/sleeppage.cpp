@@ -2,6 +2,7 @@
 #include "privileged.h"
 #include "sleepadvice.h"
 #include "theme.h"
+#include "userhelper.h"
 #include <QDateTime>
 #include <QSettings>
 #include <QSpinBox>
@@ -85,6 +86,15 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
     diagOut_ = muted(QString());
     diagOut_->setVisible(false);
     root->addWidget(diagOut_);
+    // Read-only, as the user (tune-profile-helper "hibernate_check"): no password.
+    hib_ = new QPushButton(tr("Can this machine hibernate?"));
+    hib_->setVisible(QFileInfo::exists(QStringLiteral("/sys/power/state")));
+    connect(hib_, &QPushButton::clicked, this, &SleepPage::checkHibernate);
+    root->addWidget(hib_, 0, Qt::AlignLeft);
+    hibOut_ = muted(QString());
+    hibOut_->setTextFormat(Qt::RichText);
+    hibOut_->setVisible(false);
+    root->addWidget(hibOut_);
 
     root->addWidget(new QLabel(QStringLiteral("<b>Wake sources (ACPI)</b>")));
     wake_ = table({QStringLiteral("Device"), QStringLiteral("Sleep state"), QStringLiteral("May wake"), QStringLiteral("Sysfs node")});
@@ -184,6 +194,51 @@ QString SleepPage::findingText(const QString &code, const QJsonValue &detail) {
         return tr("The AMD and Intel power counters cannot be read: debugfs is not mounted, or this machine has none of them.");
     if (code == QLatin1String("nothing_found"))
         return tr("No setting above explains it. The raw counters are shown below for comparison.");
+    return {};
+}
+
+void SleepPage::checkHibernate() {
+    hib_->setEnabled(false);
+    userhelper::run(QJsonObject{{QStringLiteral("op"), QStringLiteral("hibernate_check")}}, this, [this](const QJsonObject &r) {
+        hib_->setEnabled(true);
+        hibOut_->setVisible(true);
+        if (!r.value(QStringLiteral("ok")).toBool()) {
+            hibOut_->setText(tr("Could not check: %1").arg(r.value(QStringLiteral("error")).toString().toHtmlEscaped()));
+            return;
+        }
+        QStringList parts;
+        for (const QJsonValue &v : r.value(QStringLiteral("findings")).toArray()) {
+            const QJsonObject f = v.toObject();
+            const QString text = hibernateText(f.value(QStringLiteral("code")).toString(), f.value(QStringLiteral("detail")));
+            if (text.isEmpty()) continue;
+            const bool warn = f.value(QStringLiteral("severity")).toString() == QLatin1String("warn");
+            parts << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(warn ? theme::WARN : theme::OK), text.toHtmlEscaped());
+        }
+        hibOut_->setText(parts.join(QStringLiteral("<br>")));
+    });
+}
+
+QString SleepPage::hibernateText(const QString &code, const QJsonValue &detail) {
+    const QJsonObject d = detail.toObject();
+    if (code == QLatin1String("no_disk_state"))
+        return tr("The kernel does not offer hibernation (no \"disk\" in /sys/power/state): it was built without it or it is switched off.");
+    if (code == QLatin1String("lockdown"))
+        return tr("Kernel lockdown is in force (%1, usually because of Secure Boot): the kernel refuses to hibernate.").arg(detail.toString());
+    if (code == QLatin1String("no_swap"))
+        return d.value(QStringLiteral("zram")).toBool()
+            ? tr("The only swap is zram, which lives in memory: hibernation needs a swap partition or swap file on disk.")
+            : tr("There is no swap: hibernation needs a swap partition or swap file on disk.");
+    if (code == QLatin1String("swap_small"))
+        return tr("Swap on disk (%1 GiB) is smaller than the memory (%2 GiB). Hibernation can fail when much of the memory is in use.")
+            .arg(d.value(QStringLiteral("swap_kib")).toDouble() / 1048576.0, 0, 'f', 1).arg(d.value(QStringLiteral("mem_kib")).toDouble() / 1048576.0, 0, 'f', 1);
+    if (code == QLatin1String("no_resume"))
+        return tr("No resume= on the kernel command line, and systemd did not record a HibernateLocation: the next boot would not find the image.");
+    if (code == QLatin1String("swap_plain_crypt"))
+        return tr("Swap %1 is plain dm-crypt, usually with a new random key each boot: an image written there cannot be read back. Use LUKS with a fixed key instead.").arg(detail.toString());
+    if (code == QLatin1String("swap_luks"))
+        return tr("Swap %1 is LUKS-encrypted: the initramfs must unlock it before resuming.").arg(detail.toString());
+    if (code == QLatin1String("ready"))
+        return tr("Nothing found that would stop a hibernate.");
     return {};
 }
 

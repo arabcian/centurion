@@ -42,6 +42,7 @@ pub mod par;
 pub mod pmtable;
 pub mod pstore;
 pub mod sleepdiag;
+pub mod hibernate;
 pub mod netguard;
 pub mod nvreg;
 pub mod ocjournal;

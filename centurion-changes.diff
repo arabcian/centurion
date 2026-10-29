@@ -1,0 +1,716 @@
+diff --git a/crates/centurion-helpers/src/backup.rs b/crates/centurion-helpers/src/backup.rs
+index 7d9f27f..acac41d 100644
+--- a/crates/centurion-helpers/src/backup.rs
++++ b/crates/centurion-helpers/src/backup.rs
+@@ -390,7 +390,7 @@ impl Drop for AgeAux {
+ }
+ 
+ /// Answers every passphrase prompt age writes to its terminal (age asks twice when encrypting), at most
+-/// four times. The passphrase goes nowhere else; the terminal's echo is off while age reads it.
++/// four times. The passphrase goes nowhere else; the terminal's echo is off (age_command turns it off first).
+ fn answer_prompts(master: OwnedFd, pass: Secret, stop: Arc<AtomicBool>) {
+     let fd = master.as_raw_fd();
+     let mut seen: Vec<u8> = Vec::new();
+@@ -442,6 +442,13 @@ fn age_command(age: &Path, low: bool, decrypt: bool, recipient: Option<&str>, ke
+             }
+             let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
+             for fd in [m, s] { unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC); } }
++            // Echo off from the start: the answer may arrive before age turns echo off itself, and an echoed
++            // passphrase would come back through the master into answer_prompts' buffer.
++            let mut t: libc::termios = unsafe { std::mem::zeroed() };
++            if unsafe { libc::tcgetattr(s, &mut t) } == 0 {
++                t.c_lflag &= !(libc::ECHO | libc::ECHONL);
++                unsafe { libc::tcsetattr(s, libc::TCSANOW, &t) };
++            }
+             let mut c = command_tty(age, low, s);
+             c.arg(if decrypt { "-d" } else { "-p" });
+             let stop = aux.stop.clone();
+@@ -981,6 +988,8 @@ impl TryCloneFd for std::process::ChildStdout {
+ /// increment are applied before tar writes into the new name.
+ struct ChainRestore {
+     root: OwnedFd,
++    /// File system of the target: renames and deletions never reach a directory on another one.
++    root_dev: libc::dev_t,
+     hasher: std::collections::hash_map::RandomState,
+     known: HashSet<u64>,
+     deleted: u64,
+@@ -998,7 +1007,9 @@ impl ChainRestore {
+         let c = std::ffi::CString::new(target.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+         let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+         if fd < 0 { return Err(format!("{}: {}", target.display(), std::io::Error::last_os_error())); }
+-        Ok(ChainRestore { root: unsafe { OwnedFd::from_raw_fd(fd) }, hasher: Default::default(), known: HashSet::new(),
++        let root = unsafe { OwnedFd::from_raw_fd(fd) };
++        let root_dev = fstat(&root).map(|s| s.st_dev).ok_or_else(|| format!("{}: {}", target.display(), std::io::Error::last_os_error()))?;
++        Ok(ChainRestore { root, root_dev, hasher: Default::default(), known: HashSet::new(),
+                           deleted: 0, renamed: 0, notes: Vec::new(), partial: false })
+     }
+ 
+@@ -1043,19 +1054,31 @@ impl ChainRestore {
+         self.known.extend(s.members);
+     }
+ 
+-    fn open_dir(&self, rel: &[u8]) -> Option<OwnedFd> {
+-        let mut cur = dup(&self.root)?;
+-        if rel.is_empty() { return Some(cur); }
+-        if !tarscan::plain_path(rel) { return None; }
+-        for comp in rel.split(|&b| b == b'/') { cur = open_at(&cur, comp)?; }
+-        Some(cur)
++    /// A directory of the target by its archive path, on the target's own file system. Err(true): the path
++    /// goes through a mount point (another file system); Err(false): it cannot be opened.
++    fn open_dir(&self, rel: &[u8]) -> Result<OwnedFd, bool> {
++        let mut cur = dup(&self.root).ok_or(false)?;
++        if rel.is_empty() { return Ok(cur); }
++        if !tarscan::plain_path(rel) { return Err(false); }
++        for comp in rel.split(|&b| b == b'/') {
++            cur = open_at(&cur, comp).ok_or(false)?;
++            if fstat(&cur).map(|s| s.st_dev) != Some(self.root_dev) { return Err(true); }
++        }
++        Ok(cur)
+     }
+ 
+     /// Deletes the entries of directory `d.dir` that the chain restored earlier and that this increment's
+     /// listing no longer has.
+     fn purge(&mut self, d: &tarscan::Dumpdir) {
+-        let Some(dir) = self.open_dir(&d.dir) else { return };
+-        let Some(dev) = fstat(&dir).map(|s| s.st_dev) else { return };
++        let dir = match self.open_dir(&d.dir) {
++            Ok(dir) => dir,
++            Err(true) => {
++                self.note(format!("/{}: on another file system (a mount point): nothing deleted there", String::from_utf8_lossy(&d.dir)));
++                return;
++            }
++            Err(false) => return,
++        };
++        let dev = self.root_dev;
+         let present: HashSet<&[u8]> = d.names.iter().map(|n| n.as_slice()).collect();
+         for name in list_dir(&dir) {
+             if present.contains(name.as_slice()) { continue; }
+@@ -1105,7 +1128,7 @@ impl ChainRestore {
+         let (Some((op, on)), Some((np, nn))) = (split(old), split(new)) else { return };
+         let done = (|| {
+             if !self.known.contains(&self.hash(old)) { return None; }
+-            let (od, nd) = (self.open_dir(&op)?, self.open_dir(&np)?);
++            let (od, nd) = (self.open_dir(&op).ok()?, self.open_dir(&np).ok()?);
+             let (oc, nc) = (std::ffi::CString::new(on).ok()?, std::ffi::CString::new(nn).ok()?);
+             let st = fstatat(&od, &oc)?;
+             if st.st_mode & libc::S_IFMT != libc::S_IFDIR || fstatat(&nd, &nc).is_some() { return Some(false); }
+@@ -1113,7 +1136,7 @@ impl ChainRestore {
+         })();
+         if done == Some(true) {
+             self.renamed += 1;
+-            if let Some(fd) = self.open_dir(new) { self.rekey(&fd, old, new, 0); }
++            if let Ok(fd) = self.open_dir(new) { self.rekey(&fd, old, new, 0); }
+         } else {
+             self.note(format!("/{} → /{}: rename recorded by the image not applied (not restored by it, or the new name exists)", show(old), show(new)));
+         }
+diff --git a/crates/centurion-helpers/src/bin/tune-helper.rs b/crates/centurion-helpers/src/bin/tune-helper.rs
+index 99e24cc..59189d8 100644
+--- a/crates/centurion-helpers/src/bin/tune-helper.rs
++++ b/crates/centurion-helpers/src/bin/tune-helper.rs
+@@ -14,6 +14,7 @@
+ //!   {"op":"capture_defaults"}                          tune-helper only: boot-default snapshot (normally done at boot)
+ //!   {"op":"io_probe"}                                  tune-helper only: bounded write-rate probe for autotune
+ //!       (<= 512 MiB O_DIRECT into an unlinked O_TMPFILE on /var/tmp; result in /var/lib/centurion/io-probe.json)
++//!   {"op":"hibernate_check"}                           any user: what a hibernate needs (Health → Sleep), findings as codes
+ //!   {"op":"profile"}                                   any user: the hardware profile autotune uses
+ //!   {"op":"apply","values":{k:v,..},"mode":"manual"|"game","preset":"name"}
+ //!       "replace":true (manual only): first restore every knob this request
+@@ -1055,6 +1056,7 @@ fn run() -> Value {
+         "battery_trend" => return centurion_helpers::trends::battery_request(&req),
+         "event_days" => return centurion_helpers::trends::event_request(&req),
+         "diag_report" => return centurion_helpers::diagreport::request(&req),
++        "hibernate_check" => return centurion_helpers::hibernate::run(std::path::Path::new("/")),
+         "nvreg_describe" => return centurion_helpers::nvreg::describe(),
+         "autotune" => return match req["goal"].as_str().and_then(centurion_helpers::autotune::Goal::parse) {
+             Some(g) => centurion_helpers::autotune::autotune_req(g, &req["weights"], &req),
+diff --git a/crates/centurion-helpers/src/hibernate.rs b/crates/centurion-helpers/src/hibernate.rs
+new file mode 100644
+index 0000000..9d1da2f
+--- /dev/null
++++ b/crates/centurion-helpers/src/hibernate.rs
+@@ -0,0 +1,164 @@
++//! Health → Sleep → "Can this machine hibernate?": read-only checks of what a hibernate needs. Called as
++//! the user through tune-profile-helper (op "hibernate_check"); every file read is world-readable.
++//!
++//! Only fixed paths below `root` (production: "/") are read; nothing is written. `analyse` turns the
++//! readings into finding codes and the GUI words them, as in sleepdiag.
++
++use serde_json::{json, Value};
++use std::fs;
++use std::path::Path;
++
++/// systemd's EFI variable for resuming without `resume=` (systemd 255+, `HibernateLocation`).
++const HIBERNATE_LOCATION: &str = "sys/firmware/efi/efivars/HibernateLocation-8cf2644b-4b0b-428f-9387-6d876050dc67";
++
++fn text(p: &Path) -> Option<String> {
++    let s = fs::read_to_string(p).ok()?;
++    let s = s.trim().to_owned();
++    (!s.is_empty()).then_some(s)
++}
++
++/// A "Name:   1234 kB" line of /proc/meminfo, in KiB.
++fn meminfo_kib(meminfo: &str, key: &str) -> Option<u64> {
++    meminfo.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix(':')?.split_whitespace().next()?.parse().ok())
++}
++
++/// The dm-crypt flavour of a device-mapper swap ("CRYPT-LUKS2-…" → "luks", "CRYPT-PLAIN-…" → "plain").
++fn crypt_kind(root: &Path, dev: &str) -> Option<&'static str> {
++    let dm = if let Some(n) = dev.strip_prefix("/dev/dm-") {
++        format!("dm-{n}")
++    } else {
++        let name = dev.strip_prefix("/dev/mapper/")?;
++        fs::read_dir(root.join("sys/block")).ok()?.flatten()
++            .map(|e| e.file_name().to_string_lossy().into_owned())
++            .find(|b| b.starts_with("dm-") && text(&root.join(format!("sys/block/{b}/dm/name"))).as_deref() == Some(name))?
++    };
++    let uuid = text(&root.join(format!("sys/block/{dm}/dm/uuid")))?;
++    if uuid.starts_with("CRYPT-LUKS") { Some("luks") } else if uuid.starts_with("CRYPT-") { Some("plain") } else { None }
++}
++
++pub fn readings(root: &Path) -> Value {
++    let meminfo = text(&root.join("proc/meminfo")).unwrap_or_default();
++    // /proc/swaps: "Filename Type Size Used Priority", sizes in KiB. zram lives in RAM: it cannot hold the image.
++    let swaps: Vec<Value> = text(&root.join("proc/swaps")).unwrap_or_default().lines().skip(1).filter_map(|l| {
++        let f: Vec<&str> = l.split_whitespace().collect();
++        let (name, kind, size) = (*f.first()?, *f.get(1)?, f.get(2)?.parse::<u64>().ok()?);
++        let name = name.replace("\\040", " ");
++        Some(json!({"name": name, "type": kind, "kib": size, "zram": name.starts_with("/dev/zram"), "crypt": crypt_kind(root, &name)}))
++    }).collect();
++    let cmdline = text(&root.join("proc/cmdline")).unwrap_or_default();
++    let resume = cmdline.split_whitespace().find_map(|a| a.strip_prefix("resume=")).map(str::to_owned);
++    // "none [integrity] confidentiality": the bracketed one is in force.
++    let lockdown = text(&root.join("sys/kernel/security/lockdown"))
++        .and_then(|l| l.split_whitespace().find(|w| w.starts_with('[')).map(|w| w.trim_matches(['[', ']']).to_owned()));
++    json!({
++        "mem_kib": meminfo_kib(&meminfo, "MemTotal"),
++        "swaps": swaps,
++        "resume": resume,
++        "hibernate_location": root.join(HIBERNATE_LOCATION).exists(),
++        "lockdown": lockdown,
++        "power_state": text(&root.join("sys/power/state")),
++    })
++}
++
++/// Finding codes, most important first. "ready" only when nothing blocks.
++pub fn analyse(r: &Value) -> Vec<Value> {
++    let mut out = Vec::new();
++    if !r["power_state"].as_str().is_some_and(|s| s.split_whitespace().any(|w| w == "disk")) {
++        out.push(finding("no_disk_state", "warn", Value::Null));
++    }
++    if let Some(l) = r["lockdown"].as_str().filter(|l| *l != "none") {
++        out.push(finding("lockdown", "warn", json!(l)));
++    }
++    let swaps = r["swaps"].as_array().cloned().unwrap_or_default();
++    let disk: Vec<&Value> = swaps.iter().filter(|s| s["zram"] != true).collect();
++    let swap_kib: u64 = disk.iter().filter_map(|s| s["kib"].as_u64()).sum();
++    let zram = swaps.iter().any(|s| s["zram"] == true);
++    if disk.is_empty() {
++        out.push(finding("no_swap", "warn", json!({"zram": zram})));
++    } else if let Some(mem) = r["mem_kib"].as_u64().filter(|&m| swap_kib < m) {
++        out.push(finding("swap_small", "warn", json!({"swap_kib": swap_kib, "mem_kib": mem})));
++    }
++    if r["resume"].is_null() && r["hibernate_location"] != true {
++        out.push(finding("no_resume", "warn", Value::Null));
++    }
++    for s in &disk {
++        match s["crypt"].as_str() {
++            Some("plain") => out.push(finding("swap_plain_crypt", "warn", s["name"].clone())),
++            Some("luks") => out.push(finding("swap_luks", "info", s["name"].clone())),
++            _ => {}
++        }
++    }
++    if !out.iter().any(|f| f["severity"] == "warn") {
++        out.push(finding("ready", "info", Value::Null));
++    }
++    out
++}
++
++fn finding(code: &str, severity: &str, detail: Value) -> Value {
++    json!({"code": code, "severity": severity, "detail": detail})
++}
++
++/// tune-profile-helper op "hibernate_check": {"ok", "readings", "findings"}. Read-only.
++pub fn run(root: &Path) -> Value {
++    let r = readings(root);
++    let findings = analyse(&r);
++    json!({"ok": true, "readings": r, "findings": findings})
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn codes(r: &Value) -> Vec<String> {
++        analyse(r).iter().map(|f| f["code"].as_str().unwrap().to_owned()).collect()
++    }
++
++    fn put(root: &Path, rel: &str, body: &str) {
++        let p = root.join(rel);
++        fs::create_dir_all(p.parent().unwrap()).unwrap();
++        fs::write(p, body).unwrap();
++    }
++
++    #[test]
++    fn a_ready_machine() {
++        let dir = std::env::temp_dir().join(format!("centurion-hib-ok-{}", std::process::id()));
++        let _ = fs::remove_dir_all(&dir);
++        put(&dir, "proc/meminfo", "MemTotal:       16000000 kB\nSwapTotal:      20000000 kB\n");
++        put(&dir, "proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 8000000 0 100\n/dev/nvme0n1p3 partition 20000000 0 -2\n");
++        put(&dir, "proc/cmdline", "root=/dev/nvme0n1p2 resume=UUID=abcd quiet\n");
++        put(&dir, "sys/kernel/security/lockdown", "[none] integrity confidentiality\n");
++        put(&dir, "sys/power/state", "freeze mem disk\n");
++        let r = readings(&dir);
++        assert_eq!(r["resume"], "UUID=abcd");
++        assert_eq!(r["lockdown"], "none");
++        assert_eq!(codes(&r), ["ready"]);
++        let _ = fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn what_blocks_a_hibernate() {
++        let dir = std::env::temp_dir().join(format!("centurion-hib-bad-{}", std::process::id()));
++        let _ = fs::remove_dir_all(&dir);
++        put(&dir, "proc/meminfo", "MemTotal:       16000000 kB\n");
++        put(&dir, "proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 8000000 0 100\n");
++        put(&dir, "proc/cmdline", "quiet\n");
++        put(&dir, "sys/kernel/security/lockdown", "none [integrity] confidentiality\n");
++        put(&dir, "sys/power/state", "freeze mem\n");
++        // zram alone is no swap for hibernation; no resume= and no HibernateLocation.
++        assert_eq!(codes(&readings(&dir)), ["no_disk_state", "lockdown", "no_swap", "no_resume"]);
++        // a small swap on a random-key dm-crypt mapping (found by its /dev/mapper name)
++        put(&dir, "proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/mapper/cswap partition 4000000 0 -2\n");
++        put(&dir, "sys/block/dm-1/dm/name", "cswap\n");
++        put(&dir, "sys/block/dm-1/dm/uuid", "CRYPT-PLAIN-cswap\n");
++        put(&dir, HIBERNATE_LOCATION, "x");
++        let c = codes(&readings(&dir));
++        assert!(c.contains(&"swap_small".into()) && c.contains(&"swap_plain_crypt".into()) && !c.contains(&"no_resume".into()), "{c:?}");
++        let _ = fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn nothing_readable_is_not_ready() {
++        let c = codes(&readings(Path::new("/nonexistent-centurion")));
++        assert!(c.contains(&"no_disk_state".into()) && !c.contains(&"ready".into()));
++    }
++}
+diff --git a/crates/centurion-helpers/src/lib.rs b/crates/centurion-helpers/src/lib.rs
+index c860222..08c57ed 100644
+--- a/crates/centurion-helpers/src/lib.rs
++++ b/crates/centurion-helpers/src/lib.rs
+@@ -42,6 +42,7 @@ pub mod par;
+ pub mod pmtable;
+ pub mod pstore;
+ pub mod sleepdiag;
++pub mod hibernate;
+ pub mod netguard;
+ pub mod nvreg;
+ pub mod ocjournal;
+diff --git a/crates/centurion-helpers/src/netguard.rs b/crates/centurion-helpers/src/netguard.rs
+index 9be01bb..a328622 100644
+--- a/crates/centurion-helpers/src/netguard.rs
++++ b/crates/centurion-helpers/src/netguard.rs
+@@ -751,6 +751,7 @@ struct Acct {
+     open: HashMap<u32, Conn>,              // conntrack id → owner, from NEW until DESTROY
+     ledger: traffic::Ledger,
+     dirty: Option<Instant>,                // totals changed and not written yet
++    lost_logged: Option<Instant>,          // last "events lost" line (at most one a minute)
+ }
+ 
+ struct Conn { exe: String, inbound: bool }
+@@ -924,7 +925,7 @@ impl Guard {
+         if self.acct.is_some() { return Ok(()); }
+         enable_ct_accounting()?;
+         let fd = ct_open().map_err(|e| format!("traffic accounting: conntrack events unavailable: {e} (kernel: NF_CT_NETLINK)"))?;
+-        self.acct = Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None });
++        self.acct = Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None, lost_logged: None });
+         Ok(())
+     }
+ 
+@@ -933,10 +934,22 @@ impl Guard {
+     fn acct_read(&mut self) {
+         let mut evs = Vec::new();
+         {
+-            let Some(a) = self.acct.as_ref() else { return };
++            let Some(a) = self.acct.as_mut() else { return };
+             let mut buf = vec![0u8; 32768];
+             for _ in 0..64 {
+-                let Ok(n) = nl_recv(&a.fd, &mut buf, libc::MSG_DONTWAIT) else { break };
++                let n = match nl_recv(&a.fd, &mut buf, libc::MSG_DONTWAIT) {
++                    Ok(n) => n,
++                    // The kernel dropped events because the socket buffer was full (a burst of connections):
++                    // those connections are not counted. Said in the daemon log, then reading goes on.
++                    Err(e) if e.raw_os_error() == Some(libc::ENOBUFS) => {
++                        if a.lost_logged.map_or(true, |t| t.elapsed() >= Duration::from_secs(60)) {
++                            eprintln!("centurion-netguard: traffic accounting: conntrack events lost (receive buffer full); some connections are not counted");
++                            a.lost_logged = Some(Instant::now());
++                        }
++                        continue;
++                    }
++                    Err(_) => break,
++                };
+                 nl_each(&buf[..n], |ty, p| if let Some(ev) = traffic::parse_ct(ty, p) { evs.push(ev) });
+             }
+         }
+@@ -1019,6 +1032,10 @@ fn ct_open() -> io::Result<OwnedFd> {
+     sa.nl_groups = (1 << (NFNLGRP_CONNTRACK_NEW - 1)) | (1 << (NFNLGRP_CONNTRACK_DESTROY - 1));
+     let r = unsafe { libc::bind(raw, &sa as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t) };
+     if r < 0 { return Err(io::Error::last_os_error()); }
++    // A larger receive buffer than the default (~200 KiB) so a burst of connections does not overflow it
++    // (ENOBUFS, events lost). The daemon is root: FORCE goes past net.core.rmem_max.
++    let size: libc::c_int = 4 << 20;
++    unsafe { libc::setsockopt(raw, libc::SOL_SOCKET, libc::SO_RCVBUFFORCE, &size as *const _ as *const libc::c_void, 4); }
+     Ok(fd)
+ }
+ 
+diff --git a/crates/centurion-helpers/src/tarscan.rs b/crates/centurion-helpers/src/tarscan.rs
+index 32f6a4b..3ec666b 100644
+--- a/crates/centurion-helpers/src/tarscan.rs
++++ b/crates/centurion-helpers/src/tarscan.rs
+@@ -45,6 +45,8 @@ pub struct Scanner {
+     pax_path: Option<Vec<u8>>,
+     /// POSIX format (what GNU tar writes with --xattrs): the dumpdir travels as the pax record GNU.dumpdir.
+     pax_dumpdir: Option<Vec<u8>>,
++    /// pax `size`: GNU tar writes 0 in the header of a member of 8 GiB or more and the real size here.
++    pax_size: Option<u64>,
+     sparse_ext: bool,
+     zeros: u8,
+     pub broken: bool,
+@@ -56,7 +58,7 @@ impl Default for Scanner { fn default() -> Self { Scanner::new() } }
+ impl Scanner {
+     pub fn new() -> Scanner {
+         Scanner { hdr: Vec::with_capacity(BLOCK), left: 0, content: 0, data: Data::Skip, kind: 0, name: Vec::new(),
+-                  long_name: None, pax_path: None, pax_dumpdir: None, sparse_ext: false, zeros: 0, broken: false, ended: false }
++                  long_name: None, pax_path: None, pax_dumpdir: None, pax_size: None, sparse_ext: false, zeros: 0, broken: false, ended: false }
+     }
+ 
+     /// Feeds the next bytes of the (decompressed) stream; events are reported as soon as they are complete.
+@@ -100,8 +102,9 @@ impl Scanner {
+         }
+         self.zeros = 0;
+         if !checksum_ok(h) { self.broken = true; return; }
+-        let Some(size) = number(&h[124..136]) else { self.broken = true; return };
++        let Some(mut size) = number(&h[124..136]) else { self.broken = true; return };
+         self.kind = h[156];
++        if !matches!(self.kind, b'x' | b'g' | b'L' | b'K') { if let Some(s) = self.pax_size.take() { size = s; } }
+         self.content = size;
+         self.data = Data::Skip;
+         let keep = |max: u64| if size <= max { Some(Data::Keep(Vec::with_capacity(size as usize))) } else { None };
+@@ -156,9 +159,10 @@ impl Scanner {
+         match self.kind {
+             b'L' => self.long_name = Some(cstr(&v).to_vec()),
+             b'x' => {
+-                let (p, d) = pax_records(&v);
++                let (p, d, n) = pax_records(&v);
+                 self.pax_path = p;
+                 self.pax_dumpdir = d;
++                self.pax_size = n;
+             }
+             b'D' => on(Event::Dumpdir(dumpdir(&norm(&self.name), &v))),
+             _ => {}
+@@ -191,21 +195,26 @@ fn checksum_ok(h: &[u8]) -> bool {
+     unsigned == want || signed == want as i64
+ }
+ 
+-/// `path` and `GNU.dumpdir` of pax records: "<len> <key>=<value>\n"… (values may hold NULs).
+-/// A malformed record list yields neither.
+-fn pax_records(v: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
++/// `path`, `GNU.dumpdir` and `size` of pax records: "<len> <key>=<value>\n"… (values may hold NULs).
++/// A malformed record list yields none of them.
++fn pax_records(v: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>) {
+     let mut rest = v;
+-    let (mut path, mut dd) = (None, None);
++    let (mut path, mut dd, mut size) = (None, None, None);
+     while !rest.is_empty() {
+-        let Some(sp) = rest.iter().position(|&b| b == b' ') else { return (None, None) };
+-        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { return (None, None) };
+-        if len <= sp + 1 || len > rest.len() || rest[len - 1] != b'\n' { return (None, None); }
++        let Some(sp) = rest.iter().position(|&b| b == b' ') else { return (None, None, None) };
++        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { return (None, None, None) };
++        if len <= sp + 1 || len > rest.len() || rest[len - 1] != b'\n' { return (None, None, None); }
+         let rec = &rest[sp + 1..len - 1];
+         if let Some(val) = rec.strip_prefix(b"path=") { path = Some(val.to_vec()); }
+         if let Some(val) = rec.strip_prefix(b"GNU.dumpdir=") { dd = Some(val.to_vec()); }
++        if let Some(val) = rec.strip_prefix(b"size=") {
++            // A size that cannot be read would lose the member boundaries: the record list counts as malformed.
++            let Some(n) = std::str::from_utf8(val).ok().and_then(|s| s.parse::<u64>().ok()) else { return (None, None, None) };
++            size = Some(n);
++        }
+         rest = &rest[len..];
+     }
+-    (path, dd)
++    (path, dd, size)
+ }
+ 
+ /// The dumpdir of `dir`: "<code><name>\0"… ending with an empty entry.
+@@ -280,11 +289,43 @@ mod tests {
+     #[test]
+     fn pax_record_lists() {
+         assert_eq!(pax_records(b"20 path=a/long/name\n").0.as_deref(), Some(&b"a/long/name"[..]));
+-        assert_eq!(pax_records(b"9 x=yyyy\n"), (None, None));
+-        assert_eq!(pax_records(b"99 path=x\n"), (None, None));
++        assert_eq!(pax_records(b"9 x=yyyy\n"), (None, None, None));
++        assert_eq!(pax_records(b"99 path=x\n"), (None, None, None));
++        assert_eq!(pax_records(b"19 size=9663676416\n").2, Some(9663676416));
+         assert_eq!(pax_records(b"20 GNU.dumpdir=Yf\0\0\n").1.as_deref(), Some(&b"Yf\0\0"[..]));
+     }
+ 
++    /// A 512-byte header with a valid checksum.
++    fn hdr(name: &[u8], kind: u8, size: u64) -> Vec<u8> {
++        let mut h = vec![0u8; BLOCK];
++        h[..name.len()].copy_from_slice(name);
++        h[124..135].copy_from_slice(format!("{size:011o}").as_bytes());
++        h[156] = kind;
++        h[257..263].copy_from_slice(b"ustar\0");
++        h[148..156].copy_from_slice(b"        ");
++        let sum: u32 = h.iter().map(|&b| b as u32).sum();
++        h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
++        h
++    }
++
++    /// A member of 8 GiB or more (posix format): the header says 0, the pax record has the size. Its content
++    /// is skipped — even when it holds what looks like a tar header (a .tar inside a disk image).
++    #[test]
++    fn pax_size_overrides_the_header() {
++        let rec = b"13 size=1024\n";
++        let mut t = hdr(b"PaxHeaders/big", b'x', rec.len() as u64);
++        t.extend_from_slice(rec);
++        t.resize(2 * BLOCK, 0);
++        t.extend(hdr(b"big", b'0', 0));
++        t.extend(hdr(b"evil", b'0', 0));
++        t.resize(t.len() + BLOCK, 0x41);
++        t.extend(hdr(b"after", b'0', 0));
++        t.resize(t.len() + 2 * BLOCK, 0);
++        let (ev, broken) = scan(&t, 100);
++        assert!(!broken);
++        assert_eq!(ev, vec![Event::Member(b"big".to_vec()), Event::Member(b"after".to_vec())]);
++    }
++
+     #[test]
+     fn garbage_is_broken_not_trusted() {
+         let (ev, broken) = scan(&[0x55u8; 2048], 100);
+diff --git a/docs/HANDBOOK.md b/docs/HANDBOOK.md
+index 8fe0121..f400d14 100644
+--- a/docs/HANDBOOK.md
++++ b/docs/HANDBOOK.md
+@@ -254,6 +254,8 @@ PCI lists the live link of each GPU and NVMe drive. A link running with fewer la
+ 
+ **Why doesn't the hardware sleep?** appears when the last three sleeps of at least 10 minutes each spent under 2 % of their time in the hardware (SoC) low-power state. One click reads the settings that usually keep it from being reached: the suspend mode, PCIe ASPM policy, NVMe power states and runtime power management, USB devices kept awake, whether the NVIDIA GPU is powered now, and the AMD / Intel power counters from debugfs (root; the password is not asked for an active session). It changes nothing. Findings are listed in plain words, and the raw counters are shown below them.
+ 
++**Can this machine hibernate?** (Sleep) checks, without a password and without changing anything, what a hibernate needs: the kernel offers it (`disk` in `/sys/power/state`), no kernel lockdown (Secure Boot usually turns it on, and the kernel then refuses), swap on disk at least as large as the memory (zram does not count: it lives in memory), `resume=` on the kernel command line or systemd's `HibernateLocation` EFI variable, and whether the swap is encrypted (plain dm-crypt with a random key cannot hold the image; LUKS must be unlocked by the initramfs).
++
+ ### Kernel log
+ Warnings or worse, kept across boots.
+ 
+diff --git a/docs/TECHNICAL.md b/docs/TECHNICAL.md
+index e951c4c..baf708b 100644
+--- a/docs/TECHNICAL.md
++++ b/docs/TECHNICAL.md
+@@ -465,8 +465,11 @@ selects POSIX format) on its way to a plain `tar -x`, and `ChainRestore`:
+ renames (`R`/`T`) are applied before the bytes behind them reach tar; after each increment, an entry is deleted
+ only if the chain itself restored it (hashed member names of the earlier steps) and the increment's dumpdir no
+ longer lists it — through `openat`/`unlinkat` with `O_NOFOLLOW`, never across a mount point (`st_dev`), a
+-directory only once it holds nothing unknown. A stream it cannot read (bad checksum, multi-volume) disables
+-deletions for that step. The result reports `deleted`, `renamed` and `notes`.
++directory only once it holds nothing unknown. Renames and deletions stay on the target's own file system: a
++directory reached through a mount point under the target (a separate `/boot` or `/var`) gets tar's files but no
++deletions, and a note says so. A stream it cannot read (bad checksum, multi-volume) disables
++deletions for that step. tarscan takes a member's size from its pax `size` record when there is one (GNU tar
++writes 0 in the header of a member of 8 GiB or more). The result reports `deleted`, `renamed` and `notes`.
+ The request must repeat the resolved target (`confirm`); the GUI asks to type
+ RESTORE for `/`. Missing mount points (`/proc /sys /dev /run /tmp /var/tmp
+ /mnt /media /home`) are created afterwards, so images made with a plain
+@@ -963,6 +966,8 @@ the helpers (`tune::cpu_vendor()`).
+ 
+ **Health event kinds** (`crates/centurion-helpers/src/health.rs::classify`, `gui/src/healthtab.cpp`): besides `xid`, `gsp`, `mce`, `aer`, `lockup`, `d3cold`, `amdgpu` the classifier emits `nvme` (I/O timeout / controller reset = error, controller down = critical), `fs` (EXT4-fs error, BTRFS error / csum failed, XFS corruption; critical), `igpu` (i915 GPU HANG, xe Timedout job / trying reset; error), `wifi` (iwlwifi microcode error, mt79xx message timeout, ath firmware crash; warn), `thermal` (critical temperature reached = critical, package temperature above threshold = warn), `oom` (warn) and `oops` (`Oops:` / `BUG:` / `WARNING: CPU:` at the start of the message; error; the title names the trailing `[module]` when present). `HealthTab::drainKmsg` pre-filters raw `/dev/kmsg` records with a `KEYS` list that must be extended with every new pattern, otherwise the line never starts a scan; keys anchored with `;` match the start of the message. `stability.rs::event_weight` gives all of the new kinds weight 0 and `curvepage.cpp` ignores kinds it does not know, so none of them is charged to a curve.
+ 
++**Hibernate check** (`crates/centurion-helpers/src/hibernate.rs`, `gui/src/sleeppage.cpp`): `tune-profile-helper {"op":"hibernate_check"}` as the user (`userhelper`), read-only. Reads `/proc/meminfo`, `/proc/swaps` (zram excluded from the swap total), `/proc/cmdline` (`resume=`), `/sys/firmware/efi/efivars/HibernateLocation-8cf2644b-…`, `/sys/kernel/security/lockdown` (the bracketed mode), `/sys/power/state`, and for a device-mapper swap `/sys/block/dm-N/dm/{name,uuid}` (`CRYPT-LUKS…` / other `CRYPT-…` = plain). `analyse` gives codes (`no_disk_state`, `lockdown`, `no_swap`, `swap_small`, `no_resume`, `swap_plain_crypt`, `swap_luks`, `ready`); the GUI words them.
++
+ **Boot history and pstore** (`crates/centurion-helpers/src/boothist.rs`, `pstore.rs`, `gui/src/bootpage.cpp`): `health-reader {"op":"boots"}` (read-only, same silent polkit action as the scan) returns `boothist::build` over `exposure.json`, `oc-journal.jsonl` and `pstore::list`. A boot is `clean` (closed by centurion-boot-guard), `unclean` (`on_boot` found it open), `running` (current) or `unknown` (left open, the guard did not run). `curves` is the ordered, de-duplicated state list per journal kind; an empty object means stock or older than the journal's rotation. A pstore record is attributed to the unclean boot whose lifetime (start to the next boot's start) contains its time, else the nearest within 24 h, else left unattributed. `previous_unclean` (the boot before the current one, when it is unclean) feeds the band in `HealthTab`; the GUI reads that once ~4 s after start and when the page is shown, never periodically. The last 30 kernel-log lines of an unclean boot are taken by the GUI from its own `kernel.log` (`boot=<first 8 of boot_id> seq=` tag); the helper does not know the user's home. pstore sources: `/sys/fs/pstore`, `/var/lib/systemd/pstore` (up to 3 directory levels), and the archive; files are opened `O_NOFOLLOW`, must be regular, are read up to 1 MiB, clipped to the last 12 KiB and passed through `health::scrub`. `tune-helper {"op":"pstore_clear"}` takes nothing from the request: for every file in `/sys/fs/pstore` it writes the scrubbed text to `/var/lib/centurion/pstore/<crash time>-<name>.txt` (`write_root_file`, 0644) and only then `unlink`s the pstore file (the kernel frees the EFI variable; EFI variables are never touched directly), one `wlog` line per removal; archive files beyond the newest 30 are pruned. The GUI confirms first; the op is not in `PROFILE_OPS`.
+ 
+ **Ryzen limit reasons** (`crates/centurion-helpers/src/pmtable.rs`): `ryzen-co-helper monitor_stream` with `"limits": true` adds the PM table head from `/sys/kernel/ryzen_smu_drv/pm_table`. Desktop-derived tables (version family 0x24 / 0x38 / 0x54 / 0x62): PPT, TDC, THM, EDC at f32 indices 0/1, 2/3, 4/5, 8/9. Mobile APUs (0x37 / 0x40 / 0x45 / 0x4C / 0x5D / 0x65): STAPM, PPT fast / slow, TDC, EDC, THM at 0/1, 2/3, 4/5, 8/9, 12/13, 16/17. Every limit and value must be physically plausible, otherwise nothing is shown ("layout not recognised" + version). ≥ 95 % of a limit counts as binding; the tab sums seconds per limit since the monitor started. Read-only.
+@@ -1001,6 +1006,8 @@ the helpers (`tune::cpu_vendor()`).
+   program's day in the ledger. Forwarded flows (no local socket) are ignored. Totals are written at most every
+   10 s (`TRAFFIC_FLUSH`) and on stop. File: 0640 root:wheel, 90 days, 256 programs per day (rest under
+   `(other)`). Connections the daemon did not see open are not counted.
++  The conntrack socket has a 4 MiB receive buffer (`SO_RCVBUFFORCE`); if a burst still overflows it
++  (`ENOBUFS`), the lost events' connections are not counted and the daemon log says so (at most once a minute).
+ - **Wi-Fi** (`wifi.rs`): `iw dev <if> link` and `iw dev <if> station dump`, unprivileged, through the
+   user op `netguard-helper {"op":"wifi"}`. The first `/sys/class/net/*` with `phy80211` or `wireless`, one whose `operstate` is `up` first.
+   The tab also counts this boot's `WIFI` lines in `health.log` (tail only, reread when the file changes). Warnings:
+diff --git a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+index 98afbd4..c4c43db 100644
+--- a/gui/i18n/centurion_tr.ts
++++ b/gui/i18n/centurion_tr.ts
+@@ -3046,6 +3046,50 @@ Başvurduğu profiller korunur.</translation>
+ </context>
+ <context>
+     <name>SleepPage</name>
++    <message>
++        <source>Can this machine hibernate?</source>
++        <translation>Bu makine hazırda bekletebilir mi?</translation>
++    </message>
++    <message>
++        <source>Could not check: %1</source>
++        <translation>Denetlenemedi: %1</translation>
++    </message>
++    <message>
++        <source>The kernel does not offer hibernation (no &quot;disk&quot; in /sys/power/state): it was built without it or it is switched off.</source>
++        <translation>Çekirdek hazırda beklemeyi sunmuyor (/sys/power/state içinde &quot;disk&quot; yok): onsuz derlenmiş ya da kapatılmış.</translation>
++    </message>
++    <message>
++        <source>Kernel lockdown is in force (%1, usually because of Secure Boot): the kernel refuses to hibernate.</source>
++        <translation>Çekirdek kilidi (lockdown) etkin (%1, genellikle Secure Boot yüzünden): çekirdek hazırda beklemeyi reddeder.</translation>
++    </message>
++    <message>
++        <source>The only swap is zram, which lives in memory: hibernation needs a swap partition or swap file on disk.</source>
++        <translation>Tek takas alanı bellekte duran zram: hazırda bekleme için diskte bir takas bölümü ya da takas dosyası gerekir.</translation>
++    </message>
++    <message>
++        <source>There is no swap: hibernation needs a swap partition or swap file on disk.</source>
++        <translation>Takas alanı yok: hazırda bekleme için diskte bir takas bölümü ya da takas dosyası gerekir.</translation>
++    </message>
++    <message>
++        <source>Swap on disk (%1 GiB) is smaller than the memory (%2 GiB). Hibernation can fail when much of the memory is in use.</source>
++        <translation>Diskteki takas alanı (%1 GiB) bellekten (%2 GiB) küçük. Belleğin çoğu kullanımdayken hazırda bekleme başarısız olabilir.</translation>
++    </message>
++    <message>
++        <source>No resume= on the kernel command line, and systemd did not record a HibernateLocation: the next boot would not find the image.</source>
++        <translation>Çekirdek komut satırında resume= yok ve systemd HibernateLocation kaydetmemiş: bir sonraki açılış imajı bulamaz.</translation>
++    </message>
++    <message>
++        <source>Swap %1 is plain dm-crypt, usually with a new random key each boot: an image written there cannot be read back. Use LUKS with a fixed key instead.</source>
++        <translation>%1 takas alanı düz dm-crypt; genellikle her açılışta yeni rastgele anahtarla: oraya yazılan imaj geri okunamaz. Bunun yerine sabit anahtarlı LUKS kullanın.</translation>
++    </message>
++    <message>
++        <source>Swap %1 is LUKS-encrypted: the initramfs must unlock it before resuming.</source>
++        <translation>%1 takas alanı LUKS ile şifreli: devam etmeden önce initramfs onu açmalı.</translation>
++    </message>
++    <message>
++        <source>Nothing found that would stop a hibernate.</source>
++        <translation>Hazırda beklemeyi engelleyecek bir şey bulunmadı.</translation>
++    </message>
+     <message>
+         <location filename="work/gui/src/sleeppage.cpp" line="81" />
+         <source>Why doesn't the hardware sleep?</source>
+@@ -3794,6 +3838,10 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
+ </context>
+ <context>
+     <name>BackupPage</name>
++    <message>
++        <source>After a successful image, older image sets in this folder beyond this count are deleted. A set is a full image with its increments, removed whole.</source>
++        <translation>Başarılı bir imajdan sonra bu klasörde bu sayıyı aşan eski imaj takımları silinir. Takım, tam imaj ile artımlarıdır ve bütün olarak silinir.</translation>
++    </message>
+     <message>
+         <source>Compare two…</source>
+         <translation>İki yedeği karşılaştır…</translation>
+diff --git a/gui/src/backuppage.cpp b/gui/src/backuppage.cpp
+index 3b068b2..4c5b0e3 100644
+--- a/gui/src/backuppage.cpp
++++ b/gui/src/backuppage.cpp
+@@ -222,7 +222,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
+     keep_->setRange(0, 99);
+     keep_->setSpecialValueText(QStringLiteral("all"));
+     keep_->setValue(st.value(QStringLiteral("keep"), 0).toInt());
+-    keep_->setToolTip(QStringLiteral("After a successful image, older image sets in this folder beyond this count are deleted. A set is a full image with its increments, removed whole."));
++    keep_->setToolTip(tr("After a successful image, older image sets in this folder beyond this count are deleted. A set is a full image with its increments, removed whole."));
+     o->addWidget(new QLabel(QStringLiteral("Compression")));
+     o->addWidget(comp_);
+     o->addWidget(new QLabel(QStringLiteral("Level")));
+diff --git a/gui/src/sleeppage.cpp b/gui/src/sleeppage.cpp
+index 24c0ee7..95a5467 100644
+--- a/gui/src/sleeppage.cpp
++++ b/gui/src/sleeppage.cpp
+@@ -2,6 +2,7 @@
+ #include "privileged.h"
+ #include "sleepadvice.h"
+ #include "theme.h"
++#include "userhelper.h"
+ #include <QDateTime>
+ #include <QSettings>
+ #include <QSpinBox>
+@@ -85,6 +86,15 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
+     diagOut_ = muted(QString());
+     diagOut_->setVisible(false);
+     root->addWidget(diagOut_);
++    // Read-only, as the user (tune-profile-helper "hibernate_check"): no password.
++    hib_ = new QPushButton(tr("Can this machine hibernate?"));
++    hib_->setVisible(QFileInfo::exists(QStringLiteral("/sys/power/state")));
++    connect(hib_, &QPushButton::clicked, this, &SleepPage::checkHibernate);
++    root->addWidget(hib_, 0, Qt::AlignLeft);
++    hibOut_ = muted(QString());
++    hibOut_->setTextFormat(Qt::RichText);
++    hibOut_->setVisible(false);
++    root->addWidget(hibOut_);
+ 
+     root->addWidget(new QLabel(QStringLiteral("<b>Wake sources (ACPI)</b>")));
+     wake_ = table({QStringLiteral("Device"), QStringLiteral("Sleep state"), QStringLiteral("May wake"), QStringLiteral("Sysfs node")});
+@@ -187,6 +197,51 @@ QString SleepPage::findingText(const QString &code, const QJsonValue &detail) {
+     return {};
+ }
+ 
++void SleepPage::checkHibernate() {
++    hib_->setEnabled(false);
++    userhelper::run(QJsonObject{{QStringLiteral("op"), QStringLiteral("hibernate_check")}}, this, [this](const QJsonObject &r) {
++        hib_->setEnabled(true);
++        hibOut_->setVisible(true);
++        if (!r.value(QStringLiteral("ok")).toBool()) {
++            hibOut_->setText(tr("Could not check: %1").arg(r.value(QStringLiteral("error")).toString().toHtmlEscaped()));
++            return;
++        }
++        QStringList parts;
++        for (const QJsonValue &v : r.value(QStringLiteral("findings")).toArray()) {
++            const QJsonObject f = v.toObject();
++            const QString text = hibernateText(f.value(QStringLiteral("code")).toString(), f.value(QStringLiteral("detail")));
++            if (text.isEmpty()) continue;
++            const bool warn = f.value(QStringLiteral("severity")).toString() == QLatin1String("warn");
++            parts << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(warn ? theme::WARN : theme::OK), text.toHtmlEscaped());
++        }
++        hibOut_->setText(parts.join(QStringLiteral("<br>")));
++    });
++}
++
++QString SleepPage::hibernateText(const QString &code, const QJsonValue &detail) {
++    const QJsonObject d = detail.toObject();
++    if (code == QLatin1String("no_disk_state"))
++        return tr("The kernel does not offer hibernation (no \"disk\" in /sys/power/state): it was built without it or it is switched off.");
++    if (code == QLatin1String("lockdown"))
++        return tr("Kernel lockdown is in force (%1, usually because of Secure Boot): the kernel refuses to hibernate.").arg(detail.toString());
++    if (code == QLatin1String("no_swap"))
++        return d.value(QStringLiteral("zram")).toBool()
++            ? tr("The only swap is zram, which lives in memory: hibernation needs a swap partition or swap file on disk.")
++            : tr("There is no swap: hibernation needs a swap partition or swap file on disk.");
++    if (code == QLatin1String("swap_small"))
++        return tr("Swap on disk (%1 GiB) is smaller than the memory (%2 GiB). Hibernation can fail when much of the memory is in use.")
++            .arg(d.value(QStringLiteral("swap_kib")).toDouble() / 1048576.0, 0, 'f', 1).arg(d.value(QStringLiteral("mem_kib")).toDouble() / 1048576.0, 0, 'f', 1);
++    if (code == QLatin1String("no_resume"))
++        return tr("No resume= on the kernel command line, and systemd did not record a HibernateLocation: the next boot would not find the image.");
++    if (code == QLatin1String("swap_plain_crypt"))
++        return tr("Swap %1 is plain dm-crypt, usually with a new random key each boot: an image written there cannot be read back. Use LUKS with a fixed key instead.").arg(detail.toString());
++    if (code == QLatin1String("swap_luks"))
++        return tr("Swap %1 is LUKS-encrypted: the initramfs must unlock it before resuming.").arg(detail.toString());
++    if (code == QLatin1String("ready"))
++        return tr("Nothing found that would stop a hibernate.");
++    return {};
++}
++
+ void SleepPage::showEvent(QShowEvent *e) {
+     QWidget::showEvent(e);
+     refresh();
+diff --git a/gui/src/sleeppage.h b/gui/src/sleeppage.h
+index 4adcff6..eba5ac6 100644
+--- a/gui/src/sleeppage.h
++++ b/gui/src/sleeppage.h
+@@ -36,9 +36,11 @@ private:
+     void diagnose();
+     void showDiagnosis(const QJsonObject &r);
+     static QString findingText(const QString &code, const QJsonValue &detail);
+-    QLabel *summary_, *hint_, *sources_, *diagOut_;
++    void checkHibernate();
++    static QString hibernateText(const QString &code, const QJsonValue &detail);
++    QLabel *summary_, *hint_, *sources_, *diagOut_, *hibOut_;
+     QWidget *advice_;
+-    QPushButton *diag_;
++    QPushButton *diag_, *hib_;
+     QTreeWidget *sleeps_, *wake_;
+     bool filling_ = false;
+ };
