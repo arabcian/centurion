@@ -40,6 +40,8 @@
 //!   {"op":"guard_reset"}                               resume boot presets paused by centurion-boot-guard
 //!   {"op":"calibrate_on_boot","sessions":N,"budget":MIN,"scene":"..","cancel":bool}   tune-helper only:
 //!       schedule (or cancel) centurion-calibrate sessions at the next boot (centurion-calibrate-boot service)
+//!   {"op":"pstore_clear"}                              tune-helper only: copy every /sys/fs/pstore record (address-scrubbed) to
+//!       /var/lib/centurion/pstore/, remove only those that were archived (frees the EFI variables behind them)
 //!
 //! Values that fail centurion_helpers::autotune::audit's hard limits (e.g. an int32-
 //! wrapped vm.dirty_bytes of 8192) are never stored or written. After an apply
@@ -1048,6 +1050,11 @@ fn run() -> Value {
     match op {
         "health" => return centurion_helpers::health::scan(req["since"].as_u64().unwrap_or(0)),
         "klog" => return centurion_helpers::health::klog(req["since"].as_u64().unwrap_or(0)),
+        "overview" => return centurion_helpers::overview::request(&req),
+        "dgpu_usage" => return centurion_helpers::overview::dgpu_request(&req),
+        "battery_trend" => return centurion_helpers::trends::battery_request(&req),
+        "event_days" => return centurion_helpers::trends::event_request(&req),
+        "diag_report" => return centurion_helpers::diagreport::request(&req),
         "nvreg_describe" => return centurion_helpers::nvreg::describe(),
         "autotune" => return match req["goal"].as_str().and_then(centurion_helpers::autotune::Goal::parse) {
             Some(g) => centurion_helpers::autotune::autotune_req(g, &req["weights"], &req),
@@ -1090,6 +1097,8 @@ fn run() -> Value {
             _ => json!({"ok": false, "error": "wakeup_set needs 'device' (string) and 'enabled' (bool)"}),
         },
         "set_wireless_pm_lock" => op_set_wireless_pm_lock(&req),
+        // Takes nothing from the request: archives /sys/fs/pstore into /var/lib/centurion/pstore, then empties it.
+        "pstore_clear" => centurion_helpers::pstore::clear(),
         "boot" => op_boot(),
         "guard_reset" => match centurion_helpers::bootguard::reset() {
             Ok(v) => json!({"ok": true, "guard": v}),
@@ -1138,7 +1147,7 @@ mod tests {
     use super::*;
     #[test]
     fn profile_role_cannot_take_values() {
-        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot"] {
+        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear"] {
             assert!(!PROFILE_OPS.contains(&op), "{op} must stay tune-helper only");
         }
     }

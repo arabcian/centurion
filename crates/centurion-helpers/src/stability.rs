@@ -114,6 +114,9 @@ fn event_weight(kind: &str, level: &str) -> f64 {
     match (kind, level) {
         ("unclean", _) => 3.0,
         ("lockup", _) | ("gsp", _) | ("d3cold", _) => 2.0,
+        // Disk, file system, iGPU, Wi-Fi, thermal, OOM and kernel-bug events say nothing about the
+        // Curve Optimizer / undervolt / GPU curve: they must not fall through to the critical rule.
+        ("nvme" | "fs" | "igpu" | "wifi" | "thermal" | "oom" | "oops", _) => 0.0,
         (_, "critical") => 2.0,
         ("amdgpu", "error") => 1.0,
         _ => 0.0,
@@ -331,6 +334,13 @@ mod tests {
         assert!(bad.note().contains("vm.bad"));
         // vm.ok was changed in every boot: no "off" exposure, never judged.
         assert!(r.iter().all(|x| x.key != "vm.ok"));
+    }
+
+    #[test]
+    fn non_curve_event_kinds_weigh_nothing() {
+        for k in ["nvme:critical", "fs:critical", "thermal:critical", "igpu:error", "wifi:warn", "oom:warn", "oops:error"] {
+            assert_eq!(boot_events(&json!({"clean": true, "events": {k: 5}})), 0.0, "{k}");
+        }
     }
 
     #[test]

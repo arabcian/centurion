@@ -1,8 +1,8 @@
 //! Helper of Health → Network (same contract as the other helpers: one JSON
 //! request on stdin, one JSON line on stdout).
-//!   any user:  {"op":"list"}  {"op":"status"}  {"op":"whois", "ip": "address"}
+//!   any user:  {"op":"list"}  {"op":"status"}  {"op":"whois", "ip": "address"}  {"op":"wifi"}
 //!   root (pkexec):
-//!     {"op":"set", "guard": bool, "allow_lan": bool, "log_conns": bool}
+//!     {"op":"set", "guard": bool, "allow_lan": bool, "log_conns": bool, "traffic": bool}
 //!     {"op":"blacklist", "add": ["ip | cidr | first - last"], "label": "group", "remove": [...], "remove_all": bool}
 //!                                                                live sockets to added addresses are aborted
 //!     {"op":"whitelist", "add": ["path | dir/ | name.exe"], "remove": [...]}
@@ -15,7 +15,7 @@ use centurion_helpers::*;
 
 fn main() {
     init();
-    let out = match read_request(256 * 1024) {
+    let out = match read_request(4 << 20) {
         Ok(req) => netguard::handle(&req),
         Err(e) => e,
     };

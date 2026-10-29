@@ -61,6 +61,9 @@ private:
     void saveSettings();
     QString selected(QString *kind = nullptr) const;
     void select(const QString &path);
+    QStringList selectedPaths() const;
+    bool askKey(const QString &archive, QString *key);
+    void compareConfigs();
 
     void configRestore();
     void systemBackup();
@@ -75,8 +78,8 @@ private:
     QLabel *autoNote_ = nullptr, *remindNote_ = nullptr;
     class QTimer *autoTimer_ = nullptr;
 
-    QLineEdit *cfgDir_, *sysDir_, *target_;
-    QCheckBox *cfgProfile_, *cfgLogs_, *low_, *verify_, *home_;
+    QLineEdit *cfgDir_, *sysDir_, *target_, *recipient_;
+    QCheckBox *cfgProfile_, *cfgLogs_, *low_, *verify_, *home_, *incr_;
     QComboBox *comp_;
     QSpinBox *level_, *keep_;
     QPlainTextEdit *excludes_, *log_;

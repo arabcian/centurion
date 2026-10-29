@@ -11,19 +11,29 @@
 // (new lines only, while its tab is shown); the block log is watched with
 // inotify, so a new block reaches the tray without any polling. Rule changes
 // go through pkexec and take effect in the running daemon at once.
+// The Wi-Fi tab (signal, link rate, retries) appears only on a machine with a
+// wireless interface and is read by the same unprivileged helper, every 3 s while shown.
+// Traffic (bytes per program per day) is the netguard ledger file, read directly like the connection log.
 #include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
+#include <QDateTime>
 #include <QJsonObject>
+#include <QPointer>
 #include <QWidget>
 #include <functional>
+
+#include "blocklistsubs.h"
+#include "traffic.h"
 
 class QCheckBox;
 class QFileSystemWatcher;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidget;
 class QMenu;
+class QNetworkAccessManager;
 class QTabWidget;
 class QTimer;
 class QTreeWidget;
@@ -55,6 +65,14 @@ private:
     void connDetails(const QString &ip, int pid, const QString &exe, qint64 uid, const QString &state);
     void whois(const QString &ip, std::function<void(const QJsonObject &)> cb);
     void addIpActions(QMenu &m, const QString &ip);
+    void refreshWifi();
+    void applyWifi(const QJsonObject &w);
+    void subscriptions();
+    void fillTraffic();
+    bool loadTraffic();
+    void fillSubscriptions();
+    void updateSubscription(int row);
+    void changeSubscription(const QString &name, const std::function<void(BlocklistSub &)> &f);
     void blacklistNetwork(const QString &ip);
     void bulkBlacklist();
     void removeBlacklisted(bool all);
@@ -64,11 +82,22 @@ private:
     void changeList(const char *op, const char *verb, const QString &entry);
 
     QLabel *status_, *connInfo_;
-    QCheckBox *guard_, *lan_, *logConns_, *listening_;
+    QCheckBox *guard_, *lan_, *logConns_, *accounting_, *listening_;
     QTabWidget *tabs_;
+    QLabel *wifiText_;                        // Wi-Fi tab: link and station counters
+    QTimer *wifiTimer_;
+    int wifiTab_ = -1;
+    QPointer<QListWidget> subList_;           // open Subscriptions window
+    QNetworkAccessManager *nam_ = nullptr;
     QLineEdit *filter_, *logFilter_, *wlEdit_, *blEdit_;
     QLabel *logInfo_;
     QTreeWidget *conns_, *blocked_, *connLog_, *bl_;  // bl_: groups (entries banned together) with their entries
+    QTreeWidget *trafficTree_;
+    QLabel *trafficInfo_;
+    int trafficTab_ = -1;
+    TrafficDays trafficDays_;                 // Traffic ledger, reread when the file changed
+    QDateTime trafficSeen_;
+    bool trafficReadable_ = false;
     QListWidget *wl_;
     QStringList blacklist_;
     QTimer *timer_;

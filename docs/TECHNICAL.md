@@ -421,7 +421,19 @@ cached, for everyone (including a local admin).
 → `<folder>/backup-YYYY-MM-DD.tar.gz` (`_HHMMSS` added when the name exists;
 `.tar.zst` / `.tar.xz` with the other compressors), 0600 root, written as
 `.partial` and renamed, plus `<archive>.info.json` (entry count, kernel,
-excludes, tar status). Default excludes use the `/proc/*` form, not `/proc`:
+excludes, tar status, `level`, `chain`, `encrypted`).
+**Increments** (`recipient` absent, `incremental` true): every image gets a root-owned
+snapshot `<archive>.snar` (GNU tar `--listed-incremental`; a missing file makes a full dump).
+An increment copies the newest image's snapshot to `.<name>.snar.partial`, names the image
+`backup-DATE_HHMMSS-iN.tar.<ext>` and records `level` N and `chain` (the full image's name).
+After `MAX_LEVEL` (6) increments the next image is full again. Retention (`prune`) works per
+chain: the newest `keep` chains stay, and a chain is removed whole with its sidecars and snapshots.
+**Encryption** (`recipient` = `age1…`): the compressor's stdout goes through `age -r <key>` into the
+file, named `….tar.<ext>.age`. The public key is an argument, never a secret. A passphrase cannot be
+used: age 1.1.1 reads it only from a terminal, and ignores `AGE_PASSPHRASE`. Reading needs the
+secret key (`identity` in the request, written to a 0600 scratch file for that run, deleted after).
+An encrypted image is not verified at creation (only its key can read it); `verify` does it later.
+ Default excludes use the `/proc/*` form, not `/proc`:
 the empty mount points stay in the archive, so a restore onto a fresh file
 system boots. The archive itself and older `backup-*.tar.*` files in the
 folder are always excluded; `/home/*` unless "Include /home". tar status 1
@@ -430,13 +442,20 @@ archive and flags it. Optional: verify (read back through
 `<decompressor> | tar -t`, entry count compared), retention (newest N
 `backup-YYYY-MM-DD*` images kept), nice 19 + lowest best-effort I/O priority.
 
-**Restore** (`system_restore`, root): compression from the magic bytes, then
+**Restore** (`system_restore`, root): compression from the magic bytes (an encrypted image: `age -d -i <key>`,
+then the compression named by the `.tar.<ext>.age` file name), then
 `<decompressor> | tar --acls --xattrs --xattrs-include='*' --numeric-owner -xvpf - -C <target>`.
+An increment is restored after its full image and every increment before it, the later ones with
+`--listed-incremental=/dev/null` so the deletions they record are applied. Missing increments are named, never skipped.
 The request must repeat the resolved target (`confirm`); the GUI asks to type
 RESTORE for `/`. Missing mount points (`/proc /sys /dev /run /tmp /var/tmp
 /mnt /media /home`) are created afterwards, so images made with a plain
 `--exclude=/proc` restore to a bootable tree too. `--numeric-owner`: correct
 when restoring from live media whose passwd differs.
+
+**Compare** (`config_diff`, as the user): two configuration archives are unpacked into a 0700 scratch directory
+(`unpack`, links refused), their user and system files read into memory. JSON files are compared key by key
+(`a.b[0].c` paths), `.ini` files by section and key; other files as a whole. Reformatting alone is not a change.
 
 **Centurion configuration** (`config_backup`, as the user): readable files are staged
 and packed as `centurion-config-YYYY-MM-DD_HHMMSS.tar.gz` (0600):
@@ -945,6 +964,26 @@ the helpers (`tune::cpu_vendor()`).
 **Notifications** (`gui/src/notifyprefs.cpp`, `notifydialog.cpp`, `tray.cpp::gatedNotify`): `HealthTab::alert(category, severity, title, message)` carries the notifyprefs key (`kernel`, `network`, `backup`, `curve`, `smart`, `heat`) and, for kernel alerts, the worst severity (`error` / `critical`). `notifyprefs::decide` is the whole gate (Show / Hide / Defer); the Tray holds deferred lines while `scenes::gameSessions() > 0` (`/run/centurion/tune/state.json`, written by the game hooks) and sends one summary from `flushDeferred()` when a game ends (`LauncherWatch::gameEnded`, or `SceneEngine::activeSceneChanged` with a non-game scene). Settings in `gui.ini` `notify/off`, `notify/critical_only`, `notify/defer_game`. Test: `gui/tests/notifyprefs_test.cpp`.
 
 **Charger history** (`gui/src/batterypage.cpp`, `batteryadvice.cpp`): on every tick the page adds the seconds on the charger to `ac_days[today]` (and those at capacity ≥ 98 % to `full`), using the same monotonic-gap rule as the scene statistics, so a suspend ends the stretch. A *drain stretch* (`ac_drain`) is open while the charger is plugged in and `status` is `Discharging`; it is saved when it ends, if it lasted a minute or more, with its energy taken from `energy_now` differences. `batteryadvice::evaluate` decides the Long_Life advice from the last 30 days; `parseChargeTypes` reads the bracketed mode from the battery's `charge_types`. The button calls `legion-profile-helper` `charge_type` through `privileged::run`, as Home does. Test: `gui/tests/batteryadvice_test.cpp`.
+
+## Network: traffic ledger, Wi-Fi, blocklist subscriptions
+
+- **Traffic** (`crates/centurion-helpers/src/traffic.rs`, `netguard.rs` `acct_*`): with `traffic: true`
+  in `/etc/centurion/netguard.json` the daemon sets `net.netfilter.nf_conntrack_acct = 1` (logged in
+  `writes.log`), opens a NETLINK_NETFILTER socket on groups NEW (1) and DESTROY (3), and adds an `ct state
+  invalid counter` rule (no verdict) so conntrack tracks local flows. At NEW the owner is looked up while the
+  socket exists (sock_diag, then `/proc/<pid>/fd` in batches); at DESTROY the counters are added to that
+  program's day in the ledger. Forwarded flows (no local socket) are ignored. Totals are written at most every
+  10 s (`TRAFFIC_FLUSH`) and on stop. File: 0640 root:wheel, 90 days, 256 programs per day (rest under
+  `(other)`). Connections the daemon did not see open are not counted.
+- **Wi-Fi** (`wifi.rs`): `iw dev <if> link` and `iw dev <if> station dump`, unprivileged, through the
+  user op `netguard-helper {"op":"wifi"}`. The first `/sys/class/net/*` with `phy80211` or `wireless`. Warnings:
+  signal below −75 dBm; retries above 10 % or failures above 2 % of transmitted packets (since association).
+- **Blocklist subscriptions** (`gui/src/blocklistsubs.*`, `netpage.cpp` `updateSubscription`): stored in
+  `gui.ini` as `netguard_subs/N/*`. The GUI downloads over https (30 s timeout, 8 MiB cap), parses
+  (`parseBlocklist`: at most 100 000 tokens), and sends one `blacklist` request: `add` = new list, `remove` = the
+  group's entries the new list no longer has, `label` = the subscription name. The helper validates every entry
+  and saves once, so a refused request changes nothing. The blacklist cap is `MAX_BLACKLIST = 100 000`; the
+  helper request limit is 4 MiB and the config read limit 8 MiB.
 
 ## Health analysis ops (read-only)
 

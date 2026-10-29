@@ -43,7 +43,7 @@ fn near_range(r: std::ops::Range<f64>) -> impl Strategy<Value = f64> {
 
 fn metrics() -> impl Strategy<Value = Metrics> {
     (20.0..60.0f64, 40.0..100.0f64, prop::option::of(0.0..9000.0f64), prop::option::of(400.0..6000.0f64))
-        .prop_map(|(start_temp, steady_temp, fan_rpm, mhz)| Metrics { start_temp, steady_temp, max_temp: steady_temp + 2.0, fan_rpm, mhz })
+        .prop_map(|(start_temp, steady_temp, fan_rpm, mhz)| Metrics { start_temp, steady_temp, max_temp: steady_temp + 2.0, fan_rpm, mhz, fan_spread: None })
 }
 
 fn rank(l: Level) -> u8 {
@@ -250,7 +250,7 @@ proptest! {
     /// The steady-state temperature is an average of readings: it stays between their extremes.
     #[test]
     fn cooling_summary_is_bounded(temps in vec(30.0..105.0f64, 1..200)) {
-        let samples: Vec<Sample> = temps.iter().enumerate().map(|(i, t)| Sample { t: i as f64 * 2.0, temp: *t, fan: None, mhz: None }).collect();
+        let samples: Vec<Sample> = temps.iter().enumerate().map(|(i, t)| Sample { t: i as f64 * 2.0, temp: *t, fan: None, mhz: None, fans: vec![] }).collect();
         let m = summarise(&samples, 40.0).unwrap();
         let (lo, hi) = (temps.iter().cloned().fold(f64::MAX, f64::min), temps.iter().cloned().fold(f64::MIN, f64::max));
         prop_assert!(m.steady_temp >= lo - 1e-9 && m.steady_temp <= hi + 1e-9);
@@ -266,7 +266,7 @@ proptest! {
         for (i, (op, c, temp, noisy)) in ops.into_iter().enumerate() {
             let c = &contexts[c];
             match op {
-                0 | 1 => add_run(&mut runs, run_json(i as i64, c, &Metrics { start_temp: 45.0, steady_temp: temp, max_temp: temp + 1.0, fan_rpm: None, mhz: None }, noisy, 240)),
+                0 | 1 => add_run(&mut runs, run_json(i as i64, c, &Metrics { start_temp: 45.0, steady_temp: temp, max_temp: temp + 1.0, fan_rpm: None, mhz: None, fan_spread: None }, noisy, 240)),
                 _ if i % 2 == 0 => { promote_latest(&mut runs, &c.key()); }
                 _ => forget(&mut runs, &c.key()),
             }

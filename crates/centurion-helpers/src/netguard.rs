@@ -8,6 +8,8 @@
 //!                       and process, and if that is a Wine program which is
 //!                       not whitelisted: verdict DROP, socket destroyed
 //!                       (SOCK_DESTROY), one line in the block log.
+//!   * traffic           switchable (`traffic`): conntrack NEW/DESTROY events are matched to the owning program
+//!                       and its byte counters are added to a per-day ledger (traffic.rs). Nothing is sampled.
 //!   * connection log    switchable (`log_conns`): the first packet of every new
 //!                       flow, outbound and inbound, goes through the same queue,
 //!                       is accepted at once and written to the connection log
@@ -15,6 +17,7 @@
 //!
 //! Config   /etc/centurion/netguard.json   (root-owned, world-readable)
 //! Log      /var/log/centurion/netguard.log (JSON lines, rotated at 1 MiB)
+//! Traffic  /var/lib/centurion/traffic.json (per-day totals, written at most every TRAFFIC_FLUSH)
 //!          /var/log/centurion/connections.log (JSON lines, rotated at 4 MiB)
 //! Daemon   centurion-netguard daemon; holds a lock on /run/centurion/netguard.pid,
 //!          reloads on SIGHUP (sent by the helper after every rule change).
@@ -42,6 +45,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{Duration, Instant};
+use crate::traffic;
 
 pub const CONF_DIR: &str = "/etc/centurion";
 pub const CONF_FILE: &str = "/etc/centurion/netguard.json";
@@ -57,8 +61,14 @@ const FLUSH_GAP: Duration = Duration::from_millis(200);
 const HOOK_LOCAL_IN: u8 = 1;  // NF_INET_LOCAL_IN
 const QUEUE_NUM: u16 = 19536;
 const TABLE: &str = "centurion_netguard";
-const MAX_BLACKLIST: usize = 4096;
+/// Entries in the IP blacklist. Large enough for a published netset (a subscription, Rules → Subscriptions…).
+const MAX_BLACKLIST: usize = 100_000;
 const MAX_WHITELIST: usize = 1024;
+const NETLINK_NETFILTER: libc::c_int = 12;
+const NFNLGRP_CONNTRACK_NEW: u32 = 1;
+const NFNLGRP_CONNTRACK_DESTROY: u32 = 3;
+const NF_ACCT_SYSCTL: &str = "/proc/sys/net/netfilter/nf_conntrack_acct";
+const TRAFFIC_FLUSH: Duration = Duration::from_secs(10);
 
 pub const KCONFIG: &[&str] = &["NETFILTER_NETLINK_QUEUE", "NF_TABLES", "NF_TABLES_INET", "NFT_QUEUE", "NF_CONNTRACK",
                                "NFT_CT", "INET_DIAG", "INET_TCP_DIAG", "INET_UDP_DIAG", "INET_DIAG_DESTROY"];
@@ -153,6 +163,8 @@ pub struct Config {
     pub allow_lan: bool,
     /// Log every new connection, outbound and inbound, to CONN_LOG.
     pub log_conns: bool,
+    /// Count bytes per program per day (traffic.rs).
+    pub traffic: bool,
     /// Exact path, directory prefix (trailing '/') or bare file name (case-insensitive).
     pub whitelist: Vec<String>,
     pub blacklist: Vec<Net>,
@@ -161,7 +173,7 @@ pub struct Config {
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new() } }
+    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new() } }
 }
 
 fn basename(s: &str) -> &str { s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s) }
@@ -171,7 +183,7 @@ fn valid_entry(s: &str) -> bool { !s.is_empty() && s.len() <= 512 && !s.chars().
 impl Config {
     pub fn load() -> Result<Config, String> {
         if !Path::new(CONF_FILE).exists() { return Ok(Config::default()); }
-        let text = crate::read_root_file(CONF_FILE, 1 << 20).ok_or_else(|| format!("{CONF_FILE} is not a root-owned regular file"))?;
+        let text = crate::read_root_file(CONF_FILE, 8 << 20).ok_or_else(|| format!("{CONF_FILE} is not a root-owned regular file"))?;
         let v: Value = serde_json::from_str(&text).map_err(|e| format!("{CONF_FILE}: {e}"))?;
         let strs = |k: &str| v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect::<Vec<_>>()).unwrap_or_default();
         let blacklist: Vec<Net> = strs("blacklist").iter().filter_map(|s| Net::parse(s)).take(MAX_BLACKLIST).collect();
@@ -182,6 +194,7 @@ impl Config {
             guard: v["guard"].as_bool().unwrap_or(false),
             allow_lan: v["allow_lan"].as_bool().unwrap_or(true),
             log_conns: v["log_conns"].as_bool().unwrap_or(false),
+            traffic: v["traffic"].as_bool().unwrap_or(false),
             whitelist: strs("whitelist").into_iter().filter(|s| valid_entry(s)).take(MAX_WHITELIST).collect(),
             blacklist,
             labels,
@@ -189,7 +202,7 @@ impl Config {
     }
 
     pub fn to_json(&self) -> Value {
-        json!({"guard": self.guard, "allow_lan": self.allow_lan, "log_conns": self.log_conns, "whitelist": self.whitelist,
+        json!({"guard": self.guard, "allow_lan": self.allow_lan, "log_conns": self.log_conns, "traffic": self.traffic, "whitelist": self.whitelist,
                "blacklist": self.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), "labels": self.labels})
     }
 
@@ -533,11 +546,13 @@ fn nft_script(cfg: &Config) -> String {
     // Loopback first, before the blacklist drops: an entry or range that covers 127.0.0.0/8 or ::1
     // (e.g. "0.0.0.0 - 255.255.255.254") must not cut the machine off from its own local services.
     s += "\tchain in {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tiifname \"lo\" accept\n\t\tip saddr @bl4 drop\n\t\tip6 saddr @bl6 drop\n";
+    if cfg.traffic { s += "\t\tct state invalid counter\n"; }
     if cfg.log_conns {
         s += "\t\tct state != new accept\n\t\tmeta pkttype { broadcast, multicast } accept\n";
         s += &queue;
     }
     s += "\t}\n\tchain out {\n\t\ttype filter hook output priority 0; policy accept;\n\t\toifname \"lo\" accept\n\t\tip daddr @bl4 drop\n\t\tip6 daddr @bl6 drop\n";
+    if cfg.traffic { s += "\t\tct state invalid counter\n"; }
     if cfg.guard || cfg.log_conns {
         s += "\t\tct state != new accept\n";
         // With the connection log on, LAN flows must reach the daemon too; it applies the exemption itself.
@@ -727,7 +742,18 @@ struct Guard {
     owners: HashMap<u32, i32>,             // socket inode → pid
     owners_at: Instant,
     hot: Vec<i32>,                         // pids that owned the last logged sockets, searched first
+    acct: Option<Acct>,                    // traffic accounting, while switched on
 }
+
+/// Per-program traffic accounting: the conntrack socket, the connections open now, and the day ledger.
+struct Acct {
+    fd: OwnedFd,
+    open: HashMap<u32, Conn>,              // conntrack id → owner, from NEW until DESTROY
+    ledger: traffic::Ledger,
+    dirty: Option<Instant>,                // totals changed and not written yet
+}
+
+struct Conn { exe: String, inbound: bool }
 
 /// One new flow waiting for its connection-log line.
 struct Seen { ts: u64, inbound: bool, f: Flow, host: String, blocked: bool, open: bool, inode: u32, uid: Option<u32>, pid: i32, exe: String }
@@ -888,6 +914,65 @@ impl Guard {
         if !out.is_empty() { append_log(CONN_LOG, CONN_LOG_MAX, &out); }
     }
 
+    /// Starts or stops traffic accounting to match the configuration.
+    fn sync_acct(&mut self) -> Result<(), String> {
+        if !self.cfg.traffic {
+            self.acct_save();
+            self.acct = None;
+            return Ok(());
+        }
+        if self.acct.is_some() { return Ok(()); }
+        enable_ct_accounting()?;
+        let fd = ct_open().map_err(|e| format!("traffic accounting: conntrack events unavailable: {e} (kernel: NF_CT_NETLINK)"))?;
+        self.acct = Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None });
+        Ok(())
+    }
+
+    /// Reads the conntrack events queued so far. A new connection is tied to its owner now, while its socket
+    /// exists; a connection that ended is counted under the program it was tied to.
+    fn acct_read(&mut self) {
+        let mut evs = Vec::new();
+        {
+            let Some(a) = self.acct.as_ref() else { return };
+            let mut buf = vec![0u8; 32768];
+            for _ in 0..64 {
+                let Ok(n) = nl_recv(&a.fd, &mut buf, libc::MSG_DONTWAIT) else { break };
+                nl_each(&buf[..n], |ty, p| if let Some(ev) = traffic::parse_ct(ty, p) { evs.push(ev) });
+            }
+        }
+        let (mut fresh, mut ended) = (Vec::new(), Vec::new());
+        for ev in evs {
+            if ev.delete { ended.push(ev); continue; }
+            let f = Flow { proto: ev.proto, src: ev.src, sport: ev.sport, dst: ev.dst, dport: ev.dport, l4: 0 };
+            if let Some(s) = self.diag.find_socket(&f) { fresh.push((ev.id, false, s.inode)); }
+            else if let Some(s) = self.diag.find_local(&f) { fresh.push((ev.id, true, s.inode)); }  // no local socket: forwarded, not counted
+        }
+        self.find_owners(fresh.iter().map(|x| x.2).filter(|&i| i != 0).collect());
+        let mut names = HashMap::new();
+        let mut opened = Vec::with_capacity(fresh.len());
+        for (id, inbound, inode) in fresh {
+            let pid = self.owners.get(&inode).copied().unwrap_or(0);
+            let exe = if pid == 0 { traffic::UNKNOWN.to_owned() } else { self.program(pid, &mut names) };
+            opened.push((id, Conn { exe, inbound }));
+        }
+        let Some(a) = self.acct.as_mut() else { return };
+        if a.open.len() > 16384 { a.open.clear(); }
+        a.open.extend(opened);
+        for ev in ended {
+            let Some(c) = a.open.remove(&ev.id) else { continue };
+            let (tx, rx) = if c.inbound { (ev.reply_bytes, ev.orig_bytes) } else { (ev.orig_bytes, ev.reply_bytes) };
+            a.ledger.add(&traffic::local_day(now_secs()), &c.exe, tx, rx);
+            a.dirty.get_or_insert_with(Instant::now);
+        }
+    }
+
+    fn acct_save(&mut self) {
+        let gid = log_gid();
+        let Some(a) = self.acct.as_mut() else { return };
+        a.dirty = None;
+        if let Err(e) = a.ledger.save(gid) { eprintln!("centurion-netguard: traffic totals not saved: {e}"); }
+    }
+
     /// Writes the pending connection-log lines (runs after the verdicts went out).
     fn flush(&mut self) {
         self.flushed = Instant::now();
@@ -924,6 +1009,28 @@ impl Guard {
     }
 }
 
+/// Conntrack events for new and destroyed connections (ctnetlink multicast groups).
+fn ct_open() -> io::Result<OwnedFd> {
+    let raw = unsafe { libc::socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, NETLINK_NETFILTER) };
+    if raw < 0 { return Err(io::Error::last_os_error()); }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let mut sa: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
+    sa.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+    sa.nl_groups = (1 << (NFNLGRP_CONNTRACK_NEW - 1)) | (1 << (NFNLGRP_CONNTRACK_DESTROY - 1));
+    let r = unsafe { libc::bind(raw, &sa as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t) };
+    if r < 0 { return Err(io::Error::last_os_error()); }
+    Ok(fd)
+}
+
+/// Byte counters per connection need nf_conntrack_acct, which is off by default. Switched on once, and logged.
+fn enable_ct_accounting() -> Result<(), String> {
+    let cur = std::fs::read_to_string(NF_ACCT_SYSCTL).map_err(|e| format!("{NF_ACCT_SYSCTL}: {e} (kernel: NF_CONNTRACK)"))?;
+    if cur.trim() == "1" { return Ok(()); }
+    std::fs::write(NF_ACCT_SYSCTL, b"1\n").map_err(|e| format!("{NF_ACCT_SYSCTL}: {e}"))?;
+    crate::wlog::log("sysctl", "net.netfilter.nf_conntrack_acct <- 1 (per-program traffic accounting)");
+    Ok(())
+}
+
 /// Takes the daemon lock and records our pid; None if another daemon holds it.
 fn lock_daemon() -> Option<std::fs::File> {
     crate::secure_dir(RUN_DIR).ok()?;
@@ -947,7 +1054,7 @@ pub fn daemon_pid() -> Option<i32> {
 /// What the running daemon really enforces, for `status`: the helper and the GUI
 /// compare it with the saved configuration (an older daemon writes nothing here).
 fn write_state(cfg: &Config, error: Option<&str>) {
-    let _ = crate::write_root_file(STATE_FILE, json!({"guard": cfg.guard, "allow_lan": cfg.allow_lan, "log_conns": cfg.log_conns, "error": error}).to_string().as_bytes());
+    let _ = crate::write_root_file(STATE_FILE, json!({"guard": cfg.guard, "allow_lan": cfg.allow_lan, "log_conns": cfg.log_conns, "traffic": cfg.traffic, "error": error}).to_string().as_bytes());
 }
 
 fn applied() -> Value {
@@ -955,7 +1062,7 @@ fn applied() -> Value {
 }
 
 fn in_force(cfg: &Config, a: &Value) -> bool {
-    a["error"].is_string() || (a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns)
+    a["error"].is_string() || (a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns && a["traffic"] == cfg.traffic)
 }
 
 pub fn run_daemon() -> i32 {
@@ -990,7 +1097,8 @@ pub fn run_daemon() -> i32 {
               if cfg.guard { "on" } else { "off" }, if cfg.log_conns { "on" } else { "off" }, cfg.blacklist.len(), cfg.whitelist.len());
     let mut g = Guard { cfg, diag, wine: HashSet::new(), idents: HashMap::new(), scanned: Instant::now(),
                         last_pid: String::new(), logged: HashMap::new(), pending: Vec::new(), flushed: Instant::now(),
-                        seen: HashMap::new(), owners: HashMap::new(), owners_at: Instant::now(), hot: Vec::new() };
+                        seen: HashMap::new(), owners: HashMap::new(), owners_at: Instant::now(), hot: Vec::new(), acct: None };
+    if let Err(e) = g.sync_acct() { eprintln!("centurion-netguard: {e}"); write_state(&g.cfg, Some(&e)); }
     if g.cfg.log_conns { g.snapshot(); }
     g.sweep();
     let mut buf = [0u8; 8192];
@@ -999,7 +1107,7 @@ pub fn run_daemon() -> i32 {
             match Config::load() {
                 Ok(c) => {
                     let was_logging = std::mem::replace(&mut g.cfg, c).log_conns;
-                    let res = nft_run(&nft_script(&g.cfg));
+                    let res = nft_run(&nft_script(&g.cfg)).and_then(|_| g.sync_acct());
                     write_state(&g.cfg, res.as_ref().err().map(String::as_str));
                     match res {
                         Ok(()) => {
@@ -1013,11 +1121,19 @@ pub fn run_daemon() -> i32 {
                 Err(e) => eprintln!("centurion-netguard: reload failed, keeping the old rules: {e}"),
             }
         }
-        // Pending log lines wake the loop when their batch window ends; otherwise it sleeps until a packet or signal.
-        let wait = if g.pending.is_empty() { -1 } else { FLUSH_GAP.saturating_sub(g.flushed.elapsed()).as_millis() as libc::c_int };
+        // Pending log lines and traffic totals wake the loop when their batch window ends; otherwise it sleeps
+        // until a packet, a conntrack event or a signal.
+        let mut wait = if g.pending.is_empty() { None } else { Some(FLUSH_GAP.saturating_sub(g.flushed.elapsed())) };
+        if let Some(d) = g.acct.as_ref().and_then(|a| a.dirty) {
+            let left = TRAFFIC_FLUSH.saturating_sub(d.elapsed());
+            wait = Some(wait.map_or(left, |w| w.min(left)));
+        }
+        let wait = wait.map_or(-1, |d| d.as_millis() as libc::c_int);
+        let ct_fd = g.acct.as_ref().map_or(-1, |a| a.fd.as_raw_fd());  // a negative fd is ignored by poll
         let mut fds = [libc::pollfd { fd: queue.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 },
-                       libc::pollfd { fd: pipe[0], events: libc::POLLIN, revents: 0 }];
-        if unsafe { libc::poll(fds.as_mut_ptr(), 2, wait) } < 0 { continue; }  // EINTR: flags are checked above
+                       libc::pollfd { fd: pipe[0], events: libc::POLLIN, revents: 0 },
+                       libc::pollfd { fd: ct_fd, events: libc::POLLIN, revents: 0 }];
+        if unsafe { libc::poll(fds.as_mut_ptr(), 3, wait) } < 0 { continue; }  // EINTR: flags are checked above
         if fds[1].revents != 0 { let mut b = [0u8; 64]; unsafe { libc::read(pipe[0], b.as_mut_ptr().cast(), b.len()); } }
         if fds[0].revents != 0 {
             for _ in 0..64 {  // then back to poll, so a flood cannot starve SIGTERM/SIGHUP
@@ -1029,8 +1145,11 @@ pub fn run_daemon() -> i32 {
                 for (id, accept) in pkts { queue.verdict(id, accept); }
             }
         }
+        if fds[2].revents != 0 { g.acct_read(); }
         if !g.pending.is_empty() && g.flushed.elapsed() >= FLUSH_GAP { g.flush(); }
+        if g.acct.as_ref().and_then(|a| a.dirty).map_or(false, |d| d.elapsed() >= TRAFFIC_FLUSH) { g.acct_save(); }
     }
+    g.acct_save();
     nft_remove();
     let _ = std::fs::remove_file(STATE_FILE);
     eprintln!("centurion-netguard: stopped");
@@ -1140,6 +1259,7 @@ pub fn handle(req: &Value) -> Value {
         "list" => return list(),
         "status" => return status(true),
         "whois" => return whois(req["ip"].as_str().unwrap_or("")),
+        "wifi" => return crate::wifi::status(),
         _ => {}
     }
     if unsafe { libc::geteuid() } != 0 { return json!({"ok": false, "needs_root": true, "error": "this operation needs root (pkexec)"}); }
@@ -1150,6 +1270,7 @@ pub fn handle(req: &Value) -> Value {
             if let Some(b) = req["guard"].as_bool() { cfg.guard = b; }
             if let Some(b) = req["allow_lan"].as_bool() { cfg.allow_lan = b; }
             if let Some(b) = req["log_conns"].as_bool() { cfg.log_conns = b; }
+            if let Some(b) = req["traffic"].as_bool() { cfg.traffic = b; }
         }
         "blacklist" => {
             let label = req["label"].as_str().map(|l| l.chars().filter(|c| !c.is_control()).take(64).collect::<String>().trim().to_owned())

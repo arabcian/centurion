@@ -5,6 +5,7 @@
 #include "sysinfo.h"
 #include "theme.h"
 
+#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -69,9 +70,11 @@ QJsonObject readJson(const QString &path) {
     return QJsonDocument::fromJson(f.readAll()).object();
 }
 
+// Mirrors backup::is_image_name (increments "-iN" are part of the name; encrypted images end in ".age").
 bool isImageName(const QString &n) {
     return n.startsWith(QLatin1String("backup-")) &&
-           (n.endsWith(QLatin1String(".tar.gz")) || n.endsWith(QLatin1String(".tar.zst")) || n.endsWith(QLatin1String(".tar.xz")));
+           (n.endsWith(QLatin1String(".tar.gz")) || n.endsWith(QLatin1String(".tar.zst")) || n.endsWith(QLatin1String(".tar.xz")) ||
+            n.endsWith(QLatin1String(".tar.gz.age")) || n.endsWith(QLatin1String(".tar.zst.age")) || n.endsWith(QLatin1String(".tar.xz.age")));
 }
 bool isConfigName(const QString &n) { return n.startsWith(QLatin1String("centurion-config-")) && n.endsWith(QLatin1String(".tar.gz")); }
 
@@ -130,6 +133,12 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     cr->addWidget(ci, 1);
     connect(action("Back up now", cr, "btnAccent"), &QPushButton::clicked, this, &BackupPage::configBackup);
     connect(action("Restore selected…", cr), &QPushButton::clicked, this, &BackupPage::configRestore);
+    auto *bCmp = new QPushButton(tr("Compare two…"));
+    bCmp->setToolTip(tr("Select two \"Centurion configuration\" archives (Ctrl+click) to see what changed between them: files, and keys "
+                        "in JSON and .ini files. Reads only; restores nothing."));
+    actions_.append(bCmp);
+    cr->addWidget(bCmp);
+    connect(bCmp, &QPushButton::clicked, this, &BackupPage::compareConfigs);
     cv->addLayout(cr);
     // Automatic: made by the tray app itself (as you, no password), when the newest configuration backup is older than this.
     auto *ar = new QHBoxLayout;
@@ -191,7 +200,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     keep_->setRange(0, 99);
     keep_->setSpecialValueText(QStringLiteral("all"));
     keep_->setValue(st.value(QStringLiteral("keep"), 0).toInt());
-    keep_->setToolTip(QStringLiteral("After a successful image, older backup-YYYY-MM-DD images in this folder beyond this count are deleted."));
+    keep_->setToolTip(QStringLiteral("After a successful image, older image sets in this folder beyond this count are deleted. A set is a full image with its increments, removed whole."));
     o->addWidget(new QLabel(QStringLiteral("Compression")));
     o->addWidget(comp_);
     o->addWidget(new QLabel(QStringLiteral("Level")));
@@ -203,6 +212,21 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     o->addWidget(keep_);
     o->addStretch(1);
     sv->addLayout(o);
+
+    auto *ir = new QHBoxLayout;
+    incr_ = new QCheckBox(tr("Incremental"));
+    incr_->setChecked(st.value(QStringLiteral("incremental"), false).toBool());
+    incr_->setToolTip(tr("Only what changed since the newest image in the folder. The first image is a full one; up to 6 increments follow it. "
+                         "A chain is only ever pruned whole, and a restore applies the full image and then each increment in order."));
+    recipient_ = new QLineEdit(st.value(QStringLiteral("recipient")).toString().trimmed());
+    recipient_->setPlaceholderText(tr("encrypt to: age1… public key (empty = not encrypted)"));
+    recipient_->setToolTip(tr("Encrypts the image with age to this public key (a public key is not a secret). Reading the image back needs the "
+                              "matching AGE-SECRET-KEY line, which Centurion asks for when needed and never stores. Keep that key somewhere other "
+                              "than this computer: without it the image cannot be read."));
+    ir->addWidget(incr_);
+    ir->addWidget(new QLabel(tr("Encrypt to")));
+    ir->addWidget(recipient_, 1);
+    sv->addLayout(ir);
 
     auto *er = new QHBoxLayout;
     auto *el = new QLabel(QStringLiteral("Exclude"));
@@ -253,6 +277,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     list_->setHeaderLabels({QStringLiteral("Archive"), QStringLiteral("Kind"), QStringLiteral("Size"), QStringLiteral("Written"), QStringLiteral("Notes")});
     list_->setRootIsDecorated(false);
     list_->setAlternatingRowColors(true);
+    list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     list_->setUniformRowHeights(true);
     for (int i = 0; i < 4; ++i) list_->header()->setSectionResizeMode(i, QHeaderView::ResizeToContents);
     list_->header()->setStretchLastSection(true);
@@ -386,6 +411,8 @@ void BackupPage::saveSettings() {
     st.setValue(QStringLiteral("verify"), verify_->isChecked());
     st.setValue(QStringLiteral("include_home"), home_->isChecked());
     st.setValue(QStringLiteral("keep"), keep_->value());
+    st.setValue(QStringLiteral("incremental"), incr_->isChecked());
+    st.setValue(QStringLiteral("recipient"), recipient_->text().trimmed());
     st.setValue(QStringLiteral("excludes"), excludes_->toPlainText());
     st.setValue(QStringLiteral("restore_target"), target_->text());
     if (autoDays_) {
@@ -437,6 +464,8 @@ void BackupPage::refreshList() {
                 if (!str(info, "verified").isEmpty()) notes << QStringLiteral("verified");
                 if (info.value(QLatin1String("include_home")).toBool()) notes << QStringLiteral("with /home");
                 if (num(info, "tar_status") == 2) notes << QStringLiteral("tar reported errors");
+                if (info.value(QLatin1String("encrypted")).toBool()) notes << tr("encrypted");
+                if (num(info, "level") > 0) notes << tr("increment %1").arg(num(info, "level"));
                 if (!str(info, "kernel").isEmpty()) notes << QStringLiteral("kernel ") + str(info, "kernel");
             }
         } else if (e.fi.fileName().contains(QLatin1String("pre-restore"))) {
@@ -464,6 +493,12 @@ QString BackupPage::selected(QString *kind) const {
     if (!it) return {};
     if (kind) *kind = it->data(0, KindRole).toString();
     return it->data(0, PathRole).toString();
+}
+
+QStringList BackupPage::selectedPaths() const {
+    QStringList out;
+    for (const QTreeWidgetItem *it : list_->selectedItems()) out << it->data(0, PathRole).toString();
+    return out;
 }
 
 // ── job plumbing ────────────────────────────────────────────────────────────
@@ -679,17 +714,27 @@ void BackupPage::systemBackup() {
     QJsonArray ex;
     for (const QString &l : excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts))
         if (!l.trimmed().isEmpty()) ex.append(l.trimmed());
+    const QString recipient = recipient_->text().trimmed();
+    if (!recipient.isEmpty() && !recipient.startsWith(QLatin1String("age1"))) {
+        finished(tr("\"Encrypt to\" needs an age public key (age1…), or leave it empty."), false);
+        return;
+    }
     log_->clear();
-    run({{"op", "system_backup"}, {"dest_dir", dir}, {"compressor", comp_->currentData().toString()}, {"level", level_->value()},
-         {"include_home", home_->isChecked()}, {"excludes", ex}, {"low_priority", low_->isChecked()},
-         {"verify", verify_->isChecked()}, {"keep", keep_->value()}},
-        true, QStringLiteral("Waiting for the administrator password…"), [this](const QJsonObject &r) {
+    if (!recipient.isEmpty())
+        log(tr("Encrypted: keep the AGE-SECRET-KEY that goes with this key somewhere other than this computer. Without it the image cannot be read."), theme::WARN);
+    QJsonObject req{{"op", "system_backup"}, {"dest_dir", dir}, {"compressor", comp_->currentData().toString()}, {"level", level_->value()},
+                    {"include_home", home_->isChecked()}, {"excludes", ex}, {"low_priority", low_->isChecked()},
+                    {"verify", verify_->isChecked()}, {"keep", keep_->value()}, {"incremental", incr_->isChecked()}};
+    if (!recipient.isEmpty()) req["recipient"] = recipient;
+    run(req, true, QStringLiteral("Waiting for the administrator password…"), [this](const QJsonObject &r) {
             for (const QJsonValue &m : r.value("messages").toArray()) log(m.toString(), theme::WARN);
             if (!r.value("ok").toBool()) { finished(QStringLiteral("System image failed: ") + str(r, "error"), false); return; }
             for (const QJsonValue &d : r.value("removed").toArray()) log(QStringLiteral("removed old image ") + d.toString());
             QString s = QStringLiteral("%1 written: %2, %L3 entries, %4").arg(QFileInfo(str(r, "archive")).fileName(), human(num(r, "bytes")))
                             .arg(num(r, "files")).arg(clock(num(r, "elapsed")));
             if (r.value("verified").toBool()) s += QStringLiteral(", verified");
+            if (r.value("encrypted").toBool()) s += tr(", encrypted: verify it with its key");
+            if (num(r, "level") > 0) s += tr(", increment %1").arg(num(r, "level"));
             if (r.value("degraded").toBool()) s += QStringLiteral(" — tar reported errors on some files (%1 message(s) below)").arg(num(r, "message_count"));
             else if (num(r, "message_count") > 0) s += QStringLiteral(" — %1 tar note(s), e.g. files that changed while being read").arg(num(r, "message_count"));
             finished(s, !r.value("degraded").toBool());
@@ -697,12 +742,92 @@ void BackupPage::systemBackup() {
         });
 }
 
-void BackupPage::verifySelected() {
-    const QString archive = selected();
-    if (archive.isEmpty()) { finished(QStringLiteral("Select an archive in the list first."), false); return; }
+// Asks for the age secret key of an encrypted image. It is passed to the helper for this run only: never stored.
+bool BackupPage::askKey(const QString &archive, QString *key) {
+    bool ok = false;
+    const QString typed = QInputDialog::getText(this, tr("Age key"),
+        tr("%1 is encrypted. Paste its AGE-SECRET-KEY-1… line. It is used for this run only and is not kept.").arg(QFileInfo(archive).fileName()),
+        QLineEdit::Password, QString(), &ok).trimmed();
+    if (!ok || typed.isEmpty()) return false;
+    *key = typed;
+    return true;
+}
+
+// Two configuration archives → what changed from the first to the second (backup::config_diff).
+void BackupPage::compareConfigs() {
+    QStringList two;
+    for (const QString &p : selectedPaths()) if (isConfigName(QFileInfo(p).fileName())) two << p;
+    if (two.size() != 2) {
+        finished(tr("Select exactly two \"Centurion configuration\" archives (Ctrl+click) to compare."), false);
+        return;
+    }
     log_->clear();
-    // A system image is 0600 root: reading it back needs the password too.
-    run({{"op", "verify"}, {"archive", archive}}, !QFileInfo(archive).isReadable(), QStringLiteral("Verifying…"), [this, archive](const QJsonObject &r) {
+    run({{"op", "config_diff"}, {"a", two[0]}, {"b", two[1]}}, false, tr("Comparing the configurations…"), [this, two](const QJsonObject &r) {
+        if (!r.value("ok").toBool()) { finished(tr("Comparison failed: ") + str(r, "error"), false); return; }
+        const auto val = [](const QJsonValue &v) { return v.isNull() ? tr("(none)") : v.toString(); };
+        log(tr("A: %1 (made %2)").arg(QFileInfo(two[0]).fileName(), str(r.value("a").toObject(), "created").left(16)), theme::MUTED);
+        log(tr("B: %1 (made %2)").arg(QFileInfo(two[1]).fileName(), str(r.value("b").toObject(), "created").left(16)), theme::MUTED);
+        for (const QJsonValue &v : r.value("removed").toArray()) log(QStringLiteral("- ") + v.toString(), theme::DANGER);
+        for (const QJsonValue &v : r.value("added").toArray()) log(QStringLiteral("+ ") + v.toString(), theme::OK);
+        for (const QJsonValue &v : r.value("changed").toArray()) {
+            const QJsonObject c = v.toObject();
+            const QJsonArray keys = c.value(QLatin1String("keys")).toArray();
+            if (keys.isEmpty()) log(QStringLiteral("~ ") + str(c, "path") + tr("  (changed; not a JSON or .ini file)"), theme::WARN);
+            for (const QJsonValue &k : keys) {
+                const QJsonObject o = k.toObject();
+                log(QStringLiteral("~ %1: %2 → %3").arg(str(o, "key"), val(o.value(QLatin1String("old"))),
+                                                        val(o.value(QLatin1String("new")))), theme::WARN);
+            }
+        }
+        QString summary = tr("%1 added, %2 removed, %3 changed, %4 unchanged.")
+            .arg(r.value("added").toArray().size()).arg(r.value("removed").toArray().size())
+            .arg(r.value("changed").toArray().size()).arg(num(r, "same"));
+        if (r.value("truncated").toBool()) summary += tr(" The list was cut short.");
+        finished(summary, true);
+    });
+}
+
+// {"op":"verify"} — one archive, or several (each read back on its own; one line per archive).
+void BackupPage::verifySelected() {
+    const QStringList paths = selectedPaths();
+    if (paths.isEmpty()) { finished(QStringLiteral("Select an archive in the list first."), false); return; }
+    // A system image is 0600 root: reading it back needs the password too. An encrypted one needs its key, asked once.
+    bool root = false;
+    QString encrypted;
+    for (const QString &p : paths) {
+        if (!QFileInfo(p).isReadable()) root = true;
+        if (encrypted.isEmpty() && p.endsWith(QLatin1String(".age"))) encrypted = p;
+    }
+    QString key;
+    if (!encrypted.isEmpty() && !askKey(encrypted, &key)) { status_->setText(tr("Verify cancelled.")); return; }
+    QJsonObject req{{"op", "verify"}};
+    if (paths.size() == 1) {
+        req["archive"] = paths.first();
+    } else {
+        QJsonArray list;
+        for (const QString &p : paths) list.append(p);
+        req["archives"] = list;
+    }
+    if (!key.isEmpty()) req["identity"] = key;
+    log_->clear();
+    run(req, root, QStringLiteral("Verifying…"), [this, paths](const QJsonObject &r) {
+        if (paths.size() > 1) {
+            if (!r.contains(QLatin1String("results"))) { finished(tr("Verification failed: ") + str(r, "error"), false); return; }
+            int good = 0;
+            for (const QJsonValue &v : r.value("results").toArray()) {
+                const QJsonObject o = v.toObject();
+                const QString name = QFileInfo(str(o, "archive")).fileName();
+                if (o.value("ok").toBool()) {
+                    ++good;
+                    log(tr("%1: readable end to end, %L2 entries").arg(name).arg(num(o, "files")), theme::OK);
+                } else {
+                    log(QStringLiteral("%1: %2").arg(name, str(o, "error")), theme::DANGER);
+                }
+            }
+            finished(tr("%1 of %2 archive(s) verified.").arg(good).arg(paths.size()), good == paths.size());
+            return;
+        }
+        const QString archive = paths.first();
         if (!r.value("ok").toBool()) { finished(QStringLiteral("%1 did NOT verify: %2").arg(QFileInfo(archive).fileName(), str(r, "error")), false); return; }
         finished(QStringLiteral("%1 is readable end to end: %L2 entries%3.").arg(QFileInfo(archive).fileName()).arg(num(r, "files"))
                      .arg(r.value("compared").toBool() ? QStringLiteral(", same count as when it was written") : QString()), true);
@@ -737,11 +862,15 @@ void BackupPage::systemRestore() {
                                                                                  : QStringLiteral("The directory is empty.")),
                 QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) { status_->setText(QStringLiteral("Restore cancelled.")); return; }
     }
+    QString key;
+    if (archive.endsWith(QLatin1String(".age")) && !askKey(archive, &key)) { status_->setText(QStringLiteral("Restore cancelled.")); return; }
+    QJsonObject req{{"op", "system_restore"}, {"archive", archive}, {"target", target}, {"confirm", target}, {"low_priority", false}};
+    if (!key.isEmpty()) req["identity"] = key;
     log_->clear();
-    run({{"op", "system_restore"}, {"archive", archive}, {"target", target}, {"confirm", target}, {"low_priority", false}},
-        true, QStringLiteral("Waiting for the administrator password…"), [this, target, name](const QJsonObject &r) {
+    run(req, true, QStringLiteral("Waiting for the administrator password…"), [this, target, name](const QJsonObject &r) {
             for (const QJsonValue &m : r.value("messages").toArray()) log(m.toString(), theme::WARN);
             if (!r.value("ok").toBool()) { finished(QStringLiteral("Restore failed: ") + str(r, "error"), false); return; }
+            if (num(r, "steps") > 1) log(tr("restored the full image and %1 increment(s), in order").arg(num(r, "steps") - 1));
             QStringList made;
             for (const QJsonValue &d : r.value("created_dirs").toArray()) made << d.toString();
             if (!made.isEmpty()) log(QStringLiteral("created missing mount points: ") + made.join(QLatin1Char(' ')));

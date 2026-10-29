@@ -58,6 +58,8 @@ add_executable(centurion
     src/charts.cpp       src/charts.h
     src/dgpupage.cpp     src/dgpupage.h
     src/netpage.cpp      src/netpage.h
+    src/blocklistsubs.cpp src/blocklistsubs.h
+    src/traffic.cpp      src/traffic.h
     src/backuppage.cpp   src/backuppage.h
     src/prewrite.cpp     src/prewrite.h
     src/launcherwatch.cpp src/launcherwatch.h
@@ -237,6 +239,12 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-notifyprefs-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-notifyprefs-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME notifyprefs COMMAND centurion-notifyprefs-test)
+    add_executable(centurion-blocklistsubs-test tests/blocklistsubs_test.cpp src/blocklistsubs.cpp src/blocklistsubs.h)
+    target_link_libraries(centurion-blocklistsubs-test PRIVATE Qt6::Core)
+    add_test(NAME blocklistsubs COMMAND centurion-blocklistsubs-test)
+    add_executable(centurion-traffic-test tests/traffic_test.cpp src/traffic.cpp src/traffic.h)
+    target_link_libraries(centurion-traffic-test PRIVATE Qt6::Core)
+    add_test(NAME traffic COMMAND centurion-traffic-test)
     add_executable(centurion-batteryadvice-test tests/batteryadvice_test.cpp src/batteryadvice.cpp src/batteryadvice.h)
     target_link_libraries(centurion-batteryadvice-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-batteryadvice-test PRIVATE QT_NO_KEYWORDS)

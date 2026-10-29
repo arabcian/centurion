@@ -3,7 +3,9 @@
 //!
 //! Reported: NVIDIA Xid (with what the code means; Xid 154 is only the
 //! recovery action for the Xid before it), GSP timeouts, machine checks,
-//! PCIe AER errors, soft/hard lockups and RCU stalls, amdgpu ring timeouts.
+//! PCIe AER errors, soft/hard lockups and RCU stalls, amdgpu ring timeouts,
+//! NVMe timeouts, file system errors, Intel iGPU hangs, Wi-Fi firmware
+//! crashes, critical temperatures, OOM kills and kernel oops/BUG/WARNING.
 
 use serde_json::{json, Value};
 use std::io::Read;
@@ -118,7 +120,44 @@ pub fn classify(msg: &str) -> Option<Value> {
     if has("amdgpu") && ((has("ring") && has("timeout")) || has("GPU reset begin")) {
         return ev("amdgpu", "error", "AMD iGPU hang / reset");
     }
+    // Storage: NVMe controller trouble ("nvme nvme0: I/O 12 QID 3 timeout, aborting").
+    if msg.starts_with("nvme nvme") {
+        if has("controller is down") { return ev("nvme", "critical", "NVMe controller is down"); }
+        if (has("I/O") && has("timeout")) || has("resetting controller") { return ev("nvme", "error", "NVMe I/O timeout / controller reset"); }
+        return None;
+    }
+    // File systems: only the kernel's own error reports, not warnings or mount chatter.
+    if has("EXT4-fs error") || msg.starts_with("BTRFS error") || (msg.starts_with("BTRFS warning") && has("csum failed"))
+        || (msg.starts_with("XFS") && (has("Corruption") || has("corruption detected"))) {
+        return ev("fs", "critical", "File system error (possible disk or data corruption)");
+    }
+    // Intel iGPU: i915 hang, xe job timeout / engine reset.
+    if (has("i915") && has("GPU HANG")) || (msg.starts_with("xe ") && (has("Timedout job") || has("trying reset"))) {
+        return ev("igpu", "error", "Intel iGPU hang / reset");
+    }
+    // Wi-Fi firmware crashes.
+    if (has("iwlwifi") && has("Microcode SW error")) || (has("mt79") && has("Message") && has("timeout"))
+        || (has("firmware crashed") && ["ath9k", "ath10k", "ath11k", "ath12k"].iter().any(|d| has(d))) {
+        return ev("wifi", "warn", "Wi-Fi firmware error (the adapter resets itself)");
+    }
+    if has("critical temperature reached") { return ev("thermal", "critical", "Critical temperature reached (emergency shutdown)"); }
+    if has("Package temperature above threshold") { return ev("thermal", "warn", "CPU package temperature above threshold (throttling)"); }
+    if has("Out of memory:") && has("Kill") { return ev("oom", "warn", "Out of memory: a process was killed"); }
+    // Kernel faults. Anchored at the start of the message: that is how the kernel prints them, and
+    // "BUG:" / "Oops:" inside other text (driver messages) must not count.
+    if msg.starts_with("Oops:") || msg.starts_with("BUG:") || msg.starts_with("WARNING: CPU:") {
+        let what = if msg.starts_with("WARNING") { "Kernel warning" } else { "Kernel oops / bug" };
+        let title = match module_tag(msg) { Some(m) => format!("{what} in {m}"), None => what.to_string() };
+        return ev("oops", "error", &title);
+    }
     None
+}
+
+/// The trailing "[module]" of a kernel message ("... foo+0x1/0x2 [amdgpu]"); "[#1]" and the like do not qualify.
+fn module_tag(msg: &str) -> Option<&str> {
+    let m = msg.trim_end().strip_suffix(']')?;
+    let inner = &m[m.rfind('[')? + 1..];
+    (!inner.is_empty() && inner.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')).then_some(inner)
 }
 
 /// The kernel's generic MCE line ("CPU 0: Machine Check: 0 Bank 5: be00000000800400"): status
@@ -285,5 +324,73 @@ mod tests {
         assert!(classify("mce: [Hardware Error]: TSC 0 ADDR 1ffffffe0 MISC d012000101000000 SYND 4d000000 IPID 1000b000000000").is_none());
         assert_eq!(classify("watchdog: BUG: soft lockup - CPU#3 stuck for 22s!").unwrap()["kind"], "lockup");
         assert_eq!(classify("nvidia 0000:01:00.0: Unable to change power state from D3cold to D0, device inaccessible").unwrap()["kind"], "d3cold");
+    }
+    fn kl(msg: &str) -> (String, String) {
+        let e = classify(msg).unwrap_or_else(|| panic!("not classified: {msg}"));
+        (e["kind"].as_str().unwrap().into(), e["level"].as_str().unwrap().into())
+    }
+    fn is(msg: &str, kind: &str, level: &str) { assert_eq!(kl(msg), (kind.to_string(), level.to_string()), "{msg}"); }
+    #[test]
+    fn nvme_lines() {
+        is("nvme nvme0: I/O 123 (I/O Cmd) QID 5 timeout, aborting", "nvme", "error");
+        is("nvme nvme0: I/O tag 12 (c00c) opcode 0x2 (I/O Cmd) QID 1 timeout, reset controller", "nvme", "error");
+        is("nvme nvme0: resetting controller", "nvme", "error");
+        is("nvme nvme0: controller is down; will reset: CSTS=0xffffffff, PCI_STATUS=0xffff", "nvme", "critical");
+        assert!(classify("nvme nvme0: pci function 0000:01:00.0").is_none());
+        assert!(classify("nvme nvme0: 8/0/0 default/read/poll queues").is_none());
+        assert!(classify("nvme 0000:01:00.0: platform quirk: setting simple suspend").is_none());
+        assert!(classify("nvme_core: module loaded, I/O timeout=30").is_none());
+    }
+    #[test]
+    fn fs_lines() {
+        is("EXT4-fs error (device nvme0n1p2): ext4_lookup:1855: inode #131073: comm ls: iget: bad extra_isize", "fs", "critical");
+        is("BTRFS error (device nvme0n1p2): bdev /dev/nvme0n1p2 errs: wr 0, rd 0, flush 0, corrupt 3, gen 0", "fs", "critical");
+        is("BTRFS warning (device dm-0): csum failed root 5 ino 257 off 0 csum 0x8941f998 expected csum 0x1d4c2f0b mirror 1", "fs", "critical");
+        is("XFS (sda1): Corruption detected. Unmount and run xfs_repair", "fs", "critical");
+        is("XFS (dm-0): Metadata corruption detected at xfs_buf_ioend+0x8f/0x180 [xfs], xfs_inode block 0x40", "fs", "critical");
+        assert!(classify("EXT4-fs (sda1): mounted filesystem with ordered data mode. Quota mode: none.").is_none());
+        assert!(classify("EXT4-fs warning (device sda1): ext4_dx_add_entry:2402: Directory index full!").is_none());
+        assert!(classify("BTRFS info (device nvme0n1p2): using crc32c checksum algorithm").is_none());
+        assert!(classify("BTRFS warning (device nvme0n1p2): space cache v1 is being deprecated").is_none());
+        assert!(classify("XFS (sda1): Mounting V5 Filesystem").is_none());
+    }
+    #[test]
+    fn igpu_wifi_lines() {
+        is("i915 0000:00:02.0: [drm] GPU HANG: ecode 9:1:85dffffb, in firefox [2345]", "igpu", "error");
+        is("xe 0000:00:02.0: [drm] GT0: Timedout job: seqno=4294967169, lrc_seqno=4294967169, guc_id=12, flags=0x0 in glxgears [1234]", "igpu", "error");
+        is("xe 0000:00:02.0: [drm] GT0: trying reset from guc_exec_queue_timedout_job", "igpu", "error");
+        assert!(classify("i915 0000:00:02.0: [drm] Finished loading DMC firmware i915/adlp_dmc.bin (v2.20)").is_none());
+        assert!(classify("xe 0000:00:02.0: [drm] GT0: reset done").is_none());
+        is("iwlwifi 0000:02:00.0: Microcode SW error detected. Restarting 0x0.", "wifi", "warn");
+        is("mt7921e 0000:03:00.0: Message 00020007 (seq 3) timeout", "wifi", "warn");
+        is("ath11k_pci 0000:03:00.0: firmware crashed: MHI_CB_EE_RDDM", "wifi", "warn");
+        assert!(classify("iwlwifi 0000:02:00.0: loaded firmware version 77.2df0e0e8.0 ty-a0-gf-a0-77.ucode").is_none());
+        assert!(classify("mt7921e 0000:03:00.0: ASIC revision: 79220010").is_none());
+    }
+    #[test]
+    fn thermal_oom_oops_lines() {
+        is("thermal thermal_zone0: critical temperature reached, shutting down", "thermal", "critical");
+        is("CPU0: Package temperature above threshold, cpu clock throttled (total events = 1)", "thermal", "warn");
+        assert!(classify("CPU0: Package temperature/speed normal").is_none());
+        is("Out of memory: Killed process 4242 (firefox) total-vm:8123456kB, anon-rss:4012345kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:9000kB oom_score_adj:0", "oom", "warn");
+        assert!(classify("oom_reaper: reaped process 4242 (firefox), now anon-rss:0kB, file-rss:0kB, shmem-rss:0kB").is_none());
+        is("Oops: 0000 [#1] PREEMPT SMP NOPTI", "oops", "error");
+        is("BUG: kernel NULL pointer dereference, address: 0000000000000008", "oops", "error");
+        let e = classify("WARNING: CPU: 3 PID: 1234 at drivers/gpu/drm/amd/amdgpu/amdgpu_dm.c:123 dm_update+0x1/0x2 [amdgpu]").unwrap();
+        assert_eq!(e["kind"], "oops");
+        assert_eq!(e["title"], "Kernel warning in amdgpu");
+        assert_eq!(classify("Oops: 0000 [#1] PREEMPT SMP NOPTI").unwrap()["title"], "Kernel oops / bug");
+        // Existing kinds win: a soft lockup is still a lockup, not a bug report.
+        is("watchdog: BUG: soft lockup - CPU#3 stuck for 22s!", "lockup", "critical");
+        assert!(classify("mydriver: BUG: not a kernel report").is_none());
+        assert!(classify("usb 1-1: new high-speed USB device number 2 using xhci_hcd").is_none());
+    }
+    #[test]
+    fn module_tags() {
+        assert_eq!(module_tag("foo+0x1/0x2 [nvidia_drm]"), Some("nvidia_drm"));
+        assert_eq!(module_tag("Oops: 0000 [#1] PREEMPT SMP"), None);
+        assert_eq!(module_tag("trailing [#1]"), None);
+        assert_eq!(module_tag("[]"), None);
+        assert_eq!(module_tag("no brackets"), None);
     }
 }

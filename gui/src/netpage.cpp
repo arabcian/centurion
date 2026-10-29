@@ -1,13 +1,16 @@
 #include "netpage.h"
 
+#include "blocklistsubs.h"
 #include "privileged.h"
 #include "theme.h"
 
 #include <QCheckBox>
 #include <QCollator>
+#include <QComboBox>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDialog>
+#include <QDate>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
@@ -15,12 +18,14 @@
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFontDatabase>
+#include <QFormLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QHideEvent>
 #include <QHostAddress>
 #include <QHostInfo>
+#include <QLocale>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
@@ -28,6 +33,9 @@
 #include <QMenu>
 #include <QMap>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
@@ -40,6 +48,7 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -51,7 +60,7 @@ static constexpr int POLL_MS = 3000, MAX_BLOCK_ROWS = 1000, ALERT_GAP_MS = 10000
 static const char *const LOG_DIR = "/var/log/centurion";
 static const char *const LOG_FILE = "/var/log/centurion/netguard.log";
 static const char *const CONN_LOG = "/var/log/centurion/connections.log";
-static constexpr int LOG_TAB = 2, MAX_LOG_ROWS = 3000;
+static constexpr int LOG_TAB = 2, MAX_LOG_ROWS = 3000, TRAFFIC_DAYS_SHOWN = 30;
 static constexpr qint64 LOG_TAIL = 512 * 1024;  // of an existing log, only the end is loaded
 enum { IdxRole = Qt::UserRole, KeyRole, ExeRole, IpRole, SortRole, PidRole, UidRole };
 
@@ -120,6 +129,8 @@ private:
     }
 };
 
+static QString humanBytes(qint64 bytes) { return QLocale::c().formattedDataSize(bytes, 1, QLocale::DataSizeIecFormat); }
+
 static QTreeWidget *makeTree(const QStringList &cols) {
     auto *t = new QTreeWidget;
     t->setColumnCount(cols.size());
@@ -155,6 +166,11 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     top->addWidget(guard_);
     top->addWidget(lan_);
     top->addWidget(logConns_);
+    accounting_ = new QCheckBox(tr("Traffic accounting"));
+    accounting_->setToolTip(tr("Counts the bytes each program sends and receives, per day (Traffic tab).\n"
+                               "A connection is counted when it closes. Totals are kept for 90 days.\n"
+                               "Needs the daemon running; switching it on turns on conntrack byte counters."));
+    top->addWidget(accounting_);
     v->addLayout(top);
 
     tabs_ = new QTabWidget;
@@ -191,7 +207,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *bKill = button("Kill connection", rc);
     auto *bBlC = button("Blacklist IP", rc, true);
     vc->addLayout(rc);
-    conns_ = makeTree({"Program", "PID", "Proto", "Local", "Remote", "State"});
+    conns_ = makeTree({"Program", "PID", "Proto", "Local", "Remote", "State", tr("Today")});
     conns_->setColumnWidth(0, 220);
     conns_->setColumnWidth(3, 190);
     conns_->setColumnWidth(4, 230);
@@ -284,13 +300,51 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *bBlMany = button("Add many…", rl);
     bBlMany->setToolTip("Paste or load a list of addresses, CIDR blocks and ranges; they are banned as one group\n"
                         "that can be removed again with one click.");
+    auto *bSubs = button("Subscriptions…", rl);
+    bSubs->setToolTip("Published address lists (e.g. FireHOL) kept as one group each. Nothing is fetched until\n"
+                      "you press Update now; the update asks for the administrator password once.");
     auto *bBlDel = button("Remove", rl, true);
     tabs_->addTab(pr, "Rules");
+
+    // ── Wi-Fi ── (hidden until the status says this machine has a wireless interface)
+    auto *pw = new QWidget;
+    auto *vw = new QVBoxLayout(pw);
+    vw->setContentsMargins(6, 6, 6, 6);
+    wifiText_ = new QLabel;
+    wifiText_->setTextFormat(Qt::RichText);
+    wifiText_->setWordWrap(true);
+    wifiText_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    wifiText_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    vw->addWidget(wifiText_);
+    auto *wifiNote = new QLabel(tr("Retries and failures are totals since this connection started. Refreshes every 3 s while this tab is open."));
+    wifiNote->setProperty("role", "muted");
+    wifiNote->setWordWrap(true);
+    vw->addWidget(wifiNote);
+    vw->addStretch(1);
+    wifiTab_ = tabs_->addTab(pw, tr("Wi-Fi"));
+    tabs_->setTabVisible(wifiTab_, false);
+
+    // ── Traffic ── bytes per program per day (the netguard ledger; see traffic.rs)
+    auto *pt = new QWidget;
+    auto *vt = new QVBoxLayout(pt);
+    vt->setContentsMargins(6, 6, 6, 6);
+    trafficInfo_ = new QLabel;
+    trafficInfo_->setProperty("role", "muted");
+    trafficInfo_->setWordWrap(true);
+    vt->addWidget(trafficInfo_);
+    trafficTree_ = makeTree({tr("Day"), tr("Program"), tr("Sent"), tr("Received"), tr("Connections")});
+    trafficTree_->setColumnWidth(0, 110);
+    trafficTree_->setColumnWidth(1, 300);
+    trafficTree_->setColumnWidth(2, 110);
+    trafficTree_->setColumnWidth(3, 110);
+    vt->addWidget(trafficTree_, 1);
+    trafficTab_ = tabs_->addTab(pt, tr("Traffic"));
 
     // ── wiring ──
     connect(guard_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"guard", on}}); });
     connect(lan_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"allow_lan", on}}); });
     connect(logConns_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"log_conns", on}}); });
+    connect(accounting_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"traffic", on}}); });
     connect(logFilter_, &QLineEdit::textChanged, this, &NetPage::filterConnLog);
     auto logIp = [this] { auto *it = connLog_->currentItem(); return it ? it->data(0, IpRole).toString() : QString(); };
     auto detConn = [this](const QJsonObject &c) {
@@ -403,10 +457,18 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     });
     connect(bBlDel, &QPushButton::clicked, this, [this] { removeBlacklisted(false); });
     connect(bBlMany, &QPushButton::clicked, this, &NetPage::bulkBlacklist);
+    connect(bSubs, &QPushButton::clicked, this, &NetPage::subscriptions);
 
     timer_ = new QTimer(this);
     timer_->setInterval(POLL_MS);
-    connect(timer_, &QTimer::timeout, this, [this] { if (tabs_->currentIndex() == LOG_TAB) readConnLog(); else refreshConns(); });
+    connect(timer_, &QTimer::timeout, this, [this] {
+        if (tabs_->currentIndex() == LOG_TAB) readConnLog();
+        else if (tabs_->currentIndex() == trafficTab_) fillTraffic();
+        else refreshConns();
+    });
+    wifiTimer_ = new QTimer(this);
+    wifiTimer_->setInterval(POLL_MS);
+    connect(wifiTimer_, &QTimer::timeout, this, &NetPage::refreshWifi);
 
     // Block log: inotify, also while the window sits in the tray (tray alerts).
     watch_ = new QFileSystemWatcher(this);
@@ -431,22 +493,33 @@ void NetPage::showEvent(QShowEvent *e) {
     runUser({{"op", "status"}}, [this](const QJsonObject &s) { applyStatus(s); });
     watchLog();
     readLog(false);
+    refreshWifi();  // also decides whether the Wi-Fi tab exists on this machine
     poll();
 }
 
 void NetPage::hideEvent(QHideEvent *e) {
     QWidget::hideEvent(e);
     timer_->stop();
+    wifiTimer_->stop();
     viaRoot_ = false;
 }
 
 /// The connection list and the connection log refresh only while they are what the user is looking at.
 void NetPage::poll() {
+    if (isVisible() && tabs_->currentIndex() == wifiTab_) {
+        refreshWifi();
+        wifiTimer_->start();
+    } else {
+        wifiTimer_->stop();
+    }
     if (isVisible() && tabs_->currentIndex() == 0) {
         if (!viaRoot_) refreshConns();
         timer_->start();
     } else if (isVisible() && tabs_->currentIndex() == LOG_TAB) {
         readConnLog();
+        timer_->start();
+    } else if (isVisible() && tabs_->currentIndex() == trafficTab_) {
+        fillTraffic();
         timer_->start();
     } else {
         timer_->stop();
@@ -477,7 +550,8 @@ void NetPage::runRoot(const QJsonObject &req, bool isStatus) {
     privileged::run(helper(), req, this, [this, isStatus](const privileged::Result &r) {
         if (!r.ok()) {
             QMessageBox::warning(this, "Network", r.message());
-            const QSignalBlocker b1(guard_), b2(lan_), b3(logConns_);  // put the check boxes back
+            const QSignalBlocker b1(guard_), b2(lan_), b3(logConns_), b4(accounting_);  // put the check boxes back
+            accounting_->setChecked(state_.value(QLatin1String("traffic")).toBool());
             guard_->setChecked(state_.value(QLatin1String("guard")).toBool());
             logConns_->setChecked(state_.value(QLatin1String("log_conns")).toBool());
             lan_->setChecked(state_.value(QLatin1String("allow_lan")).toBool(true));
@@ -510,8 +584,9 @@ void NetPage::applyStatus(const QJsonObject &s) {
         }
     state_ = s;
     const bool running = s.value(QLatin1String("running")).toBool(), guard = s.value(QLatin1String("guard")).toBool();
-    const bool logging = s.value(QLatin1String("log_conns")).toBool();
-    { const QSignalBlocker b1(guard_), b2(lan_), b3(logConns_);
+    const bool logging = s.value(QLatin1String("log_conns")).toBool(), traffic = s.value(QLatin1String("traffic")).toBool();
+    { const QSignalBlocker b1(guard_), b2(lan_), b3(logConns_), b4(accounting_);
+      accounting_->setChecked(traffic);
       guard_->setChecked(guard);
       logConns_->setChecked(logging);
       lan_->setChecked(s.value(QLatin1String("allow_lan")).toBool(true));
@@ -563,7 +638,8 @@ void NetPage::applyStatus(const QJsonObject &s) {
     const QJsonObject applied = s.value(QLatin1String("applied")).toObject();
     if (running && !str(applied, "error").isEmpty())
         lines << QStringLiteral("<span style='color:%1'>The daemon could not load the rules: %2</span>").arg(QLatin1String(theme::DANGER), str(applied, "error").toHtmlEscaped());
-    else if (running && (applied.value(QLatin1String("guard")).toBool() != guard || applied.value(QLatin1String("log_conns")).toBool() != logging))
+    else if (running && (applied.value(QLatin1String("guard")).toBool() != guard || applied.value(QLatin1String("log_conns")).toBool() != logging
+                         || applied.value(QLatin1String("traffic")).toBool() != traffic))
         lines << QStringLiteral("<span style='color:%1'>The running daemon has not applied these settings — restart it: <code>%2</code></span>")
                      .arg(QLatin1String(theme::WARN), QFileInfo::exists(QStringLiteral("/run/systemd/system")) ? QStringLiteral("systemctl restart centurion-netguard")
                                                                                                              : QStringLiteral("rc-service centurion-netguard restart"));
@@ -575,9 +651,55 @@ void NetPage::applyStatus(const QJsonObject &s) {
         lines << QStringLiteral("<span style='color:%1'>nft not found — emerge net-firewall/nftables</span>").arg(QLatin1String(theme::DANGER));
     if (s.contains(QLatin1String("config_error")))
         lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER), str(s, "config_error").toHtmlEscaped());
+    const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
+    for (const BlocklistSub &sub : loadBlocklistSubs(blocklistSettingsPath()))
+        if (blocklistDue(sub, nowSecs))
+            lines << QStringLiteral("<span style='color:%1'>●</span> %2").arg(QLatin1String(theme::WARN),
+                         tr("Blocklist “%1” is due for an update — Rules → Subscriptions…").arg(sub.name.toHtmlEscaped()));
     status_->setText(lines.join(QStringLiteral("<br>")));
     showConns();  // blacklist colouring
     filterConnLog();  // "logging on/off" in the Log tab
+}
+
+/// Rereads the ledger when the file changed since the last read; true when it was read.
+bool NetPage::loadTraffic() {
+    const QFileInfo fi(trafficFilePath());
+    const QDateTime mtime = fi.lastModified();
+    if (mtime == trafficSeen_) return false;
+    trafficSeen_ = mtime;
+    trafficDays_.clear();
+    QFile f(trafficFilePath());
+    trafficReadable_ = fi.exists() && f.open(QIODevice::ReadOnly);
+    if (trafficReadable_) trafficDays_ = parseTraffic(f.readAll());
+    return true;
+}
+
+/// The newest TRAFFIC_DAYS_SHOWN days, programs of each day by bytes moved.
+void NetPage::fillTraffic() {
+    if (!loadTraffic() && trafficTree_->topLevelItemCount()) return;
+    trafficTree_->clear();
+    const QStringList days = trafficDays_.keys();  // ascending; the newest are at the end
+    for (int i = days.size() - 1, shown = 0; i >= 0 && shown < TRAFFIC_DAYS_SHOWN; --i, ++shown) {
+        const QString &day = days.at(i);
+        QList<QPair<QString, TrafficTotal>> progs;
+        const QMap<QString, TrafficTotal> &of = trafficDays_.value(day);
+        for (auto p = of.cbegin(); p != of.cend(); ++p) progs << qMakePair(p.key(), p.value());
+        std::sort(progs.begin(), progs.end(), [](const auto &a, const auto &b) { return a.second.tx + a.second.rx > b.second.tx + b.second.rx; });
+        for (const auto &pr : progs) {
+            const TrafficTotal &t = pr.second;
+            auto *it = new SortItem({day, pr.first, humanBytes(t.tx), humanBytes(t.rx), QString::number(t.conns)});
+            it->setData(2, SortRole, double(t.tx));
+            it->setData(3, SortRole, double(t.rx));
+            it->setData(4, SortRole, double(t.conns));
+            trafficTree_->addTopLevelItem(it);
+        }
+    }
+    if (!trafficReadable_ && !trafficSeen_.isNull())
+        trafficInfo_->setText(tr("Cannot read %1: this account needs membership in the wheel group.").arg(trafficFilePath()));
+    else if (trafficDays_.isEmpty())
+        trafficInfo_->setText(tr("No traffic recorded yet. Switch on Traffic accounting above; a program's bytes appear when its connection closes."));
+    else
+        trafficInfo_->setText(tr("Bytes per program per day, newest first; the last %1 days are shown. A connection is counted when it closes.").arg(TRAFFIC_DAYS_SHOWN));
 }
 
 void NetPage::refreshConns() {
@@ -598,6 +720,7 @@ QJsonObject NetPage::curConn() const {
 }
 
 void NetPage::showConns() {
+    loadTraffic();
     const QString needle = filter_->text().trimmed();
     const QString keep = conns_->currentItem() ? conns_->currentItem()->data(0, KeyRole).toString() : QString();
     const int scroll = conns_->verticalScrollBar()->value();
@@ -619,7 +742,10 @@ void NetPage::showConns() {
             continue;
         const QString local = endpoint(str(c, "local"), c.value(QLatin1String("lport")).toInt());
         const QString peer = remote.isEmpty() ? QStringLiteral("*") : endpoint(remote, c.value(QLatin1String("rport")).toInt());
-        auto *it = new SortItem({name, pid ? QString::number(pid) : QString(), str(c, "proto").toUpper(), local, peer, state});
+        const qint64 today = trafficBytes(trafficDays_, QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")), exe.isEmpty() ? name : exe);
+        auto *it = new SortItem({name, pid ? QString::number(pid) : QString(), str(c, "proto").toUpper(), local, peer, state,
+                                 today > 0 ? humanBytes(today) : QStringLiteral("—")});
+        it->setData(6, SortRole, double(today));
         it->setData(0, IdxRole, i);
         it->setData(0, KeyRole, QString(str(c, "proto") + local + peer));
         it->setToolTip(0, exe);
@@ -627,7 +753,7 @@ void NetPage::showConns() {
         const bool bl = c.value(QLatin1String("bl")).toBool() || black.contains(remote);
         if (bl || isWine) {
             const QColor col(QLatin1String(bl ? theme::DANGER : theme::PURPLE));
-            for (int k = 0; k < 6; ++k) it->setForeground(k, col);
+            for (int k = 0; k < 7; ++k) it->setForeground(k, col);
         }
         conns_->addTopLevelItem(it);
         if (it->data(0, KeyRole).toString() == keep) sel = it;
@@ -998,6 +1124,49 @@ void NetPage::addIpActions(QMenu &m, const QString &ip) {
     m.addAction(QStringLiteral("Blacklist the owner's whole network…"), this, [this, ip] { blacklistNetwork(ip); });
 }
 
+void NetPage::refreshWifi() {
+    runUser({{"op", "wifi"}}, [this](const QJsonObject &w) { applyWifi(w); }, 6000);
+}
+
+/// Shows the link and the station counters with plain warnings; the raw numbers come with the answer.
+void NetPage::applyWifi(const QJsonObject &w) {
+    if (wifiTab_ < 0) return;
+    const bool present = w.value(QLatin1String("present")).toBool();
+    tabs_->setTabVisible(wifiTab_, present);
+    if (!present) return;
+    const QString iface = str(w, "iface").toHtmlEscaped();
+    if (!w.value(QLatin1String("ok")).toBool()) {
+        wifiText_->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER), str(w, "error").toHtmlEscaped()));
+        return;
+    }
+    if (!w.value(QLatin1String("iw")).toBool()) {
+        wifiText_->setText(tr("Install <code>iw</code> to read the Wi-Fi link of %1.").arg(iface));
+        return;
+    }
+    if (!w.value(QLatin1String("connected")).toBool()) {
+        wifiText_->setText(tr("%1: not connected to a Wi-Fi network.").arg(iface));
+        return;
+    }
+    const auto num = [&w](const char *k, int prec) {
+        const QJsonValue v = w.value(QLatin1String(k));
+        return v.isNull() || v.isUndefined() ? QStringLiteral("—") : QString::number(v.toDouble(), 'f', prec);
+    };
+    QStringList warn;
+    for (const QJsonValue &x : w.value(QLatin1String("warn")).toArray()) warn << x.toString();
+    QStringList lines;
+    lines << tr("Connected to <b>%1</b> on %2.").arg(str(w, "ssid").toHtmlEscaped(), iface);
+    const QString signal = num("signal_dbm", 0);
+    lines << tr("Signal <b>%1 dBm</b>").arg(signal) + (warn.contains(QStringLiteral("weak_signal")) ? QStringLiteral(" <span style='color:%1'>%2</span>")
+                                                                                                     .arg(QLatin1String(theme::WARN), tr("weak")) : QString());
+    lines << tr("Link rate: %1 Mb/s down, %2 Mb/s up").arg(num("rx_mbps", 1), num("tx_mbps", 1));
+    lines << tr("Retries: %1 % of transmitted packets · failed: %2 %").arg(num("retry_pct", 1), num("fail_pct", 1));
+    if (warn.contains(QStringLiteral("weak_signal"))) lines << tr("Weak signal: move closer to the access point or check the antenna.");
+    if (warn.contains(QStringLiteral("retries"))) lines << tr("Many retries: the channel is busy or the link is marginal.");
+    if (warn.contains(QStringLiteral("failed"))) lines << tr("Many failed transmissions: packets are being lost on this link.");
+    if (warn.isEmpty()) lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::OK), tr("The link looks healthy."));
+    wifiText_->setText(lines.join(QStringLiteral("<br>")));
+}
+
 /// Bans the registered block the address sits in (whois range), as one group named after its owner.
 void NetPage::blacklistNetwork(const QString &ip) {
     whois(ip, [this, ip](const QJsonObject &r) {
@@ -1025,6 +1194,154 @@ void NetPage::blacklistNetwork(const QString &ip) {
                                       .arg(entries.join(QStringLiteral(", ")), label)) != QMessageBox::Yes) return;
         runRoot({{"op", "blacklist"}, {"add", QJsonArray::fromStringList(entries)}, {"label", label.isEmpty() ? ip : label}});
     });
+}
+
+/// Entries the blacklist holds under group `name` in a status answer.
+static QJsonArray groupEntries(const QJsonObject &status, const QString &name) {
+    QJsonArray out;
+    const QJsonObject labels = status.value(QLatin1String("labels")).toObject();
+    for (auto it = labels.constBegin(); it != labels.constEnd(); ++it)
+        if (it.value().toString() == name) out.append(it.key());
+    return out;
+}
+
+/// Changes one subscription in gui.ini and redraws the window's list.
+void NetPage::changeSubscription(const QString &name, const std::function<void(BlocklistSub &)> &f) {
+    const QString path = blocklistSettingsPath();
+    QList<BlocklistSub> subs = loadBlocklistSubs(path);
+    for (BlocklistSub &s : subs) if (s.name == name) f(s);
+    saveBlocklistSubs(path, subs);
+    fillSubscriptions();
+}
+
+void NetPage::fillSubscriptions() {
+    if (!subList_) return;
+    subList_->clear();
+    for (const BlocklistSub &s : loadBlocklistSubs(blocklistSettingsPath())) {
+        QString state;
+        if (!s.error.isEmpty()) state = tr("failed: %1").arg(s.error);
+        else if (s.updated) state = tr("%1 addresses, updated %2").arg(s.entries).arg(QDateTime::fromSecsSinceEpoch(s.updated).toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+        else state = tr("never updated");
+        subList_->addItem(QStringLiteral("%1  (every %2 h) — %3").arg(s.name, QString::number(s.hours), state));
+    }
+}
+
+/// Fetches the list over HTTPS in this process (the daemon never goes online), then replaces the group in one
+/// blacklist request: new entries added, entries the new list no longer has removed. A failed fetch, an invalid
+/// entry or a refused request leaves the blacklist as it was.
+void NetPage::updateSubscription(int row) {
+    const QList<BlocklistSub> subs = loadBlocklistSubs(blocklistSettingsPath());
+    if (row < 0 || row >= subs.size()) return;
+    const QString name = subs.at(row).name;
+    if (!nam_) nam_ = new QNetworkAccessManager(this);
+    QNetworkRequest rq{QUrl(subs.at(row).url)};
+    rq.setTransferTimeout(30000);
+    QNetworkReply *reply = nam_->get(rq);
+    auto body = std::make_shared<QByteArray>();
+    connect(reply, &QIODevice::readyRead, reply, [reply, body] {
+        if (body->size() <= BLOCKLIST_MAX_BYTES) body->append(reply->readAll());
+        if (body->size() > BLOCKLIST_MAX_BYTES) reply->abort();
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, body, name] {
+        reply->deleteLater();
+        const auto fail = [this, name](const QString &msg) { changeSubscription(name, [&msg](BlocklistSub &s) { s.error = msg; }); };
+        if (body->size() > BLOCKLIST_MAX_BYTES) return fail(tr("The list is larger than 8 MB."));
+        if (reply->error() != QNetworkReply::NoError) return fail(reply->errorString());
+        const ParsedBlocklist p = parseBlocklist(*body);
+        if (!p.error.isEmpty()) return fail(p.error);
+        const QSet<QString> fresh(p.entries.cbegin(), p.entries.cend());
+        QJsonArray gone;
+        for (const QJsonValue &e : groupEntries(state_, name)) if (!fresh.contains(e.toString())) gone.append(e);
+        privileged::run(helper(), QJsonObject{{"op", "blacklist"}, {"add", QJsonArray::fromStringList(p.entries)}, {"remove", gone}, {"label", name}}, this,
+            [this, name, count = p.entries.size()](const privileged::Result &r) {
+                if (!r.ok()) return changeSubscription(name, [&r](BlocklistSub &s) { s.error = r.message(); });
+                applyStatus(r.json);
+                changeSubscription(name, [count](BlocklistSub &s) {
+                    s.error.clear();
+                    s.entries = count;
+                    s.updated = QDateTime::currentSecsSinceEpoch();
+                });
+            });
+    });
+}
+
+/// Rules → Subscriptions…: the list of published lists, add / update now / remove.
+void NetPage::subscriptions() {
+    if (subList_) { subList_->window()->raise(); return; }
+    auto *d = new QDialog(this);
+    d->setAttribute(Qt::WA_DeleteOnClose);
+    d->setWindowTitle(tr("Blocklist subscriptions"));
+    d->resize(600, 440);
+    auto *v = new QVBoxLayout(d);
+    auto *hint = new QLabel(tr("A published list (one address, CIDR block or range per line) is banned as one named group. "
+                               "Nothing is downloaded until you press Update now. A failed download or an invalid entry keeps the list as it was. "
+                               "Example: https://iplists.firehol.org/files/firehol_level1.netset"));
+    hint->setWordWrap(true);
+    hint->setProperty("role", "muted");
+    v->addWidget(hint);
+    subList_ = new QListWidget;
+    v->addWidget(subList_, 1);
+    fillSubscriptions();
+    auto *form = new QFormLayout;
+    auto *name = new QLineEdit;
+    name->setMaxLength(64);
+    name->setPlaceholderText(tr("FireHOL level 1"));
+    auto *url = new QLineEdit;
+    url->setPlaceholderText(QStringLiteral("https://…"));
+    auto *every = new QComboBox;
+    every->addItem(tr("Daily"), 24);
+    every->addItem(tr("Weekly"), 168);
+    every->addItem(tr("Monthly"), 720);
+    every->setCurrentIndex(1);
+    form->addRow(tr("Name"), name);
+    form->addRow(tr("Address"), url);
+    form->addRow(tr("Update every"), every);
+    v->addLayout(form);
+    auto *row = new QHBoxLayout;
+    auto *bAdd = new QPushButton(tr("Add"));
+    auto *bNow = new QPushButton(tr("Update now"));
+    auto *bDel = new QPushButton(tr("Remove"));
+    bDel->setObjectName(QStringLiteral("btnDanger"));
+    row->addWidget(bAdd);
+    row->addWidget(bNow);
+    row->addStretch(1);
+    row->addWidget(bDel);
+    v->addLayout(row);
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Close);
+    v->addWidget(box);
+    connect(box, &QDialogButtonBox::rejected, d, &QDialog::close);
+    connect(bAdd, &QPushButton::clicked, d, [this, name, url, every] {
+        BlocklistSub s;
+        s.name = name->text().trimmed();
+        s.url = url->text().trimmed();
+        s.hours = every->currentData().toInt();
+        const QList<BlocklistSub> subs = loadBlocklistSubs(blocklistSettingsPath());
+        QString err;
+        if (s.name.isEmpty()) err = tr("Give the list a name.");
+        else if (!blocklistUrlOk(s.url)) err = tr("The address must start with https:// and name a host.");
+        else for (const BlocklistSub &o : subs) if (o.name == s.name) err = tr("A list named %1 already exists.").arg(s.name);
+        if (!err.isEmpty()) { QMessageBox::warning(this, tr("Blocklist subscriptions"), err); return; }
+        QList<BlocklistSub> next = subs;
+        next << s;
+        saveBlocklistSubs(blocklistSettingsPath(), next);
+        fillSubscriptions();
+        name->clear();
+        url->clear();
+    });
+    connect(bNow, &QPushButton::clicked, d, [this] { if (subList_ && subList_->currentRow() >= 0) updateSubscription(subList_->currentRow()); });
+    connect(bDel, &QPushButton::clicked, d, [this] {
+        if (!subList_ || subList_->currentRow() < 0) return;
+        const QList<BlocklistSub> subs = loadBlocklistSubs(blocklistSettingsPath());
+        const BlocklistSub s = subs.value(subList_->currentRow());
+        if (QMessageBox::question(this, tr("Blocklist subscriptions"), tr("Remove %1 and stop banning its addresses?").arg(s.name)) != QMessageBox::Yes) return;
+        QList<BlocklistSub> next = subs;
+        next.removeAt(subList_->currentRow());
+        saveBlocklistSubs(blocklistSettingsPath(), next);
+        fillSubscriptions();
+        const QJsonArray gone = groupEntries(state_, s.name);
+        if (!gone.isEmpty()) runRoot({{"op", "blacklist"}, {"remove", gone}});
+    });
+    d->show();
 }
 
 /// Paste or load a list; it is banned as one named group.

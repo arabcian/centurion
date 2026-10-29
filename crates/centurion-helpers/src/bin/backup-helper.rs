@@ -7,7 +7,7 @@
 //! or died) cancels: tar and the compressor are terminated and the partial
 //! archive is removed.
 //!
-//!   as the user:   config_backup  config_inspect  config_restore_user  verify (readable archives)
+//!   as the user:   config_backup  config_inspect  config_restore_user  config_diff  verify (readable archives)
 //!   root (pkexec): system_backup  system_restore  config_restore_root  verify
 //!
 //! polkit: com.centurion.backup — the administrator password every
@@ -35,6 +35,7 @@ fn main() {
         "config_backup" => backup::config_backup(&req),
         "config_inspect" => backup::config_inspect(&req),
         "config_restore_user" => backup::config_restore_user(&req),
+        "config_diff" => backup::config_diff(&req),
         "verify" => backup::verify(&req),
         "system_backup" | "system_restore" | "config_restore_root" if !root =>
             json!({"ok": false, "needs_root": true, "error": format!("{op} must run as root (via pkexec)")}),

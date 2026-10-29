@@ -2227,6 +2227,243 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     </message>
 </context>
 <context>
+    <name>NetPage</name>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="169"/>
+        <source>Traffic accounting</source>
+        <translation>Trafik sayımı</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="170"/>
+        <source>Counts the bytes each program sends and receives, per day (Traffic tab).
+A connection is counted when it closes. Totals are kept for 90 days.
+Needs the daemon running; switching it on turns on conntrack byte counters.</source>
+        <translation>Her programın gönderdiği ve aldığı baytları gün gün sayar (Trafik sekmesi).
+Bir bağlantı kapandığında sayılır. Toplamlar 90 gün tutulur.
+Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="210"/>
+        <source>Today</source>
+        <translation>Bugün</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="319"/>
+        <source>Retries and failures are totals since this connection started. Refreshes every 3 s while this tab is open.</source>
+        <translation>Yeniden denemeler ve hatalar bu bağlantı kurulduğundan beri toplamdır. Bu sekme açıkken her 3 sn yenilenir.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="324"/>
+        <source>Wi-Fi</source>
+        <translation>Wi-Fi</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="335"/>
+        <source>Day</source>
+        <translation>Gün</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="335"/>
+        <source>Program</source>
+        <translation>Program</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="335"/>
+        <source>Sent</source>
+        <translation>Gönderilen</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="335"/>
+        <source>Received</source>
+        <translation>Alınan</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="335"/>
+        <source>Connections</source>
+        <translation>Bağlantılar</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="341"/>
+        <source>Traffic</source>
+        <translation>Trafik</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="658"/>
+        <source>Blocklist “%1” is due for an update — Rules → Subscriptions…</source>
+        <translation>Engel listesi “%1” güncellenmeli — Kurallar → Abonelikler…</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="696"/>
+        <source>Cannot read %1: this account needs membership in the wheel group.</source>
+        <translation>%1 okunamıyor: bu hesabın wheel grubunda olması gerekir.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="698"/>
+        <source>No traffic recorded yet. Switch on Traffic accounting above; a program&apos;s bytes appear when its connection closes.</source>
+        <translation>Henüz trafik kaydı yok. Yukarıdaki Trafik sayımını açın; bir programın baytları bağlantısı kapandığında görünür.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="700"/>
+        <source>Bytes per program per day, newest first; the last %1 days are shown. A connection is counted when it closes.</source>
+        <translation>Program başına günlük bayt, en yeni önce; son %1 gün gösterilir. Bir bağlantı kapandığında sayılır.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1142"/>
+        <source>Install &lt;code&gt;iw&lt;/code&gt; to read the Wi-Fi link of %1.</source>
+        <translation>%1 Wi-Fi bağlantısını okumak için &lt;code&gt;iw&lt;/code&gt; kurun.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1146"/>
+        <source>%1: not connected to a Wi-Fi network.</source>
+        <translation>%1: bir Wi-Fi ağına bağlı değil.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1156"/>
+        <source>Connected to &lt;b&gt;%1&lt;/b&gt; on %2.</source>
+        <translation>&lt;b&gt;%1&lt;/b&gt; ağına bağlı, arayüz %2.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1158"/>
+        <source>Signal &lt;b&gt;%1 dBm&lt;/b&gt;</source>
+        <translation>Sinyal &lt;b&gt;%1 dBm&lt;/b&gt;</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1159"/>
+        <source>weak</source>
+        <translation>zayıf</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1160"/>
+        <source>Link rate: %1 Mb/s down, %2 Mb/s up</source>
+        <translation>Bağlantı hızı: %1 Mb/s indirme, %2 Mb/s yükleme</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1161"/>
+        <source>Retries: %1 % of transmitted packets · failed: %2 %</source>
+        <translation>Yeniden deneme: gönderilen paketlerin %1 %'i · başarısız: %2 %</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1162"/>
+        <source>Weak signal: move closer to the access point or check the antenna.</source>
+        <translation>Zayıf sinyal: erişim noktasına yaklaşın ya da antenini kontrol edin.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1163"/>
+        <source>Many retries: the channel is busy or the link is marginal.</source>
+        <translation>Çok fazla yeniden deneme: kanal meşgul ya da bağlantı sınırda.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1164"/>
+        <source>Many failed transmissions: packets are being lost on this link.</source>
+        <translation>Çok fazla başarısız iletim: bu bağlantıda paketler kayboluyor.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1165"/>
+        <source>The link looks healthy.</source>
+        <translation>Bağlantı sağlıklı görünüyor.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1220"/>
+        <source>failed: %1</source>
+        <translation>başarısız: %1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1221"/>
+        <source>%1 addresses, updated %2</source>
+        <translation>%1 adres, güncellendi: %2</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1222"/>
+        <source>never updated</source>
+        <translation>hiç güncellenmedi</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1246"/>
+        <source>The list is larger than 8 MB.</source>
+        <translation>Liste 8 MB’tan büyük.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1271"/>
+        <source>Blocklist subscriptions</source>
+        <translation>Engel listesi abonelikleri</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1274"/>
+        <source>A published list (one address, CIDR block or range per line) is banned as one named group. Nothing is downloaded until you press Update now. A failed download or an invalid entry keeps the list as it was. Example: https://iplists.firehol.org/files/firehol_level1.netset</source>
+        <translation>Yayımlanmış bir liste (satır başına bir adres, CIDR bloğu ya da aralık) tek bir adlandırılmış grup olarak engellenir. Şimdi güncelle’ye basılana kadar hiçbir şey indirilmez. Başarısız indirme ya da geçersiz bir girdi listeyi olduğu gibi tutar. Örnek: https://iplists.firehol.org/files/firehol_level1.netset</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1286"/>
+        <source>FireHOL level 1</source>
+        <translation>FireHOL level 1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1290"/>
+        <source>Daily</source>
+        <translation>Günlük</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1291"/>
+        <source>Weekly</source>
+        <translation>Haftalık</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1292"/>
+        <source>Monthly</source>
+        <translation>Aylık</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1294"/>
+        <source>Name</source>
+        <translation>Ad</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1295"/>
+        <source>Address</source>
+        <translation>Adres</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1296"/>
+        <source>Update every</source>
+        <translation>Güncelleme sıklığı</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1299"/>
+        <source>Add</source>
+        <translation>Ekle</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1300"/>
+        <source>Update now</source>
+        <translation>Şimdi güncelle</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1301"/>
+        <source>Remove</source>
+        <translation>Kaldır</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1318"/>
+        <source>Give the list a name.</source>
+        <translation>Listeye bir ad verin.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1319"/>
+        <source>The address must start with https:// and name a host.</source>
+        <translation>Adres https:// ile başlamalı ve bir sunucu adı içermeli.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1320"/>
+        <source>A list named %1 already exists.</source>
+        <translation>%1 adında bir liste zaten var.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/netpage.cpp" line="1334"/>
+        <source>Remove %1 and stop banning its addresses?</source>
+        <translation>%1 kaldırılsın ve adresleri engellenmeyi bıraksın mı?</translation>
+    </message>
+</context>
+<context>
     <name>NotifyDialog</name>
     <message>
         <location filename="work/gui/src/notifydialog.cpp" line="11" />
@@ -3547,6 +3784,121 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <location filename="work/gui/src/systools.cpp" line="398" />
         <source>fwupd: the devices it can update and the firmware updates it finds. Finding updates contacts the LVFS server on the internet, so this page runs only on "Run again".</source>
         <translation>fwupd: güncellenebilen aygıtlar ve bulunan donanım yazılımı güncellemeleri. Güncelleme aramak internetteki LVFS sunucusuna bağlanır, bu yüzden bu sayfa yalnızca "Run again" ile çalışır.</translation>
+    </message>
+</context>
+<context>
+    <name>BackupPage</name>
+    <message>
+        <source>Compare two…</source>
+        <translation>İki yedeği karşılaştır…</translation>
+    </message>
+    <message>
+        <source>Select two "Centurion configuration" archives (Ctrl+click) to see what changed between them: files, and keys in JSON and .ini files. Reads only; restores nothing.</source>
+        <translation>Aralarındaki farkı görmek için iki "Centurion configuration" arşivini seçin (Ctrl+tık): dosyalar ile JSON ve .ini dosyalarındaki anahtarlar. Yalnızca okur; hiçbir şey geri yüklemez.</translation>
+    </message>
+    <message>
+        <source>Incremental</source>
+        <translation>Artımlı</translation>
+    </message>
+    <message>
+        <source>Only what changed since the newest image in the folder. The first image is a full one; up to 6 increments follow it. A chain is only ever pruned whole, and a restore applies the full image and then each increment in order.</source>
+        <translation>Yalnızca klasördeki en yeni imajdan bu yana değişenler. İlk imaj tam imajdır; ardından en fazla 6 artım gelir. Bir zincir yalnızca bütün olarak silinir; geri yükleme tam imajı, ardından artımları sırayla uygular.</translation>
+    </message>
+    <message>
+        <source>encrypt to: age1… public key (empty = not encrypted)</source>
+        <translation>şifrele: age1… açık anahtarı (boş = şifresiz)</translation>
+    </message>
+    <message>
+        <source>Encrypts the image with age to this public key (a public key is not a secret). Reading the image back needs the matching AGE-SECRET-KEY line, which Centurion asks for when needed and never stores. Keep that key somewhere other than this computer: without it the image cannot be read.</source>
+        <translation>İmaj bu açık anahtarla age kullanılarak şifrelenir (açık anahtar gizli değildir). Okumak için eşleşen AGE-SECRET-KEY satırı gerekir; Centurion gerektiğinde sorar, asla saklamaz. Bu anahtarı bu bilgisayar dışında saklayın: anahtar olmadan imaj okunamaz.</translation>
+    </message>
+    <message>
+        <source>Encrypt to</source>
+        <translation>Şifrele</translation>
+    </message>
+    <message>
+        <source>encrypted</source>
+        <translation>şifreli</translation>
+    </message>
+    <message>
+        <source>increment %1</source>
+        <translation>artım %1</translation>
+    </message>
+    <message>
+        <source>"Encrypt to" needs an age public key (age1…), or leave it empty.</source>
+        <translation>"Şifrele" için bir age açık anahtarı (age1…) gerekir ya da boş bırakın.</translation>
+    </message>
+    <message>
+        <source>Encrypted: keep the AGE-SECRET-KEY that goes with this key somewhere other than this computer. Without it the image cannot be read.</source>
+        <translation>Şifreli: bu anahtara ait AGE-SECRET-KEY'i bu bilgisayar dışında saklayın. Olmadan imaj okunamaz.</translation>
+    </message>
+    <message>
+        <source>, encrypted: verify it with its key</source>
+        <translation>, şifreli: anahtarıyla doğrulayın</translation>
+    </message>
+    <message>
+        <source>, increment %1</source>
+        <translation>, artım %1</translation>
+    </message>
+    <message>
+        <source>restored the full image and %1 increment(s), in order</source>
+        <translation>tam imaj ve %1 artım sırayla geri yüklendi</translation>
+    </message>
+    <message>
+        <source>Verify cancelled.</source>
+        <translation>Doğrulama iptal edildi.</translation>
+    </message>
+    <message>
+        <source>Age key</source>
+        <translation>Age anahtarı</translation>
+    </message>
+    <message>
+        <source>%1 is encrypted. Paste its AGE-SECRET-KEY-1… line. It is used for this run only and is not kept.</source>
+        <translation>%1 şifreli. AGE-SECRET-KEY-1… satırını yapıştırın. Yalnızca bu çalıştırmada kullanılır, saklanmaz.</translation>
+    </message>
+    <message>
+        <source>Select exactly two "Centurion configuration" archives (Ctrl+click) to compare.</source>
+        <translation>Karşılaştırmak için tam olarak iki "Centurion configuration" arşivi seçin (Ctrl+tık).</translation>
+    </message>
+    <message>
+        <source>Comparing the configurations…</source>
+        <translation>Yapılandırmalar karşılaştırılıyor…</translation>
+    </message>
+    <message>
+        <source>Comparison failed: </source>
+        <translation>Karşılaştırma başarısız: </translation>
+    </message>
+    <message>
+        <source>A: %1 (made %2)</source>
+        <translation>A: %1 (oluşturulma: %2)</translation>
+    </message>
+    <message>
+        <source>B: %1 (made %2)</source>
+        <translation>B: %1 (oluşturulma: %2)</translation>
+    </message>
+    <message>
+        <source>  (changed; not a JSON or .ini file)</source>
+        <translation>  (değişti; JSON ya da .ini dosyası değil)</translation>
+    </message>
+    <message>
+        <source>%1 added, %2 removed, %3 changed, %4 unchanged.</source>
+        <translation>%1 eklendi, %2 silindi, %3 değişti, %4 aynı.</translation>
+    </message>
+    <message>
+        <source> The list was cut short.</source>
+        <translation> Liste kısaltıldı.</translation>
+    </message>
+    <message>
+        <source>Verification failed: </source>
+        <translation>Doğrulama başarısız: </translation>
+    </message>
+    <message>
+        <source>%1 of %2 archive(s) verified.</source>
+        <translation>%1 / %2 arşiv doğrulandı.</translation>
+    </message>
+    <message>
+        <source>%1: readable end to end, %L2 entries</source>
+        <translation>%1: baştan sona okunabiliyor, %L2 girdi</translation>
     </message>
 </context>
 </TS>

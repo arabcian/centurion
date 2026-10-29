@@ -3,11 +3,16 @@
 //!   centurion-cooltest status               {"ok", "context", "key", "limit_c", "baseline", "runs", "latest", "assessment"}
 //!   centurion-cooltest run [--seconds N]    JSON lines: {"phase", ...} progress, then {"ok", "run", "assessment"}
 //!   centurion-cooltest baseline             make the newest clean run of the current settings the baseline
-//!   centurion-cooltest forget               drop every stored run of the current settings
+//!   centurion-cooltest forget               drop every stored run and fan-test result of the current settings
+//!   centurion-cooltest fans                 {"ok", "fans": [rpm per fan]} - a read of the fans now
+//!   centurion-cooltest fanmax --peaks A,B   the fan test's peak rpm per fan: the first one under the current
+//!                                           settings is the baseline, later ones are compared with it
 //!
 //! `run` loads every CPU thread with a fixed, light-weight floating-point loop (about four minutes by
 //! default), samples die temperature, fans and clock every 2 s, and stores the steady-state result.
 //! Nothing is written to the hardware; the load stops when the process does.
+//! The fan test itself (fans to maximum, then back) is done by the GUI through the Home page, which
+//! has the root rights for it; this tool only reads the fans and judges the peaks it is given.
 //! How runs are compared (firmware settings, pinned die, noise): see the `cooling` module.
 
 use centurion_helpers::cooling::{self as cool, Context, Sample};
@@ -74,7 +79,6 @@ fn run(seconds: u64) -> Value {
     let ctx: Context = cool::capture_context();
     let limit = ctx.limit_c();
     let abort_at = ctx.abort_c();
-    let fans_before = cool::fans_rpm().len();
 
     // Low priority: the desktop stays usable while every thread is busy.
     unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 10); }
@@ -96,9 +100,10 @@ fn run(seconds: u64) -> Value {
             std::thread::sleep(SAMPLE_EVERY);
             let t = t0.elapsed().as_secs_f64();
             let Some(temp) = centurion_helpers::bench::cpu_temp_c() else { continue };
-            let fan = cool::fans_rpm().into_iter().fold(None, |m: Option<f64>, r| Some(m.map_or(r, |x| x.max(r))));
+            let fans = cool::fans_rpm();
+            let fan = fans.iter().copied().reduce(f64::max);
             let mhz = cool::avg_mhz();
-            samples.push(Sample { t, temp, fan, mhz });
+            samples.push(Sample { t, temp, fan, fans, mhz });
             emit(&json!({"phase": "load", "elapsed": t, "total": seconds, "temp": temp, "fan": fan, "mhz": mhz, "start_temp": start_temp}));
             if temp >= abort_at { aborted = Some(temp); break; }
         }
@@ -118,7 +123,7 @@ fn run(seconds: u64) -> Value {
     let mut runs = cool::load_runs(&path);
     let mut r = cool::run_json(now_epoch(), &ctx, &m, noisy, seconds);
     r["other_busy_cpus"] = json!((busy * 10.0).round() / 10.0);
-    r["fans"] = json!(fans_before);
+    r["fans"] = json!(cool::fan_means(cool::steady_window(&samples)));
     cool::add_run(&mut runs, r.clone());
     if let Err(e) = cool::save_runs(&path, &runs) {
         return json!({"ok": false, "error": format!("the test finished but its result could not be saved: {e}")});
@@ -139,6 +144,45 @@ fn edit_store(f: impl FnOnce(&mut Vec<Value>, &str) -> Result<(), String>) -> Va
     }
 }
 
+fn forget() -> Value {
+    let key = cool::capture_context().key();
+    let (path, fan_path) = (cool::store_path(), cool::fanmax_path());
+    let mut runs = cool::load_runs(&path);
+    cool::forget(&mut runs, &key);
+    let mut peaks = cool::load_fanmax(&fan_path);
+    if let Some(o) = peaks.as_object_mut() { o.remove(&key); }
+    match cool::save_runs(&path, &runs).and_then(|_| cool::save_fanmax(&fan_path, &peaks)) {
+        Ok(()) => json!({"ok": true}),
+        Err(e) => json!({"ok": false, "error": e}),
+    }
+}
+
+fn fans() -> Value { json!({"ok": true, "fans": cool::fans_rpm()}) }
+
+/// The fan test's peaks against the baseline of the current settings (the first test under them becomes it).
+fn fanmax(args: &[String]) -> Value {
+    let peaks: Result<Vec<f64>, _> = args.iter().position(|a| a == "--peaks")
+        .and_then(|i| args.get(i + 1))
+        .map_or(Err(()), |s| s.split(',').map(|p| p.trim().parse::<f64>().map_err(|_| ())).collect());
+    let Ok(peaks) = peaks else { return json!({"ok": false, "error": "usage: fanmax --peaks RPM[,RPM...]"}) };
+    if peaks.is_empty() { return json!({"ok": false, "error": "no fan speeds were measured"}); }
+    let key = cool::capture_context().key();
+    let path = cool::fanmax_path();
+    let mut store = cool::load_fanmax(&path);
+    let Some(base) = cool::fan_peak_baseline(&store, &key) else {
+        store[&key] = json!({"t": now_epoch(), "peaks": peaks});
+        return match cool::save_fanmax(&path, &store) {
+            Ok(()) => json!({"ok": true, "baseline": true, "peaks": peaks}),
+            Err(e) => json!({"ok": false, "error": e}),
+        };
+    };
+    match cool::check_fan_peaks(&base, &peaks) {
+        Some(c) => json!({"ok": true, "baseline": false, "peaks": peaks, "base_peaks": base, "drops_pct": c.drops_pct, "warn": c.warn,
+                          "warn_pct": cool::FAN_PEAK_WARN_PCT}),
+        None => json!({"ok": false, "error": "the number of fans differs from the baseline; press \"Forget results for these settings\" to start over"}),
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let v = match args.first().map(String::as_str) {
@@ -154,9 +198,11 @@ fn main() {
             run(secs)
         }
         Some("baseline") => edit_store(|runs, key| if cool::promote_latest(runs, key) { Ok(()) } else { Err("no clean run for the current settings yet".into()) }),
-        Some("forget") => edit_store(|runs, key| { cool::forget(runs, key); Ok(()) }),
+        Some("forget") => forget(),
+        Some("fans") => fans(),
+        Some("fanmax") => fanmax(&args),
         _ => {
-            eprintln!("usage: centurion-cooltest status | run [--seconds N] | baseline | forget");
+            eprintln!("usage: centurion-cooltest status | run [--seconds N] | baseline | forget | fans | fanmax --peaks RPM[,RPM...]");
             std::process::exit(2);
         }
     };

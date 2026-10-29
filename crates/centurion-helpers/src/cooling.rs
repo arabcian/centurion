@@ -48,13 +48,20 @@ const WATCH_FAN_PCT: f64 = 15.0;
 const PINNED_MARGIN_C: f64 = 2.0;
 /// Below this a fan reading is not a speed worth comparing.
 const MIN_FAN_RPM: f64 = 500.0;
+/// Fans further apart than this many points (spread = (fastest - slowest) / fastest) than in the baseline: a watch item.
+const WATCH_SPLIT_PTS: f64 = 15.0;
+/// A fan whose peak speed in the fan test is this far (percent) under its baseline peak is a warning.
+pub const FAN_PEAK_WARN_PCT: f64 = 8.0;
 
 /// One reading during the load.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Sample {
     pub t: f64,
     pub temp: f64,
+    /// Fastest fan.
     pub fan: Option<f64>,
+    /// Every fan, in `fans_rpm` order.
+    pub fans: Vec<f64>,
     pub mhz: Option<f64>,
 }
 
@@ -67,6 +74,8 @@ pub struct Metrics {
     pub max_temp: f64,
     /// Fastest fan, mean over the steady window.
     pub fan_rpm: Option<f64>,
+    /// How unevenly the fans spin (see `fan_spread`), mean over the steady window.
+    pub fan_spread: Option<f64>,
     pub mhz: Option<f64>,
 }
 
@@ -75,17 +84,39 @@ fn mean(it: impl Iterator<Item = f64>) -> Option<f64> {
     (n > 0).then(|| s / n as f64)
 }
 
+/// Mean speed of each fan over the samples (fan order as `fans_rpm`).
+pub fn fan_means<'a>(samples: impl IntoIterator<Item = &'a Sample>) -> Vec<f64> {
+    let samples: Vec<&Sample> = samples.into_iter().collect();
+    let n = samples.iter().map(|s| s.fans.len()).max().unwrap_or(0);
+    (0..n).filter_map(|i| mean(samples.iter().filter_map(|s| s.fans.get(i).copied()))).collect()
+}
+
+/// (fastest - slowest) / fastest, in percent. None with fewer than two fans or when none reaches
+/// `MIN_FAN_RPM`. A fan stopped under load shows as 100.
+pub fn fan_spread(means: &[f64]) -> Option<f64> {
+    let max = means.iter().copied().fold(f64::MIN, f64::max);
+    if means.len() < 2 || max < MIN_FAN_RPM { return None; }
+    let min = means.iter().copied().fold(f64::MAX, f64::min);
+    Some((max - min) / max * 100.0)
+}
+
+/// The steady window of a run: its last STEADY_WINDOW_S seconds (at most half of it).
+pub fn steady_window(samples: &[Sample]) -> Vec<&Sample> {
+    let (Some(last), Some(first)) = (samples.last().map(|s| s.t), samples.first().map(|s| s.t)) else { return Vec::new() };
+    let window = STEADY_WINDOW_S.min((last - first) / 2.0).max(0.0);
+    samples.iter().filter(|s| s.t >= last - window).collect()
+}
+
 /// Steady-state metrics of a run. None without a sample.
 pub fn summarise(samples: &[Sample], start_temp: f64) -> Option<Metrics> {
-    let last = samples.last()?.t;
-    let first = samples.first()?.t;
-    let window = STEADY_WINDOW_S.min((last - first) / 2.0).max(0.0);
-    let steady: Vec<&Sample> = samples.iter().filter(|s| s.t >= last - window).collect();
+    let steady = steady_window(samples);
+    if steady.is_empty() { return None; }
     Some(Metrics {
         start_temp,
         steady_temp: mean(steady.iter().map(|s| s.temp))?,
         max_temp: samples.iter().map(|s| s.temp).fold(f64::MIN, f64::max),
         fan_rpm: mean(steady.iter().filter_map(|s| s.fan)),
+        fan_spread: fan_spread(&fan_means(steady.iter().copied())),
         mhz: mean(steady.iter().filter_map(|s| s.mhz)),
     })
 }
@@ -135,6 +166,8 @@ pub struct Assessment {
     pub d_temp: f64,
     pub d_clock_pct: Option<f64>,
     pub d_fan_pct: Option<f64>,
+    /// Change of the fan spread in points (positive = the fans spin further apart than at the baseline).
+    pub d_split_pts: Option<f64>,
     pub pinned: bool,
 }
 
@@ -148,8 +181,9 @@ pub fn assess(base: &Metrics, now: &Metrics, limit_c: f64, base_noisy: bool, now
         (Some(b), Some(n)) if b >= MIN_FAN_RPM && n >= MIN_FAN_RPM => pct_down(Some(b), Some(n)).map(|d| -d),
         _ => None,
     };
+    let d_split_pts = match (base.fan_spread, now.fan_spread) { (Some(b), Some(n)) => Some(n - b), _ => None };
     let pinned = now.steady_temp >= limit_c - PINNED_MARGIN_C;
-    let mut a = Assessment { level: Level::Ok, reasons: Vec::new(), d_temp, d_clock_pct, d_fan_pct, pinned };
+    let mut a = Assessment { level: Level::Ok, reasons: Vec::new(), d_temp, d_clock_pct, d_fan_pct, d_split_pts, pinned };
 
     if base_noisy || now_noisy {
         a.level = Level::Inconclusive;
@@ -173,6 +207,9 @@ pub fn assess(base: &Metrics, now: &Metrics, limit_c: f64, base_noisy: bool, now
     if pinned && clock >= WARN_CLOCK_PCT { warn = true; a.reasons.push(("pinned", limit_c)); a.reasons.push(("clock_down", clock)); }
     else if clock >= WATCH_CLOCK_PCT { watch = true; a.reasons.push(("clock_down", clock)); }
     if !warn && fan >= WATCH_FAN_PCT { watch = true; a.reasons.push(("fan_up", fan)); }
+    // One fan slower than the others (dust in one fan, a blocked duct, a loose cable): a watch item only,
+    // since a changed fan curve also moves the spread.
+    if !warn && d_split_pts.unwrap_or(0.0) >= WATCH_SPLIT_PTS { watch = true; a.reasons.push(("fan_split", d_split_pts.unwrap_or(0.0))); }
 
     if warn { a.level = Level::Warn; }
     else if watch { a.level = Level::Watch; }
@@ -185,11 +222,11 @@ pub fn assess(base: &Metrics, now: &Metrics, limit_c: f64, base_noisy: bool, now
 
 // ── store ────────────────────────────────────────────────────────────────────
 
-/// One stored run: `{"t", "key", "ctx", "start_temp", "steady_temp", "max_temp", "fan_rpm", "mhz",
-/// "noisy", "secs", "baseline"}`.
+/// One stored run: `{"t", "key", "ctx", "start_temp", "steady_temp", "max_temp", "fan_rpm", "fan_spread",
+/// "mhz", "noisy", "secs", "baseline"}`. Runs stored before per-fan readings have no "fan_spread".
 pub fn run_json(t: i64, ctx: &Context, m: &Metrics, noisy: bool, secs: u64) -> Value {
     json!({"t": t, "key": ctx.key(), "ctx": ctx.to_json(), "start_temp": m.start_temp, "steady_temp": m.steady_temp,
-           "max_temp": m.max_temp, "fan_rpm": m.fan_rpm, "mhz": m.mhz, "noisy": noisy, "secs": secs, "baseline": false})
+           "max_temp": m.max_temp, "fan_rpm": m.fan_rpm, "fan_spread": m.fan_spread, "mhz": m.mhz, "noisy": noisy, "secs": secs, "baseline": false})
 }
 
 pub fn metrics_of(run: &Value) -> Option<Metrics> {
@@ -198,6 +235,7 @@ pub fn metrics_of(run: &Value) -> Option<Metrics> {
         steady_temp: run["steady_temp"].as_f64()?,
         max_temp: run["max_temp"].as_f64()?,
         fan_rpm: run["fan_rpm"].as_f64(),
+        fan_spread: run["fan_spread"].as_f64(),
         mhz: run["mhz"].as_f64(),
     })
 }
@@ -273,11 +311,33 @@ pub fn avg_mhz() -> Option<f64> {
     mean(khz.into_iter()).map(|k| k / 1000.0)
 }
 
-pub fn store_path() -> PathBuf {
+fn state_dir() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| PathBuf::from(h).join(".local/state")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join("centurion/cooling.json")
+    base.join("centurion")
+}
+
+pub fn store_path() -> PathBuf { state_dir().join("cooling.json") }
+
+/// Fan-test baselines: `{key: {"t": epoch, "peaks": [peak rpm per fan]}}`, one entry per firmware context.
+pub fn fanmax_path() -> PathBuf { state_dir().join("fanmax.json") }
+
+/// Peak speeds of the fans under `key` (None when the fan test has no baseline for it).
+pub fn fan_peak_baseline(store: &Value, key: &str) -> Option<Vec<f64>> {
+    Some(store[key]["peaks"].as_array()?.iter().filter_map(Value::as_f64).collect())
+}
+
+/// Compares fan peaks with their baseline, fan by fan. `drops_pct` is how far each peak sits below its
+/// baseline (negative = faster). None when the fan counts differ or no baseline fan reaches `MIN_FAN_RPM`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PeakCheck { pub drops_pct: Vec<f64>, pub warn: bool }
+
+pub fn check_fan_peaks(base: &[f64], now: &[f64]) -> Option<PeakCheck> {
+    if base.len() != now.len() || !base.iter().any(|b| *b >= MIN_FAN_RPM) { return None; }
+    let drops_pct: Vec<f64> = base.iter().zip(now).map(|(b, n)| if *b >= MIN_FAN_RPM { (b - n) / b * 100.0 } else { 0.0 }).collect();
+    let warn = drops_pct.iter().any(|d| *d >= FAN_PEAK_WARN_PCT);
+    Some(PeakCheck { drops_pct, warn })
 }
 
 /// The stored runs (empty when there is no readable store).
@@ -286,15 +346,26 @@ pub fn load_runs(path: &Path) -> Vec<Value> {
     std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).map(|v| runs(&v)).unwrap_or_default()
 }
 
-/// Writes the store in one step (temp file + rename), so a reader never sees half of it.
-pub fn save_runs(path: &Path, runs: &[Value]) -> Result<(), String> {
+/// Writes a store file in one step (temp file + rename), so a reader never sees half of it.
+fn write_atomic(path: &Path, v: &Value) -> Result<(), String> {
     let dir = path.parent().ok_or("bad store path")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let tmp = dir.join(format!(".cooling.json.{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec(&json!({"version": 1, "runs": runs})).map_err(|e| e.to_string())?)
+    let tmp = dir.join(format!(".{}.{}", path.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));
+    std::fs::write(&tmp, serde_json::to_vec(v).map_err(|e| e.to_string())?)
         .and_then(|_| std::fs::rename(&tmp, path))
         .map_err(|e| { let _ = std::fs::remove_file(&tmp); format!("{}: {e}", path.display()) })
 }
+
+pub fn save_runs(path: &Path, runs: &[Value]) -> Result<(), String> {
+    write_atomic(path, &json!({"version": 1, "runs": runs}))
+}
+
+/// The fan-test store (empty when there is none or it is unreadable).
+pub fn load_fanmax(path: &Path) -> Value {
+    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}))
+}
+
+pub fn save_fanmax(path: &Path, store: &Value) -> Result<(), String> { write_atomic(path, store) }
 
 /// The newest run of `key` and its verdict against that key's baseline (None without a baseline or
 /// when the newest run is the baseline itself).
@@ -307,7 +378,7 @@ pub fn latest_assessment(runs: &[Value], key: &str, limit_c: f64) -> Option<(Val
 }
 
 pub fn assessment_json(a: &Assessment) -> Value {
-    json!({"level": a.level.as_str(), "d_temp": a.d_temp, "d_clock_pct": a.d_clock_pct, "d_fan_pct": a.d_fan_pct, "pinned": a.pinned,
+    json!({"level": a.level.as_str(), "d_temp": a.d_temp, "d_clock_pct": a.d_clock_pct, "d_fan_pct": a.d_fan_pct, "d_split_pts": a.d_split_pts, "pinned": a.pinned,
            "reasons": a.reasons.iter().map(|(c, v)| json!({"code": c, "value": v})).collect::<Vec<_>>()})
 }
 
@@ -316,7 +387,7 @@ mod tests {
     use super::*;
 
     fn m(start: f64, temp: f64, fan: Option<f64>, mhz: Option<f64>) -> Metrics {
-        Metrics { start_temp: start, steady_temp: temp, max_temp: temp + 1.0, fan_rpm: fan, mhz }
+        Metrics { start_temp: start, steady_temp: temp, max_temp: temp + 1.0, fan_rpm: fan, fan_spread: None, mhz }
     }
     fn ctx(limit: Option<i64>) -> Context {
         let mut limits = BTreeMap::new();
@@ -328,7 +399,7 @@ mod tests {
     #[test]
     fn steady_window_is_the_end_of_the_run() {
         // 0..240 s: 60 °C for the first 150 s, then 80 °C.
-        let s: Vec<Sample> = (0..=120).map(|i| { let t = i as f64 * 2.0; Sample { t, temp: if t < 150.0 { 60.0 } else { 80.0 }, fan: Some(3000.0), mhz: None } }).collect();
+        let s: Vec<Sample> = (0..=120).map(|i| { let t = i as f64 * 2.0; Sample { t, temp: if t < 150.0 { 60.0 } else { 80.0 }, fan: Some(3000.0), fans: vec![3000.0], mhz: None } }).collect();
         let r = summarise(&s, 45.0).unwrap();
         assert_eq!(r.steady_temp, 80.0);
         assert_eq!(r.max_temp, 80.0);
@@ -390,6 +461,71 @@ mod tests {
         assert_eq!(a.reasons[0].0, "warm_start");
         assert_eq!(assess(&base, &hot, 95.0, false, true).level, Level::Inconclusive);
         assert_eq!(assess(&base, &hot, 95.0, true, false).level, Level::Inconclusive);
+    }
+
+    #[test]
+    fn fan_spread_measures_the_disagreement() {
+        assert_eq!(fan_spread(&[3000.0, 3000.0]), Some(0.0));
+        assert_eq!(fan_spread(&[3000.0, 1500.0]), Some(50.0));
+        assert_eq!(fan_spread(&[3000.0, 0.0]), Some(100.0));
+        assert_eq!(fan_spread(&[3000.0]), None);
+        assert_eq!(fan_spread(&[400.0, 300.0]), None);
+    }
+
+    #[test]
+    fn per_fan_means_come_from_the_steady_window() {
+        let s = |t: f64, fans: Vec<f64>| Sample { t, temp: 80.0, fan: fans.iter().copied().reduce(f64::max), fans, mhz: None };
+        let samples = vec![s(0.0, vec![3000.0, 2000.0]), s(2.0, vec![3200.0, 2200.0])];
+        assert_eq!(fan_means(&samples), vec![3100.0, 2100.0]);
+        // Two samples: the steady window is the last one only.
+        let r = summarise(&samples, 45.0).unwrap();
+        assert!((r.fan_spread.unwrap() - 31.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn one_fan_slower_than_the_others_is_a_watch_item() {
+        let base = Metrics { fan_spread: Some(2.0), ..m(45.0, 78.0, Some(3200.0), Some(4200.0)) };
+        let even = Metrics { fan_spread: Some(4.0), ..m(45.0, 78.5, Some(3200.0), Some(4200.0)) };
+        assert_eq!(assess(&base, &even, 95.0, false, false).level, Level::Ok);
+        let uneven = Metrics { fan_spread: Some(30.0), ..m(45.0, 78.5, Some(3200.0), Some(4200.0)) };
+        let a = assess(&base, &uneven, 95.0, false, false);
+        assert_eq!(a.level, Level::Watch);
+        assert_eq!(a.d_split_pts, Some(28.0));
+        assert!(a.reasons.iter().any(|r| r.0 == "fan_split" && (r.1 - 28.0).abs() < 1e-9));
+        // A baseline from before per-fan readings cannot be compared.
+        let old = Metrics { fan_spread: None, ..m(45.0, 78.0, Some(3200.0), Some(4200.0)) };
+        assert_eq!(assess(&old, &uneven, 95.0, false, false).d_split_pts, None);
+        // The spread survives the store.
+        let run = run_json(1, &ctx(Some(95)), &even, false, 240);
+        assert_eq!(metrics_of(&run).unwrap().fan_spread, Some(4.0));
+    }
+
+    #[test]
+    fn fan_peaks_eight_percent_under_the_baseline_warn() {
+        let c = check_fan_peaks(&[4000.0, 4000.0], &[3600.0, 3900.0]).unwrap();
+        assert!(c.warn);
+        assert!((c.drops_pct[0] - 10.0).abs() < 1e-9 && (c.drops_pct[1] - 2.5).abs() < 1e-9);
+        assert!(!check_fan_peaks(&[4000.0], &[3800.0]).unwrap().warn); // 5 %
+        assert!(check_fan_peaks(&[4000.0], &[4000.0, 4000.0]).is_none()); // fan count changed
+        assert!(check_fan_peaks(&[300.0], &[200.0]).is_none()); // nothing comparable
+    }
+
+    #[test]
+    fn fan_peak_baseline_is_kept_per_key() {
+        let store = json!({"ctx-a": {"t": 1, "peaks": [4000.0, 3900.0]}});
+        assert_eq!(fan_peak_baseline(&store, "ctx-a"), Some(vec![4000.0, 3900.0]));
+        assert_eq!(fan_peak_baseline(&store, "ctx-b"), None);
+    }
+
+    #[test]
+    fn fan_test_store_round_trip() {
+        let dir = std::env::temp_dir().join(format!("fanmax-test-{}", std::process::id()));
+        let file = dir.join("nested/fanmax.json");
+        assert!(load_fanmax(&file).as_object().unwrap().is_empty());
+        let store = json!({"ctx-a": {"t": 5, "peaks": [4000.0, 3900.0]}});
+        save_fanmax(&file, &store).unwrap();
+        assert_eq!(fan_peak_baseline(&load_fanmax(&file), "ctx-a"), Some(vec![4000.0, 3900.0]));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
