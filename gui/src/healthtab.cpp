@@ -312,6 +312,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         });
     } else {
         needsRoot_ = true;
+        curves_->setKernelLog(false);
         timer_->start(POLL_ROOT_MS);
     }
     // Resume point: highest seq of the current boot already in the file, so a
@@ -426,6 +427,7 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
     if (!r.value(QStringLiteral("ok")).toBool()) {
         if (r.value(QStringLiteral("needs_root")).toBool() && !needsRoot_) {
             needsRoot_ = true;
+            curves_->setKernelLog(false);
             timer_->start(POLL_ROOT_MS);
             QTimer::singleShot(0, this, &HealthTab::scan);
             return;

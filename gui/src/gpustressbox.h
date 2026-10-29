@@ -26,6 +26,8 @@ public:
     void refresh(bool blocked);
     /// A new kernel event of this session (CurvePage::onFault): NVIDIA Xids and AMD GPU resets count against a running test.
     void onFault(const QJsonObject &e);
+    /// Whether the kernel log is read live (CurvePage::setKernelLog). When not, events come minutes late and are not counted.
+    void setKernelLog(bool live);
 
 Q_SIGNALS:
     void alert(const QString &title, const QString &message);
@@ -45,7 +47,7 @@ private:
     QString program_;
     QComboBox *device_ = nullptr, *mode_ = nullptr, *minutes_ = nullptr;
     QSpinBox *percent_ = nullptr;
-    QLabel *percentLabel_ = nullptr, *status_ = nullptr;
+    QLabel *percentLabel_ = nullptr, *status_ = nullptr, *klogNote_ = nullptr;
     QPushButton *run_ = nullptr;
     QTreeWidget *results_ = nullptr;
     QProcess *proc_ = nullptr, *listProc_ = nullptr;
@@ -57,5 +59,5 @@ private:
     QString pci_, deviceName_, curve_;
     gpustress::Mode runMode_ = gpustress::Mode::Vram;
     int seconds_ = 0, faults_ = 0;
-    bool cancelled_ = false, blocked_ = false, settling_ = false;
+    bool cancelled_ = false, blocked_ = false, settling_ = false, kernelLive_ = true;
 };

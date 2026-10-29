@@ -57,6 +57,12 @@ GpuStressBox::GpuStressBox(QWidget *parent) : QWidget(parent) {
             .toHtmlEscaped()));
     intro->setWordWrap(true);
     root->addWidget(intro);
+    klogNote_ = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
+        tr("The kernel log is not readable without a password here, so GPU errors are not counted during the test; "
+           "only the test's own results are.").toHtmlEscaped()));
+    klogNote_->setWordWrap(true);
+    klogNote_->setVisible(!kernelLive_);
+    root->addWidget(klogNote_);
 
     auto *row = new QHBoxLayout;
     row->addWidget(new QLabel(tr("GPU")));
@@ -165,6 +171,11 @@ void GpuStressBox::showDevices() {
         status_->setVisible(false);
 }
 
+void GpuStressBox::setKernelLog(bool live) {
+    kernelLive_ = live;
+    if (klogNote_) klogNote_->setVisible(!live);
+}
+
 void GpuStressBox::onFault(const QJsonObject &e) {
     if (proc_ && gpustress::isGpuFault(e.value(QStringLiteral("kind")).toString(), e.value(QStringLiteral("code")).toInt())) ++faults_;
 }
@@ -241,13 +252,14 @@ void GpuStressBox::finished(int exitCode, bool crashed) {
 void GpuStressBox::conclude(int exitCode, bool crashed, qint64 seconds) {
     settling_ = false;
     const gpustress::Verdict v = gpustress::verdict(run_state_, exitCode, crashed, cancelled_, faults_);
-    const QJsonObject result{
+    QJsonObject result{
         {QStringLiteral("t"), QDateTime::currentSecsSinceEpoch()}, {QStringLiteral("mode"), gpustress::modeName(runMode_)},
         {QStringLiteral("pci"), pci_}, {QStringLiteral("device"), deviceName_},
         {QStringLiteral("mib"), run_state_.bytes / (1024 * 1024)}, {QStringLiteral("seconds"), seconds},
         {QStringLiteral("passes"), run_state_.passes}, {QStringLiteral("errors"), run_state_.errors},
         {QStringLiteral("faults"), faults_}, {QStringLiteral("verdict"), gpustress::verdictName(v)},
         {QStringLiteral("curve"), curve_}};
+    if (!kernelLive_) result[QStringLiteral("kernel_log")] = false;  // a pass without kernel events is weaker evidence
     const bool saved = gpustress::append(result);
     proc_->deleteLater();
     proc_ = nullptr;

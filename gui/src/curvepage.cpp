@@ -280,6 +280,11 @@ void CurvePage::resetGpuCurve(const QString &title) {
                     }, 120000);
 }
 
+void CurvePage::setKernelLog(bool live) {
+    memTest_->setKernelLog(live);
+    gpuTest_->setKernelLog(live);
+}
+
 void CurvePage::onFault(const QJsonObject &e) {
     memTest_->onFault(e);
     gpuTest_->onFault(e);

@@ -23,6 +23,7 @@
 namespace {
 
 constexpr int STUCK_GRACE_S = 120;  // stressapptest ends itself; one still running this long after is killed
+constexpr int SETTLE_MS = 3000;     // kernel events reach onFault ~1.5 s after they are logged (HealthTab debounce): wait for them
 
 QString findTool(const QString &name) {
     QString p = QStandardPaths::findExecutable(name);
@@ -63,6 +64,12 @@ MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
             .arg(memtest::toolName(tool_)).toHtmlEscaped()));
     intro->setWordWrap(true);
     root->addWidget(intro);
+    klogNote_ = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
+        tr("The kernel log is not readable without a password here, so machine checks are not counted during the test; "
+           "only the test's own results are.").toHtmlEscaped()));
+    klogNote_->setWordWrap(true);
+    klogNote_->setVisible(!kernelLive_);
+    root->addWidget(klogNote_);
 
     auto *row = new QHBoxLayout;
     row->addWidget(new QLabel(tr("Free memory to test")));
@@ -103,6 +110,11 @@ MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
     ticker_->setInterval(1000);
     connect(ticker_, &QTimer::timeout, this, &MemTestBox::tick);
     fill();
+}
+
+void MemTestBox::setKernelLog(bool live) {
+    kernelLive_ = live;
+    if (klogNote_) klogNote_->setVisible(!live);
 }
 
 void MemTestBox::onFault(const QJsonObject &e) {
@@ -184,22 +196,34 @@ void MemTestBox::tick() {
 }
 
 void MemTestBox::finished(int exitCode, bool crashed) {
-    if (!proc_) return;
+    if (!proc_ || settling_) return;
     ticker_->stop();
     if (!partial_.isEmpty()) memtest::feed(run_state_, tool_, QString::fromLocal8Bit(partial_));
+    // The machine check that the failure caused is logged after the process is gone: keep counting them a
+    // moment (proc_ stays set, so onFault counts), with Start disabled, before the verdict is decided.
+    settling_ = true;
+    run_->setEnabled(false);
+    const qint64 seconds = elapsed_.elapsed() / 1000;
+    QTimer::singleShot(SETTLE_MS, this, [this, exitCode, crashed, seconds] { conclude(exitCode, crashed, seconds); });
+}
+
+void MemTestBox::conclude(int exitCode, bool crashed, qint64 seconds) {
+    settling_ = false;
     const memtest::Verdict v = memtest::verdict(run_state_, tool_, exitCode, crashed, stopped_, cancelled_, mce_);
-    const QJsonObject result{
+    QJsonObject result{
         {QStringLiteral("t"), QDateTime::currentSecsSinceEpoch()}, {QStringLiteral("tool"), memtest::toolName(tool_)},
-        {QStringLiteral("mib"), plan_.mib}, {QStringLiteral("seconds"), elapsed_.elapsed() / 1000},
+        {QStringLiteral("mib"), plan_.mib}, {QStringLiteral("seconds"), seconds},
         {QStringLiteral("verdict"), memtest::verdictName(v)}, {QStringLiteral("errors"), run_state_.errors},
         {QStringLiteral("mce"), mce_}, {QStringLiteral("clamped"), plan_.clamped},
         {QStringLiteral("unlocked"), run_state_.unlocked}, {QStringLiteral("bios"), bios_}};
+    if (!kernelLive_) result[QStringLiteral("kernel_log")] = false;  // a pass without kernel events is weaker evidence
     const bool saved = memtest::append(result);
     proc_->deleteLater();
     proc_ = nullptr;
     run_->setText(tr("Start"));
     percent_->setEnabled(true);
     minutes_->setEnabled(true);
+    run_->setEnabled(true);
 
     QString text;
     if (v == memtest::Verdict::Pass) text = QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::OK, tr("No errors.").toHtmlEscaped());

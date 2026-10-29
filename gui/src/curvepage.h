@@ -27,6 +27,8 @@ public:
     explicit CurvePage(QWidget *parent = nullptr);
     /// A new kernel event of this session (HealthTab::fault).
     void onFault(const QJsonObject &e);
+    /// Whether the kernel log is read live (HealthTab); the test boxes say so when it is not.
+    void setKernelLog(bool live);
     /// Takes the GPU curve back to stock now (the guard's path; Monitor's action uses it too). `title` names the cause.
     void resetGpuCurve(const QString &title);
     /// "stock" or the journal's state of the last curve write this boot, for "gpu" / "cpu".

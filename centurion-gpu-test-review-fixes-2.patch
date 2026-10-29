@@ -1,0 +1,294 @@
+From d8eb9b0dc832e982a52e432f6cb23dae85d64479 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 29 Oct 2026 14:20:53 +0300
+Subject: [PATCH] GPU/memory test: settle memtest verdict, note a restricted
+ kernel log, record kernel_log
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UQQdXHz7YaPeWPUWLgASBj
+---
+ docs/HANDBOOK.md         |  4 ++--
+ docs/TECHNICAL.md        |  4 ++--
+ gui/src/curvepage.cpp    |  5 +++++
+ gui/src/curvepage.h      |  2 ++
+ gui/src/gpustressbox.cpp | 14 +++++++++++++-
+ gui/src/gpustressbox.h   |  6 ++++--
+ gui/src/healthtab.cpp    |  2 ++
+ gui/src/memtestbox.cpp   | 30 +++++++++++++++++++++++++++---
+ gui/src/memtestbox.h     |  7 +++++--
+ 9 files changed, 62 insertions(+), 12 deletions(-)
+
+diff --git a/docs/HANDBOOK.md b/docs/HANDBOOK.md
+index f9954b0..2c781f4 100644
+--- a/docs/HANDBOOK.md
++++ b/docs/HANDBOOK.md
+@@ -203,9 +203,9 @@ pstore records pile up in firmware (EFI) storage on systems without systemd-psto
+ ### Curve stability
+ Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journaled by the helpers; this page lays the saved Xid / GSP / D3cold and machine-check / lockup errors over it: hours in effect, errors, errors per 10 h per profile, highlighted when clearly worse than stock. Optional guard: *Take the GPU curve back to stock after an Xid* and the same for the CPU curve after a machine check — otherwise you only get a notification naming the curve. After such a reset the notification has *Undo*, which applies the saved profile that was in effect again (not for unsaved edits). The curve tabs also have **Trial apply**: after Apply you have 30 s to press *Keep*, else the curve goes back to stock.
+ 
+-**Memory test** checks BIOS memory timings or speed: it writes and reads back a share of the free memory (10–90 %, default 70 %) for 5, 15, 30 or 60 minutes with `stressapptest` (preferred) or `memtester`, as you, no password, while machine checks reported by the Monitor count as errors. The machine is slow meanwhile. Each result is kept (newest 50, `~/.local/state/centurion/memtest.json`) with the BIOS memory timing settings it ran under — speed and the overridden timings, "changed this boot" when a new setting is not in effect yet; read without a password on the Legion Pro 7 16AFR10H, "not readable" elsewhere. memtester must lock the memory it tests: it is held to the session's memlock limit (`ulimit -l`), and a limit under 64 MiB is reported with how to raise it; stressapptest needs no lock. A failure also raises a *Curve guard* notification. Without either tool the section shows the install command.
++**Memory test** checks BIOS memory timings or speed: it writes and reads back a share of the free memory (10–90 %, default 70 %) for 5, 15, 30 or 60 minutes with `stressapptest` (preferred) or `memtester`, as you, no password, while machine checks reported by the Monitor count as errors. The machine is slow meanwhile. Each result is kept (newest 50, `~/.local/state/centurion/memtest.json`) with the BIOS memory timing settings it ran under — speed and the overridden timings, "changed this boot" when a new setting is not in effect yet; read without a password on the Legion Pro 7 16AFR10H, "not readable" elsewhere. memtester must lock the memory it tests: it is held to the session's memlock limit (`ulimit -l`), and a limit under 64 MiB is reported with how to raise it; stressapptest needs no lock. A failure also raises a *Curve guard* notification. If the kernel log needs a password on this machine, machine checks are not counted during the test, the section says so and each result is marked; only the tool's own result counts. Without either tool the section shows the install command.
+ 
+-**GPU test** checks a graphics-card undervolt, overclock or VRAM offset: it runs work whose correct result is known on the chosen GPU (never an unnamed "first" one, so laptops pick the discrete card) for 5, 10, 15, 30 or 60 minutes (default 10) and counts every wrong result, as you, no password. Run **VRAM** after changing a memory offset (it fills 10–95 %, default 80 %, of the video memory) and **Core** after changing a core curve. The screen may stutter meanwhile. Needs the Vulkan driver of your GPU. A lost GPU, any wrong result, or an Xid / amdgpu error reported by the Monitor during the run is a failure. A pass is evidence, not proof. Each result is kept (newest 50, `~/.local/state/centurion/gpustress.json`) with the curve state in effect.
++**GPU test** checks a graphics-card undervolt, overclock or VRAM offset: it runs work whose correct result is known on the chosen GPU (never an unnamed "first" one, so laptops pick the discrete card) for 5, 10, 15, 30 or 60 minutes (default 10) and counts every wrong result, as you, no password. Run **VRAM** after changing a memory offset (it fills 10–95 %, default 80 %, of the video memory) and **Core** after changing a core curve. The screen may stutter meanwhile. Needs the Vulkan driver of your GPU. A lost GPU, any wrong result, or an Xid / amdgpu error reported by the Monitor during the run is a failure. A pass is evidence, not proof. Each result is kept (newest 50, `~/.local/state/centurion/gpustress.json`) with the curve state in effect. If the kernel log needs a password on this machine, Xid / amdgpu errors are not counted during the test, the section says so and each result is marked; only the tool's own result counts.
+ 
+ ### Sleep
+ Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`). **Suggestions**: an enabled wake source that woke the machine at least twice with the lid closed (neither the lid nor the power button among the wake sources) is listed with the battery the machine then spent awake before sleeping again, and a *Disable* button that does the same as unticking it. The battery cost is measured only on battery and when the next sleep came within 2 h.
+diff --git a/docs/TECHNICAL.md b/docs/TECHNICAL.md
+index c9cee9b..608e6db 100644
+--- a/docs/TECHNICAL.md
++++ b/docs/TECHNICAL.md
+@@ -968,13 +968,13 @@ the helpers (`tune::cpu_vendor()`).
+ 
+ **Hibernate check** (`crates/centurion-helpers/src/hibernate.rs`, `gui/src/sleeppage.cpp`): `tune-profile-helper {"op":"hibernate_check"}` as the user (`userhelper`), read-only. Reads `/proc/meminfo`, `/proc/swaps` (zram excluded from the swap total), `/proc/cmdline` (`resume=`), `/sys/firmware/efi/efivars/HibernateLocation-8cf2644b-…`, `/sys/kernel/security/lockdown` (the bracketed mode), `/sys/power/state`, and for a device-mapper swap `/sys/block/dm-N/dm/{name,uuid}` (`CRYPT-LUKS…` / other `CRYPT-…` = plain). `analyse` gives codes (`no_disk_state`, `lockdown`, `no_swap`, `swap_small`, `no_resume`, `swap_plain_crypt`, `swap_luks`, `ready`); the GUI words them.
+ 
+-**Memory test** (`gui/src/memtest.cpp` logic + `tests/memtest_test.cpp`, `gui/src/memtestbox.cpp`, `memory_spd.rs::aod_snapshot`): Health → Curve stability. The GUI runs `stressapptest -M <MiB> -s <s>` (preferred) or `memtester <MiB>M` (no loop count; terminated at the deadline, which is its normal end) as the user. Size = the chosen share of `MemAvailable`; for memtester also at most `RLIMIT_MEMLOCK` (below 64 MiB it does not start and says how to raise the limit). Errors: memtester `FAILURE` lines and exit bits 0x02/0x04; stressapptest `Hardware Error:` lines, its `Found N hardware incidents` and `Status: PASS/FAIL`; plus `mce` events from `CurvePage::onFault` during the run. Verdict pass / fail / incomplete (stopped, crashed, no status line); an error found is a failure however the run ended. Before the run `tune-profile-helper {"op":"mem_snapshot"}` (any user, read-only) decodes the world-readable `AodSetupRpl` efivar on the mapped model/BIOS (`aod_supported`): `speed_mts`, `manual` (fields with mode 1) and `pending` (`/run/centurion/aod-pending` exists: written this boot). Results: `$XDG_STATE_HOME/centurion/memtest.json`, JSON array, newest 50.
++**Memory test** (`gui/src/memtest.cpp` logic + `tests/memtest_test.cpp`, `gui/src/memtestbox.cpp`, `memory_spd.rs::aod_snapshot`): Health → Curve stability. The GUI runs `stressapptest -M <MiB> -s <s>` (preferred) or `memtester <MiB>M` (no loop count; terminated at the deadline, which is its normal end) as the user. Size = the chosen share of `MemAvailable`; for memtester also at most `RLIMIT_MEMLOCK` (below 64 MiB it does not start and says how to raise the limit). Errors: memtester `FAILURE` lines and exit bits 0x02/0x04; stressapptest `Hardware Error:` lines, its `Found N hardware incidents` and `Status: PASS/FAIL`; plus `mce` events from `CurvePage::onFault` during the run. Verdict pass / fail / incomplete (stopped, crashed, no status line); an error found is a failure however the run ended. Before the run `tune-profile-helper {"op":"mem_snapshot"}` (any user, read-only) decodes the world-readable `AodSetupRpl` efivar on the mapped model/BIOS (`aod_supported`): `speed_mts`, `manual` (fields with mode 1) and `pending` (`/run/centurion/aod-pending` exists: written this boot). The verdict is decided 3 s after the tool exits (proc stays set and Start stays disabled), so an `mce` logged by the failure that ended the run, which reaches `onFault` ~1.5 s later through the HealthTab debounce, still counts. When `/dev/kmsg` cannot be opened HealthTab polls every `POLL_ROOT_MS` (5 min) and tells `CurvePage::setKernelLog(false)`; both test boxes then show a muted note that kernel events are not counted, and each result gets `"kernel_log": false` (key omitted when the log is live). Results: `$XDG_STATE_HOME/centurion/memtest.json`, JSON array, newest 50.
+ 
+ **Boot history and pstore** (`crates/centurion-helpers/src/boothist.rs`, `pstore.rs`, `gui/src/bootpage.cpp`): `health-reader {"op":"boots"}` (read-only, same silent polkit action as the scan) returns `boothist::build` over `exposure.json`, `oc-journal.jsonl` and `pstore::list`. A boot is `clean` (closed by centurion-boot-guard), `unclean` (`on_boot` found it open), `running` (current) or `unknown` (left open, the guard did not run). `curves` is the ordered, de-duplicated state list per journal kind; an empty object means stock or older than the journal's rotation. A pstore record is attributed to the unclean boot whose lifetime (start to the next boot's start) contains its time, else the nearest within 24 h, else left unattributed. `previous_unclean` (the boot before the current one, when it is unclean) feeds the band in `HealthTab`; the GUI reads that once ~4 s after start and when the page is shown, never periodically. The last 30 kernel-log lines of an unclean boot are taken by the GUI from its own `kernel.log` (`boot=<first 8 of boot_id> seq=` tag); the helper does not know the user's home. pstore sources: `/sys/fs/pstore`, `/var/lib/systemd/pstore` (up to 3 directory levels), and the archive; files are opened `O_NOFOLLOW`, must be regular, are read up to 1 MiB, clipped to the last 12 KiB and passed through `health::scrub`. `tune-helper {"op":"pstore_clear"}` takes nothing from the request: for every file in `/sys/fs/pstore` it writes the scrubbed text to `/var/lib/centurion/pstore/<crash time>-<name>.txt` (`write_root_file`, 0644) and only then `unlink`s the pstore file (a record over 1 MiB, the read limit, stays in place and is reported) (the kernel frees the EFI variable; EFI variables are never touched directly), one `wlog` line per removal; archive files beyond the newest 30 are pruned. The GUI confirms first; the op is not in `PROFILE_OPS`.
+ 
+ **Ryzen limit reasons** (`crates/centurion-helpers/src/pmtable.rs`): `ryzen-co-helper monitor_stream` with `"limits": true` adds the PM table head from `/sys/kernel/ryzen_smu_drv/pm_table`. Desktop-derived tables (version family 0x24 / 0x38 / 0x54 / 0x62): PPT, TDC, THM, EDC at f32 indices 0/1, 2/3, 4/5, 8/9. Mobile APUs (0x37 / 0x40 / 0x45 / 0x4C / 0x5D / 0x65): STAPM, PPT fast / slow, TDC, EDC, THM at 0/1, 2/3, 4/5, 8/9, 12/13, 16/17. Every limit and value must be physically plausible, otherwise nothing is shown ("layout not recognised" + version). ≥ 95 % of a limit counts as binding; the tab sums seconds per limit since the monitor started. Read-only.
+ 
+-**GPU test** (`crates/centurion-gpustress`, `gui/src/gpustress.cpp` logic + `tests/gpustress_test.cpp`, `gui/src/gpustressbox.cpp`; spec `docs/GPUSTRESS.md`): Health → Curve stability. Vendor-neutral Vulkan 1.1 compute, run as the user; the tool never touches clocks or curves, it loads the GPU while the user's curve is in effect. `ash` loads `libvulkan.so.1` at run time (none → `init_failed`); the WGSL shaders in `shaders/` are compiled to SPIR-V by `naga` in `build.rs`. `centurion-gpustress list` prints the devices (PCI address via `VK_EXT_pci_bus_info`, else a unique vendor/device match in sysfs; CPU implementations as `"type":"cpu"`, hidden by the GUI); `vram --device <pci> --percent 10..95 --seconds <s>` and `core --device <pci> --seconds <s>` print JSON lines `start` / `progress` / `error` / `end` (16 error lines per pass, 200 per run; exit 0 pass, 1 errors, 2 device lost, 3 init failure, 4 stopped by SIGTERM/SIGINT). VRAM: chunks of at most 256 MiB from the `DEVICE_LOCAL` heap (share of the `VK_EXT_memory_budget` budget, keeping 256 MiB free), one fenced submission per chunk and dispatch (a fence not signalled within 10 s is a hung GPU: `device_lost`, exit 2); patterns addr / walk1 / walk0 / solid / random are a stateless function of (pattern, global word index, pass), so the check recomputes the expected word and keeps no copy. Core: 1 Mi invocations of dependent f32 FMA + integer mixing, the first two runs must agree and become the reference, every later run is compared with it on the GPU; one dispatch is calibrated to about 100 ms and the seed (new reference pair, recalibration) changes every 60 s. Build feature `fault-inject` (tests only) corrupts one word after the write of pass 3 / disturbs one invocation. The GUI follows the Memory test: verdict pass / fail / incomplete, `xid` (not 45 / 154) and `amdgpu` events from `CurvePage::onFault` count as faults, the run is killed `seconds + 120` s after start, the verdict is decided 3 s after the tool exits so the kernel events the failure caused (delayed by the Monitor's debounce) still count, and it is not offered while an NVIDIA dGPU is on the bus but unusable. Results: `$XDG_STATE_HOME/centurion/gpustress.json`, JSON array, newest 50, with the GPU curve state in effect at start.
++**GPU test** (`crates/centurion-gpustress`, `gui/src/gpustress.cpp` logic + `tests/gpustress_test.cpp`, `gui/src/gpustressbox.cpp`; spec `docs/GPUSTRESS.md`): Health → Curve stability. Vendor-neutral Vulkan 1.1 compute, run as the user; the tool never touches clocks or curves, it loads the GPU while the user's curve is in effect. `ash` loads `libvulkan.so.1` at run time (none → `init_failed`); the WGSL shaders in `shaders/` are compiled to SPIR-V by `naga` in `build.rs`. `centurion-gpustress list` prints the devices (PCI address via `VK_EXT_pci_bus_info`, else a unique vendor/device match in sysfs; CPU implementations as `"type":"cpu"`, hidden by the GUI); `vram --device <pci> --percent 10..95 --seconds <s>` and `core --device <pci> --seconds <s>` print JSON lines `start` / `progress` / `error` / `end` (16 error lines per pass, 200 per run; exit 0 pass, 1 errors, 2 device lost, 3 init failure, 4 stopped by SIGTERM/SIGINT). VRAM: chunks of at most 256 MiB from the `DEVICE_LOCAL` heap (share of the `VK_EXT_memory_budget` budget, keeping 256 MiB free), one fenced submission per chunk and dispatch (a fence not signalled within 10 s is a hung GPU: `device_lost`, exit 2); patterns addr / walk1 / walk0 / solid / random are a stateless function of (pattern, global word index, pass), so the check recomputes the expected word and keeps no copy. Core: 1 Mi invocations of dependent f32 FMA + integer mixing, the first two runs must agree and become the reference, every later run is compared with it on the GPU; one dispatch is calibrated to about 100 ms and the seed (new reference pair, recalibration) changes every 60 s. Build feature `fault-inject` (tests only) corrupts one word after the write of pass 3 / disturbs one invocation. The GUI follows the Memory test: verdict pass / fail / incomplete, `xid` (not 45 / 154) and `amdgpu` events from `CurvePage::onFault` count as faults, the run is killed `seconds + 120` s after start, the verdict is decided 3 s after the tool exits so the kernel events the failure caused (delayed by the Monitor's debounce) still count, and it is not offered while an NVIDIA dGPU is on the bus but unusable. With a restricted kernel log (`CurvePage::setKernelLog(false)`, see Memory test) the box shows a note that GPU errors are not counted and each result gets `"kernel_log": false`. Results: `$XDG_STATE_HOME/centurion/gpustress.json`, JSON array, newest 50, with the GPU curve state in effect at start.
+ 
+ **Curve journal and stability** (`ocjournal.rs` in both crates, `gui/src/curvepage.cpp`): ryzen-co-helper, intel-uv-helper, nvcurve-root-helper and `nvcurve autoload` append `{"t","boot","kind","state"}` to `/var/lib/centurion/oc-journal.jsonl` (0644, rotated at 256 KiB) after every successful curve write. Health → Curve stability builds per-boot timelines (boot start / end from `exposure.json`, stock from each boot's start) and attributes the saved Xid / GSP / D3cold (GPU) and MCE / lockup (CPU) lines of `health.log` to the state in effect; Xid 45 / 154 are follow-ups and not counted. Guard: a new Xid 13/31/43/61/62/69/109/119/120 with a non-stock GPU curve raises a notification and — opt-in — runs `reset_gpu_curve` (never after Xid 79, never while the dGPU is unusable); an MCE / lockup with a non-stock CPU curve does the same with the CPU helper's `reset`. At most one reset per minute.
+ 
+diff --git a/gui/src/curvepage.cpp b/gui/src/curvepage.cpp
+index 4bc6453..1fb80b9 100644
+--- a/gui/src/curvepage.cpp
++++ b/gui/src/curvepage.cpp
+@@ -280,6 +280,11 @@ void CurvePage::resetGpuCurve(const QString &title) {
+                     }, 120000);
+ }
+ 
++void CurvePage::setKernelLog(bool live) {
++    memTest_->setKernelLog(live);
++    gpuTest_->setKernelLog(live);
++}
++
+ void CurvePage::onFault(const QJsonObject &e) {
+     memTest_->onFault(e);
+     gpuTest_->onFault(e);
+diff --git a/gui/src/curvepage.h b/gui/src/curvepage.h
+index 0058d58..40d150a 100644
+--- a/gui/src/curvepage.h
++++ b/gui/src/curvepage.h
+@@ -27,6 +27,8 @@ public:
+     explicit CurvePage(QWidget *parent = nullptr);
+     /// A new kernel event of this session (HealthTab::fault).
+     void onFault(const QJsonObject &e);
++    /// Whether the kernel log is read live (HealthTab); the test boxes say so when it is not.
++    void setKernelLog(bool live);
+     /// Takes the GPU curve back to stock now (the guard's path; Monitor's action uses it too). `title` names the cause.
+     void resetGpuCurve(const QString &title);
+     /// "stock" or the journal's state of the last curve write this boot, for "gpu" / "cpu".
+diff --git a/gui/src/gpustressbox.cpp b/gui/src/gpustressbox.cpp
+index 3105e3a..be29f31 100644
+--- a/gui/src/gpustressbox.cpp
++++ b/gui/src/gpustressbox.cpp
+@@ -57,6 +57,12 @@ GpuStressBox::GpuStressBox(QWidget *parent) : QWidget(parent) {
+             .toHtmlEscaped()));
+     intro->setWordWrap(true);
+     root->addWidget(intro);
++    klogNote_ = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
++        tr("The kernel log is not readable without a password here, so GPU errors are not counted during the test; "
++           "only the test's own results are.").toHtmlEscaped()));
++    klogNote_->setWordWrap(true);
++    klogNote_->setVisible(!kernelLive_);
++    root->addWidget(klogNote_);
+ 
+     auto *row = new QHBoxLayout;
+     row->addWidget(new QLabel(tr("GPU")));
+@@ -165,6 +171,11 @@ void GpuStressBox::showDevices() {
+         status_->setVisible(false);
+ }
+ 
++void GpuStressBox::setKernelLog(bool live) {
++    kernelLive_ = live;
++    if (klogNote_) klogNote_->setVisible(!live);
++}
++
+ void GpuStressBox::onFault(const QJsonObject &e) {
+     if (proc_ && gpustress::isGpuFault(e.value(QStringLiteral("kind")).toString(), e.value(QStringLiteral("code")).toInt())) ++faults_;
+ }
+@@ -241,13 +252,14 @@ void GpuStressBox::finished(int exitCode, bool crashed) {
+ void GpuStressBox::conclude(int exitCode, bool crashed, qint64 seconds) {
+     settling_ = false;
+     const gpustress::Verdict v = gpustress::verdict(run_state_, exitCode, crashed, cancelled_, faults_);
+-    const QJsonObject result{
++    QJsonObject result{
+         {QStringLiteral("t"), QDateTime::currentSecsSinceEpoch()}, {QStringLiteral("mode"), gpustress::modeName(runMode_)},
+         {QStringLiteral("pci"), pci_}, {QStringLiteral("device"), deviceName_},
+         {QStringLiteral("mib"), run_state_.bytes / (1024 * 1024)}, {QStringLiteral("seconds"), seconds},
+         {QStringLiteral("passes"), run_state_.passes}, {QStringLiteral("errors"), run_state_.errors},
+         {QStringLiteral("faults"), faults_}, {QStringLiteral("verdict"), gpustress::verdictName(v)},
+         {QStringLiteral("curve"), curve_}};
++    if (!kernelLive_) result[QStringLiteral("kernel_log")] = false;  // a pass without kernel events is weaker evidence
+     const bool saved = gpustress::append(result);
+     proc_->deleteLater();
+     proc_ = nullptr;
+diff --git a/gui/src/gpustressbox.h b/gui/src/gpustressbox.h
+index 1ace388..fadc7fa 100644
+--- a/gui/src/gpustressbox.h
++++ b/gui/src/gpustressbox.h
+@@ -26,6 +26,8 @@ public:
+     void refresh(bool blocked);
+     /// A new kernel event of this session (CurvePage::onFault): NVIDIA Xids and AMD GPU resets count against a running test.
+     void onFault(const QJsonObject &e);
++    /// Whether the kernel log is read live (CurvePage::setKernelLog). When not, events come minutes late and are not counted.
++    void setKernelLog(bool live);
+ 
+ Q_SIGNALS:
+     void alert(const QString &title, const QString &message);
+@@ -45,7 +47,7 @@ private:
+     QString program_;
+     QComboBox *device_ = nullptr, *mode_ = nullptr, *minutes_ = nullptr;
+     QSpinBox *percent_ = nullptr;
+-    QLabel *percentLabel_ = nullptr, *status_ = nullptr;
++    QLabel *percentLabel_ = nullptr, *status_ = nullptr, *klogNote_ = nullptr;
+     QPushButton *run_ = nullptr;
+     QTreeWidget *results_ = nullptr;
+     QProcess *proc_ = nullptr, *listProc_ = nullptr;
+@@ -57,5 +59,5 @@ private:
+     QString pci_, deviceName_, curve_;
+     gpustress::Mode runMode_ = gpustress::Mode::Vram;
+     int seconds_ = 0, faults_ = 0;
+-    bool cancelled_ = false, blocked_ = false, settling_ = false;
++    bool cancelled_ = false, blocked_ = false, settling_ = false, kernelLive_ = true;
+ };
+diff --git a/gui/src/healthtab.cpp b/gui/src/healthtab.cpp
+index 7d63f80..4b4b6df 100644
+--- a/gui/src/healthtab.cpp
++++ b/gui/src/healthtab.cpp
+@@ -312,6 +312,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
+         });
+     } else {
+         needsRoot_ = true;
++        curves_->setKernelLog(false);
+         timer_->start(POLL_ROOT_MS);
+     }
+     // Resume point: highest seq of the current boot already in the file, so a
+@@ -426,6 +427,7 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
+     if (!r.value(QStringLiteral("ok")).toBool()) {
+         if (r.value(QStringLiteral("needs_root")).toBool() && !needsRoot_) {
+             needsRoot_ = true;
++            curves_->setKernelLog(false);
+             timer_->start(POLL_ROOT_MS);
+             QTimer::singleShot(0, this, &HealthTab::scan);
+             return;
+diff --git a/gui/src/memtestbox.cpp b/gui/src/memtestbox.cpp
+index 544275d..801a6cc 100644
+--- a/gui/src/memtestbox.cpp
++++ b/gui/src/memtestbox.cpp
+@@ -23,6 +23,7 @@
+ namespace {
+ 
+ constexpr int STUCK_GRACE_S = 120;  // stressapptest ends itself; one still running this long after is killed
++constexpr int SETTLE_MS = 3000;     // kernel events reach onFault ~1.5 s after they are logged (HealthTab debounce): wait for them
+ 
+ QString findTool(const QString &name) {
+     QString p = QStandardPaths::findExecutable(name);
+@@ -63,6 +64,12 @@ MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
+             .arg(memtest::toolName(tool_)).toHtmlEscaped()));
+     intro->setWordWrap(true);
+     root->addWidget(intro);
++    klogNote_ = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
++        tr("The kernel log is not readable without a password here, so machine checks are not counted during the test; "
++           "only the test's own results are.").toHtmlEscaped()));
++    klogNote_->setWordWrap(true);
++    klogNote_->setVisible(!kernelLive_);
++    root->addWidget(klogNote_);
+ 
+     auto *row = new QHBoxLayout;
+     row->addWidget(new QLabel(tr("Free memory to test")));
+@@ -105,6 +112,11 @@ MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
+     fill();
+ }
+ 
++void MemTestBox::setKernelLog(bool live) {
++    kernelLive_ = live;
++    if (klogNote_) klogNote_->setVisible(!live);
++}
++
+ void MemTestBox::onFault(const QJsonObject &e) {
+     if (proc_ && e.value(QStringLiteral("kind")).toString() == QLatin1String("mce")) ++mce_;
+ }
+@@ -184,22 +196,34 @@ void MemTestBox::tick() {
+ }
+ 
+ void MemTestBox::finished(int exitCode, bool crashed) {
+-    if (!proc_) return;
++    if (!proc_ || settling_) return;
+     ticker_->stop();
+     if (!partial_.isEmpty()) memtest::feed(run_state_, tool_, QString::fromLocal8Bit(partial_));
++    // The machine check that the failure caused is logged after the process is gone: keep counting them a
++    // moment (proc_ stays set, so onFault counts), with Start disabled, before the verdict is decided.
++    settling_ = true;
++    run_->setEnabled(false);
++    const qint64 seconds = elapsed_.elapsed() / 1000;
++    QTimer::singleShot(SETTLE_MS, this, [this, exitCode, crashed, seconds] { conclude(exitCode, crashed, seconds); });
++}
++
++void MemTestBox::conclude(int exitCode, bool crashed, qint64 seconds) {
++    settling_ = false;
+     const memtest::Verdict v = memtest::verdict(run_state_, tool_, exitCode, crashed, stopped_, cancelled_, mce_);
+-    const QJsonObject result{
++    QJsonObject result{
+         {QStringLiteral("t"), QDateTime::currentSecsSinceEpoch()}, {QStringLiteral("tool"), memtest::toolName(tool_)},
+-        {QStringLiteral("mib"), plan_.mib}, {QStringLiteral("seconds"), elapsed_.elapsed() / 1000},
++        {QStringLiteral("mib"), plan_.mib}, {QStringLiteral("seconds"), seconds},
+         {QStringLiteral("verdict"), memtest::verdictName(v)}, {QStringLiteral("errors"), run_state_.errors},
+         {QStringLiteral("mce"), mce_}, {QStringLiteral("clamped"), plan_.clamped},
+         {QStringLiteral("unlocked"), run_state_.unlocked}, {QStringLiteral("bios"), bios_}};
++    if (!kernelLive_) result[QStringLiteral("kernel_log")] = false;  // a pass without kernel events is weaker evidence
+     const bool saved = memtest::append(result);
+     proc_->deleteLater();
+     proc_ = nullptr;
+     run_->setText(tr("Start"));
+     percent_->setEnabled(true);
+     minutes_->setEnabled(true);
++    run_->setEnabled(true);
+ 
+     QString text;
+     if (v == memtest::Verdict::Pass) text = QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::OK, tr("No errors.").toHtmlEscaped());
+diff --git a/gui/src/memtestbox.h b/gui/src/memtestbox.h
+index d78a75c..22b2b20 100644
+--- a/gui/src/memtestbox.h
++++ b/gui/src/memtestbox.h
+@@ -22,6 +22,8 @@ public:
+     explicit MemTestBox(QWidget *parent = nullptr);
+     /// A new kernel event of this session (CurvePage::onFault): machine checks count against a running test.
+     void onFault(const QJsonObject &e);
++    /// Whether the kernel log is read live (CurvePage::setKernelLog). When not, events come minutes late and are not counted.
++    void setKernelLog(bool live);
+ 
+ Q_SIGNALS:
+     void alert(const QString &title, const QString &message);
+@@ -30,6 +32,7 @@ private:
+     void start();
+     void launch(const memtest::Plan &p, const QJsonObject &bios);
+     void finished(int exitCode, bool crashed);
++    void conclude(int exitCode, bool crashed, qint64 seconds);
+     void tick();
+     void fill();
+     static QString biosText(const QJsonObject &bios);
+@@ -39,7 +42,7 @@ private:
+     QSpinBox *percent_ = nullptr;
+     QComboBox *minutes_ = nullptr;
+     QPushButton *run_ = nullptr;
+-    QLabel *status_ = nullptr;
++    QLabel *status_ = nullptr, *klogNote_ = nullptr;
+     QTreeWidget *results_ = nullptr;
+     QProcess *proc_ = nullptr;
+     QTimer *ticker_ = nullptr;
+@@ -49,5 +52,5 @@ private:
+     memtest::Plan plan_;
+     QJsonObject bios_;
+     int seconds_ = 0, mce_ = 0;
+-    bool stopped_ = false, cancelled_ = false;
++    bool stopped_ = false, cancelled_ = false, settling_ = false, kernelLive_ = true;
+ };
+-- 
+2.43.0
+
