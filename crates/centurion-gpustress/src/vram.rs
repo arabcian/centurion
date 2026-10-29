@@ -17,8 +17,9 @@ const PATTERNS: [&str; 5] = ["addr", "walk1", "walk0", "solid", "random"];
 const SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vram.spv"));
 
 // The patterns in Rust: the fault injection and the unit test need the expected value on the host, and
-// the test runs vram.wgsl to prove both copies agree. Indices are u32 and wrap: above 16 GiB tested, two
-// words exactly 2^32 apart share an `addr` value (a limit of keeping the shader to 32-bit integers).
+// the test runs vram.wgsl to prove both copies agree. The shader only has 32-bit integers, so the global
+// word index (u64) travels as two halves and addr / random mix hash(high half) in: words 2^32 apart (16 GiB)
+// still differ. walk1 / walk0 depend on the index mod 32 only, which 2^32 does not change.
 #[cfg(any(test, feature = "fault-inject"))]
 fn hash(x: u32) -> u32 {
     let mut h = x;
@@ -30,13 +31,14 @@ fn hash(x: u32) -> u32 {
 }
 
 #[cfg(any(test, feature = "fault-inject"))]
-fn value(pattern: u32, index: u32, seed: u32, phase: u32) -> u32 {
+fn value(pattern: u32, word: u64, seed: u32, phase: u32) -> u32 {
+    let (index, hi) = (word as u32, (word >> 32) as u32);
     match pattern {
-        0 => index ^ hash(seed),
+        0 => index ^ hash(seed) ^ hash(hi),
         1 => 1u32 << (index.wrapping_add(seed) % 32),
         2 => !(1u32 << (index.wrapping_add(seed) % 32)),
         3 => if seed.wrapping_add(phase) & 1 == 1 { u32::MAX } else { 0 },
-        _ => hash(index ^ hash(seed.wrapping_add(0x9e37_79b9))),
+        _ => hash(index ^ hash(seed.wrapping_add(0x9e37_79b9)) ^ hash(hi)),
     }
 }
 
@@ -80,10 +82,11 @@ impl Rig {
     }
 
     /// One submission: `fill` or `verify` over chunk `i`. Returns how many words were wrong and the first few.
-    fn run(&self, i: usize, verify: bool, pattern: u32, seed: u32, phase: u32) -> Result<(u32, Vec<[u32; 3]>), vk::Result> {
+    fn run(&self, i: usize, verify: bool, pattern: u32, seed: u32, phase: u32) -> Result<(u32, Vec<[u64; 3]>), vk::Result> {
         let words = (self.chunks[i].size / 4) as u32;
         let (x, y) = dims(&self.ctx.limits, words as u64).ok_or(vk::Result::ERROR_FEATURE_NOT_PRESENT)?;
-        for (k, v) in [pattern, seed, (i as u32).wrapping_mul(self.stride), words, phase].iter().enumerate() { self.params.set(k, *v); }
+        let base = i as u64 * self.stride as u64;
+        for (k, v) in [pattern, seed, base as u32, words, phase, (base >> 32) as u32].iter().enumerate() { self.params.set(k, *v); }
         self.found.set(0, 0);
         // SAFETY: recording into the command buffer `submit` has begun, with handles made by `new`.
         self.ctx.submit(|d, cmd| unsafe {
@@ -91,7 +94,10 @@ impl Rig {
             d.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, self.layout, 0, &[self.sets[i]], &[]);
             d.cmd_dispatch(cmd, x, y, 1);
         })?;
-        Ok(self.found.mismatches())
+        // The shader reports the low half of each index; the offset in the chunk is below 2^32, so add it to the full base.
+        let (n, mut first) = self.found.mismatches();
+        for f in &mut first { f[0] = base + (f[0] as u32).wrapping_sub(base as u32) as u64; }
+        Ok((n, first))
     }
 }
 
@@ -109,8 +115,8 @@ fn halt(t0: Instant, seconds: u64) -> Option<Halt> {
 #[cfg(feature = "fault-inject")]
 fn inject(rig: &Rig, pattern: u32, seed: u32, phase: u32) -> Result<(), vk::Result> {
     let last = rig.chunks.len() - 1;
-    let off = 12345.min(rig.chunks[last].size / 4 - 1) as u32;
-    let index = (last as u32).wrapping_mul(rig.stride).wrapping_add(off);
+    let off = 12345.min(rig.chunks[last].size / 4 - 1);
+    let index = last as u64 * rig.stride as u64 + off;
     let want = value(pattern, index, seed, phase);
     eprintln!("fault-inject: word {index} expected 0x{want:08x}");
     let to_fill = vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
@@ -119,7 +125,7 @@ fn inject(rig: &Rig, pattern: u32, seed: u32, phase: u32) -> Result<(), vk::Resu
     rig.ctx.submit(|d, cmd| unsafe {
         d.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER,
             vk::DependencyFlags::empty(), &[to_fill], &[], &[]);
-        d.cmd_fill_buffer(cmd, rig.chunks[last].buf, off as u64 * 4, 4, want ^ 1);
+        d.cmd_fill_buffer(cmd, rig.chunks[last].buf, off * 4, 4, want ^ 1);
         d.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER,
             vk::DependencyFlags::empty(), &[from_fill], &[], &[]);
     })
@@ -199,30 +205,36 @@ mod tests {
     /// then check that `verify` accepts the data and reports one corrupted word exactly.
     #[test]
     fn shader_matches_rust() {
+        for pattern in [0, 4] {
+            assert_ne!(value(pattern, 5, 1, 0), value(pattern, 5 + (1 << 32), 1, 0), "pattern {pattern}: words 2^32 apart must differ");
+        }
         let Ok((_entry, instance)) = device::open() else { eprintln!("skipped: no Vulkan"); return; };
         let gpus = device::list(&instance).unwrap();
         let Some(gpu) = gpus.iter().find(|g| g.kind == "cpu") else { eprintln!("skipped: no CPU Vulkan device"); return; };
         let ctx = Ctx::new(&instance, gpu).unwrap();
         const WORDS: u32 = 1 << 16;
-        const STRIDE: u32 = 1_000_003;  // not a power of two: a wrong base shows
-        let chunks: Vec<Buf> = (0..2).map(|_| ctx.buffer(WORDS as u64 * 4, vk::BufferUsageFlags::STORAGE_BUFFER, Mem::Host).unwrap()).collect();
+        // Not a power of two, and 2 x STRIDE is 200 words short of 2^32: chunk 2 straddles the 2^32 boundary and
+        // chunk 3 lies above it, so the carry and a nonzero base_hi are both exercised.
+        const STRIDE: u32 = 0x8000_0000 - 100;
+        const CHUNKS: usize = 4;
+        let chunks: Vec<Buf> = (0..CHUNKS).map(|_| ctx.buffer(WORDS as u64 * 4, vk::BufferUsageFlags::STORAGE_BUFFER, Mem::Host).unwrap()).collect();
         let rig = Rig::new(ctx, chunks, STRIDE).unwrap();
         for pattern in 0..5 {
             for seed in [1, 4, 5, 70_001] {
                 for phase in 0..2 {
-                    for i in 0..2usize {
-                        let base = (i as u32).wrapping_mul(STRIDE);
+                    for i in 0..CHUNKS {
+                        let base = i as u64 * STRIDE as u64;
                         rig.run(i, false, pattern, seed, phase).unwrap();
                         for w in 0..WORDS {
-                            assert_eq!(rig.chunks[i].get(w as usize), value(pattern, base.wrapping_add(w), seed, phase),
+                            assert_eq!(rig.chunks[i].get(w as usize), value(pattern, base + w as u64, seed, phase),
                                 "pattern {pattern} seed {seed} phase {phase} chunk {i} word {w}");
                         }
                         assert_eq!(rig.run(i, true, pattern, seed, phase).unwrap().0, 0);
                         let w = 4321 + i as u32;
-                        let want = value(pattern, base + w, seed, phase);
+                        let want = value(pattern, base + w as u64, seed, phase);
                         rig.chunks[i].set(w as usize, want ^ 0x10);
                         let (n, first) = rig.run(i, true, pattern, seed, phase).unwrap();
-                        assert_eq!((n, first), (1, vec![[base + w, want, want ^ 0x10]]));
+                        assert_eq!((n, first), (1, vec![[base + w as u64, want as u64, (want ^ 0x10) as u64]]));
                     }
                 }
             }

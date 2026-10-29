@@ -63,7 +63,7 @@ impl Rig {
     }
 
     /// The current run against the reference: how many words differ and the first few.
-    fn compare(&self) -> Result<(u32, Vec<[u32; 3]>), vk::Result> {
+    fn compare(&self) -> Result<(u32, Vec<[u64; 3]>), vk::Result> {
         self.found.set(0, 0);
         self.dispatch(self.compare, self.sets[0])?;
         Ok(self.found.mismatches())

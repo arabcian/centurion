@@ -38,6 +38,7 @@ Requires:       hicolor-icon-theme
 Recommends:     nftables
 Recommends:     pigz
 Recommends:     zstd
+Recommends:     vulkan-loader
 Suggests:       mangohud
 
 %description

@@ -42,9 +42,9 @@ Plan plan(Mode m, const QString &pci, int percent, int seconds);
 
 /// What the output said so far, fed line by line.
 struct Run {
-    int errors = 0;          // wrong words: the full count from progress / end lines, at least the error lines seen
-    int errorLines = 0;
-    int passes = 0;
+    qint64 errors = 0;          // wrong words: the full count from progress / end lines, at least the error lines seen
+    qint64 errorLines = 0;
+    qint64 passes = 0;
     qint64 bytes = 0;        // start: how much one run tests
     QString name;            // start: the device
     QString status;          // end: pass / fail / stopped / device_lost / init_failed

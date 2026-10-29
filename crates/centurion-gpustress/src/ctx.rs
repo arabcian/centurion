@@ -5,6 +5,9 @@ use crate::device::{self, Gpu};
 use ash::{ext, vk, Device, Instance};
 use std::ffi::CStr;
 
+/// A submission is capped near 500 ms (core) or is one 256 MiB chunk (VRAM); 10 s without the fence is a hung GPU.
+const FENCE_TIMEOUT_NS: u64 = 10_000_000_000;
+
 pub struct Ctx {
     pub instance: Instance,
     pub phys: vk::PhysicalDevice,
@@ -42,9 +45,10 @@ impl Buf {
         unsafe { self.ptr.add(i).write_volatile(v) }
     }
     /// The shaders' result layout: the count of wrong words, then the first 16 as (index, expected, actual).
-    pub fn mismatches(&self) -> (u32, Vec<[u32; 3]>) {
+    /// Widened to u64 so the VRAM test can put the full word index in the index slot.
+    pub fn mismatches(&self) -> (u32, Vec<[u64; 3]>) {
         let n = self.get(0);
-        (n, (0..n.min(16) as usize).map(|k| [self.get(1 + 3 * k), self.get(2 + 3 * k), self.get(3 + 3 * k)]).collect())
+        (n, (0..n.min(16) as usize).map(|k| [self.get(1 + 3 * k) as u64, self.get(2 + 3 * k) as u64, self.get(3 + 3 * k) as u64]).collect())
     }
 }
 
@@ -189,7 +193,7 @@ impl Ctx {
             d.reset_fences(&[self.fence])?;
             let cmds = [self.cmd];
             d.queue_submit(self.queue, &[vk::SubmitInfo::default().command_buffers(&cmds)], self.fence)?;
-            d.wait_for_fences(&[self.fence], true, u64::MAX)
+            d.wait_for_fences(&[self.fence], true, FENCE_TIMEOUT_NS)
         }
     }
 }

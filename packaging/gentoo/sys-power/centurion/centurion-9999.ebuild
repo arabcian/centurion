@@ -242,6 +242,7 @@ pkg_postinst() {
 	optfeature "System tools → PCI devices" sys-apps/pciutils
 	optfeature "System tools → USB devices" sys-apps/usbutils
 	optfeature "System tools → NUMA" sys-process/numactl
+	optfeature "Health → Curve stability → GPU test (Vulkan loader)" media-libs/vulkan-loader
 	optfeature "System tools → Vulkan info" dev-util/vulkan-tools
 	optfeature "System tools → OpenGL info" x11-apps/mesa-progs
 }

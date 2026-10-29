@@ -48,8 +48,8 @@ void feed(Run &r, const QString &line) {
         r.name = o.value(QStringLiteral("name")).toString();
     } else if (ev == QLatin1String("progress") || ev == QLatin1String("end")) {
         // progress / end carry the full count; the error lines are capped (16 a pass, 200 a run).
-        r.errors = std::max(r.errors, int(o.value(QStringLiteral("errors")).toInteger()));
-        r.passes = std::max(r.passes, int(o.value(QStringLiteral("passes")).toInteger()));
+        r.errors = std::max<qint64>(r.errors, o.value(QStringLiteral("errors")).toInteger());
+        r.passes = std::max<qint64>(r.passes, o.value(QStringLiteral("passes")).toInteger());
         if (ev == QLatin1String("end")) {
             r.ended = true;
             r.status = o.value(QStringLiteral("status")).toString();

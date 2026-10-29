@@ -50,7 +50,7 @@ impl State {
 
     /// Counts `count` wrong words; prints the first few as `error` lines within the caps (16 per pass, 200 per
     /// run). `in_pass` is how many lines this pass has printed.
-    fn wrong(&mut self, t0: Instant, in_pass: &mut u32, pass: u64, pattern: &str, count: u32, first: &[[u32; 3]]) {
+    fn wrong(&mut self, t0: Instant, in_pass: &mut u32, pass: u64, pattern: &str, count: u32, first: &[[u64; 3]]) {
         self.errors += count as u64;
         for &[word, expected, actual] in first {
             if *in_pass < LINES_PER_PASS && self.lines < LINES_PER_RUN {
@@ -77,10 +77,12 @@ fn init_failed(msg: &str) -> ! {
     std::process::exit(end("init_failed", 0.0, 0, 0, msg))
 }
 
-/// A Vulkan error after the test started. A lost device is itself a failed test and is not recreated;
+/// A Vulkan error after the test started. A lost device (or a hung one, see below) is itself a failed test and is not recreated;
 /// any other error ends the run as `init_failed` (not a verdict about the GPU).
 fn vk_end(e: vk::Result, t: f64, passes: u64, errors: u64) -> i32 {
     if e == vk::Result::ERROR_DEVICE_LOST { end("device_lost", t, passes, errors, "the device was lost") }
+    // A fence that never signals is a hung GPU, which under a curve is a failed test.
+    else if e == vk::Result::TIMEOUT { end("device_lost", t, passes, errors, "the GPU stopped responding") }
     else { end("init_failed", t, passes, errors, &format!("Vulkan error: {e}")) }
 }
 
@@ -143,5 +145,17 @@ fn main() {
             std::process::exit(if a.vram { vram::run(&a.device, a.percent, a.seconds) } else { cores::run(&a.device, a.seconds) })
         }
         Err(e) => init_failed(&e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vk_errors_map_to_exit_codes() {
+        assert_eq!(vk_end(vk::Result::ERROR_DEVICE_LOST, 0.0, 0, 0), 2);
+        assert_eq!(vk_end(vk::Result::TIMEOUT, 0.0, 0, 0), 2);  // fence timeout = hung GPU
+        assert_eq!(vk_end(vk::Result::ERROR_OUT_OF_HOST_MEMORY, 0.0, 0, 0), 3);
     }
 }

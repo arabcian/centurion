@@ -21,7 +21,8 @@ pub struct Gpu {
 pub fn open() -> Result<(Entry, Instance), String> {
     // SAFETY: loads libvulkan.so.1 at run time; a missing library is an ordinary error.
     let entry = unsafe { Entry::load() }.map_err(|e| format!("Vulkan loader not found: {e}"))?;
-    let app = vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_1);
+    // 1.2 so the core driver-properties struct below is valid on 1.2 devices; 1.1 devices still work (they use the extension).
+    let app = vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_2);
     let info = vk::InstanceCreateInfo::default().application_info(&app);
     // SAFETY: valid create info, no extensions or layers.
     let instance = unsafe { entry.create_instance(&info, None) }.map_err(|e| format!("could not create a Vulkan instance: {e}"))?;

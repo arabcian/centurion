@@ -18,7 +18,8 @@ optdepends=('acpi_call: GPU power limits, fan curve, GPU mode, EC temperatures'
             'pigz: faster Backup compression'
             'zstd: Backup compression'
             'xorg-xrandr: Scenes → refresh rate on X11'
-            'brightnessctl: Scenes → screen brightness without logind')
+            'brightnessctl: Scenes → screen brightness without logind'
+            'vulkan-icd-loader: GPU test')
 install=centurion.install
 options=('!lto')  # the GUI does its own LTO (CENTURION_LTO), Cargo.toml sets fat LTO for the helpers
 source=("centurion::git+$url.git")

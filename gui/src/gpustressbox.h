@@ -36,6 +36,7 @@ private:
     void start();
     void launch(const gpustress::Plan &p, gpustress::Mode m, int seconds);
     void finished(int exitCode, bool crashed);
+    void conclude(int exitCode, bool crashed, qint64 seconds);
     void tick();
     void fill();
     void setIdle(bool idle);
@@ -56,5 +57,5 @@ private:
     QString pci_, deviceName_, curve_;
     gpustress::Mode runMode_ = gpustress::Mode::Vram;
     int seconds_ = 0, faults_ = 0;
-    bool cancelled_ = false, blocked_ = false;
+    bool cancelled_ = false, blocked_ = false, settling_ = false;
 };

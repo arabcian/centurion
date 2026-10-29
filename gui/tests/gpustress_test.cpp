@@ -55,6 +55,8 @@ int main(int argc, char **argv) {
     CHECK(bad.errors == 5000);
     feed(bad, R"j({"ev":"error","t":3.1,"pass":4,"pattern":"addr","word":1,"expected":"0x1","actual":"0x0"})j");
     CHECK(bad.errors == 5000);
+    feed(bad, R"j({"ev":"progress","t":4.0,"passes":3,"bytes_checked":1,"errors":5000000000})j");  // more than INT_MAX
+    CHECK(bad.errors == 5000000000LL);
     Run lost = fed({R"j({"ev":"end","status":"device_lost","t":9.0,"passes":1,"errors":0,"msg":"the device was lost"})j"});
     CHECK(lost.deviceLost && lost.ended && lost.msg == "the device was lost");
 

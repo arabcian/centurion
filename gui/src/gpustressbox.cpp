@@ -16,9 +16,15 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <climits>
+
 namespace {
 
 constexpr int STUCK_GRACE_S = 120;  // the tool ends itself; one still running this long after is killed
+constexpr int SETTLE_MS = 3000;     // kernel events reach onFault ~1.5 s after they are logged (HealthTab debounce): wait for them
+
+// tr()'s plural count is an int; a broken VRAM run can have more wrong words than that.
+int plural(qint64 n) { return int(qMin<qint64>(n, INT_MAX)); }
 
 QString findTool(const QString &name) {
     QString p = QStandardPaths::findExecutable(name);
@@ -212,23 +218,33 @@ void GpuStressBox::tick() {
     const qint64 s = elapsed_.elapsed() / 1000;
     if (s >= seconds_ + STUCK_GRACE_S) proc_->kill();  // recorded as not finished
     const QString what = runMode_ == gpustress::Mode::Vram ? tr("VRAM") : tr("Core");
-    QString text = tr("%1 test on %2: %3 of %4 min, %n pass(es)", nullptr, run_state_.passes)
+    QString text = tr("%1 test on %2: %3 of %4 min, %n pass(es)", nullptr, plural(run_state_.passes))
                        .arg(what, deviceName_).arg(s / 60).arg(seconds_ / 60);
-    text += QStringLiteral(" · ") + tr("%n error(s)", nullptr, run_state_.errors);
+    text += QStringLiteral(" · ") + tr("%n error(s)", nullptr, plural(run_state_.errors));
     if (faults_ > 0) text += QStringLiteral(" · ") + tr("%n GPU error(s) in the kernel log", nullptr, faults_);
     status_->setVisible(true);
     status_->setText(text);
 }
 
 void GpuStressBox::finished(int exitCode, bool crashed) {
-    if (!proc_) return;
+    if (!proc_ || settling_) return;
     ticker_->stop();
     if (!partial_.isEmpty()) gpustress::feed(run_state_, QString::fromUtf8(partial_));
+    // The Xid that the failure caused is logged after the process is gone: keep counting faults a moment
+    // (proc_ stays set, so onFault counts), with Start disabled, before the verdict is decided.
+    settling_ = true;
+    run_->setEnabled(false);
+    const qint64 seconds = elapsed_.elapsed() / 1000;
+    QTimer::singleShot(SETTLE_MS, this, [this, exitCode, crashed, seconds] { conclude(exitCode, crashed, seconds); });
+}
+
+void GpuStressBox::conclude(int exitCode, bool crashed, qint64 seconds) {
+    settling_ = false;
     const gpustress::Verdict v = gpustress::verdict(run_state_, exitCode, crashed, cancelled_, faults_);
     const QJsonObject result{
         {QStringLiteral("t"), QDateTime::currentSecsSinceEpoch()}, {QStringLiteral("mode"), gpustress::modeName(runMode_)},
         {QStringLiteral("pci"), pci_}, {QStringLiteral("device"), deviceName_},
-        {QStringLiteral("mib"), run_state_.bytes / (1024 * 1024)}, {QStringLiteral("seconds"), elapsed_.elapsed() / 1000},
+        {QStringLiteral("mib"), run_state_.bytes / (1024 * 1024)}, {QStringLiteral("seconds"), seconds},
         {QStringLiteral("passes"), run_state_.passes}, {QStringLiteral("errors"), run_state_.errors},
         {QStringLiteral("faults"), faults_}, {QStringLiteral("verdict"), gpustress::verdictName(v)},
         {QStringLiteral("curve"), curve_}};
@@ -257,7 +273,7 @@ void GpuStressBox::finished(int exitCode, bool crashed) {
     status_->setVisible(true);
     status_->setText(text);
     if (v == gpustress::Verdict::Fail)
-        Q_EMIT alert(tr("GPU test failed"), tr("%n error(s) during the GPU test.", nullptr, run_state_.errors + faults_ + (run_state_.deviceLost ? 1 : 0)));
+        Q_EMIT alert(tr("GPU test failed"), tr("%n error(s) during the GPU test.", nullptr, plural(run_state_.errors + faults_ + (run_state_.deviceLost ? 1 : 0))));
     fill();
 }
 
@@ -270,14 +286,14 @@ void GpuStressBox::fill() {
         const QString shown = v == QLatin1String("pass") ? tr("pass") : v == QLatin1String("fail") ? tr("fail") : tr("incomplete");
         const bool vram = o.value(QStringLiteral("mode")).toString() == QLatin1String("vram");
         const int faults = o.value(QStringLiteral("faults")).toInt();
-        QString errors = QString::number(o.value(QStringLiteral("errors")).toInt());
+        QString errors = QString::number(o.value(QStringLiteral("errors")).toInteger());
         if (faults > 0) errors += QStringLiteral(" + ") + tr("%n kernel", nullptr, faults);
         auto *it = new QTreeWidgetItem({
             QDateTime::fromSecsSinceEpoch(o.value(QStringLiteral("t")).toInteger()).toString(QStringLiteral("yyyy-MM-dd HH:mm")),
             vram ? tr("VRAM") : tr("Core"), o.value(QStringLiteral("device")).toString(),
             vram ? tr("%1 MiB").arg(o.value(QStringLiteral("mib")).toInteger()) : QStringLiteral("-"),
             tr("%n min", nullptr, int(o.value(QStringLiteral("seconds")).toInteger() / 60)),
-            QString::number(o.value(QStringLiteral("passes")).toInt()), errors, shown, o.value(QStringLiteral("curve")).toString()});
+            QString::number(o.value(QStringLiteral("passes")).toInteger()), errors, shown, o.value(QStringLiteral("curve")).toString()});
         const char *color = v == QLatin1String("pass") ? theme::OK : v == QLatin1String("fail") ? theme::DANGER : theme::MUTED;
         it->setForeground(7, QColor(QLatin1String(color)));
         results_->addTopLevelItem(it);

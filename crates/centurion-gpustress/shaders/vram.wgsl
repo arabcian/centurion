@@ -5,10 +5,10 @@
 struct Params {
     pattern: u32,  // 0 addr, 1 walk1, 2 walk0, 3 solid, 4 random
     seed: u32,     // the pass number
-    base: u32,     // global index of this chunk's first word (chunk index x words per chunk)
+    base: u32,     // global index of this chunk's first word (chunk index x words per chunk), low 32 bits
     words: u32,    // words in this chunk
     phase: u32,    // solid only: 0 = the pass's value, 1 = its inverse
-    pad0: u32,
+    base_hi: u32,  // the same index, high 32 bits
     pad1: u32,
     pad2: u32,
 }
@@ -30,14 +30,21 @@ fn hash(x: u32) -> u32 {
     return h;
 }
 
-fn value(index: u32) -> u32 {
+// `index` is the low 32 bits of the global word index, `hi` the high 32 bits. addr and random mix
+// hash(hi) in (hash(0) = 0, so below 2^32 words they are unchanged) so words 2^32 apart differ.
+fn value(index: u32, hi: u32) -> u32 {
     switch p.pattern {
-        case 0u: { return index ^ hash(p.seed); }
+        case 0u: { return index ^ hash(p.seed) ^ hash(hi); }
         case 1u: { return 1u << ((index + p.seed) % 32u); }
         case 2u: { return ~(1u << ((index + p.seed) % 32u)); }
         case 3u: { return select(0u, 0xffffffffu, ((p.seed + p.phase) & 1u) == 1u); }
-        default: { return hash(index ^ hash(p.seed + 0x9e3779b9u)); }
+        default: { return hash(index ^ hash(p.seed + 0x9e3779b9u) ^ hash(hi)); }
     }
+}
+
+// High half of the global index of the word `lo` (= base + offset, wrapped): a carry when it wrapped.
+fn high(lo: u32) -> u32 {
+    return p.base_hi + select(0u, 1u, lo < p.base);
 }
 
 // 256 invocations x 4 consecutive words; the dispatch is 2D because a 256 MiB chunk needs 65536
@@ -51,7 +58,8 @@ fn fill(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nwg: vec3
     let first = first_word(wg, nwg, li);
     if first >= p.words { return; }  // words is a multiple of 4
     for (var j = 0u; j < 4u; j++) {
-        data[first + j] = value(p.base + first + j);
+        let lo = p.base + first + j;
+        data[first + j] = value(lo, high(lo));
     }
 }
 
@@ -60,12 +68,13 @@ fn verify(@builtin(workgroup_id) wg: vec3<u32>, @builtin(num_workgroups) nwg: ve
     let first = first_word(wg, nwg, li);
     if first >= p.words { return; }
     for (var j = 0u; j < 4u; j++) {
-        let want = value(p.base + first + j);
+        let lo = p.base + first + j;
+        let want = value(lo, high(lo));
         let got = data[first + j];
         if got != want {
             let slot = atomicAdd(&found.count, 1u);
             if slot < 16u {
-                found.first[slot * 3u] = p.base + first + j;
+                found.first[slot * 3u] = lo;  // the host adds the high half
                 found.first[slot * 3u + 1u] = want;
                 found.first[slot * 3u + 2u] = got;
             }

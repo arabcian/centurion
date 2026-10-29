@@ -2,7 +2,7 @@
 name = "centurion-gpustress"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.77"  # c"..." literals; naga 22 needs 1.74
 description = "Centurion GPU stability test: Vulkan compute work with a known result, every wrong bit counted"
 license = "GPL-3.0-or-later"
 
