@@ -1252,6 +1252,15 @@ fn kill_where(pred: impl Fn(&Sock) -> bool) -> (usize, Option<String>) {
     (n, err)
 }
 
+/// Removes every blacklist entry of group `label` (a subscription update with `replace`). Done before the
+/// new entries are added, so an entry the new list writes differently (a range, "1.2.3.5/24") is not
+/// removed again after it was re-added.
+fn drop_group(cfg: &mut Config, label: &str) {
+    let old: HashSet<String> = cfg.labels.iter().filter(|(_, l)| l.as_str() == label).map(|(n, _)| n.clone()).collect();
+    cfg.blacklist.retain(|n| !old.contains(&n.to_string()));
+    cfg.labels.retain(|n, _| !old.contains(n));
+}
+
 /// One request of netguard-helper. `list` and `status` work for any user; the rest is root-only.
 pub fn handle(req: &Value) -> Value {
     let op = req["op"].as_str().unwrap_or("");
@@ -1277,6 +1286,7 @@ pub fn handle(req: &Value) -> Value {
                 .filter(|l| !l.is_empty());
             // Clear first: "replace the list" must keep what this same request adds.
             if req["remove_all"] == true { cfg.blacklist.clear(); }
+            if req["replace"] == true { if let Some(l) = &label { drop_group(&mut cfg, l); } }
             let mut have: HashSet<String> = cfg.blacklist.iter().map(Net::to_string).collect();
             let mut added = Vec::new();
             for s in strings(&req["add"]) {
@@ -1503,6 +1513,18 @@ mod tests {
         assert!(parse_packet(&ext).is_none());
         assert_eq!((f.proto, f.sport, f.dport, f.dst.to_string().as_str()), (TCP, 40000, 443, "2001:db8::"));
         assert!(parse_packet(&[0x45, 0, 0]).is_none());
+    }
+
+    #[test]
+    fn drop_group_removes_only_that_group() {
+        let mut c = Config::default();
+        for (s, l) in [("1.2.3.0/24", "FireHOL"), ("5.6.7.8", "FireHOL"), ("9.9.9.9", "manual")] {
+            c.blacklist.push(Net::parse(s).unwrap());
+            c.labels.insert(s.to_owned(), l.to_owned());
+        }
+        drop_group(&mut c, "FireHOL");
+        assert_eq!(c.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), vec!["9.9.9.9"]);
+        assert_eq!(c.labels.len(), 1);
     }
 
     #[test]

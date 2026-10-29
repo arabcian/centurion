@@ -29,6 +29,7 @@ class QProgressBar;
 class QPushButton;
 class QSpinBox;
 class QTreeWidget;
+class QFileInfo;
 
 class BackupPage : public QWidget {
     Q_OBJECT
@@ -62,8 +63,20 @@ private:
     QString selected(QString *kind = nullptr) const;
     void select(const QString &path);
     QStringList selectedPaths() const;
-    bool askKey(const QString &archive, QString *key);
+    /// Asks for what opens an encrypted image (passphrase, or a pasted / loaded age secret key) and puts it
+    /// into `req` as "passphrase" or "identity". Nothing is stored. false = cancelled.
+    bool askSecret(const QStringList &archives, QJsonObject *req);
+    /// Asks for a new passphrase twice (system image with "Passphrase" encryption). false = cancelled.
+    bool askNewPassphrase(QString *pass);
+    void newKeyPair();
+    void updateEncryptionUi();
     void compareConfigs();
+    void compareWithCurrent();
+    void runDiff(const QJsonObject &req);
+    void showDiff(const QJsonObject &r);
+    // Verification results of this user's runs (state file), shown in the list's Notes.
+    void rememberVerify(const QString &path, bool ok, const QString &error);
+    QJsonObject verifyRecord(const QFileInfo &fi) const;
 
     void configRestore();
     void systemBackup();
@@ -79,6 +92,8 @@ private:
     class QTimer *autoTimer_ = nullptr;
 
     QLineEdit *cfgDir_, *sysDir_, *target_, *recipient_;
+    QComboBox *encMode_ = nullptr;
+    QPushButton *keyGen_ = nullptr;
     QCheckBox *cfgProfile_, *cfgLogs_, *low_, *verify_, *home_, *incr_;
     QComboBox *comp_;
     QSpinBox *level_, *keep_;
@@ -94,5 +109,6 @@ private:
     bool procRoot_ = false, cancelling_ = false;
     QJsonObject final_;
     qint64 lastBytes_ = 0, lastElapsed_ = 0;
+    QString step_;                 // "step 2 of 4" while a chain is restored
     double rate_ = 0;
 };

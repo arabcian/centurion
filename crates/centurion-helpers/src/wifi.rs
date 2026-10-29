@@ -84,15 +84,18 @@ pub fn warnings(s: &Station) -> Vec<&'static str> {
     w
 }
 
-/// The first interface with a Wi-Fi (nl80211 or wext) directory.
+/// The first interface with a Wi-Fi (nl80211 or wext) directory; one that is up comes before one that is not.
 fn wireless_iface() -> Option<String> {
-    let mut names: Vec<String> = std::fs::read_dir("/sys/class/net").ok()?
+    let mut names: Vec<(bool, String)> = std::fs::read_dir("/sys/class/net").ok()?
         .filter_map(Result::ok)
         .filter(|e| e.path().join("phy80211").exists() || e.path().join("wireless").exists())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .map(|e| {
+            let up = std::fs::read_to_string(e.path().join("operstate")).is_ok_and(|s| s.trim() == "up");
+            (!up, e.file_name().to_string_lossy().into_owned())
+        })
         .collect();
     names.sort();
-    names.into_iter().next()
+    names.into_iter().next().map(|(_, n)| n)
 }
 
 fn iw_bin() -> Option<PathBuf> {

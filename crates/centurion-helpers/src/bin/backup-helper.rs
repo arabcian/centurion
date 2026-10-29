@@ -7,7 +7,8 @@
 //! or died) cancels: tar and the compressor are terminated and the partial
 //! archive is removed.
 //!
-//!   as the user:   config_backup  config_inspect  config_restore_user  config_diff  verify (readable archives)
+//!   as the user:   config_backup  config_inspect  config_restore_user  config_diff (two archives, or one and
+//!                  the live configuration)  verify (readable archives)
 //!   root (pkexec): system_backup  system_restore  config_restore_root  verify
 //!
 //! polkit: com.centurion.backup — the administrator password every

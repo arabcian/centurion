@@ -1124,6 +1124,29 @@ void NetPage::addIpActions(QMenu &m, const QString &ip) {
     m.addAction(QStringLiteral("Blacklist the owner's whole network…"), this, [this, ip] { blacklistNetwork(ip); });
 }
 
+/// Wi-Fi firmware errors (Monitor's `wifi` events) saved in health.log during this boot. Only the end of the
+/// log is read, and only again when the file changed (the tab refreshes every 3 s).
+static int wifiEventsThisBoot() {
+    static qint64 seenSize = -1;
+    static QDateTime seenTime;
+    static int count = 0;
+    QString dir = qEnvironmentVariable("XDG_STATE_HOME");
+    if (dir.isEmpty()) dir = QDir::homePath() + QStringLiteral("/.local/state");
+    QFile f(dir + QStringLiteral("/centurion/health.log"));
+    const QFileInfo fi(f);
+    if (fi.size() == seenSize && fi.lastModified() == seenTime) return count;
+    seenSize = fi.size();
+    seenTime = fi.lastModified();
+    count = 0;
+    QFile b(QStringLiteral("/proc/sys/kernel/random/boot_id"));
+    const QString boot = b.open(QIODevice::ReadOnly) ? QString::fromLatin1(b.readAll().trimmed().left(8)) : QString();
+    if (boot.isEmpty() || !f.open(QIODevice::ReadOnly | QIODevice::Text)) return count;
+    if (f.size() > LOG_TAIL) { f.seek(f.size() - LOG_TAIL); f.readLine(); }
+    const QRegularExpression re(QStringLiteral("\\sboot=%1 seq=\\d+\\s+\\S+\\s+WIFI\\s").arg(boot));
+    while (!f.atEnd()) if (re.match(QString::fromUtf8(f.readLine())).hasMatch()) ++count;
+    return count;
+}
+
 void NetPage::refreshWifi() {
     runUser({{"op", "wifi"}}, [this](const QJsonObject &w) { applyWifi(w); }, 6000);
 }
@@ -1163,7 +1186,10 @@ void NetPage::applyWifi(const QJsonObject &w) {
     if (warn.contains(QStringLiteral("weak_signal"))) lines << tr("Weak signal: move closer to the access point or check the antenna.");
     if (warn.contains(QStringLiteral("retries"))) lines << tr("Many retries: the channel is busy or the link is marginal.");
     if (warn.contains(QStringLiteral("failed"))) lines << tr("Many failed transmissions: packets are being lost on this link.");
-    if (warn.isEmpty()) lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::OK), tr("The link looks healthy."));
+    if (const int fw = wifiEventsThisBoot())
+        lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::WARN),
+                     tr("The Wi-Fi firmware crashed and restarted %n time(s) since boot (Health → Monitor).", nullptr, fw));
+    if (warn.isEmpty() && !wifiEventsThisBoot()) lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::OK), tr("The link looks healthy."));
     wifiText_->setText(lines.join(QStringLiteral("<br>")));
 }
 
@@ -1249,10 +1275,9 @@ void NetPage::updateSubscription(int row) {
         if (reply->error() != QNetworkReply::NoError) return fail(reply->errorString());
         const ParsedBlocklist p = parseBlocklist(*body);
         if (!p.error.isEmpty()) return fail(p.error);
-        const QSet<QString> fresh(p.entries.cbegin(), p.entries.cend());
-        QJsonArray gone;
-        for (const QJsonValue &e : groupEntries(state_, name)) if (!fresh.contains(e.toString())) gone.append(e);
-        privileged::run(helper(), QJsonObject{{"op", "blacklist"}, {"add", QJsonArray::fromStringList(p.entries)}, {"remove", gone}, {"label", name}}, this,
+        // "replace": the helper drops the group's old entries before adding these, so an entry written
+        // differently from its stored form (a range, a non-canonical CIDR) is not removed again.
+        privileged::run(helper(), QJsonObject{{"op", "blacklist"}, {"add", QJsonArray::fromStringList(p.entries)}, {"label", name}, {"replace", true}}, this,
             [this, name, count = p.entries.size()](const privileged::Result &r) {
                 if (!r.ok()) return changeSubscription(name, [&r](BlocklistSub &s) { s.error = r.message(); });
                 applyStatus(r.json);

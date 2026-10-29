@@ -2362,6 +2362,12 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         <source>The link looks healthy.</source>
         <translation>Bağlantı sağlıklı görünüyor.</translation>
     </message>
+    <message numerus="yes">
+        <source>The Wi-Fi firmware crashed and restarted %n time(s) since boot (Health → Monitor).</source>
+        <translation>
+            <numerusform>Wi-Fi yazılımı açılıştan beri %n kez çöküp yeniden başladı (Health → Monitor).</numerusform>
+        </translation>
+    </message>
     <message>
         <location filename="work/gui/src/netpage.cpp" line="1220"/>
         <source>failed: %1</source>
@@ -3793,10 +3799,6 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <translation>İki yedeği karşılaştır…</translation>
     </message>
     <message>
-        <source>Select two "Centurion configuration" archives (Ctrl+click) to see what changed between them: files, and keys in JSON and .ini files. Reads only; restores nothing.</source>
-        <translation>Aralarındaki farkı görmek için iki "Centurion configuration" arşivini seçin (Ctrl+tık): dosyalar ile JSON ve .ini dosyalarındaki anahtarlar. Yalnızca okur; hiçbir şey geri yüklemez.</translation>
-    </message>
-    <message>
         <source>Incremental</source>
         <translation>Artımlı</translation>
     </message>
@@ -3805,28 +3807,12 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <translation>Yalnızca klasördeki en yeni imajdan bu yana değişenler. İlk imaj tam imajdır; ardından en fazla 6 artım gelir. Bir zincir yalnızca bütün olarak silinir; geri yükleme tam imajı, ardından artımları sırayla uygular.</translation>
     </message>
     <message>
-        <source>encrypt to: age1… public key (empty = not encrypted)</source>
-        <translation>şifrele: age1… açık anahtarı (boş = şifresiz)</translation>
-    </message>
-    <message>
         <source>Encrypts the image with age to this public key (a public key is not a secret). Reading the image back needs the matching AGE-SECRET-KEY line, which Centurion asks for when needed and never stores. Keep that key somewhere other than this computer: without it the image cannot be read.</source>
         <translation>İmaj bu açık anahtarla age kullanılarak şifrelenir (açık anahtar gizli değildir). Okumak için eşleşen AGE-SECRET-KEY satırı gerekir; Centurion gerektiğinde sorar, asla saklamaz. Bu anahtarı bu bilgisayar dışında saklayın: anahtar olmadan imaj okunamaz.</translation>
     </message>
     <message>
-        <source>Encrypt to</source>
-        <translation>Şifrele</translation>
-    </message>
-    <message>
-        <source>encrypted</source>
-        <translation>şifreli</translation>
-    </message>
-    <message>
         <source>increment %1</source>
         <translation>artım %1</translation>
-    </message>
-    <message>
-        <source>"Encrypt to" needs an age public key (age1…), or leave it empty.</source>
-        <translation>"Şifrele" için bir age açık anahtarı (age1…) gerekir ya da boş bırakın.</translation>
     </message>
     <message>
         <source>Encrypted: keep the AGE-SECRET-KEY that goes with this key somewhere other than this computer. Without it the image cannot be read.</source>
@@ -3849,14 +3835,6 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <translation>Doğrulama iptal edildi.</translation>
     </message>
     <message>
-        <source>Age key</source>
-        <translation>Age anahtarı</translation>
-    </message>
-    <message>
-        <source>%1 is encrypted. Paste its AGE-SECRET-KEY-1… line. It is used for this run only and is not kept.</source>
-        <translation>%1 şifreli. AGE-SECRET-KEY-1… satırını yapıştırın. Yalnızca bu çalıştırmada kullanılır, saklanmaz.</translation>
-    </message>
-    <message>
         <source>Select exactly two "Centurion configuration" archives (Ctrl+click) to compare.</source>
         <translation>Karşılaştırmak için tam olarak iki "Centurion configuration" arşivi seçin (Ctrl+tık).</translation>
     </message>
@@ -3869,24 +3847,8 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <translation>Karşılaştırma başarısız: </translation>
     </message>
     <message>
-        <source>A: %1 (made %2)</source>
-        <translation>A: %1 (oluşturulma: %2)</translation>
-    </message>
-    <message>
-        <source>B: %1 (made %2)</source>
-        <translation>B: %1 (oluşturulma: %2)</translation>
-    </message>
-    <message>
-        <source>  (changed; not a JSON or .ini file)</source>
-        <translation>  (değişti; JSON ya da .ini dosyası değil)</translation>
-    </message>
-    <message>
         <source>%1 added, %2 removed, %3 changed, %4 unchanged.</source>
         <translation>%1 eklendi, %2 silindi, %3 değişti, %4 aynı.</translation>
-    </message>
-    <message>
-        <source> The list was cut short.</source>
-        <translation> Liste kısaltıldı.</translation>
     </message>
     <message>
         <source>Verification failed: </source>
@@ -3899,6 +3861,439 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
     <message>
         <source>%1: readable end to end, %L2 entries</source>
         <translation>%1: baştan sona okunabiliyor, %L2 girdi</translation>
+    </message>
+    <message>
+        <source>Select two &quot;Centurion configuration&quot; archives (Ctrl+click) to see what changed from the older to the newer: files, keys in JSON / .ini / KEY=value files, lines in other text and, when both have a system profile, the kernel configuration and installed packages. Reads only; restores nothing.</source>
+        <translation>Eskiden yeniye neyin değiştiğini görmek için iki &quot;Centurion configuration&quot; arşivi seçin (Ctrl+tık): dosyalar, JSON / .ini / ANAHTAR=değer dosyalarında anahtarlar, diğer metinlerde satırlar ve ikisinde de sistem profili varsa çekirdek yapılandırması ile kurulu paketler. Yalnızca okur; hiçbir şey geri yüklemez.</translation>
+    </message>
+    <message>
+        <source>Compare with now…</source>
+        <translation>Şimdiyle karşılaştır…</translation>
+    </message>
+    <message>
+        <source>What changed since the selected &quot;Centurion configuration&quot; archive was made: it is compared with the configuration as it is now. Reads only; restores nothing.</source>
+        <translation>Seçili &quot;Centurion configuration&quot; arşivi alındığından beri ne değişti: arşiv şu anki yapılandırmayla karşılaştırılır. Yalnızca okur; hiçbir şey geri yüklemez.</translation>
+    </message>
+    <message>
+        <source>Not encrypted</source>
+        <translation>Şifresiz</translation>
+    </message>
+    <message>
+        <source>Passphrase</source>
+        <translation>Parola</translation>
+    </message>
+    <message>
+        <source>Public key (age)</source>
+        <translation>Açık anahtar (age)</translation>
+    </message>
+    <message>
+        <source>The image holds /etc/shadow and every private key on the system: encrypt it when it leaves this computer.
+Passphrase: asked when the image is made and when it is read back; never stored.
+Public key: anyone can make images with it, only the matching secret key reads them — the key can stay off this computer.
+Uses age (app-crypt/age). An increment keeps the encryption of its chain.</source>
+        <translation>İmaj /etc/shadow dosyasını ve sistemdeki tüm gizli anahtarları içerir: bu bilgisayardan çıkacaksa şifreleyin.
+Parola: imaj oluşturulurken ve okunurken sorulur; hiçbir yerde saklanmaz.
+Açık anahtar: herkes bununla imaj oluşturabilir, yalnızca eşleşen gizli anahtar okuyabilir — anahtar bu bilgisayarın dışında kalabilir.
+age kullanılır (app-crypt/age). Bir artım, zincirinin şifrelemesini korur.</translation>
+    </message>
+    <message>
+        <source>age1… public key</source>
+        <translation>age1… açık anahtarı</translation>
+    </message>
+    <message>
+        <source>New key pair…</source>
+        <translation>Yeni anahtar çifti…</translation>
+    </message>
+    <message>
+        <source>Makes a new age key pair with age-keygen: the secret key goes into a file you choose (keep it off this computer, e.g. on a USB stick or in a password manager), the public key is filled in here.</source>
+        <translation>age-keygen ile yeni bir age anahtar çifti oluşturur: gizli anahtar seçtiğiniz bir dosyaya yazılır (bu bilgisayarın dışında saklayın, örn. USB bellekte ya da parola yöneticisinde), açık anahtar buraya doldurulur.</translation>
+    </message>
+    <message>
+        <source>Encryption</source>
+        <translation>Şifreleme</translation>
+    </message>
+    <message>
+        <source>Archive</source>
+        <translation>Arşiv</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Tür</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Boyut</translation>
+    </message>
+    <message>
+        <source>Written</source>
+        <translation>Yazılma</translation>
+    </message>
+    <message>
+        <source>Notes</source>
+        <translation>Notlar</translation>
+    </message>
+    <message>
+        <source>%L1 entries</source>
+        <translation>%L1 girdi</translation>
+    </message>
+    <message>
+        <source>encrypted (passphrase)</source>
+        <translation>şifreli (parola)</translation>
+    </message>
+    <message>
+        <source>encrypted (key)</source>
+        <translation>şifreli (anahtar)</translation>
+    </message>
+    <message>
+        <source>verified %1</source>
+        <translation>doğrulandı %1</translation>
+    </message>
+    <message>
+        <source>with /home</source>
+        <translation>/home dahil</translation>
+    </message>
+    <message>
+        <source>tar reported errors</source>
+        <translation>tar hata bildirdi</translation>
+    </message>
+    <message>
+        <source>kernel %1</source>
+        <translation>çekirdek %1</translation>
+    </message>
+    <message>
+        <source>saved automatically before a restore</source>
+        <translation>geri yüklemeden önce otomatik kaydedildi</translation>
+    </message>
+    <message>
+        <source>saved automatically before a firmware write</source>
+        <translation>donanım yazılımı yazmasından önce otomatik kaydedildi</translation>
+    </message>
+    <message>
+        <source>readable %1</source>
+        <translation>okunabilir %1</translation>
+    </message>
+    <message>
+        <source>FAILED verification %1: %2</source>
+        <translation>doğrulama BAŞARISIZ %1: %2</translation>
+    </message>
+    <message>
+        <source>System image</source>
+        <translation>Sistem imajı</translation>
+    </message>
+    <message>
+        <source>Centurion configuration</source>
+        <translation>Centurion yapılandırması</translation>
+    </message>
+    <message>
+        <source>its full image is not listed — it cannot be restored alone</source>
+        <translation>tam imajı listede yok — tek başına geri yüklenemez</translation>
+    </message>
+    <message numerus="yes">
+        <source>full image + %n increment(s), %1 in all</source>
+        <translation>
+            <numerusform>tam imaj + %n artım, toplam %1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>step %1 of %2</source>
+        <translation>adım %1 / %2</translation>
+    </message>
+    <message>
+        <source>%1: %2</source>
+        <translation>%1: %2</translation>
+    </message>
+    <message>
+        <source>&quot;Public key&quot; needs an age public key (age1…, 62 characters): paste one, or make one with &quot;New key pair…&quot;.</source>
+        <translation>&quot;Açık anahtar&quot; için bir age açık anahtarı gerekir (age1…, 62 karakter): yapıştırın ya da &quot;Yeni anahtar çifti…&quot; ile oluşturun.</translation>
+    </message>
+    <message>
+        <source>Image cancelled.</source>
+        <translation>İmaj iptal edildi.</translation>
+    </message>
+    <message>
+        <source>Encrypted with a passphrase: without it the image cannot be read. Centurion does not keep it.</source>
+        <translation>Parolayla şifreli: parola olmadan imaj okunamaz. Centurion parolayı saklamaz.</translation>
+    </message>
+    <message>
+        <source>, encrypted</source>
+        <translation>, şifreli</translation>
+    </message>
+    <message>
+        <source>Passphrase for the image</source>
+        <translation>İmaj parolası</translation>
+    </message>
+    <message>
+        <source>The image is encrypted with this passphrase (age, scrypt). It is needed to verify or restore the image and is not stored anywhere: &lt;b&gt;if it is lost, the image is lost&lt;/b&gt;. An increment must use the passphrase of its chain.</source>
+        <translation>İmaj bu parolayla şifrelenir (age, scrypt). İmajı doğrulamak ya da geri yüklemek için gerekir ve hiçbir yerde saklanmaz: &lt;b&gt;parola kaybolursa imaj da kaybolur&lt;/b&gt;. Bir artım, zincirinin parolasını kullanmalıdır.</translation>
+    </message>
+    <message>
+        <source>passphrase</source>
+        <translation>parola</translation>
+    </message>
+    <message>
+        <source>again</source>
+        <translation>tekrar</translation>
+    </message>
+    <message>
+        <source>Show</source>
+        <translation>Göster</translation>
+    </message>
+    <message>
+        <source>Type it twice.</source>
+        <translation>İki kez yazın.</translation>
+    </message>
+    <message>
+        <source>The two do not match yet.</source>
+        <translation>İkisi henüz eşleşmiyor.</translation>
+    </message>
+    <message>
+        <source>Short: anyone holding the file can try passphrases offline. Several words are better.</source>
+        <translation>Kısa: dosyayı ele geçiren biri çevrimdışı parola deneyebilir. Birkaç kelime daha iyidir.</translation>
+    </message>
+    <message>
+        <source>Matches.</source>
+        <translation>Eşleşiyor.</translation>
+    </message>
+    <message>
+        <source>age-keygen was not found. Install age (app-crypt/age).</source>
+        <translation>age-keygen bulunamadı. age paketini kurun (app-crypt/age).</translation>
+    </message>
+    <message>
+        <source>Save the secret key — keep it off this computer</source>
+        <translation>Gizli anahtarı kaydedin — bu bilgisayarın dışında saklayın</translation>
+    </message>
+    <message>
+        <source>age key (*.agekey *.txt);;All files (*)</source>
+        <translation>age anahtarı (*.agekey *.txt);;Tüm dosyalar (*)</translation>
+    </message>
+    <message>
+        <source>%1 exists; choose a new file name (an existing key is never overwritten).</source>
+        <translation>%1 zaten var; yeni bir dosya adı seçin (mevcut bir anahtarın üzerine asla yazılmaz).</translation>
+    </message>
+    <message>
+        <source>age-keygen failed: %1</source>
+        <translation>age-keygen başarısız: %1</translation>
+    </message>
+    <message>
+        <source>age-keygen wrote no public key.</source>
+        <translation>age-keygen açık anahtar yazmadı.</translation>
+    </message>
+    <message>
+        <source>New key pair: the public key is filled in; the secret key is in %1 (only you can read it).</source>
+        <translation>Yeni anahtar çifti: açık anahtar dolduruldu; gizli anahtar %1 içinde (yalnızca siz okuyabilirsiniz).</translation>
+    </message>
+    <message>
+        <source>New key pair</source>
+        <translation>Yeni anahtar çifti</translation>
+    </message>
+    <message>
+        <source>The secret key was saved to
+%1
+
+Move it (or a copy) somewhere other than this computer — a USB stick, a password manager. Restoring or verifying an encrypted image asks for it; without it the images cannot be read.</source>
+        <translation>Gizli anahtar şuraya kaydedildi:
+%1
+
+Onu (ya da bir kopyasını) bu bilgisayarın dışına taşıyın — USB bellek, parola yöneticisi. Şifreli bir imajı geri yüklemek ya da doğrulamak için sorulur; olmadan imajlar okunamaz.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n encrypted archive(s)</source>
+        <translation>
+            <numerusform>%n şifreli arşiv</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Encrypted image</source>
+        <translation>Şifreli imaj</translation>
+    </message>
+    <message>
+        <source>%1 is encrypted with a passphrase. Type it:</source>
+        <translation>%1 parolayla şifreli. Parolayı yazın:</translation>
+    </message>
+    <message>
+        <source>%1 is encrypted to an age key. Paste its AGE-SECRET-KEY-1… line or load the key file:</source>
+        <translation>%1 bir age anahtarıyla şifreli. AGE-SECRET-KEY-1… satırını yapıştırın ya da anahtar dosyasını yükleyin:</translation>
+    </message>
+    <message>
+        <source>%1 is encrypted. Type its passphrase, or paste / load its age secret key:</source>
+        <translation>%1 şifreli. Parolasını yazın ya da age gizli anahtarını yapıştırın / yükleyin:</translation>
+    </message>
+    <message>
+        <source>Load key file…</source>
+        <translation>Anahtar dosyası yükle…</translation>
+    </message>
+    <message>
+        <source>Used for this run only; Centurion does not store it.</source>
+        <translation>Yalnızca bu çalıştırmada kullanılır; Centurion saklamaz.</translation>
+    </message>
+    <message>
+        <source>age secret key</source>
+        <translation>age gizli anahtarı</translation>
+    </message>
+    <message>
+        <source>age key (*.agekey *.txt *.key);;All files (*)</source>
+        <translation>age anahtarı (*.agekey *.txt *.key);;Tüm dosyalar (*)</translation>
+    </message>
+    <message>
+        <source>%1 holds no AGE-SECRET-KEY line.</source>
+        <translation>%1 içinde AGE-SECRET-KEY satırı yok.</translation>
+    </message>
+    <message>
+        <source>(key file %1)</source>
+        <translation>(anahtar dosyası %1)</translation>
+    </message>
+    <message>
+        <source>Key loaded from %1.</source>
+        <translation>Anahtar %1 dosyasından yüklendi.</translation>
+    </message>
+    <message>
+        <source>Select one &quot;Centurion configuration&quot; archive to compare with the configuration as it is now.</source>
+        <translation>Şu anki yapılandırmayla karşılaştırmak için bir &quot;Centurion configuration&quot; arşivi seçin.</translation>
+    </message>
+    <message>
+        <source> Packages: %1 new, %2 removed, %3 other version.</source>
+        <translation> Paketler: %1 yeni, %2 kaldırılmış, %3 farklı sürüm.</translation>
+    </message>
+    <message>
+        <source>Configuration: backup → now</source>
+        <translation>Yapılandırma: yedek → şimdi</translation>
+    </message>
+    <message>
+        <source>Configuration: older → newer backup</source>
+        <translation>Yapılandırma: eski → yeni yedek</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Before&lt;/b&gt;: %1 (made %2)&lt;br&gt;&lt;b&gt;After&lt;/b&gt;: %3</source>
+        <translation>&lt;b&gt;Önce&lt;/b&gt;: %1 (oluşturulma: %2)&lt;br&gt;&lt;b&gt;Sonra&lt;/b&gt;: %3</translation>
+    </message>
+    <message>
+        <source>the configuration as it is now</source>
+        <translation>şu anki yapılandırma</translation>
+    </message>
+    <message>
+        <source>%1 (made %2)</source>
+        <translation>%1 (oluşturulma: %2)</translation>
+    </message>
+    <message>
+        <source>The archives were put in time order.</source>
+        <translation>Arşivler zaman sırasına kondu.</translation>
+    </message>
+    <message>
+        <source>System profile not compared (not in both).</source>
+        <translation>Sistem profili karşılaştırılmadı (ikisinde birden yok).</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n log or per-boot file(s) not compared.</source>
+        <translation>
+            <numerusform>%n günlük ya da açılışa özgü dosya karşılaştırılmadı.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Long lists were cut short.</source>
+        <translation>Uzun listeler kısaltıldı.</translation>
+    </message>
+    <message>
+        <source>Filter (file, key or package)…</source>
+        <translation>Süz (dosya, anahtar ya da paket)…</translation>
+    </message>
+    <message>
+        <source>What</source>
+        <translation>Ne</translation>
+    </message>
+    <message>
+        <source>Before</source>
+        <translation>Önce</translation>
+    </message>
+    <message>
+        <source>After</source>
+        <translation>Sonra</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>Değişen</translation>
+    </message>
+    <message>
+        <source>(none)</source>
+        <translation>(yok)</translation>
+    </message>
+    <message numerus="yes">
+        <source>… %n more line(s)</source>
+        <translation>
+            <numerusform>… %n satır daha</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>same lines, another order</source>
+        <translation>aynı satırlar, farklı sıra</translation>
+    </message>
+    <message>
+        <source>binary file: contents differ</source>
+        <translation>ikili dosya: içerik farklı</translation>
+    </message>
+    <message>
+        <source>see &quot;Packages&quot; below</source>
+        <translation>aşağıdaki &quot;Paketler&quot;e bakın</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n key(s)</source>
+        <translation>
+            <numerusform>%n anahtar</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>Eklenen</translation>
+    </message>
+    <message>
+        <source>Removed</source>
+        <translation>Silinen</translation>
+    </message>
+    <message>
+        <source>Not readable now (not compared)</source>
+        <translation>Şu an okunamıyor (karşılaştırılmadı)</translation>
+    </message>
+    <message>
+        <source>Packages</source>
+        <translation>Paketler</translation>
+    </message>
+    <message>
+        <source>No differences.</source>
+        <translation>Fark yok.</translation>
+    </message>
+    <message>
+        <source>Copy as text</source>
+        <translation>Metin olarak kopyala</translation>
+    </message>
+    <message>
+        <source>%1: readable, but its image set is incomplete — %2</source>
+        <translation>%1: okunabilir, ancak imaj kümesi eksik — %2</translation>
+    </message>
+    <message>
+        <source>
+
+This is increment %1: its full image and increments 1–%1 are unpacked in that order. What was deleted or renamed between them is deleted or renamed again — only among the files these images restored. Nothing else on the target is removed, and nothing across a mount point.</source>
+        <translation>
+
+Bu %1. artım: tam imajı ve 1–%1 artımları bu sırayla açılır. Aralarında silinen ya da yeniden adlandırılanlar yeniden silinir ya da adlandırılır — yalnızca bu imajların geri yüklediği dosyalar arasında. Hedefteki başka hiçbir şey silinmez, bir bağlama noktasının ötesine de geçilmez.</translation>
+    </message>
+    <message>
+        <source>Restore stopped before anything was written: an image of this set is encrypted. Select the newest image again and restore; Centurion asks for its passphrase or key.</source>
+        <translation>Geri yükleme hiçbir şey yazılmadan durdu: bu kümedeki bir imaj şifreli. En yeni imajı yeniden seçip geri yükleyin; Centurion parolasını ya da anahtarını sorar.</translation>
+    </message>
+    <message>
+        <source>as recorded between the images: %1 deleted, %2 directory(ies) renamed</source>
+        <translation>imajlar arasında kaydedildiği gibi: %1 silindi, %2 dizin yeniden adlandırıldı</translation>
+    </message>
+</context>
+<context>
+    <name>blocklistsubs</name>
+    <message>
+        <source>The list has more than %1 entries.</source>
+        <translation>Listede %1 girdiden fazlası var.</translation>
+    </message>
+    <message>
+        <source>The list has no entries.</source>
+        <translation>Listede hiç girdi yok.</translation>
     </message>
 </context>
 </TS>

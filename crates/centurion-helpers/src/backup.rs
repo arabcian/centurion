@@ -20,19 +20,30 @@
 //! Cancel: the GUI closes our stdin; the children (own process groups) are
 //! terminated and the partial archive is removed.
 //!
-//! Encryption (optional): the image goes through `age -r <public key>`. Reading it back needs the age
-//! secret key, which comes with the request and is written to a 0600 scratch file for that run only.
+//! Encryption (optional): the image goes through age, to a public key (`age -r <age1…>`) or with a
+//! passphrase (`age -p`). Secrets arrive in the request on stdin and never touch a disk: a secret key is
+//! handed to age through a pipe (`-i /dev/fd/3`), a passphrase is typed into age's own prompt on a
+//! private pseudo-terminal (age reads passphrases only from a terminal). Both are wiped when dropped.
 //!
-//! Increments (optional): every image has a snapshot next to it (`<image>.snar`, GNU tar's
-//! listed-incremental). An increment is one level above the image it continues; retention keeps
-//! whole chains, and a restore unpacks the full image and then each increment in order.
+//! Increments (optional): every image has a snapshot (`<image>.snar`, GNU tar's listed-incremental;
+//! for an encrypted image a private root-only copy under /var/lib/centurion/backup-snar, so the
+//! list of every path on the system does not travel next to the ciphertext). An increment is one
+//! level above the image it continues and keeps its chain's encryption; retention keeps whole chains,
+//! and a restore unpacks the full image and then each increment in order. tar's own incremental
+//! extraction is NOT used: it deletes everything in an archived directory that was not there at
+//! backup time — new users under /home, the disks mounted under /mnt (the backup disk itself).
+//! `ChainRestore` applies the recorded renames and deletes only what the chain itself restored.
 //!
-//! config_diff: what changed between two configuration archives (read only).
+//! config_diff: what changed between two configuration archives, or one and the live configuration
+//! (read only).
 
+use crate::tarscan;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs::{self, File};
+use std::hash::{BuildHasher, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
@@ -325,19 +336,164 @@ fn recipient_of(req: &Value) -> Result<Option<String>, String> {
     Ok(Some(r.to_owned()))
 }
 
-/// The age secret key of a request ("AGE-SECRET-KEY-1…"), written to a 0600 file in a scratch directory that
-/// is removed when the returned guard is dropped. It is never logged and never kept.
-fn identity_file(req: &Value) -> Result<Option<(Scratch, PathBuf)>, String> {
-    let Some(k) = req["identity"].as_str().map(str::trim).filter(|s| !s.is_empty()) else { return Ok(None) };
-    if k.len() > 128 || !k.starts_with("AGE-SECRET-KEY-1") || !k.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'-') {
+/// A secret from the request: never logged, never written to a file, wiped when dropped.
+struct Secret(Vec<u8>);
+impl Drop for Secret {
+    fn drop(&mut self) { for b in self.0.iter_mut() { unsafe { std::ptr::write_volatile(b, 0) }; } }
+}
+
+/// What reads (or, for a passphrase, also writes) an encrypted image.
+enum Key {
+    /// Every "AGE-SECRET-KEY-1…" line of what was pasted or loaded (an age-keygen file has comments around it).
+    Identity(Secret),
+    Passphrase(Secret),
+}
+
+/// {"passphrase":"…"} or {"identity":"AGE-SECRET-KEY-1…" (or a whole key file)}; neither = no key.
+fn key_of(req: &Value) -> Result<Option<Key>, String> {
+    if let Some(p) = req["passphrase"].as_str().filter(|p| !p.is_empty()) {
+        if p.len() > 1024 || p.contains(['\0', '\n', '\r']) { return Err("the passphrase must be one line of at most 1024 bytes".into()); }
+        return Ok(Some(Key::Passphrase(Secret(p.as_bytes().to_vec()))));
+    }
+    let Some(text) = req["identity"].as_str().filter(|s| !s.trim().is_empty()) else { return Ok(None) };
+    let keys: Vec<&str> = text.lines().map(str::trim).filter(|l| l.starts_with("AGE-SECRET-KEY-")).collect();
+    let valid = |k: &&str| k.len() <= 128 && k.starts_with("AGE-SECRET-KEY-1") && k.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'-');
+    if keys.is_empty() || keys.len() > 16 || !keys.iter().all(valid) {
         return Err("the key is not an age secret key (AGE-SECRET-KEY-1…)".into());
     }
-    let dir = Scratch(mkdtemp(&std::env::temp_dir(), "centurion-key-")?);
-    let path = dir.0.join("key");
-    let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&path).map_err(|e| e.to_string())?;
-    f.write_all(format!("{k}\n").as_bytes()).map_err(|e| e.to_string())?;
-    Ok(Some((dir, path)))
+    let mut v = keys.join("\n").into_bytes();
+    v.push(b'\n');
+    Ok(Some(Key::Identity(Secret(v))))
+}
+
+fn cloexec_pipe() -> Result<(OwnedFd, OwnedFd), String> {
+    let mut fds = [0 as RawFd; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 { return Err(std::io::Error::last_os_error().to_string()); }
+    Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
+}
+
+/// Resources an age child needs while it runs. Dropped after the child has been waited for: the slave
+/// side of the terminal closes first, so the prompt-answering thread sees the end and is joined.
+#[derive(Default)]
+struct AgeAux {
+    key_pipe: Option<OwnedFd>,  // read end of the key pipe: closed right after the spawn
+    tty_slave: Option<OwnedFd>,
+    stop: Arc<AtomicBool>,
+    answerer: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for AgeAux {
+    fn drop(&mut self) {
+        self.tty_slave = None;
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.answerer.take() { let _ = h.join(); }
+    }
+}
+
+/// Answers every passphrase prompt age writes to its terminal (age asks twice when encrypting), at most
+/// four times. The passphrase goes nowhere else; the terminal's echo is off while age reads it.
+fn answer_prompts(master: OwnedFd, pass: Secret, stop: Arc<AtomicBool>) {
+    let fd = master.as_raw_fd();
+    let mut seen: Vec<u8> = Vec::new();
+    let (mut pos, mut answered) = (0usize, 0);
+    let mut buf = [0u8; 512];
+    while !stop.load(Ordering::Relaxed) {
+        let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        if unsafe { libc::poll(&mut p, 1, 200) } <= 0 { continue; }
+        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        if n <= 0 { break; }  // EIO: every slave descriptor is closed, age is gone
+        seen.extend_from_slice(&buf[..n as usize]);
+        while answered < 4 {
+            let Some(i) = find(&seen[pos..], b"assphrase").map(|i| pos + i) else { break };
+            let Some(j) = seen[i..].iter().position(|&b| b == b':').map(|j| i + j) else { break };
+            let mut line = Secret([pass.0.as_slice(), b"\n"].concat());
+            let _ = unsafe { libc::write(fd, line.0.as_ptr() as *const libc::c_void, line.0.len()) };
+            line.0.iter_mut().for_each(|b| *b = 0);
+            answered += 1;
+            pos = j + 1;
+        }
+        if seen.len() > 64 << 10 { break; }
+    }
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> { hay.windows(needle.len()).position(|w| w == needle) }
+
+/// `age` as a stage of the pipe: encrypting (`recipient`, or the `Key::Passphrase`) or decrypting (`key`).
+/// The returned AgeAux must outlive the child.
+fn age_command(age: &Path, low: bool, decrypt: bool, recipient: Option<&str>, key: Option<&Key>) -> Result<(Command, AgeAux), String> {
+    let mut aux = AgeAux::default();
+    let cmd = match (decrypt, key) {
+        (true, Some(Key::Identity(k))) => {
+            let (r, w) = cloexec_pipe()?;
+            // The key is small: it fits the pipe buffer, so it is written whole before age starts.
+            let n = unsafe { libc::write(w.as_raw_fd(), k.0.as_ptr() as *const libc::c_void, k.0.len()) };
+            if n != k.0.len() as isize { return Err("could not hand the key to age".into()); }
+            drop(w);
+            let rfd = r.as_raw_fd();
+            let mut c = command(age, low);
+            c.args(["-d", "-i", "/dev/fd/3"]);
+            unsafe { c.pre_exec(move || if libc::dup2(rfd, 3) < 0 { Err(std::io::Error::last_os_error()) } else { Ok(()) }); }
+            aux.key_pipe = Some(r);
+            c
+        }
+        (_, Some(Key::Passphrase(p))) if decrypt || recipient.is_none() => {
+            let (mut m, mut s) = (0 as RawFd, 0 as RawFd);
+            if unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null(), std::ptr::null()) } != 0 {
+                return Err(format!("no pseudo-terminal for the passphrase: {}", std::io::Error::last_os_error()));
+            }
+            let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
+            for fd in [m, s] { unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC); } }
+            let mut c = command_tty(age, low, s);
+            c.arg(if decrypt { "-d" } else { "-p" });
+            let stop = aux.stop.clone();
+            let pass = Secret(p.0.clone());
+            aux.answerer = Some(std::thread::spawn(move || answer_prompts(master, pass, stop)));
+            aux.tty_slave = Some(slave);
+            c
+        }
+        (false, _) => {
+            let r = recipient.ok_or("no recipient or passphrase to encrypt with")?;
+            let mut c = command(age, low);
+            c.arg("-r").arg(r);
+            c
+        }
+        (true, None) => return Err("the archive is encrypted: its passphrase or age key is needed to read it".into()),
+        (true, Some(_)) => unreachable!(),
+    };
+    Ok((cmd, aux))
+}
+
+/// Like `command`, but the child gets a session of its own with `tty` as its controlling terminal — age opens
+/// /dev/tty for the passphrase. setsid also makes it a process group leader, so the cancel still reaches it.
+fn command_tty(path: &Path, low_priority: bool, tty: RawFd) -> Command {
+    let mut c = Command::new(path);
+    if let Some(n) = path.file_name() { c.arg0(n); }
+    c.env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").env("LC_ALL", "C");
+    unsafe {
+        c.pre_exec(move || {
+            if libc::setsid() < 0 || libc::ioctl(tty, libc::TIOCSCTTY as _, 0) < 0 { return Err(std::io::Error::last_os_error()); }
+            if low_priority {
+                libc::setpriority(libc::PRIO_PROCESS as _, 0, 19);
+                libc::syscall(libc::SYS_ioprio_set, 1, 0, (2 << 13) | 7);
+            }
+            Ok(())
+        });
+    }
+    c
+}
+
+/// Whether `key` opens an encrypted image: age decrypts (and authenticates) the first chunk, nothing more.
+fn key_opens(archive: &Path, key: &Key) -> bool {
+    let (Some(age), Ok(f)) = (tool("age"), File::open(archive)) else { return false };
+    let Ok((mut c, aux)) = age_command(&age, true, true, None, Some(key)) else { return false };
+    c.stdin(Stdio::from(f)).stdout(Stdio::piped()).stderr(Stdio::null());
+    let Ok(mut ch) = c.spawn() else { return false };
+    let mut aux = aux;
+    aux.key_pipe = None;
+    let mut one = [0u8; 1];
+    let got = ch.stdout.take().map_or(false, |mut o| matches!(o.read(&mut one), Ok(1)));
+    let _ = ch.kill();
+    let _ = ch.wait();
+    got
 }
 
 // ── system image: create ────────────────────────────────────────────────────
@@ -346,28 +502,68 @@ fn identity_file(req: &Value) -> Result<Option<(Scratch, PathBuf)>, String> {
 /// one again, so a chain is at most a full image and a week of dailies.
 const MAX_LEVEL: u64 = 6;
 
-/// The newest image in a folder that has a snapshot: the next increment continues from it.
-struct Tip { snar: PathBuf, level: u64, chain: String }
+/// How an image is encrypted, as its sidecar records it: what an increment must match to continue its chain.
+#[derive(Clone, Debug, PartialEq)]
+enum Enc { None, Recipient(String), Passphrase }
 
-fn chain_tip(dir: &Path) -> Option<Tip> {
+impl Enc {
+    fn of_info(info: &Value) -> Enc {
+        match (info["encryption"].as_str(), info["recipient"].as_str()) {
+            (Some("passphrase"), _) => Enc::Passphrase,
+            (_, Some(r)) if !r.is_empty() => Enc::Recipient(r.to_owned()),
+            _ if info["encrypted"].as_bool() == Some(true) => Enc::Passphrase,  // encrypted, no key recorded
+            _ => Enc::None,
+        }
+    }
+    fn label(&self) -> &'static str {
+        match self { Enc::None => "not encrypted", Enc::Recipient(_) => "encrypted to a public key", Enc::Passphrase => "encrypted with a passphrase" }
+    }
+}
+
+/// An image a new increment could continue.
+struct Tip { image: PathBuf, snar: PathBuf, level: u64, chain: String, enc: Enc }
+
+/// The newest image in a folder that has a snapshot and the given encryption: the next increment continues
+/// from it. A folder may hold chains of several kinds (an older passphrase chain next to a newer plain image):
+/// an image continues the newest chain made the same way. None: no such image (`any` tells whether there was
+/// another kind).
+fn chain_tip(dir: &Path, enc: &Enc) -> (Option<Tip>, bool) {
     let mut best: Option<(SystemTime, Tip)> = None;
-    for e in fs::read_dir(dir).ok()?.flatten() {
+    let mut any = false;
+    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
         let p = e.path();
         if !is_image_name(&n) || !fs::symlink_metadata(snar_of(&p)).is_ok_and(|m| m.is_file()) { continue; }
         let Some(info) = read_info(&p) else { continue };
         let (Some(level), Some(chain)) = (info["level"].as_u64(), info["chain"].as_str()) else { continue };
+        any = true;
+        let tip_enc = Enc::of_info(&info);
+        if tip_enc != *enc { continue; }
         let mtime = fs::symlink_metadata(&p).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
         if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
-            best = Some((mtime, Tip { snar: snar_of(&p), level, chain: chain.to_owned() }));
+            best = Some((mtime, Tip { snar: snar_of(&p), image: p, level, chain: chain.to_owned(), enc: tip_enc }));
         }
     }
-    best.map(|(_, t)| t)
+    (best.map(|(_, t)| t), any)
+}
+
+/// Whether a new image may continue the chain of `tip`: same encryption, and for a passphrase the same
+/// passphrase (a restore asks for one). Err stops the backup; Ok(Some(note)) starts a new chain instead.
+fn continues(tip: &Tip, enc: &Enc, key: Option<&Key>) -> Result<Option<String>, String> {
+    if tip.level >= MAX_LEVEL { return Ok(Some(format!("the chain has {MAX_LEVEL} increments: a new full image starts the next one"))); }
+    if *enc != tip.enc {
+        return Ok(Some(format!("a new full image: the chain is {}, this image is {}", tip.enc.label(), enc.label())));
+    }
+    if *enc == Enc::Passphrase && !key.is_some_and(|k| key_opens(&tip.image, k)) {
+        return Err(format!("this passphrase does not open {}, the image this increment would continue. Use the chain's \
+                            passphrase, or untick Incremental to start a new chain.", tip.image.file_name().unwrap_or_default().to_string_lossy()));
+    }
+    Ok(None)
 }
 
 /// {"op":"system_backup","dest_dir":"/…","compressor":"pigz|zstd|xz","level":6,"threads":0,
-///  "include_home":false,"excludes":[…],"low_priority":true,"verify":true,"keep":0,
-///  "recipient":"age1…","incremental":false}
+///  "include_home":false,"excludes":[…],"low_priority":true,"verify":true,"keep":0,"incremental":false,
+///  "recipient":"age1…" | "passphrase":"…", "identity":"AGE-SECRET-KEY-1…" (only to verify a recipient image)}
 pub fn system_backup(req: &Value) -> Value {
     match system_backup_inner(req) { Ok(v) => v, Err(e) => fail(e) }
 }
@@ -390,7 +586,14 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
         o => return Err(format!("unknown compressor: {o}")),
     };
     let recipient = recipient_of(req)?;
-    let age = if recipient.is_some() { Some(tool("age").ok_or("age is not installed (needed to encrypt the image)")?) } else { None };
+    let key = key_of(req)?;
+    let enc = match (&recipient, &key) {
+        (Some(_), Some(Key::Passphrase(_))) => return Err("choose a public key or a passphrase, not both".into()),
+        (Some(r), _) => Enc::Recipient(r.clone()),
+        (None, Some(Key::Passphrase(_))) => Enc::Passphrase,
+        (None, _) => Enc::None,
+    };
+    let age = if enc != Enc::None { Some(tool("age").ok_or("age is not installed (needed to encrypt the image)")?) } else { None };
     let mut excludes: Vec<String> = match req["excludes"].as_array() {
         Some(a) => {
             if a.len() > 128 { return Err("too many exclude patterns".into()); }
@@ -405,8 +608,15 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     if free_bytes(&dest).is_some_and(|f| f < 1 << 30) {
         return Err(format!("less than 1 GiB free in {}", dest.display()));
     }
-    // An increment continues from the snapshot of the newest image; without one, or past MAX_LEVEL, it is a full image.
-    let tip = if req["incremental"].as_bool().unwrap_or(false) { chain_tip(&dest).filter(|t| t.level < MAX_LEVEL) } else { None };
+    // An increment continues from the snapshot of the newest image, when the chain allows it (see `continues`).
+    let mut notes: Vec<String> = Vec::new();
+    let tip = if req["incremental"].as_bool().unwrap_or(false) {
+        match chain_tip(&dest, &enc) {
+            (Some(t), _) => match continues(&t, &enc, key.as_ref())? { None => Some(t), Some(n) => { notes.push(n); None } },
+            (None, true) => { notes.push(format!("a new full image: the earlier images here were made another way (this one is {})", enc.label())); None }
+            (None, false) => { notes.push("no earlier image with a snapshot here: this one is the full image of a new chain".into()); None }
+        }
+    } else { None };
     let level_out = tip.as_ref().map_or(0, |t| t.level + 1);
     let st = stamp();
     let ext_full = format!("tar.{ext}{}", if age.is_some() { ".age" } else { "" });
@@ -416,13 +626,20 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     let chain = tip.as_ref().map_or_else(|| name.clone(), |t| t.chain.clone());
     let fin = dest.join(&name);
     let partial = dest.join(format!("{name}.partial"));
-    let (snar_fin, snar_part) = (snar_of(&fin), dest.join(format!(".{name}.snar.partial")));
-    // The archive must not swallow itself, its snapshot or the older images next to it.
+    let snar_fin = snar_of(&fin);
+    let snar_part = snar_fin.with_file_name(format!(".{}.partial", snar_fin.file_name().unwrap_or_default().to_string_lossy()));
+    if age.is_some() {
+        crate::secure_dir("/var/lib/centurion")?;
+        crate::secure_dir(PRIVATE_SNAR)?;
+        let _ = fs::set_permissions(PRIVATE_SNAR, fs::Permissions::from_mode(0o700));  // even the image names stay private
+    }
+    // The archive must not swallow itself, its snapshot, the older images next to it or the private snapshots.
     excludes.push(literal(&fin));
     excludes.push(literal(&partial));
     excludes.push(literal(&snar_fin));
     excludes.push(literal(&snar_part));
     excludes.push(format!("{}/backup-*.tar.*", literal(&dest).trim_end_matches('/')));
+    excludes.push(format!("{PRIVATE_SNAR}/*"));
 
     let out = fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&partial)
@@ -431,6 +648,7 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     impl Drop for Partial<'_> { fn drop(&mut self) { if !self.1 { let _ = fs::remove_file(self.0); } } }
     let mut guard = Partial(&partial, false);
     let mut snap = Partial(&snar_part, false);
+    let _ = fs::remove_file(&snar_part);  // a leftover from a crashed run would make this a wrong increment
     if let Some(t) = &tip { fs::copy(&t.snar, &snar_part).map_err(|e| format!("{}: {e}", t.snar.display()))?; }
 
     let mut tc = command(&tar, low);
@@ -439,9 +657,9 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     tc.arg(format!("--listed-incremental={}", snar_part.display()));
     for e in &excludes { tc.arg(format!("--exclude={e}")); }
     tc.args(["-cvpf", "-", "/"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let pipe = format!("{} {}{}", comp_path.display(), comp_args.join(" "),
-                       recipient.as_deref().map_or(String::new(), |r| format!(" | age -r {r}")));
-    crate::emit(&json!({"event": "start", "phase": "backup", "archive": fin, "excludes": excludes,
+    let pipe = format!("{} {}{}", comp_path.display(), comp_args.join(" "), match &enc {
+        Enc::None => String::new(), Enc::Recipient(r) => format!(" | age -r {r}"), Enc::Passphrase => " | age -p".into() });
+    crate::emit(&json!({"event": "start", "phase": "backup", "archive": fin, "excludes": excludes, "level": level_out, "notes": notes,
                         "command": format!("tar --acls --xattrs --xattrs-include='*' --listed-incremental=… --exclude=… -cpf - / | {pipe}")}));
     let mut t = spawn(tc, "tar")?;
     let prog = Arc::new(Progress::default());
@@ -455,15 +673,20 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     };
     readers.push(reader(c.stderr.take().unwrap(), prog.clone(), false));
     let mut kids = vec![t, c];
+    let mut _age_aux = None;
     if let Some(age) = &age {
-        let mut ac = command(age, low);
-        ac.arg("-r").arg(recipient.as_deref().unwrap_or_default())
-            .stdin(Stdio::from(kids[1].stdout.take().unwrap()))
+        let built = age_command(age, low, false, recipient.as_deref(), key.as_ref());
+        let (mut ac, aux) = match built {
+            Ok(x) => x,
+            Err(e) => { kill_all(libc::SIGKILL); for k in &mut kids { let _ = k.wait(); } return Err(e); }
+        };
+        ac.stdin(Stdio::from(kids[1].stdout.take().unwrap()))
             .stdout(Stdio::from(out.try_clone().map_err(|e| e.to_string())?)).stderr(Stdio::piped());
         let mut a = match spawn(ac, "age") {
             Ok(a) => a,
             Err(e) => { kill_all(libc::SIGKILL); for k in &mut kids { let _ = k.wait(); } return Err(e); }
         };
+        _age_aux = Some(aux);
         readers.push(reader(a.stderr.take().unwrap(), prog.clone(), false));
         kids.push(a);
     }
@@ -474,6 +697,7 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
                             "files": prog.files.load(Ordering::Relaxed), "current": prog.current.lock().unwrap_or_else(|e| e.into_inner()).clone(),
                             "elapsed": started.elapsed().as_secs()}));
     });
+    drop(_age_aux);
     for r in readers { let _ = r.join(); }
     if cancelled() { return Err("cancelled — the partial archive was removed".into()); }
     let last = || prog.tail().last().map(|l| format!(": {l}")).unwrap_or_default();
@@ -498,20 +722,25 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
 
     let files = prog.files.load(Ordering::Relaxed);
     let (host, kernel) = uname();
+    let (encryption, rec) = match &enc { Enc::None => (Value::Null, Value::Null), Enc::Recipient(r) => (json!("recipient"), json!(r)), Enc::Passphrase => (json!("passphrase"), Value::Null) };
     let mut info = json!({"format": "centurion-system-backup", "version": 1, "created": st.iso,
         "host": host, "kernel": kernel, "archive": name, "bytes": bytes, "files": files,
         "compressor": comp_path.file_name().map(|n| n.to_string_lossy().into_owned()), "excludes": excludes,
         "include_home": req["include_home"].as_bool().unwrap_or(false), "tar_status": tcode,
         "messages": prog.msg_count.load(Ordering::Relaxed),
-        "level": level_out, "chain": chain, "snapshot": true, "encrypted": age.is_some(), "recipient": recipient});
+        "level": level_out, "chain": chain, "snapshot": true, "encrypted": age.is_some(), "encryption": encryption, "recipient": rec,
+        "parent": tip.as_ref().map(|t| t.image.file_name().unwrap_or_default().to_string_lossy().into_owned())});
     let side = sidecar(&fin);
     let _ = crate::write_root_file(&side, info.to_string().as_bytes());
-    crate::wlog::log("backup", &format!("system_backup {} level {level_out}{}", fin.display(), if age.is_some() { " encrypted" } else { "" }));
+    crate::wlog::log("backup", &format!("system_backup {} level {level_out}{}", fin.display(),
+                                        if age.is_some() { format!(" ({})", enc.label()) } else { String::new() }));
 
-    // Only the key reads an encrypted image back, so it is verified from the list, with the key.
+    // An encrypted image is read back with what opens it: the passphrase it was made with, or a secret key
+    // sent along for this purpose. Without one it is verified later, from the list.
     let mut verified = Value::Null;
-    if req["verify"].as_bool().unwrap_or(false) && age.is_none() {
-        match read_archive(&fin, None, low, None, false) {
+    let can_read = age.is_none() || matches!(&key, Some(Key::Passphrase(_))) || matches!(&key, Some(Key::Identity(_)));
+    if req["verify"].as_bool().unwrap_or(false) && can_read {
+        match read_archive(&fin, None, low, key.as_ref(), None) {
             Ok(r) if r.files == files => {
                 verified = json!(true);
                 info["verified"] = json!(stamp().iso);
@@ -525,13 +754,26 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     let removed = prune(&dest, req["keep"].as_u64().unwrap_or(0) as usize, &chain);
     if !removed.is_empty() { crate::wlog::log("backup", &format!("retention removed {}", removed.join(" "))); }
     Ok(json!({"ok": true, "archive": fin, "bytes": bytes, "files": files, "tar_status": tcode,
-              "degraded": tcode == 2, "verified": verified, "encrypted": age.is_some(), "level": level_out, "chain": chain,
+              "degraded": tcode == 2, "verified": verified, "encrypted": age.is_some(), "encryption": info["encryption"],
+              "level": level_out, "chain": chain, "notes": notes,
               "removed": removed, "message_count": prog.msg_count.load(Ordering::Relaxed), "messages": prog.tail(),
               "elapsed": started.elapsed().as_secs()}))
 }
 
+/// Snapshots of encrypted images: root-only, here rather than next to the image (a snapshot names every
+/// archived path). One per image, named by the image's name and folder.
+const PRIVATE_SNAR: &str = "/var/lib/centurion/backup-snar";
+
 /// The root-owned snapshot of an image: GNU tar's listed-incremental file, which the next increment starts from.
-fn snar_of(archive: &Path) -> PathBuf { PathBuf::from(format!("{}.snar", archive.display())) }
+/// Next to the image, or for an encrypted image in PRIVATE_SNAR (moving such an image makes the next one full).
+fn snar_of(archive: &Path) -> PathBuf {
+    let name = archive.file_name().unwrap_or_default().to_string_lossy();
+    if !name.ends_with(".age") { return PathBuf::from(format!("{}.snar", archive.display())); }
+    let dir = archive.parent().map(|d| d.as_os_str().as_bytes().to_vec()).unwrap_or_default();
+    // FNV-1a of the folder: stable across runs (unlike std's hasher), and the name alone keeps it readable.
+    let h = dir.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    PathBuf::from(format!("{PRIVATE_SNAR}/{h:016x}-{name}.snar"))
+}
 
 fn sidecar(archive: &Path) -> String { format!("{}.info.json", archive.display()) }
 
@@ -605,10 +847,11 @@ fn prune(dir: &Path, keep: usize, kept: &str) -> Vec<String> {
 struct ReadResult { files: u64, tar_status: i32, prog: Arc<Progress>, elapsed: u64 }
 
 /// `[age -d] | <decompressor> | tar -t` (target None) or `… | tar -xp -C target`. Compression comes from the
-/// file's magic bytes; an encrypted image is decrypted with the age identity file `key` first, and its inner
-/// compression is read from its name. `incremental` unpacks an increment: GNU tar's listed-incremental with an
-/// empty snapshot, so the deletions an increment records are applied.
-fn read_archive(archive: &Path, target: Option<&Path>, low: bool, key: Option<&Path>, incremental: bool) -> Result<ReadResult, String> {
+/// file's magic bytes; an encrypted image is decrypted with `key` first, and its inner compression is read
+/// from its name. With `chain`, the tar stream also passes through `ChainRestore` (an image of a chain being
+/// restored step by step); `true` = this step is an increment, whose renames and deletions are applied.
+fn read_archive(archive: &Path, target: Option<&Path>, low: bool, key: Option<&Key>,
+                chain: Option<(&mut ChainRestore, bool)>) -> Result<ReadResult, String> {
     let tar = tool("tar").ok_or("tar is not installed")?;
     let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     let total = file.metadata().map_or(0, |m| m.len());
@@ -616,67 +859,92 @@ fn read_archive(archive: &Path, target: Option<&Path>, low: bool, key: Option<&P
     let phase = if target.is_some() { "restore" } else { "verify" };
     let prog = Arc::new(Progress::default());
     // The stages between the file and tar, in order: [age -d], then the decompressor.
-    let mut stages: Vec<(PathBuf, Vec<String>, Comp)> = Vec::new();
+    let mut stages: Vec<(Command, Comp)> = Vec::new();
+    let mut auxes: Vec<AgeAux> = Vec::new();
     let inner = if comp == Comp::Age {
-        let key = key.ok_or("the archive is encrypted: its age key is needed to read it")?;
         let age = tool("age").ok_or("age is not installed (needed to read an encrypted image)")?;
-        stages.push((age, vec!["-d".into(), "-i".into(), key.display().to_string()], Comp::Age));
+        let (c, aux) = age_command(&age, low, true, None, key)?;
+        stages.push((c, Comp::Age));
+        auxes.push(aux);
         inner_comp(archive)?
     } else {
         comp
     };
     if inner != Comp::None {
         let (path, args) = inner.decompressor()?;
-        stages.push((path, args.into_iter().map(str::to_owned).collect(), inner));
+        let mut c = command(&path, low);
+        c.args(args);
+        stages.push((c, inner));
     }
+    let kinds: Vec<Comp> = stages.iter().map(|(_, k)| *k).collect();
     let mut kids: Vec<Child> = Vec::new();
     let mut readers = Vec::new();
     // The children read through a duplicate of `file`: one shared offset, so
     // our own descriptor tells how far into the archive they are.
-    let mut input = Stdio::from(file.try_clone().map_err(|e| e.to_string())?);
-    for (path, args, _) in &stages {
-        let mut c = command(path, low);
-        c.args(args).stdin(input).stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut ch = spawn(c, "decompressor")?;
+    let mut src: Box<dyn Read + Send> = Box::new(file.try_clone().map_err(|e| e.to_string())?);
+    let mut src_stdio: Option<Stdio> = Some(Stdio::from(file.try_clone().map_err(|e| e.to_string())?));
+    for (mut c, _) in stages {
+        c.stdin(src_stdio.take().unwrap()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut ch = match spawn(c, "decompressor") {
+            Ok(ch) => ch,
+            Err(e) => { kill_all(libc::SIGKILL); for k in &mut kids { let _ = k.wait(); } return Err(e); }
+        };
+        for a in &mut auxes { a.key_pipe = None; }  // age holds its own copy now
         readers.push(reader(ch.stderr.take().unwrap(), prog.clone(), false));
-        input = Stdio::from(ch.stdout.take().unwrap());
+        let out = ch.stdout.take().unwrap();
+        src_stdio = Some(Stdio::from(out.try_clone_fd()?));
+        src = Box::new(out);
         kids.push(ch);
     }
     let mut tc = command(&tar, low);
     match target {
         Some(t) => {
+            // No --listed-incremental here: see ChainRestore for why the deletions are not tar's.
             tc.args(["--acls", "--xattrs", "--xattrs-include=*", "--numeric-owner", "-xvpf", "-"]);
-            if incremental { tc.arg("--listed-incremental=/dev/null"); }
             tc.arg("-C").arg(t);
         }
         None => { tc.args(["-tf", "-"]); }
     }
-    tc.stdin(input).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let tee = chain.is_some();
+    tc.stdin(if tee { drop(src_stdio.take()); Stdio::piped() } else { src_stdio.take().unwrap() })
+        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    if !tee { drop(src); src = Box::new(std::io::empty()); }
     let mut t = match spawn(tc, "tar") {
         Ok(t) => t,
         Err(e) => { kill_all(libc::SIGKILL); for k in &mut kids { let _ = k.wait(); } return Err(e); }
     };
     readers.push(reader(t.stdout.take().unwrap(), prog.clone(), true));
     readers.push(reader(t.stderr.take().unwrap(), prog.clone(), false));
+    let sink = t.stdin.take();
     kids.push(t);
 
     let started = Instant::now();
     let fd = file.as_raw_fd();
-    let status = wait_all(&mut kids, || {
-        let pos = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) }.max(0) as u64;
-        crate::emit(&json!({"event": "progress", "phase": phase, "bytes": pos, "total": total,
-                            "files": prog.files.load(Ordering::Relaxed), "current": prog.current.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-                            "elapsed": started.elapsed().as_secs()}));
+    let (status, scanned) = std::thread::scope(|sc| {
+        let handle = match (chain, sink) {
+            (Some((state, apply)), Some(sink)) => Some(sc.spawn(move || state.pass(src, sink, apply).map(|s| (s, state, apply)))),
+            _ => None,
+        };
+        let status = wait_all(&mut kids, || {
+            let pos = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) }.max(0) as u64;
+            crate::emit(&json!({"event": "progress", "phase": phase, "bytes": pos, "total": total,
+                                "files": prog.files.load(Ordering::Relaxed), "current": prog.current.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+                                "elapsed": started.elapsed().as_secs()}));
+        });
+        (status, handle.and_then(|h| h.join().ok()))
     });
+    drop(auxes);
     for r in readers { let _ = r.join(); }
     if cancelled() { return Err("cancelled".into()); }
     let last = || prog.tail().last().map(|l| format!(": {l}")).unwrap_or_default();
     let ts = *status.last().unwrap();
     let tcode = ts.code().ok_or_else(|| format!("tar was killed ({ts})"))?;
-    for (i, (_, _, kind)) in stages.iter().enumerate() {
+    for (i, kind) in kinds.iter().enumerate() {
         let ds = status[i];
         if *kind == Comp::Age && !ds.success() {
             return Err(if prog.has("no identity matched") { "this key does not open the archive".to_string() }
+                       else if prog.has("incorrect passphrase") { "this passphrase does not open the archive".to_string() }
+                       else if prog.has("passphrase-encrypted") { "the archive is encrypted with a passphrase, not to a key".to_string() }
                        else { format!("age could not decrypt the archive ({ds}){}", last()) });
         }
         // gzip exits 2 for warnings; a decompressor cut off by SIGPIPE after tar
@@ -688,44 +956,267 @@ fn read_archive(archive: &Path, target: Option<&Path>, low: bool, key: Option<&P
         return Err(format!("the archive is damaged or truncated{}", last()));
     }
     if tcode != 0 && (target.is_none() || tcode != 2) { return Err(format!("tar failed with status {tcode}{}", last())); }
+    // tar has finished this step: now the deletions it recorded, then what it brought in becomes "known".
+    if let Some((s, state, apply)) = scanned.transpose().map_err(|e| format!("reading the archive stream: {e}"))? {
+        state.finish(s, apply);
+    }
     Ok(ReadResult { files: prog.files.load(Ordering::Relaxed), tar_status: tcode, prog, elapsed: started.elapsed().as_secs() })
+}
+
+trait TryCloneFd { fn try_clone_fd(&self) -> Result<OwnedFd, String>; }
+impl TryCloneFd for std::process::ChildStdout {
+    fn try_clone_fd(&self) -> Result<OwnedFd, String> {
+        let fd = unsafe { libc::fcntl(self.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+        if fd < 0 { return Err(std::io::Error::last_os_error().to_string()); }
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+}
+
+// ── chain restore: renames and deletions, done safely ─────────────────────────
+
+/// One restore of an image chain (full image, then each increment). It remembers every path the chain has
+/// put into the target (hashed), so an increment can delete what was deleted on the system between two
+/// images — and nothing else: not files the target had of its own, not what the images excluded (/home/*,
+/// /mnt/*…), never across a mount point, never through a symbolic link. Directory renames recorded by an
+/// increment are applied before tar writes into the new name.
+struct ChainRestore {
+    root: OwnedFd,
+    hasher: std::collections::hash_map::RandomState,
+    known: HashSet<u64>,
+    deleted: u64,
+    renamed: u64,
+    notes: Vec<String>,
+    /// Some stream could not be read: its paths are missing from `known`, so later deletions are fewer.
+    partial: bool,
+}
+
+/// What one pass over a stream found.
+struct Scanned { members: Vec<u64>, dumpdirs: Vec<tarscan::Dumpdir>, broken: bool }
+
+impl ChainRestore {
+    fn new(target: &Path) -> Result<ChainRestore, String> {
+        let c = std::ffi::CString::new(target.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+        let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+        if fd < 0 { return Err(format!("{}: {}", target.display(), std::io::Error::last_os_error())); }
+        Ok(ChainRestore { root: unsafe { OwnedFd::from_raw_fd(fd) }, hasher: Default::default(), known: HashSet::new(),
+                          deleted: 0, renamed: 0, notes: Vec::new(), partial: false })
+    }
+
+    fn hash(&self, p: &[u8]) -> u64 { let mut h = self.hasher.build_hasher(); h.write(p); h.finish() }
+
+    fn note(&mut self, n: String) { if self.notes.len() < 50 { self.notes.push(n); } }
+
+    /// Copies `src` to tar's stdin, reading the headers on the way. Renames are applied the moment their
+    /// listing is complete, before the bytes that follow reach tar.
+    fn pass(&mut self, mut src: Box<dyn Read + Send>, mut sink: std::process::ChildStdin, apply: bool) -> std::io::Result<Scanned> {
+        let mut scan = tarscan::Scanner::new();
+        let mut out = Scanned { members: Vec::new(), dumpdirs: Vec::new(), broken: false };
+        let mut buf = vec![0u8; 256 << 10];
+        loop {
+            let n = match src.read(&mut buf) { Ok(0) => break, Ok(n) => n, Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue, Err(e) => return Err(e) };
+            let mut events = Vec::new();
+            scan.feed(&buf[..n], &mut |e| events.push(e));
+            for e in events {
+                match e {
+                    tarscan::Event::Member(m) => out.members.push(self.hash(&m)),
+                    tarscan::Event::Dumpdir(d) => {
+                        if apply && d.ok { for (o, n) in &d.renames { self.rename(o, n); } }
+                        out.dumpdirs.push(d);
+                    }
+                }
+            }
+            if sink.write_all(&buf[..n]).is_err() { break; }  // tar stopped reading: its status tells why
+            if cancelled() { break; }
+        }
+        out.broken = scan.broken;
+        Ok(out)
+    }
+
+    /// After tar finished a step: an increment's deletions, then everything it brought counts as the chain's.
+    fn finish(&mut self, s: Scanned, apply: bool) {
+        if s.broken {
+            self.partial = true;
+            self.note("part of an archive could not be read for its directory listings: nothing was deleted for it".into());
+        } else if apply {
+            for d in s.dumpdirs.iter().filter(|d| d.ok) { self.purge(d); }
+        }
+        self.known.extend(s.members);
+    }
+
+    fn open_dir(&self, rel: &[u8]) -> Option<OwnedFd> {
+        let mut cur = dup(&self.root)?;
+        if rel.is_empty() { return Some(cur); }
+        if !tarscan::plain_path(rel) { return None; }
+        for comp in rel.split(|&b| b == b'/') { cur = open_at(&cur, comp)?; }
+        Some(cur)
+    }
+
+    /// Deletes the entries of directory `d.dir` that the chain restored earlier and that this increment's
+    /// listing no longer has.
+    fn purge(&mut self, d: &tarscan::Dumpdir) {
+        let Some(dir) = self.open_dir(&d.dir) else { return };
+        let Some(dev) = fstat(&dir).map(|s| s.st_dev) else { return };
+        let present: HashSet<&[u8]> = d.names.iter().map(|n| n.as_slice()).collect();
+        for name in list_dir(&dir) {
+            if present.contains(name.as_slice()) { continue; }
+            let path = join(&d.dir, &name);
+            if self.known.contains(&self.hash(&path)) { self.remove(&dir, &name, &path, dev, 0); }
+        }
+    }
+
+    /// Removes `name` (in `parent`) if the chain put it there; a directory only with what it alone holds.
+    fn remove(&mut self, parent: &OwnedFd, name: &[u8], path: &[u8], parent_dev: libc::dev_t, depth: u32) -> bool {
+        let Ok(c) = std::ffi::CString::new(name) else { return false };
+        let Some(st) = fstatat(parent, &c) else { return false };
+        if st.st_mode & libc::S_IFMT == libc::S_IFDIR {
+            if st.st_dev != parent_dev {
+                self.note(format!("/{}: a mount point, kept", String::from_utf8_lossy(path)));
+                return false;
+            }
+            if depth > 64 { return false; }
+            let Some(fd) = open_at(parent, name) else { return false };
+            let mut all = true;
+            for child in list_dir(&fd) {
+                let cp = join(path, &child);
+                all &= self.known.contains(&self.hash(&cp)) && self.remove(&fd, &child, &cp, st.st_dev, depth + 1);
+            }
+            if all && unsafe { libc::unlinkat(parent.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR) } == 0 {
+                self.deleted += 1;
+                return true;
+            }
+            self.note(format!("/{}: deleted between the images, kept because it holds files the images do not have",
+                              String::from_utf8_lossy(path)));
+            return false;
+        }
+        let ok = unsafe { libc::unlinkat(parent.as_raw_fd(), c.as_ptr(), 0) } == 0;
+        if ok { self.deleted += 1; }
+        ok
+    }
+
+    /// A directory renamed between two images: moved inside the target, if the chain made the old one and
+    /// nothing is in the way. What was known under the old name is known under the new one.
+    fn rename(&mut self, old: &[u8], new: &[u8]) {
+        let split = |p: &[u8]| -> Option<(Vec<u8>, Vec<u8>)> {
+            if !tarscan::plain_path(p) { return None; }
+            let i = p.iter().rposition(|&b| b == b'/');
+            Some(match i { Some(i) => (p[..i].to_vec(), p[i + 1..].to_vec()), None => (Vec::new(), p.to_vec()) })
+        };
+        let show = |p: &[u8]| String::from_utf8_lossy(p).into_owned();
+        let (Some((op, on)), Some((np, nn))) = (split(old), split(new)) else { return };
+        let done = (|| {
+            if !self.known.contains(&self.hash(old)) { return None; }
+            let (od, nd) = (self.open_dir(&op)?, self.open_dir(&np)?);
+            let (oc, nc) = (std::ffi::CString::new(on).ok()?, std::ffi::CString::new(nn).ok()?);
+            let st = fstatat(&od, &oc)?;
+            if st.st_mode & libc::S_IFMT != libc::S_IFDIR || fstatat(&nd, &nc).is_some() { return Some(false); }
+            Some(unsafe { libc::renameat(od.as_raw_fd(), oc.as_ptr(), nd.as_raw_fd(), nc.as_ptr()) } == 0)
+        })();
+        if done == Some(true) {
+            self.renamed += 1;
+            if let Some(fd) = self.open_dir(new) { self.rekey(&fd, old, new, 0); }
+        } else {
+            self.note(format!("/{} → /{}: rename recorded by the image not applied (not restored by it, or the new name exists)", show(old), show(new)));
+        }
+    }
+
+    fn rekey(&mut self, dir: &OwnedFd, old: &[u8], new: &[u8], depth: u32) {
+        if depth > 64 { return; }
+        self.known.insert(self.hash(new));
+        for child in list_dir(dir) {
+            let (o, n) = (join(old, &child), join(new, &child));
+            if !self.known.contains(&self.hash(&o)) { continue; }
+            self.known.insert(self.hash(&n));
+            if let Some(fd) = open_at(dir, &child) { self.rekey(&fd, &o, &n, depth + 1); }
+        }
+    }
+}
+
+fn join(dir: &[u8], name: &[u8]) -> Vec<u8> { if dir.is_empty() { name.to_vec() } else { [dir, b"/", name].concat() } }
+
+fn dup(fd: &OwnedFd) -> Option<OwnedFd> {
+    let n = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+    (n >= 0).then(|| unsafe { OwnedFd::from_raw_fd(n) })
+}
+
+/// A directory below `dir`, never through a symbolic link.
+fn open_at(dir: &OwnedFd, name: &[u8]) -> Option<OwnedFd> {
+    let c = std::ffi::CString::new(name).ok()?;
+    let fd = unsafe { libc::openat(dir.as_raw_fd(), c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+    (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn fstat(fd: &OwnedFd) -> Option<libc::stat> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    (unsafe { libc::fstat(fd.as_raw_fd(), &mut st) } == 0).then_some(st)
+}
+
+fn fstatat(dir: &OwnedFd, name: &std::ffi::CStr) -> Option<libc::stat> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    (unsafe { libc::fstatat(dir.as_raw_fd(), name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0).then_some(st)
+}
+
+fn list_dir(dir: &OwnedFd) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let Some(d) = dup(dir) else { return out };
+    let dp = unsafe { libc::fdopendir(d.as_raw_fd()) };
+    if dp.is_null() { return out; }
+    std::mem::forget(d);  // closedir closes it
+    loop {
+        let e = unsafe { libc::readdir(dp) };
+        if e.is_null() { break; }
+        let name = unsafe { std::ffi::CStr::from_ptr((*e).d_name.as_ptr()) }.to_bytes();
+        if name != b"." && name != b".." { out.push(name.to_vec()); }
+    }
+    unsafe { libc::closedir(dp) };
+    out
 }
 
 /// {"op":"verify","archive":"/…"} or {"op":"verify","archives":["/…", …]} — reads whole archives back (compressed
 /// stream + tar structure) and compares the entry count with the one recorded when each was made. An encrypted
-/// image needs its key: {"identity":"AGE-SECRET-KEY-1…"}. Several archives: one result per archive.
+/// image needs its key or passphrase ({"identity":…} / {"passphrase":…}). Several archives: one result per archive.
+/// An increment is also checked for the images it continues (`chain_error`): alone it restores nothing.
 pub fn verify(req: &Value) -> Value {
-    let key = match identity_file(req) { Ok(k) => k, Err(e) => return fail(e) };
-    let key_path = key.as_ref().map(|(_, p)| p.as_path());
+    let key = match key_of(req) { Ok(k) => k, Err(e) => return fail(e) };
     let low = req["low_priority"].as_bool().unwrap_or(true);
     if let Some(list) = req["archives"].as_array() {
         if list.is_empty() || list.len() > 64 { return fail("choose between 1 and 64 archives"); }
-        let results: Vec<Value> = list.iter().map(|a| verify_one(a, key_path, low)).collect();
+        let results: Vec<Value> = list.iter().map(|a| verify_one(a, key.as_ref(), low)).collect();
         return json!({"ok": results.iter().all(|r| r["ok"] == json!(true)), "results": results});
     }
-    verify_one(&req["archive"], key_path, low)
+    verify_one(&req["archive"], key.as_ref(), low)
 }
 
-fn verify_one(archive_v: &Value, key: Option<&Path>, low: bool) -> Value {
+fn verify_one(archive_v: &Value, key: Option<&Key>, low: bool) -> Value {
     let archive = match abs_file(archive_v) { Ok(a) => a, Err(e) => return fail(e) };
     if key.is_none() && sniff(&archive) == Comp::Age {
-        return json!({"ok": false, "needs_key": true, "archive": archive, "error": "the archive is encrypted: its age key is needed"});
+        return json!({"ok": false, "needs_key": true, "archive": archive, "error": "the archive is encrypted: its passphrase or age key is needed"});
     }
     crate::emit(&json!({"event": "start", "phase": "verify", "archive": archive}));
-    let r = match read_archive(&archive, None, low, key, false) { Ok(r) => r, Err(e) => return fail(e) };
+    let r = match read_archive(&archive, None, low, key, None) {
+        Ok(r) => r,
+        Err(e) => { let mut f = fail(e); f["archive"] = json!(archive); return f; }
+    };
     let side = sidecar(&archive);
     // As root only a root-owned, non-symlink sidecar counts (the archive's directory may be the
     // user's: a link there must not make root read, and then copy, another root file).
     let text = if is_root() { crate::read_root_file(&side, 1 << 20) } else { fs::read_to_string(&side).ok() };
     let mut info = text.and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object);
     if let Some(expect) = info.as_ref().and_then(|i| i["files"].as_u64()) {
-        if expect != r.files { return fail(format!("{} entries recorded when the backup was made, {} read back", expect, r.files)); }
+        if expect != r.files {
+            let mut f = fail(format!("{} entries recorded when the backup was made, {} read back", expect, r.files));
+            f["archive"] = json!(archive);
+            return f;
+        }
     }
+    let chain_error = match info.as_ref().and_then(|i| i["level"].as_u64()) {
+        Some(l) if l > 0 => restore_sequence(&archive).err(),
+        _ => None,
+    };
     if let Some(i) = info.as_mut().filter(|_| is_root()) {
         i["verified"] = json!(stamp().iso);
         let _ = crate::write_root_file(&side, i.to_string().as_bytes());
     }
-    json!({"ok": true, "archive": archive, "files": r.files, "compared": info.is_some(), "elapsed": r.elapsed})
+    json!({"ok": true, "archive": archive, "files": r.files, "compared": info.is_some(), "elapsed": r.elapsed, "chain_error": chain_error})
 }
 
 /// The archives to unpack, in order, to restore `archive`: its full image, then every increment up to it.
@@ -738,6 +1229,23 @@ fn restore_sequence(archive: &Path) -> Result<Vec<(PathBuf, bool)>, String> {
     let chain = info["chain"].as_str().filter(|c| is_image_name(c))
         .ok_or("this increment does not name its full image: restore the full image instead")?.to_owned();
     let dir = archive.parent().ok_or("the archive has no folder")?;
+    // Each increment names the image it continued ("parent"): follow those links, so two increments of the
+    // same level (an image made again after its snapshot was lost) cannot be mixed up.
+    if info["parent"].is_string() {
+        let mut seq = vec![(archive.to_path_buf(), true)];
+        let (mut inf, mut l) = (info.clone(), level);
+        while l > 0 {
+            let p = inf["parent"].as_str().filter(|n| is_image_name(n)).map(|n| dir.join(n))
+                .ok_or_else(|| format!("increment {l} of this chain does not name the image it continues"))?;
+            inf = read_info(&p).filter(|_| fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()))
+                .filter(|i| i["chain"].as_str() == Some(chain.as_str()) && i["level"].as_u64() == Some(l - 1))
+                .ok_or_else(|| format!("increment {} of this chain is missing from {}", l - 1, dir.display()))?;
+            l -= 1;
+            seq.push((p, l > 0));
+        }
+        seq.reverse();
+        return Ok(seq);
+    }
     let mut found: Vec<Option<PathBuf>> = vec![None; level as usize + 1];
     for e in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
@@ -764,23 +1272,30 @@ pub fn system_restore(req: &Value) -> Value {
     if req["confirm"].as_str().map(Path::new) != Some(target.as_path()) {
         return fail(format!("confirm must repeat the resolved target ({})", target.display()));
     }
-    let key = match identity_file(req) { Ok(k) => k, Err(e) => return fail(e) };
-    let key_path = key.as_ref().map(|(_, p)| p.as_path());
-    if key_path.is_none() && sniff(&archive) == Comp::Age {
-        return json!({"ok": false, "needs_key": true, "archive": archive, "error": "the archive is encrypted: its age key is needed"});
-    }
+    let key = match key_of(req) { Ok(k) => k, Err(e) => return fail(e) };
     let seq = match restore_sequence(&archive) { Ok(s) => s, Err(e) => return fail(e) };
-    crate::wlog::log("backup", &format!("system_restore {} -> {}", archive.display(), target.display()));
-    crate::emit(&json!({"event": "start", "phase": "restore", "archive": archive, "target": target,
+    if key.is_none() && seq.iter().any(|(f, _)| sniff(f) == Comp::Age) {
+        return json!({"ok": false, "needs_key": true, "archive": archive, "error": "the archive is encrypted: its passphrase or age key is needed"});
+    }
+    crate::wlog::log("backup", &format!("system_restore {} -> {}{}", archive.display(), target.display(),
+                                        if seq.len() > 1 { format!(" ({} steps)", seq.len()) } else { String::new() }));
+    crate::emit(&json!({"event": "start", "phase": "restore", "archive": archive, "target": target, "steps": seq.len(),
                         "command": format!("tar --acls --xattrs --xattrs-include='*' --numeric-owner -xpf {} -C {}", archive.display(), target.display())}));
     let low = req["low_priority"].as_bool().unwrap_or(false);
     let (mut files, mut elapsed, mut degraded) = (0u64, 0u64, false);
     let mut messages: Vec<String> = Vec::new();
     let mut message_count = 0u64;
-    for (file, incremental) in &seq {
-        let r = match read_archive(file, Some(&target), low, key_path, *incremental) {
+    // A chain is restored through ChainRestore: the increments' renames and deletions, limited to what the chain restored.
+    let mut chain = if seq.len() > 1 {
+        match ChainRestore::new(&target) { Ok(c) => Some(c), Err(e) => return fail(e) }
+    } else { None };
+    for (i, (file, incremental)) in seq.iter().enumerate() {
+        if seq.len() > 1 {
+            crate::emit(&json!({"event": "start", "phase": "restore", "archive": file, "step": i + 1, "steps": seq.len()}));
+        }
+        let r = match read_archive(file, Some(&target), low, key.as_ref(), chain.as_mut().map(|c| (c, *incremental))) {
             Ok(r) => r,
-            Err(e) => return fail(if seq.len() > 1 { format!("{}: {e}", file.display()) } else { e }),
+            Err(e) => return fail(if seq.len() > 1 { format!("{} (step {} of {}): {e}", file.display(), i + 1, seq.len()) } else { e }),
         };
         files += r.files;
         elapsed += r.elapsed;
@@ -788,6 +1303,8 @@ pub fn system_restore(req: &Value) -> Value {
         message_count += r.prog.msg_count.load(Ordering::Relaxed);
         messages = r.prog.tail();
     }
+    let (deleted, renamed, notes) = chain.as_ref().map_or((0, 0, Vec::new()), |c| (c.deleted, c.renamed, c.notes.clone()));
+    if deleted + renamed > 0 { crate::wlog::log("backup", &format!("system_restore {}: {deleted} deleted, {renamed} renamed as the increments recorded", target.display())); }
     let mut created = Vec::new();
     for (d, mode) in MOUNT_POINTS {
         let p = target.join(d);
@@ -798,7 +1315,7 @@ pub fn system_restore(req: &Value) -> Value {
     }
     unsafe { libc::sync(); }
     json!({"ok": true, "archive": archive, "target": target, "files": files, "steps": seq.len(),
-           "degraded": degraded, "created_dirs": created,
+           "degraded": degraded, "created_dirs": created, "deleted": deleted, "renamed": renamed, "notes": notes,
            "message_count": message_count, "messages": messages, "elapsed": elapsed})
 }
 
@@ -815,7 +1332,7 @@ fn config_home() -> Option<PathBuf> { xdg("XDG_CONFIG_HOME", ".config") }
 fn user_state() -> Option<PathBuf> { xdg("XDG_STATE_HOME", ".local/state").map(|p| p.join("centurion")) }
 
 #[derive(Default)]
-struct Copier { files: u64, bytes: u64, skipped: Vec<String>, links: bool }
+struct Copier { files: u64, bytes: u64, skipped: Vec<String>, unread: Vec<PathBuf>, links: bool }
 
 impl Copier {
     /// Copies a file or tree. The path named by the caller is followed if it
@@ -849,6 +1366,7 @@ impl Copier {
     }
     fn skip(&mut self, p: &Path, why: &str) {
         if self.skipped.len() < 200 { self.skipped.push(format!("{} ({why})", p.display())); }
+        if self.unread.len() < 1000 { self.unread.push(p.to_path_buf()); }
     }
 }
 
@@ -916,16 +1434,10 @@ pub fn config_backup(req: &Value) -> Value {
     match config_backup_inner(req) { Ok(v) => v, Err(e) => fail(e) }
 }
 
-fn config_backup_inner(req: &Value) -> Result<Value, String> {
-    if is_root() { return Err("config_backup runs as the user, not through pkexec".into()); }
-    let d = req["dest_dir"].as_str().filter(|s| s.starts_with('/') && s.len() < 1024).ok_or("dest_dir: an absolute path is required")?;
-    fs::create_dir_all(d).map_err(|e| format!("{d}: {e}"))?;
-    let dest = abs_dir(&req["dest_dir"], "dest_dir")?;
-    let tar = tool("tar").ok_or("tar is not installed")?;
-    let stage = Scratch(mkdtemp(&std::env::temp_dir(), "centurion-backup-")?);
-    let s = &stage.0;
-    let logs = req["include_logs"].as_bool().unwrap_or(false);
+struct Staged { user: Copier, state: Copier, sys: Copier, prof: Copier }
 
+/// Copies what a configuration backup holds into `s`, in the archive's layout (see config_backup).
+fn stage_config(s: &Path, profile: bool, logs: bool) -> Staged {
     let mut user = Copier::default();
     if let Some(c) = config_home() {
         for d in USER_CONFIG_DIRS { user.copy(&c.join(d), &s.join("user/config").join(d), 0); }
@@ -937,10 +1449,23 @@ fn config_backup_inner(req: &Value) -> Result<Value, String> {
         sys.copy(&Path::new("/").join(p), &s.join("system").join(p), 0);
     }
     let mut prof = Copier { links: true, ..Default::default() };
-    if req["include_profile"].as_bool().unwrap_or(true) {
+    if profile {
         for p in PROFILE { prof.copy(&Path::new("/").join(p), &s.join("system-profile/root").join(p), 0); }
         profile_facts(&s.join("system-profile"));
     }
+    Staged { user, state, sys, prof }
+}
+
+fn config_backup_inner(req: &Value) -> Result<Value, String> {
+    if is_root() { return Err("config_backup runs as the user, not through pkexec".into()); }
+    let d = req["dest_dir"].as_str().filter(|s| s.starts_with('/') && s.len() < 1024).ok_or("dest_dir: an absolute path is required")?;
+    fs::create_dir_all(d).map_err(|e| format!("{d}: {e}"))?;
+    let dest = abs_dir(&req["dest_dir"], "dest_dir")?;
+    let tar = tool("tar").ok_or("tar is not installed")?;
+    let stage = Scratch(mkdtemp(&std::env::temp_dir(), "centurion-backup-")?);
+    let s = &stage.0;
+    let Staged { user, state, sys, prof } = stage_config(s, req["include_profile"].as_bool().unwrap_or(true),
+                                                          req["include_logs"].as_bool().unwrap_or(false));
     if user.files + sys.files + prof.files == 0 { return Err("nothing to back up yet".into()); }
 
     let st = stamp();
@@ -990,16 +1515,19 @@ pub fn config_inspect(req: &Value) -> Value {
 
 /// Extracts one top-level directory of a configuration backup into a 0700
 /// scratch directory; ownership and modes from the archive are not applied.
-fn unpack(archive: &Path, top: &str, base: &Path) -> Result<Option<Scratch>, String> {
+/// `strict` (every restore): links and special files are refused. A comparison only reads regular files and
+/// never follows a link, so it accepts them (the system profile keeps symbolic links as links).
+fn unpack(archive: &Path, top: &str, base: &Path, strict: bool) -> Result<Option<Scratch>, String> {
     let tar = tool("tar").ok_or("tar is not installed")?;
     let m = read_manifest(&tar, archive)?;
-    let key = if top == "user" { "user_config" } else { "system" };
-    if m["contents"][key].as_u64().unwrap_or(0) == 0 { return Ok(None); }
+    let key = match top { "user" => "user_config", "system-profile" => "system_profile", _ => "system" };
+    let has = m["contents"][key].as_u64().unwrap_or(0) > 0 || (top == "user" && m["contents"]["user_state"].as_u64().unwrap_or(0) > 0);
+    if !has { return Ok(None); }
     let stage = Scratch(mkdtemp(base, ".centurion-restore-")?);
     let o = command(&tar, false).arg("-xf").arg(archive).arg("-C").arg(&stage.0)
         .args(["--no-same-owner", "--no-same-permissions", top]).stdin(Stdio::null()).output().map_err(|e| format!("tar: {e}"))?;
     if !o.status.success() { return Err(format!("tar failed: {}", String::from_utf8_lossy(&o.stderr).trim())); }
-    plain_tree(&stage.0, 0)?;
+    if strict { plain_tree(&stage.0, 0)?; }
     Ok(Some(stage))
 }
 
@@ -1030,7 +1558,7 @@ pub fn config_restore_user(req: &Value) -> Value {
     let r: Result<Value, String> = (|| {
         if is_root() { return Err("config_restore_user runs as the user".to_string()); }
         let archive = abs_file(&req["archive"])?;
-        let Some(stage) = unpack(&archive, "user", &std::env::temp_dir())? else { return Ok(json!({"ok": true, "files": 0})) };
+        let Some(stage) = unpack(&archive, "user", &std::env::temp_dir(), true)? else { return Ok(json!({"ok": true, "files": 0})) };
         let dst = config_home().ok_or("no home directory")?;
         // A scene's "command" step runs a program at the next scene switch: one that arrives from
         // an archive is dropped (the user re-enters it in the scene editor if it is theirs).
@@ -1109,7 +1637,7 @@ pub fn config_restore_root(req: &Value) -> Value {
     let r: Result<Value, String> = (|| {
         let archive = abs_file(&req["archive"])?;
         crate::secure_dir("/var/lib/centurion")?;
-        let Some(stage) = unpack(&archive, "system", Path::new("/var/lib/centurion"))? else {
+        let Some(stage) = unpack(&archive, "system", Path::new("/var/lib/centurion"), true)? else {
             return Ok(json!({"ok": true, "files": 0, "restored": []}));
         };
         let s = stage.0.join("system");
@@ -1139,38 +1667,104 @@ pub fn config_restore_root(req: &Value) -> Value {
     r.unwrap_or_else(fail)
 }
 
-// ── configuration backups: what changed between two ─────────────────────────────
+// ── configuration backups: what changed ─────────────────────────────────────────
 
-/// Longest list of files / keys a diff reports; the rest is counted as truncated.
+/// Longest list of files / keys / packages a diff reports; the rest is counted.
 const DIFF_MAX: usize = 200;
+/// Lines shown per changed text file, each way.
+const LINES_MAX: usize = 40;
+const TEXT_MAX: usize = 256 << 10;
+/// Not compared: logs (they change all the time) and generated profile facts that differ on every boot.
+const DIFF_SKIP: &[&str] = &["user/state/", "system/var/log/", "system-profile/mounts.txt", "system-profile/swaps.txt",
+                             "system-profile/modules.txt", "system-profile/running-kernel-config.gz"];
+const PACKAGES: &str = "system-profile/packages.txt";
 
-/// {"op":"config_diff","a":"/…","b":"/…"} — what changed between two configuration archives: files added,
-/// removed and changed, and for JSON and .ini files the keys that changed. Reads only, as the user; restores
-/// nothing. The system profile is not compared (it is reference material, see config_backup).
+/// {"op":"config_diff","a":"/…","b":"/…"|"current","profile":true} — what changed between two configuration
+/// archives, or between one and the configuration as it is now ("current"): files added, removed and changed;
+/// for JSON, .ini and KEY=value files (kernel .config, conf.d, make.conf) the keys; for other text the lines; and
+/// with `profile` the system profile too, installed packages as added / removed / upgraded. Two archives are
+/// put in time order (older first, `swapped` says so). Reads only, as the user; restores nothing.
 pub fn config_diff(req: &Value) -> Value {
     let r: Result<Value, String> = (|| {
         if is_root() { return Err("config_diff runs as the user, not through pkexec".to_string()); }
         let tar = tool("tar").ok_or("tar is not installed")?;
-        let (a, b) = (abs_file(&req["a"])?, abs_file(&req["b"])?);
-        let (ma, mb) = (read_manifest(&tar, &a)?, read_manifest(&tar, &b)?);
+        let mut a = abs_file(&req["a"])?;
+        let mut ma = read_manifest(&tar, &a)?;
+        let want_profile = req["profile"].as_bool().unwrap_or(true);
+        let has_profile = |m: &Value| m["contents"]["system_profile"].as_u64().unwrap_or(0) > 0;
         let stage = Scratch(mkdtemp(&std::env::temp_dir(), "centurion-diff-")?);
-        let fa = read_config_files(&a, &stage.0)?;
-        let fb = read_config_files(&b, &stage.0)?;
+        let (fa, fb, b_info, swapped, profile, unreadable);
+        if req["b"].as_str() == Some("current") {
+            profile = want_profile && has_profile(&ma);
+            fa = read_config_files(&a, &stage.0, profile)?;
+            let live = stage.0.join("live");
+            fs::create_dir_all(&live).map_err(|e| e.to_string())?;
+            let st = stage_config(&live, profile, false);
+            let mut m = BTreeMap::new();
+            for top in ["user", "system", "system-profile"] {
+                if live.join(top).is_dir() { collect_files(&live.join(top), top, 0, &mut m)?; }
+            }
+            fb = m;
+            // What could not be read now is not "removed": it is listed apart.
+            let mut prefixes: Vec<String> = Vec::new();
+            let home = config_home();
+            for p in st.user.unread.iter() {
+                if let Some(rel) = home.as_ref().and_then(|h| p.strip_prefix(h).ok()) { prefixes.push(format!("user/config/{}", rel.display())); }
+            }
+            for p in st.sys.unread.iter() { prefixes.push(format!("system{}", p.display())); }
+            for p in st.prof.unread.iter() { prefixes.push(format!("system-profile/root{}", p.display())); }
+            unreadable = prefixes;
+            b_info = json!({"current": true, "created": stamp().iso, "name": "current"});
+            swapped = false;
+        } else {
+            let mut b = abs_file(&req["b"])?;
+            let mut mb = read_manifest(&tar, &b)?;
+            // Made in the same second: the file times decide.
+            let mtime = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+            swapped = (ma["created"].as_str().unwrap_or(""), mtime(&a)) > (mb["created"].as_str().unwrap_or(""), mtime(&b));
+            if swapped { std::mem::swap(&mut a, &mut b); std::mem::swap(&mut ma, &mut mb); }
+            profile = want_profile && has_profile(&ma) && has_profile(&mb);
+            fa = read_config_files(&a, &stage.0, profile)?;
+            fb = read_config_files(&b, &stage.0, profile)?;
+            b_info = json!({"created": mb["created"], "centurion_version": mb["centurion_version"],
+                            "name": b.file_name().map(|n| n.to_string_lossy().into_owned())});
+            unreadable = Vec::new();
+        }
+        let skip = |k: &String| DIFF_SKIP.iter().any(|s| k.starts_with(s));
+        let ignored = fa.keys().chain(fb.keys()).filter(|k| skip(k)).collect::<BTreeSet<_>>().len();
+        let (fa, fb): (BTreeMap<_, _>, BTreeMap<_, _>) = (fa.into_iter().filter(|(k, _)| !skip(k)).collect(),
+                                                          fb.into_iter().filter(|(k, _)| !skip(k)).collect());
         let mut d = diff_files(&fa, &fb);
-        d["a"] = json!({"created": ma["created"], "centurion_version": ma["centurion_version"]});
-        d["b"] = json!({"created": mb["created"], "centurion_version": mb["centurion_version"]});
+        if !unreadable.is_empty() {
+            let under = |k: &str| unreadable.iter().any(|p| k == p || k.starts_with(&format!("{p}/")));
+            let removed: Vec<Value> = d["removed"].as_array().cloned().unwrap_or_default();
+            let (gone, unread): (Vec<Value>, Vec<Value>) = removed.into_iter().partition(|v| !under(v.as_str().unwrap_or("")));
+            d["removed"] = json!(gone);
+            d["unreadable"] = json!(unread);
+        }
+        if profile {
+            let text = |m: &BTreeMap<String, Vec<u8>>| m.get(PACKAGES).map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+            d["packages"] = package_changes(&text(&fa), &text(&fb));
+        }
+        d["profile_compared"] = json!(profile);
+        d["ignored"] = json!(ignored);
+        d["swapped"] = json!(swapped);
+        d["a"] = json!({"created": ma["created"], "centurion_version": ma["centurion_version"],
+                        "name": a.file_name().map(|n| n.to_string_lossy().into_owned())});
+        d["b"] = b_info;
         d["ok"] = json!(true);
         Ok(d)
     })();
     r.unwrap_or_else(fail)
 }
 
-/// Every regular file of a configuration archive's user and system parts, read into memory and keyed by
-/// its path inside the archive. `unpack` has already refused links and special files.
-fn read_config_files(archive: &Path, base: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
+/// Every regular file of a configuration archive's user and system parts (and with `profile` its system
+/// profile), read into memory and keyed by its path inside the archive. Links are never followed.
+fn read_config_files(archive: &Path, base: &Path, profile: bool) -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut out = BTreeMap::new();
-    for top in ["user", "system"] {
-        let Some(stage) = unpack(archive, top, base)? else { continue };
+    let tops: &[&str] = if profile { &["user", "system", "system-profile"] } else { &["user", "system"] };
+    for top in tops {
+        let Some(stage) = unpack(archive, top, base, false)? else { continue };
         collect_files(&stage.0.join(top), top, 0, &mut out)?;
     }
     Ok(out)
@@ -1184,47 +1778,85 @@ fn collect_files(dir: &Path, key: &str, depth: usize, out: &mut BTreeMap<String,
         let md = fs::symlink_metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         if md.is_dir() { collect_files(&p, &k, depth + 1, out)?; }
         else if md.is_file() && md.len() <= MAX_FILE { out.insert(k, fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?); }
+        else if md.file_type().is_symlink() {
+            // A link is compared by where it points.
+            if let Ok(t) = fs::read_link(&p) { out.insert(k, format!("symbolic link → {}", t.display()).into_bytes()); }
+        }
     }
     Ok(())
 }
 
 /// Changes between two sets of archive files (path → content). A file that is only reformatted is not a change.
 fn diff_files(a: &BTreeMap<String, Vec<u8>>, b: &BTreeMap<String, Vec<u8>>) -> Value {
-    let mut added: Vec<String> = b.keys().filter(|k| !a.contains_key(*k)).cloned().collect();
-    let mut removed: Vec<String> = a.keys().filter(|k| !b.contains_key(*k)).cloned().collect();
+    let added: Vec<String> = b.keys().filter(|k| !a.contains_key(*k)).cloned().collect();
+    let removed: Vec<String> = a.keys().filter(|k| !b.contains_key(*k)).cloned().collect();
     let mut changed: Vec<Value> = Vec::new();
     let mut same = 0u64;
     for (k, old) in a {
         let Some(new) = b.get(k) else { continue };
         if old == new { same += 1; continue; }
+        if k == PACKAGES { changed.push(json!({"path": k, "kind": "packages", "keys": []})); continue; }
         match (keys_of(k, old), keys_of(k, new)) {
-            (Some(x), Some(y)) => {
+            (Some((kind, x)), Some((_, y))) => {
                 let keys = key_changes(&x, &y);
-                if keys.is_empty() { same += 1; } else { changed.push(json!({"path": k, "keys": keys})); }
+                if keys.is_empty() { same += 1; } else { changed.push(json!({"path": k, "kind": kind, "keys": keys})); }
             }
-            // Not JSON or .ini: the whole file is compared, no keys to show.
-            _ => changed.push(json!({"path": k, "keys": []})),
+            _ => match (text_of(old), text_of(new)) {
+                (Some(x), Some(y)) => {
+                    let lines = line_changes(x, y);
+                    if lines["removed"].as_array().map_or(0, Vec::len) + lines["added"].as_array().map_or(0, Vec::len) == 0 {
+                        changed.push(json!({"path": k, "kind": "text", "keys": [], "reordered": true}));
+                    } else {
+                        changed.push(json!({"path": k, "kind": "text", "keys": [], "lines": lines}));
+                    }
+                }
+                _ => changed.push(json!({"path": k, "kind": "binary", "keys": []})),
+            },
         }
     }
+    let counts = json!({"added": added.len(), "removed": removed.len(), "changed": changed.len()});
     let truncated = added.len() > DIFF_MAX || removed.len() > DIFF_MAX || changed.len() > DIFF_MAX;
-    added.truncate(DIFF_MAX);
-    removed.truncate(DIFF_MAX);
+    let cut = |mut v: Vec<String>| { v.truncate(DIFF_MAX); v };
     changed.truncate(DIFF_MAX);
-    json!({"added": added, "removed": removed, "changed": changed, "same": same, "truncated": truncated})
+    json!({"added": cut(added), "removed": cut(removed), "changed": changed, "same": same, "truncated": truncated, "counts": counts})
 }
 
-/// The key → value view of a JSON or .ini file; None for anything else.
-fn keys_of(path: &str, bytes: &[u8]) -> Option<BTreeMap<String, String>> {
+fn text_of(b: &[u8]) -> Option<&str> {
+    if b.len() > TEXT_MAX || b.contains(&0) { return None; }
+    std::str::from_utf8(b).ok()
+}
+
+/// The lines only in `a` and only in `b`, each in file order (a line that only moved is not a change).
+fn line_changes(a: &str, b: &str) -> Value {
+    fn count(t: &str) -> BTreeMap<&str, i64> { let mut m = BTreeMap::new(); for l in t.lines() { *m.entry(l).or_default() += 1; } m }
+    let (ca, cb) = (count(a), count(b));
+    let only = |t: &str, mine: &BTreeMap<&str, i64>, other: &BTreeMap<&str, i64>| {
+        let mut extra: BTreeMap<&str, i64> = mine.iter().map(|(l, n)| (*l, n - other.get(l).copied().unwrap_or(0))).filter(|(_, n)| *n > 0).collect();
+        let mut out = Vec::new();
+        for l in t.lines() {
+            if let Some(n) = extra.get_mut(l).filter(|n| **n > 0) { *n -= 1; out.push(l.chars().take(200).collect::<String>()); }
+        }
+        out
+    };
+    let (mut r, mut ad) = (only(a, &ca, &cb), only(b, &cb, &ca));
+    let more = r.len().saturating_sub(LINES_MAX) + ad.len().saturating_sub(LINES_MAX);
+    r.truncate(LINES_MAX);
+    ad.truncate(LINES_MAX);
+    json!({"removed": r, "added": ad, "more": more})
+}
+
+/// The key → value view of a JSON, .ini or KEY=value file, with its kind; None for anything else.
+fn keys_of(path: &str, bytes: &[u8]) -> Option<(&'static str, BTreeMap<String, String>)> {
     let text = std::str::from_utf8(bytes).ok()?;
     if path.ends_with(".json") {
         let v: Value = serde_json::from_str(text).ok()?;
         let mut out = BTreeMap::new();
         flatten_json("", &v, &mut out);
-        Some(out)
+        Some(("json", out))
     } else if path.ends_with(".ini") {
-        Some(flatten_ini(text))
+        Some(("ini", flatten_ini(text)))
     } else {
-        None
+        flatten_kv(text).map(|m| ("keys", m))
     }
 }
 
@@ -1254,6 +1886,38 @@ fn flatten_ini(text: &str) -> BTreeMap<String, String> {
     out
 }
 
+fn is_kv_key(k: &str) -> bool {
+    k.len() <= 128 && k.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && k.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+}
+
+/// KEY=value text — a kernel .config ("# CONFIG_X is not set" counts as a value), conf.d, make.conf, sysctl,
+/// /etc/environment — when at least 80 % of its non-comment lines are assignments. Anything else is None.
+fn flatten_kv(text: &str) -> Option<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    let (mut lines, mut kv) = (0usize, 0usize);
+    for l in text.lines().map(str::trim) {
+        if l.is_empty() { continue; }
+        if let Some(k) = l.strip_prefix("# ").and_then(|r| r.strip_suffix(" is not set")).filter(|k| is_kv_key(k)) {
+            out.insert(k.to_owned(), "is not set".to_owned());
+            lines += 1;
+            kv += 1;
+            continue;
+        }
+        if l.starts_with(['#', ';']) { continue; }
+        lines += 1;
+        let l = l.strip_prefix("export ").unwrap_or(l);
+        if let Some((k, v)) = l.split_once('=') {
+            let k = k.trim().trim_end_matches('+').trim();
+            if is_kv_key(k) {
+                out.insert(k.to_owned(), v.trim().trim_matches('"').to_owned());
+                kv += 1;
+            }
+        }
+    }
+    (lines > 0 && kv * 10 >= lines * 8).then_some(out)
+}
+
 fn join_key(prefix: &str, k: &str) -> String {
     if prefix.is_empty() { k.to_owned() } else { format!("{prefix}.{k}") }
 }
@@ -1267,9 +1931,54 @@ fn key_changes(a: &BTreeMap<String, String>, b: &BTreeMap<String, String>) -> Ve
         .collect()
 }
 
+/// "category/name-1.2.3-r1" → ("category/name", "1.2.3-r1"): the version starts at the first "-digit" after the
+/// category. A line without one is a name alone.
+fn split_atom(atom: &str) -> (&str, &str) {
+    let b = atom.as_bytes();
+    let from = atom.find('/').map_or(0, |i| i + 1);
+    (from..b.len()).find(|&i| b[i] == b'-' && b.get(i + 1).is_some_and(u8::is_ascii_digit))
+        .map_or((atom, ""), |i| (&atom[..i], &atom[i + 1..]))
+}
+
+/// Installed packages (the profile's packages.txt) between two backups: added, removed and upgraded or
+/// downgraded (same name, another version; slots are paired in version order).
+fn package_changes(a: &str, b: &str) -> Value {
+    let group = |t: &str| {
+        let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for l in t.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let (n, v) = split_atom(l);
+            m.entry(n.to_owned()).or_default().push(v.to_owned());
+        }
+        m
+    };
+    let (ga, gb) = (group(a), group(b));
+    let names: BTreeSet<&String> = ga.keys().chain(gb.keys()).collect();
+    let (mut added, mut removed, mut changed) = (Vec::new(), Vec::new(), Vec::new());
+    let atom = |n: &str, v: &str| if v.is_empty() { n.to_owned() } else { format!("{n}-{v}") };
+    for n in names {
+        let mut va = ga.get(n).cloned().unwrap_or_default();
+        let mut vb = gb.get(n).cloned().unwrap_or_default();
+        let common: Vec<String> = va.iter().filter(|v| vb.contains(v)).cloned().collect();
+        va.retain(|v| !common.contains(v));
+        vb.retain(|v| !common.contains(v));
+        va.sort();
+        vb.sort();
+        let pairs = va.len().min(vb.len());
+        for i in 0..pairs { changed.push(json!({"name": n, "old": va[i], "new": vb[i]})); }
+        removed.extend(va[pairs..].iter().map(|v| atom(n, v)));
+        added.extend(vb[pairs..].iter().map(|v| atom(n, v)));
+    }
+    let counts = json!({"added": added.len(), "removed": removed.len(), "changed": changed.len()});
+    added.truncate(DIFF_MAX);
+    removed.truncate(DIFF_MAX);
+    changed.truncate(DIFF_MAX);
+    json!({"added": added, "removed": removed, "changed": changed, "counts": counts})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn files(list: &[(&str, &str)]) -> BTreeMap<String, Vec<u8>> {
         list.iter().map(|(k, v)| (k.to_string(), v.as_bytes().to_vec())).collect()
@@ -1280,7 +1989,7 @@ mod tests {
         let a = files(&[("user/config/centurion/x.json", r#"{"gpu":{"offset":-30,"name":"A"},"keep":1}"#)]);
         let b = files(&[("user/config/centurion/x.json", r#"{"gpu":{"offset":-25,"name":"A"},"keep":1,"new":true}"#)]);
         let d = diff_files(&a, &b);
-        assert_eq!(d["changed"], json!([{"path": "user/config/centurion/x.json", "keys": [
+        assert_eq!(d["changed"], json!([{"path": "user/config/centurion/x.json", "kind": "json", "keys": [
             {"key": "gpu.offset", "old": "-30", "new": "-25"},
             {"key": "new", "old": null, "new": "true"}]}]));
         assert_eq!(d["same"], 0);
@@ -1302,18 +2011,55 @@ mod tests {
         let d = diff_files(&a, &b);
         assert_eq!(d["added"], json!(["user/config/centurion/new.json"]));
         assert_eq!(d["removed"], json!(["user/config/centurion/old.json"]));
-        assert_eq!(d["changed"], json!([{"path": "system/etc/centurion/blob", "keys": []}]));
+        assert_eq!(d["changed"], json!([{"path": "system/etc/centurion/blob", "kind": "text", "keys": [],
+                                         "lines": {"removed": ["1"], "added": ["2"], "more": 0}}]));
         assert_eq!(d["truncated"], false);
     }
 
     #[test]
     fn ini_keys_by_section() {
-        let a = keys_of("x.ini", b"[gpu]\n# note\nclock = 1\n").unwrap();
-        let b = keys_of("x.ini", b"[gpu]\nclock=2\n[cpu]\nvolt=3\n").unwrap();
+        let a = keys_of("x.ini", b"[gpu]\n# note\nclock = 1\n").unwrap().1;
+        let b = keys_of("x.ini", b"[gpu]\nclock=2\n[cpu]\nvolt=3\n").unwrap().1;
         let keys: Vec<Value> = key_changes(&a, &b);
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0]["key"], "cpu.volt");
         assert_eq!(keys[1]["key"], "gpu.clock");
+    }
+
+    #[test]
+    fn kernel_config_and_conf_files_by_key() {
+        let a = b"# Linux kernel config\nCONFIG_A=y\n# CONFIG_B is not set\nCONFIG_C=\"x\"\n";
+        let b = b"# Linux kernel config\nCONFIG_A=m\nCONFIG_B=y\nCONFIG_C=\"x\"\n";
+        let d = diff_files(&files(&[("system-profile/root/usr/src/linux/.config", std::str::from_utf8(a).unwrap())]),
+                           &files(&[("system-profile/root/usr/src/linux/.config", std::str::from_utf8(b).unwrap())]));
+        assert_eq!(d["changed"][0]["kind"], "keys");
+        assert_eq!(d["changed"][0]["keys"], json!([{"key": "CONFIG_A", "old": "y", "new": "m"},
+                                                    {"key": "CONFIG_B", "old": "is not set", "new": "y"}]));
+        // prose is not mistaken for assignments
+        assert!(flatten_kv("This is a note.\nIt has a=b once.\nAnd more words.\n").is_none());
+        assert!(flatten_kv("export PATH=/bin\nLANG=C\n").is_some());
+    }
+
+    #[test]
+    fn text_files_by_line() {
+        let l = line_changes("a\nb\nc\nb\n", "c\nb\na\nd\n");
+        assert_eq!(l, json!({"removed": ["b"], "added": ["d"], "more": 0}));
+        let d = diff_files(&files(&[("system-profile/root/var/lib/portage/world", "x/a\ny/b\n")]),
+                           &files(&[("system-profile/root/var/lib/portage/world", "y/b\nx/a\n")]));
+        assert_eq!(d["changed"][0]["reordered"], true);
+    }
+
+    #[test]
+    fn package_lists() {
+        assert_eq!(split_atom("sys-kernel/gentoo-sources-6.6.30"), ("sys-kernel/gentoo-sources", "6.6.30"));
+        assert_eq!(split_atom("media-libs/libsdl2-2.30.1-r1"), ("media-libs/libsdl2", "2.30.1-r1"));
+        assert_eq!(split_atom("dev-qt/qt6-base-6.7.2"), ("dev-qt/qt6-base", "6.7.2"));
+        assert_eq!(split_atom("app-misc/foo"), ("app-misc/foo", ""));
+        let p = package_changes("a/x-1.0\nb/y-2.0\nc/slot-1.0\nc/slot-2.0\nd/gone-1\n",
+                                "a/x-1.1\nb/y-2.0\nc/slot-2.0\nc/slot-3.0\ne/new-5\n");
+        assert_eq!(p["changed"], json!([{"name": "a/x", "old": "1.0", "new": "1.1"}, {"name": "c/slot", "old": "1.0", "new": "3.0"}]));
+        assert_eq!(p["added"], json!(["e/new-5"]));
+        assert_eq!(p["removed"], json!(["d/gone-1"]));
     }
 
     #[test]
@@ -1379,42 +2125,201 @@ mod tests {
     }
 
     #[test]
-    fn recipient_and_identity_shapes() {
-        assert!(recipient_of(&json!({"recipient": "age1"})).is_err());
-        assert!(recipient_of(&json!({})).unwrap().is_none());
-        assert!(identity_file(&json!({"identity": "not-a-key"})).is_err());
-        assert!(identity_file(&json!({})).unwrap().is_none());
+    fn restore_sequence_follows_parents_past_a_twin_increment() {
+        let dir = std::env::temp_dir().join(format!("centurion-seq-parent-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mk = |name: &str, level: u64, parent: Option<&str>| {
+            let p = dir.join(name);
+            fs::write(&p, b"x").unwrap();
+            fs::write(sidecar(&p), json!({"level": level, "chain": "backup-2026-10-01.tar.gz", "parent": parent}).to_string()).unwrap();
+        };
+        mk("backup-2026-10-01.tar.gz", 0, None);
+        mk("backup-2026-10-02_100000-i1.tar.gz", 1, Some("backup-2026-10-01.tar.gz"));
+        // its snapshot was lost, so the next increment continued the full image again: a second level 1
+        mk("backup-2026-10-03_100000-i1.tar.gz", 1, Some("backup-2026-10-01.tar.gz"));
+        mk("backup-2026-10-04_100000-i2.tar.gz", 2, Some("backup-2026-10-03_100000-i1.tar.gz"));
+        let seq = restore_sequence(&dir.join("backup-2026-10-04_100000-i2.tar.gz")).unwrap();
+        let names: Vec<String> = seq.iter().map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["backup-2026-10-01.tar.gz", "backup-2026-10-03_100000-i1.tar.gz", "backup-2026-10-04_100000-i2.tar.gz"]);
+        assert_eq!(seq.iter().map(|(_, i)| *i).collect::<Vec<_>>(), [false, true, true]);
+        fs::remove_file(dir.join("backup-2026-10-03_100000-i1.tar.gz")).unwrap();
+        assert!(restore_sequence(&dir.join("backup-2026-10-04_100000-i2.tar.gz")).unwrap_err().contains("increment 1"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
+    fn recipient_and_key_shapes() {
+        assert!(recipient_of(&json!({"recipient": "age1"})).is_err());
+        assert!(recipient_of(&json!({})).unwrap().is_none());
+        assert!(key_of(&json!({"identity": "not-a-key"})).is_err());
+        assert!(key_of(&json!({})).unwrap().is_none());
+        assert!(key_of(&json!({"identity": "  "})).unwrap().is_none());
+        assert!(key_of(&json!({"passphrase": "two\nlines"})).is_err());
+        assert!(matches!(key_of(&json!({"passphrase": "correct horse"})), Ok(Some(Key::Passphrase(_)))));
+        // A whole age-keygen file: comments around the key are fine.
+        let file = "# created: 2026-10-29\n# public key: age1xyz\nAGE-SECRET-KEY-1QQQQ\n";
+        match key_of(&json!({"identity": file})) {
+            Ok(Some(Key::Identity(k))) => assert_eq!(k.0, b"AGE-SECRET-KEY-1QQQQ\n"),
+            _ => panic!("key file not accepted"),
+        }
+    }
+
+    fn have(t: &str) -> bool { tool(t).is_some() }
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("centurion-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn sh(cmd: &str) { assert!(Command::new("sh").arg("-c").arg(cmd).status().unwrap().success(), "{cmd}"); }
+
+    #[test]
     fn encrypted_image_reads_back_with_its_key_only() {
-        // age-keygen, sh, tar and gzip are needed; without them there is nothing to prove.
-        let have = |t: &str| tool(t).is_some();
         if !(have("age") && have("tar") && have("gzip")) { return; }
-        let dir = std::env::temp_dir().join(format!("centurion-age-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = tmp("age-test");
         fs::create_dir_all(dir.join("src/etc")).unwrap();
         fs::write(dir.join("src/etc/a.txt"), "hello").unwrap();
-        let keygen = |p: &Path| std::process::Command::new("age-keygen").arg("-o").arg(p).output().map_or(false, |o| o.status.success());
+        let keygen = |p: &Path| Command::new("age-keygen").arg("-o").arg(p).output().map_or(false, |o| o.status.success());
         if !keygen(&dir.join("key.txt")) || !keygen(&dir.join("other.txt")) { let _ = fs::remove_dir_all(&dir); return; }
         let text = fs::read_to_string(dir.join("key.txt")).unwrap();
         let recipient = text.lines().find_map(|l| l.strip_prefix("# public key: ")).unwrap().trim().to_owned();
-        let secret = text.lines().find(|l| l.starts_with("AGE-SECRET-KEY-")).unwrap().to_owned();
         let other = fs::read_to_string(dir.join("other.txt")).unwrap();
-        let other_secret = other.lines().find(|l| l.starts_with("AGE-SECRET-KEY-")).unwrap().to_owned();
         let img = dir.join("backup-2026-10-29.tar.gz.age");
-        let sh = format!("tar -C {} -cf - etc | gzip -c | age -r {} > {}", dir.join("src").display(), recipient, img.display());
-        assert!(std::process::Command::new("sh").arg("-c").arg(&sh).status().unwrap().success());
+        sh(&format!("tar -C {} -cf - etc | gzip -c | age -r {} > {}", dir.join("src").display(), recipient, img.display()));
 
         assert_eq!(sniff(&img), Comp::Age);
-        assert!(read_archive(&img, None, true, None, false).is_err());
-        let (_k, key) = identity_file(&json!({"identity": secret})).unwrap().unwrap();
-        assert_eq!(read_archive(&img, None, true, Some(&key), false).unwrap().files, 2);
-        let (_w, wrong) = identity_file(&json!({"identity": other_secret})).unwrap().unwrap();
-        let e = read_archive(&img, None, true, Some(&wrong), false).err().unwrap();
+        assert!(read_archive(&img, None, true, None, None).is_err());
+        // The whole key file is accepted; the key travels through a pipe, never a file.
+        let key = key_of(&json!({"identity": text})).unwrap().unwrap();
+        assert_eq!(read_archive(&img, None, true, Some(&key), None).unwrap().files, 2);
+        assert!(key_opens(&img, &key));
+        let wrong = key_of(&json!({"identity": other})).unwrap().unwrap();
+        assert!(!key_opens(&img, &wrong));
+        let e = read_archive(&img, None, true, Some(&wrong), None).err().unwrap();
         assert!(e.contains("does not open"), "{e}");
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// age -p through the private terminal: encrypt, then read back with the right and a wrong passphrase.
+    #[test]
+    fn passphrase_image_round_trip() {
+        if !(have("age") && have("tar") && have("gzip")) { return; }
+        let dir = tmp("pass-test");
+        fs::create_dir_all(dir.join("src/etc")).unwrap();
+        fs::write(dir.join("src/etc/shadow"), "root:x").unwrap();
+        let plain = dir.join("plain.tar.gz");
+        sh(&format!("tar -C {} -cf - etc | gzip -c > {}", dir.join("src").display(), plain.display()));
+        let img = dir.join("backup-2026-10-29.tar.gz.age");
+        let pass = key_of(&json!({"passphrase": "correct horse battery"})).unwrap().unwrap();
+        let (mut c, aux) = age_command(&tool("age").unwrap(), false, false, None, Some(&pass)).unwrap();
+        c.stdin(File::open(&plain).unwrap()).stdout(File::create(&img).unwrap()).stderr(Stdio::piped());
+        let o = c.spawn().unwrap().wait_with_output().unwrap();
+        drop(aux);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert!(!fs::read(&img).unwrap().windows(6).any(|w| w == b"root:x"));
+        assert!(key_opens(&img, &pass));
+        assert_eq!(read_archive(&img, None, true, Some(&pass), None).unwrap().files, 2);
+        let wrong = key_of(&json!({"passphrase": "nope"})).unwrap().unwrap();
+        assert!(!key_opens(&img, &wrong));
+        let e = read_archive(&img, None, true, Some(&wrong), None).err().unwrap();
+        assert!(e.contains("passphrase does not open"), "{e}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chains_keep_their_encryption() {
+        let tip = |enc: Enc| Tip { image: PathBuf::from("/nonexistent/backup-2026-10-01.tar.gz"), snar: PathBuf::new(), level: 1,
+                                   chain: "backup-2026-10-01.tar.gz".into(), enc };
+        assert_eq!(continues(&tip(Enc::None), &Enc::None, None), Ok(None));
+        assert!(continues(&tip(Enc::None), &Enc::Recipient("age1a".into()), None).unwrap().is_some());
+        assert!(continues(&tip(Enc::Recipient("age1a".into())), &Enc::Recipient("age1b".into()), None).unwrap().is_some());
+        // A passphrase that cannot be checked against the chain stops the backup instead of guessing.
+        assert!(continues(&tip(Enc::Passphrase), &Enc::Passphrase, None).is_err());
+        let mut full = tip(Enc::None);
+        full.level = MAX_LEVEL;
+        assert!(continues(&full, &Enc::None, None).unwrap().is_some());
+        assert_eq!(Enc::of_info(&json!({"encrypted": true, "encryption": "passphrase"})), Enc::Passphrase);
+        assert_eq!(Enc::of_info(&json!({"encrypted": true, "recipient": "age1q"})), Enc::Recipient("age1q".into()));
+        assert_eq!(Enc::of_info(&json!({"encrypted": false})), Enc::None);
+    }
+
+    #[test]
+    fn encrypted_snapshots_are_private() {
+        assert_eq!(snar_of(Path::new("/b/backup-2026-10-29.tar.gz")), PathBuf::from("/b/backup-2026-10-29.tar.gz.snar"));
+        let p = snar_of(Path::new("/media/usb/backup-2026-10-29.tar.gz.age"));
+        assert!(p.starts_with(PRIVATE_SNAR) && p.to_string_lossy().ends_with("-backup-2026-10-29.tar.gz.age.snar"));
+        assert_ne!(p, snar_of(Path::new("/media/other/backup-2026-10-29.tar.gz.age")));
+    }
+
+    /// The data-loss case: an increment restored over a target must apply what changed between the images
+    /// (a deletion, a directory rename) and leave everything else alone — files the target has of its own,
+    /// and what the images excluded (here home/*, like /home/* on a real system).
+    #[test]
+    fn chain_restore_touches_only_what_the_chain_restored() {
+        if !(have("tar") && have("gzip")) { return; }
+        let base = tmp("chain-test");
+        let (src, arch, dst) = (base.join("src"), base.join("arch"), base.join("dst"));
+        for d in ["etc/old", "d1/sub", "home/alice", "var"] { fs::create_dir_all(src.join(d)).unwrap(); }
+        fs::create_dir_all(&arch).unwrap();
+        fs::write(src.join("etc/keep"), "k").unwrap();
+        fs::write(src.join("etc/gone"), "g").unwrap();
+        fs::write(src.join("etc/old/x"), "x").unwrap();
+        fs::write(src.join("d1/g"), "unchanged").unwrap();
+        fs::write(src.join("d1/sub/f"), "f").unwrap();
+        fs::write(src.join("home/alice/data"), "a").unwrap();
+        let mk = |name: &str, level: u64, from: Option<&str>| {
+            let snar = arch.join(format!("{name}.snar"));
+            if let Some(f) = from { fs::copy(arch.join(format!("{f}.snar")), &snar).unwrap(); }
+            std::thread::sleep(Duration::from_millis(1100));  // tar's change detection works in whole seconds
+            // posix + xattrs: what system_backup writes (GNU.dumpdir pax records)
+            sh(&format!("tar -C {} --xattrs --listed-incremental={} --exclude='./home/*' -cf - . | gzip -c > {}",
+                        src.display(), snar.display(), arch.join(name).display()));
+            fs::write(sidecar(&arch.join(name)), json!({"level": level, "chain": "backup-2026-10-01.tar.gz"}).to_string()).unwrap();
+            // File times come from the kernel's coarse clock: a change made right after tar started could look older.
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        mk("backup-2026-10-01.tar.gz", 0, None);
+        fs::remove_file(src.join("etc/gone")).unwrap();
+        fs::remove_dir_all(src.join("etc/old")).unwrap();
+        fs::rename(src.join("d1"), src.join("d2")).unwrap();
+        fs::write(src.join("etc/new"), "n").unwrap();
+        mk("backup-2026-10-02_100000-i1.tar.gz", 1, Some("backup-2026-10-01.tar.gz"));
+        fs::write(src.join("etc/keep"), "k2").unwrap();
+        mk("backup-2026-10-03_100000-i2.tar.gz", 2, Some("backup-2026-10-02_100000-i1.tar.gz"));
+
+        // The target already holds things of its own.
+        for d in ["home/bob", "etc/local", "mnt/usb"] { fs::create_dir_all(dst.join(d)).unwrap(); }
+        fs::write(dst.join("home/bob/thesis"), "precious").unwrap();
+        fs::write(dst.join("home/loose"), "precious").unwrap();
+        fs::write(dst.join("etc/local/mine"), "precious").unwrap();
+        fs::write(dst.join("etc/mine.conf"), "precious").unwrap();
+        fs::write(dst.join("mnt/usb/backups"), "precious").unwrap();
+
+        let t = fs::canonicalize(&dst).unwrap();
+        let r = system_restore(&json!({"archive": arch.join("backup-2026-10-03_100000-i2.tar.gz"), "target": t, "confirm": t}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["steps"], 3);
+        let read = |p: &str| fs::read_to_string(dst.join(p)).ok();
+        // what the images say
+        assert_eq!(read("etc/keep").as_deref(), Some("k2"));
+        assert_eq!(read("etc/new").as_deref(), Some("n"));
+        assert_eq!(read("etc/gone"), None, "{r}");
+        assert!(!dst.join("etc/old").exists(), "{r}");
+        assert_eq!(read("d2/g").as_deref(), Some("unchanged"), "the renamed directory keeps its unchanged files: {r}");
+        assert_eq!(read("d2/sub/f").as_deref(), Some("f"));
+        assert!(!dst.join("d1").exists(), "{r}");
+        // what they must not touch
+        for p in ["home/bob/thesis", "home/loose", "etc/local/mine", "etc/mine.conf", "mnt/usb/backups"] {
+            assert_eq!(read(p).as_deref(), Some("precious"), "{p} was removed: {r}");
+        }
+        assert!(r["deleted"].as_u64().unwrap() >= 3, "{r}");
+        assert_eq!(r["renamed"], 1, "{r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn config_backup_then_diff() {
         // User operations: as root both refuse to run, so the test only proves anything as a user.
@@ -1430,6 +2335,7 @@ mod tests {
         fs::write(cfg.join("gpu.json"), r#"{"gpu":{"offset":-30},"keep":1}"#).unwrap();
         let a = config_backup(&json!({"dest_dir": dest_s, "include_profile": false, "tag": "a"}));
         assert_eq!(a["ok"], true, "{a}");
+        std::thread::sleep(Duration::from_millis(1100));  // "created" has whole seconds
         fs::write(cfg.join("gpu.json"), r#"{"gpu":{"offset":-25},"keep":1}"#).unwrap();
         fs::write(cfg.join("added.json"), "{}").unwrap();
         let b = config_backup(&json!({"dest_dir": dest_s, "include_profile": false, "tag": "b"}));
@@ -1438,6 +2344,16 @@ mod tests {
         assert_eq!(d["ok"], true, "{d}");
         assert_eq!(d["added"], json!(["user/config/centurion/added.json"]));
         assert_eq!(d["changed"][0]["keys"], json!([{"key": "gpu.offset", "old": "-30", "new": "-25"}]));
+        // Picked newest first: still compared oldest to newest.
+        let r = config_diff(&json!({"a": b["archive"], "b": a["archive"]}));
+        assert_eq!(r["swapped"], true);
+        assert_eq!(r["added"], json!(["user/config/centurion/added.json"]));
+        // Against what is here now.
+        fs::write(cfg.join("gpu.json"), r#"{"gpu":{"offset":-20},"keep":1}"#).unwrap();
+        let c = config_diff(&json!({"a": b["archive"], "b": "current"}));
+        assert_eq!(c["ok"], true, "{c}");
+        assert_eq!(c["b"]["current"], true);
+        assert_eq!(c["changed"][0]["keys"], json!([{"key": "gpu.offset", "old": "-25", "new": "-20"}]));
         let _ = fs::remove_dir_all(&base);
     }
 

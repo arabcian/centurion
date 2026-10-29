@@ -3,7 +3,8 @@
 //!   any user:  {"op":"list"}  {"op":"status"}  {"op":"whois", "ip": "address"}  {"op":"wifi"}
 //!   root (pkexec):
 //!     {"op":"set", "guard": bool, "allow_lan": bool, "log_conns": bool, "traffic": bool}
-//!     {"op":"blacklist", "add": ["ip | cidr | first - last"], "label": "group", "remove": [...], "remove_all": bool}
+//!     {"op":"blacklist", "add": ["ip | cidr | first - last"], "label": "group", "remove": [...], "remove_all": bool,
+//!      "replace": bool}   replace: the group's old entries are dropped first (a subscription update)
 //!                                                                live sockets to added addresses are aborted
 //!     {"op":"whitelist", "add": ["path | dir/ | name.exe"], "remove": [...]}
 //!     {"op":"kill", "proto": "tcp|udp", "lport": n, "remote": "ip", "rport": n}

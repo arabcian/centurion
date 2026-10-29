@@ -14,6 +14,7 @@ use std::path::Path;
 pub mod amdgpu;
 pub mod autotune;
 pub mod backup;
+pub mod tarscan;
 pub mod bootguard;
 pub mod boothist;
 pub mod dgpu;

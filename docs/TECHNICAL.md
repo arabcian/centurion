@@ -422,17 +422,24 @@ cached, for everyone (including a local admin).
 `.tar.zst` / `.tar.xz` with the other compressors), 0600 root, written as
 `.partial` and renamed, plus `<archive>.info.json` (entry count, kernel,
 excludes, tar status, `level`, `chain`, `encrypted`).
-**Increments** (`recipient` absent, `incremental` true): every image gets a root-owned
-snapshot `<archive>.snar` (GNU tar `--listed-incremental`; a missing file makes a full dump).
-An increment copies the newest image's snapshot to `.<name>.snar.partial`, names the image
+**Increments** (`incremental` true): every image gets a root-owned snapshot (GNU tar `--listed-incremental`;
+a missing file makes a full dump): `<archive>.snar`, or for an encrypted image
+`/var/lib/centurion/backup-snar/<FNV-1a of the folder>-<name>.snar` (it names every archived path; the
+folder is excluded from images). An increment copies the newest image's snapshot to a `.partial`, names the image
 `backup-DATE_HHMMSS-iN.tar.<ext>` and records `level` N and `chain` (the full image's name).
-After `MAX_LEVEL` (6) increments the next image is full again. Retention (`prune`) works per
-chain: the newest `keep` chains stay, and a chain is removed whole with its sidecars and snapshots.
-**Encryption** (`recipient` = `age1…`): the compressor's stdout goes through `age -r <key>` into the
-file, named `….tar.<ext>.age`. The public key is an argument, never a secret. A passphrase cannot be
-used: age 1.1.1 reads it only from a terminal, and ignores `AGE_PASSPHRASE`. Reading needs the
-secret key (`identity` in the request, written to a 0600 scratch file for that run, deleted after).
-An encrypted image is not verified at creation (only its key can read it); `verify` does it later.
+It continues a chain only with the same encryption (`encryption` none / `recipient` + key / `passphrase` in
+the sidecar); otherwise, or after `MAX_LEVEL` (6) increments, the image is a full one and the result's `notes` say
+why. A passphrase is checked against the chain's newest image first (`key_opens`: age decrypts and authenticates
+the first chunk) — a wrong one stops the backup. Retention (`prune`) works per chain: the newest `keep` chains
+stay, and a chain is removed whole with its sidecars and snapshots.
+**Encryption**: `recipient` = `age1…` → `age -r <key>`; `passphrase` → `age -p`. age 1.1.1 reads a
+passphrase only from a terminal (and ignores `AGE_PASSPHRASE`), so age runs in a session of its own with a
+pseudo-terminal as its controlling tty (`openpty`, `setsid`, `TIOCSCTTY`); a thread answers each
+"…passphrase…:" prompt on the master side (twice when encrypting, at most four times). Reading with a secret
+key: `identity` (the `AGE-SECRET-KEY-1…` lines of what was pasted or loaded) is written into a pipe that age
+reads as `-i /dev/fd/3`. Secrets come only from the request on stdin, are never logged or written to a file,
+and are overwritten when dropped (`Secret`). A passphrase image is verified at creation; a recipient image only
+when an `identity` comes with the request (otherwise later, by `verify`).
  Default excludes use the `/proc/*` form, not `/proc`:
 the empty mount points stay in the archive, so a restore onto a fresh file
 system boots. The archive itself and older `backup-*.tar.*` files in the
@@ -442,20 +449,39 @@ archive and flags it. Optional: verify (read back through
 `<decompressor> | tar -t`, entry count compared), retention (newest N
 `backup-YYYY-MM-DD*` images kept), nice 19 + lowest best-effort I/O priority.
 
-**Restore** (`system_restore`, root): compression from the magic bytes (an encrypted image: `age -d -i <key>`,
+**Restore** (`system_restore`, root): compression from the magic bytes (an encrypted image: `age -d`, with `-i /dev/fd/3` or the passphrase prompt,
 then the compression named by the `.tar.<ext>.age` file name), then
 `<decompressor> | tar --acls --xattrs --xattrs-include='*' --numeric-owner -xvpf - -C <target>`.
-An increment is restored after its full image and every increment before it, the later ones with
-`--listed-incremental=/dev/null` so the deletions they record are applied. Missing increments are named, never skipped.
+An increment is restored after its full image and every increment before it (missing ones are named,
+never skipped; each step emits a `start` event with `step`/`steps`). The steps follow each increment's
+`parent` (the file name of the image it continued, in its sidecar), so a second increment of the same level —
+made after the snapshot of the newest one was lost — is never mixed in; sidecars without `parent` fall back
+to one image per `level` of the `chain`. tar's own incremental extraction
+(`--listed-incremental=/dev/null`) is **not** used: it deletes every entry of an archived directory that was not
+there when the image was made — e.g. `/home/<a newer user>` (the images exclude `/home/*`), or the disk mounted under
+`/mnt` that the restore reads from. Instead the stream passes through `tarscan` (reads GNU/ustar/pax headers,
+`L` long names, the `D` dumpdirs of GNU format and the `GNU.dumpdir` pax records GNU tar writes once `--xattrs`
+selects POSIX format) on its way to a plain `tar -x`, and `ChainRestore`:
+renames (`R`/`T`) are applied before the bytes behind them reach tar; after each increment, an entry is deleted
+only if the chain itself restored it (hashed member names of the earlier steps) and the increment's dumpdir no
+longer lists it — through `openat`/`unlinkat` with `O_NOFOLLOW`, never across a mount point (`st_dev`), a
+directory only once it holds nothing unknown. A stream it cannot read (bad checksum, multi-volume) disables
+deletions for that step. The result reports `deleted`, `renamed` and `notes`.
 The request must repeat the resolved target (`confirm`); the GUI asks to type
 RESTORE for `/`. Missing mount points (`/proc /sys /dev /run /tmp /var/tmp
 /mnt /media /home`) are created afterwards, so images made with a plain
 `--exclude=/proc` restore to a bootable tree too. `--numeric-owner`: correct
 when restoring from live media whose passwd differs.
 
-**Compare** (`config_diff`, as the user): two configuration archives are unpacked into a 0700 scratch directory
-(`unpack`, links refused), their user and system files read into memory. JSON files are compared key by key
-(`a.b[0].c` paths), `.ini` files by section and key; other files as a whole. Reformatting alone is not a change.
+**Compare** (`config_diff`, as the user): `a` and `b` (or `b` = `"current"`: the live configuration staged by
+the same code as `config_backup`) are unpacked into a 0700 scratch directory, links kept as links (compared by
+target, never followed), and read into memory. Two archives are ordered by `created` (then file time; `swapped`).
+JSON files are compared key by key (`a.b[0].c`), `.ini` by section and key, and any text where ≥ 80 % of the
+non-comment lines are `KEY=value` (kernel `.config` with `# CONFIG_X is not set`, conf.d, make.conf) by key;
+other text by the lines only in one side (multiset, order ignored; `reordered` when only the order changed).
+With `profile` and a system profile in both, `packages.txt` gives `packages` added / removed / changed (same
+`category/name`, version split at the first `-digit`). Logs and per-boot facts are skipped (`ignored`); in
+"current" mode, paths that could not be read now are `unreadable`, not removed. Lists are capped at 200.
 
 **Centurion configuration** (`config_backup`, as the user): readable files are staged
 and packed as `centurion-config-YYYY-MM-DD_HHMMSS.tar.gz` (0600):
@@ -976,12 +1002,14 @@ the helpers (`tune::cpu_vendor()`).
   10 s (`TRAFFIC_FLUSH`) and on stop. File: 0640 root:wheel, 90 days, 256 programs per day (rest under
   `(other)`). Connections the daemon did not see open are not counted.
 - **Wi-Fi** (`wifi.rs`): `iw dev <if> link` and `iw dev <if> station dump`, unprivileged, through the
-  user op `netguard-helper {"op":"wifi"}`. The first `/sys/class/net/*` with `phy80211` or `wireless`. Warnings:
+  user op `netguard-helper {"op":"wifi"}`. The first `/sys/class/net/*` with `phy80211` or `wireless`, one whose `operstate` is `up` first.
+  The tab also counts this boot's `WIFI` lines in `health.log` (tail only, reread when the file changes). Warnings:
   signal below −75 dBm; retries above 10 % or failures above 2 % of transmitted packets (since association).
 - **Blocklist subscriptions** (`gui/src/blocklistsubs.*`, `netpage.cpp` `updateSubscription`): stored in
   `gui.ini` as `netguard_subs/N/*`. The GUI downloads over https (30 s timeout, 8 MiB cap), parses
-  (`parseBlocklist`: at most 100 000 tokens), and sends one `blacklist` request: `add` = new list, `remove` = the
-  group's entries the new list no longer has, `label` = the subscription name. The helper validates every entry
+  (`parseBlocklist`: at most 100 000 tokens), and sends one `blacklist` request: `add` = new list, `label` = the subscription name,
+  `replace: true` (the helper drops the group's old entries before adding, so an entry stored in another form —
+  a range split into CIDR blocks, `1.2.3.5/24` stored as `1.2.3.0/24` — is not removed again). The helper validates every entry
   and saves once, so a refused request changes nothing. The blacklist cap is `MAX_BLACKLIST = 100 000`; the
   helper request limit is 4 MiB and the config read limit 8 MiB.
 

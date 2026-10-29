@@ -1,5 +1,6 @@
 #include "blocklistsubs.h"
 
+#include <QCoreApplication>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
@@ -23,13 +24,13 @@ ParsedBlocklist parseBlocklist(const QByteArray &text) {
         for (const QString &tok : line.split(sep, Qt::SkipEmptyParts)) {
             if (out.entries.size() == BLOCKLIST_MAX_ENTRIES) {
                 out.entries.clear();
-                out.error = QStringLiteral("The list has more than %1 entries.").arg(BLOCKLIST_MAX_ENTRIES);
+                out.error = QCoreApplication::translate("blocklistsubs", "The list has more than %1 entries.").arg(BLOCKLIST_MAX_ENTRIES);
                 return out;
             }
             out.entries << tok;
         }
     }
-    if (out.entries.isEmpty()) out.error = QStringLiteral("The list has no entries.");
+    if (out.entries.isEmpty()) out.error = QCoreApplication::translate("blocklistsubs", "The list has no entries.");
     return out;
 }
 

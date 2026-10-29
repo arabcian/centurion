@@ -34,7 +34,7 @@ constexpr qsizetype MAX_OUT = 1 << 20;
 // A command is argv; argv[0] may be a pseudo-command:
 //   @file <path>      contents of a file
 //   @dir <path>       contents of every file in a directory
-//   @glob <pattern>   every file matching (dir/*/name; name may contain * too)
+//   @glob <pattern>   every file matching (dir/sub/name; sub and name may contain *)
 //   @pcilink          PCIe link speed/width of GPUs and NVMe drives (sysfs)
 //   @tainted          /proc/sys/kernel/tainted decoded into its flags
 //   @microcode        distinct microcode revisions of the CPUs
@@ -313,8 +313,8 @@ private:
         if (c.first() == QLatin1String("@pcilink")) { out_ += QStringLiteral("$ PCIe links (sysfs)\n") + pciLinks() + '\n'; step(i + 1); return; }
         if (c.first() == QLatin1String("@glob")) {
             const QString pat = c.at(1);
-            const QString dir = pat.section('/', 0, -3), name = pat.section('/', -1);
-            for (const QString &e : QDir(dir).entryList(QDir::Dirs | QDir::NoDotAndDotDot))
+            const QString dir = pat.section('/', 0, -3), sub = pat.section('/', -2, -2), name = pat.section('/', -1);
+            for (const QString &e : QDir(dir).entryList({sub}, QDir::Dirs | QDir::NoDotAndDotDot))
                 for (const QString &f : QDir(dir + '/' + e).entryList({name}, QDir::Files))
                     out_ += "$ cat " + dir + '/' + e + '/' + f + '\n' + readFile(dir + '/' + e + '/' + f) + '\n';
             step(i + 1);
@@ -390,7 +390,7 @@ void addPages(QTabWidget *tabs) {
          {{"@glob", "/sys/class/power_supply/*/uevent"}}},
         {QT_TRANSLATE_NOOP("systools", "Thermal"),
          QT_TRANSLATE_NOOP("systools", "Every thermal zone: its type, current temperature and trip points. Temperatures are in millidegrees Celsius, as the kernel reports them."),
-         {{"@glob", "/sys/class/thermal/*/type"}, {"@glob", "/sys/class/thermal/*/temp"}, {"@glob", "/sys/class/thermal/*/trip_point_*_temp"}}},
+         {{"@glob", "/sys/class/thermal/thermal_zone*/type"}, {"@glob", "/sys/class/thermal/thermal_zone*/temp"}, {"@glob", "/sys/class/thermal/thermal_zone*/trip_point_*"}}},
         {QT_TRANSLATE_NOOP("systools", "Security"),
          QT_TRANSLATE_NOOP("systools", "Mitigations for CPU vulnerabilities, kernel lockdown, Secure Boot, the kernel taint flags and the microcode revision."),
          {{"@dir", "/sys/devices/system/cpu/vulnerabilities"}, {"@file", "/sys/kernel/security/lockdown"}, {"mokutil", "--sb-state"}, {"@tainted"}, {"@microcode"}}},
