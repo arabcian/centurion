@@ -1,6 +1,7 @@
 #include "coolingpage.h"
 #include "charts.h"
 #include "theme.h"
+#include <QColor>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDir>
@@ -274,6 +275,19 @@ void CoolingPage::refresh() {
     tool({QStringLiteral("status")}, [this](const QJsonObject &o) { fillStatus(o); });
 }
 
+/// Label of a context field that `centurion-cooltest status` reports as changed.
+static QString fieldName(const QString &f) {
+    if (f == QLatin1String("profile")) return CoolingPage::tr("power profile");
+    if (f == QLatin1String("power")) return CoolingPage::tr("power source");
+    if (f == QLatin1String("ppt_pl1_spl")) return QStringLiteral("PL1");
+    if (f == QLatin1String("ppt_pl2_sppt")) return QStringLiteral("PL2");
+    if (f == QLatin1String("ppt_pl3_fppt")) return QStringLiteral("PL3");
+    if (f == QLatin1String("cpu_temp")) return CoolingPage::tr("temperature target");
+    if (f == QLatin1String("threads")) return CoolingPage::tr("CPU threads");
+    if (f == QLatin1String("load_rev")) return CoolingPage::tr("test version");
+    return f;
+}
+
 static QString fw(const QJsonObject &limits, const char *k) {
     return limits.contains(QLatin1String(k)) ? QString::number(limits.value(QLatin1String(k)).toInt()) : QStringLiteral("–");
 }
@@ -320,6 +334,26 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
         else if (!base.isEmpty())
             it->setText(5, tr("%1 °C").arg(QString::asprintf("%+.1f", r.value(QStringLiteral("steady_temp")).toDouble() - base.value(QStringLiteral("steady_temp")).toDouble())));
     }
+    // Runs under other settings: listed greyed with what differs, never compared (the table used to hide them).
+    const QJsonArray others = s.value(QStringLiteral("others")).toArray();
+    for (const QJsonValue &v : others) {
+        const QJsonObject r = v.toObject();
+        auto *it = new QTreeWidgetItem(table_);
+        it->setText(0, QDateTime::fromSecsSinceEpoch(qint64(r.value(QStringLiteral("t")).toDouble())).toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+        it->setText(1, tr("%1 °C").arg(r.value(QStringLiteral("steady_temp")).toDouble(), 0, 'f', 1));
+        it->setText(2, r.value(QStringLiteral("fan_rpm")).isNull() ? QStringLiteral("–") : tr("%1 rpm").arg(qRound(r.value(QStringLiteral("fan_rpm")).toDouble())));
+        it->setText(3, r.value(QStringLiteral("mhz")).isNull() ? QStringLiteral("–") : tr("%1 GHz").arg(r.value(QStringLiteral("mhz")).toDouble() / 1000.0, 0, 'f', 2));
+        it->setText(4, tr("%1 °C").arg(r.value(QStringLiteral("start_temp")).toDouble(), 0, 'f', 0));
+        QStringList diff;
+        for (const QJsonValue &d : r.value(QStringLiteral("differs")).toArray()) {
+            const QJsonObject o = d.toObject();
+            const auto val = [](const QJsonValue &x) { return x.isNull() || x.isUndefined() ? QStringLiteral("–") : x.toVariant().toString(); };
+            diff << QStringLiteral("%1 %2 → %3").arg(fieldName(o.value(QStringLiteral("field")).toString()), val(o.value(QStringLiteral("then"))), val(o.value(QStringLiteral("now"))));
+        }
+        it->setText(5, tr("other settings, not compared: %1").arg(diff.join(QStringLiteral(", "))));
+        it->setToolTip(5, it->text(5));
+        for (int col = 0; col < 6; ++col) it->setForeground(col, QColor(QString::fromLatin1(theme::MUTED)));
+    }
     baseline_->setEnabled(anyClean);
     forget_->setEnabled(!runs.isEmpty());
 
@@ -343,6 +377,9 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
                                                                                        : theme::OK);
     } else if (!runs.isEmpty() && !base.isEmpty()) {
         showVerdict(tr("This is the baseline for these firmware settings. Run the test again in a few weeks, and after cleaning, to compare."), theme::INFO);
+    } else if (runs.isEmpty() && !others.isEmpty()) {
+        showVerdict(tr("No test under the current settings yet. The earlier runs (grey) were made under other settings, so they are kept but not "
+                       "compared; the next run starts a baseline for these settings."), theme::INFO);
     } else {
         verdict_->setVisible(false);
     }

@@ -277,6 +277,34 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
 <context>
     <name>CoolingPage</name>
     <message>
+        <source>other settings, not compared: %1</source>
+        <translation>başka ayarlar, karşılaştırılmadı: %1</translation>
+    </message>
+    <message>
+        <source>No test under the current settings yet. The earlier runs (grey) were made under other settings, so they are kept but not compared; the next run starts a baseline for these settings.</source>
+        <translation>Geçerli ayarlarla henüz test yok. Önceki koşular (gri) başka ayarlarla yapıldı; saklanıyor ama karşılaştırılmıyor. Sonraki koşu bu ayarlar için temel çizgiyi başlatır.</translation>
+    </message>
+    <message>
+        <source>power profile</source>
+        <translation>güç profili</translation>
+    </message>
+    <message>
+        <source>power source</source>
+        <translation>güç kaynağı</translation>
+    </message>
+    <message>
+        <source>temperature target</source>
+        <translation>sıcaklık hedefi</translation>
+    </message>
+    <message>
+        <source>CPU threads</source>
+        <translation>CPU iş parçacığı</translation>
+    </message>
+    <message>
+        <source>test version</source>
+        <translation>test sürümü</translation>
+    </message>
+    <message>
         <location filename="work/gui/src/coolingpage.cpp" line="89" />
         <source>Other programs were using the CPU during the test, so this run cannot be compared with the baseline. Close them and run the test again.</source>
         <translation>Test sırasında başka programlar işlemciyi kullanıyordu; bu çalıştırma referansla karşılaştırılamaz. Onları kapatıp testi yeniden çalıştırın.</translation>
@@ -2530,6 +2558,18 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
 <context>
     <name>OverviewPage</name>
     <message>
+        <source>Mark reviewed</source>
+        <translation>İncelendi olarak işaretle</translation>
+    </message>
+    <message>
+        <source>You have looked into these unexpected shutdowns. A new one turns the card back on.</source>
+        <translation>Bu beklenmedik kapanışlara baktınız. Yeni bir kapanış kartı yeniden açar.</translation>
+    </message>
+    <message>
+        <source>%1 more marked reviewed.</source>
+        <translation>%1 tanesi daha incelendi olarak işaretli.</translation>
+    </message>
+    <message>
         <location filename="work/gui/src/overviewpage.cpp" line="59" />
         <source>Refresh</source>
         <translation>Yenile</translation>
@@ -3669,6 +3709,10 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
 </context>
 <context>
     <name>systools</name>
+    <message>
+        <source>(no matching files)</source>
+        <translation>(eşleşen dosya yok)</translation>
+    </message>
     <message>
         <location filename="work/gui/src/systools.cpp" line="132" />
         <source>    ! x%1 of the x%2 the device supports: the slot, a riser or a bifurcation setting may limit the lanes. Check again under load.

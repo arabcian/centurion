@@ -113,12 +113,14 @@ void OverviewPage::refresh() {
     for (const QString &d : configured) {
         if (!d.isEmpty() && d != QLatin1String("/")) dirs.append(d);
     }
-    // Kernel errors marked seen (Health → Mark all seen) are left out of the kernel card.
+    // Kernel errors marked seen (Health → Mark all seen) are left out of the kernel card, unclean
+    // boots marked reviewed (the card's own button) out of the unclean card.
     const QJsonObject req{{QStringLiteral("op"), QStringLiteral("overview")},
                           {QStringLiteral("battery"), BatteryPage::present()},
                           {QStringLiteral("dgpu"), DgpuPage::present()},
                           {QStringLiteral("backup_dirs"), dirs},
-                          {QStringLiteral("kernel_seen"), st.value(QStringLiteral("health/seen_ms"), 0).toLongLong() / 1000}};
+                          {QStringLiteral("kernel_seen"), st.value(QStringLiteral("health/seen_ms"), 0).toLongLong() / 1000},
+                          {QStringLiteral("unclean_seen"), st.value(QStringLiteral("health/unclean_seen"), 0).toLongLong()}};
     userhelper::run(req, this, [this](const QJsonObject &r) {
         busy_ = false;
         onReply(r);
@@ -179,10 +181,24 @@ void OverviewPage::rebuildCards(const QJsonArray &cards) {
         body->setStyleSheet(QStringLiteral("color:%1").arg(QString::fromLatin1(theme::FG_DIM)));
         col->addWidget(body);
 
+        auto *buttons = new QHBoxLayout;
+        buttons->addStretch(1);
+        if (id == QLatin1String("unclean") && level > kOk) {
+            // Stores the newest unclean boot's start: it and every older one stop counting, a later one counts again.
+            auto *reviewed = new QPushButton(tr("Mark reviewed"));
+            reviewed->setToolTip(tr("You have looked into these unexpected shutdowns. A new one turns the card back on."));
+            const qint64 newest = c.value(QStringLiteral("newest")).toInteger();
+            connect(reviewed, &QPushButton::clicked, this, [this, newest] {
+                guiSettings().setValue(QStringLiteral("health/unclean_seen"), newest);
+                refresh();
+            });
+            buttons->addWidget(reviewed);
+        }
         auto *show = new QPushButton(tr("Show"));
         const QString target = targetFor(id);
         connect(show, &QPushButton::clicked, this, [this, target] { Q_EMIT openPage(target); });
-        col->addWidget(show, 0, Qt::AlignRight);
+        buttons->addWidget(show);
+        col->addLayout(buttons);
 
         grid_->addWidget(card, i / 2, i % 2, Qt::AlignTop);
         ++i;
@@ -255,8 +271,10 @@ QString OverviewPage::cardBody(const QJsonObject &c) {
             .arg(c.value(QStringLiteral("crit7")).toInt()).arg(c.value(QStringLiteral("err7")).toInt());
     }
     if (id == QLatin1String("unclean")) {
-        return tr("%1 of the last %2 boots ended unexpectedly.")
-            .arg(c.value(QStringLiteral("unclean")).toInt()).arg(c.value(QStringLiteral("boots")).toInt());
+        QString text = tr("%1 of the last %2 boots ended unexpectedly.")
+                           .arg(c.value(QStringLiteral("unclean")).toInt()).arg(c.value(QStringLiteral("boots")).toInt());
+        if (const int reviewed = c.value(QStringLiteral("reviewed")).toInt()) text += QLatin1Char(' ') + tr("%1 more marked reviewed.").arg(reviewed);
+        return text;
     }
     if (id == QLatin1String("battery")) {
         return tr("%1 % of design capacity (%2 Wh full, measured %3).")

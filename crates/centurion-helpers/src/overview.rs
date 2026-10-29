@@ -8,7 +8,7 @@
 //!
 //! Levels: -1 no data yet, 0 ok, 1 attention, 2 problem.
 //!
-//! stdin:  {"op":"overview", "battery": bool, "dgpu": bool, "backup_dirs": ["/abs/dir", …]}
+//! stdin:  {"op":"overview", "battery": bool, "dgpu": bool, "backup_dirs": ["/abs/dir", …], "kernel_seen"?: epoch, "unclean_seen"?: epoch}
 //! stdout: {"ok": true, "cards": [{"id", "level", …}], "worst": n}
 //! stdin:  {"op":"dgpu_usage"}
 //! stdout: {"ok": true, "today": {"awake_pct", "hours"}, "wakes": [{"t", "holders"}], "power": {…}}
@@ -169,16 +169,21 @@ pub fn kernel_counts(log: &str, now: i64, offset: i64) -> KernelCounts {
 // ── unexpected shutdowns (exposure.json) ─────────────────────────────────────
 
 #[derive(Default, Debug, PartialEq)]
-pub struct Dirty { pub boots: u64, pub unclean: u64 }
+pub struct Dirty { pub boots: u64, pub unclean: u64, pub reviewed: u64, pub newest: i64 }
 
-/// Boots that started in the last 30 days, and how many of them did not end cleanly.
-pub fn dirty_boots(exposure: &Value, now: i64) -> Dirty {
+/// Boots that started in the last 30 days and how many of them did not end cleanly. `seen` is the
+/// start of the newest unclean boot the user marked reviewed (0 = none): unclean boots up to it are
+/// counted in `reviewed`, not `unclean`. A later crash starts later, so it is never hidden.
+/// `newest`: start of the newest unclean boot (what "Mark reviewed" stores).
+pub fn dirty_boots(exposure: &Value, now: i64, seen: i64) -> Dirty {
     let mut d = Dirty::default();
     for b in exposure["boots"].as_array().into_iter().flatten() {
-        let age = now - b["start"].as_i64().unwrap_or(0);
-        if !(0..=MONTH).contains(&age) { continue; }
+        let start = b["start"].as_i64().unwrap_or(0);
+        if !(0..=MONTH).contains(&(now - start)) { continue; }
         d.boots += 1;
-        if b["clean"].as_bool() == Some(false) { d.unclean += 1; }
+        if b["clean"].as_bool() != Some(false) { continue; }
+        if start <= seen { d.reviewed += 1; } else { d.unclean += 1; }
+        d.newest = d.newest.max(start);
     }
     d
 }
@@ -289,6 +294,8 @@ pub struct Inputs {
     pub today: String,
     pub health_log: String,
     pub exposure: Option<Value>,
+    /// Start of the newest unclean boot marked reviewed on the Overview (0 = none).
+    pub unclean_seen: i64,
     pub battery: Option<Value>,
     pub cooling: Option<Value>,
     pub sleep_log: String,
@@ -319,11 +326,11 @@ pub fn cards(i: &Inputs) -> Vec<Value> {
     let lvl = if k.crit24 > 0 { BAD } else if k.crit7 + k.err7 > 0 { WARN } else { OK };
     out.push(card("kernel", lvl, json!({"crit24": k.crit24, "err24": k.err24, "crit7": k.crit7, "err7": k.err7})));
 
-    let dirty = i.exposure.as_ref().map(|e| dirty_boots(e, i.now)).filter(|d| d.boots > 0);
+    let dirty = i.exposure.as_ref().map(|e| dirty_boots(e, i.now, i.unclean_seen)).filter(|d| d.boots > 0);
     match dirty {
         Some(d) => {
             let lvl = if d.unclean >= DIRTY_BAD { BAD } else if d.unclean >= DIRTY_WARN { WARN } else { OK };
-            out.push(card("unclean", lvl, json!({"boots": d.boots, "unclean": d.unclean})));
+            out.push(card("unclean", lvl, json!({"boots": d.boots, "unclean": d.unclean, "reviewed": d.reviewed, "newest": d.newest})));
         }
         None => out.push(card("unclean", NODATA, json!({}))),
     }
@@ -395,6 +402,7 @@ pub fn read_inputs(req: &Value) -> Inputs {
         today: ymd(now, offset),
         health_log: health,
         exposure: read_json(Path::new(stability::EXPOSURE)),
+        unclean_seen: req["unclean_seen"].as_i64().unwrap_or(0),
         battery: read_json(&st.join("battery.json")),
         cooling: read_json(&st.join("cooling.json")),
         sleep_log: read_tail(Path::new("/var/log/centurion/sleep.log"), TAIL_BYTES).unwrap_or_default(),
@@ -486,7 +494,23 @@ mod tests {
             {"boot": "c", "start": now - 4 * DAY, "clean": true},
             {"boot": "d", "start": now - DAY},
         ]});
-        assert_eq!(dirty_boots(&e, now), Dirty { boots: 3, unclean: 1 });
+        assert_eq!(dirty_boots(&e, now, 0), Dirty { boots: 3, unclean: 1, reviewed: 0, newest: now - 5 * DAY });
+    }
+
+    #[test]
+    fn reviewed_unclean_boots_stop_counting_until_the_next_one() {
+        let now = MAR1_2000 + 100 * DAY;
+        let e = json!({"boots": [
+            {"boot": "a", "start": now - 6 * DAY, "clean": false},
+            {"boot": "b", "start": now - 5 * DAY, "clean": false},
+            {"boot": "c", "start": now - DAY},
+        ]});
+        // Marked reviewed with the newest unclean start: both are reviewed, nothing is left.
+        assert_eq!(dirty_boots(&e, now, now - 5 * DAY), Dirty { boots: 3, unclean: 0, reviewed: 2, newest: now - 5 * DAY });
+        // The running boot (started before the mark) crashes later: it counts again.
+        let mut e2 = e.clone();
+        e2["boots"][2]["clean"] = json!(false);
+        assert_eq!(dirty_boots(&e2, now, now - 5 * DAY).unclean, 1);
     }
 
     #[test]

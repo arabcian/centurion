@@ -269,6 +269,18 @@ pub fn promote_latest(runs: &mut [Value], key: &str) -> bool {
     true
 }
 
+/// How a stored run's context (`ctx` of `run_json`) differs from `now` (`Context::to_json`):
+/// `[{"field", "then", "now"}]` for profile, power, each of FW_KEYS, threads and load_rev.
+/// This is why a run is not compared with the current settings.
+pub fn context_diff(then: &Value, now: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut cmp = |field: &str, a: &Value, b: &Value| if a != b { out.push(json!({"field": field, "then": a, "now": b})); };
+    for f in ["profile", "power"] { cmp(f, &then[f], &now[f]); }
+    for k in FW_KEYS { cmp(k, &then["limits"][k], &now["limits"][k]); }
+    for f in ["threads", "load_rev"] { cmp(f, &then[f], &now[f]); }
+    out
+}
+
 /// Drops every run of `key`.
 pub fn forget(runs: &mut Vec<Value>, key: &str) { runs.retain(|r| r["key"] != key); }
 
@@ -557,6 +569,16 @@ mod tests {
         forget(&mut runs, &c.key());
         assert!(runs.iter().all(|r| r["key"] != c.key().as_str()));
         assert!(!promote_latest(&mut runs, &c.key()));
+    }
+
+    #[test]
+    fn context_diff_names_what_changed() {
+        let (a, mut b) = (ctx(Some(95)), ctx(Some(89)));
+        assert!(context_diff(&a.to_json(), &a.to_json()).is_empty());
+        b.threads = 16;
+        let d = context_diff(&a.to_json(), &b.to_json());
+        assert_eq!(d.iter().map(|x| x["field"].as_str().unwrap()).collect::<Vec<_>>(), ["cpu_temp", "threads"]);
+        assert_eq!((d[0]["then"].as_i64(), d[0]["now"].as_i64()), (Some(95), Some(89)));
     }
 
     #[test]

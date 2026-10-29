@@ -1,6 +1,7 @@
 //! centurion-cooltest - cooling health test. Runs as the user (never through pkexec).
 //!
-//!   centurion-cooltest status               {"ok", "context", "key", "limit_c", "baseline", "runs", "latest", "assessment"}
+//!   centurion-cooltest status               {"ok", "context", "key", "limit_c", "baseline", "runs", "others", "latest", "assessment"}
+//!                                           ("others": the newest runs under other settings, each with "differs")
 //!   centurion-cooltest run [--seconds N]    JSON lines: {"phase", ...} progress, then {"ok", "run", "assessment"}
 //!   centurion-cooltest baseline             make the newest clean run of the current settings the baseline
 //!   centurion-cooltest forget               drop every stored run and fan-test result of the current settings
@@ -28,6 +29,8 @@ const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 /// Cool-down before the load: down to this die temperature, at most COOLDOWN_MAX.
 const COOLDOWN_TARGET_C: f64 = 50.0;
 const COOLDOWN_MAX: Duration = Duration::from_secs(120);
+/// Runs under other settings listed by `status` (newest first).
+const OTHERS_SHOWN: usize = 10;
 /// Other programs keeping this many CPUs busy over the run make it noisy.
 const NOISY_BUSY_CPUS: f64 = 1.0;
 
@@ -56,11 +59,18 @@ fn status() -> Value {
     let key = ctx.key();
     let runs = cool::load_runs(&cool::store_path());
     let mine: Vec<&Value> = runs.iter().filter(|r| r["key"] == key.as_str()).collect();
+    // Runs under other settings are kept but never compared; listed so they do not look lost.
+    let now_ctx = ctx.to_json();
+    let others: Vec<Value> = runs.iter().rev().filter(|r| r["key"] != key.as_str()).take(OTHERS_SHOWN).map(|r| {
+        let mut r = r.clone();
+        r["differs"] = json!(cool::context_diff(&r["ctx"], &now_ctx));
+        r
+    }).collect();
     let mut v = json!({
         "ok": true, "context": ctx.to_json(), "key": key, "limit_c": ctx.limit_c(),
         "has_sensor": centurion_helpers::bench::cpu_temp_c().is_some(),
         "fans": cool::fans_rpm().len(),
-        "baseline": cool::baseline_for(&runs, &key), "runs": mine, "total_runs": runs.len(),
+        "baseline": cool::baseline_for(&runs, &key), "runs": mine, "others": others, "total_runs": runs.len(),
     });
     if let Some((last, a)) = cool::latest_assessment(&runs, &key, ctx.limit_c()) {
         v["latest"] = last;

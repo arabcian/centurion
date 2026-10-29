@@ -315,9 +315,14 @@ private:
         if (c.first() == QLatin1String("@glob")) {
             const QString pat = c.at(1);
             const QString dir = pat.section('/', 0, -3), sub = pat.section('/', -2, -2), name = pat.section('/', -1);
+            int found = 0;
             for (const QString &e : QDir(dir).entryList({sub}, QDir::Dirs | QDir::NoDotAndDotDot))
-                for (const QString &f : QDir(dir + '/' + e).entryList({name}, QDir::Files))
+                for (const QString &f : QDir(dir + '/' + e).entryList({name}, QDir::Files)) {
                     out_ += "$ cat " + dir + '/' + e + '/' + f + '\n' + readFile(dir + '/' + e + '/' + f) + '\n';
+                    ++found;
+                }
+            // A page must never stay blank: say that nothing matched.
+            if (!found) out_ += "$ cat " + pat + '\n' + QCoreApplication::translate("systools", "(no matching files)") + "\n\n";
             step(i + 1);
             return;
         }
@@ -402,6 +407,10 @@ void addPages(QTabWidget *tabs) {
          {{"fwupdmgr", "get-devices"}, {"fwupdmgr", "get-updates"}}, nullptr, true},
     };
     for (const Spec &s : specs) {
+        // No ACPI thermal zone (common on AMD laptops; their temperatures are on the Sensors page): no Thermal page.
+        if (QLatin1String(s.title) == QLatin1String("Thermal") &&
+            QDir(QStringLiteral("/sys/class/thermal")).entryList({QStringLiteral("thermal_zone*")}, QDir::Dirs | QDir::NoDotAndDotDot).isEmpty())
+            continue;
         const QString title = QCoreApplication::translate("systools", s.title);
         // The SMART summary goes in front of the raw output it summarizes.
         if (s.rootTool && QLatin1String(s.rootTool) == QLatin1String("smart")) tabs->addTab(new SmartPage, QStringLiteral("SMART"));
