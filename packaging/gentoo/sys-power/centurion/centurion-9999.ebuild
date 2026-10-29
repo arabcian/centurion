@@ -143,7 +143,7 @@ src_install() {
 	exeopts -m0700
 	doexe "${r}"/nvcurve-root-helper
 	exeopts -m0755
-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest}
+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress}
 
 	cmake_src_install
 

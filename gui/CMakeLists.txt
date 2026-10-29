@@ -70,6 +70,8 @@ add_executable(centurion
     src/curvepage.cpp    src/curvepage.h
     src/memtest.cpp      src/memtest.h
     src/memtestbox.cpp   src/memtestbox.h
+    src/gpustress.cpp    src/gpustress.h
+    src/gpustressbox.cpp src/gpustressbox.h
     src/driftwatch.cpp   src/driftwatch.h
     src/smartwatch.cpp   src/smartwatch.h
     src/lidwatch.cpp     src/lidwatch.h
@@ -237,6 +239,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-memtest-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-memtest-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME memtest COMMAND centurion-memtest-test)
+    add_executable(centurion-gpustress-test tests/gpustress_test.cpp src/gpustress.cpp src/gpustress.h)
+    target_link_libraries(centurion-gpustress-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-gpustress-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME gpustress COMMAND centurion-gpustress-test)
     add_executable(centurion-klogview-test tests/klogview_test.cpp src/klogview.cpp src/klogview.h)
     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)

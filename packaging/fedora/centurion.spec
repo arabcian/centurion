@@ -99,6 +99,7 @@ fi
 %{_bindir}/centurion-netguard
 %{_bindir}/centurion-display
 %{_bindir}/centurion-cooltest
+%{_bindir}/centurion-gpustress
 %dir %{_libexecdir}/centurion
 %{_libexecdir}/centurion/legion-profile-helper
 %{_libexecdir}/centurion/fwattr-helper

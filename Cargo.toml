@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/centurion-helpers", "crates/centurion-spectrum", "crates/nvcurve"]
+members = ["crates/centurion-helpers", "crates/centurion-spectrum", "crates/nvcurve", "crates/centurion-gpustress"]
 
 [workspace.package]
 edition = "2021"

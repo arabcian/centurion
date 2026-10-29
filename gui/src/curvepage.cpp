@@ -1,5 +1,6 @@
 #include "curvepage.h"
 #include "memtestbox.h"
+#include "gpustressbox.h"
 #include "privileged.h"
 #include "sysinfo.h"
 #include "theme.h"
@@ -35,6 +36,19 @@ static QSettings guiIni() {
 static QString bootId() {
     QFile f(QStringLiteral("/proc/sys/kernel/random/boot_id"));
     return f.open(QIODevice::ReadOnly) ? QString::fromLatin1(f.readAll()).trimmed() : QString();
+}
+
+static bool nvidiaUsable();  // defined below, with the guard that uses it
+
+/// An NVIDIA display-class function is on the PCI bus (same directory listing as nvidiaUsable: no GPU wake-up).
+/// The GPU test is held back while one is there but unusable; machines with only AMD / Intel GPUs are not held back.
+static bool nvidiaOnBus() {
+    const QDir d(QStringLiteral("/sys/bus/pci/devices"));
+    for (const QString &e : d.entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::System)) {
+        auto rd = [&](const char *f) { QFile x(d.filePath(e) + '/' + QLatin1String(f)); return x.open(QIODevice::ReadOnly) ? x.readAll().trimmed() : QByteArray(); };
+        if (rd("vendor") == "0x10de" && rd("class").startsWith("0x03")) return true;
+    }
+    return false;
 }
 
 static QString groupOf(const QString &kind) { return kind == QLatin1String("gpu_curve") ? QStringLiteral("gpu") : QStringLiteral("cpu"); }
@@ -118,11 +132,15 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
     memTest_ = new MemTestBox;
     connect(memTest_, &MemTestBox::alert, this, &CurvePage::alert);
     root->addWidget(memTest_);
+    gpuTest_ = new GpuStressBox;
+    connect(gpuTest_, &GpuStressBox::alert, this, &CurvePage::alert);
+    root->addWidget(gpuTest_);
 }
 
 void CurvePage::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
     recompute();
+    gpuTest_->refresh(nvidiaOnBus() && !nvidiaUsable());
 }
 
 namespace {
@@ -264,6 +282,7 @@ void CurvePage::resetGpuCurve(const QString &title) {
 
 void CurvePage::onFault(const QJsonObject &e) {
     memTest_->onFault(e);
+    gpuTest_->onFault(e);
     const QString kind = e.value("kind").toString();
     const QString title = e.value("title").toString();
     if (kind == QLatin1String("xid")) {

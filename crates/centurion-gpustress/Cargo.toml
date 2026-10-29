@@ -1,0 +1,25 @@
+[package]
+name = "centurion-gpustress"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Centurion GPU stability test: Vulkan compute work with a known result, every wrong bit counted"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "centurion-gpustress"
+path = "src/main.rs"
+
+[dependencies]
+# Vulkan is loaded at run time (Entry::load), so no SDK and no link-time libvulkan.
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+serde_json = "1"
+libc = "0.2"
+
+[build-dependencies]
+# WGSL -> SPIR-V at build time, so no external shader compiler is needed.
+naga = { version = "22", features = ["wgsl-in", "spv-out"] }
+
+[features]
+# Test-only: flips one word after the write dispatch of pass 3 (VRAM) / perturbs one invocation (core).
+fault-inject = []
