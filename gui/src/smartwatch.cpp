@@ -32,7 +32,8 @@ QString todayIso() { return QDate::currentDate().toString(Qt::ISODate); }
 // Only a wheel/sudo admin gets the helper without a password, so only they get the unattended sample.
 bool adminAtMachine() {
     std::vector<gid_t> gids(static_cast<size_t>(std::max(getgroups(0, nullptr), 0)));
-    getgroups(static_cast<int>(gids.size()), gids.data());
+    // Only the entries getgroups filled: on failure (-1) none, never zero-initialised gids.
+    gids.resize(static_cast<size_t>(std::max(getgroups(static_cast<int>(gids.size()), gids.data()), 0)));
     gids.push_back(getgid());
     for (const char *name : {"wheel", "sudo"}) {
         const group *g = getgrnam(name);
@@ -105,6 +106,13 @@ QStringList record(const QJsonArray &disks) {
         disk[QStringLiteral("model")] = model;
         disk[QStringLiteral("samples")] = samples;
         all[id] = disk;
+    }
+    // A disk not seen for MAX_DAYS (a USB stick, a replaced drive) is dropped whole, so the file stays bounded.
+    const QString oldest = QDate::currentDate().addDays(-MAX_DAYS).toString(Qt::ISODate);
+    for (auto it = all.begin(); it != all.end();) {
+        const QJsonArray samples = it->toObject().value(QStringLiteral("samples")).toArray();
+        if (samples.isEmpty() || samples.last().toObject().value(QStringLiteral("d")).toString() < oldest) it = all.erase(it);
+        else ++it;
     }
     hist[QStringLiteral("disks")] = all;
     hist[QStringLiteral("sampled")] = today;

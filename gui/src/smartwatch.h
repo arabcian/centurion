@@ -1,7 +1,8 @@
 #pragma once
 // SMART record and disk-health alerts.
 //
-// The record is kept by the GUI as the user, in ~/.local/state/centurion/smart.json (730 days):
+// The record is kept by the GUI as the user, in ~/.local/state/centurion/smart.json (730 days; a disk
+// not seen for that long is dropped):
 //   "disks":   {id: {"model", "samples": [{"d", "temp_c", "passed", "life_used_pct", "spare_pct",
 //                                          "spare_threshold_pct", "media_errors", "unsafe_shutdowns",
 //                                          "critical_warning", "written_tb", "power_on_hours"}]}}

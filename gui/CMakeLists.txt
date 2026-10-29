@@ -68,6 +68,8 @@ add_executable(centurion
     src/i18n.cpp         src/i18n.h
     src/trialbar.cpp     src/trialbar.h
     src/curvepage.cpp    src/curvepage.h
+    src/memtest.cpp      src/memtest.h
+    src/memtestbox.cpp   src/memtestbox.h
     src/driftwatch.cpp   src/driftwatch.h
     src/smartwatch.cpp   src/smartwatch.h
     src/lidwatch.cpp     src/lidwatch.h
@@ -231,6 +233,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
+    add_executable(centurion-memtest-test tests/memtest_test.cpp src/memtest.cpp src/memtest.h)
+    target_link_libraries(centurion-memtest-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-memtest-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME memtest COMMAND centurion-memtest-test)
     add_executable(centurion-klogview-test tests/klogview_test.cpp src/klogview.cpp src/klogview.h)
     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)

@@ -107,7 +107,9 @@ fn clear_in(pstore: &str, archive: &str, log: &mut dyn FnMut(&str)) -> Value {
     if let Err(e) = crate::secure_dir(archive) { return json!({"ok": false, "error": e}); }
     let (mut archived, mut removed, mut errors) = (0u32, 0u32, Vec::<String>::new());
     for (name, path) in files {
-        let Some((mtime, _, bytes)) = read_file(&path) else { errors.push(format!("{name}: cannot read")); continue };
+        let Some((mtime, size, bytes)) = read_file(&path) else { errors.push(format!("{name}: cannot read")); continue };
+        // read_file stops at MAX_FILE: a clipped copy is not an archive of the record, so it stays in place.
+        if (bytes.len() as u64) < size { errors.push(format!("{name}: larger than {} MiB, left in place", MAX_FILE >> 20)); continue; }
         // The whole record (not the clipped tail), scrubbed: the archive is world-readable.
         let text = crate::health::scrub(&String::from_utf8_lossy(&bytes));
         let dest = format!("{archive}/{}", archive_name(mtime, &name));
@@ -221,6 +223,18 @@ mod tests {
         let empty = tmp("clr-e");
         assert_eq!(clear_in(empty.to_str().unwrap(), "/nonexistent/centurion-archive", &mut |_| {})["ok"], true);
         for d in [&p, &a, &empty] { let _ = std::fs::remove_dir_all(d); }
+    }
+
+    #[test]
+    fn a_record_too_large_to_archive_whole_stays() {
+        if unsafe { libc::geteuid() } != 0 { return; }  // secure_dir needs root
+        let (p, a) = (tmp("big-p"), tmp("big-a"));
+        std::fs::write(p.join("dmesg-ramoops-0"), vec![b'x'; MAX_FILE as usize + 1]).unwrap();
+        let r = clear_in(p.to_str().unwrap(), a.to_str().unwrap(), &mut |_| {});
+        assert_eq!((r["ok"].as_bool(), r["removed"].as_u64()), (Some(false), Some(0)), "{r}");
+        assert!(p.join("dmesg-ramoops-0").exists());
+        assert_eq!(std::fs::read_dir(&a).unwrap().count(), 0);
+        for d in [&p, &a] { let _ = std::fs::remove_dir_all(d); }
     }
 
     #[test]

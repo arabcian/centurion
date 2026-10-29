@@ -64,6 +64,7 @@ const ToolPkg TOOL_PKGS[] = {
     {"df", "sys-apps/coreutils", "coreutils", "coreutils", "coreutils"},
     {"mokutil", "sys-boot/mokutil", "mokutil", "mokutil", "mokutil"},
     {"fwupdmgr", "sys-apps/fwupd", "fwupd", "fwupd", "fwupd"},
+    {"memtester", "sys-apps/memtester", "memtester", "memtester", "memtester"},
 };
 
 // "gentoo", "arch", "fedora" (Fedora and the RHEL family), "debian" (Debian and Ubuntu), or "" for any other
@@ -365,6 +366,8 @@ private:
 } // namespace
 
 namespace systools {
+
+QString installCommand(const QString &tool) { return installHint(tool); }
 
 void addPages(QTabWidget *tabs) {
     const Spec specs[] = {

@@ -4344,4 +4344,151 @@ Bu %1. artım: tam imajı ve 1–%1 artımları bu sırayla açılır. Araların
         <translation>Listede hiç girdi yok.</translation>
     </message>
 </context>
+<context>
+    <name>MemTestBox</name>
+    <message>
+        <source>Memory test</source>
+        <translation>Bellek testi</translation>
+    </message>
+    <message>
+        <source>Checks memory timings by writing and reading back most of the free memory. Needs stressapptest or memtester: %1</source>
+        <translation>Boş belleğin çoğunu yazıp geri okuyarak bellek zamanlamalarını denetler. stressapptest ya da memtester gerekir: %1</translation>
+    </message>
+    <message>
+        <source>Writes and reads back a share of the free memory with %1 and watches for machine checks meanwhile. The machine is slow while it runs. Each result is kept with the BIOS memory timings in effect.</source>
+        <translation>Boş belleğin bir kısmını %1 ile yazıp geri okur, bu sırada makine denetimi (MCE) olaylarını izler. Test sürerken makine yavaşlar. Her sonuç, o anki BIOS bellek zamanlamalarıyla birlikte saklanır.</translation>
+    </message>
+    <message>
+        <source>Free memory to test</source>
+        <translation>Test edilecek boş bellek</translation>
+    </message>
+    <message>
+        <source>Duration</source>
+        <translation>Süre</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n min</source>
+        <translation>
+            <numerusform>%n dk</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Başlat</translation>
+    </message>
+    <message>
+        <source>Date</source>
+        <translation>Tarih</translation>
+    </message>
+    <message>
+        <source>Tool</source>
+        <translation>Araç</translation>
+    </message>
+    <message>
+        <source>Memory</source>
+        <translation>Bellek</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>Sonuç</translation>
+    </message>
+    <message>
+        <source>BIOS memory timings</source>
+        <translation>BIOS bellek zamanlamaları</translation>
+    </message>
+    <message>
+        <source>memtester must lock the memory it tests, and this session may lock only %1 MiB (RLIMIT_MEMLOCK). Raise the limit (for example &quot;@wheel - memlock unlimited&quot; in /etc/security/limits.conf, then log in again) or install stressapptest, which needs no lock.</source>
+        <translation>memtester test ettiği belleği kilitlemek zorunda ve bu oturum yalnızca %1 MiB kilitleyebiliyor (RLIMIT_MEMLOCK). Sınırı yükseltin (örneğin /etc/security/limits.conf içine &quot;@wheel - memlock unlimited&quot;, sonra yeniden oturum açın) ya da kilit gerektirmeyen stressapptest'i kurun.</translation>
+    </message>
+    <message>
+        <source>Too little free memory to test (under %1 MiB).</source>
+        <translation>Test için boş bellek çok az (%1 MiB'ın altında).</translation>
+    </message>
+    <message>
+        <source>Reading the BIOS memory timings…</source>
+        <translation>BIOS bellek zamanlamaları okunuyor…</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Durdur</translation>
+    </message>
+    <message numerus="yes">
+        <source>Testing %1 MiB with %2: %3 of %4 min, %n error(s)</source>
+        <translation>
+            <numerusform>%2 ile %1 MiB test ediliyor: %3 / %4 dk, %n hata</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n machine check(s)</source>
+        <translation>
+            <numerusform>%n makine denetimi</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>held to the memlock limit</source>
+        <translation>memlock sınırıyla kısıtlı</translation>
+    </message>
+    <message>
+        <source>No errors.</source>
+        <translation>Hata yok.</translation>
+    </message>
+    <message>
+        <source>Memory errors: %1 from the test, %2 machine check(s). The memory timings or speed are not stable.</source>
+        <translation>Bellek hataları: testten %1, %2 makine denetimi. Bellek zamanlamaları ya da hızı kararlı değil.</translation>
+    </message>
+    <message>
+        <source>Not finished: the test was stopped or ended early (exit code %1).</source>
+        <translation>Tamamlanmadı: test durduruldu ya da erken bitti (çıkış kodu %1).</translation>
+    </message>
+    <message>
+        <source>memtester could not lock its memory: parts of it may have been swapped out and not tested.</source>
+        <translation>memtester belleğini kilitleyemedi: bir kısmı takas alanına taşınmış ve test edilmemiş olabilir.</translation>
+    </message>
+    <message>
+        <source>The result could not be saved to %1.</source>
+        <translation>Sonuç %1 dosyasına kaydedilemedi.</translation>
+    </message>
+    <message>
+        <source>Memory test failed</source>
+        <translation>Bellek testi başarısız</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n error(s) during the memory test.</source>
+        <translation>
+            <numerusform>Bellek testi sırasında %n hata.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>not readable on this machine</source>
+        <translation>bu makinede okunamıyor</translation>
+    </message>
+    <message>
+        <source>%1 MT/s</source>
+        <translation>%1 MT/s</translation>
+    </message>
+    <message>
+        <source>all Auto</source>
+        <translation>tümü Auto</translation>
+    </message>
+    <message>
+        <source>(changed this boot: not in effect until the next boot)</source>
+        <translation>(bu açılışta değiştirildi: bir sonraki açılışa kadar etkin değil)</translation>
+    </message>
+    <message>
+        <source>pass</source>
+        <translation>geçti</translation>
+    </message>
+    <message>
+        <source>fail</source>
+        <translation>kaldı</translation>
+    </message>
+    <message>
+        <source>incomplete</source>
+        <translation>tamamlanmadı</translation>
+    </message>
+    <message>
+        <source>%1 MiB</source>
+        <translation>%1 MiB</translation>
+    </message>
+</context>
 </TS>

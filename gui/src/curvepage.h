@@ -10,11 +10,13 @@
 // GPU curve ← NVIDIA Xid / GSP timeouts / D3cold failures; CPU curve (Curve Optimizer or Intel
 // undervolt) ← machine checks and lockups. Xid 45 and 154 are follow-ups of another Xid and are
 // not counted. A reboot resets every curve, so each boot starts at stock.
+// Below the table: the memory test (memtestbox.h), for BIOS memory timings.
 #include <QJsonObject>
 #include <QWidget>
 
 class QCheckBox;
 class QLabel;
+class MemTestBox;
 class QTreeWidget;
 
 class CurvePage : public QWidget {
@@ -42,5 +44,6 @@ private:
     QTreeWidget *table_;
     QLabel *note_;
     QCheckBox *gpuReset_, *cpuReset_;
+    MemTestBox *memTest_;
     qint64 lastGpuReset_ = 0, lastCpuReset_ = 0;  // ms since epoch: one reset per burst of errors
 };

@@ -460,6 +460,47 @@ pub fn aod_get() -> Value {
            "backup": latest_backup().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))})
 }
 
+/// tune-profile-helper op "mem_snapshot" (any user, read-only; efivarfs files are world-readable): the BIOS
+/// memory timing settings for Health → Curve stability → Memory test, kept with each result.
+/// {"available": false, "error"} on a machine whose layout is not mapped; otherwise "speed_mts", "manual"
+/// ({name: value} of the overridden fields; empty = all Auto) and "pending" (changed this boot: the
+/// running timings are still the earlier ones until the next boot).
+pub fn aod_snapshot() -> Value {
+    match aod_supported().and_then(|_| aod_load()) {
+        Ok(b) => aod_snapshot_of(&b, Path::new(PENDING).exists()),
+        Err(e) => json!({"available": false, "error": e}),
+    }
+}
+
+fn aod_snapshot_of(b: &[u8], pending: bool) -> Value {
+    let manual: serde_json::Map<String, Value> = AOD_FIELDS.iter()
+        .filter_map(|&(n, i, _, _)| { let (mode, v) = rec(b, i); (mode == 1).then(|| (n.to_owned(), json!(v))) })
+        .collect();
+    json!({"available": true, "speed_mts": rec(b, 0).1, "manual": manual, "pending": pending})
+}
+
+#[cfg(test)]
+mod aod_snapshot_tests {
+    use super::*;
+    #[test]
+    fn only_overridden_fields_are_listed() {
+        let mut b = vec![0u8; AOD_SIZE];
+        let put = |b: &mut [u8], i: usize, mode: u8, v: u16| {
+            let o = AOD_BASE + 3 * i;
+            b[o] = mode;
+            b[o + 1..o + 3].copy_from_slice(&v.to_le_bytes());
+        };
+        put(&mut b, 0, 1, 6000);
+        put(&mut b, 1, 1, 36);   // tCL manual
+        put(&mut b, 3, 0, 40);   // tRP auto: not listed
+        let s = aod_snapshot_of(&b, true);
+        assert_eq!(s["speed_mts"], 6000);
+        assert_eq!(s["manual"], json!({"tCL": 36}));
+        assert_eq!(s["pending"], true);
+        assert_eq!(aod_snapshot_of(&vec![0u8; AOD_SIZE], false)["manual"], json!({}));
+    }
+}
+
 fn set_immutable(path: &str, on: bool) -> Result<(), String> {
     use std::os::unix::io::AsRawFd;
     const GET: libc::c_ulong = 0x8008_6601;

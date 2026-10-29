@@ -1,4 +1,5 @@
 #include "curvepage.h"
+#include "memtestbox.h"
 #include "privileged.h"
 #include "sysinfo.h"
 #include "theme.h"
@@ -114,6 +115,9 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
     connect(bRefresh, &QPushButton::clicked, this, &CurvePage::recompute);
     row->addWidget(bRefresh);
     root->addLayout(row);
+    memTest_ = new MemTestBox;
+    connect(memTest_, &MemTestBox::alert, this, &CurvePage::alert);
+    root->addWidget(memTest_);
 }
 
 void CurvePage::showEvent(QShowEvent *e) {
@@ -259,6 +263,7 @@ void CurvePage::resetGpuCurve(const QString &title) {
 }
 
 void CurvePage::onFault(const QJsonObject &e) {
+    memTest_->onFault(e);
     const QString kind = e.value("kind").toString();
     const QString title = e.value("title").toString();
     if (kind == QLatin1String("xid")) {
