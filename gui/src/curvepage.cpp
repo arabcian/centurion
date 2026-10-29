@@ -246,6 +246,18 @@ static bool nvidiaUsable() {
     return false;
 }
 
+void CurvePage::resetGpuCurve(const QString &title) {
+    const QString st = currentState(QStringLiteral("gpu"));
+    if (st == QLatin1String("stock")) return;
+    lastGpuReset_ = QDateTime::currentMSecsSinceEpoch();
+    privileged::run(privileged::helperPath(QStringLiteral("nvcurve-root-helper")), QJsonObject{{"op", "reset_gpu_curve"}}, this,
+                    [this, title, st](const privileged::Result &r) {
+                        if (r.ok()) Q_EMIT curveReset(QStringLiteral("gpu"), profileOf(st), title + QStringLiteral("\nGPU curve reset to stock."));
+                        else Q_EMIT alert(QStringLiteral("GPU curve guard"), QStringLiteral("Could not reset the GPU curve: ") + r.message());
+                        if (isVisible()) recompute();
+                    }, 120000);
+}
+
 void CurvePage::onFault(const QJsonObject &e) {
     const QString kind = e.value("kind").toString();
     const QString title = e.value("title").toString();
@@ -259,13 +271,7 @@ void CurvePage::onFault(const QJsonObject &e) {
         const bool gone = code == 79;
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         if (gpuReset_->isChecked() && !gone && nowMs - lastGpuReset_ > RESET_BURST_MS && nvidiaUsable()) {
-            lastGpuReset_ = nowMs;
-            privileged::run(privileged::helperPath(QStringLiteral("nvcurve-root-helper")), QJsonObject{{"op", "reset_gpu_curve"}}, this,
-                            [this, title, st](const privileged::Result &r) {
-                                if (r.ok()) Q_EMIT curveReset(QStringLiteral("gpu"), profileOf(st), title + QStringLiteral("\nGPU curve reset to stock."));
-                                else Q_EMIT alert(QStringLiteral("GPU curve guard"), QStringLiteral("Could not reset the GPU curve: ") + r.message());
-                                if (isVisible()) recompute();
-                            }, 120000);
+            resetGpuCurve(title);
             msg += QStringLiteral(" Resetting it to stock…");
         } else if (gone) {
             msg += QStringLiteral(" The card fell off the bus: reboot (the curve is gone with it).");

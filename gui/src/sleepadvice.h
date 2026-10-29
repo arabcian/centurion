@@ -25,8 +25,19 @@ struct Sleep {
     QStringList wokeBy;            // kernel wakeup-source names
     QString statusBefore;          // battery status when it went to sleep ("Discharging" = on battery)
     double energyBefore = 0, energyAfter = 0, full = 0;
+    bool hasHwSleep = false;       // the sleep hook recorded the hardware sleep time (0 is a reading too)
+    double hwSleepUs = 0;          // time in the hardware (SoC) low-power state
 };
 Sleep parse(const QJsonObject &o);
+
+// "Why doesn't the hardware sleep?" is offered when the last sleeps of a useful length spent almost no
+// time in the hardware low-power state (the sleep hook measured it).
+inline constexpr int HW_IDLE_SLEEPS = 3;
+inline constexpr qint64 HW_IDLE_MIN_S = 10 * 60;
+inline constexpr double HW_IDLE_SHARE = 0.02;
+/// `rowsOldestFirst`: the last HW_IDLE_SLEEPS sleeps with a reading and at least HW_IDLE_MIN_S long
+/// are all below HW_IDLE_SHARE. Sleeps without a reading or too short are skipped.
+bool hwSleepIdle(const QList<Sleep> &rowsOldestFirst);
 
 /// Lid or power / sleep button (by kernel wakeup-source or ACPI device name).
 bool isUserWake(const QString &name);

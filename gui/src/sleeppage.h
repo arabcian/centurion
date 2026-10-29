@@ -7,12 +7,16 @@
 //   * ACPI wake sources (/proc/acpi/wakeup) with a switch each — remembered for every boot by
 //     tune-helper (needs the centurion-tune service to put them back at boot);
 //   * suggestions: an enabled ACPI wake source that keeps waking the machine with the lid closed,
-//     with the battery it cost and a button to switch it off (sleepadvice.h).
-// Everything is read on show only; nothing runs in the background.
+//     with the battery it cost and a button to switch it off (sleepadvice.h);
+//   * "Why doesn't the hardware sleep?": offered when the recent sleeps spent almost no time in the
+//     hardware low-power state; one button runs the read-only check (health-reader, sleepdiag.rs);
+//   * the limit for the "lid closed, still awake" tray warning (lidwatch.h) is set here (gui.ini).
+// Everything is read on show only; nothing runs in the background. The check runs on the button only.
 #include <QWidget>
 
 class QJsonObject;
 class QLabel;
+class QPushButton;
 class QTreeWidget;
 
 class SleepPage : public QWidget {
@@ -29,8 +33,12 @@ private:
     void fillWake();
     void fillAdvice(const QList<QJsonObject> &rowsOldestFirst);
     void setWake(const QString &dev, bool on);
-    QLabel *summary_, *hint_, *sources_;
+    void diagnose();
+    void showDiagnosis(const QJsonObject &r);
+    static QString findingText(const QString &code, const QJsonValue &detail);
+    QLabel *summary_, *hint_, *sources_, *diagOut_;
     QWidget *advice_;
+    QPushButton *diag_;
     QTreeWidget *sleeps_, *wake_;
     bool filling_ = false;
 };

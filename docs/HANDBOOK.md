@@ -159,8 +159,46 @@ Apply when finished — do not apply in a loop (writes go to non-volatile memory
 
 ## 9. Health
 
+The sub-tabs are grouped: **Overview**, **Diagnostics** (Monitor, Boot history, Curve stability, Kernel log), **Power** (Sleep, Battery use, dGPU power, Cooling), **Network**, **System info** (SMART and the tool pages) and **Backup**. Health opens on the sub-tab you had open last time.
+
+### Overview
+The first sub-tab: one card per area, coloured by its level — **ok** (green), **watch** (yellow), **attention** (red), or **no data** (grey) until there is something to judge:
+- *Kernel errors* — critical and error lines of the last 24 h and 7 days.
+- *Unclean shutdowns* — boots that ended in a crash, hang or power loss: watch at 1, attention at 3 or more.
+- *Battery health* (only with a battery) — full capacity against design: ok from 80 %, watch from 70 %, attention below.
+- *Cooling test* — the verdict of the last cooling test (stable, close to the limit, reached the limit, or inconclusive).
+- *Last backup* — age of the newest archive in the backup folders: ok up to 7 days, watch up to 30, attention after that. The system image folder (`/`) is not read.
+- *dGPU awake time today* (only with an NVIDIA dGPU) — the share of today's time on battery the GPU was awake; watch above 20 %.
+- *Sleep drain* — battery per hour asleep (watch above 2 %/h) and any dGPU error on wake (attention).
+
+**Show** opens the sub-tab with the details. The worst level also appears as a small badge on Home and as a line at the top of the tray menu, both hidden until the first reading. The thresholds are fixed rules of thumb, not a diagnosis.
+
+Nothing runs in the background: the page reads its data when it is shown, once at start-up, a few seconds after a kernel fault, and on **Refresh**.
+
+### Diagnostic report
+**Create diagnostic report…** at the bottom of Overview builds one `.tar.gz` for a bug report. A preview comes first: every file with its status (included, not present, too large or unreadable — the last two are left out), and the text as it will be saved. **Save…** writes the archive (readable by you only) where you choose. Nothing is uploaded.
+
+The report holds the system identity from DMI (vendor, model, BIOS, kernel, release, NVIDIA driver version), the Health records (health and kernel logs, sleep and cooling records, battery and dGPU usage, the boot record, the last 200 writes Centurion made to sysfs or firmware) and a README. Long logs contribute only their recent part.
+
+Before saving, serial numbers, UUIDs and asset tags are replaced with `<hidden>`, MAC addresses with `<mac>`, IPv4 addresses with `<ip>`, and kernel addresses with `<addr>`. The replacement is best effort: look through the preview before you attach the archive anywhere public.
+
 ### Monitor
 *Scan now* lists NVIDIA Xid / GSP, MCE, AER, lockups and guard rollbacks with uptime. Events are saved across boots — **Open saved log** / **Clear saved log**. Use it first when games crash after tuning.
+
+Above the list, a chart of the last 30 days: one column per day, stacked by kind (Xid, NVMe, file system, and so on), read from the saved log. Click a day to show only its rows from this session; click it again to show all. The list holds this session only, so an older day points you to the saved log.
+
+The same event repeating within five minutes is one row, marked `×N`, with its first and last uptime; the saved log still has every line. **Mark all seen** stops the events shown so far from counting as new: the summary then reads *Not seen yet* and counts only what came after, and the Overview's kernel card and the Home badge follow the same count. Nothing is deleted by it.
+
+Double-click an event (or right-click it) to see it in the Kernel log: the 20 saved lines before and after it, the event itself in bold. The menu also offers the page the event points to, when there is something to do there now: dGPU power for Xid 79 and D3cold; **Reset GPU curve to stock** for a GPU Xid while a GPU curve is in effect; the CPU curve tab for a machine check or lockup while a CPU curve is in effect; SMART for NVMe and file system errors.
+
+Also recognised: NVMe timeouts and controller resets, file system errors (ext4, Btrfs, XFS), Intel iGPU hangs (i915 / xe), Wi-Fi firmware crashes (iwlwifi, mt79xx, ath1xk), critical / throttling temperatures, out-of-memory kills and kernel oops / BUG / WARNING lines (with the module name when the kernel prints one). Their counters appear in the summary line once seen. They are shown and saved like the rest but do not count against a CPU / GPU curve in Curve stability.
+
+### Boot history
+One row per boot Centurion has seen: when it started, how long it lasted, how it ended (**clean**, **unclean** = crash, hang or power loss, **running**, or *not tracked* when the boot guard did not run in it), its kernel events and the CPU / GPU curves that were in effect. Select a row for the details. For an unclean boot you also get the last 30 saved kernel-log lines of that boot and the pstore records (panic text the kernel saved across the crash, with kernel addresses removed). Repeated unclean boots with the same curve in effect point at that curve.
+
+When the previous session ended unexpectedly, a band at the top of Monitor says so (*Show* opens this page, *Dismiss* hides it for that boot).
+
+pstore records pile up in firmware (EFI) storage on systems without systemd-pstore. **Archive and clear pstore…** (only shown while there are records) copies them to `/var/lib/centurion/pstore` — with kernel addresses removed, the newest 30 are kept — and then deletes them from `/sys/fs/pstore`; a record that could not be archived is not deleted. The deletion is listed in `/var/log/centurion/writes.log`.
 
 ### Curve stability
 Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journaled by the helpers; this page lays the saved Xid / GSP / D3cold and machine-check / lockup errors over it: hours in effect, errors, errors per 10 h per profile, highlighted when clearly worse than stock. Optional guard: *Take the GPU curve back to stock after an Xid* and the same for the CPU curve after a machine check — otherwise you only get a notification naming the curve. After such a reset the notification has *Undo*, which applies the saved profile that was in effect again (not for unsaved edits). The curve tabs also have **Trial apply**: after Apply you have 30 s to press *Keep*, else the curve goes back to stock.
@@ -168,14 +206,28 @@ Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journ
 ### Sleep
 Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`). **Suggestions**: an enabled wake source that woke the machine at least twice with the lid closed (neither the lid nor the power button among the wake sources) is listed with the battery the machine then spent awake before sleeping again, and a *Disable* button that does the same as unticking it. The battery cost is measured only on battery and when the next sleep came within 2 h.
 
+**Warn when the lid has been closed this long** (default 10 minutes, 0 = never): a laptop shut in a bag but still awake gets one tray notification after that many minutes, with the CPU temperature and the fastest fan. It is not sent when a monitor is connected besides the built-in panel, and nothing is checked while the lid is open. It works while the window is closed, from UPower's lid signal; no polling.
+
 ### Cooling
 Does the laptop still cool as well as it did? **Run cooling test** loads every CPU thread for 2, 4 (recommended) or 8 minutes after a short cool-down, and records die temperature, the fastest fan and the clock. Nothing runs in the background; the fans will be loud. The first clean run under a set of firmware settings (PL1 / PL2 / PL3, CPU temperature target, power profile, power source) is the **baseline**; later runs are compared with it. A hotter die at the same load, louder fans or, when the firmware holds the die at its temperature target, a lower clock suggest dust in the heat sink or dried-out paste: clean the vents and fans first. A changed power limit or temperature target starts a new baseline, because it changes how much heat the load makes. Runs disturbed by other programs or started warm are marked and not compared. For a fair test: charger in, fans on Auto, other programs closed, same room, same length. After cleaning, **Use the latest run as baseline**. **Forget results for these settings** deletes the stored runs; they live in `~/.local/state/centurion/cooling.json`.
+
+Every run also records how unevenly the fans spin (the gap between the fastest and the slowest fan, in points). A gap that grows by 15 points or more against the baseline is a watch item — one fan is slower than the others: dust in that fan, a blocked duct or a loose cable. A baseline from before this was recorded cannot be compared.
+
+**Fan max test…** puts every fan at maximum (the same as *Max all fans* on Home) for 30 seconds, after 5 seconds of reading, and records each fan's highest speed. Afterwards the fans go back to what they were set to on Home. It needs the Home tab's fan controls, and it asks first because the fans will be loud. The first test under a set of firmware settings is the baseline for the peaks; a fan peaking 8 % or more under its baseline is flagged (dust in that fan, or a blocked air path). Cancelling restores the fans at once. **Forget results for these settings** also forgets the fan baseline (`fanmax.json`).
 
 ### Battery use
 Time left at the current draw, battery drain per scene (energy actually taken from the battery while each scene was active, sleep excluded) with "full charge lasts ~", and a daily capacity / health history.
 
+The charts: average draw per scene as bars, and the health line (full charge against design capacity, one point per day). **Wear forecast** under the history fits a straight line to the last 180 days of daily samples. With at least 30 samples it says when health reaches 80 % of design at the current rate, in months. A flat or rising trend gets no forecast, and fewer than 30 samples get none either. It is a rule of thumb from the samples, not a warranty.
+
+**Charger use** — time on the charger and how much of it the battery spent at full charge (98 % or more), kept for 60 days. When more than 70 % of the charger time over the last 30 days was at full charge (and at least 20 hours of charger time), and the battery has a *Long_Life* charge mode that is not selected, the page offers **Set charge mode to Long_Life…** (asks for the password, same helper as Home). Below that, **the stretches on the charger while the battery still drained** — start, length, energy lost and scene. Such a stretch means the adapter could not carry the load; a longer adapter or a lighter scene fixes it. Stretches under a minute are not listed. The record lives in `~/.local/state/centurion/battery.json` (`ac_days`, `ac_drain`); nothing is polled beyond the existing one-minute read.
+
 ### dGPU power
 Why the NVIDIA GPU is awake: runtime-PM state, sibling functions, upstream port, open handles. **Copy report** for bug reports.
+
+**Usage on battery** — awake time per day (the share of time on battery), and how many watts more the battery spends while the dGPU is awake than while it sleeps. The comparison appears only after at least 30 minutes on battery in each state. **Wake-ups (last 20)** — each time the GPU left runtime suspend, with the programs that had its device open at that moment (read from `/proc`). The record lives in `~/.local/state/centurion/dgpu.json`. It is sampled once a minute while Centurion runs, from the runtime-PM counters in sysfs. Nothing asks the driver or NVML for data, so looking at it never wakes the GPU.
+
+**Long-awake warning** — on battery, a dGPU that stays awake for 10 minutes without a break raises one desktop notification naming the program that held it. *Show* opens this page. Each awake stretch is reported once; the warning is not stored.
 
 ### Network
 Needs the `centurion-netguard` service.
@@ -188,13 +240,33 @@ Needs the `centurion-netguard` service.
 ### Tool pages
 Sensors · CPU · Memory · DMI · PCI · PCIe detail · USB · Storage · SMART · NVIDIA · Graphics · Kernel · Battery. Each runs the matching system command and shows the output (DMI, PCIe detail, SMART need the admin password; NVIDIA and Graphics may wake the dGPU).
 
+PCI lists the live link of each GPU and NVMe drive. A link running with fewer lanes than the device supports is flagged with a line naming the lane count; check again under load, because a lower speed at idle is normal and only noted.
+
+**Why doesn't the hardware sleep?** appears when the last three sleeps of at least 10 minutes each spent under 2 % of their time in the hardware (SoC) low-power state. One click reads the settings that usually keep it from being reached: the suspend mode, PCIe ASPM policy, NVMe power states and runtime power management, USB devices kept awake, whether the NVIDIA GPU is powered now, and the AMD / Intel power counters from debugfs (root; the password is not asked for an active session). It changes nothing. Findings are listed in plain words, and the raw counters are shown below them.
+
 ### Kernel log
 Warnings or worse, kept across boots.
+
+- **Level** — *WARN and worse* (everything saved), *ERR and worse*, *CRIT and worse*, *ALERT and worse* or *EMERG only*.
+- **Group repeats** (on by default) — messages that differ only in their numbers (counters, addresses, process ids) become one line with `×N` and the time of the last one. The saved log keeps every line.
+- **Only new** — shows the messages that no earlier boot in the saved log had. After a kernel or driver update this is the list of what changed.
+- **Mute this message** — right-click a line. Muted messages are hidden (the count is shown under the list); **Show muted** brings them back, and **Unmute this message** undoes it. The list is kept in `gui.ini` (`klog/muted`).
+
+The page reads the saved log when it is shown or its options change; nothing runs in the background for it.
+
+### Notifications…
+The **Notifications…** button on the Monitor's toolbar (Health) picks which alerts reach the desktop:
+- *Hardware and driver errors* (Health scan), *Blocked connections* (Network guard), *Backup reminders and finished backups*, *Curve guard* (suspect or reset curves), *Disk health* (SMART) and *Lid closed while the machine stays awake*. A switched-off category is hidden on the desktop; the event itself stays where it is listed (Monitor, Network, Curve stability, Backup, SMART).
+- *Hardware and driver alerts: critical only* — hides plain errors and keeps critical ones.
+- *While a game runs, hold these alerts* — the alerts that arrive during a game session wait, and when the session ends one summary notification lists them (the first five, then the count).
+
+Other notifications (a game detected, a scene switched, fans put back to Auto) are not in these categories and always show. Settings are kept in `gui.ini` (`notify/…`).
 
 ### Backup
 - **Centurion configuration** — scenes, presets, curves, lighting, boot profiles, network rules, calibration. Optional *System profile* (Portage config, kernel config, fstab, package list — reference only) and *Logs*. Saving needs no password; restoring the root-owned part does. A safety copy is made before every restore.
 - **System image** — choose folder and compressor, options *Low priority*, *Verify*, *Include /home*, retention. Writes `backup-DATE.tar.gz` of `/`. **Restore** to any target path (type `RESTORE` for `/`). Admin password every time.
 - **Automatic** — the configuration is backed up on its own when the newest one in the folder is older than the set interval (default 7 days; no password; only `…-auto` archives are pruned, keep-newest count). A system image needs the password, so Centurion only **reminds** you (tray, at most once a day) when the newest image is older than the interval you set (default 30 days, 0 = off).
+- **Before firmware writes** — the BIOS memory timings, BIOS CPU OC, GPU MUX mode and a forced iGPU-only switch persist in firmware and always ask for the password. Right before each one, the configuration is copied to the same folder as `…-pre-memtiming`, `…-pre-biosoc`, `…-pre-gpumux` or `…-pre-igpu` (no password; a system profile is included when the Backup page has it ticked). Only the newest 5 of these copies are kept. If the copy fails, the write still goes ahead and a notification says why.
 
 ## 10. Command-line cheat sheet
 
@@ -228,6 +300,8 @@ $D.SetPowerProfile performance   # signal PowerProfileChanged(profile)
 $D.PowerProfile
 $D.Sensors                       # Home's Live rows: cpu, fans, storage, power, igpu, battery
 $D.SensorValues                  # the same as numbers: cpu_temp_c, fan1_rpm, battery_percent, …
+$D.HealthSummary                 # Health → Overview: worst level (-1 no data, 0 ok, 1 watch, 2 attention) and the cards
+$D.HealthEvents 0                # this session's kernel events with seq > 0, oldest first; signal HealthEvent(kind, level, title)
 ```
 
 Any process of your user can call it, like `centurion-gamemode`; root work still asks polkit as usual.

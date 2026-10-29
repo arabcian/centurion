@@ -43,12 +43,23 @@ add_executable(centurion
     src/amdgpu.cpp       src/amdgpu.h
     src/amdgputab.cpp    src/amdgputab.h
     src/healthtab.cpp    src/healthtab.h
+    src/overviewpage.cpp src/overviewpage.h
+    src/reportpreview.cpp src/reportpreview.h
+    src/userhelper.cpp   src/userhelper.h
+    src/dgpuusage.cpp    src/dgpuusage.h
+    src/bootpage.cpp     src/bootpage.h
     src/nvregdialog.cpp  src/nvregdialog.h
     src/systools.cpp     src/systools.h
     src/klogpage.cpp     src/klogpage.h
+    src/klogview.cpp     src/klogview.h
+    src/notifyprefs.cpp  src/notifyprefs.h
+    src/notifydialog.cpp src/notifydialog.h
+    src/batteryadvice.cpp src/batteryadvice.h
+    src/charts.cpp       src/charts.h
     src/dgpupage.cpp     src/dgpupage.h
     src/netpage.cpp      src/netpage.h
     src/backuppage.cpp   src/backuppage.h
+    src/prewrite.cpp     src/prewrite.h
     src/launcherwatch.cpp src/launcherwatch.h
     src/batterypage.cpp  src/batterypage.h
     src/coolingpage.cpp  src/coolingpage.h
@@ -56,6 +67,9 @@ add_executable(centurion
     src/trialbar.cpp     src/trialbar.h
     src/curvepage.cpp    src/curvepage.h
     src/driftwatch.cpp   src/driftwatch.h
+    src/smartwatch.cpp   src/smartwatch.h
+    src/lidwatch.cpp     src/lidwatch.h
+    src/smartpage.cpp    src/smartpage.h
     src/sleeppage.cpp    src/sleeppage.h
     src/sleepadvice.cpp  src/sleepadvice.h
     src/mangohud.cpp     src/mangohud.h
@@ -215,6 +229,22 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
+    add_executable(centurion-klogview-test tests/klogview_test.cpp src/klogview.cpp src/klogview.h)
+    target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME klogview COMMAND centurion-klogview-test)
+    add_executable(centurion-notifyprefs-test tests/notifyprefs_test.cpp src/notifyprefs.cpp src/notifyprefs.h)
+    target_link_libraries(centurion-notifyprefs-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-notifyprefs-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME notifyprefs COMMAND centurion-notifyprefs-test)
+    add_executable(centurion-batteryadvice-test tests/batteryadvice_test.cpp src/batteryadvice.cpp src/batteryadvice.h)
+    target_link_libraries(centurion-batteryadvice-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-batteryadvice-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME batteryadvice COMMAND centurion-batteryadvice-test)
+    add_executable(centurion-dgpuusage-test tests/dgpuusage_test.cpp src/dgpuusage.cpp src/dgpuusage.h)
+    target_link_libraries(centurion-dgpuusage-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-dgpuusage-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME dgpuusage COMMAND centurion-dgpuusage-test)
     add_executable(centurion-cooling-test tests/coolingpage_test.cpp src/coolingpage.cpp src/coolingpage.h src/theme.cpp src/theme.h)
     target_link_libraries(centurion-cooling-test PRIVATE Qt6::Widgets)
     target_compile_definitions(centurion-cooling-test PRIVATE QT_NO_KEYWORDS)

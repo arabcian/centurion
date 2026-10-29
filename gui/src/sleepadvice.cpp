@@ -14,7 +14,20 @@ Sleep parse(const QJsonObject &o) {
     s.energyBefore = o.value("energy_before").toDouble();
     s.energyAfter = o.value("energy_after").toDouble();
     s.full = o.value("full").toDouble();
+    s.hasHwSleep = !o.value("hw_sleep_us").toString().isEmpty();
+    s.hwSleepUs = o.value("hw_sleep_us").toString().toDouble();
     return s;
+}
+
+bool hwSleepIdle(const QList<Sleep> &rows) {
+    int counted = 0;
+    for (auto it = rows.crbegin(); it != rows.crend() && counted < HW_IDLE_SLEEPS; ++it) {
+        const qint64 len = it->end - it->start;
+        if (len < HW_IDLE_MIN_S || !it->hasHwSleep) continue;
+        if (it->hwSleepUs / 1e6 / double(len) >= HW_IDLE_SHARE) return false;
+        ++counted;
+    }
+    return counted == HW_IDLE_SLEEPS;
 }
 
 bool isUserWake(const QString &n) {

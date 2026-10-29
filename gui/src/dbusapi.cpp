@@ -1,4 +1,5 @@
 #include "dbusapi.h"
+#include "healthtab.h"
 #include "hometab.h"
 #include "mainwindow.h"
 #include "platformprofile.h"
@@ -15,10 +16,14 @@ static const char *PATH = "/com/centurion/Centurion";
 DbusApi::DbusApi(MainWindow *win) : QObject(win), win_(win) {
     qDBusRegisterMetaType<QMap<QString, QString>>();
     qDBusRegisterMetaType<QMap<QString, double>>();
+    qDBusRegisterMetaType<QList<QVariantMap>>();
     connect(win_->scenes(), &SceneEngine::finished, this, [this](const QString &n, bool ok, const QStringList &) {
         if (!n.isEmpty()) Q_EMIT SceneApplied(n, ok);  // empty name: an informational note, not an apply
     });
     connect(&pp::Watcher::instance(), &pp::Watcher::changed, this, &DbusApi::PowerProfileChanged);
+    connect(win_->health(), &HealthTab::fault, this, [this](const QJsonObject &e) {
+        Q_EMIT HealthEvent(e.value(QStringLiteral("kind")).toString(), e.value(QStringLiteral("level")).toString(), e.value(QStringLiteral("title")).toString());
+    });
 }
 
 bool DbusApi::registerOnBus() {
@@ -64,3 +69,12 @@ QMap<QString, QString> DbusApi::Sensors() {
 }
 
 QMap<QString, double> DbusApi::SensorValues() { return sysinfo::sensorValues(); }
+
+QVariantMap DbusApi::HealthSummary() {
+    QVariantMap m;
+    m.insert(QStringLiteral("worst"), win_->health()->worstLevel());
+    m.insert(QStringLiteral("cards"), QVariant::fromValue(win_->health()->overviewCards()));
+    return m;
+}
+
+QList<QVariantMap> DbusApi::HealthEvents(uint sinceSeq) { return win_->health()->eventsSince(sinceSeq); }

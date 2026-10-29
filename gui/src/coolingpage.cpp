@@ -12,9 +12,16 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <cmath>
+#include <utility>
+
+// Fan max test: the fans are read for FAN_WAIT_S before they go to maximum, then FAN_SPIN_S at maximum.
+static constexpr int FAN_WAIT_S = 5;
+static constexpr int FAN_SPIN_S = 30;
+static constexpr int FAN_TICK_MS = 2000;
 
 static QString toolPath() {
     const QString p = QStandardPaths::findExecutable(QStringLiteral("centurion-cooltest"));
@@ -62,6 +69,8 @@ QString CoolingPage::verdictText(const QJsonObject &a, double limitC) {
         if (!std::isnan(reason(a, "temp_up"))) facts << tr("%1 °C hotter at the same load").arg(reason(a, "temp_up"), 0, 'f', 1);
         if (!std::isnan(reason(a, "clock_down"))) facts << tr("clock %1 % lower").arg(reason(a, "clock_down"), 0, 'f', 0);
         if (!std::isnan(reason(a, "fan_up"))) facts << tr("fans %1 % faster").arg(reason(a, "fan_up"), 0, 'f', 0);
+        if (!std::isnan(reason(a, "fan_split")))
+            facts << tr("the fans spin %1 points further apart than at the baseline (one of them is slower)").arg(reason(a, "fan_split"), 0, 'f', 0);
         if (!facts.isEmpty()) t += QLatin1Char(' ') + facts.join(QStringLiteral(", ")) + QLatin1Char('.');
         if (!std::isnan(reason(a, "fan_up"))) t += QLatin1Char(' ') + tr("(If you changed the fan curve since the baseline, ignore the fan figure.)");
     }
@@ -69,6 +78,26 @@ QString CoolingPage::verdictText(const QJsonObject &a, double limitC) {
         t += QLatin1Char(' ') + tr("The firmware holds the CPU at its %1 °C temperature target, so the temperature cannot rise further: the clock is what shows weaker cooling.")
                                      .arg(limitC, 0, 'f', 0);
     return t;
+}
+
+QString CoolingPage::fanMaxText(const QJsonObject &r, bool *warn) {
+    if (warn) *warn = false;
+    if (!r.value(QStringLiteral("ok")).toBool()) return r.value(QStringLiteral("error")).toString(tr("The fan test failed."));
+    QStringList rpm;
+    for (const QJsonValue &v : r.value(QStringLiteral("peaks")).toArray()) rpm << tr("%1 rpm").arg(qRound(v.toDouble()));
+    const QString head = tr("Peak speed at maximum: %1.").arg(rpm.join(QStringLiteral(" · ")));
+    if (r.value(QStringLiteral("baseline")).toBool())
+        return head + QLatin1Char(' ') + tr("Saved as the baseline for these firmware settings. Run the test again after cleaning to compare.");
+    if (warn) *warn = r.value(QStringLiteral("warn")).toBool();
+    const double limit = r.value(QStringLiteral("warn_pct")).toDouble(8);
+    const QJsonArray drops = r.value(QStringLiteral("drops_pct")).toArray();
+    QStringList low;
+    for (int i = 0; i < drops.size(); ++i)
+        if (drops.at(i).toDouble() >= limit) low << tr("fan %1 peaks %2 % under its baseline").arg(i + 1).arg(qRound(drops.at(i).toDouble()));
+    if (low.isEmpty()) return head + QLatin1Char(' ') + tr("No fan peaks more than %1 % under its baseline.").arg(qRound(limit));
+    return head + QLatin1Char(' ')
+           + tr("Weaker than the baseline: %1. Dust in that fan or a blocked air path is the usual cause: clean the vents and the fan, then repeat the test.")
+                 .arg(low.join(QStringLiteral(", ")));
 }
 
 CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
@@ -95,10 +124,18 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     length_->addItem(tr("8 minutes (thorough)"), 480);
     length_->setCurrentIndex(1);
     length_->setToolTip(tr("Use the same length every time you compare."));
+    fanMax_ = new QPushButton(tr("Fan max test…"));
+    fanMax_->setToolTip(tr("Puts every fan at maximum for %1 seconds to measure its peak speed. The fans go back to their Home-tab setting afterwards.")
+                            .arg(FAN_SPIN_S));
+    fanMax_->setEnabled(false);
     row->addWidget(run_);
     row->addWidget(cancel_);
     row->addWidget(length_);
+    row->addWidget(fanMax_);
     row->addStretch(1);
+    fanTimer_ = new QTimer(this);
+    fanTimer_->setInterval(FAN_TICK_MS);
+    connect(fanTimer_, &QTimer::timeout, this, &CoolingPage::fanTick);
     root->addLayout(row);
 
     bar_ = new QProgressBar;
@@ -135,7 +172,11 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
                              "A changed power limit or temperature target starts a new baseline, since it changes how much heat the load makes.")));
 
     connect(run_, &QPushButton::clicked, this, &CoolingPage::start);
-    connect(cancel_, &QPushButton::clicked, this, [this] { if (proc_) proc_->kill(); });
+    connect(fanMax_, &QPushButton::clicked, this, &CoolingPage::fanMaxStart);
+    connect(cancel_, &QPushButton::clicked, this, [this] {
+        if (fanTesting_) fanStop(true);
+        else if (proc_) proc_->kill();
+    });
     connect(baseline_, &QPushButton::clicked, this, [this] {
         tool({QStringLiteral("baseline")}, [this](const QJsonObject &o) {
             if (!o.value(QStringLiteral("ok")).toBool()) QMessageBox::information(this, tr("Cooling"), o.value(QStringLiteral("error")).toString());
@@ -143,7 +184,7 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
         });
     });
     connect(forget_, &QPushButton::clicked, this, [this] {
-        if (QMessageBox::question(this, tr("Cooling"), tr("Forget every cooling result stored for the current firmware settings?")) != QMessageBox::Yes) return;
+        if (QMessageBox::question(this, tr("Cooling"), tr("Forget every cooling and fan test result stored for the current firmware settings?")) != QMessageBox::Yes) return;
         tool({QStringLiteral("forget")}, [this](const QJsonObject &) { verdict_->setVisible(false); refresh(); });
     });
 }
@@ -202,6 +243,7 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
 
     const bool sensor = s.value(QStringLiteral("has_sensor")).toBool();
     run_->setEnabled(sensor && !proc_);
+    fanMax_->setEnabled(bool(fans_.allMax) && s.value(QStringLiteral("fans")).toInt() > 0 && !proc_ && !fanTesting_);
     if (!sensor) live_->setText(tr("<span style='color:%1'>No CPU temperature sensor found (k10temp / coretemp), so the test cannot run.</span>").arg(theme::WARN));
 
     const QJsonObject base = s.value(QStringLiteral("baseline")).toObject();
@@ -245,6 +287,7 @@ void CoolingPage::showVerdict(const QString &text, const char *color) {
 
 void CoolingPage::setRunning(bool on) {
     run_->setEnabled(!on);
+    fanMax_->setEnabled(!on && fanMax_->isEnabled());
     length_->setEnabled(!on);
     baseline_->setEnabled(!on && baseline_->isEnabled());
     forget_->setEnabled(!on && forget_->isEnabled());
@@ -322,4 +365,95 @@ void CoolingPage::finished(const QJsonObject &o) {
     }
     // Table and verdict come from the stored runs (the tool's own answer carries the same assessment).
     refresh();
+}
+
+void CoolingPage::setFanControls(const FanControls &controls) {
+    fans_ = controls;
+    refresh();
+}
+
+void CoolingPage::fanMaxStart() {
+    if (!fans_.allMax || fanTesting_ || proc_) return;
+    if (QMessageBox::question(this, tr("Fan max test"),
+            tr("All fans will run at maximum speed for %1 seconds, so they will be loud. Afterwards they go back to their Home-tab setting. "
+               "The peak speed of each fan is compared with its baseline.").arg(FAN_SPIN_S)) != QMessageBox::Yes)
+        return;
+    fanPrev_ = fans_.targets();
+    fanPrevMax_ = fans_.maxMode();
+    fanPeaks_.clear();
+    fanTesting_ = true;
+    fanMaxed_ = false;
+    fanReading_ = false;
+    verdict_->setVisible(false);
+    setRunning(true);
+    bar_->setRange(0, FAN_WAIT_S + FAN_SPIN_S);
+    fanClock_.start();
+    fanTimer_->start();
+    fanTick();
+}
+
+// Every FAN_TICK_MS: the fans are read (the reading is the tool's, as the user); after FAN_WAIT_S the fans go
+// to maximum; the peaks are the highest readings from then on, until FAN_WAIT_S + FAN_SPIN_S.
+void CoolingPage::fanTick() {
+    const int el = int(fanClock_.elapsed() / 1000);
+    bar_->setValue(el);
+    bar_->setFormat(tr("%1 / %2 s").arg(el).arg(FAN_WAIT_S + FAN_SPIN_S));
+    if (el >= FAN_WAIT_S + FAN_SPIN_S) { fanStop(false); return; }
+    if (el >= FAN_WAIT_S && !fanMaxed_) {
+        fanMaxed_ = true;
+        if (!fanPrevMax_) fans_.allMax();  // Home's own path: the same writes as "Max all fans"
+    }
+    if (fanReading_) return;
+    fanReading_ = true;
+    tool({QStringLiteral("fans")}, [this, el](const QJsonObject &o) {
+        fanReading_ = false;
+        const QJsonArray a = o.value(QStringLiteral("fans")).toArray();
+        if (!fanTesting_ || a.isEmpty()) return;
+        QStringList rpm;
+        for (int i = 0; i < a.size(); ++i) {
+            const double v = a.at(i).toDouble();
+            rpm << QString::number(qRound(v));
+            if (el < FAN_WAIT_S) continue;
+            if (fanPeaks_.size() <= i) fanPeaks_.resize(i + 1);
+            fanPeaks_[i] = qMax(fanPeaks_[i], v);
+        }
+        const QString list = rpm.join(QStringLiteral(" · "));
+        live_->setText(el < FAN_WAIT_S ? tr("Fans before the test: %1 rpm").arg(list) : tr("Fans at maximum: %1 rpm").arg(list));
+    });
+}
+
+void CoolingPage::fanStop(bool aborted) {
+    fanTimer_->stop();
+    fanTesting_ = false;
+    setRunning(false);
+    live_->clear();
+    fanRestore(0);  // no-op when the fans were never put at maximum
+    // Shows the text after the status refresh, which would otherwise hide the banner again.
+    auto show = [this](const QString &text, const char *color) {
+        tool({QStringLiteral("status")}, [this, text, color](const QJsonObject &s) { fillStatus(s); showVerdict(text, color); });
+    };
+    if (aborted) { show(tr("The fan test was stopped. The fans are back as they were."), theme::INFO); return; }
+    if (fanPeaks_.isEmpty()) { show(tr("No fan speed was read during the test."), theme::WARN); return; }
+    QStringList peaks;
+    for (double v : fanPeaks_) peaks << QString::number(qRound(v));
+    tool({QStringLiteral("fanmax"), QStringLiteral("--peaks"), peaks.join(QLatin1Char(','))}, [show](const QJsonObject &o) {
+        bool warn = false;
+        const QString text = fanMaxText(o, &warn);
+        show(text, !o.value(QStringLiteral("ok")).toBool() ? theme::WARN : warn ? theme::DANGER : theme::OK);
+    });
+}
+
+// Puts the fans back as they were before the test: all to Auto, then the fixed targets that were set. Waits
+// while a Home write is still in flight (the writes are asynchronous).
+void CoolingPage::fanRestore(int tries) {
+    if (!fans_.allAuto || !fanMaxed_) return;
+    if (fans_.busy() && tries < 20) {
+        QTimer::singleShot(500, this, [this, tries] { fanRestore(tries + 1); });
+        return;
+    }
+    fanMaxed_ = false;
+    if (fanPrevMax_) return;  // they were at maximum before the test: leave them there
+    fans_.allAuto();
+    for (const auto &p : std::as_const(fanPrev_))
+        if (p.second > 0) fans_.setTarget(p.first, p.second);
 }

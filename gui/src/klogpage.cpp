@@ -1,9 +1,11 @@
 #include "klogpage.h"
 
+#include "klogview.h"
 #include "privileged.h"
 #include "theme.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
@@ -18,13 +20,17 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSocketNotifier>
+#include <QStandardPaths>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTextStream>
 #include <QTimer>
 #include <QUrl>
@@ -34,18 +40,28 @@
 #include <cerrno>
 #include <cstdlib>
 #include <ctime>
+#include <deque>
 #include <fcntl.h>
 #include <memory>
+#include <optional>
 #include <unistd.h>
+#include <utility>
 
 static constexpr int DEBOUNCE_MS = 3000;
 static constexpr qint64 LOG_MAX_BYTES = 16 << 20;  // then kernel.log -> kernel.log.1
 static constexpr int MAX_SHOWN_LINES = 6000;
 static constexpr qint64 TAIL_BYTES = 512 << 10;
+static constexpr int CONTEXT_LINES = 20;           // around a record opened from Monitor
 
 static QString helperPath() { return privileged::helperPath(QStringLiteral("tune-profile-helper")); }
 
 static const char *const LEVELS[] = {"EMERG", "ALERT", "CRIT", "ERR", "WARN"};
+// The level filter's choices, in order: the highest level index still shown ("… and worse").
+static constexpr int LEVEL_MAX[] = {4, 3, 2, 1, 0};
+
+static QString guiIniPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/gui.ini");
+}
 
 KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     auto *v = new QVBoxLayout(this);
@@ -73,8 +89,26 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     for (auto *b : {bRefresh, bCopy, bOpen, bClear}) top->addWidget(b);
     v->addLayout(top);
 
+    auto *opts = new QHBoxLayout;
+    level_ = new QComboBox;
+    level_->addItems({tr("WARN and worse"), tr("ERR and worse"), tr("CRIT and worse"), tr("ALERT and worse"), tr("EMERG only")});
+    group_ = new QCheckBox(tr("Group repeats"));
+    group_->setChecked(true);
+    group_->setToolTip(tr("Messages that differ only in numbers (counters, addresses, process ids) become one line with a count."));
+    onlyNew_ = new QCheckBox(tr("Only new"));
+    onlyNew_->setToolTip(tr("Messages that were not in the saved log of an earlier boot (new after an update or a change)."));
+    showMuted_ = new QCheckBox(tr("Show muted"));
+    opts->addWidget(level_);
+    opts->addWidget(group_);
+    opts->addWidget(onlyNew_);
+    opts->addWidget(showMuted_);
+    opts->addStretch(1);
+    v->addLayout(opts);
+
     text_ = new QTextBrowser;
     text_->setLineWrapMode(QTextEdit::NoWrap);
+    text_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(text_, &QWidget::customContextMenuRequested, this, &KlogPage::contextMenu);
     text_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     v->addWidget(text_, 1);
     info_ = new QLabel;
@@ -82,8 +116,10 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     info_->setProperty("role", "muted");
     v->addWidget(info_);
 
-    connect(scope_, &QComboBox::currentIndexChanged, this, [this] { render(); });
-    connect(filter_, &QLineEdit::textChanged, this, [this] { render(); });
+    connect(scope_, &QComboBox::currentIndexChanged, this, [this] { focusBoot_.clear(); render(); });
+    connect(filter_, &QLineEdit::textChanged, this, [this] { focusBoot_.clear(); render(); });
+    connect(level_, &QComboBox::currentIndexChanged, this, [this] { focusBoot_.clear(); render(); });
+    for (QCheckBox *c : {group_, onlyNew_, showMuted_}) connect(c, &QCheckBox::toggled, this, [this] { focusBoot_.clear(); render(); });
     connect(bRefresh, &QPushButton::clicked, this, &KlogPage::capture);
     connect(bCopy, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(text_->toPlainText()); });
     connect(bOpen, &QPushButton::clicked, this, [] { QDesktopServices::openUrl(QUrl::fromLocalFile(logPath())); });
@@ -95,6 +131,11 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
         // Keep savedSeq_: what this boot already showed is not written again.
         render();
     });
+
+    {
+        QSettings st(guiIniPath(), QSettings::IniFormat);
+        for (const QString &k : st.value(QStringLiteral("klog/muted")).toStringList()) muted_.insert(k);
+    }
 
     QFile b(QStringLiteral("/proc/sys/kernel/random/boot_id"));
     if (b.open(QIODevice::ReadOnly)) bootId_ = QString::fromLatin1(b.readAll().trimmed());
@@ -146,6 +187,15 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
 }
 
 KlogPage::~KlogPage() { if (kmsgFd_ >= 0) ::close(kmsgFd_); }
+
+void KlogPage::showAt(const QString &bootId, quint64 seq) {
+    // The scope and filter signals clear any earlier focus, so the focus is set after them.
+    scope_->setCurrentIndex(1);
+    filter_->clear();
+    focusBoot_ = bootId.left(8);
+    focusSeq_ = seq;
+    render();
+}
 
 void KlogPage::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
@@ -258,35 +308,109 @@ void KlogPage::updateInfo() {
     if (needsRoot_) s += QStringLiteral("\nKernel log is restricted (kernel.dmesg_restrict=1): captured through pkexec when this page is opened or on Refresh, "
                                         "not in the background. sysctl kernel.dmesg_restrict=0 enables continuous capture.");
     else s += QStringLiteral("\nCapturing continuously (a scan runs only when the kernel logs a warning or error).");
+    if (hiddenMuted_) s += QLatin1Char('\n') + tr("%1 muted line(s) hidden — right-click a line to unmute its message.").arg(hiddenMuted_);
     info_->setText(s);
 }
 
 void KlogPage::render() {
     const bool all = scope_->currentIndex() == 1;
-    const QString tag = QStringLiteral("boot=") + bootId_.left(8) + QLatin1Char(' ');
+    const QString boot = bootId_.left(8);
     const QString needle = filter_->text();
-    QStringList lines;
+    const int levelMax = LEVEL_MAX[std::clamp(level_->currentIndex(), 0, 4)];
+    // Judged over the whole saved log, whatever the scope and filter: "only new" needs the earlier boots too.
+    QHash<QString, QString> firstBoot;
+    std::deque<klogview::Line> shown;  // the newest lines of the scope, level and text filter
     for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
         while (!f.atEnd()) {
             const QString l = QString::fromUtf8(f.readLine()).trimmed();
-            if (l.isEmpty()) continue;
-            if (!all && !l.contains(tag)) continue;
+            const std::optional<klogview::Line> p = klogview::parse(l);
+            if (!p) continue;
+            if (!firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
+            if (!all && p->boot != boot) continue;
+            if (p->level > levelMax) continue;
             if (!needle.isEmpty() && !l.contains(needle, Qt::CaseInsensitive)) continue;
-            lines << l;
-            if (lines.size() > MAX_SHOWN_LINES) lines.removeFirst();
+            shown.push_back(*p);
+            if (shown.size() > MAX_SHOWN_LINES) shown.pop_front();
         }
     }
+
+    // Opened from Monitor: only the lines around that record, the record itself in bold, no grouping.
+    const bool focused = !focusBoot_.isEmpty();
+    std::vector<klogview::Row> rows;
+    int mark = -1;
+    hiddenMuted_ = 0;
+    if (focused) {
+        const std::vector<klogview::Line> v(shown.begin(), shown.end());
+        int at = -1;
+        for (int i = 0; i < int(v.size()) && at < 0; ++i) if (v[i].boot == focusBoot_ && v[i].seq == focusSeq_) at = i;
+        if (at >= 0) {
+            const int from = std::max(0, at - CONTEXT_LINES), to = std::min<int>(int(v.size()), at + CONTEXT_LINES + 1);
+            for (int i = from; i < to; ++i) rows.push_back(klogview::Row{v[i], 1, v[i].time});
+            mark = at - from;
+        }
+    } else {
+        std::vector<klogview::Line> keep;
+        for (const klogview::Line &l : shown) {
+            if (muted_.contains(l.key) && !showMuted_->isChecked()) { ++hiddenMuted_; continue; }
+            if (onlyNew_->isChecked() && firstBoot.value(l.key) != l.boot) continue;
+            keep.push_back(l);
+        }
+        rows = klogview::group(keep, group_->isChecked());
+    }
+
+    rowKey_.clear();
     QString html = QStringLiteral("<pre style='margin:0'>");
-    for (const QString &l : lines) {
-        const char *c = l.contains(QLatin1String("  EMERG ")) || l.contains(QLatin1String("  ALERT ")) || l.contains(QLatin1String("  CRIT  ")) ? theme::DANGER
-                        : l.contains(QLatin1String("  ERR   ")) ? theme::WARN : theme::FG_DIM;
-        html += QStringLiteral("<span style='color:%1'>%2</span>\n").arg(QString::fromLatin1(c), l.toHtmlEscaped());
+    for (int i = 0; i < int(rows.size()); ++i) {
+        const klogview::Row &r = rows.at(i);
+        const klogview::Line &l = r.first;
+        QString plain = l.text;
+        if (r.count > 1) plain += tr("  ×%1, last %2").arg(r.count).arg(r.last.mid(11));
+        if (muted_.contains(l.key)) plain += tr("  [muted]");
+        rowKey_.insert(plain.trimmed(), l.key);  // the context menu finds the message by its line text
+        const char *c = l.level <= 2 ? theme::DANGER : l.level == 3 ? theme::WARN : theme::FG_DIM;
+        html += QStringLiteral("<span style='color:%1%2'>%3%4</span>\n").arg(QString::fromLatin1(c),
+                                                                             i == mark ? QStringLiteral(";font-weight:bold") : QString(),
+                                                                             i == mark ? QStringLiteral("<a name='focus'></a>") : QString(),
+                                                                             plain.toHtmlEscaped());
     }
     html += QStringLiteral("</pre>");
     const int vs = text_->verticalScrollBar()->value();
     const bool atEnd = vs >= text_->verticalScrollBar()->maximum() - 4;
-    text_->setHtml(lines.isEmpty() ? QStringLiteral("<i>No saved kernel warnings or errors%1.</i>").arg(all ? QString() : QStringLiteral(" for this boot")) : html);
+    if (focused && rows.empty()) {
+        text_->setHtml(tr("<i>Kernel message %1 is not in the saved log (yet).</i>").arg(focusSeq_));
+        return;
+    }
+    text_->setHtml(rows.empty() ? QStringLiteral("<i>No saved kernel warnings or errors%1.</i>").arg(all ? QString() : QStringLiteral(" for this boot")) : html);
+    updateInfo();
+    if (mark >= 0) {
+        text_->scrollToAnchor(QStringLiteral("focus"));
+        return;
+    }
     text_->verticalScrollBar()->setValue(atEnd || vs == 0 ? text_->verticalScrollBar()->maximum() : vs);
+}
+
+void KlogPage::contextMenu(const QPoint &pos) {
+    std::unique_ptr<QMenu> menu(text_->createStandardContextMenu(pos));
+    QTextCursor c = text_->cursorForPosition(pos);
+    c.select(QTextCursor::LineUnderCursor);
+    if (const auto it = rowKey_.constFind(c.selectedText().trimmed()); it != rowKey_.constEnd()) {
+        const QString key = it.value();
+        menu->addSeparator();
+        if (muted_.contains(key)) menu->addAction(tr("Unmute this message"), this, [this, key] { setMuted(key, false); });
+        else menu->addAction(tr("Mute this message"), this, [this, key] { setMuted(key, true); });
+    }
+    menu->exec(text_->mapToGlobal(pos));
+}
+
+void KlogPage::setMuted(const QString &key, bool on) {
+    if (on) muted_.insert(key);
+    else muted_.remove(key);
+    QStringList list;
+    for (const QString &k : std::as_const(muted_)) list << k;
+    list.sort();
+    QSettings st(guiIniPath(), QSettings::IniFormat);
+    st.setValue(QStringLiteral("klog/muted"), list);
+    render();
 }

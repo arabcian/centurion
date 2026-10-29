@@ -7,6 +7,8 @@ class HealthTab;
 class HomeTab;
 class LauncherWatch;
 class DriftWatch;
+class LidWatch;
+class SmartWatch;
 class SceneEngine;
 class GlobalShortcuts;
 class IntelTab;
@@ -33,6 +35,8 @@ public:
     HealthTab *health() const { return health_; }
     LauncherWatch *launchers() const { return launchers_; }
     DriftWatch *drift() const { return drift_; }
+    SmartWatch *smart() const { return smart_; }
+    LidWatch *lid() const { return lid_; }
     /// Creates the NVIDIA tab if the dGPU has appeared since start-up (after
     /// "Bring NVIDIA back" / leaving iGPU-only). Returns the tab, or nullptr.
     NvidiaTab *ensureNvidiaTab();
@@ -71,5 +75,7 @@ private:
     HealthTab *health_;
     LauncherWatch *launchers_ = nullptr;
     DriftWatch *drift_ = nullptr;
+    SmartWatch *smart_ = nullptr;
+    LidWatch *lid_ = nullptr;
     bool forceQuit_ = false, hideOnClose_ = false, wizardChecked_ = false;
 };

@@ -17,8 +17,13 @@
 //   SensorValues()          → a{sd}   the same as numbers, unit in the key (Home Assistant & co.):
 //                                     cpu_temp_c, fanN_rpm, nvmeN_temp_c, power_<hwmon>_w, igpu_temp_c,
 //                                     battery_percent, battery_power_w, battery_health_percent
+//   HealthSummary()         → a{sv}   worst: the Overview's worst level (-1 no data yet, 0 ok, 1 watch,
+//                                     2 attention); cards: aa{sv} of its cards (id, level and numbers, no text)
+//   HealthEvents(u since)   → aa{sv}  this session's kernel events above that seq, oldest first: seq, kind, level,
+//                                     title, boot_id (a repeated event is one row, under its first seq)
 //   signal SceneApplied(s name, b ok)
 //   signal PowerProfileChanged(s profile)
+//   signal HealthEvent(s kind, s level, s title)   each new kernel fault, as the Monitor sees it
 //
 // Same trust as `centurion-gamemode SCENE`: any process of this user may call
 // it; root work still goes through the helpers and their polkit rules.
@@ -26,6 +31,7 @@
 #include <QObject>
 #include <QStringList>
 #include <QMap>
+#include <QVariantMap>
 
 class MainWindow;
 
@@ -46,10 +52,13 @@ public Q_SLOTS:
     void SetPowerProfile(const QString &profile);
     QMap<QString, QString> Sensors();
     QMap<QString, double> SensorValues();
+    QVariantMap HealthSummary();
+    QList<QVariantMap> HealthEvents(uint sinceSeq);
 
 Q_SIGNALS:
     void SceneApplied(const QString &name, bool ok);
     void PowerProfileChanged(const QString &profile);
+    void HealthEvent(const QString &kind, const QString &level, const QString &title);
 
 private:
     MainWindow *win_;

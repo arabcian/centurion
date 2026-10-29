@@ -60,6 +60,23 @@ int main(int argc, char **argv) {
     // Sources that resolve to nothing switchable are left out.
     CHECK(analyse({row(0, 1, "serio0", 1, 1), row(2, 3, "serio0", 1, 1)}, resolve).isEmpty());
 
+    // Hardware sleep: the last three long sleeps with a reading must all be nearly idle.
+    auto hw = [](qint64 start, qint64 len, double pct) {
+        Sleep s;
+        s.start = start;
+        s.end = start + len;
+        s.hasHwSleep = true;
+        s.hwSleepUs = pct / 100.0 * double(len) * 1e6;
+        return s;
+    };
+    CHECK(hwSleepIdle({hw(0, 3600, 0), hw(4000, 3600, 1), hw(8000, 3600, 0.5)}));
+    CHECK(!hwSleepIdle({hw(0, 3600, 0), hw(4000, 3600, 40), hw(8000, 3600, 0)}));       // one busy sleep among the three
+    CHECK(!hwSleepIdle({hw(0, 3600, 0), hw(4000, 3600, 0)}));                           // only two
+    CHECK(hwSleepIdle({hw(0, 60, 50), hw(100, 3600, 0), hw(4000, 3600, 0), hw(8000, 3600, 0)})); // short sleep ignored
+    Sleep unread = hw(0, 3600, 0);
+    unread.hasHwSleep = false;  // no sleep-hook reading
+    CHECK(!hwSleepIdle({unread, unread, unread}));
+
     if (failures) std::fprintf(stderr, "%d failure(s)\n", failures);
     else std::puts("sleepadvice: all checks passed");
     return failures ? 1 : 0;

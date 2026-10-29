@@ -28,6 +28,8 @@ public:
     explicit HomeTab(QWidget *parent = nullptr);
     ~HomeTab() override;
     void setSceneEngine(SceneEngine *eng);  // pause banner
+    /// Health → Overview's worst level: a small badge in the header (hidden for -1 = no reading yet).
+    void setHealthLevel(int level);
 
     /// `translated = false` gives the English name (the MangoHud overlay stays English).
     static QString profileLabel(const QString &profile, bool translated = true);
@@ -69,6 +71,7 @@ protected:
 
 private:
     QVector<std::function<void()>> onFirstShow_;  // helper reads deferred until the tab is first shown
+    QLabel *healthBadge_ = nullptr;
     void rebuild();
     // GPU mode (MUX): read once on first show, switched through legion-gpu-helper.
     void readGpuMode();

@@ -23,6 +23,10 @@ public:
     explicit CurvePage(QWidget *parent = nullptr);
     /// A new kernel event of this session (HealthTab::fault).
     void onFault(const QJsonObject &e);
+    /// Takes the GPU curve back to stock now (the guard's path; Monitor's action uses it too). `title` names the cause.
+    void resetGpuCurve(const QString &title);
+    /// "stock" or the journal's state of the last curve write this boot, for "gpu" / "cpu".
+    static QString currentState(const QString &group);
 
 Q_SIGNALS:
     void alert(const QString &title, const QString &message);
@@ -35,8 +39,6 @@ protected:
 
 private:
     void recompute();
-    /// "stock" or the journal's state of the last curve write this boot, for "gpu" / "cpu".
-    static QString currentState(const QString &group);
     QTreeWidget *table_;
     QLabel *note_;
     QCheckBox *gpuReset_, *cpuReset_;

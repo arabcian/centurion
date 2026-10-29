@@ -3,12 +3,16 @@
 #include "sleepadvice.h"
 #include "theme.h"
 #include <QDateTime>
+#include <QSettings>
+#include <QSpinBox>
+#include <QStandardPaths>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -20,6 +24,11 @@
 
 static const char *SLEEP_LOG = "/var/log/centurion/sleep.log";
 static constexpr int MAX_ROWS = 200;
+
+// gui.ini, where the bag warning's limit is kept (LidWatch reads it).
+static QSettings guiSettings() {
+    return QSettings(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/gui.ini"), QSettings::IniFormat);
+}
 
 static QString rd(const QString &p, qint64 max = 4096) {
     QFile f(p);
@@ -69,6 +78,13 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
     new QVBoxLayout(advice_);
     advice_->layout()->setContentsMargins(0, 0, 0, 0);
     root->addWidget(advice_);
+    diag_ = new QPushButton(tr("Why doesn't the hardware sleep?"));
+    diag_->setVisible(false);
+    connect(diag_, &QPushButton::clicked, this, &SleepPage::diagnose);
+    root->addWidget(diag_, 0, Qt::AlignLeft);
+    diagOut_ = muted(QString());
+    diagOut_->setVisible(false);
+    root->addWidget(diagOut_);
 
     root->addWidget(new QLabel(QStringLiteral("<b>Wake sources (ACPI)</b>")));
     wake_ = table({QStringLiteral("Device"), QStringLiteral("Sleep state"), QStringLiteral("May wake"), QStringLiteral("Sysfs node")});
@@ -79,6 +95,17 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
         "Untick a device to stop it from waking the machine (e.g. a USB controller whose mouse wakes the laptop in a bag, "
         "or a PCIe port that ends sleep at once). The choice is remembered and restored at boot by the centurion-tune service. "
         "Keep the lid (LID*) and the power button enabled.")));
+
+    // A laptop shut in a bag but still awake gets one tray warning after this long (LidWatch; 0 = never).
+    auto *bag = new QHBoxLayout;
+    bag->addWidget(new QLabel(tr("Warn when the lid has been closed this long and the machine is still awake (minutes, 0 = never):")));
+    auto *minutes = new QSpinBox;
+    minutes->setRange(0, 240);
+    minutes->setValue(guiSettings().value(QStringLiteral("sleep/bag_warn_min"), 10).toInt());
+    connect(minutes, &QSpinBox::valueChanged, this, [](int v) { guiSettings().setValue(QStringLiteral("sleep/bag_warn_min"), v); });
+    bag->addWidget(minutes);
+    bag->addStretch(1);
+    root->addLayout(bag);
 
     connect(wake_, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *it, int col) {
         if (filling_ || col != 2) return;
@@ -99,6 +126,65 @@ void SleepPage::setWake(const QString &dev, bool on) {
                         if (!r.ok()) QMessageBox::warning(this, QStringLiteral("Wake sources"), dev + QStringLiteral(": ") + r.message());
                         refresh();
                     });
+}
+
+void SleepPage::diagnose() {
+    diag_->setEnabled(false);
+    diagOut_->setText(tr("Reading the sleep path…"));
+    diagOut_->setVisible(true);
+    // Read-only (health-reader "sleep_diag"); the debugfs counters need root, the rest is sysfs.
+    privileged::run(privileged::helperPath(QStringLiteral("health-reader")), QJsonObject{{QStringLiteral("op"), QStringLiteral("sleep_diag")}}, this,
+                    [this](const privileged::Result &r) {
+        diag_->setEnabled(true);
+        if (r.ok()) showDiagnosis(r.json);
+        else diagOut_->setText(tr("Could not read the sleep path: %1").arg(r.message()));
+    });
+}
+
+void SleepPage::showDiagnosis(const QJsonObject &r) {
+    QStringList parts;
+    for (const QJsonValue &v : r.value(QStringLiteral("findings")).toArray()) {
+        const QJsonObject f = v.toObject();
+        const QString text = findingText(f.value(QStringLiteral("code")).toString(), f.value(QStringLiteral("detail")));
+        if (text.isEmpty()) continue;
+        const bool warn = f.value(QStringLiteral("severity")).toString() == QLatin1String("warn");
+        parts << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(warn ? theme::WARN : theme::FG_DIM), text.toHtmlEscaped());
+    }
+    // The raw counters, for whoever wants to compare them with the Intel or AMD documentation.
+    const QJsonObject dbg = r.value(QStringLiteral("readings")).toObject().value(QStringLiteral("debugfs")).toObject();
+    const QList<QPair<QString, QString>> raw{{QStringLiteral("amd_s0ix"), tr("AMD S0ix statistics")},
+                                              {QStringLiteral("amd_idlemask"), tr("AMD idle mask")},
+                                              {QStringLiteral("intel_substates"), tr("Intel package C-state residency")},
+                                              {QStringLiteral("intel_ltr"), tr("Intel latency tolerance (LTR)")}};
+    for (const auto &[key, label] : raw) {
+        const QString v = dbg.value(key).toString();
+        if (!v.isEmpty()) parts << QStringLiteral("<b>%1</b><pre style='margin:0'>%2</pre>").arg(label, v.toHtmlEscaped());
+    }
+    diagOut_->setText(parts.isEmpty() ? tr("Nothing to report.") : parts.join(QStringLiteral("<br>")));
+}
+
+QString SleepPage::findingText(const QString &code, const QJsonValue &detail) {
+    if (code == QLatin1String("deep_sleep"))
+        return tr("This machine suspends with deep (S3) sleep. The hardware sleep counter stays at zero in that mode, so the hardware-sleep share says nothing here.");
+    if (code == QLatin1String("aspm_performance"))
+        return tr("PCIe ASPM is set to performance: PCIe links never enter their low-power states, which keeps the processor package awake. "
+                  "The kernel option pcie_aspm.policy=powersave lifts it.");
+    if (code == QLatin1String("nvme_apst_off"))
+        return tr("NVMe power states are disabled (nvme_core.default_ps_max_latency_us=0). A drive that cannot enter its low-power states keeps the platform awake.");
+    if (code == QLatin1String("nvme_pm_on"))
+        return tr("NVMe runtime power management is on for %1. Its power/control should be auto.").arg(detail.toString());
+    if (code == QLatin1String("usb_pm_on"))
+        return tr("%1 USB device(s) keep runtime power management on (power/control = on): %2. "
+                  "A device that cannot sleep keeps the platform awake; its power/control should be auto.")
+            .arg(detail.toObject().value(QStringLiteral("count")).toInt()).arg(detail.toObject().value(QStringLiteral("devices")).toString());
+    if (code == QLatin1String("dgpu_active"))
+        return tr("The NVIDIA GPU (%1) is powered on right now. While it is, the platform cannot reach its deepest sleep. "
+                  "The dGPU power page shows how long it stays awake and what holds it.").arg(detail.toString());
+    if (code == QLatin1String("debugfs_unreadable"))
+        return tr("The AMD and Intel power counters cannot be read: debugfs is not mounted, or this machine has none of them.");
+    if (code == QLatin1String("nothing_found"))
+        return tr("No setting above explains it. The raw counters are shown below for comparison.");
+    return {};
 }
 
 void SleepPage::showEvent(QShowEvent *e) {
@@ -137,6 +223,7 @@ void SleepPage::fillSleeps() {
         hint_->setText(QStringLiteral("No sleep log yet. It is written by the centurion-sleep-log system-sleep hook (installed by install.sh / the ebuild) "
                                       "from the next suspend on."));
         fillAdvice({});
+        diag_->setVisible(false);
         return;
     }
     if (f.size() > (1 << 20)) f.seek(f.size() - (1 << 20));
@@ -146,6 +233,9 @@ void SleepPage::fillSleeps() {
         if (!o.isEmpty()) rows << o;
     }
     fillAdvice(rows);
+    QList<sleepadvice::Sleep> parsed;
+    for (const QJsonObject &o : rows) parsed << sleepadvice::parse(o);
+    diag_->setVisible(sleepadvice::hwSleepIdle(parsed));
     std::reverse(rows.begin(), rows.end());
     double drainSum = 0, hoursSum = 0;
     for (const QJsonObject &o : rows.mid(0, MAX_ROWS)) {
@@ -163,8 +253,9 @@ void SleepPage::fillSleeps() {
         } else if (!onBattery && o.value("status_before").toString().isEmpty()) {
             used = QStringLiteral("—");
         }
+        const bool hwKnown = !o.value("hw_sleep_us").toString().isEmpty();
         const double hwUs = o.value("hw_sleep_us").toString().toDouble();
-        const QString hw = (hwUs > 0 && t1 > t0) ? QStringLiteral("%1%").arg(std::min(100.0, hwUs / 1e6 / double(t1 - t0) * 100), 0, 'f', 0) : QStringLiteral("—");
+        const QString hw = (hwKnown && t1 > t0) ? QStringLiteral("%1%").arg(std::min(100.0, hwUs / 1e6 / double(t1 - t0) * 100), 0, 'f', 0) : QStringLiteral("—");
         QString woke = o.value("woke_by").toString();
         woke.replace(',', QStringLiteral(", "));
         if (woke.isEmpty() && !o.value("wake_irq").toString().isEmpty()) woke = QStringLiteral("IRQ ") + o.value("wake_irq").toString();
@@ -172,7 +263,7 @@ void SleepPage::fillSleeps() {
                                         o.value("mode").toString().isEmpty() ? o.value("kind").toString() : o.value("mode").toString(),
                                         used, per, hw, o.value("dgpu_before").toString() + QStringLiteral(" → ") + o.value("dgpu_after").toString(), woke});
         // A sleep that kept the SoC mostly awake, or drained fast, stands out.
-        if ((hwUs > 0 && t1 - t0 > 600 && hwUs / 1e6 / double(t1 - t0) < 0.5) || (per != QLatin1String("—") && per.section(' ', 0, 0).toDouble() > 2.0))
+        if ((hwKnown && t1 - t0 > 600 && hwUs / 1e6 / double(t1 - t0) < 0.5) || (per != QLatin1String("—") && per.section(' ', 0, 0).toDouble() > 2.0))
             for (int i = 0; i < 8; ++i) it->setForeground(i, QColor(QLatin1String(theme::WARN)));
         if (o.value("dgpu_after").toString() == QLatin1String("error"))
             for (int i = 0; i < 8; ++i) it->setForeground(i, QColor(QLatin1String(theme::DANGER)));

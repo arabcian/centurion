@@ -1,11 +1,14 @@
 #include "tray.h"
 #include "launcherwatch.h"
 #include "driftwatch.h"
+#include "lidwatch.h"
+#include "smartwatch.h"
 #include "healthtab.h"
 #include "hometab.h"
 #include "inteltab.h"
 #include "lightingtab.h"
 #include "mainwindow.h"
+#include "notifyprefs.h"
 #include "nvidiatab.h"
 #include "optimizetab.h"
 #include "ryzentab.h"
@@ -16,6 +19,8 @@
 #include <QMenu>
 #include <QFile>
 #include <QPainter>
+#include <QPixmap>
+#include <QRectF>
 #include <QSvgRenderer>
 #include <QTimer>
 
@@ -57,15 +62,23 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     rebuild();
 
     // Hardware/driver faults found by the Health tab's background scan.
-    connect(win_->health(), &HealthTab::alert, this, [this](const QString &t, const QString &m) { notify(t, m); });
+    connect(win_->health(), &HealthTab::alert, this, [this](const QString &category, const QString &severity, const QString &t, const QString &m) {
+        gatedNotify(category, severity, t, m);
+    });
+    // The dGPU stayed awake on battery (DgpuUsage): one alert per stretch, with a button to its page.
+    connect(win_->health(), &HealthTab::dgpuAwake, this, [this](qint64 minutes, const QString &holders) {
+        const QString who = holders.isEmpty() ? tr("Nothing identified as holding it.") : tr("Held by: %1").arg(holders);
+        notify(tr("dGPU awake for %1 min on battery").arg(minutes), who + tr("\nHealth → dGPU power for details."),
+               {{tr("Show"), [this] { win_->health()->openDgpuPage(); win_->showTab(QStringLiteral("Health")); }}});
+    });
     // Fan guard dropped fixed fan speeds after a temperature spike.
     connect(win_->home(), &HomeTab::alert, this, [this](const QString &t, const QString &m) { notify(t, m); });
     // Curve guard reset a curve after an error: offer to put the profile back (same path as the tray menu).
     connect(win_->health(), &HealthTab::curveReset, this, [this](const QString &group, const QString &profile, const QString &m) {
         const bool gpu = group == QLatin1String("gpu");
         const QString title = gpu ? tr("GPU curve guard") : tr("CPU curve guard");
-        if (profile.isEmpty()) { notify(title, m); return; }
-        notify(title, m + tr("\nWas: '%1'").arg(profile), {{tr("Undo"), [this, gpu, title, profile] {
+        if (profile.isEmpty()) { gatedNotify(notifyprefs::CURVE, QString(), title, m); return; }
+        gatedNotify(notifyprefs::CURVE, QString(), title, m + tr("\nWas: '%1'").arg(profile), {{tr("Undo"), [this, gpu, title, profile] {
             if (!claimCooldown()) return;
             if (gpu) {
                 if (NvidiaTab *nv = win_->nvidia()) { nv->applyNamedProfile(profile); notify(title, tr("Applying profile '%1'…").arg(profile)); }
@@ -84,6 +97,7 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
         });
         connect(lw, &LauncherWatch::gameEnded, this, [this](const QString &g, const QString &src) {
             notify(tr("%1 game closed").arg(src), tr("%1 — game mode ended.").arg(g));
+            flushDeferred();
         });
     }
 
@@ -96,6 +110,17 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
                        + tr("\nOptimizations tab → Re-apply."),
                    {{tr("Re-apply"), [dw] { dw->reapply(); }}});
         });
+    }
+
+    if (SmartWatch *sw = win_->smart()) {
+        connect(sw, &SmartWatch::alert, this, [this](const QStringList &lines) {
+            gatedNotify(notifyprefs::SMART, QString(), tr("Disk health"), lines.join(QLatin1Char('\n')) + tr("\nHealth → SMART for details."));
+        });
+    }
+
+    // Lid shut for longer than the Sleep page's limit while the machine stays awake.
+    if (LidWatch *lw = win_->lid()) {
+        connect(lw, &LidWatch::warm, this, [this](const QString &m) { gatedNotify(notifyprefs::HEAT, QString(), tr("Laptop awake with the lid closed"), m); });
     }
 
     // Scene results: a notification when nobody is looking at the Scenes tab
@@ -113,6 +138,7 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     });
     connect(eng, &SceneEngine::activeSceneChanged, this, [this](const QString &n, bool game) {
         setToolTip(tr("Centurion — scene: %1").arg(n));
+        if (!game) flushDeferred();
         if (win_->isVisible() && win_->isActiveWindow()) return;
         notify(game ? tr("Game scene: %1").arg(n) : tr("Scene: %1").arg(n),
                game ? tr("Game started — scene switched.") : tr("Scene switched."));
@@ -138,6 +164,23 @@ bool Tray::claimCooldown() {
 void Tray::notify(const QString &t, const QString &m, const QList<NotifyAction> &actions) {
     // The title is the topic: a newer message with the same title replaces the older one.
     notifier_->notify(t, t, m, actions, 2500, [this, t, m] { if (supportsMessages()) showMessage(t, m, icon(), 2500); });
+}
+
+void Tray::gatedNotify(const QString &category, const QString &severity, const QString &t, const QString &m, const QList<NotifyAction> &actions) {
+    switch (notifyprefs::decide(notifyprefs::load(), category, severity, scenes::gameSessions() > 0)) {
+    case notifyprefs::Verdict::Show: notify(t, m, actions); break;
+    case notifyprefs::Verdict::Hide: break;
+    case notifyprefs::Verdict::Defer: deferred_ << t + QStringLiteral(" — ") + QString(m).replace(QLatin1Char('\n'), QLatin1Char(' ')); break;
+    }
+}
+
+void Tray::flushDeferred() {
+    if (deferred_.isEmpty() || scenes::gameSessions() > 0) return;
+    constexpr int SHOWN = 5;
+    QStringList lines = deferred_.mid(0, SHOWN);
+    if (deferred_.size() > SHOWN) lines << QStringLiteral("…");
+    notify(tr("While gaming: %1 alert(s)").arg(deferred_.size()), lines.join(QLatin1Char('\n')) + tr("\nHealth → Notifications… to change this."));
+    deferred_.clear();
 }
 
 static void disabledEntry(QMenu *m, const QString &t) { m->addAction(t)->setEnabled(false); }
@@ -351,6 +394,26 @@ void Tray::rebuild() {
             if (top % 100) add(tr("%1 RPM (max)").arg(top), top);
         }
         fm->setEnabled(!home->fanBusy());
+    }
+
+    // Health: the worst Overview level, one click away. Shown only once the Overview has a reading.
+    if (const int worst = win_->health()->worstLevel(); worst >= 0) {
+        const char *color = worst >= 2 ? theme::DANGER : worst == 1 ? theme::WARN : theme::OK;
+        const QString text = worst >= 2 ? tr("Health: problem found") : worst == 1 ? tr("Health: needs a look") : tr("Health: all clear");
+        QPixmap dot(16, 16);
+        dot.fill(Qt::transparent);
+        QPainter p(&dot);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(QLatin1String(color)));
+        p.drawEllipse(QRectF(3, 3, 10, 10));
+        p.end();
+        connect(menu_->addAction(QIcon(dot), text), &QAction::triggered, this, [this] {
+            win_->showNormal();
+            win_->raise();
+            win_->activateWindow();
+            win_->showTab(QStringLiteral("Health"));
+        });
     }
 
     menu_->addSeparator();

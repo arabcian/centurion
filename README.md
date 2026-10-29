@@ -69,9 +69,10 @@ tab (which does wake it).
 While Centurion runs it answers on the session bus as `com.centurion.Centurion`
 (object `/com/centurion/Centurion`): `ListScenes`, `ActiveScene`, `ApplyScene`,
 `PowerProfiles`, `PowerProfile`, `SetPowerProfile`, `Sensors` (text rows),
-`SensorValues` (numbers, unit in the key: `cpu_temp_c`, `fan1_rpm`, `battery_percent`, …), and the signals
-`SceneApplied` / `PowerProfileChanged` — for KDE Connect, Home Assistant, Stream
-Deck or your own scripts. Examples in the [Handbook](docs/HANDBOOK.md#10-command-line-cheat-sheet).
+`SensorValues` (numbers, unit in the key: `cpu_temp_c`, `fan1_rpm`, `battery_percent`, …), `HealthSummary`
+(the Health Overview cards and their worst level), `HealthEvents` (this session's kernel events after a sequence
+number), and the signals `SceneApplied` / `PowerProfileChanged` / `HealthEvent` — for KDE Connect, Home
+Assistant, Stream Deck or your own scripts. Examples in the [Handbook](docs/HANDBOOK.md#10-command-line-cheat-sheet).
 
 ## Boot services
 

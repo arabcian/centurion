@@ -19,6 +19,9 @@
 #include "healthtab.h"
 #include "launcherwatch.h"
 #include "driftwatch.h"
+#include "smartwatch.h"
+#include "coolingpage.h"
+#include "lidwatch.h"
 #include "firstrunwizard.h"
 #include "mangohud.h"
 #include "platformprofile.h"
@@ -124,6 +127,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     }
     health_ = new HealthTab;
     tabs_->addTab(health_, tr("Health"));
+    // Cooling's fan max test drives the fans through the Home tab's own controls (the same calls as the tray menu).
+    {
+        HomeTab *home = home_;
+        health_->cooling()->setFanControls(FanControls{
+            [home] {
+                QList<QPair<QString, int>> out;
+                for (const HomeTab::FanInfo &f : home->fanInfo()) out << qMakePair(f.key, f.target);
+                return out;
+            },
+            [home] { return home->fansMaxMode(); },
+            [home] { return home->fanBusy(); },
+            [home] { home->setAllFansMax(); },
+            [home] { home->setAllFansAuto(); },
+            [home](const QString &key, int rpm) { home->setFanTarget(key, rpm); },
+        });
+    }
+    connect(health_, &HealthTab::levelChanged, home_, &HomeTab::setHealthLevel);
+    connect(health_, &HealthTab::openTab, this, &MainWindow::showTab);
 
     // The dGPU can come back after start-up (iGPU-only → Default, "Bring NVIDIA back").
     connect(home_, &HomeTab::dgpuRestored, this, &MainWindow::ensureNvidiaTab);
@@ -162,6 +183,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(drift_, &DriftWatch::drift, this, [this](const QStringList &lines, const QString &culprits) {
         optimize_->setDrift(lines, culprits, [this] { drift_->reapply(); });
     });
+
+    // Daily SMART sample (admins only) and its alerts.
+    smart_ = new SmartWatch(this);
+    // Lid shut for long while awake (warm in a bag): the tray warns once per closing.
+    lid_ = new LidWatch(this);
 }
 
 NvidiaTab *MainWindow::ensureNvidiaTab() {

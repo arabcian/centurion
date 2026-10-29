@@ -6,6 +6,7 @@
 #include "lighting.h"
 #include "memorydialog.h"
 #include "scenes.h"
+#include "prewrite.h"
 #include "privileged.h"
 #include "sysinfo.h"
 #include "theme.h"
@@ -122,6 +123,16 @@ QString HomeTab::profileLabel(const QString &p, bool translated) {
 
 QString HomeTab::helperPath() { return privileged::helperPath(QStringLiteral("legion-profile-helper")); }
 
+void HomeTab::setHealthLevel(int level) {
+    if (!healthBadge_) return;
+    healthBadge_->setVisible(level >= 0);
+    if (level < 0) return;
+    const char *color = level >= 2 ? theme::DANGER : level == 1 ? theme::WARN : theme::OK;
+    healthBadge_->setText(level >= 2 ? tr("Health: problem found") : level == 1 ? tr("Health: needs a look") : tr("Health: all clear"));
+    healthBadge_->setStyleSheet(QStringLiteral("color:%1").arg(QString::fromLatin1(color)));
+    healthBadge_->setToolTip(tr("Health → Overview"));
+}
+
 static QLabel *muted(const QString &text, QWidget *parent = nullptr) {
     auto *l = new QLabel(text, parent);
     l->setProperty("role", "muted");
@@ -190,6 +201,9 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     head->addWidget(muted(sub.join("   ·   ")));
     auto *headRow = new QHBoxLayout;
     headRow->addLayout(head, 1);
+    healthBadge_ = new QLabel;
+    healthBadge_->setVisible(false);
+    headRow->addWidget(healthBadge_, 0, Qt::AlignVCenter);
     auto *themeBox = new QComboBox;
     themeBox->setToolTip(tr("Colour theme. Applied by restarting the app (a few seconds)."));
     for (const auto &[id, name] : theme::themes()) themeBox->addItem(name, id);
@@ -735,27 +749,31 @@ QGroupBox *HomeTab::buildDeviceBox() {
         // (dGPU/MUX mode, no amdgpu); the user can still insist.
         auto setIgpu = std::make_shared<std::function<void(int, bool)>>();
         *setIgpu = [this, ig, gh, weak = std::weak_ptr<std::function<void(int, bool)>>(setIgpu)](int i, bool force) {
-            // The forced override is a firmware-helper call: it asks for the password.
-            privileged::run(force ? privileged::helperPath(privileged::FIRMWARE_HELPER) : gh,
-                            QJsonObject{{"op", "set_igpu_mode"}, {"mode", ig->itemData(i).toInt()}, {"force", force}}, this,
-                            [this, ig, i, weak](const privileged::Result &r) {
-                if (r.ok()) {
-                    ig->setProperty("applied", i);
-                    // Back to Default: the firmware returns the card; rescan + load the driver.
-                    if (ig->itemData(i).toInt() == 0)
-                        privileged::run(privileged::helperPath("legion-gpu-helper"), QJsonObject{{"op", "dgpu_restore"}}, this,
-                                        [this](const privileged::Result &rr) { if (rr.ok()) Q_EMIT dgpuRestored(); }, 60000);
-                    return;
-                }
-                ig->setCurrentIndex(ig->property("applied").toInt());
-                if (r.reached && r.json.value("needs_force").toBool()
-                    && QMessageBox::warning(this, tr("iGPU mode"), r.message() + tr("\n\nApply anyway? (asks for the administrator password)"),
-                                            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
-                    if (auto f = weak.lock()) { ig->setCurrentIndex(i); (*f)(i, true); }
-                    return;
-                }
-                if (!r.reached || !r.json.value("needs_force").toBool()) QMessageBox::warning(this, tr("iGPU mode"), r.message());
-            }, force ? privileged::FIRMWARE_TIMEOUT_MS : 60000);
+            // The forced override is a firmware-helper call: it asks for the password, after a safety copy.
+            auto send = [this, ig, gh, i, force, weak] {
+                privileged::run(force ? privileged::helperPath(privileged::FIRMWARE_HELPER) : gh,
+                                QJsonObject{{"op", "set_igpu_mode"}, {"mode", ig->itemData(i).toInt()}, {"force", force}}, this,
+                                [this, ig, i, weak](const privileged::Result &r) {
+                    if (r.ok()) {
+                        ig->setProperty("applied", i);
+                        // Back to Default: the firmware returns the card; rescan + load the driver.
+                        if (ig->itemData(i).toInt() == 0)
+                            privileged::run(privileged::helperPath("legion-gpu-helper"), QJsonObject{{"op", "dgpu_restore"}}, this,
+                                            [this](const privileged::Result &rr) { if (rr.ok()) Q_EMIT dgpuRestored(); }, 60000);
+                        return;
+                    }
+                    ig->setCurrentIndex(ig->property("applied").toInt());
+                    if (r.reached && r.json.value("needs_force").toBool()
+                        && QMessageBox::warning(this, tr("iGPU mode"), r.message() + tr("\n\nApply anyway? (asks for the administrator password)"),
+                                                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
+                        if (auto f = weak.lock()) { ig->setCurrentIndex(i); (*f)(i, true); }
+                        return;
+                    }
+                    if (!r.reached || !r.json.value("needs_force").toBool()) QMessageBox::warning(this, tr("iGPU mode"), r.message());
+                }, force ? privileged::FIRMWARE_TIMEOUT_MS : 60000);
+            };
+            if (force) prewrite::backupThen(QStringLiteral("igpu"), this, send);
+            else send();
         };
         connect(ig, &QComboBox::activated, this, [setIgpu](int i) { (*setIgpu)(i, false); });
         connect(nvBack, &QPushButton::clicked, this, [this, nvBack, gh] {
@@ -1532,21 +1550,23 @@ void HomeTab::setGpuMode(const QString &mode, bool force) {
         if (QMessageBox::question(this, tr("GPU mode"), msg) != QMessageBox::Yes) { readGpuMode(); return; }
     }
     gpuMode_->setEnabled(false);
-    // A MUX change persists in firmware: legion-firmware-helper, password every time.
-    privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER), QJsonObject{{"op", "set_gpu_mode"}, {"mode", mode}, {"force", force}}, this,
-                    [this, mode](const privileged::Result &r) {
-        gpuMode_->setEnabled(true);
-        if (r.reached && r.json.value("needs_force").toBool()) {
-            const auto a = QMessageBox::warning(this, tr("GPU mode — iGPU driver missing"), r.message() +
-                tr("\n\nSwitch anyway? Only do this if you are about to boot a kernel that has the iGPU driver, "
-                   "or you know how to switch back in the BIOS setup (F2)."), QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-            if (a == QMessageBox::Yes) setGpuMode(mode, true); else readGpuMode();
-            return;
-        }
-        // A dialog, not the 10 s status line: after a password prompt a failure
-        // that only flashes by looks as if the switch was silently ignored.
-        if (!r.ok()) { QMessageBox::warning(this, tr("GPU mode"), tr("The GPU mode was not changed:\n\n%1").arg(r.message())); readGpuMode(); return; }
-        showStatus(r.json.value("reboot_pending").toBool() ? tr("GPU mode set — reboot to switch.") : tr("GPU mode unchanged."), 8000);
-        readGpuMode();
-    }, privileged::FIRMWARE_TIMEOUT_MS);
+    // A MUX change persists in firmware: legion-firmware-helper, password every time, after a safety copy.
+    prewrite::backupThen(QStringLiteral("gpumux"), this, [this, mode, force] {
+        privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER), QJsonObject{{"op", "set_gpu_mode"}, {"mode", mode}, {"force", force}}, this,
+                        [this, mode](const privileged::Result &r) {
+            gpuMode_->setEnabled(true);
+            if (r.reached && r.json.value("needs_force").toBool()) {
+                const auto a = QMessageBox::warning(this, tr("GPU mode — iGPU driver missing"), r.message() +
+                    tr("\n\nSwitch anyway? Only do this if you are about to boot a kernel that has the iGPU driver, "
+                       "or you know how to switch back in the BIOS setup (F2)."), QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (a == QMessageBox::Yes) setGpuMode(mode, true); else readGpuMode();
+                return;
+            }
+            // A dialog, not the 10 s status line: after a password prompt a failure
+            // that only flashes by looks as if the switch was silently ignored.
+            if (!r.ok()) { QMessageBox::warning(this, tr("GPU mode"), tr("The GPU mode was not changed:\n\n%1").arg(r.message())); readGpuMode(); return; }
+            showStatus(r.json.value("reboot_pending").toBool() ? tr("GPU mode set — reboot to switch.") : tr("GPU mode unchanged."), 8000);
+            readGpuMode();
+        }, privileged::FIRMWARE_TIMEOUT_MS);
+    });
 }

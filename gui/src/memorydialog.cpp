@@ -1,4 +1,5 @@
 #include "memorydialog.h"
+#include "prewrite.h"
 #include "privileged.h"
 #include "theme.h"
 #include <QHBoxLayout>
@@ -302,18 +303,20 @@ void MemoryDialog::openEditor() {
             }
             apply->setEnabled(false);
             // BIOS variable write: legion-firmware-helper asks for the password every time.
-            privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER), req, dlg,
-                            [dlg, apply](const privileged::Result &w) {
-                if (w.ok()) {
-                    QMessageBox::information(dlg, "Edit timings", w.json.value("changed").toBool()
-                        ? "Written. Reboot to apply, then check the Running column.\n\nBackup: " + w.json.value("backup").toString()
-                        : QStringLiteral("Nothing changed."));
-                    dlg->close();
-                } else {
-                    QMessageBox::warning(dlg, "Edit timings", w.message());
-                    apply->setEnabled(true);
-                }
-            }, privileged::FIRMWARE_TIMEOUT_MS);
+            prewrite::backupThen(QStringLiteral("memtiming"), dlg, [dlg, apply, req] {
+                privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER), req, dlg,
+                                [dlg, apply](const privileged::Result &w) {
+                    if (w.ok()) {
+                        QMessageBox::information(dlg, "Edit timings", w.json.value("changed").toBool()
+                            ? "Written. Reboot to apply, then check the Running column.\n\nBackup: " + w.json.value("backup").toString()
+                            : QStringLiteral("Nothing changed."));
+                        dlg->close();
+                    } else {
+                        QMessageBox::warning(dlg, "Edit timings", w.message());
+                        apply->setEnabled(true);
+                    }
+                }, privileged::FIRMWARE_TIMEOUT_MS);
+            });
         });
         dlg->show();
     });

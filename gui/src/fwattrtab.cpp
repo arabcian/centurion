@@ -5,6 +5,7 @@
 #include <QSaveFile>
 #include <QShowEvent>
 #include "platformprofile.h"
+#include "prewrite.h"
 #include "privileged.h"
 #include "theme.h"
 
@@ -222,15 +223,17 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
                     if (sb->value() != sb->property("stored").toInt()) vals[k] = sb->value();
                 if (vals.isEmpty()) return;
                 btn->setEnabled(false);
-                privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER),
-                                QJsonObject{{"op", "set_fw_oc_many"}, {"values", vals}}, this,
-                                [spins, note, vals, dirty](const privileged::Result &r) {
-                    if (r.ok())
-                        for (const auto &[k, sb] : *spins) if (vals.contains(k)) sb->setProperty("stored", sb->value());
-                    note->setText(r.ok() ? QStringLiteral("%1 change(s) saved — reboot to apply").arg(vals.size())
-                                         : QStringLiteral("Failed: ") + r.message());
-                    dirty();
-                }, privileged::FIRMWARE_TIMEOUT_MS);
+                prewrite::backupThen(QStringLiteral("biosoc"), this, [this, spins, note, vals, dirty] {
+                    privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER),
+                                    QJsonObject{{"op", "set_fw_oc_many"}, {"values", vals}}, this,
+                                    [spins, note, vals, dirty](const privileged::Result &r) {
+                        if (r.ok())
+                            for (const auto &[k, sb] : *spins) if (vals.contains(k)) sb->setProperty("stored", sb->value());
+                        note->setText(r.ok() ? QStringLiteral("%1 change(s) saved — reboot to apply").arg(vals.size())
+                                             : QStringLiteral("Failed: ") + r.message());
+                        dirty();
+                    }, privileged::FIRMWARE_TIMEOUT_MS);
+                });
             });
             if (!spins->isEmpty()) ol->addWidget(btn);
             ol->addStretch(1);

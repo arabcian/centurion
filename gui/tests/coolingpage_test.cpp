@@ -66,6 +66,19 @@ int main(int argc, char **argv) {
         CHECK(better.contains(QStringLiteral("-9.0")) && better.contains(QStringLiteral("baseline")));
         const QString fan = CoolingPage::verdictText(obj(R"({"level":"watch","d_temp":4.5,"pinned":false,"reasons":[{"code":"temp_up","value":4.5},{"code":"fan_up","value":16}]})"), 95);
         CHECK(fan.contains(QStringLiteral("4.5 °C hotter")) && fan.contains(QStringLiteral("fan curve")));
+        const QString split = CoolingPage::verdictText(obj(R"({"level":"watch","d_temp":0.5,"pinned":false,"reasons":[{"code":"fan_split","value":22}]})"), 95);
+        CHECK(split.contains(QStringLiteral("22 points further apart")));
+
+        // Fan max test: the peaks against their baseline.
+        bool warn = false;
+        const QString peaks = CoolingPage::fanMaxText(obj(R"({"ok":true,"baseline":false,"peaks":[3600,3900],"base_peaks":[4000,4000],"drops_pct":[10.0,2.5],"warn":true,"warn_pct":8.0})"), &warn);
+        CHECK(warn);
+        CHECK(peaks.contains(QStringLiteral("3600 rpm")) && peaks.contains(QStringLiteral("fan 1 peaks 10 % under")) && !peaks.contains(QStringLiteral("fan 2 peaks")));
+        const QString calm = CoolingPage::fanMaxText(obj(R"({"ok":true,"baseline":false,"peaks":[3900],"drops_pct":[2.5],"warn":false,"warn_pct":8.0})"), &warn);
+        CHECK(!warn && calm.contains(QStringLiteral("No fan peaks more than 8 %")));
+        const QString first = CoolingPage::fanMaxText(obj(R"({"ok":true,"baseline":true,"peaks":[4000,3900]})"), &warn);
+        CHECK(!warn && first.contains(QStringLiteral("baseline")));
+        CHECK(CoolingPage::fanMaxText(obj(R"({"ok":false,"error":"no fans"})"), &warn).contains(QStringLiteral("no fans")));
     }
 
     // ── the page against a fake tool ───────────────────────────────────────────

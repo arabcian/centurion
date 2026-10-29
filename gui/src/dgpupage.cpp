@@ -1,9 +1,12 @@
 #include "dgpupage.h"
 #include "privileged.h"
 #include "theme.h"
+#include "userhelper.h"
 
 #include <QCheckBox>
 #include <QClipboard>
+#include <QDateTime>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QCoreApplication>
@@ -33,6 +36,7 @@ using Row = DgpuPage::Row;
 using Report = DgpuPage::Report;
 
 static const QString PCI = QStringLiteral("/sys/bus/pci/devices");
+static constexpr int USAGE_EVERY = 30;  // ticks: the usage view is refreshed about once a minute
 
 /// Whole (small) sysfs/procfs file, trimmed; empty when unreadable.
 static QString rd(const QString &p) {
@@ -58,6 +62,11 @@ static QString gpuAddr() {
 }
 
 bool DgpuPage::present() { return !gpuAddr().isEmpty(); }
+
+QString DgpuPage::devicePath() {
+    const QString a = gpuAddr();
+    return a.isEmpty() ? QString() : QFileInfo(PCI + '/' + a).canonicalFilePath();
+}
 
 static QString fmtMs(qint64 ms) {
     const qint64 s = ms / 1000;
@@ -144,6 +153,15 @@ static QList<Row> scanHolders(const QString &dev) {
     if (out.isEmpty()) out.append({section, QStringLiteral("none"), QStringLiteral("no process of yours has the NVIDIA device open"), 1});
     out.append({section, QStringLiteral("note"), QStringLiteral("root-owned processes (nvidia-powerd, display manager) are not visible without root"), 0});
     return out;
+}
+
+QString DgpuPage::holdersAt(const QString &dev) {
+    QStringList out;
+    for (const Row &h : scanHolders(dev)) {
+        if (h.key == QLatin1String("none") || h.key == QLatin1String("note")) continue;
+        out << h.key + QStringLiteral(" → ") + h.value;
+    }
+    return out.join(QStringLiteral("; "));
 }
 
 static Report gather(bool withHolders, QList<Row> holders) {
@@ -316,7 +334,11 @@ DgpuPage::DgpuPage(QWidget *parent) : QWidget(parent) {
 
     timer_ = new QTimer(this);
     timer_->setInterval(POLL_MS);
-    connect(timer_, &QTimer::timeout, this, [this] { ++tick_; refresh(tick_ % HOLDER_EVERY == 0); });
+    connect(timer_, &QTimer::timeout, this, [this] {
+        ++tick_;
+        refresh(tick_ % HOLDER_EVERY == 0);
+        if (tick_ % USAGE_EVERY == 0) refreshUsage();
+    });
 }
 
 void DgpuPage::setAwake(bool on) {
@@ -338,6 +360,7 @@ void DgpuPage::showEvent(QShowEvent *e) {
     { const QSignalBlocker b(awake_); awake_->setChecked(QFile::exists(QStringLiteral("/etc/centurion/dgpu-awake"))); }
     tick_ = 0;
     refresh(true);
+    refreshUsage();
     timer_->start();
 }
 
@@ -361,8 +384,59 @@ void DgpuPage::refresh(bool scanHolders) {
     });
 }
 
-void DgpuPage::apply(const Report &r) {
-    holders_ = r.holders;
+void DgpuPage::refreshUsage() {
+    QPointer<DgpuPage> self(this);
+    userhelper::run(QJsonObject{{QStringLiteral("op"), QStringLiteral("dgpu_usage")}}, this, [self](const QJsonObject &r) {
+        if (self) self->onUsage(r);
+    });
+}
+
+void DgpuPage::onUsage(const QJsonObject &r) {
+    if (last_.rows.isEmpty()) return;  // no sysfs report yet: apply() will show the rows with the first one
+    const QString usage = tr("Usage on battery (this app's record)");
+    const QString wakes = tr("Wake-ups (last 20)");
+    usageRows_.clear();
+    if (r.value(QStringLiteral("ok")).toBool()) {
+        const QJsonObject today = r.value(QStringLiteral("today")).toObject();
+        const QJsonValue pct = today.value(QStringLiteral("awake_pct"));
+        if (pct.isDouble()) {
+            usageRows_.append({usage, tr("Awake today"),
+                               tr("%1 % of the %2 h on battery").arg(pct.toDouble(), 0, 'f', 1)
+                                   .arg(today.value(QStringLiteral("hours")).toDouble(), 0, 'f', 1),
+                               r.value(QStringLiteral("level")).toInt() == 1 ? 2 : 1});
+        } else {
+            usageRows_.append({usage, tr("Awake today"), tr("no battery time recorded today"), 0});
+        }
+        const QJsonObject power = r.value(QStringLiteral("power")).toObject();
+        if (power.value(QStringLiteral("delta_w")).isDouble()) {
+            usageRows_.append({usage, tr("Awake against asleep"),
+                               tr("about %1 W more while the dGPU is awake (awake %2 W, asleep %3 W)")
+                                   .arg(power.value(QStringLiteral("delta_w")).toDouble(), 0, 'f', 1)
+                                   .arg(power.value(QStringLiteral("awake_w")).toDouble(), 0, 'f', 1)
+                                   .arg(power.value(QStringLiteral("asleep_w")).toDouble(), 0, 'f', 1), 0});
+        } else {
+            usageRows_.append({usage, tr("Awake against asleep"),
+                               tr("not enough yet: at least 30 min on battery in each state"), 0});
+        }
+        const QJsonArray list = r.value(QStringLiteral("wakes")).toArray();
+        if (list.isEmpty()) usageRows_.append({wakes, tr("none recorded yet"), QString(), 0});
+        for (const QJsonValue &v : list) {
+            const QJsonObject w = v.toObject();
+            const QString who = w.value(QStringLiteral("holders")).toString();
+            usageRows_.append({wakes, QDateTime::fromSecsSinceEpoch(w.value(QStringLiteral("t")).toInteger()).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+                               who.isEmpty() ? tr("no process of yours had the GPU open") : who, 0});
+        }
+    } else {
+        usageRows_.append({usage, tr("Unavailable"), r.value(QStringLiteral("error")).toString(), 0});
+    }
+    apply(last_);
+}
+
+void DgpuPage::apply(const Report &sysfs) {
+    last_ = sysfs;
+    holders_ = sysfs.holders;
+    Report r = sysfs;
+    r.rows = usageRows_ + sysfs.rows;
     const QString text = reportText(r);
     if (text == shown_) return;
     shown_ = text;

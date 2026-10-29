@@ -55,7 +55,8 @@
     <description xml:lang="tr">Çekirdek günlüğünden donanım hata olaylarını oku (salt okunur)</description>
     <message>Authentication is required to read hardware error events</message>
     <message xml:lang="tr">Donanım hata olaylarını okumak için kimlik doğrulama gerekiyor</message>
-    <!-- Read-only, classified events only (no raw log lines): the active local session gets it without a prompt. -->
+    <!-- Read-only: classified kernel events (no raw log lines), boot history, and the sleep-path readings (sleep_diag,
+         fixed paths, nothing written). The active local session gets it without a prompt. -->
     <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>yes</allow_active></defaults>
     <annotate key="org.freedesktop.policykit.exec.path">@LIBEXEC@/health-reader</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>

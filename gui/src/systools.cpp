@@ -1,6 +1,7 @@
 #include "systools.h"
 
 #include "privileged.h"
+#include "smartpage.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -66,9 +67,16 @@ QString pciLinks() {
         const char *what = cls.startsWith("0x03") ? "GPU" : cls.startsWith("0x0108") ? "NVMe" : nullptr;
         if (!what || !QFile::exists(p + "current_link_speed")) continue;
         auto rd = [&](const char *f) { return readFile(p + QLatin1String(f)).trimmed(); };
+        const QString speed = rd("current_link_speed"), width = rd("current_link_width");
+        const QString maxSpeed = rd("max_link_speed"), maxWidth = rd("max_link_width");
         out += QStringLiteral("%1  %2  now %3 x%4  (max %5 x%6)\n")
-                   .arg(e, QString::fromLatin1(what).leftJustified(4), rd("current_link_speed"), rd("current_link_width"),
-                        rd("max_link_speed"), rd("max_link_width"));
+                   .arg(e, QString::fromLatin1(what).leftJustified(4), speed, width, maxSpeed, maxWidth);
+        // Fewer lanes than the device supports is a warning. A lower speed is only a note: an idle link
+        // downclocks on purpose, so the speed is checked again under load.
+        if (width.toInt() > 0 && maxWidth.toInt() > width.toInt())
+            out += QCoreApplication::translate("systools", "    ! x%1 of the x%2 the device supports: the slot, a riser or a bifurcation setting may limit the lanes. Check again under load.\n").arg(width, maxWidth);
+        else if (!speed.isEmpty() && !maxSpeed.isEmpty() && speed != maxSpeed)
+            out += QCoreApplication::translate("systools", "    note: a lower speed at idle is normal; check again under load.\n");
     }
     return out.isEmpty() ? QStringLiteral("(no PCIe link information)\n") : out;
 }
@@ -251,7 +259,7 @@ void addPages(QTabWidget *tabs) {
         {"USB", "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
         {"Storage", "Block devices, schedulers and mounted filesystems.",
          {{"lsblk", "-o", "NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINTS,ROTA,SCHED"}, {"df", "-hT", "-x", "tmpfs", "-x", "devtmpfs"}}},
-        {"SMART", "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart"},
+        {"SMART details", "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart"},
         {"NVIDIA", "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
          {{"@file", "/proc/driver/nvidia/version"}, {"nvidia-smi", "-q"}}},
         {"Graphics", "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
@@ -261,7 +269,11 @@ void addPages(QTabWidget *tabs) {
         {"Battery", "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
          {{"@glob", "/sys/class/power_supply/*/uevent"}}},
     };
-    for (const Spec &s : specs) tabs->addTab(new ToolPage(s), QString::fromLatin1(s.title));
+    for (const Spec &s : specs) {
+        // The SMART summary goes in front of the raw output it summarizes.
+        if (s.rootTool && QLatin1String(s.rootTool) == QLatin1String("smart")) tabs->addTab(new SmartPage, QStringLiteral("SMART"));
+        tabs->addTab(new ToolPage(s), QString::fromLatin1(s.title));
+    }
 }
 
 } // namespace systools

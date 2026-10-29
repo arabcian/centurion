@@ -8,6 +8,7 @@
 // NVML/nvidia-smi or PCI config space, so looking at the page never wakes the
 // GPU or resets its idle timer. Polled only while the page is visible, on a
 // worker thread (a wedged driver must not freeze the GUI).
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QWidget>
@@ -22,6 +23,11 @@ class DgpuPage : public QWidget {
 public:
     explicit DgpuPage(QWidget *parent = nullptr);
     static bool present();  // an NVIDIA display-class PCI function exists
+    /// Canonical sysfs directory of that function (empty when there is none).
+    static QString devicePath();
+    /// Processes of the user holding the device at `dev`, as "name (pid) → nodes; …" (empty when none).
+    /// Reads /proc only; safe on a worker thread and never wakes the GPU.
+    static QString holdersAt(const QString &dev);
 
     struct Row { QString section, key, value; int level; };  // 0 plain, 1 good, 2 attention
     struct Report { QString verdict; int level = 0; QList<Row> rows, holders; };
@@ -33,6 +39,8 @@ protected:
 private:
     void refresh(bool scanHolders);
     void apply(const Report &r);
+    void refreshUsage();          // dgpu_usage from the usage tracker (a helper call, about once a minute)
+    void onUsage(const QJsonObject &r);
 
     void setAwake(bool on);
 
@@ -43,5 +51,7 @@ private:
     bool busy_ = false;
     int tick_ = 0;
     QList<Row> holders_;   // last "open handles" scan (rescanned every few ticks)
+    QList<Row> usageRows_; // "Usage on battery" and "Wake-ups" sections, from the tracker
+    Report last_;          // last sysfs report, so the usage rows can be shown without a new scan
     QString shown_;        // text of what the tree shows (skip identical rebuilds)
 };
