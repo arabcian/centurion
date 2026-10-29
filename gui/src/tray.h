@@ -24,6 +24,8 @@ private:
                      const QList<NotifyAction> &actions = {});
     /// Sends the alerts held during a game as one summary, once no game session is left.
     void flushDeferred();
+    /// Health → Cooling: one notification when the newest clean cooling test is overdue (at most once a week).
+    void coolingReminder();
 
     MainWindow *win_;
     QMenu *menu_;

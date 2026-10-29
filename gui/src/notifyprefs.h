@@ -18,7 +18,8 @@ inline const QString BACKUP = QStringLiteral("backup");    // Backup reminders a
 inline const QString CURVE = QStringLiteral("curve");      // Curve guard: suspect or reset curves
 inline const QString SMART = QStringLiteral("smart");      // Disk health (SMART)
 inline const QString HEAT = QStringLiteral("heat");        // Lid closed while the machine stays awake
-inline const QStringList ALL_CATEGORIES{KERNEL, NETWORK, BACKUP, CURVE, SMART, HEAT};
+inline const QString COOLING = QStringLiteral("cooling");  // Cooling test overdue (Health → Cooling)
+inline const QStringList ALL_CATEGORIES{KERNEL, NETWORK, BACKUP, CURVE, SMART, HEAT, COOLING};
 
 // Severities of kernel alerts; other categories pass an empty one.
 inline const QString ERROR_LEVEL = QStringLiteral("error");

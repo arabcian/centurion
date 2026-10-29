@@ -215,6 +215,10 @@ Every run also records how unevenly the fans spin (the gap between the fastest a
 
 **Fan max test…** puts every fan at maximum (the same as *Max all fans* on Home) for 30 seconds, after 5 seconds of reading, and records each fan's highest speed. Afterwards the fans go back to what they were set to on Home. It needs the Home tab's fan controls, and it asks first because the fans will be loud. The first test under a set of firmware settings is the baseline for the peaks; a fan peaking 8 % or more under its baseline is flagged (dust in that fan, or a blocked air path). Cancelling restores the fans at once. **Forget results for these settings** also forgets the fan baseline (`fanmax.json`).
 
+**Trend** (above the table, shown from two clean runs on) plots the steady die temperature of each clean run under the same firmware settings, by day.
+
+**Overdue reminder**: the *Remind me when the newest clean test is older than* setting (default 120 days, 0 = off) sends one tray notification when the newest clean run is that old, at most once a week. Centurion checks it once, a few minutes after start-up, and does not check again until the next start. Nothing is shown when no clean run exists yet. The notification is in the *Cooling test reminders* category under Notifications.
+
 ### Battery use
 Time left at the current draw, battery drain per scene (energy actually taken from the battery while each scene was active, sleep excluded) with "full charge lasts ~", and a daily capacity / health history.
 
@@ -238,7 +242,10 @@ Needs the `centurion-netguard` service.
 - **IP info** — reverse DNS + whois.
 
 ### Tool pages
-Sensors · CPU · Memory · DMI · PCI · PCIe detail · USB · Storage · SMART · NVIDIA · Graphics · Kernel · Battery. Each runs the matching system command and shows the output (DMI, PCIe detail, SMART need the admin password; NVIDIA and Graphics may wake the dGPU).
+Sensors · CPU · Memory · DMI · PCI · PCIe detail · USB · Storage · SMART · NVIDIA · Graphics · Kernel · Battery · Thermal · Security · Firmware updates. Each runs the matching system command and shows the output (DMI, PCIe detail, SMART need the admin password; NVIDIA and Graphics may wake the dGPU). A tool that is not installed shows the command for your distribution (`emerge`, `pacman -S`, `dnf install` or `apt install`, from `/etc/os-release`), or only its name when the distribution is not recognised.
+- **Thermal** — every thermal zone's type, temperature (millidegrees Celsius) and trip points.
+- **Security** — CPU vulnerability mitigations, kernel lockdown, Secure Boot (`mokutil`), the kernel taint flags decoded into one line per flag, and the microcode revision.
+- **Firmware updates** — `fwupdmgr get-devices` and `get-updates`. Looking for updates contacts the LVFS server on the internet, so this page runs only on **Run again**, never when it is opened.
 
 PCI lists the live link of each GPU and NVMe drive. A link running with fewer lanes than the device supports is flagged with a line naming the lane count; check again under load, because a lower speed at idle is normal and only noted.
 
@@ -256,7 +263,7 @@ The page reads the saved log when it is shown or its options change; nothing run
 
 ### Notifications…
 The **Notifications…** button on the Monitor's toolbar (Health) picks which alerts reach the desktop:
-- *Hardware and driver errors* (Health scan), *Blocked connections* (Network guard), *Backup reminders and finished backups*, *Curve guard* (suspect or reset curves), *Disk health* (SMART) and *Lid closed while the machine stays awake*. A switched-off category is hidden on the desktop; the event itself stays where it is listed (Monitor, Network, Curve stability, Backup, SMART).
+- *Hardware and driver errors* (Health scan), *Blocked connections* (Network guard), *Backup reminders and finished backups*, *Curve guard* (suspect or reset curves), *Disk health* (SMART), *Lid closed while the machine stays awake* and *Cooling test reminders*. A switched-off category is hidden on the desktop; the event itself stays where it is listed (Monitor, Network, Curve stability, Backup, SMART, Cooling).
 - *Hardware and driver alerts: critical only* — hides plain errors and keeps critical ones.
 - *While a game runs, hold these alerts* — the alerts that arrive during a game session wait, and when the session ends one summary notification lists them (the first five, then the count).
 

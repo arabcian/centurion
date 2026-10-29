@@ -1,7 +1,9 @@
 #include "coolingpage.h"
+#include "charts.h"
 #include "theme.h"
 #include <QComboBox>
 #include <QDateTime>
+#include <QDir>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -11,10 +13,13 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSettings>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -43,6 +48,37 @@ static double reason(const QJsonObject &a, const char *code) {
     }
     return std::nan("");
 }
+
+namespace coolingreminder {
+
+// The same place the tool uses: $XDG_STATE_HOME/centurion, else ~/.local/state/centurion.
+QString storePath() {
+    const QString base = qEnvironmentVariableIsEmpty("XDG_STATE_HOME") ? QDir::homePath() + QStringLiteral("/.local/state")
+                                                                       : qEnvironmentVariable("XDG_STATE_HOME");
+    return base + QStringLiteral("/centurion/cooling.json");
+}
+
+QString settingsPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/gui.ini");
+}
+
+qint64 lastCleanRun(const QByteArray &store) {
+    qint64 newest = 0;
+    for (const QJsonValue &v : QJsonDocument::fromJson(store).object().value(QStringLiteral("runs")).toArray()) {
+        const QJsonObject r = v.toObject();
+        if (!r.value(QStringLiteral("noisy")).toBool()) newest = std::max(newest, qint64(r.value(QStringLiteral("t")).toDouble()));
+    }
+    return newest;
+}
+
+bool reminderDue(qint64 lastClean, qint64 lastReminder, qint64 now, int days) {
+    constexpr qint64 DAY = 86400;
+    if (days <= 0 || lastClean <= 0) return false;  // off, or no clean run to be overdue
+    if (now - lastClean < qint64(days) * DAY) return false;
+    return lastReminder <= 0 || now - lastReminder >= 7 * DAY;
+}
+
+}  // namespace coolingreminder
 
 QString CoolingPage::verdictText(const QJsonObject &a, double limitC) {
     const QString level = a.value(QStringLiteral("level")).toString();
@@ -151,6 +187,12 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     verdict_->setVisible(false);
     root->addWidget(verdict_);
 
+    // The steady temperature of each clean run under these settings, by day (shown from two runs on).
+    trend_ = new LineChart;
+    trend_->setFixedHeight(120);
+    trend_->setVisible(false);
+    root->addWidget(trend_);
+
     table_ = new QTreeWidget;
     table_->setColumnCount(6);
     table_->setHeaderLabels({tr("Date"), tr("CPU temperature"), tr("Fan"), tr("Clock"), tr("Started at"), tr("Compared with the baseline")});
@@ -168,6 +210,17 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     foot->addWidget(baseline_);
     foot->addWidget(forget_);
     root->addLayout(foot);
+    auto *remind = new QHBoxLayout;
+    remindDays_ = new QSpinBox;
+    remindDays_->setRange(0, 3650);
+    remindDays_->setSpecialValueText(tr("off"));
+    remindDays_->setSuffix(tr(" days"));
+    remindDays_->setValue(QSettings(coolingreminder::settingsPath(), QSettings::IniFormat).value(QStringLiteral("cooling/remind_days"), 120).toInt());
+    remindDays_->setToolTip(tr("A tray notification when the newest clean test is older than this, at most once a week. Off: no reminders."));
+    remind->addWidget(new QLabel(tr("Remind me when the newest clean test is older than")));
+    remind->addWidget(remindDays_);
+    remind->addStretch(1);
+    root->addLayout(remind);
     root->addWidget(muted(tr("For a fair comparison: plug in the charger, leave the fans on Auto, close other programs, use the same room and the same test length. "
                              "A changed power limit or temperature target starts a new baseline, since it changes how much heat the load makes.")));
 
@@ -186,6 +239,9 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     connect(forget_, &QPushButton::clicked, this, [this] {
         if (QMessageBox::question(this, tr("Cooling"), tr("Forget every cooling and fan test result stored for the current firmware settings?")) != QMessageBox::Yes) return;
         tool({QStringLiteral("forget")}, [this](const QJsonObject &) { verdict_->setVisible(false); refresh(); });
+    });
+    connect(remindDays_, &QSpinBox::valueChanged, this, [](int days) {
+        QSettings(coolingreminder::settingsPath(), QSettings::IniFormat).setValue(QStringLiteral("cooling/remind_days"), days);
     });
 }
 
@@ -266,6 +322,19 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
     }
     baseline_->setEnabled(anyClean);
     forget_->setEnabled(!runs.isEmpty());
+
+    // Trend: the steady temperature of each clean run, by day since the first one (the store keeps runs oldest first).
+    const double t0 = runs.isEmpty() ? 0.0 : runs.first().toObject().value(QStringLiteral("t")).toDouble();
+    QVector<LineChart::Point> points;
+    for (const QJsonValue &v : runs) {
+        const QJsonObject r = v.toObject();
+        if (r.value(QStringLiteral("noisy")).toBool()) continue;
+        const double t = r.value(QStringLiteral("t")).toDouble(), temp = r.value(QStringLiteral("steady_temp")).toDouble();
+        points << LineChart::Point{(t - t0) / 86400.0, temp,
+                                   QDateTime::fromSecsSinceEpoch(qint64(t)).toString(QStringLiteral("yyyy-MM-dd")) + QStringLiteral(" · ") + tr("%1 °C").arg(temp, 0, 'f', 1)};
+    }
+    trend_->setPoints(points, QStringLiteral("°C"));
+    trend_->setVisible(points.size() >= 2);
 
     if (s.contains(QStringLiteral("assessment"))) {
         const QJsonObject a = s.value(QStringLiteral("assessment")).toObject();

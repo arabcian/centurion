@@ -12,6 +12,6 @@ public:
 private:
     void save();
 
-    QCheckBox *categories_[6];  // in notifyprefs::ALL_CATEGORIES order
+    QCheckBox *categories_[7];  // in notifyprefs::ALL_CATEGORIES order
     QCheckBox *criticalOnly_, *deferGame_;
 };

@@ -1,4 +1,5 @@
 #include "tray.h"
+#include "coolingpage.h"
 #include "launcherwatch.h"
 #include "driftwatch.h"
 #include "lidwatch.h"
@@ -16,8 +17,10 @@
 #include "theme.h"
 #include <QApplication>
 #include <algorithm>
-#include <QMenu>
+#include <QDateTime>
 #include <QFile>
+#include <QMenu>
+#include <QSettings>
 #include <QPainter>
 #include <QPixmap>
 #include <QRectF>
@@ -25,6 +28,7 @@
 #include <QTimer>
 
 static constexpr int APPLY_COOLDOWN_MS = 2500;
+static constexpr int COOLING_CHECK_MS = 3 * 60 * 1000;  // after login settles
 
 QIcon appIcon(int size) {
     // The installed centurion.svg (compiled in), recoloured to theme::ACCENT / BG1 so window,
@@ -145,6 +149,21 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     });
     connect(eng, &SceneEngine::started, this, [this](const QString &n) { setToolTip(tr("Centurion — applying scene '%1'…").arg(n)); });
     connect(eng, &SceneEngine::finished, this, [this](const QString &n) { if (!n.isEmpty()) setToolTip(tr("Centurion — scene: %1").arg(n)); });
+
+    // An overdue cooling test: checked once, a few minutes after start-up (as the backup reminder's first check); nothing repeats.
+    QTimer::singleShot(COOLING_CHECK_MS, this, [this] { coolingReminder(); });
+}
+
+void Tray::coolingReminder() {
+    const QSettings st(coolingreminder::settingsPath(), QSettings::IniFormat);
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    QFile store(coolingreminder::storePath());
+    const qint64 lastClean = store.open(QIODevice::ReadOnly) ? coolingreminder::lastCleanRun(store.readAll()) : 0;
+    const int days = st.value(QStringLiteral("cooling/remind_days"), 120).toInt();
+    if (!coolingreminder::reminderDue(lastClean, st.value(QStringLiteral("cooling/last_reminder"), 0).toLongLong(), now, days)) return;
+    QSettings(coolingreminder::settingsPath(), QSettings::IniFormat).setValue(QStringLiteral("cooling/last_reminder"), now);
+    gatedNotify(notifyprefs::COOLING, QString(), tr("Cooling test overdue"),
+                tr("The last clean cooling test was %1 days ago. Health → Cooling → Run cooling test.").arg((now - lastClean) / 86400));
 }
 
 void Tray::toggleWindow() {

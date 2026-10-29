@@ -23,9 +23,10 @@ NotifyDialog::NotifyDialog(QWidget *parent) : QDialog(parent) {
         QT_TR_NOOP("Curve guard (suspect or reset curves)"),
         QT_TR_NOOP("Disk health (SMART)"),
         QT_TR_NOOP("Lid closed while the machine stays awake"),
+        QT_TR_NOOP("Cooling test reminders"),
     };
     const notifyprefs::Prefs p = notifyprefs::load();
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
         categories_[i] = new QCheckBox(tr(labels[i]));
         categories_[i]->setChecked(!p.off.contains(notifyprefs::ALL_CATEGORIES.at(i)));
         v->addWidget(categories_[i]);
@@ -46,7 +47,7 @@ NotifyDialog::NotifyDialog(QWidget *parent) : QDialog(parent) {
 
 void NotifyDialog::save() {
     notifyprefs::Prefs p;
-    for (int i = 0; i < 6; ++i) if (!categories_[i]->isChecked()) p.off << notifyprefs::ALL_CATEGORIES.at(i);
+    for (int i = 0; i < 7; ++i) if (!categories_[i]->isChecked()) p.off << notifyprefs::ALL_CATEGORIES.at(i);
     p.criticalOnly = criticalOnly_->isChecked();
     p.deferGame = deferGame_->isChecked();
     notifyprefs::save(p);

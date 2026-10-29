@@ -12,6 +12,10 @@
 // Fan max test (button, only with the Home tab's fan controls): all fans go to maximum for 30 s,
 // after 5 s of reading, sampling each fan's peak speed; then the fans go back as they were on Home.
 // The peaks are judged by centurion-cooltest against the first test under the same firmware settings.
+//
+// Overdue reminder (coolingreminder, Tray): when the newest clean run is older than the days set on this
+// page (default 120, 0 = off), one tray notification, at most once a week. The tray checks it once,
+// a few minutes after start-up, reading the same store file; nothing repeats.
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QList>
@@ -24,8 +28,21 @@ class QLabel;
 class QProcess;
 class QProgressBar;
 class QPushButton;
+class QSpinBox;
 class QTimer;
 class QTreeWidget;
+class LineChart;
+
+namespace coolingreminder {
+/// Where the cooling store (`cooling.json`) and the GUI settings (`gui.ini`, `cooling/…` keys) are.
+QString storePath();
+QString settingsPath();
+/// Epoch seconds of the newest clean (not noisy) run in the store's JSON text; 0 when there is none.
+qint64 lastCleanRun(const QByteArray &store);
+/// Whether to remind now: `days` > 0, a clean run exists and is at least `days` old, and the last reminder
+/// (epoch seconds, 0 = never) is at least a week old.
+bool reminderDue(qint64 lastClean, qint64 lastReminder, qint64 now, int days);
+}
 
 /// The Home tab's fan controls as the fan max test uses them. The main window wires them to the Home tab
 /// (this page does not depend on it). Without them the test is not offered.
@@ -68,6 +85,8 @@ private:
     QProgressBar *bar_;
     QPushButton *run_, *cancel_, *baseline_, *forget_, *fanMax_;
     QComboBox *length_;
+    QSpinBox *remindDays_;
+    LineChart *trend_;
     QTreeWidget *table_;
     QProcess *proc_ = nullptr;
     QByteArray buf_;

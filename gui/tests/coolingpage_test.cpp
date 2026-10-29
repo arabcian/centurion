@@ -81,6 +81,21 @@ int main(int argc, char **argv) {
         CHECK(CoolingPage::fanMaxText(obj(R"({"ok":false,"error":"no fans"})"), &warn).contains(QStringLiteral("no fans")));
     }
 
+    // ── overdue reminder: the newest clean run, and when to remind ─────────────
+    {
+        constexpr qint64 DAY = 86400, NOW = 200 * DAY;
+        const QByteArray store = R"({"version":1,"runs":[
+            {"t":10,"noisy":false},{"t":50,"noisy":true},{"t":30,"noisy":false}]})";
+        CHECK(coolingreminder::lastCleanRun(store) == 30);       // a noisy run does not count
+        CHECK(coolingreminder::lastCleanRun("") == 0);           // no store yet
+        CHECK(!coolingreminder::reminderDue(0, 0, NOW, 120));    // no clean run: nothing to be overdue
+        CHECK(!coolingreminder::reminderDue(NOW - 10 * DAY, 0, NOW, 120));  // not yet 120 days old
+        CHECK(coolingreminder::reminderDue(NOW - 130 * DAY, 0, NOW, 120));  // overdue, never reminded
+        CHECK(!coolingreminder::reminderDue(NOW - 130 * DAY, NOW - 3 * DAY, NOW, 120));  // reminded 3 days ago
+        CHECK(coolingreminder::reminderDue(NOW - 130 * DAY, NOW - 8 * DAY, NOW, 120));   // a week has passed
+        CHECK(!coolingreminder::reminderDue(NOW - 130 * DAY, 0, NOW, 0));                // 0 = off
+    }
+
     // ── the page against a fake tool ───────────────────────────────────────────
     QTemporaryDir dir;
     CHECK(dir.isValid());

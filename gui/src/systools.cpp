@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFontDatabase>
@@ -23,6 +24,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <iterator>
+
 namespace {
 
 constexpr int CMD_TIMEOUT_MS = 20000;
@@ -30,20 +33,72 @@ constexpr qsizetype MAX_OUT = 1 << 20;
 
 // A command is argv; argv[0] may be a pseudo-command:
 //   @file <path>      contents of a file
-//   @glob <pattern>   every file matching (dir/*/name)
+//   @dir <path>       contents of every file in a directory
+//   @glob <pattern>   every file matching (dir/*/name; name may contain * too)
 //   @pcilink          PCIe link speed/width of GPUs and NVMe drives (sysfs)
+//   @tainted          /proc/sys/kernel/tainted decoded into its flags
+//   @microcode        distinct microcode revisions of the CPUs
 struct Spec {
     const char *title, *about;
     QList<QStringList> cmds;
     const char *rootTool = nullptr;  // tune-helper {"op":"tool"} instead of cmds
+    bool manual = false;             // runs only on "Run again" (it may reach the network)
 };
 
-const QHash<QString, QString> PACKAGES = {
-    {"sensors", "sys-apps/lm-sensors"}, {"lscpu", "sys-apps/util-linux"}, {"cpupower", "sys-power/cpupower"},
-    {"numactl", "sys-process/numactl"}, {"lspci", "sys-apps/pciutils"}, {"lsusb", "sys-apps/usbutils"},
-    {"lsblk", "sys-apps/util-linux"}, {"nvidia-smi", "x11-drivers/nvidia-drivers"},
-    {"vulkaninfo", "dev-util/vulkan-tools"}, {"glxinfo", "x11-apps/mesa-progs"}, {"lsmod", "sys-apps/kmod"},
-    {"swapon", "sys-apps/util-linux"}, {"free", "sys-process/procps"}, {"df", "sys-apps/coreutils"}};
+// The package that provides each tool, per distribution family (Gentoo first: it is the project's own).
+struct ToolPkg { const char *tool, *gentoo, *arch, *fedora, *debian; };
+const ToolPkg TOOL_PKGS[] = {
+    {"sensors", "sys-apps/lm-sensors", "lm_sensors", "lm_sensors", "lm-sensors"},
+    {"lscpu", "sys-apps/util-linux", "util-linux", "util-linux", "util-linux"},
+    {"cpupower", "sys-power/cpupower", "cpupower", "kernel-tools", "linux-cpupower"},
+    {"numactl", "sys-process/numactl", "numactl", "numactl", "numactl"},
+    {"lspci", "sys-apps/pciutils", "pciutils", "pciutils", "pciutils"},
+    {"lsusb", "sys-apps/usbutils", "usbutils", "usbutils", "usbutils"},
+    {"lsblk", "sys-apps/util-linux", "util-linux", "util-linux", "util-linux"},
+    {"nvidia-smi", "x11-drivers/nvidia-drivers", "nvidia-utils", "xorg-x11-drv-nvidia-cuda", "nvidia-smi"},
+    {"vulkaninfo", "dev-util/vulkan-tools", "vulkan-tools", "vulkan-tools", "vulkan-tools"},
+    {"glxinfo", "x11-apps/mesa-progs", "mesa-utils", "glx-utils", "mesa-utils"},
+    {"lsmod", "sys-apps/kmod", "kmod", "kmod", "kmod"},
+    {"swapon", "sys-apps/util-linux", "util-linux", "util-linux", "util-linux"},
+    {"free", "sys-process/procps", "procps-ng", "procps-ng", "procps"},
+    {"df", "sys-apps/coreutils", "coreutils", "coreutils", "coreutils"},
+    {"mokutil", "sys-boot/mokutil", "mokutil", "mokutil", "mokutil"},
+    {"fwupdmgr", "sys-apps/fwupd", "fwupd", "fwupd", "fwupd"},
+};
+
+// "gentoo", "arch", "fedora" (Fedora and the RHEL family), "debian" (Debian and Ubuntu), or "" for any other
+// distribution. Read from the ID and ID_LIKE lines of /etc/os-release.
+QString distroFamily() {
+    static const QHash<QString, QString> FAMILY = {{"gentoo", "gentoo"}, {"arch", "arch"}, {"fedora", "fedora"}, {"rhel", "fedora"},
+                                                   {"centos", "fedora"}, {"debian", "debian"}, {"ubuntu", "debian"}};
+    static const QString family = [] {
+        QStringList ids;
+        QFile f(QStringLiteral("/etc/os-release"));
+        if (f.open(QIODevice::ReadOnly))
+            for (const QString &line : QString::fromUtf8(f.readAll()).split(QLatin1Char('\n')))
+                if (line.startsWith(QLatin1String("ID=")) || line.startsWith(QLatin1String("ID_LIKE=")))
+                    ids << line.section(QLatin1Char('='), 1).remove(QLatin1Char('"')).split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        for (const QString &id : ids)
+            if (FAMILY.contains(id)) return FAMILY.value(id);
+        return QString();
+    }();
+    return family;
+}
+
+// The command that installs the tool on this distribution, e.g. "emerge sys-apps/lm-sensors". Only the tool's
+// name when the distribution or the tool is not known.
+QString installHint(const QString &tool) {
+    const QString fam = distroFamily();
+    for (const ToolPkg &p : TOOL_PKGS) {
+        if (tool != QLatin1String(p.tool)) continue;
+        if (fam == QLatin1String("gentoo")) return QStringLiteral("emerge %1").arg(QLatin1String(p.gentoo));
+        if (fam == QLatin1String("arch")) return QStringLiteral("pacman -S %1").arg(QLatin1String(p.arch));
+        if (fam == QLatin1String("fedora")) return QStringLiteral("dnf install %1").arg(QLatin1String(p.fedora));
+        if (fam == QLatin1String("debian")) return QStringLiteral("apt install %1").arg(QLatin1String(p.debian));
+        break;
+    }
+    return tool;
+}
 
 QString findExe(const QString &name) {
     QString p = QStandardPaths::findExecutable(name);
@@ -81,6 +136,60 @@ QString pciLinks() {
     return out.isEmpty() ? QStringLiteral("(no PCIe link information)\n") : out;
 }
 
+// Kernel taint flags, bit 0 first (include/linux/kernel.h, admin-guide/tainted-kernels.rst).
+struct TaintBit { char letter; const char *text; };
+const TaintBit TAINT_BITS[] = {
+    {'P', QT_TRANSLATE_NOOP("systools", "proprietary module loaded")},
+    {'F', QT_TRANSLATE_NOOP("systools", "module force-loaded")},
+    {'S', QT_TRANSLATE_NOOP("systools", "SMP kernel on a CPU not designed for SMP")},
+    {'R', QT_TRANSLATE_NOOP("systools", "module forcibly removed")},
+    {'M', QT_TRANSLATE_NOOP("systools", "machine check exception")},
+    {'B', QT_TRANSLATE_NOOP("systools", "bad page referenced")},
+    {'U', QT_TRANSLATE_NOOP("systools", "tainted by user space request")},
+    {'D', QT_TRANSLATE_NOOP("systools", "an oops or BUG happened earlier")},
+    {'A', QT_TRANSLATE_NOOP("systools", "ACPI table overridden")},
+    {'W', QT_TRANSLATE_NOOP("systools", "a kernel warning happened earlier")},
+    {'C', QT_TRANSLATE_NOOP("systools", "staging driver loaded")},
+    {'I', QT_TRANSLATE_NOOP("systools", "firmware bug workaround applied")},
+    {'O', QT_TRANSLATE_NOOP("systools", "out-of-tree module loaded")},
+    {'E', QT_TRANSLATE_NOOP("systools", "unsigned module loaded")},
+    {'L', QT_TRANSLATE_NOOP("systools", "soft lockup happened")},
+    {'K', QT_TRANSLATE_NOOP("systools", "kernel live-patched")},
+    {'X', QT_TRANSLATE_NOOP("systools", "auxiliary taint (distribution)")},
+    {'T', QT_TRANSLATE_NOOP("systools", "built with the randstruct plugin")},
+    {'N', QT_TRANSLATE_NOOP("systools", "kernel self-test taint")},
+};
+
+// /proc/sys/kernel/tainted as the number and one line per flag set.
+QString taintedText() {
+    const QString raw = readFile(QStringLiteral("/proc/sys/kernel/tainted")).trimmed();
+    bool ok = false;
+    const qulonglong mask = raw.toULongLong(&ok);
+    if (!ok) return raw + QLatin1Char('\n');
+    if (mask == 0) return QStringLiteral("0\n") + QCoreApplication::translate("systools", "not tainted: nothing unusual has been loaded or has happened") + QLatin1Char('\n');
+    QString out = QStringLiteral("%1\n").arg(mask);
+    for (int bit = 0; bit < 64; ++bit) {
+        if (!(mask & (qulonglong(1) << bit))) continue;
+        if (bit < int(std::size(TAINT_BITS)))
+            out += QStringLiteral("  bit %1 %2: %3\n").arg(bit).arg(QChar(TAINT_BITS[bit].letter)).arg(QCoreApplication::translate("systools", TAINT_BITS[bit].text));
+        else
+            out += QStringLiteral("  bit %1: %2\n").arg(bit).arg(QCoreApplication::translate("systools", "unknown flag"));
+    }
+    return out;
+}
+
+// One line per distinct microcode revision in /proc/cpuinfo (every thread repeats it).
+QString microcodeText() {
+    QStringList revs;
+    for (const QString &line : readFile(QStringLiteral("/proc/cpuinfo")).split(QLatin1Char('\n'))) {
+        if (!line.startsWith(QLatin1String("microcode"))) continue;
+        const QString rev = line.section(QLatin1Char(':'), 1).trimmed();
+        if (!revs.contains(rev)) revs << rev;
+    }
+    return revs.isEmpty() ? QCoreApplication::translate("systools", "(no microcode information)\n")
+                          : QStringLiteral("microcode: %1\n").arg(revs.join(QLatin1String(", ")));
+}
+
 // "Serial Number: X", "UUID: X", "POWER_SUPPLY_SERIAL_NUMBER=X", "GPU UUID : X"…
 // (dmidecode, smartctl, nvme, nvidia-smi, battery). Placeholder values that
 // identify nothing are left visible.
@@ -96,7 +205,7 @@ public:
         auto *v = new QVBoxLayout(this);
         v->setContentsMargins(8, 6, 8, 6);
         auto *top = new QHBoxLayout;
-        auto *about = new QLabel(QString::fromUtf8(s.about));
+        auto *about = new QLabel(QCoreApplication::translate("systools", s.about));
         about->setWordWrap(true);
         about->setProperty("role", "muted");
         top->addWidget(about, 1);
@@ -114,6 +223,7 @@ public:
         text_->setLineWrapMode(QTextEdit::NoWrap);
         text_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         v->addWidget(text_, 1);
+        if (s.manual) text_->setPlainText(QCoreApplication::translate("systools", "Not run yet: press \"Run again\" to read this page."));
         connect(text_, &QTextBrowser::anchorClicked, this, [this](const QUrl &u) {
             bool ok = false;
             const int i = u.toString().mid(2).toInt(&ok);  // "s:<index>"
@@ -134,7 +244,7 @@ public:
 protected:
     void showEvent(QShowEvent *e) override {
         QWidget::showEvent(e);
-        if (!ran_) start();  // lazy: nothing runs until the page is opened
+        if (!ran_ && !spec_.manual) start();  // lazy: nothing runs until the page is opened
     }
 
 private:
@@ -205,13 +315,23 @@ private:
             const QString pat = c.at(1);
             const QString dir = pat.section('/', 0, -3), name = pat.section('/', -1);
             for (const QString &e : QDir(dir).entryList(QDir::Dirs | QDir::NoDotAndDotDot))
-                if (QFile::exists(dir + '/' + e + '/' + name)) out_ += "$ cat " + dir + '/' + e + '/' + name + '\n' + readFile(dir + '/' + e + '/' + name) + '\n';
+                for (const QString &f : QDir(dir + '/' + e).entryList({name}, QDir::Files))
+                    out_ += "$ cat " + dir + '/' + e + '/' + f + '\n' + readFile(dir + '/' + e + '/' + f) + '\n';
             step(i + 1);
             return;
         }
+        if (c.first() == QLatin1String("@dir")) {
+            const QString dir = c.at(1);
+            for (const QString &f : QDir(dir).entryList(QDir::Files, QDir::Name))
+                out_ += "$ cat " + dir + '/' + f + '\n' + readFile(dir + '/' + f) + '\n';
+            step(i + 1);
+            return;
+        }
+        if (c.first() == QLatin1String("@tainted")) { out_ += QStringLiteral("$ cat /proc/sys/kernel/tainted (decoded)\n") + taintedText() + '\n'; step(i + 1); return; }
+        if (c.first() == QLatin1String("@microcode")) { out_ += QStringLiteral("$ /proc/cpuinfo (microcode)\n") + microcodeText() + '\n'; step(i + 1); return; }
         const QString exe = findExe(c.first());
         if (exe.isEmpty()) {
-            out_ += "$ " + shown + "\n(not installed — emerge " + PACKAGES.value(c.first(), QStringLiteral("?")) + ")\n\n";
+            out_ += "$ " + shown + '\n' + QCoreApplication::translate("systools", "(not installed — %1)").arg(installHint(c.first())) + "\n\n";
             step(i + 1);
             return;
         }
@@ -268,11 +388,21 @@ void addPages(QTabWidget *tabs) {
          {{"uname", "-a"}, {"@file", "/proc/cmdline"}, {"lsmod"}}},
         {"Battery", "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
          {{"@glob", "/sys/class/power_supply/*/uevent"}}},
+        {QT_TRANSLATE_NOOP("systools", "Thermal"),
+         QT_TRANSLATE_NOOP("systools", "Every thermal zone: its type, current temperature and trip points. Temperatures are in millidegrees Celsius, as the kernel reports them."),
+         {{"@glob", "/sys/class/thermal/*/type"}, {"@glob", "/sys/class/thermal/*/temp"}, {"@glob", "/sys/class/thermal/*/trip_point_*_temp"}}},
+        {QT_TRANSLATE_NOOP("systools", "Security"),
+         QT_TRANSLATE_NOOP("systools", "Mitigations for CPU vulnerabilities, kernel lockdown, Secure Boot, the kernel taint flags and the microcode revision."),
+         {{"@dir", "/sys/devices/system/cpu/vulnerabilities"}, {"@file", "/sys/kernel/security/lockdown"}, {"mokutil", "--sb-state"}, {"@tainted"}, {"@microcode"}}},
+        {QT_TRANSLATE_NOOP("systools", "Firmware updates"),
+         QT_TRANSLATE_NOOP("systools", "fwupd: the devices it can update and the firmware updates it finds. Finding updates contacts the LVFS server on the internet, so this page runs only on \"Run again\"."),
+         {{"fwupdmgr", "get-devices"}, {"fwupdmgr", "get-updates"}}, nullptr, true},
     };
     for (const Spec &s : specs) {
+        const QString title = QCoreApplication::translate("systools", s.title);
         // The SMART summary goes in front of the raw output it summarizes.
         if (s.rootTool && QLatin1String(s.rootTool) == QLatin1String("smart")) tabs->addTab(new SmartPage, QStringLiteral("SMART"));
-        tabs->addTab(new ToolPage(s), QString::fromLatin1(s.title));
+        tabs->addTab(new ToolPage(s), title);
     }
 }
 

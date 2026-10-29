@@ -14,7 +14,7 @@ int main() {
 
     CHECK(decide(p, KERNEL, ERROR_LEVEL, false) == Verdict::Show);
     CHECK(decide(p, NETWORK, none, false) == Verdict::Show);
-    CHECK(ALL_CATEGORIES.size() == 6);
+    CHECK(ALL_CATEGORIES.size() == 7);
 
     // A switched-off category is hidden, whatever the game state; the others are unaffected.
     p.off = {BACKUP};
