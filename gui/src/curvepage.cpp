@@ -130,15 +130,15 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
     connect(bRefresh, &QPushButton::clicked, this, &CurvePage::recompute);
     row->addWidget(bRefresh);
     root->addLayout(row);
+    cpuTest_ = new CpuStressBox;
+    connect(cpuTest_, &CpuStressBox::alert, this, &CurvePage::alert);
+    root->addWidget(cpuTest_);
     memTest_ = new MemTestBox;
     connect(memTest_, &MemTestBox::alert, this, &CurvePage::alert);
     root->addWidget(memTest_);
     gpuTest_ = new GpuStressBox;
     connect(gpuTest_, &GpuStressBox::alert, this, &CurvePage::alert);
     root->addWidget(gpuTest_);
-    cpuTest_ = new CpuStressBox;
-    connect(cpuTest_, &CpuStressBox::alert, this, &CurvePage::alert);
-    root->addWidget(cpuTest_);
 }
 
 void CurvePage::showEvent(QShowEvent *e) {

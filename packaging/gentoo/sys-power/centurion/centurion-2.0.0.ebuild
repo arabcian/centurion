@@ -3,7 +3,10 @@
 
 EAPI=8
 
-inherit cmake linux-info systemd udev xdg
+# centurion-cpustress uses AVX-512 intrinsics from std::arch (Rust >= 1.89).
+RUST_MIN_VER="1.89.0"
+
+inherit cmake linux-info rust systemd udev xdg
 
 DESCRIPTION="Power profile, firmware attribute and CPU/GPU curve tuning for Lenovo Legion laptops"
 HOMEPAGE="https://github.com/arabcian/centurion"
@@ -30,7 +33,13 @@ RDEPEND="
 # Health → Network (centurion-netguard); warnings only.
 CONFIG_CHECK="~NETFILTER_NETLINK_QUEUE ~NF_TABLES ~NF_TABLES_INET ~NFT_QUEUE ~NF_CONNTRACK ~NFT_CT
 	~INET_DIAG ~INET_TCP_DIAG ~INET_UDP_DIAG ~INET_DIAG_DESTROY"
-BDEPEND=">=virtual/rust-1.75 dev-qt/qttools:6[linguist]"
+BDEPEND="dev-qt/qttools:6[linguist]"
+
+pkg_setup() {
+	linux-info_pkg_setup
+	# linux-info's exported pkg_setup would otherwise shadow rust's.
+	rust_pkg_setup
+}
 
 pkg_nofetch() {
 	einfo "Build the tarball with ./make-dist.sh in the source tree and copy"
@@ -62,7 +71,7 @@ src_install() {
 	doexe "${r}"/{legion-profile-helper,fwattr-helper,ryzen-co-helper,tune-helper,tune-profile-helper,intel-uv-helper,legion-gpu-helper,legion-firmware-helper,lighting-helper,amdgpu-helper,nvcurve-sensors,legion-ec-sensors,health-reader,centurion-boot-guard,netguard-helper,backup-helper}
 	exeopts -m0700
 	doexe "${r}"/nvcurve-root-helper
-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress}
+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress,centurion-cpustress}
 
 	cmake_src_install
 
@@ -87,7 +96,7 @@ src_install() {
 	done
 	sed -e "s|@LIBEXEC@|${EPREFIX}/usr/libexec/centurion|g" \
 		packaging/sleep/centurion-intel-uv > "${T}"/50-centurion-intel-uv || die
-	exeinto /$(get_libdir)/elogind/system-sleep
+	exeinto /usr/lib/elogind/system-sleep
 	exeopts -m0755
 	doexe "${T}"/50-centurion-intel-uv
 	newexe packaging/sleep/centurion-sleep-log 40-centurion-sleep-log

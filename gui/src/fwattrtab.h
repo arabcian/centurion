@@ -3,6 +3,7 @@
 // One slider/spinbox per /sys/class/firmware-attributes/*/attributes/*
 // entry, ranges taken from the driver itself; writes via fwattr-helper.
 #include <QMap>
+#include <QPointer>
 #include <QWidget>
 
 class QLabel;
@@ -51,7 +52,13 @@ private:
 
     QList<Row> rows_;
     QLabel *banner_, *status_;
-    QLabel *tau_ = nullptr;  // CPU PL1 tau, read-only (legion-gpu-helper status "pl1_tau_s")
+    // CPU PL1 tau, read-only row in the CPU box (legion-gpu-helper status "pl1_tau_s").
+    QPointer<QLabel> tauLabel_;
+    QPointer<QSlider> tauSlider_;
+    QPointer<QSpinBox> tauSpin_;
+    QPointer<QLabel> tauNote_;
+    int tauSeconds_ = 0;  // last value read (0 = none); rebuild() shows it before the next read
+    void showTau();
     QPushButton *applyAll_, *rescan_;
     QTabWidget *tabs_;
     QTimer *statusTimer_;

@@ -1,0 +1,264 @@
+diff -ruN a/docs/HANDBOOK.md b/docs/HANDBOOK.md
+--- a/docs/HANDBOOK.md	2026-10-31 00:21:36.079750275 +0300
++++ b/docs/HANDBOOK.md	2026-10-31 00:21:36.096008324 +0300
+@@ -71,7 +71,7 @@
+ Needs **Custom** profile for most limits.
+ 
+ - **CPU PL1 / PL2 / PL3** — sustained / short boost / peak power. Raise in small steps; watch temperature in Home.
+-- **CPU PL1 tau** (shown below the tabs, read-only) — how long the CPU may stay above PL1. The firmware keeps it without a kernel attribute; on AMD nothing in the ACPI tables passes it on, so it is shown but not offered.
++- **CPU PL1 tau** (last row of the CPU box, locked slider, read-only) — how long the CPU may stay above PL1. The firmware keeps it without a kernel attribute; on AMD nothing in the ACPI tables passes it on, so it is shown but not offered.
+ - **Temperature target** — where the CPU starts to throttle.
+ - **GPU cTGP / Dynamic Boost** — GPU power and the boost ceiling / floor. Written over WMI (needs `acpi_call`).
+ - **CPU overclocking (firmware, next boot)** — PBO scalar, boost override, all-core CO stored in the BIOS. Asks for the password.
+@@ -207,12 +207,12 @@
+ ### Curve stability
+ Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journaled by the helpers; this page lays the saved Xid / GSP / D3cold and machine-check / lockup errors over it: hours in effect, errors, errors per 10 h per profile, highlighted when clearly worse than stock. Optional guard: *Take the GPU curve back to stock after an Xid* and the same for the CPU curve after a machine check — otherwise you only get a notification naming the curve. After such a reset the notification has *Undo*, which applies the saved profile that was in effect again (not for unsaved edits). The curve tabs also have **Trial apply**: after Apply you have 30 s to press *Keep*, else the curve goes back to stock.
+ 
++**CPU test** checks a Curve Optimizer offset (AMD) or an undervolt (Intel), as you, no password. **Per core** moves one thread from core to core (1, 3, 6 or 10 minutes each, default 3; *Rounds* repeats the whole tour): a lone thread runs at the highest boost, where a too-negative offset of one core fails first. Use it after per-core offsets. **All cores** loads every CPU for 5–60 minutes: use it after an all-core offset. The load is **SSE** (highest clock, the best first test), **AVX2** or **AVX-512** (more heat and current, lower clock), only those the CPU has. *Idle ↔ load transitions* (on by default) spends the last third of each core's time in short bursts with pauses, because offsets often fail while a core leaves an idle state and boosts. Every result is compared with a reference computed on two other cores; a wrong result, or a machine check or lockup reported by the Monitor during the run, is a failure, and the failing CPUs are named — on AMD with their CCD and the Ryzen Curve slot (*CPU 5 (CCD0 slot 5)*); make those slots less negative and test again. An unstable offset may freeze or reset the machine instead: the test is stored as running while it runs, so after the reboot the section shows *machine went down* with the core that was loaded, and a notification says so. On AMD, *Hold the "CO validation" preset during the test* (on by default; asks for the password) applies that Optimizations preset for the test and returns the tuning from before afterwards (not while a game holds the tuning). Each result is kept (newest 50, `~/.local/state/centurion/cpustress.json`) with the CPU curve in effect. A Ryzen Curve profile that was applied by name (loaded or saved and applied unchanged, from the tray or a scene) and then tested shows **✓ verified** — or **✗ failed** / **✗ crashed** — next to it in the Ryzen Curve tab; saving the profile again clears the badge, since the tested offsets changed.
++
+ **Memory test** checks BIOS memory timings or speed: it writes and reads back a share of the free memory (10–90 %, default 70 %) for 5, 15, 30 or 60 minutes with `stressapptest` (preferred) or `memtester`, as you, no password, while machine checks reported by the Monitor count as errors. The machine is slow meanwhile. Each result is kept (newest 50, `~/.local/state/centurion/memtest.json`) with the BIOS memory timing settings it ran under — speed and the overridden timings, "changed this boot" when a new setting is not in effect yet; read without a password on the Legion Pro 7 16AFR10H, "not readable" elsewhere. memtester must lock the memory it tests: it is held to the session's memlock limit (`ulimit -l`), and a limit under 64 MiB is reported with how to raise it; stressapptest needs no lock. A failure also raises a *Curve guard* notification. If the kernel log needs a password on this machine, machine checks are not counted during the test, the section says so and each result is marked; only the tool's own result counts. Without either tool the section shows the install command.
+ 
+ **GPU test** checks a graphics-card undervolt, overclock or VRAM offset: it runs work whose correct result is known on the chosen GPU (never an unnamed "first" one, so laptops pick the discrete card) for 5, 10, 15, 30 or 60 minutes (default 10) and counts every wrong result, as you, no password. Run **VRAM** after changing a memory offset (it fills 10–95 %, default 80 %, of the video memory) and **Core** after changing a core curve. The screen may stutter meanwhile. Needs the Vulkan driver of your GPU. A lost GPU, any wrong result, or an Xid / amdgpu error reported by the Monitor during the run is a failure. A pass is evidence, not proof. Each result is kept (newest 50, `~/.local/state/centurion/gpustress.json`) with the curve state in effect. If the kernel log needs a password on this machine, Xid / amdgpu errors are not counted during the test, the section says so and each result is marked; only the tool's own result counts.
+ 
+-**CPU test** checks a Curve Optimizer offset (AMD) or an undervolt (Intel), as you, no password. **Per core** moves one thread from core to core (1, 3, 6 or 10 minutes each, default 3; *Rounds* repeats the whole tour): a lone thread runs at the highest boost, where a too-negative offset of one core fails first. Use it after per-core offsets. **All cores** loads every CPU for 5–60 minutes: use it after an all-core offset. The load is **SSE** (highest clock, the best first test), **AVX2** or **AVX-512** (more heat and current, lower clock), only those the CPU has. *Idle ↔ load transitions* (on by default) spends the last third of each core's time in short bursts with pauses, because offsets often fail while a core leaves an idle state and boosts. Every result is compared with a reference computed on two other cores; a wrong result, or a machine check or lockup reported by the Monitor during the run, is a failure, and the failing CPUs are named — on AMD with their CCD and the Ryzen Curve slot (*CPU 5 (CCD0 slot 5)*); make those slots less negative and test again. An unstable offset may freeze or reset the machine instead: the test is stored as running while it runs, so after the reboot the section shows *machine went down* with the core that was loaded, and a notification says so. On AMD, *Hold the "CO validation" preset during the test* (on by default; asks for the password) applies that Optimizations preset for the test and returns the tuning from before afterwards (not while a game holds the tuning). Each result is kept (newest 50, `~/.local/state/centurion/cpustress.json`) with the CPU curve in effect. A Ryzen Curve profile that was applied by name (loaded or saved and applied unchanged, from the tray or a scene) and then tested shows **✓ verified** — or **✗ failed** / **✗ crashed** — next to it in the Ryzen Curve tab; saving the profile again clears the badge, since the tested offsets changed.
+-
+ ### Sleep
+ Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`). **Suggestions**: an enabled wake source that woke the machine at least twice with the lid closed (neither the lid nor the power button among the wake sources) is listed with the battery the machine then spent awake before sleeping again, and a *Disable* button that does the same as unticking it. The battery cost is measured only on battery and when the next sleep came within 2 h.
+ 
+diff -ruN a/gui/src/curvepage.cpp b/gui/src/curvepage.cpp
+--- a/gui/src/curvepage.cpp	2026-10-31 00:21:36.081991604 +0300
++++ b/gui/src/curvepage.cpp	2026-10-31 00:21:36.101359998 +0300
+@@ -130,15 +130,15 @@
+     connect(bRefresh, &QPushButton::clicked, this, &CurvePage::recompute);
+     row->addWidget(bRefresh);
+     root->addLayout(row);
++    cpuTest_ = new CpuStressBox;
++    connect(cpuTest_, &CpuStressBox::alert, this, &CurvePage::alert);
++    root->addWidget(cpuTest_);
+     memTest_ = new MemTestBox;
+     connect(memTest_, &MemTestBox::alert, this, &CurvePage::alert);
+     root->addWidget(memTest_);
+     gpuTest_ = new GpuStressBox;
+     connect(gpuTest_, &GpuStressBox::alert, this, &CurvePage::alert);
+     root->addWidget(gpuTest_);
+-    cpuTest_ = new CpuStressBox;
+-    connect(cpuTest_, &CpuStressBox::alert, this, &CurvePage::alert);
+-    root->addWidget(cpuTest_);
+ }
+ 
+ void CurvePage::showEvent(QShowEvent *e) {
+diff -ruN a/gui/src/fwattrtab.cpp b/gui/src/fwattrtab.cpp
+--- a/gui/src/fwattrtab.cpp	2026-10-31 00:21:36.082641071 +0300
++++ b/gui/src/fwattrtab.cpp	2026-10-31 00:21:36.101391592 +0300
+@@ -262,13 +262,6 @@
+     tabs_->setDocumentMode(true);
+     lay->addWidget(tabs_);
+ 
+-    tau_ = new QLabel;
+-    tau_->setProperty("role", "muted");
+-    tau_->setToolTip("PL1 tau: how long the CPU may stay above PL1 before it is held to it. The firmware keeps it in the EC\n"
+-                     "(WMI feature 0x01070000) without a kernel attribute, in the steps of Intel's time-window encoding. On AMD\n"
+-                     "nothing in the ACPI tables passes it on, so whether changing it would do anything is unknown: shown, not offered.");
+-    tau_->setVisible(false);
+-    lay->addWidget(tau_);
+     status_ = new QLabel;
+     status_->setProperty("role", "muted");
+     lay->addWidget(status_);
+@@ -323,6 +316,7 @@
+     if (busy_) return;
+     while (tabs_->count()) { QWidget *w = tabs_->widget(0); tabs_->removeTab(0); w->deleteLater(); }
+     rows_.clear();
++    tauLabel_ = nullptr; tauSlider_ = nullptr; tauSpin_ = nullptr; tauNote_ = nullptr;  // went with the old pages
+ 
+     const QList<FwAttr> attrs = discover();
+     {   // Remember the firmware ranges while the attributes are there.
+@@ -412,6 +406,37 @@
+                 rows_.append({a, slider, spin, apply, def});
+                 ++r;
+             }
++            if (group == QLatin1String("CPU") && !tauSlider_) {
++                // PL1 tau: laid out like the rows above but never editable (no kernel attribute; on AMD
++                // nothing in the ACPI tables passes a write on). Hidden until the EC has been read.
++                const QString tip = QStringLiteral(
++                    "PL1 tau: how long the CPU may stay above PL1 before it is held to it. The firmware keeps it in the EC\n"
++                    "(WMI feature 0x01070000) without a kernel attribute, in the steps of Intel's time-window encoding\n"
++                    "(20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160 s). On AMD nothing in the ACPI tables passes it on,\n"
++                    "so whether changing it would do anything is unknown: shown, not offered.");
++                tauLabel_ = new QLabel(QStringLiteral("CPU PL1 tau (time window)"));
++                tauSlider_ = new QSlider(Qt::Horizontal);
++                tauSlider_->setRange(20, 160);
++                tauSlider_->setEnabled(false);
++                tauSpin_ = new QSpinBox;
++                tauSpin_->setFixedWidth(70);
++                tauSpin_->setRange(0, 999);
++                tauSpin_->setSuffix(QStringLiteral(" s"));
++                tauSpin_->setButtonSymbols(QAbstractSpinBox::NoButtons);
++                tauSpin_->setEnabled(false);
++                tauNote_ = new QLabel(QStringLiteral("🔒 read-only"));
++                tauNote_->setProperty("role", "muted");
++                tauNote_->setAlignment(Qt::AlignCenter);
++                for (QWidget *w : {static_cast<QWidget *>(tauLabel_), static_cast<QWidget *>(tauSlider_),
++                                   static_cast<QWidget *>(tauSpin_), static_cast<QWidget *>(tauNote_)})
++                    w->setToolTip(tip);
++                g->addWidget(tauLabel_, r, 0);
++                g->addWidget(tauSlider_, r, 1);
++                g->addWidget(tauSpin_, r, 2);
++                g->addWidget(tauNote_, r, 3, 1, 2);
++                ++r;
++                showTau();
++            }
+             // Explain the WMI rows right under the box that contains them.
+             bool anyWmi = false;
+             for (const FwAttr &a : items) anyWmi |= a.viaWmi();
+@@ -554,8 +579,8 @@
+     privileged::run(gpuHelperPath(), QJsonObject{{"op", "status"}}, this, [this](const privileged::Result &r) {
+         wmiReady_ = r.reached && r.json.value("acpi").toBool();
+         const QJsonObject vals = r.json.value("values").toObject();
+-        tau_->setVisible(r.json.contains("pl1_tau_s"));
+-        tau_->setText(QStringLiteral("CPU PL1 tau: %1 s (read-only)").arg(r.json.value("pl1_tau_s").toInt()));
++        tauSeconds_ = r.json.value("pl1_tau_s").toInt();
++        showTau();
+         {   // WMAE id check for the CPU limits: the fallback is only offered
+             // once WMAE has been seen to report exactly what sysfs reports.
+             QJsonObject cache = readRangeCache();
+@@ -599,6 +624,18 @@
+     });
+ }
+ 
++void FwattrTab::showTau() {
++    if (!tauSlider_) return;
++    const bool have = tauSeconds_ > 0;
++    for (QWidget *w : {static_cast<QWidget *>(tauLabel_), static_cast<QWidget *>(tauSlider_),
++                       static_cast<QWidget *>(tauSpin_), static_cast<QWidget *>(tauNote_)})
++        w->setVisible(have);
++    if (!have) return;
++    tauSlider_->setRange(std::min(20, tauSeconds_), std::max(160, tauSeconds_));
++    tauSlider_->setValue(tauSeconds_);
++    tauSpin_->setValue(tauSeconds_);
++}
++
+ QMap<QString, int> FwattrTab::wmiValues() const {
+     QMap<QString, int> out;
+     if (!wmiReady_ || wmiStale_) return out;
+diff -ruN a/gui/src/fwattrtab.h b/gui/src/fwattrtab.h
+--- a/gui/src/fwattrtab.h	2026-10-31 00:21:36.082683564 +0300
++++ b/gui/src/fwattrtab.h	2026-10-31 00:21:36.101430073 +0300
+@@ -3,6 +3,7 @@
+ // One slider/spinbox per /sys/class/firmware-attributes/*/attributes/*
+ // entry, ranges taken from the driver itself; writes via fwattr-helper.
+ #include <QMap>
++#include <QPointer>
+ #include <QWidget>
+ 
+ class QLabel;
+@@ -51,7 +52,13 @@
+ 
+     QList<Row> rows_;
+     QLabel *banner_, *status_;
+-    QLabel *tau_ = nullptr;  // CPU PL1 tau, read-only (legion-gpu-helper status "pl1_tau_s")
++    // CPU PL1 tau, read-only row in the CPU box (legion-gpu-helper status "pl1_tau_s").
++    QPointer<QLabel> tauLabel_;
++    QPointer<QSlider> tauSlider_;
++    QPointer<QSpinBox> tauSpin_;
++    QPointer<QLabel> tauNote_;
++    int tauSeconds_ = 0;  // last value read (0 = none); rebuild() shows it before the next read
++    void showTau();
+     QPushButton *applyAll_, *rescan_;
+     QTabWidget *tabs_;
+     QTimer *statusTimer_;
+diff -ruN a/packaging/gentoo/sys-power/centurion/Manifest b/packaging/gentoo/sys-power/centurion/Manifest
+--- a/packaging/gentoo/sys-power/centurion/Manifest	2026-10-31 00:21:36.087595483 +0300
++++ b/packaging/gentoo/sys-power/centurion/Manifest	2026-10-31 00:21:36.102623859 +0300
+@@ -1,3 +1,3 @@
+-EBUILD centurion-2.0.0.ebuild 6448 BLAKE2B 4c31c79869ec9e08e3052a1be8bbac19670544f8777fe5e06aa50d72ac105d792214bff92c6bf3f860207546981a780b0cb2417fbde996e7a3b40f8dd07193f9 SHA512 cfaa20b56f3cbf7d6cf58b8403a1ee736043707f2c2cfe9ce7b1944777cf485c51eeca5277fea0e14f773d7c28c1a5948ca5d626ef69272297e6fbb878dcf2aa
+-EBUILD centurion-9999.ebuild 10038 BLAKE2B 051da8b336f4f20a2e88cbb682f41e09c5afbe6a7ab15536095b178975f159000c4967d38ffe689d5d77777ab33b07fdb346c8e1a84fbd08b2bfae5ca1308791 SHA512 860f5a0b4d5418ec501a07cc3aa010c12bfd13e15dd69f26b012bf6665d78d747ab2b49512f336510fbec04eb5daa2d502b4b67f91244ddf98556b2bdd668af2
++EBUILD centurion-2.0.0.ebuild 6668 BLAKE2B d1612aa6435f8dea9b79a0c73d197a96d43b453b3a05716446bddf5ad85035211a70ee9309ae8c94d321c33d114d4be8f962d62029f1019473dfd9adfe603193 SHA512 f73fcdb97d551340a37e6bf0fd14c38a4407f3cbf854947d3240b4479c2f49af5058454d3dc7ac8aa439e8dd650ab777a92b8331f192ae36e0b1ee503a53ceed
++EBUILD centurion-9999.ebuild 10099 BLAKE2B af60967d1f0d540a9c5b564573b271be7b5608c2b9ce1f14f7c9924e74869707066aa1fcf9a6195f2c139f33d8efe42a2b20ccf2aab03832fba9913e81c7ba08 SHA512 eee60b3266f6cfb50777b26dc50add1495aa44f13573451b582ffd15d3ef0bd9b1f3b7db34ec7d2b471d425f74d0b24f9e3a6ec8f68466fe8e17134a2b3026b8
+ MISC metadata.xml 204 BLAKE2B 640a3d71e609291fb4859879d5a0fc94ab8c82361ba1c30b9b5fe18708b668f3653679de9aa68a5f23f51c790cdac2ea711292721e30174b4964c2c5de9c13a9 SHA512 e6750645c2b0e8285f5c7b10477918163d940d07b8b361c5478fd25b622683f13291063f5fac288d2f7a7d373bef58a1547dc70bb3e2bb1c5bd4e3196886f6e2
+diff -ruN a/packaging/gentoo/sys-power/centurion/Manifest.rej b/packaging/gentoo/sys-power/centurion/Manifest.rej
+--- a/packaging/gentoo/sys-power/centurion/Manifest.rej	2026-10-31 00:21:36.087630206 +0300
++++ b/packaging/gentoo/sys-power/centurion/Manifest.rej	1970-01-01 02:00:00.000000000 +0200
+@@ -1,8 +0,0 @@
+---- packaging/gentoo/sys-power/centurion/Manifest	2026-10-30 14:59:58.488929801 +0300
+-+++ centurion-main/packaging/gentoo/sys-power/centurion/Manifest	2026-10-30 15:03:40.340311732 +0300
+-@@ -1,2 +1,3 @@
+--EBUILD centurion-9999.ebuild 9876 BLAKE2B 85bd9d43457202c7094da2adfdd3a0dbafeca6d5786cf1d2102cfbb92a4c809b0ffa659efbd1e4855a5cd307a78e64a1fb26bb6292669cf5171453b80381bad0 SHA512 2e19c60d794ba51e6d0eca3d62098934d45ff8887073541a0fe0dd70d1e5760dceb2e7ff85330e121d513a51b8b15e064a5d5b0f4cea07b2b931b06be602bd27
+--MISC metadata.xml 999 BLAKE2B ebb9772d0b2f8b4c9290fa176bed025d1773a9e368dc15bb7ac3140404bf1e01e70d47da036486c73e4ac2685cfcb809057be38dcbb55f279143be9c3d2db19a SHA512 febce8b2fd169fa361274fae96e99dc43748eee85cca74f69bf6ff6f8ef9cf631fe5f9b6feb646ebb5cefa419135b6b27bf4601683d219d0e2719063a172febe
+-+EBUILD centurion-2.0.0.ebuild 6452 BLAKE2B ddaee7c788d21466210e59b81c4a1cb80b1143b12552b71061a961a1c4eb7b5eb175439d7d5bbf34bfb66962edebbb12bd174722580e1b166d32e5ecfcc27ace SHA512 c6265cc098f65d989307b673c3cecb29948e4e2fc120ee3d936f596cc58992e684515fad371451caa2765c70bfcddec020acc5bf913aca0077df75c5ee01a7cd
+-+EBUILD centurion-9999.ebuild 10038 BLAKE2B 051da8b336f4f20a2e88cbb682f41e09c5afbe6a7ab15536095b178975f159000c4967d38ffe689d5d77777ab33b07fdb346c8e1a84fbd08b2bfae5ca1308791 SHA512 860f5a0b4d5418ec501a07cc3aa010c12bfd13e15dd69f26b012bf6665d78d747ab2b49512f336510fbec04eb5daa2d502b4b67f91244ddf98556b2bdd668af2
+-+MISC metadata.xml 204 BLAKE2B 640a3d71e609291fb4859879d5a0fc94ab8c82361ba1c30b9b5fe18708b668f3653679de9aa68a5f23f51c790cdac2ea711292721e30174b4964c2c5de9c13a9 SHA512 e6750645c2b0e8285f5c7b10477918163d940d07b8b361c5478fd25b622683f13291063f5fac288d2f7a7d373bef58a1547dc70bb3e2bb1c5bd4e3196886f6e2
+diff -ruN a/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild b/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild
+--- a/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild	2026-10-31 00:21:36.087668169 +0300
++++ b/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild	2026-10-31 00:21:36.102662140 +0300
+@@ -3,7 +3,10 @@
+ 
+ EAPI=8
+ 
+-inherit cmake linux-info systemd udev xdg
++# centurion-cpustress uses AVX-512 intrinsics from std::arch (Rust >= 1.89).
++RUST_MIN_VER="1.89.0"
++
++inherit cmake linux-info rust systemd udev xdg
+ 
+ DESCRIPTION="Power profile, firmware attribute and CPU/GPU curve tuning for Lenovo Legion laptops"
+ HOMEPAGE="https://github.com/arabcian/centurion"
+@@ -30,7 +33,13 @@
+ # Health → Network (centurion-netguard); warnings only.
+ CONFIG_CHECK="~NETFILTER_NETLINK_QUEUE ~NF_TABLES ~NF_TABLES_INET ~NFT_QUEUE ~NF_CONNTRACK ~NFT_CT
+ 	~INET_DIAG ~INET_TCP_DIAG ~INET_UDP_DIAG ~INET_DIAG_DESTROY"
+-BDEPEND=">=virtual/rust-1.75 dev-qt/qttools:6[linguist]"
++BDEPEND="dev-qt/qttools:6[linguist]"
++
++pkg_setup() {
++	linux-info_pkg_setup
++	# linux-info's exported pkg_setup would otherwise shadow rust's.
++	rust_pkg_setup
++}
+ 
+ pkg_nofetch() {
+ 	einfo "Build the tarball with ./make-dist.sh in the source tree and copy"
+@@ -62,7 +71,7 @@
+ 	doexe "${r}"/{legion-profile-helper,fwattr-helper,ryzen-co-helper,tune-helper,tune-profile-helper,intel-uv-helper,legion-gpu-helper,legion-firmware-helper,lighting-helper,amdgpu-helper,nvcurve-sensors,legion-ec-sensors,health-reader,centurion-boot-guard,netguard-helper,backup-helper}
+ 	exeopts -m0700
+ 	doexe "${r}"/nvcurve-root-helper
+-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress}
++	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress,centurion-cpustress}
+ 
+ 	cmake_src_install
+ 
+@@ -87,7 +96,7 @@
+ 	done
+ 	sed -e "s|@LIBEXEC@|${EPREFIX}/usr/libexec/centurion|g" \
+ 		packaging/sleep/centurion-intel-uv > "${T}"/50-centurion-intel-uv || die
+-	exeinto /$(get_libdir)/elogind/system-sleep
++	exeinto /usr/lib/elogind/system-sleep
+ 	exeopts -m0755
+ 	doexe "${T}"/50-centurion-intel-uv
+ 	newexe packaging/sleep/centurion-sleep-log 40-centurion-sleep-log
+diff -ruN a/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild.rej b/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild.rej
+--- a/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild.rej	2026-10-31 00:21:36.087700948 +0300
++++ b/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild.rej	1970-01-01 02:00:00.000000000 +0200
+@@ -1,23 +0,0 @@
+---- packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild	2026-10-30 14:59:58.489130532 +0300
+-+++ centurion-main/packaging/gentoo/sys-power/centurion/centurion-2.0.0.ebuild	2026-10-30 15:03:29.446813643 +0300
+-@@ -30,7 +30,10 @@
+- # Health → Network (centurion-netguard); warnings only.
+- CONFIG_CHECK="~NETFILTER_NETLINK_QUEUE ~NF_TABLES ~NF_TABLES_INET ~NFT_QUEUE ~NF_CONNTRACK ~NFT_CT
+- 	~INET_DIAG ~INET_TCP_DIAG ~INET_UDP_DIAG ~INET_DIAG_DESTROY"
+--BDEPEND=">=virtual/rust-1.75"
+-+BDEPEND="
+-+	>=virtual/rust-1.75
+-+	dev-qt/qttools:6[linguist]
+-+"
+- 
+- pkg_nofetch() {
+- 	einfo "Build the tarball with ./make-dist.sh in the source tree and copy"
+-@@ -62,7 +65,7 @@
+- 	doexe "${r}"/{legion-profile-helper,fwattr-helper,ryzen-co-helper,tune-helper,tune-profile-helper,intel-uv-helper,legion-gpu-helper,legion-firmware-helper,lighting-helper,amdgpu-helper,nvcurve-sensors,legion-ec-sensors,health-reader,centurion-boot-guard,netguard-helper,backup-helper}
+- 	exeopts -m0700
+- 	doexe "${r}"/nvcurve-root-helper
+--	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display}
+-+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress}
+- 
+- 	cmake_src_install
+- 
