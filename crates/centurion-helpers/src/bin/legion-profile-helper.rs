@@ -19,7 +19,8 @@
 //!   stdin:  {"wmae_toggle": "get"} | {"wmae_toggle": "set", "key": k, "on": bool}
 //!           firmware switches, only those the machine reports (see legion_wmi):
 //!           instant_boot_ac, instant_boot_usbpd, fnq_custom, flip_to_start (Lenovo WMAE /
-//!           UEFI FBSWIF), super_key_lock, touchpad_lock, fan_cooling (GameZone), usb_charge_battery (VPC2004)
+//!           UEFI FBSWIF), super_key_lock, touchpad_lock, fan_cooling (GameZone), usb_charge_battery (VPC2004),
+//!           power_led_sync (WMAE 0x06040000)
 //!   stdin:  {"machine": "report"}   read-only: model, series, BIOS, WMI blocks, capability list
 //!   stdin:  {"fan_fullspeed": "get"}
 //!   stdout: {"ok": true, "on": bool, "backend": "pwm1_enable" | "fan_fullspeed" | "wmae"}

@@ -23,7 +23,9 @@ Lenovo Legion Toolkit (LLT)
   (HID feature report layout, operation codes, effect encoding, key-map
   queries), the keyboard USB product-ID table per Legion series/generation,
   and the per-effect parameter rules in the Lighting tab were learned from
-  LLT's source code. The implementation here is written from scratch in Rust
+  LLT's source code. So were the custom boot logo's UEFI variable layouts
+  (LBLDESP / LBLDVC), its SHA-256 / CRC-32 digest rules and file naming, and
+  the power-button light sync value (capability 0x06040000, 0 / 2). The implementation here is written from scratch in Rust
   and C++/Qt; no LLT source files are included. Many thanks to Bartosz
   Cichecki, the LenovoLegionToolkit-Team and all LLT contributors for
   documenting this hardware.

@@ -17,6 +17,7 @@ pub mod backup;
 pub mod tarscan;
 pub mod bootguard;
 pub mod boothist;
+pub mod bootlogo;
 pub mod dgpu;
 pub mod diagreport;
 pub mod display;

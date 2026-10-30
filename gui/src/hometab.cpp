@@ -1,5 +1,6 @@
 #include "hometab.h"
 #include <memory>
+#include "bootlogodialog.h"
 #include "deviceinfodialog.h"
 #include "i18n.h"
 #include "fancurvedialog.h"
@@ -374,6 +375,12 @@ QGroupBox *HomeTab::buildHardwareBox() {
                             "Useful when reporting how Centurion behaves on another model.");
             connect(btn, &QPushButton::clicked, this, [this] { (new DeviceInfoDialog(helperPath(), this))->show(); });
             h->addWidget(btn);
+            if (BootLogoDialog::available()) {
+                auto *logo = new QPushButton(tr("Boot logo…"));
+                logo->setToolTip(tr("Replace the Lenovo logo shown at power-on with a picture of your own."));
+                connect(logo, &QPushButton::clicked, this, [this] { (new BootLogoDialog(this))->show(); });
+                h->addWidget(logo);
+            }
             auto *wiz = new QPushButton(tr("Setup wizard…"));
             wiz->setToolTip("The first-run wizard again: hardware found, boot services, first backup, first scene, extras.");
             connect(wiz, &QPushButton::clicked, this, &HomeTab::setupWizardRequested);
@@ -988,7 +995,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
     }
 
     // Firmware on/off switches (Instant Boot, Fn+Q Custom, flip to start, key / touchpad
-    // lock, USB charging on battery): probed through the helper, shown only for what
+    // lock, USB charging on battery, power light sync): probed through the helper, shown only for what
     // the firmware reports.
     {
         auto *wrap = new QWidget;
@@ -1015,6 +1022,9 @@ QGroupBox *HomeTab::buildDeviceBox() {
                 {"usb_charge_battery", QT_TRANSLATE_NOOP("HomeTab", "USB charging on battery"),
                  QT_TRANSLATE_NOOP("HomeTab", "Keep the always-on USB port powered while the laptop is off or asleep on battery too\n"
                  "(needs \"USB charging when off\").")},
+                {"power_led_sync", QT_TRANSLATE_NOOP("HomeTab", "Power light sync"),
+                 QT_TRANSLATE_NOOP("HomeTab", "The power-button light follows the keyboard backlight (on/off and level).\n"
+                 "Off: it no longer follows the keyboard; its own brightness cannot be set from here.")},
             };
             for (const auto &d : DEFS) {
                 if (!t.contains(d.key)) continue;

@@ -25,6 +25,10 @@
 //! stdin:  {"op": "battery_info"} Health → Battery: maker, hardware id and manufacture date from the
 //!                               firmware's WMI data block (one query per field through acpi_call; no
 //!                               module is loaded from here). See centurion_helpers::legion_wmi::battery_info.
+//!
+//! stdin:  {"op": "boot_logo"}   Home → Boot logo: the firmware's logo variables (LBLDESP / LBLDVC) and
+//!                               the files in the ESP's EFI/Lenovo/Logo. Read-only.
+//!                               See centurion_helpers::bootlogo::status.
 
 fn main() {
     centurion_helpers::init();
@@ -37,6 +41,9 @@ fn main() {
     }
     if req["op"].as_str() == Some("battery_info") {
         std::process::exit(centurion_helpers::finish(centurion_helpers::legion_wmi::battery_info()));
+    }
+    if req["op"].as_str() == Some("boot_logo") {
+        std::process::exit(centurion_helpers::finish(centurion_helpers::bootlogo::status()));
     }
     let since = req["since"].as_u64().unwrap_or(0);
     std::process::exit(centurion_helpers::finish(centurion_helpers::health::scan(since)));

@@ -1090,6 +1090,11 @@ fn cap_usable(id: u32, need: u32) -> bool { cap_usable_in(capabilities(), id, ne
 //       (firmware fan-cooling run; its end is signalled by the GameZone "fan cooling
 //        finish" event BC72A435-…, so the status may drop back to 0 by itself.
 //        SMCN20WW answers 0 = unsupported and has no 13/20 bodies: never offered there)
+//   WMAE, values 0 / 2 (not 0 / 1):
+//     power_led_sync   0x06040000   power-button light follows the keyboard backlight
+//       (LenovoLegionToolkit PowerButtonLedController: 0 = off, 2 = on, confirmed by read-back).
+//       Offered only when the capability list marks it readable and writable. Its brightness
+//       (LENOVO_LIGHTING_METHOD, lighting id 4) is not offered: the method numbers are unconfirmed.
 //   VPC2004 (the ACPI device behind ideapad_laptop), HALS status / SALS command:
 //     usb_charge_battery  HALS bit 15, SALS 0x13 on / 0x12 off — "always-on USB"
 //       also while the laptop runs on battery. The kernel exposes bits 6/7
@@ -1111,6 +1116,9 @@ const GZ_TOGGLES: &[GzToggle] = &[
 ];
 
 const KEY_USB_BATTERY: &str = "usb_charge_battery";
+const KEY_POWER_LED_SYNC: &str = "power_led_sync";
+const FEAT_POWER_LED: u32 = 0x0604_0000;
+const POWER_LED_SYNC_ON: i64 = 2;
 const KEY_FLIP: &str = "flip_to_start";
 
 /// Switches a write showed this firmware does not really have (the request was
@@ -1229,6 +1237,9 @@ pub fn wmae_toggles_get() -> Value {
             if let Ok(v @ (0 | 1)) = wmaa(t.get, 0) { put(t.key, v == 1); }
         }
         if let Some(on) = usb_battery_get() { put(KEY_USB_BATTERY, on); }
+        if cap_usable(FEAT_POWER_LED, CAP_GET | CAP_SET) {
+            if let Ok(v @ (0 | POWER_LED_SYNC_ON)) = wmae_get(FEAT_POWER_LED) { put(KEY_POWER_LED_SYNC, v != 0); }
+        }
     }
     match flip_backend() {
         Some(FlipBackend::Wmae) if acpi => { if let Ok(v @ (0 | 1)) = wmae_get(0x0003_0000) { put(KEY_FLIP, v == 1); } }
@@ -1263,6 +1274,15 @@ pub fn wmae_toggle_set(key: &str, on: bool) -> Value {
         }
     } else if key == KEY_USB_BATTERY {
         usb_battery_set(on)
+    } else if key == KEY_POWER_LED_SYNC {
+        if !cap_usable(FEAT_POWER_LED, CAP_GET | CAP_SET) { Err(format!("{key}: not in this firmware's capability list")) }
+        else {
+            let want = if on { POWER_LED_SYNC_ON } else { 0 };
+            wmae_set(FEAT_POWER_LED, want).and_then(|_| match wmae_get(FEAT_POWER_LED)? {
+                v if v == want => Ok(()),
+                v => Err(format!("{key}: read-back {v}")),
+            })
+        }
     } else if let Some(t) = WMAE_TOGGLES.iter().find(|t| t.key == key) {
         if wmae_toggle_offered(t) { wmae_switch(key, t.id, on) } else { Err(format!("{key}: not in this firmware's capability list")) }
     } else if let Some(t) = GZ_TOGGLES.iter().find(|t| t.key == key) {
@@ -1382,6 +1402,7 @@ fn cap_name(id: u32) -> Option<&'static str> {
         0x0007_0000 => "Supported power modes", 0x0009_0000 => "Legion Zone interface version",
         0x000A_0000 => "Auto refresh-rate switching", 0x000E_0000 => "Lenovo AI chip", 0x000F_0000 => "iGPU mode change status",
         0x0010_0000 => "Custom mode in Fn+Q", 0x001A_0000 => "Panel Over Drive",
+        0x0604_0000 => "Power button light (keyboard sync)",
         0x001E_0200 => "Balanced sub-level (1-5)", 0x001E_0300 => "Performance sub-level (1-5)",
         0x0027_0000 => "Keyboard id",
         0x0101_0000 => "CPU short-term power limit", 0x0102_0000 => "CPU long-term power limit",

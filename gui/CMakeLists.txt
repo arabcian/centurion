@@ -23,6 +23,7 @@ add_executable(centurion
     src/hometab.cpp      src/hometab.h
     src/fancurvedialog.cpp src/fancurvedialog.h
     src/memorydialog.cpp src/memorydialog.h
+    src/bootlogodialog.cpp src/bootlogodialog.h
     src/deviceinfodialog.cpp src/deviceinfodialog.h
     src/fwattrtab.cpp    src/fwattrtab.h
     src/ryzentab.cpp     src/ryzentab.h

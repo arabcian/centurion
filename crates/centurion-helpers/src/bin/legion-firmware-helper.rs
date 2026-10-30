@@ -17,13 +17,17 @@
 //!   {"op": "set_gpu_mode", "mode": "hybrid"|"dgpu", "force": bool}   MUX, next boot
 //!   {"op": "set_igpu_mode", "mode": 0|1|2, "force": true}             only the forced override;
 //!                                                   the guarded path stays in legion-gpu-helper
+//!   {"op": "boot_logo_set", "jpeg_hex": "ffd8…"}     custom boot logo: baseline JPEG at the firmware's
+//!                                                   resolution, written to the ESP + LBLDVC/LBLDESP
+//!   {"op": "boot_logo_reset"}                        back to the Lenovo logo (see bootlogo.rs)
 //! Same contract as the other helpers: one JSON object on stdin, one JSON line out.
 
-use centurion_helpers::{legion_wmi, memory_spd, *};
+use centurion_helpers::{bootlogo, legion_wmi, memory_spd, *};
 use serde_json::{json, Value};
 
 fn run() -> Value {
-    let req = match read_request(8192) { Ok(v) => v, Err(e) => return e };
+    // The boot logo travels hex-encoded in the request; every other op is a few hundred bytes.
+    let req = match read_request(2 * bootlogo::MAX_LOGO + 4096) { Ok(v) => v, Err(e) => return e };
     let Some(o) = req.as_object() else { return json!({"ok": false, "error": "payload must be an object"}) };
     let force = o.get("force").and_then(Value::as_bool).unwrap_or(false);
     match o.get("op").and_then(Value::as_str) {
@@ -76,6 +80,11 @@ fn run() -> Value {
             _ => json!({"ok": false, "error": "'values' object required"}),
         },
         Some("set_gpu_mode") => legion_wmi::set_gpu_mode(o.get("mode").and_then(Value::as_str).unwrap_or(""), force),
+        Some("boot_logo_set") => match o.get("jpeg_hex").and_then(Value::as_str) {
+            Some(h) => bootlogo::set(h),
+            None => json!({"ok": false, "error": "'jpeg_hex' required"}),
+        },
+        Some("boot_logo_reset") => bootlogo::reset(),
         Some("set_igpu_mode") => legion_wmi::set_igpu_mode(o.get("mode").and_then(Value::as_u64).unwrap_or(99), force),
         other => json!({"ok": false, "error": format!("unknown op: {}", other.unwrap_or("None"))}),
     }

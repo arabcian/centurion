@@ -275,6 +275,165 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
     </message>
 </context>
 <context>
+    <name>BootLogoDialog</name>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Boot logo</source>
+        <translation>Açılış logosu</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Replace the Lenovo logo shown at power-on. The picture is saved on the EFI system partition and the firmware shows it from the next boot. Writing asks for the administrator password every time.</source>
+        <translation>Açılışta görünen Lenovo logosunu değiştirin. Resim EFI sistem bölümüne kaydedilir ve donanım yazılımı onu bir sonraki açılıştan itibaren gösterir. Yazma her seferinde yönetici parolasını sorar.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Choose picture…</source>
+        <translation>Resim seç…</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Apply</source>
+        <translation>Uygula</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Restore Lenovo logo</source>
+        <translation>Lenovo logosuna dön</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Close</source>
+        <translation>Kapat</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Reading…</source>
+        <translation>Okunuyor…</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Could not read the logo settings: %1</source>
+        <translation>Logo ayarları okunamadı: %1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>This firmware has no custom boot logo support.</source>
+        <translation>Bu donanım yazılımında özel açılış logosu desteği yok.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Custom logo: %1 · picture size %2×%3 · the firmware lists %4</source>
+        <translation>Özel logo: %1 · resim boyutu %2×%3 · donanım yazılımının listelediği: %4</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>on</source>
+        <translation>açık</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>off</source>
+        <translation>kapalı</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>EFI partition: %1</source>
+        <translation>EFI bölümü: %1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Logo file: %1</source>
+        <translation>Logo dosyası: %1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>The firmware does not list JPEG; Centurion only writes JPEG logos.</source>
+        <translation>Donanım yazılımı JPEG listelemiyor; Centurion yalnızca JPEG logo yazar.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Boot logo picture</source>
+        <translation>Açılış logosu resmi</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Images (%1)</source>
+        <translation>Resimler (%1)</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Cannot read that picture: %1</source>
+        <translation>Bu resim okunamıyor: %1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>%1 (%2×%3) — scaled to fit, black borders.</source>
+        <translation>%1 (%2×%3) — sığacak şekilde ölçeklendi, siyah kenarlar.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Could not encode the picture as JPEG.</source>
+        <translation>Resim JPEG olarak kodlanamadı.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Write this picture as the boot logo?
+
+It is saved as EFI/Lenovo/Logo/mylogo_%1x%2.jpg on the EFI partition and the firmware's logo settings are switched on. It shows from the next boot; "Restore Lenovo logo" undoes it.</source>
+        <translation>Bu resim açılış logosu olarak yazılsın mı?
+
+EFI bölümüne EFI/Lenovo/Logo/mylogo_%1x%2.jpg olarak kaydedilir ve donanım yazılımının logo ayarı açılır. Bir sonraki açılıştan itibaren görünür; "Lenovo logosuna dön" bunu geri alır.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Writing…</source>
+        <translation>Yazılıyor…</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>The boot logo was not changed:
+
+%1</source>
+        <translation>Açılış logosu değiştirilmedi:
+
+%1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>
+
+A step could not be undone; "Restore Lenovo logo" puts the default back.</source>
+        <translation>
+
+Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Boot logo set — it shows from the next boot.</source>
+        <translation>Açılış logosu ayarlandı — bir sonraki açılıştan itibaren görünür.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Switch back to the Lenovo logo and delete the custom picture from the EFI partition?</source>
+        <translation>Lenovo logosuna dönülsün ve özel resim EFI bölümünden silinsin mi?</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Could not restore the Lenovo logo:
+
+%1</source>
+        <translation>Lenovo logosuna dönülemedi:
+
+%1</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/bootlogodialog.cpp" />
+        <source>Lenovo logo restored — from the next boot.</source>
+        <translation>Lenovo logosuna dönüldü — bir sonraki açılıştan itibaren.</translation>
+    </message>
+</context>
+<context>
     <name>CoolingPage</name>
     <message>
         <source>other settings, not compared: %1</source>
@@ -2051,6 +2210,28 @@ Yine de geçilsin mi? Bunu yalnızca iGPU sürücüsü olan bir çekirdekle açm
         <location filename="work/gui/src/hometab.cpp" line="1568" />
         <source>GPU mode unchanged.</source>
         <translation>GPU modu değişmedi.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/hometab.cpp" />
+        <source>Power light sync</source>
+        <translation>Güç ışığı senkronu</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/hometab.cpp" />
+        <source>The power-button light follows the keyboard backlight (on/off and level).
+Off: it no longer follows the keyboard; its own brightness cannot be set from here.</source>
+        <translation>Güç düğmesi ışığı klavye aydınlatmasını izler (açık/kapalı ve seviye).
+Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/hometab.cpp" />
+        <source>Boot logo…</source>
+        <translation>Açılış logosu…</translation>
+    </message>
+    <message>
+        <location filename="work/gui/src/hometab.cpp" />
+        <source>Replace the Lenovo logo shown at power-on with a picture of your own.</source>
+        <translation>Açılışta görünen Lenovo logosunu kendi resminizle değiştirin.</translation>
     </message>
 </context>
 <context>

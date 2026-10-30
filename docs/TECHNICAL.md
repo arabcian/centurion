@@ -299,12 +299,15 @@ kernel's `Documentation/wmi/devices/lenovo-wmi-{gamezone,other}.rst` and
 | Other method `DC2A8805-…` (WMAE) | 17 GetFeatureValue / 18 SetFeatureValue, `{u32 id, u32 value}` | K, LLL, HW |
 | | ids: 0x0101–0x0104 CPU limits, 0x0201/0x0202/0x020B GPU, 0x04020000 fan full speed, 0x0301000{1,2} instant boot, 0x00100000 Fn+Q custom, 0x05050000 GPU temp | LLT, K, LLL, HW |
 | | 0x00030000 flip to start, 0x001A0000 Over Drive, 0x0403000{1,2,4} fan RPM — only when the capability list marks them valid | LLT, LLL |
+| | 0x06040000 power-button light sync with the keyboard, values 0 / 2 (not 0 / 1), read back after the write — only when listed readable and writable | LLT only |
 | Capability data 00 `362A3AFE-…` | `{u32 id, u32 flags, u32 default}`; flags bit0 valid, bit1 get, bit2 set | K |
 | Fan method `92549549-…` (WMAB) | 5 Fan_Get_Table, 6 Fan_Set_Table (`FSTM, FSID, FSTL, 10×u16`) | LLL, LLT, HW |
 | | 1 Fan_Get_FullSpeed, 2 Fan_Set_FullSpeed — fallback where 0x04020000 is not listed | LLL, LLT |
 | VPC2004 (`ideapad_laptop`) | sysfs `fn_lock`, `usb_charging`, `camera_power`, `charge_types`, LED `platform::kbd_backlight` | K |
 | | HALS bit 15 / SALS 0x13, 0x12: USB charging on battery (bits 6/7 as in K) | LLT only |
 | UEFI `FBSWIF-d743491e-…` | 4 data bytes, byte 0 = flip to start; attributes and other bytes preserved | LLT, LLL |
+| UEFI `LBLDESP-871455d0-…` | 10 bytes: u8 enabled, u32 width, u32 height, u8 format mask (1 JPEG, 8 GIF, 0x10 BMP, 0x20 PNG) | LLT, HW (read) |
+| UEFI `LBLDVC-871455d1-…` | 40 bytes: u32 version, 32-byte digest, 4 pad; ≥ 0x00020003 SHA-256 of the logo file, older CRC-32 of its first 512 bytes | LLT, HW (read) |
 | CPU method (WMAC 0x0E), WQA6 | BIOS CPU OC tunes 0x414D4401–03 | LLT (ids), HW |
 | Spectrum HID | 960-byte feature report id 7 | LLT, HW |
 | 4-zone HID | 33-byte feature report `CC 16 effect speed brightness 4×RGB 00 ltr rtl` | LLT |
@@ -319,7 +322,9 @@ Notes:
   switch is not offered again.
 - Deliberately **not** implemented because the references disagree or the
   address could not be confirmed: lid-logo / port lights through
-  `LENOVO_LIGHTING_METHOD` (LLT writes state 0 for "off", LLL writes 2),
+  `LENOVO_LIGHTING_METHOD` (LLT writes state 0 for "off", LLL writes 2) and the
+  power-button light's brightness through the same method (lighting id 4; only its
+  WMAE sync switch is offered),
   battery night charge (Windows driver IOCTL only), first-generation Custom
   mode limits (`LENOVO_CPU_METHOD` / `LENOVO_GPU_METHOD` buffer layouts),
   the pre-capability "feature flags" methods, GameZone AI sub-mode.
@@ -390,6 +395,31 @@ NVIDIA GPU can power off; *dGPU only*: the panel is wired to NVIDIA. Hybrid
 is refused when the running kernel has no `amdgpu` (the panel would stay
 black) unless you confirm a second warning; the BIOS setup (F2) has the same
 switch as a way back. Needs `acpi_call`.
+
+## Boot logo (Home → Hardware → Boot logo…)
+
+Replaces the Lenovo logo shown at power-on (the firmware's "Logo DIY"). Shown only when the
+UEFI variable `LBLDESP` exists. Status comes from `health-reader {"op":"boot_logo"}` (read-only);
+writing goes through `legion-firmware-helper` (`boot_logo_set` / `boot_logo_reset`, password
+every time). Code: `crates/centurion-helpers/src/bootlogo.rs`, `gui/src/bootlogodialog.*`.
+
+- The GUI re-encodes every picture: scaled to fit the firmware's resolution (2560×1600 on the
+  16AFR10H), centred on black, baseline JPEG, quality lowered until it is ≤ 4 MiB. The bytes
+  travel hex-encoded in the request, so the root helper never opens a user-chosen path.
+- The helper accepts only a complete baseline JPEG (SOF0, 8-bit, 1 or 3 components) at exactly
+  the size `LBLDESP` lists — the firmware's image parsers are a known attack surface (LogoFAIL,
+  CVE-2023-40238). It finds the ESP as the read-write vfat mount udev tags with the ESP
+  partition type (without udev data: the only vfat mount with an `EFI` directory).
+- Set: previous files in `EFI/Lenovo/Logo` are kept in memory and removed, the picture is
+  written as `mylogo_<w>x<h>.jpg` (fsync), then `LBLDVC` gets the digest (version kept), then
+  `LBLDESP` byte 0 = 1. Each variable write is read back; a failed step restores what the
+  earlier steps changed, including the previous picture, and reports `state`.
+- Reset: `LBLDESP` byte 0 = 0 first (the firmware then ignores the rest), digest zeroed with the
+  version kept (LLT writes 0x00020003 here; on the 16AFR10H the result is the same), files removed.
+- Neither variable is ever created. Checked in a private mount namespace with the 16AFR10H's
+  variable contents on tmpfs and an ext4 stand-in for the ESP (the test kernel had no vfat):
+  set, wrong size refused, enable-step failure → original state and previous picture restored,
+  reset → factory bytes. **Not yet tried on the laptop** (whether the firmware shows the picture).
 
 ## Boot options (Optimizations → Boot options)
 
