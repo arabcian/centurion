@@ -79,6 +79,8 @@ private:
     void log(const QString &msg, const QString &level = "info");
 
     void reloadProfiles();
+    void updateVerified();
+    QJsonObject namedProfile();
     void saveProfile();
     bool loadProfile();
     void deleteProfile();
@@ -115,6 +117,9 @@ private:
     QString boostText_, tempText_;
     class QRadioButton *rAll_ = nullptr;
     QComboBox *profileCombo_ = nullptr;
+    QLabel *verified_ = nullptr;  // CPU test result of the selected profile (cpustress.h)
+    QString loadedName_;          // profile last loaded or saved, and the grid state it gave (namedProfile)
+    QJsonObject loadedState_;
     QPlainTextEdit *log_ = nullptr;
     bool busy_ = false, profilesReady_ = true;
     TrialBar *trial_ = nullptr;

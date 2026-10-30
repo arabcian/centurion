@@ -4716,4 +4716,254 @@ Bu %1. artım: tam imajı ve 1–%1 artımları bu sırayla açılır. Araların
         <translation>%1 MiB</translation>
     </message>
 </context>
+<context>
+    <name>CpuStressBox</name>
+    <message>
+        <source>CPU test</source>
+        <translation>CPU testi</translation>
+    </message>
+    <message>
+        <source>Checks a Curve Optimizer offset or an undervolt core by core. Needs centurion-cpustress, which is installed next to centurion-cooltest.</source>
+        <translation>Curve Optimizer ofsetini ya da undervolt'u çekirdek çekirdek denetler. centurion-cooltest'in yanına kurulan centurion-cpustress gerekir.</translation>
+    </message>
+    <message>
+        <source>Runs work whose correct result is known and compares every result, and watches for machine checks and lockups in the kernel log meanwhile. Per core: one thread visits every core in turn at its highest boost, where a Curve Optimizer or undervolt offset fails first; use it after per-core offsets. All cores: every CPU at once; use it after an all-core offset. SSE keeps the clock highest; AVX2 / AVX-512 add heat and current. An unstable offset can also freeze or reset the machine: the core that was loaded is then shown here after the reboot. A pass is evidence, not proof. Each result is kept with the CPU curve in effect.</source>
+        <translation>Doğru sonucu bilinen işler çalıştırır, her sonucu karşılaştırır ve bu sırada kernel günlüğünde makine denetimi (MCE) ile kilitlenme olaylarını izler. Çekirdek başına: tek iş parçacığı sırayla her çekirdeğe en yüksek boost'ta gider; Curve Optimizer ya da undervolt ofseti ilk orada çöker. Çekirdek başına ofsetlerden sonra kullanın. Tüm çekirdekler: bütün CPU'lar aynı anda; tüm çekirdek ofsetinden sonra kullanın. SSE saati en yüksekte tutar; AVX2 / AVX-512 ısı ve akım ekler. Kararsız bir ofset makineyi dondurabilir ya da yeniden başlatabilir: o zaman yüklenen çekirdek yeniden başlatmadan sonra burada gösterilir. Geçmek kanıttır, kesinlik değil. Her sonuç o an etkin CPU eğrisiyle saklanır.</translation>
+    </message>
+    <message>
+        <source>The kernel log is not readable without a password here, so machine checks are not counted during the test; only the test's own results are.</source>
+        <translation>Kernel günlüğü burada parolasız okunamıyor, bu yüzden test sırasında makine denetimleri sayılmaz; yalnızca testin kendi sonuçları sayılır.</translation>
+    </message>
+    <message>
+        <source>Per core</source>
+        <translation>Çekirdek başına</translation>
+    </message>
+    <message>
+        <source>All cores</source>
+        <translation>Tüm çekirdekler</translation>
+    </message>
+    <message>
+        <source>SSE (highest boost)</source>
+        <translation>SSE (en yüksek boost)</translation>
+    </message>
+    <message>
+        <source>Rounds</source>
+        <translation>Tur</translation>
+    </message>
+    <message>
+        <source>How many times every core is visited.</source>
+        <translation>Her çekirdeğin kaç kez test edileceği.</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Başlat</translation>
+    </message>
+    <message>
+        <source>Idle ↔ load transitions</source>
+        <translation>Boşta ↔ yük geçişleri</translation>
+    </message>
+    <message>
+        <source>The last third of each core's time (all cores: of the run) alternates short bursts with pauses of
+1-200 ms, so the core keeps leaving idle states and boosting again. Curve Optimizer offsets often
+fail there although a steady load passes.</source>
+        <translation>Her çekirdeğin süresinin (tüm çekirdeklerde: testin) son üçte biri kısa yük patlamalarını 1-200 ms
+duraklamalarla değiştirir; çekirdek sürekli boşta durumlarından çıkıp yeniden boost'a geçer. Curve Optimizer
+ofsetleri sabit yükü geçse bile çoğu zaman burada çöker.</translation>
+    </message>
+    <message>
+        <source>Hold the "CO validation" preset during the test</source>
+        <translation>Test boyunca "CO validation" preset'ini uygula</translation>
+    </message>
+    <message>
+        <source>Optimizations preset: boost on, every idle state on, machine checks polled every 10 s.
+Applied when the test starts and taken back when it ends, returning the tuning that was in
+effect before (it is held like a game session, so it also comes back if Centurion quits).
+Asks for the administrator password; not applied while a game holds the tuning.</source>
+        <translation>Optimizations preset'i: boost açık, tüm boşta durumları açık, makine denetimleri 10 sn'de bir yoklanır.
+Test başlarken uygulanır, bitince geri alınır ve önceki ayarlar döner (oyun oturumu gibi tutulur;
+Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarları tutarken uygulanmaz.</translation>
+    </message>
+    <message>
+        <source>centurion-cpustress could not read the CPU topology.</source>
+        <translation>centurion-cpustress CPU topolojisini okuyamadı.</translation>
+    </message>
+    <message>
+        <source>Date</source>
+        <translation>Tarih</translation>
+    </message>
+    <message>
+        <source>Test</source>
+        <translation>Test</translation>
+    </message>
+    <message>
+        <source>Duration</source>
+        <translation>Süre</translation>
+    </message>
+    <message>
+        <source>Errors</source>
+        <translation>Hatalar</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>Sonuç</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>Hatalı</translation>
+    </message>
+    <message>
+        <source>CPU curve</source>
+        <translation>CPU eğrisi</translation>
+    </message>
+    <message>
+        <source>while %1 was loaded</source>
+        <translation>%1 yükteyken</translation>
+    </message>
+    <message>
+        <source>during the all-core test</source>
+        <translation>tüm çekirdek testi sırasında</translation>
+    </message>
+    <message>
+        <source>The machine went down %1 (CPU curve: %2). Back that offset off before trusting it.</source>
+        <translation>Makine %1 kapandı (CPU eğrisi: %2). Güvenmeden önce o ofseti geri çekin.</translation>
+    </message>
+    <message>
+        <source>CPU test: the machine went down</source>
+        <translation>CPU testi: makine kapandı</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n min</source>
+        <translation>
+            <numerusform>%n dk</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>CPU %1 (CCD%2 slot %3)</source>
+        <translation>CPU %1 (CCD%2 slot %3)</translation>
+    </message>
+    <message>
+        <source>CPU %1</source>
+        <translation>CPU %1</translation>
+    </message>
+    <message>
+        <source>The test settings are not valid.</source>
+        <translation>Test ayarları geçerli değil.</translation>
+    </message>
+    <message>
+        <source>Applying the "CO validation" preset…</source>
+        <translation>"CO validation" preset'i uygulanıyor…</translation>
+    </message>
+    <message>
+        <source>The preset was not applied (%1); the test did not start.</source>
+        <translation>Preset uygulanmadı (%1); test başlamadı.</translation>
+    </message>
+    <message>
+        <source>A game holds the tuning, so the "CO validation" preset is not in effect for this test.</source>
+        <translation>Ayarları bir oyun tutuyor, bu yüzden "CO validation" preset'i bu testte etkin değil.</translation>
+    </message>
+    <message>
+        <source>Some preset values could not be applied: %1</source>
+        <translation>Bazı preset değerleri uygulanamadı: %1</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Durdur</translation>
+    </message>
+    <message>
+        <source>Per-core test: %1 of about %2 min, %3 of %4 cores done</source>
+        <translation>Çekirdek başına test: yaklaşık %2 dk'nın %1. dk'sı, %4 çekirdekten %3 tanesi bitti</translation>
+    </message>
+    <message>
+        <source>All-core test: %1 of %2 min</source>
+        <translation>Tüm çekirdek testi: %2 dk'nın %1. dk'sı</translation>
+    </message>
+    <message>
+        <source>now on %1</source>
+        <translation>şimdi %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n error(s)</source>
+        <translation>
+            <numerusform>%n hata</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n machine check(s) / lockup(s)</source>
+        <translation>
+            <numerusform>%n makine denetimi / kilitlenme</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The tuning from before the test could not be restored: %1. Use Optimizations → Restore originals.</source>
+        <translation>Testten önceki ayarlar geri yüklenemedi: %1. Optimizations → Restore originals kullanın.</translation>
+    </message>
+    <message>
+        <source>No errors. A pass is evidence, not proof: the offset may still fail under another load or at idle.</source>
+        <translation>Hata yok. Geçmek kanıttır, kesinlik değil: ofset başka bir yükte ya da boştayken yine çökebilir.</translation>
+    </message>
+    <message>
+        <source>%1 wrong result(s), %2 machine check(s) / lockup(s). The CPU curve in effect is not stable.</source>
+        <translation>%1 yanlış sonuç, %2 makine denetimi / kilitlenme. Etkin CPU eğrisi kararlı değil.</translation>
+    </message>
+    <message>
+        <source>Wrong results on: %1.</source>
+        <translation>Yanlış sonuç verenler: %1.</translation>
+    </message>
+    <message>
+        <source>Kernel errors named: %1.</source>
+        <translation>Kernel hatalarının adlandırdıkları: %1.</translation>
+    </message>
+    <message>
+        <source>Make the offset of those slots less negative (for example by 5) in Ryzen Curve and test again.</source>
+        <translation>Ryzen Curve'de bu slotların ofsetini daha az negatif yapın (örneğin 5) ve yeniden test edin.</translation>
+    </message>
+    <message>
+        <source>Not finished: the test was stopped or ended early (exit code %1).</source>
+        <translation>Bitmedi: test durduruldu ya da erken bitti (çıkış kodu %1).</translation>
+    </message>
+    <message>
+        <source>The result could not be saved to %1.</source>
+        <translation>Sonuç %1 dosyasına kaydedilemedi.</translation>
+    </message>
+    <message>
+        <source>CPU test failed</source>
+        <translation>CPU testi başarısız</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n error(s) during the CPU test.</source>
+        <translation>
+            <numerusform>CPU testi sırasında %n hata.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>pass</source>
+        <translation>geçti</translation>
+    </message>
+    <message>
+        <source>fail</source>
+        <translation>başarısız</translation>
+    </message>
+    <message>
+        <source>machine went down</source>
+        <translation>makine kapandı</translation>
+    </message>
+    <message>
+        <source>running</source>
+        <translation>sürüyor</translation>
+    </message>
+    <message>
+        <source>incomplete</source>
+        <translation>tamamlanmadı</translation>
+    </message>
+    <message>
+        <source>transitions</source>
+        <translation>geçişler</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n kernel</source>
+        <translation>
+            <numerusform>%n kernel</numerusform>
+        </translation>
+    </message>
+</context>
 </TS>

@@ -9,6 +9,7 @@
 #include "theme.h"
 
 #include <memory>
+#include <unistd.h>
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -225,6 +226,11 @@ static QJsonObject builtinObject(const Builtin &b) {
     QJsonObject o = QJsonDocument::fromJson(QByteArray(b.json)).object();
     o["summary"] = QString::fromUtf8(b.summary);
     return o;
+}
+
+QJsonObject OptimizeTab::builtinValues(const QString &name) {
+    const Builtin *b = builtin(name);
+    return b ? builtinObject(*b).value(QStringLiteral("values")).toObject() : QJsonObject();
 }
 
 /// Same rule as centurion-gamemode's valid_name().
@@ -637,6 +643,32 @@ QWidget *OptimizeTab::buildLaunchPage() {
                       : QStringLiteral("Heroic / Bottles detection off."), theme::OK, 6000);
     });
     ug->addWidget(detectLaunchers_, 4, 0, 1, 3);
+    auto *ntsync = new QCheckBox(QStringLiteral("NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)"));
+    ntsync->setChecked(cfg.value("ntsync").toBool());
+    ntsync->setToolTip(QStringLiteral("NTSYNC is the kernel's driver for Windows synchronisation objects (/dev/ntsync): Wine and Proton use it\n"
+                                      "instead of esync / fsync for lower overhead in games with many threads. Wine 11 uses it on its own;\n"
+                                      "GE-Proton 10 and builds like it only when PROTON_USE_NTSYNC=1 is set. With this on, centurion-gamemode\n"
+                                      "WRAP / RUN (Steam launch options) set it for the game, unless the launch options already do. Lutris\n"
+                                      "starts the game itself (PRE / POST hooks): set the variable in the game's environment there."));
+    connect(ntsync, &QCheckBox::toggled, this, [this](bool on) {
+        QJsonObject cfg = readJsonFile(configFile());
+        if (on) cfg["ntsync"] = true; else cfg.remove("ntsync");
+        QString err;
+        if (!writeJsonFile(configFile(), cfg, &err)) { showStatus("Could not save: " + err, theme::DANGER); return; }
+        showStatus(on ? QStringLiteral("NTSYNC on for games started through centurion-gamemode WRAP / RUN.") : QStringLiteral("NTSYNC variable off."), theme::OK, 6000);
+    });
+    ug->addWidget(ntsync, 5, 0, 1, 2);
+    // Readiness: the device exists (module ntsync or CONFIG_NTSYNC=y) and this user may read and write it
+    // (mode 0666 since Linux 6.14; older kernels need a udev rule).
+    const bool dev = QFileInfo::exists(QStringLiteral("/dev/ntsync"));
+    const bool rw = dev && ::access("/dev/ntsync", R_OK | W_OK) == 0;
+    auto *ntsyncState = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(rw ? theme::OK : theme::WARN,
+        rw ? QStringLiteral("/dev/ntsync ready")
+           : dev ? QStringLiteral("/dev/ntsync is not read / write for you: a udev rule KERNEL==\"ntsync\", MODE=\"0666\" (kernels before 6.14)")
+                 : QStringLiteral("/dev/ntsync missing: modprobe ntsync (or a kernel with CONFIG_NTSYNC)")));
+    ntsyncState->setTextFormat(Qt::RichText);
+    ntsyncState->setWordWrap(true);
+    ug->addWidget(ntsyncState, 5, 2);
     ug->setColumnStretch(2, 1);
     v->addWidget(uvBox);
     fillGameScenes();

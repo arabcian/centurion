@@ -1,5 +1,6 @@
 #include "curvepage.h"
 #include "memtestbox.h"
+#include "cpustressbox.h"
 #include "gpustressbox.h"
 #include "privileged.h"
 #include "sysinfo.h"
@@ -135,6 +136,9 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
     gpuTest_ = new GpuStressBox;
     connect(gpuTest_, &GpuStressBox::alert, this, &CurvePage::alert);
     root->addWidget(gpuTest_);
+    cpuTest_ = new CpuStressBox;
+    connect(cpuTest_, &CpuStressBox::alert, this, &CurvePage::alert);
+    root->addWidget(cpuTest_);
 }
 
 void CurvePage::showEvent(QShowEvent *e) {
@@ -283,11 +287,13 @@ void CurvePage::resetGpuCurve(const QString &title) {
 void CurvePage::setKernelLog(bool live) {
     memTest_->setKernelLog(live);
     gpuTest_->setKernelLog(live);
+    cpuTest_->setKernelLog(live);
 }
 
 void CurvePage::onFault(const QJsonObject &e) {
     memTest_->onFault(e);
     gpuTest_->onFault(e);
+    cpuTest_->onFault(e);
     const QString kind = e.value("kind").toString();
     const QString title = e.value("title").toString();
     if (kind == QLatin1String("xid")) {

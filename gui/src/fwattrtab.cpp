@@ -262,6 +262,13 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
     tabs_->setDocumentMode(true);
     lay->addWidget(tabs_);
 
+    tau_ = new QLabel;
+    tau_->setProperty("role", "muted");
+    tau_->setToolTip("PL1 tau: how long the CPU may stay above PL1 before it is held to it. The firmware keeps it in the EC\n"
+                     "(WMI feature 0x01070000) without a kernel attribute, in the steps of Intel's time-window encoding. On AMD\n"
+                     "nothing in the ACPI tables passes it on, so whether changing it would do anything is unknown: shown, not offered.");
+    tau_->setVisible(false);
+    lay->addWidget(tau_);
     status_ = new QLabel;
     status_->setProperty("role", "muted");
     lay->addWidget(status_);
@@ -547,6 +554,8 @@ void FwattrTab::readWmi() {
     privileged::run(gpuHelperPath(), QJsonObject{{"op", "status"}}, this, [this](const privileged::Result &r) {
         wmiReady_ = r.reached && r.json.value("acpi").toBool();
         const QJsonObject vals = r.json.value("values").toObject();
+        tau_->setVisible(r.json.contains("pl1_tau_s"));
+        tau_->setText(QStringLiteral("CPU PL1 tau: %1 s (read-only)").arg(r.json.value("pl1_tau_s").toInt()));
         {   // WMAE id check for the CPU limits: the fallback is only offered
             // once WMAE has been seen to report exactly what sysfs reports.
             QJsonObject cache = readRangeCache();

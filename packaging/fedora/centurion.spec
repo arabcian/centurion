@@ -22,8 +22,8 @@ URL:            https://github.com/arabcian/centurion
 Source0:        %{name}-%{version}.tar.xz
 ExclusiveArch:  x86_64
 
-BuildRequires:  cargo >= 1.75
-BuildRequires:  rust >= 1.75
+BuildRequires:  cargo >= 1.89
+BuildRequires:  rust >= 1.89
 BuildRequires:  cmake >= 3.19
 BuildRequires:  gcc-c++
 BuildRequires:  qt6-qtbase-devel
@@ -101,6 +101,7 @@ fi
 %{_bindir}/centurion-display
 %{_bindir}/centurion-cooltest
 %{_bindir}/centurion-gpustress
+%{_bindir}/centurion-cpustress
 %dir %{_libexecdir}/centurion
 %{_libexecdir}/centurion/legion-profile-helper
 %{_libexecdir}/centurion/fwattr-helper

@@ -482,10 +482,14 @@ Opt usbcInputs() {
         const QString e = p.section('/', -1);
         any = true;
         if (rdInt(p + "/online").value_or(0) != 1) continue;
-        const auto uv = rdInt(p + "/voltage_now"), ua = rdInt(p + "/current_now");
+        const auto uv = rdInt(p + "/voltage_now"), ua = rdInt(p + "/current_now"), max = rdInt(p + "/current_max");
         const QString port = QStringLiteral("Port %1").arg(e.section(':', -1).toInt());
+        // current_max: what the charger agreed to deliver (USB PD contract), so "of N W" is the charger's limit at this voltage.
+        const QString limit = uv && max && *uv > 0 && *max > 0 ? QStringLiteral(" of %1 W").arg(*uv / 1e6 * (*max / 1e6), 0, 'f', 0) : QString();
         if (uv && ua && *uv > 0 && *ua > 0)
-            l << QStringLiteral("%1 %2 W (%3 V)").arg(port).arg(*uv / 1e6 * (*ua / 1e6), 0, 'f', 1).arg(*uv / 1e6, 0, 'f', 0);
+            l << QStringLiteral("%1 %2 W%3 (%4 V)").arg(port).arg(*uv / 1e6 * (*ua / 1e6), 0, 'f', 1).arg(limit).arg(*uv / 1e6, 0, 'f', 0);
+        else if (!limit.isEmpty())
+            l << port + QStringLiteral(" connected, up to") + limit.mid(3);
         else
             l << port + QStringLiteral(" connected");
     }

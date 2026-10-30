@@ -1,0 +1,2402 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 009b1d9..751a0f7 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -44,6 +44,14 @@ version = "2.13.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+ 
++[[package]]
++name = "centurion-cpustress"
++version = "0.1.0"
++dependencies = [
++ "libc",
++ "serde_json",
++]
++
+ [[package]]
+ name = "centurion-gpustress"
+ version = "0.1.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 033dacd..e37e2de 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,6 @@
+ [workspace]
+ resolver = "2"
+-members = ["crates/centurion-helpers", "crates/centurion-spectrum", "crates/nvcurve", "crates/centurion-gpustress"]
++members = ["crates/centurion-helpers", "crates/centurion-spectrum", "crates/nvcurve", "crates/centurion-gpustress", "crates/centurion-cpustress"]
+ 
+ [workspace.package]
+ edition = "2021"
+diff --git a/README.md b/README.md
+index 1160cd1..8e6a877 100644
+--- a/README.md
++++ b/README.md
+@@ -37,7 +37,7 @@ Tabs appear only when the hardware, driver or tool behind them exists.
+ | **AMD GPU** *(amdgpu)* | Overdrive clocks / voltage per GPU generation, power limit, fan curve (RDNA3+), power profile. Every Apply is a **trial** — reverts in 20 s unless you press *Keep*; one-click undervolt steps. |
+ | **Optimizations** | 100+ documented CPU / memory / scheduler / storage / network / device / power knobs in 8 groups, built-in presets, **Autotune**, game launch hooks (Lutris, Steam), boot-parameter advisor, *Restore originals* and *↺ Return to boot-guard defaults*. |
+ | **Lighting** *(Spectrum, or 4-zone RGB)* | Spectrum keyboards: per-key RGB on a drawing of your own keyboard, firmware effects, 6 hardware profiles, brightness, lid logo, accent lights. 4-zone RGB keyboards: effect, speed, brightness and four zone colours. |
+-| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches, suggestions for wake sources that keep waking the machine with the lid closed) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
++| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset; memory, GPU and per-core / all-core CPU tests) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches, suggestions for wake sources that keep waking the machine with the lid closed) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
+ 
+ The **tray menu** carries the everyday actions: Scene (with auto-switch and
+ pause), Power Profile, CPU Curve, CPU Undervolt (Intel), GPU Curve,
+@@ -62,6 +62,7 @@ tab (which does wake it).
+ | `centurion-netguard daemon\|status\|list\|whois IP` | Network guard daemon and queries |
+ | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
+ | `centurion-cooltest status\|run [--seconds N]\|baseline\|forget` | Cooling health test as the user (Health → Cooling): fixed CPU load, compared with a baseline of the same firmware settings |
++| `centurion-cpustress info\|percore\|allcore --load sse\|avx2\|avx512 --seconds N [--cycles N] [--transitions] [--cpus LIST]` | CPU stability test as the user (Health → Curve stability → CPU test): per-core or all-core work with a known result, for Curve Optimizer / undervolt offsets |
+ | `centurion-display list\|set-refresh HZ\|brightness\|set-brightness PCT` | Internal panel refresh rate (KDE kscreen-doctor, wlr-randr or xrandr) and backlight brightness (sysfs, logind SetBrightness or brightnessctl) as the user — used by Scenes |
+ 
+ ## D-Bus API
+@@ -329,7 +330,7 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
+ 
+ ## Requirements
+ 
+-**Build:** Rust ≥ 1.75 (cargo), a C++20 compiler, CMake ≥ 3.19, Qt ≥ 6.4 (Widgets, Network, Svg; Linguist tools optional, for the Turkish translation).
++**Build:** Rust ≥ 1.89 (cargo), a C++20 compiler, CMake ≥ 3.19, Qt ≥ 6.4 (Widgets, Network, Svg; Linguist tools optional, for the Turkish translation).
+ 
+ **Runtime:**
+ 
+diff --git a/crates/centurion-cpustress/Cargo.toml b/crates/centurion-cpustress/Cargo.toml
+new file mode 100644
+index 0000000..2c6a987
+--- /dev/null
++++ b/crates/centurion-cpustress/Cargo.toml
+@@ -0,0 +1,19 @@
++[package]
++name = "centurion-cpustress"
++version = "0.1.0"
++edition = "2021"
++rust-version = "1.89"  # AVX-512 intrinsics in std::arch
++description = "Centurion CPU stability test: per-core and all-core work with a known result, for Curve Optimizer / undervolt offsets"
++license = "GPL-3.0-or-later"
++
++[[bin]]
++name = "centurion-cpustress"
++path = "src/main.rs"
++
++[dependencies]
++serde_json = "1"
++libc = "0.2"
++
++[features]
++# Test-only: one wrong chunk on the highest-numbered CPU, to check the failure path end to end.
++fault-inject = []
+diff --git a/crates/centurion-cpustress/src/main.rs b/crates/centurion-cpustress/src/main.rs
+new file mode 100644
+index 0000000..01132d5
+--- /dev/null
++++ b/crates/centurion-cpustress/src/main.rs
+@@ -0,0 +1,323 @@
++//! centurion-cpustress - CPU stability test for Curve Optimizer / undervolt offsets. Runs as the user
++//! (never through pkexec) and touches no clocks or curves: it only loads the CPU while the user's curve is in effect.
++//!
++//!   centurion-cpustress info
++//!       {"cores": [{"cpus": [0, 16], "l3": 0}, ...], "loads": {"sse": true, "avx2": true, "avx512": true}}
++//!   centurion-cpustress percore --load <sse|avx2|avx512> --seconds <per core> [--cycles N] [--transitions] [--cpus LIST]
++//!       one thread, moved from physical core to physical core (the first logical CPU of each; LIST picks some)
++//!   centurion-cpustress allcore --load <sse|avx2|avx512> --seconds <s> [--transitions]
++//!       one thread on every online logical CPU
++//!
++//! Output: one JSON object per line on stdout.
++//!   {"ev":"start","mode","load","seconds","cycles","transitions","cpus":[...]}
++//!   {"ev":"core","t","cpu","cycle"}                     percore: the thread moved to this CPU
++//!   {"ev":"progress","t","chunks","errors"[,"cpu"]}       at most once per second
++//!   {"ev":"error","t","cpu","seed","expected","actual"}   a chunk that differs from the reference (at most 200 lines)
++//!   {"ev":"core_end","t","cpu","chunks","errors"[,"skipped"]}
++//!   {"ev":"end","status":"pass|fail|stopped|init_failed","t","chunks","errors","failed":[cpu...],"msg"}
++//! Exit code: 0 pass, 1 errors found, 3 init failure or bad arguments, 4 stopped.
++//!
++//! How a result is known to be right: before the test, the reference hash of every seed is computed on two
++//! different cores at the same time and must agree (a third core breaks a tie). Every chunk of the test is
++//! compared with it. A core that returns one wrong chunk has failed; the per-core test moves on to the next
++//! core, the all-core test stops that CPU's thread. Many unstable offsets never return a wrong number but
++//! crash the machine or raise a machine check instead: the GUI covers both (kernel events, unfinished runs).
++//!
++//! `--transitions`: the last third of each core's time (all-core: of the run) alternates single chunks with
++//! pauses of 1-200 ms, so the core keeps dropping into idle states and boosting back out of them - where
++//! Curve Optimizer offsets often fail although a steady load passes.
++
++mod topo;
++mod work;
++
++use serde_json::{json, Value};
++use std::io::Write;
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::{Arc, Mutex};
++use std::time::{Duration, Instant};
++use work::Load;
++
++/// Set by SIGTERM / SIGINT; the workers look at it after every chunk.
++static STOP: AtomicBool = AtomicBool::new(false);
++extern "C" fn on_stop(_: libc::c_int) { STOP.store(true, Ordering::SeqCst); }
++
++const NSEEDS: u64 = 8;
++const MAX_ERROR_LINES: u32 = 200;
++const PAUSES_MS: [u64; 8] = [1, 3, 10, 30, 200, 2, 50, 100];
++
++fn emit(v: &Value) {
++    let mut out = std::io::stdout().lock();
++    let _ = writeln!(out, "{v}");
++    let _ = out.flush();
++}
++
++fn secs(t: Instant) -> f64 { (t.elapsed().as_secs_f64() * 1000.0).round() / 1000.0 }
++
++#[derive(Debug, PartialEq)]
++struct Args { per_core: bool, load: Load, seconds: u64, cycles: u32, transitions: bool, cpus: Option<Vec<usize>> }
++
++const USAGE: &str = "usage: centurion-cpustress info | percore --load <sse|avx2|avx512> --seconds <s> [--cycles N] [--transitions] [--cpus LIST] | allcore --load <sse|avx2|avx512> --seconds <s> [--transitions]";
++
++fn parse(argv: &[String]) -> Result<Args, String> {
++    let per_core = match argv.first().map(String::as_str) {
++        Some("percore") => true,
++        Some("allcore") => false,
++        _ => return Err(USAGE.into()),
++    };
++    let (mut load, mut seconds, mut cycles, mut transitions, mut cpus) = (None, None, 1, false, None);
++    let mut it = argv[1..].iter();
++    while let Some(flag) = it.next() {
++        if flag == "--transitions" { transitions = true; continue; }
++        let val = it.next().ok_or(format!("{flag} needs a value"))?;
++        match flag.as_str() {
++            "--load" => load = Some(Load::parse(val).ok_or("--load must be sse, avx2 or avx512")?),
++            "--seconds" => seconds = Some(val.parse::<u64>().map_err(|_| "--seconds is not a number")?),
++            "--cycles" if per_core => cycles = val.parse::<u32>().map_err(|_| "--cycles is not a number")?,
++            "--cpus" if per_core => cpus = Some(topo::parse_list(val).filter(|l| !l.is_empty()).ok_or("--cpus is not a CPU list")?),
++            _ => return Err(format!("unknown argument {flag}")),
++        }
++    }
++    let seconds = seconds.ok_or("--seconds is required")?;
++    if !(1..=86_400).contains(&seconds) { return Err("--seconds must be 1..86400".into()); }
++    if !(1..=100).contains(&cycles) { return Err("--cycles must be 1..100".into()); }
++    Ok(Args { per_core, load: load.ok_or("--load is required")?, seconds, cycles, transitions, cpus })
++}
++
++/// A wrong chunk: time, CPU, seed, expected, actual.
++type Wrong = (f64, usize, u64, u64, u64);
++
++/// What the workers report; the main thread prints it.
++#[derive(Default)]
++struct Shared { chunks: AtomicU64, errors: AtomicU64, wrong: Mutex<Vec<Wrong>> }
++
++/// Runs chunks pinned to `cpu` until `until`, the stop flag or the first wrong chunk. Pauses after each chunk
++/// from `pause_from` on (transitions). Returns the chunks done, or why the CPU could not be used.
++fn worker(cpu: usize, load: Load, refs: &[u64], until: Instant, pause_from: Option<Instant>, t0: Instant, sh: &Shared) -> Result<u64, String> {
++    topo::pin(cpu)?;
++    let mut buf = vec![0u64; work::BUF_WORDS];
++    let mut n = 0u64;
++    while !STOP.load(Ordering::Relaxed) && Instant::now() < until {
++        let seed = n % NSEEDS;
++        let got = work::chunk(load, seed, &mut buf);
++        // Test builds only: the 4th chunk on the highest-numbered CPU comes out wrong.
++        #[cfg(feature = "fault-inject")]
++        let got = if n == 3 && cpu + 1 == topo::cores().iter().flat_map(|c| c.cpus.iter()).count() { got ^ 1 } else { got };
++        n += 1;
++        sh.chunks.fetch_add(1, Ordering::Relaxed);
++        if got != refs[seed as usize] {
++            sh.errors.fetch_add(1, Ordering::Relaxed);
++            sh.wrong.lock().unwrap().push((secs(t0), cpu, seed, refs[seed as usize], got));
++            break;
++        }
++        if pause_from.is_some_and(|p| Instant::now() >= p) {
++            std::thread::sleep(Duration::from_millis(PAUSES_MS[(n % PAUSES_MS.len() as u64) as usize]));
++        }
++    }
++    Ok(n)
++}
++
++/// All seeds on one CPU.
++fn reference_on(cpu: usize, load: Load) -> Result<Vec<u64>, String> {
++    topo::pin(cpu)?;
++    let mut buf = vec![0u64; work::BUF_WORDS];
++    Ok((0..NSEEDS).map(|s| work::chunk(load, s, &mut buf)).collect())
++}
++
++/// The reference hashes, from two CPUs at once (a third on disagreement). A CPU outvoted on a seed is
++/// returned with it as wrong. Err when no two agree.
++fn reference(load: Load, candidates: &[usize]) -> Result<(Vec<u64>, Vec<Wrong>), String> {
++    let mut picks: Vec<usize> = Vec::new();
++    for &c in [candidates.first(), candidates.last()].into_iter().flatten().chain(candidates.iter()) {
++        if !picks.contains(&c) { picks.push(c); }
++    }
++    let run = |cpus: &[usize]| -> Result<Vec<Vec<u64>>, String> {
++        let hs: Vec<_> = cpus.iter().map(|&c| std::thread::spawn(move || reference_on(c, load))).collect();
++        hs.into_iter().map(|h| h.join().map_err(|_| "reference thread panicked".to_string())?).collect()
++    };
++    let first: Vec<usize> = picks.iter().take(2).copied().collect();
++    let mut res = run(&first)?;
++    let mut used = first.clone();
++    if res.len() == 2 && res[0] != res[1] {
++        let Some(&third) = picks.get(2) else { return Err(format!("the reference runs on CPU {} and {} disagree", used[0], used[1])) };
++        res.extend(run(&[third])?);
++        used.push(third);
++    }
++    let mut refs = Vec::new();
++    let mut wrong = Vec::new();
++    for s in 0..NSEEDS as usize {
++        let vals: Vec<u64> = res.iter().map(|r| r[s]).collect();
++        let Some(&v) = vals.iter().find(|&&v| vals.iter().filter(|&&w| w == v).count() * 2 > vals.len()) else {
++            return Err(format!("the reference runs on CPU {used:?} disagree"));
++        };
++        for (i, &w) in vals.iter().enumerate() { if w != v { wrong.push((0.0, used[i], s as u64, v, w)); } }
++        refs.push(v);
++    }
++    Ok((refs, wrong))
++}
++
++/// Prints what the workers reported; `failed` collects the CPUs of every wrong chunk.
++struct Printer { lines: u32, last_progress: f64, failed: Vec<usize> }
++
++impl Printer {
++    fn drain(&mut self, sh: &Shared) {
++        for (t, cpu, seed, exp, act) in sh.wrong.lock().unwrap().drain(..) {
++            if !self.failed.contains(&cpu) { self.failed.push(cpu); }
++            if self.lines < MAX_ERROR_LINES {
++                self.lines += 1;
++                emit(&json!({"ev": "error", "t": t, "cpu": cpu, "seed": seed, "expected": format!("0x{exp:016x}"), "actual": format!("0x{act:016x}")}));
++            }
++        }
++    }
++    fn progress(&mut self, sh: &Shared, t0: Instant, cpu: Option<usize>) {
++        let t = secs(t0);
++        if t - self.last_progress < 1.0 { return; }
++        self.last_progress = t;
++        let mut v = json!({"ev": "progress", "t": t, "chunks": sh.chunks.load(Ordering::Relaxed), "errors": sh.errors.load(Ordering::Relaxed)});
++        if let Some(c) = cpu { v["cpu"] = json!(c); }
++        emit(&v);
++    }
++}
++
++/// Prints the `end` line and returns the exit code that goes with its status.
++fn end(status: &str, t: f64, chunks: u64, errors: u64, failed: &[usize], msg: &str) -> i32 {
++    emit(&json!({"ev": "end", "status": status, "t": t, "chunks": chunks, "errors": errors, "failed": failed, "msg": msg}));
++    match status { "pass" => 0, "fail" => 1, "init_failed" => 3, _ => 4 }
++}
++
++fn run(a: &Args) -> i32 {
++    if !a.load.supported() { return end("init_failed", 0.0, 0, 0, &[], &format!("this CPU has no {}", a.load.name())); }
++    let cores = topo::cores();
++    let online: Vec<usize> = cores.iter().flat_map(|c| c.cpus.iter().copied()).collect();
++    let firsts: Vec<usize> = cores.iter().map(|c| c.cpus[0]).collect();
++    let tested: Vec<usize> = if a.per_core {
++        match &a.cpus {
++            Some(l) => {
++                if let Some(bad) = l.iter().find(|c| !firsts.contains(c)) {
++                    return end("init_failed", 0.0, 0, 0, &[], &format!("CPU {bad} is not the first online CPU of a core"));
++                }
++                l.clone()
++            }
++            None => firsts.clone(),
++        }
++    } else { let mut o = online.clone(); o.sort_unstable(); o };
++    if tested.is_empty() { return end("init_failed", 0.0, 0, 0, &[], "no online CPU"); }
++
++    // Reference CPUs: the tested ones first, the others as tie-breakers.
++    let mut cand = tested.clone();
++    cand.extend(firsts.iter().filter(|c| !tested.contains(c)));
++    let (refs, outvoted) = match reference(a.load, &cand) {
++        Ok(r) => r,
++        Err(e) => return end("fail", 0.0, 0, 1, &[], &e),
++    };
++    let t0 = Instant::now();
++    emit(&json!({"ev": "start", "mode": if a.per_core { "percore" } else { "allcore" }, "load": a.load.name(),
++                 "seconds": a.seconds, "cycles": a.cycles, "transitions": a.transitions, "cpus": tested}));
++    let sh = Arc::new(Shared::default());
++    sh.errors.fetch_add(outvoted.len() as u64, Ordering::Relaxed);
++    sh.wrong.lock().unwrap().extend(outvoted);
++    let mut p = Printer { lines: 0, last_progress: -1.0, failed: Vec::new() };
++    p.drain(&sh);
++    let refs = Arc::new(refs);
++    let span = Duration::from_secs(a.seconds);
++    let pause_at = |start: Instant| a.transitions.then(|| start + span * 2 / 3);
++
++    if a.per_core {
++        'outer: for cycle in 0..a.cycles {
++            for &cpu in &tested {
++                if STOP.load(Ordering::SeqCst) { break 'outer; }
++                if p.failed.contains(&cpu) { continue; }
++                emit(&json!({"ev": "core", "t": secs(t0), "cpu": cpu, "cycle": cycle}));
++                let errs_before = sh.errors.load(Ordering::Relaxed);
++                let chunks_before = sh.chunks.load(Ordering::Relaxed);
++                let start = Instant::now();
++                let (sh2, refs2, load, pf) = (sh.clone(), refs.clone(), a.load, pause_at(start));
++                let h = std::thread::spawn(move || worker(cpu, load, &refs2, start + span, pf, t0, &sh2));
++                while !h.is_finished() {
++                    std::thread::sleep(Duration::from_millis(100));
++                    p.drain(&sh);
++                    p.progress(&sh, t0, Some(cpu));
++                }
++                let r = h.join().unwrap_or_else(|_| Err("worker panicked".into()));
++                p.drain(&sh);
++                let errs = sh.errors.load(Ordering::Relaxed) - errs_before;
++                let mut v = json!({"ev": "core_end", "t": secs(t0), "cpu": cpu, "chunks": sh.chunks.load(Ordering::Relaxed) - chunks_before, "errors": errs});
++                if let Err(e) = r { v["skipped"] = json!(e); }
++                emit(&v);
++            }
++        }
++    } else {
++        let start = Instant::now();
++        let hs: Vec<_> = tested.iter().map(|&cpu| {
++            let (sh2, refs2, load, pf) = (sh.clone(), refs.clone(), a.load, pause_at(start));
++            (cpu, std::thread::spawn(move || worker(cpu, load, &refs2, start + span, pf, t0, &sh2)))
++        }).collect();
++        while hs.iter().any(|(_, h)| !h.is_finished()) {
++            std::thread::sleep(Duration::from_millis(100));
++            p.drain(&sh);
++            p.progress(&sh, t0, None);
++        }
++        for (cpu, h) in hs {
++            if let Ok(Err(e)) = h.join() { eprintln!("centurion-cpustress: CPU {cpu}: {e}"); }
++        }
++        p.drain(&sh);
++    }
++    let errors = sh.errors.load(Ordering::Relaxed);
++    let chunks = sh.chunks.load(Ordering::Relaxed);
++    let t = secs(t0);
++    let mut failed = p.failed;
++    failed.sort_unstable();
++    if errors > 0 { end("fail", t, chunks, errors, &failed, "wrong results") }
++    else if STOP.load(Ordering::SeqCst) { end("stopped", t, chunks, 0, &[], "stopped") }
++    else { end("pass", t, chunks, 0, &[], "") }
++}
++
++fn info() -> i32 {
++    let cores: Vec<Value> = topo::cores().iter().map(|c| json!({"cpus": c.cpus, "l3": c.l3})).collect();
++    emit(&json!({"cores": cores, "loads": {"sse": Load::Sse.supported(), "avx2": Load::Avx2.supported(), "avx512": Load::Avx512.supported()}}));
++    0
++}
++
++fn main() {
++    let argv: Vec<String> = std::env::args().skip(1).collect();
++    if argv.first().map(String::as_str) == Some("info") { std::process::exit(info()); }
++    match parse(&argv) {
++        Ok(a) => {
++            // SAFETY: the handler only stores to an atomic.
++            unsafe {
++                libc::signal(libc::SIGTERM, on_stop as *const () as libc::sighandler_t);
++                libc::signal(libc::SIGINT, on_stop as *const () as libc::sighandler_t);
++            }
++            std::process::exit(run(&a))
++        }
++        Err(e) => std::process::exit(end("init_failed", 0.0, 0, 0, &[], &e)),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn v(s: &str) -> Vec<String> { s.split_whitespace().map(str::to_owned).collect() }
++
++    #[test]
++    fn arguments() {
++        assert_eq!(parse(&v("percore --load sse --seconds 60 --cycles 2 --transitions --cpus 0,2")).unwrap(),
++                   Args { per_core: true, load: Load::Sse, seconds: 60, cycles: 2, transitions: true, cpus: Some(vec![0, 2]) });
++        assert_eq!(parse(&v("allcore --seconds 5 --load avx2")).unwrap(),
++                   Args { per_core: false, load: Load::Avx2, seconds: 5, cycles: 1, transitions: false, cpus: None });
++        assert!(parse(&v("allcore --load sse --seconds 5 --cpus 1")).is_err());  // per-core only
++        assert!(parse(&v("percore --load avx --seconds 5")).is_err());
++        assert!(parse(&v("percore --load sse --seconds 0")).is_err());
++        assert!(parse(&v("percore --load sse")).is_err());
++        assert!(parse(&v("percore --load sse --seconds 5 --cycles 0")).is_err());
++        assert!(parse(&v("burn")).is_err());
++    }
++
++    #[test]
++    fn reference_agrees_across_cpus() {
++        let cpus: Vec<usize> = topo::cores().iter().map(|c| c.cpus[0]).collect();
++        let (refs, wrong) = reference(Load::Sse, &cpus).unwrap();
++        assert_eq!(refs.len(), NSEEDS as usize);
++        assert!(wrong.is_empty());
++    }
++}
+diff --git a/crates/centurion-cpustress/src/topo.rs b/crates/centurion-cpustress/src/topo.rs
+new file mode 100644
+index 0000000..b78808a
+--- /dev/null
++++ b/crates/centurion-cpustress/src/topo.rs
+@@ -0,0 +1,80 @@
++//! Which CPUs are online, which logical CPUs share a physical core, and pinning the calling thread.
++
++use std::path::Path;
++
++const CPU_DIR: &str = "/sys/devices/system/cpu";
++
++/// "0-3,8,10-11" → [0,1,2,3,8,10,11]. None on anything malformed.
++pub fn parse_list(s: &str) -> Option<Vec<usize>> {
++    let mut out = Vec::new();
++    for part in s.trim().split(',').filter(|p| !p.is_empty()) {
++        match part.split_once('-') {
++            Some((a, b)) => {
++                let (a, b): (usize, usize) = (a.trim().parse().ok()?, b.trim().parse().ok()?);
++                if b < a || b - a > 4096 { return None; }
++                out.extend(a..=b);
++            }
++            None => out.push(part.trim().parse().ok()?),
++        }
++    }
++    out.sort_unstable();
++    out.dedup();
++    Some(out)
++}
++
++/// One physical core: its logical CPUs (SMT siblings), ascending. `cpus[0]` is the one the per-core test loads.
++#[derive(Clone, Debug, PartialEq)]
++pub struct Core { pub cpus: Vec<usize>, pub l3: Option<u32> }
++
++fn read(p: impl AsRef<Path>) -> Option<String> { std::fs::read_to_string(p).ok() }
++
++/// Online physical cores, ordered by their first logical CPU.
++pub fn cores() -> Vec<Core> {
++    let online = read(format!("{CPU_DIR}/online")).and_then(|s| parse_list(&s)).unwrap_or_default();
++    let mut out: Vec<Core> = Vec::new();
++    for &c in &online {
++        let mut sib = read(format!("{CPU_DIR}/cpu{c}/topology/thread_siblings_list")).and_then(|s| parse_list(&s)).unwrap_or_else(|| vec![c]);
++        sib.retain(|s| online.contains(s));
++        if sib.first() != Some(&c) { continue; }  // listed with its first sibling
++        let l3 = read(format!("{CPU_DIR}/cpu{c}/cache/index3/id")).and_then(|s| s.trim().parse().ok());
++        out.push(Core { cpus: sib, l3 });
++    }
++    out
++}
++
++/// Pins the calling thread to `cpu` and checks that it now runs there.
++pub fn pin(cpu: usize) -> Result<(), String> {
++    // SAFETY: cpu_set_t is plain data; CPU_SET bounds-checks against its size.
++    unsafe {
++        let mut set: libc::cpu_set_t = std::mem::zeroed();
++        libc::CPU_ZERO(&mut set);
++        libc::CPU_SET(cpu, &mut set);
++        if libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) != 0 {
++            return Err(format!("cannot pin to CPU {cpu}: {}", std::io::Error::last_os_error()));
++        }
++        if libc::sched_getcpu() != cpu as i32 { return Err(format!("pinned to CPU {cpu} but running elsewhere")); }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn lists() {
++        assert_eq!(parse_list("0-3,8,10-11\n"), Some(vec![0, 1, 2, 3, 8, 10, 11]));
++        assert_eq!(parse_list("5"), Some(vec![5]));
++        assert_eq!(parse_list(""), Some(vec![]));
++        assert_eq!(parse_list("3-1"), None);
++        assert_eq!(parse_list("a"), None);
++    }
++
++    #[test]
++    fn this_machine_has_cores() {
++        let c = cores();
++        assert!(!c.is_empty());
++        assert!(c.windows(2).all(|w| w[0].cpus[0] < w[1].cpus[0]));
++        assert!(pin(c[0].cpus[0]).is_ok());
++    }
++}
+diff --git a/crates/centurion-cpustress/src/work.rs b/crates/centurion-cpustress/src/work.rs
+new file mode 100644
+index 0000000..0446db8
+--- /dev/null
++++ b/crates/centurion-cpustress/src/work.rs
+@@ -0,0 +1,229 @@
++//! The work: a chunk of arithmetic whose result is a 64-bit hash that depends on every step.
++//!
++//! Each chunk fills a 256 KiB buffer from its seed, then iterates
++//!   - the logistic map x ← r·(x − x²) on 8 (sse), 16 (avx2) or 32 (avx512) doubles. It is chaotic, so one
++//!     wrong bit anywhere grows until the final value is completely different (tests/flip_*), and the same
++//!     operations in the same order give bit-identical results on every core (no fast-math, no contraction);
++//!   - an integer multiply / shift / xor chain fed with every double's bits before each step;
++//!   - a dependent walk through the buffer (load, xor, store), so the load/store units and L2 take part.
++//!
++//! The three loads differ in how hard they hit the core: `sse` is scalar SSE2 and leaves the clock at its
++//! highest boost (where Curve Optimizer and undervolt offsets usually fail first); `avx2` uses 256-bit FMA;
++//! `avx512` 512-bit FMA, the most current and heat and so the lowest clock. A chunk only has to equal the
++//! same chunk of the same load computed on another core.
++
++pub const BUF_WORDS: usize = 32 * 1024;  // 256 KiB: inside L2 on every core this targets
++const R: f64 = 3.99;
++const K1: u64 = 0xBF58_476D_1CE4_E5B9;
++const K32: u64 = 0x9E37_79B9;  // 32-bit odd multiplier for the vector paths (mul_epu32)
++/// Iterations per chunk, for every load: about 15 ms on a 3 GHz server core, so a chunk ends often enough to
++/// check the stop flag and the deadline, and a transitions pause follows a short burst.
++const ITERS: u32 = 3_000_000;
++/// No fault injected (see `chunk_with`).
++pub const NO_FLIP: u32 = u32::MAX;
++
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Load { Sse, Avx2, Avx512 }
++
++impl Load {
++    pub fn parse(s: &str) -> Option<Load> {
++        match s { "sse" => Some(Load::Sse), "avx2" => Some(Load::Avx2), "avx512" => Some(Load::Avx512), _ => None }
++    }
++    pub fn name(self) -> &'static str {
++        match self { Load::Sse => "sse", Load::Avx2 => "avx2", Load::Avx512 => "avx512" }
++    }
++    pub fn supported(self) -> bool {
++        #[cfg(target_arch = "x86_64")]
++        {
++            match self {
++                Load::Sse => true,
++                Load::Avx2 => is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma"),
++                Load::Avx512 => is_x86_feature_detected!("avx512f"),
++            }
++        }
++        #[cfg(not(target_arch = "x86_64"))]
++        { self == Load::Sse }
++    }
++}
++
++fn splitmix(s: &mut u64) -> u64 {
++    *s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
++    let mut z = *s;
++    z = (z ^ (z >> 30)).wrapping_mul(K1);
++    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
++    z ^ (z >> 31)
++}
++
++/// A start value in [0.1, 0.9): away from the map's fixed points.
++fn start(s: &mut u64) -> f64 { 0.1 + 0.8 * ((splitmix(s) >> 11) as f64 / (1u64 << 53) as f64) }
++
++/// Fills the buffer; returns the seed state for the start values.
++fn fill(seed: u64, buf: &mut [u64]) -> u64 {
++    let mut s = seed ^ 0x6A09_E667_F3BC_C908;
++    for w in buf.iter_mut() { *w = splitmix(&mut s); }
++    s
++}
++
++fn fold(mut h: u64, words: impl Iterator<Item = u64>) -> u64 {
++    for w in words { h = (h ^ w).wrapping_mul(K1).rotate_left(23); }
++    h
++}
++
++/// One chunk. The caller has checked `load.supported()`.
++pub fn chunk(load: Load, seed: u64, buf: &mut [u64]) -> u64 { chunk_with(load, seed, buf, NO_FLIP) }
++
++/// `flip`: iteration at which one low bit of the first double is flipped (a simulated fault, tests only).
++pub fn chunk_with(load: Load, seed: u64, buf: &mut [u64], flip: u32) -> u64 {
++    assert_eq!(buf.len(), BUF_WORDS);
++    match load {
++        Load::Sse => sse(seed, buf, flip),
++        #[cfg(target_arch = "x86_64")]
++        // SAFETY: the CPU features were checked by Load::supported before any chunk runs.
++        Load::Avx2 => unsafe { x86::avx2(seed, buf, flip) },
++        #[cfg(target_arch = "x86_64")]
++        Load::Avx512 => unsafe { x86::avx512(seed, buf, flip) },
++        #[cfg(not(target_arch = "x86_64"))]
++        _ => unreachable!("vector loads are x86_64 only"),
++    }
++}
++
++fn sse(seed: u64, buf: &mut [u64], flip: u32) -> u64 {
++    let mut s = fill(seed, buf);
++    let mut x = [0.0f64; 8];
++    for v in x.iter_mut() { *v = start(&mut s); }
++    let mut h = [splitmix(&mut s), splitmix(&mut s), splitmix(&mut s), splitmix(&mut s)];
++    let mask = BUF_WORDS - 1;
++    let mut idx = (s as usize) & mask;
++    for it in 0..ITERS {
++        if it == flip { x[0] = f64::from_bits(x[0].to_bits() ^ 1); }
++        // The integer chain takes every double's bits before the map updates it: a wrong bit lands in the
++        // chain even when the map's rounding would absorb it, and the chain (a bijection) never loses it.
++        for (j, hj) in h.iter_mut().enumerate() {
++            *hj = ((*hj ^ (*hj >> 29)).wrapping_mul(K1)).wrapping_add(x[j].to_bits() ^ x[j + 4].to_bits());
++        }
++        for v in x.iter_mut() { *v = R * (*v - *v * *v); }
++        let w = buf[idx];
++        buf[idx] = w ^ h[0];
++        idx = ((w ^ h[1]) as usize) & mask;
++    }
++    let h0 = fold(0, x.iter().map(|v| v.to_bits()).chain(h));
++    fold(h0, buf.iter().copied())
++}
++
++#[cfg(target_arch = "x86_64")]
++mod x86 {
++    use super::*;
++    use std::arch::x86_64::*;
++
++    #[target_feature(enable = "avx2,fma")]
++    pub unsafe fn avx2(seed: u64, buf: &mut [u64], flip: u32) -> u64 {
++        let mut s = fill(seed, buf);
++        let r = _mm256_set1_pd(R);
++        let k = _mm256_set1_epi64x(K32 as i64);
++        let mut x = [_mm256_setzero_pd(); 4];
++        for v in x.iter_mut() { *v = _mm256_set_pd(start(&mut s), start(&mut s), start(&mut s), start(&mut s)); }
++        let mut h = [_mm256_set_epi64x(splitmix(&mut s) as i64, splitmix(&mut s) as i64, splitmix(&mut s) as i64, splitmix(&mut s) as i64); 2];
++        h[1] = _mm256_xor_si256(h[1], _mm256_set1_epi64x(splitmix(&mut s) as i64));
++        let mask = BUF_WORDS - 1;
++        let mut idx = (s as usize) & mask;
++        for it in 0..ITERS {
++            if it == flip { x[0] = _mm256_castsi256_pd(_mm256_xor_si256(_mm256_castpd_si256(x[0]), _mm256_set_epi64x(0, 0, 0, 1))); }
++            for (j, hj) in h.iter_mut().enumerate() {
++                let m = _mm256_mul_epu32(_mm256_xor_si256(*hj, _mm256_srli_epi64::<29>(*hj)), k);
++                let xb = _mm256_xor_si256(_mm256_castpd_si256(x[j]), _mm256_castpd_si256(x[j + 2]));
++                *hj = _mm256_add_epi64(_mm256_add_epi64(m, _mm256_srli_epi64::<32>(*hj)), xb);
++            }
++            for v in x.iter_mut() { *v = _mm256_mul_pd(r, _mm256_fnmadd_pd(*v, *v, *v)); }
++            let w = *buf.get_unchecked(idx);
++            let h0 = _mm256_extract_epi64::<0>(h[0]) as u64;
++            *buf.get_unchecked_mut(idx) = w ^ h0;
++            idx = ((w ^ _mm256_extract_epi64::<1>(h[1]) as u64) as usize) & mask;
++        }
++        let mut words = [0u64; 24];
++        for (i, v) in x.iter().enumerate() { _mm256_storeu_si256(words.as_mut_ptr().add(i * 4) as *mut __m256i, _mm256_castpd_si256(*v)); }
++        for (i, v) in h.iter().enumerate() { _mm256_storeu_si256(words.as_mut_ptr().add(16 + i * 4) as *mut __m256i, *v); }
++        fold(fold(0, words.iter().copied()), buf.iter().copied())
++    }
++
++    #[target_feature(enable = "avx512f")]
++    pub unsafe fn avx512(seed: u64, buf: &mut [u64], flip: u32) -> u64 {
++        let mut s = fill(seed, buf);
++        let r = _mm512_set1_pd(R);
++        let k = _mm512_set1_epi64(K32 as i64);
++        let mut x = [_mm512_setzero_pd(); 4];
++        for v in x.iter_mut() {
++            let mut lanes = [0.0f64; 8];
++            for l in lanes.iter_mut() { *l = start(&mut s); }
++            *v = _mm512_loadu_pd(lanes.as_ptr());
++        }
++        let mut h = [_mm512_setzero_si512(); 2];
++        for v in h.iter_mut() {
++            let mut lanes = [0u64; 8];
++            for l in lanes.iter_mut() { *l = splitmix(&mut s); }
++            *v = _mm512_loadu_si512(lanes.as_ptr() as *const __m512i);
++        }
++        let mask = BUF_WORDS - 1;
++        let mut idx = (s as usize) & mask;
++        let lane0 = |v: __m512i| _mm_cvtsi128_si64(_mm512_castsi512_si128(v)) as u64;
++        for it in 0..ITERS {
++            if it == flip { x[0] = _mm512_castsi512_pd(_mm512_xor_si512(_mm512_castpd_si512(x[0]), _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, 1))); }
++            for (j, hj) in h.iter_mut().enumerate() {
++                let m = _mm512_mul_epu32(_mm512_xor_si512(*hj, _mm512_srli_epi64::<29>(*hj)), k);
++                let xb = _mm512_xor_si512(_mm512_castpd_si512(x[j]), _mm512_castpd_si512(x[j + 2]));
++                *hj = _mm512_add_epi64(_mm512_add_epi64(m, _mm512_srli_epi64::<32>(*hj)), xb);
++            }
++            for v in x.iter_mut() { *v = _mm512_mul_pd(r, _mm512_fnmadd_pd(*v, *v, *v)); }
++            let w = *buf.get_unchecked(idx);
++            *buf.get_unchecked_mut(idx) = w ^ lane0(h[0]);
++            idx = ((w ^ lane0(h[1])) as usize) & mask;
++        }
++        let mut words = [0u64; 48];
++        for (i, v) in x.iter().enumerate() { _mm512_storeu_si512(words.as_mut_ptr().add(i * 8) as *mut __m512i, _mm512_castpd_si512(*v)); }
++        for (i, v) in h.iter().enumerate() { _mm512_storeu_si512(words.as_mut_ptr().add(32 + i * 8) as *mut __m512i, *v); }
++        fold(fold(0, words.iter().copied()), buf.iter().copied())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn loads() -> Vec<Load> { [Load::Sse, Load::Avx2, Load::Avx512].into_iter().filter(|l| l.supported()).collect() }
++
++    #[test]
++    fn same_seed_same_result_other_seed_other_result() {
++        let mut b = vec![0u64; BUF_WORDS];
++        for l in loads() {
++            let a = chunk(l, 7, &mut b);
++            assert_eq!(a, chunk(l, 7, &mut b), "{l:?}");
++            assert_ne!(a, chunk(l, 8, &mut b), "{l:?}");
++        }
++    }
++
++    #[test]
++    fn one_flipped_bit_changes_the_result() {
++        let mut b = vec![0u64; BUF_WORDS];
++        for l in loads() {
++            let good = chunk(l, 3, &mut b);
++            for flip in [0, 1000, 150_000] {
++                assert_ne!(good, chunk_with(l, 3, &mut b, flip), "{l:?} flip at {flip}");
++            }
++        }
++    }
++
++    #[test]
++    fn same_result_on_another_thread() {
++        let mut b = vec![0u64; BUF_WORDS];
++        for l in loads() {
++            let here = chunk(l, 11, &mut b);
++            let there = std::thread::spawn(move || chunk(l, 11, &mut vec![0u64; BUF_WORDS])).join().unwrap();
++            assert_eq!(here, there, "{l:?}");
++        }
++    }
++
++    #[test]
++    fn names_round_trip() {
++        for l in [Load::Sse, Load::Avx2, Load::Avx512] { assert_eq!(Load::parse(l.name()), Some(l)); }
++        assert_eq!(Load::parse("avx"), None);
++    }
++}
+diff --git a/crates/centurion-helpers/src/bin/centurion-gamemode.rs b/crates/centurion-helpers/src/bin/centurion-gamemode.rs
+index 58dda16..1f9d597 100644
+--- a/crates/centurion-helpers/src/bin/centurion-gamemode.rs
++++ b/crates/centurion-helpers/src/bin/centurion-gamemode.rs
+@@ -27,6 +27,8 @@
+ //!                   with a game scene: whether its CPU / GPU curve is applied;
+ //!                   without one: apply the "GAMING" curve profiles (CPU first,
+ //!                   GPU 2 s later; a missing profile is skipped with a note).
++//!   "ntsync"        true: WRAP / RUN set PROTON_USE_NTSYNC=1 for the game when /dev/ntsync is
++//!                   usable (and the launch options did not set it).
+ //!   "field_ab"      true (every game) or a list of game names: A/B comparison -
+ //!                   launches of a game alternate B (game preset) and A (boot
+ //!                   defaults: no preset, no launch boost; same game scene).
+@@ -1091,6 +1093,7 @@ extern "C" fn forward(sig: libc::c_int) {
+ fn wrap(args: &[String]) -> i32 {
+     // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
+     std::env::set_var("CENTURION_WRAPPED", "1");
++    ntsync_env();
+     OWNER.store(std::process::id() as i32, Ordering::SeqCst);
+     let (name, cmd) = split_cmd(args);
+     if cmd.is_empty() { log!("centurion-gamemode WRAP: no command"); return 2; }
+@@ -1196,9 +1199,24 @@ fn wait_for_start(preset: &Value) {
+ fn read_json_str(p: &str) -> Option<String> { std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned()) }
+ 
+ 
++/// tune.json "ntsync": Proton builds that support NTSYNC but use it only when asked (GE-Proton 10:
++/// PROTON_USE_NTSYNC=1) get the variable, when /dev/ntsync is usable by this user and the launch options did
++/// not set it already. Wine 11 uses /dev/ntsync on its own and ignores the variable.
++fn ntsync_env() {
++    if !read_json(&config_dir().join("tune.json")).is_some_and(|c| c["ntsync"] == true) { return; }
++    if std::env::var_os("PROTON_USE_NTSYNC").is_some() { return; }
++    // SAFETY: a NUL-terminated literal.
++    if unsafe { libc::access(b"/dev/ntsync\0".as_ptr() as *const libc::c_char, libc::R_OK | libc::W_OK) } == 0 {
++        std::env::set_var("PROTON_USE_NTSYNC", "1");
++    } else {
++        log!("centurion-gamemode: NTSYNC is on, but /dev/ntsync is missing or not read / write for this user — starting without it");
++    }
++}
++
+ fn run_exec(args: &[String]) -> i32 {
+     // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
+     std::env::set_var("CENTURION_WRAPPED", "1");
++    ntsync_env();
+     let (name, cmd) = split_cmd(args);
+     if cmd.is_empty() { log!("centurion-gamemode RUN: no command"); return 2; }
+     match load_preset(name.as_deref()) {
+diff --git a/crates/centurion-helpers/src/legion_wmi.rs b/crates/centurion-helpers/src/legion_wmi.rs
+index 6525097..37c8896 100644
+--- a/crates/centurion-helpers/src/legion_wmi.rs
++++ b/crates/centurion-helpers/src/legion_wmi.rs
+@@ -583,6 +583,12 @@ pub fn status(want_envelope: bool) -> Value {
+         out["envelope"] = json!({"gpu_min_w": minp, "gpu_max_w": maxp, "ctgp_max_w": (maxp - ceil).max(minp), "ctgp_min_w": minp});
+     }
+     out["values"] = Value::Object(vals);
++    // CPU PL1 tau (WMAE 0x01070000), shown read-only: the firmware has it (20-160 s in the steps of Intel's
++    // time-window encoding, kept in the EC) but no kernel attribute, and on AMD nothing in the DSDT passes it on,
++    // so whether a write would change anything is unknown. A plain EC read; 0 = not on this model.
++    if acpi_available() {
++        if let Some(v) = wmae_get(0x0107_0000).ok().filter(|v| *v > 0) { out["pl1_tau_s"] = json!(v); }
++    }
+     if !acpi_available() {
+         out["note"] = json!("acpi_call not loaded — the cTGP / boost knobs can't be written (modprobe acpi_call).");
+     }
+diff --git a/docs/HANDBOOK.md b/docs/HANDBOOK.md
+index d8c74d1..852cbfc 100644
+--- a/docs/HANDBOOK.md
++++ b/docs/HANDBOOK.md
+@@ -71,6 +71,7 @@ A scene is a **name for a whole setup**. It stores power profile, firmware limit
+ Needs **Custom** profile for most limits.
+ 
+ - **CPU PL1 / PL2 / PL3** — sustained / short boost / peak power. Raise in small steps; watch temperature in Home.
++- **CPU PL1 tau** (shown below the tabs, read-only) — how long the CPU may stay above PL1. The firmware keeps it without a kernel attribute; on AMD nothing in the ACPI tables passes it on, so it is shown but not offered.
+ - **Temperature target** — where the CPU starts to throttle.
+ - **GPU cTGP / Dynamic Boost** — GPU power and the boost ceiling / floor. Written over WMI (needs `acpi_call`).
+ - **CPU overclocking (firmware, next boot)** — PBO scalar, boost override, all-core CO stored in the BIOS. Asks for the password.
+@@ -138,6 +139,8 @@ Game mode is reference-counted: the first game applies, the last exit restores.
+ 
+ **Heroic and Bottles** have no hook like Lutris: tick *Detect games started from Heroic and Bottles* (System at game start). Centurion then notices their games itself (Heroic: `HEROIC_APP_NAME` in the game's environment; Bottles: a Windows program running in a bottle) and runs the same PRE / POST — game scene, ★ game preset, session record. It only looks at processes while Heroic or Bottles runs; games you already wrap with `centurion-gamemode WRAP` are left alone.
+ 
++**NTSYNC** (*NTSYNC for Wine / Proton*): the kernel driver for Windows synchronisation objects (`/dev/ntsync`). Wine 11 uses it on its own; GE-Proton 10 and similar builds only with `PROTON_USE_NTSYNC=1`. With the box ticked, `centurion-gamemode WRAP` / `RUN` (Steam launch options) set that variable for the game unless the launch options already do. Lutris starts the game itself, so set it in the game's environment there. The line next to the box says whether `/dev/ntsync` exists and is read / write for you (Linux 6.14 and later: yes; older kernels need a udev rule `KERNEL=="ntsync", MODE="0666"`).
++
+ **Drift banner:** when TLP, power-profiles-daemon, tuned, auto-cpufreq or a script changes a setting Centurion applied, a banner at the top of Optimizations lists it (what it is now, what it was) and the tools found running; *Re-apply* puts the active scene (or preset) back. A tray notification says the same, with a *Re-apply* button.
+ 
+ ### 7.5 Boot options
+@@ -208,6 +211,8 @@ Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journ
+ 
+ **GPU test** checks a graphics-card undervolt, overclock or VRAM offset: it runs work whose correct result is known on the chosen GPU (never an unnamed "first" one, so laptops pick the discrete card) for 5, 10, 15, 30 or 60 minutes (default 10) and counts every wrong result, as you, no password. Run **VRAM** after changing a memory offset (it fills 10–95 %, default 80 %, of the video memory) and **Core** after changing a core curve. The screen may stutter meanwhile. Needs the Vulkan driver of your GPU. A lost GPU, any wrong result, or an Xid / amdgpu error reported by the Monitor during the run is a failure. A pass is evidence, not proof. Each result is kept (newest 50, `~/.local/state/centurion/gpustress.json`) with the curve state in effect. If the kernel log needs a password on this machine, Xid / amdgpu errors are not counted during the test, the section says so and each result is marked; only the tool's own result counts.
+ 
++**CPU test** checks a Curve Optimizer offset (AMD) or an undervolt (Intel), as you, no password. **Per core** moves one thread from core to core (1, 3, 6 or 10 minutes each, default 3; *Rounds* repeats the whole tour): a lone thread runs at the highest boost, where a too-negative offset of one core fails first. Use it after per-core offsets. **All cores** loads every CPU for 5–60 minutes: use it after an all-core offset. The load is **SSE** (highest clock, the best first test), **AVX2** or **AVX-512** (more heat and current, lower clock), only those the CPU has. *Idle ↔ load transitions* (on by default) spends the last third of each core's time in short bursts with pauses, because offsets often fail while a core leaves an idle state and boosts. Every result is compared with a reference computed on two other cores; a wrong result, or a machine check or lockup reported by the Monitor during the run, is a failure, and the failing CPUs are named — on AMD with their CCD and the Ryzen Curve slot (*CPU 5 (CCD0 slot 5)*); make those slots less negative and test again. An unstable offset may freeze or reset the machine instead: the test is stored as running while it runs, so after the reboot the section shows *machine went down* with the core that was loaded, and a notification says so. On AMD, *Hold the "CO validation" preset during the test* (on by default; asks for the password) applies that Optimizations preset for the test and returns the tuning from before afterwards (not while a game holds the tuning). Each result is kept (newest 50, `~/.local/state/centurion/cpustress.json`) with the CPU curve in effect. A Ryzen Curve profile that was applied by name (loaded or saved and applied unchanged, from the tray or a scene) and then tested shows **✓ verified** — or **✗ failed** / **✗ crashed** — next to it in the Ryzen Curve tab; saving the profile again clears the badge, since the tested offsets changed.
++
+ ### Sleep
+ Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`). **Suggestions**: an enabled wake source that woke the machine at least twice with the lid closed (neither the lid nor the power button among the wake sources) is listed with the battery the machine then spent awake before sleeping again, and a *Disable* button that does the same as unticking it. The battery cost is measured only on battery and when the next sleep came within 2 h.
+ 
+diff --git a/docs/TECHNICAL.md b/docs/TECHNICAL.md
+index cbc991d..d60e94b 100644
+--- a/docs/TECHNICAL.md
++++ b/docs/TECHNICAL.md
+@@ -1006,6 +1006,12 @@ the helpers (`tune::cpu_vendor()`).
+ 
+ **GPU test** (`crates/centurion-gpustress`, `gui/src/gpustress.cpp` logic + `tests/gpustress_test.cpp`, `gui/src/gpustressbox.cpp`; spec `docs/GPUSTRESS.md`): Health → Curve stability. Vendor-neutral Vulkan 1.1 compute, run as the user; the tool never touches clocks or curves, it loads the GPU while the user's curve is in effect. `ash` loads `libvulkan.so.1` at run time (none → `init_failed`); the WGSL shaders in `shaders/` are compiled to SPIR-V by `naga` in `build.rs`. `centurion-gpustress list` prints the devices (PCI address via `VK_EXT_pci_bus_info`, else a unique vendor/device match in sysfs; CPU implementations as `"type":"cpu"`, hidden by the GUI); `vram --device <pci> --percent 10..95 --seconds <s>` and `core --device <pci> --seconds <s>` print JSON lines `start` / `progress` / `error` / `end` (16 error lines per pass, 200 per run; exit 0 pass, 1 errors, 2 device lost, 3 init failure, 4 stopped by SIGTERM/SIGINT). VRAM: chunks of at most 256 MiB from the `DEVICE_LOCAL` heap (share of the `VK_EXT_memory_budget` budget, keeping 256 MiB free), one fenced submission per chunk and dispatch (a fence not signalled within 10 s is a hung GPU: `device_lost`, exit 2); patterns addr / walk1 / walk0 / solid / random are a stateless function of (pattern, global word index, pass), so the check recomputes the expected word and keeps no copy. Core: 1 Mi invocations of dependent f32 FMA + integer mixing, the first two runs must agree and become the reference, every later run is compared with it on the GPU; one dispatch is calibrated to about 100 ms and the seed (new reference pair, recalibration) changes every 60 s. Build feature `fault-inject` (tests only) corrupts one word after the write of pass 3 / disturbs one invocation. The GUI follows the Memory test: verdict pass / fail / incomplete, `xid` (not 45 / 154) and `amdgpu` events from `CurvePage::onFault` count as faults, the run is killed `seconds + 120` s after start, the verdict is decided 3 s after the tool exits so the kernel events the failure caused (delayed by the Monitor's debounce) still count, and it is not offered while an NVIDIA dGPU is on the bus but unusable. With a restricted kernel log (`CurvePage::setKernelLog(false)`, see Memory test) the box shows a note that GPU errors are not counted and each result gets `"kernel_log": false`. Results: `$XDG_STATE_HOME/centurion/gpustress.json`, JSON array, newest 50, with the GPU curve state in effect at start.
+ 
++**CPU test** (`crates/centurion-cpustress`, `gui/src/cpustress.cpp` logic + `tests/cpustress_test.cpp`, `gui/src/cpustressbox.cpp`): Health → Curve stability. Own crate because the AVX-512 intrinsics need Rust 1.89. Run as the user; touches no clocks or curves. `info` prints the online physical cores (`thread_siblings_list`, first logical CPU first, L3 id) and the loads this CPU runs (`sse` always; `avx2` = AVX2 + FMA; `avx512` = AVX-512F, runtime detection). `percore --load L --seconds S [--cycles N] [--transitions] [--cpus LIST]` pins one thread (`sched_setaffinity`, checked with `sched_getcpu`) to the first logical CPU of each core in turn; `allcore --load L --seconds S [--transitions]` one thread per online logical CPU. Work: a chunk (about 15 ms) fills a 256 KiB buffer from its seed (8 seeds, rotating), then iterates the logistic map x ← 3.99·(x − x²) on 8 / 16 / 32 doubles (scalar SSE2 / 256-bit FMA / 512-bit FMA), an integer multiply-shift chain that absorbs every double's bits before each step (so a wrong bit cannot be rounded away), and a dependent load-xor-store walk through the buffer; the result is a 64-bit hash. Before the test the 8 reference hashes are computed on two CPUs at once (the first and last tested); on disagreement a third decides per seed and the outvoted CPU counts as failed; no majority = `fail`. A CPU's first wrong chunk ends its turn (per-core: the next core; all-core: that thread stops). `--transitions`: the last third of each core's time (all-core: of the run) sleeps 1–200 ms after every chunk. JSON lines `start` / `core` / `progress` (1 Hz) / `error` (200 lines max) / `core_end` / `end` with `failed` CPUs; exit 0 pass, 1 errors, 3 init failure or bad arguments, 4 stopped (SIGTERM/SIGINT, checked after every chunk). Build feature `fault-inject` (tests only) corrupts the 4th chunk on the highest-numbered CPU. GUI: verdict as the GPU test; `mce` and `lockup` events from `CurvePage::onFault` count as faults and the CPU they name (`CPU 3:` / `CPU#3`) is listed; the run is killed `total + 120` s after start; verdict 3 s after exit. The record is stored as `"verdict": "running"` (with `boot` and the current `cpu`) at start and at every `core` line; on the next start of the GUI, `settle()` turns such records into `crashed` (another boot: the machine went down with that CPU loaded; a notification is raised) or `incomplete` (same boot). AMD only: *Hold the "CO validation" preset* sends tune-helper `{"op": "apply", "mode": "game", "preset": "CO validation", "values": OptimizeTab::builtinValues(…), "owner_pid": <GUI pid>}` before the run and `{"op": "release", "owner_pid": …}` after it: the game-session layer restores the previous tuning, and a dead GUI's session is pruned like a dead launcher's. Records: `$XDG_STATE_HOME/centurion/cpustress.json`, newest 50, with `curve` = `CurvePage::currentState("cpu")` (Curve Optimizer or Intel undervolt journal state), `vendor`, and for a `profile:NAME` curve on AMD `profile_hash` (first 16 hex digits of the SHA-1 of the profile file). The Ryzen Curve tab shows the newest pass / fail / crashed record whose curve and hash match the selected profile (`cpustress::verification`). For that, the Ryzen tab now names the profile in `set_coall` / `set_coper_batch` (`"profile"`, journalled as `profile:NAME` by ryzen-co-helper) while the grid is unchanged since the profile was loaded or saved.
++
++**PL1 tau** (`legion_wmi::status`, Firmware tab): WMAE get `0x01070000` returns the EC's F5E4 decoded to seconds (20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160; default 56). The SMCN19WW DSDT stores a set only in the EC and passes it nowhere else, and the encoding is Intel's time-window format, so on AMD the effect of a write is unknown; the value is reported as `pl1_tau_s` (when > 0) and shown read-only.
++
++**NTSYNC** (`centurion-gamemode`, Optimizations → System at game start): tune.json `"ntsync": true` makes WRAP / RUN set `PROTON_USE_NTSYNC=1` before exec when `/dev/ntsync` is readable and writable for the user (`access(R_OK|W_OK)`) and the variable is not set already; otherwise a log line. The GUI shows whether the device exists and is usable.
++
+ **Curve journal and stability** (`ocjournal.rs` in both crates, `gui/src/curvepage.cpp`): ryzen-co-helper, intel-uv-helper, nvcurve-root-helper and `nvcurve autoload` append `{"t","boot","kind","state"}` to `/var/lib/centurion/oc-journal.jsonl` (0644, rotated at 256 KiB) after every successful curve write. Health → Curve stability builds per-boot timelines (boot start / end from `exposure.json`, stock from each boot's start) and attributes the saved Xid / GSP / D3cold (GPU) and MCE / lockup (CPU) lines of `health.log` to the state in effect; Xid 45 / 154 are follow-ups and not counted. Guard: a new Xid 13/31/43/61/62/69/109/119/120 with a non-stock GPU curve raises a notification and — opt-in — runs `reset_gpu_curve` (never after Xid 79, never while the dGPU is unusable); an MCE / lockup with a non-stock CPU curve does the same with the CPU helper's `reset`. At most one reset per minute.
+ 
+ **Trial apply** (`gui/src/trialbar.cpp`; gui.ini `nvidia/trial`, `ryzen/trial`, `intel/trial`): 30 s after a successful apply the tab's own reset runs unless *Keep* is pressed; a reset or a new apply ends the trial.
+diff --git a/gui/CMakeLists.txt b/gui/CMakeLists.txt
+index beddde9..0fa2f8a 100644
+--- a/gui/CMakeLists.txt
++++ b/gui/CMakeLists.txt
+@@ -73,6 +73,8 @@ add_executable(centurion
+     src/memtestbox.cpp   src/memtestbox.h
+     src/gpustress.cpp    src/gpustress.h
+     src/gpustressbox.cpp src/gpustressbox.h
++    src/cpustress.cpp    src/cpustress.h
++    src/cpustressbox.cpp src/cpustressbox.h
+     src/driftwatch.cpp   src/driftwatch.h
+     src/smartwatch.cpp   src/smartwatch.h
+     src/lidwatch.cpp     src/lidwatch.h
+@@ -245,6 +247,10 @@ if(CENTURION_BUILD_TESTS)
+     target_link_libraries(centurion-gpustress-test PRIVATE Qt6::Core)
+     target_compile_definitions(centurion-gpustress-test PRIVATE QT_NO_KEYWORDS)
+     add_test(NAME gpustress COMMAND centurion-gpustress-test)
++    add_executable(centurion-cpustress-test tests/cpustress_test.cpp src/cpustress.cpp src/cpustress.h)
++    target_link_libraries(centurion-cpustress-test PRIVATE Qt6::Core)
++    target_compile_definitions(centurion-cpustress-test PRIVATE QT_NO_KEYWORDS)
++    add_test(NAME cpustress COMMAND centurion-cpustress-test)
+     add_executable(centurion-klogview-test tests/klogview_test.cpp src/klogview.cpp src/klogview.h)
+     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
+     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)
+diff --git a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+index 3903517..8392616 100644
+--- a/gui/i18n/centurion_tr.ts
++++ b/gui/i18n/centurion_tr.ts
+@@ -4716,4 +4716,254 @@ Bu %1. artım: tam imajı ve 1–%1 artımları bu sırayla açılır. Araların
+         <translation>%1 MiB</translation>
+     </message>
+ </context>
++<context>
++    <name>CpuStressBox</name>
++    <message>
++        <source>CPU test</source>
++        <translation>CPU testi</translation>
++    </message>
++    <message>
++        <source>Checks a Curve Optimizer offset or an undervolt core by core. Needs centurion-cpustress, which is installed next to centurion-cooltest.</source>
++        <translation>Curve Optimizer ofsetini ya da undervolt'u çekirdek çekirdek denetler. centurion-cooltest'in yanına kurulan centurion-cpustress gerekir.</translation>
++    </message>
++    <message>
++        <source>Runs work whose correct result is known and compares every result, and watches for machine checks and lockups in the kernel log meanwhile. Per core: one thread visits every core in turn at its highest boost, where a Curve Optimizer or undervolt offset fails first; use it after per-core offsets. All cores: every CPU at once; use it after an all-core offset. SSE keeps the clock highest; AVX2 / AVX-512 add heat and current. An unstable offset can also freeze or reset the machine: the core that was loaded is then shown here after the reboot. A pass is evidence, not proof. Each result is kept with the CPU curve in effect.</source>
++        <translation>Doğru sonucu bilinen işler çalıştırır, her sonucu karşılaştırır ve bu sırada kernel günlüğünde makine denetimi (MCE) ile kilitlenme olaylarını izler. Çekirdek başına: tek iş parçacığı sırayla her çekirdeğe en yüksek boost'ta gider; Curve Optimizer ya da undervolt ofseti ilk orada çöker. Çekirdek başına ofsetlerden sonra kullanın. Tüm çekirdekler: bütün CPU'lar aynı anda; tüm çekirdek ofsetinden sonra kullanın. SSE saati en yüksekte tutar; AVX2 / AVX-512 ısı ve akım ekler. Kararsız bir ofset makineyi dondurabilir ya da yeniden başlatabilir: o zaman yüklenen çekirdek yeniden başlatmadan sonra burada gösterilir. Geçmek kanıttır, kesinlik değil. Her sonuç o an etkin CPU eğrisiyle saklanır.</translation>
++    </message>
++    <message>
++        <source>The kernel log is not readable without a password here, so machine checks are not counted during the test; only the test's own results are.</source>
++        <translation>Kernel günlüğü burada parolasız okunamıyor, bu yüzden test sırasında makine denetimleri sayılmaz; yalnızca testin kendi sonuçları sayılır.</translation>
++    </message>
++    <message>
++        <source>Per core</source>
++        <translation>Çekirdek başına</translation>
++    </message>
++    <message>
++        <source>All cores</source>
++        <translation>Tüm çekirdekler</translation>
++    </message>
++    <message>
++        <source>SSE (highest boost)</source>
++        <translation>SSE (en yüksek boost)</translation>
++    </message>
++    <message>
++        <source>Rounds</source>
++        <translation>Tur</translation>
++    </message>
++    <message>
++        <source>How many times every core is visited.</source>
++        <translation>Her çekirdeğin kaç kez test edileceği.</translation>
++    </message>
++    <message>
++        <source>Start</source>
++        <translation>Başlat</translation>
++    </message>
++    <message>
++        <source>Idle ↔ load transitions</source>
++        <translation>Boşta ↔ yük geçişleri</translation>
++    </message>
++    <message>
++        <source>The last third of each core's time (all cores: of the run) alternates short bursts with pauses of
++1-200 ms, so the core keeps leaving idle states and boosting again. Curve Optimizer offsets often
++fail there although a steady load passes.</source>
++        <translation>Her çekirdeğin süresinin (tüm çekirdeklerde: testin) son üçte biri kısa yük patlamalarını 1-200 ms
++duraklamalarla değiştirir; çekirdek sürekli boşta durumlarından çıkıp yeniden boost'a geçer. Curve Optimizer
++ofsetleri sabit yükü geçse bile çoğu zaman burada çöker.</translation>
++    </message>
++    <message>
++        <source>Hold the "CO validation" preset during the test</source>
++        <translation>Test boyunca "CO validation" preset'ini uygula</translation>
++    </message>
++    <message>
++        <source>Optimizations preset: boost on, every idle state on, machine checks polled every 10 s.
++Applied when the test starts and taken back when it ends, returning the tuning that was in
++effect before (it is held like a game session, so it also comes back if Centurion quits).
++Asks for the administrator password; not applied while a game holds the tuning.</source>
++        <translation>Optimizations preset'i: boost açık, tüm boşta durumları açık, makine denetimleri 10 sn'de bir yoklanır.
++Test başlarken uygulanır, bitince geri alınır ve önceki ayarlar döner (oyun oturumu gibi tutulur;
++Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarları tutarken uygulanmaz.</translation>
++    </message>
++    <message>
++        <source>centurion-cpustress could not read the CPU topology.</source>
++        <translation>centurion-cpustress CPU topolojisini okuyamadı.</translation>
++    </message>
++    <message>
++        <source>Date</source>
++        <translation>Tarih</translation>
++    </message>
++    <message>
++        <source>Test</source>
++        <translation>Test</translation>
++    </message>
++    <message>
++        <source>Duration</source>
++        <translation>Süre</translation>
++    </message>
++    <message>
++        <source>Errors</source>
++        <translation>Hatalar</translation>
++    </message>
++    <message>
++        <source>Result</source>
++        <translation>Sonuç</translation>
++    </message>
++    <message>
++        <source>Failed</source>
++        <translation>Hatalı</translation>
++    </message>
++    <message>
++        <source>CPU curve</source>
++        <translation>CPU eğrisi</translation>
++    </message>
++    <message>
++        <source>while %1 was loaded</source>
++        <translation>%1 yükteyken</translation>
++    </message>
++    <message>
++        <source>during the all-core test</source>
++        <translation>tüm çekirdek testi sırasında</translation>
++    </message>
++    <message>
++        <source>The machine went down %1 (CPU curve: %2). Back that offset off before trusting it.</source>
++        <translation>Makine %1 kapandı (CPU eğrisi: %2). Güvenmeden önce o ofseti geri çekin.</translation>
++    </message>
++    <message>
++        <source>CPU test: the machine went down</source>
++        <translation>CPU testi: makine kapandı</translation>
++    </message>
++    <message numerus="yes">
++        <source>%n min</source>
++        <translation>
++            <numerusform>%n dk</numerusform>
++        </translation>
++    </message>
++    <message>
++        <source>CPU %1 (CCD%2 slot %3)</source>
++        <translation>CPU %1 (CCD%2 slot %3)</translation>
++    </message>
++    <message>
++        <source>CPU %1</source>
++        <translation>CPU %1</translation>
++    </message>
++    <message>
++        <source>The test settings are not valid.</source>
++        <translation>Test ayarları geçerli değil.</translation>
++    </message>
++    <message>
++        <source>Applying the "CO validation" preset…</source>
++        <translation>"CO validation" preset'i uygulanıyor…</translation>
++    </message>
++    <message>
++        <source>The preset was not applied (%1); the test did not start.</source>
++        <translation>Preset uygulanmadı (%1); test başlamadı.</translation>
++    </message>
++    <message>
++        <source>A game holds the tuning, so the "CO validation" preset is not in effect for this test.</source>
++        <translation>Ayarları bir oyun tutuyor, bu yüzden "CO validation" preset'i bu testte etkin değil.</translation>
++    </message>
++    <message>
++        <source>Some preset values could not be applied: %1</source>
++        <translation>Bazı preset değerleri uygulanamadı: %1</translation>
++    </message>
++    <message>
++        <source>Stop</source>
++        <translation>Durdur</translation>
++    </message>
++    <message>
++        <source>Per-core test: %1 of about %2 min, %3 of %4 cores done</source>
++        <translation>Çekirdek başına test: yaklaşık %2 dk'nın %1. dk'sı, %4 çekirdekten %3 tanesi bitti</translation>
++    </message>
++    <message>
++        <source>All-core test: %1 of %2 min</source>
++        <translation>Tüm çekirdek testi: %2 dk'nın %1. dk'sı</translation>
++    </message>
++    <message>
++        <source>now on %1</source>
++        <translation>şimdi %1</translation>
++    </message>
++    <message numerus="yes">
++        <source>%n error(s)</source>
++        <translation>
++            <numerusform>%n hata</numerusform>
++        </translation>
++    </message>
++    <message numerus="yes">
++        <source>%n machine check(s) / lockup(s)</source>
++        <translation>
++            <numerusform>%n makine denetimi / kilitlenme</numerusform>
++        </translation>
++    </message>
++    <message>
++        <source>The tuning from before the test could not be restored: %1. Use Optimizations → Restore originals.</source>
++        <translation>Testten önceki ayarlar geri yüklenemedi: %1. Optimizations → Restore originals kullanın.</translation>
++    </message>
++    <message>
++        <source>No errors. A pass is evidence, not proof: the offset may still fail under another load or at idle.</source>
++        <translation>Hata yok. Geçmek kanıttır, kesinlik değil: ofset başka bir yükte ya da boştayken yine çökebilir.</translation>
++    </message>
++    <message>
++        <source>%1 wrong result(s), %2 machine check(s) / lockup(s). The CPU curve in effect is not stable.</source>
++        <translation>%1 yanlış sonuç, %2 makine denetimi / kilitlenme. Etkin CPU eğrisi kararlı değil.</translation>
++    </message>
++    <message>
++        <source>Wrong results on: %1.</source>
++        <translation>Yanlış sonuç verenler: %1.</translation>
++    </message>
++    <message>
++        <source>Kernel errors named: %1.</source>
++        <translation>Kernel hatalarının adlandırdıkları: %1.</translation>
++    </message>
++    <message>
++        <source>Make the offset of those slots less negative (for example by 5) in Ryzen Curve and test again.</source>
++        <translation>Ryzen Curve'de bu slotların ofsetini daha az negatif yapın (örneğin 5) ve yeniden test edin.</translation>
++    </message>
++    <message>
++        <source>Not finished: the test was stopped or ended early (exit code %1).</source>
++        <translation>Bitmedi: test durduruldu ya da erken bitti (çıkış kodu %1).</translation>
++    </message>
++    <message>
++        <source>The result could not be saved to %1.</source>
++        <translation>Sonuç %1 dosyasına kaydedilemedi.</translation>
++    </message>
++    <message>
++        <source>CPU test failed</source>
++        <translation>CPU testi başarısız</translation>
++    </message>
++    <message numerus="yes">
++        <source>%n error(s) during the CPU test.</source>
++        <translation>
++            <numerusform>CPU testi sırasında %n hata.</numerusform>
++        </translation>
++    </message>
++    <message>
++        <source>pass</source>
++        <translation>geçti</translation>
++    </message>
++    <message>
++        <source>fail</source>
++        <translation>başarısız</translation>
++    </message>
++    <message>
++        <source>machine went down</source>
++        <translation>makine kapandı</translation>
++    </message>
++    <message>
++        <source>running</source>
++        <translation>sürüyor</translation>
++    </message>
++    <message>
++        <source>incomplete</source>
++        <translation>tamamlanmadı</translation>
++    </message>
++    <message>
++        <source>transitions</source>
++        <translation>geçişler</translation>
++    </message>
++    <message numerus="yes">
++        <source>%n kernel</source>
++        <translation>
++            <numerusform>%n kernel</numerusform>
++        </translation>
++    </message>
++</context>
+ </TS>
+diff --git a/gui/src/cpustress.cpp b/gui/src/cpustress.cpp
+new file mode 100644
+index 0000000..e193764
+--- /dev/null
++++ b/gui/src/cpustress.cpp
+@@ -0,0 +1,159 @@
++#include "cpustress.h"
++
++#include <QCryptographicHash>
++#include <QDir>
++#include <QFile>
++#include <QFileInfo>
++#include <QJsonDocument>
++#include <QRegularExpression>
++#include <QSaveFile>
++#include <algorithm>
++
++namespace cpustress {
++
++QString modeName(Mode m) { return m == Mode::PerCore ? QStringLiteral("percore") : QStringLiteral("allcore"); }
++
++static QList<int> ints(const QJsonValue &v) {
++    QList<int> out;
++    for (const QJsonValue &x : v.toArray()) out.append(x.toInt());
++    return out;
++}
++
++Info parseInfo(const QByteArray &infoJson) {
++    const QJsonObject o = QJsonDocument::fromJson(infoJson).object();
++    Info info;
++    for (const QJsonValue &c : o.value(QStringLiteral("cores")).toArray()) {
++        const QList<int> cpus = ints(c.toObject().value(QStringLiteral("cpus")));
++        if (!cpus.isEmpty()) info.cores.append(cpus);
++    }
++    const QJsonObject loads = o.value(QStringLiteral("loads")).toObject();
++    for (const char *l : {"sse", "avx2", "avx512"})
++        if (loads.value(QLatin1String(l)).toBool()) info.loads.append(QLatin1String(l));
++    return info;
++}
++
++Plan plan(Mode m, const QString &load, int seconds, bool transitions, int cycles) {
++    Plan p;
++    if (!QStringList{QStringLiteral("sse"), QStringLiteral("avx2"), QStringLiteral("avx512")}.contains(load)) { p.error = QStringLiteral("load"); return p; }
++    if (seconds < 1 || (m == Mode::PerCore && (cycles < 1 || cycles > MAX_CYCLES))) { p.error = QStringLiteral("seconds"); return p; }
++    p.args = {modeName(m), QStringLiteral("--load"), load, QStringLiteral("--seconds"), QString::number(seconds)};
++    if (m == Mode::PerCore && cycles > 1) p.args << QStringLiteral("--cycles") << QString::number(cycles);
++    if (transitions) p.args << QStringLiteral("--transitions");
++    return p;
++}
++
++bool feed(Run &r, const QString &line) {
++    const QJsonObject o = QJsonDocument::fromJson(line.toUtf8()).object();
++    const QString ev = o.value(QStringLiteral("ev")).toString();
++    if (ev == QLatin1String("start")) {
++        r.cpus = ints(o.value(QStringLiteral("cpus")));
++    } else if (ev == QLatin1String("core")) {
++        r.cpu = o.value(QStringLiteral("cpu")).toInt(-1);
++        return true;
++    } else if (ev == QLatin1String("core_end")) {
++        r.done.append(o.value(QStringLiteral("cpu")).toInt(-1));
++    } else if (ev == QLatin1String("progress") || ev == QLatin1String("end")) {
++        // progress / end carry the full count; the error lines are capped (200 a run).
++        r.errors = std::max<qint64>(r.errors, o.value(QStringLiteral("errors")).toInteger());
++        r.chunks = std::max<qint64>(r.chunks, o.value(QStringLiteral("chunks")).toInteger());
++        if (ev == QLatin1String("end")) {
++            r.ended = true;
++            r.status = o.value(QStringLiteral("status")).toString();
++            r.msg = o.value(QStringLiteral("msg")).toString();
++            for (int c : ints(o.value(QStringLiteral("failed")))) if (!r.failed.contains(c)) r.failed.append(c);
++        }
++    } else if (ev == QLatin1String("error")) {
++        r.errors = std::max(r.errors, ++r.errorLines);
++        const int c = o.value(QStringLiteral("cpu")).toInt(-1);
++        if (c >= 0 && !r.failed.contains(c)) r.failed.append(c);
++    }
++    return false;
++}
++
++bool isCpuFault(const QString &kind) { return kind == QLatin1String("mce") || kind == QLatin1String("lockup"); }
++
++int eventCpu(const QString &text) {
++    static const QRegularExpression re(QStringLiteral(R"(\bCPU ?#?(\d{1,4})\b)"));
++    const QRegularExpressionMatch m = re.match(text);
++    return m.hasMatch() ? m.captured(1).toInt() : -1;
++}
++
++Verdict verdict(const Run &r, int exitCode, bool crashed, bool cancelled, int cpuFaults) {
++    // An error found is real however the run ended.
++    if (r.errors > 0 || cpuFaults > 0) return Verdict::Fail;
++    if (cancelled || crashed || !r.ended) return Verdict::Incomplete;
++    return r.status == QLatin1String("pass") && exitCode == 0 ? Verdict::Pass : Verdict::Incomplete;
++}
++
++QString verdictName(Verdict v) {
++    switch (v) {
++    case Verdict::Pass: return QStringLiteral("pass");
++    case Verdict::Fail: return QStringLiteral("fail");
++    case Verdict::Incomplete: break;
++    }
++    return QStringLiteral("incomplete");
++}
++
++QString profileHash(const QByteArray &profileFile) {
++    return QString::fromLatin1(QCryptographicHash::hash(profileFile, QCryptographicHash::Sha1).toHex().left(16));
++}
++
++QJsonObject verification(const QJsonArray &all, const QString &profile, const QString &hash) {
++    const QString curve = QStringLiteral("profile:") + profile;
++    for (qsizetype i = all.size() - 1; i >= 0; --i) {
++        const QJsonObject o = all.at(i).toObject();
++        const QString v = o.value(QStringLiteral("verdict")).toString();
++        if (o.value(QStringLiteral("curve")).toString() != curve || o.value(QStringLiteral("profile_hash")).toString() != hash) continue;
++        if (v == QLatin1String("pass") || v == QLatin1String("fail") || v == QLatin1String("crashed")) return o;
++    }
++    return {};
++}
++
++QString stateFile() {
++    QString dir = qEnvironmentVariable("XDG_STATE_HOME");
++    if (dir.isEmpty()) dir = QDir::homePath() + QStringLiteral("/.local/state");
++    return dir + QStringLiteral("/centurion/cpustress.json");
++}
++
++QJsonArray load() {
++    QFile f(stateFile());
++    if (!f.open(QIODevice::ReadOnly) || f.size() > 1024 * 1024) return {};
++    return QJsonDocument::fromJson(f.readAll()).array();
++}
++
++static bool save(const QJsonArray &all) {
++    QDir().mkpath(QFileInfo(stateFile()).absolutePath());
++    QSaveFile f(stateFile());
++    if (!f.open(QIODevice::WriteOnly)) return false;
++    f.write(QJsonDocument(all).toJson(QJsonDocument::Compact));
++    return f.commit();
++}
++
++bool store(const QJsonObject &result) {
++    QJsonArray all = load();
++    const QJsonObject last = all.isEmpty() ? QJsonObject() : all.last().toObject();
++    if (last.value(QStringLiteral("verdict")).toString() == QLatin1String("running")
++        && last.value(QStringLiteral("id")) == result.value(QStringLiteral("id")))
++        all.removeLast();
++    all.append(result);
++    while (all.size() > KEEP) all.removeFirst();
++    return save(all);
++}
++
++QJsonArray settle(const QString &bootId) {
++    QJsonArray all = load(), crashed;
++    bool changed = false;
++    for (qsizetype i = 0; i < all.size(); ++i) {
++        QJsonObject o = all.at(i).toObject();
++        if (o.value(QStringLiteral("verdict")).toString() != QLatin1String("running")) continue;
++        const bool other = o.value(QStringLiteral("boot")).toString() != bootId;
++        o[QStringLiteral("verdict")] = other ? QStringLiteral("crashed") : QStringLiteral("incomplete");
++        if (other) crashed.append(o);
++        all[i] = o;
++        changed = true;
++    }
++    if (changed) save(all);
++    return crashed;
++}
++
++} // namespace cpustress
+diff --git a/gui/src/cpustress.h b/gui/src/cpustress.h
+new file mode 100644
+index 0000000..e916b39
+--- /dev/null
++++ b/gui/src/cpustress.h
+@@ -0,0 +1,80 @@
++#pragma once
++// Health → Curve stability → CPU test: the logic behind CpuStressBox, kept free of widgets so it can be
++// tested (tests/cpustress_test.cpp).
++//
++// `centurion-cpustress` (crates/centurion-cpustress) runs as the user: `percore` moves one thread from
++// physical core to physical core (the Curve Optimizer / undervolt offset of one core is what fails, and a
++// lone thread runs at the highest boost), `allcore` loads every logical CPU. Every chunk of work is compared
++// with a reference computed on two other cores. It prints one JSON object per line.
++//
++// Results go to $XDG_STATE_HOME/centurion/cpustress.json, newest last, at most KEEP entries, each with the
++// CPU curve in effect when the run started (CurvePage::currentState("cpu"): Curve Optimizer or Intel
++// undervolt). A run is stored as "running" when it starts and updated whenever the per-core test moves on,
++// so a machine that goes down under the test leaves a record naming the core that was loaded ("crashed").
++#include <QJsonArray>
++#include <QJsonObject>
++#include <QList>
++#include <QStringList>
++
++namespace cpustress {
++
++enum class Mode { PerCore, AllCore };
++enum class Verdict { Pass, Fail, Incomplete };
++
++constexpr int KEEP = 50;
++constexpr int MAX_CYCLES = 10;
++
++QString modeName(Mode m);  // "percore" / "allcore": the tool's argument and the record's value
++
++struct Info {
++    QList<QList<int>> cores;  // logical CPUs of each physical core, the first one is what the per-core test loads
++    QStringList loads;        // of "sse", "avx2", "avx512": the ones this CPU can run
++};
++Info parseInfo(const QByteArray &infoJson);
++
++struct Plan {
++    QStringList args;
++    QString error;  // "load" or "seconds": not startable; args empty
++};
++/// `seconds`: per core (PerCore) or for the whole run (AllCore). `cycles` is PerCore only.
++Plan plan(Mode m, const QString &load, int seconds, bool transitions, int cycles = 1);
++
++/// What the output said so far, fed line by line.
++struct Run {
++    qint64 chunks = 0;
++    qint64 errors = 0;      // the full count from progress / end lines, at least the error lines seen
++    qint64 errorLines = 0;
++    int cpu = -1;           // per-core: the CPU the thread is on now
++    QList<int> cpus;        // start: the CPUs under test
++    QList<int> failed;      // CPUs that returned a wrong result
++    QList<int> done;        // per-core: CPUs whose turn ended (core_end), in order
++    QString status, msg;    // end
++    bool ended = false;
++};
++/// Returns true when the line moved the per-core test to another CPU (the running record is worth updating).
++bool feed(Run &r, const QString &line);
++
++/// A kernel event of this session that counts against a running CPU test: a machine check or a lockup.
++bool isCpuFault(const QString &kind);
++/// The CPU an MCE or lockup line names ("CPU 3: Machine Check …", "soft lockup - CPU#5 stuck …"), or -1.
++int eventCpu(const QString &text);
++
++/// `cancelled`: the user stopped it. `crashed`: the process did not exit normally. `cpuFaults`: isCpuFault events during the run.
++Verdict verdict(const Run &r, int exitCode, bool crashed, bool cancelled, int cpuFaults);
++QString verdictName(Verdict v);
++
++/// The first 16 hex digits of the SHA-1 of a Curve Optimizer profile file: a result belongs to the profile as it was tested.
++QString profileHash(const QByteArray &profileFile);
++/// The newest finished test (pass / fail / crashed) of this profile with this content, or {} when none.
++QJsonObject verification(const QJsonArray &all, const QString &profile, const QString &hash);
++
++QString stateFile();
++QJsonArray load();
++/// Stores a record: replaces the newest one when it is the same run ("id") and still "running", else appends.
++/// Keeps the newest KEEP. False when the file could not be written.
++bool store(const QJsonObject &result);
++/// Runs left "running" by an earlier session: "crashed" when they started in another boot (the machine went
++/// down under the test), "incomplete" when in this one (Centurion itself ended). Saved; returns the crashed ones.
++QJsonArray settle(const QString &bootId);
++
++} // namespace cpustress
+diff --git a/gui/src/cpustressbox.cpp b/gui/src/cpustressbox.cpp
+new file mode 100644
+index 0000000..3aee39f
+--- /dev/null
++++ b/gui/src/cpustressbox.cpp
+@@ -0,0 +1,431 @@
++#include "cpustressbox.h"
++
++#include "curvepage.h"
++#include "optimizetab.h"
++#include "privileged.h"
++#include "ryzentab.h"
++#include "sysinfo.h"
++#include "theme.h"
++
++#include <QCheckBox>
++#include <QComboBox>
++#include <QCoreApplication>
++#include <QDateTime>
++#include <QFile>
++#include <QHBoxLayout>
++#include <QHeaderView>
++#include <QLabel>
++#include <QProcess>
++#include <QPushButton>
++#include <QSpinBox>
++#include <QStandardPaths>
++#include <QTimer>
++#include <QTreeWidget>
++#include <QVBoxLayout>
++
++#include <climits>
++
++namespace {
++
++constexpr int STUCK_GRACE_S = 120;  // the tool ends itself; one still running this long after is killed
++constexpr int SETTLE_MS = 3000;     // kernel events reach onFault ~1.5 s after they are logged (HealthTab debounce): wait for them
++const char *const CO_PRESET = "CO validation";
++
++int plural(qint64 n) { return int(qMin<qint64>(n, INT_MAX)); }
++
++QString findTool(const QString &name) {
++    QString p = QStandardPaths::findExecutable(name);
++    if (p.isEmpty()) p = QStandardPaths::findExecutable(name, {QStringLiteral("/usr/local/bin"), QStringLiteral("/usr/bin")});
++    return p;
++}
++
++QString bootId() {
++    QFile f(QStringLiteral("/proc/sys/kernel/random/boot_id"));
++    return f.open(QIODevice::ReadOnly) ? QString::fromLatin1(f.readAll()).trimmed() : QString();
++}
++
++/// The Curve Optimizer profile file behind a "profile:NAME" curve state, or "" (Intel undervolt, all-core, stock).
++QString profileFile(const QString &curve) {
++    if (!sysinfo::isAmd() || !curve.startsWith(QLatin1String("profile:"))) return {};
++    return ryzen::profilesDir() + QLatin1Char('/') + curve.mid(8) + QStringLiteral(".json");
++}
++
++} // namespace
++
++CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
++    auto *root = new QVBoxLayout(this);
++    root->setContentsMargins(0, 0, 0, 0);
++    root->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(tr("CPU test"))));
++
++    program_ = findTool(QStringLiteral("centurion-cpustress"));
++    if (program_.isEmpty()) {
++        auto *hint = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
++            tr("Checks a Curve Optimizer offset or an undervolt core by core. Needs centurion-cpustress, which is "
++               "installed next to centurion-cooltest.").toHtmlEscaped()));
++        hint->setWordWrap(true);
++        root->addWidget(hint);
++        return;
++    }
++    QProcess infoProc;
++    infoProc.start(program_, {QStringLiteral("info")});
++    if (infoProc.waitForFinished(3000)) info_ = cpustress::parseInfo(infoProc.readAllStandardOutput());
++
++    auto *intro = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
++        tr("Runs work whose correct result is known and compares every result, and watches for machine checks and "
++           "lockups in the kernel log meanwhile. Per core: one thread visits every core in turn at its highest boost, "
++           "where a Curve Optimizer or undervolt offset fails first; use it after per-core offsets. All cores: every "
++           "CPU at once; use it after an all-core offset. SSE keeps the clock highest; AVX2 / AVX-512 add heat and "
++           "current. An unstable offset can also freeze or reset the machine: the core that was loaded is then shown "
++           "here after the reboot. A pass is evidence, not proof. Each result is kept with the CPU curve in effect.")
++            .toHtmlEscaped()));
++    intro->setWordWrap(true);
++    root->addWidget(intro);
++    klogNote_ = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
++        tr("The kernel log is not readable without a password here, so machine checks are not counted during the test; "
++           "only the test's own results are.").toHtmlEscaped()));
++    klogNote_->setWordWrap(true);
++    klogNote_->setVisible(!kernelLive_);
++    root->addWidget(klogNote_);
++
++    auto *row = new QHBoxLayout;
++    mode_ = new QComboBox;
++    mode_->addItem(tr("Per core"), static_cast<int>(cpustress::Mode::PerCore));
++    mode_->addItem(tr("All cores"), static_cast<int>(cpustress::Mode::AllCore));
++    row->addWidget(mode_);
++    load_ = new QComboBox;
++    if (info_.loads.contains(QLatin1String("sse"))) load_->addItem(tr("SSE (highest boost)"), QStringLiteral("sse"));
++    if (info_.loads.contains(QLatin1String("avx2"))) load_->addItem(QStringLiteral("AVX2"), QStringLiteral("avx2"));
++    if (info_.loads.contains(QLatin1String("avx512"))) load_->addItem(QStringLiteral("AVX-512"), QStringLiteral("avx512"));
++    row->addWidget(load_);
++    durationLabel_ = new QLabel;
++    row->addWidget(durationLabel_);
++    duration_ = new QComboBox;
++    row->addWidget(duration_);
++    cyclesLabel_ = new QLabel(tr("Rounds"));
++    row->addWidget(cyclesLabel_);
++    cycles_ = new QSpinBox;
++    cycles_->setRange(1, cpustress::MAX_CYCLES);
++    cycles_->setToolTip(tr("How many times every core is visited."));
++    row->addWidget(cycles_);
++    run_ = new QPushButton(tr("Start"));
++    run_->setEnabled(!info_.cores.isEmpty() && load_->count() > 0);
++    connect(run_, &QPushButton::clicked, this, [this] {
++        if (!proc_) { start(); return; }
++        cancelled_ = true;
++        proc_->terminate();  // the tool stops after its current chunk and prints "stopped"
++    });
++    row->addWidget(run_);
++    row->addStretch(1);
++    root->addLayout(row);
++    connect(mode_, &QComboBox::currentIndexChanged, this, &CpuStressBox::fillDurations);
++    fillDurations();
++
++    auto *row2 = new QHBoxLayout;
++    transitions_ = new QCheckBox(tr("Idle ↔ load transitions"));
++    transitions_->setChecked(true);
++    transitions_->setToolTip(tr("The last third of each core's time (all cores: of the run) alternates short bursts with pauses of\n"
++                                "1-200 ms, so the core keeps leaving idle states and boosting again. Curve Optimizer offsets often\n"
++                                "fail there although a steady load passes."));
++    row2->addWidget(transitions_);
++    if (sysinfo::isAmd() && !OptimizeTab::builtinValues(QLatin1String(CO_PRESET)).isEmpty()) {
++        preset_ = new QCheckBox(tr("Hold the \"CO validation\" preset during the test"));
++        preset_->setChecked(true);
++        preset_->setToolTip(tr("Optimizations preset: boost on, every idle state on, machine checks polled every 10 s.\n"
++                               "Applied when the test starts and taken back when it ends, returning the tuning that was in\n"
++                               "effect before (it is held like a game session, so it also comes back if Centurion quits).\n"
++                               "Asks for the administrator password; not applied while a game holds the tuning."));
++        row2->addWidget(preset_);
++    }
++    row2->addStretch(1);
++    root->addLayout(row2);
++
++    status_ = new QLabel;
++    status_->setWordWrap(true);
++    status_->setVisible(false);
++    root->addWidget(status_);
++    if (info_.cores.isEmpty()) note(tr("centurion-cpustress could not read the CPU topology."), theme::WARN);
++
++    results_ = new QTreeWidget;
++    results_->setRootIsDecorated(false);
++    results_->setHeaderLabels({tr("Date"), tr("Test"), tr("Duration"), tr("Errors"), tr("Result"), tr("Failed"), tr("CPU curve")});
++    results_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
++    results_->setMaximumHeight(160);
++    root->addWidget(results_);
++
++    ticker_ = new QTimer(this);  // only while a test runs
++    ticker_->setInterval(1000);
++    connect(ticker_, &QTimer::timeout, this, &CpuStressBox::tick);
++
++    // A run of an earlier session that never ended: the machine went down under it (or Centurion did).
++    const QJsonArray crashed = cpustress::settle(bootId());
++    if (!crashed.isEmpty()) {
++        const QJsonObject c = crashed.last().toObject();
++        const int cpu = c.value(QStringLiteral("cpu")).toInt(-1);
++        const QString where = cpu >= 0 ? tr("while %1 was loaded").arg(cpuName(cpu)) : tr("during the all-core test");
++        const QString msg = tr("The machine went down %1 (CPU curve: %2). Back that offset off before trusting it.")
++                                .arg(where, c.value(QStringLiteral("curve")).toString());
++        note(msg, theme::DANGER);
++        QTimer::singleShot(0, this, [this, msg] { Q_EMIT alert(tr("CPU test: the machine went down"), msg); });
++    }
++    fill();
++}
++
++void CpuStressBox::fillDurations() {
++    const bool perCore = mode_->currentData().toInt() == static_cast<int>(cpustress::Mode::PerCore);
++    durationLabel_->setText(perCore ? tr("Per core") : tr("Duration"));
++    duration_->clear();
++    for (int m : perCore ? QList<int>{1, 3, 6, 10} : QList<int>{5, 10, 15, 30, 60}) duration_->addItem(tr("%n min", nullptr, m), m * 60);
++    duration_->setCurrentIndex(1);  // 3 min a core / 10 min
++    cyclesLabel_->setVisible(perCore);
++    cycles_->setVisible(perCore);
++}
++
++void CpuStressBox::note(const QString &text, const char *color) {
++    status_->setVisible(true);
++    status_->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(color), text.toHtmlEscaped()));
++}
++
++void CpuStressBox::setIdle(bool idle) {
++    for (QWidget *w : {static_cast<QWidget *>(mode_), static_cast<QWidget *>(load_), static_cast<QWidget *>(duration_),
++                       static_cast<QWidget *>(cycles_), static_cast<QWidget *>(transitions_)})
++        w->setEnabled(idle);
++    if (preset_) preset_->setEnabled(idle);
++}
++
++void CpuStressBox::setKernelLog(bool live) {
++    kernelLive_ = live;
++    if (klogNote_) klogNote_->setVisible(!live);
++}
++
++void CpuStressBox::onFault(const QJsonObject &e) {
++    if (!proc_ || !cpustress::isCpuFault(e.value(QStringLiteral("kind")).toString())) return;
++    ++faults_;
++    const int cpu = cpustress::eventCpu(e.value(QStringLiteral("text")).toString());
++    if (cpu >= 0 && !faultCpus_.contains(cpu)) faultCpus_.append(cpu);
++}
++
++QString CpuStressBox::cpuName(int cpu) const {
++    // On AMD: the CCD and the Curve Optimizer slot of the Ryzen tab (the n-th core of its CCD).
++    if (sysinfo::isAmd()) {
++        const ryzen::Layout l = ryzen::detect();
++        for (auto it = l.cores.cbegin(); it != l.cores.cend(); ++it)
++            for (qsizetype i = 0; i < it.value().size(); ++i)
++                if (it.value().at(i).cpus.contains(cpu)) return tr("CPU %1 (CCD%2 slot %3)").arg(cpu).arg(it.key()).arg(i);
++    }
++    return tr("CPU %1").arg(cpu);
++}
++
++QString CpuStressBox::cpuList(const QList<int> &cpus) const {
++    QStringList out;
++    for (int c : cpus) out << cpuName(c);
++    return out.join(QStringLiteral(", "));
++}
++
++int CpuStressBox::totalSeconds() const {
++    return runMode_ == cpustress::Mode::PerCore ? seconds_ * int(info_.cores.size()) * cycles_n_ : seconds_;
++}
++
++void CpuStressBox::start() {
++    runMode_ = static_cast<cpustress::Mode>(mode_->currentData().toInt());
++    seconds_ = duration_->currentData().toInt();
++    cycles_n_ = runMode_ == cpustress::Mode::PerCore ? cycles_->value() : 1;
++    load_name_ = load_->currentData().toString();
++    plan_ = cpustress::plan(runMode_, load_name_, seconds_, transitions_->isChecked(), cycles_n_);
++    if (!plan_.error.isEmpty()) { note(tr("The test settings are not valid."), theme::WARN); return; }
++    if (!preset_ || !preset_->isChecked()) { launch(); return; }
++
++    // The preset first, as a game session owned by this process; the test starts once it is in effect.
++    starting_ = true;
++    run_->setEnabled(false);
++    setIdle(false);
++    note(tr("Applying the \"CO validation\" preset…"), theme::MUTED);
++    const QJsonObject req{{"op", "apply"}, {"mode", "game"}, {"preset", QLatin1String(CO_PRESET)},
++                          {"values", OptimizeTab::builtinValues(QLatin1String(CO_PRESET))},
++                          {"owner_pid", QCoreApplication::applicationPid()}};
++    privileged::run(privileged::helperPath(QStringLiteral("tune-helper")), req, this, [this](const privileged::Result &r) {
++        starting_ = false;
++        if (!r.reached) {
++            note(tr("The preset was not applied (%1); the test did not start.").arg(r.message()), theme::WARN);
++            setIdle(true);
++            run_->setEnabled(true);
++            return;
++        }
++        // applied:false with ok:true = a game already holds the tuning; our session was still opened.
++        presetHeld_ = r.json.value(QStringLiteral("ok")).toBool() || r.json.value(QStringLiteral("applied")).toBool();
++        launch();
++        if (!r.json.value(QStringLiteral("applied")).toBool())
++            note(tr("A game holds the tuning, so the \"CO validation\" preset is not in effect for this test."), theme::WARN);
++        else if (!r.ok())
++            note(tr("Some preset values could not be applied: %1").arg(r.message()), theme::WARN);
++    });
++}
++
++QJsonObject CpuStressBox::record(const QString &verdict) const {
++    QJsonObject o{{"id", id_}, {"t", id_}, {"boot", bootId()}, {"verdict", verdict},
++                  {"mode", cpustress::modeName(runMode_)}, {"load", load_name_}, {"seconds", seconds_}, {"cycles", cycles_n_},
++                  {"transitions", plan_.args.contains(QStringLiteral("--transitions"))}, {"preset", presetHeld_},
++                  {"vendor", sysinfo::isAmd() ? "amd" : sysinfo::isIntel() ? "intel" : "other"},
++                  {"curve", curve_}, {"cpu", run_state_.cpu}};
++    if (!profileHash_.isEmpty()) o[QStringLiteral("profile_hash")] = profileHash_;
++    return o;
++}
++
++void CpuStressBox::launch() {
++    id_ = QDateTime::currentSecsSinceEpoch();
++    curve_ = CurvePage::currentState(QStringLiteral("cpu"));  // what the result is about: the curve in effect at the start
++    profileHash_.clear();
++    if (const QString pf = profileFile(curve_); !pf.isEmpty()) {
++        QFile f(pf);
++        if (f.open(QIODevice::ReadOnly) && f.size() < 256 * 1024) profileHash_ = cpustress::profileHash(f.readAll());
++    }
++    run_state_ = {};
++    partial_.clear();
++    faults_ = 0;
++    faultCpus_.clear();
++    cancelled_ = false;
++    cpustress::store(record(QStringLiteral("running")));  // left behind if the machine goes down
++    proc_ = new QProcess(this);
++    proc_->setStandardErrorFile(QProcess::nullDevice());  // diagnostics only; the verdict is on stdout
++    connect(proc_, &QProcess::readyReadStandardOutput, this, [this] {
++        partial_ += proc_->readAllStandardOutput();
++        qsizetype nl;
++        while ((nl = partial_.indexOf('\n')) >= 0) {
++            if (cpustress::feed(run_state_, QString::fromUtf8(partial_.left(nl)))) cpustress::store(record(QStringLiteral("running")));
++            partial_.remove(0, nl + 1);
++        }
++        if (partial_.size() > 64 * 1024) partial_.clear();  // never a line that long
++    });
++    connect(proc_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus st) { finished(code, st == QProcess::CrashExit); });
++    connect(proc_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
++        if (e == QProcess::FailedToStart) finished(-1, true);
++    });
++    proc_->start(program_, plan_.args);
++    elapsed_.start();
++    ticker_->start();
++    run_->setText(tr("Stop"));
++    run_->setEnabled(true);
++    setIdle(false);
++    tick();
++}
++
++void CpuStressBox::tick() {
++    if (!proc_) return;
++    const qint64 s = elapsed_.elapsed() / 1000;
++    if (s >= totalSeconds() + STUCK_GRACE_S) proc_->kill();  // recorded as not finished
++    QString text = runMode_ == cpustress::Mode::PerCore
++        ? tr("Per-core test: %1 of about %2 min, %3 of %4 cores done").arg(s / 60).arg(totalSeconds() / 60)
++              .arg(run_state_.done.size()).arg(info_.cores.size() * cycles_n_)
++        : tr("All-core test: %1 of %2 min").arg(s / 60).arg(totalSeconds() / 60);
++    if (runMode_ == cpustress::Mode::PerCore && run_state_.cpu >= 0) text += QStringLiteral(" · ") + tr("now on %1").arg(cpuName(run_state_.cpu));
++    text += QStringLiteral(" · ") + tr("%n error(s)", nullptr, plural(run_state_.errors));
++    if (faults_ > 0) text += QStringLiteral(" · ") + tr("%n machine check(s) / lockup(s)", nullptr, faults_);
++    status_->setVisible(true);
++    status_->setText(text);
++}
++
++void CpuStressBox::finished(int exitCode, bool crashed) {
++    if (!proc_ || settling_) return;
++    ticker_->stop();
++    if (!partial_.isEmpty()) cpustress::feed(run_state_, QString::fromUtf8(partial_));
++    // The machine check that a failure caused may be logged after the process is gone: keep counting a moment
++    // (proc_ stays set, so onFault counts), with Start disabled, before the verdict is decided.
++    settling_ = true;
++    run_->setEnabled(false);
++    const qint64 seconds = elapsed_.elapsed() / 1000;
++    QTimer::singleShot(SETTLE_MS, this, [this, exitCode, crashed, seconds] { conclude(exitCode, crashed, seconds); });
++}
++
++void CpuStressBox::releasePreset() {
++    if (!presetHeld_) return;
++    presetHeld_ = false;
++    privileged::run(privileged::helperPath(QStringLiteral("tune-helper")),
++                    QJsonObject{{"op", "release"}, {"owner_pid", QCoreApplication::applicationPid()}}, this,
++                    [this](const privileged::Result &r) {
++                        if (!r.ok()) note(tr("The tuning from before the test could not be restored: %1. Use Optimizations → Restore originals.")
++                                              .arg(r.message()), theme::WARN);
++                    });
++}
++
++void CpuStressBox::conclude(int exitCode, bool crashed, qint64 seconds) {
++    settling_ = false;
++    const cpustress::Verdict v = cpustress::verdict(run_state_, exitCode, crashed, cancelled_, faults_);
++    const bool heldPreset = presetHeld_;
++    QJsonObject result = record(cpustress::verdictName(v));
++    result[QStringLiteral("seconds")] = seconds;
++    result[QStringLiteral("preset")] = heldPreset;
++    result[QStringLiteral("chunks")] = run_state_.chunks;
++    result[QStringLiteral("errors")] = run_state_.errors;
++    result[QStringLiteral("faults")] = faults_;
++    QJsonArray failed;
++    for (int c : run_state_.failed) failed.append(c);
++    result[QStringLiteral("failed")] = failed;
++    QJsonArray fc;
++    for (int c : std::as_const(faultCpus_)) fc.append(c);
++    result[QStringLiteral("fault_cpus")] = fc;
++    result.remove(QStringLiteral("cpu"));
++    if (!kernelLive_) result[QStringLiteral("kernel_log")] = false;  // a pass without kernel events is weaker evidence
++    const bool saved = cpustress::store(result);
++    proc_->deleteLater();
++    proc_ = nullptr;
++    releasePreset();
++    run_->setText(tr("Start"));
++    setIdle(true);
++    run_->setEnabled(true);
++
++    QString text;
++    if (v == cpustress::Verdict::Pass) {
++        text = QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::OK,
++            tr("No errors. A pass is evidence, not proof: the offset may still fail under another load or at idle.").toHtmlEscaped());
++    } else if (v == cpustress::Verdict::Fail) {
++        QString body = tr("%1 wrong result(s), %2 machine check(s) / lockup(s). The CPU curve in effect is not stable.")
++                           .arg(run_state_.errors).arg(faults_);
++        if (!run_state_.failed.isEmpty()) body += QLatin1Char(' ') + tr("Wrong results on: %1.").arg(cpuList(run_state_.failed));
++        if (!faultCpus_.isEmpty()) body += QLatin1Char(' ') + tr("Kernel errors named: %1.").arg(cpuList(faultCpus_));
++        if (sysinfo::isAmd()) body += QLatin1Char(' ') + tr("Make the offset of those slots less negative (for example by 5) in Ryzen Curve and test again.");
++        text = QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::DANGER, body.toHtmlEscaped());
++    } else {
++        text = tr("Not finished: the test was stopped or ended early (exit code %1).").arg(exitCode).toHtmlEscaped();
++        if (!run_state_.msg.isEmpty() && run_state_.status == QLatin1String("init_failed")) text += QStringLiteral("<br>") + run_state_.msg.toHtmlEscaped();
++    }
++    if (!saved) text += QStringLiteral("<br>") + tr("The result could not be saved to %1.").arg(cpustress::stateFile()).toHtmlEscaped();
++    status_->setVisible(true);
++    status_->setText(text);
++    if (v == cpustress::Verdict::Fail)
++        Q_EMIT alert(tr("CPU test failed"), tr("%n error(s) during the CPU test.", nullptr, plural(run_state_.errors + faults_)));
++    fill();
++}
++
++void CpuStressBox::fill() {
++    results_->clear();
++    const QJsonArray all = cpustress::load();
++    for (qsizetype i = all.size() - 1; i >= 0; --i) {
++        const QJsonObject o = all.at(i).toObject();
++        const QString v = o.value(QStringLiteral("verdict")).toString();
++        const QString shown = v == QLatin1String("pass") ? tr("pass") : v == QLatin1String("fail") ? tr("fail")
++                            : v == QLatin1String("crashed") ? tr("machine went down") : v == QLatin1String("running") ? tr("running")
++                            : tr("incomplete");
++        const bool perCore = o.value(QStringLiteral("mode")).toString() == QLatin1String("percore");
++        QString test = (perCore ? tr("Per core") : tr("All cores")) + QStringLiteral(" · ") + o.value(QStringLiteral("load")).toString().toUpper();
++        if (o.value(QStringLiteral("transitions")).toBool()) test += QStringLiteral(" · ") + tr("transitions");
++        const int faults = o.value(QStringLiteral("faults")).toInt();
++        QString errors = QString::number(o.value(QStringLiteral("errors")).toInteger());
++        if (faults > 0) errors += QStringLiteral(" + ") + tr("%n kernel", nullptr, faults);
++        QList<int> bad;
++        for (const char *k : {"failed", "fault_cpus"})
++            for (const QJsonValue &c : o.value(QLatin1String(k)).toArray()) if (!bad.contains(c.toInt())) bad.append(c.toInt());
++        if (v == QLatin1String("crashed") && o.value(QStringLiteral("cpu")).toInt(-1) >= 0) bad.append(o.value(QStringLiteral("cpu")).toInt());
++        QStringList badNames;
++        for (int c : bad) badNames << QString::number(c);
++        auto *it = new QTreeWidgetItem({
++            QDateTime::fromSecsSinceEpoch(o.value(QStringLiteral("t")).toInteger()).toString(QStringLiteral("yyyy-MM-dd HH:mm")),
++            test, v == QLatin1String("crashed") ? QStringLiteral("-") : tr("%n min", nullptr, int(o.value(QStringLiteral("seconds")).toInteger() / 60)),
++            v == QLatin1String("crashed") ? QStringLiteral("-") : errors, shown,
++            badNames.isEmpty() ? QStringLiteral("-") : tr("CPU %1").arg(badNames.join(QStringLiteral(", "))),
++            o.value(QStringLiteral("curve")).toString()});
++        if (!bad.isEmpty()) it->setToolTip(5, cpuList(bad));
++        const char *color = v == QLatin1String("pass") ? theme::OK : (v == QLatin1String("fail") || v == QLatin1String("crashed")) ? theme::DANGER : theme::MUTED;
++        it->setForeground(4, QColor(QLatin1String(color)));
++        results_->addTopLevelItem(it);
++    }
++    results_->setVisible(!all.isEmpty());
++}
+diff --git a/gui/src/cpustressbox.h b/gui/src/cpustressbox.h
+new file mode 100644
+index 0000000..d92d312
+--- /dev/null
++++ b/gui/src/cpustressbox.h
+@@ -0,0 +1,71 @@
++#pragma once
++// Health → Curve stability → CPU test: runs `centurion-cpustress` as the user (per core after changing
++// per-core Curve Optimizer offsets, all cores after an all-core offset or an Intel undervolt), counts the
++// machine checks and lockups the Monitor reports meanwhile, and keeps each result with the CPU curve in
++// effect (cpustress.h has the logic and the record). On AMD it can hold the Optimizations "CO validation"
++// preset for the length of the test, as a game session of tune-helper, so the previous tuning comes back
++// afterwards (and tune-helper's stale-session cleanup returns it if Centurion dies first).
++#include "cpustress.h"
++
++#include <QElapsedTimer>
++#include <QJsonObject>
++#include <QWidget>
++
++class QCheckBox;
++class QComboBox;
++class QLabel;
++class QProcess;
++class QPushButton;
++class QSpinBox;
++class QTimer;
++class QTreeWidget;
++
++class CpuStressBox : public QWidget {
++    Q_OBJECT
++public:
++    explicit CpuStressBox(QWidget *parent = nullptr);
++    /// A new kernel event of this session (CurvePage::onFault): machine checks and lockups count against a running test.
++    void onFault(const QJsonObject &e);
++    /// Whether the kernel log is read live (CurvePage::setKernelLog). When not, events come minutes late and are not counted.
++    void setKernelLog(bool live);
++
++Q_SIGNALS:
++    void alert(const QString &title, const QString &message);
++
++private:
++    void start();
++    void launch();
++    void finished(int exitCode, bool crashed);
++    void conclude(int exitCode, bool crashed, qint64 seconds);
++    void releasePreset();
++    QJsonObject record(const QString &verdict) const;
++    void tick();
++    void fill();
++    void fillDurations();
++    void setIdle(bool idle);
++    void note(const QString &text, const char *color);
++    QString cpuName(int cpu) const;
++    QString cpuList(const QList<int> &cpus) const;
++    int totalSeconds() const;
++
++    QString program_;
++    cpustress::Info info_;
++    QComboBox *mode_ = nullptr, *load_ = nullptr, *duration_ = nullptr;
++    QSpinBox *cycles_ = nullptr;
++    QLabel *cyclesLabel_ = nullptr, *durationLabel_ = nullptr, *status_ = nullptr, *klogNote_ = nullptr;
++    QCheckBox *transitions_ = nullptr, *preset_ = nullptr;
++    QPushButton *run_ = nullptr;
++    QTreeWidget *results_ = nullptr;
++    QProcess *proc_ = nullptr;
++    QTimer *ticker_ = nullptr;
++    QElapsedTimer elapsed_;
++    QByteArray partial_;
++    cpustress::Run run_state_;
++    cpustress::Plan plan_;
++    cpustress::Mode runMode_ = cpustress::Mode::PerCore;
++    QString load_name_, curve_, profileHash_;
++    qint64 id_ = 0;
++    int seconds_ = 0, cycles_n_ = 1, faults_ = 0;
++    QList<int> faultCpus_;
++    bool cancelled_ = false, settling_ = false, kernelLive_ = true, presetHeld_ = false, starting_ = false;
++};
+diff --git a/gui/src/curvepage.cpp b/gui/src/curvepage.cpp
+index 1fb80b9..2586de1 100644
+--- a/gui/src/curvepage.cpp
++++ b/gui/src/curvepage.cpp
+@@ -1,5 +1,6 @@
+ #include "curvepage.h"
+ #include "memtestbox.h"
++#include "cpustressbox.h"
+ #include "gpustressbox.h"
+ #include "privileged.h"
+ #include "sysinfo.h"
+@@ -135,6 +136,9 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
+     gpuTest_ = new GpuStressBox;
+     connect(gpuTest_, &GpuStressBox::alert, this, &CurvePage::alert);
+     root->addWidget(gpuTest_);
++    cpuTest_ = new CpuStressBox;
++    connect(cpuTest_, &CpuStressBox::alert, this, &CurvePage::alert);
++    root->addWidget(cpuTest_);
+ }
+ 
+ void CurvePage::showEvent(QShowEvent *e) {
+@@ -283,11 +287,13 @@ void CurvePage::resetGpuCurve(const QString &title) {
+ void CurvePage::setKernelLog(bool live) {
+     memTest_->setKernelLog(live);
+     gpuTest_->setKernelLog(live);
++    cpuTest_->setKernelLog(live);
+ }
+ 
+ void CurvePage::onFault(const QJsonObject &e) {
+     memTest_->onFault(e);
+     gpuTest_->onFault(e);
++    cpuTest_->onFault(e);
+     const QString kind = e.value("kind").toString();
+     const QString title = e.value("title").toString();
+     if (kind == QLatin1String("xid")) {
+diff --git a/gui/src/curvepage.h b/gui/src/curvepage.h
+index 40d150a..5043dbf 100644
+--- a/gui/src/curvepage.h
++++ b/gui/src/curvepage.h
+@@ -10,8 +10,9 @@
+ // GPU curve ← NVIDIA Xid / GSP timeouts / D3cold failures; CPU curve (Curve Optimizer or Intel
+ // undervolt) ← machine checks and lockups. Xid 45 and 154 are follow-ups of another Xid and are
+ // not counted. A reboot resets every curve, so each boot starts at stock.
+-// Below the table: the memory test (memtestbox.h), for BIOS memory timings, and the GPU test (gpustressbox.h),
+-// for a GPU core curve or a VRAM clock offset.
++// Below the table: the memory test (memtestbox.h), for BIOS memory timings, the GPU test (gpustressbox.h),
++// for a GPU core curve or a VRAM clock offset, and the CPU test (cpustressbox.h), for a Curve Optimizer or
++// undervolt offset.
+ #include <QJsonObject>
+ #include <QWidget>
+ 
+@@ -19,6 +20,7 @@ class QCheckBox;
+ class QLabel;
+ class MemTestBox;
+ class GpuStressBox;
++class CpuStressBox;
+ class QTreeWidget;
+ 
+ class CurvePage : public QWidget {
+@@ -50,5 +52,6 @@ private:
+     QCheckBox *gpuReset_, *cpuReset_;
+     MemTestBox *memTest_;
+     GpuStressBox *gpuTest_;
++    CpuStressBox *cpuTest_;
+     qint64 lastGpuReset_ = 0, lastCpuReset_ = 0;  // ms since epoch: one reset per burst of errors
+ };
+diff --git a/gui/src/fwattrtab.cpp b/gui/src/fwattrtab.cpp
+index f6b5ed2..4297670 100644
+--- a/gui/src/fwattrtab.cpp
++++ b/gui/src/fwattrtab.cpp
+@@ -262,6 +262,13 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
+     tabs_->setDocumentMode(true);
+     lay->addWidget(tabs_);
+ 
++    tau_ = new QLabel;
++    tau_->setProperty("role", "muted");
++    tau_->setToolTip("PL1 tau: how long the CPU may stay above PL1 before it is held to it. The firmware keeps it in the EC\n"
++                     "(WMI feature 0x01070000) without a kernel attribute, in the steps of Intel's time-window encoding. On AMD\n"
++                     "nothing in the ACPI tables passes it on, so whether changing it would do anything is unknown: shown, not offered.");
++    tau_->setVisible(false);
++    lay->addWidget(tau_);
+     status_ = new QLabel;
+     status_->setProperty("role", "muted");
+     lay->addWidget(status_);
+@@ -547,6 +554,8 @@ void FwattrTab::readWmi() {
+     privileged::run(gpuHelperPath(), QJsonObject{{"op", "status"}}, this, [this](const privileged::Result &r) {
+         wmiReady_ = r.reached && r.json.value("acpi").toBool();
+         const QJsonObject vals = r.json.value("values").toObject();
++        tau_->setVisible(r.json.contains("pl1_tau_s"));
++        tau_->setText(QStringLiteral("CPU PL1 tau: %1 s (read-only)").arg(r.json.value("pl1_tau_s").toInt()));
+         {   // WMAE id check for the CPU limits: the fallback is only offered
+             // once WMAE has been seen to report exactly what sysfs reports.
+             QJsonObject cache = readRangeCache();
+diff --git a/gui/src/fwattrtab.h b/gui/src/fwattrtab.h
+index 9cce78c..bb730a2 100644
+--- a/gui/src/fwattrtab.h
++++ b/gui/src/fwattrtab.h
+@@ -51,6 +51,7 @@ private:
+ 
+     QList<Row> rows_;
+     QLabel *banner_, *status_;
++    QLabel *tau_ = nullptr;  // CPU PL1 tau, read-only (legion-gpu-helper status "pl1_tau_s")
+     QPushButton *applyAll_, *rescan_;
+     QTabWidget *tabs_;
+     QTimer *statusTimer_;
+diff --git a/gui/src/inteltab.cpp b/gui/src/inteltab.cpp
+index 6b6697d..3a5dd0f 100644
+--- a/gui/src/inteltab.cpp
++++ b/gui/src/inteltab.cpp
+@@ -202,7 +202,8 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
+         connect(volt_[i].val, &QDoubleSpinBox::valueChanged, this, [sync, i] { sync(i); });
+     }
+     vg->addWidget(link_, planes.size() + 1, 0, 1, 3);
+-    vg->addWidget(muted("Negative = undervolt. Start around −50 mV, test (stress + idle + suspend/resume), then step "
++    vg->addWidget(muted("Negative = undervolt. Start around −50 mV, test (Health → Curve stability → CPU test, idle, "
++                        "suspend/resume), then step "
+                         "down 10 mV at a time. Too far = freezes / MCEs; the offset is lost on reboot and S3, so a bad "
+                         "value is recovered by a power cycle."), planes.size() + 2, 0, 1, 3);
+     vg->setColumnStretch(2, 1);
+diff --git a/gui/src/optimizetab.cpp b/gui/src/optimizetab.cpp
+index 684d9f2..ffa1b2f 100644
+--- a/gui/src/optimizetab.cpp
++++ b/gui/src/optimizetab.cpp
+@@ -9,6 +9,7 @@
+ #include "theme.h"
+ 
+ #include <memory>
++#include <unistd.h>
+ #include <QApplication>
+ #include <QCheckBox>
+ #include <QClipboard>
+@@ -227,6 +228,11 @@ static QJsonObject builtinObject(const Builtin &b) {
+     return o;
+ }
+ 
++QJsonObject OptimizeTab::builtinValues(const QString &name) {
++    const Builtin *b = builtin(name);
++    return b ? builtinObject(*b).value(QStringLiteral("values")).toObject() : QJsonObject();
++}
++
+ /// Same rule as centurion-gamemode's valid_name().
+ static bool validPresetName(const QString &n) {
+     static const QRegularExpression re(QStringLiteral(R"(^[\p{L}\p{N}][\p{L}\p{N} _.\-]{0,63}\z)"));
+@@ -637,6 +643,32 @@ QWidget *OptimizeTab::buildLaunchPage() {
+                       : QStringLiteral("Heroic / Bottles detection off."), theme::OK, 6000);
+     });
+     ug->addWidget(detectLaunchers_, 4, 0, 1, 3);
++    auto *ntsync = new QCheckBox(QStringLiteral("NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)"));
++    ntsync->setChecked(cfg.value("ntsync").toBool());
++    ntsync->setToolTip(QStringLiteral("NTSYNC is the kernel's driver for Windows synchronisation objects (/dev/ntsync): Wine and Proton use it\n"
++                                      "instead of esync / fsync for lower overhead in games with many threads. Wine 11 uses it on its own;\n"
++                                      "GE-Proton 10 and builds like it only when PROTON_USE_NTSYNC=1 is set. With this on, centurion-gamemode\n"
++                                      "WRAP / RUN (Steam launch options) set it for the game, unless the launch options already do. Lutris\n"
++                                      "starts the game itself (PRE / POST hooks): set the variable in the game's environment there."));
++    connect(ntsync, &QCheckBox::toggled, this, [this](bool on) {
++        QJsonObject cfg = readJsonFile(configFile());
++        if (on) cfg["ntsync"] = true; else cfg.remove("ntsync");
++        QString err;
++        if (!writeJsonFile(configFile(), cfg, &err)) { showStatus("Could not save: " + err, theme::DANGER); return; }
++        showStatus(on ? QStringLiteral("NTSYNC on for games started through centurion-gamemode WRAP / RUN.") : QStringLiteral("NTSYNC variable off."), theme::OK, 6000);
++    });
++    ug->addWidget(ntsync, 5, 0, 1, 2);
++    // Readiness: the device exists (module ntsync or CONFIG_NTSYNC=y) and this user may read and write it
++    // (mode 0666 since Linux 6.14; older kernels need a udev rule).
++    const bool dev = QFileInfo::exists(QStringLiteral("/dev/ntsync"));
++    const bool rw = dev && ::access("/dev/ntsync", R_OK | W_OK) == 0;
++    auto *ntsyncState = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(rw ? theme::OK : theme::WARN,
++        rw ? QStringLiteral("/dev/ntsync ready")
++           : dev ? QStringLiteral("/dev/ntsync is not read / write for you: a udev rule KERNEL==\"ntsync\", MODE=\"0666\" (kernels before 6.14)")
++                 : QStringLiteral("/dev/ntsync missing: modprobe ntsync (or a kernel with CONFIG_NTSYNC)")));
++    ntsyncState->setTextFormat(Qt::RichText);
++    ntsyncState->setWordWrap(true);
++    ug->addWidget(ntsyncState, 5, 2);
+     ug->setColumnStretch(2, 1);
+     v->addWidget(uvBox);
+     fillGameScenes();
+diff --git a/gui/src/optimizetab.h b/gui/src/optimizetab.h
+index 16830ed..63aada0 100644
+--- a/gui/src/optimizetab.h
++++ b/gui/src/optimizetab.h
+@@ -42,6 +42,8 @@ public:
+     bool applyNamedPreset(const QString &name);
+     /// tune-helper, run as the user for "describe" (DriftWatch).
+     static QString helperPathForDescribe();
++    /// A built-in preset's values for this CPU's vendor ("CO validation" for the CPU test); {} if there is none.
++    static QJsonObject builtinValues(const QString &name);
+     /// Drift banner (DriftWatch): settings changed by something else since Centurion applied them.
+     void setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply);
+     void restoreAll(bool confirm = true);
+diff --git a/gui/src/ryzentab.cpp b/gui/src/ryzentab.cpp
+index 29a238d..6f888bb 100644
+--- a/gui/src/ryzentab.cpp
++++ b/gui/src/ryzentab.cpp
+@@ -1,4 +1,5 @@
+ #include "ryzentab.h"
++#include "cpustress.h"
+ #include "trialbar.h"
+ #include <QShowEvent>
+ #include "platformprofile.h"
+@@ -301,6 +302,10 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect())
+     connect(bSave, &QPushButton::clicked, this, &RyzenTab::saveProfile);
+     connect(bDel, &QPushButton::clicked, this, &RyzenTab::deleteProfile);
+     pl->addWidget(profileCombo_, 1);
++    verified_ = new QLabel;
++    verified_->setVisible(false);
++    pl->addWidget(verified_);
++    connect(profileCombo_, &QComboBox::currentTextChanged, this, &RyzenTab::updateVerified);
+     pl->addWidget(bLoad);
+     pl->addWidget(bSave);
+     pl->addWidget(bDel);
+@@ -630,7 +635,9 @@ bool RyzenTab::applyAllCore(std::function<void()> then) {
+         QMessageBox::warning(this, "Out of Range", QStringLiteral("Offset must be within %1..%2.").arg(CO_MIN).arg(CO_MAX));
+         return false;
+     }
+-    runOp("set_coall", {{"value", v}}, std::move(then));
++    QJsonObject params = namedProfile();
++    params["value"] = v;
++    runOp("set_coall", params, std::move(then));
+     return true;
+ }
+ 
+@@ -668,7 +675,9 @@ bool RyzenTab::applyPerCore(std::function<void()> then) {
+     if (entries.isEmpty()) { QMessageBox::information(this, "No Input", "No per-core values have been entered."); return false; }
+     if (parkedSkipped) log(QStringLiteral("Skipping %1 slot(s) on the parked CCD (kept in the profile).").arg(parkedSkipped), "cmd");
+     if (skipped) log(QStringLiteral("Skipping %1 disabled slot(s).").arg(skipped));
+-    runOp("set_coper_batch", {{"entries", entries}}, std::move(then));
++    QJsonObject params = namedProfile();
++    params["entries"] = entries;
++    runOp("set_coper_batch", params, std::move(then));
+     return true;
+ }
+ 
+@@ -710,6 +719,26 @@ void RyzenTab::reloadProfiles() {
+     profileCombo_->clear();
+     profileCombo_->addItems(savedProfileNames());
+     if (int i = profileCombo_->findText(prev); i >= 0) profileCombo_->setCurrentIndex(i);
++    updateVerified();  // a profile saved again under the same name changed its content
++}
++
++// The badge next to the profile: the newest CPU test (Health → Curve stability) run while this profile, as it is
++// saved now, was applied. Saving the profile again changes its content, so an old result no longer shows.
++void RyzenTab::updateVerified() {
++    QFile f(ryzen::profilesDir() + QLatin1Char('/') + profileCombo_->currentText() + QStringLiteral(".json"));
++    const QJsonObject r = !profileCombo_->currentText().isEmpty() && f.open(QIODevice::ReadOnly) && f.size() < 256 * 1024
++        ? cpustress::verification(cpustress::load(), profileCombo_->currentText(), cpustress::profileHash(f.readAll())) : QJsonObject();
++    verified_->setVisible(!r.isEmpty());
++    if (r.isEmpty()) return;
++    const QString v = r.value(QStringLiteral("verdict")).toString();
++    const bool pass = v == QLatin1String("pass");
++    verified_->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(pass ? theme::OK : theme::DANGER,
++        pass ? QStringLiteral("✓ verified") : v == QLatin1String("crashed") ? QStringLiteral("✗ crashed") : QStringLiteral("✗ failed")));
++    const QString test = r.value(QStringLiteral("mode")).toString() == QLatin1String("percore") ? QStringLiteral("per-core") : QStringLiteral("all-core");
++    verified_->setToolTip(QStringLiteral("CPU test (Health → Curve stability), %1 %2, %3: %4")
++        .arg(test, r.value(QStringLiteral("load")).toString().toUpper(),
++             QDateTime::fromSecsSinceEpoch(r.value(QStringLiteral("t")).toInteger()).toString(QStringLiteral("yyyy-MM-dd HH:mm")),
++             pass ? QStringLiteral("passed") : v == QLatin1String("crashed") ? QStringLiteral("the machine went down") : QStringLiteral("failed")));
+ }
+ 
+ QJsonObject RyzenTab::currentState() {
+@@ -754,9 +783,18 @@ void RyzenTab::saveProfile() {
+     }
+     reloadProfiles();
+     profileCombo_->setCurrentText(name);
++    loadedName_ = name;
++    loadedState_ = currentState();
+     log("Profile saved: " + path);
+ }
+ 
++// The saved profile the grid still shows unchanged (loaded or just saved), named in the apply request so the
++// curve journal records "profile:NAME" (Health → Curve stability, the CPU test's verified badge); {} after an edit.
++QJsonObject RyzenTab::namedProfile() {
++    if (loadedName_.isEmpty() || currentState() != loadedState_) return {};
++    return {{"profile", loadedName_}};
++}
++
+ bool RyzenTab::loadProfile() {
+     const QString name = profileCombo_->currentText();
+     if (name.isEmpty()) { QMessageBox::information(this, "No Profile", "No profile selected to load."); return false; }
+@@ -784,6 +822,8 @@ bool RyzenTab::loadProfile() {
+     bool hidden = false;
+     for (const Slot &s : slots_) hidden |= !activeCcds_.contains(s.ccd) && (s.disable->isChecked() || !s.entry->text().isEmpty());
+     if (hidden) rAll_->setChecked(true);  // same set Scenes / centurion-gamemode apply
++    loadedName_ = name;
++    loadedState_ = currentState();
+     log("Profile loaded: " + name);
+     if (missing) log(QStringLiteral("%1 slot(s) in the profile do not exist on this topology (%2 CCD(s)) and were ignored.")
+                          .arg(missing).arg(ccdCount_), "err");
+@@ -841,6 +881,7 @@ void RyzenTab::changeEvent(QEvent *e) {
+ 
+ void RyzenTab::showEvent(QShowEvent *e) {
+     QWidget::showEvent(e);
++    updateVerified();
+     updateParked();
+     monitorTick();
+     monTimer_->start();
+diff --git a/gui/src/ryzentab.h b/gui/src/ryzentab.h
+index 90533ba..de4a6cc 100644
+--- a/gui/src/ryzentab.h
++++ b/gui/src/ryzentab.h
+@@ -79,6 +79,8 @@ private:
+     void log(const QString &msg, const QString &level = "info");
+ 
+     void reloadProfiles();
++    void updateVerified();
++    QJsonObject namedProfile();
+     void saveProfile();
+     bool loadProfile();
+     void deleteProfile();
+@@ -115,6 +117,9 @@ private:
+     QString boostText_, tempText_;
+     class QRadioButton *rAll_ = nullptr;
+     QComboBox *profileCombo_ = nullptr;
++    QLabel *verified_ = nullptr;  // CPU test result of the selected profile (cpustress.h)
++    QString loadedName_;          // profile last loaded or saved, and the grid state it gave (namedProfile)
++    QJsonObject loadedState_;
+     QPlainTextEdit *log_ = nullptr;
+     bool busy_ = false, profilesReady_ = true;
+     TrialBar *trial_ = nullptr;
+diff --git a/gui/src/sysinfo.cpp b/gui/src/sysinfo.cpp
+index c06ccfb..ce8d896 100644
+--- a/gui/src/sysinfo.cpp
++++ b/gui/src/sysinfo.cpp
+@@ -482,10 +482,14 @@ Opt usbcInputs() {
+         const QString e = p.section('/', -1);
+         any = true;
+         if (rdInt(p + "/online").value_or(0) != 1) continue;
+-        const auto uv = rdInt(p + "/voltage_now"), ua = rdInt(p + "/current_now");
++        const auto uv = rdInt(p + "/voltage_now"), ua = rdInt(p + "/current_now"), max = rdInt(p + "/current_max");
+         const QString port = QStringLiteral("Port %1").arg(e.section(':', -1).toInt());
++        // current_max: what the charger agreed to deliver (USB PD contract), so "of N W" is the charger's limit at this voltage.
++        const QString limit = uv && max && *uv > 0 && *max > 0 ? QStringLiteral(" of %1 W").arg(*uv / 1e6 * (*max / 1e6), 0, 'f', 0) : QString();
+         if (uv && ua && *uv > 0 && *ua > 0)
+-            l << QStringLiteral("%1 %2 W (%3 V)").arg(port).arg(*uv / 1e6 * (*ua / 1e6), 0, 'f', 1).arg(*uv / 1e6, 0, 'f', 0);
++            l << QStringLiteral("%1 %2 W%3 (%4 V)").arg(port).arg(*uv / 1e6 * (*ua / 1e6), 0, 'f', 1).arg(limit).arg(*uv / 1e6, 0, 'f', 0);
++        else if (!limit.isEmpty())
++            l << port + QStringLiteral(" connected, up to") + limit.mid(3);
+         else
+             l << port + QStringLiteral(" connected");
+     }
+diff --git a/gui/tests/cpustress_test.cpp b/gui/tests/cpustress_test.cpp
+new file mode 100644
+index 0000000..f5ffeab
+--- /dev/null
++++ b/gui/tests/cpustress_test.cpp
+@@ -0,0 +1,103 @@
++// Unit test for Health → Curve stability → CPU test (cpustress.cpp). Plain asserts, like gpustress_test.cpp.
++#include "../src/cpustress.h"
++
++#include <QCoreApplication>
++#include <QTemporaryDir>
++#include <cstdio>
++
++static int failures = 0;
++#define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++failures; } } while (0)
++
++using namespace cpustress;
++
++static Run fed(const QStringList &lines) {
++    Run r;
++    for (const QString &l : lines) feed(r, l);
++    return r;
++}
++
++int main(int argc, char **argv) {
++    QCoreApplication app(argc, argv);
++
++    // Plan: cycles only for the per-core test; transitions for both.
++    CHECK(plan(Mode::PerCore, "sse", 180, false).args == (QStringList{"percore", "--load", "sse", "--seconds", "180"}));
++    CHECK(plan(Mode::PerCore, "avx2", 60, true, 3).args
++          == (QStringList{"percore", "--load", "avx2", "--seconds", "60", "--cycles", "3", "--transitions"}));
++    CHECK(plan(Mode::AllCore, "avx512", 600, true, 3).args == (QStringList{"allcore", "--load", "avx512", "--seconds", "600", "--transitions"}));
++    CHECK(plan(Mode::AllCore, "avx", 600, false).error == QLatin1String("load") && plan(Mode::AllCore, "avx", 600, false).args.isEmpty());
++    CHECK(plan(Mode::PerCore, "sse", 0, false).error == QLatin1String("seconds"));
++    CHECK(plan(Mode::PerCore, "sse", 60, false, MAX_CYCLES + 1).error == QLatin1String("seconds"));
++
++    // info: cores with their siblings, only the loads this CPU runs.
++    const Info info = parseInfo(R"j({"cores":[{"cpus":[0,16],"l3":0},{"cpus":[1,17],"l3":0},{"cpus":[],"l3":1}],"loads":{"sse":true,"avx2":true,"avx512":false}})j");
++    CHECK(info.cores.size() == 2 && info.cores[1] == (QList<int>{1, 17}) && info.loads == (QStringList{"sse", "avx2"}));
++    CHECK(parseInfo("garbage").cores.isEmpty());
++
++    // Output lines: a pass of the per-core test.
++    Run r;
++    CHECK(!feed(r, R"j({"ev":"start","mode":"percore","load":"sse","seconds":60,"cycles":1,"transitions":false,"cpus":[0,1]})j"));
++    CHECK(feed(r, R"j({"ev":"core","t":0.0,"cpu":0,"cycle":0})j") && r.cpu == 0);
++    feed(r, "not json");
++    feed(r, R"j({"ev":"progress","t":1.0,"chunks":70,"errors":0,"cpu":0})j");
++    feed(r, R"j({"ev":"core_end","t":60.0,"cpu":0,"chunks":4000,"errors":0})j");
++    CHECK(feed(r, R"j({"ev":"core","t":60.0,"cpu":1,"cycle":0})j") && r.cpu == 1);
++    feed(r, R"j({"ev":"end","status":"pass","t":120.0,"chunks":8000,"errors":0,"failed":[],"msg":""})j");
++    CHECK(r.cpus == (QList<int>{0, 1}) && r.done == (QList<int>{0}) && r.chunks == 8000 && r.ended && r.failed.isEmpty());
++    CHECK(verdict(r, 0, false, false, 0) == Verdict::Pass);
++    CHECK(verdict(r, 0, false, false, 1) == Verdict::Fail);      // a machine check during the run
++    CHECK(verdict(r, 0, false, true, 0) == Verdict::Incomplete); // stopped by the user
++    CHECK(verdict(r, 0, true, false, 0) == Verdict::Incomplete);
++    CHECK(verdict(fed({}), 0, false, false, 0) == Verdict::Incomplete);
++
++    // Wrong results: the failing CPU comes from the error line and from the end line; the counts never go down.
++    Run bad = fed({R"j({"ev":"error","t":3.0,"cpu":5,"seed":2,"expected":"0x1","actual":"0x0"})j"});
++    CHECK(bad.errors == 1 && bad.failed == (QList<int>{5}));
++    feed(bad, R"j({"ev":"progress","t":4.0,"chunks":9,"errors":3})j");
++    feed(bad, R"j({"ev":"end","status":"fail","t":9.0,"chunks":20,"errors":3,"failed":[5,7],"msg":"wrong results"})j");
++    CHECK(bad.errors == 3 && bad.failed == (QList<int>{5, 7}) && verdict(bad, 1, false, false, 0) == Verdict::Fail);
++    CHECK(verdict(bad, 4, false, true, 0) == Verdict::Fail);  // an error found is real even when stopped
++    CHECK(verdictName(Verdict::Pass) == "pass" && verdictName(Verdict::Fail) == "fail" && verdictName(Verdict::Incomplete) == "incomplete");
++
++    // Kernel events: machine checks and lockups count, with the CPU they name.
++    CHECK(isCpuFault("mce") && isCpuFault("lockup") && !isCpuFault("xid") && !isCpuFault("nvme"));
++    CHECK(eventCpu("mce: [Hardware Error]: CPU 3: Machine Check: 0 Bank 5: be00000000800400") == 3);
++    CHECK(eventCpu("watchdog: BUG: soft lockup - CPU#12 stuck for 22s! [stress:1234]") == 12);
++    CHECK(eventCpu("mce: [Hardware Error]: Machine check events logged") == -1);
++
++    // Storage: a running record is replaced by its own result, another run's is not touched.
++    QTemporaryDir tmp;
++    qputenv("XDG_STATE_HOME", tmp.path().toUtf8());
++    CHECK(load().isEmpty());
++    CHECK(store({{"id", 1}, {"verdict", "pass"}}));
++    CHECK(store({{"id", 2}, {"verdict", "running"}, {"boot", "b1"}, {"cpu", 0}}));
++    CHECK(store({{"id", 2}, {"verdict", "running"}, {"boot", "b1"}, {"cpu", 4}}));
++    CHECK(load().size() == 2 && load().last().toObject().value("cpu").toInt() == 4);
++    CHECK(store({{"id", 2}, {"verdict", "fail"}}));
++    CHECK(load().size() == 2 && load().last().toObject().value("verdict").toString() == "fail");
++    for (int i = 0; i < KEEP + 5; ++i) store({{"id", 100 + i}, {"verdict", "pass"}});
++    CHECK(load().size() == KEEP && load().first().toObject().value("id").toInt() == 105);
++
++    // A run left "running": crashed when it belongs to another boot, incomplete in this one.
++    store({{"id", 500}, {"verdict", "running"}, {"boot", "old"}, {"cpu", 6}});
++    QJsonArray crashed = settle("new");
++    CHECK(crashed.size() == 1 && crashed[0].toObject().value("cpu").toInt() == 6);
++    CHECK(load().last().toObject().value("verdict").toString() == "crashed");
++    CHECK(settle("new").isEmpty());
++    store({{"id", 501}, {"verdict", "running"}, {"boot", "new"}});
++    CHECK(settle("new").isEmpty() && load().last().toObject().value("verdict").toString() == "incomplete");
++
++    // Verification: the newest finished test of the profile with the same content; incomplete runs do not count.
++    const QString h = profileHash("{\"coall\":-10}");
++    CHECK(h.size() == 16 && h != profileHash("{\"coall\":-15}"));
++    QJsonArray all{QJsonObject{{"curve", "profile:daily"}, {"profile_hash", h}, {"verdict", "pass"}, {"t", 1}},
++                   QJsonObject{{"curve", "profile:daily"}, {"profile_hash", h}, {"verdict", "incomplete"}, {"t", 2}},
++                   QJsonObject{{"curve", "profile:other"}, {"profile_hash", h}, {"verdict", "fail"}, {"t", 3}}};
++    CHECK(verification(all, "daily", h).value("t").toInt() == 1);
++    CHECK(verification(all, "daily", "0000").isEmpty());  // the profile was edited since
++    all.append(QJsonObject{{"curve", "profile:daily"}, {"profile_hash", h}, {"verdict", "crashed"}, {"t", 4}});
++    CHECK(verification(all, "daily", h).value("verdict").toString() == "crashed");
++
++    if (failures) std::fprintf(stderr, "%d failure(s)\n", failures);
++    else std::printf("cpustress_test: all checks passed\n");
++    return failures ? 1 : 0;
++}
+diff --git a/packaging/fedora/centurion.spec b/packaging/fedora/centurion.spec
+index 0d96360..391de6f 100644
+--- a/packaging/fedora/centurion.spec
++++ b/packaging/fedora/centurion.spec
+@@ -22,8 +22,8 @@ URL:            https://github.com/arabcian/centurion
+ Source0:        %{name}-%{version}.tar.xz
+ ExclusiveArch:  x86_64
+ 
+-BuildRequires:  cargo >= 1.75
+-BuildRequires:  rust >= 1.75
++BuildRequires:  cargo >= 1.89
++BuildRequires:  rust >= 1.89
+ BuildRequires:  cmake >= 3.19
+ BuildRequires:  gcc-c++
+ BuildRequires:  qt6-qtbase-devel
+@@ -101,6 +101,7 @@ fi
+ %{_bindir}/centurion-display
+ %{_bindir}/centurion-cooltest
+ %{_bindir}/centurion-gpustress
++%{_bindir}/centurion-cpustress
+ %dir %{_libexecdir}/centurion
+ %{_libexecdir}/centurion/legion-profile-helper
+ %{_libexecdir}/centurion/fwattr-helper
+diff --git a/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild b/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild
+index 8b29ac3..fc49d33 100644
+--- a/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild
++++ b/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild
+@@ -3,8 +3,8 @@
+ 
+ EAPI=8
+ 
+-# README: Rust >= 1.75 (cargo.eclass raises this to the oldest slot in tree).
+-RUST_MIN_VER="1.75.0"
++# README: Rust >= 1.89 (centurion-cpustress: AVX-512 intrinsics; cargo.eclass raises this to the oldest slot in tree).
++RUST_MIN_VER="1.89.0"
+ 
+ inherit cargo cmake git-r3 linux-info optfeature systemd toolchain-funcs udev xdg
+ 
+@@ -143,7 +143,7 @@ src_install() {
+ 	exeopts -m0700
+ 	doexe "${r}"/nvcurve-root-helper
+ 	exeopts -m0755
+-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress}
++	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress,centurion-cpustress}
+ 
+ 	cmake_src_install
+ 
+diff --git a/packaging/install-files.sh b/packaging/install-files.sh
+index acd6e1f..be20b70 100644
+--- a/packaging/install-files.sh
++++ b/packaging/install-files.sh
+@@ -24,7 +24,7 @@ install -d "${own[@]}" -m 0755 "$DESTDIR$LIBEXEC" "$DESTDIR$PREFIX/bin"
+ install "${own[@]}" -m 0755 "$T/legion-profile-helper" "$T/fwattr-helper" "$T/ryzen-co-helper" "$T/tune-helper" "$T/tune-profile-helper" "$T/intel-uv-helper" "$T/legion-gpu-helper" "$T/legion-firmware-helper" "$T/lighting-helper" "$T/amdgpu-helper" "$T/nvcurve-sensors" "$T/legion-ec-sensors" "$T/health-reader" "$T/centurion-boot-guard" "$T/netguard-helper" "$T/backup-helper" \
+     "$DESTDIR$LIBEXEC/"
+ install "${own[@]}" -m 0700 "$T/nvcurve-root-helper" "$DESTDIR$LIBEXEC/"
+-install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$T/centurion-cooltest" "$T/centurion-gpustress" "$DESTDIR$PREFIX/bin/"
++install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$T/centurion-cooltest" "$T/centurion-gpustress" "$T/centurion-cpustress" "$DESTDIR$PREFIX/bin/"
+ DESTDIR="$DESTDIR" cmake --install gui/build --strip
+ 
+ # Packages put the rules under /usr/share (POLKIT_RULESDIR): /etc/polkit-1/rules.d belongs to polkit

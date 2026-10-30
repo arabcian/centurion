@@ -51,6 +51,7 @@ private:
 
     QList<Row> rows_;
     QLabel *banner_, *status_;
+    QLabel *tau_ = nullptr;  // CPU PL1 tau, read-only (legion-gpu-helper status "pl1_tau_s")
     QPushButton *applyAll_, *rescan_;
     QTabWidget *tabs_;
     QTimer *statusTimer_;

@@ -37,7 +37,7 @@ Tabs appear only when the hardware, driver or tool behind them exists.
 | **AMD GPU** *(amdgpu)* | Overdrive clocks / voltage per GPU generation, power limit, fan curve (RDNA3+), power profile. Every Apply is a **trial** — reverts in 20 s unless you press *Keep*; one-click undervolt steps. |
 | **Optimizations** | 100+ documented CPU / memory / scheduler / storage / network / device / power knobs in 8 groups, built-in presets, **Autotune**, game launch hooks (Lutris, Steam), boot-parameter advisor, *Restore originals* and *↺ Return to boot-guard defaults*. |
 | **Lighting** *(Spectrum, or 4-zone RGB)* | Spectrum keyboards: per-key RGB on a drawing of your own keyboard, firmware effects, 6 hardware profiles, brightness, lid logo, accent lights. 4-zone RGB keyboards: effect, speed, brightness and four zone colours. |
-| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches, suggestions for wake sources that keep waking the machine with the lid closed) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
+| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset; memory, GPU and per-core / all-core CPU tests) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches, suggestions for wake sources that keep waking the machine with the lid closed) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
 
 The **tray menu** carries the everyday actions: Scene (with auto-switch and
 pause), Power Profile, CPU Curve, CPU Undervolt (Intel), GPU Curve,
@@ -62,6 +62,7 @@ tab (which does wake it).
 | `centurion-netguard daemon\|status\|list\|whois IP` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
 | `centurion-cooltest status\|run [--seconds N]\|baseline\|forget` | Cooling health test as the user (Health → Cooling): fixed CPU load, compared with a baseline of the same firmware settings |
+| `centurion-cpustress info\|percore\|allcore --load sse\|avx2\|avx512 --seconds N [--cycles N] [--transitions] [--cpus LIST]` | CPU stability test as the user (Health → Curve stability → CPU test): per-core or all-core work with a known result, for Curve Optimizer / undervolt offsets |
 | `centurion-display list\|set-refresh HZ\|brightness\|set-brightness PCT` | Internal panel refresh rate (KDE kscreen-doctor, wlr-randr or xrandr) and backlight brightness (sysfs, logind SetBrightness or brightnessctl) as the user — used by Scenes |
 
 ## D-Bus API
@@ -329,7 +330,7 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 
 ## Requirements
 
-**Build:** Rust ≥ 1.75 (cargo), a C++20 compiler, CMake ≥ 3.19, Qt ≥ 6.4 (Widgets, Network, Svg; Linguist tools optional, for the Turkish translation).
+**Build:** Rust ≥ 1.89 (cargo), a C++20 compiler, CMake ≥ 3.19, Qt ≥ 6.4 (Widgets, Network, Svg; Linguist tools optional, for the Turkish translation).
 
 **Runtime:**
 

@@ -1,0 +1,19 @@
+[package]
+name = "centurion-cpustress"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"  # AVX-512 intrinsics in std::arch
+description = "Centurion CPU stability test: per-core and all-core work with a known result, for Curve Optimizer / undervolt offsets"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "centurion-cpustress"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+libc = "0.2"
+
+[features]
+# Test-only: one wrong chunk on the highest-numbered CPU, to check the failure path end to end.
+fault-inject = []

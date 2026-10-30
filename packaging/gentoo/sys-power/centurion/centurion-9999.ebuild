@@ -3,8 +3,8 @@
 
 EAPI=8
 
-# README: Rust >= 1.75 (cargo.eclass raises this to the oldest slot in tree).
-RUST_MIN_VER="1.75.0"
+# README: Rust >= 1.89 (centurion-cpustress: AVX-512 intrinsics; cargo.eclass raises this to the oldest slot in tree).
+RUST_MIN_VER="1.89.0"
 
 inherit cargo cmake git-r3 linux-info optfeature systemd toolchain-funcs udev xdg
 
@@ -143,7 +143,7 @@ src_install() {
 	exeopts -m0700
 	doexe "${r}"/nvcurve-root-helper
 	exeopts -m0755
-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress}
+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress,centurion-cpustress}
 
 	cmake_src_install
 

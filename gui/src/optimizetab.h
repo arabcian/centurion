@@ -42,6 +42,8 @@ public:
     bool applyNamedPreset(const QString &name);
     /// tune-helper, run as the user for "describe" (DriftWatch).
     static QString helperPathForDescribe();
+    /// A built-in preset's values for this CPU's vendor ("CO validation" for the CPU test); {} if there is none.
+    static QJsonObject builtinValues(const QString &name);
     /// Drift banner (DriftWatch): settings changed by something else since Centurion applied them.
     void setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply);
     void restoreAll(bool confirm = true);

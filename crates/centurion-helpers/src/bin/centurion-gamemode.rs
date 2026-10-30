@@ -27,6 +27,8 @@
 //!                   with a game scene: whether its CPU / GPU curve is applied;
 //!                   without one: apply the "GAMING" curve profiles (CPU first,
 //!                   GPU 2 s later; a missing profile is skipped with a note).
+//!   "ntsync"        true: WRAP / RUN set PROTON_USE_NTSYNC=1 for the game when /dev/ntsync is
+//!                   usable (and the launch options did not set it).
 //!   "field_ab"      true (every game) or a list of game names: A/B comparison -
 //!                   launches of a game alternate B (game preset) and A (boot
 //!                   defaults: no preset, no launch boost; same game scene).
@@ -1091,6 +1093,7 @@ extern "C" fn forward(sig: libc::c_int) {
 fn wrap(args: &[String]) -> i32 {
     // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
     std::env::set_var("CENTURION_WRAPPED", "1");
+    ntsync_env();
     OWNER.store(std::process::id() as i32, Ordering::SeqCst);
     let (name, cmd) = split_cmd(args);
     if cmd.is_empty() { log!("centurion-gamemode WRAP: no command"); return 2; }
@@ -1196,9 +1199,24 @@ fn wait_for_start(preset: &Value) {
 fn read_json_str(p: &str) -> Option<String> { std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned()) }
 
 
+/// tune.json "ntsync": Proton builds that support NTSYNC but use it only when asked (GE-Proton 10:
+/// PROTON_USE_NTSYNC=1) get the variable, when /dev/ntsync is usable by this user and the launch options did
+/// not set it already. Wine 11 uses /dev/ntsync on its own and ignores the variable.
+fn ntsync_env() {
+    if !read_json(&config_dir().join("tune.json")).is_some_and(|c| c["ntsync"] == true) { return; }
+    if std::env::var_os("PROTON_USE_NTSYNC").is_some() { return; }
+    // SAFETY: a NUL-terminated literal.
+    if unsafe { libc::access(b"/dev/ntsync\0".as_ptr() as *const libc::c_char, libc::R_OK | libc::W_OK) } == 0 {
+        std::env::set_var("PROTON_USE_NTSYNC", "1");
+    } else {
+        log!("centurion-gamemode: NTSYNC is on, but /dev/ntsync is missing or not read / write for this user — starting without it");
+    }
+}
+
 fn run_exec(args: &[String]) -> i32 {
     // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
     std::env::set_var("CENTURION_WRAPPED", "1");
+    ntsync_env();
     let (name, cmd) = split_cmd(args);
     if cmd.is_empty() { log!("centurion-gamemode RUN: no command"); return 2; }
     match load_preset(name.as_deref()) {

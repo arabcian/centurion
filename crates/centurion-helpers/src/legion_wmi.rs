@@ -583,6 +583,12 @@ pub fn status(want_envelope: bool) -> Value {
         out["envelope"] = json!({"gpu_min_w": minp, "gpu_max_w": maxp, "ctgp_max_w": (maxp - ceil).max(minp), "ctgp_min_w": minp});
     }
     out["values"] = Value::Object(vals);
+    // CPU PL1 tau (WMAE 0x01070000), shown read-only: the firmware has it (20-160 s in the steps of Intel's
+    // time-window encoding, kept in the EC) but no kernel attribute, and on AMD nothing in the DSDT passes it on,
+    // so whether a write would change anything is unknown. A plain EC read; 0 = not on this model.
+    if acpi_available() {
+        if let Some(v) = wmae_get(0x0107_0000).ok().filter(|v| *v > 0) { out["pl1_tau_s"] = json!(v); }
+    }
     if !acpi_available() {
         out["note"] = json!("acpi_call not loaded — the cTGP / boost knobs can't be written (modprobe acpi_call).");
     }

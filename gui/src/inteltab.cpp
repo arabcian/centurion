@@ -202,7 +202,8 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
         connect(volt_[i].val, &QDoubleSpinBox::valueChanged, this, [sync, i] { sync(i); });
     }
     vg->addWidget(link_, planes.size() + 1, 0, 1, 3);
-    vg->addWidget(muted("Negative = undervolt. Start around −50 mV, test (stress + idle + suspend/resume), then step "
+    vg->addWidget(muted("Negative = undervolt. Start around −50 mV, test (Health → Curve stability → CPU test, idle, "
+                        "suspend/resume), then step "
                         "down 10 mV at a time. Too far = freezes / MCEs; the offset is lost on reboot and S3, so a bad "
                         "value is recovered by a power cycle."), planes.size() + 2, 0, 1, 3);
     vg->setColumnStretch(2, 1);
