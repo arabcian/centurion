@@ -23,6 +23,8 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
+pub mod lamparray;
+
 pub const VENDOR_ID: u16 = 0x048D;
 pub const PRODUCT_MASK: u16 = 0xFF00;
 /// Product-id families the Spectrum controller ships under (the same three

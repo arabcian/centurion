@@ -6,6 +6,10 @@ use centurion_helpers::*;
 
 fn main() {
     init();
+    // Long-running: frames on stdin until EOF (see lighting::stream), not one request.
+    if std::env::args().nth(1).as_deref() == Some("stream") {
+        std::process::exit(finish(lighting::stream()));
+    }
     let code = match read_request(lighting::MAX_REQUEST) {
         Ok(req) => finish(lighting::handle(&req)),
         Err(e) => finish(e),

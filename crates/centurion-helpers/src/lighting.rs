@@ -18,14 +18,22 @@
 //!   {"op": "z4_set", "effect": "off"|"static"|"breath"|"wave"|"smooth", "speed"?: 1..4,
 //!    "brightness"?: 1..2, "colors"?: ["rrggbb" x4], "right_to_left"?: bool}
 //!       the 4-zone controller is write-only: there is no state to read back
+//!   {"op": "la_probe"}                      -> {"ok", "present", "node", "lamps", "min_update_us",
+//!                                               "map": [[id, x_um, y_um, z_um, purposes, key_usage], ..]}
+//!       LampArray interface (usage page 0x59, 048D:C193 on the 16AFR10H)
+//! `lighting-helper stream` (argument, no JSON request): host-driven frames on that interface, see `stream`.
 //! Effect: {"type": 1..13, "speed": 0..3, "direction": 0..4, "clockwise": 0..2,
 //!          "color_mode": 0..2, "colors": ["rrggbb", ..], "keys": [keycode, ..]}
 //!
 //! Every write goes to the controller's non-volatile profile store, so the
 //! GUI only writes on an explicit Apply (never while dragging a slider).
 
-use centurion_spectrum::{self as sp, Device, Effect, Rgb};
+use centurion_spectrum::{self as sp, lamparray::LampArray, Device, Effect, Rgb};
 use serde_json::{json, Map, Value};
+use std::io::BufRead;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 pub const MAX_REQUEST: usize = 16 * 1024;
 
@@ -165,6 +173,7 @@ fn handle_zone4(op: &str, req: &Value) -> Value {
 pub fn handle(req: &Value) -> Value {
     let op = req.get("op").and_then(Value::as_str).unwrap_or("");
     if matches!(op, "z4_probe" | "z4_set") { return handle_zone4(op, req); }
+    if op == "la_probe" { return la_probe(); }
     if !matches!(op, "probe" | "state" | "effects" | "set" | "write" | "reset") {
         return json!({"ok": false, "error": format!("unknown op '{op}'")});
     }
@@ -216,6 +225,95 @@ pub fn handle(req: &Value) -> Value {
     run().unwrap_or_else(|e| e)
 }
 
+fn la_err(e: sp::Error) -> Value {
+    let missing = matches!(e, sp::Error::NotFound);
+    let mut v = err(e);
+    if missing { v["error"] = json!("LampArray lighting interface (USB 048D:C1xx, usage page 0x59) not found"); }
+    v
+}
+
+fn la_probe() -> Value {
+    let a = match LampArray::open() {
+        Ok(a) => a,
+        Err(sp::Error::NotFound) => return json!({"ok": true, "present": false}),
+        Err(e) => return la_err(e),
+    };
+    match a.lamps() {
+        Ok(l) => json!({"ok": true, "present": true, "node": a.path().display().to_string(), "lamps": a.count(),
+                        "min_update_us": a.min_update_us(),
+                        "map": l.iter().map(|l| json!([l.id, l.x, l.y, l.z, l.purposes, l.key])).collect::<Vec<_>>()}),
+        Err(e) => la_err(e),
+    }
+}
+
+/// One frame line: "rrggbb" per lamp, in lamp-id order, no separators.
+fn parse_frame(line: &str, lamps: usize) -> Result<Vec<Rgb>, String> {
+    let s = line.trim();
+    if s.len() != lamps * 6 || !s.is_ascii() {
+        return Err(format!("frame must be {lamps} \"rrggbb\" colours ({} hex digits), got {}", lamps * 6, s.len()));
+    }
+    (0..lamps).map(|i| Rgb::parse_hex(&s[6 * i..6 * i + 6]).ok_or_else(|| format!("lamp {i}: not a hex colour"))).collect()
+}
+
+static STREAM_FD: AtomicI32 = AtomicI32::new(-1);
+
+extern "C" fn stream_signal(sig: libc::c_int) {
+    let fd = STREAM_FD.load(Ordering::SeqCst);
+    if fd >= 0 { sp::lamparray::restore_autonomous_fd(fd); }
+    unsafe { libc::_exit(128 + sig) }
+}
+
+/// Puts the controller back on its own (Spectrum) effect when the stream ends for any reason it can catch.
+struct Restore<'a>(&'a LampArray);
+impl Drop for Restore<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.set_autonomous(true);
+        STREAM_FD.store(-1, Ordering::SeqCst);
+    }
+}
+
+/// `lighting-helper stream`: host-driven lighting on the LampArray interface. Writes one status
+/// line ({"ok", "streaming", "lamps", "min_update_us"}), then reads frames from stdin, one per line
+/// (see `parse_frame`), and shows the newest one at most once per the controller's minimum update
+/// interval (frames arriving faster are dropped, so the colours never lag behind). Nothing is written
+/// to the controller's profile store. Ends at EOF or on a bad frame, with the final status line;
+/// autonomous mode (the stored effect) comes back on return, on SIGTERM / SIGINT / SIGHUP / SIGPIPE,
+/// and on abort (panics abort in release builds). Only SIGKILL leaves the lamps as last drawn.
+pub fn stream() -> Value {
+    let a = match LampArray::open() { Ok(a) => a, Err(e) => return la_err(e) };
+    if unsafe { libc::flock(a.raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return json!({"ok": false, "error": "another lighting stream is already running"});
+    }
+    let lamps = a.count() as usize;
+    let interval = Duration::from_micros(a.min_update_us().into());
+    STREAM_FD.store(a.raw_fd(), Ordering::SeqCst);
+    for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGPIPE, libc::SIGABRT] {
+        unsafe { libc::signal(sig, stream_signal as *const () as libc::sighandler_t); }
+    }
+    let _restore = Restore(&a);
+    if let Err(e) = a.set_autonomous(false) { return la_err(e); }
+    crate::emit(&json!({"ok": true, "streaming": true, "lamps": lamps, "min_update_us": a.min_update_us()}));
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let f = line.map_err(|e| format!("stdin: {e}")).and_then(|l| parse_frame(&l, lamps));
+            let bad = f.is_err();
+            if tx.send(f).is_err() || bad { break; }
+        }
+    });
+    let (mut shown, mut last) = (0u64, None::<Instant>);
+    while let Ok(mut frame) = rx.recv() {
+        if let Some(t) = last { std::thread::sleep(interval.saturating_sub(t.elapsed())); }
+        while let Ok(newer) = rx.try_recv() { frame = newer; }
+        let colors = match frame { Ok(c) => c, Err(m) => return json!({"ok": false, "error": m, "frames": shown}) };
+        if let Err(e) = a.show(&colors) { return merge(la_err(e), json!({"frames": shown})); }
+        last = Some(Instant::now());
+        shown += 1;
+    }
+    json!({"ok": true, "frames": shown})
+}
+
 /// A scene's "lighting" object: {"profile"?, "brightness"?, "logo"?}.
 /// Returns the request to send (op "set"), or None when it changes nothing.
 pub fn scene_request(v: &Value) -> Option<Value> {
@@ -246,6 +344,16 @@ mod tests {
         assert!(effect_from_json(&json!({"type": 11, "speed": 4, "keys": [1]})).is_err());
         assert!(effect_from_json(&json!({"type": 11, "colors": ["zz0000"], "keys": [1]})).is_err());
         assert_eq!(effect_from_json(&json!({"type": 2, "keys": [1]})).unwrap().color_mode, 0);
+    }
+
+    #[test]
+    fn stream_frames() {
+        assert_eq!(parse_frame("ff0000 00ff00".replace(' ', "").as_str(), 2).unwrap(), vec![Rgb(255, 0, 0), Rgb(0, 255, 0)]);
+        assert_eq!(parse_frame("0a0b0c\n", 1).unwrap(), vec![Rgb(10, 11, 12)], "trailing newline is fine");
+        assert!(parse_frame("ff0000", 2).is_err(), "too short");
+        assert!(parse_frame("ff0000ff0000ff", 2).is_err(), "too long");
+        assert!(parse_frame("ff0000zz0000", 2).unwrap_err().contains("lamp 1"));
+        assert!(parse_frame("ff0000ffééé", 2).is_err(), "non-ASCII must not split a char");
     }
 
     #[test]
