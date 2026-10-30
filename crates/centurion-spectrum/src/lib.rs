@@ -475,6 +475,14 @@ pub struct Device {
     path: PathBuf,
 }
 
+/// Candidate order for [`Device::find`]: interfaces on the USB device that also carries the LampArray
+/// go last. On the 16AFR10H that device (C193) has a second 960-byte vendor interface whose answer to
+/// D1 is unknown; the Spectrum controller is C197. Without this the pick hinged on hidraw numbering
+/// (string order "hidraw10" < "hidraw6"). Stable sort: nothing is dropped, other orders are kept.
+fn lamparray_last(dirs: &mut [(PathBuf, u16)], lamparray_pid: Option<u16>) {
+    dirs.sort_by_key(|&(_, p)| Some(p) == lamparray_pid);
+}
+
 /// A Spectrum HID interface exists: matching ids and a REPORT_LEN-byte feature
 /// report in its descriptor (sysfs only: nothing is opened, no ioctl is sent).
 pub fn present() -> bool {
@@ -499,8 +507,11 @@ impl Device {
     pub fn find() -> Result<Self> {
         let mut last_err = None;
         if !Path::new("/sys/class/hidraw").is_dir() { return Err(Error::NotFound); }
-        for dir in hidraw_dirs() {
-            if !hid_ids(&dir).map_or(false, |(v, p)| is_spectrum_product(v, p)) { continue; }
+        let mut dirs: Vec<(PathBuf, u16)> = hidraw_dirs().into_iter()
+            .filter_map(|d| hid_ids(&d).filter(|&(v, p)| is_spectrum_product(v, p)).map(|(_, p)| (d, p)))
+            .collect();
+        lamparray_last(&mut dirs, lamparray::product());
+        for (dir, _) in dirs {
             // Same guard as LenovoLegionToolkit: only an interface whose HID
             // descriptor declares a REPORT_LEN-byte feature report is spoken
             // to. Other interfaces of the controller never get a single ioctl.
@@ -708,6 +719,23 @@ mod tests {
     fn ioctl_numbers() {
         assert_eq!(HIDIOCSFEATURE, 0xC3C0_4806);
         assert_eq!(HIDIOCGFEATURE, 0xC3C0_4807);
+    }
+
+    #[test]
+    fn lamparray_device_tried_last() {
+        use std::path::PathBuf;
+        let names = |d: &[(PathBuf, u16)]| d.iter().map(|(p, _)| p.to_str().unwrap().to_owned()).collect::<Vec<_>>();
+        // 16AFR10H today (hidraw10 = C197 sorts first) and after a renumbering (C193 first): C197 first both times.
+        for order in [[("hidraw10", 0xC197), ("hidraw6", 0xC193)], [("hidraw5", 0xC193), ("hidraw9", 0xC197)]] {
+            let mut d: Vec<(PathBuf, u16)> = order.iter().map(|&(n, p)| (n.into(), p)).collect();
+            super::lamparray_last(&mut d, Some(0xC193));
+            assert_eq!(d[0].1, 0xC197, "{:?}", names(&d));
+            assert_eq!(d.len(), 2, "nothing dropped");
+        }
+        // No LampArray: order untouched.
+        let mut d: Vec<(PathBuf, u16)> = vec![("hidraw6".into(), 0xC193), ("hidraw7".into(), 0xC197)];
+        super::lamparray_last(&mut d, None);
+        assert_eq!(names(&d), ["hidraw6", "hidraw7"]);
     }
 }
 

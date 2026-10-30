@@ -21,6 +21,10 @@
 //! stdin:  {"op": "sleep_diag"}  Health → Sleep → "Why doesn't the hardware sleep?": fixed sysfs and
 //!                               debugfs paths (the PMC counters need root), findings as codes. Read-only.
 //!                               See centurion_helpers::sleepdiag::run.
+//!
+//! stdin:  {"op": "battery_info"} Health → Battery: maker, hardware id and manufacture date from the
+//!                               firmware's WMI data block (one query per field through acpi_call; no
+//!                               module is loaded from here). See centurion_helpers::legion_wmi::battery_info.
 
 fn main() {
     centurion_helpers::init();
@@ -30,6 +34,9 @@ fn main() {
     }
     if req["op"].as_str() == Some("sleep_diag") {
         std::process::exit(centurion_helpers::finish(centurion_helpers::sleepdiag::run(std::path::Path::new("/"))));
+    }
+    if req["op"].as_str() == Some("battery_info") {
+        std::process::exit(centurion_helpers::finish(centurion_helpers::legion_wmi::battery_info()));
     }
     let since = req["since"].as_u64().unwrap_or(0);
     std::process::exit(centurion_helpers::finish(centurion_helpers::health::scan(since)));

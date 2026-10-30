@@ -1,7 +1,7 @@
 # Centurion: Yol haritası (özellik 1–9)
 
 Kapsam: istenen 9 özelliğin durumu. Uygulananlar: 1, 2, 5, 6, 7, 8 ve 9'un AUR / COPR kısmı.
-Ertelenenler: 3, 4 (donanım) ve Flatpak.
+Ertelenen: Flatpak. 3 ve 4'ün donanım engeli kalktı (LampArray arayüzü, aşağıda); sıradaki adım akış yardımcısının donanım testi.
 
 ## Durum tablosu
 
@@ -10,8 +10,8 @@ Ertelenenler: 3, 4 (donanım) ve Flatpak.
 | 1 | Sahne başına global kısayol | ✅ Yapıldı | `gui/src/shortcuts.*` (GlobalShortcuts portalı), Scenes → *Shortcut* | — | QtDBus, xdg-desktop-portal ≥ 1.18 |
 | 1b | Fn+Q'ya özel davranış | ❌ Kapsam dışı | Fn+Q'yu EC işliyor; uygulama yalnızca sonradan profil değişikliğini görüyor. Kullanıcı kararıyla düşürüldü | — | — |
 | 2 | MangoHud katmanı | ✅ Yapıldı | `centurion-gamemode OVERLAY`, `gui/src/mangohud.*`, Scenes → MangoHud kutusu | — | MangoHud |
-| 3 | Sese duyarlı aydınlatma | ⏸ Ertelendi (donanım) | Spectrum Gen10 host karelerini (A1) yok sayıyor; CB yazmaları flash'a gidiyor | Araştırma 1–2 gün + uygulama 2–3 gün | Donanımda doğrulanmış geçici (RAM) yazma yolu |
-| 4 | Ekran rengi senkronu | ⏸ Ertelendi (donanım) | 3 ile aynı engel; ayrıca ScreenCast/PipeWire akışı | 3–4 gün (3'ten sonra) | 3'ün akış yardımcısı |
+| 3 | Sese duyarlı aydınlatma | 🔓 Engel kalktı (LampArray, c193) | Geçici (RAM) yol: HID LampArray arayüzü; `lighting-helper stream` yazıldı, donanımda çalıştırılmadı | 2–3 gün | Akış yardımcısının donanım testi |
+| 4 | Ekran rengi senkronu | 🔓 Engel kalktı (LampArray, c193) | 3 ile aynı yol; ayrıca ScreenCast/PipeWire akışı | 3–4 gün (3'ten sonra) | 3'ün akış yardımcısı |
 | 5 | Uyku teşhisi önerileri | ✅ Yapıldı | `gui/src/sleepadvice.*`, Health → Sleep → *Suggestion* | — | centurion-sleep-log hook |
 | 6 | D-Bus API | ✅ Yapıldı | `gui/src/dbusapi.*`, `com.centurion.Centurion` | — | QtDBus |
 | 7 | Masaüstü bildirimleri (eylem düğmeli) | ✅ Yapıldı | `gui/src/notify.*`; *Undo* (eğri koruması), *Re-apply* (drift), *Details* (sahne hatası) | — | QtDBus |
@@ -19,28 +19,27 @@ Ertelenenler: 3, 4 (donanım) ve Flatpak.
 | 9 | AUR / COPR | ✅ Yapıldı | `packaging/arch/`, `packaging/fedora/`, ortak düzen `packaging/install-files.sh` | — | — |
 | 9b | Flatpak | ⏸ Ertelendi | Sandbox'tan `pkexec` için `flatpak-spawn --host` gerekir, bu da sandbox'ı fiilen kaldırır | 3+ gün | Dar bir D-Bus system servisi (mimari değişiklik) |
 
-Kalan sıra: **3/4 araştırması → Flatpak (gerekirse)**. 3 ve 4 donanım araştırması bitmeden
-kod yazmaya değmez.
+Kalan sıra: **akış yardımcısının donanım testi → 3 → 4 → Flatpak (gerekirse)**.
 
 ---
 
 ## 3. Sese duyarlı aydınlatma
 
-**Engel.** `crates/centurion-spectrum/src/lib.rs` başlığına göre Gen10 (048d:c1xx) firmware'i
-LLT'nin host-driven A1/Aurora karelerini yok sayıyor (16AFR10H'de test edildi). Tuş başına
-renk yalnızca CB (EFFECT_SET) ile yazılabiliyor, o da kalıcı profil belleğine gidiyor:
-saniyede 20–30 kez yazmak flash'ı aşındırır. 4 bölgeli (33 bayt) klavyede ise sürekli
-yazmak sorun gibi görünmüyor (L5P-Keyboard-RGB bunu yapıyor), ama orada da donanımda
-doğrulanmalı.
+**Engel (kalktı).** Spectrum arayüzünden (`048d:c197`, rapor 7) geçici renk yolu yok: Gen10
+firmware'i LLT'nin host-driven A1/Aurora karelerini yok sayıyor, CB (EFFECT_SET) ise kalıcı profil
+belleğine yazıyor. Aynı denetleyici ayrı bir USB cihazında (`048d:c193`, usage page 0x59) standart
+HID LampArray arayüzü de sunuyor: autonomous mode kapalıyken renkler RAM'de tutuluyor, Spectrum
+profili değişmiyor (16AFR10H'de doğrulandı: `state` hash'i önce/sonra aynı, autonomous=1 ile kendi
+efektine döndü). 319 lamba (0–101 tuşlar, 102–318 ön/arka şeritler), en kısa güncelleme 32,2 ms.
+Sürücü: `crates/centurion-spectrum/src/lamparray.rs`. 4 bölgeli (33 bayt) klavyede sürekli yazma
+hâlâ donanımda doğrulanmadı.
 
 **Plan.**
-1. *Araştırma (Spectrum):* Windows'ta LLT ya da Legion Space'in AudioBounce / AuroraSync
-   efektleri sırasındaki USB trafiğini (USBPcap) yakala. Host'tan giden bir "geçici renk"
-   işlem kodu var mı bak. Test aracı CB'ye hiç yazmasın; doğrulamak için yalnızca
-   EFFECT_GET okusun.
-2. *Akış yardımcısı:* `lighting-helper` için uzun ömürlü bir `stream` modu (uaccess ile
-   pkexec'siz). stdin'den kare alsın, en fazla 30 Hz'e kısıtlasın, çıkışta son
-   kalıcı durumu geri yüklesin. Yalnızca geçici yolu doğrulanmış denetleyicilerde açılsın.
+1. ~~*Araştırma (Spectrum)*~~: gerek kalmadı (LampArray).
+2. *Akış yardımcısı* (yazıldı, donanım testi bekliyor): `lighting-helper stream`; uaccess ile
+   pkexec'siz, stdin'den satır başına bir kare, en fazla cihazın 32,2 ms aralığında gösterir
+   (araya girenler atlanır), çıkışta / SIGTERM'de autonomous mode'u geri açar, profil belleğine
+   yazmaz. SIGKILL sonrası için `{"op":"la_restore"}`.
 3. *Ses:* PipeWire monitor kaynağından yakalama (`pw-record --target @DEFAULT_SINK@.monitor`
    ya da libpipewire), 1024 örneklik FFT, bant enerjisi → renk. 4 bölgede 4 bant,
    Spectrum'da sütun başına bant.
@@ -52,7 +51,7 @@ gecikme < 50 ms.
 
 ## 4. Ekran rengi senkronu (ambient)
 
-**Engel:** 3 ile aynı (geçici yazma yolu gerekli).
+**Engel:** 3 ile aynı, kalktı (LampArray akış yardımcısı).
 
 **Plan.**
 1. *Wayland:* `org.freedesktop.portal.ScreenCast` (CreateSession → SelectSources monitor →

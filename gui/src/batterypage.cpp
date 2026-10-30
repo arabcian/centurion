@@ -89,6 +89,10 @@ BatteryPage::BatteryPage(QWidget *parent) : QWidget(parent) {
                                          "sleep excluded). \"Full charge lasts\" = today's full capacity ÷ the average draw.")));
 
     root->addWidget(new QLabel(QStringLiteral("<b>Capacity history</b>")));
+    batInfo_ = new QLabel;
+    batInfo_->setTextFormat(Qt::RichText);
+    batInfo_->setVisible(false);
+    root->addWidget(batInfo_);
     wear_ = new QLabel;
     wear_->setTextFormat(Qt::RichText);
     root->addWidget(wear_);
@@ -145,7 +149,37 @@ void BatteryPage::showEvent(QShowEvent *e) {
     refreshNow();
     refreshTables();
     refreshForecast();
+    if (!infoAsked_) refreshInfo();
     nowTimer_->start();
+}
+
+// Maker and manufacture date from the firmware (health-reader "battery_info"); static, asked once.
+// With the date: the battery's age and the capacity lost per year so far (today's full vs design).
+void BatteryPage::refreshInfo() {
+    infoAsked_ = true;
+    const QString helper = privileged::helperPath(QStringLiteral("health-reader"));
+    if (!QFileInfo(helper).isExecutable()) return;
+    privileged::run(helper, QJsonObject{{QStringLiteral("op"), QStringLiteral("battery_info")}}, this, [this](const privileged::Result &r) {
+        if (!r.reached || !r.json.value(QStringLiteral("ok")).toBool()) return;  // unsupported or too old a helper: no line
+        QStringList p;
+        if (const QString maker = r.json.value(QStringLiteral("maker")).toString(); !maker.isEmpty())
+            p << tr("Battery by <b>%1</b>").arg(maker.toHtmlEscaped());
+        const QDate made = QDate::fromString(r.json.value(QStringLiteral("mfg_date")).toString(), Qt::ISODate);
+        const QDate today = QDate::currentDate();
+        if (made.isValid() && made <= today) {
+            const qint64 days = made.daysTo(today);
+            p << tr("made %1 (%2 months ago)").arg(made.toString(Qt::ISODate)).arg(days / 30);
+            const sysinfo::BatteryState b = sysinfo::batteryState();
+            // Under three months the yearly figure is mostly the counter's noise.
+            if (days >= 90 && b.fullWh > 0 && b.designWh > 0) {
+                const double lost = std::max(0.0, 100.0 - b.fullWh / b.designWh * 100.0);
+                p << tr("~%1 % of design capacity lost per year").arg(lost / (days / 365.25), 0, 'f', 1);
+            }
+        }
+        if (p.isEmpty()) return;
+        batInfo_->setText(p.join(QStringLiteral(" &nbsp;·&nbsp; ")));
+        batInfo_->setVisible(true);
+    });
 }
 
 void BatteryPage::hideEvent(QHideEvent *e) {

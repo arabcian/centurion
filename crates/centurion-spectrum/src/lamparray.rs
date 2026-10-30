@@ -39,12 +39,21 @@ fn is_lamparray(desc: &[u8]) -> bool {
     desc.starts_with(&[0x05, 0x59, 0x09, 0x01]) && LAYOUT.iter().all(|p| desc.windows(4).any(|w| w == p))
 }
 
-/// hidraw node of the LampArray interface (sysfs only, nothing is opened).
-pub fn find() -> Option<PathBuf> {
+fn find_dir() -> Option<PathBuf> {
     hidraw_dirs().into_iter().find(|d| {
         hid_ids(d).map_or(false, |(v, p)| is_spectrum_product(v, p))
             && fs::read(d.join("device/report_descriptor")).map_or(false, |b| is_lamparray(&b))
-    }).map(|d| Path::new("/dev").join(d.file_name().unwrap()))
+    })
+}
+
+/// hidraw node of the LampArray interface (sysfs only, nothing is opened).
+pub fn find() -> Option<PathBuf> {
+    find_dir().map(|d| Path::new("/dev").join(d.file_name().unwrap()))
+}
+
+/// USB product id of the device carrying the LampArray interface (sysfs only).
+pub(crate) fn product() -> Option<u16> {
+    hid_ids(&find_dir()?).map(|(_, p)| p)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

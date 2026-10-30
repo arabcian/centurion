@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include <QFile>
+#include "acpievents.h"
 #include "amdgputab.h"
 #include "fwattrtab.h"
 #include "hometab.h"
@@ -121,6 +122,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     if (lighting::present()) {
         lighting_ = new LightingTab;
         tabs_->addTab(lighting_, tr("Lighting"));
+        // Fn+Space cycles the brightness inside the EC; its WMI notification (d0 and e8, both per press) is the
+        // only sign of it. Coalesced, and late enough for the controller to report the new level.
+        auto *acpi = new AcpiEvents(this);
+        auto *fnSpace = new QTimer(this);
+        fnSpace->setSingleShot(true);
+        fnSpace->setInterval(300);
+        connect(fnSpace, &QTimer::timeout, lighting_, &LightingTab::refreshIfClean);
+        connect(acpi, &AcpiEvents::event, fnSpace, [fnSpace](const QString &, const QString &, uint type, uint) {
+            if (type == 0xd0 || type == 0xe8) fnSpace->start();
+        });
     } else if (lighting::zone4Present()) {
         // Older 4-zone RGB keyboard: its own, much smaller page under the same tab name.
         tabs_->addTab(new Zone4Tab, tr("Lighting"));

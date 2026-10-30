@@ -695,6 +695,17 @@ mod tests {
         assert!(FEATURES.iter().all(|f| f.lo >= 1), "no knob may allow 0");
     }
     #[test]
+    fn battery_info_fields() {
+        assert_eq!(wmi_text("\"SMP\""), Some("SMP".into()));
+        assert_eq!(wmi_text("{0x42, 0x59, 0x44, 0x00, 0x00}"), Some("BYD".into()));
+        assert_eq!(wmi_text("0x134fec8"), Some("20250312".into()), "integers print as decimal");
+        assert_eq!(wmi_text("\"\""), None);
+        assert_eq!(wmi_text("{0x01, 0x02}"), None, "control bytes are not text");
+        assert_eq!(mfg_date("20250312").as_deref(), Some("2025-03-12"));
+        assert_eq!(mfg_date("2025/03/12").as_deref(), Some("2025-03-12"));
+        for bad in ["20251312", "19990101", "2025031", "2025-03-1a", "20250300"] { assert_eq!(mfg_date(bad), None, "{bad}"); }
+    }
+    #[test]
     fn capability_list() {
         let c = parse_capdata00("{0x01, 0x00, 0x01, 0x03, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}").unwrap();
         assert_eq!(c, Cap { id: 0x0301_0001, flags: 7, default: 0 });
@@ -1000,6 +1011,53 @@ pub fn capabilities() -> Option<&'static [Cap]> {
         let _ = crate::secure_dir("/run/centurion").and_then(|_| crate::write_root_file(CAP_CACHE, Value::Array(j).to_string().as_bytes()));
         Some(list)
     }).as_deref()
+}
+
+// WMI data block C3A03776-… (\_SB.WMI4.WQAD on the 16AFR10H): three instances — battery maker,
+// hardware id, manufacture date (YYYYMMDD, from EC B1DA). Only the GUID prefix is known; the reply is
+// validated instead. Read-only (a data-block query); served by health-reader.
+const BATTERY_INFO_GUID: &str = "C3A03776";
+
+/// One instance as acpi_call prints it — "string", {buffer} or integer — as printable text.
+fn wmi_text(reply: &str) -> Option<String> {
+    let r = reply.trim();
+    let s = if let Some(q) = r.strip_prefix('"') {
+        q.strip_suffix('"')?.to_owned()
+    } else if r.starts_with('{') {
+        parse_buf(r).into_iter().take_while(|&b| b != 0).map(char::from).collect()
+    } else {
+        parse_u64(r)?.to_string()
+    };
+    let s = s.trim();
+    (!s.is_empty() && s.len() <= 64 && s.bytes().all(|b| (0x20..0x7F).contains(&b))).then(|| s.to_owned())
+}
+
+/// "YYYYMMDD" (separators allowed) → "YYYY-MM-DD"; anything else → None.
+fn mfg_date(s: &str) -> Option<String> {
+    let d: String = s.chars().filter(|c| !matches!(c, '-' | '/' | '.')).collect();
+    if d.len() != 8 || !d.bytes().all(|b| b.is_ascii_digit()) { return None; }
+    let (y, m, day): (u32, u32, u32) = (d[..4].parse().ok()?, d[4..6].parse().ok()?, d[6..].parse().ok()?);
+    ((2000..2100).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&day)).then(|| format!("{y:04}-{m:02}-{day:02}"))
+}
+
+/// {"ok", "maker", "hw_id", "mfg_raw", "mfg_date"} (unreadable fields null). Never loads a module:
+/// health-reader's polkit action is silent, so acpi_call must already be loaded by the rest of the app.
+pub fn battery_info() -> Value {
+    let (path, n) = match crate::fan_table::wmi_query_path(BATTERY_INFO_GUID) {
+        Ok(p) => p,
+        Err(e) => return json!({"ok": false, "unsupported": true, "error": format!("battery info WMI block: {e}")}),
+    };
+    if n < 3 { return json!({"ok": false, "unsupported": true, "error": format!("battery info WMI block has {n} instances, 3 expected")}); }
+    if !acpi_available() { return json!({"ok": false, "error": "acpi_call is not loaded"}); }
+    let mut f = Vec::new();
+    for i in 0..3 {
+        match acpi_raw_read(&format!("{path} 0x{i:x}")) {
+            Ok(r) => f.push(wmi_text(&r)),
+            Err(e) => return json!({"ok": false, "error": e}),
+        }
+    }
+    let date = f[2].as_deref().and_then(mfg_date);
+    json!({"ok": true, "maker": f[0], "hw_id": f[1], "mfg_raw": f[2], "mfg_date": date})
 }
 
 /// Listed, valid and carrying every bit of `need` (CAP_GET / CAP_SET).

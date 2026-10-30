@@ -1,6 +1,7 @@
 #pragma once
 // Health → Battery: time left at the current draw, battery drain per scene, and the capacity
-// (wear) history with its chart and the wear forecast (tune-profile-helper "battery_trend").
+// (wear) history with its chart and the wear forecast (tune-profile-helper "battery_trend"), and the
+// battery's maker / manufacture date / age where the firmware reports them (health-reader "battery_info").
 //
 // The record is kept by the GUI itself, as the user, in ~/.local/state/centurion/battery.json:
 //   "scenes":   {name: {"sec", "wh"}}   time spent on battery and energy taken from it, per active scene
@@ -57,12 +58,14 @@ private:
     void refreshNow();
     void refreshTables();
     void refreshForecast();
+    void refreshInfo();
     static QString file();
     static QString chargeFile();
 
     QJsonObject data_;
     QTimer *timer_, *nowTimer_;
-    QLabel *now_, *wear_, *forecast_, *advice_;
+    QLabel *now_, *wear_, *forecast_, *advice_, *batInfo_;
+    bool infoAsked_ = false;
     BarChart *scenesChart_;
     LineChart *healthChart_;
     QPushButton *longLife_;

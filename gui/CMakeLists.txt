@@ -75,6 +75,7 @@ add_executable(centurion
     src/driftwatch.cpp   src/driftwatch.h
     src/smartwatch.cpp   src/smartwatch.h
     src/lidwatch.cpp     src/lidwatch.h
+    src/acpievents.cpp   src/acpievents.h
     src/smartpage.cpp    src/smartpage.h
     src/sleeppage.cpp    src/sleeppage.h
     src/sleepadvice.cpp  src/sleepadvice.h

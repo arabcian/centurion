@@ -21,6 +21,8 @@
 //!   {"op": "la_probe"}                      -> {"ok", "present", "node", "lamps", "min_update_us",
 //!                                               "map": [[id, x_um, y_um, z_um, purposes, key_usage], ..]}
 //!       LampArray interface (usage page 0x59, 048D:C193 on the 16AFR10H)
+//!   {"op": "la_restore"}                    -> {"ok", "present"}   autonomous mode back on (the stored effect),
+//!       for a stream that died by SIGKILL; refused while a stream is running
 //! `lighting-helper stream` (argument, no JSON request): host-driven frames on that interface, see `stream`.
 //! Effect: {"type": 1..13, "speed": 0..3, "direction": 0..4, "clockwise": 0..2,
 //!          "color_mode": 0..2, "colors": ["rrggbb", ..], "keys": [keycode, ..]}
@@ -174,6 +176,7 @@ pub fn handle(req: &Value) -> Value {
     let op = req.get("op").and_then(Value::as_str).unwrap_or("");
     if matches!(op, "z4_probe" | "z4_set") { return handle_zone4(op, req); }
     if op == "la_probe" { return la_probe(); }
+    if op == "la_restore" { return la_restore(); }
     if !matches!(op, "probe" | "state" | "effects" | "set" | "write" | "reset") {
         return json!({"ok": false, "error": format!("unknown op '{op}'")});
     }
@@ -242,6 +245,22 @@ fn la_probe() -> Value {
         Ok(l) => json!({"ok": true, "present": true, "node": a.path().display().to_string(), "lamps": a.count(),
                         "min_update_us": a.min_update_us(),
                         "map": l.iter().map(|l| json!([l.id, l.x, l.y, l.z, l.purposes, l.key])).collect::<Vec<_>>()}),
+        Err(e) => la_err(e),
+    }
+}
+
+/// Autonomous mode back on. Takes the stream's lock first, so it never cuts into a live stream.
+fn la_restore() -> Value {
+    let a = match LampArray::open() {
+        Ok(a) => a,
+        Err(sp::Error::NotFound) => return json!({"ok": true, "present": false}),
+        Err(e) => return la_err(e),
+    };
+    if unsafe { libc::flock(a.raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return json!({"ok": false, "error": "a lighting stream is running"});
+    }
+    match a.set_autonomous(true) {
+        Ok(()) => json!({"ok": true, "present": true}),
         Err(e) => la_err(e),
     }
 }
