@@ -176,7 +176,7 @@ impl Default for Config {
     fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new() } }
 }
 
-fn basename(s: &str) -> &str { s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s) }
+fn basename(s: &str) -> &str { s.rsplit(['/', '\\']).next().unwrap_or(s) }
 
 fn valid_entry(s: &str) -> bool { !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control) }
 
@@ -774,7 +774,7 @@ fn log_gid() -> Option<u32> {
 fn append_log(file: &str, max: u64, text: &str) {
     use std::os::unix::fs::MetadataExt;
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o755).create(LOG_DIR);
-    if std::fs::metadata(file).map_or(false, |m| m.len() > max) { let _ = std::fs::rename(file, format!("{file}.1")); }
+    if std::fs::metadata(file).is_ok_and(|m| m.len() > max) { let _ = std::fs::rename(file, format!("{file}.1")); }
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(file) {
         let gid = log_gid();
@@ -797,12 +797,12 @@ impl Guard {
     fn owner(&mut self, inode: u32) -> Option<i32> {
         let has = |p: &i32| socket_inodes(*p).any(|i| i == inode);
         if let Some(&p) = self.wine.iter().find(|p| has(p)) {
-            if exe_of(p).map_or(false, |e| is_wine_loader(&e)) { return Some(p); }  // pid not recycled
+            if exe_of(p).is_some_and(|e| is_wine_loader(&e)) { return Some(p); }  // pid not recycled
         }
         // No process was created since the last scan (and it is fresh): the set is complete.
         let np = newest_pid();
         if np == self.last_pid && !np.is_empty() && self.scanned.elapsed() < Duration::from_millis(250) { return None; }
-        let fresh: HashSet<i32> = pids().filter(|&p| exe_of(p).map_or(false, |e| is_wine_loader(&e))).collect();
+        let fresh: HashSet<i32> = pids().filter(|&p| exe_of(p).is_some_and(|e| is_wine_loader(&e))).collect();
         let old = std::mem::replace(&mut self.wine, fresh);
         self.scanned = Instant::now();
         self.last_pid = np;
@@ -1000,7 +1000,7 @@ impl Guard {
             let proto = if e.f.proto == TCP { "tcp" } else { "udp" };
             let (dir, remote, rport, lport) = if e.inbound { ("in", e.f.src, e.f.sport, e.f.dport) } else { ("out", e.f.dst, e.f.dport, e.f.sport) };
             let key = format!("{dir}|{proto}|{remote}|{}|{exe}|{:?}|{}", if e.inbound { lport } else { rport }, e.uid, e.host);
-            if self.seen.get(&key).map_or(false, |t| t.elapsed() < Duration::from_secs(60)) { continue; }
+            if self.seen.get(&key).is_some_and(|t| t.elapsed() < Duration::from_secs(60)) { continue; }
             self.seen.insert(key, Instant::now());
             out += &json!({"ts": e.ts, "dir": dir, "proto": proto, "remote": remote.to_string(), "rport": rport, "lport": lport,
                            "pid": pid, "uid": e.uid, "exe": exe, "host": e.host, "blocked": e.blocked, "open": e.open}).to_string();
@@ -1012,7 +1012,7 @@ impl Guard {
     fn log(&mut self, f: &Flow, pkt: &[u8], pid: i32, ident: &str, killed: bool) {
         let proto = if f.proto == TCP { "tcp" } else { "udp" };
         let key = format!("{ident}|{proto}|{}|{}", f.dst, f.dport);
-        if self.logged.get(&key).map_or(false, |t| t.elapsed() < Duration::from_secs(60)) { return; }
+        if self.logged.get(&key).is_some_and(|t| t.elapsed() < Duration::from_secs(60)) { return; }
         if self.logged.len() > 4096 { self.logged.clear(); }
         self.logged.insert(key, Instant::now());
         let host = if f.proto == UDP && f.dport == 53 { pkt.get(f.l4 + 8..).and_then(dns_qname) } else { None };
@@ -1164,7 +1164,7 @@ pub fn run_daemon() -> i32 {
         }
         if fds[2].revents != 0 { g.acct_read(); }
         if !g.pending.is_empty() && g.flushed.elapsed() >= FLUSH_GAP { g.flush(); }
-        if g.acct.as_ref().and_then(|a| a.dirty).map_or(false, |d| d.elapsed() >= TRAFFIC_FLUSH) { g.acct_save(); }
+        if g.acct.as_ref().and_then(|a| a.dirty).is_some_and(|d| d.elapsed() >= TRAFFIC_FLUSH) { g.acct_save(); }
     }
     g.acct_save();
     nft_remove();

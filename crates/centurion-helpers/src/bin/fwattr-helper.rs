@@ -87,8 +87,8 @@ fn check_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Result<Target, 
     // The resolved file must still be <...>/attributes/<attr>/current_value
     // of a firmware-attributes class device, not merely "somewhere in /sys".
     let Some(real) = canonical_in_sysfs(p)
-        .filter(|r| r.file_name().map_or(false, |n| n == "current_value"))
-        .filter(|r| r.parent().and_then(|d| d.parent()).and_then(|d| d.file_name()).map_or(false, |n| n == "attributes"))
+        .filter(|r| r.file_name().is_some_and(|n| n == "current_value"))
+        .filter(|r| r.parent().and_then(|d| d.parent()).and_then(|d| d.file_name()).is_some_and(|n| n == "attributes"))
         .filter(|r| r.components().any(|c| c.as_os_str() == "firmware-attributes")) else {
         return err("path resolves outside sysfs".into());
     };

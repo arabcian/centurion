@@ -102,7 +102,7 @@ fn ryzen_profiles_dir() -> PathBuf { xdg_config().join("ryzen-curve-optimizer/pr
 fn presets_dir() -> PathBuf { config_dir().join("tune-presets") }
 
 fn valid_name(n: &str) -> bool {
-    n.chars().next().map_or(false, |c| c.is_alphanumeric()) && n.len() <= 64
+    n.chars().next().is_some_and(|c| c.is_alphanumeric()) && n.len() <= 64
         && n.chars().all(|c| c.is_alphanumeric() || " _-.".contains(c)) && !n.contains("..")
 }
 
@@ -449,7 +449,7 @@ fn is_wrapper(pid: i32, comm: &str) -> bool {
     WRAPPER_COMMS.contains(&comm)
         || std::fs::read_link(format!("/proc/{pid}/exe")).ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .map_or(false, |n| SHELL_EXES.contains(&n.as_str()))
+            .is_some_and(|n| SHELL_EXES.contains(&n.as_str()))
         || is_lutris_wrapper(comm, &std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default())
 }
 
@@ -516,7 +516,7 @@ fn enter_game_scene(scene: &str, cpu: bool, gpu: bool) {
 }
 
 fn scenes_paused() -> bool {
-    read_json(&config_dir().join("scenes.json")).map_or(false, |v| v["paused"] == true)
+    read_json(&config_dir().join("scenes.json")).is_some_and(|v| v["paused"] == true)
 }
 
 fn leave_game_scene() {
@@ -589,7 +589,7 @@ fn nvidia_usable() -> bool {
         rd(&p, "vendor") == "0x10de" && rd(&p, "class").starts_with("0x03") && p.join("driver").exists()
             && rd(&p, "power/runtime_status") != "error"
     });
-    on_bus && std::fs::read_dir("/proc/driver/nvidia/gpus").map_or(false, |mut d| d.next().is_some())
+    on_bus && std::fs::read_dir("/proc/driver/nvidia/gpus").is_ok_and(|mut d| d.next().is_some())
 }
 const GPU_OFF: &str = "skipped (NVIDIA dGPU is off)";
 
@@ -753,7 +753,7 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
     }
 
     // 5a. Custom-mode fan curve: only while the Custom profile is active (the EC follows the table there only).
-    if let Some(lv) = s["fan_table"].as_array().filter(|a| a.len() == 10 && a.iter().all(|x| x.as_u64().map_or(false, |n| (1..=10).contains(&n)))) {
+    if let Some(lv) = s["fan_table"].as_array().filter(|a| a.len() == 10 && a.iter().all(|x| x.as_u64().is_some_and(|n| (1..=10).contains(&n)))) {
         if current_platform_profile().as_deref() != Some("custom") {
             line("Fan curve", Ok("skipped (not the Custom power profile)".into()));
         } else {
@@ -1153,8 +1153,8 @@ fn wrap(args: &[String]) -> i32 {
 fn start_lock_held() -> bool {
     use std::os::unix::io::AsRawFd;
     let Ok(f) = std::fs::OpenOptions::new().write(true).open(runtime_dir().join("gamemode-start.lock")) else { return false };
-    let busy = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0;
-    busy  // our own lock (if taken) is released when `f` drops
+    
+    (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0)  // our own lock (if taken) is released when `f` drops
 }
 
 fn wait_for_start(preset: &Value) {
@@ -1166,7 +1166,7 @@ fn wait_for_start(preset: &Value) {
         let held = start_lock_held();
         // tune-helper's world-readable state file: no helper process (full sysfs describe) every 200 ms while the game starts.
         let active = !held && read_json(Path::new("/run/centurion/tune/state.json"))
-            .map_or(false, |st| st["source"] == "game" && centurion_helpers::live_game_sessions(&st) > 0);
+            .is_some_and(|st| st["source"] == "game" && centurion_helpers::live_game_sessions(&st) > 0);
         let smt = !smt_off || read_json_str("/sys/devices/system/cpu/smt/active").as_deref() == Some("0");
         if active && smt { break; }
         if active {

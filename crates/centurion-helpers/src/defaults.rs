@@ -43,11 +43,11 @@ pub fn storable(t: &tune::Tunable, v: &str) -> bool { tune::validate(t, &json!(v
 pub fn capture() -> Result<Value, String> {
     let (id, kr) = (boot_id(), kernel());
     let old = read_json(DEFAULTS_FILE);
-    if old.as_ref().map_or(false, |o| o["boot_id"] == json!(id)) {
+    if old.as_ref().is_some_and(|o| o["boot_id"] == json!(id)) {
         return Ok(json!({"captured": false, "reason": "already captured this boot"}));
     }
     let clean = !Path::new(TUNE_STATE).exists() && !Path::new("/run/tlp").exists();
-    if !clean && old.as_ref().map_or(false, |o| o["clean"] == json!(true) && o["kernel"] == json!(kr)) {
+    if !clean && old.as_ref().is_some_and(|o| o["clean"] == json!(true) && o["kernel"] == json!(kr)) {
         return Ok(json!({"captured": false, "reason": "keeping the clean snapshot of this kernel"}));
     }
     let mut values = Map::new();
@@ -72,7 +72,7 @@ pub fn parse_defaults(v: &Value) -> Option<Defaults> {
     // Snapshots written before capture() skipped the radio switches can hold rf.wlan = 0 (captured
     // before the Wi-Fi was unblocked): ignored, so nothing anchors at or returns to "radio off".
     let values = v["values"].as_object()?.iter()
-        .filter(|(k, _)| !tune::find(k).map_or(false, tune::user_switch))
+        .filter(|(k, _)| !tune::find(k).is_some_and(tune::user_switch))
         .filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_owned()))).collect();
     Some(Defaults { values, clean: v["clean"].as_bool().unwrap_or(false), kernel: v["kernel"].as_str().unwrap_or("").to_owned() })
 }

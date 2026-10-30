@@ -795,7 +795,7 @@ pub fn policies() -> Vec<PathBuf> {
         return v;
     }
     let v: Vec<PathBuf> = numbered(&Path::new(CPU_DIR).join("cpufreq"), "policy").into_iter().map(|x| x.1)
-        .filter(|p| read(&p.join("affected_cpus")).map_or(false, |s| !s.trim().is_empty()))
+        .filter(|p| read(&p.join("affected_cpus")).is_some_and(|s| !s.trim().is_empty()))
         .collect();
     POLICIES.with(|t| *t.borrow_mut() = Some((std::time::Instant::now(), v.clone())));
     v
@@ -877,7 +877,7 @@ pub fn cstate_names() -> Vec<String> {
 /// `cpu.cstate_max` = `value` leaves only the POLL pseudo-state (no real idle state: every idle CPU
 /// spins). Calibration and autotune never test or pick it; it stays selectable by hand.
 pub fn poll_only_cstate<S: AsRef<str>>(names: &[S], value: &str) -> bool {
-    value.trim().parse::<usize>().map_or(false, |i| i < names.len() && names[..=i].iter().all(|n| n.as_ref().eq_ignore_ascii_case("POLL")))
+    value.trim().parse::<usize>().is_ok_and(|i| i < names.len() && names[..=i].iter().all(|n| n.as_ref().eq_ignore_ascii_case("POLL")))
 }
 
 pub fn debugfs_mounted() -> bool {
@@ -1222,7 +1222,7 @@ fn powerd_service(action: &str) -> bool {
     } else if Path::new("/run/openrc").is_dir() {
         (bin(&["/sbin/rc-service", "/usr/sbin/rc-service", "/bin/rc-service", "/usr/bin/rc-service"]), ["nvidia-powerd", action])
     } else { return false };
-    bin.and_then(|b| run_tool(&b, &args, std::time::Duration::from_secs(15))).map_or(false, |(ok, _)| ok)
+    bin.and_then(|b| run_tool(&b, &args, std::time::Duration::from_secs(15))).is_some_and(|(ok, _)| ok)
 }
 
 /// `systemctl <action> <name>.service` / `rc-service <name> <action>` (name must be a plain daemon name).
@@ -1232,9 +1232,9 @@ pub fn service_ctl(name: &str, action: &str) -> bool {
     let unit = format!("{name}.service");
     let t = std::time::Duration::from_secs(15);
     if Path::new("/run/systemd/system").is_dir() {
-        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[action, &unit], t)).map_or(false, |(ok, _)| ok)
+        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[action, &unit], t)).is_some_and(|(ok, _)| ok)
     } else if Path::new("/run/openrc").is_dir() {
-        bin(&["/sbin/rc-service", "/usr/sbin/rc-service", "/bin/rc-service", "/usr/bin/rc-service"]).and_then(|b| run_tool(&b, &[name, action], t)).map_or(false, |(ok, _)| ok)
+        bin(&["/sbin/rc-service", "/usr/sbin/rc-service", "/bin/rc-service", "/usr/bin/rc-service"]).and_then(|b| run_tool(&b, &[name, action], t)).is_some_and(|(ok, _)| ok)
     } else { false }
 }
 
@@ -1246,12 +1246,12 @@ pub fn service_boot(name: &str, on: bool) -> bool {
     let unit = format!("{name}.service");
     let t = std::time::Duration::from_secs(15);
     if Path::new("/run/systemd/system").is_dir() {
-        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[if on { "enable" } else { "disable" }, &unit], t)).map_or(false, |(ok, _)| ok)
+        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[if on { "enable" } else { "disable" }, &unit], t)).is_some_and(|(ok, _)| ok)
     } else if Path::new("/run/openrc").is_dir() {
         let linked = Path::new("/etc/runlevels/default").join(name).exists();
         if linked == on { return true; }
         bin(&["/sbin/rc-update", "/usr/sbin/rc-update", "/bin/rc-update", "/usr/bin/rc-update"])
-            .and_then(|b| run_tool(&b, &[if on { "add" } else { "del" }, name, "default"], t)).map_or(false, |(ok, _)| ok)
+            .and_then(|b| run_tool(&b, &[if on { "add" } else { "del" }, name, "default"], t)).is_some_and(|(ok, _)| ok)
     } else { false }
 }
 
@@ -1266,7 +1266,7 @@ fn system_stopping() -> bool {
     if Path::new("/run/systemd/system").is_dir() {
         let bin = ["/usr/bin/systemctl", "/bin/systemctl"].iter().map(PathBuf::from).find(|p| crate::trusted_path(p));
         return bin.and_then(|b| run_tool(&b, &["is-system-running"], std::time::Duration::from_secs(5)))
-            .map_or(false, |(_, out)| out.trim() == "stopping");
+            .is_some_and(|(_, out)| out.trim() == "stopping");
     }
     false
 }
@@ -1335,7 +1335,7 @@ fn role_matching(groups: &[Ccx], set: &[usize]) -> Option<String> {
         if let Some(g) = groups.iter().find(|g| g.cpus == set) { return Some(format!("ccd{}", g.index)); }
     }
     for role in ["pcore", "ecore"] {
-        if resolve_ccd(groups, role).map_or(false, |g| g.cpus == set) { return Some(role.into()); }
+        if resolve_ccd(groups, role).is_some_and(|g| g.cpus == set) { return Some(role.into()); }
     }
     groups.iter().find(|g| g.cpus == set).map(|g| format!("ccd{}", g.index))
 }
@@ -1355,7 +1355,7 @@ fn gpu_tree() -> Vec<PathBuf> {
         .filter_map(|e| std::fs::canonicalize(e.path()).ok())
         .filter(|p| p.starts_with("/sys/devices"))
         .collect();
-    let display: Vec<&PathBuf> = devs.iter().filter(|d| read(&d.join("class")).map_or(false, |c| c.starts_with("0x03"))).collect();
+    let display: Vec<&PathBuf> = devs.iter().filter(|d| read(&d.join("class")).is_some_and(|c| c.starts_with("0x03"))).collect();
     let slot = |d: &Path| d.file_name().map(|n| n.to_string_lossy().rsplit_once('.').map_or(String::new(), |x| x.0.to_owned()));
     let slots: Vec<Option<String>> = display.iter().map(|d| slot(d)).collect();
     devs.iter()
@@ -1368,7 +1368,7 @@ fn gpu_tree() -> Vec<PathBuf> {
 fn pci_unsafe_to_touch(file: &Path, tree: &[PathBuf], need_active: bool) -> bool {
     let Some(mut dev) = file.parent() else { return true };
     // <dev>/link/l1_aspm and <dev>/power/control belong to <dev>; <dev>/config is <dev>'s own.
-    if dev.file_name().map_or(false, |n| n == "link" || n == "power") { dev = dev.parent().unwrap_or(dev); }
+    if dev.file_name().is_some_and(|n| n == "link" || n == "power") { dev = dev.parent().unwrap_or(dev); }
     if tree.iter().any(|t| t == dev) { return true; }
     need_active && !matches!(read(&dev.join("power/runtime_status")).as_deref(), None | Some("active"))
 }
@@ -1389,8 +1389,8 @@ fn pci_config_files_writable() -> Vec<PathBuf> {
 }
 
 fn is_pci_config(p: &Path) -> bool {
-    p.file_name().map_or(false, |n| n == "config") && p.starts_with("/sys/devices")
-        && p.parent().map_or(false, |d| d.join("vendor").is_file() && d.join("class").is_file())
+    p.file_name().is_some_and(|n| n == "config") && p.starts_with("/sys/devices")
+        && p.parent().is_some_and(|d| d.join("vendor").is_file() && d.join("class").is_file())
 }
 
 /// A runtime-suspended function (D3hot/D3cold: the dGPU, its audio function,
@@ -1470,7 +1470,7 @@ fn rapl_files(name: &str) -> Vec<PathBuf> {
     for e in std::fs::read_dir(POWERCAP).into_iter().flatten().flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
         let top = (n.starts_with("intel-rapl:") || n.starts_with("intel-rapl-mmio:")) && n.matches(':').count() == 1;
-        if !top || !read(&e.path().join("name")).map_or(false, |x| x.starts_with("package")) { continue; }
+        if !top || !read(&e.path().join("name")).is_some_and(|x| x.starts_with("package")) { continue; }
         for i in 0..8 {
             if read(&e.path().join(format!("constraint_{i}_name"))).as_deref() == Some(name) {
                 let f = e.path().join(format!("constraint_{i}_power_limit_uw"));
@@ -1518,7 +1518,7 @@ pub fn kmod_available(module: &str, subdir: &str) -> bool {
     let rel = unsafe { std::ffi::CStr::from_ptr(u.release.as_ptr()) }.to_string_lossy().into_owned();
     let base = Path::new("/lib/modules").join(rel);
     let ko = format!("{module}.ko");
-    if std::fs::read_to_string(base.join("modules.builtin")).map_or(false, |b| b.lines().any(|l| l.ends_with(&format!("/{ko}")))) {
+    if std::fs::read_to_string(base.join("modules.builtin")).is_ok_and(|b| b.lines().any(|l| l.ends_with(&format!("/{ko}")))) {
         return true;
     }
     std::fs::read_dir(base.join("kernel").join(subdir)).into_iter().flatten().flatten()
@@ -1527,7 +1527,7 @@ pub fn kmod_available(module: &str, subdir: &str) -> bool {
 
 /// intel_pstate/no_turbo is the inverse of "boost".
 /// no_turbo speaks the opposite of "boost", rfkill `soft` the opposite of "radio on".
-fn inverted(f: &Path) -> bool { f.file_name().map_or(false, |n| n == "no_turbo" || n == "soft") }
+fn inverted(f: &Path) -> bool { f.file_name().is_some_and(|n| n == "no_turbo" || n == "soft") }
 
 fn irq_files() -> Vec<PathBuf> {
     numbered(Path::new("/proc/irq"), "").into_iter()
@@ -1538,7 +1538,7 @@ fn irq_files() -> Vec<PathBuf> {
 
 fn is_irq_file(p: &Path) -> bool {
     p.to_str().and_then(|s| s.strip_prefix("/proc/irq/")).and_then(|r| r.strip_suffix("/smp_affinity_list"))
-        .map_or(false, |n| !n.is_empty() && n.len() < 8 && n.bytes().all(|b| b.is_ascii_digit()))
+        .is_some_and(|n| !n.is_empty() && n.len() < 8 && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Per-file refusals do not fail the knob: kernel-managed IRQs return EIO,
@@ -1673,7 +1673,7 @@ pub fn wireless_lock() -> Option<Vec<PathBuf>> { wireless_pm_locked().then(wirel
 /// Under the master switch the wireless devices are not the runtime-PM rows' business.
 fn without_wireless(v: Vec<PathBuf>) -> Vec<PathBuf> {
     let Some(w) = wireless_lock() else { return v };
-    v.into_iter().filter(|f| !f.parent().and_then(|p| p.parent()).map_or(false, |d| w.iter().any(|x| x == d))).collect()
+    v.into_iter().filter(|f| !f.parent().and_then(|p| p.parent()).is_some_and(|d| w.iter().any(|x| x == d))).collect()
 }
 
 /// Forces Wi-Fi and Bluetooth power management off while the master switch is on:
@@ -1720,7 +1720,7 @@ fn eth_ifaces() -> Vec<PathBuf> {
         .filter(|p| p.join("device").exists() && !p.join("wireless").is_dir() && !p.join("phy80211").exists())
         .filter(|p| read(&p.join("type")).as_deref() == Some("1"))
         .filter(|p| wifi_ifname(p).is_some())
-        .filter(|p| std::fs::canonicalize(p).map_or(false, |c| !c.starts_with("/sys/devices/virtual")))
+        .filter(|p| std::fs::canonicalize(p).is_ok_and(|c| !c.starts_with("/sys/devices/virtual")))
         .collect();
     v.sort();
     v
@@ -1804,7 +1804,7 @@ fn hdparm() -> Option<PathBuf> {
 
 /// "sda".."sdzz": the only disk names any ATA target accepts.
 fn ata_disk_name_ok(n: &str) -> bool {
-    n.strip_prefix("sd").map_or(false, |r| (1..=3).contains(&r.len()) && r.bytes().all(|b| b.is_ascii_lowercase()))
+    n.strip_prefix("sd").is_some_and(|r| (1..=3).contains(&r.len()) && r.bytes().all(|b| b.is_ascii_lowercase()))
 }
 
 /// The udev database entry of a block device (`E:KEY=value` lines), if readable.
@@ -1822,9 +1822,9 @@ fn ata_disks() -> Vec<(String, PathBuf)> {
             let real = canonical_in_sysfs(&e.path())?;
             let behind_ata = real.components().any(|c| {
                 let c = c.as_os_str().to_string_lossy();
-                c.strip_prefix("ata").map_or(false, |d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+                c.strip_prefix("ata").is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
             });
-            behind_ata.then(|| (n, real))
+            behind_ata.then_some((n, real))
         })
         .collect();
     v.sort();
@@ -1885,7 +1885,7 @@ fn ahci_port_files() -> Vec<PathBuf> {
         if !dev.starts_with("/sys/devices") { continue; }
         for p in std::fs::read_dir(&dev).into_iter().flatten().flatten() {
             let n = p.file_name().to_string_lossy().into_owned();
-            if !n.strip_prefix("ata").map_or(false, |d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) { continue; }
+            if !n.strip_prefix("ata").is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) { continue; }
             if let Some(c) = canonical_in_sysfs(&p.path().join("power/control")) { if c.is_file() { v.push(c); } }
         }
     }
@@ -1946,7 +1946,7 @@ fn scx_pids() -> Vec<i32> {
     let bins: Vec<PathBuf> = SCX_NAMES.iter().filter_map(|n| scx_bin(n)).filter_map(|p| std::fs::canonicalize(p).ok()).collect();
     std::fs::read_dir("/proc").into_iter().flatten().flatten()
         .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
-        .filter(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).map_or(false, |x| bins.contains(&x)))
+        .filter(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|x| bins.contains(&x)))
         .collect()
 }
 
@@ -2172,7 +2172,7 @@ fn file_usable(p: &str) -> bool {
         "/proc/sys/vm/dirty_ratio" => read(Path::new("/proc/sys/vm/dirty_bytes")).as_deref() == Some("0"),
         "/proc/sys/vm/dirty_background_ratio" => read(Path::new("/proc/sys/vm/dirty_background_bytes")).as_deref() == Some("0"),
         // Present but empty (and not writable) where EAS cannot run.
-        "/proc/sys/kernel/sched_energy_aware" => read(Path::new(p)).map_or(false, |v| !v.is_empty()),
+        "/proc/sys/kernel/sched_energy_aware" => read(Path::new(p)).is_some_and(|v| !v.is_empty()),
         // BORE kernels (CachyOS) export base_slice_ns read-only and derive it from min_base_slice_ns:
         // a row that can only fail must not be offered.
         "/sys/kernel/debug/sched/base_slice_ns" => {
@@ -2356,7 +2356,7 @@ pub fn options(t: &Tunable) -> Vec<(String, String)> {
         (Options::Special, Target::MinFreq) | (Options::Special, Target::FloorFreq) => {
             let mut v = Vec::new();
             // amd-pstate only; intel_pstate has no such file.
-            if policies().first().map_or(false, |p| p.join("amd_pstate_lowest_nonlinear_freq").is_file()) {
+            if policies().first().is_some_and(|p| p.join("amd_pstate_lowest_nonlinear_freq").is_file()) {
                 v.push(("lowest_nonlinear".into(), "lowest_nonlinear (efficient floor)".into()));
             }
             v.push(("cpuinfo_min".into(), "cpuinfo_min (hardware minimum)".into()));
@@ -2472,7 +2472,7 @@ fn current_with(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
             if let Some((role, _, _)) = parked_record() { return Some(canonical_ccd(&role)); }
             let online = online_cpus();
             let off: Vec<usize> = present_cpus().into_iter().filter(|c| !online.contains(c)).collect();
-            if !off.is_empty() && hybrid().map_or(false, |h| h.ecores == off) { return Some("ecore".into()); }
+            if !off.is_empty() && hybrid().is_some_and(|h| h.ecores == off) { return Some("ecore".into()); }
             return Some(if off.is_empty() { "none".into() } else { format!("offline {}", fmt_cpu_list(&off)) });
         }
         Target::SchedExt => return scx_current(),
@@ -2484,7 +2484,7 @@ fn current_with(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
             return Some(if vals.all(|v| v == first) { first } else { "mixed".into() });
         }
         Target::PciAspm => {
-            let on = |name: &str| fs.iter().filter(|f| f.file_name().map_or(false, |n| n == name))
+            let on = |name: &str| fs.iter().filter(|f| f.file_name().is_some_and(|n| n == name))
                 .all(|f| read(f).as_deref() == Some("1"));
             return Some(if on("l1_aspm") && on("l1_1_aspm") && on("l1_2_aspm") { "l1ss".into() }
                         else if on("l1_aspm") { "l1".into() } else { "stock (per driver)".into() });
@@ -2593,7 +2593,7 @@ pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(Path
             // l1: only the L1 switch; l1ss: L1 plus both substates. Enabling a
             // substate implies L1 in the kernel, so the order is only cosmetic.
             let want: &[&str] = if value == "l1ss" { ASPM_FILES } else { &["l1_aspm"] };
-            fs.into_iter().filter(|f| f.file_name().and_then(|n| n.to_str()).map_or(false, |n| want.contains(&n)))
+            fs.into_iter().filter(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| want.contains(&n)))
                 .map(|f| (f, "1".to_owned())).collect()
         }
         Target::SchedExt => vec![(fs[0].clone(), value.to_owned())],
@@ -2616,7 +2616,7 @@ pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(Path
             // no_turbo speaks the opposite of "boost".
             let value = if inverted(&f) { if value == "1" { "0" } else { "1" } } else { value };
             // Match the file's own vocabulary (module params report Y/N).
-            let yn = read(&f).map_or(false, |r| r == "Y" || r == "N");
+            let yn = read(&f).is_some_and(|r| r == "Y" || r == "N");
             let w = match (yn, value) { (true, "1") => "Y", (true, _) => "N", (false, v) => v };
             (f, w.to_owned())
         }).collect(),
@@ -2662,7 +2662,7 @@ fn is_hotplug_file(f: &Path) -> bool {
     let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let parent = f.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
     match name {
-        "online" => parent.strip_prefix("cpu").map_or(false, |n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+        "online" => parent.strip_prefix("cpu").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
         "control" => parent == "smt",
         _ => false,
     }
@@ -2697,7 +2697,7 @@ fn write_checked_inner(f: &Path, data: &str) -> Result<(), String> {
         return sysfs_write(f, data.as_bytes()).map_err(|e| format!("{s}: {e}"));
     }
     let Some(real) = canonical_in_sysfs(f) else { return Err(format!("{s}: refused (outside the allowlist)")) };
-    if real.file_name().map_or(false, |n| n == "config") {
+    if real.file_name().is_some_and(|n| n == "config") {
         if !is_pci_config(&real) { return Err(format!("{s}: refused (not a PCI config file)")); }
         // Never write config space of a GPU, its slot siblings or the bridges above it,
         // nor of a sleeping device: the write would wake it through ACPI (D state on a
@@ -2708,11 +2708,11 @@ fn write_checked_inner(f: &Path, data: &str) -> Result<(), String> {
     }
     if is_pci_link_or_power(&real) {
         // power/control 'on' is meant to wake a device: only the GPU tree is off limits there.
-        let is_link = real.parent().and_then(|p| p.file_name()).map_or(false, |n| n == "link");
+        let is_link = real.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "link");
         if pci_unsafe_to_touch(&real, &gpu_tree(), is_link) { return Err(format!("{s}: skipped (GPU tree or suspended device)")); }
         return write_with_timeout(real, data.to_owned()).map_err(|e| format!("{s}: {e}"));
     }
-    if real.file_name().map_or(false, |n| n == "amd_x3d_mode") {
+    if real.file_name().is_some_and(|n| n == "amd_x3d_mode") {
         return write_with_timeout(real, data.to_owned()).map_err(|e| format!("{s}: {e}"));
     }
     sysfs_write(&real, data.as_bytes()).map_err(|e| format!("{s}: {e}"))
@@ -2740,7 +2740,7 @@ fn pci_latency_write_timeout(cfg: &Path, hex: &str) -> std::io::Result<()> {
     loop {
         let mut st = 0;
         let r = unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
-        if r == pid { return if libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0 { Ok(()) } else { Err(std::io::Error::new(std::io::ErrorKind::Other, "config write failed")) }; }
+        if r == pid { return if libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0 { Ok(()) } else { Err(std::io::Error::other("config write failed")) }; }
         if r < 0 { return Err(std::io::Error::last_os_error()); }
         if std::time::Instant::now() >= end { unsafe { libc::kill(pid, libc::SIGKILL) }; return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "config write timed out (device not responding)")); }
         std::thread::sleep(std::time::Duration::from_millis(20));

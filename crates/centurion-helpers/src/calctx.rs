@@ -152,7 +152,7 @@ pub fn scene_file_for(user: &str, name: &str) -> Result<PathBuf, String> {
     if !valid_scene_name(name) { return Err(format!("invalid scene name '{name}'")); }
     let home = home_of(user).ok_or_else(|| format!("no home directory for {user}"))?;
     let p = Path::new(&home).join(".config/centurion/scenes").join(format!("{name}.json"));
-    if !std::fs::symlink_metadata(&p).map_or(false, |m| m.is_file()) {
+    if !std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
         return Err(format!("scene \"{name}\" not found or not a regular file ({})", p.display()));
     }
     Ok(p)
@@ -211,7 +211,7 @@ pub const BOOT_SERVICE: &str = "centurion-calibrate-boot";
 pub fn boot_calibration_pending() -> bool {
     if Path::new(BOOT_FLAG).exists() { return true; }
     crate::read_root_file(BOOT_TAKEN, BOOT_FLAG_MAX).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .map_or(false, |v| v["boot_id"].as_str() == Some(crate::bootguard::boot_id().as_str()))
+        .is_some_and(|v| v["boot_id"].as_str() == Some(crate::bootguard::boot_id().as_str()))
 }
 
 /// Schedules (or cancels) a calibration at the next boot. `user`: whose scene `scene` is.

@@ -336,7 +336,7 @@ mod aod_range_tests {
         for &(name, _, lo, hi) in AOD_FIELDS {
             assert!(lo <= hi, "{name}");
             if let Some(&(_, _, _, w)) = UMC_FIELDS.iter().find(|f| f.0 == name) {
-                assert!(u32::from(hi) <= (1u32 << w) - 1, "{name}: max {hi} does not fit a {w}-bit field");
+                assert!(u32::from(hi) < (1u32 << w), "{name}: max {hi} does not fit a {w}-bit field");
             }
         }
     }
@@ -456,7 +456,7 @@ pub fn aod_get() -> Value {
         json!({"name": n, "manual": mode == 1, "value": v, "min": lo, "max": hi, "safe_min": safe_floor(n, &spd, &live)})
     }).collect();
     json!({"ok": true, "editable": true, "speed_mts": rec(&b, 0).1, "fields": fields, "protected": protection(),
-           "pending": boot_image().map_or(false, |img| img != b),
+           "pending": boot_image().is_some_and(|img| img != b),
            "backup": latest_backup().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))})
 }
 
@@ -520,8 +520,8 @@ fn set_immutable(path: &str, on: bool) -> Result<(), String> {
 fn backup_files() -> Vec<std::path::PathBuf> {
     let mut v: Vec<_> = fs::read_dir(BACKUP_DIR).into_iter().flatten().flatten().map(|e| e.path())
         .filter(|p| p.file_name().and_then(|n| n.to_str())
-            .map_or(false, |n| n.starts_with("AodSetupRpl-") && n.ends_with(".bin") && !n.contains(".prerestore")))
-        .filter(|p| fs::symlink_metadata(p).map_or(false, |m| m.is_file() && m.len() == AOD_SIZE as u64))
+            .is_some_and(|n| n.starts_with("AodSetupRpl-") && n.ends_with(".bin") && !n.contains(".prerestore")))
+        .filter(|p| fs::symlink_metadata(p).is_ok_and(|m| m.is_file() && m.len() == AOD_SIZE as u64))
         .collect();
     // Names sort by time: seconds are zero-padded in new names; old names
     // (AodSetupRpl-<secs>.bin) have the same digit count until 2286.
@@ -597,7 +597,7 @@ fn aod_write(b: &[u8], prev: &[u8], backup: &str) -> Result<Value, Value> {
     };
     let state = match after.as_deref() { Some(a) if a == prev => "original", Some(a) if a == b => "requested", _ => "unknown" };
     crate::wlog::log("efivar", &format!("AodSetupRpl write failed: write={wtxt} readback={readback} rollback={rollback} state={state}"));
-    let prot = w.as_ref().err().map_or(false, |e| e.raw_os_error() == Some(libc::EROFS) || e.raw_os_error() == Some(libc::EPERM));
+    let prot = w.as_ref().err().is_some_and(|e| e.raw_os_error() == Some(libc::EROFS) || e.raw_os_error() == Some(libc::EPERM));
     let msg = if prot && state == "original" {
         "the firmware refused the write: AMD Variable Protection is on. Disable it in the BIOS \
          (advanced menu) and try again — it cannot be turned off from the OS. Nothing changed.".to_string()
@@ -638,7 +638,7 @@ pub fn aod_set(values: Option<&Value>, below_safe_ok: bool) -> Value {
         }
         // Refresh ordering, only between records that are actually in use
         // (manual); an Auto record's stored number is not what the BIOS runs.
-        let manual = |n: &str| AOD_FIELDS.iter().find(|f| f.0 == n).map_or(false, |f| rec(&b, f.1).0 == 1);
+        let manual = |n: &str| AOD_FIELDS.iter().find(|f| f.0 == n).is_some_and(|f| rec(&b, f.1).0 == 1);
         for (hi, lo) in [("tRFC1", "tRFC2"), ("tRFC2", "tRFCsb"), ("tRFC1", "tRFCsb")] {
             if manual(hi) && manual(lo) && g(hi) < g(lo) { return Err(format!("{hi} must be ≥ {lo}")); }
         }

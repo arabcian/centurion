@@ -14,7 +14,7 @@ pub fn record(state: &str) {
     // Root-owned directory only (ensure_dir refuses any other owner), then an atomic O_EXCL tmp + rename:
     // a user-owned directory must not be able to redirect the rotation through a planted symlink.
     if crate::atomicio::ensure_dir(std::path::Path::new("/var/lib/centurion"), 0o755).is_err() { return; }
-    if std::fs::symlink_metadata(FILE).map_or(false, |m| m.file_type().is_file() && m.len() > MAX_BYTES) {
+    if std::fs::symlink_metadata(FILE).is_ok_and(|m| m.file_type().is_file() && m.len() > MAX_BYTES) {
         if let Ok(old) = crate::atomicio::read_regular(std::path::Path::new(FILE), 4 * MAX_BYTES) {
             let old = old.as_bytes();
             let cut = old.len().saturating_sub(KEEP_BYTES);

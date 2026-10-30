@@ -784,7 +784,7 @@ impl Calibration {
         }
         let kept = self.ctx_ref.get(phase.name());
         cnt.into_iter().filter(|(_, m)| m.len() >= 2).filter_map(|(k, m)| {
-            if let Some(v) = kept.and_then(|x| x.get(&k)).filter(|v| m.get(*v).map_or(false, |n| *n > 0)) { return Some((k, v.clone())); }
+            if let Some(v) = kept.and_then(|x| x.get(&k)).filter(|v| m.get(*v).is_some_and(|n| *n > 0)) { return Some((k, v.clone())); }
             m.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|(v, _)| (k, v))
         }).collect()
     }
@@ -799,7 +799,7 @@ impl Calibration {
     /// The context pseudo-knobs of one row (dimensions at their reference are left out).
     fn row_ctx(&self, r: &Row, refs: &BTreeMap<String, String>) -> Cfg {
         let Some(d) = self.contexts.get(&r.cx) else { return Vec::new() };
-        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).map_or(false, |rv| rv != v)).collect()
+        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).is_some_and(|rv| rv != v)).collect()
     }
     /// The power source the phase's power model uses: the preferred one when it has enough rows,
     /// else the one that has rows. Never both (see `PowerSrc`). None = no power rows / not a
@@ -817,15 +817,15 @@ impl Calibration {
     pub fn ctx_cfg(&self, phase: Phase, cx: &str) -> Cfg {
         let refs = self.ctx_refs(phase);
         let Some(d) = self.contexts.get(cx) else { return Vec::new() };
-        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).map_or(false, |rv| rv != v)).collect()
+        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).is_some_and(|rv| rv != v)).collect()
     }
     /// The same for a context description that may never have been measured: only dimension
     /// values some phase's rows were measured in are kept (an unmeasured value says nothing).
     pub fn ctx_cfg_for(&self, phase: Phase, desc: &Value) -> Cfg {
         let refs = self.ctx_refs(phase);
         let seen = |k: &str, v: &str| self.rows.iter().filter(|r| r.phase == phase)
-            .any(|r| self.contexts.get(&r.cx).map_or(false, |d| Self::ctx_dims(d).iter().any(|(a, b)| a == k && b == v)));
-        Self::ctx_dims(desc).into_iter().filter(|(k, v)| refs.get(k).map_or(false, |rv| rv != v) && seen(k, v)).collect()
+            .any(|r| self.contexts.get(&r.cx).is_some_and(|d| Self::ctx_dims(d).iter().any(|(a, b)| a == k && b == v)));
+        Self::ctx_dims(desc).into_iter().filter(|(k, v)| refs.get(k).is_some_and(|rv| rv != v) && seen(k, v)).collect()
     }
     /// Sets the preferred power source (drops the cached fits it changes).
     pub fn set_power_pref(&self, src: PowerSrc) {
@@ -1369,7 +1369,7 @@ impl Calibration {
     /// What a calibration design leaves out: unsafe and soft-unsafe combinations.
     pub fn avoid_cfg(&self, cfg: &[(String, String)]) -> bool { self.unsafe_cfg(cfg) || self.soft_unsafe_cfg(cfg) }
     pub fn is_unsafe(&self, key: &str, value: &str) -> bool {
-        self.keys.get(key).map_or(false, |gs| gs.iter().any(|g| g.values.get(value).map_or(false, |s| s.unsafe_)))
+        self.keys.get(key).is_some_and(|gs| gs.iter().any(|g| g.values.get(value).is_some_and(|s| s.unsafe_)))
     }
     /// Every value measured for `key` (any phase), with the group's reference.
     pub fn values(&self, key: &str, reference: &str) -> Option<(String, Vec<String>)> {
@@ -1586,7 +1586,7 @@ impl Calibration {
         static BACKED_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         crate::secure_dir(crate::defaults::DIR)?;
         if !BACKED_UP.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            if let Some(old) = crate::read_root_file(FILE, MAX_FILE).filter(|t| serde_json::from_str::<Value>(t).map_or(false, |v| v.is_object())) {
+            if let Some(old) = crate::read_root_file(FILE, MAX_FILE).filter(|t| serde_json::from_str::<Value>(t).is_ok_and(|v| v.is_object())) {
                 let _ = crate::write_root_file(BACKUP, old.as_bytes());
             }
         }
@@ -1957,7 +1957,7 @@ mod tests {
         let with_a = vec![("vm.a".to_string(), "64".to_string())];
         let (mu, var) = j.eval(&with_a);
         assert!(mu > 0.07 && var > 0.0 && var.sqrt() < 0.05, "{mu} {var}");
-        assert!(c.unsafe_cfg(&[]) == false);
+        assert!(!c.unsafe_cfg(&[]));
     }
 
     /// Rows of one phase: `f(i, cfg) -> y` with a fresh session per `per` rows.

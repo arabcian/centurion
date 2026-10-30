@@ -171,7 +171,7 @@ fn apply(j: &mut Journal, key: &str, value: &str, rate: u64, ram: u64) -> Result
             let (mode, mthp) = value.split_once('+').map_or((value, false), |(m, _)| (m, true));
             j.set("thp.enabled", mode)?;
             for k in ["thp.mthp_16k", "thp.mthp_32k", "thp.mthp_64k"] {
-                if tune::find(k).map_or(false, |t| !tune::files(t).is_empty()) { j.set(k, if mthp { "inherit" } else { "never" })?; }
+                if tune::find(k).is_some_and(|t| !tune::files(t).is_empty()) { j.set(k, if mthp { "inherit" } else { "never" })?; }
             }
             Ok(())
         }
@@ -195,7 +195,7 @@ fn live_label(key: &str, disk: Option<&str>) -> Option<String> {
         "thp" => {
             let m = cur("thp.enabled")?;
             if m != "always" && m != "madvise" && m != "never" { return None; }
-            let mthp = ["thp.mthp_16k", "thp.mthp_32k", "thp.mthp_64k"].iter().any(|k| cur(k).map_or(false, |v| v != "never"));
+            let mthp = ["thp.mthp_16k", "thp.mthp_32k", "thp.mthp_64k"].iter().any(|k| cur(k).is_some_and(|v| v != "never"));
             if m == "never" && mthp { return None; }
             Some(if mthp { format!("{m}+mthp") } else { m })
         }
@@ -222,7 +222,7 @@ impl Ballast {
         let out = child.stdout.take().ok_or("ballast: no stdout")?;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || { let mut r = std::io::BufReader::new(out); let mut l = String::new(); let _ = r.read_line(&mut l); let _ = tx.send(l); });
-        match rx.recv_timeout(Duration::from_secs(120)) { Ok(l) => line = l, Err(_) => {} }
+        if let Ok(l) = rx.recv_timeout(Duration::from_secs(120)) { line = l }
         let held_mib = line.trim().strip_prefix("ready ").and_then(|n| n.parse().ok()).unwrap_or(0);
         if held_mib == 0 { let _ = child.kill(); return Err("ballast did not come up".into()); }
         let (braked, stop) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
@@ -431,7 +431,7 @@ fn plan(rounds: usize, scale: f64, ram: u64, only: &Option<Vec<String>>, phase: 
         keys.push((t.key.to_owned(), t.group));
     }
     for (key, group) in keys {
-        if only.as_ref().map_or(false, |o| !o.iter().any(|x| selects(x, &key, group))) { continue; }
+        if only.as_ref().is_some_and(|o| !o.iter().any(|x| selects(x, &key, group))) { continue; }
         if calib::io_key(&key) { if let Err(e) = disk { skipped.push((key, format!("no storage suite: {e} (--dir PATH on a local disk)"))); continue; } }
         if key.starts_with("kernel.sched_burst_") && live_label("kernel.sched_bore", None).as_deref() == Some("0") {
             skipped.push((key, "BORE is off (kernel.sched_bore 0): its tunables change nothing".into())); continue;
@@ -453,7 +453,7 @@ fn plan(rounds: usize, scale: f64, ram: u64, only: &Option<Vec<String>>, phase: 
                     .map(|h| centurion_helpers::autotune::wsf_for(h, ram).to_string()).collect()
             } else { vec![v] };
             for x in vs {
-                if t.map_or(false, |t| t.kind == tune::Kind::Choice) && !opts.is_empty() && !opts.contains(&x) { continue; }
+                if t.is_some_and(|t| t.kind == tune::Kind::Choice) && !opts.is_empty() && !opts.contains(&x) { continue; }
                 if x != reference && !values.contains(&x) { values.push(x); }
             }
         }
@@ -877,7 +877,7 @@ impl Runner<'_> {
         // pressure the load phase is about (its knobs would read as having relieved it). Thrown away; the
         // next run builds the ballast again (need_ballast). An OOM kill is kept: that is the knob's doing.
         let oom = matches!(&r, Ok((_, true)));
-        if phase == Phase::Load && !oom && !self.ballast.as_mut().map_or(false, |b| b.alive()) {
+        if phase == Phase::Load && !oom && !self.ballast.as_mut().is_some_and(|b| b.alive()) {
             eprintln!("\nthe ballast stopped during the run (memory brake): run thrown away");
             self.dropped += 1;
             // Evidence all the same: the brake fired while these knobs held memory short.
@@ -937,7 +937,7 @@ impl Runner<'_> {
             return t;
         }
         if hot {
-            let top_up = self.last_hot.map_or(false, |t| t.elapsed() < Duration::from_secs(8));
+            let top_up = self.last_hot.is_some_and(|t| t.elapsed() < Duration::from_secs(8));
             bench::preheat(if top_up { ms(self.c, 4000) } else { Duration::from_secs_f64(self.c.heat_secs) });
             self.last_hot = Some(Instant::now());
             return bench::cpu_temp_c();
@@ -1250,7 +1250,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let design_factors = |fs: &[Factor], refused: &[(String, String)]| -> Vec<Factor> { let mut v = writable(fs, refused); if heat { v.push(heat_f.clone()); } v };
     // vm.dirty's reference is window "1" (what autotune reads it as), not the live limits: every run of
     // this phase starts from it, so the reference runs are what the label says.
-    let dirty_ok = tune::find("vm.dirty_bytes").map_or(false, |t| !tune::files(t).is_empty());
+    let dirty_ok = tune::find("vm.dirty_bytes").is_some_and(|t| !tune::files(t).is_empty());
     rn.base = factors.iter().filter(|f| f.key == "vm.dirty" && dirty_ok).map(|f| (f.key.clone(), f.reference.clone())).collect();
     let cost = est_secs(phase, bs, rn.c.scale).max(1.0);
     let heat_secs = rn.c.heat_secs;
@@ -1454,7 +1454,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
             let p = progress(cal, *ph, &phase_factors(its));
             eprintln!("\n{}: progressive stage {:?} - {}\n  log: {}", ph.name(), p.stage(), p.stage().what(), p.line());
             let sr = surprise_rate(cal, *ph);
-            let surprising = sr.map_or(false, |r| r > SURPRISE_HIGH);
+            let surprising = sr.is_some_and(|r| r > SURPRISE_HIGH);
             if surprising { eprintln!("{}: {:.0} % of the recent confirmations were SURPRISES: this session chases doubt first", ph.name(), sr.unwrap_or(0.0) * 100.0); }
             Depth::progressive(p.stage(), its.len(), p.polish, surprising)
         } else { *dp };
@@ -1594,7 +1594,7 @@ fn main() {
             if progressive {
                 for (ph, its, _) in split(&items, scale, budget) {
                     let p = progress(&cal, ph, &phase_factors(&its));
-                    let d = Depth::progressive(p.stage(), its.len(), p.polish, surprise_rate(&cal, ph).map_or(false, |r| r > SURPRISE_HIGH));
+                    let d = Depth::progressive(p.stage(), its.len(), p.polish, surprise_rate(&cal, ph).is_some_and(|r| r > SURPRISE_HIGH));
                     println!("  {:<5} progressive stage {:?} ({}): {}\n        log: {}", ph.name(), p.stage(), d.name, p.stage().what(), p.line());
                 }
                 println!("  (lean sessions build on each other; --depth lean runs the fixed lean shape)");
@@ -1664,11 +1664,11 @@ fn main() {
     }
     if !Journal::load().entries.is_empty() { die("an interrupted run left changes: sudo centurion-calibrate --restore first"); }
     let state_active = std::fs::read_to_string(TUNE_STATE).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .map_or(false, |v| preset_baseline(&v));
+        .is_some_and(|v| preset_baseline(&v));
     if state_active { die("an Optimizations preset is active: Restore originals first, so every knob is measured from the boot state"); }
     let _ = centurion_helpers::secure_dir("/run/centurion");
     if let Err(e) = centurion_helpers::secure_dir("/run/centurion/tune") { die(&format!("lock dir: {e}")); }
-    let lock = std::fs::OpenOptions::new().create(true).write(true).open(TUNE_LOCK).unwrap_or_else(|e| die(&format!("lock: {e}")));
+    let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(TUNE_LOCK).unwrap_or_else(|e| die(&format!("lock: {e}")));
     if unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX | libc::LOCK_NB) } != 0 { die("Centurion is applying something; try again"); }
     // The lock is held for the whole run on purpose (a scene or game preset applied in the middle would
     // be measured as if it were the knob under test). Say who holds it, so tune-helper can answer at once
@@ -1757,7 +1757,7 @@ fn main() {
     if cal.migrated { eprintln!("note: the stored idle/load measurements came from an older benchmark set that could not see most CPU and scheduler knobs; those phases start over (storage rows and unsafe values are kept)"); }
     if src != "battery" { eprintln!("note: on AC — power is RAPL (CPU package) only; device power states (the DEV phase) and whole-machine power need a session on battery"); }
     match &ctx.disk {
-        Some(d) => eprintln!("storage suite: {} on {d} ({} MiB written per IO run, unlinked temp files){}", ctx.dir, ctx.io_size * 3 / 2 >> 20,
+        Some(d) => eprintln!("storage suite: {} on {d} ({} MiB written per IO run, unlinked temp files){}", ctx.dir, (ctx.io_size * 3 / 2) >> 20,
                              match (bench::disk_temp_c(d), bench::disk_temp_warn(d)) {
                                  (Some(t), Some(w)) => format!("; drive at {t:.0} °C, warning temperature {w:.0} °C: IO runs wait for it to cool"),
                                  _ => "; no drive temperature sensor".to_owned(),
@@ -1956,7 +1956,7 @@ const BOOT_IDLE_S: u64 = 300;
 /// functions hardwire the register to 0, the knob is never measured, and its restore is refused
 /// while the device is suspended (GPU tree / runtime PM), which left the entry behind for good.
 fn preset_baseline(st: &Value) -> bool {
-    st["baseline"].as_array().map_or(false, |a| a.iter().any(|e| e[0] != "pci.latency_timer"))
+    st["baseline"].as_array().is_some_and(|a| a.iter().any(|e| e[0] != "pci.latency_timer"))
 }
 
 fn boot_status() -> String {
@@ -2075,7 +2075,7 @@ fn boot_run() -> i32 {
             std::thread::sleep(Duration::from_millis(500));
         }
         let status = child.wait().ok();
-        let ok = status.map_or(false, |s| s.success());
+        let ok = status.is_some_and(|s| s.success());
         if STOP.load(Ordering::SeqCst) { break; }
         // Unplugged mid-session: not a failure - wait for AC (boot_blocker) and run the session again.
         if status.and_then(|s| s.code()) == Some(EXIT_POWER) { log("the power source went away during the session: waiting for AC to resume"); interrupted = true; }
@@ -2334,7 +2334,7 @@ fn coupling_main(cal: &mut Calibration, secs: u64) -> Result<(), String> {
     if util < 70.0 { return Err(format!("GPU utilisation {util:.0} %: start a GPU-bound game or benchmark first (windowed is fine), then run this")); }
     // While dynamic EPP is on the kernel owns EPP (writes are refused or undone at the next power event):
     // the boost switch is the lever then.
-    let epp_ok = tune::find("cpu.epp").map_or(false, |t| !tune::files(t).is_empty())
+    let epp_ok = tune::find("cpu.epp").is_some_and(|t| !tune::files(t).is_empty())
         && tune::find("cpu.dynamic_epp").and_then(tune::current).as_deref() != Some("enabled");
     let (key, hi, lo) = if epp_ok { ("cpu.epp", "performance", "power") } else { ("cpu.boost", "1", "0") };
     let mut j = Journal { entries: Vec::new() };

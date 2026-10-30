@@ -497,7 +497,7 @@ impl Evidence {
     }
     /// Direct reclaim is a regular event, not a one-off.
     pub fn reclaim_stalls(&self) -> bool {
-        self.direct_reclaim_share().map_or(false, |s| s >= 0.10) && self.allocstall >= 1000
+        self.direct_reclaim_share().is_some_and(|s| s >= 0.10) && self.allocstall >= 1000
     }
     /// 0..1: how strongly this machine's history says kswapd starts too late
     /// (direct reclaim share, or kswapd hitting the low watermark right after
@@ -510,7 +510,7 @@ impl Evidence {
     }
     /// Memory is short right now (tasks are stalling on it).
     pub fn mem_pressure_now(&self) -> bool {
-        self.psi_mem_full.map_or(false, |v| v >= 1.0) || self.psi_mem_some.map_or(false, |v| v >= 10.0)
+        self.psi_mem_full.is_some_and(|v| v >= 1.0) || self.psi_mem_some.is_some_and(|v| v >= 10.0)
     }
     /// Huge pages are being used a lot (THP fault volume since boot).
     pub fn thp_heavy(&self) -> bool { self.thp_fault_alloc + self.thp_fault_fallback >= 50_000 }
@@ -734,7 +734,7 @@ impl Profile {
         let (mut nvidia, mut amd_i, mut intel_i) = (false, false, false);
         for e in std::fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten() {
             let d = e.path();
-            if !rd(d.join("class")).map_or(false, |c| c.starts_with("0x03")) { continue; }
+            if !rd(d.join("class")).is_some_and(|c| c.starts_with("0x03")) { continue; }
             match rd(d.join("vendor")).as_deref() {
                 Some("0x10de") => nvidia = true,
                 Some("0x1002") => amd_i = true,
@@ -774,7 +774,7 @@ impl Profile {
             cstates,
             ram_kb,
             swap: swap_kind(zswap_on),
-            nvme: disks.iter().any(|d| d.file_name().map_or(false, |n| n.to_string_lossy().starts_with("nvme"))),
+            nvme: disks.iter().any(|d| d.file_name().is_some_and(|n| n.to_string_lossy().starts_with("nvme"))),
             rotational: disks.iter().any(|d| rot(d)),
             sata_hosts: std::fs::read_dir("/sys/class/scsi_host").into_iter().flatten().flatten()
                 .any(|e| e.path().join("link_power_management_policy").is_file()),
@@ -832,7 +832,7 @@ impl Profile {
     }
     /// A candidate that caused an OOM kill during the calibration load phase.
     fn measured_unsafe(&self, key: &str, value: &str) -> bool {
-        self.calibration.as_ref().map_or(false, |c| c.is_unsafe(key, value))
+        self.calibration.as_ref().is_some_and(|c| c.is_unsafe(key, value))
     }
     /// Boot-time value of a tunable, when a snapshot exists.
     pub fn boot_default(&self, k: &str) -> Option<&str> { self.defaults.as_ref()?.values.get(k).map(String::as_str) }
@@ -1128,7 +1128,7 @@ fn round2(x: f64) -> f64 { (x * 100.0).round() / 100.0 }
 fn seen_in(j: &model::Joint, key: &str) -> bool {
     j.values(key).iter().any(|val| {
         let a = [(key.to_owned(), val.clone())];
-        (0..4).any(|o| j.eval_diff_obj(&a, &[], o).map_or(false, |(m, var)| var > 0.0 && m.abs() >= SEEN_Z * var.sqrt()))
+        (0..4).any(|o| j.eval_diff_obj(&a, &[], o).is_some_and(|(m, var)| var > 0.0 && m.abs() >= SEEN_Z * var.sqrt()))
     })
 }
 
@@ -1323,7 +1323,7 @@ impl<'a> Rules<'a> {
         if key == "thp" {
             let m = self.eff("thp.enabled")?;
             if m != "always" && m != "madvise" { return None; }
-            let mthp = ["thp.mthp_16k", "thp.mthp_32k", "thp.mthp_64k"].iter().any(|k| self.eff(k).map_or(false, |v| v != "never"));
+            let mthp = ["thp.mthp_16k", "thp.mthp_32k", "thp.mthp_64k"].iter().any(|k| self.eff(k).is_some_and(|v| v != "never"));
             return Some(if mthp { format!("{m}+mthp") } else { m });
         }
         tune::find(key).and_then(|t| self.eff(t.key))
@@ -1348,11 +1348,11 @@ fn joint_pass(r: &mut Rules) {
             if let Some(v) = r.context_value(&key) { if v != reference { fixed.push((key.clone(), v)); } }
             continue;
         }
-        if r.p.boot_default(&key).map_or(false, |d| d != reference) { continue; }
+        if r.p.boot_default(&key).is_some_and(|d| d != reference) { continue; }
         let c = r.level_costs(&key, &reference, &model::with_mids(&reference, &joint.values(&key)));
         // A rule chose a value that was never measured: nothing to weigh it against, it stays.
         let ruled = r.out.iter().find(|d| d.key == key.as_str()).map(|d| vstr(&d.value));
-        if ruled.map_or(false, |v| !c.iter().any(|(x, _)| *x == v)) { continue; }
+        if ruled.is_some_and(|v| !c.iter().any(|(x, _)| *x == v)) { continue; }
         if c.len() > 1 { keys.push(key); cands.push(c); }
     }
     if keys.is_empty() { return; }
@@ -1481,7 +1481,7 @@ fn thp_anchor(p: &Profile, mthp_ok: bool) -> Option<Combo> {
     let scan: u32 = p.boot_default("thp.khp_pages_to_scan").and_then(|v| v.parse().ok()).unwrap_or(4096);
     let sleep: u32 = p.boot_default("thp.khp_scan_sleep_ms").and_then(|v| v.parse().ok()).unwrap_or(10_000);
     let pace = if scan <= 2048 || sleep >= 20_000 { Pace::Slow } else if scan >= 8192 || sleep <= 5000 { Pace::Fast } else { Pace::Default };
-    let mthp = mthp_ok && MTHP.iter().filter(|(_, kb)| *kb <= 64).any(|(k, _)| p.boot_default(k).map_or(false, |v| v != "never"));
+    let mthp = mthp_ok && MTHP.iter().filter(|(_, kb)| *kb <= 64).any(|(k, _)| p.boot_default(k).is_some_and(|v| v != "never"));
     if mthp && ptes != 0 && ptes != 511 { return None; }
     if ![511, 255, 64, 0].contains(&ptes) { return None; }
     Some((always, mthp, ptes, pace))
@@ -1668,8 +1668,8 @@ fn memory_rules(r: &mut Rules) {
              "The last second's working set is never evicted: no thrashing stutter, but real pressure ends in an OOM kill instead of slowness."),
     ]);
 
-    if p.cur("mm.lru_gen").map_or(false, |v| v != "7") { r.set("mm.lru_gen", 7, "All MGLRU features (kernel default)."); }
-    if !r.is(Desktop) && p.cur("mm.ksm_run").map_or(false, |v| v != "0") { r.set("mm.ksm_run", 0, "Stop the KSM scanner: pure background cost without VMs."); }
+    if p.cur("mm.lru_gen").is_some_and(|v| v != "7") { r.set("mm.lru_gen", 7, "All MGLRU features (kernel default)."); }
+    if !r.is(Desktop) && p.cur("mm.ksm_run").is_some_and(|v| v != "0") { r.set("mm.ksm_run", 0, "Stop the KSM scanner: pure background cost without VMs."); }
     if matches!(r.g, Gaming | Desktop) && p.cur("vm.max_map_count").and_then(|v| v.parse::<u64>().ok()).map_or(true, |v| v < 1_048_576) {
         r.set("vm.max_map_count", 1_048_576, "Arch/Fedora value: some Proton games exceed the old 65530 mapping limit; only a per-process count, no memory is reserved.");
     }
@@ -1877,7 +1877,7 @@ fn cpu_rules(r: &mut Rules) {
     // The clock every timestamp is read from. A machine whose kernel fell back from the TSC at boot
     // (or that a tool switched) pays a device read on every clock_gettime(): no goal wants that, and
     // no benchmark is needed to know it. "tsc" is only in the list while the kernel trusts it.
-    if p.cur("clock.source").map_or(false, |c| c != "tsc") && p.clocksources.iter().any(|c| c == "tsc") {
+    if p.cur("clock.source").is_some_and(|c| c != "tsc") && p.clocksources.iter().any(|c| c == "tsc") {
         r.set("clock.source", "tsc", format!("The clock is read from '{}': every time query costs a slow device read. The TSC is listed as usable, so it is switched back (a clock the kernel has ruled out would not be offered).",
                                                p.cur("clock.source").unwrap_or("?")));
     }
@@ -2066,10 +2066,10 @@ fn cpu_rules(r: &mut Rules) {
     }
 
     // Hot-plug: autotune never parks a CCD; it brings a parked one back.
-    if p.cur("cpu.ccd_park").map_or(false, |v| v != "none") {
+    if p.cur("cpu.ccd_park").is_some_and(|v| v != "none") {
         r.set("cpu.ccd_park", "none", "A CCD is parked: all CPUs back online (autotune isolates with affinity/steering instead; parking breaks Wine/Proton CPU numbering and nvidia-powerd).");
     }
-    if r.is(Throughput) && p.cur("cpu.smt").map_or(false, |v| v == "off") {
+    if r.is(Throughput) && (p.cur("cpu.smt") == Some("off")) {
         r.set("cpu.smt", "on", "SMT on: +20-30% throughput for parallel builds.");
     }
 }
@@ -2126,7 +2126,7 @@ fn sched_rules(r: &mut Rules) {
     if r.is(Throughput) {
         r.set("sched.migration_cost_ns", 5_000_000, "Tasks count as cache-hot for 5 ms (TuneD throughput value): fewer cache-destroying migrations.");
     }
-    if p.cur("wq.affinity_scope").map_or(false, |v| v != "cache") {
+    if p.cur("wq.affinity_scope").is_some_and(|v| v != "cache") {
         r.set("wq.affinity_scope", "cache", "Unbound kernel work stays inside the L3 domain that queued it (kernel default).");
     }
     // Steering: keep IRQs and unbound kernel work off the game's cores.
@@ -2200,7 +2200,7 @@ pub fn enforce(out: &mut Vec<Decision>, p: &Profile) -> Vec<String> {
         }
     }
     // 2. mTHP collapse honours max_ptes_none only at 0 or 511 (kernel 7.x warns and falls back).
-    let mthp_on = MTHP.iter().any(|(k, _)| eff(out, k).map_or(false, |v| v != "never"));
+    let mthp_on = MTHP.iter().any(|(k, _)| eff(out, k).is_some_and(|v| v != "never"));
     if mthp_on {
         if let Some(n) = num(eff(out, "thp.khp_max_ptes_none")).filter(|n| *n != 0 && *n != 511) {
             out.retain(|d| d.key != "thp.khp_max_ptes_none");
@@ -2288,7 +2288,7 @@ pub fn audit(values: &Map<String, Value>, ctx: &AuditCtx) -> Vec<Issue> {
     if let (Some(b), Some(x)) = (bg, d) {
         if x <= b { add("vm.dirty_bytes", true, format!("dirty_bytes {x} <= dirty_background_bytes {b}"), None); }
     }
-    let mthp_on = MTHP.iter().any(|(k, _)| s(k).map_or(false, |v| v != "never"));
+    let mthp_on = MTHP.iter().any(|(k, _)| s(k).is_some_and(|v| v != "never"));
     if let Some(pn) = n("thp.khp_max_ptes_none") {
         if pn != 0 && pn != 511 && mthp_on {
             add("thp.khp_max_ptes_none", false, format!("{pn} with mTHP on: the kernel ignores it for mTHP collapse (only 0 or 511)"), Some(json!(0)));
@@ -2404,7 +2404,7 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let (w, hn) = w.adapted_heat(goal, heat);
     if let Some(n) = hn { notes.push(("heat", n)); }
     let w = w.with_overrides(weights);
-    let want_explore = opts["explore"] != false && p.calibration.as_ref().map_or(false, |c| !c.rows.is_empty());
+    let want_explore = opts["explore"] != false && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty());
     // The models depend on the rows, never on the weights: fitted once (every CPU), then the main
     // decision and the explored trade-offs all read them in parallel.
     if let Some(c) = p.calibration.as_mut() { c.merge_hyp_cache(); c.use_fit_store(); }
@@ -2699,7 +2699,7 @@ mod tests {
             assert!(int(&d, "thp.khp_pages_to_scan") <= 8192 || get(&d, "thp.khp_pages_to_scan").is_none());
             // Live 409 with live mTHP on: resolved to a value the kernel accepts.
             let ptes = get(&d, "thp.khp_max_ptes_none").and_then(Value::as_i64).unwrap_or(409);
-            let mthp_on = MTHP.iter().any(|(k, _)| get(&d, k).map(vstr).or_else(|| p.cur(k).map(str::to_owned)).map_or(false, |v| v != "never"));
+            let mthp_on = MTHP.iter().any(|(k, _)| get(&d, k).map(vstr).or_else(|| p.cur(k).map(str::to_owned)).is_some_and(|v| v != "never"));
             assert!(!mthp_on || ptes == 0 || ptes == 511, "{g:?}: mTHP on with max_ptes_none {ptes}");
         }
         // The combination search itself never offers an invalid pair.
@@ -2709,7 +2709,7 @@ mod tests {
         let (d, _, _) = decide_weighted(Goal::Throughput, &p2, w);
         assert_eq!(get(&d, "thp.enabled"), Some(&json!("always")), "weights must be able to buy THP=always");
         let ptes = get(&d, "thp.khp_max_ptes_none").and_then(Value::as_i64).unwrap_or(511);
-        let on = MTHP.iter().any(|(k, _)| get(&d, k).map_or(false, |v| v != "never"));
+        let on = MTHP.iter().any(|(k, _)| get(&d, k).is_some_and(|v| v != "never"));
         assert!(!on || ptes == 0 || ptes == 511);
     }
 
@@ -3035,7 +3035,7 @@ mod tests {
         p.calibration = Some(cal);
         let (d, sc, _) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
         let v = int(&d, "sched.migration_cost_ns");
-        assert!(v >= 700_000 && v <= 2_300_000, "dose between the measured points: {v}");
+        assert!((700_000..=2_300_000).contains(&v), "dose between the measured points: {v}");
         assert!(sc["sched.migration_cost_ns"].as_array().unwrap().len() > 4, "interpolated doses were scored");
         assert!(get(&d, "cpu.epp").is_none() && get(&d, "cpu.epp_ccd0").is_some());
     }
@@ -3362,7 +3362,7 @@ mod tests {
         let now = 1_800_000_000;
         e.merge_history(&[("a".into(), now, h.clone()), ("this".into(), now, h.clone()), ("s".into(), now, short)], "this", now);
         assert_eq!((e.history_boots, e.uptime_s), (1, 72_400));
-        assert!(e.direct_reclaim_share().map_or(false, |s| s < 0.05) && e.history_hours() > 20.0);
+        assert!(e.direct_reclaim_share().is_some_and(|s| s < 0.05) && e.history_hours() > 20.0);
         assert!((e.mem_stall_share.unwrap() - 1.0).abs() < 0.02, "{:?}", e.mem_stall_share);
         // A month-old boot counts half; counters survive the file format.
         let mut old = Evidence::default();
@@ -3531,7 +3531,7 @@ mod tests {
         let cool = alts.iter().find(|a| a["label"].as_str().unwrap().starts_with("Cooler")).expect("a cooler alternative");
         assert!(cool["changes"].as_array().unwrap().iter().any(|c| c["key"] == "vm.page_lock_unfairness" && c["from"] == "3"), "{cool}");
         assert!(pred["throughput"][0].as_f64().unwrap() > 0.2 && pred["power"][0].as_f64().unwrap() < -0.3, "{pred}");
-        assert!(sens.iter().all(|s| s["flips"].as_array().map_or(false, |f| !f.is_empty())));
+        assert!(sens.iter().all(|s| s["flips"].as_array().is_some_and(|f| !f.is_empty())));
         // The main decision's frame is back in place after exploring.
         let (d2, _, _) = decide_weighted(Goal::Gaming, &p, w);
         assert_eq!(d, d2);

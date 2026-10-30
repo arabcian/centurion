@@ -34,7 +34,7 @@ pub fn wear(capacity: &Value, today: i64) -> Value {
     for e in capacity.as_array().into_iter().flatten() {
         let (Some(d), Some(full), Some(design)) = (e["d"].as_str().and_then(day_number), e["full"].as_f64(), e["design"].as_f64()) else { continue };
         let age = today - d;
-        if design <= 0.0 || age < 0 || age >= WINDOW_DAYS { continue; }
+        if design <= 0.0 || !(0..WINDOW_DAYS).contains(&age) { continue; }
         pts.push((d as f64, 100.0 * full / design));
     }
     let n = pts.len();

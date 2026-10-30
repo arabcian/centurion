@@ -521,7 +521,7 @@ impl Smu {
         loop {
             match self.transact(opcode, arg0)? {
                 RSP_OK => return Ok(()),
-                r if attempt < 3 && (r == 0xFC || !matches!(r, 0xFF | 0xFE | 0xFD)) => {
+                r if attempt < 3 && (r == 0xFC || !matches!(r, 0xFD..=0xFF)) => {
                     attempt += 1;
                     std::thread::sleep(Duration::from_millis(10 << attempt));
                 }

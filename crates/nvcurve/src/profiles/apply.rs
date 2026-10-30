@@ -75,7 +75,7 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
             out.warnings.push(format!("Mem offset: {e}"));
         },
         // Written only when one is actually set: no NVML write on GPUs that never had an offset.
-        None => if limits::get_clock_offsets(idx).mem_offset_mhz.map_or(false, |cur| cur != 0) {
+        None => if limits::get_clock_offsets(idx).mem_offset_mhz.is_some_and(|cur| cur != 0) {
             if let Err(e) = limits::set_clock_offsets(None, Some(0), idx) {
                 out.warnings.push(format!("Mem offset reset: {e}"));
             }
@@ -116,7 +116,7 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
     // legacy (pre-NVML) profiles and `nvcurve profile save` carry them, so every autoload /
     // gamemode / scene apply overclocked the VRAM twice. Never write them.
     let mem_pts: Vec<i64> = deltas.keys().copied().filter(|&i| usize::try_from(i).ok()
-        .and_then(|i| state.points.get(i)).map_or(false, |pt| pt.domain == Domain::Memory)).collect();
+        .and_then(|i| state.points.get(i)).is_some_and(|pt| pt.domain == Domain::Memory)).collect();
     if !mem_pts.is_empty() {
         for i in &mem_pts { deltas.remove(i); }
         out.warnings.push(format!("Ignored memory-domain curve_deltas (points {mem_pts:?}): the memory \

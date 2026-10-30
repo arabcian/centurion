@@ -96,7 +96,7 @@ pub struct Buf {
 }
 
 impl Buf {
-    pub fn new(len: usize) -> Self { Buf { words: vec![0; (len + 7) / 8], len } }
+    pub fn new(len: usize) -> Self { Buf { words: vec![0; len.div_ceil(8)], len } }
     pub fn from_bytes(b: &[u8]) -> Self {
         let mut s = Self::new(b.len());
         s.bytes_mut().copy_from_slice(b);

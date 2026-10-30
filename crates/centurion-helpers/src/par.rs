@@ -13,7 +13,7 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
-thread_local! { static INSIDE: Cell<bool> = Cell::new(false); }
+thread_local! { static INSIDE: Cell<bool> = const { Cell::new(false) }; }
 
 /// Worker threads available to one parallel section.
 pub fn threads() -> usize {

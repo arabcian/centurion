@@ -80,14 +80,14 @@ pub fn apply_profile_verified(gpu_index: usize, name: &str, cfg: &Config, max_re
     };
     let Some(prev) = prev else { return Err(format!("{err} — rollback impossible: previous curve could not be read")) };
     let Ok((g, _)) = gpu::get_gpu(gpu_index) else { return Err(format!("{err} — rollback failed: GPU unavailable")) };
-    if vfcurve::read_clock_offsets(g).map_or(false, |now| now == prev) {
+    if vfcurve::read_clock_offsets(g).is_ok_and(|now| now == prev) {
         return Err(format!("{err} — curve unchanged (previous offsets still active)"));
     }
     let Ok(state) = vfcurve::read_curve(g, "") else { return Err(format!("{err} — rollback failed: curve unreadable")) };
     let deltas: vfcurve::PointDeltas = state.points.iter()
-        .filter_map(|p| prev.get(p.index as usize).map(|&d| (p.index as i64, d as i64))).collect();
+        .filter_map(|p| prev.get(p.index).map(|&d| (p.index as i64, d as i64))).collect();
     let (rc, d) = vfcurve::write_offsets(g, &deltas, false, false, None);
-    let ok = rc == 0 && vfcurve::read_clock_offsets(g).map_or(false, |now| now == prev);
+    let ok = rc == 0 && vfcurve::read_clock_offsets(g).is_ok_and(|now| now == prev);
     Err(if ok { format!("{err} — previous curve restored") }
         else { format!("{err} — rollback FAILED ({rc}: {d}); GPU curve state is unknown, check `nvcurve` or load a snapshot") })
 }

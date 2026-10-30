@@ -486,7 +486,7 @@ fn lamparray_last(dirs: &mut [(PathBuf, u16)], lamparray_pid: Option<u16>) {
 /// A Spectrum HID interface exists: matching ids and a REPORT_LEN-byte feature
 /// report in its descriptor (sysfs only: nothing is opened, no ioctl is sent).
 pub fn present() -> bool {
-    hidraw_dirs().iter().any(|d| hid_ids(d).map_or(false, |(v, p)| is_spectrum_product(v, p)) && feature_len(d) == Some(REPORT_LEN))
+    hidraw_dirs().iter().any(|d| hid_ids(d).is_some_and(|(v, p)| is_spectrum_product(v, p)) && feature_len(d) == Some(REPORT_LEN))
 }
 
 impl Device {
@@ -815,7 +815,7 @@ pub mod zone4 {
     /// report in the descriptor (sysfs only, nothing is opened).
     pub fn find() -> Option<PathBuf> {
         hidraw_dirs().into_iter().find(|d| {
-            hid_ids(d).map_or(false, |(v, p)| v == VENDOR_ID && p & PRODUCT_MASK == PRODUCT_MATCH) && feature_len(d) == Some(REPORT_LEN)
+            hid_ids(d).is_some_and(|(v, p)| v == VENDOR_ID && p & PRODUCT_MASK == PRODUCT_MATCH) && feature_len(d) == Some(REPORT_LEN)
         }).map(|d| Path::new("/dev").join(d.file_name().unwrap()))
     }
 

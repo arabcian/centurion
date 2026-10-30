@@ -85,7 +85,7 @@ pub fn record(cfg: &BTreeMap<String, String>) {
     let cfg_v: Map<String, Value> = cfg.iter().map(|(k, x)| (k.clone(), json!(x))).collect();
     let segs = b["segs"].as_array_mut();
     let Some(segs) = segs else { return };
-    if segs.last().map_or(false, |s| s["cfg"] == Value::Object(cfg_v.clone())) { return; }
+    if segs.last().is_some_and(|s| s["cfg"] == Value::Object(cfg_v.clone())) { return; }
     segs.push(json!({"t": now(), "cfg": cfg_v}));
     let drop = segs.len().saturating_sub(MAX_SEGS);
     segs.drain(..drop);
@@ -153,7 +153,7 @@ pub fn on_shutdown() {
 
 fn inflight_clear_if_this_boot() {
     let f: Option<Value> = crate::read_root_file(INFLIGHT, 64 * 1024).and_then(|s| serde_json::from_str(&s).ok());
-    if f.map_or(false, |f| f["boot"] == json!(boot_id())) { inflight_clear(); }
+    if f.is_some_and(|f| f["boot"] == json!(boot_id())) { inflight_clear(); }
 }
 
 /// centurion-boot-guard at the start of a boot: an earlier boot without an end ended uncleanly; a

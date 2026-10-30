@@ -166,7 +166,7 @@ fn mce_status_corrected(msg: &str) -> bool {
     let Some(i) = msg.find(" Bank ") else { return false };
     let Some(j) = msg[i..].find(": ") else { return false };
     let hex = msg[i + j + 2..].split_whitespace().next().unwrap_or("");
-    u64::from_str_radix(hex.trim_start_matches("0x"), 16).map_or(false, |s| s >> 63 & 1 == 1 && s >> 61 & 1 == 0)
+    u64::from_str_radix(hex.trim_start_matches("0x"), 16).is_ok_and(|s| s >> 63 & 1 == 1 && s >> 61 & 1 == 0)
 }
 
 /// Reads every /dev/kmsg record with seq > since. Err("EPERM") when the caller

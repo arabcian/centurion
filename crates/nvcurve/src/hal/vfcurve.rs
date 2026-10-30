@@ -519,7 +519,7 @@ mod tests {
     fn readback_tolerates_clamp_only() {
         assert!(readback_matches(-50_000, -50_000));
         assert!(readback_matches(-270_000, -224_000));
-        assert!(!readback_matches(-50_000, 0 + 1_000));
+        assert!(!readback_matches(-50_000, 1_000));
         assert!(!readback_matches(50_000, 40_000));
     }
 

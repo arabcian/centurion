@@ -110,9 +110,9 @@ fn partition_layout(gpu: Gpu) -> (bool, Vec<u32>) {
     if let Some(c) = PARTS.lock().unwrap_or_else(|p| p.into_inner()).as_ref().and_then(|m| m.get(&gpu)) {
         return (c.clamshell, c.parts.clone());
     }
-    let clamshell = read_register(gpu, REG_GDDR_CLAMSHELL).map_or(false, |v| (v >> 22) & 1 == 1);
+    let clamshell = read_register(gpu, REG_GDDR_CLAMSHELL).is_ok_and(|v| (v >> 22) & 1 == 1);
     let parts: Vec<u32> = (0..=8u32).filter(|&p| read_register(gpu, REG_GDDR_TEMP_STATUS + p * 0x4000)
-        .map_or(false, |s| s & POISON_MASK != POISON)).collect();
+        .is_ok_and(|s| s & POISON_MASK != POISON)).collect();
     if !parts.is_empty() {
         PARTS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new)
             .insert(gpu, PartCache { clamshell, parts: parts.clone() });
@@ -155,7 +155,7 @@ fn vram_partitions(gpu: Gpu) -> Vec<(String, i32)> {
 /// `arch`: NVML architecture id (None = unknown → pre-Blackwell rules).
 pub fn read(gpu: Gpu, arch: Option<u32>) -> Sensors {
     let mut s = Sensors::default();
-    let blackwell = arch.map_or(false, |a| a >= ARCH_BLACKWELL);
+    let blackwell = arch.is_some_and(|a| a >= ARCH_BLACKWELL);
     let mut src = Vec::new();
 
     let values: Option<[i32; 40]> = channel_mask(gpu).ok().and_then(|m| therm_call(gpu, m).ok()).map(|b| {

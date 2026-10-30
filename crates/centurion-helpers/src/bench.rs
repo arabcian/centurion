@@ -276,7 +276,7 @@ pub fn disk_of(dir: &str) -> Result<String, String> {
         }
     }
     let name = node.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    if crate::tune::block_devs().iter().any(|d| d.file_name().map_or(false, |n| n.to_string_lossy() == name)) { Ok(name) }
+    if crate::tune::block_devs().iter().any(|d| d.file_name().is_some_and(|n| n.to_string_lossy() == name)) { Ok(name) }
     else { Err(format!("{dir} is on {name}, which the Storage rows do not cover")) }
 }
 
@@ -298,7 +298,7 @@ fn rand_reads(fd: i32, pages: u64, max_n: usize, until: Instant, seed: u64, stop
     if p.is_null() || pages == 0 { return Vec::new(); }
     let mut x = seed | 1;
     let mut lat = Vec::with_capacity(max_n.min(1 << 16));
-    while lat.len() < max_n && Instant::now() < until && !stop.map_or(false, |s| s.load(Ordering::Relaxed)) {
+    while lat.len() < max_n && Instant::now() < until && !stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
         x ^= x << 13; x ^= x >> 7; x ^= x << 17;
         let off = (x % pages) * 4096;
         let a = Instant::now();
@@ -460,10 +460,10 @@ impl Rapl {
     fn new() -> Rapl { Rapl::from_dir(std::path::Path::new("/sys/class/powercap")) }
     fn from_dir(root: &std::path::Path) -> Rapl {
         let all: Vec<std::path::PathBuf> = std::fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.path())
-            .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().matches(':').count() == 1) && p.join("energy_uj").exists()).collect();
+            .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().matches(':').count() == 1) && p.join("energy_uj").exists()).collect();
         let name = |p: &std::path::Path| std::fs::read_to_string(p.join("name")).unwrap_or_default().trim().to_owned();
         let msr_pkg: Vec<std::path::PathBuf> = all.iter().filter(|p| name(p).starts_with("package")
-            && p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("intel-rapl:"))).cloned().collect();
+            && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("intel-rapl:"))).cloned().collect();
         let pick = if !msr_pkg.is_empty() { msr_pkg } else { all.into_iter().filter(|p| name(p) != "psys").take(1).collect() };
         Rapl { zones: pick.into_iter().map(|p| {
             let range = std::fs::read_to_string(p.join("max_energy_range_uj")).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
@@ -562,7 +562,7 @@ pub fn gate_on(read: &dyn Fn() -> Option<f64>, target: f64, max: Duration) -> (O
         let Some(t) = read() else { return (None, t0.elapsed().as_secs_f64()) };
         let now = t0.elapsed().as_secs_f64();
         hist.push_back((now, t));
-        while hist.front().map_or(false, |(a, _)| now - a > 1.05) { hist.pop_front(); }
+        while hist.front().is_some_and(|(a, _)| now - a > 1.05) { hist.pop_front(); }
         let cooling = match (hist.front(), hist.len() >= 4) { (Some((a, ta)), true) if now - a >= 0.9 => (ta - t) / (now - a) >= 0.15, _ => true };
         if t <= target || !cooling || t0.elapsed() >= max { return (Some(t), now); }
         std::thread::sleep(Duration::from_millis(250));
@@ -712,123 +712,6 @@ pub fn settle() {
     let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
     let _ = std::fs::write("/proc/sys/vm/compact_memory", "1");
     std::thread::sleep(Duration::from_millis(500));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn cpu_benches() {
-        assert!(cpu_single(Duration::from_millis(100)) > 0.0);
-        assert!(cpu_multi(Duration::from_millis(100)).0 > 0.0);
-        assert!(pingpong_p99_us(200).unwrap() > 0.0);
-    }
-
-    #[test]
-    fn io_and_wake_produce_metrics() {
-        let mut s = Sample::new();
-        io("/tmp", 16 << 20, &mut s).unwrap();
-        assert!(s[&Metric::WriteMbs] > 0.0 && s[&Metric::ReadMbs] > 0.0);
-        assert!(s.get(&Metric::RaFootprintMib).map_or(false, |m| *m > 0.0) && s.contains_key(&Metric::MmapFaultP99Us));
-        assert!(wake_p99_us(Duration::from_millis(200)).is_some());
-        assert!(frame_tail_us(Duration::from_millis(120)).map_or(false, |v| v > 0.0));
-        let (t, m) = frame_us(Duration::from_millis(120)).unwrap();
-        assert!(m > 0.0 && t >= m, "the tail is never below the median");
-        assert_eq!(p99(&mut vec![]), None);
-        assert_eq!(tail(&mut vec![]), None);
-        // Worst 1 %, at least 5: 1000 samples -> the 10 largest; 8 samples -> the 5 largest.
-        let mut v: Vec<f64> = (1..=1000).map(|x| x as f64).collect();
-        assert!((tail(&mut v).unwrap() - 995.5).abs() < 1e-9);
-        let mut w: Vec<f64> = (1..=8).map(|x| x as f64).collect();
-        assert!((tail(&mut w).unwrap() - 6.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn disk_of_refuses_ram_file_systems() {
-        // /dev/shm is tmpfs on every Linux system that has it.
-        if std::path::Path::new("/dev/shm").is_dir() { assert!(disk_of("/dev/shm").is_err()); }
-        assert_eq!(dev_split((259u64 << 8) | 3), (259, 3));
-        assert_eq!(dev_split(((300u64 & 0xfff) << 8) | ((1000u64 & 0xff) | ((1000u64 & !0xff) << 12))), (300, 1000));
-    }
-
-    #[test]
-    fn rapl_counts_the_package_once_and_survives_wrap() {
-        let root = std::env::temp_dir().join(format!("centurion-rapl-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let zone = |dir: &str, name: &str| {
-            let d = root.join(dir);
-            std::fs::create_dir_all(&d).unwrap();
-            std::fs::write(d.join("name"), format!("{name}\n")).unwrap();
-            std::fs::write(d.join("energy_uj"), "1000\n").unwrap();
-            std::fs::write(d.join("max_energy_range_uj"), "65532610987\n").unwrap();
-        };
-        // Intel laptop layout: MSR package, its core subzone, platform (psys), and the same package over MMIO.
-        zone("intel-rapl:0", "package-0"); zone("intel-rapl:0:0", "core"); zone("intel-rapl:1", "psys"); zone("intel-rapl-mmio:0", "package-0");
-        let r = Rapl::from_dir(&root);
-        assert_eq!(r.zones.iter().map(|z| z.0.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>(), vec!["intel-rapl:0"]);
-        // The counter wrapped between the two readings.
-        assert_eq!(r.joules(&[65_532_000_000], &[1_389_013]), Some(2.0));
-        assert_eq!(r.joules(&[5_000_000], &[7_000_000]), Some(2.0));
-        // Only an MMIO zone: it is used; psys alone is never taken as package power.
-        let _ = std::fs::remove_dir_all(&root);
-        zone("intel-rapl-mmio:0", "package-0"); zone("intel-rapl:1", "psys");
-        assert_eq!(Rapl::from_dir(&root).zones.len(), 1);
-        assert!(Rapl::from_dir(&root).zones[0].0.ends_with("intel-rapl-mmio:0"));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn game_loop_contention_and_jobs_produce_metrics() {
-        assert!(unit() >= 50_000 && unit() == unit(), "measured once");
-        let g = game_loop(Duration::from_millis(240)).expect("frames");
-        let (med, tl) = (g.med_ms, g.tail_ms);
-        assert!(g.jitter_us >= 1.0 && g.jitter_us.is_finite());
-        assert!(med > 0.0 && tl >= med);
-        let c = contended(Duration::from_millis(120));
-        assert!(c.rate > 0.0 && c.frame_tail.map_or(false, |v| v > 0.0));
-        // The test binary is not centurion-calibrate: a child that fails to run the job yields None, never a figure.
-        assert_eq!(jobs_per_sec(std::path::Path::new("/nonexistent/centurion-calibrate"), Duration::from_millis(50)), None);
-        job_main(10_000);
-    }
-
-    #[test]
-    fn cache_loop_walks_one_cycle_and_produces_frames() {
-        let c = Chain::new(1 << 20, 7).expect("chain");
-        // One cycle over every line: a full lap returns to the start, no shorter walk does.
-        assert_eq!(c.walk(5, c.lines as u64), 5);
-        assert_ne!(c.walk(5, c.lines as u64 / 2), 5);
-        assert!((8 * MIB..=64 * MIB).contains(&cache_set_bytes()) && cache_set_bytes() % MIB == 0);
-        assert!(cache_unit() >= 1000 && cache_unit() == cache_unit(), "measured once");
-        let (med, tl) = cache_loop(Duration::from_millis(300)).expect("frames");
-        assert!(med > 0.0 && tl >= med);
-        assert_eq!(pacing_us(&[vec![1.0, 1.5, 1.0], vec![2.0]]), Some(500.0));
-    }
-
-    #[test]
-    fn battery_cadence_and_fresh_updates() {
-        // EC updates every 2 s, polled every 0.25 s: changes at 2, 4, 6, 8.
-        let s: Vec<BatSample> = (0..40).map(|i| { let t = i as f64 * 0.25; (t, 10.0 + (t / 2.0).floor()) }).collect();
-        assert!((cadence_of(&s).unwrap() - 2.0).abs() < 1e-9);
-        // Updates carry 11, 12, 13, 14; the first one (may straddle the change) is skipped.
-        assert!((mean_of_updates(&s, 1).unwrap() - 13.0).abs() < 1e-9);
-        assert!(cadence_of(&s[..10]).is_none(), "one change is no cadence");
-        assert_eq!(mean_of_updates(&[(0.0, 5.0), (1.0, 5.0)], 1), None);
-        assert!(display_state().len() < 4096);
-        if let Some(t) = cpu_temp_c() { assert!((-20.0..150.0).contains(&t)); }
-        assert_eq!((parse_cpumask("00000000,00000000\n"), parse_cpumask("00000000,0000000f"), parse_cpumask("3,1")), (0, 4, 3));
-        assert!(disk_sensor("../sda").is_none() && disk_temp_c("").is_none());
-        let n = std::cell::Cell::new(0);
-        let falling = || { n.set(n.get() + 1); Some(60.0 - n.get() as f64) };
-        assert_eq!(gate_on(&falling, 58.0, Duration::from_secs(5)).0, Some(58.0), "stops once the sensor is at the target");
-    }
-
-    #[test]
-    fn sub_runs_pool_their_samples() {
-        assert!(cpu_single(Duration::from_millis(40)) > 0.0);
-        let (rate, _) = cpu_multi(Duration::from_millis(40));
-        assert!(rate > 0.0);
-        assert!(pingpong_p99_us(200).is_some(), "4 bursts of 58 rounds, warm-up dropped");
-    }
 }
 
 // ── load phase ─────────────────────────────────────────────────────────────
@@ -984,7 +867,7 @@ fn pingpong_burst(rounds: usize) -> Option<Vec<f64>> {
 fn mono_ns() -> i64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts); }
-    ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64
+    ts.tv_sec * 1_000_000_000 + ts.tv_nsec
 }
 
 /// Work of one frame: fixed (never scaled to the clock), so a core that is still ramping up
@@ -1329,7 +1212,7 @@ pub fn burst_job_tail_ms(exe: &std::path::Path, dur: Duration) -> Option<f64> {
         let t = Instant::now();
         let ok = std::process::Command::new(exe).arg("__job").arg(iters)
             .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-            .status().map_or(false, |s| s.success());
+            .status().is_ok_and(|s| s.success());
         ok.then(|| t.elapsed().as_secs_f64() * 1e3)
     };
     run(exe, &iters)?;  // brings the binary back into the page cache
@@ -1368,7 +1251,7 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
     let iters = (unit() * 2).to_string();
     let spawn = |exe: &std::path::Path, iters: &str| std::process::Command::new(exe).arg("__job").arg(iters)
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .status().map_or(false, |s| s.success());
+        .status().is_ok_and(|s| s.success());
     if !spawn(exe, &iters) { return None; }  // also brings the binary back into the page cache
     let threads = (std::thread::available_parallelism().map_or(4, |n| n.get()) / 2).clamp(2, 12);
     let t0 = Instant::now();
@@ -1379,4 +1262,121 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
     let n: u64 = hs.into_iter().map(|h| h.join().unwrap_or(0)).sum();
     let secs = t0.elapsed().as_secs_f64();
     (n > 0 && secs > 0.0).then(|| n as f64 / secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cpu_benches() {
+        assert!(cpu_single(Duration::from_millis(100)) > 0.0);
+        assert!(cpu_multi(Duration::from_millis(100)).0 > 0.0);
+        assert!(pingpong_p99_us(200).unwrap() > 0.0);
+    }
+
+    #[test]
+    fn io_and_wake_produce_metrics() {
+        let mut s = Sample::new();
+        io("/tmp", 16 << 20, &mut s).unwrap();
+        assert!(s[&Metric::WriteMbs] > 0.0 && s[&Metric::ReadMbs] > 0.0);
+        assert!(s.get(&Metric::RaFootprintMib).is_some_and(|m| *m > 0.0) && s.contains_key(&Metric::MmapFaultP99Us));
+        assert!(wake_p99_us(Duration::from_millis(200)).is_some());
+        assert!(frame_tail_us(Duration::from_millis(120)).is_some_and(|v| v > 0.0));
+        let (t, m) = frame_us(Duration::from_millis(120)).unwrap();
+        assert!(m > 0.0 && t >= m, "the tail is never below the median");
+        assert_eq!(p99(&mut vec![]), None);
+        assert_eq!(tail(&mut vec![]), None);
+        // Worst 1 %, at least 5: 1000 samples -> the 10 largest; 8 samples -> the 5 largest.
+        let mut v: Vec<f64> = (1..=1000).map(|x| x as f64).collect();
+        assert!((tail(&mut v).unwrap() - 995.5).abs() < 1e-9);
+        let mut w: Vec<f64> = (1..=8).map(|x| x as f64).collect();
+        assert!((tail(&mut w).unwrap() - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn disk_of_refuses_ram_file_systems() {
+        // /dev/shm is tmpfs on every Linux system that has it.
+        if std::path::Path::new("/dev/shm").is_dir() { assert!(disk_of("/dev/shm").is_err()); }
+        assert_eq!(dev_split((259u64 << 8) | 3), (259, 3));
+        assert_eq!(dev_split(((300u64 & 0xfff) << 8) | ((1000u64 & 0xff) | ((1000u64 & !0xff) << 12))), (300, 1000));
+    }
+
+    #[test]
+    fn rapl_counts_the_package_once_and_survives_wrap() {
+        let root = std::env::temp_dir().join(format!("centurion-rapl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let zone = |dir: &str, name: &str| {
+            let d = root.join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("name"), format!("{name}\n")).unwrap();
+            std::fs::write(d.join("energy_uj"), "1000\n").unwrap();
+            std::fs::write(d.join("max_energy_range_uj"), "65532610987\n").unwrap();
+        };
+        // Intel laptop layout: MSR package, its core subzone, platform (psys), and the same package over MMIO.
+        zone("intel-rapl:0", "package-0"); zone("intel-rapl:0:0", "core"); zone("intel-rapl:1", "psys"); zone("intel-rapl-mmio:0", "package-0");
+        let r = Rapl::from_dir(&root);
+        assert_eq!(r.zones.iter().map(|z| z.0.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>(), vec!["intel-rapl:0"]);
+        // The counter wrapped between the two readings.
+        assert_eq!(r.joules(&[65_532_000_000], &[1_389_013]), Some(2.0));
+        assert_eq!(r.joules(&[5_000_000], &[7_000_000]), Some(2.0));
+        // Only an MMIO zone: it is used; psys alone is never taken as package power.
+        let _ = std::fs::remove_dir_all(&root);
+        zone("intel-rapl-mmio:0", "package-0"); zone("intel-rapl:1", "psys");
+        assert_eq!(Rapl::from_dir(&root).zones.len(), 1);
+        assert!(Rapl::from_dir(&root).zones[0].0.ends_with("intel-rapl-mmio:0"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn game_loop_contention_and_jobs_produce_metrics() {
+        assert!(unit() >= 50_000 && unit() == unit(), "measured once");
+        let g = game_loop(Duration::from_millis(240)).expect("frames");
+        let (med, tl) = (g.med_ms, g.tail_ms);
+        assert!(g.jitter_us >= 1.0 && g.jitter_us.is_finite());
+        assert!(med > 0.0 && tl >= med);
+        let c = contended(Duration::from_millis(120));
+        assert!(c.rate > 0.0 && c.frame_tail.is_some_and(|v| v > 0.0));
+        // The test binary is not centurion-calibrate: a child that fails to run the job yields None, never a figure.
+        assert_eq!(jobs_per_sec(std::path::Path::new("/nonexistent/centurion-calibrate"), Duration::from_millis(50)), None);
+        job_main(10_000);
+    }
+
+    #[test]
+    fn cache_loop_walks_one_cycle_and_produces_frames() {
+        let c = Chain::new(1 << 20, 7).expect("chain");
+        // One cycle over every line: a full lap returns to the start, no shorter walk does.
+        assert_eq!(c.walk(5, c.lines as u64), 5);
+        assert_ne!(c.walk(5, c.lines as u64 / 2), 5);
+        assert!((8 * MIB..=64 * MIB).contains(&cache_set_bytes()) && cache_set_bytes() % MIB == 0);
+        assert!(cache_unit() >= 1000 && cache_unit() == cache_unit(), "measured once");
+        let (med, tl) = cache_loop(Duration::from_millis(300)).expect("frames");
+        assert!(med > 0.0 && tl >= med);
+        assert_eq!(pacing_us(&[vec![1.0, 1.5, 1.0], vec![2.0]]), Some(500.0));
+    }
+
+    #[test]
+    fn battery_cadence_and_fresh_updates() {
+        // EC updates every 2 s, polled every 0.25 s: changes at 2, 4, 6, 8.
+        let s: Vec<BatSample> = (0..40).map(|i| { let t = i as f64 * 0.25; (t, 10.0 + (t / 2.0).floor()) }).collect();
+        assert!((cadence_of(&s).unwrap() - 2.0).abs() < 1e-9);
+        // Updates carry 11, 12, 13, 14; the first one (may straddle the change) is skipped.
+        assert!((mean_of_updates(&s, 1).unwrap() - 13.0).abs() < 1e-9);
+        assert!(cadence_of(&s[..10]).is_none(), "one change is no cadence");
+        assert_eq!(mean_of_updates(&[(0.0, 5.0), (1.0, 5.0)], 1), None);
+        assert!(display_state().len() < 4096);
+        if let Some(t) = cpu_temp_c() { assert!((-20.0..150.0).contains(&t)); }
+        assert_eq!((parse_cpumask("00000000,00000000\n"), parse_cpumask("00000000,0000000f"), parse_cpumask("3,1")), (0, 4, 3));
+        assert!(disk_sensor("../sda").is_none() && disk_temp_c("").is_none());
+        let n = std::cell::Cell::new(0);
+        let falling = || { n.set(n.get() + 1); Some(60.0 - n.get() as f64) };
+        assert_eq!(gate_on(&falling, 58.0, Duration::from_secs(5)).0, Some(58.0), "stops once the sensor is at the target");
+    }
+
+    #[test]
+    fn sub_runs_pool_their_samples() {
+        assert!(cpu_single(Duration::from_millis(40)) > 0.0);
+        let (rate, _) = cpu_multi(Duration::from_millis(40));
+        assert!(rate > 0.0);
+        assert!(pingpong_p99_us(200).is_some(), "4 bursts of 58 rounds, warm-up dropped");
+    }
 }

@@ -497,7 +497,7 @@ fn key_opens(archive: &Path, key: &Key) -> bool {
     let mut aux = aux;
     aux.key_pipe = None;
     let mut one = [0u8; 1];
-    let got = ch.stdout.take().map_or(false, |mut o| matches!(o.read(&mut one), Ok(1)));
+    let got = ch.stdout.take().is_some_and(|mut o| matches!(o.read(&mut one), Ok(1)));
     let _ = ch.kill();
     let _ = ch.wait();
     got
@@ -1532,7 +1532,7 @@ fn read_manifest(tar: &Path, archive: &Path) -> Result<Value, String> {
 
 /// {"op":"config_inspect","archive":"/…"} → {"ok":true,"manifest":{…}}
 pub fn config_inspect(req: &Value) -> Value {
-    let r = (|| Ok::<_, String>(read_manifest(&tool("tar").ok_or("tar is not installed")?, &abs_file(&req["archive"])?)?))();
+    let r = (|| read_manifest(&tool("tar").ok_or("tar is not installed")?, &abs_file(&req["archive"])?))();
     match r { Ok(m) => json!({"ok": true, "manifest": m}), Err(e) => fail(e) }
 }
 
@@ -1597,15 +1597,15 @@ pub fn config_restore_user(req: &Value) -> Value {
 /// A scene with a command that cannot be rewritten is removed from the stage, not restored as is.
 fn strip_scene_commands(dir: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    if !fs::symlink_metadata(dir).map_or(false, |m| m.is_dir()) { return out; }
+    if !fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) { return out; }
     for e in fs::read_dir(dir).into_iter().flatten().flatten() {
         let p = e.path();
-        if !fs::symlink_metadata(&p).map_or(false, |m| m.is_file()) { continue; }
+        if !fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) { continue; }
         let Ok(text) = fs::read_to_string(&p) else { let _ = fs::remove_file(&p); continue };
         let Ok(mut v) = serde_json::from_str::<Value>(&text) else { continue };
         let Some(o) = v.as_object_mut() else { continue };
         if o.remove("command").is_some() {
-            let ok = serde_json::to_vec_pretty(&v).ok().map_or(false, |b| fs::write(&p, b).is_ok());
+            let ok = serde_json::to_vec_pretty(&v).ok().is_some_and(|b| fs::write(&p, b).is_ok());
             if !ok { let _ = fs::remove_file(&p); }
             out.push(e.file_name().to_string_lossy().trim_end_matches(".json").to_owned());
         }
@@ -1622,7 +1622,7 @@ fn safe_name(n: &std::ffi::OsStr) -> Option<&str> {
 /// root-owned directory `dst`, each root:root 0644 through an atomic write.
 fn install_dir(src: &Path, dst: &str, only: Option<&[&str]>, done: &mut Vec<String>) -> Result<(), String> {
     // `src` itself must be a real directory (never a link to one); files are opened without following links.
-    if !fs::symlink_metadata(src).map_or(false, |m| m.is_dir()) { return Ok(()); }
+    if !fs::symlink_metadata(src).is_ok_and(|m| m.is_dir()) { return Ok(()); }
     let Ok(rd) = fs::read_dir(src) else { return Ok(()) };
     let mut made = false;
     for e in rd.flatten() {
@@ -1677,7 +1677,7 @@ pub fn config_restore_root(req: &Value) -> Value {
         // modprobe.d is executable configuration (an `install` line runs a command as root at module load):
         // the saved file is never copied. Its managed options are validated and the file is written anew.
         let conf = s.join("etc/modprobe.d/zz-centurion-nvidia.conf");
-        if fs::symlink_metadata(&conf).map_or(false, |m| m.is_file()) {
+        if fs::symlink_metadata(&conf).is_ok_and(|m| m.is_file()) {
             let text = String::from_utf8_lossy(&read_nofollow(&conf)?).into_owned();
             if crate::nvreg::restore_from(&text)? > 0 { done.push(crate::nvreg::CENTURION_FILE.to_owned()); }
         }
@@ -2205,7 +2205,7 @@ mod tests {
         let dir = tmp("age-test");
         fs::create_dir_all(dir.join("src/etc")).unwrap();
         fs::write(dir.join("src/etc/a.txt"), "hello").unwrap();
-        let keygen = |p: &Path| Command::new("age-keygen").arg("-o").arg(p).output().map_or(false, |o| o.status.success());
+        let keygen = |p: &Path| Command::new("age-keygen").arg("-o").arg(p).output().is_ok_and(|o| o.status.success());
         if !keygen(&dir.join("key.txt")) || !keygen(&dir.join("other.txt")) { let _ = fs::remove_dir_all(&dir); return; }
         let text = fs::read_to_string(dir.join("key.txt")).unwrap();
         let recipient = text.lines().find_map(|l| l.strip_prefix("# public key: ")).unwrap().trim().to_owned();

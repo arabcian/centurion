@@ -41,8 +41,8 @@ fn is_lamparray(desc: &[u8]) -> bool {
 
 fn find_dir() -> Option<PathBuf> {
     hidraw_dirs().into_iter().find(|d| {
-        hid_ids(d).map_or(false, |(v, p)| is_spectrum_product(v, p))
-            && fs::read(d.join("device/report_descriptor")).map_or(false, |b| is_lamparray(&b))
+        hid_ids(d).is_some_and(|(v, p)| is_spectrum_product(v, p))
+            && fs::read(d.join("device/report_descriptor")).is_ok_and(|b| is_lamparray(&b))
     })
 }
 

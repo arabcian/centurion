@@ -24,7 +24,7 @@ pub fn record(kind: &str, state: &str) {
     // plant symlinks that the rotation below would follow as root.
     if crate::secure_dir("/var/lib/centurion").is_err() { return; }
     // Rotation: keep the newest half (whole lines) once the file passes MAX_BYTES.
-    if std::fs::symlink_metadata(FILE).map_or(false, |m| m.file_type().is_file() && m.len() > MAX_BYTES) {
+    if std::fs::symlink_metadata(FILE).is_ok_and(|m| m.file_type().is_file() && m.len() > MAX_BYTES) {
         if let Some(old) = crate::read_root_file(FILE, 4 * MAX_BYTES) {
             let old = old.as_bytes();
             let cut = old.len().saturating_sub(KEEP_BYTES);

@@ -89,14 +89,14 @@ pub const ARL_PLANES: &[&str] = &["memss", "ngu"];
 /// verified there (285K, 255HX). Arrow Lake-H (197) and -U (181) are a different die (Meteor
 /// Lake-style SoC tile); on them 0x607 is not this mailbox. Family 6 only: a family 18/19 part
 /// with the same model number is something else.
-pub fn is_arrow_lake() -> bool { cpu_id_ref().map_or(false, |c| c.family == 6 && c.model == 198) }
+pub fn is_arrow_lake() -> bool { cpu_id_ref().is_some_and(|c| c.family == 6 && c.model == 198) }
 
 /// Generations whose OC-mailbox domain map (0 core, 1 iGPU, 2 cache, 3 SA, 4 analog I/O) is the
 /// one intel-undervolt / undervolt.py / throttled use (Haswell .. Raptor Lake), plus Arrow Lake-S/HX
 /// mapped on real hardware. Elsewhere (Sandy/Ivy Bridge, Meteor/Lunar Lake, Arrow Lake-H/U,
 /// Panther Lake, Atom, Xeon, unknown) the same index may name a different rail: read-only there.
 pub fn uv_map_verified() -> bool {
-    cpu_id_ref().map_or(false, |c| c.family == 6 && matches!(c.model,
+    cpu_id_ref().is_some_and(|c| c.family == 6 && matches!(c.model,
         60 | 69 | 70 | 61 | 71 | 78 | 94 | 142 | 158 | 102 | 126 | 140 | 141 | 165 | 166 | 167
         | 151 | 154 | 183 | 186 | 191 | 198))
 }
@@ -974,7 +974,7 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             Ok(format!("{:.2} A", back as f64 / 4.0))
         })();
         // `prior` is also set when the build closure vetoed: only keep it if a write happened.
-        if let (Some(c), true) = (prior, r.is_ok() || !r.as_ref().err().map_or(false, |e| e.contains("nothing written"))) { undo.push((format!("iccmax.{k}"), Undo::Icc(idx, c))); }
+        if let (Some(c), true) = (prior, r.is_ok() || !r.as_ref().err().is_some_and(|e| e.contains("nothing written"))) { undo.push((format!("iccmax.{k}"), Undo::Icc(idx, c))); }
         all &= step(&mut results, format!("iccmax.{k}"), r);
     }
 
@@ -1174,6 +1174,61 @@ pub fn reset_profile() -> Profile {
     Profile { voltage: cpu_planes().map(|&(k, i, _)| (k, i, 0.0)).collect(), ..Default::default() }
 }
 
+/// Undervolt-protection probe (CVE-2019-11157 / UVP): the OC Lock bit does not
+/// cover every BIOS voltage lock, so the only reliable test is a write. Moves the
+/// CPU Core offset ONE tick (~0.98 mV) towards 0 — never deeper — checks the
+/// readback, then restores the original value. Reads alone cannot tell, because an
+/// ignored write reads back the old value, which is why the value must change.
+pub fn probe_uv_lock() -> Value {
+    if cpu_id().map(|c| c.vendor) != Some("GenuineIntel".into()) {
+        return json!({"ok": false, "error": "not an Intel CPU"});
+    }
+    ensure_allow_writes();
+    let msr = match Msr::open(true) {
+        Ok(m) => m,
+        Err(e) => return json!({"ok": false, "error": format!("/dev/cpu/0/msr: {}", err_str(&e))}),
+    };
+    let oc_lock = msr.read(MSR_FLEX_RATIO).ok().map(|v| (v >> 20) & 1 == 1);
+    if !uv_map_verified() { return json!({"ok": false, "error": uv_map_refusal(), "oc_lock": oc_lock}); }
+    let plane = 0u64;  // CPU Core
+    let cur = match msr.mailbox(uv_read_cmd(plane)) {
+        Ok(r) if (r >> 32) & 0xFF != 0 => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock,
+            "message": format!("OC mailbox read refused (status {:#04x}) — no voltage control on this CPU/BIOS", (r >> 32) & 0xFF)}),
+        Ok(r) => r,
+        Err(e) => return json!({"ok": false, "error": format!("mailbox read: {}", err_str(&e)), "oc_lock": oc_lock}),
+    };
+    let raw = (((cur & 0xFFFF_FFFF) >> 21) & 0x7FF) as i64;
+    let ticks = if raw >= 0x400 { raw - 0x800 } else { raw };
+    let test = if ticks < 0 { ticks + 1 } else if ticks > 0 { ticks - 1 } else { -1 };
+    // Ratio/target/mode bits (20:0) are carried over from the read in both writes.
+    let cmd = uv_write_cmd_keep(plane, test, cur);
+    let back = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, test, c)));
+    // Always restore, whatever happened.
+    let restore = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, ticks, c)));
+    let restored = matches!(restore, Ok(Rmw::Done { cmd: rc, back: rb, .. }) if mb_status(rb) == 0 && rb & 0xFFFF_FFFF == rc & 0xFFFF_FFFF);
+    let back = match back {
+        Ok(Rmw::Done { back, .. }) => back,
+        Ok(Rmw::Vetoed(_)) => unreachable!("probe write is never vetoed"),
+        Ok(Rmw::Absent(st)) => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock, "restored": restored,
+            "message": format!("OC mailbox read refused (status {st:#04x}) — nothing written")}),
+        Err(e) => return json!({"ok": false, "error": format!("mailbox write: {}", err_str(&e)), "oc_lock": oc_lock, "restored": restored}),
+    };
+    let status = (back >> 32) & 0xFF;
+    let accepted = status == 0 && back & 0xFFFF_FFFF == cmd & 0xFFFF_FFFF;
+    json!({
+        "ok": true,
+        "uv_locked": !accepted,
+        "oc_lock": oc_lock,
+        "restored": restored,
+        "original_mv": (decode_mv(cur) * 100.0).round() / 100.0,
+        "test_mv": (decode_mv(cmd) * 100.0).round() / 100.0,
+        "readback_mv": (decode_mv(back) * 100.0).round() / 100.0,
+        "status": status,
+        "message": if accepted { "voltage offsets are writable (undervolt unlocked)".to_string() }
+                   else { format!("write ignored (readback {:.2} mV, status {status:#04x}) — undervolting is locked by the BIOS", decode_mv(back)) },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1307,59 +1362,4 @@ mod tests {
         assert_eq!(p.tjoffset, Some(10));
         assert!(!p.mchbar && p.pl1.is_some() && p.pl2.is_none());
     }
-}
-
-/// Undervolt-protection probe (CVE-2019-11157 / UVP): the OC Lock bit does not
-/// cover every BIOS voltage lock, so the only reliable test is a write. Moves the
-/// CPU Core offset ONE tick (~0.98 mV) towards 0 — never deeper — checks the
-/// readback, then restores the original value. Reads alone cannot tell, because an
-/// ignored write reads back the old value, which is why the value must change.
-pub fn probe_uv_lock() -> Value {
-    if cpu_id().map(|c| c.vendor) != Some("GenuineIntel".into()) {
-        return json!({"ok": false, "error": "not an Intel CPU"});
-    }
-    ensure_allow_writes();
-    let msr = match Msr::open(true) {
-        Ok(m) => m,
-        Err(e) => return json!({"ok": false, "error": format!("/dev/cpu/0/msr: {}", err_str(&e))}),
-    };
-    let oc_lock = msr.read(MSR_FLEX_RATIO).ok().map(|v| (v >> 20) & 1 == 1);
-    if !uv_map_verified() { return json!({"ok": false, "error": uv_map_refusal(), "oc_lock": oc_lock}); }
-    let plane = 0u64;  // CPU Core
-    let cur = match msr.mailbox(uv_read_cmd(plane)) {
-        Ok(r) if (r >> 32) & 0xFF != 0 => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock,
-            "message": format!("OC mailbox read refused (status {:#04x}) — no voltage control on this CPU/BIOS", (r >> 32) & 0xFF)}),
-        Ok(r) => r,
-        Err(e) => return json!({"ok": false, "error": format!("mailbox read: {}", err_str(&e)), "oc_lock": oc_lock}),
-    };
-    let raw = (((cur & 0xFFFF_FFFF) >> 21) & 0x7FF) as i64;
-    let ticks = if raw >= 0x400 { raw - 0x800 } else { raw };
-    let test = if ticks < 0 { ticks + 1 } else if ticks > 0 { ticks - 1 } else { -1 };
-    // Ratio/target/mode bits (20:0) are carried over from the read in both writes.
-    let cmd = uv_write_cmd_keep(plane, test, cur);
-    let back = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, test, c)));
-    // Always restore, whatever happened.
-    let restore = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, ticks, c)));
-    let restored = matches!(restore, Ok(Rmw::Done { cmd: rc, back: rb, .. }) if mb_status(rb) == 0 && rb & 0xFFFF_FFFF == rc & 0xFFFF_FFFF);
-    let back = match back {
-        Ok(Rmw::Done { back, .. }) => back,
-        Ok(Rmw::Vetoed(_)) => unreachable!("probe write is never vetoed"),
-        Ok(Rmw::Absent(st)) => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock, "restored": restored,
-            "message": format!("OC mailbox read refused (status {st:#04x}) — nothing written")}),
-        Err(e) => return json!({"ok": false, "error": format!("mailbox write: {}", err_str(&e)), "oc_lock": oc_lock, "restored": restored}),
-    };
-    let status = (back >> 32) & 0xFF;
-    let accepted = status == 0 && back & 0xFFFF_FFFF == cmd & 0xFFFF_FFFF;
-    json!({
-        "ok": true,
-        "uv_locked": !accepted,
-        "oc_lock": oc_lock,
-        "restored": restored,
-        "original_mv": (decode_mv(cur) * 100.0).round() / 100.0,
-        "test_mv": (decode_mv(cmd) * 100.0).round() / 100.0,
-        "readback_mv": (decode_mv(back) * 100.0).round() / 100.0,
-        "status": status,
-        "message": if accepted { "voltage offsets are writable (undervolt unlocked)".to_string() }
-                   else { format!("write ignored (readback {:.2} mV, status {status:#04x}) — undervolting is locked by the BIOS", decode_mv(back)) },
-    })
 }

@@ -29,7 +29,7 @@ fn usage() -> ! {
 /// Same rule as the GUI's validPresetName / centurion-gamemode's valid_name.
 fn valid_name(n: &str) -> bool {
     let mut ch = n.chars();
-    let first_ok = ch.next().map_or(false, char::is_alphanumeric);
+    let first_ok = ch.next().is_some_and(char::is_alphanumeric);
     first_ok && n.len() <= 64 && !n.contains("..") && n.chars().all(|c| c.is_alphanumeric() || " _.-".contains(c))
 }
 
@@ -148,7 +148,7 @@ fn audit_cmd(args: &[String]) {
         if let Some(d) = config_dir() {
             for sub in ["scenes", "tune-presets"] {
                 let mut v: Vec<PathBuf> = std::fs::read_dir(d.join(sub)).into_iter().flatten().flatten().map(|e| e.path())
-                    .filter(|p| p.extension().map_or(false, |x| x == "json")).collect();
+                    .filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
                 v.sort();
                 files.extend(v);
             }

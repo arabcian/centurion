@@ -181,10 +181,10 @@ pub fn reset_all_clock_offsets(gpu_index: u32) -> Result<Vec<String>, String> {
             }
         }
     }
-    if n.gpc_clk_vf_offset(h).map_or(false, |v| v != 0) && n.set_gpc_clk_vf_offset(h, 0).is_ok() {
+    if n.gpc_clk_vf_offset(h).is_ok_and(|v| v != 0) && n.set_gpc_clk_vf_offset(h, 0).is_ok() {
         done.push("core offset (per-domain) → 0".into());
     }
-    if n.mem_clk_vf_offset(h).map_or(false, |v| v != 0) && n.set_mem_clk_vf_offset(h, 0).is_ok() {
+    if n.mem_clk_vf_offset(h).is_ok_and(|v| v != 0) && n.set_mem_clk_vf_offset(h, 0).is_ok() {
         done.push("memory offset (per-domain) → 0".into());
     }
     Ok(done)

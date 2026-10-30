@@ -133,7 +133,7 @@ fn lock() -> Result<Lock, String> {
                 let holder = fs::read_to_string(LOCK_FILE).unwrap_or_default();
                 if let Some(pid) = holder.trim().strip_prefix("calibrate ").and_then(|p| p.parse::<i32>().ok()) {
                     // comm is cut to 15 bytes: "centurion-calibrate" reads back as "centurion-calib".
-                    if fs::read_to_string(format!("/proc/{pid}/comm")).map_or(false, |c| c.trim() == &"centurion-calibrate"[..15]) {
+                    if fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == &"centurion-calibrate"[..15]) {
                         return Err(format!("centurion-calibrate is measuring (pid {pid}) and holds the tuning until it ends; \
                                             try again when it has finished, or stop it (Ctrl-C restores its changes)"));
                     }
@@ -440,7 +440,7 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
         // CPUs come back first: give them time before their cpufreq files are written.
         if !hotplug_done && !tune::is_hotplug(key) {
             hotplug_done = true;
-            if order.first().map_or(false, |&j| tune::is_hotplug(&items[j].0)) {
+            if order.first().is_some_and(|&j| tune::is_hotplug(&items[j].0)) {
                 std::thread::sleep(tune::HOTPLUG_SETTLE);
                 tune::invalidate_topology();
             }
@@ -460,7 +460,7 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
             Err(e) if matches!(tune::find(key).map(|t| &t.target), Some(tune::Target::PciLatency)) && e.contains("skipped (GPU tree or suspended device)") => {}
             // Best-effort rows (IRQs, PCI/USB devices): not an error, but the
             // original stays recorded for the next restore instead of being lost.
-            Err(_) if tune::find(key).map_or(false, tune::best_effort) => { failed.insert(i); deferred += 1; }
+            Err(_) if tune::find(key).is_some_and(tune::best_effort) => { failed.insert(i); deferred += 1; }
             Err(e) => { failed.insert(i); errs.push(json!({"key": key, "error": e})); }
         }
     }
@@ -595,7 +595,7 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
             st.source = Some(mode.to_owned());
         }
         let (results, mut ok) = apply_values(st, values, mode == "game");
-        if restored["errors"].as_array().map_or(false, |a| !a.is_empty()) { ok = false; }
+        if restored["errors"].as_array().is_some_and(|a| !a.is_empty()) { ok = false; }
         if values.is_empty() && st.baseline.is_empty() { st.source = None; }
         json!({"ok": ok, "applied": true, "results": results, "restored": restored,
             "error": (!ok).then_some("some settings could not be applied")})
@@ -719,7 +719,7 @@ fn op_restore_defaults() -> Value {
     };
     // Snapshots written before capture() filtered them can hold "mixed" / 0-byte dirty limits: not values.
     let values: Map<String, Value> = d.values.iter()
-        .filter(|(k, v)| tune::find(k).map_or(false, |t| centurion_helpers::defaults::storable(t, v)))
+        .filter(|(k, v)| tune::find(k).is_some_and(|t| centurion_helpers::defaults::storable(t, v)))
         .map(|(k, v)| (k.clone(), json!(v))).collect();
     if values.is_empty() { return json!({"ok": false, "error": "the boot-default snapshot holds no known settings"}); }
     locked(|st| {
@@ -853,7 +853,7 @@ fn clean_values(values: &Map<String, Value>) -> Result<(Map<String, Value>, Vec<
 }
 
 fn preset_name(s: &str) -> Option<String> {
-    let ok = !s.is_empty() && s.len() <= 64 && s.chars().next().map_or(false, char::is_alphanumeric)
+    let ok = !s.is_empty() && s.len() <= 64 && s.chars().next().is_some_and(char::is_alphanumeric)
         && s.chars().all(|c| c.is_alphanumeric() || " _-.".contains(c)) && !s.contains("..");
     ok.then(|| s.to_owned())
 }

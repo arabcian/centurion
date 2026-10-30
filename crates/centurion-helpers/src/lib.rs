@@ -279,7 +279,7 @@ fn module_installed(module: &str) -> bool {
     let builtin = std::fs::read_to_string(base.join("modules.builtin")).unwrap_or_default();
     dep.lines().map(|l| l.split(':').next().unwrap_or("")).chain(builtin.lines()).any(|path| {
         let file = path.rsplit('/').next().unwrap_or("");
-        file.find(".ko").map_or(false, |i| norm(&file[..i]) == want)
+        file.find(".ko").is_some_and(|i| norm(&file[..i]) == want)
     })
 }
 
@@ -384,7 +384,7 @@ pub fn dgpu_usable() -> bool {
         rd(&p, "vendor") == "0x10de" && rd(&p, "class").starts_with("0x03") && p.join("driver").exists()
             && rd(&p, "power/runtime_status") != "error"
     });
-    on_bus && std::fs::read_dir("/proc/driver/nvidia/gpus").map_or(false, |mut d| d.next().is_some())
+    on_bus && std::fs::read_dir("/proc/driver/nvidia/gpus").is_ok_and(|mut d| d.next().is_some())
 }
 
 /// While centurion-calibrate measures (or waits to measure at boot), nothing else may change the power
@@ -445,7 +445,7 @@ pub fn fw_write_order(items: &[(&str, Option<i64>, i64)]) -> Vec<usize> {
         let hit = FW_PL_CHAINS.iter().enumerate()
             .find_map(|(c, ch)| ch.iter().position(|a| *a == attr).map(|p| (c, p, ch.len())));
         match hit {
-            Some((c, p, n)) if cur.map_or(false, |v| new > v) => (1 + 2 * c, n - 1 - p),
+            Some((c, p, n)) if cur.is_some_and(|v| new > v) => (1 + 2 * c, n - 1 - p),
             Some((c, p, _)) => (2 + 2 * c, p),
             None if FW_PL_AFTER.contains(&attr) => (9, 0),
             None => (0, 0),

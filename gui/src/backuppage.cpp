@@ -949,25 +949,36 @@ void BackupPage::newKeyPair() {
                                                       tr("age key (*.agekey *.txt);;All files (*)"));
     if (file.isEmpty()) return;
     if (QFileInfo::exists(file)) { finished(tr("%1 exists; choose a new file name (an existing key is never overwritten).").arg(file), false); return; }
-    QProcess p;
-    p.start(keygen, {QStringLiteral("-o"), file});
-    if (!p.waitForFinished(15000) || p.exitCode() != 0) {
-        finished(tr("age-keygen failed: %1").arg(QString::fromUtf8(p.readAllStandardError()).trimmed()), false);
-        return;
-    }
-    QFile::setPermissions(file, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    QFile f(file);
-    QString pub;
-    if (f.open(QIODevice::ReadOnly))
-        for (const QByteArray &l : f.readAll().split('\n'))
-            if (l.startsWith("# public key: ")) pub = QString::fromLatin1(l.mid(14)).trimmed();
-    if (pub.isEmpty()) { finished(tr("age-keygen wrote no public key."), false); return; }
-    recipient_->setText(pub);
-    saveSettings();
-    log(tr("New key pair: the public key is filled in; the secret key is in %1 (only you can read it).").arg(file), theme::OK);
-    QMessageBox::information(this, tr("New key pair"),
-        tr("The secret key was saved to\n%1\n\nMove it (or a copy) somewhere other than this computer — a USB stick, a password manager. "
-           "Restoring or verifying an encrypted image asks for it; without it the images cannot be read.").arg(file));
+    // Asynchronous, so a hung age-keygen cannot freeze the window; a 15 s watchdog kills it.
+    auto *p = new QProcess(this);
+    connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart) return;  // every other error is followed by finished()
+        finished(tr("age-keygen failed: %1").arg(p->errorString()), false);
+        p->deleteLater();
+    });
+    auto *watchdog = new QTimer(p);
+    watchdog->setSingleShot(true);
+    connect(watchdog, &QTimer::timeout, p, [p] { if (p->state() != QProcess::NotRunning) p->kill(); });
+    connect(p, &QProcess::finished, this, [this, p, file](int code, QProcess::ExitStatus status) {
+        const QString err = QString::fromUtf8(p->readAllStandardError()).trimmed();
+        p->deleteLater();
+        if (status != QProcess::NormalExit || code != 0) { finished(tr("age-keygen failed: %1").arg(err), false); return; }
+        QFile::setPermissions(file, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        QFile f(file);
+        QString pub;
+        if (f.open(QIODevice::ReadOnly))
+            for (const QByteArray &l : f.readAll().split('\n'))
+                if (l.startsWith("# public key: ")) pub = QString::fromLatin1(l.mid(14)).trimmed();
+        if (pub.isEmpty()) { finished(tr("age-keygen wrote no public key."), false); return; }
+        recipient_->setText(pub);
+        saveSettings();
+        log(tr("New key pair: the public key is filled in; the secret key is in %1 (only you can read it).").arg(file), theme::OK);
+        QMessageBox::information(this, tr("New key pair"),
+            tr("The secret key was saved to\n%1\n\nMove it (or a copy) somewhere other than this computer — a USB stick, a password manager. "
+               "Restoring or verifying an encrypted image asks for it; without it the images cannot be read.").arg(file));
+    });
+    p->start(keygen, {QStringLiteral("-o"), file});
+    watchdog->start(15000);
 }
 
 // Asks for what opens encrypted images: the sidecar says whether they were made with a passphrase or a key.

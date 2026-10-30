@@ -40,7 +40,7 @@ fn write(v: &Value) -> Result<(), String> {
 
 /// A previous boot left the guard armed (it never reached its stable window).
 fn previous_boot_died(v: &Value, current: &str) -> bool {
-    v["state"] == "armed" && v["boot_id"].as_str().map_or(false, |b| b != current)
+    v["state"] == "armed" && v["boot_id"].as_str().is_some_and(|b| b != current)
 }
 
 /// Presets must be skipped: already tripped, or the previous boot died armed

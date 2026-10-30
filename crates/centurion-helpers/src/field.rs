@@ -85,7 +85,7 @@ pub fn sessions(text: &str) -> Vec<Value> {
 
 /// The session a log belongs to: the log was last written while the game ran or shortly after
 /// it ended (`mtime`). The latest session that fits wins.
-pub fn match_session<'a>(sessions: &'a [Value], mtime: u64) -> Option<&'a Value> {
+pub fn match_session(sessions: &[Value], mtime: u64) -> Option<&Value> {
     sessions.iter().filter(|s| {
         let st = s["start"].as_u64().unwrap_or(u64::MAX);
         let end = s["end"].as_u64().unwrap_or(st + 6 * 3600);

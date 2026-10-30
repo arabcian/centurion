@@ -81,7 +81,7 @@ pub fn validate(p: &Param, v: &str) -> Result<String, String> {
         }
         Kind::Dwords => {
             let ok = !v.is_empty() && v.len() <= 512 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b"_=;,".contains(&b))
-                && v.split(';').filter(|e| !e.is_empty()).all(|e| e.split_once('=').map_or(false, |(k, x)| !k.is_empty() && num(x).is_some()));
+                && v.split(';').filter(|e| !e.is_empty()).all(|e| e.split_once('=').is_some_and(|(k, x)| !k.is_empty() && num(x).is_some()));
             if ok { Ok(v.into()) } else { Err(format!("{}: expected Key=Value;Key=Value with numeric values", p.name)) }
         }
     }
@@ -92,7 +92,7 @@ pub fn validate(p: &Param, v: &str) -> Result<String, String> {
 fn root_dir_chain(dir: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     let Ok(real) = std::fs::canonicalize(dir) else { return false };
-    real.ancestors().all(|d| std::fs::metadata(d).map_or(false, |m| {
+    real.ancestors().all(|d| std::fs::metadata(d).is_ok_and(|m| {
         m.is_dir() && m.uid() == 0
             && (m.mode() & 0o020 == 0 || m.gid() == 0)
             && (m.mode() & 0o002 == 0 || m.mode() & 0o1000 != 0)

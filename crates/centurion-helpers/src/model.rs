@@ -598,7 +598,7 @@ fn bwd(l: &[f64], n: usize, b: &mut [f64]) {
 /// sweep was memory-bound); every column's arithmetic is the same as solving it alone.
 fn inv_diag(l: &[f64], n: usize) -> Vec<f64> {
     const CB: usize = 16;
-    let blocks = (n + CB - 1) / CB;
+    let blocks = n.div_ceil(CB);
     let parts = crate::par::map(blocks, |b| {
         let (j0, j1) = (b * CB, ((b + 1) * CB).min(n));
         let mut u: Vec<Vec<f64>> = (j0..j1).map(|j| vec![0.0; n - j]).collect();
@@ -653,7 +653,7 @@ fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, 
     {
         let pc: Vec<Option<Shared>> = kc.iter_mut().map(|m| m.as_mut().map(|m| Shared(m.as_mut_ptr()))).collect();
         let (pn, po) = (Shared(kn.as_mut_ptr()), Shared(ko.as_mut_ptr()));
-        let pt = temp.then(|| Shared(kt.as_mut_ptr()));
+        let pt = temp.then_some(Shared(kt.as_mut_ptr()));
         let space = &*space;
         crate::par::map(n, |i| {
             // SAFETY: task i writes only row i (lower part) of each matrix.
@@ -1097,7 +1097,7 @@ impl Interaction {
 
 impl Model {
     pub fn new(space: Arc<Space>, fits: [Option<Arc<Fit>>; 4], wts: [f64; 4]) -> Option<Model> {
-        (0..4).any(|o| wts[o] != 0.0 && fits[o].is_some()).then(|| Model { space, fits, wts })
+        (0..4).any(|o| wts[o] != 0.0 && fits[o].is_some()).then_some(Model { space, fits, wts })
     }
     fn parts(&self) -> impl Iterator<Item = (usize, f64, &Fit)> + '_ {
         (0..4).filter_map(move |o| Some((o, self.wts[o], self.fits[o].as_deref()?))).filter(|(_, w, _)| *w != 0.0)
@@ -1895,7 +1895,7 @@ mod tests {
             v
         }).collect();
         let prob = Problem::new(&joint, keys, cands, Vec::new(), RISK_Z, 0.03, Vec::new());
-        let mut sel = prob.optimize(&vec![0; 10], &mut rng, 6);
+        let mut sel = prob.optimize(&[0; 10], &mut rng, 6);
         prob.prune(&mut sel, RISK_Z, 0.03);
         let cfg = prob.cfg(&sel);
         let on = |k: &str| cfg.iter().any(|(a, _)| a == k);

@@ -84,7 +84,7 @@ pub fn resolve_restore_path(dir: &str, filepath: Option<&str>) -> Result<PathBuf
         // would otherwise sort last and be picked implicitly.
         None => {
             let newest = bins_sorted(d).into_iter().rev()
-                .find(|n| std::fs::symlink_metadata(d.join(n)).map_or(false, |m| m.file_type().is_file()))
+                .find(|n| std::fs::symlink_metadata(d.join(n)).is_ok_and(|m| m.file_type().is_file()))
                 .ok_or_else(|| format!("No snapshot .bin files in {dir}"))?;
             d.join(newest)
         }

@@ -198,7 +198,7 @@ pub fn resolve(card: &str) -> Result<Card, String> {
     if read_trimmed(&dev.join("vendor")).unwrap_or_default() != "0x1002" { return Err("not an AMD device".into()); }
     let hwmon = std::fs::read_dir(dev.join("hwmon")).ok().and_then(|rd| {
         rd.flatten().map(|e| e.path())
-            .find(|p| read_trimmed(&p.join("name")).map_or(false, |n| n == "amdgpu"))
+            .find(|p| read_trimmed(&p.join("name")).is_ok_and(|n| n == "amdgpu"))
     }).and_then(|p| canonical_in_sysfs(&p)).filter(|p| p.starts_with(&dev));
     Ok(Card { dev, hwmon })
 }
@@ -337,7 +337,7 @@ fn od_marker(card: &Card) -> String {
 fn tune_owns_level() -> bool {
     crate::read_root_file("/run/centurion/tune/state.json", 8 << 20)
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .map_or(false, |v| v["baseline"].as_array().map_or(false, |b| b.iter().any(|e| e[0] == "gpu.amdgpu_dpm")))
+        .is_some_and(|v| v["baseline"].as_array().is_some_and(|b| b.iter().any(|e| e[0] == "gpu.amdgpu_dpm")))
 }
 
 const FAN_DIR: &str = "gpu_od/fan_ctrl";
@@ -410,7 +410,7 @@ pub fn apply(card: &Card, s: &Map<String, Value>) -> Result<Vec<String>, String>
     };
     // A profile only sticks under `manual`. The default profile does not need
     // it, so "auto + BOOTUP_DEFAULT" (the stock state) stays auto.
-    let profile_needs_manual = profile.as_ref().map_or(false, |p| p.1 != "BOOTUP_DEFAULT");
+    let profile_needs_manual = profile.as_ref().is_some_and(|p| p.1 != "BOOTUP_DEFAULT");
     let profile_write = profile.as_ref().filter(|p| !p.2 || profile_needs_manual).map(|p| p.0);
     let cap_uw = match s.get("power_cap_w").filter(|v| !v.is_null()) {
         None => None,
@@ -494,7 +494,7 @@ pub fn apply(card: &Card, s: &Map<String, Value>) -> Result<Vec<String>, String>
             put(card, "power_dpm_force_performance_level", w)?;
             done.push(format!("performance level {w}"));
         }
-        if owned && !profile_needs_manual && level.map_or(false, |l| Some(l) != prev) {
+        if owned && !profile_needs_manual && level.is_some_and(|l| Some(l) != prev) {
             done.push("performance level left as it is: the Optimizations row \"iGPU DPM level\" is applied and owns it".into());
         }
     }
@@ -517,7 +517,7 @@ pub fn apply(card: &Card, s: &Map<String, Value>) -> Result<Vec<String>, String>
         }
         if let (Some(old), Some(hw)) = (cap_prev.as_ref(), card.hwmon.as_ref()) {
             let ok = canonical_in_sysfs(&hw.join("power1_cap")).filter(|r| r.starts_with(&card.dev))
-                .map_or(false, |p| sysfs_write(&p, old.as_bytes()).is_ok());
+                .is_some_and(|p| sysfs_write(&p, old.as_bytes()).is_ok());
             undo.push(if ok { "power limit restored".into() } else { "power limit NOT restored".into() });
         }
         if od_write { undo.push("overdrive reset to stock".into()); }
