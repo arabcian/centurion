@@ -125,6 +125,17 @@ void GlobalShortcuts::list() {
     });
 }
 
+/// The portal's shortcut list for `set` (shortcut id → preferred trigger).
+static PortalShortcuts portalShortcuts(const QHash<QString, QString> &set) {
+    PortalShortcuts out;
+    for (auto it = set.cbegin(); it != set.cend(); ++it) {
+        QVariantMap p{{QStringLiteral("description"), QStringLiteral("Apply scene ") + it.key().mid(6)}};
+        if (!it.value().isEmpty()) p.insert(QStringLiteral("preferred_trigger"), it.value());
+        out << PortalShortcut{it.key(), p};
+    }
+    return out;
+}
+
 void GlobalShortcuts::bindIfNeeded() {
     const QHash<QString, QString> want = wanted();
     if (!listed_) {
@@ -133,15 +144,25 @@ void GlobalShortcuts::bindIfNeeded() {
         for (auto it = want.cbegin(); it != want.cend(); ++it)
             if (triggers_.contains(it.key())) asked_.insert(it.key(), it.value());
     }
-    if (QSet<QString>(want.keyBegin(), want.keyEnd()) == QSet<QString>(triggers_.keyBegin(), triggers_.keyEnd()) && asked_ == want) return;
-    PortalShortcuts shortcuts;
-    for (auto it = want.cbegin(); it != want.cend(); ++it) {
-        QVariantMap p{{QStringLiteral("description"), QStringLiteral("Apply scene ") + it.key().mid(6)}};
-        if (!it.value().isEmpty()) p.insert(QStringLiteral("preferred_trigger"), it.value());
-        shortcuts << PortalShortcut{it.key(), p};
+    // The desktop keeps the key of a shortcut it already has and ignores preferred_trigger for it, so an edited
+    // key is bound again from scratch: the list without it first (the desktop forgets it), then with it.
+    QSet<QString> changed;
+    for (auto it = want.cbegin(); it != want.cend(); ++it)
+        if (triggers_.contains(it.key()) && asked_.contains(it.key()) && asked_.value(it.key()) != it.value()) changed.insert(it.key());
+    if (!changed.isEmpty()) {
+        QHash<QString, QString> rest = want;
+        for (const QString &id : std::as_const(changed)) { rest.remove(id); asked_.remove(id); }
+        request(QStringLiteral("BindShortcuts"), {QVariant::fromValue(QDBusObjectPath(session_)), QVariant::fromValue(portalShortcuts(rest)), QString()}, {},
+                [this](uint code, const QVariantMap &r) {
+                    if (code == 0) storeTriggers(r.value(QStringLiteral("shortcuts")));
+                    else asked_.clear();
+                    bindIfNeeded();  // binds the changed shortcuts afresh
+                });
+        return;
     }
+    if (QSet<QString>(want.keyBegin(), want.keyEnd()) == QSet<QString>(triggers_.keyBegin(), triggers_.keyEnd()) && asked_ == want) return;
     asked_ = want;
-    request(QStringLiteral("BindShortcuts"), {QVariant::fromValue(QDBusObjectPath(session_)), QVariant::fromValue(shortcuts), QString()}, {},
+    request(QStringLiteral("BindShortcuts"), {QVariant::fromValue(QDBusObjectPath(session_)), QVariant::fromValue(portalShortcuts(want)), QString()}, {},
             [this](uint code, const QVariantMap &r) {
                 if (code == 0) storeTriggers(r.value(QStringLiteral("shortcuts")));
                 else asked_.clear();  // dismissed: asked again at the next save
