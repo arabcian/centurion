@@ -373,6 +373,170 @@ göçü ve 8 MiB sınırına yaklaşma özellik testleri eklensin.
 
 ---
 
+## 2b. Yeni knob'lar (E serisi)
+
+Şu an tabloda 169 knob var (`tune.rs` `TUNABLES`): EEVDF, BORE, Infinity, 7.2 LLC dengeleme, sched_ext başlat/durdur, THP/mTHP,
+MGLRU, zswap, blok kuyruğu, cihaz güç yönetimi. Aşağıdakiler **eksik** ve hedef makinede (Legion Pro 7 16AFR10H: 9955HX3D,
+RTX 5080, 2× Samsung NVMe, RTL8125, MT7927; çekirdek 7.3.0-cachyos) anlamlı olanlar.
+
+Kapsam dışı: **MuQSS** 2021'de (5.12) bırakıldı, 7.x için yok. `wq.power_efficient` bilinçli olarak emekliye ayrılmış
+(`RETIRED_KEYS`), geri getirilmez.
+
+| ID | Başlık | Alan | Öncelik | Efor | Model |
+|---|---|---|---|---|---|
+| **E1** | sched_ext: modlar/argümanlar, scx_loader entegrasyonu, dinamik allowlist, sağlık izleme | Scheduler | P0 | L | Opus (güvenlik) + Sonnet |
+| **E2** | irqbalance çakışma tespiti (`irq.affinity` sessizce geri alınıyor) | Scheduler/IRQ | P0 | S | Sonnet |
+| **E3** | Oyun için görev başına EEVDF slice (`sched_attr.sched_runtime`) | Launch bloğu | P1 | M | Opus |
+| **E4** | Elevator ayarları (`queue/iosched/*`: kyber, mq-deadline, bfq) | Storage | P1 | M | Sonnet |
+| **E5** | zram: ikincil sıkıştırma (recompress) + idle işaretleme, boot zamanı yapılandırma | Memory | P1 | M | Sonnet |
+| **E6** | Threaded NAPI + NAPI kthread'lerini CCD rolüne yönlendirme | Network | P1 | M | Sonnet |
+| **E7** | BORE ve EEVDF özelliklerinin dinamik keşfi (eksik `sched_burst_*`, `PLACE_*`) | Scheduler | P1 | S | Sonnet |
+| **E8** | `ppt_cpu_cl` kalibrasyon bağlamına girmiyor | Calibration | P1 | S | Sonnet |
+| **E9** | Project C (BMQ/PDS) tespiti + `kernel.yield_type` | Scheduler | P2 | S | Sonnet |
+| **E10** | Ağ: `tcp_notsent_lowat`, `tcp_fastopen`, `gro_flush_timeout`/`napi_defer_hard_irqs`, busy poll | Network | P2 | M | Sonnet |
+| **E11** | Küçük bellek knob'ları: `max_ptes_shared`, `use_zero_page`, `compact_unevictable_allowed`, `dirtytime_expire_seconds`, KSM advisor | Memory | P2 | S | Sonnet |
+| **E12** | btrfs async discard sınırları (`/sys/fs/btrfs/<uuid>/discard/*`) | Storage | P2 | S | Sonnet |
+| **E13** | Arka plan cgroup'u: oyun sırasında diğerlerine `cpu.weight` / `cpu.idle` | Scheduler | P2 | M | Opus |
+
+**Her yeni knob için ortak kontrol listesi** (her E maddesinin kabul ölçütüne dahildir):
+1. `tune.rs` satırı: yardım metni (diğerleriyle aynı üslup), `Kind`/`Options`, `debugfs`/`caution`/`vendor`; dosya yoksa satır gizlenir.
+2. `defaults.rs` boot snapshot'ına girer mi (radyo anahtarları gibi istisna mı)?
+3. `tune-helper` audit sınırları (reddet / uyar + fix).
+4. Kalibrasyon: plana girer mi, yoksa `calib::EXCLUDED` + gerekçe mi? Merdiven değerleri autotune'un güven bölgesi içinde mi?
+5. Autotune: yapısal kural mı, puanlanan knob mu (etki vektörü + risk), yoksa yalnızca elle mi?
+6. Journal/restore yolu ve `RETIRED_KEYS` ile çakışmama; `tune.rs` testindeki anahtar listesine ekleme.
+7. AUTOTUNE.md / HANDBOOK güncellemesi (D1 testi).
+
+### E1 — sched_ext'i tamamla (P0, L)
+
+**Sorun (kanıt).** `scx_set` (`tune.rs` ~1981) scheduler'ı **argümansız** başlatıyor: lavd'nin `--performance/--powersave`,
+bpfland'in `-m performance -s/-S/-l` gibi modları kullanılamıyor. Allowlist sabit (`SCX_NAMES`: lavd, bpfland, rusty, flash,
+cosmos, p2dq, tickless, layered); güncel scx deposunda beerland, cake, forge, pandemonium, rustland gibi yenileri var, `chaos`
+ise test amaçlı gecikme enjekte eden bir scheduler (asla sunulmamalı). `scx_loader` (CachyOS'ta varsayılan yönetici, D-Bus
+`org.scx.Loader`, sistem veriyolu) hiç hesaba katılmıyor: o çalışırken Centurion kendi kopyasını başlatırsa ikisi çakışır ve restore
+yanlış durumu geri yükler. Scheduler'ın watchdog tarafından atılması (ejection) hiçbir yerde kayıt edilmiyor.
+
+**Yapılacak.**
+- Yeni knob `sched.ext_mode`: `auto | gaming | lowlatency | powersave | server`. Mod → argüman eşlemesi: önce
+  `/etc/scx_loader/config.toml` (yoksa `/etc/scx_loader.toml`) içindeki `[scheds.<ad>]` dizileri, yoksa kodda küçük bir tablo
+  (scx_loader'ın örnek yapılandırmasındaki değerler: bpfland gaming `-m performance`, lavd gaming `--performance`, powersave
+  `--powersave` …). Argümanlar yalnızca bu tablodan gelir, kullanıcıdan serbest metin alınmaz.
+- scx_loader varsa (D-Bus adı sahipli): `StartScheduler / SwitchScheduler(name, mode)` ve `StopScheduler` ile sür; baseline'a
+  önceki `CurrentScheduler` + `SchedulerMode` yazılır, restore onları geri getirir. Yoksa mevcut doğrudan başlatma yolu.
+- Allowlist: güvenilir dizindeki `scx_*` dosyaları keşfedilir, bilinen-güvenli listeyle kesişim (chaos ve demo/test
+  scheduler'ları hariç); bilinmeyen yeni ad "experimental" olarak işaretli sunulur.
+- Sağlık: `/sys/kernel/sched_ext/` altındaki `state`, `enable_seq` ve (varsa) olay sayaçları + çekirdek günlüğündeki sched_ext
+  "disabled/error" satırları `stability.rs` olay sınıflandırmasına girer (ağırlık 1). Atılan scheduler'ın knob değeri drift olarak
+  raporlanır.
+- Kalibrasyon: sched_ext **ve** modu ölçülebilir (bağlam pseudo-knob'u değil, gerçek knob); ama EEVDF/BORE knob'larıyla
+  karşılıklı dışlayıcı: scx etkinken `sched.*`, `kernel.sched_bore*` satırları anlamsız. Tasarımda bu çiftler "geçersiz kombinasyon"
+  olarak işaretlenmeli (model tarafında `bad` kümeleri gibi).
+
+**Kabul ölçütü.** Birim testleri: config.toml ayrıştırma, mod → argüman çözümü, allowlist (chaos reddedilir, `../` reddedilir),
+scx_loader var/yok yolları için sahte D-Bus (veya soyutlanmış arayüz). Restore sonrası önceki scheduler + mod aynen döner.
+
+### E2 — irqbalance çakışması (P0, S)
+
+**Sorun.** Kod tabanında `irqbalance` hiç geçmiyor. `irq.affinity` (oyunda IRQ'ları diğer CCD'ye taşıma) uygulandıktan sonra
+çalışan bir irqbalance daemon'u birkaç saniye içinde dağıtımı geri alır; kullanıcı ayarın uygulandığını sanır.
+
+**Yapılacak.** `irq.affinity` / `wq.cpumask` / game isolate uygulanırken irqbalance süreci aranır; varsa: (a) GUI satırında uyarı,
+(b) seçenek: oyun süresince `IRQBALANCE_BANNED_CPULIST` mantığıyla değil, servisi duraklatıp restore'da geri başlatmak (journal'a
+yazılır; systemd ve OpenRC ikisi de). Drift izleyici bu knob'u 10 s sonra tekrar okuyup sapmayı "irqbalance" nedeniyle raporlar.
+
+**Kabul ölçütü.** Süreç tespiti ve journal girişi için birim testi; servis zaten durmuşsa restore onu başlatmaz.
+
+### E3 — Oyun için görev başına EEVDF slice (P1, M)
+
+**Arka plan.** EEVDF 6.12'den beri `sched_setattr()`'ın `sched_runtime` alanını normal görevler için slice önerisi olarak
+kabul ediyor (100 µs – 100 ms). Kısa slice daha erken sanal son tarih demek; uyanan görev çalışanı daha erken kesebilir: daha
+tutarlı kare zamanlaması, karşılığında çok kısa seçilirse throughput kaybı.
+
+**Yapılacak.** Launch bloğuna (`timerslack_ns` yanına) `slice_us` (kapalı / 1000 / 2000 / 3000). `centurion-gamemode` oyunun
+süreç ağacına (yeni thread'ler dahil: periyodik tarama ya da clone takibi, mevcut timerslack yolu nasıl yapıyorsa) uygular.
+BORE etkinken veya sched_ext varken etkisi farklıdır: bu durumda satır not düşer. Kalibrasyon: game-loop ve cache-loop probları
+kendi thread'lerine bu slice'ı uygulayarak "launch.slice_us" knob'unu ölçebilir (yalnızca o probun thread'leri, sistem geneli değil).
+
+**Kabul ölçütü.** `sched_getattr` ile geri okuma testi (çekirdek desteklemiyorsa satır gizli); oyun bitince değer kalmaz
+(süreç ölür, sorun yok) ama gamemode'un kendi thread'ine sızmaz.
+
+### E4 — Elevator ayarları (P1, M)
+
+`blk.scheduler` var ama seçilen elevator'ün kendi ayarları yok: kyber `read_lat_nsec` / `write_lat_nsec`, mq-deadline
+`read_expire` / `write_expire` / `fifo_batch` / `writes_starved`, bfq `low_latency` / `slice_idle`. Bunlar yalnızca o elevator
+etkinken var (koşullu satır, `blk.scheduler` ile etkileşim). NVMe'de varsayılan `none` olduğu için çoğu zaman gizli kalır; ama
+autotune mq-deadline/kyber seçerse ayarı da ölçülmeli. Kalibrasyonda `blk.scheduler` değeriyle iç içe tasarım: elevator ≠ o değer
+iken bu knob'lar "uygulanamaz" (refused değil, koşullu). IO fazı ölçer.
+
+**Kabul ölçütü.** Koşullu uygulama testi (elevator değişince dosyalar kaybolur/gelir; journal sırası: önce elevator — mevcut
+`todo.sort_by_key` kuralıyla uyumlu).
+
+### E5 — zram (P1, M)
+
+Autotune zram'ı tanıyor (`SwapKind::Zram`, swappiness 150) ama zram'ın kendisi ayarlanmıyor. Canlı değiştirilebilenler:
+`recomp_algorithm` (ikincil, daha güçlü sıkıştırıcı; ör. zstd) + `idle` işaretleme + `recompress type=idle` (soğuk sayfaları
+yeniden sıkıştırır, RAM kazandırır). `comp_algorithm` ve `disksize` ise reset (swapoff) ister: bunlar knob değil, "boot zamanı
+yapılandırma" olarak (zram-generator / OpenRC zram-init dosyasına öneri) raporlanır, canlı yazılmaz. Periyodik recompress bir
+zamanlayıcı ister: centurion-tune boot op'u veya gamemode dışı boşta zamanlarında. Kabul: zram yoksa satırlar gizli; recompress
+yalnızca idle sayfalarda ve sınırlı CPU ile çalışır (bir oturumda en fazla N MiB).
+
+### E6 — Threaded NAPI (P1, M)
+
+`/sys/class/net/<if>/threaded` = 1 iken ağ softirq işi `napi/<if>-<n>` kthread'lerinde çalışır ve bunlar diğer kthread'ler gibi
+CCD rolüne (oyun dışı CCD) yönlendirilebilir. Şu an `irq.affinity` IRQ'yu taşıyor ama softirq işi hâlâ IRQ'nun düştüğü CPU'da.
+RTL8125 ve MT7927 için: knob + game isolate yolunda kthread affinity. Kabul: sürücü desteklemiyorsa yazma reddi → satır gizli;
+restore kthread'leri serbest bırakır.
+
+### E7 — BORE / EEVDF özelliklerinin dinamik keşfi (P1, S)
+
+BORE için sabit 6 sysctl var; çekirdek sürümüne göre başka `sched_burst_*` dosyaları olabilir. EEVDF'te `PLACE_LAG`,
+`PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` gibi özellikler tabloda yok (mevcut: next_buddy, run_to_parity, preempt_short,
+delay_dequeue, hrtick, sis_util, ttwu_queue, cache_hot_buddy, wakeup_preemption). Yapılacak: `/proc/sys/kernel/sched_burst_*` ve
+debugfs `sched/features` içinde tabloda olmayan girdileri "Discovered" olarak (yalnız elle, kalibrasyon dışı) göster; bilinen ve
+anlamlı olanları (yukarıdaki `PLACE_*`) tam satır olarak ekle ve kalibrasyona al. Kabul: keşif listesinde bilinen anahtar tekrar
+görünmez.
+
+### E8 — `ppt_cpu_cl` kalibrasyon bağlamında yok (P1, S)
+
+Firmware'de `ppt_cpu_cl` var (bu makinede 70, aralık 30–100) ve `lib.rs` yazma sırası onu biliyor (`FW_PL_AFTER`), ama
+`calctx::FW_ATTRS` listesinde yok: kalibrasyon bağlamı (`ctx.limits`) bu limiti kaydetmiyor; değiştiğinde iki farklı bağlam aynı
+kimliği alır. Yapılacak: listeye ekle; `ctx_ref` / bağlam kimliği geri uyumu (eski oturumlarda alan yok = "bilinmiyor",
+yeni bağlam açmaz). Kabul: `scene_power_and_description` testine alan eklenir.
+
+### E9 — Project C tespiti (P2, S)
+
+Project C (BMQ/PDS) 7.x'te kararsız: Liquorix Eylül 2026'da 7.2 için ekleyip ~20 saat sonra geri aldı. Yine de çekirdek
+gelirse: `/proc/sys/kernel/yield_type` (0/1/2) tek canlı ayar; zaman dilimi `sched_timeslice=` boot parametresi (rapor notu,
+knob değil). EEVDF/BORE/LLC/sched_ext satırları dosyaları olmadığından zaten gizlenir; profil özetinde "alt scheduler: PDS/BMQ"
+yazsın ve autotune'un scheduler kuralları bu durumda devre dışı kalsın. Kabul: sahte /proc ağacıyla tespit testi.
+
+### E10 — Ağ ince ayarları (P2, M)
+
+`net.ipv4.tcp_notsent_lowat` (BBR + fq ile gönderme tarafı bufferbloat'u azaltır), `tcp_fastopen`, arayüz başına
+`gro_flush_timeout` + `napi_defer_hard_irqs` (kesme sayısı ↔ gecikme, güç), `net.core.busy_poll/busy_read` (gecikme düşer ama
+CPU uyanık kalır: power objective'de yüksek maliyet, yalnızca elle). Oyunda yerel µs düzeyi kazanç internet RTT'si yanında küçük;
+öncelik bu yüzden düşük. Kalibrasyon bunları göremez (ağ benchmark'ı yok) → rule-only, `EXCLUDED` gerekçesiyle.
+
+### E11 — Küçük bellek knob'ları (P2, S)
+
+`khugepaged/max_ptes_shared`, `transparent_hugepage/use_zero_page`, `vm.compact_unevictable_allowed` (RT gecikmesi için 0),
+`vm.dirtytime_expire_seconds`, KSM advisor (`/sys/kernel/mm/ksm/advisor_mode`, `ksm.run` açıksa). Hepsi heap probu / load fazıyla
+ölçülebilir ya da rule-only; her biri ortak kontrol listesinden geçer.
+
+### E12 — btrfs async discard (P2, S)
+
+`/sys/fs/btrfs/<uuid>/discard/{iops_limit,kbps_limit,max_discard_size}`: arka plan TRIM'in oyun sırasında I/O gecikmesine
+sızmasını sınırlar. Yalnızca btrfs + `discard=async` ile görünür. Dosya sistemi UUID'si değişebileceği için anahtar bağlama göre
+(`/`, `/home`) çözülür.
+
+### E13 — Arka plan cgroup'u (P2, M)
+
+Oyun cgroup'u (`isolate.rs`, cpuset partition) var; geri kalan iş için ağırlık yok. Oyun süresince kullanıcı oturumunun diğer
+cgroup'larına `cpu.weight` düşürme veya `cpu.idle=1` (SCHED_IDLE benzeri). systemd ve OpenRC (unified cgroup) farkı, derleme gibi
+bilinçli arka plan işlerini aç bırakma seçeneği. Restore kesin olmalı (journal). Kalibrasyonun contended window'u bunu ölçebilir.
+
+---
+
 ## 3. Modele verirken (prompt şablonu)
 
 Her maddeyi ayrı bir oturumda verin. Şablon:
