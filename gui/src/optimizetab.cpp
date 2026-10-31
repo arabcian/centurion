@@ -7,11 +7,13 @@
 #include "lazywidget.h"
 #include "sysinfo.h"
 #include "theme.h"
+#include "autotunereport.h"
 
 #include <memory>
 #include <unistd.h>
 #include <QApplication>
 #include <QCheckBox>
+#include <QToolButton>
 #include <QClipboard>
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -1999,9 +2001,34 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         wl->setTextFormat(Qt::RichText);
         wl->setTextInteractionFlags(Qt::TextSelectableByMouse);
         v->addWidget(wl);
+        // Context, joint-model and evidence messages (older reports mixed them into "constraints").
+        if (const QJsonArray notes = d.value(QStringLiteral("notes")).toArray(); !notes.isEmpty()) {
+            QStringList nl;
+            for (const auto &n : notes) nl << n.toString().toHtmlEscaped();
+            auto *btn = new QToolButton;
+            btn->setText(QStringLiteral("Notes / Evidence (%1)").arg(notes.size()));
+            btn->setCheckable(true);
+            btn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            btn->setArrowType(Qt::RightArrow);
+            auto *body = new QLabel(nl.join(QStringLiteral("<br>")));
+            body->setWordWrap(true);
+            body->setTextFormat(Qt::RichText);
+            body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            body->hide();
+            connect(btn, &QToolButton::toggled, body, [btn, body](bool on) { body->setVisible(on); btn->setArrowType(on ? Qt::DownArrow : Qt::RightArrow); });
+            v->addWidget(btn);
+            v->addWidget(body);
+        }
     }
-    auto *table = new QTableWidget(0, 4);
-    table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Why (for this machine)")});
+    // Source / confidence columns only when the report carries "decisions" (older helpers: old layout).
+    const QHash<QString, QJsonObject> dec = autotunereport::decisionsByKey(d);
+    const QJsonObject scores = d.value(QStringLiteral("scores")).toObject();
+    const bool rich = !dec.isEmpty();
+    auto *onlyChanges = new QCheckBox(QStringLiteral("Only changes"));
+    v->addWidget(onlyChanges);
+    auto *table = new QTableWidget(0, rich ? 6 : 4);
+    if (rich) table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Source"), QStringLiteral("Confidence"), QStringLiteral("Why (for this machine)")});
+    else table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Why (for this machine)")});
     table->verticalHeader()->hide();
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setSelectionMode(QAbstractItemView::NoSelection);
@@ -2009,15 +2036,24 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
-    auto add = [table](const QString &g, const QString &name, const QString &val, const QString &reason, bool changes) {
+    for (int c = 3; c < table->columnCount() - 1; ++c) table->horizontalHeader()->setSectionResizeMode(c, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(table->columnCount() - 1, QHeaderView::Stretch);
+    auto add = [table, rich, &dec, &scores](const QString &key, const QString &g, const QString &name, const QString &val, const QString &reason, bool changes) {
         const int r = table->rowCount();
         table->insertRow(r);
         auto *a = new QTableWidgetItem(g), *b = new QTableWidgetItem(name), *c = new QTableWidgetItem(val), *e = new QTableWidgetItem(reason);
         if (changes) { QFont f = c->font(); f.setBold(true); c->setFont(f); }
         else c->setToolTip(QStringLiteral("Already the live value."));
         for (auto *it : {a, b, c, e}) it->setToolTip(reason);
-        table->setItem(r, 0, a); table->setItem(r, 1, b); table->setItem(r, 2, c); table->setItem(r, 3, e);
+        a->setData(Qt::UserRole, changes);
+        table->setItem(r, 0, a); table->setItem(r, 1, b); table->setItem(r, 2, c);
+        if (!rich) { table->setItem(r, 3, e); return; }
+        const QJsonObject o = dec.value(key);
+        auto *s = new QTableWidgetItem(autotunereport::badge(o.value(QStringLiteral("source")).toString()));
+        auto *k = new QTableWidgetItem(autotunereport::confidence(o));
+        const QString trace = autotunereport::scoreTrace(scores.value(key).toArray());
+        for (auto *it : {s, k}) it->setToolTip(trace.isEmpty() ? reason : QStringLiteral("Scores (value → U): ") + trace);
+        table->setItem(r, 3, s); table->setItem(r, 4, k); table->setItem(r, 5, e);
     };
     int changing = 0;
     for (const char *gname : GROUPS) {
@@ -2026,16 +2062,19 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
             const QString shown = r.combo ? r.combo->currentText() : editorValue(r);
             const bool ch = differs(r);
             changing += ch;
-            add(r.group, r.label, shown + (ch ? QString() : QStringLiteral("  (=)")), why.value(r.key).toString(), ch);
+            add(r.key, r.group, r.label, shown + (ch ? QString() : QStringLiteral("  (=)")), why.value(r.key).toString(), ch);
         }
     }
     const QJsonObject run = preset.value("run").toObject();
     if (why.contains("run"))
-        add(QStringLiteral("Launch"), QStringLiteral("Game launch boost"),
+        add(QStringLiteral("run"), QStringLiteral("Launch"), QStringLiteral("Game launch boost"),
             QStringLiteral("nice %1 · %2%3").arg(run.value("nice").toInt()).arg(run.value("affinity").toString(),
                 run.value("timerslack_ns").toInt(0) > 0 ? QStringLiteral(" · precise timers") : QString())
                 + (run.value("slice_us").toInt(0) > 0 ? QStringLiteral(" · slice %1 µs").arg(run.value("slice_us").toInt()) : QString()), why.value("run").toString(), true);
     table->resizeRowsToContents();
+    connect(onlyChanges, &QCheckBox::toggled, table, [table](bool on) {
+        for (int r = 0; r < table->rowCount(); ++r) table->setRowHidden(r, on && !table->item(r, 0)->data(Qt::UserRole).toBool());
+    });
     v->addWidget(table, 1);
 
     // What the calibrated part is predicted to do, other trade-offs on the same data, and the

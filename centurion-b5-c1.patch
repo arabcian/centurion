@@ -1,0 +1,618 @@
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/crates/centurion-helpers/src/autotune.rs b/crates/centurion-helpers/src/autotune.rs
+--- a/crates/centurion-helpers/src/autotune.rs	2026-10-31 14:04:59.000000000 +0300
++++ b/crates/centurion-helpers/src/autotune.rs	2026-10-31 15:20:11.705869901 +0300
+@@ -932,9 +932,19 @@
+ const MTHP: [(&str, u32); 7] = [("thp.mthp_16k", 16), ("thp.mthp_32k", 32), ("thp.mthp_64k", 64), ("thp.mthp_128k", 128),
+                                 ("thp.mthp_256k", 256), ("thp.mthp_512k", 512), ("thp.mthp_1m", 1024)];
+ 
+-/// One rule outcome.
++/// One rule outcome. `source`: how it was decided (structural, estimate, measured, joint,
++/// pinned, evidence, audit, retired); `seen`: whether the benchmarks can see the key (None: not modelled);
++/// `alone` / `in_context`: joint-model gain [mean, sd] alone and next to the other choices;
++/// `n`: measurement evidence behind the value; `risk`: stability cost a rule priced in (<= 0).
+ #[derive(Clone, Debug, PartialEq)]
+-pub struct Decision { pub key: &'static str, pub value: Value, pub why: String }
++pub struct Decision { pub key: &'static str, pub value: Value, pub why: String, pub source: &'static str, pub seen: Option<bool>,
++                      pub alone: Option<[f64; 2]>, pub in_context: Option<[f64; 2]>, pub n: Option<f64>, pub risk: f64 }
++
++impl Decision {
++    fn new(key: &'static str, value: Value, why: String, source: &'static str) -> Self {
++        Decision { key, value, why, source, seen: None, alone: None, in_context: None, n: None, risk: 0.0 }
++    }
++}
+ 
+ struct Rules<'a> {
+     p: &'a Profile,
+@@ -958,6 +968,10 @@
+     /// The dirty window `dirty_rules` chose, in the calibration's labels ("0.25", "0.5", "1", "2"):
+     /// fixed context of the joint pass, where it interacts with the elevator, queue depth and throttling.
+     dirty_window: Option<String>,
++    /// Source stamped on the next `set` (see [`Decision`]).
++    src: &'static str,
++    /// Joint-pass gains per key: (alone, in context), each [mean, sd].
++    jstat: BTreeMap<&'static str, ([f64; 2], [f64; 2])>,
+ }
+ 
+ fn vstr(v: &Value) -> String { match v { Value::String(s) => s.clone(), x => x.to_string() } }
+@@ -965,7 +979,9 @@
+ impl<'a> Rules<'a> {
+     fn set(&mut self, key: &'static str, value: impl Into<Value>, why: impl Into<String>) {
+         self.out.retain(|d| d.key != key);
+-        self.out.push(Decision { key, value: value.into(), why: why.into() });
++        let seen = self.jkeys.contains(key).then(|| self.seen(key));
++        let source = if self.pinned(key) { "pinned" } else { self.src };
++        self.out.push(Decision { seen, ..Decision::new(key, value.into(), why.into(), source) });
+     }
+     /// Like `set`, but skipped when the live value already matches. Only for a preset meant for the
+     /// live context: one for another scene's profile must carry the value, since the live value is
+@@ -1057,6 +1073,14 @@
+     }
+ 
+     fn choose_raw(&mut self, key: &'static str, reference: Cand, alts: Vec<Cand>) -> Option<String> {
++        let measured = self.p.calibration.as_ref().is_some_and(|c| c.key_names().iter().any(|k| k == key)) && self.seen(key);
++        let prev = std::mem::replace(&mut self.src, if self.p.learned_risk(key).is_none() { "retired" } else if measured { "measured" }
++            else if key == "vm.watermark_scale_factor" && self.p.evidence.reclaim_strength() > 0.0 { "evidence" } else { "estimate" });
++        let r = self.choose_pick(key, reference, alts);
++        self.src = prev;
++        r
++    }
++    fn choose_pick(&mut self, key: &'static str, reference: Cand, alts: Vec<Cand>) -> Option<String> {
+         match self.pick(key, &reference, &alts) {
+             Some(i) => {
+                 let c = &alts[i];
+@@ -1199,12 +1223,19 @@
+ /// Pure rule set with the goal's default weights. Keys that do not exist on this machine are filtered later.
+ pub fn decide(goal: Goal, p: &Profile) -> Vec<Decision> { decide_weighted(goal, p, Weights::for_goal(goal)).0 }
+ 
+-/// Decisions plus the score trace and the constraint notes.
++/// Decisions plus the score trace and the notes, the hard-constraint messages last.
+ pub fn decide_weighted(goal: Goal, p: &Profile, w: Weights) -> (Vec<Decision>, Map<String, Value>, Vec<String>) {
++    let (d, s, mut notes, constraints) = decide_full(goal, p, w);
++    notes.extend(constraints);
++    (d, s, notes)
++}
++
++/// [`decide_weighted`] with the notes (context, joint model, warnings) apart from the hard constraints.
++fn decide_full(goal: Goal, p: &Profile, w: Weights) -> Decided {
+     let mut pre = Vec::new();
+     let w = measurement_frame(goal, p, w, &mut pre);
+     let mut r = Rules { p, g: goal, w, out: Vec::new(), scores: Map::new(), notes: pre, joint: None, jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()),
+-                          measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None };
++                          measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None, src: "structural", jstat: BTreeMap::new() };
+     r.joint = p.calibration.as_ref().and_then(|c| c.joint([w.latency, w.throughput, w.power, w.footprint], r.blend()));
+     for k in p.field_risk.values().filter(|k| k.risk < 0.0) { r.notes.push(k.note()); }
+     r.jkeys = r.joint.as_ref().map(|j| j.keys().into_iter().collect()).unwrap_or_default();
+@@ -1218,12 +1249,24 @@
+     }
+     io_rules(&mut r);
+     device_rules(&mut r);
++    r.src = "measured";
+     signature_pass(&mut r);
++    r.src = "joint";
+     joint_pass(&mut r);
++    r.src = "audit";
+     repair_live(&mut r);
+-    let mut notes = std::mem::take(&mut r.notes);
+-    notes.extend(enforce(&mut r.out, p));
+-    (r.out, r.scores, notes)
++    let notes = std::mem::take(&mut r.notes);
++    let constraints = enforce(&mut r.out, p);
++    let share = r.blend();
++    for d in r.out.iter_mut() {
++        let v = vstr(&d.value);
++        d.risk = r.risk.get(&(d.key.to_owned(), v.clone())).copied().unwrap_or(0.0);
++        if let Some((a, c)) = r.jstat.get(d.key) { (d.alone, d.in_context) = (Some(*a), Some(*c)); }
++        if let (Some(cal), Some(rf)) = (p.calibration.as_ref(), p.boot_default(d.key).or_else(|| p.cur(d.key))) {
++            if rf != v { d.n = cal.get(d.key, rf, &v, share).map(|m| m.n); }
++        }
++    }
++    (r.out, r.scores, notes, constraints)
+ }
+ 
+ /// The power context the preset will run in: a power profile (the scene's, else the live one) on AC,
+@@ -1402,6 +1445,7 @@
+     for (i, key) in keys.iter().enumerate() {
+         if sel[i] == start[i] { if ruled[i] { kept += 1; } continue; }
+         let value = cands[i][sel[i]].0.clone();
++        let mut stat = None;
+         let why = if sel[i] == 0 && ruled[i] {
+             let (m, v) = joint.eval_diff(&[(key.clone(), cands[i][start[i]].0.clone())], &[]);
+             format!("Joint model: {} = {} measured {:+.3} (±{:.3}) against the reference on this machine - worse with confidence, so the rule's choice goes back to the reference.",
+@@ -1412,12 +1456,14 @@
+                     key, cands[i][start[i]].0, d.map_or(0.0, |d| d.1), d.map_or(0.0, |d| d.2))
+         } else {
+             let m = marg.iter().find(|m| m.0 == i);
+-            let alone = joint.eval_diff(&[(key.clone(), value.clone())], &[]).0;
++            let (alone, av) = joint.eval_diff(&[(key.clone(), value.clone())], &[]);
++            stat = m.map(|m| ([alone, av.max(0.0).sqrt()], [m.1, m.2]));
+             format!("Joint model: {} = {}: {:+.3} alone, {:+.3} (±{:.3}) next to the other chosen settings.", key, value, alone, m.map_or(0.0, |m| m.1), m.map_or(0.0, |m| m.2))
+         };
+         let Some(t) = tune::find(key) else { continue };
+         let v = value.parse::<i64>().map(Value::from).unwrap_or_else(|_| json!(value));
+         r.set_live(t.key, v, why);
++        if let Some(st) = stat { r.jstat.insert(t.key, st); }
+     }
+     let cfg = prob.cfg(&sel);
+     let (mu, var) = joint.eval(&cfg);
+@@ -2232,8 +2278,8 @@
+     if mthp_on {
+         if let Some(n) = num(eff(out, "thp.khp_max_ptes_none")).filter(|n| *n != 0 && *n != 511) {
+             out.retain(|d| d.key != "thp.khp_max_ptes_none");
+-            out.push(Decision { key: "thp.khp_max_ptes_none", value: json!(0),
+-                why: format!("mTHP is enabled: the kernel only supports max_ptes_none 0 or 511 for mTHP collapse (live {n} would be ignored with a warning); 0 = no fill-in.") });
++            out.push(Decision::new("thp.khp_max_ptes_none", json!(0),
++                format!("mTHP is enabled: the kernel only supports max_ptes_none 0 or 511 for mTHP collapse (live {n} would be ignored with a warning); 0 = no fill-in."), "structural"));
+             notes.push("max_ptes_none forced to 0 (mTHP on)".into());
+         }
+     }
+@@ -2242,7 +2288,7 @@
+         && num(eff(out, "vm.watermark_boost_factor")) == Some(0) && num(eff(out, "vm.compaction_proactiveness")) == Some(0) {
+         out.retain(|d| d.key != "vm.compaction_proactiveness");
+         if p.cur("vm.compaction_proactiveness") == Some("0") {
+-            out.push(Decision { key: "vm.compaction_proactiveness", value: json!(20), why: "THP is on everywhere and boost reclaim is off: proactive compaction (kernel default 20) is the only path left that keeps huge pages available.".into() });
++            out.push(Decision::new("vm.compaction_proactiveness", json!(20), "THP is on everywhere and boost reclaim is off: proactive compaction (kernel default 20) is the only path left that keeps huge pages available.".into(), "structural"));
+         }
+         notes.push("proactive compaction kept on (THP always + boost 0)".into());
+     }
+@@ -2439,7 +2485,7 @@
+     prefit(goal, &p);
+     if let Some(c) = p.calibration.as_ref() { c.save_hyp_cache(); c.save_fit_store(); }
+     let t_decide = std::time::Instant::now();
+-    let (main, ex) = if want_explore { let (m, e) = explore(goal, &p, w); (m, Some(e)) } else { (decide_weighted(goal, &p, w), None) };
++    let (main, ex) = if want_explore { let (m, e) = explore(goal, &p, w); (m, Some(e)) } else { (decide_full(goal, &p, w), None) };
+     let mut out = assemble(goal, &p, w, main);
+     let mut notes: Vec<Value> = notes.into_iter().filter(|(k, _)| weights.get(k).is_none()).map(|(_, n)| Value::String(n)).collect();
+     // What the measured part of the decision rests on (rows, sessions, fit quality, widened
+@@ -2453,7 +2499,7 @@
+     if let Some(n) = crate::bench::forced_idle_cpus().filter(|n| *n > 0) {
+         notes.push(Value::String(format!("Firmware is forcing {n} CPU(s) idle right now (ACPI processor aggregator, a platform power-capping request): while it lasts it overrules the CPU settings here - check the power adapter and the firmware power limits.")));
+     }
+-    if let (false, Some(c)) = (notes.is_empty(), out["constraints"].as_array_mut()) { c.splice(0..0, notes); }
++    if let (false, Some(c)) = (notes.is_empty(), out["notes"].as_array_mut()) { c.splice(0..0, notes); }
+     if let Some((alts, sens, pred)) = ex {
+         out["alternatives"] = Value::Array(alts);
+         out["sensitivity"] = Value::Array(sens);
+@@ -2504,7 +2550,7 @@
+     q
+ }
+ 
+-type Decided = (Vec<Decision>, Map<String, Value>, Vec<String>);
++type Decided = (Vec<Decision>, Map<String, Value>, Vec<String>, Vec<String>);
+ type Explored = (Vec<Value>, Vec<Value>, Value);
+ 
+ /// The main decision, plus the alternatives (the same machine data under other trade-offs) and the
+@@ -2535,12 +2581,12 @@
+     let profs: Vec<std::sync::Mutex<Option<Profile>>> = jobs.iter().map(|_| std::sync::Mutex::new(Some(share(p)))).collect();
+     let mut res: Vec<Option<(Decided, Value)>> = crate::par::map(jobs.len(), |i| {
+         let q = profs[i].lock().ok().and_then(|mut g| g.take())?;
+-        let d = decide_weighted(goal, &q, jobs[i].0);
++        let d = decide_full(goal, &q, jobs[i].0);
+         // Sensitivity steps need only the decisions; the main one and the trade-offs also their prediction.
+         let pred = if jobs[i].1.is_none() { predict(goal, &q, jobs[i].0, &d.0) } else { Value::Null };
+         Some((d, pred))
+     }).into_iter().collect();
+-    let (main, pred) = res[0].take().unwrap_or_else(|| (decide_weighted(goal, p, w), Value::Null));
++    let (main, pred) = res[0].take().unwrap_or_else(|| (decide_full(goal, p, w), Value::Null));
+     let base = &main.0;
+     let val = |d: &[Decision], k: &str| d.iter().find(|x| x.key == k).map(|x| vstr(&x.value));
+     let diff = |d: &[Decision]| -> Vec<Value> {
+@@ -2552,14 +2598,14 @@
+     };
+     let mut alts = Vec::new();
+     for (i, (label, wv)) in variants.iter().enumerate() {
+-        let Some(((d, _, _), pr)) = res[1 + i].take() else { continue };
++        let Some(((d, _, _, _), pr)) = res[1 + i].take() else { continue };
+         let ch = diff(&d);
+         if ch.is_empty() { continue; }
+         alts.push(json!({"label": label, "weights": wv.to_json(), "changes": ch, "predicted": pr}));
+     }
+     let mut flips: BTreeMap<String, Vec<String>> = BTreeMap::new();
+     for (i, job) in jobs.iter().enumerate().skip(1 + variants.len()) {
+-        let (Some((name, down)), Some(((d, _, _), _))) = (job.1, res[i].take()) else { continue };
++        let (Some((name, down)), Some(((d, _, _, _), _))) = (job.1, res[i].take()) else { continue };
+         for c in diff(&d) {
+             let k = c["key"].as_str().unwrap_or("").to_owned();
+             flips.entry(k).or_default().push(format!("{name} {} -> {}", if down { "-30 %" } else { "+30 %" },
+@@ -2572,13 +2618,14 @@
+ 
+ pub fn autotune_with(goal: Goal, p: &Profile) -> Value { autotune_weighted(goal, p, Weights::for_goal(goal)) }
+ 
+-pub fn autotune_weighted(goal: Goal, p: &Profile, w: Weights) -> Value { assemble(goal, p, w, decide_weighted(goal, p, w)) }
++pub fn autotune_weighted(goal: Goal, p: &Profile, w: Weights) -> Value { assemble(goal, p, w, decide_full(goal, p, w)) }
+ 
+ /// The reply for a decision set: availability filter, audit, rationale.
+-fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Decided) -> Value {
++fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes, constraints): Decided) -> Value {
+     let mut values = Map::new();
+     let mut why = Map::new();
+     let mut skipped = Vec::new();
++    let mut structured = Vec::new();
+     let slice = decisions.iter().find(|d| d.key == SLICE_KEY).map(|d| (d.value.as_u64(), d.why.clone()));
+     for d in decisions {
+         let Some(t) = tune::find(d.key) else { continue };
+@@ -2592,6 +2639,8 @@
+         match validate_static(t, &d.value) {
+             Ok(v) => {
+                 let jv = match t.kind { tune::Kind::Int { .. } => v.parse::<i64>().map(Value::from).unwrap_or(Value::String(v)), _ => Value::String(v) };
++                structured.push(json!({"key": d.key, "value": jv.clone(), "source": d.source, "seen": d.seen,
++                                       "alone": d.alone, "in_context": d.in_context, "n": d.n.map(round2), "risk": round2(d.risk)}));
+                 values.insert(d.key.to_owned(), jv);
+                 why.insert(d.key.to_owned(), Value::String(d.why));
+             }
+@@ -2603,6 +2652,7 @@
+     for is in audit(&values, &ctx).into_iter().filter(|i| i.reject) {
+         values.remove(&is.key);
+         why.remove(&is.key);
++        structured.retain(|d| d["key"] != is.key.as_str());
+         skipped.push(json!({"key": is.key, "why": format!("safety audit: {}", is.msg)}));
+     }
+     let live: Map<String, Value> = p.current.iter().map(|(k, v)| (k.clone(), v.parse::<i64>().map(Value::from).unwrap_or_else(|_| json!(v)))).collect();
+@@ -2617,11 +2667,11 @@
+     json!({
+         "ok": true, "goal": goal.key(), "goal_label": goal.label(), "name": goal.preset_name(),
+         "profile": p.to_json(), "profile_summary": p.summary(), "evidence_summary": p.evidence.summary(),
+-        "weights": w.to_json(), "scores": scores, "constraints": notes, "live_issues": live_issues,
++        "weights": w.to_json(), "scores": scores, "notes": notes, "constraints": constraints, "live_issues": live_issues,
+         "preset": {"values": values, "run": run, "summary": summary,
+                    "autotune": {"goal": goal.key(), "kernel": format!("{}.{}", p.kernel.0, p.kernel.1),
+                                 "weights": w.to_json(), "storage_write": p.io.to_json()}},
+-        "rationale": why, "skipped": skipped,
++        "rationale": why, "decisions": structured, "skipped": skipped,
+     })
+ }
+ 
+@@ -2995,6 +3045,10 @@
+         assert!(get(&one, "pm.pci_runtime").is_none(), "one rollback in four applies already costs more than the gain");
+         p.outcomes.insert("pm.pci_runtime".into(), defaults::Outcome { applies: 50, rollbacks: 2 });
+         assert!(get(&decide(Goal::PowerSave, &p), "pm.pci_runtime").is_none(), "two rollbacks retire it");
++        let mut q = p.clone();
++        q.current.insert("pm.pci_runtime".into(), "auto".into());
++        let back = decide(Goal::PowerSave, &q).into_iter().find(|d| d.key == "pm.pci_runtime").unwrap();
++        assert_eq!((back.value, back.source), (json!("on"), "retired"), "a retired key goes back to its boot default, and says why");
+         let d = defaults::parse_defaults(&json!({"clean": true, "kernel": "7.2", "values": {"vm.swappiness": "60"}})).unwrap();
+         assert_eq!(d.values["vm.swappiness"], "60");
+         let o = defaults::parse_outcomes(&json!({"vm.dirty_bytes": {"applies": 4, "rollbacks": 1}}));
+@@ -3053,6 +3107,36 @@
+     }
+ 
+     #[test]
++    fn every_decision_has_a_source() {
++        let mut p = legion();
++        let mut cal = calib::Calibration::default();
++        sig(&mut cal, "blk.read_ahead_kb", "128", "1024", false, meas(0.0, 0.30, None), 5);
++        sig(&mut cal, "vm.dirty", "1", "0.5", false, meas(0.40, 0.0, None), 5);
++        p.current.insert("blk.read_ahead_kb".into(), "128".into());
++        p.calibration = Some(cal);
++        const KNOWN: [&str; 8] = ["structural", "estimate", "measured", "joint", "pinned", "evidence", "audit", "retired"];
++        for g in Goal::ALL {
++            let w = Weights::for_goal(g);
++            let out = assemble(g, &p, w, decide_full(g, &p, w));
++            let ds = out["decisions"].as_array().unwrap();
++            assert_eq!(ds.len(), out["rationale"].as_object().unwrap().len() - out["rationale"].get("run").map_or(0, |_| 1), "{g:?}: one decision per rationale entry");
++            for d in ds { assert!(KNOWN.contains(&d["source"].as_str().unwrap()), "{g:?}: {d}"); }
++        }
++        let w = Weights::for_goal(Goal::Throughput);
++        let out = assemble(Goal::Throughput, &p, w, decide_full(Goal::Throughput, &p, w));
++        let src = |k: &str| out["decisions"].as_array().unwrap().iter().find(|d| d["key"] == k).map(|d| d["source"].clone());
++        assert!(matches!(src("blk.read_ahead_kb").as_ref().and_then(Value::as_str), Some("measured" | "joint")), "{:?}", src("blk.read_ahead_kb"));
++        assert_eq!(src("cpu.epp_boost"), Some(json!("pinned")));
++        let ra = out["decisions"].as_array().unwrap().iter().find(|d| d["key"] == "blk.read_ahead_kb").unwrap();
++        assert!(ra["n"].as_f64().is_some_and(|n| n > 0.0), "measured value carries its evidence: {ra}");
++        assert!(out["notes"].is_array() && out["constraints"].is_array());
++        for c in out["constraints"].as_array().unwrap() {
++            let c = c.as_str().unwrap();
++            assert!(!c.starts_with("Joint model") && !c.starts_with("Context") && !c.starts_with("Weights"), "a note among the constraints: {c}");
++        }
++    }
++
++    #[test]
+     fn load_phase_measurements_drive_pressure_knobs() {
+         let mut p = legion();
+         let wsf = wsf_for(256 << 20, p.ram_kb * 1024).to_string();
+@@ -3331,7 +3415,7 @@
+     fn the_chosen_dirty_window_is_context_of_the_joint_pass() {
+         let p = legion();
+         let mut r = Rules { p: &p, g: Goal::Gaming, w: Weights::for_goal(Goal::Gaming), out: Vec::new(), scores: Map::new(), notes: Vec::new(), joint: None,
+-                            jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()), measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None };
++                            jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()), measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None, src: "structural", jstat: BTreeMap::new() };
+         assert_eq!(r.context_value("vm.dirty"), None);
+         dirty_rules(&mut r);
+         let w = r.context_value("vm.dirty").expect("window recorded");
+@@ -3702,7 +3786,7 @@
+                 prefit(Goal::Gaming, &p);
+                 p.calibration.as_ref().unwrap().save_fit_store();
+                 let t1 = t.elapsed();
+-                let out = assemble(Goal::Gaming, &p, w, decide_weighted(Goal::Gaming, &p, w));
++                let out = assemble(Goal::Gaming, &p, w, decide_full(Goal::Gaming, &p, w));
+                 eprintln!("  {label}: fit {:?} [{}], total {:?}", t1, p.calibration.as_ref().unwrap().fit_store_line().unwrap_or_default(), t.elapsed());
+                 outs.push((w, p));
+                 let _ = out;
+@@ -3711,8 +3795,8 @@
+             let (w, kept) = (outs[1].0, &outs[1].1);
+             let fresh = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); } q };
+             prefit(Goal::Gaming, &fresh);
+-            assert_eq!(assemble(Goal::Gaming, kept, w, decide_weighted(Goal::Gaming, kept, w))["preset"],
+-                       assemble(Goal::Gaming, &fresh, w, decide_weighted(Goal::Gaming, &fresh, w))["preset"]);
++            assert_eq!(assemble(Goal::Gaming, kept, w, decide_full(Goal::Gaming, kept, w))["preset"],
++                       assemble(Goal::Gaming, &fresh, w, decide_full(Goal::Gaming, &fresh, w))["preset"]);
+             let _ = std::fs::remove_dir_all(&dir);
+             std::env::remove_var("XDG_CACHE_HOME");
+         }
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/crates/centurion-helpers/src/bin/centurion-autotune.rs b/crates/centurion-helpers/src/bin/centurion-autotune.rs
+--- a/crates/centurion-helpers/src/bin/centurion-autotune.rs	2026-10-31 12:55:30.000000000 +0300
++++ b/crates/centurion-helpers/src/bin/centurion-autotune.rs	2026-10-31 15:14:42.734236550 +0300
+@@ -96,6 +96,7 @@
+         let run = &out["preset"]["run"];
+         let _ = writeln!(o, "\n  launch: nice {} · affinity {}  {}", run["nice"], run["affinity"].as_str().unwrap_or("none"),
+                          why.get("run").and_then(Value::as_str).unwrap_or(""));
++        for n in out["notes"].as_array().into_iter().flatten() { let _ = writeln!(o, "  note: {}", n.as_str().unwrap_or("")); }
+         for n in out["constraints"].as_array().into_iter().flatten() { let _ = writeln!(o, "  constraint: {}", n.as_str().unwrap_or("")); }
+         for i in out["live_issues"].as_array().into_iter().flatten() {
+             let _ = writeln!(o, "  live value: {} - {}", i["key"].as_str().unwrap_or(""), i["message"].as_str().unwrap_or(""));
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/docs/ROADMAP-AUTOTUNE.md b/docs/ROADMAP-AUTOTUNE.md
+--- a/docs/ROADMAP-AUTOTUNE.md	2026-10-31 14:17:40.000000000 +0300
++++ b/docs/ROADMAP-AUTOTUNE.md	2026-10-31 15:38:22.955166598 +0300
+@@ -11,7 +11,7 @@
+ 
+ ## İlerleme (2026-10-31)
+ 
+-**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
++**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7, B5, C1 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
+ 
+ | ID | Durum | Not |
+ |---|---|---|
+@@ -21,9 +21,11 @@
+ | A11 | ✅ | Tüm deşarj olan bataryalar toplanır, > 300 W reddedilir; DEV koşusunda `energy_now` (yoksa `charge_now × voltage_now`) farkıyla ikinci tahmin, > %20 ayrışmada uyarı (yalnız uyarı; metrik değişmez). |
+ | D2 | ✅ | `tests/properties.rs`: rastgele JSON / eski sürüm / bozuk bayt / round-trip. 8 MiB sınırı testi yok (`save` kök + dosya ister; budama mantığı private). |
+ | E2 | ✅ (kısmi) | irqbalance tespiti, satırda uyarı (`conflict` → GUI ⚠ + tooltip), CCD uygulanınca servis durdurulur (işaret dosyası), restore / `all` ile yalnızca bizim durdurduğumuz servis geri başlatılır. **Yok:** 10 s sonra drift yeniden okuma, kullanıcı seçeneği (otomatik yapılıyor). |
++| B5 | ✅ | `Decision`: `source` (structural/estimate/measured/joint/pinned/evidence/audit/retired), `seen`, `alone`/`in_context` ([mean, sd], joint pass), `n` (ölçüm kanıtı), `risk`. JSON: `"decisions": [...]`, `"notes"` ayrı, `"constraints"` yalnızca `enforce` kısıtları; `rationale` aynen. Testler: `every_decision_has_a_source`, `rollbacks_retire_a_key`. Eski GUI çalışır ama notları göstermez. |
++| C1 | ✅ (kısmi) | `gui/src/autotunereport.*` (+ `tests/autotunereport_test.cpp`): Source + Confidence sütunları (yalnız `decisions` varsa; yoksa eski düzen), skor izi hücre tooltip'inde, "Only changes" filtresi, açılır "Notes / Evidence". **Yok:** "son çalıştırmadan beri değişti" işareti (B4'e bağlı), satır genişletme (tooltip ile çözüldü). |
+ | E7 | ✅ | `PLACE_LAG`, `PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` tam satır (Scheduler grubu → kalibrasyona otomatik girer). Tabloda olmayan `sched_burst_*` ve sched feature'lar `describe.discovered` ile GUI'de salt-okunur listelenir (elle yazma desteği yok). |
+ 
+-**Kalan:** B1, B5, A3, A1, A2, A4, A5, C1, C2, C3, B4, B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, C7, E1, E3, E4, E5, E6, E9, E10, E11, E12, E13.
++**Kalan:** B1, A3, A1, A2, A4, A5, C2, C3, B4, B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, C7, E1, E3, E4, E5, E6, E9, E10, E11, E12, E13.
+ 
+ ## 0. Mevcut durum (yeniden yapılmasın)
+ 
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/gui/CMakeLists.txt b/gui/CMakeLists.txt
+--- a/gui/CMakeLists.txt	2026-10-31 12:55:30.000000000 +0300
++++ b/gui/CMakeLists.txt	2026-10-31 15:23:27.814986741 +0300
+@@ -31,6 +31,7 @@
+     src/vfcurvewidget.cpp src/vfcurvewidget.h
+     src/nvidiatab.cpp    src/nvidiatab.h
+     src/optimizetab.cpp  src/optimizetab.h
++    src/autotunereport.cpp src/autotunereport.h
+     src/int64spinbox.cpp src/int64spinbox.h
+     src/tray.cpp         src/tray.h
+     src/scenes.cpp       src/scenes.h
+@@ -239,6 +240,10 @@
+     target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
+     target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
+     add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
++    add_executable(centurion-autotunereport-test tests/autotunereport_test.cpp src/autotunereport.cpp src/autotunereport.h)
++    target_link_libraries(centurion-autotunereport-test PRIVATE Qt6::Core)
++    target_compile_definitions(centurion-autotunereport-test PRIVATE QT_NO_KEYWORDS)
++    add_test(NAME autotunereport COMMAND centurion-autotunereport-test)
+     add_executable(centurion-memtest-test tests/memtest_test.cpp src/memtest.cpp src/memtest.h)
+     target_link_libraries(centurion-memtest-test PRIVATE Qt6::Core)
+     target_compile_definitions(centurion-memtest-test PRIVATE QT_NO_KEYWORDS)
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/gui/src/autotunereport.cpp b/gui/src/autotunereport.cpp
+--- a/gui/src/autotunereport.cpp	1970-01-01 02:00:00.000000000 +0200
++++ b/gui/src/autotunereport.cpp	2026-10-31 15:23:27.794062635 +0300
+@@ -0,0 +1,46 @@
++#include "autotunereport.h"
++
++#include <QStringList>
++
++namespace autotunereport {
++
++QHash<QString, QJsonObject> decisionsByKey(const QJsonObject &report) {
++    QHash<QString, QJsonObject> out;
++    for (const auto &v : report.value(QStringLiteral("decisions")).toArray()) {
++        const QJsonObject o = v.toObject();
++        out.insert(o.value(QStringLiteral("key")).toString(), o);
++    }
++    return out;
++}
++
++QString badge(const QString &source) {
++    static const QHash<QString, QString> names{
++        {QStringLiteral("structural"), QStringLiteral("Rule")}, {QStringLiteral("estimate"), QStringLiteral("Estimate")},
++        {QStringLiteral("measured"), QStringLiteral("Measured")}, {QStringLiteral("joint"), QStringLiteral("Joint")},
++        {QStringLiteral("pinned"), QStringLiteral("Pinned")}, {QStringLiteral("evidence"), QStringLiteral("Evidence")},
++        {QStringLiteral("audit"), QStringLiteral("Audit")}, {QStringLiteral("retired"), QStringLiteral("Retired")}};
++    return names.value(source, source);
++}
++
++QString confidence(const QJsonObject &d) {
++    QStringList p;
++    QJsonArray g = d.value(QStringLiteral("in_context")).toArray();
++    if (g.size() != 2) g = d.value(QStringLiteral("alone")).toArray();
++    if (g.size() == 2) p << QStringLiteral("%1 ± %2").arg(g[0].toDouble(), 0, 'f', 3).arg(g[1].toDouble(), 0, 'f', 3).prepend(g[0].toDouble() >= 0 ? QStringLiteral("+") : QString());
++    if (const double n = d.value(QStringLiteral("n")).toDouble(); n > 0) p << QStringLiteral("n %1").arg(n, 0, 'g', 3);
++    if (d.value(QStringLiteral("seen")).isBool() && !d.value(QStringLiteral("seen")).toBool()) p << QStringLiteral("unseen");
++    return p.join(QStringLiteral(" · "));
++}
++
++QString scoreTrace(const QJsonArray &trace) {
++    QStringList p;
++    for (const auto &v : trace) {
++        const QJsonObject o = v.toObject();
++        const QJsonValue val = o.value(QStringLiteral("value"));
++        const QString s = val.isString() ? val.toString() : QString::number(val.toDouble(), 'g', 12);
++        p << QStringLiteral("%1 %2").arg(s).arg(o.value(QStringLiteral("u")).toDouble(), 0, 'f', 2);
++    }
++    return p.join(QStringLiteral(" → "));
++}
++
++}
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/gui/src/autotunereport.h b/gui/src/autotunereport.h
+--- a/gui/src/autotunereport.h	1970-01-01 02:00:00.000000000 +0200
++++ b/gui/src/autotunereport.h	2026-10-31 15:23:27.792175677 +0300
+@@ -0,0 +1,18 @@
++// Formatting of the autotune report's structured fields (centurion-autotune <goal> --json:
++// "decisions", "scores", "notes"). Pure, so tests/autotunereport_test.cpp covers it.
++#pragma once
++#include <QHash>
++#include <QJsonArray>
++#include <QJsonObject>
++#include <QString>
++
++namespace autotunereport {
++// key -> decision object; empty when the JSON predates the field (old report layout then).
++QHash<QString, QJsonObject> decisionsByKey(const QJsonObject &report);
++// "Rule", "Estimate", "Measured", "Joint", "Pinned", "Evidence", "Audit", "Retired".
++QString badge(const QString &source);
++// "+0.120 ± 0.040" (in context, else alone), "n 5" and "unseen" when the benchmarks cannot see it.
++QString confidence(const QJsonObject &decision);
++// Score trace "madvise 0.00 → always -0.30" (value → U).
++QString scoreTrace(const QJsonArray &trace);
++}
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/gui/src/optimizetab.cpp b/gui/src/optimizetab.cpp
+--- a/gui/src/optimizetab.cpp	2026-10-31 13:48:40.000000000 +0300
++++ b/gui/src/optimizetab.cpp	2026-10-31 15:23:54.447933214 +0300
+@@ -7,11 +7,13 @@
+ #include "lazywidget.h"
+ #include "sysinfo.h"
+ #include "theme.h"
++#include "autotunereport.h"
+ 
+ #include <memory>
+ #include <unistd.h>
+ #include <QApplication>
+ #include <QCheckBox>
++#include <QToolButton>
+ #include <QClipboard>
+ #include <QAbstractItemView>
+ #include <QComboBox>
+@@ -1999,9 +2001,34 @@
+         wl->setTextFormat(Qt::RichText);
+         wl->setTextInteractionFlags(Qt::TextSelectableByMouse);
+         v->addWidget(wl);
++        // Context, joint-model and evidence messages (older reports mixed them into "constraints").
++        if (const QJsonArray notes = d.value(QStringLiteral("notes")).toArray(); !notes.isEmpty()) {
++            QStringList nl;
++            for (const auto &n : notes) nl << n.toString().toHtmlEscaped();
++            auto *btn = new QToolButton;
++            btn->setText(QStringLiteral("Notes / Evidence (%1)").arg(notes.size()));
++            btn->setCheckable(true);
++            btn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
++            btn->setArrowType(Qt::RightArrow);
++            auto *body = new QLabel(nl.join(QStringLiteral("<br>")));
++            body->setWordWrap(true);
++            body->setTextFormat(Qt::RichText);
++            body->setTextInteractionFlags(Qt::TextSelectableByMouse);
++            body->hide();
++            connect(btn, &QToolButton::toggled, body, [btn, body](bool on) { body->setVisible(on); btn->setArrowType(on ? Qt::DownArrow : Qt::RightArrow); });
++            v->addWidget(btn);
++            v->addWidget(body);
++        }
+     }
+-    auto *table = new QTableWidget(0, 4);
+-    table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Why (for this machine)")});
++    // Source / confidence columns only when the report carries "decisions" (older helpers: old layout).
++    const QHash<QString, QJsonObject> dec = autotunereport::decisionsByKey(d);
++    const QJsonObject scores = d.value(QStringLiteral("scores")).toObject();
++    const bool rich = !dec.isEmpty();
++    auto *onlyChanges = new QCheckBox(QStringLiteral("Only changes"));
++    v->addWidget(onlyChanges);
++    auto *table = new QTableWidget(0, rich ? 6 : 4);
++    if (rich) table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Source"), QStringLiteral("Confidence"), QStringLiteral("Why (for this machine)")});
++    else table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Why (for this machine)")});
+     table->verticalHeader()->hide();
+     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+     table->setSelectionMode(QAbstractItemView::NoSelection);
+@@ -2009,15 +2036,24 @@
+     table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+     table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+     table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+-    table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+-    auto add = [table](const QString &g, const QString &name, const QString &val, const QString &reason, bool changes) {
++    for (int c = 3; c < table->columnCount() - 1; ++c) table->horizontalHeader()->setSectionResizeMode(c, QHeaderView::ResizeToContents);
++    table->horizontalHeader()->setSectionResizeMode(table->columnCount() - 1, QHeaderView::Stretch);
++    auto add = [table, rich, &dec, &scores](const QString &key, const QString &g, const QString &name, const QString &val, const QString &reason, bool changes) {
+         const int r = table->rowCount();
+         table->insertRow(r);
+         auto *a = new QTableWidgetItem(g), *b = new QTableWidgetItem(name), *c = new QTableWidgetItem(val), *e = new QTableWidgetItem(reason);
+         if (changes) { QFont f = c->font(); f.setBold(true); c->setFont(f); }
+         else c->setToolTip(QStringLiteral("Already the live value."));
+         for (auto *it : {a, b, c, e}) it->setToolTip(reason);
+-        table->setItem(r, 0, a); table->setItem(r, 1, b); table->setItem(r, 2, c); table->setItem(r, 3, e);
++        a->setData(Qt::UserRole, changes);
++        table->setItem(r, 0, a); table->setItem(r, 1, b); table->setItem(r, 2, c);
++        if (!rich) { table->setItem(r, 3, e); return; }
++        const QJsonObject o = dec.value(key);
++        auto *s = new QTableWidgetItem(autotunereport::badge(o.value(QStringLiteral("source")).toString()));
++        auto *k = new QTableWidgetItem(autotunereport::confidence(o));
++        const QString trace = autotunereport::scoreTrace(scores.value(key).toArray());
++        for (auto *it : {s, k}) it->setToolTip(trace.isEmpty() ? reason : QStringLiteral("Scores (value → U): ") + trace);
++        table->setItem(r, 3, s); table->setItem(r, 4, k); table->setItem(r, 5, e);
+     };
+     int changing = 0;
+     for (const char *gname : GROUPS) {
+@@ -2026,16 +2062,19 @@
+             const QString shown = r.combo ? r.combo->currentText() : editorValue(r);
+             const bool ch = differs(r);
+             changing += ch;
+-            add(r.group, r.label, shown + (ch ? QString() : QStringLiteral("  (=)")), why.value(r.key).toString(), ch);
++            add(r.key, r.group, r.label, shown + (ch ? QString() : QStringLiteral("  (=)")), why.value(r.key).toString(), ch);
+         }
+     }
+     const QJsonObject run = preset.value("run").toObject();
+     if (why.contains("run"))
+-        add(QStringLiteral("Launch"), QStringLiteral("Game launch boost"),
++        add(QStringLiteral("run"), QStringLiteral("Launch"), QStringLiteral("Game launch boost"),
+             QStringLiteral("nice %1 · %2%3").arg(run.value("nice").toInt()).arg(run.value("affinity").toString(),
+                 run.value("timerslack_ns").toInt(0) > 0 ? QStringLiteral(" · precise timers") : QString())
+                 + (run.value("slice_us").toInt(0) > 0 ? QStringLiteral(" · slice %1 µs").arg(run.value("slice_us").toInt()) : QString()), why.value("run").toString(), true);
+     table->resizeRowsToContents();
++    connect(onlyChanges, &QCheckBox::toggled, table, [table](bool on) {
++        for (int r = 0; r < table->rowCount(); ++r) table->setRowHidden(r, on && !table->item(r, 0)->data(Qt::UserRole).toBool());
++    });
+     v->addWidget(table, 1);
+ 
+     // What the calibrated part is predicted to do, other trade-offs on the same data, and the
+diff -ruN '--exclude=target' '--exclude=Cargo.lock' a/gui/tests/autotunereport_test.cpp b/gui/tests/autotunereport_test.cpp
+--- a/gui/tests/autotunereport_test.cpp	1970-01-01 02:00:00.000000000 +0200
++++ b/gui/tests/autotunereport_test.cpp	2026-10-31 15:24:34.530525753 +0300
+@@ -0,0 +1,40 @@
++// Unit test for the autotune report formatting (autotunereport.cpp). Plain asserts, like int64spinbox_test.cpp.
++#include "../src/autotunereport.h"
++
++#include <QCoreApplication>
++#include <QJsonDocument>
++#include <cstdio>
++
++static int failures = 0;
++#define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++failures; } } while (0)
++
++using namespace autotunereport;
++
++int main(int argc, char **argv) {
++    QCoreApplication app(argc, argv);
++    const QJsonObject rep = QJsonDocument::fromJson(R"json({
++        "decisions": [
++            {"key": "blk.read_ahead_kb", "value": 1024, "source": "joint", "seen": true, "alone": [0.2, 0.05], "in_context": [0.12, 0.04], "n": 5, "risk": 0},
++            {"key": "cpu.epp_boost", "value": "1", "source": "pinned", "seen": null, "alone": null, "in_context": null, "n": null, "risk": 0},
++            {"key": "vm.swappiness", "value": 10, "source": "estimate", "seen": false, "alone": null, "in_context": null, "n": null, "risk": -0.1}
++        ],
++        "scores": {"thp": [{"value": "(leave)", "u": 0}, {"value": "always", "u": -0.3}, {"value": 512, "u": 0.25}]}
++    })json").object();
++
++    const auto d = decisionsByKey(rep);
++    CHECK(d.size() == 3);
++    CHECK(badge(d["blk.read_ahead_kb"]["source"].toString()) == "Joint");
++    CHECK(badge("structural") == "Rule" && badge("measured") == "Measured" && badge("retired") == "Retired");
++    CHECK(badge("future") == "future");
++    CHECK(confidence(d["blk.read_ahead_kb"]) == "+0.120 ± 0.040 · n 5");
++    CHECK(confidence(d["cpu.epp_boost"]).isEmpty());
++    CHECK(confidence(d["vm.swappiness"]) == "unseen");
++    CHECK(confidence(QJsonObject{{"alone", QJsonArray{-0.05, 0.01}}}) == "-0.050 ± 0.010");
++    CHECK(scoreTrace(rep["scores"]["thp"].toArray()) == "(leave) 0.00 → always -0.30 → 512 0.25");
++    // A report from before the field: no decisions, the dialog keeps its old layout.
++    CHECK(decisionsByKey(QJsonObject{{"rationale", QJsonObject{}}}).isEmpty());
++
++    if (failures) std::fprintf(stderr, "%d failure(s)\n", failures);
++    else std::puts("autotunereport: ok");
++    return failures ? 1 : 0;
++}

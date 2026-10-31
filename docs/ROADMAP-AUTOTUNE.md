@@ -11,7 +11,7 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 
 ## İlerleme (2026-10-31)
 
-**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
+**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7, B5, C1 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
 
 | ID | Durum | Not |
 |---|---|---|
@@ -21,9 +21,11 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 | A11 | ✅ | Tüm deşarj olan bataryalar toplanır, > 300 W reddedilir; DEV koşusunda `energy_now` (yoksa `charge_now × voltage_now`) farkıyla ikinci tahmin, > %20 ayrışmada uyarı (yalnız uyarı; metrik değişmez). |
 | D2 | ✅ | `tests/properties.rs`: rastgele JSON / eski sürüm / bozuk bayt / round-trip. 8 MiB sınırı testi yok (`save` kök + dosya ister; budama mantığı private). |
 | E2 | ✅ (kısmi) | irqbalance tespiti, satırda uyarı (`conflict` → GUI ⚠ + tooltip), CCD uygulanınca servis durdurulur (işaret dosyası), restore / `all` ile yalnızca bizim durdurduğumuz servis geri başlatılır. **Yok:** 10 s sonra drift yeniden okuma, kullanıcı seçeneği (otomatik yapılıyor). |
+| B5 | ✅ | `Decision`: `source` (structural/estimate/measured/joint/pinned/evidence/audit/retired), `seen`, `alone`/`in_context` ([mean, sd], joint pass), `n` (ölçüm kanıtı), `risk`. JSON: `"decisions": [...]`, `"notes"` ayrı, `"constraints"` yalnızca `enforce` kısıtları; `rationale` aynen. Testler: `every_decision_has_a_source`, `rollbacks_retire_a_key`. Eski GUI çalışır ama notları göstermez. |
+| C1 | ✅ (kısmi) | `gui/src/autotunereport.*` (+ `tests/autotunereport_test.cpp`): Source + Confidence sütunları (yalnız `decisions` varsa; yoksa eski düzen), skor izi hücre tooltip'inde, "Only changes" filtresi, açılır "Notes / Evidence". **Yok:** "son çalıştırmadan beri değişti" işareti (B4'e bağlı), satır genişletme (tooltip ile çözüldü). |
 | E7 | ✅ | `PLACE_LAG`, `PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` tam satır (Scheduler grubu → kalibrasyona otomatik girer). Tabloda olmayan `sched_burst_*` ve sched feature'lar `describe.discovered` ile GUI'de salt-okunur listelenir (elle yazma desteği yok). |
 
-**Kalan:** B1, B5, A3, A1, A2, A4, A5, C1, C2, C3, B4, B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, C7, E1, E3, E4, E5, E6, E9, E10, E11, E12, E13.
+**Kalan:** B1, A3, A1, A2, A4, A5, C2, C3, B4, B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, C7, E1, E3, E4, E5, E6, E9, E10, E11, E12, E13.
 
 ## 0. Mevcut durum (yeniden yapılmasın)
 

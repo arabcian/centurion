@@ -31,6 +31,7 @@ add_executable(centurion
     src/vfcurvewidget.cpp src/vfcurvewidget.h
     src/nvidiatab.cpp    src/nvidiatab.h
     src/optimizetab.cpp  src/optimizetab.h
+    src/autotunereport.cpp src/autotunereport.h
     src/int64spinbox.cpp src/int64spinbox.h
     src/tray.cpp         src/tray.h
     src/scenes.cpp       src/scenes.h
@@ -239,6 +240,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
+    add_executable(centurion-autotunereport-test tests/autotunereport_test.cpp src/autotunereport.cpp src/autotunereport.h)
+    target_link_libraries(centurion-autotunereport-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-autotunereport-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME autotunereport COMMAND centurion-autotunereport-test)
     add_executable(centurion-memtest-test tests/memtest_test.cpp src/memtest.cpp src/memtest.h)
     target_link_libraries(centurion-memtest-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-memtest-test PRIVATE QT_NO_KEYWORDS)

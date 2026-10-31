@@ -932,9 +932,19 @@ pub const LIVE_KEYS: &[&str] = &[
 const MTHP: [(&str, u32); 7] = [("thp.mthp_16k", 16), ("thp.mthp_32k", 32), ("thp.mthp_64k", 64), ("thp.mthp_128k", 128),
                                 ("thp.mthp_256k", 256), ("thp.mthp_512k", 512), ("thp.mthp_1m", 1024)];
 
-/// One rule outcome.
+/// One rule outcome. `source`: how it was decided (structural, estimate, measured, joint,
+/// pinned, evidence, audit, retired); `seen`: whether the benchmarks can see the key (None: not modelled);
+/// `alone` / `in_context`: joint-model gain [mean, sd] alone and next to the other choices;
+/// `n`: measurement evidence behind the value; `risk`: stability cost a rule priced in (<= 0).
 #[derive(Clone, Debug, PartialEq)]
-pub struct Decision { pub key: &'static str, pub value: Value, pub why: String }
+pub struct Decision { pub key: &'static str, pub value: Value, pub why: String, pub source: &'static str, pub seen: Option<bool>,
+                      pub alone: Option<[f64; 2]>, pub in_context: Option<[f64; 2]>, pub n: Option<f64>, pub risk: f64 }
+
+impl Decision {
+    fn new(key: &'static str, value: Value, why: String, source: &'static str) -> Self {
+        Decision { key, value, why, source, seen: None, alone: None, in_context: None, n: None, risk: 0.0 }
+    }
+}
 
 struct Rules<'a> {
     p: &'a Profile,
@@ -958,6 +968,10 @@ struct Rules<'a> {
     /// The dirty window `dirty_rules` chose, in the calibration's labels ("0.25", "0.5", "1", "2"):
     /// fixed context of the joint pass, where it interacts with the elevator, queue depth and throttling.
     dirty_window: Option<String>,
+    /// Source stamped on the next `set` (see [`Decision`]).
+    src: &'static str,
+    /// Joint-pass gains per key: (alone, in context), each [mean, sd].
+    jstat: BTreeMap<&'static str, ([f64; 2], [f64; 2])>,
 }
 
 fn vstr(v: &Value) -> String { match v { Value::String(s) => s.clone(), x => x.to_string() } }
@@ -965,7 +979,9 @@ fn vstr(v: &Value) -> String { match v { Value::String(s) => s.clone(), x => x.t
 impl<'a> Rules<'a> {
     fn set(&mut self, key: &'static str, value: impl Into<Value>, why: impl Into<String>) {
         self.out.retain(|d| d.key != key);
-        self.out.push(Decision { key, value: value.into(), why: why.into() });
+        let seen = self.jkeys.contains(key).then(|| self.seen(key));
+        let source = if self.pinned(key) { "pinned" } else { self.src };
+        self.out.push(Decision { seen, ..Decision::new(key, value.into(), why.into(), source) });
     }
     /// Like `set`, but skipped when the live value already matches. Only for a preset meant for the
     /// live context: one for another scene's profile must carry the value, since the live value is
@@ -1057,6 +1073,14 @@ impl<'a> Rules<'a> {
     }
 
     fn choose_raw(&mut self, key: &'static str, reference: Cand, alts: Vec<Cand>) -> Option<String> {
+        let measured = self.p.calibration.as_ref().is_some_and(|c| c.key_names().iter().any(|k| k == key)) && self.seen(key);
+        let prev = std::mem::replace(&mut self.src, if self.p.learned_risk(key).is_none() { "retired" } else if measured { "measured" }
+            else if key == "vm.watermark_scale_factor" && self.p.evidence.reclaim_strength() > 0.0 { "evidence" } else { "estimate" });
+        let r = self.choose_pick(key, reference, alts);
+        self.src = prev;
+        r
+    }
+    fn choose_pick(&mut self, key: &'static str, reference: Cand, alts: Vec<Cand>) -> Option<String> {
         match self.pick(key, &reference, &alts) {
             Some(i) => {
                 let c = &alts[i];
@@ -1199,12 +1223,19 @@ fn sub(a: Fx, b: Fx) -> Fx { fx(a.lat - b.lat, a.thr - b.thr, a.pwr - b.pwr, a.m
 /// Pure rule set with the goal's default weights. Keys that do not exist on this machine are filtered later.
 pub fn decide(goal: Goal, p: &Profile) -> Vec<Decision> { decide_weighted(goal, p, Weights::for_goal(goal)).0 }
 
-/// Decisions plus the score trace and the constraint notes.
+/// Decisions plus the score trace and the notes, the hard-constraint messages last.
 pub fn decide_weighted(goal: Goal, p: &Profile, w: Weights) -> (Vec<Decision>, Map<String, Value>, Vec<String>) {
+    let (d, s, mut notes, constraints) = decide_full(goal, p, w);
+    notes.extend(constraints);
+    (d, s, notes)
+}
+
+/// [`decide_weighted`] with the notes (context, joint model, warnings) apart from the hard constraints.
+fn decide_full(goal: Goal, p: &Profile, w: Weights) -> Decided {
     let mut pre = Vec::new();
     let w = measurement_frame(goal, p, w, &mut pre);
     let mut r = Rules { p, g: goal, w, out: Vec::new(), scores: Map::new(), notes: pre, joint: None, jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()),
-                          measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None };
+                          measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None, src: "structural", jstat: BTreeMap::new() };
     r.joint = p.calibration.as_ref().and_then(|c| c.joint([w.latency, w.throughput, w.power, w.footprint], r.blend()));
     for k in p.field_risk.values().filter(|k| k.risk < 0.0) { r.notes.push(k.note()); }
     r.jkeys = r.joint.as_ref().map(|j| j.keys().into_iter().collect()).unwrap_or_default();
@@ -1218,12 +1249,24 @@ pub fn decide_weighted(goal: Goal, p: &Profile, w: Weights) -> (Vec<Decision>, M
     }
     io_rules(&mut r);
     device_rules(&mut r);
+    r.src = "measured";
     signature_pass(&mut r);
+    r.src = "joint";
     joint_pass(&mut r);
+    r.src = "audit";
     repair_live(&mut r);
-    let mut notes = std::mem::take(&mut r.notes);
-    notes.extend(enforce(&mut r.out, p));
-    (r.out, r.scores, notes)
+    let notes = std::mem::take(&mut r.notes);
+    let constraints = enforce(&mut r.out, p);
+    let share = r.blend();
+    for d in r.out.iter_mut() {
+        let v = vstr(&d.value);
+        d.risk = r.risk.get(&(d.key.to_owned(), v.clone())).copied().unwrap_or(0.0);
+        if let Some((a, c)) = r.jstat.get(d.key) { (d.alone, d.in_context) = (Some(*a), Some(*c)); }
+        if let (Some(cal), Some(rf)) = (p.calibration.as_ref(), p.boot_default(d.key).or_else(|| p.cur(d.key))) {
+            if rf != v { d.n = cal.get(d.key, rf, &v, share).map(|m| m.n); }
+        }
+    }
+    (r.out, r.scores, notes, constraints)
 }
 
 /// The power context the preset will run in: a power profile (the scene's, else the live one) on AC,
@@ -1402,6 +1445,7 @@ fn joint_pass(r: &mut Rules) {
     for (i, key) in keys.iter().enumerate() {
         if sel[i] == start[i] { if ruled[i] { kept += 1; } continue; }
         let value = cands[i][sel[i]].0.clone();
+        let mut stat = None;
         let why = if sel[i] == 0 && ruled[i] {
             let (m, v) = joint.eval_diff(&[(key.clone(), cands[i][start[i]].0.clone())], &[]);
             format!("Joint model: {} = {} measured {:+.3} (±{:.3}) against the reference on this machine - worse with confidence, so the rule's choice goes back to the reference.",
@@ -1412,12 +1456,14 @@ fn joint_pass(r: &mut Rules) {
                     key, cands[i][start[i]].0, d.map_or(0.0, |d| d.1), d.map_or(0.0, |d| d.2))
         } else {
             let m = marg.iter().find(|m| m.0 == i);
-            let alone = joint.eval_diff(&[(key.clone(), value.clone())], &[]).0;
+            let (alone, av) = joint.eval_diff(&[(key.clone(), value.clone())], &[]);
+            stat = m.map(|m| ([alone, av.max(0.0).sqrt()], [m.1, m.2]));
             format!("Joint model: {} = {}: {:+.3} alone, {:+.3} (±{:.3}) next to the other chosen settings.", key, value, alone, m.map_or(0.0, |m| m.1), m.map_or(0.0, |m| m.2))
         };
         let Some(t) = tune::find(key) else { continue };
         let v = value.parse::<i64>().map(Value::from).unwrap_or_else(|_| json!(value));
         r.set_live(t.key, v, why);
+        if let Some(st) = stat { r.jstat.insert(t.key, st); }
     }
     let cfg = prob.cfg(&sel);
     let (mu, var) = joint.eval(&cfg);
@@ -2232,8 +2278,8 @@ pub fn enforce(out: &mut Vec<Decision>, p: &Profile) -> Vec<String> {
     if mthp_on {
         if let Some(n) = num(eff(out, "thp.khp_max_ptes_none")).filter(|n| *n != 0 && *n != 511) {
             out.retain(|d| d.key != "thp.khp_max_ptes_none");
-            out.push(Decision { key: "thp.khp_max_ptes_none", value: json!(0),
-                why: format!("mTHP is enabled: the kernel only supports max_ptes_none 0 or 511 for mTHP collapse (live {n} would be ignored with a warning); 0 = no fill-in.") });
+            out.push(Decision::new("thp.khp_max_ptes_none", json!(0),
+                format!("mTHP is enabled: the kernel only supports max_ptes_none 0 or 511 for mTHP collapse (live {n} would be ignored with a warning); 0 = no fill-in."), "structural"));
             notes.push("max_ptes_none forced to 0 (mTHP on)".into());
         }
     }
@@ -2242,7 +2288,7 @@ pub fn enforce(out: &mut Vec<Decision>, p: &Profile) -> Vec<String> {
         && num(eff(out, "vm.watermark_boost_factor")) == Some(0) && num(eff(out, "vm.compaction_proactiveness")) == Some(0) {
         out.retain(|d| d.key != "vm.compaction_proactiveness");
         if p.cur("vm.compaction_proactiveness") == Some("0") {
-            out.push(Decision { key: "vm.compaction_proactiveness", value: json!(20), why: "THP is on everywhere and boost reclaim is off: proactive compaction (kernel default 20) is the only path left that keeps huge pages available.".into() });
+            out.push(Decision::new("vm.compaction_proactiveness", json!(20), "THP is on everywhere and boost reclaim is off: proactive compaction (kernel default 20) is the only path left that keeps huge pages available.".into(), "structural"));
         }
         notes.push("proactive compaction kept on (THP always + boost 0)".into());
     }
@@ -2439,7 +2485,7 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     prefit(goal, &p);
     if let Some(c) = p.calibration.as_ref() { c.save_hyp_cache(); c.save_fit_store(); }
     let t_decide = std::time::Instant::now();
-    let (main, ex) = if want_explore { let (m, e) = explore(goal, &p, w); (m, Some(e)) } else { (decide_weighted(goal, &p, w), None) };
+    let (main, ex) = if want_explore { let (m, e) = explore(goal, &p, w); (m, Some(e)) } else { (decide_full(goal, &p, w), None) };
     let mut out = assemble(goal, &p, w, main);
     let mut notes: Vec<Value> = notes.into_iter().filter(|(k, _)| weights.get(k).is_none()).map(|(_, n)| Value::String(n)).collect();
     // What the measured part of the decision rests on (rows, sessions, fit quality, widened
@@ -2453,7 +2499,7 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     if let Some(n) = crate::bench::forced_idle_cpus().filter(|n| *n > 0) {
         notes.push(Value::String(format!("Firmware is forcing {n} CPU(s) idle right now (ACPI processor aggregator, a platform power-capping request): while it lasts it overrules the CPU settings here - check the power adapter and the firmware power limits.")));
     }
-    if let (false, Some(c)) = (notes.is_empty(), out["constraints"].as_array_mut()) { c.splice(0..0, notes); }
+    if let (false, Some(c)) = (notes.is_empty(), out["notes"].as_array_mut()) { c.splice(0..0, notes); }
     if let Some((alts, sens, pred)) = ex {
         out["alternatives"] = Value::Array(alts);
         out["sensitivity"] = Value::Array(sens);
@@ -2504,7 +2550,7 @@ fn share(p: &Profile) -> Profile {
     q
 }
 
-type Decided = (Vec<Decision>, Map<String, Value>, Vec<String>);
+type Decided = (Vec<Decision>, Map<String, Value>, Vec<String>, Vec<String>);
 type Explored = (Vec<Value>, Vec<Value>, Value);
 
 /// The main decision, plus the alternatives (the same machine data under other trade-offs) and the
@@ -2535,12 +2581,12 @@ fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
     let profs: Vec<std::sync::Mutex<Option<Profile>>> = jobs.iter().map(|_| std::sync::Mutex::new(Some(share(p)))).collect();
     let mut res: Vec<Option<(Decided, Value)>> = crate::par::map(jobs.len(), |i| {
         let q = profs[i].lock().ok().and_then(|mut g| g.take())?;
-        let d = decide_weighted(goal, &q, jobs[i].0);
+        let d = decide_full(goal, &q, jobs[i].0);
         // Sensitivity steps need only the decisions; the main one and the trade-offs also their prediction.
         let pred = if jobs[i].1.is_none() { predict(goal, &q, jobs[i].0, &d.0) } else { Value::Null };
         Some((d, pred))
     }).into_iter().collect();
-    let (main, pred) = res[0].take().unwrap_or_else(|| (decide_weighted(goal, p, w), Value::Null));
+    let (main, pred) = res[0].take().unwrap_or_else(|| (decide_full(goal, p, w), Value::Null));
     let base = &main.0;
     let val = |d: &[Decision], k: &str| d.iter().find(|x| x.key == k).map(|x| vstr(&x.value));
     let diff = |d: &[Decision]| -> Vec<Value> {
@@ -2552,14 +2598,14 @@ fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
     };
     let mut alts = Vec::new();
     for (i, (label, wv)) in variants.iter().enumerate() {
-        let Some(((d, _, _), pr)) = res[1 + i].take() else { continue };
+        let Some(((d, _, _, _), pr)) = res[1 + i].take() else { continue };
         let ch = diff(&d);
         if ch.is_empty() { continue; }
         alts.push(json!({"label": label, "weights": wv.to_json(), "changes": ch, "predicted": pr}));
     }
     let mut flips: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (i, job) in jobs.iter().enumerate().skip(1 + variants.len()) {
-        let (Some((name, down)), Some(((d, _, _), _))) = (job.1, res[i].take()) else { continue };
+        let (Some((name, down)), Some(((d, _, _, _), _))) = (job.1, res[i].take()) else { continue };
         for c in diff(&d) {
             let k = c["key"].as_str().unwrap_or("").to_owned();
             flips.entry(k).or_default().push(format!("{name} {} -> {}", if down { "-30 %" } else { "+30 %" },
@@ -2572,13 +2618,14 @@ fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
 
 pub fn autotune_with(goal: Goal, p: &Profile) -> Value { autotune_weighted(goal, p, Weights::for_goal(goal)) }
 
-pub fn autotune_weighted(goal: Goal, p: &Profile, w: Weights) -> Value { assemble(goal, p, w, decide_weighted(goal, p, w)) }
+pub fn autotune_weighted(goal: Goal, p: &Profile, w: Weights) -> Value { assemble(goal, p, w, decide_full(goal, p, w)) }
 
 /// The reply for a decision set: availability filter, audit, rationale.
-fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Decided) -> Value {
+fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes, constraints): Decided) -> Value {
     let mut values = Map::new();
     let mut why = Map::new();
     let mut skipped = Vec::new();
+    let mut structured = Vec::new();
     let slice = decisions.iter().find(|d| d.key == SLICE_KEY).map(|d| (d.value.as_u64(), d.why.clone()));
     for d in decisions {
         let Some(t) = tune::find(d.key) else { continue };
@@ -2592,6 +2639,8 @@ fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Dec
         match validate_static(t, &d.value) {
             Ok(v) => {
                 let jv = match t.kind { tune::Kind::Int { .. } => v.parse::<i64>().map(Value::from).unwrap_or(Value::String(v)), _ => Value::String(v) };
+                structured.push(json!({"key": d.key, "value": jv.clone(), "source": d.source, "seen": d.seen,
+                                       "alone": d.alone, "in_context": d.in_context, "n": d.n.map(round2), "risk": round2(d.risk)}));
                 values.insert(d.key.to_owned(), jv);
                 why.insert(d.key.to_owned(), Value::String(d.why));
             }
@@ -2603,6 +2652,7 @@ fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Dec
     for is in audit(&values, &ctx).into_iter().filter(|i| i.reject) {
         values.remove(&is.key);
         why.remove(&is.key);
+        structured.retain(|d| d["key"] != is.key.as_str());
         skipped.push(json!({"key": is.key, "why": format!("safety audit: {}", is.msg)}));
     }
     let live: Map<String, Value> = p.current.iter().map(|(k, v)| (k.clone(), v.parse::<i64>().map(Value::from).unwrap_or_else(|_| json!(v)))).collect();
@@ -2617,11 +2667,11 @@ fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Dec
     json!({
         "ok": true, "goal": goal.key(), "goal_label": goal.label(), "name": goal.preset_name(),
         "profile": p.to_json(), "profile_summary": p.summary(), "evidence_summary": p.evidence.summary(),
-        "weights": w.to_json(), "scores": scores, "constraints": notes, "live_issues": live_issues,
+        "weights": w.to_json(), "scores": scores, "notes": notes, "constraints": constraints, "live_issues": live_issues,
         "preset": {"values": values, "run": run, "summary": summary,
                    "autotune": {"goal": goal.key(), "kernel": format!("{}.{}", p.kernel.0, p.kernel.1),
                                 "weights": w.to_json(), "storage_write": p.io.to_json()}},
-        "rationale": why, "skipped": skipped,
+        "rationale": why, "decisions": structured, "skipped": skipped,
     })
 }
 
@@ -2995,6 +3045,10 @@ mod tests {
         assert!(get(&one, "pm.pci_runtime").is_none(), "one rollback in four applies already costs more than the gain");
         p.outcomes.insert("pm.pci_runtime".into(), defaults::Outcome { applies: 50, rollbacks: 2 });
         assert!(get(&decide(Goal::PowerSave, &p), "pm.pci_runtime").is_none(), "two rollbacks retire it");
+        let mut q = p.clone();
+        q.current.insert("pm.pci_runtime".into(), "auto".into());
+        let back = decide(Goal::PowerSave, &q).into_iter().find(|d| d.key == "pm.pci_runtime").unwrap();
+        assert_eq!((back.value, back.source), (json!("on"), "retired"), "a retired key goes back to its boot default, and says why");
         let d = defaults::parse_defaults(&json!({"clean": true, "kernel": "7.2", "values": {"vm.swappiness": "60"}})).unwrap();
         assert_eq!(d.values["vm.swappiness"], "60");
         let o = defaults::parse_outcomes(&json!({"vm.dirty_bytes": {"applies": 4, "rollbacks": 1}}));
@@ -3050,6 +3104,36 @@ mod tests {
         let de = decide(Goal::Desktop, &p);
         assert_eq!(int(&de, "vm.dirty_bytes") as u64, dirty_pair(p.io.bps, p.ram_kb * 1024, 0.5).1);
         assert!(de.iter().find(|x| x.key == "vm.dirty_bytes").unwrap().why.contains("measured"));
+    }
+
+    #[test]
+    fn every_decision_has_a_source() {
+        let mut p = legion();
+        let mut cal = calib::Calibration::default();
+        sig(&mut cal, "blk.read_ahead_kb", "128", "1024", false, meas(0.0, 0.30, None), 5);
+        sig(&mut cal, "vm.dirty", "1", "0.5", false, meas(0.40, 0.0, None), 5);
+        p.current.insert("blk.read_ahead_kb".into(), "128".into());
+        p.calibration = Some(cal);
+        const KNOWN: [&str; 8] = ["structural", "estimate", "measured", "joint", "pinned", "evidence", "audit", "retired"];
+        for g in Goal::ALL {
+            let w = Weights::for_goal(g);
+            let out = assemble(g, &p, w, decide_full(g, &p, w));
+            let ds = out["decisions"].as_array().unwrap();
+            assert_eq!(ds.len(), out["rationale"].as_object().unwrap().len() - out["rationale"].get("run").map_or(0, |_| 1), "{g:?}: one decision per rationale entry");
+            for d in ds { assert!(KNOWN.contains(&d["source"].as_str().unwrap()), "{g:?}: {d}"); }
+        }
+        let w = Weights::for_goal(Goal::Throughput);
+        let out = assemble(Goal::Throughput, &p, w, decide_full(Goal::Throughput, &p, w));
+        let src = |k: &str| out["decisions"].as_array().unwrap().iter().find(|d| d["key"] == k).map(|d| d["source"].clone());
+        assert!(matches!(src("blk.read_ahead_kb").as_ref().and_then(Value::as_str), Some("measured" | "joint")), "{:?}", src("blk.read_ahead_kb"));
+        assert_eq!(src("cpu.epp_boost"), Some(json!("pinned")));
+        let ra = out["decisions"].as_array().unwrap().iter().find(|d| d["key"] == "blk.read_ahead_kb").unwrap();
+        assert!(ra["n"].as_f64().is_some_and(|n| n > 0.0), "measured value carries its evidence: {ra}");
+        assert!(out["notes"].is_array() && out["constraints"].is_array());
+        for c in out["constraints"].as_array().unwrap() {
+            let c = c.as_str().unwrap();
+            assert!(!c.starts_with("Joint model") && !c.starts_with("Context") && !c.starts_with("Weights"), "a note among the constraints: {c}");
+        }
     }
 
     #[test]
@@ -3331,7 +3415,7 @@ mod tests {
     fn the_chosen_dirty_window_is_context_of_the_joint_pass() {
         let p = legion();
         let mut r = Rules { p: &p, g: Goal::Gaming, w: Weights::for_goal(Goal::Gaming), out: Vec::new(), scores: Map::new(), notes: Vec::new(), joint: None,
-                            jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()), measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None };
+                            jkeys: BTreeSet::new(), seen: RefCell::new(BTreeMap::new()), measured_only: BTreeSet::new(), risk: BTreeMap::new(), dirty_window: None, src: "structural", jstat: BTreeMap::new() };
         assert_eq!(r.context_value("vm.dirty"), None);
         dirty_rules(&mut r);
         let w = r.context_value("vm.dirty").expect("window recorded");
@@ -3702,7 +3786,7 @@ mod perf_bench {
                 prefit(Goal::Gaming, &p);
                 p.calibration.as_ref().unwrap().save_fit_store();
                 let t1 = t.elapsed();
-                let out = assemble(Goal::Gaming, &p, w, decide_weighted(Goal::Gaming, &p, w));
+                let out = assemble(Goal::Gaming, &p, w, decide_full(Goal::Gaming, &p, w));
                 eprintln!("  {label}: fit {:?} [{}], total {:?}", t1, p.calibration.as_ref().unwrap().fit_store_line().unwrap_or_default(), t.elapsed());
                 outs.push((w, p));
                 let _ = out;
@@ -3711,8 +3795,8 @@ mod perf_bench {
             let (w, kept) = (outs[1].0, &outs[1].1);
             let fresh = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); } q };
             prefit(Goal::Gaming, &fresh);
-            assert_eq!(assemble(Goal::Gaming, kept, w, decide_weighted(Goal::Gaming, kept, w))["preset"],
-                       assemble(Goal::Gaming, &fresh, w, decide_weighted(Goal::Gaming, &fresh, w))["preset"]);
+            assert_eq!(assemble(Goal::Gaming, kept, w, decide_full(Goal::Gaming, kept, w))["preset"],
+                       assemble(Goal::Gaming, &fresh, w, decide_full(Goal::Gaming, &fresh, w))["preset"]);
             let _ = std::fs::remove_dir_all(&dir);
             std::env::remove_var("XDG_CACHE_HOME");
         }
