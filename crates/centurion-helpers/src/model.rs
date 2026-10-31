@@ -65,7 +65,10 @@ const TEMP_SD: f64 = 0.01;
 /// the outlier reweighting, the `var_scale` formula, the screening - so fits kept by an older build
 /// are refitted instead of read back as if nothing had changed.
 /// 2 = per-objective screening (`PhaseSet::build_screened`).
-pub const MODEL_VERSION: u32 = 2;
+/// 3 = leave-one-session-out check (`loso`) in `var_scale`.
+pub const MODEL_VERSION: u32 = 3;
+/// Sessions the leave-one-session-out check leaves out in turn (the newest; bounds its cost).
+const LOSO_SESSIONS: usize = 8;
 
 // ── small helpers ────────────────────────────────────────────────────────────
 
@@ -402,6 +405,11 @@ pub struct Fit {
     /// misspecified model (an interaction it has no term for, a drift it cannot see) does not
     /// make decisions with confidence it has not earned.
     pub var_scale: f64,
+    /// Leave-one-session-out R² and 90 % coverage (`loso`; NaN with fewer than two sessions): what
+    /// the model is worth in a session it has not seen - rows of one session share its offset and
+    /// drift, so the row-wise leave-one-out above is optimistic.
+    pub loso_r2: f64,
+    pub loso_cover: f64,
     /// Final observation weights (after the outlier reweighting): with `hyper` they fix the
     /// factorisation, so a kept fit is rebuilt by one evaluation (`FitMeta`, `refit`).
     w: Vec<f64>,
@@ -620,12 +628,22 @@ fn inv_diag(l: &[f64], n: usize) -> Vec<f64> {
 /// leave-one-out sweeps) depend only on the rows, never on the objective weights; with this kept,
 /// a fit of the same rows is rebuilt by one factorisation and is the same fit, bit for bit (every
 /// step is deterministic).
-#[derive(Clone, Debug, PartialEq)]
-pub struct FitMeta { pub hyper: Hyper, pub w: Vec<f64>, pub loo_rmse: f64, pub loo_r2: f64, pub cover90: f64, pub var_scale: f64 }
+#[derive(Clone, Debug)]
+pub struct FitMeta { pub hyper: Hyper, pub w: Vec<f64>, pub loo_rmse: f64, pub loo_r2: f64, pub cover90: f64, pub var_scale: f64,
+                     pub loso_r2: f64, pub loso_cover: f64 }
+
+/// Field by field; the leave-one-session-out values by bits (NaN = not measured, equal to itself).
+impl PartialEq for FitMeta {
+    fn eq(&self, o: &Self) -> bool {
+        self.hyper == o.hyper && self.w == o.w && self.loo_rmse == o.loo_rmse && self.loo_r2 == o.loo_r2 && self.cover90 == o.cover90
+            && self.var_scale == o.var_scale && self.loso_r2.to_bits() == o.loso_r2.to_bits() && self.loso_cover.to_bits() == o.loso_cover.to_bits()
+    }
+}
 
 impl Fit {
     pub fn meta(&self) -> FitMeta {
-        FitMeta { hyper: self.hyper, w: self.w.clone(), loo_rmse: self.loo_rmse, loo_r2: self.loo_r2, cover90: self.cover90, var_scale: self.var_scale }
+        FitMeta { hyper: self.hyper, w: self.w.clone(), loo_rmse: self.loo_rmse, loo_r2: self.loo_r2, cover90: self.cover90, var_scale: self.var_scale,
+                  loso_r2: self.loso_r2, loso_cover: self.loso_cover }
     }
 }
 
@@ -702,7 +720,9 @@ fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, 
     } else { 0.6 * sd_y };
     if let Some(m) = known {
         let res = eval(&m.hyper, &m.w)?;
-        return Some(finish(space, obs, m.hyper, m.w.clone(), res, m.loo_rmse, m.loo_r2, m.cover90, m.var_scale));
+        let mut f = finish(space, obs, m.hyper, m.w.clone(), res, m.loo_rmse, m.loo_r2, m.cover90, m.var_scale);
+        (f.loso_r2, f.loso_cover) = (m.loso_r2, m.loso_cover);
+        return Some(f);
     }
     let mut h = init.unwrap_or(Hyper { sigma: sigma0.max(0.005), ..Hyper::START }).clamp();
     let mut res = eval(&h, &w0);
@@ -750,8 +770,54 @@ fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, 
         let raw = (med / 0.4549).clamp(1.0, 4.0);
         1.0 + (raw - 1.0) * n as f64 / (n as f64 + 60.0)
     };
+    // A new session is what the model is used for: its calibration must hold there too.
+    let (loso_r2, loso_cover, loso_scale) = loso(&res.1, n, &res.2, obs, mean_y);
+    let var_scale = var_scale.max(loso_scale);
     let sst: f64 = y.iter().map(|v| (v - mean_y).powi(2)).sum::<f64>().max(1e-12);
-    Some(finish(space, obs, h, w, res, (sse / n as f64).sqrt(), 1.0 - sse / sst, cover / n as f64, var_scale))
+    let mut f = finish(space, obs, h, w, res, (sse / n as f64).sqrt(), 1.0 - sse / sst, cover / n as f64, var_scale);
+    (f.loso_r2, f.loso_cover) = (loso_r2, loso_cover);
+    Some(f)
+}
+
+/// Leave-one-session-out check over the newest `LOSO_SESSIONS` sessions: each session's rows are
+/// predicted from all others by the GP's block leave-out (residuals e_B = [(K⁻¹)_BB]⁻¹ α_B, their
+/// covariance [(K⁻¹)_BB]⁻¹; `l` = Cholesky factor of K, `alpha` = K⁻¹ y). Returns R², 90 % coverage
+/// and the variance scale its z² ask for (median against χ²(1), as `var_scale`); (NaN, NaN, 1)
+/// with fewer than two sessions.
+fn loso(l: &[f64], n: usize, alpha: &[f64], obs: &[Obs], mean_y: f64) -> (f64, f64, f64) {
+    let mut newest: HashMap<usize, f64> = HashMap::new();
+    for o in obs { let t = newest.entry(o.sess).or_insert(f64::MIN); *t = t.max(o.t); }
+    if newest.len() < 2 { return (f64::NAN, f64::NAN, 1.0); }
+    let mut sess: Vec<(usize, f64)> = newest.into_iter().collect();
+    sess.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    let (mut sse, mut sst, mut cover, mut z2) = (0.0, 0.0, 0.0, Vec::new());
+    for &(s, _) in sess.iter().take(LOSO_SESSIONS) {
+        let b: Vec<usize> = (0..n).filter(|i| obs[*i].sess == s).collect();
+        let m = b.len();
+        let mut a = vec![0.0; m * m];
+        for (c, &i) in b.iter().enumerate() {
+            let mut e = vec![0.0; n];
+            e[i] = 1.0;
+            fwd(l, n, &mut e); bwd(l, n, &mut e);
+            for (r, &j) in b.iter().enumerate() { a[r * m + c] = e[j]; }
+        }
+        if !chol(&mut a, m) { continue; }
+        let mut r: Vec<f64> = b.iter().map(|&i| alpha[i]).collect();
+        fwd(&a, m, &mut r); bwd(&a, m, &mut r);
+        let d = inv_diag(&a, m);
+        for (q, &i) in b.iter().enumerate() {
+            sse += r[q] * r[q];
+            sst += (obs[i].y - mean_y).powi(2);
+            let z = r[q] / d[q].max(1e-300).sqrt();
+            if z.abs() < 1.645 { cover += 1.0; }
+            if z.is_finite() { z2.push(z * z); }
+        }
+    }
+    if z2.is_empty() { return (f64::NAN, f64::NAN, 1.0); }
+    let k = z2.len() as f64;
+    z2.sort_by(|a, b| a.total_cmp(b));
+    let raw = (z2[z2.len() / 2] / 0.4549).clamp(1.0, 4.0);
+    (1.0 - sse / sst.max(1e-12), cover / k, 1.0 + (raw - 1.0) * k / (k + 60.0))
 }
 
 /// The fit from its factorisation: explicit posterior-mean coefficients and the statistics.
@@ -799,7 +865,7 @@ fn finish(space: Arc<Space>, obs: &[Obs], h: Hyper, w: Vec<f64>, res: (f64, Vec<
     for (k, b) in &tri { tri_ix.entry(k >> 19).or_default().push((k & 0x7FFFF, *b)); }
     let alpha = res.2.clone();
     Fit { space, nobs: n, x: obs.iter().map(|o| o.x.clone()).collect(), l: pack_lower(&res.1, n), alpha, scales: s, hyper: h, loglik: res.0,
-          loo_rmse, loo_r2, cover90, var_scale, w, main, pair, tri, tri_ix, memo: Arc::new(Memo::default()), tproj: Arc::new(TermProj::default()) }
+          loo_rmse, loo_r2, cover90, var_scale, loso_r2: f64::NAN, loso_cover: f64::NAN, w, main, pair, tri, tri_ix, memo: Arc::new(Memo::default()), tproj: Arc::new(TermProj::default()) }
 }
 
 impl Fit {
@@ -1123,6 +1189,9 @@ impl Model {
     /// Leave-one-out R² and 90 % interval coverage, averaged over the objectives by weight.
     pub fn r2(&self) -> f64 { self.avg(|m| m.loo_r2) }
     pub fn cover90(&self) -> f64 { self.avg(|m| m.cover90) }
+    /// Leave-one-session-out R² and coverage (NaN with one session).
+    pub fn loso_r2(&self) -> f64 { self.avg(|m| m.loso_r2) }
+    pub fn loso_cover(&self) -> f64 { self.avg(|m| m.loso_cover) }
     /// Run-to-run noise of the utility.
     pub fn noise(&self) -> f64 { self.parts().map(|(_, w, m)| (w * m.sigma()).powi(2)).sum::<f64>().sqrt() }
     pub fn nobs(&self) -> usize { self.parts().map(|(_, _, m)| m.nobs).max().unwrap_or(0) }
@@ -1365,6 +1434,16 @@ impl Target {
         }
         acc / ws
     }
+}
+
+/// A change already in effect (`incumbent`, not the reference at index 0) earns `delta` among its
+/// knob's candidates: it paid for the switch once, so it is kept unless it falls below
+/// margin - delta, where a new change must clear the margin. The reference gets no head start -
+/// that locked good new changes out (B1 simulator, 10 sessions: flips 23 -> 19 and regret
+/// 0.204 -> 0.244 with it; keeping changes alone, delta = margin: flips 7, regret 0.169).
+/// No-op when the incumbent is the reference or not a candidate.
+pub fn favour_incumbent(c: &mut [(String, f64)], incumbent: &str, delta: f64) {
+    if let Some(i) = c.iter().position(|(v, _)| v == incumbent).filter(|i| *i > 0) { c[i].1 += delta; }
 }
 
 impl<'a> Problem<'a> {
@@ -1701,6 +1780,66 @@ pub fn initial_design(factors: &[Factor], n: usize, rng: &mut Rng) -> Vec<Cfg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_change_in_effect_gets_the_head_start() {
+        let base = vec![("0".to_owned(), 0.0), ("1".to_owned(), -0.02), ("2".to_owned(), -0.03)];
+        let mut c = base.clone();
+        favour_incumbent(&mut c, "2", 0.03);
+        assert_eq!(c[2].1, 0.0);
+        assert_eq!((c[0].1, c[1].1), (0.0, -0.02));
+        let mut c = base.clone();
+        favour_incumbent(&mut c, "0", 0.03);
+        assert_eq!(c, base, "the reference gets no head start");
+        favour_incumbent(&mut c, "7", 0.03);
+        assert_eq!(c, base, "an unmeasured live value: nothing");
+    }
+
+    /// The block leave-out equals conditioning the Gaussian on the other sessions directly.
+    #[test]
+    fn loso_block_formula_matches_direct_conditioning() {
+        let n = 9;
+        let mut rng = Rng::new(3);
+        // SPD matrix: A Aᵀ + I, rows in three sessions of three.
+        let a: Vec<f64> = (0..n * n).map(|_| rng.unit() - 0.5).collect();
+        let kf: Vec<f64> = (0..n * n).map(|ij| { let (i, j) = (ij / n, ij % n); (0..n).map(|q| a[i * n + q] * a[j * n + q]).sum::<f64>() + if i == j { 1.0 } else { 0.0 } }).collect();
+        let y: Vec<f64> = (0..n).map(|_| rng.unit() - 0.5).collect();
+        let obs: Vec<Obs> = (0..n).map(|i| Obs { x: PCfg::default(), sess: i / 3, pos: 0.5, t: i as f64, w: 1.0, y: y[i], tc: 0.0 }).collect();
+        let mut l = kf.clone();
+        assert!(chol(&mut l, n));
+        let mut alpha = y.clone();
+        fwd(&l, n, &mut alpha); bwd(&l, n, &mut alpha);
+        let mean_y = y.iter().sum::<f64>() / n as f64;
+        let (r2, cover, scale) = loso(&l, n, &alpha, &obs, mean_y);
+        // Direct: for each session B, mu_B = K_BR K_RR⁻¹ y_R, var_B = diag(K_BB - K_BR K_RR⁻¹ K_RB).
+        let (mut sse, mut sst, mut cov, mut z2) = (0.0, 0.0, 0.0, Vec::new());
+        for s in 0..3 {
+            let rest: Vec<usize> = (0..n).filter(|i| i / 3 != s).collect();
+            let m = rest.len();
+            let mut krr: Vec<f64> = rest.iter().flat_map(|&i| rest.iter().map(move |&j| (i, j))).map(|(i, j)| kf[i * n + j]).collect();
+            assert!(chol(&mut krr, m));
+            for i in (0..n).filter(|i| i / 3 == s) {
+                let mut v: Vec<f64> = rest.iter().map(|&j| kf[i * n + j]).collect();
+                let kb = v.clone();
+                fwd(&krr, m, &mut v); bwd(&krr, m, &mut v);
+                let mu: f64 = v.iter().zip(&rest).map(|(a, &j)| a * y[j]).sum();
+                let var = kf[i * n + i] - v.iter().zip(&kb).map(|(a, b)| a * b).sum::<f64>();
+                let e = y[i] - mu;
+                sse += e * e; sst += (y[i] - mean_y).powi(2);
+                let z = e / var.sqrt();
+                if z.abs() < 1.645 { cov += 1.0; }
+                z2.push(z * z);
+            }
+        }
+        assert!((r2 - (1.0 - sse / sst)).abs() < 1e-9, "R² {r2} vs {}", 1.0 - sse / sst);
+        assert!((cover - cov / n as f64).abs() < 1e-12);
+        z2.sort_by(|a, b| a.total_cmp(b));
+        let raw = (z2[n / 2] / 0.4549).clamp(1.0, 4.0);
+        assert!((scale - (1.0 + (raw - 1.0) * n as f64 / (n as f64 + 60.0))).abs() < 1e-9);
+        let one: Vec<Obs> = obs.iter().map(|o| Obs { sess: 0, ..o.clone() }).collect();
+        let (r, c, sc) = loso(&l, n, &alpha, &one, mean_y);
+        assert!(r.is_nan() && c.is_nan() && sc == 1.0, "one session: nothing to leave out");
+    }
 
     /// The blocked, threaded factorisation and LOO diagonal agree with the textbook versions.
     #[test]

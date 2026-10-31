@@ -41,9 +41,15 @@ evidence); a calibration run is a measurement with a field of view. Two things
 keep a benchmark that cannot see a knob from voting on it:
 
 - **Seen or not.** A knob counts as *seen* when at least one of its values moves
-  one of the objectives this goal weighs by 2 posterior standard deviations in the joint
-  model (per objective, not on the weighted utility: a measured trade-off - latency up,
-  throughput down - can sum to nothing and is still measured, not blindness). Only
+  one of the objectives this goal weighs in the joint model by a Šidák-corrected z: with m
+  such effects (values x weighted objectives), z ≥ Φ⁻¹(1 − α/(2m)), α = 0.05 (1.96 for one
+  effect, 2.95 for a 4-value knob over 4 objectives; a fixed 2 sd gave noise 16 chances).
+  Judged per objective, not on the weighted utility: a measured trade-off - latency up,
+  throughput down - can sum to nothing and is still measured, not blindness. A knob seen
+  in the goal's previous run stays seen down to 0.3 below the threshold (hysteresis, so the
+  verdict does not flicker between runs; kept in `autotune-seen.json` beside the history).
+  On the B1 simulator this cut false "seen" among no-effect knobs from 7 % to 2 % for 2
+  points of detection. Only
   then do measured effects replace the rule's estimates (in proportion to the
   evidence, as before). For a knob the benchmarks do not see, "measured: no
   effect" is the benchmark's blindness: the estimate stays. The same holds for the knobs a
@@ -58,6 +64,13 @@ keep a benchmark that cannot see a knob from voting on it:
   (mean + 1 sd < 0, in the context of the other choices). Values picked from the
   measurements alone (keys no rule knows) and every *additional* change still
   have to clear the margin in context.
+- **A change in effect is not re-litigated.** A measured change the live preset
+  already carries earns the margin back (it paid for the switch once): it is
+  dropped only when it falls below zero in context, where a new change must clear
+  the margin. The reference gets no such head start. On the B1 simulator (10
+  sessions on one machine) this cut the decisions that flip from one run to the
+  next from 23 to 7 and the regret from 0.204 to 0.169; a head start for the
+  reference as well locked good new changes out (regret 0.244).
 
 Before this, every calibrated knob had to prove itself again in the benchmarks:
 whatever they could not measure went back to its boot default, and the more a

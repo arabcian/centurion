@@ -50,6 +50,8 @@ const KEEP_BRAKES: usize = 40;
 const MAX_UNSAFE: usize = 50;
 /// Sessions' quality records kept (newest last).
 const KEEP_QUALITY: usize = 64;
+/// Days of storage-suite write totals kept.
+const KEEP_IO_DAYS: u64 = 14;
 /// Baseline records kept: one per session and phase, about the last 64 sessions.
 const KEEP_BASELINES: usize = 256;
 /// How many MADs a session's reference level may stray from its history before it is flagged.
@@ -576,7 +578,7 @@ impl std::fmt::Debug for FitStore { fn fmt(&self, f: &mut std::fmt::Formatter<'_
 fn store_entry(key: &str, phase: Phase, pf: &PhaseFit) -> Value {
     let fits: Vec<Value> = pf.fits.iter().map(|f| f.as_ref().map_or(Value::Null, |f| {
         let m = f.meta();
-        json!({"h": bits(&m.hyper.to_vec()), "w": bits(&m.w), "s": bits(&[m.loo_rmse, m.loo_r2, m.cover90, m.var_scale])})
+        json!({"h": bits(&m.hyper.to_vec()), "w": bits(&m.w), "s": bits(&[m.loo_rmse, m.loo_r2, m.cover90, m.var_scale, m.loso_r2, m.loso_cover])})
     })).collect();
     json!({"key": key, "phase": phase.name(), "order": pf.set.space.order, "heredity": bits(&pf.set.space.heredity),
            "screen": pf.set.screen.iter().map(|h| h.map_or(Value::Null, |h| bits(&h.to_vec()))).collect::<Vec<_>>(), "fits": fits})
@@ -663,6 +665,9 @@ pub struct Calibration {
     pub migrated: bool,
     /// Environments the sessions ran in (`env_current`): hash -> {bios, microcode, kernel_release, cmdline, ram_speed}.
     pub envs: BTreeMap<String, Value>,
+    /// Bytes the storage suite wrote per day (UTC day number), the last `KEEP_IO_DAYS` days: the
+    /// daily write budget (`centurion-calibrate --io-budget`) protects the drive's endurance.
+    pub io_days: BTreeMap<u64, u64>,
     /// Session -> environment hash (an environment is fixed for a session; rows find theirs by `sess`).
     pub sess_env: BTreeMap<u64, String>,
     /// Current kernel (major.minor) and time used to weight records.
@@ -1063,10 +1068,10 @@ impl Calibration {
             let mut out: [Option<Arc<Fit>>; 4] = Default::default();
             for (o, f) in fits.iter().enumerate() {
                 if f.is_null() { continue; }
-                let s = unbits(&f["s"]).filter(|s| s.len() == 4)?;
+                let s = unbits(&f["s"]).filter(|s| s.len() == 6)?;
                 let h = unbits(&f["h"]).filter(|h| h.len() == 6)?;
                 let meta = model::FitMeta { hyper: Hyper { sigma: h[0], main: h[1], pin: h[2], px: h[3], tri: h[4], ou: h[5] }, w: unbits(&f["w"])?,
-                                            loo_rmse: s[0], loo_r2: s[1], cover90: s[2], var_scale: s[3] };
+                                            loo_rmse: s[0], loo_r2: s[1], cover90: s[2], var_scale: s[3], loso_r2: s[4], loso_cover: s[5] };
                 out[o] = Some(set.refit_obj(o, &meta)?);
             }
             Some(PhaseFit { set, fits: out })
@@ -1495,7 +1500,7 @@ impl Calibration {
         }).collect();
         json!({"version": 9, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
-               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "baselines": self.baselines, "envs": self.envs, "sess_env": self.sess_env, "predcheck": self.predcheck,
+               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "baselines": self.baselines, "envs": self.envs, "sess_env": self.sess_env, "io_days": self.io_days, "predcheck": self.predcheck,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
                "brakes": cfgs_json(&self.brakes), "soft_unsafe": cfgs_json(&self.soft_unsafe),
                "unsafe_pinned": self.unsafe_pinned.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
@@ -1551,6 +1556,9 @@ impl Calibration {
         c.quality = v["quality"].as_array().cloned().unwrap_or_default();
         c.baselines = v["baselines"].as_array().cloned().unwrap_or_default();
         for (h, e) in v["envs"].as_object().into_iter().flatten() { c.envs.insert(h.clone(), e.clone()); }
+        for (d, b) in v["io_days"].as_object().into_iter().flatten() {
+            if let (Ok(d), Some(b)) = (d.parse::<u64>(), b.as_u64()) { c.io_days.insert(d, b); }
+        }
         for (s, h) in v["sess_env"].as_object().into_iter().flatten() {
             if let (Ok(s), Some(h)) = (s.parse::<u64>(), h.as_str()) { c.sess_env.insert(s, h.to_owned()); }
         }
@@ -1708,6 +1716,13 @@ impl Calibration {
         let drop = self.quality.len().saturating_sub(KEEP_QUALITY);
         self.quality.drain(..drop);
     }
+    /// Bytes the storage suite wrote on `day` (UTC day number).
+    pub fn io_written(&self, day: u64) -> u64 { self.io_days.get(&day).copied().unwrap_or(0) }
+    /// Adds `bytes` written by the storage suite on `day`; days older than `KEEP_IO_DAYS` are dropped.
+    pub fn note_io(&mut self, day: u64, bytes: u64) {
+        *self.io_days.entry(day).or_default() += bytes;
+        self.io_days.retain(|d, _| *d + KEEP_IO_DAYS > day);
+    }
     /// Records the environment session `sess` runs in.
     pub fn note_env(&mut self, sess: u64, hash: &str, env: Value) {
         self.envs.insert(hash.to_owned(), env);
@@ -1790,6 +1805,11 @@ impl Calibration {
                     let cov = fits.iter().map(|f| f.cover90).sum::<f64>() / n;
                     let infl = fits.iter().map(|f| f.var_scale).fold(1.0f64, f64::max);
                     s.push_str(&format!(", model R² {r2:.2}, 90 % intervals hold {:.0} %", cov * 100.0));
+                    let lr: Vec<f64> = fits.iter().map(|f| f.loso_r2).filter(|x| x.is_finite()).collect();
+                    let lc: Vec<f64> = fits.iter().map(|f| f.loso_cover).filter(|x| x.is_finite()).collect();
+                    if !lr.is_empty() && !lc.is_empty() {
+                        s.push_str(&format!(" (in a left-out session: R² {:.2}, {:.0} %)", lr.iter().sum::<f64>() / lr.len() as f64, lc.iter().sum::<f64>() / lc.len() as f64 * 100.0));
+                    }
                     if infl > 1.05 { s.push_str(&format!(", uncertainty widened x{:.2} (the model is less sure than its fit claims)", infl.sqrt())); }
                 }
             }
@@ -2271,6 +2291,20 @@ mod tests {
         c.invalidate();
         let without = c.get("cpu.a", "0", "1", Blend { load: 0.0, io: 1.0 }).unwrap().pwr.unwrap();
         assert!(with.abs() < 0.03 && without < -0.05, "with the temperature term {with}, without {without}");
+    }
+
+    #[test]
+    fn io_written_per_day_round_trips_and_ages_out() {
+        let mut c = Calibration::default();
+        c.note_io(100, 5 << 30);
+        c.note_io(100, 1 << 30);
+        assert_eq!(c.io_written(100), 6 << 30);
+        c.note_io(113, 1);
+        assert_eq!(c.io_days.len(), 2);
+        c.note_io(114, 1);
+        assert_eq!(c.io_written(100), 0, "older than 14 days");
+        assert_eq!(Calibration::from_json(&c.to_json()).io_days, c.io_days);
+        assert_eq!(crate::bench::parse_block_stat_written("  100 0 2000 10 50 0 4000 20 0 30 30"), Some(4000 * 512));
     }
 
     #[test]

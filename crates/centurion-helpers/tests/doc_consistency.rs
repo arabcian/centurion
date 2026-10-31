@@ -60,8 +60,10 @@ fn gui_fallback_weights_match_code() {
 fn constants_match_doc() {
     let doc = flat(DOC);
     assert!(doc.contains(&format!("margin ({MARGIN:.2})")), "MARGIN {MARGIN} not in AUTOTUNE.md");
-    let seen = src_const(AUTOTUNE_RS, "SEEN_Z");
-    assert!(doc.contains(&format!("weighs by {seen} posterior standard deviations")), "SEEN_Z {seen} not in AUTOTUNE.md");
+    let alpha = src_const(AUTOTUNE_RS, "SEEN_ALPHA");
+    assert!(doc.contains(&format!("α = {alpha:.2}")), "SEEN_ALPHA {alpha} not in AUTOTUNE.md");
+    let hyst = src_const(AUTOTUNE_RS, "SEEN_HYST");
+    assert!(doc.contains(&format!("down to {hyst} below the threshold")), "SEEN_HYST {hyst} not in AUTOTUNE.md");
     let keep = src_const(AUTOTUNE_RS, "KEEP_Z");
     assert!(doc.contains(&format!("(mean + {keep} sd < 0")), "KEEP_Z {keep} not in AUTOTUNE.md");
     let caps = CALIB_RS.lines().find(|l| l.contains("const PHASE_ROWS")).expect("PHASE_ROWS");

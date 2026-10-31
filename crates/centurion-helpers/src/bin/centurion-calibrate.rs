@@ -3,6 +3,7 @@
 //! accumulated across runs.
 //!
 //!   sudo centurion-calibrate [--budget MIN] [--depth lean|deep|max] [--all] [--phase idle|load|io|both]
+//!                           [--io-budget GiB]   daily write budget of the storage suite (default 20)
 //!                      [--only KEY|@thp|@mem|@cpu|@sched|@io,..] [--sessions N] [--thorough] [--dir PATH] [--seed N] [--no-confirm]
 //!   sudo centurion-calibrate --oat [...]        legacy: one knob at a time (ref, every candidate, ref)
 //!   centurion-calibrate --list                  the plan: keys, values, depth, estimated time, coverage
@@ -269,7 +270,15 @@ impl Ballast {
 /// soak before a "hot" run; `cx`: id of the session's measurement context; `heat`: the design
 /// varies the heat state (None = by depth, see Depth::heat).
 struct Ctx { exe: PathBuf, dir: String, disk: Option<String>, io_size: usize, scale: f64, battery: bool, bat_period: Option<f64>,
-             heat_secs: f64, cx: String, heat: Option<bool> }
+             heat_secs: f64, cx: String, heat: Option<bool>,
+             /// Daily write budget of the storage suite (bytes; `--io-budget GiB`, default IO_BUDGET_GIB).
+             io_budget: u64 }
+
+/// Default daily write budget of the storage suite: an IO run writes ~1.5 x its size (256 MiB), so
+/// a phase of hundreds of runs would otherwise write hundreds of GB.
+const IO_BUDGET_GIB: f64 = 20.0;
+
+fn today() -> u64 { now() / 86_400 }
 
 fn ms(c: &Ctx, base: u64) -> Duration { Duration::from_millis((base as f64 * c.scale) as u64) }
 
@@ -772,6 +781,11 @@ struct Runner<'a> { j: Journal, c: &'a Ctx, rate: u64, ram: u64, ballast: Option
                     gate_s: f64,
                     /// Runs measured while the firmware forced CPUs idle / while the drive was at its warning temperature.
                     forced: usize, disk_hot: usize,
+                    /// Interrupt rates of each phase's reference runs (the yardstick of `bench::disturbances`),
+                    /// and runs disturbed by outside activity, per kind ("irq", "disk", "net", "gpu").
+                    irq_ref: [Vec<f64>; 4], parasites: BTreeMap<&'static str, usize>,
+                    /// Bytes the storage suite wrote today before this session, and in this session.
+                    io_before: u64, io_session: u64,
                     /// Power source the session runs on (true = AC; None = unknown, not watched), and whether it
                     /// went away for good (the session ends; the boot calibration waits for it and resumes).
                     ac0: Option<bool>, power_lost: bool, power_waits: usize,
@@ -788,7 +802,7 @@ const POWER_WAIT: Duration = Duration::from_secs(120);
 impl Runner<'_> {
     fn new<'a>(c: &'a Ctx, rate: u64, ram: u64) -> Runner<'a> {
         Runner { j: Journal { entries: Vec::new() }, c, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
-                 cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0,
+                 cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0, irq_ref: Default::default(), parasites: BTreeMap::new(), io_before: 0, io_session: 0,
                  ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new() }
     }
     /// The session's power source must still be there: a charger pulled on AC (or plugged in on
@@ -839,6 +853,13 @@ impl Runner<'_> {
     }
     /// One run of `cfg` (all other knobs at their reference). None = a value could not be written.
     fn run(&mut self, phase: Phase, b: Benches, cfg: &Cfg, note: &str) -> Result<Option<Done>, String> {
+        // The daily write budget: an IO run that would exceed it ends the storage phase cleanly.
+        let io_est = (self.c.io_size as f64 * 1.5) as u64;
+        if phase == Phase::Io && self.io_before + self.io_session + io_est > self.c.io_budget {
+            return Err(format!("storage suite stopped: {:.1} GiB written today, the daily budget is {:.1} GiB (--io-budget GiB raises it; it protects the drive's endurance)",
+                               (self.io_before + self.io_session) as f64 / (1u64 << 30) as f64, self.c.io_budget as f64 / (1u64 << 30) as f64));
+        }
+        let written0 = if phase == Phase::Io { self.c.disk.as_deref().and_then(bench::disk_written_bytes) } else { None };
         if STOP.load(Ordering::SeqCst) { let _ = self.j.restore(); return Err("interrupted".into()); }
         self.power_check()?;
         // A value the kernel refused earlier in this session is refused again: no point in another try.
@@ -882,10 +903,12 @@ impl Runner<'_> {
         let disp = bench::display_state();
         let skip: Vec<u32> = self.ballast.as_ref().map(|b| b.pid).into_iter().collect();
         let (fg, t1) = (bench::Foreign::snapshot(&skip), Instant::now());
+        let sys0 = bench::SysCounters::read();
         let idle0 = bench::forced_idle_cpus().unwrap_or(0);
         let r = match phase { Phase::Idle => run_idle(b, self.c).map(|s| (s, false)), Phase::Load => run_load(b, self.c),
                               Phase::Io => run_io(self.c).map(|s| (s, false)), Phase::Dev => run_dev(self.c).map(|s| (s, false)) };
         let busy = fg.busy_cpus(&skip, t1.elapsed().as_secs_f64());
+        let act = sys0.activity(&bench::SysCounters::read(), t1.elapsed().as_secs_f64());
         let forced = idle0.max(bench::forced_idle_cpus().unwrap_or(0));
         // Read before the restore: what the drive reached during the storage suite.
         let disk_hot = match (phase, self.c.disk.as_deref()) {
@@ -893,6 +916,10 @@ impl Runner<'_> {
             _ => None,
         };
         for e in self.j.restore() { eprintln!("\nrestore: {e}"); }
+        if phase == Phase::Io {
+            let w1 = self.c.disk.as_deref().and_then(bench::disk_written_bytes);
+            self.io_session += match (written0, w1) { (Some(a), Some(b)) if b >= a => b - a, _ => io_est };
+        }
         // The power source changed while the run measured: part of it ran in another power context.
         // Thrown away; the next run waits for the source to come back (power_check).
         if let (Some(want), Some(now)) = (self.ac0, centurion_helpers::power::on_ac()) {
@@ -912,6 +939,21 @@ impl Runner<'_> {
         // Other programs keeping more than 0.6 CPU busy disturb the figures: such a run counts less.
         let mut w = if busy > 0.6 { (0.6 / busy).clamp(0.1, 1.0) } else { 1.0 };
         if w < 1.0 { self.busy += 1; if self.busy <= 3 || self.busy % 10 == 0 { eprintln!("\nother programs kept {busy:.1} CPU(s) busy: run counted at {:.0} % ({} such run(s))", w * 100.0, self.busy); } }
+        // Outside activity the process count above does not see: interrupt storms, others' disk and
+        // network traffic, a busy GPU. Each kind halves the run's weight.
+        {
+            let refs = &self.irq_ref[phase.idx()];
+            let ref_irq = (refs.len() >= 2).then(|| { let mut v = refs.clone(); calib::median(&mut v) }).flatten();
+            let kinds = bench::disturbances(&act, ref_irq, phase != Phase::Io);
+            for k in &kinds {
+                w *= 0.5;
+                let n = self.parasites.entry(k).or_default();
+                *n += 1;
+                if *n <= 2 || *n % 10 == 0 { eprintln!("\noutside activity during the run ({k}: {:.0} irq/s, others' disk {:.1} MB/s, network {:.1} MB/s, GPU {}): run counted at half ({n} such run(s))",
+                    act.irq_per_s, act.disk_mb_s, act.net_mb_s, act.gpu_busy.map_or("-".into(), |g| format!("{g:.0} %"))); }
+            }
+            if cfg.is_empty() && kinds.is_empty() { self.irq_ref[phase.idx()].push(act.irq_per_s); }
+        }
         // The firmware parked CPUs in forced idle (ACPI processor aggregator) during the run: its
         // clock and throughput figures are the platform's power capping, not the knobs'.
         if forced > 0 {
@@ -1443,7 +1485,7 @@ fn session_quality(rows: &[Row], d: &Design, rn: &Runner) -> Value {
     let noise: Vec<Value> = (0..4).map(|o| robust_sd(&refs.iter().map(|r| r.y[o]).collect::<Vec<_>>()).map_or(Value::Null, |x| json!(round3(x)))).collect();
     json!({"t": now(), "sess": d.sess, "phase": d.phase.name(), "strategy": d.strategy, "runs": d.runs.len(), "refs": refs.len(), "noise": noise,
            "weak": d.runs.iter().filter(|r| r.w < 0.999).count(), "refused": rn.unwritable.len(), "dropped": rn.dropped,
-           "power_waits": rn.power_waits, "ended_early": rn.power_lost, "cx": d.meta.cx})
+           "power_waits": rn.power_waits, "ended_early": rn.power_lost, "cx": d.meta.cx, "parasites": rn.parasites})
 }
 
 fn quality_line(q: &Value) -> String {
@@ -1455,6 +1497,9 @@ fn quality_line(q: &Value) -> String {
     if weak > 0 { s.push_str(&format!("; {weak} disturbed run(s) counted less")); }
     let (refused, dropped) = (q["refused"].as_u64().unwrap_or(0), q["dropped"].as_u64().unwrap_or(0));
     if refused > 0 || dropped > 0 { s.push_str(&format!("; {refused} value(s) refused by the kernel, {dropped} run(s) thrown away")); }
+    if let Some(p) = q["parasites"].as_object().filter(|p| !p.is_empty()) {
+        s.push_str(&format!("; outside activity: {}", p.iter().map(|(k, n)| format!("{n} run(s) {k}")).collect::<Vec<_>>().join(", ")));
+    }
     if q["power_waits"].as_u64().unwrap_or(0) > 0 { s.push_str(&format!("; waited {} time(s) for the power source", q["power_waits"])); }
     if let Some(b) = q["baseline_shift"].as_array() {
         let l: Vec<String> = b.iter().map(|x| format!("{} {:+.1} %", x["metric"].as_str().unwrap_or("?"), x["rel"].as_f64().unwrap_or(0.0) * 100.0)).collect();
@@ -1494,6 +1539,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
     let phases = split(items, ctx.scale, budget);
     if phases.is_empty() { eprintln!("nothing to design: fewer than two testable knobs"); return true; }
     let mut rn = Runner::new(ctx, rate, ram);
+    rn.io_before = cal.io_written(today());
     for (ph, its, secs) in &phases {
         let pdp = if progressive {
             let p = progress(cal, *ph, &phase_factors(its));
@@ -1506,6 +1552,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
         if let Err(e) = design_phase(cal, &mut rn, *ph, its, *secs, &pdp, kernel, seed, confirm, &refs) { eprintln!("\n{e}"); if STOP.load(Ordering::SeqCst) || rn.power_lost { break; } }
     }
     for e in rn.j.restore() { eprintln!("restore: {e}"); }
+    if rn.io_session > 0 { cal.note_io(today(), rn.io_session); save(cal); }
     if let Some(b) = rn.ballast.take() { b.stop(); }
     centurion_helpers::stability::inflight_clear();
     cal.prune_contexts(&ctx.cx);
@@ -1541,8 +1588,10 @@ fn show_model(c: &Calibration) {
     println!("\nexperiment log: {} run(s), {} unsafe combination(s)", c.rows.len(), c.unsafe_sets.len());
     for ph in Phase::ALL {
         let Some(m) = c.phase_model(ph, [1.0; 4]) else { continue };
-        println!("  {:<5} {} knob(s), {} run(s), noise {:.3}, model R² {:.2}, 90 % interval coverage {:.0} %, interactions up to {}", ph.name(),
-                 m.space.factors.len(), m.nobs(), m.noise(), m.r2(), m.cover90() * 100.0, if m.space.order >= 3 { "triples" } else { "pairs" });
+        println!("  {:<5} {} knob(s), {} run(s), noise {:.3}, model R² {:.2}, 90 % interval coverage {:.0} %{}, interactions up to {}", ph.name(),
+                 m.space.factors.len(), m.nobs(), m.noise(), m.r2(), m.cover90() * 100.0,
+                 if m.loso_r2().is_finite() { format!(" (leave-one-session-out: R² {:.2}, {:.0} %)", m.loso_r2(), m.loso_cover() * 100.0) } else { String::new() },
+                 if m.space.order >= 3 { "triples" } else { "pairs" });
         report_interactions(&m, 8, "        ");
     }
 }
@@ -1794,6 +1843,7 @@ fn main() {
         scale,
         battery: src == "battery",
         bat_period, heat_secs: 15.0 * scale, cx, heat: heat_opt,
+        io_budget: (opt("--io-budget").and_then(|s| s.parse::<f64>().ok()).unwrap_or(IO_BUDGET_GIB).max(0.0) * (1u64 << 30) as f64) as u64,
     };
     let rate = centurion_helpers::iorate::gather().bps;
     // Precise timers for the probes: with the default 50 µs timer slack the kernel may deliver every

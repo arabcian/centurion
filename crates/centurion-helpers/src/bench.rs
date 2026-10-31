@@ -228,6 +228,92 @@ impl Foreign {
     }
 }
 
+/// Machine-wide activity counters around a run (A6): interrupts + softirqs, whole-disk sectors
+/// read + written, network bytes (no loopback), this process's own I/O bytes, and the busy share
+/// of an amdgpu GPU that is already awake (never woken to be read).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SysCounters { pub irq: u64, pub sectors: u64, pub net: u64, pub own_io: u64, pub gpu_busy: Option<f64> }
+
+/// What the rest of the machine did during a run.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Activity { pub irq_per_s: f64, pub disk_mb_s: f64, pub net_mb_s: f64, pub gpu_busy: Option<f64> }
+
+/// Thresholds of [`disturbances`], in one place: interrupt rate against the session's reference
+/// runs (ratio), others' disk traffic outside the storage suite, network traffic, GPU busy share.
+pub const IRQ_RATIO: f64 = 2.0;
+pub const DISK_MB_S: f64 = 20.0;
+pub const NET_MB_S: f64 = 5.0;
+pub const GPU_BUSY_PCT: f64 = 20.0;
+
+/// `intr` + `softirq` totals of /proc/stat.
+pub fn parse_stat_irq(text: &str) -> u64 {
+    text.lines().filter(|l| l.starts_with("intr ") || l.starts_with("softirq ")).filter_map(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).sum()
+}
+
+/// Sectors read + written by whole disks in /proc/diskstats (partitions, loop, ram, dm and zram left out:
+/// they would count the same traffic twice or are not disks).
+pub fn parse_diskstats(text: &str) -> u64 {
+    let whole = |n: &str| {
+        let digits_after = |p: &str| n.strip_prefix(p).is_some_and(|r| !r.is_empty() && r.bytes().all(|b| b.is_ascii_digit()));
+        (n.starts_with("nvme") && n.contains('n') && !n.contains('p') && n[4..].split('n').count() == 2)
+            || ((n.starts_with("sd") || n.starts_with("vd") || n.starts_with("hd")) && n[2..].bytes().all(|b| b.is_ascii_lowercase()) && n.len() > 2)
+            || (digits_after("mmcblk"))
+    };
+    text.lines().filter_map(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        (f.len() >= 10 && whole(f[2])).then(|| f[5].parse::<u64>().unwrap_or(0) + f[9].parse::<u64>().unwrap_or(0))
+    }).sum()
+}
+
+/// Received + sent bytes of every interface but loopback in /proc/net/dev.
+pub fn parse_netdev(text: &str) -> u64 {
+    text.lines().filter_map(|l| {
+        let (name, rest) = l.split_once(':')?;
+        if name.trim() == "lo" { return None; }
+        let f: Vec<&str> = rest.split_whitespace().collect();
+        (f.len() >= 9).then(|| f[0].parse::<u64>().unwrap_or(0) + f[8].parse::<u64>().unwrap_or(0))
+    }).sum()
+}
+
+/// read_bytes + write_bytes of /proc/self/io.
+pub fn parse_self_io(text: &str) -> u64 {
+    text.lines().filter(|l| l.starts_with("read_bytes:") || l.starts_with("write_bytes:")).filter_map(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).sum()
+}
+
+impl SysCounters {
+    pub fn read() -> SysCounters {
+        let rd = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+        let gpu_busy = std::fs::read_dir("/sys/class/drm").ok().into_iter().flatten().flatten().find_map(|e| {
+            let d = e.path().join("device");
+            if !e.file_name().to_string_lossy().starts_with("card") || e.file_name().to_string_lossy().contains('-') { return None; }
+            // Only a GPU that is awake: reading a suspended dGPU's counters would wake it.
+            if std::fs::read_to_string(d.join("power/runtime_status")).map(|s| s.trim() != "active").unwrap_or(false) { return None; }
+            std::fs::read_to_string(d.join("gpu_busy_percent")).ok()?.trim().parse::<f64>().ok()
+        });
+        SysCounters { irq: parse_stat_irq(&rd("/proc/stat")), sectors: parse_diskstats(&rd("/proc/diskstats")), net: parse_netdev(&rd("/proc/net/dev")),
+                      own_io: parse_self_io(&rd("/proc/self/io")), gpu_busy }
+    }
+    /// Rates between `self` (start) and `end` over `secs`; disk traffic is net of this process's own I/O.
+    pub fn activity(&self, end: &SysCounters, secs: f64) -> Activity {
+        let s = secs.max(0.1);
+        let disk = (end.sectors.saturating_sub(self.sectors) * 512).saturating_sub(end.own_io.saturating_sub(self.own_io));
+        Activity { irq_per_s: end.irq.saturating_sub(self.irq) as f64 / s, disk_mb_s: disk as f64 / 1e6 / s,
+                   net_mb_s: end.net.saturating_sub(self.net) as f64 / 1e6 / s, gpu_busy: end.gpu_busy }
+    }
+}
+
+/// Which kinds of outside activity disturbed a run: "irq" (interrupt rate above IRQ_RATIO x the
+/// session's reference runs, when known), "disk" (others' disk traffic; not checked in the storage
+/// suite), "net", "gpu".
+pub fn disturbances(a: &Activity, ref_irq_per_s: Option<f64>, check_disk: bool) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if ref_irq_per_s.is_some_and(|r| r > 0.0 && a.irq_per_s > IRQ_RATIO * r) { out.push("irq"); }
+    if check_disk && a.disk_mb_s > DISK_MB_S { out.push("disk"); }
+    if a.net_mb_s > NET_MB_S { out.push("net"); }
+    if a.gpu_busy.is_some_and(|g| g > GPU_BUSY_PCT) { out.push("gpu"); }
+    out
+}
+
 fn tmpfile(dir: &str, direct: bool) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new().read(true).write(true).mode(0o600)
         .custom_flags(libc::O_TMPFILE | libc::O_CLOEXEC | if direct { libc::O_DIRECT } else { 0 }).open(dir)
@@ -631,6 +717,14 @@ fn disk_sensor(disk: &str) -> Option<(std::path::PathBuf, f64)> {
 }
 
 /// A disk's temperature in °C (None without a sensor).
+/// Bytes written to a whole disk since boot (`/sys/block/<disk>/stat`, sectors written x 512).
+pub fn disk_written_bytes(disk: &str) -> Option<u64> {
+    parse_block_stat_written(&std::fs::read_to_string(format!("/sys/block/{disk}/stat")).ok()?)
+}
+
+/// Sectors written (7th field) x 512 of a block device's stat line.
+pub fn parse_block_stat_written(text: &str) -> Option<u64> { text.split_whitespace().nth(6)?.parse::<u64>().ok().map(|s| s * 512) }
+
 pub fn disk_temp_c(disk: &str) -> Option<f64> {
     let (p, _) = disk_sensor(disk)?;
     let v: f64 = std::fs::read_to_string(p).ok()?.trim().parse().ok()?;
@@ -1320,6 +1414,37 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outside_activity_from_fixture_counters() {
+        let stat = "cpu  1 2 3\nintr 1000 5 6 7\nctxt 99\nsoftirq 500 1 2\n";
+        assert_eq!(parse_stat_irq(stat), 1500);
+        let disk = "\
+ 259       0 nvme0n1 100 0 2000 10 50 0 4000 20 0 30 30 0 0 0 0
+ 259       1 nvme0n1p1 90 0 1800 9 40 0 3600 18 0 25 25 0 0 0 0
+   8       0 sda 10 0 100 1 5 0 200 2 0 3 3 0 0 0 0
+   8       1 sda1 10 0 100 1 5 0 200 2 0 3 3 0 0 0 0
+   7       0 loop0 1 0 999 0 0 0 0 0 0 0 0 0 0 0 0
+ 253       0 dm-0 1 0 777 0 1 0 777 0 0 0 0 0 0 0 0
+ 179       0 mmcblk0 1 0 10 0 1 0 20 0 0 0 0 0 0 0 0
+ 179       1 mmcblk0p1 1 0 10 0 1 0 20 0 0 0 0 0 0 0 0
+";
+        assert_eq!(parse_diskstats(disk), 2000 + 4000 + 100 + 200 + 10 + 20, "whole disks only");
+        let net = "Inter-|   Receive\n face |bytes packets\n    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  wlan0: 1000 3 0 0 0 0 0 0 300 2 0 0 0 0 0 0\n";
+        assert_eq!(parse_netdev(net), 1300);
+        assert_eq!(parse_self_io("rchar: 5\nread_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 0\n"), 12288);
+        let a = SysCounters { irq: 1000, sectors: 0, net: 0, own_io: 0, gpu_busy: None };
+        // 10 s: 30000 irq/s, 100 MB of others' disk traffic (our own 20 MB taken out), 1 MB of network.
+        let b = SysCounters { irq: 301_000, sectors: 120_000_000 / 512 + 1, net: 1_000_000, own_io: 20_000_000, gpu_busy: Some(35.0) };
+        let act = a.activity(&b, 10.0);
+        assert!((act.irq_per_s - 30_000.0).abs() < 1e-9 && (act.disk_mb_s - 10.0).abs() < 0.01 && (act.net_mb_s - 0.1).abs() < 1e-9);
+        assert_eq!(disturbances(&act, Some(10_000.0), true), ["irq", "gpu"]);
+        assert_eq!(disturbances(&act, None, true), ["gpu"], "no reference runs yet: interrupts not judged");
+        let busy_disk = Activity { disk_mb_s: 50.0, net_mb_s: 8.0, ..Activity::default() };
+        assert_eq!(disturbances(&busy_disk, Some(1.0), true), ["disk", "net"]);
+        assert_eq!(disturbances(&busy_disk, Some(1.0), false), ["net"], "the storage suite's own traffic is not a disturbance");
+        assert!(disturbances(&Activity { irq_per_s: 15_000.0, ..Activity::default() }, Some(10_000.0), true).is_empty());
+    }
     #[test]
     fn cpu_benches() {
         assert!(cpu_single(Duration::from_millis(100)) > 0.0);

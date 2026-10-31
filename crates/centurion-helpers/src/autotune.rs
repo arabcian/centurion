@@ -47,10 +47,16 @@ pub const MARGIN: f64 = 0.03;
 /// calibration's memory brake stopped its load twice under it (`calib::Calibration::note_brake`). Half the
 /// largest field-stability charge: a warning sign under artificial pressure, not a crash.
 const SOFT_UNSAFE_COST: f64 = -0.25;
-/// The benchmarks "see" a knob when at least one of its values moves this goal's utility by
-/// this many posterior standard deviations. Below it a measured "no effect" is the benchmark's
-/// blindness, not knowledge: the rule's estimate stays.
-const SEEN_Z: f64 = 2.0;
+/// The benchmarks "see" a knob when one of its effects (value x objective this goal weighs)
+/// clears a Šidák-corrected z: Φ⁻¹(1 − SEEN_ALPHA / (2m)), m = values x weighted objectives - a
+/// 4-value knob has 16 chances to cross a fixed 2 sd by noise. Below it a measured "no effect" is
+/// the benchmark's blindness, not knowledge: the rule's estimate stays.
+const SEEN_ALPHA: f64 = 0.05;
+/// A knob seen last time stays seen down to SEEN_HYST below the threshold (no flicker between runs).
+const SEEN_HYST: f64 = 0.3;
+/// Head start of a change in effect in the joint pass (`model::favour_incumbent`): it does not pay
+/// the margin again on every run.
+const INCUMBENT: f64 = MARGIN;
 /// A value a rule chose leaves the joint decision only when the model puts it this many
 /// standard deviations below the reference.
 const KEEP_Z: f64 = 1.0;
@@ -668,6 +674,8 @@ pub struct Profile {
     pub field_risk: BTreeMap<String, crate::stability::KeyRisk>,
     /// The power profile the preset will run under (a scene's; None = the live one).
     pub target_profile: Option<String>,
+    /// "Seen" verdicts of the previous autotune run for this goal (hysteresis, see SEEN_HYST).
+    pub seen_prev: BTreeMap<String, bool>,
     /// Live values of the rows whose rule depends on the current state.
     pub current: BTreeMap<String, String>,
 }
@@ -813,6 +821,7 @@ impl Profile {
             outcomes: defaults::load_outcomes(),
             calibration: calib::Calibration::load(),
             field_risk: BTreeMap::new(),
+            seen_prev: BTreeMap::new(),
             target_profile: None,
             current,
         }
@@ -971,7 +980,8 @@ struct Rules<'a> {
     /// The signature's joint model for this goal's weights (None: no design rows yet).
     joint: Option<model::Joint>,
     jkeys: BTreeSet<String>,
-    seen: RefCell<BTreeMap<String, bool>>,
+    /// key -> (seen, largest z, threshold to enter).
+    seen: RefCell<BTreeMap<String, (bool, f64, f64)>>,
     /// Keys no rule knows, decided from the measurements alone (signature pass).
     measured_only: BTreeSet<&'static str>,
     /// Stability cost a rule gave a candidate, (key, value) -> risk (<= 0), relative to the
@@ -1010,12 +1020,15 @@ impl<'a> Rules<'a> {
     /// the package is shared with a GPU - the 1 % lows of a real game, which no synthetic
     /// load of a few hundred milliseconds reproduces.
     fn pinned(&self, key: &str) -> bool { key == "cpu.epp_boost" && matches!(self.g, Goal::Gaming | Goal::Throughput) }
-    /// Whether the benchmarks can see `key` on this machine at all (see SEEN_Z). Keys the
-    /// joint model does not hold (one-at-a-time records only) count as seen, as before.
+    /// Whether the benchmarks can see `key` on this machine at all (see SEEN_ALPHA, SEEN_HYST). Keys
+    /// the joint model does not hold (one-at-a-time records only) count as seen, as before.
     fn seen(&self, key: &str) -> bool {
-        if let Some(v) = self.seen.borrow().get(key) { return *v; }
-        let v = match &self.joint { Some(j) if self.jkeys.contains(key) => seen_in(j, key), _ => true };
-        self.seen.borrow_mut().insert(key.to_owned(), v);
+        if let Some(v) = self.seen.borrow().get(key) { return v.0; }
+        let Some(j) = self.joint.as_ref().filter(|_| self.jkeys.contains(key)) else { return true };
+        let (z, m) = seen_z(j, key);
+        let enter = seen_enter(m);
+        let v = m > 0 && seen_state(self.p.seen_prev.get(key).copied(), z, enter);
+        self.seen.borrow_mut().insert(key.to_owned(), (v, z, enter));
         v
     }
     /// How this goal combines the calibration phases (load share, storage weight).
@@ -1150,7 +1163,7 @@ impl<'a> Rules<'a> {
     /// read-ahead, preemption, defrag): the measurements decide only where the benchmarks can see
     /// the knob. On a blind knob every measured value scores zero, so the boot value won and the
     /// rule was skipped - "measured: no effect" overturned the rule, the opposite of what
-    /// `SEEN_Z` promises. The rule decides then; the joint pass still takes its value back on
+    /// `SEEN_ALPHA` promises. The rule decides then; the joint pass still takes its value back on
     /// credible contrary evidence.
     fn measured_rule(&mut self, key: &'static str) -> bool { self.seen(key) && self.calibrated_choice(key) }
     /// Value in effect after this rule set: decided, else live.
@@ -1161,17 +1174,37 @@ impl<'a> Rules<'a> {
 
 fn round2(x: f64) -> f64 { (x * 100.0).round() / 100.0 }
 
-/// At least one value of `key` moves at least one objective this goal weighs by SEEN_Z posterior
-/// standard deviations. Judged per objective, not on the weighted utility: a knob that trades latency
-/// against throughput (or package power against clock) can sum to ~0 utility while every one of its
-/// effects is measured to a fraction of a percent - that is a measured trade-off, not blindness, and
-/// the measurements must replace the rule's estimates.
-pub fn seen_in(j: &model::Joint, key: &str) -> bool {
-    j.values(key).iter().any(|val| {
+/// Largest |effect| / posterior sd of `key` over its values and the objectives this goal weighs,
+/// and how many such effects were tested. Judged per objective, not on the weighted utility: a knob
+/// that trades latency against throughput (or package power against clock) can sum to ~0 utility
+/// while every one of its effects is measured to a fraction of a percent - that is a measured
+/// trade-off, not blindness, and the measurements must replace the rule's estimates.
+pub fn seen_z(j: &model::Joint, key: &str) -> (f64, usize) {
+    let weighed: Vec<usize> = (0..4).filter(|o| (0..4).any(|w| j.model(w).is_some_and(|m| m.wts[*o] > 0.0))).collect();
+    let (mut z, mut m) = (0.0f64, 0usize);
+    for val in j.values(key) {
         let a = [(key.to_owned(), val.clone())];
-        (0..4).any(|o| j.eval_diff_obj(&a, &[], o).is_some_and(|(m, var)| var > 0.0 && m.abs() >= SEEN_Z * var.sqrt()))
-    })
+        for &o in &weighed {
+            m += 1;
+            if let Some((mu, var)) = j.eval_diff_obj(&a, &[], o).filter(|(_, v)| *v > 0.0) { z = z.max(mu.abs() / var.sqrt()); }
+        }
+    }
+    (z, m)
 }
+
+/// Šidák-corrected threshold for `m` tests: Φ⁻¹(1 − SEEN_ALPHA / (2m)).
+pub fn seen_enter(m: usize) -> f64 {
+    let target = 1.0 - SEEN_ALPHA / (2.0 * m.max(1) as f64);
+    let (mut lo, mut hi) = (0.0, 10.0);
+    for _ in 0..80 { let mid = 0.5 * (lo + hi); if model::norm_cdf(mid) < target { lo = mid } else { hi = mid } }
+    0.5 * (lo + hi)
+}
+
+/// With hysteresis: a knob seen before leaves "seen" only below `enter - SEEN_HYST`.
+fn seen_state(prev: Option<bool>, z: f64, enter: f64) -> bool { z >= if prev == Some(true) { enter - SEEN_HYST } else { enter } }
+
+/// Whether the benchmarks see `key` (no history).
+pub fn seen_in(j: &model::Joint, key: &str) -> bool { let (z, m) = seen_z(j, key); m > 0 && z >= seen_enter(m) }
 
 /// Stability-objective cost of a value whose real price no calibration run can see (<= 0).
 ///
@@ -1238,7 +1271,7 @@ pub fn decide(goal: Goal, p: &Profile) -> Vec<Decision> { decide_weighted(goal, 
 
 /// Decisions plus the score trace and the notes, the hard-constraint messages last.
 pub fn decide_weighted(goal: Goal, p: &Profile, w: Weights) -> (Vec<Decision>, Map<String, Value>, Vec<String>) {
-    let (d, s, mut notes, constraints) = decide_full(goal, p, w);
+    let (d, s, mut notes, constraints, _) = decide_full(goal, p, w);
     notes.extend(constraints);
     (d, s, notes)
 }
@@ -1268,7 +1301,13 @@ fn decide_full(goal: Goal, p: &Profile, w: Weights) -> Decided {
     joint_pass(&mut r);
     r.src = "audit";
     repair_live(&mut r);
-    let notes = std::mem::take(&mut r.notes);
+    let mut notes = std::mem::take(&mut r.notes);
+    let seen: BTreeMap<String, bool> = r.seen.borrow().iter().map(|(k, v)| (k.clone(), v.0)).collect();
+    if !seen.is_empty() {
+        let held = r.seen.borrow().values().filter(|v| v.0 && v.1 < v.2).count();
+        notes.push(format!("Seen: the benchmarks see {} of {} measured knob(s){}.", seen.values().filter(|v| **v).count(), seen.len(),
+                           if held > 0 { format!(", {held} only just (kept from the last run, below the threshold to enter)") } else { String::new() }));
+    }
     let constraints = enforce(&mut r.out, p);
     let share = r.blend();
     for d in r.out.iter_mut() {
@@ -1279,7 +1318,7 @@ fn decide_full(goal: Goal, p: &Profile, w: Weights) -> Decided {
             if rf != v { d.n = cal.get(d.key, rf, &v, share).map(|m| m.n); }
         }
     }
-    (r.out, r.scores, notes, constraints)
+    (r.out, r.scores, notes, constraints, seen)
 }
 
 /// The power context the preset will run in: a power profile (the scene's, else the live one) on AC,
@@ -1442,6 +1481,14 @@ fn joint_pass(r: &mut Rules) {
         let learned = r.w.stability * r.p.learned_risk(&keys[i]).unwrap_or(0.0);
         let sd = joint.eval_diff(&[(keys[i].clone(), c[start[i]].0.clone())], &[]).1.max(0.0).sqrt();
         c[start[i]].1 = learned + MARGIN + (KEEP_Z + model::RISK_Z) * sd;
+    }
+    // Stability between runs: a change in effect now (the applied preset's) keeps a head start
+    // (INCUMBENT). Not for another scene's preset: the live value belongs to the current scene.
+    if r.p.target_profile.is_none() {
+        for (i, c) in cands.iter_mut().enumerate() {
+            if ruled[i] { continue; }
+            if let Some(live) = r.p.cur(&keys[i]) { model::favour_incumbent(c, live, INCUMBENT); }
+        }
     }
     let mut prob = model::Problem::new(&joint, keys.clone(), cands.clone(), fixed, model::RISK_Z, MARGIN, cal.unsafe_sets.clone());
     // Soft-unsafe combinations (the calibration's memory brake fired twice under them): allowed, at a
@@ -2486,6 +2533,11 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let mut p = Profile::gather();
     p.load_field_risk();
     p.target_profile = opts["profile"].as_str().filter(|s| !s.is_empty() && s.len() <= 32).map(str::to_owned);
+    let seen_path = crate::overview::state_dir().join("autotune-seen.json");
+    let mut seen_all: Value = std::fs::read_to_string(&seen_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| json!({}));
+    if p.target_profile.is_none() {
+        p.seen_prev = seen_all[goal.key()].as_object().into_iter().flatten().filter_map(|(k, v)| Some((k.clone(), v.as_bool()?))).collect();
+    }
     let (w, notes) = effective_weights(goal, &p.evidence);
     let w = w.with_overrides(weights);
     let want_explore = opts["explore"] != false && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty());
@@ -2522,6 +2574,10 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
         let path = crate::overview::state_dir().join("autotune-history.jsonl");
         if let Some(prev) = history_last(&path, goal) { out["diff_vs_last"] = Value::Array(diff_vs_last(&prev, &entry)); }
         history_push(&path, &entry);
+        if out["seen"].as_object().is_some_and(|m| !m.is_empty()) && seen_all.is_object() {
+            seen_all[goal.key()] = out["seen"].clone();
+            let _ = std::fs::write(&seen_path, seen_all.to_string());
+        }
     }
     out
 }
@@ -2613,7 +2669,7 @@ fn share(p: &Profile) -> Profile {
     q
 }
 
-type Decided = (Vec<Decision>, Map<String, Value>, Vec<String>, Vec<String>);
+type Decided = (Vec<Decision>, Map<String, Value>, Vec<String>, Vec<String>, BTreeMap<String, bool>);
 type Explored = (Vec<Value>, Vec<Value>, Value);
 
 /// The main decision, plus the alternatives (the same machine data under other trade-offs) and the
@@ -2661,14 +2717,14 @@ fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
     };
     let mut alts = Vec::new();
     for (i, (label, wv)) in variants.iter().enumerate() {
-        let Some(((d, _, _, _), pr)) = res[1 + i].take() else { continue };
+        let Some(((d, _, _, _, _), pr)) = res[1 + i].take() else { continue };
         let ch = diff(&d);
         if ch.is_empty() { continue; }
         alts.push(json!({"label": label, "weights": wv.to_json(), "changes": ch, "predicted": pr}));
     }
     let mut flips: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (i, job) in jobs.iter().enumerate().skip(1 + variants.len()) {
-        let (Some((name, down)), Some(((d, _, _, _), _))) = (job.1, res[i].take()) else { continue };
+        let (Some((name, down)), Some(((d, _, _, _, _), _))) = (job.1, res[i].take()) else { continue };
         for c in diff(&d) {
             let k = c["key"].as_str().unwrap_or("").to_owned();
             flips.entry(k).or_default().push(format!("{name} {} -> {}", if down { "-30 %" } else { "+30 %" },
@@ -2684,7 +2740,7 @@ pub fn autotune_with(goal: Goal, p: &Profile) -> Value { autotune_weighted(goal,
 pub fn autotune_weighted(goal: Goal, p: &Profile, w: Weights) -> Value { assemble(goal, p, w, decide_full(goal, p, w)) }
 
 /// The reply for a decision set: availability filter, audit, rationale.
-fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes, constraints): Decided) -> Value {
+fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes, constraints, seen): Decided) -> Value {
     let mut values = Map::new();
     let mut why = Map::new();
     let mut skipped = Vec::new();
@@ -2734,7 +2790,7 @@ fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes, cons
         "preset": {"values": values, "run": run, "summary": summary,
                    "autotune": {"goal": goal.key(), "kernel": format!("{}.{}", p.kernel.0, p.kernel.1),
                                 "weights": w.to_json(), "storage_write": p.io.to_json()}},
-        "rationale": why, "decisions": structured, "skipped": skipped,
+        "rationale": why, "decisions": structured, "seen": seen, "skipped": skipped,
     })
 }
 
@@ -2771,7 +2827,7 @@ mod tests {
             evidence: Evidence::default(),
             io: iorate::IoRate { bps: 1500 * MIB, source: iorate::Source::Probe, device: "nvme0n1".into(), class: iorate::DevClass::Nvme },
             cmdline: "root=/dev/nvme0n1p2 nowatchdog pcie_aspm=force usbcore.autosuspend=-1 processor.max_cstate=9".into(),
-            defaults: None, outcomes: BTreeMap::new(), calibration: None, field_risk: BTreeMap::new(), target_profile: None,
+            defaults: None, outcomes: BTreeMap::new(), calibration: None, field_risk: BTreeMap::new(), seen_prev: BTreeMap::new(), target_profile: None,
             current: BTreeMap::from([
                 ("vm.min_free_kbytes".into(), "67584".into()), ("cpu.ccd_park".into(), "none".into()),
                 ("thp.enabled".into(), "always".into()), ("thp.khp_max_ptes_none".into(), "409".into()),
@@ -3167,6 +3223,20 @@ mod tests {
         let de = decide(Goal::Desktop, &p);
         assert_eq!(int(&de, "vm.dirty_bytes") as u64, dirty_pair(p.io.bps, p.ram_kb * 1024, 0.5).1);
         assert!(de.iter().find(|x| x.key == "vm.dirty_bytes").unwrap().why.contains("measured"));
+    }
+
+    #[test]
+    fn seen_threshold_is_corrected_and_hysteretic() {
+        assert!((seen_enter(1) - 1.96).abs() < 0.01, "one test: the plain two-sided 5 %");
+        assert!((seen_enter(16) - 2.95).abs() < 0.01, "4 values x 4 objectives");
+        assert!(seen_enter(4) > 2.4 && seen_enter(4) < seen_enter(8));
+        let enter = 2.0;
+        // A knob whose z swings between 2.1 and 1.9 keeps the state it had.
+        let mut st = None;
+        for z in [2.1, 1.9, 2.1, 1.9, 1.9] { st = Some(seen_state(st, z, enter)); assert_eq!(st, Some(true), "seen stays seen at z {z}"); }
+        let mut st = Some(false);
+        for z in [1.9, 1.95, 1.9] { st = Some(seen_state(st, z, enter)); assert_eq!(st, Some(false), "unseen stays unseen at z {z}"); }
+        assert!(!seen_state(Some(true), 1.6, enter), "a clear drop below the exit threshold leaves seen");
     }
 
     #[test]
