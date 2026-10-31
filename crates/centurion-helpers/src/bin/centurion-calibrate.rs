@@ -2695,6 +2695,12 @@ mod tests {
     }
 }
 
+/// Decision-quality regression on synthetic machines (roadmap B1); kept outside `src/bin` so cargo
+/// does not take it for a binary.
+#[cfg(test)]
+#[path = "../calsim.rs"]
+mod calsim;
+
 #[cfg(test)]
 mod sim {
     //! Offline comparison on a synthetic, noisy machine: the same number of runs spent

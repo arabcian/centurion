@@ -11,7 +11,7 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 
 ## İlerleme (2026-10-31)
 
-**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7, B5, C1, C7, A5, E9; kısmi: B4, A4 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
+**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7, B1, B5, C1, C7, A5, E9; kısmi: B4, A4 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
 
 | ID | Durum | Not |
 |---|---|---|
@@ -21,6 +21,7 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 | A11 | ✅ | Tüm deşarj olan bataryalar toplanır, > 300 W reddedilir; DEV koşusunda `energy_now` (yoksa `charge_now × voltage_now`) farkıyla ikinci tahmin, > %20 ayrışmada uyarı (yalnız uyarı; metrik değişmez). |
 | D2 | ✅ | `tests/properties.rs`: rastgele JSON / eski sürüm / bozuk bayt / round-trip. 8 MiB sınırı testi yok (`save` kök + dosya ister; budama mantığı private). |
 | E2 | ✅ (kısmi) | irqbalance tespiti, satırda uyarı (`conflict` → GUI ⚠ + tooltip), CCD uygulanınca servis durdurulur (işaret dosyası), restore / `all` ile yalnızca bizim durdurduğumuz servis geri başlatılır. **Yok:** 10 s sonra drift yeniden okuma, kullanıcı seçeneği (otomatik yapılıyor). |
+| B1 | ✅ | `crates/centurion-helpers/src/calsim.rs` (kalibrasyon binary'sinin test modülü; `src/bin` dışında, yoksa cargo ayrı binary sanar). Senaryolar: `classic` (eski 16 knob, aynı gerçek) ve `realistic` (48 knob: 30 ikili, 10 seçim, 8 tepe noktalı doz merdiveni; 4 amaç, ödünleşim, 8 etkileşim, 4 kör güç maliyeti; oturum ofseti, OU drift, t(ν=3) + %2 aykırı, amaç başına gürültü, sıra ile ısınan `tc`, gözlenmeyen güç bütçesi, 17 koşuda bir parazit). Tasarım ve kararlar üretim yolundan: `initial_design`, `PhaseSet`, `analyse`, autotune `seen_in` (pub yapıldı). Ölçütler: amaç başına yanlış karar oranı ve regret, %90 kapsama, sahte seen. `cargo test --release -p centurion-helpers sim_regression -- --ignored --nocapture` → `tests/sim-baseline.json` (±0.03), `CENTURION_SIM_BASELINE=write` yeniler; ~40 s. Eski `mod sim` taşınmadı (testleri aynen duruyor). İlk bulgular: realistic'te sahte seen %7, kapsama 0.92, classic'te kapsama 0.67. |
 | B5 | ✅ | `Decision`: `source` (structural/estimate/measured/joint/pinned/evidence/audit/retired), `seen`, `alone`/`in_context` ([mean, sd], joint pass), `n` (ölçüm kanıtı), `risk`. JSON: `"decisions": [...]`, `"notes"` ayrı, `"constraints"` yalnızca `enforce` kısıtları; `rationale` aynen. Testler: `every_decision_has_a_source`, `rollbacks_retire_a_key`. Eski GUI çalışır ama notları göstermez. |
 | C1 | ✅ | `gui/src/autotunereport.*` (+ `tests/autotunereport_test.cpp`): Source + Confidence sütunları (yalnız `decisions` varsa; yoksa eski düzen), skor izi hücre tooltip'inde (satır genişletme yerine), "Only changes" filtresi, açılır "Notes / Evidence", B4'ün `diff_vs_last`'ı ile "↻ changed since the last autotune" işareti. |
 | B4 | ✅ (kısmi) | `$XDG_STATE_HOME/centurion/autotune-history.jsonl` (autotune kullanıcı olarak çalışır; amaç başına son 20: ağırlık, bağlam, satır sayısı, değerler). Çıktıda `"diff_vs_last": [{key, from, value, why}]`, neden: new data / weights / context / rule. CLI ve GUI gösterir. Sahne preset'i (`profile`) geçmişe yazılmaz. **Yok:** joint pass incumbent bonusu (δ = MARGIN/2): kabul ölçütü B1 simülatörüne bağlı. |
@@ -30,7 +31,7 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 | E9 | ✅ | Tespit (`kernel.yield_type` varlığı), profil özeti "scheduler: Project C (BMQ/PDS)", scheduler kurallarının atlanması ve rapor notu zaten vardı; tespit `project_c_under(root)`'a ayrıldı, sahte /proc ağacı testi eklendi. |
 | E7 | ✅ | `PLACE_LAG`, `PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` tam satır (Scheduler grubu → kalibrasyona otomatik girer). Tabloda olmayan `sched_burst_*` ve sched feature'lar `describe.discovered` ile GUI'de salt-okunur listelenir (elle yazma desteği yok). |
 
-**Kalan:** B1, A3, A1, A2, C2, C3, B4 (bonus), A4 (--strict), B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, E1, E3, E4, E5, E6, E10, E11, E12, E13.
+**Kalan:** A3, A1, A2, C2, C3, B4 (bonus), A4 (--strict), B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, E1, E3, E4, E5, E6, E10, E11, E12, E13.
 
 ## 0. Mevcut durum (yeniden yapılmasın)
 

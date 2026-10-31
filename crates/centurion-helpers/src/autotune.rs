@@ -1166,7 +1166,7 @@ fn round2(x: f64) -> f64 { (x * 100.0).round() / 100.0 }
 /// against throughput (or package power against clock) can sum to ~0 utility while every one of its
 /// effects is measured to a fraction of a percent - that is a measured trade-off, not blindness, and
 /// the measurements must replace the rule's estimates.
-fn seen_in(j: &model::Joint, key: &str) -> bool {
+pub fn seen_in(j: &model::Joint, key: &str) -> bool {
     j.values(key).iter().any(|val| {
         let a = [(key.to_owned(), val.clone())];
         (0..4).any(|o| j.eval_diff_obj(&a, &[], o).is_some_and(|(m, var)| var > 0.0 && m.abs() >= SEEN_Z * var.sqrt()))
