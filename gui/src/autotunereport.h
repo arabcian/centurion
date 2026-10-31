@@ -13,6 +13,8 @@ QHash<QString, QJsonObject> decisionsByKey(const QJsonObject &report);
 QString badge(const QString &source);
 // "+0.120 ± 0.040" (in context, else alone), "n 5" and "unseen" when the benchmarks cannot see it.
 QString confidence(const QJsonObject &decision);
+// key -> "was 512 (new data)" for the keys that changed since the last run ("diff_vs_last").
+QHash<QString, QString> changedSinceLast(const QJsonObject &report);
 // Score trace "madvise 0.00 → always -0.30" (value → U).
 QString scoreTrace(const QJsonArray &trace);
 }

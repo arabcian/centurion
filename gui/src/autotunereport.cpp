@@ -32,6 +32,17 @@ QString confidence(const QJsonObject &d) {
     return p.join(QStringLiteral(" · "));
 }
 
+QHash<QString, QString> changedSinceLast(const QJsonObject &report) {
+    QHash<QString, QString> out;
+    for (const auto &v : report.value(QStringLiteral("diff_vs_last")).toArray()) {
+        const QJsonObject o = v.toObject();
+        const QJsonValue from = o.value(QStringLiteral("from"));
+        const QString was = from.isNull() || from.isUndefined() ? QStringLiteral("not set") : from.isString() ? from.toString() : QString::number(from.toDouble(), 'g', 12);
+        out.insert(o.value(QStringLiteral("key")).toString(), QStringLiteral("was %1 (%2)").arg(was, o.value(QStringLiteral("why")).toString()));
+    }
+    return out;
+}
+
 QString scoreTrace(const QJsonArray &trace) {
     QStringList p;
     for (const auto &v : trace) {

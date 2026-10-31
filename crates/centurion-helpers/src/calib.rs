@@ -50,6 +50,10 @@ const KEEP_BRAKES: usize = 40;
 const MAX_UNSAFE: usize = 50;
 /// Sessions' quality records kept (newest last).
 const KEEP_QUALITY: usize = 64;
+/// Baseline records kept: one per session and phase, about the last 64 sessions.
+const KEEP_BASELINES: usize = 256;
+/// How many MADs a session's reference level may stray from its history before it is flagged.
+pub const BASELINE_Z: f64 = 4.0;
 const KEEP: usize = 10;
 const HALF_LIFE_DAYS: f64 = 90.0;
 /// Rows age in steps of this many seconds, counted from the phase's newest row (`age_ref`). A row's
@@ -647,15 +651,56 @@ pub struct Calibration {
     /// Quality record of every design session (phase, runs, reference-run noise per objective,
     /// disturbed runs, unwritable values, interruptions), newest last.
     pub quality: Vec<Value>,
+    /// Reference-run level of every design session, newest last (`note_baseline`):
+    /// {"t", "sess", "phase", "cx", "src", "m": {metric: [median, robust sd or null]}}. The effects are
+    /// relative to each session's own reference, so a drift of the machine itself shows only here.
+    pub baselines: Vec<Value>,
     /// Predicted vs observed of every confirmation and verify check, newest last (`note_predcheck`):
     /// {"t", "src": "confirm"|"verify", "phase", "goal", "mu", "sd", "obs"}; `sd` is the whole
     /// tolerance scale (prediction sd and measurement noise combined).
     pub predcheck: Vec<Value>,
     /// The file held idle/load data of an older benchmark set, which was dropped on reading.
     pub migrated: bool,
+    /// Environments the sessions ran in (`env_current`): hash -> {bios, microcode, kernel_release, cmdline, ram_speed}.
+    pub envs: BTreeMap<String, Value>,
+    /// Session -> environment hash (an environment is fixed for a session; rows find theirs by `sess`).
+    pub sess_env: BTreeMap<u64, String>,
     /// Current kernel (major.minor) and time used to weight records.
     pub kernel: String,
     pub now: u64,
+    /// Current environment hash (set on loading, like `kernel`; empty = unknown, weight 1).
+    pub env: String,
+}
+
+/// Boot parameters that change what a knob does (security mitigations, CPU frequency driver, preemption).
+const ENV_CMDLINE: [&str; 4] = ["mitigations=", "amd_pstate=", "intel_pstate=", "preempt="];
+
+/// The machine's environment beyond the kernel version: BIOS, CPU microcode, kernel release, the
+/// boot parameters of `ENV_CMDLINE`, RAM speed (empty where no source exists). Returns (hash, record).
+pub fn env_current() -> (String, Value) {
+    let rd = |p: &str| std::fs::read_to_string(p).map(|s| s.trim().to_owned()).unwrap_or_default();
+    let microcode = crate::cpuinfo_head().lines().find_map(|l| l.strip_prefix("microcode")?.split_once(':').map(|(_, v)| v.trim().to_owned())).unwrap_or_default();
+    let raw = rd("/proc/cmdline");
+    let cmdline: Vec<&str> = raw.split_whitespace().filter(|t| ENV_CMDLINE.iter().any(|p| t.starts_with(p))).collect();
+    env_record(&rd("/sys/class/dmi/id/bios_version"), &microcode, &rd("/proc/sys/kernel/osrelease"), &cmdline.join(" "), "")
+}
+
+fn env_record(bios: &str, microcode: &str, kernel_release: &str, cmdline: &str, ram_speed: &str) -> (String, Value) {
+    let v = json!({"bios": bios, "microcode": microcode, "kernel_release": kernel_release, "cmdline": cmdline, "ram_speed": ram_speed});
+    // FNV-1a over the record: short, stable across runs and builds.
+    let h = v.to_string().bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+    (format!("{:08x}", h >> 32), v)
+}
+
+/// How much a row from environment `row` counts in environment `cur`: another BIOS or microcode x0.7,
+/// another `mitigations=` or `preempt=` x0.5 (on top of the kernel rule). Unknown on either side: 1.
+pub fn env_weight(cur: &Value, row: &Value) -> f64 {
+    if !cur.is_object() || !row.is_object() { return 1.0; }
+    let param = |v: &Value, p: &str| v["cmdline"].as_str().unwrap_or("").split_whitespace().find(|t| t.starts_with(p)).map(str::to_owned);
+    let mut w = 1.0;
+    if cur["bios"] != row["bios"] || cur["microcode"] != row["microcode"] { w *= 0.7; }
+    if param(cur, "mitigations=") != param(row, "mitigations=") || param(cur, "preempt=") != param(row, "preempt=") { w *= 0.5; }
+    w
 }
 
 fn neg(m: Measured) -> Measured {
@@ -889,6 +934,7 @@ impl Calibration {
             if r.cfg.iter().any(|(k, _)| !same_family(phase, k)) { continue; }
             let age = age_ref.saturating_sub(r.t) as f64 / 86_400.0;
             let k = if self.kernel.is_empty() || major_minor(&r.kernel) == mm { 1.0 } else { 0.5 };
+            let k = k * self.row_env_weight(r.sess);
             let b = if r.bv == BENCH_VERSION || r.field { 1.0 } else { 0.6 };
             let mut cfg = r.cfg.clone();
             if !r.field {
@@ -1449,7 +1495,7 @@ impl Calibration {
         }).collect();
         json!({"version": 9, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
-               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "predcheck": self.predcheck,
+               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "baselines": self.baselines, "envs": self.envs, "sess_env": self.sess_env, "predcheck": self.predcheck,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
                "brakes": cfgs_json(&self.brakes), "soft_unsafe": cfgs_json(&self.soft_unsafe),
                "unsafe_pinned": self.unsafe_pinned.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
@@ -1503,6 +1549,11 @@ impl Calibration {
         c.verify = v["verify"].as_array().cloned().unwrap_or_default();
         c.field_sessions = v["fs"].as_array().cloned().unwrap_or_default();
         c.quality = v["quality"].as_array().cloned().unwrap_or_default();
+        c.baselines = v["baselines"].as_array().cloned().unwrap_or_default();
+        for (h, e) in v["envs"].as_object().into_iter().flatten() { c.envs.insert(h.clone(), e.clone()); }
+        for (s, h) in v["sess_env"].as_object().into_iter().flatten() {
+            if let (Ok(s), Some(h)) = (s.parse::<u64>(), h.as_str()) { c.sess_env.insert(s, h.to_owned()); }
+        }
         c.predcheck = v["predcheck"].as_array().cloned().unwrap_or_default();
         // Format <= 7: IO rows carried the CPU's start temperature; since 8 they carry the drive's.
         if version < 8 { for r in c.rows.iter_mut().filter(|r| r.phase == Phase::Io) { r.tc = f64::NAN; } }
@@ -1585,6 +1636,9 @@ impl Calibration {
             if !c.fingerprint.product.is_empty() && !c.fingerprint.matches(fp) { return None; }
             c.fingerprint = fp.clone();
             c.kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
+            let (h, e) = env_current();
+            c.envs.entry(h.clone()).or_insert(e);
+            c.env = h;
             c.now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             Some(c)
         };
@@ -1654,6 +1708,65 @@ impl Calibration {
         let drop = self.quality.len().saturating_sub(KEEP_QUALITY);
         self.quality.drain(..drop);
     }
+    /// Records the environment session `sess` runs in.
+    pub fn note_env(&mut self, sess: u64, hash: &str, env: Value) {
+        self.envs.insert(hash.to_owned(), env);
+        self.sess_env.insert(sess, hash.to_owned());
+        // Environments no kept session refers to any more.
+        let used: BTreeSet<String> = self.sess_env.values().cloned().collect();
+        self.envs.retain(|h, _| used.contains(h));
+    }
+    /// `env_weight` of session `sess`'s environment against the current one.
+    pub fn row_env_weight(&self, sess: u64) -> f64 {
+        match (self.envs.get(&self.env), self.sess_env.get(&sess).and_then(|h| self.envs.get(h))) {
+            (Some(c), Some(r)) => env_weight(c, r),
+            _ => 1.0,
+        }
+    }
+    /// Design rows per environment weight below 1: [(weight, rows)], for the reports.
+    pub fn env_spread(&self) -> Vec<(f64, usize)> {
+        let mut m: BTreeMap<u64, usize> = BTreeMap::new();
+        for r in self.rows.iter().filter(|r| !r.field) {
+            let w = self.row_env_weight(r.sess);
+            if w < 1.0 { *m.entry((w * 100.0).round() as u64).or_default() += 1; }
+        }
+        m.into_iter().map(|(w, n)| (w as f64 / 100.0, n)).collect()
+    }
+    /// Notes a session's reference level (replacing that session and phase's earlier record; the
+    /// last `KEEP_BASELINES` are kept).
+    pub fn note_baseline(&mut self, b: Value) {
+        self.baselines.retain(|x| !(x["sess"] == b["sess"] && x["phase"] == b["phase"]));
+        self.baselines.push(b);
+        let drop = self.baselines.len().saturating_sub(KEEP_BASELINES);
+        self.baselines.drain(..drop);
+    }
+    /// Metrics of `b` whose reference level left the history of earlier sessions in the same phase,
+    /// context and power source: |level - median| > BASELINE_Z x MAD (at least 1 % of the level),
+    /// with >= 3 earlier sessions. Returns (metric, relative deviation).
+    pub fn baseline_shift(&self, b: &Value) -> Vec<(String, f64)> {
+        let past: Vec<&Value> = self.baselines.iter().filter(|x| x["sess"] != b["sess"] && x["phase"] == b["phase"]
+            && x["cx"] == b["cx"] && x["src"] == b["src"]).collect();
+        let mut out = Vec::new();
+        for (m, cur) in b["m"].as_object().into_iter().flatten() {
+            let Some(cur) = cur[0].as_f64() else { continue };
+            let mut h: Vec<f64> = past.iter().filter_map(|x| x["m"][m][0].as_f64()).collect();
+            if h.len() < 3 { continue; }
+            let Some(med) = median(&mut h) else { continue };
+            let mut d: Vec<f64> = h.iter().map(|x| (x - med).abs()).collect();
+            let mad = (1.4826 * median(&mut d).unwrap_or(0.0)).max(0.01 * med.abs());
+            if med != 0.0 && (cur - med).abs() > BASELINE_Z * mad { out.push((m.clone(), (cur - med) / med)); }
+        }
+        out
+    }
+    /// The newest session's baseline shift, as a note (None when it is in line with its history).
+    pub fn baseline_note(&self) -> Option<String> {
+        let b = self.baselines.last()?;
+        let sh = self.baseline_shift(b);
+        if sh.is_empty() { return None; }
+        let list: Vec<String> = sh.iter().map(|(m, r)| format!("{m} {:+.1} %", r * 100.0)).collect();
+        Some(format!("Baseline: in the last {} session the reference runs left their history ({}): the machine may not be in its usual state (thermal paste, firmware, a new background service, power mode).",
+                     b["phase"].as_str().unwrap_or("?"), list.join(", ")))
+    }
     /// One line per phase about what the model rests on: runs and sessions, fit quality, how much
     /// its intervals had to be widened to stay honest, and how old the newest measurement is.
     /// Empty without design rows.
@@ -1684,6 +1797,8 @@ impl Calibration {
             if age_d > 120.0 { s.push_str("; old - a fresh calibration session is due"); }
             out.push(s);
         }
+        for (w, n) in self.env_spread() { out.push(format!("Environment: {n} run(s) from another BIOS/microcode/boot parameters count x{w:.2}.")); }
+        if let Some(n) = self.baseline_note() { out.push(n); }
         out
     }
 }
@@ -2156,6 +2271,57 @@ mod tests {
         c.invalidate();
         let without = c.get("cpu.a", "0", "1", Blend { load: 0.0, io: 1.0 }).unwrap().pwr.unwrap();
         assert!(with.abs() < 0.03 && without < -0.05, "with the temperature term {with}, without {without}");
+    }
+
+    #[test]
+    fn environments_weigh_rows_and_round_trip() {
+        let (h1, e1) = env_record("N0CN30WW", "0xa20120a", "7.2.8", "mitigations=auto", "");
+        let (h2, e2) = env_record("N0CN32WW", "0xa20120a", "7.2.8", "mitigations=auto", "");
+        let (_, e3) = env_record("N0CN30WW", "0xa20120a", "7.2.8", "mitigations=off preempt=full", "");
+        assert_ne!(h1, h2);
+        assert_eq!(env_record("N0CN30WW", "0xa20120a", "7.2.8", "mitigations=auto", "").0, h1, "stable hash");
+        assert_eq!(env_weight(&e1, &e1), 1.0);
+        assert_eq!(env_weight(&e1, &e2), 0.7);
+        assert_eq!(env_weight(&e1, &e3), 0.5);
+        let (_, e4) = env_record("N0CN32WW", "0xa20120a", "7.2.8", "mitigations=off", "");
+        assert!((env_weight(&e1, &e4) - 0.35).abs() < 1e-12, "multiplicative");
+        assert_eq!(env_weight(&Value::Null, &e2), 1.0, "unknown environment");
+        let mut c = Calibration::default();
+        c.note_env(1, &h1, e1.clone());
+        c.note_env(2, &h2, e2);
+        c.env = h1.clone();
+        assert_eq!(c.row_env_weight(1), 1.0);
+        assert_eq!(c.row_env_weight(2), 0.7);
+        assert_eq!(c.row_env_weight(3), 1.0, "a session from before environments");
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!((back.envs.clone(), back.sess_env.clone()), (c.envs.clone(), c.sess_env.clone()));
+        c.note_env(2, &h1, e1);
+        assert_eq!(c.envs.len(), 1, "unreferenced environments are dropped");
+    }
+
+    #[test]
+    fn baseline_shift_is_flagged_against_history() {
+        let mut c = Calibration::default();
+        let b = |sess: u64, single: f64| json!({"sess": sess, "phase": "idle", "cx": "", "src": "rapl", "m": {"cpu_single": [single, 1.0], "idle_w": [5.0, null]}});
+        assert!(c.baseline_shift(&b(1, 100.0)).is_empty(), "no history: nothing to compare");
+        for (i, v) in [100.0, 101.0, 99.5, 100.5].into_iter().enumerate() { c.note_baseline(b(i as u64, v)); }
+        assert!(c.baseline_shift(&b(9, 100.8)).is_empty(), "an ordinary session");
+        let sh = c.baseline_shift(&b(9, 93.0));
+        assert_eq!(sh.len(), 1);
+        assert_eq!(sh[0].0, "cpu_single");
+        assert!((sh[0].1 + 0.07).abs() < 0.005);
+        assert!(c.baseline_note().is_none());
+        c.note_baseline(b(9, 93.0));
+        c.note_baseline(b(9, 93.0));
+        assert_eq!(c.baselines.len(), 5, "rewritten per session and phase");
+        assert!(c.baseline_note().unwrap().contains("cpu_single -7.2 %"));
+        let other = json!({"sess": 9, "phase": "load", "cx": "", "src": "rapl", "m": {"cpu_single": [50.0, null]}});
+        assert!(c.baseline_shift(&other).is_empty(), "another phase has its own history");
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.baselines, c.baselines);
+        let mut v = c.to_json();
+        v.as_object_mut().unwrap().remove("baselines");
+        assert!(Calibration::from_json(&v).baselines.is_empty(), "older files without baselines");
     }
 
     #[test]

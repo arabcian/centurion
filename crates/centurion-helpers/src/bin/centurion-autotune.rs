@@ -98,6 +98,9 @@ fn goal_cmd(args: &[String]) {
                          why.get("run").and_then(Value::as_str).unwrap_or(""));
         for n in out["notes"].as_array().into_iter().flatten() { let _ = writeln!(o, "  note: {}", n.as_str().unwrap_or("")); }
         for n in out["constraints"].as_array().into_iter().flatten() { let _ = writeln!(o, "  constraint: {}", n.as_str().unwrap_or("")); }
+        for c in out["diff_vs_last"].as_array().into_iter().flatten() {
+            let _ = writeln!(o, "  changed since last run: {} {} -> {} ({})", c["key"].as_str().unwrap_or(""), c["from"], c["value"], c["why"].as_str().unwrap_or(""));
+        }
         for i in out["live_issues"].as_array().into_iter().flatten() {
             let _ = writeln!(o, "  live value: {} - {}", i["key"].as_str().unwrap_or(""), i["message"].as_str().unwrap_or(""));
         }

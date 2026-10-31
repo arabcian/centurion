@@ -223,6 +223,19 @@ pub fn game_heat_share(sessions: &[Value]) -> Option<GameHeat> {
 }
 
 /// The game-session log of the user autotune runs for (pkexec caller, sudo user, else the caller).
+/// Project C (BMQ/PDS) kernel: its only live knob, kernel.yield_type, exists under `root`.
+fn project_c_under(root: &Path) -> bool { root.join("proc/sys/kernel/yield_type").is_file() }
+
+/// The goal's weights leaned towards this machine's recorded history (footprint, storage, load,
+/// heat) with one note per change; what autotune uses where the user set nothing.
+pub fn effective_weights(goal: Goal, e: &Evidence) -> (Weights, Vec<(&'static str, String)>) {
+    let (w, mut notes) = Weights::for_goal(goal).adapted(e);
+    let heat = if goal == Goal::Gaming { game_heat_share(&game_sessions()) } else { None };
+    let (w, hn) = w.adapted_heat(goal, heat);
+    if let Some(n) = hn { notes.push(("heat", n)); }
+    (w, notes)
+}
+
 fn game_sessions() -> Vec<Value> {
     let home = std::env::var("PKEXEC_UID").ok().or_else(|| std::env::var("SUDO_USER").ok()).filter(|u| !u.is_empty())
         .and_then(|u| crate::calctx::home_of(&u))
@@ -789,7 +802,7 @@ impl Profile {
             kernel: kernel_release(),
             numa_nodes,
             scx,
-            project_c: Path::new("/proc/sys/kernel/yield_type").is_file(),
+            project_c: project_c_under(Path::new("/")),
             dynamic_epp: cpu.join("amd_pstate/dynamic_epp").is_file(),
             uncore,
             clocksources: tune::find("clock.source").map(|t| tune::options(t).into_iter().map(|o| o.0).collect()).unwrap_or_default(),
@@ -2473,10 +2486,7 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let mut p = Profile::gather();
     p.load_field_risk();
     p.target_profile = opts["profile"].as_str().filter(|s| !s.is_empty() && s.len() <= 32).map(str::to_owned);
-    let (w, mut notes) = Weights::for_goal(goal).adapted(&p.evidence);
-    let heat = if goal == Goal::Gaming { game_heat_share(&game_sessions()) } else { None };
-    let (w, hn) = w.adapted_heat(goal, heat);
-    if let Some(n) = hn { notes.push(("heat", n)); }
+    let (w, notes) = effective_weights(goal, &p.evidence);
     let w = w.with_overrides(weights);
     let want_explore = opts["explore"] != false && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty());
     // The models depend on the rows, never on the weights: fitted once (every CPU), then the main
@@ -2505,7 +2515,60 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
         out["sensitivity"] = Value::Array(sens);
         if !pred.is_null() { out["predicted"] = pred; }
     }
+    // What changed since the last run for this goal, and why (B4). Skipped for a scene's preset:
+    // its context is another profile, the history is about the live one.
+    if p.target_profile.is_none() {
+        let entry = history_entry(goal, &p, w, &out);
+        let path = crate::overview::state_dir().join("autotune-history.jsonl");
+        if let Some(prev) = history_last(&path, goal) { out["diff_vs_last"] = Value::Array(diff_vs_last(&prev, &entry)); }
+        history_push(&path, &entry);
+    }
     out
+}
+
+/// One autotune run as kept in the history: what decided it (weights, context, how many
+/// calibration rows) and what it decided.
+fn history_entry(goal: Goal, p: &Profile, w: Weights, out: &Value) -> Value {
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    json!({"t": t, "goal": goal.key(), "weights": w.to_json(), "context": target_context(goal, p),
+           "rows": p.calibration.as_ref().map_or(0, |c| c.rows.len()), "values": out["preset"]["values"]})
+}
+
+/// Keys whose value differs from the previous run, with the likely cause: new calibration data,
+/// other weights, another context - none of these: the machine's live state (rules).
+fn diff_vs_last(prev: &Value, cur: &Value) -> Vec<Value> {
+    let mut why = Vec::new();
+    if prev["rows"] != cur["rows"] { why.push("new data"); }
+    if prev["weights"] != cur["weights"] { why.push("weights"); }
+    if prev["context"] != cur["context"] { why.push("context"); }
+    if why.is_empty() { why.push("rule"); }
+    let empty = Map::new();
+    let (a, b) = (prev["values"].as_object().unwrap_or(&empty), cur["values"].as_object().unwrap_or(&empty));
+    let keys: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+    keys.into_iter().filter(|k| a.get(*k) != b.get(*k))
+        .map(|k| json!({"key": k, "from": a.get(k), "value": b.get(k), "why": why.join(", ")})).collect()
+}
+
+const HISTORY_PER_GOAL: usize = 20;
+
+fn history_last(path: &std::path::Path, goal: Goal) -> Option<Value> {
+    std::fs::read_to_string(path).ok()?.lines().rev()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok()).find(|v| v["goal"] == goal.key())
+}
+
+/// Appends `entry`, keeping the last [`HISTORY_PER_GOAL`] runs per goal. Best effort.
+fn history_push(path: &std::path::Path, entry: &Value) {
+    let mut lines: Vec<Value> = std::fs::read_to_string(path).unwrap_or_default().lines()
+        .filter_map(|l| serde_json::from_str(l).ok()).collect();
+    lines.push(entry.clone());
+    let goal = &entry["goal"];
+    let n = lines.iter().filter(|v| v["goal"] == *goal).count();
+    let mut drop = n.saturating_sub(HISTORY_PER_GOAL);
+    lines.retain(|v| if drop > 0 && v["goal"] == *goal { drop -= 1; false } else { true });
+    let text: String = lines.iter().map(|v| format!("{v}\n")).collect();
+    if let Some(dir) = path.parent() { let _ = std::fs::create_dir_all(dir); }
+    let tmp = path.with_extension("jsonl.tmp");
+    if std::fs::write(&tmp, text).is_ok() { let _ = std::fs::rename(&tmp, path); }
 }
 
 /// The calibrated part of a decision set: the knobs the joint model holds, at their decided values.
@@ -3104,6 +3167,52 @@ mod tests {
         let de = decide(Goal::Desktop, &p);
         assert_eq!(int(&de, "vm.dirty_bytes") as u64, dirty_pair(p.io.bps, p.ram_kb * 1024, 0.5).1);
         assert!(de.iter().find(|x| x.key == "vm.dirty_bytes").unwrap().why.contains("measured"));
+    }
+
+    #[test]
+    fn project_c_is_detected_from_a_fake_proc_tree() {
+        let root = std::env::temp_dir().join(format!("centurion-pc-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("proc/sys/kernel")).unwrap();
+        assert!(!project_c_under(&root), "EEVDF kernel: no yield_type");
+        std::fs::write(root.join("proc/sys/kernel/yield_type"), "1\n").unwrap();
+        assert!(project_c_under(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn effective_weights_without_history_are_the_defaults() {
+        let (w, notes) = effective_weights(Goal::Desktop, &Evidence::default());
+        assert_eq!(w.to_json(), Weights::for_goal(Goal::Desktop).to_json());
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn diff_vs_last_names_the_cause() {
+        let prev = json!({"rows": 10, "weights": {"latency": 1.0}, "context": {"power": "ac"}, "values": {"a": 1, "b": "x", "gone": 3}});
+        let same = json!({"rows": 10, "weights": {"latency": 1.0}, "context": {"power": "ac"}, "values": {"a": 1, "b": "y", "new": 4}});
+        let d = diff_vs_last(&prev, &same);
+        let keys: Vec<&str> = d.iter().map(|x| x["key"].as_str().unwrap()).collect();
+        assert_eq!(keys, ["b", "gone", "new"]);
+        assert_eq!(d[0], json!({"key": "b", "from": "x", "value": "y", "why": "rule"}));
+        assert_eq!(d[1]["value"], Value::Null);
+        let more = json!({"rows": 12, "weights": {"latency": 1.2}, "context": {"power": "ac"}, "values": {"a": 2}});
+        assert_eq!(diff_vs_last(&prev, &more)[0]["why"], "new data, weights");
+        assert!(diff_vs_last(&prev, &prev).is_empty());
+    }
+
+    #[test]
+    fn history_keeps_the_last_runs_per_goal() {
+        let dir = std::env::temp_dir().join(format!("centurion-hist-{}", std::process::id()));
+        let path = dir.join("h.jsonl");
+        let _ = std::fs::remove_file(&path);
+        for i in 0..25 { history_push(&path, &json!({"goal": "gaming", "rows": i})); }
+        history_push(&path, &json!({"goal": "desktop", "rows": 99}));
+        let lines = std::fs::read_to_string(&path).unwrap().lines().count();
+        assert_eq!(lines, HISTORY_PER_GOAL + 1);
+        assert_eq!(history_last(&path, Goal::Gaming).unwrap()["rows"], 24);
+        assert_eq!(history_last(&path, Goal::Desktop).unwrap()["rows"], 99);
+        assert!(history_last(&path, Goal::PowerSave).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

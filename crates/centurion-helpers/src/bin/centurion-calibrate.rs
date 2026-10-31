@@ -745,6 +745,17 @@ fn ref_levels(runs: &[Run], phase: Phase, src: calib::PowerSrc) -> Vec<(String, 
     out
 }
 
+/// A session's reference level: per metric the median and robust sd of its reference runs.
+fn baseline(runs: &[Run], phase: Phase, sess: u64, meta: &Meta) -> Value {
+    let mut m = serde_json::Map::new();
+    for metric in calib::Metric::ALL {
+        let v: Vec<f64> = runs.iter().filter(|r| r.cfg.is_empty()).filter_map(|r| r.s.get(&metric).copied()).filter(|x| x.is_finite()).collect();
+        let Some(med) = calib::median(&mut v.clone()) else { continue };
+        m.insert(metric.name().into(), json!([round3(med), robust_sd(&v).map(round3)]));
+    }
+    json!({"t": now(), "sess": sess, "phase": phase.name(), "cx": meta.cx, "src": meta.src.name(), "m": m})
+}
+
 /// A finished run: sample, OOM kill, evidence weight (a busy machine counts less), time, start temperature.
 struct Done { s: Sample, oom: bool, w: f64, t: u64, temp: Option<f64> }
 
@@ -1227,11 +1238,26 @@ impl Design<'_> {
     }
     fn commit(&self, cal: &mut Calibration, rn: &Runner) {
         let rows = compute_rows(&self.runs, self.phase, self.sess, self.kernel, self.n_total, &self.meta);
-        let q = session_quality(&rows, self, rn);
+        let mut q = session_quality(&rows, self, rn);
         cal.put_session(self.phase, self.sess, rows);
+        // The environment this session ran in (BIOS, microcode, boot parameters): rows of another one count less.
+        let (h, e) = calib::env_current();
+        cal.note_env(self.sess, &h, e);
+        cal.env = h;
         for (k, w) in ref_levels(&self.runs, self.phase, self.meta.src) { cal.ref_w.insert(k, (w * 100.0).round() / 100.0); }
+        // The session's absolute reference level against earlier sessions (from 2 reference runs on).
+        let b = baseline(&self.runs, self.phase, self.sess, &self.meta);
+        let shift = if q["refs"].as_u64().unwrap_or(0) >= 2 { cal.baseline_shift(&b) } else { Vec::new() };
+        cal.note_baseline(b);
+        let mine = |x: &Value| x["sess"] == json!(self.sess) && x["phase"] == json!(self.phase.name());
+        if !shift.is_empty() {
+            let warned = cal.quality.iter().any(|x| mine(x) && x.get("baseline_shift").is_some());
+            let list: Vec<String> = shift.iter().map(|(m, r)| format!("{m} {:+.1} %", r * 100.0)).collect();
+            if !warned { eprintln!("\nwarning: the reference runs left this machine's history ({}): is it in its usual state (power mode, background services, firmware)?", list.join(", ")); }
+            q["baseline_shift"] = shift.iter().map(|(m, r)| json!({"metric": m, "rel": round3(*r)})).collect();
+        }
         // One record per session and phase, rewritten at every commit: an interrupted session keeps its last one.
-        cal.quality.retain(|x| !(x["sess"] == json!(self.sess) && x["phase"] == json!(self.phase.name())));
+        cal.quality.retain(|x| !mine(x));
         cal.note_quality(q);
         save(cal);
     }
@@ -1430,6 +1456,10 @@ fn quality_line(q: &Value) -> String {
     let (refused, dropped) = (q["refused"].as_u64().unwrap_or(0), q["dropped"].as_u64().unwrap_or(0));
     if refused > 0 || dropped > 0 { s.push_str(&format!("; {refused} value(s) refused by the kernel, {dropped} run(s) thrown away")); }
     if q["power_waits"].as_u64().unwrap_or(0) > 0 { s.push_str(&format!("; waited {} time(s) for the power source", q["power_waits"])); }
+    if let Some(b) = q["baseline_shift"].as_array() {
+        let l: Vec<String> = b.iter().map(|x| format!("{} {:+.1} %", x["metric"].as_str().unwrap_or("?"), x["rel"].as_f64().unwrap_or(0.0) * 100.0)).collect();
+        s.push_str(&format!("; reference level off its history: {}", l.join(", ")));
+    }
     if q["ended_early"] == true { s.push_str("; ended early: the power source did not come back"); }
     if let (Some(c), Some(n)) = (q["checks"].as_u64().filter(|c| *c > 0), q["surprises"].as_u64()) { s.push_str(&format!("; {n} of {c} confirmation(s) SURPRISE")); }
     s
@@ -1523,6 +1553,11 @@ fn show(c: &Calibration) {
     let fp = &c.fingerprint;
     println!("signature of {} · {} · {} MiB · BIOS {}\npower {}\n", fp.product, fp.cpu, fp.ram_mib, fp.bios,
              if c.on_battery { "last measured on battery (whole machine)" } else { "measured on AC (RAPL: CPU package only)" });
+    let spread = c.env_spread();
+    if !spread.is_empty() {
+        let l: Vec<String> = spread.iter().map(|(w, n)| format!("{n} run(s) x{w:.2}")).collect();
+        println!("environments: {} session(s) in {} environment(s); from another BIOS/microcode/boot parameters: {}\n", c.sess_env.len(), c.envs.len(), l.join(", "));
+    }
     println!("  {:<30} {:<24} {:<5} {:>8} {:>8} {:>8} {:>8} {:>5}", "knob", "value vs ref", "phase", "latency", "thruput", "power", "memory", "n");
     for (k, gs) in &c.keys {
         for g in gs {

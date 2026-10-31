@@ -9,7 +9,8 @@
 //!   {"op":"autotune","goal":"gaming","weights":{..}}   any user: hardware profile + derived preset
 //!       (goal: powersave | gaming | throughput | desktop; optional objective weights; see centurion_helpers::autotune)
 //!   {"op":"autotune_defaults"}                         any user: every goal's default objective weights
-//!       ({"keys": Weights::KEYS, "goals": {goal: [weight per key]}}; the GUI's weight editor reads them)
+//!       ({"keys": Weights::KEYS, "goals": {goal: [weight per key]}, "adapted": {goal: {"weights": [..], "why": {key: note}}}};
+//!       the GUI's weight editor reads them; "adapted" = leaned towards this machine's history, as autotune uses them)
 //!   {"op":"audit"}                                     any user: safety audit of the root preset store + boot preset
 //!   {"op":"capture_defaults"}                          tune-helper only: boot-default snapshot (normally done at boot)
 //!   {"op":"io_probe"}                                  tune-helper only: bounded write-rate probe for autotune
@@ -1054,12 +1055,16 @@ fn op_boot() -> Value {
 
 /// Every goal's default weights in `Weights::KEYS` order (read-only: the GUI used to keep a copy).
 fn autotune_defaults() -> Value {
-    use centurion_helpers::autotune::{Goal, Weights};
-    let goals: Map<String, Value> = Goal::ALL.iter().map(|g| {
-        let w = Weights::for_goal(*g).to_json();
-        (g.key().to_owned(), Value::Array(Weights::KEYS.iter().map(|k| w[*k].clone()).collect()))
+    use centurion_helpers::autotune::{effective_weights, Evidence, Goal, Weights};
+    let row = |w: &Weights| { let w = w.to_json(); Value::Array(Weights::KEYS.iter().map(|k| w[*k].clone()).collect()) };
+    let goals: Map<String, Value> = Goal::ALL.iter().map(|g| (g.key().to_owned(), row(&Weights::for_goal(*g)))).collect();
+    let e = Evidence::gather();
+    let adapted: Map<String, Value> = Goal::ALL.iter().map(|g| {
+        let (w, notes) = effective_weights(*g, &e);
+        let why: Map<String, Value> = notes.into_iter().map(|(k, n)| (k.to_owned(), Value::String(n))).collect();
+        (g.key().to_owned(), json!({"weights": row(&w), "why": why}))
     }).collect();
-    json!({"ok": true, "keys": Weights::KEYS, "goals": goals})
+    json!({"ok": true, "keys": Weights::KEYS, "goals": goals, "adapted": adapted})
 }
 
 fn run() -> Value {

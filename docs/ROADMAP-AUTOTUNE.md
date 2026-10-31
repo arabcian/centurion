@@ -11,7 +11,7 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 
 ## İlerleme (2026-10-31)
 
-**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7, B5, C1 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
+**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7, B5, C1, C7, A5, E9; kısmi: B4, A4 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
 
 | ID | Durum | Not |
 |---|---|---|
@@ -22,10 +22,15 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 | D2 | ✅ | `tests/properties.rs`: rastgele JSON / eski sürüm / bozuk bayt / round-trip. 8 MiB sınırı testi yok (`save` kök + dosya ister; budama mantığı private). |
 | E2 | ✅ (kısmi) | irqbalance tespiti, satırda uyarı (`conflict` → GUI ⚠ + tooltip), CCD uygulanınca servis durdurulur (işaret dosyası), restore / `all` ile yalnızca bizim durdurduğumuz servis geri başlatılır. **Yok:** 10 s sonra drift yeniden okuma, kullanıcı seçeneği (otomatik yapılıyor). |
 | B5 | ✅ | `Decision`: `source` (structural/estimate/measured/joint/pinned/evidence/audit/retired), `seen`, `alone`/`in_context` ([mean, sd], joint pass), `n` (ölçüm kanıtı), `risk`. JSON: `"decisions": [...]`, `"notes"` ayrı, `"constraints"` yalnızca `enforce` kısıtları; `rationale` aynen. Testler: `every_decision_has_a_source`, `rollbacks_retire_a_key`. Eski GUI çalışır ama notları göstermez. |
-| C1 | ✅ (kısmi) | `gui/src/autotunereport.*` (+ `tests/autotunereport_test.cpp`): Source + Confidence sütunları (yalnız `decisions` varsa; yoksa eski düzen), skor izi hücre tooltip'inde, "Only changes" filtresi, açılır "Notes / Evidence". **Yok:** "son çalıştırmadan beri değişti" işareti (B4'e bağlı), satır genişletme (tooltip ile çözüldü). |
+| C1 | ✅ | `gui/src/autotunereport.*` (+ `tests/autotunereport_test.cpp`): Source + Confidence sütunları (yalnız `decisions` varsa; yoksa eski düzen), skor izi hücre tooltip'inde (satır genişletme yerine), "Only changes" filtresi, açılır "Notes / Evidence", B4'ün `diff_vs_last`'ı ile "↻ changed since the last autotune" işareti. |
+| B4 | ✅ (kısmi) | `$XDG_STATE_HOME/centurion/autotune-history.jsonl` (autotune kullanıcı olarak çalışır; amaç başına son 20: ağırlık, bağlam, satır sayısı, değerler). Çıktıda `"diff_vs_last": [{key, from, value, why}]`, neden: new data / weights / context / rule. CLI ve GUI gösterir. Sahne preset'i (`profile`) geçmişe yazılmaz. **Yok:** joint pass incumbent bonusu (δ = MARGIN/2): kabul ölçütü B1 simülatörüne bağlı. |
+| C7 | ✅ | `autotune::effective_weights` (autotune ve `autotune_defaults` aynı fonksiyonu kullanır); op `"adapted": {goal: {weights, why}}` döndürür; ağırlık penceresi farklı olan satırda "default 0.40 → in effect 0.55" + nedeni tooltip'te. |
+| A4 | ✅ (kısmi) | Signature `baselines` (oturum × faz başına metrik medyan + robust sd, bağlam, kaynak; ~64 oturum). ≥ 2 referans koşudan sonra her commit'te geçmişle karşılaştırma (aynı faz/bağlam/kaynak, ≥ 3 eski oturum, > 4·MAD, MAD ≥ %1): stderr uyarısı (bir kez), quality `baseline_shift`, quality satırı, autotune notu (`evidence_lines`). **Yok:** `--strict` ile oturumu durdurma; kontrol koşu başına değil commit başına. |
+| A5 | ✅ | Ortam: BIOS, mikrokod, kernel release, cmdline (`mitigations=`, `amd_pstate=`, `intel_pstate=`, `preempt=`), RAM hızı (kaynak yok → boş). Satır formatı değişmedi: `sess_env` (oturum → hash) + `envs` (hash → kayıt). Ağırlık: BIOS/mikrokod farkı ×0.7, mitigations/preempt farkı ×0.5, çekirdek kuralıyla çarpımsal; ortamı bilinmeyen eski oturumlar ×1. `--show` ve autotune notu dağılımı yazar. |
+| E9 | ✅ | Tespit (`kernel.yield_type` varlığı), profil özeti "scheduler: Project C (BMQ/PDS)", scheduler kurallarının atlanması ve rapor notu zaten vardı; tespit `project_c_under(root)`'a ayrıldı, sahte /proc ağacı testi eklendi. |
 | E7 | ✅ | `PLACE_LAG`, `PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` tam satır (Scheduler grubu → kalibrasyona otomatik girer). Tabloda olmayan `sched_burst_*` ve sched feature'lar `describe.discovered` ile GUI'de salt-okunur listelenir (elle yazma desteği yok). |
 
-**Kalan:** B1, A3, A1, A2, A4, A5, C2, C3, B4, B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, C7, E1, E3, E4, E5, E6, E9, E10, E11, E12, E13.
+**Kalan:** B1, A3, A1, A2, C2, C3, B4 (bonus), A4 (--strict), B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, E1, E3, E4, E5, E6, E10, E11, E12, E13.
 
 ## 0. Mevcut durum (yeniden yapılmasın)
 

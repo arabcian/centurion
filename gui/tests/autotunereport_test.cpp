@@ -31,6 +31,14 @@ int main(int argc, char **argv) {
     CHECK(confidence(d["vm.swappiness"]) == "unseen");
     CHECK(confidence(QJsonObject{{"alone", QJsonArray{-0.05, 0.01}}}) == "-0.050 ± 0.010");
     CHECK(scoreTrace(rep["scores"]["thp"].toArray()) == "(leave) 0.00 → always -0.30 → 512 0.25");
+    const QJsonObject withDiff = QJsonDocument::fromJson(R"json({"diff_vs_last": [
+        {"key": "vm.swappiness", "from": 60, "value": 10, "why": "new data"},
+        {"key": "blk.nomerges", "from": null, "value": 2, "why": "weights, context"}]})json").object();
+    const auto ch = changedSinceLast(withDiff);
+    CHECK(ch.size() == 2);
+    CHECK(ch.value("vm.swappiness") == "was 60 (new data)");
+    CHECK(ch.value("blk.nomerges") == "was not set (weights, context)");
+    CHECK(changedSinceLast(rep).isEmpty());
     // A report from before the field: no decisions, the dialog keeps its old layout.
     CHECK(decisionsByKey(QJsonObject{{"rationale", QJsonObject{}}}).isEmpty());
 

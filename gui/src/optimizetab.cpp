@@ -1796,12 +1796,13 @@ static QList<double> fallbackWeights(const QString &goal) {
     return {0.7, 0.3, 0.7, 0.6, 1.0, 0.6, 0.4, 0.15, 0.0};
 }
 
-// The goal's default weights as the helper defines them (read-only op, no authentication; asked once
-// per run of the GUI). Keys the helper does not send keep the fallback value.
-static QList<double> defaultWeights(const QString &goal) {
-    static QJsonObject goals;
-    static QStringList keys;
+// tune-helper's "autotune_defaults" reply (read-only op, no authentication; asked once per run of the GUI).
+struct HelperWeights { QJsonObject goals, adapted; QStringList keys; };
+static const HelperWeights &helperWeights() {
+    static HelperWeights h;
     static bool asked = false;
+    QJsonObject &goals = h.goals;
+    QStringList &keys = h.keys;
     if (!asked) {
         asked = true;
         QProcess p;
@@ -1813,6 +1814,7 @@ static QList<double> defaultWeights(const QString &goal) {
                 const QJsonObject r = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
                 if (r.value(QStringLiteral("ok")).toBool()) {
                     goals = r.value(QStringLiteral("goals")).toObject();
+                    h.adapted = r.value(QStringLiteral("adapted")).toObject();
                     for (const auto &k : r.value(QStringLiteral("keys")).toArray()) keys << k.toString();
                 }
             } else {
@@ -1821,13 +1823,22 @@ static QList<double> defaultWeights(const QString &goal) {
             }
         }
     }
-    QList<double> out = fallbackWeights(goal);
-    const QJsonArray row = goals.value(goal).toArray();
+    return h;
+}
+
+// Weight row (helper key order) mapped onto WEIGHT_KEYS; keys the helper does not send keep `base`.
+static QList<double> weightRow(const QJsonArray &row, QList<double> base) {
+    const QStringList &keys = helperWeights().keys;
     for (int i = 0; i < N_WEIGHTS; ++i) {
         const qsizetype j = keys.indexOf(QString::fromLatin1(WEIGHT_KEYS[i]));
-        if (j >= 0 && j < row.size() && row.at(j).isDouble()) out[i] = row.at(j).toDouble();
+        if (j >= 0 && j < row.size() && row.at(j).isDouble()) base[i] = row.at(j).toDouble();
     }
-    return out;
+    return base;
+}
+
+// The goal's default weights as the helper defines them; the fallback copy when it cannot answer.
+static QList<double> defaultWeights(const QString &goal) {
+    return weightRow(helperWeights().goals.value(goal).toArray(), fallbackWeights(goal));
 }
 
 QJsonObject OptimizeTab::autotuneWeights(const QString &goal) const {
@@ -1839,6 +1850,10 @@ void OptimizeTab::editAutotuneWeights() {
     const QString goal = autoGoal_->currentData().toString();
     const QList<double> def = defaultWeights(goal);
     const QJsonObject cur = autotuneWeights(goal);
+    // What autotune uses for a weight left at its default: leaned towards this machine's history.
+    const QJsonObject adapted = helperWeights().adapted.value(goal).toObject();
+    const QList<double> eff = weightRow(adapted.value(QStringLiteral("weights")).toArray(), def);
+    const QJsonObject effWhy = adapted.value(QStringLiteral("why")).toObject();
     QDialog dlg(this);
     dlg.setWindowTitle(QStringLiteral("Autotune weights — %1").arg(autoGoal_->currentText()));
     auto *form = new QFormLayout(&dlg);
@@ -1863,7 +1878,20 @@ void OptimizeTab::editAutotuneWeights() {
         b->setSingleStep(0.1);
         b->setDecimals(2);
         b->setValue(cur.contains(WEIGHT_KEYS[i]) ? cur.value(WEIGHT_KEYS[i]).toDouble() : def[i]);
-        form->addRow(labels[i], b);
+        if (qAbs(eff[i] - def[i]) > 1e-6) {
+            auto *row = new QWidget;
+            auto *h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            h->addWidget(b);
+            auto *hint = muted(QStringLiteral("default %1 → in effect %2").arg(def[i], 0, 'f', 2).arg(eff[i], 0, 'f', 2));
+            const QString why = effWhy.value(QLatin1String(WEIGHT_KEYS[i])).toString();
+            hint->setToolTip(why);
+            b->setToolTip(why);
+            h->addWidget(hint, 1);
+            form->addRow(labels[i], row);
+        } else {
+            form->addRow(labels[i], b);
+        }
         boxes << b;
     }
     auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults);
@@ -2024,6 +2052,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     const QHash<QString, QJsonObject> dec = autotunereport::decisionsByKey(d);
     const QJsonObject scores = d.value(QStringLiteral("scores")).toObject();
     const bool rich = !dec.isEmpty();
+    const QHash<QString, QString> since = autotunereport::changedSinceLast(d);
     auto *onlyChanges = new QCheckBox(QStringLiteral("Only changes"));
     v->addWidget(onlyChanges);
     auto *table = new QTableWidget(0, rich ? 6 : 4);
@@ -2062,7 +2091,9 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
             const QString shown = r.combo ? r.combo->currentText() : editorValue(r);
             const bool ch = differs(r);
             changing += ch;
-            add(r.key, r.group, r.label, shown + (ch ? QString() : QStringLiteral("  (=)")), why.value(r.key).toString(), ch);
+            const QString was = since.value(r.key);
+            add(r.key, r.group, r.label, shown + (ch ? QString() : QStringLiteral("  (=)")) + (was.isEmpty() ? QString() : QStringLiteral("  ↻")),
+                was.isEmpty() ? why.value(r.key).toString() : QStringLiteral("Changed since the last autotune: %1. %2").arg(was, why.value(r.key).toString()), ch);
         }
     }
     const QJsonObject run = preset.value("run").toObject();
