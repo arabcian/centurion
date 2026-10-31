@@ -345,7 +345,7 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     ("thp.khugepaged_defrag", "khugepaged: minutes"), ("thp.khp_max_ptes_none", "khugepaged: minutes"),
     ("thp.khp_pages_to_scan", "khugepaged: minutes"), ("thp.khp_scan_sleep_ms", "khugepaged: minutes"),
     ("thp.khp_max_ptes_swap", "khugepaged: minutes"), ("thp.khp_alloc_sleep_ms", "khugepaged: minutes"),
-    ("mm.lru_gen", "switching MGLRU off under load stalls"), ("mm.ksm_run", "no effect without mergeable memory"),
+    ("mm.ksm_run", "no effect without mergeable memory"),
     ("vm.max_map_count", "a limit, not a cost"), ("vm.dirty_ratio", "tested as vm.dirty"), ("vm.dirty_background_ratio", "vm.dirty"),
     ("vm.dirty_bytes", "vm.dirty"), ("vm.dirty_background_bytes", "vm.dirty"),
     ("sched.ext", "needs a userspace scheduler"), ("kernel.watchdog", "never disabled"), ("kernel.sched_schedstats", "debug counters"),
@@ -397,6 +397,8 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         // Upper bound never below the lower one (clamp panics otherwise: RAM under 1.6 GB).
         "vm.min_free_kbytes" => v(&[r / 2, r * 2].map(|x| x.clamp(16_384, ((ram_kb / 100) as i64).max(16_384)))),
         "mm.lru_gen_min_ttl" => v(&[0, 1000]),
+        // MGLRU off against every feature on: intermediate masks are not doses.
+        "mm.lru_gen" => v(&[0, 7]),
         // Storage (IO phase). Doses stay inside autotune's 2x (+1 doubling with evidence) trust
         // region around the boot value: a level it could never pick is a wasted run.
         "blk.read_ahead_kb" if r > 0 => v(&[r / 4, r / 2, r * 2, r * 4].map(|x| x.clamp(4, 16_384))),
@@ -480,6 +482,9 @@ pub fn phases_for(key: &str, group: &str) -> Vec<(Phase, Benches)> {
         // Per-CPU free lists are the page allocator's fast path: fault cost on a quiet machine, and how
         // much memory sits parked in them when it is short.
         "vm.percpu_pagelist_high_fraction" => vec![(Phase::Idle, b(true, false, false, false)), (Phase::Load, b(true, false, false, false))],
+        // The page reclaim algorithm: what the CPU suite and the memory probe pay on a quiet machine
+        // and under the load phase's memory pressure (the ballast), where reclaim actually runs.
+        "mm.lru_gen" => vec![(Phase::Idle, b(true, false, false, true)), (Phase::Load, b(true, false, false, true))],
         _ => match group {
             "CPU" => vec![(Phase::Idle, b(false, false, true, true)), (Phase::Load, b(false, false, false, true))],
             "Scheduler" => vec![(Phase::Idle, b(false, false, false, true)), (Phase::Load, b(true, false, false, true))],

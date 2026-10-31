@@ -12,10 +12,10 @@ There are two kinds of rules.
 V-Cache CCD roles, game affinity / IRQ steering on X3D, amdgpu DPM `auto`,
 bringing a parked CCD back, BBR + fq, swap cost model (kernel doc: swappiness
 > 100 for in-memory swap), and amd-pstate's per-core **EPP boost** (`cpu.epp_boost`,
-patched kernels): on for **Gaming** and **Throughput** as part of the goal itself -
-neither the signature nor the joint model can take it away (it stays in the model
-as fixed context, so the other knobs are decided next to it). Desktop turns it on
-by rule, power saving off; there the measurements may overrule the rule (below).
+patched kernels): on for **Gaming**, **Throughput** and **Desktop** by rule, off for
+power saving. The rule is prior knowledge: the measurements (the game loop and frame
+times of the CPU suite) take it back only when they put it below the reference with
+confidence, as for any other ruled knob (below).
 
 **Scored knobs** are every setting with a real trade-off. Each candidate value
 has an effect vector over five objectives relative to the reference

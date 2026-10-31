@@ -1003,8 +1003,7 @@ impl<'a> Rules<'a> {
     fn set(&mut self, key: &'static str, value: impl Into<Value>, why: impl Into<String>) {
         self.out.retain(|d| d.key != key);
         let seen = self.jkeys.contains(key).then(|| self.seen(key));
-        let source = if self.pinned(key) { "pinned" } else { self.src };
-        self.out.push(Decision { seen, ..Decision::new(key, value.into(), why.into(), source) });
+        self.out.push(Decision { seen, ..Decision::new(key, value.into(), why.into(), self.src) });
     }
     /// Like `set`, but skipped when the live value already matches. Only for a preset meant for the
     /// live context: one for another scene's profile must carry the value, since the live value is
@@ -1015,11 +1014,6 @@ impl<'a> Rules<'a> {
         self.set(key, value, why);
     }
     fn is(&self, g: Goal) -> bool { self.g == g }
-    /// Decided by the goal itself, whatever a benchmark says: amd-pstate's per-core EPP boost
-    /// is on for gaming and throughput. It acts on cores that stay more than half busy while
-    /// the package is shared with a GPU - the 1 % lows of a real game, which no synthetic
-    /// load of a few hundred milliseconds reproduces.
-    fn pinned(&self, key: &str) -> bool { key == "cpu.epp_boost" && matches!(self.g, Goal::Gaming | Goal::Throughput) }
     /// Whether the benchmarks can see `key` on this machine at all (see SEEN_ALPHA, SEEN_HYST). Keys
     /// the joint model does not hold (one-at-a-time records only) count as seen, as before.
     fn seen(&self, key: &str) -> bool {
@@ -1451,7 +1445,7 @@ fn joint_pass(r: &mut Rules) {
         // The target context's reference (references are kept per measurement context).
         let Some(reference) = cal.model_ref(&key) else { continue };
         let scoped = format!("{key}_");
-        if tune::find(&key).is_none() || r.pinned(&key) || calib::excluded(&key) || r.out.iter().any(|d| d.key.starts_with(&scoped)) {
+        if tune::find(&key).is_none() || calib::excluded(&key) || r.out.iter().any(|d| d.key.starts_with(&scoped)) {
             if let Some(v) = r.context_value(&key) { if v != reference { fixed.push((key.clone(), v)); } }
             continue;
         }
@@ -1953,8 +1947,7 @@ fn device_rules(r: &mut Rules) {
 /// here: the joint pass weighs it against the model's posterior and takes it back
 /// only on credible evidence (one-at-a-time records, which carry no posterior,
 /// still replace it). A global key is left alone when a rule already set a scoped
-/// variant of it (cpu.epp vs cpu.epp_ccd0: CCD roles stay structural), and so is
-/// a key the goal pins (see `Rules::pinned`).
+/// variant of it (cpu.epp vs cpu.epp_ccd0: CCD roles stay structural).
 fn signature_pass(r: &mut Rules) {
     let Some(cal) = r.p.calibration.as_ref() else { return };
     let keys: Vec<&'static str> = cal.key_names().iter().filter_map(|k| tune::find(k).map(|t| t.key)).collect();
@@ -1962,7 +1955,7 @@ fn signature_pass(r: &mut Rules) {
         if r.scores.contains_key(key) { continue; }
         // Measured by an older version and no longer part of the plan (frequency caps, dynamic EPP):
         // the rule's value stands, the old rows only serve the model as context.
-        if r.pinned(key) || calib::excluded(key) { continue; }
+        if calib::excluded(key) { continue; }
         let scoped = format!("{key}_");
         if r.out.iter().any(|d| d.key.starts_with(&scoped)) { continue; }
         let before: Vec<Decision> = r.out.iter().filter(|d| d.key == key).cloned().collect();
@@ -3305,7 +3298,6 @@ mod tests {
         let out = assemble(Goal::Throughput, &p, w, decide_full(Goal::Throughput, &p, w));
         let src = |k: &str| out["decisions"].as_array().unwrap().iter().find(|d| d["key"] == k).map(|d| d["source"].clone());
         assert!(matches!(src("blk.read_ahead_kb").as_ref().and_then(Value::as_str), Some("measured" | "joint")), "{:?}", src("blk.read_ahead_kb"));
-        assert_eq!(src("cpu.epp_boost"), Some(json!("pinned")));
         let ra = out["decisions"].as_array().unwrap().iter().find(|d| d["key"] == "blk.read_ahead_kb").unwrap();
         assert!(ra["n"].as_f64().is_some_and(|n| n > 0.0), "measured value carries its evidence: {ra}");
         assert!(out["notes"].is_array() && out["constraints"].is_array());
@@ -3497,16 +3489,14 @@ mod tests {
         let p = ruled_signature(-0.15, -0.15);
         let (d, _, _) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
         assert_ne!(get(&d, "kernel.split_lock_mitigate"), Some(&json!(0)), "{d:?}");
-        let why = |d: &[Decision], k: &str| d.iter().find(|x| x.key == k).map(|x| x.why.clone()).unwrap_or_default();
-        // EPP boost is the goal's own decision for gaming and throughput - no benchmark takes it away ...
-        for g in [Goal::Gaming, Goal::Throughput] {
+        // EPP boost is a rule like any other: every goal follows credible harm.
+        for g in [Goal::Gaming, Goal::Throughput, Goal::Desktop] {
             let (d, _, _) = decide_weighted(g, &p, Weights::for_goal(g));
-            assert_eq!(get(&d, "cpu.epp_boost"), Some(&json!("1")), "{g:?}");
-            assert!(why(&d, "cpu.epp_boost").starts_with("EPP boost"), "{g:?}: the rule's own reason, not a model's");
+            assert_ne!(get(&d, "cpu.epp_boost"), Some(&json!("1")), "{g:?}: {d:?}");
         }
-        // ... while the desktop goal follows the measurement.
-        let (d, _, _) = decide_weighted(Goal::Desktop, &p, Weights::for_goal(Goal::Desktop));
-        assert_ne!(get(&d, "cpu.epp_boost"), Some(&json!("1")), "{d:?}");
+        // Blind benchmarks leave the rule's EPP boost on for gaming too.
+        let (d, _, _) = decide_weighted(Goal::Gaming, &ruled_signature(0.0, 0.0), Weights::for_goal(Goal::Gaming));
+        assert_eq!(get(&d, "cpu.epp_boost"), Some(&json!("1")));
     }
 
     /// A load-phase signature in which every listed knob (key, boot value, tested value) measured

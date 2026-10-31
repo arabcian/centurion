@@ -35,7 +35,7 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 | E9 | ✅ | Tespit (`kernel.yield_type` varlığı), profil özeti "scheduler: Project C (BMQ/PDS)", scheduler kurallarının atlanması ve rapor notu zaten vardı; tespit `project_c_under(root)`'a ayrıldı, sahte /proc ağacı testi eklendi. |
 | E7 | ✅ | `PLACE_LAG`, `PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` tam satır (Scheduler grubu → kalibrasyona otomatik girer). Tabloda olmayan `sched_burst_*` ve sched feature'lar `describe.discovered` ile GUI'de salt-okunur listelenir (elle yazma desteği yok). |
 
-**Kalan:** A1, A2, C2, C3, A4 (--strict), A10 (SLC), B6, C4, A7, C5, A9, A8, C6, E1, E3, E4, E5, E6, E10, E11, E12, E13.
+**Kalan:** A1, A2, A4 (--strict), A7, A8, A9, A10 (SLC), B6, C2, C3, C4, C5, C6, E1 (E3–E6, E9–E13 zaten koddaydı; eski liste yanlışlıkla sayıyordu). Ayrıntılı devir tablosu: `docs/ROADMAP-AUTOTUNE-KALAN.md`.
 
 ## 0. Mevcut durum (yeniden yapılmasın)
 
