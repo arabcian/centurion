@@ -414,6 +414,11 @@ Kapsam dışı: **MuQSS** 2021'de (5.12) bırakıldı, 7.x için yok. `wq.power_
 | **E12** | btrfs async discard sınırları (`/sys/fs/btrfs/<uuid>/discard/*`) | Storage | P2 | S | Sonnet |
 | **E13** | Arka plan cgroup'u: oyun sırasında diğerlerine `cpu.weight` / `cpu.idle` | Scheduler | P2 | M | Opus |
 
+**Durum (2026-10-31).** E2 (irqbalance durdur/geri başlat), E7 (`PLACE_*` satırları + `sched_burst_*` / features keşfi) ve
+E8 (`ppt_cpu_cl` `FW_ATTRS` içinde) zaten koddaydı. E3, E4, E5, E6, E9–E13 eklendi (AUTOTUNE.md "Settings added with the E
+series"). E5 düzeltmesi: `recomp_algorithm` başlatılmış zram aygıtında `-EBUSY` döner, canlı knob değildir; yalnızca idle
+işaretleme + `recompress` canlı (gamemode: oyun başı işaretle, oyun sonu sınırlı yeniden sıkıştır). Açık: E1.
+
 **Her yeni knob için ortak kontrol listesi** (her E maddesinin kabul ölçütüne dahildir):
 1. `tune.rs` satırı: yardım metni (diğerleriyle aynı üslup), `Kind`/`Options`, `debugfs`/`caution`/`vendor`; dosya yoksa satır gizlenir.
 2. `defaults.rs` boot snapshot'ına girer mi (radyo anahtarları gibi istisna mı)?

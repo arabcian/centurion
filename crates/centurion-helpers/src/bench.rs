@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1037,7 +1037,18 @@ fn gated_frames<M: FnMut(), J: FnMut() + Send + 'static>(dur: Duration, skip: u6
     v
 }
 
+/// EEVDF slice (µs) the game and cache loops request for their own threads (0 = default): how
+/// centurion-calibrate measures the launch block's `slice_us` without touching the rest of the system.
+pub static PROBE_SLICE_US: AtomicU64 = AtomicU64::new(0);
+
+/// Requests PROBE_SLICE_US for the calling probe thread; the job threads it spawns inherit it.
+fn probe_slice() {
+    let us = PROBE_SLICE_US.load(Ordering::SeqCst);
+    if us > 0 { let _ = crate::tune::set_thread_slice_us(us); }
+}
+
 fn game_part(dur: Duration, seed: u64, unit: u64) -> Vec<f64> {
+    probe_slice();
     let buf = vec![1u8; 1024 * 1024];
     let mut acc = seed;
     let v = gated_frames(dur, 2, || { acc = work(unit * 48 / 10, acc, &buf); }, |w| {  // 4.8 ms at full clock: the 60 % busy main thread
@@ -1172,6 +1183,7 @@ pub fn cache_unit() -> u64 {
 }
 
 fn cache_part(dur: Duration, seed: u64, unit: u64, chain: Arc<Chain>) -> Vec<f64> {
+    probe_slice();
     let n = chain.lines as u64;
     // Four walkers a quarter lap apart (another offset per thread set).
     let start = |k: u64| ((n / 4 * k + n / 16 * seed) % n) as u32;

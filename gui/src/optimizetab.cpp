@@ -575,6 +575,23 @@ QWidget *OptimizeTab::buildLaunchPage() {
                                               "used to batch wake-ups). With this on, the game's whole process tree gets 1 ns: frame limiters, audio\n"
                                               "and Wine's waits wake when they asked to. Costs a few more timer interrupts; needs RUN / WRAP."));
     g->addWidget(preciseTimers_, 3, 1, 1, 2);
+    g->addWidget(new QLabel("Time slice"), 4, 0);
+    sliceUs_ = new QComboBox;
+    for (const auto &[label, us] : std::initializer_list<std::pair<const char *, int>>{{"off", 0}, {"1 ms", 1000}, {"2 ms", 2000}, {"3 ms", 3000}}) sliceUs_->addItem(label, us);
+    g->addWidget(sliceUs_, 4, 1);
+    g->addWidget(muted("EEVDF slice for the game's threads (sched_setattr, kernel 6.12+). Shorter = a waking thread preempts sooner\n"
+                       "(steadier frame pacing); too short costs throughput. No effect under sched_ext or Project C. Needs RUN / WRAP."), 4, 2);
+    g->addWidget(new QLabel("Game CPU share"), 5, 0);
+    gameShare_ = new QComboBox;
+    for (const auto &[label, w] : std::initializer_list<std::pair<const char *, int>>{{"off", 0}, {"2× the rest", 200}, {"4× the rest", 400}, {"8× the rest", 800}}) gameShare_->addItem(label, w);
+    g->addWidget(gameShare_, 5, 1);
+    g->addWidget(muted("The game runs in its own cgroup with this cpu.weight against everything else (default 100): background work\n"
+                       "(builds, indexers) keeps running but yields. Needs cgroup v2 with the cpu controller; removed when game mode ends."), 5, 2);
+    zramRecompress_ = new QCheckBox("Recompress cold zram pages after the game");
+    zramRecompress_->setToolTip(QStringLiteral("At game start every zram page is marked idle; when game mode ends, pages the session never touched are\n"
+                                               "recompressed with the secondary algorithm (at most 64 MiB per device): more free RAM afterwards.\n"
+                                               "Needs a recompression algorithm set in the boot zram configuration (it cannot be set on a live device)."));
+    g->addWidget(zramRecompress_, 6, 1, 1, 2);
     g->setColumnStretch(2, 1);
     v->addWidget(runBox);
 
@@ -714,6 +731,9 @@ QWidget *OptimizeTab::buildLaunchPage() {
     connect(nice_, &QSpinBox::valueChanged, this, onRun);
     connect(affinity_, &QComboBox::currentIndexChanged, this, onRun);
     connect(preciseTimers_, &QCheckBox::toggled, this, onRun);
+    connect(sliceUs_, &QComboBox::currentIndexChanged, this, onRun);
+    connect(gameShare_, &QComboBox::currentIndexChanged, this, onRun);
+    connect(zramRecompress_, &QCheckBox::toggled, this, onRun);
     connect(uvCpu_, &QCheckBox::toggled, this, &OptimizeTab::saveUndervolt);
     connect(uvGpu_, &QCheckBox::toggled, this, &OptimizeTab::saveUndervolt);
     connect(gameScene_, &QComboBox::activated, this, &OptimizeTab::saveUndervolt);
@@ -969,6 +989,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
     while (groups_->count()) { QWidget *w = groups_->widget(0); groups_->removeTab(0); w->deleteLater(); }
     rows_.clear();
     nice_ = nullptr; affinity_ = nullptr; autogroup_ = nullptr; preciseTimers_ = nullptr; topoLabel_ = nullptr;
+    sliceUs_ = gameShare_ = nullptr; zramRecompress_ = nullptr;
     uvCpu_ = uvGpu_ = nullptr; uvInfo_ = nullptr;
     lutrisPre_ = lutrisPost_ = lutrisPrefix_ = steam_ = nullptr;
 
@@ -1379,6 +1400,9 @@ QJsonObject OptimizeTab::collectRun() const {
     QJsonObject run{{"nice", nice_->value()}, {"autogroup", autogroup_->isChecked()},
                     {"affinity", affinity_->currentData().toString().isEmpty() ? QStringLiteral("none") : affinity_->currentData().toString()}};
     if (preciseTimers_ && preciseTimers_->isChecked()) run["timerslack_ns"] = 1;
+    if (sliceUs_ && sliceUs_->currentData().toInt() > 0) run["slice_us"] = sliceUs_->currentData().toInt();
+    if (gameShare_ && gameShare_->currentData().toInt() > 0) run["cpu_weight"] = gameShare_->currentData().toInt();
+    if (zramRecompress_ && zramRecompress_->isChecked()) run["zram_recompress"] = true;
     return run;
 }
 
@@ -1565,6 +1589,9 @@ int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped, bo
         const int i = affinity_->findData(canonicalCcd(run.value("affinity").toString("none")));
         affinity_->setCurrentIndex(i < 0 ? 0 : i);
         if (preciseTimers_) preciseTimers_->setChecked(run.value("timerslack_ns").toInt(0) > 0);
+        if (sliceUs_) { const int i = sliceUs_->findData(run.value("slice_us").toInt(0)); sliceUs_->setCurrentIndex(i < 0 ? 0 : i); }
+        if (gameShare_) { const int i = gameShare_->findData(run.value("cpu_weight").toInt(0)); gameShare_->setCurrentIndex(i < 0 ? 0 : i); }
+        if (zramRecompress_) zramRecompress_->setChecked(run.value("zram_recompress").toBool(false));
     }
     return n;
 }
@@ -2006,7 +2033,8 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     if (why.contains("run"))
         add(QStringLiteral("Launch"), QStringLiteral("Game launch boost"),
             QStringLiteral("nice %1 · %2%3").arg(run.value("nice").toInt()).arg(run.value("affinity").toString(),
-                run.value("timerslack_ns").toInt(0) > 0 ? QStringLiteral(" · precise timers") : QString()), why.value("run").toString(), true);
+                run.value("timerslack_ns").toInt(0) > 0 ? QStringLiteral(" · precise timers") : QString())
+                + (run.value("slice_us").toInt(0) > 0 ? QStringLiteral(" · slice %1 µs").arg(run.value("slice_us").toInt()) : QString()), why.value("run").toString(), true);
     table->resizeRowsToContents();
     v->addWidget(table, 1);
 

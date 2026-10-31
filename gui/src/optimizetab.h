@@ -179,6 +179,8 @@ private:
     QPushButton *autoBtn_ = nullptr;
     bool autoRunning_ = false;
     QSpinBox *nice_ = nullptr;
+    QComboBox *sliceUs_ = nullptr, *gameShare_ = nullptr;
+    QCheckBox *zramRecompress_ = nullptr;
     QCheckBox *autogroup_ = nullptr, *preciseTimers_ = nullptr, *uvCpu_ = nullptr, *uvGpu_ = nullptr, *wirelessLock_ = nullptr;
     QLabel *uvInfo_ = nullptr;
     QComboBox *gameScene_ = nullptr;   // scene the first game switches to (tune.json "game_scene")

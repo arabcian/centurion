@@ -29,6 +29,8 @@
 //!       captured early in this boot (defaults.json) — also what TLP or anything else changed since; calibration anchor
 //!   {"op":"snapshot"}                                  refresh the readable copy of debugfs values (also done after every root op)
 //!   {"op":"boost","nice":-5,"autogroup":true}          renice the process that ran pkexec
+//!   {"op":"isolate_join","park":"ccd1"?,"weight":400?}  game RUN/WRAP: move the caller into the game cgroup (partition without park's CCD and/or cpu.weight)
+//!   {"op":"zram","action":"mark_idle"|"recompress"}   game start / end: mark zram pages idle, recompress the still-idle ones (bounded)
 //!   {"op":"set_boot","values":{..}|null,"preset":".."} store/clear the boot preset (root-owned file)
 //!   {"op":"set_wireless_pm_lock","on":bool}            tune-helper only: master switch — Wi-Fi/Bluetooth power management stays off
 //!       (root-owned /etc/centurion/wireless-pm-lock; scenes, presets and autotune cannot turn it back on)
@@ -105,7 +107,7 @@ fn profile_role() -> bool { env!("CARGO_BIN_NAME") == "tune-profile-helper" }
 /// Ops tune-profile-helper serves as root. None can put a value on the kernel that the user has not approved:
 /// stored presets by name, restoring saved originals, game-session bookkeeping, fixed read-only tools, and the
 /// root-owned boot preset. (Read-only ops that need no root are answered before this check.)
-const PROFILE_OPS: &[&str] = &["snapshot", "apply_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "tool", "boot"];
+const PROFILE_OPS: &[&str] = &["snapshot", "apply_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "zram", "tool", "boot"];
 
 struct Lock(#[allow(dead_code)] fs::File);
 
@@ -814,9 +816,12 @@ fn op_boost(req: &Value) -> Value {
 /// soft-parked CCD `park`. Only while a game session holds game mode, so the
 /// release that ends it also removes the partition.
 fn op_isolate_join(req: &Value) -> Value {
-    let Some(park) = req["park"].as_str().filter(|s| !s.is_empty() && s.len() <= 16) else {
-        return json!({"ok": false, "error": "park must name a CCD"});
-    };
+    let park = req["park"].as_str().filter(|s| !s.is_empty() && s.len() <= 16);
+    if req["park"].is_string() && park.is_none() { return json!({"ok": false, "error": "park must name a CCD"}); }
+    // cpu.weight of the game cgroup against the rest of the system (default 100).
+    let weight = req["weight"].as_u64().filter(|w| (1..=10_000).contains(w)).map(|w| w as u32);
+    if !req["weight"].is_null() && weight.is_none() { return json!({"ok": false, "error": "weight must be in 1..10000"}); }
+    if park.is_none() && weight.is_none() { return json!({"ok": false, "error": "park or weight is required"}); }
     let ppid = unsafe { libc::getppid() };
     let Some(caller) = std::env::var("PKEXEC_UID").ok().and_then(|v| v.parse::<u32>().ok()) else {
         return json!({"ok": false, "error": "isolate_join is only available through pkexec"});
@@ -828,13 +833,16 @@ fn op_isolate_join(req: &Value) -> Value {
         if st.source.as_deref() != Some("game") || st.refcount() == 0 {
             return json!({"ok": false, "error": "game mode is not active"});
         }
-        let groups = tune::ccx_groups();
-        let Some(pg) = tune::resolve_ccd(&groups, park) else {
-            return json!({"ok": false, "error": format!("'{park}' does not resolve to an online CCD")});
-        };
-        let mut cpus: Vec<usize> = groups.iter().flat_map(|g| g.cpus.iter().copied()).filter(|c| !pg.cpus.contains(c)).collect();
-        cpus.sort_unstable();
-        if let Err(e) = centurion_helpers::isolate::setup(&cpus) { return json!({"ok": false, "error": e}); }
+        let mut cpus: Vec<usize> = Vec::new();
+        if let Some(park) = park {
+            let groups = tune::ccx_groups();
+            let Some(pg) = tune::resolve_ccd(&groups, park) else {
+                return json!({"ok": false, "error": format!("'{park}' does not resolve to an online CCD")});
+            };
+            cpus = groups.iter().flat_map(|g| g.cpus.iter().copied()).filter(|c| !pg.cpus.contains(c)).collect();
+            cpus.sort_unstable();
+        }
+        if let Err(e) = centurion_helpers::isolate::setup(&cpus, weight) { return json!({"ok": false, "error": e}); }
         // Same PID-reuse pin as boost: only while the caller is still our parent.
         if unsafe { libc::getppid() } != ppid { return json!({"ok": false, "error": "caller exited"}); }
         match centurion_helpers::isolate::join(ppid) {
@@ -1105,6 +1113,11 @@ fn run() -> Value {
         "restore_defaults" => op_restore_defaults(),
         "boost" => op_boost(&req),
         "isolate_join" => op_isolate_join(&req),
+        // Fixed, bounded writes (no value from the request): game start marks, game end recompresses.
+        "zram" => match tune::zram_action(req["action"].as_str().unwrap_or("")) {
+            Ok(n) => json!({"ok": true, "devices": n}),
+            Err(e) => json!({"ok": false, "error": e}),
+        },
         "tool" => centurion_helpers::tools::run(req["tool"].as_str().unwrap_or("")),
         "nvreg_set" => match req["values"].as_object() {
             Some(v) => match centurion_helpers::nvreg::set(v) {
@@ -1172,6 +1185,18 @@ mod tests {
         for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear"] {
             assert!(!PROFILE_OPS.contains(&op), "{op} must stay tune-helper only");
         }
+    }
+    #[test]
+    fn isolate_join_checks_park_and_weight_first() {
+        let err = |req: Value| op_isolate_join(&req)["error"].as_str().unwrap_or("").to_owned();
+        assert_eq!(err(json!({})), "park or weight is required");
+        assert_eq!(err(json!({"park": null, "weight": null})), "park or weight is required");
+        assert_eq!(err(json!({"weight": 0})), "weight must be in 1..10000");
+        assert_eq!(err(json!({"weight": 20_000})), "weight must be in 1..10000");
+        assert_eq!(err(json!({"park": ""})), "park must name a CCD");
+        // Valid arguments get as far as the pkexec check (not run through pkexec here).
+        std::env::remove_var("PKEXEC_UID");
+        assert!(err(json!({"park": null, "weight": 400})).contains("only available through pkexec"));
     }
     #[test]
     fn autotune_defaults_mirror_the_weights() {

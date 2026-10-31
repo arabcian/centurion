@@ -245,6 +245,13 @@ fn post() -> Result<bool, String> {
     // Not while an A launch is still running: the scene and the field session are its POST's to end
     // (the mirror of the A path above, which leaves them to a real session's POST).
     if (v["restored"] == true || v["state"]["refcount"] == 0) && !ab_launch_live(&read_scene_state()) { end_session(); leave_game_scene(); }
+    if v["restored"] == true && update_scene_state(|st| st.as_object_mut().and_then(|o| o.remove("zram_marked")).is_some()) {
+        match pkexec(&json!({"op": "zram", "action": "recompress"})) {
+            Ok(r) if r["ok"] == true => log!("centurion-gamemode: zram idle pages recompressed"),
+            Ok(r) => log!("centurion-gamemode: zram recompress: {}", r["error"].as_str().unwrap_or("?")),
+            Err(e) => log!("centurion-gamemode: zram recompress: {e}"),
+        }
+    }
     Ok(ok)
 }
 
@@ -1004,11 +1011,16 @@ fn prepare_run(preset: &Value, parked: Option<&str>) {
     // Soft park: the game gets the other CCD(s) to itself through a cgroup
     // partition (everything else is moved off them); pinning below stays as
     // the fallback when the partition is not available.
-    if let Some(pr) = parked {
-        match pkexec(&json!({"op": "isolate_join", "park": pr})) {
-            Ok(v) if v["ok"] == true => log!("centurion-gamemode: game CPU partition {} (rest of the system moved off it)", v["cpus"].as_str().unwrap_or("?")),
-            Ok(v) => log!("centurion-gamemode: game CPU partition not used: {}", v["error"].as_str().unwrap_or("?")),
-            Err(e) => log!("centurion-gamemode: game CPU partition not used: {e}"),
+    // CPU share: the same game cgroup with a cpu.weight against the rest of the system (default 100).
+    let weight = run["cpu_weight"].as_u64().filter(|w| (1..=10_000).contains(w));
+    if parked.is_some() || weight.is_some() {
+        match pkexec(&json!({"op": "isolate_join", "park": parked, "weight": weight})) {
+            Ok(v) if v["ok"] == true => {
+                if parked.is_some() { log!("centurion-gamemode: game CPU partition {} (rest of the system moved off it)", v["cpus"].as_str().unwrap_or("?")); }
+                if let Some(w) = weight { log!("centurion-gamemode: game cgroup cpu.weight {w} (rest of the system: 100)"); }
+            }
+            Ok(v) => log!("centurion-gamemode: game cgroup not used: {}", v["error"].as_str().unwrap_or("?")),
+            Err(e) => log!("centurion-gamemode: game cgroup not used: {e}"),
         }
     }
     let role = run["affinity"].as_str().unwrap_or("none");
@@ -1037,6 +1049,21 @@ fn prepare_run(preset: &Value, parked: Option<&str>) {
     if let Some(ns) = run["timerslack_ns"].as_u64().filter(|n| (1..=50_000).contains(n)) {
         if unsafe { libc::prctl(libc::PR_SET_TIMERSLACK, ns as libc::c_ulong) } == 0 { log!("centurion-gamemode: timer slack {ns} ns"); }
         else { log!("centurion-gamemode: timer slack: {}", std::io::Error::last_os_error()); }
+    }
+    // EEVDF slice request for the game's threads (inherited over clone, fork and exec, like the timer slack).
+    if let Some(us) = run["slice_us"].as_u64().filter(|n| (100..=100_000).contains(n)) {
+        if !tune::slice_supported() { log!("centurion-gamemode: slice {us} µs skipped (needs EEVDF on 6.12+, not sched_ext / Project C)"); }
+        else if let Err(e) = tune::set_thread_slice_us(us) { log!("centurion-gamemode: slice: {e}"); }
+        else { log!("centurion-gamemode: slice {us} µs"); }
+    }
+    // zram: every stored page is marked idle now; the POST that ends game mode recompresses the ones the
+    // game session never touched (cold pages) with the secondary algorithm, bounded per device.
+    if run["zram_recompress"] == true {
+        match pkexec(&json!({"op": "zram", "action": "mark_idle"})) {
+            Ok(v) if v["ok"] == true => { update_scene_state(|st| st["zram_marked"] = json!(true)); log!("centurion-gamemode: zram pages marked idle"); }
+            Ok(v) => log!("centurion-gamemode: zram recompression skipped: {}", v["error"].as_str().unwrap_or("?")),
+            Err(e) => log!("centurion-gamemode: zram recompression skipped: {e}"),
+        }
     }
     // Wine/Proton must see exactly the CPUs the game may use (see soft_park).
     if std::env::var_os("WINE_CPU_TOPOLOGY").is_none() {
@@ -1128,6 +1155,8 @@ fn wrap(args: &[String]) -> i32 {
     for s in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] { unsafe { libc::signal(s, forward as *const () as libc::sighandler_t) }; }
     let spawned = Command::new(&cmd[0]).args(&cmd[1..]).spawn();
     if let Ok(c) = &spawned { CHILD.store(c.id() as i32, Ordering::SeqCst); }
+    // The game took the slice request with it; this waiting parent (and the POST it runs) goes back to the default.
+    if preset["run"]["slice_us"].as_u64().is_some() { let _ = tune::set_thread_slice_us(0); }
     unsafe { libc::sigprocmask(libc::SIG_UNBLOCK, &held, std::ptr::null_mut()); }
     let code = match spawned {
         Ok(mut c) => {

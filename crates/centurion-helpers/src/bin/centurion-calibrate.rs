@@ -167,6 +167,11 @@ fn apply(j: &mut Journal, key: &str, value: &str, rate: u64, ram: u64) -> Result
             if d >= cur { j.set("vm.dirty_bytes", &d.to_string())?; j.set("vm.dirty_background_bytes", &bg.to_string()) }
             else { j.set("vm.dirty_background_bytes", &bg.to_string())?; j.set("vm.dirty_bytes", &d.to_string()) }
         }
+        // Nothing system-wide: the game and cache loops request this slice for their own threads.
+        "launch.slice_us" => {
+            bench::PROBE_SLICE_US.store(value.parse().map_err(|_| "bad slice")?, Ordering::SeqCst);
+            Ok(())
+        }
         "thp" => {
             let (mode, mthp) = value.split_once('+').map_or((value, false), |(m, _)| (m, true));
             j.set("thp.enabled", mode)?;
@@ -192,6 +197,7 @@ fn live_label(key: &str, disk: Option<&str>) -> Option<String> {
     }
     match key {
         "vm.dirty" => Some("1".into()),
+        "launch.slice_us" => Some("0".into()),
         "thp" => {
             let m = cur("thp.enabled")?;
             if m != "always" && m != "madvise" && m != "never" { return None; }
@@ -418,6 +424,8 @@ fn plan(rounds: usize, scale: f64, ram: u64, only: &Option<Vec<String>>, phase: 
     let mut items = Vec::new();
     let mut skipped = Vec::new();
     let mut keys: Vec<(String, &'static str)> = vec![("vm.dirty".into(), "Memory"), ("thp".into(), "Memory")];
+    if tune::slice_supported() { keys.push((centurion_helpers::autotune::SLICE_KEY.into(), "Scheduler")); }
+    else { skipped.push((centurion_helpers::autotune::SLICE_KEY.into(), "slice request needs EEVDF on 6.12+ (not sched_ext / Project C)".into())); }
     for t in tune::TUNABLES {
         if calib::dev_key(t.key) {
             if !battery { skipped.push((t.key.to_owned(), "device power state: measured on battery only (RAPL cannot see it)".into())); continue; }

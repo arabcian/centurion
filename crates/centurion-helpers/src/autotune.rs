@@ -633,6 +633,8 @@ pub struct Profile {
     pub kernel: (u32, u32),
     pub numa_nodes: usize,
     pub scx: Vec<String>,
+    /// Project C (BMQ/PDS) scheduler in place of EEVDF: kernel.yield_type exists only there.
+    pub project_c: bool,
     pub dynamic_epp: bool,
     pub uncore: Option<(u64, u64)>,
     /// Clocksources the kernel still trusts (available_clocksource).
@@ -787,6 +789,7 @@ impl Profile {
             kernel: kernel_release(),
             numa_nodes,
             scx,
+            project_c: Path::new("/proc/sys/kernel/yield_type").is_file(),
             dynamic_epp: cpu.join("amd_pstate/dynamic_epp").is_file(),
             uncore,
             clocksources: tune::find("clock.source").map(|t| tune::options(t).into_iter().map(|o| o.0).collect()).unwrap_or_default(),
@@ -906,6 +909,7 @@ impl Profile {
         p.push(if self.battery { match self.on_ac { Some(true) => "laptop (on AC)", Some(false) => "laptop (on battery)", None => "laptop" } }
                else { "desktop (no battery)" }.into());
         p.push(format!("kernel {}.{}", self.kernel.0, self.kernel.1));
+        if self.project_c { p.push("scheduler: Project C (BMQ/PDS)".into()); }
         p.join(" · ")
     }
 }
@@ -1207,6 +1211,11 @@ pub fn decide_weighted(goal: Goal, p: &Profile, w: Weights) -> (Vec<Decision>, M
     cpu_rules(&mut r);
     memory_rules(&mut r);
     sched_rules(&mut r);
+    // EEVDF / BORE / sched_ext rules mean nothing under Project C (their files are absent anyway).
+    if p.project_c {
+        r.out.retain(|d| !(d.key.starts_with("sched.") || d.key.starts_with("kernel.sched_")));
+        r.notes.push("Project C (BMQ/PDS) kernel: scheduler rules skipped; kernel.yield_type and the sched_timeslice= boot parameter are manual.".into());
+    }
     io_rules(&mut r);
     device_rules(&mut r);
     signature_pass(&mut r);
@@ -2162,7 +2171,23 @@ fn sched_rules(r: &mut Rules) {
         Gaming | Throughput => r.set("kernel.sched_energy_aware", "0", "Classic load balancing: spread for performance instead of packing on efficient cores."),
         Desktop => {}
     }
+    // EEVDF slice request for the game's threads (launch block, not a table row): only on measured
+    // evidence - the probes request it for their own threads (centurion-calibrate, launch.slice_us).
+    if r.is(Gaming) && r.seen(SLICE_KEY) {
+        let reference = cand(0, Fx::default(), 0.0, String::new());
+        let mut alts: Vec<Cand> = [1000, 2000, 3000].iter()
+            .map(|us| cand(*us, Fx::default(), 0.2, format!("EEVDF slice {us} µs for the game's threads (measured by the game and cache loops)."))).collect();
+        let b = r.blend();
+        for c in alts.iter_mut() { r.p.apply_measured(b, SLICE_KEY, "0", &vstr(&c.value), c); }
+        if let Some(i) = r.pick(SLICE_KEY, &reference, &alts) {
+            let why = format!("{}{}", alts[i].fx.explain(&r.w, alts[i].dev), alts[i].why);
+            r.set(SLICE_KEY, alts[i].value.clone(), why);
+        }
+    }
 }
+
+/// Calibration pseudo-knob for the launch block's `slice_us` (see sched_rules / assemble).
+pub const SLICE_KEY: &str = "launch.slice_us";
 
 const SLACK_WHY: &str = "Timer slack 1 ns for the game's process tree: the kernel may deliver a normal thread's sleep or wait time-out up to 50 µs late (the default slack, used to batch wake-ups); frame limiters, audio and Wine's waits then wake when they asked to.";
 
@@ -2554,6 +2579,7 @@ fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Dec
     let mut values = Map::new();
     let mut why = Map::new();
     let mut skipped = Vec::new();
+    let slice = decisions.iter().find(|d| d.key == SLICE_KEY).map(|d| (d.value.as_u64(), d.why.clone()));
     for d in decisions {
         let Some(t) = tune::find(d.key) else { continue };
         if !cfg!(test) {
@@ -2581,7 +2607,11 @@ fn assemble(goal: Goal, p: &Profile, w: Weights, (decisions, scores, notes): Dec
     }
     let live: Map<String, Value> = p.current.iter().map(|(k, v)| (k.clone(), v.parse::<i64>().map(Value::from).unwrap_or_else(|_| json!(v)))).collect();
     let live_issues: Vec<Value> = audit(&live, &ctx).iter().map(Issue::to_json).collect();
-    let (run, run_why) = run_block(goal, p);
+    let (mut run, mut run_why) = run_block(goal, p);
+    if let (Some((Some(us), sw)), Some(o)) = (slice, run.as_object_mut()) {
+        o.insert("slice_us".into(), json!(us));
+        run_why = Some(format!("{} {sw}", run_why.unwrap_or_default()));
+    }
     if let Some(rw) = run_why { why.insert("run".into(), Value::String(rw)); }
     let summary = format!("Autotuned for {} on {}.", goal.label().to_lowercase(), p.summary());
     json!({
@@ -2623,7 +2653,7 @@ mod tests {
                           CState { name: "C2".into(), latency_us: 18 }, CState { name: "C3".into(), latency_us: 350 }],
             ram_kb: 32_166_484, swap: SwapKind::Zram, nvme: true, rotational: false, sata_hosts: false,
             battery: true, on_ac: Some(true), nvidia_dgpu: true, amd_igpu: true, intel_igpu: false, wifi: true,
-            kernel: (7, 2), numa_nodes: 1, scx: vec!["lavd".into()], dynamic_epp: true, uncore: None,
+            kernel: (7, 2), numa_nodes: 1, scx: vec!["lavd".into()], project_c: false, dynamic_epp: true, uncore: None,
             clocksources: vec!["tsc".into(), "hpet".into(), "acpi_pm".into()],
             evidence: Evidence::default(),
             io: iorate::IoRate { bps: 1500 * MIB, source: iorate::Source::Probe, device: "nvme0n1".into(), class: iorate::DevClass::Nvme },
@@ -2978,6 +3008,22 @@ mod tests {
         for _ in 0..runs { c.add(key, r, v, if load { calib::Phase::Load } else { calib::Phase::Idle }, Some(m), false, 0, ""); }
     }
 
+    #[test]
+    fn measured_slice_goes_to_the_launch_block() {
+        let mut p = legion();
+        assert!(autotune_with(Goal::Gaming, &p)["preset"]["run"]["slice_us"].is_null(), "no measurement: no slice request");
+        let mut cal = calib::Calibration::default();
+        sig(&mut cal, SLICE_KEY, "0", "1000", false, meas(-0.05, -0.01, None), 6);
+        sig(&mut cal, SLICE_KEY, "0", "2000", false, meas(0.20, 0.0, None), 6);
+        sig(&mut cal, SLICE_KEY, "0", "3000", false, meas(0.05, 0.0, None), 6);
+        p.calibration = Some(cal);
+        let v = autotune_with(Goal::Gaming, &p);
+        assert_eq!(v["preset"]["run"]["slice_us"], json!(2000), "{}", v["scores"][SLICE_KEY]);
+        assert!(v["preset"]["values"].get(SLICE_KEY).is_none(), "a launch-block setting, never a table value");
+        assert!(autotune_with(Goal::Desktop, &p)["preset"]["run"]["slice_us"].is_null());
+        assert_eq!(calib::phases_for(SLICE_KEY, "Scheduler").len(), 2);
+        assert_eq!(calib::override_values(SLICE_KEY, "0", 0).unwrap(), vec!["1000", "2000", "3000"]);
+    }
     #[test]
     fn calibration_replaces_estimates() {
         let mut p = legion();
@@ -3414,6 +3460,13 @@ mod tests {
         assert_eq!((get(&d, "clock.source"), get(&d, "kernel.nmi_watchdog")), (None, None));
         assert_eq!(autotune_with(Goal::Gaming, &legion())["preset"]["run"]["timerslack_ns"], json!(1));
         assert!(autotune_with(Goal::Desktop, &legion())["preset"]["run"]["timerslack_ns"].is_null());
+        let sched = |v: &Value| v["preset"]["values"].as_object().unwrap().keys().filter(|k| k.starts_with("sched.") || k.starts_with("kernel.sched_")).count();
+        assert!(sched(&autotune_with(Goal::Gaming, &legion())) > 0);
+        let mut pc = legion();
+        pc.project_c = true;
+        let v = autotune_with(Goal::Gaming, &pc);
+        assert_eq!(sched(&v), 0, "Project C: no EEVDF/BORE/sched_ext decisions");
+        assert!(v.to_string().contains("Project C (BMQ/PDS) kernel"));
         let c = ctx(&legion());
         let bad = audit(json!({"vm.percpu_pagelist_high_fraction": 4}).as_object().unwrap(), &c);
         assert!(bad.len() == 1 && bad[0].reject && bad[0].fix == Some(json!(8)));

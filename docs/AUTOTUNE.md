@@ -919,6 +919,20 @@ centurion-helpers --bin centurion-calibrate sequential`; the noise/budget sweep 
 | `clock.source` | structural: switched back to `tsc` when another clock is in use and the kernel still lists the TSC. Never benchmarked |
 | launch block `timerslack_ns` | Gaming: 1 ns for the game's process tree (`centurion-gamemode RUN` / `WRAP`); in the GUI: Game launch → *Precise timers* |
 
+## Settings added with the E series (ROADMAP-AUTOTUNE §2b)
+
+| knob | how it is decided |
+|------|------|
+| launch block `slice_us` | EEVDF slice request (`sched_setattr` `sched_runtime`, 6.12+) for the game's process tree, inherited over clone / fork / exec like the timer slack; WRAP resets the waiting parent to the default. Calibrated as the pseudo-knob `launch.slice_us` (1000 / 2000 / 3000 µs against the default; CPU suite, idle and load): only the game and cache loops request it for their own threads, nothing system-wide is written. Gaming takes the winner only when it was *seen* and clears the margin; never set without a measurement. Skipped under sched_ext and Project C. GUI: Game launch → *Time slice* |
+| launch block `cpu_weight` | manual: the game cgroup (`/sys/fs/cgroup/centurion-game`, the same one soft park partitions) gets this `cpu.weight` against every other top-level cgroup (100). Removed with the cgroup by the restore that ends game mode. GUI: *Game CPU share* |
+| launch block `zram_recompress` | manual: game start marks every zram page idle, the POST that ends game mode recompresses the pages still idle (`type=idle`, at most 16384 pages per device). Needs a recompression algorithm from the boot zram configuration: the kernel refuses `recomp_algorithm` on an initialised device, so it is not a knob |
+| `blk.kyber_*`, `blk.dl_*`, `blk.bfq_*` | manual (`EXCLUDED`): `queue/iosched/*` of the active elevator; the rows exist only where that elevator runs and come after `blk.scheduler` in the table, so apply writes them once it is active |
+| `btrfs.discard_*` | manual (`EXCLUDED`): async discard pacing of every mounted btrfs file system |
+| `kernel.yield_type` | manual (`EXCLUDED`), Project C kernels only. On such a kernel the profile says so and the scheduler rules (`sched.*`, `kernel.sched_*`) are dropped |
+| `net.tcp_notsent_lowat`, `net.tcp_fastopen`, `net.gro_flush_timeout`, `net.napi_defer_hard_irqs`, `net.busy_poll`, `net.busy_read`, `net.napi_threaded` | manual (Network group: no network benchmark). Per-interface rows cover every physical interface. NAPI threads are ordinary kthreads: the soft-park partition moves them off the game CCD by itself |
+| `thp.use_zero_page`, `vm.compact_unevictable_allowed` | measured in the load phase (generic flip) |
+| `thp.khp_max_ptes_shared`, `mm.ksm_advisor`, `vm.dirtytime_expire_seconds` | manual (`EXCLUDED`, same reasons as their khugepaged / KSM / dirty-expire siblings) |
+
 ## C-state caps
 
 `cpu.cstate_max` (and `cpu.wake_latency_us`, its PM QoS sibling) is calibrated like any CPU knob,

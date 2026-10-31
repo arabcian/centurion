@@ -351,6 +351,16 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     // ITMT hands the preferred cores to whatever runs all the time: under load that is the ballast's
     // spinners, so the probes got the lower-ranked cores and "on" measured worse than it is.
     ("sched.itmt", "preferred cores go to the load phase's ballast, not to the probes (structural)"),
+    ("blk.kyber_read_lat_ns", "elevator tunable: manual only"), ("blk.kyber_write_lat_ns", "elevator tunable: manual only"),
+    ("blk.dl_read_expire_ms", "elevator tunable: manual only"), ("blk.dl_write_expire_ms", "elevator tunable: manual only"),
+    ("blk.dl_fifo_batch", "elevator tunable: manual only"), ("blk.dl_writes_starved", "elevator tunable: manual only"),
+    ("blk.bfq_low_latency", "elevator tunable: manual only"), ("blk.bfq_slice_idle_ms", "elevator tunable: manual only"),
+    ("btrfs.discard_iops_limit", "background TRIM pacing: the storage suite never waits for it"),
+    ("btrfs.discard_kbps_limit", "background TRIM pacing: the storage suite never waits for it"),
+    ("btrfs.discard_max_size", "background TRIM pacing: the storage suite never waits for it"),
+    ("kernel.yield_type", "Project C kernels only: manual"),
+    ("thp.khp_max_ptes_shared", "khugepaged: minutes"), ("mm.ksm_advisor", "no effect without mergeable memory"),
+    ("vm.dirtytime_expire_seconds", "12 h timestamp age: longer than a run, unmeasurable"),
 ];
 
 /// A key the calibration never tests (see `EXCLUDED`). Measurements of such a key that an older
@@ -389,6 +399,8 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         "zswap.max_pool_percent" => v(&[10, 20, 30]),
         // 0/1/2 are the whole range: the generic halve/double rule would only offer 1.
         "kernel.sched_burst_inherit_type" => v(&[0, 1, 2]),
+        // Launch-block slice request (µs), measured on the game and cache loops' own threads; 0 = default slice.
+        "launch.slice_us" => v(&[1000, 2000, 3000]),
         // BORE doses: halving/doubling would test penalty_offset 48 (= no burst is ever penalised, the
         // same as sched_bore 0) and a smoothness of 2 only; these bracket the stock value on both sides.
         "kernel.sched_burst_smoothness" => v(&[0, 2, 3]),
@@ -447,6 +459,8 @@ pub fn phases_for(key: &str, group: &str) -> Vec<(Phase, Benches)> {
         k if k == "thp" || k == "thp.shmem_enabled" || k.starts_with("thp.mthp_") =>
             vec![(Phase::Idle, b(true, false, false, false)), (Phase::Load, b(true, false, false, false))],
         "vm.stat_interval" => vec![(Phase::Idle, b(false, false, true, true))],
+        // Only the game and cache loops' own threads request the slice: the CPU suite, quiet and contended.
+        "launch.slice_us" => vec![(Phase::Idle, b(false, false, false, true)), (Phase::Load, b(false, false, false, true))],
         // The hard-lockup detector costs a performance counter and its NMIs: idle power, nothing under load.
         "kernel.nmi_watchdog" => vec![(Phase::Idle, b(false, false, true, true))],
         // Per-CPU free lists are the page allocator's fast path: fault cost on a quiet machine, and how
