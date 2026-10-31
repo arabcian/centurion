@@ -408,6 +408,20 @@ fn rand_reads(fd: i32, pages: u64, max_n: usize, until: Instant, seed: u64, stop
 ///    cache the fault read-around brought in, i.e. what read-ahead costs a program that maps
 ///    a big pack and touches it sparsely).
 /// Every file is an unlinked O_TMPFILE: nothing is left behind.
+const SLC_PART: usize = 32 * MIB;
+static SLC_DROP: AtomicBool = AtomicBool::new(false);
+
+/// Whether the last storage suite's write fell by more than half (and clears it).
+pub fn slc_drop_taken() -> bool { SLC_DROP.swap(false, Ordering::Relaxed) }
+
+/// Write speed per part (MB/s) fell by more than half: the median of the last three parts
+/// under half the median of the first three (an exhausted SLC cache). Fewer than 6 parts: no.
+pub fn slc_drop(parts: &[f64]) -> bool {
+    if parts.len() < 6 { return false; }
+    let med3 = |v: &[f64]| { let mut a = v.to_vec(); a.sort_by(f64::total_cmp); a[1] };
+    med3(&parts[parts.len() - 3..]) < 0.5 * med3(&parts[..3])
+}
+
 pub fn io(dir: &str, size: usize, s: &mut Sample) -> Result<(), String> {
     let size = size.max(16 * MIB) / MIB * MIB;
     let mut f = tmpfile(dir, false).map_err(|e| format!("{dir}: {e}"))?;
@@ -430,11 +444,22 @@ pub fn io(dir: &str, size: usize, s: &mut Sample) -> Result<(), String> {
     let mut buf = vec![0u8; MIB];
     let mut x: u64 = 0x2545_F491_4F6C_DD1D;
     for b in buf.iter_mut() { x ^= x << 13; x ^= x >> 7; x ^= x << 17; *b = x as u8; }
+    // In 32 MiB parts, each committed: the drive's speed per part (buffered, the first parts only
+    // filled the page cache and every run showed a "drop" at the dirty limit).
     let t0 = Instant::now();
     let mut res = Ok(());
-    for _ in 0..size / MIB { if let Err(e) = f.write_all(&buf) { res = Err(format!("write: {e}")); break; } }
+    let mut parts = Vec::new();
+    for _ in 0..size.div_ceil(SLC_PART) {
+        let tp = Instant::now();
+        let n = SLC_PART.min(size - parts.len() * SLC_PART) / MIB;
+        for _ in 0..n { if let Err(e) = f.write_all(&buf) { res = Err(format!("write: {e}")); break; } }
+        if res.is_ok() { res = f.sync_data().map_err(|e| format!("fdatasync: {e}")); }
+        if res.is_err() { break; }
+        parts.push((n * MIB) as f64 / MIB as f64 / tp.elapsed().as_secs_f64());
+    }
     if res.is_ok() { res = f.sync_all().map_err(|e| format!("fsync: {e}")); }
     let wsecs = t0.elapsed().as_secs_f64();
+    SLC_DROP.store(slc_drop(&parts), Ordering::Relaxed);
     stop.store(true, Ordering::Relaxed);
     let mut fl = prober.join().unwrap_or_default();
     res?;
@@ -1415,6 +1440,13 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn slc_drop_from_part_speeds() {
+        assert!(!slc_drop(&[900.0; 5]), "too few parts");
+        assert!(!slc_drop(&[900.0, 950.0, 880.0, 870.0, 860.0, 910.0, 890.0, 900.0]), "a steady drive");
+        assert!(!slc_drop(&[900.0, 950.0, 880.0, 870.0, 860.0, 300.0, 890.0, 900.0]), "one slow part is not a drop");
+        assert!(slc_drop(&[2000.0, 2100.0, 1900.0, 2000.0, 1200.0, 600.0, 580.0, 620.0]), "the cache ran out");
+    }
     #[test]
     fn outside_activity_from_fixture_counters() {
         let stat = "cpu  1 2 3\nintr 1000 5 6 7\nctxt 99\nsoftirq 500 1 2\n";

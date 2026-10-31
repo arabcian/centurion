@@ -4,6 +4,7 @@
 //!
 //!   sudo centurion-calibrate [--budget MIN] [--depth lean|deep|max] [--all] [--phase idle|load|io|both]
 //!                           [--io-budget GiB]   daily write budget of the storage suite (default 20)
+//!                           [--strict]          end the session cleanly when its first reference runs leave the history
 //!                      [--only KEY|@thp|@mem|@cpu|@sched|@io,..] [--sessions N] [--thorough] [--dir PATH] [--seed N] [--no-confirm]
 //!   sudo centurion-calibrate --oat [...]        legacy: one knob at a time (ref, every candidate, ref)
 //!   centurion-calibrate --list                  the plan: keys, values, depth, estimated time, coverage
@@ -11,7 +12,8 @@
 //!   sudo centurion-calibrate --restore          put back what an interrupted run changed
 //!   sudo centurion-calibrate --restore --drop   same, and give up originals that cannot be written back
 //!   sudo centurion-calibrate --scene NAME [...] measure in a scene's power context (profile, limits, fan)
-//!   sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--goal G]   whole preset vs the boot state (ABBA)
+//!   sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--phase load] [--goal G|all] [--sequential]
+//!                                               whole preset vs the boot state (ABBA); --sequential stops once decided
 //!   sudo centurion-calibrate --gpu-coupling [--secs S]   CPU-GPU power coupling while a GPU-bound load runs
 //!   sudo centurion-calibrate --field LOG... [--game NAME] import game sessions' frame-time logs (FLM / MangoHud)
 //!   sudo centurion-calibrate --schedule-boot [--sessions N] [--budget MIN] [--scene NAME] | --cancel-boot
@@ -272,7 +274,9 @@ impl Ballast {
 struct Ctx { exe: PathBuf, dir: String, disk: Option<String>, io_size: usize, scale: f64, battery: bool, bat_period: Option<f64>,
              heat_secs: f64, cx: String, heat: Option<bool>,
              /// Daily write budget of the storage suite (bytes; `--io-budget GiB`, default IO_BUDGET_GIB).
-             io_budget: u64 }
+             io_budget: u64,
+             /// `--strict`: a session whose first two reference runs left the history ends (rows kept, restored).
+             strict: bool }
 
 /// Default daily write budget of the storage suite: an IO run writes ~1.5 x its size (256 MiB), so
 /// a phase of hundreds of runs would otherwise write hundreds of GB.
@@ -734,7 +738,7 @@ fn compute_rows(runs: &[Run], phase: Phase, sess: u64, kernel: &str, n_total: us
         for i in 0..4 { if acc[i].1 > 0.0 { y[i] = acc[i].0 / acc[i].1 * gain[i]; } }
         let tc = match (r.temp, if is_hot(&r.cfg) { t_hot } else { t_cool }) { (Some(t), Some(m)) => t - m, _ => f64::NAN };
         Row { phase, sess, pos: (r.order as f64 / n_total.max(runs.len()) as f64).min(1.0), t: r.t, kernel: kernel.into(), cfg: r.cfg.clone(), y, w: r.w,
-              bv: calib::BENCH_VERSION, src: if phase == Phase::Dev { calib::PowerSrc::Battery } else { meta.src }, cx: meta.cx.clone(), tc, field: false }
+              bv: calib::bench_version(phase), src: if phase == Phase::Dev { calib::PowerSrc::Battery } else { meta.src }, cx: meta.cx.clone(), tc, field: false }
     }).collect()
 }
 
@@ -781,6 +785,8 @@ struct Runner<'a> { j: Journal, c: &'a Ctx, rate: u64, ram: u64, ballast: Option
                     gate_s: f64,
                     /// Runs measured while the firmware forced CPUs idle / while the drive was at its warning temperature.
                     forced: usize, disk_hot: usize,
+                    /// Storage runs whose write speed fell mid-write (`bench::slc_drop`).
+                    slc: usize,
                     /// Interrupt rates of each phase's reference runs (the yardstick of `bench::disturbances`),
                     /// and runs disturbed by outside activity, per kind ("irq", "disk", "net", "gpu").
                     irq_ref: [Vec<f64>; 4], parasites: BTreeMap<&'static str, usize>,
@@ -794,7 +800,9 @@ struct Runner<'a> { j: Journal, c: &'a Ctx, rate: u64, ram: u64, ballast: Option
                     unwritable: Vec<(String, String)>, dropped: usize,
                     /// Configurations of loaded runs the memory brake stopped, not yet noted in the signature
                     /// (`Design::exec` hands them to `Calibration::note_brake`).
-                    braked: Vec<Cfg> }
+                    braked: Vec<Cfg>,
+                    /// `--strict` ended the session: its reference level left the history.
+                    shifted: bool }
 
 /// How long a session waits for its power source to come back before it ends.
 const POWER_WAIT: Duration = Duration::from_secs(120);
@@ -802,8 +810,8 @@ const POWER_WAIT: Duration = Duration::from_secs(120);
 impl Runner<'_> {
     fn new<'a>(c: &'a Ctx, rate: u64, ram: u64) -> Runner<'a> {
         Runner { j: Journal { entries: Vec::new() }, c, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
-                 cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0, irq_ref: Default::default(), parasites: BTreeMap::new(), io_before: 0, io_session: 0,
-                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new() }
+                 cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0, slc: 0, irq_ref: Default::default(), parasites: BTreeMap::new(), io_before: 0, io_session: 0,
+                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new(), shifted: false }
     }
     /// The session's power source must still be there: a charger pulled on AC (or plugged in on
     /// battery) moves the firmware limits, the power reading's source and the context every row is
@@ -966,6 +974,13 @@ impl Runner<'_> {
             w *= 0.3;
             self.disk_hot += 1;
             if self.disk_hot <= 2 || self.disk_hot % 10 == 0 { eprintln!("\nthe drive reached {t:.0} °C (its warning temperature is {lim:.0} °C) during the storage suite: it may have throttled, run counted at 30 % ({} such run(s))", self.disk_hot); }
+        }
+        // The write speed fell by more than half between its first and last parts: the drive's SLC
+        // cache ran out mid-write, a state of the drive, not of the knobs.
+        if bench::slc_drop_taken() {
+            w *= 0.3;
+            self.slc += 1;
+            if self.slc <= 2 || self.slc % 10 == 0 { eprintln!("\nthe write speed fell by more than half mid-write (SLC cache exhausted): run counted at 30 % ({} such run(s))", self.slc); }
         }
         // The display changed under the run (dimmed, blanked, brightness keys): its power is not comparable.
         match &self.disp0 {
@@ -1233,7 +1248,20 @@ fn report_interactions(m: &Model, k: usize, indent: &str) {
 struct Design<'a> { phase: Phase, bs: Benches, sess: u64, n_total: usize, kernel: &'a str, refs: &'a BTreeMap<String, String>, runs: Vec<Run>, oom_left: usize,
                     t0: Instant, secs: f64, spent: f64, meta: Meta, strategy: &'static str,
                     /// Runs attempted (measured, OOM-bisected, refused or thrown away): what `spent` was spent on.
-                    tries: usize }
+                    tries: usize,
+                    /// The early baseline check (A4) ran: once, right after the second reference run.
+                    checked: bool }
+
+/// Whether a reference run is due after the space-filling stage's design run `i` (0-based): one
+/// every 6. Shared with the simulator (calsim), so it measures this schedule. A7 measured random
+/// placement and random 5-7 blocks there: no gain over a fixed gap (classic coverage fell).
+fn ref_due(i: usize) -> bool { i % 6 == 5 }
+
+/// Baseline shift once the session has exactly two reference runs (None before and after: the
+/// check runs once, as early as it can; `Design::commit` repeats it with every later reference).
+fn early_shift(cal: &Calibration, runs: &[Run], phase: Phase, sess: u64, meta: &Meta) -> Option<Vec<(String, f64)>> {
+    (runs.iter().filter(|r| r.cfg.is_empty()).count() == 2).then(|| cal.baseline_shift(&baseline(runs, phase, sess, meta)))
+}
 
 impl Design<'_> {
     fn exec(&mut self, cal: &mut Calibration, rn: &mut Runner, cfg: &Cfg) -> Result<(), String> {
@@ -1255,6 +1283,16 @@ impl Design<'_> {
                 self.keep_runs(kept);
             }
             None => {}
+        }
+        if cfg.is_empty() && !self.checked {
+            if let Some(sh) = early_shift(cal, &self.runs, self.phase, self.sess, &self.meta) {
+                self.checked = true;
+                // Committed now: the warning is printed and recorded at once, not after the space-filling stage.
+                if !sh.is_empty() {
+                    self.commit(cal, rn);
+                    if rn.c.strict { rn.shifted = true; return Err("--strict: the reference runs left this machine's history: session ended (measured runs are kept)".into()); }
+                }
+            }
         }
         // Brake events: twice under the same configuration (or one inside the other) makes it soft-unsafe.
         for c in std::mem::take(&mut rn.braked) {
@@ -1344,7 +1382,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let mut rng = Rng::new(seed ^ sess);
     let mut d = Design { phase, bs, sess, n_total, kernel, refs, runs: Vec::new(), oom_left: 12, t0: Instant::now(), secs: budget, spent: 0.0,
                          meta: Meta { src: if phase == Phase::Dev || rn.c.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, cx: rn.c.cx.clone() },
-                         strategy: dp.name, tries: 0 };
+                         strategy: dp.name, tries: 0, checked: false };
     rn.disp0 = None;
     if heat { eprintln!("{name}: heat is a design factor (heat-soaked runs: {:.0} s of every CPU busy first)", rn.c.heat_secs); }
     let prior: Vec<Cfg> = cal.rows.iter().filter(|r| r.phase == phase).map(|r| r.cfg.clone()).collect();
@@ -1356,14 +1394,14 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
 
     // 1. Space-filling: balanced over knobs, values and knob pairs, crowded runs with the depth.
     d.exec(cal, rn, &none)?;
-    let mut since = 0;
+    let mut n = 0;
     let init: Vec<Cfg> = model::design(&design_factors(&factors, &rn.unwritable), n_init, &mut rng, &dp.mix, &prior).into_iter().filter(|c| !cal.avoid_cfg(c)).collect();
     'init: for chunk in init.chunks(6) {
         for cfg in cool_first(chunk.to_vec()) {
             if d.secs.is_finite() && d.t0.elapsed().as_secs_f64() > d.secs * (dp.init + 0.1) { break 'init; }
             d.exec(cal, rn, &cfg)?;
-            since += 1;
-            if since >= 6 { d.exec(cal, rn, &none)?; since = 0; }
+            if ref_due(n) { d.exec(cal, rn, &none)?; }
+            n += 1;
         }
     }
     d.exec(cal, rn, &none)?;
@@ -1549,7 +1587,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
             if surprising { eprintln!("{}: {:.0} % of the recent confirmations were SURPRISES: this session chases doubt first", ph.name(), sr.unwrap_or(0.0) * 100.0); }
             Depth::progressive(p.stage(), its.len(), p.polish, surprising)
         } else { *dp };
-        if let Err(e) = design_phase(cal, &mut rn, *ph, its, *secs, &pdp, kernel, seed, confirm, &refs) { eprintln!("\n{e}"); if STOP.load(Ordering::SeqCst) || rn.power_lost { break; } }
+        if let Err(e) = design_phase(cal, &mut rn, *ph, its, *secs, &pdp, kernel, seed, confirm, &refs) { eprintln!("\n{e}"); if STOP.load(Ordering::SeqCst) || rn.power_lost || rn.shifted { break; } }
     }
     for e in rn.j.restore() { eprintln!("restore: {e}"); }
     if rn.io_session > 0 { cal.note_io(today(), rn.io_session); save(cal); }
@@ -1844,6 +1882,7 @@ fn main() {
         battery: src == "battery",
         bat_period, heat_secs: 15.0 * scale, cx, heat: heat_opt,
         io_budget: (opt("--io-budget").and_then(|s| s.parse::<f64>().ok()).unwrap_or(IO_BUDGET_GIB).max(0.0) * (1u64 << 30) as f64) as u64,
+        strict: flag("--strict"),
     };
     let rate = centurion_helpers::iorate::gather().bps;
     // Precise timers for the probes: with the default 50 µs timer slack the kernel may deliver every
@@ -1876,7 +1915,8 @@ fn main() {
     cal.on_battery = src == "battery";
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
     if let Some(name) = opt("--verify") {
-        let r = verify_main(&mut cal, &ctx, &name, opt("--rounds").and_then(|s| s.parse().ok()).unwrap_or(4), flag("--io"), opt("--goal"), rate, ram, &kernel);
+        let r = verify_main(&mut cal, &ctx, &name, opt("--rounds").and_then(|s| s.parse().ok()).unwrap_or(4), flag("--io"), opt("--goal"), rate, ram, &kernel,
+                            phase == "load", flag("--sequential"));
         if let Err(e) = r { eprintln!("centurion-calibrate --verify: {e}"); }
         centurion_helpers::autotune::evidence_taint(&ev0);
         return;
@@ -2258,7 +2298,9 @@ const NOT_IN_VERIFY: &[&str] = &["cpu.smt", "cpu.ccd_park", "cpu.pstate_status",
 /// calibrated part; keeps the result in the signature, and the runs as design rows when every
 /// change is a calibrated knob.
 #[allow(clippy::too_many_arguments)]
-fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with_io: bool, goal: Option<String>, rate: u64, ram: u64, kernel: &str) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with_io: bool, goal: Option<String>, rate: u64, ram: u64, kernel: &str,
+               load: bool, sequential: bool) -> Result<(), String> {
     if name.is_empty() || name.len() > 64 || !name.chars().all(|c| c.is_ascii_alphanumeric() || " _-.".contains(c)) || name.starts_with('.') { return Err(format!("invalid preset name '{name}'")); }
     let text = centurion_helpers::read_root_file(&format!("/etc/centurion/presets/{name}.json"), 256 * 1024)
         .ok_or_else(|| format!("preset \"{name}\" is not in the approved store (/etc/centurion/presets): save it in the GUI first"))?;
@@ -2273,6 +2315,9 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
         cfg.push((k.clone(), val));
     }
     if cfg.is_empty() { return Err(format!("\"{name}\" changes nothing here (all its values are live already)")); }
+    // `--goal all`: every goal's gain from the same runs; the preset's own goal (from its name) decides
+    // the sequential stop and the model check.
+    let all_goals = goal.as_deref() == Some("all");
     let goal = goal.as_deref().and_then(Goal::parse).or_else(|| {
         let n = name.to_lowercase();
         [("gam", Goal::Gaming), ("throughput", Goal::Throughput), ("compile", Goal::Throughput), ("power", Goal::PowerSave), ("battery", Goal::PowerSave)]
@@ -2286,15 +2331,26 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     let drifted: Vec<String> = cal.refs.keys().filter(|k| !calib::io_key(k) && !calib::dev_key(k))
         .filter(|k| match (live_label(k, ctx.disk.as_deref()), cal.ref_for(k, &ctx.cx)) { (Some(v), Some(r)) => v != r, _ => false })
         .cloned().collect();
-    eprintln!("verify \"{name}\" ({} change(s){}) against the boot state for {}: {rounds} ABBA round(s)",
-              cfg.len(), if skipped.is_empty() { String::new() } else { format!("; not written: {}", skipped.join(", ")) }, goal.label());
+    // The main phase: idle, or load (under the memory ballast, like the design's load phase).
+    let main = if load { Phase::Load } else { Phase::Idle };
+    eprintln!("verify \"{name}\" ({} change(s){}) against the boot state for {}, {} phase: {} ABBA round(s)",
+              cfg.len(), if skipped.is_empty() { String::new() } else { format!("; not written: {}", skipped.join(", ")) }, goal.label(), main.name(),
+              if sequential { format!("up to {rounds}, stopping once decided") } else { rounds.to_string() });
     let mut rn = Runner::new(ctx, rate, ram);
-    let bs = Benches { cpu_mem: true, cpu: true, idle: true, io: false };
+    let bs = if load { Benches { cpu_mem: true, cpu: true, ..Default::default() } } else { Benches { cpu_mem: true, cpu: true, idle: true, io: false } };
     let none: Cfg = Vec::new();
     let mut runs: BTreeMap<usize, Vec<Run>> = BTreeMap::new();
     // (round, ABBA position) of every run kept, per phase: a run that drops out must not shift the pairing.
     let mut tags: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
-    let phases: Vec<Phase> = if with_io && ctx.disk.is_some() { vec![Phase::Idle, Phase::Io] } else { vec![Phase::Idle] };
+    let phases: Vec<Phase> = if with_io && ctx.disk.is_some() { vec![main, Phase::Io] } else { vec![main] };
+    let meta = Meta { src: if ctx.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, cx: ctx.cx.clone() };
+    let sess = now() + 7;
+    // Rows of every phase with their (round, position) tags, and a goal's utility per kept run of each phase.
+    let rows_of = |runs: &BTreeMap<usize, Vec<Run>>, tags: &BTreeMap<usize, Vec<(usize, usize)>>| -> Vec<(Phase, Vec<Row>, Vec<(usize, usize)>)> {
+        runs.iter().map(|(pi, rs)| { let ph = Phase::from_idx(*pi as u64); (ph, compute_rows(rs, ph, sess, kernel, rs.len(), &meta), tags_of(tags, *pi)) }).collect()
+    };
+    let looks = rounds.saturating_sub(SEQ_MIN - 1).max(1);
+    let mut decided_at = None;
     'r: for r in 0..rounds {
         let order: [&Cfg; 4] = if r % 2 == 0 { [&none, &cfg, &cfg, &none] } else { [&cfg, &none, &none, &cfg] };
         for (pos, c) in order.into_iter().enumerate() {
@@ -2308,24 +2364,25 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
                 }
             }
         }
+        // Sequential: after every block from the third, stop once the goal's interval at the per-look
+        // level (Bonferroni over the looks the rounds allow) excludes 0.
+        if sequential && r + 1 >= SEQ_MIN && r + 1 < rounds {
+            let d = block_diffs(joint_utility(&vruns(&rows_of(&runs, &tags), goal)).into_iter());
+            if seq_decided(&d, looks) { decided_at = Some(r + 1); eprintln!("\ndecided after {} ABBA block(s): stopping", r + 1); break; }
+        }
     }
     for e in rn.j.restore() { eprintln!("\nrestore: {e}"); }
+    if let Some(b) = rn.ballast.take() { b.stop(); }
     centurion_helpers::stability::inflight_clear();
     eprintln!();
-    let meta = Meta { src: if ctx.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, cx: ctx.cx.clone() };
-    let sess = now() + 7;
     let mut objectives = serde_json::Map::new();
     let mut stored = false;
     let names = ["latency", "throughput", "power", "memory"];
     // Every kept run of every phase as (round, position, is B, goal utility of the phase, objectives).
-    let mut tagged: Vec<Vec<VRun>> = Vec::new();
-    for (pi, rs) in &runs {
-        let ph = Phase::from_idx(*pi as u64);
-        let rows = compute_rows(rs, ph, sess, kernel, rs.len(), &meta);
-        let wts = goal_wts(goal, ph);
-        let tg = tags.get(pi).map_or(&[][..], |v| v.as_slice());
-        let vr: Vec<VRun> = rows.iter().zip(tg).map(|(r, &(round, pos))| VRun { round, pos, b: !r.cfg.is_empty(), y: r.y,
-            u: (0..4).filter(|o| r.y[*o].is_finite()).map(|o| wts[o] * r.y[o]).sum() }).collect();
+    let prows = rows_of(&runs, &tags);
+    let tagged = vruns(&prows, goal);
+    for ((ph, rows, _), vr) in prows.iter().zip(&tagged) {
+        let ph = *ph;
         // Per objective: one B-A difference per ABBA block (drift inside the block cancels).
         for o in 0..4 {
             let d = block_diffs(vr.iter().filter(|x| x.y[o].is_finite()).map(|x| (x.round, x.b, x.y[o])));
@@ -2333,7 +2390,6 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
                 objectives.insert(format!("{}{}", if ph == Phase::Io { "io " } else { "" }, names[o]), json!([round3(st.mean), round3(st.se)]));
             }
         }
-        tagged.push(vr);
         // The runs join the design log when every change is a knob the model calibrates from the same reference.
         if ph == Phase::Idle && drifted.is_empty() && cfg.iter().all(|(k, _)| cal.refs.contains_key(k) && calib::phases_for(k, tune::find(k).map_or("", |t| t.group)).iter().any(|p| p.0 == Phase::Idle)) {
             cal.put_session(ph, sess, rows.clone());
@@ -2343,9 +2399,13 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     let gain = paired_stats(&block_diffs(joint_utility(&tagged).into_iter()));
     let (um, use_) = gain.as_ref().map_or((f64::NAN, f64::NAN), |g| (g.mean, g.se));
     let blocks = gain.as_ref().map_or(0, |g| g.n);
-    // What the model predicts for the calibrated part of the preset (idle phase, the session's context).
-    cal.set_target(vec![(1.0, cal.ctx_cfg(Phase::Idle, &ctx.cx))]);
-    let pred = cal.phase_model(Phase::Idle, goal_wts(goal, Phase::Idle)).map(|m| {
+    // Every other goal's gain from the same runs (`--goal all`).
+    let others: Vec<(Goal, Option<Paired>)> = if all_goals {
+        Goal::ALL.into_iter().filter(|g| *g != goal).map(|g| (g, paired_stats(&block_diffs(joint_utility(&vruns(&prows, g)).into_iter())))).collect()
+    } else { Vec::new() };
+    // What the model predicts for the calibrated part of the preset (main phase, the session's context).
+    cal.set_target(vec![(1.0, cal.ctx_cfg(main, &ctx.cx))]);
+    let pred = cal.phase_model(main, goal_wts(goal, main)).map(|m| {
         let keys: Vec<(String, String)> = cfg.iter().filter(|(k, _)| m.space.has(k)).cloned().collect();
         let mut j = Joint::new(Some(m), None, None, 0.5);
         j.ctxs = cal.target.borrow().clone();
@@ -2354,14 +2414,25 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     });
     println!("\nverify \"{name}\" for {}: {blocks} ABBA block(s), gains as paired B-A differences per block:", goal.label());
     for (k, x) in &objectives { println!("  {k:<16} {:+6.1} % ± {:.1}", x[0].as_f64().unwrap_or(0.0) * 100.0, x[1].as_f64().unwrap_or(0.0) * 100.0); }
+    // Sequential: the verdict is read at the per-look level, as the stopping rule was (else repeated looks inflate it).
+    let (lo, hi) = match (&gain, sequential) {
+        (Some(g), true) => { let h = t_crit(g.n - 1, SEQ_ALPHA / looks as f64) * g.se; (g.mean - h, g.mean + h) }
+        (Some(g), false) => (g.lo, g.hi),
+        _ => (f64::NAN, f64::NAN),
+    };
     match &gain {
-        Some(g) => println!("  weighted gain    {um:+.3} ± {use_:.3} (95 % CI {:+.3} .. {:+.3}, t with {} df)  -> {}", g.lo, g.hi, g.n - 1,
-                            if g.lo > 0.0 { "better than the boot state" } else if g.hi < 0.0 { "WORSE than the boot state" } else { "no credible difference" }),
+        Some(g) => println!("  weighted gain    {um:+.3} ± {use_:.3} ({} CI {lo:+.3} .. {hi:+.3}, t with {} df)  -> {}",
+                            if sequential { format!("sequential, {looks} look(s) at {:.2} %", 100.0 * SEQ_ALPHA / looks as f64) } else { "95 %".into() }, g.n - 1,
+                            if lo > 0.0 { "better than the boot state" } else if hi < 0.0 { "WORSE than the boot state" } else { "no credible difference" }),
         None => println!("  weighted gain    not measurable: fewer than two complete ABBA blocks"),
+    }
+    for (g, p) in &others {
+        match p { Some(p) => println!("  {:<16} {:+.3} ± {:.3} (95 % CI {:+.3} .. {:+.3})", g.key(), p.mean, p.se, p.lo, p.hi),
+                  None => println!("  {:<16} not measurable", g.key()) }
     }
     if let Some((k, mu, sd)) = pred {
         let agree = use_.is_finite() && (um - mu).abs() <= 2.0 * (use_ * use_ + sd * sd).sqrt();
-        if use_.is_finite() { cal.note_predcheck("verify", "idle", goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
+        if use_.is_finite() { cal.note_predcheck("verify", main.name(), goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
         println!("  model predicted  {mu:+.3} ± {sd:.3} for its {k} calibrated change(s) of {} -> {}", cfg.len(),
                  if agree { "as predicted" } else { "SURPRISE: the uncalibrated part or interactions the model has not seen matter" });
     }
@@ -2369,11 +2440,60 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     else if !drifted.is_empty() { println!("  the runs stay out of the design log: {} differ(s) from the calibration's reference now", drifted.join(", ")); }
     cal.verify.push(json!({"t": now(), "preset": name, "goal": goal.key(), "changes": cfg.len(), "rounds": blocks, "paired": true, "objectives": objectives,
                            "gain": [round3(um), round3(use_)], "ci95": gain.as_ref().map(|g| json!([round3(g.lo), round3(g.hi)])),
+                           "phase": main.name(), "sequential": sequential.then(|| json!({"looks": looks, "decided_at": decided_at})),
+                           "gains": (!others.is_empty()).then(|| others.iter().map(|(g, p)| (g.key().to_owned(), p.as_ref().map_or(Value::Null, |p| json!([round3(p.mean), round3(p.se)])))).collect::<serde_json::Map<_, _>>()),
                            "predicted": pred.map(|p| json!([p.0, round3(p.1), round3(p.2)])), "cx": ctx.cx}));
     let drop = cal.verify.len().saturating_sub(20);
     cal.verify.drain(..drop);
     save(cal);
     Ok(())
+}
+
+/// (round, position) tags of one phase's kept verify runs.
+fn tags_of(tags: &BTreeMap<usize, Vec<(usize, usize)>>, pi: usize) -> Vec<(usize, usize)> { tags.get(&pi).cloned().unwrap_or_default() }
+
+/// Every phase's kept runs with goal `g`'s utility in that phase.
+fn vruns(prows: &[(Phase, Vec<Row>, Vec<(usize, usize)>)], g: Goal) -> Vec<Vec<VRun>> {
+    prows.iter().map(|(ph, rows, tg)| {
+        let wts = goal_wts(g, *ph);
+        rows.iter().zip(tg).map(|(r, &(round, pos))| VRun { round, pos, b: !r.cfg.is_empty(), y: r.y,
+            u: (0..4).filter(|o| r.y[*o].is_finite()).map(|o| wts[o] * r.y[o]).sum() }).collect()
+    }).collect()
+}
+
+/// Sequential verify: first look after SEQ_MIN blocks; family-wise error SEQ_ALPHA split evenly
+/// over the looks (Bonferroni: <= 5 % false "better/worse" however many looks are taken).
+const SEQ_MIN: usize = 3;
+const SEQ_ALPHA: f64 = 0.05;
+
+/// Whether the block differences `d` already decide: their t interval at SEQ_ALPHA / looks excludes 0.
+fn seq_decided(d: &[f64], looks: usize) -> bool {
+    let Some(p) = paired_stats(d) else { return false };
+    d.len() >= SEQ_MIN && p.mean.abs() > t_crit(p.n - 1, SEQ_ALPHA / looks.max(1) as f64) * p.se
+}
+
+/// Two-sided critical value of Student's t (P(|T| > t) = alpha) for integer `df`: the exact CDF
+/// (Abramowitz & Stegun 26.7.3-4), inverted by bisection.
+fn t_crit(df: usize, alpha: f64) -> f64 {
+    if df == 0 { return f64::INFINITY; }
+    let inside = |t: f64| {
+        let th = (t / (df as f64).sqrt()).atan();
+        let (c2, s) = (th.cos().powi(2), th.sin());
+        let (mut term, mut sum) = (1.0, 1.0);
+        if df % 2 == 0 {
+            for k in (2..df).step_by(2) { term *= c2 * (k - 1) as f64 / k as f64; sum += term; }
+            s * sum
+        } else {
+            if df == 1 { return 2.0 * th / std::f64::consts::PI; }
+            let mut acc = 1.0;
+            for k in (3..df).step_by(2) { term *= c2 * (k - 1) as f64 / k as f64; acc += term; }
+            sum = acc;
+            2.0 / std::f64::consts::PI * (th + s * th.cos() * sum)
+        }
+    };
+    let (mut lo, mut hi) = (0.0, 1e4);
+    for _ in 0..100 { let m = 0.5 * (lo + hi); if inside(m) < 1.0 - alpha { lo = m } else { hi = m } }
+    0.5 * (lo + hi)
 }
 
 fn round3(x: f64) -> f64 { if x.is_finite() { (x * 1000.0).round() / 1000.0 } else { f64::NAN } }
@@ -2486,6 +2606,24 @@ mod tests {
     use super::*;
     fn meta() -> Meta { Meta { src: calib::PowerSrc::Rapl, cx: String::new() } }
     #[test]
+    fn early_shift_runs_at_the_second_reference_only() {
+        let s = |v: f64| -> Sample { [(Metric::CpuSingle, v)].into_iter().collect() };
+        let r = |cfg: Cfg, v: f64, i: usize| Run { cfg, s: s(v), order: i, t: i as u64, w: 1.0, temp: None };
+        let mut cal = Calibration::default();
+        for (i, v) in [100.0, 101.0, 99.5, 100.5].into_iter().enumerate() {
+            cal.note_baseline(baseline(&[r(Vec::new(), v, 0), r(Vec::new(), v, 1)], Phase::Idle, i as u64, &meta()));
+        }
+        let mut runs = vec![r(Vec::new(), 93.0, 0), r(vec![("k".into(), "1".into())], 90.0, 1)];
+        assert!(early_shift(&cal, &runs, Phase::Idle, 9, &meta()).is_none(), "one reference run: too early");
+        runs.push(r(Vec::new(), 93.0, 2));
+        let sh = early_shift(&cal, &runs, Phase::Idle, 9, &meta()).expect("checked at the second reference");
+        assert_eq!(sh.len(), 1, "a shifted session is flagged");
+        let ok = vec![r(Vec::new(), 100.2, 0), r(Vec::new(), 100.4, 1)];
+        assert!(early_shift(&cal, &ok, Phase::Idle, 9, &meta()).unwrap().is_empty(), "an ordinary session passes");
+        runs.push(r(Vec::new(), 93.0, 3));
+        assert!(early_shift(&cal, &runs, Phase::Idle, 9, &meta()).is_none(), "once only");
+    }
+    #[test]
     fn rows_carry_source_context_and_start_temperature() {
         let s = |w: f64| -> Sample { [(Metric::IdleW, w), (Metric::CpuSingle, 100.0)].into_iter().collect() };
         let hot = vec![("ctx.heat".to_owned(), "hot".to_owned())];
@@ -2560,6 +2698,26 @@ mod tests {
     /// --verify pairs by (round, ABBA position): a dropped run takes only its own slot out of the
     /// cross-phase sum (summing by index paired runs of different rounds after it), and the gain is the
     /// mean of one B-A difference per block with a t interval - drift between blocks cancels.
+    #[test]
+    fn sequential_verify_keeps_false_positives_under_5_percent() {
+        for (df, t) in [(1, 12.706), (2, 4.303), (4, 2.776), (7, 2.365), (10, 2.228)] { assert!((t_crit(df, 0.05) - t).abs() < 2e-3, "t({df}) = {}", t_crit(df, 0.05)); }
+        assert!((t_crit(2, 0.005) - 14.089).abs() < 0.01);
+        let mut rng = Rng::new(11);
+        let mut normal = || (-2.0 * (1.0 - rng.unit()).ln()).sqrt() * (std::f64::consts::TAU * rng.unit()).cos();
+        let (rounds, trials) = (12, 4000);
+        let looks = rounds - (SEQ_MIN - 1);
+        let (mut fp, mut early) = (0, 0);
+        for _ in 0..trials {
+            let d: Vec<f64> = (0..rounds).map(|_| normal()).collect();
+            if (SEQ_MIN..=rounds).any(|k| seq_decided(&d[..k], looks)) { fp += 1; }
+            let e: Vec<f64> = (0..rounds).map(|_| 2.0 + normal()).collect();
+            if (SEQ_MIN..rounds).any(|k| seq_decided(&e[..k], looks)) { early += 1; }
+        }
+        let fp = fp as f64 / trials as f64;
+        eprintln!("sequential verify: false positive rate {fp:.4}, early {:.3}", early as f64 / trials as f64);
+        assert!(fp <= 0.05, "false positive rate {fp}");
+        assert!(early as f64 / trials as f64 > 0.8, "a 2-sd gain is found before the last round");
+    }
     #[test]
     fn verify_pairs_runs_by_round_and_position() {
         // Two phases, 3 rounds; a strong drift between rounds (+1 per round), the preset is +0.1.

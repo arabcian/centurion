@@ -233,6 +233,14 @@ impl Metric {
 /// frame pacing of the game loop (every frame counts, not the worst five) and the package
 /// power it draws. Rows of set 4 stay and count 60 % (same probes, fewer metrics).
 pub const BENCH_VERSION: u8 = 5;
+/// Benchmark set of the storage suite (IO rows only; idle/load rows stay at BENCH_VERSION).
+/// 6 = the write is timed in 32 MiB parts, each committed with fdatasync: WriteMbs is the
+/// drive's own speed (not the page cache's up to the dirty limit) and FsyncP99Ms is read
+/// against a writer that commits; a drop between parts flags an exhausted SLC cache.
+pub const IO_BENCH_VERSION: u8 = 6;
+
+/// The current benchmark set of a phase's rows.
+pub fn bench_version(phase: Phase) -> u8 { if phase == Phase::Io { IO_BENCH_VERSION } else { BENCH_VERSION } }
 
 /// Scale of an objective that averages `k` metrics. A knob moves the one or two metrics it
 /// acts on and leaves the rest alone, so the plain mean shrank with every benchmark added: a
@@ -940,7 +948,7 @@ impl Calibration {
             let age = age_ref.saturating_sub(r.t) as f64 / 86_400.0;
             let k = if self.kernel.is_empty() || major_minor(&r.kernel) == mm { 1.0 } else { 0.5 };
             let k = k * self.row_env_weight(r.sess);
-            let b = if r.bv == BENCH_VERSION || r.field { 1.0 } else { 0.6 };
+            let b = if r.bv == bench_version(phase) || r.field { 1.0 } else { 0.6 };
             let mut cfg = r.cfg.clone();
             if !r.field {
                 for (key, mr) in &mrefs {

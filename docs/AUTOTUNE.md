@@ -300,7 +300,7 @@ autotune credits the power objective as throughput: the power weight grows by
 
 ## Verifying a preset (`--verify`)
 
-`sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--goal G]` measures a whole preset
+`sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--phase load] [--goal G|all] [--sequential]` measures a whole preset
 from the approved store against the boot state, ABBA-interleaved (drift cancels), on the
 idle benchmark suite (and the storage suite with `--io`). Every run is tagged with its ABBA
 round and position; the gains are **paired**: per round one difference B − A (mean of the
@@ -314,6 +314,13 @@ or the preset's name) with its interval (better / worse only when the interval e
 what the joint model predicted for the preset's calibrated part - `as predicted`,
 or `SURPRISE` when the uncalibrated part or interactions the model has not seen matter. CPU
 offlining, driver switches, firmware limits and radios are never written by a verification.
+`--phase load` runs the load suite under the memory ballast instead of the idle suite (the model
+check then reads the load model). `--goal all` also reports every other goal's weighted gain from
+the same runs (signature `gains`). `--sequential` makes `--rounds` a maximum: from the third block
+on, the run stops once the goal's interval excludes 0 at the per-look level 5 % / looks (Bonferroni;
+looks = rounds − 2), and the final verdict is read at that level too, so repeated looks keep false
+"better / worse" verdicts under 5 % (simulated: 3.2 % over 12 rounds). Signature: `phase`,
+`sequential` = {looks, decided_at}.
 The result is kept in the signature (`verify`, last 20: `gain` = [mean, se] of the paired
 differences, `ci95`, `rounds` = complete blocks, `paired: true`); when every change is a calibrated
 knob the runs also join the design log.
@@ -902,7 +909,7 @@ All options:
 | `--scene NAME` | measure in a scene's power context (profile, firmware limits, fan); put back afterwards |
 | `--no-fan-lock` | leave the fans on auto on AC (default: full speed for the session) |
 | `--heat` / `--no-heat` | force heat as a design factor on / off (default: deep/max and progressive stages from "crowd") |
-| `--verify NAME [--rounds N] [--io] [--goal G]` | the whole preset NAME against the boot state, ABBA |
+| `--verify NAME [--rounds N] [--io] [--phase load] [--goal G\|all] [--sequential]` | the whole preset NAME against the boot state, ABBA |
 | `--gpu-coupling [--secs S]` | CPU-GPU power coupling while a GPU-bound load runs |
 | `--field LOG... [--game NAME]` | import game sessions' frame-time logs (see *Field evidence*) |
 | `--schedule-boot [--sessions N] [--budget MIN] [--scene NAME]`, `--cancel-boot` | calibration at the next boot |

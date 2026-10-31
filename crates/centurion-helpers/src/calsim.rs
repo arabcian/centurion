@@ -258,7 +258,7 @@ fn calibrate(sc: &Scenario, seed: u64) -> Option<(Analysis, PhaseSet, [Option<Ar
         if s == 0 {
             for (i, c) in model::initial_design(&sc.factors, (per as f64 * 0.8) as usize, &mut rng).into_iter().enumerate() {
                 b.run(&c);
-                if i % 6 == 5 { b.run(&Vec::new()); }
+                if ref_due(i) { b.run(&Vec::new()); }
             }
         }
         while b.n + 6 <= end {
