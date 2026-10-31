@@ -129,12 +129,13 @@ alone, and the report says so. Rows of older signatures carry the file's last-se
 flag as their source.
 
 **Measurement context.** Each session records its context: power profile, AC or battery,
-the CPU firmware limits (PL1/PL2/PL3, temperature limit, CPU+GPU offset), the GPU limits
+the CPU firmware limits (PL1/PL2/PL3, cross-loading limit `ppt_cpu_cl`, temperature limit, CPU+GPU offset), the GPU limits
 (cTGP, Dynamic Boost; only read while the dGPU is usable), the fan mode and the Curve
 Optimizer state (ryzen-co-helper records what it applied in
 `/run/centurion/co-state.json`). Where a phase's runs were measured in more than
 one context, the context enters the model as pseudo-knobs (`ctx.profile`, `ctx.power`,
-`ctx.limits` = limits + fan + curve) whose interactions with every knob are learned like
+`ctx.limits` = limits + fan + curve, `ctx.cl` = `ppt_cpu_cl`, its own dimension because it was
+recorded later: sessions without it count as the reference and keep their `ctx.limits` id) whose interactions with every knob are learned like
 any other pair: EPP and boost under a 45 W Quiet limit are not EPP and boost under 130 W
 Performance. Autotune reads every effect *in the context the preset will run in*:
 the profile of the scene it is for (GUI: *Autotune for … for scene X*, CLI: `--profile`),
@@ -582,7 +583,10 @@ each phase's stage and what the log holds.
    measured (2–4×) and compared with the prediction: `as predicted` or
    `SURPRISE` (tolerance: twice the prediction's sd combined with the goal's run-to-run noise
    as the model measured it - it was a fixed 2 %); either way it joins the data. The count is
-   kept in the session's quality record (`checks`, `surprises`). **Rule:** when more than 30 %
+   kept in the session's quality record (`checks`, `surprises`), and every check (and every
+   `--verify` with a prediction) is logged as (predicted mean, sd, observed) in the signature's
+   `predcheck` (last 200). `--show` prints the share of the last 50 inside ±2 sd and a five-bin
+   PIT histogram; below 70 % (with ≥ 10 checks) autotune adds a warning note. **Rule:** when more than 30 %
    of the phase's checks in its last 4 sessions with confirmations (at least 3 checks) were
    surprises, the next progressive session of that phase chases doubt - the
    `lean/polish-doubt` shape (doubtful interactions and triples) - as soon as the coverage
@@ -910,7 +914,7 @@ centurion-helpers --bin centurion-calibrate sequential`; the noise/budget sweep 
 | `vm.percpu_pagelist_high_fraction` | measured (idle and loaded): 0 = kernel-sized per-CPU free lists, 8 / 32 / 128 = pinned. 1–7 are refused by the kernel and by the audit |
 | `vm.extfrag_threshold` | measured in the load phase (fragmented free memory): 250 / 500 / 750 |
 | `kernel.nmi_watchdog` | scored: off saves a performance counter per CPU and its NMIs, and costs the hard-lockup trace. The estimate alone never clears the margin; a measured idle-power gain can. `nowatchdog` / `nmi_watchdog=` on the command line wins. The soft-lockup detector (`kernel.watchdog`) is still never turned off |
-| `sched.feat_sis_util`, `sched.feat_ttwu_queue`, `sched.feat_cache_hot_buddy`, `sched.feat_wakeup_preemption` | measured only (no rule): wake-up search width, remote wake-ups by IPI or directly, buddies kept on their cache, batch behaviour |
+| `sched.feat_sis_util`, `sched.feat_ttwu_queue`, `sched.feat_cache_hot_buddy`, `sched.feat_wakeup_preemption`, `sched.feat_place_lag`, `sched.feat_place_deadline_initial`, `sched.feat_place_rel_deadline` | measured only (no rule): wake-up search width, remote wake-ups by IPI or directly, buddies kept on their cache, batch behaviour |
 | `blk.max_sectors_kb` | measured in the IO phase: ¼ and ½ of the live request size, jointly with read-ahead and the elevator |
 | `clock.source` | structural: switched back to `tsc` when another clock is in use and the kernel still lists the TSC. Never benchmarked |
 | launch block `timerslack_ns` | Gaming: 1 ns for the game's process tree (`centurion-gamemode RUN` / `WRAP`); in the GUI: Game launch → *Precise timers* |

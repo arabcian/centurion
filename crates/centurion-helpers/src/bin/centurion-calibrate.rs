@@ -353,7 +353,13 @@ fn run_io(c: &Ctx) -> Result<Sample, String> {
 fn run_dev(c: &Ctx) -> Result<Sample, String> {
     std::thread::sleep(ms(c, 3000));
     let mut s = Sample::new();
+    let (e0, t0) = (bench::battery_energy_uwh(), Instant::now());
     let w = bench::idle_w_with(ms(c, 10_000), true, c.bat_period).ok_or("no battery power reading")?;
+    // Second estimate from the energy counter over the same window: a power_now in the wrong
+    // unit or averaged by the firmware shows up as a disagreement.
+    if let Some(we) = e0.zip(bench::battery_energy_uwh()).and_then(|(a, b)| bench::energy_watts(a, b, t0.elapsed().as_secs_f64())) {
+        if bench::battery_estimates_disagree(w, we) { eprintln!("\nbattery: power reading {w:.1} W, energy counter {we:.1} W (> 20 % apart)"); }
+    }
     s.insert(Metric::IdleW, w);
     Ok(s)
 }
@@ -1360,6 +1366,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
                         let tol = 2.0 * (sd * sd + noise * noise / obs.len() as f64).sqrt();
                         checks += 1;
                         if (m - mu).abs() > tol { surprises += 1; }
+                        cal.note_predcheck("confirm", name, g.key(), *mu, tol / 2.0, m);
                         eprintln!("  {:<30} {} change(s): predicted {:+.3} ± {:.3}, measured {:+.3} ({} runs) {}", g.label(), cfg.len(), mu, sd, m, obs.len(),
                                   if (m - mu).abs() <= tol { "as predicted" } else { "SURPRISE (now part of the data)" });
                     }
@@ -1527,6 +1534,10 @@ fn show(c: &Calibration) {
     if !c.quality.is_empty() {
         println!("\nlast sessions:");
         for q in c.quality.iter().rev().take(8).rev() { println!("  {}", quality_line(q)); }
+    }
+    if let Some((n, cov, pit)) = c.predcheck_summary(50) {
+        println!("\npredictions vs measurements (last {n} confirmation/verify checks): {:.0} % inside ±2 sd (≈95 % if honest); PIT {:?} (flat = calibrated, U = too narrow)",
+                 cov * 100.0, pit);
     }
 }
 
@@ -2257,6 +2268,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     }
     if let Some((k, mu, sd)) = pred {
         let agree = use_.is_finite() && (um - mu).abs() <= 2.0 * (use_ * use_ + sd * sd).sqrt();
+        if use_.is_finite() { cal.note_predcheck("verify", "idle", goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
         println!("  model predicted  {mu:+.3} ± {sd:.3} for its {k} calibrated change(s) of {} -> {}", cfg.len(),
                  if agree { "as predicted" } else { "SURPRISE: the uncalibrated part or interactions the model has not seen matter" });
     }

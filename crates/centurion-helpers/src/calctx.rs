@@ -24,7 +24,7 @@ pub const SCENE_JOURNAL: &str = "/run/centurion/calibrate-scene.json";
 const HELPER_DIR: &str = match option_env!("CENTURION_HELPER_DIR") { Some(d) => d, None => "/usr/libexec/centurion" };
 
 /// Firmware attributes recorded as context (read through sysfs; never woken, never written here).
-const FW_ATTRS: &[&str] = &["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt", "cpu_temp", "gpu_nv_ac_offset", "gpu_temp"];
+const FW_ATTRS: &[&str] = &["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt", "ppt_cpu_cl", "cpu_temp", "gpu_nv_ac_offset", "gpu_temp"];
 /// GPU knobs behind WMI: read only while the dGPU is usable.
 const GPU_KEYS: &[(&str, &str)] = &[("gpu_nv_ctgp", "ctgp"), ("gpu_nv_ppab", "boost_up"), ("gpu_nv_cpu_boost", "boost_down")];
 
@@ -90,6 +90,7 @@ pub fn describe(d: &Value) -> String {
     if let Some(l) = d["limits"].as_object() {
         let g = |k: &str| l.get(k).and_then(Value::as_i64).map(|v| v.to_string()).unwrap_or_else(|| "-".into());
         p.push(format!("PL1/PL2/PL3 {}/{}/{} W", g("ppt_pl1_spl"), g("ppt_pl2_sppt"), g("ppt_pl3_fppt")));
+        if l.contains_key("ppt_cpu_cl") { p.push(format!("CPU CL {} W", g("ppt_cpu_cl"))); }
         if l.contains_key("gpu_nv_ctgp") { p.push(format!("cTGP {} W + boost {} W", g("gpu_nv_ctgp"), g("gpu_nv_ppab"))); }
     }
     if let Some(a) = d["adapter"].as_str() { p.push(a.to_owned()); }
@@ -332,6 +333,15 @@ mod tests {
         let d = json!({"profile": "performance", "power": "ac", "limits": {"ppt_pl1_spl": 80, "ppt_pl2_sppt": 110, "ppt_pl3_fppt": 120}, "fan": "full", "co": "reset"});
         let t = describe(&d);
         assert!(t.contains("80/110/120") && t.contains("fan full") && t.contains("CPU curve 0"), "{t}");
+        let mut cl = d.clone();
+        cl["limits"]["ppt_cpu_cl"] = json!(70);
+        assert!(describe(&cl).contains("CPU CL 70 W"));
+        // ppt_cpu_cl is its own dimension: the ctx.limits id of earlier sessions (no field) stays the same.
+        let dims = |d: &Value| crate::calib::Calibration::ctx_dims(d);
+        let lim = |d: &Value| dims(d).into_iter().find(|(k, _)| k == "ctx.limits");
+        assert_eq!(lim(&d), lim(&cl));
+        assert!(dims(&cl).contains(&("ctx.cl".to_owned(), "70".to_owned())));
+        assert!(!dims(&d).iter().any(|(k, _)| k == "ctx.cl"));
         assert!(scene_file("../x").is_err() && scene_file("").is_err());
     }
 }

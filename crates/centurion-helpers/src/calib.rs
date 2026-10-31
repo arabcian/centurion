@@ -523,6 +523,8 @@ impl std::fmt::Debug for ModelCache { fn fmt(&self, f: &mut std::fmt::Formatter<
 /// let a few long idle/load sessions push out every IO and DEV row - the storage suite and the
 /// battery-only device runs are the rarest measurements in the log and the hardest to redo.
 /// Field rows (game sessions) are bounded by their own record and never trimmed here.
+/// Prediction checks kept (`Calibration::predcheck`).
+const KEEP_PREDCHECK: usize = 200;
 const PHASE_ROWS: [usize; 4] = [1100, 1100, 600, 300];
 
 fn pidx(phase: Phase) -> usize { phase.idx() }
@@ -631,6 +633,10 @@ pub struct Calibration {
     /// Quality record of every design session (phase, runs, reference-run noise per objective,
     /// disturbed runs, unwritable values, interruptions), newest last.
     pub quality: Vec<Value>,
+    /// Predicted vs observed of every confirmation and verify check, newest last (`note_predcheck`):
+    /// {"t", "src": "confirm"|"verify", "phase", "goal", "mu", "sd", "obs"}; `sd` is the whole
+    /// tolerance scale (prediction sd and measurement noise combined).
+    pub predcheck: Vec<Value>,
     /// The file held idle/load data of an older benchmark set, which was dropped on reading.
     pub migrated: bool,
     /// Current kernel (major.minor) and time used to weight records.
@@ -761,7 +767,9 @@ impl Calibration {
         // sessions over many interaction terms.
         // GPU limits (cTGP, Dynamic Boost) do not change what a CPU knob does, and they are only readable
         // while the dGPU is on: they stay out of the id (the budget credit reads them from the description).
-        let cpu_lim: Map<String, Value> = desc["limits"].as_object().map(|m| m.iter().filter(|(k, _)| !k.starts_with("gpu_nv_")).map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
+        // ppt_cpu_cl was recorded later: kept out of the id (earlier sessions keep theirs) and given its
+        // own dimension; a session without it is unknown there, i.e. counts as the reference.
+        let cpu_lim: Map<String, Value> = desc["limits"].as_object().map(|m| m.iter().filter(|(k, _)| !k.starts_with("gpu_nv_") && *k != "ppt_cpu_cl").map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
         let mut lim = json!({"limits": cpu_lim, "fan": desc["fan"], "co": desc["co"]});
         // A USB-C charger caps the CPU like a lower limit does (only present then: the barrel adapter's
         // contexts keep the ids earlier sessions were recorded under).
@@ -769,6 +777,7 @@ impl Calibration {
         if !(desc["limits"].is_null() && desc["fan"].is_null() && desc["co"].is_null() && desc["adapter"].is_null()) {
             out.push(("ctx.limits".to_owned(), format!("L{:06x}", crate::model::fnv(lim.to_string().as_bytes()) & 0xFF_FFFF)));
         }
+        if let Some(cl) = desc["limits"]["ppt_cpu_cl"].as_i64() { out.push(("ctx.cl".to_owned(), cl.to_string())); }
         out
     }
     /// Per context dimension of one phase: the reference value when the phase's rows saw more than one
@@ -1426,7 +1435,7 @@ impl Calibration {
         }).collect();
         json!({"version": 9, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
-               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality,
+               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "predcheck": self.predcheck,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
                "brakes": cfgs_json(&self.brakes), "soft_unsafe": cfgs_json(&self.soft_unsafe),
                "unsafe_pinned": self.unsafe_pinned.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
@@ -1480,6 +1489,7 @@ impl Calibration {
         c.verify = v["verify"].as_array().cloned().unwrap_or_default();
         c.field_sessions = v["fs"].as_array().cloned().unwrap_or_default();
         c.quality = v["quality"].as_array().cloned().unwrap_or_default();
+        c.predcheck = v["predcheck"].as_array().cloned().unwrap_or_default();
         // Format <= 7: IO rows carried the CPU's start temperature; since 8 they carry the drive's.
         if version < 8 { for r in c.rows.iter_mut().filter(|r| r.phase == Phase::Io) { r.tc = f64::NAN; } }
         // Format 4 logged vm.dirty design rows against the live limits while labelling them window "1".
@@ -1601,6 +1611,28 @@ impl Calibration {
             }
         }
         crate::write_root_file(FILE, &body)
+    }
+    /// One prediction checked against a measurement (confirmation or `--verify`); the last 200 are kept.
+    pub fn note_predcheck(&mut self, src: &str, phase: &str, goal: &str, mu: f64, sd: f64, obs: f64) {
+        if !(mu.is_finite() && sd.is_finite() && sd > 0.0 && obs.is_finite()) { return; }
+        let r = |x: f64| (x * 10_000.0).round() / 10_000.0;
+        self.predcheck.push(json!({"t": self.now, "src": src, "phase": phase, "goal": goal, "mu": r(mu), "sd": r(sd), "obs": r(obs)}));
+        let drop = self.predcheck.len().saturating_sub(KEEP_PREDCHECK);
+        self.predcheck.drain(..drop);
+    }
+    /// Of the last `last` checks: how many, the share inside ±2 sd (the tolerance the checks use,
+    /// ~95 % when the intervals are honest) and a PIT histogram (Φ(z) in five bins; flat = calibrated,
+    /// U = intervals too narrow, hump = too wide). None without checks.
+    pub fn predcheck_summary(&self, last: usize) -> Option<(usize, f64, [usize; 5])> {
+        let zs: Vec<f64> = self.predcheck.iter().rev().take(last).filter_map(|c| {
+            let (mu, sd, obs) = (c["mu"].as_f64()?, c["sd"].as_f64()?, c["obs"].as_f64()?);
+            (sd > 0.0).then(|| (obs - mu) / sd)
+        }).collect();
+        if zs.is_empty() { return None; }
+        let mut pit = [0usize; 5];
+        for z in &zs { pit[((model::norm_cdf(*z) * 5.0) as usize).min(4)] += 1; }
+        let inside = zs.iter().filter(|z| z.abs() <= 2.0).count();
+        Some((zs.len(), inside as f64 / zs.len() as f64, pit))
     }
     /// Notes the quality record of a finished design session (the last `KEEP_QUALITY` are kept).
     pub fn note_quality(&mut self, q: Value) {
@@ -2222,6 +2254,24 @@ mod tests {
         v.as_object_mut().unwrap().remove("refs_cx");
         let old = Calibration::from_json(&v);
         assert!(old.refs_cx.is_empty() && old.ref_for("cpu.epp", &a) == old.refs.get("cpu.epp").cloned());
+    }
+    #[test]
+    fn prediction_checks_are_logged_capped_and_summarised() {
+        let mut c = Calibration::default();
+        assert!(c.predcheck_summary(50).is_none());
+        // Honest: |z| ≤ 2 except one; one bad input is ignored.
+        for i in 0..20 { c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.05 + 0.01 * (i % 5) as f64 * 0.4); }
+        c.note_predcheck("verify", "idle", "gaming", 0.05, 0.01, 0.10);
+        c.note_predcheck("verify", "idle", "gaming", 0.05, 0.0, 0.10);
+        let (n, cov, pit) = c.predcheck_summary(50).unwrap();
+        assert_eq!(n, 21);
+        assert!((cov - 20.0 / 21.0).abs() < 1e-9);
+        assert_eq!(pit.iter().sum::<usize>(), 21);
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.predcheck, c.predcheck);
+        for _ in 0..300 { c.note_predcheck("confirm", "load", "desktop", 0.0, 0.01, 0.05); }
+        assert_eq!(c.predcheck.len(), KEEP_PREDCHECK);
+        assert!(c.predcheck_summary(50).unwrap().1 < 0.7);
     }
     #[test]
     fn device_phase_adds_whole_machine_power() {

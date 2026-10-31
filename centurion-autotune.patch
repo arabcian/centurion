@@ -1,0 +1,801 @@
+diff -ruN -x target orig/crates/centurion-helpers/src/autotune.rs centurion-main/crates/centurion-helpers/src/autotune.rs
+--- orig/crates/centurion-helpers/src/autotune.rs	2026-10-31 12:32:24.746720330 +0300
++++ centurion-main/crates/centurion-helpers/src/autotune.rs	2026-10-31 12:41:22.164317207 +0300
+@@ -1248,6 +1248,9 @@
+     let hot: model::Cfg = dims.iter().cloned().chain(std::iter::once(("ctx.heat".to_owned(), "hot".to_owned()))).collect();
+     let t = if heat_known && w.heat > 0.0 { vec![(1.0 - w.heat, dims), (w.heat, hot)] } else { vec![(1.0, dims)] };
+     cal.set_target(t);
++    if let Some((n, cov, _)) = cal.predcheck_summary(50).filter(|x| x.0 >= 10 && x.1 < 0.7) {
++        notes.push(format!("Warning: only {:.0} % of the last {n} confirmation/verify measurements fell inside the predicted ±2 sd: the model's intervals are too narrow, treat its gains with caution.", cov * 100.0));
++    }
+     if cal.contexts.len() > 1 { notes.push(format!("Context: decided for {} (the calibration measured {} context(s)).", crate::calctx::describe(&desc), cal.contexts.len())); }
+     if heat_known && w.heat > 0.0 { notes.push(format!("Heat: {:.0} % of the weight on heat-soaked running (pre-heated calibration runs).", w.heat * 100.0)); }
+     // CPU-GPU budget: what the GPU makes of a watt the CPU leaves it.
+diff -ruN -x target orig/crates/centurion-helpers/src/bench.rs centurion-main/crates/centurion-helpers/src/bench.rs
+--- orig/crates/centurion-helpers/src/bench.rs	2026-10-31 12:32:24.748292219 +0300
++++ centurion-main/crates/centurion-helpers/src/bench.rs	2026-10-31 12:40:45.962835935 +0300
+@@ -437,17 +437,58 @@
+     if battery_uw().is_some() { "battery" } else if !Rapl::new().zones.is_empty() { "rapl" } else { "none" }
+ }
+ 
+-pub fn battery_uw() -> Option<f64> {
+-    for e in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
+-        let p = e.path();
++pub fn battery_uw() -> Option<f64> { battery_uw_in(std::path::Path::new("/sys/class/power_supply")) }
++
++/// Above this the reading is a unit or firmware error, not a laptop's discharge.
++const MAX_BATTERY_W: f64 = 300.0;
++
++/// Discharging batteries under `dir` (BAT0 + BAT1 machines discharge both).
++fn discharging(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
++    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
++    let mut v: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| {
+         let rd = |n: &str| std::fs::read_to_string(p.join(n)).ok().map(|s| s.trim().to_owned());
+-        if rd("type").as_deref() != Some("Battery") || rd("status").as_deref() != Some("Discharging") { continue; }
++        rd("type").as_deref() == Some("Battery") && rd("status").as_deref() == Some("Discharging")
++    }).collect();
++    v.sort();
++    v
++}
++fn sys_f64(p: &std::path::Path, n: &str) -> Option<f64> { std::fs::read_to_string(p.join(n)).ok()?.trim().parse().ok() }
++
++/// Discharge power (µW) of every discharging battery under `dir`, summed. None when none
++/// discharges, one of them has no reading, or the sum is implausible (> 300 W).
++pub fn battery_uw_in(dir: &std::path::Path) -> Option<f64> {
++    let bats = discharging(dir);
++    if bats.is_empty() { return None; }
++    let mut sum = 0.0;
++    for p in &bats {
+         // Some firmware reports the discharge as a negative current/power.
+-        if let Some(w) = rd("power_now").and_then(|v| v.parse::<f64>().ok()) { return Some(w.abs()); }
+-        let (i, v) = (rd("current_now")?.parse::<f64>().ok()?, rd("voltage_now")?.parse::<f64>().ok()?);
+-        return Some((i * v / 1e6).abs());
++        sum += match sys_f64(p, "power_now") {
++            Some(w) => w.abs(),
++            None => (sys_f64(p, "current_now")? * sys_f64(p, "voltage_now")? / 1e6).abs(),
++        };
+     }
+-    None
++    (sum.is_finite() && sum <= MAX_BATTERY_W * 1e6).then_some(sum)
++}
++
++/// Remaining energy (µWh) of the discharging batteries under `dir`: `energy_now`, else
++/// `charge_now` × `voltage_now`. None when any of them has neither.
++pub fn battery_energy_uwh_in(dir: &std::path::Path) -> Option<f64> {
++    let bats = discharging(dir);
++    if bats.is_empty() { return None; }
++    bats.iter().map(|p| sys_f64(p, "energy_now").or_else(|| Some(sys_f64(p, "charge_now")? * sys_f64(p, "voltage_now")? / 1e6))).sum()
++}
++pub fn battery_energy_uwh() -> Option<f64> { battery_energy_uwh_in(std::path::Path::new("/sys/class/power_supply")) }
++
++/// Watts from two energy readings `secs` apart; None when the counter did not move (too coarse
++/// for the window) or went up.
++pub fn energy_watts(e0_uwh: f64, e1_uwh: f64, secs: f64) -> Option<f64> {
++    let d = e0_uwh - e1_uwh;
++    (d > 0.0 && secs > 0.0).then(|| d * 3600.0 / secs / 1e6)
++}
++
++/// The power reading and the energy difference disagree by more than 20 %.
++pub fn battery_estimates_disagree(power_w: f64, energy_w: f64) -> bool {
++    (power_w - energy_w).abs() > 0.2 * power_w.max(energy_w)
+ }
+ 
+ /// RAPL package energy counters. Only package domains of the MSR interface: on Intel
+@@ -1302,6 +1343,35 @@
+     }
+ 
+     #[test]
++    fn battery_sums_every_discharging_battery_and_rejects_nonsense() {
++        let root = std::env::temp_dir().join(format!("centurion-bat-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        let dev = |name: &str, files: &[(&str, &str)]| {
++            let d = root.join(name);
++            std::fs::create_dir_all(&d).unwrap();
++            for (f, v) in files { std::fs::write(d.join(f), format!("{v}\n")).unwrap(); }
++        };
++        dev("AC", &[("type", "Mains"), ("online", "0")]);
++        dev("BAT0", &[("type", "Battery"), ("status", "Discharging"), ("power_now", "-8000000"), ("energy_now", "50000000")]);
++        dev("BAT1", &[("type", "Battery"), ("status", "Discharging"), ("current_now", "500000"), ("voltage_now", "12000000"),
++                      ("charge_now", "4000000")]);
++        assert_eq!(battery_uw_in(&root), Some(14_000_000.0));
++        assert_eq!(battery_energy_uwh_in(&root), Some(50_000_000.0 + 48_000_000.0));
++        // A charging battery is not counted.
++        dev("BAT1", &[("status", "Charging")]);
++        assert_eq!(battery_uw_in(&root), Some(8_000_000.0));
++        // Implausible (wrong unit): rejected.
++        dev("BAT0", &[("power_now", "800000000")]);
++        assert_eq!(battery_uw_in(&root), None);
++        let _ = std::fs::remove_dir_all(&root);
++        assert_eq!(battery_uw_in(&root), None);
++        // 10 Wh in an hour is 10 W; a counter that did not move gives nothing.
++        assert_eq!(energy_watts(20e6, 10e6, 3600.0), Some(10.0));
++        assert_eq!(energy_watts(10e6, 10e6, 12.0), None);
++        assert!(!battery_estimates_disagree(10.0, 11.0) && battery_estimates_disagree(10.0, 13.0));
++    }
++
++    #[test]
+     fn rapl_counts_the_package_once_and_survives_wrap() {
+         let root = std::env::temp_dir().join(format!("centurion-rapl-{}", std::process::id()));
+         let _ = std::fs::remove_dir_all(&root);
+diff -ruN -x target orig/crates/centurion-helpers/src/bin/centurion-calibrate.rs centurion-main/crates/centurion-helpers/src/bin/centurion-calibrate.rs
+--- orig/crates/centurion-helpers/src/bin/centurion-calibrate.rs	2026-10-31 12:32:24.751534655 +0300
++++ centurion-main/crates/centurion-helpers/src/bin/centurion-calibrate.rs	2026-10-31 12:41:22.163542638 +0300
+@@ -353,7 +353,13 @@
+ fn run_dev(c: &Ctx) -> Result<Sample, String> {
+     std::thread::sleep(ms(c, 3000));
+     let mut s = Sample::new();
++    let (e0, t0) = (bench::battery_energy_uwh(), Instant::now());
+     let w = bench::idle_w_with(ms(c, 10_000), true, c.bat_period).ok_or("no battery power reading")?;
++    // Second estimate from the energy counter over the same window: a power_now in the wrong
++    // unit or averaged by the firmware shows up as a disagreement.
++    if let Some(we) = e0.zip(bench::battery_energy_uwh()).and_then(|(a, b)| bench::energy_watts(a, b, t0.elapsed().as_secs_f64())) {
++        if bench::battery_estimates_disagree(w, we) { eprintln!("\nbattery: power reading {w:.1} W, energy counter {we:.1} W (> 20 % apart)"); }
++    }
+     s.insert(Metric::IdleW, w);
+     Ok(s)
+ }
+@@ -1360,6 +1366,7 @@
+                         let tol = 2.0 * (sd * sd + noise * noise / obs.len() as f64).sqrt();
+                         checks += 1;
+                         if (m - mu).abs() > tol { surprises += 1; }
++                        cal.note_predcheck("confirm", name, g.key(), *mu, tol / 2.0, m);
+                         eprintln!("  {:<30} {} change(s): predicted {:+.3} ± {:.3}, measured {:+.3} ({} runs) {}", g.label(), cfg.len(), mu, sd, m, obs.len(),
+                                   if (m - mu).abs() <= tol { "as predicted" } else { "SURPRISE (now part of the data)" });
+                     }
+@@ -1528,6 +1535,10 @@
+         println!("\nlast sessions:");
+         for q in c.quality.iter().rev().take(8).rev() { println!("  {}", quality_line(q)); }
+     }
++    if let Some((n, cov, pit)) = c.predcheck_summary(50) {
++        println!("\npredictions vs measurements (last {n} confirmation/verify checks): {:.0} % inside ±2 sd (≈95 % if honest); PIT {:?} (flat = calibrated, U = too narrow)",
++                 cov * 100.0, pit);
++    }
+ }
+ 
+ fn main() {
+@@ -2257,6 +2268,7 @@
+     }
+     if let Some((k, mu, sd)) = pred {
+         let agree = use_.is_finite() && (um - mu).abs() <= 2.0 * (use_ * use_ + sd * sd).sqrt();
++        if use_.is_finite() { cal.note_predcheck("verify", "idle", goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
+         println!("  model predicted  {mu:+.3} ± {sd:.3} for its {k} calibrated change(s) of {} -> {}", cfg.len(),
+                  if agree { "as predicted" } else { "SURPRISE: the uncalibrated part or interactions the model has not seen matter" });
+     }
+diff -ruN -x target orig/crates/centurion-helpers/src/bin/tune-helper.rs centurion-main/crates/centurion-helpers/src/bin/tune-helper.rs
+--- orig/crates/centurion-helpers/src/bin/tune-helper.rs	2026-10-31 12:32:24.752692978 +0300
++++ centurion-main/crates/centurion-helpers/src/bin/tune-helper.rs	2026-10-31 12:44:14.052165471 +0300
+@@ -370,6 +370,19 @@
+                 }
+             }
+         }
++        // irqbalance would rewrite the affinity within seconds (see tune::irqbalance_pause).
++        let mut irq_note: Option<String> = None;
++        if t.key == "irq.affinity" && !todo.is_empty() {
++            if v == "all" {
++                if let Ok(true) = tune::irqbalance_resume() { irq_note = Some("irqbalance restarted".into()); }
++            } else {
++                match tune::irqbalance_pause() {
++                    Ok(true) => irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into()),
++                    Ok(false) => {}
++                    Err(e) => irq_note = Some(e),
++                }
++            }
++        }
+         for (f, data, fresh) in todo {
+             match tune::write_value(t, &f, &data) {
+                 Ok(()) => {
+@@ -406,6 +419,7 @@
+         let mut r = json!({"key": t.key, "value": v, "written": written});
+         if refused > 0 { r["refused"] = json!(refused); }
+         if let Some(n) = powerd_note { r["note"] = json!(n); }
++        if let Some(n) = irq_note { r["note"] = json!(match r["note"].as_str() { Some(p) => format!("{p}; {n}"), None => n }); }
+         if errs.is_empty() {
+             r["ok"] = json!(true);
+         } else {
+@@ -465,6 +479,10 @@
+         }
+     }
+     if let Err(e) = tune::powerd_resume() { errs.push(json!({"key": "nvidia-powerd", "error": e})); }
++    // The daemon comes back with the affinity it would have fought (only if we stopped it).
++    if items.iter().enumerate().any(|(i, x)| x.0 == "irq.affinity" && !failed.contains(&i)) {
++        if let Err(e) = tune::irqbalance_resume() { errs.push(json!({"key": "irqbalance", "error": e})); }
++    }
+     (n, errs, deferred, failed)
+ }
+ 
+diff -ruN -x target orig/crates/centurion-helpers/src/calctx.rs centurion-main/crates/centurion-helpers/src/calctx.rs
+--- orig/crates/centurion-helpers/src/calctx.rs	2026-10-31 12:32:24.753810107 +0300
++++ centurion-main/crates/centurion-helpers/src/calctx.rs	2026-10-31 12:33:03.917409020 +0300
+@@ -24,7 +24,7 @@
+ const HELPER_DIR: &str = match option_env!("CENTURION_HELPER_DIR") { Some(d) => d, None => "/usr/libexec/centurion" };
+ 
+ /// Firmware attributes recorded as context (read through sysfs; never woken, never written here).
+-const FW_ATTRS: &[&str] = &["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt", "cpu_temp", "gpu_nv_ac_offset", "gpu_temp"];
++const FW_ATTRS: &[&str] = &["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt", "ppt_cpu_cl", "cpu_temp", "gpu_nv_ac_offset", "gpu_temp"];
+ /// GPU knobs behind WMI: read only while the dGPU is usable.
+ const GPU_KEYS: &[(&str, &str)] = &[("gpu_nv_ctgp", "ctgp"), ("gpu_nv_ppab", "boost_up"), ("gpu_nv_cpu_boost", "boost_down")];
+ 
+@@ -90,6 +90,7 @@
+     if let Some(l) = d["limits"].as_object() {
+         let g = |k: &str| l.get(k).and_then(Value::as_i64).map(|v| v.to_string()).unwrap_or_else(|| "-".into());
+         p.push(format!("PL1/PL2/PL3 {}/{}/{} W", g("ppt_pl1_spl"), g("ppt_pl2_sppt"), g("ppt_pl3_fppt")));
++        if l.contains_key("ppt_cpu_cl") { p.push(format!("CPU CL {} W", g("ppt_cpu_cl"))); }
+         if l.contains_key("gpu_nv_ctgp") { p.push(format!("cTGP {} W + boost {} W", g("gpu_nv_ctgp"), g("gpu_nv_ppab"))); }
+     }
+     if let Some(a) = d["adapter"].as_str() { p.push(a.to_owned()); }
+@@ -332,6 +333,15 @@
+         let d = json!({"profile": "performance", "power": "ac", "limits": {"ppt_pl1_spl": 80, "ppt_pl2_sppt": 110, "ppt_pl3_fppt": 120}, "fan": "full", "co": "reset"});
+         let t = describe(&d);
+         assert!(t.contains("80/110/120") && t.contains("fan full") && t.contains("CPU curve 0"), "{t}");
++        let mut cl = d.clone();
++        cl["limits"]["ppt_cpu_cl"] = json!(70);
++        assert!(describe(&cl).contains("CPU CL 70 W"));
++        // ppt_cpu_cl is its own dimension: the ctx.limits id of earlier sessions (no field) stays the same.
++        let dims = |d: &Value| crate::calib::Calibration::ctx_dims(d);
++        let lim = |d: &Value| dims(d).into_iter().find(|(k, _)| k == "ctx.limits");
++        assert_eq!(lim(&d), lim(&cl));
++        assert!(dims(&cl).contains(&("ctx.cl".to_owned(), "70".to_owned())));
++        assert!(!dims(&d).iter().any(|(k, _)| k == "ctx.cl"));
+         assert!(scene_file("../x").is_err() && scene_file("").is_err());
+     }
+ }
+diff -ruN -x target orig/crates/centurion-helpers/src/calib.rs centurion-main/crates/centurion-helpers/src/calib.rs
+--- orig/crates/centurion-helpers/src/calib.rs	2026-10-31 12:32:24.754052182 +0300
++++ centurion-main/crates/centurion-helpers/src/calib.rs	2026-10-31 12:42:36.993601971 +0300
+@@ -523,6 +523,8 @@
+ /// let a few long idle/load sessions push out every IO and DEV row - the storage suite and the
+ /// battery-only device runs are the rarest measurements in the log and the hardest to redo.
+ /// Field rows (game sessions) are bounded by their own record and never trimmed here.
++/// Prediction checks kept (`Calibration::predcheck`).
++const KEEP_PREDCHECK: usize = 200;
+ const PHASE_ROWS: [usize; 4] = [1100, 1100, 600, 300];
+ 
+ fn pidx(phase: Phase) -> usize { phase.idx() }
+@@ -631,6 +633,10 @@
+     /// Quality record of every design session (phase, runs, reference-run noise per objective,
+     /// disturbed runs, unwritable values, interruptions), newest last.
+     pub quality: Vec<Value>,
++    /// Predicted vs observed of every confirmation and verify check, newest last (`note_predcheck`):
++    /// {"t", "src": "confirm"|"verify", "phase", "goal", "mu", "sd", "obs"}; `sd` is the whole
++    /// tolerance scale (prediction sd and measurement noise combined).
++    pub predcheck: Vec<Value>,
+     /// The file held idle/load data of an older benchmark set, which was dropped on reading.
+     pub migrated: bool,
+     /// Current kernel (major.minor) and time used to weight records.
+@@ -761,7 +767,9 @@
+         // sessions over many interaction terms.
+         // GPU limits (cTGP, Dynamic Boost) do not change what a CPU knob does, and they are only readable
+         // while the dGPU is on: they stay out of the id (the budget credit reads them from the description).
+-        let cpu_lim: Map<String, Value> = desc["limits"].as_object().map(|m| m.iter().filter(|(k, _)| !k.starts_with("gpu_nv_")).map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
++        // ppt_cpu_cl was recorded later: kept out of the id (earlier sessions keep theirs) and given its
++        // own dimension; a session without it is unknown there, i.e. counts as the reference.
++        let cpu_lim: Map<String, Value> = desc["limits"].as_object().map(|m| m.iter().filter(|(k, _)| !k.starts_with("gpu_nv_") && *k != "ppt_cpu_cl").map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
+         let mut lim = json!({"limits": cpu_lim, "fan": desc["fan"], "co": desc["co"]});
+         // A USB-C charger caps the CPU like a lower limit does (only present then: the barrel adapter's
+         // contexts keep the ids earlier sessions were recorded under).
+@@ -769,6 +777,7 @@
+         if !(desc["limits"].is_null() && desc["fan"].is_null() && desc["co"].is_null() && desc["adapter"].is_null()) {
+             out.push(("ctx.limits".to_owned(), format!("L{:06x}", crate::model::fnv(lim.to_string().as_bytes()) & 0xFF_FFFF)));
+         }
++        if let Some(cl) = desc["limits"]["ppt_cpu_cl"].as_i64() { out.push(("ctx.cl".to_owned(), cl.to_string())); }
+         out
+     }
+     /// Per context dimension of one phase: the reference value when the phase's rows saw more than one
+@@ -1426,7 +1435,7 @@
+         }).collect();
+         json!({"version": 9, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
+                "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
+-               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality,
++               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "predcheck": self.predcheck,
+                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
+                "brakes": cfgs_json(&self.brakes), "soft_unsafe": cfgs_json(&self.soft_unsafe),
+                "unsafe_pinned": self.unsafe_pinned.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
+@@ -1480,6 +1489,7 @@
+         c.verify = v["verify"].as_array().cloned().unwrap_or_default();
+         c.field_sessions = v["fs"].as_array().cloned().unwrap_or_default();
+         c.quality = v["quality"].as_array().cloned().unwrap_or_default();
++        c.predcheck = v["predcheck"].as_array().cloned().unwrap_or_default();
+         // Format <= 7: IO rows carried the CPU's start temperature; since 8 they carry the drive's.
+         if version < 8 { for r in c.rows.iter_mut().filter(|r| r.phase == Phase::Io) { r.tc = f64::NAN; } }
+         // Format 4 logged vm.dirty design rows against the live limits while labelling them window "1".
+@@ -1602,6 +1612,28 @@
+         }
+         crate::write_root_file(FILE, &body)
+     }
++    /// One prediction checked against a measurement (confirmation or `--verify`); the last 200 are kept.
++    pub fn note_predcheck(&mut self, src: &str, phase: &str, goal: &str, mu: f64, sd: f64, obs: f64) {
++        if !(mu.is_finite() && sd.is_finite() && sd > 0.0 && obs.is_finite()) { return; }
++        let r = |x: f64| (x * 10_000.0).round() / 10_000.0;
++        self.predcheck.push(json!({"t": self.now, "src": src, "phase": phase, "goal": goal, "mu": r(mu), "sd": r(sd), "obs": r(obs)}));
++        let drop = self.predcheck.len().saturating_sub(KEEP_PREDCHECK);
++        self.predcheck.drain(..drop);
++    }
++    /// Of the last `last` checks: how many, the share inside ±2 sd (the tolerance the checks use,
++    /// ~95 % when the intervals are honest) and a PIT histogram (Φ(z) in five bins; flat = calibrated,
++    /// U = intervals too narrow, hump = too wide). None without checks.
++    pub fn predcheck_summary(&self, last: usize) -> Option<(usize, f64, [usize; 5])> {
++        let zs: Vec<f64> = self.predcheck.iter().rev().take(last).filter_map(|c| {
++            let (mu, sd, obs) = (c["mu"].as_f64()?, c["sd"].as_f64()?, c["obs"].as_f64()?);
++            (sd > 0.0).then(|| (obs - mu) / sd)
++        }).collect();
++        if zs.is_empty() { return None; }
++        let mut pit = [0usize; 5];
++        for z in &zs { pit[((model::norm_cdf(*z) * 5.0) as usize).min(4)] += 1; }
++        let inside = zs.iter().filter(|z| z.abs() <= 2.0).count();
++        Some((zs.len(), inside as f64 / zs.len() as f64, pit))
++    }
+     /// Notes the quality record of a finished design session (the last `KEEP_QUALITY` are kept).
+     pub fn note_quality(&mut self, q: Value) {
+         self.quality.push(q);
+@@ -2224,6 +2256,24 @@
+         assert!(old.refs_cx.is_empty() && old.ref_for("cpu.epp", &a) == old.refs.get("cpu.epp").cloned());
+     }
+     #[test]
++    fn prediction_checks_are_logged_capped_and_summarised() {
++        let mut c = Calibration::default();
++        assert!(c.predcheck_summary(50).is_none());
++        // Honest: |z| ≤ 2 except one; one bad input is ignored.
++        for i in 0..20 { c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.05 + 0.01 * (i % 5) as f64 * 0.4); }
++        c.note_predcheck("verify", "idle", "gaming", 0.05, 0.01, 0.10);
++        c.note_predcheck("verify", "idle", "gaming", 0.05, 0.0, 0.10);
++        let (n, cov, pit) = c.predcheck_summary(50).unwrap();
++        assert_eq!(n, 21);
++        assert!((cov - 20.0 / 21.0).abs() < 1e-9);
++        assert_eq!(pit.iter().sum::<usize>(), 21);
++        let back = Calibration::from_json(&c.to_json());
++        assert_eq!(back.predcheck, c.predcheck);
++        for _ in 0..300 { c.note_predcheck("confirm", "load", "desktop", 0.0, 0.01, 0.05); }
++        assert_eq!(c.predcheck.len(), KEEP_PREDCHECK);
++        assert!(c.predcheck_summary(50).unwrap().1 < 0.7);
++    }
++    #[test]
+     fn device_phase_adds_whole_machine_power() {
+         let mut c = Calibration::default();
+         c.refs.insert("snd.hda_power_save".into(), "0".into());
+diff -ruN -x target orig/crates/centurion-helpers/src/tune.rs centurion-main/crates/centurion-helpers/src/tune.rs
+--- orig/crates/centurion-helpers/src/tune.rs	2026-10-31 12:32:24.761337821 +0300
++++ centurion-main/crates/centurion-helpers/src/tune.rs	2026-10-31 12:45:53.972002297 +0300
+@@ -572,6 +572,15 @@
+     dbg(t("sched.feat_cache_hot_buddy", "Scheduler", "CACHE_HOT_BUDDY (debugfs)",
+       "The load balancer treats a task that was just chosen as next/last buddy as cache-hot and avoids migrating it (default on). On = buddies stay where their data is: better cache locality, and on a two-CCD chip fewer hops to the other L3. Off = they are moved like any other task: load evens out faster, at the price of cold caches after the move.",
+       Kind::Bool, NO, Target::SchedFeature("CACHE_HOT_BUDDY"))),
++    dbg(t("sched.feat_place_lag", "Scheduler", "PLACE_LAG (debugfs)",
++      "A task that slept is put back into the competition with the lag it had when it left (default on): a task that was owed CPU time keeps its claim, one that had run ahead keeps its debt, so sleeping neither earns nor loses fairness. Off = every woken task starts at the queue's average (zero lag): short sleepers (input, audio, a game's frame thread) can no longer carry a claim across a sleep, but neither can a hog shed its debt by napping. Leave on unless chasing a fairness regression.",
++      Kind::Bool, NO, Target::SchedFeature("PLACE_LAG"))),
++    dbg(t("sched.feat_place_deadline_initial", "Scheduler", "PLACE_DEADLINE_INITIAL (debugfs)",
++      "A freshly forked task gets half a slice before its first virtual deadline instead of a whole one (default on), so it eases into the competition without waiting a full slice behind the running tasks. Off = new tasks start with a full slice: a fork storm (a build, a launcher spawning helpers) preempts the running tasks a little less eagerly.",
++      Kind::Bool, NO, Target::SchedFeature("PLACE_DEADLINE_INITIAL"))),
++    dbg(t("sched.feat_place_rel_deadline", "Scheduler", "PLACE_REL_DEADLINE (debugfs)",
++      "Kernel 6.12+: a task moved to another runqueue (migration, cgroup or priority change) keeps its deadline relative to its own progress (default on) instead of getting a fresh one there. On = a migrated task neither jumps the queue nor falls back behind it; off = it is placed like a new arrival, which can delay a thread the load balancer just moved to the other CCD.",
++      Kind::Bool, NO, Target::SchedFeature("PLACE_REL_DEADLINE"))),
+     dbg(warn(t("sched.feat_wakeup_preemption", "Scheduler", "WAKEUP_PREEMPTION (debugfs)",
+       "Whether a task that wakes up may preempt the running one (default on). Off = no wake-up ever preempts: the running task keeps the CPU until its slice ends or the tick moves it on, as if everything ran as SCHED_BATCH. That is the most throughput a saturated machine gives (fewest context switches, warm caches) and the worst wake-up latency - input, audio and frame threads wait for a slice boundary. A batch/compile-box setting; never for gaming or desktop use.",
+       Kind::Bool, NO, Target::SchedFeature("WAKEUP_PREEMPTION")))),
+@@ -582,7 +591,7 @@
+       "Confines every unbound kernel workqueue (writeback, crypto, most filesystem background work) to the CPUs of one CCD, keeping that background work off whichever CCD the game runs on. Typical use: set this to 'frequency' (or whichever CCD is NOT hosting the game) while the Game launch tab's affinity points the game at 'cache'/the V-Cache CCD - filesystem/crypto work then physically cannot preempt or share L2/L3 with the game's threads. Pick 'all' to undo (kernel default spreads across every CPU). Only offered with 2+ CCDs; a single-CCD chip has nothing to confine work away from.",
+       Kind::Choice, Options::Special, Target::WqCpumask),
+     t("irq.affinity", "Scheduler", "IRQ affinity",
+-      "Sets smp_affinity_list for every IRQ to one CCD's CPUs, so device interrupts (network, USB, most peripherals) fire on cores the game is not using. Same pairing idea as workqueue CPUs above: point this at the non-gaming CCD. Best-effort by design - multi-queue NVMe/network IRQs are often kernel-managed and refuse a manual affinity change (reported as 'refused', not a failure); single-CPU-only IRQs (per-CPU timers) are skipped since they say nothing about policy either way. 'all' restores the kernel's default spread.",
++      "Sets smp_affinity_list for every IRQ to one CCD's CPUs, so device interrupts (network, USB, most peripherals) fire on cores the game is not using. Same pairing idea as workqueue CPUs above: point this at the non-gaming CCD. Best-effort by design - multi-queue NVMe/network IRQs are often kernel-managed and refuse a manual affinity change (reported as 'refused', not a failure); single-CPU-only IRQs (per-CPU timers) are skipped since they say nothing about policy either way. 'all' restores the kernel's default spread. A running irqbalance daemon would undo the setting within seconds: it is stopped while a CCD is set and started again on restore or 'all' (only if Centurion stopped it).",
+       Kind::Choice, Options::Special, Target::Irq),
+     // ── Storage ───────────────────────────────────────────────────────────
+     t("blk.scheduler", "Storage", "I/O scheduler",
+@@ -1225,6 +1234,53 @@
+     bin.and_then(|b| run_tool(&b, &args, std::time::Duration::from_secs(15))).is_some_and(|(ok, _)| ok)
+ }
+ 
++// ── irqbalance ─────────────────────────────────────────────────────────────
++// A running irqbalance daemon rewrites smp_affinity_list every few seconds and quietly undoes
++// irq.affinity. Applying an affinity stops it (marked first, like nvidia-powerd); restoring
++// irq.affinity starts it again, but only when we were the ones who stopped it.
++
++pub const IRQBALANCE_MARK: &str = "/run/centurion/tune/irqbalance-paused.json";
++
++/// Pids whose comm is "irqbalance" under a /proc-like `root`.
++pub fn irqbalance_pids_in(root: &Path) -> Vec<i32> {
++    std::fs::read_dir(root).into_iter().flatten().flatten()
++        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
++        .filter(|pid| read(&root.join(pid.to_string()).join("comm")).as_deref() == Some("irqbalance"))
++        .collect()
++}
++pub fn irqbalance_running() -> bool { !irqbalance_pids_in(Path::new("/proc")).is_empty() }
++
++fn irqbalance_wait(running: bool, ms: u64) -> bool {
++    let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
++    loop {
++        if irqbalance_running() == running { return true; }
++        if std::time::Instant::now() >= end { return false; }
++        std::thread::sleep(std::time::Duration::from_millis(50));
++    }
++}
++
++/// Before an IRQ affinity write. Ok(true): it ran and is stopped now (marked); Ok(false): it was not
++/// running (no mark: restore will not start it). Err: still running.
++pub fn irqbalance_pause() -> Result<bool, String> {
++    if !irqbalance_running() { return Ok(false); }
++    crate::write_root_file(IRQBALANCE_MARK, json!({"via": "service"}).to_string().as_bytes())?;
++    if service_ctl("irqbalance", "stop") && irqbalance_wait(false, 3000) { return Ok(true); }
++    let _ = std::fs::remove_file(IRQBALANCE_MARK);
++    Err("irqbalance is running and could not be stopped: it will undo the IRQ affinity within seconds".into())
++}
++
++/// Restart decision: only a daemon we stopped (mark present) that is not running again.
++pub fn irqbalance_should_start(marked: bool, running: bool) -> bool { marked && !running }
++
++/// After irq.affinity is restored (or set back to "all"). Ok(true) = restarted.
++pub fn irqbalance_resume() -> Result<bool, String> {
++    let marked = crate::read_root_file(IRQBALANCE_MARK, 4096).is_some();
++    if !marked || system_stopping() { return Ok(false); }
++    let _ = std::fs::remove_file(IRQBALANCE_MARK);
++    if !irqbalance_should_start(marked, irqbalance_running()) { return Ok(false); }
++    if service_ctl("irqbalance", "start") && irqbalance_wait(true, 3000) { Ok(true) } else { Err("irqbalance service did not start again".into()) }
++}
++
+ /// `systemctl <action> <name>.service` / `rc-service <name> <action>` (name must be a plain daemon name).
+ pub fn service_ctl(name: &str, action: &str) -> bool {
+     if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') || !matches!(action, "start" | "stop") { return false; }
+@@ -2811,6 +2867,31 @@
+     })
+ }
+ 
++/// Entries the kernel offers that the table does not know: `sched_burst_*` sysctls under `sysctl_dir`
++/// and feature bits in the text of debugfs sched/features. (name, value) - shown, never written.
++pub fn discover_in(sysctl_dir: &Path, features: Option<&str>) -> Vec<(String, String)> {
++    let known_files: Vec<&str> = TUNABLES.iter().filter_map(|t| match t.target { Target::File(p) => p.strip_prefix("/proc/sys/kernel/"), _ => None }).collect();
++    let known_feats: Vec<&str> = TUNABLES.iter().filter_map(|t| match t.target { Target::SchedFeature(n) => Some(n), _ => None }).collect();
++    let mut out: Vec<(String, String)> = std::fs::read_dir(sysctl_dir).into_iter().flatten().flatten().filter_map(|e| {
++        let name = e.file_name().to_str()?.to_owned();
++        if !name.starts_with("sched_burst_") { return None; }
++        if known_files.contains(&name.as_str()) { return None; }
++        Some((format!("kernel.{name}"), read(&e.path())?))
++    }).collect();
++    out.sort();
++    for w in features.unwrap_or("").split_whitespace() {
++        let (name, on) = match w.strip_prefix("NO_") { Some(n) => (n, "0"), None => (w, "1") };
++        if !known_feats.contains(&name) { out.push((format!("sched feature {name}"), on.to_owned())); }
++    }
++    out
++}
++
++/// `discover_in` on the live system (sched/features only when readable: debugfs is root-only).
++pub fn discovered() -> Vec<Value> {
++    let feats = read(Path::new("/sys/kernel/debug/sched/features"));
++    discover_in(Path::new("/proc/sys/kernel"), feats.as_deref()).into_iter().map(|(k, v)| json!({"name": k, "value": v})).collect()
++}
++
+ /// Rows whose state costs a child process (iw, ethtool, hdparm) or PCI config-space reads.
+ fn slow_to_read(t: &Tunable) -> bool {
+     matches!(t.target, Target::WifiPowerSave | Target::EthWol | Target::EthEee | Target::DiskApm(_) | Target::PciLatency)
+@@ -2842,6 +2923,9 @@
+             "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
+         });
+         if !light { row["help"] = json!(t.help); }
++        if matches!(t.target, Target::Irq) && irqbalance_running() {
++            row["conflict"] = json!("irqbalance is running: it would undo this setting within seconds. Applying a CCD stops it; restoring starts it again.");
++        }
+         row
+     }).collect();
+     let mut m = Map::new();
+@@ -2849,6 +2933,7 @@
+     m.insert("tunables".into(), Value::Array(rows));
+     m.insert("topology".into(), describe_topology());
+     m.insert("vendor".into(), json!(cpu_vendor().as_str()));
++    if !light { m.insert("discovered".into(), Value::Array(discovered())); }
+     Value::Object(m)
+ }
+ 
+@@ -2874,6 +2959,36 @@
+         assert!(match_park_record(&serde_json::json!({"role": "x", "cpus": []}), &[]).is_none());
+     }
+     #[test]
++    fn discovery_lists_only_what_the_table_does_not_know() {
++        let root = std::env::temp_dir().join(format!("centurion-sysctl-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        std::fs::create_dir_all(&root).unwrap();
++        for (f, v) in [("sched_burst_inherit_type", "2"), ("sched_burst_fork_atavistic", "1"), ("sched_bore", "1"), ("sched_burst_exclude_kthreads", "0")] {
++            std::fs::write(root.join(f), format!("{v}\n")).unwrap();
++        }
++        let d = discover_in(&root, Some("PLACE_LAG NO_HRTICK NEXT_BUDDY NO_SOME_NEW_BIT LATENCY_WARN"));
++        let names: Vec<&str> = d.iter().map(|x| x.0.as_str()).collect();
++        assert_eq!(names, ["kernel.sched_burst_exclude_kthreads", "kernel.sched_burst_fork_atavistic", "sched feature SOME_NEW_BIT", "sched feature LATENCY_WARN"]);
++        assert_eq!(d[2].1, "0");
++        let _ = std::fs::remove_dir_all(&root);
++    }
++    #[test]
++    fn irqbalance_is_found_and_only_restarted_when_we_stopped_it() {
++        let root = std::env::temp_dir().join(format!("centurion-proc-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&root);
++        for (pid, comm) in [("1", "init"), ("812", "irqbalance"), ("900", "irqbalance-ui"), ("self", "x")] {
++            std::fs::create_dir_all(root.join(pid)).unwrap();
++            std::fs::write(root.join(pid).join("comm"), format!("{comm}\n")).unwrap();
++        }
++        assert_eq!(irqbalance_pids_in(&root), vec![812]);
++        let _ = std::fs::remove_dir_all(root.join("812"));
++        assert!(irqbalance_pids_in(&root).is_empty());
++        let _ = std::fs::remove_dir_all(&root);
++        assert!(irqbalance_should_start(true, false));
++        assert!(!irqbalance_should_start(false, false), "a service that was already stopped is not started");
++        assert!(!irqbalance_should_start(true, true));
++    }
++    #[test]
+     fn new_targets() {
+         assert_eq!(wifi_ifname(Path::new("/sys/class/net/wlan0")).as_deref(), Some("wlan0"));
+         assert_eq!(wifi_ifname(Path::new("/sys/class/net/wlp4s0")).as_deref(), Some("wlp4s0"));
+diff -ruN -x target orig/crates/centurion-helpers/tests/doc_consistency.rs centurion-main/crates/centurion-helpers/tests/doc_consistency.rs
+--- orig/crates/centurion-helpers/tests/doc_consistency.rs	1970-01-01 02:00:00.000000000 +0200
++++ centurion-main/crates/centurion-helpers/tests/doc_consistency.rs	2026-10-31 12:33:44.937886794 +0300
+@@ -0,0 +1,72 @@
++//! docs/AUTOTUNE.md states exact numbers (weights, margins, caps). This test keeps the document,
++//! the code and the GUI's fallback copy of the weights from drifting apart.
++
++use centurion_helpers::autotune::{Goal, Weights, MARGIN};
++
++const DOC: &str = include_str!("../../../docs/AUTOTUNE.md");
++const AUTOTUNE_RS: &str = include_str!("../src/autotune.rs");
++const CALIB_RS: &str = include_str!("../src/calib.rs");
++const GUI: &str = include_str!("../../../gui/src/optimizetab.cpp");
++
++/// The value of `const NAME: f64 = <v>;` in a source file.
++fn src_const(src: &str, name: &str) -> f64 {
++    let pat = format!("const {name}: f64 = ");
++    let rest = &src[src.find(&pat).unwrap_or_else(|| panic!("{name} not found")) + pat.len()..];
++    rest[..rest.find(';').unwrap()].trim().parse().unwrap()
++}
++
++/// Squeezes whitespace so wrapped doc lines match.
++fn flat(s: &str) -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") }
++
++fn nums(s: &str) -> Vec<f64> {
++    s.split(|c: char| !(c.is_ascii_digit() || c == '.')).filter(|t| !t.is_empty()).map(|t| t.parse().unwrap()).collect()
++}
++
++const GOALS: [(Goal, &str, &str); 4] = [
++    (Goal::Gaming, "Gaming", "gaming"), (Goal::Desktop, "Desktop", ""),
++    (Goal::Throughput, "Throughput", "throughput"), (Goal::PowerSave, "Power save", "powersave"),
++];
++
++#[test]
++fn weight_table_matches_code() {
++    for (g, row, _) in GOALS {
++        let line = DOC.lines().find(|l| l.starts_with(&format!("| {row} "))).unwrap_or_else(|| panic!("no doc row for {row}"));
++        let doc = nums(line);
++        let w = Weights::for_goal(g);
++        // lat, thr, pwr, mem, stab, storage, heat, budget
++        let code = [w.latency, w.throughput, w.power, w.footprint, w.stability, w.storage, w.heat, w.budget];
++        assert_eq!(doc, code, "AUTOTUNE.md weight row {row}");
++    }
++}
++
++#[test]
++fn gui_fallback_weights_match_code() {
++    let body = &GUI[GUI.find("fallbackWeights(const QString &goal)").expect("fallbackWeights")..];
++    let body = &body[..body.find("\n}").unwrap()];
++    for (g, _, key) in GOALS {
++        let line = if key.is_empty() {
++            body.lines().find(|l| l.trim_start().starts_with("return {")).unwrap()
++        } else {
++            body.lines().find(|l| l.contains(&format!("\"{key}\""))).unwrap()
++        };
++        let list = &line[line.find('{').unwrap()..];
++        let w = Weights::for_goal(g);
++        let code = [w.latency, w.throughput, w.power, w.footprint, w.stability, w.storage, w.load, w.heat, w.budget];
++        assert_eq!(nums(list), code, "optimizetab.cpp fallbackWeights for {key:?}");
++    }
++}
++
++#[test]
++fn constants_match_doc() {
++    let doc = flat(DOC);
++    assert!(doc.contains(&format!("margin ({MARGIN:.2})")), "MARGIN {MARGIN} not in AUTOTUNE.md");
++    let seen = src_const(AUTOTUNE_RS, "SEEN_Z");
++    assert!(doc.contains(&format!("weighs by {seen} posterior standard deviations")), "SEEN_Z {seen} not in AUTOTUNE.md");
++    let keep = src_const(AUTOTUNE_RS, "KEEP_Z");
++    assert!(doc.contains(&format!("(mean + {keep} sd < 0")), "KEEP_Z {keep} not in AUTOTUNE.md");
++    let caps = CALIB_RS.lines().find(|l| l.contains("const PHASE_ROWS")).expect("PHASE_ROWS");
++    let caps = nums(&caps[caps.find('[').unwrap() + 1..]);
++    let caps: Vec<f64> = caps[1..].to_vec(); // drop the array length
++    let text = format!("at most {} idle / {} load / {} IO / {} DEV rows", caps[0], caps[1], caps[2], caps[3]);
++    assert!(doc.contains(&text), "PHASE_ROWS {caps:?}: expected \"{text}\" in AUTOTUNE.md");
++}
+diff -ruN -x target orig/crates/centurion-helpers/tests/properties.rs centurion-main/crates/centurion-helpers/tests/properties.rs
+--- orig/crates/centurion-helpers/tests/properties.rs	2026-10-31 12:32:24.763278761 +0300
++++ centurion-main/crates/centurion-helpers/tests/properties.rs	2026-10-31 12:42:57.040530609 +0300
+@@ -289,3 +289,60 @@
+         let _ = cooling::DEFAULT_LIMIT_C;
+     }
+ }
++
++// ── signature.json (calib::Calibration) ──────────────────────────────────────────────────────
++
++use centurion_helpers::calib::{Calibration, Phase, Row};
++
++/// A signature as the calibration writes it: a few contexts and design rows (NaN objectives included).
++fn any_signature() -> impl Strategy<Value = Calibration> {
++    let row = (0usize..4, 0u64..20, vec(("[a-z]{1,3}\\.[a-z]{1,4}", "[0-9]{1,2}"), 0..4),
++               vec(prop_oneof![Just(f64::NAN), -1.0f64..1.0], 4), 0.0f64..2.0, any::<bool>());
++    (vec(row, 0..40), vec("[a-z]{1,8}", 0..3)).prop_map(|(rows, profiles)| {
++        let mut c = Calibration::default();
++        let cxs: Vec<String> = profiles.iter().map(|p| c.add_context(json!({"profile": p, "power": "ac"}))).collect();
++        for (i, (ph, sess, cfg, y, w, field)) in rows.into_iter().enumerate() {
++            c.rows.push(Row { phase: Phase::ALL[ph], sess, t: 1_700_000_000 + i as u64, cfg, y: [y[0], y[1], y[2], y[3]], w, field,
++                              cx: cxs.get(i % cxs.len().max(1)).cloned().unwrap_or_default(), ..Default::default() });
++        }
++        c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.04);
++        c
++    })
++}
++
++proptest! {
++    /// Whatever JSON the file holds (any version number, any shape), reading it never panics, and
++    /// what it reads as is stable: written back and read again, it stays the same.
++    #[test]
++    fn signature_reader_survives_any_json(v in any_json(), version in prop_oneof![Just(None), (0u64..12).prop_map(Some)]) {
++        let mut v = v;
++        if let (Some(n), Some(o)) = (version, v.as_object_mut()) { o.insert("version".into(), json!(n)); }
++        let c = Calibration::from_json(&v);
++        let once = c.to_json();
++        prop_assert_eq!(Calibration::from_json(&once).to_json(), once);
++    }
++
++    /// Hand-shaped old-format fields (rows, keys, quality, verify of the wrong types) do not panic.
++    #[test]
++    fn old_format_fields_of_the_wrong_type(version in 1u64..10, rows in any_json(), keys in any_json(), q in any_json()) {
++        let v = json!({"version": version, "rows": rows, "keys": keys, "quality": q, "verify": q, "predcheck": q, "contexts": keys});
++        let _ = Calibration::from_json(&v).to_json();
++    }
++
++    /// Random bytes: either not JSON (the loader's "damaged" path) or read without a panic.
++    #[test]
++    fn damaged_bytes_never_panic(b in vec(any::<u8>(), 0..256)) {
++        if let Ok(v) = serde_json::from_slice::<Value>(&b) { let _ = Calibration::from_json(&v); }
++    }
++
++    /// A signature the calibration wrote round-trips: rows, contexts, prediction checks.
++    #[test]
++    fn signature_round_trip(c in any_signature()) {
++        let j = c.to_json();
++        let back = Calibration::from_json(&j);
++        prop_assert_eq!(back.rows.len(), c.rows.len());
++        prop_assert_eq!(&back.contexts, &c.contexts);
++        prop_assert_eq!(&back.predcheck, &c.predcheck);
++        prop_assert_eq!(back.to_json(), j);
++    }
++}
+diff -ruN -x target orig/docs/AUTOTUNE.md centurion-main/docs/AUTOTUNE.md
+--- orig/docs/AUTOTUNE.md	2026-10-31 12:32:24.767357643 +0300
++++ centurion-main/docs/AUTOTUNE.md	2026-10-31 12:45:47.132795091 +0300
+@@ -129,12 +129,13 @@
+ flag as their source.
+ 
+ **Measurement context.** Each session records its context: power profile, AC or battery,
+-the CPU firmware limits (PL1/PL2/PL3, temperature limit, CPU+GPU offset), the GPU limits
++the CPU firmware limits (PL1/PL2/PL3, cross-loading limit `ppt_cpu_cl`, temperature limit, CPU+GPU offset), the GPU limits
+ (cTGP, Dynamic Boost; only read while the dGPU is usable), the fan mode and the Curve
+ Optimizer state (ryzen-co-helper records what it applied in
+ `/run/centurion/co-state.json`). Where a phase's runs were measured in more than
+ one context, the context enters the model as pseudo-knobs (`ctx.profile`, `ctx.power`,
+-`ctx.limits` = limits + fan + curve) whose interactions with every knob are learned like
++`ctx.limits` = limits + fan + curve, `ctx.cl` = `ppt_cpu_cl`, its own dimension because it was
++recorded later: sessions without it count as the reference and keep their `ctx.limits` id) whose interactions with every knob are learned like
+ any other pair: EPP and boost under a 45 W Quiet limit are not EPP and boost under 130 W
+ Performance. Autotune reads every effect *in the context the preset will run in*:
+ the profile of the scene it is for (GUI: *Autotune for … for scene X*, CLI: `--profile`),
+@@ -582,7 +583,10 @@
+    measured (2–4×) and compared with the prediction: `as predicted` or
+    `SURPRISE` (tolerance: twice the prediction's sd combined with the goal's run-to-run noise
+    as the model measured it - it was a fixed 2 %); either way it joins the data. The count is
+-   kept in the session's quality record (`checks`, `surprises`). **Rule:** when more than 30 %
++   kept in the session's quality record (`checks`, `surprises`), and every check (and every
++   `--verify` with a prediction) is logged as (predicted mean, sd, observed) in the signature's
++   `predcheck` (last 200). `--show` prints the share of the last 50 inside ±2 sd and a five-bin
++   PIT histogram; below 70 % (with ≥ 10 checks) autotune adds a warning note. **Rule:** when more than 30 %
+    of the phase's checks in its last 4 sessions with confirmations (at least 3 checks) were
+    surprises, the next progressive session of that phase chases doubt - the
+    `lean/polish-doubt` shape (doubtful interactions and triples) - as soon as the coverage
+@@ -910,7 +914,7 @@
+ | `vm.percpu_pagelist_high_fraction` | measured (idle and loaded): 0 = kernel-sized per-CPU free lists, 8 / 32 / 128 = pinned. 1–7 are refused by the kernel and by the audit |
+ | `vm.extfrag_threshold` | measured in the load phase (fragmented free memory): 250 / 500 / 750 |
+ | `kernel.nmi_watchdog` | scored: off saves a performance counter per CPU and its NMIs, and costs the hard-lockup trace. The estimate alone never clears the margin; a measured idle-power gain can. `nowatchdog` / `nmi_watchdog=` on the command line wins. The soft-lockup detector (`kernel.watchdog`) is still never turned off |
+-| `sched.feat_sis_util`, `sched.feat_ttwu_queue`, `sched.feat_cache_hot_buddy`, `sched.feat_wakeup_preemption` | measured only (no rule): wake-up search width, remote wake-ups by IPI or directly, buddies kept on their cache, batch behaviour |
++| `sched.feat_sis_util`, `sched.feat_ttwu_queue`, `sched.feat_cache_hot_buddy`, `sched.feat_wakeup_preemption`, `sched.feat_place_lag`, `sched.feat_place_deadline_initial`, `sched.feat_place_rel_deadline` | measured only (no rule): wake-up search width, remote wake-ups by IPI or directly, buddies kept on their cache, batch behaviour |
+ | `blk.max_sectors_kb` | measured in the IO phase: ¼ and ½ of the live request size, jointly with read-ahead and the elevator |
+ | `clock.source` | structural: switched back to `tsc` when another clock is in use and the kernel still lists the TSC. Never benchmarked |
+ | launch block `timerslack_ns` | Gaming: 1 ns for the game's process tree (`centurion-gamemode RUN` / `WRAP`); in the GUI: Game launch → *Precise timers* |
+diff -ruN -x target orig/docs/ROADMAP-AUTOTUNE.md centurion-main/docs/ROADMAP-AUTOTUNE.md
+--- orig/docs/ROADMAP-AUTOTUNE.md	2026-10-31 12:32:24.767671104 +0300
++++ centurion-main/docs/ROADMAP-AUTOTUNE.md	2026-10-31 12:51:33.204978864 +0300
+@@ -9,6 +9,22 @@
+ 
+ ---
+ 
++## İlerleme (2026-10-31)
++
++**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
++
++| ID | Durum | Not |
++|---|---|---|
++| D1 | ✅ | `tests/doc_consistency.rs`: ağırlık tablosu, GUI `fallbackWeights`, `MARGIN`, `SEEN_Z`, `KEEP_Z`, `PHASE_ROWS` cap'leri. `MODESTY` dokümanda sayı olarak geçmediği için kontrol dışı. |
++| E8 | ✅ | `ppt_cpu_cl` bağlama kaydedilir; `ctx.limits` kimliğine **girmez** (eski oturumların kimliği aynı kalır), ayrı `ctx.cl` boyutu olur: alanı olmayan eski oturum referans sayılır. |
++| B3 | ✅ | Signature `predcheck` (son 200; confirm + verify), `--show` kapsama + 5 kutulu PIT, autotune'da < %70 (≥ 10 kontrol) uyarısı. |
++| A11 | ✅ | Tüm deşarj olan bataryalar toplanır, > 300 W reddedilir; DEV koşusunda `energy_now` (yoksa `charge_now × voltage_now`) farkıyla ikinci tahmin, > %20 ayrışmada uyarı (yalnız uyarı; metrik değişmez). |
++| D2 | ✅ | `tests/properties.rs`: rastgele JSON / eski sürüm / bozuk bayt / round-trip. 8 MiB sınırı testi yok (`save` kök + dosya ister; budama mantığı private). |
++| E2 | ✅ (kısmi) | irqbalance tespiti, satırda uyarı (`conflict` → GUI ⚠ + tooltip), CCD uygulanınca servis durdurulur (işaret dosyası), restore / `all` ile yalnızca bizim durdurduğumuz servis geri başlatılır. **Yok:** 10 s sonra drift yeniden okuma, kullanıcı seçeneği (otomatik yapılıyor). |
++| E7 | ✅ | `PLACE_LAG`, `PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` tam satır (Scheduler grubu → kalibrasyona otomatik girer). Tabloda olmayan `sched_burst_*` ve sched feature'lar `describe.discovered` ile GUI'de salt-okunur listelenir (elle yazma desteği yok). |
++
++**Kalan:** B1, B5, A3, A1, A2, A4, A5, C1, C2, C3, B4, B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, C7, E1, E3, E4, E5, E6, E9, E10, E11, E12, E13.
++
+ ## 0. Mevcut durum (yeniden yapılmasın)
+ 
+ Sistem zaten çok olgun; aşağıdakiler **var ve çalışıyor**, maddeler bunların üzerine kurulur:
+diff -ruN -x target orig/gui/src/optimizetab.cpp centurion-main/gui/src/optimizetab.cpp
+--- orig/gui/src/optimizetab.cpp	2026-10-31 12:32:24.782117380 +0300
++++ centurion-main/gui/src/optimizetab.cpp	2026-10-31 12:45:47.133424362 +0300
+@@ -869,6 +869,7 @@
+     state_ = d.value("state").toObject();
+     isolation_ = d.value("isolation").toObject();  // same describe poll: no extra cost
+     boot_ = d.value("boot").toObject();
++    if (!light) discovered_ = d.value("discovered").toArray();
+     if (wirelessLock_ && !busy_) {  // the root-owned marker is the truth, not the checkbox
+         const QSignalBlocker b(wirelessLock_);
+         wirelessLock_->setChecked(d.value("wireless_pm_lock").toBool());
+@@ -988,6 +989,7 @@
+         r.kind = o.value("kind").toString();
+         r.debugfs = o.value("debugfs").toBool();
+         r.caution = o.value("caution").toBool();
++        r.conflict = o.value("conflict").toString();
+         r.hotplug = o.value("hotplug").toBool();
+         r.userSwitch = o.value("user_switch").toBool() || isRadioSwitch(r.key);
+         rows_.append(r);
+@@ -1023,7 +1025,7 @@
+             const QString key = r.key;
+             r.include = new QCheckBox(page);
+             r.include->setToolTip("Include in Apply, Save and boot preset");
+-            r.name = new QLabel((r.caution ? QStringLiteral("⚠ ") : QString()) + r.label, page);
++            r.name = new QLabel((r.caution || !r.conflict.isEmpty() ? QStringLiteral("⚠ ") : QString()) + r.label, page);
+             // Fixed-width div: Qt wraps rich-text tooltips to the widget's width by
+             // default, which for a short label would squeeze a long explanation into
+             // a tall, narrow column. 420px reads as normal paragraphs instead.
+@@ -1032,6 +1034,7 @@
+             if (r.debugfs) tip += "<br><i>debugfs: the live value is readable by root only.</i>";
+             if (r.hotplug) tip += "<br><i>Hot-plugs CPUs: applied after every other row, restored first.</i>";
+             if (r.caution) tip += QStringLiteral("<br><span style='color:%1'>Can cost stability, heat or idle power.</span>").arg(theme::WARN);
++            if (!r.conflict.isEmpty()) tip += QStringLiteral("<br><span style='color:%1'>%2</span>").arg(theme::WARN, r.conflict.toHtmlEscaped());
+             r.name->setToolTip(tip);
+             r.name->setTextFormat(Qt::PlainText);
+             r.cur = new QLabel(page);
+@@ -1097,6 +1100,16 @@
+             updateRow(r, rows[i].toObject());
+             if (r.available) ++available;
+         }
++        if (group == QLatin1String("Scheduler") && !discovered_.isEmpty()) {
++            QStringList items;
++            for (const auto &v : discovered_)
++                items << QStringLiteral("%1 = %2").arg(v.toObject().value("name").toString(), v.toObject().value("value").toString());
++            auto *disc = new QLabel(QStringLiteral("Discovered (not in Centurion's table; shown only, set by hand, not calibrated): ") + items.join(QStringLiteral(", ")), page);
++            disc->setWordWrap(true);
++            disc->setTextInteractionFlags(Qt::TextSelectableByMouse);
++            disc->setProperty("role", "muted");
++            grid->addWidget(disc, line++, 0, 1, 5);
++        }
+         grid->setColumnStretch(1, 2);
+         grid->setColumnStretch(3, 3);
+         grid->setRowStretch(line, 1);
+diff -ruN -x target orig/gui/src/optimizetab.h centurion-main/gui/src/optimizetab.h
+--- orig/gui/src/optimizetab.h	2026-10-31 12:32:24.782256214 +0300
++++ centurion-main/gui/src/optimizetab.h	2026-10-31 12:45:47.133026966 +0300
+@@ -73,6 +73,7 @@
+     struct Option { QString value, label; };
+     struct Row {
+         QString key, group, label, help, kind, current;
++        QString conflict;  // another daemon fights this row (irqbalance vs irq.affinity)
+         QList<Option> options;
+         qint64 min = 0, max = 0;
+         bool available = false, debugfs = false, caution = false, hotplug = false;
+@@ -165,6 +166,7 @@
+ 
+     QList<Row> rows_;
+     QJsonObject topology_, state_, boot_, isolation_;
++    QJsonArray discovered_;  // scheduler entries the helper's table does not know (read-only)
+     bool active_ = false, busy_ = false, describing_ = false, helperMissing_ = false;
+     bool needFull_ = true;                 // next describe must read the slow rows too
+     QHash<QString, QJsonObject> slowKeep_; // slow rows as of the last full describe

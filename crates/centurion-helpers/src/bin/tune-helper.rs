@@ -370,6 +370,19 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
                 }
             }
         }
+        // irqbalance would rewrite the affinity within seconds (see tune::irqbalance_pause).
+        let mut irq_note: Option<String> = None;
+        if t.key == "irq.affinity" && !todo.is_empty() {
+            if v == "all" {
+                if let Ok(true) = tune::irqbalance_resume() { irq_note = Some("irqbalance restarted".into()); }
+            } else {
+                match tune::irqbalance_pause() {
+                    Ok(true) => irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into()),
+                    Ok(false) => {}
+                    Err(e) => irq_note = Some(e),
+                }
+            }
+        }
         for (f, data, fresh) in todo {
             match tune::write_value(t, &f, &data) {
                 Ok(()) => {
@@ -406,6 +419,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         let mut r = json!({"key": t.key, "value": v, "written": written});
         if refused > 0 { r["refused"] = json!(refused); }
         if let Some(n) = powerd_note { r["note"] = json!(n); }
+        if let Some(n) = irq_note { r["note"] = json!(match r["note"].as_str() { Some(p) => format!("{p}; {n}"), None => n }); }
         if errs.is_empty() {
             r["ok"] = json!(true);
         } else {
@@ -465,6 +479,10 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
         }
     }
     if let Err(e) = tune::powerd_resume() { errs.push(json!({"key": "nvidia-powerd", "error": e})); }
+    // The daemon comes back with the affinity it would have fought (only if we stopped it).
+    if items.iter().enumerate().any(|(i, x)| x.0 == "irq.affinity" && !failed.contains(&i)) {
+        if let Err(e) = tune::irqbalance_resume() { errs.push(json!({"key": "irqbalance", "error": e})); }
+    }
     (n, errs, deferred, failed)
 }
 

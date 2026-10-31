@@ -437,17 +437,58 @@ pub fn power_source() -> &'static str {
     if battery_uw().is_some() { "battery" } else if !Rapl::new().zones.is_empty() { "rapl" } else { "none" }
 }
 
-pub fn battery_uw() -> Option<f64> {
-    for e in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
-        let p = e.path();
+pub fn battery_uw() -> Option<f64> { battery_uw_in(std::path::Path::new("/sys/class/power_supply")) }
+
+/// Above this the reading is a unit or firmware error, not a laptop's discharge.
+const MAX_BATTERY_W: f64 = 300.0;
+
+/// Discharging batteries under `dir` (BAT0 + BAT1 machines discharge both).
+fn discharging(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut v: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| {
         let rd = |n: &str| std::fs::read_to_string(p.join(n)).ok().map(|s| s.trim().to_owned());
-        if rd("type").as_deref() != Some("Battery") || rd("status").as_deref() != Some("Discharging") { continue; }
+        rd("type").as_deref() == Some("Battery") && rd("status").as_deref() == Some("Discharging")
+    }).collect();
+    v.sort();
+    v
+}
+fn sys_f64(p: &std::path::Path, n: &str) -> Option<f64> { std::fs::read_to_string(p.join(n)).ok()?.trim().parse().ok() }
+
+/// Discharge power (µW) of every discharging battery under `dir`, summed. None when none
+/// discharges, one of them has no reading, or the sum is implausible (> 300 W).
+pub fn battery_uw_in(dir: &std::path::Path) -> Option<f64> {
+    let bats = discharging(dir);
+    if bats.is_empty() { return None; }
+    let mut sum = 0.0;
+    for p in &bats {
         // Some firmware reports the discharge as a negative current/power.
-        if let Some(w) = rd("power_now").and_then(|v| v.parse::<f64>().ok()) { return Some(w.abs()); }
-        let (i, v) = (rd("current_now")?.parse::<f64>().ok()?, rd("voltage_now")?.parse::<f64>().ok()?);
-        return Some((i * v / 1e6).abs());
+        sum += match sys_f64(p, "power_now") {
+            Some(w) => w.abs(),
+            None => (sys_f64(p, "current_now")? * sys_f64(p, "voltage_now")? / 1e6).abs(),
+        };
     }
-    None
+    (sum.is_finite() && sum <= MAX_BATTERY_W * 1e6).then_some(sum)
+}
+
+/// Remaining energy (µWh) of the discharging batteries under `dir`: `energy_now`, else
+/// `charge_now` × `voltage_now`. None when any of them has neither.
+pub fn battery_energy_uwh_in(dir: &std::path::Path) -> Option<f64> {
+    let bats = discharging(dir);
+    if bats.is_empty() { return None; }
+    bats.iter().map(|p| sys_f64(p, "energy_now").or_else(|| Some(sys_f64(p, "charge_now")? * sys_f64(p, "voltage_now")? / 1e6))).sum()
+}
+pub fn battery_energy_uwh() -> Option<f64> { battery_energy_uwh_in(std::path::Path::new("/sys/class/power_supply")) }
+
+/// Watts from two energy readings `secs` apart; None when the counter did not move (too coarse
+/// for the window) or went up.
+pub fn energy_watts(e0_uwh: f64, e1_uwh: f64, secs: f64) -> Option<f64> {
+    let d = e0_uwh - e1_uwh;
+    (d > 0.0 && secs > 0.0).then(|| d * 3600.0 / secs / 1e6)
+}
+
+/// The power reading and the energy difference disagree by more than 20 %.
+pub fn battery_estimates_disagree(power_w: f64, energy_w: f64) -> bool {
+    (power_w - energy_w).abs() > 0.2 * power_w.max(energy_w)
 }
 
 /// RAPL package energy counters. Only package domains of the MSR interface: on Intel
@@ -1299,6 +1340,35 @@ mod tests {
         if std::path::Path::new("/dev/shm").is_dir() { assert!(disk_of("/dev/shm").is_err()); }
         assert_eq!(dev_split((259u64 << 8) | 3), (259, 3));
         assert_eq!(dev_split(((300u64 & 0xfff) << 8) | ((1000u64 & 0xff) | ((1000u64 & !0xff) << 12))), (300, 1000));
+    }
+
+    #[test]
+    fn battery_sums_every_discharging_battery_and_rejects_nonsense() {
+        let root = std::env::temp_dir().join(format!("centurion-bat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dev = |name: &str, files: &[(&str, &str)]| {
+            let d = root.join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            for (f, v) in files { std::fs::write(d.join(f), format!("{v}\n")).unwrap(); }
+        };
+        dev("AC", &[("type", "Mains"), ("online", "0")]);
+        dev("BAT0", &[("type", "Battery"), ("status", "Discharging"), ("power_now", "-8000000"), ("energy_now", "50000000")]);
+        dev("BAT1", &[("type", "Battery"), ("status", "Discharging"), ("current_now", "500000"), ("voltage_now", "12000000"),
+                      ("charge_now", "4000000")]);
+        assert_eq!(battery_uw_in(&root), Some(14_000_000.0));
+        assert_eq!(battery_energy_uwh_in(&root), Some(50_000_000.0 + 48_000_000.0));
+        // A charging battery is not counted.
+        dev("BAT1", &[("status", "Charging")]);
+        assert_eq!(battery_uw_in(&root), Some(8_000_000.0));
+        // Implausible (wrong unit): rejected.
+        dev("BAT0", &[("power_now", "800000000")]);
+        assert_eq!(battery_uw_in(&root), None);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(battery_uw_in(&root), None);
+        // 10 Wh in an hour is 10 W; a counter that did not move gives nothing.
+        assert_eq!(energy_watts(20e6, 10e6, 3600.0), Some(10.0));
+        assert_eq!(energy_watts(10e6, 10e6, 12.0), None);
+        assert!(!battery_estimates_disagree(10.0, 11.0) && battery_estimates_disagree(10.0, 13.0));
     }
 
     #[test]

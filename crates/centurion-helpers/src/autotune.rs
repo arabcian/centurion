@@ -1248,6 +1248,9 @@ fn measurement_frame(goal: Goal, p: &Profile, mut w: Weights, notes: &mut Vec<St
     let hot: model::Cfg = dims.iter().cloned().chain(std::iter::once(("ctx.heat".to_owned(), "hot".to_owned()))).collect();
     let t = if heat_known && w.heat > 0.0 { vec![(1.0 - w.heat, dims), (w.heat, hot)] } else { vec![(1.0, dims)] };
     cal.set_target(t);
+    if let Some((n, cov, _)) = cal.predcheck_summary(50).filter(|x| x.0 >= 10 && x.1 < 0.7) {
+        notes.push(format!("Warning: only {:.0} % of the last {n} confirmation/verify measurements fell inside the predicted ±2 sd: the model's intervals are too narrow, treat its gains with caution.", cov * 100.0));
+    }
     if cal.contexts.len() > 1 { notes.push(format!("Context: decided for {} (the calibration measured {} context(s)).", crate::calctx::describe(&desc), cal.contexts.len())); }
     if heat_known && w.heat > 0.0 { notes.push(format!("Heat: {:.0} % of the weight on heat-soaked running (pre-heated calibration runs).", w.heat * 100.0)); }
     // CPU-GPU budget: what the GPU makes of a watt the CPU leaves it.

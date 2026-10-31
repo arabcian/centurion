@@ -869,6 +869,7 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     state_ = d.value("state").toObject();
     isolation_ = d.value("isolation").toObject();  // same describe poll: no extra cost
     boot_ = d.value("boot").toObject();
+    if (!light) discovered_ = d.value("discovered").toArray();
     if (wirelessLock_ && !busy_) {  // the root-owned marker is the truth, not the checkbox
         const QSignalBlocker b(wirelessLock_);
         wirelessLock_->setChecked(d.value("wireless_pm_lock").toBool());
@@ -988,6 +989,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         r.kind = o.value("kind").toString();
         r.debugfs = o.value("debugfs").toBool();
         r.caution = o.value("caution").toBool();
+        r.conflict = o.value("conflict").toString();
         r.hotplug = o.value("hotplug").toBool();
         r.userSwitch = o.value("user_switch").toBool() || isRadioSwitch(r.key);
         rows_.append(r);
@@ -1023,7 +1025,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             const QString key = r.key;
             r.include = new QCheckBox(page);
             r.include->setToolTip("Include in Apply, Save and boot preset");
-            r.name = new QLabel((r.caution ? QStringLiteral("⚠ ") : QString()) + r.label, page);
+            r.name = new QLabel((r.caution || !r.conflict.isEmpty() ? QStringLiteral("⚠ ") : QString()) + r.label, page);
             // Fixed-width div: Qt wraps rich-text tooltips to the widget's width by
             // default, which for a short label would squeeze a long explanation into
             // a tall, narrow column. 420px reads as normal paragraphs instead.
@@ -1032,6 +1034,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             if (r.debugfs) tip += "<br><i>debugfs: the live value is readable by root only.</i>";
             if (r.hotplug) tip += "<br><i>Hot-plugs CPUs: applied after every other row, restored first.</i>";
             if (r.caution) tip += QStringLiteral("<br><span style='color:%1'>Can cost stability, heat or idle power.</span>").arg(theme::WARN);
+            if (!r.conflict.isEmpty()) tip += QStringLiteral("<br><span style='color:%1'>%2</span>").arg(theme::WARN, r.conflict.toHtmlEscaped());
             r.name->setToolTip(tip);
             r.name->setTextFormat(Qt::PlainText);
             r.cur = new QLabel(page);
@@ -1096,6 +1099,16 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             ++line;
             updateRow(r, rows[i].toObject());
             if (r.available) ++available;
+        }
+        if (group == QLatin1String("Scheduler") && !discovered_.isEmpty()) {
+            QStringList items;
+            for (const auto &v : discovered_)
+                items << QStringLiteral("%1 = %2").arg(v.toObject().value("name").toString(), v.toObject().value("value").toString());
+            auto *disc = new QLabel(QStringLiteral("Discovered (not in Centurion's table; shown only, set by hand, not calibrated): ") + items.join(QStringLiteral(", ")), page);
+            disc->setWordWrap(true);
+            disc->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            disc->setProperty("role", "muted");
+            grid->addWidget(disc, line++, 0, 1, 5);
         }
         grid->setColumnStretch(1, 2);
         grid->setColumnStretch(3, 3);

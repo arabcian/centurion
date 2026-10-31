@@ -572,6 +572,15 @@ pub const TUNABLES: &[Tunable] = &[
     dbg(t("sched.feat_cache_hot_buddy", "Scheduler", "CACHE_HOT_BUDDY (debugfs)",
       "The load balancer treats a task that was just chosen as next/last buddy as cache-hot and avoids migrating it (default on). On = buddies stay where their data is: better cache locality, and on a two-CCD chip fewer hops to the other L3. Off = they are moved like any other task: load evens out faster, at the price of cold caches after the move.",
       Kind::Bool, NO, Target::SchedFeature("CACHE_HOT_BUDDY"))),
+    dbg(t("sched.feat_place_lag", "Scheduler", "PLACE_LAG (debugfs)",
+      "A task that slept is put back into the competition with the lag it had when it left (default on): a task that was owed CPU time keeps its claim, one that had run ahead keeps its debt, so sleeping neither earns nor loses fairness. Off = every woken task starts at the queue's average (zero lag): short sleepers (input, audio, a game's frame thread) can no longer carry a claim across a sleep, but neither can a hog shed its debt by napping. Leave on unless chasing a fairness regression.",
+      Kind::Bool, NO, Target::SchedFeature("PLACE_LAG"))),
+    dbg(t("sched.feat_place_deadline_initial", "Scheduler", "PLACE_DEADLINE_INITIAL (debugfs)",
+      "A freshly forked task gets half a slice before its first virtual deadline instead of a whole one (default on), so it eases into the competition without waiting a full slice behind the running tasks. Off = new tasks start with a full slice: a fork storm (a build, a launcher spawning helpers) preempts the running tasks a little less eagerly.",
+      Kind::Bool, NO, Target::SchedFeature("PLACE_DEADLINE_INITIAL"))),
+    dbg(t("sched.feat_place_rel_deadline", "Scheduler", "PLACE_REL_DEADLINE (debugfs)",
+      "Kernel 6.12+: a task moved to another runqueue (migration, cgroup or priority change) keeps its deadline relative to its own progress (default on) instead of getting a fresh one there. On = a migrated task neither jumps the queue nor falls back behind it; off = it is placed like a new arrival, which can delay a thread the load balancer just moved to the other CCD.",
+      Kind::Bool, NO, Target::SchedFeature("PLACE_REL_DEADLINE"))),
     dbg(warn(t("sched.feat_wakeup_preemption", "Scheduler", "WAKEUP_PREEMPTION (debugfs)",
       "Whether a task that wakes up may preempt the running one (default on). Off = no wake-up ever preempts: the running task keeps the CPU until its slice ends or the tick moves it on, as if everything ran as SCHED_BATCH. That is the most throughput a saturated machine gives (fewest context switches, warm caches) and the worst wake-up latency - input, audio and frame threads wait for a slice boundary. A batch/compile-box setting; never for gaming or desktop use.",
       Kind::Bool, NO, Target::SchedFeature("WAKEUP_PREEMPTION")))),
@@ -582,7 +591,7 @@ pub const TUNABLES: &[Tunable] = &[
       "Confines every unbound kernel workqueue (writeback, crypto, most filesystem background work) to the CPUs of one CCD, keeping that background work off whichever CCD the game runs on. Typical use: set this to 'frequency' (or whichever CCD is NOT hosting the game) while the Game launch tab's affinity points the game at 'cache'/the V-Cache CCD - filesystem/crypto work then physically cannot preempt or share L2/L3 with the game's threads. Pick 'all' to undo (kernel default spreads across every CPU). Only offered with 2+ CCDs; a single-CCD chip has nothing to confine work away from.",
       Kind::Choice, Options::Special, Target::WqCpumask),
     t("irq.affinity", "Scheduler", "IRQ affinity",
-      "Sets smp_affinity_list for every IRQ to one CCD's CPUs, so device interrupts (network, USB, most peripherals) fire on cores the game is not using. Same pairing idea as workqueue CPUs above: point this at the non-gaming CCD. Best-effort by design - multi-queue NVMe/network IRQs are often kernel-managed and refuse a manual affinity change (reported as 'refused', not a failure); single-CPU-only IRQs (per-CPU timers) are skipped since they say nothing about policy either way. 'all' restores the kernel's default spread.",
+      "Sets smp_affinity_list for every IRQ to one CCD's CPUs, so device interrupts (network, USB, most peripherals) fire on cores the game is not using. Same pairing idea as workqueue CPUs above: point this at the non-gaming CCD. Best-effort by design - multi-queue NVMe/network IRQs are often kernel-managed and refuse a manual affinity change (reported as 'refused', not a failure); single-CPU-only IRQs (per-CPU timers) are skipped since they say nothing about policy either way. 'all' restores the kernel's default spread. A running irqbalance daemon would undo the setting within seconds: it is stopped while a CCD is set and started again on restore or 'all' (only if Centurion stopped it).",
       Kind::Choice, Options::Special, Target::Irq),
     // ── Storage ───────────────────────────────────────────────────────────
     t("blk.scheduler", "Storage", "I/O scheduler",
@@ -1223,6 +1232,53 @@ fn powerd_service(action: &str) -> bool {
         (bin(&["/sbin/rc-service", "/usr/sbin/rc-service", "/bin/rc-service", "/usr/bin/rc-service"]), ["nvidia-powerd", action])
     } else { return false };
     bin.and_then(|b| run_tool(&b, &args, std::time::Duration::from_secs(15))).is_some_and(|(ok, _)| ok)
+}
+
+// ── irqbalance ─────────────────────────────────────────────────────────────
+// A running irqbalance daemon rewrites smp_affinity_list every few seconds and quietly undoes
+// irq.affinity. Applying an affinity stops it (marked first, like nvidia-powerd); restoring
+// irq.affinity starts it again, but only when we were the ones who stopped it.
+
+pub const IRQBALANCE_MARK: &str = "/run/centurion/tune/irqbalance-paused.json";
+
+/// Pids whose comm is "irqbalance" under a /proc-like `root`.
+pub fn irqbalance_pids_in(root: &Path) -> Vec<i32> {
+    std::fs::read_dir(root).into_iter().flatten().flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|pid| read(&root.join(pid.to_string()).join("comm")).as_deref() == Some("irqbalance"))
+        .collect()
+}
+pub fn irqbalance_running() -> bool { !irqbalance_pids_in(Path::new("/proc")).is_empty() }
+
+fn irqbalance_wait(running: bool, ms: u64) -> bool {
+    let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    loop {
+        if irqbalance_running() == running { return true; }
+        if std::time::Instant::now() >= end { return false; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Before an IRQ affinity write. Ok(true): it ran and is stopped now (marked); Ok(false): it was not
+/// running (no mark: restore will not start it). Err: still running.
+pub fn irqbalance_pause() -> Result<bool, String> {
+    if !irqbalance_running() { return Ok(false); }
+    crate::write_root_file(IRQBALANCE_MARK, json!({"via": "service"}).to_string().as_bytes())?;
+    if service_ctl("irqbalance", "stop") && irqbalance_wait(false, 3000) { return Ok(true); }
+    let _ = std::fs::remove_file(IRQBALANCE_MARK);
+    Err("irqbalance is running and could not be stopped: it will undo the IRQ affinity within seconds".into())
+}
+
+/// Restart decision: only a daemon we stopped (mark present) that is not running again.
+pub fn irqbalance_should_start(marked: bool, running: bool) -> bool { marked && !running }
+
+/// After irq.affinity is restored (or set back to "all"). Ok(true) = restarted.
+pub fn irqbalance_resume() -> Result<bool, String> {
+    let marked = crate::read_root_file(IRQBALANCE_MARK, 4096).is_some();
+    if !marked || system_stopping() { return Ok(false); }
+    let _ = std::fs::remove_file(IRQBALANCE_MARK);
+    if !irqbalance_should_start(marked, irqbalance_running()) { return Ok(false); }
+    if service_ctl("irqbalance", "start") && irqbalance_wait(true, 3000) { Ok(true) } else { Err("irqbalance service did not start again".into()) }
 }
 
 /// `systemctl <action> <name>.service` / `rc-service <name> <action>` (name must be a plain daemon name).
@@ -2811,6 +2867,31 @@ pub fn describe_topology() -> Value {
     })
 }
 
+/// Entries the kernel offers that the table does not know: `sched_burst_*` sysctls under `sysctl_dir`
+/// and feature bits in the text of debugfs sched/features. (name, value) - shown, never written.
+pub fn discover_in(sysctl_dir: &Path, features: Option<&str>) -> Vec<(String, String)> {
+    let known_files: Vec<&str> = TUNABLES.iter().filter_map(|t| match t.target { Target::File(p) => p.strip_prefix("/proc/sys/kernel/"), _ => None }).collect();
+    let known_feats: Vec<&str> = TUNABLES.iter().filter_map(|t| match t.target { Target::SchedFeature(n) => Some(n), _ => None }).collect();
+    let mut out: Vec<(String, String)> = std::fs::read_dir(sysctl_dir).into_iter().flatten().flatten().filter_map(|e| {
+        let name = e.file_name().to_str()?.to_owned();
+        if !name.starts_with("sched_burst_") { return None; }
+        if known_files.contains(&name.as_str()) { return None; }
+        Some((format!("kernel.{name}"), read(&e.path())?))
+    }).collect();
+    out.sort();
+    for w in features.unwrap_or("").split_whitespace() {
+        let (name, on) = match w.strip_prefix("NO_") { Some(n) => (n, "0"), None => (w, "1") };
+        if !known_feats.contains(&name) { out.push((format!("sched feature {name}"), on.to_owned())); }
+    }
+    out
+}
+
+/// `discover_in` on the live system (sched/features only when readable: debugfs is root-only).
+pub fn discovered() -> Vec<Value> {
+    let feats = read(Path::new("/sys/kernel/debug/sched/features"));
+    discover_in(Path::new("/proc/sys/kernel"), feats.as_deref()).into_iter().map(|(k, v)| json!({"name": k, "value": v})).collect()
+}
+
 /// Rows whose state costs a child process (iw, ethtool, hdparm) or PCI config-space reads.
 fn slow_to_read(t: &Tunable) -> bool {
     matches!(t.target, Target::WifiPowerSave | Target::EthWol | Target::EthEee | Target::DiskApm(_) | Target::PciLatency)
@@ -2842,6 +2923,9 @@ pub fn describe_with(light: bool) -> Value {
             "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
         });
         if !light { row["help"] = json!(t.help); }
+        if matches!(t.target, Target::Irq) && irqbalance_running() {
+            row["conflict"] = json!("irqbalance is running: it would undo this setting within seconds. Applying a CCD stops it; restoring starts it again.");
+        }
         row
     }).collect();
     let mut m = Map::new();
@@ -2849,6 +2933,7 @@ pub fn describe_with(light: bool) -> Value {
     m.insert("tunables".into(), Value::Array(rows));
     m.insert("topology".into(), describe_topology());
     m.insert("vendor".into(), json!(cpu_vendor().as_str()));
+    if !light { m.insert("discovered".into(), Value::Array(discovered())); }
     Value::Object(m)
 }
 
@@ -2872,6 +2957,36 @@ mod tests {
         assert!(match_park_record(&rec, &[]).is_none());                 // everything back online: stale
         assert!(match_park_record(&rec, &off[..8]).is_none());           // partially online: not this state
         assert!(match_park_record(&serde_json::json!({"role": "x", "cpus": []}), &[]).is_none());
+    }
+    #[test]
+    fn discovery_lists_only_what_the_table_does_not_know() {
+        let root = std::env::temp_dir().join(format!("centurion-sysctl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for (f, v) in [("sched_burst_inherit_type", "2"), ("sched_burst_fork_atavistic", "1"), ("sched_bore", "1"), ("sched_burst_exclude_kthreads", "0")] {
+            std::fs::write(root.join(f), format!("{v}\n")).unwrap();
+        }
+        let d = discover_in(&root, Some("PLACE_LAG NO_HRTICK NEXT_BUDDY NO_SOME_NEW_BIT LATENCY_WARN"));
+        let names: Vec<&str> = d.iter().map(|x| x.0.as_str()).collect();
+        assert_eq!(names, ["kernel.sched_burst_exclude_kthreads", "kernel.sched_burst_fork_atavistic", "sched feature SOME_NEW_BIT", "sched feature LATENCY_WARN"]);
+        assert_eq!(d[2].1, "0");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    #[test]
+    fn irqbalance_is_found_and_only_restarted_when_we_stopped_it() {
+        let root = std::env::temp_dir().join(format!("centurion-proc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (pid, comm) in [("1", "init"), ("812", "irqbalance"), ("900", "irqbalance-ui"), ("self", "x")] {
+            std::fs::create_dir_all(root.join(pid)).unwrap();
+            std::fs::write(root.join(pid).join("comm"), format!("{comm}\n")).unwrap();
+        }
+        assert_eq!(irqbalance_pids_in(&root), vec![812]);
+        let _ = std::fs::remove_dir_all(root.join("812"));
+        assert!(irqbalance_pids_in(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(irqbalance_should_start(true, false));
+        assert!(!irqbalance_should_start(false, false), "a service that was already stopped is not started");
+        assert!(!irqbalance_should_start(true, true));
     }
     #[test]
     fn new_targets() {

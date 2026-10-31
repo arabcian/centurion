@@ -9,6 +9,22 @@ Sondaki **"Modele verirken"** bölümünde hazır prompt şablonu var.
 
 ---
 
+## İlerleme (2026-10-31)
+
+**Tamamlanan:** D1, E8, B3, A11, D2, E2, E7 (ayrıntı ve sınırlar aşağıda). `cargo test -p centurion-helpers --release` yeşil.
+
+| ID | Durum | Not |
+|---|---|---|
+| D1 | ✅ | `tests/doc_consistency.rs`: ağırlık tablosu, GUI `fallbackWeights`, `MARGIN`, `SEEN_Z`, `KEEP_Z`, `PHASE_ROWS` cap'leri. `MODESTY` dokümanda sayı olarak geçmediği için kontrol dışı. |
+| E8 | ✅ | `ppt_cpu_cl` bağlama kaydedilir; `ctx.limits` kimliğine **girmez** (eski oturumların kimliği aynı kalır), ayrı `ctx.cl` boyutu olur: alanı olmayan eski oturum referans sayılır. |
+| B3 | ✅ | Signature `predcheck` (son 200; confirm + verify), `--show` kapsama + 5 kutulu PIT, autotune'da < %70 (≥ 10 kontrol) uyarısı. |
+| A11 | ✅ | Tüm deşarj olan bataryalar toplanır, > 300 W reddedilir; DEV koşusunda `energy_now` (yoksa `charge_now × voltage_now`) farkıyla ikinci tahmin, > %20 ayrışmada uyarı (yalnız uyarı; metrik değişmez). |
+| D2 | ✅ | `tests/properties.rs`: rastgele JSON / eski sürüm / bozuk bayt / round-trip. 8 MiB sınırı testi yok (`save` kök + dosya ister; budama mantığı private). |
+| E2 | ✅ (kısmi) | irqbalance tespiti, satırda uyarı (`conflict` → GUI ⚠ + tooltip), CCD uygulanınca servis durdurulur (işaret dosyası), restore / `all` ile yalnızca bizim durdurduğumuz servis geri başlatılır. **Yok:** 10 s sonra drift yeniden okuma, kullanıcı seçeneği (otomatik yapılıyor). |
+| E7 | ✅ | `PLACE_LAG`, `PLACE_DEADLINE_INITIAL`, `PLACE_REL_DEADLINE` tam satır (Scheduler grubu → kalibrasyona otomatik girer). Tabloda olmayan `sched_burst_*` ve sched feature'lar `describe.discovered` ile GUI'de salt-okunur listelenir (elle yazma desteği yok). |
+
+**Kalan:** B1, B5, A3, A1, A2, A4, A5, C1, C2, C3, B4, B2, A6, A10, B6, C4, A7, C5, A9, A8, C6, C7, E1, E3, E4, E5, E6, E9, E10, E11, E12, E13.
+
 ## 0. Mevcut durum (yeniden yapılmasın)
 
 Sistem zaten çok olgun; aşağıdakiler **var ve çalışıyor**, maddeler bunların üzerine kurulur:

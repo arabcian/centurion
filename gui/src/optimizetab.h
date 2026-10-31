@@ -73,6 +73,7 @@ private:
     struct Option { QString value, label; };
     struct Row {
         QString key, group, label, help, kind, current;
+        QString conflict;  // another daemon fights this row (irqbalance vs irq.affinity)
         QList<Option> options;
         qint64 min = 0, max = 0;
         bool available = false, debugfs = false, caution = false, hotplug = false;
@@ -165,6 +166,7 @@ private:
 
     QList<Row> rows_;
     QJsonObject topology_, state_, boot_, isolation_;
+    QJsonArray discovered_;  // scheduler entries the helper's table does not know (read-only)
     bool active_ = false, busy_ = false, describing_ = false, helperMissing_ = false;
     bool needFull_ = true;                 // next describe must read the slow rows too
     QHash<QString, QJsonObject> slowKeep_; // slow rows as of the last full describe
