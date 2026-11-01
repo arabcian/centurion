@@ -29,6 +29,22 @@ nereden başlanacağı, nelere dikkat edileceği ve hangi kararın beklendiği v
   Load fazında balast altında MGLRU kapatılıyor: donanımda takılma izlenmeli.
 - **docs/KNOBS.md:** 196 knobun kalibrasyon / autotune envanteri (koddan üretildi).
 
+## 2026-11-01 (2) oturumu: hedef ölçeği
+
+- **Metrik aileleri ✅** `compute_rows`/`fold` hedefi metrik başına değil senaryo (aile, `Metric::family`) başına toplar
+  (ortalama × aile/2). Eski hali yoğun knoblarda (EPP, boost, C-state) idle'da lat/thr ×5.5, pwr ×1.5 (load ×6 / ×1) veriyordu:
+  güç, hedef ağırlığının ~¼'ü kadar tartılıyordu. Şimdi idle 2/2/1/1, load 2/2/1/1, IO 1/1/1/1.
+  `BENCH_VERSION` 5 → 6, `IO_BENCH_VERSION` 6 → 7, signature format 10: eski satırlar `rescale_families` ile ölçeklenir
+  (baseline kaydındaki metrik listesi, yoksa `SET5_METRICS`), ×0.6; DEV satırları değişmez ve güncel sayılır; `hyp` ve
+  `fit-scales.json` (yeni `v` alanı) yeniden kestirilir. **Bedel:** ailesinde yalnız olmayan tek bir metriği oynatan knob
+  (ör. yalnız `GameJitterUs`) eskisinden küçük görünür. Testler: `objectives_count_scenarios_not_probes`,
+  `format_9_rows_are_rescaled_and_their_scales_dropped`, `a_change_of_every_metric_weighs_power_against_latency_by_scenarios`.
+- **Gürültü ağırlıkları havuzlu ✅** `metric_weights` oturumun referans saçılımını makinenin önceki oturumlarıyla
+  (`Calibration::ref_log_sd`, aynı faz + güç kaynağı, 6 koşu değerinde) birleştirir; < 4 referanslı oturum artık eşit
+  ağırlığa düşmez. Testler: `a_short_session_weighs_its_metrics_by_the_machines_earlier_scatter`, `reference_scatter_pools_*`.
+- `sim_regression` değişmedi (simülatör hedef seviyesinde çalışır; metrik katmanı birim testlerle sınanıyor).
+  Donanımda doğrulanmadı: MARGIN 0.03 yoğun CPU knobları için artık fiilen daha sıkı.
+
 ## Kalan maddeler
 
 | ID | Öncelik / efor | Bağımlılık | Durum | Ne yapılacak (bugünkü koda göre) | Kabul / doğrulama | Dikkat, açık karar |
@@ -67,7 +83,7 @@ nereden başlanacağı, nelere dikkat edileceği ve hangi kararın beklendiği v
   `cargo test --release -p centurion-helpers --bin centurion-calibrate sim_regression -- --ignored --nocapture` (~40 s),
   baseline `crates/centurion-helpers/tests/sim-baseline.json` (±0.03); istatistik bilerek değişince `CENTURION_SIM_BASELINE=write`.
   Diğer ölçümler: `seen_test_rates` (A3), `loso_against_loo` (B2), `incumbent_head_start_steadies_decisions` (B4).
-- Sürüm sabitleri: `model::MODEL_VERSION` = 3 (B2 ile arttı), `calib::BENCH_VERSION` değişmedi.
+- Sürüm sabitleri: `model::MODEL_VERSION` = 3 (B2 ile arttı), `calib::BENCH_VERSION` = 6, `IO_BENCH_VERSION` = 7 (metrik aileleri).
 - Bu oturumda eklenen kalıcı dosyalar: kullanıcı state dizininde `autotune-history.jsonl` (B4), `autotune-seen.json` (A3);
   signature'da `baselines` (A4), `envs` + `sess_env` (A5), `io_days` (A10).
 - İlkeler (CLAUDE.md): cerrahi değişiklik, önce test, kartın iddiası koda uymuyorsa dur ve söyle. Bu oturumda üç kez kart

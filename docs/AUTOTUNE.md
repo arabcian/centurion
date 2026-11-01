@@ -747,16 +747,38 @@ runs the I/O benchmark, so a full session writes less than before.
 **Objective scale.** An objective used to be the mean of its metrics. A knob moves
 the one or two metrics it acts on, so every benchmark added made every knob look
 smaller: a 10 % better frame tail among eight latency metrics came out as 1.3 %,
-under the 0.03 margin whatever the evidence. An objective is now the gain *summed*
-over its metrics, counted as if two of them carried it (noise-weighted mean × k/2,
-never below the mean): that frame tail is worth 5 %, and a knob lands on the same
-scale whether or not the session also ran the memory probes.
+under the 0.03 margin whatever the evidence. An objective is the gain *summed*
+over its scenarios, counted as if two of them carried it (mean × k/2, never below
+the mean): that frame tail is worth 5 %, and a knob lands on the same scale whether
+or not the session also ran the memory probes.
+
+The scenarios are metric families (benchmark set 6, `Metric::family`): latency =
+interactive wake-ups (wake, ping-pong, frame loop), the game (tail, pacing, cache
+tail), a contended machine (busy frame tail, burst-job tail), memory (fault tails,
+stalls); throughput = compute, game frame time, process start (short jobs, heap
+fault-in), memory access (TLB probes, THP coverage, bandwidth); power = idle and
+loaded; storage = its read and its write side. Inside a family the metrics are
+noise-weighted, families count alike. Set 5 summed per *metric*: a change that moves
+every metric (EPP, boost, C-states, the governor) came out 5.5× in latency and
+throughput and 1.5× in power on the idle phase (6× / 1× under load), so power weighed
+a quarter of what the goal said: a 3 % faster / 8 % hungrier EPP scored +0.087 for
+the desktop goal. Now 2× / 2× / 1× (+0.007, under the margin).
+
+The noise weights come from the session's reference runs pooled with this machine's
+earlier sessions of the same phase and power source (the `baselines` record, worth 6
+reference runs); a session with fewer than 4 reference runs used equal weights and so
+put the same knob on another scale than a long one.
 
 **Older signatures.** Idle/load rows and one-at-a-time records of benchmark sets
 1-3 are dropped when the file is read (they were blind to most CPU and scheduler
 knobs and would vote "no effect" against the new runs); those phases start over.
 IO rows are kept and rescaled (the storage suite is unchanged), unsafe values and
 unsafe sets stay. `centurion-calibrate` says so once; a few lean sessions rebuild it.
+Signatures before format 10 (benchmark set 5, IO set 6) are brought to the family
+scale when read: each row by the metrics its session's baseline recorded (else the
+set's own list), exact for a change that moves its objective's metrics alike; they
+count 60 % (device rows, one metric, stay current), and their fitted scales are
+fitted again.
 
 **From runs to a model** (`src/model.rs`). Per run and metric: log-ratio to the
 session's reference runs (+ = better), clipped to ±0.5, then combined per

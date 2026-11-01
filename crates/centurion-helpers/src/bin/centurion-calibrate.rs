@@ -663,33 +663,47 @@ struct Run { cfg: Cfg, s: Sample, order: usize, t: u64, w: f64, temp: Option<f64
 
 fn is_hot(cfg: &[(String, String)]) -> bool { cfg.iter().any(|(k, v)| k == "ctx.heat" && v == "hot") }
 
-/// What every row of a session shares: the power source and the measurement context.
+/// What every row of a session shares: the power source, the measurement context and, per phase,
+/// this machine's reference-run scatter from earlier sessions (`Calibration::ref_log_sd`).
 #[derive(Clone)]
-struct Meta { src: calib::PowerSrc, cx: String }
+struct Meta { src: calib::PowerSrc, cx: String, sd: [BTreeMap<Metric, f64>; 4] }
+
+impl Meta {
+    fn new(cal: &Calibration, src: calib::PowerSrc, cx: String) -> Meta {
+        Meta { src, cx, sd: Phase::ALL.map(|ph| cal.ref_log_sd(ph, if ph == Phase::Dev { calib::PowerSrc::Battery } else { src })) }
+    }
+}
 
 fn obj_index(m: Metric) -> usize { match m.objective() { Objective::Lat => 0, Objective::Thr => 1, Objective::Pwr => 2, Objective::Mem => 3 } }
 
-/// Weight of every metric inside its objective, from the scatter of the session's reference
-/// runs (robust sd of the log values): w = 1 / (sd^2 + mean sd^2 of the objective), i.e. halfway
+/// Reference runs of this machine's earlier sessions that the pooled scatter (`Meta::sd`) is worth
+/// next to the session's own.
+const PRIOR_REFS: f64 = 6.0;
+
+/// Weight of every metric inside its family (`Metric::family`), from the scatter of the session's
+/// reference runs (robust sd of the log values) pooled with this machine's earlier sessions
+/// (`prior`, worth `PRIOR_REFS` runs): w = 1 / (sd^2 + mean sd^2 of the family), i.e. halfway
 /// between equal weights and inverse variance, then kept within 1/3..3x of the equal share. A
 /// tail that jumps 30 % between identical runs no longer drowns a bandwidth that moves 1 %, and
-/// no single metric can take an objective over. Fewer than 4 reference runs: equal weights.
-fn metric_weights(refs: &[&Run], ms: &[Metric]) -> BTreeMap<Metric, f64> {
-    let sd = |m: Metric| -> Option<f64> {
+/// no single metric can take a family over. A session with fewer than 4 reference runs takes the
+/// pooled scatter alone (equal weights only on a machine without any), so short and long sessions
+/// put a knob on the same scale.
+fn metric_weights(refs: &[&Run], ms: &[Metric], prior: &BTreeMap<Metric, f64>) -> BTreeMap<Metric, f64> {
+    let var = |m: Metric| -> Option<f64> {
         let v: Vec<f64> = refs.iter().filter_map(|r| r.s.get(&m)).filter(|x| **x + m.eps() > 0.0).map(|x| (x + m.eps()).ln()).collect();
-        if v.len() < 4 { return None; }
-        let mut a = v.clone();
-        let med = calib::median(&mut a)?;
-        let mut d: Vec<f64> = v.iter().map(|x| (x - med).abs()).collect();
-        Some(1.4826 * calib::median(&mut d)?)
+        let own = robust_sd(&v).map(|s| (v.len() as f64, s * s));
+        match (own, prior.get(&m).map(|p| p * p)) {
+            (Some((n, s)), Some(p)) => Some((n * s + PRIOR_REFS * p) / (n + PRIOR_REFS)),
+            (Some((_, s)), None) => Some(s),
+            (None, p) => p,
+        }
     };
+    let mut fams: BTreeMap<&str, Vec<Metric>> = BTreeMap::new();
+    for m in ms { fams.entry(m.family()).or_default().push(*m); }
     let mut out = BTreeMap::new();
-    for o in 0..4 {
-        let mo: Vec<Metric> = ms.iter().copied().filter(|m| obj_index(*m) == o).collect();
-        if mo.is_empty() { continue; }
-        let sds: Vec<Option<f64>> = mo.iter().map(|m| sd(*m)).collect();
-        if sds.iter().any(Option::is_none) { for m in &mo { out.insert(*m, 1.0); } continue; }
-        let var: Vec<f64> = sds.iter().map(|x| x.unwrap().powi(2)).collect();
+    for mo in fams.values() {
+        let vars: Option<Vec<f64>> = mo.iter().map(|m| var(*m)).collect();
+        let Some(var) = vars else { for m in mo { out.insert(*m, 1.0); } continue };
         let mean = (var.iter().sum::<f64>() / var.len() as f64).max(1e-6);
         let raw: Vec<f64> = var.iter().map(|v| 1.0 / (v + mean)).collect();
         let avg = raw.iter().sum::<f64>() / raw.len() as f64;
@@ -700,9 +714,9 @@ fn metric_weights(refs: &[&Run], ms: &[Metric]) -> BTreeMap<Metric, f64> {
 
 /// Runs -> rows: per metric the log-ratio to the session's reference runs (all runs when there
 /// are fewer than 3), sign so that + is better, each clipped to +-0.5 (a stray outlier cannot
-/// dominate), averaged per objective with the metric's noise weight (`metric_weights`) and brought
-/// to the objective's scale (`calib::objective_gain`: the gain summed over the objective's metrics,
-/// not diluted by the ones a knob does not touch). A metric
+/// dominate), averaged per family with the metric's noise weight (`metric_weights`), the families
+/// averaged per objective and brought to the objective's scale (`calib::objective_gain`: the gain
+/// summed over the objective's families, not diluted by the ones a knob does not touch). A metric
 /// counts only if at least 80 % of the runs have it, so every run is judged on the same set.
 /// Each row keeps its run's time (drift model) and weight.
 fn compute_rows(runs: &[Run], phase: Phase, sess: u64, kernel: &str, n_total: usize, meta: &Meta) -> Vec<Row> {
@@ -719,23 +733,24 @@ fn compute_rows(runs: &[Run], phase: Phase, sess: u64, kernel: &str, n_total: us
         if let Some(b) = calib::median(&mut v) { base.insert(m, b); }
     }
     // Weights over the metrics this phase actually measured (the others are not in any row).
-    let wts = metric_weights(&refs, &base.keys().copied().collect::<Vec<_>>());
-    let mut gain = [0usize; 4];
-    for m in base.keys() { gain[obj_index(*m)] += 1; }
-    let gain = gain.map(calib::objective_gain);
+    let wts = metric_weights(&refs, &base.keys().copied().collect::<Vec<_>>(), &meta.sd[phase.idx()]);
+    let gain = calib::family_counts(base.keys().copied()).map(calib::objective_gain);
     runs.iter().map(|r| {
-        let mut acc = [(0.0f64, 0.0f64); 4];
+        let mut fam: BTreeMap<(usize, &str), (f64, f64)> = BTreeMap::new();
         for (m, b) in &base {
             let Some(&v) = r.s.get(m) else { continue };
             let e = m.eps();
             if v + e <= 0.0 || b + e <= 0.0 { continue; }
             let mut d = ((v + e) / (b + e)).ln();
             if !m.higher_better() { d = -d; }
-            let (i, w) = (obj_index(*m), wts.get(m).copied().unwrap_or(1.0));
-            acc[i].0 += w * d.clamp(-0.5, 0.5); acc[i].1 += w;
+            let w = wts.get(m).copied().unwrap_or(1.0);
+            let a = fam.entry((obj_index(*m), m.family())).or_default();
+            a.0 += w * d.clamp(-0.5, 0.5); a.1 += w;
         }
+        let mut acc = [(0.0f64, 0usize); 4];
+        for ((i, _), (s, w)) in &fam { acc[*i].0 += s / w; acc[*i].1 += 1; }
         let mut y = [f64::NAN; 4];
-        for i in 0..4 { if acc[i].1 > 0.0 { y[i] = acc[i].0 / acc[i].1 * gain[i]; } }
+        for i in 0..4 { if acc[i].1 > 0 { y[i] = acc[i].0 / acc[i].1 as f64 * gain[i]; } }
         let tc = match (r.temp, if is_hot(&r.cfg) { t_hot } else { t_cool }) { (Some(t), Some(m)) => t - m, _ => f64::NAN };
         Row { phase, sess, pos: (r.order as f64 / n_total.max(runs.len()) as f64).min(1.0), t: r.t, kernel: kernel.into(), cfg: r.cfg.clone(), y, w: r.w,
               bv: calib::bench_version(phase), src: if phase == Phase::Dev { calib::PowerSrc::Battery } else { meta.src }, cx: meta.cx.clone(), tc, field: false }
@@ -1381,7 +1396,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let sess = now() + phase.idx() as u64;
     let mut rng = Rng::new(seed ^ sess);
     let mut d = Design { phase, bs, sess, n_total, kernel, refs, runs: Vec::new(), oom_left: 12, t0: Instant::now(), secs: budget, spent: 0.0,
-                         meta: Meta { src: if phase == Phase::Dev || rn.c.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, cx: rn.c.cx.clone() },
+                         meta: Meta::new(cal, if phase == Phase::Dev || rn.c.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, rn.c.cx.clone()),
                          strategy: dp.name, tries: 0, checked: false };
     rn.disp0 = None;
     if heat { eprintln!("{name}: heat is a design factor (heat-soaked runs: {:.0} s of every CPU busy first)", rn.c.heat_secs); }
@@ -2343,7 +2358,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     // (round, ABBA position) of every run kept, per phase: a run that drops out must not shift the pairing.
     let mut tags: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
     let phases: Vec<Phase> = if with_io && ctx.disk.is_some() { vec![main, Phase::Io] } else { vec![main] };
-    let meta = Meta { src: if ctx.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, cx: ctx.cx.clone() };
+    let meta = Meta::new(cal, if ctx.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, ctx.cx.clone());
     let sess = now() + 7;
     // Rows of every phase with their (round, position) tags, and a goal's utility per kept run of each phase.
     let rows_of = |runs: &BTreeMap<usize, Vec<Run>>, tags: &BTreeMap<usize, Vec<(usize, usize)>>| -> Vec<(Phase, Vec<Row>, Vec<(usize, usize)>)> {
@@ -2604,7 +2619,7 @@ fn coupling_main(cal: &mut Calibration, secs: u64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn meta() -> Meta { Meta { src: calib::PowerSrc::Rapl, cx: String::new() } }
+    fn meta() -> Meta { Meta { src: calib::PowerSrc::Rapl, cx: String::new(), sd: Default::default() } }
     #[test]
     fn early_shift_runs_at_the_second_reference_only() {
         let s = |v: f64| -> Sample { [(Metric::CpuSingle, v)].into_iter().collect() };
@@ -2631,7 +2646,7 @@ mod tests {
         runs.push(Run { cfg: hot.clone(), s: s(12.0), order: 4, t: 9, w: 1.0, temp: Some(88.0) });
         runs.push(Run { cfg: hot.clone(), s: s(12.0), order: 5, t: 10, w: 1.0, temp: Some(92.0) });
         runs.push(Run { cfg: vec![("cpu.k".into(), "1".into())], s: s(10.0), order: 6, t: 11, w: 1.0, temp: None });
-        let m = Meta { src: calib::PowerSrc::Battery, cx: "c1".into() };
+        let m = Meta { src: calib::PowerSrc::Battery, cx: "c1".into(), sd: Default::default() };
         let rows = compute_rows(&runs, Phase::Idle, 3, "7.2", 7, &m);
         assert!(rows.iter().all(|r| r.src == calib::PowerSrc::Battery && r.cx == "c1"));
         // Cool runs against the cool median (51.5), hot ones against the hot median (90).
@@ -2802,11 +2817,11 @@ mod tests {
         let refs: Vec<Run> = [1.0, 1.3, 0.75, 1.25, 0.8, 1.0].iter().zip([1.0, 1.02, 0.98, 1.01, 0.99, 1.0])
             .map(|(a, b)| run(vec![], &[(Metric::WakeP99Us, 100.0 * a), (Metric::FrameP99Us, 500.0 * b)])).collect();
         let r: Vec<&Run> = refs.iter().collect();
-        let w = metric_weights(&r, &[Metric::WakeP99Us, Metric::FrameP99Us]);
+        let w = metric_weights(&r, &[Metric::WakeP99Us, Metric::FrameP99Us], &BTreeMap::new());
         // Two metrics, one far noisier: the shrinkage settles at 3:1 (1.5 / 0.5 of the equal share).
         assert!(w[&Metric::FrameP99Us] > 1.45 && w[&Metric::WakeP99Us] < 0.55, "{w:?}");
         // Too few references: equal weights.
-        let w2 = metric_weights(&r[..3], &[Metric::WakeP99Us, Metric::FrameP99Us]);
+        let w2 = metric_weights(&r[..3], &[Metric::WakeP99Us, Metric::FrameP99Us], &BTreeMap::new());
         assert_eq!(w2[&Metric::WakeP99Us], 1.0);
         // A run 10 % better on the steady metric only now shows clearly more than half of it.
         let mut runs = refs;
@@ -2832,6 +2847,52 @@ mod tests {
         runs.push(run(vec![("k".into(), "1".into())], &few(9.0)));
         let y2 = compute_rows(&runs, Phase::Idle, 1, "", 10, &meta()).last().unwrap().y[0];
         assert!((y - y2).abs() < 1e-9, "{y} vs {y2}");
+    }
+    #[test]
+    fn a_change_of_every_metric_weighs_power_against_latency_by_scenarios() {
+        // The idle suite; a clock-like change makes every latency/throughput metric 3 % better and costs 8 % power.
+        let lat = [Metric::WakeP99Us, Metric::PingPongP99Us, Metric::FrameP99Us, Metric::FrameMedUs, Metric::GameTailMs, Metric::GameJitterUs,
+                   Metric::CacheTailMs, Metric::BusyFrameP99Us, Metric::BurstJobTailMs, Metric::FaultP99Us, Metric::FaultHugeP99Us];
+        let thr = [Metric::GameFrameMs, Metric::CacheFrameMs, Metric::CpuSingle, Metric::CpuMulti, Metric::JobsPerSec, Metric::AllocMs,
+                   Metric::MemBwGbs, Metric::ThpPct, Metric::TlbRandNs, Metric::TlbHugeNs, Metric::ShmRandNs];
+        let pwr = [Metric::IdleW, Metric::GameW, Metric::CpuEff];
+        let s = |perf: f64, power: f64| -> Vec<(Metric, f64)> {
+            let at = |m: Metric, f: f64| (m, 100.0 * if m.higher_better() { 1.0 / f } else { f });
+            lat.iter().chain(&thr).map(|m| at(*m, perf)).chain(pwr.iter().map(|m| at(*m, power))).collect()
+        };
+        let mut runs: Vec<Run> = (0..3).map(|_| run(vec![], &s(1.0, 1.0))).collect();
+        runs.push(run(vec![("cpu.epp".into(), "performance".into())], &s(0.97, 1.08)));
+        let y = compute_rows(&runs, Phase::Idle, 1, "", 10, &meta()).last().unwrap().y;
+        let (dp, dw) = ((1.0f64 / 0.97).ln(), 1.08f64.ln());
+        // Four scenarios each for latency and throughput, two for power (idle, loaded): x2, x2, x1.
+        assert!((y[0] - 2.0 * dp).abs() < 1e-9 && (y[1] - 2.0 * dp).abs() < 1e-4 && (y[2] + dw).abs() < 1e-9, "{y:?}");  // THP coverage reads against its offset
+        // The desktop goal (latency 0.7, throughput 0.3, power 0.7) no longer buys 3 % speed for 8 % power:
+        // summed per metric (x5.5, x5.5, x1.5) it read +0.087, now under the margin.
+        let u = 0.7 * y[0] + 0.3 * y[1] + 0.7 * y[2];
+        assert!(u < MARGIN && 0.7 * 5.5 * dp + 0.3 * 5.5 * dp - 0.7 * 1.5 * dw > 0.08, "{u}");
+        // Another probe of the same scenario adds nothing to a change that moves the whole scenario.
+        let drop = |r: &Run| Run { cfg: r.cfg.clone(), s: r.s.iter().filter(|(m, _)| !matches!(m, Metric::FrameMedUs | Metric::GameJitterUs)).map(|(m, v)| (*m, *v)).collect(),
+                                   order: r.order, t: r.t, w: r.w, temp: r.temp };
+        let fewer: Vec<Run> = runs.iter().map(drop).collect();
+        let y2 = compute_rows(&fewer, Phase::Idle, 1, "", 10, &meta()).last().unwrap().y;
+        assert!((0..3).all(|o| (y[o] - y2[o]).abs() < 1e-9) && y2[3].is_nan(), "{y:?} vs {y2:?}");
+    }
+    #[test]
+    fn a_short_session_weighs_its_metrics_by_the_machines_earlier_scatter() {
+        // This machine's reference runs: the wake tail scatters 30 %, the frame tail 2 %.
+        let prior: BTreeMap<Metric, f64> = [(Metric::WakeP99Us, 0.3), (Metric::FrameP99Us, 0.02)].into_iter().collect();
+        let ms = [Metric::WakeP99Us, Metric::FrameP99Us];
+        let three: Vec<Run> = (0..3).map(|_| run(vec![], &[(Metric::WakeP99Us, 100.0), (Metric::FrameP99Us, 500.0)])).collect();
+        let r: Vec<&Run> = three.iter().collect();
+        let w = metric_weights(&r, &ms, &prior);
+        assert!(w[&Metric::FrameP99Us] > 1.45 && w[&Metric::WakeP99Us] < 0.55, "three references: the earlier scatter, not equal weights: {w:?}");
+        // Six references of its own that say the opposite (frame tail 30 %, wake tail 1.5 %): pooled, neither takes over.
+        let six: Vec<Run> = [1.0, 1.02, 0.98, 1.01, 0.99, 1.0].iter().zip([1.0, 1.3, 0.75, 1.25, 0.8, 1.0])
+            .map(|(a, b)| run(vec![], &[(Metric::WakeP99Us, 100.0 * a), (Metric::FrameP99Us, 500.0 * b)])).collect();
+        let w6 = metric_weights(&six.iter().collect::<Vec<_>>(), &ms, &prior);
+        assert!((0.85..1.15).contains(&w6[&Metric::FrameP99Us]) && (0.85..1.15).contains(&w6[&Metric::WakeP99Us]), "{w6:?}");
+        // No history anywhere: equal weights, as before.
+        assert_eq!(metric_weights(&r, &ms, &BTreeMap::new())[&Metric::WakeP99Us], 1.0);
     }
 
     #[test]
@@ -2915,7 +2976,7 @@ mod sim {
     //! (a) one knob at a time (reference vs candidate, keep what beats the margin) and
     //! (b) by the sequential design (space-filling start, then runs chosen by decision doubt).
     use super::*;
-    fn meta() -> Meta { Meta { src: calib::PowerSrc::Rapl, cx: String::new() } }
+    fn meta() -> Meta { Meta { src: calib::PowerSrc::Rapl, cx: String::new(), sd: Default::default() } }
     use centurion_helpers::model::PhaseSet;
 
     fn fac(k: &str, r: &str, v: &[&str]) -> Factor { Factor { key: k.into(), reference: r.into(), values: v.iter().map(|s| s.to_string()).collect() } }

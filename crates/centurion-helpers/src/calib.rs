@@ -72,6 +72,8 @@ const MAX_FIT_STORE: u64 = 16 * 1024 * 1024;
 const KEEP_FITS: usize = 8;
 /// 2 = screening hyperparameters per objective ("screen" holds four entries).
 const FIT_STORE_VERSION: u64 = 2;
+/// Objective scale of the cached fit scales (`fit-scales.json`): 1 = metric families (BENCH_VERSION 6).
+const HYP_CACHE_VERSION: u64 = 1;
 
 /// One benchmark metric and its direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -186,6 +188,32 @@ impl Metric {
             ProbeRssMib | RaFootprintMib => Objective::Mem,
         }
     }
+    /// The scenario a metric stands for inside its objective (see `objective_gain`). Metrics of one
+    /// family read the same mechanism: a clock or C-state change moves every frame, wake-up and
+    /// ping-pong tail together, so counting them one by one made a latency objective of eleven
+    /// metrics 5.5x the size of the same change while power (three metrics) was 1.5x.
+    pub fn family(self) -> &'static str {
+        use Metric::*;
+        match self {
+            WakeP99Us | PingPongP99Us | FrameP99Us | FrameMedUs => "lat.interactive",
+            GameTailMs | GameJitterUs | CacheTailMs => "lat.game",
+            BusyFrameP99Us | BurstJobTailMs => "lat.contended",
+            FaultP99Us | FaultHugeP99Us | StallsPerSec => "lat.memory",
+            FsyncP99Ms | MixedReadP99Us => "lat.io_write",
+            RandReadP99Us | MmapFaultP99Us => "lat.io_read",
+            CpuSingle | CpuMulti => "thr.compute",
+            GameFrameMs | CacheFrameMs => "thr.game",
+            JobsPerSec | AllocMs => "thr.process",
+            TlbRandNs | TlbHugeNs | ShmRandNs | ThpPct | MemBwGbs => "thr.memory",
+            WriteMbs => "thr.io_write",
+            ReadMbs | IopsK => "thr.io_read",
+            IdleW => "pwr.idle",
+            PkgW | GameW | CpuEff => "pwr.loaded",
+            IoCpuUs => "pwr.io",
+            ProbeRssMib => "mem.heap",
+            RaFootprintMib => "mem.cache",
+        }
+    }
     /// Smallest relative change that counts as real in the one-at-a-time path. p99 tails
     /// jitter far more than means and counters.
     pub fn noise_floor(self) -> f64 {
@@ -231,24 +259,62 @@ impl Metric {
 /// the largest L3 shared by four threads: which L3 a thread lands on, what a migration costs -
 /// every earlier probe fitted in L2 and could not tell a V-Cache die from a frequency die),
 /// frame pacing of the game loop (every frame counts, not the worst five) and the package
-/// power it draws. Rows of set 4 stay and count 60 % (same probes, fewer metrics).
-pub const BENCH_VERSION: u8 = 5;
+/// power it draws. Rows of set 4 stay and count 60 % (same probes, fewer metrics). 6 = the
+/// same probes, objectives summed over metric families instead of metrics (`objective_gain`);
+/// older idle/load rows are brought to the new scale when read (`rescale_families`) and count 60 %.
+pub const BENCH_VERSION: u8 = 6;
 /// Benchmark set of the storage suite (IO rows only; idle/load rows stay at BENCH_VERSION).
 /// 6 = the write is timed in 32 MiB parts, each committed with fdatasync: WriteMbs is the
 /// drive's own speed (not the page cache's up to the dirty limit) and FsyncP99Ms is read
 /// against a writer that commits; a drop between parts flags an exhausted SLC cache.
-pub const IO_BENCH_VERSION: u8 = 6;
+/// 7 = objectives over metric families (as BENCH_VERSION 6).
+pub const IO_BENCH_VERSION: u8 = 7;
 
 /// The current benchmark set of a phase's rows.
 pub fn bench_version(phase: Phase) -> u8 { if phase == Phase::Io { IO_BENCH_VERSION } else { BENCH_VERSION } }
 
-/// Scale of an objective that averages `k` metrics. A knob moves the one or two metrics it
-/// acts on and leaves the rest alone, so the plain mean shrank with every benchmark added: a
-/// 10 % better frame time among eight latency metrics came out as 1.3 %, below any margin
-/// autotune can use, and the more the suite measured the less every knob seemed to do. The
-/// objective is therefore the gain summed over its metrics, counted as if two of them carried
-/// it: mean x k/2 (never below the mean). One scale whatever else a session measured.
+/// Scale of an objective that averages `k` metric families (`Metric::family`). A knob moves the
+/// one or two scenarios it acts on and leaves the rest alone, so the plain mean shrank with every
+/// benchmark added: a 10 % better frame time among eight latency metrics came out as 1.3 %, below
+/// any margin autotune can use. The objective is therefore the gain summed over its families,
+/// counted as if two of them carried it: mean x k/2 (never below the mean). Families, not metrics:
+/// summed per metric, a change that moves every metric (EPP, boost, C-states) grew with the
+/// number of probes an objective has, and power (few probes) weighed a third of latency.
 pub fn objective_gain(k: usize) -> f64 { (k as f64 / 2.0).max(1.0) }
+
+/// Families per objective (lat, thr, pwr, mem) among `ms`.
+pub fn family_counts(ms: impl IntoIterator<Item = Metric>) -> [usize; 4] {
+    let mut f: [Vec<&str>; 4] = Default::default();
+    for m in ms {
+        let o = m.objective() as usize;
+        if !f[o].contains(&m.family()) { f[o].push(m.family()); }
+    }
+    f.map(|v| v.len())
+}
+
+/// Factor that brings a row of benchmark set <= 5 (objective = noise-weighted metric mean x
+/// k_metrics/2) to set 6 (family mean x k_families/2), for a session that measured `ms`. Exact
+/// for a change that moves its objective's metrics alike (the clock, EPP, C-state knobs the old
+/// scale overstated); a change of a single metric comes out somewhat smaller than set 6 would
+/// measure it, which the 60 % weight of older rows covers.
+pub fn rescale_families(ms: &[Metric]) -> [f64; 4] {
+    let mut k = [0usize; 4];
+    for m in ms { k[m.objective() as usize] += 1; }
+    let f = family_counts(ms.iter().copied());
+    std::array::from_fn(|o| if k[o] == 0 { 1.0 } else { objective_gain(f[o]) / objective_gain(k[o]) })
+}
+
+/// The metrics a phase's design run measured in benchmark set 5 (old rows without a baseline record).
+const SET5_METRICS: [&[Metric]; 3] = {
+    use Metric::*;
+    [&[WakeP99Us, PingPongP99Us, FrameP99Us, FrameMedUs, GameTailMs, GameJitterUs, CacheTailMs, BusyFrameP99Us, BurstJobTailMs,
+       FaultP99Us, FaultHugeP99Us, GameFrameMs, CacheFrameMs, CpuSingle, CpuMulti, JobsPerSec, AllocMs, MemBwGbs, ThpPct, TlbRandNs,
+       TlbHugeNs, ShmRandNs, IdleW, GameW, CpuEff, ProbeRssMib],
+     &[WakeP99Us, PingPongP99Us, FrameP99Us, FrameMedUs, GameTailMs, GameJitterUs, CacheTailMs, BusyFrameP99Us, BurstJobTailMs,
+       FaultP99Us, FaultHugeP99Us, StallsPerSec, GameFrameMs, CacheFrameMs, CpuSingle, CpuMulti, JobsPerSec, AllocMs, MemBwGbs, ThpPct,
+       TlbRandNs, TlbHugeNs, ShmRandNs, PkgW, ProbeRssMib],
+     &[FsyncP99Ms, MixedReadP99Us, RandReadP99Us, MmapFaultP99Us, WriteMbs, ReadMbs, IopsK, IoCpuUs, RaFootprintMib]]
+};
 
 /// Gains of the storage suite's objectives (4 latency, 3 throughput, 1 power, 1 footprint
 /// metric): IO rows logged before version 4 hold plain means of the same metrics.
@@ -316,8 +382,9 @@ pub struct Measured { pub lat: Option<f64>, pub thr: Option<f64>, pub pwr: Optio
 
 pub fn fold(effects: &BTreeMap<Metric, f64>) -> Measured {
     let mean = |o: Objective| {
-        let v: Vec<f64> = effects.iter().filter(|(m, _)| m.objective() == o).map(|(_, e)| *e).collect();
-        (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64 * objective_gain(v.len()))
+        let mut fam: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
+        for (m, e) in effects.iter().filter(|(m, _)| m.objective() == o) { let a = fam.entry(m.family()).or_default(); a.0 += e; a.1 += 1.0; }
+        (!fam.is_empty()).then(|| fam.values().map(|(s, n)| s / n).sum::<f64>() / fam.len() as f64 * objective_gain(fam.len()))
     };
     Measured { lat: mean(Objective::Lat), thr: mean(Objective::Thr), pwr: mean(Objective::Pwr), mem: mean(Objective::Mem), n: 1.0 }
 }
@@ -1317,7 +1384,7 @@ impl Calibration {
         let Some(p) = Calibration::hyp_cache_path() else { return };
         let Ok(t) = std::fs::read_to_string(&p) else { return };
         let Ok(v) = serde_json::from_str::<Value>(&t) else { return };
-        if v["fingerprint"] != self.fingerprint.to_json() { return; }
+        if v["fingerprint"] != self.fingerprint.to_json() || v["v"].as_u64() != Some(HYP_CACHE_VERSION) { return; }
         for (k, h) in v["hyp"].as_object().into_iter().flatten() {
             if self.hyp.contains_key(k) { continue; }
             let h: Vec<f64> = h.as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
@@ -1338,10 +1405,10 @@ impl Calibration {
         let Some(p) = Calibration::hyp_cache_path() else { return };
         let mut m = Map::new();
         if let Some(v) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
-            if v["fingerprint"] == self.fingerprint.to_json() { if let Some(o) = v["hyp"].as_object() { m = o.clone(); } }
+            if v["fingerprint"] == self.fingerprint.to_json() && v["v"].as_u64() == Some(HYP_CACHE_VERSION) { if let Some(o) = v["hyp"].as_object() { m = o.clone(); } }
         }
         for (k, h) in add { m.insert(k, json!(h)); }
-        let out = json!({"fingerprint": self.fingerprint.to_json(), "hyp": m});
+        let out = json!({"v": HYP_CACHE_VERSION, "fingerprint": self.fingerprint.to_json(), "hyp": m});
         if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
         let tmp = p.with_extension(format!("tmp{}", std::process::id()));
         if std::fs::write(&tmp, out.to_string()).is_ok() && std::fs::rename(&tmp, &p).is_err() { let _ = std::fs::remove_file(&tmp); }
@@ -1511,7 +1578,7 @@ impl Calibration {
             if r.field { o["fd"] = json!(true); }
             o
         }).collect();
-        json!({"version": 9, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
+        json!({"version": 10, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
                "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "baselines": self.baselines, "envs": self.envs, "sess_env": self.sess_env, "io_days": self.io_days, "predcheck": self.predcheck,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
@@ -1599,6 +1666,28 @@ impl Calibration {
             }
             c.keys.retain(|_, gs| !gs.is_empty());
         }
+        // Format <= 9 summed objectives per metric (benchmark set 5, IO set 6): rows and one-at-a-time
+        // records are brought to the family scale (`rescale_families`) with the metrics the session's
+        // baseline recorded, else the set's own list. Device rows (one metric) are unchanged and stay
+        // current; the fitted scales of the old rows are dropped below.
+        if version < 10 {
+            for r in c.rows.iter_mut().filter(|r| !r.field) {
+                if r.phase == Phase::Dev { if r.bv == 5 { r.bv = BENCH_VERSION; } continue; }
+                let rec = c.baselines.iter().find(|b| b["sess"] == json!(r.sess) && b["phase"] == r.phase.name()).and_then(|b| b["m"].as_object());
+                let ms: Vec<Metric> = match rec {
+                    Some(m) => Metric::ALL.into_iter().filter(|x| m.contains_key(x.name())).collect(),
+                    None => SET5_METRICS[r.phase.idx()].to_vec(),
+                };
+                for (y, f) in r.y.iter_mut().zip(rescale_families(&ms)) { *y *= f; }
+            }
+            for (i, f) in [rescale_families(SET5_METRICS[0]), rescale_families(SET5_METRICS[1])].into_iter().enumerate() {
+                for s in c.keys.values_mut().flatten().flat_map(|g| g.values.values_mut()) {
+                    for rec in if i == 0 { &mut s.idle } else { &mut s.load } {
+                        for (x, f) in [&mut rec.m.lat, &mut rec.m.thr, &mut rec.m.pwr, &mut rec.m.mem].into_iter().zip(f) { if let Some(x) = x { *x *= f; } }
+                    }
+                }
+            }
+        }
         for (k, x) in v["refs"].as_object().into_iter().flatten() { if let Some(x) = x.as_str() { c.refs.insert(k.clone(), x.to_owned()); } }
         // Format <= 8: one reference per knob (`refs`), which every context then shares.
         for (cx, m) in v["refs_cx"].as_object().into_iter().flatten() {
@@ -1613,7 +1702,7 @@ impl Calibration {
             let u: Cfg = u.as_array().into_iter().flatten().filter_map(pair).collect();
             if c.unsafe_sets.contains(&u) && !c.unsafe_pinned.contains(&u) { c.unsafe_pinned.push(u); }
         }
-        for (k, x) in v["hyp"].as_object().into_iter().flatten().filter(|_| !old) {
+        for (k, x) in v["hyp"].as_object().into_iter().flatten().filter(|_| !old && version >= 10) {
             let h: Vec<f64> = x.as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
             if Hyper::from_slice(&h).is_some() { c.hyp.insert(k.clone(), h); }
         }
@@ -1759,6 +1848,21 @@ impl Calibration {
             if w < 1.0 { *m.entry((w * 100.0).round() as u64).or_default() += 1; }
         }
         m.into_iter().map(|(w, n)| (w as f64 / 100.0, n)).collect()
+    }
+    /// Reference-run scatter per metric on this machine (relative robust sd, i.e. the sd of the log
+    /// value): the median over the recorded sessions of `phase` read from `src`. What a session with
+    /// few reference runs of its own weighs its metrics by.
+    pub fn ref_log_sd(&self, phase: Phase, src: PowerSrc) -> BTreeMap<Metric, f64> {
+        let past: Vec<&Map<String, Value>> = self.baselines.iter()
+            .filter(|b| b["phase"] == phase.name() && b["src"] == src.name()).filter_map(|b| b["m"].as_object()).collect();
+        Metric::ALL.into_iter().filter_map(|m| {
+            let mut v: Vec<f64> = past.iter().filter_map(|x| {
+                let a = x.get(m.name())?.as_array()?;
+                let (med, sd) = (a.first()?.as_f64()? + m.eps(), a.get(1)?.as_f64()?);
+                (med > 0.0 && sd.is_finite()).then(|| sd / med)
+            }).collect();
+            median(&mut v).map(|s| (m, s))
+        }).collect()
     }
     /// Notes a session's reference level (replacing that session and phase's earlier record; the
     /// last `KEEP_BASELINES` are kept).
@@ -1933,7 +2037,8 @@ mod tests {
         let c5 = Calibration::from_json(&v5);
         assert_eq!(c5.rows.len(), 1);
         assert!(c5.migrated && c5.rows[0].phase == Phase::Io && c5.rows[0].bv == BENCH_VERSION && c5.hyp.is_empty());
-        assert!((c5.rows[0].y[0] - 0.2).abs() < 1e-12 && (c5.rows[0].y[1] - 0.15).abs() < 1e-12 && (c5.rows[0].y[2] - 0.1).abs() < 1e-12);
+        // x (2, 1.5, 1) to the summed scale, then x (1/2, 2/3, 1) to the family scale (4 latency metrics in 2 families, 3 throughput in 2).
+        assert!((c5.rows[0].y[0] - 0.1).abs() < 1e-12 && (c5.rows[0].y[1] - 0.1).abs() < 1e-12 && (c5.rows[0].y[2] - 0.1).abs() < 1e-12);
         assert!(c5.strategies_of(Phase::Idle).is_empty() && c5.strategies_of(Phase::Io).len() == 1);
         let again = Calibration::from_json(&c5.to_json());
         assert!(!again.migrated && again.rows.len() == 1 && again.rows[0].y[0] == c5.rows[0].y[0]);
@@ -2517,5 +2622,55 @@ mod tests {
         assert!(j.dev.is_some() && j.idle.is_none());
         assert!((j.eval(&[kv("snd.hda_power_save", "1")]).0 - 0.7 * 0.06).abs() < 0.015);
         assert!(c.joint([1.0, 1.0, 0.0, 0.5], Blend { load: 0.5, io: 1.0 }).is_none(), "power weight 0: devices do not count");
+    }
+
+    #[test]
+    fn objectives_count_scenarios_not_probes() {
+        // Every idle metric 2 % better: each objective counts its scenarios (families), not its probes.
+        let ms = SET5_METRICS[0];
+        assert_eq!(family_counts(ms.iter().copied()), [4, 4, 2, 1]);
+        let fx: BTreeMap<Metric, f64> = ms.iter().map(|m| (*m, 0.02)).collect();
+        let f = fold(&fx);
+        assert!((f.lat.unwrap() - 0.04).abs() < 1e-12 && (f.thr.unwrap() - 0.04).abs() < 1e-12 && (f.pwr.unwrap() - 0.02).abs() < 1e-12, "{f:?}");
+        // One metric of a family alone still counts whole when it is that family's only probe.
+        let one: BTreeMap<Metric, f64> = ms.iter().map(|m| (*m, if *m == Metric::BurstJobTailMs { 0.1 } else { 0.0 })).collect();
+        assert!((fold(&one).lat.unwrap() - 0.1 / 2.0 / 4.0 * 2.0).abs() < 1e-12);
+        // Set-5 rows (sum over 11 latency and 3 power metrics) come back to that scale.
+        let r = rescale_families(ms);
+        assert!((r[0] - 2.0 / 5.5).abs() < 1e-12 && (r[2] - 1.0 / 1.5).abs() < 1e-12 && r[3] == 1.0);
+        assert!((5.5 * 0.02 * r[0] - 0.04).abs() < 1e-12 && (1.5 * 0.02 * r[2] - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn format_9_rows_are_rescaled_and_their_scales_dropped() {
+        let row = |ph: u64, s: u64, bv: u64| json!({"ph": ph, "s": s, "p": 0.5, "t": 1, "k": "7.2", "w": 1.0, "bv": bv, "c": [["cpu.epp", "performance"]], "y": [0.11, 0.11, 0.03, 0.01]});
+        // Session 2 recorded a baseline without the memory probe: its own metric list decides.
+        let b2 = json!({"sess": 2, "phase": "idle", "src": "rapl", "m": {"wake p99": [50.0, 2.0], "frame tail": [400.0, 8.0], "idle power": [3.0, 0.1]}});
+        let v9 = json!({"version": 9, "rows": [row(0, 1, 5), row(0, 2, 5), row(3, 1, 5)], "baselines": [b2],
+                        "hyp": {"idle0": [0.03, 0.03, 0.012, 0.004, 0.004, 0.01]}});
+        let c = Calibration::from_json(&v9);
+        assert_eq!(c.rows.len(), 3);
+        assert!((c.rows[0].y[0] - 0.11 * 2.0 / 5.5).abs() < 1e-12 && (c.rows[0].y[2] - 0.03 / 1.5).abs() < 1e-12, "{:?}", c.rows[0].y);
+        // 2 latency metrics of one family: gain 1 both ways; power: 1 metric, 1 family.
+        assert!((c.rows[1].y[0] - 0.11).abs() < 1e-12 && (c.rows[1].y[2] - 0.03).abs() < 1e-12, "{:?}", c.rows[1].y);
+        assert_eq!((c.rows[0].bv, c.rows[2].bv), (5, BENCH_VERSION), "idle rows count as an older set, device rows (one metric) stay current");
+        assert!(c.rows[2].y == [0.11, 0.11, 0.03, 0.01] && c.hyp.is_empty());
+        // Written again as format 10: read back unchanged.
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.rows.iter().map(|r| r.y).collect::<Vec<_>>(), c.rows.iter().map(|r| r.y).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn reference_scatter_pools_earlier_sessions_of_the_same_phase_and_source() {
+        let mut c = Calibration::default();
+        for (s, sd) in [(1, 2.0), (2, 4.0), (3, 6.0)] {
+            c.note_baseline(json!({"sess": s, "phase": "idle", "src": "rapl", "m": {"wake p99": [100.0, sd], "alloc stalls": [0.0, 0.5]}}));
+        }
+        c.note_baseline(json!({"sess": 4, "phase": "idle", "src": "battery", "m": {"wake p99": [100.0, 50.0]}}));
+        c.note_baseline(json!({"sess": 5, "phase": "load", "src": "rapl", "m": {"wake p99": [100.0, 50.0]}}));
+        let sd = c.ref_log_sd(Phase::Idle, PowerSrc::Rapl);
+        assert!((sd[&Metric::WakeP99Us] - 0.04).abs() < 1e-12, "median of the three rapl idle sessions: {sd:?}");
+        assert!((sd[&Metric::StallsPerSec] - 0.5).abs() < 1e-12, "a counter at 0 is read against its offset");
+        assert!(c.ref_log_sd(Phase::Io, PowerSrc::Rapl).is_empty());
     }
 }
