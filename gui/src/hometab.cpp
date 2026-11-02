@@ -221,6 +221,30 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     themeLabel->setWordWrap(false);
     headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
     headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
+    // Both UI modes use the exact same hardware features. Saving the mode
+    // changes only visual presentation and the top-level navigation shell.
+    auto *uiMode = new QComboBox;
+    uiMode->setObjectName(QStringLiteral("uiModeSelector"));
+    uiMode->setToolTip(tr("Choose the original UI or the experimental layout. Applies on restart."));
+    uiMode->addItem(tr("Experimental"), QStringLiteral("experimental"));
+    uiMode->addItem(tr("Classic"), QStringLiteral("classic"));
+    uiMode->setCurrentIndex(theme::experimentalEnabled() ? 0 : 1);
+    connect(uiMode, &QComboBox::activated, this, [this, uiMode](int index) {
+        const bool experimental = uiMode->itemData(index).toString() == QLatin1String("experimental");
+        if (experimental == theme::experimentalEnabled()) return;
+        if (!theme::saveUiMode(experimental)) {
+            showStatus(tr("Could not save the interface mode."), 6000);
+            return;
+        }
+        if (QMessageBox::question(this, tr("Interface"),
+                tr("Restart Centurion now to switch interface layout?")) == QMessageBox::Yes)
+            theme::requestRestart();
+        else showStatus(tr("The interface changes at the next start."), 6000);
+    });
+    auto *uiLabel = muted(tr("Interface"));
+    uiLabel->setWordWrap(false);
+    headRow->addWidget(uiLabel, 0, Qt::AlignVCenter);
+    headRow->addWidget(uiMode, 0, Qt::AlignVCenter);
     // Interface language: same mechanism as the theme (saved, applied at the next start).
     auto *langBox = new QComboBox;
     langBox->setToolTip(tr("Interface language. Applied by restarting the app (a few seconds)."));
@@ -313,6 +337,31 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     cells->setColumnStretch(1, 1);
     root->addLayout(cells, 1);
     if (!dev) root->addWidget(status_);
+    // Direct shortcuts to high-frequency workflows. These emit a navigation
+    // signal; actions never apply a profile, curve or firmware value.
+    if (theme::experimentalEnabled()) {
+        auto *quickRow = new QHBoxLayout;
+        quickRow->setSpacing(6);
+        auto *hint = muted(tr("QUICK ACCESS"));
+        hint->setWordWrap(false);
+        quickRow->addWidget(hint);
+        const QPair<QString, QString> links[] = {
+            {tr("Health Center"), QStringLiteral("Health")},
+            {tr("Optimize"), QStringLiteral("Optimizations")},
+            {tr("Scenes"), QStringLiteral("Scenes")},
+        };
+        for (const auto &link : links) {
+            auto *button = new QPushButton(link.first);
+            button->setObjectName(QStringLiteral("btnMini"));
+            button->setToolTip(tr("Open %1 without changing any settings").arg(link.first));
+            connect(button, &QPushButton::clicked, this, [this, id = link.second] {
+                Q_EMIT openPageRequested(id);
+            });
+            quickRow->addWidget(button);
+        }
+        quickRow->addStretch();
+        root->addLayout(quickRow);
+    }
     statusTimer_ = new QTimer(this);
     statusTimer_->setSingleShot(true);
     connect(statusTimer_, &QTimer::timeout, status_, [this] { status_->clear(); });

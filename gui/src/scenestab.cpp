@@ -132,7 +132,9 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     left->addWidget(listBox, 1);
     auto *leftHost = new QWidget;
     leftHost->setLayout(left);
-    leftHost->setFixedWidth(190);
+    // A little wider in Experimental so long scene names do not truncate.
+    // The right editor keeps its original content and operational callbacks.
+    leftHost->setFixedWidth(theme::experimentalEnabled() ? 228 : 190);
     root->addWidget(leftHost);
 
     // ── right: editor + automatic switching ──

@@ -17,6 +17,7 @@ class NvidiaTab;
 class OptimizeTab;
 class RyzenTab;
 class QTabWidget;
+class QToolButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -59,8 +60,13 @@ protected:
 
 private:
     void fitTabs();
+    void arrangeTabs();
+    void populateSectionMenu();
+    void showQuickNavigator();
+    void placeHeaderControls();
     QTabWidget *tabs_;
     int tabW_ = -1;
+    QToolButton *sectionsButton_ = nullptr;
     QWidget *mark_;  // brand: icon + wordmark, floated over the header bezel
     HomeTab *home_;
     RyzenTab *ryzen_ = nullptr;

@@ -1,0 +1,1024 @@
+diff --git a/docs/EXPERIMENTAL-UI.md b/docs/EXPERIMENTAL-UI.md
+new file mode 100644
+index 0000000..62f6d04
+--- /dev/null
++++ b/docs/EXPERIMENTAL-UI.md
+@@ -0,0 +1,91 @@
++# Centurion Experimental UI — first implementation
++
++Branch: `experimental/ui-overhaul` (the original source is available on `master`).
++
++This is a **real Qt Widgets code change**, not a picture or an HTML mockup. It is
++an initial cohesive UI pass based on the compact Graphite/amber concept. It does
++**not** claim to reproduce every pixel of the concept art, nor to have passed a
++hardware integration test.
++
++## User-facing changes
++
++- Flat, consistently styled surfaces across every existing Qt tab, including
++  the Home, Health, CPU/GPU curves, Optimize, Scenes, Lighting, and Firmware pages.
++  The existing Centurion theme palettes (Graphite, Gruvbox, etc.) remain usable.
++- Top-level page order: Home, Health Center, AMD/Intel CPU controls (if present),
++  NVIDIA/AMD GPU controls (if present), Optimize, Scenes, Lighting (if present),
++  Firmware (if present). No page is deleted or eagerly instantiated to do this.
++- `All sections` header menu lists every page available on the current device,
++  even where a narrow window cannot fit its tab label.
++- `Ctrl+K` opens the read-only navigation palette. It searches top-level tabs,
++  the currently visible page's sections/controls, its nested subtabs, and visible
++  one-level navigation trees. Choosing an item **navigates or focuses**; it does
++  **not** click the control, apply a curve, write sysfs, or run a helper.
++- Current main page is restored on next launch by stable page name, not unstable
++  numerical index; optional hardware pages may appear/disappear.
++- Optimize has a live autocomplete search for all available tuning rows; selecting
++  a match brings its original editor into view without changing its value.
++- Home has three quick navigation links; the CPU CCD cards and Health overview
++  are less ornamental; Scenes has a slightly wider preset list.
++- Choose **Experimental** or **Classic** in Home > Interface, then restart.
++  This selection is saved to `~/.config/centurion/gui.ini` (`[ui] mode=`), and
++  changes only the interface. `CENTURION_UI=classic` and
++  `CENTURION_UI=experimental` override the saved mode for one launch.
++
++## Intentionally unchanged
++
++- The Rust helpers, their privilege levels and IPC, hardware probe addresses,
++  fan safety guard, power / undervolt / PBO / OC algorithms, stress/validation
++  programs, SMART and historical log parsing, kernel monitoring, notification
++  routing, tray behavior and backup/import/export format.
++- All hardware-conditional tabs and the original late NVIDIA tab creation.
++  No new GPU polling or stress testing takes place to populate navigation.
++- Health Center's existing local navigation and system tools directory.
++- Special input protections: mouse wheel over a combo box never changes its
++  value, and tuning buttons retain their existing confirmation flows.
++
++The mockup sometimes illustrates unavailable controls (e.g. unlocked laptop GPU
++power limits, firmware downloads). **No unimplemented or unsafe device control
++was added simply because it appeared in a generated concept image.**
++
++## Build / validation
++
++On Gentoo with Qt 6.4+ development packages, C++20 compiler, CMake and Ninja:
++
++```sh
++cmake -S gui -B build/gui -G Ninja -DCMAKE_BUILD_TYPE=Release
++cmake --build build/gui -j"$(nproc)"
++python3 gui/tests/health_ui_static_test.py
++python3 gui/tests/experimental_ui_static_test.py
++# if you enable the existing Qt tests during configuration:
++ctest --test-dir build/gui --output-on-failure
++./build/gui/centurion --window
++```
++
++UI mode is not a different daemon or set of helpers: installing this branch
++normally retains the previous backend. Switching to the original Git branch
++(or to Classic in this build) is a voluntary user choice.
++
++## Mandatory on-device regression checklist
++
++1. With AMD Zen 5 / Intel systems, verify that only supported CPU controls
++   appear; switch GPU from iGPU-only to hybrid and check late NVIDIA creation.
++2. Select all available top tabs and every Health navigation item; confirm
++   `Ctrl+K` opens existing nested subtabs without triggering any write.
++3. Resize to 620×420 and 1366×768; ensure All sections and the tab scroller
++   remain operable, and check for horizontal overlap in Home settings.
++4. Exercise CPU/GPU profile saving/loading, trial expiry, cancel, rollback,
++   scene switching, fan auto/max and device toggles. Check that they perform
++   exactly the same commands as the original branch.
++5. Check SMART, old Health event days, report privacy preview, history,
++   boot events and tray notifications. Verify no surprise GPU wake on Home.
++6. Switch to Classic, restart, and switch back; check persistence across
++   reboot and command-line environment override.
++
++### Verification boundary
++
++In this authoring environment, Qt6 development headers, Qt6 CMake package files
++and Rust Cargo are missing. Full C++/Rust compilation and real EC/SMU/GPU
++integration verification **have not been performed**. The static checks validate
++source-level integration only. The implementation should be treated as an
++experimental/test build until the above tests succeed on a supported machine.
+diff --git a/gui/CMakeLists.txt b/gui/CMakeLists.txt
+index 171e4f9..2511868 100644
+--- a/gui/CMakeLists.txt
++++ b/gui/CMakeLists.txt
+@@ -16,6 +16,7 @@ set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root hel
+ add_executable(centurion
+     src/main.cpp
+     src/mainwindow.cpp   src/mainwindow.h
++    src/uinavigator.cpp  src/uinavigator.h
+     src/theme.cpp        src/theme.h
+     src/privileged.cpp   src/privileged.h
+     src/platformprofile.cpp src/platformprofile.h
+diff --git a/gui/src/hometab.cpp b/gui/src/hometab.cpp
+index d8f1ace..3478359 100644
+--- a/gui/src/hometab.cpp
++++ b/gui/src/hometab.cpp
+@@ -221,6 +221,30 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
+     themeLabel->setWordWrap(false);
+     headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
+     headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
++    // Both UI modes use the exact same hardware features. Saving the mode
++    // changes only visual presentation and the top-level navigation shell.
++    auto *uiMode = new QComboBox;
++    uiMode->setObjectName(QStringLiteral("uiModeSelector"));
++    uiMode->setToolTip(tr("Choose the original UI or the experimental layout. Applies on restart."));
++    uiMode->addItem(tr("Experimental"), QStringLiteral("experimental"));
++    uiMode->addItem(tr("Classic"), QStringLiteral("classic"));
++    uiMode->setCurrentIndex(theme::experimentalEnabled() ? 0 : 1);
++    connect(uiMode, &QComboBox::activated, this, [this, uiMode](int index) {
++        const bool experimental = uiMode->itemData(index).toString() == QLatin1String("experimental");
++        if (experimental == theme::experimentalEnabled()) return;
++        if (!theme::saveUiMode(experimental)) {
++            showStatus(tr("Could not save the interface mode."), 6000);
++            return;
++        }
++        if (QMessageBox::question(this, tr("Interface"),
++                tr("Restart Centurion now to switch interface layout?")) == QMessageBox::Yes)
++            theme::requestRestart();
++        else showStatus(tr("The interface changes at the next start."), 6000);
++    });
++    auto *uiLabel = muted(tr("Interface"));
++    uiLabel->setWordWrap(false);
++    headRow->addWidget(uiLabel, 0, Qt::AlignVCenter);
++    headRow->addWidget(uiMode, 0, Qt::AlignVCenter);
+     // Interface language: same mechanism as the theme (saved, applied at the next start).
+     auto *langBox = new QComboBox;
+     langBox->setToolTip(tr("Interface language. Applied by restarting the app (a few seconds)."));
+@@ -313,6 +337,31 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
+     cells->setColumnStretch(1, 1);
+     root->addLayout(cells, 1);
+     if (!dev) root->addWidget(status_);
++    // Direct shortcuts to high-frequency workflows. These emit a navigation
++    // signal; actions never apply a profile, curve or firmware value.
++    if (theme::experimentalEnabled()) {
++        auto *quickRow = new QHBoxLayout;
++        quickRow->setSpacing(6);
++        auto *hint = muted(tr("QUICK ACCESS"));
++        hint->setWordWrap(false);
++        quickRow->addWidget(hint);
++        const QPair<QString, QString> links[] = {
++            {tr("Health Center"), QStringLiteral("Health")},
++            {tr("Optimize"), QStringLiteral("Optimizations")},
++            {tr("Scenes"), QStringLiteral("Scenes")},
++        };
++        for (const auto &link : links) {
++            auto *button = new QPushButton(link.first);
++            button->setObjectName(QStringLiteral("btnMini"));
++            button->setToolTip(tr("Open %1 without changing any settings").arg(link.first));
++            connect(button, &QPushButton::clicked, this, [this, id = link.second] {
++                Q_EMIT openPageRequested(id);
++            });
++            quickRow->addWidget(button);
++        }
++        quickRow->addStretch();
++        root->addLayout(quickRow);
++    }
+     statusTimer_ = new QTimer(this);
+     statusTimer_->setSingleShot(true);
+     connect(statusTimer_, &QTimer::timeout, status_, [this] { status_->clear(); });
+diff --git a/gui/src/hometab.h b/gui/src/hometab.h
+index 0a5187e..1da1da2 100644
+--- a/gui/src/hometab.h
++++ b/gui/src/hometab.h
+@@ -62,6 +62,8 @@ Q_SIGNALS:
+     void dgpuRestored();
+     /// *Setup wizard…* next to Device info.
+     void setupWizardRequested();
++    /// Navigation request only; never applies tuning or changes device state.
++    void openPageRequested(const QString &page);
+     /// Something the user must hear about even with the window hidden (tray notification).
+     void alert(const QString &title, const QString &message);
+ 
+diff --git a/gui/src/mainwindow.cpp b/gui/src/mainwindow.cpp
+index bd4cc75..0dc6222 100644
+--- a/gui/src/mainwindow.cpp
++++ b/gui/src/mainwindow.cpp
+@@ -27,9 +27,17 @@
+ #include "mangohud.h"
+ #include "platformprofile.h"
+ #include "trialbar.h"
++#include "uinavigator.h"
+ #include <QApplication>
+ #include <QCloseEvent>
+ #include <QHBoxLayout>
++#include <QAction>
++#include <QKeySequence>
++#include <QMenu>
++#include <QSettings>
++#include <QShortcut>
++#include <QStandardPaths>
++#include <QToolButton>
+ #include <QLabel>
+ #include <QTabBar>
+ #include <QTabWidget>
+@@ -46,7 +54,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+     setWindowIcon(appIcon(128));
+     // Room for the 2×2 Home grid and the curve tabs' control rows without clipping;
+     // still well inside a 1366×768 (or 1920×1080 at 150 %) desktop.
+-    resize(1080, 700);
++    resize(theme::experimentalEnabled() ? 1320 : 1080, theme::experimentalEnabled() ? 760 : 700);
+     setMinimumSize(620, 420);
+ 
+     tabs_ = new QTabWidget;
+@@ -73,9 +81,32 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+     wordmark->setObjectName("appWordmark");
+     markRow->addWidget(markIcon);
+     markRow->addWidget(wordmark);
++    if (theme::experimentalEnabled()) {
++        auto *tag = new QLabel(tr("Experimental"));
++        tag->setObjectName(QStringLiteral("experimentalTag"));
++        markRow->addWidget(tag);
++    }
++
++    // Full tab index is available even when the tab bar must scroll on a
++    // smaller screen. This is navigation only: never builds missing hardware
++    // pages and never calls a device control.
++    if (theme::experimentalEnabled()) {
++        sectionsButton_ = new QToolButton(tabs_);
++        sectionsButton_->setObjectName(QStringLiteral("experimentalSectionsButton"));
++        sectionsButton_->setText(tr("All sections  ▾"));
++        sectionsButton_->setToolTip(tr("All available pages, including hardware-specific tools. Ctrl+K to search."));
++        sectionsButton_->setPopupMode(QToolButton::InstantPopup);
++        sectionsButton_->setMenu(new QMenu(sectionsButton_));
++        connect(sectionsButton_->menu(), &QMenu::aboutToShow, this, &MainWindow::populateSectionMenu);
++        sectionsButton_->setAutoRaise(false);
++        auto *quick = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
++        quick->setContext(Qt::ApplicationShortcut);
++        connect(quick, &QShortcut::activated, this, &MainWindow::showQuickNavigator);
++    }
+ 
+     home_ = new HomeTab;
+     tabs_->addTab(home_, tr("Home"));
++    connect(home_, &HomeTab::openPageRequested, this, &MainWindow::showTab);
+     const int scenesAt = tabs_->count();  // Scenes sits right after Home; built last (it reads every tab)
+     // Every tab below exists only where its hardware/firmware interface does,
+     // so nobody is offered a control their machine can't honour.
+@@ -199,6 +230,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+     smart_ = new SmartWatch(this);
+     // Lid shut for long while awake (warm in a bag): the tray warns once per closing.
+     lid_ = new LidWatch(this);
++
++    if (theme::experimentalEnabled()) {
++        arrangeTabs();
++        populateSectionMenu();
++        // The last selected main page is restored by identity rather than an
++        // index (hardware-gated pages appear/disappear between launches).
++        QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
++        const QString last = settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString();
++        for (int i = 0; i < tabs_->count(); ++i)
++            if (tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
++        connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
++            if (i < 0 || i >= tabs_->count()) return;
++            QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
++            settings.setValue(QStringLiteral("ui/last_page"), tabs_->tabBar()->tabData(i).toString());
++        });
++    }
+ }
+ 
+ NvidiaTab *MainWindow::ensureNvidiaTab() {
+@@ -208,11 +255,83 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
+     const int at = tabs_->indexOf(amdgpu_ ? static_cast<QWidget *>(amdgpu_) : static_cast<QWidget *>(optimize_));
+     tabs_->insertTab(at, nvidia_, tr("NVIDIA Curve"));
+     tabW_ = -1;
++    if (theme::experimentalEnabled()) { arrangeTabs(); populateSectionMenu(); }
+     fitTabs();
+     Q_EMIT nvidiaTabAdded();
+     return nvidia_;
+ }
+ 
++// Canonical page IDs are separate from their translated visible captions.
++// We rearrange existing QTabWidget pages, never reparent or recreate them:
++// Home, Health and all vendor-specific operations keep their connections,
++// timers, system helpers and security guard rails.
++void MainWindow::arrangeTabs() {
++    // The Scenes page is not SceneEngine; it is the remaining QTabWidget page.
++    // Preserve every original tab, including fallback zone-lighting devices.
++    const QStringList originalNames{QStringLiteral("Home"), QStringLiteral("Health"),
++        QStringLiteral("Ryzen Curve"), QStringLiteral("Intel Undervolt"),
++        QStringLiteral("NVIDIA Curve"), QStringLiteral("AMD GPU"),
++        QStringLiteral("Optimizations"), QStringLiteral("Scenes"),
++        QStringLiteral("Lighting"), QStringLiteral("Firmware")};
++    // Initial order at construction may differ; record their canonical IDs
++    // once, before moving anything (Qt moves tabData along with the page).
++    for (int i = 0; i < tabs_->count(); ++i) {
++        if (!tabs_->tabBar()->tabData(i).isValid()) {
++            QString id;
++            for (const QString &n : originalNames)
++                if (tabs_->tabText(i) == tr(n.toUtf8().constData())) { id = n; break; }
++            if (!id.isEmpty()) tabs_->tabBar()->setTabData(i, id);
++        }
++    }
++    int target = 0;
++    for (const QString &id : originalNames) {
++        int from = -1;
++        for (int i = 0; i < tabs_->count(); ++i)
++            if (tabs_->tabBar()->tabData(i).toString() == id) { from = i; break; }
++        if (from < 0) continue;
++        if (from != target) tabs_->tabBar()->moveTab(from, target);
++        // Shorten labels only where it helps; the full name is still in the
++        // tooltip and the canonical ID used by HealthTab::openTab.
++        const QString display = id == QLatin1String("Health") ? tr("Health Center")
++                              : id == QLatin1String("Optimizations") ? tr("Optimize")
++                              : tr(id.toUtf8().constData());
++        tabs_->setTabText(target, display);
++        tabs_->setTabToolTip(target, tr(id.toUtf8().constData()));
++        ++target;
++    }
++    tabW_ = -1;
++}
++
++void MainWindow::populateSectionMenu() {
++    if (!sectionsButton_) return;
++    QMenu *menu = sectionsButton_->menu();
++    menu->clear();
++    QAction *find = menu->addAction(tr("Find a setting…    Ctrl+K"));
++    connect(find, &QAction::triggered, this, &MainWindow::showQuickNavigator);
++    menu->addSeparator();
++    for (int i = 0; i < tabs_->count(); ++i) {
++        QWidget *page = tabs_->widget(i);
++        QAction *action = menu->addAction(tabs_->tabText(i));
++        action->setCheckable(true);
++        action->setChecked(i == tabs_->currentIndex());
++        action->setEnabled(tabs_->isTabEnabled(i));
++        connect(action, &QAction::triggered, this, [this, page] {
++            const int n = tabs_->indexOf(page);
++            if (n >= 0) tabs_->setCurrentIndex(n);
++        });
++    }
++}
++
++void MainWindow::showQuickNavigator() { uinavigator::open(tabs_, this); }
++
++void MainWindow::placeHeaderControls() {
++    if (!sectionsButton_) return;
++    sectionsButton_->adjustSize();
++    sectionsButton_->move(std::max(0, tabs_->width() - sectionsButton_->width() - 13),
++                           std::max(0, (tabs_->tabBar()->height() - sectionsButton_->height()) / 2));
++    sectionsButton_->raise();
++}
++
+ // The selector rail hugs its keys: document mode would stretch the tab bar (and
+ // so the rail painted behind it) across the whole window. Text tabs size
+ // themselves. The style sheet shifts the bar right by the brand inset without
+@@ -220,7 +339,7 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
+ // the window edge and shows its scroll buttons instead of running off-screen.
+ void MainWindow::fitTabs() {
+     QTabBar *bar = tabs_->tabBar();
+-    const int room = tabs_->width() - theme::brandInset() - 8;
++    const int room = tabs_->width() - theme::brandInset() - (sectionsButton_ ? 148 : 8);
+     const int w = std::max(120, std::min(bar->sizeHint().width(), room));
+     if (w != tabW_) { tabW_ = w; bar->setMaximumWidth(w); }
+ }
+@@ -228,6 +347,7 @@ void MainWindow::fitTabs() {
+ void MainWindow::resizeEvent(QResizeEvent *e) {
+     QMainWindow::resizeEvent(e);
+     fitTabs();
++    placeHeaderControls();
+ }
+ 
+ void MainWindow::showEvent(QShowEvent *e) {
+@@ -237,6 +357,7 @@ void MainWindow::showEvent(QShowEvent *e) {
+     mark_->adjustSize();  // the style sheet arrives after the constructor (theme.h)
+     mark_->move(theme::BRAND_X, std::max(0, (tabs_->tabBar()->height() - mark_->height()) / 2));
+     mark_->raise();
++    placeHeaderControls();
+     // First time the window opens (not the tray-only start): the setup wizard, once per user.
+     if (!wizardChecked_) { wizardChecked_ = true; QTimer::singleShot(0, this, [this] { FirstRunWizard::maybeShow(this); }); }
+ }
+@@ -247,9 +368,14 @@ void MainWindow::updateOverlay() {
+ }
+ 
+ void MainWindow::showTab(const QString &label) {
+-    for (int i = 0; i < tabs_->count(); ++i)
+-        // `label` is the English name; the tab shows its translation (the same tr() as in the constructor).
+-        if (tabs_->tabText(i) == tr(label.toUtf8().constData())) { tabs_->setCurrentIndex(i); break; }
++    for (int i = 0; i < tabs_->count(); ++i) {
++        // HealthPage sends canonical English names, not the new short caption.
++        if (tabs_->tabBar()->tabData(i).toString() == label ||
++            tabs_->tabText(i) == tr(label.toUtf8().constData())) {
++            tabs_->setCurrentIndex(i);
++            break;
++        }
++    }
+     showNormal();
+     raise();
+     activateWindow();
+diff --git a/gui/src/mainwindow.h b/gui/src/mainwindow.h
+index 1868caa..4636b50 100644
+--- a/gui/src/mainwindow.h
++++ b/gui/src/mainwindow.h
+@@ -17,6 +17,7 @@ class NvidiaTab;
+ class OptimizeTab;
+ class RyzenTab;
+ class QTabWidget;
++class QToolButton;
+ 
+ class MainWindow : public QMainWindow {
+     Q_OBJECT
+@@ -59,8 +60,13 @@ protected:
+ 
+ private:
+     void fitTabs();
++    void arrangeTabs();
++    void populateSectionMenu();
++    void showQuickNavigator();
++    void placeHeaderControls();
+     QTabWidget *tabs_;
+     int tabW_ = -1;
++    QToolButton *sectionsButton_ = nullptr;
+     QWidget *mark_;  // brand: icon + wordmark, floated over the header bezel
+     HomeTab *home_;
+     RyzenTab *ryzen_ = nullptr;
+diff --git a/gui/src/optimizetab.cpp b/gui/src/optimizetab.cpp
+index 701ed98..af65937 100644
+--- a/gui/src/optimizetab.cpp
++++ b/gui/src/optimizetab.cpp
+@@ -13,6 +13,8 @@
+ #include <unistd.h>
+ #include <QApplication>
+ #include <QCheckBox>
++#include <QCompleter>
++#include <QStringListModel>
+ #include <QToolButton>
+ #include <QClipboard>
+ #include <QAbstractItemView>
+@@ -504,6 +506,30 @@ void OptimizeTab::buildUi() {
+     refreshCalibrationStatus();
+     root->addWidget(pbox);
+ 
++    // Opt-in keyboard navigation through the dozens of fine-grained tuning
++    // knobs. A search only changes the selected subtab/scroll position; the
++    // existing Apply checked operation is the sole commit path.
++    if (theme::experimentalEnabled()) {
++        auto *findRow = new QHBoxLayout;
++        findRow->setSpacing(7);
++        auto *caption = muted(tr("Find setting"));
++        findRow->addWidget(caption);
++        settingSearch_ = new QLineEdit;
++        settingSearch_->setObjectName(QStringLiteral("optimizeSettingSearch"));
++        settingSearch_->setPlaceholderText(tr("Search across CPU, memory, storage, network…  (Enter to locate)"));
++        settingSearch_->setClearButtonEnabled(true);
++        settingSearchModel_ = new QStringListModel(this);
++        auto *completer = new QCompleter(settingSearchModel_, this);
++        completer->setCaseSensitivity(Qt::CaseInsensitive);
++        completer->setFilterMode(Qt::MatchContains);
++        completer->setCompletionMode(QCompleter::PopupCompletion);
++        settingSearch_->setCompleter(completer);
++        connect(settingSearch_, &QLineEdit::returnPressed, this, [this] {
++            jumpToSetting(settingSearch_->text());
++        });
++        findRow->addWidget(settingSearch_, 1);
++        root->addLayout(findRow);
++    }
+     groups_ = new QTabWidget;
+     groups_->setDocumentMode(true);
+     root->addWidget(groups_, 1);
+@@ -984,6 +1010,36 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
+     if (!radioRepairOffered_) QTimer::singleShot(0, this, &OptimizeTab::offerRadioRepairApproval);
+ }
+ 
++void OptimizeTab::jumpToSetting(const QString &query) {
++    if (!settingSearch_ || !groups_) return;
++    QString text = query.trimmed();
++    if (text.isEmpty()) return;
++    // Completer entries use "Group / Setting"; free-text searches match
++    // labels/help/keys. Keep the source row and its include checkbox intact.
++    for (Row &r : rows_) {
++        if (!r.name) continue;
++        const QString fullname = r.group + QStringLiteral(" / ") + r.label;
++        if (!fullname.contains(text, Qt::CaseInsensitive) &&
++            !r.label.contains(text, Qt::CaseInsensitive) &&
++            !r.key.contains(text, Qt::CaseInsensitive) &&
++            !r.help.contains(text, Qt::CaseInsensitive) &&
++            text.compare(fullname, Qt::CaseInsensitive) != 0)
++            continue;
++        for (int i = 0; i < groups_->count(); ++i) {
++            if (!groups_->tabText(i).startsWith(r.group + QLatin1Char(' '))) continue;
++            groups_->setCurrentIndex(i);
++            if (auto *scroll = qobject_cast<QScrollArea *>(groups_->widget(i)))
++                scroll->ensureWidgetVisible(r.name, 14, 40);
++            // Focus the checkbox only to show keyboard users where they are.
++            // No toggle, helper call or automatic application takes place.
++            if (r.include && r.include->isEnabled())
++                r.include->setFocus(Qt::OtherFocusReason);
++            return;
++        }
++    }
++    showStatus(tr("No setting matched: %1").arg(text));
++}
++
+ void OptimizeTab::buildRows(const QJsonArray &rows) {
+     const QJsonObject values = collectValues();  // keep the user's edits across a rebuild
+     const QJsonObject run = collectRun();
+@@ -1140,6 +1196,14 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
+     }
+     groups_->addTab(buildLaunchPage(), "Game launch");
+     groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), "Boot options");  // built on first open
++    if (settingSearchModel_) {
++        QStringList entries;
++        for (const Row &r : rows_) if (!r.label.isEmpty())
++            entries.append(r.group + QStringLiteral(" / ") + r.label);
++        entries.removeDuplicates();
++        entries.sort(Qt::CaseInsensitive);
++        settingSearchModel_->setStringList(entries);
++    }
+     if (tabIndex >= 0 && tabIndex < groups_->count()) groups_->setCurrentIndex(tabIndex);
+     // Dev aids for screenshots (like CENTURION_TAB): CENTURION_OPT_SUBTAB=N, CENTURION_OPT_LOAD=<preset>.
+     if (qEnvironmentVariableIsSet("CENTURION_OPT_SUBTAB")) groups_->setCurrentIndex(qEnvironmentVariableIntValue("CENTURION_OPT_SUBTAB"));
+diff --git a/gui/src/optimizetab.h b/gui/src/optimizetab.h
+index d3b9b3b..f9a98f1 100644
+--- a/gui/src/optimizetab.h
++++ b/gui/src/optimizetab.h
+@@ -26,6 +26,7 @@ class SceneEngine;
+ class Int64SpinBox;
+ class QTabWidget;
+ class QTimer;
++class QStringListModel;
+ 
+ class OptimizeTab : public QWidget {
+     Q_OBJECT
+@@ -91,6 +92,7 @@ private:
+     void refresh(bool fromPoll = false);
+     void onDescribe(const QJsonObject &d, bool light = false);
+     void buildRows(const QJsonArray &rows);
++    void jumpToSetting(const QString &query);
+     void updateRow(Row &r, const QJsonObject &o);
+     void updateStateBanner();
+     class QFrame *driftBar_ = nullptr;
+@@ -192,6 +194,8 @@ private:
+     QLineEdit *lutrisPre_ = nullptr, *lutrisPost_ = nullptr, *lutrisPrefix_ = nullptr, *steam_ = nullptr;
+     QLabel *topoLabel_ = nullptr;
+     QTabWidget *groups_ = nullptr;
++    QLineEdit *settingSearch_ = nullptr;
++    QStringListModel *settingSearchModel_ = nullptr;
+     QTimer *poll_ = nullptr, *statusTimer_ = nullptr;
+     QString loadedPreset_;
+ };
+diff --git a/gui/src/overviewpage.cpp b/gui/src/overviewpage.cpp
+index 12e6cd6..4234aac 100644
+--- a/gui/src/overviewpage.cpp
++++ b/gui/src/overviewpage.cpp
+@@ -60,9 +60,12 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
+     hero->setObjectName(QStringLiteral("healthHero"));
+     hero->setStyleSheet(QStringLiteral("QFrame#healthHero{background:%1;border:1px solid %2;border-radius:13px}"
+                                        "QFrame#healthHero QLabel{border:none;background:transparent}")
+-                        .arg(theme::BG2, theme::BORDER));
++                        .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
+     auto *heroLayout = new QVBoxLayout(hero);
+-    heroLayout->setContentsMargins(18, 15, 18, 15);
++    heroLayout->setContentsMargins(theme::experimentalEnabled() ? 13 : 18,
++                                   theme::experimentalEnabled() ? 10 : 15,
++                                   theme::experimentalEnabled() ? 13 : 18,
++                                   theme::experimentalEnabled() ? 10 : 15);
+     heroLayout->setSpacing(7);
+     auto *top = new QHBoxLayout;
+     summary_ = new QLabel;
+@@ -91,7 +94,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
+     recommend->setObjectName(QStringLiteral("healthAdvice"));
+     recommend->setStyleSheet(QStringLiteral("QFrame#healthAdvice{background:%1;border:1px solid %2;border-radius:10px}"
+                                             "QFrame#healthAdvice QLabel{background:transparent;border:none}")
+-                             .arg(theme::BG2, theme::BORDER));
++                             .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
+     auto *adviceLayout = new QHBoxLayout(recommend);
+     adviceLayout->setContentsMargins(14, 11, 14, 11);
+     recommendation_ = new QLabel;
+diff --git a/gui/src/ryzentab.cpp b/gui/src/ryzentab.cpp
+index 048e1e2..9512197 100644
+--- a/gui/src/ryzentab.cpp
++++ b/gui/src/ryzentab.cpp
+@@ -407,8 +407,14 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect())
+ 
+         auto *card = new QFrame;
+         card->setObjectName("ccdCard");
+-        card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
+-                                .arg(theme::BG2, theme::BORDER_SOFT, accent));
++        // Keep the CCD's identity in its title, not a bright frame around
++        // every row: instrumentation should be readable rather than decorative.
++        if (theme::experimentalEnabled())
++            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-radius: 7px; }")
++                                    .arg(theme::BG1, theme::BORDER));
++        else
++            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
++                                    .arg(theme::BG2, theme::BORDER_SOFT, accent));
+         auto *g = new QGridLayout(card);
+         g->setContentsMargins(8, 6, 8, 6);
+         g->setHorizontalSpacing(14);
+diff --git a/gui/src/scenestab.cpp b/gui/src/scenestab.cpp
+index f95f84c..af86b9c 100644
+--- a/gui/src/scenestab.cpp
++++ b/gui/src/scenestab.cpp
+@@ -132,7 +132,9 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
+     left->addWidget(listBox, 1);
+     auto *leftHost = new QWidget;
+     leftHost->setLayout(left);
+-    leftHost->setFixedWidth(190);
++    // A little wider in Experimental so long scene names do not truncate.
++    // The right editor keeps its original content and operational callbacks.
++    leftHost->setFixedWidth(theme::experimentalEnabled() ? 228 : 190);
+     root->addWidget(leftHost);
+ 
+     // ── right: editor + automatic switching ──
+diff --git a/gui/src/theme.cpp b/gui/src/theme.cpp
+index 61fe103..2340c77 100644
+--- a/gui/src/theme.cpp
++++ b/gui/src/theme.cpp
+@@ -76,6 +76,22 @@ QList<QPair<QString, QString>> themes() {
+ }
+ QString currentTheme() { return g_current; }
+ 
++bool experimentalEnabled() {
++    const QByteArray overrideMode = qgetenv("CENTURION_UI").trimmed().toLower();
++    if (overrideMode == "classic") return false;
++    if (overrideMode == "experimental") return true;
++    return settings().value(QStringLiteral("ui/mode"), QStringLiteral("experimental")).toString()
++           != QLatin1String("classic");
++}
++
++bool saveUiMode(bool experimental) {
++    QSettings s = settings();
++    s.setValue(QStringLiteral("ui/mode"), experimental ? QStringLiteral("experimental") : QStringLiteral("classic"));
++    s.sync();
++    return s.status() == QSettings::NoError;
++}
++
++
+ void load() {
+     const QString want = settings().value(QStringLiteral("theme")).toString();
+     const Palette *p = &PALETTES[0];
+@@ -146,7 +162,8 @@ int brandInset() {
+     QFont f = QApplication::font();
+     f.setPointSize(FONT_PT + 2);
+     f.setWeight(QFont::Bold);
+-    return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion")) + 22;
++    return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion"))
++           + (experimentalEnabled() ? 118 : 22);
+ }
+ 
+ // Selectors (objectName / dynamic properties) are the contract with the tabs:
+@@ -350,6 +367,97 @@ QMenu::separator { height: 1px; background: @BORDER_SOFT; margin: 5px 8px; }
+ QMenu::indicator { width: 12px; height: 12px; left: 6px; }
+ QMenu::indicator:checked { image: url(:/theme/check.png); background: @ACCENT; border-radius: 3px; }
+ QMenuBar { background: @BG0; } QMenuBar::item:selected { background: @BG3; }
++)QSS");
++    // Experimental: flatter surfaces and stronger hierarchy without hiding controls.
++    // Appended after the classic selectors, so the original styling is selectable.
++    // Uses the same palette tokens: every existing colour theme keeps working.
++    if (experimentalEnabled()) s += QStringLiteral(R"QSS(
++/* ── Centurion Experimental / cohesive, dense instrumentation ── */
++QWidget { background: @BG0; }
++.QWidget { background: transparent; }
++QTabWidget#mainTabs { background: @BG0; }
++QTabWidget#mainTabs::pane { background: @BG0; border-top: 1px solid @BORDER_SOFT; }
++QTabWidget#mainTabs > QTabBar {
++    background: transparent; border: none; border-radius: 0; margin: 0;
++}
++QTabWidget#mainTabs > QTabBar::tab {
++    color: @FG_DIM; background: transparent; border: none;
++    border-bottom: 2px solid transparent; border-radius: 0;
++    padding: 14px 12px 11px 12px; margin: 0 2px; font-weight: 500;
++}
++QTabWidget#mainTabs > QTabBar::tab:hover:!selected {
++    background: @BG1; color: @FG;
++}
++QTabWidget#mainTabs > QTabBar::tab:selected {
++    color: @FG; background: transparent; border: none;
++    border-bottom: 2px solid @ACCENT; font-weight: 700;
++}
++QTabWidget#mainTabs > QTabBar QToolButton {
++    background: @BG1; border: 1px solid @BORDER_SOFT; margin: 7px 1px;
++}
++QWidget#appMark { background: transparent; }
++QLabel#experimentalTag {
++    color: @ACCENT; font-size: 8pt; font-weight: 600;
++    border: 1px solid @ACCENT_SOFT; border-radius: 5px;
++    padding: 2px 5px; background: @ACCENT_TINT2;
++}
++QToolButton#experimentalSectionsButton {
++    color: @FG_DIM; background: @BG1; border: 1px solid @BORDER;
++    padding: 4px 9px; border-radius: 6px; font-weight: 600;
++}
++QToolButton#experimentalSectionsButton:hover {
++    color: @FG; border-color: @ACCENT_SOFT; background: @BG2;
++}
++/* Section panels: line and typography rather than stacked gradients. */
++QGroupBox {
++    background: @BG1; border: 1px solid @BORDER;
++    border-radius: 8px; margin-top: 0; padding: 29px 9px 8px 9px;
++    color: @FG; font-weight: 600;
++}
++QGroupBox::title {
++    color: @FG; border: none; left: 12px; top: 9px;
++    padding: 0; background: transparent; font-size: @FONTpt; font-weight: 700;
++}
++QGroupBox#box_blue::title, QGroupBox#box_purple::title,
++QGroupBox#box_yellow::title, QGroupBox#box_green::title,
++QGroupBox#box_grey::title, QGroupBox#box_red::title { border: none; }
++QGroupBox QGroupBox {
++    background: transparent; border: none; border-top: 1px solid @BORDER_SOFT;
++    border-radius: 0; padding: 24px 0 0 0;
++}
++QGroupBox QGroupBox::title { color: @FG_DIM; border: none; left: 3px; top: 7px; }
++QPushButton {
++    background: @BG2; border: 1px solid @BORDER; border-radius: 6px;
++    padding: 4px 10px; color: @FG; font-weight: 500;
++}
++QPushButton:hover { background: @BG3; border-color: @ACCENT_SOFT; }
++QPushButton:checked { background: @ACCENT_TINT; border-color: @ACCENT_SOFT; color: @FG; }
++QPushButton#btnAccent { background: @ACCENT; border: 1px solid @ACCENT_SOFT; color: @ON_ACCENT; font-weight: 700; }
++QPushButton#btnAccent:hover { background: @ACCENT_HI; border-color: @ACCENT_HI; }
++QPushButton#btnDanger { background: @DANGER_WASH; border: 1px solid @DANGER_SOFT; color: @DANGER; }
++QLineEdit, QSpinBox, QDoubleSpinBox, Int64SpinBox, QComboBox {
++    background: @WELL; border: 1px solid @BORDER; border-radius: 6px;
++}
++QPlainTextEdit, QTextEdit { border: 1px solid @BORDER; border-radius: 7px; }
++QListView, QTreeView, QTableView {
++    background: @BG1; border: 1px solid @BORDER; border-radius: 7px;
++    alternate-background-color: @ROW_ALT; padding: 2px;
++}
++QTreeView::item:selected, QTableView::item:selected, QListView::item:selected {
++    background: @ACCENT_TINT; color: @FG;
++}
++QHeaderView::section {
++    background: @BG1; border-right: 0; border-bottom: 1px solid @BORDER;
++    border-radius: 0; font-weight: 600; color: @FG_DIM;
++}
++QTabBar::tab { padding: 7px 12px 6px 12px; }
++QTabBar::tab:selected { color: @FG; border-bottom: 2px solid @ACCENT; }
++QProgressBar::chunk { background: @ACCENT; }
++QCheckBox::indicator:checked { background: @ACCENT; border: 1px solid @ACCENT; image: url(:/theme/check.png); }
++QSlider::sub-page:horizontal { background: @ACCENT; }
++QSlider::handle:horizontal { background: @ACCENT_HI; border: 2px solid @BG1; }
++QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 7px; }
++QMenu::item { border-radius: 4px; }
+ )QSS");
+     const QColor accent(QString::fromLatin1(ACCENT));
+     // Text on the amber key: the darkest surface, unless the accent itself is dark.
+diff --git a/gui/src/theme.h b/gui/src/theme.h
+index 961f68b..d969689 100644
+--- a/gui/src/theme.h
++++ b/gui/src/theme.h
+@@ -35,6 +35,9 @@ QString profileAccent(const QString &profile);
+ /// Premade palettes: (id, display name), in menu order.
+ QList<QPair<QString, QString>> themes();
+ QString currentTheme();
++/// Experimental interface is selected by default on this branch; classic remains available.
++bool experimentalEnabled();
++bool saveUiMode(bool experimental);
+ /// Reads the saved choice (~/.config/centurion/gui.ini) and sets the tokens.
+ void load();
+ bool saveTheme(const QString &id);
+diff --git a/gui/src/uinavigator.cpp b/gui/src/uinavigator.cpp
+new file mode 100644
+index 0000000..0e63f48
+--- /dev/null
++++ b/gui/src/uinavigator.cpp
+@@ -0,0 +1,165 @@
++#include "uinavigator.h"
++
++#include <QAbstractButton>
++#include <QDialog>
++#include <QGroupBox>
++#include <QHBoxLayout>
++#include <QLabel>
++#include <QLineEdit>
++#include <QListWidget>
++#include <QPointer>
++#include <QScrollArea>
++#include <QTabWidget>
++#include <QTreeWidget>
++#include <QVBoxLayout>
++#include <QVector>
++
++namespace uinavigator {
++namespace {
++struct Destination {
++    int tab = -1;
++    QPointer<QWidget> target;
++    QPointer<QTabWidget> inner;
++    int innerIndex = -1;
++    QPointer<QTreeWidget> tree;
++    QTreeWidgetItem *treeItem = nullptr;
++    QString title;
++    QString search;
++};
++}
++
++void open(QTabWidget *tabs, QWidget *parent) {
++    if (!tabs) return;
++    QDialog dialog(parent);
++    dialog.setWindowTitle(QObject::tr("Quick navigation — Centurion"));
++    dialog.resize(560, 490);
++    auto *layout = new QVBoxLayout(&dialog);
++    layout->setContentsMargins(14, 14, 14, 14);
++    layout->setSpacing(8);
++    auto *heading = new QLabel(QObject::tr("Jump to a section"));
++    heading->setProperty("role", "title");
++    layout->addWidget(heading);
++    auto *hint = new QLabel(QObject::tr("Search tabs and visible controls. Enter navigates; it never applies a setting."));
++    hint->setProperty("role", "muted");
++    hint->setWordWrap(true);
++    layout->addWidget(hint);
++    auto *search = new QLineEdit;
++    search->setObjectName(QStringLiteral("experimentalQuickSearch"));
++    search->setPlaceholderText(QObject::tr("CPU, fan, Health, Scenes, tuning…"));
++    search->setClearButtonEnabled(true);
++    layout->addWidget(search);
++    auto *results = new QListWidget;
++    results->setObjectName(QStringLiteral("experimentalQuickResults"));
++    results->setUniformItemSizes(true);
++    results->setAlternatingRowColors(false);
++    layout->addWidget(results, 1);
++
++    QVector<Destination> destinations;
++    for (int i = 0; i < tabs->count(); ++i) {
++        const QString label = tabs->tabText(i);
++        if (!tabs->isTabEnabled(i)) continue;
++        const QString detail = tabs->tabToolTip(i);
++        Destination dest;
++        dest.tab = i;
++        dest.title = QObject::tr("Page  /  %1").arg(label);
++        dest.search = label + QLatin1Char(' ') + detail;
++        destinations.append(dest);
++    }
++    // Only *already visible* controls are indexed. Building unopened specialist
++    // pages here could wake a sleeping dGPU or trigger a privileged probe.
++    if (QWidget *page = tabs->currentWidget()) {
++        const QString prefix = tabs->tabText(tabs->currentIndex());
++        for (QWidget *w : page->findChildren<QWidget *>()) {
++            if (!w->isVisibleTo(page) || !w->isEnabled()) continue;
++            QString label;
++            if (auto *group = qobject_cast<QGroupBox *>(w)) label = group->title();
++            else if (auto *button = qobject_cast<QAbstractButton *>(w)) label = button->text();
++            else continue;
++            label.remove(QLatin1Char('&'));
++            if (label.trimmed().isEmpty() || label.size() > 100) continue;
++            if (destinations.size() >= 220) break;
++            Destination dest;
++            dest.tab = tabs->currentIndex();
++            dest.target = w;
++            dest.title = QObject::tr("%1  /  %2").arg(prefix, label);
++            dest.search = prefix + QLatin1Char(' ') + label + QLatin1Char(' ') + w->toolTip();
++            destinations.append(dest);
++        }
++        // Discover existing sub-tab names without activating them. This keeps
++        // Optimize's CPU/Storage/Network/Boot tools searchable without forcing
++        // the LazyWidget content to initialize (or making extra device reads).
++        for (QTabWidget *inner : page->findChildren<QTabWidget *>()) {
++            if (!inner->isVisibleTo(page)) continue;
++            for (int j = 0; j < inner->count() && destinations.size() < 250; ++j) {
++                if (!inner->isTabEnabled(j)) continue;
++                Destination dest;
++                dest.tab = tabs->currentIndex();
++                dest.inner = inner;
++                dest.innerIndex = j;
++                dest.title = QObject::tr("%1  /  %2").arg(prefix, inner->tabText(j));
++                dest.search = dest.title + QLatin1Char(' ') + inner->tabToolTip(j);
++                destinations.append(dest);
++            }
++        }
++        // Health Center's one-level tree is also a first-class navigation
++        // target. Skip headers, hidden groups and the inner tool directory.
++        for (QTreeWidget *tree : page->findChildren<QTreeWidget *>()) {
++            if (!tree->isVisibleTo(page) || tree->objectName() == QLatin1String("experimentalQuickResults")) continue;
++            for (int r = 0; r < tree->topLevelItemCount(); ++r) {
++                QTreeWidgetItem *root = tree->topLevelItem(r);
++                for (int j = 0; j < root->childCount() && destinations.size() < 300; ++j) {
++                    QTreeWidgetItem *item = root->child(j);
++                    if (item->isHidden() || !(item->flags() & Qt::ItemIsSelectable)) continue;
++                    Destination dest;
++                    dest.tab = tabs->currentIndex();
++                    dest.tree = tree;
++                    dest.treeItem = item;
++                    dest.title = QObject::tr("%1  /  %2").arg(prefix, item->text(0));
++                    dest.search = prefix + QLatin1Char(' ') + root->text(0) + QLatin1Char(' ') + item->text(0);
++                    destinations.append(dest);
++                }
++            }
++        }
++    }
++    auto refill = [&] {
++        results->clear();
++        const QString filter = search->text().trimmed();
++        for (int i = 0; i < destinations.size(); ++i) {
++            const Destination &d = destinations.at(i);
++            if (!filter.isEmpty() && !d.search.contains(filter, Qt::CaseInsensitive)) continue;
++            auto *item = new QListWidgetItem(d.title, results);
++            item->setData(Qt::UserRole, i);
++        }
++        if (results->count()) results->setCurrentRow(0);
++    };
++    QObject::connect(search, &QLineEdit::textChanged, &dialog, refill);
++    auto select = [&] {
++        QListWidgetItem *item = results->currentItem();
++        if (!item) return;
++        const int i = item->data(Qt::UserRole).toInt();
++        if (i < 0 || i >= destinations.size()) return;
++        const Destination d = destinations.at(i);
++        if (d.tab < 0 || d.tab >= tabs->count()) return;
++        tabs->setCurrentIndex(d.tab);
++        if (d.inner && d.innerIndex >= 0 && d.innerIndex < d.inner->count())
++            d.inner->setCurrentIndex(d.innerIndex);
++        if (d.tree && d.treeItem) d.tree->setCurrentItem(d.treeItem);
++        if (d.target) {
++            // Find the nearest scroll area. Focus is purely navigational and
++            // never clicks the widget, adjusts a value or writes hardware.
++            for (QWidget *p = d.target->parentWidget(); p; p = p->parentWidget()) {
++                if (auto *scroll = qobject_cast<QScrollArea *>(p)) {
++                    scroll->ensureWidgetVisible(d.target); break;
++                }
++            }
++            if (d.target->focusPolicy() != Qt::NoFocus) d.target->setFocus(Qt::OtherFocusReason);
++        }
++        dialog.accept();
++    };
++    QObject::connect(results, &QListWidget::itemActivated, &dialog, [&](QListWidgetItem *) { select(); });
++    QObject::connect(search, &QLineEdit::returnPressed, &dialog, select);
++    refill();
++    search->setFocus();
++    dialog.exec();
++}
++}  // namespace uinavigator
+diff --git a/gui/src/uinavigator.h b/gui/src/uinavigator.h
+new file mode 100644
+index 0000000..f03b29f
+--- /dev/null
++++ b/gui/src/uinavigator.h
+@@ -0,0 +1,8 @@
++#pragma once
++// Read-only navigation: never invokes a tuning control or hardware scanner.
++class QTabWidget;
++class QWidget;
++namespace uinavigator {
++/// Search available tabs and the currently visible page's controls (Ctrl+K).
++void open(QTabWidget *tabs, QWidget *parent);
++}
+diff --git a/gui/tests/experimental_ui_static_test.py b/gui/tests/experimental_ui_static_test.py
+new file mode 100644
+index 0000000..203dd89
+--- /dev/null
++++ b/gui/tests/experimental_ui_static_test.py
+@@ -0,0 +1,66 @@
++#!/usr/bin/env python3
++"""Guardrails for Experimental UI integration when Qt development files are unavailable.
++
++Static checks do not replace a compile or a real hardware regression run.
++"""
++from pathlib import Path
++import re
++
++ROOT = Path(__file__).resolve().parents[2]
++def source(path):
++    return (ROOT / path).read_text(encoding='utf-8')
++
++def check(title, condition):
++    if not condition:
++        raise AssertionError(title)
++    print('PASS', title)
++
++main = source('gui/src/mainwindow.cpp')
++nav = source('gui/src/uinavigator.cpp')
++theme = source('gui/src/theme.cpp')
++home = source('gui/src/hometab.cpp')
++optimize = source('gui/src/optimizetab.cpp')
++cmake = source('gui/CMakeLists.txt')
++check('all original top-level pages remain constructed', all(
++    x in main for x in ['new HomeTab', 'new FwattrTab', 'new RyzenTab', 'new IntelTab',
++                     'new NvidiaTab', 'new AmdGpuTab', 'new OptimizeTab',
++                     'new LightingTab', 'new Zone4Tab', 'new HealthTab', 'new ScenesTab']))
++check('original conditional hardware availability preserved', all(
++    x in main for x in ['FwattrTab::present()', 'NvidiaTab::present()',
++                     'AmdGpuTab::present()', 'lighting::present()',
++                     'lighting::zone4Present()', 'sysinfo::isIntel()']))
++check('all original operational connections preserved', all(
++    x in main for x in ['HealthTab::levelChanged', 'HealthTab::openTab',
++                     'HomeTab::dgpuRestored', 'setFanControls',
++                     'SceneEngine::finished', 'TrialBar', 'DriftWatch',
++                     'SmartWatch', 'LidWatch']))
++check('layout switch saves via Qt settings and supports classic fallback', all(
++    x in theme for x in ['CENTURION_UI', 'ui/mode', 'experimental', 'classic', 'saveUiMode']))
++check('feature-preserving reorder relies on tab IDs, not recreating content', all(
++    x in main for x in ['tabData(i)', 'moveTab(from, target)', 'arrangeTabs()', 'populateSectionMenu()']))
++check('Health and Home deep links follow canonical page IDs', all(
++    x in main for x in ['tabs_->tabBar()->tabData(i).toString() == label',
++                     'HomeTab::openPageRequested']))
++check('late dGPU discovery still inserts its tab', all(
++    x in main for x in ['ensureNvidiaTab()', 'tabs_->insertTab(at, nvidia_',
++                     'Q_EMIT nvidiaTabAdded()']))
++check('new navigator only changes navigation state', all(
++    x in nav for x in ['setCurrentIndex', 'setCurrentItem', 'ensureWidgetVisible'])
++    and not re.search(r'privileged::|QProcess|applyProfile|setFanTarget|run\(', nav))
++check('navigator indexes sub-tabs without activating lazy pages during search', all(
++    x in nav for x in ['findChildren<QTabWidget *>', 'inner->tabText(j)',
++                     'findChildren<QTreeWidget *>', 'isVisibleTo(page)']))
++check('Home quick access only emits a navigation request',
++    'openPageRequested(id)' in home and 'Q_EMIT openPageRequested' in home)
++check('experimental style uses current Centurion theme tokens', all(
++    x in theme for x in ['Centurion Experimental', 'QTabWidget#mainTabs',
++                       'QGroupBox', '@BG0', '@ACCENT']))
++check('Optimize searches real setting rows without applying them', all(
++    x in optimize for x in ['jumpToSetting(const QString &query)', 'settingSearchModel_->setStringList(entries)',
++                       'scroll->ensureWidgetVisible(r.name', 'r.include->setFocus'])
++    and 'applySelected()' not in optimize[optimize.index('void OptimizeTab::jumpToSetting('):optimize.index('void OptimizeTab::buildRows(')])
++check('CMake builds new navigator source', 'src/uinavigator.cpp' in cmake)
++check('original helper source stays external to UI edits',
++    'src/privileged.cpp' in cmake and 'src/uinavigator.cpp' in cmake)
++check('no duplicated main-window implementation', main.count('void MainWindow::arrangeTabs()') == 1)
++print('PASS: 15 Experimental UI source checks')

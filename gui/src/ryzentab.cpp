@@ -407,8 +407,14 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
 
         auto *card = new QFrame;
         card->setObjectName("ccdCard");
-        card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
-                                .arg(theme::BG2, theme::BORDER_SOFT, accent));
+        // Keep the CCD's identity in its title, not a bright frame around
+        // every row: instrumentation should be readable rather than decorative.
+        if (theme::experimentalEnabled())
+            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-radius: 7px; }")
+                                    .arg(theme::BG1, theme::BORDER));
+        else
+            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
+                                    .arg(theme::BG2, theme::BORDER_SOFT, accent));
         auto *g = new QGridLayout(card);
         g->setContentsMargins(8, 6, 8, 6);
         g->setHorizontalSpacing(14);

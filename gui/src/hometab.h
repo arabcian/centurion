@@ -62,6 +62,8 @@ Q_SIGNALS:
     void dgpuRestored();
     /// *Setup wizard…* next to Device info.
     void setupWizardRequested();
+    /// Navigation request only; never applies tuning or changes device state.
+    void openPageRequested(const QString &page);
     /// Something the user must hear about even with the window hidden (tray notification).
     void alert(const QString &title, const QString &message);
 

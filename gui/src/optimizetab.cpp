@@ -13,6 +13,8 @@
 #include <unistd.h>
 #include <QApplication>
 #include <QCheckBox>
+#include <QCompleter>
+#include <QStringListModel>
 #include <QToolButton>
 #include <QClipboard>
 #include <QAbstractItemView>
@@ -504,6 +506,30 @@ void OptimizeTab::buildUi() {
     refreshCalibrationStatus();
     root->addWidget(pbox);
 
+    // Opt-in keyboard navigation through the dozens of fine-grained tuning
+    // knobs. A search only changes the selected subtab/scroll position; the
+    // existing Apply checked operation is the sole commit path.
+    if (theme::experimentalEnabled()) {
+        auto *findRow = new QHBoxLayout;
+        findRow->setSpacing(7);
+        auto *caption = muted(tr("Find setting"));
+        findRow->addWidget(caption);
+        settingSearch_ = new QLineEdit;
+        settingSearch_->setObjectName(QStringLiteral("optimizeSettingSearch"));
+        settingSearch_->setPlaceholderText(tr("Search across CPU, memory, storage, network…  (Enter to locate)"));
+        settingSearch_->setClearButtonEnabled(true);
+        settingSearchModel_ = new QStringListModel(this);
+        auto *completer = new QCompleter(settingSearchModel_, this);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        completer->setFilterMode(Qt::MatchContains);
+        completer->setCompletionMode(QCompleter::PopupCompletion);
+        settingSearch_->setCompleter(completer);
+        connect(settingSearch_, &QLineEdit::returnPressed, this, [this] {
+            jumpToSetting(settingSearch_->text());
+        });
+        findRow->addWidget(settingSearch_, 1);
+        root->addLayout(findRow);
+    }
     groups_ = new QTabWidget;
     groups_->setDocumentMode(true);
     root->addWidget(groups_, 1);
@@ -984,6 +1010,36 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     if (!radioRepairOffered_) QTimer::singleShot(0, this, &OptimizeTab::offerRadioRepairApproval);
 }
 
+void OptimizeTab::jumpToSetting(const QString &query) {
+    if (!settingSearch_ || !groups_) return;
+    QString text = query.trimmed();
+    if (text.isEmpty()) return;
+    // Completer entries use "Group / Setting"; free-text searches match
+    // labels/help/keys. Keep the source row and its include checkbox intact.
+    for (Row &r : rows_) {
+        if (!r.name) continue;
+        const QString fullname = r.group + QStringLiteral(" / ") + r.label;
+        if (!fullname.contains(text, Qt::CaseInsensitive) &&
+            !r.label.contains(text, Qt::CaseInsensitive) &&
+            !r.key.contains(text, Qt::CaseInsensitive) &&
+            !r.help.contains(text, Qt::CaseInsensitive) &&
+            text.compare(fullname, Qt::CaseInsensitive) != 0)
+            continue;
+        for (int i = 0; i < groups_->count(); ++i) {
+            if (!groups_->tabText(i).startsWith(r.group + QLatin1Char(' '))) continue;
+            groups_->setCurrentIndex(i);
+            if (auto *scroll = qobject_cast<QScrollArea *>(groups_->widget(i)))
+                scroll->ensureWidgetVisible(r.name, 14, 40);
+            // Focus the checkbox only to show keyboard users where they are.
+            // No toggle, helper call or automatic application takes place.
+            if (r.include && r.include->isEnabled())
+                r.include->setFocus(Qt::OtherFocusReason);
+            return;
+        }
+    }
+    showStatus(tr("No setting matched: %1").arg(text));
+}
+
 void OptimizeTab::buildRows(const QJsonArray &rows) {
     const QJsonObject values = collectValues();  // keep the user's edits across a rebuild
     const QJsonObject run = collectRun();
@@ -1140,6 +1196,14 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
     }
     groups_->addTab(buildLaunchPage(), "Game launch");
     groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), "Boot options");  // built on first open
+    if (settingSearchModel_) {
+        QStringList entries;
+        for (const Row &r : rows_) if (!r.label.isEmpty())
+            entries.append(r.group + QStringLiteral(" / ") + r.label);
+        entries.removeDuplicates();
+        entries.sort(Qt::CaseInsensitive);
+        settingSearchModel_->setStringList(entries);
+    }
     if (tabIndex >= 0 && tabIndex < groups_->count()) groups_->setCurrentIndex(tabIndex);
     // Dev aids for screenshots (like CENTURION_TAB): CENTURION_OPT_SUBTAB=N, CENTURION_OPT_LOAD=<preset>.
     if (qEnvironmentVariableIsSet("CENTURION_OPT_SUBTAB")) groups_->setCurrentIndex(qEnvironmentVariableIntValue("CENTURION_OPT_SUBTAB"));

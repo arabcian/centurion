@@ -76,6 +76,22 @@ QList<QPair<QString, QString>> themes() {
 }
 QString currentTheme() { return g_current; }
 
+bool experimentalEnabled() {
+    const QByteArray overrideMode = qgetenv("CENTURION_UI").trimmed().toLower();
+    if (overrideMode == "classic") return false;
+    if (overrideMode == "experimental") return true;
+    return settings().value(QStringLiteral("ui/mode"), QStringLiteral("experimental")).toString()
+           != QLatin1String("classic");
+}
+
+bool saveUiMode(bool experimental) {
+    QSettings s = settings();
+    s.setValue(QStringLiteral("ui/mode"), experimental ? QStringLiteral("experimental") : QStringLiteral("classic"));
+    s.sync();
+    return s.status() == QSettings::NoError;
+}
+
+
 void load() {
     const QString want = settings().value(QStringLiteral("theme")).toString();
     const Palette *p = &PALETTES[0];
@@ -146,7 +162,8 @@ int brandInset() {
     QFont f = QApplication::font();
     f.setPointSize(FONT_PT + 2);
     f.setWeight(QFont::Bold);
-    return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion")) + 22;
+    return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion"))
+           + (experimentalEnabled() ? 118 : 22);
 }
 
 // Selectors (objectName / dynamic properties) are the contract with the tabs:
@@ -350,6 +367,97 @@ QMenu::separator { height: 1px; background: @BORDER_SOFT; margin: 5px 8px; }
 QMenu::indicator { width: 12px; height: 12px; left: 6px; }
 QMenu::indicator:checked { image: url(:/theme/check.png); background: @ACCENT; border-radius: 3px; }
 QMenuBar { background: @BG0; } QMenuBar::item:selected { background: @BG3; }
+)QSS");
+    // Experimental: flatter surfaces and stronger hierarchy without hiding controls.
+    // Appended after the classic selectors, so the original styling is selectable.
+    // Uses the same palette tokens: every existing colour theme keeps working.
+    if (experimentalEnabled()) s += QStringLiteral(R"QSS(
+/* ── Centurion Experimental / cohesive, dense instrumentation ── */
+QWidget { background: @BG0; }
+.QWidget { background: transparent; }
+QTabWidget#mainTabs { background: @BG0; }
+QTabWidget#mainTabs::pane { background: @BG0; border-top: 1px solid @BORDER_SOFT; }
+QTabWidget#mainTabs > QTabBar {
+    background: transparent; border: none; border-radius: 0; margin: 0;
+}
+QTabWidget#mainTabs > QTabBar::tab {
+    color: @FG_DIM; background: transparent; border: none;
+    border-bottom: 2px solid transparent; border-radius: 0;
+    padding: 14px 12px 11px 12px; margin: 0 2px; font-weight: 500;
+}
+QTabWidget#mainTabs > QTabBar::tab:hover:!selected {
+    background: @BG1; color: @FG;
+}
+QTabWidget#mainTabs > QTabBar::tab:selected {
+    color: @FG; background: transparent; border: none;
+    border-bottom: 2px solid @ACCENT; font-weight: 700;
+}
+QTabWidget#mainTabs > QTabBar QToolButton {
+    background: @BG1; border: 1px solid @BORDER_SOFT; margin: 7px 1px;
+}
+QWidget#appMark { background: transparent; }
+QLabel#experimentalTag {
+    color: @ACCENT; font-size: 8pt; font-weight: 600;
+    border: 1px solid @ACCENT_SOFT; border-radius: 5px;
+    padding: 2px 5px; background: @ACCENT_TINT2;
+}
+QToolButton#experimentalSectionsButton {
+    color: @FG_DIM; background: @BG1; border: 1px solid @BORDER;
+    padding: 4px 9px; border-radius: 6px; font-weight: 600;
+}
+QToolButton#experimentalSectionsButton:hover {
+    color: @FG; border-color: @ACCENT_SOFT; background: @BG2;
+}
+/* Section panels: line and typography rather than stacked gradients. */
+QGroupBox {
+    background: @BG1; border: 1px solid @BORDER;
+    border-radius: 8px; margin-top: 0; padding: 29px 9px 8px 9px;
+    color: @FG; font-weight: 600;
+}
+QGroupBox::title {
+    color: @FG; border: none; left: 12px; top: 9px;
+    padding: 0; background: transparent; font-size: @FONTpt; font-weight: 700;
+}
+QGroupBox#box_blue::title, QGroupBox#box_purple::title,
+QGroupBox#box_yellow::title, QGroupBox#box_green::title,
+QGroupBox#box_grey::title, QGroupBox#box_red::title { border: none; }
+QGroupBox QGroupBox {
+    background: transparent; border: none; border-top: 1px solid @BORDER_SOFT;
+    border-radius: 0; padding: 24px 0 0 0;
+}
+QGroupBox QGroupBox::title { color: @FG_DIM; border: none; left: 3px; top: 7px; }
+QPushButton {
+    background: @BG2; border: 1px solid @BORDER; border-radius: 6px;
+    padding: 4px 10px; color: @FG; font-weight: 500;
+}
+QPushButton:hover { background: @BG3; border-color: @ACCENT_SOFT; }
+QPushButton:checked { background: @ACCENT_TINT; border-color: @ACCENT_SOFT; color: @FG; }
+QPushButton#btnAccent { background: @ACCENT; border: 1px solid @ACCENT_SOFT; color: @ON_ACCENT; font-weight: 700; }
+QPushButton#btnAccent:hover { background: @ACCENT_HI; border-color: @ACCENT_HI; }
+QPushButton#btnDanger { background: @DANGER_WASH; border: 1px solid @DANGER_SOFT; color: @DANGER; }
+QLineEdit, QSpinBox, QDoubleSpinBox, Int64SpinBox, QComboBox {
+    background: @WELL; border: 1px solid @BORDER; border-radius: 6px;
+}
+QPlainTextEdit, QTextEdit { border: 1px solid @BORDER; border-radius: 7px; }
+QListView, QTreeView, QTableView {
+    background: @BG1; border: 1px solid @BORDER; border-radius: 7px;
+    alternate-background-color: @ROW_ALT; padding: 2px;
+}
+QTreeView::item:selected, QTableView::item:selected, QListView::item:selected {
+    background: @ACCENT_TINT; color: @FG;
+}
+QHeaderView::section {
+    background: @BG1; border-right: 0; border-bottom: 1px solid @BORDER;
+    border-radius: 0; font-weight: 600; color: @FG_DIM;
+}
+QTabBar::tab { padding: 7px 12px 6px 12px; }
+QTabBar::tab:selected { color: @FG; border-bottom: 2px solid @ACCENT; }
+QProgressBar::chunk { background: @ACCENT; }
+QCheckBox::indicator:checked { background: @ACCENT; border: 1px solid @ACCENT; image: url(:/theme/check.png); }
+QSlider::sub-page:horizontal { background: @ACCENT; }
+QSlider::handle:horizontal { background: @ACCENT_HI; border: 2px solid @BG1; }
+QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 7px; }
+QMenu::item { border-radius: 4px; }
 )QSS");
     const QColor accent(QString::fromLatin1(ACCENT));
     // Text on the amber key: the darkest surface, unless the accent itself is dark.

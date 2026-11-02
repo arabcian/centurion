@@ -16,6 +16,7 @@ set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root hel
 add_executable(centurion
     src/main.cpp
     src/mainwindow.cpp   src/mainwindow.h
+    src/uinavigator.cpp  src/uinavigator.h
     src/theme.cpp        src/theme.h
     src/privileged.cpp   src/privileged.h
     src/platformprofile.cpp src/platformprofile.h

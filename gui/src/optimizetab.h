@@ -26,6 +26,7 @@ class SceneEngine;
 class Int64SpinBox;
 class QTabWidget;
 class QTimer;
+class QStringListModel;
 
 class OptimizeTab : public QWidget {
     Q_OBJECT
@@ -91,6 +92,7 @@ private:
     void refresh(bool fromPoll = false);
     void onDescribe(const QJsonObject &d, bool light = false);
     void buildRows(const QJsonArray &rows);
+    void jumpToSetting(const QString &query);
     void updateRow(Row &r, const QJsonObject &o);
     void updateStateBanner();
     class QFrame *driftBar_ = nullptr;
@@ -192,6 +194,8 @@ private:
     QLineEdit *lutrisPre_ = nullptr, *lutrisPost_ = nullptr, *lutrisPrefix_ = nullptr, *steam_ = nullptr;
     QLabel *topoLabel_ = nullptr;
     QTabWidget *groups_ = nullptr;
+    QLineEdit *settingSearch_ = nullptr;
+    QStringListModel *settingSearchModel_ = nullptr;
     QTimer *poll_ = nullptr, *statusTimer_ = nullptr;
     QString loadedPreset_;
 };

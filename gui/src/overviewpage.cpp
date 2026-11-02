@@ -60,9 +60,12 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     hero->setObjectName(QStringLiteral("healthHero"));
     hero->setStyleSheet(QStringLiteral("QFrame#healthHero{background:%1;border:1px solid %2;border-radius:13px}"
                                        "QFrame#healthHero QLabel{border:none;background:transparent}")
-                        .arg(theme::BG2, theme::BORDER));
+                        .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
     auto *heroLayout = new QVBoxLayout(hero);
-    heroLayout->setContentsMargins(18, 15, 18, 15);
+    heroLayout->setContentsMargins(theme::experimentalEnabled() ? 13 : 18,
+                                   theme::experimentalEnabled() ? 10 : 15,
+                                   theme::experimentalEnabled() ? 13 : 18,
+                                   theme::experimentalEnabled() ? 10 : 15);
     heroLayout->setSpacing(7);
     auto *top = new QHBoxLayout;
     summary_ = new QLabel;
@@ -91,7 +94,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     recommend->setObjectName(QStringLiteral("healthAdvice"));
     recommend->setStyleSheet(QStringLiteral("QFrame#healthAdvice{background:%1;border:1px solid %2;border-radius:10px}"
                                             "QFrame#healthAdvice QLabel{background:transparent;border:none}")
-                             .arg(theme::BG2, theme::BORDER));
+                             .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
     auto *adviceLayout = new QHBoxLayout(recommend);
     adviceLayout->setContentsMargins(14, 11, 14, 11);
     recommendation_ = new QLabel;

@@ -27,9 +27,17 @@
 #include "mangohud.h"
 #include "platformprofile.h"
 #include "trialbar.h"
+#include "uinavigator.h"
 #include <QApplication>
 #include <QCloseEvent>
 #include <QHBoxLayout>
+#include <QAction>
+#include <QKeySequence>
+#include <QMenu>
+#include <QSettings>
+#include <QShortcut>
+#include <QStandardPaths>
+#include <QToolButton>
 #include <QLabel>
 #include <QTabBar>
 #include <QTabWidget>
@@ -46,7 +54,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowIcon(appIcon(128));
     // Room for the 2×2 Home grid and the curve tabs' control rows without clipping;
     // still well inside a 1366×768 (or 1920×1080 at 150 %) desktop.
-    resize(1080, 700);
+    resize(theme::experimentalEnabled() ? 1320 : 1080, theme::experimentalEnabled() ? 760 : 700);
     setMinimumSize(620, 420);
 
     tabs_ = new QTabWidget;
@@ -73,9 +81,32 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     wordmark->setObjectName("appWordmark");
     markRow->addWidget(markIcon);
     markRow->addWidget(wordmark);
+    if (theme::experimentalEnabled()) {
+        auto *tag = new QLabel(tr("Experimental"));
+        tag->setObjectName(QStringLiteral("experimentalTag"));
+        markRow->addWidget(tag);
+    }
+
+    // Full tab index is available even when the tab bar must scroll on a
+    // smaller screen. This is navigation only: never builds missing hardware
+    // pages and never calls a device control.
+    if (theme::experimentalEnabled()) {
+        sectionsButton_ = new QToolButton(tabs_);
+        sectionsButton_->setObjectName(QStringLiteral("experimentalSectionsButton"));
+        sectionsButton_->setText(tr("All sections  ▾"));
+        sectionsButton_->setToolTip(tr("All available pages, including hardware-specific tools. Ctrl+K to search."));
+        sectionsButton_->setPopupMode(QToolButton::InstantPopup);
+        sectionsButton_->setMenu(new QMenu(sectionsButton_));
+        connect(sectionsButton_->menu(), &QMenu::aboutToShow, this, &MainWindow::populateSectionMenu);
+        sectionsButton_->setAutoRaise(false);
+        auto *quick = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
+        quick->setContext(Qt::ApplicationShortcut);
+        connect(quick, &QShortcut::activated, this, &MainWindow::showQuickNavigator);
+    }
 
     home_ = new HomeTab;
     tabs_->addTab(home_, tr("Home"));
+    connect(home_, &HomeTab::openPageRequested, this, &MainWindow::showTab);
     const int scenesAt = tabs_->count();  // Scenes sits right after Home; built last (it reads every tab)
     // Every tab below exists only where its hardware/firmware interface does,
     // so nobody is offered a control their machine can't honour.
@@ -199,6 +230,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     smart_ = new SmartWatch(this);
     // Lid shut for long while awake (warm in a bag): the tray warns once per closing.
     lid_ = new LidWatch(this);
+
+    if (theme::experimentalEnabled()) {
+        arrangeTabs();
+        populateSectionMenu();
+        // The last selected main page is restored by identity rather than an
+        // index (hardware-gated pages appear/disappear between launches).
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+        const QString last = settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString();
+        for (int i = 0; i < tabs_->count(); ++i)
+            if (tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
+        connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
+            if (i < 0 || i >= tabs_->count()) return;
+            QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+            settings.setValue(QStringLiteral("ui/last_page"), tabs_->tabBar()->tabData(i).toString());
+        });
+    }
 }
 
 NvidiaTab *MainWindow::ensureNvidiaTab() {
@@ -208,9 +255,81 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
     const int at = tabs_->indexOf(amdgpu_ ? static_cast<QWidget *>(amdgpu_) : static_cast<QWidget *>(optimize_));
     tabs_->insertTab(at, nvidia_, tr("NVIDIA Curve"));
     tabW_ = -1;
+    if (theme::experimentalEnabled()) { arrangeTabs(); populateSectionMenu(); }
     fitTabs();
     Q_EMIT nvidiaTabAdded();
     return nvidia_;
+}
+
+// Canonical page IDs are separate from their translated visible captions.
+// We rearrange existing QTabWidget pages, never reparent or recreate them:
+// Home, Health and all vendor-specific operations keep their connections,
+// timers, system helpers and security guard rails.
+void MainWindow::arrangeTabs() {
+    // The Scenes page is not SceneEngine; it is the remaining QTabWidget page.
+    // Preserve every original tab, including fallback zone-lighting devices.
+    const QStringList originalNames{QStringLiteral("Home"), QStringLiteral("Health"),
+        QStringLiteral("Ryzen Curve"), QStringLiteral("Intel Undervolt"),
+        QStringLiteral("NVIDIA Curve"), QStringLiteral("AMD GPU"),
+        QStringLiteral("Optimizations"), QStringLiteral("Scenes"),
+        QStringLiteral("Lighting"), QStringLiteral("Firmware")};
+    // Initial order at construction may differ; record their canonical IDs
+    // once, before moving anything (Qt moves tabData along with the page).
+    for (int i = 0; i < tabs_->count(); ++i) {
+        if (!tabs_->tabBar()->tabData(i).isValid()) {
+            QString id;
+            for (const QString &n : originalNames)
+                if (tabs_->tabText(i) == tr(n.toUtf8().constData())) { id = n; break; }
+            if (!id.isEmpty()) tabs_->tabBar()->setTabData(i, id);
+        }
+    }
+    int target = 0;
+    for (const QString &id : originalNames) {
+        int from = -1;
+        for (int i = 0; i < tabs_->count(); ++i)
+            if (tabs_->tabBar()->tabData(i).toString() == id) { from = i; break; }
+        if (from < 0) continue;
+        if (from != target) tabs_->tabBar()->moveTab(from, target);
+        // Shorten labels only where it helps; the full name is still in the
+        // tooltip and the canonical ID used by HealthTab::openTab.
+        const QString display = id == QLatin1String("Health") ? tr("Health Center")
+                              : id == QLatin1String("Optimizations") ? tr("Optimize")
+                              : tr(id.toUtf8().constData());
+        tabs_->setTabText(target, display);
+        tabs_->setTabToolTip(target, tr(id.toUtf8().constData()));
+        ++target;
+    }
+    tabW_ = -1;
+}
+
+void MainWindow::populateSectionMenu() {
+    if (!sectionsButton_) return;
+    QMenu *menu = sectionsButton_->menu();
+    menu->clear();
+    QAction *find = menu->addAction(tr("Find a setting…    Ctrl+K"));
+    connect(find, &QAction::triggered, this, &MainWindow::showQuickNavigator);
+    menu->addSeparator();
+    for (int i = 0; i < tabs_->count(); ++i) {
+        QWidget *page = tabs_->widget(i);
+        QAction *action = menu->addAction(tabs_->tabText(i));
+        action->setCheckable(true);
+        action->setChecked(i == tabs_->currentIndex());
+        action->setEnabled(tabs_->isTabEnabled(i));
+        connect(action, &QAction::triggered, this, [this, page] {
+            const int n = tabs_->indexOf(page);
+            if (n >= 0) tabs_->setCurrentIndex(n);
+        });
+    }
+}
+
+void MainWindow::showQuickNavigator() { uinavigator::open(tabs_, this); }
+
+void MainWindow::placeHeaderControls() {
+    if (!sectionsButton_) return;
+    sectionsButton_->adjustSize();
+    sectionsButton_->move(std::max(0, tabs_->width() - sectionsButton_->width() - 13),
+                           std::max(0, (tabs_->tabBar()->height() - sectionsButton_->height()) / 2));
+    sectionsButton_->raise();
 }
 
 // The selector rail hugs its keys: document mode would stretch the tab bar (and
@@ -220,7 +339,7 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
 // the window edge and shows its scroll buttons instead of running off-screen.
 void MainWindow::fitTabs() {
     QTabBar *bar = tabs_->tabBar();
-    const int room = tabs_->width() - theme::brandInset() - 8;
+    const int room = tabs_->width() - theme::brandInset() - (sectionsButton_ ? 148 : 8);
     const int w = std::max(120, std::min(bar->sizeHint().width(), room));
     if (w != tabW_) { tabW_ = w; bar->setMaximumWidth(w); }
 }
@@ -228,6 +347,7 @@ void MainWindow::fitTabs() {
 void MainWindow::resizeEvent(QResizeEvent *e) {
     QMainWindow::resizeEvent(e);
     fitTabs();
+    placeHeaderControls();
 }
 
 void MainWindow::showEvent(QShowEvent *e) {
@@ -237,6 +357,7 @@ void MainWindow::showEvent(QShowEvent *e) {
     mark_->adjustSize();  // the style sheet arrives after the constructor (theme.h)
     mark_->move(theme::BRAND_X, std::max(0, (tabs_->tabBar()->height() - mark_->height()) / 2));
     mark_->raise();
+    placeHeaderControls();
     // First time the window opens (not the tray-only start): the setup wizard, once per user.
     if (!wizardChecked_) { wizardChecked_ = true; QTimer::singleShot(0, this, [this] { FirstRunWizard::maybeShow(this); }); }
 }
@@ -247,9 +368,14 @@ void MainWindow::updateOverlay() {
 }
 
 void MainWindow::showTab(const QString &label) {
-    for (int i = 0; i < tabs_->count(); ++i)
-        // `label` is the English name; the tab shows its translation (the same tr() as in the constructor).
-        if (tabs_->tabText(i) == tr(label.toUtf8().constData())) { tabs_->setCurrentIndex(i); break; }
+    for (int i = 0; i < tabs_->count(); ++i) {
+        // HealthPage sends canonical English names, not the new short caption.
+        if (tabs_->tabBar()->tabData(i).toString() == label ||
+            tabs_->tabText(i) == tr(label.toUtf8().constData())) {
+            tabs_->setCurrentIndex(i);
+            break;
+        }
+    }
     showNormal();
     raise();
     activateWindow();
