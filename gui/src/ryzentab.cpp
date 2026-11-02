@@ -850,11 +850,10 @@ bool RyzenTab::applyNamedProfile(const QString &name) {
     bool anyCore = false;
     for (Slot *s : activeSlots()) anyCore |= parse(*s).first == Parse::Ok;
     const bool hasCoall = !coall_->text().trimmed().isEmpty();
-    // Chained, not back-to-back: the Python version fired per-core while the
-    // all-core pkexec call was still running, so it was rejected as busy
-    // and a profile with both parts only ever got its all-core half applied.
-    if (hasCoall) return applyAllCore(anyCore ? std::function<void()>([this] { applyPerCore(); }) : std::function<void()>());
+    // A per-core batch resets every core to 0 first (ryzen-co-helper), so an all-core value sent
+    // before it would be overwritten at once: the all-core offset goes out only without per-core values.
     if (anyCore) return applyPerCore();
+    if (hasCoall) return applyAllCore();
     log("Profile '" + name + "' contains no offsets to apply.", "err");
     return false;
 }
