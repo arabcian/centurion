@@ -13,6 +13,7 @@
 #include <memory>
 #include <unistd.h>
 #include <QApplication>
+#include <QCoreApplication>
 #include <QCheckBox>
 #include <QCompleter>
 #include <QStringListModel>
@@ -1126,7 +1127,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             if (topology_.value("cache_ccd").toInt(-1) == i) r.label += "  (V-Cache)";
             else if (topology_.value("frequency_ccd").toInt(-1) == i) r.label += "  (frequency)";
         }
-        r.help = o.value("help").toString();
+        r.help = QCoreApplication::translate("OptimizationBackend", o.value("help").toString().toUtf8().constData());
         r.kind = o.value("kind").toString();
         r.debugfs = o.value("debugfs").toBool();
         r.caution = o.value("caution").toBool();
@@ -1165,16 +1166,16 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             if (r.group != group) continue;
             const QString key = r.key;
             r.include = new QCheckBox(page);
-            r.include->setToolTip("Include in Apply, Save and boot preset");
+            r.include->setToolTip(tr("Include in Apply, Save and boot preset"));
             r.name = new QLabel((r.caution || !r.conflict.isEmpty() ? QStringLiteral("⚠ ") : QString()) + r.label, page);
             // Fixed-width div: Qt wraps rich-text tooltips to the widget's width by
             // default, which for a short label would squeeze a long explanation into
             // a tall, narrow column. 420px reads as normal paragraphs instead.
             QString tip = QStringLiteral("<div style='max-width:420px;'><b>%1</b><br>%2</div>")
                               .arg(r.key.toHtmlEscaped(), r.help.toHtmlEscaped());
-            if (r.debugfs) tip += "<br><i>debugfs: the live value is readable by root only.</i>";
-            if (r.hotplug) tip += "<br><i>Hot-plugs CPUs: applied after every other row, restored first.</i>";
-            if (r.caution) tip += QStringLiteral("<br><span style='color:%1'>Can cost stability, heat or idle power.</span>").arg(theme::WARN);
+            if (r.debugfs) tip += tr("<br><i>debugfs: geçerli değeri yalnızca root okuyabilir.</i>");
+            if (r.hotplug) tip += tr("<br><i>CPU çekirdeklerini çevrimiçi/çevrimdışı yapar: en son uygulanır, ilk geri alınır.</i>");
+            if (r.caution) tip += QStringLiteral("<br><span style='color:%1'>Kararlılığı, sıcaklığı veya boşta güç tüketimini olumsuz etkileyebilir.</span>").arg(theme::WARN);
             if (!r.conflict.isEmpty()) tip += QStringLiteral("<br><span style='color:%1'>%2</span>").arg(theme::WARN, r.conflict.toHtmlEscaped());
             r.name->setToolTip(tip);
             r.name->setTextFormat(Qt::PlainText);
@@ -1215,7 +1216,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             editor->setToolTip(tip);
             r.revert = new QPushButton("↺", page);
             r.revert->setFixedWidth(30);
-            r.revert->setToolTip("Restore this setting's original value");
+            r.revert->setToolTip(tr("Restore this setting's original value"));
             connect(r.revert, &QPushButton::clicked, this, [this, key] { revertRow(key); });
             connect(r.include, &QCheckBox::toggled, this, [this, key] { if (Row *x = row(key)) markRow(*x); });
             grid->addWidget(r.include, line, 0);
