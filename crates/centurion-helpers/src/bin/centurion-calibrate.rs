@@ -1098,7 +1098,7 @@ fn oom_cull(cal: &mut Calibration, run: &mut dyn FnMut(&Cfg) -> Result<Option<Do
             refs: &BTreeMap<String, String>, kernel: &str, kept: &mut Vec<(Cfg, Done)>, tries: &mut usize) -> Result<(), String> {
     if cfg.len() == 1 {
         let (k, v) = &cfg[0];
-        cal.add(k, refs.get(k).map_or("", String::as_str), v, phase, None, true, now(), kernel);
+        cal.add(k, refs.get(k).map_or("", String::as_str), v, phase, None, ( true, now(), kernel));
         cal.add_unsafe_set(cfg.clone());
         eprintln!("\n{k} = {v} caused an OOM kill: never picked");
         return Ok(());
@@ -2051,11 +2051,11 @@ fn main() {
         for e in j.restore() { eprintln!("\nrestore: {e}"); }
         let refs = samples.remove(&it.reference).unwrap_or_default();
         let t = now();
-        for v in &unsafe_vals { cal.add(&it.key, &it.reference, v, it.phase, None, true, t, &kernel); }
+        for v in &unsafe_vals { cal.add(&it.key, &it.reference, v, it.phase, None, ( true, t, &kernel)); }
         if refs.len() < 2 { continue; }
         for (v, s) in &samples {
             let m = calib::fold(&calib::metric_effects(&refs, s));
-            cal.add(&it.key, &it.reference, v, it.phase, Some(m), false, t, &kernel);
+            cal.add(&it.key, &it.reference, v, it.phase, Some(m), ( false, t, &kernel));
         }
         // Saved after every knob: an interrupted run keeps what it measured.
         let _ = centurion_helpers::secure_dir(centurion_helpers::defaults::DIR);

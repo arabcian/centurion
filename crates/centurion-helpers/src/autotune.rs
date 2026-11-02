@@ -3,7 +3,7 @@
 //!
 //! Stages (pure where it matters, so every rule is testable without sysfs):
 //!   1. [`Profile::gather`]  hardware / kernel facts, live values, evidence
-//!                           (vmstat, PSI) and the disk's sustained write rate.
+//!    (vmstat, PSI) and the disk's sustained write rate.
 //!   2. [`decide_weighted`]  two kinds of rules:
 //!        * structural rules: topology/driver facts that have one right answer
 //!          (pstate mode, CCD roles, amdgpu DPM auto, bring a parked CCD back);
@@ -18,8 +18,8 @@
 //!          measured evidence, never "bigger is better": every non-reference
 //!          candidate carries a documented cost.
 //!   3. [`enforce`]          hard constraints no weight can buy: dirty pair
-//!                           ordering, THP/mTHP/max_ptes_none, watermark and
-//!                           reserve envelopes, EPP vs governor, boot params.
+//!    ordering, THP/mTHP/max_ptes_none, watermark and
+//!    reserve envelopes, EPP vs governor, boot params.
 //!   4. [`autotune_with`]    tune::validate + [`audit`] + availability filter.
 //!
 //! [`audit`] also checks presets/scenes written by older versions (int32-
@@ -443,8 +443,7 @@ impl Evidence {
     pub fn history_hours(&self) -> f64 { self.uptime_s as f64 / 3600.0 }
     /// This boot as the kernel reports it: counters since boot and the pressure averages.
     pub fn live() -> Evidence {
-        let mut e = Evidence::default();
-        e.uptime_s = rd("/proc/uptime").and_then(|s| s.split('.').next().and_then(|n| n.parse().ok())).unwrap_or(0);
+        let mut e = Evidence { uptime_s: rd("/proc/uptime").and_then(|s| s.split('.').next().and_then(|n| n.parse().ok())).unwrap_or(0), ..Default::default() };
         e.parse_vmstat(&std::fs::read_to_string("/proc/vmstat").unwrap_or_default());
         let mem = rd("/proc/pressure/memory").unwrap_or_default();
         let io = rd("/proc/pressure/io").unwrap_or_default();
@@ -2675,7 +2674,8 @@ fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
         ("More performance (latency, throughput x1.3; power x0.4)", Weights { latency: (w.latency * 1.3).min(3.0), throughput: (w.throughput * 1.3).min(3.0), power: w.power * 0.4, ..w }),
         ("Leaner memory (footprint x2)", Weights { footprint: (w.footprint * 2.0).min(3.0), ..w }),
     ];
-    let fields: [(&str, fn(&mut Weights) -> &mut f64, f64); 6] = [
+    type WeightField = (&'static str, fn(&mut Weights) -> &mut f64, f64);
+    let fields: [WeightField; 6] = [
         ("latency", |w| &mut w.latency, 3.0), ("throughput", |w| &mut w.throughput, 3.0), ("power", |w| &mut w.power, 3.0),
         ("footprint", |w| &mut w.footprint, 3.0), ("load", |w| &mut w.load, 1.0), ("heat", |w| &mut w.heat, 1.0)];
     // Jobs: 0 = main, then the trade-offs, then the sensitivity steps (name, -30 % / +30 %).
@@ -2844,7 +2844,7 @@ mod tests {
                     let (bg, full) = (int(&d, "vm.dirty_background_bytes"), int(&d, "vm.dirty_bytes"));
                     assert!(full > bg, "{gb} GB {g:?}: {bg} !< {full}");
                     assert!(bg >= 8 << 20 && full >= 32 << 20, "{gb} GB {g:?} floors");
-                    assert!(full as u64 <= ((gb << 30) / 50).min(1 << 30).max(32 << 20), "{gb} GB {g:?}: {full} over 2% of RAM / 1 GiB");
+                    assert!(full as u64 <= ((gb << 30) / 50).clamp(32 << 20, 1 << 30), "{gb} GB {g:?}: {full} over 2% of RAM / 1 GiB");
                     assert!(full.abs() < JSON_SAFE_INT);
                     for x in [bg, full] {
                         assert!(tune::validate(tune::find("vm.dirty_bytes").unwrap(), &json!(x)).is_ok());
@@ -3171,7 +3171,7 @@ mod tests {
     fn meas(lat: f64, thr: f64, mem: Option<f64>) -> calib::Measured { calib::Measured { lat: Some(lat), thr: Some(thr), pwr: None, mem, n: 1.0 } }
     /// n runs of the same result, idle or load.
     fn sig(c: &mut calib::Calibration, key: &str, r: &str, v: &str, load: bool, m: calib::Measured, runs: usize) {
-        for _ in 0..runs { c.add(key, r, v, if load { calib::Phase::Load } else { calib::Phase::Idle }, Some(m), false, 0, ""); }
+        for _ in 0..runs { c.add(key, r, v, if load { calib::Phase::Load } else { calib::Phase::Idle }, Some(m), ( false, 0, "")); }
     }
 
     #[test]
@@ -3313,7 +3313,7 @@ mod tests {
         let wsf = wsf_for(256 << 20, p.ram_kb * 1024).to_string();
         let mut cal = calib::Calibration::default();
         sig(&mut cal, "vm.watermark_scale_factor", "10", &wsf, true, meas(0.30, 0.0, None), 3);
-        cal.add("mm.lru_gen_min_ttl", "0", "1000", calib::Phase::Load, Some(meas(0.9, 0.0, None)), true, 0, "");
+        cal.add("mm.lru_gen_min_ttl", "0", "1000", calib::Phase::Load, Some(meas(0.9, 0.0, None)), ( true, 0, ""));
         sig(&mut cal, "sched.preempt", "full", "lazy", true, meas(-0.25, 0.0, None), 3);
         sig(&mut cal, "sched.preempt", "full", "voluntary", true, meas(-0.4, 0.0, None), 3);
         sig(&mut cal, "vm.swappiness", "150", "60", true, meas(-0.2, 0.0, None), 3);
@@ -3659,8 +3659,7 @@ mod tests {
         // Earlier boots: 20 h with kswapd doing the work and 1 % of the time stalled on memory.
         let mut h = Evidence::default();
         (h.uptime_s, h.pgscan_kswapd, h.pgscan_direct, h.psi_mem_us) = (72_000, 5_000_000, 100_000, 720_000_000);
-        let mut short = Evidence::default();
-        short.uptime_s = 60;
+        let short = Evidence { uptime_s: 60, ..Default::default() };
         let now = 1_800_000_000;
         e.merge_history(&[("a".into(), now, h.clone()), ("this".into(), now, h.clone()), ("s".into(), now, short)], "this", now);
         assert_eq!((e.history_boots, e.uptime_s), (1, 72_400));
@@ -3894,7 +3893,7 @@ mod perf_bench {
             for (i, c) in design.iter().enumerate() {
                 let c = if i % 8 == 0 { Vec::new() } else { c.clone() };
                 let mut y = [0.0; 4];
-                for kv in &c { if let Some(e) = eff.get(kv) { for o in 0..4 { y[o] += e[o]; } } }
+                for kv in &c { if let Some(e) = eff.get(kv) { for (out, effect) in y.iter_mut().zip(e.iter()) { *out += *effect; } } }
                 for o in 0..4 { y[o] += ((rng.unit() + rng.unit() + rng.unit()) - 1.5) * 0.04; }
                 if phase == calib::Phase::Dev { y[0] = f64::NAN; y[1] = f64::NAN; y[3] = f64::NAN; }
                 t += 7;

@@ -10,6 +10,7 @@
 //! * outcomes.json - per key: how often a changed value was applied and how
 //!   often the pressure guard rolled it back. Autotune turns rollbacks into a
 //!   stability cost; two rollbacks retire every non-default candidate of that key.
+//!
 //! Both files are root-owned 0644 under /var/lib/centurion.
 
 use crate::tune;

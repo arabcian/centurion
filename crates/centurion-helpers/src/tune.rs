@@ -1093,10 +1093,11 @@ pub struct Ccx { pub index: usize, pub cpus: Vec<usize>, pub l3_kib: u64, pub ma
 /// long-running callers (centurion-gamemode polling for SMT/CCD parking to settle)
 /// still see the live topology.
 const TOPO_TTL: std::time::Duration = std::time::Duration::from_millis(250);
+type PolicyCpuCache = (std::time::Instant, Vec<(PathBuf, Vec<usize>)>);
 thread_local! {
     static TOPO: std::cell::RefCell<Option<(std::time::Instant, Vec<Ccx>)>> = const { std::cell::RefCell::new(None) };
     static POLICIES: std::cell::RefCell<Option<(std::time::Instant, Vec<PathBuf>)>> = const { std::cell::RefCell::new(None) };
-    static POLICY_CPUS: std::cell::RefCell<Option<(std::time::Instant, Vec<(PathBuf, Vec<usize>)>)>> = const { std::cell::RefCell::new(None) };
+    static POLICY_CPUS: std::cell::RefCell<Option<PolicyCpuCache>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Forget the cached topology (after writing cpu*/online or smt/control).
@@ -2370,9 +2371,7 @@ fn zswap_compressors() -> Vec<String> {
         let Some((k, val)) = l.split_once(':') else { continue };
         match k.trim() {
             "name" => name = val.trim().to_owned(),
-            "type" if matches!(val.trim(), "scomp" | "acomp" | "compression") => {
-                if !name.is_empty() && !v.contains(&name) { v.push(name.clone()); }
-            }
+            "type" if matches!(val.trim(), "scomp" | "acomp" | "compression") && !name.is_empty() && !v.contains(&name) => { v.push(name.clone()); }
             _ => {}
         }
     }

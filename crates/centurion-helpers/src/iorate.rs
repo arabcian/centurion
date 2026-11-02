@@ -3,11 +3,12 @@
 //! Autotune sizes vm.dirty_bytes / dirty_background_bytes in *seconds of
 //! writeback* (rate x window), so the rate has to come from this machine:
 //!   1. probe   - root: a bounded O_DIRECT write (<= 512 MiB, <= 4 s) into an
-//!                unnamed O_TMPFILE on the root file system, result kept in
-//!                /var/lib/centurion/io-probe.json (0644, root-owned)
+//!    unnamed O_TMPFILE on the root file system, result kept in
+//!    /var/lib/centurion/io-probe.json (0644, root-owned)
 //!   2. passive - bytes moved / io_ticks from /sys/block/<disk>/stat: the average
-//!                rate while the disk was busy since boot (a lower bound)
+//!    rate while the disk was busy since boot (a lower bound)
 //!   3. class   - conservative sustained figure for the device type
+//!
 //! Every figure is clamped to its device class's plausible range.
 
 use serde_json::{json, Value};

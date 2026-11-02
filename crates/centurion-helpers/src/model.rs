@@ -8,15 +8,15 @@
 //!   triple it touched.
 //! * Model: one additive Gaussian process per objective (Duvenaud, Nickisch &
 //!   Rasmussen, "Additive Gaussian Processes", 2011):
-//!       f(x) = sum of main effects + sum over pairs + sum over triples
+//!    f(x) = sum of main effects + sum over pairs + sum over triples
 //!   For knob f, m_f / u_f are the dot products of its features in x and x'
 //!   (thermometer coding for numeric ladders, so neighbouring doses share strength
 //!   and doses in between are interpolated; one feature per value for choices),
 //!   zero when either configuration leaves the knob at its reference. With
 //!   z_f = h_f * u_f:
-//!       k(x,x') = s_main^2 sum m_f
-//!               + s_pin^2 sum_{a<b same cluster} z_a z_b + s_px^2 sum_{a<b other} z_a z_b
-//!               + s_tri^2 (sum_{in-cluster triples} + (s_px/s_pin)^2 sum_{mixed}) z_a z_b z_c
+//!    k(x,x') = s_main^2 sum m_f
+//!    + s_pin^2 sum_{a<b same cluster} z_a z_b + s_px^2 sum_{a<b other} z_a z_b
+//!    + s_tri^2 (sum_{in-cluster triples} + (s_px/s_pin)^2 sum_{mixed}) z_a z_b z_c
 //!   evaluated through elementary symmetric polynomials of the knobs both runs
 //!   changed: EVERY pair and triple of ALL knobs is in the model at a cost linear in
 //!   the number of changed knobs. The coupled clusters (memory/reclaim/THP/writeback
@@ -75,14 +75,14 @@ const LOSO_SESSIONS: usize = 8;
 pub struct Rng(u64);
 impl Rng {
     pub fn new(seed: u64) -> Rng { Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1) }
-    pub fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         let mut x = self.0;
         x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
         self.0 = x;
         x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
-    pub fn below(&mut self, n: usize) -> usize { if n <= 1 { 0 } else { (self.next() % n as u64) as usize } }
-    pub fn unit(&mut self) -> f64 { (self.next() >> 11) as f64 / (1u64 << 53) as f64 }
+    pub fn below(&mut self, n: usize) -> usize { if n <= 1 { 0 } else { (self.next_u64() % n as u64) as usize } }
+    pub fn unit(&mut self) -> f64 { (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64 }
     pub fn shuffle<T>(&mut self, v: &mut [T]) { for i in (1..v.len()).rev() { let j = self.below(i + 1); v.swap(i, j); } }
     /// Uniform in lo..=hi.
     pub fn range(&mut self, lo: usize, hi: usize) -> usize { if hi <= lo { lo } else { lo + self.below(hi - lo + 1) } }
@@ -432,7 +432,8 @@ pub struct Fit {
 
 /// Per-term projections, sharded for parallel readers (`Fit::tproj`).
 #[derive(Default)]
-pub struct TermProj { shards: [std::sync::Mutex<HashMap<Vec<u64>, Arc<Vec<f64>>>>; 16] }
+type ProjectionShard = std::sync::Mutex<HashMap<Vec<u64>, Arc<Vec<f64>>>>;
+pub struct TermProj { shards: [ProjectionShard; 16] }
 impl std::fmt::Debug for TermProj { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("TermProj") } }
 /// Kept terms per shard (n doubles each: at most ~140 MB for 1100 rows, in practice a few MB).
 const TPROJ_CAP: usize = 1000;
@@ -449,7 +450,8 @@ impl TermProj {
 
 /// Exact-key memo (the key is the functional's full bit pattern), sharded for parallel readers.
 #[derive(Default)]
-pub struct Memo { shards: [std::sync::Mutex<HashMap<Vec<u64>, (f64, f64)>>; 16] }
+type MemoShard = std::sync::Mutex<HashMap<Vec<u64>, (f64, f64)>>;
+pub struct Memo { shards: [MemoShard; 16] }
 impl std::fmt::Debug for Memo { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("Memo") } }
 const MEMO_CAP: usize = 40_000;
 impl Memo {
@@ -754,10 +756,10 @@ fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, 
     let d = inv_diag(&res.1, n);
     let (mut sse, mut cover) = (0.0, 0.0);
     let mut z2: Vec<f64> = Vec::with_capacity(n);
-    for i in 0..n {
-        let r = res.2[i] / d[i];
+    for (i, diag) in d.iter().enumerate().take(n) {
+        let r = res.2[i] / *diag;
         sse += r * r;
-        let z = res.2[i] / d[i].sqrt();
+        let z = res.2[i] / diag.sqrt();
         if z.abs() < 1.645 { cover += 1.0; }
         if z.is_finite() { z2.push(z * z); }
     }

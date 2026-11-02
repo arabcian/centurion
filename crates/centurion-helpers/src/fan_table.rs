@@ -9,7 +9,9 @@
 //!     (firmware_node/path) + "WM" + its object_id (e.g. \_SB.GZFD.WMAB);
 //!   * the machine must answer method 5 with a sane 10-level table, or it is refused;
 //!   * every write is read back through method 5, and a mismatch restores the old table.
+//!
 //! Per-fan RPM/temperature steps (LENOVO_FAN_TABLE_DATA) are parsed from the DSDT
+//!
 //! when the firmware stores them as static buffers; the curve works without them.
 //!
 //! Verified on Legion Pro 7 16AFR10H (SMCN19WW/SMCN20WW): the EC keeps the table across

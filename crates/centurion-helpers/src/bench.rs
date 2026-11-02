@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 const MIB: usize = 1 << 20;
 
-pub fn p99(v: &mut Vec<f64>) -> Option<f64> {
+pub fn p99(v: &mut [f64]) -> Option<f64> {
     if v.is_empty() { return None; }
     v.sort_by(|a, b| a.total_cmp(b));
     Some(v[((v.len() as f64 * 0.99) as usize).min(v.len() - 1)])
@@ -25,7 +25,7 @@ pub fn p99(v: &mut Vec<f64>) -> Option<f64> {
 /// a smaller sample) - the expected shortfall at p99. A single order statistic of a short
 /// window jitters far more than the effects being measured (p99 of 40 fsyncs is simply the
 /// maximum); the mean of the worst few keeps the tail's meaning at a fraction of the noise.
-pub fn tail(v: &mut Vec<f64>) -> Option<f64> {
+pub fn tail(v: &mut [f64]) -> Option<f64> {
     if v.is_empty() { return None; }
     v.sort_by(|a, b| b.total_cmp(a));
     let k = ((v.len() as f64 * 0.01).ceil() as usize).max(5).min(v.len());
@@ -407,6 +407,7 @@ fn rand_reads(fd: i32, pages: u64, max_n: usize, until: Instant, seed: u64, stop
 ///  * random first touches of a cold mmap of the file (MmapFaultP99Us; RaFootprintMib = page
 ///    cache the fault read-around brought in, i.e. what read-ahead costs a program that maps
 ///    a big pack and touches it sparsely).
+///
 /// Every file is an unlinked O_TMPFILE: nothing is left behind.
 const SLC_PART: usize = 32 * MIB;
 static SLC_DROP: AtomicBool = AtomicBool::new(false);

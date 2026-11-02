@@ -212,23 +212,25 @@ fn checksum_ok(h: &[u8]) -> bool {
 
 /// `path`, `GNU.dumpdir` and `size` of pax records: "<len> <key>=<value>\n"… (values may hold NULs).
 /// A malformed record list yields none of them.
+#[cfg(test)]
 fn pax_records(v: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>) {
     pax_records_checked(v).unwrap_or((None, None, None))
 }
 
-fn pax_records_checked(v: &[u8]) -> Option<(Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>)> {
+type PaxRecords = (Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>);
+fn pax_records_checked(v: &[u8]) -> Option<PaxRecords> {
     let mut rest = v;
     let (mut path, mut dd, mut size) = (None, None, None);
     while !rest.is_empty() {
-        let Some(sp) = rest.iter().position(|&b| b == b' ') else { return None };
-        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { return None };
+        let sp = rest.iter().position(|&b| b == b' ')?;
+        let len = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok())?;
         if len <= sp + 1 || len > rest.len() || rest[len - 1] != b'\n' { return None; }
         let rec = &rest[sp + 1..len - 1];
         if let Some(val) = rec.strip_prefix(b"path=") { path = Some(val.to_vec()); }
         if let Some(val) = rec.strip_prefix(b"GNU.dumpdir=") { dd = Some(val.to_vec()); }
         if let Some(val) = rec.strip_prefix(b"size=") {
             // A size that cannot be read would lose the member boundaries: the record list counts as malformed.
-            let Some(n) = std::str::from_utf8(val).ok().and_then(|s| s.parse::<u64>().ok()) else { return None };
+            let n = std::str::from_utf8(val).ok().and_then(|s| s.parse::<u64>().ok())?;
             size = Some(n);
         }
         rest = &rest[len..];

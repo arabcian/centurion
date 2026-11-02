@@ -40,7 +40,7 @@ pub fn decode(b: &[u8]) -> Result<Value, String> {
     if b[2] != 0x12 { return Err(format!("not DDR5 SPD (type byte {:#04x})", b[2])); }
     let w = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]) as u32;
     let tck = w(20);
-    let mt = if tck > 0 { 2_000_000 / tck } else { 0 };
+    let mt = 2_000_000u32.checked_div(tck).unwrap_or(0);
     let form = match b[3] & 0x0F { 1 => "RDIMM", 2 => "UDIMM", 3 => "SODIMM", 4 => "LRDIMM", 0x0B => "CAMM2", _ => "?" };
     let die_gb = match b[4] & 0x1F { 1 => 4, 2 => 8, 3 => 12, 4 => 16, 5 => 24, 6 => 32, 7 => 48, 8 => 64, _ => 0 };
     let part = String::from_utf8_lossy(&b[521..551]).trim().to_string();

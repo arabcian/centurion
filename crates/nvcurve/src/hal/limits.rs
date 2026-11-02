@@ -129,7 +129,8 @@ pub fn set_clock_offsets(gpc_offset_mhz: Option<i32>, mem_offset_mhz: Option<i32
         let prefer_new = std::env::var_os("CENTURION_NVML_MEM_NEW_API").is_some();
         let old = |n: &nvml::Nvml| n.set_mem_clk_vf_offset(h, raw);
         let new = |n: &nvml::Nvml| n.set_clock_offset(h, CLOCK_MEM, 0, raw);
-        let (first, second): (&dyn Fn(&nvml::Nvml) -> Result<(), String>, &dyn Fn(&nvml::Nvml) -> Result<(), String>) =
+        type ClockOffsetSetter<'a> = &'a dyn Fn(&nvml::Nvml) -> Result<(), String>;
+        let (first, second): (ClockOffsetSetter<'_>, ClockOffsetSetter<'_>) =
             if prefer_new { (&new, &old) } else { (&old, &new) };
         if let Err(e) = first(n) {
             debug!("memory offset, first API: {e} — trying the other one");

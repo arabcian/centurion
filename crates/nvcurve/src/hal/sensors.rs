@@ -9,8 +9,11 @@
 //!   * GDDR7 (and GDDR6X) memory also reports per-partition sensors through
 //!     registers 0x009024C0/0x009024D0 + 0x4000·partition; the hottest one is
 //!     what matters for a memory overclock.
+//!
 //! The memory type is inferred from the architecture (Blackwell GeForce =
+//!
 //! GDDR7); every value is range-checked, so a wrong guess shows "—", never a
+//!
 //! bogus number.
 
 use crate::nvapi::{fid, nvcall, Buf, Gpu};

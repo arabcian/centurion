@@ -4,16 +4,16 @@
 //!   * connection list   sock_diag (the kernel interface behind `ss`) + /proc/<pid>/fd
 //!   * IP blacklist      nftables table `inet centurion_netguard` (drop in + out)
 //!   * Wine/.exe guard   the first packet of every new outbound flow is queued
-//!                       (NFQUEUE) to the daemon; it finds the owning socket
-//!                       and process, and if that is a Wine program which is
-//!                       not whitelisted: verdict DROP, socket destroyed
-//!                       (SOCK_DESTROY), one line in the block log.
+//!    (NFQUEUE) to the daemon; it finds the owning socket
+//!    and process, and if that is a Wine program which is
+//!    not whitelisted: verdict DROP, socket destroyed
+//!    (SOCK_DESTROY), one line in the block log.
 //!   * traffic           switchable (`traffic`): conntrack NEW/DESTROY events are matched to the owning program
-//!                       and its byte counters are added to a per-day ledger (traffic.rs). Nothing is sampled.
+//!    and its byte counters are added to a per-day ledger (traffic.rs). Nothing is sampled.
 //!   * connection log    switchable (`log_conns`): the first packet of every new
-//!                       flow, outbound and inbound, goes through the same queue,
-//!                       is accepted at once and written to the connection log
-//!                       with its program. Plus an on-demand whois client.
+//!    flow, outbound and inbound, goes through the same queue,
+//!    is accepted at once and written to the connection log
+//!    with its program. Plus an on-demand whois client.
 //!
 //! Config   /etc/centurion/netguard.json   (root-owned, world-readable)
 //! Log      /var/log/centurion/netguard.log (JSON lines, rotated at 1 MiB)

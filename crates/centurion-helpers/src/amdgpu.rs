@@ -18,10 +18,11 @@
 //! Table shapes the parser understands (kernel output differs per SMU):
 //!   * per-state (Polaris, Vega10):  `OD_SCLK: 0: 300MHz 750mV …`, range `VDDC:`
 //!   * V/F curve (Vega20, Navi1x):   `OD_VDDC_CURVE: 0: 800MHz 716mV`, ranges
-//!                                    `VDDC_CURVE_SCLK[i]` / `VDDC_CURVE_VOLT[i]`
+//!    `VDDC_CURVE_SCLK[i]` / `VDDC_CURVE_VOLT[i]`
 //!   * min/max (Navi2x, RDNA3, APUs): `OD_SCLK: 0: 500Mhz 1: 2500Mhz`,
-//!                                    optional `OD_VDDGFX_OFFSET: -50mV`
+//!    optional `OD_VDDGFX_OFFSET: -50mV`
 //!   * offset (RDNA4):                `OD_SCLK_OFFSET: 0Mhz`, range `SCLK_OFFSET:`
+//!
 //! The files are padded with NUL bytes on several ASICs; those are dropped.
 
 use crate::{canonical_in_sysfs, read_trimmed, sysfs_write};
@@ -145,7 +146,8 @@ pub fn parse_fan_value(text: &str) -> Option<(i64, (i64, i64))> {
 }
 
 /// `OD_FAN_CURVE:\n0: 45C 30%\n…\nOD_RANGE:\nFAN_CURVE(hotspot temp): 25C 100C\nFAN_CURVE(fan speed): 35% 100%`
-pub fn parse_fan_curve(text: &str) -> Option<(Vec<(i64, i64)>, (i64, i64), (i64, i64))> {
+pub type FanCurveBounds = (Vec<(i64, i64)>, (i64, i64), (i64, i64));
+pub fn parse_fan_curve(text: &str) -> Option<FanCurveBounds> {
     let clean: String = text.chars().filter(|&c| c != '\0').collect();
     let (mut pts, mut temp, mut speed, mut in_range) = (Vec::new(), None, None, false);
     for l in clean.lines().map(str::trim).filter(|l| !l.is_empty()) {

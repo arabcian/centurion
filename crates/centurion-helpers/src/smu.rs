@@ -24,6 +24,7 @@
 //!     zenmaster's ryzen_smu backend do). Also works under lockdown, but is not serialised with the
 //!     driver's own mailbox traffic.
 //!  3. PCI config space of 00:00.0 (0xB8/0xBC), only when the kernel is not locked down.
+//!
 //! Every path takes /run/lock/access_pci.lock (zenmaster/ZenTune use the same file).
 //!
 //! Safety rules: opcode and mailbox come only from `Spec` (no caller-supplied opcode), the SMU

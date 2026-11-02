@@ -85,7 +85,8 @@ pub fn rows<T: Send>(data: &mut [T], row_len: usize, cost: impl Fn(usize) -> f64
         rest = tail;
     }
     let next = AtomicUsize::new(0);
-    let cells: Vec<std::sync::Mutex<Option<(usize, &mut [T])>>> = blocks.into_iter().map(|b| std::sync::Mutex::new(Some(b))).collect();
+    type RowBlockCell<'a, T> = std::sync::Mutex<Option<(usize, &'a mut [T])>>;
+    let cells: Vec<RowBlockCell<'_, T>> = blocks.into_iter().map(|b| std::sync::Mutex::new(Some(b))).collect();
     std::thread::scope(|s| {
         for _ in 0..w {
             s.spawn(|| {

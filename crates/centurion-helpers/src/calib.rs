@@ -389,6 +389,7 @@ pub fn fold(effects: &BTreeMap<Metric, f64>) -> Measured {
     Measured { lat: mean(Objective::Lat), thr: mean(Objective::Thr), pwr: mean(Objective::Pwr), mem: mean(Objective::Mem), n: 1.0 }
 }
 
+type StoredModelInput = (Vec<Factor>, Vec<model::Row>, Vec<Option<Hyper>>, String);
 impl Measured {
     fn from_json(v: &Value) -> Measured {
         Measured { lat: v["lat"].as_f64(), thr: v["thr"].as_f64(), pwr: v["pwr"].as_f64(), mem: v["mem"].as_f64(), n: v["n"].as_f64().unwrap_or(1.0) }
@@ -1173,7 +1174,7 @@ impl Calibration {
     /// The phase model's input as the store keys it: factors, rows, starting hyperparameters
     /// (screening per objective, then one fit per objective) and their fingerprint. A screening that
     /// starts from the legacy summed key is searched, not used as it is: it is keyed apart.
-    fn store_input(&self, phase: Phase) -> Option<(Vec<Factor>, Vec<model::Row>, Vec<Option<Hyper>>, String)> {
+    fn store_input(&self, phase: Phase) -> Option<StoredModelInput> {
         let (factors, rows) = self.set_input(phase)?;
         let (screen, _, legacy) = self.screen_inits(phase, None);
         let inits: Vec<Option<Hyper>> = screen.into_iter().chain((0..4).map(|o| self.hyper(phase, o))).collect();
@@ -1539,7 +1540,8 @@ impl Calibration {
         Some((stored, vals.into_iter().collect()))
     }
     /// Adds one run's result.
-    pub fn add(&mut self, key: &str, reference: &str, value: &str, phase: Phase, m: Option<Measured>, unsafe_: bool, t: u64, kernel: &str) {
+    pub fn add(&mut self, key: &str, reference: &str, value: &str, phase: Phase, m: Option<Measured>, meta: (bool, u64, &str)) {
+        let (unsafe_, t, kernel) = meta;
         let gs = self.keys.entry(key.to_owned()).or_default();
         let g = match gs.iter().position(|g| g.reference == reference) {
             Some(i) => &mut gs[i],
@@ -2000,11 +2002,11 @@ mod tests {
     fn signature_accumulates_weights_and_migrates() {
         let now = 400 * 86_400;
         let mut c = Calibration { kernel: "7.2.8".into(), now, ..Default::default() };
-        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.10)), false, now, "7.2.8");
-        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.30)), false, now - 90 * 86_400, "7.2.1");
-        c.add("k", "128", "1024", Phase::Load, Some(m(-0.2, 0.0)), false, now, "7.2.8");
-        c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.04)), false, now, "7.2.8");
-        c.add("k", "128", "4096", Phase::Load, None, true, now, "7.2.8");
+        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.10)), ( false, now, "7.2.8"));
+        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.30)), ( false, now - 90 * 86_400, "7.2.1"));
+        c.add("k", "128", "1024", Phase::Load, Some(m(-0.2, 0.0)), ( false, now, "7.2.8"));
+        c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.04)), ( false, now, "7.2.8"));
+        c.add("k", "128", "4096", Phase::Load, None, ( true, now, "7.2.8"));
         // Newest weighs 1, the 90-day-old one 0.5 -> (0.10 + 0.15) / 1.5.
         let i = c.get_phase("k", "128", "1024", Phase::Idle).unwrap();
         assert!((i.thr.unwrap() - 0.25 / 1.5).abs() < 1e-9 && (i.n - 1.5).abs() < 1e-9);
@@ -2022,7 +2024,7 @@ mod tests {
         assert_eq!(back.keys, c.keys);
         assert_eq!(c.coverage("k", Phase::Idle), 3);
         // Records beyond KEEP drop the oldest.
-        for _ in 0..15 { c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.0)), false, now, "7.2.8"); }
+        for _ in 0..15 { c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.0)), ( false, now, "7.2.8")); }
         assert_eq!(c.keys["k"][0].values["256"].idle.len(), KEEP);
         // Files of an older benchmark set load, but their idle/load records are not kept (the
         // old benchmarks were blind to most CPU and scheduler knobs); unsafe values stay unsafe.

@@ -216,6 +216,7 @@ pub fn read_root_file(p: &str, max: u64) -> Option<String> {
 
 /// Atomic root-owned write: tmp (O_EXCL, no symlink, 0644) + fsync + rename
 /// + fsync(dir). A reader (boot service, GUI) sees the old file or the new
+///
 /// one, never a truncated one — also across a power cut.
 pub fn write_root_file(p: &str, body: &[u8]) -> Result<(), String> {
     let path = Path::new(p);
