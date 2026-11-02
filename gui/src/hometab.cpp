@@ -42,7 +42,6 @@
 #include <QProcess>
 #include <QScrollArea>
 #include <QTabWidget>
-#include <QSplitter>
 #include <QRegularExpression>
 #include <QPushButton>
 #include <QIcon>
@@ -357,40 +356,15 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     QGroupBox *hardware = buildHardwareBox();
     QGroupBox *liveSensors = buildLiveBox();
     if (theme::experimentalEnabled()) {
-        // Do not stretch short profile/device groups to consume spare space.
-        // The scroll area owns overflow; the graph/telemetry owns free height.
-        // Minimum, not Maximum: its wrapped no-driver notice needs its full height-for-width.
-        profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
-        if (dev) dev->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-
-        auto *work = new QSplitter(Qt::Horizontal);
-        work->setObjectName(QStringLiteral("homeWorkspace"));
-        work->setChildrenCollapsible(false);
-        // Controls: the real hardware profile buttons and every device toggle.
-        auto *leftScroll = new QScrollArea;
-        leftScroll->setWidgetResizable(true);
-        leftScroll->setFrameShape(QFrame::NoFrame);
-        auto *controlsHost = new QWidget;
-        auto *controls = new QVBoxLayout(controlsHost);
-        controls->setContentsMargins(0, 0, 5, 0);
-        controls->setSpacing(5);
-        controls->addWidget(profileBox);
-        if (dev) controls->addWidget(dev);
-        // Navigation is now the app rail. Do not spend a third of the Home
-        // control column repeating links to pages that are one click away.
-        controls->addStretch();
-        leftScroll->setWidget(controlsHost);
-        work->addWidget(leftScroll);
-
-        auto *right = new QWidget;
-        auto *readings = new QVBoxLayout(right);
-        readings->setContentsMargins(4, 0, 0, 0);
-        readings->setSpacing(8);
+        // One 2×2 grid with shared rows and equal columns, not two independent
+        // columns: every card edge (top, seam, bottom, centre gap) lines up by
+        // construction, whatever each card's content height is.
+        //   Power Profile │ Monitoring
+        //   Device        │ Live sensors / Hardware & firmware
         auto *plotPanel = new QGroupBox(tr("Monitoring"));
         auto *chartLayout = new QVBoxLayout(plotPanel);
         temperaturePlot_ = new experimentalui::TemperaturePlot;
         chartLayout->addWidget(temperaturePlot_, 1);
-        readings->addWidget(plotPanel, 2);
         auto *details = new QTabWidget;
         details->setObjectName(QStringLiteral("homeDetailTabs"));
         details->setDocumentMode(true);
@@ -399,14 +373,40 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         hardware->setTitle(QString());
         details->addTab(liveSensors, tr("Live sensors"));
         details->addTab(hardware, tr("Hardware && firmware"));
-        readings->addWidget(details, 3);
-        work->addWidget(right);
-        // Even halves: controls and readings carry the same visual weight.
-        work->setStretchFactor(0, 1);
-        work->setStretchFactor(1, 1);
-        work->setSizes({660, 660});
-        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/home_split_even"));
-        root->addWidget(work, 1);
+        // A card like its neighbours; its tab bar stands where a title would.
+        auto *detailCard = new QFrame;
+        detailCard->setObjectName(QStringLiteral("homeDetailCard"));
+        auto *detailLayout = new QVBoxLayout(detailCard);
+        detailLayout->setContentsMargins(6, 4, 6, 6);
+        detailLayout->addWidget(details);
+
+        for (QWidget *w : {static_cast<QWidget *>(profileBox), static_cast<QWidget *>(dev),
+                           static_cast<QWidget *>(plotPanel), static_cast<QWidget *>(detailCard)})
+            if (w) w->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        auto *gridHost = new QWidget;
+        gridHost->setObjectName(QStringLiteral("homeWorkspace"));
+        auto *cells = new QGridLayout(gridHost);
+        cells->setContentsMargins(0, 0, 0, 0);
+        cells->setSpacing(6);
+        cells->addWidget(profileBox, 0, 0);
+        cells->addWidget(plotPanel, 0, 1);
+        if (dev) {
+            cells->addWidget(dev, 1, 0);
+            cells->addWidget(detailCard, 1, 1);
+        } else {
+            cells->addWidget(detailCard, 1, 0, 1, 2);
+        }
+        // Equal halves; the top row is as tall as the profile list needs, the
+        // bottom row takes the rest of the window.
+        cells->setColumnStretch(0, 1);
+        cells->setColumnStretch(1, 1);
+        cells->setRowStretch(1, 1);
+        // Only a window too small for the content scrolls.
+        auto *scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidget(gridHost);
+        root->addWidget(scroll, 1);
     } else {
         // Identical Classic layout and all existing child widgets.
         auto *cells = new QGridLayout;

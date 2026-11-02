@@ -154,7 +154,9 @@ protected:
         p.setPen(muted);
         p.drawText(QRectF(4, 3, 280, 19), Qt::AlignLeft, QObject::tr("TEMPERATURES  ·  LAST 5 MIN"));
         p.setPen(QPen(grid, 1));
-        for (int t = 30; t <= 100; t += 10) {
+        // Short plot (Home's top row): a label every 20 °C, so they never touch.
+        const int step = plot.height() < 140 ? 20 : 10;
+        for (int t = step == 20 ? 40 : 30; t <= 100; t += step) {
             const double y = plot.bottom() - (t - 25.0) / 80.0 * plot.height();
             if (y < plot.top() || y > plot.bottom()) continue;
             p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y));

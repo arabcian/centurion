@@ -465,8 +465,10 @@ QMenu::item { border-radius: 3px; }
 QFrame#expInlineDivider { background: @BORDER; border: 0; max-height: 1px; }
 QSplitter::handle:horizontal { background: @BORDER_SOFT; width: 1px; }
 QSplitter::handle:vertical { background: @BORDER_SOFT; height: 1px; }
-QTabWidget#homeDetailTabs::pane { border: 1px solid @BORDER; background: @BG1; }
+QFrame#homeDetailCard { background: @BG1; border: 1px solid @BORDER_SOFT; border-radius: 6px; }
+QTabWidget#homeDetailTabs::pane { border: 0; border-top: 1px solid @BORDER_SOFT; background: transparent; }
 QTabWidget#homeDetailTabs > QTabBar::tab { padding: 5px 10px; }
+QTabWidget#homeDetailTabs > QStackedWidget { background: transparent; }
 QTabWidget#homeDetailTabs > QStackedWidget > QGroupBox { border: 0; background: transparent; padding: 6px 6px 4px 6px; }
 )QSS");
     const QColor accent(QString::fromLatin1(ACCENT));

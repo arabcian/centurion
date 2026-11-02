@@ -26,6 +26,8 @@ checks = {
     'Studio tab captions escape the ampersand': all(t in intel for t in ['tr("Voltage && safety")', 'tr("Limits && throttling")', 'tr("Startup && daemon")']) and 'tr("Hardware && firmware")' in home,
     'Firmware sits in the Tuning group': 'id == QLatin1String("Firmware")) return QStringLiteral("TUNING")' in main,
     'Home has no duplicate metric strip': 'expCpuValue_' not in home and 'experimentalui::strip' not in home,
+    'Stability tests are separate framed runs': all('new QGroupBox(tr("%s"))' % t in (ROOT / f).read_text() for f, t in [('cpustressbox.cpp', 'CPU test'), ('memtestbox.cpp', 'Memory test'), ('gpustressbox.cpp', 'GPU test')]),
+    'Home cards share one grid (aligned rows, equal columns)': 'cells->setColumnStretch(1, 1)' in home and 'cells->addWidget(detailCard, 1, 1)' in home and 'QSplitter' not in home,
     'Disclosure does not apply any setting': 'QToolButton *disclosure' in ui and 'panel->setVisible(on)' in ui and 'QProcess' not in ui,
 }
 for label, result in checks.items():

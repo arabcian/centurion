@@ -7,7 +7,7 @@ This source branch contains real Qt/C++ layout changes relative to the supplied 
 | Area | Studio composition |
 |---|---|
 | App shell | 1480×720 default window, 154 px navigation / 48 px compact mode, 32 px navigation rows, small top command strip, existing hardware-gated page IDs and Ctrl+K selector. Firmware is listed under Tuning. |
-| Home | Real profile/device controls + real EC/sensor timeline in even halves (split saved between sessions). No separate metric strip: temperatures, power and fans are shown once, in Live sensors. Turbo fan shares the fan-button row. |
+| Home | Real profile/device controls + real EC/sensor timeline in one 2×2 grid with shared rows and equal columns (Power Profile │ Monitoring, Device │ Live sensors / Hardware), so card edges always line up; the window scrolls only when too small. No separate metric strip: temperatures, power and fans are shown once, in Live sensors. Turbo fan shares the fan-button row. |
 | Health | Same searchable section list and System-tools tree as Classic (one click per page; the combobox pickers were removed). Overview keeps Classic's order: status, recommendation, then checked areas in two columns. |
 | Ryzen Curve | Original CCD per-core editor preserved at full working width. Profile, Reset and All-Core controls share a top action band. Diagnostics log is disclosed on demand. |
 | NVIDIA Curve | Full-width original V/F graph, original profile/actions and sensor readouts, expandable driver log |
