@@ -6,6 +6,7 @@
 #include "privileged.h"
 #include "sysinfo.h"
 #include "theme.h"
+#include "experimentalui.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -34,6 +35,9 @@
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSignalBlocker>
+#include <QSplitter>
+#include <QSpinBox>
 #include <QScrollArea>
 #include <QSet>
 #include <QStandardPaths>
@@ -346,7 +350,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     bAll->setFixedWidth(APPLY_W);
     connect(bAll, &QPushButton::clicked, this, [this] { applyAllCore(); });
     al->addWidget(bAll);
-    root->addWidget(acBox);
+    if (!theme::experimentalEnabled()) root->addWidget(acBox);
 
     // Per-core
     auto *coreBox = box("Per-Core Offsets  (fixed SMU slot layout)", "box_green");
@@ -531,7 +535,91 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     coreGrid_ = gridHost;
     fitCoreScroll();
     cl->addWidget(scroll, 1);
-    root->addWidget(coreBox, 1);
+    if (theme::experimentalEnabled()) {
+        // Left: the original 7-column CCD editor; right: an editable focused
+        // slot linked to the very same QLineEdit/QCheckBox. No second model.
+        auto *workspace = new QSplitter(Qt::Horizontal);
+        workspace->setObjectName(QStringLiteral("ryzenWorkspace"));
+        workspace->setChildrenCollapsible(false);
+        workspace->addWidget(coreBox);
+        auto *sidebarScroll = new QScrollArea;
+        sidebarScroll->setFrameShape(QFrame::NoFrame);
+        sidebarScroll->setWidgetResizable(true);
+        sidebarScroll->setMinimumWidth(270);
+        auto *side = new QWidget;
+        auto *sideLayout = new QVBoxLayout(side);
+        sideLayout->setContentsMargins(4, 0, 0, 0);
+        sideLayout->setSpacing(8);
+        auto *editorBox = box(tr("Selected SMU slot"), "box_grey");
+        auto *editor = new QVBoxLayout(editorBox);
+        auto *help = experimentalui::subtitle(tr(
+            "Select a slot from the detected CCD topology. The editor and table always share the same offset."));
+        editor->addWidget(help);
+        auto *slotPicker = new QComboBox;
+        slotPicker->setObjectName(QStringLiteral("ryzenSelectedSlot"));
+        for (int i = 0; i < slots_.size(); ++i)
+            slotPicker->addItem(QStringLiteral("CCD%1 · SMU slot %2").arg(slots_[i].ccd).arg(slots_[i].slot), i);
+        editor->addWidget(slotPicker);
+        auto *editRow = new QHBoxLayout;
+        editRow->addWidget(new QLabel(tr("CO steps")));
+        auto *selectedOffset = new QSpinBox;
+        selectedOffset->setObjectName(QStringLiteral("ryzenSelectedOffset"));
+        selectedOffset->setRange(CO_MIN, CO_MAX);
+        selectedOffset->setKeyboardTracking(false); // do not rewrite a slot mid-typing
+        selectedOffset->setToolTip(tr("Curve Optimizer offset in CO steps, not millivolts."));
+        editRow->addWidget(selectedOffset, 1);
+        editor->addLayout(editRow);
+        auto *disabled = new QCheckBox(tr("Disable this SMU slot"));
+        editor->addWidget(disabled);
+        auto *readings = experimentalui::subtitle(QString());
+        editor->addWidget(readings);
+        auto sync = [this, slotPicker, selectedOffset, disabled, readings] {
+            const int n = slotPicker->currentData().toInt();
+            if (n < 0 || n >= slots_.size()) return;
+            const auto &slot = slots_[n];
+            const QSignalBlocker a(selectedOffset), b(disabled);
+            if (!selectedOffset->hasFocus()) selectedOffset->setValue(slot.entry->text().toInt());
+            selectedOffset->setEnabled(!slot.disable->isChecked());
+            disabled->setChecked(slot.disable->isChecked());
+            readings->setText(tr("CPPC: %1    Clock: %2    VID: %3    Power: %4")
+                .arg(slot.cppc->text(), slot.mhz->text(), slot.volt->text(), slot.watt->text()));
+        };
+        connect(slotPicker, &QComboBox::currentIndexChanged, this, [sync](int) { sync(); });
+        connect(selectedOffset, &QSpinBox::valueChanged, this, [this, slotPicker](int value) {
+            const int n = slotPicker->currentData().toInt();
+            if (n >= 0 && n < slots_.size() && !slots_[n].disable->isChecked())
+                slots_[n].entry->setText(QString::number(value));
+        });
+        connect(disabled, &QCheckBox::toggled, this, [this, slotPicker](bool on) {
+            const int n = slotPicker->currentData().toInt();
+            if (n >= 0 && n < slots_.size()) slots_[n].disable->setChecked(on);
+        });
+        for (const auto &slot : std::as_const(slots_)) {
+            connect(slot.entry, &QLineEdit::textChanged, this, [sync](const QString &) { sync(); });
+            connect(slot.disable, &QCheckBox::toggled, this, [sync](bool) { sync(); });
+        }
+        sync();
+        auto *reader = new QTimer(this);
+        reader->setInterval(1000);
+        connect(reader, &QTimer::timeout, this, [this, sync] { if (isVisible()) sync(); });
+        reader->start(); // GUI label synchronization only, no extra sensor collection
+        sideLayout->addWidget(editorBox);
+        sideLayout->addWidget(acBox);
+        auto *note = new QLabel(tr("Changes are not sent to the CPU until Apply All-Core or Apply Per-Core is pressed. "
+                                  "Keep the existing validation and trial workflow."));
+        note->setWordWrap(true);
+        note->setProperty("role", "muted");
+        sideLayout->addWidget(note);
+        sideLayout->addStretch();
+        sidebarScroll->setWidget(side);
+        workspace->addWidget(sidebarScroll);
+        workspace->setStretchFactor(0, 7);
+        workspace->setStretchFactor(1, 3);
+        workspace->setSizes({850, 330});
+        root->addWidget(workspace, 1);
+    } else {
+        root->addWidget(coreBox, 1);
+    }
 
     auto *logBox = box("Output / Log", "box_grey");
     auto *ll = new QVBoxLayout(logBox);

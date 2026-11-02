@@ -336,6 +336,14 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         else if (target == QLatin1String("cooling")) page = cooling_;
         else if (target == QLatin1String("dgpu")) page = findChild<DgpuPage *>();
         else if (target == QLatin1String("sleep")) page = findChild<SleepPage *>();
+        else if (target == QLatin1String("klog")) page = klog_;
+        else if (target == QLatin1String("tools")) page = toolDirectory_;
+        else if (target == QLatin1String("smart")) {
+            for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it)
+                if (it.value()->data(0, Qt::UserRole).toString() == QStringLiteral("smart")) {
+                    page = it.key(); break;
+                }
+        }
         showPage(page);
     });
     auto *root = new QVBoxLayout(monitor);

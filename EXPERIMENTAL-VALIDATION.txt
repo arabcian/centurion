@@ -1,0 +1,17 @@
+Centurion Experimental UI v2 — verification
+===========================================
+BASE: Centurion-Experimental-UI.zip (v1)
+CHANGES: C++ Qt layouts for Home, Ryzen Curve, NVIDIA Curve, Optimize,
+Health Overview, Scenes, Lighting and Firmware; shared chart/styling.
+
+Source-only checks: 20 Health + 15 UI shell + 16 layout = 51 PASS.
+Against the previous experimental source, no existing class slot callback
+reference was removed from the nine modified .cpp operational page files.
+All existing Rust helpers and privileged implementation files are unchanged.
+
+NOT VERIFIED: Qt compilation/link, visual screenshots from the binary,
+end-to-end feature parity, Gentoo-specific behavior and hardware writes.
+Qt6 >=6.4 Config.cmake is missing in the authoring environment. CMake
+stopped at find_package(Qt6...) before compilation. Cargo also unavailable.
+
+See docs/EXPERIMENTAL-UI-V2.md for scope and verification commands.

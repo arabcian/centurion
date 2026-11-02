@@ -11,6 +11,7 @@
 #include "privileged.h"
 #include "sysinfo.h"
 #include "theme.h"
+#include "experimentalui.h"
 
 #include <QButtonGroup>
 #include <QCoreApplication>
@@ -36,7 +37,13 @@
 #include <QLabel>
 #include <QFrame>
 #include <QMessageBox>
+#include <QMenu>
+#include <QWidgetAction>
 #include <QProcess>
+#include <QScrollArea>
+#include <QTabWidget>
+#include <QSplitter>
+#include <QRegularExpression>
 #include <QPushButton>
 #include <QIcon>
 #include <QPainter>
@@ -219,8 +226,20 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     });
     auto *themeLabel = muted(tr("Theme"));
     themeLabel->setWordWrap(false);
-    headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
-    headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
+    // Preferences stay discoverable without dominating the monitoring surface.
+    QWidget *preferences = nullptr;
+    QHBoxLayout *preferencesRow = nullptr;
+    if (theme::experimentalEnabled()) {
+        preferences = new QWidget;
+        preferencesRow = new QHBoxLayout(preferences);
+        preferencesRow->setContentsMargins(3, 3, 3, 3);
+        preferencesRow->setSpacing(6);
+        preferencesRow->addWidget(themeLabel);
+        preferencesRow->addWidget(themeBox);
+    } else {
+        headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
+        headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
+    }
     // Both UI modes use the exact same hardware features. Saving the mode
     // changes only visual presentation and the top-level navigation shell.
     auto *uiMode = new QComboBox;
@@ -243,8 +262,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     });
     auto *uiLabel = muted(tr("Interface"));
     uiLabel->setWordWrap(false);
-    headRow->addWidget(uiLabel, 0, Qt::AlignVCenter);
-    headRow->addWidget(uiMode, 0, Qt::AlignVCenter);
+    if (preferencesRow) { preferencesRow->addWidget(uiLabel); preferencesRow->addWidget(uiMode); }
+    else { headRow->addWidget(uiLabel, 0, Qt::AlignVCenter); headRow->addWidget(uiMode, 0, Qt::AlignVCenter); }
     // Interface language: same mechanism as the theme (saved, applied at the next start).
     auto *langBox = new QComboBox;
     langBox->setToolTip(tr("Interface language. Applied by restarting the app (a few seconds)."));
@@ -259,8 +278,21 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     });
     auto *langLabel = muted(tr("Language"));
     langLabel->setWordWrap(false);
-    headRow->addWidget(langLabel, 0, Qt::AlignVCenter);
-    headRow->addWidget(langBox, 0, Qt::AlignVCenter);
+    if (preferencesRow) {
+        preferencesRow->addWidget(langLabel);
+        preferencesRow->addWidget(langBox);
+        auto *settingsButton = new QPushButton(tr("Preferences"));
+        settingsButton->setObjectName(QStringLiteral("btnMini"));
+        auto *popup = new QMenu(settingsButton);
+        auto *panelAction = new QWidgetAction(popup);
+        panelAction->setDefaultWidget(preferences);
+        popup->addAction(panelAction);
+        settingsButton->setMenu(popup);
+        headRow->addWidget(settingsButton);
+    } else {
+        headRow->addWidget(langLabel, 0, Qt::AlignVCenter);
+        headRow->addWidget(langBox, 0, Qt::AlignVCenter);
+    }
     root->addLayout(headRow);
 
     guardBanner_ = new QFrame;
@@ -321,47 +353,110 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     status_->setFixedHeight(status_->fontMetrics().height() + 2);
     status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 
-    // 2×2 grid, every cell the same size.
-    auto *cells = new QGridLayout;
-    cells->setSpacing(6);
     QGroupBox *dev = buildDeviceBox();  // hosts status_ when present
-    const QList<QWidget *> boxes{buildHardwareBox(), buildLiveBox(), profileBox, dev};
-    for (int i = 0; i < boxes.size(); ++i) {
-        if (!boxes[i]) continue;
-        boxes[i]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        cells->addWidget(boxes[i], i / 2, i % 2);
-    }
-    cells->setRowStretch(0, 1);
-    cells->setRowStretch(1, 1);
-    cells->setColumnStretch(0, 1);
-    cells->setColumnStretch(1, 1);
-    root->addLayout(cells, 1);
-    if (!dev) root->addWidget(status_);
-    // Direct shortcuts to high-frequency workflows. These emit a navigation
-    // signal; actions never apply a profile, curve or firmware value.
+    QGroupBox *hardware = buildHardwareBox();
+    QGroupBox *liveSensors = buildLiveBox();
     if (theme::experimentalEnabled()) {
-        auto *quickRow = new QHBoxLayout;
-        quickRow->setSpacing(6);
-        auto *hint = muted(tr("QUICK ACCESS"));
-        hint->setWordWrap(false);
-        quickRow->addWidget(hint);
-        const QPair<QString, QString> links[] = {
-            {tr("Health Center"), QStringLiteral("Health")},
-            {tr("Optimize"), QStringLiteral("Optimizations")},
-            {tr("Scenes"), QStringLiteral("Scenes")},
-        };
-        for (const auto &link : links) {
-            auto *button = new QPushButton(link.first);
-            button->setObjectName(QStringLiteral("btnMini"));
-            button->setToolTip(tr("Open %1 without changing any settings").arg(link.first));
-            connect(button, &QPushButton::clicked, this, [this, id = link.second] {
-                Q_EMIT openPageRequested(id);
-            });
-            quickRow->addWidget(button);
+        // The conceptual Home layout, using the *actual* existing controls.
+        // Technical inventory and live readings remain in a visible details tab,
+        // not discarded/replaced with simulated data.
+        auto *strip = experimentalui::strip();
+        strip->setObjectName(QStringLiteral("expStrip"));
+        auto *metrics = new QHBoxLayout(strip);
+        metrics->setContentsMargins(16, 10, 16, 10);
+        metrics->setSpacing(16);
+        const QStringList names{tr("CPU TEMPERATURE"), tr("GPU / RUNTIME PM"),
+                                tr("CPU POWER"), tr("FANS")};
+        QLabel **values[]{&expCpuValue_, &expGpuValue_, &expPowerValue_, &expFanValue_};
+        for (int i = 0; i < names.size(); ++i) {
+            auto *column = new QVBoxLayout;
+            column->setSpacing(2);
+            column->addWidget(experimentalui::metric(names.at(i), values[i]));
+            column->addWidget(*values[i]);
+            metrics->addLayout(column, 1);
+            if (i < names.size() - 1) {
+                auto *line = new QFrame;
+                line->setFrameShape(QFrame::VLine);
+                line->setObjectName(QStringLiteral("expMetricDivider"));
+                metrics->addWidget(line);
+            }
         }
-        quickRow->addStretch();
-        root->addLayout(quickRow);
+        root->addWidget(strip);
+
+        auto *work = new QSplitter(Qt::Horizontal);
+        work->setObjectName(QStringLiteral("homeWorkspace"));
+        work->setChildrenCollapsible(false);
+        // Controls: the real hardware profile buttons and every device toggle.
+        auto *leftScroll = new QScrollArea;
+        leftScroll->setWidgetResizable(true);
+        leftScroll->setFrameShape(QFrame::NoFrame);
+        auto *controlsHost = new QWidget;
+        auto *controls = new QVBoxLayout(controlsHost);
+        controls->setContentsMargins(0, 0, 6, 0);
+        controls->setSpacing(8);
+        controls->addWidget(profileBox);
+        if (dev) controls->addWidget(dev);
+        auto *shortcuts = new QGroupBox(tr("Quick access"));
+        auto *links = new QVBoxLayout(shortcuts);
+        const QPair<QString, QString> targets[] = {
+            {tr("Health Center"), QStringLiteral("Health")},
+            {tr("CPU curve / undervolt"), sysinfo::isIntel() ? QStringLiteral("Intel Undervolt") : QStringLiteral("Ryzen Curve")},
+            {tr("NVIDIA curve editor"), QStringLiteral("NVIDIA Curve")},
+            {tr("Optimization tools"), QStringLiteral("Optimizations")},
+            {tr("Scenes & automation"), QStringLiteral("Scenes")}
+        };
+        for (const auto &target : targets) {
+            auto *button = new QPushButton(target.first + QStringLiteral("   ›"));
+            button->setObjectName(QStringLiteral("expQuickLink"));
+            connect(button, &QPushButton::clicked, this, [this, target] {
+                Q_EMIT openPageRequested(target.second);
+            });
+            links->addWidget(button);
+        }
+        controls->addWidget(shortcuts);
+        controls->addStretch();
+        leftScroll->setWidget(controlsHost);
+        work->addWidget(leftScroll);
+
+        auto *right = new QWidget;
+        auto *readings = new QVBoxLayout(right);
+        readings->setContentsMargins(4, 0, 0, 0);
+        readings->setSpacing(8);
+        auto *plotPanel = new QGroupBox(tr("Monitoring"));
+        auto *chartLayout = new QVBoxLayout(plotPanel);
+        chartLayout->addWidget(experimentalui::subtitle(
+            tr("Sensor history from existing Home polling. An idle dGPU is never woken to fill this graph.")));
+        temperaturePlot_ = new experimentalui::TemperaturePlot;
+        chartLayout->addWidget(temperaturePlot_, 1);
+        readings->addWidget(plotPanel, 2);
+        auto *details = new QTabWidget;
+        details->setObjectName(QStringLiteral("homeDetailTabs"));
+        details->setDocumentMode(true);
+        details->addTab(liveSensors, tr("Live sensors"));
+        details->addTab(hardware, tr("Hardware & firmware"));
+        readings->addWidget(details, 3);
+        work->addWidget(right);
+        work->setStretchFactor(0, 4);
+        work->setStretchFactor(1, 7);
+        work->setSizes({430, 730});
+        root->addWidget(work, 1);
+    } else {
+        // Identical Classic layout and all existing child widgets.
+        auto *cells = new QGridLayout;
+        cells->setSpacing(6);
+        const QList<QWidget *> boxes{hardware, liveSensors, profileBox, dev};
+        for (int i = 0; i < boxes.size(); ++i) {
+            if (!boxes[i]) continue;
+            boxes[i]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+            cells->addWidget(boxes[i], i / 2, i % 2);
+        }
+        cells->setRowStretch(0, 1);
+        cells->setRowStretch(1, 1);
+        cells->setColumnStretch(0, 1);
+        cells->setColumnStretch(1, 1);
+        root->addLayout(cells, 1);
     }
+    if (!dev) root->addWidget(status_);
     statusTimer_ = new QTimer(this);
     statusTimer_->setSingleShot(true);
     connect(statusTimer_, &QTimer::timeout, status_, [this] { status_->clear(); });
@@ -568,6 +663,37 @@ void HomeTab::refreshLive() {
             for (int i = 0; i < vals.size() && i < self->liveRows_.size(); ++i) {
                 const QString t = vals[i].value_or(QStringLiteral("—"));
                 if (self->liveRows_[i].value->text() != t) self->liveRows_[i].value->setText(t);
+            }
+            if (self->temperaturePlot_) {
+                auto pick = [](const QString &str) -> std::optional<double> {
+                    static const QRegularExpression re(QStringLiteral("(-?\\d+(?:\\.\\d+)?)"));
+                    const auto match = re.match(str);
+                    if (!match.hasMatch()) return std::nullopt;
+                    bool ok = false;
+                    const double v = match.captured(1).toDouble(&ok);
+                    return ok ? std::optional<double>(v) : std::nullopt;
+                };
+                std::optional<double> cpu;
+                for (const auto &r : std::as_const(self->liveRows_)) {
+                    if (r.key->text() == self->tr("CPU Temp")) { cpu = pick(r.value->text()); break; }
+                }
+                // An EC temperature is real only while the dGPU is awake and
+                // the last EC sample is recent. No NVML request is introduced.
+                std::optional<double> gpu;
+                if (self->ecGpuTemp_ > 0 && monoMs() - self->ecAt_ < 5000 &&
+                    self->gpuLiveValue_ && self->gpuLiveValue_->text().contains(self->tr("awake")))
+                    gpu = self->ecGpuTemp_;
+                self->temperaturePlot_->append(cpu, gpu);
+                if (self->expCpuValue_) self->expCpuValue_->setText(cpu ? QStringLiteral("%1 °C").arg(*cpu, 0, 'f', 0) : QStringLiteral("—"));
+                if (self->expGpuValue_) self->expGpuValue_->setText(self->gpuLiveValue_ && !self->gpuLiveValue_->isHidden()
+                                                            ? self->gpuLiveValue_->text() : self->tr("Not available"));
+                for (const auto &r : std::as_const(self->liveRows_)) {
+                    if (self->expPowerValue_ && r.key->text() == self->tr("CPU Power")) self->expPowerValue_->setText(r.value->text());
+                    if (self->expFanValue_ && r.key->text() == self->tr("Fans")) self->expFanValue_->setText(r.value->text());
+                }
+                if (self->expFanValue_ && self->expFanValue_->text() == QStringLiteral("—") &&
+                    self->ecFansValue_ && !self->ecFansValue_->text().isEmpty())
+                    self->expFanValue_->setText(self->ecFansValue_->text());
             }
         }, Qt::QueuedConnection);
     });

@@ -51,7 +51,7 @@ check('navigator indexes sub-tabs without activating lazy pages during search', 
     x in nav for x in ['findChildren<QTabWidget *>', 'inner->tabText(j)',
                      'findChildren<QTreeWidget *>', 'isVisibleTo(page)']))
 check('Home quick access only emits a navigation request',
-    'openPageRequested(id)' in home and 'Q_EMIT openPageRequested' in home)
+    'openPageRequested(target.second)' in home and 'Q_EMIT openPageRequested' in home)
 check('experimental style uses current Centurion theme tokens', all(
     x in theme for x in ['Centurion Experimental', 'QTabWidget#mainTabs',
                        'QGroupBox', '@BG0', '@ACCENT']))

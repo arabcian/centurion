@@ -7,6 +7,7 @@
 #include "lazywidget.h"
 #include "sysinfo.h"
 #include "theme.h"
+#include "experimentalui.h"
 #include "autotunereport.h"
 
 #include <memory>
@@ -52,6 +53,7 @@
 #include "int64spinbox.h"
 #include <QStandardPaths>
 #include <QTabWidget>
+#include <QSplitter>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -504,7 +506,63 @@ void OptimizeTab::buildUi() {
     pl->addLayout(autoRow, 2, 0, 1, 8);
     pl->addWidget(calLabel_, 3, 0, 1, 8);
     refreshCalibrationStatus();
-    root->addWidget(pbox);
+    if (theme::experimentalEnabled()) {
+        // The old top card was a full-width 8-column control strip. Separate
+        // the two tasks without replacing a single button or its signal.
+        pl->removeItem(autoRow);
+        pl->removeWidget(calLabel_);
+        for (QWidget *w : {static_cast<QWidget *>(presetCombo_), bLoad, bSave, bDel,
+                           static_cast<QWidget *>(gameBtn_), static_cast<QWidget *>(bootBtn_),
+                           static_cast<QWidget *>(bootClear_), summary, static_cast<QWidget *>(bootLabel_)})
+            pl->removeWidget(w);
+        // Remove obsolete spacer cells/indices from the original grid.
+        while (QLayoutItem *item = pl->takeAt(0)) delete item;
+        pl->addWidget(presetCombo_, 0, 0, 1, 2);
+        pl->addWidget(bLoad, 1, 0); pl->addWidget(bSave, 1, 1);
+        pl->addWidget(bDel, 2, 0); pl->addWidget(gameBtn_, 2, 1);
+        pl->addWidget(bootBtn_, 3, 0); pl->addWidget(bootClear_, 3, 1);
+        pl->addWidget(summary, 4, 0, 1, 2);
+        pl->addWidget(bootLabel_, 5, 0, 1, 2);
+        bootLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+        // The original autotune controls move into a single task-focused panel.
+        // Empty old layout items (widgets are owned by their Qt parents).
+        while (QLayoutItem *item = autoRow->takeAt(0)) {
+            if (auto *w = item->widget()) {
+                // Only the two redundant prepositions disappear; the actual
+                // interactive widgets are reparented to the new grid below.
+                if (w == autoLbl || (qobject_cast<QLabel *>(w) && w != calLabel_)) w->deleteLater();
+            }
+            delete item;
+        }
+        delete autoRow;
+        auto *autoPanel = new QGroupBox(tr("Autotune workspace"));
+        auto *ag = new QGridLayout(autoPanel);
+        ag->setHorizontalSpacing(9);
+        ag->setVerticalSpacing(9);
+        ag->addWidget(experimentalui::subtitle(tr(
+            "Choose the optimization goal and the calibration context. Autotune proposes changes; Apply checked commits them.")), 0, 0, 1, 2);
+        ag->addWidget(new QLabel(tr("Goal")), 1, 0);
+        ag->addWidget(autoGoal_, 1, 1);
+        ag->addWidget(new QLabel(tr("Power profile / context")), 2, 0);
+        ag->addWidget(autoCtx_, 2, 1);
+        autoBtn_->setObjectName(QStringLiteral("btnAccent"));
+        ag->addWidget(autoBtn_, 3, 0, 1, 2);
+        ag->addWidget(weightsBtn, 4, 0);
+        ag->addWidget(calBtn, 4, 1);
+        ag->addWidget(calLabel_, 5, 0, 1, 2);
+        auto *workspace = new QSplitter(Qt::Horizontal);
+        workspace->setObjectName(QStringLiteral("optimizeWorkspace"));
+        workspace->setChildrenCollapsible(false);
+        workspace->addWidget(autoPanel);
+        workspace->addWidget(pbox);
+        workspace->setStretchFactor(0, 7);
+        workspace->setStretchFactor(1, 4);
+        workspace->setSizes({730, 410});
+        root->addWidget(workspace);
+    } else {
+        root->addWidget(pbox);
+    }
 
     // Opt-in keyboard navigation through the dozens of fine-grained tuning
     // knobs. A search only changes the selected subtab/scroll position; the

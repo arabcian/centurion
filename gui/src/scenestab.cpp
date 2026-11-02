@@ -12,6 +12,7 @@
 #include "ryzentab.h"
 #include "shortcuts.h"
 #include "theme.h"
+#include "experimentalui.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QCheckBox>
@@ -44,6 +45,8 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QScrollArea>
+#include <QSplitter>
 
 using scenes::Choice;
 using scenes::Scene;
@@ -134,8 +137,13 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     leftHost->setLayout(left);
     // A little wider in Experimental so long scene names do not truncate.
     // The right editor keeps its original content and operational callbacks.
-    leftHost->setFixedWidth(theme::experimentalEnabled() ? 228 : 190);
-    root->addWidget(leftHost);
+    if (theme::experimentalEnabled()) {
+        leftHost->setMinimumWidth(190);
+        leftHost->setMaximumWidth(340);
+    } else {
+        leftHost->setFixedWidth(190);
+        root->addWidget(leftHost);
+    }
 
     // ── right: editor + automatic switching ──
     auto *right = new QVBoxLayout;
@@ -413,7 +421,25 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     status_->setWordWrap(true);
     right->addWidget(status_);
     right->addStretch(1);
-    root->addLayout(right, 1);
+    if (theme::experimentalEnabled()) {
+        auto *work = new QSplitter(Qt::Horizontal);
+        work->setObjectName(QStringLiteral("scenesWorkspace"));
+        work->setChildrenCollapsible(false);
+        work->addWidget(leftHost);
+        auto *editorScroll = new QScrollArea;
+        editorScroll->setWidgetResizable(true);
+        editorScroll->setFrameShape(QFrame::NoFrame);
+        auto *editorHost = new QWidget;
+        editorHost->setLayout(right); // all original callbacks/controls remain
+        editorScroll->setWidget(editorHost);
+        work->addWidget(editorScroll);
+        work->setStretchFactor(0, 2);
+        work->setStretchFactor(1, 8);
+        work->setSizes({245, 900});
+        root->addWidget(work, 1);
+    } else {
+        root->addLayout(right, 1);
+    }
 
     // ── wiring ──
     connect(list_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *it) {

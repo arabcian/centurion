@@ -455,6 +455,31 @@ QTabBar::tab:selected { color: @FG; border-bottom: 2px solid @ACCENT; }
 QProgressBar::chunk { background: @ACCENT; }
 QCheckBox::indicator:checked { background: @ACCENT; border: 1px solid @ACCENT; image: url(:/theme/check.png); }
 QSlider::sub-page:horizontal { background: @ACCENT; }
+/* Real experimental workspaces: same shell on Home, Health, Curves, Optimize,
+   Scenes and Lighting. Flat readouts, clear tasks, subtle dividing lines. */
+QFrame#expStrip, QFrame#expSurface {
+    background: @BG1; border: 1px solid @BORDER; border-radius: 8px;
+}
+QFrame#expMetricDivider { color: @BORDER; background: @BORDER; max-width: 1px; border: none; }
+QLabel#expEyebrow, QLabel#expMetricLabel {
+    background: transparent; color: @MUTED; font-size: 8pt; font-weight: 600;
+}
+QLabel#expMetricValue {
+    background: transparent; color: @FG; font-size: 14pt; font-weight: 700;
+}
+QPushButton#expQuickLink {
+    text-align: left; padding: 9px 12px; background: @BG2;
+    border: 1px solid @BORDER_SOFT; border-radius: 6px;
+}
+QPushButton#expQuickLink:hover { border-color: @ACCENT_SOFT; background: @BG3; }
+QSplitter#homeWorkspace::handle, QSplitter#ryzenWorkspace::handle,
+QSplitter#nvidiaWorkspace::handle, QSplitter#optimizeWorkspace::handle,
+QSplitter#healthWorkspace::handle, QSplitter#scenesWorkspace::handle,
+QSplitter#lightingWorkspace::handle {
+    background: @BORDER_SOFT;
+}
+QTabWidget#homeDetailTabs::pane { background: @BG1; border: 1px solid @BORDER; }
+QTabWidget#homeDetailTabs > QTabBar::tab { padding: 9px 13px; }
 QSlider::handle:horizontal { background: @ACCENT_HI; border: 2px solid @BG1; }
 QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 7px; }
 QMenu::item { border-radius: 4px; }
