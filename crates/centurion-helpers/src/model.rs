@@ -431,8 +431,8 @@ pub struct Fit {
 }
 
 /// Per-term projections, sharded for parallel readers (`Fit::tproj`).
-#[derive(Default)]
 type ProjectionShard = std::sync::Mutex<HashMap<Vec<u64>, Arc<Vec<f64>>>>;
+#[derive(Default)]
 pub struct TermProj { shards: [ProjectionShard; 16] }
 impl std::fmt::Debug for TermProj { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("TermProj") } }
 /// Kept terms per shard (n doubles each: at most ~140 MB for 1100 rows, in practice a few MB).
@@ -449,8 +449,8 @@ impl TermProj {
 }
 
 /// Exact-key memo (the key is the functional's full bit pattern), sharded for parallel readers.
-#[derive(Default)]
 type MemoShard = std::sync::Mutex<HashMap<Vec<u64>, (f64, f64)>>;
+#[derive(Default)]
 pub struct Memo { shards: [MemoShard; 16] }
 impl std::fmt::Debug for Memo { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("Memo") } }
 const MEMO_CAP: usize = 40_000;
