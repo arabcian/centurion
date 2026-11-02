@@ -101,8 +101,9 @@ fn register_temp(gpu: Gpu, offset: u32) -> Option<i32> {
 /// Partitions that answered with a real status word, and the clamshell bit, per GPU. Probed
 /// once: polling the status register of an absent / floorswept partition every 2 s is a
 /// priv-ring access to a unit that does not exist (0xBADF… PRI error) — on GSP drivers a
-/// stream of those is a GPU fault source. Re-probed only while no partition has answered
-/// (the FB can be clock-gated at idle and poison every read).
+/// stream of those is a GPU fault source. An empty result is cached too: re-probing while
+/// the FB is clock-gated (every read poisoned) would be exactly that stream, every poll.
+/// A new process (tab reopened, helper restarted) probes again.
 struct PartCache { clamshell: bool, parts: Vec<u32> }
 static PARTS: Mutex<Option<HashMap<Gpu, PartCache>>> = Mutex::new(None);
 
@@ -113,10 +114,8 @@ fn partition_layout(gpu: Gpu) -> (bool, Vec<u32>) {
     let clamshell = read_register(gpu, REG_GDDR_CLAMSHELL).is_ok_and(|v| (v >> 22) & 1 == 1);
     let parts: Vec<u32> = (0..=8u32).filter(|&p| read_register(gpu, REG_GDDR_TEMP_STATUS + p * 0x4000)
         .is_ok_and(|s| s & POISON_MASK != POISON)).collect();
-    if !parts.is_empty() {
-        PARTS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new)
-            .insert(gpu, PartCache { clamshell, parts: parts.clone() });
-    }
+    PARTS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new)
+        .insert(gpu, PartCache { clamshell, parts: parts.clone() });
     (clamshell, parts)
 }
 

@@ -185,13 +185,15 @@ private:
         auto parse = [](unsigned long long v) { return 2 * int(std::min<unsigned long long>(v, 0x50)) - 40; };
         auto poisoned = [](unsigned long long v) { return (v & 0xFFFF0000ull) == 0xBADF0000ull; };
         // Probe the partition layout once (see hal/sensors.rs partition_layout): absent /
-        // floorswept partitions are not read again on every poll.
-        if (parts_.empty()) {
+        // floorswept partitions are not read again on every poll. An empty result is kept too
+        // (all reads poisoned): re-probing it every poll is the PRI-error stream itself.
+        if (!partsProbed_) {
+            partsProbed_ = true;
             clamshell_ = reg(0x00900200).value_or(0) >> 22 & 1;
             for (unsigned p = 0; p <= 8; ++p)
                 if (auto st = reg(0x009024D0 + p * 0x4000); st && !poisoned(*st)) parts_.push_back(p);
-            if (parts_.empty()) return std::nullopt;
         }
+        if (parts_.empty()) return std::nullopt;
         const bool clamshell = clamshell_;
         for (unsigned p : parts_) {
             auto st = reg(0x009024D0 + p * 0x4000);
@@ -221,6 +223,7 @@ private:
     int (*reg_)(void *, RegOps *) = nullptr;
     int mask_ = 0;
     std::vector<unsigned> parts_;
+    bool partsProbed_ = false;
     bool clamshell_ = false;
 };
 

@@ -1,0 +1,56 @@
+--- centurion-main/crates/nvcurve/src/hal/sensors.rs	2026-11-01 08:24:42.000000000 +0300
++++ b/crates/nvcurve/src/hal/sensors.rs	2026-11-02 11:42:19.334738129 +0300
+@@ -101,8 +101,9 @@
+ /// Partitions that answered with a real status word, and the clamshell bit, per GPU. Probed
+ /// once: polling the status register of an absent / floorswept partition every 2 s is a
+ /// priv-ring access to a unit that does not exist (0xBADF… PRI error) — on GSP drivers a
+-/// stream of those is a GPU fault source. Re-probed only while no partition has answered
+-/// (the FB can be clock-gated at idle and poison every read).
++/// stream of those is a GPU fault source. An empty result is cached too: re-probing while
++/// the FB is clock-gated (every read poisoned) would be exactly that stream, every poll.
++/// A new process (tab reopened, helper restarted) probes again.
+ struct PartCache { clamshell: bool, parts: Vec<u32> }
+ static PARTS: Mutex<Option<HashMap<Gpu, PartCache>>> = Mutex::new(None);
+ 
+@@ -113,10 +114,8 @@
+     let clamshell = read_register(gpu, REG_GDDR_CLAMSHELL).is_ok_and(|v| (v >> 22) & 1 == 1);
+     let parts: Vec<u32> = (0..=8u32).filter(|&p| read_register(gpu, REG_GDDR_TEMP_STATUS + p * 0x4000)
+         .is_ok_and(|s| s & POISON_MASK != POISON)).collect();
+-    if !parts.is_empty() {
+-        PARTS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new)
+-            .insert(gpu, PartCache { clamshell, parts: parts.clone() });
+-    }
++    PARTS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new)
++        .insert(gpu, PartCache { clamshell, parts: parts.clone() });
+     (clamshell, parts)
+ }
+ 
+--- centurion-main/gui/src/nvidiatab.cpp	2026-11-01 08:24:42.000000000 +0300
++++ b/gui/src/nvidiatab.cpp	2026-11-02 11:42:32.550738561 +0300
+@@ -185,13 +185,15 @@
+         auto parse = [](unsigned long long v) { return 2 * int(std::min<unsigned long long>(v, 0x50)) - 40; };
+         auto poisoned = [](unsigned long long v) { return (v & 0xFFFF0000ull) == 0xBADF0000ull; };
+         // Probe the partition layout once (see hal/sensors.rs partition_layout): absent /
+-        // floorswept partitions are not read again on every poll.
+-        if (parts_.empty()) {
++        // floorswept partitions are not read again on every poll. An empty result is kept too
++        // (all reads poisoned): re-probing it every poll is the PRI-error stream itself.
++        if (!partsProbed_) {
++            partsProbed_ = true;
+             clamshell_ = reg(0x00900200).value_or(0) >> 22 & 1;
+             for (unsigned p = 0; p <= 8; ++p)
+                 if (auto st = reg(0x009024D0 + p * 0x4000); st && !poisoned(*st)) parts_.push_back(p);
+-            if (parts_.empty()) return std::nullopt;
+         }
++        if (parts_.empty()) return std::nullopt;
+         const bool clamshell = clamshell_;
+         for (unsigned p : parts_) {
+             auto st = reg(0x009024D0 + p * 0x4000);
+@@ -221,6 +223,7 @@
+     int (*reg_)(void *, RegOps *) = nullptr;
+     int mask_ = 0;
+     std::vector<unsigned> parts_;
++    bool partsProbed_ = false;
+     bool clamshell_ = false;
+ };
+ 
