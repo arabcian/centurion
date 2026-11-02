@@ -846,8 +846,8 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
 
 // ── undervolt ("GAMING" curve presets) ──────────────────────────────────────
 
-/// Ryzen Curve Optimizer profile → ryzen-co-helper, the same order the GUI
-/// uses: all-core offset first, per-core offsets only after it succeeded.
+/// Ryzen Curve Optimizer profile → ryzen-co-helper, like the GUI: the per-core batch
+/// resets every core to 0 first, so the all-core offset is sent only without per-core values.
 fn apply_ryzen(path: &Path) -> Result<(), String> {
     let p = read_json(path).ok_or_else(|| format!("cannot read {}", path.display()))?;
     let helper = format!("{HELPER_DIR}/ryzen-co-helper");
@@ -874,8 +874,8 @@ fn apply_ryzen(path: &Path) -> Result<(), String> {
         .collect();
     let coall = p["coall"].as_i64();
     if coall.is_none() && entries.is_empty() { return Err("profile contains no offsets".into()); }
-    if let Some(v) = coall { call("set_coall", json!({"value": v}))?; }
     if !entries.is_empty() { call("set_coper_batch", json!({"entries": entries}))?; }
+    else if let Some(v) = coall { call("set_coall", json!({"value": v}))?; }
     Ok(())
 }
 
