@@ -14,6 +14,7 @@
 #include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QLabel>

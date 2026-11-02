@@ -511,9 +511,13 @@ void OptimizeTab::buildUi() {
         // the two tasks without replacing a single button or its signal.
         pl->removeItem(autoRow);
         pl->removeWidget(calLabel_);
-        for (QWidget *w : {static_cast<QWidget *>(presetCombo_), bLoad, bSave, bDel,
-                           static_cast<QWidget *>(gameBtn_), static_cast<QWidget *>(bootBtn_),
-                           static_cast<QWidget *>(bootClear_), summary, static_cast<QWidget *>(bootLabel_)})
+        // An explicit QWidget* list is required: deduction of a braced
+        // initializer list does not implicitly unify QPushButton* and QWidget*.
+        for (QWidget *w : {static_cast<QWidget *>(presetCombo_),
+                           static_cast<QWidget *>(bLoad), static_cast<QWidget *>(bSave),
+                           static_cast<QWidget *>(bDel), static_cast<QWidget *>(gameBtn_),
+                           static_cast<QWidget *>(bootBtn_), static_cast<QWidget *>(bootClear_),
+                           static_cast<QWidget *>(summary), static_cast<QWidget *>(bootLabel_)})
             pl->removeWidget(w);
         // Remove obsolete spacer cells/indices from the original grid.
         while (QLayoutItem *item = pl->takeAt(0)) delete item;

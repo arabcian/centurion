@@ -25,6 +25,8 @@ checks = {
  'Firmware discovery and safety checks retained': all(t in files['fwattrtab.cpp'] for t in ['FwattrTab::discover()', 'refreshLockState()', 'applyAll()', 'readOnlyAttr']),
  'Experimental sections all use shared workspace style': all(t in files['theme.cpp'] for t in ['homeWorkspace','ryzenWorkspace','nvidiaWorkspace','optimizeWorkspace','healthWorkspace','scenesWorkspace','lightingWorkspace']),
  'Original callbacks unchanged for operations': all(t in files['hometab.cpp'] for t in ['&HomeTab::refreshLive', 'applyProfile(', 'setFanTarget(']),
+ 'Health overview QGroupBox header is explicit': '#include <QGroupBox>' in files['overviewpage.cpp'],
+ 'Optimize mixed widget list has nine explicit QWidget casts': files['optimizetab.cpp'].split('for (QWidget *w : {static_cast<QWidget *>(presetCombo_)', 1)[1].split('})', 1)[0].count('static_cast<QWidget *>(') == 8,
 }
 for key, ok in checks.items():
     if not ok: raise AssertionError(key)
