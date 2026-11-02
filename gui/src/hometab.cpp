@@ -362,31 +362,6 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         // Minimum, not Maximum: its wrapped no-driver notice needs its full height-for-width.
         profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
         if (dev) dev->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-        // The Home layout uses the actual existing controls.
-        // Technical inventory and live readings remain in a visible details tab,
-        // not discarded/replaced with simulated data.
-        auto *strip = experimentalui::strip();
-        strip->setObjectName(QStringLiteral("expStrip"));
-        auto *metrics = new QHBoxLayout(strip);
-        metrics->setContentsMargins(12, 6, 12, 6);
-        metrics->setSpacing(9);
-        const QStringList names{tr("CPU TEMPERATURE"), tr("GPU / RUNTIME PM"),
-                                tr("CPU POWER"), tr("FANS")};
-        QLabel **values[]{&expCpuValue_, &expGpuValue_, &expPowerValue_, &expFanValue_};
-        for (int i = 0; i < names.size(); ++i) {
-            auto *column = new QVBoxLayout;
-            column->setSpacing(2);
-            column->addWidget(experimentalui::metric(names.at(i), values[i]));
-            column->addWidget(*values[i]);
-            metrics->addLayout(column, 1);
-            if (i < names.size() - 1) {
-                auto *line = new QFrame;
-                line->setFrameShape(QFrame::VLine);
-                line->setObjectName(QStringLiteral("expMetricDivider"));
-                metrics->addWidget(line);
-            }
-        }
-        root->addWidget(strip);
 
         auto *work = new QSplitter(Qt::Horizontal);
         work->setObjectName(QStringLiteral("homeWorkspace"));
@@ -426,10 +401,11 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         details->addTab(hardware, tr("Hardware && firmware"));
         readings->addWidget(details, 3);
         work->addWidget(right);
-        work->setStretchFactor(0, 4);
-        work->setStretchFactor(1, 7);
-        work->setSizes({390, 780});
-        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/home_split"));
+        // Even halves: controls and readings carry the same visual weight.
+        work->setStretchFactor(0, 1);
+        work->setStretchFactor(1, 1);
+        work->setSizes({660, 660});
+        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/home_split_even"));
         root->addWidget(work, 1);
     } else {
         // Identical Classic layout and all existing child widgets.
@@ -676,16 +652,6 @@ void HomeTab::refreshLive() {
                     self->gpuLiveValue_ && self->gpuLiveValue_->text().contains(self->tr("awake")))
                     gpu = self->ecGpuTemp_;
                 self->temperaturePlot_->append(cpu, gpu);
-                if (self->expCpuValue_) self->expCpuValue_->setText(cpu ? QStringLiteral("%1 °C").arg(*cpu, 0, 'f', 0) : QStringLiteral("—"));
-                if (self->expGpuValue_) self->expGpuValue_->setText(self->gpuLiveValue_ && !self->gpuLiveValue_->isHidden()
-                                                            ? self->gpuLiveValue_->text() : self->tr("Not available"));
-                for (const auto &r : std::as_const(self->liveRows_)) {
-                    if (self->expPowerValue_ && r.key->text() == self->tr("CPU Power")) self->expPowerValue_->setText(r.value->text());
-                    if (self->expFanValue_ && r.key->text() == self->tr("Fans")) self->expFanValue_->setText(r.value->text());
-                }
-                if (self->expFanValue_ && self->expFanValue_->text() == QStringLiteral("—") &&
-                    self->ecFansValue_ && !self->ecFansValue_->text().isEmpty())
-                    self->expFanValue_->setText(self->ecFansValue_->text());
             }
         }, Qt::QueuedConnection);
     });
@@ -1088,6 +1054,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
     }
     // No sysfs interface: the Legion WMAE fallback (EC FNST) is probed through the
     // helper; the checkbox appears once the firmware answers.
+    int fullSpeedRow = -1;  // Studio puts the fan buttons on this row, beside the checkbox
     if (!fullSpeedFile_.isEmpty() || !fanHwmon_.isEmpty() || wmiHas("DC2A8805-3A8C-41BA-A6F7-092E0089CD3B")
         || wmiHas("92549549-4BDE-4F06-AC04-CE8BF898DBAA")) {
         fullSpeed_ = new QCheckBox(tr("Turbo fan (EC full speed)"));
@@ -1099,6 +1066,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         connect(fullSpeed_, &QCheckBox::clicked, this, [this](bool on) { setDevice("fan_fullspeed", on ? "1" : "0"); });
         auto *fsLabel = label(tr("Fans"));
         g->addWidget(fsLabel, row, 0);
+        fullSpeedRow = row;
         g->addWidget(fullSpeed_, row++, 1, 1, 4);
         if (fullSpeedFile_.isEmpty()) {
             fullSpeed_->hide();
@@ -1151,7 +1119,14 @@ QGroupBox *HomeTab::buildDeviceBox() {
         if (curveBtn) mh->addWidget(curveBtn);
         mh->addWidget(maxAllBtn_);
         mh->addWidget(maxBannerBtn_);
-        g->addLayout(mh, row++, 0, 1, 5);
+        if (theme::experimentalEnabled() && fullSpeedRow >= 0) {
+            // One "Fans" row: Turbo on the left, curve / max on the right.
+            g->removeWidget(fullSpeed_);
+            mh->insertWidget(0, fullSpeed_);
+            g->addLayout(mh, fullSpeedRow, 1, 1, 4);
+        } else {
+            g->addLayout(mh, row++, 0, 1, 5);
+        }
     }
     if (!fans_.isEmpty() || fullSpeed_) {
         fanWarn_ = new QLabel;

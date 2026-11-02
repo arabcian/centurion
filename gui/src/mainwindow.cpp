@@ -63,7 +63,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowIcon(appIcon(128));
     // A compact, independent shell in experimental mode. The old shell remains
     // completely intact under Classic; the device pages are exactly the same.
-    resize(theme::experimentalEnabled() ? 1200 : 1080, theme::experimentalEnabled() ? 740 : 700);
+    resize(theme::experimentalEnabled() ? 1480 : 1080, theme::experimentalEnabled() ? 720 : 700);
     setMinimumSize(620, 420);
 
     tabs_ = new QTabWidget;
@@ -256,9 +256,9 @@ void MainWindow::arrangeTabs() {
     // Preserve every original tab, including fallback zone-lighting devices.
     const QStringList originalNames{QStringLiteral("Home"), QStringLiteral("Health"),
         QStringLiteral("Ryzen Curve"), QStringLiteral("Intel Undervolt"),
-        QStringLiteral("NVIDIA Curve"), QStringLiteral("AMD GPU"),
+        QStringLiteral("NVIDIA Curve"), QStringLiteral("AMD GPU"), QStringLiteral("Firmware"),
         QStringLiteral("Optimizations"), QStringLiteral("Scenes"),
-        QStringLiteral("Lighting"), QStringLiteral("Firmware")};
+        QStringLiteral("Lighting")};
     // Initial order at construction may differ; record their canonical IDs
     // once, before moving anything (Qt moves tabData along with the page).
     for (int i = 0; i < tabs_->count(); ++i) {
@@ -398,7 +398,8 @@ void MainWindow::rebuildExperimentalNavigation() {
     const auto groupFor = [](const QString &id) -> QString {
         if (id == QLatin1String("Home") || id == QLatin1String("Health")) return QStringLiteral("MONITOR");
         if (id == QLatin1String("Ryzen Curve") || id == QLatin1String("Intel Undervolt") ||
-            id == QLatin1String("NVIDIA Curve") || id == QLatin1String("AMD GPU")) return QStringLiteral("TUNING");
+            id == QLatin1String("NVIDIA Curve") || id == QLatin1String("AMD GPU") ||
+            id == QLatin1String("Firmware")) return QStringLiteral("TUNING");
         return QStringLiteral("WORKSPACE");
     };
     for (int i = 0; i < tabs_->count(); ++i) {
@@ -482,7 +483,8 @@ void MainWindow::syncExperimentalNavigation() {
     expTitle_->setText(label);
     const QString group = id == QLatin1String("Home") || id == QLatin1String("Health") ? tr("MONITOR") :
         id == QLatin1String("Ryzen Curve") || id == QLatin1String("Intel Undervolt") ||
-        id == QLatin1String("NVIDIA Curve") || id == QLatin1String("AMD GPU") ? tr("TUNING") : tr("WORKSPACE");
+        id == QLatin1String("NVIDIA Curve") || id == QLatin1String("AMD GPU") ||
+        id == QLatin1String("Firmware") ? tr("TUNING") : tr("WORKSPACE");
     expPath_->setText(QStringLiteral("CENTURION  /  ") + group);
     for (auto *button : std::as_const(expNavButtons_))
         button->setChecked(button->property("pageId").toString() == id);

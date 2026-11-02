@@ -76,7 +76,6 @@ private:
     QVector<std::function<void()>> onFirstShow_;  // helper reads deferred until the tab is first shown
     QLabel *healthBadge_ = nullptr;
     experimentalui::TemperaturePlot *temperaturePlot_ = nullptr;
-    QLabel *expCpuValue_ = nullptr, *expGpuValue_ = nullptr, *expPowerValue_ = nullptr, *expFanValue_ = nullptr;
     void rebuild();
     // GPU mode (MUX): read once on first show, switched through legion-gpu-helper.
     void readGpuMode();

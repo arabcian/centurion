@@ -130,35 +130,6 @@ inline QToolButton *disclosure(const QString &text, QWidget *panel, bool expande
     return toggle;
 }
 
-inline QLabel *eyebrow(const QString &s) {
-    auto *l = new QLabel(s.toUpper());
-    l->setObjectName(QStringLiteral("expEyebrow"));
-    return l;
-}
-inline QLabel *subtitle(const QString &s) {
-    auto *l = new QLabel(s);
-    l->setProperty("role", "muted");
-    l->setWordWrap(true);
-    return l;
-}
-inline QFrame *strip() {
-    auto *f = new QFrame;
-    f->setObjectName(QStringLiteral("expStrip"));
-    return f;
-}
-inline QFrame *surface() {
-    auto *f = new QFrame;
-    f->setObjectName(QStringLiteral("expSurface"));
-    return f;
-}
-inline QLabel *metric(const QString &label, QLabel **value) {
-    auto *box = new QLabel(label);
-    box->setObjectName(QStringLiteral("expMetricLabel"));
-    *value = new QLabel(QStringLiteral("—"));
-    (*value)->setObjectName(QStringLiteral("expMetricValue"));
-    return box;
-}
-
 // Graph drawn from existing samples; missing dGPU temperatures intentionally
 // break the line rather than pretending an asleep GPU has a zero temperature.
 class TemperaturePlot : public QWidget {

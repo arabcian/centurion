@@ -384,8 +384,6 @@ QToolButton#expDisclosure { background: transparent; color: @FG_DIM; text-align:
     border: 0; border-top: 1px solid @BORDER_SOFT; border-radius: 0;
     font-weight: 700; font-size: 8pt; padding: 8px 6px; }
 QToolButton#expDisclosure:hover { color: @FG; background: @BG2; }
-QComboBox#healthPagePicker, QComboBox#healthToolPicker { background: @BG1; color: @FG;
-    border: 1px solid @BORDER; padding: 4px 12px; min-height: 22px; }
 QTabWidget#intelWorkflows::pane { border-top: 1px solid @BORDER_SOFT; }
 QTabWidget#intelWorkflows QTabBar::tab { padding: 7px 14px; }
 
@@ -464,13 +462,7 @@ QHeaderView::section { background: @BG1; border: 0; border-bottom: 1px solid @BO
     color: @FG_DIM; font-weight: 600; padding: 4px 7px; }
 QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 6px; padding: 4px; }
 QMenu::item { border-radius: 3px; }
-QFrame#expStrip, QFrame#expSurface { background: @BG1; border: 1px solid @BORDER;
-    border-radius: 6px; }
-QFrame#expMetricDivider { background: @BORDER; color: @BORDER; border: 0; max-width: 1px; }
 QFrame#expInlineDivider { background: @BORDER; border: 0; max-height: 1px; }
-QLabel#expEyebrow, QLabel#expMetricLabel { color: @MUTED; background: transparent;
-    font-size: 8pt; font-weight: 600; }
-QLabel#expMetricValue { color: @FG; background: transparent; font-size: 15pt; font-weight: 700; }
 QSplitter::handle:horizontal { background: @BORDER_SOFT; width: 1px; }
 QSplitter::handle:vertical { background: @BORDER_SOFT; height: 1px; }
 QTabWidget#homeDetailTabs::pane { border: 1px solid @BORDER; background: @BG1; }

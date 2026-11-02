@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QMutex>
 #include <QHash>
+#include <QMap>
 #include "platformprofile.h"
 #include <QDir>
 #include <QFile>
@@ -291,12 +292,19 @@ std::optional<double> cpuTempC() {
 }
 
 Opt fans() {
+    // Several drivers (lenovo_wmi_other, legion hwmon, …) report the same physical
+    // fans under the same index. One reading per index, from the chip with the
+    // most fans first, so a fan only one driver knows (fan4) still shows up.
+    QList<Chip> cs = chips();
+    std::stable_sort(cs.begin(), cs.end(), [](const Chip &a, const Chip &b) { return a.fan.size() > b.fan.size(); });
+    QMap<int, long long> rpmByIndex;
+    for (const Chip &c : std::as_const(cs))
+        for (const Input &f : c.fan)
+            if (!rpmByIndex.contains(f.index))
+                if (auto rpm = rdInt(f.path); rpm && *rpm > 0) rpmByIndex.insert(f.index, *rpm);
     QStringList l;
-    for (const Chip &c : chips())
-        for (const Input &f : c.fan) {
-            if (l.size() >= 4) return joined(l);
-            if (auto rpm = rdInt(f.path); rpm && *rpm > 0) l << QStringLiteral("Fan %1 %2 RPM").arg(f.index).arg(*rpm);
-        }
+    for (auto it = rpmByIndex.cbegin(); it != rpmByIndex.cend(); ++it)
+        l << QStringLiteral("Fan %1 %2 RPM").arg(it.key()).arg(it.value());
     return joined(l);
 }
 
