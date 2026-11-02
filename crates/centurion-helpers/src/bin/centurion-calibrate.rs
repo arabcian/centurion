@@ -923,6 +923,28 @@ impl Runner<'_> {
             }
         }
         let temp = self.conditions(phase, is_hot(cfg));
+        // The thermal gate is a measurement stabilizer, not a hard safety interlock.
+        // Storage is different: never start a new intensive IO run at the drive's
+        // warning temperature, even when the bounded cool-down gate timed out.
+        if phase == Phase::Io {
+            if let Some(d) = self.c.disk.as_deref() {
+                match (bench::disk_temp_c(d), bench::disk_temp_warn(d)) {
+                    (Some(t), Some(limit)) if t >= limit => {
+                        eprintln!("\nstorage run skipped: drive at {t:.0} °C (warning {limit:.0} °C)");
+                        self.dropped += 1;
+                        for e in self.j.restore() { eprintln!("\nrestore: {e}"); }
+                        return Ok(None);
+                    }
+                    (None, _) | (_, None) => {
+                        eprintln!("\nstorage run skipped: NVMe temperature or warning limit unavailable");
+                        self.dropped += 1;
+                        for e in self.j.restore() { eprintln!("\nrestore: {e}"); }
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+            }
+        }
         let disp = bench::display_state();
         let skip: Vec<u32> = self.ballast.as_ref().map(|b| b.pid).into_iter().collect();
         let (fg, t1) = (bench::Foreign::snapshot(&skip), Instant::now());
@@ -984,11 +1006,21 @@ impl Runner<'_> {
             self.forced += 1;
             if self.forced <= 2 || self.forced % 10 == 0 { eprintln!("\nthe firmware forced {forced} CPU(s) idle during the run (ACPI processor aggregator): run counted at 10 % ({} such run(s)) - check the power adapter and the firmware power limits", self.forced); }
         }
+        // Runs with severe external interference are not representative samples. The
+        // regression already has reference drift correction, but down-weighting a run
+        // cannot undo systematic bias from forced idle or competing workloads.
+        // Keep moderate disturbances for the robust fit and drop only severe ones.
+        if forced > 0 || w < 0.20 {
+            self.dropped += 1;
+            eprintln!("\ncalibration sample discarded: forced idle or severe external interference (weight {w:.2})");
+            return Ok(None);
+        }
         // The drive reached its warning temperature: it may have throttled mid-suite.
         if let Some((t, lim)) = disk_hot {
-            w *= 0.3;
             self.disk_hot += 1;
-            if self.disk_hot <= 2 || self.disk_hot % 10 == 0 { eprintln!("\nthe drive reached {t:.0} °C (its warning temperature is {lim:.0} °C) during the storage suite: it may have throttled, run counted at 30 % ({} such run(s))", self.disk_hot); }
+            self.dropped += 1;
+            if self.disk_hot <= 2 || self.disk_hot % 10 == 0 { eprintln!("\nthe drive reached {t:.0} °C (warning {lim:.0} °C); invalid measurement discarded ({} such run(s))", self.disk_hot); }
+            return Ok(None);
         }
         // The write speed fell by more than half between its first and last parts: the drive's SLC
         // cache ran out mid-write, a state of the drive, not of the knobs.

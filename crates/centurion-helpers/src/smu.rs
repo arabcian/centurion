@@ -475,15 +475,17 @@ impl Smu {
         let spec = detect(fam, model).map(spec_for).ok_or_else(|| format!(
             "CPU family {fam:#x} model {model}: no verified Curve Optimizer interface (supported: Cezanne, \
              Rembrandt, Phoenix, Hawk Point, Dragon Range, Krackan, Strix Point, Strix Halo, Fire Range)"))?;
-        let mut why: Vec<String> = Vec::new();
-        if kmod_usable() {
-            match DriverMb::open(spec) {
-                Ok(mut d) => match d.selftest() {
-                    Ok(()) => return Ok(Smu { spec, link: Link::Driver(d) }),
-                    Err(e) => why.push(e),
-                },
-                Err(e) => why.push(e),
+        if std::path::Path::new(KMOD_DIR).exists() {
+            // Never silently bypass a present kernel driver after its version, codename or
+            // mailbox self-test fails. Its PM-table worker may use the same SMU mailbox;
+            // raw SMN transactions are not serialized by the kernel's amd_smu_mutex.
+            // Users who deliberately need raw access must unload ryzen_smu first.
+            if !kmod_usable() {
+                return Err("ryzen_smu is present but unsupported/unreadable; raw SMN fallback disabled while the driver is loaded".into());
             }
+            let mut d = DriverMb::open(spec)?;
+            d.selftest()?;
+            return Ok(Smu { spec, link: Link::Driver(d) });
         }
         let raw = Bus::open().and_then(|mut bus| {
             let g = bus.guard()?;
@@ -493,7 +495,7 @@ impl Smu {
         });
         match raw {
             Ok(bus) => Ok(Smu { spec, link: Link::Raw(bus) }),
-            Err(e) => { why.push(e); Err(why.join("; ")) }
+            Err(e) => Err(e),
         }
     }
 

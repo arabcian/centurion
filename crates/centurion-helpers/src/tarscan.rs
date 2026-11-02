@@ -88,6 +88,11 @@ impl Scanner {
         }
     }
 
+    /// Incomplete metadata or member contents at EOF must not authorize incremental deletions.
+    pub fn complete(&self) -> bool {
+        !self.broken && self.ended && self.left == 0 && self.hdr.is_empty() && !self.sparse_ext
+    }
+
     fn header(&mut self, h: &[u8], on: &mut dyn FnMut(Event)) {
         if self.sparse_ext {
             // Old GNU sparse extension block: the last byte of its map says whether another follows.
@@ -135,7 +140,13 @@ impl Scanner {
     }
 
     fn start_data(&mut self, on: &mut dyn FnMut(Event)) {
-        self.left = self.content.div_ceil(BLOCK as u64) * BLOCK as u64;
+        let Some(padded) = self.content.checked_add((BLOCK - 1) as u64)
+            .map(|n| n / BLOCK as u64)
+            .and_then(|n| n.checked_mul(BLOCK as u64)) else {
+                self.broken = true;
+                return;
+            };
+        self.left = padded;
         if self.left == 0 { self.member_done(on); }
     }
 
@@ -159,10 +170,14 @@ impl Scanner {
         match self.kind {
             b'L' => self.long_name = Some(cstr(&v).to_vec()),
             b'x' => {
-                let (p, d, n) = pax_records(&v);
-                self.pax_path = p;
-                self.pax_dumpdir = d;
-                self.pax_size = n;
+                match pax_records_checked(&v) {
+                    Some((p, d, n)) => {
+                        self.pax_path = p;
+                        self.pax_dumpdir = d;
+                        self.pax_size = n;
+                    }
+                    None => self.broken = true, // fail closed on malformed PAX metadata
+                }
             }
             b'D' => on(Event::Dumpdir(dumpdir(&norm(&self.name), &v))),
             _ => {}
@@ -198,23 +213,27 @@ fn checksum_ok(h: &[u8]) -> bool {
 /// `path`, `GNU.dumpdir` and `size` of pax records: "<len> <key>=<value>\n"… (values may hold NULs).
 /// A malformed record list yields none of them.
 fn pax_records(v: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>) {
+    pax_records_checked(v).unwrap_or((None, None, None))
+}
+
+fn pax_records_checked(v: &[u8]) -> Option<(Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>)> {
     let mut rest = v;
     let (mut path, mut dd, mut size) = (None, None, None);
     while !rest.is_empty() {
-        let Some(sp) = rest.iter().position(|&b| b == b' ') else { return (None, None, None) };
-        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { return (None, None, None) };
-        if len <= sp + 1 || len > rest.len() || rest[len - 1] != b'\n' { return (None, None, None); }
+        let Some(sp) = rest.iter().position(|&b| b == b' ') else { return None };
+        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { return None };
+        if len <= sp + 1 || len > rest.len() || rest[len - 1] != b'\n' { return None; }
         let rec = &rest[sp + 1..len - 1];
         if let Some(val) = rec.strip_prefix(b"path=") { path = Some(val.to_vec()); }
         if let Some(val) = rec.strip_prefix(b"GNU.dumpdir=") { dd = Some(val.to_vec()); }
         if let Some(val) = rec.strip_prefix(b"size=") {
             // A size that cannot be read would lose the member boundaries: the record list counts as malformed.
-            let Some(n) = std::str::from_utf8(val).ok().and_then(|s| s.parse::<u64>().ok()) else { return (None, None, None) };
+            let Some(n) = std::str::from_utf8(val).ok().and_then(|s| s.parse::<u64>().ok()) else { return None };
             size = Some(n);
         }
         rest = &rest[len..];
     }
-    (path, dd, size)
+    Some((path, dd, size))
 }
 
 /// The dumpdir of `dir`: "<code><name>\0"… ending with an empty entry.
@@ -287,6 +306,14 @@ mod tests {
     }
 
     #[test]
+    fn malformed_pax_rejected_for_restore() {
+        assert!(pax_records_checked(b"99 path=bad\n").is_none());
+        assert!(pax_records_checked(b"19 size=notanumber\n").is_none());
+        assert!(pax_records_checked(b"0 path=x\n").is_none());
+        assert!(pax_records_checked(b"20 path=a/long/name\n").is_some());
+    }
+
+    #[test]
     fn pax_record_lists() {
         assert_eq!(pax_records(b"20 path=a/long/name\n").0.as_deref(), Some(&b"a/long/name"[..]));
         assert_eq!(pax_records(b"9 x=yyyy\n"), (None, None, None));
@@ -331,6 +358,46 @@ mod tests {
         let (ev, broken) = scan(&[0x55u8; 2048], 100);
         assert!(ev.is_empty());
         assert!(broken);
+    }
+
+    #[test]
+    fn truncated_archive_never_authorizes_incremental_deletions() {
+        let mut archive = hdr(b"safe", b'0', 700);
+        archive.extend_from_slice(&vec![0x41; 1024]);
+        archive.extend_from_slice(&[0u8; 1024]);
+        for cut in [0, 1, 511, 512, 513, 900, 1535, 1536, 2047] {
+            let mut scanner = Scanner::new();
+            for chunk in archive[..cut].chunks(31) {
+                scanner.feed(chunk, &mut |_| {});
+            }
+            assert!(!scanner.complete(), "truncated at {cut} bytes");
+        }
+        let mut scanner = Scanner::new();
+        for chunk in archive.chunks(29) { scanner.feed(chunk, &mut |_| {}); }
+        assert!(scanner.complete());
+    }
+
+    #[test]
+    fn arbitrary_stream_bytes_never_panic_and_are_chunk_invariant() {
+        // Deterministic pseudo-random parser fuzz regression (no external crate).
+        let mut x = 0x91a2_b3c4_d5e6_f701u64;
+        for length in [0usize, 1, 7, 511, 512, 513, 1024, 1536, 4096] {
+            let mut bytes = Vec::with_capacity(length);
+            for _ in 0..length {
+                x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+                bytes.push(x as u8);
+            }
+            let mut states = Vec::new();
+            for chunk in [1, 3, 17, 512, 4096] {
+                let mut scanner = Scanner::new();
+                let mut events = Vec::new();
+                for part in bytes.chunks(chunk) {
+                    scanner.feed(part, &mut |e| events.push(e));
+                }
+                states.push((scanner.complete(), scanner.broken, events));
+            }
+            for state in &states[1..] { assert_eq!(state, &states[0]); }
+        }
     }
 
     /// Real archives from GNU tar, fed in odd-sized chunks: every member and the dumpdirs come out.

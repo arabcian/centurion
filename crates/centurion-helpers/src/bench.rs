@@ -39,7 +39,7 @@ fn anon(len: usize) -> Option<&'static mut [u8]> {
 }
 fn unmap(s: &mut [u8]) { unsafe { libc::munmap(s.as_mut_ptr() as *mut libc::c_void, s.len()); } }
 
-/// Timer wake-up overshoot p99 (µs) of a 500 µs sleep loop while another
+/// Timer wake-up overshoot upper-tail mean (µs) of a 500 µs sleep loop while another
 /// thread churns anonymous memory (faults, THP allocation, reclaim paths).
 /// The sleeper is a fresh thread in each of 3 sub-windows: where the scheduler
 /// happens to place it (V-Cache or frequency CCD, SMT sibling of a busy core)
@@ -865,12 +865,14 @@ pub fn idle_w_battery(dur: Duration, period: f64) -> Option<f64> {
     mean_of_updates(&v, 1).or_else(|| (!v.is_empty()).then(|| v.iter().map(|x| x.1).sum::<f64>() / v.len() as f64))
 }
 
-/// Root: drop clean caches and compact memory so one run does not inherit
-/// the previous run's page cache or fragmentation.
+/// Default: keep the rest of the system's caches intact. Explicit cold-cache runs can
+/// opt in with CENTURION_COLD_CACHE=1; do not perturb unrelated workloads silently.
 pub fn settle() {
-    unsafe { libc::sync(); }
-    let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
-    let _ = std::fs::write("/proc/sys/vm/compact_memory", "1");
+    if std::env::var_os("CENTURION_COLD_CACHE").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        unsafe { libc::sync(); }
+        let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
+        let _ = std::fs::write("/proc/sys/vm/compact_memory", "1");
+    }
     std::thread::sleep(Duration::from_millis(500));
 }
 

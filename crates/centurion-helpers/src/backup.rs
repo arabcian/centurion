@@ -1039,7 +1039,7 @@ impl ChainRestore {
             if sink.write_all(&buf[..n]).is_err() { break; }  // tar stopped reading: its status tells why
             if cancelled() { break; }
         }
-        out.broken = scan.broken;
+        out.broken = !scan.complete();
         Ok(out)
     }
 
