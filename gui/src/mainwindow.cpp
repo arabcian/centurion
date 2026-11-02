@@ -479,7 +479,7 @@ void MainWindow::syncExperimentalNavigation() {
     const QString id = tabs_->tabBar()->tabData(i).toString();
     QString label = tabs_->tabText(i);
     if (id == QLatin1String("Home")) label = tr("Overview");
-    if (id == QLatin1String("Health")) label = tr("Health center");
+    if (id == QLatin1String("Health")) label = tr("Health Center");
     expTitle_->setText(label);
     const QString group = id == QLatin1String("Home") || id == QLatin1String("Health") ? tr("MONITOR") :
         id == QLatin1String("Ryzen Curve") || id == QLatin1String("Intel Undervolt") ||
