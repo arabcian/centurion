@@ -357,14 +357,18 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     QGroupBox *hardware = buildHardwareBox();
     QGroupBox *liveSensors = buildLiveBox();
     if (theme::experimentalEnabled()) {
-        // The conceptual Home layout, using the *actual* existing controls.
+        // Do not stretch short profile/device groups to consume spare space.
+        // The scroll area owns overflow; the graph/telemetry owns free height.
+        profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+        if (dev) dev->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+        // The Home layout uses the actual existing controls.
         // Technical inventory and live readings remain in a visible details tab,
         // not discarded/replaced with simulated data.
         auto *strip = experimentalui::strip();
         strip->setObjectName(QStringLiteral("expStrip"));
         auto *metrics = new QHBoxLayout(strip);
-        metrics->setContentsMargins(16, 10, 16, 10);
-        metrics->setSpacing(16);
+        metrics->setContentsMargins(12, 6, 12, 6);
+        metrics->setSpacing(9);
         const QStringList names{tr("CPU TEMPERATURE"), tr("GPU / RUNTIME PM"),
                                 tr("CPU POWER"), tr("FANS")};
         QLabel **values[]{&expCpuValue_, &expGpuValue_, &expPowerValue_, &expFanValue_};
@@ -392,28 +396,12 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         leftScroll->setFrameShape(QFrame::NoFrame);
         auto *controlsHost = new QWidget;
         auto *controls = new QVBoxLayout(controlsHost);
-        controls->setContentsMargins(0, 0, 6, 0);
-        controls->setSpacing(8);
+        controls->setContentsMargins(0, 0, 5, 0);
+        controls->setSpacing(5);
         controls->addWidget(profileBox);
         if (dev) controls->addWidget(dev);
-        auto *shortcuts = new QGroupBox(tr("Quick access"));
-        auto *links = new QVBoxLayout(shortcuts);
-        const QPair<QString, QString> targets[] = {
-            {tr("Health Center"), QStringLiteral("Health")},
-            {tr("CPU curve / undervolt"), sysinfo::isIntel() ? QStringLiteral("Intel Undervolt") : QStringLiteral("Ryzen Curve")},
-            {tr("NVIDIA curve editor"), QStringLiteral("NVIDIA Curve")},
-            {tr("Optimization tools"), QStringLiteral("Optimizations")},
-            {tr("Scenes & automation"), QStringLiteral("Scenes")}
-        };
-        for (const auto &target : targets) {
-            auto *button = new QPushButton(target.first + QStringLiteral("   ›"));
-            button->setObjectName(QStringLiteral("expQuickLink"));
-            connect(button, &QPushButton::clicked, this, [this, target] {
-                Q_EMIT openPageRequested(target.second);
-            });
-            links->addWidget(button);
-        }
-        controls->addWidget(shortcuts);
+        // Navigation is now the app rail. Do not spend a third of the Home
+        // control column repeating links to pages that are one click away.
         controls->addStretch();
         leftScroll->setWidget(controlsHost);
         work->addWidget(leftScroll);
@@ -424,8 +412,6 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         readings->setSpacing(8);
         auto *plotPanel = new QGroupBox(tr("Monitoring"));
         auto *chartLayout = new QVBoxLayout(plotPanel);
-        chartLayout->addWidget(experimentalui::subtitle(
-            tr("Sensor history from existing Home polling. An idle dGPU is never woken to fill this graph.")));
         temperaturePlot_ = new experimentalui::TemperaturePlot;
         chartLayout->addWidget(temperaturePlot_, 1);
         readings->addWidget(plotPanel, 2);
@@ -438,7 +424,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         work->addWidget(right);
         work->setStretchFactor(0, 4);
         work->setStretchFactor(1, 7);
-        work->setSizes({430, 730});
+        work->setSizes({390, 780});
         root->addWidget(work, 1);
     } else {
         // Identical Classic layout and all existing child widgets.
@@ -461,8 +447,9 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     statusTimer_->setSingleShot(true);
     connect(statusTimer_, &QTimer::timeout, status_, [this] { status_->clear(); });
 
-    root->addWidget(muted(tr("Per-component limits and undervolt curves live in the other tabs. "
-                           "Firmware Attributes only accepts writes while the profile is Custom.")));
+    if (!theme::experimentalEnabled())
+        root->addWidget(muted(tr("Per-component limits and undervolt curves live in the other tabs. "
+                                 "Firmware Attributes only accepts writes while the profile is Custom.")));
 
     group_ = new QButtonGroup(this);
     group_->setExclusive(true);

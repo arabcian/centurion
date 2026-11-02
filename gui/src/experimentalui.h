@@ -7,6 +7,9 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
+#include <QIcon>
+#include <QPixmap>
+#include <QPolygonF>
 #include <QPen>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -17,6 +20,79 @@
 #include <optional>
 
 namespace experimentalui {
+// Purpose-drawn navigation symbols: consistent 18 px line icons in all
+// palettes, without icon-font or KDE-theme dependencies. Active pages use
+// the same accent as primary actions; icons have no semantic side effects.
+inline QIcon navigationIcon(const QString &page) {
+    const auto draw = [&page](const char *color) {
+        QPixmap px(36, 36);
+        px.setDevicePixelRatio(2.0);
+        px.fill(Qt::transparent);
+        QPainter p(&px);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(QColor(QString::fromLatin1(color)), 1.55,
+                      Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        if (page == QLatin1String("Home")) {
+            p.drawLine(QPointF(2.8, 8.8), QPointF(9, 3.2));
+            p.drawLine(QPointF(9, 3.2), QPointF(15.2, 8.8));
+            p.drawRoundedRect(QRectF(4.7, 8.3, 8.6, 7), 0.7, 0.7);
+            p.drawLine(QPointF(9, 15.3), QPointF(9, 11.5));
+        } else if (page == QLatin1String("Health")) {
+            p.drawRoundedRect(QRectF(2, 3, 14, 12), 3, 3);
+            p.drawPolyline(QPolygonF{QPointF(3.6, 9), QPointF(6, 9),
+                QPointF(7.5, 6), QPointF(9.5, 12), QPointF(11, 8.5), QPointF(14.5, 8.5)});
+        } else if (page == QLatin1String("Ryzen Curve") || page == QLatin1String("Intel Undervolt")) {
+            p.drawRoundedRect(QRectF(4.5, 4.5, 9, 9), 1.6, 1.6);
+            p.drawRect(QRectF(7.2, 7.2, 3.6, 3.6));
+            for (int v : {6, 10, 13}) {
+                p.drawLine(QPointF(v, 2), QPointF(v, 4.5));
+                p.drawLine(QPointF(v, 13.5), QPointF(v, 16));
+                p.drawLine(QPointF(2, v), QPointF(4.5, v));
+                p.drawLine(QPointF(13.5, v), QPointF(16, v));
+            }
+        } else if (page == QLatin1String("NVIDIA Curve") || page == QLatin1String("AMD GPU")) {
+            p.drawRoundedRect(QRectF(2, 4, 14, 10), 1.6, 1.6);
+            p.drawEllipse(QPointF(7, 9), 2.5, 2.5);
+            p.drawLine(QPointF(12, 6.5), QPointF(14.1, 6.5));
+            p.drawLine(QPointF(12, 9), QPointF(14.1, 9));
+            p.drawLine(QPointF(12, 11.5), QPointF(14.1, 11.5));
+        } else if (page == QLatin1String("Optimizations")) {
+            for (int y : {4, 9, 14}) p.drawLine(QPointF(2.5, y), QPointF(15.5, y));
+            for (const QPointF &pos : {QPointF(6, 4), QPointF(12, 9), QPointF(8, 14)}) {
+                p.setBrush(QColor(QString::fromLatin1(theme::BG1)));
+                p.drawEllipse(pos, 1.8, 1.8);
+            }
+        } else if (page == QLatin1String("Scenes")) {
+            p.drawRoundedRect(QRectF(2.8, 4, 10.5, 10.3), 1.5, 1.5);
+            p.drawLine(QPointF(6, 2.5), QPointF(15.3, 2.5));
+            p.drawLine(QPointF(15.3, 2.5), QPointF(15.3, 12));
+            p.drawLine(QPointF(5.5, 8.5), QPointF(10.8, 8.5));
+        } else if (page == QLatin1String("Lighting")) {
+            p.drawEllipse(QRectF(5, 3.5, 8, 8));
+            p.drawLine(QPointF(6.5, 13.2), QPointF(11.5, 13.2));
+            p.drawLine(QPointF(7.2, 15.2), QPointF(10.8, 15.2));
+            p.drawLine(QPointF(9, 1.2), QPointF(9, 2));
+            p.drawLine(QPointF(3, 5), QPointF(4, 5.5));
+            p.drawLine(QPointF(14, 5.5), QPointF(15, 5));
+        } else {
+            p.drawRoundedRect(QRectF(3.2, 2.7, 11.6, 12.6), 2, 2);
+            for (int y : {6, 9, 12}) {
+                p.drawLine(QPointF(6, y), QPointF(8, y));
+                p.drawLine(QPointF(10.5, y), QPointF(12.3, y));
+            }
+        }
+        p.end();
+        return px;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(theme::FG_DIM), QIcon::Normal, QIcon::Off);
+    icon.addPixmap(draw(theme::ACCENT), QIcon::Normal, QIcon::On);
+    icon.addPixmap(draw(theme::FG), QIcon::Active, QIcon::Off);
+    icon.addPixmap(draw(theme::ACCENT), QIcon::Active, QIcon::On);
+    return icon;
+}
+
 inline QLabel *eyebrow(const QString &s) {
     auto *l = new QLabel(s.toUpper());
     l->setObjectName(QStringLiteral("expEyebrow"));
@@ -51,7 +127,7 @@ inline QLabel *metric(const QString &label, QLabel **value) {
 class TemperaturePlot : public QWidget {
 public:
     explicit TemperaturePlot(QWidget *parent = nullptr) : QWidget(parent) {
-        setMinimumHeight(156);
+        setMinimumHeight(116);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         setToolTip(QObject::tr("CPU and EC GPU temperatures, last 5 minutes. Missing samples are not estimated."));
     }

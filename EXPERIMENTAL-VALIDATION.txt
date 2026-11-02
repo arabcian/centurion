@@ -1,17 +1,39 @@
-Centurion Experimental UI v2 — verification
-===========================================
-BASE: Centurion-Experimental-UI.zip (v1)
-CHANGES: C++ Qt layouts for Home, Ryzen Curve, NVIDIA Curve, Optimize,
-Health Overview, Scenes, Lighting and Firmware; shared chart/styling.
+Centurion Experimental UI v3 — verification (2026-11-02)
+=======================================================
+BASE: user-uploaded Centurion-Experimental-UI-v2.1(1).zip.
 
-Source-only checks: 20 Health + 15 UI shell + 16 layout = 51 PASS.
-Against the previous experimental source, no existing class slot callback
-reference was removed from the nine modified .cpp operational page files.
-All existing Rust helpers and privileged implementation files are unchanged.
+SOURCE CHANGE: 11 gui/src files modified. Independent Qt Widgets
+experimental shell / navigation, unified compact QSS, reflow of Home,
+Ryzen, NVIDIA, AMD GPU, Optimizations, Health and Firmware.
+Scenes, Lighting, Intel UV, other pages inherit the shared shell and
+styles; their operational layouts are carried forward unchanged.
 
-NOT VERIFIED: Qt compilation/link, visual screenshots from the binary,
-end-to-end feature parity, Gentoo-specific behavior and hardware writes.
-Qt6 >=6.4 Config.cmake is missing in the authoring environment. CMake
-stopped at find_package(Qt6...) before compilation. Cargo also unavailable.
+PASS: Archive-to-output comparison proves all Rust crates/helpers,
+IPC, polkit integration, algorithms and runtime device gates unchanged.
+PASS: Structural C++ delimiter / raw-string lexical checks.
+PASS: Canonical page identity, navigation and critical cross-tab signal
+references present, plus main editing widget placements.
 
-See docs/EXPERIMENTAL-UI-V2.md for scope and verification commands.
+BLOCKED: Qt6 >= 6.4 development files unavailable in this runtime.
+CMake configure fails before compiling at find_package(Qt6 REQUIRED).
+Cargo/rustc also unavailable. There has been NO full compile, Qt UI
+screenshot, Qt runtime proof or hardware validation. These cannot be
+represented as PASS without a real Gentoo/Qt build.
+
+See docs/EXPERIMENTAL-UI-V3.md for change scope and commands.
+
+Update (2026-11-02, second pass)
+--------------------------------
+PASS: Full GUI compile + link with Qt 6.4.2 (project minimum), Debug, zero
+      warnings. 17/17 CTest unit tests (CENTURION_BUILD_TESTS=ON).
+PASS: Xvfb smoke run (CENTURION_PGO_TRAIN=2) walks every page and sub-tab in
+      both experimental and classic modes: no crash, no Qt/QSS warnings.
+FIXED: Restoring ui/last_page at start-up left the top title and rail
+      selection on Overview while another page was shown (the restore ran
+      before currentChanged was connected). mainwindow.cpp now syncs once.
+FIXED: 5 stale static checks still expected v2 items that v3 removed on
+      purpose (section menu, Ryzen second editor, Home quick access, per-page
+      workspace selectors). Updated to v3; intent kept. 3/3 scripts pass.
+STILL NOT VERIFIED: Rust crates (no cargo), NVIDIA/AMD GPU/Ryzen/Lighting/
+      Firmware pages (no such hardware in the VM, so not constructed), real
+      Legion hardware behaviour.

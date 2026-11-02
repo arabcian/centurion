@@ -106,10 +106,10 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     split->setChildrenCollapsible(false);
     outer->addWidget(split);
     auto *rail = new QWidget;
-    rail->setMinimumWidth(176);
-    rail->setMaximumWidth(274);
+    rail->setMinimumWidth(158);
+    rail->setMaximumWidth(230);
     auto *railLayout = new QVBoxLayout(rail);
-    railLayout->setContentsMargins(8, 10, 6, 8);
+    railLayout->setContentsMargins(6, 7, 5, 6);
     auto *railTitle = new QLabel(tr("HEALTH CENTER"));
     railTitle->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding:5px").arg(theme::FG_DIM));
     railLayout->addWidget(railTitle);
@@ -125,13 +125,13 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     navigation_->setUniformRowHeights(true);
     navigation_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     navigation_->setFrameShape(QFrame::NoFrame);
-    navigation_->setStyleSheet(QStringLiteral("QTreeWidget{background:transparent;border:0}QTreeWidget::item{padding:6px 3px}"));
+    navigation_->setStyleSheet(QStringLiteral("QTreeWidget{background:transparent;border:0}QTreeWidget::item{padding:3px 3px}"));
     railLayout->addWidget(navigation_, 1);
     split->addWidget(rail);
     pages_ = new QStackedWidget;
     split->addWidget(pages_);
     split->setStretchFactor(1, 1);
-    split->setSizes({214, 850});
+    split->setSizes({178, 880});
 
     auto addGroup = [this](const QString &label) {
         auto *group = new QTreeWidgetItem(navigation_, {label.toUpper()});
@@ -213,7 +213,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     toolNavigation_->setIndentation(12);
     toolNavigation_->setMinimumWidth(150);
     toolNavigation_->setMaximumWidth(260);
-    toolNavigation_->setStyleSheet(QStringLiteral("QTreeWidget::item{padding:6px 3px}"));
+    toolNavigation_->setStyleSheet(QStringLiteral("QTreeWidget::item{padding:3px 3px}"));
     toolSplit->addWidget(toolNavigation_);
     toolPages_ = new QStackedWidget;
     toolSplit->addWidget(toolPages_);

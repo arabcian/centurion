@@ -37,7 +37,7 @@ check('all original operational connections preserved', all(
 check('layout switch saves via Qt settings and supports classic fallback', all(
     x in theme for x in ['CENTURION_UI', 'ui/mode', 'experimental', 'classic', 'saveUiMode']))
 check('feature-preserving reorder relies on tab IDs, not recreating content', all(
-    x in main for x in ['tabData(i)', 'moveTab(from, target)', 'arrangeTabs()', 'populateSectionMenu()']))
+    x in main for x in ['tabData(i)', 'moveTab(from, target)', 'arrangeTabs()', 'rebuildExperimentalNavigation()']))
 check('Health and Home deep links follow canonical page IDs', all(
     x in main for x in ['tabs_->tabBar()->tabData(i).toString() == label',
                      'HomeTab::openPageRequested']))
@@ -50,10 +50,10 @@ check('new navigator only changes navigation state', all(
 check('navigator indexes sub-tabs without activating lazy pages during search', all(
     x in nav for x in ['findChildren<QTabWidget *>', 'inner->tabText(j)',
                      'findChildren<QTreeWidget *>', 'isVisibleTo(page)']))
-check('Home quick access only emits a navigation request',
-    'openPageRequested(target.second)' in home and 'Q_EMIT openPageRequested' in home)
+check('Home quick-access button farm stays removed (v3: the rail navigates)',
+    'openPageRequested(target.second)' not in home)
 check('experimental style uses current Centurion theme tokens', all(
-    x in theme for x in ['Centurion Experimental', 'QTabWidget#mainTabs',
+    x in theme for x in ['Experimental / Studio', 'QTabWidget#mainTabs',
                        'QGroupBox', '@BG0', '@ACCENT']))
 check('Optimize searches real setting rows without applying them', all(
     x in optimize for x in ['jumpToSetting(const QString &query)', 'settingSearchModel_->setStringList(entries)',

@@ -1,5 +1,11 @@
 #include "mainwindow.h"
 #include <QFile>
+#include <QFrame>
+#include <QScrollArea>
+#include <QVBoxLayout>
+#include <QLayoutItem>
+#include <QPushButton>
+#include <QFont>
 #include "acpievents.h"
 #include "amdgputab.h"
 #include "fwattrtab.h"
@@ -28,6 +34,7 @@
 #include "platformprofile.h"
 #include "trialbar.h"
 #include "uinavigator.h"
+#include "experimentalui.h"
 #include <QApplication>
 #include <QCloseEvent>
 #include <QHBoxLayout>
@@ -42,6 +49,8 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QStyle>
+#include <utility>
 #include <malloc.h>
 #include <algorithm>
 
@@ -52,9 +61,9 @@ static void trimHeap() { ::malloc_trim(0); }
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Centurion");
     setWindowIcon(appIcon(128));
-    // Room for the 2×2 Home grid and the curve tabs' control rows without clipping;
-    // still well inside a 1366×768 (or 1920×1080 at 150 %) desktop.
-    resize(theme::experimentalEnabled() ? 1320 : 1080, theme::experimentalEnabled() ? 760 : 700);
+    // A compact, independent shell in experimental mode. The old shell remains
+    // completely intact under Classic; the device pages are exactly the same.
+    resize(theme::experimentalEnabled() ? 1280 : 1080, theme::experimentalEnabled() ? 760 : 700);
     setMinimumSize(620, 420);
 
     tabs_ = new QTabWidget;
@@ -63,45 +72,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     tabs_->tabBar()->setAttribute(Qt::WA_StyledBackground, true);  // ...and the selector rail behind the tabs
     tabs_->setDocumentMode(true);
     tabs_->setUsesScrollButtons(true);
-    setCentralWidget(tabs_);
-    // Brand mark at the start of the header bezel; the version lives in its tooltip
-    // (it used to take a whole status-bar row for four seconds). Floated over
-    // the band rather than set as a corner widget: in document mode a corner
-    // widget moves the page's top rule up through the tab labels. The rail
-    // starts at theme::brandInset(), measured with the wordmark's font.
-    mark_ = new QWidget(tabs_);
-    mark_->setObjectName("appMark");
-    mark_->setToolTip(QStringLiteral("Centurion " CENTURION_VERSION));
-    auto *markRow = new QHBoxLayout(mark_);
-    markRow->setContentsMargins(0, 0, 0, 0);
-    markRow->setSpacing(theme::BRAND_GAP);
-    auto *markIcon = new QLabel;
-    markIcon->setPixmap(appIcon(64).pixmap(QSize(theme::BRAND_ICON, theme::BRAND_ICON)));
-    auto *wordmark = new QLabel(QStringLiteral("Centurion"));
-    wordmark->setObjectName("appWordmark");
-    markRow->addWidget(markIcon);
-    markRow->addWidget(wordmark);
-    if (theme::experimentalEnabled()) {
-        auto *tag = new QLabel(tr("Experimental"));
-        tag->setObjectName(QStringLiteral("experimentalTag"));
-        markRow->addWidget(tag);
-    }
-
-    // Full tab index is available even when the tab bar must scroll on a
-    // smaller screen. This is navigation only: never builds missing hardware
-    // pages and never calls a device control.
-    if (theme::experimentalEnabled()) {
-        sectionsButton_ = new QToolButton(tabs_);
-        sectionsButton_->setObjectName(QStringLiteral("experimentalSectionsButton"));
-        sectionsButton_->setText(tr("All sections  ▾"));
-        sectionsButton_->setToolTip(tr("All available pages, including hardware-specific tools. Ctrl+K to search."));
-        sectionsButton_->setPopupMode(QToolButton::InstantPopup);
-        sectionsButton_->setMenu(new QMenu(sectionsButton_));
-        connect(sectionsButton_->menu(), &QMenu::aboutToShow, this, &MainWindow::populateSectionMenu);
-        sectionsButton_->setAutoRaise(false);
-        auto *quick = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
-        quick->setContext(Qt::ApplicationShortcut);
-        connect(quick, &QShortcut::activated, this, &MainWindow::showQuickNavigator);
+    if (!theme::experimentalEnabled()) setCentralWidget(tabs_);
+    if (!theme::experimentalEnabled()) {
+        // Classic retains its original header, tab strip and positioning.
+        mark_ = new QWidget(tabs_);
+        mark_->setObjectName("appMark");
+        mark_->setToolTip(QStringLiteral("Centurion " CENTURION_VERSION));
+        auto *markRow = new QHBoxLayout(mark_);
+        markRow->setContentsMargins(0, 0, 0, 0);
+        markRow->setSpacing(theme::BRAND_GAP);
+        auto *markIcon = new QLabel;
+        markIcon->setPixmap(appIcon(64).pixmap(QSize(theme::BRAND_ICON, theme::BRAND_ICON)));
+        auto *wordmark = new QLabel(QStringLiteral("Centurion"));
+        wordmark->setObjectName("appWordmark");
+        markRow->addWidget(markIcon);
+        markRow->addWidget(wordmark);
     }
 
     home_ = new HomeTab;
@@ -233,15 +218,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     if (theme::experimentalEnabled()) {
         arrangeTabs();
-        populateSectionMenu();
+        installExperimentalShell();
         // The last selected main page is restored by identity rather than an
         // index (hardware-gated pages appear/disappear between launches).
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
         const QString last = settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString();
         for (int i = 0; i < tabs_->count(); ++i)
             if (tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
+        syncExperimentalNavigation();  // the restore above ran before currentChanged is connected
         connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
             if (i < 0 || i >= tabs_->count()) return;
+            syncExperimentalNavigation();
             QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
             settings.setValue(QStringLiteral("ui/last_page"), tabs_->tabBar()->tabData(i).toString());
         });
@@ -255,7 +242,7 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
     const int at = tabs_->indexOf(amdgpu_ ? static_cast<QWidget *>(amdgpu_) : static_cast<QWidget *>(optimize_));
     tabs_->insertTab(at, nvidia_, tr("NVIDIA Curve"));
     tabW_ = -1;
-    if (theme::experimentalEnabled()) { arrangeTabs(); populateSectionMenu(); }
+    if (theme::experimentalEnabled()) { arrangeTabs(); rebuildExperimentalNavigation(); }
     fitTabs();
     Q_EMIT nvidiaTabAdded();
     return nvidia_;
@@ -302,24 +289,204 @@ void MainWindow::arrangeTabs() {
     tabW_ = -1;
 }
 
-void MainWindow::populateSectionMenu() {
-    if (!sectionsButton_) return;
-    QMenu *menu = sectionsButton_->menu();
-    menu->clear();
-    QAction *find = menu->addAction(tr("Find a setting…    Ctrl+K"));
-    connect(find, &QAction::triggered, this, &MainWindow::showQuickNavigator);
-    menu->addSeparator();
-    for (int i = 0; i < tabs_->count(); ++i) {
-        QWidget *page = tabs_->widget(i);
-        QAction *action = menu->addAction(tabs_->tabText(i));
-        action->setCheckable(true);
-        action->setChecked(i == tabs_->currentIndex());
-        action->setEnabled(tabs_->isTabEnabled(i));
-        connect(action, &QAction::triggered, this, [this, page] {
-            const int n = tabs_->indexOf(page);
-            if (n >= 0) tabs_->setCurrentIndex(n);
-        });
+// A dedicated experimental shell, not a re-skinned tab strip. No duplicate
+// widget instances: QTabWidget stays as the page stack (with its bar hidden),
+// and the rail only selects pages that were actually created by hardware gates.
+void MainWindow::installExperimentalShell() {
+    auto *shell = new QWidget(this);
+    shell->setObjectName(QStringLiteral("expShell"));
+    auto *shellLayout = new QHBoxLayout(shell);
+    shellLayout->setContentsMargins(0, 0, 0, 0);
+    shellLayout->setSpacing(0);
+
+    expRail_ = new QFrame(shell);
+    expRail_->setObjectName(QStringLiteral("expRail"));
+    auto *rail = new QVBoxLayout(expRail_);
+    rail->setContentsMargins(8, 10, 8, 8);
+    rail->setSpacing(4);
+    auto *brand = new QWidget;
+    auto *brandRow = new QHBoxLayout(brand);
+    brandRow->setContentsMargins(5, 0, 0, 4);
+    brandRow->setSpacing(9);
+    auto *brandIcon = new QLabel;
+    brandIcon->setObjectName(QStringLiteral("expBrandIcon"));
+    brandIcon->setPixmap(appIcon(64).pixmap(24, 24));
+    brandRow->addWidget(brandIcon);
+    expBrandLabel_ = new QLabel(QStringLiteral("CENTURION"));
+    expBrandLabel_->setObjectName(QStringLiteral("expBrandLabel"));
+    brandRow->addWidget(expBrandLabel_);
+    brandRow->addStretch();
+    rail->addWidget(brand);
+
+    auto *line = new QFrame;
+    line->setObjectName(QStringLiteral("expRailDivider"));
+    line->setFixedHeight(1);
+    rail->addWidget(line);
+    auto *navScroll = new QScrollArea;
+    navScroll->setFrameShape(QFrame::NoFrame);
+    navScroll->setWidgetResizable(true);
+    navScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    navScroll->setObjectName(QStringLiteral("expNavScroll"));
+    auto *nav = new QWidget;
+    nav->setObjectName(QStringLiteral("expNavHost"));
+    expNavLayout_ = new QVBoxLayout(nav);
+    expNavLayout_->setContentsMargins(0, 7, 0, 0);
+    expNavLayout_->setSpacing(3);
+    navScroll->setWidget(nav);
+    rail->addWidget(navScroll, 1);
+    expToggle_ = new QPushButton(tr("Collapse navigation"));
+    expToggle_->setObjectName(QStringLiteral("expRailToggle"));
+    expToggle_->setToolTip(tr("Expand or collapse navigation (Ctrl+B)"));
+    connect(expToggle_, &QPushButton::clicked, this, [this] {
+        expUserToggled_ = true;
+        setExperimentalCollapsed(!expCollapsed_);
+    });
+    rail->addWidget(expToggle_);
+    auto *collapseShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
+    collapseShortcut->setContext(Qt::ApplicationShortcut);
+    connect(collapseShortcut, &QShortcut::activated, expToggle_, &QPushButton::click);
+    shellLayout->addWidget(expRail_);
+
+    auto *content = new QWidget;
+    content->setObjectName(QStringLiteral("expContent"));
+    auto *column = new QVBoxLayout(content);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(0);
+    auto *top = new QFrame;
+    top->setObjectName(QStringLiteral("expTopbar"));
+    auto *topRow = new QHBoxLayout(top);
+    topRow->setContentsMargins(16, 5, 15, 5);
+    topRow->setSpacing(12);
+    auto *titles = new QVBoxLayout;
+    titles->setSpacing(0);
+    expPath_ = new QLabel;
+    expPath_->setObjectName(QStringLiteral("expTopPath"));
+    expTitle_ = new QLabel;
+    expTitle_->setObjectName(QStringLiteral("expTopTitle"));
+    titles->addWidget(expPath_);
+    titles->addWidget(expTitle_);
+    topRow->addLayout(titles, 1);
+    auto *find = new QPushButton(tr("Search settings    Ctrl+K"));
+    find->setObjectName(QStringLiteral("expSearch"));
+    find->setToolTip(tr("Jump to a page or a control"));
+    connect(find, &QPushButton::clicked, this, &MainWindow::showQuickNavigator);
+    topRow->addWidget(find);
+    column->addWidget(top);
+    tabs_->tabBar()->hide();
+    tabs_->setObjectName(QStringLiteral("expPageStack"));
+    column->addWidget(tabs_, 1);
+    shellLayout->addWidget(content, 1);
+    setCentralWidget(shell);
+
+    auto *quick = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
+    quick->setContext(Qt::ApplicationShortcut);
+    connect(quick, &QShortcut::activated, this, &MainWindow::showQuickNavigator);
+    rebuildExperimentalNavigation();
+    // Compact automatically on small screens; manual choice persists per user.
+    QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    expUserToggled_ = st.contains(QStringLiteral("ui/rail_collapsed"));
+    setExperimentalCollapsed(expUserToggled_ ? st.value(QStringLiteral("ui/rail_collapsed")).toBool() : width() < 1100);
+}
+
+void MainWindow::rebuildExperimentalNavigation() {
+    if (!expNavLayout_) return;
+    while (QLayoutItem *item = expNavLayout_->takeAt(0)) {
+        if (QWidget *widget = item->widget()) widget->deleteLater();
+        delete item;
     }
+    expNavButtons_.clear();
+    QString previousGroup;
+    const auto groupFor = [](const QString &id) -> QString {
+        if (id == QLatin1String("Home") || id == QLatin1String("Health")) return QStringLiteral("MONITOR");
+        if (id == QLatin1String("Ryzen Curve") || id == QLatin1String("Intel Undervolt") ||
+            id == QLatin1String("NVIDIA Curve") || id == QLatin1String("AMD GPU")) return QStringLiteral("TUNING");
+        return QStringLiteral("WORKSPACE");
+    };
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const QString id = tabs_->tabBar()->tabData(i).toString();
+        const QString group = groupFor(id);
+        if (group != previousGroup) {
+            auto *heading = new QLabel(group);
+            heading->setObjectName(QStringLiteral("expNavHeading"));
+            heading->setVisible(!expCollapsed_);
+            expNavLayout_->addWidget(heading);
+            previousGroup = group;
+        }
+        QString label = tabs_->tabText(i);
+        if (id == QLatin1String("Home")) label = tr("Overview");
+        if (id == QLatin1String("Health")) label = tr("Health");
+        if (id == QLatin1String("Optimizations")) label = tr("Optimize");
+        const QString code = id == QLatin1String("Home") ? QStringLiteral("HM") :
+            id == QLatin1String("Health") ? QStringLiteral("HL") :
+            id == QLatin1String("Ryzen Curve") ? QStringLiteral("CPU") :
+            id == QLatin1String("Intel Undervolt") ? QStringLiteral("CPU") :
+            id == QLatin1String("NVIDIA Curve") ? QStringLiteral("NV") :
+            id == QLatin1String("AMD GPU") ? QStringLiteral("GPU") :
+            id == QLatin1String("Optimizations") ? QStringLiteral("OPT") :
+            id == QLatin1String("Scenes") ? QStringLiteral("SC") :
+            id == QLatin1String("Lighting") ? QStringLiteral("RGB") : QStringLiteral("FW");
+        auto *button = new QPushButton;
+        button->setObjectName(QStringLiteral("expNavButton"));
+        button->setCheckable(true);
+        button->setAutoExclusive(true);
+        button->setProperty("navLabel", label);
+        button->setProperty("navCode", code);
+        button->setProperty("pageId", id);
+        button->setIcon(experimentalui::navigationIcon(id));
+        button->setIconSize(QSize(18, 18));
+        button->setText(expCollapsed_ ? QString() : label);
+        button->setToolTip(label);
+        button->setEnabled(tabs_->isTabEnabled(i));
+        button->setCursor(Qt::PointingHandCursor);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        button->setFixedHeight(35);
+        QWidget *page = tabs_->widget(i);
+        connect(button, &QPushButton::clicked, this, [this, page] {
+            const int index = tabs_->indexOf(page);
+            if (index >= 0) tabs_->setCurrentIndex(index);
+        });
+        expNavLayout_->addWidget(button);
+        expNavButtons_.append(button);
+    }
+    expNavLayout_->addStretch(1);
+    syncExperimentalNavigation();
+}
+
+void MainWindow::setExperimentalCollapsed(bool collapsed) {
+    if (!expRail_) return;
+    expCollapsed_ = collapsed;
+    expRail_->setFixedWidth(collapsed ? 56 : 184);
+    expBrandLabel_->setVisible(!collapsed);
+    expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Collapse"));
+    for (auto *button : std::as_const(expNavButtons_)) {
+        button->setText(collapsed ? QString() : button->property("navLabel").toString());
+        button->setProperty("collapsed", collapsed);
+        button->style()->unpolish(button);
+        button->style()->polish(button);
+    }
+    for (QLabel *heading : expRail_->findChildren<QLabel *>(QStringLiteral("expNavHeading")))
+        heading->setVisible(!collapsed);
+    if (expUserToggled_) {
+        QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+        st.setValue(QStringLiteral("ui/rail_collapsed"), collapsed);
+    }
+}
+
+void MainWindow::syncExperimentalNavigation() {
+    if (!expTitle_) return;
+    const int i = tabs_->currentIndex();
+    if (i < 0 || i >= tabs_->count()) return;
+    const QString id = tabs_->tabBar()->tabData(i).toString();
+    QString label = tabs_->tabText(i);
+    if (id == QLatin1String("Home")) label = tr("Overview");
+    if (id == QLatin1String("Health")) label = tr("Health center");
+    expTitle_->setText(label);
+    const QString group = id == QLatin1String("Home") || id == QLatin1String("Health") ? tr("MONITOR") :
+        id == QLatin1String("Ryzen Curve") || id == QLatin1String("Intel Undervolt") ||
+        id == QLatin1String("NVIDIA Curve") || id == QLatin1String("AMD GPU") ? tr("TUNING") : tr("WORKSPACE");
+    expPath_->setText(QStringLiteral("CENTURION  /  ") + group);
+    for (auto *button : std::as_const(expNavButtons_))
+        button->setChecked(button->property("pageId").toString() == id);
 }
 
 void MainWindow::showQuickNavigator() { uinavigator::open(tabs_, this); }
@@ -338,6 +505,7 @@ void MainWindow::placeHeaderControls() {
 // shortening it, so a narrow window is capped here too: the bar then ends at
 // the window edge and shows its scroll buttons instead of running off-screen.
 void MainWindow::fitTabs() {
+    if (theme::experimentalEnabled()) return;
     QTabBar *bar = tabs_->tabBar();
     const int room = tabs_->width() - theme::brandInset() - (sectionsButton_ ? 148 : 8);
     const int w = std::max(120, std::min(bar->sizeHint().width(), room));
@@ -348,15 +516,18 @@ void MainWindow::resizeEvent(QResizeEvent *e) {
     QMainWindow::resizeEvent(e);
     fitTabs();
     placeHeaderControls();
+    if (expRail_ && !expUserToggled_) setExperimentalCollapsed(width() < 1100);
 }
 
 void MainWindow::showEvent(QShowEvent *e) {
     QMainWindow::showEvent(e);
     fitTabs();
     // Centred on the tab band (its height is known once the style has polished it).
-    mark_->adjustSize();  // the style sheet arrives after the constructor (theme.h)
-    mark_->move(theme::BRAND_X, std::max(0, (tabs_->tabBar()->height() - mark_->height()) / 2));
-    mark_->raise();
+    if (mark_) {
+        mark_->adjustSize();
+        mark_->move(theme::BRAND_X, std::max(0, (tabs_->tabBar()->height() - mark_->height()) / 2));
+        mark_->raise();
+    }
     placeHeaderControls();
     // First time the window opens (not the tray-only start): the setup wizard, once per user.
     if (!wizardChecked_) { wizardChecked_ = true; QTimer::singleShot(0, this, [this] { FirstRunWizard::maybeShow(this); }); }

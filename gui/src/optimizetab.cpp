@@ -507,63 +507,44 @@ void OptimizeTab::buildUi() {
     pl->addWidget(calLabel_, 3, 0, 1, 8);
     refreshCalibrationStatus();
     if (theme::experimentalEnabled()) {
-        // The old top card was a full-width 8-column control strip. Separate
-        // the two tasks without replacing a single button or its signal.
+        // Two compact workflow rows, not two permanently open side-by-side
+        // cards. Reuse every control and every existing signal connection.
+        // All optimization categories gain the full content width below.
         pl->removeItem(autoRow);
         pl->removeWidget(calLabel_);
-        // An explicit QWidget* list is required: deduction of a braced
-        // initializer list does not implicitly unify QPushButton* and QWidget*.
         for (QWidget *w : {static_cast<QWidget *>(presetCombo_),
                            static_cast<QWidget *>(bLoad), static_cast<QWidget *>(bSave),
                            static_cast<QWidget *>(bDel), static_cast<QWidget *>(gameBtn_),
                            static_cast<QWidget *>(bootBtn_), static_cast<QWidget *>(bootClear_),
                            static_cast<QWidget *>(summary), static_cast<QWidget *>(bootLabel_)})
             pl->removeWidget(w);
-        // Remove obsolete spacer cells/indices from the original grid.
         while (QLayoutItem *item = pl->takeAt(0)) delete item;
-        pl->addWidget(presetCombo_, 0, 0, 1, 2);
-        pl->addWidget(bLoad, 1, 0); pl->addWidget(bSave, 1, 1);
-        pl->addWidget(bDel, 2, 0); pl->addWidget(gameBtn_, 2, 1);
-        pl->addWidget(bootBtn_, 3, 0); pl->addWidget(bootClear_, 3, 1);
-        pl->addWidget(summary, 4, 0, 1, 2);
-        pl->addWidget(bootLabel_, 5, 0, 1, 2);
-        bootLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
-        // The original autotune controls move into a single task-focused panel.
-        // Empty old layout items (widgets are owned by their Qt parents).
-        while (QLayoutItem *item = autoRow->takeAt(0)) {
-            if (auto *w = item->widget()) {
-                // Only the two redundant prepositions disappear; the actual
-                // interactive widgets are reparented to the new grid below.
-                if (w == autoLbl || (qobject_cast<QLabel *>(w) && w != calLabel_)) w->deleteLater();
-            }
-            delete item;
-        }
-        delete autoRow;
-        auto *autoPanel = new QGroupBox(tr("Autotune workspace"));
-        auto *ag = new QGridLayout(autoPanel);
-        ag->setHorizontalSpacing(9);
-        ag->setVerticalSpacing(9);
-        ag->addWidget(experimentalui::subtitle(tr(
-            "Choose the optimization goal and the calibration context. Autotune proposes changes; Apply checked commits them.")), 0, 0, 1, 2);
-        ag->addWidget(new QLabel(tr("Goal")), 1, 0);
-        ag->addWidget(autoGoal_, 1, 1);
-        ag->addWidget(new QLabel(tr("Power profile / context")), 2, 0);
-        ag->addWidget(autoCtx_, 2, 1);
+        auto *presetLine = new QHBoxLayout;
+        presetLine->setSpacing(5);
+        for (QWidget *w : {static_cast<QWidget *>(presetCombo_),
+                           static_cast<QWidget *>(bLoad), static_cast<QWidget *>(bSave),
+                           static_cast<QWidget *>(bDel), static_cast<QWidget *>(gameBtn_),
+                           static_cast<QWidget *>(bootBtn_), static_cast<QWidget *>(bootClear_)})
+            presetLine->addWidget(w);
+        presetLine->setStretch(0, 1);
+        pl->addLayout(presetLine, 0, 0);
+        auto *presetInfo = new QHBoxLayout;
+        presetInfo->addWidget(summary, 1);
+        presetInfo->addWidget(bootLabel_);
+        pl->addLayout(presetInfo, 1, 0);
+
+        auto *separator = new QFrame;
+        separator->setFrameShape(QFrame::HLine);
+        separator->setObjectName(QStringLiteral("expInlineDivider"));
+        pl->addWidget(separator, 2, 0);
+        // The existing row is reflowed into a compact action band; do not
+        // clone Autotune controls, which would desynchronize their state.
+        pl->addLayout(autoRow, 3, 0);
         autoBtn_->setObjectName(QStringLiteral("btnAccent"));
-        ag->addWidget(autoBtn_, 3, 0, 1, 2);
-        ag->addWidget(weightsBtn, 4, 0);
-        ag->addWidget(calBtn, 4, 1);
-        ag->addWidget(calLabel_, 5, 0, 1, 2);
-        auto *workspace = new QSplitter(Qt::Horizontal);
-        workspace->setObjectName(QStringLiteral("optimizeWorkspace"));
-        workspace->setChildrenCollapsible(false);
-        workspace->addWidget(autoPanel);
-        workspace->addWidget(pbox);
-        workspace->setStretchFactor(0, 7);
-        workspace->setStretchFactor(1, 4);
-        workspace->setSizes({730, 410});
-        root->addWidget(workspace);
+        pl->addWidget(calLabel_, 4, 0);
+        pl->setVerticalSpacing(3);
+        root->addWidget(pbox);
     } else {
         root->addWidget(pbox);
     }

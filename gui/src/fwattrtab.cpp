@@ -245,18 +245,6 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
         });
     }
 
-    if (theme::experimentalEnabled()) {
-        auto *head = experimentalui::strip();
-        auto *hl = new QHBoxLayout(head);
-        hl->setContentsMargins(14, 10, 14, 10);
-        auto *info = new QVBoxLayout;
-        info->addWidget(experimentalui::eyebrow(tr("FIRMWARE / DEVICE PARAMETERS")));
-        info->addWidget(experimentalui::subtitle(tr(
-            "Only discovered device attributes are shown. Writes require Custom mode; "
-            "unsupported settings are not offered.")));
-        hl->addLayout(info, 1);
-        lay->addWidget(head);
-    }
     auto *top = new QHBoxLayout;
     auto *src = new QLabel(BASE);
     src->setProperty("role", "muted");

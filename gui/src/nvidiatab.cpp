@@ -316,7 +316,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     prow->addWidget(bDef);
     prow->addWidget(bDel);
     prow->addWidget(bDrv);
-    if (!theme::experimentalEnabled()) sv->addLayout(prow);
+    sv->addLayout(prow);
     root->addWidget(status);
 
     // Point info
@@ -576,45 +576,10 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch2->addWidget(resetBtn_);
     ch2->addWidget(bResetAll);
     if (theme::experimentalEnabled()) {
-        // Existing V/F widget remains the only graph/editor: no simulated curve,
-        // no duplicate profile or control state and no new NVML polling.
-        auto *work = new QSplitter(Qt::Horizontal);
-        work->setObjectName(QStringLiteral("nvidiaWorkspace"));
-        work->setChildrenCollapsible(false);
-        work->addWidget(curve);
-        auto *rightScroll = new QScrollArea;
-        rightScroll->setWidgetResizable(true);
-        rightScroll->setFrameShape(QFrame::NoFrame);
-        rightScroll->setMinimumWidth(250);
-        auto *rightHost = new QWidget;
-        auto *rightLayout = new QVBoxLayout(rightHost);
-        rightLayout->setContentsMargins(5, 0, 0, 0);
-        rightLayout->setSpacing(8);
-        auto *profilePanel = new QGroupBox(tr("Profiles & actions"));
-        auto *profileLayout = new QGridLayout(profilePanel);
-        profileLayout->addWidget(profiles_, 0, 0, 1, 2);
-        profileLayout->addWidget(bApplyProf, 1, 0, 1, 2);
-        bApplyProf->setObjectName(QStringLiteral("btnAccent"));
-        profileLayout->addWidget(bSave, 2, 0);
-        profileLayout->addWidget(bDef, 2, 1);
-        profileLayout->addWidget(bDel, 3, 0);
-        profileLayout->addWidget(bDrv, 3, 1);
-        rightLayout->addWidget(profilePanel);
-        delete prow;  // ownership of its controls has moved into profileLayout
-        auto *instructions = new QGroupBox(tr("Curve workflow"));
-        auto *il = new QVBoxLayout(instructions);
-        il->addWidget(experimentalui::subtitle(tr(
-            "1. Read the active curve.  2. Select points in the graph. "
-            "3. Set offsets or flatten.  4. Apply and validate stability. "
-            "Reset restores the original curve.")));
-        rightLayout->addWidget(instructions);
-        rightLayout->addStretch();
-        rightScroll->setWidget(rightHost);
-        work->addWidget(rightScroll);
-        work->setStretchFactor(0, 8);
-        work->setStretchFactor(1, 3);
-        work->setSizes({870, 300});
-        root->addWidget(work, 1);
+        // Give the actual V/F graph the full page width. The former right
+        // sidebar (and a static instruction card) shrank the working graph.
+        // Profile actions live in the compact status band above it.
+        root->addWidget(curve, 1);
         root->addWidget(ctl);
     } else {
         root->addWidget(ctl);
