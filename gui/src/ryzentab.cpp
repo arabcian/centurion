@@ -350,7 +350,18 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     bAll->setFixedWidth(APPLY_W);
     connect(bAll, &QPushButton::clicked, this, [this] { applyAllCore(); });
     al->addWidget(bAll);
-    if (!theme::experimentalEnabled()) root->addWidget(acBox);
+    if (theme::experimentalEnabled()) {
+        // The reset group was taking an entire column for one button.
+        // Transfer that actual button; the confirmation handler is unchanged.
+        rl->removeWidget(bReset);
+        top->removeWidget(resetBox);
+        pl->addWidget(bReset);
+        resetBox->deleteLater();
+        acHint->setToolTip(acHint->text());
+        acBox->setToolTip(acHint->text());
+        acHint->hide();
+        top->addWidget(acBox, 1);
+    } else root->addWidget(acBox);
 
     // Per-core
     auto *coreBox = box("Per-Core Offsets  (fixed SMU slot layout)", "box_green");
@@ -539,7 +550,6 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         // Slot-by-slot editing already exists in the CCD matrix. A second
         // editor duplicated that state and stole ~30% of the usable width.
         // Preserve one source of truth, the fixed 8-slot table, at full width.
-        root->addWidget(acBox);
         root->addWidget(coreBox, 1);
     } else {
         root->addWidget(coreBox, 1);
@@ -554,6 +564,9 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     ll->addWidget(log_);
     log_->setMinimumHeight(54);
     log_->setMaximumHeight(90);
+    if (theme::experimentalEnabled()) {
+        root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Diagnostics"), logBox));
+    }
     root->addWidget(logBox, 0);
 
     monTimer_ = new QTimer(this);

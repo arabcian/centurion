@@ -63,7 +63,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowIcon(appIcon(128));
     // A compact, independent shell in experimental mode. The old shell remains
     // completely intact under Classic; the device pages are exactly the same.
-    resize(theme::experimentalEnabled() ? 1280 : 1080, theme::experimentalEnabled() ? 760 : 700);
+    resize(theme::experimentalEnabled() ? 1200 : 1080, theme::experimentalEnabled() ? 740 : 700);
     setMinimumSize(620, 420);
 
     tabs_ = new QTabWidget;
@@ -225,7 +225,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         const QString last = settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString();
         for (int i = 0; i < tabs_->count(); ++i)
             if (tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
-        syncExperimentalNavigation();  // the restore above ran before currentChanged is connected
         connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
             if (i < 0 || i >= tabs_->count()) return;
             syncExperimentalNavigation();
@@ -302,11 +301,11 @@ void MainWindow::installExperimentalShell() {
     expRail_ = new QFrame(shell);
     expRail_->setObjectName(QStringLiteral("expRail"));
     auto *rail = new QVBoxLayout(expRail_);
-    rail->setContentsMargins(8, 10, 8, 8);
+    rail->setContentsMargins(6, 8, 6, 6);
     rail->setSpacing(4);
     auto *brand = new QWidget;
     auto *brandRow = new QHBoxLayout(brand);
-    brandRow->setContentsMargins(5, 0, 0, 4);
+    brandRow->setContentsMargins(6, 0, 0, 3);
     brandRow->setSpacing(9);
     auto *brandIcon = new QLabel;
     brandIcon->setObjectName(QStringLiteral("expBrandIcon"));
@@ -330,7 +329,7 @@ void MainWindow::installExperimentalShell() {
     auto *nav = new QWidget;
     nav->setObjectName(QStringLiteral("expNavHost"));
     expNavLayout_ = new QVBoxLayout(nav);
-    expNavLayout_->setContentsMargins(0, 7, 0, 0);
+    expNavLayout_->setContentsMargins(0, 4, 0, 0);
     expNavLayout_->setSpacing(3);
     navScroll->setWidget(nav);
     rail->addWidget(navScroll, 1);
@@ -355,8 +354,8 @@ void MainWindow::installExperimentalShell() {
     auto *top = new QFrame;
     top->setObjectName(QStringLiteral("expTopbar"));
     auto *topRow = new QHBoxLayout(top);
-    topRow->setContentsMargins(16, 5, 15, 5);
-    topRow->setSpacing(12);
+    topRow->setContentsMargins(14, 4, 12, 4);
+    topRow->setSpacing(7);
     auto *titles = new QVBoxLayout;
     titles->setSpacing(0);
     expPath_ = new QLabel;
@@ -366,7 +365,7 @@ void MainWindow::installExperimentalShell() {
     titles->addWidget(expPath_);
     titles->addWidget(expTitle_);
     topRow->addLayout(titles, 1);
-    auto *find = new QPushButton(tr("Search settings    Ctrl+K"));
+    auto *find = new QPushButton(tr("Jump to…   Ctrl+K"));
     find->setObjectName(QStringLiteral("expSearch"));
     find->setToolTip(tr("Jump to a page or a control"));
     connect(find, &QPushButton::clicked, this, &MainWindow::showQuickNavigator);
@@ -385,7 +384,7 @@ void MainWindow::installExperimentalShell() {
     // Compact automatically on small screens; manual choice persists per user.
     QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
     expUserToggled_ = st.contains(QStringLiteral("ui/rail_collapsed"));
-    setExperimentalCollapsed(expUserToggled_ ? st.value(QStringLiteral("ui/rail_collapsed")).toBool() : width() < 1100);
+    setExperimentalCollapsed(expUserToggled_ ? st.value(QStringLiteral("ui/rail_collapsed")).toBool() : width() < 1010);
 }
 
 void MainWindow::rebuildExperimentalNavigation() {
@@ -439,7 +438,7 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setEnabled(tabs_->isTabEnabled(i));
         button->setCursor(Qt::PointingHandCursor);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        button->setFixedHeight(35);
+        button->setFixedHeight(32);
         QWidget *page = tabs_->widget(i);
         connect(button, &QPushButton::clicked, this, [this, page] {
             const int index = tabs_->indexOf(page);
@@ -455,9 +454,9 @@ void MainWindow::rebuildExperimentalNavigation() {
 void MainWindow::setExperimentalCollapsed(bool collapsed) {
     if (!expRail_) return;
     expCollapsed_ = collapsed;
-    expRail_->setFixedWidth(collapsed ? 56 : 184);
+    expRail_->setFixedWidth(collapsed ? 48 : 154);
     expBrandLabel_->setVisible(!collapsed);
-    expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Collapse"));
+    expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
     for (auto *button : std::as_const(expNavButtons_)) {
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
         button->setProperty("collapsed", collapsed);
@@ -516,7 +515,7 @@ void MainWindow::resizeEvent(QResizeEvent *e) {
     QMainWindow::resizeEvent(e);
     fitTabs();
     placeHeaderControls();
-    if (expRail_ && !expUserToggled_) setExperimentalCollapsed(width() < 1100);
+    if (expRail_ && !expUserToggled_) setExperimentalCollapsed(width() < 1010);
 }
 
 void MainWindow::showEvent(QShowEvent *e) {

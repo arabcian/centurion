@@ -1,0 +1,129 @@
+Centurion Experimental Studio v4 — verification
+============================================
+Base: uploaded Experimental Studio v3
+Changed files: 17
+Patch: applied to fresh v3 successfully, every file byte-for-byte verified
+Static checks: PASS (4 suites / 70 checks)
+Qt6 build: NOT VERIFIED — Qt6 >= 6.4 development headers and CMake package are absent in this environment.
+No GUI screenshot, on-device test, polkit test, or hardware run was performed.
+
+Test results:
+experimental_ui_static_test.py
+PASS all original top-level pages remain constructed
+PASS original conditional hardware availability preserved
+PASS all original operational connections preserved
+PASS layout switch saves via Qt settings and supports classic fallback
+PASS feature-preserving reorder relies on tab IDs, not recreating content
+PASS Health and Home deep links follow canonical page IDs
+PASS late dGPU discovery still inserts its tab
+PASS new navigator only changes navigation state
+PASS navigator indexes sub-tabs without activating lazy pages during search
+PASS Home route is wired to canonical main-tab navigation
+PASS experimental style uses current Centurion theme tokens
+PASS Optimize searches real setting rows without applying them
+PASS CMake builds new navigator source
+PASS original helper source stays external to UI edits
+PASS no duplicated main-window implementation
+PASS: 15 Experimental UI source checks
+
+experimental_layout_static_test.py
+PASS Home actually builds real 2-column workspace
+PASS Home never introduces NVML polling
+PASS Home Classic 2x2 layout retained
+PASS Ryzen existing SMU slot layout retained
+PASS Ryzen single authoritative CCD slot editor
+PASS Ryzen labels use offset units, not misleading millivolts
+PASS NVIDIA uses original full-width VfCurveWidget
+PASS NVIDIA original write/reset operations retained
+PASS Optimize autotune parameters preserved
+PASS Health reports from real overview helper
+PASS Health actions have actual destinations
+PASS Scenes dynamic editor preserved
+PASS Lighting physical keyboard retained
+PASS Firmware discovery and safety checks retained
+PASS Studio design tokens and task layouts present
+PASS Original callbacks unchanged for operations
+PASS Health overview QGroupBox header is explicit
+PASS Optimize preset control reparenting is typed
+PASS: 18 layout source checks
+
+health_ui_static_test.py
+PASS - single-level Health stack
+PASS - searchable primary navigation
+PASS - searchable system tool catalog
+PASS - original lazy system tools reused
+PASS - overview deep links preserved
+PASS - SMART remains accessible directly
+PASS - event/search filters
+PASS - simple and technical event views
+PASS - older saved event days
+PASS - archived rows excluded from live DBus events
+PASS - read errors visible in simple view
+PASS - user acknowledgment does not delete logs
+PASS - no invented hardware health verdict
+PASS - dashboard priority sorting
+PASS - recommendations lead to actual pages
+PASS - responsive overview
+PASS - drive health summary and advanced table
+PASS - unknown drives not called healthy
+PASS - archived log record parsing example
+PASS - archived parser same in C++
+PASS: 20 static checks
+
+studio_v4_static_test.py
+PASS Main menu uses canonical hardware-gated tabs, not duplicated panels
+PASS Compact rail is actually implemented
+PASS Health has one picker rather than two active rails
+PASS Health picker forwards to original selection model
+PASS System tools keep original toolPages and their picker
+PASS Intel has three task workspaces
+PASS Intel Classic retains original scrolling form
+PASS Firmware real attribute editors can be split, no duplicate
+PASS Firmware still locks non-Custom profile
+PASS Scenes automation is on-demand, still real widgets
+PASS Home original controls and EC plot
+PASS Ryzen original slot widgets and diagnostics
+PASS NVIDIA real curve editor and on-demand logs
+PASS Optimize real autotune parameters and settings search
+PASS AMD GPU dynamic firmware controls preserved
+PASS Lighting physical keyboard and effect editor
+PASS Disclosure does not apply any setting
+PASS: 17 Studio composition checks (not a binary test)
+
+Qt6 CMake configure output:
+-- Configuring incomplete, errors occurred!
+CMake Error at CMakeLists.txt:8 (find_package):
+  By not providing "FindQt6.cmake" in CMAKE_MODULE_PATH this project has
+  asked CMake to find a package configuration file provided by "Qt6", but
+  CMake did not find one.
+
+  Could not find a package configuration file provided by "Qt6" (requested
+  version 6.4) with any of the following names:
+
+    Qt6Config.cmake
+    qt6-config.cmake
+
+  Add the installation prefix of "Qt6" to CMAKE_PREFIX_PATH or set "Qt6_DIR"
+  to a directory containing one of the above files.  If "Qt6" provides a
+  separate development package or SDK, be sure it has been installed.
+
+
+
+Modified source paths:
+docs/EXPERIMENTAL-STUDIO-V4.md
+gui/src/amdgputab.cpp
+gui/src/experimentalui.h
+gui/src/fwattrtab.cpp
+gui/src/healthtab.cpp
+gui/src/hometab.cpp
+gui/src/inteltab.cpp
+gui/src/lightingtab.cpp
+gui/src/mainwindow.cpp
+gui/src/nvidiatab.cpp
+gui/src/optimizetab.cpp
+gui/src/ryzentab.cpp
+gui/src/scenestab.cpp
+gui/src/theme.cpp
+gui/tests/experimental_layout_static_test.py
+gui/tests/experimental_ui_static_test.py
+gui/tests/studio_v4_static_test.py

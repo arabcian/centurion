@@ -425,6 +425,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         work->setStretchFactor(0, 4);
         work->setStretchFactor(1, 7);
         work->setSizes({390, 780});
+        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/home_split"));
         root->addWidget(work, 1);
     } else {
         // Identical Classic layout and all existing child widgets.

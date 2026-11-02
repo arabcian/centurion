@@ -50,10 +50,10 @@ check('new navigator only changes navigation state', all(
 check('navigator indexes sub-tabs without activating lazy pages during search', all(
     x in nav for x in ['findChildren<QTabWidget *>', 'inner->tabText(j)',
                      'findChildren<QTreeWidget *>', 'isVisibleTo(page)']))
-check('Home quick-access button farm stays removed (v3: the rail navigates)',
-    'openPageRequested(target.second)' not in home)
+check('Home route is wired to canonical main-tab navigation',
+    '&HomeTab::openPageRequested' in main and 'void MainWindow::showTab' in main)
 check('experimental style uses current Centurion theme tokens', all(
-    x in theme for x in ['Experimental / Studio', 'QTabWidget#mainTabs',
+    x in theme for x in ['Experimental / Studio', 'QTabWidget#expPageStack',
                        'QGroupBox', '@BG0', '@ACCENT']))
 check('Optimize searches real setting rows without applying them', all(
     x in optimize for x in ['jumpToSetting(const QString &query)', 'settingSearchModel_->setStringList(entries)',

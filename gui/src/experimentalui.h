@@ -12,6 +12,9 @@
 #include <QPolygonF>
 #include <QPen>
 #include <QPushButton>
+#include <QToolButton>
+#include <QSettings>
+#include <QSplitter>
 #include <QVBoxLayout>
 #include <QVector>
 #include <QWidget>
@@ -91,6 +94,38 @@ inline QIcon navigationIcon(const QString &page) {
     icon.addPixmap(draw(theme::FG), QIcon::Active, QIcon::Off);
     icon.addPixmap(draw(theme::ACCENT), QIcon::Active, QIcon::On);
     return icon;
+}
+
+// One compact disclosure for an advanced/rarely-used section. Reparents neither
+// widgets nor operations; the caller puts its existing panel immediately after it.
+// Persisting disclosure state is intentionally left to the owning page.
+inline void rememberSplitter(QSplitter *splitter, const QString &key) {
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                       QStringLiteral("centurion"), QStringLiteral("gui"));
+    const QByteArray state = settings.value(key).toByteArray();
+    if (!state.isEmpty()) splitter->restoreState(state);
+    QObject::connect(splitter, &QSplitter::splitterMoved, splitter,
+                     [splitter, key](int, int) {
+        QSettings prefs(QSettings::IniFormat, QSettings::UserScope,
+                        QStringLiteral("centurion"), QStringLiteral("gui"));
+        prefs.setValue(key, splitter->saveState());
+    });
+}
+
+inline QToolButton *disclosure(const QString &text, QWidget *panel, bool expanded = false) {
+    auto *toggle = new QToolButton;
+    toggle->setObjectName(QStringLiteral("expDisclosure"));
+    toggle->setText(text);
+    toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toggle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    toggle->setCheckable(true);
+    toggle->setChecked(expanded);
+    panel->setVisible(expanded);
+    QObject::connect(toggle, &QToolButton::toggled, panel, [panel, toggle](bool on) {
+        panel->setVisible(on);
+        toggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+    });
+    return toggle;
 }
 
 inline QLabel *eyebrow(const QString &s) {

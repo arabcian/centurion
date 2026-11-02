@@ -591,6 +591,9 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     log_->setReadOnly(true);
     log_->setFixedHeight(52);
     log_->setMaximumBlockCount(1000);
+    if (theme::experimentalEnabled()) {
+        root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Driver output"), log_));
+    }
     root->addWidget(log_);
 
     statsTimer_ = new QTimer(this);

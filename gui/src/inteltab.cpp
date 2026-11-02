@@ -2,6 +2,7 @@
 #include "trialbar.h"
 #include "privileged.h"
 #include "theme.h"
+#include "experimentalui.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -10,6 +11,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QScrollArea>
+#include <QTabWidget>
 #include <QTimer>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -435,17 +437,51 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     right->addWidget(dBox);
     right->addStretch();
 
-    mid->addLayout(left, 1);
-    mid->addLayout(right, 1);
-    auto *midHost = new QWidget;
-    midHost->setObjectName("intelMid");
-    midHost->setStyleSheet("#intelMid { background: transparent; }");
-    midHost->setLayout(mid);
-    auto *scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setWidget(midHost);
-    root->addWidget(scroll, 1);
+    if (theme::experimentalEnabled()) {
+        // Each task gets its own complete workspace. All controls are the
+        // original widgets; only their parent layout changes in Studio mode.
+        for (QWidget *w : {static_cast<QWidget *>(vBox), static_cast<QWidget *>(xBox),
+                           static_cast<QWidget *>(rBox), static_cast<QWidget *>(lBox),
+                           static_cast<QWidget *>(dBox)}) {
+            left->removeWidget(w);
+            right->removeWidget(w);
+        }
+        delete left;
+        delete right;
+        delete mid;
+        auto *work = new QTabWidget;
+        work->setObjectName(QStringLiteral("intelWorkflows"));
+        work->setDocumentMode(true);
+        auto makePage = [work](const QString &label, QWidget *first, QWidget *second) {
+            auto *scroll = new QScrollArea;
+            scroll->setFrameShape(QFrame::NoFrame);
+            scroll->setWidgetResizable(true);
+            auto *page = new QWidget;
+            auto *row = new QHBoxLayout(page);
+            row->setContentsMargins(5, 7, 5, 7);
+            row->setSpacing(8);
+            row->addWidget(first, second ? 3 : 1, Qt::AlignTop);
+            if (second) row->addWidget(second, 2, Qt::AlignTop);
+            scroll->setWidget(page);
+            work->addTab(scroll, label);
+        };
+        makePage(tr("Voltage & safety"), vBox, xBox);
+        makePage(tr("Limits & throttling"), lBox, rBox);
+        makePage(tr("Startup & daemon"), dBox, nullptr);
+        root->addWidget(work, 1);
+    } else {
+        mid->addLayout(left, 1);
+        mid->addLayout(right, 1);
+        auto *midHost = new QWidget;
+        midHost->setObjectName("intelMid");
+        midHost->setStyleSheet("#intelMid { background: transparent; }");
+        midHost->setLayout(mid);
+        auto *scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidget(midHost);
+        root->addWidget(scroll, 1);
+    }
 
     // ── actions ──
     auto *aBox = box("Apply", "box_green");
@@ -483,6 +519,9 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     ll->addWidget(log_);
     logBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     aBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    if (theme::experimentalEnabled()) {
+        root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  MSR operations"), logBox));
+    }
     root->addWidget(logBox, 0);
 
     reloadProfiles();

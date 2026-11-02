@@ -280,8 +280,9 @@ void AmdGpuTab::rebuildForm() {
     // lays out the individual power, curve and fan workflows in two columns.
     // Classic retains the original single long-form editor.
     QVBoxLayout *leftColumn = nullptr, *rightColumn = nullptr;
+    QHBoxLayout *columns = nullptr;
     if (theme::experimentalEnabled()) {
-        auto *columns = new QHBoxLayout;
+        columns = new QHBoxLayout;
         columns->setSpacing(7);
         leftColumn = new QVBoxLayout;
         rightColumn = new QVBoxLayout;
@@ -453,8 +454,13 @@ void AmdGpuTab::rebuildForm() {
             row(fg, QStringLiteral("Fan curve"), w, QStringLiteral("Hotspot temperature → fan speed; must not fall."));
         }
     }
-    if (leftColumn) { leftColumn->addStretch(1); rightColumn->addStretch(1); }
-    else v->addStretch(1);
+    if (leftColumn) {
+        // Dynamic firmware capabilities can expose only one category. In that
+        // case the editor uses the whole page, not an empty 50% column.
+        if (section <= 1) columns->setStretch(1, 0);
+        leftColumn->addStretch(1);
+        rightColumn->addStretch(1);
+    } else v->addStretch(1);
     formHost_->addWidget(form_);
 }
 

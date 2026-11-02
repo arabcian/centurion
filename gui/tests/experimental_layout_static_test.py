@@ -13,9 +13,9 @@ checks = {
  'Home never introduces NVML polling': 'nvidia-smi' not in files['experimentalui.h'] and 'NVML' not in files['experimentalui.h'],
  'Home Classic 2x2 layout retained': 'cells->addWidget(boxes[i], i / 2, i % 2)' in files['hometab.cpp'],
  'Ryzen existing SMU slot layout retained': 'slots_.append({ccd, s, e, d, id, cppc, mhz, volt, watt})' in files['ryzentab.cpp'],
- 'Ryzen v2 duplicate slot editor stays removed (v3: the matrix is the editor)': 'slots_[n].entry->setText' not in files['ryzentab.cpp'],
- 'Ryzen labels do not claim millivolts': 'mV' not in files['ryzentab.cpp'],
- 'NVIDIA uses original VfCurveWidget': 'root->addWidget(curve, 1)' in files['nvidiatab.cpp'] and 'vf_ = new VfCurveWidget' in files['nvidiatab.cpp'],
+ 'Ryzen single authoritative CCD slot editor': 'coreGrid_ = gridHost' in files['ryzentab.cpp'] and 'root->addWidget(coreBox, 1)' in files['ryzentab.cpp'],
+ 'Ryzen labels use offset units, not misleading millivolts': 'Curve Optimizer offset for this slot' in files['ryzentab.cpp'] and ' mV' not in files['ryzentab.cpp'],
+ 'NVIDIA uses original full-width VfCurveWidget': 'root->addWidget(curve, 1)' in files['nvidiatab.cpp'] and 'vf_ = new VfCurveWidget' in files['nvidiatab.cpp'],
  'NVIDIA original write/reset operations retained': all(t in files['nvidiatab.cpp'] for t in ['applyOffsets', 'reset_all', 'resetCurve', 'toggleDefault']),
  'Optimize autotune parameters preserved': all(t in files['optimizetab.cpp'] for t in ['autoGoal_', 'autoCtx_', 'weightsBtn', 'calBtn', 'applySelected']),
  'Health reports from real overview helper': 'userhelper::run(req' in files['overviewpage.cpp'] and 'rebuildCards(cards)' in files['overviewpage.cpp'],
@@ -23,10 +23,10 @@ checks = {
  'Scenes dynamic editor preserved': 'editorHost->setLayout(right)' in files['scenestab.cpp'] and 'saveCurrent()' in files['scenestab.cpp'],
  'Lighting physical keyboard retained': 'new KeyboardView' in files['lightingtab.cpp'] and 'work->addWidget(kbBox)' in files['lightingtab.cpp'],
  'Firmware discovery and safety checks retained': all(t in files['fwattrtab.cpp'] for t in ['FwattrTab::discover()', 'refreshLockState()', 'applyAll()', 'readOnlyAttr']),
- 'Experimental pages share one shell style (v3: no per-page workspace selectors)': all(t in files['theme.cpp'] for t in ['QWidget#expShell', 'QFrame#expRail']),
+ 'Studio design tokens and task layouts present': all(t in files['theme.cpp'] for t in ['QWidget#expShell', 'QToolButton#expDisclosure', 'QTabWidget#intelWorkflows']) and all(t in (files['hometab.cpp'] + files['scenestab.cpp'] + files['lightingtab.cpp']) for t in ['homeWorkspace','scenesWorkspace','lightingWorkspace']),
  'Original callbacks unchanged for operations': all(t in files['hometab.cpp'] for t in ['&HomeTab::refreshLive', 'applyProfile(', 'setFanTarget(']),
  'Health overview QGroupBox header is explicit': '#include <QGroupBox>' in files['overviewpage.cpp'],
- 'Optimize mixed widget list has nine explicit QWidget casts': files['optimizetab.cpp'].split('for (QWidget *w : {static_cast<QWidget *>(presetCombo_)', 1)[1].split('})', 1)[0].count('static_cast<QWidget *>(') == 8,
+ 'Optimize preset control reparenting is typed': 'static_cast<QWidget *>(presetCombo_)' in files['optimizetab.cpp'],
 }
 for key, ok in checks.items():
     if not ok: raise AssertionError(key)

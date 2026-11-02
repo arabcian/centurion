@@ -13,6 +13,7 @@
 #include "shortcuts.h"
 #include "theme.h"
 #include "experimentalui.h"
+#include "experimentalui.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QCheckBox>
@@ -394,6 +395,15 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         QString err;
         if (!eng_->setPaused(on, &err)) { syncPause(!on); setStatus(tr("Could not save the pause setting: %1").arg(err), theme::DANGER); }
     });
+    if (theme::experimentalEnabled()) {
+        // Pause is an immediate action and must never be buried behind the
+        // secondary automation disclosure. Reparent the original button into
+        // the always-visible scene picker. Its signal is unchanged.
+        ag->removeWidget(pause_);
+        left->insertWidget(0, pause_);
+        auto *advanced = experimentalui::disclosure(tr("AUTOMATION  ·  Triggers and active-scene rules"), autoBox);
+        right->addWidget(advanced);
+    }
     right->addWidget(autoBox);
 
     if (mangohud::available()) {
@@ -436,6 +446,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         work->setStretchFactor(0, 2);
         work->setStretchFactor(1, 8);
         work->setSizes({245, 900});
+        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/scenes_split"));
         root->addWidget(work, 1);
     } else {
         root->addLayout(right, 1);

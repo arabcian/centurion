@@ -476,6 +476,7 @@ void LightingTab::buildUi() {
         work->setStretchFactor(0, 7);
         work->setStretchFactor(1, 3);
         work->setSizes({750, 350});
+        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/lighting_split"));
         root->addWidget(work, 1);
         delete mid; // no widgets are owned by the unused layout in Experimental
     } else {

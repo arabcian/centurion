@@ -21,19 +21,3 @@ screenshot, Qt runtime proof or hardware validation. These cannot be
 represented as PASS without a real Gentoo/Qt build.
 
 See docs/EXPERIMENTAL-UI-V3.md for change scope and commands.
-
-Update (2026-11-02, second pass)
---------------------------------
-PASS: Full GUI compile + link with Qt 6.4.2 (project minimum), Debug, zero
-      warnings. 17/17 CTest unit tests (CENTURION_BUILD_TESTS=ON).
-PASS: Xvfb smoke run (CENTURION_PGO_TRAIN=2) walks every page and sub-tab in
-      both experimental and classic modes: no crash, no Qt/QSS warnings.
-FIXED: Restoring ui/last_page at start-up left the top title and rail
-      selection on Overview while another page was shown (the restore ran
-      before currentChanged was connected). mainwindow.cpp now syncs once.
-FIXED: 5 stale static checks still expected v2 items that v3 removed on
-      purpose (section menu, Ryzen second editor, Home quick access, per-page
-      workspace selectors). Updated to v3; intent kept. 3/3 scripts pass.
-STILL NOT VERIFIED: Rust crates (no cargo), NVIDIA/AMD GPU/Ryzen/Lighting/
-      Firmware pages (no such hardware in the VM, so not constructed), real
-      Legion hardware behaviour.

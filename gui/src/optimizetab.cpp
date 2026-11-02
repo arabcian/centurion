@@ -538,11 +538,27 @@ void OptimizeTab::buildUi() {
         separator->setFrameShape(QFrame::HLine);
         separator->setObjectName(QStringLiteral("expInlineDivider"));
         pl->addWidget(separator, 2, 0);
-        // The existing row is reflowed into a compact action band; do not
-        // clone Autotune controls, which would desynchronize their state.
-        pl->addLayout(autoRow, 3, 0);
+        // Hide the advanced Autotune toolchain until the user needs it.
+        // Calibration status stays visible even while closed. The original
+        // controls remain in the layout (no mirrored/duplicated state).
+        auto *showAuto = new QToolButton;
+        showAuto->setObjectName(QStringLiteral("expDisclosure"));
+        showAuto->setText(tr("AUTOTUNE  ·  Goals, custom weights and calibration"));
+        showAuto->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        showAuto->setArrowType(Qt::RightArrow);
+        showAuto->setCheckable(true);
+        auto toggleAuto = [autoRow, showAuto](bool expanded) {
+            for (int i = 0; i < autoRow->count(); ++i)
+                if (QWidget *control = autoRow->itemAt(i)->widget())
+                    control->setVisible(expanded);
+            showAuto->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+        };
+        connect(showAuto, &QToolButton::toggled, this, toggleAuto);
+        pl->addWidget(showAuto, 3, 0);
+        pl->addLayout(autoRow, 4, 0);
         autoBtn_->setObjectName(QStringLiteral("btnAccent"));
-        pl->addWidget(calLabel_, 4, 0);
+        pl->addWidget(calLabel_, 5, 0);
+        toggleAuto(false);
         pl->setVerticalSpacing(3);
         root->addWidget(pbox);
     } else {
