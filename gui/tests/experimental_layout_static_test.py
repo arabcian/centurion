@@ -25,7 +25,7 @@ checks = {
  'Firmware discovery and safety checks retained': all(t in files['fwattrtab.cpp'] for t in ['FwattrTab::discover()', 'refreshLockState()', 'applyAll()', 'readOnlyAttr']),
  'Studio design tokens and task layouts present': all(t in files['theme.cpp'] for t in ['QWidget#expShell', 'QToolButton#expDisclosure', 'QTabWidget#intelWorkflows']) and all(t in (files['hometab.cpp'] + files['scenestab.cpp'] + files['lightingtab.cpp']) for t in ['homeWorkspace','scenesWorkspace','lightingWorkspace']),
  'Original callbacks unchanged for operations': all(t in files['hometab.cpp'] for t in ['&HomeTab::refreshLive', 'applyProfile(', 'setFanTarget(']),
- 'Health overview QGroupBox header is explicit': '#include <QGroupBox>' in files['overviewpage.cpp'],
+ 'Health overview uses one full-width column order in both modes': 'outer->addWidget(hero);' in files['overviewpage.cpp'] and 'healthWorkspace' not in files['overviewpage.cpp'],
  'Optimize preset control reparenting is typed': 'static_cast<QWidget *>(presetCombo_)' in files['optimizetab.cpp'],
 }
 for key, ok in checks.items():

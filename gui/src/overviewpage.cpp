@@ -5,7 +5,6 @@
 #include "reportpreview.h"
 #include "sysinfo.h"
 #include "theme.h"
-#include "experimentalui.h"
 #include "userhelper.h"
 
 #include <QDate>
@@ -14,14 +13,12 @@
 #include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
-#include <QSplitter>
 #include <QResizeEvent>
 #include <QFont>
 #include <algorithm>
@@ -61,9 +58,10 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     // not a guarantee that every physical component has been tested.
     auto *hero = new QFrame;
     hero->setObjectName(QStringLiteral("healthHero"));
-    hero->setStyleSheet(QStringLiteral("QFrame#healthHero{background:%1;border:1px solid %2;border-radius:13px}"
+    hero->setStyleSheet(QStringLiteral("QFrame#healthHero{background:%1;border:1px solid %2;border-radius:%3px}"
                                        "QFrame#healthHero QLabel{border:none;background:transparent}")
-                        .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
+                        .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER,
+                             theme::experimentalEnabled() ? QStringLiteral("6") : QStringLiteral("13")));
     auto *heroLayout = new QVBoxLayout(hero);
     heroLayout->setContentsMargins(theme::experimentalEnabled() ? 13 : 18,
                                    theme::experimentalEnabled() ? 10 : 15,
@@ -91,13 +89,14 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     status_->setWordWrap(true);
     status_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
     heroLayout->addWidget(status_);
-    if (!theme::experimentalEnabled()) outer->addWidget(hero);
+    outer->addWidget(hero);
 
     auto *recommend = new QFrame;
     recommend->setObjectName(QStringLiteral("healthAdvice"));
-    recommend->setStyleSheet(QStringLiteral("QFrame#healthAdvice{background:%1;border:1px solid %2;border-radius:10px}"
+    recommend->setStyleSheet(QStringLiteral("QFrame#healthAdvice{background:%1;border:1px solid %2;border-radius:%3px}"
                                             "QFrame#healthAdvice QLabel{background:transparent;border:none}")
-                             .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
+                             .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER,
+                                  theme::experimentalEnabled() ? QStringLiteral("6") : QStringLiteral("10")));
     auto *adviceLayout = new QHBoxLayout(recommend);
     adviceLayout->setContentsMargins(14, 11, 14, 11);
     recommendation_ = new QLabel;
@@ -109,11 +108,11 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
         if (!recommendedTarget_.isEmpty()) Q_EMIT openPage(recommendedTarget_);
     });
     adviceLayout->addWidget(recommendButton_);
-    if (!theme::experimentalEnabled()) outer->addWidget(recommend);
+    outer->addWidget(recommend);
 
     auto *section = new QLabel(tr("CHECKED AREAS"));
     section->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px").arg(theme::FG_DIM));
-    if (!theme::experimentalEnabled()) outer->addWidget(section);
+    outer->addWidget(section);
     scroll_ = new QScrollArea;
     scroll_->setWidgetResizable(true);
     scroll_->setFrameShape(QFrame::NoFrame);
@@ -122,51 +121,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     grid_->setContentsMargins(0, 0, 5, 0);
     grid_->setSpacing(10);
     scroll_->setWidget(cards);
-    if (theme::experimentalEnabled()) {
-        // Existing health-card data + existing action signal, re-composed as
-        // findings on the left and diagnostic decisions on the right.
-        auto *workspace = new QSplitter(Qt::Horizontal);
-        workspace->setObjectName(QStringLiteral("healthWorkspace"));
-        workspace->setChildrenCollapsible(false);
-        auto *findings = experimentalui::surface();
-        auto *fl = new QVBoxLayout(findings);
-        fl->setContentsMargins(12, 13, 12, 12);
-        fl->addWidget(section);
-        fl->addWidget(experimentalui::subtitle(tr("Prioritized indicators from actual hardware and saved event logs.")));
-        fl->addWidget(scroll_, 1);
-        workspace->addWidget(findings);
-        auto *side = new QWidget;
-        auto *sl = new QVBoxLayout(side);
-        sl->setContentsMargins(4, 0, 0, 0);
-        sl->setSpacing(10);
-        sl->addWidget(hero);
-        sl->addWidget(recommend);
-        auto *shortcuts = new QGroupBox(tr("Inspect a subsystem"));
-        auto *actions = new QVBoxLayout(shortcuts);
-        const QList<QPair<QString, QString>> pages{
-            {tr("Events & alerts"), QStringLiteral("monitor")},
-            {tr("Drive health (SMART)"), QStringLiteral("smart")},
-            {tr("Sleep & wake"), QStringLiteral("sleep")},
-            {tr("Cooling"), QStringLiteral("cooling")},
-            {tr("Kernel log"), QStringLiteral("klog")},
-            {tr("System tools"), QStringLiteral("tools")}
-        };
-        for (const auto &it : pages) {
-            auto *button = new QPushButton(it.first + QStringLiteral("   ›"));
-            button->setObjectName(QStringLiteral("expQuickLink"));
-            connect(button, &QPushButton::clicked, this, [this, id = it.second] { Q_EMIT openPage(id); });
-            actions->addWidget(button);
-        }
-        sl->addWidget(shortcuts);
-        sl->addStretch();
-        workspace->addWidget(side);
-        workspace->setStretchFactor(0, 7);
-        workspace->setStretchFactor(1, 4);
-        workspace->setSizes({690, 390});
-        outer->addWidget(workspace, 1);
-    } else {
-        outer->addWidget(scroll_, 1);
-    }
+    outer->addWidget(scroll_, 1);
 
     auto *bottom = new QHBoxLayout;
     auto *hint = new QLabel(tr("Results reflect available logs and measurements, not a complete hardware test. "
@@ -201,7 +156,7 @@ void OverviewPage::resizeEvent(QResizeEvent *e) {
 
 void OverviewPage::layoutCards() {
     if (!scroll_ || cards_.isEmpty()) return;
-    const int columns = !theme::experimentalEnabled() && scroll_->viewport()->width() >= 650 ? 2 : 1;
+    const int columns = scroll_->viewport()->width() >= 650 ? 2 : 1;
     for (QFrame *card : cards_) grid_->removeWidget(card);
     for (int i = 0; i < cards_.size(); ++i)
         grid_->addWidget(cards_.at(i), i / columns, i % columns, Qt::AlignTop);

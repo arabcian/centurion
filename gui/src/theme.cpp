@@ -420,19 +420,20 @@ QTabWidget#expPageStack::pane { border: 0; background: @BG0; }
 QTabWidget#expPageStack > QTabBar { max-height: 0px; }
 /* App-wide visual tokens. Compact, restrained, consistent with all palettes. */
 QGroupBox { background: @BG1; border: 1px solid @BORDER_SOFT; border-radius: 6px;
-    margin-top: 0; padding: 15px 6px 4px 6px; color: @FG; font-weight: 600; }
+    margin-top: 0; padding: 22px 6px 5px 6px; color: @FG; font-weight: 600; }
+/* Classic's colour-coded title bar, at Studio density: sections stay scannable. */
 QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left;
-    top: 4px; left: 10px; color: @FG_DIM; font-size: 9pt;
-    border: 0; padding: 0; background: transparent; font-weight: 700; }
-QGroupBox#box_red::title { color: @DANGER; }
-QGroupBox#box_green::title { color: @OK; }
-QGroupBox#box_yellow::title { color: @WARN; }
-QGroupBox#box_blue::title { color: @INFO; }
-QGroupBox#box_purple::title { color: @PURPLE; }
-QGroupBox#box_grey::title { color: @FG_DIM; }
+    top: 6px; left: 9px; color: @ACCENT; font-size: @FONTpt;
+    border: 0; border-left: 3px solid @ACCENT; padding: 0 0 0 6px; background: transparent; font-weight: 700; }
+QGroupBox#box_red::title { color: @DANGER; border-left-color: @DANGER; }
+QGroupBox#box_green::title { color: @OK; border-left-color: @OK; }
+QGroupBox#box_yellow::title { color: @WARN; border-left-color: @WARN; }
+QGroupBox#box_blue::title { color: @INFO; border-left-color: @INFO; }
+QGroupBox#box_purple::title { color: @PURPLE; border-left-color: @PURPLE; }
+QGroupBox#box_grey::title { color: @FG_DIM; border-left-color: @MUTED; }
 QGroupBox QGroupBox { background: transparent; border: none; border-top: 1px solid @BORDER_SOFT;
-    padding: 15px 0 0; border-radius: 0; }
-QGroupBox QGroupBox::title { left: 0; top: 3px; color: @FG_DIM; }
+    padding: 18px 0 0; border-radius: 0; }
+QGroupBox QGroupBox::title { left: 0; top: 4px; color: @ACCENT_SOFT; border-left: 0; padding: 0; font-size: 8pt; }
 QLabel[role="title"] { color: @FG; font-size: 12pt; font-weight: 700; }
 QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
 QPushButton { background: @BG3; border: 1px solid @BORDER;
@@ -463,7 +464,6 @@ QHeaderView::section { background: @BG1; border: 0; border-bottom: 1px solid @BO
     color: @FG_DIM; font-weight: 600; padding: 4px 7px; }
 QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 6px; padding: 4px; }
 QMenu::item { border-radius: 3px; }
-QSlider::handle:horizontal { background: @ACCENT_HI; border: 2px solid @BG1; }
 QFrame#expStrip, QFrame#expSurface { background: @BG1; border: 1px solid @BORDER;
     border-radius: 6px; }
 QFrame#expMetricDivider { background: @BORDER; color: @BORDER; border: 0; max-width: 1px; }
@@ -475,6 +475,7 @@ QSplitter::handle:horizontal { background: @BORDER_SOFT; width: 1px; }
 QSplitter::handle:vertical { background: @BORDER_SOFT; height: 1px; }
 QTabWidget#homeDetailTabs::pane { border: 1px solid @BORDER; background: @BG1; }
 QTabWidget#homeDetailTabs > QTabBar::tab { padding: 5px 10px; }
+QTabWidget#homeDetailTabs > QStackedWidget > QGroupBox { border: 0; background: transparent; padding: 6px 6px 4px 6px; }
 )QSS");
     const QColor accent(QString::fromLatin1(ACCENT));
     // Text on the amber key: the darkest surface, unless the accent itself is dark.

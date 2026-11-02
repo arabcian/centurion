@@ -519,6 +519,9 @@ void OptimizeTab::buildUi() {
                            static_cast<QWidget *>(summary), static_cast<QWidget *>(bootLabel_)})
             pl->removeWidget(w);
         while (QLayoutItem *item = pl->takeAt(0)) delete item;
+        // Everything now lives in column 0: let it, not the old column 4, take the width.
+        pl->setColumnStretch(4, 0);
+        pl->setColumnStretch(0, 1);
 
         auto *presetLine = new QHBoxLayout;
         presetLine->setSpacing(5);

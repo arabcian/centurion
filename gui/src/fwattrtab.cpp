@@ -344,14 +344,6 @@ void FwattrTab::rebuild() {
         auto *pl = new QVBoxLayout(page);
         pl->setContentsMargins(2, 4, 2, 2);
         pl->setSpacing(6);
-        auto *studioGrid = theme::experimentalEnabled() ? new QGridLayout : nullptr;
-        if (studioGrid) { studioGrid->setSpacing(7); pl->addLayout(studioGrid); }
-        bool cpuFound = false, gpuFound = false;
-        for (const FwAttr &attr : *it) {
-            cpuFound |= category(attr.name) == QLatin1String("CPU");
-            gpuFound |= category(attr.name) == QLatin1String("GPU");
-        }
-        const bool splitHardware = cpuFound && gpuFound;
         for (const QString &group : {QStringLiteral("CPU"), QStringLiteral("GPU"), QStringLiteral("Other")}) {
             QList<FwAttr> items;
             for (const FwAttr &a : *it) if (category(a.name) == group) items.append(a);
@@ -461,17 +453,8 @@ void FwattrTab::rebuild() {
                 note->setProperty("role", "muted");
                 g->addWidget(note, r++, 0, 1, 5);
             }
-            if (studioGrid) {
-                // Hardware categories are independent; two columns halve the
-                // usual vertical travel without duplicating a single writer.
-                const bool other = group == QLatin1String("Other");
-                const int gridRow = other ? 1 : 0;
-                const int gridColumn = splitHardware && group == QLatin1String("GPU") ? 1 : 0;
-                studioGrid->addWidget(box, gridRow, gridColumn, 1,
-                                      other || !splitHardware ? 2 : 1, Qt::AlignTop);
-            } else pl->addWidget(box);
+            pl->addWidget(box);
         }
-        if (studioGrid) { studioGrid->setColumnStretch(0, 1); studioGrid->setColumnStretch(1, 1); }
         pl->addStretch();
         scroll->setWidget(page);
         tabs_->addTab(scroll, it.key());

@@ -359,7 +359,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     if (theme::experimentalEnabled()) {
         // Do not stretch short profile/device groups to consume spare space.
         // The scroll area owns overflow; the graph/telemetry owns free height.
-        profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+        // Minimum, not Maximum: its wrapped no-driver notice needs its full height-for-width.
+        profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
         if (dev) dev->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
         // The Home layout uses the actual existing controls.
         // Technical inventory and live readings remain in a visible details tab,
@@ -418,8 +419,11 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *details = new QTabWidget;
         details->setObjectName(QStringLiteral("homeDetailTabs"));
         details->setDocumentMode(true);
+        // The tab already names each page: no second title or frame inside it.
+        liveSensors->setTitle(QString());
+        hardware->setTitle(QString());
         details->addTab(liveSensors, tr("Live sensors"));
-        details->addTab(hardware, tr("Hardware & firmware"));
+        details->addTab(hardware, tr("Hardware && firmware"));
         readings->addWidget(details, 3);
         work->addWidget(right);
         work->setStretchFactor(0, 4);

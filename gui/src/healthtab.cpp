@@ -19,7 +19,6 @@
 #include "sysinfo.h"
 #include "systools.h"
 #include "theme.h"
-#include "experimentalui.h"
 
 #include <QDateTime>
 #include <QDesktopServices>
@@ -60,7 +59,6 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QSignalBlocker>
-#include <QStandardItemModel>
 
 #include <cerrno>
 #include <cstring>
@@ -105,28 +103,11 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // functional pages remain; tool commands stay lazy until their page is opened.
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
-    const bool studio = theme::experimentalEnabled();
-    auto *split = studio ? nullptr : new QSplitter(Qt::Horizontal, this);
-    if (split) {
-        split->setChildrenCollapsible(false);
-        outer->addWidget(split);
-    }
-    // Studio uses a single-line page switcher. The navigation tree remains the
-    // source of truth for deep-links, saved selection and search matching.
-    auto *pagePicker = studio ? new QComboBox(this) : nullptr;
-    if (studio) {
-        auto *switchRow = new QHBoxLayout;
-        switchRow->setContentsMargins(8, 6, 8, 2);
-        switchRow->setSpacing(8);
-        auto *label = experimentalui::eyebrow(tr("VIEW"));
-        switchRow->addWidget(label);
-        pagePicker->setObjectName(QStringLiteral("healthPagePicker"));
-        pagePicker->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
-        pagePicker->setMinimumWidth(240);
-        switchRow->addWidget(pagePicker, 0);
-        switchRow->addStretch(1);
-        outer->addLayout(switchRow);
-    }
+    // Studio keeps the same searchable section list as Classic: one click per
+    // page, every page visible at once. Only its frame follows the Studio rail.
+    auto *split = new QSplitter(Qt::Horizontal, this);
+    split->setChildrenCollapsible(false);
+    outer->addWidget(split);
     auto *rail = new QWidget;
     rail->setMinimumWidth(158);
     rail->setMaximumWidth(230);
@@ -135,6 +116,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *railTitle = new QLabel(tr("HEALTH CENTER"));
     railTitle->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding:5px").arg(theme::FG_DIM));
     railLayout->addWidget(railTitle);
+    railTitle->setVisible(!theme::experimentalEnabled());  // Studio: the top bar already names the page
     auto *navSearch = new QLineEdit;
     navSearch->setPlaceholderText(tr("Find a health tool…"));
     navSearch->setClearButtonEnabled(true);
@@ -149,14 +131,11 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     navigation_->setFrameShape(QFrame::NoFrame);
     navigation_->setStyleSheet(QStringLiteral("QTreeWidget{background:transparent;border:0}QTreeWidget::item{padding:3px 3px}"));
     railLayout->addWidget(navigation_, 1);
-    if (split) split->addWidget(rail);
-    else { rail->setParent(this); rail->hide(); }  // retain the data model for deep-links
+    split->addWidget(rail);
     pages_ = new QStackedWidget;
-    if (split) {
-        split->addWidget(pages_);
-        split->setStretchFactor(1, 1);
-        split->setSizes({178, 880});
-    } else outer->addWidget(pages_, 1);
+    split->addWidget(pages_);
+    split->setStretchFactor(1, 1);
+    split->setSizes({178, 880});
 
     auto addGroup = [this](const QString &label) {
         auto *group = new QTreeWidgetItem(navigation_, {label.toUpper()});
@@ -169,8 +148,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         group->setExpanded(true);
         return group;
     };
-    auto addPage = [this, pagePicker](QTreeWidgetItem *group, QWidget *page, const QString &label, const QString &key) {
-        if (pagePicker) pagePicker->addItem(group->text(0) + QStringLiteral("  /  ") + label, key);
+    auto addPage = [this](QTreeWidgetItem *group, QWidget *page, const QString &label, const QString &key) {
         pages_->addWidget(page);
         auto *item = new QTreeWidgetItem(group, {label});
         item->setData(0, Qt::UserRole, key);
@@ -231,9 +209,8 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     toolSearch->setClearButtonEnabled(true);
     toolSearch->setObjectName(QStringLiteral("healthToolSearch"));
     directoryLayout->addWidget(toolSearch);
-    auto *toolSplit = theme::experimentalEnabled() ? nullptr : new QSplitter(Qt::Horizontal);
-    if (toolSplit) toolSplit->setChildrenCollapsible(false);
-    auto *toolPicker = theme::experimentalEnabled() ? new QComboBox : nullptr;
+    auto *toolSplit = new QSplitter(Qt::Horizontal);
+    toolSplit->setChildrenCollapsible(false);
     toolNavigation_ = new QTreeWidget;
     toolNavigation_->setHeaderHidden(true);
     toolNavigation_->setRootIsDecorated(false);
@@ -242,24 +219,11 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     toolNavigation_->setMaximumWidth(260);
     toolNavigation_->setStyleSheet(QStringLiteral("QTreeWidget::item{padding:3px 3px}"));
     toolPages_ = new QStackedWidget;
-    if (toolSplit) {
-        toolSplit->addWidget(toolNavigation_);
-        toolSplit->addWidget(toolPages_);
-        toolSplit->setStretchFactor(1, 1);
-        toolSplit->setSizes({195, 640});
-        directoryLayout->addWidget(toolSplit, 1);
-    } else {
-        auto *line = new QHBoxLayout;
-        line->addWidget(experimentalui::eyebrow(tr("TOOL")));
-        toolPicker->setMinimumWidth(240);
-        toolPicker->setObjectName(QStringLiteral("healthToolPicker"));
-        line->addWidget(toolPicker);
-        line->addStretch(1);
-        directoryLayout->addLayout(line);
-        directoryLayout->addWidget(toolPages_, 1);
-        toolNavigation_->setParent(toolDirectory_);
-        toolNavigation_->hide();
-    }
+    toolSplit->addWidget(toolNavigation_);
+    toolSplit->addWidget(toolPages_);
+    toolSplit->setStretchFactor(1, 1);
+    toolSplit->setSizes({195, 640});
+    directoryLayout->addWidget(toolSplit, 1);
     addPage(advanced, toolDirectory_, tr("System tools"), QStringLiteral("tools"));
     auto *deviceTools = new QTreeWidgetItem(toolNavigation_, {tr("Devices")});
     auto *connectivityTools = new QTreeWidgetItem(toolNavigation_, {tr("Connections")});
@@ -287,7 +251,6 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
                  label == QLatin1String("USB")) group = connectivityTools;
         auto *item = new QTreeWidgetItem(group, {label});
         toolItems_.insert(page, item);
-        if (toolPicker) toolPicker->addItem(group->text(0) + QStringLiteral("  /  ") + label, label);
         toolPages_->addWidget(page);
         if (!firstTool) firstTool = page;
         if (label == QLatin1String("SMART")) smartTool = page;
@@ -297,10 +260,6 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         // while keeping the complete device tool catalog available.
         toolPages_->removeWidget(smartTool);
         toolItems_.remove(smartTool);
-        if (toolPicker) {
-            const int smartIndex = toolPicker->findData(QStringLiteral("SMART"));
-            if (smartIndex >= 0) toolPicker->removeItem(smartIndex);
-        }
         for (int i = deviceTools->childCount() - 1; i >= 0; --i) {
             if (deviceTools->child(i)->text(0) == QLatin1String("SMART")) delete deviceTools->takeChild(i);
         }
@@ -311,35 +270,13 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         toolPages_->setCurrentWidget(firstTool);
         toolNavigation_->setCurrentItem(toolItems_.value(firstTool));
     }
-    if (toolPicker) {
-        connect(toolPicker, &QComboBox::currentIndexChanged, this,
-                [this, toolPicker](int i) {
-            const QString key = toolPicker->itemData(i).toString();
-            for (auto it = toolItems_.cbegin(); it != toolItems_.cend(); ++it)
-                if (it.value()->text(0) == key) { toolNavigation_->setCurrentItem(it.value()); break; }
-        });
-        connect(toolNavigation_, &QTreeWidget::currentItemChanged, toolPicker,
-                [toolPicker](QTreeWidgetItem *item, QTreeWidgetItem *) {
-            if (!item || !item->parent()) return;
-            const int idx = toolPicker->findData(item->text(0));
-            if (idx >= 0) { const QSignalBlocker block(toolPicker); toolPicker->setCurrentIndex(idx); }
-        });
-    }
     connect(toolNavigation_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item, QTreeWidgetItem *) {
         if (!item || !item->parent()) return;
         for (auto it = toolItems_.cbegin(); it != toolItems_.cend(); ++it) {
             if (it.value() == item) { toolPages_->setCurrentWidget(it.key()); break; }
         }
     });
-    connect(toolSearch, &QLineEdit::textChanged, this, [this, toolPicker](const QString &query) {
-        if (toolPicker) {
-            for (int i = 0; i < toolPicker->count(); ++i) {
-                const bool match = query.isEmpty() || toolPicker->itemText(i).contains(query, Qt::CaseInsensitive);
-                // Disable unmatched entries rather than deleting selection or tool page state.
-                if (auto *model = qobject_cast<QStandardItemModel *>(toolPicker->model()))
-                    if (auto *item = model->item(i)) item->setEnabled(match);
-            }
-        }
+    connect(toolSearch, &QLineEdit::textChanged, this, [this](const QString &query) {
         for (int i = 0; i < toolNavigation_->topLevelItemCount(); ++i) {
             auto *group = toolNavigation_->topLevelItem(i);
             int visible = 0;
@@ -360,27 +297,6 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     backup_ = new BackupPage;
     connect(backup_, &BackupPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::BACKUP, QString(), t, m); });
     addPage(maintenance, backup_, tr("Backups"), QStringLiteral("backup"));
-    if (pagePicker) {
-        connect(pagePicker, &QComboBox::currentIndexChanged, this,
-                [this, pagePicker](int index) {
-            const QString key = pagePicker->itemData(index).toString();
-            for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
-                if (it.value()->data(0, Qt::UserRole).toString() == key) {
-                    navigation_->setCurrentItem(it.value());
-                    break;
-                }
-            }
-        });
-        connect(navigation_, &QTreeWidget::currentItemChanged, pagePicker,
-                [pagePicker](QTreeWidgetItem *item, QTreeWidgetItem *) {
-            if (!item || !item->parent()) return;
-            const int index = pagePicker->findData(item->data(0, Qt::UserRole));
-            if (index >= 0) {
-                const QSignalBlocker block(pagePicker);
-                pagePicker->setCurrentIndex(index);
-            }
-        });
-    }
     connect(navigation_, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem *item, QTreeWidgetItem *) {
         if (!item || !item->parent()) return;

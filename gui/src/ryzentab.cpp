@@ -360,7 +360,9 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         acHint->setToolTip(acHint->text());
         acBox->setToolTip(acHint->text());
         acHint->hide();
-        top->addWidget(acBox, 1);
+        // Profile row carries a combo and four buttons, All-Core one field and one button.
+        top->setStretchFactor(profBox, 3);
+        top->addWidget(acBox, 2);
     } else root->addWidget(acBox);
 
     // Per-core

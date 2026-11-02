@@ -460,14 +460,14 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
             auto *row = new QHBoxLayout(page);
             row->setContentsMargins(5, 7, 5, 7);
             row->setSpacing(8);
-            row->addWidget(first, second ? 3 : 1, Qt::AlignTop);
-            if (second) row->addWidget(second, 2, Qt::AlignTop);
+            row->addWidget(first, 1, Qt::AlignTop);
+            if (second) row->addWidget(second, 1, Qt::AlignTop);
             scroll->setWidget(page);
             work->addTab(scroll, label);
         };
-        makePage(tr("Voltage & safety"), vBox, xBox);
-        makePage(tr("Limits & throttling"), lBox, rBox);
-        makePage(tr("Startup & daemon"), dBox, nullptr);
+        makePage(tr("Voltage && safety"), vBox, xBox);
+        makePage(tr("Limits && throttling"), lBox, rBox);
+        makePage(tr("Startup && daemon"), dBox, nullptr);
         root->addWidget(work, 1);
     } else {
         mid->addLayout(left, 1);

@@ -117,6 +117,8 @@ inline QToolButton *disclosure(const QString &text, QWidget *panel, bool expande
     toggle->setObjectName(QStringLiteral("expDisclosure"));
     toggle->setText(text);
     toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    // Full row: its top rule then spans the page like every other divider.
+    toggle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     toggle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
     toggle->setCheckable(true);
     toggle->setChecked(expanded);
