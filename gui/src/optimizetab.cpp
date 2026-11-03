@@ -343,14 +343,14 @@ void OptimizeTab::buildUi() {
     btext->addWidget(banner_);
     btext->addWidget(bannerDetail_);
     bl->addLayout(btext, 1);
-    defaultsBtn_ = new QPushButton("↺ Return to boot-guard defaults");
-    defaultsBtn_->setToolTip("Pause Scenes and write every setting back to the value centurion-boot-guard captured at the start of this boot —\n"
-                             "a clean baseline for calibration, even if TLP or a scene changed things since.");
+    defaultsBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "↺ Return to boot-guard defaults"));
+    defaultsBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Pause Scenes and write every setting back to the value centurion-boot-guard captured at the start of this boot —\n"
+                             "a clean baseline for calibration, even if TLP or a scene changed things since."));
     connect(defaultsBtn_, &QPushButton::clicked, this, &OptimizeTab::returnToBootDefaults);
     bl->addWidget(defaultsBtn_);
-    restoreBtn_ = new QPushButton("Restore originals");
+    restoreBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Restore originals"));
     restoreBtn_->setObjectName("btnDanger");
-    restoreBtn_->setToolTip("Write every saved original value back (hot-plugged CPUs first).");
+    restoreBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Write every saved original value back (hot-plugged CPUs first)."));
     connect(restoreBtn_, &QPushButton::clicked, this, [this] { restoreAll(true); });
     bl->addWidget(restoreBtn_);
     root->addWidget(bannerFrame);
@@ -365,10 +365,10 @@ void OptimizeTab::buildUi() {
     driftText_->setWordWrap(true);
     driftText_->setTextFormat(Qt::RichText);
     dl->addWidget(driftText_, 1);
-    auto *dRe = new QPushButton(QStringLiteral("Re-apply"));
-    dRe->setToolTip(QStringLiteral("Apply the active scene again (or the preset, without a scene)."));
+    auto *dRe = new QPushButton(QCoreApplication::translate("OptimizeTab", "Re-apply"));
+    dRe->setToolTip(QCoreApplication::translate("OptimizeTab", "Apply the active scene again (or the preset, without a scene)."));
     connect(dRe, &QPushButton::clicked, this, [this] { if (driftReapply_) driftReapply_(); driftBar_->hide(); });
-    auto *dHide = new QPushButton(QStringLiteral("Dismiss"));
+    auto *dHide = new QPushButton(QCoreApplication::translate("OptimizeTab", "Dismiss"));
     dHide->setObjectName("btnMini");
     connect(dHide, &QPushButton::clicked, driftBar_, &QWidget::hide);
     dl->addWidget(dRe);
@@ -377,8 +377,8 @@ void OptimizeTab::buildUi() {
     root->addWidget(driftBar_);
 
     // Master switch: outranks every scene, preset and autotune result.
-    wirelessLock_ = new QCheckBox(QStringLiteral("Forcefully disable Wi-Fi and Bluetooth power management"));
-    wirelessLock_->setToolTip(QStringLiteral(
+    wirelessLock_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Forcefully disable Wi-Fi and Bluetooth power management"));
+    wirelessLock_->setToolTip(QCoreApplication::translate("OptimizeTab", 
         "Master switch. While it is on, Wi-Fi power save, runtime power management of the Wi-Fi and Bluetooth devices and\n"
         "Bluetooth USB autosuspend are kept off — scenes, presets, game mode and autotune cannot turn them back on.\n"
         "With NetworkManager installed a drop-in is also written so it does not re-enable Wi-Fi power save on reconnect.\n\n"
@@ -422,15 +422,15 @@ void OptimizeTab::buildUi() {
     pl->setHorizontalSpacing(6);
     presetCombo_ = new QComboBox;
     presetCombo_->setMinimumWidth(160);
-    auto *bLoad = new QPushButton("Load"), *bSave = new QPushButton("Save as…"), *bDel = new QPushButton("Delete");
+    auto *bLoad = new QPushButton(QCoreApplication::translate("OptimizeTab", "Load")), *bSave = new QPushButton(QCoreApplication::translate("OptimizeTab", "Save as…")), *bDel = new QPushButton(QCoreApplication::translate("OptimizeTab", "Delete"));
     bDel->setObjectName("btnDanger");
-    gameBtn_ = new QPushButton("★ Use for games");
-    gameBtn_->setToolTip("Make the selected preset the default of centurion-gamemode (Lutris / Steam hooks).\n"
-                         "A built-in preset is copied to your preset folder first.");
-    bootBtn_ = new QPushButton("⏻ Apply at boot");
-    bootBtn_->setToolTip("Store the checked rows as the boot preset (root-owned\n"
-                         "/etc/centurion/tune-boot.json, applied by the centurion-tune OpenRC service).");
-    bootClear_ = new QPushButton("Clear boot");
+    gameBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "★ Use for games"));
+    gameBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Make the selected preset the default of centurion-gamemode (Lutris / Steam hooks).\n"
+                         "A built-in preset is copied to your preset folder first."));
+    bootBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "⏻ Apply at boot"));
+    bootBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Store the checked rows as the boot preset (root-owned\n"
+                         "/etc/centurion/tune-boot.json, applied by the centurion-tune OpenRC service)."));
+    bootClear_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Clear boot"));
     connect(bLoad, &QPushButton::clicked, this, &OptimizeTab::loadSelected);
     connect(bSave, &QPushButton::clicked, this, &OptimizeTab::saveAs);
     connect(bDel, &QPushButton::clicked, this, &OptimizeTab::deleteSelected);
@@ -462,35 +462,35 @@ void OptimizeTab::buildUi() {
     // Autotune: pick a base, the helper profiles the hardware and fills the rows.
     auto *autoRow = new QHBoxLayout;
     autoRow->setSpacing(6);
-    auto *autoLbl = new QLabel(QStringLiteral("Autotune for"));
+    auto *autoLbl = new QLabel(QCoreApplication::translate("OptimizeTab", "Autotune for"));
     autoGoal_ = new QComboBox;
-    autoGoal_->addItem(QStringLiteral("Power saving"), QStringLiteral("powersave"));
-    autoGoal_->addItem(QStringLiteral("Gaming (latency + throughput)"), QStringLiteral("gaming"));
-    autoGoal_->addItem(QStringLiteral("Bare throughput"), QStringLiteral("throughput"));
-    autoGoal_->addItem(QStringLiteral("Optimal desktop"), QStringLiteral("desktop"));
+    autoGoal_->addItem(QCoreApplication::translate("OptimizeTab", "Power saving"), QStringLiteral("powersave"));
+    autoGoal_->addItem(QCoreApplication::translate("OptimizeTab", "Gaming (latency + throughput)"), QStringLiteral("gaming"));
+    autoGoal_->addItem(QCoreApplication::translate("OptimizeTab", "Bare throughput"), QStringLiteral("throughput"));
+    autoGoal_->addItem(QCoreApplication::translate("OptimizeTab", "Optimal desktop"), QStringLiteral("desktop"));
     autoGoal_->setCurrentIndex(3);
-    autoGoal_->setToolTip(QStringLiteral("Power saving: battery life and low heat first.\n"
+    autoGoal_->setToolTip(QCoreApplication::translate("OptimizeTab", "Power saving: battery life and low heat first.\n"
                                          "Gaming: frame-time consistency and input latency, then throughput.\n"
                                          "Bare throughput: most work per second for builds, encodes, compute.\n"
                                          "Optimal desktop: responsive everyday use at sensible power."));
-    autoBtn_ = new QPushButton(QStringLiteral("⚙ Autotune"));
-    autoBtn_->setToolTip(QStringLiteral("Profile this machine (CPU topology, V-Cache/hybrid, cpufreq driver, C-state latencies, RAM, swap,\n"
+    autoBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "⚙ Autotune"));
+    autoBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Profile this machine (CPU topology, V-Cache/hybrid, cpufreq driver, C-state latencies, RAM, swap,\n"
                                         "storage, battery, GPUs, kernel) and check every row with the value the chosen base calls for.\n"
                                         "Nothing is written until you press Apply checked; Save turns it into a preset."));
     connect(autoBtn_, &QPushButton::clicked, this, &OptimizeTab::runAutotune);
-    auto *weightsBtn = new QPushButton(QStringLiteral("Weights…"));
-    weightsBtn->setToolTip(QStringLiteral("How much this base values latency, throughput, power, memory footprint, stability\n"
+    auto *weightsBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Weights…"));
+    weightsBtn->setToolTip(QCoreApplication::translate("OptimizeTab", "How much this base values latency, throughput, power, memory footprint, stability\n"
                                           "and how much the calibrated storage benchmarks count.\n"
                                           "Autotune writes a setting only when its expected gain under these weights beats leaving it alone;\n"
                                           "hard safety limits cannot be bought with weights."));
     connect(weightsBtn, &QPushButton::clicked, this, &OptimizeTab::editAutotuneWeights);
     autoCtx_ = new QComboBox;
-    autoCtx_->setToolTip(QStringLiteral("The power profile the preset will run under. A knob's measured effect depends on it (EPP and boost\n"
+    autoCtx_->setToolTip(QCoreApplication::translate("OptimizeTab", "The power profile the preset will run under. A knob's measured effect depends on it (EPP and boost\n"
                                         "act differently under a 45 W and a 130 W limit): autotune reads the calibration measured under\n"
                                         "that profile. \"Live profile\" = whatever is active now; a scene = the profile that scene sets."));
     fillAutotuneContexts();
-    auto *calBtn = new QPushButton(QStringLiteral("Calibrate at next boot…"));
-    calBtn->setToolTip(QStringLiteral("Schedule centurion-calibrate sessions for the next boot: the boot preset and scenes are held, and the\n"
+    auto *calBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Calibrate at next boot…"));
+    calBtn->setToolTip(QCoreApplication::translate("OptimizeTab", "Schedule centurion-calibrate sessions for the next boot: the boot preset and scenes are held, and the\n"
                                       "sessions run once the machine is on AC and nobody has touched it for 5 minutes (a key press\n"
                                       "stops the running one cleanly; it resumes after the next quiet stretch). Then the boot preset\n"
                                       "and the scene for the power source come back. The one-shot centurion-calibrate-boot service is added for that boot only."));
@@ -498,7 +498,7 @@ void OptimizeTab::buildUi() {
     calLabel_ = muted({});
     autoRow->addWidget(autoLbl);
     autoRow->addWidget(autoGoal_);
-    autoRow->addWidget(new QLabel(QStringLiteral("for")));
+    autoRow->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "for")));
     autoRow->addWidget(autoCtx_);
     autoRow->addWidget(autoBtn_);
     autoRow->addWidget(weightsBtn);
@@ -599,7 +599,7 @@ void OptimizeTab::buildUi() {
 
     // Action bar
     auto *bar = new QHBoxLayout;
-    auto *sel = new QLabel("Select:");
+    auto *sel = new QLabel(QCoreApplication::translate("OptimizeTab", "Select:"));
     sel->setProperty("role", "muted");
     bar->addWidget(sel);
     auto selector = [this](const QString &text, const QString &tip, std::function<bool(const Row &)> pred) {
@@ -617,10 +617,10 @@ void OptimizeTab::buildUi() {
     status_ = new QLabel;
     status_->setWordWrap(true);
     bar->addWidget(status_, 1);
-    auto *refreshBtn = new QPushButton("Refresh");
+    auto *refreshBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Refresh"));
     connect(refreshBtn, &QPushButton::clicked, this, &OptimizeTab::refresh);
     bar->addWidget(refreshBtn);
-    applyBtn_ = new QPushButton("Apply checked");
+    applyBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"));
     applyBtn_->setObjectName("btnAccent");
     applyBtn_->setMinimumWidth(132);
     connect(applyBtn_, &QPushButton::clicked, this, &OptimizeTab::applySelected);
@@ -644,42 +644,42 @@ QWidget *OptimizeTab::buildLaunchPage() {
     auto *runBox = box("Launch boost  (saved in the preset's \"run\" block)", "box_green");
     auto *g = new QGridLayout(runBox);
     g->setHorizontalSpacing(10);
-    g->addWidget(new QLabel("Nice"), 0, 0);
+    g->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "Nice")), 0, 0);
     nice_ = new QSpinBox;
     nice_->setRange(-20, 0);
     nice_->setSpecialValueText("off");
     nice_->setFixedWidth(90);
     g->addWidget(nice_, 0, 1);
     g->addWidget(muted("Priority for the game process tree. -5 is a sane start; -15…-20 can starve compositor and audio."), 0, 2);
-    autogroup_ = new QCheckBox("Also renice the autogroup");
+    autogroup_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Also renice the autogroup"));
     autogroup_->setChecked(true);
     g->addWidget(autogroup_, 1, 1, 1, 2);
-    g->addWidget(new QLabel("CPU affinity"), 2, 0);
+    g->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "CPU affinity")), 2, 0);
     affinity_ = new QComboBox;
     affinity_->setMinimumWidth(180);
     g->addWidget(affinity_, 2, 1);
     g->addWidget(muted(sysinfo::isIntel()
         ? QStringLiteral("Pins the game to the P-cores (or E-cores). Pair it with \"Unbound workqueue CPUs\" / \"IRQ affinity\" on the E-cores.")
         : QStringLiteral("Pins the game to one CCD. Pair it with \"Unbound workqueue CPUs\" / \"IRQ affinity\" on the other CCD.")), 2, 2);
-    preciseTimers_ = new QCheckBox("Precise timers (timer slack 1 ns)");
-    preciseTimers_->setToolTip(QStringLiteral("The kernel may deliver a normal thread's sleep or wait time-out up to 50 µs late (default timer slack,\n"
+    preciseTimers_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Precise timers (timer slack 1 ns)"));
+    preciseTimers_->setToolTip(QCoreApplication::translate("OptimizeTab", "The kernel may deliver a normal thread's sleep or wait time-out up to 50 µs late (default timer slack,\n"
                                               "used to batch wake-ups). With this on, the game's whole process tree gets 1 ns: frame limiters, audio\n"
                                               "and Wine's waits wake when they asked to. Costs a few more timer interrupts; needs RUN / WRAP."));
     g->addWidget(preciseTimers_, 3, 1, 1, 2);
-    g->addWidget(new QLabel("Time slice"), 4, 0);
+    g->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "Time slice")), 4, 0);
     sliceUs_ = new QComboBox;
     for (const auto &[label, us] : std::initializer_list<std::pair<const char *, int>>{{"off", 0}, {"1 ms", 1000}, {"2 ms", 2000}, {"3 ms", 3000}}) sliceUs_->addItem(label, us);
     g->addWidget(sliceUs_, 4, 1);
     g->addWidget(muted("EEVDF slice for the game's threads (sched_setattr, kernel 6.12+). Shorter = a waking thread preempts sooner\n"
                        "(steadier frame pacing); too short costs throughput. No effect under sched_ext or Project C. Needs RUN / WRAP."), 4, 2);
-    g->addWidget(new QLabel("Game CPU share"), 5, 0);
+    g->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "Game CPU share")), 5, 0);
     gameShare_ = new QComboBox;
     for (const auto &[label, w] : std::initializer_list<std::pair<const char *, int>>{{"off", 0}, {"2× the rest", 200}, {"4× the rest", 400}, {"8× the rest", 800}}) gameShare_->addItem(label, w);
     g->addWidget(gameShare_, 5, 1);
     g->addWidget(muted("The game runs in its own cgroup with this cpu.weight against everything else (default 100): background work\n"
                        "(builds, indexers) keeps running but yields. Needs cgroup v2 with the cpu controller; removed when game mode ends."), 5, 2);
-    zramRecompress_ = new QCheckBox("Recompress cold zram pages after the game");
-    zramRecompress_->setToolTip(QStringLiteral("At game start every zram page is marked idle; when game mode ends, pages the session never touched are\n"
+    zramRecompress_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Recompress cold zram pages after the game"));
+    zramRecompress_->setToolTip(QCoreApplication::translate("OptimizeTab", "At game start every zram page is marked idle; when game mode ends, pages the session never touched are\n"
                                                "recompressed with the secondary algorithm (at most 64 MiB per device): more free RAM afterwards.\n"
                                                "Needs a recompression algorithm set in the boot zram configuration (it cannot be set on a live device)."));
     g->addWidget(zramRecompress_, 6, 1, 1, 2);
@@ -692,21 +692,21 @@ QWidget *OptimizeTab::buildLaunchPage() {
     ug->setHorizontalSpacing(10);
     ug->setVerticalSpacing(6);
     const QJsonObject cfg = readJsonFile(configFile());
-    ug->addWidget(new QLabel("Scene"), 0, 0);
+    ug->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "Scene")), 0, 0);
     gameScene_ = new QComboBox;
     gameScene_->setMinimumWidth(160);
-    gameScene_->setToolTip("The first game to start switches the machine to this scene; when the last game exits it goes "
+    gameScene_->setToolTip(QCoreApplication::translate("OptimizeTab", "The first game to start switches the machine to this scene; when the last game exits it goes "
                            "back to the scene active before (or to the AC / battery scene if automatic switching is on).\n"
-                           "The scene's Optimizations preset is not used while playing — the ★ game preset handles tuning.");
+                           "The scene's Optimizations preset is not used while playing — the ★ game preset handles tuning."));
     ug->addWidget(gameScene_, 0, 1, 1, 2);
-    uvCpu_ = new QCheckBox("Undervolt CPU");
+    uvCpu_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Undervolt CPU"));
     uvCpu_->setChecked(cfg.value("undervolt_cpu").toBool());
-    uvGpu_ = new QCheckBox("Undervolt GPU");
+    uvGpu_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Undervolt GPU"));
     uvGpu_->setChecked(cfg.value("undervolt_gpu").toBool());
     if (!sysinfo::isAmd() && !sysinfo::isIntel()) {
         uvCpu_->setChecked(false);
         uvCpu_->setEnabled(false);
-        uvCpu_->setToolTip(QStringLiteral("No CPU undervolt backend for this CPU."));
+        uvCpu_->setToolTip(QCoreApplication::translate("OptimizeTab", "No CPU undervolt backend for this CPU."));
     }
     ug->addWidget(uvCpu_, 1, 0);
     ug->addWidget(uvGpu_, 1, 1);
@@ -718,9 +718,9 @@ QWidget *OptimizeTab::buildLaunchPage() {
                                        "the scene loads without touching the curves. Without a scene: the \"%1\" curve profiles "
                                        "are applied (CPU first, GPU 2 s later). Run by centurion-gamemode PRE / WRAP.").arg(UNDERVOLT_PROFILE)),
                    2, 0, 1, 3);
-    fieldAb_ = new QCheckBox(QStringLiteral("A/B field comparison: every other launch of a game runs at the boot defaults"));
+    fieldAb_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "A/B field comparison: every other launch of a game runs at the boot defaults"));
     fieldAb_->setChecked(cfg.value("field_ab").toBool());
-    fieldAb_->setToolTip(QStringLiteral("Real games instead of benchmarks: launches alternate B (the game preset) and A (boot defaults, no\n"
+    fieldAb_->setToolTip(QCoreApplication::translate("OptimizeTab", "Real games instead of benchmarks: launches alternate B (the game preset) and A (boot defaults, no\n"
                                         "launch boost; the game scene is the same). centurion-gamemode records every session; feed the frame-time\n"
                                         "logs (FLM CSV or MangoHud CSV) with\n"
                                         "    sudo centurion-calibrate --field LOG...\n"
@@ -734,9 +734,9 @@ QWidget *OptimizeTab::buildLaunchPage() {
                       : QStringLiteral("A/B comparison off."), theme::OK, 6000);
     });
     ug->addWidget(fieldAb_, 3, 0, 1, 3);
-    detectLaunchers_ = new QCheckBox(QStringLiteral("Detect games started from Heroic and Bottles (no launch options needed)"));
+    detectLaunchers_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Detect games started from Heroic and Bottles (no launch options needed)"));
     detectLaunchers_->setChecked(cfg.value("detect_launchers").toBool());
-    detectLaunchers_->setToolTip(QStringLiteral("Heroic and Bottles have no pre/post hook like Lutris. With this on, Centurion notices their games itself\n"
+    detectLaunchers_->setToolTip(QCoreApplication::translate("OptimizeTab", "Heroic and Bottles have no pre/post hook like Lutris. With this on, Centurion notices their games itself\n"
                                                 "(Heroic: HEROIC_APP_NAME in the game's environment; Bottles: a Windows program running in a bottle) and\n"
                                                 "runs the same game start / end as the Lutris hook: game scene, ★ game preset, session record.\n"
                                                 "Costs a process-name sweep every 15 s; game processes are only looked at while Heroic or Bottles runs.\n"
@@ -751,9 +751,9 @@ QWidget *OptimizeTab::buildLaunchPage() {
                       : QStringLiteral("Heroic / Bottles detection off."), theme::OK, 6000);
     });
     ug->addWidget(detectLaunchers_, 4, 0, 1, 3);
-    auto *ntsync = new QCheckBox(QStringLiteral("NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)"));
+    auto *ntsync = new QCheckBox(QCoreApplication::translate("OptimizeTab", "NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)"));
     ntsync->setChecked(cfg.value("ntsync").toBool());
-    ntsync->setToolTip(QStringLiteral("NTSYNC is the kernel's driver for Windows synchronisation objects (/dev/ntsync): Wine and Proton use it\n"
+    ntsync->setToolTip(QCoreApplication::translate("OptimizeTab", "NTSYNC is the kernel's driver for Windows synchronisation objects (/dev/ntsync): Wine and Proton use it\n"
                                       "instead of esync / fsync for lower overhead in games with many threads. Wine 11 uses it on its own;\n"
                                       "GE-Proton 10 and builds like it only when PROTON_USE_NTSYNC=1 is set. With this on, centurion-gamemode\n"
                                       "WRAP / RUN (Steam launch options) set it for the game, unless the launch options already do. Lutris\n"
@@ -798,7 +798,7 @@ QWidget *OptimizeTab::buildLaunchPage() {
         edit->setReadOnly(true);
         edit->setStyleSheet("font-family: monospace;");
         hg->addWidget(edit, r, 1);
-        auto *copy = new QPushButton("Copy");
+        auto *copy = new QPushButton(QCoreApplication::translate("OptimizeTab", "Copy"));
         connect(copy, &QPushButton::clicked, this, [this, edit] {
             QApplication::clipboard()->setText(edit->text());
             showStatus("Copied: " + edit->text(), theme::OK, 3000);
@@ -836,7 +836,7 @@ void OptimizeTab::fillGameScenes() {
     const QString sel = readJsonFile(configFile()).value("game_scene").toString();
     const QSignalBlocker b(gameScene_);
     gameScene_->clear();
-    gameScene_->addItem(QStringLiteral("— none (keep the current scene)"), QString());
+    gameScene_->addItem(QCoreApplication::translate("OptimizeTab", "— none (keep the current scene)"), QString());
     const QStringList names = scenes::names();
     for (const QString &n : names) gameScene_->addItem(n, n);
     if (!sel.isEmpty() && !names.contains(sel)) gameScene_->addItem(sel + QStringLiteral("  (missing)"), sel);
@@ -1017,18 +1017,18 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
         const QString keep = canonicalCcd(affinity_->currentData().toString());
         const QSignalBlocker b(affinity_);
         affinity_->clear();
-        affinity_->addItem("none (scheduler decides)", "none");
+        affinity_->addItem(QCoreApplication::translate("OptimizeTab", "none (scheduler decides)"), "none");
         const QJsonArray ccds = topology_.value("ccds").toArray();
         // One entry per CCD, named by its role (no separate cache/frequency aliases).
         const int cacheCcd = topology_.value("cache_ccd").toInt(-1), freqCcd = topology_.value("frequency_ccd").toInt(-1);
         if (ccds.size() > 1) for (const auto &c : ccds) {
             const int i = c.toObject().value("index").toInt();
             const QString role = i == cacheCcd ? QStringLiteral(" V-Cache") : i == freqCcd ? QStringLiteral(" frequency") : QString();
-            affinity_->addItem(QStringLiteral("CCD%1%2 (%3)").arg(i).arg(role, c.toObject().value("cpus").toString()), QStringLiteral("ccd%1").arg(i));
+            affinity_->addItem(QCoreApplication::translate("OptimizeTab", "CCD%1%2 (%3)").arg(i).arg(role, c.toObject().value("cpus").toString()), QStringLiteral("ccd%1").arg(i));
         }
         if (const QJsonObject h = topology_.value("hybrid").toObject(); !h.isEmpty()) {
-            affinity_->addItem("P-cores (" + h.value("pcores").toString() + ")", "pcore");
-            affinity_->addItem("E-cores (" + h.value("ecores").toString() + ")", "ecore");
+            affinity_->addItem(QCoreApplication::translate("OptimizeTab", "P-cores (") + h.value("pcores").toString() + ")", "pcore");
+            affinity_->addItem(QCoreApplication::translate("OptimizeTab", "E-cores (") + h.value("ecores").toString() + ")", "ecore");
         }
         const int k = affinity_->findData(keep);
         affinity_->setCurrentIndex(k < 0 ? 0 : k);
@@ -1081,7 +1081,8 @@ void OptimizeTab::jumpToSetting(const QString &query) {
     // labels/help/keys. Keep the source row and its include checkbox intact.
     for (Row &r : rows_) {
         if (!r.name) continue;
-        const QString fullname = r.group + QStringLiteral(" / ") + r.label;
+        const QString localizedGroup = QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData());
+        const QString fullname = localizedGroup + QStringLiteral(" / ") + r.label;
         if (!fullname.contains(text, Qt::CaseInsensitive) &&
             !r.label.contains(text, Qt::CaseInsensitive) &&
             !r.key.contains(text, Qt::CaseInsensitive) &&
@@ -1089,7 +1090,7 @@ void OptimizeTab::jumpToSetting(const QString &query) {
             text.compare(fullname, Qt::CaseInsensitive) != 0)
             continue;
         for (int i = 0; i < groups_->count(); ++i) {
-            if (!groups_->tabText(i).startsWith(r.group + QLatin1Char(' '))) continue;
+            if (groups_->widget(i)->property("optimizationGroup").toString() != r.group) continue;
             groups_->setCurrentIndex(i);
             if (auto *scroll = qobject_cast<QScrollArea *>(groups_->widget(i)))
                 scroll->ensureWidgetVisible(r.name, 14, 40);
@@ -1119,7 +1120,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         Row r;
         r.key = o.value("key").toString();
         r.group = o.value("group").toString();
-        r.label = o.value("label").toString();
+        r.label = QCoreApplication::translate("OptimizationLabels", o.value("label").toString().toUtf8().constData());
         // Per-CCD rows: name the die's role from the live topology.
         static const QRegularExpression ccdKey(QStringLiteral("_ccd(\\d+)$"));  // compiled once, not per row
         if (const auto m = ccdKey.match(r.key); m.hasMatch()) {
@@ -1153,10 +1154,12 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         // into the scroll area and again when that moved into the tab widget - most of the time
         // this function took.
         scroll->setWidget(page);
-        const int tab = groups_->addTab(scroll, group);
+        const QString displayGroup = QCoreApplication::translate("OptimizationGroups", group.toUtf8().constData());
+        const int tab = groups_->addTab(scroll, displayGroup);
+        scroll->setProperty("optimizationGroup", group);
         const char *heads[] = {"", "Setting", "Live value", "New value", ""};
         for (int c = 0; c < 5; ++c) {
-            auto *h = new QLabel(QString::fromLatin1(heads[c]), page);
+            auto *h = new QLabel(tr(heads[c]), page);
             h->setProperty("role", "muted");
             grid->addWidget(h, 0, c);
         }
@@ -1173,9 +1176,9 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             // a tall, narrow column. 420px reads as normal paragraphs instead.
             QString tip = QStringLiteral("<div style='max-width:420px;'><b>%1</b><br>%2</div>")
                               .arg(r.key.toHtmlEscaped(), r.help.toHtmlEscaped());
-            if (r.debugfs) tip += tr("<br><i>debugfs: geçerli değeri yalnızca root okuyabilir.</i>");
-            if (r.hotplug) tip += tr("<br><i>CPU çekirdeklerini çevrimiçi/çevrimdışı yapar: en son uygulanır, ilk geri alınır.</i>");
-            if (r.caution) tip += QStringLiteral("<br><span style='color:%1'>Kararlılığı, sıcaklığı veya boşta güç tüketimini olumsuz etkileyebilir.</span>").arg(theme::WARN);
+            if (r.debugfs) tip += tr("<br><i>debugfs: current values can only be read by root.</i>");
+            if (r.hotplug) tip += tr("<br><i>Hot-plugs CPU cores: applied last and restored first.</i>");
+            if (r.caution) tip += QStringLiteral("<br><span style='color:%1'>%2</span>").arg(theme::WARN, tr("May adversely affect stability, temperature or idle power consumption."));
             if (!r.conflict.isEmpty()) tip += QStringLiteral("<br><span style='color:%1'>%2</span>").arg(theme::WARN, r.conflict.toHtmlEscaped());
             r.name->setToolTip(tip);
             r.name->setTextFormat(Qt::PlainText);
@@ -1246,7 +1249,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             QStringList items;
             for (const auto &v : discovered_)
                 items << QStringLiteral("%1 = %2").arg(v.toObject().value("name").toString(), v.toObject().value("value").toString());
-            auto *disc = new QLabel(QStringLiteral("Discovered (not in Centurion's table; shown only, set by hand, not calibrated): ") + items.join(QStringLiteral(", ")), page);
+            auto *disc = new QLabel(QCoreApplication::translate("OptimizeTab", "Discovered (not in Centurion's table; shown only, set by hand, not calibrated): ") + items.join(QStringLiteral(", ")), page);
             disc->setWordWrap(true);
             disc->setTextInteractionFlags(Qt::TextSelectableByMouse);
             disc->setProperty("role", "muted");
@@ -1255,14 +1258,15 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         grid->setColumnStretch(1, 2);
         grid->setColumnStretch(3, 3);
         grid->setRowStretch(line, 1);
-        groups_->setTabText(tab, QStringLiteral("%1  %2").arg(group).arg(available));
+        groups_->setTabText(tab, QStringLiteral("%1  %2").arg(displayGroup).arg(available));
     }
-    groups_->addTab(buildLaunchPage(), "Game launch");
-    groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), "Boot options");  // built on first open
+    groups_->addTab(buildLaunchPage(), tr("Game launch"));
+    groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), tr("Boot options"));  // built on first open
     if (settingSearchModel_) {
         QStringList entries;
         for (const Row &r : rows_) if (!r.label.isEmpty())
-            entries.append(r.group + QStringLiteral(" / ") + r.label);
+            entries.append(QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData())
+                           + QStringLiteral(" / ") + r.label);
         entries.removeDuplicates();
         entries.sort(Qt::CaseInsensitive);
         settingSearchModel_->setStringList(entries);
@@ -1294,11 +1298,11 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
     if (r.kind == "bool") opts = {{"1", "enabled"}, {"0", "disabled"}};
 
     const bool rootOnly = r.available && r.current.isEmpty() && r.debugfs;
-    r.cur->setText(!r.available ? QStringLiteral("n/a") : rootOnly ? QStringLiteral("root only")
-                                : r.kind == "bool" ? (r.current == "1" ? "enabled" : r.current == "0" ? "disabled" : r.current)
-                                : r.current);
+    r.cur->setText(!r.available ? tr("n/a") : rootOnly ? tr("root only")
+                                : r.kind == "bool" ? (r.current == "1" ? tr("enabled") : r.current == "0" ? tr("disabled") : r.current)
+                                : QCoreApplication::translate("OptimizationOptions", r.current.toUtf8().constData()));
     theme::setSheet(r.cur, QStringLiteral("color:%1; background:transparent;").arg(r.available && !rootOnly ? theme::FG_DIM : theme::MUTED));
-    r.cur->setToolTip(r.available ? QStringLiteral("%1 file(s)").arg(o.value("files").toInt()) : "Not present on this kernel/hardware");
+    r.cur->setToolTip(r.available ? tr("%1 file(s)").arg(o.value("files").toInt()) : tr("Not present on this kernel/hardware"));
 
     // Keep a user edit; otherwise follow the live value. A spin box mid-edit
     // (has focus, keyboard tracking off so no valueChanged yet) is left alone
@@ -1316,7 +1320,7 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
             const bool offered = std::any_of(opts.begin(), opts.end(), [&](const Option &x) { return x.value == r.current; });
             // A live state that is not a choice (mixed, "offline 8-15", "4000 kHz"): shown, not applicable.
             if (!offered) r.combo->addItem(r.current.isEmpty() ? QStringLiteral("—") : QStringLiteral("— (%1)").arg(r.current), QString());
-            for (const Option &x : opts) r.combo->addItem(x.label, x.value);
+            for (const Option &x : opts) r.combo->addItem(QCoreApplication::translate("OptimizationOptions", x.label.toUtf8().constData()), x.value);
         }
         if (!setEditorValue(r, want)) {
             if (r.touched && !want.isEmpty()) {
@@ -1324,7 +1328,7 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
                 // parks is offline, so sysfs no longer describes it). Keep it
                 // instead of silently falling back to a value-less placeholder,
                 // which Save then dropped without a word.
-                r.combo->addItem(QStringLiteral("%1  (not offered right now)").arg(want), want);
+                r.combo->addItem(tr("%1  (not offered right now)").arg(want), want);
                 setEditorValue(r, want);
             } else {
                 setEditorValue(r, r.current);
@@ -1457,7 +1461,7 @@ void OptimizeTab::updateStateBanner() {
     bootLabel_->setText(boot_.isEmpty() ? QStringLiteral("No boot preset")
                         : QStringLiteral("⏻ Boot: \"%1\" · %2 setting(s)")
                               .arg(bootName.isEmpty() ? QStringLiteral("unnamed") : bootName).arg(bootCount));
-    bootLabel_->setToolTip("Applied by the centurion-tune OpenRC service. Enable it once with:\n    rc-update add centurion-tune boot");
+    bootLabel_->setToolTip(QCoreApplication::translate("OptimizeTab", "Applied by the centurion-tune OpenRC service. Enable it once with:\n    rc-update add centurion-tune boot"));
     bootClear_->setEnabled(!boot_.isEmpty() && !busy_);
 }
 
@@ -2048,12 +2052,12 @@ void OptimizeTab::fillAutotuneContexts() {
     const QString sel = autoCtx_->currentData().toString();
     const QSignalBlocker b(autoCtx_);
     autoCtx_->clear();
-    autoCtx_->addItem(QStringLiteral("live profile"), QString());
+    autoCtx_->addItem(QCoreApplication::translate("OptimizeTab", "live profile"), QString());
     QStringList seen;
     for (const QString &n : scenes::names()) {
         const auto s = scenes::load(n);
         if (!s || s->platformProfile.isEmpty()) continue;
-        autoCtx_->addItem(QStringLiteral("scene %1 (%2)").arg(n, s->platformProfile), s->platformProfile);
+        autoCtx_->addItem(QCoreApplication::translate("OptimizeTab", "scene %1 (%2)").arg(n, s->platformProfile), s->platformProfile);
     }
     autoCtx_->setCurrentIndex(std::max(0, autoCtx_->findData(sel)));
 }
@@ -2090,9 +2094,9 @@ void OptimizeTab::scheduleBootCalibration() {
     minutes->setValue(15);
     minutes->setSuffix(QStringLiteral(" min"));
     auto *scene = new QComboBox;
-    scene->addItem(QStringLiteral("boot state (no scene)"), QString());
+    scene->addItem(QCoreApplication::translate("OptimizeTab", "boot state (no scene)"), QString());
     for (const QString &n : scenes::names()) scene->addItem(n, n);
-    scene->setToolTip(QStringLiteral("Measure in a scene's power context (its power profile, firmware limits and fan mode; not its\n"
+    scene->setToolTip(QCoreApplication::translate("OptimizeTab", "Measure in a scene's power context (its power profile, firmware limits and fan mode; not its\n"
                                      "Optimizations preset - those knobs are what is measured)."));
     form->addRow(QStringLiteral("Sessions"), sessions);
     form->addRow(QStringLiteral("Each"), minutes);
@@ -2127,13 +2131,13 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     dlg.resize(980, 600);
     auto *v = new QVBoxLayout(&dlg);
     v->setSpacing(6);
-    auto *head = new QLabel(QStringLiteral("<b>Machine</b>&nbsp; %1").arg(d.value("profile_summary").toString().toHtmlEscaped()));
+    auto *head = new QLabel(QCoreApplication::translate("OptimizeTab", "<b>Machine</b>&nbsp; %1").arg(d.value("profile_summary").toString().toHtmlEscaped()));
     head->setWordWrap(true);
     head->setTextFormat(Qt::RichText);
     head->setTextInteractionFlags(Qt::TextSelectableByMouse);
     v->addWidget(head);
     if (const QString ev = d.value(QStringLiteral("evidence_summary")).toString(); !ev.isEmpty()) {
-        auto *evl = new QLabel(QStringLiteral("<b>Observed</b>&nbsp; %1").arg(ev.toHtmlEscaped()));
+        auto *evl = new QLabel(QCoreApplication::translate("OptimizeTab", "<b>Observed</b>&nbsp; %1").arg(ev.toHtmlEscaped()));
         evl->setWordWrap(true);
         evl->setTextFormat(Qt::RichText);
         evl->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -2150,7 +2154,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
             const QJsonObject o = i.toObject();
             extra << QStringLiteral("live %1: %2").arg(o.value("key").toString(), o.value("message").toString());
         }
-        auto *wl = new QLabel(QStringLiteral("<b>Weights</b>&nbsp; %1%2").arg(w.join(QStringLiteral(" · ")).toHtmlEscaped(),
+        auto *wl = new QLabel(QCoreApplication::translate("OptimizeTab", "<b>Weights</b>&nbsp; %1%2").arg(w.join(QStringLiteral(" · ")).toHtmlEscaped(),
             extra.isEmpty() ? QString() : QStringLiteral("<br>") + extra.join(QStringLiteral("<br>")).toHtmlEscaped()));
         wl->setWordWrap(true);
         wl->setTextFormat(Qt::RichText);
@@ -2180,7 +2184,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     const QJsonObject scores = d.value(QStringLiteral("scores")).toObject();
     const bool rich = !dec.isEmpty();
     const QHash<QString, QString> since = autotunereport::changedSinceLast(d);
-    auto *onlyChanges = new QCheckBox(QStringLiteral("Only changes"));
+    auto *onlyChanges = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Only changes"));
     v->addWidget(onlyChanges);
     auto *table = new QTableWidget(0, rich ? 6 : 4);
     if (rich) table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Source"), QStringLiteral("Confidence"), QStringLiteral("Why (for this machine)")});
@@ -2199,7 +2203,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         table->insertRow(r);
         auto *a = new QTableWidgetItem(g), *b = new QTableWidgetItem(name), *c = new QTableWidgetItem(val), *e = new QTableWidgetItem(reason);
         if (changes) { QFont f = c->font(); f.setBold(true); c->setFont(f); }
-        else c->setToolTip(QStringLiteral("Already the live value."));
+        else c->setToolTip(QCoreApplication::translate("OptimizeTab", "Already the live value."));
         for (auto *it : {a, b, c, e}) it->setToolTip(reason);
         a->setData(Qt::UserRole, changes);
         table->setItem(r, 0, a); table->setItem(r, 1, b); table->setItem(r, 2, c);
@@ -2246,20 +2250,20 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         return p.join(QStringLiteral(" · "));
     };
     if (const QJsonObject pr = d.value(QStringLiteral("predicted")).toObject(); !pr.isEmpty()) {
-        auto *l = new QLabel(QStringLiteral("<b>Predicted</b>&nbsp; (calibrated settings, against the boot state) %1").arg(objectives(pr).toHtmlEscaped()));
+        auto *l = new QLabel(QCoreApplication::translate("OptimizeTab", "<b>Predicted</b>&nbsp; (calibrated settings, against the boot state) %1").arg(objectives(pr).toHtmlEscaped()));
         l->setTextFormat(Qt::RichText);
         l->setWordWrap(true);
         v->addWidget(l);
     }
     if (d.value(QStringLiteral("explore_truncated")).toBool()) {
-        auto *l = new QLabel(QStringLiteral("Trade-offs / sensitivity cut short (time budget): the list below is partial."));
+        auto *l = new QLabel(QCoreApplication::translate("OptimizeTab", "Trade-offs / sensitivity cut short (time budget): the list below is partial."));
         l->setWordWrap(true);
         v->addWidget(l);
     }
     const QJsonArray alts = d.value(QStringLiteral("alternatives")).toArray();
     bool rerun = false;
     if (!alts.isEmpty()) {
-        auto *ab = new QGroupBox(QStringLiteral("Other trade-offs on the same measurements"));
+        auto *ab = new QGroupBox(QCoreApplication::translate("OptimizeTab", "Other trade-offs on the same measurements"));
         auto *al = new QVBoxLayout(ab);
         al->setSpacing(4);
         for (const auto &x : alts) {
@@ -2276,8 +2280,8 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
             l->setWordWrap(true);
             l->setTextInteractionFlags(Qt::TextSelectableByMouse);
             row->addWidget(l, 1);
-            auto *use = new QPushButton(QStringLiteral("Use these weights"));
-            use->setToolTip(QStringLiteral("Saves this trade-off's weights for the goal and runs Autotune again."));
+            auto *use = new QPushButton(QCoreApplication::translate("OptimizeTab", "Use these weights"));
+            use->setToolTip(QCoreApplication::translate("OptimizeTab", "Saves this trade-off's weights for the goal and runs Autotune again."));
             const QJsonObject wts = a.value(QStringLiteral("weights")).toObject();
             connect(use, &QPushButton::clicked, &dlg, [&dlg, &rerun, goal, wts] {
                 const QList<double> def = defaultWeights(goal);
