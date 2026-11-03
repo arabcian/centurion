@@ -836,6 +836,8 @@ void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
         const qint64 baseK = qint64(p.value("base_kHz").toDouble());
         offs[base.size()] = off;
         freqs.append(cur);
+        // Approximation is DISPLAY-ONLY if V3 is unavailable. Rust will refuse
+        // flatten writes rather than trust cur-off as an offset-free base.
         base.append(QPointF(mv, baseK > 0 ? floorDiv(baseK, 1000) : cur - off));
     }
     if (base.isEmpty()) { log("❌ No GPU points found in vf_curve."); return; }
@@ -1104,7 +1106,17 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
                                                      : data.value("vram_p0_offset_mhz")).toInt();
 
     QHash<int, int> offs;
-    for (int i = 0; i < base_.size(); ++i) offs[i] = floorDiv(qint64(deltas.value(QString::number(i)).toDouble()), 1000);
+    for (int i = 0; i < base_.size(); ++i) {
+        const QJsonValue value = deltas.value(QString::number(i));
+        bool valid = true;
+        const qint64 khz = value.isString() ? value.toString().toLongLong(&valid)
+                                               : qint64(value.toDouble());
+        if (!valid) {
+            log(QStringLiteral("❌ Invalid frequency offset at point %1: %2").arg(i).arg(value.toString()));
+            return;
+        }
+        offs[i] = floorDiv(khz, 1000);
+    }
     adoptOffsets(offs);
 
     memSpin_->setValue(mem);

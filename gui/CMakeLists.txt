@@ -32,7 +32,6 @@ add_executable(centurion
     src/vfcurvewidget.cpp src/vfcurvewidget.h
     src/nvidiatab.cpp    src/nvidiatab.h
     src/optimizetab.cpp  src/optimizetab.h
-    src/optimization_translation_sources.cpp
     src/autotunereport.cpp src/autotunereport.h
     src/int64spinbox.cpp src/int64spinbox.h
     src/tray.cpp         src/tray.h
