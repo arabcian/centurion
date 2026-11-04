@@ -109,6 +109,22 @@ class Invariants(unittest.TestCase):
         self.assertNotIn('map(|now| vfcurve::write_prepared_offsets',s)
         self.assertEqual(s.count('vfcurve::restore_offsets_verified(gpu, &old_offsets)'),2)
 
+    def test_rust_cast_comparison_precedence(self):
+        # Regression: Rust parses `x as i64 < bound` as a generic type
+        # argument without parentheses. This broke the Gentoo 1.98.1 build.
+        import re
+        for f in (ROOT / 'crates/nvcurve/src').rglob('*.rs'):
+            code = f.read_text()
+            invalid = re.search(r'\bas\s+(?:u\d+|i\d+|usize|isize)\s*<\s*[^=]', code)
+            self.assertIsNone(invalid, f'{f}: cast/comparison precedence requires parentheses')
+        guard = src('crates/nvcurve/src/hal/flatten_guard.rs')
+        self.assertIn('(p.index as i64) < from', guard)
+        self.assertIn('(b.index as i64) < from', guard)
+
+    def test_ops_no_unused_profile_native_import(self):
+        ops = src('crates/nvcurve/src/ops.rs')
+        self.assertNotIn('use crate::profiles::native::{load_profile, profile_path};', ops)
+
     def test_syntactic_braces(self):
         # Quote- and comment-aware nesting heuristic. Not a Rust parser.
         files=['crates/nvcurve/src/nvapi.rs','crates/nvcurve/src/hal/vfcurve.rs','crates/nvcurve/src/hal/flatten_guard.rs',

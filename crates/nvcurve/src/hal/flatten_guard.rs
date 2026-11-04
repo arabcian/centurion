@@ -78,7 +78,7 @@ pub fn verify_flatten_preflight(
 
     // Check the point immediately before the plateau; a steep rising anchor
     // above the flat region would create a fold, regardless of CT validity.
-    if let Some(anchor) = initial.points.iter().filter(|p| p.domain == Domain::Gpu && p.index as i64 < from && p.freq_khz > 0).last() {
+    if let Some(anchor) = initial.points.iter().filter(|p| p.domain == Domain::Gpu && (p.index as i64) < from && p.freq_khz > 0).last() {
         if projected(anchor, deltas) > target_khz + MAX_ANCHOR_OVERSHOOT_KHZ {
             return Err(format!("point {}: anchor exceeds plateau by more than 30 MHz", anchor.index));
         }
@@ -88,7 +88,7 @@ pub fn verify_flatten_preflight(
     let gpu: Vec<_> = initial.points.iter().filter(|p| p.domain == Domain::Gpu && p.freq_khz > 0).collect();
     for w in gpu.windows(3) {
         let (a, b, c) = (w[0], w[1], w[2]);
-        if b.index as i64 < from || c.volt_uv <= a.volt_uv || c.volt_uv - a.volt_uv > 50_000 { continue; }
+        if (b.index as i64) < from || c.volt_uv <= a.volt_uv || c.volt_uv - a.volt_uv > 50_000 { continue; }
         let interp = a.base_freq_khz() + (c.base_freq_khz() - a.base_freq_khz())
             * i64::from(b.volt_uv - a.volt_uv) / i64::from(c.volt_uv - a.volt_uv);
         if (b.base_freq_khz() - interp).abs() > MAX_INTERPOLATION_DEVIATION_KHZ {

@@ -5,7 +5,6 @@ use crate::config::{Config, PERSISTENT_CONFIG_FILE};
 use crate::hal::{gpu, limits, monitoring, sensors, vfcurve};
 use crate::nvml;
 use crate::profiles::apply::apply_profile;
-use crate::profiles::native::{load_profile, profile_path};
 use crate::types::CurveState;
 use serde_json::{json, Map, Value};
 use std::path::Path;

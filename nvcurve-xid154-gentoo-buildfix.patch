@@ -1,0 +1,72 @@
+diff --git a/crates/nvcurve/src/hal/flatten_guard.rs b/crates/nvcurve/src/hal/flatten_guard.rs
+--- a/crates/nvcurve/src/hal/flatten_guard.rs
++++ b/crates/nvcurve/src/hal/flatten_guard.rs
+@@ -78,7 +78,7 @@
+ 
+     // Check the point immediately before the plateau; a steep rising anchor
+     // above the flat region would create a fold, regardless of CT validity.
+-    if let Some(anchor) = initial.points.iter().filter(|p| p.domain == Domain::Gpu && p.index as i64 < from && p.freq_khz > 0).last() {
++    if let Some(anchor) = initial.points.iter().filter(|p| p.domain == Domain::Gpu && (p.index as i64) < from && p.freq_khz > 0).last() {
+         if projected(anchor, deltas) > target_khz + MAX_ANCHOR_OVERSHOOT_KHZ {
+             return Err(format!("point {}: anchor exceeds plateau by more than 30 MHz", anchor.index));
+         }
+@@ -88,7 +88,7 @@
+     let gpu: Vec<_> = initial.points.iter().filter(|p| p.domain == Domain::Gpu && p.freq_khz > 0).collect();
+     for w in gpu.windows(3) {
+         let (a, b, c) = (w[0], w[1], w[2]);
+-        if b.index as i64 < from || c.volt_uv <= a.volt_uv || c.volt_uv - a.volt_uv > 50_000 { continue; }
++        if (b.index as i64) < from || c.volt_uv <= a.volt_uv || c.volt_uv - a.volt_uv > 50_000 { continue; }
+         let interp = a.base_freq_khz() + (c.base_freq_khz() - a.base_freq_khz())
+             * i64::from(b.volt_uv - a.volt_uv) / i64::from(c.volt_uv - a.volt_uv);
+         if (b.base_freq_khz() - interp).abs() > MAX_INTERPOLATION_DEVIATION_KHZ {
+diff --git a/crates/nvcurve/src/ops.rs b/crates/nvcurve/src/ops.rs
+--- a/crates/nvcurve/src/ops.rs
++++ b/crates/nvcurve/src/ops.rs
+@@ -5,7 +5,6 @@
+ use crate::hal::{gpu, limits, monitoring, sensors, vfcurve};
+ use crate::nvml;
+ use crate::profiles::apply::apply_profile;
+-use crate::profiles::native::{load_profile, profile_path};
+ use crate::types::CurveState;
+ use serde_json::{json, Map, Value};
+ use std::path::Path;
+diff --git a/tests/nvcurve_safety_static_test.py b/tests/nvcurve_safety_static_test.py
+--- a/tests/nvcurve_safety_static_test.py
++++ b/tests/nvcurve_safety_static_test.py
+@@ -109,6 +109,22 @@
+         self.assertNotIn('map(|now| vfcurve::write_prepared_offsets',s)
+         self.assertEqual(s.count('vfcurve::restore_offsets_verified(gpu, &old_offsets)'),2)
+ 
++    def test_rust_cast_comparison_precedence(self):
++        # Regression: Rust parses `x as i64 < bound` as a generic type
++        # argument without parentheses. This broke the Gentoo 1.98.1 build.
++        import re
++        for f in (ROOT / 'crates/nvcurve/src').rglob('*.rs'):
++            code = f.read_text()
++            invalid = re.search(r'\bas\s+(?:u\d+|i\d+|usize|isize)\s*<\s*[^=]', code)
++            self.assertIsNone(invalid, f'{f}: cast/comparison precedence requires parentheses')
++        guard = src('crates/nvcurve/src/hal/flatten_guard.rs')
++        self.assertIn('(p.index as i64) < from', guard)
++        self.assertIn('(b.index as i64) < from', guard)
++
++    def test_ops_no_unused_profile_native_import(self):
++        ops = src('crates/nvcurve/src/ops.rs')
++        self.assertNotIn('use crate::profiles::native::{load_profile, profile_path};', ops)
++
+     def test_syntactic_braces(self):
+         # Quote- and comment-aware nesting heuristic. Not a Rust parser.
+         files=['crates/nvcurve/src/nvapi.rs','crates/nvcurve/src/hal/vfcurve.rs','crates/nvcurve/src/hal/flatten_guard.rs',
+diff --git a/NVCURVE-XID154-CHANGELOG.md b/NVCURVE-XID154-CHANGELOG.md
+--- a/NVCURVE-XID154-CHANGELOG.md
++++ b/NVCURVE-XID154-CHANGELOG.md
+@@ -26,3 +26,10 @@
+ This patch **reduces known software hazards** but does not prove that Xid 154 is caused by NVcurve or that an existing OC is stable. `gpu_clock_cap_mhz=2692` with `gpu_clock_comp_mhz=100` requests a cap of 2792 MHz, not 2692 MHz; the patch now reports that difference as a warning. Clock lock restoration is not guaranteed because NVML does not expose the former lock ranges. The V3 offset-free base query is unavailable with this declared struct and is intentionally suppressed rather than sending a truncated/invalid NvAPI request.
+ 
+ **First test**: keep `nvcurve-autoload` disabled, build/test the source, use a conservative profile only if the GPU is currently healthy, and inspect kernel logs before any subsequent trial.
++
++## Gentoo / Rust 1.98.1 compile fix (2026-11-04)
++
++- Parenthesized two cast-before-`<` expressions in `hal/flatten_guard.rs` to prevent Rust from parsing the comparison as a const-generic argument (reported as seven cascading errors).
++- Removed unused `load_profile` and `profile_path` imports from `ops.rs`.
++- Added static regression checks for this cast/comparison parsing hazard.
++- This is a targeted fix for the uploaded build log; native Cargo/Qt compilation is **not** available in the patching environment. Run `cargo build --release --frozen` and the Gentoo ebuild on the target system to confirm and reveal any later errors.
