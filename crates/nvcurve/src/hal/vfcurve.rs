@@ -84,6 +84,9 @@ const V3_BASE_SUPPORTED: usize = 0x24;
 const V3_BASE_FREQ: usize = 12;
 
 pub fn read_base_freqs(gpu: Gpu) -> Option<Vec<u32>> {
+    // This experimental V3 declaration is 88844 bytes, but the NvAPI version
+    // word only encodes 16-bit lengths. Never issue the truncated request.
+    if V3_SIZE > u16::MAX as usize { return None; }
     let mask = get_boost_mask(gpu).ok()?;
     let d = nvcall(fid::GET_VFP_CURVE, gpu, V3_SIZE, 3, |b| b.bytes_mut()[4..36].copy_from_slice(&mask)).ok()?;
     parse_v3_base(d.bytes())
@@ -281,11 +284,56 @@ pub fn clamp_to_floor(deltas: &mut PointDeltas, state: &CurveState) -> Vec<Strin
     notes
 }
 
-/// Read-back check that tolerates the floor clamp: a negative delta that came
-/// back less negative (but still ≤ 0) was raised to its point's floor on
-/// purpose; anything else must match exactly.
+/// No implicit clamp tolerance: a driver-clamped offset has a different shape
+/// and must not be reported as an applied profile.
 pub fn readback_matches(expected: i64, got: i64) -> bool {
-    got == expected || (expected < 0 && got > expected && got <= 0)
+    got == expected
+}
+
+/// Missing indices, invalid indices and driver-normalized offsets are failures.
+/// Do not use `filter_map` here: that silently discards a failed readback.
+pub fn verify_readback(deltas: &PointDeltas, readback: &[i32]) -> Vec<String> {
+    deltas.iter().filter_map(|(&p, &expected)| {
+        match usize::try_from(p).ok().and_then(|i| readback.get(i)) {
+            None => Some(format!("point {p}: missing from ClockBoostTable read-back")),
+            Some(&got) if !readback_matches(expected, i64::from(got)) => Some(format!(
+                "point {p}: expected {:+} kHz, read {:+} kHz", expected, got)),
+            Some(_) => None,
+        }
+    }).collect()
+}
+
+/// The checked, *already prepared* profile write. The floor-clamping helper
+/// intentionally does not run here: adjusting a validated offset after the
+/// flatten preflight would invalidate that preflight without updating readback.
+pub fn write_prepared_offsets(gpu: Gpu, deltas: &PointDeltas, raw: &[u8]) -> (i32, String) {
+    if deltas.is_empty() { return (0, "no points to write".into()); }
+    let mask = match get_boost_mask(gpu) {
+        Ok(m) => m,
+        Err(e) => return (-999, format!("Cannot validate GPU point mask: {e}")),
+    };
+    for &p in deltas.keys() {
+        if usize::try_from(p).map_or(true, |i| !mask_has(&mask, i)) {
+            return (-998, format!("Refused point {p}: not programmable in GPU point mask"));
+        }
+    }
+    let mut buf = match build_write_buffer(gpu, deltas, false, Some(raw)) {
+        Ok(b) => b,
+        Err(e) => return (-998, e),
+    };
+    nvcall_raw(fid::SET_CLOCK_BOOST_TABLE, gpu, &mut buf)
+}
+
+/// One best-effort offset restore after an unsuccessful write. An Xid may make
+/// even rollback impossible; return that failure instead of claiming recovery.
+pub fn restore_offsets_verified(gpu: Gpu, expected: &PointDeltas) -> Result<(), String> {
+    let raw = read_clock_table_raw(gpu)?;
+    let (rc, why) = write_prepared_offsets(gpu, expected, raw.bytes());
+    if rc != 0 { return Err(format!("CT restore write failed {rc}: {why}")); }
+    let observed = read_clock_offsets(gpu)?;
+    let errors = verify_readback(expected, &observed);
+    if errors.is_empty() { Ok(()) }
+    else { Err(format!("CT restore verification failed: {}", errors.join("; "))) }
 }
 
 /// Returns (driver return code, description). -998 = rejected, -999 = setup failure.
@@ -354,15 +402,18 @@ pub fn global_offset_deltas(curve: &CurveState, delta_khz: i64) -> PointDeltas {
 /// the driver's offset-free V3 base tuple (freq − delta without it). Computing this at write time
 /// instead of from an earlier read is what keeps the top flat: the base curve moves in 7.5/15 MHz
 /// steps with temperature, and stale bases left the top points 8–23 MHz above the target.
-pub fn flatten_deltas(curve: &CurveState, from: i64, mhz: i64) -> PointDeltas {
-    let target = mhz * 1000;
-    curve.points.iter()
-        .filter(|p| p.domain == Domain::Gpu && p.index as i64 >= from && p.freq_khz > 0)
-        .map(|p| {
-            let base = p.base_khz.map_or(i64::from(p.freq_khz) - i64::from(p.delta_khz), i64::from);
-            (p.index as i64, target - base)
-        })
-        .collect()
+pub fn flatten_deltas(curve: &CurveState, from: i64, mhz: i64) -> Result<PointDeltas, String> {
+    if from < 0 || mhz <= 0 { return Err("flatten_from / flatten_mhz must be positive and present".into()); }
+    let target = mhz.checked_mul(1000).ok_or("flatten MHz overflows kHz")?;
+    let mut out = PointDeltas::new();
+    for pt in curve.points.iter().filter(|pt| pt.domain == Domain::Gpu && pt.index as i64 >= from && pt.freq_khz > 0) {
+        let base = pt.base_freq_khz();
+        let delta = target.checked_sub(base).ok_or("flatten delta overflow")?;
+        i32::try_from(delta).map_err(|_| format!("flatten point {} overflows i32", pt.index))?;
+        out.insert(pt.index as i64, delta);
+    }
+    if out.is_empty() { return Err(format!("flatten_from {from} selects no active GPU V/F points")); }
+    Ok(out)
 }
 
 /// Global core offset (see `global_offset_deltas`).
@@ -505,22 +556,27 @@ mod tests {
             pt(126, 2_775_000, Some(3_157_000), -390_000, Domain::Gpu),
             pt(127, 405_000, Some(405_000), 0, Domain::Memory),
         ], timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info" };
-        let d = flatten_deltas(&st, 72, 2752);
+        let d = flatten_deltas(&st, 72, 2752).unwrap();
         assert_eq!(d.len(), 3);                       // 71 below the anchor and the memory point untouched
         assert_eq!(d[&72], 300_000);
         assert_eq!(d[&75], 232_000);                  // 2520 + 232 = 2752, not the stale +240
         assert_eq!(d[&126], -405_000);
         // no V3 base: freq − delta
         let nob = CurveState { points: vec![pt(80, 2_760_000, None, 240_000, Domain::Gpu)], ..st };
-        assert_eq!(flatten_deltas(&nob, 72, 2752)[&80], 232_000);
+        assert_eq!(flatten_deltas(&nob, 72, 2752).unwrap()[&80], 232_000);
     }
 
     #[test]
-    fn readback_tolerates_clamp_only() {
+    fn readback_is_exact_and_includes_missing() {
         assert!(readback_matches(-50_000, -50_000));
-        assert!(readback_matches(-270_000, -224_000));
+        assert!(!readback_matches(-270_000, -224_000));
+        assert!(!readback_matches(-500_000, 0));
         assert!(!readback_matches(-50_000, 1_000));
         assert!(!readback_matches(50_000, 40_000));
+        let mut d = PointDeltas::new();
+        d.insert(0, -500_000);
+        d.insert(3, 150_000);
+        assert_eq!(verify_readback(&d, &[0]).len(), 2);
     }
 
     #[test]

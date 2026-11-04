@@ -8,7 +8,7 @@
 use nvcurve::config::{Config, PERSISTENT_CONFIG_FILE};
 use nvcurve::hal::{gpu, limits, monitoring, snapshot, vfcurve};
 use nvcurve::nvapi::*;
-use nvcurve::profiles::apply::{apply_profile, run_autoload};
+use nvcurve::profiles::apply::run_autoload;
 use nvcurve::profiles::native::{list_profiles, load_profile, profile_path, save_profile, ProfileData};
 use nvcurve::safety::validate_write;
 use nvcurve::{logging, ops, CurveState, Domain, NvError};
@@ -260,10 +260,10 @@ fn cmd_write(a: &Args, cfg: &Config) {
         let what = if reset_all { " (gpu + memory domain)" } else { "" };
         if dry { println!("DRY RUN — would reset all offsets to 0{what}."); return; }
         require_root();
-        let (g, _) = open_gpu(a);
-        let (rc, d) = if reset_all { vfcurve::reset_all_offsets(g, false) } else { vfcurve::reset_offsets(g, false) };
-        if rc != 0 { die(1, format!("Write failed ({rc}): {d}")); }
-        println!("Reset: all offsets set to 0{what}.");
+        let domain = if reset_all { None } else { Some(Domain::Gpu) };
+        let verified = ops::reset_vf_offsets_verified(a.gpu(), domain)
+            .unwrap_or_else(|e| die(1, format!("Reset failed: {e}")));
+        println!("{verified}{what}.");
         return;
     }
     let delta = delta.unwrap();
@@ -419,14 +419,9 @@ fn cmd_profile(a: &Args, cfg: &Config) {
         Some("apply") => {
             let n = need("apply");
             require_root();
-            let out = apply_profile(a.gpu(), n, cfg).unwrap_or_else(|e| die(1, format!("Profile '{n}': {e}")));
-            for w in &out.warnings { eprintln!("  warning: {w}"); }
-            if !out.errors.is_empty() {
-                for e in &out.errors { eprintln!("  error: {e}"); }
-                die(1, format!("Profile '{n}' applied with errors."));
-            }
-            if out.warnings.is_empty() { println!("Applied profile '{n}'."); }
-            else { println!("Applied profile '{n}' with warnings (see stderr)."); }
+            let msg = ops::apply_profile_verified(a.gpu(), n, cfg, 1)
+                .unwrap_or_else(|e| die(1, format!("Profile '{n}': {e}")));
+            println!("{msg}");
         }
         _ => die(2, "usage: nvcurve profile list|save NAME|apply NAME|default (NAME|--clear)"),
     }
@@ -550,7 +545,9 @@ fn main() {
     let writes = matches!((c0, c1), (Some("write" | "reset-all" | "autoload"), _)
         | (Some("snapshot"), Some("restore")) | (Some("profile"), Some("apply"))
         | (Some("memlock"), Some("set" | "reset")) | (Some("powermizer"), Some("set")));
-    let _lock = (writes && !a.flag("--dry-run") && unsafe { libc::geteuid() } == 0)
+    let unsafe_sensor_probe = c0 == Some("sensors") &&
+        std::env::var("NVCURVE_UNSAFE_REG_SENSORS").ok().as_deref() == Some("1");
+    let _lock = ((writes || unsafe_sensor_probe) && !a.flag("--dry-run") && unsafe { libc::geteuid() } == 0)
         .then(|| ops::gpu_write_lock().unwrap_or_else(|e| die(1, format!("nvcurve: {e}"))));
     match a.pos.first().map(String::as_str) {
         Some("read") => cmd_read(&a),

@@ -1,4 +1,5 @@
 pub mod gpu;
+pub mod flatten_guard;
 pub mod limits;
 pub mod monitoring;
 pub mod ranges;

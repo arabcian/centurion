@@ -182,6 +182,11 @@ const NOT_FOUND: &str = "function pointer not found (driver too old?)";
 pub fn nvcall(id: u32, gpu: Gpu, size: usize, ver: u32, pre_fill: impl FnOnce(&mut Buf))
     -> Result<Buf, String>
 {
+    // Linux NvAPI encodes the request size in 16 bits. Truncating it silently
+    // produces an invalid version word and can corrupt the caller's assumptions.
+    if size > u16::MAX as usize || ver > u16::MAX as u32 {
+        return Err(format!("NvAPI versioned structure cannot encode {size} bytes / version {ver}"));
+    }
     let mut buf = Buf::new(size);
     buf.put_u32(0, (ver << 16) | size as u32);
     pre_fill(&mut buf);

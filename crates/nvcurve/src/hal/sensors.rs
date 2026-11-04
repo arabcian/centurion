@@ -81,6 +81,11 @@ fn celsius(raw: i32) -> Option<i32> {
 }
 
 pub fn read_register(gpu: Gpu, offset: u32) -> Result<u64, String> {
+    // Unsafe/private GSP register probes are deliberately opt-in. In
+    // particular, do not probe missing GDDR partitions every 2 s at boot.
+    if std::env::var("NVCURVE_UNSAFE_REG_SENSORS").ok().as_deref() != Some("1") {
+        return Err("raw NVIDIA register sensor probes disabled (NVCURVE_UNSAFE_REG_SENSORS=1 opts in)".into());
+    }
     let b = nvcall(fid::REGISTER_OP, gpu, REG_OP_SIZE, 1, |b| {
         b.put_u32(4, 1); // op_count
         let flags = REG_FLAG_READ | REG_FLAG_32BIT | REG_FLAG_GLOBAL;

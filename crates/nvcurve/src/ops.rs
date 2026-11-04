@@ -26,9 +26,29 @@ pub fn gpu_write_lock() -> Result<std::fs::File, String> {
         if unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&f), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
             return Ok(f);
         }
+        let e = std::io::Error::last_os_error();
+        if e.kind() != std::io::ErrorKind::WouldBlock {
+            return Err(format!("cannot acquire {WRITE_LOCK}: {e}"));
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
     Err("another nvcurve GPU write is still running (waited 60 s)".into())
+}
+
+/// Try acquiring the same lock without waiting. Optional private-register
+/// sensor polls should skip a sample rather than waiting behind a GPU write.
+pub fn gpu_try_lock() -> Result<Option<std::fs::File>, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::fd::AsRawFd;
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(WRITE_LOCK)
+        .map_err(|e| format!("cannot open {WRITE_LOCK}: {e}"))?;
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(Some(f));
+    }
+    let e = std::io::Error::last_os_error();
+    if e.kind() == std::io::ErrorKind::WouldBlock { Ok(None) }
+    else { Err(format!("cannot lock {WRITE_LOCK}: {e}")) }
 }
 
 /// `{gpu, current_voltage_uV, vf_curve:[{index,freq_kHz,volt_uV,freq_offset_kHz,domain}]}`
@@ -67,73 +87,18 @@ pub fn read_curve_retry(gpu_index: usize, retries: u32) -> Result<Value, String>
     Err(last)
 }
 
-/// Reset → apply → read-back verify → retry. Ok(message) / Err(reason).
-/// On failure the offsets that were live before the call are written back (they are read first),
-/// and the error says whether that worked. NVML offsets (memory, power, ...) are not touched here.
-pub fn apply_profile_verified(gpu_index: usize, name: &str, cfg: &Config, max_retries: u32)
+/// Shared one-shot profile operation used by GUI, CLI and autoload.
+/// The caller holds the cross-process GPU lock. No separate reset, no blind
+/// retry, and rollback is delegated to the transaction that knows which
+/// NVML changes were attempted. `max_retries` is accepted for old callers but
+/// deliberately ignored: reapplying OC after an Xid can wedge the driver.
+pub fn apply_profile_verified(gpu_index: usize, name: &str, cfg: &Config, _max_retries: u32)
     -> Result<String, String>
 {
-    let prev = gpu::get_gpu(gpu_index).ok().and_then(|(g, _)| vfcurve::read_clock_offsets(g).ok());
-    let err = match apply_profile_verified_inner(gpu_index, name, cfg, max_retries) {
-        Ok(m) => return Ok(m),
-        Err(e) => e,
-    };
-    let Some(prev) = prev else { return Err(format!("{err} — rollback impossible: previous curve could not be read")) };
-    let Ok((g, _)) = gpu::get_gpu(gpu_index) else { return Err(format!("{err} — rollback failed: GPU unavailable")) };
-    if vfcurve::read_clock_offsets(g).is_ok_and(|now| now == prev) {
-        return Err(format!("{err} — curve unchanged (previous offsets still active)"));
-    }
-    let Ok(state) = vfcurve::read_curve(g, "") else { return Err(format!("{err} — rollback failed: curve unreadable")) };
-    let deltas: vfcurve::PointDeltas = state.points.iter()
-        .filter_map(|p| prev.get(p.index).map(|&d| (p.index as i64, d as i64))).collect();
-    let (rc, d) = vfcurve::write_offsets(g, &deltas, false, false, None);
-    let ok = rc == 0 && vfcurve::read_clock_offsets(g).is_ok_and(|now| now == prev);
-    Err(if ok { format!("{err} — previous curve restored") }
-        else { format!("{err} — rollback FAILED ({rc}: {d}); GPU curve state is unknown, check `nvcurve` or load a snapshot") })
-}
-
-fn apply_profile_verified_inner(gpu_index: usize, name: &str, cfg: &Config, max_retries: u32)
-    -> Result<String, String>
-{
-    let (g, _) = gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?;
-    // Validate the profile BEFORE touching the GPU: a typo or a broken file must not
-    // wipe the curve that is currently applied.
-    let path = profile_path(&cfg.profile_dir, name).ok_or_else(|| format!("Invalid profile name: {name:?}"))?;
-    if !path.is_file() { return Err(format!("Profile not found: {name}")); }
-    load_profile(&path)?.deltas().map_err(|e| format!("Malformed curve_deltas in profile: {e}"))?;
-    let (rc, d) = vfcurve::reset_all_offsets(g, false);
-    if rc != 0 { return Err(format!("Reset failed: {d}")); }
-    let max_retries = max_retries.max(1);  // 0 attempts would report success without applying anything
-
-    let mut errs: Vec<String> = Vec::new();
-    let mut warns: Vec<String> = Vec::new();
-    for attempt in 0..max_retries {
-        let out = apply_profile(gpu_index, name, cfg)?;
-        errs = out.errors;
-        warns = out.warnings;
-        let expected = out.deltas;  // what was written (a flatten is resolved at apply time)
-        if errs.is_empty() && !expected.is_empty() {
-            match vfcurve::read_clock_offsets(g) {
-                Err(e) => errs = vec![format!("Read-back failed: {e}")],
-                Ok(offs) => {
-                    let mism: Vec<String> = expected.iter().filter_map(|(&i, &v)| {
-                        let got = *offs.get(usize::try_from(i).ok()?)? as i64;
-                        (!vfcurve::readback_matches(v, got)).then(|| format!("pt{i}: expected {:+.0}MHz got {:+.0}MHz",
-                                                    v as f64 / 1000.0, got as f64 / 1000.0))
-                    }).collect();
-                    if !mism.is_empty() { errs = vec![format!("Read-back mismatch: {}", mism.join("; "))]; }
-                }
-            }
-        }
-        if errs.is_empty() { break; }
-        if attempt + 1 < max_retries { std::thread::sleep(Duration::from_millis(300)); }
-    }
-    if !errs.is_empty() {
-        let suffix = if max_retries > 1 { format!(" (after {max_retries} attempts)") } else { String::new() };
-        return Err(format!("{}{suffix}", errs.join("; ")));
-    }
-    let mut msg = format!("Profile '{name}' applied successfully.");
-    for w in warns { msg.push('\n'); msg.push_str(&w); }
+    let out = apply_profile(gpu_index, name, cfg)?;
+    if !out.errors.is_empty() { return Err(out.errors.join("; ")); }
+    let mut msg = format!("Profile '{name}' applied and verified.");
+    for warning in out.warnings { msg.push('\n'); msg.push_str(&warning); }
     Ok(msg)
 }
 
@@ -155,6 +120,62 @@ pub fn sensors_json(gpu_index: usize) -> Value {
     })
 }
 
+/// One prepared zero-table write, exact read-back and one rollback attempt;
+/// no separate stock-curve interlude or stale read-back acceptance.
+/// Reset only the requested V/F domain (None = both GPU and memory).
+/// Same prepared-write/read-back model as profile apply, without modifying
+/// NVML locks. The caller holds gpu_write_lock.
+pub fn reset_vf_offsets_verified(gpu_index: usize, domain: Option<crate::types::Domain>) -> Result<String, String> {
+    use crate::types::Domain;
+    let (g, _) = gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?;
+    let (state, raw) = vfcurve::read_curve_with_raw_ct(g, "")?;
+    let mask = vfcurve::get_boost_mask(g)?;
+    let old = vfcurve::parse_ct_entries(raw.bytes());
+    let mut zero = vfcurve::PointDeltas::new();
+    for (i, &(d, _)) in old.iter().enumerate() {
+        let active = mask[i / 8] & (1u8 << (i % 8)) != 0;
+        let old_domain = state.points.iter().find(|p| p.index == i).map(|p| p.domain);
+        let wanted = domain.is_none() || domain == old_domain;
+        if active && wanted { zero.insert(i as i64, 0); }
+        else if d != 0 && !active && domain.is_none() {
+            return Err(format!("nonzero offset on masked-out point {i}, refusing partial reset"));
+        } else if d != 0 && active && domain == Some(Domain::Gpu) && old_domain.is_none() {
+            return Err(format!("cannot classify nonzero CT point {i} for GPU-only reset"));
+        }
+    }
+    if state.points.is_empty() || zero.is_empty() { return Err("no programmable GPU points in requested domain".into()); }
+    let before: vfcurve::PointDeltas = zero.keys().map(|&i| (i, old[i as usize].0 as i64)).collect();
+    let latest = vfcurve::read_clock_offsets(g)?;
+    if latest != old.iter().map(|&(d, _)| d).collect::<Vec<_>>() {
+        return Err("ClockBoostTable changed during reset preflight".into());
+    }
+    let (rc, why) = vfcurve::write_prepared_offsets(g, &zero, raw.bytes());
+    if rc != 0 {
+        let rollback = vfcurve::restore_offsets_verified(g, &before);
+        return Err(format!("Reset CT write failed {rc}: {why}; rollback attempt: {rollback:?}"));
+    }
+    let mismatch = vfcurve::read_clock_offsets(g).map(|now| vfcurve::verify_readback(&zero, &now));
+    if !matches!(&mismatch, Ok(v) if v.is_empty()) {
+        let err = mismatch.map(|v| v.join("; ")).unwrap_or_else(|e| e);
+        let rollback = vfcurve::restore_offsets_verified(g, &before);
+        return Err(format!("Reset read-back failed: {err}; rollback attempt: {rollback:?}"));
+    }
+    Ok(format!("{} V/F offsets reset and verified", match domain {
+        None => "all", Some(Domain::Gpu) => "GPU", Some(Domain::Memory) => "memory" }))
+}
+
+/// GUI Reset Curve also releases its core cap; memory NVML offsets/locks are
+/// deliberately left untouched (Reset All handles those separately).
+pub fn reset_gpu_curve_verified(gpu_index: usize) -> Result<String, String> {
+    let summary = reset_vf_offsets_verified(gpu_index, None)?;
+    match limits::reset_gpu_locked_clocks(gpu_index as u32) {
+        Ok(()) => Ok(format!("{summary}; GPU cap released")),
+        Err(e) if e.contains("Not Supported") || e.contains("not found") =>
+            Ok(format!("{summary}; core lock API unavailable")),
+        Err(e) => Err(format!("{summary}; core cap release failed: {e}")),
+    }
+}
+
 /// Everything back to stock, in the order LACT's reset uses too: curve
 /// offsets (every point, both domains), NVML offsets in every P-state, core
 /// and memory clock locks, power limit, PowerMizer → Auto. Each step is
@@ -162,20 +183,16 @@ pub fn sensors_json(gpu_index: usize) -> Value {
 pub fn reset_everything(gpu_index: usize) -> (Vec<String>, Vec<String>) {
     let (mut done, mut errs) = (Vec::new(), Vec::new());
     let idx = gpu_index as u32;
-    match gpu::get_gpu(gpu_index) {
-        Ok((g, _)) => match vfcurve::reset_all_offsets(g, false) {
-            (0, _) => done.push("V/F curve offsets → 0 (all points)".to_string()),
-            (rc, d) => errs.push(format!("curve reset ({rc}): {d}")),
-        },
-        Err(e) => errs.push(format!("curve reset: {e}")),
+    match reset_gpu_curve_verified(gpu_index) {
+        Ok(msg) => done.push(msg),
+        Err(e) => { errs.push(format!("V/F reset: {e}")); return (done, errs); }
     }
     match limits::reset_all_clock_offsets(idx) {
         Ok(v) if v.is_empty() => done.push("NVML clock offsets already 0 in every P-state".into()),
         Ok(v) => done.extend(v),
         Err(e) => errs.push(format!("clock offsets: {e}")),
     }
-    for (what, r) in [("core clock lock", limits::reset_gpu_locked_clocks(idx)),
-                      ("memory clock lock", limits::reset_mem_locked_clocks(idx))] {
+    for (what, r) in [("memory clock lock", limits::reset_mem_locked_clocks(idx))] {
         match r {
             Ok(()) => done.push(format!("{what} released")),
             // "not supported" on a GPU without locks is not a failed reset

@@ -1,43 +1,44 @@
-# nvcurve: Flatten safety preflight (experimental)
+# NVcurve V/F transactional safety — Xid 154 investigation patch
 
-This branch intentionally **preserves the existing flatten algorithm**:
+This branch keeps the **existing flatten math** (target kHz minus offset-free base kHz) and adds a read-only preflight, a single prepared ClockBoostTable write, strict read-back, and best-effort rollback. This is a *defensive patch*, not proof that any GPU overclock or undervolt is electrically stable.
 
-- With an available offset-free V3 base: `delta_kHz = target_kHz - V3_base_kHz`.
-- Without V3: `delta_kHz = target_kHz - (live_VFP_freq_kHz - live_CT_delta_kHz)`.
+## What changed
 
-The new `crates/nvcurve/src/hal/flatten_guard.rs` module is a **read-only preflight**. It does not change the actual flatten calculation or send a stress workload to the GPU. It runs for **all profile entry points** (GUI, CLI, autoload) because they share `profiles::apply::apply_profile`.
+- `flatten_guard.rs` compares two successive driver reads. It checks point count, identity, domain, voltage and previous CT offset; tolerates up to 45 MHz base-clock drift; checks the projected plateau, its preceding anchor, local V/F shape and large point outliers. It rejects anomalies **before any profile GPU write**.
+- One shared operation is used for GUI helper, CLI profile apply and boot autoload. Each already holds `/run/nvcurve.lock`. No reset-to-stock gap and no automatic retry after a failed OC write.
+- The same ClockBoostTable write includes every programmable core point and zeroes memory-domain CT offsets. Old nonzero CT points outside the populated VFP curve are either explicitly zeroed (if in the device mask) or rejected. Profiles with nonzero memory offset in other P-states are rejected instead of silently compounding offsets.
+- Read-back comparisons are exact; missing points, unexpected positive offsets or clamped negative deltas are treated as errors. NVML memory offset and power limits are also verified when queryable. The clock-lock API does **not** disclose the previous lock range, so previously set locks cannot be restored exactly after an error. This is reported in the error, not hidden.
+- Snapshots are restored only if metadata matches the GPU (UUID when available, otherwise name), the point mask and validated offsets. No raw snapshot driver control bytes are replayed.
+- GUI reset, CLI `write --reset`, CLI `write --reset-all`, and `reset-all` now verify CT results and try to roll back incomplete writes.
+- Raw Blackwell `REGISTER_OP` sensor probes are **disabled by default**. They are reachable only with `NVCURVE_UNSAFE_REG_SENSORS=1` and then participate in the same process-level GPU write lock in the shipped CLI, sensor helper and root helper. This cannot serialize with third-party GPU tools.
+- The experimental V3 struct is 88,844 bytes, greater than the 16-bit NVAPI version size field. The invalid request is no longer sent. Flatten therefore uses the V1 status-based `freq - old_delta` fallback unless a valid future base-tuple implementation becomes available.
 
-## What the preflight checks
+## Important limitations
 
-1. Read the V/F curve and ClockBoostTable twice from NVIDIA's driver, without writing anything.
-2. Refuse changes in point count, point index, GPU/memory domain, voltage, or previous CT delta between the two reads.
-3. Compare reconstructed base frequencies of the flattened points across both reads; tolerate up to **45 MHz** natural boost-bin/temperature drift. A larger difference aborts the transaction.
-4. Reject absurd voltage/base readings, voltage reversals, sudden local frequency steps (more than **+180 / -45 MHz** across at most 25 mV) and a single point deviating more than **90 MHz** from local linear interpolation.
-5. Confirm that **each individual selected point**, when its prepared delta is added to the *same first-read base* used by the algorithm, equals the desired flat frequency. This catches calculation, rounding, and clamp-induced deviations.
-6. Confirm that the point immediately before the flatten start does not exceed the new plateau by over **30 MHz**.
-7. Check the entire CT against the initial CT at preflight, and **once more immediately before the first write** to avoid overwriting another tool's concurrent settings. A stale preflight aborts without rollback, because this transaction has not changed the GPU.
-8. After an accepted profile is sent, the exact CT readback must still match; a failed write triggers best-effort NVML/CT rollback. Previous NVML clock locks cannot always be restored and are reported as such.
-
-If any check fails, the profile application returns `Flatten safety preflight: ...` and **does not apply the new GPU settings**. The user can retry when the GPU is idle or revise the anomalous voltage/frequency point.
-
-## Safety limitations
-
-- A consistent but *capped* VFP read can hide the true offset-free base when V3 is unavailable. Two reads **cannot prove** that this estimate is correct. The preflight is a plausibility and concurrency gate, **not proof of GPU electrical stability**.
-- The checks cannot determine whether a frequency/voltage pair is stable under actual workload. No stress test is run automatically, so the GPU does not take additional stress before applying an undervolt.
-- Thresholds are intentionally conservative, but different GPUs/drivers may need adjustment. A false rejection is preferable to applying an outlier.
-- Blackwell raw REGISTER_OP temperature probes are also disabled by default in this branch for independent PRI/GSP concerns; opting back into that experimental path is unsafe.
-- The driver may normalize offsets. The code currently requires exact CT readback; if that driver normalizes a value, the profile fails instead of silently accepting a different offset.
+1. There is **no compatible Rust/Cargo toolchain in the patch authoring environment**. Static source checks passed (`12/12`), but **Rust compilation, all Rust unit tests, and real NVIDIA hardware operation remain unverified**. Build on Gentoo before considering any GPU write.
+2. NVIDIA UVM Xid 154 is a recovery requirement, **not** a diagnosis of its initiating failure. A correct CT write can still overclock an unstable device; NVIDIA driver/GSP, firmware, UVM and other tuning software remain possible sources.
+3. Two coherent VFP reads cannot establish electrical stability. In particular, the V1 fallback can be misleading if the driver clamps frequencies. Conservative profiles and a separate workload stability test are still required.
+4. Rollback is best-effort and can fail if the GSP/UVM is already faulted. NVML does not expose prior GPU and memory clock-lock values; a failed transaction may release those locks rather than restore their previous ranges. The returned error states this.
+5. Old snapshots without metadata are intentionally rejected. If a profile's GPU name differs from the device, or an unsupported P-state cannot be verified, application fails closed instead of silently applying a possibly incorrect setting.
+6. `NVCURVE_UNSAFE_REG_SENSORS=1` is an unsafe experimental override, not recommended with a system exhibiting Xid failures.
 
 ## Gentoo verification
 
-From the project root:
+Run from the repository root:
 
 ```bash
 python3 tests/nvcurve_safety_static_test.py
 cargo test -p nvcurve --lib
+cargo test -p nvcurve --bins
 cargo build --release -p nvcurve
 ```
 
-The Python tests check wiring and source invariants; they do not execute Rust. The seven Rust `flatten_guard` tests include a healthy old-style flatten without V3, 15 MHz boost-bin drift, and rejections for incorrect offset, unstable read, voltage change, previous-offset change, anomalous point, anchor inversion, and missing point.
+The Python tests are source-level checks, not a Rust parser or GPU simulation. A successful `cargo build` is still not proof of GPU safety.
 
-For a real GPU trial: disable autoload, reset the GPU tuning state using your *known safe* method, and apply only a conservative profile. Review kernel logs before attempting any aggressive frequency/voltage settings. Never run `nvcurve` operations against a GPU already experiencing recovery, GSP faults, or Xid errors.
+To isolate the startup fault, disable boot autoload before deploying the test build (do not re-enable until you have established stability):
+
+```bash
+sudo rc-update del nvcurve-autoload default
+```
+
+Check `dmesg` for NVRM/Xid and UVM faults after each controlled boot. Do not repeatedly reapply a profile to a GPU in Xid 154 recovery state. The particular `EXPERIMENTAL` profile with +240 MHz below the index-72 flatten and a 2692 MHz flat top may be *rejected* if the actual driver V/F anchor is higher than the plateau; this is an intentional safety failure, not a compatibility bug.

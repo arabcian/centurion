@@ -1,7 +1,10 @@
 //! ClockBoostTable snapshots (port of hal/snapshot.py).
 
 use crate::atomicio::{ensure_dir, write_bytes, write_json};
-use crate::hal::vfcurve::{get_boost_mask, read_clock_table_raw};
+use crate::hal::vfcurve::{self, get_boost_mask, read_clock_table_raw};
+use crate::hal::gpu;
+use crate::safety::validate_write;
+use crate::nvapi::MAX_DELTA_KHZ;
 use crate::nvapi::*;
 use crate::timefmt;
 use crate::types::SnapshotInfo;
@@ -44,12 +47,21 @@ pub fn save(gpu: Gpu, gpu_name: &str, dir: &str, max_snapshots: usize, raw: Opti
     }
     let offs = offsets(raw);
     let nonzero = offs.iter().filter(|&&o| o != 0).count();
+    // Store a stable UUID in new snapshots; older snapshots retain the GPU
+    // name and must still be checked before restore.
+    let gpu_uuid = gpu::enumerate_gpus().ok().and_then(|handles| {
+        let idx = handles.iter().position(|&h| h == gpu)? as u32;
+        let n = crate::nvml::ready().ok()?;
+        n.uuid(n.handle(idx).ok()?).ok()
+    });
     let meta = json!({
-        "gpu": gpu_name, "timestamp": timefmt::iso_now(), "file": bin.to_string_lossy(),
+        "gpu": gpu_name, "gpu_uuid": gpu_uuid, "timestamp": timefmt::iso_now(), "file": bin.to_string_lossy(),
         "size": raw.len(), "offsets_kHz": offs, "nonzero_offsets": nonzero,
     });
     if let Err(e) = write_json(&meta_path, &meta, 0o644) {
-        error!("Snapshot metadata write failed: {e}");
+        error!("Snapshot metadata write failed: {e}; discarding incomplete snapshot");
+        let _ = std::fs::remove_file(&bin);
+        return None;
     }
     info!("Snapshot saved: {} ({} bytes, {nonzero} non-zero offsets)", bin.display(), raw.len());
     if max_snapshots > 0 { prune(dir, max_snapshots); }
@@ -100,28 +112,89 @@ pub fn resolve_restore_path(dir: &str, filepath: Option<&str>) -> Result<PathBuf
     Ok(real)
 }
 
+/// A snapshot contains driver-private words that must never be replayed as a
+/// raw NvAPI request. Restore ONLY checked per-point signed frequency deltas
+/// into a freshly acquired live table, preserving driver-owned fields.
 pub fn restore(gpu: Gpu, dir: &str, filepath: Option<&str>) -> Result<(), String> {
     let path = resolve_restore_path(dir, filepath)?;
     if !path.is_file() { return Err(format!("Snapshot file not found: {}", path.display())); }
     let mut raw = Vec::with_capacity(CT_SIZE + 1);
     std::fs::OpenOptions::new().read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&path).and_then(|f| f.take(CT_SIZE as u64 + 1).read_to_end(&mut raw))
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&path)
+        .and_then(|f| f.take(CT_SIZE as u64 + 1).read_to_end(&mut raw))
         .map_err(|e| format!("{}: {e}", path.display()))?;
     if raw.len() != CT_SIZE {
         return Err(format!("Snapshot size mismatch: expected {CT_SIZE}, got {}", raw.len()));
     }
     let vw = read_u32(&raw, 0);
     let expected = (1u32 << 16) | CT_SIZE as u32;
-    if vw != expected {
-        return Err(format!("Version word mismatch: 0x{vw:08X} (expected 0x{expected:08X})"));
+    if vw != expected { return Err(format!("Version mismatch: 0x{vw:08X} (expected 0x{expected:08X})")); }
+    let path_meta = path.with_extension("json");
+    let meta: serde_json::Value = serde_json::from_str(&crate::atomicio::read_regular(&path_meta, 64 * 1024)
+        .map_err(|e| format!("Snapshot metadata is mandatory: {e}"))?)
+        .map_err(|e| format!("Invalid snapshot metadata: {e}"))?;
+    let Some(saved_name) = meta["gpu"].as_str().filter(|n| !n.is_empty()) else {
+        return Err("Snapshot metadata has no GPU identity; refusing unsafe restore".into());
+    };
+    let live_name = gpu::gpu_name(gpu);
+    if live_name.is_empty() || saved_name != live_name {
+        return Err(format!("Snapshot belongs to {saved_name:?}, active GPU is {live_name:?}"));
     }
-    let mut buf = Buf::from_bytes(&raw);
-    if let Ok(mask) = get_boost_mask(gpu) { buf.bytes_mut()[4..36].copy_from_slice(&mask); }
-    info!("Restoring ClockBoostTable from {}", path.display());
-    match nvcall_raw(fid::SET_CLOCK_BOOST_TABLE, gpu, &mut buf) {
-        (0, _) => Ok(()),
-        (r, d) => Err(format!("SetClockBoostTable returned {r} ({d})")),
+    if meta["size"].as_u64() != Some(CT_SIZE as u64) {
+        return Err("Snapshot metadata size does not match ClockBoostTable".into());
     }
+    if let Some(expected_uuid) = meta["gpu_uuid"].as_str() {
+        let handles = gpu::enumerate_gpus().map_err(|e| e.to_string())?;
+        let idx = handles.iter().position(|&h| h == gpu)
+            .ok_or("Cannot locate GPU for snapshot UUID verification")? as u32;
+        let n = crate::nvml::ready()?;
+        let got = n.uuid(n.handle(idx)?)?;
+        if got != expected_uuid { return Err(format!("Snapshot GPU UUID {expected_uuid} != active {got}")); }
+    }
+    let current_mask = get_boost_mask(gpu)?;
+    let saved_mask = &raw[4..36];
+    // Only actual programmable points are accepted. A driver update or a
+    // different device mask must never write an invented point.
+    let mut deltas = vfcurve::PointDeltas::new();
+    for (i, (d, _)) in vfcurve::parse_ct_entries(&raw).into_iter().enumerate() {
+        let active = current_mask[i / 8] & (1u8 << (i % 8)) != 0;
+        let saved_active = saved_mask[i / 8] & (1u8 << (i % 8)) != 0;
+        if active != saved_active {
+            return Err(format!("Snapshot point-mask mismatch at point {i}"));
+        }
+        if !active && d != 0 {
+            return Err(format!("Snapshot stores a nonzero delta on masked-out point {i}"));
+        }
+        if active { deltas.insert(i as i64, i64::from(d)); }
+    }
+    let errors = validate_write(&deltas, MAX_DELTA_KHZ);
+    if !errors.is_empty() { return Err(format!("Snapshot offset safety validation: {}", errors.join("; "))); }
+    if deltas.is_empty() { return Err("Snapshot has no active V/F points".into()); }
+    if let Some(saved) = meta["offsets_kHz"].as_array() {
+        if saved.len() != CT_POINTS || saved.iter().enumerate().any(|(i, x)| x.as_i64() !=
+            Some(i64::from(read_i32(&raw, CT_BASE + i * CT_STRIDE + CT_DELTA_OFF)))) {
+            return Err("Snapshot metadata offset array differs from saved binary".into());
+        }
+    } else { return Err("Snapshot metadata has no offset array".into()); }
+
+    let live = read_clock_table_raw(gpu)?;
+    let old_offsets: vfcurve::PointDeltas = deltas.keys()
+        .map(|&i| (i, i64::from(read_i32(live.bytes(), CT_BASE + i as usize * CT_STRIDE + CT_DELTA_OFF)))).collect();
+    info!("Restoring validated offsets (not raw driver fields) from {}", path.display());
+    let (rc, reason) = vfcurve::write_prepared_offsets(gpu, &deltas, live.bytes());
+    if rc != 0 {
+        let rollback = vfcurve::restore_offsets_verified(gpu, &old_offsets);
+        return Err(format!("Snapshot CT write failed {rc}: {reason}; rollback attempt: {rollback:?}"));
+    }
+    let mismatch = vfcurve::read_clock_offsets(gpu).map(|got| vfcurve::verify_readback(&deltas, &got));
+    if !matches!(&mismatch, Ok(v) if v.is_empty()) {
+        let observed = mismatch.map(|v| v.join("; ")).unwrap_or_else(|e| e);
+        // Best effort restoring original CT offsets; exact success is not
+        // guaranteed if the driver entered an Xid recovery state.
+        let rollback = vfcurve::restore_offsets_verified(gpu, &old_offsets);
+        return Err(format!("Snapshot read-back failed: {observed}; rollback attempt: {rollback:?}"));
+    }
+    Ok(())
 }
 
 pub fn list_snapshots(dir: &str) -> Vec<SnapshotInfo> {
