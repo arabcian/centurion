@@ -359,12 +359,10 @@ fn run() -> Value {
                 "centurion-calibrate (pid {pid}) is measuring: power profile, firmware limits, fan and curves stay as they are until it ends")});
         }
     }
-    // Opted-in raw sensor reads must participate in the same GPU write lock.
-    let _lock = if op == "read_sensors" && std::env::var("NVCURVE_UNSAFE_REG_SENSORS").ok().as_deref() != Some("1") { None } else {
-        match ops::gpu_write_lock() {
-            Ok(f) => Some(f),
-            Err(e) => return json!({"ok": false, "error": e}),
-        }
+    // Raw sensor register reads take the same GPU write lock as the writes.
+    let _lock = match ops::gpu_write_lock() {
+        Ok(f) => f,
+        Err(e) => return json!({"ok": false, "error": e}),
     };
     match handler(obj) {
         Ok(m) => {

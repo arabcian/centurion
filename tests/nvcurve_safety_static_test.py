@@ -65,12 +65,18 @@ class Invariants(unittest.TestCase):
             self.assertIn(phrase,a)
         self.assertLess(a.index('if changed_locks.memory_offset {'),a.index('vfcurve::restore_offsets_verified(g, previous)'))
 
-    def test_register_probe_disabled_by_default_and_locked_if_opted_in(self):
-        s=src('crates/nvcurve/src/hal/sensors.rs')
-        self.assertLess(s.index('if std::env::var("NVCURVE_UNSAFE_REG_SENSORS")'),s.index('let b = nvcall(fid::REGISTER_OP'))
+    def test_register_probe_on_by_default_and_locked(self):
+        for f in ['crates/nvcurve/src/hal/sensors.rs','crates/nvcurve/src/bin/nvcurve-sensors.rs',
+                  'crates/nvcurve/src/bin/nvcurve.rs','crates/nvcurve/src/bin/nvcurve-root-helper.rs','gui/src/nvidiatab.cpp']:
+            self.assertNotIn('NVCURVE_UNSAFE_REG_SENSORS',src(f))
         self.assertIn('ops::gpu_try_lock()',src('crates/nvcurve/src/bin/nvcurve-sensors.rs'))
-        self.assertIn('let unsafe_sensor_probe',src('crates/nvcurve/src/bin/nvcurve.rs'))
-        self.assertIn('NVCURVE_UNSAFE_REG_SENSORS',src('crates/nvcurve/src/bin/nvcurve-root-helper.rs'))
+        self.assertIn('let sensor_probe',src('crates/nvcurve/src/bin/nvcurve.rs'))
+
+    def test_curve_shape_ignores_stock_shape(self):
+        s=src('crates/nvcurve/src/hal/flatten_guard.rs')
+        self.assertIn('step < stock_step - MAX_LOCAL_DOWN_KHZ',s)
+        self.assertNotIn('MAX_LOCAL_UP_KHZ',s)
+        self.assertNotIn('MAX_INTERPOLATION_DEVIATION_KHZ',s)
 
     def test_snapshot_restore_only_validated_offsets(self):
         s=src('crates/nvcurve/src/hal/snapshot.rs')
@@ -98,8 +104,7 @@ class Invariants(unittest.TestCase):
         self.assertIn('std::trunc(raw) != raw',s)
         self.assertIn('if (khz < -2000000 || khz > 1000000) valid = false;',s)
         self.assertIn('if (!valid)',s)
-        self.assertIn('return blackwell ? std::nullopt : channel(9);',s)
-        self.assertIn('NVCURVE_UNSAFE_REG_SENSORS',s)
+        self.assertIn('return blackwell ? regTemp(0x00AD0AA0) : channel(9);',s)
 
     def test_snapshot_metadata_required_and_rollback_verified(self):
         s=src('crates/nvcurve/src/hal/snapshot.rs')
@@ -119,7 +124,6 @@ class Invariants(unittest.TestCase):
             self.assertIsNone(invalid, f'{f}: cast/comparison precedence requires parentheses')
         guard = src('crates/nvcurve/src/hal/flatten_guard.rs')
         self.assertIn('(p.index as i64) < from', guard)
-        self.assertIn('(b.index as i64) < from', guard)
 
     def test_ops_no_unused_profile_native_import(self):
         ops = src('crates/nvcurve/src/ops.rs')

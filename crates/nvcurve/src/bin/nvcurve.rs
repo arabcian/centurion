@@ -545,9 +545,8 @@ fn main() {
     let writes = matches!((c0, c1), (Some("write" | "reset-all" | "autoload"), _)
         | (Some("snapshot"), Some("restore")) | (Some("profile"), Some("apply"))
         | (Some("memlock"), Some("set" | "reset")) | (Some("powermizer"), Some("set")));
-    let unsafe_sensor_probe = c0 == Some("sensors") &&
-        std::env::var("NVCURVE_UNSAFE_REG_SENSORS").ok().as_deref() == Some("1");
-    let _lock = ((writes || unsafe_sensor_probe) && !a.flag("--dry-run") && unsafe { libc::geteuid() } == 0)
+    let sensor_probe = c0 == Some("sensors");
+    let _lock = ((writes || sensor_probe) && !a.flag("--dry-run") && unsafe { libc::geteuid() } == 0)
         .then(|| ops::gpu_write_lock().unwrap_or_else(|e| die(1, format!("nvcurve: {e}"))));
     match a.pos.first().map(String::as_str) {
         Some("read") => cmd_read(&a),

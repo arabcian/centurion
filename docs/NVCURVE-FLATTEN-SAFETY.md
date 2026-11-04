@@ -4,13 +4,13 @@ This branch keeps the **existing flatten math** (target kHz minus offset-free ba
 
 ## What changed
 
-- `flatten_guard.rs` compares two successive driver reads. It checks point count, identity, domain, voltage and previous CT offset; tolerates up to 45 MHz base-clock drift; checks the projected plateau, its preceding anchor, local V/F shape and large point outliers. It rejects anomalies **before any profile GPU write**.
+- `flatten_guard.rs` compares two successive driver reads. It checks point count, identity, domain, voltage and previous CT offset; tolerates up to 45 MHz base-clock drift; checks the projected plateau, its preceding anchor, and folds the offsets introduce into the V/F curve (the stock curve's own shape is never judged: Blackwell has 150-200 MHz jumps at one voltage). It rejects anomalies **before any profile GPU write**.
 - One shared operation is used for GUI helper, CLI profile apply and boot autoload. Each already holds `/run/nvcurve.lock`. No reset-to-stock gap and no automatic retry after a failed OC write.
 - The same ClockBoostTable write includes every programmable core point and zeroes memory-domain CT offsets. Old nonzero CT points outside the populated VFP curve are either explicitly zeroed (if in the device mask) or rejected. Profiles with nonzero memory offset in other P-states are rejected instead of silently compounding offsets.
 - Read-back comparisons are exact; missing points, unexpected positive offsets or clamped negative deltas are treated as errors. NVML memory offset and power limits are also verified when queryable. The clock-lock API does **not** disclose the previous lock range, so previously set locks cannot be restored exactly after an error. This is reported in the error, not hidden.
 - Snapshots are restored only if metadata matches the GPU (UUID when available, otherwise name), the point mask and validated offsets. No raw snapshot driver control bytes are replayed.
 - GUI reset, CLI `write --reset`, CLI `write --reset-all`, and `reset-all` now verify CT results and try to roll back incomplete writes.
-- Raw Blackwell `REGISTER_OP` sensor probes are **disabled by default**. They are reachable only with `NVCURVE_UNSAFE_REG_SENSORS=1` and then participate in the same process-level GPU write lock in the shipped CLI, sensor helper and root helper. This cannot serialize with third-party GPU tools.
+- Blackwell `REGISTER_OP` sensor reads (hotspot, GDDR7 partitions) are on, as before. The CLI, sensor helper and root helper take the process-level GPU write lock for them, so they never sample during an nvcurve write. This cannot serialize with third-party GPU tools.
 - The experimental V3 struct is 88,844 bytes, greater than the 16-bit NVAPI version size field. The invalid request is no longer sent. Flatten therefore uses the V1 status-based `freq - old_delta` fallback unless a valid future base-tuple implementation becomes available.
 
 ## Important limitations
@@ -20,7 +20,6 @@ This branch keeps the **existing flatten math** (target kHz minus offset-free ba
 3. Two coherent VFP reads cannot establish electrical stability. In particular, the V1 fallback can be misleading if the driver clamps frequencies. Conservative profiles and a separate workload stability test are still required.
 4. Rollback is best-effort and can fail if the GSP/UVM is already faulted. NVML does not expose prior GPU and memory clock-lock values; a failed transaction may release those locks rather than restore their previous ranges. The returned error states this.
 5. Old snapshots without metadata are intentionally rejected. If a profile's GPU name differs from the device, or an unsupported P-state cannot be verified, application fails closed instead of silently applying a possibly incorrect setting.
-6. `NVCURVE_UNSAFE_REG_SENSORS=1` is an unsafe experimental override, not recommended with a system exhibiting Xid failures.
 
 ## Gentoo verification
 

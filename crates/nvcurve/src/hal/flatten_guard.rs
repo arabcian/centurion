@@ -5,17 +5,17 @@ use crate::types::{CurveState, Domain, VfPoint};
 
 const MAX_BASE_DRIFT_KHZ: i64 = 45_000;
 const MAX_ANCHOR_OVERSHOOT_KHZ: i64 = 30_000;
-const MAX_LOCAL_UP_KHZ: i64 = 180_000;
 const MAX_LOCAL_DOWN_KHZ: i64 = 45_000;
-const MAX_INTERPOLATION_DEVIATION_KHZ: i64 = 90_000;
 
 fn projected(p: &VfPoint, deltas: &PointDeltas) -> i64 {
     p.base_freq_khz() + deltas.get(&(p.index as i64)).copied().unwrap_or(i64::from(p.delta_khz))
 }
 
 /// Check that a programmed curve doesn't fold back or contain an absurd point.
-/// Only adjacent points with similar voltage are compared: frequency jumps
-/// over a large voltage span can be legitimate.
+/// Only adjacent points with similar voltage are compared. The stock curve's
+/// own shape is the driver's data (Blackwell has 150-200 MHz jumps at one
+/// voltage), so only a drop the *offsets* introduce is rejected; a one-point
+/// spike shows up as such a drop on its far side.
 pub fn validate_curve_shape(state: &CurveState, deltas: &PointDeltas) -> Result<(), String> {
     let mut previous: Option<&VfPoint> = None;
     for p in state.points.iter().filter(|p| p.domain == Domain::Gpu && p.freq_khz != 0) {
@@ -33,8 +33,9 @@ pub fn validate_curve_shape(state: &CurveState, deltas: &PointDeltas) -> Result<
             }
             if p.volt_uv - q.volt_uv <= 25_000 {
                 let step = target - projected(q, deltas);
-                if !(-MAX_LOCAL_DOWN_KHZ..=MAX_LOCAL_UP_KHZ).contains(&step) {
-                    return Err(format!("points {}→{}: anomalous frequency step {step} kHz", q.index, p.index));
+                let stock_step = base - q.base_freq_khz();
+                if step < -MAX_LOCAL_DOWN_KHZ && step < stock_step - MAX_LOCAL_DOWN_KHZ {
+                    return Err(format!("points {}→{}: offsets fold the curve back by {} kHz", q.index, p.index, -step));
                 }
             }
         }
@@ -83,18 +84,6 @@ pub fn verify_flatten_preflight(
             return Err(format!("point {}: anchor exceeds plateau by more than 30 MHz", anchor.index));
         }
     }
-    // Reject a local base outlier at otherwise evenly spaced voltages. Do not
-    // interpolate across a 0 mV or very large-voltage interval.
-    let gpu: Vec<_> = initial.points.iter().filter(|p| p.domain == Domain::Gpu && p.freq_khz > 0).collect();
-    for w in gpu.windows(3) {
-        let (a, b, c) = (w[0], w[1], w[2]);
-        if (b.index as i64) < from || c.volt_uv <= a.volt_uv || c.volt_uv - a.volt_uv > 50_000 { continue; }
-        let interp = a.base_freq_khz() + (c.base_freq_khz() - a.base_freq_khz())
-            * i64::from(b.volt_uv - a.volt_uv) / i64::from(c.volt_uv - a.volt_uv);
-        if (b.base_freq_khz() - interp).abs() > MAX_INTERPOLATION_DEVIATION_KHZ {
-            return Err(format!("point {}: anomalous base frequency vs neighbours", b.index));
-        }
-    }
     Ok(())
 }
 
@@ -135,6 +124,32 @@ mod tests {
         assert!(verify_flatten_preflight(&s, &c, 72, 2700, &d).is_err());
         let c = st(vec![pt(72, 2_670_000, 820_000, 0)]);
         assert!(verify_flatten_preflight(&s, &c, 72, 2700, &d).is_err());
+    }
+    // Real Blackwell stock curve: +187 MHz between points 29→30 at the same
+    // voltage. The driver's own shape must never block a write.
+    #[test]
+    fn stock_curve_jump_is_not_an_anomaly() {
+        let s = st(vec![pt(28, 1_400_000, 700_000, 0), pt(29, 1_413_000, 705_000, 0),
+                        pt(30, 1_600_000, 705_000, 0), pt(31, 1_615_000, 710_000, 0),
+                        pt(32, 1_630_000, 715_000, 0)]);
+        assert!(validate_curve_shape(&s, &PointDeltas::new()).is_ok());
+        let mut d = PointDeltas::new();
+        d.extend([(28, 100_000), (29, 100_000), (30, 100_000), (31, 100_000), (32, 100_000)]);
+        assert!(validate_curve_shape(&s, &d).is_ok());
+        // Flatten starting before the jump: plateau at 1600 MHz from point 29.
+        d.clear();
+        d.extend([(28, 0), (29, 187_000), (30, 0), (31, -15_000), (32, -30_000)]);
+        assert!(verify_flatten_preflight(&s, &s, 29, 1600, &d).is_ok());
+    }
+    #[test]
+    fn rejects_fold_or_spike_introduced_by_the_write() {
+        let s = st(vec![pt(29, 1_413_000, 705_000, 0), pt(30, 1_600_000, 705_000, 0),
+                        pt(31, 1_615_000, 710_000, 0)]);
+        let mut d = PointDeltas::new();
+        d.extend([(29, 0), (30, -250_000), (31, 0)]); // fold: 30 drops below 29
+        assert!(validate_curve_shape(&s, &d).is_err());
+        d.extend([(29, 0), (30, 200_000), (31, 0)]);  // one-point spike
+        assert!(validate_curve_shape(&s, &d).is_err());
     }
     #[test]
     fn rejects_unstable_base() {

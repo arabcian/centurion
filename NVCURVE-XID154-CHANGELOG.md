@@ -9,10 +9,10 @@ Scope: the uploaded `centurion-nvcurve-test.zip`, modifying only NVcurve-related
 | `crates/nvcurve/src/nvapi.rs` | Refuse versioned request sizes exceeding the low 16-bit field |
 | `crates/nvcurve/src/profiles/apply.rs` | Shared transactional apply with preflight, one CT write, readback before NVML memory writes, final verification, best-effort rollback, detection of stale memory offsets and unrepresented CT points, no blind retries |
 | `crates/nvcurve/src/ops.rs` | Unify apply callers; no reset interlude; verified curve reset path for GUI and CLI; fail closed during reset-all |
-| `crates/nvcurve/src/hal/sensors.rs` | Blackwell REGISTER_OP disabled unless explicitly enabled by `NVCURVE_UNSAFE_REG_SENSORS=1` |
-| `crates/nvcurve/src/bin/{nvcurve,nvcurve-sensors,nvcurve-root-helper}.rs` | Shared path, skip opt-in sensor samples when the GPU write lock is busy, verified reset |
+| `crates/nvcurve/src/hal/sensors.rs` | (reverted) Blackwell REGISTER_OP sensors on by default again |
+| `crates/nvcurve/src/bin/{nvcurve,nvcurve-sensors,nvcurve-root-helper}.rs` | Shared path, skip sensor samples when the GPU write lock is busy, verified reset |
 | `crates/nvcurve/src/hal/snapshot.rs` | GPU metadata / mask / offset validation; replay checked offsets only; readback and rollback attempt |
-| `gui/src/nvidiatab.cpp` | Validate malformed, nonintegral and out-of-range JSON offsets before conversion; remove direct private Blackwell register reads |
+| `gui/src/nvidiatab.cpp` | Validate malformed, nonintegral and out-of-range JSON offsets before conversion |
 | `tests/nvcurve_safety_static_test.py` | 13 GPU-free source regression tests |
 
 ## Verification performed in the authoring environment
@@ -33,3 +33,8 @@ This patch **reduces known software hazards** but does not prove that Xid 154 is
 - Removed unused `load_profile` and `profile_path` imports from `ops.rs`.
 - Added static regression checks for this cast/comparison parsing hazard.
 - This is a targeted fix for the uploaded build log; native Cargo/Qt compilation is **not** available in the patching environment. Run `cargo build --release --frozen` and the Gentoo ebuild on the target system to confirm and reveal any later errors.
+
+## Fix: stock-curve false positive + Blackwell sensors default (2026-11-04)
+
+- `flatten_guard::validate_curve_shape` rejected the driver's own stock curve (`points 29→30: anomalous frequency step 187000 kHz` with all offsets 0), so every profile apply and flatten failed on Blackwell. It now rejects only folds the offsets introduce (projected drop > 45 MHz and > 45 MHz below the stock step); a one-point spike is caught by the drop on its far side. The neighbour-interpolation check on the stock base curve had the same flaw and is removed.
+- `NVCURVE_UNSAFE_REG_SENSORS` is gone: Blackwell hotspot / GDDR7 partition sensors are on by default again (Rust and GUI, as before this patch). The GPU write lock around sensor reads is kept and no longer opt-in.

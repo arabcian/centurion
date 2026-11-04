@@ -108,8 +108,8 @@ private:
 // ── NvAPI temperatures (hotspot, VRAM) — in-process, only while visible ─────
 // Same sources as `nvcurve sensors` (crates/nvcurve/src/hal/sensors.rs):
 // thermal channel 9 = hotspot up to Ada, channel 15 = GDDR6/6X memory,
-// channel 10 = GDDR7 memory. Private Blackwell registers are never read by
-// this class; the optional root sensor helper handles them under a GPU lock.
+// channel 10 = GDDR7 memory; Blackwell's hotspot and per-partition GDDR7
+// temperatures come from GPU registers. All values are range-checked.
 class NvApiTemps {
 public:
     static NvApiTemps *open() {
@@ -123,13 +123,17 @@ public:
         if (auto unload = fn<int (*)()>(0xD22BDD7E); unload && gpu_) unload();
         dlclose(lib_);
     }
-    // Never send private REGISTER_OP calls from the unprivileged GUI: the
-    // root nvcurve-sensors helper is the only optional, lock-protected reader.
-    std::optional<int> hotspot(bool blackwell) { return blackwell ? std::nullopt : channel(9); }
-    std::optional<int> vram(bool blackwell) { return channel(blackwell ? 10 : 15); }
+    std::optional<int> hotspot(bool blackwell) { return blackwell ? regTemp(0x00AD0AA0) : channel(9); }
+    std::optional<int> vram(bool blackwell) {
+        if (!blackwell) return channel(15);
+        if (auto p = partitionsMax()) return p;
+        return channel(10);
+    }
 private:
     struct Therm { unsigned version; int mask; int values[40]; };
-    static_assert(sizeof(Therm) == 168);
+    struct RegOp { unsigned short flags, status; unsigned offset; unsigned long long writeMask, value; };
+    struct RegOps { unsigned version, count; RegOp op[256]; };
+    static_assert(sizeof(Therm) == 168 && sizeof(RegOp) == 24 && sizeof(RegOps) == 6152);
 
     template <typename F> F fn(unsigned id) { return qi_ ? reinterpret_cast<F>(qi_(id)) : nullptr; }
     explicit NvApiTemps(void *h) : lib_(h) {
@@ -141,6 +145,7 @@ private:
         unsigned n = 0;
         if (enumGpus(gpus, &n) == 0 && n > 0) gpu_ = gpus[0];
         therm_ = fn<int (*)(void *, Therm *)>(0x65FE3AAD);
+        reg_ = fn<int (*)(void *, RegOps *)>(0x2EB3C140);
     }
     bool thermRead(int mask, Therm &t) {
         t = Therm{};
@@ -161,10 +166,70 @@ private:
         const int c = t.values[i] / 256;
         return c > 0 && c < 255 ? std::optional(c) : std::nullopt;
     }
+    std::optional<unsigned long long> reg(unsigned offset) {
+        if (!reg_) return std::nullopt;
+        auto *ops = new RegOps{};
+        ops->version = unsigned(sizeof(RegOps)) | (1u << 16);
+        ops->count = 1;
+        ops->op[0].flags = 1 | 4 | 16;  // read, 32-bit, global
+        ops->op[0].offset = offset;
+        const bool ok = reg_(gpu_, ops) == 0 && ops->op[0].status == 0;
+        const unsigned long long v = ops->op[0].value;
+        delete ops;
+        if (!ok) return std::nullopt;
+        return v;
+    }
+    std::optional<int> regTemp(unsigned offset) {
+        auto v = reg(offset);
+        if (!v) return std::nullopt;
+        const int c = int((*v & 0xFFFF) / 256);
+        return c > 0 && c < 255 ? std::optional(c) : std::nullopt;
+    }
+    std::optional<int> partitionsMax() {
+        std::optional<int> best;
+        auto parse = [](unsigned long long v) { return 2 * int(std::min<unsigned long long>(v, 0x50)) - 40; };
+        auto poisoned = [](unsigned long long v) { return (v & 0xFFFF0000ull) == 0xBADF0000ull; };
+        // Probe the partition layout once (see hal/sensors.rs partition_layout): absent /
+        // floorswept partitions are not read again on every poll. An empty result is kept too
+        // (all reads poisoned): re-probing it every poll is the PRI-error stream itself.
+        if (!partsProbed_) {
+            partsProbed_ = true;
+            clamshell_ = reg(0x00900200).value_or(0) >> 22 & 1;
+            for (unsigned p = 0; p <= 8; ++p)
+                if (auto st = reg(0x009024D0 + p * 0x4000); st && !poisoned(*st)) parts_.push_back(p);
+        }
+        if (parts_.empty()) return std::nullopt;
+        const bool clamshell = clamshell_;
+        for (unsigned p : parts_) {
+            auto st = reg(0x009024D0 + p * 0x4000);
+            if (!st || poisoned(*st)) continue;
+            for (const auto &pair : {std::array{std::pair{0x0u, 24u}, std::pair{0x8u, 26u}},
+                                     std::array{std::pair{0x4u, 25u}, std::pair{0xCu, 27u}}}) {
+                for (const auto &[slot, bit] : pair) {
+                    if (!(*st >> bit & 1)) continue;
+                    auto d = reg(0x009024C0 + p * 0x4000 + slot);
+                    if (!d || *d == 0 || *d == 0xFFFFFFFFull || poisoned(*d)) continue;
+                    const unsigned long long pc0 = *d >> 16 & 0xFF, pc1 = *d >> 24 & 0xFF;
+                    if (pc0 == 0 || pc0 == 0xFF) continue;
+                    for (unsigned long long raw : {pc0, clamshell ? pc1 : 0ull}) {
+                        if (raw == 0 || raw == 0xFF) continue;
+                        const int c = parse(raw);
+                        if (c > 0 && c < 150 && (!best || c > *best)) best = c;
+                    }
+                    break;
+                }
+            }
+        }
+        return best;
+    }
     void *lib_, *gpu_ = nullptr;
     void *(*qi_)(unsigned) = nullptr;
     int (*therm_)(void *, Therm *) = nullptr;
+    int (*reg_)(void *, RegOps *) = nullptr;
     int mask_ = 0;
+    std::vector<unsigned> parts_;
+    bool partsProbed_ = false;
+    bool clamshell_ = false;
 };
 
 static QString throttleText(unsigned long long m) {
@@ -612,10 +677,7 @@ void NvidiaTab::pollStats() {
     }
     // Blackwell: hotspot and partition temps are privileged register reads →
     // the root stream supplies them; the user-mode reads cover the rest.
-    // Raw Blackwell registers are disabled by default; do not launch a
-    // privileged two-second polling process when that feature is unused.
-    if (blackwell_ && qEnvironmentVariable("NVCURVE_UNSAFE_REG_SENSORS") == QStringLiteral("1") &&
-        !sensorStream_ && !streamFailed_) startSensorStream();
+    if (blackwell_ && !sensorStream_ && !streamFailed_) startSensorStream();
     const bool streamFresh = QDateTime::currentMSecsSinceEpoch() - streamAt_ < 5000;
     if (temps_ && !streamFresh) {
         const auto h = temps_->hotspot(blackwell_), v = temps_->vram(blackwell_);

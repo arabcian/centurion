@@ -44,18 +44,15 @@ fn main() {
     let start = Instant::now();
     let mut out = std::io::stdout().lock();
     while start.elapsed() < MAX_RUNTIME {
-        // When the explicitly opted-in private registers are enabled, never
-        // sample while a separate nvcurve process is writing an OC table.
-        let s = if std::env::var("NVCURVE_UNSAFE_REG_SENSORS").ok().as_deref() == Some("1") {
-            match ops::gpu_try_lock() {
-                Ok(Some(_lock)) => sensors::read(g, arch),
-                Ok(None) => sensors::Sensors::default(), // GPU write in progress
-                Err(e) => {
-                    eprintln!("sensor read skipped: {e}");
-                    sensors::Sensors::default()
-                }
+        // Never sample registers while another nvcurve process is writing an OC table.
+        let s = match ops::gpu_try_lock() {
+            Ok(Some(_lock)) => sensors::read(g, arch),
+            Ok(None) => sensors::Sensors::default(), // GPU write in progress
+            Err(e) => {
+                eprintln!("sensor read skipped: {e}");
+                sensors::Sensors::default()
             }
-        } else { sensors::read(g, arch) };
+        };
         let line = serde_json::json!({
             "hotspot_c": s.hotspot_c, "vram_c": s.vram_c, "vram_partitions": s.vram_partitions,
         });
