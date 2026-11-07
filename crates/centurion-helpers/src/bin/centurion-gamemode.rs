@@ -519,8 +519,10 @@ fn enter_game_scene(scene: &str, cpu: bool, gpu: bool) {
         // PRE that is cut short (hook timeout, launcher killed) used to leave the machine on Custom
         // while the state still named the old scene — the GUI neither knew nor reported the switch.
         st["active"] = json!(scene);
+        st["partial"] = json!(true);  // until the apply below says otherwise
     });
     let ok = apply_scene(scene, SceneParts { cpu, gpu, tuning: false });  // parts that failed were reported
+    update_scene_state(|st| st["partial"] = json!(!ok));
     if !ok { log!("centurion-gamemode: game scene \"{scene}\" was applied only partly — see the lines above"); }
 }
 
@@ -554,8 +556,8 @@ fn leave_game_scene() {
     match target {
         Some(t) => {
             log!("centurion-gamemode: last game closed — back to scene \"{t}\"");
-            apply_scene(&t, SceneParts { cpu: true, gpu: true, tuning: true });
-            update_scene_state(|st| st["active"] = json!(t));
+            let ok = apply_scene(&t, SceneParts { cpu: true, gpu: true, tuning: true });
+            update_scene_state(|st| { st["active"] = json!(t); st["partial"] = json!(!ok); });
         }
         None => log!("centurion-gamemode: last game closed — no earlier scene to return to (the game scene stays)"),
     }
@@ -1349,7 +1351,7 @@ fn main() {
                 std::process::exit(1);
             }
             let ok = apply_scene(&args[1], SceneParts { cpu: true, gpu: true, tuning: true });
-            update_scene_state(|st| st["active"] = json!(args[1]));
+            update_scene_state(|st| { st["active"] = json!(args[1]); st["partial"] = json!(!ok); });
             (!ok) as i32
         }
         Some("STATUS") => status(),

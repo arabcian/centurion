@@ -33,6 +33,7 @@ pub mod calctx;
 pub mod cooling;
 pub mod stability;
 pub mod field;
+pub mod flight;
 pub mod bench;
 pub mod isolate;
 pub mod legion_wmi;

@@ -45,6 +45,8 @@
 //!   {"op":"guard_reset"}                               resume boot presets paused by centurion-boot-guard
 //!   {"op":"calibrate_on_boot","sessions":N,"budget":MIN,"scene":"..","cancel":bool}   tune-helper only:
 //!       schedule (or cancel) centurion-calibrate sessions at the next boot (centurion-calibrate-boot service)
+//!   {"op":"flight_interval","seconds":N}               tune-helper only: flight recorder sample / sync interval
+//!       (5, 10, 30 or 60 s; omit "seconds" to query), see centurion_helpers::flight
 //!   {"op":"pstore_clear"}                              tune-helper only: copy every /sys/fs/pstore record (address-scrubbed) to
 //!       /var/lib/centurion/pstore/, remove only those that were archived (frees the EFI variables behind them)
 //!
@@ -1139,6 +1141,7 @@ fn run() -> Value {
         "set_wireless_pm_lock" => op_set_wireless_pm_lock(&req),
         // Takes nothing from the request: archives /sys/fs/pstore into /var/lib/centurion/pstore, then empties it.
         "pstore_clear" => centurion_helpers::pstore::clear(),
+        "flight_interval" => centurion_helpers::flight::interval_op(req.get("seconds").and_then(Value::as_u64)),
         "boot" => op_boot(),
         "guard_reset" => match centurion_helpers::bootguard::reset() {
             Ok(v) => json!({"ok": true, "guard": v}),
@@ -1187,7 +1190,7 @@ mod tests {
     use super::*;
     #[test]
     fn profile_role_cannot_take_values() {
-        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear"] {
+        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear", "flight_interval"] {
             assert!(!PROFILE_OPS.contains(&op), "{op} must stay tune-helper only");
         }
     }

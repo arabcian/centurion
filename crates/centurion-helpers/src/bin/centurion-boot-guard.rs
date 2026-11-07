@@ -1,8 +1,8 @@
 //! centurion-boot-guard — keeps an unstable boot preset from crash-looping the machine.
 //!
 //!   centurion-boot-guard arm      (root) start of boot: arm, or trip if the last boot died armed
-//!   centurion-boot-guard watch    (root) arm, disarm after the stable window, stay up; SIGTERM =
-//!                                  clean shutdown (systemd Type=simple; OpenRC uses arm + stop)
+//!   centurion-boot-guard watch    (root) arm, disarm after the stable window, stay up running the
+//!                                  flight recorder (flight.rs); SIGTERM = clean shutdown
 //!   centurion-boot-guard disarm   (root) this boot is fine (stable window over)
 //!   centurion-boot-guard shutdown (root) clean shutdown/reboot: disarm + record it (OpenRC stop)
 //!   centurion-boot-guard check    exit 0 = apply presets, 1 = skip (reason on stderr) — for
@@ -14,11 +14,8 @@
 //!
 //! See bootguard.rs for the state machine.
 
-use centurion_helpers::bootguard;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static STOP: AtomicBool = AtomicBool::new(false);
-extern "C" fn on_term(_: libc::c_int) { STOP.store(true, Ordering::SeqCst); }
+use centurion_helpers::{bootguard, flight};
+use std::time::{Duration, Instant};
 
 fn fail(e: String) -> i32 { eprintln!("centurion-boot-guard: {e}"); 2 }
 
@@ -44,29 +41,40 @@ fn arm() -> i32 {
 
 fn watch() -> i32 {
     let code = arm();
-    if code != 0 || bootguard::read()["state"] != "armed" { return code; }
-    for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-        unsafe { libc::signal(s, on_term as *const () as libc::sighandler_t) };
+    if code != 0 { return code; }
+    // Paused (the presets tripped the guard): nothing to disarm, but the recorder runs and SIGTERM
+    // still records the clean end — these crash-looping boots are the ones worth recording.
+    let mut disarmed = bootguard::read()["state"] != "armed";
+    // The signals stay blocked and are taken with sigtimedwait: a flight-recorder sample and the
+    // end of the stable window are both timeouts of the same wait, and a SIGTERM cannot slip in
+    // between a check and the wait.
+    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::sigemptyset(&mut set);
+        for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] { libc::sigaddset(&mut set, s); }
+        libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
     }
-    // Sleep in short steps so a shutdown within the window disarms promptly.
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(bootguard::WINDOW_SECS);
-    while std::time::Instant::now() < end && !STOP.load(Ordering::SeqCst) {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    }
-    if !STOP.load(Ordering::SeqCst) {
-        if let Err(e) = bootguard::disarm() { fail(e); }
-        // Stay up until the service is stopped: SIGTERM at shutdown is how a
-        // clean end of this boot gets recorded (for the GUI's login guard).
-        // Blocked in sigsuspend() until then (it used to wake once a second for the whole uptime).
-        // The signals are blocked outside sigsuspend, so one cannot slip in between the check and the wait.
-        unsafe {
-            let (mut block, mut old): (libc::sigset_t, libc::sigset_t) = (std::mem::zeroed(), std::mem::zeroed());
-            libc::sigemptyset(&mut block);
-            for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] { libc::sigaddset(&mut block, s); }
-            libc::sigprocmask(libc::SIG_BLOCK, &block, &mut old);
-            while !STOP.load(Ordering::SeqCst) { libc::sigsuspend(&old); }
-            libc::sigprocmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
+    let mut rec = flight::Recorder::open();
+    if rec.is_none() { eprintln!("centurion-boot-guard: flight recorder unavailable"); }
+    let window_end = Instant::now() + Duration::from_secs(bootguard::WINDOW_SECS);
+    loop {
+        if let Some(r) = rec.as_mut() { r.sample(); }
+        // Re-read every time (a 64-byte file): a change in Health applies from the next sample.
+        let interval = Duration::from_secs(flight::interval());
+        let now = Instant::now();
+        if !disarmed && now >= window_end {
+            if let Err(e) = bootguard::disarm() { fail(e); }
+            disarmed = true;
         }
+        // Stay up until the service is stopped: SIGTERM at shutdown is how a clean end of this
+        // boot gets recorded (for the GUI's login guard). Without a recorder nothing wakes it.
+        let wait = match (disarmed, rec.is_some()) {
+            (false, _) => interval.min(window_end.saturating_duration_since(now)),
+            (true, true) => interval,
+            (true, false) => Duration::from_secs(86_400),
+        };
+        let ts = libc::timespec { tv_sec: wait.as_secs() as libc::time_t, tv_nsec: wait.subsec_nanos() as libc::c_long };
+        if unsafe { libc::sigtimedwait(&set, std::ptr::null_mut(), &ts) } > 0 { break; }
     }
     shutdown()
 }

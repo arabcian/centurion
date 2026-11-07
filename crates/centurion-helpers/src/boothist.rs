@@ -15,12 +15,24 @@ const JOURNAL_MAX: u64 = 512 * 1024;
 /// A pstore record this far from any unclean boot's lifetime is not attributed to it.
 const LINK_SLACK_S: u64 = 24 * 3600;
 const MAX_STATES: usize = 8;
+/// Flight-recorder samples handed to the GUI: the last 120 (10 min at the default 5 s interval).
+const FLIGHT_KEEP: usize = 120;
 
 fn now() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 
 pub fn load() -> Value {
     let journal = crate::read_root_file(crate::ocjournal::FILE, JOURNAL_MAX).unwrap_or_default();
-    build(&crate::stability::load(), &journal, &crate::bootguard::boot_id(), now(), &crate::pstore::list())
+    let mut out = build(&crate::stability::load(), &journal, &crate::bootguard::boot_id(), now(), &crate::pstore::list());
+    attach_flight(&mut out, &crate::flight::load_prev(FLIGHT_KEEP));
+    out
+}
+
+/// The flight recorder's samples (flight::parse) go to the boot they were recorded in, as "flight".
+pub fn attach_flight(out: &mut Value, flight: &Value) {
+    let Some(id) = flight["boot"].as_str() else { return };
+    for b in out["boots"].as_array_mut().into_iter().flatten() {
+        if b["boot"].as_str() == Some(id) { b["flight"] = flight["samples"].clone(); }
+    }
 }
 
 /// Index (into `spans`: (start, next boot's start) of each unclean boot) of the boot a record written at
@@ -42,7 +54,8 @@ fn curve_states(journal: &[(String, String, String)], boot: &str) -> Value {
 }
 
 /// {"ok", "current", "boots": [newest first], "previous_unclean": {"boot","end"}|null, "pstore": {"available", "entries"}}.
-/// boot: {"boot", "start", "end"?, "duration"?, "state", "events": {kind:level: n}, "event_total", "curves": {kind: states}, "pstore": [entry indexes]}.
+/// boot: {"boot", "start", "end"?, "duration"?, "state", "events": {kind:level: n}, "event_total", "curves": {kind: states}, "pstore": [entry indexes]}
+/// (`load` adds "flight": [samples] to the previous boot, see `attach_flight`).
 /// Every pstore entry gains "boot" (the unclean boot it was attributed to) when there is one.
 pub fn build(exposure: &Value, journal: &str, current: &str, now: u64, pstore: &Value) -> Value {
     let jl: Vec<(String, String, String)> = journal.lines().filter_map(|l| {

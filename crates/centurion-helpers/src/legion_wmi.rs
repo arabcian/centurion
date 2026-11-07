@@ -149,7 +149,17 @@ fn sysfs_write(attr: &str, value: i64) -> Result<(), String> {
 
 // ── acpi_call (WMAE) ────────────────────────────────────────────────────────
 
-fn acpi_available() -> bool { Path::new(ACPI_CALL).exists() }
+fn acpi_available() -> bool { acpi_fake().is_some() || Path::new(ACPI_CALL).exists() }
+
+/// Stand-in for /proc/acpi/call: (expression) -> the module's raw reply.
+pub type AcpiFake = fn(&str) -> String;
+static ACPI_FAKE: std::sync::Mutex<Option<AcpiFake>> = std::sync::Mutex::new(None);
+fn acpi_fake() -> Option<AcpiFake> { *ACPI_FAKE.lock().unwrap_or_else(|e| e.into_inner()) }
+
+/// Virtual hardware test lab only (tests/virtual_lab.rs): every acpi_call of this process goes to
+/// `f` instead of the kernel module (None = back to the module). No helper ever sets it.
+#[doc(hidden)]
+pub fn set_acpi_fake(f: Option<AcpiFake>) { *ACPI_FAKE.lock().unwrap_or_else(|e| e.into_inner()) = f; }
 
 fn modprobe_acpi_call() { crate::modprobe("acpi_call"); }
 
@@ -211,6 +221,7 @@ fn acpi_is_read(expr: &str) -> bool {
 fn acpi_raw_inner(expr: &str) -> Result<String, String> {
     use std::io::{Read, Write};
     const MAX_REPLY: u64 = 4096;
+    if let Some(fake) = acpi_fake() { return acpi_reply(fake(expr).as_bytes()); }
     let mut f = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(ACPI_CALL)
         .map_err(|e| format!("{ACPI_CALL}: {e}"))?;
     let _lock = crate::FdLock::exclusive(&f).map_err(|e| format!("{ACPI_CALL} lock: {e}"))?;
@@ -221,7 +232,11 @@ fn acpi_raw_inner(expr: &str) -> Result<String, String> {
     let mut raw = vec![0u8; MAX_REPLY as usize];
     let n = f.read(&mut raw).map_err(|e| format!("acpi_call read: {e}"))?;
     raw.truncate(n);
-    let out = String::from_utf8_lossy(&raw);
+    acpi_reply(&raw)
+}
+
+fn acpi_reply(raw: &[u8]) -> Result<String, String> {
+    let out = String::from_utf8_lossy(raw);
     let out = out.trim_matches(char::from(0)).trim().to_owned();
     if out.starts_with("Error") { return Err(format!("acpi_call: {out}")); }
     Ok(out)
