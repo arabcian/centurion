@@ -53,9 +53,13 @@ public:
     void showTab(const QString &label);
     /// Rewrites the MangoHud overlay file (active scene · power profile), or removes it when the overlay is off.
     void updateOverlay();
+    /// Emergency safe mode: runs centurion-safe-mode (CPU/GPU curves, optimizations, fan boost, profile → safe
+    /// defaults) and sets every fan back to Auto. Result in safeModeFinished; a second call while running is ignored.
+    void runSafeMode();
 
 Q_SIGNALS:
     void nvidiaTabAdded();
+    void safeModeFinished(bool ok, const QString &log);
 
 protected:
     void closeEvent(QCloseEvent *e) override;

@@ -345,10 +345,13 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     eb->addWidget(del_);
     eb->addStretch(1);
     save_ = new QPushButton(tr("Save"));
+    preview_ = new QPushButton(tr("Preview"));
+    preview_->setToolTip(tr("Shows what Apply would change on this machine; writes nothing"));
     apply_ = new QPushButton(tr("Apply"));
     apply_->setObjectName("btnAccent");
     apply_->setToolTip("Saves the scene if changed, then applies it");
     eb->addWidget(save_);
+    eb->addWidget(preview_);
     eb->addWidget(apply_);
     g->addLayout(eb, row++, 0, 1, 4);
     right->addWidget(editor_);
@@ -462,6 +465,11 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(del_, &QPushButton::clicked, this, &ScenesTab::deleteScene);
     connect(save_, &QPushButton::clicked, this, [this] { if (saveCurrent()) setStatus("Saved.", theme::OK); });
     connect(apply_, &QPushButton::clicked, this, &ScenesTab::applyCurrent);
+    connect(preview_, &QPushButton::clicked, this, [this] {
+        const Scene s = fromEditor();
+        QMessageBox::information(this, tr("Preview: %1").arg(s.name),
+                                 eng_->preview(s).join('\n') + tr("\n\nNothing was written. Values are read now and may differ at apply time."));
+    });
     connect(fwCapture_, &QPushButton::clicked, this, &ScenesTab::captureFirmware);
     connect(fanClear_, &QPushButton::clicked, this, [this] { fanTable_.clear(); updateFanTableLabel(); updateDirty(); });
     connect(fwClear_, &QPushButton::clicked, this, [this] { firmware_.clear(); updateFirmwareLabel(); updateDirty(); });
@@ -714,7 +722,12 @@ void ScenesTab::reloadList(const QString &selectName) {
         if (a.enabled && n == a.onBattery) tags << QStringLiteral("battery");
         auto *it = new QListWidgetItem(tags.isEmpty() ? n : n + QStringLiteral("  ·  ") + tags.join('/'));
         it->setData(Qt::UserRole, n);
-        if (n == eng_->active()) { QFont f = it->font(); f.setBold(true); it->setFont(f); it->setToolTip(tr("Active")); }
+        if (n == eng_->active()) {
+            QFont f = it->font(); f.setBold(true); it->setFont(f);
+            const bool partial = scenes::activeScenePartial();
+            if (partial) it->setText(it->text() + QStringLiteral("  ·  partial"));
+            it->setToolTip(partial ? tr("Active, but its last apply had failed steps: only partly in effect") : tr("Active"));
+        }
         list_->addItem(it);
     }
     filling_ = false;

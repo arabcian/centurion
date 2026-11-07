@@ -22,6 +22,8 @@ public:
     /// Re-applies what drifted: the active scene if there is one, else the Optimizations preset.
     void reapply();
     void check() { run(false); }
+    /// Running / enabled tools that write the same knobs (TLP, power-profiles-daemon, tuned, …), comma-separated.
+    static QString culprits();
 
 Q_SIGNALS:
     /// `lines`: "key: now X (was Y after Centurion applied it)"; empty = nothing drifted (any more). `culprits`: tools found running.
@@ -30,7 +32,6 @@ Q_SIGNALS:
 private:
     void run(bool snapshot);
     void onDescribe(const QJsonObject &d, bool snapshot);
-    static QString culprits();
 
     MainWindow *win_;
     QTimer *periodic_, *soon_;

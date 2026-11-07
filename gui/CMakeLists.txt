@@ -32,6 +32,7 @@ add_executable(centurion
     src/vfcurvewidget.cpp src/vfcurvewidget.h
     src/nvidiatab.cpp    src/nvidiatab.h
     src/optimizetab.cpp  src/optimizetab.h
+    src/optimization_translation_sources.cpp
     src/autotunereport.cpp src/autotunereport.h
     src/int64spinbox.cpp src/int64spinbox.h
     src/tray.cpp         src/tray.h
@@ -84,6 +85,7 @@ add_executable(centurion
     src/smartpage.cpp    src/smartpage.h
     src/sleeppage.cpp    src/sleeppage.h
     src/sleepadvice.cpp  src/sleepadvice.h
+    src/flightrec.cpp    src/flightrec.h
     src/mangohud.cpp     src/mangohud.h
     src/dbusapi.cpp      src/dbusapi.h
     src/shortcuts.cpp    src/shortcuts.h
@@ -241,6 +243,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
+    add_executable(centurion-flightrec-test tests/flightrec_test.cpp src/flightrec.cpp src/flightrec.h)
+    target_link_libraries(centurion-flightrec-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-flightrec-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME flightrec COMMAND centurion-flightrec-test)
     add_executable(centurion-autotunereport-test tests/autotunereport_test.cpp src/autotunereport.cpp src/autotunereport.h)
     target_link_libraries(centurion-autotunereport-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-autotunereport-test PRIVATE QT_NO_KEYWORDS)

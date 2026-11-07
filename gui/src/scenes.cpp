@@ -8,6 +8,7 @@
 #include "nvidiatab.h"
 #include "optimizetab.h"
 #include "platformprofile.h"
+#include "driftwatch.h"
 #include "privileged.h"
 #include "ryzentab.h"
 #include <algorithm>
@@ -252,10 +253,13 @@ QString activeScene() {
     return validName(n) ? n : QString();
 }
 
-void setActiveScene(const QString &name) {
+bool activeScenePartial() { return readObject(stateFile()).value("partial").toBool(); }
+
+void setActiveScene(const QString &name, bool partial) {
     const StateLock lock;
     QJsonObject o = readObject(stateFile());
     o["active"] = name;
+    o["partial"] = partial;
     writeObject(stateFile(), o, nullptr);
 }
 
@@ -892,6 +896,60 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
     done(false, "no CPU curve backend for this CPU");
 }
 
+QStringList SceneEngine::preview(const Scene &s) const {
+    QStringList out;
+    auto choice = [](const Choice &c) { return c.kind == Choice::Reset ? QStringLiteral("reset to stock") : "profile '" + c.name + "'"; };
+    const auto cur = pp::currentProfile(pp::primaryHandler()).value_or(QString());
+    const QString profileAfter = s.platformProfile.isEmpty() ? cur : s.platformProfile;
+    if (s.fanFullSpeed >= 0) out << QStringLiteral("Fan boost: ") + (s.fanFullSpeed ? "turbo (EC full speed)" : "auto");
+    if (!s.platformProfile.isEmpty())
+        out << (cur == s.platformProfile ? QStringLiteral("Power profile: already %1").arg(HomeTab::profileLabel(cur))
+                                         : QStringLiteral("Power profile: %1 → %2").arg(HomeTab::profileLabel(cur), HomeTab::profileLabel(s.platformProfile)));
+    if (!s.firmware.isEmpty()) {
+        if (profileAfter != QStringLiteral("custom")) out << QStringLiteral("✗ Firmware limits: need the Custom power profile");
+        else {
+            QMap<QString, FwAttr> byName;
+            for (const FwAttr &a : FwattrTab::discover()) byName.insert(a.name, a);
+            QStringList changes;
+            int missing = 0, gpu = 0;
+            for (auto it = s.firmware.cbegin(); it != s.firmware.cend(); ++it) {
+                const auto a = byName.constFind(it.key());
+                if (a == byName.cend() || (!a->viaWmi() && !a->ranged)) { ++missing; continue; }
+                if (a->viaWmi()) { ++gpu; continue; }
+                if (a->current != it.value()) changes << QStringLiteral("%1 %2 → %3").arg(a->displayName).arg(a->current).arg(it.value());
+            }
+            out << "Firmware limits: " + (changes.isEmpty() ? QStringLiteral("no sysfs value changes") : changes.join(QStringLiteral(", ")));
+            if (gpu) out << (nvidiaUsable() ? QStringLiteral("Firmware limits: %1 GPU value(s) via WMI").arg(gpu)
+                                            : QStringLiteral("✗ Firmware limits: %1 GPU value(s) skipped (NVIDIA dGPU is off)").arg(gpu));
+            if (missing) out << QStringLiteral("✗ Firmware limits: %1 value(s) not present on this machine").arg(missing);
+        }
+    }
+    if (s.cpu.kind != Choice::Unchanged)
+        out << (win_->ryzen() ? "CPU curve: " + choice(s.cpu) : win_->intel() ? "CPU undervolt: " + choice(s.cpu)
+                                                                               : QStringLiteral("✗ CPU curve: no supported CPU tuning interface"));
+    if (s.gpu.kind != Choice::Unchanged)
+        out << (nvidiaUsable() ? "GPU curve: " + choice(s.gpu)
+                               : NvidiaTab::present() ? QStringLiteral("✗ GPU curve: skipped (NVIDIA dGPU is off)")
+                                                      : QStringLiteral("✗ GPU curve: skipped (no NVIDIA GPU on the bus)"));
+    if (s.tuning.kind != Choice::Unchanged)
+        out << (s.tuning.kind == Choice::Reset ? QStringLiteral("Optimizations: restore originals") : "Optimizations: preset '" + s.tuning.name + "'");
+    if (s.fanTable.size() == 10)
+        out << (profileAfter == QStringLiteral("custom") ? QStringLiteral("Fan curve: custom EC table") : QStringLiteral("✗ Fan curve: needs the Custom power profile"));
+    if (s.lightProfile >= 0 || s.lightBrightness >= 0)
+        out << (lighting::present() ? QStringLiteral("Lighting: keyboard profile / brightness") : QStringLiteral("✗ Lighting: no Spectrum keyboard here"));
+    if (!s.zone4.isEmpty()) out << (lighting::zone4Present() ? QStringLiteral("4-zone lighting") : QStringLiteral("✗ 4-zone lighting: no 4-zone keyboard here"));
+    if (s.kbdLevel >= 0) out << QStringLiteral("Keyboard light: level %1").arg(s.kbdLevel);
+    if (s.panelOd >= 0) out << QStringLiteral("Panel Over Drive: ") + (s.panelOd ? "on" : "off");
+    if (s.refresh > 0) out << QStringLiteral("Display: %1 Hz").arg(s.refresh);
+    if (!s.command.isEmpty()) out << "⚠ Command: " + s.command + " (runs as you; cannot be undone or checked)";
+    if (s.screenBrightness > 0) out << QStringLiteral("Screen brightness: %1 %").arg(s.screenBrightness);
+    if (out.isEmpty()) out << QStringLiteral("Nothing to change (every component is 'unchanged')");
+    const bool touchesPower = !s.platformProfile.isEmpty() || !s.firmware.isEmpty() || s.tuning.kind != Choice::Unchanged;
+    if (const QString c = DriftWatch::culprits(); touchesPower && !c.isEmpty())
+        out << "⚠ Other tools that may change the same settings afterwards: " + c;
+    return out;
+}
+
 void SceneEngine::start(const Scene &s) {
     busy_ = true;
     ok_ = true;
@@ -1197,7 +1255,7 @@ void SceneEngine::finish() {
     // what is applied), and never run a queued automatic switch under a game that started meanwhile.
     const bool gameOwns = gameTookOver_ || (autoApply_ && (gameSessions() > 0 || gameStarting() || gameSceneActive()));
     gameTookOver_ = false;
-    if (!gameOwns) { setActiveScene(current_); seenActive_ = current_; }
+    if (!gameOwns) { setActiveScene(current_, !ok_); seenActive_ = current_; }
     Q_EMIT finished(current_, ok_, log_);
     if (gameOwns) {
         pending_.clear();

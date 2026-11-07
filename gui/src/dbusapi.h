@@ -54,11 +54,14 @@ public Q_SLOTS:
     QMap<QString, double> SensorValues();
     QVariantMap HealthSummary();
     QList<QVariantMap> HealthEvents(uint sinceSeq);
+    /// Emergency safe mode (centurion-safe-mode); the result arrives as SafeModeFinished.
+    void SafeMode();
 
 Q_SIGNALS:
     void SceneApplied(const QString &name, bool ok);
     void PowerProfileChanged(const QString &profile);
     void HealthEvent(const QString &kind, const QString &level, const QString &title);
+    void SafeModeFinished(bool ok, const QString &log);
 
 private:
     MainWindow *win_;

@@ -86,7 +86,9 @@ std::optional<bool> onAc(bool lenient = false);
 /// Shared with centurion-gamemode ($XDG_RUNTIME_DIR/centurion/scene.json):
 /// the active scene, whoever applied it, and the game-launch bookkeeping.
 QString activeScene();
-void setActiveScene(const QString &name);
+/// The active scene's last apply had a failed step: it is only partly in effect.
+bool activeScenePartial();
+void setActiveScene(const QString &name, bool partial = false);
 /// Game sessions currently holding game mode (tune-helper's state).
 int gameSessions();
 
@@ -108,6 +110,9 @@ public:
     /// Applies a saved scene. While one is running, the latest request is
     /// queued and runs right after (an AC flip mid-apply is never lost).
     void apply(const QString &name);
+    /// Dry run: one line per component of what applying `s` would do here, read-only (nothing is written).
+    /// "✗ " = would fail or be skipped, "⚠ " = conflict or cannot be undone.
+    QStringList preview(const scenes::Scene &s) const;
     bool busy() const { return busy_; }
     /// Active scene (applied by the GUI or by centurion-gamemode at game start/exit).
     QString active() const { return scenes::activeScene(); }

@@ -20,6 +20,7 @@
 #include <QDateTime>
 #include <QFile>
 #include <QMenu>
+#include <QMessageBox>
 #include <QSettings>
 #include <QPainter>
 #include <QPixmap>
@@ -147,8 +148,13 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
         notify(game ? tr("Game scene: %1").arg(n) : tr("Scene: %1").arg(n),
                game ? tr("Game started — scene switched.") : tr("Scene switched."));
     });
+    connect(win_, &MainWindow::safeModeFinished, this, [this](bool ok, const QString &log) {
+        notify(ok ? tr("Safe mode: done") : tr("Safe mode: some steps failed"), log);
+    });
     connect(eng, &SceneEngine::started, this, [this](const QString &n) { setToolTip(tr("Centurion — applying scene '%1'…").arg(n)); });
-    connect(eng, &SceneEngine::finished, this, [this](const QString &n) { if (!n.isEmpty()) setToolTip(tr("Centurion — scene: %1").arg(n)); });
+    connect(eng, &SceneEngine::finished, this, [this](const QString &n, bool ok) {
+        if (!n.isEmpty()) setToolTip(ok ? tr("Centurion — scene: %1").arg(n) : tr("Centurion — scene: %1 (partly applied)").arg(n));
+    });
 
     // An overdue cooling test: checked once, a few minutes after start-up (as the backup reminder's first check); nothing repeats.
     QTimer::singleShot(COOLING_CHECK_MS, this, [this] { coolingReminder(); });
@@ -340,6 +346,14 @@ void Tray::rebuild() {
         notify(tr("Optimizations"), tr("Restoring original values…"));
     });
     om->setEnabled(!opt->busy());
+
+    connect(menu_->addAction(tr("Emergency safe mode…")), &QAction::triggered, this, [this] {
+        if (QMessageBox::question(nullptr, tr("Emergency safe mode"),
+                                  tr("Reset the CPU and NVIDIA curves, restore the optimizations, set the fans to Auto and "
+                                     "the power profile to Balanced?")) != QMessageBox::Yes) return;
+        notify(tr("Safe mode"), tr("Resetting to safe defaults…"));
+        win_->runSafeMode();
+    });
 
     // Keyboard lighting (Spectrum controller) — immediate, no cooldown needed.
     if (LightingTab *lt = win_->lighting()) {

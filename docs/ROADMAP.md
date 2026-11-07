@@ -126,3 +126,23 @@ olmadığı için düğme *Device info…*'nun yanında).
   profil değişince yazar, kapanışta siler. Çalışma dizini yoksa ya da yol tırnak gerektiriyorsa
   `centurion-gamemode OVERLAY` kalır. Eski bloklar dokunulmadan çalışmaya devam eder (yeni biçim
   için anahtarı kapatıp açmak yeterli). Kazanç ölçülmedi.
+
+---
+
+## Faz 1 — Güvenilirlik (2026-11-07)
+
+| Özellik | Durum | Nerede |
+|---|---|---|
+| V/F Curve Integrity Validator | ✅ | `nvcurve/src/safety.rs` `check_curve_geometry`: profil uygulama ve `nvcurve set` yazmadan önce. Komşularından > 300 MHz yukarıdaki tek nokta (spike) = uyarı (NVIDIA sekmesinde tek nokta bilerek düzenlenebildiği için engellemez); GPU'nun kendi eğrisinde olmayan ters eğim = uyarı. GPU'nun kendi plato/çukurları işaretlenmez. Yazma sonrası geri okuma zaten vardı (`apply_with_retry`). Kontrolden geçmek kararlılık garantisi değildir. |
+| Scene Dry Run | ✅ | Scenes → *Preview*: `SceneEngine::preview`, yalnızca okur; desteklenmeyen / atlanacak adımlar, geri alınamaz *Command*, çakışan araçlar (`DriftWatch::culprits`). |
+| Kısmi sahne durumu | ✅ | `scene.json` → `partial`; GUI (`finish`) ve `centurion-gamemode` (PRE/POST/SCENE) yazar. Liste "· partial", tepsi "(partly applied)". Snapshot/rollback yok (karar). |
+| Emergency Safe Mode | ✅ | `centurion-safe-mode` (CPU eğrisi/UV → 0, NVIDIA `reset_all` 30 s zaman aşımıyla, optimizasyon restore, fan boost auto, profil balanced); tepsi *Emergency safe mode…*, D-Bus `SafeMode()` + `SafeModeFinished`. Modül yeniden yükleme yok. |
+
+## Faz 2 — Teşhis ve test (2026-11-07)
+
+| Özellik | Durum | Nerede |
+|---|---|---|
+| Hardware Flight Recorder | ✅ | `centurion-helpers/src/flight.rs`; `centurion-boot-guard watch` varsayılan 5 s'de bir örnek alır (Health → Boot history → *Flight recorder*: 5 / 10 / 30 / 60 s; `/etc/centurion/flight-interval`, `tune-helper {"op":"flight_interval"}`, bir sonraki örnekten itibaren geçerli, yeniden başlatma gerekmez) (systemd ve artık OpenRC'de de ayakta kalan `watch`). Yalnızca ucuz, uyandırmayan okumalar: hwmon CPU sıcaklığı / fanlar, RAPL paket gücü, cpufreq, pil gücü, load, dGPU runtime-PM durumu; EC GPU sıcaklığı yalnızca dGPU zaten uyanıkken (NVML / nvidia-smi yok). `/var/lib/centurion/flight.ring`: sabit boyutlu (≈135 KB, 720 örnek: 5 s'de 1 saat, 60 s'de 12 saat) halka, her örnek yerinde yazılır + fdatasync. Yeni boot'ta önceki halka `flight-prev.ring` olur; Health → Boot history o boot'un son 10 dakikasını (tepe değerler + son 2 dk) gösterir. Guard tetiklenmiş (paused) boot'larda da `watch` ayakta kalır: disarm etmez ama kaydeder ve SIGTERM'de temiz kapanışı yazar (önceden systemd'de bu boot'larda temiz kapanış hiç kaydedilmiyordu). Metin `gui/src/flightrec.cpp` (birim testi `gui/tests/flightrec_test.cpp`). |
+| Virtual Hardware Test Lab | ✅ | `centurion-helpers/tests/virtual_lab.rs`: sahte sysfs ağacı (AMD laptop, sensörsüz makine, sarılan RAPL sayacı, uyuyan dGPU), halka dosyası (sarma, aynı boot'ta devam, boot değişiminde döndürme, bozuk satırlar), betikli çekirdek hata dizisi (GPU'nun bus'tan düşmesi), sahte SMU (bus hatası, yanıtsız, red). Sahte acpi_call (`legion_wmi::set_acpi_fake`, yalnızca testler kurar): EC GPU sıcaklığı (geçerli / 0 / mantıksız / firmware hatası) ve recorder'ın 5 ardışık hatadan sonra EC'yi bırakması. GUI: `flightrec_test` (ctest). |
+
+Açık: donanımda doğrulama; polkit seviyesine göre adım başına yetki istenebilir; NVIDIA güç yönetimi (nvidia-powerd) çakışması önizlemede ayrıca gösterilmiyor.

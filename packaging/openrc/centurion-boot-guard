@@ -6,6 +6,7 @@
 
 description="Pause Centurion boot presets after a crashed boot"
 GUARD="@LIBEXEC@/centurion-boot-guard"
+pidfile="/run/${RC_SVCNAME}.pid"
 
 depend() {
 	need localmount
@@ -18,13 +19,17 @@ start() {
 	ebegin "Arming Centurion boot guard"
 	"${GUARD}" arm
 	eend $?
-	# Disarm once the boot has been stable for the window (180 s).
-	( sleep 180; "${GUARD}" disarm ) >/dev/null 2>&1 &
+	# Stays up: disarms once the boot has been stable for the window (180 s)
+	# and runs the flight recorder (one sensor sample every 5 s).
+	start-stop-daemon --start --background --make-pidfile --pidfile "${pidfile}" \
+		--exec "${GUARD}" -- watch
 }
 
 stop() {
 	# Clean shutdown / reboot: this boot did not crash (also recorded for the
 	# GUI's login guard, so a quick reboot after login is not taken for a crash).
-	"${GUARD}" shutdown >/dev/null 2>&1
+	# watch records it on SIGTERM; if it is not running, record it here.
+	start-stop-daemon --stop --quiet --pidfile "${pidfile}" --retry TERM/10 >/dev/null 2>&1 \
+		|| "${GUARD}" shutdown >/dev/null 2>&1
 	return 0
 }

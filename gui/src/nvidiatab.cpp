@@ -36,7 +36,6 @@
 #include <array>
 #include <vector>
 #include <cmath>
-#include <limits>
 #include <dlfcn.h>
 
 static const QString PROFILES_DIR = QStringLiteral("/etc/nvcurve/profiles");
@@ -837,8 +836,6 @@ void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
         const qint64 baseK = qint64(p.value("base_kHz").toDouble());
         offs[base.size()] = off;
         freqs.append(cur);
-        // Approximation is DISPLAY-ONLY if V3 is unavailable. Rust will refuse
-        // flatten writes rather than trust cur-off as an offset-free base.
         base.append(QPointF(mv, baseK > 0 ? floorDiv(baseK, 1000) : cur - off));
     }
     if (base.isEmpty()) { log("❌ No GPU points found in vf_curve."); return; }
@@ -1107,30 +1104,7 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
                                                      : data.value("vram_p0_offset_mhz")).toInt();
 
     QHash<int, int> offs;
-    for (int i = 0; i < base_.size(); ++i) {
-        const QJsonValue value = deltas.value(QString::number(i));
-        bool valid = true;
-        qint64 khz = 0;
-        if (value.isString()) {
-            khz = value.toString().toLongLong(&valid);
-        } else if (value.isDouble()) {
-            const double raw = value.toDouble();
-            // Validate before converting JSON doubles to signed 64-bit values.
-            if (!std::isfinite(raw) || std::trunc(raw) != raw ||
-                static_cast<long double>(raw) < static_cast<long double>(std::numeric_limits<qint64>::min()) ||
-                static_cast<long double>(raw) > static_cast<long double>(std::numeric_limits<qint64>::max())) {
-                valid = false;
-            } else { khz = static_cast<qint64>(raw); }
-        } else if (!value.isUndefined() && !value.isNull()) {
-            valid = false;
-        }
-        if (khz < -2000000 || khz > 1000000) valid = false;
-        if (!valid) {
-            log(QStringLiteral("❌ Invalid frequency offset at point %1: %2").arg(i).arg(value.toString()));
-            return;
-        }
-        offs[i] = floorDiv(khz, 1000);
-    }
+    for (int i = 0; i < base_.size(); ++i) offs[i] = floorDiv(qint64(deltas.value(QString::number(i)).toDouble()), 1000);
     adoptOffsets(offs);
 
     memSpin_->setValue(mem);

@@ -94,6 +94,7 @@ fi
 %{_bindir}/centurion
 %{_bindir}/nvcurve
 %{_bindir}/centurion-gamemode
+%{_bindir}/centurion-safe-mode
 %{_bindir}/centurion-intel-uv
 %{_bindir}/centurion-autotune
 %{_bindir}/centurion-calibrate

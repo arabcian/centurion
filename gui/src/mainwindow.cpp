@@ -36,6 +36,8 @@
 #include "uinavigator.h"
 #include "experimentalui.h"
 #include <QApplication>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QAction>
@@ -532,6 +534,28 @@ void MainWindow::showEvent(QShowEvent *e) {
     placeHeaderControls();
     // First time the window opens (not the tray-only start): the setup wizard, once per user.
     if (!wizardChecked_) { wizardChecked_ = true; QTimer::singleShot(0, this, [this] { FirstRunWizard::maybeShow(this); }); }
+}
+
+void MainWindow::runSafeMode() {
+    static bool running = false;
+    if (running) return;
+    running = true;
+    home_->setAllFansAuto();
+    const QString tool = QStandardPaths::findExecutable(QStringLiteral("centurion-safe-mode"));
+    auto *p = new QProcess(this);
+    p->setProcessChannelMode(QProcess::MergedChannels);
+    connect(p, &QProcess::finished, this, [this, p](int code, QProcess::ExitStatus st) {
+        running = false;
+        p->deleteLater();
+        Q_EMIT safeModeFinished(st == QProcess::NormalExit && code == 0, QString::fromUtf8(p->readAll()).trimmed());
+    });
+    connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart) return;
+        running = false;
+        p->deleteLater();
+        Q_EMIT safeModeFinished(false, QStringLiteral("centurion-safe-mode not found"));
+    });
+    p->start(tool.isEmpty() ? QStringLiteral("/usr/bin/centurion-safe-mode") : tool, {});
 }
 
 void MainWindow::updateOverlay() {
