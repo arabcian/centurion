@@ -1,12 +1,10 @@
 #include "ryzentab.h"
-#include "cpustress.h"
 #include "trialbar.h"
 #include <QShowEvent>
 #include "platformprofile.h"
 #include "privileged.h"
 #include "sysinfo.h"
 #include "theme.h"
-#include "experimentalui.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -35,9 +33,6 @@
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QSignalBlocker>
-#include <QSplitter>
-#include <QSpinBox>
 #include <QScrollArea>
 #include <QSet>
 #include <QStandardPaths>
@@ -306,10 +301,6 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     connect(bSave, &QPushButton::clicked, this, &RyzenTab::saveProfile);
     connect(bDel, &QPushButton::clicked, this, &RyzenTab::deleteProfile);
     pl->addWidget(profileCombo_, 1);
-    verified_ = new QLabel;
-    verified_->setVisible(false);
-    pl->addWidget(verified_);
-    connect(profileCombo_, &QComboBox::currentTextChanged, this, &RyzenTab::updateVerified);
     pl->addWidget(bLoad);
     pl->addWidget(bSave);
     pl->addWidget(bDel);
@@ -350,20 +341,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     bAll->setFixedWidth(APPLY_W);
     connect(bAll, &QPushButton::clicked, this, [this] { applyAllCore(); });
     al->addWidget(bAll);
-    if (theme::experimentalEnabled()) {
-        // The reset group was taking an entire column for one button.
-        // Transfer that actual button; the confirmation handler is unchanged.
-        rl->removeWidget(bReset);
-        top->removeWidget(resetBox);
-        pl->addWidget(bReset);
-        resetBox->deleteLater();
-        acHint->setToolTip(acHint->text());
-        acBox->setToolTip(acHint->text());
-        acHint->hide();
-        // Profile row carries a combo and four buttons, All-Core one field and one button.
-        top->setStretchFactor(profBox, 3);
-        top->addWidget(acBox, 2);
-    } else root->addWidget(acBox);
+    root->addWidget(acBox);
 
     // Per-core
     auto *coreBox = box("Per-Core Offsets  (fixed SMU slot layout)", "box_green");
@@ -424,14 +402,8 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
 
         auto *card = new QFrame;
         card->setObjectName("ccdCard");
-        // Keep the CCD's identity in its title, not a bright frame around
-        // every row: instrumentation should be readable rather than decorative.
-        if (theme::experimentalEnabled())
-            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-radius: 7px; }")
-                                    .arg(theme::BG1, theme::BORDER));
-        else
-            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
-                                    .arg(theme::BG2, theme::BORDER_SOFT, accent));
+        card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
+                                .arg(theme::BG2, theme::BORDER_SOFT, accent));
         auto *g = new QGridLayout(card);
         g->setContentsMargins(8, 6, 8, 6);
         g->setHorizontalSpacing(14);
@@ -548,14 +520,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     coreGrid_ = gridHost;
     fitCoreScroll();
     cl->addWidget(scroll, 1);
-    if (theme::experimentalEnabled()) {
-        // Slot-by-slot editing already exists in the CCD matrix. A second
-        // editor duplicated that state and stole ~30% of the usable width.
-        // Preserve one source of truth, the fixed 8-slot table, at full width.
-        root->addWidget(coreBox, 1);
-    } else {
-        root->addWidget(coreBox, 1);
-    }
+    root->addWidget(coreBox, 1);
 
     auto *logBox = box("Output / Log", "box_grey");
     auto *ll = new QVBoxLayout(logBox);
@@ -566,9 +531,6 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     ll->addWidget(log_);
     log_->setMinimumHeight(54);
     log_->setMaximumHeight(90);
-    if (theme::experimentalEnabled()) {
-        root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Diagnostics"), logBox));
-    }
     root->addWidget(logBox, 0);
 
     monTimer_ = new QTimer(this);
@@ -668,9 +630,7 @@ bool RyzenTab::applyAllCore(std::function<void()> then) {
         QMessageBox::warning(this, "Out of Range", QStringLiteral("Offset must be within %1..%2.").arg(CO_MIN).arg(CO_MAX));
         return false;
     }
-    QJsonObject params = namedProfile();
-    params["value"] = v;
-    runOp("set_coall", params, std::move(then));
+    runOp("set_coall", {{"value", v}}, std::move(then));
     return true;
 }
 
@@ -708,9 +668,7 @@ bool RyzenTab::applyPerCore(std::function<void()> then) {
     if (entries.isEmpty()) { QMessageBox::information(this, "No Input", "No per-core values have been entered."); return false; }
     if (parkedSkipped) log(QStringLiteral("Skipping %1 slot(s) on the parked CCD (kept in the profile).").arg(parkedSkipped), "cmd");
     if (skipped) log(QStringLiteral("Skipping %1 disabled slot(s).").arg(skipped));
-    QJsonObject params = namedProfile();
-    params["entries"] = entries;
-    runOp("set_coper_batch", params, std::move(then));
+    runOp("set_coper_batch", {{"entries", entries}}, std::move(then));
     return true;
 }
 
@@ -752,26 +710,6 @@ void RyzenTab::reloadProfiles() {
     profileCombo_->clear();
     profileCombo_->addItems(savedProfileNames());
     if (int i = profileCombo_->findText(prev); i >= 0) profileCombo_->setCurrentIndex(i);
-    updateVerified();  // a profile saved again under the same name changed its content
-}
-
-// The badge next to the profile: the newest CPU test (Health → Curve stability) run while this profile, as it is
-// saved now, was applied. Saving the profile again changes its content, so an old result no longer shows.
-void RyzenTab::updateVerified() {
-    QFile f(ryzen::profilesDir() + QLatin1Char('/') + profileCombo_->currentText() + QStringLiteral(".json"));
-    const QJsonObject r = !profileCombo_->currentText().isEmpty() && f.open(QIODevice::ReadOnly) && f.size() < 256 * 1024
-        ? cpustress::verification(cpustress::load(), profileCombo_->currentText(), cpustress::profileHash(f.readAll())) : QJsonObject();
-    verified_->setVisible(!r.isEmpty());
-    if (r.isEmpty()) return;
-    const QString v = r.value(QStringLiteral("verdict")).toString();
-    const bool pass = v == QLatin1String("pass");
-    verified_->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(pass ? theme::OK : theme::DANGER,
-        pass ? QStringLiteral("✓ verified") : v == QLatin1String("crashed") ? QStringLiteral("✗ crashed") : QStringLiteral("✗ failed")));
-    const QString test = r.value(QStringLiteral("mode")).toString() == QLatin1String("percore") ? QStringLiteral("per-core") : QStringLiteral("all-core");
-    verified_->setToolTip(QStringLiteral("CPU test (Health → Curve stability), %1 %2, %3: %4")
-        .arg(test, r.value(QStringLiteral("load")).toString().toUpper(),
-             QDateTime::fromSecsSinceEpoch(r.value(QStringLiteral("t")).toInteger()).toString(QStringLiteral("yyyy-MM-dd HH:mm")),
-             pass ? QStringLiteral("passed") : v == QLatin1String("crashed") ? QStringLiteral("the machine went down") : QStringLiteral("failed")));
 }
 
 QJsonObject RyzenTab::currentState() {
@@ -816,16 +754,7 @@ void RyzenTab::saveProfile() {
     }
     reloadProfiles();
     profileCombo_->setCurrentText(name);
-    loadedName_ = name;
-    loadedState_ = currentState();
     log("Profile saved: " + path);
-}
-
-// The saved profile the grid still shows unchanged (loaded or just saved), named in the apply request so the
-// curve journal records "profile:NAME" (Health → Curve stability, the CPU test's verified badge); {} after an edit.
-QJsonObject RyzenTab::namedProfile() {
-    if (loadedName_.isEmpty() || currentState() != loadedState_) return {};
-    return {{"profile", loadedName_}};
 }
 
 bool RyzenTab::loadProfile() {
@@ -855,8 +784,6 @@ bool RyzenTab::loadProfile() {
     bool hidden = false;
     for (const Slot &s : slots_) hidden |= !activeCcds_.contains(s.ccd) && (s.disable->isChecked() || !s.entry->text().isEmpty());
     if (hidden) rAll_->setChecked(true);  // same set Scenes / centurion-gamemode apply
-    loadedName_ = name;
-    loadedState_ = currentState();
     log("Profile loaded: " + name);
     if (missing) log(QStringLiteral("%1 slot(s) in the profile do not exist on this topology (%2 CCD(s)) and were ignored.")
                          .arg(missing).arg(ccdCount_), "err");
@@ -883,10 +810,11 @@ bool RyzenTab::applyNamedProfile(const QString &name) {
     bool anyCore = false;
     for (Slot *s : activeSlots()) anyCore |= parse(*s).first == Parse::Ok;
     const bool hasCoall = !coall_->text().trimmed().isEmpty();
-    // A per-core batch resets every core to 0 first (ryzen-co-helper), so an all-core value sent
-    // before it would be overwritten at once: the all-core offset goes out only without per-core values.
+    // Chained, not back-to-back: the Python version fired per-core while the
+    // all-core pkexec call was still running, so it was rejected as busy
+    // and a profile with both parts only ever got its all-core half applied.
+    if (hasCoall) return applyAllCore(anyCore ? std::function<void()>([this] { applyPerCore(); }) : std::function<void()>());
     if (anyCore) return applyPerCore();
-    if (hasCoall) return applyAllCore();
     log("Profile '" + name + "' contains no offsets to apply.", "err");
     return false;
 }
@@ -913,7 +841,6 @@ void RyzenTab::changeEvent(QEvent *e) {
 
 void RyzenTab::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
-    updateVerified();
     updateParked();
     monitorTick();
     monTimer_->start();

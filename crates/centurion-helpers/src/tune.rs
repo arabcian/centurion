@@ -170,10 +170,6 @@ pub enum Target {
     /// twin, and 0 is not a valid bytes value, so while the system is in ratio
     /// mode the baseline records "ratio:<n>" and restore writes the ratio file.
     DirtyBytes { bytes: &'static str, ratio: &'static str },
-    /// Same attribute under every physical network interface (/sys/class/net/<if>/<attr>).
-    NetIf(&'static str),
-    /// discard/<attr> of every mounted btrfs file system (/sys/fs/btrfs/<uuid>/discard).
-    BtrfsDiscard(&'static str),
 }
 
 pub struct Tunable {
@@ -386,21 +382,6 @@ pub const TUNABLES: &[Tunable] = &[
     t("mm.ksm_run", "Memory", "KSM run",
       "KSM background-scans memory for identical pages across processes and merges them to save RAM - common in VM hosts, rarely useful for a single desktop/game session and pure scanning overhead when there is little page duplication. 0 = stop the scanner (recommended while gaming: one less periodic task competing for cache/memory bandwidth). 1 = run normally. 2 = stop and eagerly unmerge already-merged pages, useful once if you disabled KSM after it had already merged things and want the memory back immediately.",
       int(0, 2), NO, Target::File("/sys/kernel/mm/ksm/run")),
-    t("mm.ksm_advisor", "Memory", "KSM scan advisor",
-      "With KSM running: scan-time lets the kernel size the scanner's pages_to_scan itself so one full pass takes about advisor_target_scan_time (200 s), instead of a fixed rate - less scanning when little memory is mergeable. none = the fixed pages_to_scan (stock).",
-      Kind::Choice, BR, Target::File("/sys/kernel/mm/ksm/advisor_mode")),
-    t("thp.khp_max_ptes_shared", "Memory", "khugepaged max_ptes_shared",
-      "How many of a 2 MB range's 4 KB pages may be shared with another process (after fork) when khugepaged collapses it into a huge page (default 256). Lower = fewer collapses that copy shared pages (less memory duplicated, less khugepaged work); higher = more huge pages for forked workers.",
-      int(0, 511), NO, Target::File("/sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_shared")),
-    t("thp.use_zero_page", "Memory", "THP huge zero page",
-      "1 (stock) = a read fault on untouched anonymous memory maps the shared 2 MB zero page instead of allocating; 0 = a real huge page is allocated (and zeroed) on the first read. Matters for programs that read large zero-filled buffers before writing them.",
-      Kind::Bool, NO, Target::File("/sys/kernel/mm/transparent_hugepage/use_zero_page")),
-    t("vm.compact_unevictable_allowed", "Memory", "Compact unevictable pages",
-      "1 (stock) = memory compaction may move mlocked (unevictable) pages; 0 = it leaves them alone, so a process that locked its memory (audio servers, some anti-cheat and real-time code) never takes a minor fault while compaction runs - at the cost of more fragmentation. PREEMPT_RT kernels default to 0.",
-      Kind::Bool, NO, Target::File("/proc/sys/vm/compact_unevictable_allowed")),
-    t("vm.dirtytime_expire_seconds", "Memory", "vm.dirtytime_expire_seconds",
-      "With the lazytime mount option, how old an inode's timestamp-only change may get before it is written out (default 43200 = 12 h). Longer = fewer metadata writes (SSD wear, battery); shorter = timestamps on disk stay closer to the truth after a crash.",
-      int(1, 2_147_483_647), NO, Target::File("/proc/sys/vm/dirtytime_expire_seconds")),
     t("vm.max_map_count", "Memory", "vm.max_map_count",
       "Ceiling on mmap() regions a single process may hold. Several modern Proton/DXVK titles (large open-world games especially) map more regions than the old distro default of 65530 and crash with an out-of-memory-looking error that is actually this limit. 2147483642 is the SteamOS/Proton-recommended value (effectively unlimited) and is what every gaming preset here sets; no real downside to leaving it this high on a desktop.",
       int(65_530, 2_147_483_642), NO, Target::File("/proc/sys/vm/max_map_count")),
@@ -570,9 +551,6 @@ pub const TUNABLES: &[Tunable] = &[
     t("kernel.sched_burst_cache_lifetime", "Scheduler", "BORE burst cache lifetime (ns)",
       "How long (ns) the averaged penalty of a process tree or thread group is cached before it is recomputed for the next fork (stock 75000000 = 75 ms). Longer = cheaper forks, staler averages; shorter = fresher averages, more scanning work per fork under heavy fork rates. Only relevant with burst inheritance on.",
       int(0, 4_294_967_295), NO, Target::File("/proc/sys/kernel/sched_burst_cache_lifetime")),
-    t("kernel.yield_type", "Scheduler", "Project C yield type",
-      "Only on a Project C (BMQ/PDS) kernel: what sched_yield() does. 0 = nothing (yielding threads keep running), 1 = deboost/requeue the caller (stock), 2 = also give the CPU to the next task. Spin-and-yield code in some games and Wine behaves better at 0 or 1. The time slice itself is the sched_timeslice= boot parameter.",
-      int(0, 2), NO, Target::File("/proc/sys/kernel/yield_type")),
     t("kernel.infinity_smt_divisor", "Scheduler", "Infinity SMT slice divisor",
       "Infinity scheduler, v4.x series (galpt/infinity-scheduler kernel patch; the later infinity-sched-new rewrite has no knobs and no such file): EMA-based interactivity on top of EEVDF/CFS and RT, no BPF): the slice of a task running on an SMT sibling whose twin thread is busy is divided by this value (1-16; stock 2, 1 = no halving). Higher = shorter slices on shared cores, so interactive work on the other sibling gets the core back sooner, at the cost of more context switches for the CPU-bound task; lower = longer slices, better throughput on SMT pairs. Out-of-range writes are refused by the kernel. Only exists on an Infinity kernel (kernel.infinity_running = 1; version in kernel.infinity_version, counters in /proc/sys/kernel/infinity_stats).",
       int(1, 16), NO, Target::File("/proc/sys/kernel/infinity_smt_divisor")),
@@ -594,15 +572,6 @@ pub const TUNABLES: &[Tunable] = &[
     dbg(t("sched.feat_cache_hot_buddy", "Scheduler", "CACHE_HOT_BUDDY (debugfs)",
       "The load balancer treats a task that was just chosen as next/last buddy as cache-hot and avoids migrating it (default on). On = buddies stay where their data is: better cache locality, and on a two-CCD chip fewer hops to the other L3. Off = they are moved like any other task: load evens out faster, at the price of cold caches after the move.",
       Kind::Bool, NO, Target::SchedFeature("CACHE_HOT_BUDDY"))),
-    dbg(t("sched.feat_place_lag", "Scheduler", "PLACE_LAG (debugfs)",
-      "A task that slept is put back into the competition with the lag it had when it left (default on): a task that was owed CPU time keeps its claim, one that had run ahead keeps its debt, so sleeping neither earns nor loses fairness. Off = every woken task starts at the queue's average (zero lag): short sleepers (input, audio, a game's frame thread) can no longer carry a claim across a sleep, but neither can a hog shed its debt by napping. Leave on unless chasing a fairness regression.",
-      Kind::Bool, NO, Target::SchedFeature("PLACE_LAG"))),
-    dbg(t("sched.feat_place_deadline_initial", "Scheduler", "PLACE_DEADLINE_INITIAL (debugfs)",
-      "A freshly forked task gets half a slice before its first virtual deadline instead of a whole one (default on), so it eases into the competition without waiting a full slice behind the running tasks. Off = new tasks start with a full slice: a fork storm (a build, a launcher spawning helpers) preempts the running tasks a little less eagerly.",
-      Kind::Bool, NO, Target::SchedFeature("PLACE_DEADLINE_INITIAL"))),
-    dbg(t("sched.feat_place_rel_deadline", "Scheduler", "PLACE_REL_DEADLINE (debugfs)",
-      "Kernel 6.12+: a task moved to another runqueue (migration, cgroup or priority change) keeps its deadline relative to its own progress (default on) instead of getting a fresh one there. On = a migrated task neither jumps the queue nor falls back behind it; off = it is placed like a new arrival, which can delay a thread the load balancer just moved to the other CCD.",
-      Kind::Bool, NO, Target::SchedFeature("PLACE_REL_DEADLINE"))),
     dbg(warn(t("sched.feat_wakeup_preemption", "Scheduler", "WAKEUP_PREEMPTION (debugfs)",
       "Whether a task that wakes up may preempt the running one (default on). Off = no wake-up ever preempts: the running task keeps the CPU until its slice ends or the tick moves it on, as if everything ran as SCHED_BATCH. That is the most throughput a saturated machine gives (fewest context switches, warm caches) and the worst wake-up latency - input, audio and frame threads wait for a slice boundary. A batch/compile-box setting; never for gaming or desktop use.",
       Kind::Bool, NO, Target::SchedFeature("WAKEUP_PREEMPTION")))),
@@ -613,7 +582,7 @@ pub const TUNABLES: &[Tunable] = &[
       "Confines every unbound kernel workqueue (writeback, crypto, most filesystem background work) to the CPUs of one CCD, keeping that background work off whichever CCD the game runs on. Typical use: set this to 'frequency' (or whichever CCD is NOT hosting the game) while the Game launch tab's affinity points the game at 'cache'/the V-Cache CCD - filesystem/crypto work then physically cannot preempt or share L2/L3 with the game's threads. Pick 'all' to undo (kernel default spreads across every CPU). Only offered with 2+ CCDs; a single-CCD chip has nothing to confine work away from.",
       Kind::Choice, Options::Special, Target::WqCpumask),
     t("irq.affinity", "Scheduler", "IRQ affinity",
-      "Sets smp_affinity_list for every IRQ to one CCD's CPUs, so device interrupts (network, USB, most peripherals) fire on cores the game is not using. Same pairing idea as workqueue CPUs above: point this at the non-gaming CCD. Best-effort by design - multi-queue NVMe/network IRQs are often kernel-managed and refuse a manual affinity change (reported as 'refused', not a failure); single-CPU-only IRQs (per-CPU timers) are skipped since they say nothing about policy either way. 'all' restores the kernel's default spread. A running irqbalance daemon would undo the setting within seconds: it is stopped while a CCD is set and started again on restore or 'all' (only if Centurion stopped it).",
+      "Sets smp_affinity_list for every IRQ to one CCD's CPUs, so device interrupts (network, USB, most peripherals) fire on cores the game is not using. Same pairing idea as workqueue CPUs above: point this at the non-gaming CCD. Best-effort by design - multi-queue NVMe/network IRQs are often kernel-managed and refuse a manual affinity change (reported as 'refused', not a failure); single-CPU-only IRQs (per-CPU timers) are skipped since they say nothing about policy either way. 'all' restores the kernel's default spread.",
       Kind::Choice, Options::Special, Target::Irq),
     // ── Storage ───────────────────────────────────────────────────────────
     t("blk.scheduler", "Storage", "I/O scheduler",
@@ -643,41 +612,6 @@ pub const TUNABLES: &[Tunable] = &[
     t("blk.max_sectors_kb", "Storage", "Max request size (KiB)",
       "Largest single request the block layer builds for every whole disk (the drive's own limit, max_hw_sectors_kb, is the ceiling: a larger value is refused for that disk only). Larger requests = fewer of them for sequential reads and writeback: least overhead, best streaming throughput. Smaller = a big write is cut into more pieces, so a small read waits behind less data per request: a shorter read tail while something writes, at a throughput cost. Pairs with read-ahead (a 128 KiB read-ahead never builds a bigger request anyway). centurion-calibrate measures it in the IO phase together with the other Storage rows.",
       int(4, 1_048_576), NO, Target::PerBlock("max_sectors_kb")),
-    // Elevator tunables: queue/iosched/* exists only while that elevator is the active one, so each
-    // row shows up only on disks running it. After blk.scheduler in the table: written after it.
-    t("blk.kyber_read_lat_ns", "Storage", "kyber read latency target (ns)",
-      "Read latency kyber aims for (default 2000000 = 2 ms): when reads complete slower than this, kyber shrinks the queue depth it gives writes and other requests. Lower = reads win more often against a write burst (smoother asset streaming while something downloads), at some write throughput. Only on disks using the kyber elevator.",
-      int(10_000, 1_000_000_000), NO, Target::PerBlock("iosched/read_lat_nsec")),
-    t("blk.kyber_write_lat_ns", "Storage", "kyber write latency target (ns)",
-      "Write latency kyber aims for (default 10000000 = 10 ms). Lower = writes are throttled sooner to protect it; higher = writes get more of the queue. Only on disks using the kyber elevator.",
-      int(10_000, 1_000_000_000), NO, Target::PerBlock("iosched/write_lat_nsec")),
-    t("blk.dl_read_expire_ms", "Storage", "mq-deadline read deadline (ms)",
-      "How long a read may wait before mq-deadline serves it ahead of everything else (default 500 ms). Lower = a read stuck behind sorted batches is served sooner (fewer long load hitches); too low turns sorting off in practice. Only on disks using mq-deadline.",
-      int(1, 60_000), NO, Target::PerBlock("iosched/read_expire")),
-    t("blk.dl_write_expire_ms", "Storage", "mq-deadline write deadline (ms)",
-      "Same deadline for writes (default 5000 ms). Writes are expected to wait longer than reads; lowering it toward the read deadline gives writes a fairer share. Only on disks using mq-deadline.",
-      int(1, 60_000), NO, Target::PerBlock("iosched/write_expire")),
-    t("blk.dl_fifo_batch", "Storage", "mq-deadline batch size",
-      "Requests mq-deadline dispatches in one sorted batch before it checks deadlines again (default 16). 1 = deadlines checked after every request (lowest latency, least merging); larger = more throughput on sequential work. Only on disks using mq-deadline.",
-      int(1, 1024), NO, Target::PerBlock("iosched/fifo_batch")),
-    t("blk.dl_writes_starved", "Storage", "mq-deadline writes_starved",
-      "How many read batches may run before a pending write batch must be served (default 2). Higher = reads preferred longer (good for a game loading while something writes); too high starves writeback. Only on disks using mq-deadline.",
-      int(1, 64), NO, Target::PerBlock("iosched/writes_starved")),
-    t("blk.bfq_low_latency", "Storage", "bfq low_latency",
-      "bfq's interactive/soft-real-time heuristics (default on): processes that do small bursts of I/O and then think (a game, a desktop app) get priority over steady streamers. Off = plain proportional sharing, a little more throughput. Only on disks using bfq.",
-      Kind::Bool, NO, Target::PerBlock("iosched/low_latency")),
-    t("blk.bfq_slice_idle_ms", "Storage", "bfq slice_idle (ms)",
-      "How long bfq keeps a disk idle waiting for the next request of the process it is serving (default 8 ms) - right for a spinning disk, where seeking away costs more. 0 = never idle: noticeably more throughput on an SSD, weaker per-process fairness. Only on disks using bfq.",
-      int(0, 1000), NO, Target::PerBlock("iosched/slice_idle")),
-    t("btrfs.discard_iops_limit", "Storage", "btrfs async discard IOPS limit",
-      "Ceiling on background TRIM requests per second issued by btrfs async discard (discard=async, the default on SSDs since 6.2), on every mounted btrfs file system. Lower = background TRIM stays out of the way of game I/O longer, freed space is trimmed later; 0 = no limit.",
-      int(0, 1000), NO, Target::BtrfsDiscard("iops_limit")),
-    t("btrfs.discard_kbps_limit", "Storage", "btrfs async discard bandwidth limit (KiB/s)",
-      "Ceiling on background TRIM bandwidth for btrfs async discard (0 = no limit, the default). A limit keeps a large delete (uninstalling a game) from turning into a burst of TRIM that competes with reads.",
-      int(0, 10_000_000), NO, Target::BtrfsDiscard("kbps_limit")),
-    t("btrfs.discard_max_size", "Storage", "btrfs async discard max size (bytes)",
-      "Largest single TRIM request btrfs async discard sends (default 64 MiB). Smaller = each TRIM occupies the drive for less time (shorter latency spikes for reads behind it), more requests in total.",
-      int(4096, 1_073_741_824), NO, Target::BtrfsDiscard("max_discard_size")),
     // ── Network ───────────────────────────────────────────────────────────
     t("net.tcp_congestion", "Network", "TCP congestion control",
       "Algorithm that decides how fast TCP sends. cubic (default) backs off on packet loss, so a lossy Wi-Fi link or a busy uplink makes it swing between too fast and too slow - visible as latency spikes in online games and uneven downloads. bbr models the path's bandwidth and round-trip time instead and keeps queues short: steadier latency and better throughput on Wi-Fi and long routes. bbr is loaded on demand (tcp_bbr module). Only affects new connections.",
@@ -697,27 +631,6 @@ pub const TUNABLES: &[Tunable] = &[
     t("net.netdev_max_backlog", "Network", "Receive backlog (packets)",
       "Per-CPU queue of received packets waiting for the network stack when the NIC delivers faster than the CPU processes them (stock 1000; CachyOS ships 4096). A larger queue absorbs bursts on a fast link (2.5 GbE, Wi-Fi 7) instead of dropping packets, at the price of a little more buffering delay while it is full. Only matters under bursty receive load.",
       int(100, 1_000_000), NO, Target::File("/proc/sys/net/core/netdev_max_backlog")),
-    t("net.tcp_notsent_lowat", "Network", "TCP not-sent low watermark (bytes)",
-      "How much not-yet-sent data a TCP socket may queue before the application is told to wait (stock: unlimited, 4294967295). 131072 (with BBR + fq) or 16384 keeps the queue in the socket short, so a new small message (a game input packet on a connection that also streams) is not stuck behind megabytes of buffered data. Sender side only; bulk uploads are unaffected in practice.",
-      int(1, 4_294_967_295), NO, Target::File("/proc/sys/net/ipv4/tcp_notsent_lowat")),
-    t("net.tcp_fastopen", "Network", "TCP Fast Open",
-      "Bitmask: 1 = client (stock), 2 = server, 3 = both. Fast Open sends data in the first handshake packet to a server it has talked to before, saving one round trip on reconnects. 0 = off (some middleboxes drop such packets).",
-      int(0, 3), NO, Target::File("/proc/sys/net/ipv4/tcp_fastopen")),
-    t("net.gro_flush_timeout", "Network", "GRO flush timeout (ns)",
-      "Per network interface: how long received packets may be held to be merged (GRO) before the stack sees them (default 0 = flush at the end of every poll). With interrupt deferral below, a timeout of ~20000-200000 ns batches packets: fewer interrupts and wake-ups (power, less CPU on a busy 2.5 GbE link), each packet a little later.",
-      int(0, 10_000_000), NO, Target::NetIf("gro_flush_timeout")),
-    t("net.napi_defer_hard_irqs", "Network", "NAPI deferred interrupts",
-      "Per network interface: how many empty polls NAPI keeps polling on the GRO timer above before it re-enables the device interrupt (default 0). Only acts together with a non-zero GRO flush timeout. More = fewer interrupts under steady traffic, at a little latency.",
-      int(0, 1000), NO, Target::NetIf("napi_defer_hard_irqs")),
-    warn(t("net.busy_poll", "Network", "Socket busy poll (µs)",
-      "poll()/select()/epoll on a socket spins on the device queue this long instead of sleeping (default 0 = off). Lowest receive latency (a few µs), but the CPU stays busy and out of idle states while it waits: high power cost, and over the internet the gain is tiny next to the round trip.",
-      int(0, 10_000), NO, Target::File("/proc/sys/net/core/busy_poll"))),
-    warn(t("net.busy_read", "Network", "Socket busy read (µs)",
-      "Same busy polling for blocking reads on a socket (default 0 = off). Same trade: µs-level latency for a CPU that never idles while a game waits for packets.",
-      int(0, 10_000), NO, Target::File("/proc/sys/net/core/busy_read"))),
-    t("net.napi_threaded", "Network", "Threaded NAPI",
-      "Per network interface: receive processing (NAPI) runs in its own napi/<if>-<n> kernel threads instead of as softirq on whatever CPU took the interrupt (default 0). Threads are scheduled like any other task: the game CPU partition (soft park) moves them off the game's CCD by itself, so network work stops stealing time from game threads there. Interfaces whose driver cannot do it refuse the write.",
-      int(0, 1), NO, Target::NetIf("threaded")),
     // ── Devices ───────────────────────────────────────────────────────────
     t("pci.aspm", "Devices", "PCIe ASPM policy",
       "PCIe Active State Power Management policy. 'performance' keeps every PCIe link at full power, no link-state transitions: removes the wake-up latency that shows as GPU or NVMe micro-jitter when a link drops to a power-saving state between traffic bursts - right for a plugged-in gaming session. 'powersave'/'powersupersave' let links drop to save power (better battery life, small idle power win) but on some hardware combinations actively cause dropouts on NVMe or Wi-Fi rather than just adding latency - if you see random Wi-Fi disconnects or NVMe timeouts, try 'performance' or 'default' here even outside gaming. 'default' defers to what the BIOS/ACPI tables request per device.",
@@ -882,7 +795,7 @@ pub fn policies() -> Vec<PathBuf> {
         return v;
     }
     let v: Vec<PathBuf> = numbered(&Path::new(CPU_DIR).join("cpufreq"), "policy").into_iter().map(|x| x.1)
-        .filter(|p| read(&p.join("affected_cpus")).is_some_and(|s| !s.trim().is_empty()))
+        .filter(|p| read(&p.join("affected_cpus")).map_or(false, |s| !s.trim().is_empty()))
         .collect();
     POLICIES.with(|t| *t.borrow_mut() = Some((std::time::Instant::now(), v.clone())));
     v
@@ -964,7 +877,7 @@ pub fn cstate_names() -> Vec<String> {
 /// `cpu.cstate_max` = `value` leaves only the POLL pseudo-state (no real idle state: every idle CPU
 /// spins). Calibration and autotune never test or pick it; it stays selectable by hand.
 pub fn poll_only_cstate<S: AsRef<str>>(names: &[S], value: &str) -> bool {
-    value.trim().parse::<usize>().is_ok_and(|i| i < names.len() && names[..=i].iter().all(|n| n.as_ref().eq_ignore_ascii_case("POLL")))
+    value.trim().parse::<usize>().map_or(false, |i| i < names.len() && names[..=i].iter().all(|n| n.as_ref().eq_ignore_ascii_case("POLL")))
 }
 
 pub fn debugfs_mounted() -> bool {
@@ -1093,11 +1006,10 @@ pub struct Ccx { pub index: usize, pub cpus: Vec<usize>, pub l3_kib: u64, pub ma
 /// long-running callers (centurion-gamemode polling for SMT/CCD parking to settle)
 /// still see the live topology.
 const TOPO_TTL: std::time::Duration = std::time::Duration::from_millis(250);
-type PolicyCpuCache = (std::time::Instant, Vec<(PathBuf, Vec<usize>)>);
 thread_local! {
     static TOPO: std::cell::RefCell<Option<(std::time::Instant, Vec<Ccx>)>> = const { std::cell::RefCell::new(None) };
     static POLICIES: std::cell::RefCell<Option<(std::time::Instant, Vec<PathBuf>)>> = const { std::cell::RefCell::new(None) };
-    static POLICY_CPUS: std::cell::RefCell<Option<PolicyCpuCache>> = const { std::cell::RefCell::new(None) };
+    static POLICY_CPUS: std::cell::RefCell<Option<(std::time::Instant, Vec<(PathBuf, Vec<usize>)>)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Forget the cached topology (after writing cpu*/online or smt/control).
@@ -1310,140 +1222,19 @@ fn powerd_service(action: &str) -> bool {
     } else if Path::new("/run/openrc").is_dir() {
         (bin(&["/sbin/rc-service", "/usr/sbin/rc-service", "/bin/rc-service", "/usr/bin/rc-service"]), ["nvidia-powerd", action])
     } else { return false };
-    bin.and_then(|b| run_tool(&b, &args, std::time::Duration::from_secs(15))).is_some_and(|(ok, _)| ok)
-}
-
-// ── irqbalance ─────────────────────────────────────────────────────────────
-// A running irqbalance daemon rewrites smp_affinity_list every few seconds and quietly undoes
-// irq.affinity. Applying an affinity stops it (marked first, like nvidia-powerd); restoring
-// irq.affinity starts it again, but only when we were the ones who stopped it.
-
-pub const IRQBALANCE_MARK: &str = "/run/centurion/tune/irqbalance-paused.json";
-
-/// Pids whose comm is "irqbalance" under a /proc-like `root`.
-pub fn irqbalance_pids_in(root: &Path) -> Vec<i32> {
-    std::fs::read_dir(root).into_iter().flatten().flatten()
-        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
-        .filter(|pid| read(&root.join(pid.to_string()).join("comm")).as_deref() == Some("irqbalance"))
-        .collect()
-}
-pub fn irqbalance_running() -> bool { !irqbalance_pids_in(Path::new("/proc")).is_empty() }
-
-fn irqbalance_wait(running: bool, ms: u64) -> bool {
-    let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-    loop {
-        if irqbalance_running() == running { return true; }
-        if std::time::Instant::now() >= end { return false; }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-}
-
-/// Before an IRQ affinity write. Ok(true): it ran and is stopped now (marked); Ok(false): it was not
-/// running (no mark: restore will not start it). Err: still running.
-pub fn irqbalance_pause() -> Result<bool, String> {
-    if !irqbalance_running() { return Ok(false); }
-    crate::write_root_file(IRQBALANCE_MARK, json!({"via": "service"}).to_string().as_bytes())?;
-    if service_ctl("irqbalance", "stop") && irqbalance_wait(false, 3000) { return Ok(true); }
-    let _ = std::fs::remove_file(IRQBALANCE_MARK);
-    Err("irqbalance is running and could not be stopped: it will undo the IRQ affinity within seconds".into())
-}
-
-/// Restart decision: only a daemon we stopped (mark present) that is not running again.
-pub fn irqbalance_should_start(marked: bool, running: bool) -> bool { marked && !running }
-
-/// After irq.affinity is restored (or set back to "all"). Ok(true) = restarted.
-pub fn irqbalance_resume() -> Result<bool, String> {
-    let marked = crate::read_root_file(IRQBALANCE_MARK, 4096).is_some();
-    if !marked || system_stopping() { return Ok(false); }
-    let _ = std::fs::remove_file(IRQBALANCE_MARK);
-    if !irqbalance_should_start(marked, irqbalance_running()) { return Ok(false); }
-    if service_ctl("irqbalance", "start") && irqbalance_wait(true, 3000) { Ok(true) } else { Err("irqbalance service did not start again".into()) }
+    bin.and_then(|b| run_tool(&b, &args, std::time::Duration::from_secs(15))).map_or(false, |(ok, _)| ok)
 }
 
 /// `systemctl <action> <name>.service` / `rc-service <name> <action>` (name must be a plain daemon name).
-// ── per-task EEVDF slice ────────────────────────────────────────────────
-// Since 6.12 sched_setattr()'s sched_runtime is a slice request for a normal (fair) task, clamped by the
-// kernel to 100 µs..100 ms; 0 = back to the default slice. Inherited by new threads, fork and exec.
-#[repr(C)]
-#[derive(Default)]
-struct SchedAttr { size: u32, policy: u32, flags: u64, nice: i32, priority: u32, runtime: u64, deadline: u64, period: u64, util_min: u32, util_max: u32 }
-
-/// Slice of the calling thread in ns (the kernel reports the default slice when none was requested).
-pub fn thread_slice_ns() -> std::io::Result<u64> {
-    let mut a = SchedAttr::default();
-    let r = unsafe { libc::syscall(libc::SYS_sched_getattr, 0, &mut a as *mut SchedAttr, std::mem::size_of::<SchedAttr>() as u32, 0u32) };
-    if r != 0 { return Err(std::io::Error::last_os_error()); }
-    Ok(a.runtime)
-}
-
-/// Requests a `us` µs slice for the calling thread (0 = default), keeping its policy and nice.
-/// Only for SCHED_OTHER / SCHED_BATCH: a real-time thread is left alone.
-pub fn set_thread_slice_us(us: u64) -> std::io::Result<()> {
-    let mut a = SchedAttr::default();
-    let size = std::mem::size_of::<SchedAttr>() as u32;
-    if unsafe { libc::syscall(libc::SYS_sched_getattr, 0, &mut a as *mut SchedAttr, size, 0u32) } != 0 { return Err(std::io::Error::last_os_error()); }
-    if a.policy != libc::SCHED_OTHER as u32 && a.policy != libc::SCHED_BATCH as u32 {
-        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "not a fair-class thread"));
-    }
-    a.size = size;
-    a.flags = 0;
-    a.runtime = us.saturating_mul(1000);
-    if unsafe { libc::syscall(libc::SYS_sched_setattr, 0, &a as *const SchedAttr, 0u32) } != 0 { return Err(std::io::Error::last_os_error()); }
-    Ok(())
-}
-
-/// The slice request means something: EEVDF (6.12+) is the scheduler, not sched_ext or Project C.
-pub fn slice_supported() -> bool {
-    let rel = read(Path::new("/proc/sys/kernel/osrelease")).unwrap_or_default();
-    let mut it = rel.split(|c: char| !c.is_ascii_digit()).filter_map(|x| x.parse::<u32>().ok());
-    let ver = (it.next().unwrap_or(0), it.next().unwrap_or(0));
-    ver >= (6, 12) && !Path::new("/proc/sys/kernel/yield_type").exists()
-        && read(Path::new(SCX_STATE)).map_or(true, |s| s != "enabled")
-}
-
-// ── zram recompression ──────────────────────────────────────────────────
-// The secondary algorithm (recomp_algorithm) can only be set before a zram device is initialised (the
-// kernel answers EBUSY afterwards): that is boot configuration (zram-generator / zram-init), not a knob.
-// What can run live is marking every stored page idle and later recompressing the pages still idle.
-
-/// Pages recompressed per device and game (64 MiB of 4 KiB pages): bounds the CPU time spent.
-pub const ZRAM_RECOMPRESS_MAX_PAGES: u64 = 16_384;
-
-/// zram devices in use (disksize > 0) with a recompression algorithm configured, under a /sys/block-like `root`.
-pub fn zram_recomp_devs(root: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(root).into_iter().flatten().flatten()
-        .filter(|e| e.file_name().to_string_lossy().starts_with("zram"))
-        .map(|e| e.path())
-        .filter(|d| read(&d.join("disksize")).is_some_and(|s| s != "0"))
-        .filter(|d| read(&d.join("recomp_algorithm")).is_some_and(|s| !s.is_empty()))
-        .collect();
-    v.sort();
-    v
-}
-
-/// "mark_idle": every stored page becomes idle; "recompress": the pages nobody touched since then are
-/// recompressed with the secondary algorithm (bounded). Returns how many devices took the write.
-pub fn zram_action(action: &str) -> Result<usize, String> {
-    let (file, data) = match action {
-        "mark_idle" => ("idle", "all".to_owned()),
-        "recompress" => ("recompress", format!("type=idle max_pages={ZRAM_RECOMPRESS_MAX_PAGES}")),
-        _ => return Err("action must be mark_idle or recompress".into()),
-    };
-    let devs = zram_recomp_devs(Path::new("/sys/block"));
-    if devs.is_empty() { return Err("no zram device with a recompression algorithm (set one in the boot zram configuration)".into()); }
-    let errs: Vec<String> = devs.iter().filter_map(|d| write_checked(&d.join(file), &data).err()).collect();
-    if errs.len() == devs.len() { Err(errs.join("; ")) } else { Ok(devs.len() - errs.len()) }
-}
-
 pub fn service_ctl(name: &str, action: &str) -> bool {
     if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') || !matches!(action, "start" | "stop") { return false; }
     let bin = |c: &[&str]| c.iter().map(PathBuf::from).find(|p| crate::trusted_path(p));
     let unit = format!("{name}.service");
     let t = std::time::Duration::from_secs(15);
     if Path::new("/run/systemd/system").is_dir() {
-        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[action, &unit], t)).is_some_and(|(ok, _)| ok)
+        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[action, &unit], t)).map_or(false, |(ok, _)| ok)
     } else if Path::new("/run/openrc").is_dir() {
-        bin(&["/sbin/rc-service", "/usr/sbin/rc-service", "/bin/rc-service", "/usr/bin/rc-service"]).and_then(|b| run_tool(&b, &[name, action], t)).is_some_and(|(ok, _)| ok)
+        bin(&["/sbin/rc-service", "/usr/sbin/rc-service", "/bin/rc-service", "/usr/bin/rc-service"]).and_then(|b| run_tool(&b, &[name, action], t)).map_or(false, |(ok, _)| ok)
     } else { false }
 }
 
@@ -1455,12 +1246,12 @@ pub fn service_boot(name: &str, on: bool) -> bool {
     let unit = format!("{name}.service");
     let t = std::time::Duration::from_secs(15);
     if Path::new("/run/systemd/system").is_dir() {
-        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[if on { "enable" } else { "disable" }, &unit], t)).is_some_and(|(ok, _)| ok)
+        bin(&["/usr/bin/systemctl", "/bin/systemctl"]).and_then(|b| run_tool(&b, &[if on { "enable" } else { "disable" }, &unit], t)).map_or(false, |(ok, _)| ok)
     } else if Path::new("/run/openrc").is_dir() {
         let linked = Path::new("/etc/runlevels/default").join(name).exists();
         if linked == on { return true; }
         bin(&["/sbin/rc-update", "/usr/sbin/rc-update", "/bin/rc-update", "/usr/bin/rc-update"])
-            .and_then(|b| run_tool(&b, &[if on { "add" } else { "del" }, name, "default"], t)).is_some_and(|(ok, _)| ok)
+            .and_then(|b| run_tool(&b, &[if on { "add" } else { "del" }, name, "default"], t)).map_or(false, |(ok, _)| ok)
     } else { false }
 }
 
@@ -1475,7 +1266,7 @@ fn system_stopping() -> bool {
     if Path::new("/run/systemd/system").is_dir() {
         let bin = ["/usr/bin/systemctl", "/bin/systemctl"].iter().map(PathBuf::from).find(|p| crate::trusted_path(p));
         return bin.and_then(|b| run_tool(&b, &["is-system-running"], std::time::Duration::from_secs(5)))
-            .is_some_and(|(_, out)| out.trim() == "stopping");
+            .map_or(false, |(_, out)| out.trim() == "stopping");
     }
     false
 }
@@ -1544,7 +1335,7 @@ fn role_matching(groups: &[Ccx], set: &[usize]) -> Option<String> {
         if let Some(g) = groups.iter().find(|g| g.cpus == set) { return Some(format!("ccd{}", g.index)); }
     }
     for role in ["pcore", "ecore"] {
-        if resolve_ccd(groups, role).is_some_and(|g| g.cpus == set) { return Some(role.into()); }
+        if resolve_ccd(groups, role).map_or(false, |g| g.cpus == set) { return Some(role.into()); }
     }
     groups.iter().find(|g| g.cpus == set).map(|g| format!("ccd{}", g.index))
 }
@@ -1564,7 +1355,7 @@ fn gpu_tree() -> Vec<PathBuf> {
         .filter_map(|e| std::fs::canonicalize(e.path()).ok())
         .filter(|p| p.starts_with("/sys/devices"))
         .collect();
-    let display: Vec<&PathBuf> = devs.iter().filter(|d| read(&d.join("class")).is_some_and(|c| c.starts_with("0x03"))).collect();
+    let display: Vec<&PathBuf> = devs.iter().filter(|d| read(&d.join("class")).map_or(false, |c| c.starts_with("0x03"))).collect();
     let slot = |d: &Path| d.file_name().map(|n| n.to_string_lossy().rsplit_once('.').map_or(String::new(), |x| x.0.to_owned()));
     let slots: Vec<Option<String>> = display.iter().map(|d| slot(d)).collect();
     devs.iter()
@@ -1577,7 +1368,7 @@ fn gpu_tree() -> Vec<PathBuf> {
 fn pci_unsafe_to_touch(file: &Path, tree: &[PathBuf], need_active: bool) -> bool {
     let Some(mut dev) = file.parent() else { return true };
     // <dev>/link/l1_aspm and <dev>/power/control belong to <dev>; <dev>/config is <dev>'s own.
-    if dev.file_name().is_some_and(|n| n == "link" || n == "power") { dev = dev.parent().unwrap_or(dev); }
+    if dev.file_name().map_or(false, |n| n == "link" || n == "power") { dev = dev.parent().unwrap_or(dev); }
     if tree.iter().any(|t| t == dev) { return true; }
     need_active && !matches!(read(&dev.join("power/runtime_status")).as_deref(), None | Some("active"))
 }
@@ -1598,8 +1389,8 @@ fn pci_config_files_writable() -> Vec<PathBuf> {
 }
 
 fn is_pci_config(p: &Path) -> bool {
-    p.file_name().is_some_and(|n| n == "config") && p.starts_with("/sys/devices")
-        && p.parent().is_some_and(|d| d.join("vendor").is_file() && d.join("class").is_file())
+    p.file_name().map_or(false, |n| n == "config") && p.starts_with("/sys/devices")
+        && p.parent().map_or(false, |d| d.join("vendor").is_file() && d.join("class").is_file())
 }
 
 /// A runtime-suspended function (D3hot/D3cold: the dGPU, its audio function,
@@ -1679,7 +1470,7 @@ fn rapl_files(name: &str) -> Vec<PathBuf> {
     for e in std::fs::read_dir(POWERCAP).into_iter().flatten().flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
         let top = (n.starts_with("intel-rapl:") || n.starts_with("intel-rapl-mmio:")) && n.matches(':').count() == 1;
-        if !top || !read(&e.path().join("name")).is_some_and(|x| x.starts_with("package")) { continue; }
+        if !top || !read(&e.path().join("name")).map_or(false, |x| x.starts_with("package")) { continue; }
         for i in 0..8 {
             if read(&e.path().join(format!("constraint_{i}_name"))).as_deref() == Some(name) {
                 let f = e.path().join(format!("constraint_{i}_power_limit_uw"));
@@ -1727,7 +1518,7 @@ pub fn kmod_available(module: &str, subdir: &str) -> bool {
     let rel = unsafe { std::ffi::CStr::from_ptr(u.release.as_ptr()) }.to_string_lossy().into_owned();
     let base = Path::new("/lib/modules").join(rel);
     let ko = format!("{module}.ko");
-    if std::fs::read_to_string(base.join("modules.builtin")).is_ok_and(|b| b.lines().any(|l| l.ends_with(&format!("/{ko}")))) {
+    if std::fs::read_to_string(base.join("modules.builtin")).map_or(false, |b| b.lines().any(|l| l.ends_with(&format!("/{ko}")))) {
         return true;
     }
     std::fs::read_dir(base.join("kernel").join(subdir)).into_iter().flatten().flatten()
@@ -1736,7 +1527,7 @@ pub fn kmod_available(module: &str, subdir: &str) -> bool {
 
 /// intel_pstate/no_turbo is the inverse of "boost".
 /// no_turbo speaks the opposite of "boost", rfkill `soft` the opposite of "radio on".
-fn inverted(f: &Path) -> bool { f.file_name().is_some_and(|n| n == "no_turbo" || n == "soft") }
+fn inverted(f: &Path) -> bool { f.file_name().map_or(false, |n| n == "no_turbo" || n == "soft") }
 
 fn irq_files() -> Vec<PathBuf> {
     numbered(Path::new("/proc/irq"), "").into_iter()
@@ -1747,7 +1538,7 @@ fn irq_files() -> Vec<PathBuf> {
 
 fn is_irq_file(p: &Path) -> bool {
     p.to_str().and_then(|s| s.strip_prefix("/proc/irq/")).and_then(|r| r.strip_suffix("/smp_affinity_list"))
-        .is_some_and(|n| !n.is_empty() && n.len() < 8 && n.bytes().all(|b| b.is_ascii_digit()))
+        .map_or(false, |n| !n.is_empty() && n.len() < 8 && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Per-file refusals do not fail the knob: kernel-managed IRQs return EIO,
@@ -1882,7 +1673,7 @@ pub fn wireless_lock() -> Option<Vec<PathBuf>> { wireless_pm_locked().then(wirel
 /// Under the master switch the wireless devices are not the runtime-PM rows' business.
 fn without_wireless(v: Vec<PathBuf>) -> Vec<PathBuf> {
     let Some(w) = wireless_lock() else { return v };
-    v.into_iter().filter(|f| !f.parent().and_then(|p| p.parent()).is_some_and(|d| w.iter().any(|x| x == d))).collect()
+    v.into_iter().filter(|f| !f.parent().and_then(|p| p.parent()).map_or(false, |d| w.iter().any(|x| x == d))).collect()
 }
 
 /// Forces Wi-Fi and Bluetooth power management off while the master switch is on:
@@ -1929,30 +1720,7 @@ fn eth_ifaces() -> Vec<PathBuf> {
         .filter(|p| p.join("device").exists() && !p.join("wireless").is_dir() && !p.join("phy80211").exists())
         .filter(|p| read(&p.join("type")).as_deref() == Some("1"))
         .filter(|p| wifi_ifname(p).is_some())
-        .filter(|p| std::fs::canonicalize(p).is_ok_and(|c| !c.starts_with("/sys/devices/virtual")))
-        .collect();
-    v.sort();
-    v
-}
-
-/// `<if>/<attr>` of every physical interface (has a device link, not under /sys/devices/virtual).
-fn net_if_files(root: &Path, attr: &str) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(root).into_iter().flatten().flatten()
-        .map(|e| e.path())
-        .filter(|p| p.join("device").exists())
-        .filter(|p| std::fs::canonicalize(p).is_ok_and(|c| !c.starts_with("/sys/devices/virtual")))
-        .map(|p| p.join(attr))
-        .filter(|f| f.is_file())
-        .collect();
-    v.sort();
-    v
-}
-
-/// `<uuid>/discard/<attr>` of every btrfs file system the kernel lists (only mounted ones appear).
-fn btrfs_discard_files(root: &Path, attr: &str) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(root).into_iter().flatten().flatten()
-        .map(|e| e.path().join("discard").join(attr))
-        .filter(|f| f.is_file())
+        .filter(|p| std::fs::canonicalize(p).map_or(false, |c| !c.starts_with("/sys/devices/virtual")))
         .collect();
     v.sort();
     v
@@ -2036,7 +1804,7 @@ fn hdparm() -> Option<PathBuf> {
 
 /// "sda".."sdzz": the only disk names any ATA target accepts.
 fn ata_disk_name_ok(n: &str) -> bool {
-    n.strip_prefix("sd").is_some_and(|r| (1..=3).contains(&r.len()) && r.bytes().all(|b| b.is_ascii_lowercase()))
+    n.strip_prefix("sd").map_or(false, |r| (1..=3).contains(&r.len()) && r.bytes().all(|b| b.is_ascii_lowercase()))
 }
 
 /// The udev database entry of a block device (`E:KEY=value` lines), if readable.
@@ -2054,9 +1822,9 @@ fn ata_disks() -> Vec<(String, PathBuf)> {
             let real = canonical_in_sysfs(&e.path())?;
             let behind_ata = real.components().any(|c| {
                 let c = c.as_os_str().to_string_lossy();
-                c.strip_prefix("ata").is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+                c.strip_prefix("ata").map_or(false, |d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
             });
-            behind_ata.then_some((n, real))
+            behind_ata.then(|| (n, real))
         })
         .collect();
     v.sort();
@@ -2117,7 +1885,7 @@ fn ahci_port_files() -> Vec<PathBuf> {
         if !dev.starts_with("/sys/devices") { continue; }
         for p in std::fs::read_dir(&dev).into_iter().flatten().flatten() {
             let n = p.file_name().to_string_lossy().into_owned();
-            if !n.strip_prefix("ata").is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) { continue; }
+            if !n.strip_prefix("ata").map_or(false, |d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) { continue; }
             if let Some(c) = canonical_in_sysfs(&p.path().join("power/control")) { if c.is_file() { v.push(c); } }
         }
     }
@@ -2178,7 +1946,7 @@ fn scx_pids() -> Vec<i32> {
     let bins: Vec<PathBuf> = SCX_NAMES.iter().filter_map(|n| scx_bin(n)).filter_map(|p| std::fs::canonicalize(p).ok()).collect();
     std::fs::read_dir("/proc").into_iter().flatten().flatten()
         .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
-        .filter(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|x| bins.contains(&x)))
+        .filter(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).map_or(false, |x| bins.contains(&x)))
         .collect()
 }
 
@@ -2371,7 +2139,9 @@ fn zswap_compressors() -> Vec<String> {
         let Some((k, val)) = l.split_once(':') else { continue };
         match k.trim() {
             "name" => name = val.trim().to_owned(),
-            "type" if matches!(val.trim(), "scomp" | "acomp" | "compression") && !name.is_empty() && !v.contains(&name) => { v.push(name.clone()); }
+            "type" if matches!(val.trim(), "scomp" | "acomp" | "compression") => {
+                if !name.is_empty() && !v.contains(&name) { v.push(name.clone()); }
+            }
             _ => {}
         }
     }
@@ -2402,7 +2172,7 @@ fn file_usable(p: &str) -> bool {
         "/proc/sys/vm/dirty_ratio" => read(Path::new("/proc/sys/vm/dirty_bytes")).as_deref() == Some("0"),
         "/proc/sys/vm/dirty_background_ratio" => read(Path::new("/proc/sys/vm/dirty_background_bytes")).as_deref() == Some("0"),
         // Present but empty (and not writable) where EAS cannot run.
-        "/proc/sys/kernel/sched_energy_aware" => read(Path::new(p)).is_some_and(|v| !v.is_empty()),
+        "/proc/sys/kernel/sched_energy_aware" => read(Path::new(p)).map_or(false, |v| !v.is_empty()),
         // BORE kernels (CachyOS) export base_slice_ns read-only and derive it from min_base_slice_ns:
         // a row that can only fail must not be offered.
         "/sys/kernel/debug/sched/base_slice_ns" => {
@@ -2520,8 +2290,6 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
         Target::Irq => if has_domains() { irq_files() } else { vec![] },
         Target::WifiPowerSave => wifi_ifaces(),
         Target::EthWol => eth_ifaces(),
-        Target::NetIf(a) => net_if_files(Path::new("/sys/class/net"), a),
-        Target::BtrfsDiscard(a) => btrfs_discard_files(Path::new("/sys/fs/btrfs"), a),
         Target::EthEee => eth_ifaces().into_iter().filter(|p| eee_get(p).is_some()).collect(),
         Target::PciAspm => pci_aspm_files(),
         Target::SchedExt => if scx_available().is_empty() { vec![] } else { vec![PathBuf::from(SCX_STATE)] },
@@ -2588,7 +2356,7 @@ pub fn options(t: &Tunable) -> Vec<(String, String)> {
         (Options::Special, Target::MinFreq) | (Options::Special, Target::FloorFreq) => {
             let mut v = Vec::new();
             // amd-pstate only; intel_pstate has no such file.
-            if policies().first().is_some_and(|p| p.join("amd_pstate_lowest_nonlinear_freq").is_file()) {
+            if policies().first().map_or(false, |p| p.join("amd_pstate_lowest_nonlinear_freq").is_file()) {
                 v.push(("lowest_nonlinear".into(), "lowest_nonlinear (efficient floor)".into()));
             }
             v.push(("cpuinfo_min".into(), "cpuinfo_min (hardware minimum)".into()));
@@ -2704,7 +2472,7 @@ fn current_with(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
             if let Some((role, _, _)) = parked_record() { return Some(canonical_ccd(&role)); }
             let online = online_cpus();
             let off: Vec<usize> = present_cpus().into_iter().filter(|c| !online.contains(c)).collect();
-            if !off.is_empty() && hybrid().is_some_and(|h| h.ecores == off) { return Some("ecore".into()); }
+            if !off.is_empty() && hybrid().map_or(false, |h| h.ecores == off) { return Some("ecore".into()); }
             return Some(if off.is_empty() { "none".into() } else { format!("offline {}", fmt_cpu_list(&off)) });
         }
         Target::SchedExt => return scx_current(),
@@ -2716,7 +2484,7 @@ fn current_with(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
             return Some(if vals.all(|v| v == first) { first } else { "mixed".into() });
         }
         Target::PciAspm => {
-            let on = |name: &str| fs.iter().filter(|f| f.file_name().is_some_and(|n| n == name))
+            let on = |name: &str| fs.iter().filter(|f| f.file_name().map_or(false, |n| n == name))
                 .all(|f| read(f).as_deref() == Some("1"));
             return Some(if on("l1_aspm") && on("l1_1_aspm") && on("l1_2_aspm") { "l1ss".into() }
                         else if on("l1_aspm") { "l1".into() } else { "stock (per driver)".into() });
@@ -2825,7 +2593,7 @@ pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(Path
             // l1: only the L1 switch; l1ss: L1 plus both substates. Enabling a
             // substate implies L1 in the kernel, so the order is only cosmetic.
             let want: &[&str] = if value == "l1ss" { ASPM_FILES } else { &["l1_aspm"] };
-            fs.into_iter().filter(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| want.contains(&n)))
+            fs.into_iter().filter(|f| f.file_name().and_then(|n| n.to_str()).map_or(false, |n| want.contains(&n)))
                 .map(|f| (f, "1".to_owned())).collect()
         }
         Target::SchedExt => vec![(fs[0].clone(), value.to_owned())],
@@ -2848,7 +2616,7 @@ pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(Path
             // no_turbo speaks the opposite of "boost".
             let value = if inverted(&f) { if value == "1" { "0" } else { "1" } } else { value };
             // Match the file's own vocabulary (module params report Y/N).
-            let yn = read(&f).is_some_and(|r| r == "Y" || r == "N");
+            let yn = read(&f).map_or(false, |r| r == "Y" || r == "N");
             let w = match (yn, value) { (true, "1") => "Y", (true, _) => "N", (false, v) => v };
             (f, w.to_owned())
         }).collect(),
@@ -2894,7 +2662,7 @@ fn is_hotplug_file(f: &Path) -> bool {
     let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let parent = f.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
     match name {
-        "online" => parent.strip_prefix("cpu").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+        "online" => parent.strip_prefix("cpu").map_or(false, |n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
         "control" => parent == "smt",
         _ => false,
     }
@@ -2929,7 +2697,7 @@ fn write_checked_inner(f: &Path, data: &str) -> Result<(), String> {
         return sysfs_write(f, data.as_bytes()).map_err(|e| format!("{s}: {e}"));
     }
     let Some(real) = canonical_in_sysfs(f) else { return Err(format!("{s}: refused (outside the allowlist)")) };
-    if real.file_name().is_some_and(|n| n == "config") {
+    if real.file_name().map_or(false, |n| n == "config") {
         if !is_pci_config(&real) { return Err(format!("{s}: refused (not a PCI config file)")); }
         // Never write config space of a GPU, its slot siblings or the bridges above it,
         // nor of a sleeping device: the write would wake it through ACPI (D state on a
@@ -2940,11 +2708,11 @@ fn write_checked_inner(f: &Path, data: &str) -> Result<(), String> {
     }
     if is_pci_link_or_power(&real) {
         // power/control 'on' is meant to wake a device: only the GPU tree is off limits there.
-        let is_link = real.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "link");
+        let is_link = real.parent().and_then(|p| p.file_name()).map_or(false, |n| n == "link");
         if pci_unsafe_to_touch(&real, &gpu_tree(), is_link) { return Err(format!("{s}: skipped (GPU tree or suspended device)")); }
         return write_with_timeout(real, data.to_owned()).map_err(|e| format!("{s}: {e}"));
     }
-    if real.file_name().is_some_and(|n| n == "amd_x3d_mode") {
+    if real.file_name().map_or(false, |n| n == "amd_x3d_mode") {
         return write_with_timeout(real, data.to_owned()).map_err(|e| format!("{s}: {e}"));
     }
     sysfs_write(&real, data.as_bytes()).map_err(|e| format!("{s}: {e}"))
@@ -2972,7 +2740,7 @@ fn pci_latency_write_timeout(cfg: &Path, hex: &str) -> std::io::Result<()> {
     loop {
         let mut st = 0;
         let r = unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
-        if r == pid { return if libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0 { Ok(()) } else { Err(std::io::Error::other("config write failed")) }; }
+        if r == pid { return if libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0 { Ok(()) } else { Err(std::io::Error::new(std::io::ErrorKind::Other, "config write failed")) }; }
         if r < 0 { return Err(std::io::Error::last_os_error()); }
         if std::time::Instant::now() >= end { unsafe { libc::kill(pid, libc::SIGKILL) }; return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "config write timed out (device not responding)")); }
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -3043,31 +2811,6 @@ pub fn describe_topology() -> Value {
     })
 }
 
-/// Entries the kernel offers that the table does not know: `sched_burst_*` sysctls under `sysctl_dir`
-/// and feature bits in the text of debugfs sched/features. (name, value) - shown, never written.
-pub fn discover_in(sysctl_dir: &Path, features: Option<&str>) -> Vec<(String, String)> {
-    let known_files: Vec<&str> = TUNABLES.iter().filter_map(|t| match t.target { Target::File(p) => p.strip_prefix("/proc/sys/kernel/"), _ => None }).collect();
-    let known_feats: Vec<&str> = TUNABLES.iter().filter_map(|t| match t.target { Target::SchedFeature(n) => Some(n), _ => None }).collect();
-    let mut out: Vec<(String, String)> = std::fs::read_dir(sysctl_dir).into_iter().flatten().flatten().filter_map(|e| {
-        let name = e.file_name().to_str()?.to_owned();
-        if !name.starts_with("sched_burst_") { return None; }
-        if known_files.contains(&name.as_str()) { return None; }
-        Some((format!("kernel.{name}"), read(&e.path())?))
-    }).collect();
-    out.sort();
-    for w in features.unwrap_or("").split_whitespace() {
-        let (name, on) = match w.strip_prefix("NO_") { Some(n) => (n, "0"), None => (w, "1") };
-        if !known_feats.contains(&name) { out.push((format!("sched feature {name}"), on.to_owned())); }
-    }
-    out
-}
-
-/// `discover_in` on the live system (sched/features only when readable: debugfs is root-only).
-pub fn discovered() -> Vec<Value> {
-    let feats = read(Path::new("/sys/kernel/debug/sched/features"));
-    discover_in(Path::new("/proc/sys/kernel"), feats.as_deref()).into_iter().map(|(k, v)| json!({"name": k, "value": v})).collect()
-}
-
 /// Rows whose state costs a child process (iw, ethtool, hdparm) or PCI config-space reads.
 fn slow_to_read(t: &Tunable) -> bool {
     matches!(t.target, Target::WifiPowerSave | Target::EthWol | Target::EthEee | Target::DiskApm(_) | Target::PciLatency)
@@ -3099,9 +2842,6 @@ pub fn describe_with(light: bool) -> Value {
             "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
         });
         if !light { row["help"] = json!(t.help); }
-        if matches!(t.target, Target::Irq) && irqbalance_running() {
-            row["conflict"] = json!("irqbalance is running: it would undo this setting within seconds. Applying a CCD stops it; restoring starts it again.");
-        }
         row
     }).collect();
     let mut m = Map::new();
@@ -3109,7 +2849,6 @@ pub fn describe_with(light: bool) -> Value {
     m.insert("tunables".into(), Value::Array(rows));
     m.insert("topology".into(), describe_topology());
     m.insert("vendor".into(), json!(cpu_vendor().as_str()));
-    if !light { m.insert("discovered".into(), Value::Array(discovered())); }
     Value::Object(m)
 }
 
@@ -3133,84 +2872,6 @@ mod tests {
         assert!(match_park_record(&rec, &[]).is_none());                 // everything back online: stale
         assert!(match_park_record(&rec, &off[..8]).is_none());           // partially online: not this state
         assert!(match_park_record(&serde_json::json!({"role": "x", "cpus": []}), &[]).is_none());
-    }
-    #[test]
-    fn discovery_lists_only_what_the_table_does_not_know() {
-        let root = std::env::temp_dir().join(format!("centurion-sysctl-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        for (f, v) in [("sched_burst_inherit_type", "2"), ("sched_burst_fork_atavistic", "1"), ("sched_bore", "1"), ("sched_burst_exclude_kthreads", "0")] {
-            std::fs::write(root.join(f), format!("{v}\n")).unwrap();
-        }
-        let d = discover_in(&root, Some("PLACE_LAG NO_HRTICK NEXT_BUDDY NO_SOME_NEW_BIT LATENCY_WARN"));
-        let names: Vec<&str> = d.iter().map(|x| x.0.as_str()).collect();
-        assert_eq!(names, ["kernel.sched_burst_exclude_kthreads", "kernel.sched_burst_fork_atavistic", "sched feature SOME_NEW_BIT", "sched feature LATENCY_WARN"]);
-        assert_eq!(d[2].1, "0");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-    #[test]
-    fn irqbalance_is_found_and_only_restarted_when_we_stopped_it() {
-        let root = std::env::temp_dir().join(format!("centurion-proc-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        for (pid, comm) in [("1", "init"), ("812", "irqbalance"), ("900", "irqbalance-ui"), ("self", "x")] {
-            std::fs::create_dir_all(root.join(pid)).unwrap();
-            std::fs::write(root.join(pid).join("comm"), format!("{comm}\n")).unwrap();
-        }
-        assert_eq!(irqbalance_pids_in(&root), vec![812]);
-        let _ = std::fs::remove_dir_all(root.join("812"));
-        assert!(irqbalance_pids_in(&root).is_empty());
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(irqbalance_should_start(true, false));
-        assert!(!irqbalance_should_start(false, false), "a service that was already stopped is not started");
-        assert!(!irqbalance_should_start(true, true));
-    }
-    #[test]
-    fn slice_request_reads_back_and_is_inherited() {
-        if !slice_supported() { return; }  // kernel without the EEVDF slice request: the row stays hidden
-        std::thread::spawn(|| {
-            if set_thread_slice_us(1500).is_err() { return; }  // sandbox refusing sched_setattr
-            assert_eq!(thread_slice_ns().unwrap(), 1_500_000);
-            assert_eq!(std::thread::spawn(|| thread_slice_ns().unwrap()).join().unwrap(), 1_500_000, "new threads inherit it");
-            set_thread_slice_us(0).unwrap();
-            assert_ne!(thread_slice_ns().unwrap(), 1_500_000, "0 = back to the default slice");
-        }).join().unwrap();
-    }
-    #[test]
-    fn net_if_and_btrfs_discard_files() {
-        let root = std::env::temp_dir().join(format!("centurion-netbtrfs-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let net = root.join("net");
-        // eth0: physical, has the attribute; lo: no device link; wlan0: physical, no attribute.
-        for (dev, attr) in [("eth0", true), ("lo", true), ("wlan0", false)] {
-            std::fs::create_dir_all(net.join(dev)).unwrap();
-            if dev != "lo" { std::fs::create_dir_all(net.join(dev).join("device")).unwrap(); }
-            if attr { std::fs::write(net.join(dev).join("threaded"), "0\n").unwrap(); }
-        }
-        assert_eq!(net_if_files(&net, "threaded"), vec![net.join("eth0/threaded")]);
-        let fs = root.join("btrfs");
-        std::fs::create_dir_all(fs.join("aaaa-1/discard")).unwrap();
-        std::fs::write(fs.join("aaaa-1/discard/kbps_limit"), "0\n").unwrap();
-        std::fs::create_dir_all(fs.join("features")).unwrap();
-        assert_eq!(btrfs_discard_files(&fs, "kbps_limit"), vec![fs.join("aaaa-1/discard/kbps_limit")]);
-        assert!(btrfs_discard_files(&fs, "iops_limit").is_empty());
-        // zram0: in use with a secondary algorithm; zram1: none configured; zram2: not initialised.
-        let blk = root.join("block");
-        for (d, size, recomp) in [("zram0", "8589934592", "#1: lzo lz4 [zstd]"), ("zram1", "8589934592", ""), ("zram2", "0", "#1: [zstd]")] {
-            std::fs::create_dir_all(blk.join(d)).unwrap();
-            std::fs::write(blk.join(d).join("disksize"), size).unwrap();
-            std::fs::write(blk.join(d).join("recomp_algorithm"), recomp).unwrap();
-        }
-        assert_eq!(zram_recomp_devs(&blk), vec![blk.join("zram0")]);
-        assert!(zram_action("reset").is_err());
-        let _ = std::fs::remove_dir_all(&root);
-        for k in ["blk.kyber_read_lat_ns", "blk.dl_fifo_batch", "blk.bfq_slice_idle_ms", "btrfs.discard_kbps_limit", "kernel.yield_type",
-                  "net.tcp_notsent_lowat", "net.gro_flush_timeout", "net.busy_poll", "net.napi_threaded", "mm.ksm_advisor",
-                  "thp.khp_max_ptes_shared", "thp.use_zero_page", "vm.compact_unevictable_allowed", "vm.dirtytime_expire_seconds"] {
-            assert!(find(k).is_some(), "{k}");
-        }
-        // Elevator tunables come after the elevator in the table: apply writes them once it is active.
-        let pos = |k: &str| TUNABLES.iter().position(|t| t.key == k).unwrap();
-        assert!(pos("blk.scheduler") < pos("blk.kyber_read_lat_ns") && pos("blk.scheduler") < pos("blk.bfq_low_latency"));
     }
     #[test]
     fn new_targets() {

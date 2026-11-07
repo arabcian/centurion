@@ -35,9 +35,6 @@ QString profileAccent(const QString &profile);
 /// Premade palettes: (id, display name), in menu order.
 QList<QPair<QString, QString>> themes();
 QString currentTheme();
-/// Experimental interface is selected by default on this branch; classic remains available.
-bool experimentalEnabled();
-bool saveUiMode(bool experimental);
 /// Reads the saved choice (~/.config/centurion/gui.ini) and sets the tokens.
 void load();
 bool saveTheme(const QString &id);

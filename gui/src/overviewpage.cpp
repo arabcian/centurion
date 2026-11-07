@@ -19,9 +19,6 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
-#include <QResizeEvent>
-#include <QFont>
-#include <algorithm>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTime>
@@ -54,82 +51,37 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     outer->setContentsMargins(8, 6, 8, 6);
     outer->setSpacing(6);
 
-    // Prominent health verdict: explicitly describes logged/checked areas only,
-    // not a guarantee that every physical component has been tested.
-    auto *hero = new QFrame;
-    hero->setObjectName(QStringLiteral("healthHero"));
-    hero->setStyleSheet(QStringLiteral("QFrame#healthHero{background:%1;border:1px solid %2;border-radius:%3px}"
-                                       "QFrame#healthHero QLabel{border:none;background:transparent}")
-                        .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER,
-                             theme::experimentalEnabled() ? QStringLiteral("6") : QStringLiteral("13")));
-    auto *heroLayout = new QVBoxLayout(hero);
-    heroLayout->setContentsMargins(theme::experimentalEnabled() ? 13 : 18,
-                                   theme::experimentalEnabled() ? 10 : 15,
-                                   theme::experimentalEnabled() ? 13 : 18,
-                                   theme::experimentalEnabled() ? 10 : 15);
-    heroLayout->setSpacing(7);
     auto *top = new QHBoxLayout;
     summary_ = new QLabel;
+    summary_->setTextFormat(Qt::RichText);
     summary_->setWordWrap(true);
-    QFont titleFont = summary_->font();
-    titleFont.setPointSize(titleFont.pointSize() + 5);
-    titleFont.setBold(true);
-    summary_->setFont(titleFont);
     top->addWidget(summary_, 1);
-    auto *bRefresh = new QPushButton(tr("Check now"));
-    bRefresh->setToolTip(tr("Refresh recorded indicators without running a hardware stress test."));
+    auto *bRefresh = new QPushButton(tr("Refresh"));
     connect(bRefresh, &QPushButton::clicked, this, &OverviewPage::refresh);
     top->addWidget(bRefresh);
-    heroLayout->addLayout(top);
-    counts_ = new QLabel;
-    counts_->setWordWrap(true);
-    counts_->setStyleSheet(QStringLiteral("color:%1").arg(theme::FG_DIM));
-    heroLayout->addWidget(counts_);
+    outer->addLayout(top);
+
     status_ = new QLabel;
-    status_->setWordWrap(true);
     status_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
-    heroLayout->addWidget(status_);
-    outer->addWidget(hero);
+    outer->addWidget(status_);
 
-    auto *recommend = new QFrame;
-    recommend->setObjectName(QStringLiteral("healthAdvice"));
-    recommend->setStyleSheet(QStringLiteral("QFrame#healthAdvice{background:%1;border:1px solid %2;border-radius:%3px}"
-                                            "QFrame#healthAdvice QLabel{background:transparent;border:none}")
-                             .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER,
-                                  theme::experimentalEnabled() ? QStringLiteral("6") : QStringLiteral("10")));
-    auto *adviceLayout = new QHBoxLayout(recommend);
-    adviceLayout->setContentsMargins(14, 11, 14, 11);
-    recommendation_ = new QLabel;
-    recommendation_->setWordWrap(true);
-    recommendation_->setTextFormat(Qt::PlainText);
-    adviceLayout->addWidget(recommendation_, 1);
-    recommendButton_ = new QPushButton(tr("Inspect"));
-    connect(recommendButton_, &QPushButton::clicked, this, [this] {
-        if (!recommendedTarget_.isEmpty()) Q_EMIT openPage(recommendedTarget_);
-    });
-    adviceLayout->addWidget(recommendButton_);
-    outer->addWidget(recommend);
-
-    auto *section = new QLabel(tr("CHECKED AREAS"));
-    section->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px").arg(theme::FG_DIM));
-    outer->addWidget(section);
-    scroll_ = new QScrollArea;
-    scroll_->setWidgetResizable(true);
-    scroll_->setFrameShape(QFrame::NoFrame);
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
     auto *cards = new QWidget;
     grid_ = new QGridLayout(cards);
-    grid_->setContentsMargins(0, 0, 5, 0);
-    grid_->setSpacing(10);
-    scroll_->setWidget(cards);
-    outer->addWidget(scroll_, 1);
+    grid_->setContentsMargins(0, 0, 0, 0);
+    grid_->setSpacing(8);
+    scroll->setWidget(cards);
+    outer->addWidget(scroll, 1);
 
     auto *bottom = new QHBoxLayout;
-    auto *hint = new QLabel(tr("Results reflect available logs and measurements, not a complete hardware test. "
-                               "Details remain available for troubleshooting."));
+    auto *hint = new QLabel(tr("The logs are read when this page is shown, when a kernel error appears, or on Refresh. "
+                               "The report collects the same logs for a bug report; it is written only where you choose."));
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
     bottom->addWidget(hint, 1);
-    auto *bReport = new QPushButton(tr("Diagnostic report…"));
+    auto *bReport = new QPushButton(tr("Create diagnostic report…"));
     connect(bReport, &QPushButton::clicked, this, &OverviewPage::report);
     bottom->addWidget(bReport);
     outer->addLayout(bottom);
@@ -138,8 +90,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     debounce_->setSingleShot(true);
     debounce_->setInterval(DEBOUNCE_MS);
     connect(debounce_, &QTimer::timeout, this, &OverviewPage::refresh);
-    summary_->setText(tr("Checking system indicators…"));
-    counts_->setText(tr("Results will appear when the first check completes."));
+    summary_->setText(tr("Reading the logs…"));
 }
 
 void OverviewPage::showEvent(QShowEvent *e) {
@@ -148,22 +99,6 @@ void OverviewPage::showEvent(QShowEvent *e) {
 }
 
 void OverviewPage::scheduleRefresh() { debounce_->start(); }
-
-void OverviewPage::resizeEvent(QResizeEvent *e) {
-    QWidget::resizeEvent(e);
-    layoutCards();
-}
-
-void OverviewPage::layoutCards() {
-    if (!scroll_ || cards_.isEmpty()) return;
-    const int columns = scroll_->viewport()->width() >= 650 ? 2 : 1;
-    for (QFrame *card : cards_) grid_->removeWidget(card);
-    for (int i = 0; i < cards_.size(); ++i)
-        grid_->addWidget(cards_.at(i), i / columns, i % columns, Qt::AlignTop);
-    grid_->setColumnStretch(0, 1);
-    grid_->setColumnStretch(1, columns == 2 ? 1 : 0);
-}
-
 
 QJsonArray OverviewPage::cards() const { return QJsonDocument::fromJson(shown_).array(); }
 
@@ -206,63 +141,14 @@ void OverviewPage::onReply(const QJsonObject &r) {
     worst_ = r.value(QStringLiteral("worst")).toInt(kNoData);
     QString text;
     switch (worst_) {
-    case kAttention: text = tr("A problem needs attention"); break;
-    case kWatch: text = tr("Some items need a closer look"); break;
-    case kOk: text = tr("No unreviewed issues in checked areas"); break;
-    default: text = tr("More information is needed"); break;
+    case kAttention: text = tr("A problem was found: at least one card is marked “attention”."); break;
+    case kWatch: text = tr("Worth a look: at least one card is marked “watch”."); break;
+    case kOk: text = tr("All clear: nothing in the logs needs your attention."); break;
+    default: text = tr("Not enough data yet: the logs fill up as Centurion runs."); break;
     }
-    summary_->setText(text);
-    summary_->setStyleSheet(QStringLiteral("color:%1").arg(QString::fromLatin1(levelColor(worst_))));
-    int normal = 0, watch = 0, attention = 0, unknown = 0;
-    for (const QJsonValue &v : cards) {
-        const int level = v.toObject().value(QStringLiteral("level")).toInt(kNoData);
-        if (level == kOk) ++normal;
-        else if (level == kWatch) ++watch;
-        else if (level == kAttention) ++attention;
-        else ++unknown;
-    }
-    counts_->setText(tr("%1 normal  ·  %2 to review  ·  %3 needing attention  ·  %4 not checked")
-                         .arg(normal).arg(watch).arg(attention).arg(unknown));
-    status_->setText(tr("Last checked %1 · Only logged and available indicators are assessed")
-                         .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
-    showRecommendation(cards);
+    summary_->setText(QStringLiteral("<span style='color:%1'><b>%2</b></span>").arg(QString::fromLatin1(levelColor(worst_)), text));
+    status_->setText(tr("Updated %1").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss"))));
     Q_EMIT worstChanged(worst_);
-}
-
-void OverviewPage::showRecommendation(const QJsonArray &cards) {
-    QJsonObject selected;
-    int highest = kOk;
-    for (const QJsonValue &v : cards) {
-        const QJsonObject c = v.toObject();
-        const int level = c.value(QStringLiteral("level")).toInt(kNoData);
-        if (level > highest) { selected = c; highest = level; }
-    }
-    if (selected.isEmpty()) {
-        recommendedTarget_.clear();
-        recommendButton_->setVisible(false);
-        recommendation_->setText(tr("No urgent action suggested. Review unknown items or create a diagnostic report if you are troubleshooting."));
-        return;
-    }
-    const QString id = selected.value(QStringLiteral("id")).toString();
-    recommendedTarget_ = targetFor(id);
-    recommendButton_->setVisible(true);
-    QString detail;
-    if (id == QLatin1String("kernel"))
-        detail = tr("A recent kernel or driver error was recorded. Review the events before changing any tuning settings.");
-    else if (id == QLatin1String("unclean"))
-        detail = tr("One or more sessions ended unexpectedly. Check the boot history for timing and possible causes.");
-    else if (id == QLatin1String("battery"))
-        detail = tr("Battery capacity or behavior may need attention. Compare the measured values with previous readings.");
-    else if (id == QLatin1String("cooling"))
-        detail = tr("Review the last cooling test and temperatures. A missing test is not evidence of faulty cooling.");
-    else if (id == QLatin1String("backup"))
-        detail = tr("Check your most recent backup before making further system changes.");
-    else if (id == QLatin1String("dgpu"))
-        detail = tr("The discrete GPU may be staying awake. Inspect processes keeping it active.");
-    else if (id == QLatin1String("sleep"))
-        detail = tr("Sleep or wake behavior deserves inspection; check the recorded battery drain and resume events.");
-    else detail = tr("Review the recorded details of the highlighted item.");
-    recommendation_->setText(tr("Suggested next step: %1").arg(detail));
 }
 
 void OverviewPage::rebuildCards(const QJsonArray &cards) {
@@ -270,58 +156,54 @@ void OverviewPage::rebuildCards(const QJsonArray &cards) {
         delete item->widget();
         delete item;
     }
-    cards_.clear();
-    QList<QJsonObject> sorted;
-    for (const QJsonValue &v : cards) sorted.append(v.toObject());
-    std::stable_sort(sorted.begin(), sorted.end(), [](const QJsonObject &a, const QJsonObject &b) {
-        return a.value(QStringLiteral("level")).toInt(kNoData) > b.value(QStringLiteral("level")).toInt(kNoData);
-    });
-    for (const QJsonObject &c : sorted) {
+    int i = 0;
+    for (const QJsonValue &v : cards) {
+        const QJsonObject c = v.toObject();
         const QString id = c.value(QStringLiteral("id")).toString();
         const int level = c.value(QStringLiteral("level")).toInt(kNoData);
+
         auto *card = new QFrame;
-        card->setObjectName(QStringLiteral("healthCard"));
-        card->setStyleSheet(QStringLiteral("QFrame#healthCard{background:%1;border:1px solid %2;border-radius:11px}"
-                                           "QFrame#healthCard QLabel{border:none;background:transparent}")
-                            .arg(theme::BG2, theme::BORDER));
+        card->setObjectName(QStringLiteral("card"));
+        card->setStyleSheet(QStringLiteral("QFrame#card{background:%1;border:1px solid %2;border-radius:6px}QLabel{border:none;background:transparent}")
+                                .arg(theme::BG2, theme::BG3));
         auto *col = new QVBoxLayout(card);
-        col->setContentsMargins(14, 12, 14, 12);
-        col->setSpacing(9);
+
         auto *head = new QHBoxLayout;
-        auto *title = new QLabel(cardTitle(id));
-        QFont titleFont = title->font();
-        titleFont.setBold(true);
-        title->setFont(titleFont);
+        auto *title = new QLabel(QStringLiteral("<b>%1</b>").arg(cardTitle(id)));
         head->addWidget(title, 1);
         auto *tag = new QLabel(levelWord(level));
-        tag->setStyleSheet(QStringLiteral("color:%1;font-weight:600").arg(QString::fromLatin1(levelColor(level))));
+        tag->setStyleSheet(QStringLiteral("color:%1").arg(QString::fromLatin1(levelColor(level))));
         head->addWidget(tag);
         col->addLayout(head);
+
         auto *body = new QLabel(cardBody(c));
         body->setWordWrap(true);
-        body->setTextFormat(Qt::PlainText);
-        body->setStyleSheet(QStringLiteral("color:%1").arg(theme::FG_DIM));
+        body->setStyleSheet(QStringLiteral("color:%1").arg(QString::fromLatin1(theme::FG_DIM)));
         col->addWidget(body);
+
         auto *buttons = new QHBoxLayout;
         buttons->addStretch(1);
         if (id == QLatin1String("unclean") && level > kOk) {
-            const qint64 newest = c.value(QStringLiteral("newest")).toInteger();
+            // Stores the newest unclean boot's start: it and every older one stop counting, a later one counts again.
             auto *reviewed = new QPushButton(tr("Mark reviewed"));
-            reviewed->setToolTip(tr("Acknowledges these shutdowns; does not repair the cause. New shutdowns will appear again."));
+            reviewed->setToolTip(tr("You have looked into these unexpected shutdowns. A new one turns the card back on."));
+            const qint64 newest = c.value(QStringLiteral("newest")).toInteger();
             connect(reviewed, &QPushButton::clicked, this, [this, newest] {
                 guiSettings().setValue(QStringLiteral("health/unclean_seen"), newest);
                 refresh();
             });
             buttons->addWidget(reviewed);
         }
-        auto *show = new QPushButton(tr("View details"));
+        auto *show = new QPushButton(tr("Show"));
         const QString target = targetFor(id);
         connect(show, &QPushButton::clicked, this, [this, target] { Q_EMIT openPage(target); });
         buttons->addWidget(show);
         col->addLayout(buttons);
-        cards_.append(card);
+
+        grid_->addWidget(card, i / 2, i % 2, Qt::AlignTop);
+        ++i;
     }
-    layoutCards();
+    grid_->setRowStretch(grid_->rowCount(), 1);
 }
 
 void OverviewPage::report() {
@@ -424,10 +306,10 @@ QString OverviewPage::cardBody(const QJsonObject &c) {
 }
 
 QString OverviewPage::levelWord(int level) {
-    if (level == kAttention) return tr("Needs attention");
-    if (level == kWatch) return tr("Review");
-    if (level == kOk) return tr("Normal");
-    return tr("Not checked");
+    if (level == kAttention) return tr("attention");
+    if (level == kWatch) return tr("watch");
+    if (level == kOk) return tr("ok");
+    return tr("no data");
 }
 
 QString OverviewPage::targetFor(const QString &id) {

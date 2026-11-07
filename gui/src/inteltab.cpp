@@ -2,7 +2,6 @@
 #include "trialbar.h"
 #include "privileged.h"
 #include "theme.h"
-#include "experimentalui.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -11,7 +10,6 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QScrollArea>
-#include <QTabWidget>
 #include <QTimer>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -204,8 +202,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
         connect(volt_[i].val, &QDoubleSpinBox::valueChanged, this, [sync, i] { sync(i); });
     }
     vg->addWidget(link_, planes.size() + 1, 0, 1, 3);
-    vg->addWidget(muted("Negative = undervolt. Start around −50 mV, test (Health → Curve stability → CPU test, idle, "
-                        "suspend/resume), then step "
+    vg->addWidget(muted("Negative = undervolt. Start around −50 mV, test (stress + idle + suspend/resume), then step "
                         "down 10 mV at a time. Too far = freezes / MCEs; the offset is lost on reboot and S3, so a bad "
                         "value is recovered by a power cycle."), planes.size() + 2, 0, 1, 3);
     vg->setColumnStretch(2, 1);
@@ -437,51 +434,17 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     right->addWidget(dBox);
     right->addStretch();
 
-    if (theme::experimentalEnabled()) {
-        // Each task gets its own complete workspace. All controls are the
-        // original widgets; only their parent layout changes in Studio mode.
-        for (QWidget *w : {static_cast<QWidget *>(vBox), static_cast<QWidget *>(xBox),
-                           static_cast<QWidget *>(rBox), static_cast<QWidget *>(lBox),
-                           static_cast<QWidget *>(dBox)}) {
-            left->removeWidget(w);
-            right->removeWidget(w);
-        }
-        delete left;
-        delete right;
-        delete mid;
-        auto *work = new QTabWidget;
-        work->setObjectName(QStringLiteral("intelWorkflows"));
-        work->setDocumentMode(true);
-        auto makePage = [work](const QString &label, QWidget *first, QWidget *second) {
-            auto *scroll = new QScrollArea;
-            scroll->setFrameShape(QFrame::NoFrame);
-            scroll->setWidgetResizable(true);
-            auto *page = new QWidget;
-            auto *row = new QHBoxLayout(page);
-            row->setContentsMargins(5, 7, 5, 7);
-            row->setSpacing(8);
-            row->addWidget(first, 1, Qt::AlignTop);
-            if (second) row->addWidget(second, 1, Qt::AlignTop);
-            scroll->setWidget(page);
-            work->addTab(scroll, label);
-        };
-        makePage(tr("Voltage && safety"), vBox, xBox);
-        makePage(tr("Limits && throttling"), lBox, rBox);
-        makePage(tr("Startup && daemon"), dBox, nullptr);
-        root->addWidget(work, 1);
-    } else {
-        mid->addLayout(left, 1);
-        mid->addLayout(right, 1);
-        auto *midHost = new QWidget;
-        midHost->setObjectName("intelMid");
-        midHost->setStyleSheet("#intelMid { background: transparent; }");
-        midHost->setLayout(mid);
-        auto *scroll = new QScrollArea;
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        scroll->setWidget(midHost);
-        root->addWidget(scroll, 1);
-    }
+    mid->addLayout(left, 1);
+    mid->addLayout(right, 1);
+    auto *midHost = new QWidget;
+    midHost->setObjectName("intelMid");
+    midHost->setStyleSheet("#intelMid { background: transparent; }");
+    midHost->setLayout(mid);
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(midHost);
+    root->addWidget(scroll, 1);
 
     // ── actions ──
     auto *aBox = box("Apply", "box_green");
@@ -519,9 +482,6 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     ll->addWidget(log_);
     logBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     aBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    if (theme::experimentalEnabled()) {
-        root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  MSR operations"), logBox));
-    }
     root->addWidget(logBox, 0);
 
     reloadProfiles();

@@ -9,7 +9,6 @@
 #include <QFile>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QGroupBox>
 #include <QLabel>
 #include <QProcess>
 #include <QPushButton>
@@ -41,13 +40,9 @@ qint64 memlockBytes() {
 } // namespace
 
 MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
-    // A titled frame of its own: each test is a separate run, not part of the one above.
-    auto *outer = new QVBoxLayout(this);
-    outer->setContentsMargins(0, 0, 0, 0);
-    auto *frame = new QGroupBox(tr("Memory test"));
-    frame->setObjectName(QStringLiteral("box_purple"));
-    outer->addWidget(frame);
-    auto *root = new QVBoxLayout(frame);
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(tr("Memory test"))));
 
     for (const auto t : {memtest::Tool::Stressapptest, memtest::Tool::Memtester}) {
         program_ = findTool(memtest::toolName(t));

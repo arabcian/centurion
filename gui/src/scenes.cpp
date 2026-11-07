@@ -875,8 +875,8 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
             helper("ryzen-co-helper", {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}, {"profile", name}}}},
                    [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); });
         };
-        // Per-core batch resets every core to 0 first, so all-core only without per-core values — as the tab.
-        if (coall.isDouble() && entries.isEmpty())
+        // All-core first, per-core on top — same order as the tab.
+        if (coall.isDouble())
             helper("ryzen-co-helper", {{"op", "set_coall"}, {"params", QJsonObject{{"value", coall.toInt()}, {"profile", name}}}},
                    [perCore, done](bool ok, const QString &m) { if (ok) perCore(); else done(false, m); });
         else perCore();

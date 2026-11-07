@@ -9,13 +9,13 @@ use serde_json::{json, Value};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const MIB: usize = 1 << 20;
 
-pub fn p99(v: &mut [f64]) -> Option<f64> {
+pub fn p99(v: &mut Vec<f64>) -> Option<f64> {
     if v.is_empty() { return None; }
     v.sort_by(|a, b| a.total_cmp(b));
     Some(v[((v.len() as f64 * 0.99) as usize).min(v.len() - 1)])
@@ -25,7 +25,7 @@ pub fn p99(v: &mut [f64]) -> Option<f64> {
 /// a smaller sample) - the expected shortfall at p99. A single order statistic of a short
 /// window jitters far more than the effects being measured (p99 of 40 fsyncs is simply the
 /// maximum); the mean of the worst few keeps the tail's meaning at a fraction of the noise.
-pub fn tail(v: &mut [f64]) -> Option<f64> {
+pub fn tail(v: &mut Vec<f64>) -> Option<f64> {
     if v.is_empty() { return None; }
     v.sort_by(|a, b| b.total_cmp(a));
     let k = ((v.len() as f64 * 0.01).ceil() as usize).max(5).min(v.len());
@@ -39,7 +39,7 @@ fn anon(len: usize) -> Option<&'static mut [u8]> {
 }
 fn unmap(s: &mut [u8]) { unsafe { libc::munmap(s.as_mut_ptr() as *mut libc::c_void, s.len()); } }
 
-/// Timer wake-up overshoot upper-tail mean (µs) of a 500 µs sleep loop while another
+/// Timer wake-up overshoot p99 (µs) of a 500 µs sleep loop while another
 /// thread churns anonymous memory (faults, THP allocation, reclaim paths).
 /// The sleeper is a fresh thread in each of 3 sub-windows: where the scheduler
 /// happens to place it (V-Cache or frequency CCD, SMT sibling of a busy core)
@@ -228,92 +228,6 @@ impl Foreign {
     }
 }
 
-/// Machine-wide activity counters around a run (A6): interrupts + softirqs, whole-disk sectors
-/// read + written, network bytes (no loopback), this process's own I/O bytes, and the busy share
-/// of an amdgpu GPU that is already awake (never woken to be read).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct SysCounters { pub irq: u64, pub sectors: u64, pub net: u64, pub own_io: u64, pub gpu_busy: Option<f64> }
-
-/// What the rest of the machine did during a run.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Activity { pub irq_per_s: f64, pub disk_mb_s: f64, pub net_mb_s: f64, pub gpu_busy: Option<f64> }
-
-/// Thresholds of [`disturbances`], in one place: interrupt rate against the session's reference
-/// runs (ratio), others' disk traffic outside the storage suite, network traffic, GPU busy share.
-pub const IRQ_RATIO: f64 = 2.0;
-pub const DISK_MB_S: f64 = 20.0;
-pub const NET_MB_S: f64 = 5.0;
-pub const GPU_BUSY_PCT: f64 = 20.0;
-
-/// `intr` + `softirq` totals of /proc/stat.
-pub fn parse_stat_irq(text: &str) -> u64 {
-    text.lines().filter(|l| l.starts_with("intr ") || l.starts_with("softirq ")).filter_map(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).sum()
-}
-
-/// Sectors read + written by whole disks in /proc/diskstats (partitions, loop, ram, dm and zram left out:
-/// they would count the same traffic twice or are not disks).
-pub fn parse_diskstats(text: &str) -> u64 {
-    let whole = |n: &str| {
-        let digits_after = |p: &str| n.strip_prefix(p).is_some_and(|r| !r.is_empty() && r.bytes().all(|b| b.is_ascii_digit()));
-        (n.starts_with("nvme") && n.contains('n') && !n.contains('p') && n[4..].split('n').count() == 2)
-            || ((n.starts_with("sd") || n.starts_with("vd") || n.starts_with("hd")) && n[2..].bytes().all(|b| b.is_ascii_lowercase()) && n.len() > 2)
-            || (digits_after("mmcblk"))
-    };
-    text.lines().filter_map(|l| {
-        let f: Vec<&str> = l.split_whitespace().collect();
-        (f.len() >= 10 && whole(f[2])).then(|| f[5].parse::<u64>().unwrap_or(0) + f[9].parse::<u64>().unwrap_or(0))
-    }).sum()
-}
-
-/// Received + sent bytes of every interface but loopback in /proc/net/dev.
-pub fn parse_netdev(text: &str) -> u64 {
-    text.lines().filter_map(|l| {
-        let (name, rest) = l.split_once(':')?;
-        if name.trim() == "lo" { return None; }
-        let f: Vec<&str> = rest.split_whitespace().collect();
-        (f.len() >= 9).then(|| f[0].parse::<u64>().unwrap_or(0) + f[8].parse::<u64>().unwrap_or(0))
-    }).sum()
-}
-
-/// read_bytes + write_bytes of /proc/self/io.
-pub fn parse_self_io(text: &str) -> u64 {
-    text.lines().filter(|l| l.starts_with("read_bytes:") || l.starts_with("write_bytes:")).filter_map(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).sum()
-}
-
-impl SysCounters {
-    pub fn read() -> SysCounters {
-        let rd = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
-        let gpu_busy = std::fs::read_dir("/sys/class/drm").ok().into_iter().flatten().flatten().find_map(|e| {
-            let d = e.path().join("device");
-            if !e.file_name().to_string_lossy().starts_with("card") || e.file_name().to_string_lossy().contains('-') { return None; }
-            // Only a GPU that is awake: reading a suspended dGPU's counters would wake it.
-            if std::fs::read_to_string(d.join("power/runtime_status")).map(|s| s.trim() != "active").unwrap_or(false) { return None; }
-            std::fs::read_to_string(d.join("gpu_busy_percent")).ok()?.trim().parse::<f64>().ok()
-        });
-        SysCounters { irq: parse_stat_irq(&rd("/proc/stat")), sectors: parse_diskstats(&rd("/proc/diskstats")), net: parse_netdev(&rd("/proc/net/dev")),
-                      own_io: parse_self_io(&rd("/proc/self/io")), gpu_busy }
-    }
-    /// Rates between `self` (start) and `end` over `secs`; disk traffic is net of this process's own I/O.
-    pub fn activity(&self, end: &SysCounters, secs: f64) -> Activity {
-        let s = secs.max(0.1);
-        let disk = (end.sectors.saturating_sub(self.sectors) * 512).saturating_sub(end.own_io.saturating_sub(self.own_io));
-        Activity { irq_per_s: end.irq.saturating_sub(self.irq) as f64 / s, disk_mb_s: disk as f64 / 1e6 / s,
-                   net_mb_s: end.net.saturating_sub(self.net) as f64 / 1e6 / s, gpu_busy: end.gpu_busy }
-    }
-}
-
-/// Which kinds of outside activity disturbed a run: "irq" (interrupt rate above IRQ_RATIO x the
-/// session's reference runs, when known), "disk" (others' disk traffic; not checked in the storage
-/// suite), "net", "gpu".
-pub fn disturbances(a: &Activity, ref_irq_per_s: Option<f64>, check_disk: bool) -> Vec<&'static str> {
-    let mut out = Vec::new();
-    if ref_irq_per_s.is_some_and(|r| r > 0.0 && a.irq_per_s > IRQ_RATIO * r) { out.push("irq"); }
-    if check_disk && a.disk_mb_s > DISK_MB_S { out.push("disk"); }
-    if a.net_mb_s > NET_MB_S { out.push("net"); }
-    if a.gpu_busy.is_some_and(|g| g > GPU_BUSY_PCT) { out.push("gpu"); }
-    out
-}
-
 fn tmpfile(dir: &str, direct: bool) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new().read(true).write(true).mode(0o600)
         .custom_flags(libc::O_TMPFILE | libc::O_CLOEXEC | if direct { libc::O_DIRECT } else { 0 }).open(dir)
@@ -362,7 +276,7 @@ pub fn disk_of(dir: &str) -> Result<String, String> {
         }
     }
     let name = node.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    if crate::tune::block_devs().iter().any(|d| d.file_name().is_some_and(|n| n.to_string_lossy() == name)) { Ok(name) }
+    if crate::tune::block_devs().iter().any(|d| d.file_name().map_or(false, |n| n.to_string_lossy() == name)) { Ok(name) }
     else { Err(format!("{dir} is on {name}, which the Storage rows do not cover")) }
 }
 
@@ -384,7 +298,7 @@ fn rand_reads(fd: i32, pages: u64, max_n: usize, until: Instant, seed: u64, stop
     if p.is_null() || pages == 0 { return Vec::new(); }
     let mut x = seed | 1;
     let mut lat = Vec::with_capacity(max_n.min(1 << 16));
-    while lat.len() < max_n && Instant::now() < until && !stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
+    while lat.len() < max_n && Instant::now() < until && !stop.map_or(false, |s| s.load(Ordering::Relaxed)) {
         x ^= x << 13; x ^= x >> 7; x ^= x << 17;
         let off = (x % pages) * 4096;
         let a = Instant::now();
@@ -407,22 +321,7 @@ fn rand_reads(fd: i32, pages: u64, max_n: usize, until: Instant, seed: u64, stop
 ///  * random first touches of a cold mmap of the file (MmapFaultP99Us; RaFootprintMib = page
 ///    cache the fault read-around brought in, i.e. what read-ahead costs a program that maps
 ///    a big pack and touches it sparsely).
-///
 /// Every file is an unlinked O_TMPFILE: nothing is left behind.
-const SLC_PART: usize = 32 * MIB;
-static SLC_DROP: AtomicBool = AtomicBool::new(false);
-
-/// Whether the last storage suite's write fell by more than half (and clears it).
-pub fn slc_drop_taken() -> bool { SLC_DROP.swap(false, Ordering::Relaxed) }
-
-/// Write speed per part (MB/s) fell by more than half: the median of the last three parts
-/// under half the median of the first three (an exhausted SLC cache). Fewer than 6 parts: no.
-pub fn slc_drop(parts: &[f64]) -> bool {
-    if parts.len() < 6 { return false; }
-    let med3 = |v: &[f64]| { let mut a = v.to_vec(); a.sort_by(f64::total_cmp); a[1] };
-    med3(&parts[parts.len() - 3..]) < 0.5 * med3(&parts[..3])
-}
-
 pub fn io(dir: &str, size: usize, s: &mut Sample) -> Result<(), String> {
     let size = size.max(16 * MIB) / MIB * MIB;
     let mut f = tmpfile(dir, false).map_err(|e| format!("{dir}: {e}"))?;
@@ -445,22 +344,11 @@ pub fn io(dir: &str, size: usize, s: &mut Sample) -> Result<(), String> {
     let mut buf = vec![0u8; MIB];
     let mut x: u64 = 0x2545_F491_4F6C_DD1D;
     for b in buf.iter_mut() { x ^= x << 13; x ^= x >> 7; x ^= x << 17; *b = x as u8; }
-    // In 32 MiB parts, each committed: the drive's speed per part (buffered, the first parts only
-    // filled the page cache and every run showed a "drop" at the dirty limit).
     let t0 = Instant::now();
     let mut res = Ok(());
-    let mut parts = Vec::new();
-    for _ in 0..size.div_ceil(SLC_PART) {
-        let tp = Instant::now();
-        let n = SLC_PART.min(size - parts.len() * SLC_PART) / MIB;
-        for _ in 0..n { if let Err(e) = f.write_all(&buf) { res = Err(format!("write: {e}")); break; } }
-        if res.is_ok() { res = f.sync_data().map_err(|e| format!("fdatasync: {e}")); }
-        if res.is_err() { break; }
-        parts.push((n * MIB) as f64 / MIB as f64 / tp.elapsed().as_secs_f64());
-    }
+    for _ in 0..size / MIB { if let Err(e) = f.write_all(&buf) { res = Err(format!("write: {e}")); break; } }
     if res.is_ok() { res = f.sync_all().map_err(|e| format!("fsync: {e}")); }
     let wsecs = t0.elapsed().as_secs_f64();
-    SLC_DROP.store(slc_drop(&parts), Ordering::Relaxed);
     stop.store(true, Ordering::Relaxed);
     let mut fl = prober.join().unwrap_or_default();
     res?;
@@ -549,58 +437,17 @@ pub fn power_source() -> &'static str {
     if battery_uw().is_some() { "battery" } else if !Rapl::new().zones.is_empty() { "rapl" } else { "none" }
 }
 
-pub fn battery_uw() -> Option<f64> { battery_uw_in(std::path::Path::new("/sys/class/power_supply")) }
-
-/// Above this the reading is a unit or firmware error, not a laptop's discharge.
-const MAX_BATTERY_W: f64 = 300.0;
-
-/// Discharging batteries under `dir` (BAT0 + BAT1 machines discharge both).
-fn discharging(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut v: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| {
+pub fn battery_uw() -> Option<f64> {
+    for e in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
+        let p = e.path();
         let rd = |n: &str| std::fs::read_to_string(p.join(n)).ok().map(|s| s.trim().to_owned());
-        rd("type").as_deref() == Some("Battery") && rd("status").as_deref() == Some("Discharging")
-    }).collect();
-    v.sort();
-    v
-}
-fn sys_f64(p: &std::path::Path, n: &str) -> Option<f64> { std::fs::read_to_string(p.join(n)).ok()?.trim().parse().ok() }
-
-/// Discharge power (µW) of every discharging battery under `dir`, summed. None when none
-/// discharges, one of them has no reading, or the sum is implausible (> 300 W).
-pub fn battery_uw_in(dir: &std::path::Path) -> Option<f64> {
-    let bats = discharging(dir);
-    if bats.is_empty() { return None; }
-    let mut sum = 0.0;
-    for p in &bats {
+        if rd("type").as_deref() != Some("Battery") || rd("status").as_deref() != Some("Discharging") { continue; }
         // Some firmware reports the discharge as a negative current/power.
-        sum += match sys_f64(p, "power_now") {
-            Some(w) => w.abs(),
-            None => (sys_f64(p, "current_now")? * sys_f64(p, "voltage_now")? / 1e6).abs(),
-        };
+        if let Some(w) = rd("power_now").and_then(|v| v.parse::<f64>().ok()) { return Some(w.abs()); }
+        let (i, v) = (rd("current_now")?.parse::<f64>().ok()?, rd("voltage_now")?.parse::<f64>().ok()?);
+        return Some((i * v / 1e6).abs());
     }
-    (sum.is_finite() && sum <= MAX_BATTERY_W * 1e6).then_some(sum)
-}
-
-/// Remaining energy (µWh) of the discharging batteries under `dir`: `energy_now`, else
-/// `charge_now` × `voltage_now`. None when any of them has neither.
-pub fn battery_energy_uwh_in(dir: &std::path::Path) -> Option<f64> {
-    let bats = discharging(dir);
-    if bats.is_empty() { return None; }
-    bats.iter().map(|p| sys_f64(p, "energy_now").or_else(|| Some(sys_f64(p, "charge_now")? * sys_f64(p, "voltage_now")? / 1e6))).sum()
-}
-pub fn battery_energy_uwh() -> Option<f64> { battery_energy_uwh_in(std::path::Path::new("/sys/class/power_supply")) }
-
-/// Watts from two energy readings `secs` apart; None when the counter did not move (too coarse
-/// for the window) or went up.
-pub fn energy_watts(e0_uwh: f64, e1_uwh: f64, secs: f64) -> Option<f64> {
-    let d = e0_uwh - e1_uwh;
-    (d > 0.0 && secs > 0.0).then(|| d * 3600.0 / secs / 1e6)
-}
-
-/// The power reading and the energy difference disagree by more than 20 %.
-pub fn battery_estimates_disagree(power_w: f64, energy_w: f64) -> bool {
-    (power_w - energy_w).abs() > 0.2 * power_w.max(energy_w)
+    None
 }
 
 /// RAPL package energy counters. Only package domains of the MSR interface: on Intel
@@ -613,10 +460,10 @@ impl Rapl {
     fn new() -> Rapl { Rapl::from_dir(std::path::Path::new("/sys/class/powercap")) }
     fn from_dir(root: &std::path::Path) -> Rapl {
         let all: Vec<std::path::PathBuf> = std::fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.path())
-            .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().matches(':').count() == 1) && p.join("energy_uj").exists()).collect();
+            .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().matches(':').count() == 1) && p.join("energy_uj").exists()).collect();
         let name = |p: &std::path::Path| std::fs::read_to_string(p.join("name")).unwrap_or_default().trim().to_owned();
         let msr_pkg: Vec<std::path::PathBuf> = all.iter().filter(|p| name(p).starts_with("package")
-            && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("intel-rapl:"))).cloned().collect();
+            && p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("intel-rapl:"))).cloned().collect();
         let pick = if !msr_pkg.is_empty() { msr_pkg } else { all.into_iter().filter(|p| name(p) != "psys").take(1).collect() };
         Rapl { zones: pick.into_iter().map(|p| {
             let range = std::fs::read_to_string(p.join("max_energy_range_uj")).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
@@ -715,7 +562,7 @@ pub fn gate_on(read: &dyn Fn() -> Option<f64>, target: f64, max: Duration) -> (O
         let Some(t) = read() else { return (None, t0.elapsed().as_secs_f64()) };
         let now = t0.elapsed().as_secs_f64();
         hist.push_back((now, t));
-        while hist.front().is_some_and(|(a, _)| now - a > 1.05) { hist.pop_front(); }
+        while hist.front().map_or(false, |(a, _)| now - a > 1.05) { hist.pop_front(); }
         let cooling = match (hist.front(), hist.len() >= 4) { (Some((a, ta)), true) if now - a >= 0.9 => (ta - t) / (now - a) >= 0.15, _ => true };
         if t <= target || !cooling || t0.elapsed() >= max { return (Some(t), now); }
         std::thread::sleep(Duration::from_millis(250));
@@ -743,14 +590,6 @@ fn disk_sensor(disk: &str) -> Option<(std::path::PathBuf, f64)> {
 }
 
 /// A disk's temperature in °C (None without a sensor).
-/// Bytes written to a whole disk since boot (`/sys/block/<disk>/stat`, sectors written x 512).
-pub fn disk_written_bytes(disk: &str) -> Option<u64> {
-    parse_block_stat_written(&std::fs::read_to_string(format!("/sys/block/{disk}/stat")).ok()?)
-}
-
-/// Sectors written (7th field) x 512 of a block device's stat line.
-pub fn parse_block_stat_written(text: &str) -> Option<u64> { text.split_whitespace().nth(6)?.parse::<u64>().ok().map(|s| s * 512) }
-
 pub fn disk_temp_c(disk: &str) -> Option<f64> {
     let (p, _) = disk_sensor(disk)?;
     let v: f64 = std::fs::read_to_string(p).ok()?.trim().parse().ok()?;
@@ -866,15 +705,130 @@ pub fn idle_w_battery(dur: Duration, period: f64) -> Option<f64> {
     mean_of_updates(&v, 1).or_else(|| (!v.is_empty()).then(|| v.iter().map(|x| x.1).sum::<f64>() / v.len() as f64))
 }
 
-/// Default: keep the rest of the system's caches intact. Explicit cold-cache runs can
-/// opt in with CENTURION_COLD_CACHE=1; do not perturb unrelated workloads silently.
+/// Root: drop clean caches and compact memory so one run does not inherit
+/// the previous run's page cache or fragmentation.
 pub fn settle() {
-    if std::env::var_os("CENTURION_COLD_CACHE").as_deref() == Some(std::ffi::OsStr::new("1")) {
-        unsafe { libc::sync(); }
-        let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
-        let _ = std::fs::write("/proc/sys/vm/compact_memory", "1");
-    }
+    unsafe { libc::sync(); }
+    let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
+    let _ = std::fs::write("/proc/sys/vm/compact_memory", "1");
     std::thread::sleep(Duration::from_millis(500));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cpu_benches() {
+        assert!(cpu_single(Duration::from_millis(100)) > 0.0);
+        assert!(cpu_multi(Duration::from_millis(100)).0 > 0.0);
+        assert!(pingpong_p99_us(200).unwrap() > 0.0);
+    }
+
+    #[test]
+    fn io_and_wake_produce_metrics() {
+        let mut s = Sample::new();
+        io("/tmp", 16 << 20, &mut s).unwrap();
+        assert!(s[&Metric::WriteMbs] > 0.0 && s[&Metric::ReadMbs] > 0.0);
+        assert!(s.get(&Metric::RaFootprintMib).map_or(false, |m| *m > 0.0) && s.contains_key(&Metric::MmapFaultP99Us));
+        assert!(wake_p99_us(Duration::from_millis(200)).is_some());
+        assert!(frame_tail_us(Duration::from_millis(120)).map_or(false, |v| v > 0.0));
+        let (t, m) = frame_us(Duration::from_millis(120)).unwrap();
+        assert!(m > 0.0 && t >= m, "the tail is never below the median");
+        assert_eq!(p99(&mut vec![]), None);
+        assert_eq!(tail(&mut vec![]), None);
+        // Worst 1 %, at least 5: 1000 samples -> the 10 largest; 8 samples -> the 5 largest.
+        let mut v: Vec<f64> = (1..=1000).map(|x| x as f64).collect();
+        assert!((tail(&mut v).unwrap() - 995.5).abs() < 1e-9);
+        let mut w: Vec<f64> = (1..=8).map(|x| x as f64).collect();
+        assert!((tail(&mut w).unwrap() - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn disk_of_refuses_ram_file_systems() {
+        // /dev/shm is tmpfs on every Linux system that has it.
+        if std::path::Path::new("/dev/shm").is_dir() { assert!(disk_of("/dev/shm").is_err()); }
+        assert_eq!(dev_split((259u64 << 8) | 3), (259, 3));
+        assert_eq!(dev_split(((300u64 & 0xfff) << 8) | ((1000u64 & 0xff) | ((1000u64 & !0xff) << 12))), (300, 1000));
+    }
+
+    #[test]
+    fn rapl_counts_the_package_once_and_survives_wrap() {
+        let root = std::env::temp_dir().join(format!("centurion-rapl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let zone = |dir: &str, name: &str| {
+            let d = root.join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("name"), format!("{name}\n")).unwrap();
+            std::fs::write(d.join("energy_uj"), "1000\n").unwrap();
+            std::fs::write(d.join("max_energy_range_uj"), "65532610987\n").unwrap();
+        };
+        // Intel laptop layout: MSR package, its core subzone, platform (psys), and the same package over MMIO.
+        zone("intel-rapl:0", "package-0"); zone("intel-rapl:0:0", "core"); zone("intel-rapl:1", "psys"); zone("intel-rapl-mmio:0", "package-0");
+        let r = Rapl::from_dir(&root);
+        assert_eq!(r.zones.iter().map(|z| z.0.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>(), vec!["intel-rapl:0"]);
+        // The counter wrapped between the two readings.
+        assert_eq!(r.joules(&[65_532_000_000], &[1_389_013]), Some(2.0));
+        assert_eq!(r.joules(&[5_000_000], &[7_000_000]), Some(2.0));
+        // Only an MMIO zone: it is used; psys alone is never taken as package power.
+        let _ = std::fs::remove_dir_all(&root);
+        zone("intel-rapl-mmio:0", "package-0"); zone("intel-rapl:1", "psys");
+        assert_eq!(Rapl::from_dir(&root).zones.len(), 1);
+        assert!(Rapl::from_dir(&root).zones[0].0.ends_with("intel-rapl-mmio:0"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn game_loop_contention_and_jobs_produce_metrics() {
+        assert!(unit() >= 50_000 && unit() == unit(), "measured once");
+        let g = game_loop(Duration::from_millis(240)).expect("frames");
+        let (med, tl) = (g.med_ms, g.tail_ms);
+        assert!(g.jitter_us >= 1.0 && g.jitter_us.is_finite());
+        assert!(med > 0.0 && tl >= med);
+        let c = contended(Duration::from_millis(120));
+        assert!(c.rate > 0.0 && c.frame_tail.map_or(false, |v| v > 0.0));
+        // The test binary is not centurion-calibrate: a child that fails to run the job yields None, never a figure.
+        assert_eq!(jobs_per_sec(std::path::Path::new("/nonexistent/centurion-calibrate"), Duration::from_millis(50)), None);
+        job_main(10_000);
+    }
+
+    #[test]
+    fn cache_loop_walks_one_cycle_and_produces_frames() {
+        let c = Chain::new(1 << 20, 7).expect("chain");
+        // One cycle over every line: a full lap returns to the start, no shorter walk does.
+        assert_eq!(c.walk(5, c.lines as u64), 5);
+        assert_ne!(c.walk(5, c.lines as u64 / 2), 5);
+        assert!((8 * MIB..=64 * MIB).contains(&cache_set_bytes()) && cache_set_bytes() % MIB == 0);
+        assert!(cache_unit() >= 1000 && cache_unit() == cache_unit(), "measured once");
+        let (med, tl) = cache_loop(Duration::from_millis(300)).expect("frames");
+        assert!(med > 0.0 && tl >= med);
+        assert_eq!(pacing_us(&[vec![1.0, 1.5, 1.0], vec![2.0]]), Some(500.0));
+    }
+
+    #[test]
+    fn battery_cadence_and_fresh_updates() {
+        // EC updates every 2 s, polled every 0.25 s: changes at 2, 4, 6, 8.
+        let s: Vec<BatSample> = (0..40).map(|i| { let t = i as f64 * 0.25; (t, 10.0 + (t / 2.0).floor()) }).collect();
+        assert!((cadence_of(&s).unwrap() - 2.0).abs() < 1e-9);
+        // Updates carry 11, 12, 13, 14; the first one (may straddle the change) is skipped.
+        assert!((mean_of_updates(&s, 1).unwrap() - 13.0).abs() < 1e-9);
+        assert!(cadence_of(&s[..10]).is_none(), "one change is no cadence");
+        assert_eq!(mean_of_updates(&[(0.0, 5.0), (1.0, 5.0)], 1), None);
+        assert!(display_state().len() < 4096);
+        if let Some(t) = cpu_temp_c() { assert!((-20.0..150.0).contains(&t)); }
+        assert_eq!((parse_cpumask("00000000,00000000\n"), parse_cpumask("00000000,0000000f"), parse_cpumask("3,1")), (0, 4, 3));
+        assert!(disk_sensor("../sda").is_none() && disk_temp_c("").is_none());
+        let n = std::cell::Cell::new(0);
+        let falling = || { n.set(n.get() + 1); Some(60.0 - n.get() as f64) };
+        assert_eq!(gate_on(&falling, 58.0, Duration::from_secs(5)).0, Some(58.0), "stops once the sensor is at the target");
+    }
+
+    #[test]
+    fn sub_runs_pool_their_samples() {
+        assert!(cpu_single(Duration::from_millis(40)) > 0.0);
+        let (rate, _) = cpu_multi(Duration::from_millis(40));
+        assert!(rate > 0.0);
+        assert!(pingpong_p99_us(200).is_some(), "4 bursts of 58 rounds, warm-up dropped");
+    }
 }
 
 // ── load phase ─────────────────────────────────────────────────────────────
@@ -1030,7 +984,7 @@ fn pingpong_burst(rounds: usize) -> Option<Vec<f64>> {
 fn mono_ns() -> i64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts); }
-    ts.tv_sec * 1_000_000_000 + ts.tv_nsec
+    ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64
 }
 
 /// Work of one frame: fixed (never scaled to the clock), so a core that is still ramping up
@@ -1159,18 +1113,7 @@ fn gated_frames<M: FnMut(), J: FnMut() + Send + 'static>(dur: Duration, skip: u6
     v
 }
 
-/// EEVDF slice (µs) the game and cache loops request for their own threads (0 = default): how
-/// centurion-calibrate measures the launch block's `slice_us` without touching the rest of the system.
-pub static PROBE_SLICE_US: AtomicU64 = AtomicU64::new(0);
-
-/// Requests PROBE_SLICE_US for the calling probe thread; the job threads it spawns inherit it.
-fn probe_slice() {
-    let us = PROBE_SLICE_US.load(Ordering::SeqCst);
-    if us > 0 { let _ = crate::tune::set_thread_slice_us(us); }
-}
-
 fn game_part(dur: Duration, seed: u64, unit: u64) -> Vec<f64> {
-    probe_slice();
     let buf = vec![1u8; 1024 * 1024];
     let mut acc = seed;
     let v = gated_frames(dur, 2, || { acc = work(unit * 48 / 10, acc, &buf); }, |w| {  // 4.8 ms at full clock: the 60 % busy main thread
@@ -1305,7 +1248,6 @@ pub fn cache_unit() -> u64 {
 }
 
 fn cache_part(dur: Duration, seed: u64, unit: u64, chain: Arc<Chain>) -> Vec<f64> {
-    probe_slice();
     let n = chain.lines as u64;
     // Four walkers a quarter lap apart (another offset per thread set).
     let start = |k: u64| ((n / 4 * k + n / 16 * seed) % n) as u32;
@@ -1387,7 +1329,7 @@ pub fn burst_job_tail_ms(exe: &std::path::Path, dur: Duration) -> Option<f64> {
         let t = Instant::now();
         let ok = std::process::Command::new(exe).arg("__job").arg(iters)
             .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-            .status().is_ok_and(|s| s.success());
+            .status().map_or(false, |s| s.success());
         ok.then(|| t.elapsed().as_secs_f64() * 1e3)
     };
     run(exe, &iters)?;  // brings the binary back into the page cache
@@ -1426,7 +1368,7 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
     let iters = (unit() * 2).to_string();
     let spawn = |exe: &std::path::Path, iters: &str| std::process::Command::new(exe).arg("__job").arg(iters)
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .status().is_ok_and(|s| s.success());
+        .status().map_or(false, |s| s.success());
     if !spawn(exe, &iters) { return None; }  // also brings the binary back into the page cache
     let threads = (std::thread::available_parallelism().map_or(4, |n| n.get()) / 2).clamp(2, 12);
     let t0 = Instant::now();
@@ -1437,188 +1379,4 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
     let n: u64 = hs.into_iter().map(|h| h.join().unwrap_or(0)).sum();
     let secs = t0.elapsed().as_secs_f64();
     (n > 0 && secs > 0.0).then(|| n as f64 / secs)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slc_drop_from_part_speeds() {
-        assert!(!slc_drop(&[900.0; 5]), "too few parts");
-        assert!(!slc_drop(&[900.0, 950.0, 880.0, 870.0, 860.0, 910.0, 890.0, 900.0]), "a steady drive");
-        assert!(!slc_drop(&[900.0, 950.0, 880.0, 870.0, 860.0, 300.0, 890.0, 900.0]), "one slow part is not a drop");
-        assert!(slc_drop(&[2000.0, 2100.0, 1900.0, 2000.0, 1200.0, 600.0, 580.0, 620.0]), "the cache ran out");
-    }
-    #[test]
-    fn outside_activity_from_fixture_counters() {
-        let stat = "cpu  1 2 3\nintr 1000 5 6 7\nctxt 99\nsoftirq 500 1 2\n";
-        assert_eq!(parse_stat_irq(stat), 1500);
-        let disk = "\
- 259       0 nvme0n1 100 0 2000 10 50 0 4000 20 0 30 30 0 0 0 0
- 259       1 nvme0n1p1 90 0 1800 9 40 0 3600 18 0 25 25 0 0 0 0
-   8       0 sda 10 0 100 1 5 0 200 2 0 3 3 0 0 0 0
-   8       1 sda1 10 0 100 1 5 0 200 2 0 3 3 0 0 0 0
-   7       0 loop0 1 0 999 0 0 0 0 0 0 0 0 0 0 0 0
- 253       0 dm-0 1 0 777 0 1 0 777 0 0 0 0 0 0 0 0
- 179       0 mmcblk0 1 0 10 0 1 0 20 0 0 0 0 0 0 0 0
- 179       1 mmcblk0p1 1 0 10 0 1 0 20 0 0 0 0 0 0 0 0
-";
-        assert_eq!(parse_diskstats(disk), 2000 + 4000 + 100 + 200 + 10 + 20, "whole disks only");
-        let net = "Inter-|   Receive\n face |bytes packets\n    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  wlan0: 1000 3 0 0 0 0 0 0 300 2 0 0 0 0 0 0\n";
-        assert_eq!(parse_netdev(net), 1300);
-        assert_eq!(parse_self_io("rchar: 5\nread_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 0\n"), 12288);
-        let a = SysCounters { irq: 1000, sectors: 0, net: 0, own_io: 0, gpu_busy: None };
-        // 10 s: 30000 irq/s, 100 MB of others' disk traffic (our own 20 MB taken out), 1 MB of network.
-        let b = SysCounters { irq: 301_000, sectors: 120_000_000 / 512 + 1, net: 1_000_000, own_io: 20_000_000, gpu_busy: Some(35.0) };
-        let act = a.activity(&b, 10.0);
-        assert!((act.irq_per_s - 30_000.0).abs() < 1e-9 && (act.disk_mb_s - 10.0).abs() < 0.01 && (act.net_mb_s - 0.1).abs() < 1e-9);
-        assert_eq!(disturbances(&act, Some(10_000.0), true), ["irq", "gpu"]);
-        assert_eq!(disturbances(&act, None, true), ["gpu"], "no reference runs yet: interrupts not judged");
-        let busy_disk = Activity { disk_mb_s: 50.0, net_mb_s: 8.0, ..Activity::default() };
-        assert_eq!(disturbances(&busy_disk, Some(1.0), true), ["disk", "net"]);
-        assert_eq!(disturbances(&busy_disk, Some(1.0), false), ["net"], "the storage suite's own traffic is not a disturbance");
-        assert!(disturbances(&Activity { irq_per_s: 15_000.0, ..Activity::default() }, Some(10_000.0), true).is_empty());
-    }
-    #[test]
-    fn cpu_benches() {
-        assert!(cpu_single(Duration::from_millis(100)) > 0.0);
-        assert!(cpu_multi(Duration::from_millis(100)).0 > 0.0);
-        assert!(pingpong_p99_us(200).unwrap() > 0.0);
-    }
-
-    #[test]
-    fn io_and_wake_produce_metrics() {
-        let mut s = Sample::new();
-        io("/tmp", 16 << 20, &mut s).unwrap();
-        assert!(s[&Metric::WriteMbs] > 0.0 && s[&Metric::ReadMbs] > 0.0);
-        assert!(s.get(&Metric::RaFootprintMib).is_some_and(|m| *m > 0.0) && s.contains_key(&Metric::MmapFaultP99Us));
-        assert!(wake_p99_us(Duration::from_millis(200)).is_some());
-        assert!(frame_tail_us(Duration::from_millis(120)).is_some_and(|v| v > 0.0));
-        let (t, m) = frame_us(Duration::from_millis(120)).unwrap();
-        assert!(m > 0.0 && t >= m, "the tail is never below the median");
-        assert_eq!(p99(&mut vec![]), None);
-        assert_eq!(tail(&mut vec![]), None);
-        // Worst 1 %, at least 5: 1000 samples -> the 10 largest; 8 samples -> the 5 largest.
-        let mut v: Vec<f64> = (1..=1000).map(|x| x as f64).collect();
-        assert!((tail(&mut v).unwrap() - 995.5).abs() < 1e-9);
-        let mut w: Vec<f64> = (1..=8).map(|x| x as f64).collect();
-        assert!((tail(&mut w).unwrap() - 6.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn disk_of_refuses_ram_file_systems() {
-        // /dev/shm is tmpfs on every Linux system that has it.
-        if std::path::Path::new("/dev/shm").is_dir() { assert!(disk_of("/dev/shm").is_err()); }
-        assert_eq!(dev_split((259u64 << 8) | 3), (259, 3));
-        assert_eq!(dev_split(((300u64 & 0xfff) << 8) | ((1000u64 & 0xff) | ((1000u64 & !0xff) << 12))), (300, 1000));
-    }
-
-    #[test]
-    fn battery_sums_every_discharging_battery_and_rejects_nonsense() {
-        let root = std::env::temp_dir().join(format!("centurion-bat-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let dev = |name: &str, files: &[(&str, &str)]| {
-            let d = root.join(name);
-            std::fs::create_dir_all(&d).unwrap();
-            for (f, v) in files { std::fs::write(d.join(f), format!("{v}\n")).unwrap(); }
-        };
-        dev("AC", &[("type", "Mains"), ("online", "0")]);
-        dev("BAT0", &[("type", "Battery"), ("status", "Discharging"), ("power_now", "-8000000"), ("energy_now", "50000000")]);
-        dev("BAT1", &[("type", "Battery"), ("status", "Discharging"), ("current_now", "500000"), ("voltage_now", "12000000"),
-                      ("charge_now", "4000000")]);
-        assert_eq!(battery_uw_in(&root), Some(14_000_000.0));
-        assert_eq!(battery_energy_uwh_in(&root), Some(50_000_000.0 + 48_000_000.0));
-        // A charging battery is not counted.
-        dev("BAT1", &[("status", "Charging")]);
-        assert_eq!(battery_uw_in(&root), Some(8_000_000.0));
-        // Implausible (wrong unit): rejected.
-        dev("BAT0", &[("power_now", "800000000")]);
-        assert_eq!(battery_uw_in(&root), None);
-        let _ = std::fs::remove_dir_all(&root);
-        assert_eq!(battery_uw_in(&root), None);
-        // 10 Wh in an hour is 10 W; a counter that did not move gives nothing.
-        assert_eq!(energy_watts(20e6, 10e6, 3600.0), Some(10.0));
-        assert_eq!(energy_watts(10e6, 10e6, 12.0), None);
-        assert!(!battery_estimates_disagree(10.0, 11.0) && battery_estimates_disagree(10.0, 13.0));
-    }
-
-    #[test]
-    fn rapl_counts_the_package_once_and_survives_wrap() {
-        let root = std::env::temp_dir().join(format!("centurion-rapl-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let zone = |dir: &str, name: &str| {
-            let d = root.join(dir);
-            std::fs::create_dir_all(&d).unwrap();
-            std::fs::write(d.join("name"), format!("{name}\n")).unwrap();
-            std::fs::write(d.join("energy_uj"), "1000\n").unwrap();
-            std::fs::write(d.join("max_energy_range_uj"), "65532610987\n").unwrap();
-        };
-        // Intel laptop layout: MSR package, its core subzone, platform (psys), and the same package over MMIO.
-        zone("intel-rapl:0", "package-0"); zone("intel-rapl:0:0", "core"); zone("intel-rapl:1", "psys"); zone("intel-rapl-mmio:0", "package-0");
-        let r = Rapl::from_dir(&root);
-        assert_eq!(r.zones.iter().map(|z| z.0.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>(), vec!["intel-rapl:0"]);
-        // The counter wrapped between the two readings.
-        assert_eq!(r.joules(&[65_532_000_000], &[1_389_013]), Some(2.0));
-        assert_eq!(r.joules(&[5_000_000], &[7_000_000]), Some(2.0));
-        // Only an MMIO zone: it is used; psys alone is never taken as package power.
-        let _ = std::fs::remove_dir_all(&root);
-        zone("intel-rapl-mmio:0", "package-0"); zone("intel-rapl:1", "psys");
-        assert_eq!(Rapl::from_dir(&root).zones.len(), 1);
-        assert!(Rapl::from_dir(&root).zones[0].0.ends_with("intel-rapl-mmio:0"));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn game_loop_contention_and_jobs_produce_metrics() {
-        assert!(unit() >= 50_000 && unit() == unit(), "measured once");
-        let g = game_loop(Duration::from_millis(240)).expect("frames");
-        let (med, tl) = (g.med_ms, g.tail_ms);
-        assert!(g.jitter_us >= 1.0 && g.jitter_us.is_finite());
-        assert!(med > 0.0 && tl >= med);
-        let c = contended(Duration::from_millis(120));
-        assert!(c.rate > 0.0 && c.frame_tail.is_some_and(|v| v > 0.0));
-        // The test binary is not centurion-calibrate: a child that fails to run the job yields None, never a figure.
-        assert_eq!(jobs_per_sec(std::path::Path::new("/nonexistent/centurion-calibrate"), Duration::from_millis(50)), None);
-        job_main(10_000);
-    }
-
-    #[test]
-    fn cache_loop_walks_one_cycle_and_produces_frames() {
-        let c = Chain::new(1 << 20, 7).expect("chain");
-        // One cycle over every line: a full lap returns to the start, no shorter walk does.
-        assert_eq!(c.walk(5, c.lines as u64), 5);
-        assert_ne!(c.walk(5, c.lines as u64 / 2), 5);
-        assert!((8 * MIB..=64 * MIB).contains(&cache_set_bytes()) && cache_set_bytes() % MIB == 0);
-        assert!(cache_unit() >= 1000 && cache_unit() == cache_unit(), "measured once");
-        let (med, tl) = cache_loop(Duration::from_millis(300)).expect("frames");
-        assert!(med > 0.0 && tl >= med);
-        assert_eq!(pacing_us(&[vec![1.0, 1.5, 1.0], vec![2.0]]), Some(500.0));
-    }
-
-    #[test]
-    fn battery_cadence_and_fresh_updates() {
-        // EC updates every 2 s, polled every 0.25 s: changes at 2, 4, 6, 8.
-        let s: Vec<BatSample> = (0..40).map(|i| { let t = i as f64 * 0.25; (t, 10.0 + (t / 2.0).floor()) }).collect();
-        assert!((cadence_of(&s).unwrap() - 2.0).abs() < 1e-9);
-        // Updates carry 11, 12, 13, 14; the first one (may straddle the change) is skipped.
-        assert!((mean_of_updates(&s, 1).unwrap() - 13.0).abs() < 1e-9);
-        assert!(cadence_of(&s[..10]).is_none(), "one change is no cadence");
-        assert_eq!(mean_of_updates(&[(0.0, 5.0), (1.0, 5.0)], 1), None);
-        assert!(display_state().len() < 4096);
-        if let Some(t) = cpu_temp_c() { assert!((-20.0..150.0).contains(&t)); }
-        assert_eq!((parse_cpumask("00000000,00000000\n"), parse_cpumask("00000000,0000000f"), parse_cpumask("3,1")), (0, 4, 3));
-        assert!(disk_sensor("../sda").is_none() && disk_temp_c("").is_none());
-        let n = std::cell::Cell::new(0);
-        let falling = || { n.set(n.get() + 1); Some(60.0 - n.get() as f64) };
-        assert_eq!(gate_on(&falling, 58.0, Duration::from_secs(5)).0, Some(58.0), "stops once the sensor is at the target");
-    }
-
-    #[test]
-    fn sub_runs_pool_their_samples() {
-        assert!(cpu_single(Duration::from_millis(40)) > 0.0);
-        let (rate, _) = cpu_multi(Duration::from_millis(40));
-        assert!(rate > 0.0);
-        assert!(pingpong_p99_us(200).is_some(), "4 bursts of 58 rounds, warm-up dropped");
-    }
 }

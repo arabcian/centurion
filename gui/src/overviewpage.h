@@ -10,10 +10,6 @@
 class QGridLayout;
 class QLabel;
 class QTimer;
-class QPushButton;
-class QScrollArea;
-class QFrame;
-class QResizeEvent;
 
 class OverviewPage : public QWidget {
     Q_OBJECT
@@ -33,25 +29,18 @@ Q_SIGNALS:
 
 protected:
     void showEvent(QShowEvent *e) override;
-    void resizeEvent(QResizeEvent *e) override;
 
 private:
     void onReply(const QJsonObject &r);
     void rebuildCards(const QJsonArray &cards);
     void report();
-    void layoutCards();
-    void showRecommendation(const QJsonArray &cards);
     static QString cardTitle(const QString &id);
     static QString cardBody(const QJsonObject &card);
     static QString levelWord(int level);
     static QString targetFor(const QString &id);
 
     QGridLayout *grid_;
-    QLabel *summary_, *status_, *counts_ = nullptr, *recommendation_ = nullptr;
-    QPushButton *recommendButton_ = nullptr;
-    QScrollArea *scroll_ = nullptr;
-    QList<QFrame *> cards_;
-    QString recommendedTarget_;
+    QLabel *summary_, *status_;
     QTimer *debounce_;
     QByteArray shown_;  // JSON of the cards on screen (an identical reply does not rebuild them)
     int worst_ = -1;

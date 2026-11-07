@@ -27,8 +27,6 @@
 //!                   with a game scene: whether its CPU / GPU curve is applied;
 //!                   without one: apply the "GAMING" curve profiles (CPU first,
 //!                   GPU 2 s later; a missing profile is skipped with a note).
-//!   "ntsync"        true: WRAP / RUN set PROTON_USE_NTSYNC=1 for the game when /dev/ntsync is
-//!                   usable (and the launch options did not set it).
 //!   "field_ab"      true (every game) or a list of game names: A/B comparison -
 //!                   launches of a game alternate B (game preset) and A (boot
 //!                   defaults: no preset, no launch boost; same game scene).
@@ -104,7 +102,7 @@ fn ryzen_profiles_dir() -> PathBuf { xdg_config().join("ryzen-curve-optimizer/pr
 fn presets_dir() -> PathBuf { config_dir().join("tune-presets") }
 
 fn valid_name(n: &str) -> bool {
-    n.chars().next().is_some_and(|c| c.is_alphanumeric()) && n.len() <= 64
+    n.chars().next().map_or(false, |c| c.is_alphanumeric()) && n.len() <= 64
         && n.chars().all(|c| c.is_alphanumeric() || " _-.".contains(c)) && !n.contains("..")
 }
 
@@ -245,13 +243,6 @@ fn post() -> Result<bool, String> {
     // Not while an A launch is still running: the scene and the field session are its POST's to end
     // (the mirror of the A path above, which leaves them to a real session's POST).
     if (v["restored"] == true || v["state"]["refcount"] == 0) && !ab_launch_live(&read_scene_state()) { end_session(); leave_game_scene(); }
-    if v["restored"] == true && update_scene_state(|st| st.as_object_mut().and_then(|o| o.remove("zram_marked")).is_some()) {
-        match pkexec(&json!({"op": "zram", "action": "recompress"})) {
-            Ok(r) if r["ok"] == true => log!("centurion-gamemode: zram idle pages recompressed"),
-            Ok(r) => log!("centurion-gamemode: zram recompress: {}", r["error"].as_str().unwrap_or("?")),
-            Err(e) => log!("centurion-gamemode: zram recompress: {e}"),
-        }
-    }
     Ok(ok)
 }
 
@@ -458,7 +449,7 @@ fn is_wrapper(pid: i32, comm: &str) -> bool {
     WRAPPER_COMMS.contains(&comm)
         || std::fs::read_link(format!("/proc/{pid}/exe")).ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .is_some_and(|n| SHELL_EXES.contains(&n.as_str()))
+            .map_or(false, |n| SHELL_EXES.contains(&n.as_str()))
         || is_lutris_wrapper(comm, &std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default())
 }
 
@@ -525,7 +516,7 @@ fn enter_game_scene(scene: &str, cpu: bool, gpu: bool) {
 }
 
 fn scenes_paused() -> bool {
-    read_json(&config_dir().join("scenes.json")).is_some_and(|v| v["paused"] == true)
+    read_json(&config_dir().join("scenes.json")).map_or(false, |v| v["paused"] == true)
 }
 
 fn leave_game_scene() {
@@ -598,7 +589,7 @@ fn nvidia_usable() -> bool {
         rd(&p, "vendor") == "0x10de" && rd(&p, "class").starts_with("0x03") && p.join("driver").exists()
             && rd(&p, "power/runtime_status") != "error"
     });
-    on_bus && std::fs::read_dir("/proc/driver/nvidia/gpus").is_ok_and(|mut d| d.next().is_some())
+    on_bus && std::fs::read_dir("/proc/driver/nvidia/gpus").map_or(false, |mut d| d.next().is_some())
 }
 const GPU_OFF: &str = "skipped (NVIDIA dGPU is off)";
 
@@ -762,7 +753,7 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
     }
 
     // 5a. Custom-mode fan curve: only while the Custom profile is active (the EC follows the table there only).
-    if let Some(lv) = s["fan_table"].as_array().filter(|a| a.len() == 10 && a.iter().all(|x| x.as_u64().is_some_and(|n| (1..=10).contains(&n)))) {
+    if let Some(lv) = s["fan_table"].as_array().filter(|a| a.len() == 10 && a.iter().all(|x| x.as_u64().map_or(false, |n| (1..=10).contains(&n)))) {
         if current_platform_profile().as_deref() != Some("custom") {
             line("Fan curve", Ok("skipped (not the Custom power profile)".into()));
         } else {
@@ -846,8 +837,8 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
 
 // ── undervolt ("GAMING" curve presets) ──────────────────────────────────────
 
-/// Ryzen Curve Optimizer profile → ryzen-co-helper, like the GUI: the per-core batch
-/// resets every core to 0 first, so the all-core offset is sent only without per-core values.
+/// Ryzen Curve Optimizer profile → ryzen-co-helper, the same order the GUI
+/// uses: all-core offset first, per-core offsets only after it succeeded.
 fn apply_ryzen(path: &Path) -> Result<(), String> {
     let p = read_json(path).ok_or_else(|| format!("cannot read {}", path.display()))?;
     let helper = format!("{HELPER_DIR}/ryzen-co-helper");
@@ -874,8 +865,8 @@ fn apply_ryzen(path: &Path) -> Result<(), String> {
         .collect();
     let coall = p["coall"].as_i64();
     if coall.is_none() && entries.is_empty() { return Err("profile contains no offsets".into()); }
+    if let Some(v) = coall { call("set_coall", json!({"value": v}))?; }
     if !entries.is_empty() { call("set_coper_batch", json!({"entries": entries}))?; }
-    else if let Some(v) = coall { call("set_coall", json!({"value": v}))?; }
     Ok(())
 }
 
@@ -1011,16 +1002,11 @@ fn prepare_run(preset: &Value, parked: Option<&str>) {
     // Soft park: the game gets the other CCD(s) to itself through a cgroup
     // partition (everything else is moved off them); pinning below stays as
     // the fallback when the partition is not available.
-    // CPU share: the same game cgroup with a cpu.weight against the rest of the system (default 100).
-    let weight = run["cpu_weight"].as_u64().filter(|w| (1..=10_000).contains(w));
-    if parked.is_some() || weight.is_some() {
-        match pkexec(&json!({"op": "isolate_join", "park": parked, "weight": weight})) {
-            Ok(v) if v["ok"] == true => {
-                if parked.is_some() { log!("centurion-gamemode: game CPU partition {} (rest of the system moved off it)", v["cpus"].as_str().unwrap_or("?")); }
-                if let Some(w) = weight { log!("centurion-gamemode: game cgroup cpu.weight {w} (rest of the system: 100)"); }
-            }
-            Ok(v) => log!("centurion-gamemode: game cgroup not used: {}", v["error"].as_str().unwrap_or("?")),
-            Err(e) => log!("centurion-gamemode: game cgroup not used: {e}"),
+    if let Some(pr) = parked {
+        match pkexec(&json!({"op": "isolate_join", "park": pr})) {
+            Ok(v) if v["ok"] == true => log!("centurion-gamemode: game CPU partition {} (rest of the system moved off it)", v["cpus"].as_str().unwrap_or("?")),
+            Ok(v) => log!("centurion-gamemode: game CPU partition not used: {}", v["error"].as_str().unwrap_or("?")),
+            Err(e) => log!("centurion-gamemode: game CPU partition not used: {e}"),
         }
     }
     let role = run["affinity"].as_str().unwrap_or("none");
@@ -1049,21 +1035,6 @@ fn prepare_run(preset: &Value, parked: Option<&str>) {
     if let Some(ns) = run["timerslack_ns"].as_u64().filter(|n| (1..=50_000).contains(n)) {
         if unsafe { libc::prctl(libc::PR_SET_TIMERSLACK, ns as libc::c_ulong) } == 0 { log!("centurion-gamemode: timer slack {ns} ns"); }
         else { log!("centurion-gamemode: timer slack: {}", std::io::Error::last_os_error()); }
-    }
-    // EEVDF slice request for the game's threads (inherited over clone, fork and exec, like the timer slack).
-    if let Some(us) = run["slice_us"].as_u64().filter(|n| (100..=100_000).contains(n)) {
-        if !tune::slice_supported() { log!("centurion-gamemode: slice {us} µs skipped (needs EEVDF on 6.12+, not sched_ext / Project C)"); }
-        else if let Err(e) = tune::set_thread_slice_us(us) { log!("centurion-gamemode: slice: {e}"); }
-        else { log!("centurion-gamemode: slice {us} µs"); }
-    }
-    // zram: every stored page is marked idle now; the POST that ends game mode recompresses the ones the
-    // game session never touched (cold pages) with the secondary algorithm, bounded per device.
-    if run["zram_recompress"] == true {
-        match pkexec(&json!({"op": "zram", "action": "mark_idle"})) {
-            Ok(v) if v["ok"] == true => { update_scene_state(|st| st["zram_marked"] = json!(true)); log!("centurion-gamemode: zram pages marked idle"); }
-            Ok(v) => log!("centurion-gamemode: zram recompression skipped: {}", v["error"].as_str().unwrap_or("?")),
-            Err(e) => log!("centurion-gamemode: zram recompression skipped: {e}"),
-        }
     }
     // Wine/Proton must see exactly the CPUs the game may use (see soft_park).
     if std::env::var_os("WINE_CPU_TOPOLOGY").is_none() {
@@ -1120,7 +1091,6 @@ extern "C" fn forward(sig: libc::c_int) {
 fn wrap(args: &[String]) -> i32 {
     // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
     std::env::set_var("CENTURION_WRAPPED", "1");
-    ntsync_env();
     OWNER.store(std::process::id() as i32, Ordering::SeqCst);
     let (name, cmd) = split_cmd(args);
     if cmd.is_empty() { log!("centurion-gamemode WRAP: no command"); return 2; }
@@ -1155,8 +1125,6 @@ fn wrap(args: &[String]) -> i32 {
     for s in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] { unsafe { libc::signal(s, forward as *const () as libc::sighandler_t) }; }
     let spawned = Command::new(&cmd[0]).args(&cmd[1..]).spawn();
     if let Ok(c) = &spawned { CHILD.store(c.id() as i32, Ordering::SeqCst); }
-    // The game took the slice request with it; this waiting parent (and the POST it runs) goes back to the default.
-    if preset["run"]["slice_us"].as_u64().is_some() { let _ = tune::set_thread_slice_us(0); }
     unsafe { libc::sigprocmask(libc::SIG_UNBLOCK, &held, std::ptr::null_mut()); }
     let code = match spawned {
         Ok(mut c) => {
@@ -1185,8 +1153,8 @@ fn wrap(args: &[String]) -> i32 {
 fn start_lock_held() -> bool {
     use std::os::unix::io::AsRawFd;
     let Ok(f) = std::fs::OpenOptions::new().write(true).open(runtime_dir().join("gamemode-start.lock")) else { return false };
-    
-    (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0)  // our own lock (if taken) is released when `f` drops
+    let busy = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0;
+    busy  // our own lock (if taken) is released when `f` drops
 }
 
 fn wait_for_start(preset: &Value) {
@@ -1198,7 +1166,7 @@ fn wait_for_start(preset: &Value) {
         let held = start_lock_held();
         // tune-helper's world-readable state file: no helper process (full sysfs describe) every 200 ms while the game starts.
         let active = !held && read_json(Path::new("/run/centurion/tune/state.json"))
-            .is_some_and(|st| st["source"] == "game" && centurion_helpers::live_game_sessions(&st) > 0);
+            .map_or(false, |st| st["source"] == "game" && centurion_helpers::live_game_sessions(&st) > 0);
         let smt = !smt_off || read_json_str("/sys/devices/system/cpu/smt/active").as_deref() == Some("0");
         if active && smt { break; }
         if active {
@@ -1228,24 +1196,9 @@ fn wait_for_start(preset: &Value) {
 fn read_json_str(p: &str) -> Option<String> { std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned()) }
 
 
-/// tune.json "ntsync": Proton builds that support NTSYNC but use it only when asked (GE-Proton 10:
-/// PROTON_USE_NTSYNC=1) get the variable, when /dev/ntsync is usable by this user and the launch options did
-/// not set it already. Wine 11 uses /dev/ntsync on its own and ignores the variable.
-fn ntsync_env() {
-    if !read_json(&config_dir().join("tune.json")).is_some_and(|c| c["ntsync"] == true) { return; }
-    if std::env::var_os("PROTON_USE_NTSYNC").is_some() { return; }
-    // SAFETY: a NUL-terminated literal.
-    if unsafe { libc::access(b"/dev/ntsync\0".as_ptr() as *const libc::c_char, libc::R_OK | libc::W_OK) } == 0 {
-        std::env::set_var("PROTON_USE_NTSYNC", "1");
-    } else {
-        log!("centurion-gamemode: NTSYNC is on, but /dev/ntsync is missing or not read / write for this user — starting without it");
-    }
-}
-
 fn run_exec(args: &[String]) -> i32 {
     // Marks the game as already handled by a hook: the GUI's Heroic / Bottles watcher leaves it alone.
     std::env::set_var("CENTURION_WRAPPED", "1");
-    ntsync_env();
     let (name, cmd) = split_cmd(args);
     if cmd.is_empty() { log!("centurion-gamemode RUN: no command"); return 2; }
     match load_preset(name.as_deref()) {

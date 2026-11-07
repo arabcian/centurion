@@ -89,7 +89,6 @@ pub fn bios() -> Bios { bios_at(Path::new("/sys/class/dmi/id")) }
 ///  - K1CN boards: leaving Custom directly misbehaves; step through another
 ///    mode first (Quiet via Performance, Balanced via Quiet, Performance via
 ///    Balanced, Extreme is simply written twice).
-///
 /// Returns the mode to write first (kernel names), or None.
 pub fn profile_detour(bios: &Bios, from: &str, to: &str) -> Option<&'static str> {
     if bios.prefix.eq_ignore_ascii_case("J2CN") && from == "low-power" && to == "performance" {

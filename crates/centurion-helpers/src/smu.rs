@@ -24,7 +24,6 @@
 //!     zenmaster's ryzen_smu backend do). Also works under lockdown, but is not serialised with the
 //!     driver's own mailbox traffic.
 //!  3. PCI config space of 00:00.0 (0xB8/0xBC), only when the kernel is not locked down.
-//!
 //! Every path takes /run/lock/access_pci.lock (zenmaster/ZenTune use the same file).
 //!
 //! Safety rules: opcode and mailbox come only from `Spec` (no caller-supplied opcode), the SMU
@@ -476,17 +475,15 @@ impl Smu {
         let spec = detect(fam, model).map(spec_for).ok_or_else(|| format!(
             "CPU family {fam:#x} model {model}: no verified Curve Optimizer interface (supported: Cezanne, \
              Rembrandt, Phoenix, Hawk Point, Dragon Range, Krackan, Strix Point, Strix Halo, Fire Range)"))?;
-        if std::path::Path::new(KMOD_DIR).exists() {
-            // Never silently bypass a present kernel driver after its version, codename or
-            // mailbox self-test fails. Its PM-table worker may use the same SMU mailbox;
-            // raw SMN transactions are not serialized by the kernel's amd_smu_mutex.
-            // Users who deliberately need raw access must unload ryzen_smu first.
-            if !kmod_usable() {
-                return Err("ryzen_smu is present but unsupported/unreadable; raw SMN fallback disabled while the driver is loaded".into());
+        let mut why: Vec<String> = Vec::new();
+        if kmod_usable() {
+            match DriverMb::open(spec) {
+                Ok(mut d) => match d.selftest() {
+                    Ok(()) => return Ok(Smu { spec, link: Link::Driver(d) }),
+                    Err(e) => why.push(e),
+                },
+                Err(e) => why.push(e),
             }
-            let mut d = DriverMb::open(spec)?;
-            d.selftest()?;
-            return Ok(Smu { spec, link: Link::Driver(d) });
         }
         let raw = Bus::open().and_then(|mut bus| {
             let g = bus.guard()?;
@@ -496,7 +493,7 @@ impl Smu {
         });
         match raw {
             Ok(bus) => Ok(Smu { spec, link: Link::Raw(bus) }),
-            Err(e) => Err(e),
+            Err(e) => { why.push(e); Err(why.join("; ")) }
         }
     }
 
@@ -524,7 +521,7 @@ impl Smu {
         loop {
             match self.transact(opcode, arg0)? {
                 RSP_OK => return Ok(()),
-                r if attempt < 3 && (r == 0xFC || !matches!(r, 0xFD..=0xFF)) => {
+                r if attempt < 3 && (r == 0xFC || !matches!(r, 0xFF | 0xFE | 0xFD)) => {
                     attempt += 1;
                     std::thread::sleep(Duration::from_millis(10 << attempt));
                 }

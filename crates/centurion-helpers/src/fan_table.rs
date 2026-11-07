@@ -9,9 +9,7 @@
 //!     (firmware_node/path) + "WM" + its object_id (e.g. \_SB.GZFD.WMAB);
 //!   * the machine must answer method 5 with a sane 10-level table, or it is refused;
 //!   * every write is read back through method 5, and a mismatch restores the old table.
-//!
 //! Per-fan RPM/temperature steps (LENOVO_FAN_TABLE_DATA) are parsed from the DSDT
-//!
 //! when the firmware stores them as static buffers; the curve works without them.
 //!
 //! Verified on Legion Pro 7 16AFR10H (SMCN19WW/SMCN20WW): the EC keeps the table across
@@ -96,7 +94,7 @@ pub fn wmi_node(guid: &str) -> Result<WmiNode, String> {
         return Err(format!("unexpected WMI object_id '{oid}'"));
     }
     let instances = fs::read_to_string(dev.join("instance_count")).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(1);
-    let expensive = fs::read_to_string(dev.join("expensive")).is_ok_and(|s| s.trim() == "1");
+    let expensive = fs::read_to_string(dev.join("expensive")).map_or(false, |s| s.trim() == "1");
     // Walk up from the WMI device to the PNP0C14 device that owns the ACPI node.
     let mut cur: Option<PathBuf> = fs::canonicalize(&dev).ok();
     while let Some(p) = cur {

@@ -12,8 +12,6 @@
 #include "ryzentab.h"
 #include "shortcuts.h"
 #include "theme.h"
-#include "experimentalui.h"
-#include "experimentalui.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QCheckBox>
@@ -46,8 +44,6 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <QScrollArea>
-#include <QSplitter>
 
 using scenes::Choice;
 using scenes::Scene;
@@ -136,15 +132,8 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     left->addWidget(listBox, 1);
     auto *leftHost = new QWidget;
     leftHost->setLayout(left);
-    // A little wider in Experimental so long scene names do not truncate.
-    // The right editor keeps its original content and operational callbacks.
-    if (theme::experimentalEnabled()) {
-        leftHost->setMinimumWidth(190);
-        leftHost->setMaximumWidth(340);
-    } else {
-        leftHost->setFixedWidth(190);
-        root->addWidget(leftHost);
-    }
+    leftHost->setFixedWidth(190);
+    root->addWidget(leftHost);
 
     // ── right: editor + automatic switching ──
     auto *right = new QVBoxLayout;
@@ -395,15 +384,6 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         QString err;
         if (!eng_->setPaused(on, &err)) { syncPause(!on); setStatus(tr("Could not save the pause setting: %1").arg(err), theme::DANGER); }
     });
-    if (theme::experimentalEnabled()) {
-        // Pause is an immediate action and must never be buried behind the
-        // secondary automation disclosure. Reparent the original button into
-        // the always-visible scene picker. Its signal is unchanged.
-        ag->removeWidget(pause_);
-        left->insertWidget(0, pause_);
-        auto *advanced = experimentalui::disclosure(tr("AUTOMATION  ·  Triggers and active-scene rules"), autoBox);
-        right->addWidget(advanced);
-    }
     right->addWidget(autoBox);
 
     if (mangohud::available()) {
@@ -431,26 +411,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     status_->setWordWrap(true);
     right->addWidget(status_);
     right->addStretch(1);
-    if (theme::experimentalEnabled()) {
-        auto *work = new QSplitter(Qt::Horizontal);
-        work->setObjectName(QStringLiteral("scenesWorkspace"));
-        work->setChildrenCollapsible(false);
-        work->addWidget(leftHost);
-        auto *editorScroll = new QScrollArea;
-        editorScroll->setWidgetResizable(true);
-        editorScroll->setFrameShape(QFrame::NoFrame);
-        auto *editorHost = new QWidget;
-        editorHost->setLayout(right); // all original callbacks/controls remain
-        editorScroll->setWidget(editorHost);
-        work->addWidget(editorScroll);
-        work->setStretchFactor(0, 2);
-        work->setStretchFactor(1, 8);
-        work->setSizes({245, 900});
-        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/scenes_split"));
-        root->addWidget(work, 1);
-    } else {
-        root->addLayout(right, 1);
-    }
+    root->addLayout(right, 1);
 
     // ── wiring ──
     connect(list_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *it) {

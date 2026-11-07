@@ -2,7 +2,6 @@
 #include "trialbar.h"
 #include "privileged.h"
 #include "theme.h"
-#include "experimentalui.h"
 #include "vfcurvewidget.h"
 #include <QPointer>
 
@@ -25,9 +24,6 @@
 #include <QPushButton>
 #include "nvregdialog.h"
 #include <QSlider>
-#include <QSplitter>
-#include <QScrollArea>
-#include <QGridLayout>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -189,15 +185,13 @@ private:
         auto parse = [](unsigned long long v) { return 2 * int(std::min<unsigned long long>(v, 0x50)) - 40; };
         auto poisoned = [](unsigned long long v) { return (v & 0xFFFF0000ull) == 0xBADF0000ull; };
         // Probe the partition layout once (see hal/sensors.rs partition_layout): absent /
-        // floorswept partitions are not read again on every poll. An empty result is kept too
-        // (all reads poisoned): re-probing it every poll is the PRI-error stream itself.
-        if (!partsProbed_) {
-            partsProbed_ = true;
+        // floorswept partitions are not read again on every poll.
+        if (parts_.empty()) {
             clamshell_ = reg(0x00900200).value_or(0) >> 22 & 1;
             for (unsigned p = 0; p <= 8; ++p)
                 if (auto st = reg(0x009024D0 + p * 0x4000); st && !poisoned(*st)) parts_.push_back(p);
+            if (parts_.empty()) return std::nullopt;
         }
-        if (parts_.empty()) return std::nullopt;
         const bool clamshell = clamshell_;
         for (unsigned p : parts_) {
             auto st = reg(0x009024D0 + p * 0x4000);
@@ -227,7 +221,6 @@ private:
     int (*reg_)(void *, RegOps *) = nullptr;
     int mask_ = 0;
     std::vector<unsigned> parts_;
-    bool partsProbed_ = false;
     bool clamshell_ = false;
 };
 
@@ -288,7 +281,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     sv->addLayout(stats);
 
     auto *prow = new QHBoxLayout;
-    if (!theme::experimentalEnabled()) prow->addWidget(lbl("Profile:", theme::MUTED));
+    prow->addWidget(lbl("Profile:", theme::MUTED));
     auto *bSave = new QPushButton("Save As…");
     bSave->setObjectName("btnAccent");
     connect(bSave, &QPushButton::clicked, this, &NvidiaTab::saveProfileAs);
@@ -447,7 +440,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     gb->addWidget(bAll);
     gb->addWidget(bRg);
     cv->addLayout(gb);
-    if (!theme::experimentalEnabled()) root->addWidget(curve, 1);
+    root->addWidget(curve, 1);
 
     // Controls
     auto *ctl = new QGroupBox("Controls");
@@ -575,15 +568,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch2->addWidget(bApply);
     ch2->addWidget(resetBtn_);
     ch2->addWidget(bResetAll);
-    if (theme::experimentalEnabled()) {
-        // Give the actual V/F graph the full page width. The former right
-        // sidebar (and a static instruction card) shrank the working graph.
-        // Profile actions live in the compact status band above it.
-        root->addWidget(curve, 1);
-        root->addWidget(ctl);
-    } else {
-        root->addWidget(ctl);
-    }
+    root->addWidget(ctl);
     actionButtons_ = {bSave, bDef, bApplyProf, bDel, bLock, bUnlock, bCap, bUncap, readBtn_, bApply, resetBtn_, bResetAll};
 
     log_ = new QPlainTextEdit;
@@ -591,9 +576,6 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     log_->setReadOnly(true);
     log_->setFixedHeight(52);
     log_->setMaximumBlockCount(1000);
-    if (theme::experimentalEnabled()) {
-        root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Driver output"), log_));
-    }
     root->addWidget(log_);
 
     statsTimer_ = new QTimer(this);

@@ -1,6 +1,5 @@
 #include "lightingtab.h"
 #include "theme.h"
-#include "experimentalui.h"
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QFrame>
@@ -19,8 +18,6 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
-#include <QSplitter>
-#include <QScrollArea>
 #include <cmath>
 
 using namespace lighting;
@@ -387,14 +384,10 @@ void LightingTab::buildUi() {
     paintRow->addStretch(1);
     kl->addLayout(paintRow);
     kl->addStretch(1);
-    if (!theme::experimentalEnabled()) mid->addWidget(kbBox, 1);
+    mid->addWidget(kbBox, 1);
 
     auto *fxBox = new QGroupBox("Effects in this profile");
-    if (theme::experimentalEnabled()) {
-        fxBox->setMinimumWidth(260);
-    } else {
-        fxBox->setFixedWidth(260);
-    }
+    fxBox->setFixedWidth(260);
     auto *fl = new QVBoxLayout(fxBox);
     fl->setSpacing(4);
     list_ = new QListWidget;
@@ -463,26 +456,8 @@ void LightingTab::buildUi() {
     keysRow->addWidget(show, 1);
     eg->addLayout(keysRow, row++, 0, 1, 2);
     fl->addWidget(editor_);
-    if (theme::experimentalEnabled()) {
-        auto *work = new QSplitter(Qt::Horizontal);
-        work->setObjectName(QStringLiteral("lightingWorkspace"));
-        work->setChildrenCollapsible(false);
-        work->addWidget(kbBox);
-        auto *effectsScroll = new QScrollArea;
-        effectsScroll->setFrameShape(QFrame::NoFrame);
-        effectsScroll->setWidgetResizable(true);
-        effectsScroll->setWidget(fxBox);
-        work->addWidget(effectsScroll);
-        work->setStretchFactor(0, 7);
-        work->setStretchFactor(1, 3);
-        work->setSizes({750, 350});
-        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/lighting_split"));
-        root->addWidget(work, 1);
-        delete mid; // no widgets are owned by the unused layout in Experimental
-    } else {
-        mid->addWidget(fxBox);
-        root->addLayout(mid, 1);
-    }
+    mid->addWidget(fxBox);
+    root->addLayout(mid, 1);
 
     // ── bottom bar ──
     auto *bottom = new QHBoxLayout;

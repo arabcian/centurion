@@ -129,8 +129,7 @@ pub fn set_clock_offsets(gpc_offset_mhz: Option<i32>, mem_offset_mhz: Option<i32
         let prefer_new = std::env::var_os("CENTURION_NVML_MEM_NEW_API").is_some();
         let old = |n: &nvml::Nvml| n.set_mem_clk_vf_offset(h, raw);
         let new = |n: &nvml::Nvml| n.set_clock_offset(h, CLOCK_MEM, 0, raw);
-        type ClockOffsetSetter<'a> = &'a dyn Fn(&nvml::Nvml) -> Result<(), String>;
-        let (first, second): (ClockOffsetSetter<'_>, ClockOffsetSetter<'_>) =
+        let (first, second): (&dyn Fn(&nvml::Nvml) -> Result<(), String>, &dyn Fn(&nvml::Nvml) -> Result<(), String>) =
             if prefer_new { (&new, &old) } else { (&old, &new) };
         if let Err(e) = first(n) {
             debug!("memory offset, first API: {e} — trying the other one");
@@ -182,10 +181,10 @@ pub fn reset_all_clock_offsets(gpu_index: u32) -> Result<Vec<String>, String> {
             }
         }
     }
-    if n.gpc_clk_vf_offset(h).is_ok_and(|v| v != 0) && n.set_gpc_clk_vf_offset(h, 0).is_ok() {
+    if n.gpc_clk_vf_offset(h).map_or(false, |v| v != 0) && n.set_gpc_clk_vf_offset(h, 0).is_ok() {
         done.push("core offset (per-domain) → 0".into());
     }
-    if n.mem_clk_vf_offset(h).is_ok_and(|v| v != 0) && n.set_mem_clk_vf_offset(h, 0).is_ok() {
+    if n.mem_clk_vf_offset(h).map_or(false, |v| v != 0) && n.set_mem_clk_vf_offset(h, 0).is_ok() {
         done.push("memory offset (per-domain) → 0".into());
     }
     Ok(done)

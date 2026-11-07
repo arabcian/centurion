@@ -12,10 +12,10 @@ There are two kinds of rules.
 V-Cache CCD roles, game affinity / IRQ steering on X3D, amdgpu DPM `auto`,
 bringing a parked CCD back, BBR + fq, swap cost model (kernel doc: swappiness
 > 100 for in-memory swap), and amd-pstate's per-core **EPP boost** (`cpu.epp_boost`,
-patched kernels): on for **Gaming**, **Throughput** and **Desktop** by rule, off for
-power saving. The rule is prior knowledge: the measurements (the game loop and frame
-times of the CPU suite) take it back only when they put it below the reference with
-confidence, as for any other ruled knob (below).
+patched kernels): on for **Gaming** and **Throughput** as part of the goal itself -
+neither the signature nor the joint model can take it away (it stays in the model
+as fixed context, so the other knobs are decided next to it). Desktop turns it on
+by rule, power saving off; there the measurements may overrule the rule (below).
 
 **Scored knobs** are every setting with a real trade-off. Each candidate value
 has an effect vector over five objectives relative to the reference
@@ -41,15 +41,9 @@ evidence); a calibration run is a measurement with a field of view. Two things
 keep a benchmark that cannot see a knob from voting on it:
 
 - **Seen or not.** A knob counts as *seen* when at least one of its values moves
-  one of the objectives this goal weighs in the joint model by a Šidák-corrected z: with m
-  such effects (values x weighted objectives), z ≥ Φ⁻¹(1 − α/(2m)), α = 0.05 (1.96 for one
-  effect, 2.95 for a 4-value knob over 4 objectives; a fixed 2 sd gave noise 16 chances).
-  Judged per objective, not on the weighted utility: a measured trade-off - latency up,
-  throughput down - can sum to nothing and is still measured, not blindness. A knob seen
-  in the goal's previous run stays seen down to 0.3 below the threshold (hysteresis, so the
-  verdict does not flicker between runs; kept in `autotune-seen.json` beside the history).
-  On the B1 simulator this cut false "seen" among no-effect knobs from 7 % to 2 % for 2
-  points of detection. Only
+  one of the objectives this goal weighs by 2 posterior standard deviations in the joint
+  model (per objective, not on the weighted utility: a measured trade-off - latency up,
+  throughput down - can sum to nothing and is still measured, not blindness). Only
   then do measured effects replace the rule's estimates (in proportion to the
   evidence, as before). For a knob the benchmarks do not see, "measured: no
   effect" is the benchmark's blindness: the estimate stays. The same holds for the knobs a
@@ -64,13 +58,6 @@ keep a benchmark that cannot see a knob from voting on it:
   (mean + 1 sd < 0, in the context of the other choices). Values picked from the
   measurements alone (keys no rule knows) and every *additional* change still
   have to clear the margin in context.
-- **A change in effect is not re-litigated.** A measured change the live preset
-  already carries earns the margin back (it paid for the switch once): it is
-  dropped only when it falls below zero in context, where a new change must clear
-  the margin. The reference gets no such head start. On the B1 simulator (10
-  sessions on one machine) this cut the decisions that flip from one run to the
-  next from 23 to 7 and the regret from 0.204 to 0.169; a head start for the
-  reference as well locked good new changes out (regret 0.244).
 
 Before this, every calibrated knob had to prove itself again in the benchmarks:
 whatever they could not measure went back to its boot default, and the more a
@@ -142,13 +129,12 @@ alone, and the report says so. Rows of older signatures carry the file's last-se
 flag as their source.
 
 **Measurement context.** Each session records its context: power profile, AC or battery,
-the CPU firmware limits (PL1/PL2/PL3, cross-loading limit `ppt_cpu_cl`, temperature limit, CPU+GPU offset), the GPU limits
+the CPU firmware limits (PL1/PL2/PL3, temperature limit, CPU+GPU offset), the GPU limits
 (cTGP, Dynamic Boost; only read while the dGPU is usable), the fan mode and the Curve
 Optimizer state (ryzen-co-helper records what it applied in
 `/run/centurion/co-state.json`). Where a phase's runs were measured in more than
 one context, the context enters the model as pseudo-knobs (`ctx.profile`, `ctx.power`,
-`ctx.limits` = limits + fan + curve, `ctx.cl` = `ppt_cpu_cl`, its own dimension because it was
-recorded later: sessions without it count as the reference and keep their `ctx.limits` id) whose interactions with every knob are learned like
+`ctx.limits` = limits + fan + curve) whose interactions with every knob are learned like
 any other pair: EPP and boost under a 45 W Quiet limit are not EPP and boost under 130 W
 Performance. Autotune reads every effect *in the context the preset will run in*:
 the profile of the scene it is for (GUI: *Autotune for … for scene X*, CLI: `--profile`),
@@ -300,7 +286,7 @@ autotune credits the power objective as throughput: the power weight grows by
 
 ## Verifying a preset (`--verify`)
 
-`sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--phase load] [--goal G|all] [--sequential]` measures a whole preset
+`sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--goal G]` measures a whole preset
 from the approved store against the boot state, ABBA-interleaved (drift cancels), on the
 idle benchmark suite (and the storage suite with `--io`). Every run is tagged with its ABBA
 round and position; the gains are **paired**: per round one difference B − A (mean of the
@@ -314,13 +300,6 @@ or the preset's name) with its interval (better / worse only when the interval e
 what the joint model predicted for the preset's calibrated part - `as predicted`,
 or `SURPRISE` when the uncalibrated part or interactions the model has not seen matter. CPU
 offlining, driver switches, firmware limits and radios are never written by a verification.
-`--phase load` runs the load suite under the memory ballast instead of the idle suite (the model
-check then reads the load model). `--goal all` also reports every other goal's weighted gain from
-the same runs (signature `gains`). `--sequential` makes `--rounds` a maximum: from the third block
-on, the run stops once the goal's interval excludes 0 at the per-look level 5 % / looks (Bonferroni;
-looks = rounds − 2), and the final verdict is read at that level too, so repeated looks keep false
-"better / worse" verdicts under 5 % (simulated: 3.2 % over 12 rounds). Signature: `phase`,
-`sequential` = {looks, decided_at}.
 The result is kept in the signature (`verify`, last 20: `gain` = [mean, se] of the paired
 differences, `ci95`, `rounds` = complete blocks, `paired: true`); when every change is a calibrated
 knob the runs also join the design log.
@@ -603,10 +582,7 @@ each phase's stage and what the log holds.
    measured (2–4×) and compared with the prediction: `as predicted` or
    `SURPRISE` (tolerance: twice the prediction's sd combined with the goal's run-to-run noise
    as the model measured it - it was a fixed 2 %); either way it joins the data. The count is
-   kept in the session's quality record (`checks`, `surprises`), and every check (and every
-   `--verify` with a prediction) is logged as (predicted mean, sd, observed) in the signature's
-   `predcheck` (last 200). `--show` prints the share of the last 50 inside ±2 sd and a five-bin
-   PIT histogram; below 70 % (with ≥ 10 checks) autotune adds a warning note. **Rule:** when more than 30 %
+   kept in the session's quality record (`checks`, `surprises`). **Rule:** when more than 30 %
    of the phase's checks in its last 4 sessions with confirmations (at least 3 checks) were
    surprises, the next progressive session of that phase chases doubt - the
    `lean/polish-doubt` shape (doubtful interactions and triples) - as soon as the coverage
@@ -747,38 +723,16 @@ runs the I/O benchmark, so a full session writes less than before.
 **Objective scale.** An objective used to be the mean of its metrics. A knob moves
 the one or two metrics it acts on, so every benchmark added made every knob look
 smaller: a 10 % better frame tail among eight latency metrics came out as 1.3 %,
-under the 0.03 margin whatever the evidence. An objective is the gain *summed*
-over its scenarios, counted as if two of them carried it (mean × k/2, never below
-the mean): that frame tail is worth 5 %, and a knob lands on the same scale whether
-or not the session also ran the memory probes.
-
-The scenarios are metric families (benchmark set 6, `Metric::family`): latency =
-interactive wake-ups (wake, ping-pong, frame loop), the game (tail, pacing, cache
-tail), a contended machine (busy frame tail, burst-job tail), memory (fault tails,
-stalls); throughput = compute, game frame time, process start (short jobs, heap
-fault-in), memory access (TLB probes, THP coverage, bandwidth); power = idle and
-loaded; storage = its read and its write side. Inside a family the metrics are
-noise-weighted, families count alike. Set 5 summed per *metric*: a change that moves
-every metric (EPP, boost, C-states, the governor) came out 5.5× in latency and
-throughput and 1.5× in power on the idle phase (6× / 1× under load), so power weighed
-a quarter of what the goal said: a 3 % faster / 8 % hungrier EPP scored +0.087 for
-the desktop goal. Now 2× / 2× / 1× (+0.007, under the margin).
-
-The noise weights come from the session's reference runs pooled with this machine's
-earlier sessions of the same phase and power source (the `baselines` record, worth 6
-reference runs); a session with fewer than 4 reference runs used equal weights and so
-put the same knob on another scale than a long one.
+under the 0.03 margin whatever the evidence. An objective is now the gain *summed*
+over its metrics, counted as if two of them carried it (noise-weighted mean × k/2,
+never below the mean): that frame tail is worth 5 %, and a knob lands on the same
+scale whether or not the session also ran the memory probes.
 
 **Older signatures.** Idle/load rows and one-at-a-time records of benchmark sets
 1-3 are dropped when the file is read (they were blind to most CPU and scheduler
 knobs and would vote "no effect" against the new runs); those phases start over.
 IO rows are kept and rescaled (the storage suite is unchanged), unsafe values and
 unsafe sets stay. `centurion-calibrate` says so once; a few lean sessions rebuild it.
-Signatures before format 10 (benchmark set 5, IO set 6) are brought to the family
-scale when read: each row by the metrics its session's baseline recorded (else the
-set's own list), exact for a change that moves its objective's metrics alike; they
-count 60 % (device rows, one metric, stay current), and their fitted scales are
-fitted again.
 
 **From runs to a model** (`src/model.rs`). Per run and metric: log-ratio to the
 session's reference runs (+ = better), clipped to ±0.5, then combined per
@@ -931,7 +885,7 @@ All options:
 | `--scene NAME` | measure in a scene's power context (profile, firmware limits, fan); put back afterwards |
 | `--no-fan-lock` | leave the fans on auto on AC (default: full speed for the session) |
 | `--heat` / `--no-heat` | force heat as a design factor on / off (default: deep/max and progressive stages from "crowd") |
-| `--verify NAME [--rounds N] [--io] [--phase load] [--goal G\|all] [--sequential]` | the whole preset NAME against the boot state, ABBA |
+| `--verify NAME [--rounds N] [--io] [--goal G]` | the whole preset NAME against the boot state, ABBA |
 | `--gpu-coupling [--secs S]` | CPU-GPU power coupling while a GPU-bound load runs |
 | `--field LOG... [--game NAME]` | import game sessions' frame-time logs (see *Field evidence*) |
 | `--schedule-boot [--sessions N] [--budget MIN] [--scene NAME]`, `--cancel-boot` | calibration at the next boot |
@@ -956,24 +910,10 @@ centurion-helpers --bin centurion-calibrate sequential`; the noise/budget sweep 
 | `vm.percpu_pagelist_high_fraction` | measured (idle and loaded): 0 = kernel-sized per-CPU free lists, 8 / 32 / 128 = pinned. 1–7 are refused by the kernel and by the audit |
 | `vm.extfrag_threshold` | measured in the load phase (fragmented free memory): 250 / 500 / 750 |
 | `kernel.nmi_watchdog` | scored: off saves a performance counter per CPU and its NMIs, and costs the hard-lockup trace. The estimate alone never clears the margin; a measured idle-power gain can. `nowatchdog` / `nmi_watchdog=` on the command line wins. The soft-lockup detector (`kernel.watchdog`) is still never turned off |
-| `sched.feat_sis_util`, `sched.feat_ttwu_queue`, `sched.feat_cache_hot_buddy`, `sched.feat_wakeup_preemption`, `sched.feat_place_lag`, `sched.feat_place_deadline_initial`, `sched.feat_place_rel_deadline` | measured only (no rule): wake-up search width, remote wake-ups by IPI or directly, buddies kept on their cache, batch behaviour |
+| `sched.feat_sis_util`, `sched.feat_ttwu_queue`, `sched.feat_cache_hot_buddy`, `sched.feat_wakeup_preemption` | measured only (no rule): wake-up search width, remote wake-ups by IPI or directly, buddies kept on their cache, batch behaviour |
 | `blk.max_sectors_kb` | measured in the IO phase: ¼ and ½ of the live request size, jointly with read-ahead and the elevator |
 | `clock.source` | structural: switched back to `tsc` when another clock is in use and the kernel still lists the TSC. Never benchmarked |
 | launch block `timerslack_ns` | Gaming: 1 ns for the game's process tree (`centurion-gamemode RUN` / `WRAP`); in the GUI: Game launch → *Precise timers* |
-
-## Settings added with the E series (ROADMAP-AUTOTUNE §2b)
-
-| knob | how it is decided |
-|------|------|
-| launch block `slice_us` | EEVDF slice request (`sched_setattr` `sched_runtime`, 6.12+) for the game's process tree, inherited over clone / fork / exec like the timer slack; WRAP resets the waiting parent to the default. Calibrated as the pseudo-knob `launch.slice_us` (1000 / 2000 / 3000 µs against the default; CPU suite, idle and load): only the game and cache loops request it for their own threads, nothing system-wide is written. Gaming takes the winner only when it was *seen* and clears the margin; never set without a measurement. Skipped under sched_ext and Project C. GUI: Game launch → *Time slice* |
-| launch block `cpu_weight` | manual: the game cgroup (`/sys/fs/cgroup/centurion-game`, the same one soft park partitions) gets this `cpu.weight` against every other top-level cgroup (100). Removed with the cgroup by the restore that ends game mode. GUI: *Game CPU share* |
-| launch block `zram_recompress` | manual: game start marks every zram page idle, the POST that ends game mode recompresses the pages still idle (`type=idle`, at most 16384 pages per device). Needs a recompression algorithm from the boot zram configuration: the kernel refuses `recomp_algorithm` on an initialised device, so it is not a knob |
-| `blk.kyber_*`, `blk.dl_*`, `blk.bfq_*` | manual (`EXCLUDED`): `queue/iosched/*` of the active elevator; the rows exist only where that elevator runs and come after `blk.scheduler` in the table, so apply writes them once it is active |
-| `btrfs.discard_*` | manual (`EXCLUDED`): async discard pacing of every mounted btrfs file system |
-| `kernel.yield_type` | manual (`EXCLUDED`), Project C kernels only. On such a kernel the profile says so and the scheduler rules (`sched.*`, `kernel.sched_*`) are dropped |
-| `net.tcp_notsent_lowat`, `net.tcp_fastopen`, `net.gro_flush_timeout`, `net.napi_defer_hard_irqs`, `net.busy_poll`, `net.busy_read`, `net.napi_threaded` | manual (Network group: no network benchmark). Per-interface rows cover every physical interface. NAPI threads are ordinary kthreads: the soft-park partition moves them off the game CCD by itself |
-| `thp.use_zero_page`, `vm.compact_unevictable_allowed` | measured in the load phase (generic flip) |
-| `thp.khp_max_ptes_shared`, `mm.ksm_advisor`, `vm.dirtytime_expire_seconds` | manual (`EXCLUDED`, same reasons as their khugepaged / KSM / dirty-expire siblings) |
 
 ## C-state caps
 

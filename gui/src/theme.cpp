@@ -76,22 +76,6 @@ QList<QPair<QString, QString>> themes() {
 }
 QString currentTheme() { return g_current; }
 
-bool experimentalEnabled() {
-    const QByteArray overrideMode = qgetenv("CENTURION_UI").trimmed().toLower();
-    if (overrideMode == "classic") return false;
-    if (overrideMode == "experimental") return true;
-    return settings().value(QStringLiteral("ui/mode"), QStringLiteral("experimental")).toString()
-           != QLatin1String("classic");
-}
-
-bool saveUiMode(bool experimental) {
-    QSettings s = settings();
-    s.setValue(QStringLiteral("ui/mode"), experimental ? QStringLiteral("experimental") : QStringLiteral("classic"));
-    s.sync();
-    return s.status() == QSettings::NoError;
-}
-
-
 void load() {
     const QString want = settings().value(QStringLiteral("theme")).toString();
     const Palette *p = &PALETTES[0];
@@ -162,8 +146,7 @@ int brandInset() {
     QFont f = QApplication::font();
     f.setPointSize(FONT_PT + 2);
     f.setWeight(QFont::Bold);
-    return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion"))
-           + (experimentalEnabled() ? 118 : 22);
+    return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion")) + 22;
 }
 
 // Selectors (objectName / dynamic properties) are the contract with the tabs:
@@ -367,109 +350,6 @@ QMenu::separator { height: 1px; background: @BORDER_SOFT; margin: 5px 8px; }
 QMenu::indicator { width: 12px; height: 12px; left: 6px; }
 QMenu::indicator:checked { image: url(:/theme/check.png); background: @ACCENT; border-radius: 3px; }
 QMenuBar { background: @BG0; } QMenuBar::item:selected { background: @BG3; }
-)QSS");
-    // Experimental: flatter surfaces and stronger hierarchy without hiding controls.
-    // Appended after the classic selectors, so the original styling is selectable.
-    // Uses the same palette tokens: every existing colour theme keeps working.
-    if (experimentalEnabled()) s += QStringLiteral(R"QSS(
-/* Experimental / Studio: content-first, tight hierarchy, no faux-metal shading. */
-QScrollArea { border: 0; }
-QSplitter::handle { background: @BORDER_SOFT; }
-QSplitter::handle:horizontal { width: 1px; }
-QSplitter::handle:vertical { height: 1px; }
-QWidget#expShell QGroupBox { background: @BG1; border: 1px solid @BORDER_SOFT; }
-QWidget#expShell QGroupBox QGroupBox { background: transparent; border: 0;
-    border-top: 1px solid @BORDER_SOFT; }
-QToolButton#expDisclosure { background: transparent; color: @FG_DIM; text-align: left;
-    border: 0; border-top: 1px solid @BORDER_SOFT; border-radius: 0;
-    font-weight: 700; font-size: 8pt; padding: 8px 6px; }
-QToolButton#expDisclosure:hover { color: @FG; background: @BG2; }
-QTabWidget#intelWorkflows::pane { border-top: 1px solid @BORDER_SOFT; }
-QTabWidget#intelWorkflows QTabBar::tab { padding: 7px 14px; }
-
-QWidget#expShell, QWidget#expContent { background: @BG0; }
-QFrame#expRail { background: @BG1; border-right: 1px solid @BORDER; }
-QWidget#expNavHost, QScrollArea#expNavScroll,
-QScrollArea#expNavScroll > QWidget > QWidget { background: transparent; }
-QLabel#expBrandLabel { color: @FG; font-size: 10pt; font-weight: 800; background: transparent; }
-QLabel#expBrandIcon { background: transparent; }
-QFrame#expRailDivider { background: @BORDER; border: 0; }
-QLabel#expNavHeading { color: @MUTED; background: transparent;
-    padding: 8px 6px 3px 9px; font-size: 8pt; font-weight: 700; }
-QPushButton#expNavButton { text-align: left; color: @FG_DIM; background: transparent;
-    border: 0; border-left: 2px solid transparent; border-radius: 4px;
-    font-weight: 500; padding: 3px 12px; min-height: 0; }
-QPushButton#expNavButton:hover { background: @BG2; color: @FG; }
-QPushButton#expNavButton:checked { color: @FG; background: @BG3;
-    border-left: 2px solid @ACCENT; font-weight: 700; }
-QPushButton#expNavButton[collapsed="true"] { text-align: center; padding: 3px 1px; font-size: 8pt; }
-QPushButton#expRailToggle { text-align: left; color: @MUTED; font-size: 8pt;
-    background: transparent; border: 0; border-top: 1px solid @BORDER;
-    border-radius: 0; padding: 7px 9px; min-height: 21px; }
-QPushButton#expRailToggle:hover { color: @FG; background: @BG2; }
-QFrame#expTopbar { background: @BG0; border-bottom: 1px solid @BORDER; }
-QLabel#expTopPath { color: @MUTED; font-size: 7pt; font-weight: 600; }
-QLabel#expTopTitle { color: @FG; font-size: 10pt; font-weight: 700; }
-QPushButton#expSearch { background: @BG1; color: @FG_DIM;
-    border: 1px solid @BORDER; border-radius: 6px; padding: 5px 12px; font-size: 8pt;
-    font-weight: 500; min-height: 18px; }
-QPushButton#expSearch:hover { border-color: @ACCENT_SOFT; color: @FG; }
-QTabWidget#expPageStack::pane { border: 0; background: @BG0; }
-QTabWidget#expPageStack > QTabBar { max-height: 0px; }
-/* App-wide visual tokens. Compact, restrained, consistent with all palettes. */
-QGroupBox { background: @BG1; border: 1px solid @BORDER_SOFT; border-radius: 6px;
-    margin-top: 0; padding: 22px 6px 5px 6px; color: @FG; font-weight: 600; }
-/* Classic's colour-coded title bar, at Studio density: sections stay scannable. */
-QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left;
-    top: 6px; left: 9px; color: @ACCENT; font-size: @FONTpt;
-    border: 0; border-left: 3px solid @ACCENT; padding: 0 0 0 6px; background: transparent; font-weight: 700; }
-QGroupBox#box_red::title { color: @DANGER; border-left-color: @DANGER; }
-QGroupBox#box_green::title { color: @OK; border-left-color: @OK; }
-QGroupBox#box_yellow::title { color: @WARN; border-left-color: @WARN; }
-QGroupBox#box_blue::title { color: @INFO; border-left-color: @INFO; }
-QGroupBox#box_purple::title { color: @PURPLE; border-left-color: @PURPLE; }
-QGroupBox#box_grey::title { color: @FG_DIM; border-left-color: @MUTED; }
-QGroupBox QGroupBox { background: transparent; border: none; border-top: 1px solid @BORDER_SOFT;
-    padding: 18px 0 0; border-radius: 0; }
-QGroupBox QGroupBox::title { left: 0; top: 4px; color: @ACCENT_SOFT; border-left: 0; padding: 0; font-size: 8pt; }
-QLabel[role="title"] { color: @FG; font-size: 12pt; font-weight: 700; }
-QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
-QPushButton { background: @BG3; border: 1px solid @BORDER;
-    color: @FG; border-radius: 5px; padding: 3px 9px; min-height: 17px;
-    font-weight: 500; }
-QPushButton:hover { background: @BG4; border-color: @ACCENT_SOFT; }
-QPushButton:pressed { background: @BG2; }
-QPushButton:checked { background: @ACCENT_TINT; border-color: @ACCENT_SOFT; color: @FG; }
-QPushButton#btnAccent { background: @ACCENT; color: @ON_ACCENT; font-weight: 700;
-    border: 1px solid @ACCENT; }
-QPushButton#btnAccent:hover { background: @ACCENT_HI; border-color: @ACCENT_TOP; }
-QPushButton#btnDanger { color: @DANGER; border-color: @DANGER_SOFT; background: @DANGER_WASH; }
-QPushButton#btnDanger:hover { background: @DANGER_TINT; border-color: @DANGER; }
-QPushButton:disabled, QPushButton#btnAccent:disabled, QPushButton#btnDanger:disabled {
-    color: @MUTED; background: transparent; border-color: @BORDER_SOFT; }
-QPushButton#btnMini { font-size: 8pt; padding: 1px 7px; min-height: 15px; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, Int64SpinBox {
-    background: @WELL; border: 1px solid @BORDER; color: @FG;
-    border-radius: 5px; padding: 2px 7px; min-height: 18px; }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, Int64SpinBox:focus {
-    border-color: @ACCENT; }
-QPlainTextEdit, QTextEdit, QListView, QTreeView, QTableView {
-    background: @WELL; border: 1px solid @BORDER; border-radius: 5px; }
-QTabWidget::pane { border-top: 1px solid @BORDER; background: transparent; }
-QTabBar::tab { padding: 5px 11px; color: @MUTED; }
-QTabBar::tab:selected { color: @FG; border-bottom: 2px solid @ACCENT; }
-QHeaderView::section { background: @BG1; border: 0; border-bottom: 1px solid @BORDER;
-    color: @FG_DIM; font-weight: 600; padding: 4px 7px; }
-QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 6px; padding: 4px; }
-QMenu::item { border-radius: 3px; }
-QFrame#expInlineDivider { background: @BORDER; border: 0; max-height: 1px; }
-QSplitter::handle:horizontal { background: @BORDER_SOFT; width: 1px; }
-QSplitter::handle:vertical { background: @BORDER_SOFT; height: 1px; }
-QFrame#homeDetailCard { background: @BG1; border: 1px solid @BORDER_SOFT; border-radius: 6px; }
-QTabWidget#homeDetailTabs::pane { border: 0; border-top: 1px solid @BORDER_SOFT; background: transparent; }
-QTabWidget#homeDetailTabs > QTabBar::tab { padding: 5px 10px; }
-QTabWidget#homeDetailTabs > QStackedWidget { background: transparent; }
-QTabWidget#homeDetailTabs > QStackedWidget > QGroupBox { border: 0; background: transparent; padding: 6px 6px 4px 6px; }
 )QSS");
     const QColor accent(QString::fromLatin1(ACCENT));
     // Text on the amber key: the darkest surface, unless the accent itself is dark.

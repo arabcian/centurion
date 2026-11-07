@@ -26,7 +26,6 @@ class SceneEngine;
 class Int64SpinBox;
 class QTabWidget;
 class QTimer;
-class QStringListModel;
 
 class OptimizeTab : public QWidget {
     Q_OBJECT
@@ -43,8 +42,6 @@ public:
     bool applyNamedPreset(const QString &name);
     /// tune-helper, run as the user for "describe" (DriftWatch).
     static QString helperPathForDescribe();
-    /// A built-in preset's values for this CPU's vendor ("CO validation" for the CPU test); {} if there is none.
-    static QJsonObject builtinValues(const QString &name);
     /// Drift banner (DriftWatch): settings changed by something else since Centurion applied them.
     void setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply);
     void restoreAll(bool confirm = true);
@@ -74,7 +71,6 @@ private:
     struct Option { QString value, label; };
     struct Row {
         QString key, group, label, help, kind, current;
-        QString conflict;  // another daemon fights this row (irqbalance vs irq.affinity)
         QList<Option> options;
         qint64 min = 0, max = 0;
         bool available = false, debugfs = false, caution = false, hotplug = false;
@@ -92,7 +88,6 @@ private:
     void refresh(bool fromPoll = false);
     void onDescribe(const QJsonObject &d, bool light = false);
     void buildRows(const QJsonArray &rows);
-    void jumpToSetting(const QString &query);
     void updateRow(Row &r, const QJsonObject &o);
     void updateStateBanner();
     class QFrame *driftBar_ = nullptr;
@@ -168,7 +163,6 @@ private:
 
     QList<Row> rows_;
     QJsonObject topology_, state_, boot_, isolation_;
-    QJsonArray discovered_;  // scheduler entries the helper's table does not know (read-only)
     bool active_ = false, busy_ = false, describing_ = false, helperMissing_ = false;
     bool needFull_ = true;                 // next describe must read the slow rows too
     QHash<QString, QJsonObject> slowKeep_; // slow rows as of the last full describe
@@ -181,8 +175,6 @@ private:
     QPushButton *autoBtn_ = nullptr;
     bool autoRunning_ = false;
     QSpinBox *nice_ = nullptr;
-    QComboBox *sliceUs_ = nullptr, *gameShare_ = nullptr;
-    QCheckBox *zramRecompress_ = nullptr;
     QCheckBox *autogroup_ = nullptr, *preciseTimers_ = nullptr, *uvCpu_ = nullptr, *uvGpu_ = nullptr, *wirelessLock_ = nullptr;
     QLabel *uvInfo_ = nullptr;
     QComboBox *gameScene_ = nullptr;   // scene the first game switches to (tune.json "game_scene")
@@ -194,8 +186,6 @@ private:
     QLineEdit *lutrisPre_ = nullptr, *lutrisPost_ = nullptr, *lutrisPrefix_ = nullptr, *steam_ = nullptr;
     QLabel *topoLabel_ = nullptr;
     QTabWidget *groups_ = nullptr;
-    QLineEdit *settingSearch_ = nullptr;
-    QStringListModel *settingSearchModel_ = nullptr;
     QTimer *poll_ = nullptr, *statusTimer_ = nullptr;
     QString loadedPreset_;
 };

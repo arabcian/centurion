@@ -25,10 +25,7 @@ class KlogPage;
 class OverviewPage;
 class QFrame;
 class QLabel;
-class QStackedWidget;
-class QLineEdit;
-class QComboBox;
-class QCheckBox;
+class QTabWidget;
 class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -79,9 +76,6 @@ private:
     void refreshDays();
     void filterDay(const QString &date);
     void applyDayFilter();
-    void loadHistoryDay();
-    void explainEvent(const QJsonObject &e);
-    static QString friendlyEvent(const QJsonObject &e);
 
     /// Mark all seen: the events shown so far stop counting as new (gui.ini, see seenMs_).
     void markSeen();
@@ -91,23 +85,12 @@ private:
     /// The newest row of one event that repeats: same boot, kind, code and title, within GROUP_US.
     struct Group { QTreeWidgetItem *row = nullptr; QString base; double firstUs = 0, lastUs = 0; int n = 0; };
 
-    QLabel *summary_, *source_, *aer_, *logInfo_, *dayInfo_, *scanWarning_ = nullptr;
+    QLabel *summary_, *source_, *aer_, *logInfo_, *dayInfo_;
     DayBars *days_ = nullptr;
     QString dayFilter_;          // the day the list shows (empty: all)
     quint64 savedSeq_ = 0;      // highest seq of this boot already in the log file
     QString savedBoot_;         // boot_id savedSeq_ belongs to
     QTreeWidget *list_;
-    QTreeWidget *navigation_ = nullptr;
-    QStackedWidget *pages_ = nullptr;
-    QHash<QWidget *, QTreeWidgetItem *> pageItems_;
-    QWidget *toolDirectory_ = nullptr;
-    QTreeWidget *toolNavigation_ = nullptr;
-    QStackedWidget *toolPages_ = nullptr;
-    QHash<QWidget *, QTreeWidgetItem *> toolItems_;
-    QLineEdit *eventSearch_ = nullptr;
-    QComboBox *severityFilter_ = nullptr;
-    QCheckBox *technicalEvents_ = nullptr;
-    QList<QTreeWidgetItem *> historyRows_;
     QTimer *timer_, *debounce_;
     int kmsgFd_ = -1;
     quint64 lastSeq_ = 0;
@@ -119,6 +102,7 @@ private:
     qint64 seenMs_ = 0;    // Mark all seen: events up to this wall-clock time (ms since epoch) are not new; 0 = never
     BackupPage *backup_ = nullptr;
     BootPage *boot_ = nullptr;
+    QTabWidget *sub_ = nullptr;  // the Health sub-tabs (Monitor's actions switch to them)
     KlogPage *klog_ = nullptr;
     CurvePage *curves_ = nullptr;
     CoolingPage *cooling_ = nullptr;
