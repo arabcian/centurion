@@ -187,8 +187,18 @@ protected:
                 if (inSegment) path.lineTo(x, y); else path.moveTo(x, y);
                 inSegment = true;
             }
-            p.setPen(QPen(color, 1.8));
+            // Soft halo under a crisp line; a dot marks the live reading.
+            QColor glow = color;
+            glow.setAlphaF(0.16);
+            p.setPen(QPen(glow, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             p.drawPath(path);
+            p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.drawPath(path);
+            if (inSegment) {
+                p.setBrush(color);
+                p.drawEllipse(path.currentPosition(), 2.6, 2.6);
+                p.setBrush(Qt::NoBrush);
+            }
         };
         draw(true, QColor(theme::ACCENT));
         draw(false, QColor(theme::OK));
