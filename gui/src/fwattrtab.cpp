@@ -378,7 +378,7 @@ void FwattrTab::rebuild() {
                     g->addWidget(slider, r, 1);
                 } else {
                     auto *w = new QLabel(QStringLiteral("⚠ no range"));
-                    w->setStyleSheet(QStringLiteral("color: %1;").arg(theme::WARN));
+                    w->setProperty("tone", "warn");
                     g->addWidget(w, r, 1);
                 }
                 auto *spin = new QSpinBox;

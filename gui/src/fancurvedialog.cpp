@@ -27,6 +27,7 @@ static const QVector<int> STOCK = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 // ── curve widget ────────────────────────────────────────────────────────────
 
 FanCurveWidget::FanCurveWidget(QWidget *parent) : QWidget(parent) {
+    setAccessibleName(tr("Fan curve editor"));
     setMinimumSize(420, 220);
     setMouseTracking(true);
 }

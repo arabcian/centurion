@@ -137,6 +137,7 @@ public:
     explicit TemperaturePlot(QWidget *parent = nullptr) : QWidget(parent) {
         setMinimumHeight(116);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setAccessibleName(QObject::tr("Temperature history"));
         setToolTip(QObject::tr("CPU and EC GPU temperatures, last 5 minutes. Missing samples are not estimated."));
     }
     void append(std::optional<double> cpu, std::optional<double> gpu) {

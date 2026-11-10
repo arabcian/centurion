@@ -329,7 +329,7 @@ DgpuPage::DgpuPage(QWidget *parent) : QWidget(parent) {
         "the upstream port need power/control = auto and d3cold_allowed, and the driver needs NVreg_DynamicPowerManagement "
         "2 or 3. With all of that in place a GPU that stays awake is being used — the open-handles list shows by whom."));
     hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    hint->setProperty("tone", "muted");
     root->addWidget(hint);
 
     timer_ = new QTimer(this);

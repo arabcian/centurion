@@ -1,6 +1,7 @@
 #include "charts.h"
 #include "theme.h"
 
+#include <QCoreApplication>
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
@@ -21,11 +22,15 @@ QColor colorFrom(const char *hex) { return QColor(hex); }
 
 // ── LineChart ────────────────────────────────────────────────────────────────
 
-LineChart::LineChart(QWidget *parent) : QWidget(parent) {}
+LineChart::LineChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("LineChart", "Line chart")); }
 
 void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
     points_ = points;
     unit_ = yUnit;
+    // Screen readers cannot see the painting: the description carries the numbers.
+    setAccessibleDescription(points.isEmpty() ? QString()
+        : QCoreApplication::translate("LineChart", "%1 points, %2 to %3; last value %4 %5")
+              .arg(points.size()).arg(points.first().label, points.last().label).arg(points.last().y).arg(yUnit));
     update();
 }
 
@@ -72,10 +77,13 @@ void LineChart::paintEvent(QPaintEvent *) {
 
 // ── BarChart ─────────────────────────────────────────────────────────────────
 
-BarChart::BarChart(QWidget *parent) : QWidget(parent) {}
+BarChart::BarChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("BarChart", "Bar chart")); }
 
 void BarChart::setBars(const QVector<Bar> &bars) {
     bars_ = bars;
+    QStringList rows;
+    for (const Bar &b : bars) rows << b.label + QStringLiteral(": ") + b.text;
+    setAccessibleDescription(rows.join(QStringLiteral("; ")));
     setMinimumHeight(bars_.size() * BAR_ROW + 4);
     update();
 }
@@ -113,10 +121,18 @@ void BarChart::paintEvent(QPaintEvent *) {
 DayBars::DayBars(QWidget *parent) : QWidget(parent) {
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
+    setAccessibleName(tr("Kernel events per day"));
 }
 
 void DayBars::setDays(const QVector<Day> &days) {
     days_ = days;
+    QStringList rows;
+    for (const Day &d : days) {
+        int n = 0;
+        for (int c : d.kinds) n += c;
+        if (n) rows << tr("%1: %n event(s)", nullptr, n).arg(d.date);
+    }
+    setAccessibleDescription(rows.join(QStringLiteral("; ")));
     update();
 }
 

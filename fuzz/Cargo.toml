@@ -1,0 +1,39 @@
+# cargo-fuzz targets (nightly): `cargo +nightly fuzz run <target>` from the repo root.
+# Kept out of the main workspace so a normal build never pulls libfuzzer-sys.
+[package]
+name = "centurion-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+centurion-helpers = { path = "../crates/centurion-helpers" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "tarscan"
+path = "fuzz_targets/tarscan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tune_validate"
+path = "fuzz_targets/tune_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "amdgpu_od"
+path = "fuzz_targets/amdgpu_od.rs"
+test = false
+doc = false
+bench = false

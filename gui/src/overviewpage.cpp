@@ -83,11 +83,11 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     heroLayout->addLayout(top);
     counts_ = new QLabel;
     counts_->setWordWrap(true);
-    counts_->setStyleSheet(QStringLiteral("color:%1").arg(theme::FG_DIM));
+    counts_->setProperty("tone", "dim");
     heroLayout->addWidget(counts_);
     status_ = new QLabel;
     status_->setWordWrap(true);
-    status_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    status_->setProperty("tone", "muted");
     heroLayout->addWidget(status_);
     outer->addWidget(hero);
 
@@ -127,7 +127,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     auto *hint = new QLabel(tr("Results reflect available logs and measurements, not a complete hardware test. "
                                "Details remain available for troubleshooting."));
     hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    hint->setProperty("tone", "muted");
     bottom->addWidget(hint, 1);
     auto *bReport = new QPushButton(tr("Diagnostic report…"));
     connect(bReport, &QPushButton::clicked, this, &OverviewPage::report);
@@ -300,7 +300,7 @@ void OverviewPage::rebuildCards(const QJsonArray &cards) {
         auto *body = new QLabel(cardBody(c));
         body->setWordWrap(true);
         body->setTextFormat(Qt::PlainText);
-        body->setStyleSheet(QStringLiteral("color:%1").arg(theme::FG_DIM));
+        body->setProperty("tone", "dim");
         col->addWidget(body);
         auto *buttons = new QHBoxLayout;
         buttons->addStretch(1);

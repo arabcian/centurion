@@ -70,6 +70,7 @@
 //! a sysfs write stuck in D-state), so acquisition uses LOCK_NB with a short
 //! retry loop and a hard deadline: a stuck helper must not freeze the GUI or
 //! the game launcher forever.
+#![allow(clippy::type_complexity)]
 
 use centurion_helpers::autotune;
 use centurion_helpers::tune::{self, TUNABLES};

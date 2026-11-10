@@ -79,7 +79,7 @@ pub fn verify_flatten_preflight(
 
     // Check the point immediately before the plateau; a steep rising anchor
     // above the flat region would create a fold, regardless of CT validity.
-    if let Some(anchor) = initial.points.iter().filter(|p| p.domain == Domain::Gpu && (p.index as i64) < from && p.freq_khz > 0).last() {
+    if let Some(anchor) = initial.points.iter().rfind(|p| p.domain == Domain::Gpu && (p.index as i64) < from && p.freq_khz > 0) {
         if projected(anchor, deltas) > target_khz + MAX_ANCHOR_OVERSHOOT_KHZ {
             return Err(format!("point {}: anchor exceeds plateau by more than 30 MHz", anchor.index));
         }

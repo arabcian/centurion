@@ -100,6 +100,7 @@ fi
 %{_bindir}/centurion-calibrate
 %{_bindir}/centurion-netguard
 %{_bindir}/centurion-display
+%{_bindir}/centurion-export
 %{_bindir}/centurion-cooltest
 %{_bindir}/centurion-gpustress
 %{_bindir}/centurion-cpustress

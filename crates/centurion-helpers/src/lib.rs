@@ -4,6 +4,7 @@
 //! one bounded JSON request on stdin, one JSON line on stdout,
 //! exit 0 on success / 1 on failure. Nothing from argv or the
 //! environment is ever trusted.
+#![allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]  // aligned ASCII tables in module docs
 
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};

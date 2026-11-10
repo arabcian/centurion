@@ -21,6 +21,12 @@
 #include <QFile>
 #include <QMenu>
 #include <QMessageBox>
+#include <QDesktopServices>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QVersionNumber>
 #include <QSettings>
 #include <QPainter>
 #include <QPixmap>
@@ -209,6 +215,36 @@ void Tray::flushDeferred() {
 }
 
 static void disabledEntry(QMenu *m, const QString &t) { m->addAction(t)->setEnabled(false); }
+
+/// Only when the user asks: one GET of the latest GitHub release, nothing sent but the request itself.
+static void checkForUpdates() {
+    static const QString releases = QStringLiteral("https://github.com/arabcian/centurion/releases");
+    auto *nam = new QNetworkAccessManager(qApp);
+    QNetworkRequest rq(QUrl(QStringLiteral("https://api.github.com/repos/arabcian/centurion/releases/latest")));
+    rq.setTransferTimeout(15000);
+    QNetworkReply *reply = nam->get(rq);
+    QObject::connect(reply, &QNetworkReply::finished, nam, [nam, reply] {
+        nam->deleteLater();
+        const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
+        const QString tag = o.value(QStringLiteral("tag_name")).toString();
+        const QString url = o.value(QStringLiteral("html_url")).toString(releases);
+        const QVersionNumber latest = QVersionNumber::fromString(tag.startsWith(u'v') ? tag.mid(1) : tag);
+        const QVersionNumber current = QVersionNumber::fromString(QStringLiteral(CENTURION_VERSION));
+        if (reply->error() != QNetworkReply::NoError || latest.isNull()) {
+            QMessageBox::warning(nullptr, Tray::tr("Check for updates"),
+                                 Tray::tr("Could not read the latest release: %1").arg(reply->errorString()));
+        } else if (latest > current) {
+            if (QMessageBox::question(nullptr, Tray::tr("Check for updates"),
+                                      Tray::tr("Centurion %1 is available (installed: %2). Open the release page?")
+                                          .arg(latest.toString(), current.toString())) == QMessageBox::Yes)
+                QDesktopServices::openUrl(QUrl(url));
+        } else {
+            QMessageBox::information(nullptr, Tray::tr("Check for updates"),
+                                     Tray::tr("Centurion %1 is the latest release.").arg(current.toString()));
+        }
+        reply->deleteLater();
+    });
+}
 
 void Tray::rebuild() {
     menu_->clear();
@@ -450,6 +486,7 @@ void Tray::rebuild() {
     }
 
     menu_->addSeparator();
+    connect(menu_->addAction(tr("Check for updates…")), &QAction::triggered, this, &checkForUpdates);
     connect(menu_->addAction(win_->isVisible() ? tr("Hide window") : tr("Show window")), &QAction::triggered, this, &Tray::toggleWindow);
     connect(menu_->addAction(tr("Quit")), &QAction::triggered, this, [this] {
         win_->setForceQuit(true);

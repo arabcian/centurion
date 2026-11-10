@@ -97,7 +97,7 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
         "(Monitor page's saved log). GPU curve ↔ NVIDIA Xid / GSP / D3cold; CPU curve ↔ machine checks and lockups. "
         "A curve that collects errors much faster than stock is the first thing to back off."));
     intro->setWordWrap(true);
-    intro->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    intro->setProperty("tone", "muted");
     root->addWidget(intro);
 
     table_ = new QTreeWidget;

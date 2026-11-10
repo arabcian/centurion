@@ -409,11 +409,11 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     scanWarning_ = new QLabel;
     scanWarning_->setWordWrap(true);
     scanWarning_->setVisible(false);
-    scanWarning_->setStyleSheet(QStringLiteral("color:%1").arg(theme::DANGER));
+    scanWarning_->setProperty("tone", "danger");
     root->addWidget(scanWarning_);
     source_ = new QLabel;
     source_->setWordWrap(true);
-    source_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    source_->setProperty("tone", "muted");
     root->addWidget(source_);
     source_->setVisible(false);
 
@@ -422,7 +422,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     root->addWidget(days_);
     dayInfo_ = new QLabel;
     dayInfo_->setWordWrap(true);
-    dayInfo_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    dayInfo_->setProperty("tone", "muted");
     root->addWidget(dayInfo_);
 
     auto *filterRow = new QHBoxLayout;
@@ -492,7 +492,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     technicalLayout->setContentsMargins(0, 0, 0, 0);
     auto *logRow = new QHBoxLayout;
     logInfo_ = new QLabel;
-    logInfo_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    logInfo_->setProperty("tone", "muted");
     logRow->addWidget(logInfo_, 1);
     auto *bOpen = new QPushButton(tr("Open saved log"));
     connect(bOpen, &QPushButton::clicked, this, [] { QDesktopServices::openUrl(QUrl::fromLocalFile(logPath())); });
@@ -514,7 +514,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
                               "Earlier Xid codes, machine checks and PCIe events need contextual diagnosis. "
                               "Right-click an event to open the related tool or inspect its raw log."));
     hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    hint->setProperty("tone", "muted");
     technicalLayout->addWidget(hint);
     root->addWidget(technicalPanel);
     technicalPanel->setVisible(false);

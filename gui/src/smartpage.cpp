@@ -130,7 +130,7 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
             auto *failure = new QLabel(tr("%1 — Couldn't read SMART data: %2")
                                        .arg(dev, d.value(QStringLiteral("error")).toString()));
             failure->setWordWrap(true);
-            failure->setStyleSheet(QStringLiteral("color:%1").arg(theme::WARN));
+            failure->setProperty("tone", "warn");
             cardsLayout_->addWidget(failure);
             continue;
         }
@@ -193,7 +193,7 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         heading->addWidget(verdict);
         col->addLayout(heading);
         auto *location = new QLabel(dev);
-        location->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+        location->setProperty("tone", "muted");
         col->addWidget(location);
         auto *metrics = new QLabel(tr("Temperature: %1    ·    Life used: %2    ·    Media errors: %3")
                                     .arg(num(temp, tr(" °C")), num(life, tr(" %")), num(media)));
@@ -207,7 +207,7 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         else note = tr("No warning indicators in the available SMART data. This is not a guarantee against drive failure.");
         auto *description = new QLabel(note);
         description->setWordWrap(true);
-        description->setStyleSheet(QStringLiteral("color:%1").arg(theme::FG_DIM));
+        description->setProperty("tone", "dim");
         col->addWidget(description);
         cardsLayout_->addWidget(card);
     }

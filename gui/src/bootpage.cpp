@@ -59,7 +59,7 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     auto *top = new QHBoxLayout;
     info_ = new QLabel;
     info_->setWordWrap(true);
-    info_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    info_->setProperty("tone", "muted");
     top->addWidget(info_, 1);
     bClear_ = new QPushButton(tr("Archive and clear pstore…"));
     bClear_->setVisible(false);
@@ -103,7 +103,7 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
                                "kernel-log lines and the pstore records of the crash are shown instead. A repeatedly unclean boot "
                                "with the same curve in effect points at that curve."));
     hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    hint->setProperty("tone", "muted");
     root->addWidget(hint);
 }
 

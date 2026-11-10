@@ -280,9 +280,9 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     hotspot_ = lbl("Hotspot: -- °C", theme::DANGER, true);
     vram_ = lbl("VRAM: -- °C", theme::PURPLE, true);
     throttle_ = lbl("Limit: --", theme::FG_DIM);
-    throttle_->setToolTip("Why the GPU is not boosting higher right now (NVML clock event reasons).\n"
+    throttle_->setToolTip(tr("Why the GPU is not boosting higher right now (NVML clock event reasons).\n"
                           "power = at the power limit · thermal = temperature limit · — = boosting freely.\n"
-                          "While undervolting: 'power' at the same clocks with less power means the UV works.");
+                          "While undervolting: 'power' at the same clocks with less power means the UV works."));
     for (QLabel *l : {temp_, hotspot_, vram_, power_, clock_, memClock_, throttle_}) { stats->addWidget(l); stats->addSpacing(10); }
     stats->addStretch();
     sv->addLayout(stats);
@@ -298,10 +298,10 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(profiles_, &QComboBox::activated, this, &NvidiaTab::onProfileSelected);
     prow->addWidget(profiles_, 1);
     auto *bDef = new QPushButton("★ Default");
-    bDef->setToolTip("Toggle this profile as the boot-time auto-load profile");
+    bDef->setToolTip(tr("Toggle this profile as the boot-time auto-load profile"));
     connect(bDef, &QPushButton::clicked, this, &NvidiaTab::toggleDefault);
     auto *bApplyProf = new QPushButton("Apply Profile");
-    bApplyProf->setToolTip("Apply the selected saved profile to the GPU as-is");
+    bApplyProf->setToolTip(tr("Apply the selected saved profile to the GPU as-is"));
     connect(bApplyProf, &QPushButton::clicked, this, [this] {
         const QString n = profiles_->currentText().remove(STAR);
         if (!n.isEmpty()) applyNamedProfile(n);
@@ -310,7 +310,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     bDel->setObjectName("btnDanger");
     connect(bDel, &QPushButton::clicked, this, &NvidiaTab::deleteProfile);
     auto *bDrv = new QPushButton("Driver options…");
-    bDrv->setToolTip("nvidia / nvidia-drm module options (modprobe.d), applied at the next boot.");
+    bDrv->setToolTip(tr("nvidia / nvidia-drm module options (modprobe.d), applied at the next boot."));
     connect(bDrv, &QPushButton::clicked, this, [this] { NvRegDialog(this).exec(); });
     prow->addWidget(bApplyProf);
     prow->addWidget(bDef);
@@ -328,7 +328,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     for (QLabel *l : {selLabel_, voltLabel_, freqLabel_, offLabel_}) { l->setMinimumWidth(96); ih->addWidget(l); }
     pointSpin_ = spin(MIN_OFFSET, MAX_OFFSET, " MHz", 92);
     pointSpin_->setEnabled(false);
-    pointSpin_->setToolTip("Total offset for the selected point(s)");
+    pointSpin_->setToolTip(tr("Total offset for the selected point(s)"));
     connect(pointSpin_, &QSpinBox::valueChanged, this, [this](int v) {
         for (int i : vf_->selection()) { touchFlatten(i); setOffsetClamped(i, v); }
         curveModified_ = true;
@@ -341,7 +341,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     flattenSpin_ = spin(-1, 127, "", 64);
     flattenSpin_->setSpecialValueText(" ");
     flattenSpin_->setValue(-1);
-    flattenSpin_->setToolTip("Every point above this index gets the same frequency as this point (press Enter)");
+    flattenSpin_->setToolTip(tr("Every point above this index gets the same frequency as this point (press Enter)"));
     connect(flattenSpin_->findChild<QLineEdit *>(), &QLineEdit::returnPressed, this, [this] {  // Enter only, not focus loss
         flattenSpin_->interpretText();
         const int s = flattenSpin_->value();
@@ -378,11 +378,11 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     cv->setSpacing(4);
     cv->addLayout(ih);
     vf_ = new VfCurveWidget;
-    vf_->setToolTip("Click a point to select it, drag a selected point to move it.\n"
+    vf_->setToolTip(tr("Click a point to select it, drag a selected point to move it.\n"
                     "Ctrl+click toggles a point, Shift+click selects a range, Ctrl/Shift+drag on empty space box-selects.\n"
                     "Ctrl+A selects all, then drag empty space to shift the whole curve.\n"
                     "←/→ extend the selection, ↑/↓ nudge by 1 MHz (Shift: 15), Space toggles, Esc clears.\n"
-                    "Wheel zooms at the cursor, Shift+wheel pans, +/− zoom, 0 fits.");
+                    "Wheel zooms at the cursor, Shift+wheel pans, +/− zoom, 0 fits."));
     connect(vf_, &VfCurveWidget::selectionChanged, this, &NvidiaTab::onSelectionChanged);
     connect(vf_, &VfCurveWidget::pointEdited, this, [this](int i, int f) {
         if (i < 0 || i >= base_.size()) return;
@@ -411,14 +411,14 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         return sl;
     };
     auto *zoomSl = mini(100, int(VfCurveWidget::MAX_ZOOM * 100), 104);
-    zoomSl->setToolTip("Zoom the voltage axis (mouse wheel over the graph zooms at the cursor)");
+    zoomSl->setToolTip(tr("Zoom the voltage axis (mouse wheel over the graph zooms at the cursor)"));
     auto *zoomLbl = lbl("1.0×", theme::FG_DIM);
     zoomLbl->setFixedWidth(34);
     auto *panSl = mini(0, 1000, 180);
-    panSl->setToolTip("Move the zoomed window left/right (Shift+wheel over the graph)");
+    panSl->setToolTip(tr("Move the zoomed window left/right (Shift+wheel over the graph)"));
     auto *bFit = new QPushButton("Fit");
     bFit->setObjectName("btnMini");
-    bFit->setToolTip("Show the whole curve (key: 0)");
+    bFit->setToolTip(tr("Show the whole curve (key: 0)"));
     gb->addWidget(lbl("Zoom", theme::MUTED));
     gb->addWidget(zoomSl);
     gb->addWidget(zoomLbl);
@@ -442,7 +442,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *bAll = new QPushButton("Select All");
     connect(bAll, &QPushButton::clicked, vf_, &VfCurveWidget::selectAll);
     auto *bRg = new QPushButton("Reset Graph");
-    bRg->setToolTip("Discard unapplied edits and show the last curve read from the GPU");
+    bRg->setToolTip(tr("Discard unapplied edits and show the last curve read from the GPU"));
     connect(bRg, &QPushButton::clicked, this, [this] { profiles_->setCurrentIndex(-1); resetGraphToLastRead(); });
     gb->addWidget(bAll);
     gb->addWidget(bRg);
@@ -459,8 +459,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     cvl->addLayout(ch2);
     ch->addWidget(lbl("Core:", theme::MUTED));
     coreSpin_ = spin(CORE_MIN, CORE_MAX, " MHz", 96);
-    coreSpin_->setToolTip("Core offset for the V/F curve. Like LACT's curve shift it is applied from 30 % of the curve up\n"
-                          "(point 38 of 127): the idle / low-voltage points keep their stock clocks.");
+    coreSpin_->setToolTip(tr("Core offset for the V/F curve. Like LACT's curve shift it is applied from 30 % of the curve up\n"
+                          "(point 38 of 127): the idle / low-voltage points keep their stock clocks."));
     connect(coreSpin_, &QSpinBox::valueChanged, this, [this](int v) { coreOffset_ = v; flatFrom_ = -1; recompute(); });
     ch->addWidget(coreSpin_);
     ch->addSpacing(8);
@@ -471,16 +471,16 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch->addWidget(lbl("VRAM lock:", theme::MUTED));
     lockMinSpin_ = spin(0, 20000, " MHz", 92);
     lockMinSpin_->setSpecialValueText("–");
-    lockMinSpin_->setToolTip("Min memory clock (MHz). 0 → uses Max for both.");
+    lockMinSpin_->setToolTip(tr("Min memory clock (MHz). 0 → uses Max for both."));
     lockMaxSpin_ = spin(0, 20000, " MHz", 92);
     lockMaxSpin_->setSpecialValueText("–");
-    lockMaxSpin_->setToolTip("Max memory clock (MHz) — the actual lock target.");
+    lockMaxSpin_->setToolTip(tr("Max memory clock (MHz) — the actual lock target."));
     ch->addWidget(lockMinSpin_);
     ch->addWidget(lbl("–", theme::MUTED));
     ch->addWidget(lockMaxSpin_);
     auto *bLock = new QPushButton("Lock"), *bUnlock = new QPushButton("Unlock");
-    bLock->setToolTip("Lock VRAM clock to Min–Max now");
-    bUnlock->setToolTip("Unlock VRAM clock");
+    bLock->setToolTip(tr("Lock VRAM clock to Min–Max now"));
+    bUnlock->setToolTip(tr("Unlock VRAM clock"));
     connect(bLock, &QPushButton::clicked, this, &NvidiaTab::vramLock);
     connect(bUnlock, &QPushButton::clicked, this, &NvidiaTab::vramUnlock);
     ch->addWidget(bLock);
@@ -493,18 +493,18 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch2->addWidget(lbl("Core cap:", theme::MUTED));
     coreCapSpin_ = spin(209, 4000, " MHz", 96);  // minimum (209) is 'off': the driver takes 210+ only
     coreCapSpin_->setSpecialValueText(QStringLiteral("off"));
-    coreCapSpin_->setToolTip("Highest core clock the GPU may use (NVML locked clocks). The driver keeps every curve\n"
+    coreCapSpin_->setToolTip(tr("Highest core clock the GPU may use (NVML locked clocks). The driver keeps every curve\n"
                              "point within ~1000 MHz of stock whatever offset it stores, so a flatten cannot pull the\n"
                              "top points all the way down — the cap does: the GPU then runs the lowest-voltage point\n"
                              "that reaches it. It is saved with the profile and applied with\n"
-                             "Apply Offsets. Cap / Uncap change it right away.");
+                             "Apply Offsets. Cap / Uncap change it right away."));
     ch2->addWidget(coreCapSpin_);
     ch2->addWidget(lbl("+", theme::MUTED));
     capCompSpin_ = spin(0, 500, " MHz", 90);  // 80 clipped the "z" of "0 MHz"
-    capCompSpin_->setToolTip("Compensation added to the core cap when it is written.\n"
+    capCompSpin_->setToolTip(tr("Compensation added to the core cap when it is written.\n"
                              "Blackwell GPUs run ~90-115 MHz below a locked clock: measure the gap\n"
                              "(target − clock under load) and enter it here, so the GPU lands on the value you set.\n"
-                             "Saved with the profile; 0 = off.");
+                             "Saved with the profile; 0 = off."));
     capCompSpin_->setValue(std::clamp(QSettings(nvStatePath(), QSettings::IniFormat).value("core_cap_comp_mhz", 0).toInt(), 0, 500));
     connect(capCompSpin_, &QSpinBox::valueChanged, this, [](int v) {
         QSettings(nvStatePath(), QSettings::IniFormat).setValue("core_cap_comp_mhz", v);
@@ -533,11 +533,11 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch2->addWidget(lbl("PowerMizer:", theme::MUTED));
     powerMizer_ = new QComboBox;
     powerMizer_->setEnabled(false);
-    powerMizer_->setToolTip("Auto — the driver decides (default)\n"
+    powerMizer_->setToolTip(tr("Auto — the driver decides (default)\n"
                             "Adaptive — clocks drop as soon as load drops\n"
                             "Prefer maximum performance — clocks stay up: no down-clock stutter, more idle power\n"
                             "Prefer consistent performance — steady clocks for benchmarking\n"
-                            "Needs driver 580+. Not kept across reboots.");
+                            "Needs driver 580+. Not kept across reboots."));
     connect(powerMizer_, &QComboBox::activated, this, [this] {
         if (!runHelper({{"op", "set_powermizer"}, {"mode", powerMizer_->currentData().toString()}}, QString(),
                        "Could not set PowerMizer", [this](bool, const QJsonObject &) { syncPowerMizer(); }))
@@ -555,8 +555,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(resetBtn_, &QPushButton::clicked, this, &NvidiaTab::resetCurve);
     auto *bResetAll = new QPushButton("Reset All");
     bResetAll->setObjectName("btnDanger");
-    bResetAll->setToolTip("Everything back to stock: curve offsets, NVML offsets in every P-state (other tools\n"
-                          "can leave some in P2/P5), core and VRAM clock locks, power limit, PowerMizer → Auto.");
+    bResetAll->setToolTip(tr("Everything back to stock: curve offsets, NVML offsets in every P-state (other tools\n"
+                          "can leave some in P2/P5), core and VRAM clock locks, power limit, PowerMizer → Auto."));
     connect(bResetAll, &QPushButton::clicked, this, [this] {
         if (QMessageBox::question(this, "Reset All", "Put every NVIDIA setting back to stock?") != QMessageBox::Yes) return;
         runHelper({{"op", "reset_all"}}, "Everything is back to stock.", "Reset All incomplete",
@@ -654,7 +654,7 @@ void NvidiaTab::hideEvent(QHideEvent *e) {
 
 void NvidiaTab::pollStats() {
     if (!nvml_) {
-        for (QLabel *l : {temp_, power_, clock_, memClock_}) l->setToolTip("NVML (libnvidia-ml.so.1) not available");
+        for (QLabel *l : {temp_, power_, clock_, memClock_}) l->setToolTip(tr("NVML (libnvidia-ml.so.1) not available"));
         return;
     }
     if (auto t = nvml_->temp()) temp_->setText(QStringLiteral("Temp: %1 °C").arg(*t));
@@ -672,7 +672,7 @@ void NvidiaTab::pollStats() {
         blackwell_ = nvml_->architecture().value_or(0) >= 10;
         if (!temps_)
             for (QLabel *l : {hotspot_, vram_})
-                l->setToolTip("NvAPI unavailable for this user — `sudo nvcurve sensors` reads it as root");
+                l->setToolTip(tr("NvAPI unavailable for this user — `sudo nvcurve sensors` reads it as root"));
     }
     // Blackwell: hotspot and partition temps are privileged register reads →
     // the root stream supplies them; the user-mode reads cover the rest.
@@ -713,7 +713,7 @@ void NvidiaTab::startSensorStream() {
         QStringList parts;
         for (const QJsonValue &x : o.value("vram_partitions").toArray())
             parts << QStringLiteral("%1 %2°").arg(x.toArray().at(0).toString()).arg(x.toArray().at(1).toInt());
-        vram_->setToolTip(parts.isEmpty() ? QString() : QStringLiteral("Hottest memory sensor. All: ") + parts.join("  "));
+        vram_->setToolTip(parts.isEmpty() ? QString() : tr("Hottest memory sensor. All: %1").arg(parts.join("  ")));
     });
     // Context is `p` (it outlives the tab: the helper exits only once its stdin closes, after
     // ~NvidiaTab): `self` guards every touch of the tab, as in the Ryzen / Intel tabs.
@@ -723,7 +723,7 @@ void NvidiaTab::startSensorStream() {
             self->sensorStream_ = nullptr;
             if (code != 0) {  // denied / no agent: don't ask again until the tab is reopened
                 self->streamFailed_ = true;
-                self->hotspot_->setToolTip("Blackwell hotspot needs root and the sensor helper was not authorized");
+                self->hotspot_->setToolTip(tr("Blackwell hotspot needs root and the sensor helper was not authorized"));
             }
         }
         p->deleteLater();
@@ -1104,7 +1104,23 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
                                                      : data.value("vram_p0_offset_mhz")).toInt();
 
     QHash<int, int> offs;
-    for (int i = 0; i < base_.size(); ++i) offs[i] = floorDiv(qint64(deltas.value(QString::number(i)).toDouble()), 1000);
+    for (int i = 0; i < base_.size(); ++i) {
+        // A hand-edited profile must not slip a non-integer, non-finite or out-of-range
+        // delta (nvapi MIN/MAX_DELTA_KHZ) into the preview; reject the whole profile instead.
+        const QJsonValue value = deltas.value(QString::number(i));
+        bool valid = true;
+        qint64 khz = 0;
+        if (value.isString()) {
+            khz = value.toString().toLongLong(&valid);
+        } else if (!value.isUndefined()) {
+            const double raw = value.toDouble();
+            if (!value.isDouble() || !std::isfinite(raw) || std::trunc(raw) != raw || raw < -2000000 || raw > 1000000) valid = false;
+            else khz = qint64(raw);
+        }
+        if (khz < -2000000 || khz > 1000000) valid = false;
+        if (!valid) { log(QStringLiteral("❌ Profile has an invalid offset at point %1; not loaded.").arg(i)); return; }
+        offs[i] = floorDiv(khz, 1000);
+    }
     adoptOffsets(offs);
 
     memSpin_->setValue(mem);

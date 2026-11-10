@@ -74,6 +74,9 @@ While Centurion runs it answers on the session bus as `com.centurion.Centurion`
 (the Health Overview cards and their worst level), `HealthEvents` (this session's kernel events after a sequence
 number), and the signals `SceneApplied` / `PowerProfileChanged` / `HealthEvent` — for KDE Connect, Home
 Assistant, Stream Deck or your own scripts. Examples in the [Handbook](docs/HANDBOOK.md#10-command-line-cheat-sheet).
+`centurion-export prometheus [FILE]` (node_exporter textfile collector) and `centurion-export mqtt HOST`
+(`mosquitto_pub`, retained, `centurion/<key>`) pass `SensorValues` on to Grafana or Home Assistant; `--interval S`
+repeats.
 
 ## Boot services
 

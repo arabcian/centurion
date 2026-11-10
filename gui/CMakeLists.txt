@@ -15,6 +15,10 @@ if(CENTURION_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
+# `cmake --build <dir> --target clang-tidy`: lints src/*.cpp with the checks in ../.clang-tidy.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+find_program(CENTURION_RUN_CLANG_TIDY NAMES run-clang-tidy)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -107,6 +111,12 @@ add_executable(centurion
     src/notify.cpp       src/notify.h
     src/firstrunwizard.cpp src/firstrunwizard.h
 )
+if(CENTURION_RUN_CLANG_TIDY)
+    add_custom_target(clang-tidy
+        COMMAND ${CENTURION_RUN_CLANG_TIDY} -quiet -p ${CMAKE_BINARY_DIR} "${CMAKE_CURRENT_SOURCE_DIR}/src/.*\\.cpp$"
+        COMMENT "clang-tidy (checks: .clang-tidy)" VERBATIM)
+    add_dependencies(clang-tidy centurion_autogen)  # moc output must exist before the sources parse
+endif()
 # Translations: i18n/centurion_<lang>.ts -> :/i18n/centurion_<lang>.qm inside the executable.
 # `cmake --build <dir> --target update_translations` refreshes the .ts files from the sources
 # (keeps existing translations). Also keep the language list in src/i18n.cpp (AVAILABLE) in step.

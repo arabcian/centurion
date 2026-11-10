@@ -37,7 +37,7 @@ static QString toolPath() {
 static QLabel *muted(const QString &t) {
     auto *l = new QLabel(t);
     l->setWordWrap(true);
-    l->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
+    l->setProperty("tone", "muted");
     return l;
 }
 

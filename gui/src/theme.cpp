@@ -168,7 +168,7 @@ int brandInset() {
 
 // Selectors (objectName / dynamic properties) are the contract with the tabs:
 // btnAccent, btnDanger, btnMini, terminal, miniSlider, box_<colour>,
-// role=muted/title/value, mainTabs. Only the look behind them changes here.
+// role=muted/title/value, tone=muted/dim/warn/danger, mainTabs. Only the look behind them changes here.
 //
 // Grammar: the window is an instrument panel. A darker bezel carries the brand
 // and a recessed selector rail whose current key is lit; cards are machined
@@ -240,6 +240,11 @@ QLabel { background: transparent; }
 QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
 QLabel[role="title"] { color: @FG; font-size: 15pt; font-weight: 700; }
 QLabel[role="value"] { color: @FG; font-weight: 600; }
+/* Text tones (setProperty("tone", …)) instead of per-widget color stylesheets: follow theme switches. */
+*[tone="muted"] { color: @MUTED; }
+*[tone="dim"] { color: @FG_DIM; }
+*[tone="warn"] { color: @WARN; }
+*[tone="danger"] { color: @DANGER; }
 QFrame[frameShape="4"], QFrame[frameShape="5"] { color: @BORDER_SOFT; }
 
 /* ── buttons: raised one step above the card (lit top edge); amber = primary ── */

@@ -145,7 +145,7 @@ src_install() {
 	exeopts -m0700
 	doexe "${r}"/nvcurve-root-helper
 	exeopts -m0755
-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-cooltest,centurion-gpustress,centurion-cpustress}
+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-export,centurion-cooltest,centurion-gpustress,centurion-cpustress}
 	_centurion_subst packaging/centurion-safe-mode "${T}"/centurion-safe-mode
 	dobin "${T}"/centurion-safe-mode
 

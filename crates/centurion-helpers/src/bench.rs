@@ -1497,8 +1497,8 @@ mod tests {
         assert!(frame_tail_us(Duration::from_millis(120)).is_some_and(|v| v > 0.0));
         let (t, m) = frame_us(Duration::from_millis(120)).unwrap();
         assert!(m > 0.0 && t >= m, "the tail is never below the median");
-        assert_eq!(p99(&mut vec![]), None);
-        assert_eq!(tail(&mut vec![]), None);
+        assert_eq!(p99(&mut []), None);
+        assert_eq!(tail(&mut []), None);
         // Worst 1 %, at least 5: 1000 samples -> the 10 largest; 8 samples -> the 5 largest.
         let mut v: Vec<f64> = (1..=1000).map(|x| x as f64).collect();
         assert!((tail(&mut v).unwrap() - 995.5).abs() < 1e-9);

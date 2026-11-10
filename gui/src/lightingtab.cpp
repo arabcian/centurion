@@ -64,6 +64,7 @@ static QIcon swatch(const Effect &e, int size = 14) {
 // ── keyboard drawing ────────────────────────────────────────────────────────
 
 KeyboardView::KeyboardView(QWidget *parent) : QWidget(parent) {
+    setAccessibleName(tr("Keyboard lighting layout"));
     setMouseTracking(false);
     QSizePolicy sp(QSizePolicy::Expanding, QSizePolicy::Preferred);
     sp.setHeightForWidth(true);

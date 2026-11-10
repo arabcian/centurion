@@ -12,6 +12,9 @@ static QColor C(const char *s) { return QColor(QString::fromLatin1(s)); }
 
 VfCurveWidget::VfCurveWidget(QWidget *parent) : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName(tr("V/F curve editor"));
+    setAccessibleDescription(tr("Voltage/frequency points. Left/Right extend the selection, Up/Down change the "
+                                "selected points by 1 MHz (Shift: 15), Ctrl+A selects all, Esc clears."));
     setMinimumHeight(200);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);  // hover highlight

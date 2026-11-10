@@ -1,0 +1,11 @@
+# Used by the GUI's `clang-tidy` CMake target. Bug finders only; style is not enforced.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  clang-analyzer-*,
+  performance-*,
+  -performance-enum-size
+HeaderFilterRegex: '.*/gui/src/.*'

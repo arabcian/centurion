@@ -38,6 +38,7 @@
 //! ~/.local/state/centurion/game-sessions.jsonl (start, end, game,
 //! preset and its values, A/B turn). The game's name comes from CENTURION_GAME,
 //! GAME_NAME (Lutris), SteamAppId, else the wrapped program's file name.
+#![allow(clippy::type_complexity)]
 
 /// stderr logging that never panics: eprintln! aborts the process on EPIPE
 /// (a launcher that stopped reading), which could cut POST off before it had
@@ -418,7 +419,7 @@ fn user_lock(name: &str) -> Option<std::fs::File> {
     use std::os::unix::io::AsRawFd;
     let dir = runtime_dir();
     std::fs::create_dir_all(&dir).ok()?;
-    let f = std::fs::OpenOptions::new().create(true).write(true).open(dir.join(name)).ok()?;
+    let f = std::fs::OpenOptions::new().create(true).write(true).truncate(false).open(dir.join(name)).ok()?;
     loop {
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } == 0 { return Some(f); }
         if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted { return None; }
@@ -1452,7 +1453,7 @@ mod tests {
     fn lutris_wrapper() {
         assert!(is_lutris_wrapper("lutris-wrapper:", b"lutris-wrapper: /usr/bin/centurion-gamemode"));
         assert!(is_lutris_wrapper("lutris-wrapper", b"/usr/bin/python3\0/usr/share/lutris/bin/lutris-wrapper\0x\0"));
-        assert!(is_lutris_wrapper("python3.13", b"/usr/bin/python3.13\0/usr/share/lutris/bin/lutris-wrapper\0/usr/bin/centurion-gamemode\01\00\0"));
+        assert!(is_lutris_wrapper("python3.13", b"/usr/bin/python3.13\0/usr/share/lutris/bin/lutris-wrapper\0/usr/bin/centurion-gamemode\x001\x000\0"));
         assert!(!is_lutris_wrapper("lutris", b"/usr/bin/python3.13\0/usr/bin/lutris\0"));
         assert!(!is_lutris_wrapper("steam", b"/home/u/.steam/steam\0"));
     }

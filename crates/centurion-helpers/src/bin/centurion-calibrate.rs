@@ -63,6 +63,7 @@
 //! Every original is journaled before it is written and restored after each
 //! knob, on Ctrl-C, or with --restore after a crash. Needs a clean state:
 //! Optimizations → Restore originals first.
+#![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
 use centurion_helpers::autotune::{Goal, Weights, MARGIN};
 use centurion_helpers::bench;
@@ -1050,7 +1051,7 @@ impl Runner<'_> {
         // carry (it was the CPU's, which says nothing about a drive), and every run waits for the drive to
         // come back near the phase's first start, below its warning temperature.
         if phase == Phase::Io {
-            let Some(disk) = self.c.disk.clone() else { return None };
+            let disk = self.c.disk.clone()?;
             let read = || bench::disk_temp_c(&disk);
             let warn = bench::disk_temp_warn(&disk).unwrap_or(70.0);
             let pi = phase.idx();
@@ -1795,9 +1796,9 @@ fn main() {
             for (ph, its, secs) in split(&items, scale, budget) {
                 let cost = est_secs(ph, union_benches(ph, &its), scale).max(1.0);
                 let logged = cal.rows.iter().filter(|r| r.phase == ph).count();
-                println!("  {:<5} {} knob(s), ~{:.0} s per run, up to {} runs in {:.0} min ({} logged; interactions: all pairs{})", ph.name(), its.len(), cost,
+                println!("  {:<5} {} knob(s), ~{:.0} s per run, up to {} runs in {:.0} min ({} logged; interactions: all pairs, all triples from {} runs)", ph.name(), its.len(), cost,
                          ((secs / cost) as usize).clamp(12, dp.cap), secs.min(1e6) / 60.0, logged,
-                         format!(", all triples from {} runs", 150.max(4 * its.len())));
+                         150.max(4 * its.len()));
             }
             match &disk { Ok(d) => println!("storage suite on {dir} ({d}); --dir PATH measures another disk"), Err(e) => println!("storage suite off: {e}") }
             println!("sequential design: every run changes several knobs; the runs stop early once the decisions are settled. Not tested:");
@@ -1874,8 +1875,7 @@ fn main() {
     // Before the teardown exists: die() skips destructors, and a failure after this point must not
     // leave the hold, the fan lock or a scene's power context behind.
     let exe = std::env::current_exe().unwrap_or_else(|_| die("cannot find own executable"));
-    let mut td = Teardown::default();
-    td.hold = take_hold("calibrating");
+    let mut td = Teardown { hold: take_hold("calibrating"), ..Teardown::default() };
     centurion_helpers::stability::record_calibration(true);
     td.exposure = true;
     let scene = opt("--scene");
@@ -2345,7 +2345,6 @@ const NOT_IN_VERIFY: &[&str] = &["cpu.smt", "cpu.ccd_park", "cpu.pstate_status",
 /// calibrated part; keeps the result in the signature, and the runs as design rows when every
 /// change is a calibrated knob.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with_io: bool, goal: Option<String>, rate: u64, ram: u64, kernel: &str,
                load: bool, sequential: bool) -> Result<(), String> {
     if name.is_empty() || name.len() > 64 || !name.chars().all(|c| c.is_ascii_alphanumeric() || " _-.".contains(c)) || name.starts_with('.') { return Err(format!("invalid preset name '{name}'")); }
@@ -2431,10 +2430,10 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     for ((ph, rows, _), vr) in prows.iter().zip(&tagged) {
         let ph = *ph;
         // Per objective: one B-A difference per ABBA block (drift inside the block cancels).
-        for o in 0..4 {
+        for (o, name) in names.iter().enumerate() {
             let d = block_diffs(vr.iter().filter(|x| x.y[o].is_finite()).map(|x| (x.round, x.b, x.y[o])));
             if let Some(st) = paired_stats(&d) {
-                objectives.insert(format!("{}{}", if ph == Phase::Io { "io " } else { "" }, names[o]), json!([round3(st.mean), round3(st.se)]));
+                objectives.insert(format!("{}{}", if ph == Phase::Io { "io " } else { "" }, name), json!([round3(st.mean), round3(st.se)]));
             }
         }
         // The runs join the design log when every change is a knob the model calibrates from the same reference.
@@ -3022,16 +3021,22 @@ mod sim {
         let on = |k: &str| cfg.iter().any(|(a, _)| a == k);
         let is = |k: &str, v: &str| cfg.iter().any(|(a, b)| a == k && b == v);
         let mut y = 0.0;
-        if on("vm.a") { y += 0.05 } if on("vm.b") { y += 0.04 }
+        if on("vm.a") { y += 0.05 }
+        if on("vm.b") { y += 0.04 }
         if on("vm.a") && on("vm.b") { y += 0.08 }
-        if is("vm.c", "2") { y += 0.03 } if is("vm.c", "4") { y += 0.06 }
-        if on("cpu.a") { y += 0.05 } if on("cpu.b") { y += 0.03 }
+        if is("vm.c", "2") { y += 0.03 }
+        if is("vm.c", "4") { y += 0.06 }
+        if on("cpu.a") { y += 0.05 }
+        if on("cpu.b") { y += 0.03 }
         if on("cpu.a") && on("cpu.c") { y += 0.06 }
         if is("vm.c", "4") && on("cpu.a") { y += 0.05 }
-        if on("vm.d") { y += 0.06 } if on("vm.e") { y += 0.06 }
+        if on("vm.d") { y += 0.06 }
+        if on("vm.e") { y += 0.06 }
         if on("vm.d") && on("vm.e") { y -= 0.06 }
-        if on("cpu.d") { y -= 0.05 } if on("vm.f") { y -= 0.04 }
-        if on("cpu.b") && on("cpu.e") { y -= 0.08 } if on("cpu.e") { y += 0.03 }
+        if on("cpu.d") { y -= 0.05 }
+        if on("vm.f") { y -= 0.04 }
+        if on("cpu.b") && on("cpu.e") { y -= 0.08 }
+        if on("cpu.e") { y += 0.03 }
         y
     }
     pub fn factors() -> Vec<Factor> {

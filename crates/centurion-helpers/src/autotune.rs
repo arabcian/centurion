@@ -3894,7 +3894,7 @@ mod perf_bench {
                 let c = if i % 8 == 0 { Vec::new() } else { c.clone() };
                 let mut y = [0.0; 4];
                 for kv in &c { if let Some(e) = eff.get(kv) { for (out, effect) in y.iter_mut().zip(e.iter()) { *out += *effect; } } }
-                for o in 0..4 { y[o] += ((rng.unit() + rng.unit() + rng.unit()) - 1.5) * 0.04; }
+                for v in &mut y { *v += ((rng.unit() + rng.unit() + rng.unit()) - 1.5) * 0.04; }
                 if phase == calib::Phase::Dev { y[0] = f64::NAN; y[1] = f64::NAN; y[3] = f64::NAN; }
                 t += 7;
                 rows.push(calib::Row { phase, sess: (phase.idx() * 1000 + i / per) as u64, pos: (i % per) as f64 / per as f64, t, kernel: String::new(), cfg: c,
