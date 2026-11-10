@@ -1,0 +1,49 @@
+#!/bin/bash
+# centurion-safe-mode: put the tuning back to safe defaults while the system runs (Boot Guard does this at boot).
+#   CPU curve / undervolt → 0, NVIDIA V/F curve + clock/power limits → stock, optimizations → saved originals,
+#   EC fan boost → auto, platform profile → balanced (firmware fan table and limits).
+# Every step runs even if an earlier one failed; exit code 1 if any failed. Nothing is reloaded or unbound:
+# a locked-up NVIDIA driver is reported, never "fixed" by reloading the module.
+set -u
+H=@LIBEXEC@
+# Fixed locations, like the GUI: never resolve pkexec through $PATH.
+PK=/usr/bin/pkexec; [[ -x $PK ]] || PK=/bin/pkexec
+fail=0
+say() { printf '%-14s %s\n' "$1" "$2"; }
+# run <label> <helper> <json> [timeout s]
+run() {
+    local out rc
+    out=$(printf '%s' "$3" | timeout "${4:-60}" "$PK" "$H/$2" 2>&1); rc=$?
+    out=$(printf '%s' "$out" | tail -n 1)
+    if [[ $rc -eq 124 ]]; then say "$1" "FAILED: no answer in ${4:-60} s"; fail=1; return 1; fi
+    if [[ $rc -ne 0 || $out == *'"ok":false'* || $out == *'"ok": false'* ]]; then say "$1" "FAILED: $out"; fail=1; return 1; fi
+    say "$1" "ok"
+}
+
+case $(grep -m1 vendor_id /proc/cpuinfo) in
+    *AuthenticAMD*) run "CPU curve" ryzen-co-helper '{"op":"reset"}' ;;
+    *GenuineIntel*) run "CPU undervolt" intel-uv-helper '{"op":"reset","hold":true}' ;;
+    *) say "CPU" "skipped (unknown vendor)" ;;
+esac
+
+nv=
+for d in /sys/bus/pci/devices/*; do
+    [[ $(cat "$d/vendor" 2>/dev/null) == 0x10de && $(cat "$d/class" 2>/dev/null) == 0x03* && -e $d/driver ]] && nv=$d
+done
+if [[ -z $nv ]]; then
+    say "NVIDIA" "skipped (no NVIDIA GPU with a driver bound)"
+elif ! run "NVIDIA" nvcurve-root-helper '{"op":"reset_all"}' 30; then
+    say "" "the NVIDIA driver may be locked up: no module reload was attempted; a reboot resets the GPU to stock"
+fi
+
+run "Optimizations" tune-helper '{"op":"restore"}'
+
+if [[ -e /sys/firmware/acpi/platform_profile ]]; then
+    run "Fan boost" legion-profile-helper '{"device":"fan_fullspeed","value":"0"}'
+    run "Power profile" legion-profile-helper '{"profile":"balanced"}'
+else
+    say "Fans" "skipped (no platform profile interface)"
+fi
+
+[[ $fail -eq 0 ]] && echo "Safe mode: done." || echo "Safe mode: some steps FAILED (see above)."
+exit $fail
