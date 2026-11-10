@@ -145,10 +145,33 @@ fn op_set_coper_batch(p: &Map<String, Value>) -> Result<Value, Invalid> {
         results.push(json!({"ok": false, "skipped": true, "message": "not written (earlier entry failed)", "ccd": ccd, "ccx": ccx, "core": core, "coper": coper}));
     }
     if reset_first {
-        let r = smu.set_coall(0);
-        return Ok(json!({"ok": false, "results": results, "state": if r.is_ok() { "stock" } else { "unknown" },
-                         "rollback": [{"ok": r.is_ok(), "message": r.err().map_or("OK".to_owned(), |e| e.message().to_owned()), "coall": 0}],
-                         "note": "profile reset all cores to stock first; undo returns to stock, not to the offsets before this call"}));
+        // Stock is the only safe fallback when the caller lacks a complete prior
+        // snapshot: SMU has no read-back operation. When every entry supplies a
+        // previous value, first reset to stock then replay those values. This
+        // restores the named slots; unnamed prior slots cannot be reconstructed.
+        let reset = smu.set_coall(0);
+        let mut rolled = vec![json!({"ok": reset.is_ok(), "message": reset.as_ref().err().map_or("OK", |e| e.message()), "coall": 0})];
+        if reset.is_err() {
+            return Ok(json!({"ok": false, "results": results, "rollback": rolled, "state": "unknown"}));
+        }
+        if prevs.iter().all(Option::is_some) {
+            std::thread::sleep(Duration::from_millis(150));
+            let mut clean = true;
+            for (i, &(ccd, ccx, core, _)) in validated.iter().enumerate() {
+                let back = prevs[i].expect("checked above");
+                let r = smu.set_coper(ccd, ccx, core, back);
+                clean &= r.is_ok();
+                rolled.push(json!({"ok": r.is_ok(), "message": r.as_ref().err().map_or("OK", |e| e.message()),
+                                  "ccd": ccd, "ccx": ccx, "core": core, "coper": back}));
+                if !clean { break; }
+                std::thread::sleep(Duration::from_millis(3));
+            }
+            return Ok(json!({"ok": false, "results": results, "rollback": rolled,
+                             "state": if clean { "partial_original" } else { "unknown" },
+                             "note": "restored caller-provided previous offsets for the listed slots; other prior offsets cannot be recovered"}));
+        }
+        return Ok(json!({"ok": false, "results": results, "state": "stock", "rollback": rolled,
+                         "note": "caller did not supply previous values for every slot; reverted to stock"}));
     }
     let mut rolled: Vec<Value> = Vec::new();
     let mut explicit = true;

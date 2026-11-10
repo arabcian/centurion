@@ -29,7 +29,7 @@ fn rd(p: &Path) -> Option<String> { std::fs::read_to_string(p).ok().map(|s| s.tr
 
 fn cards() -> Vec<PathBuf> {
     std::fs::read_dir(PCI).into_iter().flatten().flatten().map(|e| e.path())
-        .filter(|d| rd(&d.join("vendor")).as_deref() == Some("0x10de") && rd(&d.join("class")).map_or(false, |c| c.starts_with("0x03")))
+        .filter(|d| rd(&d.join("vendor")).as_deref() == Some("0x10de") && rd(&d.join("class")).is_some_and(|c| c.starts_with("0x03")))
         .collect()
 }
 
@@ -40,7 +40,7 @@ fn module_loaded(m: &str) -> bool { Path::new("/sys/module").join(m).exists() }
 pub fn wedged() -> bool {
     std::fs::read_dir("/proc").into_iter().flatten().flatten().any(|e| {
         e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit())
-            && rd(&e.path().join("wchan")).map_or(false, |w| w.contains("rescan_store") || w.contains("remove_store") || w.contains("pci_lock_rescan_remove"))
+            && rd(&e.path().join("wchan")).is_some_and(|w| w.contains("rescan_store") || w.contains("remove_store") || w.contains("pci_lock_rescan_remove"))
     })
 }
 
@@ -57,7 +57,7 @@ pub fn holders() -> Vec<Value> {
             let Ok(t) = std::fs::read_link(fd.path()) else { continue };
             let t = t.to_string_lossy().into_owned();
             let hit = t.starts_with("/dev/nvidia")
-                || t.strip_prefix("/dev/dri/").map_or(false, nv_drm);
+                || t.strip_prefix("/dev/dri/").is_some_and(nv_drm);
             if hit && !what.contains(&t) { what.push(t); }
         }
         if what.is_empty() { continue; }
@@ -301,7 +301,7 @@ pub fn awake_op(on: Option<bool>) -> Value {
     let flag = if on {
         // Root-owned dir check + atomic, no-symlink write (like every other flag in /etc/centurion).
         crate::secure_dir("/etc/centurion").and_then(|_| crate::write_root_file(AWAKE_FLAG, b"1\n"))
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
     } else {
         match std::fs::remove_file(AWAKE_FLAG) { Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e), _ => Ok(()) }
     };

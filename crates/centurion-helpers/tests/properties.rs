@@ -289,3 +289,60 @@ proptest! {
         let _ = cooling::DEFAULT_LIMIT_C;
     }
 }
+
+// ── signature.json (calib::Calibration) ──────────────────────────────────────────────────────
+
+use centurion_helpers::calib::{Calibration, Phase, Row};
+
+/// A signature as the calibration writes it: a few contexts and design rows (NaN objectives included).
+fn any_signature() -> impl Strategy<Value = Calibration> {
+    let row = (0usize..4, 0u64..20, vec(("[a-z]{1,3}\\.[a-z]{1,4}", "[0-9]{1,2}"), 0..4),
+               vec(prop_oneof![Just(f64::NAN), -1.0f64..1.0], 4), 0.0f64..2.0, any::<bool>());
+    (vec(row, 0..40), vec("[a-z]{1,8}", 0..3)).prop_map(|(rows, profiles)| {
+        let mut c = Calibration::default();
+        let cxs: Vec<String> = profiles.iter().map(|p| c.add_context(json!({"profile": p, "power": "ac"}))).collect();
+        for (i, (ph, sess, cfg, y, w, field)) in rows.into_iter().enumerate() {
+            c.rows.push(Row { phase: Phase::ALL[ph], sess, t: 1_700_000_000 + i as u64, cfg, y: [y[0], y[1], y[2], y[3]], w, field,
+                              cx: cxs.get(i % cxs.len().max(1)).cloned().unwrap_or_default(), ..Default::default() });
+        }
+        c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.04);
+        c
+    })
+}
+
+proptest! {
+    /// Whatever JSON the file holds (any version number, any shape), reading it never panics, and
+    /// what it reads as is stable: written back and read again, it stays the same.
+    #[test]
+    fn signature_reader_survives_any_json(v in any_json(), version in prop_oneof![Just(None), (0u64..12).prop_map(Some)]) {
+        let mut v = v;
+        if let (Some(n), Some(o)) = (version, v.as_object_mut()) { o.insert("version".into(), json!(n)); }
+        let c = Calibration::from_json(&v);
+        let once = c.to_json();
+        prop_assert_eq!(Calibration::from_json(&once).to_json(), once);
+    }
+
+    /// Hand-shaped old-format fields (rows, keys, quality, verify of the wrong types) do not panic.
+    #[test]
+    fn old_format_fields_of_the_wrong_type(version in 1u64..10, rows in any_json(), keys in any_json(), q in any_json()) {
+        let v = json!({"version": version, "rows": rows, "keys": keys, "quality": q, "verify": q, "predcheck": q, "contexts": keys});
+        let _ = Calibration::from_json(&v).to_json();
+    }
+
+    /// Random bytes: either not JSON (the loader's "damaged" path) or read without a panic.
+    #[test]
+    fn damaged_bytes_never_panic(b in vec(any::<u8>(), 0..256)) {
+        if let Ok(v) = serde_json::from_slice::<Value>(&b) { let _ = Calibration::from_json(&v); }
+    }
+
+    /// A signature the calibration wrote round-trips: rows, contexts, prediction checks.
+    #[test]
+    fn signature_round_trip(c in any_signature()) {
+        let j = c.to_json();
+        let back = Calibration::from_json(&j);
+        prop_assert_eq!(back.rows.len(), c.rows.len());
+        prop_assert_eq!(&back.contexts, &c.contexts);
+        prop_assert_eq!(&back.predcheck, &c.predcheck);
+        prop_assert_eq!(back.to_json(), j);
+    }
+}

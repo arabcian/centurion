@@ -7,9 +7,13 @@
 //! unchanged topology. "root" (not "isolated") keeps load balancing inside the
 //! partition, which a multi-threaded game needs.
 //!
-//! Needs the unified hierarchy at /sys/fs/cgroup with the cpuset controller
-//! (OpenRC: rc_cgroup_mode="unified"). Created by tune-helper for a running
-//! game session and removed by the full restore that ends game mode.
+//! The same cgroup can also (or only) carry a cpu.weight: the game's CPU share
+//! against every other top-level cgroup (default weight 100), so background work
+//! yields to it without being stopped.
+//!
+//! Needs the unified hierarchy at /sys/fs/cgroup with the cpuset (partition) or
+//! cpu (weight) controller (OpenRC: rc_cgroup_mode="unified"). Created by tune-helper
+//! for a running game session and removed by the full restore that ends game mode.
 
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -31,10 +35,13 @@ fn write(p: &str, v: &str) -> Result<(), String> {
 fn cg(file: &str) -> String { format!("{CG}/{file}") }
 
 /// Why the partition cannot be used here, if it cannot.
-pub fn unsupported() -> Option<String> {
+pub fn unsupported() -> Option<String> { unsupported_for("cpuset") }
+
+/// Why controller `ctrl` (cpuset / cpu) cannot be used here, if it cannot.
+fn unsupported_for(ctrl: &str) -> Option<String> {
     match read(&format!("{ROOT}/cgroup.controllers")) {
         None => Some("cgroup v2 is not mounted at /sys/fs/cgroup (OpenRC: rc_cgroup_mode=\"unified\")".into()),
-        Some(c) if !c.split_whitespace().any(|x| x == "cpuset") => Some("the cpuset controller is not available in cgroup v2".into()),
+        Some(c) if !c.split_whitespace().any(|x| x == ctrl) => Some(format!("the {ctrl} controller is not available in cgroup v2")),
         Some(_) => None,
     }
 }
@@ -49,6 +56,7 @@ pub fn status() -> Value {
         "cpus": read(&cg("cpuset.cpus.effective")).unwrap_or_default(),
         "partition": read(&cg("cpuset.cpus.partition")).unwrap_or_default(),
         "procs": read(&cg("cgroup.procs")).map_or(0, |s| s.lines().count()),
+        "weight": read(&cg("cpu.weight")),
     })
 }
 
@@ -58,34 +66,40 @@ fn load_state() -> Value {
 
 fn save_state(v: &Value) -> Result<(), String> { crate::write_root_file(STATE, v.to_string().as_bytes()) }
 
-/// Creates (or keeps) the partition over `cpus`.
-pub fn setup(cpus: &[usize]) -> Result<(), String> {
-    if let Some(e) = unsupported() { return Err(e); }
-    if cpus.is_empty() { return Err("no CPUs for the game partition".into()); }
+/// Creates (or keeps) the game cgroup: a partition over `cpus` (none if empty) and/or `weight` as its cpu.weight.
+pub fn setup(cpus: &[usize], weight: Option<u32>) -> Result<(), String> {
+    if cpus.is_empty() && weight.is_none() { return Err("no CPUs for the game partition".into()); }
+    if !cpus.is_empty() { if let Some(e) = unsupported() { return Err(e); } }
+    if weight.is_some() { if let Some(e) = unsupported_for("cpu") { return Err(e); } }
     let list = crate::tune::fmt_cpu_list(cpus);
-    if Path::new(CG).is_dir() {
-        let part = read(&cg("cpuset.cpus.partition")).unwrap_or_default();
-        if part == "root" && read(&cg("cpuset.cpus")).map(|c| crate::tune::cpu_list(&c)) == Some(cpus.to_vec()) { return Ok(()); }
-    }
+    let part_ok = cpus.is_empty() || (Path::new(CG).is_dir() && read(&cg("cpuset.cpus.partition")).as_deref() == Some("root")
+        && read(&cg("cpuset.cpus")).map(|c| crate::tune::cpu_list(&c)) == Some(cpus.to_vec()));
+    if part_ok && weight.map_or(true, |w| read(&cg("cpu.weight")) == Some(w.to_string())) { return Ok(()); }
     let mut st = load_state();
-    if st.get("added").is_none() {
+    for (ctrl, mark, need) in [("cpuset", "added", !cpus.is_empty()), ("cpu", "added_cpu", weight.is_some())] {
+        if !need || st.get(mark).is_some() { continue; }
         let sub = read(&format!("{ROOT}/cgroup.subtree_control")).unwrap_or_default();
-        let added = !sub.split_whitespace().any(|c| c == "cpuset");
-        st["added"] = json!(added);
+        let added = !sub.split_whitespace().any(|c| c == ctrl);
+        st[mark] = json!(added);
         save_state(&st)?;  // recorded before the change, so a crash still undoes it
-        if added { write(&format!("{ROOT}/cgroup.subtree_control"), "+cpuset")?; }
+        if added { write(&format!("{ROOT}/cgroup.subtree_control"), &format!("+{ctrl}"))?; }
     }
     match std::fs::create_dir(CG) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(e) => return Err(format!("{CG}: {e}")),
     }
-    let r = write(&cg("cpuset.cpus"), &list).and_then(|_| write(&cg("cpuset.cpus.partition"), "root"));
-    let part = read(&cg("cpuset.cpus.partition")).unwrap_or_default();
-    if r.is_err() || part != "root" {
-        let why = r.err().unwrap_or_else(|| format!("kernel reports '{part}'"));
-        let _ = teardown();
-        return Err(format!("partition over {list} refused: {why}"));
+    if !part_ok {
+        let r = write(&cg("cpuset.cpus"), &list).and_then(|_| write(&cg("cpuset.cpus.partition"), "root"));
+        let part = read(&cg("cpuset.cpus.partition")).unwrap_or_default();
+        if r.is_err() || part != "root" {
+            let why = r.err().unwrap_or_else(|| format!("kernel reports '{part}'"));
+            let _ = teardown();
+            return Err(format!("partition over {list} refused: {why}"));
+        }
+    }
+    if let Some(w) = weight {
+        if let Err(e) = write(&cg("cpu.weight"), &w.to_string()) { let _ = teardown(); return Err(format!("cpu.weight {w} refused: {e}")); }
     }
     Ok(())
 }
@@ -138,6 +152,7 @@ pub fn teardown() -> Result<bool, String> {
         if !removed { return Err(format!("{CG} could not be removed (tasks still exiting?)")); }
     }
     if st["added"] == true { let _ = write(&format!("{ROOT}/cgroup.subtree_control"), "-cpuset"); }
+    if st["added_cpu"] == true { let _ = write(&format!("{ROOT}/cgroup.subtree_control"), "-cpu"); }
     let _ = std::fs::remove_file(STATE);
     Ok(existed)
 }

@@ -42,13 +42,13 @@ pub fn is_internal(name: &str) -> bool {
 }
 
 fn in_path(prog: &str) -> bool {
-    std::env::var_os("PATH").map_or(false, |p| std::env::split_paths(&p).any(|d| {
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| {
         let f = d.join(prog);
-        std::fs::metadata(&f).map_or(false, |m| m.is_file())
+        std::fs::metadata(&f).is_ok_and(|m| m.is_file())
     }))
 }
 
-fn env_has(k: &str) -> bool { std::env::var_os(k).map_or(false, |v| !v.is_empty()) }
+fn env_has(k: &str) -> bool { std::env::var_os(k).is_some_and(|v| !v.is_empty()) }
 
 /// The tool for this session, or None (no graphical session in the environment, or no supported tool).
 pub fn detect() -> Option<Backend> {

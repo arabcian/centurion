@@ -8,6 +8,7 @@
 #include "prewrite.h"
 #include "privileged.h"
 #include "theme.h"
+#include "experimentalui.h"
 
 #include <QDir>
 #include <QGridLayout>
@@ -316,6 +317,7 @@ void FwattrTab::rebuild() {
     if (busy_) return;
     while (tabs_->count()) { QWidget *w = tabs_->widget(0); tabs_->removeTab(0); w->deleteLater(); }
     rows_.clear();
+    tauLabel_ = nullptr; tauSlider_ = nullptr; tauSpin_ = nullptr; tauNote_ = nullptr;  // went with the old pages
 
     const QList<FwAttr> attrs = discover();
     {   // Remember the firmware ranges while the attributes are there.
@@ -342,7 +344,6 @@ void FwattrTab::rebuild() {
         auto *pl = new QVBoxLayout(page);
         pl->setContentsMargins(2, 4, 2, 2);
         pl->setSpacing(6);
-
         for (const QString &group : {QStringLiteral("CPU"), QStringLiteral("GPU"), QStringLiteral("Other")}) {
             QList<FwAttr> items;
             for (const FwAttr &a : *it) if (category(a.name) == group) items.append(a);
@@ -404,6 +405,37 @@ void FwattrTab::rebuild() {
                 if (a.viaWmi()) { spin->setEnabled(false); if (slider) slider->setEnabled(false); apply->setEnabled(false); }  // until readWmi confirms acpi_call
                 rows_.append({a, slider, spin, apply, def});
                 ++r;
+            }
+            if (group == QLatin1String("CPU") && !tauSlider_) {
+                // PL1 tau: laid out like the rows above but never editable (no kernel attribute; on AMD
+                // nothing in the ACPI tables passes a write on). Hidden until the EC has been read.
+                const QString tip = QStringLiteral(
+                    "PL1 tau: how long the CPU may stay above PL1 before it is held to it. The firmware keeps it in the EC\n"
+                    "(WMI feature 0x01070000) without a kernel attribute, in the steps of Intel's time-window encoding\n"
+                    "(20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160 s). On AMD nothing in the ACPI tables passes it on,\n"
+                    "so whether changing it would do anything is unknown: shown, not offered.");
+                tauLabel_ = new QLabel(QStringLiteral("CPU PL1 tau (time window)"));
+                tauSlider_ = new QSlider(Qt::Horizontal);
+                tauSlider_->setRange(20, 160);
+                tauSlider_->setEnabled(false);
+                tauSpin_ = new QSpinBox;
+                tauSpin_->setFixedWidth(70);
+                tauSpin_->setRange(0, 999);
+                tauSpin_->setSuffix(QStringLiteral(" s"));
+                tauSpin_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+                tauSpin_->setEnabled(false);
+                tauNote_ = new QLabel(QStringLiteral("🔒 read-only"));
+                tauNote_->setProperty("role", "muted");
+                tauNote_->setAlignment(Qt::AlignCenter);
+                for (QWidget *w : {static_cast<QWidget *>(tauLabel_), static_cast<QWidget *>(tauSlider_),
+                                   static_cast<QWidget *>(tauSpin_), static_cast<QWidget *>(tauNote_)})
+                    w->setToolTip(tip);
+                g->addWidget(tauLabel_, r, 0);
+                g->addWidget(tauSlider_, r, 1);
+                g->addWidget(tauSpin_, r, 2);
+                g->addWidget(tauNote_, r, 3, 1, 2);
+                ++r;
+                showTau();
             }
             // Explain the WMI rows right under the box that contains them.
             bool anyWmi = false;
@@ -547,6 +579,8 @@ void FwattrTab::readWmi() {
     privileged::run(gpuHelperPath(), QJsonObject{{"op", "status"}}, this, [this](const privileged::Result &r) {
         wmiReady_ = r.reached && r.json.value("acpi").toBool();
         const QJsonObject vals = r.json.value("values").toObject();
+        tauSeconds_ = r.json.value("pl1_tau_s").toInt();
+        showTau();
         {   // WMAE id check for the CPU limits: the fallback is only offered
             // once WMAE has been seen to report exactly what sysfs reports.
             QJsonObject cache = readRangeCache();
@@ -588,6 +622,18 @@ void FwattrTab::readWmi() {
         }
         if (!wmiReady_ && r.reached) showStatus("acpi_call not loaded — the three WMI-handled GPU attributes are read-only (modprobe acpi_call).", 8000);
     });
+}
+
+void FwattrTab::showTau() {
+    if (!tauSlider_) return;
+    const bool have = tauSeconds_ > 0;
+    for (QWidget *w : {static_cast<QWidget *>(tauLabel_), static_cast<QWidget *>(tauSlider_),
+                       static_cast<QWidget *>(tauSpin_), static_cast<QWidget *>(tauNote_)})
+        w->setVisible(have);
+    if (!have) return;
+    tauSlider_->setRange(std::min(20, tauSeconds_), std::max(160, tauSeconds_));
+    tauSlider_->setValue(tauSeconds_);
+    tauSpin_->setValue(tauSeconds_);
 }
 
 QMap<QString, int> FwattrTab::wmiValues() const {

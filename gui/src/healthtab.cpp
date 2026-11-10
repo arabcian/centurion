@@ -37,6 +37,16 @@
 #include <ctime>
 #include <QSocketNotifier>
 #include <QTabWidget>
+#include <QStackedWidget>
+#include <QLineEdit>
+#include <QComboBox>
+#include <QCheckBox>
+#include <QSplitter>
+#include <QRegularExpression>
+#include <QSet>
+#include <QFont>
+#include <QApplication>
+#include <QClipboard>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -48,6 +58,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QSignalBlocker>
 
 #include <cerrno>
 #include <cstring>
@@ -88,76 +99,238 @@ static qint64 wallMs(double tsUs) {
 }
 
 HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
-    // Top level: Overview, Diagnostics, Power, Network, System info, Backup. Diagnostics, Power and System info
-    // are groups (tab widgets of their own); showPage() reaches any page through them.
+    // A single, searchable navigation tree replaces nested tab bars. All original
+    // functional pages remain; tool commands stay lazy until their page is opened.
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
-    auto *sub = new QTabWidget;
-    sub_ = sub;
-    outer->addWidget(sub);
-    auto *diag = new QTabWidget;
-    auto *power = new QTabWidget;
-    auto *toolsTab = new QTabWidget;
-    // Overview: one card per area, first. Its worst level feeds the Home badge and the tray.
+    // Studio keeps the same searchable section list as Classic: one click per
+    // page, every page visible at once. Only its frame follows the Studio rail.
+    auto *split = new QSplitter(Qt::Horizontal, this);
+    split->setChildrenCollapsible(false);
+    outer->addWidget(split);
+    auto *rail = new QWidget;
+    rail->setMinimumWidth(158);
+    rail->setMaximumWidth(230);
+    auto *railLayout = new QVBoxLayout(rail);
+    railLayout->setContentsMargins(6, 7, 5, 6);
+    auto *railTitle = new QLabel(tr("HEALTH CENTER"));
+    railTitle->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding:5px").arg(theme::FG_DIM));
+    railLayout->addWidget(railTitle);
+    railTitle->setVisible(!theme::experimentalEnabled());  // Studio: the top bar already names the page
+    auto *navSearch = new QLineEdit;
+    navSearch->setPlaceholderText(tr("Find a health tool…"));
+    navSearch->setClearButtonEnabled(true);
+    navSearch->setObjectName(QStringLiteral("healthNavSearch"));
+    railLayout->addWidget(navSearch);
+    navigation_ = new QTreeWidget;
+    navigation_->setHeaderHidden(true);
+    navigation_->setRootIsDecorated(false);
+    navigation_->setIndentation(12);
+    navigation_->setUniformRowHeights(true);
+    navigation_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    navigation_->setFrameShape(QFrame::NoFrame);
+    navigation_->setStyleSheet(QStringLiteral("QTreeWidget{background:transparent;border:0}QTreeWidget::item{padding:3px 3px}"));
+    railLayout->addWidget(navigation_, 1);
+    split->addWidget(rail);
+    pages_ = new QStackedWidget;
+    split->addWidget(pages_);
+    split->setStretchFactor(1, 1);
+    split->setSizes({178, 880});
+
+    auto addGroup = [this](const QString &label) {
+        auto *group = new QTreeWidgetItem(navigation_, {label.toUpper()});
+        group->setFlags(group->flags() & ~Qt::ItemIsSelectable);
+        group->setForeground(0, QColor(theme::MUTED));
+        QFont font = group->font(0);
+        font.setBold(true);
+        font.setPointSize(std::max(8, font.pointSize() - 1));
+        group->setFont(0, font);
+        group->setExpanded(true);
+        return group;
+    };
+    auto addPage = [this](QTreeWidgetItem *group, QWidget *page, const QString &label, const QString &key) {
+        pages_->addWidget(page);
+        auto *item = new QTreeWidgetItem(group, {label});
+        item->setData(0, Qt::UserRole, key);
+        pageItems_.insert(page, item);
+    };
+    auto *general = addGroup(tr("At a glance"));
+    auto *problems = addGroup(tr("Problems"));
+    auto *hardware = addGroup(tr("Hardware"));
+    auto *maintenance = addGroup(tr("Maintenance"));
+    auto *advanced = addGroup(tr("Advanced"));
+
     overview_ = new OverviewPage;
     connect(overview_, &OverviewPage::worstChanged, this, &HealthTab::levelChanged);
-    // Diagnostics: the fault monitor, boot history, curve stability, kernel log.
+    addPage(general, overview_, tr("System overview"), QStringLiteral("overview"));
     auto *monitor = new QWidget;
-    diag->addTab(monitor, tr("Monitor"));
-    // Boot history: loads when first shown; the start-up load below only feeds the "ended unexpectedly" band.
+    addPage(problems, monitor, tr("Events & alerts"), QStringLiteral("monitor"));
     boot_ = new BootPage;
-    diag->addTab(boot_, tr("Boot history"));
-    // Network: connections, IP blacklist, Wine/.exe guard. Built now (not lazily):
-    // its inotify watch on the block log is what raises the tray alert.
-    auto *net = new NetPage;
-    connect(net, &NetPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::NETWORK, QString(), t, m); });
-    // Curve stability: built now, its guard reacts to new kernel errors with the window hidden.
+    addPage(problems, boot_, tr("Boot history"), QStringLiteral("boot"));
+
     auto *curves = new CurvePage;
     curves_ = curves;
     connect(curves, &CurvePage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::CURVE, QString(), t, m); });
     connect(curves, &CurvePage::curveReset, this, &HealthTab::curveReset);
     connect(this, &HealthTab::fault, curves, &CurvePage::onFault);
-    diag->addTab(curves, tr("Curve stability"));
+    addPage(advanced, curves, tr("Curve stability"), QStringLiteral("curves"));
     klog_ = new KlogPage;
-    diag->addTab(klog_, tr("Kernel log"));
-    // Power: sleep, battery, dGPU, cooling.
-    power->addTab(new SleepPage, tr("Sleep"));
+    addPage(advanced, klog_, tr("Kernel log"), QStringLiteral("klog"));
+    auto *sleep = new SleepPage;
+    addPage(hardware, sleep, tr("Sleep & wake"), QStringLiteral("sleep"));
     if (BatteryPage::present()) {
         auto *battery = new BatteryPage;
         connect(battery, &BatteryPage::dgpuAwake, this, &HealthTab::dgpuAwake);
-        power->addTab(battery, tr("Battery use"));
+        addPage(hardware, battery, tr("Battery use"), QStringLiteral("battery"));
     }
-    if (DgpuPage::present()) power->addTab(new DgpuPage, tr("dGPU power"));
+    if (DgpuPage::present()) addPage(hardware, new DgpuPage, tr("dGPU power"), QStringLiteral("dgpu"));
     cooling_ = new CoolingPage;
-    power->addTab(cooling_, tr("Cooling"));
-    // System info: the SMART summary, then one page per system tool (lazy: a tool runs when its page opens).
-    systools::addPages(toolsTab);
-    // Backup: Centurion configuration + system image (tar). Idle until a button is pressed.
+    addPage(hardware, cooling_, tr("Cooling"), QStringLiteral("cooling"));
+
+    // A searchable catalog keeps all 16+ specialist tools available without
+    // making the primary health navigation feel like a configuration console.
+    toolDirectory_ = new QWidget;
+    auto *directoryLayout = new QVBoxLayout(toolDirectory_);
+    directoryLayout->setContentsMargins(10, 9, 10, 9);
+    directoryLayout->setSpacing(9);
+    auto *directoryHeader = new QLabel(tr("System tools"));
+    QFont directoryFont = directoryHeader->font();
+    directoryFont.setBold(true);
+    directoryFont.setPointSize(directoryFont.pointSize() + 4);
+    directoryHeader->setFont(directoryFont);
+    directoryLayout->addWidget(directoryHeader);
+    auto *directoryHint = new QLabel(tr("Explore detailed device reports when needed. Tools run only when opened; "
+                                        "some may request privileges or wake a sleeping GPU."));
+    directoryHint->setWordWrap(true);
+    directoryHint->setProperty("role", "muted");
+    directoryLayout->addWidget(directoryHint);
+    auto *toolSearch = new QLineEdit;
+    toolSearch->setPlaceholderText(tr("Search all system tools…"));
+    toolSearch->setClearButtonEnabled(true);
+    toolSearch->setObjectName(QStringLiteral("healthToolSearch"));
+    directoryLayout->addWidget(toolSearch);
+    auto *toolSplit = new QSplitter(Qt::Horizontal);
+    toolSplit->setChildrenCollapsible(false);
+    toolNavigation_ = new QTreeWidget;
+    toolNavigation_->setHeaderHidden(true);
+    toolNavigation_->setRootIsDecorated(false);
+    toolNavigation_->setIndentation(12);
+    toolNavigation_->setMinimumWidth(150);
+    toolNavigation_->setMaximumWidth(260);
+    toolNavigation_->setStyleSheet(QStringLiteral("QTreeWidget::item{padding:3px 3px}"));
+    toolPages_ = new QStackedWidget;
+    toolSplit->addWidget(toolNavigation_);
+    toolSplit->addWidget(toolPages_);
+    toolSplit->setStretchFactor(1, 1);
+    toolSplit->setSizes({195, 640});
+    directoryLayout->addWidget(toolSplit, 1);
+    addPage(advanced, toolDirectory_, tr("System tools"), QStringLiteral("tools"));
+    auto *deviceTools = new QTreeWidgetItem(toolNavigation_, {tr("Devices")});
+    auto *connectivityTools = new QTreeWidgetItem(toolNavigation_, {tr("Connections")});
+    auto *advancedTools = new QTreeWidgetItem(toolNavigation_, {tr("Kernel & firmware")});
+    for (QTreeWidgetItem *group : {deviceTools, connectivityTools, advancedTools}) {
+        group->setFlags(group->flags() & ~Qt::ItemIsSelectable);
+        group->setForeground(0, QColor(theme::MUTED));
+        group->setExpanded(true);
+    }
+    QTabWidget toolsRegistry;
+    systools::addPages(&toolsRegistry);
+    QWidget *firstTool = nullptr;
+    QWidget *smartTool = nullptr;
+    while (toolsRegistry.count()) {
+        QWidget *page = toolsRegistry.widget(0);
+        const QString label = toolsRegistry.tabText(0);
+        toolsRegistry.removeTab(0);
+        QTreeWidgetItem *group = advancedTools;
+        if (label == QLatin1String("SMART") || label == QLatin1String("SMART details") ||
+            label == QLatin1String("Sensors") || label == QLatin1String("CPU") ||
+            label == QLatin1String("Memory") || label == QLatin1String("Storage") ||
+            label == QLatin1String("Thermal") || label == QLatin1String("Battery") ||
+            label == QLatin1String("NVIDIA") || label == QLatin1String("Graphics")) group = deviceTools;
+        else if (label == QLatin1String("PCI") || label == QLatin1String("PCIe detail") ||
+                 label == QLatin1String("USB")) group = connectivityTools;
+        auto *item = new QTreeWidgetItem(group, {label});
+        toolItems_.insert(page, item);
+        toolPages_->addWidget(page);
+        if (!firstTool) firstTool = page;
+        if (label == QLatin1String("SMART")) smartTool = page;
+    }
+    if (smartTool) {
+        // The drive summary is a frequent action; give it a direct shortcut
+        // while keeping the complete device tool catalog available.
+        toolPages_->removeWidget(smartTool);
+        toolItems_.remove(smartTool);
+        for (int i = deviceTools->childCount() - 1; i >= 0; --i) {
+            if (deviceTools->child(i)->text(0) == QLatin1String("SMART")) delete deviceTools->takeChild(i);
+        }
+        addPage(hardware, smartTool, tr("Drive health"), QStringLiteral("smart"));
+        if (firstTool == smartTool) firstTool = toolPages_->count() ? toolPages_->widget(0) : nullptr;
+    }
+    if (firstTool) {
+        toolPages_->setCurrentWidget(firstTool);
+        toolNavigation_->setCurrentItem(toolItems_.value(firstTool));
+    }
+    connect(toolNavigation_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item, QTreeWidgetItem *) {
+        if (!item || !item->parent()) return;
+        for (auto it = toolItems_.cbegin(); it != toolItems_.cend(); ++it) {
+            if (it.value() == item) { toolPages_->setCurrentWidget(it.key()); break; }
+        }
+    });
+    connect(toolSearch, &QLineEdit::textChanged, this, [this](const QString &query) {
+        for (int i = 0; i < toolNavigation_->topLevelItemCount(); ++i) {
+            auto *group = toolNavigation_->topLevelItem(i);
+            int visible = 0;
+            for (int n = 0; n < group->childCount(); ++n) {
+                auto *item = group->child(n);
+                const bool match = query.isEmpty() || item->text(0).contains(query, Qt::CaseInsensitive) ||
+                                    group->text(0).contains(query, Qt::CaseInsensitive);
+                item->setHidden(!match);
+                if (match) ++visible;
+            }
+            group->setHidden(!visible);
+            if (!query.isEmpty()) group->setExpanded(true);
+        }
+    });
+    auto *net = new NetPage;
+    connect(net, &NetPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::NETWORK, QString(), t, m); });
+    addPage(maintenance, net, tr("Network protection"), QStringLiteral("network"));
     backup_ = new BackupPage;
     connect(backup_, &BackupPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::BACKUP, QString(), t, m); });
-    sub->addTab(overview_, tr("Overview"));
-    sub->addTab(diag, tr("Diagnostics"));
-    sub->addTab(power, tr("Power"));
-    sub->addTab(net, tr("Network"));
-    sub->addTab(toolsTab, tr("System info"));
-    sub->addTab(backup_, tr("Backup"));
-    // The sub-tab open last time, as "top,group" indexes in gui.ini (group -1: the top page is not a group).
-    if (const QStringList last = guiSettings().value(QStringLiteral("health/tab")).toString().split(','); last.size() == 2) {
-        const int top = last[0].toInt();
-        if (top >= 0 && top < sub->count()) {
-            sub->setCurrentIndex(top);
-            auto *group = qobject_cast<QTabWidget *>(sub->currentWidget());
-            const int page = last[1].toInt();
-            if (group && page >= 0 && page < group->count()) group->setCurrentIndex(page);
+    addPage(maintenance, backup_, tr("Backups"), QStringLiteral("backup"));
+    connect(navigation_, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem *item, QTreeWidgetItem *) {
+        if (!item || !item->parent()) return;
+        for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
+            if (it.value() == item) {
+                pages_->setCurrentWidget(it.key());
+                guiSettings().setValue(QStringLiteral("health/page"), item->data(0, Qt::UserRole).toString());
+                break;
+            }
         }
+    });
+    connect(navSearch, &QLineEdit::textChanged, this, [this](const QString &query) {
+        for (int i = 0; i < navigation_->topLevelItemCount(); ++i) {
+            auto *group = navigation_->topLevelItem(i);
+            int visible = 0;
+            for (int n = 0; n < group->childCount(); ++n) {
+                auto *item = group->child(n);
+                const bool match = query.isEmpty() || item->text(0).contains(query, Qt::CaseInsensitive) ||
+                                    group->text(0).contains(query, Qt::CaseInsensitive);
+                item->setHidden(!match);
+                if (match) ++visible;
+            }
+            group->setHidden(!visible);
+            if (!query.isEmpty()) group->setExpanded(true);
+        }
+    });
+    const QString lastPage = guiSettings().value(QStringLiteral("health/page"), QStringLiteral("overview")).toString();
+    QTreeWidgetItem *initial = pageItems_.value(overview_);
+    for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
+        if (it.value()->data(0, Qt::UserRole).toString() == lastPage) { initial = it.value(); break; }
     }
-    auto remember = [sub] {
-        auto *group = qobject_cast<QTabWidget *>(sub->currentWidget());
-        guiSettings().setValue(QStringLiteral("health/tab"), QStringLiteral("%1,%2").arg(sub->currentIndex()).arg(group ? group->currentIndex() : -1));
-    };
-    connect(sub, &QTabWidget::currentChanged, this, remember);
-    for (QTabWidget *g : {diag, power, toolsTab}) connect(g, &QTabWidget::currentChanged, this, remember);
-    // The Overview's "Show" buttons: the page they name, wherever it sits.
+    navigation_->setCurrentItem(initial);
+    // currentItemChanged selects the page synchronously; no tool is run in the background.
+
     connect(overview_, &OverviewPage::openPage, this, [monitor, this](const QString &target) {
         QWidget *page = nullptr;
         if (target == QLatin1String("monitor")) page = monitor;
@@ -167,6 +340,14 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         else if (target == QLatin1String("cooling")) page = cooling_;
         else if (target == QLatin1String("dgpu")) page = findChild<DgpuPage *>();
         else if (target == QLatin1String("sleep")) page = findChild<SleepPage *>();
+        else if (target == QLatin1String("klog")) page = klog_;
+        else if (target == QLatin1String("tools")) page = toolDirectory_;
+        else if (target == QLatin1String("smart")) {
+            for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it)
+                if (it.value()->data(0, Qt::UserRole).toString() == QStringLiteral("smart")) {
+                    page = it.key(); break;
+                }
+        }
         showPage(page);
     });
     auto *root = new QVBoxLayout(monitor);
@@ -206,13 +387,17 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *top = new QHBoxLayout;
     summary_ = new QLabel;
     summary_->setTextFormat(Qt::RichText);
-    summary_->setWordWrap(true);  // up to 13 counters
+    summary_->setWordWrap(true);
+    QFont monitorFont = summary_->font();
+    monitorFont.setBold(true);
+    monitorFont.setPointSize(monitorFont.pointSize() + 2);
+    summary_->setFont(monitorFont);
     top->addWidget(summary_, 1);
-    auto *bScan = new QPushButton(QStringLiteral("Scan now"));
+    auto *bScan = new QPushButton(tr("Check now"));
     connect(bScan, &QPushButton::clicked, this, &HealthTab::scan);
     top->addWidget(bScan);
-    auto *bSeen = new QPushButton(tr("Mark all seen"));
-    bSeen->setToolTip(tr("The events shown so far stop counting as new (the Overview badge too). The list and the saved log stay as they are."));
+    auto *bSeen = new QPushButton(tr("Mark reviewed"));
+    bSeen->setToolTip(tr("Acknowledge existing event notifications without deleting logs or fixing the underlying causes."));
     connect(bSeen, &QPushButton::clicked, this, &HealthTab::markSeen);
     top->addWidget(bSeen);
     auto *bNotify = new QPushButton(tr("Notifications…"));
@@ -221,10 +406,16 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     top->addWidget(bNotify);
     root->addLayout(top);
 
+    scanWarning_ = new QLabel;
+    scanWarning_->setWordWrap(true);
+    scanWarning_->setVisible(false);
+    scanWarning_->setStyleSheet(QStringLiteral("color:%1").arg(theme::DANGER));
+    root->addWidget(scanWarning_);
     source_ = new QLabel;
     source_->setWordWrap(true);
     source_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
     root->addWidget(source_);
+    source_->setVisible(false);
 
     days_ = new DayBars;
     connect(days_, &DayBars::dayClicked, this, &HealthTab::filterDay);
@@ -234,19 +425,58 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     dayInfo_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
     root->addWidget(dayInfo_);
 
+    auto *filterRow = new QHBoxLayout;
+    eventSearch_ = new QLineEdit;
+    eventSearch_->setClearButtonEnabled(true);
+    eventSearch_->setPlaceholderText(tr("Search events, codes or devices…"));
+    filterRow->addWidget(eventSearch_, 1);
+    severityFilter_ = new QComboBox;
+    severityFilter_->addItem(tr("All levels"), QStringLiteral("all"));
+    severityFilter_->addItem(tr("Critical"), QStringLiteral("critical"));
+    severityFilter_->addItem(tr("Errors"), QStringLiteral("error"));
+    severityFilter_->addItem(tr("Warnings / other"), QStringLiteral("other"));
+    filterRow->addWidget(severityFilter_);
+    technicalEvents_ = new QCheckBox(tr("Technical view"));
+    technicalEvents_->setToolTip(tr("Show raw event titles, kernel read mode, PCIe counters and saved-log controls."));
+    filterRow->addWidget(technicalEvents_);
+    root->addLayout(filterRow);
+
     list_ = new QTreeWidget;
-    list_->setColumnCount(3);
-    list_->setHeaderLabels({QStringLiteral("Uptime"), QStringLiteral("Kind"), QStringLiteral("Event")});
+    list_->setColumnCount(4);
+    list_->setHeaderLabels({tr("When"), tr("Level"), tr("Component"), tr("What happened")});
     list_->setRootIsDecorated(false);
     list_->setAlternatingRowColors(true);
+    list_->setUniformRowHeights(true);
+    list_->setSortingEnabled(false);
     list_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     list_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    list_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     list_->header()->setStretchLastSection(true);
-    // Double-click or right-click: the event in the kernel log, and the page its kind points to.
+    connect(eventSearch_, &QLineEdit::textChanged, this, &HealthTab::applyDayFilter);
+    connect(severityFilter_, &QComboBox::currentIndexChanged, this, [this](int) { applyDayFilter(); });
+    connect(technicalEvents_, &QCheckBox::toggled, this, [this](bool technical) {
+        source_->setVisible(technical);
+        aer_->setVisible(technical);
+        for (int i = 0; i < list_->topLevelItemCount(); ++i) {
+            auto *item = list_->topLevelItem(i);
+            if (item->data(0, Qt::UserRole + 3).toBool()) continue;
+            const QJsonObject e = QJsonDocument::fromJson(item->data(0, Qt::UserRole).toByteArray()).object();
+            if (!e.isEmpty()) {
+                const QString title = e.value(QStringLiteral("title")).toString();
+                const QString key = item->data(0, Qt::UserRole + 1).toString();
+                const int repeats = groups_.value(key).n;
+                item->setText(3, (technical ? title : friendlyEvent(e)) +
+                                 (repeats > 1 ? tr("  ×%1").arg(repeats) : QString()));
+            }
+        }
+        applyDayFilter();
+    });
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(list_, &QTreeWidget::customContextMenuRequested, this, &HealthTab::eventMenu);
     connect(list_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *it, int) {
-        showInKlog(QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object());
+        const QJsonObject e = QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object();
+        if (!e.isEmpty()) explainEvent(e);
+        else QMessageBox::information(this, tr("Saved event"), it->toolTip(3));
     });
     root->addWidget(list_, 1);
 
@@ -254,36 +484,41 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     aer_->setWordWrap(true);
     aer_->setTextFormat(Qt::RichText);
     root->addWidget(aer_);
+    aer_->setVisible(false);
 
     // Persistent log: every event, across boots, until cleared.
+    auto *technicalPanel = new QWidget;
+    auto *technicalLayout = new QVBoxLayout(technicalPanel);
+    technicalLayout->setContentsMargins(0, 0, 0, 0);
     auto *logRow = new QHBoxLayout;
     logInfo_ = new QLabel;
     logInfo_->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
     logRow->addWidget(logInfo_, 1);
-    auto *bOpen = new QPushButton(QStringLiteral("Open saved log"));
+    auto *bOpen = new QPushButton(tr("Open saved log"));
     connect(bOpen, &QPushButton::clicked, this, [] { QDesktopServices::openUrl(QUrl::fromLocalFile(logPath())); });
     logRow->addWidget(bOpen);
-    auto *bClear = new QPushButton(QStringLiteral("Clear saved log"));
+    auto *bClear = new QPushButton(tr("Clear saved log"));
     connect(bClear, &QPushButton::clicked, this, [this] {
-        if (QMessageBox::question(this, QStringLiteral("Clear saved log"),
-                QStringLiteral("Delete every saved kernel error (all boots)?")) != QMessageBox::Yes) return;
+        if (QMessageBox::question(this, tr("Clear saved log"),
+                tr("Delete all locally saved kernel errors from previous and current boots?")) != QMessageBox::Yes) return;
         QFile::remove(logPath());
         QFile::remove(logPath() + QStringLiteral(".1"));
-        // Keep savedSeq_: events already seen this boot are not written again.
         updateLogInfo();
         refreshDays();
+        loadHistoryDay();
+        applyDayFilter();
     });
     logRow->addWidget(bClear);
-    root->addLayout(logRow);
-
-    auto *hint = new QLabel(QStringLiteral(
-        "Xid 154 only names the recovery the GPU needs — the cause is the Xid logged just before it. "
-        "Xid 13/31/43/45 are usually the application (or an unstable GPU curve); 62/79/119/120 are "
-        "firmware or power level. Machine checks and lockups point at CPU Curve Optimizer or RAM timings. "
-        "Hover a row for the full kernel line."));
+    technicalLayout->addLayout(logRow);
+    auto *hint = new QLabel(tr("Technical note: Xid 154 reports recovery, not the original cause. "
+                              "Earlier Xid codes, machine checks and PCIe events need contextual diagnosis. "
+                              "Right-click an event to open the related tool or inspect its raw log."));
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color:%1").arg(theme::MUTED));
-    root->addWidget(hint);
+    technicalLayout->addWidget(hint);
+    root->addWidget(technicalPanel);
+    technicalPanel->setVisible(false);
+    connect(technicalEvents_, &QCheckBox::toggled, technicalPanel, &QWidget::setVisible);
 
     debounce_ = new QTimer(this);
     debounce_->setSingleShot(true);
@@ -354,6 +589,7 @@ QList<QVariantMap> HealthTab::overviewCards() const {
 QList<QVariantMap> HealthTab::eventsSince(quint64 seq) const {
     QList<QVariantMap> out;
     for (int i = list_->topLevelItemCount() - 1; i >= 0; --i) {  // the list is newest first
+        if (list_->topLevelItem(i)->data(0, Qt::UserRole + 3).toBool()) continue;
         const QJsonObject e = QJsonDocument::fromJson(list_->topLevelItem(i)->data(0, Qt::UserRole).toByteArray()).object();
         const quint64 s = quint64(e.value(QStringLiteral("seq")).toDouble());
         if (s <= seq) continue;
@@ -390,6 +626,8 @@ void HealthTab::scan() {
     if (busy_) return;
     if (!QFileInfo(helperPath()).isExecutable()) {
         source_->setText(QStringLiteral("tune-helper is not installed."));
+        scanWarning_->setText(tr("Kernel event monitoring is unavailable: tune-profile-helper was not found."));
+        scanWarning_->setVisible(true);
         return;
     }
     busy_ = true;
@@ -399,7 +637,12 @@ void HealthTab::scan() {
         // security level -- this runs at start-up and on a timer with the window hidden.
         privileged::run(privileged::helperPath(QStringLiteral("health-reader")), req, this, [this](const privileged::Result &r) {
             busy_ = false;
-            if (!r.reached) { source_->setText(QStringLiteral("Kernel log restricted and pkexec failed: ") + r.message()); return; }
+            if (!r.reached) {
+                source_->setText(QStringLiteral("Kernel log restricted and pkexec failed: ") + r.message());
+                scanWarning_->setText(tr("Kernel monitoring is unavailable: %1").arg(r.message()));
+                scanWarning_->setVisible(true);
+                return;
+            }
             onReply(r.json, true);
         });
         return;
@@ -415,6 +658,8 @@ void HealthTab::scan() {
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
         busy_ = false;
+        scanWarning_->setText(tr("Kernel monitor could not start."));
+        scanWarning_->setVisible(true);
         p->deleteLater();
     });
     QTimer::singleShot(10000, p, [guard] { if (guard && guard->state() != QProcess::NotRunning) guard->kill(); });
@@ -433,8 +678,11 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
             return;
         }
         source_->setText(QStringLiteral("Scan failed: ") + r.value(QStringLiteral("error")).toString());
+        scanWarning_->setText(tr("Kernel monitoring failed: %1").arg(r.value(QStringLiteral("error")).toString()));
+        scanWarning_->setVisible(true);
         return;
     }
+    scanWarning_->setVisible(false);
     source_->setText(viaRoot
         ? QStringLiteral("Kernel log is restricted (kernel.dmesg_restrict=1): read through pkexec every %1 min. "
                          "sysctl kernel.dmesg_restrict=0 allows direct, faster checks.").arg(POLL_ROOT_MS / 60000)
@@ -516,13 +764,20 @@ void HealthTab::addEvent(const QJsonObject &e, const QString &bootId) {
         g->lastUs = tsUs;
         ++g->n;
         list_->insertTopLevelItem(0, list_->takeTopLevelItem(list_->indexOfTopLevelItem(g->row)));  // newest first
-        g->row->setText(0, uptime(quint64(g->firstUs)) + QStringLiteral(" – ") + uptime(quint64(tsUs)));
-        g->row->setText(2, g->base + QStringLiteral("  ×%1").arg(g->n));
+        g->row->setText(0, QDateTime::fromMSecsSinceEpoch(wallMs(g->firstUs)).toString(QStringLiteral("yyyy-MM-dd HH:mm")) +
+                           QStringLiteral(" – ") + QDateTime::fromMSecsSinceEpoch(wallMs(tsUs)).toString(QStringLiteral("HH:mm")));
+        g->row->setText(3, (technicalEvents_->isChecked() ? g->base : friendlyEvent(e)) + tr("  ×%1").arg(g->n));
         return;
     }
 
-    auto *it = new QTreeWidgetItem({uptime(quint64(tsUs)), kind.toUpper(), title});
-    it->setToolTip(2, e.value(QStringLiteral("text")).toString());
+    const QString level = e.value(QStringLiteral("level")).toString();
+    auto *it = new QTreeWidgetItem({QDateTime::fromMSecsSinceEpoch(wallMs(tsUs)).toString(QStringLiteral("yyyy-MM-dd HH:mm")),
+                                    level == QLatin1String("critical") ? tr("Critical") :
+                                    level == QLatin1String("error") ? tr("Error") : tr("Notice"),
+                                    kind.toUpper(), technicalEvents_->isChecked() ? title : friendlyEvent(e)});
+    it->setToolTip(3, tr("Original: %1\nKernel uptime: %2\n%3")
+                          .arg(title, uptime(quint64(tsUs)), e.value(QStringLiteral("text")).toString()));
+    it->setData(0, Qt::UserRole + 4, level);
     // The record itself (with its boot and seq) travels with the row: the menu and double-click need them.
     QJsonObject stored = e;
     stored.insert(QStringLiteral("boot_id"), bootId);
@@ -530,11 +785,15 @@ void HealthTab::addEvent(const QJsonObject &e, const QString &bootId) {
     it->setData(0, Qt::UserRole + 1, key);  // its group, so a row dropped below forgets it
     it->setData(0, Qt::UserRole + 2, QDateTime::fromMSecsSinceEpoch(wallMs(tsUs)).date().toString(Qt::ISODate));  // its day, for the day chart
     const QColor c(levelColor(e.value(QStringLiteral("level")).toString()));
-    for (int i = 0; i < 3; ++i) it->setForeground(i, c);
+    for (int i = 0; i < 4; ++i) it->setForeground(i, c);
     list_->insertTopLevelItem(0, it);  // newest first
+    applyDayFilter();
     groups_[key] = Group{it, title, tsUs, tsUs, 1};
-    while (list_->topLevelItemCount() > MAX_ROWS) {
-        QTreeWidgetItem *old = list_->takeTopLevelItem(list_->topLevelItemCount() - 1);
+    while (list_->topLevelItemCount() - historyRows_.size() > MAX_ROWS) {
+        int lastLive = list_->topLevelItemCount() - 1;
+        while (lastLive >= 0 && list_->topLevelItem(lastLive)->data(0, Qt::UserRole + 3).toBool()) --lastLive;
+        if (lastLive < 0) break;
+        QTreeWidgetItem *old = list_->takeTopLevelItem(lastLive);
         const QString oldKey = old->data(0, Qt::UserRole + 1).toString();
         if (groups_.value(oldKey).row == old) groups_.remove(oldKey);
         delete old;
@@ -551,15 +810,28 @@ void HealthTab::markSeen() {
 }
 
 void HealthTab::showPage(QWidget *page) {
-    if (!page) return;
-    for (QTabWidget *group : findChildren<QTabWidget *>()) {
-        if (group != sub_ && group->indexOf(page) >= 0) {
-            group->setCurrentWidget(page);
-            sub_->setCurrentWidget(group);
-            return;
+    if (!page || !pages_) return;
+    if (toolItems_.contains(page)) {
+        auto *toolItem = toolItems_.value(page);
+        if (toolItem->isHidden() || toolItem->parent()->isHidden()) {
+            if (auto *search = findChild<QLineEdit *>(QStringLiteral("healthToolSearch"))) search->clear();
         }
+        toolItem->parent()->setExpanded(true);
+        if (toolNavigation_) toolNavigation_->setCurrentItem(toolItem);
+        page = toolDirectory_;
     }
-    sub_->setCurrentWidget(page);
+    if (!pageItems_.contains(page)) return;
+    QTreeWidgetItem *item = pageItems_.value(page);
+    if (item->isHidden() || item->parent()->isHidden()) {
+        // Navigation initiated by an overview card must never be blocked by a
+        // search filter; clear it before selecting the target.
+        if (auto *search = findChild<QLineEdit *>(QStringLiteral("healthNavSearch"))) search->clear();
+        item->setHidden(false);
+        item->parent()->setHidden(false);
+    }
+    item->parent()->setExpanded(true);
+    navigation_->setCurrentItem(item);
+    pages_->setCurrentWidget(page);
 }
 
 void HealthTab::openDgpuPage() { showPage(findChild<DgpuPage *>()); }
@@ -583,20 +855,139 @@ void HealthTab::refreshDays() {
 void HealthTab::filterDay(const QString &date) {
     dayFilter_ = dayFilter_ == date ? QString() : date;
     days_->setSelected(dayFilter_);
+    loadHistoryDay();
     applyDayFilter();
+}
+
+void HealthTab::loadHistoryDay() {
+    for (QTreeWidgetItem *it : historyRows_) {
+        if (list_->indexOfTopLevelItem(it) >= 0) delete list_->takeTopLevelItem(list_->indexOfTopLevelItem(it));
+    }
+    historyRows_.clear();
+    if (dayFilter_.isEmpty()) return;
+    // health.log is bounded and rotated; a selected historical day may have
+    // fallen out of retention. Never claim that an absent row means no event.
+    const QRegularExpression pattern(QStringLiteral(
+        R"(^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\s+boot=([a-fA-F0-9]+)\s+seq=([0-9]+)\s+(\S+)\s+(\S+)\s+(.*?)\s+\|\s+(.*)$)"));
+    QSet<QString> seen;
+    for (int i = 0; i < list_->topLevelItemCount(); ++i) {
+        auto *it = list_->topLevelItem(i);
+        if (it->data(0, Qt::UserRole + 2).toString() != dayFilter_) continue;
+        const QJsonObject e = QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object();
+        if (e.isEmpty()) continue;
+        seen.insert(e.value(QStringLiteral("boot_id")).toString().left(8) + QLatin1Char(':') +
+                    QString::number(quint64(e.value(QStringLiteral("seq")).toDouble())));
+    }
+    QList<QByteArray> matches;
+    for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
+        while (!file.atEnd()) {
+            const QByteArray line = file.readLine();
+            if (!line.startsWith((dayFilter_ + QLatin1Char(' ')).toLatin1())) continue;
+            matches.append(line);
+            if (matches.size() > MAX_ROWS) matches.removeFirst();
+        }
+    }
+    // Keep the most recent 500 records, not the oldest entries of a busy day.
+    for (auto it = matches.crbegin(); it != matches.crend(); ++it) {
+        const auto match = pattern.match(QString::fromUtf8(*it));
+        if (!match.hasMatch()) continue;
+        const QString key = match.captured(2) + QLatin1Char(':') + match.captured(3);
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+        const QString level = match.captured(4).toLower();
+        const QString kind = match.captured(5);
+        const QString original = match.captured(6);
+        const QString raw = match.captured(7).trimmed();
+        const QJsonObject e{{QStringLiteral("kind"), kind.toLower()}, {QStringLiteral("title"), original},
+                            {QStringLiteral("level"), level}, {QStringLiteral("text"), raw}};
+        auto *item = new QTreeWidgetItem({match.captured(1).left(16),
+                                           level == QLatin1String("critical") ? tr("Critical") :
+                                           level == QLatin1String("error") ? tr("Error") : tr("Notice"),
+                                           kind, technicalEvents_->isChecked() ? original : friendlyEvent(e)});
+        item->setToolTip(3, tr("Saved record (may be from a previous boot):\n%1\n%2").arg(original, raw));
+        item->setData(0, Qt::UserRole + 2, dayFilter_);
+        item->setData(0, Qt::UserRole + 3, true);
+        item->setData(0, Qt::UserRole + 4, level);
+        for (int c = 0; c < 4; ++c) item->setForeground(c, QColor(levelColor(level)));
+        list_->addTopLevelItem(item);
+        historyRows_.append(item);
+    }
 }
 
 void HealthTab::applyDayFilter() {
     int shown = 0;
+    const QString needle = eventSearch_ ? eventSearch_->text().trimmed() : QString();
+    const QString severity = severityFilter_ ? severityFilter_->currentData().toString() : QStringLiteral("all");
     for (int i = 0; i < list_->topLevelItemCount(); ++i) {
         QTreeWidgetItem *it = list_->topLevelItem(i);
-        const bool hidden = !dayFilter_.isEmpty() && it->data(0, Qt::UserRole + 2).toString() != dayFilter_;
-        it->setHidden(hidden);
-        if (!hidden) ++shown;
+        const QString level = it->data(0, Qt::UserRole + 4).toString();
+        const bool dayMatch = dayFilter_.isEmpty() || it->data(0, Qt::UserRole + 2).toString() == dayFilter_;
+        const bool levelMatch = severity == QLatin1String("all") || severity == level ||
+                                (severity == QLatin1String("other") && level != QLatin1String("critical") && level != QLatin1String("error"));
+        const bool textMatch = needle.isEmpty() ||
+                               (it->text(2) + QLatin1Char(' ') + it->text(3) + QLatin1Char(' ') + it->toolTip(3))
+                                   .contains(needle, Qt::CaseInsensitive);
+        const bool show = dayMatch && levelMatch && textMatch;
+        it->setHidden(!show);
+        if (show) ++shown;
     }
-    if (dayFilter_.isEmpty()) dayInfo_->setText(tr("Last 30 days. Click a day to show only its events from this session."));
-    else if (!shown) dayInfo_->setText(tr("%1: no events from this session. Older days are in the saved log.").arg(dayFilter_));
-    else dayInfo_->setText(tr("%1: %2 rows from this session. Click the day again to show all.").arg(dayFilter_).arg(shown));
+    if (dayFilter_.isEmpty())
+        dayInfo_->setText(tr("%1 events shown from this session. Select a day to inspect saved history.").arg(shown));
+    else if (shown == 0)
+        dayInfo_->setText(tr("%1: No matching saved records are available. Logs may have rotated or been cleared.").arg(dayFilter_));
+    else
+        dayInfo_->setText(tr("%1: %2 matching records (saved history and current session). Click the day again to clear the date filter.")
+                             .arg(dayFilter_).arg(shown));
+}
+
+QString HealthTab::friendlyEvent(const QJsonObject &e) {
+    const QString kind = e.value(QStringLiteral("kind")).toString().toLower();
+    const int code = e.value(QStringLiteral("code")).toInt();
+    if (kind == QLatin1String("xid")) {
+        if (code == 79 || e.value(QStringLiteral("title")).toString().contains(QStringLiteral("Xid 79")))
+            return tr("NVIDIA GPU communication was lost");
+        if (code == 154) return tr("NVIDIA GPU entered recovery (see previous error)");
+        return tr("NVIDIA graphics driver reported a GPU error");
+    }
+    if (kind == QLatin1String("gsp")) return tr("NVIDIA GPU firmware stopped responding");
+    if (kind == QLatin1String("mce")) return tr("Processor reported a hardware error");
+    if (kind == QLatin1String("aer")) return tr("A PCIe device reported a connection error");
+    if (kind == QLatin1String("lockup")) return tr("A CPU core or kernel task stopped responding");
+    if (kind == QLatin1String("nvme")) return tr("Storage device reported an error");
+    if (kind == QLatin1String("fs")) return tr("File system reported a data or metadata error");
+    if (kind == QLatin1String("igpu")) return tr("Integrated graphics reported a problem");
+    if (kind == QLatin1String("wifi")) return tr("Wireless device or firmware reported a problem");
+    if (kind == QLatin1String("thermal")) return tr("A temperature-related warning was recorded");
+    if (kind == QLatin1String("oom")) return tr("System ran out of available memory");
+    if (kind == QLatin1String("oops")) return tr("A kernel error or warning was recorded");
+    if (kind == QLatin1String("d3cold")) return tr("GPU power-state transition reported a problem");
+    return e.value(QStringLiteral("title")).toString();
+}
+
+void HealthTab::explainEvent(const QJsonObject &e) {
+    const QString kind = e.value(QStringLiteral("kind")).toString();
+    QString guidance = tr("Review the raw log and check whether the event repeats before changing system settings.");
+    if (kind == QLatin1String("xid") || kind == QLatin1String("gsp"))
+        guidance = tr("Check NVIDIA driver and GPU power status. If a custom GPU curve is active, review its stability. The code alone does not prove a hardware fault.");
+    else if (kind == QLatin1String("mce") || kind == QLatin1String("lockup"))
+        guidance = tr("Inspect CPU curve and RAM stability if they are tuned. Also check temperatures and associated kernel events.");
+    else if (kind == QLatin1String("nvme") || kind == QLatin1String("fs"))
+        guidance = tr("Back up important files, then check drive SMART information and the full kernel log.");
+    else if (kind == QLatin1String("thermal"))
+        guidance = tr("Inspect cooling, temperatures and the workload running when the event occurred.");
+    else if (kind == QLatin1String("wifi"))
+        guidance = tr("Check wireless firmware, driver version and whether the device reconnects normally.");
+    QMessageBox dialog(this);
+    dialog.setWindowTitle(tr("Event explanation"));
+    dialog.setIcon(QMessageBox::Information);
+    dialog.setTextFormat(Qt::PlainText);
+    dialog.setText(friendlyEvent(e));
+    dialog.setInformativeText(guidance);
+    dialog.setDetailedText(tr("Reported: %1\n\nRaw kernel record:\n%2")
+                           .arg(e.value(QStringLiteral("title")).toString(), e.value(QStringLiteral("text")).toString()));
+    dialog.exec();
 }
 
 void HealthTab::showInKlog(const QJsonObject &e) {
@@ -607,11 +998,20 @@ void HealthTab::showInKlog(const QJsonObject &e) {
 void HealthTab::eventMenu(const QPoint &pos) {
     QTreeWidgetItem *it = list_->itemAt(pos);
     if (!it) return;
+    if (it->data(0, Qt::UserRole + 3).toBool()) {
+        QMenu menu(this);
+        menu.addAction(tr("Copy saved record"), this, [it] {
+            QApplication::clipboard()->setText(it->toolTip(3));
+        });
+        menu.exec(list_->viewport()->mapToGlobal(pos));
+        return;
+    }
     const QJsonObject e = QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object();
     const QString kind = e.value(QStringLiteral("kind")).toString();
     const int code = e.value(QStringLiteral("code")).toInt();
     const QString title = e.value(QStringLiteral("title")).toString();
     QMenu menu(this);
+    menu.addAction(tr("Explain this event"), this, [this, e] { explainEvent(e); });
     menu.addAction(tr("Show in kernel log"), this, [this, e] { showInKlog(e); });
     // The page the event points to, only when there is something to do there now.
     static const QList<int> gpuCurveXids{13, 31, 43, 62, 119, 120};
@@ -629,18 +1029,14 @@ void HealthTab::eventMenu(const QPoint &pos) {
 }
 
 void HealthTab::updateSummary() {
-    auto part = [](const QString &name, int n) {
-        return QStringLiteral("<span style='color:%1'><b>%2</b> %3</span>").arg(n ? theme::DANGER : theme::OK).arg(n).arg(name);
-    };
-    QStringList parts{
-        part(QStringLiteral("NVIDIA Xid"), xid_), part(QStringLiteral("GSP timeout"), gsp_), part(QStringLiteral("machine check"), mce_),
-        part(QStringLiteral("PCIe AER"), aerN_), part(QStringLiteral("lockup"), lockup_), part(QStringLiteral("other"), other_)};
-    // The newer kinds appear only once seen: a permanent green "0 NVMe" on a machine without one is noise.
-    const std::pair<QString, int> extra[] = {
-        {tr("NVMe"), nvme_}, {tr("file system"), fs_}, {tr("Intel iGPU"), igpu_}, {tr("Wi-Fi"), wifi_},
-        {tr("thermal"), thermal_}, {tr("out of memory"), oom_}, {tr("kernel oops/bug"), oops_}};
-    for (const auto &[name, n] : extra) if (n) parts << part(name, n);
-    summary_->setText((seenMs_ ? tr("Not seen yet: ") : tr("Since boot: ")) + parts.join(QStringLiteral(" &nbsp;·&nbsp; ")));
+    const int errors = xid_ + gsp_ + mce_ + aerN_ + lockup_ + other_ +
+                       nvme_ + fs_ + igpu_ + wifi_ + thermal_ + oom_ + oops_;
+    const QString label = errors ? tr("%1 reported event(s) to review").arg(errors) :
+                                   tr("No new events to review");
+    summary_->setText(label);
+    summary_->setStyleSheet(QStringLiteral("color:%1").arg(errors ? theme::WARN : theme::OK));
+    summary_->setToolTip(tr("Counts events since startup, or since they were last marked reviewed. "
+                            "Reviewing does not resolve underlying issues or erase saved history."));
 }
 
 QString HealthTab::logPath() {

@@ -1,7 +1,7 @@
 //! Minimal `log` backend: stderr, optionally teeing into a capture buffer
 //! (the root helper returns autoload's log output to the GUI as its message).
 
-use log::{Level, LevelFilter, Log, Metadata, Record};
+use log::{Level, Log, Metadata, Record};
 use std::sync::Mutex;
 
 struct Logger { level: Level, capture: bool }
@@ -28,7 +28,7 @@ impl Log for Logger {
 pub fn init(level: Level, capture: bool) {
     let l = Box::leak(Box::new(Logger { level, capture }));
     if log::set_logger(l).is_ok() {
-        log::set_max_level(LevelFilter::from(level.to_level_filter()));
+        log::set_max_level(level.to_level_filter());
     }
 }
 

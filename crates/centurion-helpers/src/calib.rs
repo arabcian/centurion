@@ -50,6 +50,12 @@ const KEEP_BRAKES: usize = 40;
 const MAX_UNSAFE: usize = 50;
 /// Sessions' quality records kept (newest last).
 const KEEP_QUALITY: usize = 64;
+/// Days of storage-suite write totals kept.
+const KEEP_IO_DAYS: u64 = 14;
+/// Baseline records kept: one per session and phase, about the last 64 sessions.
+const KEEP_BASELINES: usize = 256;
+/// How many MADs a session's reference level may stray from its history before it is flagged.
+pub const BASELINE_Z: f64 = 4.0;
 const KEEP: usize = 10;
 const HALF_LIFE_DAYS: f64 = 90.0;
 /// Rows age in steps of this many seconds, counted from the phase's newest row (`age_ref`). A row's
@@ -66,6 +72,8 @@ const MAX_FIT_STORE: u64 = 16 * 1024 * 1024;
 const KEEP_FITS: usize = 8;
 /// 2 = screening hyperparameters per objective ("screen" holds four entries).
 const FIT_STORE_VERSION: u64 = 2;
+/// Objective scale of the cached fit scales (`fit-scales.json`): 1 = metric families (BENCH_VERSION 6).
+const HYP_CACHE_VERSION: u64 = 1;
 
 /// One benchmark metric and its direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -180,6 +188,32 @@ impl Metric {
             ProbeRssMib | RaFootprintMib => Objective::Mem,
         }
     }
+    /// The scenario a metric stands for inside its objective (see `objective_gain`). Metrics of one
+    /// family read the same mechanism: a clock or C-state change moves every frame, wake-up and
+    /// ping-pong tail together, so counting them one by one made a latency objective of eleven
+    /// metrics 5.5x the size of the same change while power (three metrics) was 1.5x.
+    pub fn family(self) -> &'static str {
+        use Metric::*;
+        match self {
+            WakeP99Us | PingPongP99Us | FrameP99Us | FrameMedUs => "lat.interactive",
+            GameTailMs | GameJitterUs | CacheTailMs => "lat.game",
+            BusyFrameP99Us | BurstJobTailMs => "lat.contended",
+            FaultP99Us | FaultHugeP99Us | StallsPerSec => "lat.memory",
+            FsyncP99Ms | MixedReadP99Us => "lat.io_write",
+            RandReadP99Us | MmapFaultP99Us => "lat.io_read",
+            CpuSingle | CpuMulti => "thr.compute",
+            GameFrameMs | CacheFrameMs => "thr.game",
+            JobsPerSec | AllocMs => "thr.process",
+            TlbRandNs | TlbHugeNs | ShmRandNs | ThpPct | MemBwGbs => "thr.memory",
+            WriteMbs => "thr.io_write",
+            ReadMbs | IopsK => "thr.io_read",
+            IdleW => "pwr.idle",
+            PkgW | GameW | CpuEff => "pwr.loaded",
+            IoCpuUs => "pwr.io",
+            ProbeRssMib => "mem.heap",
+            RaFootprintMib => "mem.cache",
+        }
+    }
     /// Smallest relative change that counts as real in the one-at-a-time path. p99 tails
     /// jitter far more than means and counters.
     pub fn noise_floor(self) -> f64 {
@@ -225,16 +259,62 @@ impl Metric {
 /// the largest L3 shared by four threads: which L3 a thread lands on, what a migration costs -
 /// every earlier probe fitted in L2 and could not tell a V-Cache die from a frequency die),
 /// frame pacing of the game loop (every frame counts, not the worst five) and the package
-/// power it draws. Rows of set 4 stay and count 60 % (same probes, fewer metrics).
-pub const BENCH_VERSION: u8 = 5;
+/// power it draws. Rows of set 4 stay and count 60 % (same probes, fewer metrics). 6 = the
+/// same probes, objectives summed over metric families instead of metrics (`objective_gain`);
+/// older idle/load rows are brought to the new scale when read (`rescale_families`) and count 60 %.
+pub const BENCH_VERSION: u8 = 6;
+/// Benchmark set of the storage suite (IO rows only; idle/load rows stay at BENCH_VERSION).
+/// 6 = the write is timed in 32 MiB parts, each committed with fdatasync: WriteMbs is the
+/// drive's own speed (not the page cache's up to the dirty limit) and FsyncP99Ms is read
+/// against a writer that commits; a drop between parts flags an exhausted SLC cache.
+/// 7 = objectives over metric families (as BENCH_VERSION 6).
+pub const IO_BENCH_VERSION: u8 = 7;
 
-/// Scale of an objective that averages `k` metrics. A knob moves the one or two metrics it
-/// acts on and leaves the rest alone, so the plain mean shrank with every benchmark added: a
-/// 10 % better frame time among eight latency metrics came out as 1.3 %, below any margin
-/// autotune can use, and the more the suite measured the less every knob seemed to do. The
-/// objective is therefore the gain summed over its metrics, counted as if two of them carried
-/// it: mean x k/2 (never below the mean). One scale whatever else a session measured.
+/// The current benchmark set of a phase's rows.
+pub fn bench_version(phase: Phase) -> u8 { if phase == Phase::Io { IO_BENCH_VERSION } else { BENCH_VERSION } }
+
+/// Scale of an objective that averages `k` metric families (`Metric::family`). A knob moves the
+/// one or two scenarios it acts on and leaves the rest alone, so the plain mean shrank with every
+/// benchmark added: a 10 % better frame time among eight latency metrics came out as 1.3 %, below
+/// any margin autotune can use. The objective is therefore the gain summed over its families,
+/// counted as if two of them carried it: mean x k/2 (never below the mean). Families, not metrics:
+/// summed per metric, a change that moves every metric (EPP, boost, C-states) grew with the
+/// number of probes an objective has, and power (few probes) weighed a third of latency.
 pub fn objective_gain(k: usize) -> f64 { (k as f64 / 2.0).max(1.0) }
+
+/// Families per objective (lat, thr, pwr, mem) among `ms`.
+pub fn family_counts(ms: impl IntoIterator<Item = Metric>) -> [usize; 4] {
+    let mut f: [Vec<&str>; 4] = Default::default();
+    for m in ms {
+        let o = m.objective() as usize;
+        if !f[o].contains(&m.family()) { f[o].push(m.family()); }
+    }
+    f.map(|v| v.len())
+}
+
+/// Factor that brings a row of benchmark set <= 5 (objective = noise-weighted metric mean x
+/// k_metrics/2) to set 6 (family mean x k_families/2), for a session that measured `ms`. Exact
+/// for a change that moves its objective's metrics alike (the clock, EPP, C-state knobs the old
+/// scale overstated); a change of a single metric comes out somewhat smaller than set 6 would
+/// measure it, which the 60 % weight of older rows covers.
+pub fn rescale_families(ms: &[Metric]) -> [f64; 4] {
+    let mut k = [0usize; 4];
+    for m in ms { k[m.objective() as usize] += 1; }
+    let f = family_counts(ms.iter().copied());
+    std::array::from_fn(|o| if k[o] == 0 { 1.0 } else { objective_gain(f[o]) / objective_gain(k[o]) })
+}
+
+/// The metrics a phase's design run measured in benchmark set 5 (old rows without a baseline record).
+const SET5_METRICS: [&[Metric]; 3] = {
+    use Metric::*;
+    [&[WakeP99Us, PingPongP99Us, FrameP99Us, FrameMedUs, GameTailMs, GameJitterUs, CacheTailMs, BusyFrameP99Us, BurstJobTailMs,
+       FaultP99Us, FaultHugeP99Us, GameFrameMs, CacheFrameMs, CpuSingle, CpuMulti, JobsPerSec, AllocMs, MemBwGbs, ThpPct, TlbRandNs,
+       TlbHugeNs, ShmRandNs, IdleW, GameW, CpuEff, ProbeRssMib],
+     &[WakeP99Us, PingPongP99Us, FrameP99Us, FrameMedUs, GameTailMs, GameJitterUs, CacheTailMs, BusyFrameP99Us, BurstJobTailMs,
+       FaultP99Us, FaultHugeP99Us, StallsPerSec, GameFrameMs, CacheFrameMs, CpuSingle, CpuMulti, JobsPerSec, AllocMs, MemBwGbs, ThpPct,
+       TlbRandNs, TlbHugeNs, ShmRandNs, PkgW, ProbeRssMib],
+     &[FsyncP99Ms, MixedReadP99Us, RandReadP99Us, MmapFaultP99Us, WriteMbs, ReadMbs, IopsK, IoCpuUs, RaFootprintMib]]
+};
 
 /// Gains of the storage suite's objectives (4 latency, 3 throughput, 1 power, 1 footprint
 /// metric): IO rows logged before version 4 hold plain means of the same metrics.
@@ -302,12 +382,14 @@ pub struct Measured { pub lat: Option<f64>, pub thr: Option<f64>, pub pwr: Optio
 
 pub fn fold(effects: &BTreeMap<Metric, f64>) -> Measured {
     let mean = |o: Objective| {
-        let v: Vec<f64> = effects.iter().filter(|(m, _)| m.objective() == o).map(|(_, e)| *e).collect();
-        (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64 * objective_gain(v.len()))
+        let mut fam: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
+        for (m, e) in effects.iter().filter(|(m, _)| m.objective() == o) { let a = fam.entry(m.family()).or_default(); a.0 += e; a.1 += 1.0; }
+        (!fam.is_empty()).then(|| fam.values().map(|(s, n)| s / n).sum::<f64>() / fam.len() as f64 * objective_gain(fam.len()))
     };
     Measured { lat: mean(Objective::Lat), thr: mean(Objective::Thr), pwr: mean(Objective::Pwr), mem: mean(Objective::Mem), n: 1.0 }
 }
 
+type StoredModelInput = (Vec<Factor>, Vec<model::Row>, Vec<Option<Hyper>>, String);
 impl Measured {
     fn from_json(v: &Value) -> Measured {
         Measured { lat: v["lat"].as_f64(), thr: v["thr"].as_f64(), pwr: v["pwr"].as_f64(), mem: v["mem"].as_f64(), n: v["n"].as_f64().unwrap_or(1.0) }
@@ -331,7 +413,7 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     ("thp.khugepaged_defrag", "khugepaged: minutes"), ("thp.khp_max_ptes_none", "khugepaged: minutes"),
     ("thp.khp_pages_to_scan", "khugepaged: minutes"), ("thp.khp_scan_sleep_ms", "khugepaged: minutes"),
     ("thp.khp_max_ptes_swap", "khugepaged: minutes"), ("thp.khp_alloc_sleep_ms", "khugepaged: minutes"),
-    ("mm.lru_gen", "switching MGLRU off under load stalls"), ("mm.ksm_run", "no effect without mergeable memory"),
+    ("mm.ksm_run", "no effect without mergeable memory"),
     ("vm.max_map_count", "a limit, not a cost"), ("vm.dirty_ratio", "tested as vm.dirty"), ("vm.dirty_background_ratio", "vm.dirty"),
     ("vm.dirty_bytes", "vm.dirty"), ("vm.dirty_background_bytes", "vm.dirty"),
     ("sched.ext", "needs a userspace scheduler"), ("kernel.watchdog", "never disabled"), ("kernel.sched_schedstats", "debug counters"),
@@ -351,6 +433,16 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     // ITMT hands the preferred cores to whatever runs all the time: under load that is the ballast's
     // spinners, so the probes got the lower-ranked cores and "on" measured worse than it is.
     ("sched.itmt", "preferred cores go to the load phase's ballast, not to the probes (structural)"),
+    ("blk.kyber_read_lat_ns", "elevator tunable: manual only"), ("blk.kyber_write_lat_ns", "elevator tunable: manual only"),
+    ("blk.dl_read_expire_ms", "elevator tunable: manual only"), ("blk.dl_write_expire_ms", "elevator tunable: manual only"),
+    ("blk.dl_fifo_batch", "elevator tunable: manual only"), ("blk.dl_writes_starved", "elevator tunable: manual only"),
+    ("blk.bfq_low_latency", "elevator tunable: manual only"), ("blk.bfq_slice_idle_ms", "elevator tunable: manual only"),
+    ("btrfs.discard_iops_limit", "background TRIM pacing: the storage suite never waits for it"),
+    ("btrfs.discard_kbps_limit", "background TRIM pacing: the storage suite never waits for it"),
+    ("btrfs.discard_max_size", "background TRIM pacing: the storage suite never waits for it"),
+    ("kernel.yield_type", "Project C kernels only: manual"),
+    ("thp.khp_max_ptes_shared", "khugepaged: minutes"), ("mm.ksm_advisor", "no effect without mergeable memory"),
+    ("vm.dirtytime_expire_seconds", "12 h timestamp age: longer than a run, unmeasurable"),
 ];
 
 /// A key the calibration never tests (see `EXCLUDED`). Measurements of such a key that an older
@@ -373,6 +465,8 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         // Upper bound never below the lower one (clamp panics otherwise: RAM under 1.6 GB).
         "vm.min_free_kbytes" => v(&[r / 2, r * 2].map(|x| x.clamp(16_384, ((ram_kb / 100) as i64).max(16_384)))),
         "mm.lru_gen_min_ttl" => v(&[0, 1000]),
+        // MGLRU off against every feature on: intermediate masks are not doses.
+        "mm.lru_gen" => v(&[0, 7]),
         // Storage (IO phase). Doses stay inside autotune's 2x (+1 doubling with evidence) trust
         // region around the boot value: a level it could never pick is a wasted run.
         "blk.read_ahead_kb" if r > 0 => v(&[r / 4, r / 2, r * 2, r * 4].map(|x| x.clamp(4, 16_384))),
@@ -389,6 +483,8 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         "zswap.max_pool_percent" => v(&[10, 20, 30]),
         // 0/1/2 are the whole range: the generic halve/double rule would only offer 1.
         "kernel.sched_burst_inherit_type" => v(&[0, 1, 2]),
+        // Launch-block slice request (µs), measured on the game and cache loops' own threads; 0 = default slice.
+        "launch.slice_us" => v(&[1000, 2000, 3000]),
         // BORE doses: halving/doubling would test penalty_offset 48 (= no burst is ever penalised, the
         // same as sched_bore 0) and a smoothness of 2 only; these bracket the stock value on both sides.
         "kernel.sched_burst_smoothness" => v(&[0, 2, 3]),
@@ -447,11 +543,16 @@ pub fn phases_for(key: &str, group: &str) -> Vec<(Phase, Benches)> {
         k if k == "thp" || k == "thp.shmem_enabled" || k.starts_with("thp.mthp_") =>
             vec![(Phase::Idle, b(true, false, false, false)), (Phase::Load, b(true, false, false, false))],
         "vm.stat_interval" => vec![(Phase::Idle, b(false, false, true, true))],
+        // Only the game and cache loops' own threads request the slice: the CPU suite, quiet and contended.
+        "launch.slice_us" => vec![(Phase::Idle, b(false, false, false, true)), (Phase::Load, b(false, false, false, true))],
         // The hard-lockup detector costs a performance counter and its NMIs: idle power, nothing under load.
         "kernel.nmi_watchdog" => vec![(Phase::Idle, b(false, false, true, true))],
         // Per-CPU free lists are the page allocator's fast path: fault cost on a quiet machine, and how
         // much memory sits parked in them when it is short.
         "vm.percpu_pagelist_high_fraction" => vec![(Phase::Idle, b(true, false, false, false)), (Phase::Load, b(true, false, false, false))],
+        // The page reclaim algorithm: what the CPU suite and the memory probe pay on a quiet machine
+        // and under the load phase's memory pressure (the ballast), where reclaim actually runs.
+        "mm.lru_gen" => vec![(Phase::Idle, b(true, false, false, true)), (Phase::Load, b(true, false, false, true))],
         _ => match group {
             "CPU" => vec![(Phase::Idle, b(false, false, true, true)), (Phase::Load, b(false, false, false, true))],
             "Scheduler" => vec![(Phase::Idle, b(false, false, false, true)), (Phase::Load, b(true, false, false, true))],
@@ -523,6 +624,8 @@ impl std::fmt::Debug for ModelCache { fn fmt(&self, f: &mut std::fmt::Formatter<
 /// let a few long idle/load sessions push out every IO and DEV row - the storage suite and the
 /// battery-only device runs are the rarest measurements in the log and the hardest to redo.
 /// Field rows (game sessions) are bounded by their own record and never trimmed here.
+/// Prediction checks kept (`Calibration::predcheck`).
+const KEEP_PREDCHECK: usize = 200;
 const PHASE_ROWS: [usize; 4] = [1100, 1100, 600, 300];
 
 fn pidx(phase: Phase) -> usize { phase.idx() }
@@ -556,7 +659,7 @@ impl std::fmt::Debug for FitStore { fn fmt(&self, f: &mut std::fmt::Formatter<'_
 fn store_entry(key: &str, phase: Phase, pf: &PhaseFit) -> Value {
     let fits: Vec<Value> = pf.fits.iter().map(|f| f.as_ref().map_or(Value::Null, |f| {
         let m = f.meta();
-        json!({"h": bits(&m.hyper.to_vec()), "w": bits(&m.w), "s": bits(&[m.loo_rmse, m.loo_r2, m.cover90, m.var_scale])})
+        json!({"h": bits(&m.hyper.to_vec()), "w": bits(&m.w), "s": bits(&[m.loo_rmse, m.loo_r2, m.cover90, m.var_scale, m.loso_r2, m.loso_cover])})
     })).collect();
     json!({"key": key, "phase": phase.name(), "order": pf.set.space.order, "heredity": bits(&pf.set.space.heredity),
            "screen": pf.set.screen.iter().map(|h| h.map_or(Value::Null, |h| bits(&h.to_vec()))).collect::<Vec<_>>(), "fits": fits})
@@ -631,11 +734,59 @@ pub struct Calibration {
     /// Quality record of every design session (phase, runs, reference-run noise per objective,
     /// disturbed runs, unwritable values, interruptions), newest last.
     pub quality: Vec<Value>,
+    /// Reference-run level of every design session, newest last (`note_baseline`):
+    /// {"t", "sess", "phase", "cx", "src", "m": {metric: [median, robust sd or null]}}. The effects are
+    /// relative to each session's own reference, so a drift of the machine itself shows only here.
+    pub baselines: Vec<Value>,
+    /// Predicted vs observed of every confirmation and verify check, newest last (`note_predcheck`):
+    /// {"t", "src": "confirm"|"verify", "phase", "goal", "mu", "sd", "obs"}; `sd` is the whole
+    /// tolerance scale (prediction sd and measurement noise combined).
+    pub predcheck: Vec<Value>,
     /// The file held idle/load data of an older benchmark set, which was dropped on reading.
     pub migrated: bool,
+    /// Environments the sessions ran in (`env_current`): hash -> {bios, microcode, kernel_release, cmdline, ram_speed}.
+    pub envs: BTreeMap<String, Value>,
+    /// Bytes the storage suite wrote per day (UTC day number), the last `KEEP_IO_DAYS` days: the
+    /// daily write budget (`centurion-calibrate --io-budget`) protects the drive's endurance.
+    pub io_days: BTreeMap<u64, u64>,
+    /// Session -> environment hash (an environment is fixed for a session; rows find theirs by `sess`).
+    pub sess_env: BTreeMap<u64, String>,
     /// Current kernel (major.minor) and time used to weight records.
     pub kernel: String,
     pub now: u64,
+    /// Current environment hash (set on loading, like `kernel`; empty = unknown, weight 1).
+    pub env: String,
+}
+
+/// Boot parameters that change what a knob does (security mitigations, CPU frequency driver, preemption).
+const ENV_CMDLINE: [&str; 4] = ["mitigations=", "amd_pstate=", "intel_pstate=", "preempt="];
+
+/// The machine's environment beyond the kernel version: BIOS, CPU microcode, kernel release, the
+/// boot parameters of `ENV_CMDLINE`, RAM speed (empty where no source exists). Returns (hash, record).
+pub fn env_current() -> (String, Value) {
+    let rd = |p: &str| std::fs::read_to_string(p).map(|s| s.trim().to_owned()).unwrap_or_default();
+    let microcode = crate::cpuinfo_head().lines().find_map(|l| l.strip_prefix("microcode")?.split_once(':').map(|(_, v)| v.trim().to_owned())).unwrap_or_default();
+    let raw = rd("/proc/cmdline");
+    let cmdline: Vec<&str> = raw.split_whitespace().filter(|t| ENV_CMDLINE.iter().any(|p| t.starts_with(p))).collect();
+    env_record(&rd("/sys/class/dmi/id/bios_version"), &microcode, &rd("/proc/sys/kernel/osrelease"), &cmdline.join(" "), "")
+}
+
+fn env_record(bios: &str, microcode: &str, kernel_release: &str, cmdline: &str, ram_speed: &str) -> (String, Value) {
+    let v = json!({"bios": bios, "microcode": microcode, "kernel_release": kernel_release, "cmdline": cmdline, "ram_speed": ram_speed});
+    // FNV-1a over the record: short, stable across runs and builds.
+    let h = v.to_string().bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+    (format!("{:08x}", h >> 32), v)
+}
+
+/// How much a row from environment `row` counts in environment `cur`: another BIOS or microcode x0.7,
+/// another `mitigations=` or `preempt=` x0.5 (on top of the kernel rule). Unknown on either side: 1.
+pub fn env_weight(cur: &Value, row: &Value) -> f64 {
+    if !cur.is_object() || !row.is_object() { return 1.0; }
+    let param = |v: &Value, p: &str| v["cmdline"].as_str().unwrap_or("").split_whitespace().find(|t| t.starts_with(p)).map(str::to_owned);
+    let mut w = 1.0;
+    if cur["bios"] != row["bios"] || cur["microcode"] != row["microcode"] { w *= 0.7; }
+    if param(cur, "mitigations=") != param(row, "mitigations=") || param(cur, "preempt=") != param(row, "preempt=") { w *= 0.5; }
+    w
 }
 
 fn neg(m: Measured) -> Measured {
@@ -761,7 +912,9 @@ impl Calibration {
         // sessions over many interaction terms.
         // GPU limits (cTGP, Dynamic Boost) do not change what a CPU knob does, and they are only readable
         // while the dGPU is on: they stay out of the id (the budget credit reads them from the description).
-        let cpu_lim: Map<String, Value> = desc["limits"].as_object().map(|m| m.iter().filter(|(k, _)| !k.starts_with("gpu_nv_")).map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
+        // ppt_cpu_cl was recorded later: kept out of the id (earlier sessions keep theirs) and given its
+        // own dimension; a session without it is unknown there, i.e. counts as the reference.
+        let cpu_lim: Map<String, Value> = desc["limits"].as_object().map(|m| m.iter().filter(|(k, _)| !k.starts_with("gpu_nv_") && *k != "ppt_cpu_cl").map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
         let mut lim = json!({"limits": cpu_lim, "fan": desc["fan"], "co": desc["co"]});
         // A USB-C charger caps the CPU like a lower limit does (only present then: the barrel adapter's
         // contexts keep the ids earlier sessions were recorded under).
@@ -769,6 +922,7 @@ impl Calibration {
         if !(desc["limits"].is_null() && desc["fan"].is_null() && desc["co"].is_null() && desc["adapter"].is_null()) {
             out.push(("ctx.limits".to_owned(), format!("L{:06x}", crate::model::fnv(lim.to_string().as_bytes()) & 0xFF_FFFF)));
         }
+        if let Some(cl) = desc["limits"]["ppt_cpu_cl"].as_i64() { out.push(("ctx.cl".to_owned(), cl.to_string())); }
         out
     }
     /// Per context dimension of one phase: the reference value when the phase's rows saw more than one
@@ -784,7 +938,7 @@ impl Calibration {
         }
         let kept = self.ctx_ref.get(phase.name());
         cnt.into_iter().filter(|(_, m)| m.len() >= 2).filter_map(|(k, m)| {
-            if let Some(v) = kept.and_then(|x| x.get(&k)).filter(|v| m.get(*v).map_or(false, |n| *n > 0)) { return Some((k, v.clone())); }
+            if let Some(v) = kept.and_then(|x| x.get(&k)).filter(|v| m.get(*v).is_some_and(|n| *n > 0)) { return Some((k, v.clone())); }
             m.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|(v, _)| (k, v))
         }).collect()
     }
@@ -799,7 +953,7 @@ impl Calibration {
     /// The context pseudo-knobs of one row (dimensions at their reference are left out).
     fn row_ctx(&self, r: &Row, refs: &BTreeMap<String, String>) -> Cfg {
         let Some(d) = self.contexts.get(&r.cx) else { return Vec::new() };
-        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).map_or(false, |rv| rv != v)).collect()
+        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).is_some_and(|rv| rv != v)).collect()
     }
     /// The power source the phase's power model uses: the preferred one when it has enough rows,
     /// else the one that has rows. Never both (see `PowerSrc`). None = no power rows / not a
@@ -817,15 +971,15 @@ impl Calibration {
     pub fn ctx_cfg(&self, phase: Phase, cx: &str) -> Cfg {
         let refs = self.ctx_refs(phase);
         let Some(d) = self.contexts.get(cx) else { return Vec::new() };
-        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).map_or(false, |rv| rv != v)).collect()
+        Self::ctx_dims(d).into_iter().filter(|(k, v)| refs.get(k).is_some_and(|rv| rv != v)).collect()
     }
     /// The same for a context description that may never have been measured: only dimension
     /// values some phase's rows were measured in are kept (an unmeasured value says nothing).
     pub fn ctx_cfg_for(&self, phase: Phase, desc: &Value) -> Cfg {
         let refs = self.ctx_refs(phase);
         let seen = |k: &str, v: &str| self.rows.iter().filter(|r| r.phase == phase)
-            .any(|r| self.contexts.get(&r.cx).map_or(false, |d| Self::ctx_dims(d).iter().any(|(a, b)| a == k && b == v)));
-        Self::ctx_dims(desc).into_iter().filter(|(k, v)| refs.get(k).map_or(false, |rv| rv != v) && seen(k, v)).collect()
+            .any(|r| self.contexts.get(&r.cx).is_some_and(|d| Self::ctx_dims(d).iter().any(|(a, b)| a == k && b == v)));
+        Self::ctx_dims(desc).into_iter().filter(|(k, v)| refs.get(k).is_some_and(|rv| rv != v) && seen(k, v)).collect()
     }
     /// Sets the preferred power source (drops the cached fits it changes).
     pub fn set_power_pref(&self, src: PowerSrc) {
@@ -866,7 +1020,8 @@ impl Calibration {
             if r.cfg.iter().any(|(k, _)| !same_family(phase, k)) { continue; }
             let age = age_ref.saturating_sub(r.t) as f64 / 86_400.0;
             let k = if self.kernel.is_empty() || major_minor(&r.kernel) == mm { 1.0 } else { 0.5 };
-            let b = if r.bv == BENCH_VERSION || r.field { 1.0 } else { 0.6 };
+            let k = k * self.row_env_weight(r.sess);
+            let b = if r.bv == bench_version(phase) || r.field { 1.0 } else { 0.6 };
             let mut cfg = r.cfg.clone();
             if !r.field {
                 for (key, mr) in &mrefs {
@@ -994,10 +1149,10 @@ impl Calibration {
             let mut out: [Option<Arc<Fit>>; 4] = Default::default();
             for (o, f) in fits.iter().enumerate() {
                 if f.is_null() { continue; }
-                let s = unbits(&f["s"]).filter(|s| s.len() == 4)?;
+                let s = unbits(&f["s"]).filter(|s| s.len() == 6)?;
                 let h = unbits(&f["h"]).filter(|h| h.len() == 6)?;
                 let meta = model::FitMeta { hyper: Hyper { sigma: h[0], main: h[1], pin: h[2], px: h[3], tri: h[4], ou: h[5] }, w: unbits(&f["w"])?,
-                                            loo_rmse: s[0], loo_r2: s[1], cover90: s[2], var_scale: s[3] };
+                                            loo_rmse: s[0], loo_r2: s[1], cover90: s[2], var_scale: s[3], loso_r2: s[4], loso_cover: s[5] };
                 out[o] = Some(set.refit_obj(o, &meta)?);
             }
             Some(PhaseFit { set, fits: out })
@@ -1019,7 +1174,7 @@ impl Calibration {
     /// The phase model's input as the store keys it: factors, rows, starting hyperparameters
     /// (screening per objective, then one fit per objective) and their fingerprint. A screening that
     /// starts from the legacy summed key is searched, not used as it is: it is keyed apart.
-    fn store_input(&self, phase: Phase) -> Option<(Vec<Factor>, Vec<model::Row>, Vec<Option<Hyper>>, String)> {
+    fn store_input(&self, phase: Phase) -> Option<StoredModelInput> {
         let (factors, rows) = self.set_input(phase)?;
         let (screen, _, legacy) = self.screen_inits(phase, None);
         let inits: Vec<Option<Hyper>> = screen.into_iter().chain((0..4).map(|o| self.hyper(phase, o))).collect();
@@ -1230,7 +1385,7 @@ impl Calibration {
         let Some(p) = Calibration::hyp_cache_path() else { return };
         let Ok(t) = std::fs::read_to_string(&p) else { return };
         let Ok(v) = serde_json::from_str::<Value>(&t) else { return };
-        if v["fingerprint"] != self.fingerprint.to_json() { return; }
+        if v["fingerprint"] != self.fingerprint.to_json() || v["v"].as_u64() != Some(HYP_CACHE_VERSION) { return; }
         for (k, h) in v["hyp"].as_object().into_iter().flatten() {
             if self.hyp.contains_key(k) { continue; }
             let h: Vec<f64> = h.as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
@@ -1251,10 +1406,10 @@ impl Calibration {
         let Some(p) = Calibration::hyp_cache_path() else { return };
         let mut m = Map::new();
         if let Some(v) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
-            if v["fingerprint"] == self.fingerprint.to_json() { if let Some(o) = v["hyp"].as_object() { m = o.clone(); } }
+            if v["fingerprint"] == self.fingerprint.to_json() && v["v"].as_u64() == Some(HYP_CACHE_VERSION) { if let Some(o) = v["hyp"].as_object() { m = o.clone(); } }
         }
         for (k, h) in add { m.insert(k, json!(h)); }
-        let out = json!({"fingerprint": self.fingerprint.to_json(), "hyp": m});
+        let out = json!({"v": HYP_CACHE_VERSION, "fingerprint": self.fingerprint.to_json(), "hyp": m});
         if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
         let tmp = p.with_extension(format!("tmp{}", std::process::id()));
         if std::fs::write(&tmp, out.to_string()).is_ok() && std::fs::rename(&tmp, &p).is_err() { let _ = std::fs::remove_file(&tmp); }
@@ -1369,7 +1524,7 @@ impl Calibration {
     /// What a calibration design leaves out: unsafe and soft-unsafe combinations.
     pub fn avoid_cfg(&self, cfg: &[(String, String)]) -> bool { self.unsafe_cfg(cfg) || self.soft_unsafe_cfg(cfg) }
     pub fn is_unsafe(&self, key: &str, value: &str) -> bool {
-        self.keys.get(key).map_or(false, |gs| gs.iter().any(|g| g.values.get(value).map_or(false, |s| s.unsafe_)))
+        self.keys.get(key).is_some_and(|gs| gs.iter().any(|g| g.values.get(value).is_some_and(|s| s.unsafe_)))
     }
     /// Every value measured for `key` (any phase), with the group's reference.
     pub fn values(&self, key: &str, reference: &str) -> Option<(String, Vec<String>)> {
@@ -1385,7 +1540,8 @@ impl Calibration {
         Some((stored, vals.into_iter().collect()))
     }
     /// Adds one run's result.
-    pub fn add(&mut self, key: &str, reference: &str, value: &str, phase: Phase, m: Option<Measured>, unsafe_: bool, t: u64, kernel: &str) {
+    pub fn add(&mut self, key: &str, reference: &str, value: &str, phase: Phase, m: Option<Measured>, meta: (bool, u64, &str)) {
+        let (unsafe_, t, kernel) = meta;
         let gs = self.keys.entry(key.to_owned()).or_default();
         let g = match gs.iter().position(|g| g.reference == reference) {
             Some(i) => &mut gs[i],
@@ -1424,9 +1580,9 @@ impl Calibration {
             if r.field { o["fd"] = json!(true); }
             o
         }).collect();
-        json!({"version": 9, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
+        json!({"version": 10, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
-               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality,
+               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "baselines": self.baselines, "envs": self.envs, "sess_env": self.sess_env, "io_days": self.io_days, "predcheck": self.predcheck,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
                "brakes": cfgs_json(&self.brakes), "soft_unsafe": cfgs_json(&self.soft_unsafe),
                "unsafe_pinned": self.unsafe_pinned.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
@@ -1480,6 +1636,15 @@ impl Calibration {
         c.verify = v["verify"].as_array().cloned().unwrap_or_default();
         c.field_sessions = v["fs"].as_array().cloned().unwrap_or_default();
         c.quality = v["quality"].as_array().cloned().unwrap_or_default();
+        c.baselines = v["baselines"].as_array().cloned().unwrap_or_default();
+        for (h, e) in v["envs"].as_object().into_iter().flatten() { c.envs.insert(h.clone(), e.clone()); }
+        for (d, b) in v["io_days"].as_object().into_iter().flatten() {
+            if let (Ok(d), Some(b)) = (d.parse::<u64>(), b.as_u64()) { c.io_days.insert(d, b); }
+        }
+        for (s, h) in v["sess_env"].as_object().into_iter().flatten() {
+            if let (Ok(s), Some(h)) = (s.parse::<u64>(), h.as_str()) { c.sess_env.insert(s, h.to_owned()); }
+        }
+        c.predcheck = v["predcheck"].as_array().cloned().unwrap_or_default();
         // Format <= 7: IO rows carried the CPU's start temperature; since 8 they carry the drive's.
         if version < 8 { for r in c.rows.iter_mut().filter(|r| r.phase == Phase::Io) { r.tc = f64::NAN; } }
         // Format 4 logged vm.dirty design rows against the live limits while labelling them window "1".
@@ -1503,6 +1668,28 @@ impl Calibration {
             }
             c.keys.retain(|_, gs| !gs.is_empty());
         }
+        // Format <= 9 summed objectives per metric (benchmark set 5, IO set 6): rows and one-at-a-time
+        // records are brought to the family scale (`rescale_families`) with the metrics the session's
+        // baseline recorded, else the set's own list. Device rows (one metric) are unchanged and stay
+        // current; the fitted scales of the old rows are dropped below.
+        if version < 10 {
+            for r in c.rows.iter_mut().filter(|r| !r.field) {
+                if r.phase == Phase::Dev { if r.bv == 5 { r.bv = BENCH_VERSION; } continue; }
+                let rec = c.baselines.iter().find(|b| b["sess"] == json!(r.sess) && b["phase"] == r.phase.name()).and_then(|b| b["m"].as_object());
+                let ms: Vec<Metric> = match rec {
+                    Some(m) => Metric::ALL.into_iter().filter(|x| m.contains_key(x.name())).collect(),
+                    None => SET5_METRICS[r.phase.idx()].to_vec(),
+                };
+                for (y, f) in r.y.iter_mut().zip(rescale_families(&ms)) { *y *= f; }
+            }
+            for (i, f) in [rescale_families(SET5_METRICS[0]), rescale_families(SET5_METRICS[1])].into_iter().enumerate() {
+                for s in c.keys.values_mut().flatten().flat_map(|g| g.values.values_mut()) {
+                    for rec in if i == 0 { &mut s.idle } else { &mut s.load } {
+                        for (x, f) in [&mut rec.m.lat, &mut rec.m.thr, &mut rec.m.pwr, &mut rec.m.mem].into_iter().zip(f) { if let Some(x) = x { *x *= f; } }
+                    }
+                }
+            }
+        }
         for (k, x) in v["refs"].as_object().into_iter().flatten() { if let Some(x) = x.as_str() { c.refs.insert(k.clone(), x.to_owned()); } }
         // Format <= 8: one reference per knob (`refs`), which every context then shares.
         for (cx, m) in v["refs_cx"].as_object().into_iter().flatten() {
@@ -1517,7 +1704,7 @@ impl Calibration {
             let u: Cfg = u.as_array().into_iter().flatten().filter_map(pair).collect();
             if c.unsafe_sets.contains(&u) && !c.unsafe_pinned.contains(&u) { c.unsafe_pinned.push(u); }
         }
-        for (k, x) in v["hyp"].as_object().into_iter().flatten().filter(|_| !old) {
+        for (k, x) in v["hyp"].as_object().into_iter().flatten().filter(|_| !old && version >= 10) {
             let h: Vec<f64> = x.as_array().into_iter().flatten().filter_map(Value::as_f64).collect();
             if Hyper::from_slice(&h).is_some() { c.hyp.insert(k.clone(), h); }
         }
@@ -1561,6 +1748,9 @@ impl Calibration {
             if !c.fingerprint.product.is_empty() && !c.fingerprint.matches(fp) { return None; }
             c.fingerprint = fp.clone();
             c.kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
+            let (h, e) = env_current();
+            c.envs.entry(h.clone()).or_insert(e);
+            c.env = h;
             c.now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             Some(c)
         };
@@ -1586,7 +1776,7 @@ impl Calibration {
         static BACKED_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         crate::secure_dir(crate::defaults::DIR)?;
         if !BACKED_UP.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            if let Some(old) = crate::read_root_file(FILE, MAX_FILE).filter(|t| serde_json::from_str::<Value>(t).map_or(false, |v| v.is_object())) {
+            if let Some(old) = crate::read_root_file(FILE, MAX_FILE).filter(|t| serde_json::from_str::<Value>(t).is_ok_and(|v| v.is_object())) {
                 let _ = crate::write_root_file(BACKUP, old.as_bytes());
             }
         }
@@ -1602,11 +1792,114 @@ impl Calibration {
         }
         crate::write_root_file(FILE, &body)
     }
+    /// One prediction checked against a measurement (confirmation or `--verify`); the last 200 are kept.
+    pub fn note_predcheck(&mut self, src: &str, phase: &str, goal: &str, mu: f64, sd: f64, obs: f64) {
+        if !(mu.is_finite() && sd.is_finite() && sd > 0.0 && obs.is_finite()) { return; }
+        let r = |x: f64| (x * 10_000.0).round() / 10_000.0;
+        self.predcheck.push(json!({"t": self.now, "src": src, "phase": phase, "goal": goal, "mu": r(mu), "sd": r(sd), "obs": r(obs)}));
+        let drop = self.predcheck.len().saturating_sub(KEEP_PREDCHECK);
+        self.predcheck.drain(..drop);
+    }
+    /// Of the last `last` checks: how many, the share inside ±2 sd (the tolerance the checks use,
+    /// ~95 % when the intervals are honest) and a PIT histogram (Φ(z) in five bins; flat = calibrated,
+    /// U = intervals too narrow, hump = too wide). None without checks.
+    pub fn predcheck_summary(&self, last: usize) -> Option<(usize, f64, [usize; 5])> {
+        let zs: Vec<f64> = self.predcheck.iter().rev().take(last).filter_map(|c| {
+            let (mu, sd, obs) = (c["mu"].as_f64()?, c["sd"].as_f64()?, c["obs"].as_f64()?);
+            (sd > 0.0).then(|| (obs - mu) / sd)
+        }).collect();
+        if zs.is_empty() { return None; }
+        let mut pit = [0usize; 5];
+        for z in &zs { pit[((model::norm_cdf(*z) * 5.0) as usize).min(4)] += 1; }
+        let inside = zs.iter().filter(|z| z.abs() <= 2.0).count();
+        Some((zs.len(), inside as f64 / zs.len() as f64, pit))
+    }
     /// Notes the quality record of a finished design session (the last `KEEP_QUALITY` are kept).
     pub fn note_quality(&mut self, q: Value) {
         self.quality.push(q);
         let drop = self.quality.len().saturating_sub(KEEP_QUALITY);
         self.quality.drain(..drop);
+    }
+    /// Bytes the storage suite wrote on `day` (UTC day number).
+    pub fn io_written(&self, day: u64) -> u64 { self.io_days.get(&day).copied().unwrap_or(0) }
+    /// Adds `bytes` written by the storage suite on `day`; days older than `KEEP_IO_DAYS` are dropped.
+    pub fn note_io(&mut self, day: u64, bytes: u64) {
+        *self.io_days.entry(day).or_default() += bytes;
+        self.io_days.retain(|d, _| *d + KEEP_IO_DAYS > day);
+    }
+    /// Records the environment session `sess` runs in.
+    pub fn note_env(&mut self, sess: u64, hash: &str, env: Value) {
+        self.envs.insert(hash.to_owned(), env);
+        self.sess_env.insert(sess, hash.to_owned());
+        // Environments no kept session refers to any more.
+        let used: BTreeSet<String> = self.sess_env.values().cloned().collect();
+        self.envs.retain(|h, _| used.contains(h));
+    }
+    /// `env_weight` of session `sess`'s environment against the current one.
+    pub fn row_env_weight(&self, sess: u64) -> f64 {
+        match (self.envs.get(&self.env), self.sess_env.get(&sess).and_then(|h| self.envs.get(h))) {
+            (Some(c), Some(r)) => env_weight(c, r),
+            _ => 1.0,
+        }
+    }
+    /// Design rows per environment weight below 1: [(weight, rows)], for the reports.
+    pub fn env_spread(&self) -> Vec<(f64, usize)> {
+        let mut m: BTreeMap<u64, usize> = BTreeMap::new();
+        for r in self.rows.iter().filter(|r| !r.field) {
+            let w = self.row_env_weight(r.sess);
+            if w < 1.0 { *m.entry((w * 100.0).round() as u64).or_default() += 1; }
+        }
+        m.into_iter().map(|(w, n)| (w as f64 / 100.0, n)).collect()
+    }
+    /// Reference-run scatter per metric on this machine (relative robust sd, i.e. the sd of the log
+    /// value): the median over the recorded sessions of `phase` read from `src`. What a session with
+    /// few reference runs of its own weighs its metrics by.
+    pub fn ref_log_sd(&self, phase: Phase, src: PowerSrc) -> BTreeMap<Metric, f64> {
+        let past: Vec<&Map<String, Value>> = self.baselines.iter()
+            .filter(|b| b["phase"] == phase.name() && b["src"] == src.name()).filter_map(|b| b["m"].as_object()).collect();
+        Metric::ALL.into_iter().filter_map(|m| {
+            let mut v: Vec<f64> = past.iter().filter_map(|x| {
+                let a = x.get(m.name())?.as_array()?;
+                let (med, sd) = (a.first()?.as_f64()? + m.eps(), a.get(1)?.as_f64()?);
+                (med > 0.0 && sd.is_finite()).then(|| sd / med)
+            }).collect();
+            median(&mut v).map(|s| (m, s))
+        }).collect()
+    }
+    /// Notes a session's reference level (replacing that session and phase's earlier record; the
+    /// last `KEEP_BASELINES` are kept).
+    pub fn note_baseline(&mut self, b: Value) {
+        self.baselines.retain(|x| !(x["sess"] == b["sess"] && x["phase"] == b["phase"]));
+        self.baselines.push(b);
+        let drop = self.baselines.len().saturating_sub(KEEP_BASELINES);
+        self.baselines.drain(..drop);
+    }
+    /// Metrics of `b` whose reference level left the history of earlier sessions in the same phase,
+    /// context and power source: |level - median| > BASELINE_Z x MAD (at least 1 % of the level),
+    /// with >= 3 earlier sessions. Returns (metric, relative deviation).
+    pub fn baseline_shift(&self, b: &Value) -> Vec<(String, f64)> {
+        let past: Vec<&Value> = self.baselines.iter().filter(|x| x["sess"] != b["sess"] && x["phase"] == b["phase"]
+            && x["cx"] == b["cx"] && x["src"] == b["src"]).collect();
+        let mut out = Vec::new();
+        for (m, cur) in b["m"].as_object().into_iter().flatten() {
+            let Some(cur) = cur[0].as_f64() else { continue };
+            let mut h: Vec<f64> = past.iter().filter_map(|x| x["m"][m][0].as_f64()).collect();
+            if h.len() < 3 { continue; }
+            let Some(med) = median(&mut h) else { continue };
+            let mut d: Vec<f64> = h.iter().map(|x| (x - med).abs()).collect();
+            let mad = (1.4826 * median(&mut d).unwrap_or(0.0)).max(0.01 * med.abs());
+            if med != 0.0 && (cur - med).abs() > BASELINE_Z * mad { out.push((m.clone(), (cur - med) / med)); }
+        }
+        out
+    }
+    /// The newest session's baseline shift, as a note (None when it is in line with its history).
+    pub fn baseline_note(&self) -> Option<String> {
+        let b = self.baselines.last()?;
+        let sh = self.baseline_shift(b);
+        if sh.is_empty() { return None; }
+        let list: Vec<String> = sh.iter().map(|(m, r)| format!("{m} {:+.1} %", r * 100.0)).collect();
+        Some(format!("Baseline: in the last {} session the reference runs left their history ({}): the machine may not be in its usual state (thermal paste, firmware, a new background service, power mode).",
+                     b["phase"].as_str().unwrap_or("?"), list.join(", ")))
     }
     /// One line per phase about what the model rests on: runs and sessions, fit quality, how much
     /// its intervals had to be widened to stay honest, and how old the newest measurement is.
@@ -1631,6 +1924,11 @@ impl Calibration {
                     let cov = fits.iter().map(|f| f.cover90).sum::<f64>() / n;
                     let infl = fits.iter().map(|f| f.var_scale).fold(1.0f64, f64::max);
                     s.push_str(&format!(", model R² {r2:.2}, 90 % intervals hold {:.0} %", cov * 100.0));
+                    let lr: Vec<f64> = fits.iter().map(|f| f.loso_r2).filter(|x| x.is_finite()).collect();
+                    let lc: Vec<f64> = fits.iter().map(|f| f.loso_cover).filter(|x| x.is_finite()).collect();
+                    if !lr.is_empty() && !lc.is_empty() {
+                        s.push_str(&format!(" (in a left-out session: R² {:.2}, {:.0} %)", lr.iter().sum::<f64>() / lr.len() as f64, lc.iter().sum::<f64>() / lc.len() as f64 * 100.0));
+                    }
                     if infl > 1.05 { s.push_str(&format!(", uncertainty widened x{:.2} (the model is less sure than its fit claims)", infl.sqrt())); }
                 }
             }
@@ -1638,6 +1936,8 @@ impl Calibration {
             if age_d > 120.0 { s.push_str("; old - a fresh calibration session is due"); }
             out.push(s);
         }
+        for (w, n) in self.env_spread() { out.push(format!("Environment: {n} run(s) from another BIOS/microcode/boot parameters count x{w:.2}.")); }
+        if let Some(n) = self.baseline_note() { out.push(n); }
         out
     }
 }
@@ -1702,11 +2002,11 @@ mod tests {
     fn signature_accumulates_weights_and_migrates() {
         let now = 400 * 86_400;
         let mut c = Calibration { kernel: "7.2.8".into(), now, ..Default::default() };
-        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.10)), false, now, "7.2.8");
-        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.30)), false, now - 90 * 86_400, "7.2.1");
-        c.add("k", "128", "1024", Phase::Load, Some(m(-0.2, 0.0)), false, now, "7.2.8");
-        c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.04)), false, now, "7.2.8");
-        c.add("k", "128", "4096", Phase::Load, None, true, now, "7.2.8");
+        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.10)), ( false, now, "7.2.8"));
+        c.add("k", "128", "1024", Phase::Idle, Some(m(0.0, 0.30)), ( false, now - 90 * 86_400, "7.2.1"));
+        c.add("k", "128", "1024", Phase::Load, Some(m(-0.2, 0.0)), ( false, now, "7.2.8"));
+        c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.04)), ( false, now, "7.2.8"));
+        c.add("k", "128", "4096", Phase::Load, None, ( true, now, "7.2.8"));
         // Newest weighs 1, the 90-day-old one 0.5 -> (0.10 + 0.15) / 1.5.
         let i = c.get_phase("k", "128", "1024", Phase::Idle).unwrap();
         assert!((i.thr.unwrap() - 0.25 / 1.5).abs() < 1e-9 && (i.n - 1.5).abs() < 1e-9);
@@ -1724,7 +2024,7 @@ mod tests {
         assert_eq!(back.keys, c.keys);
         assert_eq!(c.coverage("k", Phase::Idle), 3);
         // Records beyond KEEP drop the oldest.
-        for _ in 0..15 { c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.0)), false, now, "7.2.8"); }
+        for _ in 0..15 { c.add("k", "128", "256", Phase::Idle, Some(m(0.0, 0.0)), ( false, now, "7.2.8")); }
         assert_eq!(c.keys["k"][0].values["256"].idle.len(), KEEP);
         // Files of an older benchmark set load, but their idle/load records are not kept (the
         // old benchmarks were blind to most CPU and scheduler knobs); unsafe values stay unsafe.
@@ -1739,7 +2039,8 @@ mod tests {
         let c5 = Calibration::from_json(&v5);
         assert_eq!(c5.rows.len(), 1);
         assert!(c5.migrated && c5.rows[0].phase == Phase::Io && c5.rows[0].bv == BENCH_VERSION && c5.hyp.is_empty());
-        assert!((c5.rows[0].y[0] - 0.2).abs() < 1e-12 && (c5.rows[0].y[1] - 0.15).abs() < 1e-12 && (c5.rows[0].y[2] - 0.1).abs() < 1e-12);
+        // x (2, 1.5, 1) to the summed scale, then x (1/2, 2/3, 1) to the family scale (4 latency metrics in 2 families, 3 throughput in 2).
+        assert!((c5.rows[0].y[0] - 0.1).abs() < 1e-12 && (c5.rows[0].y[1] - 0.1).abs() < 1e-12 && (c5.rows[0].y[2] - 0.1).abs() < 1e-12);
         assert!(c5.strategies_of(Phase::Idle).is_empty() && c5.strategies_of(Phase::Io).len() == 1);
         let again = Calibration::from_json(&c5.to_json());
         assert!(!again.migrated && again.rows.len() == 1 && again.rows[0].y[0] == c5.rows[0].y[0]);
@@ -1957,7 +2258,7 @@ mod tests {
         let with_a = vec![("vm.a".to_string(), "64".to_string())];
         let (mu, var) = j.eval(&with_a);
         assert!(mu > 0.07 && var > 0.0 && var.sqrt() < 0.05, "{mu} {var}");
-        assert!(c.unsafe_cfg(&[]) == false);
+        assert!(!c.unsafe_cfg(&[]));
     }
 
     /// Rows of one phase: `f(i, cfg) -> y` with a fresh session per `per` rows.
@@ -2113,6 +2414,71 @@ mod tests {
     }
 
     #[test]
+    fn io_written_per_day_round_trips_and_ages_out() {
+        let mut c = Calibration::default();
+        c.note_io(100, 5 << 30);
+        c.note_io(100, 1 << 30);
+        assert_eq!(c.io_written(100), 6 << 30);
+        c.note_io(113, 1);
+        assert_eq!(c.io_days.len(), 2);
+        c.note_io(114, 1);
+        assert_eq!(c.io_written(100), 0, "older than 14 days");
+        assert_eq!(Calibration::from_json(&c.to_json()).io_days, c.io_days);
+        assert_eq!(crate::bench::parse_block_stat_written("  100 0 2000 10 50 0 4000 20 0 30 30"), Some(4000 * 512));
+    }
+
+    #[test]
+    fn environments_weigh_rows_and_round_trip() {
+        let (h1, e1) = env_record("N0CN30WW", "0xa20120a", "7.2.8", "mitigations=auto", "");
+        let (h2, e2) = env_record("N0CN32WW", "0xa20120a", "7.2.8", "mitigations=auto", "");
+        let (_, e3) = env_record("N0CN30WW", "0xa20120a", "7.2.8", "mitigations=off preempt=full", "");
+        assert_ne!(h1, h2);
+        assert_eq!(env_record("N0CN30WW", "0xa20120a", "7.2.8", "mitigations=auto", "").0, h1, "stable hash");
+        assert_eq!(env_weight(&e1, &e1), 1.0);
+        assert_eq!(env_weight(&e1, &e2), 0.7);
+        assert_eq!(env_weight(&e1, &e3), 0.5);
+        let (_, e4) = env_record("N0CN32WW", "0xa20120a", "7.2.8", "mitigations=off", "");
+        assert!((env_weight(&e1, &e4) - 0.35).abs() < 1e-12, "multiplicative");
+        assert_eq!(env_weight(&Value::Null, &e2), 1.0, "unknown environment");
+        let mut c = Calibration::default();
+        c.note_env(1, &h1, e1.clone());
+        c.note_env(2, &h2, e2);
+        c.env = h1.clone();
+        assert_eq!(c.row_env_weight(1), 1.0);
+        assert_eq!(c.row_env_weight(2), 0.7);
+        assert_eq!(c.row_env_weight(3), 1.0, "a session from before environments");
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!((back.envs.clone(), back.sess_env.clone()), (c.envs.clone(), c.sess_env.clone()));
+        c.note_env(2, &h1, e1);
+        assert_eq!(c.envs.len(), 1, "unreferenced environments are dropped");
+    }
+
+    #[test]
+    fn baseline_shift_is_flagged_against_history() {
+        let mut c = Calibration::default();
+        let b = |sess: u64, single: f64| json!({"sess": sess, "phase": "idle", "cx": "", "src": "rapl", "m": {"cpu_single": [single, 1.0], "idle_w": [5.0, null]}});
+        assert!(c.baseline_shift(&b(1, 100.0)).is_empty(), "no history: nothing to compare");
+        for (i, v) in [100.0, 101.0, 99.5, 100.5].into_iter().enumerate() { c.note_baseline(b(i as u64, v)); }
+        assert!(c.baseline_shift(&b(9, 100.8)).is_empty(), "an ordinary session");
+        let sh = c.baseline_shift(&b(9, 93.0));
+        assert_eq!(sh.len(), 1);
+        assert_eq!(sh[0].0, "cpu_single");
+        assert!((sh[0].1 + 0.07).abs() < 0.005);
+        assert!(c.baseline_note().is_none());
+        c.note_baseline(b(9, 93.0));
+        c.note_baseline(b(9, 93.0));
+        assert_eq!(c.baselines.len(), 5, "rewritten per session and phase");
+        assert!(c.baseline_note().unwrap().contains("cpu_single -7.2 %"));
+        let other = json!({"sess": 9, "phase": "load", "cx": "", "src": "rapl", "m": {"cpu_single": [50.0, null]}});
+        assert!(c.baseline_shift(&other).is_empty(), "another phase has its own history");
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.baselines, c.baselines);
+        let mut v = c.to_json();
+        v.as_object_mut().unwrap().remove("baselines");
+        assert!(Calibration::from_json(&v).baselines.is_empty(), "older files without baselines");
+    }
+
+    #[test]
     fn rare_phases_survive_long_idle_logs_and_quality_round_trips() {
         let mut c = Calibration::default();
         let row = |phase: Phase, t: u64| Row { phase, sess: t / 100, t, y: [0.0; 4], w: 1.0, bv: BENCH_VERSION, ..Default::default() };
@@ -2224,6 +2590,24 @@ mod tests {
         assert!(old.refs_cx.is_empty() && old.ref_for("cpu.epp", &a) == old.refs.get("cpu.epp").cloned());
     }
     #[test]
+    fn prediction_checks_are_logged_capped_and_summarised() {
+        let mut c = Calibration::default();
+        assert!(c.predcheck_summary(50).is_none());
+        // Honest: |z| ≤ 2 except one; one bad input is ignored.
+        for i in 0..20 { c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.05 + 0.01 * (i % 5) as f64 * 0.4); }
+        c.note_predcheck("verify", "idle", "gaming", 0.05, 0.01, 0.10);
+        c.note_predcheck("verify", "idle", "gaming", 0.05, 0.0, 0.10);
+        let (n, cov, pit) = c.predcheck_summary(50).unwrap();
+        assert_eq!(n, 21);
+        assert!((cov - 20.0 / 21.0).abs() < 1e-9);
+        assert_eq!(pit.iter().sum::<usize>(), 21);
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.predcheck, c.predcheck);
+        for _ in 0..300 { c.note_predcheck("confirm", "load", "desktop", 0.0, 0.01, 0.05); }
+        assert_eq!(c.predcheck.len(), KEEP_PREDCHECK);
+        assert!(c.predcheck_summary(50).unwrap().1 < 0.7);
+    }
+    #[test]
     fn device_phase_adds_whole_machine_power() {
         let mut c = Calibration::default();
         c.refs.insert("snd.hda_power_save".into(), "0".into());
@@ -2240,5 +2624,55 @@ mod tests {
         assert!(j.dev.is_some() && j.idle.is_none());
         assert!((j.eval(&[kv("snd.hda_power_save", "1")]).0 - 0.7 * 0.06).abs() < 0.015);
         assert!(c.joint([1.0, 1.0, 0.0, 0.5], Blend { load: 0.5, io: 1.0 }).is_none(), "power weight 0: devices do not count");
+    }
+
+    #[test]
+    fn objectives_count_scenarios_not_probes() {
+        // Every idle metric 2 % better: each objective counts its scenarios (families), not its probes.
+        let ms = SET5_METRICS[0];
+        assert_eq!(family_counts(ms.iter().copied()), [4, 4, 2, 1]);
+        let fx: BTreeMap<Metric, f64> = ms.iter().map(|m| (*m, 0.02)).collect();
+        let f = fold(&fx);
+        assert!((f.lat.unwrap() - 0.04).abs() < 1e-12 && (f.thr.unwrap() - 0.04).abs() < 1e-12 && (f.pwr.unwrap() - 0.02).abs() < 1e-12, "{f:?}");
+        // One metric of a family alone still counts whole when it is that family's only probe.
+        let one: BTreeMap<Metric, f64> = ms.iter().map(|m| (*m, if *m == Metric::BurstJobTailMs { 0.1 } else { 0.0 })).collect();
+        assert!((fold(&one).lat.unwrap() - 0.1 / 2.0 / 4.0 * 2.0).abs() < 1e-12);
+        // Set-5 rows (sum over 11 latency and 3 power metrics) come back to that scale.
+        let r = rescale_families(ms);
+        assert!((r[0] - 2.0 / 5.5).abs() < 1e-12 && (r[2] - 1.0 / 1.5).abs() < 1e-12 && r[3] == 1.0);
+        assert!((5.5 * 0.02 * r[0] - 0.04).abs() < 1e-12 && (1.5 * 0.02 * r[2] - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn format_9_rows_are_rescaled_and_their_scales_dropped() {
+        let row = |ph: u64, s: u64, bv: u64| json!({"ph": ph, "s": s, "p": 0.5, "t": 1, "k": "7.2", "w": 1.0, "bv": bv, "c": [["cpu.epp", "performance"]], "y": [0.11, 0.11, 0.03, 0.01]});
+        // Session 2 recorded a baseline without the memory probe: its own metric list decides.
+        let b2 = json!({"sess": 2, "phase": "idle", "src": "rapl", "m": {"wake p99": [50.0, 2.0], "frame tail": [400.0, 8.0], "idle power": [3.0, 0.1]}});
+        let v9 = json!({"version": 9, "rows": [row(0, 1, 5), row(0, 2, 5), row(3, 1, 5)], "baselines": [b2],
+                        "hyp": {"idle0": [0.03, 0.03, 0.012, 0.004, 0.004, 0.01]}});
+        let c = Calibration::from_json(&v9);
+        assert_eq!(c.rows.len(), 3);
+        assert!((c.rows[0].y[0] - 0.11 * 2.0 / 5.5).abs() < 1e-12 && (c.rows[0].y[2] - 0.03 / 1.5).abs() < 1e-12, "{:?}", c.rows[0].y);
+        // 2 latency metrics of one family: gain 1 both ways; power: 1 metric, 1 family.
+        assert!((c.rows[1].y[0] - 0.11).abs() < 1e-12 && (c.rows[1].y[2] - 0.03).abs() < 1e-12, "{:?}", c.rows[1].y);
+        assert_eq!((c.rows[0].bv, c.rows[2].bv), (5, BENCH_VERSION), "idle rows count as an older set, device rows (one metric) stay current");
+        assert!(c.rows[2].y == [0.11, 0.11, 0.03, 0.01] && c.hyp.is_empty());
+        // Written again as format 10: read back unchanged.
+        let back = Calibration::from_json(&c.to_json());
+        assert_eq!(back.rows.iter().map(|r| r.y).collect::<Vec<_>>(), c.rows.iter().map(|r| r.y).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn reference_scatter_pools_earlier_sessions_of_the_same_phase_and_source() {
+        let mut c = Calibration::default();
+        for (s, sd) in [(1, 2.0), (2, 4.0), (3, 6.0)] {
+            c.note_baseline(json!({"sess": s, "phase": "idle", "src": "rapl", "m": {"wake p99": [100.0, sd], "alloc stalls": [0.0, 0.5]}}));
+        }
+        c.note_baseline(json!({"sess": 4, "phase": "idle", "src": "battery", "m": {"wake p99": [100.0, 50.0]}}));
+        c.note_baseline(json!({"sess": 5, "phase": "load", "src": "rapl", "m": {"wake p99": [100.0, 50.0]}}));
+        let sd = c.ref_log_sd(Phase::Idle, PowerSrc::Rapl);
+        assert!((sd[&Metric::WakeP99Us] - 0.04).abs() < 1e-12, "median of the three rapl idle sessions: {sd:?}");
+        assert!((sd[&Metric::StallsPerSec] - 0.5).abs() < 1e-12, "a counter at 0 is read against its offset");
+        assert!(c.ref_log_sd(Phase::Io, PowerSrc::Rapl).is_empty());
     }
 }

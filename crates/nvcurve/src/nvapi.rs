@@ -96,7 +96,7 @@ pub struct Buf {
 }
 
 impl Buf {
-    pub fn new(len: usize) -> Self { Buf { words: vec![0; (len + 7) / 8], len } }
+    pub fn new(len: usize) -> Self { Buf { words: vec![0; len.div_ceil(8)], len } }
     pub fn from_bytes(b: &[u8]) -> Self {
         let mut s = Self::new(b.len());
         s.bytes_mut().copy_from_slice(b);
@@ -177,13 +177,26 @@ pub(crate) fn call2(id: u32, a: *mut c_void, b: *mut c_void) -> Result<Option<i3
 
 const NOT_FOUND: &str = "function pointer not found (driver too old?)";
 
-/// Versioned-struct call: allocates `size` bytes, writes `(ver<<16)|size`
+/// NVIDIA's MAKE_NVAPI_VERSION: `sizeof(struct) | (ver << 16)` in one u32.
+/// The driver compares the whole word with its own constant built the same
+/// way, so a struct of 64 KiB or more (GetVFPCurve V3: 88 844 bytes) carries
+/// bit 16+ of its size into the version half — that is the word the driver
+/// expects, not a truncation. Refusing it disabled the V3 base tuples.
+pub fn version_word(size: usize, ver: u32) -> Option<u32> {
+    if ver > u32::from(u16::MAX) { return None; }
+    u32::try_from(size).ok().map(|s| s | (ver << 16))
+}
+
+/// Versioned-struct call: allocates `size` bytes, writes the version word
 /// at offset 0, lets `pre_fill` populate request fields, then calls.
 pub fn nvcall(id: u32, gpu: Gpu, size: usize, ver: u32, pre_fill: impl FnOnce(&mut Buf))
     -> Result<Buf, String>
 {
+    let word = version_word(size, ver)
+        .ok_or_else(|| format!("NvAPI versioned structure cannot encode {size} bytes / version {ver}"))?;
+    // Always the full size: the driver fills its whole struct.
     let mut buf = Buf::new(size);
-    buf.put_u32(0, (ver << 16) | size as u32);
+    buf.put_u32(0, word);
     pre_fill(&mut buf);
     match call2(id, gpu.ptr(), buf.as_mut_ptr()) {
         Err(e) => Err(e.to_string()),

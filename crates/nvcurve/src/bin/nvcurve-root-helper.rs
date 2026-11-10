@@ -163,12 +163,9 @@ fn op_apply_named_profile(p: &Obj) -> OpResult {
 }
 
 fn op_reset_gpu_curve(_: &Obj) -> OpResult {
-    let (g, _) = gpu::get_gpu(0).map_err(|e| format!("Reset failed: {e}"))?;
-    let (rc, d) = vfcurve::reset_all_offsets(g, false);
-    if rc != 0 { return Err(format!("Reset write failed: {d}")); }
-    let _ = limits::reset_gpu_locked_clocks(0);  // stock curve = no cap either
+    let msg = ops::reset_gpu_curve_verified(0)?;
     refresh_result(RESET_RESULT);
-    Ok("Reset successful.".into())
+    Ok(msg)
 }
 
 fn op_set_vram_memlock(p: &Obj) -> OpResult {
@@ -304,7 +301,7 @@ fn dispatch(op: &str) -> Option<fn(&Obj) -> OpResult> {
 /// Ops that change the GPU's live state. While centurion-calibrate holds the machine
 /// (/run/centurion/calibrating.json) they are refused, like the other hardware helpers do
 /// (centurion_helpers::refuse_during_calibration; this crate does not link that one).
-const CURVE_WRITES: &[&str] = &["apply_gpu_offsets", "apply_named_profile", "reset_gpu_curve", "reset_all", "set_powermizer",
+const CURVE_WRITES: &[&str] = &["apply_gpu_offsets", "apply_named_profile", "run_gpu_autoload", "reset_gpu_curve", "reset_all", "set_powermizer",
                                 "set_vram_memlock", "reset_vram_memlock", "set_gpu_clocklock", "reset_gpu_clocklock"];
 
 /// Pid of a live calibration hold: same rule as centurion_helpers::calibration_hold() (a recorded
@@ -362,11 +359,10 @@ fn run() -> Value {
                 "centurion-calibrate (pid {pid}) is measuring: power profile, firmware limits, fan and curves stay as they are until it ends")});
         }
     }
-    let _lock = if op == "read_sensors" { None } else {
-        match ops::gpu_write_lock() {
-            Ok(f) => Some(f),
-            Err(e) => return json!({"ok": false, "error": e}),
-        }
+    // Raw sensor register reads take the same GPU write lock as the writes.
+    let _lock = match ops::gpu_write_lock() {
+        Ok(f) => f,
+        Err(e) => return json!({"ok": false, "error": e}),
     };
     match handler(obj) {
         Ok(m) => {

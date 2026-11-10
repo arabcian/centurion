@@ -276,11 +276,31 @@ void AmdGpuTab::rebuildForm() {
     form_ = new QWidget;
     auto *v = new QVBoxLayout(form_);
     v->setContentsMargins(0, 0, 0, 0);
+    // Experimental keeps the dynamic firmware-dependent controls intact, but
+    // lays out the individual power, curve and fan workflows in two columns.
+    // Classic retains the original single long-form editor.
+    QVBoxLayout *leftColumn = nullptr, *rightColumn = nullptr;
+    QHBoxLayout *columns = nullptr;
+    if (theme::experimentalEnabled()) {
+        columns = new QHBoxLayout;
+        columns->setSpacing(7);
+        leftColumn = new QVBoxLayout;
+        rightColumn = new QVBoxLayout;
+        columns->addLayout(leftColumn, 1);
+        columns->addLayout(rightColumn, 1);
+        v->addLayout(columns);
+    }
+    int section = 0;
     auto box = [&](const QString &title) {
         auto *b = new QGroupBox(title);
         auto *g = new QGridLayout(b);
         g->setColumnStretch(2, 1);
-        v->addWidget(b);
+        if (leftColumn) {
+            (section == 1 ? rightColumn : leftColumn)->addWidget(b);
+        } else {
+            v->addWidget(b);
+        }
+        ++section;
         return g;
     };
     auto row = [](QGridLayout *g, const QString &name, QWidget *w, const QString &hint = {}) {
@@ -434,7 +454,13 @@ void AmdGpuTab::rebuildForm() {
             row(fg, QStringLiteral("Fan curve"), w, QStringLiteral("Hotspot temperature → fan speed; must not fall."));
         }
     }
-    v->addStretch(1);
+    if (leftColumn) {
+        // Dynamic firmware capabilities can expose only one category. In that
+        // case the editor uses the whole page, not an empty 50% column.
+        if (section <= 1) columns->setStretch(1, 0);
+        leftColumn->addStretch(1);
+        rightColumn->addStretch(1);
+    } else v->addStretch(1);
     formHost_->addWidget(form_);
 }
 

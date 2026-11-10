@@ -29,7 +29,7 @@ fn usage() -> ! {
 /// Same rule as the GUI's validPresetName / centurion-gamemode's valid_name.
 fn valid_name(n: &str) -> bool {
     let mut ch = n.chars();
-    let first_ok = ch.next().map_or(false, char::is_alphanumeric);
+    let first_ok = ch.next().is_some_and(char::is_alphanumeric);
     first_ok && n.len() <= 64 && !n.contains("..") && n.chars().all(|c| c.is_alphanumeric() || " _.-".contains(c))
 }
 
@@ -96,7 +96,11 @@ fn goal_cmd(args: &[String]) {
         let run = &out["preset"]["run"];
         let _ = writeln!(o, "\n  launch: nice {} · affinity {}  {}", run["nice"], run["affinity"].as_str().unwrap_or("none"),
                          why.get("run").and_then(Value::as_str).unwrap_or(""));
+        for n in out["notes"].as_array().into_iter().flatten() { let _ = writeln!(o, "  note: {}", n.as_str().unwrap_or("")); }
         for n in out["constraints"].as_array().into_iter().flatten() { let _ = writeln!(o, "  constraint: {}", n.as_str().unwrap_or("")); }
+        for c in out["diff_vs_last"].as_array().into_iter().flatten() {
+            let _ = writeln!(o, "  changed since last run: {} {} -> {} ({})", c["key"].as_str().unwrap_or(""), c["from"], c["value"], c["why"].as_str().unwrap_or(""));
+        }
         for i in out["live_issues"].as_array().into_iter().flatten() {
             let _ = writeln!(o, "  live value: {} - {}", i["key"].as_str().unwrap_or(""), i["message"].as_str().unwrap_or(""));
         }
@@ -148,7 +152,7 @@ fn audit_cmd(args: &[String]) {
         if let Some(d) = config_dir() {
             for sub in ["scenes", "tune-presets"] {
                 let mut v: Vec<PathBuf> = std::fs::read_dir(d.join(sub)).into_iter().flatten().flatten().map(|e| e.path())
-                    .filter(|p| p.extension().map_or(false, |x| x == "json")).collect();
+                    .filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
                 v.sort();
                 files.extend(v);
             }

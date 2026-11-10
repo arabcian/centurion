@@ -12,6 +12,7 @@
 
 use nvcurve::hal::{gpu, sensors};
 use nvcurve::nvml;
+use nvcurve::ops;
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
@@ -43,7 +44,15 @@ fn main() {
     let start = Instant::now();
     let mut out = std::io::stdout().lock();
     while start.elapsed() < MAX_RUNTIME {
-        let s = sensors::read(g, arch);
+        // Never sample registers while another nvcurve process is writing an OC table.
+        let s = match ops::gpu_try_lock() {
+            Ok(Some(_lock)) => sensors::read(g, arch),
+            Ok(None) => sensors::Sensors::default(), // GPU write in progress
+            Err(e) => {
+                eprintln!("sensor read skipped: {e}");
+                sensors::Sensors::default()
+            }
+        };
         let line = serde_json::json!({
             "hotspot_c": s.hotspot_c, "vram_c": s.vram_c, "vram_partitions": s.vram_partitions,
         });

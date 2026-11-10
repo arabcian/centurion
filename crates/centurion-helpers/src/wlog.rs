@@ -43,7 +43,7 @@ pub fn log(kind: &str, detail: &str) {
     let d: String = detail.chars().map(|c| if c.is_control() { ' ' } else { c }).take(400).collect();
     let line = format!("{} | {} | {} | {}<{}{} | {} | {}\n", utc_now(), me, exe, proc_comm(pp), proc_comm(gp), uid, kind, d);
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o755).create(DIR);
-    if std::fs::metadata(FILE).map_or(false, |m| m.len() > MAX) {
+    if std::fs::metadata(FILE).is_ok_and(|m| m.len() > MAX) {
         let _ = std::fs::rename(FILE, format!("{FILE}.1"));
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o644)

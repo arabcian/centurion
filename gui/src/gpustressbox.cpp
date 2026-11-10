@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QGroupBox>
 #include <QLabel>
 #include <QProcess>
 #include <QPushButton>
@@ -35,9 +36,13 @@ QString findTool(const QString &name) {
 } // namespace
 
 GpuStressBox::GpuStressBox(QWidget *parent) : QWidget(parent) {
-    auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(tr("GPU test"))));
+    // A titled frame of its own: each test is a separate run, not part of the one above.
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    auto *frame = new QGroupBox(tr("GPU test"));
+    frame->setObjectName(QStringLiteral("box_green"));
+    outer->addWidget(frame);
+    auto *root = new QVBoxLayout(frame);
 
     program_ = findTool(QStringLiteral("centurion-gpustress"));
     if (program_.isEmpty()) {

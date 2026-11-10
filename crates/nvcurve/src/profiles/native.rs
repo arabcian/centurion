@@ -142,7 +142,7 @@ pub fn save_profile(dir: &str, data: &ProfileData) -> std::io::Result<PathBuf> {
 }
 
 pub fn load_profile(path: &Path) -> Result<ProfileData, String> {
-    let text = crate::atomicio::read_regular(path, MAX_PROFILE_BYTES as u64)
+    let text = crate::atomicio::read_regular(path, MAX_PROFILE_BYTES)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     let v: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     ProfileData::from_value(v, &path.display().to_string())
@@ -151,7 +151,7 @@ pub fn load_profile(path: &Path) -> Result<ProfileData, String> {
 pub fn list_profiles(dir: &str) -> Vec<ProfileData> {
     let mut out: Vec<ProfileData> = std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |x| x == "json"))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .filter_map(|p| load_profile(&p).map_err(|e| warn!("Skipping unreadable profile: {e}")).ok())
         .collect();
     out.sort_by_key(|p| p.name.to_lowercase());
@@ -173,7 +173,7 @@ pub fn rename_profile(dir: &str, old: &str, new: &str) -> bool {
 }
 
 pub fn delete_profile(dir: &str, name: &str) -> bool {
-    profile_path(dir, name).map_or(false, |p| p.exists() && std::fs::remove_file(p).is_ok())
+    profile_path(dir, name).is_some_and(|p| p.exists() && std::fs::remove_file(p).is_ok())
 }
 
 #[cfg(test)]

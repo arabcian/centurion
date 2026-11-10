@@ -149,7 +149,17 @@ fn sysfs_write(attr: &str, value: i64) -> Result<(), String> {
 
 // ── acpi_call (WMAE) ────────────────────────────────────────────────────────
 
-fn acpi_available() -> bool { Path::new(ACPI_CALL).exists() }
+fn acpi_available() -> bool { acpi_fake().is_some() || Path::new(ACPI_CALL).exists() }
+
+/// Stand-in for /proc/acpi/call: (expression) -> the module's raw reply.
+pub type AcpiFake = fn(&str) -> String;
+static ACPI_FAKE: std::sync::Mutex<Option<AcpiFake>> = std::sync::Mutex::new(None);
+fn acpi_fake() -> Option<AcpiFake> { *ACPI_FAKE.lock().unwrap_or_else(|e| e.into_inner()) }
+
+/// Virtual hardware test lab only (tests/virtual_lab.rs): every acpi_call of this process goes to
+/// `f` instead of the kernel module (None = back to the module). No helper ever sets it.
+#[doc(hidden)]
+pub fn set_acpi_fake(f: Option<AcpiFake>) { *ACPI_FAKE.lock().unwrap_or_else(|e| e.into_inner()) = f; }
 
 fn modprobe_acpi_call() { crate::modprobe("acpi_call"); }
 
@@ -211,6 +221,7 @@ fn acpi_is_read(expr: &str) -> bool {
 fn acpi_raw_inner(expr: &str) -> Result<String, String> {
     use std::io::{Read, Write};
     const MAX_REPLY: u64 = 4096;
+    if let Some(fake) = acpi_fake() { return acpi_reply(fake(expr).as_bytes()); }
     let mut f = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(ACPI_CALL)
         .map_err(|e| format!("{ACPI_CALL}: {e}"))?;
     let _lock = crate::FdLock::exclusive(&f).map_err(|e| format!("{ACPI_CALL} lock: {e}"))?;
@@ -221,7 +232,11 @@ fn acpi_raw_inner(expr: &str) -> Result<String, String> {
     let mut raw = vec![0u8; MAX_REPLY as usize];
     let n = f.read(&mut raw).map_err(|e| format!("acpi_call read: {e}"))?;
     raw.truncate(n);
-    let out = String::from_utf8_lossy(&raw);
+    acpi_reply(&raw)
+}
+
+fn acpi_reply(raw: &[u8]) -> Result<String, String> {
+    let out = String::from_utf8_lossy(raw);
     let out = out.trim_matches(char::from(0)).trim().to_owned();
     if out.starts_with("Error") { return Err(format!("acpi_call: {out}")); }
     Ok(out)
@@ -295,7 +310,7 @@ pub fn charger_weak() -> Option<bool> {
     });
     if !online || !acpi_available() { return None; }
     // Offered only where the SmartFan interface exists: both methods belong to it.
-    if !wmaa(0x2B, 0).map_or(false, |v| v > 0) { return None; }
+    if !wmaa(0x2B, 0).is_ok_and(|v| v > 0) { return None; }
     let (fit, mode) = (wmaa(0x3E, 0).ok()?, wmaa(0x2F, 0).ok()?);
     if fit > 1 || !(1..=2).contains(&mode) { return None; }  // not the documented answers: say nothing
     Some(!(fit == 1 && mode == 1))
@@ -348,7 +363,7 @@ enum Igpu { Amd, Intel }
 fn igpu_present() -> Option<Igpu> {
     std::fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten().find_map(|e| {
         let rd = |f: &str| std::fs::read_to_string(e.path().join(f)).ok().map(|s| s.trim().to_owned());
-        if !rd("class").map_or(false, |c| c.starts_with("0x03")) { return None; }
+        if !rd("class").is_some_and(|c| c.starts_with("0x03")) { return None; }
         match rd("vendor").as_deref() { Some("0x1002") => Some(Igpu::Amd), Some("0x8086") => Some(Igpu::Intel), _ => None }
     })
 }
@@ -412,7 +427,7 @@ pub fn set_gpu_mode(mode: &str, force: bool) -> Value {
     let dgpu = match mode { "dgpu" => true, "hybrid" => false, _ => return json!({"ok": false, "error": "mode must be 'hybrid' or 'dgpu'"}) };
     if !acpi_available() { modprobe_acpi_call(); }
     if !acpi_available() { return json!({"ok": false, "error": "acpi_call is not loaded (modprobe acpi_call)"}); }
-    if !wmaa(GZ_GSYNC_SUPPORTED, 0).map_or(false, |v| v != 0) {
+    if !wmaa(GZ_GSYNC_SUPPORTED, 0).is_ok_and(|v| v != 0) {
         return json!({"ok": false, "error": "the firmware does not report GPU mode switching support"});
     }
     let kind = igpu_kind();
@@ -448,7 +463,7 @@ fn dgpu_runtime_status() -> Option<String> {
     for e in std::fs::read_dir("/sys/bus/pci/devices").ok()?.flatten() {
         let d = e.path();
         let rd = |f: &str| std::fs::read_to_string(d.join(f)).ok().map(|s| s.trim().to_owned());
-        if rd("vendor").as_deref() == Some("0x10de") && rd("class").map_or(false, |c| c.starts_with("0x03")) {
+        if rd("vendor").as_deref() == Some("0x10de") && rd("class").is_some_and(|c| c.starts_with("0x03")) {
             return rd("power/runtime_status");
         }
     }
@@ -483,7 +498,7 @@ fn nvidia_power_limits() -> Option<(i64, i64)> {
     }
     let text = String::from_utf8_lossy(&reader.join().ok()?).into_owned();
     let grab = |label: &str| text.lines().find(|l| l.contains(label))
-        .and_then(|l| l.split(':').nth(1)).and_then(|v| v.trim().split_whitespace().next())
+        .and_then(|l| l.split(':').nth(1)).and_then(|v| v.split_whitespace().next())
         .and_then(|n| n.parse::<f64>().ok()).map(|f| f as i64);
     Some((grab("Min Power Limit")?, grab("Max Power Limit")?))
 }
@@ -583,6 +598,12 @@ pub fn status(want_envelope: bool) -> Value {
         out["envelope"] = json!({"gpu_min_w": minp, "gpu_max_w": maxp, "ctgp_max_w": (maxp - ceil).max(minp), "ctgp_min_w": minp});
     }
     out["values"] = Value::Object(vals);
+    // CPU PL1 tau (WMAE 0x01070000), shown read-only: the firmware has it (20-160 s in the steps of Intel's
+    // time-window encoding, kept in the EC) but no kernel attribute, and on AMD nothing in the DSDT passes it on,
+    // so whether a write would change anything is unknown. A plain EC read; 0 = not on this model.
+    if acpi_available() {
+        if let Some(v) = wmae_get(0x0107_0000).ok().filter(|v| *v > 0) { out["pl1_tau_s"] = json!(v); }
+    }
     if !acpi_available() {
         out["note"] = json!("acpi_call not loaded — the cTGP / boost knobs can't be written (modprobe acpi_call).");
     }
@@ -763,7 +784,7 @@ const FEAT_OVERDRIVE: u32 = 0x001A_0000;
 enum OdBackend { GameZone, Wmae }
 
 fn od_backend() -> Option<OdBackend> {
-    if wmaa(0x31, 0).map_or(false, |v| v == 1) { return Some(OdBackend::GameZone); }
+    if wmaa(0x31, 0) == Ok(1) { return Some(OdBackend::GameZone); }
     let mi = crate::machine::info();
     let excluded = matches!(mi.series, crate::machine::Series::Legion7 | crate::machine::Series::LegionPro7) && mi.generation >= 10;
     (!excluded && cap_usable(FEAT_OVERDRIVE, CAP_GET | CAP_SET)).then_some(OdBackend::Wmae)
@@ -1062,7 +1083,7 @@ pub fn battery_info() -> Value {
 
 /// Listed, valid and carrying every bit of `need` (CAP_GET / CAP_SET).
 fn cap_usable_in(list: Option<&[Cap]>, id: u32, need: u32) -> bool {
-    list.map_or(false, |l| l.iter().any(|c| c.id == id && c.flags & (CAP_VALID | need) == (CAP_VALID | need)))
+    list.is_some_and(|l| l.iter().any(|c| c.id == id && c.flags & (CAP_VALID | need) == (CAP_VALID | need)))
 }
 fn cap_usable(id: u32, need: u32) -> bool { cap_usable_in(capabilities(), id, need) }
 
@@ -1155,7 +1176,7 @@ const SALS_USB_BATTERY_ON: u64 = 0x13;
 /// ACPI path of the VPC2004 device (\_SB.PCI0.LPC0.EC0.VPC0 on most models).
 fn vpc_path() -> Option<String> {
     let mut v: Vec<PathBuf> = std::fs::read_dir("/sys/bus/acpi/devices").ok()?.flatten().map(|e| e.path())
-        .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("VPC2004:"))).collect();
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("VPC2004:"))).collect();
     v.sort();
     v.iter().find_map(|p| crate::fan_table::short_acpi_path(&std::fs::read_to_string(p.join("path")).ok()?))
 }
@@ -1233,7 +1254,7 @@ pub fn wmae_toggles_get() -> Value {
             if let Ok(v @ (0 | 1)) = wmae_get(t.id) { put(t.key, v == 1); }
         }
         for t in GZ_TOGGLES {
-            if !wmaa(t.sup, 0).map_or(false, |v| v > 0) { continue; }
+            if !wmaa(t.sup, 0).is_ok_and(|v| v > 0) { continue; }
             if let Ok(v @ (0 | 1)) = wmaa(t.get, 0) { put(t.key, v == 1); }
         }
         if let Some(on) = usb_battery_get() { put(KEY_USB_BATTERY, on); }
@@ -1287,7 +1308,7 @@ pub fn wmae_toggle_set(key: &str, on: bool) -> Value {
         if wmae_toggle_offered(t) { wmae_switch(key, t.id, on) } else { Err(format!("{key}: not in this firmware's capability list")) }
     } else if let Some(t) = GZ_TOGGLES.iter().find(|t| t.key == key) {
         (|| {
-            if !wmaa(t.sup, 0).map_or(false, |v| v > 0) { return Err(format!("{key}: the firmware reports it unsupported")); }
+            if !wmaa(t.sup, 0).is_ok_and(|v| v > 0) { return Err(format!("{key}: the firmware reports it unsupported")); }
             match wmaa(t.get, 0)? { 0 | 1 => {}, v => return Err(format!("{key}: unsupported (getter {v})")) }
             wmaa(t.set, on as u64)?;
             match wmaa(t.get, 0)? {

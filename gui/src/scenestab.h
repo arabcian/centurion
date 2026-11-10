@@ -78,7 +78,7 @@ private:
     QLabel *shortcutNote_;
     QPushButton *shortcutConfigure_;
     void updateShortcutNote();
-    QPushButton *save_, *apply_, *dup_, *del_;
+    QPushButton *save_, *preview_, *apply_, *dup_, *del_;
     QCheckBox *auto_;
     QCheckBox *resume_ = nullptr;
     QCheckBox *mangohud_ = nullptr;  // only where MangoHud is installed

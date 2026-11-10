@@ -21,6 +21,7 @@ DbusApi::DbusApi(MainWindow *win) : QObject(win), win_(win) {
         if (!n.isEmpty()) Q_EMIT SceneApplied(n, ok);  // empty name: an informational note, not an apply
     });
     connect(&pp::Watcher::instance(), &pp::Watcher::changed, this, &DbusApi::PowerProfileChanged);
+    connect(win_, &MainWindow::safeModeFinished, this, &DbusApi::SafeModeFinished);
     connect(win_->health(), &HealthTab::fault, this, [this](const QJsonObject &e) {
         Q_EMIT HealthEvent(e.value(QStringLiteral("kind")).toString(), e.value(QStringLiteral("level")).toString(), e.value(QStringLiteral("title")).toString());
     });
@@ -35,6 +36,8 @@ bool DbusApi::registerOnBus() {
     }
     return true;
 }
+
+void DbusApi::SafeMode() { win_->runSafeMode(); }
 
 QStringList DbusApi::ListScenes() { return scenes::names(); }
 

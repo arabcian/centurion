@@ -73,7 +73,7 @@ fn write_var(path: &str, body: &[u8]) -> Result<(), String> {
 
 /// Puts `orig` back after a failed step; a variable the failed write never changed is left alone.
 fn restore_var(path: &str, orig: &[u8]) -> bool {
-    fs::read(path).map_or(false, |b| b == orig) || write_var(path, orig).is_ok()
+    fs::read(path).is_ok_and(|b| b == orig) || write_var(path, orig).is_ok()
 }
 
 // ── digests ─────────────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ fn logo_dir(esp: &Path) -> PathBuf {
 
 fn logo_files(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = fs::read_dir(dir).into_iter().flatten().flatten()
-        .filter(|e| e.file_type().map_or(false, |t| t.is_file())).map(|e| e.path()).collect();
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file())).map(|e| e.path()).collect();
     v.sort();
     v
 }

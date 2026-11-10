@@ -8,6 +8,7 @@
 #include "nvidiatab.h"
 #include "optimizetab.h"
 #include "platformprofile.h"
+#include "driftwatch.h"
 #include "privileged.h"
 #include "ryzentab.h"
 #include <algorithm>
@@ -24,6 +25,7 @@
 #include <QStandardPaths>
 #include <QCoreApplication>
 #include <QTimer>
+#include <QUuid>
 #include <QGuiApplication>
 #include <QSessionManager>
 #include <QSocketNotifier>
@@ -252,11 +254,33 @@ QString activeScene() {
     return validName(n) ? n : QString();
 }
 
-void setActiveScene(const QString &name) {
+bool activeScenePartial() { return readObject(stateFile()).value("partial").toBool(); }
+
+void setActiveScene(const QString &name, bool partial) {
     const StateLock lock;
     QJsonObject o = readObject(stateFile());
     o["active"] = name;
+    o["partial"] = partial;
     writeObject(stateFile(), o, nullptr);
+}
+
+/// scene.json "gpu_pending": the one deferred GPU curve apply still wanted (centurion-gamemode's
+/// defer_gpu_curve uses the same field). Empty token = cancel whatever is pending.
+static void setGpuPending(const QString &token) {
+    const StateLock lock;
+    QJsonObject o = readObject(stateFile());
+    o["gpu_pending"] = token.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(token);
+    writeObject(stateFile(), o, nullptr);
+}
+
+/// Takes the pending apply if it is still `token`'s; false = a later scene replaced or cancelled it.
+static bool claimGpuPending(const QString &token) {
+    const StateLock lock;
+    QJsonObject o = readObject(stateFile());
+    if (token.isEmpty() || o.value("gpu_pending").toString() != token) return false;
+    o["gpu_pending"] = QJsonValue::Null;
+    writeObject(stateFile(), o, nullptr);
+    return true;
 }
 
 /// /proc/<pid>/stat field 22 (start time): pid + start identify one process.
@@ -374,6 +398,9 @@ static constexpr int UNKNOWN_LENIENT_MS = 15000; // source unreadable this long:
 static constexpr int FLAP_WINDOW_MS = 120000, FLAP_MAX_SWITCHES = 4, FLAP_QUIET_MS = 30000;
 // The EC can override the platform profile a few seconds after a plug/unplug: look once more after this.
 static constexpr int VERIFY_DELAY_MS = 8000;
+// A scene's GPU curve profile is applied this long after the scene, in the background (equal to
+// centurion-gamemode's GPU_DEFER).
+static constexpr int GPU_DEFER_MS = 20000;
 
 /// centurion-calibrate holds the power context while it measures (/run/centurion/calibrating.json,
 /// world-readable): a scene switched under it would be measured as if it were the knob under test, and
@@ -395,10 +422,11 @@ SceneEngine::SceneEngine(MainWindow *win) : QObject(win), win_(win), auto_(loadA
     powerTimer_->setInterval(POWER_POLL_MS);
     connect(powerTimer_, &QTimer::timeout, this, [this] { pollPower(true); });
     clock_.start();
-    for (QTimer **t : {&debounce_, &uevTimer_, &flapRelease_, &verify_}) {
+    for (QTimer **t : {&debounce_, &uevTimer_, &flapRelease_, &verify_, &gpuDefer_}) {
         *t = new QTimer(this);
         (*t)->setSingleShot(true);
     }
+    connect(gpuDefer_, &QTimer::timeout, this, &SceneEngine::gpuDeferredFire);
     connect(debounce_, &QTimer::timeout, this, [this] { pollPower(false); });
     connect(uevTimer_, &QTimer::timeout, this, [this] { pollPower(false); });
     connect(verify_, &QTimer::timeout, this, &SceneEngine::verifyPass);
@@ -875,8 +903,8 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
             helper("ryzen-co-helper", {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}, {"profile", name}}}},
                    [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); });
         };
-        // All-core first, per-core on top — same order as the tab.
-        if (coall.isDouble())
+        // Per-core batch resets every core to 0 first, so all-core only without per-core values — as the tab.
+        if (coall.isDouble() && entries.isEmpty())
             helper("ryzen-co-helper", {{"op", "set_coall"}, {"params", QJsonObject{{"value", coall.toInt()}, {"profile", name}}}},
                    [perCore, done](bool ok, const QString &m) { if (ok) perCore(); else done(false, m); });
         else perCore();
@@ -892,6 +920,61 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
     done(false, "no CPU curve backend for this CPU");
 }
 
+QStringList SceneEngine::preview(const Scene &s) const {
+    QStringList out;
+    auto choice = [](const Choice &c) { return c.kind == Choice::Reset ? QStringLiteral("reset to stock") : "profile '" + c.name + "'"; };
+    const auto cur = pp::currentProfile(pp::primaryHandler()).value_or(QString());
+    const QString profileAfter = s.platformProfile.isEmpty() ? cur : s.platformProfile;
+    if (s.fanFullSpeed >= 0) out << QStringLiteral("Fan boost: ") + (s.fanFullSpeed ? "turbo (EC full speed)" : "auto");
+    if (!s.platformProfile.isEmpty())
+        out << (cur == s.platformProfile ? QStringLiteral("Power profile: already %1").arg(HomeTab::profileLabel(cur))
+                                         : QStringLiteral("Power profile: %1 → %2").arg(HomeTab::profileLabel(cur), HomeTab::profileLabel(s.platformProfile)));
+    if (!s.firmware.isEmpty()) {
+        if (profileAfter != QStringLiteral("custom")) out << QStringLiteral("✗ Firmware limits: need the Custom power profile");
+        else {
+            QMap<QString, FwAttr> byName;
+            for (const FwAttr &a : FwattrTab::discover()) byName.insert(a.name, a);
+            QStringList changes;
+            int missing = 0, gpu = 0;
+            for (auto it = s.firmware.cbegin(); it != s.firmware.cend(); ++it) {
+                const auto a = byName.constFind(it.key());
+                if (a == byName.cend() || (!a->viaWmi() && !a->ranged)) { ++missing; continue; }
+                if (a->viaWmi()) { ++gpu; continue; }
+                if (a->current != it.value()) changes << QStringLiteral("%1 %2 → %3").arg(a->displayName).arg(a->current).arg(it.value());
+            }
+            out << "Firmware limits: " + (changes.isEmpty() ? QStringLiteral("no sysfs value changes") : changes.join(QStringLiteral(", ")));
+            if (gpu) out << (nvidiaUsable() ? QStringLiteral("Firmware limits: %1 GPU value(s) via WMI").arg(gpu)
+                                            : QStringLiteral("✗ Firmware limits: %1 GPU value(s) skipped (NVIDIA dGPU is off)").arg(gpu));
+            if (missing) out << QStringLiteral("✗ Firmware limits: %1 value(s) not present on this machine").arg(missing);
+        }
+    }
+    if (s.cpu.kind != Choice::Unchanged)
+        out << (win_->ryzen() ? "CPU curve: " + choice(s.cpu) : win_->intel() ? "CPU undervolt: " + choice(s.cpu)
+                                                                               : QStringLiteral("✗ CPU curve: no supported CPU tuning interface"));
+    if (s.gpu.kind != Choice::Unchanged)
+        out << (nvidiaUsable() ? "GPU curve: " + choice(s.gpu)
+                                     + (s.gpu.kind == Choice::Profile ? QStringLiteral(" (%1 s after the scene)").arg(GPU_DEFER_MS / 1000) : QString())
+                               : NvidiaTab::present() ? QStringLiteral("✗ GPU curve: skipped (NVIDIA dGPU is off)")
+                                                      : QStringLiteral("✗ GPU curve: skipped (no NVIDIA GPU on the bus)"));
+    if (s.tuning.kind != Choice::Unchanged)
+        out << (s.tuning.kind == Choice::Reset ? QStringLiteral("Optimizations: restore originals") : "Optimizations: preset '" + s.tuning.name + "'");
+    if (s.fanTable.size() == 10)
+        out << (profileAfter == QStringLiteral("custom") ? QStringLiteral("Fan curve: custom EC table") : QStringLiteral("✗ Fan curve: needs the Custom power profile"));
+    if (s.lightProfile >= 0 || s.lightBrightness >= 0)
+        out << (lighting::present() ? QStringLiteral("Lighting: keyboard profile / brightness") : QStringLiteral("✗ Lighting: no Spectrum keyboard here"));
+    if (!s.zone4.isEmpty()) out << (lighting::zone4Present() ? QStringLiteral("4-zone lighting") : QStringLiteral("✗ 4-zone lighting: no 4-zone keyboard here"));
+    if (s.kbdLevel >= 0) out << QStringLiteral("Keyboard light: level %1").arg(s.kbdLevel);
+    if (s.panelOd >= 0) out << QStringLiteral("Panel Over Drive: ") + (s.panelOd ? "on" : "off");
+    if (s.refresh > 0) out << QStringLiteral("Display: %1 Hz").arg(s.refresh);
+    if (!s.command.isEmpty()) out << "⚠ Command: " + s.command + " (runs as you; cannot be undone or checked)";
+    if (s.screenBrightness > 0) out << QStringLiteral("Screen brightness: %1 %").arg(s.screenBrightness);
+    if (out.isEmpty()) out << QStringLiteral("Nothing to change (every component is 'unchanged')");
+    const bool touchesPower = !s.platformProfile.isEmpty() || !s.firmware.isEmpty() || s.tuning.kind != Choice::Unchanged;
+    if (const QString c = DriftWatch::culprits(); touchesPower && !c.isEmpty())
+        out << "⚠ Other tools that may change the same settings afterwards: " + c;
+    return out;
+}
+
 void SceneEngine::start(const Scene &s) {
     busy_ = true;
     ok_ = true;
@@ -901,6 +984,10 @@ void SceneEngine::start(const Scene &s) {
     autoApply_ = std::exchange(nextAuto_, false);
     expectedProfile_ = s.platformProfile;
     verify_->stop();
+    // A new scene cancels the GPU curve an earlier one still has pending (here or in centurion-gamemode).
+    gpuDefer_->stop();
+    deferGpu_.clear();
+    setGpuPending(QString());
     Q_EMIT started(s.name);
 
     // 0. EC fan boost FIRST: turning it off before the profile change means the fans never
@@ -1018,14 +1105,19 @@ void SceneEngine::start(const Scene &s) {
             // off at start-up (no NVIDIA tab), even after the card had been brought back.
             if (!nvidiaUsable()) { done(true, NvidiaTab::present() ? "skipped (NVIDIA dGPU is off)" : "skipped (no NVIDIA GPU on the bus)"); return; }
             win_->ensureNvidiaTab();  // the card came back after start-up
-            // Same 2 s gap after a CPU curve as centurion-gamemode (UNDERVOLT_GAP).
-            QTimer::singleShot(cpuStep ? 2000 : 0, this, [this, c, done] {
+            // A curve profile (undervolt / overclock) is applied GPU_DEFER_MS after the scene, in the background
+            // (armed by finish()): never in the middle of the power-profile / firmware-limit / CPU-curve switch.
+            if (c.kind == Choice::Profile) {
+                deferGpu_ = c.name;
+                done(true, QStringLiteral("'%1' in %2 s, in the background").arg(c.name).arg(GPU_DEFER_MS / 1000));
+                return;
+            }
+            // Reset to stock stays immediate. Same 2 s gap after a CPU curve as centurion-gamemode (UNDERVOLT_GAP).
+            QTimer::singleShot(cpuStep ? 2000 : 0, this, [this, done] {
                 // Two NvAPI sessions writing the ClockBoostTable at once is asking for trouble.
                 if (win_->nvidia() && win_->nvidia()->busy()) { done(false, "the NVIDIA tab is busy; skipped"); return; }
-                const QJsonObject req = c.kind == Choice::Reset ? QJsonObject{{"op", "reset_gpu_curve"}}
-                                                                : QJsonObject{{"op", "apply_named_profile"}, {"name", c.name}};
-                helper("nvcurve-root-helper", req, [done, c](bool ok, const QString &m) {
-                    done(ok, ok ? (c.kind == Choice::Reset ? QStringLiteral("reset") : "'" + c.name + "'") : m);
+                helper("nvcurve-root-helper", QJsonObject{{"op", "reset_gpu_curve"}}, [done](bool ok, const QString &m) {
+                    done(ok, ok ? QStringLiteral("reset") : m);
                 });
             });
         });
@@ -1197,7 +1289,16 @@ void SceneEngine::finish() {
     // what is applied), and never run a queued automatic switch under a game that started meanwhile.
     const bool gameOwns = gameTookOver_ || (autoApply_ && (gameSessions() > 0 || gameStarting() || gameSceneActive()));
     gameTookOver_ = false;
-    if (!gameOwns) { setActiveScene(current_); seenActive_ = current_; }
+    if (!gameOwns) { setActiveScene(current_, !ok_); seenActive_ = current_; }
+    // This scene's GPU curve profile, GPU_DEFER_MS from now — not when a game took the machine over.
+    if (const QString n = std::exchange(deferGpu_, QString()); !n.isEmpty() && !gameOwns) {
+        gpuDeferProfile_ = n;
+        gpuDeferScene_ = current_;
+        gpuDeferAuto_ = autoApply_;
+        gpuDeferToken_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        setGpuPending(gpuDeferToken_);
+        gpuDefer_->start(GPU_DEFER_MS);
+    }
     Q_EMIT finished(current_, ok_, log_);
     if (gameOwns) {
         pending_.clear();
@@ -1213,6 +1314,23 @@ void SceneEngine::finish() {
         return;
     }
     armVerify();
+}
+
+void SceneEngine::gpuDeferredFire() {
+    // Claimed under the state lock: a scene applied since (here or by centurion-gamemode) replaced or cancelled it.
+    if (!claimGpuPending(gpuDeferToken_)) return;
+    const QString name = gpuDeferProfile_, scene = gpuDeferScene_;
+    auto report = [this, name, scene](bool ok, const QString &m) {
+        Q_EMIT finished(QString(), ok, {(ok ? QString() : QStringLiteral("✗ "))
+                                        + QStringLiteral("GPU curve '%1' (%2 s after scene '%3'): %4").arg(name).arg(GPU_DEFER_MS / 1000).arg(scene, m)});
+        if (!ok && activeScene() == scene) setActiveScene(scene, true);
+    };
+    // Same rule as the remaining steps of an automatic switch: a game that started meanwhile wins.
+    if (gpuDeferAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { report(true, QStringLiteral("dropped, a game started")); return; }
+    if (!nvidiaUsable()) { report(true, QStringLiteral("skipped (NVIDIA dGPU is off)")); return; }
+    if (win_->nvidia() && win_->nvidia()->busy()) { report(false, QStringLiteral("the NVIDIA tab is busy; skipped")); return; }
+    helper("nvcurve-root-helper", QJsonObject{{"op", "apply_named_profile"}, {"name", name}},
+           [report](bool ok, const QString &m) { report(ok, ok ? QStringLiteral("applied") : m); });
 }
 
 /// After an automatic switch the EC may still change the platform profile on its own (it re-evaluates the

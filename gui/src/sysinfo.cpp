@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QMutex>
 #include <QHash>
+#include <QMap>
 #include "platformprofile.h"
 #include <QDir>
 #include <QFile>
@@ -291,12 +292,19 @@ std::optional<double> cpuTempC() {
 }
 
 Opt fans() {
+    // Several drivers (lenovo_wmi_other, legion hwmon, …) report the same physical
+    // fans under the same index. One reading per index, from the chip with the
+    // most fans first, so a fan only one driver knows (fan4) still shows up.
+    QList<Chip> cs = chips();
+    std::stable_sort(cs.begin(), cs.end(), [](const Chip &a, const Chip &b) { return a.fan.size() > b.fan.size(); });
+    QMap<int, long long> rpmByIndex;
+    for (const Chip &c : std::as_const(cs))
+        for (const Input &f : c.fan)
+            if (!rpmByIndex.contains(f.index))
+                if (auto rpm = rdInt(f.path); rpm && *rpm > 0) rpmByIndex.insert(f.index, *rpm);
     QStringList l;
-    for (const Chip &c : chips())
-        for (const Input &f : c.fan) {
-            if (l.size() >= 4) return joined(l);
-            if (auto rpm = rdInt(f.path); rpm && *rpm > 0) l << QStringLiteral("Fan %1 %2 RPM").arg(f.index).arg(*rpm);
-        }
+    for (auto it = rpmByIndex.cbegin(); it != rpmByIndex.cend(); ++it)
+        l << QStringLiteral("Fan %1 %2 RPM").arg(it.key()).arg(it.value());
     return joined(l);
 }
 
@@ -482,10 +490,14 @@ Opt usbcInputs() {
         const QString e = p.section('/', -1);
         any = true;
         if (rdInt(p + "/online").value_or(0) != 1) continue;
-        const auto uv = rdInt(p + "/voltage_now"), ua = rdInt(p + "/current_now");
+        const auto uv = rdInt(p + "/voltage_now"), ua = rdInt(p + "/current_now"), max = rdInt(p + "/current_max");
         const QString port = QStringLiteral("Port %1").arg(e.section(':', -1).toInt());
+        // current_max: what the charger agreed to deliver (USB PD contract), so "of N W" is the charger's limit at this voltage.
+        const QString limit = uv && max && *uv > 0 && *max > 0 ? QStringLiteral(" of %1 W").arg(*uv / 1e6 * (*max / 1e6), 0, 'f', 0) : QString();
         if (uv && ua && *uv > 0 && *ua > 0)
-            l << QStringLiteral("%1 %2 W (%3 V)").arg(port).arg(*uv / 1e6 * (*ua / 1e6), 0, 'f', 1).arg(*uv / 1e6, 0, 'f', 0);
+            l << QStringLiteral("%1 %2 W%3 (%4 V)").arg(port).arg(*uv / 1e6 * (*ua / 1e6), 0, 'f', 1).arg(limit).arg(*uv / 1e6, 0, 'f', 0);
+        else if (!limit.isEmpty())
+            l << port + QStringLiteral(" connected, up to") + limit.mid(3);
         else
             l << port + QStringLiteral(" connected");
     }

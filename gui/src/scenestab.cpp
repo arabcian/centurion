@@ -12,6 +12,8 @@
 #include "ryzentab.h"
 #include "shortcuts.h"
 #include "theme.h"
+#include "experimentalui.h"
+#include "experimentalui.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QCheckBox>
@@ -44,6 +46,8 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QScrollArea>
+#include <QSplitter>
 
 using scenes::Choice;
 using scenes::Scene;
@@ -132,8 +136,15 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     left->addWidget(listBox, 1);
     auto *leftHost = new QWidget;
     leftHost->setLayout(left);
-    leftHost->setFixedWidth(190);
-    root->addWidget(leftHost);
+    // A little wider in Experimental so long scene names do not truncate.
+    // The right editor keeps its original content and operational callbacks.
+    if (theme::experimentalEnabled()) {
+        leftHost->setMinimumWidth(190);
+        leftHost->setMaximumWidth(340);
+    } else {
+        leftHost->setFixedWidth(190);
+        root->addWidget(leftHost);
+    }
 
     // ── right: editor + automatic switching ──
     auto *right = new QVBoxLayout;
@@ -334,10 +345,13 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     eb->addWidget(del_);
     eb->addStretch(1);
     save_ = new QPushButton(tr("Save"));
+    preview_ = new QPushButton(tr("Preview"));
+    preview_->setToolTip(tr("Shows what Apply would change on this machine; writes nothing"));
     apply_ = new QPushButton(tr("Apply"));
     apply_->setObjectName("btnAccent");
     apply_->setToolTip("Saves the scene if changed, then applies it");
     eb->addWidget(save_);
+    eb->addWidget(preview_);
     eb->addWidget(apply_);
     g->addLayout(eb, row++, 0, 1, 4);
     right->addWidget(editor_);
@@ -384,6 +398,15 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         QString err;
         if (!eng_->setPaused(on, &err)) { syncPause(!on); setStatus(tr("Could not save the pause setting: %1").arg(err), theme::DANGER); }
     });
+    if (theme::experimentalEnabled()) {
+        // Pause is an immediate action and must never be buried behind the
+        // secondary automation disclosure. Reparent the original button into
+        // the always-visible scene picker. Its signal is unchanged.
+        ag->removeWidget(pause_);
+        left->insertWidget(0, pause_);
+        auto *advanced = experimentalui::disclosure(tr("AUTOMATION  ·  Triggers and active-scene rules"), autoBox);
+        right->addWidget(advanced);
+    }
     right->addWidget(autoBox);
 
     if (mangohud::available()) {
@@ -411,7 +434,26 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     status_->setWordWrap(true);
     right->addWidget(status_);
     right->addStretch(1);
-    root->addLayout(right, 1);
+    if (theme::experimentalEnabled()) {
+        auto *work = new QSplitter(Qt::Horizontal);
+        work->setObjectName(QStringLiteral("scenesWorkspace"));
+        work->setChildrenCollapsible(false);
+        work->addWidget(leftHost);
+        auto *editorScroll = new QScrollArea;
+        editorScroll->setWidgetResizable(true);
+        editorScroll->setFrameShape(QFrame::NoFrame);
+        auto *editorHost = new QWidget;
+        editorHost->setLayout(right); // all original callbacks/controls remain
+        editorScroll->setWidget(editorHost);
+        work->addWidget(editorScroll);
+        work->setStretchFactor(0, 2);
+        work->setStretchFactor(1, 8);
+        work->setSizes({245, 900});
+        experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/scenes_split"));
+        root->addWidget(work, 1);
+    } else {
+        root->addLayout(right, 1);
+    }
 
     // ── wiring ──
     connect(list_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *it) {
@@ -423,6 +465,11 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(del_, &QPushButton::clicked, this, &ScenesTab::deleteScene);
     connect(save_, &QPushButton::clicked, this, [this] { if (saveCurrent()) setStatus("Saved.", theme::OK); });
     connect(apply_, &QPushButton::clicked, this, &ScenesTab::applyCurrent);
+    connect(preview_, &QPushButton::clicked, this, [this] {
+        const Scene s = fromEditor();
+        QMessageBox::information(this, tr("Preview: %1").arg(s.name),
+                                 eng_->preview(s).join('\n') + tr("\n\nNothing was written. Values are read now and may differ at apply time."));
+    });
     connect(fwCapture_, &QPushButton::clicked, this, &ScenesTab::captureFirmware);
     connect(fanClear_, &QPushButton::clicked, this, [this] { fanTable_.clear(); updateFanTableLabel(); updateDirty(); });
     connect(fwClear_, &QPushButton::clicked, this, [this] { firmware_.clear(); updateFirmwareLabel(); updateDirty(); });
@@ -675,7 +722,12 @@ void ScenesTab::reloadList(const QString &selectName) {
         if (a.enabled && n == a.onBattery) tags << QStringLiteral("battery");
         auto *it = new QListWidgetItem(tags.isEmpty() ? n : n + QStringLiteral("  ·  ") + tags.join('/'));
         it->setData(Qt::UserRole, n);
-        if (n == eng_->active()) { QFont f = it->font(); f.setBold(true); it->setFont(f); it->setToolTip(tr("Active")); }
+        if (n == eng_->active()) {
+            QFont f = it->font(); f.setBold(true); it->setFont(f);
+            const bool partial = scenes::activeScenePartial();
+            if (partial) it->setText(it->text() + QStringLiteral("  ·  partial"));
+            it->setToolTip(partial ? tr("Active, but its last apply had failed steps: only partly in effect") : tr("Active"));
+        }
         list_->addItem(it);
     }
     filling_ = false;

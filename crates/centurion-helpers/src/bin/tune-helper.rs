@@ -9,7 +9,8 @@
 //!   {"op":"autotune","goal":"gaming","weights":{..}}   any user: hardware profile + derived preset
 //!       (goal: powersave | gaming | throughput | desktop; optional objective weights; see centurion_helpers::autotune)
 //!   {"op":"autotune_defaults"}                         any user: every goal's default objective weights
-//!       ({"keys": Weights::KEYS, "goals": {goal: [weight per key]}}; the GUI's weight editor reads them)
+//!       ({"keys": Weights::KEYS, "goals": {goal: [weight per key]}, "adapted": {goal: {"weights": [..], "why": {key: note}}}};
+//!       the GUI's weight editor reads them; "adapted" = leaned towards this machine's history, as autotune uses them)
 //!   {"op":"audit"}                                     any user: safety audit of the root preset store + boot preset
 //!   {"op":"capture_defaults"}                          tune-helper only: boot-default snapshot (normally done at boot)
 //!   {"op":"io_probe"}                                  tune-helper only: bounded write-rate probe for autotune
@@ -29,6 +30,8 @@
 //!       captured early in this boot (defaults.json) — also what TLP or anything else changed since; calibration anchor
 //!   {"op":"snapshot"}                                  refresh the readable copy of debugfs values (also done after every root op)
 //!   {"op":"boost","nice":-5,"autogroup":true}          renice the process that ran pkexec
+//!   {"op":"isolate_join","park":"ccd1"?,"weight":400?}  game RUN/WRAP: move the caller into the game cgroup (partition without park's CCD and/or cpu.weight)
+//!   {"op":"zram","action":"mark_idle"|"recompress"}   game start / end: mark zram pages idle, recompress the still-idle ones (bounded)
 //!   {"op":"set_boot","values":{..}|null,"preset":".."} store/clear the boot preset (root-owned file)
 //!   {"op":"set_wireless_pm_lock","on":bool}            tune-helper only: master switch — Wi-Fi/Bluetooth power management stays off
 //!       (root-owned /etc/centurion/wireless-pm-lock; scenes, presets and autotune cannot turn it back on)
@@ -42,6 +45,8 @@
 //!   {"op":"guard_reset"}                               resume boot presets paused by centurion-boot-guard
 //!   {"op":"calibrate_on_boot","sessions":N,"budget":MIN,"scene":"..","cancel":bool}   tune-helper only:
 //!       schedule (or cancel) centurion-calibrate sessions at the next boot (centurion-calibrate-boot service)
+//!   {"op":"flight_interval","seconds":N}               tune-helper only: flight recorder sample / sync interval
+//!       (5, 10, 30 or 60 s; omit "seconds" to query), see centurion_helpers::flight
 //!   {"op":"pstore_clear"}                              tune-helper only: copy every /sys/fs/pstore record (address-scrubbed) to
 //!       /var/lib/centurion/pstore/, remove only those that were archived (frees the EFI variables behind them)
 //!
@@ -105,7 +110,7 @@ fn profile_role() -> bool { env!("CARGO_BIN_NAME") == "tune-profile-helper" }
 /// Ops tune-profile-helper serves as root. None can put a value on the kernel that the user has not approved:
 /// stored presets by name, restoring saved originals, game-session bookkeeping, fixed read-only tools, and the
 /// root-owned boot preset. (Read-only ops that need no root are answered before this check.)
-const PROFILE_OPS: &[&str] = &["snapshot", "apply_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "tool", "boot"];
+const PROFILE_OPS: &[&str] = &["snapshot", "apply_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "zram", "tool", "boot"];
 
 struct Lock(#[allow(dead_code)] fs::File);
 
@@ -133,7 +138,7 @@ fn lock() -> Result<Lock, String> {
                 let holder = fs::read_to_string(LOCK_FILE).unwrap_or_default();
                 if let Some(pid) = holder.trim().strip_prefix("calibrate ").and_then(|p| p.parse::<i32>().ok()) {
                     // comm is cut to 15 bytes: "centurion-calibrate" reads back as "centurion-calib".
-                    if fs::read_to_string(format!("/proc/{pid}/comm")).map_or(false, |c| c.trim() == &"centurion-calibrate"[..15]) {
+                    if fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == &"centurion-calibrate"[..15]) {
                         return Err(format!("centurion-calibrate is measuring (pid {pid}) and holds the tuning until it ends; \
                                             try again when it has finished, or stop it (Ctrl-C restores its changes)"));
                     }
@@ -370,6 +375,19 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
                 }
             }
         }
+        // irqbalance would rewrite the affinity within seconds (see tune::irqbalance_pause).
+        let mut irq_note: Option<String> = None;
+        if t.key == "irq.affinity" && !todo.is_empty() {
+            if v == "all" {
+                if let Ok(true) = tune::irqbalance_resume() { irq_note = Some("irqbalance restarted".into()); }
+            } else {
+                match tune::irqbalance_pause() {
+                    Ok(true) => irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into()),
+                    Ok(false) => {}
+                    Err(e) => irq_note = Some(e),
+                }
+            }
+        }
         for (f, data, fresh) in todo {
             match tune::write_value(t, &f, &data) {
                 Ok(()) => {
@@ -406,6 +424,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         let mut r = json!({"key": t.key, "value": v, "written": written});
         if refused > 0 { r["refused"] = json!(refused); }
         if let Some(n) = powerd_note { r["note"] = json!(n); }
+        if let Some(n) = irq_note { r["note"] = json!(match r["note"].as_str() { Some(p) => format!("{p}; {n}"), None => n }); }
         if errs.is_empty() {
             r["ok"] = json!(true);
         } else {
@@ -440,7 +459,7 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
         // CPUs come back first: give them time before their cpufreq files are written.
         if !hotplug_done && !tune::is_hotplug(key) {
             hotplug_done = true;
-            if order.first().map_or(false, |&j| tune::is_hotplug(&items[j].0)) {
+            if order.first().is_some_and(|&j| tune::is_hotplug(&items[j].0)) {
                 std::thread::sleep(tune::HOTPLUG_SETTLE);
                 tune::invalidate_topology();
             }
@@ -460,11 +479,15 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
             Err(e) if matches!(tune::find(key).map(|t| &t.target), Some(tune::Target::PciLatency)) && e.contains("skipped (GPU tree or suspended device)") => {}
             // Best-effort rows (IRQs, PCI/USB devices): not an error, but the
             // original stays recorded for the next restore instead of being lost.
-            Err(_) if tune::find(key).map_or(false, tune::best_effort) => { failed.insert(i); deferred += 1; }
+            Err(_) if tune::find(key).is_some_and(tune::best_effort) => { failed.insert(i); deferred += 1; }
             Err(e) => { failed.insert(i); errs.push(json!({"key": key, "error": e})); }
         }
     }
     if let Err(e) = tune::powerd_resume() { errs.push(json!({"key": "nvidia-powerd", "error": e})); }
+    // The daemon comes back with the affinity it would have fought (only if we stopped it).
+    if items.iter().enumerate().any(|(i, x)| x.0 == "irq.affinity" && !failed.contains(&i)) {
+        if let Err(e) = tune::irqbalance_resume() { errs.push(json!({"key": "irqbalance", "error": e})); }
+    }
     (n, errs, deferred, failed)
 }
 
@@ -595,7 +618,7 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
             st.source = Some(mode.to_owned());
         }
         let (results, mut ok) = apply_values(st, values, mode == "game");
-        if restored["errors"].as_array().map_or(false, |a| !a.is_empty()) { ok = false; }
+        if restored["errors"].as_array().is_some_and(|a| !a.is_empty()) { ok = false; }
         if values.is_empty() && st.baseline.is_empty() { st.source = None; }
         json!({"ok": ok, "applied": true, "results": results, "restored": restored,
             "error": (!ok).then_some("some settings could not be applied")})
@@ -719,7 +742,7 @@ fn op_restore_defaults() -> Value {
     };
     // Snapshots written before capture() filtered them can hold "mixed" / 0-byte dirty limits: not values.
     let values: Map<String, Value> = d.values.iter()
-        .filter(|(k, v)| tune::find(k).map_or(false, |t| centurion_helpers::defaults::storable(t, v)))
+        .filter(|(k, v)| tune::find(k).is_some_and(|t| centurion_helpers::defaults::storable(t, v)))
         .map(|(k, v)| (k.clone(), json!(v))).collect();
     if values.is_empty() { return json!({"ok": false, "error": "the boot-default snapshot holds no known settings"}); }
     locked(|st| {
@@ -796,9 +819,12 @@ fn op_boost(req: &Value) -> Value {
 /// soft-parked CCD `park`. Only while a game session holds game mode, so the
 /// release that ends it also removes the partition.
 fn op_isolate_join(req: &Value) -> Value {
-    let Some(park) = req["park"].as_str().filter(|s| !s.is_empty() && s.len() <= 16) else {
-        return json!({"ok": false, "error": "park must name a CCD"});
-    };
+    let park = req["park"].as_str().filter(|s| !s.is_empty() && s.len() <= 16);
+    if req["park"].is_string() && park.is_none() { return json!({"ok": false, "error": "park must name a CCD"}); }
+    // cpu.weight of the game cgroup against the rest of the system (default 100).
+    let weight = req["weight"].as_u64().filter(|w| (1..=10_000).contains(w)).map(|w| w as u32);
+    if !req["weight"].is_null() && weight.is_none() { return json!({"ok": false, "error": "weight must be in 1..10000"}); }
+    if park.is_none() && weight.is_none() { return json!({"ok": false, "error": "park or weight is required"}); }
     let ppid = unsafe { libc::getppid() };
     let Some(caller) = std::env::var("PKEXEC_UID").ok().and_then(|v| v.parse::<u32>().ok()) else {
         return json!({"ok": false, "error": "isolate_join is only available through pkexec"});
@@ -810,13 +836,16 @@ fn op_isolate_join(req: &Value) -> Value {
         if st.source.as_deref() != Some("game") || st.refcount() == 0 {
             return json!({"ok": false, "error": "game mode is not active"});
         }
-        let groups = tune::ccx_groups();
-        let Some(pg) = tune::resolve_ccd(&groups, park) else {
-            return json!({"ok": false, "error": format!("'{park}' does not resolve to an online CCD")});
-        };
-        let mut cpus: Vec<usize> = groups.iter().flat_map(|g| g.cpus.iter().copied()).filter(|c| !pg.cpus.contains(c)).collect();
-        cpus.sort_unstable();
-        if let Err(e) = centurion_helpers::isolate::setup(&cpus) { return json!({"ok": false, "error": e}); }
+        let mut cpus: Vec<usize> = Vec::new();
+        if let Some(park) = park {
+            let groups = tune::ccx_groups();
+            let Some(pg) = tune::resolve_ccd(&groups, park) else {
+                return json!({"ok": false, "error": format!("'{park}' does not resolve to an online CCD")});
+            };
+            cpus = groups.iter().flat_map(|g| g.cpus.iter().copied()).filter(|c| !pg.cpus.contains(c)).collect();
+            cpus.sort_unstable();
+        }
+        if let Err(e) = centurion_helpers::isolate::setup(&cpus, weight) { return json!({"ok": false, "error": e}); }
         // Same PID-reuse pin as boost: only while the caller is still our parent.
         if unsafe { libc::getppid() } != ppid { return json!({"ok": false, "error": "caller exited"}); }
         match centurion_helpers::isolate::join(ppid) {
@@ -853,7 +882,7 @@ fn clean_values(values: &Map<String, Value>) -> Result<(Map<String, Value>, Vec<
 }
 
 fn preset_name(s: &str) -> Option<String> {
-    let ok = !s.is_empty() && s.len() <= 64 && s.chars().next().map_or(false, char::is_alphanumeric)
+    let ok = !s.is_empty() && s.len() <= 64 && s.chars().next().is_some_and(char::is_alphanumeric)
         && s.chars().all(|c| c.is_alphanumeric() || " _-.".contains(c)) && !s.contains("..");
     ok.then(|| s.to_owned())
 }
@@ -1028,12 +1057,16 @@ fn op_boot() -> Value {
 
 /// Every goal's default weights in `Weights::KEYS` order (read-only: the GUI used to keep a copy).
 fn autotune_defaults() -> Value {
-    use centurion_helpers::autotune::{Goal, Weights};
-    let goals: Map<String, Value> = Goal::ALL.iter().map(|g| {
-        let w = Weights::for_goal(*g).to_json();
-        (g.key().to_owned(), Value::Array(Weights::KEYS.iter().map(|k| w[*k].clone()).collect()))
+    use centurion_helpers::autotune::{effective_weights, Evidence, Goal, Weights};
+    let row = |w: &Weights| { let w = w.to_json(); Value::Array(Weights::KEYS.iter().map(|k| w[*k].clone()).collect()) };
+    let goals: Map<String, Value> = Goal::ALL.iter().map(|g| (g.key().to_owned(), row(&Weights::for_goal(*g)))).collect();
+    let e = Evidence::gather();
+    let adapted: Map<String, Value> = Goal::ALL.iter().map(|g| {
+        let (w, notes) = effective_weights(*g, &e);
+        let why: Map<String, Value> = notes.into_iter().map(|(k, n)| (k.to_owned(), Value::String(n))).collect();
+        (g.key().to_owned(), json!({"weights": row(&w), "why": why}))
     }).collect();
-    json!({"ok": true, "keys": Weights::KEYS, "goals": goals})
+    json!({"ok": true, "keys": Weights::KEYS, "goals": goals, "adapted": adapted})
 }
 
 fn run() -> Value {
@@ -1087,6 +1120,11 @@ fn run() -> Value {
         "restore_defaults" => op_restore_defaults(),
         "boost" => op_boost(&req),
         "isolate_join" => op_isolate_join(&req),
+        // Fixed, bounded writes (no value from the request): game start marks, game end recompresses.
+        "zram" => match tune::zram_action(req["action"].as_str().unwrap_or("")) {
+            Ok(n) => json!({"ok": true, "devices": n}),
+            Err(e) => json!({"ok": false, "error": e}),
+        },
         "tool" => centurion_helpers::tools::run(req["tool"].as_str().unwrap_or("")),
         "nvreg_set" => match req["values"].as_object() {
             Some(v) => match centurion_helpers::nvreg::set(v) {
@@ -1103,6 +1141,7 @@ fn run() -> Value {
         "set_wireless_pm_lock" => op_set_wireless_pm_lock(&req),
         // Takes nothing from the request: archives /sys/fs/pstore into /var/lib/centurion/pstore, then empties it.
         "pstore_clear" => centurion_helpers::pstore::clear(),
+        "flight_interval" => centurion_helpers::flight::interval_op(req.get("seconds").and_then(Value::as_u64)),
         "boot" => op_boot(),
         "guard_reset" => match centurion_helpers::bootguard::reset() {
             Ok(v) => json!({"ok": true, "guard": v}),
@@ -1151,9 +1190,21 @@ mod tests {
     use super::*;
     #[test]
     fn profile_role_cannot_take_values() {
-        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear"] {
+        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear", "flight_interval"] {
             assert!(!PROFILE_OPS.contains(&op), "{op} must stay tune-helper only");
         }
+    }
+    #[test]
+    fn isolate_join_checks_park_and_weight_first() {
+        let err = |req: Value| op_isolate_join(&req)["error"].as_str().unwrap_or("").to_owned();
+        assert_eq!(err(json!({})), "park or weight is required");
+        assert_eq!(err(json!({"park": null, "weight": null})), "park or weight is required");
+        assert_eq!(err(json!({"weight": 0})), "weight must be in 1..10000");
+        assert_eq!(err(json!({"weight": 20_000})), "weight must be in 1..10000");
+        assert_eq!(err(json!({"park": ""})), "park must name a CCD");
+        // Valid arguments get as far as the pkexec check (not run through pkexec here).
+        std::env::remove_var("PKEXEC_UID");
+        assert!(err(json!({"park": null, "weight": 400})).contains("only available through pkexec"));
     }
     #[test]
     fn autotune_defaults_mirror_the_weights() {

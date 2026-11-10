@@ -11,6 +11,7 @@
 #include "privileged.h"
 #include "sysinfo.h"
 #include "theme.h"
+#include "experimentalui.h"
 
 #include <QButtonGroup>
 #include <QCoreApplication>
@@ -36,7 +37,12 @@
 #include <QLabel>
 #include <QFrame>
 #include <QMessageBox>
+#include <QMenu>
+#include <QWidgetAction>
 #include <QProcess>
+#include <QScrollArea>
+#include <QTabWidget>
+#include <QRegularExpression>
 #include <QPushButton>
 #include <QIcon>
 #include <QPainter>
@@ -219,8 +225,44 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     });
     auto *themeLabel = muted(tr("Theme"));
     themeLabel->setWordWrap(false);
-    headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
-    headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
+    // Preferences stay discoverable without dominating the monitoring surface.
+    QWidget *preferences = nullptr;
+    QHBoxLayout *preferencesRow = nullptr;
+    if (theme::experimentalEnabled()) {
+        preferences = new QWidget;
+        preferencesRow = new QHBoxLayout(preferences);
+        preferencesRow->setContentsMargins(3, 3, 3, 3);
+        preferencesRow->setSpacing(6);
+        preferencesRow->addWidget(themeLabel);
+        preferencesRow->addWidget(themeBox);
+    } else {
+        headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
+        headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
+    }
+    // Both UI modes use the exact same hardware features. Saving the mode
+    // changes only visual presentation and the top-level navigation shell.
+    auto *uiMode = new QComboBox;
+    uiMode->setObjectName(QStringLiteral("uiModeSelector"));
+    uiMode->setToolTip(tr("Choose the original UI or the experimental layout. Applies on restart."));
+    uiMode->addItem(tr("Experimental"), QStringLiteral("experimental"));
+    uiMode->addItem(tr("Classic"), QStringLiteral("classic"));
+    uiMode->setCurrentIndex(theme::experimentalEnabled() ? 0 : 1);
+    connect(uiMode, &QComboBox::activated, this, [this, uiMode](int index) {
+        const bool experimental = uiMode->itemData(index).toString() == QLatin1String("experimental");
+        if (experimental == theme::experimentalEnabled()) return;
+        if (!theme::saveUiMode(experimental)) {
+            showStatus(tr("Could not save the interface mode."), 6000);
+            return;
+        }
+        if (QMessageBox::question(this, tr("Interface"),
+                tr("Restart Centurion now to switch interface layout?")) == QMessageBox::Yes)
+            theme::requestRestart();
+        else showStatus(tr("The interface changes at the next start."), 6000);
+    });
+    auto *uiLabel = muted(tr("Interface"));
+    uiLabel->setWordWrap(false);
+    if (preferencesRow) { preferencesRow->addWidget(uiLabel); preferencesRow->addWidget(uiMode); }
+    else { headRow->addWidget(uiLabel, 0, Qt::AlignVCenter); headRow->addWidget(uiMode, 0, Qt::AlignVCenter); }
     // Interface language: same mechanism as the theme (saved, applied at the next start).
     auto *langBox = new QComboBox;
     langBox->setToolTip(tr("Interface language. Applied by restarting the app (a few seconds)."));
@@ -235,8 +277,21 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     });
     auto *langLabel = muted(tr("Language"));
     langLabel->setWordWrap(false);
-    headRow->addWidget(langLabel, 0, Qt::AlignVCenter);
-    headRow->addWidget(langBox, 0, Qt::AlignVCenter);
+    if (preferencesRow) {
+        preferencesRow->addWidget(langLabel);
+        preferencesRow->addWidget(langBox);
+        auto *settingsButton = new QPushButton(tr("Preferences"));
+        settingsButton->setObjectName(QStringLiteral("btnMini"));
+        auto *popup = new QMenu(settingsButton);
+        auto *panelAction = new QWidgetAction(popup);
+        panelAction->setDefaultWidget(preferences);
+        popup->addAction(panelAction);
+        settingsButton->setMenu(popup);
+        headRow->addWidget(settingsButton);
+    } else {
+        headRow->addWidget(langLabel, 0, Qt::AlignVCenter);
+        headRow->addWidget(langBox, 0, Qt::AlignVCenter);
+    }
     root->addLayout(headRow);
 
     guardBanner_ = new QFrame;
@@ -297,28 +352,85 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     status_->setFixedHeight(status_->fontMetrics().height() + 2);
     status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 
-    // 2×2 grid, every cell the same size.
-    auto *cells = new QGridLayout;
-    cells->setSpacing(6);
     QGroupBox *dev = buildDeviceBox();  // hosts status_ when present
-    const QList<QWidget *> boxes{buildHardwareBox(), buildLiveBox(), profileBox, dev};
-    for (int i = 0; i < boxes.size(); ++i) {
-        if (!boxes[i]) continue;
-        boxes[i]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        cells->addWidget(boxes[i], i / 2, i % 2);
+    QGroupBox *hardware = buildHardwareBox();
+    QGroupBox *liveSensors = buildLiveBox();
+    if (theme::experimentalEnabled()) {
+        // One 2×2 grid with shared rows and equal columns, not two independent
+        // columns: every card edge (top, seam, bottom, centre gap) lines up by
+        // construction, whatever each card's content height is.
+        //   Power Profile │ Monitoring
+        //   Device        │ Live sensors / Hardware & firmware
+        auto *plotPanel = new QGroupBox(tr("Monitoring"));
+        auto *chartLayout = new QVBoxLayout(plotPanel);
+        temperaturePlot_ = new experimentalui::TemperaturePlot;
+        chartLayout->addWidget(temperaturePlot_, 1);
+        auto *details = new QTabWidget;
+        details->setObjectName(QStringLiteral("homeDetailTabs"));
+        details->setDocumentMode(true);
+        // The tab already names each page: no second title or frame inside it.
+        liveSensors->setTitle(QString());
+        hardware->setTitle(QString());
+        details->addTab(liveSensors, tr("Live sensors"));
+        details->addTab(hardware, tr("Hardware && firmware"));
+        // A card like its neighbours; its tab bar stands where a title would.
+        auto *detailCard = new QFrame;
+        detailCard->setObjectName(QStringLiteral("homeDetailCard"));
+        auto *detailLayout = new QVBoxLayout(detailCard);
+        detailLayout->setContentsMargins(6, 4, 6, 6);
+        detailLayout->addWidget(details);
+
+        for (QWidget *w : {static_cast<QWidget *>(profileBox), static_cast<QWidget *>(dev),
+                           static_cast<QWidget *>(plotPanel), static_cast<QWidget *>(detailCard)})
+            if (w) w->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        auto *gridHost = new QWidget;
+        gridHost->setObjectName(QStringLiteral("homeWorkspace"));
+        auto *cells = new QGridLayout(gridHost);
+        cells->setContentsMargins(0, 0, 0, 0);
+        cells->setSpacing(6);
+        cells->addWidget(profileBox, 0, 0);
+        cells->addWidget(plotPanel, 0, 1);
+        if (dev) {
+            cells->addWidget(dev, 1, 0);
+            cells->addWidget(detailCard, 1, 1);
+        } else {
+            cells->addWidget(detailCard, 1, 0, 1, 2);
+        }
+        // Equal halves; the top row is as tall as the profile list needs, the
+        // bottom row takes the rest of the window.
+        cells->setColumnStretch(0, 1);
+        cells->setColumnStretch(1, 1);
+        cells->setRowStretch(1, 1);
+        // Only a window too small for the content scrolls.
+        auto *scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidget(gridHost);
+        root->addWidget(scroll, 1);
+    } else {
+        // Identical Classic layout and all existing child widgets.
+        auto *cells = new QGridLayout;
+        cells->setSpacing(6);
+        const QList<QWidget *> boxes{hardware, liveSensors, profileBox, dev};
+        for (int i = 0; i < boxes.size(); ++i) {
+            if (!boxes[i]) continue;
+            boxes[i]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+            cells->addWidget(boxes[i], i / 2, i % 2);
+        }
+        cells->setRowStretch(0, 1);
+        cells->setRowStretch(1, 1);
+        cells->setColumnStretch(0, 1);
+        cells->setColumnStretch(1, 1);
+        root->addLayout(cells, 1);
     }
-    cells->setRowStretch(0, 1);
-    cells->setRowStretch(1, 1);
-    cells->setColumnStretch(0, 1);
-    cells->setColumnStretch(1, 1);
-    root->addLayout(cells, 1);
     if (!dev) root->addWidget(status_);
     statusTimer_ = new QTimer(this);
     statusTimer_->setSingleShot(true);
     connect(statusTimer_, &QTimer::timeout, status_, [this] { status_->clear(); });
 
-    root->addWidget(muted(tr("Per-component limits and undervolt curves live in the other tabs. "
-                           "Firmware Attributes only accepts writes while the profile is Custom.")));
+    if (!theme::experimentalEnabled())
+        root->addWidget(muted(tr("Per-component limits and undervolt curves live in the other tabs. "
+                                 "Firmware Attributes only accepts writes while the profile is Custom.")));
 
     group_ = new QButtonGroup(this);
     group_->setExclusive(true);
@@ -519,6 +631,27 @@ void HomeTab::refreshLive() {
             for (int i = 0; i < vals.size() && i < self->liveRows_.size(); ++i) {
                 const QString t = vals[i].value_or(QStringLiteral("—"));
                 if (self->liveRows_[i].value->text() != t) self->liveRows_[i].value->setText(t);
+            }
+            if (self->temperaturePlot_) {
+                auto pick = [](const QString &str) -> std::optional<double> {
+                    static const QRegularExpression re(QStringLiteral("(-?\\d+(?:\\.\\d+)?)"));
+                    const auto match = re.match(str);
+                    if (!match.hasMatch()) return std::nullopt;
+                    bool ok = false;
+                    const double v = match.captured(1).toDouble(&ok);
+                    return ok ? std::optional<double>(v) : std::nullopt;
+                };
+                std::optional<double> cpu;
+                for (const auto &r : std::as_const(self->liveRows_)) {
+                    if (r.key->text() == self->tr("CPU Temp")) { cpu = pick(r.value->text()); break; }
+                }
+                // An EC temperature is real only while the dGPU is awake and
+                // the last EC sample is recent. No NVML request is introduced.
+                std::optional<double> gpu;
+                if (self->ecGpuTemp_ > 0 && monoMs() - self->ecAt_ < 5000 &&
+                    self->gpuLiveValue_ && self->gpuLiveValue_->text().contains(self->tr("awake")))
+                    gpu = self->ecGpuTemp_;
+                self->temperaturePlot_->append(cpu, gpu);
             }
         }, Qt::QueuedConnection);
     });
@@ -921,6 +1054,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
     }
     // No sysfs interface: the Legion WMAE fallback (EC FNST) is probed through the
     // helper; the checkbox appears once the firmware answers.
+    int fullSpeedRow = -1;  // Studio puts the fan buttons on this row, beside the checkbox
     if (!fullSpeedFile_.isEmpty() || !fanHwmon_.isEmpty() || wmiHas("DC2A8805-3A8C-41BA-A6F7-092E0089CD3B")
         || wmiHas("92549549-4BDE-4F06-AC04-CE8BF898DBAA")) {
         fullSpeed_ = new QCheckBox(tr("Turbo fan (EC full speed)"));
@@ -932,6 +1066,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         connect(fullSpeed_, &QCheckBox::clicked, this, [this](bool on) { setDevice("fan_fullspeed", on ? "1" : "0"); });
         auto *fsLabel = label(tr("Fans"));
         g->addWidget(fsLabel, row, 0);
+        fullSpeedRow = row;
         g->addWidget(fullSpeed_, row++, 1, 1, 4);
         if (fullSpeedFile_.isEmpty()) {
             fullSpeed_->hide();
@@ -984,7 +1119,14 @@ QGroupBox *HomeTab::buildDeviceBox() {
         if (curveBtn) mh->addWidget(curveBtn);
         mh->addWidget(maxAllBtn_);
         mh->addWidget(maxBannerBtn_);
-        g->addLayout(mh, row++, 0, 1, 5);
+        if (theme::experimentalEnabled() && fullSpeedRow >= 0) {
+            // One "Fans" row: Turbo on the left, curve / max on the right.
+            g->removeWidget(fullSpeed_);
+            mh->insertWidget(0, fullSpeed_);
+            g->addLayout(mh, fullSpeedRow, 1, 1, 4);
+        } else {
+            g->addLayout(mh, row++, 0, 1, 5);
+        }
     }
     if (!fans_.isEmpty() || fullSpeed_) {
         fanWarn_ = new QLabel;

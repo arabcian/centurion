@@ -949,23 +949,20 @@ void BackupPage::newKeyPair() {
                                                       tr("age key (*.agekey *.txt);;All files (*)"));
     if (file.isEmpty()) return;
     if (QFileInfo::exists(file)) { finished(tr("%1 exists; choose a new file name (an existing key is never overwritten).").arg(file), false); return; }
-    // Asynchronous: age-keygen must not freeze the window if it hangs.
+    // Asynchronous, so a hung age-keygen cannot freeze the window; a 15 s watchdog kills it.
     auto *p = new QProcess(this);
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
-        if (e != QProcess::FailedToStart) return;  // other errors are followed by finished()
+        if (e != QProcess::FailedToStart) return;  // every other error is followed by finished()
         finished(tr("age-keygen failed: %1").arg(p->errorString()), false);
         p->deleteLater();
     });
-    auto *guard = new QTimer(p);
-    guard->setSingleShot(true);
-    connect(guard, &QTimer::timeout, p, [p] { p->kill(); });
-    connect(p, &QProcess::finished, this, [this, p, file](int code, QProcess::ExitStatus st) {
+    auto *watchdog = new QTimer(p);
+    watchdog->setSingleShot(true);
+    connect(watchdog, &QTimer::timeout, p, [p] { if (p->state() != QProcess::NotRunning) p->kill(); });
+    connect(p, &QProcess::finished, this, [this, p, file](int code, QProcess::ExitStatus status) {
         const QString err = QString::fromUtf8(p->readAllStandardError()).trimmed();
         p->deleteLater();
-        if (st != QProcess::NormalExit || code != 0) {
-            finished(tr("age-keygen failed: %1").arg(err), false);
-            return;
-        }
+        if (status != QProcess::NormalExit || code != 0) { finished(tr("age-keygen failed: %1").arg(err), false); return; }
         QFile::setPermissions(file, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
         QFile f(file);
         QString pub;
@@ -981,7 +978,7 @@ void BackupPage::newKeyPair() {
                "Restoring or verifying an encrypted image asks for it; without it the images cannot be read.").arg(file));
     });
     p->start(keygen, {QStringLiteral("-o"), file});
-    guard->start(15000);
+    watchdog->start(15000);
 }
 
 // Asks for what opens encrypted images: the sidecar says whether they were made with a passphrase or a key.

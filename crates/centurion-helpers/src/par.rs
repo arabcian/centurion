@@ -13,7 +13,7 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
-thread_local! { static INSIDE: Cell<bool> = Cell::new(false); }
+thread_local! { static INSIDE: Cell<bool> = const { Cell::new(false) }; }
 
 /// Worker threads available to one parallel section.
 pub fn threads() -> usize {
@@ -85,7 +85,8 @@ pub fn rows<T: Send>(data: &mut [T], row_len: usize, cost: impl Fn(usize) -> f64
         rest = tail;
     }
     let next = AtomicUsize::new(0);
-    let cells: Vec<std::sync::Mutex<Option<(usize, &mut [T])>>> = blocks.into_iter().map(|b| std::sync::Mutex::new(Some(b))).collect();
+    type RowBlockCell<'a, T> = std::sync::Mutex<Option<(usize, &'a mut [T])>>;
+    let cells: Vec<RowBlockCell<'_, T>> = blocks.into_iter().map(|b| std::sync::Mutex::new(Some(b))).collect();
     std::thread::scope(|s| {
         for _ in 0..w {
             s.spawn(|| {

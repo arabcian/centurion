@@ -16,6 +16,7 @@ set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root hel
 add_executable(centurion
     src/main.cpp
     src/mainwindow.cpp   src/mainwindow.h
+    src/uinavigator.cpp  src/uinavigator.h
     src/theme.cpp        src/theme.h
     src/privileged.cpp   src/privileged.h
     src/platformprofile.cpp src/platformprofile.h
@@ -31,6 +32,8 @@ add_executable(centurion
     src/vfcurvewidget.cpp src/vfcurvewidget.h
     src/nvidiatab.cpp    src/nvidiatab.h
     src/optimizetab.cpp  src/optimizetab.h
+    src/optimization_translation_sources.cpp
+    src/autotunereport.cpp src/autotunereport.h
     src/int64spinbox.cpp src/int64spinbox.h
     src/tray.cpp         src/tray.h
     src/scenes.cpp       src/scenes.h
@@ -73,6 +76,8 @@ add_executable(centurion
     src/memtestbox.cpp   src/memtestbox.h
     src/gpustress.cpp    src/gpustress.h
     src/gpustressbox.cpp src/gpustressbox.h
+    src/cpustress.cpp    src/cpustress.h
+    src/cpustressbox.cpp src/cpustressbox.h
     src/driftwatch.cpp   src/driftwatch.h
     src/smartwatch.cpp   src/smartwatch.h
     src/lidwatch.cpp     src/lidwatch.h
@@ -80,6 +85,7 @@ add_executable(centurion
     src/smartpage.cpp    src/smartpage.h
     src/sleeppage.cpp    src/sleeppage.h
     src/sleepadvice.cpp  src/sleepadvice.h
+    src/flightrec.cpp    src/flightrec.h
     src/mangohud.cpp     src/mangohud.h
     src/dbusapi.cpp      src/dbusapi.h
     src/shortcuts.cpp    src/shortcuts.h
@@ -237,6 +243,14 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-sleepadvice-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-sleepadvice-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME sleepadvice COMMAND centurion-sleepadvice-test)
+    add_executable(centurion-flightrec-test tests/flightrec_test.cpp src/flightrec.cpp src/flightrec.h)
+    target_link_libraries(centurion-flightrec-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-flightrec-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME flightrec COMMAND centurion-flightrec-test)
+    add_executable(centurion-autotunereport-test tests/autotunereport_test.cpp src/autotunereport.cpp src/autotunereport.h)
+    target_link_libraries(centurion-autotunereport-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-autotunereport-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME autotunereport COMMAND centurion-autotunereport-test)
     add_executable(centurion-memtest-test tests/memtest_test.cpp src/memtest.cpp src/memtest.h)
     target_link_libraries(centurion-memtest-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-memtest-test PRIVATE QT_NO_KEYWORDS)
@@ -245,6 +259,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-gpustress-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-gpustress-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME gpustress COMMAND centurion-gpustress-test)
+    add_executable(centurion-cpustress-test tests/cpustress_test.cpp src/cpustress.cpp src/cpustress.h)
+    target_link_libraries(centurion-cpustress-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-cpustress-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME cpustress COMMAND centurion-cpustress-test)
     add_executable(centurion-klogview-test tests/klogview_test.cpp src/klogview.cpp src/klogview.h)
     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)

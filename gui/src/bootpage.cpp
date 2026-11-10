@@ -1,8 +1,10 @@
 #include "bootpage.h"
+#include "flightrec.h"
 #include "privileged.h"
 #include "theme.h"
 
 #include <QColor>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -21,6 +23,7 @@
 
 static constexpr qint64 TAIL_BYTES = 512 << 10;   // same bound as KlogPage: only the end of the saved log is read
 static constexpr int LOG_LINES = 30;
+static const char *FLIGHT_CONF = "/etc/centurion/flight-interval";   // flight.rs CONF; absent = 5 s
 static constexpr int ROLE_BOOT = Qt::UserRole;      // boot id of a row ("" = the unattributed-pstore row)
 
 static QString when(qint64 t) { return QDateTime::fromSecsSinceEpoch(t).toString(QStringLiteral("yyyy-MM-dd HH:mm")); }
@@ -62,6 +65,16 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     bClear_->setVisible(false);
     connect(bClear_, &QPushButton::clicked, this, &BootPage::clearPstore);
     top->addWidget(bClear_);
+    top->addWidget(new QLabel(tr("Flight recorder:")));
+    interval_ = new QComboBox;
+    for (int sec : {5, 10, 30, 60})   // flight.rs CHOICES
+        interval_->addItem(sec < 60 ? tr("every %1 s").arg(sec) : tr("every %1 min").arg(sec / 60), sec);
+    interval_->setToolTip(tr("How often centurion-boot-guard takes a sensor sample and syncs it to disk. Shorter: at most that much "
+                             "is lost when the machine hangs, but one disk flush per sample. Longer: fewer writes, and the hour-long "
+                             "ring covers more time (up to 12 h at 1 min). Applies from the next sample."));
+    interval_->setCurrentIndex(qMax(0, interval_->findData(flightInterval())));
+    connect(interval_, &QComboBox::activated, this, &BootPage::setFlightInterval);
+    top->addWidget(interval_);
     auto *bRefresh = new QPushButton(tr("Refresh"));
     connect(bRefresh, &QPushButton::clicked, this, &BootPage::reload);
     top->addWidget(bRefresh);
@@ -190,6 +203,8 @@ void BootPage::showDetail() {
     if (!ev.isEmpty()) out += tr("Kernel events: %1\n").arg(eventsText(ev));
     const QJsonObject cv = b.value(QStringLiteral("curves")).toObject();
     if (!cv.isEmpty()) out += tr("Curves: %1\n").arg(curvesText(cv));
+    const QJsonArray flight = b.value(QStringLiteral("flight")).toArray();
+    if (!flight.isEmpty()) out += QLatin1Char('\n') + flightrec::text(flight);
     if (state == QLatin1String("unclean")) {
         out += QLatin1Char('\n');
         for (const QJsonValue &i : b.value(QStringLiteral("pstore")).toArray()) out += entryText(entries.at(i.toInt()).toObject()) + QLatin1Char('\n');
@@ -216,6 +231,24 @@ void BootPage::clearPstore() {
         age_.invalidate();
         reload();
     }, 120000);
+}
+
+int BootPage::flightInterval() {
+    QFile f(QString::fromLatin1(FLIGHT_CONF));
+    const int v = f.open(QIODevice::ReadOnly) ? f.read(16).trimmed().toInt() : 0;
+    return QList<int>{5, 10, 30, 60}.contains(v) ? v : 5;
+}
+
+void BootPage::setFlightInterval() {
+    const int want = interval_->currentData().toInt();
+    if (want == flightInterval()) return;
+    interval_->setEnabled(false);
+    privileged::run(privileged::helperPath(QStringLiteral("tune-helper")), QJsonObject{{"op", "flight_interval"}, {"seconds", want}}, this,
+                    [this](const privileged::Result &r) {
+        interval_->setEnabled(true);
+        if (!r.ok()) QMessageBox::warning(this, tr("Flight recorder"), tr("The interval was not changed: %1").arg(r.message()));
+        interval_->setCurrentIndex(qMax(0, interval_->findData(flightInterval())));   // show what is in effect
+    });
 }
 
 QString BootPage::logPath() {

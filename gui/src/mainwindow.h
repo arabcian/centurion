@@ -1,5 +1,6 @@
 #pragma once
 #include <QMainWindow>
+#include <QList>
 
 class AmdGpuTab;
 class FwattrTab;
@@ -17,6 +18,11 @@ class NvidiaTab;
 class OptimizeTab;
 class RyzenTab;
 class QTabWidget;
+class QToolButton;
+class QFrame;
+class QVBoxLayout;
+class QLabel;
+class QPushButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -47,9 +53,13 @@ public:
     void showTab(const QString &label);
     /// Rewrites the MangoHud overlay file (active scene · power profile), or removes it when the overlay is off.
     void updateOverlay();
+    /// Emergency safe mode: runs centurion-safe-mode (CPU/GPU curves, optimizations, fan boost, profile → safe
+    /// defaults) and sets every fan back to Auto. Result in safeModeFinished; a second call while running is ignored.
+    void runSafeMode();
 
 Q_SIGNALS:
     void nvidiaTabAdded();
+    void safeModeFinished(bool ok, const QString &log);
 
 protected:
     void closeEvent(QCloseEvent *e) override;
@@ -59,9 +69,26 @@ protected:
 
 private:
     void fitTabs();
+    void arrangeTabs();
+    void installExperimentalShell();
+    void rebuildExperimentalNavigation();
+    void setExperimentalCollapsed(bool collapsed);
+    void syncExperimentalNavigation();
+    void showQuickNavigator();
+    void placeHeaderControls();
     QTabWidget *tabs_;
     int tabW_ = -1;
-    QWidget *mark_;  // brand: icon + wordmark, floated over the header bezel
+    QToolButton *sectionsButton_ = nullptr;  // Classic legacy positioning helper
+    QFrame *expRail_ = nullptr;
+    QVBoxLayout *expNavLayout_ = nullptr;
+    QLabel *expBrandLabel_ = nullptr;
+    QLabel *expTitle_ = nullptr;
+    QLabel *expPath_ = nullptr;
+    QPushButton *expToggle_ = nullptr;
+    QList<QPushButton *> expNavButtons_;
+    bool expCollapsed_ = false;
+    bool expUserToggled_ = false;
+    QWidget *mark_ = nullptr;  // brand: icon + wordmark, floated over the header bezel
     HomeTab *home_;
     RyzenTab *ryzen_ = nullptr;
     IntelTab *intel_ = nullptr;

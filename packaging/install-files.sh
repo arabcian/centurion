@@ -24,7 +24,7 @@ install -d "${own[@]}" -m 0755 "$DESTDIR$LIBEXEC" "$DESTDIR$PREFIX/bin"
 install "${own[@]}" -m 0755 "$T/legion-profile-helper" "$T/fwattr-helper" "$T/ryzen-co-helper" "$T/tune-helper" "$T/tune-profile-helper" "$T/intel-uv-helper" "$T/legion-gpu-helper" "$T/legion-firmware-helper" "$T/lighting-helper" "$T/amdgpu-helper" "$T/nvcurve-sensors" "$T/legion-ec-sensors" "$T/health-reader" "$T/centurion-boot-guard" "$T/netguard-helper" "$T/backup-helper" \
     "$DESTDIR$LIBEXEC/"
 install "${own[@]}" -m 0700 "$T/nvcurve-root-helper" "$DESTDIR$LIBEXEC/"
-install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$T/centurion-cooltest" "$T/centurion-gpustress" "$DESTDIR$PREFIX/bin/"
+install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$T/centurion-cooltest" "$T/centurion-gpustress" "$T/centurion-cpustress" "$DESTDIR$PREFIX/bin/"
 DESTDIR="$DESTDIR" cmake --install gui/build --strip
 
 # Packages put the rules under /usr/share (POLKIT_RULESDIR): /etc/polkit-1/rules.d belongs to polkit
@@ -62,6 +62,8 @@ for u in nvcurve-autoload centurion-tune centurion-intel-uv centurion-intel-uv-d
     subst "packaging/systemd/$u.service" > "$DESTDIR$UNITDIR/$u.service"
     chmod 0644 "$DESTDIR$UNITDIR/$u.service"
 done
+subst packaging/centurion-safe-mode > "$DESTDIR$PREFIX/bin/centurion-safe-mode"
+chmod 0755 "$DESTDIR$PREFIX/bin/centurion-safe-mode"
 [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR"/etc/init.d/{nvcurve-autoload,centurion-tune,centurion-intel-uv,centurion-intel-uv-daemon,centurion-boot-guard,centurion-netguard,centurion-calibrate-boot} "$DESTDIR$UNITDIR"/{nvcurve-autoload,centurion-tune,centurion-intel-uv,centurion-intel-uv-daemon,centurion-boot-guard,centurion-netguard,centurion-calibrate-boot}.service
 # elogind resume hook (re-applies the Intel undervolt boot profile; systemd uses the unit's sleep targets).
 ELOGIND_SLEEP=${ELOGIND_SLEEP:-}

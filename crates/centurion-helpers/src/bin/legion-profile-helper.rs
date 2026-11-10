@@ -95,7 +95,7 @@ fn set_profile(node: Option<&str>, profile: &str) -> Value {
                 return json!({"ok": false, "error": format!("no such platform-profile handler: {node}")});
             }
             match canonical_in_sysfs(&target) {
-                Some(real) if real.file_name().map_or(false, |n| n == "profile") => real,
+                Some(real) if real.file_name().is_some_and(|n| n == "profile") => real,
                 _ => return json!({"ok": false, "error": "handler path resolves outside sysfs"}),
             }
         }
@@ -127,7 +127,7 @@ fn set_profile(node: Option<&str>, profile: &str) -> Value {
         if let Some(mid) = centurion_helpers::machine::profile_detour(&centurion_helpers::machine::bios(), &current, profile) {
             let choices = target.parent().map(|d| d.join("choices"))
                 .filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from("/sys/firmware/acpi/platform_profile_choices"));
-            let offered = read_trimmed(&choices).map_or(false, |c| c.split_whitespace().any(|w| w == mid));
+            let offered = read_trimmed(&choices).is_ok_and(|c| c.split_whitespace().any(|w| w == mid));
             if offered && sysfs_write(&target, mid.as_bytes()).is_ok() {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 via = Some(mid);
@@ -216,7 +216,7 @@ fn device_target(key: &str, value: &str) -> Result<PathBuf, String> {
     if IDEAPAD_KEYS.contains(&key) {
         if value != "0" && value != "1" { return Err(format!("{key} takes 0 or 1")); }
         return sorted_dir(IDEAPAD_DIR).into_iter()
-            .filter(|d| d.file_name().map_or(false, |n| n.to_string_lossy().starts_with("VPC")))
+            .filter(|d| d.file_name().is_some_and(|n| n.to_string_lossy().starts_with("VPC")))
             .map(|d| d.join(key)).find(|f| f.is_file())
             .ok_or_else(|| format!("ideapad_acpi does not expose {key}"));
     }
@@ -326,7 +326,7 @@ fn run() -> Value {
     }
     // Writes wait for a running calibration (it measures under the power context it started with).
     let writes = obj.contains_key("device") || obj.contains_key("profile")
-        || obj.get("fan_table").and_then(Value::as_str).map_or(false, |o| o != "get")
+        || obj.get("fan_table").and_then(Value::as_str).is_some_and(|o| o != "get")
         || obj.get("wmae_toggle").and_then(Value::as_str) == Some("set");
     if writes { if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; } }
     if let Some(op) = obj.get("fan_table") {

@@ -9,6 +9,9 @@
 
 class QLabel;
 class QTreeWidget;
+class QVBoxLayout;
+class QWidget;
+class QPushButton;
 
 class SmartPage : public QWidget {
     Q_OBJECT
@@ -24,5 +27,9 @@ private:
 
     QLabel *status_, *alert_;
     QTreeWidget *table_;
+    QVBoxLayout *cardsLayout_ = nullptr;
+    QWidget *cardsWidget_ = nullptr;
+    QPushButton *detailsButton_ = nullptr;
+    QWidget *summaryView_ = nullptr;
     bool ran_ = false, busy_ = false;
 };
