@@ -129,7 +129,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     navigation_->setUniformRowHeights(true);
     navigation_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     navigation_->setFrameShape(QFrame::NoFrame);
-    navigation_->setStyleSheet(QStringLiteral("QTreeWidget{background:transparent;border:0}QTreeWidget::item{padding:3px 3px}"));
+    navigation_->setStyleSheet(QStringLiteral("QTreeWidget{background:transparent;border:0}QTreeWidget::item{padding:4px 6px}QTreeWidget::branch{background:transparent}"));
     railLayout->addWidget(navigation_, 1);
     split->addWidget(rail);
     pages_ = new QStackedWidget;

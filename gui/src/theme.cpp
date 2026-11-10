@@ -382,7 +382,7 @@ QScrollArea { border: 0; }
 QSplitter::handle { background: @BORDER_SOFT; }
 QSplitter::handle:horizontal { width: 1px; }
 QSplitter::handle:vertical { height: 1px; }
-QWidget#expShell QGroupBox { background: @BG1; border: 1px solid @BORDER_SOFT; }
+QWidget#expShell QGroupBox { background: @CARD_TOP; border: 1px solid @BORDER; border-top-color: @EDGE; }
 QWidget#expShell QGroupBox QGroupBox { background: transparent; border: 0;
     border-top: 1px solid @BORDER_SOFT; }
 QToolButton#expDisclosure { background: transparent; color: @FG_DIM; text-align: left;
@@ -419,7 +419,7 @@ QPushButton#expRailToggle:hover { color: @FG; background: @BG2; }
 QFrame#expTopbar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BEZEL_TOP, stop:1 @BG0);
     border-bottom: 1px solid @BORDER; }
 QLabel#expTopPath { color: @MUTED; font-size: 7pt; font-weight: 600; }
-QLabel#expTopTitle { color: @FG; font-size: 11pt; font-weight: 700; }
+QLabel#expTopTitle { color: @FG; font-size: 13pt; font-weight: 700; }
 QPushButton#expSearch { background: @WELL; color: @MUTED;
     border: 1px solid @BORDER; border-radius: 8px; padding: 5px 14px; font-size: 8pt;
     font-weight: 500; min-height: 18px; }
@@ -428,22 +428,24 @@ QPushButton#expSearch:pressed { background: @BG2; }
 QTabWidget#expPageStack::pane { border: 0; background: @BG0; }
 QTabWidget#expPageStack > QTabBar { max-height: 0px; }
 /* App-wide visual tokens. Compact, restrained, consistent with all palettes. */
-QGroupBox { background: @BG1; border: 1px solid @BORDER_SOFT; border-radius: 8px;
-    margin-top: 0; padding: 22px 6px 5px 6px; color: @FG; font-weight: 600; }
+/* Cards stand clear of the page: a lifted surface with a full hairline and a lit top edge. */
+QGroupBox { background: @CARD_TOP; border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 8px;
+    margin-top: 0; padding: 31px 10px 8px 10px; color: @FG; font-weight: 600; }
 /* Classic's colour-coded title bar, at Studio density: sections stay scannable. */
 QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left;
-    top: 6px; left: 9px; color: @ACCENT; font-size: @FONTpt;
-    border: 0; border-left: 3px solid @ACCENT; padding: 0 0 0 6px; background: transparent; font-weight: 700; }
+    top: 10px; left: 12px; color: @FG; font-size: 10pt;
+    border: 0; border-left: 3px solid @ACCENT; padding: 0 0 0 8px; background: transparent; font-weight: 700; }
+/* The title reads in the text colour; the bar carries the section colour. Only caution/danger tint the text. */
 QGroupBox#box_red::title { color: @DANGER; border-left-color: @DANGER; }
-QGroupBox#box_green::title { color: @OK; border-left-color: @OK; }
+QGroupBox#box_green::title { color: @FG; border-left-color: @OK; }
 QGroupBox#box_yellow::title { color: @WARN; border-left-color: @WARN; }
-QGroupBox#box_blue::title { color: @INFO; border-left-color: @INFO; }
-QGroupBox#box_purple::title { color: @PURPLE; border-left-color: @PURPLE; }
+QGroupBox#box_blue::title { color: @FG; border-left-color: @INFO; }
+QGroupBox#box_purple::title { color: @FG; border-left-color: @PURPLE; }
 QGroupBox#box_grey::title { color: @FG_DIM; border-left-color: @MUTED; }
 QGroupBox QGroupBox { background: transparent; border: none; border-top: 1px solid @BORDER_SOFT;
-    padding: 18px 0 0; border-radius: 0; }
-QGroupBox QGroupBox::title { left: 0; top: 4px; color: @ACCENT_SOFT; border-left: 0; padding: 0; font-size: 8pt; }
-QLabel[role="title"] { color: @FG; font-size: 12pt; font-weight: 700; }
+    padding: 22px 0 0; border-radius: 0; }
+QGroupBox QGroupBox::title { left: 0; top: 6px; color: @FG_DIM; border-left: 0; padding: 0; font-size: 8pt; }
+QLabel[role="title"] { color: @FG; font-size: 14pt; font-weight: 700; }
 QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
 QPushButton { background: @BG3; border: 1px solid @BORDER;
     color: @FG; border-radius: 6px; padding: 3px 9px; min-height: 17px;
@@ -481,9 +483,9 @@ QPlainTextEdit, QTextEdit, QListView, QTreeView, QTableView {
     background: @WELL; border: 1px solid @BORDER; border-radius: 6px; }
 QTabWidget::pane { border-top: 1px solid @BORDER; background: transparent; }
 /* Sub-tabs: the current one is a soft accent tab standing on the pane rule. */
-QTabBar::tab { padding: 5px 11px; color: @MUTED; border-top-left-radius: 6px; border-top-right-radius: 6px; }
+QTabBar::tab { padding: 6px 13px; color: @MUTED; border-top-left-radius: 6px; border-top-right-radius: 6px; }
 QTabBar::tab:hover:!selected { background: @HILITE; }
-QTabBar::tab:selected { color: @FG; background: @ACCENT_TINT2; border-bottom: 2px solid @ACCENT; }
+QTabBar::tab:selected { color: @ACCENT_HI; background: @ACCENT_TINT; border-bottom: 2px solid @ACCENT; }
 QHeaderView::section { background: @BG1; border: 0; border-bottom: 1px solid @BORDER;
     color: @FG_DIM; font-weight: 600; padding: 4px 7px; }
 QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 6px; padding: 4px; }
@@ -492,7 +494,8 @@ QFrame#expInlineDivider { background: @BORDER; border: 0; max-height: 1px; }
 QSplitter::handle:horizontal { background: @BORDER_SOFT; width: 1px; }
 QSplitter::handle:vertical { background: @BORDER_SOFT; height: 1px; }
 QSplitter::handle:hover { background: @ACCENT_SOFT; }
-QFrame#homeDetailCard { background: @BG1; border: 1px solid @BORDER_SOFT; border-radius: 8px; }
+QFrame#homeDetailCard { background: @CARD_TOP; border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 8px; }
+QTreeView::item:selected, QListView::item:selected { border-radius: 5px; }
 QTabWidget#homeDetailTabs::pane { border: 0; border-top: 1px solid @BORDER_SOFT; background: transparent; }
 QTabWidget#homeDetailTabs > QTabBar::tab { padding: 5px 10px; }
 QTabWidget#homeDetailTabs > QStackedWidget { background: transparent; }
