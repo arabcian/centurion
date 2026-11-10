@@ -142,7 +142,9 @@ pub fn emit(v: &Value) {
 }
 
 /// Emits and converts `ok` into a process exit code.
-pub fn finish(v: Value) -> i32 {
+pub fn finish(mut v: Value) -> i32 {
+    // Version handshake: the GUI compares this with its own version (privileged.cpp).
+    if let Some(o) = v.as_object_mut() { o.insert("helper_version".into(), json!(env!("CARGO_PKG_VERSION"))); }
     emit(&v);
     if v.get("ok").and_then(Value::as_bool).unwrap_or(false) { 0 } else { 1 }
 }
@@ -377,6 +379,28 @@ impl FdLock {
 impl Drop for FdLock {
     fn drop(&mut self) { unsafe { libc::flock(self.0, libc::LOCK_UN); } }
 }
+
+/// Serialises writes of one helper binary: `/run/centurion/<name>.lock`, held until the returned
+/// File is dropped. Waits up to 30 s for another instance, then fails with a "busy" error.
+pub fn helper_lock(name: &str) -> Result<std::fs::File, String> {
+    secure_dir("/run/centurion")?;
+    let path = format!("/run/centurion/{name}.lock");
+    let f = std::fs::OpenOptions::new().create(true).read(true).write(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&path)
+        .map_err(|e| format!("{path}: {e}"))?;
+    for _ in 0..300 {
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 { return Ok(f); }
+        let e = io::Error::last_os_error();
+        if !matches!(e.raw_os_error(), Some(libc::EWOULDBLOCK) | Some(libc::EINTR)) { return Err(format!("{path}: {e}")); }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Err(format!("another {name} operation is still running (waited 30 s)"))
+}
+
+/// Hard upper bound on a helper's run time. Once pkexec has started the helper as root the GUI
+/// can no longer kill it on timeout; SIGALRM's default action ends it here instead of letting it
+/// run on unobserved. Set well above the GUI's own timeout so legitimate operations finish.
+pub fn watchdog(secs: u32) { unsafe { libc::alarm(secs); } }
 
 /// The NVIDIA dGPU is on the bus, bound, not in runtime-PM error, and its driver has initialised
 /// it (same test as centurion-gamemode's and the GUI's). Directory listing only: never wakes the GPU.

@@ -1,0 +1,32 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace --locked
+
+  deny:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  gui:
+    runs-on: ubuntu-24.04
+    env:
+      QT_QPA_PLATFORM: offscreen
+      ASAN_OPTIONS: detect_leaks=0  # Qt keeps process-lifetime allocations
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
+             qt6-base-dev qt6-svg-dev qt6-tools-dev qt6-l10n-tools libgl-dev libxkbcommon-dev dbus
+      - run: cmake -S gui -B build -DCMAKE_BUILD_TYPE=Debug -DCENTURION_BUILD_TESTS=ON
+             -DCENTURION_SANITIZE=ON -DCENTURION_LTO=OFF
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - run: python3 gui/tests/translation_tr_test.py

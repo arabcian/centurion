@@ -46,7 +46,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
 name = "centurion-cpustress"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "libc",
  "serde_json",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "centurion-gpustress"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "ash",
  "libc",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "centurion-helpers"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "centurion-spectrum",
  "libc",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "centurion-spectrum"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "libc",
 ]
@@ -233,7 +233,7 @@ dependencies = [
 
 [[package]]
 name = "nvcurve"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "libc",
  "log",

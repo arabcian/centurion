@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.arabcian.centurion</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Centurion</name>
+  <summary>Power, fan, undervolt and lighting control for Lenovo Legion laptops</summary>
+  <summary xml:lang="tr">Lenovo Legion dizüstüler için güç, fan, undervolt ve aydınlatma denetimi</summary>
+  <description>
+    <p>
+      One tray app for Lenovo Legion laptops: power profiles, firmware power limits, fan curves,
+      CPU and GPU undervolting, per-key RGB, game-aware system tuning and Scenes that switch all
+      of it at once. Privileged work runs in small validating helpers; there is no telemetry.
+    </p>
+  </description>
+  <launchable type="desktop-id">centurion.desktop</launchable>
+  <url type="homepage">https://github.com/arabcian/centurion</url>
+  <url type="bugtracker">https://github.com/arabcian/centurion/issues</url>
+  <developer id="io.github.arabcian">
+    <name>Cihan</name>
+  </developer>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/arabcian/centurion/main/screenshots/Screenshot_20261009_190532.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>System</category>
+    <category>Settings</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="2.0.0" date="2026-10-24"/>
+  </releases>
+</component>

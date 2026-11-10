@@ -233,7 +233,9 @@ fn run() -> Value {
             _ => return json!({"ok": false, "error": format!("unknown op: {}",
                      op.map(|v| v.to_string()).unwrap_or_else(|| "None".into()))}),
         };
+    centurion_helpers::watchdog(120);
     if let Some(r) = refuse_during_calibration() { return r; }
+    let _lock = match centurion_helpers::helper_lock("ryzen-co-helper") { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     let empty = Map::new();
     let params = match obj.get("params") {
         None | Some(Value::Null) => &empty,

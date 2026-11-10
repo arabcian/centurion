@@ -692,7 +692,7 @@ void NvidiaTab::startSensorStream() {
     const QString helper = privileged::helperPath(QStringLiteral("nvcurve-sensors"));
     if (pkexec.isEmpty() || !QFileInfo(helper).isExecutable()) {
         streamFailed_ = true;
-        hotspot_->setToolTip("Blackwell hotspot needs root: nvcurve-sensors is not installed");
+        hotspot_->setToolTip(tr("Blackwell hotspot needs root: nvcurve-sensors is not installed"));
         return;
     }
     // Parented to the app, not the tab: once pkexec has exec'd the root helper

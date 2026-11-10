@@ -329,6 +329,7 @@ fn run() -> Value {
         || obj.get("fan_table").and_then(Value::as_str).is_some_and(|o| o != "get")
         || obj.get("wmae_toggle").and_then(Value::as_str) == Some("set");
     if writes { if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; } }
+    let _lock = match writes.then(|| centurion_helpers::helper_lock("legion-profile-helper")).transpose() { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     if let Some(op) = obj.get("fan_table") {
         return match op.as_str() {
             Some(op) => centurion_helpers::fan_table::handle(op, obj.get("levels")),
@@ -371,6 +372,7 @@ fn run() -> Value {
 
 fn main() {
     init();
+    centurion_helpers::watchdog(120);
     std::process::exit(finish(run()));
 }
 

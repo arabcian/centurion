@@ -122,6 +122,8 @@ fi
 %{_libexecdir}/centurion/centurion-boot-guard
 %attr(0700,root,root) %{_libexecdir}/centurion/nvcurve-root-helper
 %{_datadir}/applications/centurion.desktop
+%{_datadir}/metainfo/io.github.arabcian.centurion.metainfo.xml
+%config(noreplace) %{_sysconfdir}/logrotate.d/centurion
 %{_datadir}/icons/hicolor/scalable/apps/centurion.svg
 %{_sysconfdir}/xdg/autostart/centurion.desktop
 %{_datadir}/polkit-1/actions/com.centurion.policy

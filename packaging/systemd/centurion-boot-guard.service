@@ -25,6 +25,10 @@ StateDirectory=centurion
 # The boot-state / shutdown-state lines of /var/log/centurion/writes.log (the point of
 # that log): with ProtectSystem=strict and no writable log directory they were dropped.
 LogsDirectory=centurion
+# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
+# so an allow-list such as @system-service would break them.
+SystemCallFilter=~@reboot @obsolete @cpu-emulation
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

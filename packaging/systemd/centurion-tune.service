@@ -46,6 +46,11 @@ RestrictRealtime=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
+# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
+# so an allow-list such as @system-service would break them.
+SystemCallFilter=~@reboot @obsolete @cpu-emulation
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=~CAP_SYS_BOOT CAP_SYS_TIME CAP_WAKE_ALARM CAP_AUDIT_CONTROL CAP_AUDIT_WRITE CAP_LINUX_IMMUTABLE CAP_MKNOD CAP_SETFCAP
 
 [Install]
 WantedBy=multi-user.target

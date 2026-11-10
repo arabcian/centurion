@@ -1,0 +1,1153 @@
+From b3ec8e321b6012aa06dfddea08d3444e0fd44ed1 Mon Sep 17 00:00:00 2001
+From: arabcian <arabcian@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 21:58:36 +0300
+Subject: [PATCH] Apply development table items (all except #4)
+
+Security: helper watchdog, per-helper write locks, systemd syscall
+filters, cargo-deny. Stability: helper version handshake, locked
+writes.log rotation, CI with ASan/UBSan GUI tests. Performance:
+slower launcher scan while idle. Polish: translated privileged
+errors, single workspace version, root cleanup, AppStream metainfo,
+logrotate, CHANGELOG.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UQQdXHoVpp6CV2DRJ1QBLj
+---
+ .github/workflows/ci.yml                      |  32 +++
+ CHANGELOG.md                                  |  35 +++
+ Cargo.lock                                    |  10 +-
+ Cargo.toml                                    |   1 +
+ HANDBOOK.md                                   | 240 ------------------
+ crates/centurion-cpustress/Cargo.toml         |   2 +-
+ crates/centurion-gpustress/Cargo.toml         |   2 +-
+ crates/centurion-helpers/Cargo.toml           |   2 +-
+ .../src/bin/amdgpu-helper.rs                  |   1 +
+ .../src/bin/fwattr-helper.rs                  |   2 +
+ .../src/bin/intel-uv-helper.rs                |   2 +-
+ .../src/bin/legion-gpu-helper.rs              |   2 +-
+ .../src/bin/legion-profile-helper.rs          |   2 +
+ .../src/bin/ryzen-co-helper.rs                |   2 +
+ crates/centurion-helpers/src/lib.rs           |  26 +-
+ crates/centurion-helpers/src/wlog.rs          |  10 +-
+ crates/centurion-spectrum/Cargo.toml          |   2 +-
+ crates/nvcurve/Cargo.toml                     |   2 +-
+ crates/nvcurve/src/bin/nvcurve-root-helper.rs |   5 +-
+ deny.toml                                     |  14 +
+ .../EXPERIMENTAL-STUDIO-V4-VALIDATION.txt     |   0
+ .../EXPERIMENTAL-VALIDATION.txt               |   0
+ gui/CMakeLists.txt                            |  17 +-
+ .../io.github.arabcian.centurion.metainfo.xml |  35 +++
+ gui/i18n/centurion_tr.ts                      |  55 +++-
+ gui/src/launcherwatch.cpp                     |   4 +
+ gui/src/nvidiatab.cpp                         |   2 +-
+ gui/src/privileged.cpp                        |  28 +-
+ make-dist.sh                                  |   4 +-
+ packaging/arch/centurion-git/PKGBUILD         |   2 +-
+ packaging/fedora/centurion.spec               |   2 +
+ .../sys-power/centurion/centurion-9999.ebuild |   3 +
+ packaging/install-files.sh                    |   1 +
+ packaging/logrotate/centurion                 |   9 +
+ .../systemd/centurion-boot-guard.service      |   4 +
+ .../systemd/centurion-calibrate-boot.service  |   4 +
+ .../systemd/centurion-intel-uv-daemon.service |   4 +
+ packaging/systemd/centurion-intel-uv.service  |   4 +
+ packaging/systemd/centurion-netguard.service  |   4 +
+ packaging/systemd/centurion-tune.service      |   5 +
+ packaging/systemd/nvcurve-autoload.service    |   4 +
+ 41 files changed, 313 insertions(+), 272 deletions(-)
+ create mode 100644 .github/workflows/ci.yml
+ create mode 100644 CHANGELOG.md
+ delete mode 100644 HANDBOOK.md
+ create mode 100644 deny.toml
+ rename EXPERIMENTAL-STUDIO-V4-VALIDATION.txt => docs/EXPERIMENTAL-STUDIO-V4-VALIDATION.txt (100%)
+ rename EXPERIMENTAL-VALIDATION.txt => docs/EXPERIMENTAL-VALIDATION.txt (100%)
+ create mode 100644 gui/data/io.github.arabcian.centurion.metainfo.xml
+ create mode 100644 packaging/logrotate/centurion
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..48be9f5
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,32 @@
++name: CI
++on: [push, pull_request]
++
++jobs:
++  rust:
++    runs-on: ubuntu-24.04
++    steps:
++      - uses: actions/checkout@v4
++      - uses: dtolnay/rust-toolchain@stable
++      - run: cargo test --workspace --locked
++
++  deny:
++    runs-on: ubuntu-24.04
++    steps:
++      - uses: actions/checkout@v4
++      - uses: EmbarkStudios/cargo-deny-action@v2
++
++  gui:
++    runs-on: ubuntu-24.04
++    env:
++      QT_QPA_PLATFORM: offscreen
++      ASAN_OPTIONS: detect_leaks=0  # Qt keeps process-lifetime allocations
++      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
++    steps:
++      - uses: actions/checkout@v4
++      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
++             qt6-base-dev qt6-svg-dev qt6-tools-dev qt6-l10n-tools libgl-dev libxkbcommon-dev dbus
++      - run: cmake -S gui -B build -DCMAKE_BUILD_TYPE=Debug -DCENTURION_BUILD_TESTS=ON
++             -DCENTURION_SANITIZE=ON -DCENTURION_LTO=OFF
++      - run: cmake --build build --parallel
++      - run: ctest --test-dir build --output-on-failure
++      - run: python3 gui/tests/translation_tr_test.py
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..776cb61
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,35 @@
++# Changelog
++
++Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow the
++`[workspace.package] version` in `Cargo.toml`, which the GUI and every crate share.
++
++## [Unreleased]
++
++### Security
++- Root helpers have a hard run-time bound (`watchdog`): the GUI cannot kill a helper once
++  pkexec has started it as root, so it no longer runs on unobserved after a GUI timeout.
++- `fwattr-helper`, `ryzen-co-helper` and `legion-profile-helper` serialise their writes
++  with a per-helper lock (`/run/centurion/<helper>.lock`).
++- systemd units: `SystemCallFilter=~@reboot @obsolete @cpu-emulation`; `centurion-tune`
++  also drops capabilities it never uses.
++- `deny.toml`: RustSec advisories, licences and sources checked by `cargo deny` in CI.
++
++### Fixed
++- `writes.log` rotation is locked and keeps two generations (`.1`, `.2`); two helpers
++  rotating at once could lose the previous log.
++- Untranslated pkexec/polkit error messages and the Blackwell hotspot tooltip.
++
++### Changed
++- One version for GUI and crates (crates were 0.1.0). Helpers report `helper_version`;
++  the GUI warns once when it differs from its own.
++- Launcher detection looks every 30 s instead of 15 s while no launcher runs.
++- `EXPERIMENTAL-*.txt` moved to `docs/`; the outdated root `HANDBOOK.md` removed
++  (`docs/HANDBOOK.md` is the current one).
++
++### Added
++- CI (`.github/workflows/ci.yml`): Rust tests, cargo-deny, GUI build and tests under
++  ASan/UBSan (`-DCENTURION_SANITIZE=ON`).
++- AppStream metainfo (`io.github.arabcian.centurion.metainfo.xml`).
++- logrotate configuration for `calibrate-boot.log` (the only log that does not trim itself).
++
++## [2.0.0] - 2026-10-24
+diff --git a/Cargo.lock b/Cargo.lock
+index 751a0f7..92f78a3 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -46,7 +46,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+ 
+ [[package]]
+ name = "centurion-cpustress"
+-version = "0.1.0"
++version = "2.0.0"
+ dependencies = [
+  "libc",
+  "serde_json",
+@@ -54,7 +54,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "centurion-gpustress"
+-version = "0.1.0"
++version = "2.0.0"
+ dependencies = [
+  "ash",
+  "libc",
+@@ -64,7 +64,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "centurion-helpers"
+-version = "0.1.0"
++version = "2.0.0"
+ dependencies = [
+  "centurion-spectrum",
+  "libc",
+@@ -74,7 +74,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "centurion-spectrum"
+-version = "0.1.0"
++version = "2.0.0"
+ dependencies = [
+  "libc",
+ ]
+@@ -233,7 +233,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "nvcurve"
+-version = "0.1.0"
++version = "2.0.0"
+ dependencies = [
+  "libc",
+  "log",
+diff --git a/Cargo.toml b/Cargo.toml
+index e37e2de..31c5ebf 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -3,6 +3,7 @@ resolver = "2"
+ members = ["crates/centurion-helpers", "crates/centurion-spectrum", "crates/nvcurve", "crates/centurion-gpustress", "crates/centurion-cpustress"]
+ 
+ [workspace.package]
++version = "2.0.0"  # single source: gui/CMakeLists.txt reads it too
+ edition = "2021"
+ license = "GPL-3.0-or-later"
+ 
+diff --git a/HANDBOOK.md b/HANDBOOK.md
+deleted file mode 100644
+index 95fc11c..0000000
+--- a/HANDBOOK.md
++++ /dev/null
+@@ -1,240 +0,0 @@
+-# Centurion — Handbook
+-
+-A short, task-by-task guide. For what each feature is, see the
+-[README](../README.md); for internals, [TECHNICAL.md](TECHNICAL.md) and
+-[AUTOTUNE.md](AUTOTUNE.md). Hover any setting in the GUI — every row has a tooltip.
+-
+-**Golden rules**
+-
+-1. Change one thing at a time, test, then save it as a profile.
+-2. Everything has an undo: *Restore originals*, *Reset*, *Factory reset*, *↺ Return to boot-guard defaults*.
+-3. Firmware-level changes (BIOS memory timings, BIOS CPU OC, GPU MUX) ask for the admin password — read the warning first.
+-
+----
+-
+-## 1. First ten minutes
+-
+-1. Install ([README → Install](../README.md#install)), log out and in once.
+-2. Start the app from the menu. It sits in the **tray**; closing the window hides it, *Quit* in the tray menu exits.
+-3. Enable the boot services you want (`centurion-boot-guard` first — it protects the rest):
+-   ```sh
+-   rc-update add centurion-boot-guard default     # OpenRC
+-   systemctl enable centurion-boot-guard          # systemd
+-   ```
+-4. Open **Home**, pick a power profile, look at the *Live* box to see sensors work.
+-5. Open **Scenes → New…**, press *Capture current*, name it, *Save*. You now have a restore point for the whole machine.
+-6. Health → Backup → *Centurion configuration* → make a first backup.
+-
+-## 2. The window and the tray
+-
+-| Where | What |
+-|---|---|
+-| Tabs | Home · Scenes · Firmware · Ryzen / Intel · NVIDIA · AMD GPU · Optimizations · Lighting · Health (only those your machine supports) |
+-| Tray icon | Click: show / hide the window. Right-click menu: Scene, Power Profile, CPU Curve, GPU Curve, Optimizations, Keyboard Lighting, Fans, Show/Hide, Quit |
+-| Second launch | Just shows the running window |
+-
+-Use the tray for daily switching; use the tabs when you tune.
+-
+-## 3. Home
+-
+-- **Power profile** — click a card. Applies instantly. *Custom* unlocks firmware limits and the fan curve.
+-- **Live box** — temps, fans, power, battery (with draw and time left / to full). Updates only while the Home tab is visible (saves power). The dGPU row shows *asleep* or its temperature without waking it.
+-- **Device box** — battery charge mode, GPU mode (Hybrid / dGPU only, takes effect next boot), iGPU-only mode, Panel Overdrive, Fn lock, camera, USB charging when off / on battery, keyboard backlight level (white keyboards), Instant Boot, Custom in Fn+Q, Flip to start, Super-key lock, touchpad lock, power light sync (the power-button light follows the keyboard backlight). A switch your firmware does not report is simply not shown.
+-  - **Device info…** (Hardware box) lists what the firmware reports: series, BIOS, interfaces, capability list. Use *Copy report* when filing a bug for another model.
+-  - **Boot logo…** (Hardware box, only where the firmware supports it) puts your own picture at power-on. Pick any image; it is fitted to the screen on black and saved on the EFI partition (admin password; shows from the next boot). *Restore Lenovo logo* undoes it.
+-  - **iGPU-only mode** unloads the NVIDIA driver. If the dGPU does not return, press **Bring NVIDIA back**.
+-- **Fans** — per fan: *Auto*, *Max*, or set a value and press *Set*. **Turbo fan** = EC full speed. **Fan curve…** edits the table used in Custom mode (AC power). **Assistant…** sets the firmware's CPU limit (85–100 °C, `cpu_temp`) and GPU limit (`gpu_temp`, the firmware's own range) — the chip throttles there instead of running hotter — and proposes a table for a noise preset, shaped on the firmware's temperature steps. Presets are built into the program; to use your own, copy `fan-presets.json.example` from the program's root folder to `~/.config/centurion/fan-presets.json`, edit it and reopen the assistant: each has a `name`, the fan `level` at the CPU limit (1–10), the CPU limits it offers (`cpu_min`–`cpu_max`) and `ramp_from` (a temperature step, 0–9 as in the editor; steps up to it stay at level 1) — or, instead of `level` / `ramp_from`, its own `curve`: 10 levels, one per temperature step as in the editor (never going down, last three at least 3 / 5 / 7). Stock presets: Quiet / Balanced / Performance / Max, each with its own `curve`, CPU 85–89 / 92 / 95 / 100 °C. An invalid file (including an old `ramp_from` in °C) is reported and the stock presets are used. The limits are set when the proposal goes into the editor (Custom profile) — press *Apply* there to keep the curve.
+-- **Memory timings** — *Reload* reads live timings; *Edit timings…* → *Write to BIOS* (admin password; applies next boot; *Restore previous…* undoes it). Wrong timings can stop the laptop from booting — change small steps only.
+-- **Boot guard box** — appears when a crashed boot paused presets. Fix the cause (usually an undervolt that is too deep), then *Resume boot presets* / *Resume login scene*.
+-
+-## 4. Scenes
+-
+-A scene is a **name for a whole setup**. It stores power profile, firmware limits, CPU curve, NVIDIA curve, Optimizations preset, lighting (Spectrum profile / brightness, or the 4-zone keyboard's effect and colours via *Capture*), white keyboard light level, panel Over Drive, the internal panel's **refresh rate**, fan boost, Custom-mode fan curve and an optional command. Each part can stay *Unchanged*; rows only appear where the machine has the thing behind them. The refresh rate is set as you through the desktop's own tool (KDE `kscreen-doctor`, `wlr-randr`, or `xrandr` on X11) at the current resolution — e.g. 60 Hz in the battery scene.
+-
+-**Make one:** Scenes → *New…* → *Capture current* (copies firmware limits and the fan table) → pick profiles per component → *Save*. *Apply* tests it.
+-
+-**Automatic switching:** tick *Switch scenes with the power source*, choose a scene for AC and for battery. The tray has *Pause scenes* — while paused nothing is written automatically, even on plug / unplug.
+-
+-**Game start:** Optimizations → Game launch → *System at game start*: the first game switches to the chosen scene, the last exit switches back.
+-
+-**Scripts:** `centurion-gamemode SCENE "Name"`. Export / import scenes from the Scenes tab.
+-
+-## 5. Firmware tab
+-
+-Needs **Custom** profile for most limits.
+-
+-- **CPU PL1 / PL2 / PL3** — sustained / short boost / peak power. Raise in small steps; watch temperature in Home.
+-- **Temperature target** — where the CPU starts to throttle.
+-- **GPU cTGP / Dynamic Boost** — GPU power and the boost ceiling / floor. Written over WMI (needs `acpi_call`).
+-- **CPU overclocking (firmware, next boot)** — PBO scalar, boost override, all-core CO stored in the BIOS. Asks for the password.
+-
+-## 6. Undervolting
+-
+-### NVIDIA GPU (NVIDIA tab)
+-1. *Read Curve*.
+-2. Quick way: set the **Core offset** (negative = undervolt) → *Apply Offsets*. Detailed way: drag or select points on the graph (*Fit* shows all, *Reset Graph* drops unapplied edits).
+-3. Stress test a game. Stable → *Save As…*; add ★ **Default** to apply at boot (needs `nvcurve-autoload`).
+-4. Other controls: **Lock / Unlock** the VRAM clock, **Cap / Uncap** the GPU core clock, **Driver options…** (NVIDIA module parameters). *Reset Curve* / *Reset All* go back to stock.
+-
+-### Ryzen CPU (Ryzen tab)
+-- **All-core:** enter an offset (negative = undervolt) → *Apply All-Core*.
+-- **Per-core:** enter offsets per core (CPPC-ranked, one column per CCD) → *Apply Per-Core*. Each CCD's *Fill* sets every enabled core of that CCD to one value; *Clear* empties the fields.
+-- *Save* a profile; the tray *CPU Curve* menu applies it. *Reset Curve Optimizer* clears all offsets.
+-- Crash or reboot after applying → lower the offsets (e.g. −5 steps).
+-
+-### Intel CPU (Intel Undervolt tab)
+-*Read current* → tick the values to write → *Apply*. If the readback differs, the BIOS locks undervolting (*Test UV lock*). *⏻ Apply at boot && resume* stores it; separate AC / battery profiles; *Import ThrottleStop.ini…*.
+-
+-### AMD GPU (AMD GPU tab)
+-Change values → *Apply*. It is a **trial**: unless you press **Keep** within 20 s, the old settings return. *Undervolt step −10 mV* repeats until a game crashes; keep the last step that held. Nothing is applied at boot, so a hang is fixed by rebooting. Needs `amdgpu.ppfeaturemask` bit `0x4000` (the tab shows the exact value).
+-
+-## 7. Optimizations
+-
+-### 7.1 Presets
+-Top bar: choose a preset → **Load** → review the checked rows → **Apply checked**.
+-Loading a preset (or an autotune result) checks **every** row: the preset's own values, and every row it leaves out at the
+-value `centurion-boot-guard` captured at boot. Applying a preset therefore also puts back whatever an earlier preset or a
+-manual change left behind, and a preset you save holds the whole state. (Rows the snapshot does not cover take their live
+-value while Centurion has not changed them; the status line says how many rows came from where.)
+-**Save as…** keeps your own preset. **Restore originals** undoes everything applied this session.
+-**↺ Return to boot-guard defaults** pauses Scenes and rewrites all knobs to the values captured at boot — use it as a clean baseline.
+-
+-Rows are grouped: **CPU · Memory · Scheduler · Storage · Network · Devices · Power · Stability**. The number on each sub-tab is how many rows your machine supports.
+-
+-### 7.2 Autotune (let the program choose)
+-1. Optional but recommended: enable `centurion-boot-guard` and reboot once (it records the boot defaults).
+-2. Press **⚙ Autotune** → pick a goal: *power saving*, *gaming*, *throughput*, *desktop*.
+-3. Review the filled rows (every row is checked: autotune's values, the rest at their boot-guard defaults; changed rows are bold). **Weights…** shifts priorities (latency, throughput, power, footprint, stability).
+-4. **Apply checked**. A 120 s guard rolls memory settings back if the system stalls.
+-
+-### 7.3 Calibration (teach the program your machine)
+-Optional, improves Autotune. 15 minutes, do not use the PC meanwhile.
+-```sh
+-# Pause Scenes, press "↺ Return to boot-guard defaults" (or reboot), then:
+-sudo centurion-calibrate --budget 15
+-centurion-calibrate --show        # what was learned
+-```
+-Results accumulate in `/var/lib/centurion/signature.json`. After a BIOS / hardware change the old signature is set aside automatically.
+-
+-### 7.4 Games
+-**Game launch** sub-tab:
+-1. Choose a preset and press **★ Use for games**.
+-2. Steam → game → Launch options:
+-   `centurion-gamemode WRAP -- %command%`
+-3. Lutris → Configure → System options:
+-   - Pre-launch script: `/usr/bin/centurion-gamemode PRE`
+-   - Post-exit script: `/usr/bin/centurion-gamemode POST`
+-   - Command prefix (optional launch boost): `/usr/bin/centurion-gamemode RUN`
+-4. Pin a preset per game by appending its name, e.g. `PRE "Competitive"`.
+-
+-Game mode is reference-counted: the first game applies, the last exit restores. If the preset is not approved yet: `centurion-gamemode APPROVE "Name"`.
+-
+-**Heroic and Bottles** have no hook like Lutris: tick *Detect games started from Heroic and Bottles* (System at game start). Centurion then notices their games itself (Heroic: `HEROIC_APP_NAME` in the game's environment; Bottles: a Windows program running in a bottle) and runs the same PRE / POST — game scene, ★ game preset, session record. It only looks at processes while Heroic or Bottles runs; games you already wrap with `centurion-gamemode WRAP` are left alone.
+-
+-**Drift banner:** when TLP, power-profiles-daemon, tuned, auto-cpufreq or a script changes a setting Centurion applied, a banner at the top of Optimizations lists it (what it is now, what it was) and the tools found running; *Re-apply* puts the active scene (or preset) back. A tray notification says the same.
+-
+-### 7.5 Boot options
+-Shows kernel parameters that help (ASPM, THP, amdgpu mask…) as copy-paste text. Nothing edits your bootloader.
+-
+-### 7.6 Apply at boot
+-**⏻ Apply at boot** makes the selected preset the boot preset (needs `centurion-tune`). **Clear boot** removes it.
+-
+-## 8. Lighting (Spectrum and 4-zone keyboards)
+-
+-1. Pick one of the 6 hardware **profiles**.
+-2. Select keys: click, drag, Ctrl / Shift to add.
+-3. **Paint selection** (static colour) or add an **effect** (colour change, pulse, wave, rain, ripple, type lighting, rainbow…) with speed, direction, colours.
+-4. **Apply to profile** writes it to the keyboard (limit: 960 bytes, shown under the editor). *Revert* discards edits; *Factory reset profile* restores defaults.
+-5. **Brightness (0–9)** and **Lid logo** apply immediately. Tray: *Keyboard Lighting*. Scenes can set profile + brightness.
+-
+-Apply when finished — do not apply in a loop (writes go to non-volatile memory).
+-
+-**4-zone RGB keyboards** (older Legion 5 / LOQ / IdeaPad Gaming) get a smaller Lighting tab: effect (static, breath, wave, smooth), brightness, speed and four zone colours, then **Apply**. The keyboard cannot be read back, so the tab shows what it applied last.
+-
+-## 9. Health
+-
+-### Monitor
+-*Scan now* lists NVIDIA Xid / GSP, MCE, AER, lockups and guard rollbacks with uptime. Events are saved across boots — **Open saved log** / **Clear saved log**. Use it first when games crash after tuning.
+-
+-### Curve stability
+-Every CPU / GPU curve applied (tabs, scenes, game hooks, boot autoload) is journaled by the helpers; this page lays the saved Xid / GSP / D3cold and machine-check / lockup errors over it: hours in effect, errors, errors per 10 h per profile, highlighted when clearly worse than stock. Optional guard: *Take the GPU curve back to stock after an Xid* and the same for the CPU curve after a machine check — otherwise you only get a notification naming the curve. The curve tabs also have **Trial apply**: after Apply you have 30 s to press *Keep*, else the curve goes back to stock.
+-
+-### Sleep
+-Suspend mode, suspend statistics (failures, last failing device), hardware-sleep time, and one row per sleep from the sleep hook: duration, battery used and %/h, hardware-sleep share, NVIDIA dGPU state before → after, what woke the machine. **Wake sources**: untick an ACPI device to stop it waking the laptop (remembered; restored at boot by `centurion-tune`).
+-
+-### Cooling
+-Does the laptop still cool as well as it did? **Run cooling test** loads every CPU thread for 2, 4 (recommended) or 8 minutes after a short cool-down, and records die temperature, the fastest fan and the clock. Nothing runs in the background; the fans will be loud. The first clean run under a set of firmware settings (PL1 / PL2 / PL3, CPU temperature target, power profile, power source) is the **baseline**; later runs are compared with it. A hotter die at the same load, louder fans or, when the firmware holds the die at its temperature target, a lower clock suggest dust in the heat sink or dried-out paste: clean the vents and fans first. A changed power limit or temperature target starts a new baseline, because it changes how much heat the load makes. Runs disturbed by other programs or started warm are marked and not compared. For a fair test: charger in, fans on Auto, other programs closed, same room, same length. After cleaning, **Use the latest run as baseline**. **Forget results for these settings** deletes the stored runs; they live in `~/.local/state/centurion/cooling.json`.
+-
+-### Battery use
+-Time left at the current draw, battery drain per scene (energy actually taken from the battery while each scene was active, sleep excluded) with "full charge lasts ~", and a daily capacity / health history.
+-
+-### dGPU power
+-Why the NVIDIA GPU is awake: runtime-PM state, sibling functions, upstream port, open handles. **Copy report** for bug reports.
+-
+-### Network
+-Needs the `centurion-netguard` service.
+-- **Connections** — live sockets with the program behind them. Right-click: *Details…*, *Kill connection*, *Whitelist program*, *IP info*, blacklist options.
+-- **Block non-whitelisted Wine / .exe programs** — a Windows program not on the whitelist is cut off at its first packet and listed in **Blocked**. Whitelist it from the right-click menu or **Rules**. **LAN exempt** leaves private addresses alone.
+-- **Rules** — *Whitelist* (path, folder or name) and *Blacklist* (IP, CIDR `198.51.100.0/24`, range `192.0.2.10 - 192.0.2.80`). **Add many…** bans a pasted list as one group you can remove with one click. Right-click an address: blacklist the IP, its subnet, or the owner's whole network (from whois).
+-- **Log connections** — on: every new connection to and from the machine goes to **Log** (and `/var/log/centurion/connections.log`). Off: nothing is logged.
+-- **IP info** — reverse DNS + whois.
+-
+-### Tool pages
+-Sensors · CPU · Memory · DMI · PCI · PCIe detail · USB · Storage · SMART · NVIDIA · Graphics · Kernel · Battery. Each runs the matching system command and shows the output (DMI, PCIe detail, SMART need the admin password; NVIDIA and Graphics may wake the dGPU).
+-
+-### Kernel log
+-Warnings or worse, kept across boots.
+-
+-### Backup
+-- **Centurion configuration** — scenes, presets, curves, lighting, boot profiles, network rules, calibration. Optional *System profile* (Portage config, kernel config, fstab, package list — reference only) and *Logs*. Saving needs no password; restoring the root-owned part does. A safety copy is made before every restore.
+-- **System image** — choose folder and compressor, options *Low priority*, *Verify*, *Include /home*, retention. Writes `backup-DATE.tar.gz` of `/`. **Restore** to any target path (type `RESTORE` for `/`). Admin password every time.
+-- **Automatic** — the configuration is backed up on its own when the newest one in the folder is older than the set interval (default 7 days; no password; only `…-auto` archives are pruned, keep-newest count). A system image needs the password, so Centurion only **reminds** you (tray, at most once a day) when the newest image is older than the interval you set (default 30 days, 0 = off).
+-
+-## 10. Command-line cheat sheet
+-
+-```sh
+-centurion --window            # open the window
+-centurion-gamemode STATUS                      # game-mode state
+-centurion-gamemode SCENE "Gaming"              # apply a scene from a script
+-centurion-gamemode RESTORE                     # undo game tuning
+-centurion-autotune gaming                      # preview a preset
+-centurion-autotune gaming --save               # save as "Auto Gaming"
+-centurion-autotune audit --fix                 # repair unsafe saved values
+-centurion-autotune report 30                   # memory / PSI over 30 s
+-sudo centurion-calibrate --budget 15           # measure the machine
+-centurion-boot-guard status                    # boot-guard state (sudo … reset to clear)
+-centurion-netguard status | list | whois 1.2.3.4
+-sudo centurion-intel-uv read                   # Intel undervolt state
+-nvcurve sensors                          # hotspot / VRAM temps, throttle reasons
+-sudo nvcurve reset-all                   # everything NVIDIA back to stock
+-```
+-
+-## 11. When something goes wrong
+-
+-Go down the list until it is fixed:
+-
+-1. **Odd behaviour after tuning** → Optimizations → *Restore originals*.
+-2. **Still odd** → *↺ Return to boot-guard defaults*, then `centurion-autotune audit --fix`.
+-3. **Crash on boot** → boot-guard pauses presets automatically; fix the offending undervolt / curve, then *Resume boot presets* on Home (or `sudo centurion-boot-guard reset`).
+-4. **Bad GPU curve** → NVIDIA tab → *Reset All*; or `sudo nvcurve reset-all` from a console.
+-5. **Bad CPU curve** → Ryzen → *Reset Curve Optimizer* (tray: *CPU Curve → Reset curve*).
+-6. **dGPU gone after iGPU-only** → Home → *Bring NVIDIA back*, or reboot.
+-7. **BIOS setting changes by itself** → read `/var/log/centurion/writes.log` to see what Centurion wrote.
+-8. **Laptop will not boot after BIOS memory timings** → BIOS recovery / reseat RAM; this is why that editor asks for confirmation — change small steps.
+-9. **Restore a known-good setup** → Health → Backup → *Centurion configuration* → restore.
+-
+-## 12. Glossary
+-
+-| Term | Meaning |
+-|---|---|
+-| **Scene** | Named setup of the whole machine |
+-| **Preset** | Named set of Optimizations rows |
+-| **★ / ⏻** | ★ = default (games / GPU boot curve); ⏻ = applied at boot |
+-| **Boot guard** | Pauses boot presets after a crashed boot |
+-| **CCD** | CPU chiplet; on X3D chips one CCD has the V-Cache |
+-| **CO** | Curve Optimizer (Ryzen undervolt) |
+-| **cTGP / Dynamic Boost** | GPU base power limit / extra shared with the CPU |
+-| **EPP** | Energy-performance preference of the CPU governor |
+-| **PSI** | Linux pressure-stall information (stall time for CPU / memory / I/O) |
+-| **D3cold** | Deepest PCIe power-off state — what lets the dGPU sleep |
+-| **MUX** | Hardware switch that wires the panel to the iGPU or the dGPU |
+diff --git a/crates/centurion-cpustress/Cargo.toml b/crates/centurion-cpustress/Cargo.toml
+index 2c6a987..32c48de 100644
+--- a/crates/centurion-cpustress/Cargo.toml
++++ b/crates/centurion-cpustress/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "centurion-cpustress"
+-version = "0.1.0"
++version.workspace = true
+ edition = "2021"
+ rust-version = "1.89"  # AVX-512 intrinsics in std::arch
+ description = "Centurion CPU stability test: per-core and all-core work with a known result, for Curve Optimizer / undervolt offsets"
+diff --git a/crates/centurion-gpustress/Cargo.toml b/crates/centurion-gpustress/Cargo.toml
+index cd44255..19ea5a9 100644
+--- a/crates/centurion-gpustress/Cargo.toml
++++ b/crates/centurion-gpustress/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "centurion-gpustress"
+-version = "0.1.0"
++version.workspace = true
+ edition = "2021"
+ rust-version = "1.77"  # c"..." literals; naga 22 needs 1.74
+ description = "Centurion GPU stability test: Vulkan compute work with a known result, every wrong bit counted"
+diff --git a/crates/centurion-helpers/Cargo.toml b/crates/centurion-helpers/Cargo.toml
+index 1022fa9..4104465 100644
+--- a/crates/centurion-helpers/Cargo.toml
++++ b/crates/centurion-helpers/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "centurion-helpers"
+-version = "0.1.0"
++version.workspace = true
+ edition = "2021"
+ rust-version = "1.74"
+ description = "Centurion privileged root helpers (pkexec targets)"
+diff --git a/crates/centurion-helpers/src/bin/amdgpu-helper.rs b/crates/centurion-helpers/src/bin/amdgpu-helper.rs
+index fddd084..4200a35 100644
+--- a/crates/centurion-helpers/src/bin/amdgpu-helper.rs
++++ b/crates/centurion-helpers/src/bin/amdgpu-helper.rs
+@@ -8,6 +8,7 @@ use centurion_helpers::*;
+ 
+ fn main() {
+     init();
++    centurion_helpers::watchdog(120);
+     let code = match read_request(amdgpu::MAX_REQUEST) {
+         // Both ops write the card (overdrive, power limit, fan): wait for a running calibration.
+         Ok(req) => finish(refuse_during_calibration().unwrap_or_else(|| amdgpu::handle(&req))),
+diff --git a/crates/centurion-helpers/src/bin/fwattr-helper.rs b/crates/centurion-helpers/src/bin/fwattr-helper.rs
+index 896374d..18a33e2 100644
+--- a/crates/centurion-helpers/src/bin/fwattr-helper.rs
++++ b/crates/centurion-helpers/src/bin/fwattr-helper.rs
+@@ -189,6 +189,7 @@ fn run() -> Value {
+         Err(_) => return json!({"ok": false, "error": "malformed request"}),
+     };
+     if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
++    let _lock = match centurion_helpers::helper_lock("fwattr-helper") { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
+     match &req {
+         Value::Array(items) => {
+             if items.len() > MAX_BATCH {
+@@ -220,6 +221,7 @@ fn run() -> Value {
+ 
+ fn main() {
+     init();
++    centurion_helpers::watchdog(120);
+     std::process::exit(finish(run()));
+ }
+ 
+diff --git a/crates/centurion-helpers/src/bin/intel-uv-helper.rs b/crates/centurion-helpers/src/bin/intel-uv-helper.rs
+index 9dc69b6..e0e53d9 100644
+--- a/crates/centurion-helpers/src/bin/intel-uv-helper.rs
++++ b/crates/centurion-helpers/src/bin/intel-uv-helper.rs
+@@ -125,4 +125,4 @@ fn run() -> Value {
+     out
+ }
+ 
+-fn main() { init(); std::process::exit(finish(run())); }
++fn main() { init(); centurion_helpers::watchdog(120); std::process::exit(finish(run())); }
+diff --git a/crates/centurion-helpers/src/bin/legion-gpu-helper.rs b/crates/centurion-helpers/src/bin/legion-gpu-helper.rs
+index ce4650b..c5e927c 100644
+--- a/crates/centurion-helpers/src/bin/legion-gpu-helper.rs
++++ b/crates/centurion-helpers/src/bin/legion-gpu-helper.rs
+@@ -50,4 +50,4 @@ fn moved(op: &str) -> Value {
+     json!({"ok": false, "error": format!("{op} is handled by legion-firmware-helper (administrator password required)")})
+ }
+ 
+-fn main() { init(); std::process::exit(finish(run())); }
++fn main() { init(); centurion_helpers::watchdog(120); std::process::exit(finish(run())); }
+diff --git a/crates/centurion-helpers/src/bin/legion-profile-helper.rs b/crates/centurion-helpers/src/bin/legion-profile-helper.rs
+index f0b38b8..403becd 100644
+--- a/crates/centurion-helpers/src/bin/legion-profile-helper.rs
++++ b/crates/centurion-helpers/src/bin/legion-profile-helper.rs
+@@ -329,6 +329,7 @@ fn run() -> Value {
+         || obj.get("fan_table").and_then(Value::as_str).is_some_and(|o| o != "get")
+         || obj.get("wmae_toggle").and_then(Value::as_str) == Some("set");
+     if writes { if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; } }
++    let _lock = match writes.then(|| centurion_helpers::helper_lock("legion-profile-helper")).transpose() { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
+     if let Some(op) = obj.get("fan_table") {
+         return match op.as_str() {
+             Some(op) => centurion_helpers::fan_table::handle(op, obj.get("levels")),
+@@ -371,6 +372,7 @@ fn run() -> Value {
+ 
+ fn main() {
+     init();
++    centurion_helpers::watchdog(120);
+     std::process::exit(finish(run()));
+ }
+ 
+diff --git a/crates/centurion-helpers/src/bin/ryzen-co-helper.rs b/crates/centurion-helpers/src/bin/ryzen-co-helper.rs
+index 20ae02e..d0e95a0 100644
+--- a/crates/centurion-helpers/src/bin/ryzen-co-helper.rs
++++ b/crates/centurion-helpers/src/bin/ryzen-co-helper.rs
+@@ -233,7 +233,9 @@ fn run() -> Value {
+             _ => return json!({"ok": false, "error": format!("unknown op: {}",
+                      op.map(|v| v.to_string()).unwrap_or_else(|| "None".into()))}),
+         };
++    centurion_helpers::watchdog(120);
+     if let Some(r) = refuse_during_calibration() { return r; }
++    let _lock = match centurion_helpers::helper_lock("ryzen-co-helper") { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
+     let empty = Map::new();
+     let params = match obj.get("params") {
+         None | Some(Value::Null) => &empty,
+diff --git a/crates/centurion-helpers/src/lib.rs b/crates/centurion-helpers/src/lib.rs
+index c397b7d..dcec2bf 100644
+--- a/crates/centurion-helpers/src/lib.rs
++++ b/crates/centurion-helpers/src/lib.rs
+@@ -142,7 +142,9 @@ pub fn emit(v: &Value) {
+ }
+ 
+ /// Emits and converts `ok` into a process exit code.
+-pub fn finish(v: Value) -> i32 {
++pub fn finish(mut v: Value) -> i32 {
++    // Version handshake: the GUI compares this with its own version (privileged.cpp).
++    if let Some(o) = v.as_object_mut() { o.insert("helper_version".into(), json!(env!("CARGO_PKG_VERSION"))); }
+     emit(&v);
+     if v.get("ok").and_then(Value::as_bool).unwrap_or(false) { 0 } else { 1 }
+ }
+@@ -378,6 +380,28 @@ impl Drop for FdLock {
+     fn drop(&mut self) { unsafe { libc::flock(self.0, libc::LOCK_UN); } }
+ }
+ 
++/// Serialises writes of one helper binary: `/run/centurion/<name>.lock`, held until the returned
++/// File is dropped. Waits up to 30 s for another instance, then fails with a "busy" error.
++pub fn helper_lock(name: &str) -> Result<std::fs::File, String> {
++    secure_dir("/run/centurion")?;
++    let path = format!("/run/centurion/{name}.lock");
++    let f = std::fs::OpenOptions::new().create(true).read(true).write(true).mode(0o600)
++        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&path)
++        .map_err(|e| format!("{path}: {e}"))?;
++    for _ in 0..300 {
++        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 { return Ok(f); }
++        let e = io::Error::last_os_error();
++        if !matches!(e.raw_os_error(), Some(libc::EWOULDBLOCK) | Some(libc::EINTR)) { return Err(format!("{path}: {e}")); }
++        std::thread::sleep(std::time::Duration::from_millis(100));
++    }
++    Err(format!("another {name} operation is still running (waited 30 s)"))
++}
++
++/// Hard upper bound on a helper's run time. Once pkexec has started the helper as root the GUI
++/// can no longer kill it on timeout; SIGALRM's default action ends it here instead of letting it
++/// run on unobserved. Set well above the GUI's own timeout so legitimate operations finish.
++pub fn watchdog(secs: u32) { unsafe { libc::alarm(secs); } }
++
+ /// The NVIDIA dGPU is on the bus, bound, not in runtime-PM error, and its driver has initialised
+ /// it (same test as centurion-gamemode's and the GUI's). Directory listing only: never wakes the GPU.
+ pub fn dgpu_usable() -> bool {
+diff --git a/crates/centurion-helpers/src/wlog.rs b/crates/centurion-helpers/src/wlog.rs
+index 9644c0f..480f2bb 100644
+--- a/crates/centurion-helpers/src/wlog.rs
++++ b/crates/centurion-helpers/src/wlog.rs
+@@ -1,7 +1,7 @@
+ //! Diagnostic write log: one line per firmware/EC/EFI/platform-profile write.
+ //!
+ //! /var/log/centurion/writes.log (root helpers only; best effort,
+-//! never fails the caller; rotated to writes.log.1 at 512 KiB).
++//! never fails the caller; rotated to writes.log.1 and .2 at 512 KiB).
+ //! Line: UTC time | pid | this binary | parent < grandparent (pkexec uid) | kind | detail
+ //! Used to find which tool changes BIOS-side state (e.g. Legion Optimization
+ //! turning itself off): compare against the "boot-state"/"shutdown-state" lines.
+@@ -43,7 +43,13 @@ pub fn log(kind: &str, detail: &str) {
+     let d: String = detail.chars().map(|c| if c.is_control() { ' ' } else { c }).take(400).collect();
+     let line = format!("{} | {} | {} | {}<{}{} | {} | {}\n", utc_now(), me, exe, proc_comm(pp), proc_comm(gp), uid, kind, d);
+     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o755).create(DIR);
+-    if std::fs::metadata(FILE).is_ok_and(|m| m.len() > MAX) {
++    // Size check, rotation and append under one lock: two helpers rotating at once used to rename
++    // a fresh writes.log over writes.log.1 and lose its lines. Best effort: no lock, no rotation.
++    let lock = std::fs::OpenOptions::new().create(true).write(true).mode(0o600)
++        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(format!("{DIR}/.writes.lock")).ok();
++    let _held = lock.as_ref().and_then(|l| crate::FdLock::exclusive(l).ok());
++    if _held.is_some() && std::fs::metadata(FILE).is_ok_and(|m| m.len() > MAX) {
++        let _ = std::fs::rename(format!("{FILE}.1"), format!("{FILE}.2"));
+         let _ = std::fs::rename(FILE, format!("{FILE}.1"));
+     }
+     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o644)
+diff --git a/crates/centurion-spectrum/Cargo.toml b/crates/centurion-spectrum/Cargo.toml
+index 6d5f960..20b59a1 100644
+--- a/crates/centurion-spectrum/Cargo.toml
++++ b/crates/centurion-spectrum/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "centurion-spectrum"
+-version = "0.1.0"
++version.workspace = true
+ edition = "2021"
+ rust-version = "1.70"
+ description = "Lenovo Legion keyboards over hidraw: Spectrum per-key RGB (ITE 8258) and the 4-zone RGB keyboard"
+diff --git a/crates/nvcurve/Cargo.toml b/crates/nvcurve/Cargo.toml
+index 5087287..983906e 100644
+--- a/crates/nvcurve/Cargo.toml
++++ b/crates/nvcurve/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "nvcurve"
+-version = "0.1.0"
++version.workspace = true
+ edition = "2021"
+ rust-version = "1.74"
+ description = "NVIDIA V/F curve management core (NvAPI + NVML via dlopen)"
+diff --git a/crates/nvcurve/src/bin/nvcurve-root-helper.rs b/crates/nvcurve/src/bin/nvcurve-root-helper.rs
+index f5057a3..0205f19 100644
+--- a/crates/nvcurve/src/bin/nvcurve-root-helper.rs
++++ b/crates/nvcurve/src/bin/nvcurve-root-helper.rs
+@@ -330,6 +330,8 @@ fn run() -> Value {
+         libc::umask(0o022);
+         let zero = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+         libc::setrlimit(libc::RLIMIT_CORE, &zero);
++        // Hard run-time bound (see centurion_helpers::watchdog): the GUI cannot kill a root helper.
++        libc::alarm(180);
+     }
+     logging::init(log::Level::Info, true);
+ 
+@@ -380,7 +382,8 @@ fn run() -> Value {
+ }
+ 
+ fn main() {
+-    let v = run();
++    let mut v = run();
++    if let Some(o) = v.as_object_mut() { o.insert("helper_version".into(), json!(env!("CARGO_PKG_VERSION"))); }
+     println!("{v}");
+     std::process::exit(if v["ok"] == true { 0 } else { 1 });
+ }
+diff --git a/deny.toml b/deny.toml
+new file mode 100644
+index 0000000..410be29
+--- /dev/null
++++ b/deny.toml
+@@ -0,0 +1,14 @@
++# cargo deny check — run by CI (.github/workflows/ci.yml); locally: cargo install cargo-deny.
++[advisories]
++# RustSec advisories (same database as cargo audit); yanked crates fail too.
++yanked = "deny"
++
++[licenses]
++allow = ["MIT", "Apache-2.0", "GPL-3.0-or-later", "Unlicense", "CC0-1.0", "ISC", "Unicode-3.0"]
++
++[bans]
++multiple-versions = "warn"
++
++[sources]
++unknown-registry = "deny"
++unknown-git = "deny"
+diff --git a/EXPERIMENTAL-STUDIO-V4-VALIDATION.txt b/docs/EXPERIMENTAL-STUDIO-V4-VALIDATION.txt
+similarity index 100%
+rename from EXPERIMENTAL-STUDIO-V4-VALIDATION.txt
+rename to docs/EXPERIMENTAL-STUDIO-V4-VALIDATION.txt
+diff --git a/EXPERIMENTAL-VALIDATION.txt b/docs/EXPERIMENTAL-VALIDATION.txt
+similarity index 100%
+rename from EXPERIMENTAL-VALIDATION.txt
+rename to docs/EXPERIMENTAL-VALIDATION.txt
+diff --git a/gui/CMakeLists.txt b/gui/CMakeLists.txt
+index d6d0581..91154fd 100644
+--- a/gui/CMakeLists.txt
++++ b/gui/CMakeLists.txt
+@@ -1,5 +1,19 @@
+ cmake_minimum_required(VERSION 3.19)
+-project(centurion VERSION 2.0.0 LANGUAGES CXX)
++# One version for the GUI and every crate: [workspace.package] version in ../Cargo.toml.
++file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../Cargo.toml" _ws_version REGEX "^version = \"[0-9.]+\"")
++string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" CENTURION_WS_VERSION "${_ws_version}")
++if(NOT CENTURION_WS_VERSION)
++    message(FATAL_ERROR "could not read the workspace version from ../Cargo.toml")
++endif()
++project(centurion VERSION ${CENTURION_WS_VERSION} LANGUAGES CXX)
++
++# AddressSanitizer + UndefinedBehaviorSanitizer for test builds (CI): set before any target exists
++# so the app and every test binary get it.
++option(CENTURION_SANITIZE "Build with -fsanitize=address,undefined" OFF)
++if(CENTURION_SANITIZE)
++    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
++    add_link_options(-fsanitize=address,undefined)
++endif()
+ 
+ set(CMAKE_CXX_STANDARD 20)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+@@ -227,6 +241,7 @@ endif()
+ include(GNUInstallDirs)
+ install(TARGETS centurion RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+ install(FILES data/centurion.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
++install(FILES data/io.github.arabcian.centurion.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+ install(FILES data/centurion-autostart.desktop DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/xdg/autostart
+         RENAME centurion.desktop)
+ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+diff --git a/gui/data/io.github.arabcian.centurion.metainfo.xml b/gui/data/io.github.arabcian.centurion.metainfo.xml
+new file mode 100644
+index 0000000..2a270e2
+--- /dev/null
++++ b/gui/data/io.github.arabcian.centurion.metainfo.xml
+@@ -0,0 +1,35 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<component type="desktop-application">
++  <id>io.github.arabcian.centurion</id>
++  <metadata_license>CC0-1.0</metadata_license>
++  <project_license>GPL-3.0-or-later</project_license>
++  <name>Centurion</name>
++  <summary>Power, fan, undervolt and lighting control for Lenovo Legion laptops</summary>
++  <summary xml:lang="tr">Lenovo Legion dizüstüler için güç, fan, undervolt ve aydınlatma denetimi</summary>
++  <description>
++    <p>
++      One tray app for Lenovo Legion laptops: power profiles, firmware power limits, fan curves,
++      CPU and GPU undervolting, per-key RGB, game-aware system tuning and Scenes that switch all
++      of it at once. Privileged work runs in small validating helpers; there is no telemetry.
++    </p>
++  </description>
++  <launchable type="desktop-id">centurion.desktop</launchable>
++  <url type="homepage">https://github.com/arabcian/centurion</url>
++  <url type="bugtracker">https://github.com/arabcian/centurion/issues</url>
++  <developer id="io.github.arabcian">
++    <name>Cihan</name>
++  </developer>
++  <screenshots>
++    <screenshot type="default">
++      <image>https://raw.githubusercontent.com/arabcian/centurion/main/screenshots/Screenshot_20261009_190532.png</image>
++    </screenshot>
++  </screenshots>
++  <categories>
++    <category>System</category>
++    <category>Settings</category>
++  </categories>
++  <content_rating type="oars-1.1"/>
++  <releases>
++    <release version="2.0.0" date="2026-10-24"/>
++  </releases>
++</component>
+diff --git a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+index 8658be5..13c059c 100644
+--- a/gui/i18n/centurion_tr.ts
++++ b/gui/i18n/centurion_tr.ts
+@@ -5869,6 +5869,11 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
+     </context>
+     <context>
+         <name>NvidiaTab</name>
++        <message>
++            <location filename="work/gui/src/nvidiatab.cpp"/>
++            <source>Blackwell hotspot needs root: nvcurve-sensors is not installed</source>
++            <translation>Blackwell sıcak nokta ölçümü root gerektirir: nvcurve-sensors kurulu değil</translation>
++        </message>
+         <message>
+             <location filename="../src/nvidiatab.cpp" line="595"/>
+             <source>ACTIVITY LOG  ·  Driver output</source>
+@@ -6913,4 +6918,52 @@ Optimizations preset - those knobs are what is measured).</source><translation>B
+             <translation>Hibrit Intel CPU'da bunun yerine E çekirdeklerini park eder (P çekirdekleri cpu0'ı barındırır ve asla park edilemez): oyun yalnızca P çekirdekleriyle ring'i paylaşır. Kötü hibrit zamanlamalı oyunları test etmek içindir, günlük kullanım ayarı değildir. Bütün CCD'yi tamamen çevrimdışı yapar (içindeki her CPU): zamanlama, IRQ veya CCD'ler arası cache tutarlılığı trafiği ona ulaşamaz. X3D için en deterministik kurulumdur: oyun diğer yongadan hiçbir koşulda etkilenmeden tek CCD'nin cache ve çekirdeklerini tek başına kullanır. Açık bedeli, geri yüklenene kadar o CCD'nin tüm çekirdeklerinin kaybıdır. Competitive profili en agresif adım olarak frekans CCD'sini park eder; CPU affinity ile workqueue/IRQ yönlendirmesi (çekirdek kaybetmeden yalıtımın büyük kısmını sağlar) yetmiyorsa bunu kullanın. cpu0'ın CCD'si hiçbir zaman park edilemez (çekirdek cpu0'ı çevrimiçi ister); iki CCD'li işlemcide yalnızca 'öteki' CCD park edilebilir. Herhangi bir CPU çevrimdışıyken (park veya SMT kapalı) nvidia-powerd durdurulur ve sonrasında yeniden başlatılır: hot-unplug edilmiş CPU'ları yönetemez; Blackwell dizüstülerde GSP kilitlenmesine yol açabilir (Xid 79/119 -&gt; 154, yeniden başlatma gerekir). Dolayısıyla park sırasında Dynamic Boost (+25 W GPU) kapalıdır. Oyun modu (centurion-gamemode PRE/RUN/WRAP) CCD'yi asla fiziksel olarak çevrimdışı yapmaz: Wine/Proton yalnızca çevrimiçi CPU'ları sayıp CPU numaralarına 1:1 eşler; park edilmiş CCD'nin bıraktığı boşluk (0-7,16-23) iş parçacığı sabitlemesini bozar, bazı oyunlar hiç açılmaz. Bunun yerine CCD boşaltılır: oyun diğer CCD'yi cgroup v2 cpuset bölümü olarak kullanır (diğer her şey o CCD'den taşınır; birleşik cgroup hiyerarşisi gerekir, OpenRC rc_cgroup_mode="unified"; yoksa oyun yalnızca sabitlenir). IRQ'lar ve bağımsız çekirdek workqueue işleri park edilen CCD'ye taşınır; WINE_CPU_TOPOLOGY oyunun CPU eşlemesini düzenler. Böylece oyun benzer ölçüde yalıtılır.</translation>
+         </message>
+     </context>
+-<context><name>OptimizationLabels</name><message><source>amd-pstate mode</source><translation>amd-pstate modu</translation></message><message><source>intel_pstate mode</source><translation>intel_pstate modu</translation></message><message><source>Dynamic EPP (amd-pstate)</source><translation>Dinamik EPP (amd-pstate)</translation></message><message><source>Scaling governor</source><translation>Frekans yöneticisi</translation></message><message><source>Energy-performance preference</source><translation>Enerji-performans tercihi</translation></message><message><source>amd-pstate epp_boost</source><translation>amd-pstate epp_boost</translation></message><message><source>Core performance boost</source><translation>Çekirdek performans artırımı (Boost)</translation></message><message><source>Minimum frequency</source><translation>En düşük frekans</translation></message><message><source>Floor frequency (power-limit throttle target)</source><translation>Alt frekans sınırı (güç limiti nedeniyle kısılma hedefi)</translation></message><message><source>Governor · CCD0</source><translation>Frekans yöneticisi · CCD0</translation></message><message><source>Governor · CCD1</source><translation>Frekans yöneticisi · CCD1</translation></message><message><source>EPP · CCD0</source><translation>EPP · CCD0</translation></message><message><source>EPP · CCD1</source><translation>EPP · CCD1</translation></message><message><source>Boost · CCD0</source><translation>Boost · CCD0</translation></message><message><source>Boost · CCD1</source><translation>Boost · CCD1</translation></message><message><source>Max frequency · CCD0 (kHz)</source><translation>En yüksek frekans · CCD0 (kHz)</translation></message><message><source>Max frequency · CCD1 (kHz)</source><translation>En yüksek frekans · CCD1 (kHz)</translation></message><message><source>HWP dynamic boost</source><translation>HWP dinamik Boost</translation></message><message><source>Max performance (%)</source><translation>En yüksek performans (%)</translation></message><message><source>Min performance (%)</source><translation>En düşük performans (%)</translation></message><message><source>Energy-performance bias (EPB)</source><translation>Enerji-performans önceliği (EPB)</translation></message><message><source>EPP · P-cores</source><translation>EPP · P çekirdekleri</translation></message><message><source>EPP · E-cores</source><translation>EPP · E çekirdekleri</translation></message><message><source>Max frequency · P-cores (kHz)</source><translation>En yüksek frekans · P çekirdekleri (kHz)</translation></message><message><source>Max frequency · E-cores (kHz)</source><translation>En yüksek frekans · E çekirdekleri (kHz)</translation></message><message><source>Uncore max frequency (kHz)</source><translation>Uncore en yüksek frekans (kHz)</translation></message><message><source>Uncore min frequency (kHz)</source><translation>Uncore en düşük frekans (kHz)</translation></message><message><source>RAPL PL1 · long term (W)</source><translation>RAPL PL1 · uzun süreli (W)</translation></message><message><source>RAPL PL2 · short term (W)</source><translation>RAPL PL2 · kısa süreli (W)</translation></message><message><source>TCC offset (°C below TjMax)</source><translation>TCC ofseti (TjMax altındaki °C)</translation></message><message><source>3D V-Cache CCD preference</source><translation>3D V-Cache CCD tercihi</translation></message><message><source>cpuidle governor</source><translation>cpuidle yöneticisi</translation></message><message><source>Deepest C-state kept</source><translation>İzin verilen en derin C-state</translation></message><message><source>CPU wake-up latency limit (µs)</source><translation>CPU uyanma gecikmesi sınırı (µs)</translation></message><message><source>schedutil rate limit (µs)</source><translation>schedutil hız sınırlaması (µs)</translation></message><message><source>Clocksource</source><translation>Saat kaynağı (clocksource)</translation></message><message><source>THP enabled</source><translation>THP etkinleştirme</translation></message><message><source>THP shmem</source><translation>THP paylaşılan bellek (shmem)</translation></message><message><source>THP defrag</source><translation>THP bellek birleştirme (defrag)</translation></message><message><source>khugepaged defrag</source><translation>khugepaged bellek birleştirme</translation></message><message><source>mTHP 16 KB anon</source><translation>mTHP 16 KB anonim bellek</translation></message><message><source>mTHP 32 KB anon</source><translation>mTHP 32 KB anonim bellek</translation></message><message><source>mTHP 64 KB anon</source><translation>mTHP 64 KB anonim bellek</translation></message><message><source>mTHP 128 KB anon</source><translation>mTHP 128 KB anonim bellek</translation></message><message><source>mTHP 256 KB anon</source><translation>mTHP 256 KB anonim bellek</translation></message><message><source>mTHP 512 KB anon</source><translation>mTHP 512 KB anonim bellek</translation></message><message><source>mTHP 1 MB anon</source><translation>mTHP 1 MB anonim bellek</translation></message><message><source>khugepaged max_ptes_none</source><translation>khugepaged max_ptes_none</translation></message><message><source>khugepaged pages_to_scan</source><translation>khugepaged pages_to_scan</translation></message><message><source>khugepaged scan_sleep_millisecs</source><translation>khugepaged scan_sleep_millisecs</translation></message><message><source>khugepaged max_ptes_swap</source><translation>khugepaged max_ptes_swap</translation></message><message><source>khugepaged alloc_sleep_millisecs</source><translation>khugepaged alloc_sleep_millisecs</translation></message><message><source>MGLRU enabled mask</source><translation>MGLRU etkinleştirme maskesi</translation></message><message><source>MGLRU min_ttl_ms</source><translation>MGLRU min_ttl_ms</translation></message><message><source>KSM run</source><translation>KSM çalıştırma</translation></message><message><source>KSM scan advisor</source><translation>KSM tarama danışmanı</translation></message><message><source>khugepaged max_ptes_shared</source><translation>khugepaged max_ptes_shared</translation></message><message><source>THP huge zero page</source><translation>THP büyük sıfır sayfası</translation></message><message><source>Compact unevictable pages</source><translation>Taşınamaz bellek sayfalarını sıkıştır</translation></message><message><source>vm.dirtytime_expire_seconds</source><translation>vm.dirtytime_expire_seconds</translation></message><message><source>vm.max_map_count</source><translation>vm.max_map_count</translation></message><message><source>vm.swappiness</source><translation>vm.swappiness</translation></message><message><source>vm.compaction_proactiveness</source><translation>vm.compaction_proactiveness</translation></message><message><source>vm.watermark_boost_factor</source><translation>vm.watermark_boost_factor</translation></message><message><source>vm.watermark_scale_factor</source><translation>vm.watermark_scale_factor</translation></message><message><source>vm.min_free_kbytes</source><translation>vm.min_free_kbytes</translation></message><message><source>vm.zone_reclaim_mode</source><translation>vm.zone_reclaim_mode</translation></message><message><source>vm.page_lock_unfairness</source><translation>vm.page_lock_unfairness</translation></message><message><source>vm.stat_interval</source><translation>vm.stat_interval</translation></message><message><source>vm.page-cluster</source><translation>vm.page-cluster</translation></message><message><source>vm.dirty_background_ratio (%)</source><translation>vm.dirty_background_ratio (%)</translation></message><message><source>vm.dirty_ratio (%)</source><translation>vm.dirty_ratio (%)</translation></message><message><source>vm.dirty_background_bytes</source><translation>vm.dirty_background_bytes</translation></message><message><source>vm.dirty_bytes</source><translation>vm.dirty_bytes</translation></message><message><source>vm.dirty_writeback_centisecs</source><translation>vm.dirty_writeback_centisecs</translation></message><message><source>vm.dirty_expire_centisecs</source><translation>vm.dirty_expire_centisecs</translation></message><message><source>vm.vfs_cache_pressure</source><translation>vm.vfs_cache_pressure</translation></message><message><source>zswap</source><translation>zswap</translation></message><message><source>zswap compressor</source><translation>zswap sıkıştırıcı</translation></message><message><source>zswap max pool (% of RAM)</source><translation>zswap azami havuzu (RAM yüzdesi)</translation></message><message><source>zswap shrinker</source><translation>zswap bellek geri kazanımı (shrinker)</translation></message><message><source>vm.defrag_mode</source><translation>vm.defrag_mode</translation></message><message><source>THP shrink underused</source><translation>Az kullanılan THP sayfalarını küçült</translation></message><message><source>zswap accept threshold (%)</source><translation>zswap kabul eşiği (%)</translation></message><message><source>Per-CPU free page lists (fraction)</source><translation>CPU başına boş sayfa listeleri (oran)</translation></message><message><source>vm.extfrag_threshold</source><translation>vm.extfrag_threshold</translation></message><message><source>sched_ext scheduler</source><translation>sched_ext zamanlayıcısı</translation></message><message><source>split_lock_mitigate</source><translation>split_lock_mitigate</translation></message><message><source>kernel.watchdog</source><translation>kernel.watchdog</translation></message><message><source>NMI watchdog (hard-lockup detector)</source><translation>NMI watchdog (donanım kilitlenmesi algılayıcısı)</translation></message><message><source>kernel.numa_balancing</source><translation>kernel.numa_balancing</translation></message><message><source>kernel.timer_migration</source><translation>kernel.timer_migration</translation></message><message><source>sched_autogroup_enabled</source><translation>sched_autogroup_enabled</translation></message><message><source>sched_cfs_bandwidth_slice_us</source><translation>sched_cfs_bandwidth_slice_us</translation></message><message><source>RT tasks' default boost (uclamp)</source><translation>RT görevleri için varsayılan hızlandırma (uclamp)</translation></message><message><source>Energy Aware Scheduling</source><translation>Enerji duyarlı zamanlama</translation></message><message><source>sched_schedstats</source><translation>sched_schedstats</translation></message><message><source>Preferred-core scheduling (ITMT)</source><translation>Tercihli çekirdek zamanlaması (ITMT)</translation></message><message><source>Preemption model (debugfs)</source><translation>Ön alma modeli (debugfs)</translation></message><message><source>EEVDF base slice (debugfs)</source><translation>EEVDF temel zaman dilimi (debugfs)</translation></message><message><source>min_base_slice_ns (debugfs)</source><translation>min_base_slice_ns (debugfs)</translation></message><message><source>migration_cost_ns (debugfs)</source><translation>migration_cost_ns (debugfs)</translation></message><message><source>nr_migrate (debugfs)</source><translation>nr_migrate (debugfs)</translation></message><message><source>cgroup_mode (debugfs, 7.3+)</source><translation>cgroup_mode (debugfs, 7.3+)</translation></message><message><source>Cache-aware scheduling (debugfs, 7.2+)</source><translation>Önbellek duyarlı zamanlama (debugfs, 7.2+)</translation></message><message><source>llc_aggr_tolerance (debugfs, 7.2+)</source><translation>llc_aggr_tolerance (debugfs, 7.2+)</translation></message><message><source>llc_imb_pct (debugfs, 7.2+)</source><translation>llc_imb_pct (debugfs, 7.2+)</translation></message><message><source>llc_overload_pct (debugfs, 7.2+)</source><translation>llc_overload_pct (debugfs, 7.2+)</translation></message><message><source>NEXT_BUDDY (debugfs)</source><translation>NEXT_BUDDY (debugfs)</translation></message><message><source>RUN_TO_PARITY (debugfs)</source><translation>RUN_TO_PARITY (debugfs)</translation></message><message><source>BORE scheduler</source><translation>BORE zamanlayıcısı</translation></message><message><source>BORE burst inheritance</source><translation>BORE burst mirası</translation></message><message><source>BORE smoothness</source><translation>BORE yumuşatma</translation></message><message><source>BORE penalty offset</source><translation>BORE ceza ofseti</translation></message><message><source>BORE penalty scale</source><translation>BORE ceza ölçeği</translation></message><message><source>BORE burst cache lifetime (ns)</source><translation>BORE burst önbellek ömrü (ns)</translation></message><message><source>Project C yield type</source><translation>Project C yield türü</translation></message><message><source>Infinity SMT slice divisor</source><translation>Infinity SMT zaman dilimi böleni</translation></message><message><source>PREEMPT_SHORT (debugfs)</source><translation>PREEMPT_SHORT (debugfs)</translation></message><message><source>DELAY_DEQUEUE (debugfs)</source><translation>DELAY_DEQUEUE (debugfs)</translation></message><message><source>HRTICK (debugfs)</source><translation>HRTICK (debugfs)</translation></message><message><source>SIS_UTIL (debugfs)</source><translation>SIS_UTIL (debugfs)</translation></message><message><source>TTWU_QUEUE (debugfs)</source><translation>TTWU_QUEUE (debugfs)</translation></message><message><source>CACHE_HOT_BUDDY (debugfs)</source><translation>CACHE_HOT_BUDDY (debugfs)</translation></message><message><source>PLACE_LAG (debugfs)</source><translation>PLACE_LAG (debugfs)</translation></message><message><source>PLACE_DEADLINE_INITIAL (debugfs)</source><translation>PLACE_DEADLINE_INITIAL (debugfs)</translation></message><message><source>PLACE_REL_DEADLINE (debugfs)</source><translation>PLACE_REL_DEADLINE (debugfs)</translation></message><message><source>WAKEUP_PREEMPTION (debugfs)</source><translation>WAKEUP_PREEMPTION (debugfs)</translation></message><message><source>Unbound workqueue affinity scope</source><translation>Bağımsız workqueue işlemci yakınlığı kapsamı</translation></message><message><source>Unbound workqueue CPUs</source><translation>Bağımsız workqueue CPU'ları</translation></message><message><source>IRQ affinity</source><translation>IRQ işlemci yakınlığı</translation></message><message><source>I/O scheduler</source><translation>G/Ç zamanlayıcısı</translation></message><message><source>Writeback throttling (µs)</source><translation>Writeback hız sınırlaması (µs)</translation></message><message><source>Read-ahead (KiB)</source><translation>Önden okuma (KiB)</translation></message><message><source>rq_affinity</source><translation>rq_affinity</translation></message><message><source>nomerges</source><translation>nomerges</translation></message><message><source>I/O statistics accounting</source><translation>G/Ç istatistiklerini hesaplama</translation></message><message><source>Disk entropy contribution</source><translation>Diskin entropi katkısı</translation></message><message><source>Queue depth (nr_requests)</source><translation>Kuyruk derinliği (nr_requests)</translation></message><message><source>Max request size (KiB)</source><translation>Azami istek boyutu (KiB)</translation></message><message><source>kyber read latency target (ns)</source><translation>kyber okuma gecikmesi hedefi (ns)</translation></message><message><source>kyber write latency target (ns)</source><translation>kyber yazma gecikmesi hedefi (ns)</translation></message><message><source>mq-deadline read deadline (ms)</source><translation>mq-deadline okuma süresi (ms)</translation></message><message><source>mq-deadline write deadline (ms)</source><translation>mq-deadline yazma süresi (ms)</translation></message><message><source>mq-deadline batch size</source><translation>mq-deadline grup boyutu</translation></message><message><source>mq-deadline writes_starved</source><translation>mq-deadline writes_starved</translation></message><message><source>bfq low_latency</source><translation>bfq low_latency</translation></message><message><source>bfq slice_idle (ms)</source><translation>bfq slice_idle (ms)</translation></message><message><source>btrfs async discard IOPS limit</source><translation>btrfs asenkron discard IOPS sınırı</translation></message><message><source>btrfs async discard bandwidth limit (KiB/s)</source><translation>btrfs asenkron discard bant genişliği sınırı (KiB/sn)</translation></message><message><source>btrfs async discard max size (bytes)</source><translation>btrfs asenkron discard azami boyutu (bayt)</translation></message><message><source>TCP congestion control</source><translation>TCP tıkanıklık denetimi</translation></message><message><source>Default queueing discipline</source><translation>Varsayılan paket kuyruklama disiplini</translation></message><message><source>Wi-Fi power save</source><translation>Wi-Fi güç tasarrufu</translation></message><message><source>TCP slow start after idle</source><translation>Boşta kaldıktan sonra TCP slow start</translation></message><message><source>TCP MTU probing</source><translation>TCP MTU araştırması</translation></message><message><source>Receive backlog (packets)</source><translation>Alım birikim kuyruğu (paket)</translation></message><message><source>TCP not-sent low watermark (bytes)</source><translation>TCP gönderilmemiş veri alt eşiği (bayt)</translation></message><message><source>TCP Fast Open</source><translation>TCP Fast Open</translation></message><message><source>GRO flush timeout (ns)</source><translation>GRO boşaltma zaman aşımı (ns)</translation></message><message><source>NAPI deferred interrupts</source><translation>NAPI ertelenmiş kesmeleri</translation></message><message><source>Socket busy poll (µs)</source><translation>Soket busy poll (µs)</translation></message><message><source>Socket busy read (µs)</source><translation>Soket busy read (µs)</translation></message><message><source>Threaded NAPI</source><translation>İş parçacıklı NAPI</translation></message><message><source>PCIe ASPM policy</source><translation>PCIe ASPM ilkesi</translation></message><message><source>PCIe ASPM per link</source><translation>Bağlantı başına PCIe ASPM</translation></message><message><source>Suspend mode (mem_sleep)</source><translation>Askıya alma modu (mem_sleep)</translation></message><message><source>PCI latency timers</source><translation>PCI gecikme zamanlayıcıları</translation></message><message><source>HDA power_save (s)</source><translation>HDA power_save (sn)</translation></message><message><source>HDA power_save_controller</source><translation>HDA power_save_controller</translation></message><message><source>USB autosuspend delay (s)</source><translation>USB otomatik askıya alma gecikmesi (sn)</translation></message><message><source>USB autosuspend delay · connected (ms)</source><translation>USB otomatik askıya alma · bağlı aygıtlar (ms)</translation></message><message><source>Wake-on-LAN (Ethernet)</source><translation>Wake-on-LAN (Ethernet)</translation></message><message><source>Energy-Efficient Ethernet (EEE)</source><translation>Enerji Verimli Ethernet (EEE)</translation></message><message><source>Bluetooth radio</source><translation>Bluetooth radyosu</translation></message><message><source>Wi-Fi radio</source><translation>Wi-Fi radyosu</translation></message><message><source>WWAN (mobile broadband) radio</source><translation>WWAN (mobil geniş bant) radyosu</translation></message><message><source>Panel power savings (amdgpu ABM)</source><translation>Panel güç tasarrufu (amdgpu ABM)</translation></message><message><source>Disk APM level · disk 1</source><translation>Disk APM seviyesi · disk 1</translation></message><message><source>Disk APM level · disk 2</source><translation>Disk APM seviyesi · disk 2</translation></message><message><source>Disk APM level · disk 3</source><translation>Disk APM seviyesi · disk 3</translation></message><message><source>Disk APM level · disk 4</source><translation>Disk APM seviyesi · disk 4</translation></message><message><source>AHCI disk runtime PM timeout (ms)</source><translation>AHCI disk çalışma zamanı güç yönetimi zaman aşımı (ms)</translation></message><message><source>AHCI disk runtime PM</source><translation>AHCI disk çalışma zamanı güç yönetimi</translation></message><message><source>AHCI port runtime PM</source><translation>AHCI bağlantı noktası çalışma zamanı güç yönetimi</translation></message><message><source>PCI runtime PM</source><translation>PCI çalışma zamanı güç yönetimi</translation></message><message><source>USB runtime PM (connected devices)</source><translation>USB çalışma zamanı güç yönetimi (bağlı aygıtlar)</translation></message><message><source>SATA link power (ALPM)</source><translation>SATA bağlantı güç yönetimi (ALPM)</translation></message><message><source>NVMe APST latency tolerance (µs)</source><translation>NVMe APST gecikme toleransı (µs)</translation></message><message><source>iGPU DPM level (amdgpu)</source><translation>iGPU DPM seviyesi (amdgpu)</translation></message><message><source>iGPU max frequency (Intel, MHz)</source><translation>iGPU en yüksek frekansı (Intel, MHz)</translation></message><message><source>iGPU min frequency (Intel, MHz)</source><translation>iGPU en düşük frekansı (Intel, MHz)</translation></message><message><source>iGPU SLPC power profile (i915)</source><translation>iGPU SLPC güç profili (i915)</translation></message><message><source>MCE poll interval (s)</source><translation>MCE yoklama aralığı (sn)</translation></message><message><source>SMT</source><translation>SMT</translation></message><message><source>Park a CCD / E-cores (offline)</source><translation>CCD / E çekirdeklerini park et (çevrimdışı)</translation></message></context><context><name>OptimizationGroups</name><message><source>CPU</source><translation>CPU</translation></message><message><source>Memory</source><translation>Bellek</translation></message><message><source>Scheduler</source><translation>Zamanlayıcı</translation></message><message><source>Storage</source><translation>Depolama</translation></message><message><source>Network</source><translation>Ağ</translation></message><message><source>Devices</source><translation>Aygıtlar</translation></message><message><source>Power</source><translation>Güç</translation></message><message><source>Stability</source><translation>Kararlılık</translation></message></context><context><name>OptimizationOptions</name><message><source>enabled</source><translation>etkin</translation></message><message><source>disabled</source><translation>devre dışı</translation></message><message><source>on</source><translation>açık</translation></message><message><source>off</source><translation>kapalı</translation></message><message><source>yes</source><translation>evet</translation></message><message><source>no</source><translation>hayır</translation></message><message><source>active</source><translation>etkin</translation></message><message><source>passive</source><translation>pasif</translation></message><message><source>guided</source><translation>yönlendirmeli</translation></message><message><source>performance</source><translation>performans</translation></message><message><source>powersave</source><translation>güç tasarrufu</translation></message><message><source>balance_performance</source><translation>dengeli performans</translation></message><message><source>balance_power</source><translation>dengeli güç tasarrufu</translation></message><message><source>power</source><translation>güç tasarrufu öncelikli</translation></message><message><source>auto</source><translation>otomatik</translation></message><message><source>automatic</source><translation>otomatik</translation></message><message><source>default</source><translation>varsayılan</translation></message><message><source>none</source><translation>yok</translation></message><message><source>all</source><translation>tümü</translation></message><message><source>low</source><translation>düşük</translation></message><message><source>high</source><translation>yüksek</translation></message><message><source>medium</source><translation>orta</translation></message><message><source>full</source><translation>tam</translation></message><message><source>voluntary</source><translation>gönüllü</translation></message><message><source>offline</source><translation>çevrimdışı</translation></message><message><source>online</source><translation>çevrimiçi</translation></message><message><source>force</source><translation>zorla</translation></message><message><source>never</source><translation>asla</translation></message><message><source>always</source><translation>her zaman</translation></message><message><source>madvise</source><translation>uygulama isteğine göre (madvise)</translation></message><message><source>advise</source><translation>isteğe göre (advise)</translation></message><message><source>defer</source><translation>ertele</translation></message><message><source>defer+madvise</source><translation>ertele + madvise</translation></message><message><source>within_size</source><translation>boyut sınırında</translation></message><message><source>cache</source><translation>önbellek (V-Cache)</translation></message><message><source>frequency</source><translation>frekans</translation></message><message><source>balance</source><translation>dengeli</translation></message><message><source>lowest_nonlinear</source><translation>en düşük doğrusal olmayan frekans</translation></message><message><source>cpuinfo_min</source><translation>donanımın en düşük frekansı</translation></message><message><source>schedutil</source><translation>schedutil</translation></message><message><source>ondemand</source><translation>talep üzerine</translation></message><message><source>conservative</source><translation>tutucu</translation></message><message><source>userspace</source><translation>kullanıcı alanı</translation></message><message><source>hybrid</source><translation>hibrit</translation></message><message><source>performance-leaning</source><translation>performans öncelikli</translation></message><message><source>power-leaning</source><translation>tasarruf öncelikli</translation></message><message><source>unified</source><translation>birleşik</translation></message><message><source>legacy</source><translation>eski düzen</translation></message><message><source>dynamic</source><translation>dinamik</translation></message><message><source>aggressive</source><translation>agresif</translation></message><message><source>laptop</source><translation>dizüstü</translation></message><message><source>desktop</source><translation>masaüstü</translation></message><message><source>root only</source><translation>yalnızca root</translation></message><message><source>n/a</source><translation>kullanılamıyor</translation></message><message><source>skipped</source><translation>atlandı</translation></message><message><source>unchanged</source><translation>değişmedi</translation></message><message><source>found</source><translation>bulundu</translation></message><message><source>missing</source><translation>bulunamadı</translation></message><message><source>reset</source><translation>sıfırla</translation></message><message><source>not set</source><translation>ayarlanmadı</translation></message></context></TS>
++<context><name>OptimizationLabels</name><message><source>amd-pstate mode</source><translation>amd-pstate modu</translation></message><message><source>intel_pstate mode</source><translation>intel_pstate modu</translation></message><message><source>Dynamic EPP (amd-pstate)</source><translation>Dinamik EPP (amd-pstate)</translation></message><message><source>Scaling governor</source><translation>Frekans yöneticisi</translation></message><message><source>Energy-performance preference</source><translation>Enerji-performans tercihi</translation></message><message><source>amd-pstate epp_boost</source><translation>amd-pstate epp_boost</translation></message><message><source>Core performance boost</source><translation>Çekirdek performans artırımı (Boost)</translation></message><message><source>Minimum frequency</source><translation>En düşük frekans</translation></message><message><source>Floor frequency (power-limit throttle target)</source><translation>Alt frekans sınırı (güç limiti nedeniyle kısılma hedefi)</translation></message><message><source>Governor · CCD0</source><translation>Frekans yöneticisi · CCD0</translation></message><message><source>Governor · CCD1</source><translation>Frekans yöneticisi · CCD1</translation></message><message><source>EPP · CCD0</source><translation>EPP · CCD0</translation></message><message><source>EPP · CCD1</source><translation>EPP · CCD1</translation></message><message><source>Boost · CCD0</source><translation>Boost · CCD0</translation></message><message><source>Boost · CCD1</source><translation>Boost · CCD1</translation></message><message><source>Max frequency · CCD0 (kHz)</source><translation>En yüksek frekans · CCD0 (kHz)</translation></message><message><source>Max frequency · CCD1 (kHz)</source><translation>En yüksek frekans · CCD1 (kHz)</translation></message><message><source>HWP dynamic boost</source><translation>HWP dinamik Boost</translation></message><message><source>Max performance (%)</source><translation>En yüksek performans (%)</translation></message><message><source>Min performance (%)</source><translation>En düşük performans (%)</translation></message><message><source>Energy-performance bias (EPB)</source><translation>Enerji-performans önceliği (EPB)</translation></message><message><source>EPP · P-cores</source><translation>EPP · P çekirdekleri</translation></message><message><source>EPP · E-cores</source><translation>EPP · E çekirdekleri</translation></message><message><source>Max frequency · P-cores (kHz)</source><translation>En yüksek frekans · P çekirdekleri (kHz)</translation></message><message><source>Max frequency · E-cores (kHz)</source><translation>En yüksek frekans · E çekirdekleri (kHz)</translation></message><message><source>Uncore max frequency (kHz)</source><translation>Uncore en yüksek frekans (kHz)</translation></message><message><source>Uncore min frequency (kHz)</source><translation>Uncore en düşük frekans (kHz)</translation></message><message><source>RAPL PL1 · long term (W)</source><translation>RAPL PL1 · uzun süreli (W)</translation></message><message><source>RAPL PL2 · short term (W)</source><translation>RAPL PL2 · kısa süreli (W)</translation></message><message><source>TCC offset (°C below TjMax)</source><translation>TCC ofseti (TjMax altındaki °C)</translation></message><message><source>3D V-Cache CCD preference</source><translation>3D V-Cache CCD tercihi</translation></message><message><source>cpuidle governor</source><translation>cpuidle yöneticisi</translation></message><message><source>Deepest C-state kept</source><translation>İzin verilen en derin C-state</translation></message><message><source>CPU wake-up latency limit (µs)</source><translation>CPU uyanma gecikmesi sınırı (µs)</translation></message><message><source>schedutil rate limit (µs)</source><translation>schedutil hız sınırlaması (µs)</translation></message><message><source>Clocksource</source><translation>Saat kaynağı (clocksource)</translation></message><message><source>THP enabled</source><translation>THP etkinleştirme</translation></message><message><source>THP shmem</source><translation>THP paylaşılan bellek (shmem)</translation></message><message><source>THP defrag</source><translation>THP bellek birleştirme (defrag)</translation></message><message><source>khugepaged defrag</source><translation>khugepaged bellek birleştirme</translation></message><message><source>mTHP 16 KB anon</source><translation>mTHP 16 KB anonim bellek</translation></message><message><source>mTHP 32 KB anon</source><translation>mTHP 32 KB anonim bellek</translation></message><message><source>mTHP 64 KB anon</source><translation>mTHP 64 KB anonim bellek</translation></message><message><source>mTHP 128 KB anon</source><translation>mTHP 128 KB anonim bellek</translation></message><message><source>mTHP 256 KB anon</source><translation>mTHP 256 KB anonim bellek</translation></message><message><source>mTHP 512 KB anon</source><translation>mTHP 512 KB anonim bellek</translation></message><message><source>mTHP 1 MB anon</source><translation>mTHP 1 MB anonim bellek</translation></message><message><source>khugepaged max_ptes_none</source><translation>khugepaged max_ptes_none</translation></message><message><source>khugepaged pages_to_scan</source><translation>khugepaged pages_to_scan</translation></message><message><source>khugepaged scan_sleep_millisecs</source><translation>khugepaged scan_sleep_millisecs</translation></message><message><source>khugepaged max_ptes_swap</source><translation>khugepaged max_ptes_swap</translation></message><message><source>khugepaged alloc_sleep_millisecs</source><translation>khugepaged alloc_sleep_millisecs</translation></message><message><source>MGLRU enabled mask</source><translation>MGLRU etkinleştirme maskesi</translation></message><message><source>MGLRU min_ttl_ms</source><translation>MGLRU min_ttl_ms</translation></message><message><source>KSM run</source><translation>KSM çalıştırma</translation></message><message><source>KSM scan advisor</source><translation>KSM tarama danışmanı</translation></message><message><source>khugepaged max_ptes_shared</source><translation>khugepaged max_ptes_shared</translation></message><message><source>THP huge zero page</source><translation>THP büyük sıfır sayfası</translation></message><message><source>Compact unevictable pages</source><translation>Taşınamaz bellek sayfalarını sıkıştır</translation></message><message><source>vm.dirtytime_expire_seconds</source><translation>vm.dirtytime_expire_seconds</translation></message><message><source>vm.max_map_count</source><translation>vm.max_map_count</translation></message><message><source>vm.swappiness</source><translation>vm.swappiness</translation></message><message><source>vm.compaction_proactiveness</source><translation>vm.compaction_proactiveness</translation></message><message><source>vm.watermark_boost_factor</source><translation>vm.watermark_boost_factor</translation></message><message><source>vm.watermark_scale_factor</source><translation>vm.watermark_scale_factor</translation></message><message><source>vm.min_free_kbytes</source><translation>vm.min_free_kbytes</translation></message><message><source>vm.zone_reclaim_mode</source><translation>vm.zone_reclaim_mode</translation></message><message><source>vm.page_lock_unfairness</source><translation>vm.page_lock_unfairness</translation></message><message><source>vm.stat_interval</source><translation>vm.stat_interval</translation></message><message><source>vm.page-cluster</source><translation>vm.page-cluster</translation></message><message><source>vm.dirty_background_ratio (%)</source><translation>vm.dirty_background_ratio (%)</translation></message><message><source>vm.dirty_ratio (%)</source><translation>vm.dirty_ratio (%)</translation></message><message><source>vm.dirty_background_bytes</source><translation>vm.dirty_background_bytes</translation></message><message><source>vm.dirty_bytes</source><translation>vm.dirty_bytes</translation></message><message><source>vm.dirty_writeback_centisecs</source><translation>vm.dirty_writeback_centisecs</translation></message><message><source>vm.dirty_expire_centisecs</source><translation>vm.dirty_expire_centisecs</translation></message><message><source>vm.vfs_cache_pressure</source><translation>vm.vfs_cache_pressure</translation></message><message><source>zswap</source><translation>zswap</translation></message><message><source>zswap compressor</source><translation>zswap sıkıştırıcı</translation></message><message><source>zswap max pool (% of RAM)</source><translation>zswap azami havuzu (RAM yüzdesi)</translation></message><message><source>zswap shrinker</source><translation>zswap bellek geri kazanımı (shrinker)</translation></message><message><source>vm.defrag_mode</source><translation>vm.defrag_mode</translation></message><message><source>THP shrink underused</source><translation>Az kullanılan THP sayfalarını küçült</translation></message><message><source>zswap accept threshold (%)</source><translation>zswap kabul eşiği (%)</translation></message><message><source>Per-CPU free page lists (fraction)</source><translation>CPU başına boş sayfa listeleri (oran)</translation></message><message><source>vm.extfrag_threshold</source><translation>vm.extfrag_threshold</translation></message><message><source>sched_ext scheduler</source><translation>sched_ext zamanlayıcısı</translation></message><message><source>split_lock_mitigate</source><translation>split_lock_mitigate</translation></message><message><source>kernel.watchdog</source><translation>kernel.watchdog</translation></message><message><source>NMI watchdog (hard-lockup detector)</source><translation>NMI watchdog (donanım kilitlenmesi algılayıcısı)</translation></message><message><source>kernel.numa_balancing</source><translation>kernel.numa_balancing</translation></message><message><source>kernel.timer_migration</source><translation>kernel.timer_migration</translation></message><message><source>sched_autogroup_enabled</source><translation>sched_autogroup_enabled</translation></message><message><source>sched_cfs_bandwidth_slice_us</source><translation>sched_cfs_bandwidth_slice_us</translation></message><message><source>RT tasks' default boost (uclamp)</source><translation>RT görevleri için varsayılan hızlandırma (uclamp)</translation></message><message><source>Energy Aware Scheduling</source><translation>Enerji duyarlı zamanlama</translation></message><message><source>sched_schedstats</source><translation>sched_schedstats</translation></message><message><source>Preferred-core scheduling (ITMT)</source><translation>Tercihli çekirdek zamanlaması (ITMT)</translation></message><message><source>Preemption model (debugfs)</source><translation>Ön alma modeli (debugfs)</translation></message><message><source>EEVDF base slice (debugfs)</source><translation>EEVDF temel zaman dilimi (debugfs)</translation></message><message><source>min_base_slice_ns (debugfs)</source><translation>min_base_slice_ns (debugfs)</translation></message><message><source>migration_cost_ns (debugfs)</source><translation>migration_cost_ns (debugfs)</translation></message><message><source>nr_migrate (debugfs)</source><translation>nr_migrate (debugfs)</translation></message><message><source>cgroup_mode (debugfs, 7.3+)</source><translation>cgroup_mode (debugfs, 7.3+)</translation></message><message><source>Cache-aware scheduling (debugfs, 7.2+)</source><translation>Önbellek duyarlı zamanlama (debugfs, 7.2+)</translation></message><message><source>llc_aggr_tolerance (debugfs, 7.2+)</source><translation>llc_aggr_tolerance (debugfs, 7.2+)</translation></message><message><source>llc_imb_pct (debugfs, 7.2+)</source><translation>llc_imb_pct (debugfs, 7.2+)</translation></message><message><source>llc_overload_pct (debugfs, 7.2+)</source><translation>llc_overload_pct (debugfs, 7.2+)</translation></message><message><source>NEXT_BUDDY (debugfs)</source><translation>NEXT_BUDDY (debugfs)</translation></message><message><source>RUN_TO_PARITY (debugfs)</source><translation>RUN_TO_PARITY (debugfs)</translation></message><message><source>BORE scheduler</source><translation>BORE zamanlayıcısı</translation></message><message><source>BORE burst inheritance</source><translation>BORE burst mirası</translation></message><message><source>BORE smoothness</source><translation>BORE yumuşatma</translation></message><message><source>BORE penalty offset</source><translation>BORE ceza ofseti</translation></message><message><source>BORE penalty scale</source><translation>BORE ceza ölçeği</translation></message><message><source>BORE burst cache lifetime (ns)</source><translation>BORE burst önbellek ömrü (ns)</translation></message><message><source>Project C yield type</source><translation>Project C yield türü</translation></message><message><source>Infinity SMT slice divisor</source><translation>Infinity SMT zaman dilimi böleni</translation></message><message><source>PREEMPT_SHORT (debugfs)</source><translation>PREEMPT_SHORT (debugfs)</translation></message><message><source>DELAY_DEQUEUE (debugfs)</source><translation>DELAY_DEQUEUE (debugfs)</translation></message><message><source>HRTICK (debugfs)</source><translation>HRTICK (debugfs)</translation></message><message><source>SIS_UTIL (debugfs)</source><translation>SIS_UTIL (debugfs)</translation></message><message><source>TTWU_QUEUE (debugfs)</source><translation>TTWU_QUEUE (debugfs)</translation></message><message><source>CACHE_HOT_BUDDY (debugfs)</source><translation>CACHE_HOT_BUDDY (debugfs)</translation></message><message><source>PLACE_LAG (debugfs)</source><translation>PLACE_LAG (debugfs)</translation></message><message><source>PLACE_DEADLINE_INITIAL (debugfs)</source><translation>PLACE_DEADLINE_INITIAL (debugfs)</translation></message><message><source>PLACE_REL_DEADLINE (debugfs)</source><translation>PLACE_REL_DEADLINE (debugfs)</translation></message><message><source>WAKEUP_PREEMPTION (debugfs)</source><translation>WAKEUP_PREEMPTION (debugfs)</translation></message><message><source>Unbound workqueue affinity scope</source><translation>Bağımsız workqueue işlemci yakınlığı kapsamı</translation></message><message><source>Unbound workqueue CPUs</source><translation>Bağımsız workqueue CPU'ları</translation></message><message><source>IRQ affinity</source><translation>IRQ işlemci yakınlığı</translation></message><message><source>I/O scheduler</source><translation>G/Ç zamanlayıcısı</translation></message><message><source>Writeback throttling (µs)</source><translation>Writeback hız sınırlaması (µs)</translation></message><message><source>Read-ahead (KiB)</source><translation>Önden okuma (KiB)</translation></message><message><source>rq_affinity</source><translation>rq_affinity</translation></message><message><source>nomerges</source><translation>nomerges</translation></message><message><source>I/O statistics accounting</source><translation>G/Ç istatistiklerini hesaplama</translation></message><message><source>Disk entropy contribution</source><translation>Diskin entropi katkısı</translation></message><message><source>Queue depth (nr_requests)</source><translation>Kuyruk derinliği (nr_requests)</translation></message><message><source>Max request size (KiB)</source><translation>Azami istek boyutu (KiB)</translation></message><message><source>kyber read latency target (ns)</source><translation>kyber okuma gecikmesi hedefi (ns)</translation></message><message><source>kyber write latency target (ns)</source><translation>kyber yazma gecikmesi hedefi (ns)</translation></message><message><source>mq-deadline read deadline (ms)</source><translation>mq-deadline okuma süresi (ms)</translation></message><message><source>mq-deadline write deadline (ms)</source><translation>mq-deadline yazma süresi (ms)</translation></message><message><source>mq-deadline batch size</source><translation>mq-deadline grup boyutu</translation></message><message><source>mq-deadline writes_starved</source><translation>mq-deadline writes_starved</translation></message><message><source>bfq low_latency</source><translation>bfq low_latency</translation></message><message><source>bfq slice_idle (ms)</source><translation>bfq slice_idle (ms)</translation></message><message><source>btrfs async discard IOPS limit</source><translation>btrfs asenkron discard IOPS sınırı</translation></message><message><source>btrfs async discard bandwidth limit (KiB/s)</source><translation>btrfs asenkron discard bant genişliği sınırı (KiB/sn)</translation></message><message><source>btrfs async discard max size (bytes)</source><translation>btrfs asenkron discard azami boyutu (bayt)</translation></message><message><source>TCP congestion control</source><translation>TCP tıkanıklık denetimi</translation></message><message><source>Default queueing discipline</source><translation>Varsayılan paket kuyruklama disiplini</translation></message><message><source>Wi-Fi power save</source><translation>Wi-Fi güç tasarrufu</translation></message><message><source>TCP slow start after idle</source><translation>Boşta kaldıktan sonra TCP slow start</translation></message><message><source>TCP MTU probing</source><translation>TCP MTU araştırması</translation></message><message><source>Receive backlog (packets)</source><translation>Alım birikim kuyruğu (paket)</translation></message><message><source>TCP not-sent low watermark (bytes)</source><translation>TCP gönderilmemiş veri alt eşiği (bayt)</translation></message><message><source>TCP Fast Open</source><translation>TCP Fast Open</translation></message><message><source>GRO flush timeout (ns)</source><translation>GRO boşaltma zaman aşımı (ns)</translation></message><message><source>NAPI deferred interrupts</source><translation>NAPI ertelenmiş kesmeleri</translation></message><message><source>Socket busy poll (µs)</source><translation>Soket busy poll (µs)</translation></message><message><source>Socket busy read (µs)</source><translation>Soket busy read (µs)</translation></message><message><source>Threaded NAPI</source><translation>İş parçacıklı NAPI</translation></message><message><source>PCIe ASPM policy</source><translation>PCIe ASPM ilkesi</translation></message><message><source>PCIe ASPM per link</source><translation>Bağlantı başına PCIe ASPM</translation></message><message><source>Suspend mode (mem_sleep)</source><translation>Askıya alma modu (mem_sleep)</translation></message><message><source>PCI latency timers</source><translation>PCI gecikme zamanlayıcıları</translation></message><message><source>HDA power_save (s)</source><translation>HDA power_save (sn)</translation></message><message><source>HDA power_save_controller</source><translation>HDA power_save_controller</translation></message><message><source>USB autosuspend delay (s)</source><translation>USB otomatik askıya alma gecikmesi (sn)</translation></message><message><source>USB autosuspend delay · connected (ms)</source><translation>USB otomatik askıya alma · bağlı aygıtlar (ms)</translation></message><message><source>Wake-on-LAN (Ethernet)</source><translation>Wake-on-LAN (Ethernet)</translation></message><message><source>Energy-Efficient Ethernet (EEE)</source><translation>Enerji Verimli Ethernet (EEE)</translation></message><message><source>Bluetooth radio</source><translation>Bluetooth radyosu</translation></message><message><source>Wi-Fi radio</source><translation>Wi-Fi radyosu</translation></message><message><source>WWAN (mobile broadband) radio</source><translation>WWAN (mobil geniş bant) radyosu</translation></message><message><source>Panel power savings (amdgpu ABM)</source><translation>Panel güç tasarrufu (amdgpu ABM)</translation></message><message><source>Disk APM level · disk 1</source><translation>Disk APM seviyesi · disk 1</translation></message><message><source>Disk APM level · disk 2</source><translation>Disk APM seviyesi · disk 2</translation></message><message><source>Disk APM level · disk 3</source><translation>Disk APM seviyesi · disk 3</translation></message><message><source>Disk APM level · disk 4</source><translation>Disk APM seviyesi · disk 4</translation></message><message><source>AHCI disk runtime PM timeout (ms)</source><translation>AHCI disk çalışma zamanı güç yönetimi zaman aşımı (ms)</translation></message><message><source>AHCI disk runtime PM</source><translation>AHCI disk çalışma zamanı güç yönetimi</translation></message><message><source>AHCI port runtime PM</source><translation>AHCI bağlantı noktası çalışma zamanı güç yönetimi</translation></message><message><source>PCI runtime PM</source><translation>PCI çalışma zamanı güç yönetimi</translation></message><message><source>USB runtime PM (connected devices)</source><translation>USB çalışma zamanı güç yönetimi (bağlı aygıtlar)</translation></message><message><source>SATA link power (ALPM)</source><translation>SATA bağlantı güç yönetimi (ALPM)</translation></message><message><source>NVMe APST latency tolerance (µs)</source><translation>NVMe APST gecikme toleransı (µs)</translation></message><message><source>iGPU DPM level (amdgpu)</source><translation>iGPU DPM seviyesi (amdgpu)</translation></message><message><source>iGPU max frequency (Intel, MHz)</source><translation>iGPU en yüksek frekansı (Intel, MHz)</translation></message><message><source>iGPU min frequency (Intel, MHz)</source><translation>iGPU en düşük frekansı (Intel, MHz)</translation></message><message><source>iGPU SLPC power profile (i915)</source><translation>iGPU SLPC güç profili (i915)</translation></message><message><source>MCE poll interval (s)</source><translation>MCE yoklama aralığı (sn)</translation></message><message><source>SMT</source><translation>SMT</translation></message><message><source>Park a CCD / E-cores (offline)</source><translation>CCD / E çekirdeklerini park et (çevrimdışı)</translation></message></context><context><name>OptimizationGroups</name><message><source>CPU</source><translation>CPU</translation></message><message><source>Memory</source><translation>Bellek</translation></message><message><source>Scheduler</source><translation>Zamanlayıcı</translation></message><message><source>Storage</source><translation>Depolama</translation></message><message><source>Network</source><translation>Ağ</translation></message><message><source>Devices</source><translation>Aygıtlar</translation></message><message><source>Power</source><translation>Güç</translation></message><message><source>Stability</source><translation>Kararlılık</translation></message></context><context><name>OptimizationOptions</name><message><source>enabled</source><translation>etkin</translation></message><message><source>disabled</source><translation>devre dışı</translation></message><message><source>on</source><translation>açık</translation></message><message><source>off</source><translation>kapalı</translation></message><message><source>yes</source><translation>evet</translation></message><message><source>no</source><translation>hayır</translation></message><message><source>active</source><translation>etkin</translation></message><message><source>passive</source><translation>pasif</translation></message><message><source>guided</source><translation>yönlendirmeli</translation></message><message><source>performance</source><translation>performans</translation></message><message><source>powersave</source><translation>güç tasarrufu</translation></message><message><source>balance_performance</source><translation>dengeli performans</translation></message><message><source>balance_power</source><translation>dengeli güç tasarrufu</translation></message><message><source>power</source><translation>güç tasarrufu öncelikli</translation></message><message><source>auto</source><translation>otomatik</translation></message><message><source>automatic</source><translation>otomatik</translation></message><message><source>default</source><translation>varsayılan</translation></message><message><source>none</source><translation>yok</translation></message><message><source>all</source><translation>tümü</translation></message><message><source>low</source><translation>düşük</translation></message><message><source>high</source><translation>yüksek</translation></message><message><source>medium</source><translation>orta</translation></message><message><source>full</source><translation>tam</translation></message><message><source>voluntary</source><translation>gönüllü</translation></message><message><source>offline</source><translation>çevrimdışı</translation></message><message><source>online</source><translation>çevrimiçi</translation></message><message><source>force</source><translation>zorla</translation></message><message><source>never</source><translation>asla</translation></message><message><source>always</source><translation>her zaman</translation></message><message><source>madvise</source><translation>uygulama isteğine göre (madvise)</translation></message><message><source>advise</source><translation>isteğe göre (advise)</translation></message><message><source>defer</source><translation>ertele</translation></message><message><source>defer+madvise</source><translation>ertele + madvise</translation></message><message><source>within_size</source><translation>boyut sınırında</translation></message><message><source>cache</source><translation>önbellek (V-Cache)</translation></message><message><source>frequency</source><translation>frekans</translation></message><message><source>balance</source><translation>dengeli</translation></message><message><source>lowest_nonlinear</source><translation>en düşük doğrusal olmayan frekans</translation></message><message><source>cpuinfo_min</source><translation>donanımın en düşük frekansı</translation></message><message><source>schedutil</source><translation>schedutil</translation></message><message><source>ondemand</source><translation>talep üzerine</translation></message><message><source>conservative</source><translation>tutucu</translation></message><message><source>userspace</source><translation>kullanıcı alanı</translation></message><message><source>hybrid</source><translation>hibrit</translation></message><message><source>performance-leaning</source><translation>performans öncelikli</translation></message><message><source>power-leaning</source><translation>tasarruf öncelikli</translation></message><message><source>unified</source><translation>birleşik</translation></message><message><source>legacy</source><translation>eski düzen</translation></message><message><source>dynamic</source><translation>dinamik</translation></message><message><source>aggressive</source><translation>agresif</translation></message><message><source>laptop</source><translation>dizüstü</translation></message><message><source>desktop</source><translation>masaüstü</translation></message><message><source>root only</source><translation>yalnızca root</translation></message><message><source>n/a</source><translation>kullanılamıyor</translation></message><message><source>skipped</source><translation>atlandı</translation></message><message><source>unchanged</source><translation>değişmedi</translation></message><message><source>found</source><translation>bulundu</translation></message><message><source>missing</source><translation>bulunamadı</translation></message><message><source>reset</source><translation>sıfırla</translation></message><message><source>not set</source><translation>ayarlanmadı</translation></message></context>    <context>
++        <name>privileged</name>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>pkexec was not found. Install polkit (sys-auth/polkit).</source>
++            <translation>pkexec bulunamadı. polkit'i kurun (sys-auth/polkit).</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>helper not found: %1</source>
++            <translation>yardımcı bulunamadı: %1</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>the helper did not finish in time. If an authorization dialog is still open, close it and try again. Otherwise the helper may still be finishing in the background (it stops on its own within a few minutes): check the current values before retrying.</source>
++            <translation>yardımcı zamanında bitmedi. Bir yetkilendirme penceresi hâlâ açıksa kapatıp yeniden deneyin. Aksi hâlde yardımcı arka planda bitmeye devam ediyor olabilir (birkaç dakika içinde kendiliğinden durur): yeniden denemeden önce güncel değerleri kontrol edin.</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>could not start pkexec: %1</source>
++            <translation>pkexec başlatılamadı: %1</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>the authorization request was dismissed.</source>
++            <translation>yetkilendirme isteği kapatıldı.</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>polkit did not authorize this action.</source>
++            <translation>polkit bu işleme izin vermedi.</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>polkit did not authorize this action: %1</source>
++            <translation>polkit bu işleme izin vermedi: %1</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>This helper is outside %1, so the pinned polkit actions do not apply to it.</source>
++            <translation>Bu yardımcı %1 dışında olduğundan sabitlenmiş polkit eylemleri ona uygulanmaz.</translation>
++        </message>
++        <message>
++            <location filename="work/gui/src/privileged.cpp"/>
++            <source>helper exited with code %1.</source>
++            <translation>yardımcı %1 koduyla çıktı.</translation>
++        </message>
++    </context>
++</TS>
+diff --git a/gui/src/launcherwatch.cpp b/gui/src/launcherwatch.cpp
+index 8a030e7..db75077 100644
+--- a/gui/src/launcherwatch.cpp
++++ b/gui/src/launcherwatch.cpp
+@@ -14,6 +14,8 @@
+ #include <unistd.h>
+ 
+ static constexpr int SLOW_MS = 15000, FAST_MS = 5000;
++// No launcher running: a launcher takes longer than this to start a game, so look less often.
++static constexpr int IDLE_MS = 30000;
+ static constexpr int START_SWEEPS = 2, END_SWEEPS = 2;
+ static constexpr qint64 MAX_ENVIRON = 256 * 1024;
+ 
+@@ -95,6 +97,8 @@ bool LauncherWatch::launcherRunning() const {
+ void LauncherWatch::slowTick() {
+     if (!enabled_) return;
+     launcher_ = launcherRunning();
++    const int interval = launcher_ ? SLOW_MS : IDLE_MS;
++    if (slow_->interval() != interval) slow_->setInterval(interval);
+     retune();
+     if (launcher_ && !fast_->isActive()) fastTick();
+ }
+diff --git a/gui/src/nvidiatab.cpp b/gui/src/nvidiatab.cpp
+index 0e61aa1..d5304bf 100644
+--- a/gui/src/nvidiatab.cpp
++++ b/gui/src/nvidiatab.cpp
+@@ -692,7 +692,7 @@ void NvidiaTab::startSensorStream() {
+     const QString helper = privileged::helperPath(QStringLiteral("nvcurve-sensors"));
+     if (pkexec.isEmpty() || !QFileInfo(helper).isExecutable()) {
+         streamFailed_ = true;
+-        hotspot_->setToolTip("Blackwell hotspot needs root: nvcurve-sensors is not installed");
++        hotspot_->setToolTip(tr("Blackwell hotspot needs root: nvcurve-sensors is not installed"));
+         return;
+     }
+     // Parented to the app, not the tab: once pkexec has exec'd the root helper
+diff --git a/gui/src/privileged.cpp b/gui/src/privileged.cpp
+index 2b7a1d5..54c7177 100644
+--- a/gui/src/privileged.cpp
++++ b/gui/src/privileged.cpp
+@@ -38,8 +38,8 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
+     QString pkexec;
+     for (const char *c : {"/usr/bin/pkexec", "/bin/pkexec"})
+         if (QFileInfo(QString::fromLatin1(c)).isFile()) { pkexec = QString::fromLatin1(c); break; }
+-    if (pkexec.isEmpty()) return fail(QStringLiteral("pkexec was not found. Install polkit (sys-auth/polkit)."));
+-    if (!QFileInfo(helper).isFile()) return fail(QStringLiteral("helper not found: ") + helper);
++    if (pkexec.isEmpty()) return fail(QCoreApplication::translate("privileged", "pkexec was not found. Install polkit (sys-auth/polkit)."));
++    if (!QFileInfo(helper).isFile()) return fail(QCoreApplication::translate("privileged", "helper not found: %1").arg(helper));
+ 
+     // Not parented to `ctx`: a QProcess destructor kills *and waits* for its
+     // child. Once pkexec has exec'd the root helper, our kill() is refused
+@@ -66,13 +66,13 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
+     QObject::connect(timer, &QTimer::timeout, proc, [=] {
+         proc->kill();  // works while pkexec still waits for authorization
+         Result r;
+-        r.error = QStringLiteral("the helper did not finish in time. If an authorization dialog is still open, close it and try again.");
++        r.error = QCoreApplication::translate("privileged", "the helper did not finish in time. If an authorization dialog is still open, close it and try again. Otherwise the helper may still be finishing in the background (it stops on its own within a few minutes): check the current values before retrying.");
+         finish(r);
+         reap();
+     });
+     QObject::connect(proc, &QProcess::errorOccurred, proc, [=](QProcess::ProcessError e) {
+         if (e != QProcess::FailedToStart) return;
+-        Result r; r.error = QStringLiteral("could not start pkexec: ") + proc->errorString();
++        Result r; r.error = QCoreApplication::translate("privileged", "could not start pkexec: %1").arg(proc->errorString());
+         finish(r);
+         reap();
+     });
+@@ -89,16 +89,24 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
+         if (doc.isObject() && !doc.object().isEmpty()) {
+             r.reached = true;
+             r.json = doc.object();
++            // Version handshake: an older install's helpers send no or another helper_version.
++            static bool warned = false;
++            const QString hv = r.json.value(QStringLiteral("helper_version")).toString();
++            if (!warned && hv != QStringLiteral(CENTURION_VERSION)) {
++                warned = true;
++                qWarning("centurion: %s reports version '%s', the GUI is %s; reinstall so they match",
++                         qPrintable(helper), qPrintable(hv.isEmpty() ? QStringLiteral("unknown") : hv), CENTURION_VERSION);
++            }
+         } else if (code == EXIT_DISMISSED) {
+-            r.error = QStringLiteral("the authorization request was dismissed.");
++            r.error = QCoreApplication::translate("privileged", "the authorization request was dismissed.");
+         } else if (code == EXIT_NOT_AUTHORIZED) {
+-            r.error = QStringLiteral("polkit did not authorize this action") +
+-                      (err.isEmpty() ? QStringLiteral(".") : QStringLiteral(": ") + err);
++            r.error = err.isEmpty() ? QCoreApplication::translate("privileged", "polkit did not authorize this action.")
++                                    : QCoreApplication::translate("privileged", "polkit did not authorize this action: %1").arg(err);
+             if (!helper.startsWith(QStringLiteral(CENTURION_HELPER_DIR "/")))
+-                r.error += QStringLiteral("\n\nThis helper is outside " CENTURION_HELPER_DIR
+-                                          ", so the pinned polkit actions do not apply to it.");
++                r.error += QStringLiteral("\n\n") + QCoreApplication::translate("privileged", "This helper is outside %1, so the pinned polkit actions do not apply to it.")
++                                                        .arg(QStringLiteral(CENTURION_HELPER_DIR));
+         } else {
+-            r.error = err.isEmpty() ? QStringLiteral("helper exited with code %1.").arg(code) : err;
++            r.error = err.isEmpty() ? QCoreApplication::translate("privileged", "helper exited with code %1.").arg(code) : err;
+         }
+         finish(r);
+     });
+diff --git a/make-dist.sh b/make-dist.sh
+index bb3b359..bcaa131 100755
+--- a/make-dist.sh
++++ b/make-dist.sh
+@@ -2,8 +2,8 @@
+ # Builds a self-contained release tarball (crates vendored, builds offline).
+ set -euo pipefail
+ cd "$(dirname "$0")"
+-V=$(sed -n 's/^project(centurion VERSION \([0-9.]*\).*/\1/p' gui/CMakeLists.txt)
+-[[ -n $V ]] || { echo "cannot read version from gui/CMakeLists.txt" >&2; exit 1; }
++V=$(sed -n 's/^version = "\([0-9.]*\)".*/\1/p' Cargo.toml)
++[[ -n $V ]] || { echo "cannot read version from Cargo.toml" >&2; exit 1; }
+ P=centurion-$V
+ rm -rf "dist/$P" && mkdir -p "dist/$P"
+ list() {
+diff --git a/packaging/arch/centurion-git/PKGBUILD b/packaging/arch/centurion-git/PKGBUILD
+index 3123b72..b742049 100644
+--- a/packaging/arch/centurion-git/PKGBUILD
++++ b/packaging/arch/centurion-git/PKGBUILD
+@@ -29,7 +29,7 @@ pkgver() {
+   cd centurion
+   # Version from gui/CMakeLists.txt (the project's single version), plus commits since it last changed.
+   local v c
+-  v=$(sed -n 's/^project(centurion VERSION \([0-9.]*\).*/\1/p' gui/CMakeLists.txt)
++  v=$(sed -n 's/^version = "\([0-9.]*\)".*/\1/p' Cargo.toml)
+   c=$(git log -1 --format=%H -G'^project.centurion VERSION' -- gui/CMakeLists.txt)
+   printf '%s.r%s.g%s' "$v" "$(git rev-list --count "$c"..HEAD)" "$(git rev-parse --short=7 HEAD)"
+ }
+diff --git a/packaging/fedora/centurion.spec b/packaging/fedora/centurion.spec
+index c0dcaa2..437cbc1 100644
+--- a/packaging/fedora/centurion.spec
++++ b/packaging/fedora/centurion.spec
+@@ -122,6 +122,8 @@ fi
+ %{_libexecdir}/centurion/centurion-boot-guard
+ %attr(0700,root,root) %{_libexecdir}/centurion/nvcurve-root-helper
+ %{_datadir}/applications/centurion.desktop
++%{_datadir}/metainfo/io.github.arabcian.centurion.metainfo.xml
++%config(noreplace) %{_sysconfdir}/logrotate.d/centurion
+ %{_datadir}/icons/hicolor/scalable/apps/centurion.svg
+ %{_sysconfdir}/xdg/autostart/centurion.desktop
+ %{_datadir}/polkit-1/actions/com.centurion.policy
+diff --git a/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild b/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild
+index 3c8eb62..1f115c5 100644
+--- a/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild
++++ b/packaging/gentoo/sys-power/centurion/centurion-9999.ebuild
+@@ -160,6 +160,9 @@ src_install() {
+ 	insinto /usr/share/polkit-1/rules.d
+ 	doins "${T}"/49-centurion.rules
+ 
++	insinto /etc/logrotate.d
++	newins packaging/logrotate/centurion centurion
++
+ 	local s
+ 	for s in nvcurve-autoload centurion-tune centurion-intel-uv centurion-intel-uv-daemon \
+ 		centurion-boot-guard centurion-netguard centurion-calibrate-boot; do
+diff --git a/packaging/install-files.sh b/packaging/install-files.sh
+index 48cb598..c19ccf5 100644
+--- a/packaging/install-files.sh
++++ b/packaging/install-files.sh
+@@ -62,6 +62,7 @@ for u in nvcurve-autoload centurion-tune centurion-intel-uv centurion-intel-uv-d
+     subst "packaging/systemd/$u.service" > "$DESTDIR$UNITDIR/$u.service"
+     chmod 0644 "$DESTDIR$UNITDIR/$u.service"
+ done
++install "${own[@]}" -D -m 0644 packaging/logrotate/centurion "$DESTDIR/etc/logrotate.d/centurion"
+ subst packaging/centurion-safe-mode > "$DESTDIR$PREFIX/bin/centurion-safe-mode"
+ chmod 0755 "$DESTDIR$PREFIX/bin/centurion-safe-mode"
+ [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR"/etc/init.d/{nvcurve-autoload,centurion-tune,centurion-intel-uv,centurion-intel-uv-daemon,centurion-boot-guard,centurion-netguard,centurion-calibrate-boot} "$DESTDIR$UNITDIR"/{nvcurve-autoload,centurion-tune,centurion-intel-uv,centurion-intel-uv-daemon,centurion-boot-guard,centurion-netguard,centurion-calibrate-boot}.service
+diff --git a/packaging/logrotate/centurion b/packaging/logrotate/centurion
+new file mode 100644
+index 0000000..15920a0
+--- /dev/null
++++ b/packaging/logrotate/centurion
+@@ -0,0 +1,9 @@
++# writes.log, netguard.log, connections.log and sleep.log trim themselves;
++# only the boot calibration log grows without bound.
++/var/log/centurion/calibrate-boot.log {
++    monthly
++    rotate 3
++    compress
++    missingok
++    notifempty
++}
+diff --git a/packaging/systemd/centurion-boot-guard.service b/packaging/systemd/centurion-boot-guard.service
+index 07db72b..531c7e7 100644
+--- a/packaging/systemd/centurion-boot-guard.service
++++ b/packaging/systemd/centurion-boot-guard.service
+@@ -25,6 +25,10 @@ StateDirectory=centurion
+ # The boot-state / shutdown-state lines of /var/log/centurion/writes.log (the point of
+ # that log): with ProtectSystem=strict and no writable log directory they were dropped.
+ LogsDirectory=centurion
++# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
++# so an allow-list such as @system-service would break them.
++SystemCallFilter=~@reboot @obsolete @cpu-emulation
++SystemCallErrorNumber=EPERM
+ 
+ [Install]
+ WantedBy=multi-user.target
+diff --git a/packaging/systemd/centurion-calibrate-boot.service b/packaging/systemd/centurion-calibrate-boot.service
+index 0bbdebd..1a9adb3 100644
+--- a/packaging/systemd/centurion-calibrate-boot.service
++++ b/packaging/systemd/centurion-calibrate-boot.service
+@@ -28,6 +28,10 @@ ProtectClock=yes
+ ProtectHostname=yes
+ LockPersonality=yes
+ SystemCallArchitectures=native
++# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
++# so an allow-list such as @system-service would break them.
++SystemCallFilter=~@reboot @obsolete @cpu-emulation
++SystemCallErrorNumber=EPERM
+ RestrictSUIDSGID=yes
+ RestrictNamespaces=yes
+ 
+diff --git a/packaging/systemd/centurion-intel-uv-daemon.service b/packaging/systemd/centurion-intel-uv-daemon.service
+index 2e244d4..120f221 100644
+--- a/packaging/systemd/centurion-intel-uv-daemon.service
++++ b/packaging/systemd/centurion-intel-uv-daemon.service
+@@ -27,6 +27,10 @@ RestrictNamespaces=yes
+ LockPersonality=yes
+ MemoryDenyWriteExecute=yes
+ SystemCallArchitectures=native
++# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
++# so an allow-list such as @system-service would break them.
++SystemCallFilter=~@reboot @obsolete @cpu-emulation
++SystemCallErrorNumber=EPERM
+ 
+ [Install]
+ WantedBy=multi-user.target
+diff --git a/packaging/systemd/centurion-intel-uv.service b/packaging/systemd/centurion-intel-uv.service
+index 9cb6efb..fd7e502 100644
+--- a/packaging/systemd/centurion-intel-uv.service
++++ b/packaging/systemd/centurion-intel-uv.service
+@@ -30,6 +30,10 @@ RestrictNamespaces=yes
+ LockPersonality=yes
+ MemoryDenyWriteExecute=yes
+ SystemCallArchitectures=native
++# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
++# so an allow-list such as @system-service would break them.
++SystemCallFilter=~@reboot @obsolete @cpu-emulation
++SystemCallErrorNumber=EPERM
+ 
+ [Install]
+ WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+diff --git a/packaging/systemd/centurion-netguard.service b/packaging/systemd/centurion-netguard.service
+index b9b3b99..9294288 100644
+--- a/packaging/systemd/centurion-netguard.service
++++ b/packaging/systemd/centurion-netguard.service
+@@ -24,6 +24,10 @@ RestrictAddressFamilies=AF_NETLINK AF_UNIX
+ LockPersonality=yes
+ MemoryDenyWriteExecute=yes
+ SystemCallArchitectures=native
++# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
++# so an allow-list such as @system-service would break them.
++SystemCallFilter=~@reboot @obsolete @cpu-emulation
++SystemCallErrorNumber=EPERM
+ RestrictSUIDSGID=yes
+ RestrictNamespaces=yes
+ ProtectHostname=yes
+diff --git a/packaging/systemd/centurion-tune.service b/packaging/systemd/centurion-tune.service
+index f544f26..098a395 100644
+--- a/packaging/systemd/centurion-tune.service
++++ b/packaging/systemd/centurion-tune.service
+@@ -46,6 +46,11 @@ RestrictRealtime=yes
+ LockPersonality=yes
+ MemoryDenyWriteExecute=yes
+ SystemCallArchitectures=native
++# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
++# so an allow-list such as @system-service would break them.
++SystemCallFilter=~@reboot @obsolete @cpu-emulation
++SystemCallErrorNumber=EPERM
++CapabilityBoundingSet=~CAP_SYS_BOOT CAP_SYS_TIME CAP_WAKE_ALARM CAP_AUDIT_CONTROL CAP_AUDIT_WRITE CAP_LINUX_IMMUTABLE CAP_MKNOD CAP_SETFCAP
+ 
+ [Install]
+ WantedBy=multi-user.target
+diff --git a/packaging/systemd/nvcurve-autoload.service b/packaging/systemd/nvcurve-autoload.service
+index e4362d3..55df329 100644
+--- a/packaging/systemd/nvcurve-autoload.service
++++ b/packaging/systemd/nvcurve-autoload.service
+@@ -32,6 +32,10 @@ ProtectSystem=full
+ ProtectHostname=yes
+ LockPersonality=yes
+ SystemCallArchitectures=native
++# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
++# so an allow-list such as @system-service would break them.
++SystemCallFilter=~@reboot @obsolete @cpu-emulation
++SystemCallErrorNumber=EPERM
+ 
+ [Install]
+ WantedBy=multi-user.target
+-- 
+2.43.0
+

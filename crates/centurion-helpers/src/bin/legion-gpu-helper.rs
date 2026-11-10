@@ -50,4 +50,4 @@ fn moved(op: &str) -> Value {
     json!({"ok": false, "error": format!("{op} is handled by legion-firmware-helper (administrator password required)")})
 }
 
-fn main() { init(); std::process::exit(finish(run())); }
+fn main() { init(); centurion_helpers::watchdog(120); std::process::exit(finish(run())); }

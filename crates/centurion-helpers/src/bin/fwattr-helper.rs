@@ -189,6 +189,7 @@ fn run() -> Value {
         Err(_) => return json!({"ok": false, "error": "malformed request"}),
     };
     if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
+    let _lock = match centurion_helpers::helper_lock("fwattr-helper") { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     match &req {
         Value::Array(items) => {
             if items.len() > MAX_BATCH {
@@ -220,6 +221,7 @@ fn run() -> Value {
 
 fn main() {
     init();
+    centurion_helpers::watchdog(120);
     std::process::exit(finish(run()));
 }
 

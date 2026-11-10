@@ -28,6 +28,10 @@ ProtectClock=yes
 ProtectHostname=yes
 LockPersonality=yes
 SystemCallArchitectures=native
+# Deny-list only: the units mount (tune), load modules (intel-uv) and run hardware tools,
+# so an allow-list such as @system-service would break them.
+SystemCallFilter=~@reboot @obsolete @cpu-emulation
+SystemCallErrorNumber=EPERM
 RestrictSUIDSGID=yes
 RestrictNamespaces=yes
 

@@ -29,7 +29,7 @@ pkgver() {
   cd centurion
   # Version from gui/CMakeLists.txt (the project's single version), plus commits since it last changed.
   local v c
-  v=$(sed -n 's/^project(centurion VERSION \([0-9.]*\).*/\1/p' gui/CMakeLists.txt)
+  v=$(sed -n 's/^version = "\([0-9.]*\)".*/\1/p' Cargo.toml)
   c=$(git log -1 --format=%H -G'^project.centurion VERSION' -- gui/CMakeLists.txt)
   printf '%s.r%s.g%s' "$v" "$(git rev-list --count "$c"..HEAD)" "$(git rev-parse --short=7 HEAD)"
 }

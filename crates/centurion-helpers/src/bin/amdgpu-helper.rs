@@ -8,6 +8,7 @@ use centurion_helpers::*;
 
 fn main() {
     init();
+    centurion_helpers::watchdog(120);
     let code = match read_request(amdgpu::MAX_REQUEST) {
         // Both ops write the card (overdrive, power limit, fan): wait for a running calibration.
         Ok(req) => finish(refuse_during_calibration().unwrap_or_else(|| amdgpu::handle(&req))),

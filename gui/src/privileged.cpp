@@ -38,8 +38,8 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
     QString pkexec;
     for (const char *c : {"/usr/bin/pkexec", "/bin/pkexec"})
         if (QFileInfo(QString::fromLatin1(c)).isFile()) { pkexec = QString::fromLatin1(c); break; }
-    if (pkexec.isEmpty()) return fail(QStringLiteral("pkexec was not found. Install polkit (sys-auth/polkit)."));
-    if (!QFileInfo(helper).isFile()) return fail(QStringLiteral("helper not found: ") + helper);
+    if (pkexec.isEmpty()) return fail(QCoreApplication::translate("privileged", "pkexec was not found. Install polkit (sys-auth/polkit)."));
+    if (!QFileInfo(helper).isFile()) return fail(QCoreApplication::translate("privileged", "helper not found: %1").arg(helper));
 
     // Not parented to `ctx`: a QProcess destructor kills *and waits* for its
     // child. Once pkexec has exec'd the root helper, our kill() is refused
@@ -66,13 +66,13 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
     QObject::connect(timer, &QTimer::timeout, proc, [=] {
         proc->kill();  // works while pkexec still waits for authorization
         Result r;
-        r.error = QStringLiteral("the helper did not finish in time. If an authorization dialog is still open, close it and try again.");
+        r.error = QCoreApplication::translate("privileged", "the helper did not finish in time. If an authorization dialog is still open, close it and try again. Otherwise the helper may still be finishing in the background (it stops on its own within a few minutes): check the current values before retrying.");
         finish(r);
         reap();
     });
     QObject::connect(proc, &QProcess::errorOccurred, proc, [=](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
-        Result r; r.error = QStringLiteral("could not start pkexec: ") + proc->errorString();
+        Result r; r.error = QCoreApplication::translate("privileged", "could not start pkexec: %1").arg(proc->errorString());
         finish(r);
         reap();
     });
@@ -89,16 +89,24 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
         if (doc.isObject() && !doc.object().isEmpty()) {
             r.reached = true;
             r.json = doc.object();
+            // Version handshake: an older install's helpers send no or another helper_version.
+            static bool warned = false;
+            const QString hv = r.json.value(QStringLiteral("helper_version")).toString();
+            if (!warned && hv != QStringLiteral(CENTURION_VERSION)) {
+                warned = true;
+                qWarning("centurion: %s reports version '%s', the GUI is %s; reinstall so they match",
+                         qPrintable(helper), qPrintable(hv.isEmpty() ? QStringLiteral("unknown") : hv), CENTURION_VERSION);
+            }
         } else if (code == EXIT_DISMISSED) {
-            r.error = QStringLiteral("the authorization request was dismissed.");
+            r.error = QCoreApplication::translate("privileged", "the authorization request was dismissed.");
         } else if (code == EXIT_NOT_AUTHORIZED) {
-            r.error = QStringLiteral("polkit did not authorize this action") +
-                      (err.isEmpty() ? QStringLiteral(".") : QStringLiteral(": ") + err);
+            r.error = err.isEmpty() ? QCoreApplication::translate("privileged", "polkit did not authorize this action.")
+                                    : QCoreApplication::translate("privileged", "polkit did not authorize this action: %1").arg(err);
             if (!helper.startsWith(QStringLiteral(CENTURION_HELPER_DIR "/")))
-                r.error += QStringLiteral("\n\nThis helper is outside " CENTURION_HELPER_DIR
-                                          ", so the pinned polkit actions do not apply to it.");
+                r.error += QStringLiteral("\n\n") + QCoreApplication::translate("privileged", "This helper is outside %1, so the pinned polkit actions do not apply to it.")
+                                                        .arg(QStringLiteral(CENTURION_HELPER_DIR));
         } else {
-            r.error = err.isEmpty() ? QStringLiteral("helper exited with code %1.").arg(code) : err;
+            r.error = err.isEmpty() ? QCoreApplication::translate("privileged", "helper exited with code %1.").arg(code) : err;
         }
         finish(r);
     });

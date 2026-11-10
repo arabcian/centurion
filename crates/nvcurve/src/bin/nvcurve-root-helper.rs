@@ -330,6 +330,8 @@ fn run() -> Value {
         libc::umask(0o022);
         let zero = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
         libc::setrlimit(libc::RLIMIT_CORE, &zero);
+        // Hard run-time bound (see centurion_helpers::watchdog): the GUI cannot kill a root helper.
+        libc::alarm(180);
     }
     logging::init(log::Level::Info, true);
 
@@ -380,7 +382,8 @@ fn run() -> Value {
 }
 
 fn main() {
-    let v = run();
+    let mut v = run();
+    if let Some(o) = v.as_object_mut() { o.insert("helper_version".into(), json!(env!("CARGO_PKG_VERSION"))); }
     println!("{v}");
     std::process::exit(if v["ok"] == true { 0 } else { 1 });
 }

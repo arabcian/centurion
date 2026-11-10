@@ -1,6 +1,6 @@
 [package]
 name = "centurion-cpustress"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 rust-version = "1.89"  # AVX-512 intrinsics in std::arch
 description = "Centurion CPU stability test: per-core and all-core work with a known result, for Curve Optimizer / undervolt offsets"

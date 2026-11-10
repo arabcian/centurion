@@ -1,6 +1,6 @@
 [package]
 name = "nvcurve"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 rust-version = "1.74"
 description = "NVIDIA V/F curve management core (NvAPI + NVML via dlopen)"

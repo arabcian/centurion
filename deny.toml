@@ -1,0 +1,14 @@
+# cargo deny check — run by CI (.github/workflows/ci.yml); locally: cargo install cargo-deny.
+[advisories]
+# RustSec advisories (same database as cargo audit); yanked crates fail too.
+yanked = "deny"
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "GPL-3.0-or-later", "Unlicense", "CC0-1.0", "ISC", "Unicode-3.0"]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

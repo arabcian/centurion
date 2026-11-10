@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.19)
-project(centurion VERSION 2.0.0 LANGUAGES CXX)
+# One version for the GUI and every crate: [workspace.package] version in ../Cargo.toml.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../Cargo.toml" _ws_version REGEX "^version = \"[0-9.]+\"")
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" CENTURION_WS_VERSION "${_ws_version}")
+if(NOT CENTURION_WS_VERSION)
+    message(FATAL_ERROR "could not read the workspace version from ../Cargo.toml")
+endif()
+project(centurion VERSION ${CENTURION_WS_VERSION} LANGUAGES CXX)
+
+# AddressSanitizer + UndefinedBehaviorSanitizer for test builds (CI): set before any target exists
+# so the app and every test binary get it.
+option(CENTURION_SANITIZE "Build with -fsanitize=address,undefined" OFF)
+if(CENTURION_SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -227,6 +241,7 @@ endif()
 include(GNUInstallDirs)
 install(TARGETS centurion RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES data/centurion.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES data/io.github.arabcian.centurion.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES data/centurion-autostart.desktop DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/xdg/autostart
         RENAME centurion.desktop)
 install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)

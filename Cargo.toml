@@ -3,6 +3,7 @@ resolver = "2"
 members = ["crates/centurion-helpers", "crates/centurion-spectrum", "crates/nvcurve", "crates/centurion-gpustress", "crates/centurion-cpustress"]
 
 [workspace.package]
+version = "2.0.0"  # single source: gui/CMakeLists.txt reads it too
 edition = "2021"
 license = "GPL-3.0-or-later"
 

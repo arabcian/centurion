@@ -1,0 +1,9 @@
+# writes.log, netguard.log, connections.log and sleep.log trim themselves;
+# only the boot calibration log grows without bound.
+/var/log/centurion/calibrate-boot.log {
+    monthly
+    rotate 3
+    compress
+    missingok
+    notifempty
+}

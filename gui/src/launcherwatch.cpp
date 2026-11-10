@@ -14,6 +14,8 @@
 #include <unistd.h>
 
 static constexpr int SLOW_MS = 15000, FAST_MS = 5000;
+// No launcher running: a launcher takes longer than this to start a game, so look less often.
+static constexpr int IDLE_MS = 30000;
 static constexpr int START_SWEEPS = 2, END_SWEEPS = 2;
 static constexpr qint64 MAX_ENVIRON = 256 * 1024;
 
@@ -95,6 +97,8 @@ bool LauncherWatch::launcherRunning() const {
 void LauncherWatch::slowTick() {
     if (!enabled_) return;
     launcher_ = launcherRunning();
+    const int interval = launcher_ ? SLOW_MS : IDLE_MS;
+    if (slow_->interval() != interval) slow_->setInterval(interval);
     retune();
     if (launcher_ && !fast_->isActive()) fastTick();
 }

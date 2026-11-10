@@ -2,8 +2,8 @@
 # Builds a self-contained release tarball (crates vendored, builds offline).
 set -euo pipefail
 cd "$(dirname "$0")"
-V=$(sed -n 's/^project(centurion VERSION \([0-9.]*\).*/\1/p' gui/CMakeLists.txt)
-[[ -n $V ]] || { echo "cannot read version from gui/CMakeLists.txt" >&2; exit 1; }
+V=$(sed -n 's/^version = "\([0-9.]*\)".*/\1/p' Cargo.toml)
+[[ -n $V ]] || { echo "cannot read version from Cargo.toml" >&2; exit 1; }
 P=centurion-$V
 rm -rf "dist/$P" && mkdir -p "dist/$P"
 list() {

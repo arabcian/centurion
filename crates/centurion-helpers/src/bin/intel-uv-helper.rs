@@ -125,4 +125,4 @@ fn run() -> Value {
     out
 }
 
-fn main() { init(); std::process::exit(finish(run())); }
+fn main() { init(); centurion_helpers::watchdog(120); std::process::exit(finish(run())); }

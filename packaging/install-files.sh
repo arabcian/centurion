@@ -62,6 +62,7 @@ for u in nvcurve-autoload centurion-tune centurion-intel-uv centurion-intel-uv-d
     subst "packaging/systemd/$u.service" > "$DESTDIR$UNITDIR/$u.service"
     chmod 0644 "$DESTDIR$UNITDIR/$u.service"
 done
+install "${own[@]}" -D -m 0644 packaging/logrotate/centurion "$DESTDIR/etc/logrotate.d/centurion"
 subst packaging/centurion-safe-mode > "$DESTDIR$PREFIX/bin/centurion-safe-mode"
 chmod 0755 "$DESTDIR$PREFIX/bin/centurion-safe-mode"
 [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR"/etc/init.d/{nvcurve-autoload,centurion-tune,centurion-intel-uv,centurion-intel-uv-daemon,centurion-boot-guard,centurion-netguard,centurion-calibrate-boot} "$DESTDIR$UNITDIR"/{nvcurve-autoload,centurion-tune,centurion-intel-uv,centurion-intel-uv-daemon,centurion-boot-guard,centurion-netguard,centurion-calibrate-boot}.service

@@ -1,7 +1,7 @@
 //! Diagnostic write log: one line per firmware/EC/EFI/platform-profile write.
 //!
 //! /var/log/centurion/writes.log (root helpers only; best effort,
-//! never fails the caller; rotated to writes.log.1 at 512 KiB).
+//! never fails the caller; rotated to writes.log.1 and .2 at 512 KiB).
 //! Line: UTC time | pid | this binary | parent < grandparent (pkexec uid) | kind | detail
 //! Used to find which tool changes BIOS-side state (e.g. Legion Optimization
 //! turning itself off): compare against the "boot-state"/"shutdown-state" lines.
@@ -43,7 +43,13 @@ pub fn log(kind: &str, detail: &str) {
     let d: String = detail.chars().map(|c| if c.is_control() { ' ' } else { c }).take(400).collect();
     let line = format!("{} | {} | {} | {}<{}{} | {} | {}\n", utc_now(), me, exe, proc_comm(pp), proc_comm(gp), uid, kind, d);
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o755).create(DIR);
-    if std::fs::metadata(FILE).is_ok_and(|m| m.len() > MAX) {
+    // Size check, rotation and append under one lock: two helpers rotating at once used to rename
+    // a fresh writes.log over writes.log.1 and lose its lines. Best effort: no lock, no rotation.
+    let lock = std::fs::OpenOptions::new().create(true).write(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(format!("{DIR}/.writes.lock")).ok();
+    let _held = lock.as_ref().and_then(|l| crate::FdLock::exclusive(l).ok());
+    if _held.is_some() && std::fs::metadata(FILE).is_ok_and(|m| m.len() > MAX) {
+        let _ = std::fs::rename(format!("{FILE}.1"), format!("{FILE}.2"));
         let _ = std::fs::rename(FILE, format!("{FILE}.1"));
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o644)

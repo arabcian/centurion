@@ -160,6 +160,9 @@ src_install() {
 	insinto /usr/share/polkit-1/rules.d
 	doins "${T}"/49-centurion.rules
 
+	insinto /etc/logrotate.d
+	newins packaging/logrotate/centurion centurion
+
 	local s
 	for s in nvcurve-autoload centurion-tune centurion-intel-uv centurion-intel-uv-daemon \
 		centurion-boot-guard centurion-netguard centurion-calibrate-boot; do
