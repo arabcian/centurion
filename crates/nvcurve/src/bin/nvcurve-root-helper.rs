@@ -9,7 +9,7 @@
 
 use nvcurve::atomicio::{ensure_dir, write_bytes, write_json};
 use nvcurve::config::{Config, PERSISTENT_CONFIG_FILE};
-use nvcurve::hal::{gpu, limits, vfcurve};
+use nvcurve::hal::limits;
 use nvcurve::profiles::apply::run_autoload;
 use nvcurve::profiles::native::is_canonical_profile_name;
 use nvcurve::{logging, ops};
