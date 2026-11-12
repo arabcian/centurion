@@ -38,10 +38,19 @@ pub fn get_power_limit(gpu_index: u32) -> PowerLimit {
 
 const NVIDIA_SMI: &[&str] = &["/usr/bin/nvidia-smi", "/opt/bin/nvidia-smi", "/usr/sbin/nvidia-smi"];
 
+fn checked_power_mw(limit_w: u32) -> Result<u32, String> {
+    if !(1..=1000).contains(&limit_w) {
+        return Err("power limit must be within the plausible 1..=1000 W range".into());
+    }
+    limit_w.checked_mul(1000).ok_or_else(|| "power limit overflows NVML milliwatts".into())
+}
+
 pub fn set_power_limit(limit_w: u32, gpu_index: u32) -> Result<(), String> {
+    // Validate BEFORE an NVML write or fallback, never saturate an invalid request.
+    let limit_mw = checked_power_mw(limit_w)?;
     let nvml_err = match nvml::ready().and_then(|n| {
         let h = n.handle(gpu_index)?;
-        n.set_power_limit_mw(h, limit_w.saturating_mul(1000))
+        n.set_power_limit_mw(h, limit_mw)
     }) {
         Ok(()) => return Ok(()),
         Err(e) => e,
@@ -112,6 +121,10 @@ pub fn set_clock_offsets(gpc_offset_mhz: Option<i32>, mem_offset_mhz: Option<i32
     -> Result<(), String>
 {
     if gpc_offset_mhz.is_none() && mem_offset_mhz.is_none() { return Ok(()); }
+    // One request may update both domains: a bad memory value must not leave
+    // the graphics offset changed before reporting overflow.
+    let mem_raw = mem_offset_mhz.map(|v| v.checked_mul(2)
+        .ok_or("mem_offset_mhz overflows NVML's raw domain")).transpose()?;
     let n = nvml::ready()?;
     let h = n.handle(gpu_index)?;
     let has_new = n.has("nvmlDeviceSetClockOffsets");
@@ -124,8 +137,7 @@ pub fn set_clock_offsets(gpc_offset_mhz: Option<i32>, mem_offset_mhz: Option<i32
             if let Err(e2) = n.set_gpc_clk_vf_offset(h, v) { errs.push(format!("GPC: {e2}")); }
         }
     }
-    if let Some(v) = mem_offset_mhz {
-        let raw = v.checked_mul(2).ok_or("mem_offset_mhz overflows NVML's raw domain")?;
+    if let Some(raw) = mem_raw {
         let prefer_new = std::env::var_os("CENTURION_NVML_MEM_NEW_API").is_some();
         let old = |n: &nvml::Nvml| n.set_mem_clk_vf_offset(h, raw);
         let new = |n: &nvml::Nvml| n.set_clock_offset(h, CLOCK_MEM, 0, raw);
@@ -169,26 +181,68 @@ pub fn reset_all_clock_offsets(gpu_index: u32) -> Result<Vec<String>, String> {
     let n = nvml::ready()?;
     let h = n.handle(gpu_index)?;
     let mut done = Vec::new();
+    let mut errors = Vec::new();
     if n.has("nvmlDeviceGetClockOffsets") {
-        for p in n.supported_pstates(h).unwrap_or_else(|_| vec![0]) {
+        // A failed P-state enumeration cannot be treated as "only P0": doing
+        // so claimed a full reset while leaving P2/P3 offsets untouched.
+        let states = match n.supported_pstates(h) {
+            Ok(states) => states,
+            Err(e) => {
+                errors.push(format!("cannot enumerate all memory/graphics P-states: {e}"));
+                Vec::new() // still attempt every legacy reset below
+            }
+        };
+        for p in states {
             for (kind, name) in [(CLOCK_GRAPHICS, "core"), (CLOCK_MEM, "memory")] {
                 match n.get_clock_offset(h, kind, p) {
-                    Ok(i) if i.offset_mhz != 0 => match n.set_clock_offset(h, kind, p, 0) {
-                        Ok(()) => done.push(format!("P{p} {name} offset {:+} → 0", i.offset_mhz)),
-                        Err(e) => warn!("reset P{p} {name} offset: {e}"),
-                    },
-                    _ => {}
+                    Ok(i) if i.offset_mhz != 0 => {
+                        match n.set_clock_offset(h, kind, p, 0) {
+                            Ok(()) => match n.get_clock_offset(h, kind, p) {
+                                Ok(after) if after.offset_mhz == 0 =>
+                                    done.push(format!("P{p} {name} offset {:+} → 0", i.offset_mhz)),
+                                Ok(after) => errors.push(format!("P{p} {name}: reset read-back is {:+}, expected 0", after.offset_mhz)),
+                                Err(e) => errors.push(format!("P{p} {name}: cannot verify reset: {e}")),
+                            },
+                            Err(e) => errors.push(format!("P{p} {name}: reset failed: {e}")),
+                        }
+                    }
+                    Ok(_) => {},
+                    Err(e) => errors.push(format!("P{p} {name}: cannot inspect offset: {e}")),
                 }
             }
         }
     }
-    if n.gpc_clk_vf_offset(h).is_ok_and(|v| v != 0) && n.set_gpc_clk_vf_offset(h, 0).is_ok() {
-        done.push("core offset (per-domain) → 0".into());
+    // Legacy per-domain APIs are optional. If they can read an active offset,
+    // however, a failed write or failed read-back must never be reported as OK.
+    if let Ok(old) = n.gpc_clk_vf_offset(h) {
+        if old != 0 {
+            match n.set_gpc_clk_vf_offset(h, 0) {
+                Ok(()) => match n.gpc_clk_vf_offset(h) {
+                    Ok(0) => done.push("core offset (per-domain) → 0".into()),
+                    Ok(got) => errors.push(format!("legacy core reset mismatch: read {got}, expected 0")),
+                    Err(e) => errors.push(format!("legacy core reset unverifiable: {e}")),
+                },
+                Err(e) => errors.push(format!("legacy core reset failed: {e}")),
+            }
+        }
     }
-    if n.mem_clk_vf_offset(h).is_ok_and(|v| v != 0) && n.set_mem_clk_vf_offset(h, 0).is_ok() {
-        done.push("memory offset (per-domain) → 0".into());
+    if let Ok(old) = n.mem_clk_vf_offset(h) {
+        if old != 0 {
+            match n.set_mem_clk_vf_offset(h, 0) {
+                Ok(()) => match n.mem_clk_vf_offset(h) {
+                    Ok(0) => done.push("memory offset (per-domain) → 0".into()),
+                    Ok(got) => errors.push(format!("legacy memory reset mismatch: read {got}, expected 0")),
+                    Err(e) => errors.push(format!("legacy memory reset unverifiable: {e}")),
+                },
+                Err(e) => errors.push(format!("legacy memory reset failed: {e}")),
+            }
+        }
     }
-    Ok(done)
+    if errors.is_empty() { Ok(done) }
+    else {
+        Err(format!("incomplete NVML reset: {}; completed: {}",
+            errors.join("; "), if done.is_empty() { "none".into() } else { done.join(", ") }))
+    }
 }
 
 // ── clock event (throttle) reasons ──────────────────────────────────────────
@@ -328,7 +382,7 @@ pub fn reset_gpu_locked_clocks(gpu_index: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::raw_mem_to_effective as f;
-    use super::decode_throttle;
+    use super::{decode_throttle, checked_power_mw};
     #[test]
     fn throttle_decoding() {
         let t = decode_throttle(0x0001 | 0x0004 | 0x0040);
@@ -336,6 +390,18 @@ mod tests {
         assert!(decode_throttle(0x0001).reasons.is_empty());
     }
 
+    #[test]
+    fn invalid_power_limits_do_not_saturate() {
+        assert!(checked_power_mw(0).is_err());
+        assert_eq!(checked_power_mw(100).unwrap(), 100_000);
+        assert!(checked_power_mw(1001).is_err());
+        assert!(checked_power_mw(u32::MAX).is_err());
+    }
+    #[test]
+    fn memory_raw_overflow_is_detectable_before_any_gpu_write() {
+        assert!(i32::MAX.checked_mul(2).is_none());
+        assert_eq!(500i32.checked_mul(2), Some(1000));
+    }
     #[test]
     fn python_round_semantics() {
         assert_eq!(f(2000), 1000);

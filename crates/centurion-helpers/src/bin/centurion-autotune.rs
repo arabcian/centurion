@@ -39,13 +39,22 @@ fn config_dir() -> Option<PathBuf> {
     Some(base.join("centurion"))
 }
 
-fn parse_weights(s: &str) -> Value {
+fn parse_weights(s: &str) -> Result<Value, String> {
     let mut m = Map::new();
     for kv in s.split(',') {
-        let Some((k, v)) = kv.split_once('=') else { continue };
-        if let Ok(n) = v.trim().parse::<f64>() { m.insert(k.trim().to_owned(), json!(n)); }
+        let (k, v) = kv.split_once('=').ok_or_else(|| format!("invalid weight {kv:?}: expected key=value"))?;
+        let key = k.trim();
+        if !autotune::Weights::KEYS.contains(&key) {
+            return Err(format!("unknown weight {key:?}; allowed: {}", autotune::Weights::KEYS.join(", ")));
+        }
+        let n = v.trim().parse::<f64>().map_err(|_| format!("invalid numeric weight for {key}"))?;
+        if !n.is_finite() { return Err(format!("weight {key} must be finite")); }
+        if m.insert(key.to_owned(), json!(n)).is_some() {
+            return Err(format!("duplicate weight {key:?}"));
+        }
     }
-    Value::Object(m)
+    if m.is_empty() { return Err("--weights requires at least one key=value".into()); }
+    Ok(Value::Object(m))
 }
 
 fn main() {
@@ -76,9 +85,17 @@ fn goal_cmd(args: &[String]) {
     let save = args.iter().position(|a| a == "--save").map(|i| {
         args.get(i + 1).filter(|n| !n.starts_with("--")).cloned().unwrap_or_else(|| goal.preset_name().to_owned())
     });
-    let weights = args.iter().position(|a| a == "--weights").and_then(|i| args.get(i + 1)).map(|s| parse_weights(s)).unwrap_or(Value::Null);
+    let weights = if let Some(i) = args.iter().position(|a| a == "--weights") {
+        let raw = args.get(i + 1).filter(|s| !s.starts_with("--"))
+            .unwrap_or_else(|| { eprintln!("--weights requires key=value[,key=value]"); usage() });
+        parse_weights(raw).unwrap_or_else(|e| { eprintln!("--weights: {e}"); usage() })
+    } else { Value::Null };
     let mut opts = json!({"explore": !args.iter().any(|a| a == "--no-explore")});
-    if let Some(p) = args.iter().position(|a| a == "--profile").and_then(|i| args.get(i + 1)) { opts["profile"] = json!(p); }
+    if let Some(i) = args.iter().position(|a| a == "--profile") {
+        let p = args.get(i + 1).filter(|s| !s.starts_with("--"))
+            .unwrap_or_else(|| { eprintln!("--profile requires a power profile name"); usage() });
+        opts["profile"] = json!(p);
+    }
     let out = autotune::autotune_req(goal, &weights, &opts);
     if json_out {
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -276,5 +293,25 @@ fn report(secs: u64) {
     if !issues.is_empty() {
         println!("\n== live values outside the safe envelope");
         for i in issues { println!("  {} {}: {}", if i.reject { "REJECT" } else { "warn  " }, i.key, i.msg); }
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    #[test]
+    fn rejects_invalid_or_ambiguous_weight_input() {
+        for s in ["", "latency", "latency=NaN", "power=inf", "latency=abc", "bogus=0.5",
+                  "latency=1,latency=2", "latency=1,"] {
+            assert!(parse_weights(s).is_err(), "should reject {s:?}");
+        }
+    }
+    #[test]
+    fn parses_valid_weights_without_silent_drop() {
+        let w = parse_weights("latency=1.2, throughput=0.8,load=0.6").unwrap();
+        assert_eq!(w["latency"], json!(1.2));
+        assert_eq!(w["throughput"], json!(0.8));
+        assert_eq!(w["load"], json!(0.6));
+        assert_eq!(w.as_object().unwrap().len(), 3);
     }
 }

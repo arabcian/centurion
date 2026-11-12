@@ -596,7 +596,11 @@ impl Fingerprint {
     }
     /// Same machine for the purpose of the signature (BIOS updates are kept, noted by records' dates).
     pub fn matches(&self, o: &Fingerprint) -> bool {
-        self.product == o.product && self.cpu == o.cpu && (self.ram_mib as i64 - o.ram_mib as i64).abs() * 50 <= self.ram_mib.max(1) as i64
+        // Calibration signatures can come from a JSON file: a huge RAM value
+        // must not wrap through `as i64`, or panic on i64::MIN.abs() in debug.
+        // Compare the absolute difference using unsigned arithmetic instead.
+        self.product == o.product && self.cpu == o.cpu &&
+            u128::from(self.ram_mib.abs_diff(o.ram_mib)) * 50 <= u128::from(self.ram_mib.max(1))
     }
     fn to_json(&self) -> Value { json!({"product": self.product, "cpu": self.cpu, "ram_mib": self.ram_mib, "bios": self.bios}) }
     fn from_json(v: &Value) -> Fingerprint {
@@ -2019,6 +2023,16 @@ mod tests {
     use super::*;
     fn s(pairs: &[(Metric, f64)]) -> Sample { pairs.iter().copied().collect() }
     fn m(lat: f64, thr: f64) -> Measured { Measured { lat: Some(lat), thr: Some(thr), pwr: None, mem: None, n: 1.0 } }
+
+    #[test]
+    fn fingerprint_ram_tolerance_has_no_signed_overflow() {
+        let mk = |ram_mib| Fingerprint { product: "Legion".into(), cpu: "Ryzen".into(), ram_mib, bios: String::new() };
+        assert!(mk(32768).matches(&mk(33000)));
+        assert!(!mk(32768).matches(&mk(35000)));
+        assert!(!mk(u64::MAX).matches(&mk(0)));
+        assert!(mk(u64::MAX).matches(&mk(u64::MAX)));
+        assert!(!mk(0).matches(&mk(u64::MAX)));
+    }
 
     #[test]
     fn effects_sign_noise_and_fold() {

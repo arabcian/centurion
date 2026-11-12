@@ -118,11 +118,16 @@ pub fn target_disks() -> Vec<String> {
 /// Average rate while busy, from one /sys/block/<disk>/stat line.
 /// None without enough history (>= 2 GiB written and >= 2 s busy).
 pub fn passive_bps(stat: &str) -> Option<u64> {
-    let f: Vec<u64> = stat.split_whitespace().filter_map(|x| x.parse().ok()).collect();
-    if f.len() < 10 { return None; }
-    let (rsect, wsect, io_ticks) = (f[2], f[6], f[9]);
-    if wsect * 512 < 2 << 30 || io_ticks < 2000 { return None; }
-    Some((rsect + wsect) * 512 * 1000 / io_ticks)
+    // Do not filter_map: an invalid field must not shift later stat columns.
+    let f: Vec<u64> = stat.split_whitespace().take(10)
+        .map(str::parse::<u64>).collect::<Result<_, _>>().ok()?;
+    if f.len() != 10 { return None; }
+    let (wsect, io_ticks) = (f[6], f[9]);
+    let written = u128::from(wsect) * 512;
+    if written < 2u128 << 30 || io_ticks < 2000 { return None; }
+    // Reads cannot count as write bandwidth. io_ticks measures BOTH read and
+    // write busy time, making this a conservative lower bound for writeback.
+    u64::try_from(written * 1000 / u128::from(io_ticks)).ok()
 }
 
 fn load_probe() -> Option<IoRate> {
@@ -169,7 +174,9 @@ pub fn probe(dir: &str) -> Result<Value, String> {
     let mut sv: libc::statvfs = unsafe { std::mem::zeroed() };
     let cdir = std::ffi::CString::new(dir).map_err(|_| "bad directory")?;
     if unsafe { libc::statvfs(cdir.as_ptr(), &mut sv) } != 0 { return Err(format!("{dir}: statvfs failed")); }
-    if (sv.f_bavail as u64) * (sv.f_frsize as u64) < 4 * PROBE_MAX_BYTES { return Err(format!("{dir}: less than 2 GiB free, probe skipped")); }
+    if u128::from(sv.f_bavail) * u128::from(sv.f_frsize) < u128::from(4 * PROBE_MAX_BYTES) {
+        return Err(format!("{dir}: less than 2 GiB free, probe skipped"));
+    }
     let open = |direct: bool| std::fs::OpenOptions::new().read(true).write(true).mode(0o600)
         .custom_flags(libc::O_TMPFILE | libc::O_CLOEXEC | if direct { libc::O_DIRECT } else { 0 }).open(dir);
     let (mut f, direct) = match open(true) {
@@ -216,9 +223,15 @@ mod tests {
     use super::*;
     #[test]
     fn passive_needs_history() {
-        // 4 GiB written + 1 GiB read in 5 s busy -> 1 GiB/s.
+        // 4 GiB written + 1 GiB read in 5 s busy: only writes count.
         let s = format!("100 0 {} 0 100 0 {} 0 0 5000 0", (1u64 << 30) / 512, (4u64 << 30) / 512);
-        assert_eq!(passive_bps(&s), Some(5 * (1 << 30) * 1000 / 5000));
+        assert_eq!(passive_bps(&s), Some(4 * (1 << 30) * 1000 / 5000));
+        // Increasing read traffic alone cannot raise the estimated write rate.
+        let more_reads = format!("100 0 {} 0 100 0 {} 0 0 5000 0", (100u64 << 30) / 512, (4u64 << 30) / 512);
+        assert_eq!(passive_bps(&s), passive_bps(&more_reads));
+        // Malformed numeric fields must not shift the position of io_ticks.
+        assert_eq!(passive_bps("1 bad 8 0 1 0 8388608 0 0 5000 0"), None);
+        assert!(passive_bps(&format!("0 0 0 0 0 0 {} 0 0 2000", u64::MAX)).is_none());
         assert_eq!(passive_bps("1 0 8 0 1 0 8 0 0 10 0"), None);
         assert_eq!(passive_bps("garbage"), None);
     }

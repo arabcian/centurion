@@ -18,7 +18,9 @@ const MIB: usize = 1 << 20;
 pub fn p99(v: &mut [f64]) -> Option<f64> {
     if v.is_empty() { return None; }
     v.sort_by(|a, b| a.total_cmp(b));
-    Some(v[((v.len() as f64 * 0.99) as usize).min(v.len() - 1)])
+    // Nearest-rank p99 is the ceil(0.99*n)-th observation (1-based).
+    // floor(0.99*n) selected the maximum for n=100, over-reporting tail latency.
+    Some(v[((v.len() as f64 * 0.99).ceil() as usize).saturating_sub(1).min(v.len() - 1)])
 }
 
 /// Latency tail of one window: the mean of the worst 1 % of the samples, at least 5 (all of
@@ -1474,6 +1476,15 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn p99_uses_nearest_rank_for_exact_hundred_sample_windows() {
+        let mut samples: Vec<f64> = (1..=100).map(f64::from).collect();
+        assert_eq!(p99(&mut samples), Some(99.0));
+        let mut small = vec![1.0, 2.0, 100.0];
+        assert_eq!(p99(&mut small), Some(100.0));
+        assert_eq!(p99(&mut []), None);
+    }
 
     #[test]
     fn adaptive_tail_stops_only_with_independent_agreement() {

@@ -70,6 +70,9 @@ pub fn map<R: Send>(n: usize, f: impl Fn(usize) -> R + Sync) -> Vec<R> {
 /// about equal total `cost(row)` per block (a few blocks per worker for balance).
 pub fn rows<T: Send>(data: &mut [T], row_len: usize, cost: impl Fn(usize) -> f64, f: impl Fn(usize, &mut [T]) + Sync) {
     if row_len == 0 || data.is_empty() { return; }
+    // A truncated matrix used to lose its final partial row silently in the
+    // parallel branch; reject the invalid shape for every worker count.
+    assert_eq!(data.len() % row_len, 0, "par::rows: data length must be a multiple of row_len");
     let nrows = data.len() / row_len;
     let w = width(nrows);
     if w <= 1 { f(0, data); return; }
@@ -109,6 +112,13 @@ pub fn rows<T: Send>(data: &mut [T], row_len: usize, cost: impl Fn(usize) -> f64
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[should_panic(expected = "data length must be a multiple")]
+    fn rows_never_silently_drops_trailing_values() {
+        let mut values = [0u32; 11];
+        rows(&mut values, 3, |_| 1.0, |_, _| {});
+    }
+
     #[test]
     fn map_keeps_order_and_rows_cover_everything() {
         let v = map(1000, |i| i * 2);

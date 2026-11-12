@@ -353,25 +353,55 @@ pub fn restore_offsets_verified(gpu: Gpu, expected: &PointDeltas) -> Result<(), 
     else { Err(format!("CT restore verification failed: {}", errors.join("; "))) }
 }
 
-/// Returns (driver return code, description). -998 = rejected, -999 = setup failure.
+/// Returns (driver return code, description). -997 = read-back mismatch,
+/// -998 = rejected, -999 = setup/verification failure.
 /// Deltas below a point's floor are clamped first (reported in the description).
 pub fn write_offsets(gpu: Gpu, deltas: &PointDeltas, dry_run: bool, full_mask: bool,
                      current_raw: Option<&[u8]>) -> (i32, String) {
     // Nothing to change (e.g. a domain-wide reset on a GPU that has no point of that domain):
     // never send a ClockBoostTable with an empty mask to the driver.
     if deltas.is_empty() { return (0, "no points to write".into()); }
+    // Validate untrusted deltas BEFORE requiring a GPU read, including dry-run.
+    // A valid i32 can still be outside the driver's physically supported range.
+    let invalid = crate::safety::validate_write(deltas, MAX_DELTA_KHZ);
+    if !invalid.is_empty() { return (-998, format!("Rejected unsafe write: {}", invalid.join("; "))); }
     let mut deltas = deltas.clone();
     let mut notes = Vec::new();
     if deltas.values().any(|&d| d < 0) {
+        // Without the current base V/F curve, a negative delta may push an
+        // unknown point to 0 MHz. Never continue without the floor check.
         match read_curve(gpu, "") {
-            Ok(state) => notes = clamp_to_floor(&mut deltas, &state),
-            Err(e) => log::debug!("floor clamp skipped (curve unreadable): {e}"),
+            Ok(state) => {
+                for (&p, &delta) in &deltas {
+                    if delta >= 0 { continue; }
+                    let active = usize::try_from(p).ok().and_then(|i| state.points.get(i))
+                        .is_some_and(|pt| pt.index as i64 == p && pt.freq_khz > 0);
+                    if !active {
+                        return (-998, format!("Rejected unsafe write: negative delta on unpopulated V/F point {p}"));
+                    }
+                }
+                notes = clamp_to_floor(&mut deltas, &state);
+            }
+            Err(e) => return (-999, format!("Cannot validate negative delta floor: {e}")),
         }
     }
-    // Points outside the driver's own mask are not V/F points on this GPU.
-    if let Ok(mask) = get_boost_mask(gpu) {
-        if let Some(&p) = deltas.keys().find(|&&p| usize::try_from(p).map_or(true, |i| !mask_has(&mask, i))) {
-            return (-998, format!("Rejected unsafe write: point {p} is not in this GPU's V/F point mask"));
+    // Mask discovery is mandatory: an unreadable mask is NOT an all-points
+    // authorization. This is particularly important after a driver Xid.
+    let mask = match get_boost_mask(gpu) {
+        Ok(mask) => mask,
+        Err(e) => return (-999, format!("Cannot validate GPU V/F point mask: {e}")),
+    };
+    if let Some(&p) = deltas.keys().find(|&&p| usize::try_from(p).map_or(true, |i| !mask_has(&mask, i))) {
+        return (-998, format!("Rejected unsafe write: point {p} is not in this GPU's V/F point mask"));
+    }
+    // If the caller supplied a CT baseline, refuse a stale read-modify-write.
+    // A third-party controller may update the curve without our process lock.
+    if let Some(raw) = current_raw {
+        let before: Vec<i32> = parse_ct_entries(raw).iter().map(|&(d, _)| d).collect();
+        match read_clock_offsets(gpu) {
+            Ok(now) if now == before => {},
+            Ok(_) => return (-999, "ClockBoostTable changed after the supplied baseline; write refused".into()),
+            Err(e) => return (-999, format!("Cannot verify ClockBoostTable baseline: {e}")),
         }
     }
     let mut buf = match build_write_buffer(gpu, &deltas, full_mask, current_raw) {
@@ -384,7 +414,17 @@ pub fn write_offsets(gpu: Gpu, deltas: &PointDeltas, dry_run: bool, full_mask: b
         return (0, format!("DRY RUN — buffer built but not sent to driver{suffix}"));
     }
     let (rc, d) = nvcall_raw(fid::SET_CLOCK_BOOST_TABLE, gpu, &mut buf);
-    (rc, format!("{d}{suffix}"))
+    if rc != 0 { return (rc, format!("{d}{suffix}")); }
+    // NvAPI can return success while the driver clamps or drops a delta.
+    // No unverified write is allowed to be reported as successful.
+    match read_clock_offsets(gpu) {
+        Err(e) => (-999, format!("write returned success but read-back failed: {e}{suffix}")),
+        Ok(observed) => {
+            let mismatches = verify_readback(&deltas, &observed);
+            if mismatches.is_empty() { (0, format!("{d}; verified {} CT points{suffix}", deltas.len())) }
+            else { (-997, format!("write returned success but CT read-back mismatched: {}{suffix}", mismatches.join("; "))) }
+        }
+    }
 }
 
 fn write_domain(gpu: Gpu, filter: Option<Domain>, delta: i64, dry_run: bool, empty_msg: Option<&str>)
