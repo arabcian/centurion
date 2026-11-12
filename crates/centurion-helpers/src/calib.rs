@@ -285,8 +285,9 @@ pub fn bench_version(phase: Phase) -> u8 {
 /// An explicitly different IO cache protocol cannot be treated as the same
 /// objective. Legacy pre-7 rows retain their existing low-weight migration
 /// handling; versions 7 (global) and 8 (scoped) never share a GP fit.
-fn io_semantics_compatible(phase: Phase, bv: u8, field: bool) -> bool {
-    phase != Phase::Io || field || bv < IO_BENCH_VERSION || bv == bench_version(phase)
+/// `active`: the benchmark set the model is built for (`Calibration::active_bv`).
+fn io_semantics_compatible(phase: Phase, bv: u8, field: bool, active: u8) -> bool {
+    phase != Phase::Io || field || bv < IO_BENCH_VERSION || bv == active
 }
 
 /// Scale of an objective that averages `k` metric families (`Metric::family`). A knob moves the
@@ -1019,12 +1020,27 @@ impl Calibration {
     /// one power source only (`pwr_source`). Context pseudo-knobs are added where the phase's rows
     /// were measured in more than one context. Field rows (game sessions) keep only the knobs the
     /// phase's designed runs know, their weight scaled by the share they keep.
+    /// The benchmark set a phase's model is built for. Taken from the rows (the newest designed
+    /// session), never from this process's environment: the calibration runs as root without the
+    /// user's variables, autotune runs in the GUI's, and an experimental flag set in only one of
+    /// them must not drop or down-weight every row of the other. Anything other than the
+    /// experimental variant keeps the established set.
+    fn active_bv(&self, phase: Phase) -> u8 {
+        let (cur, alt) = match phase {
+            Phase::Io => (IO_BENCH_VERSION, IO_BENCH_VERSION + 1),
+            Phase::Idle | Phase::Load => (BENCH_VERSION, BENCH_VERSION + 1),
+            Phase::Dev => (BENCH_VERSION, BENCH_VERSION),
+        };
+        let newest = self.rows.iter().filter(|r| r.phase == phase && !r.field).max_by_key(|r| (r.sess, r.t)).map(|r| r.bv);
+        if newest == Some(alt) { alt } else { cur }
+    }
     fn pre_rows(&self, phase: Phase) -> Vec<model::Row> {
         let mm = major_minor(&self.kernel);
+        let active = self.active_bv(phase);
         let ctx = self.ctx_refs(phase);
         let src = self.pwr_source(phase);
         let age_ref = self.age_ref(phase);
-        let designed: BTreeSet<&str> = self.rows.iter().filter(|r| r.phase == phase && !r.field && io_semantics_compatible(r.phase, r.bv, r.field))
+        let designed: BTreeSet<&str> = self.rows.iter().filter(|r| r.phase == phase && !r.field && io_semantics_compatible(r.phase, r.bv, r.field, active))
             .flat_map(|r| r.cfg.iter().map(|(k, _)| k.as_str())).collect();
         // Per-context references: a row of a context whose reference of a knob is not the model's had
         // that knob at its own reference, a level of its own here; a row that set it to the model's
@@ -1032,12 +1048,12 @@ impl Calibration {
         let mrefs: Vec<(&str, String)> = designed.iter().filter(|k| !crate::model::is_ctx(k) && same_family(phase, k))
             .filter_map(|k| Some((*k, self.model_ref(k)?))).collect();
         let mut out: Vec<model::Row> = Vec::new();
-        for r in self.rows.iter().filter(|r| r.phase == phase && io_semantics_compatible(r.phase, r.bv, r.field)) {
+        for r in self.rows.iter().filter(|r| r.phase == phase && io_semantics_compatible(r.phase, r.bv, r.field, active)) {
             if r.cfg.iter().any(|(k, _)| !same_family(phase, k)) { continue; }
             let age = age_ref.saturating_sub(r.t) as f64 / 86_400.0;
             let k = if self.kernel.is_empty() || major_minor(&r.kernel) == mm { 1.0 } else { 0.5 };
             let k = k * self.row_env_weight(r.sess);
-            let b = if r.bv == bench_version(phase) || r.field { 1.0 } else { 0.6 };
+            let b = if r.bv == active || r.field { 1.0 } else { 0.6 };
             let mut cfg = r.cfg.clone();
             if !r.field {
                 for (key, mr) in &mrefs {
@@ -2685,12 +2701,27 @@ mod tests {
 
     #[test]
     fn incompatible_io_cache_protocols_do_not_share_a_fit() {
-        let active = bench_version(Phase::Io);
-        let alternate = if active == IO_BENCH_VERSION { IO_BENCH_VERSION + 1 } else { IO_BENCH_VERSION };
-        assert!(io_semantics_compatible(Phase::Io, active, false));
-        assert!(!io_semantics_compatible(Phase::Io, alternate, false));
-        assert!(io_semantics_compatible(Phase::Idle, alternate, false));
-        assert!(io_semantics_compatible(Phase::Io, alternate, true), "field rows use their own source metadata");
+        let (active, alternate) = (IO_BENCH_VERSION, IO_BENCH_VERSION + 1);
+        assert!(io_semantics_compatible(Phase::Io, active, false, active));
+        assert!(!io_semantics_compatible(Phase::Io, alternate, false, active));
+        assert!(io_semantics_compatible(Phase::Idle, alternate, false, active));
+        assert!(io_semantics_compatible(Phase::Io, alternate, true, active), "field rows use their own source metadata");
+        assert!(io_semantics_compatible(Phase::Io, 5, false, alternate), "pre-7 rows keep their low-weight migration");
+    }
+
+    #[test]
+    fn active_benchmark_set_comes_from_the_rows_not_the_environment() {
+        let row = |phase: Phase, sess: u64, bv: u8| Row { phase, sess, t: sess, y: [0.0; 4], w: 1.0, bv, ..Default::default() };
+        let mut c = Calibration::default();
+        assert_eq!(c.active_bv(Phase::Io), IO_BENCH_VERSION, "no rows: the established set");
+        c.rows = vec![row(Phase::Io, 1, IO_BENCH_VERSION), row(Phase::Io, 2, IO_BENCH_VERSION + 1)];
+        assert_eq!(c.active_bv(Phase::Io), IO_BENCH_VERSION + 1, "newest session measured the scoped protocol");
+        c.rows.push(row(Phase::Io, 3, IO_BENCH_VERSION));
+        assert_eq!(c.active_bv(Phase::Io), IO_BENCH_VERSION, "flag turned off again: back to the global protocol");
+        c.rows = vec![row(Phase::Idle, 1, 5)];
+        assert_eq!(c.active_bv(Phase::Idle), BENCH_VERSION, "an older set never becomes the active one");
+        c.rows.push(row(Phase::Idle, 2, BENCH_VERSION + 1));
+        assert_eq!(c.active_bv(Phase::Idle), BENCH_VERSION + 1);
     }
 
     #[test]

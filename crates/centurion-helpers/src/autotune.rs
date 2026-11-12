@@ -2546,7 +2546,7 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     // The models depend on the rows, never on the weights: fitted once (every CPU), then the main
     // decision and the explored trade-offs all read them in parallel.
     if let Some(c) = p.calibration.as_mut() { c.merge_hyp_cache(); c.use_fit_store(); }
-    prefit(goal, &p, want_explore);
+    prefit(goal, &p);
     if let Some(c) = p.calibration.as_ref() { c.save_hyp_cache(); c.save_fit_store(); }
     let model_ms = fit_started.elapsed().as_millis();
     if report_progress { eprintln!("CENTURION_STAGE decision"); }
@@ -2687,21 +2687,15 @@ fn predict(goal: Goal, p: &Profile, w: Weights, d: &[Decision]) -> Value {
 
 fn round3(x: f64) -> f64 { (x * 1000.0).round() / 1000.0 }
 
-/// Warm only the main phase first. The remaining models are evaluated on demand
-/// in sequential mode; explore prewarms all phases before parallel variants can
-/// access the shared RefCell caches. Never run multiple dense GP fits concurrently:
-/// each can occupy hundreds of MiB when a large signature is available.
-fn prefit(goal: Goal, p: &Profile, explore: bool) {
+/// Puts the goal's measurement frame (power source) on the signature and fits every phase model
+/// once (one phase after another), so parallel decisions share the fits instead of each refitting.
+/// Every phase is fitted here, in Fast mode too: the decision reads all of them, and only fits made
+/// before `save_fit_store` are kept for the next autotune.
+fn prefit(goal: Goal, p: &Profile) {
     let Some(cal) = p.calibration.as_ref() else { return };
     cal.set_power_pref(if goal == Goal::PowerSave { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl });
     cal.set_target_cx(Some(calib::Calibration::context_id(&target_context(goal, p))));
-    let priority = if goal == Goal::Gaming || goal == Goal::Throughput { calib::Phase::Load } else { calib::Phase::Idle };
-    let _ = cal.phase_fit(priority);
-    if explore {
-        for phase in [calib::Phase::Idle, calib::Phase::Load, calib::Phase::Io, calib::Phase::Dev] {
-            if phase != priority { let _ = cal.phase_fit(phase); }
-        }
-    }
+    cal.prefit();
 }
 
 /// A copy for one parallel decision: same data, fitted models shared.
@@ -2718,6 +2712,7 @@ type Explored = (Vec<Value>, Vec<Value>, Value);
 /// decisions that depend on a weight: every weight 30 % down and up, and three labelled trade-offs.
 /// All of them re-decide from the same fitted models (no refit) and run in parallel, one decision
 /// per CPU: the wall time is about that of the main decision alone.
+#[cfg(test)]
 fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) { explore_with(goal, p, w, true) }
 
 fn explore_with(goal: Goal, p: &Profile, w: Weights, sensitivity: bool) -> (Decided, Explored) {

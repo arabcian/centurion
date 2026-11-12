@@ -67,6 +67,16 @@ static constexpr int POLL_MS = 4000, DESCRIBE_TIMEOUT_MS = 8000, PKEXEC_TIMEOUT_
 static constexpr qint64 MAX_PRESET_BYTES = 256 * 1024;
 static const char *GROUPS[] = {"CPU", "Memory", "Scheduler", "Storage", "Network", "Devices", "Power", "Stability"};
 static const QString GAMEMODE = QStringLiteral("/usr/bin/centurion-gamemode");
+// centurion-calibrate is installed to bin/ (ebuild dobin, install-files.sh), not the helper dir.
+// A fixed path: pkexec runs it as root, so it is never resolved through $PATH.
+static const QString CALIBRATE = QStringLiteral("/usr/bin/centurion-calibrate");
+
+// Fixed pkexec locations, like privileged.cpp: never resolved through $PATH.
+static QString pkexecPath() {
+    for (const char *c : {"/usr/bin/pkexec", "/bin/pkexec"})
+        if (QFileInfo(QString::fromLatin1(c)).isFile()) return QString::fromLatin1(c);
+    return {};
+}
 // centurion-gamemode PRE/WRAP apply these curve profiles (exact name) when enabled.
 static const QString UNDERVOLT_PROFILE = QStringLiteral("GAMING");
 static const QString NVCURVE_PROFILES = QStringLiteral("/etc/nvcurve/profiles");
@@ -2179,13 +2189,16 @@ void OptimizeTab::importFieldData() {
         QMessageBox::warning(this, tr("Import game telemetry"), tr("Select at most four logs per import."));
         return;
     }
-    const QString executable = privileged::helperPath(QStringLiteral("centurion-calibrate"));
-    if (!QFileInfo(executable).isExecutable()) {
-        QMessageBox::warning(this, tr("Import game telemetry"), tr("centurion-calibrate is not installed."));
+    const QString pkexec = pkexecPath();
+    if (!QFileInfo(CALIBRATE).isExecutable() || pkexec.isEmpty()) {
+        QMessageBox::warning(this, tr("Import game telemetry"), tr("centurion-calibrate or pkexec is not installed."));
         return;
     }
-    auto *proc = new QProcess(this);
-    auto *finished = std::make_shared<bool>(false);
+    // Not parented to this tab: once pkexec has exec'd the root tool our kill() is refused, and a
+    // QProcess destructor would block the GUI until it exits (see privileged.cpp).
+    auto *proc = new QProcess;
+    connect(proc, &QProcess::finished, proc, &QObject::deleteLater);
+    auto finished = std::make_shared<bool>(false);
     setBusy(true);
     showStatus(tr("Importing frame-time logs and matching recorded game sessions…"), theme::MUTED, 0);
     connect(proc, &QProcess::finished, this,
@@ -2194,7 +2207,6 @@ void OptimizeTab::importFieldData() {
             *finished = true;
             const QString output = QString::fromUtf8(proc->readAllStandardOutput()).right(5000);
             const QString error = QString::fromUtf8(proc->readAllStandardError()).right(1000);
-            proc->deleteLater();
             setBusy(false);
             const bool ok = st == QProcess::NormalExit && code == 0;
             showStatus(ok ? tr("Game telemetry imported. Re-run Autotune to use matched A/B evidence.")
@@ -2209,9 +2221,9 @@ void OptimizeTab::importFieldData() {
         QMessageBox::warning(this, tr("Game telemetry import"), proc->errorString());
         proc->deleteLater();
     });
-    QStringList args{executable, QStringLiteral("--field")};
+    QStringList args{CALIBRATE, QStringLiteral("--field")};
     args.append(files);
-    proc->start(QStringLiteral("pkexec"), args);
+    proc->start(pkexec, args);
 }
 
 void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &notLoaded) {
@@ -2250,7 +2262,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     }
     if (const QJsonObject a = d.value(QStringLiteral("application_advice")).toObject(); !a.isEmpty()) {
         auto *label = new QLabel(tr("Suggested next step: %1 (%2 settings, %3 uncertain effects, %4 without model evidence)")
-            .arg(a.value(QStringLiteral("text")).toString())
+            .arg(QCoreApplication::translate("OptimizeTab", a.value(QStringLiteral("text")).toString().toUtf8().constData()))
             .arg(a.value(QStringLiteral("settings")).toInt())
             .arg(a.value(QStringLiteral("uncertain_effects")).toInt())
             .arg(a.value(QStringLiteral("not_modelled")).toInt()));
@@ -2525,7 +2537,11 @@ void OptimizeTab::applySelected() {
     // manual presets the legacy explicit caution confirmation still applies.
     const QJsonObject preset = presetObject(loadedPreset_);
     const bool autoPreset = preset.value(QStringLiteral("autotune")).isObject();
-    const bool highRisk = !risky.isEmpty() || values.size() >= 12;
+    // Extensive = many rows that actually change something (an autotuned preset checks every row,
+    // most of them already at their live value).
+    int changed = 0;
+    for (const Row &r : rows_) if (values.contains(r.key) && differs(r)) ++changed;
+    const bool highRisk = !risky.isEmpty() || changed >= 12;
     if (autoPreset && highRisk && !verifiedAutotunePreset(loadedPreset_, values)) {
         if (!validPresetName(loadedPreset_) || !storeHas(loadedPreset_) ||
             preset.value(QStringLiteral("values")).toObject() != values) {
@@ -2537,38 +2553,41 @@ void OptimizeTab::applySelected() {
         auto *question = new QMessageBox(QMessageBox::Warning, tr("ABBA verification required"),
             tr("This autotuned preset contains high-risk or extensive changes. "
                "Run a paired ABBA benchmark against your boot settings before applying it? "
-               "The test temporarily changes settings, journals originals, and restores them."),
+               "The test temporarily changes settings, journals originals, and restores them.\n\n"
+               "Some settings (SMT, power limits, TCC offset, IRQ affinity, radios…) cannot be measured by ABBA; "
+               "a preset containing them never passes and can only be applied without verification."),
             QMessageBox::Cancel, this);
         QPushButton *verify = question->addButton(tr("Verify now"), QMessageBox::AcceptRole);
+        QPushButton *anyway = question->addButton(tr("Apply without verification"), QMessageBox::DestructiveRole);
         question->exec();
-        const bool consented = question->clickedButton() == verify;
+        const QAbstractButton *clicked = question->clickedButton();
         question->deleteLater();
-        if (!consented) return;
-        const QString executable = privileged::helperPath(QStringLiteral("centurion-calibrate"));
-        if (!QFileInfo(executable).isExecutable()) {
-            QMessageBox::critical(this, tr("ABBA verification"), tr("centurion-calibrate is not installed."));
+        if (clicked == anyway) { applyValues(values, loadedPreset_); return; }
+        if (clicked != verify) return;
+        const QString pkexec = pkexecPath();
+        if (!QFileInfo(CALIBRATE).isExecutable() || pkexec.isEmpty()) {
+            QMessageBox::critical(this, tr("ABBA verification"), tr("centurion-calibrate or pkexec is not installed."));
             return;
         }
         // Never interpolate a preset name in a shell command. pkexec executes
-        // the fixed privileged helper with a fixed argv. Fail closed.
-        auto *proc = new QProcess(this);
-        auto *progress = new QProgressDialog(tr("Verifying preset using up to four ABBA blocks…"),
-            tr("Cancel verification"), 0, 0, this);
+        // the fixed privileged tool with a fixed argv. Fail closed.
+        // Not parented to this tab (see importFieldData). There is no cancel button: the root
+        // process cannot be signalled from here; it stops and restores on its own.
+        auto *proc = new QProcess;
+        connect(proc, &QProcess::finished, proc, &QObject::deleteLater);
+        auto *progress = new QProgressDialog(tr("Verifying preset using up to four ABBA blocks… This takes several minutes and cannot be cancelled from here."),
+            QString(), 0, 0, this);
+        progress->setCancelButton(nullptr);
         progress->setWindowModality(Qt::WindowModal);
         progress->setAutoClose(false);
         progress->setAutoReset(false);
         progress->setMinimumDuration(0);
         setBusy(true);
-        connect(progress, &QProgressDialog::canceled, this, [proc] {
-            // SIGTERM uses centurion-calibrate's stop/restore path.
-            if (proc->state() != QProcess::NotRunning) proc->terminate();
-        });
         connect(proc, &QProcess::finished, this,
             [this, proc, progress, values, name = loadedPreset_](int exitCode, QProcess::ExitStatus st) {
                 const QString tail = QString::fromUtf8(proc->readAllStandardError()).right(650);
                 progress->close();
                 progress->deleteLater();
-                proc->deleteLater();
                 setBusy(false);
                 if (st != QProcess::NormalExit || exitCode != 0 || !verifiedAutotunePreset(name, values)) {
                     QMessageBox::warning(this, tr("ABBA verification failed"),
@@ -2590,8 +2609,8 @@ void OptimizeTab::applySelected() {
                 tr("Failed to start pkexec. Nothing has been applied: %1").arg(proc->errorString()));
             proc->deleteLater();
         });
-        proc->start(QStringLiteral("pkexec"),
-            QStringList{executable, QStringLiteral("--verify"), loadedPreset_,
+        proc->start(pkexec,
+            QStringList{CALIBRATE, QStringLiteral("--verify"), loadedPreset_,
                         QStringLiteral("--rounds"), QStringLiteral("4"),
                         QStringLiteral("--sequential"), QStringLiteral("--require-improvement")});
         progress->show();

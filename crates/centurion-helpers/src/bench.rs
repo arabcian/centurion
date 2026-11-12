@@ -76,11 +76,11 @@ pub fn wake_p99_us(dur: Duration) -> Option<f64> {
         let ts = { let mut sorted = part.clone(); tail(&mut sorted).unwrap_or(f64::NAN) };
         windows.push(ts);
         lat.extend(part);
-        // At least three independent scheduler placements and 600 timer events
-        // are required before making any decision about a p99 tail. The 95%
-        // t-interval on independent sub-window tails must be within 12% of
-        // their mean; unstable tails extend the measurement, never shorten it.
-        if adaptive && i >= 2 && count >= 100 && lat.len() >= 600 &&
+        // At least four windows (the full established duration: windows are dur/4)
+        // and 600 timer events are required before making any decision about a
+        // p99 tail. The 95% t-interval on independent sub-window tails must be
+        // within 12% of their mean; unstable tails extend the measurement, never shorten it.
+        if adaptive && i >= 3 && count >= 100 && lat.len() >= 600 &&
             tail_ci_stable(&windows, 0.12) { break; }
     }
     stop.store(true, Ordering::Relaxed);

@@ -1078,8 +1078,9 @@ helper until its Rust/Qt tests and a paired hardware baseline comparison pass.
   measured where the corresponding power metric was sampled. The default
   is the original full suite for every candidate.
 * `CENTURION_ADAPTIVE_PROBES=1`: try confidence-based stopping of the timer
-  wake-up probe only after at least 3 independent windows and 600 observed
-  wake-ups; cap at 6 windows. This changes idle/load benchmark provenance
+  wake-up probe only after at least 4 independent windows (the full established
+  duration) and 600 observed wake-ups; cap at 6 windows, so the probe is never
+  shorter than before, only longer when its tail is unstable. This changes idle/load benchmark provenance
   (`BENCH_VERSION+1`) and is disabled by default. The other tail probes and
   battery measurements retain their established minimum durations.
 * `CENTURION_GP_SHARED_KERNEL=1`: reuse exact observation-design immutable
@@ -1087,19 +1088,34 @@ helper until its Rust/Qt tests and a paired hardware baseline comparison pass.
   time, position, and start temperature are bit-for-bit identical. One bounded
   process-local cache; objective noise/weights and response values never shared.
 * `CENTURION_PAR_MIN_ITEMS=N`: serial threshold for inexpensive parallel map
-  calls (default 4). No persistent worker pool is claimed.
+  calls (default 1 = unchanged behaviour). No persistent worker pool is claimed.
+
+The flags are read by the process that *measures* (the calibration, as root:
+set them in the service or the root environment). The model side never reads
+them to decide which rows count: the benchmark set of a phase is taken from its
+newest designed session (`Calibration::active_bv`), so autotune in the GUI's
+environment sees the same rows whatever that environment holds.
+`CENTURION_FIT_ROW_CAP` below 1100 selects rows with the coreset rule even
+without `CENTURION_FIT_CORESET`.
 
 ### User-approved ABBA verification of high-risk autotuned presets
 
 In the Optimizations GUI, save and approve the exact named autotuned preset
-before applying high-risk or extensive changes. The **Verify now** action
-prompts for privilege through `pkexec` and runs the existing paired ABBA
+before applying high-risk or extensive changes (a caution setting, or 12 or more
+rows that change a live value). The **Verify now** action prompts for privilege
+through `pkexec` (fixed paths: `/usr/bin/pkexec`, `/usr/bin/centurion-calibrate`)
+and runs the existing paired ABBA
 calibration path with a strict positive-improvement requirement. Settings are
 journaled and restored by the calibration runner after the measurement. A
 passing record is only accepted if the root-owned machine signature contains
 at least 3 complete blocks, zero skipped keys, a positive multiple-look
 confidence interval and the exact same preset values, recorded within 24 h.
-Older verification records are never treated as approved. A failed/cancelled
+Older verification records are never treated as approved. Keys the verify run
+cannot measure (`NOT_IN_VERIFY`: SMT, RAPL limits, TCC offset, IRQ affinity,
+radios, …) are always skipped, so a preset containing them never passes; the
+dialog offers **Apply without verification** for those, after the usual caution
+warning. The running verification cannot be cancelled from the GUI (the root
+process refuses the user's signals); it stops and restores on its own. A failed
 verification never automatically applies the preset; run
 `sudo centurion-calibrate --restore` if the interrupted runner reports an
 unrestored journal. Ordinary manual presets retain their previous warning
@@ -1131,5 +1147,6 @@ signature and hardware context: model fit p50/p95 for n=64/128/256/512/1100,
 LOSO 90% interval coverage, interaction recovery, decision regret, idle/load
 measurement false-negative rate, IO write bytes, thermal gate and restore
 under crash/permission failure. Do not enable experimental flags merely
-because their code is present. `cargo test --workspace --locked` and the Qt6
-build are required and were not executable in the editing environment.
+because their code is present. `cargo test --workspace --locked`, `cargo clippy
+--workspace --all-targets --locked -- -D warnings`, the Qt6 build and the Python
+tests pass on this branch; that is not a hardware validation.

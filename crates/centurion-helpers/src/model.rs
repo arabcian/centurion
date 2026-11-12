@@ -776,7 +776,6 @@ fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, 
     let n = obs.len();
     if n < 6 { return None; }
     let order = space.order;
-    let active = |c: usize| match c { 0 => true, 1 | 2 => order >= 2, _ => order >= 3 };
     // Cache only immutable design-dependent matrices. Objective-specific response,
     // Student-t weights, sigma and Cholesky factors are deliberately NEVER shared.
     // An exact feature/session/temperature/time match is required; objectives with
@@ -1924,15 +1923,24 @@ mod tests {
     fn kernel_cache_reuses_exact_design_but_not_changed_session_or_temperature() {
         // All values are artificial; never touches hardware or privileged helpers.
         let s = Arc::new(Space::new(vec![Factor { key: "test.k".into(), reference: "0".into(), values: vec!["1".into()] }], None, 1));
-        let x = s.parse(&vec![("test.k".into(), "1".into())], true).unwrap();
+        let x = s.parse(&[("test.k".into(), "1".into())], true).unwrap();
         let mut v = (0..6).map(|i| Obs { x: x.clone(), sess: i / 3, pos: i as f64 / 6.0, t: i as f64, w: 1.0, y: 0.0, tc: 0.0 }).collect::<Vec<_>>();
+        // The cache itself is opt-in and process-global (other tests may replace its entry), so the
+        // test checks its key: what may hit it (a changed response) and what must miss (session, temperature).
+        let key0 = kernel_shape(&v);
         let a = kernel_parts(&s, &v);
         v[0].y = 999.0;
+        assert_eq!(kernel_shape(&v), key0, "a changed response reuses the kernels");
         let b = kernel_parts(&s, &v);
         assert_eq!(a.kn, b.kn, "response values never enter immutable kernels");
         v[0].sess += 1;
+        assert_ne!(kernel_shape(&v), key0, "a changed session misses the cache");
         let c = kernel_parts(&s, &v);
         assert_ne!(a.kn, c.kn, "session offset enters nuisance kernel");
+        v[0].sess -= 1;
+        v[0].tc = 3.0;
+        assert_ne!(kernel_shape(&v), key0, "a changed start temperature misses the cache");
+        assert!(kernel_parts(&s, &v).temp && !a.temp);
     }
     #[test]
     fn only_a_change_in_effect_gets_the_head_start() {

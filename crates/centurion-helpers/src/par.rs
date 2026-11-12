@@ -29,7 +29,7 @@ pub fn threads() -> usize {
 fn width(items: usize) -> usize {
     static SERIAL_UNDER: OnceLock<usize> = OnceLock::new();
     let serial_under = *SERIAL_UNDER.get_or_init(|| std::env::var("CENTURION_PAR_MIN_ITEMS").ok()
-        .and_then(|s| s.parse::<usize>().ok()).unwrap_or(4).clamp(1, 4096));
+        .and_then(|s| s.parse::<usize>().ok()).unwrap_or(1).clamp(1, 4096));
     if items < serial_under || INSIDE.with(|c| c.get()) { 1 } else { threads().min(items).max(1) }
 }
 

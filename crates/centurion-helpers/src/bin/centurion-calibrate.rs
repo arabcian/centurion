@@ -901,15 +901,16 @@ impl Runner<'_> {
         let begun = Instant::now();
         for attempt in 0..=2 {
             if STOP.load(Ordering::SeqCst) { return false; }
-            let fg = bench::Foreign::snapshot(&[]);
+            // The load phase's pressure ballast is Centurion's own child: left out, as in `run`.
+            let skip: Vec<u32> = self.ballast.as_ref().map(|b| b.pid).into_iter().collect();
+            let fg = bench::Foreign::snapshot(&skip);
             let sys = bench::SysCounters::read();
             let sample_start = Instant::now();
             std::thread::sleep(Duration::from_millis(300));
             let secs = sample_start.elapsed().as_secs_f64();
             let act = sys.activity(&bench::SysCounters::read(), secs);
-            let others = fg.busy_cpus(&[], secs);
-            // The load phase's pressure ballast is Centurion's child, not a
-            // foreign process; the threshold is in CPU cores, not percent.
+            let others = fg.busy_cpus(&skip, secs);
+            // The threshold is in CPU cores, not percent.
             let quiet = others <= 0.6 && bench::disturbances(&act, None, phase != Phase::Io).is_empty();
             if quiet { self.preflight_secs += begun.elapsed().as_secs_f64(); return true; }
             if attempt < 2 { self.preflight_retries += 1; std::thread::sleep(Duration::from_millis(200)); }
@@ -1287,7 +1288,7 @@ fn thermal_block(v: Vec<Cfg>, batch: usize) -> Vec<Cfg> {
 fn run_cost_hint(cal: &Calibration, phase: Phase, cx: &str, fallback: f64) -> f64 {
     let observed = cal.quality.iter().rev().find(|q| q["phase"] == phase.name() && q["cx"] == cx && q["runs"].as_u64().unwrap_or(0) >= 4)
         .and_then(|q| q["run_secs"].as_f64()).filter(|t| t.is_finite() && *t > 0.0);
-    observed.map_or(fallback, |t| (0.5 * fallback + 0.5 * t.clamp(fallback * 0.5, fallback * 2.0)))
+    observed.map_or(fallback, |t| 0.5 * fallback + 0.5 * t.clamp(fallback * 0.5, fallback * 2.0))
 }
 
 /// Repeated calibrations need fewer initial space-filling runs only if prior
@@ -1457,7 +1458,9 @@ impl Design<'_> {
     fn commit(&self, cal: &mut Calibration, rn: &Runner) {
         let rows = compute_rows(&self.runs, self.phase, self.sess, self.kernel, self.n_total, &self.meta);
         let mut q = session_quality(&rows, self, rn);
-        q["run_secs"] = json!(self.spent / self.tries.max(1) as f64);
+        // Per attempt, without the heat soaks: `run_cost_hint` adds `heat_secs` to hot runs itself.
+        let soak = self.runs.iter().filter(|r| is_hot(&r.cfg)).count() as f64 * rn.c.heat_secs;
+        q["run_secs"] = json!(((self.spent - soak) / self.tries.max(1) as f64).max(0.0));
         cal.put_session(self.phase, self.sess, rows);
         // The environment this session ran in (BIOS, microcode, boot parameters): rows of another one count less.
         let (h, e) = calib::env_current();

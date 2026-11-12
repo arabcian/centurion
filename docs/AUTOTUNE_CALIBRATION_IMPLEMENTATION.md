@@ -17,10 +17,10 @@ Source: `centurion_autotune_kalibrasyon_gelistirme_plani(1).md`, applied against
 | K08 | Optional scoped cache handling for IO; avoids global `sync`/`drop_caches`; benchmark-local fadvise/direct reads already exist. Distinct IO benchmark version 8 prevents mixing with previous version 7. | `CENTURION_IO_SCOPED_CACHE=1` |
 | M01 | Deterministic 384-row session/reference-stratified coarse hyperparameter fitting followed by full-data factorization; coverage gate falls back to original full hyperparameter search when failed. | `CENTURION_GP_COARSE=1` |
 | M02 | Bound periodic retunes by new evidence count and maximum batch gap; skip alternate energy-source search if that source has no newest-session evidence and known hyperparameters. | On |
-| M03 | Optional diversity-preserving fit-row selection representing sessions, references and individual knob doses; optional cap of 256, 512 or 768 instead of 1100. Baseline highest-weight truncation is kept by default. | `CENTURION_FIT_CORESET=1`, optional `CENTURION_FIT_ROW_CAP=512` |
+| M03 | Optional diversity-preserving fit-row selection representing sessions, references and individual knob doses; optional cap of 256, 512 or 768 instead of 1100 (a cap below 1100 uses the coreset rule by itself). Baseline highest-weight truncation is kept by default. | `CENTURION_FIT_CORESET=1`, optional `CENTURION_FIT_ROW_CAP=512` |
 | M08 | Precomputed session-id → index lookup in `PhaseSet::obs`. | On |
 | S02 | Autotune stage timings; standard-library-only JSONL p50/p95 comparison script and deterministic script tests. Existing Rust `virtual_lab`/model simulator should still be run in CI/hardware. | On, no hardware results claimed |
-| S03 | GP `MODEL_VERSION=4`, GP fit hash captures experimental parameters; scoped IO version 8 separated from old IO version 7. Existing data not deleted. | On |
+| S03 | GP `MODEL_VERSION=5`, GP fit hash captures experimental parameters; scoped IO version 8 separated from old IO version 7. Existing data not deleted. | On |
 | S05 | Opt-in experimental flags permit one change at a time and established fallback by unsetting variables. GUI Fast can switch to Deep. | Partial |
 
 ## Deferred from original plan
@@ -52,6 +52,16 @@ python3 scripts/compare_autotune_timings.py baseline.jsonl candidate.jsonl
 
 The script reports stage p50/p95 and p50 speed-up. It **does not** prove quality preservation or statistical significance: use the Rust simulator, phase-wise LOSO and matched hardware comparisons for that.
 
-## Known build verification boundary
+## Build verification
 
-The editing container did not contain `cargo`, `rustc`, or Qt6 Widgets development packages. The Rust and Qt code could not be compiled or run here. The supplied standalone Python comparison tests passed; this is **not** a substitute for `cargo test --workspace` and the Qt build. **Do not install these source changes as a privileged tuning helper before the build and safety tests pass.**
+The first version of this patch was written without `cargo`/Qt and did not build (`prefit` test calls,
+`auto *` on a `shared_ptr` in `optimizetab.cpp`, clippy `-D warnings`, the Turkish catalogue test).
+The review fixes (branch `fix/autotune-review`) were checked with `cargo test --workspace --locked`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, the Qt6 GUI build and all Python tests.
+Review fixes in short: every phase is prefitted again before the fit store is saved (Fast mode no longer
+refits the other phases on every run); the active benchmark set comes from the rows, not the reader's
+environment; preflight leaves the load ballast out; `run_secs` excludes heat soaks; the adaptive wake
+probe never runs shorter than before; `CENTURION_PAR_MIN_ITEMS` defaults to the old behaviour; the GUI
+runs `/usr/bin/centurion-calibrate` through a fixed `pkexec`, has no ineffective Cancel, counts only
+changed rows as "extensive" and offers an explicit unverified apply for presets ABBA cannot verify.
+Hardware validation is still outstanding: **do not enable the experimental flags unattended before it.**
