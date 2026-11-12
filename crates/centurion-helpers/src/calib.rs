@@ -271,7 +271,23 @@ pub const BENCH_VERSION: u8 = 6;
 pub const IO_BENCH_VERSION: u8 = 7;
 
 /// The current benchmark set of a phase's rows.
-pub fn bench_version(phase: Phase) -> u8 { if phase == Phase::Io { IO_BENCH_VERSION } else { BENCH_VERSION } }
+/// Scoped-cache IO is a different benchmark, never mixed with global-cache measurements.
+/// The previous semantics remain the default and are still readable in the signature.
+pub fn scoped_io_enabled() -> bool {
+    matches!(std::env::var("CENTURION_IO_SCOPED_CACHE").as_deref(), Ok("1" | "true" | "yes"))
+}
+pub fn bench_version(phase: Phase) -> u8 {
+    if phase == Phase::Io { if scoped_io_enabled() { IO_BENCH_VERSION + 1 } else { IO_BENCH_VERSION } }
+    else if matches!(phase, Phase::Idle | Phase::Load) && crate::bench::adaptive_probes_enabled() { BENCH_VERSION + 1 }
+    else { BENCH_VERSION }
+}
+
+/// An explicitly different IO cache protocol cannot be treated as the same
+/// objective. Legacy pre-7 rows retain their existing low-weight migration
+/// handling; versions 7 (global) and 8 (scoped) never share a GP fit.
+fn io_semantics_compatible(phase: Phase, bv: u8, field: bool) -> bool {
+    phase != Phase::Io || field || bv < IO_BENCH_VERSION || bv == bench_version(phase)
+}
 
 /// Scale of an objective that averages `k` metric families (`Metric::family`). A knob moves the
 /// one or two scenarios it acts on and leaves the rest alone, so the plain mean shrank with every
@@ -1008,7 +1024,7 @@ impl Calibration {
         let ctx = self.ctx_refs(phase);
         let src = self.pwr_source(phase);
         let age_ref = self.age_ref(phase);
-        let designed: BTreeSet<&str> = self.rows.iter().filter(|r| r.phase == phase && !r.field)
+        let designed: BTreeSet<&str> = self.rows.iter().filter(|r| r.phase == phase && !r.field && io_semantics_compatible(r.phase, r.bv, r.field))
             .flat_map(|r| r.cfg.iter().map(|(k, _)| k.as_str())).collect();
         // Per-context references: a row of a context whose reference of a knob is not the model's had
         // that knob at its own reference, a level of its own here; a row that set it to the model's
@@ -1016,7 +1032,7 @@ impl Calibration {
         let mrefs: Vec<(&str, String)> = designed.iter().filter(|k| !crate::model::is_ctx(k) && same_family(phase, k))
             .filter_map(|k| Some((*k, self.model_ref(k)?))).collect();
         let mut out: Vec<model::Row> = Vec::new();
-        for r in self.rows.iter().filter(|r| r.phase == phase) {
+        for r in self.rows.iter().filter(|r| r.phase == phase && io_semantics_compatible(r.phase, r.bv, r.field)) {
             if r.cfg.iter().any(|(k, _)| !same_family(phase, k)) { continue; }
             let age = age_ref.saturating_sub(r.t) as f64 / 86_400.0;
             let k = if self.kernel.is_empty() || major_minor(&r.kernel) == mm { 1.0 } else { 0.5 };
@@ -1264,8 +1280,13 @@ impl Calibration {
         // power-saving autotune (battery source) ran a full hyperparameter search on idle and load.
         if matches!(phase, Phase::Idle | Phase::Load) {
             let (pref, cur) = (self.pwr_pref.get(), self.pwr_source(phase));
+            let newest_sess = self.rows.iter().filter(|r| r.phase == phase).map(|r| r.sess).max();
             for alt in [PowerSrc::Rapl, PowerSrc::Battery] {
                 if Some(alt) == cur { continue; }
+                // An alternate source with kept scales and no newly measured rows
+                // cannot benefit from another hyperparameter search this batch.
+                let alt_has_new_evidence = self.rows.iter().any(|r| r.phase == phase && Some(r.sess) == newest_sess && r.src == alt);
+                if !alt_has_new_evidence && self.hyp.contains_key(&hyp_key(phase, 2, Some(alt))) { continue; }
                 self.pwr_pref.set(Some(alt));
                 if self.pwr_source(phase) != Some(alt) { continue; }
                 let init = self.hyper(phase, 2);
@@ -2660,6 +2681,16 @@ mod tests {
         // Written again as format 10: read back unchanged.
         let back = Calibration::from_json(&c.to_json());
         assert_eq!(back.rows.iter().map(|r| r.y).collect::<Vec<_>>(), c.rows.iter().map(|r| r.y).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn incompatible_io_cache_protocols_do_not_share_a_fit() {
+        let active = bench_version(Phase::Io);
+        let alternate = if active == IO_BENCH_VERSION { IO_BENCH_VERSION + 1 } else { IO_BENCH_VERSION };
+        assert!(io_semantics_compatible(Phase::Io, active, false));
+        assert!(!io_semantics_compatible(Phase::Io, alternate, false));
+        assert!(io_semantics_compatible(Phase::Idle, alternate, false));
+        assert!(io_semantics_compatible(Phase::Io, alternate, true), "field rows use their own source metadata");
     }
 
     #[test]

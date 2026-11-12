@@ -156,6 +156,7 @@ private:
     /// Status line of a scheduled / running / finished boot calibration (world-readable files, no helper call).
     void refreshCalibrationStatus();
     void fillAutotuneContexts();
+    void importFieldData();
 
     void applySelected();
     void applyValues(const QJsonObject &values, const QString &preset);
@@ -177,8 +178,8 @@ private:
     SceneEngine *scenes_ = nullptr;
     QPushButton *defaultsBtn_ = nullptr;
     QPushButton *restoreBtn_ = nullptr, *applyBtn_ = nullptr, *gameBtn_ = nullptr, *bootBtn_ = nullptr, *bootClear_ = nullptr;
-    QComboBox *presetCombo_ = nullptr, *affinity_ = nullptr, *autoGoal_ = nullptr;
-    QPushButton *autoBtn_ = nullptr;
+    QComboBox *presetCombo_ = nullptr, *affinity_ = nullptr, *autoGoal_ = nullptr, *autoMode_ = nullptr;
+    QPushButton *autoBtn_ = nullptr, *autoExploreBtn_ = nullptr;
     bool autoRunning_ = false;
     QSpinBox *nice_ = nullptr;
     QComboBox *sliceUs_ = nullptr, *gameShare_ = nullptr;

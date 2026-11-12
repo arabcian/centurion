@@ -1063,3 +1063,73 @@ in the Health tab). It stops early when anything else changes those knobs.
 
 Baseline entries whose original came from TLP are listed as `tlp_originals` in
 the helper state: "restore" returns them to TLP's state, not the kernel default.
+
+## Experimental Autotune/Calibration second-stage workflow (November 2026)
+
+This source branch adds opt-in experiments to the existing journal/restore,
+thermal protection, memory-pressure safeguards and IO write budgets. It is
+**not validated on physical hardware** and must not be used as a privileged
+helper until its Rust/Qt tests and a paired hardware baseline comparison pass.
+
+* `CENTURION_FAST_SCAN=1`: idle/load exploratory candidates run a shorter CPU
+  suite, with every third design candidate and every reference/confirmation
+  candidate using the established full suite. Partial rows keep latency,
+  throughput and memory objectives **missing**, not zero; power remains
+  measured where the corresponding power metric was sampled. The default
+  is the original full suite for every candidate.
+* `CENTURION_ADAPTIVE_PROBES=1`: try confidence-based stopping of the timer
+  wake-up probe only after at least 3 independent windows and 600 observed
+  wake-ups; cap at 6 windows. This changes idle/load benchmark provenance
+  (`BENCH_VERSION+1`) and is disabled by default. The other tail probes and
+  battery measurements retain their established minimum durations.
+* `CENTURION_GP_SHARED_KERNEL=1`: reuse exact observation-design immutable
+  kernel arrays across objective fits when the model space pointer, session,
+  time, position, and start temperature are bit-for-bit identical. One bounded
+  process-local cache; objective noise/weights and response values never shared.
+* `CENTURION_PAR_MIN_ITEMS=N`: serial threshold for inexpensive parallel map
+  calls (default 4). No persistent worker pool is claimed.
+
+### User-approved ABBA verification of high-risk autotuned presets
+
+In the Optimizations GUI, save and approve the exact named autotuned preset
+before applying high-risk or extensive changes. The **Verify now** action
+prompts for privilege through `pkexec` and runs the existing paired ABBA
+calibration path with a strict positive-improvement requirement. Settings are
+journaled and restored by the calibration runner after the measurement. A
+passing record is only accepted if the root-owned machine signature contains
+at least 3 complete blocks, zero skipped keys, a positive multiple-look
+confidence interval and the exact same preset values, recorded within 24 h.
+Older verification records are never treated as approved. A failed/cancelled
+verification never automatically applies the preset; run
+`sudo centurion-calibrate --restore` if the interrupted runner reports an
+unrestored journal. Ordinary manual presets retain their previous warning
+and apply workflow.
+
+Equivalent shell command, after saving and approving the preset:
+
+```sh
+sudo centurion-calibrate --verify 'Auto Gaming' --rounds 4 --sequential --require-improvement
+```
+
+`--require-improvement` exits nonzero on insufficient evidence, unknown,
+excluded or unverifiable settings, or no statistically positive corrected
+interval. It does **not** certify long-term system stability.
+
+### Importing real-game telemetry
+
+The GUI **Import game CSV…** action accepts up to 4 user-selected FLM or
+MangoHud logs, runs `centurion-calibrate --field` through `pkexec`, and
+requires recorded user game sessions with matched baseline/candidate A/B
+samples. The import validates that each file is a regular non-symlink file
+owned by the invoking user and at most 256 MiB. One unmatched game log alone
+does not alter a model or automatically apply any setting.
+
+### Benchmark acceptance gates
+
+Compare the original release and experimental branch against the same source
+signature and hardware context: model fit p50/p95 for n=64/128/256/512/1100,
+LOSO 90% interval coverage, interaction recovery, decision regret, idle/load
+measurement false-negative rate, IO write bytes, thermal gate and restore
+under crash/permission failure. Do not enable experimental flags merely
+because their code is present. `cargo test --workspace --locked` and the Qt6
+build are required and were not executable in the editing environment.

@@ -23,11 +23,14 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDateTime>
+#include <QProgressDialog>
 #include <QHeaderView>
 #include <QTableWidget>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
 #include <QGridLayout>
@@ -478,6 +481,21 @@ void OptimizeTab::buildUi() {
                                         "storage, battery, GPUs, kernel) and check every row with the value the chosen base calls for.\n"
                                         "Nothing is written until you press Apply checked; Save turns it into a preset."));
     connect(autoBtn_, &QPushButton::clicked, this, &OptimizeTab::runAutotune);
+    autoMode_ = new QComboBox;
+    autoMode_->addItem(QCoreApplication::translate("OptimizeTab", "Fast"), QStringLiteral("fast"));
+    autoMode_->addItem(QCoreApplication::translate("OptimizeTab", "Balanced"), QStringLiteral("balanced"));
+    autoMode_->addItem(QCoreApplication::translate("OptimizeTab", "Deep"), QStringLiteral("deep"));
+    autoMode_->setToolTip(QCoreApplication::translate("OptimizeTab", "Fast: main decision only. Balanced: main decision and 3 trade-offs. "
+                                         "Deep: also explores +/-30% objective-weight sensitivity. "
+                                         "No option applies settings automatically."));
+    autoExploreBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Explore…"));
+    autoExploreBtn_->setEnabled(false);
+    autoExploreBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Run trade-off comparisons on demand after the fast decision."));
+    connect(autoExploreBtn_, &QPushButton::clicked, this, [this] {
+        autoMode_->setCurrentIndex(1);
+        runAutotune();
+    });
+    connect(autoMode_, &QComboBox::currentIndexChanged, this, [this] { autoExploreBtn_->setEnabled(false); });
     auto *weightsBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Weights…"));
     weightsBtn->setToolTip(QCoreApplication::translate("OptimizeTab", "How much this base values latency, throughput, power, memory footprint, stability\n"
                                           "and how much the calibrated storage benchmarks count.\n"
@@ -495,13 +513,20 @@ void OptimizeTab::buildUi() {
                                       "stops the running one cleanly; it resumes after the next quiet stretch). Then the boot preset\n"
                                       "and the scene for the power source come back. The one-shot centurion-calibrate-boot service is added for that boot only."));
     connect(calBtn, &QPushButton::clicked, this, &OptimizeTab::scheduleBootCalibration);
+    auto *fieldBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Import game CSV…"));
+    fieldBtn->setToolTip(QCoreApplication::translate("OptimizeTab", "Import FLM or MangoHud frame-time logs from your own recorded game sessions. "
+        "This does not modify hardware settings; matching A/B game sessions are needed before they affect the model."));
+    connect(fieldBtn, &QPushButton::clicked, this, &OptimizeTab::importFieldData);
     calLabel_ = muted({});
     autoRow->addWidget(autoLbl);
     autoRow->addWidget(autoGoal_);
     autoRow->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "for")));
     autoRow->addWidget(autoCtx_);
+    autoRow->addWidget(autoMode_);
     autoRow->addWidget(autoBtn_);
+    autoRow->addWidget(autoExploreBtn_);
     autoRow->addWidget(weightsBtn);
+    autoRow->addWidget(fieldBtn);
     autoRow->addWidget(calBtn);
     autoRow->addStretch(1);
     pl->addLayout(autoRow, 2, 0, 1, 8);
@@ -1865,18 +1890,41 @@ void OptimizeTab::runAutotune() {
     if (rows_.isEmpty()) { showStatus(QStringLiteral("The tunable list is not loaded yet."), theme::WARN); return; }
     if (!QFileInfo(helperPath()).isExecutable()) { helperMissing_ = true; updateStateBanner(); return; }
     const QString goal = autoGoal_->currentData().toString();
+    const QString mode = autoMode_->currentData().toString();
     autoRunning_ = true;
     autoBtn_->setEnabled(false);
-    showStatus(QStringLiteral("Profiling the hardware…"), theme::MUTED, 0);
+    autoExploreBtn_->setEnabled(false);
+    showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · Inputs…"), theme::MUTED, 0);
     // Read-only op: runs unprivileged, like describe.
     auto *p = new QProcess(this);
     QPointer<QProcess> guard(p);
     auto timedOut = std::make_shared<bool>(false);
-    connect(p, &QProcess::finished, this, [this, p, goal, timedOut](int, QProcess::ExitStatus st) {
+    auto errorLog = std::make_shared<QByteArray>();
+    auto partialLine = std::make_shared<QByteArray>();
+    connect(p, &QProcess::readyReadStandardError, this, [this, p, errorLog, partialLine] {
+        const QByteArray chunk = p->readAllStandardError();
+        errorLog->append(chunk);
+        partialLine->append(chunk);
+        int end = -1;
+        while ((end = partialLine->indexOf('\n')) >= 0) {
+            const QByteArray line = partialLine->left(end).trimmed();
+            partialLine->remove(0, end + 1);
+            if (!line.startsWith("CENTURION_STAGE ")) continue;
+            const QByteArray stage = line.mid(sizeof("CENTURION_STAGE ") - 1);
+            QString label;
+            if (stage == "inputs") label = QCoreApplication::translate("OptimizeTab", "Inputs");
+            else if (stage == "model") label = QCoreApplication::translate("OptimizeTab", "Model");
+            else if (stage == "decision") label = QCoreApplication::translate("OptimizeTab", "Decision");
+            else if (stage == "validation") label = QCoreApplication::translate("OptimizeTab", "Validation");
+            if (!label.isEmpty()) showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · %1…").arg(label), theme::MUTED, 0);
+        }
+        if (partialLine->size() > 8192) partialLine->clear();
+    });
+    connect(p, &QProcess::finished, this, [this, p, goal, mode, timedOut, errorLog](int, QProcess::ExitStatus st) {
         autoRunning_ = false;
         autoBtn_->setEnabled(!busy_);
         const QByteArray out = p->readAllStandardOutput().trimmed();
-        const QByteArray err = p->readAllStandardError().trimmed();
+        const QByteArray err = (*errorLog + p->readAllStandardError()).trimmed();
         p->deleteLater();
         const QJsonObject d = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
         if (!d.value("ok").toBool()) {
@@ -1895,6 +1943,7 @@ void OptimizeTab::runAutotune() {
         Fill f;
         loadPresetObject(d.value("preset").toObject(), &notLoaded, true, &f);
         loadedPreset_ = d.value("name").toString();
+        autoExploreBtn_->setEnabled(mode == QLatin1String("fast") && d.value("explore_available").toBool());
         showStatus(QStringLiteral("Autotune · %1: every row checked — %2. Review, then Apply checked or Save.")
                        .arg(d.value("goal_label").toString(), fillSummary(f)), theme::OK, 12000);
         showAutotuneReport(d, notLoaded);
@@ -1908,7 +1957,7 @@ void OptimizeTab::runAutotune() {
     });
     QTimer::singleShot(AUTOTUNE_TIMEOUT_MS, p, [guard, timedOut] { if (guard && guard->state() != QProcess::NotRunning) { *timedOut = true; guard->kill(); } });
     p->start(helperPath(), {});
-    QJsonObject req{{"op", "autotune"}, {"goal", goal}};
+    QJsonObject req{{"op", "autotune"}, {"goal", goal}, {"mode", mode}, {"progress", true}};
     if (const QJsonObject w = autotuneWeights(goal); !w.isEmpty()) req["weights"] = w;
     if (autoCtx_ && !autoCtx_->currentData().toString().isEmpty()) req["profile"] = autoCtx_->currentData().toString();
     p->write(QJsonDocument(req).toJson(QJsonDocument::Compact));
@@ -2120,6 +2169,51 @@ void OptimizeTab::scheduleBootCalibration() {
     });
 }
 
+void OptimizeTab::importFieldData() {
+    if (busy_ || autoRunning_) return;
+    const QStringList files = QFileDialog::getOpenFileNames(this, tr("Import game telemetry"),
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation),
+        tr("Frame-time logs (*.csv *.log *.txt);;All files (*)"));
+    if (files.isEmpty()) return;
+    if (files.size() > 4) {
+        QMessageBox::warning(this, tr("Import game telemetry"), tr("Select at most four logs per import."));
+        return;
+    }
+    const QString executable = privileged::helperPath(QStringLiteral("centurion-calibrate"));
+    if (!QFileInfo(executable).isExecutable()) {
+        QMessageBox::warning(this, tr("Import game telemetry"), tr("centurion-calibrate is not installed."));
+        return;
+    }
+    auto *proc = new QProcess(this);
+    auto *finished = std::make_shared<bool>(false);
+    setBusy(true);
+    showStatus(tr("Importing frame-time logs and matching recorded game sessions…"), theme::MUTED, 0);
+    connect(proc, &QProcess::finished, this,
+        [this, proc, finished](int code, QProcess::ExitStatus st) {
+            if (*finished) return;
+            *finished = true;
+            const QString output = QString::fromUtf8(proc->readAllStandardOutput()).right(5000);
+            const QString error = QString::fromUtf8(proc->readAllStandardError()).right(1000);
+            proc->deleteLater();
+            setBusy(false);
+            const bool ok = st == QProcess::NormalExit && code == 0;
+            showStatus(ok ? tr("Game telemetry imported. Re-run Autotune to use matched A/B evidence.")
+                          : tr("Game telemetry import failed."), ok ? theme::OK : theme::WARN, 12000);
+            QMessageBox::information(this, tr("Game telemetry import"),
+                (output.isEmpty() ? error : output + (error.isEmpty() ? QString() : QStringLiteral("\n") + error)));
+        });
+    connect(proc, &QProcess::errorOccurred, this, [this, proc, finished](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || *finished) return;
+        *finished = true;
+        setBusy(false);
+        QMessageBox::warning(this, tr("Game telemetry import"), proc->errorString());
+        proc->deleteLater();
+    });
+    QStringList args{executable, QStringLiteral("--field")};
+    args.append(files);
+    proc->start(QStringLiteral("pkexec"), args);
+}
+
 void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &notLoaded) {
     const QJsonObject preset = d.value("preset").toObject();
     const QJsonObject values = preset.value("values").toObject();
@@ -2136,6 +2230,34 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     head->setTextFormat(Qt::RichText);
     head->setTextInteractionFlags(Qt::TextSelectableByMouse);
     v->addWidget(head);
+    const QJsonObject timings = d.value(QStringLiteral("timings_ms")).toObject();
+    if (!timings.isEmpty()) {
+        const QString mode = d.value(QStringLiteral("explore_mode")).toString(QStringLiteral("fast"));
+        auto *perf = new QLabel(QCoreApplication::translate("OptimizeTab", "<b>%1</b> · Inputs %2 ms · Model %3 ms · Decision %4 ms · Total %5 ms")
+            .arg(mode.toHtmlEscaped())
+            .arg(timings.value("inputs").toInteger())
+            .arg(timings.value("model").toInteger())
+            .arg(timings.value("decision").toInteger())
+            .arg(timings.value("total").toInteger()));
+        perf->setTextFormat(Qt::RichText);
+        perf->setWordWrap(true);
+        v->addWidget(perf);
+    }
+    if (d.value(QStringLiteral("explore_available")).toBool()) {
+        auto *hint = new QLabel(QCoreApplication::translate("OptimizeTab", "Fast result: trade-offs and weight sensitivity were skipped. Use Explore after closing this report to calculate comparisons on demand."));
+        hint->setWordWrap(true);
+        v->addWidget(hint);
+    }
+    if (const QJsonObject a = d.value(QStringLiteral("application_advice")).toObject(); !a.isEmpty()) {
+        auto *label = new QLabel(tr("Suggested next step: %1 (%2 settings, %3 uncertain effects, %4 without model evidence)")
+            .arg(a.value(QStringLiteral("text")).toString())
+            .arg(a.value(QStringLiteral("settings")).toInt())
+            .arg(a.value(QStringLiteral("uncertain_effects")).toInt())
+            .arg(a.value(QStringLiteral("not_modelled")).toInt()));
+        label->setWordWrap(true);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        v->addWidget(label);
+    }
     if (const QString ev = d.value(QStringLiteral("evidence_summary")).toString(); !ev.isEmpty()) {
         auto *evl = new QLabel(QCoreApplication::translate("OptimizeTab", "<b>Observed</b>&nbsp; %1").arg(ev.toHtmlEscaped()));
         evl->setWordWrap(true);
@@ -2356,6 +2478,37 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     });
 }
 
+// Only a *matching*, recent ABBA proof can authorize a high-risk autotuned
+// preset. The signature is root-owned; older verification records do not
+// carry the exact value snapshot and therefore cannot be treated as proof.
+static bool verifiedAutotunePreset(const QString &name, const QJsonObject &values) {
+    QFile signatureFile(QStringLiteral("/var/lib/centurion/signature.json"));
+    // A calibration signature may be several MiB (unlike a 256 KiB preset).
+    // Use the same 8 MiB upper bound as calib::MAX_FILE; fail closed.
+    if (!signatureFile.open(QIODevice::ReadOnly) || signatureFile.size() > (8LL << 20)) return false;
+    const QJsonObject signature = QJsonDocument::fromJson(signatureFile.readAll()).object();
+    const QJsonArray records = signature.value(QStringLiteral("verify")).toArray();
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (int i = records.size() - 1; i >= 0; --i) {
+        const QJsonObject v = records.at(i).toObject();
+        if (v.value(QStringLiteral("preset")).toString() != name ||
+            v.value(QStringLiteral("verification_v")).toInt() != 1 ||
+            !v.value(QStringLiteral("paired")).toBool() ||
+            !v.value(QStringLiteral("complete")).toBool() ||
+            !v.value(QStringLiteral("passed")).toBool() ||
+            v.value(QStringLiteral("rounds")).toInt() < 3 ||
+            !v.value(QStringLiteral("skipped")).toArray().isEmpty() ||
+            v.value(QStringLiteral("verified_values")).toObject() != values) continue;
+        const qint64 when = static_cast<qint64>(v.value(QStringLiteral("t")).toDouble());
+        if (when <= 0 || now < when || now - when > 24 * 3600) continue;
+        const QJsonArray ci = v.value(QStringLiteral("decision_ci")).toArray();
+        if (ci.size() != 2 || !ci.at(0).isDouble() || !ci.at(1).isDouble() ||
+            ci.at(0).toDouble() <= 0.0 || ci.at(1).toDouble() < ci.at(0).toDouble()) continue;
+        return true;
+    }
+    return false;
+}
+
 // ── apply / restore ─────────────────────────────────────────────────────────
 
 void OptimizeTab::applySelected() {
@@ -2367,6 +2520,83 @@ void OptimizeTab::applySelected() {
             "These changes can cost stability, heat or idle power:\n\n" + risky.join('\n') +
             "\n\nEverything stays reversible with Restore originals. Continue?",
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    // An autotuned preset with potentially destabilizing changes must be
+    // proved against the *current boot baseline* before Apply. For ordinary
+    // manual presets the legacy explicit caution confirmation still applies.
+    const QJsonObject preset = presetObject(loadedPreset_);
+    const bool autoPreset = preset.value(QStringLiteral("autotune")).isObject();
+    const bool highRisk = !risky.isEmpty() || values.size() >= 12;
+    if (autoPreset && highRisk && !verifiedAutotunePreset(loadedPreset_, values)) {
+        if (!validPresetName(loadedPreset_) || !storeHas(loadedPreset_) ||
+            preset.value(QStringLiteral("values")).toObject() != values) {
+            QMessageBox::warning(this, tr("Verify before apply"),
+                tr("Save these exact settings as a preset and approve its root-owned copy first. "
+                   "Any changed value invalidates the previous ABBA verification."));
+            return;
+        }
+        auto *question = new QMessageBox(QMessageBox::Warning, tr("ABBA verification required"),
+            tr("This autotuned preset contains high-risk or extensive changes. "
+               "Run a paired ABBA benchmark against your boot settings before applying it? "
+               "The test temporarily changes settings, journals originals, and restores them."),
+            QMessageBox::Cancel, this);
+        QPushButton *verify = question->addButton(tr("Verify now"), QMessageBox::AcceptRole);
+        question->exec();
+        const bool consented = question->clickedButton() == verify;
+        question->deleteLater();
+        if (!consented) return;
+        const QString executable = privileged::helperPath(QStringLiteral("centurion-calibrate"));
+        if (!QFileInfo(executable).isExecutable()) {
+            QMessageBox::critical(this, tr("ABBA verification"), tr("centurion-calibrate is not installed."));
+            return;
+        }
+        // Never interpolate a preset name in a shell command. pkexec executes
+        // the fixed privileged helper with a fixed argv. Fail closed.
+        auto *proc = new QProcess(this);
+        auto *progress = new QProgressDialog(tr("Verifying preset using up to four ABBA blocks…"),
+            tr("Cancel verification"), 0, 0, this);
+        progress->setWindowModality(Qt::WindowModal);
+        progress->setAutoClose(false);
+        progress->setAutoReset(false);
+        progress->setMinimumDuration(0);
+        setBusy(true);
+        connect(progress, &QProgressDialog::canceled, this, [proc] {
+            // SIGTERM uses centurion-calibrate's stop/restore path.
+            if (proc->state() != QProcess::NotRunning) proc->terminate();
+        });
+        connect(proc, &QProcess::finished, this,
+            [this, proc, progress, values, name = loadedPreset_](int exitCode, QProcess::ExitStatus st) {
+                const QString tail = QString::fromUtf8(proc->readAllStandardError()).right(650);
+                progress->close();
+                progress->deleteLater();
+                proc->deleteLater();
+                setBusy(false);
+                if (st != QProcess::NormalExit || exitCode != 0 || !verifiedAutotunePreset(name, values)) {
+                    QMessageBox::warning(this, tr("ABBA verification failed"),
+                        tr("The preset was not applied. Check the results and restore journaled settings if needed:\n"
+                           "sudo centurion-calibrate --restore\n\n%1").arg(tail));
+                    return;
+                }
+                QMessageBox::information(this, tr("ABBA verification passed"),
+                    tr("At least three paired ABBA blocks showed a positive, corrected confidence interval. "
+                       "Only the verified preset values will be applied."));
+                applyValues(values, name);
+            });
+        connect(proc, &QProcess::errorOccurred, this, [this, proc, progress](QProcess::ProcessError err) {
+            if (err != QProcess::FailedToStart) return;
+            progress->close();
+            progress->deleteLater();
+            setBusy(false);
+            QMessageBox::critical(this, tr("ABBA verification"),
+                tr("Failed to start pkexec. Nothing has been applied: %1").arg(proc->errorString()));
+            proc->deleteLater();
+        });
+        proc->start(QStringLiteral("pkexec"),
+            QStringList{executable, QStringLiteral("--verify"), loadedPreset_,
+                        QStringLiteral("--rounds"), QStringLiteral("4"),
+                        QStringLiteral("--sequential"), QStringLiteral("--require-improvement")});
+        progress->show();
+        return;
+    }
     applyValues(values, loadedPreset_);
 }
 

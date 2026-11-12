@@ -55,23 +55,55 @@ pub fn wake_p99_us(dur: Duration) -> Option<f64> {
             }
         }
     });
+    let adaptive = adaptive_probes_enabled() && dur >= Duration::from_millis(500);
+    let window = if adaptive { dur / 4 } else { dur / 3 };
     let mut lat = Vec::with_capacity(4096);
-    for _ in 0..3 {
+    let mut windows = Vec::new();
+    let max_windows = if adaptive { 6 } else { 3 };
+    for i in 0..max_windows {
         let part = std::thread::spawn(move || {
             let mut v = Vec::with_capacity(1024);
             let t0 = Instant::now();
-            while t0.elapsed() < dur / 3 {
+            while t0.elapsed() < window {
                 let a = Instant::now();
                 std::thread::sleep(Duration::from_micros(500));
                 v.push((a.elapsed().as_nanos() as f64 / 1000.0 - 500.0).max(0.0));
             }
             v
         });
-        lat.extend(part.join().unwrap_or_default());
+        let part = part.join().unwrap_or_default();
+        let count = part.len();
+        let ts = { let mut sorted = part.clone(); tail(&mut sorted).unwrap_or(f64::NAN) };
+        windows.push(ts);
+        lat.extend(part);
+        // At least three independent scheduler placements and 600 timer events
+        // are required before making any decision about a p99 tail. The 95%
+        // t-interval on independent sub-window tails must be within 12% of
+        // their mean; unstable tails extend the measurement, never shorten it.
+        if adaptive && i >= 2 && count >= 100 && lat.len() >= 600 &&
+            tail_ci_stable(&windows, 0.12) { break; }
     }
     stop.store(true, Ordering::Relaxed);
     let _ = churn.join();
     tail(&mut lat)
+}
+
+/// Independent-window 95% t-interval (conservative df=2 critical value).
+/// A large pooled sample without agreement across scheduler placements is
+/// never enough to call a p99 measurement stable.
+fn tail_ci_stable(w: &[f64], rel: f64) -> bool {
+    if w.len() < 3 || w.iter().any(|x| !x.is_finite() || *x < 0.0) { return false; }
+    let n = w.len() as f64;
+    let mean = w.iter().sum::<f64>() / n;
+    if mean <= 0.0 { return false; }
+    let var = w.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    // 4.303 is the 95% two-sided t critical value at df=2. Keeping that
+    // critical value for extra windows errs toward longer measurements.
+    4.303 * (var / n).sqrt() <= rel * mean
+}
+
+pub fn adaptive_probes_enabled() -> bool {
+    matches!(std::env::var("CENTURION_ADAPTIVE_PROBES").as_deref(), Ok("1" | "true" | "yes"))
 }
 
 fn smaps_kb(field: &str) -> Option<f64> {
@@ -1443,6 +1475,13 @@ pub fn jobs_per_sec(exe: &std::path::Path, dur: Duration) -> Option<f64> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn adaptive_tail_stops_only_with_independent_agreement() {
+        assert!(tail_ci_stable(&[100.0, 101.0, 99.0], 0.12));
+        assert!(!tail_ci_stable(&[100.0, 101.0], 0.12));
+        assert!(!tail_ci_stable(&[100.0, 10.0, 100.0], 0.12));
+        assert!(!tail_ci_stable(&[f64::NAN, 100.0, 100.0], 0.12));
+    }
     #[test]
     fn slc_drop_from_part_speeds() {
         assert!(!slc_drop(&[900.0; 5]), "too few parts");

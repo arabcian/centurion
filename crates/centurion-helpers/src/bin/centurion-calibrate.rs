@@ -12,7 +12,7 @@
 //!   sudo centurion-calibrate --restore          put back what an interrupted run changed
 //!   sudo centurion-calibrate --restore --drop   same, and give up originals that cannot be written back
 //!   sudo centurion-calibrate --scene NAME [...] measure in a scene's power context (profile, limits, fan)
-//!   sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--phase load] [--goal G|all] [--sequential]
+//!   sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--phase load] [--goal G|all] [--sequential] [--require-improvement]
 //!                                               whole preset vs the boot state (ABBA); --sequential stops once decided
 //!   sudo centurion-calibrate --gpu-coupling [--secs S]   CPU-GPU power coupling while a GPU-bound load runs
 //!   sudo centurion-calibrate --field LOG... [--game NAME] import game sessions' frame-time logs (FLM / MangoHud)
@@ -360,9 +360,15 @@ fn run_load(b: Benches, c: &Ctx) -> Result<(Sample, bool), String> {
 /// One run of the IO phase: page cache dropped (the previous run's file pages must not serve
 /// this one's reads), then the storage suite on the measured disk.
 fn run_io(c: &Ctx) -> Result<Sample, String> {
-    unsafe { libc::sync(); }
-    let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
-    std::thread::sleep(Duration::from_millis(400));
+    if !calib::scoped_io_enabled() {
+        // Legacy benchmark 7: keep its original global cold-cache semantics.
+        unsafe { libc::sync(); }
+        let _ = std::fs::write("/proc/sys/vm/drop_caches", "3");
+        std::thread::sleep(Duration::from_millis(400));
+    }
+    // Scoped benchmark 8: bench::io already uses posix_fadvise(DONTNEED)
+    // for the benchmark's own file and O_DIRECT for random reads. No global
+    // cache eviction; benchmark version 8 prevents merging with old rows.
     let mut s = Sample::new();
     bench::io(&c.dir, c.io_size, &mut s)?;
     Ok(s)
@@ -660,7 +666,7 @@ impl Depth {
 
 /// One executed design point (empty cfg = reference run): wall-clock time, evidence weight, die
 /// temperature at its start and whether it ran heat-soaked (cfg holds ("ctx.heat", "hot")).
-struct Run { cfg: Cfg, s: Sample, order: usize, t: u64, w: f64, temp: Option<f64> }
+struct Run { cfg: Cfg, s: Sample, order: usize, t: u64, w: f64, temp: Option<f64>, full: bool }
 
 fn is_hot(cfg: &[(String, String)]) -> bool { cfg.iter().any(|(k, v)| k == "ctx.heat" && v == "hot") }
 
@@ -729,7 +735,11 @@ fn compute_rows(runs: &[Run], phase: Phase, sess: u64, kernel: &str, n_total: us
     let base_runs: Vec<&Run> = if refs.len() >= 3 { refs.clone() } else { runs.iter().collect() };
     let mut base: BTreeMap<Metric, f64> = BTreeMap::new();
     for m in Metric::ALL {
-        if runs.iter().filter(|r| r.s.contains_key(&m)).count() * 5 < runs.len() * 4 { continue; }
+        // Fast probes intentionally omit heap/THP metrics. Establish the objective's
+        // metric vocabulary ONLY from full-suite runs, never an 80%-of-all-runs gate
+        // that would silently eliminate entire objectives when many candidates are fast.
+        let full_count = runs.iter().filter(|r| r.full).count();
+        if full_count == 0 || runs.iter().filter(|r| r.full && r.s.contains_key(&m)).count() * 5 < full_count * 4 { continue; }
         let mut v: Vec<f64> = base_runs.iter().filter_map(|r| r.s.get(&m).copied()).collect();
         if let Some(b) = calib::median(&mut v) { base.insert(m, b); }
     }
@@ -751,7 +761,12 @@ fn compute_rows(runs: &[Run], phase: Phase, sess: u64, kernel: &str, n_total: us
         let mut acc = [(0.0f64, 0usize); 4];
         for ((i, _), (s, w)) in &fam { acc[*i].0 += s / w; acc[*i].1 += 1; }
         let mut y = [f64::NAN; 4];
-        for i in 0..4 { if acc[i].1 > 0 { y[i] = acc[i].0 / acc[i].1 as f64 * gain[i]; } }
+        for i in 0..4 {
+            // A fast CPU run has a complete power objective, but its memory, throughput
+            // and latency metric families are NOT the same suite as the reference.
+            // Missing objectives stay NaN, so GP::obs(Some(i)) excludes them.
+            if acc[i].1 > 0 && (r.full || i == 2) { y[i] = acc[i].0 / acc[i].1 as f64 * gain[i]; }
+        }
         let tc = match (r.temp, if is_hot(&r.cfg) { t_hot } else { t_cool }) { (Some(t), Some(m)) => t - m, _ => f64::NAN };
         Row { phase, sess, pos: (r.order as f64 / n_total.max(runs.len()) as f64).min(1.0), t: r.t, kernel: kernel.into(), cfg: r.cfg.clone(), y, w: r.w,
               bv: calib::bench_version(phase), src: if phase == Phase::Dev { calib::PowerSrc::Battery } else { meta.src }, cx: meta.cx.clone(), tc, field: false }
@@ -817,6 +832,8 @@ struct Runner<'a> { j: Journal, c: &'a Ctx, rate: u64, ram: u64, ballast: Option
                     /// Configurations of loaded runs the memory brake stopped, not yet noted in the signature
                     /// (`Design::exec` hands them to `Calibration::note_brake`).
                     braked: Vec<Cfg>,
+                    /// Bounded preflight observations, before touching any tunable.
+                    preflight_retries: usize, preflight_skips: usize, preflight_secs: f64,
                     /// `--strict` ended the session: its reference level left the history.
                     shifted: bool }
 
@@ -827,7 +844,7 @@ impl Runner<'_> {
     fn new<'a>(c: &'a Ctx, rate: u64, ram: u64) -> Runner<'a> {
         Runner { j: Journal { entries: Vec::new() }, c, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
                  cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0, slc: 0, irq_ref: Default::default(), parasites: BTreeMap::new(), io_before: 0, io_session: 0,
-                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new(), shifted: false }
+                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new(), preflight_retries: 0, preflight_skips: 0, preflight_secs: 0.0, shifted: false }
     }
     /// The session's power source must still be there: a charger pulled on AC (or plugged in on
     /// battery) moves the firmware limits, the power reading's source and the context every row is
@@ -875,6 +892,37 @@ impl Runner<'_> {
         self.ballast = Some(b);
         Ok(())
     }
+    /// Optional bounded quiet gate. Every probe sees FOREIGN CPU work and machine
+    /// disk/network/GPU counters, without writes or a privileged system-wide action.
+    /// On expiry the default is fail-open with post-run downweighting intact.
+    /// Strict opt-in drops the run; this never waits indefinitely.
+    fn preflight(&mut self, phase: Phase) -> bool {
+        if !calibrate_flag("CENTURION_PREFLIGHT") { return true; }
+        let begun = Instant::now();
+        for attempt in 0..=2 {
+            if STOP.load(Ordering::SeqCst) { return false; }
+            let fg = bench::Foreign::snapshot(&[]);
+            let sys = bench::SysCounters::read();
+            let sample_start = Instant::now();
+            std::thread::sleep(Duration::from_millis(300));
+            let secs = sample_start.elapsed().as_secs_f64();
+            let act = sys.activity(&bench::SysCounters::read(), secs);
+            let others = fg.busy_cpus(&[], secs);
+            // The load phase's pressure ballast is Centurion's child, not a
+            // foreign process; the threshold is in CPU cores, not percent.
+            let quiet = others <= 0.6 && bench::disturbances(&act, None, phase != Phase::Io).is_empty();
+            if quiet { self.preflight_secs += begun.elapsed().as_secs_f64(); return true; }
+            if attempt < 2 { self.preflight_retries += 1; std::thread::sleep(Duration::from_millis(200)); }
+        }
+        self.preflight_secs += begun.elapsed().as_secs_f64();
+        eprintln!("\npreflight: machine remained busy after a bounded quiet wait");
+        if calibrate_flag("CENTURION_PREFLIGHT_STRICT") {
+            self.preflight_skips += 1;
+            self.dropped += 1;
+            return false;
+        }
+        true
+    }
     /// One run of `cfg` (all other knobs at their reference). None = a value could not be written.
     fn run(&mut self, phase: Phase, b: Benches, cfg: &Cfg, note: &str) -> Result<Option<Done>, String> {
         // The daily write budget: an IO run that would exceed it ends the storage phase cleanly.
@@ -888,6 +936,7 @@ impl Runner<'_> {
         self.power_check()?;
         // A value the kernel refused earlier in this session is refused again: no point in another try.
         if self.refused(cfg) { return Ok(None); }
+        if !self.preflight(phase) { return Ok(None); }
         if phase == Phase::Load { self.need_ballast()?; }
         // No memory pressure behind the storage suite: the ballast would turn it into a swap test.
         if phase != Phase::Load { if let Some(b) = self.ballast.take() { b.stop(); } }
@@ -1220,6 +1269,42 @@ fn cool_first(v: Vec<Cfg>) -> Vec<Cfg> {
     cool
 }
 
+fn calibrate_flag(name: &str) -> bool {
+    matches!(std::env::var(name).as_deref(), Ok("1" | "true" | "yes"))
+}
+
+/// Alternating thermal blocks are opt-in: the established cool-first sequence
+/// remains the fallback. Thermal gates still run before every individual probe.
+fn thermal_block(v: Vec<Cfg>, batch: usize) -> Vec<Cfg> {
+    if !calibrate_flag("CENTURION_HEAT_BLOCK_AB") || batch % 2 == 0 { return cool_first(v); }
+    let (mut hot, cool): (Vec<Cfg>, Vec<Cfg>) = v.into_iter().partition(|c| is_hot(c));
+    hot.extend(cool);
+    hot
+}
+
+/// Previous sessions' measured cost; bounded to prevent one interrupted session
+/// or a thermal spike from distorting acquisition and time allocation.
+fn run_cost_hint(cal: &Calibration, phase: Phase, cx: &str, fallback: f64) -> f64 {
+    let observed = cal.quality.iter().rev().find(|q| q["phase"] == phase.name() && q["cx"] == cx && q["runs"].as_u64().unwrap_or(0) >= 4)
+        .and_then(|q| q["run_secs"].as_f64()).filter(|t| t.is_finite() && *t > 0.0);
+    observed.map_or(fallback, |t| (0.5 * fallback + 0.5 * t.clamp(fallback * 0.5, fallback * 2.0)))
+}
+
+/// Repeated calibrations need fewer initial space-filling runs only if prior
+/// measurements cover most factor/value doses. A new machine keeps Depth.init.
+fn initial_design_count(total: usize, fraction: f64, factors: &[Factor], prior: &[Cfg]) -> usize {
+    let base = ((total as f64 * fraction) as usize).clamp(8, total);
+    if factors.is_empty() || prior.len() < factors.len() * 3 { return base; }
+    let doses: std::collections::HashSet<(&str, &str)> = prior.iter().flat_map(|cfg| cfg.iter().map(|(k, v)| (k.as_str(), v.as_str()))).collect();
+    let wanted = factors.iter().map(|f| f.values.len()).sum::<usize>();
+    if wanted == 0 { return base; }
+    let seen = factors.iter().flat_map(|f| f.values.iter().map(move |v| (f.key.as_str(), v.as_str()))).filter(|kv| doses.contains(kv)).count();
+    let fraction_seen = seen as f64 / wanted as f64;
+    let target = if fraction_seen >= 0.85 { 0.25 } else if fraction_seen >= 0.60 { 0.35 } else { fraction };
+    let floor = factors.len().min(total).max(8);
+    base.min(((total as f64 * target) as usize).max(floor).min(total))
+}
+
 fn save(cal: &Calibration) {
     if let Err(e) = cal.save() { eprintln!("\nsignature not saved: {e}"); return; }
     // The fits the retunes just made, for the next autotune (it then skips fitting).
@@ -1293,7 +1378,7 @@ fn report_interactions(m: &Model, k: usize, indent: &str) {
     }
 }
 
-struct Design<'a> { phase: Phase, bs: Benches, sess: u64, n_total: usize, kernel: &'a str, refs: &'a BTreeMap<String, String>, runs: Vec<Run>, oom_left: usize,
+struct Design<'a> { phase: Phase, bs: Benches, fast_scan: bool, sess: u64, n_total: usize, kernel: &'a str, refs: &'a BTreeMap<String, String>, runs: Vec<Run>, oom_left: usize,
                     t0: Instant, secs: f64, spent: f64, meta: Meta, strategy: &'static str,
                     /// Runs attempted (measured, OOM-bisected, refused or thrown away): what `spent` was spent on.
                     tries: usize,
@@ -1316,8 +1401,13 @@ impl Design<'_> {
         let t = Instant::now();
         // A value already refused this session is skipped at once: not an attempt that costs run time.
         if !rn.refused(cfg) { self.tries += 1; }
-        match rn.run(self.phase, self.bs, cfg, "")? {
-            Some(Done { s, oom: false, w, t, temp }) => { let order = self.runs.len(); self.runs.push(Run { cfg: cfg.clone(), s, order, t, w, temp }); }
+        // Full references, OOM isolation, dose refinement, confirmation and every
+        // third design candidate retain the established benchmark. All others may
+        // skip expensive heap/THP child probes when explicitly enabled.
+        let full = !self.fast_scan || cfg.is_empty() || self.tries % 3 == 0;
+        let b = if full { self.bs } else { Benches { cpu_mem: false, ..self.bs } };
+        match rn.run(self.phase, b, cfg, if full { "" } else { "(fast probe)" })? {
+            Some(Done { s, oom: false, w, t, temp }) => { let order = self.runs.len(); self.runs.push(Run { cfg: cfg.clone(), s, order, t, w, temp, full }); }
             Some(Done { oom: true, .. }) => {
                 let start = self.oom_left.min(6);
                 let mut left = start;
@@ -1354,7 +1444,7 @@ impl Design<'_> {
     }
     /// Measured runs from outside the design's own list (the OOM search's halves): ordinary runs.
     fn keep_runs(&mut self, kept: Vec<(Cfg, Done)>) {
-        for (cfg, Done { s, w, t, temp, .. }) in kept { let order = self.runs.len(); self.runs.push(Run { cfg, s, order, t, w, temp }); }
+        for (cfg, Done { s, w, t, temp, .. }) in kept { let order = self.runs.len(); self.runs.push(Run { cfg, s, order, t, w, temp, full: true }); }
     }
     /// Runs that still fit in the phase's time (measured cost per run, not the estimate).
     fn left(&self) -> usize {
@@ -1367,6 +1457,7 @@ impl Design<'_> {
     fn commit(&self, cal: &mut Calibration, rn: &Runner) {
         let rows = compute_rows(&self.runs, self.phase, self.sess, self.kernel, self.n_total, &self.meta);
         let mut q = session_quality(&rows, self, rn);
+        q["run_secs"] = json!(self.spent / self.tries.max(1) as f64);
         cal.put_session(self.phase, self.sess, rows);
         // The environment this session ran in (BIOS, microcode, boot parameters): rows of another one count less.
         let (h, e) = calib::env_current();
@@ -1420,20 +1511,26 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     // this phase starts from it, so the reference runs are what the label says.
     let dirty_ok = tune::find("vm.dirty_bytes").is_some_and(|t| !tune::files(t).is_empty());
     rn.base = factors.iter().filter(|f| f.key == "vm.dirty" && dirty_ok).map(|f| (f.key.clone(), f.reference.clone())).collect();
-    let cost = est_secs(phase, bs, rn.c.scale).max(1.0);
+    let cost = run_cost_hint(cal, phase, &rn.c.cx, est_secs(phase, bs, rn.c.scale).max(1.0));
     let heat_secs = rn.c.heat_secs;
     let run_cost = move |c: &Cfg| cost + if is_hot(c) { heat_secs } else { 0.0 };
     let ch = Choice { cost: &run_cost, heat };
     let n_total = ((budget / cost) as usize).clamp(12, dp.cap);
-    let n_init = ((n_total as f64 * dp.init) as usize).clamp(8, n_total);
+    let prior: Vec<Cfg> = cal.rows.iter().filter(|r| r.phase == phase && r.cx == rn.c.cx &&
+        (phase == Phase::Io || r.src == (if rn.c.battery || phase == Phase::Dev { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl })))
+        .map(|r| r.cfg.clone()).collect();
+    let n_init = initial_design_count(n_total, dp.init, &factors, &prior);
     let sess = now() + phase.idx() as u64;
     let mut rng = Rng::new(seed ^ sess);
-    let mut d = Design { phase, bs, sess, n_total, kernel, refs, runs: Vec::new(), oom_left: 12, t0: Instant::now(), secs: budget, spent: 0.0,
+    let mut d = Design { phase, bs, fast_scan: calibrate_flag("CENTURION_FAST_SCAN") && matches!(phase, Phase::Idle | Phase::Load), sess, n_total, kernel, refs, runs: Vec::new(), oom_left: 12, t0: Instant::now(), secs: budget, spent: 0.0,
                          meta: Meta::new(cal, if phase == Phase::Dev || rn.c.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, rn.c.cx.clone()),
                          strategy: dp.name, tries: 0, checked: false };
     rn.disp0 = None;
+    // Quality metadata belongs to this phase rather than previous phases.
+    rn.preflight_retries = 0;
+    rn.preflight_skips = 0;
+    rn.preflight_secs = 0.0;
     if heat { eprintln!("{name}: heat is a design factor (heat-soaked runs: {:.0} s of every CPU busy first)", rn.c.heat_secs); }
-    let prior: Vec<Cfg> = cal.rows.iter().filter(|r| r.phase == phase).map(|r| r.cfg.clone()).collect();
     eprintln!("\n{name} design ({}): {} knob(s), up to {n_total} runs of ~{cost:.0} s ({n_init} space-filling{}, then chosen by decision doubt{})",
               dp.name, factors.len(), if dp.mix.crowd > 0.0 { format!(", {:.0} % crowded ({}-{} changes)", dp.mix.crowd * 100.0, dp.mix.crowd_k.0, dp.mix.crowd_k.1) } else { String::new() },
               if dp.pairs > 0 { " and interaction doubt" } else { "" });
@@ -1446,7 +1543,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let init: Vec<Cfg> = model::design(&design_factors(&factors, &rn.unwritable), n_init, &mut rng, &dp.mix, &prior).into_iter().filter(|c| !cal.avoid_cfg(c)).collect();
     'init: for chunk in init.chunks(6) {
         for cfg in cool_first(chunk.to_vec()) {
-            if d.secs.is_finite() && d.t0.elapsed().as_secs_f64() > d.secs * (dp.init + 0.1) { break 'init; }
+            if d.secs.is_finite() && d.t0.elapsed().as_secs_f64() > d.secs * (n_init as f64 / n_total as f64 + 0.1) { break 'init; }
             d.exec(cal, rn, &cfg)?;
             if ref_due(n) { d.exec(cal, rn, &none)?; }
             n += 1;
@@ -1461,6 +1558,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let confirm_runs = if confirm { 2 + 4 * dp.reps.min(2) } else { 0 };
     let reserve = confirm_runs + if dp.ladder > 0 { dp.ladder * 2 + 1 } else { 0 };
     let (mut batches, mut exploring) = (0, false);
+    let mut last_retune_rows = d.runs.len();
     while d.runs.len() + dp.batch + 1 + reserve <= dp.cap && d.left() >= dp.batch + 1 + reserve {
         let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, dp.batch, &mut rng, &rn.c.cx, &rn.bad(cal), &ch) else { break };
         eprintln!("\n{name}: {} runs, decision doubt {:.2}{}, model R² {:.2}, 90 % interval coverage {:.0} %", d.runs.len(), an.risk,
@@ -1476,13 +1574,19 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
             // Doubt-driven runs, heat-soaked where that state is worth its soak (`analyse`).
             an.picks
         };
-        for cfg in cool_first(picks) { if !cal.avoid_cfg(&cfg) && !rn.refused(&cfg) { d.exec(cal, rn, &cfg)?; } }
+        for cfg in thermal_block(picks, batches) { if !cal.avoid_cfg(&cfg) && !rn.refused(&cfg) { d.exec(cal, rn, &cfg)?; } }
         d.exec(cal, rn, &none)?;
         d.commit(cal, rn);
         batches += 1;
-        if batches % 4 == 0 { cal.retune(phase, 1); save(cal); }
+        if batches % 4 == 0 && (d.runs.len().saturating_sub(last_retune_rows) >= 8 || batches % 12 == 0) {
+            cal.retune(phase, 1);
+            last_retune_rows = d.runs.len();
+            save(cal);
+        }
     }
 
+    // Never validate a recommendation using a reduced suite.
+    d.fast_scan = false;
     // 3. Dose refinement: midpoints of numeric ladders around the chosen doses.
     if dp.ladder > 0 && d.left() >= dp.ladder + confirm_runs {
         if let Some(an) = phase_analysis(cal, phase, &writable(&factors, &rn.unwritable), dp, 0, &mut rng, &rn.c.cx, &rn.bad(cal), &ch) {
@@ -1571,7 +1675,8 @@ fn session_quality(rows: &[Row], d: &Design, rn: &Runner) -> Value {
     let noise: Vec<Value> = (0..4).map(|o| robust_sd(&refs.iter().map(|r| r.y[o]).collect::<Vec<_>>()).map_or(Value::Null, |x| json!(round3(x)))).collect();
     json!({"t": now(), "sess": d.sess, "phase": d.phase.name(), "strategy": d.strategy, "runs": d.runs.len(), "refs": refs.len(), "noise": noise,
            "weak": d.runs.iter().filter(|r| r.w < 0.999).count(), "refused": rn.unwritable.len(), "dropped": rn.dropped,
-           "power_waits": rn.power_waits, "ended_early": rn.power_lost, "cx": d.meta.cx, "parasites": rn.parasites})
+           "power_waits": rn.power_waits, "ended_early": rn.power_lost, "cx": d.meta.cx, "parasites": rn.parasites,
+           "preflight_retries": rn.preflight_retries, "preflight_skips": rn.preflight_skips, "preflight_secs": round3(rn.preflight_secs)})
 }
 
 fn quality_line(q: &Value) -> String {
@@ -1586,6 +1691,8 @@ fn quality_line(q: &Value) -> String {
     if let Some(p) = q["parasites"].as_object().filter(|p| !p.is_empty()) {
         s.push_str(&format!("; outside activity: {}", p.iter().map(|(k, n)| format!("{n} run(s) {k}")).collect::<Vec<_>>().join(", ")));
     }
+    if q["preflight_retries"].as_u64().unwrap_or(0) > 0 { s.push_str(&format!("; {} quiet-gate retries", q["preflight_retries"])); }
+    if q["preflight_skips"].as_u64().unwrap_or(0) > 0 { s.push_str(&format!("; {} preflight skips", q["preflight_skips"])); }
     if q["power_waits"].as_u64().unwrap_or(0) > 0 { s.push_str(&format!("; waited {} time(s) for the power source", q["power_waits"])); }
     if let Some(b) = q["baseline_shift"].as_array() {
         let l: Vec<String> = b.iter().map(|x| format!("{} {:+.1} %", x["metric"].as_str().unwrap_or("?"), x["rel"].as_f64().unwrap_or(0.0) * 100.0)).collect();
@@ -1606,6 +1713,28 @@ fn split(items: &[Item], scale: f64, budget: f64) -> Vec<(Phase, Vec<&Item>, f64
     v
 }
 
+/// Baseline phase floors first, then spend the rest where evidence is sparse
+/// relative to factors and typical cost. Use only the active measurement context
+/// and power source; a battery run must not make RAPL appear well-covered.
+fn split_adaptive<'a>(items: &'a [Item], ctx: &Ctx, budget: f64, cal: &Calibration) -> Vec<(Phase, Vec<&'a Item>, f64)> {
+    let mut v = split(items, ctx.scale, budget);
+    if !calibrate_flag("CENTURION_ADAPTIVE_BUDGET") || !budget.is_finite() || v.is_empty() { return v; }
+    let floors: Vec<f64> = v.iter().map(|(ph, its, _)| 12.0 * est_secs(*ph, union_benches(*ph, its), ctx.scale).max(1.0)).collect();
+    let needed: f64 = floors.iter().sum();
+    if budget <= needed { return v; }
+    let remaining = budget - needed;
+    let scores: Vec<f64> = v.iter().map(|(ph, its, _)| {
+        let src = if *ph == Phase::Dev || ctx.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl };
+        let evidence = cal.rows.iter().filter(|r| r.phase == *ph && r.cx == ctx.cx && (r.src == src || *ph == Phase::Io)).count() as f64;
+        let cost = est_secs(*ph, union_benches(*ph, its), ctx.scale).max(1.0);
+        // An additional useful run buys less information once factor coverage is good.
+        (its.len() as f64).sqrt() * cost.sqrt() / (1.0 + evidence / (its.len() * 4).max(1) as f64).sqrt()
+    }).collect();
+    let sum = scores.iter().sum::<f64>().max(f64::EPSILON);
+    for ((e, floor), score) in v.iter_mut().zip(floors).zip(scores) { e.2 = floor + remaining * score / sum; }
+    v
+}
+
 fn phase_factors(its: &[&Item]) -> Vec<Factor> { its.iter().map(|i| Factor { key: i.key.clone(), reference: i.reference.clone(), values: i.values.clone() }).collect() }
 
 /// One design session over every phase. Returns false when the session's power source went away
@@ -1622,7 +1751,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
             eprintln!("{k}: reference changed in this context ({old} -> {r}): its earlier design rows are re-coded against the new reference");
         }
     }
-    let phases = split(items, ctx.scale, budget);
+    let phases = split_adaptive(items, ctx, budget, cal);
     if phases.is_empty() { eprintln!("nothing to design: fewer than two testable knobs"); return true; }
     let mut rn = Runner::new(ctx, rate, ram);
     rn.io_before = cal.io_written(today());
@@ -1963,9 +2092,10 @@ fn main() {
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
     if let Some(name) = opt("--verify") {
         let r = verify_main(&mut cal, &ctx, &name, opt("--rounds").and_then(|s| s.parse().ok()).unwrap_or(4), flag("--io"), opt("--goal"), rate, ram, &kernel,
-                            phase == "load", flag("--sequential"));
-        if let Err(e) = r { eprintln!("centurion-calibrate --verify: {e}"); }
+                            phase == "load", flag("--sequential"), flag("--require-improvement"));
         centurion_helpers::autotune::evidence_taint(&ev0);
+        drop(td); // restore fan, power context and calibration hold before failing
+        if let Err(e) = r { die(&format!("--verify: {e}")); }
         return;
     }
     if flag("--gpu-coupling") {
@@ -2302,11 +2432,15 @@ fn field_import(cal: &mut Calibration, files: &[String], game: Option<String>) -
     use centurion_helpers::field;
     if files.is_empty() { return Err("--field needs one or more frame-time logs (FLM or MangoHud CSV)".into()); }
     if centurion_helpers::calibration_hold().is_some() { return Err("a calibration is running: import afterwards".into()); }
-    let user = std::env::var("SUDO_USER").ok().filter(|u| !u.is_empty()).ok_or("run it with sudo from the account that plays the games")?;
-    let home = std::fs::read_to_string("/etc/passwd").ok().and_then(|p| p.lines().find_map(|l| {
+    // pkexec supplies the invoking UID, sudo supplies the invoking name.
+    // Never use root's game-session log as the user's log.
+    let uid = std::env::var("PKEXEC_UID").ok().and_then(|s| s.parse::<u32>().ok());
+    let user = std::env::var("SUDO_USER").ok().filter(|u| !u.is_empty() && u != "root");
+    let (home, caller_uid) = std::fs::read_to_string("/etc/passwd").ok().and_then(|p| p.lines().find_map(|l| {
         let f: Vec<&str> = l.split(':').collect();
-        (f.len() >= 6 && f[0] == user).then(|| f[5].to_owned())
-    })).ok_or("no home directory")?;
+        let id = if f.len() >= 6 { f[2].parse::<u32>().ok()? } else { return None };
+        ((uid == Some(id) || user.as_deref() == Some(f[0])) && id != 0).then(|| (f[5].to_owned(), id))
+    })).ok_or("run from the account that plays the games (pkexec or sudo)")?;
     let sessions = field::sessions(&std::fs::read_to_string(field::session_log(std::path::Path::new(&home))).unwrap_or_default());
     if sessions.is_empty() { return Err("no recorded game sessions yet (centurion-gamemode records them while games run)".into()); }
     let defaults = centurion_helpers::defaults::load();
@@ -2314,10 +2448,22 @@ fn field_import(cal: &mut Calibration, files: &[String], game: Option<String>) -
     let boot = |k: &str| defaults.as_ref().and_then(|d| d.values.get(k).cloned()).or_else(|| refs.get(k).cloned());
     let (mut recs, mut msgs) = (Vec::new(), Vec::new());
     for f in files {
-        let meta = std::fs::metadata(f).map_err(|e| format!("{f}: {e}"))?;
+        use std::io::Read;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let file = std::fs::OpenOptions::new().read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC).open(f)
+            .map_err(|e| format!("{f}: {e}"))?;
+        let meta = file.metadata().map_err(|e| format!("{f}: {e}"))?;
+        if !meta.is_file() || meta.uid() != caller_uid {
+            msgs.push(format!("{f}: not a regular file owned by the calling user; skipped")); continue;
+        }
         if meta.len() > 256 << 20 { msgs.push(format!("{f}: larger than 256 MiB, skipped")); continue; }
         let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-        let Some(ft) = field::parse_log(&std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?) else { msgs.push(format!("{f}: no frame times found")); continue };
+        let mut raw = Vec::new();
+        file.take((256u64 << 20) + 1).read_to_end(&mut raw).map_err(|e| format!("{f}: {e}"))?;
+        if raw.len() as u64 > (256u64 << 20) { msgs.push(format!("{f}: grew past 256 MiB during read; skipped")); continue; }
+        let content = std::str::from_utf8(&raw).map_err(|e| format!("{f}: invalid UTF-8: {e}"))?;
+        let Some(ft) = field::parse_log(content) else { msgs.push(format!("{f}: no frame times found")); continue };
         let Some(fr) = field::frames(&ft) else { msgs.push(format!("{f}: too short ({} frames)", ft.len())); continue };
         let Some(s) = field::match_session(&sessions, mtime) else { msgs.push(format!("{f}: no recorded game session around its time")); continue };
         let g = game.clone().or_else(|| s["game"].as_str().map(str::to_owned)).unwrap_or_else(|| "unknown".into());
@@ -2346,16 +2492,17 @@ const NOT_IN_VERIFY: &[&str] = &["cpu.smt", "cpu.ccd_park", "cpu.pstate_status",
 /// change is a calibrated knob.
 #[allow(clippy::too_many_arguments)]
 fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with_io: bool, goal: Option<String>, rate: u64, ram: u64, kernel: &str,
-               load: bool, sequential: bool) -> Result<(), String> {
+               load: bool, sequential: bool, require_improvement: bool) -> Result<(), String> {
     if name.is_empty() || name.len() > 64 || !name.chars().all(|c| c.is_ascii_alphanumeric() || " _-.".contains(c)) || name.starts_with('.') { return Err(format!("invalid preset name '{name}'")); }
     let text = centurion_helpers::read_root_file(&format!("/etc/centurion/presets/{name}.json"), 256 * 1024)
         .ok_or_else(|| format!("preset \"{name}\" is not in the approved store (/etc/centurion/presets): save it in the GUI first"))?;
     let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let preset_values = v["values"].as_object().ok_or_else(|| "preset has no values object".to_string())?;
     let mut cfg: Cfg = Vec::new();
     let mut skipped = Vec::new();
     for (k, x) in v["values"].as_object().into_iter().flatten() {
         let val = match x { Value::String(s) => s.clone(), o => o.to_string() };
-        let Some(t) = tune::find(k) else { continue };
+        let Some(t) = tune::find(k) else { skipped.push(k.clone()); continue };
         if NOT_IN_VERIFY.contains(&k.as_str()) || (!t.debugfs && tune::files(t).is_empty()) { skipped.push(k.clone()); continue; }
         if tune::current(t).as_deref() == Some(val.as_str()) { continue; }
         cfg.push((k.clone(), val));
@@ -2405,7 +2552,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
                 if let Some(Done { s, oom: false, w, t, temp }) = rn.run(*ph, bs, c, "(verify)")? {
                     let e = runs.entry(ph.idx()).or_default();
                     let order = e.len();
-                    e.push(Run { cfg: c.clone(), s, order, t, w, temp });
+                    e.push(Run { cfg: c.clone(), s, order, t, w, temp, full: true });
                     tags.entry(ph.idx()).or_default().push((r, pos));
                 }
             }
@@ -2486,13 +2633,26 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     else if !drifted.is_empty() { println!("  the runs stay out of the design log: {} differ(s) from the calibration's reference now", drifted.join(", ")); }
     cal.verify.push(json!({"t": now(), "preset": name, "goal": goal.key(), "changes": cfg.len(), "rounds": blocks, "paired": true, "objectives": objectives,
                            "gain": [round3(um), round3(use_)], "ci95": gain.as_ref().map(|g| json!([round3(g.lo), round3(g.hi)])),
-                           "phase": main.name(), "sequential": sequential.then(|| json!({"looks": looks, "decided_at": decided_at})),
+                           "phase": main.name(), "verification_v": 1, "verified_values": preset_values,
+                           "skipped": skipped, "complete": skipped.is_empty() && blocks >= 3,
+                           "decision_ci": if lo.is_finite() && hi.is_finite() { json!([lo, hi]) } else { Value::Null },
+                           "passed": verification_passes(blocks, &skipped, lo),
+                           "sequential": sequential.then(|| json!({"looks": looks, "decided_at": decided_at})),
                            "gains": (!others.is_empty()).then(|| others.iter().map(|(g, p)| (g.key().to_owned(), p.as_ref().map_or(Value::Null, |p| json!([round3(p.mean), round3(p.se)])))).collect::<serde_json::Map<_, _>>()),
                            "predicted": pred.map(|p| json!([p.0, round3(p.1), round3(p.2)])), "cx": ctx.cx}));
     let drop = cal.verify.len().saturating_sub(20);
     cal.verify.drain(..drop);
     save(cal);
+    if require_improvement && !verification_passes(blocks, &skipped, lo) {
+        return Err(format!("ABBA did not verify a positive improvement: {blocks} blocks, decision CI [{lo:+.4}, {hi:+.4}], {} skipped", skipped.len()));
+    }
     Ok(())
+}
+
+/// Fail closed: an incomplete ABBA, unverified key or a confidence interval
+/// touching zero is not evidence to apply a high-risk preset.
+fn verification_passes(blocks: usize, skipped: &[String], lower_bound: f64) -> bool {
+    blocks >= 3 && skipped.is_empty() && lower_bound.is_finite() && lower_bound > 0.0
 }
 
 /// (round, position) tags of one phase's kept verify runs.
@@ -2654,7 +2814,7 @@ mod tests {
     #[test]
     fn early_shift_runs_at_the_second_reference_only() {
         let s = |v: f64| -> Sample { [(Metric::CpuSingle, v)].into_iter().collect() };
-        let r = |cfg: Cfg, v: f64, i: usize| Run { cfg, s: s(v), order: i, t: i as u64, w: 1.0, temp: None };
+        let r = |cfg: Cfg, v: f64, i: usize| Run { cfg, s: s(v), order: i, t: i as u64, w: 1.0, temp: None, full: true };
         let mut cal = Calibration::default();
         for (i, v) in [100.0, 101.0, 99.5, 100.5].into_iter().enumerate() {
             cal.note_baseline(baseline(&[r(Vec::new(), v, 0), r(Vec::new(), v, 1)], Phase::Idle, i as u64, &meta()));
@@ -2673,10 +2833,10 @@ mod tests {
     fn rows_carry_source_context_and_start_temperature() {
         let s = |w: f64| -> Sample { [(Metric::IdleW, w), (Metric::CpuSingle, 100.0)].into_iter().collect() };
         let hot = vec![("ctx.heat".to_owned(), "hot".to_owned())];
-        let mut runs: Vec<Run> = (0..4).map(|i| Run { cfg: Vec::new(), s: s(10.0), order: i, t: i as u64, w: 1.0, temp: Some(50.0 + i as f64) }).collect();
-        runs.push(Run { cfg: hot.clone(), s: s(12.0), order: 4, t: 9, w: 1.0, temp: Some(88.0) });
-        runs.push(Run { cfg: hot.clone(), s: s(12.0), order: 5, t: 10, w: 1.0, temp: Some(92.0) });
-        runs.push(Run { cfg: vec![("cpu.k".into(), "1".into())], s: s(10.0), order: 6, t: 11, w: 1.0, temp: None });
+        let mut runs: Vec<Run> = (0..4).map(|i| Run { cfg: Vec::new(), s: s(10.0), order: i, t: i as u64, w: 1.0, temp: Some(50.0 + i as f64), full: true }).collect();
+        runs.push(Run { cfg: hot.clone(), s: s(12.0), order: 4, t: 9, w: 1.0, temp: Some(88.0), full: true });
+        runs.push(Run { cfg: hot.clone(), s: s(12.0), order: 5, t: 10, w: 1.0, temp: Some(92.0), full: true });
+        runs.push(Run { cfg: vec![("cpu.k".into(), "1".into())], s: s(10.0), order: 6, t: 11, w: 1.0, temp: None, full: true });
         let m = Meta { src: calib::PowerSrc::Battery, cx: "c1".into(), sd: Default::default() };
         let rows = compute_rows(&runs, Phase::Idle, 3, "7.2", 7, &m);
         assert!(rows.iter().all(|r| r.src == calib::PowerSrc::Battery && r.cx == "c1"));
@@ -2840,7 +3000,33 @@ mod tests {
         assert_eq!(union_benches(Phase::Io, &[]), Benches { io: true, ..Default::default() });
     }
 
-    fn run(cfg: Cfg, s: &[(Metric, f64)]) -> Run { Run { cfg, s: s.iter().copied().collect(), order: 0, t: 0, w: 1.0, temp: None } }
+    fn run(cfg: Cfg, s: &[(Metric, f64)]) -> Run { Run { cfg, s: s.iter().copied().collect(), order: 0, t: 0, w: 1.0, temp: None, full: true } }
+
+    #[test]
+    fn fast_probe_keeps_unmeasured_objectives_missing() {
+        // Reference probes are always full. A short candidate can inform the
+        // power model but must not invent latency, throughput or memory evidence.
+        let s = |watts: f64| -> Sample { [(Metric::IdleW, watts), (Metric::WakeP99Us, 100.0)].into_iter().collect() };
+        let mut v: Vec<Run> = (0..3).map(|i| Run { cfg: Vec::new(), s: s(10.0), order: i, t: i as u64,
+            w: 1.0, temp: None, full: true }).collect();
+        v.push(Run { cfg: vec![("cpu.k".into(), "1".into())], s: s(9.0), order: 3,
+            t: 3, w: 1.0, temp: None, full: false });
+        let rows = compute_rows(&v, Phase::Idle, 1, "kernel", 4, &meta());
+        assert_eq!(rows.len(), 4);
+        assert!(rows[3].y[0].is_nan() && rows[3].y[1].is_nan() && rows[3].y[3].is_nan(), "{:?}", rows[3].y);
+        assert!(rows[3].y[2].is_finite(), "power still measured: {:?}", rows[3].y);
+        assert!(rows[0].y[0].is_finite(), "full reference remains a latency observation");
+    }
+
+    #[test]
+    fn strict_abba_verdict_rejects_skips_small_samples_and_ambiguity() {
+        let skip = vec!["cpu.ccd_park".to_string()];
+        assert!(verification_passes(3, &[], 0.002));
+        assert!(!verification_passes(2, &[], 0.02));
+        assert!(!verification_passes(3, &skip, 0.02));
+        assert!(!verification_passes(3, &[], 0.0));
+        assert!(!verification_passes(4, &[], f64::NAN));
+    }
 
     #[test]
     fn noisy_metrics_weigh_less_inside_their_objective() {
@@ -2903,7 +3089,7 @@ mod tests {
         assert!(u < MARGIN && 0.7 * 5.5 * dp + 0.3 * 5.5 * dp - 0.7 * 1.5 * dw > 0.08, "{u}");
         // Another probe of the same scenario adds nothing to a change that moves the whole scenario.
         let drop = |r: &Run| Run { cfg: r.cfg.clone(), s: r.s.iter().filter(|(m, _)| !matches!(m, Metric::FrameMedUs | Metric::GameJitterUs)).map(|(m, v)| (*m, *v)).collect(),
-                                   order: r.order, t: r.t, w: r.w, temp: r.temp };
+                                   order: r.order, t: r.t, w: r.w, temp: r.temp, full: r.full };
         let fewer: Vec<Run> = runs.iter().map(drop).collect();
         let y2 = compute_rows(&fewer, Phase::Idle, 1, "", 10, &meta()).last().unwrap().y;
         assert!((0..3).all(|o| (y[o] - y2[o]).abs() < 1e-9) && y2[3].is_nan(), "{y:?} vs {y2:?}");
@@ -3144,11 +3330,23 @@ mod sim {
     }
 
     #[test]
+    fn repeated_calibration_reduces_initial_design_only_with_coverage() {
+        let fs = vec![fac("cpu.x", "base", &["1", "2"]), fac("vm.y", "off", &["on", "auto"])];
+        assert_eq!(initial_design_count(40, 0.55, &fs, &[]), 22);
+        let prior: Vec<Cfg> = (0..8).map(|i| vec![
+            ("cpu.x".into(), if i % 2 == 0 { "1" } else { "2" }.into()),
+            ("vm.y".into(), if i / 2 % 2 == 0 { "on" } else { "auto" }.into()),
+        ]).collect();
+        assert_eq!(initial_design_count(40, 0.55, &fs, &prior), 10);
+        assert!(initial_design_count(40, 0.55, &fs, &prior[..4]) >= 10);
+    }
+
+    #[test]
     fn rows_from_runs_are_signed_clipped_and_robust() {
         let s = |wake: f64, bw: f64, w: f64| -> Sample { [(Metric::WakeP99Us, wake), (Metric::MemBwGbs, bw), (Metric::PkgW, w)].into_iter().collect() };
-        let mut runs: Vec<Run> = (0..3).map(|i| Run { cfg: Vec::new(), s: s(100.0, 50.0, 10.0), order: i, t: 100 + i as u64, w: 1.0, temp: None }).collect();
-        runs.push(Run { cfg: vec![("k".into(), "1".into())], s: s(80.0, 55.0, 9.0), order: 3, t: 110, w: 1.0, temp: None });     // all better
-        runs.push(Run { cfg: vec![("k".into(), "2".into())], s: s(100.0, 500.0, 10.0), order: 4, t: 120, w: 0.4, temp: None });  // absurd outlier on bandwidth, busy machine
+        let mut runs: Vec<Run> = (0..3).map(|i| Run { cfg: Vec::new(), s: s(100.0, 50.0, 10.0), order: i, t: 100 + i as u64, w: 1.0, temp: None, full: true }).collect();
+        runs.push(Run { cfg: vec![("k".into(), "1".into())], s: s(80.0, 55.0, 9.0), order: 3, t: 110, w: 1.0, temp: None, full: true });     // all better
+        runs.push(Run { cfg: vec![("k".into(), "2".into())], s: s(100.0, 500.0, 10.0), order: 4, t: 120, w: 0.4, temp: None, full: true });  // absurd outlier on bandwidth, busy machine
         let rows = compute_rows(&runs, Phase::Load, 7, "7.0", 10, &meta());
         assert_eq!(rows.len(), 5);
         let ok = &rows[3];

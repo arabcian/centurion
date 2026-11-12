@@ -2522,6 +2522,9 @@ pub fn autotune(goal: Goal) -> Value { autotune_with(goal, &Profile::gather()) }
 /// `opts`: {"profile": power profile the preset is for (a scene's), "explore": false to skip the
 /// alternatives and sensitivity}.
 pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
+    let total_started = std::time::Instant::now();
+    let report_progress = opts["progress"] == true;
+    if report_progress { eprintln!("CENTURION_STAGE inputs"); }
     let mut p = Profile::gather();
     p.load_field_risk();
     p.target_profile = opts["profile"].as_str().filter(|s| !s.is_empty() && s.len() <= 32).map(str::to_owned);
@@ -2532,15 +2535,52 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     }
     let (w, notes) = effective_weights(goal, &p.evidence);
     let w = w.with_overrides(weights);
-    let want_explore = opts["explore"] != false && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty());
+    let inputs_ms = total_started.elapsed().as_millis();
+    // The GUI defaults to Fast. Legacy CLI requests without a mode keep their
+    // historical deep exploration behaviour unless `explore` is explicitly false.
+    let mode = match opts["mode"].as_str() { Some("fast") => "fast", Some("balanced") => "balanced", Some("deep") => "deep",
+        _ => if opts["explore"] == false { "fast" } else { "deep" } };
+    let want_explore = mode != "fast" && opts["explore"] != false && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty());
+    if report_progress { eprintln!("CENTURION_STAGE model"); }
+    let fit_started = std::time::Instant::now();
     // The models depend on the rows, never on the weights: fitted once (every CPU), then the main
     // decision and the explored trade-offs all read them in parallel.
     if let Some(c) = p.calibration.as_mut() { c.merge_hyp_cache(); c.use_fit_store(); }
-    prefit(goal, &p);
+    prefit(goal, &p, want_explore);
     if let Some(c) = p.calibration.as_ref() { c.save_hyp_cache(); c.save_fit_store(); }
+    let model_ms = fit_started.elapsed().as_millis();
+    if report_progress { eprintln!("CENTURION_STAGE decision"); }
     let t_decide = std::time::Instant::now();
-    let (main, ex) = if want_explore { let (m, e) = explore(goal, &p, w); (m, Some(e)) } else { (decide_full(goal, &p, w), None) };
+    let (main, ex) = if want_explore { let (m, e) = explore_with(goal, &p, w, mode == "deep"); (m, Some(e)) } else { (decide_full(goal, &p, w), None) };
+    let decision_ms = t_decide.elapsed().as_millis();
+    if report_progress { eprintln!("CENTURION_STAGE validation"); }
     let mut out = assemble(goal, &p, w, main);
+    // Advice is conservative: absence of calibration evidence cannot be
+    // presented as a verified gain, and an uncertain predicted effect is not
+    // an instruction to apply privileged settings.
+    let entries = out["decisions"].as_array();
+    let (count, unmeasured, risky, doubtful) = entries.map_or((0, 0, 0, 0), |ds| {
+        let mut no_evidence = 0;
+        let mut risky = 0;
+        let mut doubtful = 0;
+        for d in ds {
+            if d["seen"].is_null() || d["seen"] == false { no_evidence += 1; }
+            if d["risk"].as_f64().is_some_and(|r| r < -0.05) { risky += 1; }
+            if let Some(a) = d["in_context"].as_array() {
+                if a.len() == 2 && a[0].as_f64().zip(a[1].as_f64()).is_some_and(|(m, sd)| sd > 0.0 && m.abs() < 2.0 * sd) { doubtful += 1; }
+            }
+        }
+        (ds.len(), no_evidence, risky, doubtful)
+    });
+    let high_risk = count >= 12 || risky > 0;
+    let advice = if high_risk { "High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying." }
+        else if doubtful > 0 || unmeasured > count / 2 { "Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains." }
+        else { "Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement." };
+    out["application_advice"] = json!({"text": advice, "high_risk": high_risk,
+        "settings": count, "not_modelled": unmeasured, "uncertain_effects": doubtful, "risk_flags": risky});
+    out["explore_mode"] = json!(mode);
+    out["explore_available"] = json!(!want_explore && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty()));
+    out["timings_ms"] = json!({"inputs": inputs_ms, "model": model_ms, "decision": decision_ms, "total": total_started.elapsed().as_millis()});
     let mut notes: Vec<Value> = notes.into_iter().filter(|(k, _)| weights.get(k).is_none()).map(|(_, n)| Value::String(n)).collect();
     // What the measured part of the decision rests on (rows, sessions, fit quality, widened
     // uncertainty, age): a decision is only as good as its evidence, and the report says so.
@@ -2571,6 +2611,8 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
             let _ = std::fs::write(&seen_path, seen_all.to_string());
         }
     }
+    out["timings_ms"]["total"] = json!(total_started.elapsed().as_millis());
+    if report_progress { eprintln!("CENTURION_STAGE finished"); }
     out
 }
 
@@ -2645,13 +2687,21 @@ fn predict(goal: Goal, p: &Profile, w: Weights, d: &[Decision]) -> Value {
 
 fn round3(x: f64) -> f64 { (x * 1000.0).round() / 1000.0 }
 
-/// Puts the goal's measurement frame (power source) on the signature and fits every phase model
-/// once, so parallel decisions share the fits instead of each refitting.
-fn prefit(goal: Goal, p: &Profile) {
+/// Warm only the main phase first. The remaining models are evaluated on demand
+/// in sequential mode; explore prewarms all phases before parallel variants can
+/// access the shared RefCell caches. Never run multiple dense GP fits concurrently:
+/// each can occupy hundreds of MiB when a large signature is available.
+fn prefit(goal: Goal, p: &Profile, explore: bool) {
     let Some(cal) = p.calibration.as_ref() else { return };
     cal.set_power_pref(if goal == Goal::PowerSave { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl });
     cal.set_target_cx(Some(calib::Calibration::context_id(&target_context(goal, p))));
-    cal.prefit();
+    let priority = if goal == Goal::Gaming || goal == Goal::Throughput { calib::Phase::Load } else { calib::Phase::Idle };
+    let _ = cal.phase_fit(priority);
+    if explore {
+        for phase in [calib::Phase::Idle, calib::Phase::Load, calib::Phase::Io, calib::Phase::Dev] {
+            if phase != priority { let _ = cal.phase_fit(phase); }
+        }
+    }
 }
 
 /// A copy for one parallel decision: same data, fitted models shared.
@@ -2668,7 +2718,9 @@ type Explored = (Vec<Value>, Vec<Value>, Value);
 /// decisions that depend on a weight: every weight 30 % down and up, and three labelled trade-offs.
 /// All of them re-decide from the same fitted models (no refit) and run in parallel, one decision
 /// per CPU: the wall time is about that of the main decision alone.
-fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
+fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) { explore_with(goal, p, w, true) }
+
+fn explore_with(goal: Goal, p: &Profile, w: Weights, sensitivity: bool) -> (Decided, Explored) {
     let variants: [(&str, Weights); 3] = [
         ("Cooler and quieter (power x2.5)", Weights { power: (w.power * 2.5).min(3.0), ..w }),
         ("More performance (latency, throughput x1.3; power x0.4)", Weights { latency: (w.latency * 1.3).min(3.0), throughput: (w.throughput * 1.3).min(3.0), power: w.power * 0.4, ..w }),
@@ -2682,6 +2734,7 @@ fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
     let mut jobs: Vec<(Weights, Option<(&str, bool)>)> = vec![(w, None)];
     for (_, wv) in &variants { jobs.push((*wv, None)); }
     for (name, f, max) in fields {
+        if !sensitivity { break; }
         for m in [0.7, 1.3] {
             let mut wv = w;
             let x = f(&mut wv);
@@ -2690,14 +2743,30 @@ fn explore(goal: Goal, p: &Profile, w: Weights) -> (Decided, Explored) {
             jobs.push((wv, Some((name, m < 1.0))));
         }
     }
-    let profs: Vec<std::sync::Mutex<Option<Profile>>> = jobs.iter().map(|_| std::sync::Mutex::new(Some(share(p)))).collect();
-    let mut res: Vec<Option<(Decided, Value)>> = crate::par::map(jobs.len(), |i| {
-        let q = profs[i].lock().ok().and_then(|mut g| g.take())?;
-        let d = decide_full(goal, &q, jobs[i].0);
-        // Sensitivity steps need only the decisions; the main one and the trade-offs also their prediction.
-        let pred = if jobs[i].1.is_none() { predict(goal, &q, jobs[i].0, &d.0) } else { Value::Null };
+    // When a weight is zero or already clamped at its maximum, a -/+30%
+    // sensitivity variant can duplicate the main or another variant exactly.
+    // Reuse that exact decision; approximate utility screening is deliberately
+    // avoided because interactions can flip distant knobs unexpectedly.
+    let mut unique: Vec<Weights> = Vec::new();
+    let mut job_index: Vec<usize> = Vec::new();
+    for (weight, _) in &jobs {
+        let index = unique.iter().position(|x| x == weight).unwrap_or_else(|| {
+            let i = unique.len(); unique.push(*weight); i
+        });
+        job_index.push(index);
+    }
+    // Profile contains RefCell-backed caches and is Send but not Sync. A single
+    // guarded template provides isolated clones on demand. Heavy fitted GP
+    // models are shared as Arc values inside each profile clone.
+    let template = std::sync::Mutex::new(share(p));
+    let decisions: Vec<Option<(Decided, Value)>> = crate::par::map(unique.len(), |i| {
+        let q = template.lock().ok().map(|source| share(&source))?;
+        let d = decide_full(goal, &q, unique[i]);
+        let with_prediction = job_index.iter().enumerate().any(|(j, &x)| x == i && jobs[j].1.is_none());
+        let pred = if with_prediction { predict(goal, &q, unique[i], &d.0) } else { Value::Null };
         Some((d, pred))
-    }).into_iter().collect();
+    });
+    let mut res: Vec<Option<(Decided, Value)>> = job_index.iter().map(|&i| decisions[i].clone()).collect();
     let (main, pred) = res[0].take().unwrap_or_else(|| (decide_full(goal, p, w), Value::Null));
     let base = &main.0;
     let val = |d: &[Decision], k: &str| d.iter().find(|x| x.key == k).map(|x| vstr(&x.value));

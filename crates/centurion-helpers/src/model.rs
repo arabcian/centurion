@@ -66,7 +66,9 @@ const TEMP_SD: f64 = 0.01;
 /// are refitted instead of read back as if nothing had changed.
 /// 2 = per-objective screening (`PhaseSet::build_screened`).
 /// 3 = leave-one-session-out check (`loso`) in `var_scale`.
-pub const MODEL_VERSION: u32 = 3;
+/// 4 = optional coarse-search/coreset selection; kept fit keys include rollout flags.
+/// 5 = shared immutable feature/kernel matrices and optional progressive validation.
+pub const MODEL_VERSION: u32 = 5;
 /// Sessions the leave-one-session-out check leaves out in turn (the newest; bounds its cost).
 const LOSO_SESSIONS: usize = 8;
 
@@ -650,7 +652,57 @@ impl Fit {
 }
 
 /// Fits one objective. `init`: starting (or, with `passes` = 0, final) hyperparameters.
-pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -> Option<Fit> { fit_core(space, obs, init, passes, None) }
+/// Experimental, bounded coarse-to-fine hyperparameter search. The last factorisation,
+/// outlier reweighting, LOSO and uncertainty checks always use ALL observations.
+/// Off by default until the virtual lab confirms comparable coverage/regret.
+pub fn fit(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize) -> Option<Fit> {
+    if passes > 0 && obs.len() > 384 && feature_flag("CENTURION_GP_COARSE") {
+        let sample = coarse_observations(obs, 384);
+        if let Some(coarse) = fit_core(space.clone(), &sample, init, passes, None) {
+            if let Some(full) = fit_core(space.clone(), obs, Some(coarse.hyper), 0, None) {
+                // Bad cold-start coverage is a reason to use the established full search.
+                if full.cover90 >= 0.70 && (!full.loso_cover.is_finite() || full.loso_cover >= 0.65) { return Some(full); }
+            }
+        }
+    }
+    fit_core(space, obs, init, passes, None)
+}
+
+fn feature_flag(name: &str) -> bool {
+    matches!(std::env::var(name).as_deref(), Ok("1" | "true" | "yes"))
+}
+
+/// Evenly represent sessions and references before filling remaining slots by weight.
+/// Selection is deterministic; the full fit retains its original session indices.
+fn coarse_observations(obs: &[Obs], cap: usize) -> Vec<Obs> {
+    if obs.len() <= cap { return obs.to_vec(); }
+    let mut groups: std::collections::BTreeMap<(usize, bool), Vec<usize>> = std::collections::BTreeMap::new();
+    for (i, r) in obs.iter().enumerate() { groups.entry((r.sess, r.x.is_empty())).or_default().push(i); }
+    for group in groups.values_mut() {
+        group.sort_by(|&a, &b| obs[b].w.total_cmp(&obs[a].w).then(obs[b].t.total_cmp(&obs[a].t)));
+    }
+    let mut chosen = Vec::with_capacity(cap);
+    let mut taken = vec![false; obs.len()];
+    let mut depth = 0;
+    while chosen.len() < cap {
+        let mut added = false;
+        for group in groups.values() {
+            if let Some(&i) = group.get(depth) {
+                chosen.push(i); taken[i] = true; added = true;
+                if chosen.len() == cap { break; }
+            }
+        }
+        if !added { break; }
+        depth += 1;
+    }
+    if chosen.len() < cap {
+        let mut remaining: Vec<usize> = (0..obs.len()).filter(|i| !taken[*i]).collect();
+        remaining.sort_by(|&a, &b| obs[b].w.total_cmp(&obs[a].w));
+        chosen.extend(remaining.into_iter().take(cap - chosen.len()));
+    }
+    chosen.sort_unstable();
+    chosen.into_iter().map(|i| obs[i].clone()).collect()
+}
 
 /// Rebuilds a kept fit of the same observations (None when they do not match it).
 pub fn refit(space: Arc<Space>, obs: &[Obs], meta: &FitMeta) -> Option<Fit> {
@@ -658,23 +710,44 @@ pub fn refit(space: Arc<Space>, obs: &[Obs], meta: &FitMeta) -> Option<Fit> {
     fit_core(space, obs, Some(meta.hyper), 0, Some(meta))
 }
 
-fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, known: Option<&FitMeta>) -> Option<Fit> {
+/// Kernel arrays are keyed to the *same Arc<Space>* and an exact ordered
+/// immutable observation design. The global cache holds at most one phase's
+/// arrays (at most 80 MiB); no response, noise, or fit-specific data is cached.
+struct KernelParts { kc: Vec<Option<Vec<f64>>>, kn: Vec<f64>, ko: Vec<f64>, kt: Vec<f64>, temp: bool }
+type KernelShape = (PCfg, usize, u64, u64, u64);
+struct KernelCache {
+    space: std::sync::Weak<Space>, shape: Vec<KernelShape>, parts: Arc<KernelParts>,
+}
+
+fn kernel_shape(obs: &[Obs]) -> Vec<KernelShape> {
+    obs.iter().map(|o| (o.x.clone(), o.sess, o.pos.to_bits(), o.t.to_bits(), o.tc.to_bits())).collect()
+}
+
+fn kernel_parts(space: &Arc<Space>, obs: &[Obs]) -> Arc<KernelParts> {
+    static LAST: std::sync::OnceLock<std::sync::Mutex<Option<KernelCache>>> = std::sync::OnceLock::new();
+    let use_cache = feature_flag("CENTURION_GP_SHARED_KERNEL") && obs.len() >= 32 && obs.len() <= MAX_FIT_ROWS;
+    let shape = if use_cache { kernel_shape(obs) } else { Vec::new() };
+    if use_cache {
+        let cache = LAST.get_or_init(|| std::sync::Mutex::new(None));
+        if let Ok(g) = cache.lock() {
+            if let Some(c) = g.as_ref() {
+                if c.shape == shape && c.space.upgrade().is_some_and(|sp| Arc::ptr_eq(&sp, space)) {
+                    return c.parts.clone();
+                }
+            }
+        }
+    }
     let n = obs.len();
-    if n < 6 { return None; }
-    let order = space.order;
-    let active = |c: usize| match c { 0 => true, 1 | 2 => order >= 2, _ => order >= 3 };
-    // Kernel parts per class, nuisance and temperature matrices: lower triangle, one row per task.
+    let active = |c: usize| match c { 0 => true, 1 | 2 => space.order >= 2, _ => space.order >= 3 };
     let temp = obs.iter().any(|o| o.tc != 0.0);
     let mut kc: Vec<Option<Vec<f64>>> = (0..NC).map(|c| active(c).then(|| vec![0.0; n * n])).collect();
     let (mut kn, mut ko) = (vec![0.0; n * n], vec![0.0; n * n]);
-    // Start-temperature nuisance: a linear term in the run's temperature deviation, shared by every
-    // session (the physics is the machine's, not the session's). Never part of a prediction (tc = 0).
     let mut kt = if temp { vec![0.0; n * n] } else { Vec::new() };
     {
         let pc: Vec<Option<Shared>> = kc.iter_mut().map(|m| m.as_mut().map(|m| Shared(m.as_mut_ptr()))).collect();
         let (pn, po) = (Shared(kn.as_mut_ptr()), Shared(ko.as_mut_ptr()));
         let pt = temp.then_some(Shared(kt.as_mut_ptr()));
-        let space = &*space;
+        let space = &**space;
         crate::par::map(n, |i| {
             // SAFETY: task i writes only row i (lower part) of each matrix.
             let put = |p: Shared, j: usize, v: f64| unsafe { *p.0.add(i * n + j) = v };
@@ -689,6 +762,31 @@ fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, 
             }
         });
     }
+    let parts = Arc::new(KernelParts { kc, kn, ko, kt, temp });
+    if use_cache {
+        let cache = LAST.get_or_init(|| std::sync::Mutex::new(None));
+        if let Ok(mut g) = cache.lock() {
+            *g = Some(KernelCache { space: Arc::downgrade(space), shape, parts: parts.clone() });
+        }
+    }
+    parts
+}
+
+fn fit_core(space: Arc<Space>, obs: &[Obs], init: Option<Hyper>, passes: usize, known: Option<&FitMeta>) -> Option<Fit> {
+    let n = obs.len();
+    if n < 6 { return None; }
+    let order = space.order;
+    let active = |c: usize| match c { 0 => true, 1 | 2 => order >= 2, _ => order >= 3 };
+    // Cache only immutable design-dependent matrices. Objective-specific response,
+    // Student-t weights, sigma and Cholesky factors are deliberately NEVER shared.
+    // An exact feature/session/temperature/time match is required; objectives with
+    // missing observations have different keys and get their own kernels.
+    let parts = kernel_parts(&space, obs);
+    let temp = parts.temp;
+    let kc = &parts.kc;
+    let kn = &parts.kn;
+    let ko = &parts.ko;
+    let kt = &parts.kt;
     let y: Vec<f64> = obs.iter().map(|o| o.y).collect();
     let w0: Vec<f64> = obs.iter().map(|o| o.w.max(1e-3)).collect();
     let eval = |h: &Hyper, w: &[f64]| -> Option<(f64, Vec<f64>, Vec<f64>)> {
@@ -1038,12 +1136,13 @@ impl PhaseSet {
         // its runs), cool start - a heat-soaked reference sits at another level, not at another noise.
         let is_ref = |r: &Row| r.cfg.iter().all(|(k, v)| is_ctx(k) && !(k == "ctx.heat" && v == "hot"));
         let factor = session_noise_factors(self.rows.iter().filter(|r| is_ref(r)).map(|r| (r.sess, yv(r))));
+        let session_index: HashMap<u64, usize> = sess.iter().copied().enumerate().map(|(i, s)| (s, i)).collect();
         self.rows.iter().filter_map(|r| {
             let y = yv(r);
             if y.is_nan() { return None; }
             let tc = if r.tc.is_finite() { r.tc.clamp(-25.0, 25.0) } else { 0.0 };
             let w = r.w * factor.get(&r.sess).copied().unwrap_or(1.0);
-            Some(Obs { x: self.space.parse(&r.cfg, true)?, sess: sess.iter().position(|s| *s == r.sess)?, pos: r.pos, t: r.t, w, y, tc })
+            Some(Obs { x: self.space.parse(&r.cfg, true)?, sess: *session_index.get(&r.sess)?, pos: r.pos, t: r.t, w, y, tc })
         }).collect()
     }
     /// One objective on its own (rows that did not measure it are left out).
@@ -1072,12 +1171,47 @@ fn heredity_of(sfits: &[Option<Fit>; 4], nf: usize) -> Option<Vec<f64>> {
     Some(c.iter().map(|x| if mean > 1e-12 { (0.2 + 0.8 * x / mean).sqrt().clamp(0.35, 2.5) } else { 1.0 }).collect())
 }
 
-/// At most MAX_FIT_ROWS rows are fitted: the heaviest, then the newest.
+/// Experimental caps (default remains 1100). Kept fit hashes include the cap.
+/// Selecting a cap smaller than 1100 is opt-in until cross-session coverage and
+/// interaction recovery have been checked on the user's own calibration history.
+fn fit_row_cap() -> usize {
+    std::env::var("CENTURION_FIT_ROW_CAP").ok().and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| matches!(n, 256 | 512 | 768 | 1100)).unwrap_or(MAX_FIT_ROWS)
+}
+
+fn take_fit_row(i: usize, picked: &mut Vec<usize>, marks: &mut [bool], cap: usize) {
+    if picked.len() < cap && !marks[i] { marks[i] = true; picked.push(i); }
+}
+
+/// Preserve each session's reference/configuration evidence and rare knob doses
+/// before using the remaining capacity for the most reliable, recent measurements.
 fn trim_fit_rows(rows: &mut Vec<Row>) {
-    if rows.len() > MAX_FIT_ROWS {
-        rows.sort_by(|a, b| b.w.total_cmp(&a.w).then(b.t.total_cmp(&a.t)));
-        rows.truncate(MAX_FIT_ROWS);
+    let cap = fit_row_cap();
+    if rows.len() <= cap { return; }
+    rows.sort_by(|a, b| b.w.total_cmp(&a.w).then(b.t.total_cmp(&a.t)));
+    if cap == MAX_FIT_ROWS && !feature_flag("CENTURION_FIT_CORESET") {
+        // Preserve the known-good highest-weight selection by default.
+        rows.truncate(cap);
+        return;
     }
+    let mut picked = Vec::with_capacity(cap);
+    let mut marks = vec![false; rows.len()];
+    let mut sessions = HashSet::new();
+    for (i, r) in rows.iter().enumerate() {
+        if sessions.insert((r.sess, r.cfg.iter().all(|(k, _)| is_ctx(k)))) {
+            take_fit_row(i, &mut picked, &mut marks, cap);
+        }
+    }
+    let mut doses = HashSet::new();
+    for (i, r) in rows.iter().enumerate() {
+        if picked.len() == cap { break; }
+        let novel = r.cfg.iter().any(|kv| !doses.contains(kv));
+        if novel { take_fit_row(i, &mut picked, &mut marks, cap); }
+        if marks[i] { for kv in &r.cfg { doses.insert(kv.clone()); } }
+    }
+    for i in 0..rows.len() { if picked.len() == cap { break; } take_fit_row(i, &mut picked, &mut marks, cap); }
+    let before = std::mem::take(rows);
+    *rows = before.into_iter().enumerate().filter_map(|(i, r)| marks[i].then_some(r)).collect();
 }
 
 /// Fingerprint of a model input (factors, rows, starting hyperparameters): two builds with the same
@@ -1090,6 +1224,9 @@ pub fn input_hash(factors: &[Factor], rows: &[Row], inits: &[Option<Hyper>]) -> 
 fn model_stamp() -> Vec<u8> {
     let mut v: Vec<u8> = MODEL_VERSION.to_le_bytes().to_vec();
     for x in [DRIFT_SD, OU_TAU, TEMP_SD, RISK_Z] { v.extend_from_slice(&x.to_bits().to_le_bytes()); }
+    v.extend_from_slice(&(fit_row_cap() as u32).to_le_bytes());
+    v.push(feature_flag("CENTURION_GP_COARSE") as u8);
+    v.push(feature_flag("CENTURION_FIT_CORESET") as u8);
     v
 }
 
@@ -1784,6 +1921,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn kernel_cache_reuses_exact_design_but_not_changed_session_or_temperature() {
+        // All values are artificial; never touches hardware or privileged helpers.
+        let s = Arc::new(Space::new(vec![Factor { key: "test.k".into(), reference: "0".into(), values: vec!["1".into()] }], None, 1));
+        let x = s.parse(&vec![("test.k".into(), "1".into())], true).unwrap();
+        let mut v = (0..6).map(|i| Obs { x: x.clone(), sess: i / 3, pos: i as f64 / 6.0, t: i as f64, w: 1.0, y: 0.0, tc: 0.0 }).collect::<Vec<_>>();
+        let a = kernel_parts(&s, &v);
+        v[0].y = 999.0;
+        let b = kernel_parts(&s, &v);
+        assert_eq!(a.kn, b.kn, "response values never enter immutable kernels");
+        v[0].sess += 1;
+        let c = kernel_parts(&s, &v);
+        assert_ne!(a.kn, c.kn, "session offset enters nuisance kernel");
+    }
+    #[test]
     fn only_a_change_in_effect_gets_the_head_start() {
         let base = vec![("0".to_owned(), 0.0), ("1".to_owned(), -0.02), ("2".to_owned(), -0.03)];
         let mut c = base.clone();
@@ -2320,6 +2471,24 @@ mod tests {
         let pairs = PhaseSet::build_with(fs, rows, Some(2)).unwrap().fit_obj(0, None, 2).unwrap();
         assert!(mains.var_scale > 1.3, "misspecified: {}", mains.var_scale);
         assert!(pairs.var_scale < 1.15, "well specified: {}", pairs.var_scale);
+    }
+
+    /// Experimental sample must remain stable and retain both reference and changed runs.
+    #[test]
+    fn coarse_search_sampling_keeps_sessions_and_references_deterministically() {
+        let obs: Vec<Obs> = (0..600).map(|i| Obs {
+            x: if i % 3 == 0 { PCfg::default() } else { PCfg(vec![(0, vec![(0, 1.0)])]) },
+            sess: i % 8, pos: i as f64 / 600.0, t: i as f64,
+            w: 1.0 + (i % 7) as f64 / 10.0, y: 0.01 * i as f64, tc: 0.0,
+        }).collect();
+        let first = coarse_observations(&obs, 80);
+        let second = coarse_observations(&obs, 80);
+        assert_eq!(first.len(), 80);
+        assert_eq!(first.iter().map(|r| r.t).collect::<Vec<_>>(), second.iter().map(|r| r.t).collect::<Vec<_>>());
+        for session in 0..8 {
+            assert!(first.iter().any(|r| r.sess == session && r.x.is_empty()));
+            assert!(first.iter().any(|r| r.sess == session && !r.x.is_empty()));
+        }
     }
 
     /// Fit time at the size of a large calibration (`cargo test --release -- --ignored --nocapture perf`).

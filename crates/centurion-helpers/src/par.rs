@@ -26,7 +26,12 @@ pub fn threads() -> usize {
 }
 
 /// Workers for this call: 1 inside a worker (the outer section already uses every CPU).
-fn width(items: usize) -> usize { if INSIDE.with(|c| c.get()) { 1 } else { threads().min(items).max(1) } }
+fn width(items: usize) -> usize {
+    static SERIAL_UNDER: OnceLock<usize> = OnceLock::new();
+    let serial_under = *SERIAL_UNDER.get_or_init(|| std::env::var("CENTURION_PAR_MIN_ITEMS").ok()
+        .and_then(|s| s.parse::<usize>().ok()).unwrap_or(4).clamp(1, 4096));
+    if items < serial_under || INSIDE.with(|c| c.get()) { 1 } else { threads().min(items).max(1) }
+}
 
 /// Workers for a section of `items` independent pieces (1 inside a worker).
 pub fn threads_for(items: usize) -> usize { width(items) }
