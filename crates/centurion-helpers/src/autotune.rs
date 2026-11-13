@@ -1348,6 +1348,9 @@ fn measurement_frame(goal: Goal, p: &Profile, mut w: Weights, notes: &mut Vec<St
     if let Some((n, cov, _)) = cal.predcheck_summary(50).filter(|x| x.0 >= 10 && x.1 < 0.7) {
         notes.push(format!("Warning: only {:.0} % of the last {n} confirmation/verify measurements fell inside the predicted ±2 sd: the model's intervals are too narrow, treat its gains with caution.", cov * 100.0));
     }
+    if let Some((z, n)) = cal.predcheck_optimism(50) {
+        notes.push(format!("Warning: over the last {n} confirmed session phase(s) the measured gain fell {:.1} sd short of the prediction on average: the predicted gains are optimistic (the configuration checked is the one predicted best, which favours lucky estimates) - expect less than predicted.", -z));
+    }
     if cal.contexts.len() > 1 { notes.push(format!("Context: decided for {} (the calibration measured {} context(s)).", crate::calctx::describe(&desc), cal.contexts.len())); }
     if heat_known && w.heat > 0.0 { notes.push(format!("Heat: {:.0} % of the weight on heat-soaked running (pre-heated calibration runs).", w.heat * 100.0)); }
     // CPU-GPU budget: what the GPU makes of a watt the CPU leaves it.
@@ -2621,14 +2624,17 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
 fn history_entry(goal: Goal, p: &Profile, w: Weights, out: &Value) -> Value {
     let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     json!({"t": t, "goal": goal.key(), "weights": w.to_json(), "context": target_context(goal, p),
-           "rows": p.calibration.as_ref().map_or(0, |c| c.rows.len()), "values": out["preset"]["values"]})
+           "rows": p.calibration.as_ref().map_or(0, |c| c.rows.len()),
+           "newest": p.calibration.as_ref().and_then(|c| c.rows.iter().map(|r| r.t).max()).unwrap_or(0), "values": out["preset"]["values"]})
 }
 
 /// Keys whose value differs from the previous run, with the likely cause: new calibration data,
 /// other weights, another context - none of these: the machine's live state (rules).
 fn diff_vs_last(prev: &Value, cur: &Value) -> Vec<Value> {
     let mut why = Vec::new();
-    if prev["rows"] != cur["rows"] { why.push("new data"); }
+    // The row count alone misses a session on a signature at its row cap (new runs push out as many
+    // old ones): the newest run's time tells. Entries written before `newest` existed say nothing.
+    if prev["rows"] != cur["rows"] || (prev["newest"].is_number() && prev["newest"] != cur["newest"]) { why.push("new data"); }
     if prev["weights"] != cur["weights"] { why.push("weights"); }
     if prev["context"] != cur["context"] { why.push("context"); }
     if why.is_empty() { why.push("rule"); }
@@ -3325,6 +3331,12 @@ mod tests {
         let more = json!({"rows": 12, "weights": {"latency": 1.2}, "context": {"power": "ac"}, "values": {"a": 2}});
         assert_eq!(diff_vs_last(&prev, &more)[0]["why"], "new data, weights");
         assert!(diff_vs_last(&prev, &prev).is_empty());
+        // A signature at its row cap keeps its row count when a session replaces old runs: the newest run's time tells.
+        let at = |t: u64, a: i64| json!({"rows": 10, "newest": t, "weights": {"latency": 1.0}, "context": {"power": "ac"}, "values": {"a": a}});
+        assert_eq!(diff_vs_last(&at(100, 1), &at(200, 2))[0]["why"], "new data");
+        assert_eq!(diff_vs_last(&at(100, 1), &at(100, 2))[0]["why"], "rule");
+        // An entry written before `newest` existed says nothing about it.
+        assert_eq!(diff_vs_last(&prev, &at(200, 2))[0]["why"], "rule");
     }
 
     #[test]

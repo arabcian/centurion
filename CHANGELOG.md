@@ -15,6 +15,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - `deny.toml`: RustSec advisories, licences and sources checked by `cargo deny` in CI.
 
 ### Fixed
+- `centurion-calibrate`: a phase that ends early (Ctrl-C, input during a boot calibration, the
+  charger gone, the ballast braked, the write budget) keeps the runs measured since its last
+  commit; they were dropped, up to a whole space-filling stage.
+- `centurion-calibrate`: a numeric option with a missing, malformed or negative value is an
+  error instead of the default (`--budget nan` ran without a time limit).
+- Autotune's "changed since last run" names new calibration data as the cause on a signature
+  at its row cap too (it compared the row count only).
 - `writes.log` rotation is locked and keeps two generations (`.1`, `.2`); two helpers
   rotating at once could lose the previous log.
 - Untranslated pkexec/polkit error messages and the Blackwell hotspot tooltip.
@@ -30,6 +37,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   (`docs/HANDBOOK.md` is the current one).
 
 ### Added
+- Autotune and `centurion-calibrate --show` warn when the confirmation/verify measurements fall
+  short of the predictions systematically (optimistic predictions); `centurion-autotune <goal>`
+  prints the application advice in its text output.
 - `centurion-export prometheus [FILE]` / `mqtt HOST`: the D-Bus `SensorValues` for Prometheus
   (textfile collector) and MQTT (`mosquitto_pub`, retained); no port is opened.
 - Tray: *Check for updates…* — one request to the GitHub releases API, only when clicked.

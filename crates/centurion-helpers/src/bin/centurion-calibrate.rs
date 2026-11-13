@@ -92,6 +92,16 @@ static STOP: AtomicBool = AtomicBool::new(false);
 extern "C" fn on_signal(_: libc::c_int) { STOP.store(true, Ordering::SeqCst); }
 
 fn die(msg: &str) -> ! { eprintln!("centurion-calibrate: {msg}"); std::process::exit(1) }
+/// A numeric option's value; None when the option is not given. A value that is missing, does not
+/// parse or is negative is an error (`>=` is false for NaN, so that is refused too): it used to fall
+/// back to the default silently - `--budget 30m` ran 15 minutes, `--budget nan` ran without a limit.
+fn num_opt<T: std::str::FromStr + PartialOrd + Default>(args: &[String], name: &str) -> Result<Option<T>, String> {
+    let Some(i) = args.iter().position(|a| a == name) else { return Ok(None) };
+    args.get(i + 1).and_then(|s| s.parse::<T>().ok()).filter(|v| *v >= T::default()).map(Some)
+        .ok_or_else(|| format!("{name} needs a number (not negative)"))
+}
+/// `num_opt`, ending the run on a bad value.
+fn num<T: std::str::FromStr + PartialOrd + Default>(args: &[String], name: &str) -> Option<T> { num_opt(args, name).unwrap_or_else(|e| die(&e)) }
 fn now() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 
 /// Originals of every file written, persisted before each write.
@@ -1307,6 +1317,8 @@ fn initial_design_count(total: usize, fraction: f64, factors: &[Factor], prior: 
 }
 
 fn save(cal: &Calibration) {
+    // A test never writes this machine's signature.
+    if cfg!(test) { return; }
     if let Err(e) = cal.save() { eprintln!("\nsignature not saved: {e}"); return; }
     // The fits the retunes just made, for the next autotune (it then skips fitting).
     cal.keep_system_fits();
@@ -1407,7 +1419,8 @@ impl Design<'_> {
         // skip expensive heap/THP child probes when explicitly enabled.
         let full = !self.fast_scan || cfg.is_empty() || self.tries % 3 == 0;
         let b = if full { self.bs } else { Benches { cpu_mem: false, ..self.bs } };
-        match rn.run(self.phase, b, cfg, if full { "" } else { "(fast probe)" })? {
+        let done = rn.run(self.phase, b, cfg, if full { "" } else { "(fast probe)" });
+        match self.kept_on_error(cal, rn, done)? {
             Some(Done { s, oom: false, w, t, temp }) => { let order = self.runs.len(); self.runs.push(Run { cfg: cfg.clone(), s, order, t, w, temp, full }); }
             Some(Done { oom: true, .. }) => {
                 let start = self.oom_left.min(6);
@@ -1417,9 +1430,10 @@ impl Design<'_> {
                 let mut kept: Vec<(Cfg, Done)> = Vec::new();
                 let (phase, bs) = (self.phase, self.bs);
                 let mut run = |c: &Cfg| rn.run(phase, bs, c, "(OOM search)");
-                if !knobs.is_empty() { oom_cull(cal, &mut run, self.phase, &knobs, &mut left, self.refs, self.kernel, &mut kept, &mut self.tries)?; }
+                let culled = if knobs.is_empty() { Ok(()) } else { oom_cull(cal, &mut run, self.phase, &knobs, &mut left, self.refs, self.kernel, &mut kept, &mut self.tries) };
                 self.oom_left -= start - left;
                 self.keep_runs(kept);
+                self.kept_on_error(cal, rn, culled)?;
             }
             None => {}
         }
@@ -1442,6 +1456,14 @@ impl Design<'_> {
         }
         self.spent += t.elapsed().as_secs_f64();
         Ok(())
+    }
+    /// An error ends the phase (interrupted, the power source gone, the ballast braked, the write
+    /// budget): the runs measured since the last commit are committed first, when there are enough
+    /// to make rows (`compute_rows`: 4). They used to be dropped - most of a session when a key
+    /// press stopped a boot calibration in its space-filling stage, which commits only at its end.
+    fn kept_on_error<T>(&self, cal: &mut Calibration, rn: &Runner, r: Result<T, String>) -> Result<T, String> {
+        if r.is_err() && self.runs.len() >= 4 { self.commit(cal, rn); }
+        r
     }
     /// Measured runs from outside the design's own list (the OOM search's halves): ordinary runs.
     fn keep_runs(&mut self, kept: Vec<(Cfg, Done)>) {
@@ -1849,6 +1871,9 @@ fn show(c: &Calibration) {
         println!("\npredictions vs measurements (last {n} confirmation/verify checks): {:.0} % inside ±2 sd (≈95 % if honest); PIT {:?} (flat = calibrated, U = too narrow)",
                  cov * 100.0, pit);
     }
+    if let Some((z, n)) = c.predcheck_optimism(50) {
+        println!("  the predictions run optimistic: over {n} confirmed session phase(s) the measured gain fell {:.1} sd short of the predicted one on average", -z);
+    }
 }
 
 fn main() {
@@ -1888,7 +1913,13 @@ fn main() {
     let (rounds, scale) = if thorough { (2, 1.6) } else { (1, 1.0) };
     let only: Option<Vec<String>> = opt("--only").map(|s| s.split(',').map(str::to_owned).collect());
     let phase = opt("--phase").unwrap_or_else(|| "both".into());
-    let budget = if flag("--all") { f64::INFINITY } else { opt("--budget").and_then(|s| s.parse::<f64>().ok()).unwrap_or(15.0) * 60.0 };
+    // Every numeric option is read here, before anything is locked or held: a bad value ends the run
+    // through die(), which skips the teardown.
+    let budget_min: Option<f64> = num(&args, "--budget");
+    let budget = if flag("--all") { f64::INFINITY } else { budget_min.unwrap_or(15.0) * 60.0 };
+    let (sessions, rounds_max, seed, secs): (Option<u64>, Option<usize>, Option<u64>, Option<u64>) =
+        (num(&args, "--sessions"), num(&args, "--rounds"), num(&args, "--seed"), num(&args, "--secs"));
+    let io_budget_gib: f64 = num(&args, "--io-budget").unwrap_or(IO_BUDGET_GIB);
     let ram = bench::meminfo_kb("MemTotal:").unwrap_or(0) * 1024;
     // The storage suite's disk: --dir, else the first of these on a local disk (not tmpfs).
     let dir = opt("--dir").unwrap_or_else(|| ["/var/tmp", "/var/cache", "/home", "/"].iter()
@@ -1962,8 +1993,8 @@ fn main() {
     }
     if flag("--schedule-boot") || flag("--cancel-boot") {
         let user = std::env::var("SUDO_USER").ok().filter(|u| !u.is_empty() && u != "root");
-        match centurion_helpers::calctx::schedule_boot(!flag("--cancel-boot"), opt("--sessions").and_then(|s| s.parse().ok()).unwrap_or(2),
-                            opt("--budget").and_then(|s| s.parse().ok()).unwrap_or(15.0), opt("--scene").as_deref(), user.as_deref()) {
+        match centurion_helpers::calctx::schedule_boot(!flag("--cancel-boot"), sessions.unwrap_or(2),
+                            budget_min.unwrap_or(15.0), opt("--scene").as_deref(), user.as_deref()) {
             Ok(m) => println!("{m}"),
             Err(e) => die(&e),
         }
@@ -2060,7 +2091,7 @@ fn main() {
         scale,
         battery: src == "battery",
         bat_period, heat_secs: 15.0 * scale, cx, heat: heat_opt,
-        io_budget: (opt("--io-budget").and_then(|s| s.parse::<f64>().ok()).unwrap_or(IO_BUDGET_GIB).max(0.0) * (1u64 << 30) as f64) as u64,
+        io_budget: (io_budget_gib * (1u64 << 30) as f64) as u64,
         strict: flag("--strict"),
     };
     let rate = centurion_helpers::iorate::gather().bps;
@@ -2094,7 +2125,7 @@ fn main() {
     cal.on_battery = src == "battery";
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
     if let Some(name) = opt("--verify") {
-        let r = verify_main(&mut cal, &ctx, &name, opt("--rounds").and_then(|s| s.parse().ok()).unwrap_or(4), flag("--io"), opt("--goal"), rate, ram, &kernel,
+        let r = verify_main(&mut cal, &ctx, &name, rounds_max.unwrap_or(4), flag("--io"), opt("--goal"), rate, ram, &kernel,
                             phase == "load", flag("--sequential"), flag("--require-improvement"));
         centurion_helpers::autotune::evidence_taint(&ev0);
         drop(td); // restore fan, power context and calibration hold before failing
@@ -2102,14 +2133,14 @@ fn main() {
         return;
     }
     if flag("--gpu-coupling") {
-        if let Err(e) = coupling_main(&mut cal, opt("--secs").and_then(|s| s.parse().ok()).unwrap_or(120)) { eprintln!("centurion-calibrate --gpu-coupling: {e}"); }
+        if let Err(e) = coupling_main(&mut cal, secs.unwrap_or(120)) { eprintln!("centurion-calibrate --gpu-coupling: {e}"); }
         return;
     }
 
     if !flag("--oat") {
-        let seed: u64 = opt("--seed").and_then(|s| s.parse().ok()).unwrap_or(0x1B_5EED);
+        let seed = seed.unwrap_or(0x1B_5EED);
         // --sessions N: N sessions back to back (walk away; progressive ones build on each other).
-        let n = opt("--sessions").and_then(|s| s.parse::<u64>().ok()).unwrap_or(1).clamp(1, 48);
+        let n = sessions.unwrap_or(1).clamp(1, 48);
         let mut power_ok = true;
         for i in 0..n {
             if STOP.load(Ordering::SeqCst) { break; }
@@ -3004,6 +3035,41 @@ mod tests {
     }
 
     fn run(cfg: Cfg, s: &[(Metric, f64)]) -> Run { Run { cfg, s: s.iter().copied().collect(), order: 0, t: 0, w: 1.0, temp: None, full: true } }
+
+    #[test]
+    fn numeric_options_are_parsed_or_refused() {
+        let a = |s: &str| -> Vec<String> { s.split(' ').map(str::to_owned).collect() };
+        assert_eq!(num_opt::<f64>(&a("--budget 30"), "--budget"), Ok(Some(30.0)));
+        assert_eq!(num_opt::<f64>(&a("--all"), "--budget"), Ok(None));
+        for bad in ["--budget 30m", "--budget nan", "--budget -5", "--budget", "--budget --all"] {
+            assert!(num_opt::<f64>(&a(bad), "--budget").is_err(), "{bad}");
+        }
+        assert_eq!(num_opt::<u64>(&a("--verify x --seed 7"), "--seed"), Ok(Some(7)));
+        assert!(num_opt::<u64>(&a("--sessions two"), "--sessions").is_err());
+    }
+
+    /// A phase that ends on an error (Ctrl-C, input during a boot calibration, the charger pulled, the
+    /// ballast braked, the write budget) keeps the runs it measured since its last commit.
+    #[test]
+    fn a_phase_that_ends_early_keeps_its_runs() {
+        let ctx = Ctx { exe: PathBuf::new(), dir: String::new(), disk: None, io_size: 0, scale: 1.0, battery: false, bat_period: None,
+                        heat_secs: 0.0, cx: String::new(), heat: None, io_budget: 0, strict: false };
+        let mut rn = Runner::new(&ctx, 0, 0);
+        // The power source is gone for good: the next run ends the phase before it touches anything.
+        (rn.ac0, rn.power_lost) = (Some(true), true);
+        let refs = BTreeMap::new();
+        let mut d = Design { phase: Phase::Idle, bs: Benches::default(), fast_scan: false, sess: 7, n_total: 12, kernel: "", refs: &refs, runs: Vec::new(), oom_left: 0,
+                             t0: Instant::now(), secs: 60.0, spent: 0.0, meta: meta(), strategy: "lean", tries: 0, checked: true };
+        let mut cal = Calibration::default();
+        // Too few runs to make rows: nothing to keep, and no empty session record either.
+        d.runs.push(run(Vec::new(), &[(Metric::WakeP99Us, 100.0)]));
+        assert!(d.exec(&mut cal, &mut rn, &Vec::new()).is_err());
+        assert!(cal.rows.is_empty() && cal.quality.is_empty());
+        for i in 1..6 { d.runs.push(Run { order: i, ..run(if i % 3 == 0 { Vec::new() } else { vec![("vm.a".into(), "1".into())] }, &[(Metric::WakeP99Us, 100.0 + i as f64)]) }); }
+        assert!(d.exec(&mut cal, &mut rn, &Vec::new()).is_err());
+        assert_eq!(cal.rows.iter().filter(|r| r.sess == 7 && r.phase == Phase::Idle).count(), 6, "the measured runs are in the signature");
+        assert_eq!(cal.quality.len(), 1);
+    }
 
     #[test]
     fn fast_probe_keeps_unmeasured_objectives_missing() {

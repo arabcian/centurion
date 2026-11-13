@@ -1855,6 +1855,28 @@ impl Calibration {
         let inside = zs.iter().filter(|z| z.abs() <= 2.0).count();
         Some((zs.len(), inside as f64 / zs.len() as f64, pit))
     }
+    /// Whether the predictions of the last `last` checks ran optimistic: (mean z, groups), z =
+    /// (measured - predicted) / sd, when at least 6 groups average below -0.5 and more than two
+    /// standard errors under 0. A group is one calibration run's checks of one phase: its goals
+    /// share their runs, so their checks are one piece of evidence, not four. The configuration
+    /// checked is the one predicted best, so its prediction is biased upwards by selection (winner's
+    /// curse); `predcheck_summary`'s share inside ±2 sd does not show a bias of half an sd.
+    pub fn predcheck_optimism(&self, last: usize) -> Option<(f64, usize)> {
+        let mut by: BTreeMap<(u64, &str), (f64, f64)> = BTreeMap::new();
+        for c in self.predcheck.iter().rev().take(last) {
+            let (Some(mu), Some(sd), Some(obs)) = (c["mu"].as_f64(), c["sd"].as_f64(), c["obs"].as_f64()) else { continue };
+            if sd <= 0.0 { continue; }
+            let e = by.entry((c["t"].as_u64().unwrap_or(0), c["phase"].as_str().unwrap_or(""))).or_default();
+            e.0 += (obs - mu) / sd;
+            e.1 += 1.0;
+        }
+        let z: Vec<f64> = by.values().map(|(s, n)| s / n).collect();
+        if z.len() < 6 { return None; }
+        let n = z.len() as f64;
+        let mean = z.iter().sum::<f64>() / n;
+        let se = (z.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt();
+        (mean < -0.5 && mean + 2.0 * se < 0.0).then_some((mean, z.len()))
+    }
     /// Notes the quality record of a finished design session (the last `KEEP_QUALITY` are kept).
     pub fn note_quality(&mut self, q: Value) {
         self.quality.push(q);
@@ -2657,6 +2679,23 @@ mod tests {
         for _ in 0..300 { c.note_predcheck("confirm", "load", "desktop", 0.0, 0.01, 0.05); }
         assert_eq!(c.predcheck.len(), KEEP_PREDCHECK);
         assert!(c.predcheck_summary(50).unwrap().1 < 0.7);
+    }
+    #[test]
+    fn optimistic_predictions_are_told_from_honest_scatter() {
+        // Honest: the measurements scatter around the predictions.
+        let mut c = Calibration::default();
+        for i in 0..8u64 { c.now = i; c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, if i % 2 == 0 { 0.058 } else { 0.042 }); }
+        assert!(c.predcheck_optimism(50).is_none());
+        // Every session most of an sd short: inside ±2 sd every time, biased all the same.
+        let mut c = Calibration::default();
+        for i in 0..8u64 { c.now = i; c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.04 + 0.002 * (i % 3) as f64); }
+        assert_eq!(c.predcheck_summary(50).unwrap().1, 1.0);
+        let (z, n) = c.predcheck_optimism(50).unwrap();
+        assert!(n == 8 && (-1.0..-0.6).contains(&z), "{z} {n}");
+        // The goals of one calibration run and phase share their runs: one piece of evidence, not eight.
+        let mut c = Calibration::default();
+        for _ in 0..8 { c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.03); }
+        assert!(c.predcheck_optimism(50).is_none());
     }
     #[test]
     fn device_phase_adds_whole_machine_power() {

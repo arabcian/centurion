@@ -606,7 +606,12 @@ each phase's stage and what the log holds.
    kept in the session's quality record (`checks`, `surprises`), and every check (and every
    `--verify` with a prediction) is logged as (predicted mean, sd, observed) in the signature's
    `predcheck` (last 200). `--show` prints the share of the last 50 inside ±2 sd and a five-bin
-   PIT histogram; below 70 % (with ≥ 10 checks) autotune adds a warning note. **Rule:** when more than 30 %
+   PIT histogram; below 70 % (with ≥ 10 checks) autotune adds a warning note. A bias shows
+   there only once it is large, so the sign is checked too: the checks of one calibration run and
+   phase count as one (its goals share their runs), and when at least 6 of them fall short of
+   their predictions by more than 0.5 sd on average, more than two standard errors under 0,
+   `--show` and autotune say that the predicted gains are optimistic (the configuration checked
+   is the one predicted best, which favours lucky estimates). **Rule:** when more than 30 %
    of the phase's checks in its last 4 sessions with confirmations (at least 3 checks) were
    surprises, the next progressive session of that phase chases doubt - the
    `lean/polish-doubt` shape (doubtful interactions and triples) - as soon as the coverage
@@ -888,7 +893,10 @@ widened, rows of another kernel, and the age of the newest run (a fresh session 
 **Safety:** refuses while an Optimizations preset is active (Restore
 originals first), holds the tune lock, journals every original before
 writing, restores after each knob and on Ctrl-C; `sudo centurion-calibrate --restore`
-after a crash. Power on AC is the CPU package only (RAPL); device power
+after a crash. A phase that ends early (Ctrl-C, a key press during a boot calibration, the
+charger gone for good, the ballast braked repeatedly, the write budget) first commits the runs
+it measured since its last commit; they used to be dropped - up to the whole space-filling
+stage, which commits only at its end. Power on AC is the CPU package only (RAPL); device power
 states need a run on battery.
 
 ```sh
@@ -937,6 +945,10 @@ All options:
 | `--schedule-boot [--sessions N] [--budget MIN] [--scene NAME]`, `--cancel-boot` | calibration at the next boot |
 | `--status` | boot calibration status (JSON) |
 | `@dev` (with `--only`) | the device power-state rows (DEV phase, battery only) |
+
+A numeric option (`--budget`, `--sessions`, `--rounds`, `--seed`, `--secs`, `--io-budget`) whose
+value is missing, not a number or negative ends the run with an error (it fell back to the
+default silently: `--budget 30m` ran 15 minutes, `--budget nan` ran without a time limit).
 
 Needs root, a clean state (no active Optimizations preset) and the tune lock;
 Ctrl-C at any point restores everything and keeps what was measured. For

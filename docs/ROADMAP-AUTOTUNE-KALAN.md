@@ -29,6 +29,24 @@ nereden başlanacağı, nelere dikkat edileceği ve hangi kararın beklendiği v
   Load fazında balast altında MGLRU kapatılıyor: donanımda takılma izlenmeli.
 - **docs/KNOBS.md:** 196 knobun kalibrasyon / autotune envanteri (koddan üretildi).
 
+## 2026-11-13 oturumu: kod okuması bulguları
+
+- **Kesilen faz ölçtüğünü tutuyor ✅** `Design::exec` içindeki `rn.run(..)?` hata verince (STOP, şarj gitti, balast, IO bütçesi)
+  son commit'ten sonraki koşular kayboluyordu; space-filling aşaması yalnız sonunda commit ettiği için önyükleme kalibrasyonunda
+  bir tuş, o fazın tamamını siliyordu ("what it measured is kept" yazmasına rağmen). `Design::kept_on_error` önce commit eder
+  (≥ 4 koşu). Test: `a_phase_that_ends_early_keeps_its_runs`. Testlerde `save` signature yazmaz (`cfg!(test)`).
+- **Sayısal seçenekler ✅** `num_opt`: `--budget/--sessions/--rounds/--seed/--secs/--io-budget` bozuk / negatif / NaN değerde hata
+  (eskiden sessizce varsayılan; `--budget nan` süresiz max oturumdu). Test: `numeric_options_are_parsed_or_refused`.
+- **diff_vs_last ✅** geçmiş kaydına `newest` (en yeni satırın zamanı): satır tavanındaki signature'da satır sayısı değişmediği için
+  yeni veri "rule" diye etiketleniyordu.
+- **İyimser tahmin teşhisi ✅** `Calibration::predcheck_optimism` ("kazananın laneti" açık bulgusu için): oturum × faz başına
+  ortalama z; ≥ 6 grup, ortalama < −0.5 ve 0'ın 2 se altında ise `--show` ve autotune notu. Yalnız teşhis: tahminler düzeltilmiyor
+  (büzme, simülatörde `sim_regression` ile ölçülmeden eklenmemeli).
+- **Yapılmadı, bilinmeli:** (1) `verify_main`'de `rn.run(..)?` hata verince tamamlanmış ABBA blokları raporlanmadan çıkılıyor
+  (donanımsız test edilemediği için dokunulmadı; döngüden `break` yeterli). (2) `docs/AUTOTUNE.md` "forced idle koşusu %10 sayılır"
+  ve "uyarı sıcaklığındaki IO koşusu %30 sayılır" diyor, kod ikisini de atıyor (`Runner::run`); açılıştaki stderr notu da %10 diyor.
+  (3) `autotune-seen.json` atomik yazılmıyor ve oku-değiştir-yaz: paralel iki amaç birbirinin kaydını ezebilir.
+
 ## 2026-11-01 (2) oturumu: hedef ölçeği
 
 - **Metrik aileleri ✅** `compute_rows`/`fold` hedefi metrik başına değil senaryo (aile, `Metric::family`) başına toplar
