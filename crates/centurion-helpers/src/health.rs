@@ -385,6 +385,52 @@ mod tests {
         assert!(classify("mydriver: BUG: not a kernel report").is_none());
         assert!(classify("usb 1-1: new high-speed USB device number 2 using xhci_hcd").is_none());
     }
+    /// The GUI reads /dev/kmsg itself and asks for a scan only when a record contains one of its KEYS
+    /// (gui/src/healthtab.cpp, drainKmsg). A kind classify() knows but KEYS misses is never reported live:
+    /// the D3cold wake failure was one.
+    #[test]
+    fn gui_wakes_for_every_classified_line() {
+        const GUI: &str = include_str!("../../../gui/src/healthtab.cpp");
+        let list = &GUI[GUI.find("KEYS[] = {").expect("KEYS in healthtab.cpp")..];
+        let list = &list[..list.find("};").unwrap()];
+        let keys: Vec<&str> = list.split('"').skip(1).step_by(2).collect();
+        assert!(keys.len() > 20, "{keys:?}");
+        for msg in [
+            "NVRM: Xid (PCI:0000:01:00): 79, pid='<unknown>', name=<unknown>, GPU has fallen off the bus.",
+            "NVRM: GPU0 _kgspIsHeartbeatTimedOut: heartbeat timed out",
+            "mce: [Hardware Error]: Machine check events logged",
+            "mce: [Hardware Error]: CPU 3: Machine Check Exception: 5 Bank 0: 8c00004000010090",
+            "pcieport 0000:00:01.1: AER: Corrected error message received from 0000:01:00.0",
+            "nvme 0000:04:00.0: PCIe Bus Error: severity=Uncorrectable (Fatal), type=Transaction Layer",
+            "watchdog: BUG: soft lockup - CPU#3 stuck for 22s!",
+            "NMI watchdog: Watchdog detected hard LOCKUP on cpu 2",
+            "rcu: INFO: rcu_preempt detected stalls on CPUs/tasks:",
+            "nvidia 0000:01:00.0: Unable to change power state from D3cold to D0, device inaccessible",
+            "amdgpu 0000:65:00.0: [drm] *ERROR* ring gfx_0.0.0 timeout, signaled seq=2, emitted seq=4",
+            "nvme nvme0: I/O 123 (I/O Cmd) QID 5 timeout, aborting",
+            "nvme nvme0: controller is down; will reset: CSTS=0xffffffff, PCI_STATUS=0xffff",
+            "EXT4-fs error (device nvme0n1p2): ext4_lookup:1855: inode #131073: comm ls: iget: bad extra_isize",
+            "BTRFS error (device nvme0n1p2): bdev /dev/nvme0n1p2 errs: wr 0, rd 0, flush 0, corrupt 3, gen 0",
+            "BTRFS warning (device dm-0): csum failed root 5 ino 257 off 0 csum 0x8941f998 expected csum 0x1d4c2f0b mirror 1",
+            "XFS (sda1): Corruption detected. Unmount and run xfs_repair",
+            "i915 0000:00:02.0: [drm] GPU HANG: ecode 9:1:85dffffb, in firefox [2345]",
+            "xe 0000:00:02.0: [drm] GT0: trying reset from guc_exec_queue_timedout_job",
+            "iwlwifi 0000:02:00.0: Microcode SW error detected. Restarting 0x0.",
+            "mt7921e 0000:03:00.0: Message 00020007 (seq 3) timeout",
+            "ath11k_pci 0000:03:00.0: firmware crashed: MHI_CB_EE_RDDM",
+            "thermal thermal_zone0: critical temperature reached, shutting down",
+            "CPU0: Package temperature above threshold, cpu clock throttled (total events = 1)",
+            "Out of memory: Killed process 4242 (firefox) total-vm:8123456kB, anon-rss:4012345kB",
+            "Oops: 0000 [#1] PREEMPT SMP NOPTI",
+            "BUG: kernel NULL pointer dereference, address: 0000000000000008",
+            "WARNING: CPU: 3 PID: 1234 at drivers/gpu/drm/amd/amdgpu/amdgpu_dm.c:123 dm_update+0x1/0x2 [amdgpu]",
+        ] {
+            assert!(classify(msg).is_some(), "sample is not classified: {msg}");
+            let record = format!("4,1234,5678901,-;{msg}\n SUBSYSTEM=pci\n");
+            assert!(keys.iter().any(|k| record.contains(k)), "healthtab.cpp KEYS never wakes the scan for: {msg}");
+        }
+    }
+
     #[test]
     fn module_tags() {
         assert_eq!(module_tag("foo+0x1/0x2 [nvidia_drm]"), Some("nvidia_drm"));

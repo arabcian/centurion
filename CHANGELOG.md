@@ -15,6 +15,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - `deny.toml`: RustSec advisories, licences and sources checked by `cargo deny` in CI.
 
 ### Fixed
+- Health → Events & alerts: a dGPU that fails to wake from D3cold is reported when it happens. The GUI's
+  kernel-log filter did not know that line, so the (critical) event waited for the next unrelated one.
+- Health → Overview, *Sleep drain*: without a sleep long enough on battery to measure, the card says so
+  instead of "draining 0.0 % per hour"; the count is worded as what it is (all sleeps of the last 7 days).
+- Health → System tools: pages are grouped by their untranslated name. In Turkish *Thermal* ("Termal")
+  was filed under *Kernel & firmware* instead of *Devices*.
+- Health → Drive health: the "not installed" hint names this distribution's package manager (it said
+  `emerge` everywhere).
 - `centurion-calibrate`: a phase that ends early (Ctrl-C, input during a boot calibration, the
   charger gone, the ballast braked, the write budget) keeps the runs measured since its last
   commit; they were dropped, up to a whole space-filling stage.
@@ -37,6 +45,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   (`docs/HANDBOOK.md` is the current one).
 
 ### Added
+- Health → Overview: *Drive health* card, from the daily SMART record (`smart.json`): drives with a SMART
+  warning, wear or new media errors in the last 30 days. Read-only; SMART itself is still read only by
+  *Drive health* and the daily check.
+- Diagnostic report: IPv6 addresses (`<ip>`) and the user name in `/home/…` paths (`<user>`) are masked too.
 - Autotune and `centurion-calibrate --show` warn when the confirmation/verify measurements fall
   short of the predictions systematically (optimistic predictions); `centurion-autotune <goal>`
   prints the application advice in its text output.

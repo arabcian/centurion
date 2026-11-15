@@ -32,6 +32,10 @@ checks = {
     "responsive overview": 'viewport()->width() >= 650 ? 2 : 1' in overview,
     "drive health summary and advanced table": 'detailsButton_->setCheckable(true)' in smart and 'cardsLayout_->addWidget(card)' in smart,
     "unknown drives not called healthy": 'insufficient ? tr("Not checked")' in smart,
+    "tool groups do not depend on translated tab text": 'label == QLatin1String' not in health and 'property("toolKey")' in health,
+    "drive health card on the overview": 'id == QLatin1String("disk")) return QStringLiteral("smart")' in overview,
+    "sleep card has no rate without a measured sleep": '!perHour.isDouble()' in overview,
+    "install hint is not Gentoo-only": 'emerge' not in smart,
 }
 
 # This represents the actual persisted line shape from HealthTab::persist.

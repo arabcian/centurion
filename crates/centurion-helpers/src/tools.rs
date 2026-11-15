@@ -174,7 +174,9 @@ fn parse_nvme_cli(dev: &str, j: &Value) -> Value {
 fn smart_json() -> Value {
     let (sc, nv) = (bin("smartctl"), bin("nvme"));
     if sc.is_none() && nv.is_none() {
-        return json!({"ok": true, "disks": [], "missing": "sys-apps/smartmontools (or sys-apps/nvme-cli)"});
+        // The install command of this distribution, like the text pages: "emerge …" was shown on every one.
+        let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+        return json!({"ok": true, "disks": [], "missing": install_hint(family(&os_release), "smartctl", &[&PKG_SMARTMONTOOLS, &PKG_NVME_CLI])});
     }
     let mut rows = Vec::new();
     for d in disks() {

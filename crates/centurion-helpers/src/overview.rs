@@ -1,7 +1,7 @@
 //! Health → Overview, the Home / tray badge, and the dGPU usage view.
 //!
 //! Every card is decided here from the files the other Health pages keep (health.log, the boot
-//! record, battery.json, cooling.json, the sleep log, the Backup folders, dgpu.json). Read-only,
+//! record, battery.json, cooling.json, smart.json, the sleep log, the Backup folders, dgpu.json). Read-only,
 //! run as the user, asked for only when the Overview page is shown, once at start-up for the badge,
 //! and after a new kernel fault. The GUI words the cards (its texts are translated); this module
 //! returns levels and numbers only.
@@ -50,6 +50,11 @@ const SLEEP_MIN_H: f64 = 0.25;
 pub const POWER_MIN_SEC: f64 = 1800.0;
 /// Wake-ups kept in dgpu.json and shown on the page (newest first).
 pub const WAKES_SHOWN: usize = 20;
+/// A drive counts while it has a SMART sample this recent: an unplugged or replaced drive leaves the card,
+/// and a record nobody refreshed for a month is "no data", not "normal".
+const DISK_FRESH_DAYS: i64 = 30;
+/// Life used (NVMe "percentage used") from which a drive is worth a look: the Drive health page's line.
+const DISK_WORN_PCT: f64 = 80.0;
 
 // ── time ─────────────────────────────────────────────────────────────────────
 
@@ -212,6 +217,44 @@ pub fn cooling_latest(store: &Value) -> Option<(i64, Level)> {
     None
 }
 
+// ── drives (smart.json, the GUI's daily SMART record) ────────────────────────
+
+#[derive(Default, Debug, PartialEq)]
+pub struct Disks { pub disks: u64, pub faulty: u64, pub caution: u64, pub date: String, pub name: String }
+
+/// The drives of smart.json with a sample dated `cutoff` ("YYYY-MM-DD") or later, judged by the rules of the
+/// Drive health page: faulty = critical warning, failed self-assessment or spare below its threshold;
+/// caution = life used at DISK_WORN_PCT or more, or more media errors than in the first sample since `cutoff`.
+/// A drive that reports none of the indicators is not counted (the page calls it "Not checked").
+/// `date`: the newest sample; `name`: the model of the worst drive. None: no drive to judge.
+pub fn disk_health(store: &Value, cutoff: &str) -> Option<Disks> {
+    let mut d = Disks::default();
+    let mut worst = NODATA;
+    for disk in store["disks"].as_object()?.values() {
+        let recent: Vec<&Value> = disk["samples"].as_array().into_iter().flatten()
+            .filter(|s| s["d"].as_str().is_some_and(|day| day >= cutoff)).collect();
+        let (Some(first), Some(last)) = (recent.first(), recent.last()) else { continue };
+        let num = |s: &Value, k: &str| s[k].as_f64();
+        let (crit, life, media) = (num(last, "critical_warning"), num(last, "life_used_pct"), num(last, "media_errors"));
+        let passed = last["passed"].as_bool();
+        if crit.is_none() && passed.is_none() && life.is_none() && media.is_none() && num(last, "temp_c").is_none() { continue; }
+        let spare_low = matches!((num(last, "spare_pct"), num(last, "spare_threshold_pct")), (Some(s), Some(t)) if s < t);
+        let media_up = matches!((media, num(first, "media_errors")), (Some(now), Some(then)) if now > then);
+        let level = if crit.is_some_and(|c| c != 0.0) || passed == Some(false) || spare_low { BAD }
+                    else if life.is_some_and(|l| l >= DISK_WORN_PCT) || media_up { WARN }
+                    else { OK };
+        d.disks += 1;
+        match level { BAD => d.faulty += 1, WARN => d.caution += 1, _ => {} }
+        let day = last["d"].as_str().unwrap_or("");
+        if day > d.date.as_str() { d.date = day.to_owned(); }
+        if level > worst {
+            worst = level;
+            d.name = disk["model"].as_str().unwrap_or("").to_owned();
+        }
+    }
+    (d.disks > 0).then_some(d)
+}
+
 // ── sleeps (sleep.log) ───────────────────────────────────────────────────────
 
 #[derive(Default, Debug, PartialEq)]
@@ -298,6 +341,8 @@ pub struct Inputs {
     pub unclean_seen: i64,
     pub battery: Option<Value>,
     pub cooling: Option<Value>,
+    /// smart.json: one SMART sample per drive and day, written by the GUI (Drive health, SmartWatch).
+    pub smart: Option<Value>,
     pub sleep_log: String,
     pub dgpu_state: Option<Value>,
     pub backup_age: Option<i64>,
@@ -318,7 +363,8 @@ fn battery_level(pct: f64) -> i64 {
 }
 
 /// One card per subsystem that has something to say. Battery and dGPU cards exist only when that
-/// hardware is present; the disk card (SMART) is not built yet and is therefore absent.
+/// hardware is present. The disk card reads the recorded SMART samples only: reading SMART needs root,
+/// and the Overview never asks for it.
 pub fn cards(i: &Inputs) -> Vec<Value> {
     let mut out = Vec::new();
 
@@ -353,6 +399,15 @@ pub fn cards(i: &Inputs) -> Vec<Value> {
             out.push(card("cooling", lvl, json!({"verdict": verdict, "t": t})));
         }
         None => out.push(card("cooling", NODATA, json!({}))),
+    }
+
+    let since = ymd(i.now - DISK_FRESH_DAYS * DAY, i.offset);
+    match i.smart.as_ref().and_then(|s| disk_health(s, &since)) {
+        Some(d) => {
+            let lvl = if d.faulty > 0 { BAD } else if d.caution > 0 { WARN } else { OK };
+            out.push(card("disk", lvl, json!({"disks": d.disks, "faulty": d.faulty, "caution": d.caution, "date": d.date, "name": d.name})));
+        }
+        None => out.push(card("disk", NODATA, json!({}))),
     }
 
     match i.backup_age {
@@ -405,6 +460,7 @@ pub fn read_inputs(req: &Value) -> Inputs {
         unclean_seen: req["unclean_seen"].as_i64().unwrap_or(0),
         battery: read_json(&st.join("battery.json")),
         cooling: read_json(&st.join("cooling.json")),
+        smart: read_json(&st.join("smart.json")),
         sleep_log: read_tail(Path::new("/var/log/centurion/sleep.log"), TAIL_BYTES).unwrap_or_default(),
         dgpu_state: read_json(&st.join("dgpu.json")),
         backup_age: newest_age(&backup_dirs, now),
@@ -540,6 +596,61 @@ mod tests {
         assert!(matches!(cooling_latest(&warn), Some((2, Level::Warn))));
     }
 
+    fn smart_store(disks: Value) -> Value { json!({"sampled": "2026-11-10", "disks": disks}) }
+
+    #[test]
+    fn disk_health_follows_the_drive_health_page() {
+        let healthy = json!({"d": "2026-11-10", "critical_warning": 0, "passed": true, "life_used_pct": 3, "spare_pct": 100,
+                             "spare_threshold_pct": 10, "media_errors": 0, "temp_c": 41});
+        let with = |k: &str, v: Value| { let mut s = healthy.clone(); s[k] = v; s };
+        let one = |samples: Value| smart_store(json!({"id": {"model": "Disk A", "samples": samples}}));
+        let cutoff = "2026-10-15";
+
+        assert_eq!(disk_health(&one(json!([healthy])), cutoff), Some(Disks { disks: 1, date: "2026-11-10".into(), name: "Disk A".into(), ..Default::default() }));
+        for bad in [with("critical_warning", json!(4)), with("passed", json!(false)), with("spare_pct", json!(5))] {
+            assert_eq!(disk_health(&one(json!([bad])), cutoff).unwrap().faulty, 1, "{bad}");
+        }
+        assert_eq!(disk_health(&one(json!([with("life_used_pct", json!(80))])), cutoff).unwrap().caution, 1);
+        // Media errors: the rise since the first sample of the window counts; an old, unchanged total does not.
+        let mut earlier = with("media_errors", json!(2));
+        earlier["d"] = json!("2026-11-01");
+        assert_eq!(disk_health(&one(json!([earlier, with("media_errors", json!(3))])), cutoff).unwrap().caution, 1);
+        assert_eq!(disk_health(&one(json!([earlier, with("media_errors", json!(2))])), cutoff).unwrap().caution, 0);
+    }
+
+    #[test]
+    fn disk_health_skips_stale_and_silent_drives_and_names_the_worst() {
+        let sample = |d: &str, crit: i64| json!({"d": d, "critical_warning": crit, "passed": true});
+        let store = smart_store(json!({
+            "a": {"model": "Fine", "samples": [sample("2026-11-10", 0)]},
+            "b": {"model": "Failing", "samples": [sample("2026-11-09", 1)]},
+            "c": {"model": "Unplugged", "samples": [sample("2026-08-01", 1)]},     // too old: not judged
+            "d": {"model": "Silent", "samples": [{"d": "2026-11-10"}]},            // no indicators: not judged
+        }));
+        assert_eq!(disk_health(&store, "2026-10-15"),
+                   Some(Disks { disks: 2, faulty: 1, caution: 0, date: "2026-11-10".into(), name: "Failing".into() }));
+        // Nothing recent, nothing recorded, not the expected shape: no verdict.
+        assert_eq!(disk_health(&store, "2026-12-01"), None);
+        assert_eq!(disk_health(&smart_store(json!({})), "2026-10-15"), None);
+        assert_eq!(disk_health(&Value::Null, "2026-10-15"), None);
+    }
+
+    #[test]
+    fn disk_card_levels() {
+        let now = MAR1_2000 + 100 * DAY;
+        let card = |sample: Value| {
+            let smart = Some(smart_store(json!({"id": {"model": "Disk A", "samples": [sample]}})));
+            cards(&Inputs { now, smart, ..Default::default() }).into_iter().find(|c| c["id"] == "disk").unwrap()
+        };
+        let today = ymd(now, 0);
+        assert_eq!(card(json!({"d": today, "critical_warning": 0}))["level"], OK);
+        assert_eq!(card(json!({"d": today, "life_used_pct": 91}))["level"], WARN);
+        let bad = card(json!({"d": today, "passed": false}));
+        assert_eq!((bad["level"].as_i64(), bad["faulty"].as_u64(), bad["name"].as_str()), (Some(BAD), Some(1), Some("Disk A")));
+        // The window is DISK_FRESH_DAYS: a sample from the day before it opens is no data.
+        assert_eq!(card(json!({"d": ymd(now - (DISK_FRESH_DAYS + 1) * DAY, 0), "passed": false}))["level"], NODATA);
+    }
+
     #[test]
     fn sleep_stats_count_drain_on_battery_only() {
         let now = MAR1_2000 + 50 * DAY;
@@ -594,7 +705,8 @@ mod tests {
         let quiet = Inputs { now, today: ymd(now, 0), ..Default::default() };
         let c = cards(&quiet);
         let ids: Vec<&str> = c.iter().map(|x| x["id"].as_str().unwrap()).collect();
-        assert_eq!(ids, ["kernel", "unclean", "cooling", "backup", "sleep"], "no battery or dGPU card without that hardware");
+        assert_eq!(ids, ["kernel", "unclean", "cooling", "disk", "backup", "sleep"], "no battery or dGPU card without that hardware");
+        assert_eq!(c[3]["level"], NODATA, "no SMART record: the disk card says so, it does not say normal");
         assert_eq!(c[0]["level"], OK);
         assert_eq!(c[1]["level"], NODATA);
         assert_eq!(worst(&c), OK);

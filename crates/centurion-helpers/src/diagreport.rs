@@ -5,8 +5,8 @@
 //!
 //! Every text passes `sanitize` before it is kept: kernel addresses (health::scrub), the value of any
 //! line whose key names a serial number, UUID or asset tag (the rule of the GUI's SERIAL_RE: "Serial
-//! Number: X", "UUID=X"), MAC addresses and IPv4 addresses. Placeholders that identify nothing
-//! ("Not Specified", "None", "0"…) are left as they are.
+//! Number: X", "UUID=X"), MAC addresses, IPv4 and IPv6 addresses, and the user name in /home/<name>
+//! paths. Placeholders that identify nothing ("Not Specified", "None", "0"…) are left as they are.
 //!
 //! stdin:  {"op":"diag_report"}                        preview: each file's status and text
 //!         {"op":"diag_report","out":"/abs/x.tar.gz"}  writes the archive
@@ -175,6 +175,59 @@ fn mask_ipv4(text: &str) -> (String, u64) {
     (out, n)
 }
 
+/// 2001:db8::1, fe80::1c2d:3e4f:5a6b:7c8d → <ip>. A token of hex digits and colons that parses as an IPv6
+/// address; clock times ("10:00:00") and PCI addresses ("0000:01:00.0") have too few groups to be one.
+/// Runs after mask_macs and mask_ipv4, so what is left of a MAC or an IPv4-mapped address is not looked at.
+fn mask_ipv6(text: &str) -> (String, u64) {
+    let b = text.as_bytes();
+    let part = |c: u8| c.is_ascii_hexdigit() || c == b':';
+    let mut out = String::with_capacity(text.len());
+    let (mut i, mut n) = (0, 0);
+    while i < b.len() {
+        if part(b[i]) && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'.')) {
+            let end = i + b[i..].iter().take_while(|&&c| part(c)).count();
+            // Hex digits and colons only: ASCII, so `end` is a character boundary.
+            let token = &text[i..end];
+            let ends = b.get(end).map_or(true, |c| !c.is_ascii_alphanumeric());
+            let digits = token.bytes().any(|c| c != b':');  // a bare "::" is punctuation, not an address
+            if ends && digits && token.matches(':').count() >= 2 && token.parse::<std::net::Ipv6Addr>().is_ok() {
+                out.push_str("<ip>");
+                n += 1;
+            } else {
+                out.push_str(token);
+            }
+            i = end;
+            continue;
+        }
+        let ch = text[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8().max(1);
+    }
+    (out, n)
+}
+
+/// /home/alice/Games/x.exe → /home/<user>/Games/x.exe: process names and commands in the logs carry the
+/// account name with them. Only the path component after /home/ goes; the rest of the path stays readable.
+fn mask_home(text: &str) -> (String, u64) {
+    const HOME: &str = "/home/";
+    let mut out = String::with_capacity(text.len());
+    let (mut rest, mut n) = (text, 0);
+    while let Some(p) = rest.find(HOME) {
+        let after = &rest[p + HOME.len()..];
+        let len = after.find(|c: char| c == '/' || c.is_whitespace() || "\"',;:)]}|".contains(c)).unwrap_or(after.len());
+        out.push_str(&rest[..p + HOME.len()]);
+        if len > 0 && &after[..len] != "<user>" {
+            out.push_str("<user>");
+            n += 1;
+        } else {
+            out.push_str(&after[..len]);
+        }
+        rest = &after[len..];
+    }
+    out.push_str(rest);
+    (out, n)
+}
+
 /// Everything a text goes through before it is kept, with the number of values masked.
 pub fn sanitize(text: &str) -> (String, u64) {
     let scrubbed = health::scrub(text);
@@ -182,7 +235,9 @@ pub fn sanitize(text: &str) -> (String, u64) {
     let (a, serials) = mask_serials(&scrubbed);
     let (b, macs) = mask_macs(&a);
     let (c, ips) = mask_ipv4(&b);
-    (c, addr + serials + macs + ips)
+    let (d, ips6) = mask_ipv6(&c);
+    let (e, homes) = mask_home(&d);
+    (e, addr + serials + macs + ips + ips6 + homes)
 }
 
 // ── collecting ───────────────────────────────────────────────────────────────
@@ -253,7 +308,8 @@ Files
 Replaced before saving
   serial numbers, UUIDs and asset tags   -> <hidden>
   MAC addresses                          -> <mac>
-  IPv4 addresses                         -> <ip>
+  IPv4 and IPv6 addresses                -> <ip>
+  user names in home-folder paths        -> <user>
   kernel addresses                       -> <addr>
 Look through the files before you attach them anywhere public.
 ";
@@ -391,6 +447,33 @@ mod tests {
         assert_eq!(mask_macs("00:11:22:33:44:5").0, "00:11:22:33:44:5", "too short");
         assert_eq!(mask_macs("a00:11:22:33:44:55").0, "a00:11:22:33:44:55", "part of a longer token");
         assert_eq!(mask_ipv4("ip 10.1.2.3, 300.1.1.1 1.2.3.4.5 v1.2.3").0, "ip <ip>, 300.1.1.1 1.2.3.4.5 v1.2.3");
+    }
+
+    #[test]
+    fn ipv6_addresses_go_and_look_alikes_stay() {
+        assert_eq!(mask_ipv6("from 2001:db8:85a3::8a2e:370:7334 port 22").0, "from <ip> port 22");
+        assert_eq!(mask_ipv6("fe80::1c2d:3e4f:5a6b:7c8d%wlan0, ::1").0, "<ip>%wlan0, <ip>");
+        assert_eq!(mask_ipv6("[2001:db8::1]:443").0, "[<ip>]:443");
+        assert_eq!(mask_ipv6("2001:0db8:0000:0000:0000:ff00:0042:8329").1, 1);
+        for keep in ["2026-10-29 10:00:00 up", "nvidia 0000:01:00.0: Xid", "RIP: 0010:foo+0x1/0x2", "std::io and a::b::c", "ratio 16:9",
+                     "CPU:2 (1a:44:0) MC1_STATUS", "boot=abcdef12 seq=7", "::", "dead:beef", "ünïcode: ok"] {
+            assert_eq!(mask_ipv6(keep), (keep.to_owned(), 0), "{keep}");
+        }
+        // Through the whole chain: an IPv4-mapped address leaves nothing of the IPv4 part behind.
+        let (s, n) = sanitize("peer ::ffff:192.168.1.23 via fe80::1");
+        assert!(!s.contains("192.168") && !s.contains("fe80"), "{s}");
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn home_paths_lose_the_user_name_only() {
+        assert_eq!(mask_home("exe=/home/alice/Games/x.exe arg").0, "exe=/home/<user>/Games/x.exe arg");
+        assert_eq!(mask_home("\"/home/alice\", '/home/bob' /home/çağrı/x").0, "\"/home/<user>\", '/home/<user>' /home/<user>/x");
+        assert_eq!(mask_home("cd /home/alice").0, "cd /home/<user>");
+        assert_eq!(mask_home("ls /home/ and /homework/alice"), ("ls /home/ and /homework/alice".to_owned(), 0));
+        // Already masked (a second pass, or the README's own text): not counted again.
+        assert_eq!(mask_home("/home/<user>/x"), ("/home/<user>/x".to_owned(), 0));
+        assert_eq!(sanitize(README).1, 0, "the README names the placeholders; none of them is a masked value");
     }
 
     #[test]

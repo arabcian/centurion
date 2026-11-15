@@ -413,8 +413,15 @@ void addPages(QTabWidget *tabs) {
             continue;
         const QString title = QCoreApplication::translate("systools", s.title);
         // The SMART summary goes in front of the raw output it summarizes.
-        if (s.rootTool && QLatin1String(s.rootTool) == QLatin1String("smart")) tabs->addTab(new SmartPage, QStringLiteral("SMART"));
-        tabs->addTab(new ToolPage(s), title);
+        // "toolKey": the untranslated name, for callers that sort the pages (the tab text is translated).
+        if (s.rootTool && QLatin1String(s.rootTool) == QLatin1String("smart")) {
+            auto *smart = new SmartPage;
+            smart->setProperty("toolKey", QStringLiteral("SMART"));
+            tabs->addTab(smart, QStringLiteral("SMART"));
+        }
+        auto *page = new ToolPage(s);
+        page->setProperty("toolKey", QString::fromLatin1(s.title));
+        tabs->addTab(page, title);
     }
 }
 

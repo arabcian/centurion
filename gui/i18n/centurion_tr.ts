@@ -3504,9 +3504,36 @@ Kaydetmeden önce seri numaraları, UUID, MAC ve IP adresleri değiştirildi.</t
             <translation>Bugün zamanın %1 %'i uyanık (%2 sa).</translation>
         </message>
         <message>
-            <location filename="work/gui/src/overviewpage.cpp" line="282"/>
-            <source>%1 sleep(s) on battery, draining %2 % per hour; %3 dGPU error(s) on wake.</source>
-            <translation>Pilde %1 uyku; saatte %2 % pil kaybı; uyanınca %3 dGPU hatası.</translation>
+            <source>%1 sleep(s) in the last 7 days, draining %2 % per hour on battery; %3 dGPU error(s) on wake.</source>
+            <translation>Son 7 günde %1 uyku; pilde saatte %2 % pil kaybı; uyanınca %3 dGPU hatası.</translation>
+        </message>
+        <message>
+            <source>%1 sleep(s) in the last 7 days, none long enough on battery to measure the drain; %2 dGPU error(s) on wake.</source>
+            <translation>Son 7 günde %1 uyku; hiçbiri pil kaybını ölçecek kadar uzun süre pilde kalmadı; uyanınca %2 dGPU hatası.</translation>
+        </message>
+        <message>
+            <source>Drive health</source>
+            <translation>Disk sağlığı</translation>
+        </message>
+        <message>
+            <source>%1 of %2 drive(s) report a SMART warning (%3; checked %4).</source>
+            <translation>%2 diskten %1 tanesi SMART uyarısı veriyor (%3; denetim: %4).</translation>
+        </message>
+        <message>
+            <source>%1 of %2 drive(s) show wear or new media errors (%3; checked %4).</source>
+            <translation>%2 diskten %1 tanesinde aşınma veya yeni ortam hataları var (%3; denetim: %4).</translation>
+        </message>
+        <message>
+            <source>%1 drive(s), no SMART warnings (checked %2).</source>
+            <translation>%1 disk, SMART uyarısı yok (denetim: %2).</translation>
+        </message>
+        <message>
+            <source>No drive check in the last 30 days. Open the details to run one.</source>
+            <translation>Son 30 günde disk denetimi yapılmadı. Denetlemek için ayrıntıları açın.</translation>
+        </message>
+        <message>
+            <source>A drive reports a SMART warning or wear. Back up important files, then review the drive&apos;s values.</source>
+            <translation>Bir disk SMART uyarısı veya aşınma bildiriyor. Önemli dosyaları yedekleyin, ardından diskin değerlerini inceleyin.</translation>
         </message>
         <message>
             <location filename="work/gui/src/overviewpage.cpp" line="291"/>

@@ -171,9 +171,10 @@ The first sub-tab: one card per area, coloured by its level — **ok** (green), 
 - *Unclean shutdowns* — boots that ended in a crash, hang or power loss: watch at 1, attention at 3 or more. Once you have looked into them, **Mark reviewed** on the card stops them from counting (the card says how many are marked); the next unclean boot counts again. Boot history still lists them all.
 - *Battery health* (only with a battery) — full capacity against design: ok from 80 %, watch from 70 %, attention below.
 - *Cooling test* — the verdict of the last cooling test (stable, close to the limit, reached the limit, or inconclusive).
+- *Drive health* — the drives' last recorded SMART values (Drive health keeps one sample a day): attention on a critical warning, a failed self-assessment or spare capacity below its threshold; watch from 80 % life used, or when the media-error count rose in the last 30 days. No check in the last 30 days is "no data" — **Show** opens Drive health, which runs one.
 - *Last backup* — age of the newest archive in the backup folders: ok up to 7 days, watch up to 30, attention after that. The system image folder (`/`) is not read.
 - *dGPU awake time today* (only with an NVIDIA dGPU) — the share of today's time on battery the GPU was awake; watch above 20 %.
-- *Sleep drain* — battery per hour asleep (watch above 2 %/h) and any dGPU error on wake (attention).
+- *Sleep drain* — the sleeps of the last 7 days: battery per hour asleep (watch above 2 %/h), measured over the sleeps that started on battery and lasted 15 minutes or more, and any dGPU error on wake (attention).
 
 **Show** opens the sub-tab with the details. The worst level also appears as a small badge on Home and as a line at the top of the tray menu, both hidden until the first reading. The thresholds are fixed rules of thumb, not a diagnosis.
 
@@ -184,7 +185,7 @@ Nothing runs in the background: the page reads its data when it is shown, once a
 
 The report holds the system identity from DMI (vendor, model, BIOS, kernel, release, NVIDIA driver version), the Health records (health and kernel logs, sleep and cooling records, battery and dGPU usage, the boot record, the last 200 writes Centurion made to sysfs or firmware) and a README. Long logs contribute only their recent part.
 
-Before saving, serial numbers, UUIDs and asset tags are replaced with `<hidden>`, MAC addresses with `<mac>`, IPv4 addresses with `<ip>`, and kernel addresses with `<addr>`. The replacement is best effort: look through the preview before you attach the archive anywhere public.
+Before saving, serial numbers, UUIDs and asset tags are replaced with `<hidden>`, MAC addresses with `<mac>`, IPv4 and IPv6 addresses with `<ip>`, the user name in `/home/…` paths with `<user>`, and kernel addresses with `<addr>`. The replacement is best effort: look through the preview before you attach the archive anywhere public.
 
 ### Monitor
 *Scan now* lists NVIDIA Xid / GSP, MCE, AER, lockups and guard rollbacks with uptime. Events are saved across boots — **Open saved log** / **Clear saved log**. Use it first when games crash after tuning.

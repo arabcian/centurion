@@ -240,20 +240,23 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     while (toolsRegistry.count()) {
         QWidget *page = toolsRegistry.widget(0);
         const QString label = toolsRegistry.tabText(0);
+        // Sorted by the page's untranslated name: the tab text is translated ("Thermal" is "Termal" in
+        // Turkish and landed under Kernel & firmware).
+        const QString key = page->property("toolKey").toString();
         toolsRegistry.removeTab(0);
         QTreeWidgetItem *group = advancedTools;
-        if (label == QLatin1String("SMART") || label == QLatin1String("SMART details") ||
-            label == QLatin1String("Sensors") || label == QLatin1String("CPU") ||
-            label == QLatin1String("Memory") || label == QLatin1String("Storage") ||
-            label == QLatin1String("Thermal") || label == QLatin1String("Battery") ||
-            label == QLatin1String("NVIDIA") || label == QLatin1String("Graphics")) group = deviceTools;
-        else if (label == QLatin1String("PCI") || label == QLatin1String("PCIe detail") ||
-                 label == QLatin1String("USB")) group = connectivityTools;
+        if (key == QLatin1String("SMART") || key == QLatin1String("SMART details") ||
+            key == QLatin1String("Sensors") || key == QLatin1String("CPU") ||
+            key == QLatin1String("Memory") || key == QLatin1String("Storage") ||
+            key == QLatin1String("Thermal") || key == QLatin1String("Battery") ||
+            key == QLatin1String("NVIDIA") || key == QLatin1String("Graphics")) group = deviceTools;
+        else if (key == QLatin1String("PCI") || key == QLatin1String("PCIe detail") ||
+                 key == QLatin1String("USB")) group = connectivityTools;
         auto *item = new QTreeWidgetItem(group, {label});
         toolItems_.insert(page, item);
         toolPages_->addWidget(page);
         if (!firstTool) firstTool = page;
-        if (label == QLatin1String("SMART")) smartTool = page;
+        if (key == QLatin1String("SMART")) smartTool = page;
     }
     if (smartTool) {
         // The drive summary is a frequent action; give it a direct shortcut
@@ -602,10 +605,11 @@ QList<QVariantMap> HealthTab::eventsSince(quint64 seq) const {
 }
 
 void HealthTab::drainKmsg() {
-    // Must cover every kind health.rs::classify knows: a line that is not listed here never starts a scan.
+    // Must cover every kind health.rs::classify knows: a line that is not listed here never starts a scan
+    // (health.rs' test `gui_wakes_for_every_classified_line` reads this list and checks it).
     // ";xe " / ";BUG:" ... are anchored at the start of the message (the record is "pri,seq,ts,flags;message").
     static const char *const KEYS[] = {"NVRM", "Hardware Error", "achine check", "achine Check", "AER",
-                                       "PCIe Bus Error", "lockup", "LOCKUP", "stall", "amdgpu",
+                                       "PCIe Bus Error", "lockup", "LOCKUP", "stall", "D3cold", "amdgpu",
                                        ";nvme nvme", "EXT4-fs error", "BTRFS error", "csum failed", ";XFS", "GPU HANG", ";xe ",
                                        "Microcode SW error", "mt79", "firmware crashed", "critical temperature",
                                        "Package temperature above", "Out of memory", ";Oops:", ";BUG:", ";WARNING: CPU:"};

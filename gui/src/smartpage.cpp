@@ -6,6 +6,7 @@
 
 #include <QAbstractItemView>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDate>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -101,7 +102,7 @@ void SmartPage::start() {
         busy_ = false;
         if (!r.ok()) { status_->setText(QStringLiteral("Not run: ") + r.message()); return; }
         const QString missing = r.json.value(QStringLiteral("missing")).toString();
-        if (!missing.isEmpty()) { status_->setText(QStringLiteral("(not installed — emerge %1)").arg(missing)); return; }
+        if (!missing.isEmpty()) { status_->setText(QCoreApplication::translate("systools", "(not installed — %1)").arg(missing)); return; }
         const QJsonArray disks = r.json.value(QStringLiteral("disks")).toArray();
         if (disks.isEmpty()) { status_->setText(QStringLiteral("No disks found.")); return; }
         render(disks, smart::record(disks));

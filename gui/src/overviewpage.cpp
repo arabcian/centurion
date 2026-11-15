@@ -255,6 +255,8 @@ void OverviewPage::showRecommendation(const QJsonArray &cards) {
         detail = tr("Battery capacity or behavior may need attention. Compare the measured values with previous readings.");
     else if (id == QLatin1String("cooling"))
         detail = tr("Review the last cooling test and temperatures. A missing test is not evidence of faulty cooling.");
+    else if (id == QLatin1String("disk"))
+        detail = tr("A drive reports a SMART warning or wear. Back up important files, then review the drive's values.");
     else if (id == QLatin1String("backup"))
         detail = tr("Check your most recent backup before making further system changes.");
     else if (id == QLatin1String("dgpu"))
@@ -374,6 +376,7 @@ QString OverviewPage::cardTitle(const QString &id) {
     if (id == QLatin1String("unclean")) return tr("Unclean shutdowns");
     if (id == QLatin1String("battery")) return tr("Battery health");
     if (id == QLatin1String("cooling")) return tr("Cooling test");
+    if (id == QLatin1String("disk")) return tr("Drive health");
     if (id == QLatin1String("backup")) return tr("Last backup");
     if (id == QLatin1String("dgpu")) return tr("dGPU awake time today");
     if (id == QLatin1String("sleep")) return tr("Sleep drain");
@@ -381,8 +384,12 @@ QString OverviewPage::cardTitle(const QString &id) {
 }
 
 QString OverviewPage::cardBody(const QJsonObject &c) {
-    if (c.value(QStringLiteral("level")).toInt(kNoData) == kNoData) return tr("No data yet.");
     const QString id = c.value(QStringLiteral("id")).toString();
+    if (c.value(QStringLiteral("level")).toInt(kNoData) == kNoData) {
+        // SMART needs the administrator helper, so the Overview never reads it itself: say where the check is.
+        if (id == QLatin1String("disk")) return tr("No drive check in the last 30 days. Open the details to run one.");
+        return tr("No data yet.");
+    }
     if (id == QLatin1String("kernel")) {
         return tr("Last 24 h: %1 critical, %2 errors. Last 7 days: %3 critical, %4 errors.")
             .arg(c.value(QStringLiteral("crit24")).toInt()).arg(c.value(QStringLiteral("err24")).toInt())
@@ -408,6 +415,17 @@ QString OverviewPage::cardBody(const QJsonObject &c) {
         if (verdict == QLatin1String("warn")) return tr("Last load test (%1): reached the limit.").arg(when);
         return tr("Last load test (%1): inconclusive.").arg(when);
     }
+    if (id == QLatin1String("disk")) {
+        // From the recorded SMART samples (Drive health keeps one per day); nothing is read from the drives here.
+        const int disks = c.value(QStringLiteral("disks")).toInt();
+        const QString date = c.value(QStringLiteral("date")).toString();
+        const QString name = c.value(QStringLiteral("name")).toString();
+        if (const int faulty = c.value(QStringLiteral("faulty")).toInt())
+            return tr("%1 of %2 drive(s) report a SMART warning (%3; checked %4).").arg(faulty).arg(disks).arg(name, date);
+        if (const int caution = c.value(QStringLiteral("caution")).toInt())
+            return tr("%1 of %2 drive(s) show wear or new media errors (%3; checked %4).").arg(caution).arg(disks).arg(name, date);
+        return tr("%1 drive(s), no SMART warnings (checked %2).").arg(disks).arg(date);
+    }
     if (id == QLatin1String("backup")) return tr("Last backup %1 day(s) ago.").arg(c.value(QStringLiteral("age_days")).toInt());
     if (id == QLatin1String("dgpu")) {
         return tr("Awake %1 % of the time today (%2 h).")
@@ -415,9 +433,16 @@ QString OverviewPage::cardBody(const QJsonObject &c) {
             .arg(QString::number(c.value(QStringLiteral("hours")).toDouble(), 'f', 1));
     }
     if (id == QLatin1String("sleep")) {
-        return tr("%1 sleep(s) on battery, draining %2 % per hour; %3 dGPU error(s) on wake.")
+        // "sleeps" counts every sleep of the week; the drain comes only from those on battery that were long
+        // enough to measure. Without one there is no rate: it used to read "draining 0.0 % per hour".
+        const QJsonValue perHour = c.value(QStringLiteral("per_hour"));
+        if (!perHour.isDouble())
+            return tr("%1 sleep(s) in the last 7 days, none long enough on battery to measure the drain; %2 dGPU error(s) on wake.")
+                .arg(c.value(QStringLiteral("sleeps")).toInt())
+                .arg(c.value(QStringLiteral("dgpu_errors")).toInt());
+        return tr("%1 sleep(s) in the last 7 days, draining %2 % per hour on battery; %3 dGPU error(s) on wake.")
             .arg(c.value(QStringLiteral("sleeps")).toInt())
-            .arg(QString::number(c.value(QStringLiteral("per_hour")).toDouble(), 'f', 1))
+            .arg(QString::number(perHour.toDouble(), 'f', 1))
             .arg(c.value(QStringLiteral("dgpu_errors")).toInt());
     }
     return QString();
@@ -432,6 +457,7 @@ QString OverviewPage::levelWord(int level) {
 
 QString OverviewPage::targetFor(const QString &id) {
     if (id == QLatin1String("unclean")) return QStringLiteral("boot");
+    if (id == QLatin1String("disk")) return QStringLiteral("smart");
     if (id == QLatin1String("battery") || id == QLatin1String("cooling") || id == QLatin1String("backup") ||
         id == QLatin1String("dgpu") || id == QLatin1String("sleep")) return id;
     return QStringLiteral("monitor");
