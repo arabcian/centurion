@@ -125,7 +125,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     navigation_ = new QTreeWidget;
     navigation_->setHeaderHidden(true);
     navigation_->setRootIsDecorated(false);
-    navigation_->setIndentation(12);
+    navigation_->setIndentation(0);  // flat list under small-caps headings: an indent strip was painted as a second selection block
     navigation_->setUniformRowHeights(true);
     navigation_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     navigation_->setFrameShape(QFrame::NoFrame);

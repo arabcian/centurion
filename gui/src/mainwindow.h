@@ -75,6 +75,7 @@ private:
     void setExperimentalCollapsed(bool collapsed);
     void syncExperimentalNavigation();
     void showQuickNavigator();
+    void syncStatusChips();
     void placeHeaderControls();
     QTabWidget *tabs_;
     int tabW_ = -1;
@@ -85,6 +86,8 @@ private:
     QLabel *expTitle_ = nullptr;
     QLabel *expPath_ = nullptr;
     QPushButton *expToggle_ = nullptr;
+    QPushButton *expProfileChip_ = nullptr;  // top bar: current power profile
+    QPushButton *expSceneChip_ = nullptr;    // top bar: active scene
     QList<QPushButton *> expNavButtons_;
     bool expCollapsed_ = false;
     bool expUserToggled_ = false;

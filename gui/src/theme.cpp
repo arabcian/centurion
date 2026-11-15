@@ -382,7 +382,8 @@ QScrollArea { border: 0; }
 QSplitter::handle { background: @BORDER_SOFT; }
 QSplitter::handle:horizontal { width: 1px; }
 QSplitter::handle:vertical { height: 1px; }
-QWidget#expShell QGroupBox { background: @CARD_TOP; border: 1px solid @BORDER; border-top-color: @EDGE; }
+QWidget#expShell QGroupBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT);
+    border: 1px solid @BORDER; border-top-color: @EDGE; }
 QWidget#expShell QGroupBox QGroupBox { background: transparent; border: 0;
     border-top: 1px solid @BORDER_SOFT; }
 QToolButton#expDisclosure { background: transparent; color: @FG_DIM; text-align: left;
@@ -393,43 +394,67 @@ QTabWidget#intelWorkflows::pane { border-top: 1px solid @BORDER_SOFT; }
 QTabWidget#intelWorkflows QTabBar::tab { padding: 7px 14px; }
 
 QWidget#expShell, QWidget#expContent { background: @BG0; }
-QFrame#expRail { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BG1, stop:1 @BG0);
-    border-right: 1px solid @BORDER; }
+/* The rail sits a step below the page: content is the lit surface, navigation recedes. */
+QFrame#expRail { background: @SIDEBAR; border-right: 1px solid @BORDER_SOFT; }
 QWidget#expNavHost, QScrollArea#expNavScroll,
 QScrollArea#expNavScroll > QWidget > QWidget { background: transparent; }
-QLabel#expBrandLabel { color: @FG; font-size: 10pt; font-weight: 800; background: transparent; }
+QLabel#expBrandLabel { color: @FG; font-size: 10pt; font-weight: 800; letter-spacing: 1.6px; background: transparent; }
+QLabel#expBrandVersion { color: @MUTED; font-size: 7pt; font-weight: 600; background: transparent; }
 QLabel#expBrandIcon { background: transparent; }
-QFrame#expRailDivider { background: @BORDER; border: 0; }
+QFrame#expRailDivider { background: @BORDER_SOFT; border: 0; }
 QLabel#expNavHeading { color: @MUTED; background: transparent;
-    padding: 10px 6px 3px 9px; font-size: 7pt; font-weight: 700; }
+    padding: 12px 6px 4px 10px; font-size: 7pt; font-weight: 700; letter-spacing: 1.4px; }
 QPushButton#expNavButton { text-align: left; color: @FG_DIM; background: transparent;
-    border: 0; border-left: 2px solid transparent; border-radius: 4px;
-    font-weight: 500; padding: 3px 12px; min-height: 0; }
+    border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 7px;
+    font-weight: 500; padding: 3px 10px; min-height: 0; }
 QPushButton#expNavButton:hover { background: @HILITE; color: @FG; }
-/* Current page: an accent wash that fades into the rail, lit from its marker. */
-QPushButton#expNavButton:checked { color: @ACCENT_HI;
+QPushButton#expNavButton:pressed { background: @HILITE2; }
+/* Current page: a framed accent wash that fades into the rail, lit from its marker. */
+QPushButton#expNavButton:checked { color: @FG;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:1 @ACCENT_FADE);
-    border-left: 2px solid @ACCENT; font-weight: 700; }
+    border: 1px solid @ACCENT_EDGE; border-left: 3px solid @ACCENT; font-weight: 700; }
 QPushButton#expNavButton:disabled { color: @BG4; }
 QPushButton#expNavButton[collapsed="true"] { text-align: center; padding: 3px 1px; font-size: 8pt; }
 QPushButton#expRailToggle { text-align: left; color: @MUTED; font-size: 8pt;
-    background: transparent; border: 0; border-top: 1px solid @BORDER;
-    border-radius: 0; padding: 7px 9px; min-height: 21px; }
-QPushButton#expRailToggle:hover { color: @FG; background: @BG2; }
-QFrame#expTopbar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BEZEL_TOP, stop:1 @BG0);
-    border-bottom: 1px solid @BORDER; }
-QLabel#expTopPath { color: @MUTED; font-size: 7pt; font-weight: 600; }
-QLabel#expTopTitle { color: @FG; font-size: 13pt; font-weight: 700; }
-QPushButton#expSearch { background: @WELL; color: @MUTED;
-    border: 1px solid @BORDER; border-radius: 8px; padding: 5px 14px; font-size: 8pt;
-    font-weight: 500; min-height: 18px; }
-QPushButton#expSearch:hover { background: @BG1; border-color: @ACCENT_LINE; color: @FG; }
-QPushButton#expSearch:pressed { background: @BG2; }
+    background: transparent; border: 0; border-top: 1px solid @BORDER_SOFT;
+    border-radius: 0; padding: 7px 10px; min-height: 21px; }
+QPushButton#expRailToggle:hover { color: @FG; background: @HILITE; }
+QFrame#expTopbar { background: @BG0; border-bottom: 1px solid @BORDER_SOFT; }
+QLabel#expTopPath { color: @MUTED; font-size: 7pt; font-weight: 700; letter-spacing: 1.4px; }
+QLabel#expTopTitle { color: @FG; font-size: 14pt; font-weight: 700; }
+/* Search field look-alike: opens the navigator (Ctrl+K). */
+QPushButton#expSearch { background: @WELL; border: 1px solid @BORDER; border-radius: 9px;
+    padding: 0; min-height: 30px; }
+QPushButton#expSearch:hover { border-color: @ACCENT_LINE; background: @FOCUS_WELL; }
+QPushButton#expSearch:pressed, QPushButton#expSearch:focus { border-color: @ACCENT_SOFT; }
+QLabel#expSearchText { color: @MUTED; font-size: 8pt; }
+/* Key legend: a small raised cap. */
+QLabel#expKeycap { color: @FG_DIM; background: @BG3; border: 1px solid @BORDER; border-bottom: 2px solid @BORDER;
+    border-radius: 4px; padding: 0 5px; font-size: 7pt; font-weight: 700; }
+/* Status chips: the power profile and the active scene, on every page. */
+QPushButton#expChip { background: @BG2; color: @FG_DIM; border: 1px solid @BORDER; border-radius: 12px;
+    padding: 0 11px 0 9px; min-height: 22px; font-size: 8pt; font-weight: 600; }
+QPushButton#expChip:hover { color: @FG; background: @BG3; border-color: @ACCENT_LINE; }
+QPushButton#expChip:pressed { background: @BG2; }
+/* Command palette (Ctrl+K). */
+QDialog#expPalette { background: @BG1; border: 1px solid @EDGE; }
+QLineEdit#experimentalQuickSearch { background: transparent; border: 0; border-radius: 0;
+    padding: 9px 0; font-size: 11pt; }
+QLineEdit#experimentalQuickSearch:focus { background: transparent; border: 0; }
+QListWidget#experimentalQuickResults { background: transparent; border: 0; border-top: 1px solid @BORDER_SOFT;
+    border-radius: 0; padding: 6px; }
+QListWidget#experimentalQuickResults::item { padding: 6px 9px; border: 0; border-left: 3px solid transparent;
+    border-radius: 6px; color: @FG_DIM; }
+QListWidget#experimentalQuickResults::item:hover:!selected { background: @HILITE; }
+QListWidget#experimentalQuickResults::item:selected { background: @ACCENT_TINT; color: @FG; border-left: 3px solid @ACCENT; }
+QLabel#expPaletteHint { color: @MUTED; background: @SIDEBAR; border-top: 1px solid @BORDER_SOFT;
+    padding: 7px 16px; font-size: 8pt; }
 QTabWidget#expPageStack::pane { border: 0; background: @BG0; }
 QTabWidget#expPageStack > QTabBar { max-height: 0px; }
 /* App-wide visual tokens. Compact, restrained, consistent with all palettes. */
 /* Cards stand clear of the page: a lifted surface with a full hairline and a lit top edge. */
-QGroupBox { background: @CARD_TOP; border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 8px;
+QGroupBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT);
+    border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 10px;
     margin-top: 0; padding: 31px 10px 8px 10px; color: @FG; font-weight: 600; }
 /* Classic's colour-coded title bar, at Studio density: sections stay scannable. */
 QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left;
@@ -448,7 +473,7 @@ QGroupBox QGroupBox::title { left: 0; top: 6px; color: @FG_DIM; border-left: 0; 
 QLabel[role="title"] { color: @FG; font-size: 14pt; font-weight: 700; }
 QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
 QPushButton { background: @BG3; border: 1px solid @BORDER;
-    color: @FG; border-radius: 6px; padding: 3px 9px; min-height: 17px;
+    color: @FG; border-radius: 7px; padding: 3px 9px; min-height: 17px;
     font-weight: 500; }
 /* One flat ring per state: Classic's lit/shaded edges must not leak through. */
 QPushButton:focus { border-color: @ACCENT_SOFT; }
@@ -467,7 +492,7 @@ QPushButton:disabled, QPushButton#btnAccent:disabled, QPushButton#btnDanger:disa
 QPushButton#btnMini { font-size: 8pt; padding: 1px 7px; min-height: 15px; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, Int64SpinBox {
     background: @WELL; border: 1px solid @BORDER; color: @FG;
-    border-radius: 6px; padding: 2px 7px; min-height: 18px; }
+    border-radius: 7px; padding: 2px 7px; min-height: 18px; }
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, Int64SpinBox:hover {
     border-color: @EDGE; }
 QLineEdit:focus, QComboBox:focus, QComboBox:on, QSpinBox:focus, QDoubleSpinBox:focus, Int64SpinBox:focus {
@@ -488,13 +513,14 @@ QTabBar::tab:hover:!selected { background: @HILITE; }
 QTabBar::tab:selected { color: @ACCENT_HI; background: @ACCENT_TINT; border-bottom: 2px solid @ACCENT; }
 QHeaderView::section { background: @BG1; border: 0; border-bottom: 1px solid @BORDER;
     color: @FG_DIM; font-weight: 600; padding: 4px 7px; }
-QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 6px; padding: 4px; }
-QMenu::item { border-radius: 3px; }
+QMenu { background: @BG1; border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 8px; padding: 5px; }
+QMenu::item { border-radius: 5px; }
 QFrame#expInlineDivider { background: @BORDER; border: 0; max-height: 1px; }
 QSplitter::handle:horizontal { background: @BORDER_SOFT; width: 1px; }
 QSplitter::handle:vertical { background: @BORDER_SOFT; height: 1px; }
 QSplitter::handle:hover { background: @ACCENT_SOFT; }
-QFrame#homeDetailCard { background: @CARD_TOP; border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 8px; }
+QFrame#homeDetailCard { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT);
+    border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 10px; }
 QTreeView::item:selected, QListView::item:selected { border-radius: 5px; }
 QTabWidget#homeDetailTabs::pane { border: 0; border-top: 1px solid @BORDER_SOFT; background: transparent; }
 QTabWidget#homeDetailTabs > QTabBar::tab { padding: 5px 10px; }
@@ -508,14 +534,14 @@ QTabWidget#homeDetailTabs > QStackedWidget > QGroupBox { border: 0; background: 
     const std::pair<const char *, QString> toks[] = {
         {"@BORDER_SOFT", BORDER_SOFT}, {"@ACCENT_SOFT", ACCENT_SOFT}, {"@DANGER_SOFT", DANGER_SOFT},
         {"@DANGER_TINT", rgba(DANGER, 0.14)}, {"@DANGER_WASH", rgba(DANGER, 0.05)}, {"@ACCENT_TINT2", rgba(ACCENT, 0.10)},
-        {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_FADE", rgba(ACCENT, 0.02)}, {"@FOCUS_WELL", mix(WELL, ACCENT, 0.05)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_DEEP", accent.darker(135).name()},
+        {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_EDGE", rgba(ACCENT, 0.22)}, {"@ACCENT_FADE", rgba(ACCENT, 0.02)}, {"@FOCUS_WELL", mix(WELL, ACCENT, 0.05)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_DEEP", accent.darker(135).name()},
         {"@HILITE2", "rgba(255, 255, 255, 0.09)"}, {"@HILITE", "rgba(255, 255, 255, 0.05)"}, {"@ACCENT_HALO", rgba(ACCENT, 0.28)},
         {"@ACCENT_TOP", accent.lighter(125).name()}, {"@ACCENT_HI", accent.lighter(112).name()}, {"@ON_ACCENT", onAccent},
         // Derived surfaces (each palette's own hue): bezel and page floor below the window colour,
         // the rail and well shadows below that; edges are the border lifted towards the text colour.
         {"@BEZEL_TOP", mix(BG1, BG0, 0.35)}, {"@BEZEL_BOT", mix(BG0, WELL, 0.55)}, {"@PAGE_BOT", mix(BG0, WELL, 0.65)},
         {"@RAIL_SHADE", mix(WELL, "#000000", 0.35)}, {"@RAIL", mix(WELL, BG0, 0.25)},
-        {"@BTN_SHADE", mix(BORDER, "#000000", 0.35)}, {"@CARD_TOP", mix(BG1, BG2, 0.55)}, {"@ROW_ALT", mix(WELL, BG1, 0.6)},
+        {"@BTN_SHADE", mix(BORDER, "#000000", 0.35)}, {"@CARD_TOP", mix(BG1, BG2, 0.55)}, {"@CARD_BOT", mix(BG1, BG2, 0.15)}, {"@SIDEBAR", mix(BG0, WELL, 0.6)}, {"@ROW_ALT", mix(WELL, BG1, 0.6)},
         {"@KEY_TOP", mix(BG3, BG4, 0.45)}, {"@EDGE", mix(BORDER, FG, 0.13)},
         {"@BRANDW", QString::number(brandInset())}, {"@BRANDPT", QString::number(FONT_PT + 2)},
         {"@FG_DIM", FG_DIM}, {"@BORDER", BORDER}, {"@ACCENT", ACCENT}, {"@DANGER", DANGER},

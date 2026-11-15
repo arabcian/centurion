@@ -1,14 +1,17 @@
 #include "uinavigator.h"
+#include "experimentalui.h"
 
 #include <QAbstractButton>
 #include <QDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPointer>
 #include <QScrollArea>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -26,33 +29,62 @@ struct Destination {
     QString title;
     QString search;
 };
+// The search field keeps the focus; Up/Down/PageUp/PageDown move the result selection.
+class ListKeys : public QObject {
+public:
+    ListKeys(QListWidget *list, QObject *parent) : QObject(parent), list_(list) {}
+protected:
+    bool eventFilter(QObject *, QEvent *e) override {
+        if (e->type() != QEvent::KeyPress) return false;
+        const int key = static_cast<QKeyEvent *>(e)->key();
+        if (key != Qt::Key_Up && key != Qt::Key_Down && key != Qt::Key_PageUp && key != Qt::Key_PageDown) return false;
+        if (!list_->count()) return true;
+        const int page = std::max(1, list_->viewport()->height() / std::max(1, list_->sizeHintForRow(0)) - 1);
+        const int step = key == Qt::Key_Up ? -1 : key == Qt::Key_Down ? 1 : key == Qt::Key_PageUp ? -page : page;
+        list_->setCurrentRow(std::clamp(list_->currentRow() + step, 0, list_->count() - 1));
+        return true;
+    }
+private:
+    QListWidget *list_;
+};
 }
 
 void open(QTabWidget *tabs, QWidget *parent) {
     if (!tabs) return;
-    QDialog dialog(parent);
+    // A command palette: no title bar, the search field on top, results below.
+    QDialog dialog(parent, Qt::Dialog | Qt::FramelessWindowHint);
+    dialog.setObjectName(QStringLiteral("expPalette"));
     dialog.setWindowTitle(QObject::tr("Quick navigation — Centurion"));
-    dialog.resize(560, 490);
+    dialog.resize(620, 460);
     auto *layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(14, 14, 14, 14);
-    layout->setSpacing(8);
-    auto *heading = new QLabel(QObject::tr("Jump to a section"));
-    heading->setProperty("role", "title");
-    layout->addWidget(heading);
-    auto *hint = new QLabel(QObject::tr("Search tabs and visible controls. Enter navigates; it never applies a setting."));
-    hint->setProperty("role", "muted");
-    hint->setWordWrap(true);
-    layout->addWidget(hint);
+    layout->setContentsMargins(1, 1, 1, 1);  // the palette's own hairline frame
+    layout->setSpacing(0);
+    auto *searchRow = new QHBoxLayout;
+    searchRow->setContentsMargins(16, 6, 12, 6);
+    searchRow->setSpacing(10);
+    auto *searchIcon = new QLabel;
+    searchIcon->setPixmap(experimentalui::searchIcon(theme::ACCENT).pixmap(16, 16));
+    searchRow->addWidget(searchIcon);
     auto *search = new QLineEdit;
     search->setObjectName(QStringLiteral("experimentalQuickSearch"));
     search->setPlaceholderText(QObject::tr("CPU, fan, Health, Scenes, tuning…"));
     search->setClearButtonEnabled(true);
-    layout->addWidget(search);
+    searchRow->addWidget(search, 1);
+    auto *escape = new QLabel(QStringLiteral("Esc"));
+    escape->setObjectName(QStringLiteral("expKeycap"));
+    searchRow->addWidget(escape, 0, Qt::AlignVCenter);
+    layout->addLayout(searchRow);
     auto *results = new QListWidget;
     results->setObjectName(QStringLiteral("experimentalQuickResults"));
     results->setUniformItemSizes(true);
     results->setAlternatingRowColors(false);
+    results->setIconSize(QSize(18, 18));
+    results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     layout->addWidget(results, 1);
+    auto *hint = new QLabel(QObject::tr("Search tabs and visible controls. Enter navigates; it never applies a setting."));
+    hint->setObjectName(QStringLiteral("expPaletteHint"));
+    layout->addWidget(hint);
+    search->installEventFilter(new ListKeys(results, &dialog));
 
     QVector<Destination> destinations;
     for (int i = 0; i < tabs->count(); ++i) {
@@ -121,13 +153,17 @@ void open(QTabWidget *tabs, QWidget *parent) {
             }
         }
     }
+    // Each result carries the icon of the page it leads to.
+    QVector<QIcon> icons;
+    for (int i = 0; i < tabs->count(); ++i)
+        icons.append(experimentalui::navigationIcon(tabs->tabBar()->tabData(i).toString()));
     auto refill = [&] {
         results->clear();
         const QString filter = search->text().trimmed();
         for (int i = 0; i < destinations.size(); ++i) {
             const Destination &d = destinations.at(i);
             if (!filter.isEmpty() && !d.search.contains(filter, Qt::CaseInsensitive)) continue;
-            auto *item = new QListWidgetItem(d.title, results);
+            auto *item = new QListWidgetItem(icons.value(d.tab), d.title, results);
             item->setData(Qt::UserRole, i);
         }
         if (results->count()) results->setCurrentRow(0);
@@ -160,6 +196,12 @@ void open(QTabWidget *tabs, QWidget *parent) {
     QObject::connect(search, &QLineEdit::returnPressed, &dialog, select);
     refill();
     search->setFocus();
+    // Upper third of the window, where the top bar's search field is.
+    if (parent) {
+        const QPoint origin = parent->mapToGlobal(QPoint(0, 0));
+        dialog.move(origin.x() + (parent->width() - dialog.width()) / 2,
+                    origin.y() + std::max(48, (parent->height() - dialog.height()) / 5));
+    }
     dialog.exec();
 }
 }  // namespace uinavigator

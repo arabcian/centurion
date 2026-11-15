@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QIcon>
+#include <QLinearGradient>
 #include <QPixmap>
 #include <QPolygonF>
 #include <QPen>
@@ -96,6 +97,38 @@ inline QIcon navigationIcon(const QString &page) {
     return icon;
 }
 
+// Magnifier for the top bar's search field and the navigator, same stroke as the page icons.
+inline QIcon searchIcon(const char *color) {
+    QPixmap px(32, 32);
+    px.setDevicePixelRatio(2.0);
+    px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(QString::fromLatin1(color)), 1.6, Qt::SolidLine, Qt::RoundCap));
+    p.drawEllipse(QPointF(7, 7), 4.3, 4.3);
+    p.drawLine(QPointF(10.3, 10.3), QPointF(13.8, 13.8));
+    p.end();
+    return QIcon(px);
+}
+
+// Status dot (top bar's power-profile chip): the colour with a soft halo.
+inline QIcon dotIcon(const QColor &color) {
+    QPixmap px(20, 20);
+    px.setDevicePixelRatio(2.0);
+    px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    QColor halo = color;
+    halo.setAlphaF(0.25);
+    p.setBrush(halo);
+    p.drawEllipse(QPointF(5, 5), 5, 5);
+    p.setBrush(color);
+    p.drawEllipse(QPointF(5, 5), 3, 3);
+    p.end();
+    return QIcon(px);
+}
+
 // One compact disclosure for an advanced/rarely-used section. Reparents neither
 // widgets nor operations; the caller puts its existing panel immediately after it.
 // Persisting disclosure state is intentionally left to the owning page.
@@ -152,23 +185,29 @@ protected:
         const QRectF plot = QRectF(rect()).adjusted(39, 27, -12, -25);
         if (plot.width() < 30 || plot.height() < 30) return;
         const QColor muted(theme::MUTED), grid(theme::BORDER_SOFT);
+        QFont caption = font();
+        caption.setPointSizeF(caption.pointSizeF() - 1);
+        caption.setWeight(QFont::DemiBold);
+        caption.setLetterSpacing(QFont::AbsoluteSpacing, 0.8);
+        p.setFont(caption);
         p.setPen(muted);
-        p.drawText(QRectF(4, 3, 280, 19), Qt::AlignLeft, QObject::tr("TEMPERATURES  ·  LAST 5 MIN"));
-        p.setPen(QPen(grid, 1));
+        p.drawText(QRectF(4, 3, 280, 19), Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("TEMPERATURES  ·  LAST 5 MIN"));
+        caption.setLetterSpacing(QFont::AbsoluteSpacing, 0);
+        caption.setWeight(QFont::Normal);
+        p.setFont(caption);
+        // Horizontal rules only (dashed): the eye follows the level, time needs no grid.
         // Short plot (Home's top row): a label every 20 °C, so they never touch.
         const int step = plot.height() < 140 ? 20 : 10;
         for (int t = step == 20 ? 40 : 30; t <= 100; t += step) {
             const double y = plot.bottom() - (t - 25.0) / 80.0 * plot.height();
             if (y < plot.top() || y > plot.bottom()) continue;
+            p.setPen(QPen(grid, 1, Qt::DashLine));
             p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y));
             p.setPen(muted);
             p.drawText(QRectF(0, y - 9, 33, 18), Qt::AlignRight | Qt::AlignVCenter, QString::number(t));
-            p.setPen(QPen(grid, 1));
         }
-        for (int i = 0; i <= 5; ++i) {
-            const qreal x = plot.left() + plot.width() * i / 5;
-            p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()));
-        }
+        p.setPen(QPen(QColor(theme::BORDER), 1));
+        p.drawLine(plot.bottomLeft(), plot.bottomRight());
         p.setPen(muted);
         p.drawText(QRectF(plot.left(), plot.bottom() + 3, 90, 17), Qt::AlignLeft, QObject::tr("-5 min"));
         p.drawText(QRectF(plot.right() - 90, plot.bottom() + 3, 90, 17), Qt::AlignRight, QObject::tr("Now"));
@@ -176,36 +215,70 @@ protected:
             p.drawText(plot, Qt::AlignCenter, QObject::tr("Waiting for sensor samples"));
             return;
         }
-        auto draw = [&](bool cpu, const QColor &color) {
+        // Legend, right-aligned on the caption line, with the live reading of each series.
+        qreal legendRight = plot.right();
+        auto draw = [&](bool cpu, const QColor &color, const QString &name) {
             QPainterPath path;
             bool inSegment = false;
+            qreal segmentStart = 0;
+            std::optional<double> last;
+            // A soft wash under each unbroken run of samples, fading to the baseline.
+            QLinearGradient wash(plot.topLeft(), plot.bottomLeft());
+            QColor top = color, bottom = color;
+            top.setAlphaF(0.20);
+            bottom.setAlphaF(0.0);
+            wash.setColorAt(0, top);
+            wash.setColorAt(1, bottom);
+            QPainterPath run;
+            auto closeRun = [&](qreal endX) {
+                if (run.elementCount() < 2) { run = QPainterPath(); return; }
+                run.lineTo(endX, plot.bottom());
+                run.lineTo(segmentStart, plot.bottom());
+                run.closeSubpath();
+                p.fillPath(run, wash);
+                run = QPainterPath();
+            };
+            qreal x = 0;
             for (int i = 0; i < samples_.size(); ++i) {
                 const auto &value = cpu ? samples_[i].cpu : samples_[i].gpu;
-                if (!value) { inSegment = false; continue; }
-                const qreal x = plot.right() - (samples_.size() - 1 - i) * plot.width() / 149.0;
+                if (!value) { if (inSegment) closeRun(x); inSegment = false; continue; }
+                x = plot.right() - (samples_.size() - 1 - i) * plot.width() / 149.0;
                 const qreal y = plot.bottom() - (std::clamp(*value, 25.0, 105.0) - 25.0) / 80.0 * plot.height();
-                if (inSegment) path.lineTo(x, y); else path.moveTo(x, y);
+                if (inSegment) { path.lineTo(x, y); run.lineTo(x, y); }
+                else { path.moveTo(x, y); run.moveTo(x, y); segmentStart = x; }
                 inSegment = true;
+                last = value;
             }
-            // Soft halo under a crisp line; a dot marks the live reading.
-            QColor glow = color;
-            glow.setAlphaF(0.16);
-            p.setPen(QPen(glow, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-            p.drawPath(path);
+            if (inSegment) closeRun(x);
             p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             p.drawPath(path);
-            if (inSegment) {
+            if (inSegment) {  // the live reading: a dot with a halo
+                QColor halo = color;
+                halo.setAlphaF(0.25);
+                p.setPen(Qt::NoPen);
+                p.setBrush(halo);
+                p.drawEllipse(path.currentPosition(), 5.5, 5.5);
                 p.setBrush(color);
                 p.drawEllipse(path.currentPosition(), 2.6, 2.6);
                 p.setBrush(Qt::NoBrush);
             }
+            // "● CPU 62°": the value only while the series is live (an asleep dGPU has none).
+            const QString text = inSegment && last ? QStringLiteral("%1  %2°").arg(name).arg(qRound(*last)) : name;
+            QFont f = p.font();
+            f.setWeight(QFont::DemiBold);
+            p.setFont(f);
+            const qreal w = p.fontMetrics().horizontalAdvance(text);
+            const QRectF label(legendRight - w, 3, w, 19);
+            p.setPen(inSegment ? QColor(theme::FG) : muted);
+            p.drawText(label, Qt::AlignLeft | Qt::AlignVCenter, text);
+            p.setPen(Qt::NoPen);
+            p.setBrush(color);
+            p.drawEllipse(QPointF(label.left() - 9, label.center().y()), 3.2, 3.2);
+            p.setBrush(Qt::NoBrush);
+            legendRight = label.left() - 28;
         };
-        draw(true, QColor(theme::ACCENT));
-        draw(false, QColor(theme::OK));
-        p.setPen(QColor(theme::ACCENT));
-        p.drawText(QRectF(plot.right() - 125, 3, 48, 19), Qt::AlignLeft, QStringLiteral("● CPU"));
-        p.setPen(QColor(theme::OK));
-        p.drawText(QRectF(plot.right() - 66, 3, 60, 19), Qt::AlignLeft, QStringLiteral("● GPU"));
+        draw(false, QColor(theme::OK), QStringLiteral("GPU"));
+        draw(true, QColor(theme::ACCENT), QStringLiteral("CPU"));
     }
 private:
     struct Sample { std::optional<double> cpu, gpu; };

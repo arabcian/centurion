@@ -227,6 +227,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         const QString last = settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString();
         for (int i = 0; i < tabs_->count(); ++i)
             if (tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
+        syncExperimentalNavigation();  // the restored page, not Home, in the rail and the title
         connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
             if (i < 0 || i >= tabs_->count()) return;
             syncExperimentalNavigation();
@@ -307,15 +308,23 @@ void MainWindow::installExperimentalShell() {
     rail->setSpacing(4);
     auto *brand = new QWidget;
     auto *brandRow = new QHBoxLayout(brand);
-    brandRow->setContentsMargins(6, 0, 0, 3);
+    brandRow->setContentsMargins(5, 4, 0, 7);
     brandRow->setSpacing(9);
     auto *brandIcon = new QLabel;
     brandIcon->setObjectName(QStringLiteral("expBrandIcon"));
-    brandIcon->setPixmap(appIcon(64).pixmap(24, 24));
+    brandIcon->setPixmap(appIcon(64).pixmap(26, 26));
     brandRow->addWidget(brandIcon);
+    // Wordmark over the version: the rail's header reads as a product, not a label.
+    auto *brandText = new QVBoxLayout;
+    brandText->setContentsMargins(0, 0, 0, 0);
+    brandText->setSpacing(0);
     expBrandLabel_ = new QLabel(QStringLiteral("CENTURION"));
     expBrandLabel_->setObjectName(QStringLiteral("expBrandLabel"));
-    brandRow->addWidget(expBrandLabel_);
+    brandText->addWidget(expBrandLabel_);
+    auto *brandVersion = new QLabel(QStringLiteral("v" CENTURION_VERSION));
+    brandVersion->setObjectName(QStringLiteral("expBrandVersion"));
+    brandText->addWidget(brandVersion);
+    brandRow->addLayout(brandText);
     brandRow->addStretch();
     rail->addWidget(brand);
 
@@ -356,8 +365,8 @@ void MainWindow::installExperimentalShell() {
     auto *top = new QFrame;
     top->setObjectName(QStringLiteral("expTopbar"));
     auto *topRow = new QHBoxLayout(top);
-    topRow->setContentsMargins(14, 4, 12, 4);
-    topRow->setSpacing(7);
+    topRow->setContentsMargins(18, 7, 14, 7);
+    topRow->setSpacing(8);
     auto *titles = new QVBoxLayout;
     titles->setSpacing(0);
     expPath_ = new QLabel;
@@ -367,15 +376,62 @@ void MainWindow::installExperimentalShell() {
     titles->addWidget(expPath_);
     titles->addWidget(expTitle_);
     topRow->addLayout(titles, 1);
-    auto *find = new QPushButton(tr("Jump to…   Ctrl+K"));
+    // What the machine is doing right now, on every page: the power profile and the
+    // active scene. Read-only (same sources as the MangoHud line); a click opens the page.
+    auto chip = [this, topRow](const char *page) {
+        auto *c = new QPushButton;
+        c->setObjectName(QStringLiteral("expChip"));
+        c->setCursor(Qt::PointingHandCursor);
+        c->setFocusPolicy(Qt::NoFocus);
+        c->hide();
+        const QString id = QString::fromLatin1(page);
+        connect(c, &QPushButton::clicked, this, [this, id] { showTab(id); });
+        topRow->addWidget(c);
+        return c;
+    };
+    expProfileChip_ = chip("Home");
+    expSceneChip_ = chip("Scenes");
+    expSceneChip_->setIcon(experimentalui::navigationIcon(QStringLiteral("Scenes")));
+    expSceneChip_->setIconSize(QSize(14, 14));
+    connect(scenes_, &SceneEngine::finished, this, &MainWindow::syncStatusChips);
+    connect(scenes_, &SceneEngine::activeSceneChanged, this, &MainWindow::syncStatusChips);
+    connect(&pp::Watcher::instance(), &pp::Watcher::changed, this, &MainWindow::syncStatusChips);
+    syncStatusChips();
+    topRow->addSpacing(4);
+    // A search field in looks, a button in behaviour: it opens the navigator.
+    auto *find = new QPushButton;
     find->setObjectName(QStringLiteral("expSearch"));
     find->setToolTip(tr("Jump to a page or a control"));
+    find->setAccessibleName(tr("Jump to a page or a control"));
+    find->setCursor(Qt::PointingHandCursor);
+    find->setMinimumWidth(150);  // narrow window: the field gives way before the title does
+    find->setMaximumWidth(292);
+    find->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *findRow = new QHBoxLayout(find);
+    findRow->setContentsMargins(10, 0, 7, 0);
+    findRow->setSpacing(8);
+    auto *findIcon = new QLabel;
+    findIcon->setPixmap(experimentalui::searchIcon(theme::MUTED).pixmap(14, 14));
+    auto *findText = new QLabel(tr("Jump to a page or a control"));
+    findText->setObjectName(QStringLiteral("expSearchText"));
+    findText->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // clips instead of forcing the width
+    auto *findKey = new QLabel(QStringLiteral("Ctrl K"));
+    findKey->setObjectName(QStringLiteral("expKeycap"));
+    for (QLabel *l : {findIcon, findText, findKey}) l->setAttribute(Qt::WA_TransparentForMouseEvents);
+    findRow->addWidget(findIcon);
+    findRow->addWidget(findText, 1);
+    findRow->addWidget(findKey, 0, Qt::AlignVCenter);
     connect(find, &QPushButton::clicked, this, &MainWindow::showQuickNavigator);
-    topRow->addWidget(find);
+    topRow->addWidget(find, 2);
     column->addWidget(top);
     tabs_->tabBar()->hide();
     tabs_->setObjectName(QStringLiteral("expPageStack"));
-    column->addWidget(tabs_, 1);
+    // A gutter around every page, so content never touches the rail or the window edge.
+    auto *pageHost = new QWidget;
+    auto *pageLayout = new QVBoxLayout(pageHost);
+    pageLayout->setContentsMargins(8, 6, 8, 4);
+    pageLayout->addWidget(tabs_);
+    column->addWidget(pageHost, 1);
     shellLayout->addWidget(content, 1);
     setCentralWidget(shell);
 
@@ -408,7 +464,7 @@ void MainWindow::rebuildExperimentalNavigation() {
         const QString id = tabs_->tabBar()->tabData(i).toString();
         const QString group = groupFor(id);
         if (group != previousGroup) {
-            auto *heading = new QLabel(group);
+            auto *heading = new QLabel(tr(group.toUtf8().constData()));  // same catalogue entries as the top bar's path
             heading->setObjectName(QStringLiteral("expNavHeading"));
             heading->setVisible(!expCollapsed_);
             expNavLayout_->addWidget(heading);
@@ -468,6 +524,8 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     }
     for (QLabel *heading : expRail_->findChildren<QLabel *>(QStringLiteral("expNavHeading")))
         heading->setVisible(!collapsed);
+    for (QLabel *version : expRail_->findChildren<QLabel *>(QStringLiteral("expBrandVersion")))
+        version->setVisible(!collapsed);
     if (expUserToggled_) {
         QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
         st.setValue(QStringLiteral("ui/rail_collapsed"), collapsed);
@@ -490,6 +548,20 @@ void MainWindow::syncExperimentalNavigation() {
     expPath_->setText(QStringLiteral("CENTURION  /  ") + group);
     for (auto *button : std::as_const(expNavButtons_))
         button->setChecked(button->property("pageId").toString() == id);
+}
+
+void MainWindow::syncStatusChips() {
+    if (!expProfileChip_) return;
+    const QString profile = pp::Watcher::instance().current().value_or(QString());
+    expProfileChip_->setVisible(!profile.isEmpty());
+    if (!profile.isEmpty()) {
+        expProfileChip_->setText(HomeTab::profileLabel(profile));
+        expProfileChip_->setIcon(experimentalui::dotIcon(QColor(theme::profileAccent(profile))));
+        expProfileChip_->setIconSize(QSize(10, 10));
+    }
+    const QString scene = scenes::activeScene();
+    expSceneChip_->setVisible(!scene.isEmpty());
+    expSceneChip_->setText(QString(scene).replace(QLatin1Char('&'), QLatin1String("&&")));  // no mnemonic
 }
 
 void MainWindow::showQuickNavigator() { uinavigator::open(tabs_, this); }

@@ -61,7 +61,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     hero->setStyleSheet(QStringLiteral("QFrame#healthHero{background:%1;border:1px solid %2;border-radius:%3px}"
                                        "QFrame#healthHero QLabel{border:none;background:transparent}")
                         .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER,
-                             theme::experimentalEnabled() ? QStringLiteral("6") : QStringLiteral("13")));
+                             theme::experimentalEnabled() ? QStringLiteral("10") : QStringLiteral("13")));
     auto *heroLayout = new QVBoxLayout(hero);
     heroLayout->setContentsMargins(theme::experimentalEnabled() ? 13 : 18,
                                    theme::experimentalEnabled() ? 10 : 15,
@@ -96,7 +96,7 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     recommend->setStyleSheet(QStringLiteral("QFrame#healthAdvice{background:%1;border:1px solid %2;border-radius:%3px}"
                                             "QFrame#healthAdvice QLabel{background:transparent;border:none}")
                              .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER,
-                                  theme::experimentalEnabled() ? QStringLiteral("6") : QStringLiteral("10")));
+                                  theme::experimentalEnabled() ? QStringLiteral("10") : QStringLiteral("10")));
     auto *adviceLayout = new QHBoxLayout(recommend);
     adviceLayout->setContentsMargins(14, 11, 14, 11);
     recommendation_ = new QLabel;
