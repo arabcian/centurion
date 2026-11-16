@@ -30,6 +30,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   error instead of the default (`--budget nan` ran without a time limit).
 - Autotune's "changed since last run" names new calibration data as the cause on a signature
   at its row cap too (it compared the row count only).
+- `centurion-calibrate`: progressive sessions leave the base stage again after an OOM kill or a value
+  the kernel refuses. A value no run can hold (unsafe on its own, or refused in the phase's newest
+  session) stayed below 6 runs for good, so every later session was a base session: no pairs, no
+  crowding, no heat, no dose refinement.
+- `centurion-calibrate`: the storage phase is not planned on a drive without a readable temperature
+  sensor (no storage run starts without one). Every run was skipped one by one and the phase spent its
+  share of the session on nothing - without end under `--all`; its time now goes to the other phases.
+- `centurion-calibrate`: 8 runs thrown away in a row (a machine that stays busy, a drive that stays
+  hot, firmware power capping, `CENTURION_PREFLIGHT_STRICT`) end the phase with what it measured,
+  instead of spending the rest of its budget on runs that are dropped.
+- `centurion-calibrate --verify`: an error that ends the runs (the charger gone, the ballast braked,
+  the write budget) reports and keeps the ABBA blocks measured so far; the verification still fails.
+- The optimistic-predictions warning counts every session of a `--sessions N` run or a boot
+  calibration: their confirmation checks were one group (the time the signature was loaded), so a
+  night of sessions never reached the six groups the warning needs.
+- `centurion-calibrate`: the measured cost per run takes out the heat soaks as timed, not "hot runs x
+  soak length" (hot runs that follow each other only top up): the next session planned more runs
+  than fit.
+- Autotune's application advice is judged on the settings that would change something. It counted
+  every decided setting, so every report said "high-impact" (12 settings or more) and the two
+  milder verdicts could not be reached; the reply also carries `changes`.
 - `writes.log` rotation is locked and keeps two generations (`.1`, `.2`); two helpers
   rotating at once could lose the previous log.
 - Untranslated pkexec/polkit error messages and the Blackwell hotspot tooltip.

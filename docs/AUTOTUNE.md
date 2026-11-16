@@ -251,6 +251,10 @@ whose files were all skipped measured the reference under the candidate's label 
 **Session quality.** Every design session keeps a quality record (`--show`, last 64): runs and
 reference runs, the reference runs' scatter per objective, runs that counted less (busy machine,
 forced idle, display or drive state), refused values, runs thrown away, power-source waits.
+Eight runs thrown away in a row (a machine that stays busy, a drive that stays at its warning
+temperature, firmware power capping) end the phase with what it measured. The storage phase is not
+planned at all on a drive whose temperature cannot be read (NVMe hwmon, or the `drivetemp` module
+for a SATA drive): no storage run starts without it, and its time goes to the other phases.
 
 ## Heat as a design factor
 
@@ -314,6 +318,9 @@ or the preset's name) with its interval (better / worse only when the interval e
 what the joint model predicted for the preset's calibrated part - `as predicted`,
 or `SURPRISE` when the uncalibrated part or interactions the model has not seen matter. CPU
 offlining, driver switches, firmware limits and radios are never written by a verification.
+An error that ends the runs (the power source gone, the ballast braked for good, the write budget)
+still reports and keeps the blocks measured so far (`ended_early` in the record); the verification
+does not pass.
 `--phase load` runs the load suite under the memory ballast instead of the idle suite (the model
 check then reads the load model). `--goal all` also reports every other goal's weighted gain from
 the same runs (signature `gains`). `--sequential` makes `--rounds` a maximum: from the third block
@@ -560,7 +567,10 @@ The first three stages are read from the data itself (runs of deep/max
 sessions count too); every session's strategy is noted in the signature
 (`strategies`). When a progressive session's decisions are settled before its
 time is up it keeps filling coverage gaps instead of stopping. `--list` shows
-each phase's stage and what the log holds.
+each phase's stage and what the log holds. A value no run can hold - unsafe on
+its own (an OOM kill, a freeze, the memory brake twice), or refused by the kernel
+in the phase's newest session - is left out of these counts: it can never reach
+6 runs, and one such value kept every later session in the base stage.
 
 1. *Space-filling start.* Every run changes a random set of knobs together,
    balanced so every knob, every value and every **pair** of knobs appears

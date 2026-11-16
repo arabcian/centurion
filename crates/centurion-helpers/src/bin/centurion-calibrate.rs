@@ -603,7 +603,29 @@ fn is_mid(f: &Factor, v: &str) -> bool {
     lv.len() >= 2 && x > lo && x < hi && !lv.iter().any(|l| (l - x).abs() < 1e-9)
 }
 
+/// Values of `phase`'s knobs that the kernel refused to take in the phase's newest session
+/// (`quality["refused_values"]`; a kernel that takes one again clears it there).
+fn refused_last(cal: &Calibration, phase: Phase) -> Vec<(String, String)> {
+    cal.quality.iter().rev().find(|q| q["phase"] == json!(phase.name())).and_then(|q| q["refused_values"].as_array())
+        .map(|a| a.iter().filter_map(|kv| Some((kv[0].as_str()?.to_owned(), kv[1].as_str()?.to_owned()))).collect()).unwrap_or_default()
+}
+
+/// What the log holds for `factors`. A value no run can hold is left out of the count: one that is
+/// unsafe on its own (an OOM kill, a freeze, the memory brake twice - every design leaves it out) or
+/// that the kernel refuses to take. Such a value stayed below 6 runs for good, so `main_min` never
+/// reached the base stage's end and every progressive session after one OOM kill was a base session
+/// again: no pairs, no crowding, no heat, no dose refinement. A knob left without any measurable
+/// value is out of the pair count for the same reason.
 fn progress(cal: &Calibration, phase: Phase, factors: &[Factor]) -> Progress {
+    let refused = refused_last(cal, phase);
+    let factors: Vec<Factor> = factors.iter().filter_map(|f| {
+        let values: Vec<String> = f.values.iter().filter(|v| {
+            let kv = (f.key.clone(), (*v).clone());
+            !cal.avoid_cfg(std::slice::from_ref(&kv)) && !refused.contains(&kv)
+        }).cloned().collect();
+        (!values.is_empty()).then(|| Factor { values, ..f.clone() })
+    }).collect();
+    let factors = &factors[..];
     let nf = factors.len();
     let idx: BTreeMap<&str, usize> = factors.iter().enumerate().map(|(i, f)| (f.key.as_str(), i)).collect();
     let mut vc: Vec<Vec<usize>> = factors.iter().map(|f| vec![0; f.values.len()]).collect();
@@ -845,7 +867,18 @@ struct Runner<'a> { j: Journal, c: &'a Ctx, rate: u64, ram: u64, ballast: Option
                     /// Bounded preflight observations, before touching any tunable.
                     preflight_retries: usize, preflight_skips: usize, preflight_secs: f64,
                     /// `--strict` ended the session: its reference level left the history.
-                    shifted: bool }
+                    shifted: bool,
+                    /// Runs in a row that were attempted and gave no measurement (`BARREN_MAX`).
+                    barren: usize,
+                    /// Seconds the heat soaks really took (a top-up after a hot run is shorter than a full soak).
+                    soak_s: f64 }
+
+/// Attempted runs in a row without a measurement after which a phase ends. Every one of them was
+/// thrown away for a reason that lasts (a machine kept busy by other programs, a drive that stays at
+/// its warning temperature, firmware power capping, `CENTURION_PREFLIGHT_STRICT` on a machine that
+/// never gets quiet): the designs kept offering runs, each was dropped, and the phase went on spending
+/// its time budget - without end under `--all`, which has none - while nothing was measured.
+const BARREN_MAX: usize = 8;
 
 /// How long a session waits for its power source to come back before it ends.
 const POWER_WAIT: Duration = Duration::from_secs(120);
@@ -854,7 +887,7 @@ impl Runner<'_> {
     fn new<'a>(c: &'a Ctx, rate: u64, ram: u64) -> Runner<'a> {
         Runner { j: Journal { entries: Vec::new() }, c, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
                  cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0, slc: 0, irq_ref: Default::default(), parasites: BTreeMap::new(), io_before: 0, io_session: 0,
-                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new(), preflight_retries: 0, preflight_skips: 0, preflight_secs: 0.0, shifted: false }
+                 ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new(), preflight_retries: 0, preflight_skips: 0, preflight_secs: 0.0, shifted: false, barren: 0, soak_s: 0.0 }
     }
     /// The session's power source must still be there: a charger pulled on AC (or plugged in on
     /// battery) moves the firmware limits, the power reading's source and the context every row is
@@ -934,8 +967,27 @@ impl Runner<'_> {
         }
         true
     }
-    /// One run of `cfg` (all other knobs at their reference). None = a value could not be written.
+    /// One run of `cfg` (all other knobs at their reference). None = a value could not be written,
+    /// or the run was thrown away. `BARREN_MAX` thrown-away runs in a row end the phase (Err).
     fn run(&mut self, phase: Phase, b: Benches, cfg: &Cfg, note: &str) -> Result<Option<Done>, String> {
+        let (dropped, refused) = (self.dropped, self.unwritable.len());
+        let r = self.run_once(phase, b, cfg, note)?;
+        // A value the kernel refuses is not a run thrown away: it leaves the session's designs, and
+        // a design of many such values must not end the phase for the values that can be written.
+        let thrown_away = r.is_none() && self.dropped > dropped && self.unwritable.len() == refused;
+        self.tally(phase, r.is_some(), thrown_away)?;
+        Ok(r)
+    }
+    /// Counts thrown-away runs in a row (`BARREN_MAX`); a measured run starts the count again.
+    fn tally(&mut self, phase: Phase, measured: bool, thrown_away: bool) -> Result<(), String> {
+        if measured { self.barren = 0; }
+        if !thrown_away { return Ok(()); }
+        self.barren += 1;
+        if self.barren < BARREN_MAX { return Ok(()); }
+        self.barren = 0;
+        Err(format!("{} phase: {BARREN_MAX} runs in a row gave no measurement (each was thrown away, see above): the phase ends here - what it measured is kept", phase.name()))
+    }
+    fn run_once(&mut self, phase: Phase, b: Benches, cfg: &Cfg, note: &str) -> Result<Option<Done>, String> {
         // The daily write budget: an IO run that would exceed it ends the storage phase cleanly.
         let io_est = (self.c.io_size as f64 * 1.5) as u64;
         if phase == Phase::Io && self.io_before + self.io_session + io_est > self.c.io_budget {
@@ -1100,7 +1152,7 @@ impl Runner<'_> {
             }
             _ => {}
         }
-        match r { Ok((s, oom)) => Ok(Some(Done { s, oom, w, t: now(), temp })), Err(e) => { eprintln!("\n{e}"); Ok(None) } }
+        match r { Ok((s, oom)) => Ok(Some(Done { s, oom, w, t: now(), temp })), Err(e) => { eprintln!("\n{e}"); self.dropped += 1; Ok(None) } }
     }
     /// Thermal conditions before a run. Hot: heat soak (every CPU busy; a top-up when the previous run
     /// was hot as well). Cool: wait until the die is back near the phase's cool start or has stopped
@@ -1128,7 +1180,9 @@ impl Runner<'_> {
         }
         if hot {
             let top_up = self.last_hot.is_some_and(|t| t.elapsed() < Duration::from_secs(8));
+            let t0 = Instant::now();
             bench::preheat(if top_up { ms(self.c, 4000) } else { Duration::from_secs_f64(self.c.heat_secs) });
+            self.soak_s += t0.elapsed().as_secs_f64();
             self.last_hot = Some(Instant::now());
             return bench::cpu_temp_c();
         }
@@ -1396,7 +1450,9 @@ struct Design<'a> { phase: Phase, bs: Benches, fast_scan: bool, sess: u64, n_tot
                     /// Runs attempted (measured, OOM-bisected, refused or thrown away): what `spent` was spent on.
                     tries: usize,
                     /// The early baseline check (A4) ran: once, right after the second reference run.
-                    checked: bool }
+                    checked: bool,
+                    /// `Runner::soak_s` when the design started: its own heat soaks are the difference.
+                    soak0: f64 }
 
 /// Whether a reference run is due after the space-filling stage's design run `i` (0-based): one
 /// every 6. Shared with the simulator (calsim), so it measures this schedule. A7 measured random
@@ -1481,7 +1537,10 @@ impl Design<'_> {
         let rows = compute_rows(&self.runs, self.phase, self.sess, self.kernel, self.n_total, &self.meta);
         let mut q = session_quality(&rows, self, rn);
         // Per attempt, without the heat soaks: `run_cost_hint` adds `heat_secs` to hot runs itself.
-        let soak = self.runs.iter().filter(|r| is_hot(&r.cfg)).count() as f64 * rn.c.heat_secs;
+        // The soaks as timed: hot runs of a batch follow each other and only the first pays a full
+        // soak (the others a top-up), so "hot runs x heat_secs" took out more than was spent and the
+        // next session read its runs as cheaper than they are (more runs planned than fit).
+        let soak = (rn.soak_s - self.soak0).max(0.0);
         q["run_secs"] = json!(((self.spent - soak) / self.tries.max(1) as f64).max(0.0));
         cal.put_session(self.phase, self.sess, rows);
         // The environment this session ran in (BIOS, microcode, boot parameters): rows of another one count less.
@@ -1549,8 +1608,9 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let mut rng = Rng::new(seed ^ sess);
     let mut d = Design { phase, bs, fast_scan: calibrate_flag("CENTURION_FAST_SCAN") && matches!(phase, Phase::Idle | Phase::Load), sess, n_total, kernel, refs, runs: Vec::new(), oom_left: 12, t0: Instant::now(), secs: budget, spent: 0.0,
                          meta: Meta::new(cal, if phase == Phase::Dev || rn.c.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, rn.c.cx.clone()),
-                         strategy: dp.name, tries: 0, checked: false };
+                         strategy: dp.name, tries: 0, checked: false, soak0: rn.soak_s };
     rn.disp0 = None;
+    rn.barren = 0;
     // Quality metadata belongs to this phase rather than previous phases.
     rn.preflight_retries = 0;
     rn.preflight_skips = 0;
@@ -1657,7 +1717,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
                         let tol = 2.0 * (sd * sd + noise * noise / obs.len() as f64).sqrt();
                         checks += 1;
                         if (m - mu).abs() > tol { surprises += 1; }
-                        cal.note_predcheck("confirm", name, g.key(), *mu, tol / 2.0, m);
+                        cal.note_predcheck_in(sess, "confirm", name, g.key(), *mu, tol / 2.0, m);
                         eprintln!("  {:<30} {} change(s): predicted {:+.3} ± {:.3}, measured {:+.3} ({} runs) {}", g.label(), cfg.len(), mu, sd, m, obs.len(),
                                   if (m - mu).abs() <= tol { "as predicted" } else { "SURPRISE (now part of the data)" });
                     }
@@ -1700,6 +1760,7 @@ fn session_quality(rows: &[Row], d: &Design, rn: &Runner) -> Value {
     let noise: Vec<Value> = (0..4).map(|o| robust_sd(&refs.iter().map(|r| r.y[o]).collect::<Vec<_>>()).map_or(Value::Null, |x| json!(round3(x)))).collect();
     json!({"t": now(), "sess": d.sess, "phase": d.phase.name(), "strategy": d.strategy, "runs": d.runs.len(), "refs": refs.len(), "noise": noise,
            "weak": d.runs.iter().filter(|r| r.w < 0.999).count(), "refused": rn.unwritable.len(), "dropped": rn.dropped,
+           "refused_values": rn.unwritable.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
            "power_waits": rn.power_waits, "ended_early": rn.power_lost, "cx": d.meta.cx, "parasites": rn.parasites,
            "preflight_retries": rn.preflight_retries, "preflight_skips": rn.preflight_skips, "preflight_secs": round3(rn.preflight_secs)})
 }
@@ -1760,6 +1821,17 @@ fn split_adaptive<'a>(items: &'a [Item], ctx: &Ctx, budget: f64, cal: &Calibrati
     v
 }
 
+/// The phase split without the storage phase when it cannot be measured (`io_ok` false): its share
+/// of a finite budget goes to the other phases in proportion to theirs.
+fn without_io(mut v: Vec<(Phase, Vec<&Item>, f64)>, io_ok: bool) -> Vec<(Phase, Vec<&Item>, f64)> {
+    if io_ok { return v; }
+    let Some(i) = v.iter().position(|e| e.0 == Phase::Io) else { return v };
+    let freed = v.remove(i).2;
+    let sum: f64 = v.iter().map(|e| e.2).sum();
+    if freed.is_finite() && sum.is_finite() && sum > 0.0 { for e in v.iter_mut() { e.2 += freed * e.2 / sum; } }
+    v
+}
+
 fn phase_factors(its: &[&Item]) -> Vec<Factor> { its.iter().map(|i| Factor { key: i.key.clone(), reference: i.reference.clone(), values: i.values.clone() }).collect() }
 
 /// One design session over every phase. Returns false when the session's power source went away
@@ -1776,7 +1848,15 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
             eprintln!("{k}: reference changed in this context ({old} -> {r}): its earlier design rows are re-coded against the new reference");
         }
     }
-    let phases = split_adaptive(items, ctx, budget, cal);
+    // No storage run is ever started on a drive whose temperature cannot be read (`Runner::run`): the
+    // phase used to be planned all the same, every one of its runs was skipped, and it spent its share
+    // of the session - without end under --all - on nothing.
+    let io_ok = ctx.disk.as_deref().map_or(true, |d| bench::disk_temp_c(d).is_some());
+    if !io_ok && items.iter().any(|i| i.phase == Phase::Io) {
+        eprintln!("storage phase skipped: {} has no readable temperature sensor (NVMe hwmon, or the drivetemp module for a SATA drive) and no storage run starts without one; its time goes to the other phases",
+                  ctx.disk.as_deref().unwrap_or("the drive"));
+    }
+    let phases = without_io(split_adaptive(items, ctx, budget, cal), io_ok);
     if phases.is_empty() { eprintln!("nothing to design: fewer than two testable knobs"); return true; }
     let mut rn = Runner::new(ctx, rate, ram);
     rn.io_before = cal.io_written(today());
@@ -2578,12 +2658,20 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     };
     let looks = rounds.saturating_sub(SEQ_MIN - 1).max(1);
     let mut decided_at = None;
+    // An error that ends the runs (the power source gone, the ballast braked for good, the write
+    // budget, runs thrown away in a row): the blocks measured so far are still reported and kept.
+    // It used to leave through `?`: twenty minutes of complete ABBA blocks went without a word.
+    let mut ended: Option<String> = None;
     'r: for r in 0..rounds {
         let order: [&Cfg; 4] = if r % 2 == 0 { [&none, &cfg, &cfg, &none] } else { [&cfg, &none, &none, &cfg] };
         for (pos, c) in order.into_iter().enumerate() {
             for ph in &phases {
                 if STOP.load(Ordering::SeqCst) { break 'r; }
-                if let Some(Done { s, oom: false, w, t, temp }) = rn.run(*ph, bs, c, "(verify)")? {
+                let done = match rn.run(*ph, bs, c, "(verify)") {
+                    Ok(d) => d,
+                    Err(e) => { eprintln!("\nverify ended early: {e}"); ended = Some(e); break 'r; }
+                };
+                if let Some(Done { s, oom: false, w, t, temp }) = done {
                     let e = runs.entry(ph.idx()).or_default();
                     let order = e.len();
                     e.push(Run { cfg: c.clone(), s, order, t, w, temp, full: true });
@@ -2659,7 +2747,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     }
     if let Some((k, mu, sd)) = pred {
         let agree = use_.is_finite() && (um - mu).abs() <= 2.0 * (use_ * use_ + sd * sd).sqrt();
-        if use_.is_finite() { cal.note_predcheck("verify", main.name(), goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
+        if use_.is_finite() { cal.note_predcheck_in(sess, "verify", main.name(), goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
         println!("  model predicted  {mu:+.3} ± {sd:.3} for its {k} calibrated change(s) of {} -> {}", cfg.len(),
                  if agree { "as predicted" } else { "SURPRISE: the uncalibrated part or interactions the model has not seen matter" });
     }
@@ -2668,15 +2756,18 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     cal.verify.push(json!({"t": now(), "preset": name, "goal": goal.key(), "changes": cfg.len(), "rounds": blocks, "paired": true, "objectives": objectives,
                            "gain": [round3(um), round3(use_)], "ci95": gain.as_ref().map(|g| json!([round3(g.lo), round3(g.hi)])),
                            "phase": main.name(), "verification_v": 1, "verified_values": preset_values,
-                           "skipped": skipped, "complete": skipped.is_empty() && blocks >= 3,
+                           "skipped": skipped, "complete": skipped.is_empty() && blocks >= 3 && ended.is_none(),
+                           "ended_early": ended,
                            "decision_ci": if lo.is_finite() && hi.is_finite() { json!([lo, hi]) } else { Value::Null },
-                           "passed": verification_passes(blocks, &skipped, lo),
+                           "passed": ended.is_none() && verification_passes(blocks, &skipped, lo),
                            "sequential": sequential.then(|| json!({"looks": looks, "decided_at": decided_at})),
                            "gains": (!others.is_empty()).then(|| others.iter().map(|(g, p)| (g.key().to_owned(), p.as_ref().map_or(Value::Null, |p| json!([round3(p.mean), round3(p.se)])))).collect::<serde_json::Map<_, _>>()),
                            "predicted": pred.map(|p| json!([p.0, round3(p.1), round3(p.2)])), "cx": ctx.cx}));
     let drop = cal.verify.len().saturating_sub(20);
     cal.verify.drain(..drop);
     save(cal);
+    // Fail closed, as before: a verification that could not run to its end is not a pass.
+    if let Some(e) = ended { return Err(format!("{e} ({blocks} complete ABBA block(s) reported above and kept)")); }
     if require_improvement && !verification_passes(blocks, &skipped, lo) {
         return Err(format!("ABBA did not verify a positive improvement: {blocks} blocks, decision CI [{lo:+.4}, {hi:+.4}], {} skipped", skipped.len()));
     }
@@ -3048,6 +3139,58 @@ mod tests {
         assert!(num_opt::<u64>(&a("--sessions two"), "--sessions").is_err());
     }
 
+    #[test]
+    fn runs_thrown_away_in_a_row_end_the_phase() {
+        let ctx = Ctx { exe: PathBuf::new(), dir: String::new(), disk: None, io_size: 0, scale: 1.0, battery: false, bat_period: None,
+                        heat_secs: 0.0, cx: String::new(), heat: None, io_budget: 0, strict: false };
+        let mut rn = Runner::new(&ctx, 0, 0);
+        // A measured run in between starts the count again; a refused value (neither) leaves it alone.
+        for _ in 0..BARREN_MAX - 1 { assert!(rn.tally(Phase::Io, false, true).is_ok()); }
+        assert!(rn.tally(Phase::Io, false, false).is_ok());
+        assert!(rn.tally(Phase::Io, true, false).is_ok());
+        for _ in 0..BARREN_MAX - 1 { assert!(rn.tally(Phase::Io, false, true).is_ok()); }
+        let e = rn.tally(Phase::Io, false, true).unwrap_err();
+        assert!(e.starts_with("io phase") && rn.barren == 0, "{e}");
+    }
+    #[test]
+    fn a_storage_phase_that_cannot_be_measured_gives_its_time_away() {
+        let item = |key: &str, phase| Item { key: key.into(), phase, benches: Benches::default(), reference: "0".into(), values: vec!["1".into()], secs: 1.0 };
+        let (a, b, c) = (item("cpu.a", Phase::Idle), item("vm.b", Phase::Load), item("blk.c", Phase::Io));
+        let v = || vec![(Phase::Idle, vec![&a], 300.0), (Phase::Load, vec![&b], 100.0), (Phase::Io, vec![&c], 200.0)];
+        assert_eq!(without_io(v(), true).len(), 3);
+        let w = without_io(v(), false);
+        assert_eq!(w.iter().map(|e| (e.0, e.2)).collect::<Vec<_>>(), vec![(Phase::Idle, 450.0), (Phase::Load, 150.0)]);
+        // --all: no budget to hand over.
+        let inf = without_io(vec![(Phase::Idle, vec![&a], f64::INFINITY), (Phase::Io, vec![&c], f64::INFINITY)], false);
+        assert!(inf.len() == 1 && inf[0].2.is_infinite());
+    }
+    #[test]
+    fn values_no_run_can_hold_do_not_keep_a_phase_in_the_base_stage() {
+        let fs = vec![Factor { key: "vm.a".into(), reference: "0".into(), values: vec!["1".into(), "2".into()] },
+                      Factor { key: "vm.b".into(), reference: "0".into(), values: vec!["1".into()] },
+                      Factor { key: "vm.c".into(), reference: "0".into(), values: vec!["9".into()] }];
+        let mut cal = Calibration::default();
+        let kv = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        // Every value but vm.a=2 and vm.c=9 in 6 runs, every measurable pair together.
+        let rows: Vec<Row> = (0..6).map(|i| Row { phase: Phase::Idle, sess: 1, pos: 0.5, t: 1000 + i, kernel: String::new(), cfg: vec![kv("vm.a", "1"), kv("vm.b", "1")],
+                                                 y: [0.0, f64::NAN, f64::NAN, f64::NAN], w: 1.0, bv: calib::BENCH_VERSION, ..Default::default() }).collect();
+        cal.put_session(Phase::Idle, 1, rows);
+        let p = progress(&cal, Phase::Idle, &fs);
+        assert!(p.main_min == 0 && p.stage() == Stage::Base);
+        // vm.a=2 caused an OOM kill (never designed again), vm.c=9 is refused by the kernel.
+        cal.add_unsafe_set(vec![kv("vm.a", "2")]);
+        cal.note_quality(json!({"sess": 1, "phase": "idle", "refused_values": [["vm.c", "9"]]}));
+        let p = progress(&cal, Phase::Idle, &fs);
+        assert_eq!(p.main_min, 6);
+        assert!(p.pairs2 >= 0.9 && p.stage() > Stage::Base, "{:?}", p.stage());
+        // A combination that is unsafe only together forbids neither of its values.
+        let mut cal2 = Calibration::default();
+        cal2.add_unsafe_set(vec![kv("vm.a", "1"), kv("vm.b", "1")]);
+        assert_eq!(progress(&cal2, Phase::Idle, &fs).stage(), Stage::Base);
+        // The refusal is read from the phase's newest session only: a kernel that takes the value again clears it.
+        cal.note_quality(json!({"sess": 2, "phase": "idle", "refused_values": []}));
+        assert_eq!(progress(&cal, Phase::Idle, &fs).stage(), Stage::Base);
+    }
     /// A phase that ends on an error (Ctrl-C, input during a boot calibration, the charger pulled, the
     /// ballast braked, the write budget) keeps the runs it measured since its last commit.
     #[test]
@@ -3059,7 +3202,7 @@ mod tests {
         (rn.ac0, rn.power_lost) = (Some(true), true);
         let refs = BTreeMap::new();
         let mut d = Design { phase: Phase::Idle, bs: Benches::default(), fast_scan: false, sess: 7, n_total: 12, kernel: "", refs: &refs, runs: Vec::new(), oom_left: 0,
-                             t0: Instant::now(), secs: 60.0, spent: 0.0, meta: meta(), strategy: "lean", tries: 0, checked: true };
+                             t0: Instant::now(), secs: 60.0, spent: 0.0, meta: meta(), strategy: "lean", tries: 0, checked: true, soak0: 0.0 };
         let mut cal = Calibration::default();
         // Too few runs to make rows: nothing to keep, and no empty session record either.
         d.runs.push(run(Vec::new(), &[(Metric::WakeP99Us, 100.0)]));

@@ -1835,9 +1835,18 @@ impl Calibration {
     }
     /// One prediction checked against a measurement (confirmation or `--verify`); the last 200 are kept.
     pub fn note_predcheck(&mut self, src: &str, phase: &str, goal: &str, mu: f64, sd: f64, obs: f64) {
+        self.note_predcheck_in(self.now, src, phase, goal, mu, sd, obs);
+    }
+    /// [`Calibration::note_predcheck`] for the checks of session `sess`: the id is what
+    /// `predcheck_optimism` groups by. `self.now` is the time the signature was loaded, the same for
+    /// every session of one process: with `--sessions N` (and every boot calibration) all N sessions'
+    /// checks of a phase fell into one group, so a night of eight sessions counted as one piece of
+    /// evidence and the optimism warning (6 groups) could not come from it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn note_predcheck_in(&mut self, sess: u64, src: &str, phase: &str, goal: &str, mu: f64, sd: f64, obs: f64) {
         if !(mu.is_finite() && sd.is_finite() && sd > 0.0 && obs.is_finite()) { return; }
         let r = |x: f64| (x * 10_000.0).round() / 10_000.0;
-        self.predcheck.push(json!({"t": self.now, "src": src, "phase": phase, "goal": goal, "mu": r(mu), "sd": r(sd), "obs": r(obs)}));
+        self.predcheck.push(json!({"t": self.now, "sess": sess, "src": src, "phase": phase, "goal": goal, "mu": r(mu), "sd": r(sd), "obs": r(obs)}));
         let drop = self.predcheck.len().saturating_sub(KEEP_PREDCHECK);
         self.predcheck.drain(..drop);
     }
@@ -1866,7 +1875,9 @@ impl Calibration {
         for c in self.predcheck.iter().rev().take(last) {
             let (Some(mu), Some(sd), Some(obs)) = (c["mu"].as_f64(), c["sd"].as_f64(), c["obs"].as_f64()) else { continue };
             if sd <= 0.0 { continue; }
-            let e = by.entry((c["t"].as_u64().unwrap_or(0), c["phase"].as_str().unwrap_or(""))).or_default();
+            // Records written before `sess` existed carry the load time only.
+            let group = c["sess"].as_u64().or_else(|| c["t"].as_u64()).unwrap_or(0);
+            let e = by.entry((group, c["phase"].as_str().unwrap_or(""))).or_default();
             e.0 += (obs - mu) / sd;
             e.1 += 1.0;
         }
@@ -2696,6 +2707,12 @@ mod tests {
         let mut c = Calibration::default();
         for _ in 0..8 { c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.03); }
         assert!(c.predcheck_optimism(50).is_none());
+        // Sessions run back to back in one process (`--sessions N`) share the load time, not the group.
+        let mut c = Calibration::default();
+        for sess in 0..8u64 { for g in ["gaming", "desktop"] { c.note_predcheck_in(100 + sess, "confirm", "idle", g, 0.05, 0.01, 0.04); } }
+        assert_eq!(c.predcheck_optimism(50).map(|x| x.1), Some(8));
+        // The session id survives the file.
+        assert_eq!(Calibration::from_json(&c.to_json()).predcheck_optimism(50).map(|x| x.1), Some(8));
     }
     #[test]
     fn device_phase_adds_whole_machine_power() {

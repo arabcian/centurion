@@ -2558,29 +2558,16 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let decision_ms = t_decide.elapsed().as_millis();
     if report_progress { eprintln!("CENTURION_STAGE validation"); }
     let mut out = assemble(goal, &p, w, main);
-    // Advice is conservative: absence of calibration evidence cannot be
-    // presented as a verified gain, and an uncertain predicted effect is not
-    // an instruction to apply privileged settings.
-    let entries = out["decisions"].as_array();
-    let (count, unmeasured, risky, doubtful) = entries.map_or((0, 0, 0, 0), |ds| {
-        let mut no_evidence = 0;
-        let mut risky = 0;
-        let mut doubtful = 0;
-        for d in ds {
-            if d["seen"].is_null() || d["seen"] == false { no_evidence += 1; }
-            if d["risk"].as_f64().is_some_and(|r| r < -0.05) { risky += 1; }
-            if let Some(a) = d["in_context"].as_array() {
-                if a.len() == 2 && a[0].as_f64().zip(a[1].as_f64()).is_some_and(|(m, sd)| sd > 0.0 && m.abs() < 2.0 * sd) { doubtful += 1; }
-            }
-        }
-        (ds.len(), no_evidence, risky, doubtful)
-    });
-    let high_risk = count >= 12 || risky > 0;
-    let advice = if high_risk { "High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying." }
-        else if doubtful > 0 || unmeasured > count / 2 { "Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains." }
-        else { "Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement." };
-    out["application_advice"] = json!({"text": advice, "high_risk": high_risk,
-        "settings": count, "not_modelled": unmeasured, "uncertain_effects": doubtful, "risk_flags": risky});
+    // A setting that is live already is not a change (for another scene's preset every value is one:
+    // the live values belong to the current scene).
+    let live_target = p.target_profile.is_none();
+    let is_change = |k: &str, v: &Value| {
+        if !live_target { return true; }
+        let live = p.cur(k).map(str::to_owned).or_else(|| tune::find(k).and_then(tune::current));
+        live.map_or(true, |l| l != vstr(v))
+    };
+    let advice = application_advice(out["decisions"].as_array().map_or(&[][..], Vec::as_slice), &is_change);
+    out["application_advice"] = advice;
     out["explore_mode"] = json!(mode);
     out["explore_available"] = json!(!want_explore && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty()));
     out["timings_ms"] = json!({"inputs": inputs_ms, "model": model_ms, "decision": decision_ms, "total": total_started.elapsed().as_millis()});
@@ -2617,6 +2604,34 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     out["timings_ms"]["total"] = json!(total_started.elapsed().as_millis());
     if report_progress { eprintln!("CENTURION_STAGE finished"); }
     out
+}
+
+/// What to do with a decision set before applying it. Advice is conservative: absence of
+/// calibration evidence cannot be presented as a verified gain, and an uncertain predicted effect
+/// is not an instruction to apply privileged settings.
+///
+/// Judged on the settings that would change something (`is_change`: key, value -> differs from
+/// what is live). It used to count every decided setting: the structural rules alone decide
+/// dozens, nearly all of them live already on a tuned machine and none of them "seen" by a
+/// benchmark, so every report said "high-impact" (12 settings or more) and the two milder
+/// verdicts could not be reached - while the GUI's own gate before an apply counts changed rows.
+/// The counts reported next to the verdict stay those of the whole set (`settings`, ...);
+/// `changes` is new.
+fn application_advice(decisions: &[Value], is_change: &dyn Fn(&str, &Value) -> bool) -> Value {
+    let unmodelled = |d: &Value| d["seen"].is_null() || d["seen"] == false;
+    let risky = |d: &Value| d["risk"].as_f64().is_some_and(|r| r < -0.05);
+    let doubtful = |d: &Value| d["in_context"].as_array().is_some_and(|a| {
+        a.len() == 2 && a[0].as_f64().zip(a[1].as_f64()).is_some_and(|(m, sd)| sd > 0.0 && m.abs() < 2.0 * sd)
+    });
+    let count = |ds: &[&Value], f: &dyn Fn(&Value) -> bool| ds.iter().filter(|d| f(d)).count();
+    let all: Vec<&Value> = decisions.iter().collect();
+    let changed: Vec<&Value> = decisions.iter().filter(|d| is_change(d["key"].as_str().unwrap_or(""), &d["value"])).collect();
+    let high_risk = changed.len() >= 12 || count(&changed, &risky) > 0;
+    let advice = if high_risk { "High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying." }
+        else if count(&changed, &doubtful) > 0 || count(&changed, &unmodelled) > changed.len() / 2 { "Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains." }
+        else { "Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement." };
+    json!({"text": advice, "high_risk": high_risk, "settings": all.len(), "changes": changed.len(),
+           "not_modelled": count(&all, &unmodelled), "uncertain_effects": count(&all, &doubtful), "risk_flags": count(&all, &risky)})
 }
 
 /// One autotune run as kept in the history: what decided it (weights, context, how many
@@ -3319,6 +3334,28 @@ mod tests {
         assert!(notes.is_empty());
     }
 
+    #[test]
+    fn advice_is_judged_on_what_would_change() {
+        let d = |k: &str, seen: Value, risk: f64, ctx: Value| json!({"key": k, "value": "x", "seen": seen, "risk": risk, "in_context": ctx});
+        // Forty structural settings, all live already, and two measured changes the model is sure of.
+        let mut ds: Vec<Value> = (0..40).map(|i| d(&format!("live.{i}"), Value::Null, 0.0, Value::Null)).collect();
+        ds.push(d("new.a", json!(true), 0.0, json!([0.08, 0.01])));
+        ds.push(d("new.b", json!(true), 0.0, json!([0.05, 0.01])));
+        let change = |k: &str, _: &Value| k.starts_with("new.");
+        let a = application_advice(&ds, &change);
+        assert_eq!((a["settings"].as_u64(), a["changes"].as_u64(), a["high_risk"].as_bool()), (Some(42), Some(2), Some(false)), "{a}");
+        assert!(a["text"].as_str().unwrap().starts_with("Review every"), "{a}");
+        // The counts next to the verdict are still those of the whole set.
+        assert_eq!((a["not_modelled"].as_u64(), a["uncertain_effects"].as_u64(), a["risk_flags"].as_u64()), (Some(40), Some(0), Some(0)));
+        // An uncertain change asks for more evidence; a risky one, or a dozen changes, for ABBA.
+        ds.push(d("new.c", json!(true), 0.0, json!([0.01, 0.02])));
+        assert!(application_advice(&ds, &change)["text"].as_str().unwrap().starts_with("Limited"));
+        ds.push(d("new.d", json!(true), -0.2, Value::Null));
+        assert_eq!(application_advice(&ds, &change)["high_risk"], true);
+        // Another scene's preset: every setting is a change.
+        assert_eq!(application_advice(&ds[..40], &|_, _| true)["high_risk"], true);
+        assert_eq!(application_advice(&[], &|_, _| true)["high_risk"], false);
+    }
     #[test]
     fn diff_vs_last_names_the_cause() {
         let prev = json!({"rows": 10, "weights": {"latency": 1.0}, "context": {"power": "ac"}, "values": {"a": 1, "b": "x", "gone": 3}});
