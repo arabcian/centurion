@@ -962,7 +962,7 @@ impl Runner<'_> {
     /// disk/network/GPU counters, without writes or a privileged system-wide action.
     /// On expiry the default is fail-open with post-run downweighting intact.
     /// Strict opt-in drops the run; this never waits indefinitely.
-    fn preflight(&mut self, phase: Phase) -> bool {
+    fn preflight(&mut self) -> bool {
         if !calibrate_flag("CENTURION_PREFLIGHT") { return true; }
         let begun = Instant::now();
         for attempt in 0..=2 {
@@ -976,8 +976,7 @@ impl Runner<'_> {
             let secs = sample_start.elapsed().as_secs_f64();
             let act = sys.activity(&bench::SysCounters::read(), secs);
             let others = fg.busy_cpus(&skip, secs);
-            // The threshold is in CPU cores, not percent.
-            let quiet = others <= 0.6 && bench::disturbances(&act, None, phase != Phase::Io).is_empty();
+            let quiet = preflight_quiet(others, &act);
             if quiet { self.preflight_secs += begun.elapsed().as_secs_f64(); return true; }
             if attempt < 2 { self.preflight_retries += 1; std::thread::sleep(Duration::from_millis(200)); }
         }
@@ -989,6 +988,15 @@ impl Runner<'_> {
             return false;
         }
         true
+    }
+    /// Puts every original back. Once that fully succeeded, the run's knobs are no longer in effect:
+    /// the in-flight record goes too. It used to stay until the next run's own record replaced it, so
+    /// a hang in between (model fitting, building the ballast, a cool-down gate) was blamed on knobs
+    /// that had already been restored and made them a permanent unsafe set. A failed restore keeps it.
+    fn restore_settled(&mut self) {
+        let errs = self.j.restore();
+        for e in &errs { eprintln!("\nrestore: {e}"); }
+        if errs.is_empty() { centurion_helpers::stability::inflight_clear(); }
     }
     /// One run of `cfg` (all other knobs at their reference). None = a value could not be written,
     /// or the run was thrown away. `BARREN_MAX` thrown-away runs in a row end the phase (Err).
@@ -1022,7 +1030,7 @@ impl Runner<'_> {
         self.power_check()?;
         // A value the kernel refused earlier in this session is refused again: no point in another try.
         if self.refused(cfg) { return Ok(None); }
-        if !self.preflight(phase) { return Ok(None); }
+        if !self.preflight() { return Ok(None); }
         if phase == Phase::Load { self.need_ballast()?; }
         // No memory pressure behind the storage suite: the ballast would turn it into a swap test.
         if phase != Phase::Load { if let Some(b) = self.ballast.take() { b.stop(); } }
@@ -1054,7 +1062,7 @@ impl Runner<'_> {
                 // Counted as refused, not also as a run thrown away (the report counted it twice).
                 // The session's own starting point (the dirty window's reference) cannot be set: runs go on without it.
                 self.base.retain(|(bk, bv)| !(bk == k && bv == v));
-                let _ = self.j.restore();
+                self.restore_settled();
                 return Ok(None);
             }
         }
@@ -1068,13 +1076,13 @@ impl Runner<'_> {
                     (Some(t), Some(limit)) if t >= limit => {
                         eprintln!("\nstorage run skipped: drive at {t:.0} °C (warning {limit:.0} °C)");
                         self.dropped += 1;
-                        for e in self.j.restore() { eprintln!("\nrestore: {e}"); }
+                        self.restore_settled();
                         return Ok(None);
                     }
                     (None, _) | (_, None) => {
                         eprintln!("\nstorage run skipped: NVMe temperature or warning limit unavailable");
                         self.dropped += 1;
-                        for e in self.j.restore() { eprintln!("\nrestore: {e}"); }
+                        self.restore_settled();
                         return Ok(None);
                     }
                     _ => {}
@@ -1096,7 +1104,7 @@ impl Runner<'_> {
             (Phase::Io, Some(d)) => bench::disk_temp_c(d).zip(bench::disk_temp_warn(d)).filter(|(t, w)| t >= w),
             _ => None,
         };
-        for e in self.j.restore() { eprintln!("\nrestore: {e}"); }
+        self.restore_settled();
         if phase == Phase::Io {
             let w1 = self.c.disk.as_deref().and_then(bench::disk_written_bytes);
             self.io_session += match (written0, w1) { (Some(a), Some(b)) if b >= a => b - a, _ => io_est };
@@ -1220,7 +1228,8 @@ impl Runner<'_> {
                 t
             }
             Some(base) => {
-                let (margin, max) = if phase == Phase::Dev { (2.0, 15.0) } else { (4.0, 8.0) };
+                let just_hot = calibrate_flag("CENTURION_HEAT_BLOCK_AB") && self.last_hot.is_some_and(|t| t.elapsed() < Duration::from_secs(30));
+                let (margin, max) = cool_gate(phase, just_hot);
                 let (t, w) = bench::thermal_gate(base + margin, Duration::from_secs_f64(max * self.c.scale));
                 self.gate_s += w;
                 t
@@ -1357,6 +1366,23 @@ fn cool_first(v: Vec<Cfg>) -> Vec<Cfg> {
     let (mut cool, hot): (Vec<Cfg>, Vec<Cfg>) = v.into_iter().partition(|c| !is_hot(c));
     cool.extend(hot);
     cool
+}
+
+/// Preflight verdict. The threshold is in CPU cores, not percent. Disk traffic is always checked:
+/// `run` skips the disk check in the storage phase only because its own suite writes then; no suite
+/// runs during preflight, so disk traffic here is foreign (or the last run's writeback) - exactly
+/// what disturbs the next storage run.
+fn preflight_quiet(others: f64, act: &bench::Activity) -> bool {
+    others <= 0.6 && bench::disturbances(act, None, true).is_empty()
+}
+
+/// Cool-start gate for a non-IO run: (margin above the phase's cool start in °C, longest wait in s).
+/// With the alternating heat blocks a cool run often follows a heat soak directly; the established
+/// 8 s cap then ended the gate while the die was still cooling fast, and the run was recorded as
+/// "cool" from a warm die. Such a run may wait up to 30 s (the gate still stops once cooling stalls).
+fn cool_gate(phase: Phase, just_hot: bool) -> (f64, f64) {
+    let (margin, max): (f64, f64) = if phase == Phase::Dev { (2.0, 15.0) } else { (4.0, 8.0) };
+    (margin, if just_hot { max.max(30.0) } else { max })
 }
 
 fn calibrate_flag(name: &str) -> bool {
@@ -1913,10 +1939,10 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
         } else { *dp };
         if let Err(e) = design_phase(cal, &mut rn, *ph, its, *secs, &pdp, kernel, seed, confirm, &refs) { eprintln!("\n{e}"); if STOP.load(Ordering::SeqCst) || rn.power_lost || rn.shifted { break; } }
     }
-    for e in rn.j.restore() { eprintln!("restore: {e}"); }
+    // Keeps the in-flight record when a value could not be put back (it is still in effect).
+    rn.restore_settled();
     if rn.io_session > 0 { cal.note_io(today(), rn.io_session); save(cal); }
     if let Some(b) = rn.ballast.take() { b.stop(); }
-    centurion_helpers::stability::inflight_clear();
     cal.prune_contexts(&ctx.cx);
     if rn.gate_s >= 10.0 { eprintln!("\nwaited {:.0} s in all for the die (and the drive in the IO phase) to cool back to its starting temperature between runs", rn.gate_s); }
     save(cal);
@@ -3641,6 +3667,24 @@ mod sim {
         ]).collect();
         assert_eq!(initial_design_count(40, 0.55, &fs, &prior), 10);
         assert!(initial_design_count(40, 0.55, &fs, &prior[..4]) >= 10);
+    }
+
+    #[test]
+    fn preflight_checks_disk_traffic_in_every_phase() {
+        let quiet = bench::Activity { irq_per_s: 100.0, disk_mb_s: 0.0, net_mb_s: 0.0, gpu_busy: None };
+        assert!(preflight_quiet(0.2, &quiet));
+        assert!(!preflight_quiet(0.8, &quiet), "foreign CPU above 0.6 cores");
+        // No suite runs during preflight: foreign disk traffic is a disturbance, the storage phase included.
+        let disk = bench::Activity { disk_mb_s: bench::DISK_MB_S * 2.0, ..quiet };
+        assert!(!preflight_quiet(0.0, &disk));
+    }
+
+    #[test]
+    fn cool_gate_waits_longer_only_right_after_a_heat_soak() {
+        assert_eq!(cool_gate(Phase::Load, false), (4.0, 8.0));
+        assert_eq!(cool_gate(Phase::Dev, false), (2.0, 15.0));
+        assert_eq!(cool_gate(Phase::Idle, true), (4.0, 30.0));
+        assert_eq!(cool_gate(Phase::Dev, true), (2.0, 30.0));
     }
 
     #[test]

@@ -2702,9 +2702,9 @@ fn history_push(path: &std::path::Path, entry: &Value) {
     let mut drop = n.saturating_sub(HISTORY_PER_GOAL);
     lines.retain(|v| if drop > 0 && v["goal"] == *goal { drop -= 1; false } else { true });
     let text: String = lines.iter().map(|v| format!("{v}\n")).collect();
-    if let Some(dir) = path.parent() { let _ = std::fs::create_dir_all(dir); }
-    let tmp = path.with_extension("jsonl.tmp");
-    if std::fs::write(&tmp, text).is_ok() { let _ = std::fs::rename(&tmp, path); }
+    // Per-process temporary file (`write_replace`): a shared "jsonl.tmp" let a GUI and a CLI autotune
+    // running together write into the same file, and a failed rename left it behind.
+    write_replace(path, text.as_bytes());
 }
 
 /// The calibrated part of a decision set: the knobs the joint model holds, at their decided values.
