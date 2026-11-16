@@ -1069,6 +1069,16 @@ fn set_affinity(cpus: &[usize]) -> std::io::Result<()> {
 /// Applies the preset's `run` block to this process; the game inherits it.
 /// `parked`: soft-parked CCD role, the game is kept off it when the preset
 /// pins nothing itself.
+/// Adaptive X3D launch placement: follow the explicit preset's X3D mode, or the
+/// live kernel hint. Prefer the V-Cache CCD when no reliable hint is available.
+/// This is a per-game launch decision, not an unvalidated real-time thread migrator.
+fn adaptive_ccd_role(preset: &Value) -> &'static str {
+    let from_preset = preset["values"]["cpu.x3d_mode"].as_str();
+    let live = tune::x3d_mode_path().and_then(|p| std::fs::read_to_string(p).ok());
+    let pref = from_preset.or_else(|| live.as_deref().map(str::trim));
+    if pref == Some("frequency") { "frequency" } else { "cache" }
+}
+
 fn prepare_run(preset: &Value, parked: Option<&str>) {
     let run = &preset["run"];
     let nice = run["nice"].as_i64().unwrap_or(0);
@@ -1084,8 +1094,12 @@ fn prepare_run(preset: &Value, parked: Option<&str>) {
     // the fallback when the partition is not available.
     // CPU share: the same game cgroup with a cpu.weight against the rest of the system (default 100).
     let weight = run["cpu_weight"].as_u64().filter(|w| (1..=10_000).contains(w));
-    if parked.is_some() || weight.is_some() {
-        match pkexec(&json!({"op": "isolate_join", "park": parked, "weight": weight})) {
+    let uclamp_min = run["uclamp_min"].as_u64().filter(|n| *n <= 1024);
+    let uclamp_max = run["uclamp_max"].as_u64().filter(|n| *n <= 1024);
+    let memory_low_mb = run["memory_low_mb"].as_u64().filter(|n| *n <= 65536);
+    if parked.is_some() || weight.is_some() || uclamp_min.is_some() || uclamp_max.is_some() || memory_low_mb.is_some() {
+        match pkexec(&json!({"op": "isolate_join", "park": parked, "weight": weight,
+            "uclamp_min": uclamp_min, "uclamp_max": uclamp_max, "memory_low_mb": memory_low_mb})) {
             Ok(v) if v["ok"] == true => {
                 if parked.is_some() { log!("centurion-gamemode: game CPU partition {} (rest of the system moved off it)", v["cpus"].as_str().unwrap_or("?")); }
                 if let Some(w) = weight { log!("centurion-gamemode: game cgroup cpu.weight {w} (rest of the system: 100)"); }
@@ -1094,7 +1108,12 @@ fn prepare_run(preset: &Value, parked: Option<&str>) {
             Err(e) => log!("centurion-gamemode: game cgroup not used: {e}"),
         }
     }
-    let role = run["affinity"].as_str().unwrap_or("none");
+    let requested = run["affinity"].as_str().unwrap_or("none");
+    let role = if requested == "adaptive" {
+        let chosen = adaptive_ccd_role(preset);
+        if parked == Some(chosen) { if chosen == "cache" { "frequency" } else { "cache" } } else { chosen }
+    } else { requested };
+    if requested == "adaptive" { log!("centurion-gamemode: adaptive X3D selected {role} CCD from the X3D policy"); }
     if role != "none" {
         match tune::resolve_ccd(&tune::ccx_groups(), role) {
             Some(g) => match set_affinity(&g.cpus) {

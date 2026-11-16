@@ -367,6 +367,11 @@ void OptimizeTab::buildUi() {
     connect(restoreBtn_, &QPushButton::clicked, this, [this] { restoreAll(true); });
     bl->addWidget(restoreBtn_);
     root->addWidget(bannerFrame);
+    conflictBanner_ = muted({});
+    conflictBanner_->setObjectName("optimizationConflicts");
+    conflictBanner_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    conflictBanner_->hide();
+    root->addWidget(conflictBanner_);
 
     // Drift banner: hidden until DriftWatch finds a setting changed behind Centurion's back.
     driftBar_ = new QFrame;
@@ -718,6 +723,24 @@ QWidget *OptimizeTab::buildLaunchPage() {
                                                "recompressed with the secondary algorithm (at most 64 MiB per device): more free RAM afterwards.\n"
                                                "Needs a recompression algorithm set in the boot zram configuration (it cannot be set on a live device)."));
     g->addWidget(zramRecompress_, 6, 1, 1, 2);
+    g->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "Game uclamp minimum")), 7, 0);
+    uclampMin_ = new QComboBox;
+    for (const auto &[label, val] : std::initializer_list<std::pair<const char *, int>>{
+        {"off", 0}, {"12.5%", 128}, {"25%", 256}, {"37.5%", 384}, {"50%", 512}, {"75%", 768}}) uclampMin_->addItem(label, val);
+    g->addWidget(uclampMin_, 7, 1);
+    g->addWidget(muted("Minimum utilization clamp for the game's cgroup (0-1024 scale). A performance hint, not a fixed CPU frequency; may increase power use."), 7, 2);
+    g->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "Game uclamp maximum")), 8, 0);
+    uclampMax_ = new QComboBox;
+    for (const auto &[label, val] : std::initializer_list<std::pair<const char *, int>>{
+        {"off (100%)", 1024}, {"87.5%", 896}, {"75%", 768}, {"50%", 512}, {"25%", 256}}) uclampMax_->addItem(label, val);
+    g->addWidget(uclampMax_, 8, 1);
+    g->addWidget(muted("Upper utilization clamp. Can significantly limit CPU performance. Game launch rejects min > max."), 8, 2);
+    g->addWidget(new QLabel(QCoreApplication::translate("OptimizeTab", "Protect game memory")), 9, 0);
+    memoryLow_ = new QComboBox;
+    for (const auto &[label, mib] : std::initializer_list<std::pair<const char *, int>>{
+        {"off", 0}, {"1 GiB", 1024}, {"2 GiB", 2048}, {"4 GiB", 4096}, {"8 GiB", 8192}}) memoryLow_->addItem(label, mib);
+    g->addWidget(memoryLow_, 9, 1);
+    g->addWidget(muted("memory.low is best-effort protection of this game's active pages under memory pressure, not reserved RAM. Cgroup v2 memory controller required."), 9, 2);
     g->setColumnStretch(2, 1);
     v->addWidget(runBox);
 
@@ -859,6 +882,9 @@ QWidget *OptimizeTab::buildLaunchPage() {
     connect(preciseTimers_, &QCheckBox::toggled, this, onRun);
     connect(sliceUs_, &QComboBox::currentIndexChanged, this, onRun);
     connect(gameShare_, &QComboBox::currentIndexChanged, this, onRun);
+    connect(uclampMin_, &QComboBox::currentIndexChanged, this, onRun);
+    connect(uclampMax_, &QComboBox::currentIndexChanged, this, onRun);
+    connect(memoryLow_, &QComboBox::currentIndexChanged, this, onRun);
     connect(zramRecompress_, &QCheckBox::toggled, this, onRun);
     connect(uvCpu_, &QCheckBox::toggled, this, &OptimizeTab::saveUndervolt);
     connect(uvGpu_, &QCheckBox::toggled, this, &OptimizeTab::saveUndervolt);
@@ -1015,6 +1041,47 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     state_ = d.value("state").toObject();
     isolation_ = d.value("isolation").toObject();  // same describe poll: no extra cost
     boot_ = d.value("boot").toObject();
+    if (conflictBanner_) {
+        QStringList issues;
+        for (const QJsonValue &v : d.value("conflicts").toArray()) {
+            const QString message = v.toObject().value("message").toString();
+            if (!message.isEmpty()) issues << message;
+        }
+        QStringList swap;
+        for (const QJsonValue &v : d.value("swap_tiers").toArray()) {
+            const QJsonObject o = v.toObject();
+            swap << QStringLiteral("%1 (prio %2, %3 MiB used)")
+                .arg(o.value("device").toString())
+                .arg(o.value("priority").toInt())
+                .arg(o.value("used_kib").toVariant().toLongLong() / 1024);
+        }
+        const QJsonObject fw = d.value("firmware_limits").toObject();
+        QString firmware;
+        if (!fw.isEmpty()) {
+            QStringList values;
+            struct Item { const char *label; const char *key; const char *unit; };
+            for (const Item &item : { Item{"PL1", "ppt_pl1_spl", "W"}, Item{"PL2", "ppt_pl2_sppt", "W"},
+                    Item{"PL3", "ppt_pl3_fppt", "W"}, Item{"CPU CL", "ppt_cpu_cl", "W"},
+                    Item{"GPU cTGP", "gpu_nv_ctgp", "W"}, Item{"CPU temp", "cpu_temp", "°C"},
+                    Item{"GPU temp", "gpu_temp", "°C"} }) {
+                if (fw.contains(QLatin1String(item.key))) values << QString::fromLatin1(item.label) + QLatin1Char(' ')
+                    + QString::number(fw.value(QLatin1String(item.key)).toInt()) + QString::fromUtf8(item.unit);
+            }
+            firmware = tr("Firmware limits (readback): ") + values.join(QStringLiteral(" · "));
+        }
+        QString report;
+        if (!issues.isEmpty()) report = tr("Optimization conflicts: ") + issues.join(QStringLiteral(" | "));
+        if (!firmware.isEmpty()) {
+            if (!report.isEmpty()) report += QLatin1Char('\n');
+            report += firmware;
+        }
+        if (!swap.isEmpty()) {
+            if (!report.isEmpty()) report += QLatin1Char('\n');
+            report += tr("Swap tiers (read-only): ") + swap.join(QStringLiteral(" → "));
+        }
+        conflictBanner_->setText(report);
+        conflictBanner_->setVisible(!report.isEmpty());
+    }
     if (!light) discovered_ = d.value("discovered").toArray();
     if (wirelessLock_ && !busy_) {  // the root-owned marker is the truth, not the checkbox
         const QSignalBlocker b(wirelessLock_);
@@ -1056,6 +1123,8 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
         const QJsonArray ccds = topology_.value("ccds").toArray();
         // One entry per CCD, named by its role (no separate cache/frequency aliases).
         const int cacheCcd = topology_.value("cache_ccd").toInt(-1), freqCcd = topology_.value("frequency_ccd").toInt(-1);
+        if (ccds.size() > 1 && cacheCcd >= 0 && freqCcd >= 0 && cacheCcd != freqCcd)
+            affinity_->addItem(QCoreApplication::translate("OptimizeTab", "Adaptive X3D (follow cache/frequency profile)"), "adaptive");
         if (ccds.size() > 1) for (const auto &c : ccds) {
             const int i = c.toObject().value("index").toInt();
             const QString role = i == cacheCcd ? QStringLiteral(" V-Cache") : i == freqCcd ? QStringLiteral(" frequency") : QString();
@@ -1146,7 +1215,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
     while (groups_->count()) { QWidget *w = groups_->widget(0); groups_->removeTab(0); w->deleteLater(); }
     rows_.clear();
     nice_ = nullptr; affinity_ = nullptr; autogroup_ = nullptr; preciseTimers_ = nullptr; topoLabel_ = nullptr;
-    sliceUs_ = gameShare_ = nullptr; zramRecompress_ = nullptr;
+    sliceUs_ = gameShare_ = uclampMin_ = uclampMax_ = memoryLow_ = nullptr; zramRecompress_ = nullptr;
     uvCpu_ = uvGpu_ = nullptr; uvInfo_ = nullptr;
     lutrisPre_ = lutrisPost_ = lutrisPrefix_ = steam_ = nullptr;
 
@@ -1570,6 +1639,9 @@ QJsonObject OptimizeTab::collectRun() const {
     if (preciseTimers_ && preciseTimers_->isChecked()) run["timerslack_ns"] = 1;
     if (sliceUs_ && sliceUs_->currentData().toInt() > 0) run["slice_us"] = sliceUs_->currentData().toInt();
     if (gameShare_ && gameShare_->currentData().toInt() > 0) run["cpu_weight"] = gameShare_->currentData().toInt();
+    if (uclampMin_ && uclampMin_->currentData().toInt() > 0) run["uclamp_min"] = uclampMin_->currentData().toInt();
+    if (uclampMax_ && uclampMax_->currentData().toInt() < 1024) run["uclamp_max"] = uclampMax_->currentData().toInt();
+    if (memoryLow_ && memoryLow_->currentData().toInt() > 0) run["memory_low_mb"] = memoryLow_->currentData().toInt();
     if (zramRecompress_ && zramRecompress_->isChecked()) run["zram_recompress"] = true;
     return run;
 }
@@ -1759,6 +1831,9 @@ int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped, bo
         if (preciseTimers_) preciseTimers_->setChecked(run.value("timerslack_ns").toInt(0) > 0);
         if (sliceUs_) { const int i = sliceUs_->findData(run.value("slice_us").toInt(0)); sliceUs_->setCurrentIndex(i < 0 ? 0 : i); }
         if (gameShare_) { const int i = gameShare_->findData(run.value("cpu_weight").toInt(0)); gameShare_->setCurrentIndex(i < 0 ? 0 : i); }
+        if (uclampMin_) { const int i = uclampMin_->findData(run.value("uclamp_min").toInt(0)); uclampMin_->setCurrentIndex(i < 0 ? 0 : i); }
+        if (uclampMax_) { const int i = uclampMax_->findData(run.value("uclamp_max").toInt(1024)); uclampMax_->setCurrentIndex(i < 0 ? 0 : i); }
+        if (memoryLow_) { const int i = memoryLow_->findData(run.value("memory_low_mb").toInt(0)); memoryLow_->setCurrentIndex(i < 0 ? 0 : i); }
         if (zramRecompress_) zramRecompress_->setChecked(run.value("zram_recompress").toBool(false));
     }
     return n;

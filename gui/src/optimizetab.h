@@ -175,6 +175,7 @@ private:
     QHash<QString, QJsonObject> slowKeep_; // slow rows as of the last full describe
 
     QLabel *banner_ = nullptr, *bannerDetail_ = nullptr, *status_ = nullptr, *bootLabel_ = nullptr;
+    QLabel *conflictBanner_ = nullptr;  // hardware policy and swap tier diagnostics (read-only)
     SceneEngine *scenes_ = nullptr;
     QPushButton *defaultsBtn_ = nullptr;
     QPushButton *restoreBtn_ = nullptr, *applyBtn_ = nullptr, *gameBtn_ = nullptr, *bootBtn_ = nullptr, *bootClear_ = nullptr;
@@ -184,7 +185,7 @@ private:
     QJsonObject exploreReq_;
     bool autoRunning_ = false;
     QSpinBox *nice_ = nullptr;
-    QComboBox *sliceUs_ = nullptr, *gameShare_ = nullptr;
+    QComboBox *sliceUs_ = nullptr, *gameShare_ = nullptr, *uclampMin_ = nullptr, *uclampMax_ = nullptr, *memoryLow_ = nullptr;
     QCheckBox *zramRecompress_ = nullptr;
     QCheckBox *autogroup_ = nullptr, *preciseTimers_ = nullptr, *uvCpu_ = nullptr, *uvGpu_ = nullptr, *wirelessLock_ = nullptr;
     QLabel *uvInfo_ = nullptr;

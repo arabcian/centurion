@@ -268,10 +268,41 @@ fn summary(st: &State) -> Value {
         "source": st.source, "saved_files": st.baseline.len(), "keys": keys, "tlp_originals": tlp})
 }
 
+/// New hardware-specific policies cannot be combined with an older global knob
+/// covering the same concrete sysfs/proc file. Detect the overlap before ANY
+/// writes: otherwise the last table row silently wins and misleadingly looks
+/// like two successful optimizations. Existing old/old presets are unchanged.
+fn hardware_policy_overlap(values: &Map<String, Value>) -> Option<String> {
+    let advanced = |key: &str| -> bool {
+        key.starts_with("blk.nvme") || key.starts_with("pm.nvme1") || key.starts_with("pm.nvme2")
+            || key.starts_with("cpu.wake_latency_ccd") || key.starts_with("irq.nvme")
+            || key.starts_with("irq.network") || key.starts_with("irq.nvidia")
+    };
+    let mut seen: std::collections::BTreeMap<PathBuf, &'static str> = std::collections::BTreeMap::new();
+    for t in TUNABLES {
+        if !values.contains_key(t.key) { continue; }
+        for p in tune::files(t) {
+            let target = p.canonicalize().unwrap_or(p);
+            if let Some(&before) = seen.get(&target) {
+                if advanced(before) || advanced(t.key) {
+                    return Some(format!("{} and {} both control {}; remove one of these keys from the preset",
+                        before, t.key, target.display()));
+                }
+            } else {
+                seen.insert(target, t.key);
+            }
+        }
+    }
+    None
+}
+
 /// Applies `values` in table order. Returns per-key results and all-ok.
 /// `game`: the writes belong to the game layer (see GameLayer); any other apply made while a game runs
 /// takes the files it writes out of that layer, so the game's end leaves them alone.
 fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec<Value>, bool) {
+    if let Some(conflict) = hardware_policy_overlap(values) {
+        return (vec![json!({"key": "optimization_conflict", "ok": false, "error": conflict})], false);
+    }
     let mut results = Vec::new();
     let mut all_ok = true;
     for k in values.keys() {
@@ -378,9 +409,9 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         }
         // irqbalance would rewrite the affinity within seconds (see tune::irqbalance_pause).
         let mut irq_note: Option<String> = None;
-        if t.key == "irq.affinity" && !todo.is_empty() {
+        if (t.key == "irq.affinity" || t.key.starts_with("irq.")) && !todo.is_empty() {
             if v == "all" {
-                if let Ok(true) = tune::irqbalance_resume() { irq_note = Some("irqbalance restarted".into()); }
+                // Do not restart irqbalance while other per-device IRQ pins might still be active.
             } else {
                 match tune::irqbalance_pause() {
                     Ok(true) => irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into()),
@@ -486,9 +517,8 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
     }
     if let Err(e) = tune::powerd_resume() { errs.push(json!({"key": "nvidia-powerd", "error": e})); }
     // The daemon comes back with the affinity it would have fought (only if we stopped it).
-    if items.iter().enumerate().any(|(i, x)| x.0 == "irq.affinity" && !failed.contains(&i)) {
-        if let Err(e) = tune::irqbalance_resume() { errs.push(json!({"key": "irqbalance", "error": e})); }
-    }
+    // irqbalance resume belongs after state.baseline has dropped the last pinned IRQ entry.
+    // Restarting here would race a still-active per-device pin.
     (n, errs, deferred, failed)
 }
 
@@ -512,6 +542,9 @@ fn restore_entries(st: &mut State, only: Option<&[String]>) -> Value {
     }
     let mut i = 0;
     st.baseline.retain(|_| { let keep = !drop.contains(&i); i += 1; keep });
+    if !st.baseline.iter().any(|(k, _, _)| k == "irq.affinity" || k.starts_with("irq.")) {
+        if let Err(e) = tune::irqbalance_resume() { errs.push(json!({"key": "irqbalance", "error": e})); }
+    }
     // A full restore ends game mode even if some originals could not be
     // written back (those stay recorded for the next restore attempt).
     if only.is_none() { st.sessions.clear(); st.game = None; }
@@ -535,6 +568,9 @@ fn end_game(st: &mut State) -> Value {
     let drop: std::collections::HashSet<usize> = fresh_idx.iter().enumerate().filter(|(j, _)| !failed.contains(j)).map(|(_, &i)| i).collect();
     let mut i = 0;
     st.baseline.retain(|_| { let keep = !drop.contains(&i); i += 1; keep });
+    if !st.baseline.iter().any(|(k, _, _)| k == "irq.affinity" || k.starts_with("irq.")) {
+        if let Err(e) = tune::irqbalance_resume() { errs.push(json!({"key": "irqbalance", "error": e})); }
+    }
     st.sessions.clear();
     st.preset = g.preset;
     st.source = g.source;
@@ -825,7 +861,24 @@ fn op_isolate_join(req: &Value) -> Value {
     // cpu.weight of the game cgroup against the rest of the system (default 100).
     let weight = req["weight"].as_u64().filter(|w| (1..=10_000).contains(w)).map(|w| w as u32);
     if !req["weight"].is_null() && weight.is_none() { return json!({"ok": false, "error": "weight must be in 1..10000"}); }
-    if park.is_none() && weight.is_none() { return json!({"ok": false, "error": "park or weight is required"}); }
+    let uclamp_min = req["uclamp_min"].as_u64().filter(|n| *n <= 1024).map(|n| n as u32);
+    let uclamp_max = req["uclamp_max"].as_u64().filter(|n| *n <= 1024).map(|n| n as u32);
+    if (!req["uclamp_min"].is_null() && uclamp_min.is_none()) || (!req["uclamp_max"].is_null() && uclamp_max.is_none())
+        || uclamp_min.unwrap_or(0) > uclamp_max.unwrap_or(1024) {
+        return json!({"ok": false, "error": "uclamp values must be 0..1024, minimum <= maximum"});
+    }
+    let memory_low_mb = req["memory_low_mb"].as_u64().filter(|n| *n <= 65536);
+    if !req["memory_low_mb"].is_null() && memory_low_mb.is_none() { return json!({"ok": false, "error": "memory_low_mb must be 0..65536"}); }
+    let memory_low = memory_low_mb.map(|n| n * 1024 * 1024);
+    if let Some(low) = memory_low {
+        let ram = fs::read_to_string("/proc/meminfo").ok().and_then(|s| s.lines()
+            .find(|line| line.starts_with("MemTotal:"))?.split_whitespace().nth(1)?.parse::<u64>().ok())
+            .unwrap_or(0).saturating_mul(1024);
+        if ram == 0 || low > ram / 2 { return json!({"ok": false, "error": "memory.low cannot exceed half of physical RAM"}); }
+    }
+    if park.is_none() && weight.is_none() && uclamp_min.is_none() && uclamp_max.is_none() && memory_low.is_none() {
+        return json!({"ok": false, "error": "no game cgroup policy requested"});
+    }
     let ppid = unsafe { libc::getppid() };
     let Some(caller) = std::env::var("PKEXEC_UID").ok().and_then(|v| v.parse::<u32>().ok()) else {
         return json!({"ok": false, "error": "isolate_join is only available through pkexec"});
@@ -846,7 +899,7 @@ fn op_isolate_join(req: &Value) -> Value {
             cpus = groups.iter().flat_map(|g| g.cpus.iter().copied()).filter(|c| !pg.cpus.contains(c)).collect();
             cpus.sort_unstable();
         }
-        if let Err(e) = centurion_helpers::isolate::setup(&cpus, weight) { return json!({"ok": false, "error": e}); }
+        if let Err(e) = centurion_helpers::isolate::setup(&cpus, weight, uclamp_min, uclamp_max, memory_low) { return json!({"ok": false, "error": e}); }
         // Same PID-reuse pin as boost: only while the caller is still our parent.
         if unsafe { libc::getppid() } != ppid { return json!({"ok": false, "error": "caller exited"}); }
         match centurion_helpers::isolate::join(ppid) {

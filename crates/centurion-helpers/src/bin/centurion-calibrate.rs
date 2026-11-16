@@ -470,6 +470,16 @@ fn plan(rounds: usize, scale: f64, ram: u64, only: &Option<Vec<String>>, phase: 
     if tune::slice_supported() { keys.push((centurion_helpers::autotune::SLICE_KEY.into(), "Scheduler")); }
     else { skipped.push((centurion_helpers::autotune::SLICE_KEY.into(), "slice request needs EEVDF on 6.12+ (not sched_ext / Project C)".into())); }
     for t in tune::TUNABLES {
+        // These hardware-targeted controls are manual: the calibration runner must not
+        // churn disk firmware latency, garbage collection, zram limits or IRQ routing.
+        // Even --only KEY cannot override this safety policy.
+        const MANUAL: &[&str] = &["blk.nvme", "pm.nvme", "f2fs.fs", "zram.",
+            "cpu.wake_latency_ccd", "irq.nvme", "irq.network", "irq.nvidia",
+            "net.rps_cpus", "net.xps_cpus"];
+        if MANUAL.iter().any(|prefix| t.key.starts_with(prefix)) {
+            skipped.push((t.key.to_owned(), "manual hardware control: excluded from unattended calibration".into()));
+            continue;
+        }
         if calib::dev_key(t.key) {
             if !battery { skipped.push((t.key.to_owned(), "device power state: measured on battery only (RAPL cannot see it)".into())); continue; }
             if !t.debugfs && tune::files(t).is_empty() { skipped.push((t.key.to_owned(), "not on this machine/kernel".into())); continue; }

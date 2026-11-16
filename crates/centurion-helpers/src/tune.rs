@@ -85,6 +85,8 @@ pub enum Target {
     File(&'static str),
     /// Same file name in every cpufreq/policy*.
     PerPolicy(&'static str),
+    /// CPU wake latency for one hardware CCD, not every CPU globally.
+    PerCcdCpu(&'static str, usize),
     /// Same file in the cpufreq policies covering one CCD (index into ccx_groups).
     PerCcdPolicy(&'static str, usize),
     /// Per-policy `boost` (6.11+), else global cpufreq/boost, else
@@ -115,6 +117,18 @@ pub enum Target {
     SchedFeature(&'static str),
     /// cpu*/cpuidle/state*/disable: keep states <= N enabled.
     CState,
+    /// One NVMe namespace, assigned by sorted controller serial + namespace; 0/1 slots.
+    NvmeQueue(&'static str, usize),
+    /// APST PM QoS for the matching NVMe controller (slot sorted by serial).
+    NvmeControllerLatency(usize),
+    /// An existing F2FS sysfs instance, no blind mountpoint-based sysfs paths.
+    F2fs(&'static str, usize),
+    /// Running zram device's live physical-memory budget; does not reset swap.
+    ZramMemLimit(usize),
+    /// IRQ affinities for a class of PCI devices (GPU, NVMe, network).
+    DeviceIrq(&'static str),
+    /// Network queue mask for one physical NIC class; masks expressed as CCD roles.
+    NetQueueMask(&'static str),
     /// Same queue attribute on every whole disk (nvme, sd, mmcblk, vd).
     PerBlock(&'static str),
     /// machinecheck*/check_interval.
@@ -322,6 +336,12 @@ pub const TUNABLES: &[Tunable] = &[
     t("cpu.wake_latency_us", "CPU", "CPU wake-up latency limit (µs)",
       "Per-CPU PM QoS resume-latency constraint (cpuN/power/pm_qos_resume_latency_us). Both cpuidle governors (menu and teo) skip every idle state whose exit latency is above this value, so it is the fine-grained, reversible sibling of 'Deepest C-state kept': instead of naming a state you give the wake-up time you can accept, and the kernel keeps every state that is fast enough. 0 = no constraint (the kernel default - every C-state allowed). Example on Zen: C1 exits in ~1 µs, C2 in tens of µs, C3/CC6 in hundreds; a limit just below the deepest state's latency trims the worst-case wake-up jitter while keeping the shallow savings. The cost is the same as capping C-states: idle power, heat and - on a laptop - less boost headroom for the busy cores, because sleeping cores no longer hand their share of the power budget back. The special 'n/a' value (poll forever, no idle at all) is deliberately not offered.",
       int(0, 100_000), NO, Target::PerCpu("power/pm_qos_resume_latency_us")),
+    t("cpu.wake_latency_ccd0", "CPU", "Wake latency CCD0 (µs)",
+      "Per-CPU resume latency QoS only on CCD0. 0 is unrestricted; nonzero constrains deepest allowable idle state. When these CCD rows are used, do not also apply the global wake latency knob.",
+      int(0, 100_000), NO, Target::PerCcdCpu("power/pm_qos_resume_latency_us", 0)),
+    t("cpu.wake_latency_ccd1", "CPU", "Wake latency CCD1 (µs)",
+      "Per-CPU resume latency QoS only on CCD1. A tight limit saves wake-up time at the cost of idle power/boost headroom. Requires a real second CCD.",
+      int(0, 100_000), NO, Target::PerCcdCpu("power/pm_qos_resume_latency_us", 1)),
     t("cpu.schedutil_rate_limit_us", "CPU", "schedutil rate limit (µs)",
       "Only exists while the governor is schedutil (amd-pstate guided/passive, intel_cpufreq, acpi-cpufreq). Minimum time between two frequency requests from the scheduler. Lower = the clock follows load changes sooner (snappier, more requests); higher = fewer changes and less overhead, at the price of reacting later to bursts. Has no effect in amd-pstate / intel_pstate active mode, where the hardware (CPPC/HWP) picks the frequency on its own.",
       int(0, 1_000_000), NO, Target::File("/sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us")),
@@ -479,6 +499,30 @@ pub const TUNABLES: &[Tunable] = &[
     t("vm.extfrag_threshold", "Memory", "vm.extfrag_threshold",
       "When a huge-page (or other high-order) allocation fails, the kernel computes a fragmentation index for the zone, 0-1000: towards 0 the failure is a plain lack of free memory, towards 1000 the memory is there but in pieces. Below this threshold (stock 500) it reclaims, above it it compacts. Lower = compaction is tried sooner, so page cache is not thrown away to satisfy a huge page that only needed memory to be moved; higher = reclaim first, fewer page-migration stalls. Only matters with THP in use and memory fragmented - exactly what centurion-calibrate's load phase builds, which is where this row is measured.",
       int(0, 1000), NO, Target::File("/proc/sys/vm/extfrag_threshold")),
+    t("f2fs.fs1.iostat_enable", "Storage", "F2FS 1 · I/O accounting",
+      "Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.",
+      Kind::Bool, NO, Target::F2fs("iostat_enable", 0)),
+    t("f2fs.fs1.gc_idle", "Storage", "F2FS 1 · Idle GC mode",
+      "F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.",
+      int(0, 2), NO, Target::F2fs("gc_idle", 0)),
+    t("f2fs.fs1.min_gc_sleep_time", "Storage", "F2FS 1 · Minimum GC sleep (ms)",
+      "Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.",
+      int(1, 600_000), NO, Target::F2fs("min_gc_sleep_time", 0)),
+    t("zram.1_mem_limit_bytes", "Memory", "zram 1 · RAM limit (bytes)",
+      "Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.",
+      int(0, 274_877_906_944), NO, Target::ZramMemLimit(0)),
+    t("f2fs.fs2.iostat_enable", "Storage", "F2FS 2 · I/O accounting",
+      "Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.",
+      Kind::Bool, NO, Target::F2fs("iostat_enable", 1)),
+    t("f2fs.fs2.gc_idle", "Storage", "F2FS 2 · Idle GC mode",
+      "F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.",
+      int(0, 2), NO, Target::F2fs("gc_idle", 1)),
+    t("f2fs.fs2.min_gc_sleep_time", "Storage", "F2FS 2 · Minimum GC sleep (ms)",
+      "Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.",
+      int(1, 600_000), NO, Target::F2fs("min_gc_sleep_time", 1)),
+    t("zram.2_mem_limit_bytes", "Memory", "zram 2 · RAM limit (bytes)",
+      "Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.",
+      int(0, 274_877_906_944), NO, Target::ZramMemLimit(1)),
     // ── Scheduler ─────────────────────────────────────────────────────────
     warn(t("sched.ext", "Scheduler", "sched_ext scheduler",
       "Runs a sched_ext BPF scheduler (kernel 6.12+ with CONFIG_SCHED_CLASS_EXT, plus the scx schedulers installed) in place of the kernel's EEVDF while the setting is active; restoring stops it and EEVDF takes over again instantly. lavd = latency-criticality aware, built for gaming and interactive loads (frame pacing, input latency) and aware of big/little and X3D core differences; bpfland = prioritises interactive tasks, good general desktop choice; rusty/flash/cosmos/p2dq are more specialised. Best used as a game-mode setting. A buggy scheduler cannot hang the system: the kernel's watchdog ejects it and falls back to EEVDF. Only scx_* binaries that are root-owned in system directories are ever started.",
@@ -615,6 +659,21 @@ pub const TUNABLES: &[Tunable] = &[
     t("irq.affinity", "Scheduler", "IRQ affinity",
       "Sets smp_affinity_list for every IRQ to one CCD's CPUs, so device interrupts (network, USB, most peripherals) fire on cores the game is not using. Same pairing idea as workqueue CPUs above: point this at the non-gaming CCD. Best-effort by design - multi-queue NVMe/network IRQs are often kernel-managed and refuse a manual affinity change (reported as 'refused', not a failure); single-CPU-only IRQs (per-CPU timers) are skipped since they say nothing about policy either way. 'all' restores the kernel's default spread. A running irqbalance daemon would undo the setting within seconds: it is stopped while a CCD is set and started again on restore or 'all' (only if Centurion stopped it).",
       Kind::Choice, Options::Special, Target::Irq),
+    t("irq.nvme", "Scheduler", "NVMe IRQ CPU affinity",
+      "Only interrupts associated with NVMe PCI controllers. Place on the non-game CCD; managed MSI-X interrupts can reject changes. irqbalance must not fight a pinned value.",
+      Kind::Choice, Options::Special, Target::DeviceIrq("nvme")),
+    t("irq.network", "Scheduler", "Network IRQ CPU affinity",
+      "Only interrupts of physical PCI network controllers. Best effort; apply separately from the global IRQ setting.",
+      Kind::Choice, Options::Special, Target::DeviceIrq("network")),
+    warn(t("irq.nvidia", "Scheduler", "NVIDIA GPU IRQ CPU affinity",
+      "Only NVIDIA display-controller MSI interrupts, not all PCI devices in the GPU tree. May be kernel-managed; do not change for a GPU experiencing Xid errors.",
+      Kind::Choice, Options::Special, Target::DeviceIrq("nvidia"))),
+    t("net.rps_cpus", "Network", "NIC RX steering (RPS)",
+      "CPU mask for each physical NIC receive queue. Disabled by default on many multi-queue NICs; direct RPS to a separate CCD only if IRQ placement warrants it. RPS uses a hex CPU mask.",
+      Kind::Choice, Options::Special, Target::NetQueueMask("rps_cpus")),
+    t("net.xps_cpus", "Network", "NIC TX steering (XPS)",
+      "CPU mask for each physical NIC transmit queue. CCD-local completion work can help with busy network workloads; requires kernel queue attribute.",
+      Kind::Choice, Options::Special, Target::NetQueueMask("xps_cpus")),
     // ── Storage ───────────────────────────────────────────────────────────
     t("blk.scheduler", "Storage", "I/O scheduler",
       "I/O scheduler for every whole disk (nvme*, sd*, mmcblk*, vd*) that supports the option. none = no reordering/merging, lowest per-request latency - right for a fast NVMe SSD doing mostly single-queue-depth reads, which is what game loading usually looks like; all the gaming presets here set this. mq-deadline = bounds worst-case latency while still merging/reordering some, a reasonable default for a spinning disk or mixed workloads. kyber = tries to hit explicit latency targets, tunable but more complex. bfq = fairness-focused, best when several processes compete hard for the same disk (e.g. downloading while playing) at some cost to raw throughput.",
@@ -669,6 +728,30 @@ pub const TUNABLES: &[Tunable] = &[
     t("blk.bfq_slice_idle_ms", "Storage", "bfq slice_idle (ms)",
       "How long bfq keeps a disk idle waiting for the next request of the process it is serving (default 8 ms) - right for a spinning disk, where seeking away costs more. 0 = never idle: noticeably more throughput on an SSD, weaker per-process fairness. Only on disks using bfq.",
       int(0, 1000), NO, Target::PerBlock("iosched/slice_idle")),
+    t("blk.nvme1.scheduler", "Storage", "NVMe 1 · I/O scheduler",
+      "Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      Kind::Choice, BR, Target::NvmeQueue("scheduler", 0)),
+    t("blk.nvme1.read_ahead_kb", "Storage", "NVMe 1 · Read-ahead (KiB)",
+      "Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      int(0, 16_384), NO, Target::NvmeQueue("read_ahead_kb", 0)),
+    t("blk.nvme1.nr_requests", "Storage", "NVMe 1 · Queue depth",
+      "Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      int(4, 65_536), NO, Target::NvmeQueue("nr_requests", 0)),
+    t("blk.nvme1.rq_affinity", "Storage", "NVMe 1 · Completion affinity",
+      "Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      int(0, 2), NO, Target::NvmeQueue("rq_affinity", 0)),
+    t("blk.nvme2.scheduler", "Storage", "NVMe 2 · I/O scheduler",
+      "Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      Kind::Choice, BR, Target::NvmeQueue("scheduler", 1)),
+    t("blk.nvme2.read_ahead_kb", "Storage", "NVMe 2 · Read-ahead (KiB)",
+      "Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      int(0, 16_384), NO, Target::NvmeQueue("read_ahead_kb", 1)),
+    t("blk.nvme2.nr_requests", "Storage", "NVMe 2 · Queue depth",
+      "Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      int(4, 65_536), NO, Target::NvmeQueue("nr_requests", 1)),
+    t("blk.nvme2.rq_affinity", "Storage", "NVMe 2 · Completion affinity",
+      "Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.",
+      int(0, 2), NO, Target::NvmeQueue("rq_affinity", 1)),
     t("btrfs.discard_iops_limit", "Storage", "btrfs async discard IOPS limit",
       "Ceiling on background TRIM requests per second issued by btrfs async discard (discard=async, the default on SSDs since 6.2), on every mounted btrfs file system. Lower = background TRIM stays out of the way of game I/O longer, freed space is trimmed later; 0 = no limit.",
       int(0, 1000), NO, Target::BtrfsDiscard("iops_limit")),
@@ -792,6 +875,12 @@ pub const TUNABLES: &[Tunable] = &[
     t("pm.sata_alpm", "Power", "SATA link power (ALPM)",
       "AHCI link power management of every SATA port. med_power_with_dipm = the modern default (TLP recommends it for AC and battery): link and device may enter partial/slumber states when idle, a large idle saving with a tiny resume delay. min_power = deepest states, most saving, occasionally causes errors on older drives. max_performance = link always active, lowest latency. n/a on machines with only NVMe drives.",
       Kind::Choice, Options::Fixed(&["max_performance", "medium_power", "med_power_with_dipm", "min_power"]), Target::ScsiHost("link_power_management_policy")),
+    t("pm.nvme1_latency_us", "Power", "NVMe 1 · APST latency (µs)",
+      "Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.",
+      int(0, 1_000_000), NO, Target::NvmeControllerLatency(0)),
+    t("pm.nvme2_latency_us", "Power", "NVMe 2 · APST latency (µs)",
+      "Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.",
+      int(0, 1_000_000), NO, Target::NvmeControllerLatency(1)),
     t("pm.nvme_latency_us", "Power", "NVMe APST latency tolerance (µs)",
       "Ceiling on the entry+exit latency of the NVMe power states that Autonomous Power State Transition may use, per controller (power/pm_qos_latency_tolerance_us). The driver reprograms APST immediately. 0 = APST off: the drive never enters a non-operational state - no wake-up hitch when a game streams from an idle drive, but ~0.5-1 W more at idle and a warmer drive. 100000 (the usual default) = every state the drive offers. A middle value keeps the shallow states only. n/a when the drive has no APST.",
       int(0, 1_000_000), NO, Target::NvmeLatency),
@@ -1768,7 +1857,7 @@ pub fn firmware_owned(t: &Tunable, err: &str) -> bool {
 pub fn user_switch(t: &Tunable) -> bool { matches!(t.target, Target::Rfkill(_)) }
 
 pub fn best_effort(t: &Tunable) -> bool {
-    matches!(t.target, Target::Irq | Target::PciLatency | Target::PciAspm | Target::PciRuntimePm | Target::UsbRuntimePm | Target::UsbAutosuspendMs | Target::AhciPortRuntime | Target::AhciDisk(_))
+    matches!(t.target, Target::Irq | Target::DeviceIrq(_) | Target::PciLatency | Target::PciAspm | Target::PciRuntimePm | Target::UsbRuntimePm | Target::UsbAutosuspendMs | Target::AhciPortRuntime | Target::AhciDisk(_))
 }
 
 // ── command-backed targets (Wi-Fi power save, sched_ext) ─────────────────
@@ -2139,6 +2228,22 @@ fn ahci_disk_files(attr: &str) -> Vec<PathBuf> {
 
 /// Row label for the GUI: the per-disk APM rows name their drive.
 pub fn row_label(t: &Tunable) -> String {
+    if let Target::NvmeQueue(_, slot) | Target::NvmeControllerLatency(slot) = t.target {
+        if let Some((serial, path)) = nvme_namespaces().get(slot) {
+            let model = read(&path.join("device/model"))
+                .or_else(|| path.file_name().and_then(|n| n.to_str())
+                    .and_then(|n| n.rsplit_once('n').map(|x| x.0.to_owned()))
+                    .and_then(|ctl| read(&Path::new("/sys/class/nvme").join(ctl).join("model"))))
+                .unwrap_or_default();
+            return format!("{} · {} ({})", t.label, model.trim(), serial);
+        }
+    }
+    if let Target::F2fs(_, slot) = t.target {
+        let mut dirs: Vec<_> = std::fs::read_dir("/sys/fs/f2fs").into_iter().flatten().flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        dirs.sort();
+        if let Some(name) = dirs.get(slot) { return format!("{} · {name}", t.label); }
+    }
     if let Target::DiskApm(i) = t.target {
         if let Some((n, d)) = apm_disks().into_iter().nth(i) {
             let model = read(&d.join("device/model")).unwrap_or_default();
@@ -2351,6 +2456,83 @@ fn scsi_host_files(attr: &str) -> Vec<PathBuf> {
     v
 }
 
+/// NVMe namespaces sorted by controller serial then namespace ID, not transient nvmeX order.
+/// A missing serial excludes the device: slot-based preset must never silently follow a renamed drive.
+fn nvme_namespaces_at(root: &Path) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(root).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some((ctl, ns)) = name.rsplit_once('n') else { continue };
+        if !ctl.starts_with("nvme") || !ctl[4..].bytes().all(|c| c.is_ascii_digit()) || ctl.len() <= 4 || ns.is_empty() || !ns.bytes().all(|c| c.is_ascii_digit()) { continue; }
+        let dev = e.path();
+        let serial = read(&dev.join("device/serial"))
+            .or_else(|| read(&Path::new("/sys/class/nvme").join(ctl).join("serial")));
+        if let Some(serial) = serial.filter(|s| !s.is_empty()) {
+            out.push((format!("{serial}:{ns}"), dev));
+        }
+    }
+    out.sort_by(|a,b| a.0.cmp(&b.0));
+    out
+}
+fn nvme_namespaces() -> Vec<(String, PathBuf)> { nvme_namespaces_at(Path::new("/sys/block")) }
+fn nvme_slot_path(slot: usize, subfile: &str) -> Vec<PathBuf> {
+    nvme_namespaces().get(slot).map(|(_, d)| d.join(subfile)).filter(|p| p.is_file())
+        .and_then(|p| canonical_in_sysfs(&p)).into_iter().collect()
+}
+fn f2fs_slot_path(slot: usize, attr: &str) -> Vec<PathBuf> {
+    let mut dirs: Vec<_> = std::fs::read_dir("/sys/fs/f2fs").into_iter().flatten().flatten()
+        .map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    dirs.get(slot).map(|d| d.join(attr)).filter(|p| p.is_file())
+        .and_then(|p| canonical_in_sysfs(&p)).into_iter().collect()
+}
+fn zram_slot_path(slot: usize) -> Vec<PathBuf> {
+    let mut devs: Vec<_> = numbered(Path::new("/sys/block"), "zram").into_iter()
+        .map(|(_, d)| d).filter(|d| read(&d.join("disksize")).is_some_and(|s| s != "0"))
+        .collect();
+    devs.sort();
+    devs.get(slot).map(|d| d.join("mem_limit")).filter(|p| p.is_file())
+        .and_then(|p| canonical_in_sysfs(&p)).into_iter().collect()
+}
+/// Class-based PCI MSI IRQs; no arbitrary IRQ number can be requested by a user.
+fn device_irq_files(class: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for ent in std::fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten() {
+        let d = ent.path();
+        let cls = read(&d.join("class")).unwrap_or_default();
+        let want = match class {
+            "nvme" => cls.starts_with("0x0108"),
+            "network" => cls.starts_with("0x02"),
+            "nvidia" => cls.starts_with("0x03") && read(&d.join("vendor")).as_deref() == Some("0x10de"),
+            _ => false,
+        };
+        if !want { continue; }
+        for i in std::fs::read_dir(d.join("msi_irqs")).into_iter().flatten().flatten() {
+            let name = i.file_name().to_string_lossy().to_string();
+            if !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+                let p = PathBuf::from(format!("/proc/irq/{name}/smp_affinity_list"));
+                if p.is_file() { out.push(p); }
+            }
+        }
+    }
+    out.sort(); out.dedup(); out
+}
+fn nic_queue_files(attr: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir("/sys/class/net").into_iter().flatten().flatten() {
+        let n = e.path();
+        if !n.join("device").exists() { continue; }  // skip lo, veth, tun, bridges
+        for q in std::fs::read_dir(n.join("queues")).into_iter().flatten().flatten() {
+            let name = q.file_name().to_string_lossy().to_string();
+            let expected = if attr == "rps_cpus" { "rx-" } else { "tx-" };
+            if !name.starts_with(expected) || !name[expected.len()..].bytes().all(|b| b.is_ascii_digit()) { continue; }
+            let p = q.path().join(attr);
+            if let Some(real) = p.is_file().then(|| canonical_in_sysfs(&p)).flatten() { out.push(real); }
+        }
+    }
+    out.sort(); out.dedup(); out
+}
+
 fn nvme_latency_files() -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = numbered(Path::new("/sys/class/nvme"), "nvme").into_iter()
         .map(|(_, p)| p.join("power/pm_qos_latency_tolerance_us"))
@@ -2469,6 +2651,16 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
         Target::Rfkill(k) => rfkill_files(k),
         Target::ScsiHost(a) => scsi_host_files(a),
         Target::NvmeLatency => nvme_latency_files(),
+        Target::NvmeControllerLatency(slot) => nvme_namespaces().get(slot).map(|(_, d)| {
+            let n = d.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let ctl = n.rsplit_once('n').map(|(c, _)| c).unwrap_or("");
+            Path::new("/sys/class/nvme").join(ctl).join("power/pm_qos_latency_tolerance_us")
+        }).filter(|p| p.is_file()).and_then(|p| canonical_in_sysfs(&p)).into_iter().collect(),
+        Target::NvmeQueue(f, slot) => nvme_slot_path(slot, &format!("queue/{f}")),
+        Target::F2fs(f, slot) => f2fs_slot_path(slot, f),
+        Target::ZramMemLimit(slot) => zram_slot_path(slot),
+        Target::DeviceIrq(class) => if has_domains() { device_irq_files(class) } else { vec![] },
+        Target::NetQueueMask(attr) => if has_domains() { nic_queue_files(attr) } else { vec![] },
         Target::DirtyBytes { bytes, .. } => existing(PathBuf::from(bytes)),
         // scaling_governor / energy_performance_preference: on a 2+ CCD chip the
         // per-CCD override rows below cover the same file set (and always run
@@ -2489,6 +2681,9 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
                 _ => existing(f),
             }
         }
+        Target::PerCcdCpu(f, ccd) => ccx_groups().into_iter().find(|g| g.index == ccd)
+            .into_iter().flat_map(|g| g.cpus.into_iter())
+            .map(|c| Path::new(CPU_DIR).join(format!("cpu{c}/{f}"))).filter(|p| p.is_file()).collect(),
         Target::PerCcdPolicy(f, ccd) => ccd_policies(ccd).into_iter().map(|p| p.join(f)).filter(|p| p.is_file()).collect(),
         Target::Boost => {
             let per: Vec<_> = policies().into_iter().map(|p| p.join("boost")).filter(|p| p.is_file()).collect();
@@ -2576,6 +2771,8 @@ pub fn options(t: &Tunable) -> Vec<(String, String)> {
         (Options::Bracketed, Target::File(p)) => same(read(Path::new(p)).map(|s| parse_bracketed(&s).1).unwrap_or_default()),
         (Options::Bracketed, Target::IntelGt { .. }) =>
             same(files(t).first().and_then(|f| read(f)).map(|s| parse_bracketed(&s).1).unwrap_or_default()),
+        (Options::Bracketed, Target::NvmeQueue(_, _)) =>
+            same(files(t).first().and_then(|f| read(f)).map(|s| parse_bracketed(&s).1).unwrap_or_default()),
         (Options::Bracketed, Target::PerBlock(_)) => {
             // Options every disk supports (a preset must be writable everywhere).
             let mut common: Option<Vec<String>> = None;
@@ -2606,7 +2803,14 @@ pub fn options(t: &Tunable) -> Vec<(String, String)> {
             v
         }
         (Options::Special, Target::PciLatency) => vec![("tuned".into(), "tuned (00 / 80 / 20)".into())],
-        (Options::Special, Target::WqCpumask) | (Options::Special, Target::Irq) => {
+        (Options::Special, Target::NetQueueMask(_)) => {
+            let mut v = vec![("off".to_string(), "off (0, kernel handles queue)".to_string()),
+                             ("all".to_string(), "all CPUs".to_string())];
+            v.extend(role_options(&ccx_groups(), false));
+            v
+        }
+        (Options::Special, Target::WqCpumask) | (Options::Special, Target::Irq)
+        | (Options::Special, Target::DeviceIrq(_)) => {
             let mut v = vec![("all".to_string(), "all CPUs (stock)".to_string())];
             v.extend(role_options(&ccx_groups(), false));
             v
@@ -2686,7 +2890,15 @@ fn current_with(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
             }
             return Some(role_matching(&ccx_groups(), &set).unwrap_or_else(|| fmt_cpu_list(&set)));
         }
-        Target::Irq => {
+        Target::NetQueueMask(_) => {
+            let mut vals = fs.iter().filter_map(|p| read(p)).map(|x| parse_cpumask(&x));
+            let first = vals.next()?;
+            if vals.any(|s| s != first) { return Some("mixed".into()); }
+            if first.is_empty() { return Some("off".into()); }
+            if online_cpus().iter().all(|c| first.contains(c)) { return Some("all".into()); }
+            return Some(role_matching(&ccx_groups(), &first).unwrap_or_else(|| "custom".into()));
+        }
+        Target::Irq | Target::DeviceIrq(_) => {
             let (groups, online) = (ccx_groups(), online_cpus());
             let mut seen: Option<String> = None;
             for f in fs {
@@ -2759,7 +2971,7 @@ pub fn validate(t: &Tunable, v: &Value) -> Result<String, String> {
         }
         Kind::Bool => bool_norm(&s).map(str::to_owned).ok_or_else(|| format!("'{s}' is not 0/1")),
         Kind::Choice => {
-            let s = if matches!(t.target, Target::WqCpumask | Target::Irq | Target::CcdPark) { canonical_ccd(&s) } else { s };
+            let s = if matches!(t.target, Target::WqCpumask | Target::Irq | Target::CcdPark | Target::DeviceIrq(_) | Target::NetQueueMask(_)) { canonical_ccd(&s) } else { s };
             let opts = options(t);
             if opts.iter().any(|(v, _)| *v == s) { Ok(s) } else {
                 Err(format!("'{s}' is not offered here ({})", opts.iter().map(|o| o.0.as_str()).collect::<Vec<_>>().join(", ")))
@@ -2799,9 +3011,15 @@ pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(Path
             let cpus = if value == "all" { possible_cpus() } else { role(value)?.cpus };
             vec![(fs[0].clone(), cpumask_hex(&cpus))]
         }
-        Target::Irq => {
+        Target::Irq | Target::DeviceIrq(_) => {
             let list = fmt_cpu_list(&if value == "all" { online_cpus() } else { role(value)?.cpus });
             fs.into_iter().map(|f| (f, list.clone())).collect()
+        }
+        Target::NetQueueMask(_) => {
+            let cpus = if value == "off" { Vec::new() }
+                else if value == "all" { online_cpus() } else { role(value)?.cpus };
+            let mask = cpumask_hex(&cpus);
+            fs.into_iter().map(|f| (f, mask.clone())).collect()
         }
         Target::CcdPark => {
             if value == "none" {
@@ -2882,7 +3100,8 @@ pub fn same_value(t: &Tunable, orig: &str, data: &str) -> bool {
     if orig == data { return true; }
     match t.target {
         Target::WqCpumask => parse_cpumask(orig) == parse_cpumask(data),
-        Target::Irq => cpu_list(orig) == cpu_list(data),
+        Target::Irq | Target::DeviceIrq(_) => cpu_list(orig) == cpu_list(data),
+        Target::NetQueueMask(_) => parse_cpumask(orig) == parse_cpumask(data),
         _ => t.kind == Kind::Bool && bool_norm(orig).is_some() && bool_norm(orig) == bool_norm(data),
     }
 }
@@ -3073,6 +3292,62 @@ fn slow_to_read(t: &Tunable) -> bool {
     matches!(t.target, Target::WifiPowerSave | Target::EthWol | Target::EthEee | Target::DiskApm(_) | Target::PciLatency)
 }
 
+/// Read-only hardware policy contradictions; no firmware or GPU wake-up writes.
+pub fn optimization_conflicts() -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut add = |kind: &str, msg: String| out.push(json!({"kind":kind,"message":msg}));
+    let profile = read(Path::new("/sys/firmware/acpi/platform_profile")).unwrap_or_default();
+    let epps: Vec<_> = policies().into_iter()
+        .filter_map(|p| read(&p.join("energy_performance_preference"))).collect();
+    if (profile == "low-power" || profile == "quiet") && epps.iter().any(|x| x == "performance") {
+        add("power", format!("Platform profile '{profile}' and performance EPP disagree; firmware power limits can override EPP."));
+    }
+    let mut capped = Vec::new();
+    for p in policies() {
+        let max = read(&p.join("scaling_max_freq")).and_then(|v| v.parse::<u64>().ok());
+        let hw = read(&p.join("cpuinfo_max_freq")).and_then(|v| v.parse::<u64>().ok());
+        if let (Some(max), Some(hw)) = (max, hw) {
+            if hw > 0 && max < hw.saturating_mul(75)/100 { capped.push(p.file_name().and_then(|n| n.to_str()).unwrap_or("policy").to_owned()); }
+        }
+    }
+    if !capped.is_empty() { add("cpu", format!("CPU max frequency is below 75% of hardware ceiling on {} policies (check power scene / thermal limits).", capped.len())); }
+    if let Some(mode) = x3d_mode_path().and_then(|p| read(&p)) {
+        if mode == "frequency" && ccx_groups().len() > 1 {
+            add("x3d", "X3D scheduler currently favors frequency CCD; cache-heavy games may benefit from cache preference/launch affinity.".into());
+        }
+    }
+    if irqbalance_running() { add("irq", "irqbalance may overwrite per-device IRQ affinity changes.".into()); }
+    let fw = |name: &str| -> Option<i64> {
+        let path = Path::new("/sys/class/firmware-attributes/lenovo-wmi-other-0/attributes")
+            .join(name).join("current_value");
+        read(&path)?.parse().ok()
+    };
+    if let (Some(pl1),Some(pl2),Some(pl3)) = (fw("ppt_pl1_spl"),fw("ppt_pl2_sppt"),fw("ppt_pl3_fppt")) {
+        if pl1 > pl2 || pl2 > pl3 {
+            add("firmware",format!("Lenovo CPU PL limits are not ordered: SPL {pl1} W / SPPT {pl2} W / FPPT {pl3} W; check platform profile and firmware readback."));
+        }
+    }
+    if let (Some(cl),Some(pl1)) = (fw("ppt_cpu_cl"),fw("ppt_pl1_spl")) {
+        if cl > pl1 { add("firmware",format!("CPU cross-loading limit {cl} W exceeds sustained PL1 {pl1} W; firmware may clamp it.")); }
+    }
+
+    let tiers = swap_tiers_from(&std::fs::read_to_string("/proc/swaps").unwrap_or_default());
+    let z = tiers.iter().filter(|v| v["zram"] == true).filter_map(|v| v["priority"].as_i64()).max();
+    let disk = tiers.iter().filter(|v| v["zram"] == false).filter_map(|v| v["priority"].as_i64()).max();
+    if matches!((z,disk), (Some(z),Some(d)) if d >= z) {
+        add("swap", "Disk swap priority is at least as high as zram priority; under pressure disk I/O may occur before compression.".into());
+    }
+    out
+}
+/// Snapshot of the current swap tier order; no swapoff on running systems.
+pub fn swap_tiers_from(raw: &str) -> Vec<Value> {
+    raw.lines().skip(1).filter_map(|l| {
+        let mut f = l.split_whitespace();
+        let (name, kind, size, used, priority) = (f.next()?,f.next()?,f.next()?.parse::<u64>().ok()?,f.next()?.parse::<u64>().ok()?,f.next()?.parse::<i64>().ok()?);
+        Some(json!({"device":name,"kind":kind,"size_kib":size,"used_kib":used,"priority":priority,"zram":name.starts_with("/dev/zram")}))
+    }).collect()
+}
+
 /// Tunable list for the GUI.
 pub fn describe() -> Value { describe_with(false) }
 
@@ -3099,7 +3374,7 @@ pub fn describe_with(light: bool) -> Value {
             "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
         });
         if !light { row["help"] = json!(t.help); }
-        if matches!(t.target, Target::Irq) && irqbalance_running() {
+        if matches!(t.target, Target::Irq | Target::DeviceIrq(_)) && irqbalance_running() {
             row["conflict"] = json!("irqbalance is running: it would undo this setting within seconds. Applying a CCD stops it; restoring starts it again.");
         }
         row
@@ -3109,6 +3384,14 @@ pub fn describe_with(light: bool) -> Value {
     m.insert("tunables".into(), Value::Array(rows));
     m.insert("topology".into(), describe_topology());
     m.insert("vendor".into(), json!(cpu_vendor().as_str()));
+    m.insert("conflicts".into(), Value::Array(optimization_conflicts()));
+    m.insert("swap_tiers".into(), Value::Array(swap_tiers_from(&std::fs::read_to_string("/proc/swaps").unwrap_or_default())));
+    let mut firmware = Map::new();
+    for key in ["ppt_pl1_spl", "ppt_pl2_sppt", "ppt_pl3_fppt", "ppt_cpu_cl", "gpu_nv_ctgp", "cpu_temp", "gpu_temp"] {
+        let p = Path::new("/sys/class/firmware-attributes/lenovo-wmi-other-0/attributes").join(key).join("current_value");
+        if let Some(v) = read(&p).and_then(|s| s.parse::<i64>().ok()) { firmware.insert(key.into(), json!(v)); }
+    }
+    m.insert("firmware_limits".into(), Value::Object(firmware));
     if !light { m.insert("discovered".into(), Value::Array(discovered())); }
     Value::Object(m)
 }
@@ -3237,6 +3520,29 @@ mod tests {
         assert!(best_effort(find("pci.aspm_links").unwrap()));
         for k in ["rf.wlan", "rf.bluetooth", "rf.wwan"] { assert!(user_switch(find(k).unwrap()), "{k}"); }
         assert!(!user_switch(find("net.wifi_power_save").unwrap()));
+    }
+    #[test]
+    fn nvme_serial_slots() {
+        let root = std::env::temp_dir().join(format!("centurion-nvme-sort-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (n, serial) in [("nvme3n1", "Z"), ("nvme2n1", "A"), ("nvme1n1p3", "BAD")] {
+            let d = root.join(n).join("device");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("serial"), serial).unwrap();
+        }
+        let out = nvme_namespaces_at(&root);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].0, "A:1");
+        assert_eq!(out[1].0, "Z:1");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    #[test]
+    fn swap_tier_parser() {
+        let v = swap_tiers_from("Filename Type Size Used Priority\n/dev/zram0 partition 10000 200 100\n/dev/nvme0n1p3 partition 20000 0 -2\n");
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0]["priority"], 100);
+        assert_eq!(v[0]["zram"], true);
+        assert_eq!(v[1]["zram"], false);
     }
     #[test]
     fn bracketed() {

@@ -57,6 +57,9 @@ pub fn status() -> Value {
         "partition": read(&cg("cpuset.cpus.partition")).unwrap_or_default(),
         "procs": read(&cg("cgroup.procs")).map_or(0, |s| s.lines().count()),
         "weight": read(&cg("cpu.weight")),
+        "uclamp_min": read(&cg("cpu.uclamp.min")),
+        "uclamp_max": read(&cg("cpu.uclamp.max")),
+        "memory_low": read(&cg("memory.low")),
     })
 }
 
@@ -67,16 +70,36 @@ fn load_state() -> Value {
 fn save_state(v: &Value) -> Result<(), String> { crate::write_root_file(STATE, v.to_string().as_bytes()) }
 
 /// Creates (or keeps) the game cgroup: a partition over `cpus` (none if empty) and/or `weight` as its cpu.weight.
-pub fn setup(cpus: &[usize], weight: Option<u32>) -> Result<(), String> {
-    if cpus.is_empty() && weight.is_none() { return Err("no CPUs for the game partition".into()); }
+pub fn setup(cpus: &[usize], weight: Option<u32>, uclamp_min: Option<u32>, uclamp_max: Option<u32>, memory_low: Option<u64>) -> Result<(), String> {
+    if cpus.is_empty() && weight.is_none() && uclamp_min.is_none() && uclamp_max.is_none() && memory_low.is_none() {
+        return Err("no game cgroup policy requested".into());
+    }
+    if uclamp_min.is_some_and(|n| n > 1024) || uclamp_max.is_some_and(|n| n > 1024)
+        || uclamp_min.unwrap_or(0) > uclamp_max.unwrap_or(1024) {
+        return Err("uclamp must be within 0..1024 and minimum <= maximum".into());
+    }
+    if memory_low.is_some_and(|n| n > 64 * 1024 * 1024 * 1024) { return Err("memory.low exceeds 64 GiB".into()); }
     if !cpus.is_empty() { if let Some(e) = unsupported() { return Err(e); } }
-    if weight.is_some() { if let Some(e) = unsupported_for("cpu") { return Err(e); } }
+    let cpu_needed = weight.is_some() || uclamp_min.is_some() || uclamp_max.is_some();
+    if cpu_needed { if let Some(e) = unsupported_for("cpu") { return Err(e); } }
+    if memory_low.is_some() { if let Some(e) = unsupported_for("memory") { return Err(e); } }
+    // The cgroup has to expose these files; a missing kernel feature is not silently ignored.
+    if (uclamp_min.is_some() || uclamp_max.is_some()) && !Path::new(&format!("{ROOT}/cpu.uclamp.min")).is_file() {
+        return Err("CPU uclamp files not supported by this kernel".into());
+    }
+    if memory_low.is_some() && !Path::new(&format!("{ROOT}/memory.low")).is_file() {
+        return Err("memory.low not supported by this kernel".into());
+    }
     let list = crate::tune::fmt_cpu_list(cpus);
     let part_ok = cpus.is_empty() || (Path::new(CG).is_dir() && read(&cg("cpuset.cpus.partition")).as_deref() == Some("root")
         && read(&cg("cpuset.cpus")).map(|c| crate::tune::cpu_list(&c)) == Some(cpus.to_vec()));
-    if part_ok && weight.map_or(true, |w| read(&cg("cpu.weight")) == Some(w.to_string())) { return Ok(()); }
+    if part_ok
+       && weight.map_or(true, |w| read(&cg("cpu.weight")) == Some(w.to_string()))
+       && uclamp_min.map_or(true, |w| read(&cg("cpu.uclamp.min")) == Some(format!("{:.2}", w as f64 * 100.0 / 1024.0)))
+       && uclamp_max.map_or(true, |w| read(&cg("cpu.uclamp.max")) == Some(format!("{:.2}", w as f64 * 100.0 / 1024.0)))
+       && memory_low.map_or(true, |w| read(&cg("memory.low")) == Some(w.to_string())) { return Ok(()); }
     let mut st = load_state();
-    for (ctrl, mark, need) in [("cpuset", "added", !cpus.is_empty()), ("cpu", "added_cpu", weight.is_some())] {
+    for (ctrl, mark, need) in [("cpuset", "added", !cpus.is_empty()), ("cpu", "added_cpu", cpu_needed), ("memory", "added_memory", memory_low.is_some())] {
         if !need || st.get(mark).is_some() { continue; }
         let sub = read(&format!("{ROOT}/cgroup.subtree_control")).unwrap_or_default();
         let added = !sub.split_whitespace().any(|c| c == ctrl);
@@ -101,6 +124,16 @@ pub fn setup(cpus: &[usize], weight: Option<u32>) -> Result<(), String> {
     if let Some(w) = weight {
         if let Err(e) = write(&cg("cpu.weight"), &w.to_string()) { let _ = teardown(); return Err(format!("cpu.weight {w} refused: {e}")); }
     }
+    // cgroup uclamp uses 0.00..100.00 percent, not the sched_setattr 0..1024 representation.
+    // Set max before min when raising min; lower min before max when lowering max.
+    if uclamp_max.is_some() {
+        // A previously raised minimum can make lowering max fail with EINVAL.
+        // This game cgroup is empty until join(), so reset its minimum first.
+        if let Err(e) = write(&cg("cpu.uclamp.min"), "0") { let _ = teardown(); return Err(format!("cpu.uclamp.min reset: {e}")); }
+    }
+    if let Some(v) = uclamp_max { if let Err(e) = write(&cg("cpu.uclamp.max"), &format!("{:.2}", v as f64 * 100.0 / 1024.0)) { let _ = teardown(); return Err(format!("cpu.uclamp.max: {e}")); } }
+    if let Some(v) = uclamp_min { if let Err(e) = write(&cg("cpu.uclamp.min"), &format!("{:.2}", v as f64 * 100.0 / 1024.0)) { let _ = teardown(); return Err(format!("cpu.uclamp.min: {e}")); } }
+    if let Some(v) = memory_low { if let Err(e) = write(&cg("memory.low"), &v.to_string()) { let _ = teardown(); return Err(format!("memory.low: {e}")); } }
     Ok(())
 }
 
@@ -153,6 +186,7 @@ pub fn teardown() -> Result<bool, String> {
     }
     if st["added"] == true { let _ = write(&format!("{ROOT}/cgroup.subtree_control"), "-cpuset"); }
     if st["added_cpu"] == true { let _ = write(&format!("{ROOT}/cgroup.subtree_control"), "-cpu"); }
+    if st["added_memory"] == true { let _ = write(&format!("{ROOT}/cgroup.subtree_control"), "-memory"); }
     let _ = std::fs::remove_file(STATE);
     Ok(existed)
 }
