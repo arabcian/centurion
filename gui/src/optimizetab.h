@@ -146,7 +146,7 @@ private:
 
     // Autotune: tune-helper {"op":"autotune"} profiles the hardware and
     // returns a preset for the chosen base (see centurion_helpers::autotune).
-    void runAutotune();
+    void runAutotune(bool exploreOnly = false);
     /// Per-goal objective weights (QSettings autotune/weights/<goal>); empty = goal defaults.
     QJsonObject autotuneWeights(const QString &goal) const;
     void editAutotuneWeights();
@@ -180,6 +180,8 @@ private:
     QPushButton *restoreBtn_ = nullptr, *applyBtn_ = nullptr, *gameBtn_ = nullptr, *bootBtn_ = nullptr, *bootClear_ = nullptr;
     QComboBox *presetCombo_ = nullptr, *affinity_ = nullptr, *autoGoal_ = nullptr, *autoMode_ = nullptr;
     QPushButton *autoBtn_ = nullptr, *autoExploreBtn_ = nullptr;
+    // The request of the last Fast result: Explore… asks the same question (goal, weights, profile).
+    QJsonObject exploreReq_;
     bool autoRunning_ = false;
     QSpinBox *nice_ = nullptr;
     QComboBox *sliceUs_ = nullptr, *gameShare_ = nullptr;

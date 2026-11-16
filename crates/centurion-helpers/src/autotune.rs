@@ -48,7 +48,7 @@ pub const MARGIN: f64 = 0.03;
 /// largest field-stability charge: a warning sign under artificial pressure, not a crash.
 const SOFT_UNSAFE_COST: f64 = -0.25;
 /// The benchmarks "see" a knob when one of its effects (value x objective this goal weighs)
-/// clears a Šidák-corrected z: Φ⁻¹(1 − SEEN_ALPHA / (2m)), m = values x weighted objectives - a
+/// clears a Bonferroni-corrected z: Φ⁻¹(1 − SEEN_ALPHA / (2m)), m = values x weighted objectives - a
 /// 4-value knob has 16 chances to cross a fixed 2 sd by noise. Below it a measured "no effect" is
 /// the benchmark's blindness, not knowledge: the rule's estimate stays.
 const SEEN_ALPHA: f64 = 0.05;
@@ -1185,7 +1185,8 @@ pub fn seen_z(j: &model::Joint, key: &str) -> (f64, usize) {
     (z, m)
 }
 
-/// Šidák-corrected threshold for `m` tests: Φ⁻¹(1 − SEEN_ALPHA / (2m)).
+/// Bonferroni-corrected threshold for `m` tests: Φ⁻¹(1 − SEEN_ALPHA / (2m)) (Šidák's exact
+/// Φ⁻¹(1 − (1 − (1 − α)^(1/m))/2) is within 0.01 of it for every m used here).
 pub fn seen_enter(m: usize) -> f64 {
     let target = 1.0 - SEEN_ALPHA / (2.0 * m.max(1) as f64);
     let (mut lo, mut hi) = (0.0, 10.0);
@@ -2526,6 +2527,7 @@ pub fn autotune(goal: Goal) -> Value { autotune_with(goal, &Profile::gather()) }
 /// alternatives and sensitivity}.
 pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let total_started = std::time::Instant::now();
+    let mode = match explore_mode(opts) { Ok(m) => m, Err(e) => return json!({"ok": false, "error": e}) };
     let report_progress = opts["progress"] == true;
     if report_progress { eprintln!("CENTURION_STAGE inputs"); }
     let mut p = Profile::gather();
@@ -2539,10 +2541,6 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let (w, notes) = effective_weights(goal, &p.evidence);
     let w = w.with_overrides(weights);
     let inputs_ms = total_started.elapsed().as_millis();
-    // The GUI defaults to Fast. Legacy CLI requests without a mode keep their
-    // historical deep exploration behaviour unless `explore` is explicitly false.
-    let mode = match opts["mode"].as_str() { Some("fast") => "fast", Some("balanced") => "balanced", Some("deep") => "deep",
-        _ => if opts["explore"] == false { "fast" } else { "deep" } };
     let want_explore = mode != "fast" && opts["explore"] != false && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty());
     if report_progress { eprintln!("CENTURION_STAGE model"); }
     let fit_started = std::time::Instant::now();
@@ -2591,19 +2589,45 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     }
     // What changed since the last run for this goal, and why (B4). Skipped for a scene's preset:
     // its context is another profile, the history is about the live one.
+    // `"record": false` (the GUI's Explore… on a result it already has): read, but leave no second
+    // history entry and no second "seen" verdict for the same state.
     if p.target_profile.is_none() {
         let entry = history_entry(goal, &p, w, &out);
         let path = crate::overview::state_dir().join("autotune-history.jsonl");
         if let Some(prev) = history_last(&path, goal) { out["diff_vs_last"] = Value::Array(diff_vs_last(&prev, &entry)); }
-        history_push(&path, &entry);
-        if out["seen"].as_object().is_some_and(|m| !m.is_empty()) && seen_all.is_object() {
-            seen_all[goal.key()] = out["seen"].clone();
-            let _ = std::fs::write(&seen_path, seen_all.to_string());
+        if opts["record"] != false {
+            history_push(&path, &entry);
+            if out["seen"].as_object().is_some_and(|m| !m.is_empty()) && seen_all.is_object() {
+                seen_all[goal.key()] = out["seen"].clone();
+                // Replaced whole (tmp + rename), like the history: a torn write left a file that did not
+                // parse, and every goal's hysteresis was lost with it.
+                write_replace(&seen_path, seen_all.to_string().as_bytes());
+            }
         }
     }
     out["timings_ms"]["total"] = json!(total_started.elapsed().as_millis());
     if report_progress { eprintln!("CENTURION_STAGE finished"); }
     out
+}
+
+/// Exploration depth of a request: `mode` ("fast", "balanced", "deep"); without one, legacy CLI
+/// requests keep their historical deep exploration unless `explore` is false. Any other `mode` is an
+/// error (it fell back to deep, the most expensive, silently).
+fn explore_mode(opts: &Value) -> Result<&'static str, String> {
+    match &opts["mode"] {
+        Value::Null => Ok(if opts["explore"] == false { "fast" } else { "deep" }),
+        Value::String(m) if m == "fast" => Ok("fast"),
+        Value::String(m) if m == "balanced" => Ok("balanced"),
+        Value::String(m) if m == "deep" => Ok("deep"),
+        m => Err(format!("mode must be fast, balanced or deep (got {m})")),
+    }
+}
+
+/// Writes `path` whole through a temporary file and a rename. Best effort.
+fn write_replace(path: &std::path::Path, data: &[u8]) {
+    if let Some(dir) = path.parent() { let _ = std::fs::create_dir_all(dir); }
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    if std::fs::write(&tmp, data).is_err() || std::fs::rename(&tmp, path).is_err() { let _ = std::fs::remove_file(&tmp); }
 }
 
 /// What to do with a decision set before applying it. Advice is conservative: absence of
@@ -2627,7 +2651,8 @@ fn application_advice(decisions: &[Value], is_change: &dyn Fn(&str, &Value) -> b
     let all: Vec<&Value> = decisions.iter().collect();
     let changed: Vec<&Value> = decisions.iter().filter(|d| is_change(d["key"].as_str().unwrap_or(""), &d["value"])).collect();
     let high_risk = changed.len() >= 12 || count(&changed, &risky) > 0;
-    let advice = if high_risk { "High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying." }
+    let advice = if changed.is_empty() { "Nothing to apply: every decided setting is live already." }
+        else if high_risk { "High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying." }
         else if count(&changed, &doubtful) > 0 || count(&changed, &unmodelled) > changed.len() / 2 { "Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains." }
         else { "Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement." };
     json!({"text": advice, "high_risk": high_risk, "settings": all.len(), "changes": changed.len(),
@@ -3355,6 +3380,23 @@ mod tests {
         // Another scene's preset: every setting is a change.
         assert_eq!(application_advice(&ds[..40], &|_, _| true)["high_risk"], true);
         assert_eq!(application_advice(&[], &|_, _| true)["high_risk"], false);
+        // Nothing would change: no "review every selected setting" for a set that is live already.
+        let none = application_advice(&ds[..40], &|_, _| false);
+        assert!(none["text"].as_str().unwrap().starts_with("Nothing to apply"), "{none}");
+        assert_eq!((none["changes"].as_u64(), none["high_risk"].as_bool()), (Some(0), Some(false)));
+    }
+    /// A mode the helper does not know is an error: a typo ("Fast") ran the most expensive mode, deep.
+    #[test]
+    fn unknown_mode_is_refused() {
+        for bad in [json!("Fast"), json!("quick"), json!(1)] {
+            let v = autotune_req(Goal::Gaming, &Value::Null, &json!({"mode": bad}));
+            assert_eq!(v["ok"], false, "{bad}: {v}");
+            assert!(v["error"].as_str().unwrap().contains("fast, balanced or deep"));
+        }
+        assert_eq!(explore_mode(&json!({})), Ok("deep"));
+        assert_eq!(explore_mode(&json!({"explore": false})), Ok("fast"));
+        assert_eq!(explore_mode(&json!({"mode": "balanced"})), Ok("balanced"));
+        assert_eq!(explore_mode(&json!({"mode": null})), Ok("deep"));
     }
     #[test]
     fn diff_vs_last_names_the_cause() {

@@ -15,6 +15,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - `deny.toml`: RustSec advisories, licences and sources checked by `cargo deny` in CI.
 
 ### Fixed
+- `centurion-calibrate`: `--budget`/`--io-budget` refuse infinite (`inf`, `1e400`) and oversized values.
+  `--io-budget inf` turned the daily write budget that protects the drive off (it saturated to `u64::MAX`).
+- `centurion-calibrate --verify`: an interrupt is a failed verification wherever it lands. Between two
+  runs it left no error, and a stopped verification could be recorded as passed.
+- `centurion-calibrate --verify`: an OOM kill under the preset fails the verification and is reported
+  (`oom_kills` in the record); the run was dropped without a word and the preset could still pass.
+- `centurion-calibrate`: a run is dropped for severe interference on its final weight, after the SLC and
+  display factors (a run at 0.2 x 0.3 was kept while one at 0.125 was dropped).
+- `centurion-calibrate`: a phase's quality record counts its own thrown-away runs, refusals, power waits
+  and outside activity (they were the session's running totals); a refused value is no longer also
+  counted as a run thrown away.
+- Autotune: an unknown `mode` is an error (it ran the most expensive mode, deep); with nothing to change
+  the advice says so; `autotune-seen.json` is replaced whole (a torn write lost every goal's hysteresis).
+- Optimizations → Explore…: computes the trade-offs of the result on screen without reloading the table
+  (the user's edits were lost) or switching the mode to Balanced; it adds no second history entry. The
+  advice line names how many settings would change, which is what its verdict is judged on.
+- The "seen" threshold is called Bonferroni (it was called Šidák; the two differ by < 0.01 here).
 - Health → Events & alerts: a dGPU that fails to wake from D3cold is reported when it happens. The GUI's
   kernel-log filter did not know that line, so the (critical) event waited for the next unrelated one.
 - Health → Overview, *Sleep drain*: without a sleep long enough on battery to measure, the card says so

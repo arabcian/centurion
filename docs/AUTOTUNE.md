@@ -41,7 +41,7 @@ evidence); a calibration run is a measurement with a field of view. Two things
 keep a benchmark that cannot see a knob from voting on it:
 
 - **Seen or not.** A knob counts as *seen* when at least one of its values moves
-  one of the objectives this goal weighs in the joint model by a Šidák-corrected z: with m
+  one of the objectives this goal weighs in the joint model by a Bonferroni-corrected z: with m
   such effects (values x weighted objectives), z ≥ Φ⁻¹(1 − α/(2m)), α = 0.05 (1.96 for one
   effect, 2.95 for a 4-value knob over 4 objectives; a fixed 2 sd gave noise 16 chances).
   Judged per objective, not on the weighted utility: a measured trade-off - latency up,

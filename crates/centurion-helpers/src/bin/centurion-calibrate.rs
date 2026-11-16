@@ -95,10 +95,23 @@ fn die(msg: &str) -> ! { eprintln!("centurion-calibrate: {msg}"); std::process::
 /// A numeric option's value; None when the option is not given. A value that is missing, does not
 /// parse or is negative is an error (`>=` is false for NaN, so that is refused too): it used to fall
 /// back to the default silently - `--budget 30m` ran 15 minutes, `--budget nan` ran without a limit.
+/// "inf" / "infinity" / "1e400" parse as an infinite f64 and passed the `>=` test: `--io-budget inf`
+/// turned the drive's daily write budget off. Every value must be finite.
 fn num_opt<T: std::str::FromStr + PartialOrd + Default>(args: &[String], name: &str) -> Result<Option<T>, String> {
     let Some(i) = args.iter().position(|a| a == name) else { return Ok(None) };
-    args.get(i + 1).and_then(|s| s.parse::<T>().ok()).filter(|v| *v >= T::default()).map(Some)
-        .ok_or_else(|| format!("{name} needs a number (not negative)"))
+    args.get(i + 1).filter(|s| s.parse::<f64>().is_ok_and(f64::is_finite))
+        .and_then(|s| s.parse::<T>().ok()).filter(|v| *v >= T::default()).map(Some)
+        .ok_or_else(|| format!("{name} needs a finite number (not negative)"))
+}
+/// `--budget` minutes as seconds; a value too large to be a time limit is an error, not "no limit".
+fn budget_secs(min: f64) -> Result<f64, String> {
+    let s = min * 60.0;
+    if s.is_finite() && s < 1e9 { Ok(s) } else { Err("--budget: too large (use --all for no time limit)".into()) }
+}
+/// `--io-budget` GiB as bytes; a value that does not fit is an error (it saturated to u64::MAX: no budget).
+fn io_budget_bytes(gib: f64) -> Result<u64, String> {
+    let b = gib * (1u64 << 30) as f64;
+    if b.is_finite() && b < 1e18 { Ok(b as u64) } else { Err("--io-budget: too large".into()) }
 }
 /// `num_opt`, ending the run on a bad value.
 fn num<T: std::str::FromStr + PartialOrd + Default>(args: &[String], name: &str) -> Option<T> { num_opt(args, name).unwrap_or_else(|e| die(&e)) }
@@ -1028,7 +1041,7 @@ impl Runner<'_> {
                     eprintln!("\n{k} = {v}: {e} — refused by the kernel: left out of this session");
                     self.unwritable.push((k.clone(), v.clone()));
                 }
-                self.dropped += 1;
+                // Counted as refused, not also as a run thrown away (the report counted it twice).
                 // The session's own starting point (the dirty window's reference) cannot be set: runs go on without it.
                 self.base.retain(|(bk, bv)| !(bk == k && bv == v));
                 let _ = self.j.restore();
@@ -1119,15 +1132,6 @@ impl Runner<'_> {
             self.forced += 1;
             if self.forced <= 2 || self.forced % 10 == 0 { eprintln!("\nthe firmware forced {forced} CPU(s) idle during the run (ACPI processor aggregator): run counted at 10 % ({} such run(s)) - check the power adapter and the firmware power limits", self.forced); }
         }
-        // Runs with severe external interference are not representative samples. The
-        // regression already has reference drift correction, but down-weighting a run
-        // cannot undo systematic bias from forced idle or competing workloads.
-        // Keep moderate disturbances for the robust fit and drop only severe ones.
-        if forced > 0 || w < 0.20 {
-            self.dropped += 1;
-            eprintln!("\ncalibration sample discarded: forced idle or severe external interference (weight {w:.2})");
-            return Ok(None);
-        }
         // The drive reached its warning temperature: it may have throttled mid-suite.
         if let Some((t, lim)) = disk_hot {
             self.disk_hot += 1;
@@ -1151,6 +1155,17 @@ impl Runner<'_> {
                 if self.disp_off <= 2 { eprintln!("\nthe display changed during the session (brightness / blanking: {disp}): such runs count 20 % - turn off screen dimming and blanking for a calibration"); }
             }
             _ => {}
+        }
+        // Runs with severe external interference are not representative samples. The
+        // regression already has reference drift correction, but down-weighting a run
+        // cannot undo systematic bias from forced idle or competing workloads.
+        // Keep moderate disturbances for the robust fit and drop only severe ones. Judged on the final
+        // weight, after the SLC and display factors too: it was checked before them, so a run at 0.2 x 0.3
+        // was kept while one at 0.125 was dropped.
+        if forced > 0 || w < 0.20 {
+            self.dropped += 1;
+            eprintln!("\ncalibration sample discarded: forced idle or severe external interference (weight {w:.2})");
+            return Ok(None);
         }
         match r { Ok((s, oom)) => Ok(Some(Done { s, oom, w, t: now(), temp })), Err(e) => { eprintln!("\n{e}"); self.dropped += 1; Ok(None) } }
     }
@@ -1452,7 +1467,19 @@ struct Design<'a> { phase: Phase, bs: Benches, fast_scan: bool, sess: u64, n_tot
                     /// The early baseline check (A4) ran: once, right after the second reference run.
                     checked: bool,
                     /// `Runner::soak_s` when the design started: its own heat soaks are the difference.
-                    soak0: f64 }
+                    soak0: f64,
+                    /// The Runner's session-long counters when the design started: its quality record counts the difference.
+                    q0: QualityBase }
+
+/// The session-long `Runner` counters a phase's quality record is counted from (`QualityBase::of` at its start).
+#[derive(Clone, Default)]
+struct QualityBase { dropped: usize, refused: usize, power_waits: usize, parasites: BTreeMap<&'static str, usize> }
+
+impl QualityBase {
+    fn of(rn: &Runner) -> QualityBase {
+        QualityBase { dropped: rn.dropped, refused: rn.unwritable.len(), power_waits: rn.power_waits, parasites: rn.parasites.clone() }
+    }
+}
 
 /// Whether a reference run is due after the space-filling stage's design run `i` (0-based): one
 /// every 6. Shared with the simulator (calsim), so it measures this schedule. A7 measured random
@@ -1608,7 +1635,7 @@ fn design_phase(cal: &mut Calibration, rn: &mut Runner, phase: Phase, its: &[&It
     let mut rng = Rng::new(seed ^ sess);
     let mut d = Design { phase, bs, fast_scan: calibrate_flag("CENTURION_FAST_SCAN") && matches!(phase, Phase::Idle | Phase::Load), sess, n_total, kernel, refs, runs: Vec::new(), oom_left: 12, t0: Instant::now(), secs: budget, spent: 0.0,
                          meta: Meta::new(cal, if phase == Phase::Dev || rn.c.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, rn.c.cx.clone()),
-                         strategy: dp.name, tries: 0, checked: false, soak0: rn.soak_s };
+                         strategy: dp.name, tries: 0, checked: false, soak0: rn.soak_s, q0: QualityBase::of(rn) };
     rn.disp0 = None;
     rn.barren = 0;
     // Quality metadata belongs to this phase rather than previous phases.
@@ -1757,11 +1784,16 @@ fn robust_sd(v: &[f64]) -> Option<f64> {
 /// state), values the kernel refused, runs thrown away, and power-source interruptions.
 fn session_quality(rows: &[Row], d: &Design, rn: &Runner) -> Value {
     let refs: Vec<&Row> = rows.iter().filter(|r| r.cfg.is_empty()).collect();
+    // This phase's share of the session-long counters. `refused_values` stays the session's whole list:
+    // what the kernel refuses is its state, not the phase's, and progressive sessions design around it.
+    let b = &d.q0;
+    let parasites: BTreeMap<&str, usize> = rn.parasites.iter()
+        .map(|(k, n)| (*k, n.saturating_sub(b.parasites.get(k).copied().unwrap_or(0)))).filter(|(_, n)| *n > 0).collect();
     let noise: Vec<Value> = (0..4).map(|o| robust_sd(&refs.iter().map(|r| r.y[o]).collect::<Vec<_>>()).map_or(Value::Null, |x| json!(round3(x)))).collect();
     json!({"t": now(), "sess": d.sess, "phase": d.phase.name(), "strategy": d.strategy, "runs": d.runs.len(), "refs": refs.len(), "noise": noise,
-           "weak": d.runs.iter().filter(|r| r.w < 0.999).count(), "refused": rn.unwritable.len(), "dropped": rn.dropped,
+           "weak": d.runs.iter().filter(|r| r.w < 0.999).count(), "refused": rn.unwritable.len().saturating_sub(b.refused), "dropped": rn.dropped.saturating_sub(b.dropped),
            "refused_values": rn.unwritable.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
-           "power_waits": rn.power_waits, "ended_early": rn.power_lost, "cx": d.meta.cx, "parasites": rn.parasites,
+           "power_waits": rn.power_waits.saturating_sub(b.power_waits), "ended_early": rn.power_lost, "cx": d.meta.cx, "parasites": parasites,
            "preflight_retries": rn.preflight_retries, "preflight_skips": rn.preflight_skips, "preflight_secs": round3(rn.preflight_secs)})
 }
 
@@ -1996,10 +2028,11 @@ fn main() {
     // Every numeric option is read here, before anything is locked or held: a bad value ends the run
     // through die(), which skips the teardown.
     let budget_min: Option<f64> = num(&args, "--budget");
-    let budget = if flag("--all") { f64::INFINITY } else { budget_min.unwrap_or(15.0) * 60.0 };
+    let budget = if flag("--all") { f64::INFINITY } else { budget_secs(budget_min.unwrap_or(15.0)).unwrap_or_else(|e| die(&e)) };
     let (sessions, rounds_max, seed, secs): (Option<u64>, Option<usize>, Option<u64>, Option<u64>) =
         (num(&args, "--sessions"), num(&args, "--rounds"), num(&args, "--seed"), num(&args, "--secs"));
     let io_budget_gib: f64 = num(&args, "--io-budget").unwrap_or(IO_BUDGET_GIB);
+    let io_budget = io_budget_bytes(io_budget_gib).unwrap_or_else(|e| die(&e));
     let ram = bench::meminfo_kb("MemTotal:").unwrap_or(0) * 1024;
     // The storage suite's disk: --dir, else the first of these on a local disk (not tmpfs).
     let dir = opt("--dir").unwrap_or_else(|| ["/var/tmp", "/var/cache", "/home", "/"].iter()
@@ -2171,7 +2204,7 @@ fn main() {
         scale,
         battery: src == "battery",
         bat_period, heat_secs: 15.0 * scale, cx, heat: heat_opt,
-        io_budget: (io_budget_gib * (1u64 << 30) as f64) as u64,
+        io_budget,
         strict: flag("--strict"),
     };
     let rate = centurion_helpers::iorate::gather().bps;
@@ -2662,15 +2695,26 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     // budget, runs thrown away in a row): the blocks measured so far are still reported and kept.
     // It used to leave through `?`: twenty minutes of complete ABBA blocks went without a word.
     let mut ended: Option<String> = None;
+    // OOM kills per side [boot state, preset]: the run is not kept (its figures are the kill's), but
+    // the kill is evidence - it used to vanish without a word, and the preset could still pass.
+    let mut ooms = [0usize; 2];
     'r: for r in 0..rounds {
         let order: [&Cfg; 4] = if r % 2 == 0 { [&none, &cfg, &cfg, &none] } else { [&cfg, &none, &none, &cfg] };
         for (pos, c) in order.into_iter().enumerate() {
             for ph in &phases {
-                if STOP.load(Ordering::SeqCst) { break 'r; }
+                // Interrupted is interrupted wherever the key press lands: between runs it used to leave
+                // `ended` empty, and a verification stopped there could be recorded as passed.
+                if STOP.load(Ordering::SeqCst) { ended = Some("interrupted".into()); break 'r; }
                 let done = match rn.run(*ph, bs, c, "(verify)") {
                     Ok(d) => d,
                     Err(e) => { eprintln!("\nverify ended early: {e}"); ended = Some(e); break 'r; }
                 };
+                if let Some(Done { oom: true, .. }) = done {
+                    let side = usize::from(!c.is_empty());
+                    ooms[side] += 1;
+                    eprintln!("\nOOM kill during a {} run ({} phase): run not kept{}", if side == 1 { "preset" } else { "boot-state" }, ph.name(),
+                              if side == 1 { " - the verification cannot pass" } else { "" });
+                }
                 if let Some(Done { s, oom: false, w, t, temp }) = done {
                     let e = runs.entry(ph.idx()).or_default();
                     let order = e.len();
@@ -2745,6 +2789,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
         match p { Some(p) => println!("  {:<16} {:+.3} ± {:.3} (95 % CI {:+.3} .. {:+.3})", g.key(), p.mean, p.se, p.lo, p.hi),
                   None => println!("  {:<16} not measurable", g.key()) }
     }
+    if ooms[1] > 0 { println!("  OOM kills        {} under the preset ({} under the boot state): verification FAILED whatever the gain", ooms[1], ooms[0]); }
     if let Some((k, mu, sd)) = pred {
         let agree = use_.is_finite() && (um - mu).abs() <= 2.0 * (use_ * use_ + sd * sd).sqrt();
         if use_.is_finite() { cal.note_predcheck_in(sess, "verify", main.name(), goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
@@ -2759,7 +2804,8 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
                            "skipped": skipped, "complete": skipped.is_empty() && blocks >= 3 && ended.is_none(),
                            "ended_early": ended,
                            "decision_ci": if lo.is_finite() && hi.is_finite() { json!([lo, hi]) } else { Value::Null },
-                           "passed": ended.is_none() && verification_passes(blocks, &skipped, lo),
+                           "passed": ended.is_none() && verification_passes(blocks, &skipped, lo, ooms[1]),
+                           "oom_kills": {"boot": ooms[0], "preset": ooms[1]},
                            "sequential": sequential.then(|| json!({"looks": looks, "decided_at": decided_at})),
                            "gains": (!others.is_empty()).then(|| others.iter().map(|(g, p)| (g.key().to_owned(), p.as_ref().map_or(Value::Null, |p| json!([round3(p.mean), round3(p.se)])))).collect::<serde_json::Map<_, _>>()),
                            "predicted": pred.map(|p| json!([p.0, round3(p.1), round3(p.2)])), "cx": ctx.cx}));
@@ -2768,16 +2814,16 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     save(cal);
     // Fail closed, as before: a verification that could not run to its end is not a pass.
     if let Some(e) = ended { return Err(format!("{e} ({blocks} complete ABBA block(s) reported above and kept)")); }
-    if require_improvement && !verification_passes(blocks, &skipped, lo) {
-        return Err(format!("ABBA did not verify a positive improvement: {blocks} blocks, decision CI [{lo:+.4}, {hi:+.4}], {} skipped", skipped.len()));
+    if require_improvement && !verification_passes(blocks, &skipped, lo, ooms[1]) {
+        return Err(format!("ABBA did not verify a positive improvement: {blocks} blocks, decision CI [{lo:+.4}, {hi:+.4}], {} skipped, {} OOM kill(s) under the preset", skipped.len(), ooms[1]));
     }
     Ok(())
 }
 
 /// Fail closed: an incomplete ABBA, unverified key or a confidence interval
 /// touching zero is not evidence to apply a high-risk preset.
-fn verification_passes(blocks: usize, skipped: &[String], lower_bound: f64) -> bool {
-    blocks >= 3 && skipped.is_empty() && lower_bound.is_finite() && lower_bound > 0.0
+fn verification_passes(blocks: usize, skipped: &[String], lower_bound: f64, preset_ooms: usize) -> bool {
+    blocks >= 3 && skipped.is_empty() && lower_bound.is_finite() && lower_bound > 0.0 && preset_ooms == 0
 }
 
 /// (round, position) tags of one phase's kept verify runs.
@@ -3132,11 +3178,15 @@ mod tests {
         let a = |s: &str| -> Vec<String> { s.split(' ').map(str::to_owned).collect() };
         assert_eq!(num_opt::<f64>(&a("--budget 30"), "--budget"), Ok(Some(30.0)));
         assert_eq!(num_opt::<f64>(&a("--all"), "--budget"), Ok(None));
-        for bad in ["--budget 30m", "--budget nan", "--budget -5", "--budget", "--budget --all"] {
+        for bad in ["--budget 30m", "--budget nan", "--budget -5", "--budget", "--budget --all",
+                    "--budget inf", "--budget infinity", "--budget +inf", "--budget 1e400"] {
             assert!(num_opt::<f64>(&a(bad), "--budget").is_err(), "{bad}");
         }
         assert_eq!(num_opt::<u64>(&a("--verify x --seed 7"), "--seed"), Ok(Some(7)));
         assert!(num_opt::<u64>(&a("--sessions two"), "--sessions").is_err());
+        // Finite but too large to become seconds / bytes: refused, not saturated into "no limit".
+        assert!(budget_secs(1e300).is_err() && budget_secs(15.0) == Ok(900.0));
+        assert!(io_budget_bytes(1e300).is_err() && io_budget_bytes(2.0) == Ok(2 << 30));
     }
 
     #[test]
@@ -3202,7 +3252,7 @@ mod tests {
         (rn.ac0, rn.power_lost) = (Some(true), true);
         let refs = BTreeMap::new();
         let mut d = Design { phase: Phase::Idle, bs: Benches::default(), fast_scan: false, sess: 7, n_total: 12, kernel: "", refs: &refs, runs: Vec::new(), oom_left: 0,
-                             t0: Instant::now(), secs: 60.0, spent: 0.0, meta: meta(), strategy: "lean", tries: 0, checked: true, soak0: 0.0 };
+                             t0: Instant::now(), secs: 60.0, spent: 0.0, meta: meta(), strategy: "lean", tries: 0, checked: true, soak0: 0.0, q0: QualityBase::default() };
         let mut cal = Calibration::default();
         // Too few runs to make rows: nothing to keep, and no empty session record either.
         d.runs.push(run(Vec::new(), &[(Metric::WakeP99Us, 100.0)]));
@@ -3212,6 +3262,34 @@ mod tests {
         assert!(d.exec(&mut cal, &mut rn, &Vec::new()).is_err());
         assert_eq!(cal.rows.iter().filter(|r| r.sess == 7 && r.phase == Phase::Idle).count(), 6, "the measured runs are in the signature");
         assert_eq!(cal.quality.len(), 1);
+    }
+
+    /// A phase's quality record counts that phase's events: the Runner lives for the whole session,
+    /// and the second phase's record carried the first one's thrown-away runs, refusals, power waits
+    /// and outside activity.
+    #[test]
+    fn quality_record_counts_its_own_phase() {
+        let ctx = Ctx { exe: PathBuf::new(), dir: String::new(), disk: None, io_size: 0, scale: 1.0, battery: false, bat_period: None,
+                        heat_secs: 0.0, cx: String::new(), heat: None, io_budget: 0, strict: false };
+        let mut rn = Runner::new(&ctx, 0, 0);
+        // The first phase: 5 runs thrown away, one value refused, one power wait, 3 runs with an IRQ storm.
+        (rn.dropped, rn.power_waits) = (5, 1);
+        rn.unwritable.push(("vm.a".into(), "9".into()));
+        rn.parasites.insert("irq", 3);
+        let refs = BTreeMap::new();
+        let d = Design { phase: Phase::Load, bs: Benches::default(), fast_scan: false, sess: 8, n_total: 12, kernel: "", refs: &refs, runs: Vec::new(), oom_left: 0,
+                         t0: Instant::now(), secs: 60.0, spent: 0.0, meta: meta(), strategy: "lean", tries: 0, checked: true, soak0: 0.0, q0: QualityBase::of(&rn) };
+        // The second phase: 2 thrown away, one more refusal, one IRQ storm, one disk one.
+        rn.dropped += 2;
+        rn.unwritable.push(("vm.b".into(), "1".into()));
+        *rn.parasites.get_mut("irq").unwrap() += 1;
+        rn.parasites.insert("disk", 1);
+        let q = session_quality(&[], &d, &rn);
+        assert_eq!((q["dropped"].as_u64(), q["refused"].as_u64(), q["power_waits"].as_u64()), (Some(2), Some(1), Some(0)), "{q}");
+        assert_eq!(q["parasites"], json!({"irq": 1, "disk": 1}));
+        // What the kernel refuses is the kernel's state, not the phase's: the session's list stays whole
+        // (progressive sessions read it to leave those values out of their designs).
+        assert_eq!(q["refused_values"], json!([["vm.a", "9"], ["vm.b", "1"]]));
     }
 
     #[test]
@@ -3233,11 +3311,13 @@ mod tests {
     #[test]
     fn strict_abba_verdict_rejects_skips_small_samples_and_ambiguity() {
         let skip = vec!["cpu.ccd_park".to_string()];
-        assert!(verification_passes(3, &[], 0.002));
-        assert!(!verification_passes(2, &[], 0.02));
-        assert!(!verification_passes(3, &skip, 0.02));
-        assert!(!verification_passes(3, &[], 0.0));
-        assert!(!verification_passes(4, &[], f64::NAN));
+        assert!(verification_passes(3, &[], 0.002, 0));
+        assert!(!verification_passes(2, &[], 0.02, 0));
+        assert!(!verification_passes(3, &skip, 0.02, 0));
+        assert!(!verification_passes(3, &[], 0.0, 0));
+        assert!(!verification_passes(4, &[], f64::NAN, 0));
+        // An OOM kill under the preset is a failure however good its complete blocks look.
+        assert!(!verification_passes(6, &[], 0.05, 1));
     }
 
     #[test]

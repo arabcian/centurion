@@ -490,7 +490,7 @@ void OptimizeTab::buildUi() {
     autoBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Profile this machine (CPU topology, V-Cache/hybrid, cpufreq driver, C-state latencies, RAM, swap,\n"
                                         "storage, battery, GPUs, kernel) and check every row with the value the chosen base calls for.\n"
                                         "Nothing is written until you press Apply checked; Save turns it into a preset."));
-    connect(autoBtn_, &QPushButton::clicked, this, &OptimizeTab::runAutotune);
+    connect(autoBtn_, &QPushButton::clicked, this, [this] { runAutotune(); });
     autoMode_ = new QComboBox;
     autoMode_->addItem(QCoreApplication::translate("OptimizeTab", "Fast"), QStringLiteral("fast"));
     autoMode_->addItem(QCoreApplication::translate("OptimizeTab", "Balanced"), QStringLiteral("balanced"));
@@ -501,10 +501,10 @@ void OptimizeTab::buildUi() {
     autoExploreBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Explore…"));
     autoExploreBtn_->setEnabled(false);
     autoExploreBtn_->setToolTip(QCoreApplication::translate("OptimizeTab", "Run trade-off comparisons on demand after the fast decision."));
-    connect(autoExploreBtn_, &QPushButton::clicked, this, [this] {
-        autoMode_->setCurrentIndex(1);
-        runAutotune();
-    });
+    // Trade-offs for the result on screen: the same request as Balanced, but the table and the user's
+    // edits to it stay as they are and the mode choice is not changed (it was switched to Balanced and
+    // the whole preset was loaded again, dropping every check the user had changed).
+    connect(autoExploreBtn_, &QPushButton::clicked, this, [this] { runAutotune(true); });
     connect(autoMode_, &QComboBox::currentIndexChanged, this, [this] { autoExploreBtn_->setEnabled(false); });
     auto *weightsBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Weights…"));
     weightsBtn->setToolTip(QCoreApplication::translate("OptimizeTab", "How much this base values latency, throughput, power, memory footprint, stability\n"
@@ -1895,12 +1895,13 @@ void OptimizeTab::clearBoot() {
 
 // ── autotune ────────────────────────────────────────────────────────────────
 
-void OptimizeTab::runAutotune() {
+void OptimizeTab::runAutotune(bool exploreOnly) {
     if (autoRunning_ || busy_) return;
+    if (exploreOnly && exploreReq_.isEmpty()) return;
     if (rows_.isEmpty()) { showStatus(QStringLiteral("The tunable list is not loaded yet."), theme::WARN); return; }
     if (!QFileInfo(helperPath()).isExecutable()) { helperMissing_ = true; updateStateBanner(); return; }
-    const QString goal = autoGoal_->currentData().toString();
-    const QString mode = autoMode_->currentData().toString();
+    const QString goal = exploreOnly ? exploreReq_.value("goal").toString() : autoGoal_->currentData().toString();
+    const QString mode = exploreOnly ? QStringLiteral("balanced") : autoMode_->currentData().toString();
     autoRunning_ = true;
     autoBtn_->setEnabled(false);
     autoExploreBtn_->setEnabled(false);
@@ -1930,7 +1931,7 @@ void OptimizeTab::runAutotune() {
         }
         if (partialLine->size() > 8192) partialLine->clear();
     });
-    connect(p, &QProcess::finished, this, [this, p, goal, mode, timedOut, errorLog](int, QProcess::ExitStatus st) {
+    connect(p, &QProcess::finished, this, [this, p, goal, mode, exploreOnly, timedOut, errorLog](int, QProcess::ExitStatus st) {
         autoRunning_ = false;
         autoBtn_->setEnabled(!busy_);
         const QByteArray out = p->readAllStandardOutput().trimmed();
@@ -1947,6 +1948,11 @@ void OptimizeTab::runAutotune() {
                 else why = QStringLiteral("no answer from tune-helper");
             }
             showStatus(QStringLiteral("Autotune failed: %1").arg(why), theme::DANGER, 10000);
+            return;
+        }
+        if (exploreOnly) {
+            showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · trade-offs computed; the table was left as it was."), theme::OK, 8000);
+            showAutotuneReport(d, {});
             return;
         }
         QStringList notLoaded;
@@ -1968,8 +1974,15 @@ void OptimizeTab::runAutotune() {
     QTimer::singleShot(AUTOTUNE_TIMEOUT_MS, p, [guard, timedOut] { if (guard && guard->state() != QProcess::NotRunning) { *timedOut = true; guard->kill(); } });
     p->start(helperPath(), {});
     QJsonObject req{{"op", "autotune"}, {"goal", goal}, {"mode", mode}, {"progress", true}};
-    if (const QJsonObject w = autotuneWeights(goal); !w.isEmpty()) req["weights"] = w;
-    if (autoCtx_ && !autoCtx_->currentData().toString().isEmpty()) req["profile"] = autoCtx_->currentData().toString();
+    if (exploreOnly) {
+        req = exploreReq_;
+        req["mode"] = mode;
+        req["record"] = false;  // the Fast run recorded this state already (history, "seen")
+    } else {
+        if (const QJsonObject w = autotuneWeights(goal); !w.isEmpty()) req["weights"] = w;
+        if (autoCtx_ && !autoCtx_->currentData().toString().isEmpty()) req["profile"] = autoCtx_->currentData().toString();
+        exploreReq_ = mode == QLatin1String("fast") ? req : QJsonObject();
+    }
     p->write(QJsonDocument(req).toJson(QJsonDocument::Compact));
     p->closeWriteChannel();
 }
@@ -2261,8 +2274,11 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         v->addWidget(hint);
     }
     if (const QJsonObject a = d.value(QStringLiteral("application_advice")).toObject(); !a.isEmpty()) {
-        auto *label = new QLabel(tr("Suggested next step: %1 (%2 settings, %3 uncertain effects, %4 without model evidence)")
+        // The verdict is judged on the settings that would change (`changes`); the whole set's size beside a
+        // "High-impact" verdict read as if all of them were changes.
+        auto *label = new QLabel(tr("Suggested next step: %1 (%2 of %3 settings would change, %4 uncertain effects, %5 without model evidence)")
             .arg(QCoreApplication::translate("OptimizeTab", a.value(QStringLiteral("text")).toString().toUtf8().constData()))
+            .arg(a.value(QStringLiteral("changes")).toInt())
             .arg(a.value(QStringLiteral("settings")).toInt())
             .arg(a.value(QStringLiteral("uncertain_effects")).toInt())
             .arg(a.value(QStringLiteral("not_modelled")).toInt()));
@@ -2466,7 +2482,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     if (saveGame) connect(saveGame, &QPushButton::clicked, &dlg, [&] { forGames = true; dlg.accept(); });
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     if (dlg.exec() != QDialog::Accepted) {
-        if (rerun) QTimer::singleShot(0, this, &OptimizeTab::runAutotune);
+        if (rerun) QTimer::singleShot(0, this, [this] { runAutotune(); });
         return;
     }
 
