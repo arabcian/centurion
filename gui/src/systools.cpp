@@ -12,10 +12,12 @@
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QSet>
 #include <QTextBrowser>
+#include <QTextDocument>
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
@@ -43,6 +45,7 @@ struct Spec {
     QList<QStringList> cmds;
     const char *rootTool = nullptr;  // tune-helper {"op":"tool"} instead of cmds
     bool manual = false;             // runs only on "Run again" (it may reach the network)
+    bool search = false;             // a find box for the output (pages with long reports)
 };
 
 // The package that provides each tool, per distribution family (Gentoo first: it is the project's own).
@@ -217,6 +220,18 @@ public:
         about->setWordWrap(true);
         about->setProperty("role", "muted");
         top->addWidget(about, 1);
+        if (s.search) {
+            find_ = new QLineEdit;
+            find_->setPlaceholderText(QCoreApplication::translate("systools", "Find in this output…"));
+            find_->setToolTip(QCoreApplication::translate("systools", "Every match is highlighted; Enter jumps to the next one."));
+            find_->setClearButtonEnabled(true);
+            find_->setFixedWidth(220);
+            findCount_ = new QLabel;
+            findCount_->setProperty("role", "muted");
+            findCount_->setMinimumWidth(findCount_->fontMetrics().horizontalAdvance(QStringLiteral("0000/0000")));
+            top->addWidget(find_);
+            top->addWidget(findCount_);
+        }
         serialsBtn_ = new QPushButton(QStringLiteral("Show serials"));
         serialsBtn_->setToolTip(QStringLiteral("Serial numbers and UUIDs are hidden; click one in the output to show just that one."));
         serialsBtn_->setVisible(false);
@@ -245,6 +260,10 @@ public:
             else shown_.clear();
             render();
         });
+        if (find_) {
+            connect(find_, &QLineEdit::textChanged, this, [this] { findNext(true); });
+            connect(find_, &QLineEdit::returnPressed, this, [this] { findNext(false); });
+        }
         connect(run, &QPushButton::clicked, this, [this] { start(); });
         connect(copy, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(text_->toPlainText()); });
     }
@@ -311,6 +330,49 @@ private:
         serialsBtn_->setVisible(n > 0);
         serialsBtn_->setText(shown_.size() < n ? QStringLiteral("Show serials") : QStringLiteral("Hide serials"));
         if (keepScroll) { text_->verticalScrollBar()->setValue(vs); text_->horizontalScrollBar()->setValue(hs); }
+        highlight();   // setHtml dropped the previous highlights
+    }
+
+    // Jump to the next match of the find box (from the top when `restart`), wrapping at the end.
+    void findNext(bool restart) {
+        const QString q = find_->text();
+        QTextCursor c = text_->textCursor();
+        if (restart) c.movePosition(QTextCursor::Start);
+        else c.setPosition(c.selectionEnd());
+        if (!q.isEmpty()) {
+            QTextCursor hit = text_->document()->find(q, c);
+            if (hit.isNull()) hit = text_->document()->find(q, 0);   // wrap
+            if (!hit.isNull()) c = hit;
+        }
+        if (q.isEmpty() || c.selectedText().isEmpty()) c.clearSelection();
+        text_->setTextCursor(c);
+        if (c.hasSelection()) text_->ensureCursorVisible();
+        highlight();
+    }
+
+    // Every match of the find box gets a highlight; the current one (the cursor's selection) a stronger one.
+    void highlight() {
+        if (!find_) return;
+        QList<QTextEdit::ExtraSelection> marks;
+        const QString q = find_->text();
+        const QTextCursor cur = text_->textCursor();
+        int n = 0, at = 0;
+        if (!q.isEmpty()) {
+            for (QTextCursor c = text_->document()->find(q, 0); !c.isNull(); c = text_->document()->find(q, c)) {
+                ++n;
+                const bool current = c.selectionStart() == cur.selectionStart() && c.selectionEnd() == cur.selectionEnd();
+                if (current) at = n;
+                QTextEdit::ExtraSelection m;
+                m.cursor = c;
+                m.format.setBackground(QColor(QLatin1String(current ? theme::ACCENT : theme::ACCENT_SOFT)));
+                m.format.setForeground(QColor(QLatin1String(current ? theme::BG0 : theme::FG)));
+                marks << m;
+            }
+        }
+        text_->setExtraSelections(marks);
+        findCount_->setText(q.isEmpty() ? QString()
+                            : n ? QStringLiteral("%1/%2").arg(at ? QString::number(at) : QStringLiteral("–")).arg(n)
+                                : QCoreApplication::translate("systools", "no match"));
     }
 
     void step(int i) {
@@ -369,6 +431,8 @@ private:
     Spec spec_;
     QTextBrowser *text_;
     QPushButton *serialsBtn_;
+    QLineEdit *find_ = nullptr;
+    QLabel *findCount_ = nullptr;
     QString out_, raw_;
     QSet<int> shown_;
     int serials_ = 0;
@@ -385,24 +449,24 @@ void addPages(QTabWidget *tabs) {
     const Spec specs[] = {
         {"Sensors", "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
         {"CPU", "Topology, caches, frequencies and the active cpufreq driver/governor.",
-         {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}},
+         {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}, nullptr, false, true},
         {"Memory", "Usage, swap/zram and NUMA layout.", {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
-        {"DMI", "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode"},
+        {"DMI", "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode", false, true},
         {"PCI", "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.",
-         {{"lspci", "-nnk"}, {"lspci", "-tv"}, {"@pcilink"}}},
-        {"PCIe detail", "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie"},
+         {{"lspci", "-nnk"}, {"lspci", "-tv"}, {"@pcilink"}}, nullptr, false, true},
+        {"PCIe detail", "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
         {"USB", "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
         {"Storage", "Block devices, schedulers and mounted filesystems.",
          {{"lsblk", "-o", "NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINTS,ROTA,SCHED"}, {"df", "-hT", "-x", "tmpfs", "-x", "devtmpfs"}}},
-        {"SMART details", "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart"},
+        {"SMART details", "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
         {"NVIDIA", "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
-         {{"@file", "/proc/driver/nvidia/version"}, {"nvidia-smi", "-q"}}},
+         {{"@file", "/proc/driver/nvidia/version"}, {"nvidia-smi", "-q"}}, nullptr, false, true},
         {"Graphics", "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
-         {{"vulkaninfo", "--summary"}, {"glxinfo", "-B"}}},
+         {{"vulkaninfo", "--summary"}, {"glxinfo", "-B"}}, nullptr, false, true},
         {"Kernel", "Kernel version, boot command line and loaded modules.",
-         {{"uname", "-a"}, {"@file", "/proc/cmdline"}, {"lsmod"}}},
+         {{"uname", "-a"}, {"@file", "/proc/cmdline"}, {"lsmod"}}, nullptr, false, true},
         {"Battery", "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
-         {{"@glob", "/sys/class/power_supply/*/uevent"}}},
+         {{"@glob", "/sys/class/power_supply/*/uevent"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "Thermal"),
          QT_TRANSLATE_NOOP("systools", "Every thermal zone: its type, current temperature and trip points. Temperatures are in millidegrees Celsius, as the kernel reports them."),
          {{"@glob", "/sys/class/thermal/thermal_zone*/type"}, {"@glob", "/sys/class/thermal/thermal_zone*/temp"}, {"@glob", "/sys/class/thermal/thermal_zone*/trip_point_*"}}},
@@ -411,7 +475,7 @@ void addPages(QTabWidget *tabs) {
          {{"@dir", "/sys/devices/system/cpu/vulnerabilities"}, {"@file", "/sys/kernel/security/lockdown"}, {"mokutil", "--sb-state"}, {"@tainted"}, {"@microcode"}}},
         {QT_TRANSLATE_NOOP("systools", "Firmware updates"),
          QT_TRANSLATE_NOOP("systools", "fwupd: the devices it can update and the firmware updates it finds. Finding updates contacts the LVFS server on the internet, so this page runs only on \"Run again\"."),
-         {{"fwupdmgr", "get-devices"}, {"fwupdmgr", "get-updates"}}, nullptr, true},
+         {{"fwupdmgr", "get-devices"}, {"fwupdmgr", "get-updates"}}, nullptr, true, true},
     };
     for (const Spec &s : specs) {
         // No ACPI thermal zone (common on AMD laptops; their temperatures are on the Sensors page): no Thermal page.

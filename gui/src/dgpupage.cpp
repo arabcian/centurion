@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QPointer>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSet>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -442,6 +443,7 @@ void DgpuPage::apply(const Report &sysfs) {
     shown_ = text;
     verdict_->setText(r.verdict);
     theme::setSheet(verdict_, QStringLiteral("font-weight:600; color:%1;").arg(r.level == 1 ? theme::OK : r.level == 2 ? theme::WARN : theme::FG_DIM));
+    const int scroll = tree_->verticalScrollBar()->value();   // a refresh rebuilds the tree: keep the view where it was
     tree_->clear();
     QTreeWidgetItem *sec = nullptr;
     QString name;
@@ -459,4 +461,5 @@ void DgpuPage::apply(const Report &sysfs) {
         if (row.level) it->setForeground(1, QColor(QLatin1String(row.level == 1 ? theme::OK : theme::WARN)));
     }
     tree_->expandAll();
+    tree_->verticalScrollBar()->setValue(scroll);
 }

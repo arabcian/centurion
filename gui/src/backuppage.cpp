@@ -279,7 +279,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
         savedExcludes = defaultExcludes(distroprofile::family());
     excludes_ = new QPlainTextEdit(savedExcludes);
     excludes_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    excludes_->setFixedHeight(fontMetrics().lineSpacing() * 4 + 12);
+    excludes_->setMinimumHeight(fontMetrics().lineSpacing() * 4 + 12);   // grows with the page; the archive list gives up the room
     excludes_->setToolTip(QStringLiteral(
         "One tar --exclude pattern per line. \"/proc/*\" (not \"/proc\") keeps the empty mount point,\n"
         "so a restore onto a fresh disk can still mount /proc, /sys, /dev and /run.\n"
@@ -295,7 +295,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     connect(action("Create image", ec, "btnAccent"), &QPushButton::clicked, this, &BackupPage::systemBackup);
     ec->addStretch(1);
     er->addLayout(ec);
-    sv->addLayout(er);
+    sv->addLayout(er, 1);
     distroNote_ = new QLabel;
     distroNote_->setWordWrap(true);
     distroNote_->setProperty("role", "muted");
@@ -326,7 +326,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     remindNote_->setProperty("role", "muted");
     rm->addWidget(remindNote_, 1);
     sv->addLayout(rm);
-    v->addWidget(sb);
+    v->addWidget(sb, 3);
 
     // ── Archives ──
     list_ = new QTreeWidget;
@@ -338,7 +338,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     list_->setUniformRowHeights(true);
     for (int i = 0; i < 4; ++i) list_->header()->setSectionResizeMode(i, QHeaderView::ResizeToContents);
     list_->header()->setStretchLastSection(true);
-    v->addWidget(list_, 1);
+    v->addWidget(list_, 2);
 
     auto *pr = new QHBoxLayout;
     bar_ = new QProgressBar;

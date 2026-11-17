@@ -5165,6 +5165,18 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
     <context>
         <name>systools</name>
         <message>
+            <source>Find in this output…</source>
+            <translation>Bu çıktıda ara…</translation>
+        </message>
+        <message>
+            <source>Every match is highlighted; Enter jumps to the next one.</source>
+            <translation>Her eşleşme vurgulanır; Enter bir sonrakine atlar.</translation>
+        </message>
+        <message>
+            <source>no match</source>
+            <translation>eşleşme yok</translation>
+        </message>
+        <message>
             <source>(no matching files)</source>
             <translation>(eşleşen dosya yok)</translation>
         </message>

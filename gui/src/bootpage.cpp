@@ -56,6 +56,13 @@ static QString curvesText(const QJsonObject &c) {
     return p.join(QStringLiteral("; "));
 }
 
+// The curve of each kind in effect when the boot ended (or crashed): the last of its " → " states.
+static QString lastCurvesText(const QJsonObject &c) {
+    QStringList p;
+    for (auto it = c.begin(); it != c.end(); ++it) p << it.key() + QStringLiteral(": ") + it.value().toString().section(QStringLiteral(" → "), -1);
+    return p.join(QStringLiteral("; "));
+}
+
 BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(8, 6, 8, 6);
@@ -205,7 +212,7 @@ void BootPage::apply(const QJsonObject &r) {
     if (!pick && list_->topLevelItemCount()) pick = list_->topLevelItem(0);
     list_->blockSignals(false);
     applyFilter();
-    patterns_->setText(patterns());
+    patterns_->setText(patterns(false));
     if (pick) list_->setCurrentItem(pick);
     else detail_->clear();
 
@@ -335,11 +342,11 @@ void BootPage::applyFilter() {
     }
 }
 
-QString BootPage::patterns() const {
+QString BootPage::patterns(bool everyCurve) const {
     const QJsonArray boots = data_.value(QStringLiteral("boots")).toArray();
     int ended = 0, unclean = 0, timed = 0;
     qint64 total = 0, longest = 0;
-    QMap<QString, QPair<int, int>> byCurves;   // curves text → (ended boots, unclean)
+    QMap<QString, QPair<int, int>> byCurves;   // curves in effect at the end → (ended boots, unclean)
     for (const QJsonValue &v : boots) {
         const QJsonObject b = v.toObject();
         const QString state = b.value(QStringLiteral("state")).toString();
@@ -354,7 +361,7 @@ QString BootPage::patterns() const {
             ++timed;
         }
         const QJsonObject c = b.value(QStringLiteral("curves")).toObject();
-        auto &slot = byCurves[c.isEmpty() ? tr("stock (no curve)") : curvesText(c)];
+        auto &slot = byCurves[c.isEmpty() ? tr("stock (no curve)") : lastCurvesText(c)];
         ++slot.first;
         slot.second += bad;
     }
@@ -367,12 +374,16 @@ QString BootPage::patterns() const {
         QStringList rows;
         for (auto it = byCurves.cbegin(); it != byCurves.cend(); ++it) {
             const int pct = it.value().second * 100 / it.value().first;
+            const bool flagged = pct >= 50 && it.value().second >= 2;
+            if (!everyCurve && !flagged) continue;   // on screen: one row per curve sequence would bury the page
             const QString row = tr("%1: %2 of %3 unclean").arg(it.key().toHtmlEscaped()).arg(it.value().second).arg(it.value().first);
-            rows << (pct >= 50 && it.value().second >= 2 ? QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER), row) : row);
+            rows << (flagged ? QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER), row) : row);
         }
-        lines << tr("By curve in effect — %1").arg(rows.join(QStringLiteral(" · ")));
-        lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::MUTED),
-                     tr("Red: half or more of the boots with that curve ended uncleanly — test it at stock before blaming hardware."));
+        if (!rows.isEmpty()) {
+            lines << tr("By curve in effect — %1").arg(rows.join(QStringLiteral(" · ")));
+            lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::MUTED),
+                         tr("Red: half or more of the boots with that curve ended uncleanly — test it at stock before blaming hardware."));
+        }
     }
     return lines.join(QStringLiteral("<br>"));
 }
@@ -415,7 +426,7 @@ void BootPage::saveReport() {
                    stateText(b.value(QStringLiteral("state")).toString()),
                    eventsText(b.value(QStringLiteral("events")).toObject()), curvesText(b.value(QStringLiteral("curves")).toObject()));
     }
-    QString plain = patterns();
+    QString plain = patterns(true);
     plain.replace(QStringLiteral("<br>"), QStringLiteral("\n")).remove(QRegularExpression(QStringLiteral("<[^>]*>")));
     out << QString() << plain;
     QFile f(file);
