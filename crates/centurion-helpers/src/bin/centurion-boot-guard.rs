@@ -1,6 +1,7 @@
 //! centurion-boot-guard — keeps an unstable boot preset from crash-looping the machine.
 //!
-//!   centurion-boot-guard arm      (root) start of boot: arm, or trip if the last boot died armed
+//!   centurion-boot-guard arm      (root) start of boot: arm, or trip if the last boot died armed;
+//!                                  archives and clears the pstore records of the last crash
 //!   centurion-boot-guard watch    (root) arm, disarm after the stable window, stay up running the
 //!                                  flight recorder (flight.rs); SIGTERM = clean shutdown
 //!   centurion-boot-guard disarm   (root) this boot is fine (stable window over)
@@ -27,6 +28,10 @@ fn arm() -> i32 {
     // that was in flight then becomes an unsafe set of the signature) and open this one.
     for m in centurion_helpers::stability::on_boot() { eprintln!("centurion-boot-guard: {m}"); }
     centurion_helpers::stability::record_now();
+    // A crash's pstore records (efi-pstore: ~36 KiB of EFI variables per dump) go to the archive, freeing NVRAM.
+    // Never fatal: a record that cannot be archived stays where it is.
+    let ps = centurion_helpers::pstore::clear();
+    if ps["ok"] != true { eprintln!("centurion-boot-guard: pstore not (fully) archived: {}", ps["error"].as_str().unwrap_or("?")); }
     match bootguard::arm() {
         Ok(v) => {
             if v["tripped"] == true {

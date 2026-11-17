@@ -3,12 +3,12 @@
 //!
 //! * `list` (read-only, health-reader): every record found, text scrubbed (kernel addresses) and
 //!   clipped to its tail, newest first. Files are opened O_NOFOLLOW and must be regular files.
-//! * `clear` (tune-helper, root, after the GUI asked the user): copies each record from
+//! * `clear` (root: centurion-boot-guard at every boot, and tune-helper when the GUI asks): copies each record from
 //!   /sys/fs/pstore to /var/lib/centurion/pstore/ (the *scrubbed* text: the archive is world-readable,
 //!   like every other state file) and removes the pstore file only when its archive was written.
 //!   Removing a file from the pstore file system is what frees the EFI variable behind it
 //!   (OpenRC has no systemd-pstore, so efi-pstore records pile up in NVRAM). Nothing else is deleted
-//!   except archive files beyond the newest `KEEP_ARCHIVE`; EFI variables are never touched directly.
+//!   except archived crashes beyond the newest `KEEP_CRASHES`; EFI variables are never touched directly.
 
 use serde_json::{json, Value};
 use std::io::Read;
@@ -24,7 +24,9 @@ const MAX_TEXT: usize = 12 * 1024;
 const MAX_ENTRIES: usize = 40;
 const MAX_CANDIDATES: usize = 400;
 const MAX_DEPTH: usize = 3;
-const KEEP_ARCHIVE: usize = 30;
+const KEEP_CRASHES: usize = 10;
+/// Records further apart than this belong to different crashes (one efi-pstore dump is written as ~1 KiB parts over a few seconds).
+const CRASH_GAP_SECS: u64 = 60;
 
 fn kind_of(name: &str) -> &'static str {
     let base = name.rsplit('/').next().unwrap_or(name);
@@ -126,15 +128,19 @@ fn clear_in(pstore: &str, archive: &str, log: &mut dyn FnMut(&str)) -> Value {
     out
 }
 
-/// Only files this module wrote ("<digits>-….txt"), oldest crash time first out beyond KEEP_ARCHIVE.
+/// Only files this module wrote ("<digits>-….txt"), oldest crash first out beyond KEEP_CRASHES. A crash is kept or
+/// removed whole: counting files would cut a many-part dump at its oldest parts, and part 1 is the panic itself.
 fn prune_archive(archive: &str, log: &mut dyn FnMut(&str)) {
     let mut mine: Vec<(u64, PathBuf)> = std::fs::read_dir(archive).into_iter().flatten().flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
         .filter_map(|e| { let n = e.file_name().to_string_lossy().into_owned(); (n.ends_with(".txt")).then(|| archive_time(&n)).flatten().map(|t| (t, e.path())) })
         .collect();
     mine.sort_by_key(|m| std::cmp::Reverse(m.0));
-    for (_, p) in mine.into_iter().skip(KEEP_ARCHIVE) {
-        if std::fs::remove_file(&p).is_ok() { log(&format!("removed old archive {}", p.display())); }
+    let (mut crashes, mut prev) = (0usize, None::<u64>);
+    for (t, p) in mine {
+        if prev.map_or(true, |q| q - t > CRASH_GAP_SECS) { crashes += 1; }
+        prev = Some(t);
+        if crashes > KEEP_CRASHES && std::fs::remove_file(&p).is_ok() { log(&format!("removed old archive {}", p.display())); }
     }
 }
 
@@ -238,17 +244,31 @@ mod tests {
     }
 
     #[test]
+    fn a_crash_split_into_many_parts_is_kept_whole() {
+        // efi-pstore writes one dump as ~1 KiB parts over a few seconds; part 1 (the oldest time) holds the panic.
+        let a = tmp("prune-parts");
+        for part in 1..=23u64 { std::fs::write(a.join(archive_name(1000 + part / 10, &format!("dmesg-efi_pstore-old{part:02}"))), "x").unwrap(); }
+        for part in 1..=36u64 { std::fs::write(a.join(archive_name(500_000 + part / 12, &format!("dmesg-efi_pstore-new{part:02}"))), "x").unwrap(); }
+        prune_archive(a.to_str().unwrap(), &mut |_| {});
+        let names: Vec<String> = std::fs::read_dir(&a).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names.iter().filter(|n| n.contains("new")).count(), 36, "the newest crash lost parts: {names:?}");
+        assert!(names.iter().any(|n| n.contains("new01")));
+        assert_eq!(names.iter().filter(|n| n.contains("old")).count(), 23, "an older crash within the limit is kept whole");
+        let _ = std::fs::remove_dir_all(&a);
+    }
+
+    #[test]
     fn archive_is_pruned_to_the_newest() {
         let a = tmp("prune");
-        for t in 1..=(KEEP_ARCHIVE as u64 + 5) { std::fs::write(a.join(archive_name(1000 + t, "dmesg-efi-x")), "x").unwrap(); }
+        for t in 1..=(KEEP_CRASHES as u64 + 5) { std::fs::write(a.join(archive_name(1000 + t * 1000, "dmesg-efi-x")), "x").unwrap(); }
         std::fs::write(a.join("README.txt"), "not ours").unwrap();
         let mut n = 0;
         prune_archive(a.to_str().unwrap(), &mut |_| n += 1);
         assert_eq!(n, 5);
         let left = std::fs::read_dir(&a).unwrap().count();
-        assert_eq!(left, KEEP_ARCHIVE + 1);
+        assert_eq!(left, KEEP_CRASHES + 1);
         assert!(a.join("README.txt").exists());
-        assert!(!a.join(archive_name(1001, "dmesg-efi-x")).exists());
+        assert!(!a.join(archive_name(2000, "dmesg-efi-x")).exists());
         let _ = std::fs::remove_dir_all(&a);
     }
 }
