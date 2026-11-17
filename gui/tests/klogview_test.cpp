@@ -27,6 +27,10 @@ int main(int argc, char **argv) {
     CHECK(levelIndex(QStringLiteral("EMERG")) == 0 && levelIndex(QStringLiteral("WARN")) == 4 && levelIndex(QStringLiteral("DEBUG")) == -1);
     CHECK(normalize(QStringLiteral("a 12 b 3")) == QLatin1String("a # b #"));
     CHECK(normalize(QStringLiteral("  pid 42 ")) == QLatin1String("pid #"));
+    CHECK(stem(QStringLiteral("nvme nvme0: I/O 12 QID 3 timeout, aborting")) == QLatin1String("timeout, aborting"));
+    CHECK(stem(QStringLiteral("usb 1-2: device descriptor read/64, error -71")) == QLatin1String("device descriptor"));
+    CHECK(stem(QStringLiteral("mce: |CE| 0x12")).isEmpty());
+    CHECK(stem(QStringLiteral("ACPI BIOS Error (bug): Could not resolve symbol")) == QLatin1String("ACPI BIOS Error (bug): Could not resolve symbol"));
 
     // Repeats differing only in numbers form one row; the other message stays its own row.
     const std::vector<Line> lines{

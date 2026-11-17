@@ -460,6 +460,11 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
             <source>Cannot write %1: %2</source>
             <translation>%1 yazılamıyor: %2</translation>
         </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="334"/>
+            <source>No recorded boot matches this filter.</source>
+            <translation>Bu süzgece uyan kayıtlı açılış yok.</translation>
+        </message>
     </context>
     <context>
         <name>BootLogoDialog</name>
@@ -3724,6 +3729,26 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <source>Add %1 whitelisted program(s) and %2 blacklisted address(es)?</source>
             <translation>%1 beyaz listeye alınmış program ve %2 kara listeye alınmış adres eklensin mi?</translation>
         </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1602"/>
+            <source>a program's own client socket (temporary port)</source>
+            <translation>bir programın kendi istemci soketi (geçici port)</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1624"/>
+            <source>%1 grey row(s) are programs' own client sockets on temporary ports.</source>
+            <translation>%1 gri satır, programların geçici portlardaki kendi istemci soketleridir.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1740"/>
+            <source>%1 line(s) were not valid rules and are skipped.</source>
+            <translation>%1 satır geçerli bir kural değil ve atlandı.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1761"/>
+            <source>Stopped after %1 of %2 step(s): %3</source>
+            <translation>%2 adımın %1 tanesinden sonra durdu: %3</translation>
+        </message>
     </context>
     <context>
         <name>NotifyDialog</name>
@@ -5865,6 +5890,16 @@ age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translati
             <source>Swap file(s) in use, always left out: %1.</source>
             <translation>Kullanımdaki takas dosyaları, her zaman hariç tutulur: %1.</translation>
         </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="921"/>
+            <source>%1 lines: the helper accepts at most 128 exclude patterns.</source>
+            <translation>%1 satır: yardımcı en fazla 128 hariç tutma kalıbı kabul eder.</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="932"/>
+            <source>The exclude list has %1 lines; the helper accepts at most 128.</source>
+            <translation>Hariç tutma listesinde %1 satır var; yardımcı en fazla 128 kabul eder.</translation>
+        </message>
     </context>
     <context>
         <name>blocklistsubs</name>
@@ -7973,11 +8008,6 @@ sudo centurion-calibrate --restore
             <translation>Steam oyunları</translation>
         </message>
         <message>
-            <location filename="../src/distroprofile.cpp" line="126"/>
-            <source>Installed games (Steam downloads them again); saves in the cloud or ~/.local/share stay</source>
-            <translation>Kurulu oyunlar (Steam yeniden indirir); buluttaki veya ~/.local/share içindeki kayıtlar kalır</translation>
-        </message>
-        <message>
             <location filename="../src/distroprofile.cpp" line="127"/>
             <source>Flatpak app caches</source>
             <translation>Flatpak uygulama önbellekleri</translation>
@@ -7986,16 +8016,6 @@ sudo centurion-calibrate --restore
             <location filename="../src/distroprofile.cpp" line="127"/>
             <source>Per-app caches of Flatpak applications</source>
             <translation>Flatpak uygulamalarının uygulama başına önbellekleri</translation>
-        </message>
-        <message>
-            <location filename="../src/distroprofile.cpp" line="128"/>
-            <source>Flatpak repository</source>
-            <translation>Flatpak deposu</translation>
-        </message>
-        <message>
-            <location filename="../src/distroprofile.cpp" line="128"/>
-            <source>System Flatpak objects: flatpak reinstalls the apps (their list is in /var/lib/flatpak/app)</source>
-            <translation>Sistem Flatpak nesneleri: flatpak uygulamaları yeniden kurar (listeleri /var/lib/flatpak/app içinde)</translation>
         </message>
         <message>
             <location filename="../src/distroprofile.cpp" line="129"/>
@@ -8131,6 +8151,21 @@ system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklen
             <location filename="../src/distroprofile.cpp" line="167"/>
             <source>Image-based (ostree) system: / is a read-only deployment. Back up /etc, /var and /home; the OS itself comes back with rpm-ostree / bootc.</source>
             <translation>İmaj tabanlı (ostree) sistem: / salt okunur bir dağıtımdır. /etc, /var ve /home'u yedekleyin; işletim sisteminin kendisi rpm-ostree / bootc ile geri gelir.</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="152"/>
+            <source>Installed game files (Steam downloads them again). Proton prefixes with local saves (steamapps/compatdata) stay in the image</source>
+            <translation>Kurulu oyun dosyaları (Steam yeniden indirir). Yerel kayıtları tutan Proton önekleri (steamapps/compatdata) imajda kalır</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="153"/>
+            <source>Steam shader caches</source>
+            <translation>Steam gölgelendirici önbellekleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="153"/>
+            <source>Compiled shaders; Steam rebuilds them</source>
+            <translation>Derlenmiş gölgelendiriciler; Steam yeniden oluşturur</translation>
         </message>
     </context>
     <context>

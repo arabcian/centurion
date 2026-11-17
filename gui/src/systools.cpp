@@ -68,7 +68,7 @@ const ToolPkg TOOL_PKGS[] = {
     {"age", "app-crypt/age", "age", "age", "age"},
     {"pkexec", "sys-auth/polkit", "polkit", "polkit", "pkexec"},
     {"nft", "net-firewall/nftables", "nftables", "nftables", "nftables"},
-    {"acpi_call", "sys-power/acpi_call", "acpi_call-dkms", "acpi_call", "acpi-call-dkms"},
+    {"acpi_call", "sys-power/acpi_call", "acpi_call-dkms", "", "acpi-call-dkms"},  // Fedora: not packaged
 };
 
 // "gentoo", "arch", "fedora" (Fedora and the RHEL family), "debian" (Debian and Ubuntu), or "" for any other
@@ -96,10 +96,13 @@ QString installHint(const QString &tool) {
     const QString fam = distroFamily();
     for (const ToolPkg &p : TOOL_PKGS) {
         if (tool != QLatin1String(p.tool)) continue;
-        if (fam == QLatin1String("gentoo")) return QStringLiteral("emerge %1").arg(QLatin1String(p.gentoo));
-        if (fam == QLatin1String("arch")) return QStringLiteral("pacman -S %1").arg(QLatin1String(p.arch));
-        if (fam == QLatin1String("fedora")) return QStringLiteral("dnf install %1").arg(QLatin1String(p.fedora));
-        if (fam == QLatin1String("debian")) return QStringLiteral("apt install %1").arg(QLatin1String(p.debian));
+        auto pick = [&](const char *pkg, const char *cmd) {   // "" = no package in that family's repositories
+            return *pkg ? QStringLiteral("%1 %2").arg(QLatin1String(cmd), QLatin1String(pkg)) : tool;
+        };
+        if (fam == QLatin1String("gentoo")) return pick(p.gentoo, "emerge");
+        if (fam == QLatin1String("arch")) return pick(p.arch, "pacman -S");
+        if (fam == QLatin1String("fedora")) return pick(p.fedora, "dnf install");
+        if (fam == QLatin1String("debian")) return pick(p.debian, "apt install");
         break;
     }
     return tool;

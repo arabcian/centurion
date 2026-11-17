@@ -105,6 +105,31 @@ QString legacyDefaults() {
     return QStringLiteral("/proc/*\n/sys/*\n/dev/*\n/run/*\n/tmp/*\n/var/tmp/*\n/mnt/*\n/media/*\n/lost+found\n/var/cache/*\n/usr/portage/distfiles/*");
 }
 
+bool isDefaultLine(const QString &line) {
+    for (const QString &f : families()) if (imageExcludes(f).contains(line)) return true;
+    return legacyDefaults().split(QLatin1Char('\n')).contains(line);
+}
+
+QStringList lines(const QString &text) {
+    QStringList out;
+    for (const QString &l : text.split(QLatin1Char('\n'))) if (!l.trimmed().isEmpty()) out << l.trimmed();
+    return out;
+}
+
+QString unescapeOctal(const QString &s) {
+    QByteArray in = s.toUtf8(), out;
+    for (int i = 0; i < in.size(); ++i) {
+        if (in[i] == '\\' && i + 3 < in.size() && in[i + 1] >= '0' && in[i + 1] <= '3' && in[i + 2] >= '0' && in[i + 2] <= '7'
+            && in[i + 3] >= '0' && in[i + 3] <= '7') {
+            out += char((in[i + 1] - '0') * 64 + (in[i + 2] - '0') * 8 + (in[i + 3] - '0'));
+            i += 3;
+        } else {
+            out += in[i];
+        }
+    }
+    return QString::fromUtf8(out);
+}
+
 QStringList swapFiles() {
     QStringList out;
     QFile f(QStringLiteral("/proc/swaps"));
@@ -113,7 +138,7 @@ QStringList swapFiles() {
     for (int i = 1; i < lines.size(); ++i) {
         const QStringList cols = lines.at(i).simplified().split(QLatin1Char(' '));
         if (cols.size() >= 2 && cols.at(1) == QLatin1String("file") && cols.at(0).startsWith(QLatin1Char('/')))
-            out << QString(cols.at(0)).replace(QStringLiteral("\\040"), QStringLiteral(" "));
+            out << unescapeOctal(cols.at(0));
     }
     return out;
 }
@@ -123,9 +148,10 @@ QList<Optional> optionalExcludes() {
         {QStringLiteral("/home/*/.cache/*"), tr("Users' caches"), tr("Browser, thumbnail and build caches under ~/.cache (only matters with /home included)")},
         {QStringLiteral("/root/.cache/*"), tr("root's cache"), tr("~/.cache of root")},
         {QStringLiteral("/home/*/.local/share/Trash/*"), tr("Users' trash"), tr("Files already moved to the trash")},
-        {QStringLiteral("/home/*/.local/share/Steam/steamapps/*"), tr("Steam games"), tr("Installed games (Steam downloads them again); saves in the cloud or ~/.local/share stay")},
+        {QStringLiteral("/home/*/.local/share/Steam/steamapps/common/*"), tr("Steam games"),
+         tr("Installed game files (Steam downloads them again). Proton prefixes with local saves (steamapps/compatdata) stay in the image")},
+        {QStringLiteral("/home/*/.local/share/Steam/steamapps/shadercache/*"), tr("Steam shader caches"), tr("Compiled shaders; Steam rebuilds them")},
         {QStringLiteral("/home/*/.var/app/*/cache/*"), tr("Flatpak app caches"), tr("Per-app caches of Flatpak applications")},
-        {QStringLiteral("/var/lib/flatpak/repo/*"), tr("Flatpak repository"), tr("System Flatpak objects: flatpak reinstalls the apps (their list is in /var/lib/flatpak/app)")},
         {QStringLiteral("/var/lib/docker/*"), tr("Docker"), tr("Images, containers and volumes of Docker — back up volumes separately if they hold data")},
         {QStringLiteral("/var/lib/containers/*"), tr("Podman (root)"), tr("Images and containers of rootful Podman")},
         {QStringLiteral("/var/lib/libvirt/images/*"), tr("Virtual machine disks"), tr("libvirt / virt-manager disk images: large, better copied while the VMs are off")},

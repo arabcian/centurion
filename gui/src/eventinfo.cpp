@@ -152,8 +152,10 @@ Info explain(const QJsonObject &e) {
                    tr("Update the BIOS and the device's firmware."),
                    tr("For a test, boot with pcie_aspm.policy=performance (or pcie_aspm=off); if the errors stop, ASPM is the cause."),
                    tr("pci=noaer only hides the reports; it does not fix the link.")};
-        if (const QString dev = cap(text, R"(([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]))"); !dev.isEmpty())
-            i.facts << tr("PCIe device: %1").arg(dev);
+        // "pcieport <root port>: AER: … received from <device>": the device that erred is the one after "from".
+        QString dev = cap(text, R"(from ([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]))");
+        if (dev.isEmpty()) dev = cap(text, R"(([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]))");
+        if (!dev.isEmpty()) i.facts << tr("PCIe device: %1").arg(dev);
         if (const QString type = cap(text, R"(type=([A-Za-z ]+?)[,)])"); !type.isEmpty()) i.facts << tr("Error layer: %1").arg(type);
         i.urgency = corrected ? tr("Low, unless it floods.") : tr("Serious for the affected device.");
     } else if (kind == QLatin1String("lockup")) {
@@ -205,8 +207,9 @@ Info explain(const QJsonObject &e) {
                     amd ? tr("Waking from suspend") : tr("Panel Self Refresh (display power saving)")};
         i.steps = {tr("Update the kernel, Mesa and linux-firmware."), tr("Note which program was running (see below)."),
                    amd ? tr("If it follows suspend, check Sleep & wake.") : tr("If the screen flickers or freezes, test i915.enable_psr=0.")};
-        if (const QString proc = cap(text, R"(in ([^\s\[]+) \[(\d+)\])"); !proc.isEmpty()) i.facts << tr("Program: %1").arg(proc);
-        if (const QString proc = cap(text, R"(process ([^\s]+) pid)"); !proc.isEmpty()) i.facts << tr("Program: %1").arg(proc);
+        QString proc = cap(text, R"(GPU HANG: [^,]*, in ([^\s\[]+) \[\d+\])");
+        if (proc.isEmpty()) proc = cap(text, R"(process ([^\s]+) pid)");
+        if (!proc.isEmpty()) i.facts << tr("Program: %1").arg(proc);
         i.urgency = tr("Annoying rather than dangerous, unless it repeats.");
     } else if (kind == QLatin1String("wifi")) {
         i.meaning = tr("The Wi-Fi adapter's firmware crashed and the driver restarted it; the connection drops for a moment.");
@@ -305,25 +308,32 @@ QJsonObject classifyLine(const QString &m) {
     if (const QRegularExpressionMatch x = QRegularExpression(QStringLiteral(R"(NVRM: Xid \([^)]*\): (\d+))")).match(m); x.hasMatch())
         return ev("xid", "error", QStringLiteral("Xid %1").arg(x.captured(1)), x.captured(1).toInt());
     if (has("NVRM") && (has("heartbeat timed out") || has("GSP Timeout"))) return ev("gsp", "critical", QStringLiteral("GSP timeout"));
-    if (has("[Hardware Error]") || has("Machine check events logged") || has("Machine Check"))
-        return ev("mce", has("Uncorrected") || has("Exception") ? "critical" : "warn", QStringLiteral("Machine check"));
-    if (has("AER:") || has("PCIe Bus Error"))
-        return ev("aer", "warn", has("Corrected") || has("severity=Correct") ? QStringLiteral("PCIe corrected error") : QStringLiteral("PCIe uncorrectable error"));
+    if (has("[Hardware Error]") || has("Machine check events logged") || has("Machine Check Exception") || has("Machine Check:"))
+        return ev("mce", has("Uncorrected") || has("|UE|") || has("Exception") ? "critical" : "warn", QStringLiteral("Machine check"));
+    if (has("AER:") || has("PCIe Bus Error")) {
+        if (has("Corrected error") || has("severity=Correct")) return ev("aer", "warn", QStringLiteral("PCIe corrected error"));
+        if (has("Uncorrect") || has("Fatal") || has("severity=")) return ev("aer", "critical", QStringLiteral("PCIe uncorrectable error"));
+        return {};   // the detail lines of a report ("device [8086:…] error status/mask")
+    }
     if (has("soft lockup") || has("hard LOCKUP") || has("detected stalls") || has("self-detected stall"))
         return ev("lockup", "critical", QStringLiteral("CPU lockup / RCU stall"));
-    if (has("D3cold to D0")) return ev("d3cold", "critical", QStringLiteral("D3cold"));
-    if (has("amdgpu") && ((has("ring") && has("timeout")) || has("GPU reset"))) return ev("amdgpu", "error", QStringLiteral("AMD GPU hang"));
+    if (has("Unable to change power state from D3cold to D0")) return ev("d3cold", "critical", QStringLiteral("D3cold"));
+    if (has("amdgpu") && ((has("ring") && has("timeout")) || has("GPU reset begin"))) return ev("amdgpu", "error", QStringLiteral("AMD GPU hang"));
     if (m.startsWith(QLatin1String("nvme nvme")) && (has("timeout") || has("resetting") || has("controller is down")))
         return ev("nvme", "error", has("controller is down") ? QStringLiteral("NVMe controller is down") : QStringLiteral("NVMe timeout"));
-    if (has("EXT4-fs error") || (has("BTRFS") && (has("error") || has("csum failed"))) || (m.startsWith(QLatin1String("XFS")) && has("orruption")))
+    // Only the kernel's own error reports: "BTRFS info … scrub finished with 0 errors" is not one.
+    if (has("EXT4-fs error") || m.startsWith(QLatin1String("BTRFS error")) || (m.startsWith(QLatin1String("BTRFS warning")) && has("csum failed"))
+        || (m.startsWith(QLatin1String("XFS")) && (has("Corruption") || has("corruption detected"))))
         return ev("fs", "critical", QStringLiteral("File system error"));
-    if ((has("i915") && has("GPU HANG")) || (m.startsWith(QLatin1String("xe ")) && (has("Timedout job") || has("reset"))))
+    if ((has("i915") && has("GPU HANG")) || (m.startsWith(QLatin1String("xe ")) && (has("Timedout job") || has("trying reset"))))
         return ev("igpu", "error", QStringLiteral("Intel GPU hang"));
-    if ((has("iwlwifi") && has("Microcode SW error")) || (has("mt79") && has("timeout")) || has("firmware crashed"))
+    if ((has("iwlwifi") && has("Microcode SW error")) || (has("mt79") && has("Message") && has("timeout"))
+        || (has("firmware crashed") && (has("ath9k") || has("ath10k") || has("ath11k") || has("ath12k"))))
         return ev("wifi", "warn", QStringLiteral("Wi-Fi firmware error"));
     if (has("critical temperature reached")) return ev("thermal", "critical", QStringLiteral("Critical temperature"));
-    if (has("temperature above threshold")) return ev("thermal", "warn", QStringLiteral("Temperature above threshold"));
-    if (has("Out of memory") || has("Killed process")) return ev("oom", "warn", QStringLiteral("Out of memory"));
+    if (has("Package temperature above threshold") || has("Core temperature above threshold"))
+        return ev("thermal", "warn", QStringLiteral("Temperature above threshold"));
+    if (has("Out of memory:") && has("Kill")) return ev("oom", "warn", QStringLiteral("Out of memory"));
     if (m.startsWith(QLatin1String("WARNING: CPU:"))) {
         const QString mod = cap(m, R"(\[([\w-]+)\]\s*$)");
         return ev("oops", "error", mod.isEmpty() ? QStringLiteral("Kernel warning") : QStringLiteral("Kernel warning in %1").arg(mod));

@@ -104,6 +104,8 @@ private:
     QPlainTextEdit *excludes_, *log_;
     QLabel *free_, *status_;
     QLabel *distroNote_ = nullptr;
+    QStringList swaps_;            // swap files in use, read on show (not on every keystroke)
+    QString caveat_;               // distroprofile::imageCaveat(), read on show
     QTreeWidget *list_;
     QProgressBar *bar_;
     QPushButton *cancel_;

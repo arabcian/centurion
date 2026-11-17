@@ -29,6 +29,10 @@ std::optional<Line> parse(const QString &saved);
 /// A message with its numbers (counters, addresses, process ids) replaced by '#'. Repeats of one
 /// message differ only in those, so they share a key.
 QString normalize(const QString &msg);
+/// "Show only lines like this": the longest run of whole words without digits or '|' (device numbers,
+/// addresses and counters differ between repeats; '|' would split the filter), at least 6 characters;
+/// empty when the message has none. "nvme nvme0: I/O 12 QID 3 timeout, aborting" → "timeout, aborting".
+QString stem(const QString &msg);
 
 struct Row {
     Line first;         // the first occurrence: what is shown

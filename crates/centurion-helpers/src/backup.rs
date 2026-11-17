@@ -516,7 +516,8 @@ impl Enc {
 }
 
 /// An image a new increment could continue.
-struct Tip { image: PathBuf, snar: PathBuf, level: u64, chain: String, enc: Enc }
+/// `rules`: the exclude list and /home choice the tip was made with (None: a sidecar from before they were kept).
+struct Tip { image: PathBuf, snar: PathBuf, level: u64, chain: String, enc: Enc, rules: Option<Value> }
 
 /// The newest image in a folder that has a snapshot and the given encryption: the next increment continues
 /// from it. A folder may hold chains of several kinds (an older passphrase chain next to a newer plain image):
@@ -536,7 +537,8 @@ fn chain_tip(dir: &Path, enc: &Enc) -> (Option<Tip>, bool) {
         if tip_enc != *enc { continue; }
         let mtime = fs::symlink_metadata(&p).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
         if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
-            best = Some((mtime, Tip { snar: snar_of(&p), image: p, level, chain: chain.to_owned(), enc: tip_enc }));
+            let rules = (!info["rules"].is_null()).then(|| info["rules"].clone());
+            best = Some((mtime, Tip { snar: snar_of(&p), image: p, level, chain: chain.to_owned(), enc: tip_enc, rules }));
         }
     }
     (best.map(|(_, t)| t), any)
@@ -544,8 +546,13 @@ fn chain_tip(dir: &Path, enc: &Enc) -> (Option<Tip>, bool) {
 
 /// Whether a new image may continue the chain of `tip`: same encryption, and for a passphrase the same
 /// passphrase (a restore asks for one). Err stops the backup; Ok(Some(note)) starts a new chain instead.
-fn continues(tip: &Tip, enc: &Enc, key: Option<&Key>) -> Result<Option<String>, String> {
+fn continues(tip: &Tip, enc: &Enc, key: Option<&Key>, rules: &Value) -> Result<Option<String>, String> {
     if tip.level >= MAX_LEVEL { return Ok(Some(format!("the chain has {MAX_LEVEL} increments: a new full image starts the next one"))); }
+    // Another exclude list or /home choice: an increment would leave out (or newly take in) whole trees that
+    // the full image holds differently, and a chain restore would mix the two. A new chain is consistent.
+    if tip.rules.as_ref().is_some_and(|r| r != rules) {
+        return Ok(Some("a new full image: the exclude list or the /home choice changed since the chain began".into()));
+    }
     if *enc != tip.enc {
         return Ok(Some(format!("a new full image: the chain is {}, this image is {}", tip.enc.label(), enc.label())));
     }
@@ -597,6 +604,14 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
         }
         None => crate::distro::image_excludes(crate::distro::this_family()).iter().map(|s| s.to_string()).collect(),
     };
+    // What decides the image's contents (before the per-run entries below): kept in the sidecar, compared by
+    // the next increment. Order-insensitive.
+    let rules = {
+        let mut sorted = excludes.clone();
+        sorted.sort();
+        sorted.dedup();
+        json!({"excludes": sorted, "include_home": req["include_home"].as_bool().unwrap_or(false)})
+    };
     if !req["include_home"].as_bool().unwrap_or(false) { excludes.push(HOME_EXCLUDE.into()); }
     let low = req["low_priority"].as_bool().unwrap_or(true);
     // Swap files in use: gigabytes of meaningless pages, whatever the list says.
@@ -613,7 +628,7 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     let mut notes: Vec<String> = swap_notes;
     let tip = if req["incremental"].as_bool().unwrap_or(false) {
         match chain_tip(&dest, &enc) {
-            (Some(t), _) => match continues(&t, &enc, key.as_ref())? { None => Some(t), Some(n) => { notes.push(n); None } },
+            (Some(t), _) => match continues(&t, &enc, key.as_ref(), &rules)? { None => Some(t), Some(n) => { notes.push(n); None } },
             (None, true) => { notes.push(format!("a new full image: the earlier images here were made another way (this one is {})", enc.label())); None }
             (None, false) => { notes.push("no earlier image with a snapshot here: this one is the full image of a new chain".into()); None }
         }
@@ -730,6 +745,7 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
         "include_home": req["include_home"].as_bool().unwrap_or(false), "tar_status": tcode,
         "messages": prog.msg_count.load(Ordering::Relaxed),
         "level": level_out, "chain": chain, "snapshot": true, "encrypted": age.is_some(), "encryption": encryption, "recipient": rec,
+        "rules": rules,
         "parent": tip.as_ref().map(|t| t.image.file_name().unwrap_or_default().to_string_lossy().into_owned())});
     let side = sidecar(&fin);
     let _ = crate::write_root_file(&side, info.to_string().as_bytes());
@@ -1467,8 +1483,7 @@ fn stage_config(s: &Path, profile: bool, logs: bool) -> Staged {
     }
     let mut prof = Copier { links: true, ..Default::default() };
     if profile {
-        let family = crate::distro::this_family();
-        for p in crate::distro::PROFILE_COMMON.iter().chain(crate::distro::profile_paths(family)) {
+        for p in crate::distro::profile_list(crate::distro::this_family()) {
             prof.copy(&Path::new("/").join(p), &s.join("system-profile/root").join(p), 0);
         }
         profile_facts(&s.join("system-profile"));
@@ -2255,15 +2270,24 @@ mod tests {
     #[test]
     fn chains_keep_their_encryption() {
         let tip = |enc: Enc| Tip { image: PathBuf::from("/nonexistent/backup-2026-10-01.tar.gz"), snar: PathBuf::new(), level: 1,
-                                   chain: "backup-2026-10-01.tar.gz".into(), enc };
-        assert_eq!(continues(&tip(Enc::None), &Enc::None, None), Ok(None));
-        assert!(continues(&tip(Enc::None), &Enc::Recipient("age1a".into()), None).unwrap().is_some());
-        assert!(continues(&tip(Enc::Recipient("age1a".into())), &Enc::Recipient("age1b".into()), None).unwrap().is_some());
+                                   chain: "backup-2026-10-01.tar.gz".into(), enc, rules: None };
+        let r = json!({"excludes": ["/proc/*"], "include_home": false});
+        assert_eq!(continues(&tip(Enc::None), &Enc::None, None, &r), Ok(None));
+        assert!(continues(&tip(Enc::None), &Enc::Recipient("age1a".into()), None, &r).unwrap().is_some());
+        assert!(continues(&tip(Enc::Recipient("age1a".into())), &Enc::Recipient("age1b".into()), None, &r).unwrap().is_some());
         // A passphrase that cannot be checked against the chain stops the backup instead of guessing.
-        assert!(continues(&tip(Enc::Passphrase), &Enc::Passphrase, None).is_err());
+        assert!(continues(&tip(Enc::Passphrase), &Enc::Passphrase, None, &r).is_err());
         let mut full = tip(Enc::None);
         full.level = MAX_LEVEL;
-        assert!(continues(&full, &Enc::None, None).unwrap().is_some());
+        assert!(continues(&full, &Enc::None, None, &r).unwrap().is_some());
+        // Same rules continue; another exclude list or /home choice starts a new chain; an old sidecar (no rules) continues.
+        let mut same = tip(Enc::None);
+        same.rules = Some(r.clone());
+        assert_eq!(continues(&same, &Enc::None, None, &r), Ok(None));
+        let other = json!({"excludes": ["/proc/*", "/var/db/repos/gentoo/*"], "include_home": false});
+        assert!(continues(&same, &Enc::None, None, &other).unwrap().unwrap().contains("exclude list"));
+        let home = json!({"excludes": ["/proc/*"], "include_home": true});
+        assert!(continues(&same, &Enc::None, None, &home).unwrap().is_some());
         assert_eq!(Enc::of_info(&json!({"encrypted": true, "encryption": "passphrase"})), Enc::Passphrase);
         assert_eq!(Enc::of_info(&json!({"encrypted": true, "recipient": "age1q"})), Enc::Recipient("age1q".into()));
         assert_eq!(Enc::of_info(&json!({"encrypted": false})), Enc::None);

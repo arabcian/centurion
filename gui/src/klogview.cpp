@@ -37,6 +37,19 @@ QString normalize(const QString &msg) {
     return s;
 }
 
+QString stem(const QString &msg) {
+    QString best, run;
+    auto close = [&] { if (run.size() > best.size()) best = run; run.clear(); };
+    for (const QString &w : msg.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+        bool clean = !w.contains(QLatin1Char('|'));
+        for (const QChar c : w) if (c.isDigit()) { clean = false; break; }
+        if (!clean) { close(); continue; }
+        run += run.isEmpty() ? w : QLatin1Char(' ') + w;
+    }
+    close();
+    return best.size() >= 6 ? best : QString();
+}
+
 std::vector<Row> group(const std::vector<Line> &lines, bool groupRepeats) {
     std::vector<Row> rows;
     QHash<QString, size_t> at;  // key → its row

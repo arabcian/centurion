@@ -39,7 +39,14 @@ int main(int argc, char **argv) {
 
     // Storage and PCIe: the device.
     CHECK(anyContains(explain(classifyLine(QStringLiteral("nvme nvme1: I/O 12 QID 3 timeout, aborting"))).facts, "nvme1"));
-    CHECK(anyContains(explain(classifyLine(QStringLiteral("pcieport 0000:00:1c.0: AER: Corrected error message received from 0000:02:00.0"))).facts, "0000:00:1c.0"));
+    // The device that erred is the one after "from", not the root port that reported it.
+    CHECK(anyContains(explain(classifyLine(QStringLiteral("pcieport 0000:00:1c.0: AER: Corrected error message received from 0000:02:00.0"))).facts, "0000:02:00.0"));
+    CHECK(anyContains(explain(classifyLine(QStringLiteral("pcieport 0000:00:1c.0: AER: Corrected error received: 0000:00:1c.0"))).facts, "0000:00:1c.0"));
+    // Not errors: harmless lines that only mention the words, and AER detail lines.
+    CHECK(classifyLine(QStringLiteral("BTRFS info (device sda2): scrub: finished on devid 1 with status: 0 errors")).isEmpty());
+    CHECK(classifyLine(QStringLiteral("nvme 0000:02:00.0: AER:   device [144d:a80a] error status/mask=00000001/0000e000")).isEmpty());
+    CHECK(classifyLine(QStringLiteral("iwlwifi 0000:00:14.3: loaded firmware version 89.0")).isEmpty());
+    CHECK(classifyLine(QStringLiteral("systemd[1]: Started Out of memory killer daemon")).isEmpty());
     CHECK(anyContains(explain(classifyLine(QStringLiteral("BTRFS error (device nvme0n1p3): bdev /dev/nvme0n1p3 errs: wr 0, rd 0, flush 0, corrupt 1"))).steps, "scrub"));
     CHECK(anyContains(explain(classifyLine(QStringLiteral("EXT4-fs error (device sda2): ext4_find_entry:1455: inode #2"))).facts, "sda2"));
     CHECK(anyContains(explain(classifyLine(QStringLiteral("watchdog: BUG: soft lockup - CPU#5 stuck for 22s! [kworker/5:1:123]"))).facts, "kworker/5"));
@@ -67,6 +74,17 @@ int main(int argc, char **argv) {
     CHECK(!imageExcludes(QStringLiteral("debian")).contains(QStringLiteral("/usr/portage/distfiles/*")));
     CHECK(imageExcludes(QStringLiteral("gentoo")).contains(QStringLiteral("/usr/portage/distfiles/*")));
     CHECK(restoreHint(QStringLiteral("gentoo")).startsWith(QLatin1String("/mnt/gentoo")));
+    // The Defaults menu replaces default lines only; the user's own stay.
+    CHECK(isDefaultLine(QStringLiteral("/var/lib/pacman/sync/*")) && isDefaultLine(QStringLiteral("/usr/portage/distfiles/*")));
+    CHECK(!isDefaultLine(QStringLiteral("/data/*")) && !isDefaultLine(QStringLiteral("/home/*/.cache/*")));
+    CHECK(lines(QStringLiteral(" /a \r\n\n  \n/b")) == QStringList({QStringLiteral("/a"), QStringLiteral("/b")}));
+    CHECK(lines(legacyDefaults()).size() == 11);
+    CHECK(unescapeOctal(QStringLiteral("/swap\\040file\\011x")) == QStringLiteral("/swap file\tx"));
+    CHECK(unescapeOctal(QStringLiteral("/a\\9")) == QStringLiteral("/a\\9"));
+    for (const Optional &o : optionalExcludes()) {
+        CHECK(o.pattern.startsWith(QLatin1Char('/')) && !o.label.isEmpty() && !o.about.isEmpty());
+        CHECK(!o.pattern.endsWith(QLatin1String("/steamapps/*")));   // compatdata (Proton saves) must stay
+    }
 
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);
     else std::puts("eventinfo: all checks passed");

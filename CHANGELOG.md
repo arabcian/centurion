@@ -13,8 +13,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   (Steam games, caches, Docker/Podman, VM disks, journal, Ollama models…). Active swap files are always left out
   (`distro.rs`, mirrored by `gui/src/distroprofile.cpp`, kept in step by a test). A list saved with the old
   built-in default follows the new one; edited lists are kept.
+  An incremental image whose exclude list or /home choice differs from its chain's starts a new full image
+  (the sidecar keeps the chain's `rules`), so a chain restore never mixes two different selections.
 - System profile: the package manager configuration and package list of every supported family (pacman, dpkg,
-  rpm, xbps, apk), plus `packages-explicit.txt` (world set / explicitly installed). Install hints (age, polkit,
+  rpm, xbps, apk; package queries time out after 20 s), plus `packages-explicit.txt` (world set / explicitly
+  installed). Network configuration (netplan, ifupdown, ifcfg), which can hold Wi-Fi passphrases, is not copied. Install hints (age, polkit,
   nftables, acpi_call) and the restore-target placeholder follow the distribution.
 - Events & alerts: an explanation pane and dialog per event — meaning, usual causes, steps, urgency and details
   read from the record (process, PCI device, drive, killed process, kernel function) — for every Xid group, GSP,

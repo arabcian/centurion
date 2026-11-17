@@ -27,8 +27,15 @@ QStringList imageExcludes(const QString &family);
 QString excludeSummary(const QString &family);
 /// The previous built-in (Gentoo-only) default: a saved list equal to it was never edited.
 QString legacyDefaults();
+/// Whether `line` is a default of any family (or of the old built-in list): the Defaults menu replaces those
+/// lines and keeps every other one (the user's own).
+bool isDefaultLine(const QString &line);
+/// A list as the helper receives it: one trimmed pattern per non-empty line.
+QStringList lines(const QString &text);
 /// Swap files in use (/proc/swaps). The helper always leaves them out of an image.
 QStringList swapFiles();
+/// /proc/swaps's escaping undone ("\040" → space), like distro::unescape_octal.
+QString unescapeOctal(const QString &s);
 
 /// Large, regenerable or separately backed-up data a user may want to leave out too.
 struct Optional { QString pattern, label, about; };

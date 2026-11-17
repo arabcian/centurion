@@ -27,7 +27,6 @@
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
-#include <QRegularExpression>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QScrollBar>
@@ -464,9 +463,7 @@ void KlogPage::contextMenu(const QPoint &pos) {
             });
         }
         menu->addAction(tr("Copy this line"), this, [line = c.selectedText().trimmed()] { QApplication::clipboard()->setText(line); });
-        // The message with its numbers cut off at the first digit run: the same message from other boots / devices.
-        const int digit = msg.indexOf(QRegularExpression(QStringLiteral("\\d")));
-        const QString stem = msg.left(digit > 12 ? digit : 60).trimmed();
+        const QString stem = klogview::stem(msg);
         if (!stem.isEmpty())
             menu->addAction(tr("Show only lines like this"), this, [this, stem] { filter_->setText(stem); });
         if (muted_.contains(key)) menu->addAction(tr("Unmute this message"), this, [this, key] { setMuted(key, false); });
@@ -491,12 +488,12 @@ void KlogPage::fillPresets(QMenu *menu) {
     struct Preset { const char *label, *filter; };
     static const Preset PRESETS[] = {
         {QT_TR_NOOP("Graphics (NVIDIA, AMD, Intel, DRM)"), "NVRM|nvidia|amdgpu|i915|xe 0000|drm|nouveau"},
-        {QT_TR_NOOP("Storage (NVMe, SATA, file systems)"), "nvme|ata|[sd|EXT4|BTRFS|XFS|I/O error|blk_update"},
+        {QT_TR_NOOP("Storage (NVMe, SATA, file systems)"), "nvme|ata1|ata2|ata3|ata4|ahci|[sd|EXT4-fs|BTRFS|XFS|I/O error|blk_update"},
         {QT_TR_NOOP("USB and Thunderbolt"), "usb|xhci|thunderbolt|typec|ucsi"},
         {QT_TR_NOOP("PCIe"), "pcieport|AER|PCIe|pci 0000"},
         {QT_TR_NOOP("Network and Wi-Fi"), "iwlwifi|mt79|ath1|rtw|r8169|igc|e1000|wlan|wlp|enp|Bluetooth"},
-        {QT_TR_NOOP("Firmware and ACPI"), "firmware|ACPI|BIOS|EFI|microcode"},
-        {QT_TR_NOOP("CPU, memory and machine checks"), "mce|Machine check|Hardware Error|EDAC|Out of memory|oom|lockup|stall"},
+        {QT_TR_NOOP("Firmware and ACPI"), "firmware|ACPI|BIOS|efi:|microcode"},
+        {QT_TR_NOOP("CPU, memory and machine checks"), "mce:|Machine check|Hardware Error|EDAC|Out of memory|oom-kill|lockup|detected stall"},
         {QT_TR_NOOP("Power, suspend and thermal"), "PM:|suspend|resume|thermal|temperature|throttl|D3cold"},
         {QT_TR_NOOP("Kernel bugs and warnings"), "BUG:|Oops|WARNING:|Call Trace|taint"},
         {QT_TR_NOOP("Audio"), "snd|sof-audio|hda|soundwire"},

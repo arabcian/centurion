@@ -757,20 +757,22 @@ void NetPage::fillTraffic() {
         }
         trafficTree_->setSortingEnabled(true);
         trafficTree_->sortByColumn(3, Qt::DescendingOrder);
-    } else
-    for (int i = days.size() - 1, shown = 0; i >= 0 && shown < TRAFFIC_DAYS_SHOWN; --i, ++shown) {
-        const QString &day = days.at(i);
-        QList<QPair<QString, TrafficTotal>> progs;
-        const QMap<QString, TrafficTotal> &of = trafficDays_.value(day);
-        for (auto p = of.cbegin(); p != of.cend(); ++p) progs << qMakePair(p.key(), p.value());
-        std::sort(progs.begin(), progs.end(), [](const auto &a, const auto &b) { return a.second.tx + a.second.rx > b.second.tx + b.second.rx; });
-        for (const auto &pr : progs) {
-            const TrafficTotal &t = pr.second;
-            auto *it = new SortItem({day, pr.first, humanBytes(t.tx), humanBytes(t.rx), QString::number(t.conns)});
-            it->setData(2, SortRole, double(t.tx));
-            it->setData(3, SortRole, double(t.rx));
-            it->setData(4, SortRole, double(t.conns));
-            trafficTree_->addTopLevelItem(it);
+    } else {
+        trafficTree_->setSortingEnabled(false);   // per day: newest day first, in the order written below
+        for (int i = days.size() - 1, shown = 0; i >= 0 && shown < TRAFFIC_DAYS_SHOWN; --i, ++shown) {
+            const QString &day = days.at(i);
+            QList<QPair<QString, TrafficTotal>> progs;
+            const QMap<QString, TrafficTotal> &of = trafficDays_.value(day);
+            for (auto p = of.cbegin(); p != of.cend(); ++p) progs << qMakePair(p.key(), p.value());
+            std::sort(progs.begin(), progs.end(), [](const auto &a, const auto &b) { return a.second.tx + a.second.rx > b.second.tx + b.second.rx; });
+            for (const auto &pr : progs) {
+                const TrafficTotal &t = pr.second;
+                auto *it = new SortItem({day, pr.first, humanBytes(t.tx), humanBytes(t.rx), QString::number(t.conns)});
+                it->setData(2, SortRole, double(t.tx));
+                it->setData(3, SortRole, double(t.rx));
+                it->setData(4, SortRole, double(t.conns));
+                trafficTree_->addTopLevelItem(it);
+            }
         }
     }
     if (!trafficReadable_ && !trafficSeen_.isNull())
@@ -1558,11 +1560,27 @@ QString reach(const QString &addr) {
 }
 }  // namespace
 
+// The kernel's range for ephemeral (client) ports: an unconnected UDP socket there is a program's own
+// client socket (DNS, QUIC, games), not a service someone is meant to reach.
+static QPair<int, int> ephemeralPorts() {
+    QFile f(QStringLiteral("/proc/sys/net/ipv4/ip_local_port_range"));
+    const QStringList v = f.open(QIODevice::ReadOnly) ? QString::fromLatin1(f.readAll()).simplified().split(QLatin1Char(' ')) : QStringList();
+    bool a = false, b = false;
+    const int lo = v.value(0).toInt(&a), hi = v.value(1).toInt(&b);
+    return a && b && lo > 0 && hi >= lo ? qMakePair(lo, hi) : qMakePair(32768, 60999);
+}
+
 void NetPage::showPorts() {
     if (!ports_) return;
+    static const QPair<int, int> eph = ephemeralPorts();
+    // Rebuilt every 3 s: keep the selected row and the scroll position.
+    const QString keep = ports_->currentItem() ? ports_->currentItem()->data(0, KeyRole).toString() : QString();
+    const int scroll = ports_->verticalScrollBar()->value();
+    ports_->setUpdatesEnabled(false);
     ports_->setSortingEnabled(false);
     ports_->clear();
-    int exposed = 0, total = 0;
+    QTreeWidgetItem *sel = nullptr;
+    int exposed = 0, total = 0, clients = 0;
     QSet<QString> seen;
     for (const QJsonValue &v : std::as_const(connData_)) {
         const QJsonObject c = v.toObject();
@@ -1579,19 +1597,31 @@ void NetPage::showPorts() {
         const QString where = reach(local);
         QHostAddress a;
         const bool outside = a.setAddress(local) && !a.isLoopback();
-        auto *it = new SortItem({name, proto.toUpper(), QString::number(port), local, where, portService(proto, port)});
+        QString usually = portService(proto, port);
+        const bool client = proto == QLatin1String("udp") && usually.isEmpty() && port >= eph.first && port <= eph.second;
+        if (client) usually = tr("a program's own client socket (temporary port)");
+        auto *it = new SortItem({name, proto.toUpper(), QString::number(port), local, where, usually});
         it->setToolTip(0, str(c, "exe"));
-        if (outside) {
+        it->setData(0, KeyRole, key);
+        if (client) {
+            ++clients;
+            for (int k = 0; k < 6; ++k) it->setForeground(k, QColor(QLatin1String(theme::MUTED)));
+        } else if (outside) {
             ++exposed;
             const bool any = a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6;
             if (any) for (int k = 0; k < 6; ++k) it->setForeground(k, QColor(QLatin1String(theme::WARN)));
         }
         ports_->addTopLevelItem(it);
+        if (key == keep) sel = it;
         ++total;
     }
     ports_->setSortingEnabled(true);
+    if (sel) ports_->setCurrentItem(sel);
+    ports_->verticalScrollBar()->setValue(scroll);
+    ports_->setUpdatesEnabled(true);
     portsInfo_->setText(tr("%1 listening socket(s); %2 reachable from other machines (orange: on every network). "
-                           "From the connection snapshot, refreshed every 3 s while this tab is open.").arg(total).arg(exposed));
+                           "From the connection snapshot, refreshed every 3 s while this tab is open.").arg(total).arg(exposed)
+                        + (clients ? QLatin1Char(' ') + tr("%1 grey row(s) are programs' own client sockets on temporary ports.").arg(clients) : QString()));
 }
 
 void NetPage::exportTree(QTreeWidget *tree, const QString &name) {
@@ -1600,6 +1630,9 @@ void NetPage::exportTree(QTreeWidget *tree, const QString &name) {
         tr("CSV files (*.csv);;All files (*)"));
     if (file.isEmpty()) return;
     auto cell = [](QString t) {
+        // A cell a spreadsheet would run as a formula ("=…", "+…", "@…") is kept as text.
+        if (!t.isEmpty() && (t.at(0) == QLatin1Char('=') || t.at(0) == QLatin1Char('+') || t.at(0) == QLatin1Char('@') || t.at(0) == QLatin1Char('\t')))
+            t.prepend(QLatin1Char('\''));
         if (t.contains(QLatin1Char(',')) || t.contains(QLatin1Char('"')) || t.contains(QLatin1Char('\n')))
             t = QLatin1Char('"') + t.replace(QLatin1Char('"'), QStringLiteral("\"\"")) + QLatin1Char('"');
         return t;
@@ -1617,61 +1650,121 @@ void NetPage::exportTree(QTreeWidget *tree, const QString &name) {
     };
     for (int i = 0; i < tree->topLevelItemCount(); ++i) walk(tree->topLevelItem(i));
     QFile f(file);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)
+        || f.write((lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8()) < 0 || !f.flush())
         QMessageBox::warning(this, tr("Export"), tr("Cannot write %1: %2").arg(file, f.errorString()));
-        return;
-    }
-    f.write((lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8());
 }
 
 void NetPage::exportRules() {
     const QString file = QFileDialog::getSaveFileName(this, tr("Export rules"),
         QDir::homePath() + QStringLiteral("/centurion-netguard-rules.txt"), tr("Text files (*.txt);;All files (*)"));
     if (file.isEmpty()) return;
+    // [whitelist], [blacklist] (single entries) and one [blacklist: <label>] per group, so groups survive a round trip.
     QStringList out{QStringLiteral("# Centurion network protection rules, %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate)),
                     QStringLiteral("[whitelist]")};
     for (int i = 0; i < wl_->count(); ++i) out << wl_->item(i)->text();
-    out << QString() << QStringLiteral("[blacklist]") << blacklist_;
+    const QJsonObject labels = state_.value(QLatin1String("labels")).toObject();
+    QMap<QString, QStringList> groups;
+    QStringList single;
+    for (const QString &b : std::as_const(blacklist_)) {
+        const QString l = labels.value(b).toString().simplified().remove(QLatin1Char(']'));
+        if (l.isEmpty()) single << b; else groups[l] << b;
+    }
+    out << QString() << QStringLiteral("[blacklist]") << single;
+    for (auto g = groups.cbegin(); g != groups.cend(); ++g) out << QString() << QStringLiteral("[blacklist: %1]").arg(g.key()) << g.value();
     QFile f(file);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         QMessageBox::warning(this, tr("Export rules"), tr("Cannot write %1: %2").arg(file, f.errorString()));
         return;
     }
-    f.write((out.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8());
+    if (f.write((out.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8()) < 0 || !f.flush())
+        QMessageBox::warning(this, tr("Export rules"), tr("Cannot write %1: %2").arg(file, f.errorString()));
 }
+
+namespace {
+// What netguard's parse_nets accepts: an address, a CIDR block, or "a - b" / "a-b" of one family.
+bool validNetEntry(const QString &e) {
+    QHostAddress a;
+    if (a.setAddress(e)) return true;
+    if (e.contains(QLatin1Char('/'))) {
+        const auto net = QHostAddress::parseSubnet(e);
+        return !net.first.isNull() && net.second >= 0;
+    }
+    const int dash = e.indexOf(QLatin1Char('-'));
+    if (dash <= 0) return false;
+    QHostAddress lo, hi;
+    return lo.setAddress(e.left(dash).trimmed()) && hi.setAddress(e.mid(dash + 1).trimmed()) && lo.protocol() == hi.protocol();
+}
+}  // namespace
 
 void NetPage::importRules() {
     const QString file = QFileDialog::getOpenFileName(this, tr("Import rules"), QDir::homePath(), tr("Text files (*.txt);;All files (*)"));
     if (file.isEmpty()) return;
     QFile f(file);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text) || f.size() > (4 << 20)) {
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text) || f.size() > (8 << 20)) {
         QMessageBox::warning(this, tr("Import rules"), tr("Cannot read %1.").arg(file));
         return;
     }
-    QJsonArray white, black;
-    QString section;
+    QJsonArray white;
+    QMap<QString, QJsonArray> black;   // label ("" = single entries) → entries
+    QString section, label;
     QSet<QString> have;
     for (int i = 0; i < wl_->count(); ++i) have.insert(wl_->item(i)->text());
     for (const QString &b : std::as_const(blacklist_)) have.insert(b);
+    int invalid = 0, added = 0;
     for (const QString &raw : QString::fromUtf8(f.readAll()).split(QLatin1Char('\n'))) {
         const QString l = raw.trimmed();
         if (l.isEmpty() || l.startsWith(QLatin1Char('#'))) continue;
-        if (l.startsWith(QLatin1Char('['))) { section = l.toLower(); continue; }
+        if (l.startsWith(QLatin1Char('[')) && l.endsWith(QLatin1Char(']'))) {
+            const QString inner = l.mid(1, l.size() - 2).trimmed();
+            section = inner.section(QLatin1Char(':'), 0, 0).trimmed().toLower();
+            label = inner.contains(QLatin1Char(':')) ? inner.section(QLatin1Char(':'), 1).trimmed().left(64) : QString();
+            continue;
+        }
         if (have.contains(l)) continue;
-        if (section == QLatin1String("[whitelist]")) white.append(l);
-        else if (section == QLatin1String("[blacklist]")) black.append(l);
+        if (section == QLatin1String("whitelist")) {
+            if (l.size() > 512) { ++invalid; continue; }
+            white.append(l);
+        } else if (section == QLatin1String("blacklist")) {
+            if (!validNetEntry(l)) { ++invalid; continue; }
+            black[label].append(l);
+        } else {
+            ++invalid;   // outside a known section
+            continue;
+        }
+        have.insert(l);
+        ++added;
     }
-    if (white.isEmpty() && black.isEmpty()) {
-        QMessageBox::information(this, tr("Import rules"), tr("Nothing new in %1 (sections [whitelist] and [blacklist]).").arg(file));
+    if (!added) {
+        QMessageBox::information(this, tr("Import rules"), tr("Nothing new in %1 (sections [whitelist] and [blacklist]).").arg(file)
+                                 + (invalid ? QLatin1Char('\n') + tr("%1 line(s) were not valid rules and are skipped.").arg(invalid) : QString()));
         return;
     }
-    if (QMessageBox::question(this, tr("Import rules"), tr("Add %1 whitelisted program(s) and %2 blacklisted address(es)?")
-                                  .arg(white.size()).arg(black.size())) != QMessageBox::Yes) return;
-    // One after the other: each request rewrites the daemon's configuration.
-    if (white.isEmpty()) { runRoot({{"op", "blacklist"}, {"add", black}}); return; }
-    privileged::run(helper(), QJsonObject{{"op", "whitelist"}, {"add", white}}, this, [this, black](const privileged::Result &r) {
-        if (!r.ok()) { QMessageBox::warning(this, tr("Import rules"), r.message()); return; }
-        if (black.isEmpty()) applyStatus(r.json);
-        else runRoot({{"op", "blacklist"}, {"add", black}});
-    });
+    int blackCount = 0;
+    for (const QJsonArray &a : std::as_const(black)) blackCount += a.size();
+    QString ask = tr("Add %1 whitelisted program(s) and %2 blacklisted address(es)?").arg(white.size()).arg(blackCount);
+    if (invalid) ask += QLatin1Char('\n') + tr("%1 line(s) were not valid rules and are skipped.").arg(invalid);
+    if (QMessageBox::question(this, tr("Import rules"), ask) != QMessageBox::Yes) return;
+    // One request after the other (each rewrites the daemon's configuration); the first failure stops the rest.
+    QList<QJsonObject> reqs;
+    if (!white.isEmpty()) reqs << QJsonObject{{"op", "whitelist"}, {"add", white}};
+    for (auto b = black.cbegin(); b != black.cend(); ++b) {
+        QJsonObject r{{"op", "blacklist"}, {"add", b.value()}};
+        if (!b.key().isEmpty()) r.insert(QStringLiteral("label"), b.key());
+        reqs << r;
+    }
+    // The step holds itself only weakly (no reference cycle); the pending callback keeps it alive.
+    auto next = std::make_shared<std::function<void(int)>>();
+    *next = [this, reqs, weak = std::weak_ptr<std::function<void(int)>>(next)](int i) {
+        privileged::run(helper(), reqs.at(i), this, [this, reqs, self = weak.lock(), i](const privileged::Result &r) {
+            if (!r.ok()) {
+                QMessageBox::warning(this, tr("Import rules"), tr("Stopped after %1 of %2 step(s): %3").arg(i).arg(reqs.size()).arg(r.message()));
+                runUser({{"op", "status"}}, [this](const QJsonObject &st) { applyStatus(st); });
+                return;
+            }
+            if (i + 1 < reqs.size() && self) (*self)(i + 1);
+            else applyStatus(r.json);
+        });
+    };
+    (*next)(0);
 }

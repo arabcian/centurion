@@ -326,15 +326,18 @@ void BootPage::applyFilter() {
         else if (mode == QLatin1String("curves")) show = it->data(0, ROLE_BOOT + 3).toBool();
         it->setHidden(!show);
     }
-    if (list_->currentItem() && list_->currentItem()->isHidden()) {
-        for (int i = 0; i < list_->topLevelItemCount(); ++i)
-            if (!list_->topLevelItem(i)->isHidden()) { list_->setCurrentItem(list_->topLevelItem(i)); break; }
+    if (!list_->currentItem() || list_->currentItem()->isHidden()) {
+        QTreeWidgetItem *first = nullptr;
+        for (int i = 0; i < list_->topLevelItemCount() && !first; ++i)
+            if (!list_->topLevelItem(i)->isHidden()) first = list_->topLevelItem(i);
+        list_->setCurrentItem(first);   // none: the detail of a hidden boot must not stay on screen
+        if (!first) detail_->setPlainText(list_->topLevelItemCount() ? tr("No recorded boot matches this filter.") : QString());
     }
 }
 
 QString BootPage::patterns() const {
     const QJsonArray boots = data_.value(QStringLiteral("boots")).toArray();
-    int ended = 0, unclean = 0;
+    int ended = 0, unclean = 0, timed = 0;
     qint64 total = 0, longest = 0;
     QMap<QString, QPair<int, int>> byCurves;   // curves text → (ended boots, unclean)
     for (const QJsonValue &v : boots) {
@@ -344,9 +347,12 @@ QString BootPage::patterns() const {
         ++ended;
         const bool bad = state == QLatin1String("unclean");
         unclean += bad;
-        const qint64 d = qint64(b.value(QStringLiteral("duration")).toDouble());
-        total += d;
-        longest = std::max(longest, d);
+        if (b.contains(QStringLiteral("duration"))) {   // a boot without an end time has no length to average
+            const qint64 d = qint64(b.value(QStringLiteral("duration")).toDouble());
+            total += d;
+            longest = std::max(longest, d);
+            ++timed;
+        }
         const QJsonObject c = b.value(QStringLiteral("curves")).toObject();
         auto &slot = byCurves[c.isEmpty() ? tr("stock (no curve)") : curvesText(c)];
         ++slot.first;
@@ -355,7 +361,8 @@ QString BootPage::patterns() const {
     if (!ended) return {};
     QStringList lines;
     lines << tr("<b>Patterns</b> over %1 finished boot(s): %2 unclean (%3%), average session %4, longest %5.")
-                 .arg(ended).arg(unclean).arg(unclean * 100 / ended).arg(duration(total / ended), duration(longest));
+                 .arg(ended).arg(unclean).arg(unclean * 100 / ended)
+                 .arg(timed ? duration(total / timed) : QStringLiteral("—"), timed ? duration(longest) : QStringLiteral("—"));
     if (unclean && byCurves.size() > 1) {
         QStringList rows;
         for (auto it = byCurves.cbegin(); it != byCurves.cend(); ++it) {
@@ -385,9 +392,11 @@ QString BootPage::comparedWithPrevious(const QJsonObject &boot) const {
         const QString x = a.value(k).toString(), y = b.value(k).toString();
         if (x != y) out << tr("  %1: %2 → %3").arg(k, x.isEmpty() ? tr("stock") : x, y.isEmpty() ? tr("stock") : y);
     }
+    const QString sa = prev.value(QStringLiteral("state")).toString(), sb = boot.value(QStringLiteral("state")).toString();
+    // Events are recorded when a boot ends cleanly: a running or unclean boot has none to compare.
     const int ea = prev.value(QStringLiteral("event_total")).toInt(), eb = boot.value(QStringLiteral("event_total")).toInt();
-    if (ea != eb) out << tr("  kernel events: %1 → %2").arg(ea).arg(eb);
-    if (prev.value(QStringLiteral("state")) != boot.value(QStringLiteral("state")))
+    if (ea != eb && sa == QLatin1String("clean") && sb == QLatin1String("clean")) out << tr("  kernel events: %1 → %2").arg(ea).arg(eb);
+    if (sa != sb && sa != QLatin1String("running") && sb != QLatin1String("running"))
         out << tr("  ended: %1 → %2").arg(stateText(prev.value(QStringLiteral("state")).toString()), stateText(boot.value(QStringLiteral("state")).toString()));
     if (out.isEmpty()) return tr("Compared with the boot before: nothing changed in curves or events.\n");
     return tr("Compared with the boot before (%1):\n%2\n").arg(when(qint64(prev.value(QStringLiteral("start")).toDouble())), out.join(QLatin1Char('\n')));

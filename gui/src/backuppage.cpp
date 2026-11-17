@@ -275,7 +275,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     er->addWidget(el);
     // A saved list equal to the old built-in default was never edited: it follows this distribution's defaults.
     QString savedExcludes = st.value(QStringLiteral("excludes")).toString();
-    if (savedExcludes.trimmed().isEmpty() || savedExcludes.trimmed() == distroprofile::legacyDefaults())
+    if (distroprofile::lines(savedExcludes).isEmpty() || distroprofile::lines(savedExcludes) == distroprofile::lines(distroprofile::legacyDefaults()))
         savedExcludes = defaultExcludes(distroprofile::family());
     excludes_ = new QPlainTextEdit(savedExcludes);
     excludes_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -302,6 +302,8 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     distroNote_->setTextFormat(Qt::RichText);
     sv->addWidget(distroNote_);
     connect(excludes_, &QPlainTextEdit::textChanged, this, &BackupPage::updateDistroNote);
+    swaps_ = distroprofile::swapFiles();
+    caveat_ = distroprofile::imageCaveat();
     updateDistroNote();
 
     target_ = new QLineEdit(st.value(QStringLiteral("restore_target")).toString());
@@ -483,6 +485,9 @@ void BackupPage::showEvent(QShowEvent *e) {
     refreshList();
     updateFree();
     updateAutoNote();
+    swaps_ = distroprofile::swapFiles();   // swap can be switched on or off while the app runs
+    caveat_ = distroprofile::imageCaveat();
+    updateDistroNote();
 }
 
 void BackupPage::updateFree() {
@@ -860,12 +865,12 @@ void BackupPage::fillDefaultsMenu(QMenu *menu) {
     menu->clear();
     const QString here = distroprofile::family();
     auto setList = [this](const QString &family) {
-        // Optional lines the user added stay: only the defaults are replaced.
-        QStringList keep;
-        const QStringList now = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        for (const distroprofile::Optional &o : distroprofile::optionalExcludes())
-            if (now.contains(o.pattern)) keep << o.pattern;
-        excludes_->setPlainText((distroprofile::imageExcludes(family) + keep).join(QLatin1Char('\n')));
+        // Only default lines (of any distribution, or the old built-in list) are replaced; every other line —
+        // an optional exclusion or one the user typed — stays, in its order, after the new defaults.
+        QStringList out = distroprofile::imageExcludes(family);
+        for (const QString &l : distroprofile::lines(excludes_->toPlainText()))
+            if (!distroprofile::isDefaultLine(l) && !out.contains(l)) out << l;
+        excludes_->setPlainText(out.join(QLatin1Char('\n')));
         saveSettings();
     };
     QAction *mine = menu->addAction(tr("This system: %1").arg(distroprofile::prettyName()), this, [setList, here] { setList(here); });
@@ -879,14 +884,14 @@ void BackupPage::fillDefaultsMenu(QMenu *menu) {
     menu->addSeparator();
     auto *opt = menu->addMenu(tr("Also leave out"));
     opt->setToolTipsVisible(true);
-    const QStringList now = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const QStringList now = distroprofile::lines(excludes_->toPlainText());
     for (const distroprofile::Optional &o : distroprofile::optionalExcludes()) {
         QAction *a = opt->addAction(QStringLiteral("%1   %2").arg(o.label, o.pattern));
         a->setCheckable(true);
         a->setChecked(now.contains(o.pattern));
         a->setToolTip(o.about);
         connect(a, &QAction::toggled, this, [this, p = o.pattern](bool on) {
-            QStringList lines = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            QStringList lines = distroprofile::lines(excludes_->toPlainText());
             lines.removeAll(p);
             if (on) lines << p;
             excludes_->setPlainText(lines.join(QLatin1Char('\n')));
@@ -899,22 +904,22 @@ void BackupPage::fillDefaultsMenu(QMenu *menu) {
 void BackupPage::updateDistroNote() {
     if (!distroNote_) return;
     const QString here = distroprofile::family();
-    const QStringList now = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const QStringList now = distroprofile::lines(excludes_->toPlainText());
+    const QStringList defaults = distroprofile::imageExcludes(here);
     QStringList parts;
     QString state;
-    if (now == distroprofile::imageExcludes(here)) state = tr("the list is this distribution's default");
-    else {
-        int missing = 0;
-        for (const QString &e : distroprofile::imageExcludes(here)) if (!now.contains(e)) ++missing;
-        state = missing ? tr("%n default line(s) of this distribution are not in the list (Defaults ▾ restores them)", nullptr, missing)
-                        : tr("the defaults plus your own lines");
-    }
+    int missing = 0;
+    for (const QString &e : defaults) if (!now.contains(e)) ++missing;
+    if (missing) state = tr("%n default line(s) of this distribution are not in the list (Defaults ▾ restores them)", nullptr, missing);
+    else if (now.size() == defaults.size()) state = tr("the list is this distribution's default");
+    else state = tr("the defaults plus your own lines");
     parts << tr("Detected: <b>%1</b> — %2. Its defaults leave out %3.")
                  .arg(distroprofile::prettyName().toHtmlEscaped(), state, distroprofile::excludeSummary(here).toHtmlEscaped());
-    const QStringList swaps = distroprofile::swapFiles();
-    if (!swaps.isEmpty()) parts << tr("Swap file(s) in use, always left out: %1.").arg(swaps.join(QStringLiteral(", ")).toHtmlEscaped());
-    const QString caveat = distroprofile::imageCaveat();
-    if (!caveat.isEmpty()) parts << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::WARN), caveat.toHtmlEscaped());
+    if (!swaps_.isEmpty()) parts << tr("Swap file(s) in use, always left out: %1.").arg(swaps_.join(QStringLiteral(", ")).toHtmlEscaped());
+    if (now.size() > 128)
+        parts << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER),
+                     tr("%1 lines: the helper accepts at most 128 exclude patterns.").arg(now.size()).toHtmlEscaped());
+    if (!caveat_.isEmpty()) parts << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::WARN), caveat_.toHtmlEscaped());
     distroNote_->setText(parts.join(QStringLiteral("<br>")));
 }
 
@@ -923,8 +928,8 @@ void BackupPage::systemBackup() {
     const QString dir = sysDir_->text().trimmed();
     if (!QDir::isAbsolutePath(dir) || !QFileInfo(dir).isDir()) { finished(QStringLiteral("The image folder does not exist: ") + dir, false); return; }
     QJsonArray ex;
-    for (const QString &l : excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts))
-        if (!l.trimmed().isEmpty()) ex.append(l.trimmed());
+    for (const QString &l : distroprofile::lines(excludes_->toPlainText())) ex.append(l);
+    if (ex.size() > 128) { finished(tr("The exclude list has %1 lines; the helper accepts at most 128.").arg(ex.size()), false); return; }
     const QString mode = encMode_->currentData().toString();
     const QString recipient = recipient_->text().trimmed();
     if (mode == QLatin1String("recipient") && !(recipient.startsWith(QLatin1String("age1")) && recipient.size() == 62)) {
@@ -948,7 +953,9 @@ void BackupPage::systemBackup() {
         log(tr("Encrypted with a passphrase: without it the image cannot be read. Centurion does not keep it."), theme::WARN);
     run(req, true, QStringLiteral("Waiting for the administrator password…"), [this, mode](const QJsonObject &r) {
             for (const QJsonValue &m : r.value("messages").toArray()) log(m.toString(), theme::WARN);
-            for (const QJsonValue &n : r.value("notes").toArray()) log(n.toString(), theme::MUTED);
+            // The same notes came with the start line; only ones not shown yet (a job that failed early).
+            for (const QJsonValue &n : r.value("notes").toArray())
+                if (!log_->toPlainText().contains(n.toString())) log(n.toString(), theme::MUTED);
             if (!r.value("ok").toBool()) { finished(QStringLiteral("System image failed: ") + str(r, "error"), false); return; }
             for (const QJsonValue &d : r.value("removed").toArray()) log(QStringLiteral("removed old image ") + d.toString());
             QString s = QStringLiteral("%1 written: %2, %L3 entries, %4").arg(QFileInfo(str(r, "archive")).fileName(), human(num(r, "bytes")))

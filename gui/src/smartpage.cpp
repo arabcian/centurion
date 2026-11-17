@@ -217,10 +217,11 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
             const double days = *hours / 24.0;
             insights << (days >= 365 ? tr("Powered on for %1 years (%L2 h).").arg(days / 365.0, 0, 'f', 1).arg(qint64(*hours))
                                      : tr("Powered on for %1 days (%L2 h).").arg(qint64(days)).arg(qint64(*hours)));
-            if (written && days >= 1) {
+            if (written && *written > 0 && days >= 1) {
                 const double perDay = *written * 1000.0 / days;   // GB per powered-on day
                 insights << tr("Writes about %1 GB per powered-on day.").arg(perDay, 0, 'f', perDay < 10 ? 1 : 0);
-                if (life && *life >= 1 && *life < 100) {
+                // "Life used" is a whole percentage: below a few percent the projection is mostly rounding.
+                if (life && *life >= 3 && *life < 100 && perDay > 0.01) {
                     const double leftTb = *written / *life * (100.0 - *life);
                     const double leftYears = leftTb * 1000.0 / perDay / 365.0;
                     insights << tr("At this pace the rated wear lasts for roughly %1 TB more (≈ %2 years of powered-on use). "
@@ -229,7 +230,8 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
                 }
             }
         }
-        if (temp && *temp >= 70) insights << tr("Running hot (%1 °C): NVMe drives throttle around 70–80 °C; a heatsink or airflow helps.").arg(*temp);
+        if (temp && *temp >= 70 && *temp < 150)   // above that a sensor reads garbage, not heat
+            insights << tr("Running hot (%1 °C): NVMe drives throttle around 70–80 °C; a heatsink or airflow helps.").arg(*temp);
         if (const auto unsafe = smart::field(d, "unsafe_shutdowns"); unsafe && hours && *hours > 0 && *unsafe > 0 && *unsafe / (*hours / 24.0) > 0.2)
             insights << tr("%1 unsafe shutdowns: power was cut without the drive being told (forced power-offs, crashes). "
                            "Each one risks recently written data.").arg(*unsafe);
