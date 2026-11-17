@@ -329,6 +329,137 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
             <source>pstore was not (fully) cleared: %1</source>
             <translation>pstore (tamamen) temizlenemedi: %1</translation>
         </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="89"/>
+            <source>Show:</source>
+            <translation>Göster:</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="91"/>
+            <source>All boots</source>
+            <translation>Tüm açılışlar</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="92"/>
+            <source>Unclean only</source>
+            <translation>Yalnızca kirli olanlar</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="93"/>
+            <source>With kernel events</source>
+            <translation>Çekirdek olayı olanlar</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="94"/>
+            <source>With a CPU/GPU curve in effect</source>
+            <translation>CPU/GPU eğrisi etkin olanlar</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="98"/>
+            <source>Kernel log of this boot</source>
+            <translation>Bu açılışın çekirdek günlüğü</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="99"/>
+            <source>Open the saved kernel log filtered to the selected boot.</source>
+            <translation>Kayıtlı çekirdek günlüğünü seçili açılışa göre süzülmüş olarak açar.</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="105"/>
+            <source>Copy details</source>
+            <translation>Ayrıntıları kopyala</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="108"/>
+            <source>Save report…</source>
+            <translation>Raporu kaydet…</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="109"/>
+            <source>Every recorded boot with its end, events and curves, plus the patterns below, as a text file (for a bug report or a forum post).</source>
+            <translation>Kaydedilen her açılışı nasıl bittiği, olayları ve eğrileriyle, aşağıdaki örüntülerle birlikte metin dosyası olarak kaydeder (hata raporu veya forum gönderisi için).</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="351"/>
+            <source>stock (no curve)</source>
+            <translation>stok (eğri yok)</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="357"/>
+            <source>&lt;b&gt;Patterns&lt;/b&gt; over %1 finished boot(s): %2 unclean (%3%), average session %4, longest %5.</source>
+            <translation>&lt;b&gt;Örüntüler&lt;/b&gt; — %1 tamamlanmış açılış: %2 kirli (%%3), ortalama oturum %4, en uzun %5.</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="363"/>
+            <source>%1: %2 of %3 unclean</source>
+            <translation>%1: %3 açılışın %2 tanesi kirli</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="366"/>
+            <source>By curve in effect — %1</source>
+            <translation>Etkin eğriye göre — %1</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="368"/>
+            <source>Red: half or more of the boots with that curve ended uncleanly — test it at stock before blaming hardware.</source>
+            <translation>Kırmızı: o eğriyle yapılan açılışların yarısı veya fazlası kirli bitti — donanımı suçlamadan önce stok ayarlarla deneyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="386"/>
+            <source>  %1: %2 → %3</source>
+            <translation>  %1: %2 → %3</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="386"/>
+            <source>stock</source>
+            <translation>stok</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="389"/>
+            <source>  kernel events: %1 → %2</source>
+            <translation>  çekirdek olayları: %1 → %2</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="391"/>
+            <source>  ended: %1 → %2</source>
+            <translation>  bitiş: %1 → %2</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="392"/>
+            <source>Compared with the boot before: nothing changed in curves or events.
+</source>
+            <translation>Bir önceki açılışla karşılaştırma: eğrilerde ve olaylarda değişiklik yok.
+</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="393"/>
+            <source>Compared with the boot before (%1):
+%2
+</source>
+            <translation>Bir önceki açılışla karşılaştırma (%1):
+%2
+</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="397"/>
+            <source>Save boot report</source>
+            <translation>Açılış raporunu kaydet</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="399"/>
+            <source>Text files (*.txt);;All files (*)</source>
+            <translation>Metin dosyaları (*.txt);;Tüm dosyalar (*)</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="401"/>
+            <source>Centurion boot history — %1</source>
+            <translation>Centurion açılış geçmişi — %1</translation>
+        </message>
+        <message>
+            <location filename="../src/bootpage.cpp" line="414"/>
+            <source>Cannot write %1: %2</source>
+            <translation>%1 yazılamıyor: %2</translation>
+        </message>
     </context>
     <context>
         <name>BootLogoDialog</name>
@@ -1777,45 +1908,99 @@ Kernel uptime: %2
             <translation>%1: %2 eşleşen kayıt (kayıtlı geçmiş ve geçerli oturum). Tarih filtresini kaldırmak için güne yeniden tıklayın.</translation>
         </message>
         <message>
-            <location filename="../src/healthtab.cpp" line="971"/>
-            <source>Review the raw log and check whether the event repeats before changing system settings.</source>
-            <translation>Sistem ayarlarını değiştirmeden önce ham günlüğü inceleyin ve olayın tekrarlanıp tekrarlanmadığını kontrol edin.</translation>
+            <location filename="../src/healthtab.cpp" line="1074"/>
+            <source>Copy event and explanation</source>
+            <translation>Olayı ve açıklamasını kopyala</translation>
         </message>
         <message>
-            <location filename="../src/healthtab.cpp" line="973"/>
-            <source>Check NVIDIA driver and GPU power status. If a custom GPU curve is active, review its stability. The code alone does not prove a hardware fault.</source>
-            <translation>NVIDIA sürücüsünü ve GPU güç durumunu kontrol edin. Özel GPU eğrisi etkinse kararlılığını inceleyin. Yalnızca hata kodu donanım arızasını kanıtlamaz.</translation>
+            <location filename="../src/healthtab.cpp" line="1079"/>
+            <source>Show only %1 events</source>
+            <translation>Yalnızca %1 olaylarını göster</translation>
         </message>
         <message>
-            <location filename="../src/healthtab.cpp" line="975"/>
-            <source>Inspect CPU curve and RAM stability if they are tuned. Also check temperatures and associated kernel events.</source>
-            <translation>Ayarlanmışsa CPU eğrisini ve RAM kararlılığını inceleyin. Sıcaklıkları ve ilgili çekirdek olaylarını da kontrol edin.</translation>
+            <location filename="../src/healthtab.cpp" line="517"/>
+            <source>Select an event to see what it means, its usual causes and what to do.</source>
+            <translation>Ne anlama geldiğini, olağan nedenlerini ve ne yapılacağını görmek için bir olay seçin.</translation>
         </message>
         <message>
-            <location filename="../src/healthtab.cpp" line="977"/>
-            <source>Back up important files, then check drive SMART information and the full kernel log.</source>
-            <translation>Önemli dosyaları yedekleyin; ardından disk SMART bilgilerini ve tam çekirdek günlüğünü kontrol edin.</translation>
+            <location filename="../src/healthtab.cpp" line="1004"/>
+            <source>AMD graphics hung and was reset</source>
+            <translation>AMD grafik birimi takıldı ve sıfırlandı</translation>
         </message>
         <message>
-            <location filename="../src/healthtab.cpp" line="979"/>
-            <source>Inspect cooling, temperatures and the workload running when the event occurred.</source>
-            <translation>Soğutmayı, sıcaklıkları ve olay sırasındaki iş yükünü inceleyin.</translation>
+            <location filename="../src/healthtab.cpp" line="1035"/>
+            <source>Reported as: %1</source>
+            <translation>Bildirildiği şekliyle: %1</translation>
         </message>
         <message>
-            <location filename="../src/healthtab.cpp" line="981"/>
-            <source>Check wireless firmware, driver version and whether the device reconnects normally.</source>
-            <translation>Kablosuz aygıt yazılımını, sürücü sürümünü ve aygıtın normal yeniden bağlanıp bağlanmadığını kontrol edin.</translation>
+            <location filename="../src/healthtab.cpp" line="1038"/>
+            <source>Copy</source>
+            <translation>Kopyala</translation>
         </message>
         <message>
-            <location filename="../src/healthtab.cpp" line="988"/>
-            <source>Reported: %1
-
-Raw kernel record:
-%2</source>
-            <translation>Bildirilen: %1
-
-Ham çekirdek kaydı:
-%2</translation>
+            <location filename="../src/healthtab.cpp" line="108"/>
+            <source>One card per area with its level, and suggested next steps.</source>
+            <translation>Her alan için düzeyini gösteren bir kart ve önerilen sonraki adımlar.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="109"/>
+            <source>Hardware and driver errors from the kernel, explained, with saved history per day.</source>
+            <translation>Çekirdekten gelen donanım ve sürücü hataları, açıklamalarıyla ve günlere göre kayıtlı geçmişle.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="110"/>
+            <source>Every boot: how it ended, its kernel events, the curves in effect, crash records and patterns.</source>
+            <translation>Her açılış: nasıl bittiği, çekirdek olayları, etkin eğriler, çökme kayıtları ve örüntüler.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="111"/>
+            <source>Suspend statistics, battery used while asleep, wake sources and why the hardware does not sleep.</source>
+            <translation>Uyku istatistikleri, uykuda harcanan pil, uyandırma kaynakları ve donanımın neden uyumadığı.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="112"/>
+            <source>Time left, drain per scene, capacity (wear) history and forecast.</source>
+            <translation>Kalan süre, sahneye göre tüketim, kapasite (yıpranma) geçmişi ve öngörüsü.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="113"/>
+            <source>Whether the discrete GPU sleeps, what keeps it awake and what it costs.</source>
+            <translation>Harici GPU'nun uyuyup uyumadığı, onu neyin uyanık tuttuğu ve bunun maliyeti.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="114"/>
+            <source>Does the laptop still cool as well as it did: a repeatable load test against a baseline.</source>
+            <translation>Dizüstü hâlâ eskisi kadar iyi soğutuyor mu: referansa karşı tekrarlanabilir bir yük testi.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="115"/>
+            <source>Drive status, temperature, wear, media errors and a wear projection.</source>
+            <translation>Disk durumu, sıcaklık, yıpranma, ortam hataları ve yıpranma öngörüsü.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="116"/>
+            <source>Connections per program, open ports, blocked Windows programs, traffic per day and rules.</source>
+            <translation>Programlara göre bağlantılar, açık portlar, engellenen Windows programları, günlük trafik ve kurallar.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="117"/>
+            <source>Configuration backups and system images, with defaults for this distribution.</source>
+            <translation>Yapılandırma yedekleri ve sistem imajları, bu dağıtıma uygun varsayılanlarla.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="118"/>
+            <source>Stability of the CPU/GPU curves: faults seen while each was in effect.</source>
+            <translation>CPU/GPU eğrilerinin kararlılığı: her biri etkinken görülen hatalar.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="119"/>
+            <source>Kernel warnings and errors saved across reboots, with filters and explanations.</source>
+            <translation>Yeniden başlatmalar arasında saklanan çekirdek uyarıları ve hataları, süzgeçler ve açıklamalarla.</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="120"/>
+            <source>Detailed device reports: sensors, CPU, memory, PCI, USB, firmware.</source>
+            <translation>Ayrıntılı aygıt raporları: sensörler, CPU, bellek, PCI, USB, donanım yazılımı.</translation>
         </message>
     </context>
     <context>
@@ -2828,6 +3013,131 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Mute this message</source>
             <translation>Bu iletiyi sessize al</translation>
         </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="86"/>
+            <source>Filter… (a|b = either)</source>
+            <translation>Süz… (a|b = herhangi biri)</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="87"/>
+            <source>Shows lines containing the text (case-insensitive). Separate alternatives with |, e.g. nvme|ata|EXT4.</source>
+            <translation>Metni içeren satırları gösterir (büyük/küçük harf duyarsız). Alternatifleri | ile ayırın, örn. nvme|ata|EXT4.</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="91"/>
+            <source>Quick filters ▾</source>
+            <translation>Hızlı süzgeçler ▾</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="99"/>
+            <source>Save view…</source>
+            <translation>Görünümü kaydet…</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="100"/>
+            <source>Save the lines shown now (with the current filters) to a text file, e.g. for a bug report.</source>
+            <translation>Şu an gösterilen satırları (geçerli süzgeçlerle) bir metin dosyasına kaydeder; örneğin bir hata raporu için.</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="129"/>
+            <source>Show the whole log</source>
+            <translation>Günlüğün tamamını göster</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="409"/>
+            <source>Showing up to %1 lines before and %2 after kernel message %3 (boot %4), the message in bold.</source>
+            <translation>%3 numaralı çekirdek iletisinin (açılış %4) öncesindeki en fazla %1 ve sonrasındaki %2 satır gösteriliyor; ileti kalın yazılır.</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="452"/>
+            <source>What does this mean?</source>
+            <translation>Bu ne anlama geliyor?</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="454"/>
+            <source>Kernel message explained</source>
+            <translation>Çekirdek iletisinin açıklaması</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="466"/>
+            <source>Copy this line</source>
+            <translation>Bu satırı kopyala</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="471"/>
+            <source>Show only lines like this</source>
+            <translation>Yalnızca buna benzeyen satırları göster</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="493"/>
+            <source>Graphics (NVIDIA, AMD, Intel, DRM)</source>
+            <translation>Grafik (NVIDIA, AMD, Intel, DRM)</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="494"/>
+            <source>Storage (NVMe, SATA, file systems)</source>
+            <translation>Depolama (NVMe, SATA, dosya sistemleri)</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="495"/>
+            <source>USB and Thunderbolt</source>
+            <translation>USB ve Thunderbolt</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="496"/>
+            <source>PCIe</source>
+            <translation>PCIe</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="497"/>
+            <source>Network and Wi-Fi</source>
+            <translation>Ağ ve Wi-Fi</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="498"/>
+            <source>Firmware and ACPI</source>
+            <translation>Donanım yazılımı ve ACPI</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="499"/>
+            <source>CPU, memory and machine checks</source>
+            <translation>CPU, bellek ve makine denetimleri</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="500"/>
+            <source>Power, suspend and thermal</source>
+            <translation>Güç, uyku ve sıcaklık</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="501"/>
+            <source>Kernel bugs and warnings</source>
+            <translation>Çekirdek hataları ve uyarıları</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="502"/>
+            <source>Audio</source>
+            <translation>Ses</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="507"/>
+            <source>Clear filter</source>
+            <translation>Süzgeci temizle</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="511"/>
+            <source>Save kernel log view</source>
+            <translation>Çekirdek günlüğü görünümünü kaydet</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="513"/>
+            <source>Text files (*.txt *.log);;All files (*)</source>
+            <translation>Metin dosyaları (*.txt *.log);;Tüm dosyalar (*)</translation>
+        </message>
+        <message>
+            <location filename="../src/klogpage.cpp" line="517"/>
+            <source>Cannot write %1: %2</source>
+            <translation>%1 yazılamıyor: %2</translation>
+        </message>
     </context>
     <context>
         <name>LidWatch</name>
@@ -3253,6 +3563,166 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <location filename="work/gui/src/netpage.cpp" line="1334"/>
             <source>Remove %1 and stop banning its addresses?</source>
             <translation>%1 kaldırılsın ve adresleri engellenmeyi bıraksın mı?</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="211"/>
+            <source>Save the rows shown as a CSV file.</source>
+            <translation>Gösterilen satırları CSV dosyası olarak kaydeder.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="313"/>
+            <source>Export rules…</source>
+            <translation>Kuralları dışa aktar…</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="314"/>
+            <source>Whitelist and blacklist as one text file (to keep, or to load on another machine).</source>
+            <translation>Beyaz liste ve kara liste tek bir metin dosyası olarak (saklamak veya başka bir makineye yüklemek için).</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="315"/>
+            <source>Import rules…</source>
+            <translation>Kuralları içe aktar…</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="316"/>
+            <source>Adds the programs and addresses of a rules file; nothing already here is removed.</source>
+            <translation>Bir kural dosyasındaki programları ve adresleri ekler; burada var olan hiçbir şey kaldırılmaz.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="353"/>
+            <source>Per day</source>
+            <translation>Günlük</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="354"/>
+            <source>Totals per program</source>
+            <translation>Program başına toplamlar</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="355"/>
+            <source>Totals add up the shown days for each program: who used the most data this month.</source>
+            <translation>Toplamlar, gösterilen günleri her program için toplar: bu ay en çok veriyi kimin kullandığı.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="380"/>
+            <source>Proto</source>
+            <translation>Protokol</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="380"/>
+            <source>Port</source>
+            <translation>Port</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="380"/>
+            <source>Bound to</source>
+            <translation>Bağlı adres</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="380"/>
+            <source>Reachable from</source>
+            <translation>Erişilebildiği yer</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="380"/>
+            <source>Usually</source>
+            <translation>Genellikle</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="386"/>
+            <source>A program bound to 0.0.0.0 / :: answers on every network this machine joins (café Wi-Fi too). Bind it to 127.0.0.1 in its settings, or stop the service, if nothing else needs to reach it. "All users (root)" on the Connections tab names the system services.</source>
+            <translation>0.0.0.0 / :: adresine bağlı bir program, bu makinenin katıldığı her ağda yanıt verir (kafe Wi-Fi'si dahil). Başka hiçbir şeyin erişmesi gerekmiyorsa programın ayarlarında 127.0.0.1'e bağlayın veya hizmeti durdurun. Bağlantılar sekmesindeki "All users (root)" sistem hizmetlerinin adlarını gösterir.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="392"/>
+            <source>Open ports</source>
+            <translation>Açık portlar</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="751"/>
+            <source>since %1</source>
+            <translation>%1 tarihinden beri</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="859"/>
+            <source> · most connections: %1</source>
+            <translation> · en çok bağlantı: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1548"/>
+            <source>this computer only</source>
+            <translation>yalnızca bu bilgisayar</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1549"/>
+            <source>every network</source>
+            <translation>her ağ</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1550"/>
+            <source>the local link</source>
+            <translation>yerel bağlantı (link-local)</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1555"/>
+            <source>that local network</source>
+            <translation>o yerel ağ</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1557"/>
+            <source>that address (public)</source>
+            <translation>o adres (genel)</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1593"/>
+            <source>%1 listening socket(s); %2 reachable from other machines (orange: on every network). From the connection snapshot, refreshed every 3 s while this tab is open.</source>
+            <translation>%1 dinleyen soket; %2 tanesine başka makinelerden erişilebilir (turuncu: her ağda). Bağlantı anlık görüntüsünden alınır; bu sekme açıkken 3 sn'de bir yenilenir.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1598"/>
+            <source>Export</source>
+            <translation>Dışa aktar</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1600"/>
+            <source>CSV files (*.csv);;All files (*)</source>
+            <translation>CSV dosyaları (*.csv);;Tüm dosyalar (*)</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1621"/>
+            <source>Cannot write %1: %2</source>
+            <translation>%1 yazılamıyor: %2</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1628"/>
+            <source>Export rules</source>
+            <translation>Kuralları dışa aktar</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1629"/>
+            <source>Text files (*.txt);;All files (*)</source>
+            <translation>Metin dosyaları (*.txt);;Tüm dosyalar (*)</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1644"/>
+            <source>Import rules</source>
+            <translation>Kuralları içe aktar</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1648"/>
+            <source>Cannot read %1.</source>
+            <translation>%1 okunamıyor.</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1665"/>
+            <source>Nothing new in %1 (sections [whitelist] and [blacklist]).</source>
+            <translation>%1 içinde yeni bir şey yok ([whitelist] ve [blacklist] bölümleri).</translation>
+        </message>
+        <message>
+            <location filename="../src/netpage.cpp" line="1668"/>
+            <source>Add %1 whitelisted program(s) and %2 blacklisted address(es)?</source>
+            <translation>%1 beyaz listeye alınmış program ve %2 kara listeye alınmış adres eklensin mi?</translation>
         </message>
     </context>
     <context>
@@ -4939,16 +5409,6 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>Açık anahtar (age)</translation>
         </message>
         <message>
-            <source>The image holds /etc/shadow and every private key on the system: encrypt it when it leaves this computer.
-Passphrase: asked when the image is made and when it is read back; never stored.
-Public key: anyone can make images with it, only the matching secret key reads them — the key can stay off this computer.
-Uses age (app-crypt/age). An increment keeps the encryption of its chain.</source>
-            <translation>İmaj /etc/shadow dosyasını ve sistemdeki tüm gizli anahtarları içerir: bu bilgisayardan çıkacaksa şifreleyin.
-Parola: imaj oluşturulurken ve okunurken sorulur; hiçbir yerde saklanmaz.
-Açık anahtar: herkes bununla imaj oluşturabilir, yalnızca eşleşen gizli anahtar okuyabilir — anahtar bu bilgisayarın dışında kalabilir.
-age kullanılır (app-crypt/age). Bir artım, zincirinin şifrelemesini korur.</translation>
-        </message>
-        <message>
             <source>age1… public key</source>
             <translation>age1… açık anahtarı</translation>
         </message>
@@ -5105,10 +5565,6 @@ age kullanılır (app-crypt/age). Bir artım, zincirinin şifrelemesini korur.</
         <message>
             <source>Matches.</source>
             <translation>Eşleşiyor.</translation>
-        </message>
-        <message>
-            <source>age-keygen was not found. Install age (app-crypt/age).</source>
-            <translation>age-keygen bulunamadı. age paketini kurun (app-crypt/age).</translation>
         </message>
         <message>
             <source>Save the secret key — keep it off this computer</source>
@@ -5335,6 +5791,79 @@ Bu %1. artım: tam imajı ve 1–%1 artımları bu sırayla açılır. Araların
         <message>
             <source>as recorded between the images: %1 deleted, %2 directory(ies) renamed</source>
             <translation>imajlar arasında kaydedildiği gibi: %1 silindi, %2 dizin yeniden adlandırıldı</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="247"/>
+            <source>The image holds /etc/shadow and every private key on the system: encrypt it when it leaves this computer.
+Passphrase: asked when the image is made and when it is read back; never stored.
+Public key: anyone can make images with it, only the matching secret key reads them — the key can stay off this computer.
+Uses age (%1). An increment keeps the encryption of its chain.</source>
+            <translation>İmaj /etc/shadow dosyasını ve sistemdeki tüm özel anahtarları içerir: bu bilgisayardan çıkacaksa şifreleyin.
+Parola: imaj oluşturulurken ve geri okunurken sorulur; hiçbir yere kaydedilmez.
+Açık anahtar: herkes bununla imaj oluşturabilir, yalnızca eşleşen gizli anahtar okuyabilir — anahtar bu bilgisayarın dışında durabilir.
+age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="1019"/>
+            <source>age-keygen was not found. Install age (%1).</source>
+            <translation>age-keygen bulunamadı. age paketini kurun (%1).</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="289"/>
+            <source>Defaults ▾</source>
+            <translation>Varsayılanlar ▾</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="290"/>
+            <source>Fill the list with the standard layout of this distribution (or another one), or add optional exclusions.</source>
+            <translation>Listeyi bu dağıtımın (veya başka bir dağıtımın) standart dosya düzenine göre doldurun ya da isteğe bağlı hariç tutmalar ekleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="676"/>
+            <source>pkexec was not found. Install polkit (%1).</source>
+            <translation>pkexec bulunamadı. polkit paketini kurun (%1).</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="871"/>
+            <source>This system: %1</source>
+            <translation>Bu sistem: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="873"/>
+            <source>Standard layout of another distribution</source>
+            <translation>Başka bir dağıtımın standart düzeni</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="880"/>
+            <source>Also leave out</source>
+            <translation>Bunları da hariç tut</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="905"/>
+            <source>the list is this distribution's default</source>
+            <translation>liste bu dağıtımın varsayılanı</translation>
+        </message>
+        <message numerus="yes">
+            <location filename="../src/backuppage.cpp" line="909"/>
+            <source>%n default line(s) of this distribution are not in the list (Defaults ▾ restores them)</source>
+            <translation>
+                <numerusform>bu dağıtımın %n varsayılan satırı listede yok (Varsayılanlar ▾ geri getirir)</numerusform>
+            </translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="910"/>
+            <source>the defaults plus your own lines</source>
+            <translation>varsayılanlar ve sizin eklediğiniz satırlar</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="912"/>
+            <source>Detected: &lt;b&gt;%1&lt;/b&gt; — %2. Its defaults leave out %3.</source>
+            <translation>Algılanan: &lt;b&gt;%1&lt;/b&gt; — %2. Varsayılanları şunları hariç tutar: %3.</translation>
+        </message>
+        <message>
+            <location filename="../src/backuppage.cpp" line="915"/>
+            <source>Swap file(s) in use, always left out: %1.</source>
+            <translation>Kullanımdaki takas dosyaları, her zaman hariç tutulur: %1.</translation>
         </message>
     </context>
     <context>
@@ -6311,6 +6840,41 @@ sudo centurion-calibrate --restore
             <source>No warning indicators in the available SMART data. This is not a guarantee against drive failure.</source>
             <translation>Mevcut SMART verilerinde uyarı yok. Bu, diskin arızalanmayacağını garanti etmez.</translation>
         </message>
+        <message>
+            <location filename="../src/smartpage.cpp" line="218"/>
+            <source>Powered on for %1 years (%L2 h).</source>
+            <translation>%1 yıldır açık (%L2 saat).</translation>
+        </message>
+        <message>
+            <location filename="../src/smartpage.cpp" line="219"/>
+            <source>Powered on for %1 days (%L2 h).</source>
+            <translation>%1 gündür açık (%L2 saat).</translation>
+        </message>
+        <message>
+            <location filename="../src/smartpage.cpp" line="222"/>
+            <source>Writes about %1 GB per powered-on day.</source>
+            <translation>Açık kaldığı her gün yaklaşık %1 GB yazıyor.</translation>
+        </message>
+        <message>
+            <location filename="../src/smartpage.cpp" line="226"/>
+            <source>At this pace the rated wear lasts for roughly %1 TB more (≈ %2 years of powered-on use). Drives usually keep working past 100 %; it is the manufacturer's endurance rating.</source>
+            <translation>Bu hızla, beyan edilen yıpranma ömrü kabaca %1 TB daha yetiyor (≈ %2 yıllık açık kalma süresi). Diskler genellikle yüzde 100'ün ötesinde de çalışmaya devam eder; bu, üreticinin dayanıklılık değeridir.</translation>
+        </message>
+        <message>
+            <location filename="../src/smartpage.cpp" line="232"/>
+            <source>Running hot (%1 °C): NVMe drives throttle around 70–80 °C; a heatsink or airflow helps.</source>
+            <translation>Sıcak çalışıyor (%1 °C): NVMe diskler 70–80 °C civarında kendini yavaşlatır; soğutucu veya hava akışı yardımcı olur.</translation>
+        </message>
+        <message>
+            <location filename="../src/smartpage.cpp" line="234"/>
+            <source>%1 unsafe shutdowns: power was cut without the drive being told (forced power-offs, crashes). Each one risks recently written data.</source>
+            <translation>%1 güvensiz kapanma: diske haber verilmeden güç kesildi (zorla kapatma, çökme). Her biri son yazılan verileri riske atar.</translation>
+        </message>
+        <message>
+            <location filename="../src/smartpage.cpp" line="236"/>
+            <source>%1 new media error(s) in the last %2 days: back up and run a long self-test (smartctl -t long).</source>
+            <translation>Son %2 günde %1 yeni ortam hatası: yedek alın ve uzun bir öz test çalıştırın (smartctl -t long).</translation>
+        </message>
     </context>
     <context>
         <name>UiNavigator</name>
@@ -7260,6 +7824,11 @@ sudo centurion-calibrate --restore
             <source>helper exited with code %1.</source>
             <translation>yardımcı %1 koduyla çıktı.</translation>
         </message>
+        <message>
+            <location filename="../src/privileged.cpp" line="42"/>
+            <source>pkexec was not found. Install polkit (%1).</source>
+            <translation>pkexec bulunamadı. polkit paketini kurun (%1).</translation>
+        </message>
     </context>
     <context>
         <name>BarChart</name>
@@ -7304,6 +7873,1317 @@ sudo centurion-calibrate --restore
             <location filename="../src/experimentalui.h"/>
             <source>Temperature history</source>
             <translation>Sıcaklık geçmişi</translation>
+        </message>
+    </context>
+    <context>
+        <name>distroprofile</name>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="65"/>
+            <source>Arch Linux &amp; derivatives (Manjaro, EndeavourOS, CachyOS)</source>
+            <translation>Arch Linux ve türevleri (Manjaro, EndeavourOS, CachyOS)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="66"/>
+            <source>Debian / Ubuntu &amp; derivatives (Mint, Pop!_OS)</source>
+            <translation>Debian / Ubuntu ve türevleri (Mint, Pop!_OS)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="67"/>
+            <source>Fedora / RHEL family (Rocky, Alma)</source>
+            <translation>Fedora / RHEL ailesi (Rocky, Alma)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="71"/>
+            <source>Generic Linux</source>
+            <translation>Genel Linux</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="91"/>
+            <source>distfiles and binary packages (/var/cache, old /usr/portage layout) and the ebuild repository (/var/db/repos/gentoo: emerge --sync fetches it again)</source>
+            <translation>distfiles ve ikili paketler (/var/cache, eski /usr/portage düzeni) ve ebuild deposu (/var/db/repos/gentoo: emerge --sync yeniden indirir)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="93"/>
+            <source>the package cache (/var/cache/pacman) and the sync databases (pacman -Sy fetches them again)</source>
+            <translation>paket önbelleği (/var/cache/pacman) ve eşitleme veritabanları (pacman -Sy yeniden indirir)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="95"/>
+            <source>the package cache and lists (/var/cache/apt, /var/lib/apt/lists: apt update), crash reports and mounted snap revisions (their images in /var/lib/snapd/snaps are kept)</source>
+            <translation>paket önbelleği ve listeleri (/var/cache/apt, /var/lib/apt/lists: apt update), çökme raporları ve bağlanmış snap sürümleri (imajları /var/lib/snapd/snaps içinde korunur)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="97"/>
+            <source>the dnf cache (/var/cache/dnf, /var/cache/libdnf5)</source>
+            <translation>dnf önbelleği (/var/cache/dnf, /var/cache/libdnf5)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="98"/>
+            <source>the zypper cache (/var/cache/zypp) and snapper snapshots (/.snapshots)</source>
+            <translation>zypper önbelleği (/var/cache/zypp) ve snapper anlık görüntüleri (/.snapshots)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="99"/>
+            <source>the xbps package cache (/var/cache/xbps)</source>
+            <translation>xbps paket önbelleği (/var/cache/xbps)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="100"/>
+            <source>the apk cache (/var/cache/apk)</source>
+            <translation>apk önbelleği (/var/cache/apk)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="101"/>
+            <source>caches, temporary files and virtual file systems only</source>
+            <translation>yalnızca önbellekler, geçici dosyalar ve sanal dosya sistemleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="123"/>
+            <source>Users' caches</source>
+            <translation>Kullanıcı önbellekleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="123"/>
+            <source>Browser, thumbnail and build caches under ~/.cache (only matters with /home included)</source>
+            <translation>~/.cache altındaki tarayıcı, küçük resim ve derleme önbellekleri (yalnızca /home dahilken önemlidir)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="124"/>
+            <source>root's cache</source>
+            <translation>root önbelleği</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="124"/>
+            <source>~/.cache of root</source>
+            <translation>root kullanıcısının ~/.cache dizini</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="125"/>
+            <source>Users' trash</source>
+            <translation>Kullanıcı çöp kutuları</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="125"/>
+            <source>Files already moved to the trash</source>
+            <translation>Çöp kutusuna zaten taşınmış dosyalar</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="126"/>
+            <source>Steam games</source>
+            <translation>Steam oyunları</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="126"/>
+            <source>Installed games (Steam downloads them again); saves in the cloud or ~/.local/share stay</source>
+            <translation>Kurulu oyunlar (Steam yeniden indirir); buluttaki veya ~/.local/share içindeki kayıtlar kalır</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="127"/>
+            <source>Flatpak app caches</source>
+            <translation>Flatpak uygulama önbellekleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="127"/>
+            <source>Per-app caches of Flatpak applications</source>
+            <translation>Flatpak uygulamalarının uygulama başına önbellekleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="128"/>
+            <source>Flatpak repository</source>
+            <translation>Flatpak deposu</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="128"/>
+            <source>System Flatpak objects: flatpak reinstalls the apps (their list is in /var/lib/flatpak/app)</source>
+            <translation>Sistem Flatpak nesneleri: flatpak uygulamaları yeniden kurar (listeleri /var/lib/flatpak/app içinde)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="129"/>
+            <source>Docker</source>
+            <translation>Docker</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="129"/>
+            <source>Images, containers and volumes of Docker — back up volumes separately if they hold data</source>
+            <translation>Docker imajları, kapsayıcıları ve birimleri — veri tutuyorlarsa birimleri ayrıca yedekleyin</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="130"/>
+            <source>Podman (root)</source>
+            <translation>Podman (root)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="130"/>
+            <source>Images and containers of rootful Podman</source>
+            <translation>Root yetkili Podman'ın imajları ve kapsayıcıları</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="131"/>
+            <source>Virtual machine disks</source>
+            <translation>Sanal makine diskleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="131"/>
+            <source>libvirt / virt-manager disk images: large, better copied while the VMs are off</source>
+            <translation>libvirt / virt-manager disk imajları: büyüktür, sanal makineler kapalıyken kopyalamak daha iyidir</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="132"/>
+            <source>systemd journal</source>
+            <translation>systemd günlüğü (journal)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="132"/>
+            <source>Persistent journal files (often hundreds of MiB)</source>
+            <translation>Kalıcı journal dosyaları (çoğu zaman yüzlerce MiB)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="133"/>
+            <source>Ollama models</source>
+            <translation>Ollama modelleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="133"/>
+            <source>Downloaded language models (ollama pull fetches them again)</source>
+            <translation>İndirilmiş dil modelleri (ollama pull yeniden indirir)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="134"/>
+            <source>Kernel build objects</source>
+            <translation>Çekirdek derleme nesneleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="134"/>
+            <source>Object files of built kernel sources; the sources and .config stay</source>
+            <translation>Derlenmiş çekirdek kaynaklarının nesne dosyaları; kaynaklar ve .config kalır</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="139"/>
+            <source>/mnt/gentoo — or / to restore over the running system</source>
+            <translation>/mnt/gentoo — veya çalışan sistemin üzerine geri yüklemek için /</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="140"/>
+            <source>/mnt — the new root mounted from a live USB, or / to restore over the running system</source>
+            <translation>/mnt — canlı USB'den bağlanmış yeni kök dizin, veya çalışan sistemin üzerine geri yüklemek için /</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="145"/>
+            <source>/etc/portage, the world set, the kernel .config, conf.d, runlevels, env.d</source>
+            <translation>/etc/portage, world kümesi, çekirdek .config dosyası, conf.d, runlevels, env.d</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="146"/>
+            <source>pacman.conf and pacman.d (mirror list), makepkg.conf, mkinitcpio</source>
+            <translation>pacman.conf ve pacman.d (yansı listesi), makepkg.conf, mkinitcpio</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="147"/>
+            <source>APT sources and preferences, /etc/default, initramfs-tools, netplan</source>
+            <translation>APT kaynakları ve tercihleri, /etc/default, initramfs-tools, netplan</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="148"/>
+            <source>dnf configuration, yum.repos.d, /etc/sysconfig, the SELinux mode</source>
+            <translation>dnf yapılandırması, yum.repos.d, /etc/sysconfig, SELinux kipi</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="149"/>
+            <source>zypper repositories and zypp.conf, /etc/sysconfig, snapper configurations</source>
+            <translation>zypper depoları ve zypp.conf, /etc/sysconfig, snapper yapılandırmaları</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="150"/>
+            <source>xbps.d, rc.conf, enabled runit services</source>
+            <translation>xbps.d, rc.conf, etkin runit hizmetleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="151"/>
+            <source>the apk world and repositories, mkinitfs, OpenRC runlevels</source>
+            <translation>apk world ve depoları, mkinitfs, OpenRC çalışma düzeyleri</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="152"/>
+            <source>no package manager configuration (distribution not recognised)</source>
+            <translation>paket yöneticisi yapılandırması yok (dağıtım tanınmadı)</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="153"/>
+            <source>Also saves how this installation (%1) is put together, as reference material:
+%2;
+fstab, crypttab, GRUB/dracut/kernel settings, modprobe.d, modules-load.d, sysctl, udev rules,
+systemd units and logind/sleep settings, plus the kernel command line, DMI, loaded modules,
+the installed package list and the packages installed by name.
+It is stored under system-profile/ and is never restored automatically.</source>
+            <translation>Bu kurulumun (%1) nasıl bir araya getirildiğini de başvuru malzemesi olarak kaydeder:
+%2;
+fstab, crypttab, GRUB/dracut/çekirdek ayarları, modprobe.d, modules-load.d, sysctl, udev kuralları,
+systemd birimleri ve logind/uyku ayarları; ayrıca çekirdek komut satırı, DMI, yüklü modüller,
+kurulu paket listesi ve adıyla kurulan paketler.
+system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklenmez.</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="165"/>
+            <source>NixOS: the system is rebuilt from configuration.nix; back up /etc/nixos and your data rather than relying on an image of /nix/store.</source>
+            <translation>NixOS: sistem configuration.nix'ten yeniden oluşturulur; /nix/store imajına güvenmek yerine /etc/nixos'u ve verilerinizi yedekleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/distroprofile.cpp" line="167"/>
+            <source>Image-based (ostree) system: / is a read-only deployment. Back up /etc, /var and /home; the OS itself comes back with rpm-ostree / bootc.</source>
+            <translation>İmaj tabanlı (ostree) sistem: / salt okunur bir dağıtımdır. /etc, /var ve /home'u yedekleyin; işletim sisteminin kendisi rpm-ostree / bootc ile geri gelir.</translation>
+        </message>
+    </context>
+    <context>
+        <name>eventinfo</name>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="34"/>
+            <source>Process using the GPU: %1%2</source>
+            <translation>GPU'yu kullanan süreç: %1%2</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="34"/>
+            <source> (pid %1)</source>
+            <translation> (pid %1)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="35"/>
+            <source>GPU address: %1</source>
+            <translation>GPU adresi: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="36"/>
+            <source>Xid code: %1</source>
+            <translation>Xid kodu: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="39"/>
+            <source>The GPU stopped or faulted while running work for one program. The driver usually kills that program's GPU context and the rest of the system keeps working.</source>
+            <translation>GPU, bir programın işini yürütürken durdu veya hata verdi. Sürücü genellikle o programın GPU bağlamını sonlandırır ve sistemin geri kalanı çalışmaya devam eder.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="41"/>
+            <source>A bug in the game or application (or its shader cache)</source>
+            <translation>Oyunda veya uygulamada (ya da gölgelendirici önbelleğinde) bir hata</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="41"/>
+            <source>An unstable GPU overclock, undervolt or memory clock</source>
+            <translation>Kararsız bir GPU hız aşırtması, düşük voltaj ayarı veya bellek saati</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="42"/>
+            <source>A driver bug, especially right after a driver or kernel update</source>
+            <translation>Bir sürücü hatası, özellikle sürücü veya çekirdek güncellemesinden hemen sonra</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="43"/>
+            <source>Note which program was running (see the details below) and whether the event repeats with the same program only.</source>
+            <translation>Hangi programın çalıştığını (aşağıdaki ayrıntılara bakın) ve olayın yalnızca aynı programla mı tekrarlandığını not edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="44"/>
+            <source>If a custom GPU curve is active, reset it to stock and run the same workload again.</source>
+            <translation>Özel bir GPU eğrisi etkinse stoka sıfırlayın ve aynı iş yükünü tekrar çalıştırın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="45"/>
+            <source>Clear the program's shader cache (e.g. ~/.cache/nvidia, Steam's shadercache folder of that game).</source>
+            <translation>Programın gölgelendirici önbelleğini temizleyin (örn. ~/.cache/nvidia, o oyunun Steam shadercache klasörü).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="46"/>
+            <source>Update the NVIDIA driver; if the problem started with an update, try the previous version.</source>
+            <translation>NVIDIA sürücüsünü güncelleyin; sorun bir güncellemeyle başladıysa önceki sürümü deneyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="47"/>
+            <source>Usually not dangerous on its own; worth acting on if it repeats.</source>
+            <translation>Tek başına genellikle tehlikeli değil; tekrarlanırsa ilgilenmeye değer.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="50"/>
+            <source>The GPU stopped answering on the PCIe bus ("fallen off the bus") or sent corrupted data. Graphics usually freeze until a reboot.</source>
+            <translation>GPU, PCIe veri yolunda yanıt vermeyi bıraktı ("veri yolundan düştü") veya bozuk veri gönderdi. Grafikler genellikle yeniden başlatmaya kadar donar.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="52"/>
+            <source>An unstable GPU curve, overclock or undervolt</source>
+            <translation>Kararsız bir GPU eğrisi, hız aşırtması veya düşük voltaj ayarı</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="52"/>
+            <source>Power delivery: load spikes, a weak supply, or a battery-only power limit</source>
+            <translation>Güç beslemesi: yük sıçramaları, zayıf bir güç kaynağı veya yalnızca pilde geçerli bir güç sınırı</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="53"/>
+            <source>Overheating</source>
+            <translation>Aşırı ısınma</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="53"/>
+            <source>On laptops: the dGPU failing to wake from its power-saving state (D3cold)</source>
+            <translation>Dizüstülerde: harici GPU'nun güç tasarrufu durumundan (D3cold) uyanamaması</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="54"/>
+            <source>A loose card, riser or power cable (desktops)</source>
+            <translation>Gevşek bir kart, yükseltici (riser) veya güç kablosu (masaüstü)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="55"/>
+            <source>Reset any custom GPU curve to stock and see whether it comes back.</source>
+            <translation>Özel GPU eğrisini stoka sıfırlayın ve tekrar edip etmediğine bakın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="56"/>
+            <source>Check GPU temperatures under load (Cooling page).</source>
+            <translation>Yük altında GPU sıcaklıklarını kontrol edin (Soğutma sayfası).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="57"/>
+            <source>On a laptop open dGPU power: if the event follows idle periods, the runtime power management is the suspect.</source>
+            <translation>Dizüstünde dGPU gücü sayfasını açın: olay boşta kalma sürelerinin ardından geliyorsa şüpheli, çalışma zamanı güç yönetimidir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="58"/>
+            <source>Update the BIOS/EC firmware and the NVIDIA driver.</source>
+            <translation>BIOS/EC yazılımını ve NVIDIA sürücüsünü güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="59"/>
+            <source>Desktops: reseat the card and its power cables.</source>
+            <translation>Masaüstü: kartı ve güç kablolarını yeniden takın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="60"/>
+            <source>Serious: the GPU had to be reset or the session lost graphics. Save your work and reboot.</source>
+            <translation>Ciddi: GPU'nun sıfırlanması gerekti veya oturum grafiklerini kaybetti. Çalışmanızı kaydedip yeniden başlatın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="63"/>
+            <source>The GPU's internal controller or its GSP firmware stopped responding to the driver.</source>
+            <translation>GPU'nun dahili denetleyicisi veya GSP yazılımı sürücüye yanıt vermeyi bıraktı.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="64"/>
+            <source>A driver / GSP firmware bug</source>
+            <translation>Bir sürücü / GSP yazılımı hatası</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="64"/>
+            <source>An unstable GPU curve or memory clock</source>
+            <translation>Kararsız bir GPU eğrisi veya bellek saati</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="64"/>
+            <source>Overheating or power problems</source>
+            <translation>Aşırı ısınma veya güç sorunları</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="65"/>
+            <source>Update the NVIDIA driver (GSP firmware ships with it).</source>
+            <translation>NVIDIA sürücüsünü güncelleyin (GSP yazılımı onunla birlikte gelir).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="66"/>
+            <source>Reset any custom GPU curve to stock.</source>
+            <translation>Özel GPU eğrisini stoka sıfırlayın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="67"/>
+            <source>With the proprietary (closed) kernel modules, NVreg_EnableGpuFirmware=0 disables GSP for a test; the open modules require GSP.</source>
+            <translation>Kapalı kaynak (proprietary) çekirdek modülleriyle NVreg_EnableGpuFirmware=0, deneme için GSP'yi kapatır; açık modüller GSP gerektirir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="68"/>
+            <source>If it happens after resume or long idle, check the dGPU power page.</source>
+            <translation>Uykudan dönüşte veya uzun boşta kalmadan sonra oluyorsa dGPU gücü sayfasına bakın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="69"/>
+            <source>Serious: the GPU may need a reboot to work again.</source>
+            <translation>Ciddi: GPU'nun yeniden çalışması için yeniden başlatma gerekebilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="72"/>
+            <source>The GPU reported a video-memory (VRAM) error, or retired a page / remapped a row because of one.</source>
+            <translation>GPU bir video belleği (VRAM) hatası bildirdi veya bu yüzden bir sayfayı emekliye ayırdı / bir satırı yeniden eşledi.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="73"/>
+            <source>A VRAM overclock that is too high</source>
+            <translation>Fazla yüksek bir VRAM hız aşırtması</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="73"/>
+            <source>Overheating memory chips</source>
+            <translation>Aşırı ısınan bellek yongaları</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="73"/>
+            <source>Failing video memory</source>
+            <translation>Arızalanmakta olan video belleği</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="74"/>
+            <source>Remove any memory overclock and re-test.</source>
+            <translation>Bellek hız aşırtmasını kaldırıp yeniden test edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="75"/>
+            <source>Run Centurion's GPU stress test with the VRAM check.</source>
+            <translation>Centurion'un GPU stres testini VRAM denetimiyle çalıştırın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="76"/>
+            <source>If errors persist at stock clocks, the card may need service.</source>
+            <translation>Hatalar stok saatlerde de sürüyorsa kartın servise gitmesi gerekebilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="77"/>
+            <source>Serious if it repeats at stock clocks.</source>
+            <translation>Stok saatlerde tekrarlanıyorsa ciddi.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="80"/>
+            <source>The display engine reported an error while driving a screen.</source>
+            <translation>Görüntü motoru bir ekranı sürerken hata bildirdi.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="81"/>
+            <source>A cable, dock or adapter (especially DisplayPort MST)</source>
+            <translation>Bir kablo, yuva (dock) veya adaptör (özellikle DisplayPort MST)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="81"/>
+            <source>A display driver bug</source>
+            <translation>Bir görüntü sürücüsü hatası</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="81"/>
+            <source>An unusual refresh rate or mode</source>
+            <translation>Alışılmadık bir yenileme hızı veya mod</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="82"/>
+            <source>Try another cable or port and the screen's standard mode.</source>
+            <translation>Başka bir kablo veya port ile ekranın standart modunu deneyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="82"/>
+            <source>Update the driver and dock firmware.</source>
+            <translation>Sürücüyü ve yuva (dock) yazılımını güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="83"/>
+            <source>Usually limited to the display output.</source>
+            <translation>Genellikle görüntü çıkışıyla sınırlıdır.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="86"/>
+            <source>The video decoder (NVDEC) reported an error while decoding a video.</source>
+            <translation>Video kod çözücü (NVDEC) bir videoyu çözerken hata bildirdi.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="87"/>
+            <source>A corrupt or unusual video stream</source>
+            <translation>Bozuk veya alışılmadık bir video akışı</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="87"/>
+            <source>A driver bug in hardware decoding</source>
+            <translation>Donanım kod çözmede bir sürücü hatası</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="88"/>
+            <source>Note which player or browser was decoding; try software decoding to compare.</source>
+            <translation>Hangi oynatıcının veya tarayıcının kod çözdüğünü not edin; karşılaştırmak için yazılımsal kod çözmeyi deneyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="88"/>
+            <source>Update the driver.</source>
+            <translation>Sürücüyü güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="89"/>
+            <source>Not dangerous; affects video playback.</source>
+            <translation>Tehlikeli değil; video oynatmayı etkiler.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="92"/>
+            <source>The driver states which recovery the GPU needs after an earlier error (a GPU reset, or a reboot). It is a consequence, not the cause.</source>
+            <translation>Sürücü, önceki bir hatadan sonra GPU'nun hangi kurtarmaya ihtiyaç duyduğunu (GPU sıfırlaması veya yeniden başlatma) bildirir. Bu bir sonuçtur, neden değil.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="94"/>
+            <source>The Xid logged just before this one</source>
+            <translation>Bundan hemen önce kaydedilen Xid</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="95"/>
+            <source>Look at the previous Xid in the list (the title names it when known) and follow its advice.</source>
+            <translation>Listedeki önceki Xid'e bakın (biliniyorsa başlık onu adlandırır) ve onun önerisini izleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="96"/>
+            <source>Do the recovery the record asks for: usually a reboot.</source>
+            <translation>Kaydın istediği kurtarmayı yapın: genellikle yeniden başlatma.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="97"/>
+            <source>The GPU is not in a usable state until the recovery is done.</source>
+            <translation>Kurtarma yapılana kadar GPU kullanılabilir durumda değildir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="100"/>
+            <source>The NVIDIA driver reported a GPU error that is not in Centurion's table.</source>
+            <translation>NVIDIA sürücüsü, Centurion'un tablosunda bulunmayan bir GPU hatası bildirdi.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="101"/>
+            <source>See NVIDIA's Xid catalog for this code</source>
+            <translation>Bu kod için NVIDIA'nın Xid kataloğuna bakın</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="102"/>
+            <source>Check whether it repeats and with which program.</source>
+            <translation>Tekrarlanıp tekrarlanmadığını ve hangi programla olduğunu kontrol edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="102"/>
+            <source>Reset custom GPU curves to stock if any are active.</source>
+            <translation>Etkin özel GPU eğrisi varsa stoka sıfırlayın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="103"/>
+            <source>Unknown — judge by how often it repeats.</source>
+            <translation>Bilinmiyor — ne sıklıkta tekrarlandığına göre değerlendirin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="119"/>
+            <source>The NVIDIA GPU's GSP firmware stopped answering the driver (heartbeat timeout).</source>
+            <translation>NVIDIA GPU'nun GSP yazılımı sürücüye yanıt vermeyi bıraktı (kalp atışı zaman aşımı).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="120"/>
+            <source>The dGPU waking from a power-saving state</source>
+            <translation>Harici GPU'nun güç tasarrufu durumundan uyanması</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="120"/>
+            <source>An unstable GPU curve</source>
+            <translation>Kararsız bir GPU eğrisi</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="121"/>
+            <source>Update the NVIDIA driver.</source>
+            <translation>NVIDIA sürücüsünü güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="121"/>
+            <source>Reset custom GPU curves to stock.</source>
+            <translation>Özel GPU eğrilerini stoka sıfırlayın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="122"/>
+            <source>With the proprietary (closed) kernel modules, NVreg_EnableGpuFirmware=0 disables GSP for a test.</source>
+            <translation>Kapalı kaynak (proprietary) çekirdek modülleriyle NVreg_EnableGpuFirmware=0, deneme için GSP'yi kapatır.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="123"/>
+            <source>On laptops check the dGPU power page.</source>
+            <translation>Dizüstülerde dGPU gücü sayfasına bakın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="124"/>
+            <source>Serious: graphics may freeze; a reboot is usually needed.</source>
+            <translation>Ciddi: grafikler donabilir; genellikle yeniden başlatma gerekir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="127"/>
+            <source>The processor detected an internal error and corrected it (cache, core or memory controller). Nothing was lost, but corrected errors are an early sign of instability.</source>
+            <translation>İşlemci dahili bir hata algıladı ve düzeltti (önbellek, çekirdek veya bellek denetleyicisi). Hiçbir şey kaybolmadı, ancak düzeltilmiş hatalar kararsızlığın erken bir işaretidir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="129"/>
+            <source>The processor detected an internal error it could not correct. The affected process or the whole system may have stopped.</source>
+            <translation>İşlemci düzeltemediği dahili bir hata algıladı. Etkilenen süreç veya tüm sistem durmuş olabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="131"/>
+            <source>An unstable Curve Optimizer / undervolt (cores at low load or in boost)</source>
+            <translation>Kararsız bir Curve Optimizer / düşük voltaj ayarı (düşük yükteki veya boost'taki çekirdekler)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="132"/>
+            <source>RAM timings or XMP/EXPO profile at the edge of stability</source>
+            <translation>Kararlılık sınırındaki RAM zamanlamaları veya XMP/EXPO profili</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="132"/>
+            <source>High temperatures</source>
+            <translation>Yüksek sıcaklıklar</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="132"/>
+            <source>Rarely, failing hardware</source>
+            <translation>Nadiren, arızalanan donanım</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="133"/>
+            <source>If a CPU curve or undervolt is active, back it off (Ryzen Curve / Intel Undervolt) and watch for repeats.</source>
+            <translation>Bir CPU eğrisi veya düşük voltaj ayarı etkinse geri çekin (Ryzen Eğrisi / Intel Undervolt) ve tekrarlanıp tekrarlanmadığını izleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="134"/>
+            <source>If the RAM runs an XMP/EXPO profile or tuned timings, test at stock and run a memory test.</source>
+            <translation>RAM bir XMP/EXPO profili veya ayarlanmış zamanlamalarla çalışıyorsa stokta deneyin ve bir bellek testi çalıştırın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="135"/>
+            <source>Check CPU temperatures under load.</source>
+            <translation>Yük altında CPU sıcaklıklarını kontrol edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="136"/>
+            <source>rasdaemon (ras-mc-ctl --summary) decodes machine checks in more detail.</source>
+            <translation>rasdaemon (ras-mc-ctl --summary) makine denetimlerini daha ayrıntılı çözümler.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="138"/>
+            <source>MCA bank: %1</source>
+            <translation>MCA bankası: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="139"/>
+            <source>On AMD Zen the low banks are core units (sensitive to the curve), higher ones are L3, fabric and memory controllers (RAM).</source>
+            <translation>AMD Zen'de düşük numaralı bankalar çekirdek birimleridir (eğriye duyarlı), yüksek olanlar L3, fabric ve bellek denetleyicileridir (RAM).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="141"/>
+            <source>Reported by CPU %1</source>
+            <translation>Bildiren CPU: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="142"/>
+            <source>Not immediately dangerous; repeats mean the system is not fully stable.</source>
+            <translation>Hemen tehlikeli değil; tekrarlanması sistemin tam kararlı olmadığını gösterir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="143"/>
+            <source>Serious: data in flight may have been lost.</source>
+            <translation>Ciddi: aktarılmakta olan veriler kaybolmuş olabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="146"/>
+            <source>A PCIe link had transmission errors that the hardware fixed by retrying. Harmless once, but a flood slows the device and fills the log.</source>
+            <translation>Bir PCIe bağlantısında donanımın yeniden deneyerek düzelttiği iletim hataları oldu. Bir kez zararsızdır, ancak bir sel aygıtı yavaşlatır ve günlüğü doldurur.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="148"/>
+            <source>A PCIe device reported an error the link could not correct; the device may have been reset.</source>
+            <translation>Bir PCIe aygıtı bağlantının düzeltemediği bir hata bildirdi; aygıt sıfırlanmış olabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="149"/>
+            <source>Link power saving (ASPM) on that port</source>
+            <translation>O porttaki bağlantı güç tasarrufu (ASPM)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="149"/>
+            <source>Signal problems: riser, slot, Thunderbolt/USB4 dock</source>
+            <translation>Sinyal sorunları: yükseltici (riser), yuva, Thunderbolt/USB4 dock</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="150"/>
+            <source>Device or BIOS firmware bugs</source>
+            <translation>Aygıt veya BIOS yazılımı hataları</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="151"/>
+            <source>Find the device: lspci -s &lt;address&gt; (see below).</source>
+            <translation>Aygıtı bulun: lspci -s &lt;adres&gt; (aşağıya bakın).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="152"/>
+            <source>Update the BIOS and the device's firmware.</source>
+            <translation>BIOS'u ve aygıtın yazılımını güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="153"/>
+            <source>For a test, boot with pcie_aspm.policy=performance (or pcie_aspm=off); if the errors stop, ASPM is the cause.</source>
+            <translation>Deneme için pcie_aspm.policy=performance (veya pcie_aspm=off) ile açın; hatalar durursa neden ASPM'dir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="154"/>
+            <source>pci=noaer only hides the reports; it does not fix the link.</source>
+            <translation>pci=noaer yalnızca raporları gizler; bağlantıyı düzeltmez.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="156"/>
+            <source>PCIe device: %1</source>
+            <translation>PCIe aygıtı: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="157"/>
+            <source>Error layer: %1</source>
+            <translation>Hata katmanı: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="158"/>
+            <source>Low, unless it floods.</source>
+            <translation>Düşük, sel hâline gelmedikçe.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="158"/>
+            <source>Serious for the affected device.</source>
+            <translation>Etkilenen aygıt için ciddi.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="161"/>
+            <source>A CPU did not pass through a scheduling point for a long time (RCU stall): something kept it busy in the kernel.</source>
+            <translation>Bir CPU uzun süre boyunca bir zamanlama noktasından geçmedi (RCU takılması): çekirdekte bir şey onu meşgul etti.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="162"/>
+            <source>A CPU core was stuck in the kernel for many seconds without letting anything else run (soft / hard lockup).</source>
+            <translation>Bir CPU çekirdeği, başka hiçbir şeyin çalışmasına izin vermeden saniyelerce çekirdekte takılı kaldı (soft / hard lockup).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="163"/>
+            <source>A driver stuck waiting for hardware (GPU, storage, Wi-Fi)</source>
+            <translation>Donanımı bekleyerek takılan bir sürücü (GPU, depolama, Wi-Fi)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="163"/>
+            <source>An unstable CPU curve or undervolt</source>
+            <translation>Kararsız bir CPU eğrisi veya düşük voltaj ayarı</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="164"/>
+            <source>A kernel bug</source>
+            <translation>Bir çekirdek hatası</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="165"/>
+            <source>Open the kernel log around the event: the lines after it name the function and module that was stuck.</source>
+            <translation>Olayın çevresindeki çekirdek günlüğünü açın: ardından gelen satırlar takılan işlevi ve modülü adlandırır.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="166"/>
+            <source>If a CPU curve is active, back it off.</source>
+            <translation>Bir CPU eğrisi etkinse geri çekin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="167"/>
+            <source>If it happens around suspend/resume, see Sleep &amp; wake.</source>
+            <translation>Uyku/uyanma sırasında oluyorsa Uyku ve uyanma sayfasına bakın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="168"/>
+            <source>Update the kernel.</source>
+            <translation>Çekirdeği güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="170"/>
+            <source>Task running at the time: %1</source>
+            <translation>O sırada çalışan görev: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="171"/>
+            <source>CPU: %1</source>
+            <translation>CPU: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="172"/>
+            <source>Stuck for: %1 s</source>
+            <translation>Takılma süresi: %1 sn</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="173"/>
+            <source>Serious: the system may have frozen briefly or completely.</source>
+            <translation>Ciddi: sistem kısa süreliğine veya tamamen donmuş olabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="175"/>
+            <source>An NVMe drive did not answer in time and the kernel aborted the request or reset the controller.</source>
+            <translation>Bir NVMe disk zamanında yanıt vermedi ve çekirdek isteği iptal etti veya denetleyiciyi sıfırladı.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="176"/>
+            <source>Drive firmware bugs with power-saving states (APST)</source>
+            <translation>Güç tasarrufu durumlarıyla (APST) ilgili disk yazılımı hataları</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="176"/>
+            <source>Overheating drive</source>
+            <translation>Aşırı ısınan disk</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="176"/>
+            <source>A failing drive</source>
+            <translation>Arızalanmakta olan bir disk</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="177"/>
+            <source>PCIe link problems</source>
+            <translation>PCIe bağlantı sorunları</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="178"/>
+            <source>Back up important data now.</source>
+            <translation>Önemli verileri şimdi yedekleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="179"/>
+            <source>Open Drive health and check media errors, temperature and the error log.</source>
+            <translation>Disk sağlığı sayfasını açın; ortam hatalarını, sıcaklığı ve hata günlüğünü kontrol edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="180"/>
+            <source>Update the drive firmware (fwupdmgr, or the vendor's tool).</source>
+            <translation>Disk yazılımını güncelleyin (fwupdmgr veya üreticinin aracı).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="181"/>
+            <source>For a test, boot with nvme_core.default_ps_max_latency_us=0 (disables APST); if the timeouts stop, power saving is the cause.</source>
+            <translation>Deneme için nvme_core.default_ps_max_latency_us=0 ile açın (APST'yi kapatır); zaman aşımları durursa neden güç tasarrufudur.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="182"/>
+            <source>Drive: %1</source>
+            <translation>Disk: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="183"/>
+            <source>Critical: the drive is not reachable; writes may be lost.</source>
+            <translation>Kritik: diske ulaşılamıyor; yazılanlar kaybolabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="184"/>
+            <source>Serious if it repeats.</source>
+            <translation>Tekrarlanıyorsa ciddi.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="186"/>
+            <source>A file system found damaged data or metadata. Depending on the file system it may now be read-only.</source>
+            <translation>Bir dosya sistemi bozuk veri veya üst veri buldu. Dosya sistemine bağlı olarak artık salt okunur olabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="187"/>
+            <source>A failing or disconnecting drive</source>
+            <translation>Arızalanan veya bağlantısı kopan bir disk</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="187"/>
+            <source>Unstable RAM (data corrupted before it was written)</source>
+            <translation>Kararsız RAM (veri yazılmadan önce bozuldu)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="188"/>
+            <source>An earlier crash or power loss</source>
+            <translation>Daha önceki bir çökme veya güç kaybı</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="189"/>
+            <source>Back up important files now and avoid large writes.</source>
+            <translation>Önemli dosyaları şimdi yedekleyin ve büyük yazmalardan kaçının.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="191"/>
+            <source>Run btrfs scrub start / and check btrfs device stats /: they show which files are affected.</source>
+            <translation>btrfs scrub start / çalıştırın ve btrfs device stats / değerlerine bakın: hangi dosyaların etkilendiğini gösterirler.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="192"/>
+            <source>Checksum errors on a healthy drive point at RAM: run a memory test.</source>
+            <translation>Sağlıklı bir diskte sağlama toplamı hataları RAM'i işaret eder: bir bellek testi çalıştırın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="194"/>
+            <source>Run xfs_repair on the unmounted file system (from a live USB).</source>
+            <translation>Bağlı olmayan dosya sisteminde xfs_repair çalıştırın (canlı USB'den).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="196"/>
+            <source>Run e2fsck -f on the unmounted file system (from a live USB, or schedule a check at boot).</source>
+            <translation>Bağlı olmayan dosya sisteminde e2fsck -f çalıştırın (canlı USB'den veya açılışta denetim planlayarak).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="197"/>
+            <source>Check the drive in Drive health.</source>
+            <translation>Diski Disk sağlığı sayfasında kontrol edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="199"/>
+            <source>Device: %1</source>
+            <translation>Aygıt: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="200"/>
+            <source>Serious: data may be damaged.</source>
+            <translation>Ciddi: veriler zarar görmüş olabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="203"/>
+            <source>The integrated GPU hung while running a job and the driver reset it. Usually the screen freezes for a moment.</source>
+            <translation>Tümleşik GPU bir işi yürütürken takıldı ve sürücü onu sıfırladı. Genellikle ekran bir an donar.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="204"/>
+            <source>A driver or Mesa bug triggered by a program</source>
+            <translation>Bir programın tetiklediği bir sürücü veya Mesa hatası</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="204"/>
+            <source>Outdated GPU firmware (linux-firmware)</source>
+            <translation>Eski GPU yazılımı (linux-firmware)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="205"/>
+            <source>Waking from suspend</source>
+            <translation>Uykudan uyanma</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="205"/>
+            <source>Panel Self Refresh (display power saving)</source>
+            <translation>Panel Self Refresh (ekran güç tasarrufu)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="206"/>
+            <source>Update the kernel, Mesa and linux-firmware.</source>
+            <translation>Çekirdeği, Mesa'yı ve linux-firmware'i güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="206"/>
+            <source>Note which program was running (see below).</source>
+            <translation>Hangi programın çalıştığını not edin (aşağıya bakın).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="207"/>
+            <source>If it follows suspend, check Sleep &amp; wake.</source>
+            <translation>Uykudan sonra oluyorsa Uyku ve uyanma sayfasına bakın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="207"/>
+            <source>If the screen flickers or freezes, test i915.enable_psr=0.</source>
+            <translation>Ekran titriyor veya donuyorsa i915.enable_psr=0 deneyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="208"/>
+            <source>Program: %1</source>
+            <translation>Program: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="210"/>
+            <source>Annoying rather than dangerous, unless it repeats.</source>
+            <translation>Tekrarlanmadıkça tehlikeli olmaktan çok can sıkıcı.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="212"/>
+            <source>The Wi-Fi adapter's firmware crashed and the driver restarted it; the connection drops for a moment.</source>
+            <translation>Wi-Fi adaptörünün yazılımı çöktü ve sürücü onu yeniden başlattı; bağlantı bir an kopar.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="213"/>
+            <source>Firmware bugs (often fixed in newer linux-firmware)</source>
+            <translation>Yazılım hataları (çoğu zaman daha yeni linux-firmware'de düzeltilir)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="213"/>
+            <source>Power saving of the adapter</source>
+            <translation>Adaptörün güç tasarrufu</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="214"/>
+            <source>Bluetooth coexistence on combo cards</source>
+            <translation>Birleşik kartlarda Bluetooth ile birlikte çalışma</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="215"/>
+            <source>Update linux-firmware and the kernel.</source>
+            <translation>linux-firmware'i ve çekirdeği güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="216"/>
+            <source>Turn Wi-Fi power saving off for a test (NetworkManager: wifi.powersave = 2).</source>
+            <translation>Deneme için Wi-Fi güç tasarrufunu kapatın (NetworkManager: wifi.powersave = 2).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="217"/>
+            <source>MediaTek MT7921/7922: mt7921e.disable_aspm=1 helps on many laptops.</source>
+            <translation>MediaTek MT7921/7922: mt7921e.disable_aspm=1 birçok dizüstüde işe yarar.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="218"/>
+            <source>Intel: iwlwifi.power_save=0 and iwlmvm.power_scheme=1 disable its power saving.</source>
+            <translation>Intel: iwlwifi.power_save=0 ve iwlmvm.power_scheme=1 güç tasarrufunu kapatır.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="220"/>
+            <source>Driver: %1</source>
+            <translation>Sürücü: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="221"/>
+            <source>Not dangerous; costs connectivity.</source>
+            <translation>Tehlikeli değil; bağlantıya mal olur.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="224"/>
+            <source>A sensor reached its critical temperature; the system shuts down to protect the hardware.</source>
+            <translation>Bir sensör kritik sıcaklığa ulaştı; donanımı korumak için sistem kapanır.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="225"/>
+            <source>The CPU reached its temperature limit and was slowed down (throttled).</source>
+            <translation>CPU sıcaklık sınırına ulaştı ve yavaşlatıldı (throttling).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="226"/>
+            <source>Dust in the heatsink or fans</source>
+            <translation>Soğutucuda veya fanlarda toz</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="226"/>
+            <source>A fan curve that reacts too late</source>
+            <translation>Geç tepki veren bir fan eğrisi</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="226"/>
+            <source>Dried thermal paste</source>
+            <translation>Kurumuş termal macun</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="227"/>
+            <source>Power limits higher than the cooling can handle</source>
+            <translation>Soğutmanın kaldırabileceğinden yüksek güç sınırları</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="228"/>
+            <source>Open Cooling: check fan speeds and temperatures under load.</source>
+            <translation>Soğutma sayfasını açın: yük altında fan hızlarını ve sıcaklıkları kontrol edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="228"/>
+            <source>Lower the power limit or the performance profile.</source>
+            <translation>Güç sınırını veya performans profilini düşürün.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="229"/>
+            <source>Clean the fans and heatsink; consider new thermal paste.</source>
+            <translation>Fanları ve soğutucuyu temizleyin; termal macunu yenilemeyi düşünün.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="231"/>
+            <source>Critical.</source>
+            <translation>Kritik.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="231"/>
+            <source>Costs performance; harmless to the hardware.</source>
+            <translation>Performansa mal olur; donanıma zararsız.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="233"/>
+            <source>Memory (RAM plus swap) ran out and the kernel killed a process to free some.</source>
+            <translation>Bellek (RAM ve takas) tükendi ve çekirdek yer açmak için bir süreci sonlandırdı.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="234"/>
+            <source>A program using far more memory than usual (a leak)</source>
+            <translation>Her zamankinden çok daha fazla bellek kullanan bir program (sızıntı)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="234"/>
+            <source>Large parallel builds (many compiler jobs)</source>
+            <translation>Büyük paralel derlemeler (çok sayıda derleyici işi)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="235"/>
+            <source>Many browser tabs or virtual machines</source>
+            <translation>Çok sayıda tarayıcı sekmesi veya sanal makine</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="235"/>
+            <source>No or too little swap / zram</source>
+            <translation>Takas / zram yok veya çok az</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="236"/>
+            <source>See which process was killed (below) and whether it is a repeat offender.</source>
+            <translation>Hangi sürecin sonlandırıldığına (aşağıda) ve bunun tekrar eden bir durum olup olmadığına bakın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="237"/>
+            <source>Add zram or a swap file so the system slows down instead of killing programs.</source>
+            <translation>Sistem programları sonlandırmak yerine yavaşlasın diye zram veya bir takas dosyası ekleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="238"/>
+            <source>Limit parallel build jobs (Gentoo: MAKEOPTS; Arch: MAKEFLAGS in makepkg.conf).</source>
+            <translation>Paralel derleme işlerini sınırlayın (Gentoo: MAKEOPTS; Arch: makepkg.conf içinde MAKEFLAGS).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="239"/>
+            <source>systemd-oomd or earlyoom act earlier and pick the culprit more predictably.</source>
+            <translation>systemd-oomd veya earlyoom daha erken devreye girer ve suçluyu daha öngörülebilir seçer.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="242"/>
+            <source>Killed: %1 (pid %2)</source>
+            <translation>Sonlandırılan: %1 (pid %2)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="244"/>
+            <source>Its memory: %1 MiB</source>
+            <translation>Belleği: %1 MiB</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="245"/>
+            <source>Unsaved work in the killed program is lost.</source>
+            <translation>Sonlandırılan programdaki kaydedilmemiş çalışmalar kaybolur.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="248"/>
+            <source>Kernel code hit an unexpected condition and printed a warning with a stack trace. The system usually continues normally.</source>
+            <translation>Çekirdek kodu beklenmedik bir durumla karşılaştı ve yığın izi içeren bir uyarı yazdı. Sistem genellikle normal şekilde devam eder.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="250"/>
+            <source>The kernel hit a bug (an oops). The affected task was killed and the kernel may be in an inconsistent state.</source>
+            <translation>Çekirdek bir hataya çarptı (oops). Etkilenen görev sonlandırıldı ve çekirdek tutarsız bir durumda olabilir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="252"/>
+            <source>A bug in the named driver or module</source>
+            <translation>Adı geçen sürücüde veya modülde bir hata</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="252"/>
+            <source>An out-of-tree module (NVIDIA, ZFS, VirtualBox) not matching the kernel</source>
+            <translation>Çekirdekle uyuşmayan ağaç dışı bir modül (NVIDIA, ZFS, VirtualBox)</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="253"/>
+            <source>Memory corruption from unstable hardware</source>
+            <translation>Kararsız donanımdan kaynaklanan bellek bozulması</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="254"/>
+            <source>Open the kernel log around the event to read the full trace (module, function).</source>
+            <translation>Tam izi (modül, işlev) okumak için olayın çevresindeki çekirdek günlüğünü açın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="255"/>
+            <source>Update the kernel or the module named; rebuild out-of-tree modules after a kernel update.</source>
+            <translation>Çekirdeği veya adı geçen modülü güncelleyin; çekirdek güncellemesinden sonra ağaç dışı modülleri yeniden derleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="256"/>
+            <source>A one-off warning can be ignored; report repeats to the module's bug tracker with the trace.</source>
+            <translation>Tek seferlik bir uyarı göz ardı edilebilir; tekrarlarını izle birlikte modülün hata izleyicisine bildirin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="257"/>
+            <source>Save your work and reboot soon.</source>
+            <translation>Çalışmanızı kaydedin ve kısa süre içinde yeniden başlatın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="258"/>
+            <source>Module: %1</source>
+            <translation>Modül: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="259"/>
+            <source>Source location: %1</source>
+            <translation>Kaynak konumu: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="260"/>
+            <source>Function: %1</source>
+            <translation>İşlev: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="261"/>
+            <source>Bug type: %1</source>
+            <translation>Hata türü: %1</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="262"/>
+            <source>Usually harmless once.</source>
+            <translation>Bir kez olursa genellikle zararsız.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="262"/>
+            <source>Serious: reboot soon.</source>
+            <translation>Ciddi: kısa süre içinde yeniden başlatın.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="264"/>
+            <source>A device (usually the laptop's dGPU) could not be woken from its deepest power-saving state. A hang often follows.</source>
+            <translation>Bir aygıt (genellikle dizüstünün harici GPU'su) en derin güç tasarrufu durumundan uyandırılamadı. Çoğu zaman ardından donma gelir.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="265"/>
+            <source>Firmware (ACPI) bugs in runtime power management</source>
+            <translation>Çalışma zamanı güç yönetiminde donanım yazılımı (ACPI) hataları</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="265"/>
+            <source>A driver bug</source>
+            <translation>Bir sürücü hatası</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="266"/>
+            <source>Open dGPU power and review its runtime power management settings.</source>
+            <translation>dGPU gücü sayfasını açın ve çalışma zamanı güç yönetimi ayarlarını gözden geçirin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="267"/>
+            <source>Update the BIOS/EC firmware and the GPU driver.</source>
+            <translation>BIOS/EC yazılımını ve GPU sürücüsünü güncelleyin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="268"/>
+            <source>For a test, set NVreg_DynamicPowerManagement=0x00 (dGPU stays powered).</source>
+            <translation>Deneme için NVreg_DynamicPowerManagement=0x00 ayarlayın (dGPU güçte kalır).</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="269"/>
+            <source>Serious: likely to freeze the system.</source>
+            <translation>Ciddi: sistemi dondurması muhtemel.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="271"/>
+            <source>A kernel event Centurion does not have a specific explanation for.</source>
+            <translation>Centurion'un özel bir açıklamasının bulunmadığı bir çekirdek olayı.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="272"/>
+            <source>Review the raw log and check whether the event repeats before changing system settings.</source>
+            <translation>Sistem ayarlarını değiştirmeden önce ham günlüğü inceleyin ve olayın tekrarlanıp tekrarlanmadığını kontrol edin.</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="288"/>
+            <source>From this record</source>
+            <translation>Bu kayıttan</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="289"/>
+            <source>Usual causes</source>
+            <translation>Olağan nedenler</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="290"/>
+            <source>What to do</source>
+            <translation>Ne yapılmalı</translation>
+        </message>
+        <message>
+            <location filename="../src/eventinfo.cpp" line="293"/>
+            <source>Kernel record</source>
+            <translation>Çekirdek kaydı</translation>
         </message>
     </context>
 </TS>

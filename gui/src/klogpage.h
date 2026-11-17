@@ -27,9 +27,11 @@ class KlogPage : public QWidget {
 public:
     explicit KlogPage(QWidget *parent = nullptr);
     ~KlogPage() override;
-    /// Monitor's "show in kernel log": the saved lines around one kernel record (20 before and after,
+    /// Monitor's "show in kernel log": the saved lines around one kernel record (50 before, 20 after,
     /// all boots, the record highlighted). Changing the scope or the filter shows everything again.
     void showAt(const QString &bootId, quint64 seq);
+    /// Every saved line of one boot (its 8-character tag): all boots scope, filtered to that boot.
+    void showBoot(const QString &boot8);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -43,6 +45,9 @@ private:
     void updateInfo();
     void contextMenu(const QPoint &pos);
     void setMuted(const QString &key, bool on);
+    /// Quick filters ▾: common subsystems as "a|b|c" filters.
+    void fillPresets(class QMenu *menu);
+    void saveView();
     static QString logPath();
 
     QComboBox *scope_;
@@ -51,6 +56,8 @@ private:
     QLineEdit *filter_;
     QTextBrowser *text_;
     QLabel *info_;
+    QWidget *focusBar_ = nullptr;         // "showing the lines around message N" + Show the whole log
+    QLabel *focusText_ = nullptr;
     QTimer *debounce_;
     int kmsgFd_ = -1;
     quint64 lastSeq_ = 0, savedSeq_ = 0;
@@ -60,5 +67,6 @@ private:
     bool needsRoot_ = false, busy_ = false, shownOnce_ = false;
     QSet<QString> muted_;                 // normalized messages hidden by the user (gui.ini klog/muted)
     QHash<QString, QString> rowKey_;      // text of each rendered row → its message key (for the menu)
+    QHash<QString, QString> rowMsg_;      // text of each rendered row → the kernel message itself
     int hiddenMuted_ = 0;                 // rows left out by the mute list in the last render
 };

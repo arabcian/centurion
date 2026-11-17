@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+### Added
+- Health → Backups: distribution-aware defaults. `/etc/os-release` (ID / ID_LIKE) selects Gentoo, Arch (Manjaro,
+  EndeavourOS, CachyOS), Debian/Ubuntu (Mint, Pop!_OS), Fedora/RHEL, openSUSE, Void or Alpine; the image's exclude
+  list follows that layout (pacman sync DBs, apt lists, snap mounts, the Gentoo repository, snapper/Timeshift
+  snapshots, core dumps). *Defaults ▾* offers this system's list, another distribution's, and optional exclusions
+  (Steam games, caches, Docker/Podman, VM disks, journal, Ollama models…). Active swap files are always left out
+  (`distro.rs`, mirrored by `gui/src/distroprofile.cpp`, kept in step by a test). A list saved with the old
+  built-in default follows the new one; edited lists are kept.
+- System profile: the package manager configuration and package list of every supported family (pacman, dpkg,
+  rpm, xbps, apk), plus `packages-explicit.txt` (world set / explicitly installed). Install hints (age, polkit,
+  nftables, acpi_call) and the restore-target placeholder follow the distribution.
+- Events & alerts: an explanation pane and dialog per event — meaning, usual causes, steps, urgency and details
+  read from the record (process, PCI device, drive, killed process, kernel function) — for every Xid group, GSP,
+  MCE, AER, lockups, NVMe, file systems, i915/xe/amdgpu, Wi-Fi, thermal, OOM, oops and D3cold (`eventinfo.cpp`).
+- Kernel log: 50 lines of context before an event (was 20), *Show the whole log*, `a|b` filters, quick filters
+  per subsystem, *Save view…*, *What does this mean?*, *Copy this line*, *Show only lines like this*.
+- Boot history: filter (unclean / events / curves), patterns (unclean rate per curve, session lengths), comparison
+  with the previous boot, *Kernel log of this boot*, *Copy details*, *Save report…*; 50 saved kernel lines.
+- Network protection: *Open ports* tab (who can reach each listening socket, well-known services), CSV export
+  of every list, rules export/import, traffic totals per program, busiest programs on the Connections tab.
+- Drive health: power-on age, write rate, wear projection, heat and unsafe-shutdown notes.
+- Health navigation: a tooltip per page.
+
 ### Security
 - Root helpers have a hard run-time bound (`watchdog`): the GUI cannot kill a helper once
   pkexec has started it as root, so it no longer runs on unobserved after a GUI timeout.

@@ -28,6 +28,8 @@ public:
 Q_SIGNALS:
     /// After every load: the boot before this one ended unexpectedly (empty id: it did not).
     void previousUnclean(const QString &bootId, qint64 endTime);
+    /// "Kernel log of this boot": the saved kernel log filtered to one boot (its 8-character tag).
+    void openKernelLog(const QString &boot8);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -40,12 +42,22 @@ private:
     static int flightInterval();
     static QString logPath();
     static QStringList kernelLogTail(const QString &boot8, int lines);
+    /// Hides rows the filter box leaves out (all / unclean / with events / with a curve).
+    void applyFilter();
+    /// Patterns across all recorded boots: how often each curve state ended uncleanly, session lengths.
+    QString patterns() const;
+    /// What changed from the boot recorded before `boot` (curves, events), as text lines.
+    QString comparedWithPrevious(const QJsonObject &boot) const;
+    void saveReport();
 
     QLabel *info_;
     QTreeWidget *list_;
     QPlainTextEdit *detail_;
     QPushButton *bClear_;
     QComboBox *interval_;
+    QComboBox *filter_ = nullptr;
+    QLabel *patterns_ = nullptr;
+    QPushButton *bKlog_ = nullptr;
     QJsonObject data_;
     QElapsedTimer age_;
     bool busy_ = false;

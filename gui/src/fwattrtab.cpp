@@ -7,6 +7,7 @@
 #include "platformprofile.h"
 #include "prewrite.h"
 #include "privileged.h"
+#include "systools.h"
 #include "theme.h"
 #include "experimentalui.h"
 
@@ -549,8 +550,8 @@ void FwattrTab::applyAll() {
 void FwattrTab::applyWmi(const QList<int> &indices) {
     if (busy_ || locked_ || indices.isEmpty()) return;
     if (!wmiReady_) {
-        QMessageBox::warning(this, "acpi_call needed", "These attributes are written through acpi_call, which is not available.\n"
-                             "Load it with: modprobe acpi_call (Gentoo: emerge sys-power/acpi_call).");
+        QMessageBox::warning(this, "acpi_call needed", QStringLiteral("These attributes are written through acpi_call, which is not available.\n"
+                                            "Load it with: modprobe acpi_call (install: %1).").arg(systools::installCommand(QStringLiteral("acpi_call"))));
         return;
     }
     QJsonObject vals;

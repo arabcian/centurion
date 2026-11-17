@@ -1,5 +1,6 @@
 #include "klogpage.h"
 
+#include "eventinfo.h"
 #include "klogview.h"
 #include "privileged.h"
 #include "theme.h"
@@ -13,6 +14,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -25,6 +27,9 @@
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSocketNotifier>
@@ -51,7 +56,8 @@ static constexpr int DEBOUNCE_MS = 3000;
 static constexpr qint64 LOG_MAX_BYTES = 16 << 20;  // then kernel.log -> kernel.log.1
 static constexpr int MAX_SHOWN_LINES = 6000;
 static constexpr qint64 TAIL_BYTES = 512 << 10;
-static constexpr int CONTEXT_LINES = 20;           // around a record opened from Monitor
+static constexpr int CONTEXT_BEFORE = 50;          // lines before a record opened from Monitor
+static constexpr int CONTEXT_AFTER = 20;           // and after it
 
 static QString helperPath() { return privileged::helperPath(QStringLiteral("tune-profile-helper")); }
 
@@ -77,17 +83,26 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     scope_->addItems({QStringLiteral("This boot"), QStringLiteral("All saved boots")});
     top->addWidget(scope_);
     filter_ = new QLineEdit;
-    filter_->setPlaceholderText(QStringLiteral("Filter…"));
+    filter_->setPlaceholderText(tr("Filter… (a|b = either)"));
+    filter_->setToolTip(tr("Shows lines containing the text (case-insensitive). Separate alternatives with |, e.g. nvme|ata|EXT4."));
     filter_->setClearButtonEnabled(true);
-    filter_->setMaximumWidth(200);
+    filter_->setMaximumWidth(220);
     top->addWidget(filter_);
+    auto *bPresets = new QPushButton(tr("Quick filters ▾"));
+    auto *presets = new QMenu(bPresets);
+    connect(presets, &QMenu::aboutToShow, this, [this, presets] { fillPresets(presets); });
+    bPresets->setMenu(presets);
+    top->addWidget(bPresets);
     auto *bRefresh = new QPushButton(QStringLiteral("Refresh"));
     auto *bCopy = new QPushButton(QStringLiteral("Copy"));
     auto *bOpen = new QPushButton(QStringLiteral("Open saved log"));
+    auto *bSave = new QPushButton(tr("Save view…"));
+    bSave->setToolTip(tr("Save the lines shown now (with the current filters) to a text file, e.g. for a bug report."));
     auto *bClear = new QPushButton(QStringLiteral("Clear saved log"));
     bClear->setObjectName(QStringLiteral("btnDanger"));
-    for (auto *b : {bRefresh, bCopy, bOpen, bClear}) top->addWidget(b);
+    for (auto *b : {bRefresh, bCopy, bSave, bOpen, bClear}) top->addWidget(b);
     v->addLayout(top);
+    connect(bSave, &QPushButton::clicked, this, &KlogPage::saveView);
 
     auto *opts = new QHBoxLayout;
     level_ = new QComboBox;
@@ -104,6 +119,18 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     opts->addWidget(showMuted_);
     opts->addStretch(1);
     v->addLayout(opts);
+
+    focusBar_ = new QWidget;
+    auto *fb = new QHBoxLayout(focusBar_);
+    fb->setContentsMargins(0, 0, 0, 0);
+    focusText_ = new QLabel;
+    focusText_->setProperty("role", "muted");
+    fb->addWidget(focusText_, 1);
+    auto *bWhole = new QPushButton(tr("Show the whole log"));
+    connect(bWhole, &QPushButton::clicked, this, [this] { focusBoot_.clear(); render(); });
+    fb->addWidget(bWhole);
+    focusBar_->setVisible(false);
+    v->addWidget(focusBar_);
 
     text_ = new QTextBrowser;
     text_->setLineWrapMode(QTextEdit::NoWrap);
@@ -194,6 +221,13 @@ void KlogPage::showAt(const QString &bootId, quint64 seq) {
     filter_->clear();
     focusBoot_ = bootId.left(8);
     focusSeq_ = seq;
+    render();
+}
+
+void KlogPage::showBoot(const QString &boot8) {
+    scope_->setCurrentIndex(1);
+    filter_->setText(QStringLiteral("boot=") + boot8.left(8));
+    focusBoot_.clear();
     render();
 }
 
@@ -315,7 +349,15 @@ void KlogPage::updateInfo() {
 void KlogPage::render() {
     const bool all = scope_->currentIndex() == 1;
     const QString boot = bootId_.left(8);
-    const QString needle = filter_->text();
+    // "a|b|c": any of the alternatives.
+    QStringList needles;
+    for (const QString &n : filter_->text().split(QLatin1Char('|'), Qt::SkipEmptyParts))
+        if (!n.trimmed().isEmpty()) needles << n.trimmed();
+    auto matches = [&needles](const QString &l) {
+        if (needles.isEmpty()) return true;
+        for (const QString &n : needles) if (l.contains(n, Qt::CaseInsensitive)) return true;
+        return false;
+    };
     const int levelMax = LEVEL_MAX[std::clamp(level_->currentIndex(), 0, 4)];
     // Judged over the whole saved log, whatever the scope and filter: "only new" needs the earlier boots too.
     QHash<QString, QString> firstBoot;
@@ -330,7 +372,7 @@ void KlogPage::render() {
             if (!firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
             if (!all && p->boot != boot) continue;
             if (p->level > levelMax) continue;
-            if (!needle.isEmpty() && !l.contains(needle, Qt::CaseInsensitive)) continue;
+            if (!matches(l)) continue;
             shown.push_back(*p);
             if (shown.size() > MAX_SHOWN_LINES) shown.pop_front();
         }
@@ -346,7 +388,7 @@ void KlogPage::render() {
         int at = -1;
         for (int i = 0; i < int(v.size()) && at < 0; ++i) if (v[i].boot == focusBoot_ && v[i].seq == focusSeq_) at = i;
         if (at >= 0) {
-            const int from = std::max(0, at - CONTEXT_LINES), to = std::min<int>(int(v.size()), at + CONTEXT_LINES + 1);
+            const int from = std::max(0, at - CONTEXT_BEFORE), to = std::min<int>(int(v.size()), at + CONTEXT_AFTER + 1);
             for (int i = from; i < to; ++i) rows.push_back(klogview::Row{v[i], 1, v[i].time});
             mark = at - from;
         }
@@ -361,6 +403,11 @@ void KlogPage::render() {
     }
 
     rowKey_.clear();
+    rowMsg_.clear();
+    focusBar_->setVisible(focused);
+    if (focused)
+        focusText_->setText(tr("Showing up to %1 lines before and %2 after kernel message %3 (boot %4), the message in bold.")
+                                .arg(CONTEXT_BEFORE).arg(CONTEXT_AFTER).arg(focusSeq_).arg(focusBoot_));
     QString html = QStringLiteral("<pre style='margin:0'>");
     for (int i = 0; i < int(rows.size()); ++i) {
         const klogview::Row &r = rows.at(i);
@@ -369,6 +416,7 @@ void KlogPage::render() {
         if (r.count > 1) plain += tr("  ×%1, last %2").arg(r.count).arg(r.last.mid(11));
         if (muted_.contains(l.key)) plain += tr("  [muted]");
         rowKey_.insert(plain.trimmed(), l.key);  // the context menu finds the message by its line text
+        rowMsg_.insert(plain.trimmed(), l.msg);
         const char *c = l.level <= 2 ? theme::DANGER : l.level == 3 ? theme::WARN : theme::FG_DIM;
         html += QStringLiteral("<span style='color:%1%2'>%3%4</span>\n").arg(QString::fromLatin1(c),
                                                                              i == mark ? QStringLiteral(";font-weight:bold") : QString(),
@@ -397,7 +445,30 @@ void KlogPage::contextMenu(const QPoint &pos) {
     c.select(QTextCursor::LineUnderCursor);
     if (const auto it = rowKey_.constFind(c.selectedText().trimmed()); it != rowKey_.constEnd()) {
         const QString key = it.value();
+        const QString msg = rowMsg_.value(c.selectedText().trimmed());
         menu->addSeparator();
+        const QJsonObject ev = eventinfo::classifyLine(msg);
+        if (!ev.isEmpty()) {
+            menu->addAction(tr("What does this mean?"), this, [this, ev] {
+                QDialog dlg(this);
+                dlg.setWindowTitle(tr("Kernel message explained"));
+                dlg.resize(620, 480);
+                auto *v = new QVBoxLayout(&dlg);
+                auto *view = new QTextBrowser;
+                view->setHtml(eventinfo::html(ev, ev.value(QStringLiteral("title")).toString()));
+                v->addWidget(view, 1);
+                auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+                connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+                v->addWidget(bb);
+                dlg.exec();
+            });
+        }
+        menu->addAction(tr("Copy this line"), this, [line = c.selectedText().trimmed()] { QApplication::clipboard()->setText(line); });
+        // The message with its numbers cut off at the first digit run: the same message from other boots / devices.
+        const int digit = msg.indexOf(QRegularExpression(QStringLiteral("\\d")));
+        const QString stem = msg.left(digit > 12 ? digit : 60).trimmed();
+        if (!stem.isEmpty())
+            menu->addAction(tr("Show only lines like this"), this, [this, stem] { filter_->setText(stem); });
         if (muted_.contains(key)) menu->addAction(tr("Unmute this message"), this, [this, key] { setMuted(key, false); });
         else menu->addAction(tr("Mute this message"), this, [this, key] { setMuted(key, true); });
     }
@@ -413,4 +484,39 @@ void KlogPage::setMuted(const QString &key, bool on) {
     QSettings st(guiIniPath(), QSettings::IniFormat);
     st.setValue(QStringLiteral("klog/muted"), list);
     render();
+}
+
+void KlogPage::fillPresets(QMenu *menu) {
+    menu->clear();
+    struct Preset { const char *label, *filter; };
+    static const Preset PRESETS[] = {
+        {QT_TR_NOOP("Graphics (NVIDIA, AMD, Intel, DRM)"), "NVRM|nvidia|amdgpu|i915|xe 0000|drm|nouveau"},
+        {QT_TR_NOOP("Storage (NVMe, SATA, file systems)"), "nvme|ata|[sd|EXT4|BTRFS|XFS|I/O error|blk_update"},
+        {QT_TR_NOOP("USB and Thunderbolt"), "usb|xhci|thunderbolt|typec|ucsi"},
+        {QT_TR_NOOP("PCIe"), "pcieport|AER|PCIe|pci 0000"},
+        {QT_TR_NOOP("Network and Wi-Fi"), "iwlwifi|mt79|ath1|rtw|r8169|igc|e1000|wlan|wlp|enp|Bluetooth"},
+        {QT_TR_NOOP("Firmware and ACPI"), "firmware|ACPI|BIOS|EFI|microcode"},
+        {QT_TR_NOOP("CPU, memory and machine checks"), "mce|Machine check|Hardware Error|EDAC|Out of memory|oom|lockup|stall"},
+        {QT_TR_NOOP("Power, suspend and thermal"), "PM:|suspend|resume|thermal|temperature|throttl|D3cold"},
+        {QT_TR_NOOP("Kernel bugs and warnings"), "BUG:|Oops|WARNING:|Call Trace|taint"},
+        {QT_TR_NOOP("Audio"), "snd|sof-audio|hda|soundwire"},
+    };
+    for (const Preset &p : PRESETS)
+        menu->addAction(tr(p.label), this, [this, f = QString::fromLatin1(p.filter)] { filter_->setText(f); });
+    menu->addSeparator();
+    menu->addAction(tr("Clear filter"), this, [this] { filter_->clear(); });
+}
+
+void KlogPage::saveView() {
+    const QString file = QFileDialog::getSaveFileName(this, tr("Save kernel log view"),
+        QDir::homePath() + QStringLiteral("/kernel-log-%1.txt").arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmm"))),
+        tr("Text files (*.txt *.log);;All files (*)"));
+    if (file.isEmpty()) return;
+    QFile f(file);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Save kernel log view"), tr("Cannot write %1: %2").arg(file, f.errorString()));
+        return;
+    }
+    f.write(text_->toPlainText().toUtf8());
+    f.write("\n");
 }

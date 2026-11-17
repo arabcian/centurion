@@ -210,6 +210,36 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         description->setWordWrap(true);
         description->setProperty("tone", "dim");
         col->addWidget(description);
+        // What the counters add up to: age, write rate, a wear projection, temperature.
+        QStringList insights;
+        const auto hours = smart::field(d, "power_on_hours"), written = smart::field(d, "written_tb");
+        if (hours && *hours > 0) {
+            const double days = *hours / 24.0;
+            insights << (days >= 365 ? tr("Powered on for %1 years (%L2 h).").arg(days / 365.0, 0, 'f', 1).arg(qint64(*hours))
+                                     : tr("Powered on for %1 days (%L2 h).").arg(qint64(days)).arg(qint64(*hours)));
+            if (written && days >= 1) {
+                const double perDay = *written * 1000.0 / days;   // GB per powered-on day
+                insights << tr("Writes about %1 GB per powered-on day.").arg(perDay, 0, 'f', perDay < 10 ? 1 : 0);
+                if (life && *life >= 1 && *life < 100) {
+                    const double leftTb = *written / *life * (100.0 - *life);
+                    const double leftYears = leftTb * 1000.0 / perDay / 365.0;
+                    insights << tr("At this pace the rated wear lasts for roughly %1 TB more (≈ %2 years of powered-on use). "
+                                   "Drives usually keep working past 100 %; it is the manufacturer's endurance rating.")
+                                    .arg(leftTb, 0, 'f', leftTb < 10 ? 1 : 0).arg(leftYears > 50 ? QStringLiteral("50+") : QString::number(leftYears, 'f', 0));
+                }
+            }
+        }
+        if (temp && *temp >= 70) insights << tr("Running hot (%1 °C): NVMe drives throttle around 70–80 °C; a heatsink or airflow helps.").arg(*temp);
+        if (const auto unsafe = smart::field(d, "unsafe_shutdowns"); unsafe && hours && *hours > 0 && *unsafe > 0 && *unsafe / (*hours / 24.0) > 0.2)
+            insights << tr("%1 unsafe shutdowns: power was cut without the drive being told (forced power-offs, crashes). "
+                           "Each one risks recently written data.").arg(*unsafe);
+        if (delta && *delta > 0) insights << tr("%1 new media error(s) in the last %2 days: back up and run a long self-test (smartctl -t long).").arg(*delta).arg(TREND_DAYS);
+        if (!insights.isEmpty()) {
+            auto *more = new QLabel(QStringLiteral("• ") + insights.join(QStringLiteral("\n• ")));
+            more->setWordWrap(true);
+            more->setTextFormat(Qt::PlainText);
+            col->addWidget(more);
+        }
         cardsLayout_->addWidget(card);
     }
     cardsLayout_->addStretch();

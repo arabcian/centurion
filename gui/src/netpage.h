@@ -69,6 +69,13 @@ private:
     void applyWifi(const QJsonObject &w);
     void subscriptions();
     void fillTraffic();
+    /// Open ports: listening sockets from the last connection snapshot, with who can reach them.
+    void showPorts();
+    /// Writes a list's visible rows (headers first) to a CSV file the user picks.
+    void exportTree(QTreeWidget *tree, const QString &name);
+    /// Whitelist and blacklist as one text file, and back (Import adds; nothing is removed).
+    void exportRules();
+    void importRules();
     bool loadTraffic();
     void fillSubscriptions();
     void updateSubscription(int row);
@@ -95,6 +102,10 @@ private:
     QTreeWidget *trafficTree_;
     QLabel *trafficInfo_;
     int trafficTab_ = -1;
+    class QComboBox *trafficMode_ = nullptr; // per day / totals per program
+    QTreeWidget *ports_ = nullptr;
+    QLabel *portsInfo_ = nullptr;
+    int portsTab_ = -1;
     TrafficDays trafficDays_;                 // Traffic ledger, reread when the file changed
     QDateTime trafficSeen_;
     bool trafficReadable_ = false;

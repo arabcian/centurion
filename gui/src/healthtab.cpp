@@ -6,6 +6,7 @@
 #include "bootpage.h"
 #include "coolingpage.h"
 #include "curvepage.h"
+#include "eventinfo.h"
 #include "sleeppage.h"
 #include "klogpage.h"
 #include "dgpupage.h"
@@ -22,6 +23,9 @@
 
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QTextBrowser>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -98,6 +102,27 @@ static qint64 wallMs(double tsUs) {
     return bootMs + qint64(tsUs / 1000);
 }
 
+// One line per page for the navigation's tooltips: what the page answers.
+static QString pageAbout(const QString &key) {
+    static const QHash<QString, const char *> ABOUT = {
+        {QStringLiteral("overview"), QT_TRANSLATE_NOOP("HealthTab", "One card per area with its level, and suggested next steps.")},
+        {QStringLiteral("monitor"), QT_TRANSLATE_NOOP("HealthTab", "Hardware and driver errors from the kernel, explained, with saved history per day.")},
+        {QStringLiteral("boot"), QT_TRANSLATE_NOOP("HealthTab", "Every boot: how it ended, its kernel events, the curves in effect, crash records and patterns.")},
+        {QStringLiteral("sleep"), QT_TRANSLATE_NOOP("HealthTab", "Suspend statistics, battery used while asleep, wake sources and why the hardware does not sleep.")},
+        {QStringLiteral("battery"), QT_TRANSLATE_NOOP("HealthTab", "Time left, drain per scene, capacity (wear) history and forecast.")},
+        {QStringLiteral("dgpu"), QT_TRANSLATE_NOOP("HealthTab", "Whether the discrete GPU sleeps, what keeps it awake and what it costs.")},
+        {QStringLiteral("cooling"), QT_TRANSLATE_NOOP("HealthTab", "Does the laptop still cool as well as it did: a repeatable load test against a baseline.")},
+        {QStringLiteral("smart"), QT_TRANSLATE_NOOP("HealthTab", "Drive status, temperature, wear, media errors and a wear projection.")},
+        {QStringLiteral("network"), QT_TRANSLATE_NOOP("HealthTab", "Connections per program, open ports, blocked Windows programs, traffic per day and rules.")},
+        {QStringLiteral("backup"), QT_TRANSLATE_NOOP("HealthTab", "Configuration backups and system images, with defaults for this distribution.")},
+        {QStringLiteral("curves"), QT_TRANSLATE_NOOP("HealthTab", "Stability of the CPU/GPU curves: faults seen while each was in effect.")},
+        {QStringLiteral("klog"), QT_TRANSLATE_NOOP("HealthTab", "Kernel warnings and errors saved across reboots, with filters and explanations.")},
+        {QStringLiteral("tools"), QT_TRANSLATE_NOOP("HealthTab", "Detailed device reports: sensors, CPU, memory, PCI, USB, firmware.")},
+    };
+    const auto it = ABOUT.constFind(key);
+    return it == ABOUT.constEnd() ? QString() : HealthTab::tr(it.value());
+}
+
 HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // A single, searchable navigation tree replaces nested tab bars. All original
     // functional pages remain; tool commands stay lazy until their page is opened.
@@ -152,6 +177,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         pages_->addWidget(page);
         auto *item = new QTreeWidgetItem(group, {label});
         item->setData(0, Qt::UserRole, key);
+        item->setToolTip(0, pageAbout(key));
         pageItems_.insert(page, item);
     };
     auto *general = addGroup(tr("At a glance"));
@@ -385,6 +411,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         band_->setVisible(show);
     });
     QTimer::singleShot(4000, boot_, &BootPage::reload);
+    connect(boot_, &BootPage::openKernelLog, this, [this](const QString &boot8) { klog_->showBoot(boot8); showPage(klog_); });
 
     seenMs_ = guiSettings().value(QStringLiteral("health/seen_ms"), 0).toLongLong();
     auto *top = new QHBoxLayout;
@@ -477,11 +504,22 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(list_, &QTreeWidget::customContextMenuRequested, this, &HealthTab::eventMenu);
     connect(list_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *it, int) {
-        const QJsonObject e = QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object();
+        const QJsonObject e = eventOf(it);
         if (!e.isEmpty()) explainEvent(e);
         else QMessageBox::information(this, tr("Saved event"), it->toolTip(3));
     });
-    root->addWidget(list_, 1);
+    // The selected event explained right under the list: what it means, its usual causes, what to do.
+    auto *eventSplit = new QSplitter(Qt::Vertical);
+    eventSplit->setChildrenCollapsible(true);
+    eventSplit->addWidget(list_);
+    eventDetail_ = new QTextBrowser;
+    eventDetail_->setOpenLinks(false);
+    eventDetail_->setPlaceholderText(tr("Select an event to see what it means, its usual causes and what to do."));
+    eventSplit->addWidget(eventDetail_);
+    eventSplit->setStretchFactor(0, 3);
+    eventSplit->setStretchFactor(1, 2);
+    connect(list_, &QTreeWidget::currentItemChanged, this, &HealthTab::showEventDetail);
+    root->addWidget(eventSplit, 1);
 
     aer_ = new QLabel;
     aer_->setWordWrap(true);
@@ -914,6 +952,7 @@ void HealthTab::loadHistoryDay() {
         item->setData(0, Qt::UserRole + 2, dayFilter_);
         item->setData(0, Qt::UserRole + 3, true);
         item->setData(0, Qt::UserRole + 4, level);
+        item->setData(0, Qt::UserRole + 5, QJsonDocument(e).toJson(QJsonDocument::Compact));  // for the explanation pane
         for (int c = 0; c < 4; ++c) item->setForeground(c, QColor(levelColor(level)));
         list_->addTopLevelItem(item);
         historyRows_.append(item);
@@ -962,6 +1001,7 @@ QString HealthTab::friendlyEvent(const QJsonObject &e) {
     if (kind == QLatin1String("nvme")) return tr("Storage device reported an error");
     if (kind == QLatin1String("fs")) return tr("File system reported a data or metadata error");
     if (kind == QLatin1String("igpu")) return tr("Integrated graphics reported a problem");
+    if (kind == QLatin1String("amdgpu")) return tr("AMD graphics hung and was reset");
     if (kind == QLatin1String("wifi")) return tr("Wireless device or firmware reported a problem");
     if (kind == QLatin1String("thermal")) return tr("A temperature-related warning was recorded");
     if (kind == QLatin1String("oom")) return tr("System ran out of available memory");
@@ -970,27 +1010,39 @@ QString HealthTab::friendlyEvent(const QJsonObject &e) {
     return e.value(QStringLiteral("title")).toString();
 }
 
+QJsonObject HealthTab::eventOf(const QTreeWidgetItem *item) const {
+    if (!item) return {};
+    const QJsonObject live = QJsonDocument::fromJson(item->data(0, Qt::UserRole).toByteArray()).object();
+    return live.isEmpty() ? QJsonDocument::fromJson(item->data(0, Qt::UserRole + 5).toByteArray()).object() : live;
+}
+
+void HealthTab::showEventDetail() {
+    if (!eventDetail_) return;
+    const QJsonObject e = eventOf(list_->currentItem());
+    if (e.isEmpty()) { eventDetail_->clear(); return; }
+    eventDetail_->setHtml(eventinfo::html(e, friendlyEvent(e)));
+}
+
 void HealthTab::explainEvent(const QJsonObject &e) {
-    const QString kind = e.value(QStringLiteral("kind")).toString();
-    QString guidance = tr("Review the raw log and check whether the event repeats before changing system settings.");
-    if (kind == QLatin1String("xid") || kind == QLatin1String("gsp"))
-        guidance = tr("Check NVIDIA driver and GPU power status. If a custom GPU curve is active, review its stability. The code alone does not prove a hardware fault.");
-    else if (kind == QLatin1String("mce") || kind == QLatin1String("lockup"))
-        guidance = tr("Inspect CPU curve and RAM stability if they are tuned. Also check temperatures and associated kernel events.");
-    else if (kind == QLatin1String("nvme") || kind == QLatin1String("fs"))
-        guidance = tr("Back up important files, then check drive SMART information and the full kernel log.");
-    else if (kind == QLatin1String("thermal"))
-        guidance = tr("Inspect cooling, temperatures and the workload running when the event occurred.");
-    else if (kind == QLatin1String("wifi"))
-        guidance = tr("Check wireless firmware, driver version and whether the device reconnects normally.");
-    QMessageBox dialog(this);
+    QDialog dialog(this);
     dialog.setWindowTitle(tr("Event explanation"));
-    dialog.setIcon(QMessageBox::Information);
-    dialog.setTextFormat(Qt::PlainText);
-    dialog.setText(friendlyEvent(e));
-    dialog.setInformativeText(guidance);
-    dialog.setDetailedText(tr("Reported: %1\n\nRaw kernel record:\n%2")
-                           .arg(e.value(QStringLiteral("title")).toString(), e.value(QStringLiteral("text")).toString()));
+    dialog.resize(640, 520);
+    auto *v = new QVBoxLayout(&dialog);
+    auto *view = new QTextBrowser;
+    view->setOpenLinks(false);
+    view->setHtml(eventinfo::html(e, friendlyEvent(e)) +
+                  QStringLiteral("<p style='color:%1'>%2</p>").arg(QLatin1String(theme::MUTED),
+                      tr("Reported as: %1").arg(e.value(QStringLiteral("title")).toString()).toHtmlEscaped()));
+    v->addWidget(view, 1);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto *copy = buttons->addButton(tr("Copy"), QDialogButtonBox::ActionRole);
+    connect(copy, &QPushButton::clicked, &dialog, [view] { QApplication::clipboard()->setText(view->toPlainText()); });
+    if (e.contains(QStringLiteral("seq")) && !e.value(QStringLiteral("boot_id")).toString().isEmpty()) {
+        auto *klog = buttons->addButton(tr("Show in kernel log"), QDialogButtonBox::ActionRole);
+        connect(klog, &QPushButton::clicked, &dialog, [this, e, &dialog] { dialog.accept(); showInKlog(e); });
+    }
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    v->addWidget(buttons);
     dialog.exec();
 }
 
@@ -1004,6 +1056,8 @@ void HealthTab::eventMenu(const QPoint &pos) {
     if (!it) return;
     if (it->data(0, Qt::UserRole + 3).toBool()) {
         QMenu menu(this);
+        const QJsonObject saved = eventOf(it);
+        if (!saved.isEmpty()) menu.addAction(tr("Explain this event"), this, [this, saved] { explainEvent(saved); });
         menu.addAction(tr("Copy saved record"), this, [it] {
             QApplication::clipboard()->setText(it->toolTip(3));
         });
@@ -1017,6 +1071,13 @@ void HealthTab::eventMenu(const QPoint &pos) {
     QMenu menu(this);
     menu.addAction(tr("Explain this event"), this, [this, e] { explainEvent(e); });
     menu.addAction(tr("Show in kernel log"), this, [this, e] { showInKlog(e); });
+    menu.addAction(tr("Copy event and explanation"), this, [e] {
+        QTextBrowser tmp;
+        tmp.setHtml(eventinfo::html(e, friendlyEvent(e)));
+        QApplication::clipboard()->setText(tmp.toPlainText());
+    });
+    menu.addAction(tr("Show only %1 events").arg(kind.toUpper()), this, [this, kind] { eventSearch_->setText(kind.toUpper()); });
+    menu.addSeparator();
     // The page the event points to, only when there is something to do there now.
     static const QList<int> gpuCurveXids{13, 31, 43, 62, 119, 120};
     if (kind == QLatin1String("d3cold") || (kind == QLatin1String("xid") && code == 79)) {

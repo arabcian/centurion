@@ -65,6 +65,10 @@ const ToolPkg TOOL_PKGS[] = {
     {"mokutil", "sys-boot/mokutil", "mokutil", "mokutil", "mokutil"},
     {"fwupdmgr", "sys-apps/fwupd", "fwupd", "fwupd", "fwupd"},
     {"memtester", "sys-apps/memtester", "memtester", "memtester", "memtester"},
+    {"age", "app-crypt/age", "age", "age", "age"},
+    {"pkexec", "sys-auth/polkit", "polkit", "polkit", "pkexec"},
+    {"nft", "net-firewall/nftables", "nftables", "nftables", "nftables"},
+    {"acpi_call", "sys-power/acpi_call", "acpi_call-dkms", "acpi_call", "acpi-call-dkms"},
 };
 
 // "gentoo", "arch", "fedora" (Fedora and the RHEL family), "debian" (Debian and Ubuntu), or "" for any other

@@ -2,6 +2,7 @@
 
 #include "blocklistsubs.h"
 #include "privileged.h"
+#include "systools.h"
 #include "theme.h"
 
 #include <QCheckBox>
@@ -206,6 +207,8 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *bWlC = button("Whitelist program", rc);
     auto *bKill = button("Kill connection", rc);
     auto *bBlC = button("Blacklist IP", rc, true);
+    auto *bExpC = button("Export…", rc);
+    bExpC->setToolTip(tr("Save the rows shown as a CSV file."));
     vc->addLayout(rc);
     conns_ = makeTree({"Program", "PID", "Proto", "Local", "Remote", "State", tr("Today")});
     conns_->setColumnWidth(0, 220);
@@ -227,6 +230,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *bWlB = button("Whitelist program", rb);
     auto *bWlDir = button("Whitelist folder", rb);
     auto *bBlB = button("Blacklist IP", rb, true);
+    auto *bExpB = button("Export…", rb);
     auto *bClear = button("Clear log", rb, true);
     vb->addLayout(rb);
     blocked_ = makeTree({"Last seen", "Program", "Destination", "DNS name", "Hits"});
@@ -255,6 +259,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *bInfoL = button("IP info", rlog);
     bInfoL->setToolTip(bInfoC->toolTip());
     auto *bBlL = button("Blacklist IP", rlog, true);
+    auto *bExpL = button("Export…", rlog);
     auto *bClearL = button("Clear log", rlog, true);
     vl->addLayout(rlog);
     connLog_ = makeTree({"Time", "Dir", "Program", "Proto", "Remote address", "Port", "Note"});
@@ -304,6 +309,17 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     bSubs->setToolTip("Published address lists (e.g. FireHOL) kept as one group each. Nothing is fetched until\n"
                       "you press Update now; the update asks for the administrator password once.");
     auto *bBlDel = button("Remove", rl, true);
+    auto *rulesBox = new QVBoxLayout;
+    auto *bRulesOut = new QPushButton(tr("Export rules…"));
+    bRulesOut->setToolTip(tr("Whitelist and blacklist as one text file (to keep, or to load on another machine)."));
+    auto *bRulesIn = new QPushButton(tr("Import rules…"));
+    bRulesIn->setToolTip(tr("Adds the programs and addresses of a rules file; nothing already here is removed."));
+    rulesBox->addWidget(bRulesOut);
+    rulesBox->addWidget(bRulesIn);
+    rulesBox->addStretch(1);
+    hr->addLayout(rulesBox);
+    connect(bRulesOut, &QPushButton::clicked, this, &NetPage::exportRules);
+    connect(bRulesIn, &QPushButton::clicked, this, &NetPage::importRules);
     tabs_->addTab(pr, "Rules");
 
     // ── Wi-Fi ── (hidden until the status says this machine has a wireless interface)
@@ -328,10 +344,18 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *pt = new QWidget;
     auto *vt = new QVBoxLayout(pt);
     vt->setContentsMargins(6, 6, 6, 6);
+    auto *rt = new QHBoxLayout;
     trafficInfo_ = new QLabel;
     trafficInfo_->setProperty("role", "muted");
     trafficInfo_->setWordWrap(true);
-    vt->addWidget(trafficInfo_);
+    rt->addWidget(trafficInfo_, 1);
+    trafficMode_ = new QComboBox;
+    trafficMode_->addItem(tr("Per day"));
+    trafficMode_->addItem(tr("Totals per program"));
+    trafficMode_->setToolTip(tr("Totals add up the shown days for each program: who used the most data this month."));
+    rt->addWidget(trafficMode_);
+    auto *bExpT = button("Export…", rt);
+    vt->addLayout(rt);
     trafficTree_ = makeTree({tr("Day"), tr("Program"), tr("Sent"), tr("Received"), tr("Connections")});
     trafficTree_->setColumnWidth(0, 110);
     trafficTree_->setColumnWidth(1, 300);
@@ -339,6 +363,34 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     trafficTree_->setColumnWidth(3, 110);
     vt->addWidget(trafficTree_, 1);
     trafficTab_ = tabs_->addTab(pt, tr("Traffic"));
+    connect(trafficMode_, &QComboBox::currentIndexChanged, this, [this] { trafficSeen_ = QDateTime(); trafficTree_->clear(); fillTraffic(); });
+    connect(bExpT, &QPushButton::clicked, this, [this] { exportTree(trafficTree_, QStringLiteral("traffic")); });
+
+    // ── Open ports ── what this machine offers to the network (listening sockets of the last snapshot)
+    auto *pp = new QWidget;
+    auto *vp = new QVBoxLayout(pp);
+    vp->setContentsMargins(6, 6, 6, 6);
+    auto *rp = new QHBoxLayout;
+    portsInfo_ = new QLabel;
+    portsInfo_->setProperty("role", "muted");
+    portsInfo_->setWordWrap(true);
+    rp->addWidget(portsInfo_, 1);
+    auto *bExpP = button("Export…", rp);
+    vp->addLayout(rp);
+    ports_ = makeTree({tr("Program"), tr("Proto"), tr("Port"), tr("Bound to"), tr("Reachable from"), tr("Usually")});
+    ports_->setColumnWidth(0, 200);
+    ports_->setColumnWidth(3, 170);
+    ports_->setColumnWidth(4, 170);
+    ports_->setSortingEnabled(true);
+    vp->addWidget(ports_, 1);
+    auto *portsNote = new QLabel(tr("A program bound to 0.0.0.0 / :: answers on every network this machine joins (café Wi-Fi too). "
+                                    "Bind it to 127.0.0.1 in its settings, or stop the service, if nothing else needs to reach it. "
+                                    "\"All users (root)\" on the Connections tab names the system services."));
+    portsNote->setProperty("role", "muted");
+    portsNote->setWordWrap(true);
+    vp->addWidget(portsNote);
+    portsTab_ = tabs_->addTab(pp, tr("Open ports"));
+    connect(bExpP, &QPushButton::clicked, this, [this] { exportTree(ports_, QStringLiteral("open-ports")); });
 
     // ── wiring ──
     connect(guard_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"guard", on}}); });
@@ -360,6 +412,9 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     connect(bInfoL, &QPushButton::clicked, this, [this, logIp] { ipInfo(logIp()); });
     connect(connLog_, &QTreeWidget::itemDoubleClicked, this, [detLog](QTreeWidgetItem *it) { detLog(it); });
     connect(bBlL, &QPushButton::clicked, this, [this, logIp] { changeList("blacklist", "add", logIp()); });
+    connect(bExpC, &QPushButton::clicked, this, [this] { exportTree(conns_, QStringLiteral("connections")); });
+    connect(bExpB, &QPushButton::clicked, this, [this] { exportTree(blocked_, QStringLiteral("blocked")); });
+    connect(bExpL, &QPushButton::clicked, this, [this] { exportTree(connLog_, QStringLiteral("connection-log")); });
     connect(bClearL, &QPushButton::clicked, this, [this] {
         if (QMessageBox::question(this, "Clear log", "Delete the connection log?") == QMessageBox::Yes) runRoot({{"op", "clear_conn_log"}}, false);
     });
@@ -512,7 +567,7 @@ void NetPage::poll() {
     } else {
         wifiTimer_->stop();
     }
-    if (isVisible() && tabs_->currentIndex() == 0) {
+    if (isVisible() && (tabs_->currentIndex() == 0 || tabs_->currentIndex() == portsTab_)) {
         if (!viaRoot_) refreshConns();
         timer_->start();
     } else if (isVisible() && tabs_->currentIndex() == LOG_TAB) {
@@ -648,7 +703,7 @@ void NetPage::applyStatus(const QJsonObject &s) {
     if (!missing.isEmpty())
         lines << QStringLiteral("<span style='color:%1'>Kernel lacks: %2</span>").arg(QLatin1String(theme::DANGER), missing.join(QStringLiteral(", ")));
     if (s.contains(QLatin1String("nft")) && !s.value(QLatin1String("nft")).toBool())
-        lines << QStringLiteral("<span style='color:%1'>nft not found — emerge net-firewall/nftables</span>").arg(QLatin1String(theme::DANGER));
+        lines << QStringLiteral("<span style='color:%1'>nft not found — %2</span>").arg(QLatin1String(theme::DANGER), systools::installCommand(QStringLiteral("nft")).toHtmlEscaped());
     if (s.contains(QLatin1String("config_error")))
         lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER), str(s, "config_error").toHtmlEscaped());
     const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
@@ -679,6 +734,30 @@ void NetPage::fillTraffic() {
     if (!loadTraffic() && trafficTree_->topLevelItemCount()) return;
     trafficTree_->clear();
     const QStringList days = trafficDays_.keys();  // ascending; the newest are at the end
+    if (trafficMode_ && trafficMode_->currentIndex() == 1) {
+        QMap<QString, TrafficTotal> sum;
+        QString first;
+        for (int i = days.size() - 1, shown = 0; i >= 0 && shown < TRAFFIC_DAYS_SHOWN; --i, ++shown) {
+            first = days.at(i);
+            const QMap<QString, TrafficTotal> &of = trafficDays_.value(days.at(i));
+            for (auto p = of.cbegin(); p != of.cend(); ++p) {
+                TrafficTotal &t = sum[p.key()];
+                t.tx += p.value().tx;
+                t.rx += p.value().rx;
+                t.conns += p.value().conns;
+            }
+        }
+        for (auto p = sum.cbegin(); p != sum.cend(); ++p) {
+            auto *it = new SortItem({first.isEmpty() ? QString() : tr("since %1").arg(first), p.key(), humanBytes(p.value().tx),
+                                     humanBytes(p.value().rx), QString::number(p.value().conns)});
+            it->setData(2, SortRole, double(p.value().tx));
+            it->setData(3, SortRole, double(p.value().rx));
+            it->setData(4, SortRole, double(p.value().conns));
+            trafficTree_->addTopLevelItem(it);
+        }
+        trafficTree_->setSortingEnabled(true);
+        trafficTree_->sortByColumn(3, Qt::DescendingOrder);
+    } else
     for (int i = days.size() - 1, shown = 0; i >= 0 && shown < TRAFFIC_DAYS_SHOWN; --i, ++shown) {
         const QString &day = days.at(i);
         QList<QPair<QString, TrafficTotal>> progs;
@@ -764,8 +843,21 @@ void NetPage::showConns() {
     if (sel) conns_->setCurrentItem(sel);
     conns_->verticalScrollBar()->setValue(scroll);
     conns_->setUpdatesEnabled(true);
+    // The programs holding the most remote connections: who is talking right now, at a glance.
+    QHash<QString, int> perProgram;
+    for (const QJsonValue &v : std::as_const(connData_)) {
+        const QJsonObject c = v.toObject();
+        if (!str(c, "remote").isEmpty() && !str(c, "name").isEmpty()) ++perProgram[str(c, "name")];
+    }
+    QList<QPair<int, QString>> top;
+    for (auto i = perProgram.cbegin(); i != perProgram.cend(); ++i) top << qMakePair(i.value(), i.key());
+    std::sort(top.begin(), top.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+    QStringList busiest;
+    for (int i = 0; i < std::min<int>(3, top.size()); ++i) busiest << QStringLiteral("%1 %2").arg(top.at(i).second).arg(top.at(i).first);
     connInfo_->setText(QStringLiteral("%1 shown · %2 Wine%3").arg(shown).arg(wine)
-                           .arg(viaRoot_ ? QStringLiteral(" · root snapshot (not refreshing)") : QString()));
+                           .arg(viaRoot_ ? QStringLiteral(" · root snapshot (not refreshing)") : QString())
+                       + (busiest.isEmpty() ? QString() : tr(" · most connections: %1").arg(busiest.join(QStringLiteral(", ")))));
+    showPorts();
 }
 
 void NetPage::readLog(bool announce) {
@@ -1426,4 +1518,160 @@ void NetPage::removeBlacklisted(bool all) {
     }
     pick.remove(QString());
     if (!pick.isEmpty()) runRoot({{"op", "blacklist"}, {"remove", QJsonArray::fromStringList(QStringList(pick.cbegin(), pick.cend()))}});
+}
+
+namespace {
+// Well-known ports of desktop services: what a listening port usually is.
+QString portService(const QString &proto, int port) {
+    static const QHash<int, const char *> TCP = {
+        {22, "SSH"}, {53, "DNS"}, {80, "HTTP"}, {111, "rpcbind (NFS)"}, {139, "Samba (NetBIOS)"}, {443, "HTTPS"}, {445, "Samba / SMB"},
+        {631, "CUPS printing"}, {2049, "NFS"}, {3000, "development web server"}, {3306, "MySQL / MariaDB"}, {3389, "RDP remote desktop"},
+        {5432, "PostgreSQL"}, {5900, "VNC remote desktop"}, {6379, "Redis"}, {6881, "BitTorrent"}, {8080, "HTTP (alternate)"},
+        {8384, "Syncthing web UI"}, {9090, "Cockpit"}, {11434, "Ollama"}, {22000, "Syncthing"}, {24800, "Barrier / Synergy"},
+        {27036, "Steam Remote Play"}, {27040, "Steam download sharing"}, {57621, "Spotify Connect"}, {47984, "Sunshine streaming"},
+        {47989, "Sunshine streaming"}, {7070, "AnyDesk"}, {5037, "ADB (Android)"}};
+    static const QHash<int, const char *> UDP = {
+        {53, "DNS"}, {67, "DHCP server"}, {68, "DHCP client"}, {123, "NTP"}, {137, "NetBIOS name"}, {138, "NetBIOS datagram"},
+        {1900, "SSDP / UPnP discovery"}, {5353, "mDNS (Avahi)"}, {5355, "LLMNR"}, {27036, "Steam Remote Play"}, {3478, "STUN (calls)"},
+        {21027, "Syncthing discovery"}, {22000, "Syncthing (QUIC)"}, {51820, "WireGuard"}, {41641, "Tailscale"}, {57621, "Spotify Connect"},
+        {6881, "BitTorrent DHT"}};
+    if (port >= 1714 && port <= 1764) return QStringLiteral("KDE Connect / GSConnect");
+    const auto &table = proto == QLatin1String("udp") ? UDP : TCP;
+    const auto it = table.constFind(port);
+    return it == table.constEnd() ? QString() : QString::fromLatin1(it.value());
+}
+
+// "127.0.0.1" / "::1": this machine only; "0.0.0.0" / "::": every network; private ranges: that LAN.
+QString reach(const QString &addr) {
+    QHostAddress a;
+    if (!a.setAddress(addr)) return addr;
+    if (a.isLoopback()) return NetPage::tr("this computer only");
+    if (a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6 || a == QHostAddress::Any) return NetPage::tr("every network");
+    if (a.isLinkLocal()) return NetPage::tr("the local link");
+    static const QList<QPair<QHostAddress, int>> PRIVATE = {QHostAddress::parseSubnet(QStringLiteral("10.0.0.0/8")),
+                                                           QHostAddress::parseSubnet(QStringLiteral("172.16.0.0/12")),
+                                                           QHostAddress::parseSubnet(QStringLiteral("192.168.0.0/16")),
+                                                           QHostAddress::parseSubnet(QStringLiteral("100.64.0.0/10"))};
+    for (const auto &net : PRIVATE) if (a.isInSubnet(net)) return NetPage::tr("that local network");
+    if (a.isUniqueLocalUnicast()) return NetPage::tr("that local network");
+    return NetPage::tr("that address (public)");
+}
+}  // namespace
+
+void NetPage::showPorts() {
+    if (!ports_) return;
+    ports_->setSortingEnabled(false);
+    ports_->clear();
+    int exposed = 0, total = 0;
+    QSet<QString> seen;
+    for (const QJsonValue &v : std::as_const(connData_)) {
+        const QJsonObject c = v.toObject();
+        if (!str(c, "remote").isEmpty()) continue;   // connected sockets are on the Connections tab
+        const QString proto = str(c, "proto"), local = str(c, "local"), state = str(c, "state");
+        if (proto == QLatin1String("tcp") && state != QLatin1String("LISTEN")) continue;
+        const int port = c.value(QLatin1String("lport")).toInt();
+        if (port == 0) continue;
+        QString name = str(c, "name");
+        if (name.isEmpty()) name = QLatin1Char('(') + userName(uint(c.value(QLatin1String("uid")).toInteger())) + QLatin1Char(')');
+        const QString key = name + proto + local + QString::number(port);
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+        const QString where = reach(local);
+        QHostAddress a;
+        const bool outside = a.setAddress(local) && !a.isLoopback();
+        auto *it = new SortItem({name, proto.toUpper(), QString::number(port), local, where, portService(proto, port)});
+        it->setToolTip(0, str(c, "exe"));
+        if (outside) {
+            ++exposed;
+            const bool any = a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6;
+            if (any) for (int k = 0; k < 6; ++k) it->setForeground(k, QColor(QLatin1String(theme::WARN)));
+        }
+        ports_->addTopLevelItem(it);
+        ++total;
+    }
+    ports_->setSortingEnabled(true);
+    portsInfo_->setText(tr("%1 listening socket(s); %2 reachable from other machines (orange: on every network). "
+                           "From the connection snapshot, refreshed every 3 s while this tab is open.").arg(total).arg(exposed));
+}
+
+void NetPage::exportTree(QTreeWidget *tree, const QString &name) {
+    const QString file = QFileDialog::getSaveFileName(this, tr("Export"),
+        QDir::homePath() + QStringLiteral("/centurion-%1-%2.csv").arg(name, QDate::currentDate().toString(Qt::ISODate)),
+        tr("CSV files (*.csv);;All files (*)"));
+    if (file.isEmpty()) return;
+    auto cell = [](QString t) {
+        if (t.contains(QLatin1Char(',')) || t.contains(QLatin1Char('"')) || t.contains(QLatin1Char('\n')))
+            t = QLatin1Char('"') + t.replace(QLatin1Char('"'), QStringLiteral("\"\"")) + QLatin1Char('"');
+        return t;
+    };
+    QStringList lines, head;
+    for (int c = 0; c < tree->columnCount(); ++c) head << cell(tree->headerItem()->text(c));
+    lines << head.join(QLatin1Char(','));
+    std::function<void(QTreeWidgetItem *)> walk = [&](QTreeWidgetItem *it) {
+        if (!it->isHidden()) {
+            QStringList row;
+            for (int c = 0; c < tree->columnCount(); ++c) row << cell(it->text(c));
+            lines << row.join(QLatin1Char(','));
+        }
+        for (int i = 0; i < it->childCount(); ++i) walk(it->child(i));
+    };
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) walk(tree->topLevelItem(i));
+    QFile f(file);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Export"), tr("Cannot write %1: %2").arg(file, f.errorString()));
+        return;
+    }
+    f.write((lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8());
+}
+
+void NetPage::exportRules() {
+    const QString file = QFileDialog::getSaveFileName(this, tr("Export rules"),
+        QDir::homePath() + QStringLiteral("/centurion-netguard-rules.txt"), tr("Text files (*.txt);;All files (*)"));
+    if (file.isEmpty()) return;
+    QStringList out{QStringLiteral("# Centurion network protection rules, %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate)),
+                    QStringLiteral("[whitelist]")};
+    for (int i = 0; i < wl_->count(); ++i) out << wl_->item(i)->text();
+    out << QString() << QStringLiteral("[blacklist]") << blacklist_;
+    QFile f(file);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Export rules"), tr("Cannot write %1: %2").arg(file, f.errorString()));
+        return;
+    }
+    f.write((out.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8());
+}
+
+void NetPage::importRules() {
+    const QString file = QFileDialog::getOpenFileName(this, tr("Import rules"), QDir::homePath(), tr("Text files (*.txt);;All files (*)"));
+    if (file.isEmpty()) return;
+    QFile f(file);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text) || f.size() > (4 << 20)) {
+        QMessageBox::warning(this, tr("Import rules"), tr("Cannot read %1.").arg(file));
+        return;
+    }
+    QJsonArray white, black;
+    QString section;
+    QSet<QString> have;
+    for (int i = 0; i < wl_->count(); ++i) have.insert(wl_->item(i)->text());
+    for (const QString &b : std::as_const(blacklist_)) have.insert(b);
+    for (const QString &raw : QString::fromUtf8(f.readAll()).split(QLatin1Char('\n'))) {
+        const QString l = raw.trimmed();
+        if (l.isEmpty() || l.startsWith(QLatin1Char('#'))) continue;
+        if (l.startsWith(QLatin1Char('['))) { section = l.toLower(); continue; }
+        if (have.contains(l)) continue;
+        if (section == QLatin1String("[whitelist]")) white.append(l);
+        else if (section == QLatin1String("[blacklist]")) black.append(l);
+    }
+    if (white.isEmpty() && black.isEmpty()) {
+        QMessageBox::information(this, tr("Import rules"), tr("Nothing new in %1 (sections [whitelist] and [blacklist]).").arg(file));
+        return;
+    }
+    if (QMessageBox::question(this, tr("Import rules"), tr("Add %1 whitelisted program(s) and %2 blacklisted address(es)?")
+                                  .arg(white.size()).arg(black.size())) != QMessageBox::Yes) return;
+    // One after the other: each request rewrites the daemon's configuration.
+    if (white.isEmpty()) { runRoot({{"op", "blacklist"}, {"add", black}}); return; }
+    privileged::run(helper(), QJsonObject{{"op", "whitelist"}, {"add", white}}, this, [this, black](const privileged::Result &r) {
+        if (!r.ok()) { QMessageBox::warning(this, tr("Import rules"), r.message()); return; }
+        if (black.isEmpty()) applyStatus(r.json);
+        else runRoot({{"op", "blacklist"}, {"add", black}});
+    });
 }

@@ -6,7 +6,11 @@
 #include <QColor>
 #include <QComboBox>
 #include <QDateTime>
+#include <QApplication>
+#include <QClipboard>
 #include <QDir>
+#include <QFileDialog>
+#include <QMap>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -17,12 +21,13 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSplitter>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
 static constexpr qint64 TAIL_BYTES = 512 << 10;   // same bound as KlogPage: only the end of the saved log is read
-static constexpr int LOG_LINES = 30;
+static constexpr int LOG_LINES = 50;
 static const char *FLIGHT_CONF = "/etc/centurion/flight-interval";   // flight.rs CONF; absent = 5 s
 static constexpr int ROLE_BOOT = Qt::UserRole;      // boot id of a row ("" = the unattributed-pstore row)
 
@@ -80,6 +85,32 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     top->addWidget(bRefresh);
     root->addLayout(top);
 
+    auto *tools = new QHBoxLayout;
+    tools->addWidget(new QLabel(tr("Show:")));
+    filter_ = new QComboBox;
+    filter_->addItem(tr("All boots"), QStringLiteral("all"));
+    filter_->addItem(tr("Unclean only"), QStringLiteral("unclean"));
+    filter_->addItem(tr("With kernel events"), QStringLiteral("events"));
+    filter_->addItem(tr("With a CPU/GPU curve in effect"), QStringLiteral("curves"));
+    connect(filter_, &QComboBox::currentIndexChanged, this, &BootPage::applyFilter);
+    tools->addWidget(filter_);
+    tools->addStretch(1);
+    bKlog_ = new QPushButton(tr("Kernel log of this boot"));
+    bKlog_->setToolTip(tr("Open the saved kernel log filtered to the selected boot."));
+    connect(bKlog_, &QPushButton::clicked, this, [this] {
+        if (auto *it = list_->currentItem(); it && !it->data(0, ROLE_BOOT).toString().isEmpty())
+            Q_EMIT openKernelLog(it->data(0, ROLE_BOOT).toString().left(8));
+    });
+    tools->addWidget(bKlog_);
+    auto *bCopy = new QPushButton(tr("Copy details"));
+    connect(bCopy, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(detail_->toPlainText()); });
+    tools->addWidget(bCopy);
+    auto *bSave = new QPushButton(tr("Save report…"));
+    bSave->setToolTip(tr("Every recorded boot with its end, events and curves, plus the patterns below, as a text file (for a bug report or a forum post)."));
+    connect(bSave, &QPushButton::clicked, this, &BootPage::saveReport);
+    tools->addWidget(bSave);
+    root->addLayout(tools);
+
     auto *split = new QSplitter(Qt::Vertical);
     list_ = new QTreeWidget;
     list_->setColumnCount(5);
@@ -97,6 +128,11 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     split->setStretchFactor(0, 2);
     split->setStretchFactor(1, 3);
     root->addWidget(split, 1);
+    patterns_ = new QLabel;
+    patterns_->setWordWrap(true);
+    patterns_->setTextFormat(Qt::RichText);
+    patterns_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    root->addWidget(patterns_);
 
     auto *hint = new QLabel(tr("A boot is \"unclean\" when the next boot found it never closed: a crash, hang or forced power-off. "
                                "Kernel events are recorded when a boot ends cleanly, so an unclean boot has none; its last saved "
@@ -148,6 +184,9 @@ void BootPage::apply(const QJsonObject &r) {
                                         b.value(QStringLiteral("event_total")).toInt() ? eventsText(b.value(QStringLiteral("events")).toObject()) : QStringLiteral("—"),
                                         curves.isEmpty() ? QStringLiteral("—") : curvesText(curves)});
         it->setData(0, ROLE_BOOT, b.value(QStringLiteral("boot")).toString());
+        it->setData(0, ROLE_BOOT + 1, state);
+        it->setData(0, ROLE_BOOT + 2, b.value(QStringLiteral("event_total")).toInt());
+        it->setData(0, ROLE_BOOT + 3, !curves.isEmpty());
         it->setToolTip(4, tr("Empty: no curve was applied in this boot (stock), or the record is older than the curve journal."));
         const char *c = state == QLatin1String("unclean") ? theme::DANGER : state == QLatin1String("running") ? theme::OK
                         : state == QLatin1String("unknown") ? theme::MUTED : nullptr;
@@ -165,6 +204,8 @@ void BootPage::apply(const QJsonObject &r) {
     }
     if (!pick && list_->topLevelItemCount()) pick = list_->topLevelItem(0);
     list_->blockSignals(false);
+    applyFilter();
+    patterns_->setText(patterns());
     if (pick) list_->setCurrentItem(pick);
     else detail_->clear();
 
@@ -203,6 +244,7 @@ void BootPage::showDetail() {
     if (!ev.isEmpty()) out += tr("Kernel events: %1\n").arg(eventsText(ev));
     const QJsonObject cv = b.value(QStringLiteral("curves")).toObject();
     if (!cv.isEmpty()) out += tr("Curves: %1\n").arg(curvesText(cv));
+    out += comparedWithPrevious(b);
     const QJsonArray flight = b.value(QStringLiteral("flight")).toArray();
     if (!flight.isEmpty()) out += QLatin1Char('\n') + flightrec::text(flight);
     if (state == QLatin1String("unclean")) {
@@ -272,4 +314,105 @@ QStringList BootPage::kernelLogTail(const QString &boot8, int lines) {
         }
     }
     return out;
+}
+
+void BootPage::applyFilter() {
+    const QString mode = filter_ ? filter_->currentData().toString() : QStringLiteral("all");
+    for (int i = 0; i < list_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *it = list_->topLevelItem(i);
+        bool show = true;
+        if (mode == QLatin1String("unclean")) show = it->data(0, ROLE_BOOT + 1).toString() == QLatin1String("unclean");
+        else if (mode == QLatin1String("events")) show = it->data(0, ROLE_BOOT + 2).toInt() > 0;
+        else if (mode == QLatin1String("curves")) show = it->data(0, ROLE_BOOT + 3).toBool();
+        it->setHidden(!show);
+    }
+    if (list_->currentItem() && list_->currentItem()->isHidden()) {
+        for (int i = 0; i < list_->topLevelItemCount(); ++i)
+            if (!list_->topLevelItem(i)->isHidden()) { list_->setCurrentItem(list_->topLevelItem(i)); break; }
+    }
+}
+
+QString BootPage::patterns() const {
+    const QJsonArray boots = data_.value(QStringLiteral("boots")).toArray();
+    int ended = 0, unclean = 0;
+    qint64 total = 0, longest = 0;
+    QMap<QString, QPair<int, int>> byCurves;   // curves text → (ended boots, unclean)
+    for (const QJsonValue &v : boots) {
+        const QJsonObject b = v.toObject();
+        const QString state = b.value(QStringLiteral("state")).toString();
+        if (state != QLatin1String("clean") && state != QLatin1String("unclean")) continue;
+        ++ended;
+        const bool bad = state == QLatin1String("unclean");
+        unclean += bad;
+        const qint64 d = qint64(b.value(QStringLiteral("duration")).toDouble());
+        total += d;
+        longest = std::max(longest, d);
+        const QJsonObject c = b.value(QStringLiteral("curves")).toObject();
+        auto &slot = byCurves[c.isEmpty() ? tr("stock (no curve)") : curvesText(c)];
+        ++slot.first;
+        slot.second += bad;
+    }
+    if (!ended) return {};
+    QStringList lines;
+    lines << tr("<b>Patterns</b> over %1 finished boot(s): %2 unclean (%3%), average session %4, longest %5.")
+                 .arg(ended).arg(unclean).arg(unclean * 100 / ended).arg(duration(total / ended), duration(longest));
+    if (unclean && byCurves.size() > 1) {
+        QStringList rows;
+        for (auto it = byCurves.cbegin(); it != byCurves.cend(); ++it) {
+            const int pct = it.value().second * 100 / it.value().first;
+            const QString row = tr("%1: %2 of %3 unclean").arg(it.key().toHtmlEscaped()).arg(it.value().second).arg(it.value().first);
+            rows << (pct >= 50 && it.value().second >= 2 ? QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER), row) : row);
+        }
+        lines << tr("By curve in effect — %1").arg(rows.join(QStringLiteral(" · ")));
+        lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::MUTED),
+                     tr("Red: half or more of the boots with that curve ended uncleanly — test it at stock before blaming hardware."));
+    }
+    return lines.join(QStringLiteral("<br>"));
+}
+
+QString BootPage::comparedWithPrevious(const QJsonObject &boot) const {
+    const QJsonArray boots = data_.value(QStringLiteral("boots")).toArray();   // newest first
+    int at = -1;
+    for (int i = 0; i < boots.size(); ++i)
+        if (boots.at(i).toObject().value(QStringLiteral("boot")) == boot.value(QStringLiteral("boot"))) { at = i; break; }
+    if (at < 0 || at + 1 >= boots.size()) return {};
+    const QJsonObject prev = boots.at(at + 1).toObject();
+    QStringList out;
+    const QJsonObject a = prev.value(QStringLiteral("curves")).toObject(), b = boot.value(QStringLiteral("curves")).toObject();
+    QStringList keys = a.keys() + b.keys();
+    keys.removeDuplicates();
+    for (const QString &k : std::as_const(keys)) {
+        const QString x = a.value(k).toString(), y = b.value(k).toString();
+        if (x != y) out << tr("  %1: %2 → %3").arg(k, x.isEmpty() ? tr("stock") : x, y.isEmpty() ? tr("stock") : y);
+    }
+    const int ea = prev.value(QStringLiteral("event_total")).toInt(), eb = boot.value(QStringLiteral("event_total")).toInt();
+    if (ea != eb) out << tr("  kernel events: %1 → %2").arg(ea).arg(eb);
+    if (prev.value(QStringLiteral("state")) != boot.value(QStringLiteral("state")))
+        out << tr("  ended: %1 → %2").arg(stateText(prev.value(QStringLiteral("state")).toString()), stateText(boot.value(QStringLiteral("state")).toString()));
+    if (out.isEmpty()) return tr("Compared with the boot before: nothing changed in curves or events.\n");
+    return tr("Compared with the boot before (%1):\n%2\n").arg(when(qint64(prev.value(QStringLiteral("start")).toDouble())), out.join(QLatin1Char('\n')));
+}
+
+void BootPage::saveReport() {
+    const QString file = QFileDialog::getSaveFileName(this, tr("Save boot report"),
+        QDir::homePath() + QStringLiteral("/centurion-boots-%1.txt").arg(QDate::currentDate().toString(Qt::ISODate)),
+        tr("Text files (*.txt);;All files (*)"));
+    if (file.isEmpty()) return;
+    QStringList out{tr("Centurion boot history — %1").arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))), QString()};
+    for (const QJsonValue &v : data_.value(QStringLiteral("boots")).toArray()) {
+        const QJsonObject b = v.toObject();
+        out << QStringLiteral("%1  %2  %3  %4  %5").arg(when(qint64(b.value(QStringLiteral("start")).toDouble())),
+                   b.contains(QStringLiteral("duration")) ? duration(qint64(b.value(QStringLiteral("duration")).toDouble())) : QStringLiteral("—"),
+                   stateText(b.value(QStringLiteral("state")).toString()),
+                   eventsText(b.value(QStringLiteral("events")).toObject()), curvesText(b.value(QStringLiteral("curves")).toObject()));
+    }
+    QString plain = patterns();
+    plain.replace(QStringLiteral("<br>"), QStringLiteral("\n")).remove(QRegularExpression(QStringLiteral("<[^>]*>")));
+    out << QString() << plain;
+    QFile f(file);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Save boot report"), tr("Cannot write %1: %2").arg(file, f.errorString()));
+        return;
+    }
+    f.write((out.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8());
 }

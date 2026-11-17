@@ -70,6 +70,10 @@ private:
     bool askNewPassphrase(QString *pass);
     void newKeyPair();
     void updateEncryptionUi();
+    /// Defaults ▾: this distribution's exclude list, another distribution's, and optional extra exclusions.
+    void fillDefaultsMenu(class QMenu *menu);
+    /// The line under the exclude list: detected distribution, what its defaults leave out, swap files, caveats.
+    void updateDistroNote();
     void compareConfigs();
     void compareWithCurrent();
     void runDiff(const QJsonObject &req);
@@ -99,6 +103,7 @@ private:
     QSpinBox *level_, *keep_;
     QPlainTextEdit *excludes_, *log_;
     QLabel *free_, *status_;
+    QLabel *distroNote_ = nullptr;
     QTreeWidget *list_;
     QProgressBar *bar_;
     QPushButton *cancel_;

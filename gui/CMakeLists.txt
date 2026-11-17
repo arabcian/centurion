@@ -72,6 +72,8 @@ add_executable(centurion
     src/bootpage.cpp     src/bootpage.h
     src/nvregdialog.cpp  src/nvregdialog.h
     src/systools.cpp     src/systools.h
+    src/distroprofile.cpp src/distroprofile.h
+    src/eventinfo.cpp    src/eventinfo.h
     src/klogpage.cpp     src/klogpage.h
     src/klogview.cpp     src/klogview.h
     src/notifyprefs.cpp  src/notifyprefs.h
@@ -322,6 +324,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-mangohud-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-mangohud-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME mangohud COMMAND centurion-mangohud-test)
+    add_executable(centurion-eventinfo-test tests/eventinfo_test.cpp src/eventinfo.cpp src/eventinfo.h src/distroprofile.cpp src/distroprofile.h)
+    target_link_libraries(centurion-eventinfo-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-eventinfo-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME eventinfo COMMAND centurion-eventinfo-test)
     add_executable(centurion-shortcuts-test tests/shortcuts_test.cpp)
     target_link_libraries(centurion-shortcuts-test PRIVATE Qt6::Gui Qt6::DBus)
     target_compile_definitions(centurion-shortcuts-test PRIVATE QT_NO_KEYWORDS)

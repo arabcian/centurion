@@ -32,6 +32,7 @@ class QCheckBox;
 class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QTextBrowser;
 
 class HealthTab : public QWidget {
     Q_OBJECT
@@ -81,6 +82,10 @@ private:
     void applyDayFilter();
     void loadHistoryDay();
     void explainEvent(const QJsonObject &e);
+    /// The event record a row stands for (live rows and saved-history rows alike); empty for none.
+    QJsonObject eventOf(const QTreeWidgetItem *item) const;
+    /// The explanation pane under the list follows the selected row.
+    void showEventDetail();
     static QString friendlyEvent(const QJsonObject &e);
 
     /// Mark all seen: the events shown so far stop counting as new (gui.ini, see seenMs_).
@@ -97,6 +102,7 @@ private:
     quint64 savedSeq_ = 0;      // highest seq of this boot already in the log file
     QString savedBoot_;         // boot_id savedSeq_ belongs to
     QTreeWidget *list_;
+    QTextBrowser *eventDetail_ = nullptr;
     QTreeWidget *navigation_ = nullptr;
     QStackedWidget *pages_ = nullptr;
     QHash<QWidget *, QTreeWidgetItem *> pageItems_;

@@ -10,8 +10,9 @@
 //!
 //! * Centurion configuration — everything Centurion has stored (user
 //!   config, root-owned presets/boot profiles/NVIDIA curves/calibration) plus an
-//!   optional "system profile" (Portage config, world set, kernel config, fstab,
-//!   boot/module/sysctl configuration, package list), as one small dated
+//!   optional "system profile" (package manager configuration — Portage, pacman, apt, dnf, zypper, xbps,
+//!   apk —, kernel/initramfs config, fstab, boot/module/sysctl configuration, package lists; see
+//!   `distro`), as one small dated
 //!   `centurion-config-YYYY-MM-DD_HHMMSS.tar.gz`. Made unprivileged from readable files.
 //!   Restore: the user part unprivileged; the root part through a whitelist,
 //!   every file re-created root:root 0644 (owner/mode in the archive are never
@@ -54,13 +55,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-/// The exclude list of the system image. `/x/*` rather than `/x`: the (empty)
-/// mount points stay in the archive, so a restore onto a fresh file system
-/// still has /proc, /sys, /dev, /run and /tmp to mount on.
-pub const DEFAULT_EXCLUDES: &[&str] = &[
-    "/proc/*", "/sys/*", "/dev/*", "/run/*", "/tmp/*", "/var/tmp/*", "/mnt/*", "/media/*",
-    "/lost+found", "/var/cache/*", "/usr/portage/distfiles/*",
-];
+// The default exclude list of the system image is per distribution: `distro::image_excludes`. `/x/*`
+// rather than `/x`: the (empty) mount points stay in the archive, so a restore onto a fresh file system
+// still has /proc, /sys, /dev, /run and /tmp to mount on.
 pub const HOME_EXCLUDE: &str = "/home/*";
 /// Mount points created in the restore target when the archive lacks them
 /// (archives made with plain `--exclude=/proc`): (path, mode).
@@ -78,18 +75,9 @@ const SYS_CENTURION_LOGS: &[&str] = &["var/log/centurion"];
 /// /etc/centurion files a restore may write (everything the helpers keep there); anything else in an archive is skipped.
 const ETC_RESTORE: &[&str] = &["tune-boot.json", "intel-uv-boot.json", "netguard.json", "wakeup.json", "dgpu-awake", "wireless-pm-lock"];
 const VARLIB_RESTORE: &[&str] = &["signature.json", "calibration.json", "outcomes.json", "io-probe.json", "wmae-verified.json"];
-/// "System profile": how this installation is put together. Reference only.
-const PROFILE: &[&str] = &[
-    "etc/portage", "var/lib/portage/world", "var/lib/portage/world_sets", "usr/src/linux/.config",
-    "etc/fstab", "etc/default/grub", "etc/kernel", "etc/dracut.conf", "etc/dracut.conf.d",
-    "etc/modprobe.d", "etc/modules-load.d", "etc/sysctl.conf", "etc/sysctl.d", "etc/conf.d", "etc/rc.conf",
-    "etc/local.d", "etc/runlevels", "etc/udev/rules.d", "etc/X11/xorg.conf.d", "etc/environment", "etc/env.d",
-    "etc/locale.gen", "etc/hosts", "etc/security/limits.conf", "etc/security/limits.d",
-];
-/// Left out of the system profile: Portage's own GnuPG home (root 0700). It is
-/// the keyring `getuto` regenerates for verifying the tree, not configuration,
-/// and its private-key / agent-socket directories must not land in a user file.
-const PROFILE_SKIP: &[&str] = &["/etc/portage/gnupg"];
+// "System profile": how this installation is put together, reference only — `distro::PROFILE_COMMON` plus
+// `distro::profile_paths(family)`. Left out: `distro::PROFILE_SKIP` (Portage's / pacman's GnuPG homes, which
+// hold private keys and agent sockets, and repository credentials).
 const MAX_FILE: u64 = 32 << 20;       // one staged file
 const MAX_STAGE: u64 = 256 << 20;     // a whole configuration backup
 const MAX_ROOT_FILE: u64 = 16 << 20;  // one root file on restore
@@ -607,16 +595,22 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
             a.iter().map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty() && s.len() <= 512 && !s.contains(['\0', '\n']))
                 .map(str::to_owned).ok_or_else(|| "invalid exclude pattern".to_string())).collect::<Result<_, _>>()?
         }
-        None => DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect(),
+        None => crate::distro::image_excludes(crate::distro::this_family()).iter().map(|s| s.to_string()).collect(),
     };
     if !req["include_home"].as_bool().unwrap_or(false) { excludes.push(HOME_EXCLUDE.into()); }
     let low = req["low_priority"].as_bool().unwrap_or(true);
+    // Swap files in use: gigabytes of meaningless pages, whatever the list says.
+    let mut swap_notes: Vec<String> = Vec::new();
+    for f in crate::distro::swap_files(&fs::read_to_string("/proc/swaps").unwrap_or_default()) {
+        swap_notes.push(format!("swap file {f} left out (in use as swap)"));
+        excludes.push(literal(Path::new(&f)));
+    }
 
     if free_bytes(&dest).is_some_and(|f| f < 1 << 30) {
         return Err(format!("less than 1 GiB free in {}", dest.display()));
     }
     // An increment continues from the snapshot of the newest image, when the chain allows it (see `continues`).
-    let mut notes: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = swap_notes;
     let tip = if req["incremental"].as_bool().unwrap_or(false) {
         match chain_tip(&dest, &enc) {
             (Some(t), _) => match continues(&t, &enc, key.as_ref())? { None => Some(t), Some(n) => { notes.push(n); None } },
@@ -1362,7 +1356,7 @@ impl Copier {
     /// is a symlink (/usr/src/linux); links inside a tree are copied as links
     /// (`links`) or left out. Unreadable or oversized entries are listed.
     fn copy(&mut self, src: &Path, dst: &Path, depth: u32) {
-        if PROFILE_SKIP.iter().any(|p| src == Path::new(p)) { return; }
+        if crate::distro::PROFILE_SKIP.iter().any(|p| src == Path::new(p)) { return; }
         let md = match if depth == 0 { fs::metadata(src) } else { fs::symlink_metadata(src) } {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -1414,14 +1408,14 @@ fn profile_facts(dir: &Path) {
         write_text(&dir.join("modules.txt"), &(names.join("\n") + "\n"));
     }
     let _ = fs::copy("/proc/config.gz", dir.join("running-kernel-config.gz"));
-    // Installed packages (Portage VDB): category/name-version.
-    let mut pkgs = Vec::new();
-    for cat in fs::read_dir("/var/db/pkg").into_iter().flatten().flatten() {
-        for p in fs::read_dir(cat.path()).into_iter().flatten().flatten() {
-            pkgs.push(format!("{}/{}", cat.file_name().to_string_lossy(), p.file_name().to_string_lossy()));
-        }
-    }
-    if !pkgs.is_empty() { pkgs.sort(); write_text(&dir.join("packages.txt"), &(pkgs.join("\n") + "\n")); }
+    // Installed packages from this distribution's package database (Portage VDB, pacman, dpkg, rpm, xbps, apk),
+    // and the ones asked for by name (world set, pacman's explicit, apt's manual, apk's world).
+    let family = crate::distro::this_family();
+    write_text(&dir.join("distro.txt"), &format!("family: {}\n", if family.is_empty() { "unknown" } else { family }));
+    let pkgs = crate::distro::installed_packages(family);
+    if !pkgs.is_empty() { write_text(&dir.join("packages.txt"), &(pkgs.join("\n") + "\n")); }
+    let explicit = crate::distro::explicit_packages(family);
+    if !explicit.is_empty() { write_text(&dir.join("packages-explicit.txt"), &(explicit.join("\n") + "\n")); }
 }
 
 fn safe_tag(v: &Value) -> Option<&str> {
@@ -1473,7 +1467,10 @@ fn stage_config(s: &Path, profile: bool, logs: bool) -> Staged {
     }
     let mut prof = Copier { links: true, ..Default::default() };
     if profile {
-        for p in PROFILE { prof.copy(&Path::new("/").join(p), &s.join("system-profile/root").join(p), 0); }
+        let family = crate::distro::this_family();
+        for p in crate::distro::PROFILE_COMMON.iter().chain(crate::distro::profile_paths(family)) {
+            prof.copy(&Path::new("/").join(p), &s.join("system-profile/root").join(p), 0);
+        }
         profile_facts(&s.join("system-profile"));
     }
     Staged { user, state, sys, prof }
@@ -1955,8 +1952,10 @@ fn key_changes(a: &BTreeMap<String, String>, b: &BTreeMap<String, String>) -> Ve
 }
 
 /// "category/name-1.2.3-r1" → ("category/name", "1.2.3-r1"): the version starts at the first "-digit" after the
-/// category. A line without one is a name alone.
+/// category. A line without one is a name alone. "name version" (the other distributions' lists, whose names
+/// may hold "-digit") splits at the space.
 fn split_atom(atom: &str) -> (&str, &str) {
+    if let Some((n, v)) = atom.split_once(' ') { return (n, v.trim()); }
     let b = atom.as_bytes();
     let from = atom.find('/').map_or(0, |i| i + 1);
     (from..b.len()).find(|&i| b[i] == b'-' && b.get(i + 1).is_some_and(u8::is_ascii_digit))
@@ -2078,6 +2077,7 @@ mod tests {
         assert_eq!(split_atom("media-libs/libsdl2-2.30.1-r1"), ("media-libs/libsdl2", "2.30.1-r1"));
         assert_eq!(split_atom("dev-qt/qt6-base-6.7.2"), ("dev-qt/qt6-base", "6.7.2"));
         assert_eq!(split_atom("app-misc/foo"), ("app-misc/foo", ""));
+        assert_eq!(split_atom("gcc-14-base 14.2.0-4"), ("gcc-14-base", "14.2.0-4"));
         let p = package_changes("a/x-1.0\nb/y-2.0\nc/slot-1.0\nc/slot-2.0\nd/gone-1\n",
                                 "a/x-1.1\nb/y-2.0\nc/slot-2.0\nc/slot-3.0\ne/new-5\n");
         assert_eq!(p["changed"], json!([{"name": "a/x", "old": "1.0", "new": "1.1"}, {"name": "c/slot", "old": "1.0", "new": "3.0"}]));

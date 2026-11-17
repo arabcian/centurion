@@ -1,4 +1,5 @@
 #include "privileged.h"
+#include "systools.h"
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -38,7 +39,7 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
     QString pkexec;
     for (const char *c : {"/usr/bin/pkexec", "/bin/pkexec"})
         if (QFileInfo(QString::fromLatin1(c)).isFile()) { pkexec = QString::fromLatin1(c); break; }
-    if (pkexec.isEmpty()) return fail(QCoreApplication::translate("privileged", "pkexec was not found. Install polkit (sys-auth/polkit)."));
+    if (pkexec.isEmpty()) return fail(QCoreApplication::translate("privileged", "pkexec was not found. Install polkit (%1).").arg(systools::installCommand(QStringLiteral("pkexec"))));
     if (!QFileInfo(helper).isFile()) return fail(QCoreApplication::translate("privileged", "helper not found: %1").arg(helper));
 
     // Not parented to `ctx`: a QProcess destructor kills *and waits* for its

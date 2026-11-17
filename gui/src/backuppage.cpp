@@ -1,8 +1,10 @@
 #include "backuppage.h"
 #include <QTimer>
 
+#include "distroprofile.h"
 #include "privileged.h"
 #include "sysinfo.h"
+#include "systools.h"
 #include "theme.h"
 
 #include <QAbstractItemView>
@@ -28,6 +30,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
@@ -47,10 +50,9 @@ namespace {
 
 enum { PathRole = Qt::UserRole, KindRole };
 
-// Mirrors backup::DEFAULT_EXCLUDES. "/x/*" keeps the empty mount point in the
+// Default excludes: distroprofile (mirrors distro::image_excludes). "/x/*" keeps the empty mount point in the
 // archive; /home/* is the "Include /home" box.
-const char *const DEFAULT_EXCLUDES =
-    "/proc/*\n/sys/*\n/dev/*\n/run/*\n/tmp/*\n/var/tmp/*\n/mnt/*\n/media/*\n/lost+found\n/var/cache/*\n/usr/portage/distfiles/*";
+QString defaultExcludes(const QString &family) { return distroprofile::imageExcludes(family).join(QLatin1Char('\n')); }
 
 struct Comp { const char *id, *label; int lo, hi, def; };
 const Comp COMPS[] = {
@@ -132,12 +134,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     auto *cr = new QHBoxLayout;
     cfgProfile_ = new QCheckBox(QStringLiteral("System profile"));
     cfgProfile_->setChecked(st.value(QStringLiteral("config_profile"), true).toBool());
-    cfgProfile_->setToolTip(QStringLiteral(
-        "Also saves how this installation is put together, as reference material:\n"
-        "/etc/portage, the world set, the kernel .config, fstab, GRUB/dracut/kernel settings,\n"
-        "modprobe.d, modules-load.d, sysctl, conf.d, runlevels, udev rules, plus the kernel\n"
-        "command line, DMI, loaded modules and the installed package list.\n"
-        "It is stored under system-profile/ and is never restored automatically."));
+    cfgProfile_->setToolTip(distroprofile::profileAbout(distroprofile::family()));
     cfgLogs_ = new QCheckBox(QStringLiteral("Logs"));
     cfgLogs_->setChecked(st.value(QStringLiteral("config_logs"), false).toBool());
     cfgLogs_->setToolTip(QStringLiteral("Health / kernel-log history, the write log and the network-guard log."));
@@ -250,7 +247,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     encMode_->setToolTip(tr("The image holds /etc/shadow and every private key on the system: encrypt it when it leaves this computer.\n"
                             "Passphrase: asked when the image is made and when it is read back; never stored.\n"
                             "Public key: anyone can make images with it, only the matching secret key reads them — the key can stay off this computer.\n"
-                            "Uses age (app-crypt/age). An increment keeps the encryption of its chain."));
+                            "Uses age (%1). An increment keeps the encryption of its chain.").arg(systools::installCommand(QStringLiteral("age"))));
     recipient_ = new QLineEdit(savedRecipient);
     recipient_->setPlaceholderText(tr("age1… public key"));
     recipient_->setToolTip(tr("Encrypts the image with age to this public key (a public key is not a secret). Reading the image back needs the "
@@ -276,25 +273,39 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     auto *el = new QLabel(QStringLiteral("Exclude"));
     el->setAlignment(Qt::AlignTop);
     er->addWidget(el);
-    excludes_ = new QPlainTextEdit(st.value(QStringLiteral("excludes"), QString::fromLatin1(DEFAULT_EXCLUDES)).toString());
+    // A saved list equal to the old built-in default was never edited: it follows this distribution's defaults.
+    QString savedExcludes = st.value(QStringLiteral("excludes")).toString();
+    if (savedExcludes.trimmed().isEmpty() || savedExcludes.trimmed() == distroprofile::legacyDefaults())
+        savedExcludes = defaultExcludes(distroprofile::family());
+    excludes_ = new QPlainTextEdit(savedExcludes);
     excludes_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     excludes_->setFixedHeight(fontMetrics().lineSpacing() * 4 + 12);
     excludes_->setToolTip(QStringLiteral(
         "One tar --exclude pattern per line. \"/proc/*\" (not \"/proc\") keeps the empty mount point,\n"
         "so a restore onto a fresh disk can still mount /proc, /sys, /dev and /run.\n"
-        "The archive being written and older backup-* images in the folder are always excluded."));
+        "The archive being written, older backup-* images in the folder and swap files in use are always excluded."));
     er->addWidget(excludes_, 1);
     auto *ec = new QVBoxLayout;
-    auto *bDef = new QPushButton(QStringLiteral("Defaults"));
-    connect(bDef, &QPushButton::clicked, this, [this] { excludes_->setPlainText(QString::fromLatin1(DEFAULT_EXCLUDES)); });
+    auto *bDef = new QPushButton(tr("Defaults ▾"));
+    bDef->setToolTip(tr("Fill the list with the standard layout of this distribution (or another one), or add optional exclusions."));
+    auto *defMenu = new QMenu(bDef);
+    connect(defMenu, &QMenu::aboutToShow, this, [this, defMenu] { fillDefaultsMenu(defMenu); });
+    bDef->setMenu(defMenu);
     ec->addWidget(bDef);
     connect(action("Create image", ec, "btnAccent"), &QPushButton::clicked, this, &BackupPage::systemBackup);
     ec->addStretch(1);
     er->addLayout(ec);
     sv->addLayout(er);
+    distroNote_ = new QLabel;
+    distroNote_->setWordWrap(true);
+    distroNote_->setProperty("role", "muted");
+    distroNote_->setTextFormat(Qt::RichText);
+    sv->addWidget(distroNote_);
+    connect(excludes_, &QPlainTextEdit::textChanged, this, &BackupPage::updateDistroNote);
+    updateDistroNote();
 
     target_ = new QLineEdit(st.value(QStringLiteral("restore_target")).toString());
-    target_->setPlaceholderText(QStringLiteral("/mnt/gentoo — or / to restore over the running system"));
+    target_->setPlaceholderText(distroprofile::restoreHint(distroprofile::family()));
     auto *rr = folderRow(QStringLiteral("Restore to"), target_, this, QStringLiteral("Directory to restore the image into"));
     connect(action("Verify selected", rr), &QPushButton::clicked, this, &BackupPage::verifySelected);
     connect(action("Restore selected…", rr, "btnDanger"), &QPushButton::clicked, this, &BackupPage::systemRestore);
@@ -662,7 +673,7 @@ void BackupPage::run(const QJsonObject &req, bool root, const QString &what, Don
     QString pkexec;
     for (const char *c : {"/usr/bin/pkexec", "/bin/pkexec"})
         if (QFileInfo(QString::fromLatin1(c)).isFile()) { pkexec = QString::fromLatin1(c); break; }
-    if (root && pkexec.isEmpty()) return failNow(QStringLiteral("pkexec was not found. Install polkit (sys-auth/polkit)."));
+    if (root && pkexec.isEmpty()) return failNow(tr("pkexec was not found. Install polkit (%1).").arg(systools::installCommand(QStringLiteral("pkexec"))));
 
     // Parented to the app: a root child cannot be killed from here, and a
     // QProcess destructor would block on it. It ends when its stdin closes.
@@ -845,6 +856,68 @@ void BackupPage::updateEncryptionUi() {
     keyGen_->setVisible(key);
 }
 
+void BackupPage::fillDefaultsMenu(QMenu *menu) {
+    menu->clear();
+    const QString here = distroprofile::family();
+    auto setList = [this](const QString &family) {
+        // Optional lines the user added stay: only the defaults are replaced.
+        QStringList keep;
+        const QStringList now = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const distroprofile::Optional &o : distroprofile::optionalExcludes())
+            if (now.contains(o.pattern)) keep << o.pattern;
+        excludes_->setPlainText((distroprofile::imageExcludes(family) + keep).join(QLatin1Char('\n')));
+        saveSettings();
+    };
+    QAction *mine = menu->addAction(tr("This system: %1").arg(distroprofile::prettyName()), this, [setList, here] { setList(here); });
+    mine->setToolTip(distroprofile::excludeSummary(here));
+    auto *other = menu->addMenu(tr("Standard layout of another distribution"));
+    for (const QString &f : distroprofile::families()) {
+        QAction *a = other->addAction(distroprofile::familyLabel(f), this, [setList, f] { setList(f); });
+        a->setToolTip(distroprofile::excludeSummary(f));
+    }
+    other->setToolTipsVisible(true);
+    menu->addSeparator();
+    auto *opt = menu->addMenu(tr("Also leave out"));
+    opt->setToolTipsVisible(true);
+    const QStringList now = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const distroprofile::Optional &o : distroprofile::optionalExcludes()) {
+        QAction *a = opt->addAction(QStringLiteral("%1   %2").arg(o.label, o.pattern));
+        a->setCheckable(true);
+        a->setChecked(now.contains(o.pattern));
+        a->setToolTip(o.about);
+        connect(a, &QAction::toggled, this, [this, p = o.pattern](bool on) {
+            QStringList lines = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            lines.removeAll(p);
+            if (on) lines << p;
+            excludes_->setPlainText(lines.join(QLatin1Char('\n')));
+            saveSettings();
+        });
+    }
+    menu->setToolTipsVisible(true);
+}
+
+void BackupPage::updateDistroNote() {
+    if (!distroNote_) return;
+    const QString here = distroprofile::family();
+    const QStringList now = excludes_->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QStringList parts;
+    QString state;
+    if (now == distroprofile::imageExcludes(here)) state = tr("the list is this distribution's default");
+    else {
+        int missing = 0;
+        for (const QString &e : distroprofile::imageExcludes(here)) if (!now.contains(e)) ++missing;
+        state = missing ? tr("%n default line(s) of this distribution are not in the list (Defaults ▾ restores them)", nullptr, missing)
+                        : tr("the defaults plus your own lines");
+    }
+    parts << tr("Detected: <b>%1</b> — %2. Its defaults leave out %3.")
+                 .arg(distroprofile::prettyName().toHtmlEscaped(), state, distroprofile::excludeSummary(here).toHtmlEscaped());
+    const QStringList swaps = distroprofile::swapFiles();
+    if (!swaps.isEmpty()) parts << tr("Swap file(s) in use, always left out: %1.").arg(swaps.join(QStringLiteral(", ")).toHtmlEscaped());
+    const QString caveat = distroprofile::imageCaveat();
+    if (!caveat.isEmpty()) parts << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::WARN), caveat.toHtmlEscaped());
+    distroNote_->setText(parts.join(QStringLiteral("<br>")));
+}
+
 void BackupPage::systemBackup() {
     saveSettings();
     const QString dir = sysDir_->text().trimmed();
@@ -943,7 +1016,7 @@ void BackupPage::newKeyPair() {
     QString keygen;
     for (const char *c : {"/usr/bin/age-keygen", "/bin/age-keygen"})
         if (QFileInfo(QString::fromLatin1(c)).isExecutable()) { keygen = QString::fromLatin1(c); break; }
-    if (keygen.isEmpty()) { finished(tr("age-keygen was not found. Install age (app-crypt/age)."), false); return; }
+    if (keygen.isEmpty()) { finished(tr("age-keygen was not found. Install age (%1).").arg(systools::installCommand(QStringLiteral("age"))), false); return; }
     const QString file = QFileDialog::getSaveFileName(this, tr("Save the secret key — keep it off this computer"),
                                                       QDir::homePath() + QStringLiteral("/centurion-backup.agekey"),
                                                       tr("age key (*.agekey *.txt);;All files (*)"));
