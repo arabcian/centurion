@@ -227,6 +227,35 @@ pub const HOTPLUG_SETTLE: std::time::Duration = std::time::Duration::from_millis
 /// Between two ordinary knobs.
 pub const KNOB_GAP: std::time::Duration = std::time::Duration::from_millis(2);
 
+/// A global row and the narrower rows it makes redundant: they write the same files, or (dynamic
+/// EPP, the dirty byte limits) the kernel undoes them. While the global row is in a preset - with
+/// `when`, only at that value - the narrower rows are skipped on apply and greyed out in the GUI.
+/// The per-CCD / P/E-core governor, EPP and boost rows are not here: they refine the global row
+/// on purpose (applied after it; built-in presets and autotune rely on that).
+pub const SHADOWS: &[(&str, Option<&str>, &[&str])] = &[
+    ("irq.affinity", None, &["irq.nvme", "irq.network", "irq.nvidia"]),
+    ("blk.scheduler", None, &["blk.nvme1.scheduler", "blk.nvme2.scheduler"]),
+    ("blk.read_ahead_kb", None, &["blk.nvme1.read_ahead_kb", "blk.nvme2.read_ahead_kb"]),
+    ("blk.nr_requests", None, &["blk.nvme1.nr_requests", "blk.nvme2.nr_requests"]),
+    ("blk.rq_affinity", None, &["blk.nvme1.rq_affinity", "blk.nvme2.rq_affinity"]),
+    ("pm.nvme_latency_us", None, &["pm.nvme1_latency_us", "pm.nvme2_latency_us"]),
+    ("cpu.wake_latency_us", None, &["cpu.wake_latency_ccd0", "cpu.wake_latency_ccd1"]),
+    ("cpu.dynamic_epp", Some("enabled"), &["cpu.epp", "cpu.epp_ccd0", "cpu.epp_ccd1", "cpu.epp_pcore", "cpu.epp_ecore"]),
+    ("vm.dirty_bytes", None, &["vm.dirty_ratio"]),
+    ("vm.dirty_background_bytes", None, &["vm.dirty_background_ratio"]),
+];
+
+/// (shadowed key, global key) for every key of `values` that a global key in `values` shadows.
+pub fn shadowed(values: &Map<String, Value>) -> Vec<(&'static str, &'static str)> {
+    let mut out = Vec::new();
+    for &(global, when, keys) in SHADOWS {
+        let Some(v) = values.get(global) else { continue };
+        if when.is_some_and(|w| v.as_str() != Some(w)) { continue; }
+        out.extend(keys.iter().filter(|k| values.contains_key(**k)).map(|&k| (k, global)));
+    }
+    out
+}
+
 pub const TUNABLES: &[Tunable] = &[
     // ── CPU ───────────────────────────────────────────────────────────────
     amd(t("cpu.pstate_status", "CPU", "amd-pstate mode",
@@ -3392,7 +3421,10 @@ pub fn describe_with(light: bool) -> Value {
         if let Some(v) = read(&p).and_then(|s| s.parse::<i64>().ok()) { firmware.insert(key.into(), json!(v)); }
     }
     m.insert("firmware_limits".into(), Value::Object(firmware));
-    if !light { m.insert("discovered".into(), Value::Array(discovered())); }
+    if !light {
+        m.insert("discovered".into(), Value::Array(discovered()));
+        m.insert("shadows".into(), SHADOWS.iter().map(|(g, w, k)| json!({"global": g, "when": w, "keys": k})).collect());
+    }
     Value::Object(m)
 }
 
@@ -3404,6 +3436,37 @@ mod tests {
             Ccx { index: 0, cpus: (0..8).chain(16..24).collect(), l3_kib: 98304, max_khz: 5_200_000 },
             Ccx { index: 1, cpus: (8..16).chain(24..32).collect(), l3_kib: 32768, max_khz: 5_400_000 },
         ]
+    }
+    #[test]
+    fn shadows_cover_every_per_device_row() {
+        for &(g, _, keys) in SHADOWS {
+            assert!(find(g).is_some(), "{g}");
+            for k in keys {
+                assert!(find(k).is_some(), "{k}");
+                // One level only: the GUI greys in a single pass.
+                assert!(SHADOWS.iter().all(|s| s.0 != *k), "{k} is shadowed and a global row");
+            }
+        }
+        // Every row tune-helper's overlap guard would refuse next to its global row has an entry.
+        let per_device = ["blk.nvme", "pm.nvme1", "pm.nvme2", "cpu.wake_latency_ccd", "irq.nvme", "irq.network", "irq.nvidia"];
+        for t in TUNABLES.iter().filter(|t| per_device.iter().any(|p| t.key.starts_with(p))) {
+            assert!(SHADOWS.iter().any(|s| s.2.contains(&t.key)), "{} has no global row in SHADOWS", t.key);
+        }
+    }
+    #[test]
+    fn shadowed_keys() {
+        let m = |v: Value| v.as_object().unwrap().clone();
+        let v = m(json!({"irq.affinity": "all", "irq.nvme": "ccd1", "irq.network": "all", "blk.nvme1.scheduler": "none"}));
+        let mut s = shadowed(&v);
+        s.sort();
+        assert_eq!(s, vec![("irq.network", "irq.affinity"), ("irq.nvme", "irq.affinity")]);
+        // Without the global row the per-device rows stand.
+        assert!(shadowed(&m(json!({"irq.nvme": "ccd1", "blk.nvme1.scheduler": "none"}))).is_empty());
+        // `when`: only dynamic EPP "enabled" owns the EPP rows.
+        assert_eq!(shadowed(&m(json!({"cpu.dynamic_epp": "enabled", "cpu.epp": "performance"}))), vec![("cpu.epp", "cpu.dynamic_epp")]);
+        assert!(shadowed(&m(json!({"cpu.dynamic_epp": "disabled", "cpu.epp": "performance"}))).is_empty());
+        // Layered on purpose: per-CCD EPP refines the global EPP row.
+        assert!(shadowed(&m(json!({"cpu.epp": "performance", "cpu.epp_ccd1": "balance_power"}))).is_empty());
     }
     #[test]
     fn park_record_matching() {

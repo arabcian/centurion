@@ -272,6 +272,7 @@ fn summary(st: &State) -> Value {
 /// covering the same concrete sysfs/proc file. Detect the overlap before ANY
 /// writes: otherwise the last table row silently wins and misleadingly looks
 /// like two successful optimizations. Existing old/old presets are unchanged.
+/// Backstop only: pairs listed in tune::SHADOWS are resolved before this runs.
 fn hardware_policy_overlap(values: &Map<String, Value>) -> Option<String> {
     let advanced = |key: &str| -> bool {
         key.starts_with("blk.nvme") || key.starts_with("pm.nvme1") || key.starts_with("pm.nvme2")
@@ -300,10 +301,21 @@ fn hardware_policy_overlap(values: &Map<String, Value>) -> Option<String> {
 /// `game`: the writes belong to the game layer (see GameLayer); any other apply made while a game runs
 /// takes the files it writes out of that layer, so the game's end leaves them alone.
 fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec<Value>, bool) {
+    // A global row wins over the narrower rows it covers (tune::SHADOWS): those are left out, not
+    // the whole preset - scenes filled at boot defaults carry both.
+    let mut results = Vec::new();
+    let shadowed = tune::shadowed(values);
+    let kept: Map<String, Value>;
+    let values = if shadowed.is_empty() { values } else {
+        for (k, g) in &shadowed {
+            results.push(json!({"key": k, "ok": true, "skipped": format!("controlled by {g} in the same preset")}));
+        }
+        kept = values.iter().filter(|(k, _)| !shadowed.iter().any(|(s, _)| s == k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+        &kept
+    };
     if let Some(conflict) = hardware_policy_overlap(values) {
         return (vec![json!({"key": "optimization_conflict", "ok": false, "error": conflict})], false);
     }
-    let mut results = Vec::new();
     let mut all_ok = true;
     for k in values.keys() {
         if tune::find(k).is_none() && !tune::RETIRED_KEYS.contains(&k.as_str()) {

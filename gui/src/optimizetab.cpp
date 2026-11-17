@@ -1082,7 +1082,10 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
         conflictBanner_->setText(report);
         conflictBanner_->setVisible(!report.isEmpty());
     }
-    if (!light) discovered_ = d.value("discovered").toArray();
+    if (!light) {
+        discovered_ = d.value("discovered").toArray();
+        shadows_ = d.value("shadows").toArray();
+    }
     if (wirelessLock_ && !busy_) {  // the root-owned marker is the truth, not the checkbox
         const QSignalBlocker b(wirelessLock_);
         wirelessLock_->setChecked(d.value("wireless_pm_lock").toBool());
@@ -1113,6 +1116,7 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     } else {
         for (int i = 0; i < rows.size(); ++i) updateRow(rows_[i], rows[i].toObject());
     }
+    applyShadows();
 
     // Affinity choices follow the live topology.
     if (affinity_ && (topoChanged || affinity_->count() == 0) && !affinity_->view()->isVisible()) {
@@ -1303,6 +1307,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
                 editor = r.spin;
                 connect(r.spin, &Int64SpinBox::valueChanged, this, [this, key] {
                     if (Row *x = row(key)) { x->touched = true; x->include->setChecked(true); markRow(*x); }
+                    applyShadows();
                 });
                 // valueChanged doesn't fire if focus is lost without the number actually
                 // changing (e.g. typed it, then re-typed the same value) - editingFinished
@@ -1318,6 +1323,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
                 editor = r.combo;
                 connect(r.combo, &QComboBox::activated, this, [this, key] {
                     if (Row *x = row(key)) { x->touched = true; x->include->setChecked(!editorValue(*x).isEmpty()); markRow(*x); }
+                    applyShadows();
                 });
             }
             editor->setToolTip(tip);
@@ -1325,7 +1331,7 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             r.revert->setFixedWidth(30);
             r.revert->setToolTip(tr("Restore this setting's original value"));
             connect(r.revert, &QPushButton::clicked, this, [this, key] { revertRow(key); });
-            connect(r.include, &QCheckBox::toggled, this, [this, key] { if (Row *x = row(key)) markRow(*x); });
+            connect(r.include, &QCheckBox::toggled, this, [this, key] { if (Row *x = row(key)) markRow(*x); applyShadows(); });
             grid->addWidget(r.include, line, 0);
             grid->addWidget(r.name, line, 1);
             grid->addWidget(r.cur, line, 2);
@@ -1452,7 +1458,7 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
     r.revert->setVisible(saved);
     for (QWidget *w : {static_cast<QWidget *>(r.include), static_cast<QWidget *>(r.name), static_cast<QWidget *>(r.combo),
                        static_cast<QWidget *>(r.spin)})
-        if (w) w->setEnabled(r.available);
+        if (w) w->setEnabled(r.available && r.shadowedBy.isEmpty());
     if (!r.available) r.include->setChecked(false);
     markRow(r);
 }
@@ -1519,8 +1525,43 @@ bool OptimizeTab::differs(const Row &r) const {
 void OptimizeTab::markRow(Row &r) {
     if (!r.name) return;
     const bool pending = r.include->isChecked() && differs(r);
-    const char *color = !r.available ? theme::MUTED : pending ? theme::ACCENT : r.caution ? theme::WARN : theme::FG;
+    const char *color = !r.available || !r.shadowedBy.isEmpty() ? theme::MUTED : pending ? theme::ACCENT : r.caution ? theme::WARN : theme::FG;
     theme::setSheet(r.name, QStringLiteral("color:%1; background:transparent;%2").arg(color, pending ? " font-weight:600;" : ""));
+}
+
+bool OptimizeTab::wouldShadow(const QString &key, const QString &value, const QSet<QString> &keys) const {
+    for (const QJsonValue &v : shadows_) {
+        const QJsonObject s = v.toObject();
+        if (s.value("global").toString() != key) continue;
+        if (s.value("when").isString() && s.value("when").toString() != value) continue;
+        for (const QJsonValue &k : s.value("keys").toArray()) if (keys.contains(k.toString())) return true;
+    }
+    return false;
+}
+
+void OptimizeTab::applyShadows() {
+    QHash<QString, QString> by;  // shadowed key -> label of the global row
+    for (const QJsonValue &v : shadows_) {
+        const QJsonObject s = v.toObject();
+        const Row *g = row(s.value("global").toString());
+        if (!g || !g->include || !g->include->isChecked() || !g->available) continue;
+        const QString val = editorValue(*g);
+        if (val.isEmpty() || (s.value("when").isString() && s.value("when").toString() != val)) continue;
+        for (const QJsonValue &k : s.value("keys").toArray()) by.insert(k.toString(), g->label);
+    }
+    for (Row &r : rows_) {
+        if (!r.include) continue;
+        const QString was = r.shadowedBy;
+        r.shadowedBy = by.value(r.key);
+        if (r.shadowedBy == was) continue;
+        if (!r.shadowedBy.isEmpty()) { const QSignalBlocker b(r.include); r.include->setChecked(false); }
+        for (QWidget *w : {static_cast<QWidget *>(r.include), static_cast<QWidget *>(r.name), static_cast<QWidget *>(r.combo),
+                           static_cast<QWidget *>(r.spin)})
+            if (w) w->setEnabled(r.available && r.shadowedBy.isEmpty());
+        r.include->setToolTip(r.shadowedBy.isEmpty() ? tr("Include in Apply, Save and boot preset")
+                                                     : tr("Controlled by \"%1\" while that row is checked; uncheck it to set this one").arg(r.shadowedBy));
+        markRow(r);
+    }
 }
 
 OptimizeTab::Row *OptimizeTab::row(const QString &key) {
@@ -1766,6 +1807,8 @@ QJsonObject OptimizeTab::withBootDefaults(const QJsonObject &values) const {
         if (!r.include || out.contains(r.key)) continue;
         const QString v = bootValueFor(r, defs);
         if (v.isEmpty()) continue;
+        const QStringList have = values.keys();
+        if (wouldShadow(r.key, v, QSet<QString>(have.cbegin(), have.cend()))) continue;
         out[r.key] = r.kind == "int" ? QJsonValue(v.toLongLong()) : QJsonValue(v);
     }
     return out;
@@ -1814,6 +1857,8 @@ int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped, bo
             bool live = false;
             const QString v = bootValueFor(r, defs, &live);
             if (v.isEmpty() || !setEditorValue(r, v)) { ++f.unchecked; continue; }
+            // A boot-default global row must not override the preset's own per-device rows.
+            if (wouldShadow(r.key, v, set)) { setEditorValue(r, r.current); ++f.unchecked; continue; }
             r.touched = true;
             const QSignalBlocker b(r.include);
             r.include->setChecked(true);
@@ -1822,6 +1867,7 @@ int OptimizeTab::loadPresetObject(const QJsonObject &p, QStringList *skipped, bo
     }
     if (fill) *fill = f;
     for (Row &r : rows_) markRow(r);
+    applyShadows();
     const QJsonObject run = p.value("run").toObject();
     if (nice_ && !run.isEmpty()) {
         nice_->setValue(std::clamp(run.value("nice").toInt(0), -20, 0));

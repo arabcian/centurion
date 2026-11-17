@@ -11,6 +11,7 @@
 // user file the moment they are chosen for games or for boot.
 #include <QJsonArray>
 #include <QHash>
+#include <QSet>
 #include <QJsonObject>
 #include <QWidget>
 #include <functional>
@@ -80,6 +81,7 @@ private:
         bool available = false, debugfs = false, caution = false, hotplug = false;
         bool userSwitch = false;  // radio on/off (rf.*): never filled in from the boot snapshot
         bool touched = false;  // user edited the editor since the last sync
+        QString shadowedBy;    // label of the checked global row that covers this one (tune::SHADOWS)
         QCheckBox *include = nullptr;
         QLabel *name = nullptr, *cur = nullptr;
         QComboBox *combo = nullptr;
@@ -107,6 +109,10 @@ private:
     bool setEditorValue(Row &r, const QString &v);
     bool differs(const Row &r) const;
     void markRow(Row &r);
+    /// Greys out (and unchecks) every row a checked global row covers (describe "shadows").
+    void applyShadows();
+    /// Checking `key` at `value` would shadow one of `keys`.
+    bool wouldShadow(const QString &key, const QString &value, const QSet<QString> &keys) const;
     Row *row(const QString &key);
 
     QJsonObject collectValues() const;
@@ -170,6 +176,7 @@ private:
     QList<Row> rows_;
     QJsonObject topology_, state_, boot_, isolation_;
     QJsonArray discovered_;  // scheduler entries the helper's table does not know (read-only)
+    QJsonArray shadows_;     // tune::SHADOWS: {"global", "when", "keys"}
     bool active_ = false, busy_ = false, describing_ = false, helperMissing_ = false;
     bool needFull_ = true;                 // next describe must read the slow rows too
     QHash<QString, QJsonObject> slowKeep_; // slow rows as of the last full describe

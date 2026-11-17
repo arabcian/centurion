@@ -6715,6 +6715,10 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
             <translation>Uygula, Kaydet ve açılış önayarına dahil et</translation>
         </message>
         <message>
+            <source>Controlled by &quot;%1&quot; while that row is checked; uncheck it to set this one</source>
+            <translation>&quot;%1&quot; işaretliyken bu ayarı o satır belirler; bunu ayarlamak için onun işaretini kaldırın</translation>
+        </message>
+        <message>
             <source>Restore this setting's original value</source>
             <translation>Bu ayarın ilk değerini geri yükle</translation>
         </message>
