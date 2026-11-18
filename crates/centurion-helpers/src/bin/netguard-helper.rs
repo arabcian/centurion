@@ -16,7 +16,8 @@ use centurion_helpers::*;
 
 fn main() {
     init();
-    let out = match read_request(4 << 20) {
+    // A blocklist subscription may be 8 MiB of text (BLOCKLIST_MAX_BYTES), plus its JSON quoting.
+    let out = match read_request(16 << 20) {
         Ok(req) => netguard::handle(&req),
         Err(e) => e,
     };

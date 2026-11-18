@@ -12,7 +12,9 @@
 Wants=centurion-boot-guard.service
 Description=Centurion boot tuning preset
 Documentation=file:///usr/share/doc/centurion/README.md
-ConditionPathExists=/etc/centurion/tune-boot.json
+# Either is enough ("|"): saved wake sources are restored by the same helper call.
+ConditionPathExists=|/etc/centurion/tune-boot.json
+ConditionPathExists=|/etc/centurion/wakeup.json
 # After sysctl so our values win over /etc/sysctl.d; after module loading so
 # module parameters (snd_hda_intel, usbcore, amd_pstate) exist.
 After=local-fs.target systemd-modules-load.service systemd-sysctl.service systemd-udev-trigger.service centurion-boot-guard.service

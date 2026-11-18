@@ -383,7 +383,9 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
     if !status.success() { return Err(format!("tar failed ({status})")); }
     let tmp = out.with_file_name(format!("{}.partial", out.file_name().and_then(|n| n.to_str()).unwrap_or("report.tar.gz")));
     {
-        let mut dst = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)
+        // A leftover (or planted link) is removed, never written through.
+        let _ = std::fs::remove_file(&tmp);
+        let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)
             .map_err(|e| format!("{}: {e}", tmp.display()))?;
         let mut src = std::fs::File::open(&archive).map_err(|e| format!("{}: {e}", archive.display()))?;
         std::io::copy(&mut src, &mut dst).map_err(|e| format!("{}: {e}", tmp.display()))?;
@@ -396,6 +398,10 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
 
 /// Op "diag_report": a preview without "out", the archive with it.
 pub fn request(req: &Value) -> Value {
+    // The op is served before tune-helper's root check, and the path comes from the request.
+    if req["out"].is_string() && unsafe { libc::geteuid() } == 0 {
+        return json!({"ok": false, "error": "the report is written as the user, not as root"});
+    }
     let src = Sources::system();
     let version = req["version"].as_str().unwrap_or("unknown");
     let (now, offset) = overview::local_clock();
@@ -527,6 +533,32 @@ mod tests {
         assert!(body.contains("product 16ARX8") && !body.contains("SN-SECRET"), "{body}");
         assert!(write_archive(&text_entries, "x", Path::new("relative.tar.gz")).is_err());
         assert!(write_archive(&text_entries, "x", &root.join("report.zip")).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_planted_partial_link_is_replaced_not_followed() {
+        let root = temp("partial-link");
+        let victim = root.join("victim.conf");
+        std::fs::write(&victim, "ORIGINAL").unwrap();
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::symlink(&victim, root.join("r.tar.gz.partial")).unwrap();
+        let entries = vec![Entry { name: "a.txt".into(), status: "included", text: "x".into(), masked: 0 }];
+        write_archive(&entries, "r", &root.join("r.tar.gz")).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "ORIGINAL");
+        assert_eq!(std::fs::metadata(&victim).unwrap().permissions().mode() & 0o777, 0o644);
+        assert!(std::fs::symlink_metadata(root.join("r.tar.gz")).unwrap().is_file());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn root_never_writes_the_archive() {
+        if unsafe { libc::geteuid() } != 0 { return; }
+        let root = temp("as-root");
+        let out = root.join("r.tar.gz");
+        let r = request(&json!({"op": "diag_report", "out": out}));
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(!out.exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -2003,8 +2003,15 @@ void OptimizeTab::setBoot() {
     if (!risky.isEmpty()) msg += "\n\n⚠ Includes: " + risky.join(", ") + ". A bad value here is applied before you can log in.";
     if (QMessageBox::question(this, "Apply at boot", msg) != QMessageBox::Yes) return;
     const QString name = validPresetName(loadedPreset_) ? loadedPreset_ : QStringLiteral("Custom");
-    runOp({{"op", "set_boot"}, {"values", values}, {"preset", name}}, "Boot preset", [this, name](const QJsonObject &) {
-        showStatus("Boot preset \"" + name + "\" stored.", theme::OK);
+    runOp({{"op", "set_boot"}, {"values", values}, {"preset", name}}, "Boot preset", [this, name](const QJsonObject &res) {
+        if (!res.value("ok").toBool()) {
+            showStatus("Boot preset not stored: " + res.value("error").toString(), theme::DANGER, 10000);
+            return;
+        }
+        QStringList dropped;
+        for (const QJsonValue &d : res.value("dropped").toArray()) dropped << d.toObject().value("key").toString();
+        if (dropped.isEmpty()) showStatus("Boot preset \"" + name + "\" stored.", theme::OK);
+        else showStatus("Boot preset \"" + name + "\" stored without " + dropped.join(", ") + " (refused by the safety audit).", theme::WARN, 10000);
     });
 }
 

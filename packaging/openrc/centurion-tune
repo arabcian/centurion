@@ -22,7 +22,8 @@ start() {
 		ewarn "Centurion boot presets are paused after a crashed boot — resume them in the app (Home)"
 		return 0
 	fi
-	[ -f /etc/centurion/tune-boot.json ] || { einfo "No boot preset set"; return 0; }
+	# Saved wake sources are restored by the same helper call.
+	[ -f /etc/centurion/tune-boot.json ] || [ -f /etc/centurion/wakeup.json ] || { einfo "No boot preset or wake sources set"; return 0; }
 	ebegin "Applying Centurion boot tuning"
 	printf '%s' '{"op":"boot"}' | "${HELPER}" >/dev/null
 	eend $? "Some settings could not be applied (see: centurion-gamemode STATUS)"

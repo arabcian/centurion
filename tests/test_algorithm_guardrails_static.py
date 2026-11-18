@@ -63,5 +63,12 @@ class SourceGuardrails(unittest.TestCase):
         self.assertIn('duplicate weight', s)
         self.assertIn('fn rejects_invalid_or_ambiguous_weight_input()', s)
 
+    def test_boot_service_runs_for_saved_wake_sources_without_a_preset(self):
+        openrc = code('packaging/openrc/centurion-tune')
+        self.assertIn('[ -f /etc/centurion/tune-boot.json ] || [ -f /etc/centurion/wakeup.json ]', openrc)
+        unit = code('packaging/systemd/centurion-tune.service')
+        self.assertIn('ConditionPathExists=|/etc/centurion/tune-boot.json', unit)
+        self.assertIn('ConditionPathExists=|/etc/centurion/wakeup.json', unit)
+
 if __name__ == '__main__':
     unittest.main()

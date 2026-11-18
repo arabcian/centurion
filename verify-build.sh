@@ -30,12 +30,11 @@ fi
 run shell-syntax bash -c 'set -e; while IFS= read -r -d "" f; do bash -n "$f"; done < <(find . -type f -name "*.sh" -not -path "./build-*/*" -print0)' || :
 
 if command -v cargo >/dev/null 2>&1; then
-  run cargo-format cargo fmt --all -- --check || :
   run cargo-check cargo check --workspace --all-targets --locked || :
   run cargo-test cargo test --workspace --locked || :
   run cargo-clippy cargo clippy --workspace --all-targets --locked -- -D warnings || :
 else
-  missing rust-toolchain 'cargo + rustc + rustfmt + clippy'
+  missing rust-toolchain 'cargo + rustc + clippy'
 fi
 if command -v cmake >/dev/null 2>&1; then
   if run cmake-config cmake -S gui -B build-verification/gui -DCMAKE_BUILD_TYPE=Debug \

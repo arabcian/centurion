@@ -1098,22 +1098,13 @@ pub const DEBUGFS_SNAPSHOT: &str = "/run/centurion/debugfs.json";
 
 /// Root only. Atomic (temp + rename), mode 0644, in a root-owned 0755 directory.
 pub fn write_debugfs_snapshot() {
-    use std::os::unix::fs::PermissionsExt;
     if unsafe { libc::geteuid() } != 0 || !ensure_debugfs() { return; }
     let mut m = Map::new();
     for t in TUNABLES.iter().filter(|t| t.debugfs && vendor_ok(t)) {
         if let Some(v) = current(t) { m.insert(t.key.to_owned(), Value::String(v)); }
     }
-    let path = Path::new(DEBUGFS_SNAPSHOT);
-    let Some(dir) = path.parent() else { return };
-    if std::fs::create_dir_all(dir).is_err() { return; }
-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
-    let tmp = dir.join(".debugfs.json.tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let body = Value::Object(m).to_string();
-    if std::fs::write(&tmp, body).is_ok() {
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644));
-        let _ = std::fs::rename(&tmp, path);
+    if crate::secure_dir("/run/centurion").is_ok() {
+        let _ = crate::write_root_file(DEBUGFS_SNAPSHOT, Value::Object(m).to_string().as_bytes());
     }
 }
 
@@ -3220,6 +3211,8 @@ fn pci_latency_write_timeout(cfg: &Path, hex: &str) -> std::io::Result<()> {
     let pid = unsafe { libc::fork() };
     if pid < 0 { return Err(std::io::Error::last_os_error()); }
     if pid == 0 {
+        // A child stuck in the kernel must not keep the tune lock or the reply pipe open.
+        for fd in 0..4096 { unsafe { libc::close(fd); } }
         let ok = pci_latency_write(cfg, &format!("{v:02x}")).is_ok();
         unsafe { libc::_exit(if ok { 0 } else { 1 }) };
     }
@@ -3766,5 +3759,28 @@ mod tests {
         assert!(is_irq_file(Path::new("/proc/irq/42/smp_affinity_list")));
         assert!(!is_irq_file(Path::new("/proc/irq/default_smp_affinity")));
         assert!(!is_irq_file(Path::new("/proc/irq/1/../2/smp_affinity_list")));
+    }
+
+    #[test]
+    fn stuck_pci_writer_does_not_keep_the_lock() {
+        use std::os::fd::AsRawFd;
+        let d = std::env::temp_dir().join(format!("centurion-pci-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (lock, fifo) = (d.join("lock"), d.join("config"));
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let open = || std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lock).unwrap();
+        let held = open();
+        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        // Opening a FIFO nobody reads blocks the child, like a device that hangs in ACPI.
+        let writer = std::thread::spawn({ let f = fifo.clone(); move || pci_latency_write_timeout(&f, "20") });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        drop(held);
+        let again = open();
+        let free = unsafe { libc::flock(again.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+        assert!(writer.join().unwrap().is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+        assert!(free, "the stuck child still holds the lock");
     }
 }

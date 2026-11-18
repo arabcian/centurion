@@ -227,7 +227,8 @@ static void checkForUpdates() {
         nam->deleteLater();
         const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
         const QString tag = o.value(QStringLiteral("tag_name")).toString();
-        const QString url = o.value(QStringLiteral("html_url")).toString(releases);
+        QUrl page(o.value(QStringLiteral("html_url")).toString());
+        if (page.scheme() != QLatin1String("https") || page.host() != QLatin1String("github.com")) page = QUrl(releases);
         const QVersionNumber latest = QVersionNumber::fromString(tag.startsWith(u'v') ? tag.mid(1) : tag);
         const QVersionNumber current = QVersionNumber::fromString(QStringLiteral(CENTURION_VERSION));
         if (reply->error() != QNetworkReply::NoError || latest.isNull()) {
@@ -237,7 +238,7 @@ static void checkForUpdates() {
             if (QMessageBox::question(nullptr, Tray::tr("Check for updates"),
                                       Tray::tr("Centurion %1 is available (installed: %2). Open the release page?")
                                           .arg(latest.toString(), current.toString())) == QMessageBox::Yes)
-                QDesktopServices::openUrl(QUrl(url));
+                QDesktopServices::openUrl(page);
         } else {
             QMessageBox::information(nullptr, Tray::tr("Check for updates"),
                                      Tray::tr("Centurion %1 is the latest release.").arg(current.toString()));

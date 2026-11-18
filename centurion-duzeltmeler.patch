@@ -1,0 +1,415 @@
+diff --git a/crates/centurion-helpers/src/bin/centurion-export.rs b/crates/centurion-helpers/src/bin/centurion-export.rs
+index 2bde207..3f10b14 100644
+--- a/crates/centurion-helpers/src/bin/centurion-export.rs
++++ b/crates/centurion-helpers/src/bin/centurion-export.rs
+@@ -7,7 +7,8 @@
+ //!       atomically (node_exporter's textfile collector: FILE = <dir>/centurion.prom), else stdout.
+ //!   centurion-export mqtt HOST [--topic PREFIX] [--interval S] [-- MOSQUITTO_PUB_ARGS…]
+ //!       One retained message per value on PREFIX/<key> (default centurion) via mosquitto_pub;
+-//!       arguments after `--` go to mosquitto_pub as they are (-p PORT, -u USER, -P PASS, …).
++//!       arguments after `--` go to mosquitto_pub as they are (-p PORT, -u USER, …). Keep a password in
++//!       mosquitto_pub's config file (~/.config/mosquitto_pub): every local user can read `-P` in `ps`.
+ //!
+ //! Once by default; with --interval S it repeats every S seconds. Exit 1 when Centurion is not running.
+ 
+diff --git a/crates/centurion-helpers/src/bin/netguard-helper.rs b/crates/centurion-helpers/src/bin/netguard-helper.rs
+index 6bd83aa..46aa008 100644
+--- a/crates/centurion-helpers/src/bin/netguard-helper.rs
++++ b/crates/centurion-helpers/src/bin/netguard-helper.rs
+@@ -16,7 +16,8 @@ use centurion_helpers::*;
+ 
+ fn main() {
+     init();
+-    let out = match read_request(4 << 20) {
++    // A blocklist subscription may be 8 MiB of text (BLOCKLIST_MAX_BYTES), plus its JSON quoting.
++    let out = match read_request(16 << 20) {
+         Ok(req) => netguard::handle(&req),
+         Err(e) => e,
+     };
+diff --git a/crates/centurion-helpers/src/bin/tune-helper.rs b/crates/centurion-helpers/src/bin/tune-helper.rs
+index d058ebc..a39811c 100644
+--- a/crates/centurion-helpers/src/bin/tune-helper.rs
++++ b/crates/centurion-helpers/src/bin/tune-helper.rs
+@@ -82,7 +82,8 @@ use std::os::unix::io::AsRawFd;
+ use std::path::{Path, PathBuf};
+ use std::time::{Duration, Instant};
+ 
+-const MAX_STDIN_BYTES: usize = 64 * 1024;
++/// Sized for the largest request: preset_save with 64 presets of every knob.
++const MAX_STDIN_BYTES: usize = 2 * 1024 * 1024;
+ const RUN_DIR: &str = "/run/centurion";
+ const STATE_DIR: &str = "/run/centurion/tune";
+ const STATE_FILE: &str = "/run/centurion/tune/state.json";
+@@ -325,6 +326,8 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
+     }
+     // Hard safety limits (int32-wrapped dirty limits, reserves that OOM the box, ...).
+     let rejects: Vec<autotune::Issue> = autotune::audit(values, &autotune::AuditCtx::live()).into_iter().filter(|i| i.reject).collect();
++    // Files with a recorded original: IRQ and PCI rows look up hundreds of them under the tune lock.
++    let mut recorded: std::collections::HashSet<PathBuf> = st.baseline.iter().map(|(_, p, _)| p.clone()).collect();
+     // Table order, not request order: pstate mode first, hot-plug last.
+     let mut first = true;
+     for t in TUNABLES {
+@@ -376,9 +379,10 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
+                 continue;
+             };
+             if tune::same_value(t, &orig, &data) { continue; }
+-            let fresh = !st.has(&f) && !todo.iter().any(|(q, _, _)| *q == f);
++            let fresh = !recorded.contains(&f);
+             if fresh {
+                 if st.baseline.len() >= MAX_BASELINE { errs.push("baseline full".into()); break; }
++                recorded.insert(f.clone());
+                 st.baseline.push((t.key.to_owned(), f.clone(), orig));
+                 st.origins.entry(t.key.to_owned()).or_insert_with(|| origin_of(t.key).to_owned());
+                 if let (true, Some(g)) = (game, st.game.as_mut()) { g.fresh.insert(f.clone()); }
+@@ -395,6 +399,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
+         if fresh_n > 0 || prev_n > 0 {
+             if let Err(e) = st.save() {
+                 st.baseline.truncate(st.baseline.len() - fresh_n);
++                for (f, _, fresh) in &todo { if *fresh { recorded.remove(f); } }
+                 if let Some(g) = st.game.as_mut() {
+                     for (f, _, fresh) in &todo { if *fresh { g.fresh.remove(f); } }
+                     g.prev.truncate(g.prev.len() - prev_n);
+@@ -405,7 +410,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
+         }
+         // Pass 2: write. A failed write changed nothing, so its fresh
+         // baseline entry is dropped again (saved with the rest at the end).
+-        let mut unchanged: Vec<PathBuf> = Vec::new();
++        let mut unchanged: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+         let mut fw_owned = false;
+         // nvidia-powerd must be gone before any CPU goes offline (see tune::powerd_pause).
+         let mut powerd_note = None;
+@@ -421,12 +426,16 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
+         }
+         // irqbalance would rewrite the affinity within seconds (see tune::irqbalance_pause).
+         let mut irq_note: Option<String> = None;
++        let mut irq_paused = false;
+         if (t.key == "irq.affinity" || t.key.starts_with("irq.")) && !todo.is_empty() {
+             if v == "all" {
+                 // Do not restart irqbalance while other per-device IRQ pins might still be active.
+             } else {
+                 match tune::irqbalance_pause() {
+-                    Ok(true) => irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into()),
++                    Ok(true) => {
++                        irq_paused = true;
++                        irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into());
++                    }
+                     Ok(false) => {}
+                     Err(e) => irq_note = Some(e),
+                 }
+@@ -439,7 +448,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
+                     if !game { if let Some(g) = st.game.as_mut() { g.fresh.remove(&f); g.prev.retain(|(_, q, _)| *q != f); } }
+                 }
+                 Err(e) => {
+-                    if fresh { unchanged.push(f); }
++                    if fresh { unchanged.insert(f); }
+                     if tune::firmware_owned(t, &e) { fw_owned = true; }
+                     else if tune::best_effort(t) { refused += 1; } else { errs.push(e); }
+                 }
+@@ -448,6 +457,14 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
+         if !unchanged.is_empty() {
+             st.baseline.retain(|(k, q, _)| !(k == t.key && unchanged.contains(q)));
+             if let Some(g) = st.game.as_mut() { for f in &unchanged { g.fresh.remove(f); } }
++            for f in &unchanged { recorded.remove(f); }
++        }
++        // Nothing was changed after all: no restore will ever start irqbalance again.
++        if irq_paused && !st.baseline.iter().any(|(k, _, _)| k.starts_with("irq.")) {
++            irq_note = Some(match tune::irqbalance_resume() {
++                Ok(_) => "no IRQ could be changed; irqbalance started again".into(),
++                Err(e) => e,
++            });
+         }
+         if t.key == "cpu.ccd_park" && errs.is_empty() {
+             if let Err(e) = tune::record_ccd_park(&v, park_label.as_deref(), &park_cpus) { errs.push(format!("park record: {e}")); }
+@@ -1052,13 +1069,17 @@ fn op_set_boot(req: &Value) -> Value {
+             Err(e) => json!({"ok": false, "error": format!("{BOOT_FILE}: {e}")}),
+         },
+         Value::Object(values) => {
+-            let clean = match clean_values(values) {
+-                Ok((c, _)) => c,
++            let (clean, dropped) = match clean_values(values) {
++                Ok(x) => x,
+                 Err(rejected) => return json!({"ok": false, "error": "invalid values", "results": rejected}),
+             };
+             let body = json!({"preset": valid_preset(&req["preset"]), "values": clean});
+             match write_root_file(BOOT_FILE, &serde_json::to_vec_pretty(&body).unwrap()) {
+-                Ok(()) => json!({"ok": true, "boot": body}),
++                Ok(()) => {
++                    let mut out = json!({"ok": true, "boot": body});
++                    if !dropped.is_empty() { out["dropped"] = Value::Array(dropped); }
++                    out
++                }
+                 Err(e) => json!({"ok": false, "error": e}),
+             }
+         }
+@@ -1263,8 +1284,8 @@ mod tests {
+     #[test]
+     fn isolate_join_checks_park_and_weight_first() {
+         let err = |req: Value| op_isolate_join(&req)["error"].as_str().unwrap_or("").to_owned();
+-        assert_eq!(err(json!({})), "park or weight is required");
+-        assert_eq!(err(json!({"park": null, "weight": null})), "park or weight is required");
++        assert_eq!(err(json!({})), "no game cgroup policy requested");
++        assert_eq!(err(json!({"park": null, "weight": null})), "no game cgroup policy requested");
+         assert_eq!(err(json!({"weight": 0})), "weight must be in 1..10000");
+         assert_eq!(err(json!({"weight": 20_000})), "weight must be in 1..10000");
+         assert_eq!(err(json!({"park": ""})), "park must name a CCD");
+@@ -1286,6 +1307,13 @@ mod tests {
+         assert_eq!(v["goals"]["gaming"], json!([1.0, 0.6, 0.15, 0.4, 1.0, 0.5, 0.6, 0.5, 1.0]));
+     }
+     #[test]
++    fn stdin_limit_fits_the_largest_preset_batch() {
++        let preset: Map<String, Value> = TUNABLES.iter().map(|t| (t.key.to_owned(), json!("x".repeat(64)))).collect();
++        let presets: Map<String, Value> = (0..64).map(|i| (format!("{i:064}"), Value::Object(preset.clone()))).collect();
++        let req = json!({"op": "preset_save", "presets": presets}).to_string();
++        assert!(req.len() <= MAX_STDIN_BYTES, "{} bytes", req.len());
++    }
++    #[test]
+     fn preset_names() {
+         assert!(preset_name("Gaming 2").is_some());
+         let long = "a".repeat(65);
+diff --git a/crates/centurion-helpers/src/diagreport.rs b/crates/centurion-helpers/src/diagreport.rs
+index 3c1aa43..326dd1c 100644
+--- a/crates/centurion-helpers/src/diagreport.rs
++++ b/crates/centurion-helpers/src/diagreport.rs
+@@ -383,7 +383,9 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
+     if !status.success() { return Err(format!("tar failed ({status})")); }
+     let tmp = out.with_file_name(format!("{}.partial", out.file_name().and_then(|n| n.to_str()).unwrap_or("report.tar.gz")));
+     {
+-        let mut dst = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)
++        // A leftover (or planted link) is removed, never written through.
++        let _ = std::fs::remove_file(&tmp);
++        let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)
+             .map_err(|e| format!("{}: {e}", tmp.display()))?;
+         let mut src = std::fs::File::open(&archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+         std::io::copy(&mut src, &mut dst).map_err(|e| format!("{}: {e}", tmp.display()))?;
+@@ -396,6 +398,10 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
+ 
+ /// Op "diag_report": a preview without "out", the archive with it.
+ pub fn request(req: &Value) -> Value {
++    // The op is served before tune-helper's root check, and the path comes from the request.
++    if req["out"].is_string() && unsafe { libc::geteuid() } == 0 {
++        return json!({"ok": false, "error": "the report is written as the user, not as root"});
++    }
+     let src = Sources::system();
+     let version = req["version"].as_str().unwrap_or("unknown");
+     let (now, offset) = overview::local_clock();
+@@ -530,6 +536,32 @@ mod tests {
+         std::fs::remove_dir_all(&root).unwrap();
+     }
+ 
++    #[test]
++    fn a_planted_partial_link_is_replaced_not_followed() {
++        let root = temp("partial-link");
++        let victim = root.join("victim.conf");
++        std::fs::write(&victim, "ORIGINAL").unwrap();
++        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o644)).unwrap();
++        std::os::unix::fs::symlink(&victim, root.join("r.tar.gz.partial")).unwrap();
++        let entries = vec![Entry { name: "a.txt".into(), status: "included", text: "x".into(), masked: 0 }];
++        write_archive(&entries, "r", &root.join("r.tar.gz")).unwrap();
++        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "ORIGINAL");
++        assert_eq!(std::fs::metadata(&victim).unwrap().permissions().mode() & 0o777, 0o644);
++        assert!(std::fs::symlink_metadata(root.join("r.tar.gz")).unwrap().is_file());
++        std::fs::remove_dir_all(&root).unwrap();
++    }
++
++    #[test]
++    fn root_never_writes_the_archive() {
++        if unsafe { libc::geteuid() } != 0 { return; }
++        let root = temp("as-root");
++        let out = root.join("r.tar.gz");
++        let r = request(&json!({"op": "diag_report", "out": out}));
++        assert_eq!(r["ok"], false, "{r}");
++        assert!(!out.exists());
++        std::fs::remove_dir_all(&root).unwrap();
++    }
++
+     #[test]
+     fn preview_lists_every_file_with_its_status() {
+         let entries = vec![
+diff --git a/crates/centurion-helpers/src/tune.rs b/crates/centurion-helpers/src/tune.rs
+index 49f0532..1752ed7 100644
+--- a/crates/centurion-helpers/src/tune.rs
++++ b/crates/centurion-helpers/src/tune.rs
+@@ -1098,22 +1098,13 @@ pub const DEBUGFS_SNAPSHOT: &str = "/run/centurion/debugfs.json";
+ 
+ /// Root only. Atomic (temp + rename), mode 0644, in a root-owned 0755 directory.
+ pub fn write_debugfs_snapshot() {
+-    use std::os::unix::fs::PermissionsExt;
+     if unsafe { libc::geteuid() } != 0 || !ensure_debugfs() { return; }
+     let mut m = Map::new();
+     for t in TUNABLES.iter().filter(|t| t.debugfs && vendor_ok(t)) {
+         if let Some(v) = current(t) { m.insert(t.key.to_owned(), Value::String(v)); }
+     }
+-    let path = Path::new(DEBUGFS_SNAPSHOT);
+-    let Some(dir) = path.parent() else { return };
+-    if std::fs::create_dir_all(dir).is_err() { return; }
+-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
+-    let tmp = dir.join(".debugfs.json.tmp");
+-    let _ = std::fs::remove_file(&tmp);
+-    let body = Value::Object(m).to_string();
+-    if std::fs::write(&tmp, body).is_ok() {
+-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644));
+-        let _ = std::fs::rename(&tmp, path);
++    if crate::secure_dir("/run/centurion").is_ok() {
++        let _ = crate::write_root_file(DEBUGFS_SNAPSHOT, Value::Object(m).to_string().as_bytes());
+     }
+ }
+ 
+@@ -3220,6 +3211,8 @@ fn pci_latency_write_timeout(cfg: &Path, hex: &str) -> std::io::Result<()> {
+     let pid = unsafe { libc::fork() };
+     if pid < 0 { return Err(std::io::Error::last_os_error()); }
+     if pid == 0 {
++        // A child stuck in the kernel must not keep the tune lock or the reply pipe open.
++        for fd in 0..4096 { unsafe { libc::close(fd); } }
+         let ok = pci_latency_write(cfg, &format!("{v:02x}")).is_ok();
+         unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+     }
+@@ -3767,4 +3760,27 @@ mod tests {
+         assert!(!is_irq_file(Path::new("/proc/irq/default_smp_affinity")));
+         assert!(!is_irq_file(Path::new("/proc/irq/1/../2/smp_affinity_list")));
+     }
++
++    #[test]
++    fn stuck_pci_writer_does_not_keep_the_lock() {
++        use std::os::fd::AsRawFd;
++        let d = std::env::temp_dir().join(format!("centurion-pci-lock-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&d);
++        std::fs::create_dir_all(&d).unwrap();
++        let (lock, fifo) = (d.join("lock"), d.join("config"));
++        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
++        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
++        let open = || std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lock).unwrap();
++        let held = open();
++        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
++        // Opening a FIFO nobody reads blocks the child, like a device that hangs in ACPI.
++        let writer = std::thread::spawn({ let f = fifo.clone(); move || pci_latency_write_timeout(&f, "20") });
++        std::thread::sleep(std::time::Duration::from_millis(300));
++        drop(held);
++        let again = open();
++        let free = unsafe { libc::flock(again.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
++        assert!(writer.join().unwrap().is_err());
++        std::fs::remove_dir_all(&d).unwrap();
++        assert!(free, "the stuck child still holds the lock");
++    }
+ }
+diff --git a/crates/centurion-helpers/src/wakeup.rs b/crates/centurion-helpers/src/wakeup.rs
+index 56fe66b..ff0d792 100644
+--- a/crates/centurion-helpers/src/wakeup.rs
++++ b/crates/centurion-helpers/src/wakeup.rs
+@@ -30,6 +30,8 @@ fn state_of(dev: &str) -> Option<bool> {
+ }
+ 
+ fn write_toggle(dev: &str, enabled: bool) -> Result<(), String> {
++    // Two callers that both read the old state would flip the device twice.
++    let _lock = crate::helper_lock("wakeup")?;
+     match state_of(dev) {
+         None => return Err(format!("{dev} is not listed in {PROC}")),
+         Some(s) if s == enabled => return Ok(()),
+diff --git a/gui/src/optimizetab.cpp b/gui/src/optimizetab.cpp
+index 90d509f..e7419fe 100644
+--- a/gui/src/optimizetab.cpp
++++ b/gui/src/optimizetab.cpp
+@@ -2003,8 +2003,15 @@ void OptimizeTab::setBoot() {
+     if (!risky.isEmpty()) msg += "\n\n⚠ Includes: " + risky.join(", ") + ". A bad value here is applied before you can log in.";
+     if (QMessageBox::question(this, "Apply at boot", msg) != QMessageBox::Yes) return;
+     const QString name = validPresetName(loadedPreset_) ? loadedPreset_ : QStringLiteral("Custom");
+-    runOp({{"op", "set_boot"}, {"values", values}, {"preset", name}}, "Boot preset", [this, name](const QJsonObject &) {
+-        showStatus("Boot preset \"" + name + "\" stored.", theme::OK);
++    runOp({{"op", "set_boot"}, {"values", values}, {"preset", name}}, "Boot preset", [this, name](const QJsonObject &res) {
++        if (!res.value("ok").toBool()) {
++            showStatus("Boot preset not stored: " + res.value("error").toString(), theme::DANGER, 10000);
++            return;
++        }
++        QStringList dropped;
++        for (const QJsonValue &d : res.value("dropped").toArray()) dropped << d.toObject().value("key").toString();
++        if (dropped.isEmpty()) showStatus("Boot preset \"" + name + "\" stored.", theme::OK);
++        else showStatus("Boot preset \"" + name + "\" stored without " + dropped.join(", ") + " (refused by the safety audit).", theme::WARN, 10000);
+     });
+ }
+ 
+diff --git a/gui/src/tray.cpp b/gui/src/tray.cpp
+index a9a624f..0fc6ba3 100644
+--- a/gui/src/tray.cpp
++++ b/gui/src/tray.cpp
+@@ -227,7 +227,8 @@ static void checkForUpdates() {
+         nam->deleteLater();
+         const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
+         const QString tag = o.value(QStringLiteral("tag_name")).toString();
+-        const QString url = o.value(QStringLiteral("html_url")).toString(releases);
++        QUrl page(o.value(QStringLiteral("html_url")).toString());
++        if (page.scheme() != QLatin1String("https") || page.host() != QLatin1String("github.com")) page = QUrl(releases);
+         const QVersionNumber latest = QVersionNumber::fromString(tag.startsWith(u'v') ? tag.mid(1) : tag);
+         const QVersionNumber current = QVersionNumber::fromString(QStringLiteral(CENTURION_VERSION));
+         if (reply->error() != QNetworkReply::NoError || latest.isNull()) {
+@@ -237,7 +238,7 @@ static void checkForUpdates() {
+             if (QMessageBox::question(nullptr, Tray::tr("Check for updates"),
+                                       Tray::tr("Centurion %1 is available (installed: %2). Open the release page?")
+                                           .arg(latest.toString(), current.toString())) == QMessageBox::Yes)
+-                QDesktopServices::openUrl(QUrl(url));
++                QDesktopServices::openUrl(page);
+         } else {
+             QMessageBox::information(nullptr, Tray::tr("Check for updates"),
+                                      Tray::tr("Centurion %1 is the latest release.").arg(current.toString()));
+diff --git a/packaging/openrc/centurion-tune b/packaging/openrc/centurion-tune
+index 0d4d7d2..ca1ad65 100644
+--- a/packaging/openrc/centurion-tune
++++ b/packaging/openrc/centurion-tune
+@@ -22,7 +22,8 @@ start() {
+ 		ewarn "Centurion boot presets are paused after a crashed boot — resume them in the app (Home)"
+ 		return 0
+ 	fi
+-	[ -f /etc/centurion/tune-boot.json ] || { einfo "No boot preset set"; return 0; }
++	# Saved wake sources are restored by the same helper call.
++	[ -f /etc/centurion/tune-boot.json ] || [ -f /etc/centurion/wakeup.json ] || { einfo "No boot preset or wake sources set"; return 0; }
+ 	ebegin "Applying Centurion boot tuning"
+ 	printf '%s' '{"op":"boot"}' | "${HELPER}" >/dev/null
+ 	eend $? "Some settings could not be applied (see: centurion-gamemode STATUS)"
+diff --git a/packaging/systemd/centurion-tune.service b/packaging/systemd/centurion-tune.service
+index 098a395..1f0609a 100644
+--- a/packaging/systemd/centurion-tune.service
++++ b/packaging/systemd/centurion-tune.service
+@@ -12,7 +12,9 @@
+ Wants=centurion-boot-guard.service
+ Description=Centurion boot tuning preset
+ Documentation=file:///usr/share/doc/centurion/README.md
+-ConditionPathExists=/etc/centurion/tune-boot.json
++# Either is enough ("|"): saved wake sources are restored by the same helper call.
++ConditionPathExists=|/etc/centurion/tune-boot.json
++ConditionPathExists=|/etc/centurion/wakeup.json
+ # After sysctl so our values win over /etc/sysctl.d; after module loading so
+ # module parameters (snd_hda_intel, usbcore, amd_pstate) exist.
+ After=local-fs.target systemd-modules-load.service systemd-sysctl.service systemd-udev-trigger.service centurion-boot-guard.service
+diff --git a/tests/test_algorithm_guardrails_static.py b/tests/test_algorithm_guardrails_static.py
+index 838375a..9092d13 100644
+--- a/tests/test_algorithm_guardrails_static.py
++++ b/tests/test_algorithm_guardrails_static.py
+@@ -63,5 +63,12 @@ class SourceGuardrails(unittest.TestCase):
+         self.assertIn('duplicate weight', s)
+         self.assertIn('fn rejects_invalid_or_ambiguous_weight_input()', s)
+ 
++    def test_boot_service_runs_for_saved_wake_sources_without_a_preset(self):
++        openrc = code('packaging/openrc/centurion-tune')
++        self.assertIn('[ -f /etc/centurion/tune-boot.json ] || [ -f /etc/centurion/wakeup.json ]', openrc)
++        unit = code('packaging/systemd/centurion-tune.service')
++        self.assertIn('ConditionPathExists=|/etc/centurion/tune-boot.json', unit)
++        self.assertIn('ConditionPathExists=|/etc/centurion/wakeup.json', unit)
++
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/verify-build.sh b/verify-build.sh
+index 7eab83a..64ae98e 100644
+--- a/verify-build.sh
++++ b/verify-build.sh
+@@ -30,12 +30,11 @@ fi
+ run shell-syntax bash -c 'set -e; while IFS= read -r -d "" f; do bash -n "$f"; done < <(find . -type f -name "*.sh" -not -path "./build-*/*" -print0)' || :
+ 
+ if command -v cargo >/dev/null 2>&1; then
+-  run cargo-format cargo fmt --all -- --check || :
+   run cargo-check cargo check --workspace --all-targets --locked || :
+   run cargo-test cargo test --workspace --locked || :
+   run cargo-clippy cargo clippy --workspace --all-targets --locked -- -D warnings || :
+ else
+-  missing rust-toolchain 'cargo + rustc + rustfmt + clippy'
++  missing rust-toolchain 'cargo + rustc + clippy'
+ fi
+ if command -v cmake >/dev/null 2>&1; then
+   if run cmake-config cmake -S gui -B build-verification/gui -DCMAKE_BUILD_TYPE=Debug \

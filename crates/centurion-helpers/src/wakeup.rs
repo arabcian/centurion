@@ -30,6 +30,8 @@ fn state_of(dev: &str) -> Option<bool> {
 }
 
 fn write_toggle(dev: &str, enabled: bool) -> Result<(), String> {
+    // Two callers that both read the old state would flip the device twice.
+    let _lock = crate::helper_lock("wakeup")?;
     match state_of(dev) {
         None => return Err(format!("{dev} is not listed in {PROC}")),
         Some(s) if s == enabled => return Ok(()),

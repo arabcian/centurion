@@ -82,7 +82,8 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const MAX_STDIN_BYTES: usize = 64 * 1024;
+/// Sized for the largest request: preset_save with 64 presets of every knob.
+const MAX_STDIN_BYTES: usize = 2 * 1024 * 1024;
 const RUN_DIR: &str = "/run/centurion";
 const STATE_DIR: &str = "/run/centurion/tune";
 const STATE_FILE: &str = "/run/centurion/tune/state.json";
@@ -325,6 +326,8 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
     }
     // Hard safety limits (int32-wrapped dirty limits, reserves that OOM the box, ...).
     let rejects: Vec<autotune::Issue> = autotune::audit(values, &autotune::AuditCtx::live()).into_iter().filter(|i| i.reject).collect();
+    // Files with a recorded original: IRQ and PCI rows look up hundreds of them under the tune lock.
+    let mut recorded: std::collections::HashSet<PathBuf> = st.baseline.iter().map(|(_, p, _)| p.clone()).collect();
     // Table order, not request order: pstate mode first, hot-plug last.
     let mut first = true;
     for t in TUNABLES {
@@ -376,9 +379,10 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
                 continue;
             };
             if tune::same_value(t, &orig, &data) { continue; }
-            let fresh = !st.has(&f) && !todo.iter().any(|(q, _, _)| *q == f);
+            let fresh = !recorded.contains(&f);
             if fresh {
                 if st.baseline.len() >= MAX_BASELINE { errs.push("baseline full".into()); break; }
+                recorded.insert(f.clone());
                 st.baseline.push((t.key.to_owned(), f.clone(), orig));
                 st.origins.entry(t.key.to_owned()).or_insert_with(|| origin_of(t.key).to_owned());
                 if let (true, Some(g)) = (game, st.game.as_mut()) { g.fresh.insert(f.clone()); }
@@ -395,6 +399,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         if fresh_n > 0 || prev_n > 0 {
             if let Err(e) = st.save() {
                 st.baseline.truncate(st.baseline.len() - fresh_n);
+                for (f, _, fresh) in &todo { if *fresh { recorded.remove(f); } }
                 if let Some(g) = st.game.as_mut() {
                     for (f, _, fresh) in &todo { if *fresh { g.fresh.remove(f); } }
                     g.prev.truncate(g.prev.len() - prev_n);
@@ -405,7 +410,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         }
         // Pass 2: write. A failed write changed nothing, so its fresh
         // baseline entry is dropped again (saved with the rest at the end).
-        let mut unchanged: Vec<PathBuf> = Vec::new();
+        let mut unchanged: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
         let mut fw_owned = false;
         // nvidia-powerd must be gone before any CPU goes offline (see tune::powerd_pause).
         let mut powerd_note = None;
@@ -421,12 +426,16 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         }
         // irqbalance would rewrite the affinity within seconds (see tune::irqbalance_pause).
         let mut irq_note: Option<String> = None;
+        let mut irq_paused = false;
         if (t.key == "irq.affinity" || t.key.starts_with("irq.")) && !todo.is_empty() {
             if v == "all" {
                 // Do not restart irqbalance while other per-device IRQ pins might still be active.
             } else {
                 match tune::irqbalance_pause() {
-                    Ok(true) => irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into()),
+                    Ok(true) => {
+                        irq_paused = true;
+                        irq_note = Some("irqbalance stopped (it would undo this); restore starts it again".into());
+                    }
                     Ok(false) => {}
                     Err(e) => irq_note = Some(e),
                 }
@@ -439,7 +448,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
                     if !game { if let Some(g) = st.game.as_mut() { g.fresh.remove(&f); g.prev.retain(|(_, q, _)| *q != f); } }
                 }
                 Err(e) => {
-                    if fresh { unchanged.push(f); }
+                    if fresh { unchanged.insert(f); }
                     if tune::firmware_owned(t, &e) { fw_owned = true; }
                     else if tune::best_effort(t) { refused += 1; } else { errs.push(e); }
                 }
@@ -448,6 +457,14 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         if !unchanged.is_empty() {
             st.baseline.retain(|(k, q, _)| !(k == t.key && unchanged.contains(q)));
             if let Some(g) = st.game.as_mut() { for f in &unchanged { g.fresh.remove(f); } }
+            for f in &unchanged { recorded.remove(f); }
+        }
+        // Nothing was changed after all: no restore will ever start irqbalance again.
+        if irq_paused && !st.baseline.iter().any(|(k, _, _)| k.starts_with("irq.")) {
+            irq_note = Some(match tune::irqbalance_resume() {
+                Ok(_) => "no IRQ could be changed; irqbalance started again".into(),
+                Err(e) => e,
+            });
         }
         if t.key == "cpu.ccd_park" && errs.is_empty() {
             if let Err(e) = tune::record_ccd_park(&v, park_label.as_deref(), &park_cpus) { errs.push(format!("park record: {e}")); }
@@ -1052,13 +1069,17 @@ fn op_set_boot(req: &Value) -> Value {
             Err(e) => json!({"ok": false, "error": format!("{BOOT_FILE}: {e}")}),
         },
         Value::Object(values) => {
-            let clean = match clean_values(values) {
-                Ok((c, _)) => c,
+            let (clean, dropped) = match clean_values(values) {
+                Ok(x) => x,
                 Err(rejected) => return json!({"ok": false, "error": "invalid values", "results": rejected}),
             };
             let body = json!({"preset": valid_preset(&req["preset"]), "values": clean});
             match write_root_file(BOOT_FILE, &serde_json::to_vec_pretty(&body).unwrap()) {
-                Ok(()) => json!({"ok": true, "boot": body}),
+                Ok(()) => {
+                    let mut out = json!({"ok": true, "boot": body});
+                    if !dropped.is_empty() { out["dropped"] = Value::Array(dropped); }
+                    out
+                }
                 Err(e) => json!({"ok": false, "error": e}),
             }
         }
@@ -1263,8 +1284,8 @@ mod tests {
     #[test]
     fn isolate_join_checks_park_and_weight_first() {
         let err = |req: Value| op_isolate_join(&req)["error"].as_str().unwrap_or("").to_owned();
-        assert_eq!(err(json!({})), "park or weight is required");
-        assert_eq!(err(json!({"park": null, "weight": null})), "park or weight is required");
+        assert_eq!(err(json!({})), "no game cgroup policy requested");
+        assert_eq!(err(json!({"park": null, "weight": null})), "no game cgroup policy requested");
         assert_eq!(err(json!({"weight": 0})), "weight must be in 1..10000");
         assert_eq!(err(json!({"weight": 20_000})), "weight must be in 1..10000");
         assert_eq!(err(json!({"park": ""})), "park must name a CCD");
@@ -1284,6 +1305,13 @@ mod tests {
         }
         // The GUI's fallback table (gui/src/optimizetab.cpp, defaultWeights) must match: gaming, in KEYS order.
         assert_eq!(v["goals"]["gaming"], json!([1.0, 0.6, 0.15, 0.4, 1.0, 0.5, 0.6, 0.5, 1.0]));
+    }
+    #[test]
+    fn stdin_limit_fits_the_largest_preset_batch() {
+        let preset: Map<String, Value> = TUNABLES.iter().map(|t| (t.key.to_owned(), json!("x".repeat(64)))).collect();
+        let presets: Map<String, Value> = (0..64).map(|i| (format!("{i:064}"), Value::Object(preset.clone()))).collect();
+        let req = json!({"op": "preset_save", "presets": presets}).to_string();
+        assert!(req.len() <= MAX_STDIN_BYTES, "{} bytes", req.len());
     }
     #[test]
     fn preset_names() {

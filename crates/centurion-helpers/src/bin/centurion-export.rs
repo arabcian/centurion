@@ -7,7 +7,8 @@
 //!       atomically (node_exporter's textfile collector: FILE = <dir>/centurion.prom), else stdout.
 //!   centurion-export mqtt HOST [--topic PREFIX] [--interval S] [-- MOSQUITTO_PUB_ARGS…]
 //!       One retained message per value on PREFIX/<key> (default centurion) via mosquitto_pub;
-//!       arguments after `--` go to mosquitto_pub as they are (-p PORT, -u USER, -P PASS, …).
+//!       arguments after `--` go to mosquitto_pub as they are (-p PORT, -u USER, …). Keep a password in
+//!       mosquitto_pub's config file (~/.config/mosquitto_pub): every local user can read `-P` in `ps`.
 //!
 //! Once by default; with --interval S it repeats every S seconds. Exit 1 when Centurion is not running.
 
