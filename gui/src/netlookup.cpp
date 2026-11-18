@@ -118,6 +118,7 @@ void LookupTab::toolChanged() {
 }
 
 void LookupTab::whois(const QString &target) {
+    if (!run_->isEnabled()) { stop(); finish(QString()); }   // this question replaces the one still running
     tool_->setCurrentIndex(Whois);
     target_->setText(target);
     run();
@@ -212,11 +213,12 @@ void LookupTab::runDns(const QString &target) {
     for (int i = 0; i < questions.size(); ++i) {
         auto *l = new QDnsLookup(questions[i].type, name, job_);
         if (!server.isNull()) l->setNameserver(server);
-        connect(l, &QDnsLookup::finished, job_, [=, this, label = QString::fromLatin1(questions[i].name)] {
+        connect(l, &QDnsLookup::finished, job_, [=, this, type = questions[i].type, label = QString::fromLatin1(questions[i].name)] {
             QStringList &out = (*answers)[i];
             const auto line = [&](quint32 ttl, const QString &value) { out << QStringLiteral("%1  %2  %3 s").arg(label.leftJustified(6), value).arg(ttl); };
-            for (const auto &r : l->hostAddressRecords()) line(r.timeToLive(), r.value().toString());
-            for (const auto &r : l->canonicalNameRecords()) line(r.timeToLive(), r.value());
+            // An answer also carries the aliases on the way to it: only what was asked for is listed under its type.
+            if (type == QDnsLookup::A || type == QDnsLookup::AAAA) for (const auto &r : l->hostAddressRecords()) line(r.timeToLive(), r.value().toString());
+            if (type == QDnsLookup::CNAME) for (const auto &r : l->canonicalNameRecords()) line(r.timeToLive(), r.value());
             for (const auto &r : l->mailExchangeRecords()) line(r.timeToLive(), QStringLiteral("%1 %2").arg(r.preference()).arg(r.exchange()));
             for (const auto &r : l->nameServerRecords()) line(r.timeToLive(), r.value());
             for (const auto &r : l->pointerRecords()) line(r.timeToLive(), r.value());

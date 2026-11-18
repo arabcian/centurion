@@ -20,6 +20,7 @@ int main() {
         CHECK(p.entries.value(3) == "2001:db8::/32");
         CHECK(p.entries.value(4) == "203.0.113.7");  // ";" and "," separate tokens too
     }
+    CHECK(parseBlocklist("1.2.3.0/24 ; SBL123\n5.6.7.8;9.9.9.9\n").entries == QStringList({QStringLiteral("1.2.3.0/24"), QStringLiteral("5.6.7.8"), QStringLiteral("9.9.9.9")}));
     CHECK(!parseBlocklist("# only comments\n\n").error.isEmpty());
     CHECK(parseBlocklist("# only comments\n\n").entries.isEmpty());
 

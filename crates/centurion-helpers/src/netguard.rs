@@ -46,11 +46,13 @@ use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{Duration, Instant};
-use crate::firewall::Firewall;
+use crate::firewall::{Firewall, Verdict};
 use crate::traffic;
 
 pub const CONF_DIR: &str = "/etc/centurion";
 pub const CONF_FILE: &str = "/etc/centurion/netguard.json";
+/// Above what the limits allow: MAX_BLACKLIST entries, each with a 64-character label, plus all rules.
+const CONF_MAX: u64 = 64 << 20;
 const RUN_DIR: &str = "/run/centurion";
 const LOCK_FILE: &str = "/run/centurion/netguard.pid";
 const STATE_FILE: &str = "/run/centurion/netguard.state";
@@ -69,6 +71,11 @@ const MAX_WHITELIST: usize = 1024;
 const NETLINK_NETFILTER: libc::c_int = 12;
 const NFNLGRP_CONNTRACK_NEW: u32 = 1;
 const NFNLGRP_CONNTRACK_DESTROY: u32 = 3;
+const NFNLGRP_NFTABLES: u32 = 7;
+const NFT_MSG_DELTABLE: u16 = 10 << 8 | 2;  // NFNL_SUBSYS_NFTABLES << 8
+const NFPROTO_INET: u8 = 1;
+const NFTA_TABLE_NAME: u16 = 1;
+const CT_GET: u16 = 1 << 8 | 1;             // NFNL_SUBSYS_CTNETLINK << 8 | IPCTNL_MSG_CT_GET
 const NF_ACCT_SYSCTL: &str = "/proc/sys/net/netfilter/nf_conntrack_acct";
 const TRAFFIC_FLUSH: Duration = Duration::from_secs(10);
 /// nfnetlink_log group of packets the firewall stopped (shown in the connection log).
@@ -180,12 +187,14 @@ pub struct Config {
     pub blacklist: Vec<Net>,
     /// Blacklist entry (as printed) → group name; entries banned together are removed together.
     pub labels: HashMap<String, String>,
+    /// Blacklist entry → the other groups that list it too ("" = also added by hand): it stays until all let go.
+    pub shared: HashMap<String, Vec<String>>,
     /// Default policies and port rules.
     pub fw: Firewall,
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new(), fw: Firewall::default() } }
+    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new(), shared: HashMap::new(), fw: Firewall::default() } }
 }
 
 fn basename(s: &str) -> &str { s.rsplit(['/', '\\']).next().unwrap_or(s) }
@@ -195,13 +204,15 @@ fn valid_entry(s: &str) -> bool { !s.is_empty() && s.len() <= 512 && !s.chars().
 impl Config {
     pub fn load() -> Result<Config, String> {
         if !Path::new(CONF_FILE).exists() { return Ok(Config::default()); }
-        let text = crate::read_root_file(CONF_FILE, 8 << 20).ok_or_else(|| format!("{CONF_FILE} is not a root-owned regular file"))?;
+        let text = crate::read_root_file(CONF_FILE, CONF_MAX).ok_or_else(|| format!("{CONF_FILE} is not a root-owned regular file"))?;
         let v: Value = serde_json::from_str(&text).map_err(|e| format!("{CONF_FILE}: {e}"))?;
         let strs = |k: &str| v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect::<Vec<_>>()).unwrap_or_default();
         let blacklist: Vec<Net> = strs("blacklist").iter().filter_map(|s| Net::parse(s)).take(MAX_BLACKLIST).collect();
         let have: HashSet<String> = blacklist.iter().map(Net::to_string).collect();
         let labels = v["labels"].as_object().map(|m| m.iter().filter(|(k, _)| have.contains(*k))
             .filter_map(|(k, l)| Some((k.clone(), l.as_str()?.to_owned()))).collect()).unwrap_or_default();
+        let shared = v["shared_labels"].as_object().map(|m| m.iter().filter(|(k, _)| have.contains(*k))
+            .map(|(k, l)| (k.clone(), strings(l))).collect()).unwrap_or_default();
         Ok(Config {
             guard: v["guard"].as_bool().unwrap_or(false),
             allow_lan: v["allow_lan"].as_bool().unwrap_or(true),
@@ -210,13 +221,19 @@ impl Config {
             whitelist: strs("whitelist").into_iter().filter(|s| valid_entry(s)).take(MAX_WHITELIST).collect(),
             blacklist,
             labels,
+            shared,
             fw: Firewall::from_json(&v["firewall"]).map_err(|e| format!("{CONF_FILE}: {e}"))?,
         })
     }
 
     pub fn to_json(&self) -> Value {
         json!({"guard": self.guard, "allow_lan": self.allow_lan, "log_conns": self.log_conns, "traffic": self.traffic, "whitelist": self.whitelist,
-               "blacklist": self.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), "labels": self.labels, "firewall": self.fw.to_json()})
+               "blacklist": self.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), "labels": self.labels, "shared_labels": self.shared, "firewall": self.fw.to_json()})
+    }
+
+    /// What the daemon enforces when the saved rules cannot be read: nothing new gets in, and the machine stays online.
+    fn safe_mode() -> Config {
+        Config { fw: Firewall { enabled: true, inbound: Verdict::Block, ..Firewall::default() }, ..Config::default() }
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -270,7 +287,7 @@ fn nl_msg(ty: u16, flags: u16, body: &[u8]) -> Vec<u8> {
     m
 }
 
-fn nl_attr(out: &mut Vec<u8>, ty: u16, data: &[u8]) {
+pub(crate) fn nl_attr(out: &mut Vec<u8>, ty: u16, data: &[u8]) {
     out.extend_from_slice(&((4 + data.len()) as u16).to_ne_bytes());
     out.extend_from_slice(&ty.to_ne_bytes());
     out.extend_from_slice(data);
@@ -499,6 +516,9 @@ fn exe_of(pid: i32) -> Option<String> {
 /// (system Wine, Proton, Lutris/Bottles runners, CrossOver).
 pub fn is_wine_loader(exe: &str) -> bool { basename(exe).starts_with("wine") }
 
+/// wineserver creates and connects every socket of the programs it serves, so holding one says nothing about who asked.
+fn is_wine_server(exe: &str) -> bool { basename(exe).starts_with("wineserver") }
+
 fn comm(pid: i32) -> String {
     std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|s| s.trim().to_owned()).unwrap_or_default()
 }
@@ -510,33 +530,66 @@ pub fn wine_ident(pid: i32, loader: &str) -> String {
     let argv0 = std::fs::read(format!("/proc/{pid}/cmdline")).ok()
         .map(|b| String::from_utf8_lossy(b.split(|&c| c == 0).next().unwrap_or(&[])).into_owned()).unwrap_or_default();
     let want = basename(&argv0).to_lowercase();
-    let mut first: Option<String> = None;
+    let images = wine_images(pid);
+    if let Some(p) = images.iter().find(|p| basename(p).to_lowercase() == want).or(images.first()) { return p.clone(); }
+    if argv0.len() > 3 && argv0.as_bytes()[..3].eq_ignore_ascii_case(b"z:\\") { return argv0[2..].replace('\\', "/"); }
+    if argv0.to_lowercase().ends_with(".exe") { argv0 } else { loader.to_owned() }
+}
+
+/// Every Windows .exe mapped into a process, in the order of its address space.
+fn wine_images(pid: i32) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
     if let Ok(f) = std::fs::File::open(format!("/proc/{pid}/maps")) {
         for line in io::BufReader::new(f).lines().map_while(Result::ok).take(100_000) {
             // address perms offset dev inode   pathname
             let Some(path) = line.splitn(6, ' ').nth(5).map(str::trim_start) else { continue };
             let path = path.strip_suffix(" (deleted)").unwrap_or(path);
             if !path.starts_with('/') || path.len() < 5 || !path.as_bytes()[path.len() - 4..].eq_ignore_ascii_case(b".exe") { continue; }
-            if basename(path).to_lowercase() == want { return path.to_owned(); }
-            first.get_or_insert_with(|| path.to_owned());
+            if !out.iter().any(|p| p == path) { out.push(path.to_owned()); }
         }
     }
-    if let Some(p) = first { return p; }
-    if argv0.len() > 3 && argv0.as_bytes()[..3].eq_ignore_ascii_case(b"z:\\") { return argv0[2..].replace('\\', "/"); }
-    if argv0.to_lowercase().ends_with(".exe") { argv0 } else { loader.to_owned() }
+    out
 }
 
-/// inode → pid for the wanted socket inodes (first owner wins). Sees only the
-/// caller's own processes unless root.
+/// inode → pid for the wanted socket inodes (first owner wins, wineserver only if nobody else
+/// holds the socket). Sees only the caller's own processes unless root.
 fn owners_of(want: &HashSet<u32>) -> HashMap<u32, i32> {
     let mut map = HashMap::new();
+    let mut servers = Vec::new();
     for pid in pids() {
+        if exe_of(pid).is_some_and(|e| is_wine_server(&e)) { servers.push(pid); continue; }
         for ino in socket_inodes(pid) {
             if want.contains(&ino) { map.entry(ino).or_insert(pid); }
         }
-        if map.len() == want.len() { break; }
+        if map.len() == want.len() { return map; }
+    }
+    for pid in servers {
+        for ino in socket_inodes(pid) {
+            if want.contains(&ino) { map.entry(ino).or_insert(pid); }
+        }
     }
     map
+}
+
+/// The addresses of this machine's interfaces.
+fn local_addrs() -> HashSet<IpAddr> {
+    let mut out = HashSet::new();
+    let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
+    if unsafe { libc::getifaddrs(&mut list) } != 0 { return out; }
+    let mut cur = list;
+    while !cur.is_null() {
+        let (addr, next) = unsafe { ((*cur).ifa_addr, (*cur).ifa_next) };
+        if !addr.is_null() {
+            match i32::from(unsafe { (*addr).sa_family }) {
+                libc::AF_INET => { out.insert(IpAddr::V4(Ipv4Addr::from(u32::from_be(unsafe { (*addr.cast::<libc::sockaddr_in>()).sin_addr.s_addr })))); }
+                libc::AF_INET6 => { out.insert(IpAddr::V6(Ipv6Addr::from(unsafe { (*addr.cast::<libc::sockaddr_in6>()).sin6_addr.s6_addr }))); }
+                _ => {}
+            }
+        }
+        cur = next;
+    }
+    unsafe { libc::freeifaddrs(list); }
+    out
 }
 
 // ── nftables ───────────────────────────────────────────────────────────────
@@ -585,9 +638,11 @@ fn nft_ruleset(cfg: &Config, log_blocked: bool) -> String {
     s
 }
 
-fn nft_run(script: &str) -> Result<(), String> {
+fn nft_run(script: &str) -> Result<(), String> { nft_feed(&["-f", "-"], script) }
+
+fn nft_feed(args: &[&str], script: &str) -> Result<(), String> {
     let nft = sys_bin("nft").ok_or("nft not found (emerge net-firewall/nftables)")?;
-    let mut c = std::process::Command::new(nft).args(["-f", "-"]).env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+    let mut c = std::process::Command::new(nft).args(args).env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
         .current_dir("/").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped()).spawn().map_err(|e| format!("nft: {e}"))?;
     let _ = c.stdin.take().map(|mut i| i.write_all(script.as_bytes()));
@@ -816,8 +871,10 @@ fn now_secs() -> u64 { std::time::SystemTime::now().duration_since(std::time::UN
 struct Guard {
     cfg: Config,
     diag: Diag,
-    wine: HashSet<i32>,                    // pids running a Wine loader, as of the last scan
+    wine: HashSet<i32>,                    // pids running a Wine program, as of the last scan
+    servers: HashSet<i32>,                 // pids running wineserver, as of the last scan
     idents: HashMap<i32, (u64, String)>,   // pid → (start time, .exe path)
+    images: HashMap<i32, (u64, Vec<String>)>,  // pid → (start time, every mapped .exe)
     scanned: Instant,
     last_pid: String,
     logged: HashMap<String, Instant>,      // same program → same destination: one line a minute
@@ -830,6 +887,7 @@ struct Guard {
     hot: Vec<i32>,                         // pids that owned the last logged sockets, searched first
     acct: Option<Acct>,                    // traffic accounting, while switched on
     nflog: Option<OwnedFd>,                // packets the firewall stopped, while they are being logged
+    nft_events: Option<OwnedFd>,           // nftables changes: notices our table being removed
 }
 
 /// Per-program traffic accounting: the conntrack socket, the connections open now, and the day ledger.
@@ -880,21 +938,47 @@ fn newest_pid() -> String {
 }
 
 impl Guard {
-    /// The Wine process holding socket `inode`, if any.
-    fn owner(&mut self, inode: u32) -> Option<i32> {
+    /// The Wine program a socket counts against, if any: the one holding it. A socket only wineserver
+    /// holds (it makes the connection itself, before the program has the descriptor) could be any of
+    /// that user's Wine programs: the first that is not whitelisted answers for it.
+    fn owner(&mut self, s: &Sock) -> Option<i32> {
+        use std::os::unix::fs::MetadataExt;
+        let inode = s.inode;
         let has = |p: &i32| socket_inodes(*p).any(|i| i == inode);
-        if let Some(&p) = self.wine.iter().find(|p| has(p)) {
-            if exe_of(p).is_some_and(|e| is_wine_loader(&e)) { return Some(p); }  // pid not recycled
-        }
-        // No process was created since the last scan (and it is fresh): the set is complete.
+        let live = |p: &&i32| exe_of(**p).is_some_and(|e| is_wine_loader(&e));  // pid not recycled
+        if let Some(&p) = self.wine.iter().filter(|p| has(p)).find(live) { return Some(p); }
+        // No process was created since the last scan (and it is fresh): the sets are complete.
         let np = newest_pid();
-        if np == self.last_pid && !np.is_empty() && self.scanned.elapsed() < Duration::from_millis(250) { return None; }
-        let fresh: HashSet<i32> = pids().filter(|&p| exe_of(p).is_some_and(|e| is_wine_loader(&e))).collect();
-        let old = std::mem::replace(&mut self.wine, fresh);
-        self.scanned = Instant::now();
-        self.last_pid = np;
-        self.idents.retain(|p, _| self.wine.contains(p));
-        self.wine.iter().copied().find(|p| !old.contains(p) && has(p))
+        if np != self.last_pid || np.is_empty() || self.scanned.elapsed() >= Duration::from_millis(250) {
+            let (servers, wine) = pids().filter_map(|p| Some((p, exe_of(p).filter(|e| is_wine_loader(e))?)))
+                .partition::<Vec<_>, _>(|(_, e)| is_wine_server(e));
+            self.servers = servers.into_iter().map(|(p, _)| p).collect();
+            self.wine = wine.into_iter().map(|(p, _)| p).collect();
+            self.scanned = Instant::now();
+            self.last_pid = np;
+            self.idents.retain(|p, _| self.wine.contains(p));
+            self.images.retain(|p, _| self.wine.contains(p));
+            if let Some(&p) = self.wine.iter().find(|p| has(p)) { return Some(p); }
+        }
+        if !self.servers.iter().any(has) { return None; }
+        let same_user: Vec<i32> = self.wine.iter().copied()
+            .filter(|p| std::fs::metadata(format!("/proc/{p}")).is_ok_and(|m| m.uid() == s.uid)).collect();
+        same_user.into_iter().find(|&p| self.offender(p).is_some())
+    }
+
+    /// The image that keeps a Wine process from being allowed online, None if it may. Every mapped .exe
+    /// must be whitelisted: mapping a whitelisted file next to one's own does not make a program that file.
+    fn offender(&mut self, pid: i32) -> Option<String> {
+        let start = crate::proc_start_time(pid).unwrap_or(0);
+        let cached = self.images.get(&pid).filter(|(s, _)| *s == start).map(|(_, i)| i.clone());
+        let images = cached.unwrap_or_else(|| wine_images(pid));
+        if images.is_empty() {  // still starting: only its command line can name it
+            let id = self.ident(pid);
+            return (!self.cfg.whitelisted(&id)).then_some(id);
+        }
+        let found = images.iter().find(|i| !self.cfg.whitelisted(i)).cloned();
+        self.images.insert(pid, (start, images));
+        found
     }
 
     fn ident(&mut self, pid: i32) -> String {
@@ -925,6 +1009,21 @@ impl Guard {
         accept
     }
 
+    /// Puts our table back if something removed it (`nft flush ruleset`, a restart of the nftables service).
+    fn restore_table(&mut self) {
+        if nft_read(&["-t", "list", "table", "inet", TABLE]).is_ok() { return; }
+        match load_or_degrade(&self.cfg, self.nflog.is_some()) {
+            Ok(err) => {
+                eprintln!("centurion-netguard: the nftables table was removed by something else; restored");
+                write_state(&self.cfg, err.as_deref());
+            }
+            Err(e) => {
+                eprintln!("centurion-netguard: the nftables table was removed and cannot be restored: {e}");
+                write_state(&self.cfg, Some(&e));
+            }
+        }
+    }
+
     /// A packet the firewall stopped: one blocked line in the connection log, with the program when one is known.
     fn firewall_blocked(&mut self, pkt: &[u8], hook: u8) {
         let Some(f) = parse_packet(pkt) else { return };
@@ -945,9 +1044,8 @@ impl Guard {
     /// Some((pid, program)) when the socket belongs to a non-whitelisted Wine program: cut off and logged.
     fn block(&mut self, f: &Flow, pkt: &[u8], s: &Sock) -> Option<(i32, String)> {
         if s.inode == 0 { return None; }
-        let pid = self.owner(s.inode)?;
-        let ident = self.ident(pid);
-        if self.cfg.whitelisted(&ident) { return None; }
+        let pid = self.owner(s)?;
+        let ident = self.offender(pid)?;
         let killed = self.diag.destroy(s).is_ok();
         self.log(f, pkt, pid, &ident, killed);
         Some((pid, ident))
@@ -1058,11 +1156,16 @@ impl Guard {
             }
         }
         let (mut fresh, mut ended) = (Vec::new(), Vec::new());
+        let local = if evs.iter().any(|e| !e.delete) { local_addrs() } else { HashSet::new() };
         for ev in evs {
             if ev.delete { ended.push(ev); continue; }
             let f = Flow { proto: ev.proto, src: ev.src, sport: ev.sport, dst: ev.dst, dport: ev.dport, l4: 0 };
-            if let Some(s) = self.diag.find_socket(&f) { fresh.push((ev.id, false, s.inode)); }
-            else if let Some(s) = self.diag.find_local(&f) { fresh.push((ev.id, true, s.inode)); }  // no local socket: forwarded, not counted
+            // The addresses say the direction; a socket lookup alone can hit a local socket that merely has the peer's port number.
+            match (local.contains(&ev.src), local.contains(&ev.dst)) {
+                (true, false) => if let Some(s) = self.diag.find_socket(&f) { fresh.push((ev.id, false, s.inode)); },
+                (false, true) => if let Some(s) = self.diag.find_local(&f) { fresh.push((ev.id, true, s.inode)); },
+                _ => {}  // within this machine, or forwarded: not traffic of a program with the network
+            }
         }
         self.find_owners(fresh.iter().map(|x| x.2).filter(|&i| i != 0).collect());
         let mut names = HashMap::new();
@@ -1128,6 +1231,42 @@ impl Guard {
     }
 }
 
+/// Notifications of nftables changes.
+fn nft_events_open() -> io::Result<OwnedFd> {
+    let raw = unsafe { libc::socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, NETLINK_NETFILTER) };
+    if raw < 0 { return Err(io::Error::last_os_error()); }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let mut sa: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
+    sa.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+    sa.nl_groups = 1 << (NFNLGRP_NFTABLES - 1);
+    let r = unsafe { libc::bind(raw, &sa as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t) };
+    if r < 0 { return Err(io::Error::last_os_error()); }
+    Ok(fd)
+}
+
+/// Was this nftables notification the deletion of our table?
+fn is_our_table_deleted(ty: u16, p: &[u8]) -> bool {
+    if ty != NFT_MSG_DELTABLE || p.first() != Some(&NFPROTO_INET) { return false; }
+    let mut a = p.get(4..).unwrap_or(&[]);
+    while a.len() >= 4 {
+        let len = usize::from(u16::from_ne_bytes([a[0], a[1]]));
+        if len < 4 || len > a.len() { break; }
+        if u16::from_ne_bytes([a[2], a[3]]) & 0x3fff == NFTA_TABLE_NAME { return a[4..len].strip_suffix(&[0]) == Some(TABLE.as_bytes()); }
+        a = &a[((len + 3) & !3).min(a.len())..];
+    }
+    false
+}
+
+/// Loads the table. Firewall rules this kernel refuses must not take the blacklist down with them:
+/// Ok(Some(reason)) means the table is in place without the firewall.
+fn load_or_degrade(cfg: &Config, log_blocked: bool) -> Result<Option<String>, String> {
+    let Err(e) = nft_load(cfg, log_blocked) else { return Ok(None) };
+    let without = Config { fw: Firewall { enabled: false, ..cfg.fw.clone() }, ..cfg.clone() };
+    if !cfg.fw.active() || nft_run(&nft_script(&without)).is_err() { return Err(e); }
+    eprintln!("centurion-netguard: firewall NOT applied: {e}");
+    Ok(Some(format!("firewall not applied: {e}")))
+}
+
 fn wants_nflog(cfg: &Config) -> bool { cfg.log_conns && cfg.fw.active() }
 
 fn open_nflog() -> Option<OwnedFd> {
@@ -1191,7 +1330,8 @@ fn applied() -> Value {
 }
 
 fn in_force(cfg: &Config, a: &Value) -> bool {
-    a["error"].is_string() || (a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns && a["traffic"] == cfg.traffic && a["firewall"] == cfg.fw.to_json())
+    a["error"].is_string() || (a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns && a["traffic"] == cfg.traffic
+        && (a.get("firewall").is_none() || a["firewall"] == cfg.fw.to_json()))  // a daemon from before the firewall never reports one
 }
 
 pub fn run_daemon() -> i32 {
@@ -1205,7 +1345,12 @@ pub fn run_daemon() -> i32 {
         libc::signal(libc::SIGINT, handler(on_stop));
         libc::signal(libc::SIGHUP, handler(on_reload));
     }
-    let cfg = Config::load().unwrap_or_else(|e| { eprintln!("centurion-netguard: {e}; using defaults"); Config::default() });
+    let mut start_error = None;
+    let cfg = Config::load().unwrap_or_else(|e| {
+        eprintln!("centurion-netguard: {e}; new incoming connections are blocked until this is fixed");
+        start_error = Some(format!("{e} (new incoming connections are blocked until this is fixed)"));
+        Config::safe_mode()
+    });
     let diag = match Diag::open().and_then(|d| d.dump(AF_INET, TCP, !0, 1).map(|_| d)) {
         Ok(d) => d,
         Err(e) => { eprintln!("centurion-netguard: sock_diag unavailable: {e} (kernel: INET_DIAG, INET_TCP_DIAG, INET_UDP_DIAG)"); return 1; }
@@ -1218,24 +1363,21 @@ pub fn run_daemon() -> i32 {
     };
     let _ = std::fs::remove_file(STATE_FILE);
     let nflog = if wants_nflog(&cfg) { open_nflog() } else { None };
-    let mut start_error = None;
-    if let Err(e) = nft_load(&cfg, nflog.is_some()) {
-        // Firewall rules this kernel refuses must not take the blacklist down with them.
-        let without = Config { fw: Firewall { enabled: false, ..cfg.fw.clone() }, ..cfg.clone() };
-        if !cfg.fw.active() || nft_run(&nft_script(&without)).is_err() {
+    match load_or_degrade(&cfg, nflog.is_some()) {
+        Ok(e) => start_error = start_error.or(e),
+        Err(e) => {
             eprintln!("centurion-netguard: {e} (kernel: NF_TABLES, NF_TABLES_INET, NFT_QUEUE, NFT_CT, NF_CONNTRACK)");
             return 1;
         }
-        eprintln!("centurion-netguard: firewall NOT applied: {e}");
-        start_error = Some(format!("firewall not applied: {e}"));
     }
     write_state(&cfg, start_error.as_deref());
     eprintln!("centurion-netguard: started (guard {}, connection log {}, firewall {}, {} blacklisted, {} whitelisted)",
               if cfg.guard { "on" } else { "off" }, if cfg.log_conns { "on" } else { "off" }, if cfg.fw.active() { "on" } else { "off" },
               cfg.blacklist.len(), cfg.whitelist.len());
-    let mut g = Guard { cfg, diag, wine: HashSet::new(), idents: HashMap::new(), scanned: Instant::now(),
+    let nft_events = nft_events_open().map_err(|e| eprintln!("centurion-netguard: a removed table will not be noticed: {e}")).ok();
+    let mut g = Guard { cfg, diag, wine: HashSet::new(), servers: HashSet::new(), idents: HashMap::new(), images: HashMap::new(), scanned: Instant::now(),
                         last_pid: String::new(), logged: HashMap::new(), pending: Vec::new(), flushed: Instant::now(),
-                        seen: HashMap::new(), owners: HashMap::new(), owners_at: Instant::now(), hot: Vec::new(), acct: None, nflog };
+                        seen: HashMap::new(), owners: HashMap::new(), owners_at: Instant::now(), hot: Vec::new(), acct: None, nflog, nft_events };
     if let Err(e) = g.sync_acct() { eprintln!("centurion-netguard: {e}"); write_state(&g.cfg, Some(&e)); }
     if g.cfg.log_conns { g.snapshot(); }
     g.sweep();
@@ -1270,11 +1412,13 @@ pub fn run_daemon() -> i32 {
         let wait = wait.map_or(-1, |d| d.as_millis() as libc::c_int);
         let ct_fd = g.acct.as_ref().map_or(-1, |a| a.fd.as_raw_fd());  // a negative fd is ignored by poll
         let log_fd = g.nflog.as_ref().map_or(-1, |f| f.as_raw_fd());
+        let event_fd = g.nft_events.as_ref().map_or(-1, |f| f.as_raw_fd());
         let mut fds = [libc::pollfd { fd: queue.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 },
                        libc::pollfd { fd: pipe[0], events: libc::POLLIN, revents: 0 },
                        libc::pollfd { fd: ct_fd, events: libc::POLLIN, revents: 0 },
-                       libc::pollfd { fd: log_fd, events: libc::POLLIN, revents: 0 }];
-        if unsafe { libc::poll(fds.as_mut_ptr(), 4, wait) } < 0 { continue; }  // EINTR: flags are checked above
+                       libc::pollfd { fd: log_fd, events: libc::POLLIN, revents: 0 },
+                       libc::pollfd { fd: event_fd, events: libc::POLLIN, revents: 0 }];
+        if unsafe { libc::poll(fds.as_mut_ptr(), 5, wait) } < 0 { continue; }  // EINTR: flags are checked above
         if fds[1].revents != 0 { let mut b = [0u8; 64]; unsafe { libc::read(pipe[0], b.as_mut_ptr().cast(), b.len()); } }
         if fds[0].revents != 0 {
             for _ in 0..64 {  // then back to poll, so a flood cannot starve SIGTERM/SIGHUP
@@ -1296,6 +1440,17 @@ pub fn run_daemon() -> i32 {
                 });
                 for (hook, p) in pkts { g.firewall_blocked(&p, hook); }
             }
+        }
+        if fds[4].revents != 0 {
+            let mut removed = false;
+            while let Some(r) = g.nft_events.as_ref().map(|f| nl_recv(f, &mut buf, libc::MSG_DONTWAIT)) {
+                match r {
+                    Ok(n) => nl_each(&buf[..n.min(buf.len())], |ty, p| removed |= is_our_table_deleted(ty, p)),
+                    Err(e) if e.raw_os_error() == Some(libc::ENOBUFS) => removed = true,  // notices were lost: look
+                    Err(_) => break,
+                }
+            }
+            if removed { g.restore_table(); }
         }
         if !g.pending.is_empty() && g.flushed.elapsed() >= FLUSH_GAP { g.flush(); }
         if g.acct.as_ref().and_then(|a| a.dirty).is_some_and(|d| d.elapsed() >= TRAFFIC_FLUSH) { g.acct_save(); }
@@ -1352,6 +1507,7 @@ pub fn list() -> Value {
             let (state, conditional) = cfg.fw.listen_state(s.proto == TCP, s.sport);
             c["fw"] = json!(state);
             c["fw_conditional"] = json!(conditional);
+            c["fw_default"] = json!(cfg.fw.relies_on_default(s.proto == TCP, s.sport));
         }
         c
     }).collect();
@@ -1412,9 +1568,34 @@ fn kill_where(pred: impl Fn(&Sock) -> bool) -> (usize, Option<String>) {
     (n, err)
 }
 
+/// Forgets the tracked flows a new blocking rule now decides, so their next packet meets the rule
+/// instead of passing as "established". This is what ends a UDP flow, which has no socket state to abort.
+fn forget_blocked_flows(fw: &Firewall, fresh: &[String]) {
+    let Ok(fd) = nl_open(NETLINK_NETFILTER) else { return };
+    let local = local_addrs();
+    if nl_send(&fd, &nl_msg(CT_GET, NLM_F_REQUEST | NLM_F_DUMP, &[0, 0, 0, 0])).is_err() { return; }
+    let (mut buf, mut doomed, mut done) = (vec![0u8; 65536], Vec::new(), false);
+    while !done {
+        let Ok(n) = nl_recv(&fd, &mut buf, 0) else { break };
+        nl_each(&buf[..n], |ty, p| {
+            if ty == NLMSG_DONE || ty == NLMSG_ERROR { done = true; }
+            let Some(ev) = traffic::parse_ct(ty, p) else { return };
+            let hit = match (local.contains(&ev.src), local.contains(&ev.dst)) {
+                (true, false) => fw.newly_blocks(fresh, false, ev.proto, ev.dport, ev.dst),
+                (false, true) => fw.newly_blocks(fresh, true, ev.proto, ev.dport, ev.src),
+                _ => false,
+            };
+            if hit { doomed.push(ev); }
+        });
+    }
+    for ev in doomed { let _ = nl_send(&fd, &nl_msg(traffic::CT_DELETE, NLM_F_REQUEST, &traffic::delete_request(&ev))); }
+}
+
 /// Aborts the live connections a new blocking rule now decides: conntrack would keep them alive otherwise.
-/// A TCP socket on a port this machine listens on is inbound; inbound UDP has no such marker and is left alone.
+/// A TCP socket on a port this machine listens on is inbound; inbound UDP has no such marker and is left
+/// to forget_blocked_flows.
 fn kill_blocked(fw: &Firewall, fresh: &[String]) -> usize {
+    forget_blocked_flows(fw, fresh);
     let Ok(d) = Diag::open() else { return 0 };
     let listen: HashSet<u16> = dump_all(&d).unwrap_or_default().iter().filter(|s| s.proto == TCP && s.state == TCP_LISTEN).map(|s| s.sport).collect();
     kill_where(|s| {
@@ -1427,26 +1608,9 @@ fn kill_blocked(fw: &Firewall, fresh: &[String]) -> usize {
 /// What the kernel really holds: this table (terse), hit counters per rule, and every other filter chain
 /// on the same hooks. A drop there wins over an allow here. Root only: nft cannot list for other users.
 fn fw_inspect(cfg: &Config) -> Value {
-    let text = match nft_read(&["-j", "list", "ruleset"]) { Ok(t) => t, Err(e) => return json!({"ok": false, "error": e}) };
-    let parsed: Value = match serde_json::from_str(&text) { Ok(v) => v, Err(e) => return json!({"ok": false, "error": format!("nft output: {e}")}) };
-    let (mut present, mut hits, mut others) = (false, serde_json::Map::new(), Vec::new());
-    for item in parsed["nftables"].as_array().map_or(&[][..], Vec::as_slice) {
-        let (c, r) = (&item["chain"], &item["rule"]);
-        if item["table"]["name"] == TABLE && item["table"]["family"] == "inet" { present = true; }
-        if (c["hook"] == "input" || c["hook"] == "output") && c["table"] != TABLE {
-            others.push(json!({"family": c["family"], "table": c["table"], "chain": c["name"], "hook": c["hook"], "priority": c["prio"], "policy": c["policy"]}));
-        }
-        let Some(tag) = r["comment"].as_str().filter(|_| r["table"] == TABLE) else { continue };
-        let key = if tag == "default" { format!("default_{}", r["chain"].as_str().unwrap_or("")) } else { tag.to_owned() };
-        for e in r["expr"].as_array().map_or(&[][..], Vec::as_slice) {
-            if let Some(n) = e["counter"]["packets"].as_u64() {
-                let bytes = e["counter"]["bytes"].as_u64().unwrap_or(0);
-                let slot = hits.entry(key.clone()).or_insert_with(|| json!({"packets": 0, "bytes": 0}));
-                slot["packets"] = json!(slot["packets"].as_u64().unwrap_or(0) + n);
-                slot["bytes"] = json!(slot["bytes"].as_u64().unwrap_or(0) + bytes);
-            }
-        }
-    }
+    // The text form: `nft -j` exists only when nftables was built with JSON support.
+    let text = match nft_read(&["-t", "list", "ruleset"]) { Ok(t) => t, Err(e) => return json!({"ok": false, "error": e}) };
+    let (present, hits, others) = parse_ruleset(&text);
     // iptables-legacy rules are invisible to nft; this file lists the tables it has loaded.
     let legacy: Vec<String> = ["/proc/net/ip_tables_names", "/proc/net/ip6_tables_names"].iter()
         .filter_map(|f| std::fs::read_to_string(f).ok()).flat_map(|t| t.lines().map(str::to_owned).collect::<Vec<_>>()).collect();
@@ -1454,13 +1618,61 @@ fn fw_inspect(cfg: &Config) -> Value {
     json!({"ok": true, "present": present, "active": cfg.fw.active(), "hits": hits, "others": others, "legacy": legacy, "rules": rules})
 }
 
-/// Removes every blacklist entry of group `label` (a subscription update with `replace`). Done before the
-/// new entries are added, so an entry the new list writes differently (a range, "1.2.3.5/24") is not
-/// removed again after it was re-added.
+/// From `nft list ruleset`: is our table there, its counters by rule comment, and the other tables' input / output chains.
+fn parse_ruleset(text: &str) -> (bool, serde_json::Map<String, Value>, Vec<Value>) {
+    let (mut present, mut hits, mut others) = (false, serde_json::Map::new(), Vec::new());
+    let (mut family, mut table, mut chain) = ("", "", "");
+    for line in text.lines().map(str::trim) {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        match w.as_slice() {
+            ["table", f, t, "{"] => { (family, table) = (f, t); present |= *f == "inet" && *t == TABLE; continue; }
+            ["chain", c, "{"] => { chain = c; continue; }
+            ["type", _, "hook", hook, "priority", rest @ ..] if table != TABLE && (*hook == "input" || *hook == "output") => {
+                let priority = rest.first().map_or("", |p| p.trim_end_matches(';'));
+                let policy = rest.iter().position(|x| *x == "policy").and_then(|i| rest.get(i + 1)).map_or("accept", |p| p.trim_end_matches(';'));
+                others.push(json!({"family": family, "table": table, "chain": chain, "hook": hook, "priority": priority, "policy": policy}));
+                continue;
+            }
+            _ => {}
+        }
+        if table != TABLE { continue; }
+        let Some(tag) = line.rsplit_once("comment \"").and_then(|(_, t)| t.strip_suffix('"')) else { continue };
+        let Some(i) = w.iter().position(|x| *x == "counter") else { continue };
+        let (Some(n), Some(bytes)) = (w.get(i + 2).and_then(|v| v.parse::<u64>().ok()), w.get(i + 4).and_then(|v| v.parse::<u64>().ok())) else { continue };
+        let key = if tag == "default" { format!("default_{chain}") } else { tag.to_owned() };
+        let slot = hits.entry(key).or_insert_with(|| json!({"packets": 0, "bytes": 0}));
+        slot["packets"] = json!(slot["packets"].as_u64().unwrap_or(0) + n);
+        slot["bytes"] = json!(slot["bytes"].as_u64().unwrap_or(0) + bytes);
+    }
+    (present, hits, others)
+}
+
+/// Group `label` lets go of its blacklist entries (a removed list, or a subscription update with `replace`):
+/// an entry another group or the user also added stays. Done before the new entries of an update are added,
+/// so an entry the new list writes differently (a range, "1.2.3.5/24") is not removed again after it was re-added.
 fn drop_group(cfg: &mut Config, label: &str) {
-    let old: HashSet<String> = cfg.labels.iter().filter(|(_, l)| l.as_str() == label).map(|(n, _)| n.clone()).collect();
-    cfg.blacklist.retain(|n| !old.contains(&n.to_string()));
-    cfg.labels.retain(|n, _| !old.contains(n));
+    for others in cfg.shared.values_mut() { others.retain(|l| l != label); }
+    let old: Vec<String> = cfg.labels.iter().filter(|(_, l)| l.as_str() == label).map(|(n, _)| n.clone()).collect();
+    let mut gone = HashSet::new();
+    for n in old {
+        cfg.labels.remove(&n);
+        match cfg.shared.get_mut(&n).filter(|o| !o.is_empty()).map(|o| o.remove(0)) {
+            Some(next) if !next.is_empty() => { cfg.labels.insert(n, next); }
+            Some(_) => {}  // the user added it too: it stays, without a group
+            None => { gone.insert(n); }
+        }
+    }
+    cfg.blacklist.retain(|n| !gone.contains(&n.to_string()));
+    cfg.shared.retain(|_, o| !o.is_empty());
+}
+
+/// An entry of a published list that must not be applied: it reaches this machine's own or local addresses.
+/// Bogon lists such as FireHOL level 1 name these ranges because they should not come from the internet.
+fn covers_local(n: &Net) -> bool {
+    let unspecified = matches!(n.addr, IpAddr::V4(v) if v.octets()[0] == 0) || n.addr.is_unspecified();
+    unspecified || n.addr.is_loopback() || is_lan(n.addr)
+        || ["127.0.0.1", "10.0.0.1", "100.64.0.1", "169.254.0.1", "172.16.0.1", "192.168.0.1", "224.0.0.1", "::1", "fc00::1", "fe80::1", "ff02::1"]
+            .iter().filter_map(|a| a.parse().ok()).any(|ip| n.contains(ip))
 }
 
 /// One request of netguard-helper. `list` and `status` work for any user; the rest is root-only.
@@ -1474,9 +1686,12 @@ pub fn handle(req: &Value) -> Value {
         _ => {}
     }
     if unsafe { libc::geteuid() } != 0 { return json!({"ok": false, "needs_root": true, "error": "this operation needs root (pkexec)"}); }
+    // Read, change, write: two requests at once must not overwrite each other.
+    let lock = match crate::helper_lock("netguard-helper") { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     let mut cfg = match Config::load() { Ok(c) => c, Err(e) => return json!({"ok": false, "error": e}) };
     let mut killed = 0;
     let mut fresh_blocks = Vec::new();
+    let mut skipped = 0;
     match op {
         "set" => {
             if let Some(b) = req["guard"].as_bool() { cfg.guard = b; }
@@ -1490,22 +1705,35 @@ pub fn handle(req: &Value) -> Value {
             // Clear first: "replace the list" must keep what this same request adds.
             if req["remove_all"] == true { cfg.blacklist.clear(); }
             if req["replace"] == true { if let Some(l) = &label { drop_group(&mut cfg, l); } }
+            for l in strings(&req["drop_groups"]) { drop_group(&mut cfg, &l); }
             let mut have: HashSet<String> = cfg.blacklist.iter().map(Net::to_string).collect();
             let mut added = Vec::new();
             for s in strings(&req["add"]) {
                 let Some(nets) = parse_nets(&s) else { return json!({"ok": false, "error": format!("not an IP address, CIDR block or range: {s}")}) };
                 for n in nets {
+                    if req["public_only"] == true && covers_local(&n) { skipped += 1; continue; }
                     if n.contains(IpAddr::V4(Ipv4Addr::LOCALHOST)) || n.contains(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
                         return json!({"ok": false, "error": format!("{s} covers the loopback address; local programs would stop working")});
                     }
-                    if have.insert(n.to_string()) { cfg.blacklist.push(n); added.push(n); }
-                    if let Some(l) = &label { cfg.labels.insert(n.to_string(), l.clone()); }
+                    let key = n.to_string();
+                    let new = have.insert(key.clone());
+                    if new { cfg.blacklist.push(n); added.push(n); }
+                    let adding = label.clone().unwrap_or_default();
+                    match cfg.labels.get(&key) {
+                        None if new && !adding.is_empty() => { cfg.labels.insert(key, adding); }
+                        Some(first) if *first != adding => {
+                            let others = cfg.shared.entry(key).or_default();
+                            if !others.contains(&adding) { others.push(adding); }
+                        }
+                        _ => {}  // already in this group, or already added by hand
+                    }
                 }
             }
             let del: HashSet<String> = strings(&req["remove"]).iter().filter_map(|s| Net::parse(s)).map(|n| n.to_string()).collect();
             cfg.blacklist.retain(|n| !del.contains(&n.to_string()));
             let have: HashSet<String> = cfg.blacklist.iter().map(Net::to_string).collect();
             cfg.labels.retain(|k, _| have.contains(k));
+            cfg.shared.retain(|k, _| have.contains(k));
             if cfg.blacklist.len() > MAX_BLACKLIST { return json!({"ok": false, "error": "blacklist is full"}); }
             if !added.is_empty() { killed = kill_where(|s| added.iter().any(|n| n.contains(s.dst))).0; }
         }
@@ -1521,6 +1749,11 @@ pub fn handle(req: &Value) -> Value {
         "firewall" => {
             let before = cfg.fw.blocking();
             if let Err(e) = cfg.fw.apply(req) { return json!({"ok": false, "error": e}); }
+            // Ask the kernel before saving: a rule it refuses would keep the whole new rule set from loading.
+            if sys_bin("nft").is_some() {
+                let probe = Config { fw: cfg.fw.clone(), ..Config::default() };
+                if let Err(e) = nft_feed(&["-c", "-f", "-"], &nft_script(&probe)) { return json!({"ok": false, "error": e}); }
+            }
             fresh_blocks = cfg.fw.blocking().into_iter().filter(|s| !before.contains(s)).collect();
         }
         "fw_inspect" => return fw_inspect(&cfg),
@@ -1547,16 +1780,22 @@ pub fn handle(req: &Value) -> Value {
         _ => return json!({"ok": false, "error": "unknown op"}),
     }
     if let Err(e) = cfg.save() { return json!({"ok": false, "error": e}); }
+    let saved = std::fs::metadata(CONF_FILE).and_then(|m| m.modified()).ok();
     reload_daemon();
-    // Give the daemon a moment to load the rules, so the answer says what is really in force.
-    for _ in 0..15 {
+    drop(lock);
+    // Wait for the daemon, so the answer says what is really in force. A long blacklist takes seconds;
+    // a newer change to the file means this request's state will never be reported.
+    for _ in 0..500 {
         if daemon_pid().is_none() || in_force(&cfg, &applied()) { break; }
+        if std::fs::metadata(CONF_FILE).and_then(|m| m.modified()).ok() != saved { break; }
         std::thread::sleep(Duration::from_millis(40));
     }
     // After the reload: a program that reconnects at once must already meet the new rule.
-    if !fresh_blocks.is_empty() && daemon_pid().is_some() { killed += kill_blocked(&cfg.fw, &fresh_blocks); }
+    let state = applied();
+    if !fresh_blocks.is_empty() && state["error"].is_null() && state["firewall"] == cfg.fw.to_json() { killed += kill_blocked(&cfg.fw, &fresh_blocks); }
     let mut v = status(false);
     v["killed"] = json!(killed);
+    v["skipped"] = json!(skipped);
     v
 }
 
@@ -1630,6 +1869,14 @@ fn whois_referral(text: &str) -> Option<String> {
     (!v.starts_with("rwhois") && whois_host_ok(host)).then(|| host.to_owned())
 }
 
+/// LACNIC writes blocks with the trailing zero octets left out: "200.3.12/22" is 200.3.12.0/22.
+fn full_cidr(v: &str) -> String {
+    match v.split_once('/') {
+        Some((a, p)) if !a.contains(':') && a.matches('.').count() < 3 => format!("{a}{}/{p}", ".0".repeat(3 - a.matches('.').count())),
+        _ => v.to_owned(),
+    }
+}
+
 /// The handful of fields worth a glance. ARIN lists the covering networks first, the other registries the closest one first.
 fn whois_summary(text: &str, last: bool) -> Vec<[String; 2]> {
     let f = whois_fields(text);
@@ -1643,7 +1890,7 @@ fn whois_summary(text: &str, last: bool) -> Vec<[String; 2]> {
                           ("Country", &["country"]), ("AS", &["originas", "origin", "aut-num"]),
                           ("Abuse contact", &["orgabuseemail", "abuse-mailbox"]), ("Registered", &["regdate", "created"]),
                           ("Updated", &["updated", "last-modified"]), ("Status", &["nettype", "status"])] {
-        if let Some(v) = pick(keys) { out.push([label.to_owned(), v.to_owned()]); }
+        if let Some(v) = pick(keys) { out.push([label.to_owned(), if label == "Range" { full_cidr(v) } else { v.to_owned() }]); }
     }
     // RIPE / APNIC: "% Abuse contact for '…' is 'abuse@example.net'"
     if !out.iter().any(|r| r[0] == "Abuse contact") {
@@ -1860,6 +2107,13 @@ mod tests {
     #[test]
     fn drop_group_removes_only_that_group() {
         let mut c = Config::default();
+        for s in ["7.7.7.7", "8.8.8.8", "6.6.6.6"] { c.blacklist.push(Net::parse(s).unwrap()); c.labels.insert(s.to_owned(), "FireHOL".to_owned()); }
+        c.shared.insert("7.7.7.7".to_owned(), vec!["other".to_owned()]);
+        c.shared.insert("8.8.8.8".to_owned(), vec![String::new()]);
+        drop_group(&mut c, "FireHOL");
+        assert_eq!(c.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), ["7.7.7.7", "8.8.8.8"]);
+        assert_eq!((c.labels.get("7.7.7.7").map(String::as_str), c.labels.get("8.8.8.8")), (Some("other"), None));
+        let mut c = Config::default();
         for (s, l) in [("1.2.3.0/24", "FireHOL"), ("5.6.7.8", "FireHOL"), ("9.9.9.9", "manual")] {
             c.blacklist.push(Net::parse(s).unwrap());
             c.labels.insert(s.to_owned(), l.to_owned());
@@ -1938,6 +2192,45 @@ mod tests {
         let arin = "NetRange: 8.0.0.0 - 8.127.255.255\nNetName: BIG\nOrgName: Parent\n\nNetRange: 8.8.8.0 - 8.8.8.255\nCIDR: 8.8.8.0/24\nNetName: SMALL\nOrgName: Child\n";
         let s = whois_summary(arin, true);
         assert_eq!((s[0][1].as_str(), s[2][1].as_str(), s[3][1].as_str()), ("8.8.8.0 - 8.8.8.255", "SMALL", "Child"));
+    }
+
+    #[test]
+    fn local_ranges_of_published_lists() {
+        for s in ["127.0.0.0/8", "10.0.0.0/8", "192.168.0.0/16", "224.0.0.0/3", "0.0.0.0/8", "100.64.0.0/10", "8.0.0.0/5", "fe80::/10"] {
+            assert!(covers_local(&Net::parse(s).unwrap()), "{s}");
+        }
+        for s in ["8.8.8.0/24", "1.0.0.0/8", "2001:db8::/32"] { assert!(!covers_local(&Net::parse(s).unwrap()), "{s}"); }
+        assert_eq!(full_cidr("200.3.12/22"), "200.3.12.0/22");
+        assert_eq!((full_cidr("200/8"), full_cidr("1.2.3.0/24"), full_cidr("2001:db8::/32"), full_cidr("1.2.3.0 - 1.2.3.9")),
+                   ("200.0.0.0/8".to_owned(), "1.2.3.0/24".to_owned(), "2001:db8::/32".to_owned(), "1.2.3.0 - 1.2.3.9".to_owned()));
+    }
+
+    #[test]
+    fn ruleset_text() {
+        let t = "table inet centurion_netguard {\n\tset bl4 {\n\t\ttype ipv4_addr\n\t}\n\tchain fw_in {\n\t\ttcp dport { 22 } counter packets 3 bytes 180 return comment \"r1\"\n\t\tcounter packets 7 bytes 70 jump fw_drop comment \"default\"\n\t}\n}\ntable inet ufw {\n\tchain input {\n\t\ttype filter hook input priority filter; policy drop;\n\t\tcounter packets 9 bytes 9 comment \"r1\"\n\t}\n}\n";
+        let (present, hits, others) = parse_ruleset(t);
+        assert!(present);
+        assert_eq!((hits["r1"]["packets"].as_u64(), hits["default_fw_in"]["bytes"].as_u64()), (Some(3), Some(70)));
+        assert_eq!((others.len(), others[0]["table"].as_str(), others[0]["policy"].as_str(), others[0]["priority"].as_str()), (1, Some("ufw"), Some("drop"), Some("filter")));
+        assert!(!parse_ruleset("table inet other {\n}\n").0);
+    }
+
+    #[test]
+    fn table_deletion_notice() {
+        let mut p = vec![NFPROTO_INET, 0, 0, 0];
+        nl_attr(&mut p, NFTA_TABLE_NAME, b"centurion_netguard\0");
+        assert!(is_our_table_deleted(NFT_MSG_DELTABLE, &p));
+        assert!(!is_our_table_deleted(NFT_MSG_DELTABLE + 1, &p));
+        let mut other = vec![NFPROTO_INET, 0, 0, 0];
+        nl_attr(&mut other, NFTA_TABLE_NAME, b"filter\0");
+        assert!(!is_our_table_deleted(NFT_MSG_DELTABLE, &other));
+    }
+
+    #[test]
+    fn conntrack_delete_request_round_trip() {
+        let ev = traffic::CtEvent { delete: false, id: 0, proto: UDP, src: "10.0.0.2".parse().unwrap(), sport: 5000, dst: "10.0.0.1".parse().unwrap(), dport: 53, orig_bytes: 0, reply_bytes: 0 };
+        let got = traffic::parse_ct(traffic::CT_NEW, &traffic::delete_request(&ev)).unwrap();
+        assert_eq!((got.proto, got.src, got.sport, got.dst, got.dport), (ev.proto, ev.src, ev.sport, ev.dst, ev.dport));
     }
 
     #[test]

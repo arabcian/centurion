@@ -12,7 +12,7 @@ QList<int> expandPorts(const QString &text, int max);
 bool validPortList(const QString &text);
 /// A firewall rule's remote side: empty, "lan", or addresses, CIDR blocks and "a - b" ranges separated by commas.
 bool validRemote(const QString &text);
-/// A network interface name, optionally ending in * ("wg*"); empty is valid.
+/// A network interface name, optionally ending in * ("wg*"), 15 characters in all; empty is valid.
 bool validInterface(const QString &text);
 /// What the user typed reduced to a host: a URL's host name, punycode for an international domain.
 QString lookupHost(const QString &text);

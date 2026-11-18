@@ -383,7 +383,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     bPortClose->setObjectName(QStringLiteral("btnDanger"));
     auto *bPortDefault = new QPushButton(tr("Use default"));
     bPortOpen->setToolTip(tr("Firewall: allow incoming connections to the selected port from everywhere."));
-    bPortLan->setToolTip(tr("Firewall: allow the selected port from local networks only."));
+    bPortLan->setToolTip(tr("Firewall: allow the selected port from local networks only. That includes everyone on the network you are connected to, on public Wi-Fi too."));
     bPortClose->setToolTip(tr("Firewall: block incoming connections to the selected port. The program keeps running."));
     bPortDefault->setToolTip(tr("Firewall: remove this port's own rules, so the default incoming policy decides."));
     for (QPushButton *b : {bPortOpen, bPortLan, bPortClose, bPortDefault}) rp->addWidget(b);
@@ -500,9 +500,12 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         if (exe.startsWith(QLatin1Char('/')))
             m.addAction(QStringLiteral("Whitelist folder"), this, [this, exe] { changeList("whitelist", "add", exe.left(exe.lastIndexOf(QLatin1Char('/')) + 1)); });
     });
-    menuFor(connLog_, [this, detLog](QMenu &m, QTreeWidgetItem *it) {
-        m.addAction(QStringLiteral("Details…"), this, [detLog, it] { detLog(it); });
-        addIpActions(m, it->data(0, IpRole).toString());
+    menuFor(connLog_, [this](QMenu &m, QTreeWidgetItem *it) {
+        const QString ip = it->data(0, IpRole).toString(), exe = it->data(0, ExeRole).toString();
+        const int pid = it->data(0, PidRole).toInt();
+        const qint64 uid = it->data(0, UidRole).toLongLong();
+        m.addAction(QStringLiteral("Details…"), this, [=, this] { connDetails(ip, pid, exe, uid, QString()); });
+        addIpActions(m, ip);
     });
     menuFor(ports_, [this](QMenu &m, QTreeWidgetItem *) {
         m.addAction(tr("Open"), this, [this] { setPortState(QStringLiteral("open")); });
@@ -554,7 +557,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     connect(timer_, &QTimer::timeout, this, [this] {
         if (tabs_->currentIndex() == LOG_TAB) readConnLog();
         else if (tabs_->currentIndex() == trafficTab_) fillTraffic();
-        else refreshConns();
+        else if (!viaRoot_) refreshConns();
     });
     wifiTimer_ = new QTimer(this);
     wifiTimer_->setInterval(POLL_MS);
@@ -617,7 +620,7 @@ void NetPage::poll() {
 }
 
 void NetPage::runUser(const QJsonObject &req, std::function<void(const QJsonObject &)> cb, int timeoutMs) {
-    if (!QFileInfo(helper()).isExecutable()) { status_->setText(QStringLiteral("netguard-helper is not installed.")); return; }
+    if (!QFileInfo(helper()).isExecutable()) { status_->setText(QStringLiteral("netguard-helper is not installed.")); cb({}); return; }
     auto *p = new QProcess(this);
     QPointer<QProcess> guard(p);
     connect(p, &QProcess::finished, this, [p, cb](int, QProcess::ExitStatus) {
@@ -827,9 +830,9 @@ void NetPage::fillTraffic() {
 void NetPage::refreshConns() {
     if (busy_) return;
     busy_ = true;
-    viaRoot_ = false;
     runUser({{"op", "list"}}, [this](const QJsonObject &r) {
         busy_ = false;
+        if (viaRoot_) return;   // a root snapshot arrived meanwhile: it names more
         if (!r.value(QLatin1String("ok")).toBool()) { connInfo_->setText(r.isEmpty() ? QStringLiteral("helper failed") : str(r, "error")); return; }
         connData_ = r.value(QLatin1String("conns")).toArray();
         showConns();
@@ -1088,7 +1091,8 @@ void NetPage::connDetails(const QString &ip, int pid, const QString &exe, qint64
     out << QStringLiteral("== Process ==");
     const ProcStat ps = pid > 0 ? procStat(pid) : ProcStat();
     const QString liveExe = pid > 0 ? QFileInfo(QStringLiteral("/proc/%1/exe").arg(pid)).symLinkTarget() : QString();
-    const bool alive = ps.ok && (exe.isEmpty() || liveExe.isEmpty() || liveExe == exe);
+    // A Wine program is logged under its .exe; the process itself is the Wine loader.
+    const bool alive = ps.ok && (exe.isEmpty() || liveExe.isEmpty() || liveExe == exe || baseName(liveExe).startsWith(QLatin1String("wine")));
     if (pid <= 0) out << QStringLiteral("No process known for this connection (short-lived, or owned by another user: use \"All users (root)\").");
     else if (!alive) out << QStringLiteral("pid %1 has already exited (or was reused).").arg(pid);
     if (!exe.isEmpty()) out << QStringLiteral("Program:   %1").arg(exe);
@@ -1361,15 +1365,6 @@ void NetPage::blacklistNetwork(const QString &ip) {
     });
 }
 
-/// Entries the blacklist holds under group `name` in a status answer.
-static QJsonArray groupEntries(const QJsonObject &status, const QString &name) {
-    QJsonArray out;
-    const QJsonObject labels = status.value(QLatin1String("labels")).toObject();
-    for (auto it = labels.constBegin(); it != labels.constEnd(); ++it)
-        if (it.value().toString() == name) out.append(it.key());
-    return out;
-}
-
 /// Changes one subscription in gui.ini and redraws the window's list.
 void NetPage::changeSubscription(const QString &name, const std::function<void(BlocklistSub &)> &f) {
     const QString path = blocklistSettingsPath();
@@ -1416,13 +1411,14 @@ void NetPage::updateSubscription(int row) {
         if (!p.error.isEmpty()) return fail(p.error);
         // "replace": the helper drops the group's old entries before adding these, so an entry written
         // differently from its stored form (a range, a non-canonical CIDR) is not removed again.
-        privileged::run(helper(), QJsonObject{{"op", "blacklist"}, {"add", QJsonArray::fromStringList(p.entries)}, {"label", name}, {"replace", true}}, this,
+        privileged::run(helper(), QJsonObject{{"op", "blacklist"}, {"add", QJsonArray::fromStringList(p.entries)}, {"label", name}, {"replace", true}, {"public_only", true}}, this,
             [this, name, count = p.entries.size()](const privileged::Result &r) {
                 if (!r.ok()) return changeSubscription(name, [&r](BlocklistSub &s) { s.error = r.message(); });
                 applyStatus(r.json);
-                changeSubscription(name, [count](BlocklistSub &s) {
+                const int applied = count - r.json.value(QLatin1String("skipped")).toInt();   // local and reserved ranges are left out
+                changeSubscription(name, [applied](BlocklistSub &s) {
                     s.error.clear();
-                    s.entries = count;
+                    s.entries = applied;
                     s.updated = QDateTime::currentSecsSinceEpoch();
                 });
             });
@@ -1502,8 +1498,7 @@ void NetPage::subscriptions() {
         next.removeAt(subList_->currentRow());
         saveBlocklistSubs(blocklistSettingsPath(), next);
         fillSubscriptions();
-        const QJsonArray gone = groupEntries(state_, s.name);
-        if (!gone.isEmpty()) runRoot({{"op", "blacklist"}, {"remove", gone}});
+        runRoot({{"op", "blacklist"}, {"drop_groups", QJsonArray{s.name}}});
     });
     d->show();
 }
@@ -1540,11 +1535,11 @@ void NetPage::bulkBlacklist() {
         label->setText(QFileInfo(path).completeBaseName());
     });
     if (d.exec() != QDialog::Accepted) return;
-    static const QRegularExpression dash(QStringLiteral("\\s*-\\s*")), sep(QStringLiteral("[,;\\s]+"));
+    static const QRegularExpression dash(QStringLiteral("\\s*-\\s*")), sep(QStringLiteral("[,;\\s]+")), note(QStringLiteral("\\s;.*$"));
     QJsonArray add;
     const QStringList lines = text->toPlainText().split(QLatin1Char('\n'));
     for (const QString &raw : lines) {
-        const QString line = raw.section(QLatin1Char('#'), 0, 0).replace(dash, QStringLiteral("-"));  // "a - b" stays one token
+        const QString line = raw.section(QLatin1Char('#'), 0, 0).remove(note).replace(dash, QStringLiteral("-"));  // "a - b" stays one token
         for (const QString &tok : line.split(sep, Qt::SkipEmptyParts)) add.append(tok);
     }
     if (!add.isEmpty()) runRoot({{"op", "blacklist"}, {"add", add}, {"label", label->text().trimmed()}});
@@ -1558,13 +1553,15 @@ void NetPage::removeBlacklisted(bool all) {
         return;
     }
     QSet<QString> pick;
+    QJsonArray groups;   // a group lets go of its entries; one that another group also lists stays
     const QList<QTreeWidgetItem *> selected = bl_->selectedItems();
     for (const QTreeWidgetItem *it : selected) {
-        pick.insert(it->data(0, IpRole).toString());
-        for (int i = 0; i < it->childCount(); ++i) pick.insert(it->child(i)->data(0, IpRole).toString());
+        if (it->childCount()) groups.append(it->data(0, KeyRole).toString());
+        else pick.insert(it->data(0, IpRole).toString());
     }
     pick.remove(QString());
-    if (!pick.isEmpty()) runRoot({{"op", "blacklist"}, {"remove", QJsonArray::fromStringList(QStringList(pick.cbegin(), pick.cend()))}});
+    if (!pick.isEmpty() || !groups.isEmpty())
+        runRoot({{"op", "blacklist"}, {"remove", QJsonArray::fromStringList(QStringList(pick.cbegin(), pick.cend()))}, {"drop_groups", groups}});
 }
 
 namespace {
@@ -1665,7 +1662,7 @@ void NetPage::showPorts() {
             for (int k = 0; k < 7; ++k) it->setForeground(k, QColor(QLatin1String(theme::MUTED)));
         } else if (outside) {
             ++exposed;
-            exposedServices << QStringLiteral("%1: %2 %3 (%4)").arg(usually.isEmpty() ? name : usually, proto).arg(port).arg(name);
+            if (c.value(QLatin1String("fw_default")).toBool()) exposedServices << QStringLiteral("%1: %2 %3 (%4)").arg(usually.isEmpty() ? name : usually, proto).arg(port).arg(name);
             const bool any = a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6;
             if (any && fw != QLatin1String("lan")) for (int k = 0; k < 7; ++k) it->setForeground(k, QColor(QLatin1String(theme::WARN)));
         }

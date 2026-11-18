@@ -21,6 +21,7 @@ int main() {
 
     CHECK(validInterface(QString()) && validInterface(s("wlan0")) && validInterface(s("wg*")));
     CHECK(!validInterface(s("lo")) && !validInterface(s("a b")) && !validInterface(s("eth0\"")) && !validInterface(s("0123456789abcdef")));
+    CHECK(validInterface(s("0123456789abcde")) && validInterface(s("0123456789abcd*")) && !validInterface(s("0123456789abcde*")));
 
     CHECK(lookupHost(s(" https://Example.com/x ")) == s("example.com"));
     CHECK(lookupHost(s("8.8.8.0/24")) == s("8.8.8.0/24"));

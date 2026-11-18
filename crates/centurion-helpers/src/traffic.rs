@@ -133,6 +133,27 @@ pub fn parse_ct(ty: u16, payload: &[u8]) -> Option<CtEvent> {
     (have && (ev.proto == 6 || ev.proto == 17)).then_some(ev)
 }
 
+/// Body of a conntrack delete request for the flow of `ev`.
+pub fn delete_request(ev: &CtEvent) -> Vec<u8> {
+    use crate::netguard::nl_attr;
+    const NESTED: u16 = 0x8000;
+    let mut ip = Vec::new();
+    let (family, src_ty, dst_ty) = if ev.src.is_ipv4() { (libc::AF_INET as u8, CTA_IP_V4_SRC, CTA_IP_V4_DST) } else { (libc::AF_INET6 as u8, CTA_IP_V6_SRC, CTA_IP_V6_DST) };
+    for (ty, addr) in [(src_ty, ev.src), (dst_ty, ev.dst)] {
+        match addr { IpAddr::V4(a) => nl_attr(&mut ip, ty, &a.octets()), IpAddr::V6(a) => nl_attr(&mut ip, ty, &a.octets()) }
+    }
+    let mut proto = Vec::new();
+    nl_attr(&mut proto, CTA_PROTO_NUM, &[ev.proto]);
+    nl_attr(&mut proto, CTA_PROTO_SRC_PORT, &ev.sport.to_be_bytes());
+    nl_attr(&mut proto, CTA_PROTO_DST_PORT, &ev.dport.to_be_bytes());
+    let mut tuple = Vec::new();
+    nl_attr(&mut tuple, CTA_TUPLE_IP | NESTED, &ip);
+    nl_attr(&mut tuple, CTA_TUPLE_PROTO | NESTED, &proto);
+    let mut body = vec![family, 0, 0, 0];
+    nl_attr(&mut body, CTA_TUPLE_ORIG | NESTED, &tuple);
+    body
+}
+
 /// Local calendar day (YYYY-MM-DD) of a unix time, as the rest of the machine counts days.
 pub fn local_day(secs: u64) -> String {
     unsafe {

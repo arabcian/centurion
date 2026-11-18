@@ -16,11 +16,12 @@ bool blocklistDue(const BlocklistSub &s, qint64 nowSecs) {
 }
 
 ParsedBlocklist parseBlocklist(const QByteArray &text) {
-    static const QRegularExpression dash(QStringLiteral("\\s*-\\s*")), sep(QStringLiteral("[,;\\s]+"));
+    static const QRegularExpression dash(QStringLiteral("\\s*-\\s*")), sep(QStringLiteral("[,;\\s]+")), note(QStringLiteral("\\s;.*$"));
     ParsedBlocklist out;
     const QStringList lines = QString::fromUtf8(text).split(QLatin1Char('\n'));
     for (const QString &raw : lines) {
-        const QString line = raw.section(QLatin1Char('#'), 0, 0).replace(dash, QStringLiteral("-"));  // "a - b" stays one token
+        // "1.2.3.0/24 ; SBL123": text after a free-standing ; is a remark, as after #.
+        const QString line = raw.section(QLatin1Char('#'), 0, 0).remove(note).replace(dash, QStringLiteral("-"));  // "a - b" stays one token
         for (const QString &tok : line.split(sep, Qt::SkipEmptyParts)) {
             if (out.entries.size() == BLOCKLIST_MAX_ENTRIES) {
                 out.entries.clear();

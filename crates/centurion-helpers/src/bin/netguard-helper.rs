@@ -5,7 +5,10 @@
 //!   root (pkexec):
 //!     {"op":"set", "guard": bool, "allow_lan": bool, "log_conns": bool, "traffic": bool}
 //!     {"op":"blacklist", "add": ["ip | cidr | first - last"], "label": "group", "remove": [...], "remove_all": bool,
-//!      "replace": bool}   replace: the group's old entries are dropped first (a subscription update)
+//!      "replace": bool, "public_only": bool, "drop_groups": ["group"]}
+//!                         replace: the group's old entries are dropped first (a subscription update)
+//!                         public_only: entries reaching local or reserved addresses are skipped (a published list)
+//!                         drop_groups: those groups let go of their entries; one another group still lists stays
 //!                                                                live sockets to added addresses are aborted
 //!     {"op":"whitelist", "add": ["path | dir/ | name.exe"], "remove": [...]}
 //!     {"op":"kill", "proto": "tcp|udp", "lport": n, "remote": "ip", "rport": n}

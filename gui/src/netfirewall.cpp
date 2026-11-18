@@ -74,7 +74,7 @@ static bool ruleDialog(QWidget *parent, QJsonObject &rule, const QString &title)
     remote->addItem(FirewallTab::tr("Anywhere"), QString());
     remote->addItem(FirewallTab::tr("Local networks only"), QStringLiteral("lan"));
     remote->lineEdit()->setPlaceholderText(QStringLiteral("203.0.113.7, 198.51.100.0/24"));
-    remote->setToolTip(FirewallTab::tr("The other side of the connection: an address, a CIDR block or a range; several separated by commas."));
+    remote->setToolTip(FirewallTab::tr("The other side of the connection: an address, a CIDR block or a range; several separated by commas.\nLocal networks include everyone on the network you are connected to, on public Wi-Fi too."));
     const QString r = str(rule, "remote");
     if (r.isEmpty()) remote->setCurrentIndex(0);
     else if (r == QLatin1String("lan")) remote->setCurrentIndex(1);
@@ -207,7 +207,7 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
 
     auto *note = new QLabel(tr("The first matching rule decides, from the top down; the default policy applies when none matches. "
                                "Loopback, replies to existing connections, and what the network itself needs (DHCP, IPv6 neighbour discovery) always pass. "
-                               "Only this machine's own traffic is filtered, not what it forwards for virtual machines or containers. "
+                               "Traffic this machine forwards for virtual machines and containers is not filtered, except connections to ports it publishes for them, which count as incoming. "
                                "The rules are enforced only while the centurion-netguard service runs."));
     note->setProperty("role", "muted");
     note->setWordWrap(true);

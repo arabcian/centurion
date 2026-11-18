@@ -3770,8 +3770,8 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <translation>Güvenlik duvarı: seçili porta her yerden gelen bağlantılara izin verir.</translation>
         </message>
         <message>
-            <source>Firewall: allow the selected port from local networks only.</source>
-            <translation>Güvenlik duvarı: seçili porta yalnızca yerel ağlardan izin verir.</translation>
+            <source>Firewall: allow the selected port from local networks only. That includes everyone on the network you are connected to, on public Wi-Fi too.</source>
+            <translation>Güvenlik duvarı: seçili porta yalnızca yerel ağlardan izin verir. Bağlı olduğunuz ağdaki herkes buna dahildir; halka açık Wi-Fi'da da.</translation>
         </message>
         <message>
             <source>Firewall: block incoming connections to the selected port. The program keeps running.</source>
@@ -9360,8 +9360,10 @@ system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklen
             <translation>Yalnızca yerel ağlar</translation>
         </message>
         <message>
-            <source>The other side of the connection: an address, a CIDR block or a range; several separated by commas.</source>
-            <translation>Bağlantının karşı tarafı: bir adres, CIDR bloğu veya aralık; birden çok değer virgülle ayrılır.</translation>
+            <source>The other side of the connection: an address, a CIDR block or a range; several separated by commas.
+Local networks include everyone on the network you are connected to, on public Wi-Fi too.</source>
+            <translation>Bağlantının karşı tarafı: bir adres, CIDR bloğu veya aralık; birden çok değer virgülle ayrılır.
+Yerel ağlara, bağlı olduğunuz ağdaki herkes dahildir; halka açık Wi-Fi'da da.</translation>
         </message>
         <message>
             <source>every interface (or wlan0, wg*)</source>
@@ -9504,8 +9506,8 @@ Açık bağlantılar çalışmaya devam eder.</translation>
             <translation>Çekirdekte gerçekte neyin yüklü olduğunu sorar: her kuralın isabet sayacı ve bu kuralları geçersiz kılabilecek diğer güvenlik duvarları. Yönetici parolası gerekir.</translation>
         </message>
         <message>
-            <source>The first matching rule decides, from the top down; the default policy applies when none matches. Loopback, replies to existing connections, and what the network itself needs (DHCP, IPv6 neighbour discovery) always pass. Only this machine's own traffic is filtered, not what it forwards for virtual machines or containers. The rules are enforced only while the centurion-netguard service runs.</source>
-            <translation>Kurallar yukarıdan aşağıya denenir, ilk eşleşen karar verir; hiçbiri eşleşmezse varsayılan ilke uygulanır. Loopback, mevcut bağlantıların yanıtları ve ağın çalışması için gerekenler (DHCP, IPv6 komşu keşfi) her zaman geçer. Yalnızca bu makinenin kendi trafiği filtrelenir; sanal makineler veya kapsayıcılar için yönlendirdiği trafik filtrelenmez. Kurallar yalnızca centurion-netguard servisi çalışırken uygulanır.</translation>
+            <source>The first matching rule decides, from the top down; the default policy applies when none matches. Loopback, replies to existing connections, and what the network itself needs (DHCP, IPv6 neighbour discovery) always pass. Traffic this machine forwards for virtual machines and containers is not filtered, except connections to ports it publishes for them, which count as incoming. The rules are enforced only while the centurion-netguard service runs.</source>
+            <translation>Kurallar yukarıdan aşağıya denenir, ilk eşleşen karar verir; hiçbiri eşleşmezse varsayılan ilke uygulanır. Loopback, mevcut bağlantıların yanıtları ve ağın çalışması için gerekenler (DHCP, IPv6 komşu keşfi) her zaman geçer. Sanal makineler ve kapsayıcılar için yönlendirilen trafik filtrelenmez; onlar adına yayımlanan portlara gelen bağlantılar ise gelen bağlantı sayılır. Kurallar yalnızca centurion-netguard servisi çalışırken uygulanır.</translation>
         </message>
         <message>
             <source>Turn the firewall on? New incoming connections: %1. New outgoing connections: %2.</source>

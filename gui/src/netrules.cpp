@@ -68,7 +68,7 @@ bool validRemote(const QString &text) {
 
 bool validInterface(const QString &text) {
     static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9_.-]{1,15}\\*?$"));
-    return text.isEmpty() || (text != QLatin1String("lo") && re.match(text).hasMatch());
+    return text.isEmpty() || (text != QLatin1String("lo") && text.size() <= 15 && re.match(text).hasMatch());
 }
 
 QString lookupHost(const QString &text) {
