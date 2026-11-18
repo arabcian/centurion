@@ -37,7 +37,7 @@ Tabs appear only when the hardware, driver or tool behind them exists.
 | **AMD GPU** *(amdgpu)* | Overdrive clocks / voltage per GPU generation, power limit, fan curve (RDNA3+), power profile. Every Apply is a **trial** — reverts in 20 s unless you press *Keep*; one-click undervolt steps. |
 | **Optimizations** | 100+ documented CPU / memory / scheduler / storage / network / device / power knobs in 8 groups, built-in presets, **Autotune**, game launch hooks (Lutris, Steam), boot-parameter advisor, *Restore originals* and *↺ Return to boot-guard defaults*. |
 | **Lighting** *(Spectrum, or 4-zone RGB)* | Spectrum keyboards: per-key RGB on a drawing of your own keyboard, firmware effects, 6 hardware profiles, brightness, lid logo, accent lights. 4-zone RGB keyboards: effect, speed, brightness and four zone colours. |
-| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset; memory, GPU and per-core / all-core CPU tests) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches, suggestions for wake sources that keep waking the machine with the lid closed) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, IP blacklist, Wine/.exe guard, connection log, whois) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
+| **Health** | *Monitor* (Xid / GSP / MCE / AER / lockup events, kept across boots) · *Curve stability* (errors per CPU / GPU curve profile, optional auto-reset; memory, GPU and per-core / all-core CPU tests) · *Sleep* (per-sleep drain, wake source, hardware-sleep share, wake-source switches, suggestions for wake sources that keep waking the machine with the lid closed) · *Battery use* (time left, drain per scene, capacity history) · *dGPU power* (D3cold / runtime-PM report) · *Network* (connections, firewall with default inbound/outbound policies and port rules, IP blacklist, Wine/.exe guard, connection log, whois / DNS / port lookup) · system tool pages (Sensors, CPU, Memory, DMI, PCI, PCIe detail, USB, Storage, SMART, NVIDIA, Graphics, Kernel, Battery) · *Kernel log* (history across boots) · *Backup* (Centurion configuration + full system image, with restore; automatic weekly configuration backup, system-image reminder). |
 
 The **tray menu** carries the everyday actions: Scene (with auto-switch and
 pause), Power Profile, CPU Curve, CPU Undervolt (Intel), GPU Curve,
@@ -59,7 +59,7 @@ tab (which does wake it).
 | `centurion-autotune <powersave\|gaming\|throughput\|desktop>`, `probe`, `audit [--fix]`, `report [SEC]` | Autotune presets, disk probe, safety audit, memory report |
 | `centurion-calibrate [--budget MIN] [--all] [--depth lean\|deep\|max] [--scene NAME] [--list] [--show] [--restore]`, `--verify NAME`, `--field LOG...`, `--gpu-coupling`, `--schedule-boot` | Measure this machine's knobs (the "machine signature"), check presets, learn from real games |
 | `centurion-boot-guard status\|reset\|…` | Boot-crash protection state |
-| `centurion-netguard daemon\|status\|list\|whois IP` | Network guard daemon and queries |
+| `centurion-netguard daemon\|status\|list\|whois IP\|CIDR\|ASn\|DOMAIN` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
 | `centurion-cooltest status\|run [--seconds N]\|baseline\|forget` | Cooling health test as the user (Health → Cooling): fixed CPU load, compared with a baseline of the same firmware settings |
 | `centurion-cpustress info\|percore\|allcore --load sse\|avx2\|avx512 --seconds N [--cycles N] [--transitions] [--cpus LIST]` | CPU stability test as the user (Health → Curve stability → CPU test): per-core or all-core work with a known result, for Curve Optimizer / undervolt offsets |
@@ -353,7 +353,7 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 | Scenes → screen brightness | `dbus-send` or `busctl` (logind / elogind SetBrightness), or `brightnessctl` |
 | Ryzen tab limit reasons | `ryzen_smu` with a PM table (desktop-derived and mobile-APU layouts; other versions are reported, not guessed) |
 | Health → Backup (system image) | GNU `tar` with ACL / xattr support; `pigz` (falls back to `gzip`), optionally `zstd`, `xz` |
-| Health → Network | `nft` and the `centurion-netguard` service; kernel: `NETFILTER_NETLINK_QUEUE`, `NF_TABLES`, `NF_TABLES_INET`, `NFT_QUEUE`, `NF_CONNTRACK`, `NFT_CT`, `INET_DIAG`, `INET_TCP_DIAG`, `INET_UDP_DIAG`, `INET_DIAG_DESTROY` |
+| Health → Network | `nft` and the `centurion-netguard` service; kernel: `NETFILTER_NETLINK_QUEUE`, `NF_TABLES`, `NF_TABLES_INET`, `NFT_QUEUE`, `NF_CONNTRACK`, `NFT_CT`, `INET_DIAG`, `INET_TCP_DIAG`, `INET_UDP_DIAG`, `INET_DIAG_DESTROY`; firewall *Reject*: `NFT_REJECT`, `NFT_REJECT_INET`; blocked packets in the log: `NFT_LOG`, `NETFILTER_NETLINK_LOG` |
 
 Missing pieces only disable the tab or row that needs them.
 

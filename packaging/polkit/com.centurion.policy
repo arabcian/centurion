@@ -143,8 +143,8 @@
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
   <action id="com.centurion.netguard">
-    <description>Change the network guard rules (IP blacklist, program whitelist) or abort a connection</description>
-    <description xml:lang="tr">Ağ koruması kurallarını (IP kara listesi, program beyaz listesi) değiştir veya bir bağlantıyı kes</description>
+    <description>Change the network guard rules (firewall, IP blacklist, program whitelist) or abort a connection</description>
+    <description xml:lang="tr">Ağ koruması kurallarını (güvenlik duvarı, IP kara listesi, program beyaz listesi) değiştir veya bir bağlantıyı kes</description>
     <message>Authentication is required to change the network guard rules</message>
     <message xml:lang="tr">Ağ koruması kurallarını değiştirmek için kimlik doğrulama gerekiyor</message>
     <!-- Never silent (see the rules file): a guarded program runs as the user and must not be able to whitelist itself. -->

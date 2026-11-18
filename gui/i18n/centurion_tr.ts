@@ -3749,6 +3749,90 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <source>Stopped after %1 of %2 step(s): %3</source>
             <translation>%2 adımın %1 tanesinden sonra durdu: %3</translation>
         </message>
+        <message>
+            <source>Open</source>
+            <translation>Aç</translation>
+        </message>
+        <message>
+            <source>LAN only</source>
+            <translation>Yalnızca LAN</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>Kapat</translation>
+        </message>
+        <message>
+            <source>Use default</source>
+            <translation>Varsayılanı kullan</translation>
+        </message>
+        <message>
+            <source>Firewall: allow incoming connections to the selected port from everywhere.</source>
+            <translation>Güvenlik duvarı: seçili porta her yerden gelen bağlantılara izin verir.</translation>
+        </message>
+        <message>
+            <source>Firewall: allow the selected port from local networks only.</source>
+            <translation>Güvenlik duvarı: seçili porta yalnızca yerel ağlardan izin verir.</translation>
+        </message>
+        <message>
+            <source>Firewall: block incoming connections to the selected port. The program keeps running.</source>
+            <translation>Güvenlik duvarı: seçili porta gelen bağlantıları engeller. Program çalışmaya devam eder.</translation>
+        </message>
+        <message>
+            <source>Firewall: remove this port's own rules, so the default incoming policy decides.</source>
+            <translation>Güvenlik duvarı: bu portun kendi kurallarını kaldırır; kararı varsayılan gelen ilkesi verir.</translation>
+        </message>
+        <message>
+            <source>Firewall</source>
+            <translation>Güvenlik duvarı</translation>
+        </message>
+        <message>
+            <source>Lookup</source>
+            <translation>Sorgu</translation>
+        </message>
+        <message>
+            <source>blocked by the firewall</source>
+            <translation>güvenlik duvarı engelledi</translation>
+        </message>
+        <message>
+            <source>Full lookup…</source>
+            <translation>Ayrıntılı sorgu…</translation>
+        </message>
+        <message>
+            <source>open</source>
+            <translation>açık</translation>
+        </message>
+        <message>
+            <source>closed</source>
+            <translation>kapalı</translation>
+        </message>
+        <message>
+            <source>no rules</source>
+            <translation>kural yok</translation>
+        </message>
+        <message>
+            <source>A rule limited to certain addresses or an interface also applies to this port.</source>
+            <translation>Belirli adreslerle veya bir arayüzle sınırlı bir kural da bu porta uygulanıyor.</translation>
+        </message>
+        <message>
+            <source>Select a port first.</source>
+            <translation>Önce bir port seçin.</translation>
+        </message>
+        <message>
+            <source>The firewall is off, so this rule would do nothing. Turn it on? Rules already saved on the Firewall tab take effect too.</source>
+            <translation>Güvenlik duvarı kapalı, bu kural şu anda hiçbir şey yapmaz. Açılsın mı? Güvenlik duvarı sekmesinde kayıtlı kurallar da devreye girer.</translation>
+        </message>
+        <message>
+            <source>nobody (firewall)</source>
+            <translation>hiç kimse (güvenlik duvarı)</translation>
+        </message>
+        <message>
+            <source>local networks (firewall)</source>
+            <translation>yerel ağlar (güvenlik duvarı)</translation>
+        </message>
+        <message>
+            <source>Also add %1 firewall rule(s).</source>
+            <translation>Ayrıca %1 güvenlik duvarı kuralı eklensin.</translation>
+        </message>
     </context>
     <context>
         <name>NotifyDialog</name>
@@ -9235,6 +9319,568 @@ system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklen
             <location filename="../src/eventinfo.cpp" line="293"/>
             <source>Kernel record</source>
             <translation>Çekirdek kaydı</translation>
+        </message>
+    </context>
+    <context>
+        <name>FirewallTab</name>
+        <message>
+            <source>Custom</source>
+            <translation>Özel</translation>
+        </message>
+        <message>
+            <source>Incoming</source>
+            <translation>Gelen</translation>
+        </message>
+        <message>
+            <source>Outgoing</source>
+            <translation>Giden</translation>
+        </message>
+        <message>
+            <source>Allow</source>
+            <translation>İzin ver</translation>
+        </message>
+        <message>
+            <source>Block (silently drop)</source>
+            <translation>Engelle (sessizce düşür)</translation>
+        </message>
+        <message>
+            <source>Reject (refuse at once)</source>
+            <translation>Reddet (hemen geri çevir)</translation>
+        </message>
+        <message>
+            <source>22, 80, 8000-8100 (empty: every port)</source>
+            <translation>22, 80, 8000-8100 (boş: tüm portlar)</translation>
+        </message>
+        <message>
+            <source>Anywhere</source>
+            <translation>Her yerden</translation>
+        </message>
+        <message>
+            <source>Local networks only</source>
+            <translation>Yalnızca yerel ağlar</translation>
+        </message>
+        <message>
+            <source>The other side of the connection: an address, a CIDR block or a range; several separated by commas.</source>
+            <translation>Bağlantının karşı tarafı: bir adres, CIDR bloğu veya aralık; birden çok değer virgülle ayrılır.</translation>
+        </message>
+        <message>
+            <source>every interface (or wlan0, wg*)</source>
+            <translation>tüm arayüzler (veya wlan0, wg*)</translation>
+        </message>
+        <message>
+            <source>Service</source>
+            <translation>Servis</translation>
+        </message>
+        <message>
+            <source>Direction</source>
+            <translation>Yön</translation>
+        </message>
+        <message>
+            <source>Action</source>
+            <translation>İşlem</translation>
+        </message>
+        <message>
+            <source>Protocol</source>
+            <translation>Protokol</translation>
+        </message>
+        <message>
+            <source>Ports</source>
+            <translation>Portlar</translation>
+        </message>
+        <message>
+            <source>Remote address</source>
+            <translation>Uzak adres</translation>
+        </message>
+        <message>
+            <source>Interface</source>
+            <translation>Arayüz</translation>
+        </message>
+        <message>
+            <source>Note</source>
+            <translation>Not</translation>
+        </message>
+        <message>
+            <source>Ports: numbers from 1 to 65535 or ranges such as 8000-8100, at most 32 items.</source>
+            <translation>Portlar: 1-65535 arası sayılar veya 8000-8100 gibi aralıklar, en çok 32 öğe.</translation>
+        </message>
+        <message>
+            <source>Remote address: use addresses, CIDR blocks or ranges, not host names.</source>
+            <translation>Uzak adres: ana makine adı değil; adres, CIDR bloğu veya aralık yazın.</translation>
+        </message>
+        <message>
+            <source>Interface: a name such as wlan0 or wg*. Loopback is never filtered.</source>
+            <translation>Arayüz: wlan0 veya wg* gibi bir ad. Loopback hiçbir zaman filtrelenmez.</translation>
+        </message>
+        <message>
+            <source>This rule would match everything. Use the default policy above instead.</source>
+            <translation>Bu kural her şeyle eşleşir. Bunun yerine yukarıdaki varsayılan ilkeyi kullanın.</translation>
+        </message>
+        <message>
+            <source>Block</source>
+            <translation>Engelle</translation>
+        </message>
+        <message>
+            <source>Reject</source>
+            <translation>Reddet</translation>
+        </message>
+        <message>
+            <source>What happens to a new connection no rule below decides.
+Block drops it silently; Reject refuses it at once, so the other side gets an error instead of a timeout.
+Connections that are already open keep working.</source>
+            <translation>Aşağıdaki kuralların karara bağlamadığı yeni bir bağlantıya ne olacağı.
+Engelle sessizce düşürür; Reddet hemen geri çevirir, böylece karşı taraf zaman aşımı yerine hata alır.
+Açık bağlantılar çalışmaya devam eder.</translation>
+        </message>
+        <message>
+            <source>Firewall on</source>
+            <translation>Güvenlik duvarı açık</translation>
+        </message>
+        <message>
+            <source>Off: the policies and rules stay saved but nothing is filtered.</source>
+            <translation>Kapalıyken ilkeler ve kurallar kayıtlı kalır, ama hiçbir şey filtrelenmez.</translation>
+        </message>
+        <message>
+            <source>Incoming by default</source>
+            <translation>Varsayılan gelen</translation>
+        </message>
+        <message>
+            <source>Outgoing by default</source>
+            <translation>Varsayılan giden</translation>
+        </message>
+        <message>
+            <source>Answer ping</source>
+            <translation>Ping yanıtla</translation>
+        </message>
+        <message>
+            <source>Off: this machine does not answer ICMP echo requests, unless a rule allows the sender.</source>
+            <translation>Kapalıyken bu makine, gönderene bir kural izin vermedikçe ICMP echo isteklerini yanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Send ping</source>
+            <translation>Ping gönder</translation>
+        </message>
+        <message>
+            <source>Off: programs on this machine cannot send ICMP echo requests, unless a rule allows the destination.</source>
+            <translation>Kapalıyken bu makinedeki programlar, hedefe bir kural izin vermedikçe ICMP echo isteği gönderemez.</translation>
+        </message>
+        <message>
+            <source>On</source>
+            <translation>Açık</translation>
+        </message>
+        <message>
+            <source>Hits</source>
+            <translation>İsabet</translation>
+        </message>
+        <message>
+            <source>Add rule…</source>
+            <translation>Kural ekle…</translation>
+        </message>
+        <message>
+            <source>Edit…</source>
+            <translation>Düzenle…</translation>
+        </message>
+        <message>
+            <source>On / off</source>
+            <translation>Aç / kapat</translation>
+        </message>
+        <message>
+            <source>Move up</source>
+            <translation>Yukarı taşı</translation>
+        </message>
+        <message>
+            <source>Move down</source>
+            <translation>Aşağı taşı</translation>
+        </message>
+        <message>
+            <source>Remove</source>
+            <translation>Kaldır</translation>
+        </message>
+        <message>
+            <source>Check live rules…</source>
+            <translation>Canlı kuralları denetle…</translation>
+        </message>
+        <message>
+            <source>Asks the kernel what is really loaded: hit counters for every rule, and other firewalls on this machine that can override these rules. Needs the administrator password.</source>
+            <translation>Çekirdekte gerçekte neyin yüklü olduğunu sorar: her kuralın isabet sayacı ve bu kuralları geçersiz kılabilecek diğer güvenlik duvarları. Yönetici parolası gerekir.</translation>
+        </message>
+        <message>
+            <source>The first matching rule decides, from the top down; the default policy applies when none matches. Loopback, replies to existing connections, and what the network itself needs (DHCP, IPv6 neighbour discovery) always pass. Only this machine's own traffic is filtered, not what it forwards for virtual machines or containers. The rules are enforced only while the centurion-netguard service runs.</source>
+            <translation>Kurallar yukarıdan aşağıya denenir, ilk eşleşen karar verir; hiçbiri eşleşmezse varsayılan ilke uygulanır. Loopback, mevcut bağlantıların yanıtları ve ağın çalışması için gerekenler (DHCP, IPv6 komşu keşfi) her zaman geçer. Yalnızca bu makinenin kendi trafiği filtrelenir; sanal makineler veya kapsayıcılar için yönlendirdiği trafik filtrelenmez. Kurallar yalnızca centurion-netguard servisi çalışırken uygulanır.</translation>
+        </message>
+        <message>
+            <source>Turn the firewall on? New incoming connections: %1. New outgoing connections: %2.</source>
+            <translation>Güvenlik duvarı açılsın mı? Yeni gelen bağlantılar: %1. Yeni giden bağlantılar: %2.</translation>
+        </message>
+        <message>
+            <source>Services other machines can reach now:
+%1</source>
+            <translation>Diğer makinelerin şu anda erişebildiği servisler:
+%1</translation>
+        </message>
+        <message>
+            <source>Firewall</source>
+            <translation>Güvenlik duvarı</translation>
+        </message>
+        <message>
+            <source>block</source>
+            <translation>engelle</translation>
+        </message>
+        <message>
+            <source>reject</source>
+            <translation>reddet</translation>
+        </message>
+        <message>
+            <source>allow</source>
+            <translation>izin ver</translation>
+        </message>
+        <message>
+            <source>← in</source>
+            <translation>← gelen</translation>
+        </message>
+        <message>
+            <source>→ out</source>
+            <translation>→ giden</translation>
+        </message>
+        <message>
+            <source>all</source>
+            <translation>tümü</translation>
+        </message>
+        <message>
+            <source>anywhere</source>
+            <translation>her yerden</translation>
+        </message>
+        <message>
+            <source>local networks</source>
+            <translation>yerel ağlar</translation>
+        </message>
+        <message>
+            <source>Never reached: rule %1 above already decides everything this rule matches.</source>
+            <translation>Bu kurala hiç sıra gelmez: yukarıdaki %1. kural, bunun eşleştiği her şeye zaten karar veriyor.</translation>
+        </message>
+        <message>
+            <source>The firewall is off: every connection the blacklist and the Wine guard do not stop is allowed.</source>
+            <translation>Güvenlik duvarı kapalı: kara listenin ve Wine korumasının durdurmadığı her bağlantıya izin verilir.</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;On.&lt;/b&gt; New incoming connections: &lt;b&gt;%1&lt;/b&gt; · outgoing: &lt;b&gt;%2&lt;/b&gt; · %3 of %4 rule(s) active</source>
+            <translation>&lt;b&gt;Açık.&lt;/b&gt; Yeni gelen bağlantılar: &lt;b&gt;%1&lt;/b&gt; · giden: &lt;b&gt;%2&lt;/b&gt; · %4 kuraldan %3 tanesi etkin</translation>
+        </message>
+        <message>
+            <source>The daemon is not running, so nothing is filtered right now.</source>
+            <translation>Servis çalışmıyor, bu yüzden şu anda hiçbir şey filtrelenmiyor.</translation>
+        </message>
+        <message>
+            <source>%1 rule(s) can never match (shown in yellow; hover for the reason).</source>
+            <translation>%1 kural hiçbir zaman eşleşemez (sarı gösterilir; neden için üzerine gelin).</translation>
+        </message>
+        <message>
+            <source>Other machines can reach these services now and will lose access unless a rule allows them:
+
+%1
+
+Connections already open keep working. Continue?</source>
+            <translation>Diğer makineler şu anda bu servislere erişebiliyor ve bir kural izin vermezse erişimlerini kaybedecek:
+
+%1
+
+Açık bağlantılar çalışmaya devam eder. Devam edilsin mi?</translation>
+        </message>
+        <message>
+            <source>Every program on this machine loses new outgoing connections, unless a rule allows them. Without DNS and web rules the internet stops working.
+
+Add rules that allow DNS, NTP and web traffic first?</source>
+            <translation>Bir kural izin vermedikçe bu makinedeki hiçbir program yeni giden bağlantı açamaz. DNS ve web kuralları olmadan internet çalışmaz.
+
+Önce DNS, NTP ve web trafiğine izin veren kurallar eklensin mi?</translation>
+        </message>
+        <message>
+            <source>Block and allow DNS, NTP, web</source>
+            <translation>Engelle; DNS, NTP ve web serbest</translation>
+        </message>
+        <message>
+            <source>Block everything</source>
+            <translation>Her şeyi engelle</translation>
+        </message>
+        <message>
+            <source>Add firewall rule</source>
+            <translation>Güvenlik duvarı kuralı ekle</translation>
+        </message>
+        <message>
+            <source>Edit firewall rule</source>
+            <translation>Güvenlik duvarı kuralını düzenle</translation>
+        </message>
+        <message>
+            <source>Remove %1 rule(s)?</source>
+            <translation>%1 kural kaldırılsın mı?</translation>
+        </message>
+        <message>
+            <source>PROBLEM: Centurion's table is not loaded, so neither the firewall nor the blacklist is being enforced. Start the centurion-netguard service; if something ran "nft flush ruleset", reload it.</source>
+            <translation>SORUN: Centurion tablosu yüklü değil; ne güvenlik duvarı ne de kara liste uygulanıyor. centurion-netguard servisini başlatın; bir şey "nft flush ruleset" çalıştırdıysa servisi yeniden yükleyin.</translation>
+        </message>
+        <message>
+            <source>Centurion's table is loaded and the firewall is active.</source>
+            <translation>Centurion tablosu yüklü ve güvenlik duvarı etkin.</translation>
+        </message>
+        <message>
+            <source>Centurion's table is loaded; the firewall has nothing to enforce right now.</source>
+            <translation>Centurion tablosu yüklü; güvenlik duvarının şu anda uygulayacağı bir şey yok.</translation>
+        </message>
+        <message>
+            <source>New connections that reached the default policy: %1 incoming, %2 outgoing.</source>
+            <translation>Varsayılan ilkeye ulaşan yeni bağlantılar: %1 gelen, %2 giden.</translation>
+        </message>
+        <message>
+            <source>== Other firewalls on the same hooks ==</source>
+            <translation>== Aynı kancalardaki diğer güvenlik duvarları ==</translation>
+        </message>
+        <message>
+            <source>None. Centurion's rules decide alone.</source>
+            <translation>Yok. Kararı yalnızca Centurion kuralları veriyor.</translation>
+        </message>
+        <message>
+            <source>A packet must pass every one of these. A drop there wins over an "allow" here, so a port opened here can still be closed by them.</source>
+            <translation>Bir paket bunların hepsinden geçmek zorundadır. Oradaki bir düşürme buradaki "izin ver"den üstündür; yani burada açılan bir port onlar tarafından yine kapatılabilir.</translation>
+        </message>
+        <message>
+            <source>At least one of them drops by default: check it if an allowed port stays unreachable.</source>
+            <translation>En az biri varsayılan olarak düşürüyor: izin verilen bir porta ulaşılamıyorsa onu denetleyin.</translation>
+        </message>
+        <message>
+            <source>iptables-legacy tables are also loaded (%1); nft cannot show their rules. Check them with iptables -S.</source>
+            <translation>iptables-legacy tabloları da yüklü (%1); nft bunların kurallarını gösteremez. iptables -S ile denetleyin.</translation>
+        </message>
+        <message>
+            <source>== Loaded rules (address lists omitted) ==</source>
+            <translation>== Yüklü kurallar (adres listeleri hariç) ==</translation>
+        </message>
+        <message>
+            <source>Live firewall rules</source>
+            <translation>Canlı güvenlik duvarı kuralları</translation>
+        </message>
+    </context>
+    <context>
+        <name>LookupTab</name>
+        <message>
+            <source>Range</source>
+            <translation>Aralık</translation>
+        </message>
+        <message>
+            <source>CIDR</source>
+            <translation>CIDR</translation>
+        </message>
+        <message>
+            <source>Network</source>
+            <translation>Ağ</translation>
+        </message>
+        <message>
+            <source>Organisation</source>
+            <translation>Kuruluş</translation>
+        </message>
+        <message>
+            <source>Country</source>
+            <translation>Ülke</translation>
+        </message>
+        <message>
+            <source>AS</source>
+            <translation>AS</translation>
+        </message>
+        <message>
+            <source>AS name</source>
+            <translation>AS adı</translation>
+        </message>
+        <message>
+            <source>Abuse contact</source>
+            <translation>Kötüye kullanım iletişimi</translation>
+        </message>
+        <message>
+            <source>Registered</source>
+            <translation>Kayıt tarihi</translation>
+        </message>
+        <message>
+            <source>Updated</source>
+            <translation>Güncelleme</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>Domain</source>
+            <translation>Alan adı</translation>
+        </message>
+        <message>
+            <source>Registrar</source>
+            <translation>Kayıt kuruluşu</translation>
+        </message>
+        <message>
+            <source>Expires</source>
+            <translation>Bitiş tarihi</translation>
+        </message>
+        <message>
+            <source>Name servers</source>
+            <translation>Ad sunucuları</translation>
+        </message>
+        <message>
+            <source>Origin AS</source>
+            <translation>Kaynak AS</translation>
+        </message>
+        <message>
+            <source>BGP prefix</source>
+            <translation>BGP öneki</translation>
+        </message>
+        <message>
+            <source>RIR</source>
+            <translation>RIR</translation>
+        </message>
+        <message>
+            <source>Allocated</source>
+            <translation>Tahsis tarihi</translation>
+        </message>
+        <message>
+            <source>Whois</source>
+            <translation>Whois</translation>
+        </message>
+        <message>
+            <source>DNS records</source>
+            <translation>DNS kayıtları</translation>
+        </message>
+        <message>
+            <source>Port check</source>
+            <translation>Port denetimi</translation>
+        </message>
+        <message>
+            <source>Ping</source>
+            <translation>Ping</translation>
+        </message>
+        <message>
+            <source>Traceroute</source>
+            <translation>Traceroute</translation>
+        </message>
+        <message>
+            <source>Routing data</source>
+            <translation>Yönlendirme verisi</translation>
+        </message>
+        <message>
+            <source>Also asks Team Cymru's public service (whois.cymru.com) which network announces the address: origin AS, BGP prefix, AS name.
+The address or AS number is sent to that service as well as to the registries.</source>
+            <translation>Adresi hangi ağın duyurduğunu Team Cymru'nun herkese açık servisine de (whois.cymru.com) sorar: kaynak AS, BGP öneki, AS adı.
+Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönderilir.</translation>
+        </message>
+        <message>
+            <source>Run</source>
+            <translation>Çalıştır</translation>
+        </message>
+        <message>
+            <source>Stop</source>
+            <translation>Durdur</translation>
+        </message>
+        <message>
+            <source>Copy</source>
+            <translation>Kopyala</translation>
+        </message>
+        <message>
+            <source>Stopped.</source>
+            <translation>Durduruldu.</translation>
+        </message>
+        <message>
+            <source>Server</source>
+            <translation>Sunucu</translation>
+        </message>
+        <message>
+            <source>system resolver (or 1.1.1.1)</source>
+            <translation>sistem çözümleyicisi (veya 1.1.1.1)</translation>
+        </message>
+        <message>
+            <source>Ports</source>
+            <translation>Portlar</translation>
+        </message>
+        <message>
+            <source>IP address, CIDR block, AS number (AS15169) or domain</source>
+            <translation>IP adresi, CIDR bloğu, AS numarası (AS15169) veya alan adı</translation>
+        </message>
+        <message>
+            <source>domain name, or an IP address for its reverse name</source>
+            <translation>alan adı veya ters kaydı için IP adresi</translation>
+        </message>
+        <message>
+            <source>host name or IP address</source>
+            <translation>ana makine adı veya IP adresi</translation>
+        </message>
+        <message>
+            <source>Working…</source>
+            <translation>Çalışıyor…</translation>
+        </message>
+        <message>
+            <source>That is not a host name or address.</source>
+            <translation>Bu bir ana makine adı veya adres değil.</translation>
+        </message>
+        <message>
+            <source>no answer from the helper</source>
+            <translation>yardımcı programdan yanıt yok</translation>
+        </message>
+        <message>
+            <source>The registry sent no structured fields; its full answer is below.</source>
+            <translation>Kayıt kurumu yapılandırılmış alan göndermedi; tam yanıt aşağıda.</translation>
+        </message>
+        <message>
+            <source>Source: %1</source>
+            <translation>Kaynak: %1</translation>
+        </message>
+        <message>
+            <source>incomplete: %1</source>
+            <translation>eksik: %1</translation>
+        </message>
+        <message>
+            <source>The DNS server must be an IP address.</source>
+            <translation>DNS sunucusu bir IP adresi olmalı.</translation>
+        </message>
+        <message>
+            <source>%1 record(s) for %2</source>
+            <translation>%2 için %1 kayıt</translation>
+        </message>
+        <message>
+            <source>No records for %1.</source>
+            <translation>%1 için kayıt yok.</translation>
+        </message>
+        <message>
+            <source>DNS lookup failed: %1</source>
+            <translation>DNS sorgusu başarısız: %1</translation>
+        </message>
+        <message>
+            <source>Name the ports to check: numbers or ranges, at most %1.</source>
+            <translation>Denetlenecek portları yazın: sayılar veya aralıklar, en çok %1.</translation>
+        </message>
+        <message>
+            <source>open</source>
+            <translation>açık</translation>
+        </message>
+        <message>
+            <source>%1: %2 of %3 port(s) open over TCP</source>
+            <translation>%1: TCP üzerinden %3 porttan %2 tanesi açık</translation>
+        </message>
+        <message>
+            <source>closed (refused)</source>
+            <translation>kapalı (reddedildi)</translation>
+        </message>
+        <message>
+            <source>no answer (filtered, or the host is down)</source>
+            <translation>yanıt yok (filtreli veya makine kapalı)</translation>
+        </message>
+        <message>
+            <source>%1 is not installed.</source>
+            <translation>%1 kurulu değil.</translation>
+        </message>
+        <message>
+            <source>Done.</source>
+            <translation>Tamamlandı.</translation>
+        </message>
+        <message>
+            <source>Finished with exit code %1.</source>
+            <translation>%1 çıkış koduyla bitti.</translation>
+        </message>
+        <message>
+            <source>%1 could not be started.</source>
+            <translation>%1 başlatılamadı.</translation>
         </message>
     </context>
 </TS>

@@ -1,6 +1,8 @@
 #include "netpage.h"
 
 #include "blocklistsubs.h"
+#include "netfirewall.h"
+#include "netlookup.h"
 #include "privileged.h"
 #include "systools.h"
 #include "theme.h"
@@ -375,9 +377,19 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     portsInfo_->setProperty("role", "muted");
     portsInfo_->setWordWrap(true);
     rp->addWidget(portsInfo_, 1);
+    auto *bPortOpen = new QPushButton(tr("Open"));
+    auto *bPortLan = new QPushButton(tr("LAN only"));
+    auto *bPortClose = new QPushButton(tr("Close"));
+    bPortClose->setObjectName(QStringLiteral("btnDanger"));
+    auto *bPortDefault = new QPushButton(tr("Use default"));
+    bPortOpen->setToolTip(tr("Firewall: allow incoming connections to the selected port from everywhere."));
+    bPortLan->setToolTip(tr("Firewall: allow the selected port from local networks only."));
+    bPortClose->setToolTip(tr("Firewall: block incoming connections to the selected port. The program keeps running."));
+    bPortDefault->setToolTip(tr("Firewall: remove this port's own rules, so the default incoming policy decides."));
+    for (QPushButton *b : {bPortOpen, bPortLan, bPortClose, bPortDefault}) rp->addWidget(b);
     auto *bExpP = button("Export…", rp);
     vp->addLayout(rp);
-    ports_ = makeTree({tr("Program"), tr("Proto"), tr("Port"), tr("Bound to"), tr("Reachable from"), tr("Usually")});
+    ports_ = makeTree({tr("Program"), tr("Proto"), tr("Port"), tr("Bound to"), tr("Reachable from"), tr("Usually"), tr("Firewall")});
     ports_->setColumnWidth(0, 200);
     ports_->setColumnWidth(3, 170);
     ports_->setColumnWidth(4, 170);
@@ -391,6 +403,23 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     vp->addWidget(portsNote);
     portsTab_ = tabs_->addTab(pp, tr("Open ports"));
     connect(bExpP, &QPushButton::clicked, this, [this] { exportTree(ports_, QStringLiteral("open-ports")); });
+    connect(bPortOpen, &QPushButton::clicked, this, [this] { setPortState(QStringLiteral("open")); });
+    connect(bPortLan, &QPushButton::clicked, this, [this] { setPortState(QStringLiteral("lan")); });
+    connect(bPortClose, &QPushButton::clicked, this, [this] { setPortState(QStringLiteral("closed")); });
+    connect(bPortDefault, &QPushButton::clicked, this, [this] { setPortState(QStringLiteral("default")); });
+
+    // ── Firewall ── default policies and port rules (firewall.rs)
+    firewall_ = new FirewallTab;
+    firewallTab_ = tabs_->addTab(firewall_, tr("Firewall"));
+    connect(firewall_, &FirewallTab::changeRequested, this, [this](QJsonObject req) {
+        req.insert(QStringLiteral("op"), QStringLiteral("firewall"));
+        runRoot(req);
+    });
+    connect(firewall_, &FirewallTab::inspectRequested, this, &NetPage::inspectFirewall);
+
+    // ── Lookup ── whois, DNS, port check, ping, traceroute
+    lookup_ = new LookupTab([this](const QJsonObject &req, std::function<void(const QJsonObject &)> done, int ms) { runUser(req, std::move(done), ms); });
+    tabs_->addTab(lookup_, tr("Lookup"));
 
     // ── wiring ──
     connect(guard_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"guard", on}}); });
@@ -474,6 +503,12 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     menuFor(connLog_, [this, detLog](QMenu &m, QTreeWidgetItem *it) {
         m.addAction(QStringLiteral("Details…"), this, [detLog, it] { detLog(it); });
         addIpActions(m, it->data(0, IpRole).toString());
+    });
+    menuFor(ports_, [this](QMenu &m, QTreeWidgetItem *) {
+        m.addAction(tr("Open"), this, [this] { setPortState(QStringLiteral("open")); });
+        m.addAction(tr("LAN only"), this, [this] { setPortState(QStringLiteral("lan")); });
+        m.addAction(tr("Close"), this, [this] { setPortState(QStringLiteral("closed")); });
+        m.addAction(tr("Use default"), this, [this] { setPortState(QStringLiteral("default")); });
     });
     menuFor(bl_, [this](QMenu &m, QTreeWidgetItem *it) {
         const QString entry = it->data(0, IpRole).toString();
@@ -567,7 +602,7 @@ void NetPage::poll() {
     } else {
         wifiTimer_->stop();
     }
-    if (isVisible() && (tabs_->currentIndex() == 0 || tabs_->currentIndex() == portsTab_)) {
+    if (isVisible() && (tabs_->currentIndex() == 0 || tabs_->currentIndex() == portsTab_ || tabs_->currentIndex() == firewallTab_)) {
         if (!viaRoot_) refreshConns();
         timer_->start();
     } else if (isVisible() && tabs_->currentIndex() == LOG_TAB) {
@@ -610,6 +645,7 @@ void NetPage::runRoot(const QJsonObject &req, bool isStatus) {
             guard_->setChecked(state_.value(QLatin1String("guard")).toBool());
             logConns_->setChecked(state_.value(QLatin1String("log_conns")).toBool());
             lan_->setChecked(state_.value(QLatin1String("allow_lan")).toBool(true));
+            firewall_->restore();
             return;
         }
         if (isStatus) applyStatus(r.json);
@@ -638,6 +674,7 @@ void NetPage::applyStatus(const QJsonObject &s) {
             return applyStatus(m);
         }
     state_ = s;
+    firewall_->applyStatus(s);
     const bool running = s.value(QLatin1String("running")).toBool(), guard = s.value(QLatin1String("guard")).toBool();
     const bool logging = s.value(QLatin1String("log_conns")).toBool(), traffic = s.value(QLatin1String("traffic")).toBool();
     { const QSignalBlocker b1(guard_), b2(lan_), b3(logConns_), b4(accounting_);
@@ -691,10 +728,14 @@ void NetPage::applyStatus(const QJsonObject &s) {
     // What the daemon reports as loaded differs from what is saved: it failed to load the rules, or it is a build
     // from before this setting existed (installed files are new, the running process is not).
     const QJsonObject applied = s.value(QLatin1String("applied")).toObject();
+    QJsonObject firewall = s.value(QLatin1String("firewall")).toObject();
+    firewall.remove(QStringLiteral("shadowed"));   // a remark of the status answer, not part of the rules
+    const bool firewallDiffers = applied.contains(QLatin1String("firewall")) ? applied.value(QLatin1String("firewall")).toObject() != firewall
+                                                                             : firewall.value(QLatin1String("enabled")).toBool();
     if (running && !str(applied, "error").isEmpty())
         lines << QStringLiteral("<span style='color:%1'>The daemon could not load the rules: %2</span>").arg(QLatin1String(theme::DANGER), str(applied, "error").toHtmlEscaped());
     else if (running && (applied.value(QLatin1String("guard")).toBool() != guard || applied.value(QLatin1String("log_conns")).toBool() != logging
-                         || applied.value(QLatin1String("traffic")).toBool() != traffic))
+                         || applied.value(QLatin1String("traffic")).toBool() != traffic || firewallDiffers))
         lines << QStringLiteral("<span style='color:%1'>The running daemon has not applied these settings — restart it: <code>%2</code></span>")
                      .arg(QLatin1String(theme::WARN), QFileInfo::exists(QStringLiteral("/run/systemd/system")) ? QStringLiteral("systemctl restart centurion-netguard")
                                                                                                              : QStringLiteral("rc-service centurion-netguard restart"));
@@ -941,7 +982,8 @@ void NetPage::readConnLog() {
         if (name.isEmpty()) name = o.value(QLatin1String("uid")).isDouble() ? QLatin1Char('(') + userName(uint(o.value(QLatin1String("uid")).toInteger())) + QLatin1Char(')')
                                                                              : QStringLiteral("—");
         QString note = str(o, "host");
-        if (blocked) note = QStringLiteral("blocked by the Wine guard");
+        if (blocked && str(o, "by") == QLatin1String("firewall")) note = tr("blocked by the firewall");
+        else if (blocked) note = QStringLiteral("blocked by the Wine guard");
         else if (o.value(QLatin1String("existing")).toBool()) note = QStringLiteral("already open when logging started");
         else if (closed) note = QStringLiteral("no listener on this port");
         else if (!note.isEmpty()) note = QStringLiteral("DNS query: ") + note;
@@ -1157,6 +1199,8 @@ void NetPage::ipInfo(const QString &ip) {
     auto *bBl = box->addButton(QStringLiteral("Blacklist IP"), QDialogButtonBox::ActionRole);
     bBl->setObjectName(QStringLiteral("btnDanger"));
     connect(bBl, &QPushButton::clicked, this, [this, ip] { changeList("blacklist", "add", ip); });
+    auto *bFull = box->addButton(tr("Full lookup…"), QDialogButtonBox::ActionRole);
+    connect(bFull, &QPushButton::clicked, d, [this, d, ip] { tabs_->setCurrentWidget(lookup_); lookup_->whois(ip); d->close(); });
     auto *bNet = box->addButton(QStringLiteral("Blacklist network…"), QDialogButtonBox::ActionRole);
     bNet->setObjectName(QStringLiteral("btnDanger"));
     connect(bNet, &QPushButton::clicked, this, [this, ip] { blacklistNetwork(ip); });
@@ -1211,6 +1255,7 @@ void NetPage::addIpActions(QMenu &m, const QString &ip) {
     const bool v6 = ip.contains(QLatin1Char(':'));
     const QString subnet = v6 ? ip + QStringLiteral("/64") : ip.section(QLatin1Char('.'), 0, 2) + QStringLiteral(".0/24");  // the helper clears the host bits
     m.addAction(QStringLiteral("IP info"), this, [this, ip] { ipInfo(ip); });
+    m.addAction(tr("Full lookup…"), this, [this, ip] { tabs_->setCurrentWidget(lookup_); lookup_->whois(ip); });
     m.addAction(QStringLiteral("Copy address"), this, [ip] { QGuiApplication::clipboard()->setText(ip); });
     m.addSeparator();
     m.addAction(QStringLiteral("Blacklist ") + ip, this, [this, ip] { changeList("blacklist", "add", ip); });
@@ -1582,6 +1627,7 @@ void NetPage::showPorts() {
     QTreeWidgetItem *sel = nullptr;
     int exposed = 0, total = 0, clients = 0;
     QSet<QString> seen;
+    QStringList exposedServices;
     for (const QJsonValue &v : std::as_const(connData_)) {
         const QJsonObject c = v.toObject();
         if (!str(c, "remote").isEmpty()) continue;   // connected sockets are on the Connections tab
@@ -1594,22 +1640,34 @@ void NetPage::showPorts() {
         const QString key = name + proto + local + QString::number(port);
         if (seen.contains(key)) continue;
         seen.insert(key);
-        const QString where = reach(local);
+        QString where = reach(local);
         QHostAddress a;
-        const bool outside = a.setAddress(local) && !a.isLoopback();
+        const bool bound = a.setAddress(local) && !a.isLoopback();
+        // The firewall's answer counts only while the daemon enforces it.
+        const QString fw = state_.value(QLatin1String("running")).toBool() ? str(c, "fw") : QString();
+        const bool conditional = !fw.isEmpty() && c.value(QLatin1String("fw_conditional")).toBool();
+        const bool walled = bound && fw == QLatin1String("blocked") && !conditional;
+        const bool outside = bound && !walled;
+        if (walled) where = tr("nobody (firewall)");
+        else if (bound && fw == QLatin1String("lan") && !conditional) where = tr("local networks (firewall)");
         QString usually = portService(proto, port);
         const bool client = proto == QLatin1String("udp") && usually.isEmpty() && port >= eph.first && port <= eph.second;
         if (client) usually = tr("a program's own client socket (temporary port)");
-        auto *it = new SortItem({name, proto.toUpper(), QString::number(port), local, where, usually});
+        QString wall = !bound ? QStringLiteral("—") : fw == QLatin1String("open") ? tr("open") : fw == QLatin1String("lan") ? tr("LAN only")
+                       : fw == QLatin1String("blocked") ? tr("closed") : tr("no rules");
+        if (bound && conditional) wall += QStringLiteral(" *");
+        auto *it = new SortItem({name, proto.toUpper(), QString::number(port), local, where, usually, wall});
+        if (wall.endsWith(QLatin1Char('*'))) it->setToolTip(6, tr("A rule limited to certain addresses or an interface also applies to this port."));
         it->setToolTip(0, str(c, "exe"));
         it->setData(0, KeyRole, key);
         if (client) {
             ++clients;
-            for (int k = 0; k < 6; ++k) it->setForeground(k, QColor(QLatin1String(theme::MUTED)));
+            for (int k = 0; k < 7; ++k) it->setForeground(k, QColor(QLatin1String(theme::MUTED)));
         } else if (outside) {
             ++exposed;
+            exposedServices << QStringLiteral("%1: %2 %3 (%4)").arg(usually.isEmpty() ? name : usually, proto).arg(port).arg(name);
             const bool any = a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6;
-            if (any) for (int k = 0; k < 6; ++k) it->setForeground(k, QColor(QLatin1String(theme::WARN)));
+            if (any && fw != QLatin1String("lan")) for (int k = 0; k < 7; ++k) it->setForeground(k, QColor(QLatin1String(theme::WARN)));
         }
         ports_->addTopLevelItem(it);
         if (key == keep) sel = it;
@@ -1619,9 +1677,30 @@ void NetPage::showPorts() {
     if (sel) ports_->setCurrentItem(sel);
     ports_->verticalScrollBar()->setValue(scroll);
     ports_->setUpdatesEnabled(true);
+    firewall_->setExposed(exposedServices);
     portsInfo_->setText(tr("%1 listening socket(s); %2 reachable from other machines (orange: on every network). "
                            "From the connection snapshot, refreshed every 3 s while this tab is open.").arg(total).arg(exposed)
                         + (clients ? QLatin1Char(' ') + tr("%1 grey row(s) are programs' own client sockets on temporary ports.").arg(clients) : QString()));
+}
+
+void NetPage::setPortState(const QString &state) {
+    const QTreeWidgetItem *it = ports_->currentItem();
+    if (!it) { QMessageBox::information(this, tr("Firewall"), tr("Select a port first.")); return; }
+    const QString proto = it->text(1).toLower();
+    const int port = it->text(2).toInt();
+    QJsonObject req{{"op", "firewall"}, {"port", QJsonObject{{"proto", proto}, {"port", port}, {"state", state}}}};
+    if (state != QLatin1String("default") && !state_.value(QLatin1String("firewall")).toObject().value(QLatin1String("enabled")).toBool()) {
+        if (QMessageBox::question(this, tr("Firewall"), tr("The firewall is off, so this rule would do nothing. Turn it on? Rules already saved on the Firewall tab take effect too.")) != QMessageBox::Yes) return;
+        req.insert(QStringLiteral("enabled"), true);
+    }
+    runRoot(req);
+}
+
+void NetPage::inspectFirewall() {
+    privileged::run(helper(), QJsonObject{{"op", "fw_inspect"}}, this, [this](const privileged::Result &r) {
+        if (!r.ok()) { QMessageBox::warning(this, tr("Firewall"), r.message()); return; }
+        firewall_->showInspection(r.json);
+    });
 }
 
 void NetPage::exportTree(QTreeWidget *tree, const QString &name) {
@@ -1672,6 +1751,13 @@ void NetPage::exportRules() {
     }
     out << QString() << QStringLiteral("[blacklist]") << single;
     for (auto g = groups.cbegin(); g != groups.cend(); ++g) out << QString() << QStringLiteral("[blacklist: %1]").arg(g.key()) << g.value();
+    // One rule per line. The default policies are not exported: importing must not change them.
+    out << QString() << QStringLiteral("[firewall]");
+    for (const QJsonValue &r : state_.value(QLatin1String("firewall")).toObject().value(QLatin1String("rules")).toArray()) {
+        QJsonObject o = r.toObject();
+        o.remove(QStringLiteral("id"));
+        out << QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    }
     QFile f(file);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         QMessageBox::warning(this, tr("Export rules"), tr("Cannot write %1: %2").arg(file, f.errorString()));
@@ -1705,7 +1791,7 @@ void NetPage::importRules() {
         QMessageBox::warning(this, tr("Import rules"), tr("Cannot read %1.").arg(file));
         return;
     }
-    QJsonArray white;
+    QJsonArray white, rules;
     QMap<QString, QJsonArray> black;   // label ("" = single entries) → entries
     QString section, label;
     QSet<QString> have;
@@ -1728,6 +1814,10 @@ void NetPage::importRules() {
         } else if (section == QLatin1String("blacklist")) {
             if (!validNetEntry(l)) { ++invalid; continue; }
             black[label].append(l);
+        } else if (section == QLatin1String("firewall")) {
+            const QJsonObject rule = QJsonDocument::fromJson(l.toUtf8()).object();
+            if (rule.isEmpty()) { ++invalid; continue; }
+            rules.append(rule);
         } else {
             ++invalid;   // outside a known section
             continue;
@@ -1743,11 +1833,13 @@ void NetPage::importRules() {
     int blackCount = 0;
     for (const QJsonArray &a : std::as_const(black)) blackCount += a.size();
     QString ask = tr("Add %1 whitelisted program(s) and %2 blacklisted address(es)?").arg(white.size()).arg(blackCount);
+    if (!rules.isEmpty()) ask += QLatin1Char('\n') + tr("Also add %1 firewall rule(s).").arg(rules.size());
     if (invalid) ask += QLatin1Char('\n') + tr("%1 line(s) were not valid rules and are skipped.").arg(invalid);
     if (QMessageBox::question(this, tr("Import rules"), ask) != QMessageBox::Yes) return;
     // One request after the other (each rewrites the daemon's configuration); the first failure stops the rest.
     QList<QJsonObject> reqs;
     if (!white.isEmpty()) reqs << QJsonObject{{"op", "whitelist"}, {"add", white}};
+    if (!rules.isEmpty()) reqs << QJsonObject{{"op", "firewall"}, {"add", rules}};
     for (auto b = black.cbegin(); b != black.cend(); ++b) {
         QJsonObject r{{"op", "blacklist"}, {"add", b.value()}};
         if (!b.key().isEmpty()) r.insert(QStringLiteral("label"), b.key());

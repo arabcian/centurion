@@ -1,8 +1,9 @@
 //! Network guard — Health → Network.
 //!
-//! Four parts, one module:
+//! Five parts, one module:
 //!   * connection list   sock_diag (the kernel interface behind `ss`) + /proc/<pid>/fd
 //!   * IP blacklist      nftables table `inet centurion_netguard` (drop in + out)
+//!   * firewall          default inbound / outbound policy and port rules (firewall.rs), same table
 //!   * Wine/.exe guard   the first packet of every new outbound flow is queued
 //!    (NFQUEUE) to the daemon; it finds the owning socket
 //!    and process, and if that is a Wine program which is
@@ -45,6 +46,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{Duration, Instant};
+use crate::firewall::Firewall;
 use crate::traffic;
 
 pub const CONF_DIR: &str = "/etc/centurion";
@@ -69,9 +71,15 @@ const NFNLGRP_CONNTRACK_NEW: u32 = 1;
 const NFNLGRP_CONNTRACK_DESTROY: u32 = 3;
 const NF_ACCT_SYSCTL: &str = "/proc/sys/net/netfilter/nf_conntrack_acct";
 const TRAFFIC_FLUSH: Duration = Duration::from_secs(10);
+/// nfnetlink_log group of packets the firewall stopped (shown in the connection log).
+const NFLOG_GROUP: u16 = QUEUE_NUM;
 
 pub const KCONFIG: &[&str] = &["NETFILTER_NETLINK_QUEUE", "NF_TABLES", "NF_TABLES_INET", "NFT_QUEUE", "NF_CONNTRACK",
                                "NFT_CT", "INET_DIAG", "INET_TCP_DIAG", "INET_UDP_DIAG", "INET_DIAG_DESTROY"];
+
+/// Needed only by the firewall features that use them.
+const KCONFIG_REJECT: &[&str] = &["NFT_REJECT", "NFT_REJECT_INET"];
+const KCONFIG_FW_LOG: &[&str] = &["NFT_LOG", "NETFILTER_NETLINK_LOG"];
 
 const AF_INET: u8 = libc::AF_INET as u8;
 const AF_INET6: u8 = libc::AF_INET6 as u8;
@@ -101,6 +109,8 @@ impl Net {
         };
         Some(Net { addr, prefix })
     }
+
+    pub fn is_ipv4(&self) -> bool { self.addr.is_ipv4() }
 
     pub fn contains(&self, ip: IpAddr) -> bool {
         match (self.addr, unmap(ip)) {
@@ -170,10 +180,12 @@ pub struct Config {
     pub blacklist: Vec<Net>,
     /// Blacklist entry (as printed) → group name; entries banned together are removed together.
     pub labels: HashMap<String, String>,
+    /// Default policies and port rules.
+    pub fw: Firewall,
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new() } }
+    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new(), fw: Firewall::default() } }
 }
 
 fn basename(s: &str) -> &str { s.rsplit(['/', '\\']).next().unwrap_or(s) }
@@ -198,12 +210,13 @@ impl Config {
             whitelist: strs("whitelist").into_iter().filter(|s| valid_entry(s)).take(MAX_WHITELIST).collect(),
             blacklist,
             labels,
+            fw: Firewall::from_json(&v["firewall"]).map_err(|e| format!("{CONF_FILE}: {e}"))?,
         })
     }
 
     pub fn to_json(&self) -> Value {
         json!({"guard": self.guard, "allow_lan": self.allow_lan, "log_conns": self.log_conns, "traffic": self.traffic, "whitelist": self.whitelist,
-               "blacklist": self.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), "labels": self.labels})
+               "blacklist": self.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), "labels": self.labels, "firewall": self.fw.to_json()})
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -532,8 +545,11 @@ fn sys_bin(name: &str) -> Option<PathBuf> {
     ["/usr/sbin", "/sbin", "/usr/bin", "/bin"].iter().map(|d| Path::new(d).join(name)).find(|p| crate::trusted_path(p))
 }
 
+fn nft_script(cfg: &Config) -> String { nft_ruleset(cfg, false) }
+
 /// The whole table, replaced atomically (declare → delete → define is one transaction).
-fn nft_script(cfg: &Config) -> String {
+/// `log_blocked`: the firewall also reports what it stops to the daemon.
+fn nft_ruleset(cfg: &Config, log_blocked: bool) -> String {
     let set = |name: &str, ty: &str, v4: bool| {
         let el: Vec<String> = cfg.blacklist.iter().filter(|n| n.addr.is_ipv4() == v4).map(Net::to_string).collect();
         let elements = if el.is_empty() { String::new() } else { format!(" elements = {{ {} }}", el.join(", ")) };
@@ -542,17 +558,20 @@ fn nft_script(cfg: &Config) -> String {
     let mut s = format!("table inet {TABLE}\ndelete table inet {TABLE}\ntable inet {TABLE} {{\n");
     s += &set("bl4", "ipv4_addr", true);
     s += &set("bl6", "ipv6_addr", false);
+    s += &cfg.fw.chains(log_blocked.then_some(NFLOG_GROUP));
     let queue = format!("\t\tmeta l4proto {{ tcp, udp }} queue num {QUEUE_NUM} bypass\n");
     // Loopback first, before the blacklist drops: an entry or range that covers 127.0.0.0/8 or ::1
     // (e.g. "0.0.0.0 - 255.255.255.254") must not cut the machine off from its own local services.
     s += "\tchain in {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tiifname \"lo\" accept\n\t\tip saddr @bl4 drop\n\t\tip6 saddr @bl6 drop\n";
     if cfg.traffic { s += "\t\tct state invalid counter\n"; }
+    s += &cfg.fw.hook(true);  // before the queue: the daemon's accept would end this chain
     if cfg.log_conns {
         s += "\t\tct state != new accept\n\t\tmeta pkttype { broadcast, multicast } accept\n";
         s += &queue;
     }
     s += "\t}\n\tchain out {\n\t\ttype filter hook output priority 0; policy accept;\n\t\toifname \"lo\" accept\n\t\tip daddr @bl4 drop\n\t\tip6 daddr @bl6 drop\n";
     if cfg.traffic { s += "\t\tct state invalid counter\n"; }
+    s += &cfg.fw.hook(false);
     if cfg.guard || cfg.log_conns {
         s += "\t\tct state != new accept\n";
         // With the connection log on, LAN flows must reach the daemon too; it applies the exemption itself.
@@ -574,6 +593,25 @@ fn nft_run(script: &str) -> Result<(), String> {
     let _ = c.stdin.take().map(|mut i| i.write_all(script.as_bytes()));
     let out = c.wait_with_output().map_err(|e| format!("nft: {e}"))?;
     if out.status.success() { Ok(()) } else { Err(format!("nft: {}", String::from_utf8_lossy(&out.stderr).trim())) }
+}
+
+/// Loads the table. A kernel without nflog support still gets the rules, only without the blocked-packet log.
+fn nft_load(cfg: &Config, log_blocked: bool) -> Result<(), String> {
+    match nft_run(&nft_ruleset(cfg, log_blocked)) {
+        Err(e) if log_blocked => {
+            eprintln!("centurion-netguard: blocked packets are not logged: {e}");
+            nft_run(&nft_script(cfg))
+        }
+        r => r,
+    }
+}
+
+/// Output of a read-only nft command.
+fn nft_read(args: &[&str]) -> Result<String, String> {
+    let nft = sys_bin("nft").ok_or("nft not found (emerge net-firewall/nftables)")?;
+    let out = std::process::Command::new(nft).args(args).env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+        .current_dir("/").stdin(std::process::Stdio::null()).output().map_err(|e| format!("nft: {e}"))?;
+    if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(format!("nft: {}", String::from_utf8_lossy(&out.stderr).trim())) }
 }
 
 fn nft_remove() { let _ = nft_run(&format!("table inet {TABLE}\ndelete table inet {TABLE}\n")); }
@@ -711,6 +749,54 @@ fn queued_packet(p: &[u8]) -> Option<(u32, u8, &[u8])> {
     Some((id?, hook, payload))
 }
 
+// ── NFLOG (packets the firewall stopped) ───────────────────────────────────
+
+const NFUL_PACKET: u16 = 4 << 8;      // NFNL_SUBSYS_ULOG << 8 | NFULNL_MSG_PACKET
+const NFUL_CONFIG: u16 = 4 << 8 | 1;
+const NFULA_PACKET_HDR: u16 = 1;
+const NFULA_PAYLOAD: u16 = 9;
+const NFULA_CFG_CMD: u16 = 1;
+const NFULA_CFG_MODE: u16 = 2;
+
+/// The socket bound to NFLOG_GROUP.
+fn nflog_open() -> io::Result<OwnedFd> {
+    let fd = nl_open(libc::NETLINK_NETFILTER)?;
+    let config = |attr: u16, data: &[u8]| -> io::Result<()> {
+        let g = NFLOG_GROUP.to_be_bytes();
+        let mut body = vec![0, 0, g[0], g[1]];
+        nl_attr(&mut body, attr, data);
+        nl_send(&fd, &nl_msg(NFUL_CONFIG, NLM_F_REQUEST | NLM_F_ACK, &body))?;
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = nl_recv(&fd, &mut buf, 0)?;
+            let mut err = None;
+            nl_each(&buf[..n], |ty, p| if ty == NLMSG_ERROR { err = Some(nl_errno(p)); });
+            match err { Some(0) => return Ok(()), Some(e) => return Err(io::Error::from_raw_os_error(e)), None => {} }
+        }
+    };
+    config(NFULA_CFG_CMD, &[1])?;  // NFULNL_CFG_CMD_BIND
+    let mut mode = 128u32.to_be_bytes().to_vec();  // copy_range: the headers
+    mode.extend_from_slice(&[2, 0]);               // NFULNL_COPY_PACKET
+    config(NFULA_CFG_MODE, &mode)?;
+    Ok(fd)
+}
+
+/// (netfilter hook, payload) of an NFULNL_MSG_PACKET message body.
+fn nflog_packet(p: &[u8]) -> Option<(u8, &[u8])> {
+    let (mut a, mut hook, mut payload) = (p.get(4..)?, None, None);
+    while a.len() >= 4 {
+        let len = usize::from(u16::from_ne_bytes([a[0], a[1]]));
+        if len < 4 || len > a.len() { break; }
+        match u16::from_ne_bytes([a[2], a[3]]) & 0x3fff {
+            NFULA_PACKET_HDR if len >= 7 => hook = Some(a[6]),  // nfulnl_msg_packet_hdr: be16 hw_protocol, u8 hook
+            NFULA_PAYLOAD => payload = Some(&a[4..len]),
+            _ => {}
+        }
+        a = &a[((len + 3) & !3).min(a.len())..];
+    }
+    Some((hook?, payload?))
+}
+
 // ── daemon ─────────────────────────────────────────────────────────────────
 
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -743,6 +829,7 @@ struct Guard {
     owners_at: Instant,
     hot: Vec<i32>,                         // pids that owned the last logged sockets, searched first
     acct: Option<Acct>,                    // traffic accounting, while switched on
+    nflog: Option<OwnedFd>,                // packets the firewall stopped, while they are being logged
 }
 
 /// Per-program traffic accounting: the conntrack socket, the connections open now, and the day ledger.
@@ -757,7 +844,7 @@ struct Acct {
 struct Conn { exe: String, inbound: bool }
 
 /// One new flow waiting for its connection-log line.
-struct Seen { ts: u64, inbound: bool, f: Flow, host: String, blocked: bool, open: bool, inode: u32, uid: Option<u32>, pid: i32, exe: String }
+struct Seen { ts: u64, inbound: bool, f: Flow, host: String, blocked: bool, firewall: bool, open: bool, inode: u32, uid: Option<u32>, pid: i32, exe: String }
 
 /// Group allowed to read the guard's logs (the GUI reads them directly): `wheel`, as in the polkit
 /// rules. Without it the logs stay root-only.
@@ -832,10 +919,27 @@ impl Guard {
         if log {
             let host = if f.proto == UDP && f.dport == 53 && !inbound { pkt.get(f.l4 + 8..).and_then(dns_qname) } else { None };
             let (pid, exe) = block.unwrap_or_default();
-            self.pending.push(Seen { ts: now_secs(), inbound, host: host.unwrap_or_default(), blocked: !accept, open: sock.is_some(),
+            self.pending.push(Seen { ts: now_secs(), inbound, host: host.unwrap_or_default(), blocked: !accept, firewall: false, open: sock.is_some(),
                                      inode: sock.as_ref().map_or(0, |s| s.inode), uid: sock.as_ref().map(|s| s.uid), pid, exe, f });
         }
         accept
+    }
+
+    /// A packet the firewall stopped: one blocked line in the connection log, with the program when one is known.
+    fn firewall_blocked(&mut self, pkt: &[u8], hook: u8) {
+        let Some(f) = parse_packet(pkt) else { return };
+        let inbound = hook == HOOK_LOCAL_IN;
+        let broadcast = |ip: IpAddr| ip.is_multicast() || ip == IpAddr::V4(Ipv4Addr::BROADCAST);
+        if broadcast(f.dst) || self.pending.len() >= 1024 { return; }
+        let sock = if inbound { self.diag.find_local(&f) } else { self.diag.find_socket(&f) };
+        self.pending.push(Seen { ts: now_secs(), inbound, host: String::new(), blocked: true, firewall: true, open: sock.is_some(),
+                                 inode: sock.as_ref().map_or(0, |s| s.inode), uid: sock.as_ref().map(|s| s.uid), pid: 0, exe: String::new(), f });
+    }
+
+    /// Opens or closes the blocked-packet socket to match the configuration.
+    fn sync_nflog(&mut self) {
+        if !wants_nflog(&self.cfg) { self.nflog = None; return; }
+        if self.nflog.is_none() { self.nflog = open_nflog(); }
     }
 
     /// Some((pid, program)) when the socket belongs to a non-whitelisted Wine program: cut off and logged.
@@ -999,11 +1103,13 @@ impl Guard {
             let exe = if !e.exe.is_empty() || pid == 0 { e.exe } else { self.program(pid, &mut names) };
             let proto = if e.f.proto == TCP { "tcp" } else { "udp" };
             let (dir, remote, rport, lport) = if e.inbound { ("in", e.f.src, e.f.sport, e.f.dport) } else { ("out", e.f.dst, e.f.dport, e.f.sport) };
-            let key = format!("{dir}|{proto}|{remote}|{}|{exe}|{:?}|{}", if e.inbound { lport } else { rport }, e.uid, e.host);
+            let key = format!("{dir}|{proto}|{remote}|{}|{exe}|{:?}|{}|{}", if e.inbound { lport } else { rport }, e.uid, e.host, e.firewall);
             if self.seen.get(&key).is_some_and(|t| t.elapsed() < Duration::from_secs(60)) { continue; }
             self.seen.insert(key, Instant::now());
-            out += &json!({"ts": e.ts, "dir": dir, "proto": proto, "remote": remote.to_string(), "rport": rport, "lport": lport,
-                           "pid": pid, "uid": e.uid, "exe": exe, "host": e.host, "blocked": e.blocked, "open": e.open}).to_string();
+            let mut line = json!({"ts": e.ts, "dir": dir, "proto": proto, "remote": remote.to_string(), "rport": rport, "lport": lport,
+                                  "pid": pid, "uid": e.uid, "exe": exe, "host": e.host, "blocked": e.blocked, "open": e.open});
+            if e.firewall { line["by"] = json!("firewall"); }
+            out += &line.to_string();
             out.push('\n');
         }
         if !out.is_empty() { append_log(CONN_LOG, CONN_LOG_MAX, &out); }
@@ -1020,6 +1126,12 @@ impl Guard {
                           "exe": ident, "host": host.unwrap_or_default(), "killed": killed});
         append_log(LOG_FILE, LOG_MAX, &format!("{line}\n"));
     }
+}
+
+fn wants_nflog(cfg: &Config) -> bool { cfg.log_conns && cfg.fw.active() }
+
+fn open_nflog() -> Option<OwnedFd> {
+    nflog_open().map_err(|e| eprintln!("centurion-netguard: blocked packets are not logged: {e} (kernel: NETFILTER_NETLINK_LOG)")).ok()
 }
 
 /// Conntrack events for new and destroyed connections (ctnetlink multicast groups).
@@ -1071,7 +1183,7 @@ pub fn daemon_pid() -> Option<i32> {
 /// What the running daemon really enforces, for `status`: the helper and the GUI
 /// compare it with the saved configuration (an older daemon writes nothing here).
 fn write_state(cfg: &Config, error: Option<&str>) {
-    let _ = crate::write_root_file(STATE_FILE, json!({"guard": cfg.guard, "allow_lan": cfg.allow_lan, "log_conns": cfg.log_conns, "traffic": cfg.traffic, "error": error}).to_string().as_bytes());
+    let _ = crate::write_root_file(STATE_FILE, json!({"guard": cfg.guard, "allow_lan": cfg.allow_lan, "log_conns": cfg.log_conns, "traffic": cfg.traffic, "firewall": cfg.fw.to_json(), "error": error}).to_string().as_bytes());
 }
 
 fn applied() -> Value {
@@ -1079,7 +1191,7 @@ fn applied() -> Value {
 }
 
 fn in_force(cfg: &Config, a: &Value) -> bool {
-    a["error"].is_string() || (a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns && a["traffic"] == cfg.traffic)
+    a["error"].is_string() || (a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns && a["traffic"] == cfg.traffic && a["firewall"] == cfg.fw.to_json())
 }
 
 pub fn run_daemon() -> i32 {
@@ -1105,16 +1217,25 @@ pub fn run_daemon() -> i32 {
         Err(e) => { eprintln!("centurion-netguard: cannot bind NFQUEUE {QUEUE_NUM}: {e} (kernel: NETFILTER_NETLINK_QUEUE)"); return 1; }
     };
     let _ = std::fs::remove_file(STATE_FILE);
-    if let Err(e) = nft_run(&nft_script(&cfg)) {
-        eprintln!("centurion-netguard: {e} (kernel: NF_TABLES, NF_TABLES_INET, NFT_QUEUE, NFT_CT, NF_CONNTRACK)");
-        return 1;
+    let nflog = if wants_nflog(&cfg) { open_nflog() } else { None };
+    let mut start_error = None;
+    if let Err(e) = nft_load(&cfg, nflog.is_some()) {
+        // Firewall rules this kernel refuses must not take the blacklist down with them.
+        let without = Config { fw: Firewall { enabled: false, ..cfg.fw.clone() }, ..cfg.clone() };
+        if !cfg.fw.active() || nft_run(&nft_script(&without)).is_err() {
+            eprintln!("centurion-netguard: {e} (kernel: NF_TABLES, NF_TABLES_INET, NFT_QUEUE, NFT_CT, NF_CONNTRACK)");
+            return 1;
+        }
+        eprintln!("centurion-netguard: firewall NOT applied: {e}");
+        start_error = Some(format!("firewall not applied: {e}"));
     }
-    write_state(&cfg, None);
-    eprintln!("centurion-netguard: started (guard {}, connection log {}, {} blacklisted, {} whitelisted)",
-              if cfg.guard { "on" } else { "off" }, if cfg.log_conns { "on" } else { "off" }, cfg.blacklist.len(), cfg.whitelist.len());
+    write_state(&cfg, start_error.as_deref());
+    eprintln!("centurion-netguard: started (guard {}, connection log {}, firewall {}, {} blacklisted, {} whitelisted)",
+              if cfg.guard { "on" } else { "off" }, if cfg.log_conns { "on" } else { "off" }, if cfg.fw.active() { "on" } else { "off" },
+              cfg.blacklist.len(), cfg.whitelist.len());
     let mut g = Guard { cfg, diag, wine: HashSet::new(), idents: HashMap::new(), scanned: Instant::now(),
                         last_pid: String::new(), logged: HashMap::new(), pending: Vec::new(), flushed: Instant::now(),
-                        seen: HashMap::new(), owners: HashMap::new(), owners_at: Instant::now(), hot: Vec::new(), acct: None };
+                        seen: HashMap::new(), owners: HashMap::new(), owners_at: Instant::now(), hot: Vec::new(), acct: None, nflog };
     if let Err(e) = g.sync_acct() { eprintln!("centurion-netguard: {e}"); write_state(&g.cfg, Some(&e)); }
     if g.cfg.log_conns { g.snapshot(); }
     g.sweep();
@@ -1124,7 +1245,8 @@ pub fn run_daemon() -> i32 {
             match Config::load() {
                 Ok(c) => {
                     let was_logging = std::mem::replace(&mut g.cfg, c).log_conns;
-                    let res = nft_run(&nft_script(&g.cfg)).and_then(|_| g.sync_acct());
+                    g.sync_nflog();
+                    let res = nft_load(&g.cfg, g.nflog.is_some()).and_then(|_| g.sync_acct());
                     write_state(&g.cfg, res.as_ref().err().map(String::as_str));
                     match res {
                         Ok(()) => {
@@ -1147,10 +1269,12 @@ pub fn run_daemon() -> i32 {
         }
         let wait = wait.map_or(-1, |d| d.as_millis() as libc::c_int);
         let ct_fd = g.acct.as_ref().map_or(-1, |a| a.fd.as_raw_fd());  // a negative fd is ignored by poll
+        let log_fd = g.nflog.as_ref().map_or(-1, |f| f.as_raw_fd());
         let mut fds = [libc::pollfd { fd: queue.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 },
                        libc::pollfd { fd: pipe[0], events: libc::POLLIN, revents: 0 },
-                       libc::pollfd { fd: ct_fd, events: libc::POLLIN, revents: 0 }];
-        if unsafe { libc::poll(fds.as_mut_ptr(), 3, wait) } < 0 { continue; }  // EINTR: flags are checked above
+                       libc::pollfd { fd: ct_fd, events: libc::POLLIN, revents: 0 },
+                       libc::pollfd { fd: log_fd, events: libc::POLLIN, revents: 0 }];
+        if unsafe { libc::poll(fds.as_mut_ptr(), 4, wait) } < 0 { continue; }  // EINTR: flags are checked above
         if fds[1].revents != 0 { let mut b = [0u8; 64]; unsafe { libc::read(pipe[0], b.as_mut_ptr().cast(), b.len()); } }
         if fds[0].revents != 0 {
             for _ in 0..64 {  // then back to poll, so a flood cannot starve SIGTERM/SIGHUP
@@ -1163,6 +1287,16 @@ pub fn run_daemon() -> i32 {
             }
         }
         if fds[2].revents != 0 { g.acct_read(); }
+        if fds[3].revents != 0 {
+            for _ in 0..64 {
+                let Some(Ok(n)) = g.nflog.as_ref().map(|f| nl_recv(f, &mut buf, libc::MSG_DONTWAIT)) else { break };
+                let mut pkts: Vec<(u8, Vec<u8>)> = Vec::new();
+                nl_each(&buf[..n], |ty, p| if ty == NFUL_PACKET {
+                    if let Some((hook, payload)) = nflog_packet(p) { pkts.push((hook, payload.to_vec())); }
+                });
+                for (hook, p) in pkts { g.firewall_blocked(&p, hook); }
+            }
+        }
         if !g.pending.is_empty() && g.flushed.elapsed() >= FLUSH_GAP { g.flush(); }
         if g.acct.as_ref().and_then(|a| a.dirty).is_some_and(|d| d.elapsed() >= TRAFFIC_FLUSH) { g.acct_save(); }
     }
@@ -1209,17 +1343,23 @@ pub fn list() -> Value {
                 else { (comm(pid), exe, false) }
             }).clone()
         };
-        json!({"proto": if s.proto == TCP { "tcp" } else { "udp" }, "state": state_name(s),
+        let mut c = json!({"proto": if s.proto == TCP { "tcp" } else { "udp" }, "state": state_name(s),
                "local": s.src.to_string(), "lport": s.sport,
                "remote": if s.dport == 0 { String::new() } else { s.dst.to_string() }, "rport": s.dport,
                "uid": s.uid, "pid": pid, "name": name, "exe": exe, "wine": wine,
-               "bl": s.dport != 0 && cfg.blacklisted(s.dst)})
+               "bl": s.dport != 0 && cfg.blacklisted(s.dst)});
+        if s.dport == 0 && (s.proto == UDP || s.state == TCP_LISTEN) {
+            let (state, conditional) = cfg.fw.listen_state(s.proto == TCP, s.sport);
+            c["fw"] = json!(state);
+            c["fw_conditional"] = json!(conditional);
+        }
+        c
     }).collect();
     json!({"ok": true, "root": unsafe { libc::geteuid() } == 0, "conns": conns})
 }
 
 /// Kernel options from KCONFIG the running kernel lacks; None when its config is not readable.
-fn kconfig_missing() -> Option<Vec<&'static str>> {
+fn kconfig_missing(cfg: &Config) -> Option<Vec<&'static str>> {
     let mut u: libc::utsname = unsafe { std::mem::zeroed() };
     unsafe { libc::uname(&mut u); }
     let rel = unsafe { std::ffi::CStr::from_ptr(u.release.as_ptr()) }.to_string_lossy().into_owned();
@@ -1228,12 +1368,15 @@ fn kconfig_missing() -> Option<Vec<&'static str>> {
         .filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .or_else(|| std::fs::read_to_string(format!("/boot/config-{rel}")).ok())?;
     let set: HashSet<&str> = text.lines().filter_map(|l| l.strip_prefix("CONFIG_")?.split_once('=').map(|(k, _)| k)).collect();
-    Some(KCONFIG.iter().copied().filter(|k| !set.contains(k)).collect())
+    let reject = if cfg.fw.uses_reject() { KCONFIG_REJECT } else { &[] };
+    let log = if wants_nflog(cfg) { KCONFIG_FW_LOG } else { &[] };
+    Some(KCONFIG.iter().chain(reject).chain(log).copied().filter(|k| !set.contains(k)).collect())
 }
 
 pub fn status(full: bool) -> Value {
     let (cfg, err) = match Config::load() { Ok(c) => (c, None), Err(e) => (Config::default(), Some(e)) };
     let mut v = cfg.to_json();
+    v["firewall"]["shadowed"] = json!(cfg.fw.shadowed());
     let pid = daemon_pid();
     v["ok"] = json!(true);
     v["running"] = json!(pid.is_some());
@@ -1242,7 +1385,7 @@ pub fn status(full: bool) -> Value {
     if let Some(e) = err { v["config_error"] = json!(e); }
     if full {
         v["nft"] = json!(sys_bin("nft").is_some());
-        if let Some(m) = kconfig_missing() { v["missing"] = json!(m); }
+        if let Some(m) = kconfig_missing(&cfg) { v["missing"] = json!(m); }
     }
     v
 }
@@ -1269,6 +1412,48 @@ fn kill_where(pred: impl Fn(&Sock) -> bool) -> (usize, Option<String>) {
     (n, err)
 }
 
+/// Aborts the live connections a new blocking rule now decides: conntrack would keep them alive otherwise.
+/// A TCP socket on a port this machine listens on is inbound; inbound UDP has no such marker and is left alone.
+fn kill_blocked(fw: &Firewall, fresh: &[String]) -> usize {
+    let Ok(d) = Diag::open() else { return 0 };
+    let listen: HashSet<u16> = dump_all(&d).unwrap_or_default().iter().filter(|s| s.proto == TCP && s.state == TCP_LISTEN).map(|s| s.sport).collect();
+    kill_where(|s| {
+        if s.state == 6 || s.dst.is_loopback() || s.src.is_loopback() { return false; }
+        let inbound = s.proto == TCP && listen.contains(&s.sport);
+        fw.newly_blocks(fresh, inbound, s.proto, if inbound { s.sport } else { s.dport }, s.dst)
+    }).0
+}
+
+/// What the kernel really holds: this table (terse), hit counters per rule, and every other filter chain
+/// on the same hooks. A drop there wins over an allow here. Root only: nft cannot list for other users.
+fn fw_inspect(cfg: &Config) -> Value {
+    let text = match nft_read(&["-j", "list", "ruleset"]) { Ok(t) => t, Err(e) => return json!({"ok": false, "error": e}) };
+    let parsed: Value = match serde_json::from_str(&text) { Ok(v) => v, Err(e) => return json!({"ok": false, "error": format!("nft output: {e}")}) };
+    let (mut present, mut hits, mut others) = (false, serde_json::Map::new(), Vec::new());
+    for item in parsed["nftables"].as_array().map_or(&[][..], Vec::as_slice) {
+        let (c, r) = (&item["chain"], &item["rule"]);
+        if item["table"]["name"] == TABLE && item["table"]["family"] == "inet" { present = true; }
+        if (c["hook"] == "input" || c["hook"] == "output") && c["table"] != TABLE {
+            others.push(json!({"family": c["family"], "table": c["table"], "chain": c["name"], "hook": c["hook"], "priority": c["prio"], "policy": c["policy"]}));
+        }
+        let Some(tag) = r["comment"].as_str().filter(|_| r["table"] == TABLE) else { continue };
+        let key = if tag == "default" { format!("default_{}", r["chain"].as_str().unwrap_or("")) } else { tag.to_owned() };
+        for e in r["expr"].as_array().map_or(&[][..], Vec::as_slice) {
+            if let Some(n) = e["counter"]["packets"].as_u64() {
+                let bytes = e["counter"]["bytes"].as_u64().unwrap_or(0);
+                let slot = hits.entry(key.clone()).or_insert_with(|| json!({"packets": 0, "bytes": 0}));
+                slot["packets"] = json!(slot["packets"].as_u64().unwrap_or(0) + n);
+                slot["bytes"] = json!(slot["bytes"].as_u64().unwrap_or(0) + bytes);
+            }
+        }
+    }
+    // iptables-legacy rules are invisible to nft; this file lists the tables it has loaded.
+    let legacy: Vec<String> = ["/proc/net/ip_tables_names", "/proc/net/ip6_tables_names"].iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok()).flat_map(|t| t.lines().map(str::to_owned).collect::<Vec<_>>()).collect();
+    let rules = nft_read(&["-t", "list", "table", "inet", TABLE]).unwrap_or_default();
+    json!({"ok": true, "present": present, "active": cfg.fw.active(), "hits": hits, "others": others, "legacy": legacy, "rules": rules})
+}
+
 /// Removes every blacklist entry of group `label` (a subscription update with `replace`). Done before the
 /// new entries are added, so an entry the new list writes differently (a range, "1.2.3.5/24") is not
 /// removed again after it was re-added.
@@ -1284,13 +1469,14 @@ pub fn handle(req: &Value) -> Value {
     match op {
         "list" => return list(),
         "status" => return status(true),
-        "whois" => return whois(req["ip"].as_str().unwrap_or("")),
+        "whois" => return lookup(req["query"].as_str().or(req["ip"].as_str()).unwrap_or(""), req["asn"] == true),
         "wifi" => return crate::wifi::status(),
         _ => {}
     }
     if unsafe { libc::geteuid() } != 0 { return json!({"ok": false, "needs_root": true, "error": "this operation needs root (pkexec)"}); }
     let mut cfg = match Config::load() { Ok(c) => c, Err(e) => return json!({"ok": false, "error": e}) };
     let mut killed = 0;
+    let mut fresh_blocks = Vec::new();
     match op {
         "set" => {
             if let Some(b) = req["guard"].as_bool() { cfg.guard = b; }
@@ -1332,6 +1518,12 @@ pub fn handle(req: &Value) -> Value {
             cfg.whitelist.retain(|w| !del.contains(w));
             if cfg.whitelist.len() > MAX_WHITELIST { return json!({"ok": false, "error": "whitelist is full"}); }
         }
+        "firewall" => {
+            let before = cfg.fw.blocking();
+            if let Err(e) = cfg.fw.apply(req) { return json!({"ok": false, "error": e}); }
+            fresh_blocks = cfg.fw.blocking().into_iter().filter(|s| !before.contains(s)).collect();
+        }
+        "fw_inspect" => return fw_inspect(&cfg),
         "kill" => {
             let (proto, lport, rport) = (if req["proto"] == "udp" { UDP } else { TCP }, req["lport"].as_u64().unwrap_or(0), req["rport"].as_u64().unwrap_or(0));
             let remote: Option<IpAddr> = req["remote"].as_str().and_then(|s| s.parse().ok());
@@ -1361,6 +1553,8 @@ pub fn handle(req: &Value) -> Value {
         if daemon_pid().is_none() || in_force(&cfg, &applied()) { break; }
         std::thread::sleep(Duration::from_millis(40));
     }
+    // After the reload: a program that reconnects at once must already meet the new rule.
+    if !fresh_blocks.is_empty() && daemon_pid().is_some() { killed += kill_blocked(&cfg.fw, &fresh_blocks); }
     let mut v = status(false);
     v["killed"] = json!(killed);
     v
@@ -1429,9 +1623,9 @@ fn whois_fields(text: &str) -> Vec<(String, &str)> {
         .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_lowercase(), v.trim()))).filter(|(_, v)| !v.is_empty()).collect()
 }
 
-/// The server a reply points to (IANA `refer:`, ARIN `ReferralServer: whois://host`).
+/// The server a reply points to (IANA `refer:`, ARIN `ReferralServer: whois://host`, a registry's `Registrar WHOIS Server:`).
 fn whois_referral(text: &str) -> Option<String> {
-    let v = whois_fields(text).into_iter().find(|(k, _)| k == "refer" || k == "referralserver")?.1.to_lowercase();
+    let v = whois_fields(text).into_iter().find(|(k, _)| matches!(k.as_str(), "refer" | "referralserver" | "registrar whois server" | "whois server"))?.1.to_lowercase();
     let host = v.strip_prefix("whois://").unwrap_or(&v).trim_end_matches('/').trim_end_matches(":43");
     (!v.starts_with("rwhois") && whois_host_ok(host)).then(|| host.to_owned())
 }
@@ -1447,7 +1641,8 @@ fn whois_summary(text: &str, last: bool) -> Vec<[String; 2]> {
     for (label, keys) in [("Range", &["inetnum", "inet6num", "netrange"][..]), ("CIDR", &["cidr", "route", "route6"]),
                           ("Network", &["netname"]), ("Organisation", &["orgname", "org-name", "organization", "owner", "descr"]),
                           ("Country", &["country"]), ("AS", &["originas", "origin", "aut-num"]),
-                          ("Abuse contact", &["orgabuseemail", "abuse-mailbox"])] {
+                          ("Abuse contact", &["orgabuseemail", "abuse-mailbox"]), ("Registered", &["regdate", "created"]),
+                          ("Updated", &["updated", "last-modified"]), ("Status", &["nettype", "status"])] {
         if let Some(v) = pick(keys) { out.push([label.to_owned(), v.to_owned()]); }
     }
     // RIPE / APNIC: "% Abuse contact for '…' is 'abuse@example.net'"
@@ -1459,25 +1654,155 @@ fn whois_summary(text: &str, last: bool) -> Vec<[String; 2]> {
     out
 }
 
-/// Who an address belongs to: IANA names the registry, the registry answers (at
-/// most three hops). Runs as the calling user; nothing is sent for local addresses.
-pub fn whois(ip: &str) -> Value {
-    let Ok(ip) = ip.trim().parse::<IpAddr>().map(unmap) else { return json!({"ok": false, "error": "not an IP address"}) };
-    if ip.is_loopback() || ip.is_unspecified() || is_lan(ip) {
-        return json!({"ok": true, "ip": ip.to_string(), "server": "", "raw": "",
-                      "summary": [["Network", "private / local address — not registered anywhere"]]});
+#[derive(Debug, PartialEq)]
+enum WhoisQuery { Ip(IpAddr), Asn(u32), Domain(String) }
+
+/// An address, a CIDR block (its network address is asked for), `AS123`, or a domain name in ASCII.
+fn whois_target(q: &str) -> Option<WhoisQuery> {
+    let q = q.trim().trim_end_matches('.');
+    if let Ok(ip) = q.parse::<IpAddr>() { return Some(WhoisQuery::Ip(unmap(ip))); }
+    if q.contains('/') { return Net::parse(q).map(|n| WhoisQuery::Ip(n.addr)); }
+    if let Some(n) = q.get(..2).filter(|p| p.eq_ignore_ascii_case("as")).and_then(|_| q[2..].parse().ok()) { return Some(WhoisQuery::Asn(n)); }
+    let d = q.to_ascii_lowercase();
+    let label_ok = |l: &str| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    (d.len() <= 253 && d.contains('.') && d.split('.').all(label_ok)).then_some(WhoisQuery::Domain(d))
+}
+
+/// The same question as each registry wants it asked.
+fn whois_question(server: &str, q: &WhoisQuery) -> String {
+    match q {
+        WhoisQuery::Ip(ip) if server == "whois.arin.net" => format!("n + {ip}"),
+        WhoisQuery::Ip(ip) => ip.to_string(),
+        WhoisQuery::Asn(n) if server == "whois.arin.net" => format!("a {n}"),
+        WhoisQuery::Asn(n) => format!("AS{n}"),
+        WhoisQuery::Domain(d) if server == "whois.verisign-grs.com" => format!("domain {d}"),
+        WhoisQuery::Domain(d) if server == "whois.denic.de" => format!("-T dn,ace {d}"),
+        WhoisQuery::Domain(d) => d.clone(),
     }
-    let (mut next, mut server, mut raw) = ("whois.iana.org".to_owned(), String::new(), String::new());
-    for _ in 0..3 {
-        let q = if next == "whois.arin.net" { format!("n + {ip}") } else { ip.to_string() };
-        match whois_query(&next, &q) {
-            Ok(t) => { raw = t; server = std::mem::take(&mut next); }
-            Err(e) if raw.is_empty() => return json!({"ok": false, "error": e}),
-            Err(_) => break,
+}
+
+/// `keys` looked up in the records, last server first (the most specific one answers last).
+fn first_of<'a>(records: &[Vec<(String, &'a str)>], keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|k| records.iter().rev().find_map(|f| f.iter().find(|(key, v)| key == k && !v.to_ascii_lowercase().contains("redacted")).map(|(_, v)| *v)))
+}
+
+/// Every distinct value of `keys`, from the first record that has any.
+fn all_of(records: &[Vec<(String, &str)>], keys: &[&str], clean: fn(&str) -> String) -> String {
+    for f in records.iter().rev() {
+        let mut out: Vec<String> = Vec::new();
+        for (_, v) in f.iter().filter(|(k, _)| keys.contains(&k.as_str())) {
+            let c = clean(v);
+            if !out.iter().any(|x| x.eq_ignore_ascii_case(&c)) { out.push(c); }
         }
-        match whois_referral(&raw) { Some(n) if n != server => next = n, _ => break }
+        if !out.is_empty() { return out.join(", "); }
     }
-    json!({"ok": true, "ip": ip.to_string(), "server": server, "summary": whois_summary(&raw, server.ends_with("arin.net")), "raw": raw})
+    String::new()
+}
+
+fn domain_summary(texts: &[&str]) -> Vec<[String; 2]> {
+    let records: Vec<_> = texts.iter().map(|t| whois_fields(t)).collect();
+    let mut out: Vec<[String; 2]> = Vec::new();
+    for (label, keys) in [("Domain", &["domain name", "domain"][..]), ("Registrar", &["registrar", "sponsoring registrar"]),
+                          ("Registered", &["creation date", "created", "registered on", "registered"]),
+                          ("Updated", &["updated date", "last updated", "last-update", "changed", "modified"]),
+                          ("Expires", &["registry expiry date", "registrar registration expiration date", "expiry date", "expires", "expires on", "paid-till"]),
+                          ("DNSSEC", &["dnssec"]), ("Organisation", &["registrant organization", "org", "organisation"]),
+                          ("Country", &["registrant country", "country"]), ("Abuse contact", &["registrar abuse contact email", "abuse-mailbox"])] {
+        if let Some(v) = first_of(&records, keys) { out.push([label.to_owned(), v.to_owned()]); }
+    }
+    // "clientTransferProhibited https://icann.org/epp#…": the name is the information.
+    let status = all_of(&records, &["domain status", "status"], |v| v.split_whitespace().next().unwrap_or("").to_owned());
+    if !status.is_empty() { out.push(["Status".to_owned(), status]); }
+    let ns = all_of(&records, &["name server", "nserver", "nameserver"], |v| v.split_whitespace().next().unwrap_or("").to_lowercase());
+    if !ns.is_empty() { out.push(["Name servers".to_owned(), ns]); }
+    out
+}
+
+fn asn_summary(text: &str) -> Vec<[String; 2]> {
+    let records = [whois_fields(text)];
+    let mut out: Vec<[String; 2]> = Vec::new();
+    for (label, keys) in [("AS", &["aut-num", "asnumber"][..]), ("AS name", &["as-name", "asname"]), ("Organisation", &["orgname", "org-name", "organization", "owner", "descr"]),
+                          ("Country", &["country"]), ("Registered", &["regdate", "created"]), ("Updated", &["updated", "last-modified"]),
+                          ("Abuse contact", &["orgabuseemail", "abuse-mailbox"])] {
+        if let Some(v) = first_of(&records, keys) { out.push([label.to_owned(), v.to_owned()]); }
+    }
+    out
+}
+
+/// Team Cymru's routing table answer, `AS | IP | BGP Prefix | CC | Registry | Allocated | AS Name`
+/// (for an AS query: `AS | CC | Registry | Allocated | AS Name`), as summary rows.
+fn cymru_summary(text: &str) -> Vec<[String; 2]> {
+    let mut out: Vec<[String; 2]> = Vec::new();
+    let mut origins: Vec<String> = Vec::new();
+    let mut add = |label: &str, v: &str| if !v.is_empty() && v != "NA" && !out.iter().any(|r: &[String; 2]| r[0] == label) { out.push([label.to_owned(), v.to_owned()]); };
+    for line in text.lines() {
+        let f: Vec<&str> = line.split('|').map(str::trim).collect();
+        if f[0].parse::<u32>().is_err() { continue; }  // the header, or "NA": not announced
+        let (prefix, reg, alloc, name) = match f.len() { 7 => (f[2], f[4], f[5], f[6]), 5 => ("", f[2], f[3], f[4]), _ => continue };
+        if !origins.contains(&format!("AS{}", f[0])) { origins.push(format!("AS{}", f[0])); }
+        add("BGP prefix", prefix);
+        add("AS name", name);
+        add("RIR", reg);
+        add("Allocated", alloc);
+    }
+    if origins.is_empty() { add("Origin AS", "not announced"); } else { add("Origin AS", &origins.join(", ")); }
+    out
+}
+
+/// Registry record of an address, CIDR block, AS number or domain: IANA names the registry, the registry
+/// answers, a domain's registry may name its registrar (at most four servers). With `asn`, Team Cymru's
+/// routing data is added. Runs as the calling user; nothing is sent for local addresses.
+pub fn lookup(query: &str, asn: bool) -> Value {
+    let Some(q) = whois_target(query) else { return json!({"ok": false, "error": "not an IP address, CIDR block, AS number (AS123) or domain name"}) };
+    let kind = match q { WhoisQuery::Ip(_) => "ip", WhoisQuery::Asn(_) => "asn", WhoisQuery::Domain(_) => "domain" };
+    if let WhoisQuery::Ip(ip) = q {
+        if ip.is_loopback() || ip.is_unspecified() || is_lan(ip) {
+            return json!({"ok": true, "kind": kind, "ip": ip.to_string(), "server": "", "raw": "", "hops": [],
+                          "summary": [["Network", "private / local address — not registered anywhere"]]});
+        }
+    }
+    let (mut next, mut hops, mut warning): (String, Vec<(String, String)>, Option<String>) = ("whois.iana.org".to_owned(), Vec::new(), None);
+    for _ in 0..4 {
+        match whois_query(&next, &whois_question(&next, &q)) {
+            Ok(t) => hops.push((std::mem::take(&mut next), t)),
+            Err(e) if hops.is_empty() => return json!({"ok": false, "error": e}),
+            Err(e) => { warning = Some(e); break; }
+        }
+        let (server, text) = &hops[hops.len() - 1];
+        match whois_referral(text) { Some(n) if !hops.iter().any(|(s, _)| *s == n) && n != *server => next = n, _ => break }
+    }
+    let (server, raw) = hops.last().map_or(("", ""), |(s, t)| (s.as_str(), t.as_str()));
+    // IANA's own record describes the TLD or the block, not what was asked: used only if nothing else answered.
+    let answers: Vec<&str> = hops.iter().filter(|(s, _)| hops.len() == 1 || s != "whois.iana.org").map(|(_, t)| t.as_str()).collect();
+    let mut summary = match &q {
+        WhoisQuery::Ip(_) => whois_summary(raw, server.ends_with("arin.net")),
+        WhoisQuery::Asn(_) => asn_summary(raw),
+        WhoisQuery::Domain(_) => domain_summary(&answers),
+    };
+    let mut asn_error = None;
+    let routed = match &q { WhoisQuery::Ip(ip) => Some(ip.to_string()), WhoisQuery::Asn(n) => Some(format!("AS{n}")), WhoisQuery::Domain(_) => None };
+    if let Some(target) = routed.filter(|_| asn) {
+        match whois_query("whois.cymru.com", &format!(" -v {target}")) {
+            Ok(t) => {
+                let have: Vec<String> = summary.iter().map(|r| r[0].clone()).collect();
+                summary.extend(cymru_summary(&t).into_iter().filter(|r| !have.contains(&r[0])));
+                hops.push(("whois.cymru.com".to_owned(), t));
+            }
+            Err(e) => asn_error = Some(e),
+        }
+    }
+    let server = server_of(&hops);
+    let raw = hops.iter().rfind(|(s, _)| s != "whois.cymru.com").map_or("", |(_, t)| t.as_str());
+    let mut v = json!({"ok": true, "kind": kind, "query": query.trim(), "server": server, "summary": summary, "raw": raw,
+                       "hops": hops.iter().map(|(s, t)| json!({"server": s, "text": t})).collect::<Vec<_>>()});
+    if let WhoisQuery::Ip(ip) = q { v["ip"] = json!(ip.to_string()); }
+    if let Some(w) = warning.or(asn_error) { v["warning"] = json!(w); }
+    v
+}
+
+/// The registry that gave the answer (the routing lookup is an addition, not the source).
+fn server_of(hops: &[(String, String)]) -> &str {
+    hops.iter().rfind(|(s, _)| s != "whois.cymru.com").map_or("", |(s, _)| s.as_str())
 }
 
 #[cfg(test)]
@@ -1613,6 +1938,70 @@ mod tests {
         let arin = "NetRange: 8.0.0.0 - 8.127.255.255\nNetName: BIG\nOrgName: Parent\n\nNetRange: 8.8.8.0 - 8.8.8.255\nCIDR: 8.8.8.0/24\nNetName: SMALL\nOrgName: Child\n";
         let s = whois_summary(arin, true);
         assert_eq!((s[0][1].as_str(), s[2][1].as_str(), s[3][1].as_str()), ("8.8.8.0 - 8.8.8.255", "SMALL", "Child"));
+    }
+
+    #[test]
+    fn whois_targets() {
+        assert_eq!(whois_target(" 8.8.8.8 "), Some(WhoisQuery::Ip("8.8.8.8".parse().unwrap())));
+        assert_eq!(whois_target("8.8.8.77/24"), Some(WhoisQuery::Ip("8.8.8.0".parse().unwrap())));
+        assert_eq!(whois_target("2001:db8::1"), Some(WhoisQuery::Ip("2001:db8::1".parse().unwrap())));
+        assert_eq!(whois_target("as15169"), Some(WhoisQuery::Asn(15169)));
+        assert_eq!(whois_target("Example.COM."), Some(WhoisQuery::Domain("example.com".into())));
+        assert_eq!(whois_target("xn--bcher-kva.example"), Some(WhoisQuery::Domain("xn--bcher-kva.example".into())));
+        assert_eq!(whois_target("as.example"), Some(WhoisQuery::Domain("as.example".into())));
+        for bad in ["", "localhost", "exa mple.com", "-x.com", "a\r\nb.com", "x;y.com", "1.2.3.4/99"] { assert_eq!(whois_target(bad), None, "{bad}"); }
+        assert_eq!(whois_question("whois.arin.net", &WhoisQuery::Asn(1)), "a 1");
+        assert_eq!(whois_question("whois.ripe.net", &WhoisQuery::Asn(1)), "AS1");
+        assert_eq!(whois_question("whois.verisign-grs.com", &WhoisQuery::Domain("a.com".into())), "domain a.com");
+    }
+
+    #[test]
+    fn domain_and_routing_summaries() {
+        let registry = "Domain Name: EXAMPLE.COM\nRegistrar WHOIS Server: whois.registrar.example\nRegistrar: Reg Inc\nCreation Date: 1995-08-14T04:00:00Z\nRegistry Expiry Date: 2030-08-13T04:00:00Z\nDomain Status: clientDeleteProhibited https://icann.org/epp#x\nDomain Status: clientTransferProhibited https://icann.org/epp#y\nName Server: A.IANA-SERVERS.NET\nName Server: B.IANA-SERVERS.NET\nDNSSEC: signedDelegation\n";
+        assert_eq!(whois_referral(registry).as_deref(), Some("whois.registrar.example"));
+        let registrar = "Domain Name: example.com\nRegistrant Organization: REDACTED FOR PRIVACY\nRegistrant Country: TR\nRegistrar Abuse Contact Email: abuse@reg.example\n";
+        let s = domain_summary(&[registry, registrar]);
+        let get = |k: &str| s.iter().find(|r| r[0] == k).map(|r| r[1].as_str());
+        assert_eq!(get("Registrar"), Some("Reg Inc"));
+        assert_eq!(get("Expires"), Some("2030-08-13T04:00:00Z"));
+        assert_eq!(get("Status"), Some("clientDeleteProhibited, clientTransferProhibited"));
+        assert_eq!(get("Name servers"), Some("a.iana-servers.net, b.iana-servers.net"));
+        assert_eq!((get("Country"), get("Organisation"), get("Abuse contact")), (Some("TR"), None, Some("abuse@reg.example")));
+
+        let c = cymru_summary("AS      | IP               | BGP Prefix          | CC | Registry | Allocated  | AS Name\n15169   | 8.8.8.8          | 8.8.8.0/24          | US | arin     | 2023-12-28 | GOOGLE, US\n");
+        assert_eq!(c[0], ["BGP prefix".to_owned(), "8.8.8.0/24".to_owned()]);
+        assert!(c.contains(&["AS name".to_owned(), "GOOGLE, US".to_owned()]) && c.contains(&["Origin AS".to_owned(), "AS15169".to_owned()]));
+        let c = cymru_summary("AS      | CC | Registry | Allocated  | AS Name\n15169   | US | arin     | 2000-03-30 | GOOGLE, US\n");
+        assert!(c.contains(&["Allocated".to_owned(), "2000-03-30".to_owned()]));
+        let c = cymru_summary("AS | IP | BGP Prefix | CC | Registry | Allocated | AS Name\nNA | 192.0.2.1 | NA | | other | | NA\n");
+        assert_eq!(c, [["Origin AS".to_owned(), "not announced".to_owned()]]);
+    }
+
+    #[test]
+    fn firewall_in_the_table() {
+        let mut c = Config::default();
+        let plain = nft_script(&c);
+        assert!(!plain.contains("fw_") && !plain.contains("established"), "off: the table is what it always was");
+        c.fw.enabled = true;
+        c.fw.inbound = crate::firewall::Verdict::Block;
+        c.log_conns = true;
+        let s = nft_ruleset(&c, true);
+        // The verdict of the queue ends the chain: the firewall must have spoken before it, after the blacklist.
+        let chain = &s[s.find("chain in {").unwrap()..s.find("chain out {").unwrap()];
+        let at = |t: &str| chain.find(t).unwrap_or_else(|| panic!("{t}"));
+        assert!(at("ip saddr @bl4 drop") < at("ct state established,related accept") && at("jump fw_in") < at("queue num"));
+        assert!(s.contains("log group 19536") && !nft_ruleset(&c, false).contains("log group"));
+        let saved = Config::default().to_json();
+        assert_eq!(saved["firewall"]["enabled"], false);
+    }
+
+    #[test]
+    fn nflog_message() {
+        let mut body = vec![0, 0, 0x4c, 0x50];
+        nl_attr(&mut body, NFULA_PACKET_HDR, &[8, 0, 3, 0]);
+        nl_attr(&mut body, NFULA_PAYLOAD, &[0x45, 1, 2]);
+        assert_eq!(nflog_packet(&body), Some((3, &[0x45u8, 1, 2][..])));
+        assert_eq!(nflog_packet(&[0, 0, 0, 0]), None);
     }
 
     #[test]

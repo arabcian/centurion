@@ -1,7 +1,7 @@
 #!/sbin/openrc-run
 # Centurion — network guard daemon (Health → Network).
 #
-# Enforces the IP blacklist (nftables table inet centurion_netguard) and, when the
+# Enforces the firewall and the IP blacklist (nftables table inet centurion_netguard) and, when the
 # guard is switched on, cuts off Wine/.exe programs that are not whitelisted
 # (NFQUEUE). Rules: /etc/centurion/netguard.json (edited in the
 # app; the helper sends SIGHUP). Stopping the service removes the table.

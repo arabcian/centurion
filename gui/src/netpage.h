@@ -14,6 +14,7 @@
 // The Wi-Fi tab (signal, link rate, retries) appears only on a machine with a
 // wireless interface and is read by the same unprivileged helper, every 3 s while shown.
 // Traffic (bytes per program per day) is the netguard ledger file, read directly like the connection log.
+// Firewall (default policies, port rules) and Lookup (whois, DNS, port check, ping) are their own widgets.
 #include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
@@ -26,6 +27,8 @@
 #include "blocklistsubs.h"
 #include "traffic.h"
 
+class FirewallTab;
+class LookupTab;
 class QCheckBox;
 class QFileSystemWatcher;
 class QLabel;
@@ -71,6 +74,9 @@ private:
     void fillTraffic();
     /// Open ports: listening sockets from the last connection snapshot, with who can reach them.
     void showPorts();
+    /// Open ports → open / lan / closed / default: one inbound port in the firewall.
+    void setPortState(const QString &state);
+    void inspectFirewall();
     /// Writes a list's visible rows (headers first) to a CSV file the user picks.
     void exportTree(QTreeWidget *tree, const QString &name);
     /// Whitelist and blacklist as one text file, and back (Import adds; nothing is removed).
@@ -106,6 +112,9 @@ private:
     QTreeWidget *ports_ = nullptr;
     QLabel *portsInfo_ = nullptr;
     int portsTab_ = -1;
+    FirewallTab *firewall_ = nullptr;
+    LookupTab *lookup_ = nullptr;
+    int firewallTab_ = -1;
     TrafficDays trafficDays_;                 // Traffic ledger, reread when the file changed
     QDateTime trafficSeen_;
     bool trafficReadable_ = false;

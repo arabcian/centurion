@@ -26,6 +26,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   per subsystem, *Save view…*, *What does this mean?*, *Copy this line*, *Show only lines like this*.
 - Boot history: filter (unclean / events / curves), patterns (unclean rate per curve, session lengths), comparison
   with the previous boot, *Kernel log of this boot*, *Copy details*, *Save report…*; 50 saved kernel lines.
+- Network protection: *Firewall* tab (default inbound / outbound policy, ordered port rules, live rule check with hit counters and other
+  firewalls), open / LAN only / close from *Open ports*, blocked packets in the connection log; *Lookup* tab (whois for addresses, CIDR
+  blocks, AS numbers and domains with routing data, DNS records, TCP port check, ping, traceroute).
 - Network protection: *Open ports* tab (who can reach each listening socket, well-known services), CSV export
   of every list, rules export/import, traffic totals per program, busiest programs on the Connections tab.
 - Drive health: power-on age, write rate, wear projection, heat and unsafe-shutdown notes.

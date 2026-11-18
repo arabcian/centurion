@@ -35,6 +35,7 @@ pub mod calctx;
 pub mod cooling;
 pub mod stability;
 pub mod field;
+pub mod firewall;
 pub mod flight;
 pub mod bench;
 pub mod isolate;

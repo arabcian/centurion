@@ -1,6 +1,7 @@
 //! Helper of Health → Network (same contract as the other helpers: one JSON
 //! request on stdin, one JSON line on stdout).
-//!   any user:  {"op":"list"}  {"op":"status"}  {"op":"whois", "ip": "address"}  {"op":"wifi"}
+//!   any user:  {"op":"list"}  {"op":"status"}  {"op":"wifi"}
+//!     {"op":"whois", "query": "address | cidr | AS123 | domain", "asn": bool}   asn: add routing data
 //!   root (pkexec):
 //!     {"op":"set", "guard": bool, "allow_lan": bool, "log_conns": bool, "traffic": bool}
 //!     {"op":"blacklist", "add": ["ip | cidr | first - last"], "label": "group", "remove": [...], "remove_all": bool,
@@ -8,6 +9,12 @@
 //!                                                                live sockets to added addresses are aborted
 //!     {"op":"whitelist", "add": ["path | dir/ | name.exe"], "remove": [...]}
 //!     {"op":"kill", "proto": "tcp|udp", "lport": n, "remote": "ip", "rport": n}
+//!     {"op":"firewall", "enabled": bool, "inbound"|"outbound": "allow|block|reject", "ping_in"|"ping_out": bool,
+//!      "add": [rule], "front": bool, "update": [rule with id], "remove": [id], "move": {"id": n, "by": ±1},
+//!      "port": {"proto": "tcp|udp", "port": n, "state": "open|closed|lan|default"}}   every field optional
+//!       rule: {"dir": "in|out", "action": "allow|block|reject", "proto": "tcp|udp|any", "ports": "80, 8000-8100",
+//!              "remote": "lan | address, cidr, range", "iface": "wg*", "note": text, "enabled": bool}
+//!     {"op":"fw_inspect"}   the live table, hit counters and other filter chains on the same hooks
 //!     {"op":"clear_log"}  {"op":"clear_conn_log"}
 //! Rule changes are written to /etc/centurion/netguard.json and the
 //! running daemon is told to reload (SIGHUP).
