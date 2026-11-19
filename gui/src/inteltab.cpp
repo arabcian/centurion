@@ -334,6 +334,21 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     lg->addWidget(tjOn_, r, 0);
     lg->addWidget(tj_, r, 1);
     lg->addWidget(tjCur_, r++, 2, 1, 2);
+    turboOn_ = new QCheckBox("Max turbo ratio");
+    turbo_ = new QSpinBox;
+    turbo_->setRange(1, 255);  // base..stock once the status is read
+    turbo_->setPrefix("× ");
+    turbo_->setFixedWidth(104);
+    turbo_->setAlignment(Qt::AlignRight);
+    turbo_->setEnabled(false);
+    turboCur_ = new QLabel("–");
+    connect(turboOn_, &QCheckBox::toggled, turbo_, &QWidget::setEnabled);
+    turboOn_->setToolTip("MSR 0x1AD: caps every turbo ratio (× 100 MHz) — less heat and fan noise, lower peak clocks.\n"
+                         "Lower only: never above the stock ratios; the maximum gives stock back. P-cores only on hybrid\n"
+                         "CPUs. Needs an unlocked multiplier (PLATFORM_INFO bit 28); lost on reboot.");
+    lg->addWidget(turboOn_, r, 0);
+    lg->addWidget(turbo_, r, 1);
+    lg->addWidget(turboCur_, r++, 2, 1, 2);
 
     lg->addWidget(muted("Package power (MSR 0x610)"), r++, 0, 1, 4);
     auto mkPl = [&](const QString &label, double w, double s, const QString &tip) {
@@ -565,7 +580,8 @@ QJsonObject IntelTab::currentProfile() const {
             {"allow_positive", positive_->isChecked()}, {"lock_power", lock_->isChecked() && anyPl},
             {"disable_bdprochot", bd == 0 ? QJsonValue() : QJsonValue(bd == 1)},
             {"ctdp", ct == 0 ? QJsonValue() : QJsonValue(ct - 1)},
-            {"hwphint", hwpRules()}};
+            {"hwphint", hwpRules()},
+            {"turbo_ratio_max", turboOn_->isChecked() ? QJsonValue(turbo_->value()) : QJsonValue()}};
 }
 
 QJsonArray IntelTab::hwpRules() const {
@@ -593,6 +609,8 @@ void IntelTab::setProfile(const QJsonObject &p) {
     fill(icc_, p.value("iccmax").toObject());
     tjOn_->setChecked(p.value("tjoffset").isDouble());
     if (tjOn_->isChecked()) tj_->setValue(qAbs(p.value("tjoffset").toInt()));
+    turboOn_->setChecked(p.value("turbo_ratio_max").isDouble());
+    if (turboOn_->isChecked()) turbo_->setValue(p.value("turbo_ratio_max").toInt());
     const QJsonObject pw = p.value("power").toObject();
     for (auto [row, key] : {std::pair{&pl1_, "pl1"}, std::pair{&pl2_, "pl2"}}) {
         const QJsonObject t = pw.value(key).toObject();
@@ -966,6 +984,20 @@ void IntelTab::showStatus(const QJsonObject &s) {
         tjOn_->setEnabled(t.value("programmable").toBool(true));
         if (!tjOn_->isEnabled()) tjOn_->setChecked(false);
     } else tjCur_->setText("n/a");
+    const QJsonObject turboSt = s.value("turbo_ratio").toObject();
+    if (turboSt.contains("current_max")) {
+        const int base = turboSt.value("base").toInt(), stock = turboSt.value("stock_max").toInt(), cur = turboSt.value("current_max").toInt();
+        turboCur_->setText(QStringLiteral("× %1 (%2 GHz) · stock × %3").arg(cur).arg(cur / 10.0, 0, 'f', 1).arg(stock));
+        turboCur_->setToolTip("raw " + turboSt.value("raw").toString() + QStringLiteral("\nbase (non-turbo) ratio × %1").arg(base));
+        if (base > 0 && stock >= base) turbo_->setRange(base, stock);
+        // Pre-fill with the live cap so ticking the box changes nothing by itself.
+        if (!turboOn_->isChecked()) turbo_->setValue(cur);
+        turboOn_->setEnabled(turboSt.value("programmable").toBool());
+        if (!turboOn_->isEnabled()) turboOn_->setChecked(false);
+    } else {
+        turboCur_->setText("n/a");
+        turboCur_->setToolTip(turboSt.value("error").toString());
+    }
     const QJsonObject pw = s.value("power").toObject();
     auto term = [](const QJsonObject &o) {
         return QStringLiteral("%1 W · %2 s%3").arg(o.value("watts").toDouble(), 0, 'f', 1).arg(o.value("seconds").toDouble(), 0, 'g', 4)

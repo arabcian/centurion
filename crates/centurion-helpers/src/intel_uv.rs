@@ -33,6 +33,8 @@ pub const MSR_OC_MAILBOX: u64 = 0x150;
 /// Once set it stays until reset and the OC mailbox (0x150) refuses voltage writes.
 pub const MSR_FLEX_RATIO: u64 = 0x194;
 pub const MSR_TEMPERATURE_TARGET: u64 = 0x1A2;
+/// One max turbo ratio per byte (per active-core group); P-cores only on hybrid CPUs.
+pub const MSR_TURBO_RATIO_LIMIT: u64 = 0x1AD;
 pub const MSR_RAPL_POWER_UNIT: u64 = 0x606;
 pub const MSR_PKG_POWER_LIMIT: u64 = 0x610;
 pub const IA32_PERF_STATUS: u64 = 0x198;
@@ -616,6 +618,8 @@ pub struct Profile {
     pub ctdp: Option<u64>,
     /// intel-undervolt hwphint rules (used by the daemon only).
     pub hwphint: Vec<HwpRule>,
+    /// Max turbo ratio (×100 MHz): every turbo ratio byte capped to it, never above stock.
+    pub turbo_ratio_max: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -663,6 +667,11 @@ pub fn parse_profile(v: &Value) -> Result<Profile, String> {
     if let Some(c) = num(root.get("ctdp").unwrap_or(&Value::Null), "ctdp")? {
         if c.fract() != 0.0 || !(0.0..=2.0).contains(&c) { return Err("ctdp must be 0 (nominal), 1 (down) or 2 (up)".into()); }
         p.ctdp = Some(c as u64);
+    }
+    if let Some(c) = num(root.get("turbo_ratio_max").unwrap_or(&Value::Null), "turbo_ratio_max")? {
+        // The base-ratio floor needs the CPU: checked when applied.
+        if c.fract() != 0.0 || !(1.0..=255.0).contains(&c) { return Err("turbo_ratio_max must be an integer ratio 1..255".into()); }
+        p.turbo_ratio_max = Some(c as u64);
     }
     if let Some(v) = root.get("hwphint").filter(|v| !v.is_null()) {
         let arr = v.as_array().ok_or("hwphint must be a list")?;
@@ -847,6 +856,15 @@ pub fn read_status() -> Value {
         }
         Err(e) => json!({"error": err_str(e)}),
     };
+    out["turbo_ratio"] = match (&plat, msr.read(MSR_TURBO_RATIO_LIMIT)) {
+        (Ok(pi), Ok(cur)) => {
+            let stock = stored_turbo_stock().unwrap_or(cur);
+            json!({"programmable": (pi >> 28) & 1 == 1, "base": (pi >> 8) & 0xFF, "stock_max": max_turbo_ratio(stock),
+                   "current_max": max_turbo_ratio(cur), "raw": format!("{cur:#018x}")})
+        }
+        (Err(e), _) => json!({"error": err_str(e)}),
+        (_, Err(e)) => json!({"error": err_str(&e)}),
+    };
     out["power"] = match (msr.read(MSR_RAPL_POWER_UNIT), msr.read(MSR_PKG_POWER_LIMIT)) {
         (Ok(u), Ok(raw)) => {
             let units = decode_units(u);
@@ -870,6 +888,33 @@ pub fn read_status() -> Value {
         (Err(e), _) | (_, Err(e)) => json!({"error": err_str(&e)}),
     };
     out
+}
+
+/// MSR_TURBO_RATIO_LIMIT as first read this boot, before Centurion lowered it. /run is cleared on
+/// reboot, like the MSR itself, so the two stay in step.
+const TURBO_STOCK_FILE: &str = "/run/centurion/intel-turbo-ratio.json";
+
+/// Every non-zero ratio byte of `stock` capped to `cap`; a cap above stock gives stock back.
+pub fn cap_turbo_ratios(stock: u64, cap: u64) -> u64 {
+    (0..8).map(|i| {
+        let b = (stock >> (8 * i)) & 0xFF;
+        (if b == 0 { 0 } else { b.min(cap) }) << (8 * i)
+    }).fold(0, |acc, b| acc | b)
+}
+
+pub fn max_turbo_ratio(raw: u64) -> u64 { (0..8).map(|i| (raw >> (8 * i)) & 0xFF).max().unwrap_or(0) }
+
+fn stored_turbo_stock() -> Option<u64> {
+    serde_json::from_str::<Value>(&crate::read_root_file(TURBO_STOCK_FILE, 4096)?).ok()?["raw"].as_u64()
+}
+
+/// The stock value to cap from: the stored one, or `cur` (recorded first: without it the cap
+/// could never be lifted again before a reboot).
+fn turbo_stock(cur: u64) -> Result<u64, String> {
+    if let Some(s) = stored_turbo_stock() { return Ok(s); }
+    crate::secure_dir("/run/centurion")?;
+    crate::write_root_file(TURBO_STOCK_FILE, json!({"raw": cur}).to_string().as_bytes())?;
+    Ok(cur)
 }
 
 fn step(results: &mut Vec<Value>, what: String, r: Result<String, String>) -> bool {
@@ -1077,6 +1122,26 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
         })();
         if let Some(c) = prior { undo.push(("ctdp".into(), Undo::Msr(MSR_CONFIG_TDP_CONTROL, c))); }
         all &= step(&mut results, "ctdp".into(), r);
+    }
+
+    if let Some(cap) = p.turbo_ratio_max {
+        let mut prior = None;
+        let r = (|| {
+            // PLATFORM_INFO bit 28: turbo ratio limits programmable (unlocked multiplier).
+            let pi = msr.read(MSR_PLATFORM_INFO).map_err(|e| err_str(&e))?;
+            if (pi >> 28) & 1 == 0 { return Err("turbo ratio limits are not programmable on this CPU".into()); }
+            let base = (pi >> 8) & 0xFF;
+            if cap < base { return Err(format!("ratio {cap} is below the base (non-turbo) ratio {base}")); }
+            let cur = msr.read(MSR_TURBO_RATIO_LIMIT).map_err(|e| err_str(&e))?;
+            let new = cap_turbo_ratios(turbo_stock(cur)?, cap);
+            prior = Some(cur);
+            msr.write(MSR_TURBO_RATIO_LIMIT, new).map_err(|e| err_str(&e))?;
+            let back = msr.read(MSR_TURBO_RATIO_LIMIT).map_err(|e| err_str(&e))?;
+            if back != new { return Err(format!("readback {back:#018x} ≠ {new:#018x} (turbo ratios locked by firmware)")); }
+            Ok(format!("max turbo ratio {} ({:.1} GHz)", max_turbo_ratio(new), max_turbo_ratio(new) as f64 / 10.0))
+        })();
+        if let Some(c) = prior { undo.push(("turbo_ratio".into(), Undo::Msr(MSR_TURBO_RATIO_LIMIT, c))); }
+        all &= step(&mut results, "turbo_ratio".into(), r);
     }
 
     if all || !rollback { return json!({"ok": all, "results": results}); }
@@ -1339,6 +1404,26 @@ mod tests {
             {"mode": "force", "power": [{"domain": "core", "gt": true, "watts": 8}], "load_hint": "performance", "normal_hint": "power"}]})).unwrap();
         assert_eq!((p.disable_bdprochot, p.ctdp, p.hwphint.len()), (Some(true), Some(1), 2));
         assert!(parse_profile(&json!({"hwphint": [{"load": {"threshold": 0.5}, "load_hint": "perf; rm", "normal_hint": "power"}]})).is_err());
+    }
+
+    #[test]
+    fn turbo_ratio_parse() {
+        assert_eq!(parse_profile(&json!({"turbo_ratio_max": 38})).unwrap().turbo_ratio_max, Some(38));
+        assert_eq!(parse_profile(&json!({"turbo_ratio_max": null})).unwrap().turbo_ratio_max, None);
+        for bad in [json!(0), json!(256), json!(38.5), json!("38")] {
+            assert!(parse_profile(&json!({"turbo_ratio_max": bad})).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn turbo_ratio_cap_only_lowers() {
+        // i7-10750H-like: 50 / 49 / 48 / 47 / 46 / 45 for 1..6 active cores, two unused groups.
+        let stock = 0x0000_2D2E_2F30_3132;
+        assert_eq!(cap_turbo_ratios(stock, 47), 0x0000_2D2E_2F2F_2F2F);
+        assert_eq!(cap_turbo_ratios(stock, 99), stock);     // above stock: stock back, never higher
+        assert_eq!(cap_turbo_ratios(stock, 45), 0x0000_2D2D_2D2D_2D2D);
+        assert_eq!(max_turbo_ratio(stock), 50);
+        assert_eq!(max_turbo_ratio(cap_turbo_ratios(stock, 40)), 40);
     }
 
     #[test]

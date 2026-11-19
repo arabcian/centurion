@@ -72,6 +72,9 @@ private:
     QList<Row> volt_, icc_;
     QCheckBox *link_ = nullptr, *tjOn_ = nullptr, *mchbar_ = nullptr;
     QSpinBox *tj_ = nullptr;
+    QCheckBox *turboOn_ = nullptr;
+    QSpinBox *turbo_ = nullptr;
+    QLabel *turboCur_ = nullptr;
     QLabel *tjCur_ = nullptr, *info_ = nullptr, *bootLbl_ = nullptr, *plLock_ = nullptr;
     PlRow pl1_{}, pl2_{};
     QComboBox *profileCombo_ = nullptr;
