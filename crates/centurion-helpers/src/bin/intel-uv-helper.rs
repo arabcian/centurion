@@ -101,15 +101,19 @@ fn run() -> Value {
                     let name = v["name"].as_str().filter(|n| !n.is_empty() && n.len() <= 64).unwrap_or("custom");
                     centurion_helpers::ocjournal::record("cpu_uv", &format!("profile:{name}"));
                 }
-                if hold { if let Err(e) = write_hold(Some(&v)) { out["hold_error"] = json!(e); } }
+                if hold && out["ok"] == true {
+                    if let Err(e) = write_hold(Some(&v)) { out["hold_error"] = json!(e); out["ok"] = json!(false); }
+                }
                 out
             }
             Err(e) => e,
         },
         Some("reset") => {
-            let mut out = intel_uv::apply(&intel_uv::reset_profile());
+            let mut out = intel_uv::apply_atomic(&intel_uv::reset_profile());
             if out["ok"] == true { centurion_helpers::ocjournal::record("cpu_uv", "reset"); }
-            if hold { if let Err(e) = write_hold(None) { out["hold_error"] = json!(e); } }
+            if hold && out["ok"] == true {
+                if let Err(e) = write_hold(None) { out["hold_error"] = json!(e); out["ok"] = json!(false); }
+            }
             out
         }
         Some("set_boot") => {

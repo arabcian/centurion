@@ -972,7 +972,9 @@ fn read_archive(archive: &Path, target: Option<&Path>, low: bool, key: Option<&K
     if prog.has("Unexpected EOF") || prog.has("does not look like a tar archive") {
         return Err(format!("the archive is damaged or truncated{}", last()));
     }
-    if tcode != 0 && (target.is_none() || tcode != 2) { return Err(format!("tar failed with status {tcode}{}", last())); }
+    // tar exit 2 is fatal even when extracting into an existing directory:
+    // permissions, I/O failures and truncated members can leave a partial system.
+    if tcode != 0 { return Err(format!("tar failed with status {tcode}; restore may be incomplete{}", last())); }
     // tar has finished this step: now the deletions it recorded, then what it brought in becomes "known".
     if let Some((s, state, apply)) = scanned.transpose().map_err(|e| format!("reading the archive stream: {e}"))? {
         state.finish(s, apply);

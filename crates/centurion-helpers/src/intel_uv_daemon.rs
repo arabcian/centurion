@@ -318,6 +318,12 @@ fn suspended_s() -> f64 { clock(libc::CLOCK_BOOTTIME) - clock(libc::CLOCK_MONOTO
 /// permanent (a limit locked by firmware) and used to be logged every few
 /// seconds forever; now a failure is logged when it first appears or its text
 /// changes, and once more when it clears.
+/// A full profile is effective only when every requested field succeeded.
+/// An unsuccessful full write stays pending so the next tick retries it.
+fn fully_applied(v: &Value) -> bool {
+    v["ok"] == true && v["results"].as_array().is_some_and(|rs| rs.iter().all(|r| r["ok"] == true))
+}
+
 fn report(tag: &str, v: &Value, periodic: bool) {
     use std::sync::Mutex;
     static SEEN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
@@ -412,7 +418,9 @@ pub fn run_daemon() -> i32 {
             // The scene engine switches scenes with the power source; the daemon only keeps the scene's profile alive.
             if let Some(p) = held {
                 if !hold_live {
-                    report("SCENE", &intel_uv::apply(p), false);
+                    let result = intel_uv::apply(p);
+                    report("SCENE", &result, true);
+                    hold_live = fully_applied(&result);
                 } else if reapply {
                     let part = intel_uv::periodic_part(p);
                     if intel_uv::has_periodic(&part) {
@@ -421,14 +429,19 @@ pub fn run_daemon() -> i32 {
                 }
                 for l in hwp.update(&p.hwphint) { eprintln!("centurion-intel-uv: hwphint: {l}"); }
             }
-            hold_live = true;
+            // A scene reset (None) needs no full profile write; a failed
+            // scene apply remains pending until hardware confirms success.
+            if held.is_none() { hold_live = true; }
         } else if let Some(c) = &cfg {
             let src = if ac { "AC" } else { "BATTERY" };
             match c.for_source(ac) {
                 Some(_) if applied != Some(ac) => {
                     if applied.is_some() { eprintln!("centurion-intel-uv: power source → {src}"); }
-                    if let Some(full) = c.full_apply(ac) { report(src, &intel_uv::apply(&full), false); }
-                    applied = Some(ac);
+                    if let Some(full) = c.full_apply(ac) {
+                        let result = intel_uv::apply(&full);
+                        report(src, &result, true);
+                        if fully_applied(&result) { applied = Some(ac); }
+                    } else { applied = Some(ac); }
                 }
                 Some(p) => {
                     if c.reapply {
@@ -445,11 +458,15 @@ pub fn run_daemon() -> i32 {
                             // Only the other source's voltage planes, back to 0 mV.
                             Some(reset) => {
                                 eprintln!("centurion-intel-uv: no profile for {src} — voltage offsets back to 0 mV");
-                                report(src, &intel_uv::apply(&reset), false);
+                                let result = intel_uv::apply(&reset);
+                                report(src, &result, true);
+                                if fully_applied(&result) { applied = Some(ac); }
                             }
-                            None => eprintln!("centurion-intel-uv: no profile for {src}, nothing applied"),
+                            None => {
+                                eprintln!("centurion-intel-uv: no profile for {src}, nothing applied");
+                                applied = Some(ac);
+                            }
                         }
-                        applied = Some(ac);
                     }
                 }
             }
@@ -510,6 +527,14 @@ pub fn apply_boot() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_profile_success_requires_every_step() {
+        assert!(fully_applied(&json!({"ok": true, "results": [{"ok": true}]})));
+        assert!(!fully_applied(&json!({"ok": true, "results": [{"ok": false}]})));
+        assert!(!fully_applied(&json!({"ok": false, "results": [{"ok": true}]})));
+        assert!(!fully_applied(&json!({"ok": true})));
+    }
 
     #[test]
     fn source_switch_zeroes_foreign_planes() {

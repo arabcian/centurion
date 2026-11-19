@@ -30,8 +30,9 @@
 //! per known Wine pid. The connection log names the owning process from /proc
 //! after the verdict went out, batched: at most one pass per FLUSH_GAP, the
 //! processes that opened the last connections first.
-//! The queue rule carries `bypass`: without a daemon traffic flows unguarded,
-//! it is never blackholed.
+//! With Wine guard enabled, the outbound queue deliberately fails closed if
+//! the daemon disappears; connection-log-only queues retain `bypass`. The
+//! firewall and blacklist rules still take precedence over both queues.
 //!
 //! Kernel: NETFILTER_NETLINK_QUEUE, NF_TABLES, NF_TABLES_INET, NFT_QUEUE,
 //! NF_CONNTRACK, NFT_CT, INET_DIAG, INET_TCP_DIAG, INET_UDP_DIAG,
@@ -612,7 +613,10 @@ fn nft_ruleset(cfg: &Config, log_blocked: bool) -> String {
     s += &set("bl4", "ipv4_addr", true);
     s += &set("bl6", "ipv6_addr", false);
     s += &cfg.fw.chains(log_blocked.then_some(NFLOG_GROUP));
-    let queue = format!("\t\tmeta l4proto {{ tcp, udp }} queue num {QUEUE_NUM} bypass\n");
+    // A missing daemon must never silently allow Wine traffic through the
+    // application guard. Logging alone must not interrupt connectivity.
+    let log_queue = format!("\t\tmeta l4proto {{ tcp, udp }} queue num {QUEUE_NUM} bypass\n");
+    let guard_queue = format!("\t\tmeta l4proto {{ tcp, udp }} queue num {QUEUE_NUM}\n");
     // Loopback first, before the blacklist drops: an entry or range that covers 127.0.0.0/8 or ::1
     // (e.g. "0.0.0.0 - 255.255.255.254") must not cut the machine off from its own local services.
     s += "\tchain in {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tiifname \"lo\" accept\n\t\tip saddr @bl4 drop\n\t\tip6 saddr @bl6 drop\n";
@@ -620,7 +624,7 @@ fn nft_ruleset(cfg: &Config, log_blocked: bool) -> String {
     s += &cfg.fw.hook(true);  // before the queue: the daemon's accept would end this chain
     if cfg.log_conns {
         s += "\t\tct state != new accept\n\t\tmeta pkttype { broadcast, multicast } accept\n";
-        s += &queue;
+        s += &log_queue;
     }
     s += "\t}\n\tchain out {\n\t\ttype filter hook output priority 0; policy accept;\n\t\toifname \"lo\" accept\n\t\tip daddr @bl4 drop\n\t\tip6 daddr @bl6 drop\n";
     if cfg.traffic { s += "\t\tct state invalid counter\n"; }
@@ -632,7 +636,7 @@ fn nft_ruleset(cfg: &Config, log_blocked: bool) -> String {
             s += "\t\tip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255 } accept\n";
             s += "\t\tip6 daddr { fc00::/7, fe80::/10, ff00::/8 } accept\n";
         }
-        s += &queue;
+        s += if cfg.guard { &guard_queue } else { &log_queue };
     }
     s += "\t}\n}\n";
     s
@@ -1035,12 +1039,6 @@ impl Guard {
                                  inode: sock.as_ref().map_or(0, |s| s.inode), uid: sock.as_ref().map(|s| s.uid), pid: 0, exe: String::new(), f });
     }
 
-    /// Opens or closes the blocked-packet socket to match the configuration.
-    fn sync_nflog(&mut self) {
-        if !wants_nflog(&self.cfg) { self.nflog = None; return; }
-        if self.nflog.is_none() { self.nflog = open_nflog(); }
-    }
-
     /// Some((pid, program)) when the socket belongs to a non-whitelisted Wine program: cut off and logged.
     fn block(&mut self, f: &Flow, pkt: &[u8], s: &Sock) -> Option<(i32, String)> {
         if s.inode == 0 { return None; }
@@ -1329,9 +1327,15 @@ fn applied() -> Value {
     crate::read_root_file(STATE_FILE, 65536).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null)
 }
 
-fn in_force(cfg: &Config, a: &Value) -> bool {
-    a["error"].is_string() || (a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns && a["traffic"] == cfg.traffic
-        && (a.get("firewall").is_none() || a["firewall"] == cfg.fw.to_json()))  // a daemon from before the firewall never reports one
+#[derive(Debug, PartialEq, Eq)]
+enum ReloadState { Applied, Failed, Pending }
+
+fn reload_state(cfg: &Config, a: &Value) -> ReloadState {
+    if a["error"].is_string() { return ReloadState::Failed; }
+    if a["guard"] == cfg.guard && a["allow_lan"] == cfg.allow_lan && a["log_conns"] == cfg.log_conns && a["traffic"] == cfg.traffic
+        && a["firewall"] == cfg.fw.to_json() {
+        ReloadState::Applied
+    } else { ReloadState::Pending }
 }
 
 pub fn run_daemon() -> i32 {
@@ -1355,8 +1359,8 @@ pub fn run_daemon() -> i32 {
         Ok(d) => d,
         Err(e) => { eprintln!("centurion-netguard: sock_diag unavailable: {e} (kernel: INET_DIAG, INET_TCP_DIAG, INET_UDP_DIAG)"); return 1; }
     };
-    // A table left by a killed daemon must not feed packets into a queue that is still being set up.
-    nft_remove();
+    // Preserve the old rules if binding the queue fails. Once open, nft_load
+    // replaces the table as a single nftables transaction (no unguarded gap).
     let queue = match Queue::open() {
         Ok(q) => q,
         Err(e) => { eprintln!("centurion-netguard: cannot bind NFQUEUE {QUEUE_NUM}: {e} (kernel: NETFILTER_NETLINK_QUEUE)"); return 1; }
@@ -1386,20 +1390,44 @@ pub fn run_daemon() -> i32 {
         if RELOAD.swap(false, Ordering::SeqCst) {
             match Config::load() {
                 Ok(c) => {
-                    let was_logging = std::mem::replace(&mut g.cfg, c).log_conns;
-                    g.sync_nflog();
-                    let res = nft_load(&g.cfg, g.nflog.is_some()).and_then(|_| g.sync_acct());
-                    write_state(&g.cfg, res.as_ref().err().map(String::as_str));
-                    match res {
-                        Ok(()) => {
+                    let was_logging = g.cfg.log_conns;
+                    // Prepare sockets while the old policy remains active. Only
+                    // publish cfg after the atomic nft transaction has succeeded.
+                    let new_nflog = if wants_nflog(&c) && g.nflog.is_none() {
+                        open_nflog()
+                    } else { None };
+                    let log_blocked = wants_nflog(&c) && (g.nflog.is_some() || new_nflog.is_some());
+                    let acct = if c.traffic && g.acct.is_none() {
+                        enable_ct_accounting().and_then(|_| ct_open().map_err(|e| format!(
+                            "traffic accounting: conntrack events unavailable: {e} (kernel: NF_CT_NETLINK)")))
+                            .map(|fd| Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None, lost_logged: None }))
+                    } else { Ok(None) };
+                    let result = acct.and_then(|new_acct| {
+                        nft_load(&c, log_blocked).map(|()| new_acct)
+                    });
+                    match result {
+                        Ok(new_acct) => {
+                            if !c.traffic { g.acct_save(); g.acct = None; }
+                            else if let Some(a) = new_acct { g.acct = Some(a); }
+                            g.cfg = c;
+                            if !wants_nflog(&g.cfg) { g.nflog = None; }
+                            else if let Some(fd) = new_nflog { g.nflog = Some(fd); }
+                            write_state(&g.cfg, None);
                             eprintln!("centurion-netguard: configuration reloaded");
                             if g.cfg.log_conns && !was_logging { g.snapshot(); }
                             g.sweep();  // guard switched on, or a program left the whitelist
                         }
-                        Err(e) => eprintln!("centurion-netguard: {e}"),
+                        Err(e) => {
+                            // The previous sockets and policy remain installed.
+                            eprintln!("centurion-netguard: reload failed, old rules retained: {e}");
+                            write_state(&g.cfg, Some(&format!("reload failed (old rules retained): {e}")));
+                        }
                     }
                 }
-                Err(e) => eprintln!("centurion-netguard: reload failed, keeping the old rules: {e}"),
+                Err(e) => {
+                    eprintln!("centurion-netguard: reload failed, keeping the old rules: {e}");
+                    write_state(&g.cfg, Some(&format!("reload failed (old rules retained): {e}")));
+                }
             }
         }
         // Pending log lines and traffic totals wake the loop when their batch window ends; otherwise it sleeps
@@ -1537,7 +1565,15 @@ pub fn status(full: bool) -> Value {
     v["ok"] = json!(true);
     v["running"] = json!(pid.is_some());
     v["pid"] = json!(pid);
-    if pid.is_some() { v["applied"] = applied(); }
+    if pid.is_some() {
+        let a = applied();
+        v["reload_state"] = json!(match reload_state(&cfg, &a) {
+            ReloadState::Applied => "applied",
+            ReloadState::Failed => "error",
+            ReloadState::Pending => "pending",
+        });
+        v["applied"] = a;
+    }
     if let Some(e) = err { v["config_error"] = json!(e); }
     if full {
         v["nft"] = json!(sys_bin("nft").is_some());
@@ -1786,7 +1822,7 @@ pub fn handle(req: &Value) -> Value {
     // Wait for the daemon, so the answer says what is really in force. A long blacklist takes seconds;
     // a newer change to the file means this request's state will never be reported.
     for _ in 0..500 {
-        if daemon_pid().is_none() || in_force(&cfg, &applied()) { break; }
+        if daemon_pid().is_none() || reload_state(&cfg, &applied()) != ReloadState::Pending { break; }
         if std::fs::metadata(CONF_FILE).and_then(|m| m.modified()).ok() != saved { break; }
         std::thread::sleep(Duration::from_millis(40));
     }
@@ -2286,6 +2322,35 @@ mod tests {
         assert!(s.contains("log group 19536") && !nft_ruleset(&c, false).contains("log group"));
         let saved = Config::default().to_json();
         assert_eq!(saved["firewall"]["enabled"], false);
+    }
+
+    #[test]
+    fn queue_fail_closed_only_when_guarding() {
+        let mut c = Config::default();
+        c.log_conns = true;
+        let log_only = nft_script(&c);
+        assert!(log_only.contains("queue num 19536 bypass"));
+        c.guard = true;
+        let guarding = nft_script(&c);
+        let outbound = guarding.split("chain out {").nth(1).unwrap();
+        assert!(outbound.contains("queue num 19536\n"));
+        assert!(!outbound.contains("queue num 19536 bypass"));
+        let inbound = guarding.split("chain in {").nth(1).unwrap().split("chain out {").next().unwrap();
+        assert!(inbound.contains("queue num 19536 bypass"));
+    }
+
+    #[test]
+    fn reload_error_is_not_success() {
+        let c = Config::default();
+        let good = json!({"guard": c.guard, "allow_lan": c.allow_lan, "log_conns": c.log_conns,
+            "traffic": c.traffic, "firewall": c.fw.to_json(), "error": null});
+        assert_eq!(reload_state(&c, &good), ReloadState::Applied);
+        let mut error = good.clone();
+        error["error"] = json!("nft failed");
+        assert_eq!(reload_state(&c, &error), ReloadState::Failed);
+        let mut stale = good.clone();
+        stale["guard"] = json!(!c.guard);
+        assert_eq!(reload_state(&c, &stale), ReloadState::Pending);
     }
 
     #[test]

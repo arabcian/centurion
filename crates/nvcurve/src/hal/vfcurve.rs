@@ -219,8 +219,12 @@ const V3_AGREE_KHZ: i64 = 30_000;
 fn v3_agrees(state: &CurveState) -> bool {
     let gpu = || state.points.iter().filter(|p| p.domain == Domain::Gpu && p.freq_khz > 0);
     let top = gpu().map(|p| p.freq_khz).max().unwrap_or(0);
-    gpu().filter(|p| p.delta_khz == 0 && p.freq_khz < top)
-        .all(|p| p.base_khz.is_some_and(|b| (i64::from(b) - i64::from(p.freq_khz)).abs() <= V3_AGREE_KHZ))
+    // `all()` of an empty set is true: never trust an NVIDIA-private layout
+    // without at least two independent, non-plateau zero-offset anchors.
+    let anchors: Vec<_> = gpu().filter(|p| p.delta_khz == 0 && p.freq_khz < top).collect();
+    let independent: std::collections::HashSet<_> = anchors.iter().map(|p| p.freq_khz).collect();
+    independent.len() >= 2 && anchors.iter().all(|p| p.base_khz.is_some_and(|b|
+        (i64::from(b) - i64::from(p.freq_khz)).abs() <= V3_AGREE_KHZ))
 }
 
 // ── Writers ─────────────────────────────────────────────────────────────────
@@ -623,6 +627,15 @@ mod tests {
         assert!(!v3_agrees(&bad));
         let missing = st(vec![pt(0, 800_000, None, 0), pt(1, 900_000, Some(900_000), 0), pt(2, 2_500_000, None, 0)]);
         assert!(!v3_agrees(&missing));
+        // Previously accepted because the reference iterator was empty.
+        let all_modified = st(vec![pt(0, 800_000, Some(800_000), 150_000),
+                                   pt(1, 900_000, Some(900_000), -30_000),
+                                   pt(2, 2_500_000, Some(2_640_000), 0)]);
+        assert!(!v3_agrees(&all_modified));
+        let one_anchor = st(vec![pt(0, 800_000, Some(800_000), 0),
+                                 pt(1, 900_000, Some(900_000), 100_000),
+                                 pt(2, 2_500_000, Some(2_640_000), 0)]);
+        assert!(!v3_agrees(&one_anchor));
     }
 
     #[test]

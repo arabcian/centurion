@@ -3204,15 +3204,46 @@ fn is_pci_link_or_power(real: &Path) -> bool {
     in_pci && ((parent == "link" && ASPM_FILES.contains(&name)) || (parent == "power" && name == "control" && !real.to_string_lossy().contains("/usb")))
 }
 
+/// One independent OFD/flock held by BOTH parent and child. After a timeout
+/// the parent can return, but a stalled kernel writer retains the lock until
+/// its syscall finishes and the child exits. Any later hazardous write first
+/// acquires the same lock (or fails without racing an unresolved write).
+const FIRMWARE_WRITE_LOCK: &str = "/run/centurion/tune/firmware-write.lock";
+
+fn firmware_write_lock() -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    crate::secure_dir("/run/centurion").map_err(std::io::Error::other)?;
+    crate::secure_dir("/run/centurion/tune").map_err(std::io::Error::other)?;
+    let file = std::fs::OpenOptions::new().read(true).write(true).create(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(FIRMWARE_WRITE_LOCK)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(file);
+        }
+        let err = std::io::Error::last_os_error();
+        if !matches!(err.raw_os_error(), Some(libc::EAGAIN | libc::EINTR)) { return Err(err); }
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut,
+                "previous firmware/sysfs writer is unresolved; no new write started"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 /// Latency-byte write in a child with a deadline, like amd_x3d_mode: a device that
 /// hangs in ACPI takes only the child with it, never this helper or its lock.
 fn pci_latency_write_timeout(cfg: &Path, hex: &str) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
     let v = u8::from_str_radix(hex.trim(), 16).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad latency byte"))?;
+    let guard = firmware_write_lock()?;
+    let lock_fd = guard.as_raw_fd();
     let pid = unsafe { libc::fork() };
     if pid < 0 { return Err(std::io::Error::last_os_error()); }
     if pid == 0 {
         // A child stuck in the kernel must not keep the tune lock or the reply pipe open.
-        for fd in 0..4096 { unsafe { libc::close(fd); } }
+        for fd in 0..4096 { if fd != lock_fd { unsafe { libc::close(fd); } } }
         let ok = pci_latency_write(cfg, &format!("{v:02x}")).is_ok();
         unsafe { libc::_exit(if ok { 0 } else { 1 }) };
     }
@@ -3222,7 +3253,11 @@ fn pci_latency_write_timeout(cfg: &Path, hex: &str) -> std::io::Result<()> {
         let r = unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
         if r == pid { return if libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0 { Ok(()) } else { Err(std::io::Error::other("config write failed")) }; }
         if r < 0 { return Err(std::io::Error::last_os_error()); }
-        if std::time::Instant::now() >= end { unsafe { libc::kill(pid, libc::SIGKILL) }; return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "config write timed out (device not responding)")); }
+        if std::time::Instant::now() >= end {
+            unsafe { libc::kill(pid, libc::SIGKILL); libc::waitpid(pid, &mut st, libc::WNOHANG); }
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut,
+                "config write timed out; hardware state unknown, later writes serialized until child exits"));
+        }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
@@ -3239,6 +3274,9 @@ fn write_with_timeout(p: PathBuf, data: String) -> Result<(), String> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(|_| "bad path".to_string())?;
     let bytes = data.into_bytes();
+    use std::os::unix::io::AsRawFd;
+    let guard = firmware_write_lock().map_err(|e| format!("firmware write lock: {e}"))?;
+    let lock_fd = guard.as_raw_fd();
     // After fork only async-signal-safe calls: open, close, write, _exit.
     let pid = unsafe { libc::fork() };
     if pid < 0 { return Err(format!("fork: {}", std::io::Error::last_os_error())); }
@@ -3246,7 +3284,9 @@ fn write_with_timeout(p: PathBuf, data: String) -> Result<(), String> {
         unsafe {
             let fd = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
             if fd < 0 { libc::_exit(*libc::__errno_location() & 0xFF); }
-            for other in 0..4096 { if other != fd { libc::close(other); } }
+            // Keep the independent firmware lock owned by the writer even
+            // if the supervising helper times out and releases its copy.
+            for other in 0..4096 { if other != fd && other != lock_fd { libc::close(other); } }
             let n = libc::write(fd, bytes.as_ptr() as *const libc::c_void, bytes.len());
             if n < 0 { libc::_exit(*libc::__errno_location() & 0xFF); }
             libc::_exit(if n as usize == bytes.len() { 0 } else { 255 });
@@ -3266,8 +3306,10 @@ fn write_with_timeout(p: PathBuf, data: String) -> Result<(), String> {
         }
         if r < 0 { return Err(format!("waitpid: {}", std::io::Error::last_os_error())); }
         if std::time::Instant::now() >= end {
-            // Left behind: init reaps it whenever the firmware call returns.
-            return Err("timed out after 3 s (ACPI _DSM stall?)".into());
+            // SIGKILL can be deferred in uninterruptible D-state; the child
+            // keeps the firmware lock until the kernel write actually ends.
+            unsafe { libc::kill(pid, libc::SIGKILL); libc::waitpid(pid, &mut st, libc::WNOHANG); }
+            return Err("timed out after 3 s (ACPI _DSM stall?); hardware state unknown, later hazardous writes serialized".into());
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }

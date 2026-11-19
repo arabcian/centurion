@@ -195,24 +195,51 @@ fn run() -> Value {
             if items.len() > MAX_BATCH {
                 return json!({"ok": false, "error": format!("batch too large (max {MAX_BATCH})")});
             }
-            // Validate every item, then write the valid ones together in firmware-safe order.
-            // Results stay in request order (the GUI maps them by index).
+            // Batch contract: all inputs must validate before *any* firmware write.
+            // On a runtime failure, restore the captured previous values as a
+            // best effort. Firmware does not provide transactional sysfs writes:
+            // surface rollback errors rather than claiming atomic hardware state.
             let checked: Vec<Result<Target, String>> = items.iter().map(|it| match it.as_object() {
                 Some(o) => check_one(o.get("path"), o.get("value")),
                 None => Err("malformed batch item".into()),
             }).collect();
-            let valid: Vec<&Target> = checked.iter().filter_map(|c| c.as_ref().ok()).collect();
-            let mut written = write_verified(&valid).into_iter();
-            let results: Vec<Value> = items.iter().zip(&checked).map(|(it, c)| {
-                let path = it.get("path").cloned().unwrap_or(Value::Null);
-                match c.as_ref().map(|_| written.next().flatten()) {
-                    Ok(None) => json!({"path": path, "ok": true}),
-                    Ok(Some(m)) => json!({"path": path, "ok": false, "error": m}),
-                    Err(m) => json!({"path": path, "ok": false, "error": m}),
-                }
+            let result_paths = || items.iter().map(|it| it.get("path").cloned().unwrap_or(Value::Null)).collect::<Vec<_>>();
+            let paths = result_paths();
+            if checked.iter().any(Result::is_err) {
+                let results: Vec<Value> = paths.iter().zip(&checked).map(|(p, c)| match c {
+                    Ok(_) => json!({"path": p, "ok": false, "error": "batch aborted: another item failed validation (nothing written)"}),
+                    Err(e) => json!({"path": p, "ok": false, "error": e}),
+                }).collect();
+                return json!({"ok": false, "results": results, "written": false});
+            }
+            let targets: Vec<&Target> = checked.iter().filter_map(|c| c.as_ref().ok()).collect();
+            let mut seen = std::collections::HashSet::new();
+            if targets.iter().any(|t| !seen.insert(&t.real)) {
+                return json!({"ok": false, "results": paths.iter().map(|p| json!({"path": p, "ok": false,
+                    "error": "batch contains duplicate firmware attributes (nothing written)"})).collect::<Vec<_>>()});
+            }
+            // A pre-write readback is mandatory for every target in a batch.
+            // A zero/unreadable original cannot safely be restored on this BIOS.
+            let originals: Option<Vec<i64>> = targets.iter().map(|t| read_i64(&t.real).filter(|&v| v > 0)).collect();
+            let Some(originals) = originals else {
+                return json!({"ok": false, "results": paths.iter().map(|p| json!({"path": p, "ok": false,
+                    "error": "batch aborted: an original firmware value is unavailable or zero; safe rollback impossible"})).collect::<Vec<_>>()});
+            };
+            let writes = write_verified(&targets);
+            if writes.iter().all(Option::is_none) {
+                return json!({"ok": true, "results": paths.iter().map(|p| json!({"path": p, "ok": true})).collect::<Vec<_>>()});
+            }
+            let undo: Vec<Target> = targets.iter().zip(&originals).map(|(t, &v)| Target {
+                real: t.real.clone(), attr: t.attr.clone(), value: v,
             }).collect();
-            let all_ok = results.iter().all(|r| r["ok"] == true);
-            json!({"ok": all_ok, "results": results})
+            let undo_refs: Vec<&Target> = undo.iter().collect();
+            let rollbacks = write_verified(&undo_refs);
+            let results: Vec<Value> = paths.iter().enumerate().map(|(i, p)| {
+                let reason = writes[i].clone().unwrap_or_else(|| "another item failed; batch rolled back".into());
+                json!({"path": p, "ok": false, "error": reason,
+                       "rolled_back": rollbacks[i].is_none(), "rollback_error": rollbacks[i]})
+            }).collect();
+            json!({"ok": false, "results": results, "rolled_back": rollbacks.iter().all(Option::is_none)})
         }
         Value::Object(o) => write_one(o.get("path"), o.get("value")),
         _ => json!({"ok": false, "error": "malformed request"}),

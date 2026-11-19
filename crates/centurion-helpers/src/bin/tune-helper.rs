@@ -160,7 +160,7 @@ fn lock() -> Result<Lock, String> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct State {
     /// (key, path, original) in first-write order.
     baseline: Vec<(String, PathBuf, String)>,
@@ -179,7 +179,7 @@ struct State {
     game: Option<GameLayer>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct GameLayer {
     /// `preset` / `source` as they were before the first game session.
     preset: Option<String>,
@@ -296,6 +296,86 @@ fn hardware_policy_overlap(values: &Map<String, Value>) -> Option<String> {
         }
     }
     None
+}
+
+/// A replacing scene/preset must be completely valid before any earlier
+/// optimization is restored. Resolve planned sysfs writes without touching
+/// hardware and reject conflicts, invalid values and audit failures up front.
+fn preflight_replace(values: &Map<String, Value>) -> Result<Vec<(String, PathBuf, String)>, Vec<Value>> {
+    let shadowed = tune::shadowed(values);
+    let kept: Map<String, Value> = values.iter()
+        .filter(|(k, _)| !shadowed.iter().any(|(s, _)| *s == k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut errors = Vec::new();
+    if let Some(conflict) = hardware_policy_overlap(&kept) {
+        errors.push(json!({"key": "optimization_conflict", "ok": false, "error": conflict}));
+    }
+    let rejects: Vec<autotune::Issue> = autotune::audit(&kept, &autotune::AuditCtx::live())
+        .into_iter().filter(|i| i.reject).collect();
+    let mut planned = Vec::new();
+    for k in kept.keys() {
+        if tune::find(k).is_none() && !tune::RETIRED_KEYS.contains(&k.as_str()) {
+            errors.push(json!({"key": k, "ok": false, "error": "unknown key"}));
+        }
+    }
+    for t in TUNABLES {
+        let Some(raw) = kept.get(t.key) else { continue };
+        if let Some(issue) = rejects.iter().find(|i| i.key == t.key) {
+            errors.push(json!({"key": t.key, "ok": false, "error": format!("refused by the safety audit: {}", issue.msg)}));
+            continue;
+        }
+        if t.key == "net.wifi_power_save" && tune::wireless_pm_locked() { continue; }
+        // Unavailable features are intentionally skipped by apply_values for
+        // cross-hardware presets; do not mount debugfs just for validation.
+        let files = tune::files(t);
+        if files.is_empty() { continue; }
+        let value = match tune::validate(t, raw) {
+            Ok(v) => v,
+            Err(e) => { errors.push(json!({"key": t.key, "ok": false, "error": e})); continue; }
+        };
+        match tune::plan_with(t, &value, files) {
+            Ok(plan) => planned.extend(plan.into_iter().map(|(p, v)| (t.key.to_owned(), p, v))),
+            Err(e) => errors.push(json!({"key": t.key, "ok": false, "error": e})),
+        }
+    }
+    if errors.is_empty() { Ok(planned) } else { Err(errors) }
+}
+
+/// Capture the *currently enforced* values of both old and new targets.
+/// The existing baseline contains first-seen defaults, not the previous
+/// preset's values; using it as a transition rollback would be incorrect.
+fn snapshot_replace(st: &State, plan: &[(String, PathBuf, String)]) -> Result<Vec<(String, PathBuf, String)>, String> {
+    let mut old = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (key, path, _) in st.baseline.iter().chain(plan.iter()) {
+        if !seen.insert(path.clone()) { continue; }
+        let t = tune::find(key).ok_or_else(|| format!("{key}: tunable disappeared"))?;
+        let live = tune::baseline_value(t, path)
+            .ok_or_else(|| format!("cannot snapshot {} before replacing preset; nothing changed", path.display()))?;
+        old.push((key.clone(), path.clone(), live));
+    }
+    Ok(old)
+}
+
+fn rollback_replace(st: &mut State, before: State, saved: &[(String, PathBuf, String)], mut out: Value) -> Value {
+    let (_, errors, _, failed) = write_back(saved);
+    out["ok"] = json!(false);
+    out["applied"] = json!(false);
+    out["rolled_back"] = json!(errors.is_empty() && failed.is_empty());
+    if errors.is_empty() && failed.is_empty() {
+        *st = before;  // restore the exact previous session/preset/baseline
+    } else {
+        // Preserve originals for future retry even for stale keys that a
+        // partially completed restore had removed from the live state.
+        for (key, path, original) in before.baseline {
+            if !st.has(&path) { st.baseline.push((key, path, original)); }
+        }
+        st.preset = None;
+        st.source = Some("manual".into());
+        out["rollback_errors"] = json!(errors);
+        out["error"] = json!("preset replacement failed and rollback was incomplete; inspect live hardware values");
+    }
+    out
 }
 
 /// Applies `values` in table order. Returns per-key results and all-ok.
@@ -650,17 +730,35 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
     let base = autotune::Pressure::sample();
     let out = locked(|st| {
         let mut restored = Value::Null;
+        let mut before = None;
+        let mut saved = Vec::new();
         if replace {
             // A scene switch (e.g. AC → battery) must not yank a running game's tuning.
             if st.refcount() > 0 {
                 return json!({"ok": false, "applied": false, "game_active": true,
                     "error": format!("game mode is active ({} session(s)); tuning left unchanged", st.refcount())});
             }
+            let plan = match preflight_replace(values) {
+                Ok(p) => p,
+                Err(errors) => return json!({"ok": false, "applied": false, "error": "replacement preflight rejected values; previous preset unchanged", "results": errors}),
+            };
+            saved = match snapshot_replace(st, &plan) {
+                Ok(s) => s,
+                Err(e) => return json!({"ok": false, "applied": false, "error": e}),
+            };
+            before = Some(st.clone());
             let mut stale: Vec<String> = Vec::new();
             for (k, _, _) in &st.baseline {
                 if !values.contains_key(k) && !stale.contains(k) { stale.push(k.clone()); }
             }
             if !stale.is_empty() { restored = restore_entries(st, Some(&stale)); }
+            if restored["errors"].as_array().is_some_and(|a| !a.is_empty())
+                || restored["deferred"].as_u64().unwrap_or(0) != 0 {
+                return rollback_replace(st, before.take().unwrap(), &saved, json!({
+                    "ok": false, "applied": false, "error": "could not restore obsolete settings before replacement",
+                    "restored": restored,
+                }));
+            }
             st.preset = preset.clone();
         }
         if mode == "game" {
@@ -684,16 +782,25 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
             st.source = Some(mode.to_owned());
         }
         let (results, mut ok) = apply_values(st, values, mode == "game");
+        // A replace is all-or-restore, including per-device best-effort
+        // refusals that non-replacing presets are allowed to skip.
+        if replace && results.iter().any(|r| r["refused"].as_u64().unwrap_or(0) > 0) { ok = false; }
         if restored["errors"].as_array().is_some_and(|a| !a.is_empty()) { ok = false; }
         if values.is_empty() && st.baseline.is_empty() { st.source = None; }
-        json!({"ok": ok, "applied": true, "results": results, "restored": restored,
-            "error": (!ok).then_some("some settings could not be applied")})
+        let result = json!({"ok": ok, "applied": ok, "results": results, "restored": restored,
+            "error": (!ok).then_some("some settings could not be applied")});
+        if replace && !ok {
+            rollback_replace(st, before.take().unwrap(), &saved, result)
+        } else { result }
     });
     guard_after(out, base)
 }
 
 /// Starts the pressure guard when the apply wrote guarded knobs.
 fn guard_after(mut out: Value, base: autotune::Pressure) -> Value {
+    // A failed replacement may have briefly written values that were undone.
+    // Neither the defaults ledger nor the detached guard may act on them.
+    if out.get("rolled_back").is_some() { return out; }
     let keys: Vec<String> = out["results"].as_array().map(|a| a.iter()
         .filter(|r| r["ok"].as_bool() == Some(true) && r["written"].as_u64().unwrap_or(0) > 0)
         .filter_map(|r| r["key"].as_str()).filter(|k| autotune::guarded(k)).map(str::to_owned).collect()).unwrap_or_default();
