@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- Ryzen Curve → CO Search rewritten: all-core or per-core search, fast / medium / long levels, 60 s CPU cycles
+  (`centurion-cpustress --load co`: 40 s of steady FFT / NTT load in the manner of Prime95 Small FFT and y-cruncher,
+  then 20 s of load changes that move the clock and the idle states), single-core trials on the best-ranked cores,
+  a confirmation pass, its own scene and temperature limit (default 95 °C), resume after a crash, and the result
+  saved as a Ryzen Curve profile. Replaces the 20 s all-core SSE test.
 - Health → Backups: distribution-aware defaults. `/etc/os-release` (ID / ID_LIKE) selects Gentoo, Arch (Manjaro,
   EndeavourOS, CachyOS), Debian/Ubuntu (Mint, Pop!_OS), Fedora/RHEL, openSUSE, Void or Alpine; the image's exclude
   list follows that layout (pacman sync DBs, apt lists, snap mounts, the Gentoo repository, snapper/Timeshift

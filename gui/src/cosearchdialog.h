@@ -1,18 +1,29 @@
 #pragma once
-// Opt-in conservative all-core Ryzen CO search. Every candidate is temporary:
-// it is tested with centurion-cpustress then reset to stock on completion/failure.
+// Ryzen Curve Optimizer search, all-core or per-core, at three test levels (costrategy.h decides what to
+// try; centurion-cpustress --load co tests it in 60 s cycles). Every candidate is temporary: the curve goes
+// back to stock when the search ends, fails or is cancelled, and the result is saved as a Ryzen Curve
+// profile, never applied. The search can run under a scene of its own (the power level the CPU will
+// really be used at) with its own temperature limit. A journal written before every trial lets a search
+// that froze or rebooted the machine resume afterwards, the trial in flight counting as failed.
+#include "costrategy.h"
+
 #include <QDialog>
-#include <QJsonObject>
-#include <QJsonArray>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <functional>
+#include <optional>
+
+class QCloseEvent;
+class QComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QProcess;
 class QPushButton;
 class QSpinBox;
+class QTableWidget;
 class QTimer;
-class QCloseEvent;
+
 class CoSearchDialog : public QDialog {
     Q_OBJECT
 public:
@@ -23,29 +34,54 @@ protected:
     void reject() override;
 private:
     void start();
-    void next();
-    void cpuTest();
-    void testFinished(int code);
-    void validateFaultLog();
+    void offerResume();
+    void launch();
+    void step();
+    void runTest();
+    void testOutput();
+    void testFinished(int code, bool crashed);
+    void validateFaultLog(cosearch::Outcome o);
+    void finishTrial(const cosearch::Outcome &o);
     void scanKernel(std::function<void(bool, const QJsonArray &, quint64)> then);
     void cancel();
     void reset(const QString &reason);
     void done(bool resetOk, const QString &reason);
     void note(const QString &line);
     double temperature() const;
-    QLabel *status_;
+    bool toolsPresent();
+    void updateEstimate();
+    void loadSettings();
+    void saveSettings() const;
+    void writeJournal() const;
+    void refreshTable();
+    QString saveProfile() const;
+
+    QComboBox *mode_, *level_, *scene_;
+    QSpinBox *limit_, *maxTemp_;
+    QLabel *estimate_, *status_;
+    QTableWidget *table_;
     QPlainTextEdit *log_;
     QPushButton *go_, *stop_;
-    QSpinBox *limit_;
     QProcess *test_ = nullptr;
     QTimer *guard_;
     QString testProgram_;
-    int candidate_ = 0, best_ = 0;
-    bool running_ = false, abort_ = false, applying_ = false, resetting_ = false, exhausted_ = false;
-    qint64 testStart_ = 0;
+
+    std::optional<cosearch::Search> search_;
+    QJsonObject snapshot_;               // search state before the trial in flight (journal)
+    std::optional<cosearch::Trial> trial_;
+    int testIndex_ = 0;
+    cosearch::Outcome outcome_;
+    QByteArray testBuf_;
+    QJsonObject testEnd_;
+    QString expectedCurve_;              // CurvePage::currentState("cpu") while the trial's offsets are applied
+    int trialNo_ = 0;
+
+    bool running_ = false, abort_ = false, applying_ = false, resetting_ = false, finished_ = false;
+    bool sceneApplying_ = false, quitting_ = false;
+    qint64 testStart_ = 0, testDeadline_ = 0;
     quint64 kmsgSeq_ = 0;
     QHash<QString, QString> mceBefore_;
-    bool quitting_ = false;
-    QString startScene_, bootId_;
+    QString startScene_, priorScene_, bootId_;
+    int tempLimit_ = 95;
     QJsonArray attempts_;
 };

@@ -346,13 +346,14 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     acHint->setProperty("role", "muted");
     al->addWidget(acHint);
     al->addStretch();
-    // The search finds an all-core offset, so it sits with the all-core controls, as the secondary action.
+    // The search sits with the all-core controls, as the secondary action.
     auto *coSearch = new QPushButton(tr("CO Search…"));
-    coSearch->setToolTip(tr("CO Search (experimental): a conservative all-core offset search with short CPU tests; "
-                            "the curve is reset to stock afterwards."));
+    coSearch->setToolTip(tr("CO Search (experimental): all-core or per-core offset search with 60-second CPU cycles; "
+                            "the curve is reset to stock afterwards and the result saved as a profile."));
     connect(coSearch, &QPushButton::clicked, this, [this] {
         if (busy_ || trial_->running()) { QMessageBox::warning(this, tr("Busy"), tr("Finish the current CPU curve write or trial first.")); return; }
         CoSearchDialog dlg(this); dlg.exec();
+        reloadProfiles();  // the search saves its result as a profile
     });
     al->addWidget(coSearch);
     auto *bAll = new QPushButton("Apply All-Core");

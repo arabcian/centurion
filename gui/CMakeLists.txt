@@ -47,6 +47,7 @@ add_executable(centurion
     src/fwattrtab.cpp    src/fwattrtab.h
     src/ryzentab.cpp     src/ryzentab.h
     src/cosearchdialog.cpp src/cosearchdialog.h
+    src/costrategy.cpp src/costrategy.h
     src/inteltab.cpp     src/inteltab.h
     src/vfcurvewidget.cpp src/vfcurvewidget.h
     src/nvidiatab.cpp    src/nvidiatab.h
@@ -299,6 +300,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-cpustress-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-cpustress-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME cpustress COMMAND centurion-cpustress-test)
+    add_executable(centurion-costrategy-test tests/costrategy_test.cpp src/costrategy.cpp src/costrategy.h)
+    target_link_libraries(centurion-costrategy-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-costrategy-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME costrategy COMMAND centurion-costrategy-test)
     add_executable(centurion-klogview-test tests/klogview_test.cpp src/klogview.cpp src/klogview.h)
     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)

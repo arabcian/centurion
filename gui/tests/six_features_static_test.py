@@ -32,8 +32,8 @@ checks = {
   'CO search accessible': 'CoSearchDialog dlg(this)' in read('ryzentab.cpp'),
   'CO search stock guard': 'co-state.json' in co and 'knownStock' in co,
   'CO search user opt-in': 'Risk of a system crash' in co,
-  'CO search thermal guard': 't >= 80.0' in co and 't >= 92.0' in co,
-  'CO search no automatic commitment': '"op", "reset"' in co and 'Manually reapply only after extended testing' in co,
+  'CO search thermal guard': 't >= tempLimit_ - 15' in co and 't >= tempLimit_' in co and 'maxTemp_->setValue(95)' in co,
+  'CO search no automatic commitment': '"op", "reset"' in co and 'Saved as Ryzen Curve profile' in co and 'load and apply it there' in co,
   'CO search hardware fault correlation': '"health-reader"' in co and 'kmsgSeq_' in co and 'validateFaultLog' in co and 'health.log")' not in co,
   'CO search watchdog': 'test_->terminate()' in co and 'pending->kill()' in co,
 }
