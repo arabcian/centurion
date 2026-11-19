@@ -2,6 +2,7 @@
 #include "curvepage.h"
 #include "privileged.h"
 #include "scenes.h"
+#include "sysinfo.h"
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDir>
@@ -138,16 +139,8 @@ void CoSearchDialog::closeEvent(QCloseEvent *e) {
 }
 
 double CoSearchDialog::temperature() const {
-    for (const auto &dir : QDir("/sys/class/hwmon").entryList({"hwmon*"}, QDir::Dirs | QDir::NoDotAndDotDot)) {
-        QFile name("/sys/class/hwmon/" + dir + "/name");
-        if (!name.open(QIODevice::ReadOnly) || name.readAll().trimmed() != "k10temp") continue;
-        QFile t("/sys/class/hwmon/" + dir + "/temp1_input");
-        if (!t.open(QIODevice::ReadOnly)) continue;
-        bool ok = false;
-        const double c = QString::fromLatin1(t.readAll()).trimmed().toDouble(&ok) / 1000.0;
-        if (ok && c > -20 && c < 130) return c;
-    }
-    return std::numeric_limits<double>::quiet_NaN();
+    // The same sensor the rest of the GUI shows: k10temp, zenpower (Tctl/Tdie) or coretemp.
+    return sysinfo::cpuTempC().value_or(std::numeric_limits<double>::quiet_NaN());
 }
 
 void CoSearchDialog::note(const QString &s) {
@@ -180,7 +173,7 @@ void CoSearchDialog::start() {
     }
     const double t = temperature();
     if (!std::isfinite(t) || t >= 80.0) {
-        QMessageBox::warning(this, tr("Thermal guard"), tr("A readable k10temp sensor below 80°C is required before starting.")); return;
+        QMessageBox::warning(this, tr("Thermal guard"), tr("A readable CPU temperature sensor (k10temp, zenpower or coretemp) below 80°C is required before starting.")); return;
     }
     if (QMessageBox::warning(this, tr("Risk of a system crash"),
             tr("Undervolting may freeze or reboot the system. No applications can be protected against a hard lockup. "

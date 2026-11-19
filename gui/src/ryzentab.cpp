@@ -315,13 +315,6 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     pl->addWidget(bSave);
     pl->addWidget(bDel);
     top->addWidget(profBox, 1);
-    auto *coSearch = new QPushButton(tr("CO Search…"));
-    coSearch->setToolTip(tr("Experimental, conservative all-core offset search with short CPU tests and stock rollback."));
-    connect(coSearch, &QPushButton::clicked, this, [this] {
-        if (busy_ || trial_->running()) { QMessageBox::warning(this, tr("Busy"), tr("Finish the current CPU curve write or trial first.")); return; }
-        CoSearchDialog dlg(this); dlg.exec();
-    });
-    top->addWidget(coSearch);
 
     auto *resetBox = box("Global", "box_grey");
     auto *rl = new QHBoxLayout(resetBox);
@@ -353,6 +346,15 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     acHint->setProperty("role", "muted");
     al->addWidget(acHint);
     al->addStretch();
+    // The search finds an all-core offset, so it sits with the all-core controls, as the secondary action.
+    auto *coSearch = new QPushButton(tr("CO Search…"));
+    coSearch->setToolTip(tr("CO Search (experimental): a conservative all-core offset search with short CPU tests; "
+                            "the curve is reset to stock afterwards."));
+    connect(coSearch, &QPushButton::clicked, this, [this] {
+        if (busy_ || trial_->running()) { QMessageBox::warning(this, tr("Busy"), tr("Finish the current CPU curve write or trial first.")); return; }
+        CoSearchDialog dlg(this); dlg.exec();
+    });
+    al->addWidget(coSearch);
     auto *bAll = new QPushButton("Apply All-Core");
     bAll->setObjectName("btnAccent");
     bAll->setFixedWidth(APPLY_W);
@@ -420,7 +422,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     hdr->addWidget(bClear);
     hdr->addWidget(bCores);
     cl->addLayout(hdr);
-    applyButtons_ = {bAll, bReset, bCores};
+    applyButtons_ = {bAll, bReset, bCores, coSearch};
 
     const QString accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
     auto *cards = new QHBoxLayout;

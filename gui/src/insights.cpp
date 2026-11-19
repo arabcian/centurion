@@ -185,7 +185,7 @@ QStringList capabilities() {
            smuDriver ? QStringLiteral("ryzen_smu driver") : QStringLiteral("raw SMN mailbox via /sys/bus/pci/devices/0000:00:00.0/config (no ryzen_smu module)"),
            QStringLiteral("AMD CPU of a supported family, kernel lockdown off; Ryzen Curve → probe shows the exact reason"));
     report(QStringLiteral("CPU temperature sensors"), QDir("/sys/class/hwmon").exists(),
-           QStringLiteral("/sys/class/hwmon"), QStringLiteral("k10temp/coretemp driver and hwmon support"));
+           QStringLiteral("/sys/class/hwmon"), QStringLiteral("k10temp, zenpower or coretemp driver and hwmon support"));
     report(QStringLiteral("Firmware attributes"), QDir("/sys/class/firmware-attributes").exists(),
            QStringLiteral("/sys/class/firmware-attributes"), QStringLiteral("vendor WMI kernel driver, supported BIOS"));
     report(QStringLiteral("NVIDIA kernel interface"), QDir("/proc/driver/nvidia").exists(),
