@@ -1,3 +1,4 @@
+#include "cosearchdialog.h"
 #include "ryzentab.h"
 #include "cpustress.h"
 #include "trialbar.h"
@@ -314,6 +315,13 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     pl->addWidget(bSave);
     pl->addWidget(bDel);
     top->addWidget(profBox, 1);
+    auto *coSearch = new QPushButton(tr("CO Search…"));
+    coSearch->setToolTip(tr("Experimental, conservative all-core offset search with short CPU tests and stock rollback."));
+    connect(coSearch, &QPushButton::clicked, this, [this] {
+        if (busy_ || trial_->running()) { QMessageBox::warning(this, tr("Busy"), tr("Finish the current CPU curve write or trial first.")); return; }
+        CoSearchDialog dlg(this); dlg.exec();
+    });
+    top->addWidget(coSearch);
 
     auto *resetBox = box("Global", "box_grey");
     auto *rl = new QHBoxLayout(resetBox);

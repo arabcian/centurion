@@ -1,3 +1,4 @@
+#include "insights.h"
 #include "healthtab.h"
 #include "backuppage.h"
 #include "batterypage.h"
@@ -108,6 +109,7 @@ static QString pageAbout(const QString &key) {
         {QStringLiteral("overview"), QT_TRANSLATE_NOOP("HealthTab", "One card per area with its level, and suggested next steps.")},
         {QStringLiteral("monitor"), QT_TRANSLATE_NOOP("HealthTab", "Hardware and driver errors from the kernel, explained, with saved history per day.")},
         {QStringLiteral("boot"), QT_TRANSLATE_NOOP("HealthTab", "Every boot: how it ended, its kernel events, the curves in effect, crash records and patterns.")},
+        {QStringLiteral("capabilities"), QT_TRANSLATE_NOOP("HealthTab", "Why a feature is missing: read-only kernel, helper and firmware capability checks.")},
         {QStringLiteral("sleep"), QT_TRANSLATE_NOOP("HealthTab", "Suspend statistics, battery used while asleep, wake sources and why the hardware does not sleep.")},
         {QStringLiteral("battery"), QT_TRANSLATE_NOOP("HealthTab", "Time left, drain per scene, capacity (wear) history and forecast.")},
         {QStringLiteral("dgpu"), QT_TRANSLATE_NOOP("HealthTab", "Whether the discrete GPU sleeps, what keeps it awake and what it costs.")},
@@ -193,6 +195,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(problems, monitor, tr("Events & alerts"), QStringLiteral("monitor"));
     boot_ = new BootPage;
     addPage(problems, boot_, tr("Boot history"), QStringLiteral("boot"));
+    addPage(problems, insights::capabilityPage(), tr("Capability Doctor"), QStringLiteral("capabilities"));
 
     auto *curves = new CurvePage;
     curves_ = curves;
@@ -469,6 +472,21 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     technicalEvents_ = new QCheckBox(tr("Technical view"));
     technicalEvents_->setToolTip(tr("Show raw event titles, kernel read mode, PCIe counters and saved-log controls."));
     filterRow->addWidget(technicalEvents_);
+    auto *timelineButton = new QPushButton(tr("Incident Timeline…"));
+    timelineButton->setToolTip(tr("Correlate the selected incident with boot-matched sensor and scene history."));
+    filterRow->addWidget(timelineButton);
+    connect(timelineButton, &QPushButton::clicked, this, [this] {
+        QTreeWidgetItem *selected = list_ ? list_->currentItem() : nullptr;
+        const QJsonObject event = selected
+            ? QJsonDocument::fromJson(selected->data(0, Qt::UserRole).toByteArray()).object()
+            : QJsonObject{};
+        if (event.isEmpty()) {
+            QMessageBox::information(this, tr("Incident Timeline"), tr("Select a hardware event first."));
+            return;
+        }
+        insights::show(this, tr("Hardware Incident Timeline"),
+                       insights::incident(event, event.value("boot_id").toString()));
+    });
     root->addLayout(filterRow);
 
     list_ = new QTreeWidget;
@@ -942,8 +960,11 @@ void HealthTab::loadHistoryDay() {
         const QString kind = match.captured(5);
         const QString original = match.captured(6);
         const QString raw = match.captured(7).trimmed();
+        const QDateTime recordedAt = QDateTime::fromString(match.captured(1), QStringLiteral("yyyy-MM-dd HH:mm:ss"));
         const QJsonObject e{{QStringLiteral("kind"), kind.toLower()}, {QStringLiteral("title"), original},
-                            {QStringLiteral("level"), level}, {QStringLiteral("text"), raw}};
+                            {QStringLiteral("level"), level}, {QStringLiteral("text"), raw},
+                            {QStringLiteral("boot_id"), match.captured(2)},
+                            {QStringLiteral("wall_ms"), double(recordedAt.toMSecsSinceEpoch())}};
         auto *item = new QTreeWidgetItem({match.captured(1).left(16),
                                            level == QLatin1String("critical") ? tr("Critical") :
                                            level == QLatin1String("error") ? tr("Error") : tr("Notice"),
@@ -952,6 +973,7 @@ void HealthTab::loadHistoryDay() {
         item->setData(0, Qt::UserRole + 2, dayFilter_);
         item->setData(0, Qt::UserRole + 3, true);
         item->setData(0, Qt::UserRole + 4, level);
+        item->setData(0, Qt::UserRole, QJsonDocument(e).toJson(QJsonDocument::Compact));
         item->setData(0, Qt::UserRole + 5, QJsonDocument(e).toJson(QJsonDocument::Compact));  // for the explanation pane
         for (int c = 0; c < 4; ++c) item->setForeground(c, QColor(levelColor(level)));
         list_->addTopLevelItem(item);
@@ -1057,7 +1079,13 @@ void HealthTab::eventMenu(const QPoint &pos) {
     if (it->data(0, Qt::UserRole + 3).toBool()) {
         QMenu menu(this);
         const QJsonObject saved = eventOf(it);
-        if (!saved.isEmpty()) menu.addAction(tr("Explain this event"), this, [this, saved] { explainEvent(saved); });
+        if (!saved.isEmpty()) {
+            menu.addAction(tr("Explain this event"), this, [this, saved] { explainEvent(saved); });
+            menu.addAction(tr("Hardware Incident Timeline…"), this, [this, saved] {
+                insights::show(this, tr("Hardware Incident Timeline"),
+                               insights::incident(saved, saved.value("boot_id").toString()));
+            });
+        }
         menu.addAction(tr("Copy saved record"), this, [it] {
             QApplication::clipboard()->setText(it->toolTip(3));
         });
@@ -1071,6 +1099,9 @@ void HealthTab::eventMenu(const QPoint &pos) {
     QMenu menu(this);
     menu.addAction(tr("Explain this event"), this, [this, e] { explainEvent(e); });
     menu.addAction(tr("Show in kernel log"), this, [this, e] { showInKlog(e); });
+    menu.addAction(tr("Hardware Incident Timeline…"), this, [this, e] {
+        insights::show(this, tr("Hardware Incident Timeline"), insights::incident(e, e.value("boot_id").toString()));
+    });
     menu.addAction(tr("Copy event and explanation"), this, [e] {
         QTextBrowser tmp;
         tmp.setHtml(eventinfo::html(e, friendlyEvent(e)));

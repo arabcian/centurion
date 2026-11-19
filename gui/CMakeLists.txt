@@ -46,12 +46,14 @@ add_executable(centurion
     src/deviceinfodialog.cpp src/deviceinfodialog.h
     src/fwattrtab.cpp    src/fwattrtab.h
     src/ryzentab.cpp     src/ryzentab.h
+    src/cosearchdialog.cpp src/cosearchdialog.h
     src/inteltab.cpp     src/inteltab.h
     src/vfcurvewidget.cpp src/vfcurvewidget.h
     src/nvidiatab.cpp    src/nvidiatab.h
     src/optimizetab.cpp  src/optimizetab.h
     src/optimization_translation_sources.cpp
     src/autotunereport.cpp src/autotunereport.h
+    src/insights.cpp src/insights.h
     src/int64spinbox.cpp src/int64spinbox.h
     src/tray.cpp         src/tray.h
     src/scenes.cpp       src/scenes.h
@@ -277,6 +279,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-flightrec-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-flightrec-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME flightrec COMMAND centurion-flightrec-test)
+    add_executable(centurion-insights-test tests/insights_test.cpp src/insights.cpp src/insights.h src/autotunereport.cpp src/autotunereport.h)
+    target_link_libraries(centurion-insights-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-insights-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME insights COMMAND centurion-insights-test)
     add_executable(centurion-autotunereport-test tests/autotunereport_test.cpp src/autotunereport.cpp src/autotunereport.h)
     target_link_libraries(centurion-autotunereport-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-autotunereport-test PRIVATE QT_NO_KEYWORDS)
@@ -318,7 +324,7 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-dgpuusage-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-dgpuusage-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME dgpuusage COMMAND centurion-dgpuusage-test)
-    add_executable(centurion-cooling-test tests/coolingpage_test.cpp src/coolingpage.cpp src/coolingpage.h src/charts.cpp src/charts.h src/theme.cpp src/theme.h)
+    add_executable(centurion-cooling-test tests/coolingpage_test.cpp src/coolingpage.cpp src/coolingpage.h src/charts.cpp src/charts.h src/theme.cpp src/theme.h src/insights.cpp src/insights.h src/autotunereport.cpp src/autotunereport.h)
     target_link_libraries(centurion-cooling-test PRIVATE Qt6::Widgets)
     target_compile_definitions(centurion-cooling-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME cooling COMMAND centurion-cooling-test)

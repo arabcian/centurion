@@ -1,3 +1,4 @@
+#include "insights.h"
 #include "coolingpage.h"
 #include "charts.h"
 #include "theme.h"
@@ -169,6 +170,14 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     row->addWidget(cancel_);
     row->addWidget(length_);
     row->addWidget(fanMax_);
+    auto *pareto = new QPushButton(tr("Pareto Lab…"));
+    pareto->setToolTip(tr("Compare clean test runs under the same context and duration; no hardware writes."));
+    connect(pareto, &QPushButton::clicked, this, [this] {
+        const QJsonObject store = QJsonDocument::fromJson([&] { QFile f(coolingreminder::storePath());
+            return f.open(QIODevice::ReadOnly) && f.size() < (2LL << 20) ? f.readAll() : QByteArray(); }()).object();
+        insights::show(this, tr("Fan / Temperature Pareto Lab"), insights::pareto(store.value("runs").toArray()));
+    });
+    row->addWidget(pareto);
     row->addStretch(1);
     fanTimer_ = new QTimer(this);
     fanTimer_->setInterval(FAN_TICK_MS);

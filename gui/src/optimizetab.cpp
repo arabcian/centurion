@@ -1,3 +1,4 @@
+#include "insights.h"
 #include "optimizetab.h"
 #include "privileged.h"
 #include "inteltab.h"
@@ -2462,6 +2463,10 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     const QJsonObject scores = d.value(QStringLiteral("scores")).toObject();
     const bool rich = !dec.isEmpty();
     const QHash<QString, QString> since = autotunereport::changedSinceLast(d);
+    auto *evidence = new QPushButton(tr("Calibration Confidence Explorer…"));
+    evidence->setToolTip(tr("Inspect sample coverage, uncertainty and which knob needs more evidence; read-only."));
+    connect(evidence, &QPushButton::clicked, &dlg, [this, d] { insights::show(this, tr("Calibration confidence"), insights::confidence(d)); });
+    v->addWidget(evidence);
     auto *onlyChanges = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Only changes"));
     v->addWidget(onlyChanges);
     auto *table = new QTableWidget(0, rich ? 6 : 4);
