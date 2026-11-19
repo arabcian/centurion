@@ -28,6 +28,7 @@ pub mod health;
 pub mod memory_spd;
 pub mod intel_uv;
 pub mod intel_uv_daemon;
+pub mod intel_uv_search;
 pub mod iorate;
 pub mod defaults;
 pub mod calib;

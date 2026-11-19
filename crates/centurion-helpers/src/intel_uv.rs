@@ -28,6 +28,8 @@ use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::Path;
 
 pub const MSR_PLATFORM_INFO: u64 = 0xCE;
+/// Core scope: bits 3:0 package C-state limit, bit 15 lock (SDM).
+pub const MSR_PKG_CST_CONFIG_CONTROL: u64 = 0xE2;
 pub const MSR_OC_MAILBOX: u64 = 0x150;
 /// MSR_FLEX_RATIO: bit 20 = "OC Lock" (BIOS "Overclocking Lock"; what ThrottleStop's FIVR window reports).
 /// Once set it stays until reset and the OC mailbox (0x150) refuses voltage writes.
@@ -38,7 +40,11 @@ pub const MSR_TURBO_RATIO_LIMIT: u64 = 0x1AD;
 pub const MSR_RAPL_POWER_UNIT: u64 = 0x606;
 pub const MSR_PKG_POWER_LIMIT: u64 = 0x610;
 pub const IA32_PERF_STATUS: u64 = 0x198;
+pub const IA32_TSC: u64 = 0x10;
+pub const IA32_MPERF: u64 = 0xE7;
+pub const IA32_APERF: u64 = 0xE8;
 pub const IA32_THERM_STATUS: u64 = 0x19C;
+pub const IA32_PACKAGE_THERM_STATUS: u64 = 0x1B1;
 pub const MSR_POWER_CTL: u64 = 0x1FC;
 pub const MSR_PKG_ENERGY_STATUS: u64 = 0x611;
 pub const MSR_DRAM_ENERGY_STATUS: u64 = 0x619;
@@ -347,7 +353,10 @@ pub struct Msr { f: File }
 
 impl Msr {
     /// /dev/cpu/0/msr, loading the msr module first if needed.
-    pub fn open(write: bool) -> io::Result<Msr> {
+    pub fn open(write: bool) -> io::Result<Msr> { Msr::open_cpu(0, write) }
+
+    /// /dev/cpu/N/msr: for the core-scoped registers (C-state limit) and per-CPU monitoring.
+    pub fn open_cpu(cpu: usize, write: bool) -> io::Result<Msr> {
         // Single entry point of every MSR user (mailbox, monitor, daemon, CLI): the 0x150
         // mailbox and the other addresses are Intel-only, never touch them on AMD.
         if !crate::cpuinfo_head().lines().any(|l| l.starts_with("vendor_id") && l.contains("GenuineIntel")) {
@@ -361,10 +370,10 @@ impl Msr {
                 format!("Intel family {} is not family 6: these MSR addresses are not defined for it, access refused", c.family))),
             None => return Err(io::Error::new(io::ErrorKind::Unsupported, "/proc/cpuinfo unreadable: CPU family unknown, MSR access refused")),
         }
-        let dev = Path::new("/dev/cpu/0/msr");
-        if !dev.exists() { let _ = modprobe_msr(); }
+        let dev = format!("/dev/cpu/{cpu}/msr");
+        if !Path::new(&dev).exists() { let _ = modprobe_msr(); }
         let f = OpenOptions::new().read(true).write(write)
-            .custom_flags(libc::O_CLOEXEC).open(dev)?;
+            .custom_flags(libc::O_CLOEXEC).open(&dev)?;
         Ok(Msr { f })
     }
     pub fn read(&self, addr: u64) -> io::Result<u64> {
@@ -597,7 +606,12 @@ impl Drop for Mmio {
 // ── profile ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Clone)]
-pub struct PlReq { pub watts: f64, pub seconds: Option<f64> }
+pub struct PlReq { pub watts: f64, pub seconds: Option<f64>, pub clamp: Option<bool> }
+
+/// intel_pstate limits (the kernel turns them into the HWP min/max ratio — ThrottleStop's
+/// "Speed Shift Min/Max") and one EPP for every policy. None = file not written.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct HwpLimits { pub min_pct: Option<u64>, pub max_pct: Option<u64>, pub epp: Option<String> }
 
 /// None anywhere = leave that register untouched.
 #[derive(Debug, Default, Clone)]
@@ -620,6 +634,21 @@ pub struct Profile {
     pub hwphint: Vec<HwpRule>,
     /// Max turbo ratio (×100 MHz): every turbo ratio byte capped to it, never above stock.
     pub turbo_ratio_max: Option<u64>,
+    /// Per active-core-group turbo ratios (MSR 0x1AD bytes 0..n): each ≤ stock, table non-increasing.
+    pub turbo_ratios: Vec<u64>,
+    /// PL4 (powercap peak_power, W): never above this boot's stock value.
+    pub pl4: Option<f64>,
+    /// PP0 / core long-term limit (powercap intel-rapl:0:0, W): a cap, enabled when written.
+    pub pp0: Option<f64>,
+    /// Clear the PL1/PL2 enable bits of the MCHBAR copy (ThrottleStop "MMIO Lock" without the zeroing).
+    pub mchbar_disable: bool,
+    /// MSR_POWER_CTL bit 1.
+    pub c1e: Option<bool>,
+    /// MSR_PKG_CST_CONFIG_CONTROL bits 3:0, on every CPU: lower only, never when locked.
+    pub pkg_cstate_limit: Option<u64>,
+    pub hwp: Option<HwpLimits>,
+    /// intel_uncore_frequency (min_khz, max_khz), kept inside each domain's initial range.
+    pub uncore: Option<(Option<u64>, Option<u64>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -678,6 +707,47 @@ pub fn parse_profile(v: &Value) -> Result<Profile, String> {
         if arr.len() > 8 { return Err("at most 8 hwphint rules".into()); }
         for (i, r) in arr.iter().enumerate() { p.hwphint.push(parse_hwp_rule(r).map_err(|e| format!("hwphint[{i}]: {e}"))?); }
     }
+    if let Some(v) = root.get("turbo_ratios").filter(|v| !v.is_null()) {
+        let arr = v.as_array().ok_or("turbo_ratios must be a list")?;
+        if arr.is_empty() || arr.len() > 8 { return Err("turbo_ratios needs 1..8 ratios".into()); }
+        for r in arr {
+            match r.as_u64() { Some(x @ 1..=255) => p.turbo_ratios.push(x), _ => return Err("turbo_ratios: integer ratios 1..255".into()) }
+        }
+        if p.turbo_ratio_max.is_some() { return Err("turbo_ratios and turbo_ratio_max both write MSR 0x1AD: use one".into()); }
+    }
+    match root.get("c1e") {
+        None | Some(Value::Null) => {}
+        Some(Value::Bool(b)) => p.c1e = Some(*b),
+        _ => return Err("c1e must be a bool or null".into()),
+    }
+    match root.get("pkg_cstate_limit") {
+        None | Some(Value::Null) => {}
+        Some(v) => match v.as_u64() { Some(x @ 0..=15) => p.pkg_cstate_limit = Some(x), _ => return Err("pkg_cstate_limit must be an integer 0..15".into()) },
+    }
+    if let Some(h) = obj(root.get("hwp"), "hwp")? {
+        let pct = |k: &str| -> Result<Option<u64>, String> {
+            match h.get(k) { None | Some(Value::Null) => Ok(None),
+                Some(v) => match v.as_u64() { Some(x @ 1..=100) => Ok(Some(x)), _ => Err(format!("hwp.{k} must be an integer 1..100")) } }
+        };
+        let epp = match h.get("epp") { None | Some(Value::Null) => None,
+            Some(Value::String(s)) if valid_hint(s) => Some(s.clone()),
+            _ => return Err("hwp.epp is not a valid EPP name".into()) };
+        let l = HwpLimits { min_pct: pct("min_pct")?, max_pct: pct("max_pct")?, epp };
+        if let (Some(a), Some(b)) = (l.min_pct, l.max_pct) { if a > b { return Err("hwp.min_pct must be ≤ hwp.max_pct".into()); } }
+        if l.epp.is_some() && !p.hwphint.is_empty() { return Err("hwp.epp and hwphint both write EPP: use one".into()); }
+        p.hwp = Some(l);
+    }
+    if let Some(u) = obj(root.get("uncore"), "uncore")? {
+        let khz = |k: &str| -> Result<Option<u64>, String> {
+            match u.get(k) { None | Some(Value::Null) => Ok(None),
+                Some(v) => match v.as_u64() { Some(x @ 1..=10_000_000) => Ok(Some(x)), _ => Err(format!("uncore.{k} must be 1..10000000 kHz")) } }
+        };
+        let (a, b) = (khz("min_khz")?, khz("max_khz")?);
+        if let (Some(a), Some(b)) = (a, b) { if a > b { return Err("uncore.min_khz must be ≤ uncore.max_khz".into()); } }
+        // The driver stores a ratio (kHz / 100000, floored): any other value reads back different.
+        if [a, b].into_iter().flatten().any(|v| v % 100_000 != 0) { return Err("uncore frequencies must be multiples of 100 MHz".into()); }
+        p.uncore = Some((a, b));
+    }
     if let Some(m) = obj(root.get("voltage"), "voltage")? {
         for k in m.keys() {
             if plane_index(k).is_none() { return Err(format!("unknown voltage plane '{k}'")); }
@@ -715,10 +785,22 @@ pub fn parse_profile(v: &Value) -> Result<Profile, String> {
                 if !(1.0..=PL_MAX_W).contains(&w) { return Err(format!("power.{key}.watts must be 1..{PL_MAX_W} W")); }
                 let s = num(t.get("seconds").unwrap_or(&Value::Null), &format!("power.{key}.seconds"))?;
                 if let Some(s) = s { if !(0.0005..=1.0e5).contains(&s) { return Err(format!("power.{key}.seconds out of range")); } }
-                *slot = Some(PlReq { watts: w, seconds: s });
+                let clamp = match t.get("clamp") { None | Some(Value::Null) => None, Some(Value::Bool(b)) => Some(*b),
+                    _ => return Err(format!("power.{key}.clamp must be a bool")) };
+                *slot = Some(PlReq { watts: w, seconds: s, clamp });
+            }
+        }
+        for (key, slot) in [("pl4", &mut p.pl4), ("pp0", &mut p.pp0)] {
+            if let Some(w) = num(pw.get(key).unwrap_or(&Value::Null), &format!("power.{key}"))? {
+                if !(1.0..=PL_MAX_W).contains(&w) { return Err(format!("power.{key} must be 1..{PL_MAX_W} W")); }
+                *slot = Some(w);
             }
         }
         if let Some(b) = pw.get("mchbar") { p.mchbar = b.as_bool().ok_or("power.mchbar must be a bool")?; }
+        if let Some(b) = pw.get("mchbar_disable").filter(|v| !v.is_null()) {
+            p.mchbar_disable = b.as_bool().ok_or("power.mchbar_disable must be a bool")?;
+            if p.mchbar_disable && p.mchbar { return Err("power.mchbar_disable needs power.mchbar = false (no mirroring into the disabled copy)".into()); }
+        }
     }
     if p.lock_power && p.pl1.is_none() && p.pl2.is_none() { return Err("lock_power needs pl1 and/or pl2".into()); }
     Ok(p)
@@ -846,6 +928,26 @@ pub fn read_status() -> Value {
         Ok(v) => json!({"enabled": v & 1 == 1}),
         Err(e) => json!({"error": err_str(&e)}),
     };
+    out["c1e"] = match msr.read(MSR_POWER_CTL) {
+        Ok(v) => json!({"enabled": v & 2 == 2}),
+        Err(e) => json!({"error": err_str(&e)}),
+    };
+    out["pkg_cstate"] = match msr.read(MSR_PKG_CST_CONFIG_CONTROL) {
+        Ok(v) => json!({"limit": v & 0xF, "locked": (v >> 15) & 1 == 1}),
+        Err(e) => json!({"error": err_str(&e)}),
+    };
+    let pct = |k: &str| read_u64(&Path::new(PSTATE).join(k)).ok();
+    out["hwp"] = json!({"min_pct": pct("min_perf_pct"), "max_pct": pct("max_perf_pct"),
+        "epp": policies().first().and_then(|p| read_trim(&p.join("energy_performance_preference")).ok()),
+        "epp_available": policies().first().and_then(|p| read_trim(&p.join("energy_performance_available_preferences")).ok())});
+    out["uncore"] = match uncore_domains().first() {
+        Some(d) => {
+            let k = |f: &str| read_u64(&d.join(f)).ok();
+            json!({"domains": uncore_domains().len(), "min_khz": k("min_freq_khz"), "max_khz": k("max_freq_khz"),
+                   "initial_min_khz": k("initial_min_freq_khz"), "initial_max_khz": k("initial_max_freq_khz")})
+        }
+        None => json!({"error": "intel_uncore_frequency not loaded"}),
+    };
     out["ctdp"] = match &plat {
         Ok(pi) => {
             let pi = *pi;
@@ -859,8 +961,10 @@ pub fn read_status() -> Value {
     out["turbo_ratio"] = match (&plat, msr.read(MSR_TURBO_RATIO_LIMIT)) {
         (Ok(pi), Ok(cur)) => {
             let stock = stored_turbo_stock().unwrap_or(cur);
+            let bytes = |v: u64| (0..8).map(|i| (v >> (8 * i)) & 0xFF).collect::<Vec<_>>();
             json!({"programmable": (pi >> 28) & 1 == 1, "base": (pi >> 8) & 0xFF, "stock_max": max_turbo_ratio(stock),
-                   "current_max": max_turbo_ratio(cur), "raw": format!("{cur:#018x}")})
+                   "current_max": max_turbo_ratio(cur), "raw": format!("{cur:#018x}"),
+                   "stock": bytes(stock), "current": bytes(cur)})
         }
         (Err(e), _) => json!({"error": err_str(e)}),
         (_, Err(e)) => json!({"error": err_str(&e)}),
@@ -871,6 +975,16 @@ pub fn read_status() -> Value {
             let (a, b, locked) = decode_pl(raw, units);
             let t = |t: Term| json!({"watts": t.watts, "seconds": t.seconds, "enabled": t.enabled, "clamp": t.clamp});
             let mut pw = json!({"pl1": t(a), "pl2": t(b), "locked": locked, "raw": format!("{raw:#018x}")});
+            pw["pl4"] = match rapl_constraint(RAPL_PKG, "peak_power").map(|f| read_u64(&f)) {
+                Some(Ok(uw)) => json!({"watts": uw as f64 / 1e6}),
+                Some(Err(e)) => json!({"error": e}),
+                None => json!({"error": "no PL4 (peak_power) in powercap"}),
+            };
+            pw["pp0"] = match rapl_constraint(RAPL_CORE, "long_term").map(|f| read_u64(&f)) {
+                Some(Ok(uw)) => json!({"watts": uw as f64 / 1e6, "enabled": read_trim(&Path::new(RAPL_CORE).join("enabled")).ok().map(|s| s == "1")}),
+                Some(Err(e)) => json!({"error": e}),
+                None => json!({"error": "no PP0 (core) zone in powercap"}),
+            };
             match mchbar_base() {
                 Ok(base) => match Mmio::open(base + MCHBAR_PKG_LIMIT_OFFSET, false) {
                     Ok(m) => {
@@ -904,6 +1018,58 @@ pub fn cap_turbo_ratios(stock: u64, cap: u64) -> u64 {
 
 pub fn max_turbo_ratio(raw: u64) -> u64 { (0..8).map(|i| (raw >> (8 * i)) & 0xFF).max().unwrap_or(0) }
 
+/// `ratios[i]` replaces stock byte i. Each must exist in stock, stay within base..=stock, and the
+/// resulting table (the untouched stock bytes included) must not rise with more active cores.
+pub fn set_turbo_ratios(stock: u64, ratios: &[u64], base: u64) -> Result<u64, String> {
+    let mut v = stock;
+    for (i, &r) in ratios.iter().enumerate() {
+        let s = (stock >> (8 * i)) & 0xFF;
+        if s == 0 { return Err(format!("turbo group {} does not exist on this CPU", i + 1)); }
+        if r > s { return Err(format!("group {}: ratio {r} is above stock {s}", i + 1)); }
+        if r < base { return Err(format!("group {}: ratio {r} is below the base ratio {base}", i + 1)); }
+        v = (v & !(0xFFu64 << (8 * i))) | (r << (8 * i));
+    }
+    let bytes: Vec<u64> = (0..8).map(|i| (v >> (8 * i)) & 0xFF).take_while(|&b| b != 0).collect();
+    if bytes.windows(2).any(|w| w[1] > w[0]) {
+        return Err(format!("turbo table must not rise with more active cores: {bytes:?}"));
+    }
+    Ok(v)
+}
+
+/// MSR_PKG_POWER_LIMIT clamp bit of PL1 (16) or PL2 (48).
+pub fn set_clamp(raw: u64, second: bool, on: bool) -> u64 {
+    let bit = 1u64 << if second { 48 } else { 16 };
+    if on { raw | bit } else { raw & !bit }
+}
+
+/// MSR_PKG_CST_CONFIG_CONTROL with the package C-state limit (bits 3:0) lowered to `limit`.
+/// Refused when locked (bit 15) or when it would raise the limit: a deeper limit than the
+/// firmware chose may not be supported by the platform.
+pub fn cstate_lower(raw: u64, limit: u64) -> Result<u64, String> {
+    if (raw >> 15) & 1 == 1 { return Err("MSR_PKG_CST_CONFIG_CONTROL is locked by firmware (bit 15)".into()); }
+    let cur = raw & 0xF;
+    if limit > cur { return Err(format!("limit {limit} is above the firmware's {cur}: only lowering is allowed")); }
+    Ok((raw & !0xF) | limit)
+}
+
+/// MCHBAR power-limit copy with both enable bits (15, 47) cleared; refused when locked (bit 63).
+pub fn mmio_disable(raw: u64) -> Result<u64, String> {
+    if raw >> 63 == 1 { return Err("MCHBAR power-limit copy is locked until reset".into()); }
+    Ok(raw & !(1u64 << 15) & !(1u64 << 47))
+}
+
+/// Order of a min/max file pair's writes (intel_pstate perf_pct, uncore kHz) so that min ≤ max
+/// holds after each one.
+pub fn minmax_order(cur_min: u64, min: Option<u64>, max: Option<u64>) -> Vec<(&'static str, u64)> {
+    match (min, max) {
+        (Some(a), Some(b)) if b < cur_min => vec![("min", a), ("max", b)],
+        (Some(a), Some(b)) => vec![("max", b), ("min", a)],
+        (Some(a), None) => vec![("min", a)],
+        (None, Some(b)) => vec![("max", b)],
+        (None, None) => vec![],
+    }
+}
+
 fn stored_turbo_stock() -> Option<u64> {
     serde_json::from_str::<Value>(&crate::read_root_file(TURBO_STOCK_FILE, 4096)?).ok()?["raw"].as_u64()
 }
@@ -917,6 +1083,82 @@ fn turbo_stock(cur: u64) -> Result<u64, String> {
     Ok(cur)
 }
 
+// ── sysfs / powercap writes (kernel-validated) ─────────────────────────────
+
+const RAPL_PKG: &str = "/sys/class/powercap/intel-rapl:0";
+const RAPL_CORE: &str = "/sys/class/powercap/intel-rapl:0:0";
+const PSTATE: &str = "/sys/devices/system/cpu/intel_pstate";
+const UNCORE: &str = "/sys/devices/system/cpu/intel_uncore_frequency";
+/// PL4 as first read this boot (see TURBO_STOCK_FILE).
+const PL4_STOCK_FILE: &str = "/run/centurion/intel-pl4.json";
+
+fn read_trim(p: &Path) -> Result<String, String> {
+    std::fs::read_to_string(p).map(|s| s.trim().to_owned()).map_err(|e| format!("{}: {e}", p.display()))
+}
+fn read_u64(p: &Path) -> Result<u64, String> {
+    read_trim(p)?.parse().map_err(|_| format!("{}: not a number", p.display()))
+}
+
+/// Writes `val`, recording the old value in `done` first (for rollback); returns the readback.
+fn sysw(p: &Path, val: &str, done: &mut Vec<(std::path::PathBuf, String)>) -> Result<String, String> {
+    let old = read_trim(p)?;
+    crate::sysfs_write(p, val.as_bytes()).map_err(|e| format!("{}: {e}", p.display()))?;
+    done.push((p.to_path_buf(), old));
+    read_trim(p)
+}
+
+/// `constraint_N_power_limit_uw` of the constraint called `name` in a powercap zone.
+fn rapl_constraint(zone: &str, name: &str) -> Option<std::path::PathBuf> {
+    (0..4).find(|i| read_trim(&Path::new(zone).join(format!("constraint_{i}_name"))).is_ok_and(|n| n == name))
+        .map(|i| Path::new(zone).join(format!("constraint_{i}_power_limit_uw")))
+}
+
+/// intel_rapl_common turns µW into raw power units by floor division and back by multiplication,
+/// (the unit itself an integer µW count there), so a limit that took reads back in [want − unit, want].
+fn rapl_close(back_uw: u64, want_uw: u64, unit_w: f64) -> bool {
+    back_uw <= want_uw && want_uw - back_uw <= (unit_w * 1e6).round() as u64
+}
+
+/// Writes a powercap limit in W; the readback may be lower by less than one RAPL power unit.
+fn rapl_write(p: &Path, watts: f64, unit_w: f64, done: &mut Vec<(std::path::PathBuf, String)>) -> Result<String, String> {
+    let uw = (watts * 1e6).round() as u64;
+    let back: u64 = sysw(p, &uw.to_string(), done)?.parse().map_err(|_| "unreadable readback".to_string())?;
+    if !rapl_close(back, uw, unit_w) { return Err(format!("readback {:.2} W ≠ {watts} W (locked?)", back as f64 / 1e6)); }
+    Ok(format!("{:.2} W", back as f64 / 1e6))
+}
+
+/// PL4 protects the adapter and battery from current spikes: only lowering from a known stock value.
+/// A stock of 0 (no PL4 programmed / not reported) gives nothing to compare with: refused.
+fn pl4_check(stock_uw: u64, watts: f64) -> Result<(), String> {
+    if stock_uw == 0 { return Err("this boot's stock PL4 reads 0 W (not programmed): nothing written".into()); }
+    if watts * 1e6 > stock_uw as f64 {
+        return Err(format!("{watts} W is above this boot's stock PL4 {:.1} W — only lowering is allowed", stock_uw as f64 / 1e6));
+    }
+    Ok(())
+}
+
+fn policies() -> Vec<std::path::PathBuf> {
+    let mut v: Vec<_> = std::fs::read_dir("/sys/devices/system/cpu/cpufreq").into_iter().flatten().flatten().map(|e| e.path())
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("policy"))).collect();
+    v.sort();
+    v
+}
+
+fn uncore_domains() -> Vec<std::path::PathBuf> {
+    let mut v: Vec<_> = std::fs::read_dir(UNCORE).into_iter().flatten().flatten().map(|e| e.path())
+        .filter(|p| p.join("initial_max_freq_khz").exists()).collect();
+    v.sort();
+    v
+}
+
+/// CPUs with an msr device node (online ones).
+fn msr_cpus() -> Vec<usize> {
+    let mut v: Vec<usize> = std::fs::read_dir("/dev/cpu").into_iter().flatten().flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse().ok()).collect();
+    v.sort_unstable();
+    v
+}
+
 fn step(results: &mut Vec<Value>, what: String, r: Result<String, String>) -> bool {
     let ok = r.is_ok();
     results.push(match r { Ok(m) => json!({"what": what, "ok": true, "message": m}),
@@ -925,7 +1167,7 @@ fn step(results: &mut Vec<Value>, what: String, r: Result<String, String>) -> bo
 }
 
 /// What `apply_ex` must write back to undo one successful (or unverified) write.
-enum Undo { Volt(u64, u64), Icc(u64, u64), Msr(u64, u64), Mchbar(u64) }
+enum Undo { Volt(u64, u64), Icc(u64, u64), Msr(u64, u64), Mchbar(u64), MsrCpu(usize, u64, u64), File(std::path::PathBuf, String) }
 
 /// Applies a pre-validated profile: voltage, IccMax, TCC offset, then power.
 /// Fields are independent here (the daemon re-applies every tick, so one locked field must not
@@ -1055,6 +1297,8 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             let mut v = cur;
             if let Some(t) = &p.pl1 { v = encode_pl_term(v, false, t.watts, t.seconds, units)?; }
             if let Some(t) = &p.pl2 { v = encode_pl_term(v, true, t.watts, t.seconds, units)?; }
+            if let Some(c) = p.pl1.as_ref().and_then(|t| t.clamp) { v = set_clamp(v, false, c); }
+            if let Some(c) = p.pl2.as_ref().and_then(|t| t.clamp) { v = set_clamp(v, true, c); }
             let mmio_val = v;  // the MMIO copy is never locked by us
             if p.lock_power { v |= 1u64 << 63; }
             prior = Some(cur);
@@ -1144,6 +1388,169 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
         all &= step(&mut results, "turbo_ratio".into(), r);
     }
 
+    if !p.turbo_ratios.is_empty() {
+        let mut prior = None;
+        let r = (|| {
+            let pi = msr.read(MSR_PLATFORM_INFO).map_err(|e| err_str(&e))?;
+            if (pi >> 28) & 1 == 0 { return Err("turbo ratio limits are not programmable on this CPU".into()); }
+            let cur = msr.read(MSR_TURBO_RATIO_LIMIT).map_err(|e| err_str(&e))?;
+            let new = set_turbo_ratios(turbo_stock(cur)?, &p.turbo_ratios, (pi >> 8) & 0xFF)?;
+            prior = Some(cur);
+            msr.write(MSR_TURBO_RATIO_LIMIT, new).map_err(|e| err_str(&e))?;
+            let back = msr.read(MSR_TURBO_RATIO_LIMIT).map_err(|e| err_str(&e))?;
+            if back != new { return Err(format!("readback {back:#018x} ≠ {new:#018x} (turbo ratios locked by firmware)")); }
+            Ok(format!("turbo ratios {:?}", (0..p.turbo_ratios.len()).map(|i| (new >> (8 * i)) & 0xFF).collect::<Vec<_>>()))
+        })();
+        if let Some(c) = prior { undo.push(("turbo_ratios".into(), Undo::Msr(MSR_TURBO_RATIO_LIMIT, c))); }
+        all &= step(&mut results, "turbo_ratios".into(), r);
+    }
+
+    // sysfs / powercap fields: every file written is recorded for rollback.
+    let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
+    if let Some(w) = p.pl4 {
+        let r = (|| {
+            if read_trim(&Path::new(RAPL_PKG).join("name"))? != "package-0" { return Err(format!("{RAPL_PKG} is not package-0")); }
+            let f = rapl_constraint(RAPL_PKG, "peak_power").ok_or("no peak_power (PL4) constraint: kernel or CPU without PL4 support")?;
+            let cur = read_u64(&f)?;
+            let stock = match crate::read_root_file(PL4_STOCK_FILE, 4096).and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v["uw"].as_u64()) {
+                Some(s) => s,
+                None => { crate::secure_dir("/run/centurion")?; crate::write_root_file(PL4_STOCK_FILE, json!({"uw": cur}).to_string().as_bytes())?; cur }
+            };
+            pl4_check(stock, w)?;
+            let unit = decode_units(msr.read(MSR_RAPL_POWER_UNIT).map_err(|e| err_str(&e))?).power_w;
+            rapl_write(&f, w, unit, &mut files)
+        })();
+        all &= step(&mut results, "power.pl4".into(), r);
+    }
+    if let Some(w) = p.pp0 {
+        let r = (|| {
+            if read_trim(&Path::new(RAPL_CORE).join("name"))? != "core" { return Err(format!("{RAPL_CORE} is not the core (PP0) zone")); }
+            let f = rapl_constraint(RAPL_CORE, "long_term").ok_or("core zone has no long_term constraint")?;
+            let unit = decode_units(msr.read(MSR_RAPL_POWER_UNIT).map_err(|e| err_str(&e))?).power_w;
+            let msg = rapl_write(&f, w, unit, &mut files)?;
+            if sysw(&Path::new(RAPL_CORE).join("enabled"), "1", &mut files)? != "1" { return Err("PP0 limit did not enable (locked?)".into()); }
+            Ok(msg)
+        })();
+        all &= step(&mut results, "power.pp0".into(), r);
+    }
+
+    if p.mchbar_disable {
+        let mut prior = None;
+        let r = (|| {
+            let m = mchbar_base().and_then(|b| Mmio::open(b + MCHBAR_PKG_LIMIT_OFFSET, true).map_err(|e| format!("/dev/mem: {e}")))?;
+            let old = m.read64();
+            let new = mmio_disable(old)?;
+            prior = Some(old);
+            m.write64(new);
+            if m.read64() != new { return Err("MCHBAR readback differs".into()); }
+            Ok("MCHBAR PL1/PL2 disabled (the MSR limits rule alone)".into())
+        })();
+        if let Some(c) = prior { undo.push(("power.mchbar_disable".into(), Undo::Mchbar(c))); }
+        all &= step(&mut results, "power.mchbar_disable".into(), r);
+    }
+
+    if let Some(on) = p.c1e {
+        let mut prior = None;
+        let r = (|| {
+            let cur = msr.read(MSR_POWER_CTL).map_err(|e| err_str(&e))?;
+            let new = if on { cur | 2 } else { cur & !2 };
+            prior = Some(cur);
+            msr.write(MSR_POWER_CTL, new).map_err(|e| err_str(&e))?;
+            if msr.read(MSR_POWER_CTL).map_err(|e| err_str(&e))? & 2 != new & 2 { return Err("readback differs (firmware keeps C1E)".into()); }
+            Ok(if on { "C1E enabled".into() } else { "C1E disabled".into() })
+        })();
+        if let Some(c) = prior { undo.push(("c1e".into(), Undo::Msr(MSR_POWER_CTL, c))); }
+        all &= step(&mut results, "c1e".into(), r);
+    }
+
+    if let Some(limit) = p.pkg_cstate_limit {
+        let mut prior: Vec<(usize, u64)> = Vec::new();
+        let r = (|| {
+            // The encoding of bits 3:0 is per generation; checked only on the client parts the
+            // voltage map is verified for (Haswell .. Arrow Lake), where it is ordered shallow → deep.
+            if !uv_map_verified() { return Err("package C-state limit encoding not verified for this CPU — nothing written".into()); }
+            // Core-scoped: every CPU is checked before any is written.
+            let mut plan = Vec::new();
+            for cpu in msr_cpus() {
+                let m = Msr::open_cpu(cpu, true).map_err(|e| format!("cpu{cpu}: {}", err_str(&e)))?;
+                let cur = m.read(MSR_PKG_CST_CONFIG_CONTROL).map_err(|e| format!("cpu{cpu}: {}", err_str(&e)))?;
+                plan.push((cpu, m, cur, cstate_lower(cur, limit).map_err(|e| format!("cpu{cpu}: {e}"))?));
+            }
+            if plan.is_empty() { return Err("no /dev/cpu/*/msr".into()); }
+            for (cpu, m, cur, new) in &plan {
+                prior.push((*cpu, *cur));
+                m.write(MSR_PKG_CST_CONFIG_CONTROL, *new).map_err(|e| format!("cpu{cpu}: {}", err_str(&e)))?;
+                if m.read(MSR_PKG_CST_CONFIG_CONTROL).map_err(|e| err_str(&e))? != *new { return Err(format!("cpu{cpu}: readback differs")); }
+            }
+            // Offline CPUs have no msr node: they keep their value until the next full apply after they come back.
+            let offline = read_trim(Path::new("/sys/devices/system/cpu/offline")).unwrap_or_default();
+            Ok(format!("package C-state limit {limit} on {} CPUs{}", plan.len(),
+                       if offline.is_empty() { String::new() } else { format!(" (offline, not written: {offline})") }))
+        })();
+        for (cpu, c) in prior { undo.push(("pkg_cstate_limit".into(), Undo::MsrCpu(cpu, MSR_PKG_CST_CONFIG_CONTROL, c))); }
+        all &= step(&mut results, "pkg_cstate_limit".into(), r);
+    }
+
+    if let Some(h) = &p.hwp {
+        let r = (|| {
+            let mut msg = Vec::new();
+            // Checked before the perf % write: passive mode / no HWP has no EPP file.
+            if h.epp.is_some() && !policies().first().is_some_and(|p| p.join("energy_performance_preference").exists()) {
+                return Err("no energy_performance_preference (intel_pstate passive/off or no HWP) — nothing written".into());
+            }
+            if h.min_pct.is_some() || h.max_pct.is_some() {
+                let dir = Path::new(PSTATE);
+                if !dir.join("max_perf_pct").exists() { return Err("intel_pstate is not active: min/max perf % unavailable".into()); }
+                for (k, v) in minmax_order(read_u64(&dir.join("min_perf_pct"))?, h.min_pct, h.max_pct) {
+                    let back = sysw(&dir.join(format!("{k}_perf_pct")), &v.to_string(), &mut files)?;
+                    if back != v.to_string() { return Err(format!("{k}_perf_pct readback {back} ≠ {v} (kernel limited it)")); }
+                }
+                msg.push(format!("perf {}..{} %", h.min_pct.map_or("–".into(), |v| v.to_string()), h.max_pct.map_or("–".into(), |v| v.to_string())));
+            }
+            if let Some(epp) = &h.epp {
+                let pols = policies();
+                if pols.is_empty() { return Err("no cpufreq policies".into()); }
+                for pol in pols {
+                    let back = sysw(&pol.join("energy_performance_preference"), epp, &mut files)?;
+                    if back != *epp { return Err(format!("{}: EPP readback {back}", pol.display())); }
+                }
+                msg.push(format!("EPP {epp}"));
+            }
+            Ok(msg.join(", "))
+        })();
+        all &= step(&mut results, "hwp".into(), r);
+    }
+
+    if let Some((min, max)) = p.uncore {
+        let r = (|| {
+            let doms = uncore_domains();
+            if doms.is_empty() { return Err("intel_uncore_frequency is not loaded (or has no writable domains)".into()); }
+            // Every domain is checked against its own initial (stock) range before any write.
+            for d in &doms {
+                let (lo, hi) = (read_u64(&d.join("initial_min_freq_khz"))?, read_u64(&d.join("initial_max_freq_khz"))?);
+                for v in [min, max].into_iter().flatten() {
+                    if v < lo || v > hi { return Err(format!("{}: {v} kHz is outside the stock range {lo}..{hi} kHz", d.display())); }
+                }
+                // One side alone must fit the other side's current value (the driver refuses min > max).
+                match (min, max) {
+                    (Some(a), None) if a > read_u64(&d.join("max_freq_khz"))? => return Err(format!("{}: min {a} kHz is above the current max", d.display())),
+                    (None, Some(b)) if b < read_u64(&d.join("min_freq_khz"))? => return Err(format!("{}: max {b} kHz is below the current min", d.display())),
+                    _ => {}
+                }
+            }
+            for d in &doms {
+                for (k, v) in minmax_order(read_u64(&d.join("min_freq_khz"))?, min, max) {
+                    let back = sysw(&d.join(format!("{k}_freq_khz")), &v.to_string(), &mut files)?;
+                    if back != v.to_string() { return Err(format!("{}: {k} readback {back} ≠ {v}", d.display())); }
+                }
+            }
+            Ok(format!("uncore {}..{} MHz on {} domain(s)", min.map_or("–".into(), |v| (v / 1000).to_string()),
+                       max.map_or("–".into(), |v| (v / 1000).to_string()), doms.len()))
+        })();
+        all &= step(&mut results, "uncore".into(), r);
+    }
+    for (f, old) in files { undo.push((f.display().to_string(), Undo::File(f, old))); }
+
     if all || !rollback { return json!({"ok": all, "results": results}); }
     // Put back what was written, newest first; report each undo.
     let mut rolled = Vec::new();
@@ -1165,6 +1572,11 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
                 .and_then(|_| if msr.read(reg).map_err(|e| err_str(&e))? == val { Ok(format!("{reg:#x} restored")) } else { Err(format!("{reg:#x}: readback differs (locked?)")) }),
             Undo::Mchbar(val) => mchbar_base().and_then(|b| Mmio::open(b + MCHBAR_PKG_LIMIT_OFFSET, true).map_err(|e| format!("/dev/mem: {e}")))
                 .and_then(|m| { m.write64(val); if m.read64() == val { Ok("MCHBAR restored".into()) } else { Err("MCHBAR readback differs".into()) } }),
+            Undo::MsrCpu(cpu, reg, val) => Msr::open_cpu(cpu, true).map_err(|e| err_str(&e))
+                .and_then(|m| { m.write(reg, val).map_err(|e| err_str(&e))?;
+                    if m.read(reg).map_err(|e| err_str(&e))? == val { Ok(format!("cpu{cpu} {reg:#x} restored")) } else { Err(format!("cpu{cpu} {reg:#x}: readback differs")) } }),
+            Undo::File(f, old) => crate::sysfs_write(&f, old.as_bytes()).map_err(|e| format!("{}: {e}", f.display()))
+                .and_then(|_| if read_trim(&f)? == old { Ok(format!("{old} restored")) } else { Err("readback differs".into()) }),
         };
         step(&mut rolled, what, r);
     }
@@ -1183,7 +1595,16 @@ pub fn periodic_part(p: &Profile) -> Profile {
     // A locked limit cannot be rewritten until reset: skip it instead of
     // failing every interval.
     let (pl1, pl2) = if p.lock_power { (None, None) } else { (p.pl1.clone(), p.pl2.clone()) };
-    Profile { voltage: vec![], iccmax: vec![], lock_power: false, hwphint: vec![], pl1, pl2, ..p.clone() }
+    // Turbo table and C-state limit: full applies only (see has_periodic).
+    Profile { voltage: vec![], iccmax: vec![], lock_power: false, hwphint: vec![], pl1, pl2,
+              turbo_ratio_max: None, turbo_ratios: vec![], pkg_cstate_limit: None, ..p.clone() }
+}
+
+/// Whether a `periodic_part` has anything firmware, the EC or other tools may change back (the
+/// turbo ratios and C-state limit, like before, are written on full applies only).
+pub fn has_periodic(p: &Profile) -> bool {
+    p.tjoffset.is_some() || p.pl1.is_some() || p.pl2.is_some() || p.disable_bdprochot.is_some() || p.ctdp.is_some()
+        || p.pl4.is_some() || p.pp0.is_some() || p.mchbar_disable || p.c1e.is_some() || p.hwp.is_some() || p.uncore.is_some()
 }
 
 /// One monitoring sample (throttled --monitor): throttle reasons from
@@ -1229,7 +1650,62 @@ pub fn monitor_sample(msr: &Msr, clear_logs: bool) -> Value {
         let dram_unit = cpu_id_ref().filter(|c| c.family == 6 && [63, 79, 85, 86, 87].contains(&c.model)).map(|_| 15.3e-6);
         out["energy"] = json!({"unit_j": eu, "dram_unit_j": dram_unit.unwrap_or(eu), "raw": e, "wrap": 1u64 << 32});
     }
+    // Per-CPU table (ThrottleStop main window): raw APERF/MPERF/TSC for the caller to difference
+    // (MHz = base × ΔAPERF/ΔMPERF, C0 = ΔMPERF/ΔTSC) and the DTS reading (°C below TjMax).
+    if let (Ok(pi), Ok(tt)) = (msr.read(MSR_PLATFORM_INFO), msr.read(MSR_TEMPERATURE_TARGET)) {
+        out["base_mhz"] = json!(((pi >> 8) & 0xFF) * 100);
+        out["tjmax"] = json!((tt >> 16) & 0xFF);
+        match msr.read(IA32_PACKAGE_THERM_STATUS) {
+            Ok(th) if (th >> 31) & 1 == 1 => out["pkg_temp"] = json!(((tt >> 16) & 0xFF).saturating_sub((th >> 16) & 0x7F)),
+            _ => {}
+        }
+    }
+    let cpus: Vec<Value> = msr_cpus().into_iter().filter_map(|cpu| {
+        let m = Msr::open_cpu(cpu, false).ok()?;
+        let th = m.read(IA32_THERM_STATUS).ok()?;
+        Some(json!({"cpu": cpu, "aperf": m.read(IA32_APERF).ok()?, "mperf": m.read(IA32_MPERF).ok()?, "tsc": m.read(IA32_TSC).ok()?,
+                    "dts": ((th >> 31) & 1 == 1).then_some((th >> 16) & 0x7F)}))
+    }).collect();
+    out["percpu"] = json!(cpus);
     out
+}
+
+/// Package temperature in °C (IA32_PACKAGE_THERM_STATUS digital readout below TjMax).
+pub fn package_temp() -> Option<u64> {
+    let m = Msr::open(false).ok()?;
+    let th = m.read(IA32_PACKAGE_THERM_STATUS).ok()?;
+    if (th >> 31) & 1 == 0 { return None; }  // reading not valid
+    Some(((m.read(MSR_TEMPERATURE_TARGET).ok()? >> 16) & 0xFF).saturating_sub((th >> 16) & 0x7F))
+}
+
+/// Live MSR_PKG_POWER_LIMIT: raw value and its PL1/PL2 in W.
+pub fn live_pl() -> Option<(u64, f64, f64)> {
+    let m = Msr::open(false).ok()?;
+    let raw = m.read(MSR_PKG_POWER_LIMIT).ok()?;
+    let (a, b, _) = decode_pl(raw, decode_units(m.read(MSR_RAPL_POWER_UNIT).ok()?));
+    Some((raw, a.watts, b.watts))
+}
+
+/// `raw` with each PL1/PL2 term lowered to `caps` where the cap is below it (watts only; window,
+/// clamp and other bits kept). Never raises a term.
+pub fn lower_terms(raw: u64, caps: (Option<f64>, Option<f64>), u: Units) -> u64 {
+    let (a, b, _) = decode_pl(raw, u);
+    let mut v = raw;
+    for (second, cur, cap) in [(false, a.watts, caps.0), (true, b.watts, caps.1)] {
+        if let Some(c) = cap.filter(|&c| c < cur) { v = encode_pl_term(v, second, c, None, u).unwrap_or(v); }
+    }
+    v
+}
+
+/// Writes back a value `live_pl` returned (MSR only), each term capped to `caps` (the PL1/PL2 of the
+/// profile in force now: it may have changed while the value was saved), unless the register got locked.
+pub fn restore_pl(raw: u64, caps: (Option<f64>, Option<f64>)) -> Result<(), String> {
+    let m = Msr::open(true).map_err(|e| err_str(&e))?;
+    if m.read(MSR_PKG_POWER_LIMIT).map_err(|e| err_str(&e))? >> 63 == 1 { return Err("MSR_PKG_POWER_LIMIT is locked".into()); }
+    let raw = lower_terms(raw, caps, decode_units(m.read(MSR_RAPL_POWER_UNIT).map_err(|e| err_str(&e))?));
+    m.write(MSR_PKG_POWER_LIMIT, raw).map_err(|e| err_str(&e))?;
+    if m.read(MSR_PKG_POWER_LIMIT).map_err(|e| err_str(&e))? != raw { return Err("readback differs".into()); }
+    Ok(())
 }
 
 /// Stock voltage: every plane this CPU has back to 0 mV (the Arrow Lake-only planes are not
@@ -1446,5 +1922,146 @@ mod tests {
         assert_eq!(p.voltage.len(), 2);
         assert_eq!(p.tjoffset, Some(10));
         assert!(!p.mchbar && p.pl1.is_some() && p.pl2.is_none());
+    }
+
+    #[test]
+    fn power_extras_parse() {
+        let p = parse_profile(&json!({"power": {"pl1": {"watts": 45, "clamp": true}, "pl2": {"watts": 90, "clamp": false},
+            "pl4": 120, "pp0": 30, "mchbar": false, "mchbar_disable": true}})).unwrap();
+        assert_eq!((p.pl1.as_ref().unwrap().clamp, p.pl2.as_ref().unwrap().clamp), (Some(true), Some(false)));
+        assert_eq!((p.pl4, p.pp0, p.mchbar_disable), (Some(120.0), Some(30.0), true));
+        assert_eq!(parse_profile(&json!({"power": {"pl1": {"watts": 45}}})).unwrap().pl1.unwrap().clamp, None);
+        // Disabling the MMIO copy and mirroring into it contradict each other.
+        assert!(parse_profile(&json!({"power": {"mchbar_disable": true}})).is_err());
+        for bad in [json!({"pl4": 0}), json!({"pl4": 251}), json!({"pp0": -1}), json!({"pl1": {"watts": 45, "clamp": 1}})] {
+            assert!(parse_profile(&json!({"power": bad})).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn clamp_bits() {
+        assert_eq!(set_clamp(0, false, true), 1 << 16);
+        assert_eq!(set_clamp(0, true, true), 1 << 48);
+        assert_eq!(set_clamp(u64::MAX, false, false), !(1u64 << 16));
+        let (a, b, _) = decode_pl(set_clamp(set_clamp(0, false, true), true, true), decode_units(0x000A_0E03));
+        assert!(a.clamp && b.clamp);
+    }
+
+    #[test]
+    fn hwp_uncore_parse() {
+        let p = parse_profile(&json!({"hwp": {"min_pct": 20, "max_pct": 80, "epp": "balance_power"},
+            "uncore": {"min_khz": 800000, "max_khz": 3000000}})).unwrap();
+        let h = p.hwp.unwrap();
+        assert_eq!((h.min_pct, h.max_pct, h.epp.as_deref()), (Some(20), Some(80), Some("balance_power")));
+        assert_eq!(p.uncore, Some((Some(800000), Some(3000000))));
+        for bad in [json!({"hwp": {"min_pct": 90, "max_pct": 50}}), json!({"hwp": {"max_pct": 0}}), json!({"hwp": {"max_pct": 101}}),
+                    json!({"hwp": {"epp": "x; rm"}}), json!({"uncore": {"min_khz": 3000000, "max_khz": 800000}}),
+                    json!({"uncore": {"max_khz": 0}}), json!({"hwp": {"min_pct": 1.5}})] {
+            assert!(parse_profile(&bad).is_err(), "{bad}");
+        }
+        // A fixed EPP and hwphint EPP switching would fight over the same files.
+        assert!(parse_profile(&json!({"hwp": {"epp": "power"}, "hwphint": [{"load": {"threshold": 0.5},
+            "load_hint": "performance", "normal_hint": "power"}]})).is_err());
+    }
+
+    #[test]
+    fn uncore_order() {
+        // Lowering max below the current min must write min first, and the reverse when raising min.
+        assert_eq!(minmax_order(1_000_000, Some(800_000), Some(900_000)), vec![("min", 800_000), ("max", 900_000)]);
+        assert_eq!(minmax_order(1_000_000, Some(2_500_000), Some(3_000_000)), vec![("max", 3_000_000), ("min", 2_500_000)]);
+        assert_eq!(minmax_order(1_000_000, None, Some(1_500_000)), vec![("max", 1_500_000)]);
+    }
+
+    #[test]
+    fn turbo_table() {
+        assert_eq!(parse_profile(&json!({"turbo_ratios": [48, 47]})).unwrap().turbo_ratios, vec![48, 47]);
+        for bad in [json!([]), json!([48, 0]), json!([1, 2, 3, 4, 5, 6, 7, 8, 9]), json!([48.5])] {
+            assert!(parse_profile(&json!({"turbo_ratios": bad})).is_err(), "{bad}");
+        }
+        assert!(parse_profile(&json!({"turbo_ratios": [48], "turbo_ratio_max": 40})).is_err());
+        let stock = 0x0000_2D2E_2F30_3132;  // 50 49 48 47 46 45
+        assert_eq!(set_turbo_ratios(stock, &[48, 48], 20), Ok(0x0000_2D2E_2F30_3030));
+        assert!(set_turbo_ratios(stock, &[51], 20).is_err());                // above stock
+        assert!(set_turbo_ratios(stock, &[19], 20).is_err());                // below base
+        assert!(set_turbo_ratios(stock, &[46, 47], 20).is_err());            // more cores, higher ratio
+        assert!(set_turbo_ratios(stock, &[45, 45, 45, 45, 45, 45, 45], 20).is_err()); // bucket 7 does not exist
+        // A low first bucket pulls nothing else down by itself: the table must stay non-increasing.
+        assert!(set_turbo_ratios(stock, &[45], 20).is_err());
+    }
+
+    #[test]
+    fn c1e_and_cstate_parse() {
+        let p = parse_profile(&json!({"c1e": false, "pkg_cstate_limit": 3})).unwrap();
+        assert_eq!((p.c1e, p.pkg_cstate_limit), (Some(false), Some(3)));
+        for bad in [json!({"c1e": 1}), json!({"pkg_cstate_limit": 16}), json!({"pkg_cstate_limit": -1}), json!({"pkg_cstate_limit": 2.5})] {
+            assert!(parse_profile(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(cstate_lower(0x1E000008, 3), Ok(0x1E000003));
+        assert!(cstate_lower(0x1E008008, 3).is_err());   // bit 15: locked
+        assert!(cstate_lower(0x1E000003, 5).is_err());   // raising is refused
+        assert_eq!(cstate_lower(0x1E000003, 3), Ok(0x1E000003));
+    }
+
+    #[test]
+    fn mmio_disable_bits() {
+        assert_eq!(mmio_disable(0x0042_8168_00DD_8168), Ok(0x0042_0168_00DD_0168));
+        assert!(mmio_disable(1 << 63).is_err());
+    }
+
+    #[test]
+    fn periodic_keeps_new_fields() {
+        let p = parse_profile(&json!({"voltage": {"core": -50}, "c1e": true, "power": {"pl4": 100}})).unwrap();
+        let part = periodic_part(&p);
+        assert!(part.voltage.is_empty() && part.c1e == Some(true) && part.pl4 == Some(100.0));
+        assert!(has_periodic(&part));
+        assert!(!has_periodic(&periodic_part(&parse_profile(&json!({"voltage": {"core": -50}})).unwrap())));
+        // Turbo table and C-state limit are full-apply only, also when the profile has periodic fields.
+        let p = parse_profile(&json!({"turbo_ratios": [48], "pkg_cstate_limit": 3, "power": {"pl1": {"watts": 45}}})).unwrap();
+        let part = periodic_part(&p);
+        assert!(part.turbo_ratios.is_empty() && part.pkg_cstate_limit.is_none() && part.pl1.is_some());
+        let part = periodic_part(&parse_profile(&json!({"turbo_ratio_max": 40, "c1e": true})).unwrap());
+        assert!(part.turbo_ratio_max.is_none() && part.c1e == Some(true));
+    }
+
+    #[test]
+    fn positive_offset_cap_is_50_mv() {
+        assert!(parse_profile(&json!({"voltage": {"core": 50}, "allow_positive": true})).is_ok());
+        assert!(parse_profile(&json!({"voltage": {"core": 60}, "allow_positive": true})).is_err());
+        assert!(parse_profile(&json!({"voltage": {"core": 50.5}, "allow_positive": true})).is_err());
+    }
+
+    #[test]
+    fn powercap_readback_tolerance_follows_power_unit() {
+        // Kernel: µW → raw units by floor division, raw → µW on read: back ∈ (want − unit, want].
+        assert!(rapl_close(44_875_000, 45_000_000, 0.125));
+        assert!(!rapl_close(44_750_000, 45_000_000, 0.125));
+        assert!(rapl_close(44_000_001, 45_000_000, 1.0));   // coarse 1 W unit: 0.25 W was too strict
+        assert!(!rapl_close(45_250_000, 45_000_000, 0.125)); // above the request: never from rounding
+    }
+
+    #[test]
+    fn pl4_only_lowers_known_stock() {
+        assert!(pl4_check(120_000_000, 100.0).is_ok());
+        assert!(pl4_check(120_000_000, 121.0).is_err());
+        assert!(pl4_check(0, 100.0).is_err());  // stock unknown (0): nothing is "lower"
+    }
+
+    #[test]
+    fn uncore_needs_100_mhz_steps() {
+        assert!(parse_profile(&json!({"uncore": {"min_khz": 800000, "max_khz": 3100000}})).is_ok());
+        assert!(parse_profile(&json!({"uncore": {"max_khz": 3150000}})).is_err());
+    }
+
+    #[test]
+    fn lower_terms_never_raises() {
+        let u = decode_units(0x000A_0E03);
+        let raw = encode_pl_term(encode_pl_term(0, false, 45.0, Some(28.0), u).unwrap(), true, 90.0, Some(0.002), u).unwrap();
+        // A cap above the term keeps it; a lower one replaces only the watts.
+        assert_eq!(lower_terms(raw, (Some(60.0), Some(120.0)), u), raw);
+        let v = lower_terms(raw, (Some(30.0), None), u);
+        let (a, b, _) = decode_pl(v, u);
+        let (a0, b0, _) = decode_pl(raw, u);
+        assert_eq!((a.watts, a.seconds, b), (30.0, a0.seconds, b0));
+        assert_eq!(lower_terms(raw, (None, None), u), raw);
     }
 }

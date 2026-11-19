@@ -83,12 +83,28 @@ private:
     // extras (undervolt.py --force/--lock, throttled BDPROCHOT/cTDP)
     QCheckBox *positive_ = nullptr, *lock_ = nullptr;
     QComboBox *bdprochot_ = nullptr, *ctdp_ = nullptr;
+    // ThrottleStop TPL/FIVR counterparts: clamp (tristate: partial = untouched), PL4/PP0 (powercap),
+    // MMIO disable, turbo groups, intel_pstate perf %/EPP, uncore range, C1E, package C-state limit
+    QCheckBox *clamp1_ = nullptr, *clamp2_ = nullptr, *pl4On_ = nullptr, *pp0On_ = nullptr, *mmioOff_ = nullptr;
+    QDoubleSpinBox *pl4_ = nullptr, *pp0_ = nullptr;
+    QLabel *pl4Cur_ = nullptr, *pp0Cur_ = nullptr;
+    QCheckBox *groupsOn_ = nullptr;
+    QList<QSpinBox *> groups_;
+    QLabel *groupsCur_ = nullptr;
+    QCheckBox *perfOn_ = nullptr, *uncOn_ = nullptr, *cstOn_ = nullptr;
+    QSpinBox *perfMin_ = nullptr, *perfMax_ = nullptr, *uncMin_ = nullptr, *uncMax_ = nullptr, *cst_ = nullptr;
+    QComboBox *epp_ = nullptr, *c1e_ = nullptr;
+    QLabel *perfCur_ = nullptr, *uncCur_ = nullptr, *cstCur_ = nullptr;
     // boot / daemon (throttled AC/BATTERY + Update_Rate_s, intel-undervolt daemon/hwphint)
     QComboBox *bootTarget_ = nullptr;
     QSpinBox *interval_ = nullptr;
     QCheckBox *reapply_ = nullptr, *hwpOn_ = nullptr, *hwpMulti_ = nullptr;
     QComboBox *hwpMode_ = nullptr, *hwpAlgo_ = nullptr, *hwpLoadHint_ = nullptr, *hwpNormalHint_ = nullptr, *hwpDomain_ = nullptr, *hwpCmp_ = nullptr;
     QDoubleSpinBox *hwpThreshold_ = nullptr, *hwpWatts_ = nullptr;
+    // daemon temperature alarm (ThrottleStop failsafe alarm): lower PL1/PL2 at a package temperature
+    QCheckBox *alarmOn_ = nullptr;
+    QSpinBox *alarmTemp_ = nullptr;
+    QDoubleSpinBox *alarmPl1_ = nullptr, *alarmPl2_ = nullptr;
     // live monitor (throttled --monitor)
     QCheckBox *monOn_ = nullptr;
     QLabel *monLbl_ = nullptr;
@@ -98,6 +114,19 @@ private:
     QHash<QString, QLabel *> limCells_;   // "core:10" → cell
     QHash<QString, int> limCounts_;       // samples in which the reason was active
     QLabel *limInfo_ = nullptr;
+    // per-CPU table (ThrottleStop main window): MHz, C0 %, °C, max °C since "Clear max"
+    class QTableWidget *cpuTable_ = nullptr;
+    QHash<int, int> maxTemp_;
+    void updateCpuTable(const QJsonObject &s);
+    // live-monitor history: trend chart (last 5 min) and an optional CSV log (ThrottleStop Log File)
+    class LineChart *trend_ = nullptr;
+    QComboBox *trendSel_ = nullptr;
+    QCheckBox *csvOn_ = nullptr;
+    class QFile *csv_ = nullptr;
+    struct Sample { double t, pkgW, coreW, pkgC, vcore; };
+    QVector<Sample> hist_;
+    void recordSample(const QJsonObject &s, double pkgW, double coreW);
+    void drawTrend();
     QPushButton *limRun_ = nullptr;
     int limSamples_ = 0;
     bool clearLogsNext_ = false;

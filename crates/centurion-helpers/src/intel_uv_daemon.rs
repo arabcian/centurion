@@ -20,9 +20,37 @@ use std::time::{Duration, Instant};
 pub const BOOT_FILE: &str = "/etc/centurion/intel-uv-boot.json";
 
 #[derive(Debug, Clone)]
-pub struct BootConfig { pub ac: Option<Profile>, pub battery: Option<Profile>, pub interval_ms: u64, pub reapply: bool }
+pub struct BootConfig { pub ac: Option<Profile>, pub battery: Option<Profile>, pub interval_ms: u64, pub reapply: bool, pub alarm: Option<Alarm> }
 
-/// {"ac": profile|null, "battery": profile|null, "daemon": {"interval_ms": 5000, "reapply": true}}
+/// Temperature alarm (ThrottleStop's failsafe alarm profile): at `temp_c` (package) PL1/PL2 are pulled
+/// down to these values — never raised: the lower of them and the live limits wins — and the
+/// limits from before the alarm come back once the package is ALARM_BAND_C cooler.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Alarm { pub temp_c: u64, pub pl1_w: f64, pub pl2_w: f64 }
+pub const ALARM_BAND_C: u64 = 10;
+
+/// Some(new state) when the alarm switches on or off at this package temperature.
+pub fn alarm_transition(active: bool, temp_c: u64, a: &Alarm) -> Option<bool> {
+    if !active && temp_c >= a.temp_c { Some(true) }
+    else if active && temp_c + ALARM_BAND_C <= a.temp_c { Some(false) }
+    else { None }
+}
+
+/// The alarm's PL1/PL2 given the live ones: each the lower of the two.
+pub fn alarm_limits(live: (f64, f64), a: &Alarm) -> (f64, f64) { (live.0.min(a.pl1_w), live.1.min(a.pl2_w)) }
+
+fn parse_alarm(v: &Value) -> Result<Alarm, String> {
+    let n = |k: &str| v.get(k).and_then(Value::as_f64).ok_or(format!("daemon.alarm.{k} is required"));
+    let t = v.get("temp_c").and_then(Value::as_u64).ok_or("daemon.alarm.temp_c must be an integer")?;
+    if !(60..=105).contains(&t) { return Err("daemon.alarm.temp_c must be 60..105 °C".into()); }
+    let (a, b) = (n("pl1_w")?, n("pl2_w")?);
+    if !(1.0..=intel_uv::PL_MAX_W).contains(&a) || !(1.0..=intel_uv::PL_MAX_W).contains(&b) { return Err("daemon.alarm PL must be 1..250 W".into()); }
+    if a > b { return Err("daemon.alarm.pl1_w must be ≤ pl2_w".into()); }
+    Ok(Alarm { temp_c: t, pl1_w: a, pl2_w: b })
+}
+
+/// {"ac": profile|null, "battery": profile|null, "daemon": {"interval_ms": 5000, "reapply": true,
+///  "alarm": {"temp_c": 95, "pl1_w": 25, "pl2_w": 35} (optional)}}
 /// A plain profile (no ac/battery keys) is used for both sources.
 pub fn parse_boot(v: &Value) -> Result<BootConfig, String> {
     let o = v.as_object().ok_or("boot config must be an object")?;
@@ -39,7 +67,8 @@ pub fn parse_boot(v: &Value) -> Result<BootConfig, String> {
     let interval_ms = d.and_then(|d| d.get("interval_ms")).and_then(Value::as_u64).unwrap_or(5000);
     if !(500..=600_000).contains(&interval_ms) { return Err("daemon.interval_ms must be 500..600000".into()); }
     let reapply = d.and_then(|d| d.get("reapply")).and_then(Value::as_bool).unwrap_or(true);
-    Ok(BootConfig { ac, battery, interval_ms, reapply })
+    let alarm = match d.and_then(|d| d.get("alarm")) { None | Some(Value::Null) => None, Some(a) => Some(parse_alarm(a)?) };
+    Ok(BootConfig { ac, battery, interval_ms, reapply, alarm })
 }
 
 pub fn load_boot() -> Result<Option<BootConfig>, String> {
@@ -347,6 +376,7 @@ pub fn run_daemon() -> i32 {
     let mut hold_stamp = hold_mtime();
     let mut hold = load_hold();
     let mut hold_live = true;  // the held profile is in the hardware (false after a resume)
+    let mut alarm_saved: Option<u64> = None;  // MSR_PKG_POWER_LIMIT from before the alarm (Some = active)
     eprintln!("centurion-intel-uv: daemon started ({}{})", if cfg.is_some() { "config loaded" } else { "no config yet" },
               if hold.is_some() { ", a scene holds the CPU profile" } else { "" });
 
@@ -385,8 +415,7 @@ pub fn run_daemon() -> i32 {
                     report("SCENE", &intel_uv::apply(p), false);
                 } else if reapply {
                     let part = intel_uv::periodic_part(p);
-                    if part.tjoffset.is_some() || part.pl1.is_some() || part.pl2.is_some()
-                        || part.disable_bdprochot.is_some() || part.ctdp.is_some() {
+                    if intel_uv::has_periodic(&part) {
                         report("SCENE", &intel_uv::apply(&part), true);
                     }
                 }
@@ -404,8 +433,7 @@ pub fn run_daemon() -> i32 {
                 Some(p) => {
                     if c.reapply {
                         let part = intel_uv::periodic_part(p);
-                        if part.tjoffset.is_some() || part.pl1.is_some() || part.pl2.is_some()
-                            || part.disable_bdprochot.is_some() || part.ctdp.is_some() {
+                        if intel_uv::has_periodic(&part) {
                             report(src, &intel_uv::apply(&part), true);
                         }
                     }
@@ -424,6 +452,39 @@ pub fn run_daemon() -> i32 {
                         applied = Some(ac);
                     }
                 }
+            }
+        }
+        // Temperature alarm, after the re-apply above so that its lower limits are the ones that stay.
+        // The saved limits are written back capped by the profile in force *now* (config reload, source
+        // change or scene hold while the alarm was on), so the restore never goes above either.
+        let active = match &hold { Some(h) => h.as_ref(), None => cfg.as_ref().and_then(|c| c.for_source(ac)) };
+        let caps = (active.and_then(|p| p.pl1.as_ref()).map(|t| t.watts), active.and_then(|p| p.pl2.as_ref()).map(|t| t.watts));
+        match cfg.as_ref().and_then(|c| c.alarm.clone()) {
+            Some(a) => {
+                // An unreadable temperature changes nothing: an active alarm stays active (and enforced).
+                match intel_uv::package_temp().and_then(|t| alarm_transition(alarm_saved.is_some(), t, &a).map(|on| (t, on))) {
+                    Some((t, true)) => if let Some((raw, ..)) = intel_uv::live_pl() {
+                        eprintln!("centurion-intel-uv: alarm: package {t} °C ≥ {} °C — lowering PL1/PL2", a.temp_c);
+                        alarm_saved = Some(raw);
+                    },
+                    Some((t, false)) => if let Some(raw) = alarm_saved.take() {
+                        eprintln!("centurion-intel-uv: alarm cleared at {t} °C — power limits restored");
+                        if let Err(e) = intel_uv::restore_pl(raw, caps) { eprintln!("centurion-intel-uv: alarm restore: {e}"); }
+                    },
+                    None => {}
+                }
+                // Every tick while active: the periodic re-apply or the EC may have raised them again.
+                if let (true, Some((_, l1, l2))) = (alarm_saved.is_some(), intel_uv::live_pl()) {
+                    let (p1, p2) = alarm_limits((l1, l2), &a);
+                    // Only terms that are set (≥ 1 W) and above the alarm value are written.
+                    let req = |w: f64, live: f64| (w >= 1.0 && w < live).then_some(intel_uv::PlReq { watts: w, seconds: None, clamp: None });
+                    let p = Profile { pl1: req(p1, l1), pl2: req(p2, l2), ..Default::default() };
+                    if p.pl1.is_some() || p.pl2.is_some() { report("ALARM", &intel_uv::apply(&p), true); }
+                }
+            }
+            None => {
+                // Alarm removed from the config while active: give the limits back.
+                if let Some(raw) = alarm_saved.take() { let _ = intel_uv::restore_pl(raw, caps); }
             }
         }
         // A power-source change waiting out its debounce: look again as soon as it can be committed.
@@ -464,6 +525,29 @@ mod tests {
         assert!(reset.pl1.is_none() && reset.tjoffset.is_none());
         let none = parse_boot(&json!({"ac": {"power": {"pl1": {"watts": 45}}}, "battery": null})).unwrap();
         assert!(none.full_apply(false).is_none());  // nothing to undo
+    }
+    #[test]
+    fn alarm_parse_and_hysteresis() {
+        let c = parse_boot(&json!({"voltage": {"core": -50}, "daemon": {"alarm": {"temp_c": 92, "pl1_w": 25, "pl2_w": 35}}})).unwrap();
+        let a = c.alarm.unwrap();
+        assert_eq!((a.temp_c, a.pl1_w, a.pl2_w), (92, 25.0, 35.0));
+        assert_eq!(alarm_transition(false, 91, &a), None);
+        assert_eq!(alarm_transition(false, 92, &a), Some(true));
+        assert_eq!(alarm_transition(true, 83, &a), None);          // still within the 10 °C band
+        assert_eq!(alarm_transition(true, 82, &a), Some(false));
+        assert!(parse_boot(&json!({"voltage": {"core": -50}})).unwrap().alarm.is_none());
+        for bad in [json!({"temp_c": 59, "pl1_w": 25, "pl2_w": 35}), json!({"temp_c": 106, "pl1_w": 25, "pl2_w": 35}),
+                    json!({"temp_c": 90, "pl1_w": 0, "pl2_w": 35}), json!({"temp_c": 90, "pl1_w": 40, "pl2_w": 35}),
+                    json!({"temp_c": 90, "pl1_w": 25})] {
+            assert!(parse_boot(&json!({"voltage": {"core": -50}, "daemon": {"alarm": bad}})).is_err(), "{bad}");
+        }
+    }
+    #[test]
+    fn alarm_never_raises() {
+        let a = Alarm { temp_c: 90, pl1_w: 25.0, pl2_w: 35.0 };
+        assert_eq!(alarm_limits((45.0, 90.0), &a), (25.0, 35.0));
+        assert_eq!(alarm_limits((20.0, 30.0), &a), (20.0, 30.0));  // already lower: kept
+        assert_eq!(alarm_limits((20.0, 90.0), &a), (20.0, 35.0));
     }
     #[test]
     fn boot_formats() {

@@ -32,6 +32,10 @@
 #include <QSaveFile>
 #include <QSpinBox>
 #include <QStandardItemModel>
+#include <QHeaderView>
+#include <QDateTime>
+#include "charts.h"
+#include <QTableWidget>
 #include <cmath>
 #include <utility>
 #include <QStandardPaths>
@@ -216,7 +220,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     auto *xBox = box("Extras", "box_purple");
     auto *xg = new QGridLayout(xBox);
     xg->setVerticalSpacing(3);
-    positive_ = new QCheckBox("Allow positive offsets (overvolt, max +100 mV)");
+    positive_ = new QCheckBox("Allow positive offsets (overvolt, max +50 mV)");
     positive_->setToolTip("undervolt.py --force. Only for stabilising a marginal chip; throttled refuses positive offsets.");
     connect(positive_, &QCheckBox::toggled, this, &IntelTab::setPositive);
     xg->addWidget(positive_, 0, 0, 1, 2);
@@ -232,14 +236,34 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     ctdp_->addItems({"untouched", "0 · nominal", "1 · down", "2 · up"});
     ctdp_->setToolTip("throttled cTDP (MSR_CONFIG_TDP_CONTROL). Only levels the CPU advertises in PLATFORM_INFO are accepted.");
     xg->addWidget(ctdp_, 2, 1);
+    xg->addWidget(new QLabel("C1E"), 3, 0);
+    c1e_ = new QComboBox;
+    c1e_->addItems({"untouched", "disable", "enable"});
+    c1e_->setToolTip("MSR_POWER_CTL bit 1 (ThrottleStop C1E). Disabled keeps idle clocks higher at more idle power;\n"
+                     "keep it enabled on battery.");
+    xg->addWidget(c1e_, 3, 1);
+    cstOn_ = new QCheckBox("Package C-state limit");
+    cst_ = new QSpinBox;
+    cst_->setRange(0, 15);
+    cst_->setEnabled(false);
+    cstCur_ = new QLabel("–");
+    connect(cstOn_, &QCheckBox::toggled, cst_, &QWidget::setEnabled);
+    cstOn_->setToolTip("MSR_PKG_CST_CONFIG_CONTROL bits 3:0 on every CPU. Lower only (a shallower deepest package\n"
+                       "C-state: less wake-up latency, more idle power); refused when the BIOS locked it (bit 15).\n"
+                       "Only on CPUs whose encoding is verified (Haswell .. Arrow Lake).");
+    auto *cstRow = new QHBoxLayout;
+    cstRow->addWidget(cst_);
+    cstRow->addWidget(cstCur_, 1);
+    xg->addWidget(cstOn_, 4, 0);
+    xg->addLayout(cstRow, 4, 1);
     lock_ = new QCheckBox("Lock PL1/PL2 until reboot");
     lock_->setToolTip("undervolt.py --lock-power-limit: sets bit 63 of MSR_PKG_POWER_LIMIT after writing, so neither\n"
                       "firmware nor software (including this tool) can change it until the next reset.");
-    xg->addWidget(lock_, 3, 0, 1, 2);
+    xg->addWidget(lock_, 5, 0, 1, 2);
     auto *bTs = new QPushButton("Import ThrottleStop.ini…");
     bTs->setToolTip("undervolt.py --throttlestop: read FIVRVoltage offsets from a ThrottleStop profile.");
     connect(bTs, &QPushButton::clicked, this, &IntelTab::importThrottleStop);
-    xg->addWidget(bTs, 4, 0, 1, 2);
+    xg->addWidget(bTs, 6, 0, 1, 2);
     xg->setColumnStretch(1, 1);
     left->addWidget(xBox);
 
@@ -294,7 +318,60 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     lr2->addWidget(limRun_);
     lr2->addWidget(bLimReset);
     lr2->addStretch();
-    rg->addLayout(lr2, rr, 0, 1, 4);
+    rg->addLayout(lr2, rr++, 0, 1, 4);
+    cpuTable_ = new QTableWidget(0, 5);
+    cpuTable_->setHorizontalHeaderLabels({"CPU", "MHz", "C0 %", "°C", "Max °C"});
+    cpuTable_->verticalHeader()->hide();
+    cpuTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    cpuTable_->setSelectionMode(QAbstractItemView::NoSelection);
+    cpuTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    cpuTable_->setMinimumHeight(140);
+    cpuTable_->setToolTip("Live monitor, per CPU: MHz = base × ΔAPERF/ΔMPERF, C0 % = ΔMPERF/ΔTSC (busy share),\n"
+                          "°C = TjMax − DTS reading of that core (shared by its sibling threads).");
+    rg->addWidget(cpuTable_, rr++, 0, 1, 4);
+    auto *bMax = new QPushButton("Clear max");
+    connect(bMax, &QPushButton::clicked, this, [this] { maxTemp_.clear(); });
+    rg->addWidget(bMax, rr, 0);
+    trendSel_ = new QComboBox;
+    trendSel_->addItems({"Package W", "Package °C", "VCore mV"});
+    connect(trendSel_, &QComboBox::currentIndexChanged, this, &IntelTab::drawTrend);
+    rg->addWidget(trendSel_, rr++, 1, 1, 3);
+    trend_ = new LineChart;
+    trend_->setMinimumHeight(110);
+    trend_->setToolTip("Last 5 minutes of the live monitor.");
+    rg->addWidget(trend_, rr++, 0, 1, 4);
+    csvOn_ = new QCheckBox("Log to CSV…");
+    csvOn_->setToolTip("Append every live-monitor sample to a CSV file you choose (time, package/core W, package °C,\n"
+                       "VCore, throttle flags). Pauses while this tab is hidden (no samples then); stops when unticked.\n"
+                       "An existing file is appended to only if it is such a log.");
+    connect(csvOn_, &QCheckBox::toggled, this, [this](bool on) {
+        if (csv_) { csv_->close(); delete csv_; csv_ = nullptr; }
+        if (!on) return;
+        const QString path = QFileDialog::getSaveFileName(this, "CSV log", QDir::homePath() + "/centurion-intel-monitor.csv", "CSV (*.csv)");
+        auto *f = new QFile(path);
+        if (path.isEmpty() || !f->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+            delete f;
+            QSignalBlocker b(csvOn_);
+            csvOn_->setChecked(false);
+            if (!path.isEmpty()) log("Cannot open " + path, "err");
+            return;
+        }
+        static const QByteArray head = "time,package_w,core_w,package_c,vcore_mv,thermal,power,current\n";
+        if (f->size() > 0) {  // appending under another header would give a file with mixed columns
+            QFile r(path);
+            if (!r.open(QIODevice::ReadOnly) || r.readLine() != head) {
+                delete f;
+                QSignalBlocker b(csvOn_);
+                csvOn_->setChecked(false);
+                log(path + " is not a log of this format (different first line) — choose a new file", "err");
+                return;
+            }
+        }
+        csv_ = f;
+        if (csv_->size() == 0) csv_->write(head);
+        log("Logging live-monitor samples to " + path + (monOn_->isChecked() ? QString() : " (tick Live monitor to start sampling)"), "ok");
+    });
+    rg->addWidget(csvOn_, rr, 0, 1, 4);
     rg->setColumnStretch(0, 1);
     left->addWidget(rBox);
     left->addStretch();
@@ -349,6 +426,28 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     lg->addWidget(turboOn_, r, 0);
     lg->addWidget(turbo_, r, 1);
     lg->addWidget(turboCur_, r++, 2, 1, 2);
+    groupsOn_ = new QCheckBox("Turbo groups");
+    groupsOn_->setToolTip("MSR 0x1AD per group (ThrottleStop turbo ratio table): one ratio per active-core group, group 1\n"
+                          "first. Each stays between the base ratio and stock, and the table must not rise from one group to\n"
+                          "the next. Replaces 'Max turbo ratio' (both write the same register).");
+    auto *grow = new QHBoxLayout;
+    for (int i = 0; i < 8; ++i) {
+        auto *sp = new QSpinBox;
+        sp->setRange(1, 255);
+        sp->setEnabled(false);
+        sp->hide();  // shown for the groups the CPU has, once read
+        sp->setToolTip(QStringLiteral("group %1").arg(i + 1));
+        connect(groupsOn_, &QCheckBox::toggled, sp, &QWidget::setEnabled);
+        grow->addWidget(sp);
+        groups_ << sp;
+    }
+    grow->addStretch();
+    groupsCur_ = muted("Read current to show the CPU's groups.");
+    connect(groupsOn_, &QCheckBox::toggled, this, [this](bool on) { if (on) turboOn_->setChecked(false); });
+    connect(turboOn_, &QCheckBox::toggled, this, [this](bool on) { if (on) groupsOn_->setChecked(false); });
+    lg->addWidget(groupsOn_, r, 0);
+    lg->addLayout(grow, r++, 1, 1, 3);
+    lg->addWidget(groupsCur_, r++, 1, 1, 3);
 
     lg->addWidget(muted("Package power (MSR 0x610)"), r++, 0, 1, 4);
     auto mkPl = [&](const QString &label, double w, double s, const QString &tip) {
@@ -373,9 +472,79 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
                         "the effective limit is the lower of the MSR and MMIO copies. Skipped automatically if the\n"
                         "host bridge is unknown or /dev/mem is blocked.");
     lg->addWidget(mchbar_, r++, 0, 1, 4);
+    auto *clampRow = new QHBoxLayout;
+    clamp1_ = new QCheckBox("PL1 clamp");
+    clamp2_ = new QCheckBox("PL2 clamp");
+    for (QCheckBox *c : {clamp1_, clamp2_}) {
+        c->setTristate(true);
+        c->setCheckState(Qt::PartiallyChecked);
+        c->setToolTip("MSR 0x610 clamp bit (ThrottleStop TPL 'Clamp'): allow throttling below the OS-requested\n"
+                      "P-state to hold the limit. Partially checked = untouched. Written together with that PL row.");
+        clampRow->addWidget(c);
+    }
+    clampRow->addStretch();
+    lg->addLayout(clampRow, r++, 0, 1, 4);
+    auto mkW = [&](QCheckBox *&on, QDoubleSpinBox *&sp, QLabel *&cur, const QString &label, const QString &tip) {
+        on = new QCheckBox(label);
+        sp = dspin(1, 250, 1, 0, " W");
+        sp->setEnabled(false);
+        cur = new QLabel("–");
+        on->setToolTip(tip);
+        connect(on, &QCheckBox::toggled, sp, &QWidget::setEnabled);
+        lg->addWidget(on, r, 0);
+        lg->addWidget(sp, r, 1);
+        lg->addWidget(cur, r++, 2, 1, 2);
+    };
+    mkW(pl4On_, pl4_, pl4Cur_, "PL4", "Peak power limit through the kernel's powercap 'peak_power' constraint (MSR 0x601).\n"
+        "Lower only: it protects the adapter and battery from current spikes, so a value above this boot's stock\n"
+        "PL4 is refused.");
+    mkW(pp0On_, pp0_, pp0Cur_, "PP0 (cores)", "Core-domain long-term limit through powercap intel-rapl:0:0 (MSR 0x638),\n"
+        "enabled when written. A cap: it can only lower power. Some newer CPUs ignore it.");
+    mmioOff_ = new QCheckBox("Disable MCHBAR (MMIO) limits");
+    mmioOff_->setToolTip("Clears the enable bits of the MCHBAR copy of PL1/PL2, so only the MSR limits apply (ThrottleStop\n"
+                         "'MMIO Lock' clears them by writing 0; only the two enable bits are touched here). Refused when the\n"
+                         "copy is locked. Not together with mirroring.");
+    connect(mmioOff_, &QCheckBox::toggled, this, [this](bool on) { if (on) mchbar_->setChecked(false); });
+    connect(mchbar_, &QCheckBox::toggled, this, [this](bool on) { if (on) mmioOff_->setChecked(false); });
+    lg->addWidget(mmioOff_, r++, 0, 1, 4);
     plLock_ = muted("On a Legion the EC re-programs PL1/PL2 on every platform-profile change — prefer the Firmware "
                     "Attributes tab (Custom) for lasting limits.");
     lg->addWidget(plLock_, r++, 0, 1, 4);
+
+    lg->addWidget(muted("Frequency (kernel drivers)"), r++, 0, 1, 4);
+    auto mkRange = [&](QCheckBox *&on, QSpinBox *&lo, QSpinBox *&hi, QLabel *&cur, const QString &label,
+                       int min, int max, const QString &suffix, const QString &tip) {
+        on = new QCheckBox(label);
+        on->setToolTip(tip);
+        lo = new QSpinBox; hi = new QSpinBox;
+        for (QSpinBox *s : {lo, hi}) { s->setRange(min, max); s->setSuffix(suffix); s->setEnabled(false); connect(on, &QCheckBox::toggled, s, &QWidget::setEnabled); }
+        hi->setValue(max);
+        cur = new QLabel("–");
+        lg->addWidget(on, r, 0);
+        lg->addWidget(lo, r, 1);
+        lg->addWidget(hi, r, 2);
+        lg->addWidget(cur, r++, 3);
+    };
+    mkRange(perfOn_, perfMin_, perfMax_, perfCur_, "Speed Shift min–max", 1, 100, " %",
+            "intel_pstate min_perf_pct / max_perf_pct (the kernel turns them into the HWP min/max ratio —\n"
+            "ThrottleStop's Speed Shift Min/Max), as % of the highest turbo P-state.");
+    mkRange(uncOn_, uncMin_, uncMax_, uncCur_, "Ring / uncore", 100, 10000, " MHz",
+            "intel_uncore_frequency min/max for every uncore domain (MSR 0x620), kept inside each domain's stock range.\n"
+            "100 MHz steps (the driver stores a ratio).");
+    uncMin_->setSingleStep(100);
+    uncMax_->setSingleStep(100);
+    QStringList eppList{"performance", "balance_performance", "default", "balance_power", "power"};
+    if (auto t = QFile("/sys/devices/system/cpu/cpufreq/policy0/energy_performance_available_preferences"); t.open(QIODevice::ReadOnly)) {
+        const QStringList a = QString::fromLatin1(t.readAll()).split(' ', Qt::SkipEmptyParts);
+        if (!a.isEmpty()) { eppList = a; for (QString &x : eppList) x = x.trimmed(); }
+    }
+    epp_ = new QComboBox;
+    epp_->addItem("untouched");
+    epp_->addItems(eppList);
+    epp_->setToolTip("energy_performance_preference on every policy (ThrottleStop Speed Shift EPP). Not together with\n"
+                     "EPP switching (hwphint), which writes the same files.");
+    lg->addWidget(new QLabel("EPP"), r, 0);
+    lg->addWidget(epp_, r++, 1, 1, 3);
     lg->setColumnStretch(3, 1);
     lg->setRowStretch(r, 1);
     right->addWidget(lBox);
@@ -392,9 +561,11 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     dg->addWidget(bootTarget_, 0, 1, 1, 3);
     reapply_ = new QCheckBox("Re-apply every");
     reapply_->setChecked(true);
-    reapply_->setToolTip("Daemon only (intel-undervolt daemon / throttled Update_Rate_s): re-write power limits, TCC,\n"
-                         "BD PROCHOT and cTDP each interval — the EC restores its own PL1/PL2 on profile changes.\n"
-                         "Voltages are written on start, power-source change and resume.");
+    reapply_->setToolTip("Daemon only (intel-undervolt daemon / throttled Update_Rate_s): re-write power limits (PL1/PL2,\n"
+                         "PL4, PP0, MMIO disable), TCC, BD PROCHOT, cTDP, C1E, Speed Shift %, EPP and uncore each interval —\n"
+                         "the EC restores its own PL1/PL2 on profile changes. Values set here therefore win over the same\n"
+                         "settings in Optimizations (EPP, perf %, uncore) within one interval.\n"
+                         "Voltages, turbo ratios and the C-state limit are written on start, power-source change and resume.");
     interval_ = new QSpinBox;
     interval_->setRange(500, 600000);
     interval_->setSingleStep(500);
@@ -417,11 +588,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     hwpCmp_ = new QComboBox; hwpCmp_->addItems({">", "<"});
     hwpWatts_ = dspin(0, 1000, 1, 1, " W");
     hwpWatts_->setValue(8);
-    QStringList epp{"performance", "balance_performance", "default", "balance_power", "power"};
-    if (auto t = QFile("/sys/devices/system/cpu/cpufreq/policy0/energy_performance_available_preferences"); t.open(QIODevice::ReadOnly)) {
-        const QStringList a = QString::fromLatin1(t.readAll()).split(' ', Qt::SkipEmptyParts);
-        if (!a.isEmpty()) { epp = a; for (QString &x : epp) x = x.trimmed(); }
-    }
+    const QStringList &epp = eppList;
     hwpLoadHint_ = new QComboBox; hwpLoadHint_->addItems(epp);
     hwpNormalHint_ = new QComboBox; hwpNormalHint_->addItems(epp);
     hwpLoadHint_->setCurrentText("performance");
@@ -446,8 +613,36 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     connect(hwpOn_, &QCheckBox::toggled, this, hwpSync);
     connect(hwpAlgo_, &QComboBox::currentIndexChanged, this, hwpSync);
     hwpSync();
-    dg->addWidget(muted("Periodic re-apply and EPP switching need the daemon: rc-update add centurion-intel-uv-daemon default "
-                        "(systemd: centurion-intel-uv-daemon.service). Without it, centurion-intel-uv applies once at boot and after resume."), 8, 0, 1, 4);
+    // A fixed EPP and EPP switching write the same files (the helper refuses both).
+    connect(hwpOn_, &QCheckBox::toggled, this, [this](bool on) { if (on) epp_->setCurrentIndex(0); });
+    connect(epp_, &QComboBox::currentIndexChanged, this, [this](int i) { if (i > 0) hwpOn_->setChecked(false); });
+    alarmOn_ = new QCheckBox("Temperature alarm at");
+    alarmOn_->setToolTip("Daemon only (ThrottleStop failsafe alarm): when the package reaches this temperature, PL1/PL2 are\n"
+                         "lowered to the values on the right — never raised: if the live limit is already lower it stays.\n"
+                         "The limits from before the alarm are written back once the package is 10 °C cooler.");
+    alarmTemp_ = new QSpinBox;
+    alarmTemp_->setRange(60, 105);
+    alarmTemp_->setValue(95);
+    alarmTemp_->setSuffix(" °C");
+    alarmPl1_ = dspin(1, 250, 1, 0, " W");
+    alarmPl1_->setValue(25);
+    alarmPl2_ = dspin(1, 250, 1, 0, " W");
+    alarmPl2_->setValue(35);
+    for (QWidget *w : std::initializer_list<QWidget *>{alarmTemp_, alarmPl1_, alarmPl2_}) {
+        w->setEnabled(false);
+        connect(alarmOn_, &QCheckBox::toggled, w, &QWidget::setEnabled);
+    }
+    auto *alarmRow = new QHBoxLayout;
+    alarmRow->addWidget(alarmTemp_);
+    alarmRow->addWidget(new QLabel("→ PL1"));
+    alarmRow->addWidget(alarmPl1_);
+    alarmRow->addWidget(new QLabel("PL2"));
+    alarmRow->addWidget(alarmPl2_);
+    alarmRow->addStretch();
+    dg->addWidget(alarmOn_, 8, 0);
+    dg->addLayout(alarmRow, 8, 1, 1, 3);
+    dg->addWidget(muted("Periodic re-apply, EPP switching and the alarm need the daemon: rc-update add centurion-intel-uv-daemon default "
+                        "(systemd: centurion-intel-uv-daemon.service). Without it, centurion-intel-uv applies once at boot and after resume."), 9, 0, 1, 4);
     dg->setColumnStretch(3, 1);
     right->addWidget(dBox);
     right->addStretch();
@@ -539,6 +734,23 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     }
     root->addWidget(logBox, 0);
 
+    // Their ranges and starting values come from the CPU (PL4/PP0 would otherwise start at 1 W, the
+    // C-state limit at 0): tickable once Read current has filled them (showStatus enables them).
+    for (QCheckBox *c : {pl4On_, pp0On_, perfOn_, uncOn_, cstOn_}) c->setEnabled(false);
+    // Daemon settings of the stored boot file (world-readable): saveBoot writes them back from these
+    // widgets, so they must start from the stored values, not the defaults.
+    if (QFile f(QString::fromLatin1(BOOT_FILE)); f.open(QIODevice::ReadOnly)) {
+        const QJsonObject d = QJsonDocument::fromJson(f.readAll()).object().value("daemon").toObject();
+        if (d.value("interval_ms").isDouble()) interval_->setValue(d.value("interval_ms").toInt());
+        if (d.value("reapply").isBool()) reapply_->setChecked(d.value("reapply").toBool());
+        const QJsonObject a = d.value("alarm").toObject();
+        alarmOn_->setChecked(!a.isEmpty());
+        if (!a.isEmpty()) {
+            alarmTemp_->setValue(a.value("temp_c").toInt());
+            alarmPl1_->setValue(a.value("pl1_w").toDouble());
+            alarmPl2_->setValue(a.value("pl2_w").toDouble());
+        }
+    }
     reloadProfiles();
     log("Intel CPU detected. Nothing is written until you press Apply.");
 }
@@ -572,16 +784,36 @@ QJsonObject IntelTab::currentProfile() const {
     for (const Row &r : volt_)
         if (!r.on->isHidden()) v[r.key] = r.on->isChecked() ? QJsonValue(r.val->value()) : QJsonValue();
     for (const Row &r : icc_) i[r.key] = r.on->isChecked() ? QJsonValue(r.val->value()) : QJsonValue();
-    auto pl = [](const PlRow &p) { return p.on->isChecked() ? QJsonValue(QJsonObject{{"watts", p.w->value()}, {"seconds", p.s->value()}}) : QJsonValue(); };
-    const int bd = bdprochot_->currentIndex(), ct = ctdp_->currentIndex();
+    auto pl = [](const PlRow &p, const QCheckBox *clamp) {
+        if (!p.on->isChecked()) return QJsonValue();
+        QJsonObject o{{"watts", p.w->value()}, {"seconds", p.s->value()}};
+        if (clamp->checkState() != Qt::PartiallyChecked) o["clamp"] = clamp->isChecked();
+        return QJsonValue(o);
+    };
+    const int bd = bdprochot_->currentIndex(), ct = ctdp_->currentIndex(), c1 = c1e_->currentIndex();
     const bool anyPl = pl1_.on->isChecked() || pl2_.on->isChecked();
+    QJsonArray groups;
+    if (groupsOn_->isChecked())
+        for (const QSpinBox *g : groups_) if (!g->isHidden()) groups << g->value();
+    QJsonObject hwp;
+    if (perfOn_->isChecked()) { hwp["min_pct"] = perfMin_->value(); hwp["max_pct"] = perfMax_->value(); }
+    if (epp_->currentIndex() > 0) hwp["epp"] = epp_->currentText();
     return {{"voltage", v}, {"iccmax", i}, {"tjoffset", tjOn_->isChecked() ? QJsonValue(tj_->value()) : QJsonValue()},
-            {"power", QJsonObject{{"pl1", pl(pl1_)}, {"pl2", pl(pl2_)}, {"mchbar", mchbar_->isChecked()}}},
+            {"power", QJsonObject{{"pl1", pl(pl1_, clamp1_)}, {"pl2", pl(pl2_, clamp2_)}, {"mchbar", mchbar_->isChecked()},
+                                  {"pl4", pl4On_->isChecked() ? QJsonValue(pl4_->value()) : QJsonValue()},
+                                  {"pp0", pp0On_->isChecked() ? QJsonValue(pp0_->value()) : QJsonValue()},
+                                  {"mchbar_disable", mmioOff_->isChecked()}}},
             {"allow_positive", positive_->isChecked()}, {"lock_power", lock_->isChecked() && anyPl},
             {"disable_bdprochot", bd == 0 ? QJsonValue() : QJsonValue(bd == 1)},
             {"ctdp", ct == 0 ? QJsonValue() : QJsonValue(ct - 1)},
             {"hwphint", hwpRules()},
-            {"turbo_ratio_max", turboOn_->isChecked() ? QJsonValue(turbo_->value()) : QJsonValue()}};
+            {"turbo_ratio_max", turboOn_->isChecked() ? QJsonValue(turbo_->value()) : QJsonValue()},
+            {"turbo_ratios", groups.isEmpty() ? QJsonValue() : QJsonValue(groups)},
+            {"c1e", c1 == 0 ? QJsonValue() : QJsonValue(c1 == 2)},
+            {"pkg_cstate_limit", cstOn_->isChecked() ? QJsonValue(cst_->value()) : QJsonValue()},
+            {"hwp", hwp.isEmpty() ? QJsonValue() : QJsonValue(hwp)},
+            {"uncore", uncOn_->isChecked() ? QJsonValue(QJsonObject{{"min_khz", uncMin_->value() * 1000}, {"max_khz", uncMax_->value() * 1000}})
+                                           : QJsonValue()}};
 }
 
 QJsonArray IntelTab::hwpRules() const {
@@ -598,6 +830,7 @@ void IntelTab::setProfile(const QJsonObject &p) {
     QSignalBlocker lb(link_);
     const bool wasLinked = link_->isChecked();
     link_->setChecked(false);  // load both planes verbatim, then re-link
+    positive_->setChecked(p.value("allow_positive").toBool());  // before the offsets: it sets their maximum
     auto fill = [](QList<Row> &rows, const QJsonObject &o) {
         for (Row &r : rows) {
             const QJsonValue v = o.value(r.key);
@@ -618,7 +851,32 @@ void IntelTab::setProfile(const QJsonObject &p) {
         if (!t.isEmpty()) { row->w->setValue(t.value("watts").toDouble()); row->s->setValue(t.value("seconds").toDouble(row->s->value())); }
     }
     mchbar_->setChecked(pw.value("mchbar").toBool(true));
-    positive_->setChecked(p.value("allow_positive").toBool());
+    for (auto [box, key] : {std::pair{clamp1_, "pl1"}, std::pair{clamp2_, "pl2"}}) {
+        const QJsonValue c = pw.value(key).toObject().value("clamp");
+        box->setCheckState(c.isBool() ? (c.toBool() ? Qt::Checked : Qt::Unchecked) : Qt::PartiallyChecked);
+    }
+    for (auto [on, sp, key] : {std::tuple{pl4On_, pl4_, "pl4"}, std::tuple{pp0On_, pp0_, "pp0"}}) {
+        on->setChecked(pw.value(key).isDouble());
+        if (on->isChecked()) sp->setValue(pw.value(key).toDouble());
+    }
+    mmioOff_->setChecked(pw.value("mchbar_disable").toBool());
+    const QJsonArray grp = p.value("turbo_ratios").toArray();
+    groupsOn_->setChecked(!grp.isEmpty());
+    for (int g = 0; g < grp.size() && g < groups_.size(); ++g) { groups_[g]->setValue(grp[g].toInt()); groups_[g]->show(); }
+    const QJsonValue c1 = p.value("c1e");
+    c1e_->setCurrentIndex(c1.isBool() ? (c1.toBool() ? 2 : 1) : 0);
+    cstOn_->setChecked(p.value("pkg_cstate_limit").isDouble());
+    if (cstOn_->isChecked()) cst_->setValue(p.value("pkg_cstate_limit").toInt());
+    const QJsonObject hw2 = p.value("hwp").toObject();
+    perfOn_->setChecked(hw2.contains("min_pct") || hw2.contains("max_pct"));
+    // A side the profile leaves out keeps the spin box's value (the live one once read), never a range end.
+    if (hw2.contains("min_pct")) perfMin_->setValue(hw2.value("min_pct").toInt());
+    if (hw2.contains("max_pct")) perfMax_->setValue(hw2.value("max_pct").toInt());
+    epp_->setCurrentIndex(hw2.contains("epp") ? qMax(0, epp_->findText(hw2.value("epp").toString())) : 0);
+    const QJsonObject un = p.value("uncore").toObject();
+    uncOn_->setChecked(!un.isEmpty());
+    if (un.contains("min_khz")) uncMin_->setValue(un.value("min_khz").toInt() / 1000);
+    if (un.contains("max_khz")) uncMax_->setValue(un.value("max_khz").toInt() / 1000);
     lock_->setChecked(p.value("lock_power").toBool());
     const QJsonValue bd = p.value("disable_bdprochot");
     bdprochot_->setCurrentIndex(bd.isBool() ? (bd.toBool() ? 1 : 2) : 0);
@@ -652,10 +910,13 @@ bool IntelTab::validate(const QJsonObject &p) {
     bool any = false;
     for (const char *k : {"voltage", "iccmax"})
         for (const auto &v : p.value(k).toObject()) any |= v.isDouble();
-    any |= p.value("tjoffset").isDouble();
+    any |= p.value("tjoffset").isDouble() || p.value("turbo_ratio_max").isDouble();
     const QJsonObject pw = p.value("power").toObject();
     any |= pw.value("pl1").isObject() || pw.value("pl2").isObject();
     any |= p.value("disable_bdprochot").isBool() || p.value("ctdp").isDouble() || !p.value("hwphint").toArray().isEmpty();
+    any |= pw.value("pl4").isDouble() || pw.value("pp0").isDouble() || pw.value("mchbar_disable").toBool()
+        || p.value("turbo_ratios").isArray() || p.value("c1e").isBool() || p.value("pkg_cstate_limit").isDouble()
+        || p.value("hwp").isObject() || p.value("uncore").isObject();
     if (!any) { QMessageBox::information(this, "Nothing to apply", "Tick at least one value to write."); return false; }
     const QJsonObject v = p.value("voltage").toObject();
     if (v.value("core").isDouble() != v.value("cache").isDouble() || v.value("core").toDouble() != v.value("cache").toDouble())
@@ -742,14 +1003,16 @@ void IntelTab::saveBoot() {
     if (t == 0 || t == 2) cfg["battery"] = p;
     if (!cfg.contains("ac")) cfg["ac"] = QJsonValue();
     if (!cfg.contains("battery")) cfg["battery"] = QJsonValue();
-    cfg["daemon"] = QJsonObject{{"interval_ms", interval_->value()}, {"reapply", reapply_->isChecked()}};
+    cfg["daemon"] = QJsonObject{{"interval_ms", interval_->value()}, {"reapply", reapply_->isChecked()},
+                                {"alarm", alarmOn_->isChecked() ? QJsonValue(QJsonObject{{"temp_c", alarmTemp_->value()},
+                                    {"pl1_w", alarmPl1_->value()}, {"pl2_w", alarmPl2_->value()}}) : QJsonValue()}};
     if (QMessageBox::question(this, "Apply at boot", QStringLiteral("Store these values for %1 and apply them at every boot and resume?\n\n"
             "Only do this with values you have already tested.").arg(bootTarget_->currentText()),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
         runOp({{"op", "set_boot"}, {"config", cfg}});
 }
 
-IntelTab::~IntelTab() { stopMonitorStream(); }
+IntelTab::~IntelTab() { stopMonitorStream(); delete csv_; }
 
 void IntelTab::startMonitor() {
     // PGO training run: no root helper at all (the per-sample path fails fast).
@@ -859,18 +1122,85 @@ void IntelTab::showMonitor(const QJsonObject &s) {
     if (s.contains("vcore_mv")) parts << QStringLiteral("VCore %1 mV").arg(s.value("vcore_mv").toDouble(), 0, 'f', 0);
     const QJsonObject e = s.value("energy").toObject(), pe = monPrev_.value("energy").toObject();
     const double dt = s.value("t").toDouble() - monPrev_.value("t").toDouble();
+    double pkgW = qQNaN(), coreW = qQNaN();
     if (!pe.isEmpty() && dt > 0) {
         const double wrap = e.value("wrap").toDouble(4294967296.0);
         for (const char *d : {"package", "core", "graphics", "dram"}) {
             const QJsonValue a = e.value("raw").toObject().value(d), b = pe.value("raw").toObject().value(d);
             if (!a.isDouble() || !b.isDouble()) continue;
             const double unit = e.value(QString::fromLatin1(d) == "dram" ? "dram_unit_j" : "unit_j").toDouble();
-            parts << QStringLiteral("%1 %2 W").arg(QString::fromLatin1(d)).arg(std::fmod(a.toDouble() - b.toDouble() + wrap, wrap) * unit / dt, 0, 'f', 1);
+            const double w = std::fmod(a.toDouble() - b.toDouble() + wrap, wrap) * unit / dt;
+            if (QString::fromLatin1(d) == "package") pkgW = w;
+            if (QString::fromLatin1(d) == "core") coreW = w;
+            parts << QStringLiteral("%1 %2 W").arg(QString::fromLatin1(d)).arg(w, 0, 'f', 1);
         }
     }
+    recordSample(s, pkgW, coreW);
+    updateCpuTable(s);
     monPrev_ = s;
     monLbl_->setText(parts.join(" · "));
     updateLimits(s.value("limits").toObject());
+}
+
+void IntelTab::recordSample(const QJsonObject &s, double pkgW, double coreW) {
+    const double pkgC = s.value("pkg_temp").isDouble() ? s.value("pkg_temp").toDouble() : qQNaN();
+    const double vcore = s.value("vcore_mv").isDouble() ? s.value("vcore_mv").toDouble() : qQNaN();
+    hist_.append({s.value("t").toDouble(), pkgW, coreW, pkgC, vcore});
+    const double keep = 300.0;  // seconds
+    while (!hist_.isEmpty() && hist_.last().t - hist_.first().t > keep) hist_.removeFirst();
+    drawTrend();
+    if (!csv_) return;
+    const QJsonObject t = s.value("throttle").toObject();
+    auto num = [](double v, int prec) { return std::isnan(v) ? QString() : QString::number(v, 'f', prec); };
+    csv_->write(QStringLiteral("%1,%2,%3,%4,%5,%6,%7,%8\n")
+        .arg(QDateTime::fromSecsSinceEpoch(qint64(s.value("t").toDouble())).toString(Qt::ISODate))
+        .arg(num(pkgW, 2), num(coreW, 2), num(pkgC, 0), num(vcore, 0))
+        .arg(int(t.value("thermal").toBool())).arg(int(t.value("power").toBool())).arg(int(t.value("current").toBool())).toUtf8());
+    csv_->flush();
+}
+
+void IntelTab::drawTrend() {
+    const int sel = trendSel_->currentIndex();
+    QVector<LineChart::Point> pts;
+    for (const Sample &x : std::as_const(hist_)) {
+        const double y = sel == 0 ? x.pkgW : sel == 1 ? x.pkgC : x.vcore;
+        if (std::isnan(y)) continue;
+        pts.append({x.t, y, QDateTime::fromSecsSinceEpoch(qint64(x.t)).toString("HH:mm:ss") + QStringLiteral(" · %1").arg(y, 0, 'f', sel == 0 ? 1 : 0)});
+    }
+    trend_->setPoints(pts, sel == 0 ? "W" : sel == 1 ? "°C" : "mV");
+}
+
+void IntelTab::updateCpuTable(const QJsonObject &s) {
+    QHash<int, QJsonObject> prev;
+    for (const auto &v : monPrev_.value("percpu").toArray()) prev.insert(v.toObject().value("cpu").toInt(), v.toObject());
+    const QJsonArray cur = s.value("percpu").toArray();
+    const double base = s.value("base_mhz").toDouble();
+    const int tjmax = s.value("tjmax").toInt();
+    cpuTable_->setRowCount(cur.size());
+    auto cell = [this](int row, int col, const QString &text) {
+        auto *it = cpuTable_->item(row, col);
+        if (!it) { it = new QTableWidgetItem; it->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter); cpuTable_->setItem(row, col, it); }
+        it->setText(text);
+    };
+    for (int row = 0; row < cur.size(); ++row) {
+        const QJsonObject c = cur[row].toObject();
+        const int cpu = c.value("cpu").toInt();
+        cell(row, 0, QString::number(cpu));
+        const QJsonObject p = prev.value(cpu);
+        // Counters are 64-bit and only grow between two samples of one boot; a smaller value means a reset.
+        const double da = c.value("aperf").toDouble() - p.value("aperf").toDouble(),
+                     dm = c.value("mperf").toDouble() - p.value("mperf").toDouble(),
+                     dt = c.value("tsc").toDouble() - p.value("tsc").toDouble();
+        const bool rates = !p.isEmpty() && da >= 0 && dm > 0 && dt > 0;
+        cell(row, 1, rates && base > 0 ? QString::number(base * da / dm, 'f', 0) : QStringLiteral("–"));
+        cell(row, 2, rates ? QString::number(qMin(100.0, 100.0 * dm / dt), 'f', 1) : QStringLiteral("–"));
+        if (c.value("dts").isDouble() && tjmax > 0) {
+            const int t = tjmax - c.value("dts").toInt();
+            maxTemp_[cpu] = qMax(maxTemp_.value(cpu, t), t);
+            cell(row, 3, QString::number(t));
+            cell(row, 4, QString::number(maxTemp_[cpu]));
+        } else { cell(row, 3, QStringLiteral("–")); cell(row, 4, QStringLiteral("–")); }
+    }
 }
 
 void IntelTab::updateLimits(const QJsonObject &limits) {
@@ -998,6 +1328,49 @@ void IntelTab::showStatus(const QJsonObject &s) {
         turboCur_->setText("n/a");
         turboCur_->setToolTip(turboSt.value("error").toString());
     }
+    const QJsonArray stockG = turboSt.value("stock").toArray(), curG = turboSt.value("current").toArray();
+    QStringList gtext;
+    for (int g = 0; g < groups_.size(); ++g) {
+        const int st = g < stockG.size() ? stockG[g].toInt() : 0;
+        groups_[g]->setVisible(st > 0);
+        if (st <= 0) continue;
+        groups_[g]->setRange(qMax(1, turboSt.value("base").toInt()), st);
+        if (!groupsOn_->isChecked() && g < curG.size()) groups_[g]->setValue(curG[g].toInt());
+        gtext << QStringLiteral("%1/%2").arg(g < curG.size() ? curG[g].toInt() : 0).arg(st);
+    }
+    groupsCur_->setText(gtext.isEmpty() ? QStringLiteral("n/a") : "now/stock: " + gtext.join("  "));
+    groupsOn_->setEnabled(turboSt.value("programmable").toBool() && !gtext.isEmpty());
+    if (!groupsOn_->isEnabled()) groupsOn_->setChecked(false);
+    const QJsonObject hs = s.value("hwp").toObject();
+    perfCur_->setText(hs.value("max_pct").isDouble() ? QStringLiteral("now %1–%2 %").arg(hs.value("min_pct").toInt()).arg(hs.value("max_pct").toInt())
+                                                     : QStringLiteral("n/a"));
+    perfOn_->setEnabled(hs.value("max_pct").isDouble());
+    if (perfOn_->isEnabled() && !perfOn_->isChecked()) { perfMin_->setValue(hs.value("min_pct").toInt()); perfMax_->setValue(hs.value("max_pct").toInt()); }
+    if (hs.value("epp").isString()) epp_->setItemText(0, "untouched (now " + hs.value("epp").toString() + ")");
+    const QJsonObject us = s.value("uncore").toObject();
+    if (us.value("max_khz").isDouble()) {
+        const int lo = us.value("initial_min_khz").toInt() / 1000, hi = us.value("initial_max_khz").toInt() / 1000;
+        uncCur_->setText(QStringLiteral("now %1–%2 · stock %3–%4").arg(us.value("min_khz").toInt() / 1000).arg(us.value("max_khz").toInt() / 1000).arg(lo).arg(hi));
+        for (QSpinBox *sp : {uncMin_, uncMax_}) sp->setRange(lo, hi);
+        if (!uncOn_->isChecked()) { uncMin_->setValue(us.value("min_khz").toInt() / 1000); uncMax_->setValue(us.value("max_khz").toInt() / 1000); }
+        uncOn_->setEnabled(true);
+    } else {
+        uncCur_->setText("n/a");
+        uncCur_->setToolTip(us.value("error").toString());
+        uncOn_->setEnabled(false);
+        uncOn_->setChecked(false);
+    }
+    const QJsonObject c1s = s.value("c1e").toObject();
+    if (c1s.contains("enabled")) c1e_->setItemText(0, QStringLiteral("untouched (now %1)").arg(c1s.value("enabled").toBool() ? "on" : "off"));
+    const QJsonObject cs = s.value("pkg_cstate").toObject();
+    if (cs.contains("limit")) {
+        const bool locked = cs.value("locked").toBool();
+        cstCur_->setText(QStringLiteral("now %1%2").arg(cs.value("limit").toInt()).arg(locked ? " · locked" : ""));
+        cst_->setMaximum(cs.value("limit").toInt());
+        if (!cstOn_->isChecked()) cst_->setValue(cs.value("limit").toInt());
+        cstOn_->setEnabled(!locked);
+        if (locked) cstOn_->setChecked(false);
+    } else cstCur_->setText("n/a");
     const QJsonObject pw = s.value("power").toObject();
     auto term = [](const QJsonObject &o) {
         return QStringLiteral("%1 W · %2 s%3").arg(o.value("watts").toDouble(), 0, 'f', 1).arg(o.value("seconds").toDouble(), 0, 'g', 4)
@@ -1015,6 +1388,21 @@ void IntelTab::showStatus(const QJsonObject &s) {
               .arg(mc.value("matches_msr").toBool() ? " (= MSR)" : " (≠ MSR, the lower one wins)");
     plLock_->setText((plLocked ? QStringLiteral("MSR power limit is LOCKED by firmware. ") : QString()) + mtext +
                      ". The EC may re-program PL1/PL2 on profile changes.");
+    mmioOff_->setEnabled(!mc.contains("error") && !mc.value("locked").toBool());
+    if (!mmioOff_->isEnabled()) mmioOff_->setChecked(false);
+    for (auto [on, sp, cur, key] : {std::tuple{pl4On_, pl4_, pl4Cur_, "pl4"}, std::tuple{pp0On_, pp0_, pp0Cur_, "pp0"}}) {
+        const QJsonObject o = pw.value(key).toObject();
+        const bool ok = o.value("watts").isDouble();
+        cur->setText(ok ? QStringLiteral("%1 W%2").arg(o.value("watts").toDouble(), 0, 'f', 1)
+                              .arg(o.value("enabled").isBool() && !o.value("enabled").toBool() ? " (off)" : "") : QStringLiteral("n/a"));
+        // The editor stops at the helper's 250 W: the clamped value would lower a higher stock limit unnoticed.
+        if (ok && o.value("watts").toDouble() > sp->maximum())
+            cur->setText(cur->text() + QStringLiteral(" — above the %1 W editor maximum: ticking lowers it to %1 W").arg(sp->maximum(), 0, 'f', 0));
+        cur->setToolTip(o.value("error").toString());
+        on->setEnabled(ok);
+        if (!ok) on->setChecked(false);
+        else if (!on->isChecked() && o.value("watts").toDouble() >= 1) sp->setValue(o.value("watts").toDouble());
+    }
 
     const QJsonObject bd = s.value("bdprochot").toObject();
     if (bd.contains("enabled")) bdprochot_->setToolTip(bdprochot_->toolTip().section("\n\nNow:", 0, 0) +

@@ -14,8 +14,12 @@
 //!   centurion-intel-uv measure [--csv] [--sleep S]   powercap power, coretemp, per-core MHz
 //!   centurion-intel-uv throttlestop FILE.ini [INDEX] [--apply]
 //!   centurion-intel-uv turbo on|off              intel_pstate/no_turbo
+//!   centurion-intel-uv uvsearch start [--step MV] [--floor MV] [--seconds S]
+//!                                                automatic core+cache undervolt search (stress per core)
+//!   centurion-intel-uv uvsearch                  continue the search (also after a crash / reboot)
+//!   centurion-intel-uv uvsearch status|clear
 //!
-//! Offsets are mV, ≤ 0 unless --force (max +250). On Skylake and later core
+//! Offsets are mV, ≤ 0 unless --force (max +50). On Skylake and later core
 //! and cache share one plane: give both the same value (the smaller wins).
 
 use centurion_helpers::intel_uv::{self, parse_profile};
@@ -192,6 +196,22 @@ fn main() {
             let secs = args.iter().position(|a| a == "--sleep").map(|i| f(args.get(i + 1))).unwrap_or(1.0);
             if secs <= 0.0 { usage() }
             measure(csv, secs)
+        }
+        "uvsearch" => {
+            use centurion_helpers::intel_uv_search as uvs;
+            // A hang-up (ssh dropped) must also stop the stressor and put the last good value back.
+            unsafe { libc::signal(libc::SIGHUP, handler(on_int)); }
+            let opt = |k: &str, d: f64| args.iter().position(|a| a == k).map(|i| f(args.get(i + 1))).unwrap_or(d);
+            match args.get(1).map(String::as_str) {
+                None => uvs::run(None, &STOP),
+                Some("start") => match uvs::Search::new(opt("--step", 5.0), opt("--floor", -100.0), opt("--seconds", 20.0) as u64) {
+                    Ok(s) => { uvs::clear(); uvs::run(Some(s), &STOP) }
+                    Err(e) => { eprintln!("{e}"); 2 }
+                },
+                Some("status") => match uvs::load() { Some(s) => { println!("{}", s.to_json()); 0 } None => { println!("no search state"); 0 } },
+                Some("clear") => { uvs::clear(); 0 }
+                _ => usage(),
+            }
         }
         "turbo" => {
             let v = match args.get(1).map(String::as_str) { Some("on") => "0", Some("off") => "1", _ => usage() };
