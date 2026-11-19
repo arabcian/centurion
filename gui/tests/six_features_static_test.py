@@ -16,7 +16,10 @@ checks = {
   'incident timeline in Health': 'Hardware Incident Timeline' in read('healthtab.cpp') and 'insights::incident(' in read('healthtab.cpp'),
   'incident boot guard': 'ringBoot != b' in ins and 'if (b.isEmpty())' in ins,
   'scene tx log with boot identity': 'scene-transactions.jsonl' in scene and '"boot", currentBootId' in scene,
-  'scene failure short circuits': 'if (!ok) {\n            steps_.clear();' in scene,
+  'scene failure short circuits': 'if (!ok && !soft) {\n            steps_.clear();' in scene,
+  'write-free failures do not roll back': 'std::exchange(softFail_, false) && !ok' in scene,
+  'CO search reads live MCA counters': 'mceCounters()' in co and 'error_count' in co,
+  'CO search resets when destroyed mid-search': '~CoSearchDialog()' in co and 'blockingReset()' in co,
   'scene rollback reverse order': 'applied_.takeLast()' in scene,
   'scene snapshot before fan write': '{"fan_fullspeed", "get"}' in scene,
   'scene fan curve snapshot': '{"fan_table", "get"}' in scene and 'oldFanTable_' in scene,
@@ -31,7 +34,7 @@ checks = {
   'CO search user opt-in': 'Risk of a system crash' in co,
   'CO search thermal guard': 't >= 80.0' in co and 't >= 92.0' in co,
   'CO search no automatic commitment': '"op", "reset"' in co and 'Manually reapply only after extended testing' in co,
-  'CO search hardware fault correlation': 'bootId_.left(8)' in co and 'validateFaultLog' in co,
+  'CO search hardware fault correlation': '"health-reader"' in co and 'kmsgSeq_' in co and 'validateFaultLog' in co and 'health.log")' not in co,
   'CO search watchdog': 'test_->terminate()' in co and 'pending->kill()' in co,
 }
 for title, passed in checks.items():

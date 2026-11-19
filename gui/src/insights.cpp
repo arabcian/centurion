@@ -27,7 +27,7 @@ namespace {
 QByteArray readFile(const QString &path, qint64 max = 4 * 1024 * 1024) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly) || f.size() > max) return {};
-    return f.readAll(max);
+    return f.read(max);
 }
 QString rootState() {
     const QString base = qEnvironmentVariableIsEmpty("XDG_STATE_HOME")
@@ -108,7 +108,7 @@ QStringList pareto(const QJsonArray &runs) {
     QStringList out{QStringLiteral("FAN / TEMPERATURE PARETO LAB"),
         QStringLiteral("Uses the existing CPU cooling load only; no gaming frametimes or acoustic dB are measured."),
         QStringLiteral("Lower fan RPM and die temperature are better; higher sustained MHz is better."), QString()};
-    struct Run { QString id, key; double rpm, temp, mhz; int secs; };
+    struct Run { QString id, key; double rpm, temp, mhz, start; int secs; };
     QList<Run> usable;
     for (const QJsonValue &v : runs) {
         const auto o = v.toObject();
@@ -118,7 +118,8 @@ QStringList pareto(const QJsonArray &runs) {
         const int secs = o.value("secs").toInt();
         if (!(rpm > 0 && temp > 0 && mhz > 0 && secs > 0) || !std::isfinite(rpm + temp + mhz)) continue;
         usable << Run{QDateTime::fromSecsSinceEpoch(qint64(o.value("t").toDouble())).toString("yyyy-MM-dd HH:mm"),
-                     o.value("key").toString(), rpm, temp, mhz, secs};
+                     o.value("key").toString(), rpm, temp, mhz,
+                     o.value("start_temp").isDouble() ? o.value("start_temp").toDouble() : std::nan(""), secs};
     }
     if (usable.size() < 2) return out << QStringLiteral("Need at least two clean runs with fan, temperature, MHz and duration data. Run matching cooling tests first.");
     // No comparing tests with different platform profiles, firmware limits, test revision or duration.
@@ -129,12 +130,11 @@ QStringList pareto(const QJsonArray &runs) {
         const auto &g = it.value();
         if (g.size() < 2) continue;
         double lowStart = std::numeric_limits<double>::infinity(), highStart = -std::numeric_limits<double>::infinity();
-        for (const QJsonValue &v : runs) {
-            const QJsonObject r = v.toObject();
-            if (r.value("key").toString() + ':' + QString::number(r.value("secs").toInt()) != it.key() ||
-                r.value("noisy").toBool() || !r.value("start_temp").isDouble()) continue;
-            lowStart = std::min(lowStart, r.value("start_temp").toDouble());
-            highStart = std::max(highStart, r.value("start_temp").toDouble());
+        // Only the runs actually compared below (a run dropped for missing data must not block the group).
+        for (const Run &r : g) {
+            if (std::isnan(r.start)) continue;
+            lowStart = std::min(lowStart, r.start);
+            highStart = std::max(highStart, r.start);
         }
         if (std::isfinite(highStart - lowStart) && highStart - lowStart > 3.0) {
             out << QStringLiteral("Context %1: start temperatures differ by %2 °C; repeat runs after equal cooldown before comparing.")
@@ -177,8 +177,13 @@ QStringList capabilities() {
         o << QStringLiteral("    %1").arg(reason);
         if (!ok) o << QStringLiteral("    Check: %1").arg(fix);
     };
-    report(QStringLiteral("Ryzen CO (SMU)"), QDir("/sys/kernel/ryzen_smu_drv").exists(),
-           QStringLiteral("/sys/kernel/ryzen_smu_drv"), QStringLiteral("ryzen_smu module, compatible kernel, permissions, helper install"));
+    // ryzen-co-helper uses the ryzen_smu driver when it is loaded, else the raw SMN mailbox through the
+    // host bridge's PCI config space (centurion_helpers::smu): the module is optional.
+    const bool smuDriver = QDir("/sys/kernel/ryzen_smu_drv").exists();
+    const bool amd = readFile("/proc/cpuinfo", 1 << 20).contains("AuthenticAMD");
+    report(QStringLiteral("Ryzen CO (SMU)"), amd && (smuDriver || QFile::exists("/sys/bus/pci/devices/0000:00:00.0/config")),
+           smuDriver ? QStringLiteral("ryzen_smu driver") : QStringLiteral("raw SMN mailbox via /sys/bus/pci/devices/0000:00:00.0/config (no ryzen_smu module)"),
+           QStringLiteral("AMD CPU of a supported family, kernel lockdown off; Ryzen Curve → probe shows the exact reason"));
     report(QStringLiteral("CPU temperature sensors"), QDir("/sys/class/hwmon").exists(),
            QStringLiteral("/sys/class/hwmon"), QStringLiteral("k10temp/coretemp driver and hwmon support"));
     report(QStringLiteral("Firmware attributes"), QDir("/sys/class/firmware-attributes").exists(),

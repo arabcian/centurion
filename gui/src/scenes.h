@@ -171,6 +171,7 @@ private:
     int oldFanBoost_ = -1;          // captured through the helper before the first write
     QVector<int> oldFanTable_;     // captured by fan_table:get before write
     bool rollingBack_ = false, rollbackFailed_ = false, uncompensated_ = false;
+    bool softFail_ = false;          // set by a step right before done(false): nothing was written
     QStringList log_;
     bool ok_ = true, busy_ = false;
     QString current_, pending_;

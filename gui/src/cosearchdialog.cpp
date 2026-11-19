@@ -5,8 +5,9 @@
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDir>
-#include <QFile>
+#include <QDirIterator>
 #include <QFileInfo>
+#include <QFile>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QLabel>
@@ -18,6 +19,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QSaveFile>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <cmath>
@@ -72,6 +74,55 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     });
     connect(go_, &QPushButton::clicked, this, &CoSearchDialog::start);
     connect(stop_, &QPushButton::clicked, this, &CoSearchDialog::cancel);
+}
+
+/// Live AMD MCA threshold counters (machinecheckN/<bank>/<block>/error_count, mode 0444): the kernel
+/// reads the bank's MISC MSR on every read, so a corrected error shows here at once, while the kernel
+/// itself may only log it at the next MCE poll (check_interval, 5 min by default).
+static QHash<QString, QString> mceCounters() {
+    QHash<QString, QString> out;
+    QDirIterator it(QStringLiteral("/sys/devices/system/machinecheck"), {QStringLiteral("error_count")}, QDir::Files,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext() && out.size() < 4096) {
+        const QString p = it.next();
+        QFile f(p);
+        if (f.open(QIODevice::ReadOnly)) out.insert(p, QString::fromLatin1(f.read(32)).trimmed());
+    }
+    return out;
+}
+
+/// Blocking stock reset, for when the dialog is destroyed mid-search (application quit): the
+/// asynchronous privileged::run could not report back any more.
+static bool blockingReset() {
+    QString pkexec;
+    for (const char *c : {"/usr/bin/pkexec", "/bin/pkexec"})
+        if (QFileInfo(QString::fromLatin1(c)).isFile()) { pkexec = QString::fromLatin1(c); break; }
+    if (pkexec.isEmpty()) return false;
+    QProcess p;
+    p.start(pkexec, {privileged::helperPath("ryzen-co-helper")});
+    if (!p.waitForStarted(3000)) return false;
+    p.write(QJsonDocument(QJsonObject{{"op", "reset"}}).toJson(QJsonDocument::Compact) + '\n');
+    p.closeWriteChannel();
+    if (!p.waitForFinished(15000)) return false;
+    const QByteArray out = p.readAllStandardOutput().trimmed();
+    return QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object().value("ok").toBool();
+}
+
+CoSearchDialog::~CoSearchDialog() {
+    if (!running_ || resetting_) return;  // idle, or the asynchronous reset is already on its way
+    guard_->stop();
+    if (test_) {
+        test_->disconnect(this);
+        test_->kill();
+        test_->waitForFinished(2000);
+    }
+    const bool inFlight = applying_;
+    bool ok = blockingReset();
+    // An SMU write still in flight may land after that reset (ryzen-co-helper serialises on its lock):
+    // reset once more after it has had time to finish.
+    if (inFlight) { QThread::msleep(1500); ok = blockingReset() && ok; }
+    quitting_ = true;
+    done(ok, tr("Application closed during search"));
 }
 
 void CoSearchDialog::reject() {
@@ -150,7 +201,17 @@ void CoSearchDialog::start() {
     limit_->setEnabled(false);
     guard_->start();
     note(tr("Beginning with stock state; every tested candidate will be cleared afterward."));
-    next();
+    // Baseline: only kernel events logged after this point count against a candidate.
+    kmsgSeq_ = 0;
+    scanKernel([this](bool ok, const QJsonArray &, quint64 last) {
+        if (!running_ || resetting_) return;
+        if (!ok) { reset(tr("Cannot read classified kernel events; not starting.")); return; }
+        kmsgSeq_ = last;
+        if (mceCounters().isEmpty())
+            note(tr("MCA threshold counters are not readable here: corrected errors count only once the kernel logs them "
+                    "(its MCE poll can take up to 5 minutes), so a short pass is even weaker evidence."));
+        next();
+    });
 }
 
 void CoSearchDialog::next() {
@@ -162,6 +223,7 @@ void CoSearchDialog::next() {
         // Unexpected external modification or helper journal reset: fail closed.
         reset(tr("Curve state changed unexpectedly; stopping")); return;
     }
+    mceBefore_ = mceCounters();
     applying_ = true;
     note(tr("Applying trial offset %1 via the existing privileged helper…").arg(candidate_));
     privileged::run(privileged::helperPath("ryzen-co-helper"),
@@ -215,26 +277,44 @@ void CoSearchDialog::testFinished(int code) {
     });
 }
 
+void CoSearchDialog::scanKernel(std::function<void(bool, const QJsonArray &, quint64)> then) {
+    // health-reader (read-only, silent polkit) reads /dev/kmsg directly. health.log is not used: with
+    // kernel.dmesg_restrict=1 the Health tab persists events only every 5 minutes, and the file does not
+    // exist until the first event, so it can neither prove a clean trial nor be relied on to exist.
+    privileged::run(privileged::helperPath("health-reader"), QJsonObject{{"since", double(kmsgSeq_)}}, this,
+        [then](const privileged::Result &r) {
+            then(r.ok(), r.json.value("events").toArray(), quint64(r.json.value("last_seq").toDouble()));
+        }, 30000);
+}
+
 void CoSearchDialog::validateFaultLog() {
-    // The Health reader appends classified kernel events across this test window.
-    // A missing / restricted log is NOT evidence of a clean machine check history.
-    const QString base = qEnvironmentVariableIsEmpty("XDG_STATE_HOME") ? QDir::homePath() + "/.local/state" : qEnvironmentVariable("XDG_STATE_HOME");
-    QFile log(base + "/centurion/health.log");
-    if (!log.open(QIODevice::ReadOnly) || log.size() > (8LL << 20)) {
-        reset(tr("Cannot read classified hardware fault log; stopping without claiming a clean test.")); return;
-    }
-    const QString since = QDateTime::fromSecsSinceEpoch(testStart_).toString("yyyy-MM-dd HH:mm:ss");
-    for (const QByteArray &line : log.readAll().split('\n')) {
-        const QString x = QString::fromUtf8(line);
-        if (x.size() >= 19 && x.left(19) >= since && x.contains(QStringLiteral("boot=") + bootId_.left(8)) &&
-            (x.contains(" MCE ", Qt::CaseInsensitive) || x.contains(" LOCKUP ", Qt::CaseInsensitive) ||
-             x.contains(" THERMAL ", Qt::CaseInsensitive))) {
-            reset(tr("Hardware fault reported during trial: %1").arg(x.left(180))); return;
+    scanKernel([this](bool ok, const QJsonArray &events, quint64 last) {
+        if (!running_ || resetting_) return;
+        if (abort_) { reset(tr("Cancelled after CPU test")); return; }
+        // An unreadable kernel log is NOT evidence of a clean trial.
+        if (!ok) { reset(tr("Cannot read classified kernel events; stopping without claiming a clean test.")); return; }
+        for (const QJsonValue &v : events) {
+            const QJsonObject e = v.toObject();
+            const QString kind = e.value("kind").toString();
+            if (kind == "mce" || kind == "lockup" || kind == "thermal") {
+                reset(tr("Hardware fault reported during trial: %1").arg(e.value("title").toString())); return;
+            }
         }
-    }
-    best_ = candidate_;
-    note(tr("Short test passed at %1. This is provisional, not a stable offset recommendation.").arg(best_));
-    QTimer::singleShot(0, this, &CoSearchDialog::next);
+        // Corrected errors the kernel has not polled yet: any threshold counter that moved.
+        const QHash<QString, QString> now = mceCounters();
+        for (auto i = mceBefore_.cbegin(); i != mceBefore_.cend(); ++i) {
+            const auto n = now.constFind(i.key());
+            if (n != now.cend() && n.value() != i.value()) {
+                const QString bank = QFileInfo(i.key()).dir().path().section('/', -3, -2);
+                reset(tr("Corrected machine-check errors counted during trial (%1: %2 → %3)").arg(bank, i.value(), n.value()));
+                return;
+            }
+        }
+        kmsgSeq_ = std::max(kmsgSeq_, last);
+        best_ = candidate_;
+        note(tr("Short test passed at %1. This is provisional, not a stable offset recommendation.").arg(best_));
+        QTimer::singleShot(0, this, &CoSearchDialog::next);
+    });
 }
 
 void CoSearchDialog::cancel() {
@@ -289,5 +369,5 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     limit_->setEnabled(true);
     note(reason);
     if (resetOk) note(tr("SMU reset confirmed by helper; best short-test candidate was %1. Manually reapply only after extended testing.").arg(best_));
-    else QMessageBox::critical(this, tr("Reset failed"), tr("CPU curve reset could not be confirmed. Use Ryzen Curve → Reset, or reboot before continuing."));
+    else if (!quitting_) QMessageBox::critical(this, tr("Reset failed"), tr("CPU curve reset could not be confirmed. Use Ryzen Curve → Reset, or reboot before continuing."));
 }
