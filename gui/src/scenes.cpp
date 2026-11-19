@@ -1227,7 +1227,7 @@ void SceneEngine::start(const Scene &s) {
                 done(true, "skipped (the EC uses its own curve outside the Custom power profile)");
                 return;
             }
-            privileged::run(privileged::helperPath("legion-profile-helper"), {{"fan_table", "get"}}, this,
+            privileged::run(privileged::helperPath("legion-profile-helper"), QJsonObject{{"fan_table", "get"}}, this,
                 [this, lv, done](const privileged::Result &old) {
                     const QJsonArray levels = old.json.value("levels").toArray();
                     oldFanTable_.clear();
