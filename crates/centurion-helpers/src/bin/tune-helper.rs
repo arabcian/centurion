@@ -350,15 +350,24 @@ fn snapshot_replace(st: &State, plan: &[(String, PathBuf, String)]) -> Result<Ve
     for (key, path, _) in st.baseline.iter().chain(plan.iter()) {
         if !seen.insert(path.clone()) { continue; }
         let t = tune::find(key).ok_or_else(|| format!("{key}: tunable disappeared"))?;
-        let live = tune::baseline_value(t, path)
-            .ok_or_else(|| format!("cannot snapshot {} before replacing preset; nothing changed", path.display()))?;
+        let Some(live) = tune::baseline_value(t, path) else {
+            // apply_values never writes an unreadable best-effort file (counted as refused): nothing to roll back.
+            if tune::best_effort(t) { continue; }
+            return Err(format!("cannot snapshot {} before replacing preset; nothing changed", path.display()));
+        };
         old.push((key.clone(), path.clone(), live));
     }
     Ok(old)
 }
 
 fn rollback_replace(st: &mut State, before: State, saved: &[(String, PathBuf, String)], mut out: Value) -> Value {
-    let (_, errors, _, failed) = write_back(saved);
+    // Only files that actually moved: rewriting an untouched file the kernel refuses (a managed IRQ,
+    // a suspended device) would fail again and report an incomplete rollback that changed nothing.
+    let changed: Vec<(String, PathBuf, String)> = saved.iter().filter(|(k, p, v)| {
+        let Some(t) = tune::find(k) else { return true };
+        tune::baseline_value(t, p).map_or(true, |live| !tune::same_value(t, &live, v))
+    }).cloned().collect();
+    let (_, errors, _, failed) = write_back(&changed);
     out["ok"] = json!(false);
     out["applied"] = json!(false);
     out["rolled_back"] = json!(errors.is_empty() && failed.is_empty());
@@ -782,9 +791,9 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
             st.source = Some(mode.to_owned());
         }
         let (results, mut ok) = apply_values(st, values, mode == "game");
-        // A replace is all-or-restore, including per-device best-effort
-        // refusals that non-replacing presets are allowed to skip.
-        if replace && results.iter().any(|r| r["refused"].as_u64().unwrap_or(0) > 0) { ok = false; }
+        // Best-effort per-device refusals (managed IRQs, suspended PCI/USB devices) stay "refused" in
+        // the results but do not fail a replace: the kernel refuses them on every attempt, so a scene
+        // switch would always roll back, while the same preset applied by hand succeeds.
         if restored["errors"].as_array().is_some_and(|a| !a.is_empty()) { ok = false; }
         if values.is_empty() && st.baseline.is_empty() { st.source = None; }
         let result = json!({"ok": ok, "applied": ok, "results": results, "restored": restored,
