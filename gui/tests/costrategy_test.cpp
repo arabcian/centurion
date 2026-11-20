@@ -222,6 +222,91 @@ int main(int argc, char **argv) {
         }
     }
 
+    // HARD REBOOT regression: CCD1/slot4 (logical CPU 9) reboots at -25.
+    // Recovery must never repeat -25 or even try -24; the recovery snapshot is AFTER next().
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(5));
+        bool rebooted = false;
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            const auto t = s.next();
+            CHECK(t.has_value());
+            if (!t) break;
+            const auto pending = Search::load(s.save());
+            CHECK(pending.has_value());
+            if (pending) {
+                const auto inflight = pending->inFlight();
+                CHECK(inflight.has_value());
+                CHECK(inflight && inflight->perCore == t->perCore && inflight->allCore == t->allCore && inflight->what == t->what);
+            }
+            int i9 = -1;
+            for (int i = 0; i < s.cores().size(); ++i)
+                if (s.cores()[i].cpus.contains(9)) i9 = i;
+            CHECK(i9 >= 0);
+            if (i9 >= 0 && !t->perCore.isEmpty() && t->perCore[i9] == -25 &&
+                !t->what.startsWith("confirmation")) {
+                auto resumed = Search::load(s.save());
+                CHECK(resumed.has_value());
+                if (!resumed) break;
+                resumed->report(Outcome{false, {}, true}); // hard reboot is an unsafe trial
+                const QJsonObject resolved = resumed->save();
+                auto secondBoot = Search::load(resolved);
+                CHECK(secondBoot.has_value());
+                CHECK(secondBoot && !secondBoot->inFlight().has_value());
+                if (secondBoot) {
+                    Sim sim;
+                    sim.stable[9] = -23;
+                    for (int k = 0; k < 400; ++k) {
+                        const auto next = secondBoot->next();
+                        if (!next) break;
+                        if (!next->perCore.isEmpty()) CHECK(next->perCore[i9] >= -23);
+                        secondBoot->report(sim.run(*secondBoot, *next));
+                    }
+                    CHECK(secondBoot->finished());
+                    CHECK(secondBoot->values()[i9] >= -23);
+                }
+                rebooted = true;
+                break;
+            }
+            s.report(Outcome{true, {}});
+        }
+        CHECK(rebooted);
+    }
+
+    // A crash guard persists into a BRAND NEW search on the same topology.
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(5));
+        CHECK(s.guardAgainstCrash(1, 4, {9, 19}, -25));
+        CHECK(s.guardAgainstCrash(1, 4, {9, 20}, -25)); // logical CPU numbering changed; physical core guard survives
+        CHECK(!s.guardAgainstCrash(1, 3, {8, 18}, -60)); // invalid CO failure cannot be applied
+        int i9 = -1;
+        for (int i = 0; i < s.cores().size(); ++i) if (s.cores()[i].cpus.contains(9)) i9 = i;
+        CHECK(i9 >= 0);
+        Sim sim;
+        sim.stable[9] = -23;
+        for (int k = 0; k < 500; ++k) {
+            auto t = s.next();
+            if (!t) break;
+            if (!t->perCore.isEmpty()) CHECK(t->perCore[i9] >= -23);
+            s.report(sim.run(s, *t));
+        }
+        CHECK(s.finished());
+        CHECK(s.values()[i9] == -23);
+    }
+
+    // Confirmation-stage hard reboot has no reliable culprit: conservatively back off
+    // every non-stock core by 2 rather than repeating the whole crashing set.
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        Sim sim;
+        std::optional<Trial> t;
+        while ((t = s.next()) && !t->what.startsWith("confirmation")) s.report(sim.run(s, *t));
+        CHECK(t.has_value());
+        const QList<int> before = s.values();
+        s.report(Outcome{false, {}, true});
+        for (int i = 0; i < before.size(); ++i)
+            CHECK(s.values()[i] == std::min(0, before[i] + 2));
+    }
+
     // Snapshots that do not fit are refused.
     {
         Search s(Mode::PerCore, Level::Long, -40, cpu(2));

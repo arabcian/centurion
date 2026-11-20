@@ -66,7 +66,6 @@ private:
     QString testProgram_;
 
     std::optional<cosearch::Search> search_;
-    QJsonObject snapshot_;               // search state before the trial in flight (journal)
     std::optional<cosearch::Trial> trial_;
     int testIndex_ = 0;
     cosearch::Outcome outcome_;
@@ -74,6 +73,7 @@ private:
     QJsonObject testEnd_;
     QString expectedCurve_;              // CurvePage::currentState("cpu") while the trial's offsets are applied
     int trialNo_ = 0;
+    int hardReboots_ = 0;              // max two suspected reboots per search session
 
     bool running_ = false, abort_ = false, applying_ = false, resetting_ = false, finished_ = false;
     bool sceneApplying_ = false, quitting_ = false;

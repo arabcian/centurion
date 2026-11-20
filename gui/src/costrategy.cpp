@@ -50,10 +50,15 @@ int Search::Walk::candidate() const {
 int Search::Walk::coreCandidate(int limit) const {
     if (done || pass <= limit || pass - floor <= 1) return 1;
     // The first per-core write is -15, not -5. With a shallower user limit, respect that limit.
-    if (!seeded) return std::max(limit, -15);
+    if (!seeded) {
+        // A persisted crash guard can make -15 unsafe too: never cross the failure boundary.
+        const int initial = std::max({limit, -15, floor + 1});
+        return initial < pass ? initial : 1;
+    }
     if (coarse) {
         const int candidate = std::max(limit, pass - 5);
-        return candidate < pass ? candidate : 1;
+        if (candidate < pass && candidate > floor) return candidate;
+        // At a persisted crash boundary, bisect instead of jumping past it.
     }
     // pass is closer to zero than floor; never retest a known pass or fail.
     // Integer midpoint yields logarithmic refinement, including when the initial -15 fails.
@@ -101,7 +106,7 @@ QList<int> Search::topCores() const {
     return out;
 }
 
-Trial Search::allCoreTrial(int value) {
+Trial Search::allCoreTrial(int value) const {
     const LevelSpec s = spec(level_);
     const QList<int> top = topCores();
     Trial t;
@@ -112,7 +117,7 @@ Trial Search::allCoreTrial(int value) {
     return t;
 }
 
-Trial Search::perCoreTrial(int core, int value) {
+Trial Search::perCoreTrial(int core, int value) const {
     const LevelSpec s = spec(level_);
     Trial t;
     // Test ONE changing core at a time. Previously found offsets remain recorded in values(),
@@ -126,7 +131,7 @@ Trial Search::perCoreTrial(int core, int value) {
     return t;
 }
 
-Trial Search::confirmTrial() {
+Trial Search::confirmTrial() const {
     const LevelSpec s = spec(level_);
     QList<int> firsts;
     for (const Core &c : cores_) firsts << c.cpus.first();
@@ -179,24 +184,60 @@ std::optional<Trial> Search::next() {
     return std::nullopt;
 }
 
+std::optional<Trial> Search::inFlight() const {
+    if (stage_ == Stage::AllCore && cand_ < 0) return allCoreTrial(cand_);
+    if (stage_ == Stage::PerCore && tested_ >= 0 && tested_ < cores_.size() && cand_ < 0)
+        return perCoreTrial(tested_, cand_);
+    if (stage_ == Stage::Confirm) return confirmTrial();
+    return std::nullopt;
+}
+
+bool Search::guardAgainstCrash(int ccd, int slot, const QList<int> &cpus, int failed) {
+    if (mode_ != Mode::PerCore || cpus.isEmpty() || failed >= 0 || failed < limit_) return false;
+    for (int i = 0; i < cores_.size(); ++i) {
+        // Physical CCD/slot is the stable identity; Linux logical CPU IDs can shift when
+        // SMT/parking configuration changes. Keeping the guard is safer than losing it.
+        if (cores_[i].ccd != ccd || cores_[i].slot != slot) continue;
+        Walk &w = per_[i];
+        // Example: -25 triggered a reboot => -25 and -24 are forbidden; -23 is the deepest
+        // candidate permitted, not automatically accepted as stable.
+        w.floor = std::max(w.floor, std::min(-1, failed + 1));
+        if (w.pass <= w.floor) w.pass = std::min(0, w.floor + 1);
+        w.done = false;
+        return true;
+    }
+    return false;
+}
+
 void Search::report(const Outcome &o) {
     switch (stage_) {
     case Stage::AllCore:
         if (o.pass) all_.pass = cand_;
-        else { all_.floor = cand_; all_.coarse = false; }
+        else {
+            all_.floor = std::max(all_.floor, std::min(-1, cand_ + (o.interrupted ? 1 : 0)));
+            if (all_.pass <= all_.floor) all_.pass = std::min(0, all_.floor + 1);
+            all_.coarse = false;
+        }
         break;
     case Stage::PerCore: {
         if (tested_ < 0) return;
         Walk &w = per_[tested_];
         w.seeded = true;
         if (o.pass) w.pass = cand_;
-        else { w.floor = cand_; w.coarse = false; }
+        else {
+            w.floor = std::max(w.floor, std::min(-1, cand_ + (o.interrupted ? 1 : 0)));
+            if (w.pass <= w.floor) w.pass = std::min(0, w.floor + 1);
+            w.coarse = false;
+        }
         tested_ = -1;
         break;
     }
     case Stage::Confirm: {
         if (o.pass) { stage_ = Stage::Done; break; }
-        if (mode_ == Mode::AllCore) { ++all_.pass; break; }
+        if (mode_ == Mode::AllCore) {
+            all_.pass = std::min(0, all_.pass + (o.interrupted ? 2 : 1));
+            break;
+        }
         // +1 for the cores the failure was traced to; when it names none, or names a core already at
         // stock (it cannot be the cause), every undervolted core.
         QList<int> hit;
@@ -208,7 +249,8 @@ void Search::report(const Outcome &o) {
             hit.clear();
             for (int i = 0; i < cores_.size(); ++i) if (per_[i].pass < 0) hit << i;
         }
-        for (int i : hit) ++per_[i].pass;  // a confirmation only runs while some core is below 0
+        for (int i : hit)
+            per_[i].pass = std::min(0, per_[i].pass + (o.interrupted ? 2 : 1));
         break;
     }
     case Stage::Done: break;

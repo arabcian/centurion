@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonDocument>
+#include <QJsonParseError>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
@@ -29,6 +30,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <memory>
+#include <algorithm>
 
 using namespace cosearch;
 
@@ -38,10 +40,89 @@ static QString stateDir() {
 }
 /// Written before every trial, removed when the search ends: still there at the next start = it was interrupted.
 static QString journalPath() { return stateDir() + "/co-search-session.json"; }
+static QString crashGuardPath() { return stateDir() + "/co-search-crash-guards.json"; }
 static QString settingsPath() { return QFileInfo(scenes::dir()).path() + "/co-search.json"; }
 static QString readBootId() {
     QFile boot(QStringLiteral("/proc/sys/kernel/random/boot_id"));
     return boot.open(QIODevice::ReadOnly) ? QString::fromUtf8(boot.readAll()).trimmed() : QString();
+}
+
+// The in-flight trial is written AFTER Search::next(), not reconstructed from a pre-trial
+// snapshot. The signature allows rejecting corrupt/stale journals before applying any CO.
+static QJsonObject trialSignature(const Trial &t) {
+    QJsonArray per;
+    for (int x : t.perCore) per << x;
+    return QJsonObject{{"what", t.what},
+                       {"all", t.allCore ? QJsonValue(*t.allCore) : QJsonValue(QJsonValue::Null)},
+                       {"per", per}, {"seconds", t.seconds()}};
+}
+
+static std::optional<QJsonArray> readCrashGuards() {
+    QFile f(crashGuardPath());
+    if (!f.exists()) return QJsonArray{};
+    // A damaged/unreadable guard MUST NOT silently become an empty guard list.
+    if (!f.open(QIODevice::ReadOnly) || f.size() > (1LL << 20)) return std::nullopt;
+    QJsonParseError err;
+    const QJsonDocument d = QJsonDocument::fromJson(f.readAll(), &err);
+    if (err.error != QJsonParseError::NoError || !d.isObject()) return std::nullopt;
+    const QJsonObject j = d.object();
+    if (j.value("version").toInt() != 1 || !j.value("guards").isArray()) return std::nullopt;
+    const QJsonArray guards = j.value("guards").toArray();
+    if (guards.size() > 512) return std::nullopt;
+    for (const QJsonValue &v : guards) {
+        if (!v.isObject()) return std::nullopt;
+        const QJsonObject g = v.toObject();
+        if (g.value("ccd").toInt(-1) < 0 || g.value("slot").toInt(-1) < 0 ||
+            g.value("failed").toInt(1) >= 0 || g.value("failed").toInt(-99) < -50 ||
+            !g.value("cpus").isArray() || g.value("cpus").toArray().isEmpty()) return std::nullopt;
+    }
+    return guards;
+}
+
+// Retain failed candidates across NEW searches too, so "start again" cannot silently
+// rediscover the same destructive offset. A record is specific to the physical topology.
+static bool saveCrashGuard(const Search &s, const Trial &t) {
+    if (t.allCore.has_value() || t.perCore.size() != s.cores().size()) return true;
+    int suspect = -1;
+    for (int i = 0; i < t.perCore.size(); ++i) {
+        if (t.perCore[i] >= 0) continue;
+        if (suspect >= 0) return true;  // combined confirmation: no unambiguous culprit
+        suspect = i;
+    }
+    if (suspect < 0) return true;
+    const Core &c = s.cores()[suspect];
+    const auto old = readCrashGuards();
+    if (!old) return false;
+    QJsonArray logical;
+    for (int cpu : c.cpus) logical << cpu;
+    QJsonArray fresh;
+    int mostConservative = t.perCore[suspect];
+    for (const QJsonValue &v : *old) {
+        const QJsonObject item = v.toObject();
+        if (item.value("ccd").toInt(-1) == c.ccd && item.value("slot").toInt(-1) == c.slot) {
+            mostConservative = std::max(mostConservative, item.value("failed").toInt(-50));
+        } else fresh << item;
+    }
+    fresh << QJsonObject{{"ccd", c.ccd}, {"slot", c.slot}, {"cpus", logical},
+                         {"failed", mostConservative}};
+    QDir().mkpath(stateDir());
+    QSaveFile f(crashGuardPath());
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    const QByteArray data = QJsonDocument(QJsonObject{{"version", 1}, {"guards", fresh}}).toJson();
+    return f.write(data) == data.size() && f.commit();
+}
+
+static bool applyCrashGuards(Search &s) {
+    const auto guards = readCrashGuards();
+    if (!guards) return false;
+    for (const QJsonValue &v : *guards) {
+        const QJsonObject o = v.toObject();
+        QList<int> cpus;
+        for (const QJsonValue &cpu : o.value("cpus").toArray()) cpus << cpu.toInt(-1);
+        s.guardAgainstCrash(o.value("ccd").toInt(-1), o.value("slot").toInt(-1), cpus,
+                            o.value("failed").toInt(0));
+    }
+    return true;
 }
 
 CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
@@ -190,6 +271,15 @@ CoSearchDialog::~CoSearchDialog() {
     // An SMU write still in flight may land after that reset (ryzen-co-helper serialises on its lock):
     // reset once more after it has had time to finish.
     if (inFlight) { QThread::msleep(1500); ok = blockingReset() && ok; }
+    // Even an intentional GUI close must not replay the same interrupted CO candidate later.
+    if (ok && search_ && trial_) {
+        const Trial t = *trial_;
+        if (saveCrashGuard(*search_, t)) {
+            search_->report(Outcome{false, {}, true});
+            trial_.reset();
+            writeJournal();
+        }
+    }
     quitting_ = true;
     done(ok, tr("Application closed during search"));
 }
@@ -246,14 +336,19 @@ void CoSearchDialog::saveSettings() const {
 }
 
 bool CoSearchDialog::writeJournal() const {
+    if (!search_ || bootId_.isEmpty()) return false;
     QDir().mkpath(stateDir());
     QSaveFile f(journalPath());
     if (!f.open(QIODevice::WriteOnly)) return false;
-    const QByteArray data = QJsonDocument(QJsonObject{{"boot", bootId_}, {"search", snapshot_},
-        {"what", trial_ ? trial_->what : QString()}, {"scene", scene_->currentData().toString()},
-        {"prior_scene", priorScene_}, {"attempts", attempts_}}).toJson();
+    // v3 stores the ALREADY selected candidate and whether it is still pending. On reboot,
+    // report(false) updates exactly that candidate. A resolved journal must NOT replay it.
+    const QByteArray data = QJsonDocument(QJsonObject{{"version", 3}, {"boot", bootId_},
+        {"search", search_->save()}, {"pending", trial_.has_value()},
+        {"trial", trial_ ? trialSignature(*trial_) : QJsonObject{}},
+        {"scene", scene_->currentData().toString()}, {"prior_scene", priorScene_},
+        {"reboots", hardReboots_}, {"attempts", attempts_}}).toJson();
     if (f.write(data) != data.size()) return false;
-    return f.commit();  // fsync + rename: no SMU write without a recoverable on-disk record
+    return f.commit();  // QSaveFile: durable commit before a new privileged SMU write
 }
 
 bool CoSearchDialog::toolsPresent() {
@@ -284,7 +379,13 @@ void CoSearchDialog::refreshTable() {
 }
 
 void CoSearchDialog::start() {
-    if (running_ || !toolsPresent()) return;
+    if (running_) return;
+    if (QFileInfo::exists(journalPath())) {
+        // Never overwrite an unresolved crash history with a fresh, unguarded search.
+        offerResume();
+        return;
+    }
+    if (!toolsPresent()) return;
     if (CurvePage::currentState("cpu") != "stock" || scenes::gameSessions() > 0) {
         QMessageBox::warning(this, tr("Search locked"), tr("Reset the CPU curve to stock and end game sessions before searching. Existing offsets must not be overwritten.")); return;
     }
@@ -323,60 +424,142 @@ void CoSearchDialog::start() {
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
     saveSettings();
     search_.emplace(mode, levelFrom(level_->currentData().toString()).value_or(Level::Fast), limit_->value(), cores);
+    if (!applyCrashGuards(*search_)) {
+        search_.reset();
+        QMessageBox::critical(this, tr("CO crash guard corrupted"),
+            tr("The recorded unsafe CO offsets cannot be read. Search is blocked rather than retrying a known crash value."));
+        return;
+    }
+    hardReboots_ = 0;
     attempts_ = {};
     trialNo_ = 0;
     launch();
 }
 
 void CoSearchDialog::offerResume() {
+    if (running_) return;
     QFile f(journalPath());
     if (!f.open(QIODevice::ReadOnly) || f.size() > (1LL << 20)) return;
     const QJsonObject j = QJsonDocument::fromJson(f.readAll()).object();
     f.close();
     auto s = Search::load(j.value("search").toObject());
     if (!s) {
-        const auto answer = QMessageBox::warning(this, tr("Old CO search journal"),
-            tr("This interrupted search uses an incompatible or damaged strategy snapshot. "
-               "It cannot be safely resumed after the CO search rewrite. Discard the old journal? "
-               "The current CPU curve is not changed."),
+        const auto answer = QMessageBox::warning(this, tr("Invalid CO search journal"),
+            tr("The interrupted CO Search journal is incompatible or damaged. It cannot be safely resumed. "
+               "Discard the old journal? The CPU curve is not changed."),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (answer == QMessageBox::Yes) QFile::remove(journalPath());
         return;
     }
-    const bool rebooted = j.value("boot").toString() != readBootId();
-    const QString what = j.value("what").toString();
-    const QString text = rebooted
-        ? tr("A CO search was interrupted: the machine restarted while it tested %1. That trial counts as failed.").arg(what)
-        : tr("A CO search was interrupted while it tested %1 (the application closed). That trial will run again.").arg(what);
+    const int journalVersion = j.value("version").toInt(2);  // legacy: before-next() snapshot
+    if (journalVersion != 2 && journalVersion != 3) return;
+    const QString currentBoot = readBootId();
+    if (currentBoot.isEmpty()) {
+        QMessageBox::warning(this, tr("Boot identity"), tr("Cannot verify boot ID; recovery is blocked."));
+        return;
+    }
+    const bool rebooted = j.value("boot").toString() != currentBoot;
+    std::optional<Trial> interrupted;
+    bool pending = false;
+    if (journalVersion == 2) {
+        // Upgrade existing journals without ever replaying a known interrupted candidate.
+        interrupted = s->next();
+        pending = interrupted.has_value();
+        if (pending && interrupted->what != j.value("what").toString()) {
+            QMessageBox::warning(this, tr("Journal mismatch"), tr("Recovery trial does not match the old journal. No curve was written."));
+            return;
+        }
+    } else {
+        if (!j.value("pending").isBool()) {
+            QMessageBox::warning(this, tr("Invalid CO search journal"),
+                tr("The v3 journal has no valid pending-state marker. Recovery is blocked."));
+            return;
+        }
+        pending = j.value("pending").toBool(false);
+        if (pending) {
+            interrupted = s->inFlight();
+            if (!interrupted || trialSignature(*interrupted) != j.value("trial").toObject()) {
+                QMessageBox::warning(this, tr("Journal mismatch"), tr("Saved candidate and search state disagree. Recovery is blocked."));
+                return;
+            }
+        }
+    }
+    // Quarantine immediately, BEFORE the user can choose Discard. Otherwise discarding the
+    // journal and starting a new search would silently repeat the crash-inducing value.
+    if (pending && !saveCrashGuard(*s, *interrupted)) {
+        QMessageBox::critical(this, tr("Recovery guard failed"),
+            tr("Cannot save the interrupted CO candidate to the persistent crash guard. "
+               "Neither resuming nor discarding the journal is safe until this is repaired."));
+        return;
+    }
+    int rebootCount = std::max(0, j.value("reboots").toInt());
+    if (rebootCount >= 2) {
+        const auto answer = QMessageBox::warning(this, tr("CO search reboot lockout"),
+            tr("This search has already survived two suspected reboot crashes. It is locked to prevent another reboot loop. "
+               "Discard the interrupted search? Recorded core crash guards will remain in effect."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer == QMessageBox::Yes) QFile::remove(journalPath());
+        return;
+    }
+    const QString what = pending ? interrupted->what : tr("the last resolved trial");
+    const QString text = pending
+        ? tr("The search was interrupted while trying %1. That candidate will be FAILED, excluded with a safety margin and never replayed on resume.").arg(what)
+        : tr("The search stopped after its previous trial was already resolved. No candidate will be replayed.");
     const auto answer = QMessageBox::question(this, tr("Resume CO search"),
-        text + "\n\n" + tr("Resume it? The CPU curve is reset to stock first. No discards the interrupted search."),
-        QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes);
+        text + "\n\n" + tr("Resume after resetting the CPU curve to stock? No discards this interrupted search."),
+        QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::No);
     if (answer == QMessageBox::No) { QFile::remove(journalPath()); return; }
-    if (answer != QMessageBox::Yes || !toolsPresent()) return;  // Cancel: ask again next time
-    if (scenes::gameSessions() > 0) { QMessageBox::warning(this, tr("Search locked"), tr("End game sessions first.")); return; }
+    if (answer != QMessageBox::Yes || !toolsPresent()) return;
+    if (scenes::gameSessions() > 0) {
+        QMessageBox::warning(this, tr("Search locked"), tr("End game sessions first."));
+        return;
+    }
     mode_->setCurrentIndex(mode_->findData(int(s->mode())));
     level_->setCurrentIndex(level_->findData(name(s->level())));
     limit_->setValue(s->limit());
     scene_->setCurrentIndex(std::max(0, scene_->findData(j.value("scene").toString())));
     attempts_ = j.value("attempts").toArray();
-    if (rebooted) {
-        const auto t = s->next();  // the trial that was in flight (the snapshot is from just before it)
-        if (t) {
-            s->report(Outcome{false, {}});
-            attempts_.append(QJsonObject{{"t", double(QDateTime::currentSecsSinceEpoch())}, {"what", t->what}, {"pass", false}, {"note", "machine restarted"}});
-        }
+    hardReboots_ = rebootCount + int(rebooted && pending);
+    if (pending) {
+        s->report(Outcome{false, {}, true});
+        attempts_.append(QJsonObject{{"t", double(QDateTime::currentSecsSinceEpoch())},
+            {"what", interrupted->what}, {"pass", false},
+            {"note", rebooted ? "reboot; unsafe candidate quarantined" : "interrupted; unsafe candidate quarantined"}});
+    }
+    if (!applyCrashGuards(*s)) {
+        QMessageBox::critical(this, tr("CO crash guard corrupted"),
+            tr("Recorded crash exclusions cannot be read. No CO value was written."));
+        return;
     }
     search_ = std::move(s);
-    trialNo_ = attempts_.size();
+    trial_.reset();
+    bootId_ = currentBoot;
     priorScene_ = j.value("prior_scene").toString();
-    note(rebooted ? tr("Resuming: %1 counted as failed. Resetting the curve to stock.").arg(what)
-                  : tr("Resuming: %1 runs again. Resetting the curve to stock.").arg(what));
-    privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this, [this](const privileged::Result &r) {
-        if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message())); search_.reset(); return; }
-        const QString keep = priorScene_;
-        launch();
-        priorScene_ = keep;  // the scene from before the interrupted search, not the CO search scene
-    }, 120000);
+    // Commit the RECOVERED state before any further SMU write; another abrupt reboot may now
+    // safely resume from a state where the failed candidate is already excluded.
+    if (!writeJournal()) {
+        QMessageBox::critical(this, tr("Recovery journal failed"),
+            tr("Cannot durably commit the recovered state. No CO value was applied."));
+        search_.reset();
+        return;
+    }
+    trialNo_ = attempts_.size();
+    if (hardReboots_ >= 2) {
+        QMessageBox::critical(this, tr("CO search reboot lockout"),
+            tr("Two reboots were detected in this search. The last candidate was marked unsafe, "
+               "but automatic search continuation is disabled. Restart CO Search manually after checking system stability."));
+        search_.reset();
+        return;
+    }
+    note(pending ? tr("Recovery: %1 marked unsafe and excluded. Resetting to stock first.").arg(what)
+                 : tr("Recovery: continuing after last resolved trial. Resetting to stock first."));
+    privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
+        [this](const privileged::Result &r) {
+            if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message())); search_.reset(); return; }
+            const QString keep = priorScene_;
+            launch();
+            priorScene_ = keep;
+        }, 120000);
 }
 
 void CoSearchDialog::launch() {
@@ -428,7 +611,6 @@ void CoSearchDialog::launch() {
 void CoSearchDialog::step() {
     if (!running_ || resetting_) return;
     if (abort_) { reset(tr("Cancelled")); return; }
-    snapshot_ = search_->save();
     trial_ = search_->next();
     refreshTable();
     if (!trial_) { finished_ = true; reset(tr("Search finished")); return; }
@@ -507,8 +689,8 @@ void CoSearchDialog::testFinished(int code, bool crashed) {
     const QString status = testEnd_.value("status").toString();
     if (crashed) {
         // A stress process that dies by a signal on an undervolted core is a failure of that offset.
-        outcome_ = Outcome{false, {}};
-        note(tr("CPU test crashed (exit status %1).").arg(code));
+        outcome_ = Outcome{false, {}, true};
+        note(tr("CPU test crashed (exit status %1). Applying additional CO safety margin.").arg(code));
     } else if (status == "fail" && code == 1) {
         QList<int> cpus;
         for (const auto &v : testEnd_.value("failed").toArray()) cpus << v.toInt();
@@ -597,6 +779,10 @@ void CoSearchDialog::validateFaultLog(Outcome o) {
                 }
             }
         }
+        if (o.interrupted && trial_ && !saveCrashGuard(*search_, *trial_)) {
+            reset(tr("Cannot persist a crash guard after a stress worker crash; stopping."));
+            return;
+        }
         finishTrial(o);
     });
 }
@@ -611,6 +797,10 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
                 : tr("FAILED: %1%2").arg(trial_->what, named.isEmpty() ? QString() : tr(" (CPU %1)").arg(named.join(','))));
     search_->report(o);
     trial_.reset();
+    // Keep the previous trial marked PENDING on disk until a subsequent candidate has
+    // its own durable journal, or until stock reset completes. Its CO voltage is still
+    // applied in this gap: a late reboot must invalidate THAT trial, not claim "idle".
+    // A failed write for the next trial triggers reset; the old candidate stays quarantinable.
     refreshTable();
     QTimer::singleShot(0, this, &CoSearchDialog::step);
 }
@@ -681,7 +871,9 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
         target.commit();
     }
     // A freeze or an application quit leaves the journal behind for a resume; a search that ended here does not.
-    if (!quitting_ && (resetOk || finished_)) QFile::remove(journalPath());
+    // Never erase evidence merely because the algorithm finished: an unsuccessful stock
+    // reset can leave the last CO value applied and the recovery journal is still needed.
+    if (!quitting_ && resetOk) QFile::remove(journalPath());
     running_ = false;
     resetting_ = false;
     sceneApplying_ = false;

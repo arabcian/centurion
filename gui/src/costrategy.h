@@ -65,6 +65,7 @@ struct Trial {
 struct Outcome {
     bool pass = false;
     QList<int> cpus;  // logical CPUs a failure was traced to; empty = unknown (kernel event, crash)
+    bool interrupted = false; // hard reboot / interrupted trial: apply additional safety margin
 };
 
 class Search {
@@ -75,6 +76,10 @@ public:
     std::optional<Trial> next();
     /// The result of the trial last returned by next().
     void report(const Outcome &o);
+    /// Reconstruct the CURRENT in-flight candidate from an after-next() snapshot, without advancing.
+    std::optional<Trial> inFlight() const;
+    /// Do not ever probe a previously interrupted candidate (or its immediate neighbour) for this core.
+    bool guardAgainstCrash(int ccd, int slot, const QList<int> &cpus, int failed);
 
     bool finished() const { return stage_ == Stage::Done; }
     Mode mode() const { return mode_; }
@@ -103,9 +108,9 @@ private:
         int candidate() const; // legacy all-core descent
         int coreCandidate(int limit) const;
     };
-    Trial allCoreTrial(int value);
-    Trial perCoreTrial(int core, int value);
-    Trial confirmTrial();
+    Trial allCoreTrial(int value) const;
+    Trial perCoreTrial(int core, int value) const;
+    Trial confirmTrial() const;
     QStringList cpustress(bool perCore, const QList<int> &cpus, int cycles, int kernel, bool quick = false) const;
     QList<int> topCores() const;
     void finishAllCore();
