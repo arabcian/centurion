@@ -55,6 +55,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   and everything below it on that physical core in every later search; the two-reboot lockout is gone, since a
   guarded value can never be replayed. Cores can be unticked to stay at stock. A journal that cannot be resumed
   can now be discarded instead of blocking every later start. See `docs/CO_SEARCH_PERCORE_RULES_2026-11-20.md`.
+- Ryzen Curve → CO Search, per-core: every core has its own Start, typed in the table or filled from a saved
+  Ryzen Curve profile (*Preset*), so saved profiles can be tested and pushed further with the chosen step; a failed
+  Start climbs back towards stock by the step. The global start moved to all-core (*All-core start*, default -5).
+  The per-core confirmation is replaced by a 20-minute verification of the whole set that alternates single-core
+  FFT-SSE / NTT / FFT-AVX cycles with all-core loads, twice up to the package power limit.
+- `centurion-cpustress --load power`: dense AVX2 / AVX-512 FMA work on independent vectors (twice the FLOP rate of
+  `avx512`), the load that reaches the package power limit; the CO verification's earlier all-core parts stayed
+  far below it. One-ulp errors are kept by stirred integer accumulators (the map alone can round them away).
 - `centurion-calibrate`: `--budget`/`--io-budget` refuse infinite (`inf`, `1e400`) and oversized values.
   `--io-budget inf` turned the daily write budget that protects the drive off (it saturated to `u64::MAX`).
 - `centurion-calibrate --verify`: an interrupt is a failed verification wherever it lands. Between two

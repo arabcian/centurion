@@ -9928,16 +9928,8 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Çekirdek başına ayarlar:</translation>
         </message>
         <message>
-            <source>Start:</source>
-            <translation>Başlangıç:</translation>
-        </message>
-        <message>
             <source>Apply to next trials</source>
             <translation>Sonraki testlere uygula</translation>
-        </message>
-        <message>
-            <source>First per-core test value. Defaults to -15; never exceeds the configured search limit or a stored reboot guard.</source>
-            <translation>Her çekirdeğin ilk deneme değeri. Varsayılan −15; belirlenen alt sınır ve kayıtlı yeniden başlama koruması aşılmaz.</translation>
         </message>
         <message>
             <source>Changing steps is only available while a candidate is pending.</source>
@@ -9996,22 +9988,6 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Adım:</translation>
         </message>
         <message>
-            <source>CO points to go more negative after each passing probe. Default 1: the result is the exact last passing value. A larger step is faster, but the result can be up to step - 1 points more conservative than the core could hold.</source>
-            <translation>Geçen her testten sonra daha negatife gidilecek CO puanı. Varsayılan 1: sonuç tam olarak son geçen değerdir. Daha büyük adım daha hızlıdır, ama sonuç çekirdeğin kaldırabileceğinden en fazla (adım - 1) puan daha temkinli kalabilir.</translation>
-        </message>
-        <message>
-            <source>You can change both values during an active per-core search. Changes affect only future candidates, never the test already running or stored reboot exclusions.</source>
-            <translation>İki değeri de çalışan bir çekirdek başına aramada değiştirebilirsiniz. Değişiklikler yalnızca sonraki adayları etkiler; çalışan testi ve kayıtlı reboot yasaklarını asla etkilemez.</translation>
-        </message>
-        <message>
-            <source>Updated future per-core trials: start %1, step %2. Current test unchanged.</source>
-            <translation>Sonraki çekirdek testleri güncellendi: başlangıç %1, adım %2. Çalışan test değişmedi.</translation>
-        </message>
-        <message>
-            <source>Per-core: start %1, step %2. A core's first failure ends it at its last passing value. You can edit and apply these during the run.</source>
-            <translation>Çekirdek başına: başlangıç %1, adım %2. Bir çekirdeğin ilk hatası onu son geçen değerinde bitirir. Bu değerleri arama sırasında değiştirip uygulayabilirsiniz.</translation>
-        </message>
-        <message>
             <source>Result</source>
             <translation>Sonuç</translation>
         </message>
@@ -10020,20 +9996,12 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Durum</translation>
         </message>
         <message>
-            <source>Per-core: untick a core to leave it at stock (0) for the whole search and in the saved result.</source>
-            <translation>Çekirdek başına: bir çekirdeğin işaretini kaldırırsanız arama boyunca ve kaydedilen sonuçta stock (0) kalır.</translation>
-        </message>
-        <message>
             <source>excluded (stock)</source>
             <translation>test dışı (stock)</translation>
         </message>
         <message>
             <source>testing %1</source>
             <translation>test ediliyor: %1</translation>
-        </message>
-        <message>
-            <source>full-set confirmation</source>
-            <translation>tüm set doğrulaması</translation>
         </message>
         <message>
             <source>done: %1 passed, %2 failed</source>
@@ -10102,6 +10070,110 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
         <message>
             <source>Suspected reboots in this search so far: %1.</source>
             <translation>Bu aramada şimdiye kadarki şüpheli reboot sayısı: %1.</translation>
+        </message>
+        <message>
+            <source>All-core: the first offset tried; then steps of 5, and steps of 1 after a failure. Per-core uses each core's own Start in the table instead.</source>
+            <translation>All-core: denenecek ilk değer; ardından 5'er adım, hatadan sonra 1'er adım. Per-core bunun yerine tablodaki her çekirdeğin kendi Start değerini kullanır.</translation>
+        </message>
+        <message>
+            <source>All-core start:</source>
+            <translation>All-core başlangıç:</translation>
+        </message>
+        <message>
+            <source>Fill every core's Start from a saved Ryzen Curve profile (per-core values; an all-core value for cores without one; disabled slots are unticked). You can still edit single cores.</source>
+            <translation>Tüm çekirdeklerin Start değerini kayıtlı bir Ryzen Curve profilinden doldurur (çekirdek başına değerler; değeri olmayan çekirdeklere all-core değeri; devre dışı slotların işareti kaldırılır). Tek tek çekirdekleri yine düzenleyebilirsiniz.</translation>
+        </message>
+        <message>
+            <source>CO points to go more negative after each passing probe (and back towards stock after a failed Start). Default 1: the result is the exact last passing value. A larger step is faster, but the result can be up to step - 1 points more conservative than the core could hold.</source>
+            <translation>Geçen her testten sonra daha negatife (hata veren bir Start'tan sonra ise stock'a doğru) gidilecek CO puanı. Varsayılan 1: sonuç tam olarak son geçen değerdir. Daha büyük adım daha hızlıdır, ama sonuç çekirdeğin kaldırabileceğinden en fazla (adım - 1) puan daha temkinli kalabilir.</translation>
+        </message>
+        <message>
+            <source>You can change the step during an active per-core search. It affects only future candidates, never the test already running or stored reboot exclusions.</source>
+            <translation>Adımı çalışan bir çekirdek başına aramada değiştirebilirsiniz. Yalnızca sonraki adayları etkiler; çalışan testi ve kayıtlı reboot yasaklarını asla etkilemez.</translation>
+        </message>
+        <message>
+            <source>Preset:</source>
+            <translation>Preset:</translation>
+        </message>
+        <message>
+            <source>Start</source>
+            <translation>Start</translation>
+        </message>
+        <message>
+            <source>Per-core: Start is the core's first probe (0 = one step below stock). Untick a core to leave it at stock (0) for the whole search and in the saved result.</source>
+            <translation>Çekirdek başına: Start, çekirdeğin ilk test değeridir (0 = stock'un bir adım altı). Bir çekirdeğin işaretini kaldırırsanız arama boyunca ve kaydedilen sonuçta stock (0) kalır.</translation>
+        </message>
+        <message>
+            <source>Updated future per-core trials: step %1. Current test unchanged.</source>
+            <translation>Sonraki çekirdek testleri güncellendi: adım %1. Çalışan test değişmedi.</translation>
+        </message>
+        <message>
+            <source>(manual: edit Start in the table)</source>
+            <translation>(elle: Start değerlerini tabloda düzenleyin)</translation>
+        </message>
+        <message>
+            <source>Preset '%1' could not be read; the Start values were not changed.</source>
+            <translation>'%1' preset'i okunamadı; Start değerleri değiştirilmedi.</translation>
+        </message>
+        <message>
+            <source>Preset '%1' loaded into the Start column.</source>
+            <translation>'%1' preset'i Start sütununa yüklendi.</translation>
+        </message>
+        <message>
+            <source>No per-core value, all-core value %1 used: %2</source>
+            <translation>Çekirdek değeri yok, all-core değeri %1 kullanıldı: %2</translation>
+        </message>
+        <message>
+            <source>No value in the preset, starting one step below stock: %1</source>
+            <translation>Preset'te değer yok, stock'un bir adım altından başlanacak: %1</translation>
+        </message>
+        <message>
+            <source>Positive offsets start at 0: %1</source>
+            <translation>Pozitif değerler 0'dan başlar: %1</translation>
+        </message>
+        <message>
+            <source>Disabled in the preset, unticked (stay at stock): %1</source>
+            <translation>Preset'te devre dışı, işareti kaldırıldı (stock kalır): %1</translation>
+        </message>
+        <message>
+            <source>start failed, climbing; never %1 or below</source>
+            <translation>start hata verdi, yukarı çıkılıyor; %1 ve altı asla</translation>
+        </message>
+        <message>
+            <source>CCD%1 / %2: Start %3 is past the limit; it starts at %4.</source>
+            <translation>CCD%1 / %2: Start %3 limitin ötesinde; %4 değerinden başlanacak.</translation>
+        </message>
+        <message>
+            <source>Starts (typed): %1</source>
+            <translation>Başlangıçlar (elle): %1</translation>
+        </message>
+        <message>
+            <source>Starts (preset '%1'): %2</source>
+            <translation>Başlangıçlar ('%1' preset'i): %2</translation>
+        </message>
+        <message>
+            <source>Per-core: step %1. A core's first failure after a pass ends it at its last passing value; a failed Start climbs back by the step. You can change the step during the run.</source>
+            <translation>Çekirdek başına: adım %1. Bir geçişten sonraki ilk hata çekirdeği son geçen değerinde bitirir; hata veren bir Start adım adım yukarı çıkar. Adımı arama sırasında değiştirebilirsiniz.</translation>
+        </message>
+        <message>
+            <source>20-minute verification</source>
+            <translation>20 dakikalık doğrulama</translation>
+        </message>
+        <message>
+            <source>Outdated centurion-cpustress</source>
+            <translation>centurion-cpustress güncel değil</translation>
+        </message>
+        <message>
+            <source>The installed centurion-cpustress has no 'power' load, which the per-core verification uses. Reinstall Centurion so that it matches this version.</source>
+            <translation>Kurulu centurion-cpustress, çekirdek başına doğrulamanın kullandığı 'power' yükünü içermiyor. Centurion'u bu sürümle eşleşecek şekilde yeniden kurun.</translation>
+        </message>
+        <message>
+            <source>CPU not supported</source>
+            <translation>CPU desteklenmiyor</translation>
+        </message>
+        <message>
+            <source>This CPU has no AVX2 / FMA, which the verification's power load needs.</source>
+            <translation>Bu CPU'da doğrulamanın power yükü için gereken AVX2 / FMA yok.</translation>
         </message>
     </context>
 </TS>

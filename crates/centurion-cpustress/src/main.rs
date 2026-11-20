@@ -2,11 +2,11 @@
 //! (never through pkexec) and touches no clocks or curves: it only loads the CPU while the user's curve is in effect.
 //!
 //!   centurion-cpustress info
-//!       {"cores": [{"cpus": [0, 16], "l3": 0}, ...], "loads": {"sse": true, "avx2": true, "avx512": true}}
-//!   centurion-cpustress percore --load <sse|avx2|avx512> --seconds <per core> [--cycles N] [--transitions] [--cpus LIST]
+//!       {"cores": [{"cpus": [0, 16], "l3": 0}, ...], "loads": {"sse": true, "avx2": true, "avx512": true, "power": true}}
+//!   centurion-cpustress percore --load <sse|avx2|avx512|power> --seconds <per core> [--cycles N] [--transitions] [--cpus LIST]
 //!       one thread, moved from physical core to physical core (the first logical CPU of each; LIST picks some)
-//!   centurion-cpustress allcore --load <sse|avx2|avx512> --seconds <s> [--transitions]
-//!       one thread on every online logical CPU
+//!   centurion-cpustress allcore --load <sse|avx2|avx512|power> --seconds <s> [--transitions]
+//!       one thread on every online logical CPU (`power`: the highest-current load, see work.rs)
 //!
 //!   centurion-cpustress percore|allcore --load co [--cycles N] [--kernel K] [--cpus LIST]
 //!       Curve Optimizer cycles default to 60 s (40 s steady, 20 s transitions); 24 s quick
@@ -64,7 +64,7 @@ fn secs(t: Instant) -> f64 { (t.elapsed().as_secs_f64() * 1000.0).round() / 1000
 #[derive(Debug, PartialEq)]
 struct Args { per_core: bool, load: Load, seconds: u64, cycles: u32, transitions: bool, cpus: Option<Vec<usize>>, co: bool, kernel: usize }
 
-const USAGE: &str = "usage: centurion-cpustress info | percore --load <sse|avx2|avx512> --seconds <s> [--cycles N] [--transitions] [--cpus LIST] | allcore --load <sse|avx2|avx512> --seconds <s> [--transitions] | percore|allcore --load co [--seconds 24|60] [--cycles N] [--kernel 0-2] [--cpus LIST (percore)]";
+const USAGE: &str = "usage: centurion-cpustress info | percore --load <sse|avx2|avx512|power> --seconds <s> [--cycles N] [--transitions] [--cpus LIST] | allcore --load <sse|avx2|avx512|power> --seconds <s> [--transitions] | percore|allcore --load co [--seconds 24|60] [--cycles N] [--kernel 0-2] [--cpus LIST (percore)]";
 
 fn parse(argv: &[String]) -> Result<Args, String> {
     let per_core = match argv.first().map(String::as_str) {
@@ -105,7 +105,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
     if !per_core && cycles != 1 { return Err("unknown argument --cycles".into()); }
     let seconds = seconds.ok_or("--seconds is required")?;
     if !(1..=86_400).contains(&seconds) { return Err("--seconds must be 1..86400".into()); }
-    Ok(Args { per_core, load: Load::parse(load).ok_or("--load must be sse, avx2, avx512 or co")?, seconds, cycles, transitions, cpus, co, kernel: 0 })
+    Ok(Args { per_core, load: Load::parse(load).ok_or("--load must be sse, avx2, avx512, power or co")?, seconds, cycles, transitions, cpus, co, kernel: 0 })
 }
 
 /// A wrong chunk: time, CPU, seed, expected, actual.
@@ -305,7 +305,7 @@ fn run(a: &Args) -> i32 {
 
 fn info() -> i32 {
     let cores: Vec<Value> = topo::cores().iter().map(|c| json!({"cpus": c.cpus, "l3": c.l3})).collect();
-    emit(&json!({"cores": cores, "loads": {"sse": Load::Sse.supported(), "avx2": Load::Avx2.supported(), "avx512": Load::Avx512.supported(), "co": true}, "co_wide": cowork::wide_isa()}));
+    emit(&json!({"cores": cores, "loads": {"sse": Load::Sse.supported(), "avx2": Load::Avx2.supported(), "avx512": Load::Avx512.supported(), "power": Load::Power.supported(), "co": true}, "co_wide": cowork::wide_isa()}));
     0
 }
 

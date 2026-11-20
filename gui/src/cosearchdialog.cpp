@@ -115,6 +115,7 @@ static bool saveCrashGuard(const Search &s, const Trial &t) {
 
 /// Recorded crash guards by coreKey(); empty when there are none or the file is unreadable.
 static int coreKey(int ccd, int slot) { return ccd * 1000 + slot; }
+static constexpr int DEFAULT_START = -15;  // per-core Start of a core with no typed / preset value
 static QHash<int, int> crashGuardMap() {
     QHash<int, int> out;
     for (const QJsonValue &v : readCrashGuards().value_or(QJsonArray{})) {
@@ -155,11 +156,13 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     auto *explainer = new QLabel(tr(
         "Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. "
         "All-core runs 60-second cycles (40 s steady + 20 s transitions) to find one "
-        "offset for every core. Per-core tests one core at a time (the others at stock) from an editable start, "
-        "going more negative by your step; the first failure ends that core and keeps its last passing value, "
-        "and nothing as negative as the failed value is tried on it again. A value that crashed the machine is "
-        "never tried on that core again, in any later search either. Untick a core to leave it at stock. "
-        "Full-length tests verify the final individual offsets and their combined stability. "
+        "offset for every core, from its Start. Per-core tests one core at a time (the others at stock) from that "
+        "core's Start (typed in the table, or taken from a saved preset), going more negative by your step; the "
+        "first failure ends that core and keeps its last passing value, and nothing as negative as the failed "
+        "value is tried on it again. If a core's Start fails, it climbs back towards stock by the step. A value "
+        "that crashed the machine is never tried on that core again, in any later search either. Untick a core to "
+        "leave it at stock. The final per-core set is then verified for 20 minutes with the whole curve applied, "
+        "single-core loads alternating with all-core loads up to the power limit. "
         "The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. "
         "Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it."));
     explainer->setWordWrap(true);
@@ -175,12 +178,11 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     level_->addItem(tr("Fast"), name(Level::Fast));
     level_->addItem(tr("Medium"), name(Level::Medium));
     level_->addItem(tr("Long"), name(Level::Long));
-    level_->setToolTip(tr("Per-core: 24-second probes (12 s steady + all 10 boost/idle patterns); "
-                          "60-second cycles for final verification.\n"
-                          "Fast: 1 probe cycle, 1 confirmation cycle.\n"
-                          "Medium: 2 probe cycles, 2 confirmation cycles.\n"
-                          "Long: 3 probe cycles, 3 per-core and 5 all-core confirmation cycles. "
-                          "All-core trials use full 60-second cycles."));
+    level_->setToolTip(tr("Per-core: 24-second probes (12 s steady + all 10 boost/idle patterns), then a "
+                          "20-minute verification of the whole set at every level.\n"
+                          "Fast: 1 probe cycle. Medium: 2 probe cycles. Long: 3 probe cycles.\n"
+                          "All-core trials use full 60-second cycles; its confirmation is 1 / 2 / 3 cycles per core "
+                          "and 1 / 2 / 5 all-core cycles."));
     limit_ = new QSpinBox;
     limit_->setRange(-50, -5);
     limit_->setValue(-30);
@@ -190,24 +192,30 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     row1->addWidget(level_);
     row1->addWidget(new QLabel(tr("Limit:")));
     row1->addWidget(limit_);
+    allStart_ = new QSpinBox;
+    allStart_->setRange(-50, -1);
+    allStart_->setValue(-5);
+    allStart_->setToolTip(tr("All-core: the first offset tried; then steps of 5, and steps of 1 after a failure. "
+                             "Per-core uses each core's own Start in the table instead."));
+    row1->addWidget(new QLabel(tr("All-core start:")));
+    row1->addWidget(allStart_);
     row1->addStretch();
     form->addRow(tr("Search:"), row1);
     auto *tuningRow = new QHBoxLayout;
-    initial_ = new QSpinBox;
-    initial_->setRange(-50, -1);
-    initial_->setValue(-15);
-    initial_->setToolTip(tr("First per-core test value. Defaults to -15; never exceeds the configured search limit or a stored reboot guard."));
+    preset_ = new QComboBox;
+    preset_->setToolTip(tr("Fill every core's Start from a saved Ryzen Curve profile (per-core values; an all-core value "
+                           "for cores without one; disabled slots are unticked). You can still edit single cores."));
     step_ = new QSpinBox;
     step_->setRange(1, 10);
     step_->setValue(1);
-    step_->setToolTip(tr("CO points to go more negative after each passing probe. Default 1: the result is the exact "
-                         "last passing value. A larger step is faster, but the result can be up to step - 1 points "
-                         "more conservative than the core could hold."));
+    step_->setToolTip(tr("CO points to go more negative after each passing probe (and back towards stock after a failed "
+                         "Start). Default 1: the result is the exact last passing value. A larger step is faster, but "
+                         "the result can be up to step - 1 points more conservative than the core could hold."));
     applyTuning_ = new QPushButton(tr("Apply to next trials"));
-    applyTuning_->setToolTip(tr("You can change both values during an active per-core search. Changes affect only future candidates, never the test already running or stored reboot exclusions."));
+    applyTuning_->setToolTip(tr("You can change the step during an active per-core search. It affects only future candidates, never the test already running or stored reboot exclusions."));
     applyTuning_->setEnabled(false);
-    tuningRow->addWidget(new QLabel(tr("Start:")));
-    tuningRow->addWidget(initial_);
+    tuningRow->addWidget(new QLabel(tr("Preset:")));
+    tuningRow->addWidget(preset_, 1);
     tuningRow->addWidget(new QLabel(tr("Step:")));
     tuningRow->addWidget(step_);
     tuningRow->addWidget(applyTuning_);
@@ -236,9 +244,10 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     status_ = new QLabel(tr("Not started. The current CPU curve must be stock."));
     status_->setWordWrap(true);
     v->addWidget(status_);
-    table_ = new QTableWidget(0, 3);
-    table_->setHorizontalHeaderLabels({tr("Core"), tr("Result"), tr("Status")});
-    table_->setToolTip(tr("Per-core: untick a core to leave it at stock (0) for the whole search and in the saved result."));
+    table_ = new QTableWidget(0, 4);
+    table_->setHorizontalHeaderLabels({tr("Core"), tr("Start"), tr("Result"), tr("Status")});
+    table_->setToolTip(tr("Per-core: Start is the core's first probe (0 = one step below stock). Untick a core to leave "
+                          "it at stock (0) for the whole search and in the saved result."));
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->verticalHeader()->hide();
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -251,8 +260,12 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
 
     loadSettings();
     for (QComboBox *c : {mode_, level_}) connect(c, &QComboBox::currentIndexChanged, this, &CoSearchDialog::updateEstimate);
-    for (QSpinBox *spin : {limit_, initial_, step_})
+    for (QSpinBox *spin : {limit_, allStart_, step_})
         connect(spin, &QSpinBox::valueChanged, this, &CoSearchDialog::updateEstimate);
+    connect(preset_, &QComboBox::activated, this, [this] {
+        if (running_ || preset_->currentData().toString().isEmpty()) return;
+        applyPreset(preset_->currentData().toString());
+    });
     connect(mode_, &QComboBox::currentIndexChanged, this, [this] { if (!running_) refreshTable(); });
     connect(applyTuning_, &QPushButton::clicked, this, &CoSearchDialog::applyTuning);
     connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *it) {
@@ -361,22 +374,28 @@ void CoSearchDialog::note(const QString &s) {
 }
 
 Tuning CoSearchDialog::tuning() const {
-    return {initial_->value(), step_->value()};
+    return {allStart_->value(), step_->value()};
 }
 
 void CoSearchDialog::updateEstimate() {
     const auto mode = Mode(mode_->currentData().toInt());
     const bool perCore = mode == Mode::PerCore;
-    for (QSpinBox *spin : {initial_, step_}) spin->setEnabled(perCore);
+    step_->setEnabled(perCore);
+    preset_->setEnabled(perCore && !running_);
+    allStart_->setEnabled(!perCore && !running_);
     // The previous CPU curve may still be applied between finishTrial() and step().
     // Do not replace its pending journal with a non-pending snapshot in that gap.
     applyTuning_->setEnabled(perCore && running_ && !resetting_ && !abort_ &&
                              search_.has_value() && search_->perCoreSearching() && trial_.has_value());
     const auto level = levelFrom(level_->currentData().toString()).value_or(Level::Fast);
     int cores = 0;
-    for (const Core &c : coresOf(ryzen::detect()))
-        cores += !(perCore && excluded_.contains(coreKey(c.ccd, c.slot)));
-    const int m = Search::estimateMinutes(mode, level, std::max(cores, 1), limit_->value(), tuning());
+    QList<int> starts;
+    for (const Core &c : coresOf(ryzen::detect())) {
+        if (perCore && excluded_.contains(coreKey(c.ccd, c.slot))) continue;
+        ++cores;
+        starts << starts_.value(coreKey(c.ccd, c.slot), DEFAULT_START);
+    }
+    const int m = Search::estimateMinutes(mode, level, std::max(cores, 1), limit_->value(), tuning(), starts);
     estimate_->setText(tr("Roughly %1 h %2 min for %3 cores (depends on where the offsets fail).").arg(m / 60).arg(m % 60, 2, 10, QLatin1Char('0')).arg(cores));
 }
 
@@ -387,17 +406,73 @@ void CoSearchDialog::applyTuning() {
     if (!search_->setTuning(tuning())) return;
     if (!writeJournal()) {
         search_->setTuning(previous);
-        initial_->setValue(previous.initial);
         step_->setValue(previous.step);
         note(tr("Could not save updated CO steps; previous safe tuning retained."));
         return;
     }
     saveSettings();
-    note(tr("Updated future per-core trials: start %1, step %2. Current test unchanged.")
-         .arg(tuning().initial).arg(tuning().step));
+    note(tr("Updated future per-core trials: step %1. Current test unchanged.").arg(tuning().step));
+}
+
+void CoSearchDialog::reloadPresets() {
+    const QString keep = preset_->currentData().toString();
+    const QSignalBlocker block(preset_);
+    preset_->clear();
+    preset_->addItem(tr("(manual: edit Start in the table)"), QString());
+    for (const QString &f : QDir(ryzen::profilesDir()).entryList({"*.json"}, QDir::Files, QDir::Name)) {
+        const QString n = f.chopped(5);
+        preset_->addItem(n, n);
+    }
+    preset_->setCurrentIndex(std::max(0, preset_->findData(keep)));
+}
+
+void CoSearchDialog::applyPreset(const QString &name) {
+    // Same file format as Ryzen Curve → Save Profile (see RyzenTab::loadProfile).
+    QFile f(ryzen::profilesDir() + '/' + name + ".json");
+    QJsonParseError pe;
+    const QJsonDocument doc = f.open(QIODevice::ReadOnly) && f.size() <= 256 * 1024
+        ? QJsonDocument::fromJson(f.readAll(), &pe) : QJsonDocument();
+    if (!doc.isObject()) {
+        note(tr("Preset '%1' could not be read; the Start values were not changed.").arg(name));
+        preset_->setCurrentIndex(0);
+        return;
+    }
+    const QJsonObject d = doc.object();
+    QHash<int, int> values;
+    QSet<int> disabled;
+    for (const QJsonValue &v : d.value("cores").toArray()) {
+        const QJsonObject c = v.toObject();
+        if (c.value("ccx").toInt() != 0) continue;
+        const int key = coreKey(c.value("ccd").toInt(), c.contains("slot") ? c.value("slot").toInt() : c.value("core").toInt());
+        if (c.value("disabled").toBool()) disabled.insert(key);
+        else if (c.value("coper").isDouble()) values.insert(key, c.value("coper").toInt());
+    }
+    const QJsonValue coall = d.value("coall");
+    QStringList fromAll, fromStock, positive, off;
+    for (const Core &c : coresOf(ryzen::detect())) {
+        const int key = coreKey(c.ccd, c.slot);
+        const QString id = QStringLiteral("CCD%1/%2").arg(c.ccd).arg(c.slot);
+        if (disabled.contains(key)) { excluded_.insert(key); starts_[key] = 0; off << id; continue; }
+        excluded_.remove(key);
+        int v = 0;
+        if (values.contains(key)) v = values.value(key);
+        else if (coall.isDouble()) { v = coall.toInt(); fromAll << id; }
+        else fromStock << id;
+        if (v > 0) { positive << id; v = 0; }
+        starts_[key] = std::max(v, -50);
+    }
+    note(tr("Preset '%1' loaded into the Start column.").arg(name));
+    if (!fromAll.isEmpty()) note(tr("No per-core value, all-core value %1 used: %2").arg(coall.toInt()).arg(fromAll.join(", ")));
+    if (!fromStock.isEmpty()) note(tr("No value in the preset, starting one step below stock: %1").arg(fromStock.join(", ")));
+    if (!positive.isEmpty()) note(tr("Positive offsets start at 0: %1").arg(positive.join(", ")));
+    if (!off.isEmpty()) note(tr("Disabled in the preset, unticked (stay at stock): %1").arg(off.join(", ")));
+    saveSettings();
+    refreshTable();
+    updateEstimate();
 }
 
 void CoSearchDialog::loadSettings() {
+    reloadPresets();
     scene_->addItem(tr("(keep the current settings)"), QString());
     for (const QString &n : scenes::names()) {
         const auto s = scenes::load(n);
@@ -409,23 +484,30 @@ void CoSearchDialog::loadSettings() {
     mode_->setCurrentIndex(std::max(0, mode_->findData(o.value("mode").toString() == "per" ? int(Mode::PerCore) : int(Mode::AllCore))));
     level_->setCurrentIndex(std::max(0, level_->findData(o.value("level").toString())));
     limit_->setValue(o.value("limit").toInt(limit_->value()));
-    initial_->setValue(o.value("initial").toInt(initial_->value()));
+    allStart_->setValue(o.value("all_core_start").toInt(allStart_->value()));
     step_->setValue(o.value("step").toInt(step_->value()));
     for (const QJsonValue &v : o.value("excluded").toArray())
         excluded_.insert(coreKey(v.toObject().value("ccd").toInt(), v.toObject().value("slot").toInt()));
+    for (const QJsonValue &v : o.value("starts").toArray()) {
+        const QJsonObject c = v.toObject();
+        starts_.insert(coreKey(c.value("ccd").toInt(), c.value("slot").toInt()), std::clamp(c.value("value").toInt(), -50, 0));
+    }
+    preset_->setCurrentIndex(std::max(0, preset_->findData(o.value("preset").toString())));
     scene_->setCurrentIndex(std::max(0, scene_->findData(o.value("scene").toString())));
 }
 
 void CoSearchDialog::saveSettings() const {
-    QJsonArray excluded;
+    QJsonArray excluded, starts;
     for (int key : excluded_) excluded << QJsonObject{{"ccd", key / 1000}, {"slot", key % 1000}};
+    for (auto it = starts_.cbegin(); it != starts_.cend(); ++it)
+        starts << QJsonObject{{"ccd", it.key() / 1000}, {"slot", it.key() % 1000}, {"value", it.value()}};
     QDir().mkpath(QFileInfo(settingsPath()).path());
     QSaveFile f(settingsPath());
     if (!f.open(QIODevice::WriteOnly)) return;
     f.write(QJsonDocument(QJsonObject{{"mode", Mode(mode_->currentData().toInt()) == Mode::PerCore ? "per" : "all"},
                                       {"level", level_->currentData().toString()}, {"limit", limit_->value()},
-                                      {"initial", initial_->value()}, {"step", step_->value()},
-                                      {"excluded", excluded},
+                                      {"all_core_start", allStart_->value()}, {"step", step_->value()},
+                                      {"excluded", excluded}, {"starts", starts}, {"preset", preset_->currentData().toString()},
                                       {"scene", scene_->currentData().toString()}}).toJson());
     f.commit();
 }
@@ -452,6 +534,22 @@ bool CoSearchDialog::toolsPresent() {
         QMessageBox::warning(this, tr("Missing tools"), tr("Install centurion-cpustress and ryzen-co-helper first."));
         return false;
     }
+    // The per-core verification needs the `power` load: an older centurion-cpustress would only fail there,
+    // after the whole search. Ask the binary itself.
+    QProcess info;
+    info.start(testProgram_, {QStringLiteral("info")});
+    const bool answered = info.waitForFinished(10000);
+    const QJsonObject loads = answered ? QJsonDocument::fromJson(info.readAllStandardOutput()).object().value("loads").toObject() : QJsonObject{};
+    if (!loads.contains(QStringLiteral("power"))) {
+        QMessageBox::warning(this, tr("Outdated centurion-cpustress"),
+            tr("The installed centurion-cpustress has no 'power' load, which the per-core verification uses. "
+               "Reinstall Centurion so that it matches this version."));
+        return false;
+    }
+    if (!loads.value(QStringLiteral("power")).toBool()) {
+        QMessageBox::warning(this, tr("CPU not supported"), tr("This CPU has no AVX2 / FMA, which the verification's power load needs."));
+        return false;
+    }
     return true;
 }
 
@@ -476,9 +574,10 @@ void CoSearchDialog::refreshTable() {
             const bool isolated = trial_ && search_->perCoreSearching();
             if (st.excluded) status = tr("excluded (stock)");
             else if (isolated && trial_->perCore.value(i) != 0) status = tr("testing %1").arg(trial_->perCore[i]);
-            else if (trial_ && !isolated && !trial_->perCore.isEmpty()) status = tr("full-set confirmation");
+            else if (trial_ && !isolated && !trial_->perCore.isEmpty()) status = tr("20-minute verification");
             else if (st.done && st.failed) status = tr("done: %1 passed, %2 failed").arg(st.pass).arg(*st.failed);
             else if (st.done) status = tr("done: %1").arg(st.pass);
+            else if (st.failed && st.pass == 0) status = tr("start failed, climbing; never %1 or below").arg(*st.failed);
             else if (st.failed) status = tr("searching, never %1 or below").arg(*st.failed);
             else status = tr("searching");
         } else if (!search_ && guards.contains(key)) {
@@ -491,8 +590,25 @@ void CoSearchDialog::refreshTable() {
         const bool unticked = running_ && search_ && perCore ? search_->coreState(i).excluded : excluded_.contains(key);
         if (pickable || (perCore && search_)) core->setCheckState(unticked ? Qt::Unchecked : Qt::Checked);
         table_->setItem(i, 0, core);
-        table_->setItem(i, 1, new QTableWidgetItem(search_ ? QString::number(v[i]) : QString()));
-        table_->setItem(i, 2, new QTableWidgetItem(status));
+        // Start: editable for the next search; while one runs (or shows its result), the search's own.
+        table_->removeCellWidget(i, 1);
+        if (pickable) {
+            auto *spin = new QSpinBox;
+            spin->setRange(-50, 0);
+            spin->setValue(starts_.value(key, DEFAULT_START));
+            connect(spin, &QSpinBox::valueChanged, this, [this, key](int value) {
+                starts_[key] = value;
+                preset_->setCurrentIndex(0);  // edited by hand: no longer the preset as saved
+                saveSettings();
+                updateEstimate();
+            });
+            table_->setItem(i, 1, new QTableWidgetItem);
+            table_->setCellWidget(i, 1, spin);
+        } else {
+            table_->setItem(i, 1, new QTableWidgetItem(search_ && perCore ? QString::number(search_->coreState(i).start) : QString()));
+        }
+        table_->setItem(i, 2, new QTableWidgetItem(search_ ? QString::number(v[i]) : QString()));
+        table_->setItem(i, 3, new QTableWidgetItem(status));
     }
     table_->resizeColumnsToContents();
 }
@@ -552,6 +668,20 @@ void CoSearchDialog::start() {
         return;
     }
     for (const Core &c : skipped) search_->exclude(c.ccd, c.slot);
+    if (mode == Mode::PerCore) {
+        QStringList starts;
+        for (const Core &c : cores) {
+            if (skipped.contains(c)) continue;
+            const int v = starts_.value(coreKey(c.ccd, c.slot), DEFAULT_START);
+            search_->setStart(c.ccd, c.slot, v);
+            starts << QStringLiteral("CCD%1/%2 %3").arg(c.ccd).arg(c.slot).arg(v);
+            if (v < limit_->value())
+                note(tr("CCD%1 / %2: Start %3 is past the limit; it starts at %4.").arg(c.ccd).arg(c.slot).arg(v).arg(limit_->value()));
+        }
+        const QString preset = preset_->currentData().toString();
+        note(preset.isEmpty() ? tr("Starts (typed): %1").arg(starts.join(", "))
+                              : tr("Starts (preset '%1'): %2").arg(preset, starts.join(", ")));
+    }
     for (int i = 0; i < search_->cores().size(); ++i) {
         const Core &c = search_->cores()[i];
         const Search::CoreState st = search_->coreState(i);
@@ -631,7 +761,7 @@ void CoSearchDialog::offerResume() {
     mode_->setCurrentIndex(mode_->findData(int(s->mode())));
     level_->setCurrentIndex(level_->findData(name(s->level())));
     limit_->setValue(s->limit());
-    initial_->setValue(s->tuning().initial);
+    allStart_->setValue(s->tuning().allCoreStart);
     step_->setValue(s->tuning().step);
     scene_->setCurrentIndex(std::max(0, scene_->findData(j.value("scene").toString())));
     attempts_ = j.value("attempts").toArray();
@@ -688,8 +818,8 @@ void CoSearchDialog::launch() {
         note(tr("%1 search, %2 level, limit %3. Every tested candidate will be cleared afterward.")
                  .arg(search_->mode() == Mode::AllCore ? tr("All-core") : tr("Per-core"), name(search_->level())).arg(search_->limit()));
         if (search_->mode() == Mode::PerCore)
-            note(tr("Per-core: start %1, step %2. A core's first failure ends it at its last passing value. You can edit and apply these during the run.")
-                 .arg(search_->tuning().initial).arg(search_->tuning().step));
+            note(tr("Per-core: step %1. A core's first failure after a pass ends it at its last passing value; a failed "
+                    "Start climbs back by the step. You can change the step during the run.").arg(search_->tuning().step));
         // Baseline: only kernel events logged after this point count against a trial.
         kmsgSeq_ = 0;
         scanKernel([this](bool ok, const QJsonArray &, quint64 last) {
@@ -1018,6 +1148,7 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
         QStringList v;
         for (int x : search_->values()) v << QString::number(x);
         const QString profile = saveProfile();
+        reloadPresets();  // the result can be the next search's preset
         note(tr("SMU reset confirmed. Result: %1. %2").arg(v.join(' '),
              profile.isEmpty() ? tr("Saving the profile FAILED.")
                                : tr("Saved as Ryzen Curve profile '%1': load and apply it there. Many users keep 1-2 points of margin "

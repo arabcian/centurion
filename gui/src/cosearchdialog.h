@@ -56,10 +56,12 @@ private:
     void saveSettings() const;
     bool writeJournal() const;
     void refreshTable();
+    void reloadPresets();
+    void applyPreset(const QString &name);
     QString saveProfile() const;
 
-    QComboBox *mode_, *level_, *scene_;
-    QSpinBox *limit_, *initial_, *step_;
+    QComboBox *mode_, *level_, *scene_, *preset_;
+    QSpinBox *limit_, *allStart_, *step_;
     QPushButton *applyTuning_;
     QLabel *estimate_, *status_;
     QTableWidget *table_;
@@ -87,4 +89,5 @@ private:
     QString startScene_, priorScene_, bootId_;
     QJsonArray attempts_;
     QSet<int> excluded_;               // per-core: cores the user left out (coreKey(ccd, slot))
+    QHash<int, int> starts_;           // per-core: each core's start (coreKey -> offset), typed or from a preset
 };

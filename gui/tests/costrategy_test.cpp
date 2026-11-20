@@ -50,6 +50,14 @@ static QList<int> runAll(Search &s, Sim &sim) {
     return {};
 }
 
+/// Per-core: the same start for every core.
+static void startAll(Search &s, int v) {
+    for (const Core &c : s.cores()) s.setStart(c.ccd, c.slot, v);
+}
+
+/// The final whole-set trial: all-core confirmation or per-core 20-minute verification.
+static bool isFinal(const Trial &t) { return t.what.startsWith("confirmation") || t.what.startsWith("20-minute"); }
+
 /// Offsets in the simulated CPU's order (by first CPU), whatever order the search tests them in.
 static QMap<int, int> byCpu(const Search &s, const QList<int> &v) {
     QMap<int, int> out;
@@ -91,9 +99,10 @@ int main(int argc, char **argv) {
         CHECK(sim.trials == 7);  // -5, -10 (fails), -6, -7, -8, -9, confirmation
     }
 
-    // Direct -15 per physical core, with all other cores at stock during probing.
+    // Start at each core's start value, with all other cores at stock during probing.
     {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(4));
+        startAll(s, -15);
         const Trial first = *s.next();
         CHECK(!first.allCore.has_value());
         CHECK(first.perCore == (QList<int>{-15, 0, 0, 0, 0, 0, 0, 0}));
@@ -109,18 +118,21 @@ int main(int argc, char **argv) {
     // The configured limit must also govern the initial probe: no overshoot of a -5 limit.
     for (int limit : {-5, -10, -15, -30, -50}) {
         Search s(Mode::PerCore, Level::Fast, limit, cpu(2));
+        startAll(s, -15);
         CHECK(s.next()->perCore.first() == std::max(-15, limit));
     }
 
     // Manual starting offset and step; a step change applies to future trials only.
     {
-        Search s(Mode::PerCore, Level::Fast, -40, cpu(2), Tuning{-18, 7});
+        Search s(Mode::PerCore, Level::Fast, -40, cpu(2), Tuning{-5, 7});
+        startAll(s, -18);
         const auto first = s.next();
         CHECK(first && first->perCore.first() == -18);
         const QJsonObject snap = s.save();
-        CHECK(snap.value("version").toInt() == 4);
+        CHECK(snap.value("version").toInt() == 5);
         auto restored = Search::load(snap);
-        CHECK(restored && restored->tuning() == (Tuning{-18, 7}));
+        CHECK(restored && restored->tuning() == (Tuning{-5, 7}));
+        CHECK(restored && restored->coreState(1).start == -18);
         CHECK(restored && restored->inFlight() && restored->inFlight()->perCore == first->perCore);
         s.report(Outcome{true, {}});
         for (int k=0; k<3; ++k) {
@@ -132,13 +144,14 @@ int main(int argc, char **argv) {
         auto t=s.next();
         CHECK(t && t->perCore.first() == -25);
         // Changing the step during a pending trial must not change that trial.
-        CHECK(s.setTuning(Tuning{-20, 9}));
+        CHECK(s.setTuning(Tuning{-5, 9}));
         CHECK(s.inFlight() && s.inFlight()->perCore == t->perCore);
         auto saved = Search::load(s.save());
-        CHECK(saved && saved->tuning() == (Tuning{-20, 9}));
+        CHECK(saved && saved->tuning() == (Tuning{-5, 9}));
         CHECK(saved && saved->inFlight() && saved->inFlight()->perCore == t->perCore);
-        CHECK(!s.setTuning(Tuning{-20, 0}));
-        CHECK(!s.setTuning(Tuning{-20, 11}));
+        CHECK(!s.setTuning(Tuning{-5, 0}));
+        CHECK(!s.setTuning(Tuning{-5, 11}));
+        CHECK(!s.setTuning(Tuning{0, 1}));
         s.report(Outcome{true, {}});
         for (int k=0; k<3; ++k) { CHECK(s.next().has_value()); s.report(Outcome{true, {}}); }
         auto later = s.next();
@@ -148,13 +161,14 @@ int main(int argc, char **argv) {
     // The first failure after a pass ends the core: its result is the previous pass, and it is never
     // probed again (not even between the pass and the failure).
     {
-        Search s(Mode::PerCore, Level::Fast, -30, cpu(2), Tuning{-15, 5});
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2), Tuning{-5, 5});
+        startAll(s, -15);
         int core0 = -1;
         for (int i = 0; i < s.cores().size(); ++i) if (s.cores()[i].cpus.first() == 0) core0 = i;
         Sim sim{{{0, -22}, {1, -30}, {2, -30}, {3, -30}}};
         QList<int> tried0;
         std::optional<Trial> t;
-        while ((t = s.next()) && !t->what.startsWith("confirmation")) {
+        while ((t = s.next()) && !isFinal(*t)) {
             if (t->perCore[core0] != 0) tried0 << t->perCore[core0];
             s.report(sim.run(s, *t));
         }
@@ -176,8 +190,27 @@ int main(int argc, char **argv) {
         old["per"] = per;
         auto loaded = Search::load(old);
         CHECK(loaded.has_value());
-        CHECK(loaded && loaded->tuning() == (Tuning{-12, 1}));
+        CHECK(loaded && loaded->tuning() == (Tuning{-5, 1}));
         CHECK(loaded && loaded->coreState(0).done && loaded->values()[0] == -20);
+        CHECK(loaded && loaded->coreState(1).start == -12);
+        // Version 4: one "initial" for every core; a failed start that was descending from stock now climbs.
+        QJsonObject v4 = s.save();
+        v4["version"] = 4;
+        v4["tuning"] = QJsonObject{{"initial", -15}, {"step", 2}};
+        per = v4.value("per").toArray();
+        w = per[1].toObject();
+        w["pass"] = 0; w["floor"] = -15; w["seeded"] = true; w.remove("start"); w.remove("up");
+        per[1] = w;
+        v4["per"] = per;
+        auto l4 = Search::load(v4);
+        CHECK(l4 && l4->tuning() == (Tuning{-5, 2}) && l4->coreState(0).start == -15);
+        if (l4) {
+            auto t4 = l4->next();
+            CHECK(t4 && t4->perCore[0] == -15 && t4->perCore[1] == 0);  // core 0: unseeded start
+            l4->report({true, {}});
+            t4 = l4->next();
+            CHECK(t4 && t4->perCore[1] == -13);  // core 1: climbs from -15 by 2
+        }
         auto v2 = s.save();
         v2["version"] = 2;
         CHECK(!Search::load(v2));
@@ -191,6 +224,7 @@ int main(int argc, char **argv) {
     // Excluded cores stay at stock in every trial, including the confirmation, and survive a snapshot.
     {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        startAll(s, -12);
         CHECK(s.exclude(1, 0));   // CPU 2
         CHECK(!s.exclude(3, 0));  // no such core
         Search all(Mode::AllCore, Level::Fast, -30, cpu(2));
@@ -206,7 +240,7 @@ int main(int argc, char **argv) {
             auto t = r->next();
             if (!t) break;
             CHECK(t->perCore[ex] == 0);
-            confirmed |= t->what.startsWith("confirmation");
+            confirmed |= isFinal(*t);
             r->report(sim.run(*r, *t));
         }
         CHECK(confirmed && r->finished());
@@ -225,24 +259,27 @@ int main(int argc, char **argv) {
     // of 1 the result is exactly the threshold.
     {
         int cases = 0;
-        for (int initial : {-1, -5, -15, -28, -50})
+        for (int initial : {0, -1, -5, -15, -28, -50})
             for (int step : {1, 2, 3, 5, 10})
                 for (int limit : {-5, -17, -30, -50})
                     for (int stable = limit - 2; stable <= 0; ++stable) {
-                        Search s(Mode::PerCore, Level::Fast, limit, cpu(1), Tuning{initial, step});
+                        Search s(Mode::PerCore, Level::Fast, limit, cpu(1), Tuning{-5, step});
+                        startAll(s, initial);
                         Sim sim{{{0, stable}, {1, 0}}};
                         int lastPass = 0, failedAt = 1;  // 1 = no failure yet
-                        bool ended = false;              // failed after a pass: the core is over
+                        bool ended = false;              // failed after a pass, or passed after a failed start
+                        int probes = 0;
                         for (int k = 0; k < 200; ++k) {
                             auto t = s.next();
                             if (!t) break;
                             const int v = t->perCore[0];
-                            if (t->what.startsWith("confirmation") || v == 0) { s.report(sim.run(s, *t)); continue; }
-                            CHECK(!ended && "probed again after a failure following a pass");
+                            if (isFinal(*t) || v == 0) { s.report(sim.run(s, *t)); continue; }
+                            CHECK(!ended && "probed again after the core's result was found");
                             CHECK(v >= limit && v < lastPass);
                             CHECK(failedAt > 0 || v > failedAt);
+                            if (probes++ == 0) CHECK(v == std::max(initial < 0 ? initial : -step, limit));
                             const Outcome o = sim.run(s, *t);
-                            if (o.pass) lastPass = v;
+                            if (o.pass) { ended = failedAt <= 0; lastPass = v; }
                             else { ended = lastPass < 0; failedAt = failedAt > 0 ? v : std::max(failedAt, v); }
                             s.report(o);
                         }
@@ -262,7 +299,8 @@ int main(int argc, char **argv) {
             for (int initial : {-1, -10, -15, -30})
                 for (int step : {1, 3, 7})
                     for (int stable = -31; stable <= 0; stable += 3) {
-                        Search s(Mode::PerCore, Level::Fast, -30, cpu(1), Tuning{initial, step});
+                        Search s(Mode::PerCore, Level::Fast, -30, cpu(1), Tuning{-5, step});
+                        startAll(s, initial);
                         CHECK(s.guardAgainstCrash(0, 0, {0, 2}, guard));
                         Sim sim{{{0, stable}, {1, 0}}};
                         for (int k = 0; k < 200; ++k) {
@@ -280,6 +318,7 @@ int main(int argc, char **argv) {
     // A core that cannot hold -15 is bracketed toward zero, not automatically marked -15 stable.
     {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        startAll(s, -15);
         Sim sim{{{0, -2}, {1, -8}, {2, -14}, {3, 0}}};
         const QMap<int, int> got = byCpu(s, runAll(s, sim));
         CHECK(got == sim.stable);
@@ -291,7 +330,7 @@ int main(int argc, char **argv) {
         Search s(Mode::PerCore, Level::Medium, -30, cpu(2));
         Sim sim{{{0, -25}, {1, -30}, {2, -20}, {3, -18}}};
         std::optional<Trial> t;
-        while ((t = s.next()) && !t->what.startsWith("confirmation")) {
+        while ((t = s.next()) && !isFinal(*t)) {
             int nonzero = 0;
             for (int v : t->perCore) nonzero += v != 0;
             CHECK(nonzero == 1);
@@ -299,10 +338,95 @@ int main(int argc, char **argv) {
             s.report(sim.run(s, *t));
         }
         CHECK(t.has_value());
+        CHECK(t && t->what.startsWith("20-minute"));
         CHECK(t->perCore == s.values());
-        CHECK(!t->tests[0].args.contains("24"));
-        CHECK(t->tests[0].seconds == 4 * 2 * 60);
-        CHECK(t->tests[1].seconds == 2 * 60);
+        CHECK(t->seconds() == VERIFY_SECONDS);
+    }
+
+    // A start that fails climbs back towards stock by the step; the first pass is the result.
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(1), Tuning{-5, 3});
+        CHECK(s.setStart(0, 0, -20));
+        CHECK(s.setStart(1, 0, 0));
+        CHECK(!s.setStart(2, 0, -5));
+        Sim sim{{{0, -16}, {1, -4}}};
+        QList<int> tried0, tried1;
+        std::optional<Trial> t;
+        while ((t = s.next()) && !isFinal(*t)) {
+            if (t->perCore[0]) tried0 << t->perCore[0];
+            if (t->perCore[1]) tried1 << t->perCore[1];
+            s.report(sim.run(s, *t));
+        }
+        CHECK(tried0 == (QList<int>{-20, -17, -14}));  // -20, -17 fail; -14 passes: done
+        CHECK(tried1 == (QList<int>{-3, -6}));         // from stock: -3 passes, -6 fails: done
+        CHECK(s.values() == (QList<int>{-14, -3}));
+        // The core is marked done by report() itself (the dialog logs it right then), whichever way it ends.
+        Search u(Mode::PerCore, Level::Fast, -30, cpu(1), Tuning{-5, 2});
+        startAll(u, -10);
+        u.next(); u.report({false, {}});                           // core 0: -10 fails
+        u.next(); u.report({true, {}});                            // core 1: -10 passes
+        CHECK(u.next()->perCore[0] == -8); u.report({true, {}});   // core 0 climbs: -8 passes
+        CHECK(u.coreState(0).done && u.values()[0] == -8);
+        CHECK(u.next()->perCore[1] == -12); u.report({false, {}}); // core 1: -12 fails after a pass
+        CHECK(u.coreState(1).done && u.values()[1] == -10);
+        // A start below the limit or above stock is clamped.
+        Search c(Mode::PerCore, Level::Fast, -20, cpu(1));
+        CHECK(c.setStart(0, 0, -35) && c.coreState(0).start == -20);
+        CHECK(c.setStart(1, 0, 7) && c.coreState(1).start == 0);
+    }
+
+    // All-core: a configurable start; a failed start keeps steps of 5 from stock, then steps of 1.
+    {
+        Search s(Mode::AllCore, Level::Fast, -30, cpu(2), Tuning{-15, 1});
+        Sim sim{{{0, -12}, {1, -20}, {2, -20}, {3, -20}}};
+        QList<int> tried;
+        std::optional<Trial> t;
+        while ((t = s.next()) && !isFinal(*t)) { tried << *t->allCore; s.report(sim.run(s, *t)); }
+        CHECK(tried == (QList<int>{-15, -5, -10, -11, -12, -13}));
+        CHECK(s.values() == QList<int>(4, -12));
+        Search d(Mode::AllCore, Level::Fast, -30, cpu(2));
+        CHECK(d.next()->allCore == -5);  // default start: the previous fixed behaviour
+    }
+
+    // The 20-minute verification: whole curve applied; light and heavy parts alternate, power limit twice.
+    for (int n : {1, 2, 3, 4, 6, 8, 16, 17, 18, 25}) {  // 2n cores
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(n));
+        startAll(s, -10);
+        Sim sim;
+        for (const Core &c : s.cores()) sim.stable[c.cpus.first()] = -10;
+        std::optional<Trial> t;
+        while ((t = s.next()) && !isFinal(*t)) s.report(sim.run(s, *t));
+        CHECK(t && t->what.startsWith("20-minute") && t->perCore == s.values());
+        if (!t) continue;
+        const int cores = 2 * n;
+        QStringList firsts;
+        for (const Core &c : s.cores()) firsts << QString::number(c.cpus.first());
+        CHECK(t->tests[0].args == (QStringList{"percore", "--load", "co", "--cycles", "1", "--kernel", "0", "--seconds", "24", "--cpus", firsts.join(',')}));
+        CHECK(t->tests[1].args == (QStringList{"allcore", "--load", "power", "--seconds", "180"}) && t->tests[1].seconds == 180);
+        CHECK(t->tests[2].args == (QStringList{"allcore", "--load", "co", "--cycles", "2", "--kernel", "1"}));
+        CHECK(t->tests.last().args.mid(0, 3) == (QStringList{"allcore", "--load", "power"}) && t->tests.last().seconds >= 60);
+        CHECK(t->tests.last().args.last() == QString::number(t->tests.last().seconds));
+        CHECK(t->seconds() == std::max(VERIFY_SECONDS, cores * 24 + 360));
+        for (const Test &x : t->tests) {
+            CHECK(x.seconds > 0);
+            if (x.args.contains("sse")) CHECK(x.args.contains("--transitions") && x.seconds / cores >= 5);
+            const qsizetype c = x.args.indexOf("--cycles");
+            if (c >= 0) CHECK(x.args[c + 1].toInt() >= 1 && x.args[c + 1].toInt() <= 100);
+        }
+        if (cores == 8) CHECK(t->tests.size() == 6 && t->tests[4].args.contains("sse"));  // room for classic SSE too
+        if (cores == 16) {                                                                // no room for classic SSE
+            CHECK(t->tests.size() == 5 && t->tests[3].seconds == 384 && t->tests[4].seconds == 132);
+        }
+    }
+    {
+        // Only undervolted cores are loaded alone; excluded / stock cores are not.
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        startAll(s, -10);
+        CHECK(s.exclude(1, 1));
+        Sim sim{{{0, -10}, {1, -10}, {2, 0}, {3, -10}}};
+        std::optional<Trial> t;
+        while ((t = s.next()) && !isFinal(*t)) s.report(sim.run(s, *t));
+        CHECK(t && t->tests[0].args.last() == "0,1");  // CPU 2 (stable 0) and CPU 3 (excluded) at stock
     }
 
     // Per-core: each core goes down to its own threshold, never past the limit.
@@ -325,8 +449,8 @@ int main(int argc, char **argv) {
         Search s2(Mode::PerCore, Level::Fast, -30, cpu(4));
         Sim descent{stable};
         std::optional<Trial> t;
-        while ((t = s2.next()) && !t->what.startsWith("confirmation")) s2.report(descent.run(s2, *t));
-        CHECK(t && t->tests.size() == 2);
+        while ((t = s2.next()) && !isFinal(*t)) s2.report(descent.run(s2, *t));
+        CHECK(t && t->tests.size() >= 2);
         Sim strict{stable};
         strict.stable[2] = -28;
         while (t) { s2.report(strict.run(s2, *t)); t = s2.next(); }
@@ -339,7 +463,7 @@ int main(int argc, char **argv) {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
         Sim descent{{{0, -10}, {1, -20}, {2, 0}, {3, -15}}};
         std::optional<Trial> t;
-        while ((t = s.next()) && !t->what.startsWith("confirmation")) s.report(descent.run(s, *t));
+        while ((t = s.next()) && !isFinal(*t)) s.report(descent.run(s, *t));
         CHECK(byCpu(s, s.values()) == (QMap<int, int>{{0, -10}, {1, -20}, {2, 0}, {3, -15}}));
         s.report(Outcome{false, {}});
         CHECK(byCpu(s, s.values()) == (QMap<int, int>{{0, -9}, {1, -19}, {2, 0}, {3, -14}}));
@@ -391,6 +515,7 @@ int main(int argc, char **argv) {
     // Recovery must never repeat -25 or go deeper; the recovery snapshot is AFTER next().
     {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(5));
+        startAll(s, -15);
         bool rebooted = false;
         for (int attempt = 0; attempt < 200; ++attempt) {
             const auto t = s.next();
@@ -408,7 +533,7 @@ int main(int argc, char **argv) {
                 if (s.cores()[i].cpus.contains(9)) i9 = i;
             CHECK(i9 >= 0);
             if (i9 >= 0 && !t->perCore.isEmpty() && t->perCore[i9] == -25 &&
-                !t->what.startsWith("confirmation")) {
+                !isFinal(*t)) {
                 auto resumed = Search::load(s.save());
                 CHECK(resumed.has_value());
                 if (!resumed) break;
@@ -428,7 +553,7 @@ int main(int argc, char **argv) {
                         if (!next) break;
                         if (!next->perCore.isEmpty()) {
                             CHECK(next->perCore[i9] > -25);
-                            if (!next->what.startsWith("confirmation")) CHECK(next->perCore[i9] == 0);
+                            if (!isFinal(*next)) CHECK(next->perCore[i9] == 0);
                         }
                         secondBoot->report(sim.run(*secondBoot, *next));
                     }
@@ -470,7 +595,7 @@ int main(int argc, char **argv) {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
         Sim sim{{{0, -10}, {1, -12}, {2, -5}, {3, -8}}};
         std::optional<Trial> t;
-        while ((t = s.next()) && !t->what.startsWith("confirmation")) s.report(sim.run(s, *t));
+        while ((t = s.next()) && !isFinal(*t)) s.report(sim.run(s, *t));
         CHECK(t.has_value());
         const QList<int> before = s.values();
         s.report(Outcome{false, {}, true});
