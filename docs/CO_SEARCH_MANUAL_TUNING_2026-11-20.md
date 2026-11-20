@@ -1,5 +1,7 @@
 # CO Search: configurable, adaptive per-core probing
 
+> **Superseded in part** by `CO_SEARCH_PERCORE_RULES_2026-11-20.md` (per-core search rules, crash guard, reboot lockout).
+
 **Based on:** `Centurion_CO_Search_RebootLoop_Fix.zip`, 2026-11-20. Includes the prior reboot-loop protections, crash-guard persistence and recovery journal logic.
 
 ## Operator controls

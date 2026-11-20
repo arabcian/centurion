@@ -9932,14 +9932,6 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Başlangıç:</translation>
         </message>
         <message>
-            <source>Coarse step:</source>
-            <translation>Kaba adım:</translation>
-        </message>
-        <message>
-            <source>After failure:</source>
-            <translation>Hata sonrası:</translation>
-        </message>
-        <message>
             <source>Apply to next trials</source>
             <translation>Sonraki testlere uygula</translation>
         </message>
@@ -9948,32 +9940,12 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Her çekirdeğin ilk deneme değeri. Varsayılan −15; belirlenen alt sınır ve kayıtlı yeniden başlama koruması aşılmaz.</translation>
         </message>
         <message>
-            <source>Coarse downward step after a successful per-core probe. Default: 5 CO points.</source>
-            <translation>Başarılı bir çekirdek testinden sonra daha negatif yöne gidilecek CO adımı. Varsayılan: 5 puan.</translation>
-        </message>
-        <message>
-            <source>First failure switches to this refinement step (default 3). Wide gaps use its multiples; narrow gaps automatically use 2 then 1 point.</source>
-            <translation>İlk hatadan sonra bu hassaslaştırma adımına geçilir (varsayılan 3). Geniş aralıkta katları, dar aralıkta otomatik olarak 2 ve 1 puan kullanılır.</translation>
-        </message>
-        <message>
-            <source>You can change the three values during an active per-core search. Changes affect only future candidates, never the test already running or stored reboot exclusions.</source>
-            <translation>Bu üç değer arama sürerken değiştirilebilir. Değişiklikler yalnızca sonraki adayları etkiler; çalışan test veya kayıtlı yeniden başlama dışlamaları değişmez.</translation>
-        </message>
-        <message>
             <source>Changing steps is only available while a candidate is pending.</source>
             <translation>Adımlar yalnızca bir aday test edilirken değiştirilebilir.</translation>
         </message>
         <message>
             <source>Could not save updated CO steps; previous safe tuning retained.</source>
             <translation>Güncel CO adımları kaydedilemedi; önceki ayarlar korundu.</translation>
-        </message>
-        <message>
-            <source>Updated future per-core trials: start %1, coarse step %2, failure step %3 (adaptive to 2/1). Current test unchanged.</source>
-            <translation>Sonraki çekirdek testleri güncellendi: başlangıç %1, kaba adım %2, hata sonrası adım %3 (gerekirse 2/1). Çalışan test değişmedi.</translation>
-        </message>
-        <message>
-            <source>Manual CO tuning: start %1 / coarse step %2 / after failure %3 (then 2 and 1 as needed). You can edit and apply these during the run.</source>
-            <translation>Manuel CO ayarları: başlangıç %1 / kaba adım %2 / hata sonrası %3 (gerekirse 2 ve 1). Arama sırasında değiştirip uygulayabilirsiniz.</translation>
         </message>
         <message>
             <source>CO search scene:</source>
@@ -9996,14 +9968,6 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Çekirdek</translation>
         </message>
         <message>
-            <source>Offset</source>
-            <translation>CO ofseti</translation>
-        </message>
-        <message>
-            <source>Now</source>
-            <translation>Şimdi</translation>
-        </message>
-        <message>
             <source>Roughly %1 h %2 min for %3 cores (depends on where the offsets fail).</source>
             <translation>%3 çekirdek için tahminen %1 saat %2 dakika (kararsızlık sınırına göre değişir).</translation>
         </message>
@@ -10020,16 +9984,124 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>CO aramasına devam et</translation>
         </message>
         <message>
-            <source>CO search reboot lockout</source>
-            <translation>CO araması yeniden başlama kilidi</translation>
-        </message>
-        <message>
             <source>Risk of a system crash</source>
             <translation>Sistemin çökme riski</translation>
         </message>
         <message>
             <source>Cancelled by user / guard</source>
             <translation>Kullanıcı / koruma tarafından iptal edildi</translation>
+        </message>
+        <message>
+            <source>Step:</source>
+            <translation>Adım:</translation>
+        </message>
+        <message>
+            <source>CO points to go more negative after each passing probe. Default 1: the result is the exact last passing value. A larger step is faster, but the result can be up to step - 1 points more conservative than the core could hold.</source>
+            <translation>Geçen her testten sonra daha negatife gidilecek CO puanı. Varsayılan 1: sonuç tam olarak son geçen değerdir. Daha büyük adım daha hızlıdır, ama sonuç çekirdeğin kaldırabileceğinden en fazla (adım - 1) puan daha temkinli kalabilir.</translation>
+        </message>
+        <message>
+            <source>You can change both values during an active per-core search. Changes affect only future candidates, never the test already running or stored reboot exclusions.</source>
+            <translation>İki değeri de çalışan bir çekirdek başına aramada değiştirebilirsiniz. Değişiklikler yalnızca sonraki adayları etkiler; çalışan testi ve kayıtlı reboot yasaklarını asla etkilemez.</translation>
+        </message>
+        <message>
+            <source>Updated future per-core trials: start %1, step %2. Current test unchanged.</source>
+            <translation>Sonraki çekirdek testleri güncellendi: başlangıç %1, adım %2. Çalışan test değişmedi.</translation>
+        </message>
+        <message>
+            <source>Per-core: start %1, step %2. A core's first failure ends it at its last passing value. You can edit and apply these during the run.</source>
+            <translation>Çekirdek başına: başlangıç %1, adım %2. Bir çekirdeğin ilk hatası onu son geçen değerinde bitirir. Bu değerleri arama sırasında değiştirip uygulayabilirsiniz.</translation>
+        </message>
+        <message>
+            <source>Result</source>
+            <translation>Sonuç</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>Per-core: untick a core to leave it at stock (0) for the whole search and in the saved result.</source>
+            <translation>Çekirdek başına: bir çekirdeğin işaretini kaldırırsanız arama boyunca ve kaydedilen sonuçta stock (0) kalır.</translation>
+        </message>
+        <message>
+            <source>excluded (stock)</source>
+            <translation>test dışı (stock)</translation>
+        </message>
+        <message>
+            <source>testing %1</source>
+            <translation>test ediliyor: %1</translation>
+        </message>
+        <message>
+            <source>full-set confirmation</source>
+            <translation>tüm set doğrulaması</translation>
+        </message>
+        <message>
+            <source>done: %1 passed, %2 failed</source>
+            <translation>bitti: %1 geçti, %2 hata verdi</translation>
+        </message>
+        <message>
+            <source>done: %1</source>
+            <translation>bitti: %1</translation>
+        </message>
+        <message>
+            <source>searching, never %1 or below</source>
+            <translation>aranıyor; %1 ve altı asla</translation>
+        </message>
+        <message>
+            <source>searching</source>
+            <translation>aranıyor</translation>
+        </message>
+        <message>
+            <source>crash guard: never %1 or below</source>
+            <translation>crash koruması: %1 ve altı asla</translation>
+        </message>
+        <message>
+            <source>No cores to test</source>
+            <translation>Test edilecek çekirdek yok</translation>
+        </message>
+        <message>
+            <source>Every core is unticked. Tick at least one core to search.</source>
+            <translation>Tüm çekirdeklerin işareti kaldırılmış. Arama için en az bir çekirdeği işaretleyin.</translation>
+        </message>
+        <message>
+            <source>CCD%1 / %2 excluded: stays at stock.</source>
+            <translation>CCD%1 / %2 test dışı: stock kalır.</translation>
+        </message>
+        <message>
+            <source>Crash guard: CCD%1 / %2 is never tested at %3 or below.</source>
+            <translation>Crash koruması: CCD%1 / %2 asla %3 veya altında test edilmez.</translation>
+        </message>
+        <message>
+            <source>CCD%1 / %2 finished at %3: it is not tested more negative than that again.</source>
+            <translation>CCD%1 / %2 %3 değerinde bitti: bundan daha negatif bir değerle tekrar test edilmez.</translation>
+        </message>
+        <message>
+            <source>Invalid CO search journal</source>
+            <translation>Geçersiz CO arama günlüğü</translation>
+        </message>
+        <message>
+            <source>It cannot be safely resumed, and its interrupted value cannot be identified for a crash guard. Discard the old journal? The CPU curve is not changed.</source>
+            <translation>Güvenle devam ettirilemez ve yarıda kalan değer crash koruması için belirlenemiyor. Eski günlük silinsin mi? CPU eğrisi değiştirilmez.</translation>
+        </message>
+        <message>
+            <source>The interrupted CO Search journal is incompatible or damaged.</source>
+            <translation>Yarıda kalan CO Arama günlüğü uyumsuz veya bozuk.</translation>
+        </message>
+        <message>
+            <source>The journal has no valid pending-state marker.</source>
+            <translation>Günlükte geçerli bir bekleyen-deneme işareti yok.</translation>
+        </message>
+        <message>
+            <source>Saved candidate and search state disagree (journal: %1).</source>
+            <translation>Kayıtlı aday ile arama durumu uyuşmuyor (günlük: %1).</translation>
+        </message>
+        <message>
+            <source>The search was interrupted while trying %1. That value is recorded as a crash: this core keeps its last passing value, and it is never tested at that value or below again, in this or any later search.</source>
+            <translation>Arama %1 denenirken yarıda kaldı. Bu değer crash olarak kaydedildi: bu çekirdek son geçen değerini korur ve ne bu aramada ne de sonraki aramalarda o değer veya altıyla bir daha test edilmez.</translation>
+        </message>
+        <message>
+            <source>Suspected reboots in this search so far: %1.</source>
+            <translation>Bu aramada şimdiye kadarki şüpheli reboot sayısı: %1.</translation>
         </message>
     </context>
 </TS>

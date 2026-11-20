@@ -1,5 +1,7 @@
 # CO Search — reboot-loop recovery fix (20 November 2026)
 
+> **Superseded in part** by `CO_SEARCH_PERCORE_RULES_2026-11-20.md` (per-core search rules, crash guard, reboot lockout).
+
 ## Incident
 
 A user reported an isolated CO search repeatedly rebooting at **Core 9, CO -25**, even after choosing Resume four times. The previous implementation wrote the strategy **before** `Search::next()`, replayed `next()` after loading, and then tried to report the regenerated candidate as failed. It had **no durable cross-session blacklist**. Exact reproduction of the original repeated -25 incident would require the original user journal/boot logs; the source alone does not establish why all four attempts repeated the offset.

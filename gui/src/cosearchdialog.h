@@ -9,6 +9,7 @@
 
 #include <QDialog>
 #include <QHash>
+#include <QSet>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <functional>
@@ -58,7 +59,7 @@ private:
     QString saveProfile() const;
 
     QComboBox *mode_, *level_, *scene_;
-    QSpinBox *limit_, *initial_, *coarseStep_, *refineStep_;
+    QSpinBox *limit_, *initial_, *step_;
     QPushButton *applyTuning_;
     QLabel *estimate_, *status_;
     QTableWidget *table_;
@@ -76,7 +77,7 @@ private:
     QJsonObject testEnd_;
     QString expectedCurve_;              // CurvePage::currentState("cpu") while the trial's offsets are applied
     int trialNo_ = 0;
-    int hardReboots_ = 0;              // max two suspected reboots per search session
+    int hardReboots_ = 0;              // suspected reboots in this search, shown when resuming
 
     bool running_ = false, abort_ = false, applying_ = false, resetting_ = false, finished_ = false;
     bool sceneApplying_ = false, quitting_ = false;
@@ -85,4 +86,5 @@ private:
     QHash<QString, QString> mceBefore_;
     QString startScene_, priorScene_, bootId_;
     QJsonArray attempts_;
+    QSet<int> excluded_;               // per-core: cores the user left out (coreKey(ccd, slot))
 };

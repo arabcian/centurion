@@ -7,10 +7,11 @@
 // A trial tests the best-ranked cores alone first (single-core load is where the boost and the offset's
 // effect are highest) and then every core at once.
 //
-// Per-core: skip the all-core pre-search. The first trial, coarse descent and initial fine step
-// are user-configurable (-15 / 5 / 3 defaults). After a failure the passing/failing bracket
-// is refined using multiples of the fine step and then individual 2/1-point probes. If the
-// initial trial fails, refine toward stock. Other cores are at stock for isolated probes.
+// Per-core: each core is probed alone (every other core at stock), round-robin over the cores. A core
+// starts at a configurable offset (-15) and descends by a configurable step (1). The FIRST failure after
+// a pass ends that core: its result is the last value that passed, and nothing as negative as the failed
+// value (or more) is ever tried on it again. If the very first probe fails before anything passed, the core
+// descends from stock (0) instead, still never reaching the failed value. Excluded cores stay at stock.
 // The short probes include steady load and all ten boost/idle transitions. Full-length verification
 // tests each core at its found offset and then the whole set together. Correlated confirmation failures
 // make the implicated core(s) less negative; untraceable failures back off all undervolted cores.
@@ -32,12 +33,8 @@ enum class Level { Fast, Medium, Long };
 /// take effect on the NEXT selected candidate; in-flight trials and durable crash guards stay intact.
 struct Tuning {
     int initial = -15;      // first probe of an untested core, clamped to limit and crash guard
-    int coarseStep = 5;     // successful coarse descent, in CO points
-    int refineStep = 3;     // after first failure; adapt to multiples of 3, 2 and finally 1
-    bool valid() const {
-        return initial >= -50 && initial <= -1 && coarseStep >= 1 && coarseStep <= 20
-            && refineStep >= 1 && refineStep <= 10;
-    }
+    int step = 1;           // descent after each pass, in CO points
+    bool valid() const { return initial >= -50 && initial <= -1 && step >= 1 && step <= 10; }
     bool operator==(const Tuning &) const = default;
 };
 
@@ -96,8 +93,18 @@ public:
     void report(const Outcome &o);
     /// Reconstruct the CURRENT in-flight candidate from an after-next() snapshot, without advancing.
     std::optional<Trial> inFlight() const;
-    /// Do not ever probe a previously interrupted candidate (or its immediate neighbour) for this core.
+    /// Never probe `failed` or anything more negative on this physical core (a recorded crash).
     bool guardAgainstCrash(int ccd, int slot, const QList<int> &cpus, int failed);
+    /// Per-core: leave this physical core at stock for the whole search. Call before the first next().
+    bool exclude(int ccd, int slot);
+
+    /// Per-core progress of one core (cores() order), for display.
+    struct CoreState {
+        int pass = 0;               // last value that passed (0 = stock)
+        std::optional<int> failed;  // least negative value known bad (failure or crash guard)
+        bool done = false, excluded = false;
+    };
+    CoreState coreState(int i) const;
 
     bool finished() const { return stage_ == Stage::Done; }
     Mode mode() const { return mode_; }
@@ -120,9 +127,10 @@ private:
     struct Walk {
         int pass = 0;          // last observed passing value; 0 is assumed stock
         int floor = 0;         // nearest failing value, or limit - 1 sentinel
-        bool coarse = true;    // all-core uses 5 then 1; per-core uses custom step then refinement
+        bool coarse = true;    // all-core only: steps of 5, then 1
         bool done = false;
         bool seeded = false;   // per-core: whether the configured initial probe has been made
+        bool excluded = false; // per-core: left at stock by the user
         int candidate() const; // legacy all-core descent
         int coreCandidate(int limit, Tuning tuning) const;
     };

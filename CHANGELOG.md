@@ -49,6 +49,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - `deny.toml`: RustSec advisories, licences and sources checked by `cargo deny` in CI.
 
 ### Fixed
+- Ryzen Curve → CO Search, per-core: the first failure after a pass now ends that core at its last passing value;
+  nothing more negative is tried on it again (it used to keep refining between the pass and the failure). The
+  descent step is one setting (default 1) instead of coarse / refine steps. A crash guard forbids the crashed value
+  and everything below it on that physical core in every later search; the two-reboot lockout is gone, since a
+  guarded value can never be replayed. Cores can be unticked to stay at stock. A journal that cannot be resumed
+  can now be discarded instead of blocking every later start. See `docs/CO_SEARCH_PERCORE_RULES_2026-11-20.md`.
 - `centurion-calibrate`: `--budget`/`--io-budget` refuse infinite (`inf`, `1e400`) and oversized values.
   `--io-budget inf` turned the daily write budget that protects the drive off (it saturated to `u64::MAX`).
 - `centurion-calibrate --verify`: an interrupt is a failed verification wherever it lands. Between two

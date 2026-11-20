@@ -1,5 +1,7 @@
 # CO Search rebuild — 20 November 2026
 
+> **Superseded in part** by `CO_SEARCH_PERCORE_RULES_2026-11-20.md` (per-core search rules, crash guard, reboot lockout).
+
 ## New behavior
 
 - **Per-core** is the default for new CO Search settings. Prior saved mode/limit/level/scene preferences still load.

@@ -112,15 +112,15 @@ int main(int argc, char **argv) {
         CHECK(s.next()->perCore.first() == std::max(-15, limit));
     }
 
-    // Manual starting offset, coarse stride and post-failure 3 -> 2 -> 1 refinement.
+    // Manual starting offset and step; a step change applies to future trials only.
     {
-        Search s(Mode::PerCore, Level::Fast, -40, cpu(2), Tuning{-18, 7, 3});
+        Search s(Mode::PerCore, Level::Fast, -40, cpu(2), Tuning{-18, 7});
         const auto first = s.next();
         CHECK(first && first->perCore.first() == -18);
         const QJsonObject snap = s.save();
-        CHECK(snap.value("version").toInt() == 3);
+        CHECK(snap.value("version").toInt() == 4);
         auto restored = Search::load(snap);
-        CHECK(restored && restored->tuning() == (Tuning{-18, 7, 3}));
+        CHECK(restored && restored->tuning() == (Tuning{-18, 7}));
         CHECK(restored && restored->inFlight() && restored->inFlight()->perCore == first->perCore);
         s.report(Outcome{true, {}});
         for (int k=0; k<3; ++k) {
@@ -131,43 +131,150 @@ int main(int argc, char **argv) {
         }
         auto t=s.next();
         CHECK(t && t->perCore.first() == -25);
-        // Changing the stride during a pending trial must not change that trial.
-        CHECK(s.setTuning(Tuning{-20, 9, 3}));
+        // Changing the step during a pending trial must not change that trial.
+        CHECK(s.setTuning(Tuning{-20, 9}));
         CHECK(s.inFlight() && s.inFlight()->perCore == t->perCore);
         auto saved = Search::load(s.save());
-        CHECK(saved && saved->tuning() == (Tuning{-20, 9, 3}));
+        CHECK(saved && saved->tuning() == (Tuning{-20, 9}));
         CHECK(saved && saved->inFlight() && saved->inFlight()->perCore == t->perCore);
-        CHECK(!s.setTuning(Tuning{-20, 0, 3}));
+        CHECK(!s.setTuning(Tuning{-20, 0}));
+        CHECK(!s.setTuning(Tuning{-20, 11}));
+        s.report(Outcome{true, {}});
+        for (int k=0; k<3; ++k) { CHECK(s.next().has_value()); s.report(Outcome{true, {}}); }
+        auto later = s.next();
+        CHECK(later && later->perCore.first() == -34);  // -25 - 9
+    }
+
+    // The first failure after a pass ends the core: its result is the previous pass, and it is never
+    // probed again (not even between the pass and the failure).
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2), Tuning{-15, 5});
+        int core0 = -1;
+        for (int i = 0; i < s.cores().size(); ++i) if (s.cores()[i].cpus.first() == 0) core0 = i;
+        Sim sim{{{0, -22}, {1, -30}, {2, -30}, {3, -30}}};
+        QList<int> tried0;
+        std::optional<Trial> t;
+        while ((t = s.next()) && !t->what.startsWith("confirmation")) {
+            if (t->perCore[core0] != 0) tried0 << t->perCore[core0];
+            s.report(sim.run(s, *t));
+        }
+        CHECK(tried0 == (QList<int>{-15, -20, -25}));
+        CHECK(s.values()[core0] == -20);
+        CHECK(s.coreState(core0).done && s.coreState(core0).failed == -25);
     }
     {
-        Search s(Mode::PerCore, Level::Fast, -30, cpu(2), Tuning{-15, 5, 3});
-        // Fixed representative core: quick probe chronology includes the fail at -25,
-        // followed by values -23, -22, -21 as the boundary narrows.
-        for (int i=0; i<4; ++i) { const auto t=s.next(); CHECK(t.has_value()); s.report({true,{}}); }
-        for (int i=0; i<4; ++i) { const auto t=s.next(); CHECK(t.has_value()); s.report({true,{}}); }
-        const auto fail = s.next();
-        CHECK(fail && fail->perCore.first() == -25);
-        s.report({false,{}});
-        // The turn order alternates; other cores receive their own -25 attempts.
-        for (int i=0; i<3; ++i) { const auto t=s.next(); CHECK(t.has_value()); s.report({false,{}}); }
-        const auto fine = s.next();
-        CHECK(fine && fine->perCore.first() == -23);
-    }
-    {
-        // Old v2 strategy snapshots remain loadable so v3 recovery journals from
-        // the previous release do not silently become unrecoverable.
+        // Version 3 snapshots (coarse/refine search) still resume, with the default step; a core that
+        // already failed after a pass keeps that pass. Older snapshots are refused.
         Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
-        auto old = s.save();
-        old["version"] = 2;
-        old.remove("tuning");
+        QJsonObject old = s.save();
+        old["version"] = 3;
+        old["tuning"] = QJsonObject{{"initial", -12}, {"coarse_step", 5}, {"refine_step", 3}};
+        QJsonArray per = old.value("per").toArray();
+        QJsonObject w = per[0].toObject();
+        w["pass"] = -20; w["floor"] = -25; w["coarse"] = false; w["seeded"] = true; w.remove("excluded");
+        per[0] = w;
+        old["per"] = per;
         auto loaded = Search::load(old);
         CHECK(loaded.has_value());
-        CHECK(loaded && loaded->tuning() == Tuning{});
+        CHECK(loaded && loaded->tuning() == (Tuning{-12, 1}));
+        CHECK(loaded && loaded->coreState(0).done && loaded->values()[0] == -20);
+        auto v2 = s.save();
+        v2["version"] = 2;
+        CHECK(!Search::load(v2));
         auto malformed = s.save();
         QJsonObject t = malformed.value("tuning").toObject();
-        t["coarse_step"] = 0;
+        t["step"] = 0;
         malformed["tuning"] = t;
         CHECK(!Search::load(malformed));
+    }
+
+    // Excluded cores stay at stock in every trial, including the confirmation, and survive a snapshot.
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        CHECK(s.exclude(1, 0));   // CPU 2
+        CHECK(!s.exclude(3, 0));  // no such core
+        Search all(Mode::AllCore, Level::Fast, -30, cpu(2));
+        CHECK(!all.exclude(1, 0));
+        int ex = -1;
+        for (int i = 0; i < s.cores().size(); ++i) if (s.cores()[i].ccd == 1 && s.cores()[i].slot == 0) ex = i;
+        CHECK(s.coreState(ex).excluded && s.coreState(ex).done);
+        auto r = Search::load(s.save());
+        CHECK(r && r->coreState(ex).excluded);
+        Sim sim{{{0, -20}, {1, -18}, {2, -30}, {3, -16}}};
+        bool confirmed = false;
+        for (int k = 0; k < 200; ++k) {
+            auto t = r->next();
+            if (!t) break;
+            CHECK(t->perCore[ex] == 0);
+            confirmed |= t->what.startsWith("confirmation");
+            r->report(sim.run(*r, *t));
+        }
+        CHECK(confirmed && r->finished());
+        CHECK(byCpu(*r, r->values()) == (QMap<int, int>{{0, -20}, {1, -18}, {2, 0}, {3, -16}}));
+        QJsonObject bad = s.save();
+        QJsonArray per = bad.value("per").toArray();
+        QJsonObject w = per[ex].toObject();
+        w["pass"] = -5;
+        per[ex] = w;
+        bad["per"] = per;
+        CHECK(!Search::load(bad));  // an excluded core is always at stock
+    }
+
+    // Exhaustive: every start, step, limit and stable threshold. Values on a core only ever get more
+    // negative, nothing at or below a failure is retried, the result is the last pass, and with a step
+    // of 1 the result is exactly the threshold.
+    {
+        int cases = 0;
+        for (int initial : {-1, -5, -15, -28, -50})
+            for (int step : {1, 2, 3, 5, 10})
+                for (int limit : {-5, -17, -30, -50})
+                    for (int stable = limit - 2; stable <= 0; ++stable) {
+                        Search s(Mode::PerCore, Level::Fast, limit, cpu(1), Tuning{initial, step});
+                        Sim sim{{{0, stable}, {1, 0}}};
+                        int lastPass = 0, failedAt = 1;  // 1 = no failure yet
+                        bool ended = false;              // failed after a pass: the core is over
+                        for (int k = 0; k < 200; ++k) {
+                            auto t = s.next();
+                            if (!t) break;
+                            const int v = t->perCore[0];
+                            if (t->what.startsWith("confirmation") || v == 0) { s.report(sim.run(s, *t)); continue; }
+                            CHECK(!ended && "probed again after a failure following a pass");
+                            CHECK(v >= limit && v < lastPass);
+                            CHECK(failedAt > 0 || v > failedAt);
+                            const Outcome o = sim.run(s, *t);
+                            if (o.pass) lastPass = v;
+                            else { ended = lastPass < 0; failedAt = failedAt > 0 ? v : std::max(failedAt, v); }
+                            s.report(o);
+                        }
+                        CHECK(s.finished());
+                        if (step == 1) CHECK(s.values()[0] == std::min(0, std::max(stable, limit)));
+                        CHECK(s.values()[0] == lastPass);
+                        CHECK(s.values()[0] >= stable);
+                        ++cases;
+                    }
+        std::printf("exhaustive per-core walks: %d\n", cases);
+    }
+
+    // Recorded crash at -25 on a core: no new search ever probes -25 or anything more negative there.
+    {
+        int cases = 0;
+        for (int guard = -30; guard <= -1; ++guard)
+            for (int initial : {-1, -10, -15, -30})
+                for (int step : {1, 3, 7})
+                    for (int stable = -31; stable <= 0; stable += 3) {
+                        Search s(Mode::PerCore, Level::Fast, -30, cpu(1), Tuning{initial, step});
+                        CHECK(s.guardAgainstCrash(0, 0, {0, 2}, guard));
+                        Sim sim{{{0, stable}, {1, 0}}};
+                        for (int k = 0; k < 200; ++k) {
+                            auto t = s.next();
+                            if (!t) break;
+                            CHECK(t->perCore[0] > guard);
+                            s.report(sim.run(s, *t));
+                        }
+                        CHECK(s.finished() && s.values()[0] > guard);
+                        ++cases;
+                    }
+        std::printf("crash-guard walks: %d\n", cases);
     }
 
     // A core that cannot hold -15 is bracketed toward zero, not automatically marked -15 stable.
@@ -281,7 +388,7 @@ int main(int argc, char **argv) {
     }
 
     // HARD REBOOT regression: CCD1/slot4 (logical CPU 9) reboots at -25.
-    // Recovery must never repeat -25 or even try -24; the recovery snapshot is AFTER next().
+    // Recovery must never repeat -25 or go deeper; the recovery snapshot is AFTER next().
     {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(5));
         bool rebooted = false;
@@ -311,16 +418,22 @@ int main(int argc, char **argv) {
                 CHECK(secondBoot.has_value());
                 CHECK(secondBoot && !secondBoot->inFlight().has_value());
                 if (secondBoot) {
+                    // The crashed core is finished at its last pass (-24) and only reappears in the
+                    // confirmation; there it fails (stable -23 under the full set) and backs off.
+                    CHECK(secondBoot->coreState(i9).done && secondBoot->values()[i9] == -24);
                     Sim sim;
                     sim.stable[9] = -23;
                     for (int k = 0; k < 400; ++k) {
                         const auto next = secondBoot->next();
                         if (!next) break;
-                        if (!next->perCore.isEmpty()) CHECK(next->perCore[i9] >= -23);
+                        if (!next->perCore.isEmpty()) {
+                            CHECK(next->perCore[i9] > -25);
+                            if (!next->what.startsWith("confirmation")) CHECK(next->perCore[i9] == 0);
+                        }
                         secondBoot->report(sim.run(*secondBoot, *next));
                     }
                     CHECK(secondBoot->finished());
-                    CHECK(secondBoot->values()[i9] >= -23);
+                    CHECK(secondBoot->values()[i9] == -23);
                 }
                 rebooted = true;
                 break;
@@ -344,7 +457,7 @@ int main(int argc, char **argv) {
         for (int k = 0; k < 500; ++k) {
             auto t = s.next();
             if (!t) break;
-            if (!t->perCore.isEmpty()) CHECK(t->perCore[i9] >= -23);
+            if (!t->perCore.isEmpty()) CHECK(t->perCore[i9] > -25);
             s.report(sim.run(s, *t));
         }
         CHECK(s.finished());
@@ -355,7 +468,7 @@ int main(int argc, char **argv) {
     // every non-stock core by 2 rather than repeating the whole crashing set.
     {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
-        Sim sim;
+        Sim sim{{{0, -10}, {1, -12}, {2, -5}, {3, -8}}};
         std::optional<Trial> t;
         while ((t = s.next()) && !t->what.startsWith("confirmation")) s.report(sim.run(s, *t));
         CHECK(t.has_value());
@@ -376,7 +489,7 @@ int main(int argc, char **argv) {
         CHECK(!Search::load(o));
         o = s.save(); o["cores"] = QJsonArray{};
         CHECK(!Search::load(o));
-        o = s.save(); o["version"] = 1;
+        o = s.save(); o["version"] = 2;
         CHECK(!Search::load(o));  // older snapshots used all-core presearch and cannot safely resume
         o = s.save(); o["per"] = QJsonArray{};
         CHECK(!Search::load(o));
