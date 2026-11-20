@@ -5,6 +5,7 @@
 // profile, never applied. The search can run under a scene of its own (the power level the CPU will
 // really be used at). A journal written before every trial lets a search
 // that froze or rebooted the machine resume afterwards, the trial in flight counting as failed.
+#include "coevidence.h"
 #include "costrategy.h"
 
 #include <QDialog>
@@ -57,8 +58,14 @@ private:
     bool writeJournal() const;
     void refreshTable();
     void reloadPresets();
+    void watchTick();
+    void gatherEvidence(const QJsonObject &journal, const cosearch::Search &search, const cosearch::Trial &trial,
+                        std::function<void(const coevidence::Verdict &)> then);
+    void updateResultButtons();
+    void saveResultAs();
+    void loadResultIntoStarts();
     void applyPreset(const QString &name);
-    QString saveProfile() const;
+    bool saveProfile(const QString &name) const;
 
     QComboBox *mode_, *level_, *scene_, *preset_;
     QSpinBox *limit_, *allStart_, *step_;
@@ -66,9 +73,9 @@ private:
     QLabel *estimate_, *status_;
     QTableWidget *table_;
     QPlainTextEdit *log_;
-    QPushButton *go_, *stop_;
+    QPushButton *go_, *stop_, *saveResult_, *loadResult_;
     QProcess *test_ = nullptr;
-    QTimer *guard_;
+    QTimer *guard_, *watch_;
     QString testProgram_;
 
     std::optional<cosearch::Search> search_;
@@ -90,4 +97,10 @@ private:
     QJsonArray attempts_;
     QSet<int> excluded_;               // per-core: cores the user left out (coreKey(ccd, slot))
     QHash<int, int> starts_;           // per-core: each core's start (coreKey -> offset), typed or from a preset
+    // Crash watcher (coevidence.h) of the trial in flight: what it saw, committed to the journal at once.
+    QJsonArray evidence_;
+    QHash<QString, QString> mceWatch_;
+    quint64 watchSeq_ = 0;
+    bool watchBusy_ = false;
+    int activeCpu_ = -1;               // the CPU centurion-cpustress last moved its single-core load to
 };

@@ -84,6 +84,48 @@ the result. With the `fault-inject` build an all-core `power` run reports `fail`
 The GUI asks `centurion-cpustress info` before a search and refuses to start with a binary that has no `power`
 load (reinstall both together).
 
+## Crash watcher: which core the logs blame (`gui/src/coevidence.{h,cpp}`)
+
+Evidence is collected from three places:
+
+1. **Live, during every trial** (every 3 s): the MCA threshold counters in sysfs, which move the moment a corrected
+   error happens (the kernel itself logs corrected errors only at its next poll, up to 5 minutes later — too late
+   before a crash), and the classified kernel events (health-reader). A new record is written to the recovery
+   journal at once (`evidence`), so it survives a reset a moment later. The journal also keeps `active_cpu`, the
+   CPU the single-core parts last loaded.
+2. **Early in the next boot** (first 120 s): machine checks the kernel finds left in the MCA banks by the reset.
+   Used only if the boot history confirms that the previous boot is the crashed one (the boot guard's history);
+   otherwise skipped, and the summary says so.
+3. **pstore** records the boot history attributes to the crashed boot (the last lines of a kernel panic), if the
+   kernel keeps them.
+
+Recognised: the kernel's `CPU N: Machine Check…: … Bank B` and the AMD decoder's `CPU:N (…) MCB_STATUS[…]`
+records, the threshold counter paths `machinecheckN/<unit>/…/error_count`, and soft / hard lockups.
+
+**False-positive protection** (`judge`):
+
+- Only machine checks of a core's own units count: banks 0–6 on Zen (load/store, instruction fetch, L2, decode,
+  execution, floating point) or those counter unit names. A record from a shared unit (L3, memory controller,
+  fabric) points at RAM / fabric as much as at a core: **nobody** is blamed.
+- Records naming more than one core: ambiguous, nobody. A record naming a core that was at stock contradicts the
+  Curve Optimizer as the cause: nobody. Unknown CPUs are ignored.
+- Lockups / oopses name the CPU that noticed a problem, not the one that caused it: shown, never used.
+- A blame is used only in the final verification (every core undervolted): that core alone backs off by 2
+  instead of every undervolted core. It is **believed once per search**: if the set crashes again, the logs missed
+  the real culprit and every undervolted core backs off (`blamed` in the snapshot).
+- Log evidence never goes into the persistent crash guard: that stays reserved for single-core probes, where the
+  core under test is known without any log. In a single-core probe the verdict is only reported.
+
+The resume question and the log show the verdict ("System logs: …").
+
+## Saving the result
+
+*Save result as profile…* saves the Result column under a chosen name as a Ryzen Curve profile (listed in Ryzen
+Curve and in this dialog's Preset). *Use result as Start* copies it into the Start column for the next search.
+Both work after a finished search, after Stop, and after discarding an interrupted search on recovery (its values
+stay in the table); a search that did not finish its verification is named and logged as *not verified*. The
+automatic "CO search <date>" profile of a finished search is unchanged.
+
 ## Recovery changes
 
 - The two-reboot lockout is removed. In a per-core search a crash at each core's edge is an expected outcome, and

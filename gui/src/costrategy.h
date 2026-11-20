@@ -165,6 +165,7 @@ private:
     int tested_ = -1;        // per-core: core of the trial in flight
     int trials_ = 0;         // kernel rotation
     int cand_ = 0;           // value of the trial in flight
+    int blamed_ = 0;         // final-stage crashes the logs blamed on named cores (only the first is believed)
 };
 
 } // namespace cosearch

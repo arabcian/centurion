@@ -324,7 +324,10 @@ void Search::report(const Outcome &o) {
         for (int i = 0; i < cores_.size(); ++i)
             for (int cpu : o.cpus)
                 if (cores_[i].cpus.contains(cpu) && !hit.contains(i)) { hit << i; atStock |= per_[i].pass >= 0; }
-        if (hit.isEmpty() || atStock) {
+        // A crash blamed on named cores by the system logs (coevidence) is believed once per search: if the
+        // set crashes again, the logs missed the real culprit, and every undervolted core backs off.
+        const bool distrust = o.interrupted && !hit.isEmpty() && !atStock && blamed_++ > 0;
+        if (hit.isEmpty() || atStock || distrust) {
             hit.clear();
             for (int i = 0; i < cores_.size(); ++i) if (per_[i].pass < 0) hit << i;
         }
@@ -407,7 +410,7 @@ QJsonObject Search::save() const {
     return {{"version", 5}, {"mode", mode_ == Mode::AllCore ? "all" : "per"}, {"level", name(level_)}, {"limit", limit_},
             {"tuning", tuningJson(tuning_)},
             {"cores", cores}, {"stage", stages[int(stage_)]}, {"all", walkJson(all_.pass, all_.floor, all_.coarse, all_.done, all_.seeded, false, 0, false)},
-            {"per", per}, {"turn", turn_}, {"tested", tested_}, {"trials", trials_}, {"cand", cand_}};
+            {"per", per}, {"turn", turn_}, {"tested", tested_}, {"trials", trials_}, {"cand", cand_}, {"blamed", blamed_}};
 }
 
 std::optional<Search> Search::load(const QJsonObject &o) {
@@ -467,6 +470,7 @@ std::optional<Search> Search::load(const QJsonObject &o) {
     s.trials_ = o.value("trials").toInt();
     if (s.trials_ < 0 || s.trials_ > 100000) return std::nullopt;
     s.cand_ = o.value("cand").toInt();
+    s.blamed_ = std::clamp(o.value("blamed").toInt(), 0, 1000);
     if (s.cand_ < limit || s.cand_ > 0) return std::nullopt;
     return s;
 }

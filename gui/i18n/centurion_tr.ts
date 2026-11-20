@@ -10175,5 +10175,144 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <source>This CPU has no AVX2 / FMA, which the verification's power load needs.</source>
             <translation>Bu CPU'da doğrulamanın power yükü için gereken AVX2 / FMA yok.</translation>
         </message>
+        <message>
+            <source>Save result as profile…</source>
+            <translation>Sonucu profil olarak kaydet…</translation>
+        </message>
+        <message>
+            <source>Save the table's Result column as a named Ryzen Curve profile. It is listed under Ryzen Curve and in Preset here. A search that did not finish its verification is saved as not verified.</source>
+            <translation>Tablodaki Sonuç sütununu isimli bir Ryzen Curve profili olarak kaydeder. Ryzen Curve'de ve buradaki Preset listesinde görünür. Doğrulamasını bitirmemiş bir arama 'doğrulanmadı' olarak kaydedilir.</translation>
+        </message>
+        <message>
+            <source>Use result as Start</source>
+            <translation>Sonucu Start'a yükle</translation>
+        </message>
+        <message>
+            <source>Copy the Result column into the Start column (per-core), to continue from it in the next search.</source>
+            <translation>Sonuç sütununu Start sütununa kopyalar (çekirdek başına); sonraki arama oradan devam eder.</translation>
+        </message>
+        <message>
+            <source>The search was interrupted during %1. Undervolted cores back off by 2 points before it runs again: only the core the system logs blame, if they blame one; otherwise every undervolted core.</source>
+            <translation>Arama %1 sırasında yarıda kaldı. Tekrar çalışmadan önce undervolt’lu çekirdekler 2 puan geri alınır: sistem logları bir çekirdeği suçluyorsa yalnızca o, aksi halde tüm undervolt’lu çekirdekler.</translation>
+        </message>
+        <message>
+            <source>System logs: %1</source>
+            <translation>Sistem logları: %1</translation>
+        </message>
+        <message>
+            <source>Resume after resetting the CPU curve to stock? No discards this interrupted search (its values so far stay in the table and can be saved).</source>
+            <translation>CPU eğrisi stock’a sıfırlandıktan sonra devam edilsin mi? Hayır bu yarıda kalan aramayı siler (o ana kadarki değerler tabloda kalır ve kaydedilebilir).</translation>
+        </message>
+        <message>
+            <source>Interrupted search discarded. Its values so far are in the table; Save result keeps them (not verified).</source>
+            <translation>Yarıda kalan arama silindi. O ana kadarki değerleri tabloda; Sonucu kaydet ile saklanabilir (doğrulanmadı).</translation>
+        </message>
+        <message>
+            <source>Reading the system logs of the crashed boot…</source>
+            <translation>Çöken açılışın sistem logları okunuyor…</translation>
+        </message>
+        <message>
+            <source>(Machine checks from this boot's start were not used: the boot history cannot confirm that the previous boot is the one that crashed.)</source>
+            <translation>(Bu açılışın başındaki machine check kayıtları kullanılmadı: açılış geçmişi, önceki açılışın çöken açılış olduğunu doğrulayamıyor.)</translation>
+        </message>
+        <message>
+            <source>CO search %1</source>
+            <translation>CO search %1</translation>
+        </message>
+        <message>
+            <source>CO search %1 (not verified)</source>
+            <translation>CO search %1 (doğrulanmadı)</translation>
+        </message>
+        <message>
+            <source>Save result as profile</source>
+            <translation>Sonucu profil olarak kaydet</translation>
+        </message>
+        <message>
+            <source>Profile name:</source>
+            <translation>Profil adı:</translation>
+        </message>
+        <message>
+            <source>This search did not finish its verification: these values passed only the tests run so far.
+
+Profile name:</source>
+            <translation>Bu arama doğrulamasını bitirmedi: bu değerler yalnızca o ana kadar çalışan testleri geçti.
+
+Profil adı:</translation>
+        </message>
+        <message>
+            <source>Invalid name</source>
+            <translation>Geçersiz ad</translation>
+        </message>
+        <message>
+            <source>Use a name without '/' or '\', not starting with '.', up to 100 characters.</source>
+            <translation>'/' veya '\' içermeyen, '.' ile başlamayan, en fazla 100 karakterlik bir ad kullanın.</translation>
+        </message>
+        <message>
+            <source>Overwrite profile</source>
+            <translation>Profilin üzerine yaz</translation>
+        </message>
+        <message>
+            <source>A profile named '%1' exists. Replace it?</source>
+            <translation>'%1' adlı bir profil var. Değiştirilsin mi?</translation>
+        </message>
+        <message>
+            <source>Save failed</source>
+            <translation>Kaydetme başarısız</translation>
+        </message>
+        <message>
+            <source>Could not write the profile.</source>
+            <translation>Profil yazılamadı.</translation>
+        </message>
+        <message>
+            <source>Result saved as Ryzen Curve profile '%1'.</source>
+            <translation>Sonuç '%1' Ryzen Curve profili olarak kaydedildi.</translation>
+        </message>
+        <message>
+            <source>Result saved as Ryzen Curve profile '%1' (NOT verified: the search did not finish).</source>
+            <translation>Sonuç '%1' Ryzen Curve profili olarak kaydedildi (DOĞRULANMADI: arama bitmedi).</translation>
+        </message>
+        <message>
+            <source>Result copied into the Start column: %1</source>
+            <translation>Sonuç Start sütununa kopyalandı: %1</translation>
+        </message>
+        <message>
+            <source>Watcher: %1</source>
+            <translation>Gözetleyici: %1</translation>
+        </message>
+        <message>
+            <source>SMU reset confirmed. The search did not finish; nothing was saved automatically. Save result keeps the values found so far, marked as not verified.</source>
+            <translation>SMU sıfırlaması doğrulandı. Arama bitmedi; otomatik bir şey kaydedilmedi. Sonucu kaydet, o ana kadar bulunan değerleri "doğrulanmadı" olarak saklar.</translation>
+        </message>
+    </context>
+    <context>
+        <name>coevidence</name>
+        <message>
+            <source>corrected-error counter %1 of CPU %2 moved</source>
+            <translation>CPU %2 için %1 düzeltilmiş hata sayacı arttı</translation>
+        </message>
+        <message>
+            <source> Lockup reports (not used to blame): CPU %1.</source>
+            <translation> Kilitlenme raporları (suçlamada kullanılmaz): CPU %1.</translation>
+        </message>
+        <message>
+            <source>No machine-check record names a CPU of this search.</source>
+            <translation>Hiçbir machine check kaydı bu aramanın bir CPU’sunu göstermiyor.</translation>
+        </message>
+        <message>
+            <source>Machine check in a shared unit (%1): RAM / fabric as likely as a core; no core blamed.</source>
+            <translation>Paylaşılan bir birimde machine check (%1): RAM / fabric da bir çekirdek kadar olası; hiçbir çekirdek suçlanmadı.</translation>
+        </message>
+        <message>
+            <source>Machine checks on several cores (%1): ambiguous, no core blamed.</source>
+            <translation>Birden çok çekirdekte machine check (%1): belirsiz, hiçbir çekirdek suçlanmadı.</translation>
+        </message>
+        <message>
+            <source>Machine check on %1, which was at stock: not the Curve Optimizer; no core blamed.</source>
+            <translation>Stock’taki %1 üzerinde machine check: neden Curve Optimizer değil; hiçbir çekirdek suçlanmadı.</translation>
+        </message>
+        <message>
+            <source>Machine check(s) on %1 (at %2) in its own core units: that core is blamed.</source>
+            <translation>%1 (%2 değerinde) kendi çekirdek birimlerinde machine check: bu çekirdek suçlandı.</translation>
+        </message>
     </context>
 </TS>

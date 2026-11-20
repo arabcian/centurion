@@ -60,6 +60,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Start climbs back towards stock by the step. The global start moved to all-core (*All-core start*, default -5).
   The per-core confirmation is replaced by a 20-minute verification of the whole set that alternates single-core
   FFT-SSE / NTT / FFT-AVX cycles with all-core loads, twice up to the package power limit.
+- Ryzen Curve → CO Search: a crash watcher. During every trial the MCA error counters and kernel events are
+  committed to the recovery journal as they appear; after a hard reboot they, the machine checks the kernel finds
+  at the next boot and pstore records are judged. Only a core's own units can blame it (shared L3 / memory /
+  fabric, several cores, a core at stock or a lockup blame nobody), the blame only narrows the final
+  verification's back-off and is believed once per search. *Save result as profile…* (named, also for a stopped
+  or discarded search, marked not verified) and *Use result as Start*.
 - `centurion-cpustress --load power`: dense AVX2 / AVX-512 FMA work on independent vectors (twice the FLOP rate of
   `avx512`), the load that reaches the package power limit; the CO verification's earlier all-core parts stayed
   far below it. One-ulp errors are kept by stirred integer accumulators (the map alone can round them away).

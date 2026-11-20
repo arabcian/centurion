@@ -14,6 +14,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QLabel>
@@ -235,9 +236,17 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
 
     auto *row = new QHBoxLayout;
     row->addStretch();
+    saveResult_ = new QPushButton(tr("Save result as profile…"));
+    saveResult_->setToolTip(tr("Save the table's Result column as a named Ryzen Curve profile. It is listed under Ryzen Curve "
+                               "and in Preset here. A search that did not finish its verification is saved as not verified."));
+    loadResult_ = new QPushButton(tr("Use result as Start"));
+    loadResult_->setToolTip(tr("Copy the Result column into the Start column (per-core), to continue from it in the next search."));
     go_ = new QPushButton(tr("Start search"));
     stop_ = new QPushButton(tr("Stop and reset"));
     stop_->setEnabled(false);
+    row->addWidget(saveResult_);
+    row->addWidget(loadResult_);
+    row->addSpacing(12);
     row->addWidget(go_);
     row->addWidget(stop_);
     v->addLayout(row);
@@ -293,6 +302,12 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
             note(tr("CPU test exceeded safety timeout; terminating.")); cancel();
         }
     });
+    watch_ = new QTimer(this);
+    watch_->setInterval(3000);
+    connect(watch_, &QTimer::timeout, this, &CoSearchDialog::watchTick);
+    connect(saveResult_, &QPushButton::clicked, this, &CoSearchDialog::saveResultAs);
+    connect(loadResult_, &QPushButton::clicked, this, &CoSearchDialog::loadResultIntoStarts);
+    updateResultButtons();
     connect(go_, &QPushButton::clicked, this, &CoSearchDialog::start);
     connect(stop_, &QPushButton::clicked, this, &CoSearchDialog::cancel);
     QTimer::singleShot(0, this, &CoSearchDialog::offerResume);
@@ -523,7 +538,7 @@ bool CoSearchDialog::writeJournal() const {
         {"search", search_->save()}, {"pending", trial_.has_value()},
         {"trial", trial_ ? trialSignature(*trial_) : QJsonObject{}},
         {"scene", scene_->currentData().toString()}, {"prior_scene", priorScene_},
-        {"reboots", hardReboots_}, {"attempts", attempts_}}).toJson();
+        {"reboots", hardReboots_}, {"attempts", attempts_}, {"evidence", evidence_}, {"active_cpu", activeCpu_}}).toJson();
     if (f.write(data) != data.size()) return false;
     return f.commit();  // QSaveFile: durable commit before a new privileged SMU write
 }
@@ -740,65 +755,148 @@ void CoSearchDialog::offerResume() {
                "Neither resuming nor discarding the journal is safe until this is repaired."));
         return;
     }
-    // No reboot lockout: every interrupted candidate is guarded for good, so a resume can never
-    // repeat it and a reboot loop cannot form. Each resume is still the user's decision.
-    const int rebootCount = std::max(0, j.value("reboots").toInt()) + int(rebooted && pending);
-    const QString what = pending ? interrupted->what : tr("the last resolved trial");
-    const QString text = pending
-        ? tr("The search was interrupted while trying %1. That value is recorded as a crash: this core keeps its last "
-             "passing value, and it is never tested at that value or below again, in this or any later search.").arg(what)
-        : tr("The search stopped after its previous trial was already resolved. No candidate will be replayed.");
-    const auto answer = QMessageBox::question(this, tr("Resume CO search"),
-        text + "\n\n" + tr("Suspected reboots in this search so far: %1.").arg(rebootCount) + "\n\n"
-             + tr("Resume after resetting the CPU curve to stock? No discards this interrupted search."),
-        QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::No);
-    if (answer == QMessageBox::No) { QFile::remove(journalPath()); return; }
-    if (answer != QMessageBox::Yes || !toolsPresent()) return;
-    if (scenes::gameSessions() > 0) {
-        QMessageBox::warning(this, tr("Search locked"), tr("End game sessions first."));
-        return;
+    // Crash watcher: what the system logs say about the interrupted trial (coevidence.h). It is collected
+    // before the question and used only inside this search, never for the persistent crash guard.
+    auto ask = [this, j, s, interrupted, pending, rebooted, currentBoot](const coevidence::Verdict &verdict) mutable {
+        // No reboot lockout: every interrupted candidate is guarded for good, so a resume can never
+        // repeat it and a reboot loop cannot form. Each resume is still the user's decision.
+        const int rebootCount = std::max(0, j.value("reboots").toInt()) + int(rebooted && pending);
+        const QString what = pending ? interrupted->what : tr("the last resolved trial");
+        // The final verification has every core undervolted: there the logs may name the culprit. A single-core
+        // probe already knows its core (the guard above); evidence there is only reported.
+        const bool finalStage = s->mode() == Mode::PerCore && !s->perCoreSearching();
+        Outcome failed{false, {}, true};
+        if (pending && finalStage && verdict.kind == coevidence::Verdict::Blamed) failed.cpus = verdict.cpus;
+        QString text = pending
+            ? tr("The search was interrupted while trying %1. That value is recorded as a crash: this core keeps its last "
+                 "passing value, and it is never tested at that value or below again, in this or any later search.").arg(what)
+            : tr("The search stopped after its previous trial was already resolved. No candidate will be replayed.");
+        if (pending && finalStage)
+            text = tr("The search was interrupted during %1. Undervolted cores back off by 2 points before it runs again: "
+                      "only the core the system logs blame, if they blame one; otherwise every undervolted core.").arg(what);
+        if (pending && rebooted) text += "\n\n" + tr("System logs: %1").arg(verdict.summary);
+        const auto answer = QMessageBox::question(this, tr("Resume CO search"),
+            text + "\n\n" + tr("Suspected reboots in this search so far: %1.").arg(rebootCount) + "\n\n"
+                 + tr("Resume after resetting the CPU curve to stock? No discards this interrupted search (its values so far "
+                      "stay in the table and can be saved)."),
+            QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::No);
+        if (answer == QMessageBox::No) {
+            QFile::remove(journalPath());
+            if (pending) s->report(failed);
+            search_ = std::move(s);
+            trial_.reset();
+            finished_ = false;
+            refreshTable();
+            updateResultButtons();
+            note(tr("Interrupted search discarded. Its values so far are in the table; Save result keeps them (not verified)."));
+            return;
+        }
+        if (answer != QMessageBox::Yes || !toolsPresent()) return;
+        if (scenes::gameSessions() > 0) {
+            QMessageBox::warning(this, tr("Search locked"), tr("End game sessions first."));
+            return;
+        }
+        mode_->setCurrentIndex(mode_->findData(int(s->mode())));
+        level_->setCurrentIndex(level_->findData(name(s->level())));
+        limit_->setValue(s->limit());
+        allStart_->setValue(s->tuning().allCoreStart);
+        step_->setValue(s->tuning().step);
+        scene_->setCurrentIndex(std::max(0, scene_->findData(j.value("scene").toString())));
+        attempts_ = j.value("attempts").toArray();
+        hardReboots_ = rebootCount;
+        if (pending) {
+            s->report(failed);
+            attempts_.append(QJsonObject{{"t", double(QDateTime::currentSecsSinceEpoch())},
+                {"what", interrupted->what}, {"pass", false},
+                {"note", rebooted ? "reboot; unsafe candidate quarantined" : "interrupted; unsafe candidate quarantined"},
+                {"logs", rebooted ? verdict.summary : QString()}});
+        }
+        if (!applyCrashGuards(*s)) {
+            QMessageBox::critical(this, tr("CO crash guard corrupted"),
+                tr("Recorded crash exclusions cannot be read. No CO value was written."));
+            return;
+        }
+        search_ = std::move(s);
+        trial_.reset();
+        bootId_ = currentBoot;
+        priorScene_ = j.value("prior_scene").toString();
+        // Commit the RECOVERED state before any further SMU write; another abrupt reboot may now
+        // safely resume from a state where the failed candidate is already excluded.
+        if (!writeJournal()) {
+            QMessageBox::critical(this, tr("Recovery journal failed"),
+                tr("Cannot durably commit the recovered state. No CO value was applied."));
+            search_.reset();
+            return;
+        }
+        trialNo_ = attempts_.size();
+        note(pending ? tr("Recovery: %1 marked unsafe and excluded. Resetting to stock first.").arg(what)
+                     : tr("Recovery: continuing after last resolved trial. Resetting to stock first."));
+        if (pending && rebooted) note(tr("System logs: %1").arg(verdict.summary));
+        privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
+            [this](const privileged::Result &r) {
+                if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message())); search_.reset(); return; }
+                const QString keep = priorScene_;
+                launch();
+                priorScene_ = keep;
+            }, 120000);
+    };
+    if (pending && rebooted) {
+        note(tr("Reading the system logs of the crashed boot…"));
+        gatherEvidence(j, *s, *interrupted, ask);
+    } else {
+        ask({});
     }
-    mode_->setCurrentIndex(mode_->findData(int(s->mode())));
-    level_->setCurrentIndex(level_->findData(name(s->level())));
-    limit_->setValue(s->limit());
-    allStart_->setValue(s->tuning().allCoreStart);
-    step_->setValue(s->tuning().step);
-    scene_->setCurrentIndex(std::max(0, scene_->findData(j.value("scene").toString())));
-    attempts_ = j.value("attempts").toArray();
-    hardReboots_ = rebootCount;
-    if (pending) {
-        s->report(Outcome{false, {}, true});
-        attempts_.append(QJsonObject{{"t", double(QDateTime::currentSecsSinceEpoch())},
-            {"what", interrupted->what}, {"pass", false},
-            {"note", rebooted ? "reboot; unsafe candidate quarantined" : "interrupted; unsafe candidate quarantined"}});
-    }
-    if (!applyCrashGuards(*s)) {
-        QMessageBox::critical(this, tr("CO crash guard corrupted"),
-            tr("Recorded crash exclusions cannot be read. No CO value was written."));
-        return;
-    }
-    search_ = std::move(s);
-    trial_.reset();
-    bootId_ = currentBoot;
-    priorScene_ = j.value("prior_scene").toString();
-    // Commit the RECOVERED state before any further SMU write; another abrupt reboot may now
-    // safely resume from a state where the failed candidate is already excluded.
-    if (!writeJournal()) {
-        QMessageBox::critical(this, tr("Recovery journal failed"),
-            tr("Cannot durably commit the recovered state. No CO value was applied."));
-        search_.reset();
-        return;
-    }
-    trialNo_ = attempts_.size();
-    note(pending ? tr("Recovery: %1 marked unsafe and excluded. Resetting to stock first.").arg(what)
-                 : tr("Recovery: continuing after last resolved trial. Resetting to stock first."));
-    privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
-        [this](const privileged::Result &r) {
-            if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message())); search_.reset(); return; }
-            const QString keep = priorScene_;
-            launch();
-            priorScene_ = keep;
-        }, 120000);
+}
+
+void CoSearchDialog::gatherEvidence(const QJsonObject &journal, const Search &search, const Trial &trial,
+                                    std::function<void(const coevidence::Verdict &)> then) {
+    using coevidence::Record;
+    // 1. What the live watcher saw during the trial and committed to the journal before the crash.
+    QList<Record> records;
+    for (const QJsonValue &v : journal.value("evidence").toArray())
+        if (const auto r = Record::fromJson(v.toObject())) records << *r;
+    const QString crashed = journal.value("boot").toString();
+    QList<int> offsets = trial.perCore;
+    if (trial.allCore) offsets = QList<int>(search.cores().size(), *trial.allCore);
+    const QList<Core> cores = search.cores();
+    privileged::run(privileged::helperPath("health-reader"), QJsonObject{{"op", "boots"}}, this,
+        [this, records, crashed, offsets, cores, then](const privileged::Result &b) mutable {
+            // 3. pstore records the boot history attributes to the crashed boot (a kernel panic's last lines).
+            bool previousIsCrashed = false;
+            if (b.ok()) {
+                const QJsonArray boots = b.json.value("boots").toArray();  // newest first
+                const QString current = b.json.value("current").toString();
+                for (int i = 0; i + 1 < boots.size(); ++i)
+                    if (boots[i].toObject().value("boot").toString() == current)
+                        previousIsCrashed = boots[i + 1].toObject().value("boot").toString() == crashed;
+                for (const QJsonValue &e : b.json.value("pstore").toObject().value("entries").toArray()) {
+                    if (e.toObject().value("boot").toString() != crashed) continue;
+                    for (const QString &line : e.toObject().value("text").toString().split('\n'))
+                        if (const auto r = coevidence::fromKernelText(line, QStringLiteral("pstore"))) records << *r;
+                }
+            }
+            privileged::run(privileged::helperPath("health-reader"), QJsonObject{{"since", 0.0}}, this,
+                [this, records, previousIsCrashed, offsets, cores, then](const privileged::Result &k) mutable {
+                    // 2. Machine checks the kernel found in the banks early in THIS boot: left there by the reset,
+                    // so they belong to the boot before - used only when that is surely the crashed one.
+                    int boot = 0;
+                    if (k.ok() && previousIsCrashed) {
+                        for (const QJsonValue &v : k.json.value("events").toArray()) {
+                            const QJsonObject e = v.toObject();
+                            if (e.value("kind").toString() != "mce" || e.value("ts_us").toDouble() > 120e6) continue;
+                            if (const auto r = coevidence::fromKernelText(e.value("text").toString(), QStringLiteral("boot-kernel"))) {
+                                records << *r;
+                                ++boot;
+                            }
+                        }
+                    }
+                    coevidence::Verdict v = coevidence::judge(records, cores, offsets);
+                    if (!previousIsCrashed)
+                        v.summary += ' ' + tr("(Machine checks from this boot's start were not used: the boot history cannot confirm "
+                                              "that the previous boot is the one that crashed.)");
+                    then(v);
+                }, 30000);
+        }, 30000);
 }
 
 void CoSearchDialog::launch() {
@@ -811,6 +909,7 @@ void CoSearchDialog::launch() {
     stop_->setEnabled(true);
     updateEstimate();
     refreshTable();
+    updateResultButtons();
     priorScene_ = scenes::activeScene();
     guard_->start();
     auto begin = [this] {
@@ -859,6 +958,8 @@ void CoSearchDialog::step() {
     refreshTable();
     if (!trial_) { finished_ = true; reset(tr("Search finished")); return; }
     ++trialNo_;
+    evidence_ = {};
+    activeCpu_ = -1;
     if (!writeJournal()) { reset(tr("Cannot durably save the recovery journal; no CO offset was written.")); return; }
     const bool all = trial_->allCore.has_value();
     QJsonObject req;
@@ -882,6 +983,9 @@ void CoSearchDialog::step() {
         if (!running_) return;
         if (!r.ok()) { reset(tr("SMU write rejected: %1").arg(r.message())); return; }
         if (abort_) { reset(tr("Cancelled after in-flight write")); return; }
+        watchSeq_ = kmsgSeq_;
+        mceWatch_ = mceBefore_;
+        watch_->start();
         testIndex_ = 0;
         outcome_ = Outcome{true, {}};
         runTest();
@@ -912,6 +1016,11 @@ void CoSearchDialog::testOutput() {
         testBuf_.remove(0, nl + 1);
         const QString ev = o.value("ev").toString();
         if (ev == "end") testEnd_ = o;
+        else if (ev == "core" && o.value("cpu").toInt(-1) != activeCpu_) {
+            // Single-core parts: which core carries the load now, kept in the journal for a crash.
+            activeCpu_ = o.value("cpu").toInt(-1);
+            writeJournal();
+        }
         else if (ev == "error") log_->appendPlainText(tr("          wrong result on CPU %1").arg(o.value("cpu").toInt()));
         else if (ev == "phase") {
             const QJsonValue mhz = o.value("mhz_max");
@@ -1032,6 +1141,7 @@ void CoSearchDialog::validateFaultLog(Outcome o) {
 }
 
 void CoSearchDialog::finishTrial(const Outcome &o) {
+    watch_->stop();
     QJsonArray cpus;
     for (int c : o.cpus) cpus << c;
     attempts_.append(QJsonObject{{"t", double(testStart_)}, {"what", trial_->what}, {"pass", o.pass}, {"cpus", cpus}});
@@ -1078,15 +1188,15 @@ void CoSearchDialog::cancel() {
 void CoSearchDialog::reset(const QString &reason) {
     if (!running_ || resetting_) return;
     resetting_ = true;
+    watch_->stop();
     applyTuning_->setEnabled(false);
     note(reason + tr(" — requesting stock reset."));
     privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
         [this, reason](const privileged::Result &r) { done(r.ok(), reason + (r.ok() ? QString() : QStringLiteral("; reset FAILED: ") + r.message())); }, 120000);
 }
 
-QString CoSearchDialog::saveProfile() const {
+bool CoSearchDialog::saveProfile(const QString &name) const {
     // Same file format as Ryzen Curve → Save Profile, so the result loads there like any other profile.
-    const QString name = QStringLiteral("CO search %1").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm"));
     const QList<int> v = search_->values();
     QJsonArray cores;
     if (search_->mode() == Mode::PerCore)
@@ -1099,12 +1209,98 @@ QString CoSearchDialog::saveProfile() const {
                               {"coall", search_->mode() == Mode::AllCore ? QJsonValue(v.value(0)) : QJsonValue()}, {"cores", cores}};
     QDir().mkpath(ryzen::profilesDir());
     QSaveFile f(ryzen::profilesDir() + '/' + name + ".json");
-    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(profile).toJson()) < 0 || !f.commit()) return {};
-    return name;
+    return f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(profile).toJson()) >= 0 && f.commit();
+}
+
+void CoSearchDialog::updateResultButtons() {
+    bool any = false;
+    if (search_) for (int x : search_->values()) any |= x < 0;
+    saveResult_->setEnabled(!running_ && any);
+    loadResult_->setEnabled(!running_ && any);
+}
+
+void CoSearchDialog::saveResultAs() {
+    if (running_ || !search_) return;
+    const QString date = QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm");
+    QString name = finished_ ? tr("CO search %1").arg(date) : tr("CO search %1 (not verified)").arg(date);
+    bool ok = false;
+    name = QInputDialog::getText(this, tr("Save result as profile"),
+        finished_ ? tr("Profile name:")
+                  : tr("This search did not finish its verification: these values passed only the tests run so far.\n\nProfile name:"),
+        QLineEdit::Normal, name, &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (name.contains('/') || name.contains('\\') || name.startsWith('.') || name.size() > 100) {
+        QMessageBox::warning(this, tr("Invalid name"), tr("Use a name without '/' or '\\', not starting with '.', up to 100 characters."));
+        return;
+    }
+    if (QFileInfo::exists(ryzen::profilesDir() + '/' + name + ".json") &&
+        QMessageBox::question(this, tr("Overwrite profile"), tr("A profile named '%1' exists. Replace it?").arg(name),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    if (!saveProfile(name)) { QMessageBox::critical(this, tr("Save failed"), tr("Could not write the profile.")); return; }
+    reloadPresets();
+    note(finished_ ? tr("Result saved as Ryzen Curve profile '%1'.").arg(name)
+                   : tr("Result saved as Ryzen Curve profile '%1' (NOT verified: the search did not finish).").arg(name));
+}
+
+void CoSearchDialog::loadResultIntoStarts() {
+    if (running_ || !search_) return;
+    const QList<int> v = search_->values();
+    QStringList set;
+    for (int i = 0; i < search_->cores().size(); ++i) {
+        const Core &c = search_->cores()[i];
+        const int key = coreKey(c.ccd, c.slot);
+        if (search_->mode() == Mode::PerCore && search_->coreState(i).excluded) continue;  // stays unticked
+        starts_[key] = std::clamp(v[i], -50, 0);
+        set << QStringLiteral("CCD%1/%2 %3").arg(c.ccd).arg(c.slot).arg(starts_[key]);
+    }
+    preset_->setCurrentIndex(0);
+    mode_->setCurrentIndex(mode_->findData(int(Mode::PerCore)));
+    saveSettings();
+    refreshTable();
+    updateEstimate();
+    note(tr("Result copied into the Start column: %1").arg(set.join(", ")));
+}
+
+void CoSearchDialog::watchTick() {
+    if (!running_ || !trial_ || resetting_) { watch_->stop(); return; }
+    QList<coevidence::Record> fresh;
+    // MCA threshold counters move the moment a corrected error happens; the kernel itself may log it
+    // only at its next poll (5 minutes), too late before a crash.
+    const QHash<QString, QString> now = mceCounters();
+    for (auto i = now.cbegin(); i != now.cend(); ++i)
+        if (mceWatch_.contains(i.key()) && mceWatch_.value(i.key()) != i.value())
+            if (const auto r = coevidence::fromCounterPath(i.key())) fresh << *r;
+    mceWatch_ = now;
+    auto keep = [this](const QList<coevidence::Record> &records) {
+        if (records.isEmpty() || !running_ || !trial_) return;
+        for (const auto &r : records) {
+            if (evidence_.size() >= 64) break;
+            evidence_.append(r.toJson());
+            note(tr("Watcher: %1").arg(r.text));
+        }
+        writeJournal();  // durable now: a crash a moment later must not lose it
+    };
+    keep(fresh);
+    if (watchBusy_) return;
+    watchBusy_ = true;
+    privileged::run(privileged::helperPath("health-reader"), QJsonObject{{"since", double(watchSeq_)}}, this,
+        [this, keep](const privileged::Result &r) {
+            watchBusy_ = false;
+            if (!r.ok()) return;
+            watchSeq_ = std::max(watchSeq_, quint64(r.json.value("last_seq").toDouble()));
+            QList<coevidence::Record> records;
+            for (const QJsonValue &v : r.json.value("events").toArray()) {
+                const QJsonObject e = v.toObject();
+                if (e.value("kind").toString() != "mce" && e.value("kind").toString() != "lockup") continue;
+                if (const auto rec = coevidence::fromKernelText(e.value("text").toString(), QStringLiteral("watch-kernel"))) records << *rec;
+            }
+            keep(records);
+        }, 30000);
 }
 
 void CoSearchDialog::done(bool resetOk, const QString &reason) {
     guard_->stop();
+    watch_->stop();
     // Persist a bounded evidence record. "passed" means only the tests run here, not curve stability.
     QDir().mkpath(stateDir());
     const QString path = stateDir() + "/co-search-runs.json";
@@ -1139,6 +1335,7 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_}) w->setEnabled(true);
     stop_->setEnabled(false);
     refreshTable();
+    updateResultButtons();
     note(reason);
     if (!resetOk) {
         QMessageBox::critical(this, tr("Reset failed"), tr("CPU curve reset could not be confirmed. Use Ryzen Curve → Reset, or reboot before continuing."));
@@ -1147,14 +1344,16 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     if (finished_ && search_) {
         QStringList v;
         for (int x : search_->values()) v << QString::number(x);
-        const QString profile = saveProfile();
+        const QString profile = QStringLiteral("CO search %1").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm"));
+        const bool saved = saveProfile(profile);
         reloadPresets();  // the result can be the next search's preset
         note(tr("SMU reset confirmed. Result: %1. %2").arg(v.join(' '),
-             profile.isEmpty() ? tr("Saving the profile FAILED.")
+             !saved ? tr("Saving the profile FAILED.")
                                : tr("Saved as Ryzen Curve profile '%1': load and apply it there. Many users keep 1-2 points of margin "
                                     "above a searched value for daily use; run long tests before relying on it.").arg(profile)));
     } else {
-        note(tr("SMU reset confirmed. The search did not finish; nothing was saved."));
+        note(tr("SMU reset confirmed. The search did not finish; nothing was saved automatically. Save result keeps the "
+                "values found so far, marked as not verified."));
     }
     // The scene that was active before the search, if the search switched to its own.
     auto *win = parentWidget() ? qobject_cast<MainWindow *>(parentWidget()->window()) : nullptr;
