@@ -20,7 +20,9 @@ and fault-detection behaviour from those documents is unchanged.
    core is probed, that core and value go to `$XDG_STATE_HOME/centurion/co-search-crash-guards.json` before the
    resume / discard question. That value and everything below it are never applied to that physical core
    (CCD / slot) again, in this or any later search. A computational error (wrong result, machine-check) ends the
-   core in this search only, so a later search with another scene is not limited by it.
+   core in this search only, so a later search with another scene is not limited by it. So does the application
+   dying while the machine keeps running (same boot): that is not a crash of the machine. Quitting the application
+   during a trial (after its confirmed stock reset) is no failure at all: a resume runs that trial again.
 6. **Unticked cores** (Core column checkboxes, per-core mode) stay at stock in every probe, in the confirmation and
    in the saved profile. The selection is remembered in the CO Search settings.
 7. When every core is done, the whole set gets the **20-minute verification** (below). A failure backs the named
@@ -128,6 +130,12 @@ automatic "CO search <date>" profile of a finished search is unchanged.
 
 ## Recovery changes
 
+- Discarding a journal of the current boot (the application died, the machine did not) resets the curve to stock
+  first, since the trial's offset may still be applied; the journal is removed only after a confirmed reset. A
+  journal of an earlier boot is removed without a write (a restart already brought the SMU back to stock).
+- CO Search runs on AC power only: it is not started on battery, and unplugging the charger stops it with a stock
+  reset. On battery the firmware's lower power limits would give results that need not hold on AC, and a battery
+  running out would end a trial like a crash.
 - The two-reboot lockout is removed. In a per-core search a crash at each core's edge is an expected outcome, and
   the lockout stopped the search after two cores. A reboot loop cannot form: each crashed value is guarded before
   anything else happens, so a resume cannot apply it again. Each resume still asks the user, and shows how many

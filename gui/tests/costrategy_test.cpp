@@ -661,6 +661,47 @@ int main(int argc, char **argv) {
         CHECK(levelFrom("medium") == Level::Medium && !levelFrom("x"));
     }
 
+    // Clean exit (application quit after a confirmed stock reset): the dialog resumes from the journal's
+    // after-next() snapshot and runs the in-flight trial again instead of calling next(). For a quit at every
+    // trial of every mode, that must be the very trial that was cut short, and the search must end exactly
+    // like one that was never interrupted: same values, same trials (the repeat replaces the cut-short run), nothing below the limit.
+    {
+        int replays = 0;
+        for (const Mode mode : {Mode::PerCore, Mode::AllCore}) {
+            auto fresh = [&] {
+                Search s(mode, Level::Fast, -30, cpu(4), Tuning{-5, 2});
+                if (mode == Mode::PerCore) startAll(s, -15);
+                return s;
+            };
+            Sim ref{stable};
+            Search whole = fresh();
+            const QList<int> expected = runAll(whole, ref);
+            for (int quitAt = 1; quitAt <= ref.trials; ++quitAt) {
+                Search s = fresh();
+                Sim sim{stable};
+                std::optional<Search> resumed;
+                for (int n = 1; n <= quitAt; ++n) {
+                    const auto t = s.next();
+                    if (!t) break;
+                    if (n < quitAt) { s.report(sim.run(s, *t)); continue; }
+                    resumed = Search::load(s.save());  // the pending journal, written after next()
+                    const auto again = resumed ? resumed->inFlight() : std::nullopt;
+                    CHECK(again && again->what == t->what && again->perCore == t->perCore && again->allCore == t->allCore);
+                    CHECK(again && again->tests.size() == t->tests.size() && again->tests.first().args == t->tests.first().args);
+                    if (!again) break;
+                    resumed->report(sim.run(*resumed, *again));  // the repeat, reported on the resumed search
+                    ++replays;
+                }
+                if (!resumed) continue;
+                CHECK(runAll(*resumed, sim) == expected);
+                CHECK(sim.trials == ref.trials);  // the cut-short run gave no result; its repeat is the one counted
+                CHECK(sim.minValue >= -30);
+            }
+        }
+        CHECK(replays > 20);
+        std::printf("clean-exit replays: %d\n", replays);
+    }
+
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("costrategy: all checks passed");
     return 0;

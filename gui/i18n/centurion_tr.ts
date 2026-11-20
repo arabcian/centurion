@@ -9888,6 +9888,58 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
     <context>
         <name>CoSearchDialog</name>
         <message>
+            <source>On battery</source>
+            <translation>Pilde</translation>
+        </message>
+        <message>
+            <source>Connect the charger first. CO Search runs on AC power only.</source>
+            <translation>Önce şarj cihazını takın. CO Arama yalnızca AC güçte çalışır.</translation>
+        </message>
+        <message>
+            <source>Charger disconnected; stopping the search and resetting the curve.</source>
+            <translation>Şarj cihazı çıkarıldı; arama durduruluyor ve eğri sıfırlanıyor.</translation>
+        </message>
+        <message>
+            <source>Resetting the CPU curve to stock before discarding the interrupted search…</source>
+            <translation>Yarıda kalan arama silinmeden önce CPU eğrisi fabrika ayarına sıfırlanıyor…</translation>
+        </message>
+        <message>
+            <source>Reset failed: %1. The journal is kept; use Ryzen Curve → Reset, or reboot.</source>
+            <translation>Sıfırlama başarısız: %1. Günlük saklandı; Ryzen Curve → Sıfırla kullanın ya da yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>The CPU curve is reset to stock first: the interrupted value may still be applied in this boot.</source>
+            <translation>Önce CPU eğrisi fabrika ayarına sıfırlanır: yarıda kalan değer bu açılışta hâlâ uygulanmış olabilir.</translation>
+        </message>
+        <message>
+            <source>The CPU curve is not changed: the machine has restarted since.</source>
+            <translation>CPU eğrisi değiştirilmez: makine o zamandan beri yeniden başlatıldı.</translation>
+        </message>
+        <message>
+            <source>Invalid CO search journal discarded.</source>
+            <translation>Geçersiz CO arama günlüğü silindi.</translation>
+        </message>
+        <message>
+            <source>The application was closed during %1, after the CPU curve was reset to stock. Nothing failed: a resume runs this trial again.</source>
+            <translation>Uygulama %1 sırasında, CPU eğrisi fabrika ayarına sıfırlandıktan sonra kapatıldı. Başarısız olan bir şey yok: devam edildiğinde bu deneme yeniden çalıştırılır.</translation>
+        </message>
+        <message>
+            <source>The application stopped during %1 while the machine kept running. It counts as a failed verification: every undervolted core backs off by 1 point before it runs again.</source>
+            <translation>Uygulama %1 sırasında durdu, makine ise çalışmaya devam etti. Bu, başarısız bir doğrulama sayılır: yeniden çalışmadan önce undervolt uygulanan her çekirdek 1 puan geri çekilir.</translation>
+        </message>
+        <message>
+            <source>The application stopped while trying %1, but the machine kept running. That value counts as failed in this search only, as a wrong result would; no crash guard is recorded.</source>
+            <translation>Uygulama %1 denenirken durdu, ancak makine çalışmaya devam etti. Bu değer, hatalı bir sonuçta olduğu gibi yalnızca bu aramada başarısız sayılır; crash koruması kaydedilmez.</translation>
+        </message>
+        <message>
+            <source>Recovery: %1 runs again. Resetting to stock first.</source>
+            <translation>Kurtarma: %1 yeniden çalıştırılacak. Önce fabrika ayarına sıfırlanıyor.</translation>
+        </message>
+        <message>
+            <source>Recovery: %1 counted as failed in this search. Resetting to stock first.</source>
+            <translation>Kurtarma: %1 bu aramada başarısız sayıldı. Önce fabrika ayarına sıfırlanıyor.</translation>
+        </message>
+        <message>
             <source>Ryzen CO Search Assistant (experimental)</source>
             <translation>Ryzen CO Arama Asistanı (deneysel)</translation>
         </message>
@@ -10048,8 +10100,8 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Geçersiz CO arama günlüğü</translation>
         </message>
         <message>
-            <source>It cannot be safely resumed, and its interrupted value cannot be identified for a crash guard. Discard the old journal? The CPU curve is not changed.</source>
-            <translation>Güvenle devam ettirilemez ve yarıda kalan değer crash koruması için belirlenemiyor. Eski günlük silinsin mi? CPU eğrisi değiştirilmez.</translation>
+            <source>It cannot be safely resumed, and its interrupted value cannot be identified for a crash guard. Discard the old journal?</source>
+            <translation>Güvenle devam ettirilemez ve yarıda kalan değer crash koruması için belirlenemiyor. Eski günlük silinsin mi?</translation>
         </message>
         <message>
             <source>The interrupted CO Search journal is incompatible or damaged.</source>

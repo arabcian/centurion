@@ -9,7 +9,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - Ryzen Curve → CO Search rewritten: all-core or per-core search, fast / medium / long levels, 60 s CPU cycles
   (`centurion-cpustress --load co`: 40 s of steady FFT / NTT load in the manner of Prime95 Small FFT and y-cruncher,
   then 20 s of load changes that move the clock and the idle states), single-core trials on the best-ranked cores,
-  a confirmation pass, its own scene and temperature limit (default 95 °C), resume after a crash, and the result
+  a confirmation pass, its own scene (no temperature cutoff of its own: the CPU firmware's thermal limits apply),
+  AC power only, resume after a crash, and the result
   saved as a Ryzen Curve profile. Replaces the 20 s all-core SSE test.
 - Health → Backups: distribution-aware defaults. `/etc/os-release` (ID / ID_LIKE) selects Gentoo, Arch (Manjaro,
   EndeavourOS, CachyOS), Debian/Ubuntu (Mint, Pop!_OS), Fedora/RHEL, openSUSE, Void or Alpine; the image's exclude
@@ -49,6 +50,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - `deny.toml`: RustSec advisories, licences and sources checked by `cargo deny` in CI.
 
 ### Fixed
+- Ryzen Curve → CO Search: discarding an interrupted search in the same boot (the application had died, the
+  machine had not) resets the CPU curve to stock first; the journal is removed only after a confirmed reset. The
+  trial's offset could stay applied until the next reboot, while the dialog said the curve was not changed.
+- Ryzen Curve → CO Search: only a machine restart records a crash guard. Quitting the application during a trial
+  (after its confirmed stock reset) runs that trial again on resume; the application dying while the machine kept
+  running counts as a failure in that search only. Both used to forbid the value on that core for good.
+- Ryzen Curve → CO Search runs on AC power only: it does not start on battery, and unplugging the charger stops it
+  with a stock reset. A battery running out used to end a trial like a crash (a false crash guard), and the lower
+  battery power limits gave results that need not hold on AC.
 - Ryzen Curve → CO Search, per-core: the first failure after a pass now ends that core at its last passing value;
   nothing more negative is tried on it again (it used to keep refining between the pass and the failure). The
   descent step is one setting (default 1) instead of coarse / refine steps. A crash guard forbids the crashed value

@@ -102,6 +102,8 @@ private:
     QString expectedCurve_;              // CurvePage::currentState("cpu") while the trial's offsets are applied
     int trialNo_ = 0;
     int hardReboots_ = 0;              // suspected reboots in this search, shown when resuming
+    bool cleanExit_ = false;           // application quit with a confirmed stock reset: the pending trial is repeated, not failed
+    std::optional<cosearch::Trial> replay_;  // resume after a clean exit: run this in-flight trial again instead of next()
 
     bool running_ = false, abort_ = false, applying_ = false, resetting_ = false, finished_ = false;
     bool sceneApplying_ = false, quitting_ = false;
