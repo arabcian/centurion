@@ -1,4 +1,6 @@
-//! `--load co`: the Curve Optimizer cycle. Every cycle is 60 s:
+//! `--load co`: Curve Optimizer cycles default to 60 s. Optional `--seconds 24` quick probes
+//! have 12 s of steady load and the SAME ten load-transition patterns for 1.2 s each.
+//! Full cycle:
 //!
 //!   0-40 s   steady: one kernel (cowork.rs) as fast as it goes, the maximum-load check;
 //!   40-60 s  ten 2-second steps of load changes (FLUCT): short bursts and pauses at several rates, so the
@@ -16,6 +18,17 @@ use crate::cowork::{self, Kernel, Scratch};
 pub const CYCLE: Duration = Duration::from_secs(60);
 pub const STEADY: Duration = Duration::from_secs(40);
 const STEP: Duration = Duration::from_secs(2);
+const QUICK: Duration = Duration::from_secs(24);
+const QUICK_STEADY: Duration = Duration::from_secs(12);
+const QUICK_STEP: Duration = Duration::from_millis(1200);
+
+#[derive(Clone, Copy)]
+struct Timing { steady: Duration, step: Duration }
+
+fn timing(seconds: u64) -> Timing {
+    if seconds == QUICK.as_secs() { Timing { steady: QUICK_STEADY, step: QUICK_STEP } }
+    else { Timing { steady: STEADY, step: STEP } }
+}
 
 /// One fluctuation step. `on_ms`: burst length (ONE = a single chunk, ALL = the whole step, RAND = 1-200 ms
 /// each time); `off_ms`: pause after each burst (RAND = 1-200 ms); `swap`: alternate the cycle's kernel
@@ -40,8 +53,9 @@ const FLUCT: [Step; 10] = [
 ];
 
 /// Phase at `elapsed` into a cycle: 0 = steady, 1..=10 = fluctuation step.
-fn phase_at(elapsed: Duration) -> usize {
-    if elapsed < STEADY { 0 } else { (1 + ((elapsed - STEADY).as_millis() / STEP.as_millis()) as usize).min(FLUCT.len()) }
+fn phase_at(elapsed: Duration, span: Timing) -> usize {
+    if elapsed < span.steady { 0 }
+    else { (1 + ((elapsed - span.steady).as_millis() / span.step.as_millis()) as usize).min(FLUCT.len()) }
 }
 
 fn phase_name(p: usize) -> String { if p == 0 { "steady".into() } else { format!("fluct-{p}") } }
@@ -70,7 +84,8 @@ fn reference_on(cpu: usize) -> Result<Vec<u64>, String> {
     Ok(kernels().into_iter().flat_map(|k| (0..cowork::NSEEDS).map(move |seed| (k, seed))).map(|(k, seed)| cowork::chunk(k, seed, &mut s)).collect())
 }
 
-struct Job { cpu: usize, slot: usize, n: usize, kernel: usize, per_core: bool, start: Instant, t0: Instant }
+struct Job { cpu: usize, slot: usize, n: usize, kernel: usize, per_core: bool,
+             start: Instant, t0: Instant, span: Timing }
 
 /// One cycle on one CPU. Stops at the first wrong chunk (recorded in `sh`), at STOP or at `abort`.
 fn worker(j: Job, ks: &[Kernel], refs: &[u64], sh: &Shared, abort: &AtomicBool) -> Result<u64, String> {
@@ -93,13 +108,13 @@ fn worker(j: Job, ks: &[Kernel], refs: &[u64], sh: &Shared, abort: &AtomicBool) 
         sh.wrong.lock().unwrap().push((secs(j.t0), j.cpu, i as u64, refs[i], got));
         false
     };
-    let steady_end = j.start + STEADY;
+    let steady_end = j.start + j.span.steady;
     while !halted() && Instant::now() < steady_end {
         if !run(j.kernel, &mut n) { return Ok(n); }
     }
     let other = (j.kernel + 1) % ks.len();
     for (i, st) in FLUCT.iter().enumerate() {
-        let end = steady_end + STEP * (i as u32 + 1);
+        let end = steady_end + j.span.step * (i as u32 + 1);
         if !j.per_core && !active(j.slot, j.n, i, st.eighths) { sleep_until(end, abort); continue; }
         let mut flip = false;
         while !halted() && Instant::now() < end {
@@ -152,14 +167,14 @@ impl Clock {
 struct Ctx { ks: Arc<Vec<Kernel>>, refs: Arc<Vec<u64>>, sh: Arc<Shared>, t0: Instant }
 
 /// Runs one cycle on `cpus` (one worker each) and prints its phases; true when it ended with an error.
-fn cycle(cpus: &[usize], per_core: bool, kernel: usize, cyc: u32, cx: &Ctx, p: &mut Printer) -> bool {
+fn cycle(cpus: &[usize], per_core: bool, kernel: usize, cyc: u32, cx: &Ctx, p: &mut Printer, span: Timing) -> bool {
     let (ks, sh, t0) = (&cx.ks, &cx.sh, cx.t0);
     let start = Instant::now();
     let abort = Arc::new(AtomicBool::new(false));
     let errs_before = sh.errors.load(Ordering::Relaxed);
     let hs: Vec<_> = cpus.iter().enumerate().map(|(slot, &cpu)| {
         let (ks, refs, sh, abort) = (ks.clone(), cx.refs.clone(), sh.clone(), abort.clone());
-        let j = Job { cpu, slot, n: cpus.len(), kernel, per_core, start, t0 };
+        let j = Job { cpu, slot, n: cpus.len(), kernel, per_core, start, t0, span };
         (cpu, std::thread::spawn(move || worker(j, &ks, &refs, &sh, &abort)))
     }).collect();
     let (mut phase, mut clock) = (0usize, Clock::default());
@@ -172,7 +187,7 @@ fn cycle(cpus: &[usize], per_core: bool, kernel: usize, cyc: u32, cx: &Ctx, p: &
     };
     while hs.iter().any(|(_, h)| !h.is_finished()) {
         std::thread::sleep(Duration::from_millis(100));
-        let now = phase_at(start.elapsed());
+        let now = phase_at(start.elapsed(), span);
         if now != phase { end_phase(phase, &clock); phase = now; clock = Clock::default(); }
         clock.sample(cpus);
         // All-core: the first wrong chunk ends every thread; there is nothing left to learn from this cycle.
@@ -215,9 +230,10 @@ pub fn run(a: &Args) -> i32 {
         Err(e) => return end("fail", 0.0, 0, 1, &[], &e),
     };
     let t0 = Instant::now();
+    let span = timing(a.seconds);
     let names: Vec<&str> = ks.iter().map(|k| k.name()).collect();
-    emit(&json!({"ev": "start", "mode": if a.per_core { "percore" } else { "allcore" }, "load": "co", "seconds": CYCLE.as_secs(),
-                 "steady_seconds": STEADY.as_secs(), "cycles": a.cycles, "transitions": true, "kernels": names,
+    emit(&json!({"ev": "start", "mode": if a.per_core { "percore" } else { "allcore" }, "load": "co", "seconds": a.seconds,
+                 "steady_seconds": span.steady.as_secs(), "cycles": a.cycles, "transitions": true, "kernels": names,
                  "wide": cowork::wide_isa(), "cpus": tested}));
     let sh = Arc::new(Shared::default());
     sh.errors.fetch_add(outvoted.len() as u64, Ordering::Relaxed);
@@ -234,11 +250,11 @@ pub fn run(a: &Args) -> i32 {
                 if p.failed.contains(&cpu) { continue; }
                 emit(&json!({"ev": "core", "t": secs(t0), "cpu": cpu, "cycle": c, "kernel": ks[kernel_of(c)].name()}));
                 let (errs, chunks) = (sh.errors.load(Ordering::Relaxed), sh.chunks.load(Ordering::Relaxed));
-                cycle(&[cpu], true, kernel_of(c), c, &cx, &mut p);
+                cycle(&[cpu], true, kernel_of(c), c, &cx, &mut p, span);
                 emit(&json!({"ev": "core_end", "t": secs(t0), "cpu": cpu, "chunks": sh.chunks.load(Ordering::Relaxed) - chunks,
                              "errors": sh.errors.load(Ordering::Relaxed) - errs}));
             }
-        } else if STOP.load(Ordering::SeqCst) || cycle(&tested, false, kernel_of(c), c, &cx, &mut p) {
+        } else if STOP.load(Ordering::SeqCst) || cycle(&tested, false, kernel_of(c), c, &cx, &mut p, span) {
             break;
         }
     }
@@ -257,12 +273,24 @@ mod tests {
     #[test]
     fn cycle_is_40_seconds_steady_then_20_of_steps() {
         assert_eq!(STEADY + STEP * FLUCT.len() as u32, CYCLE);
-        assert_eq!(phase_at(Duration::from_millis(39_999)), 0);
-        assert_eq!(phase_at(STEADY), 1);
-        assert_eq!(phase_at(Duration::from_millis(41_999)), 1);
-        assert_eq!(phase_at(Duration::from_millis(42_000)), 2);
-        assert_eq!(phase_at(Duration::from_millis(59_999)), 10);
-        assert_eq!(phase_at(Duration::from_secs(75)), 10);  // a late sample stays in the last step
+        let full = timing(60);
+        assert_eq!(phase_at(Duration::from_millis(39_999), full), 0);
+        assert_eq!(phase_at(STEADY, full), 1);
+        assert_eq!(phase_at(Duration::from_millis(41_999), full), 1);
+        assert_eq!(phase_at(Duration::from_millis(42_000), full), 2);
+        assert_eq!(phase_at(Duration::from_millis(59_999), full), 10);
+        assert_eq!(phase_at(Duration::from_secs(75), full), 10);  // late sample stays on last step
+    }
+
+    #[test]
+    fn quick_cycle_keeps_all_transition_patterns() {
+        let quick = timing(24);
+        assert_eq!(quick.steady + quick.step * FLUCT.len() as u32, QUICK);
+        assert_eq!(phase_at(Duration::from_millis(11_999), quick), 0);
+        assert_eq!(phase_at(Duration::from_millis(12_000), quick), 1);
+        assert_eq!(phase_at(Duration::from_millis(13_199), quick), 1);
+        assert_eq!(phase_at(Duration::from_millis(13_200), quick), 2);
+        assert_eq!(phase_at(Duration::from_millis(23_999), quick), 10);
     }
 
     #[test]

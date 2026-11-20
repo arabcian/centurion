@@ -9,7 +9,8 @@
 //!       one thread on every online logical CPU
 //!
 //!   centurion-cpustress percore|allcore --load co [--cycles N] [--kernel K] [--cpus LIST]
-//!       Curve Optimizer cycles of 60 s (see co.rs): 40 s steady FFT / NTT load, then 20 s of load changes.
+//!       Curve Optimizer cycles default to 60 s (40 s steady, 20 s transitions); 24 s quick
+//!       cycles (12 s steady, 12 s transitions) are available for CO search probes.
 //!       percore: each core in turn gets N cycles; allcore: N cycles on every online CPU. K = first kernel.
 //!
 //! Output: one JSON object per line on stdout.
@@ -63,7 +64,7 @@ fn secs(t: Instant) -> f64 { (t.elapsed().as_secs_f64() * 1000.0).round() / 1000
 #[derive(Debug, PartialEq)]
 struct Args { per_core: bool, load: Load, seconds: u64, cycles: u32, transitions: bool, cpus: Option<Vec<usize>>, co: bool, kernel: usize }
 
-const USAGE: &str = "usage: centurion-cpustress info | percore --load <sse|avx2|avx512> --seconds <s> [--cycles N] [--transitions] [--cpus LIST] | allcore --load <sse|avx2|avx512> --seconds <s> [--transitions] | percore|allcore --load co [--cycles N] [--kernel 0-2] [--cpus LIST (percore)]";
+const USAGE: &str = "usage: centurion-cpustress info | percore --load <sse|avx2|avx512> --seconds <s> [--cycles N] [--transitions] [--cpus LIST] | allcore --load <sse|avx2|avx512> --seconds <s> [--transitions] | percore|allcore --load co [--seconds 24|60] [--cycles N] [--kernel 0-2] [--cpus LIST (percore)]";
 
 fn parse(argv: &[String]) -> Result<Args, String> {
     let per_core = match argv.first().map(String::as_str) {
@@ -90,11 +91,15 @@ fn parse(argv: &[String]) -> Result<Args, String> {
     let cycles = cycles.unwrap_or(1);
     if !(1..=100).contains(&cycles) { return Err("--cycles must be 1..100".into()); }
     if co {
-        // A cycle is co::CYCLE long and has its own load changes.
-        if seconds.is_some() || transitions { return Err("--seconds and --transitions do not go with --load co".into()); }
+        // The 24-second screening variant still runs ALL ten boost/idle phases.
+        if transitions { return Err("--transitions is implicit in --load co".into()); }
+        let seconds = seconds.unwrap_or(co::CYCLE.as_secs());
+        if seconds != 24 && seconds != co::CYCLE.as_secs() {
+            return Err("--load co allows only --seconds 24 or 60".into());
+        }
         let kernel = kernel.unwrap_or(0);
         if kernel >= cowork::KERNELS.len() { return Err("--kernel must be 0..2".into()); }
-        return Ok(Args { per_core, load: Load::Sse, seconds: co::CYCLE.as_secs(), cycles, transitions, cpus, co, kernel });
+        return Ok(Args { per_core, load: Load::Sse, seconds, cycles, transitions, cpus, co, kernel });
     }
     if kernel.is_some() { return Err("--kernel goes with --load co only".into()); }
     if !per_core && cycles != 1 { return Err("unknown argument --cycles".into()); }
@@ -339,12 +344,15 @@ mod tests {
         assert!(parse(&v("percore --load sse --seconds 5 --cycles 0")).is_err());
         assert!(parse(&v("burn")).is_err());
         assert!(parse(&v("allcore --load sse --seconds 5 --cycles 2")).is_err());  // per-core only, as before
-        // --load co: fixed-length cycles, any mode, a starting kernel.
+        // --load co: full or short cycles, any mode, a starting kernel.
         assert_eq!(parse(&v("allcore --load co --cycles 3 --kernel 2")).unwrap(),
                    Args { per_core: false, load: Load::Sse, seconds: 60, cycles: 3, transitions: false, cpus: None, co: true, kernel: 2 });
         assert_eq!(parse(&v("percore --load co --cpus 4")).unwrap(),
                    Args { per_core: true, load: Load::Sse, seconds: 60, cycles: 1, transitions: false, cpus: Some(vec![4]), co: true, kernel: 0 });
-        assert!(parse(&v("percore --load co --seconds 60")).is_err());
+        assert_eq!(parse(&v("percore --load co --seconds 24 --kernel 2")).unwrap().seconds, 24);
+        assert_eq!(parse(&v("percore --load co --seconds 60")).unwrap().seconds, 60);
+        assert!(parse(&v("percore --load co --seconds 12")).is_err());
+        assert!(parse(&v("percore --load co --seconds 120")).is_err());
         assert!(parse(&v("percore --load co --transitions")).is_err());
         assert!(parse(&v("percore --load co --kernel 3")).is_err());
         assert!(parse(&v("percore --load sse --seconds 5 --kernel 1")).is_err());

@@ -7,13 +7,13 @@
 // A trial tests the best-ranked cores alone first (single-core load is where the boost and the offset's
 // effect are highest) and then every core at once.
 //
-// Per-core: the all-core search (without its confirmation) gives a floor every core is known to pass. Then
-// each core goes down from there on its own, in turn alternating between CCDs: the core under test gets the
-// candidate, every other core keeps its last passed value, and only that core is loaded, so it alone sets
-// the shared voltage rail. A failure always counts against the core under test (the only thing that
-// changed). A final confirmation runs every core alone and then all together with the whole set; a core
-// that fails there gets +1 (every undervolted core when a failure names no CPU) until it passes; a search
-// that climbs back to 0 everywhere ends with stock.
+// Per-core: skip the all-core pre-search. Every physical core starts at -15 (clamped to the user's
+// search limit), with ALL other cores at stock. Successful probes descend in steps of 5; after the first
+// failure the stable/failed bracket is bisected to one CO point. If -15 itself fails, bisect toward stock
+// instead of assuming that every chip tolerates -15. Alternating CCDs reduces consecutive heating of one.
+// The short probes include steady load and all ten boost/idle transitions. Full-length verification
+// tests each core at its found offset and then the whole set together. Correlated confirmation failures
+// make the implicated core(s) less negative; untraceable failures back off all undervolted cores.
 //
 // The state is a plain JSON snapshot (save / load), so a search interrupted by a crash can resume: the trial
 // that was running counts as failed.
@@ -50,7 +50,7 @@ struct Core {
 /// One centurion-cpustress run.
 struct Test {
     QStringList args;
-    int minutes = 0;  // expected length
+    int seconds = 0;  // expected test length, without startup/reference overhead
 };
 
 /// What to try next: the offsets to apply, then the tests to run in order (stop at the first failure).
@@ -59,7 +59,7 @@ struct Trial {
     QList<int> perCore;          // otherwise: one offset per core, in cores() order
     QList<Test> tests;
     QString what;                // for the log and the crash note
-    int minutes() const;
+    int seconds() const;
 };
 
 struct Outcome {
@@ -94,17 +94,19 @@ public:
 
 private:
     enum class Stage { AllCore, PerCore, Confirm, Done };
-    struct Walk {             // one descent: all-core, or one core's
-        int pass = 0;         // last value that passed (0 = stock, never tested)
-        int floor = 0;        // most negative allowed minus one, or the highest value that failed
-        bool coarse = true;   // steps of 5 until the first failure, then 1
+    struct Walk {
+        int pass = 0;          // last observed passing value; 0 is assumed stock
+        int floor = 0;         // nearest failing value, or limit - 1 sentinel
+        bool coarse = true;    // all-core uses 5 then 1; per-core uses 5 then bisection
         bool done = false;
-        int candidate() const;  // next value to try, or 1 when there is none
+        bool seeded = false;   // per-core: whether the initial -15 probe has been made
+        int candidate() const; // legacy all-core descent
+        int coreCandidate(int limit) const;
     };
     Trial allCoreTrial(int value);
     Trial perCoreTrial(int core, int value);
     Trial confirmTrial();
-    QStringList cpustress(bool perCore, const QList<int> &cpus, int cycles, int kernel) const;
+    QStringList cpustress(bool perCore, const QList<int> &cpus, int cycles, int kernel, bool quick = false) const;
     QList<int> topCores() const;
     void finishAllCore();
 

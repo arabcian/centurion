@@ -3,7 +3,7 @@
 // try; centurion-cpustress --load co tests it in 60 s cycles). Every candidate is temporary: the curve goes
 // back to stock when the search ends, fails or is cancelled, and the result is saved as a Ryzen Curve
 // profile, never applied. The search can run under a scene of its own (the power level the CPU will
-// really be used at) with its own temperature limit. A journal written before every trial lets a search
+// really be used at). A journal written before every trial lets a search
 // that froze or rebooted the machine resume afterwards, the trial in flight counting as failed.
 #include "costrategy.h"
 
@@ -47,17 +47,16 @@ private:
     void reset(const QString &reason);
     void done(bool resetOk, const QString &reason);
     void note(const QString &line);
-    double temperature() const;
     bool toolsPresent();
     void updateEstimate();
     void loadSettings();
     void saveSettings() const;
-    void writeJournal() const;
+    bool writeJournal() const;
     void refreshTable();
     QString saveProfile() const;
 
     QComboBox *mode_, *level_, *scene_;
-    QSpinBox *limit_, *maxTemp_;
+    QSpinBox *limit_;
     QLabel *estimate_, *status_;
     QTableWidget *table_;
     QPlainTextEdit *log_;
@@ -82,6 +81,5 @@ private:
     quint64 kmsgSeq_ = 0;
     QHash<QString, QString> mceBefore_;
     QString startScene_, priorScene_, bootId_;
-    int tempLimit_ = 95;
     QJsonArray attempts_;
 };

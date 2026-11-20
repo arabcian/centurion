@@ -7,6 +7,8 @@
 namespace cosearch {
 
 static constexpr int KERNELS = 3;  // centurion-cpustress --kernel 0..2: fft-sse, fft-avx, ntt
+static constexpr int QUICK_SECONDS = 24;  // 12 s steady + 10 x 1.2 s boost/idle transitions
+static constexpr int FULL_SECONDS = 60;
 
 LevelSpec spec(Level l) {
     switch (l) {
@@ -32,17 +34,30 @@ std::optional<Level> levelFrom(const QString &s) {
     return std::nullopt;
 }
 
-int Trial::minutes() const {
-    int m = 0;
-    for (const Test &t : tests) m += t.minutes;
-    return m;
+int Trial::seconds() const {
+    int total = 0;
+    for (const Test &t : tests) total += t.seconds;
+    return total;
 }
 
 int Search::Walk::candidate() const {
     if (done) return 1;
     int c = pass - (coarse ? 5 : 1);
-    if (c <= floor) c = pass - 1;  // a coarse step would overshoot the floor: go on in steps of 1
+    if (c <= floor) c = pass - 1;  // all-core: don't overshoot a known failing offset
     return c > floor ? c : 1;
+}
+
+int Search::Walk::coreCandidate(int limit) const {
+    if (done || pass <= limit || pass - floor <= 1) return 1;
+    // The first per-core write is -15, not -5. With a shallower user limit, respect that limit.
+    if (!seeded) return std::max(limit, -15);
+    if (coarse) {
+        const int candidate = std::max(limit, pass - 5);
+        return candidate < pass ? candidate : 1;
+    }
+    // pass is closer to zero than floor; never retest a known pass or fail.
+    // Integer midpoint yields logarithmic refinement, including when the initial -15 fails.
+    return floor + (pass - floor + 1) / 2;
 }
 
 Search::Search(Mode mode, Level level, int limit, QList<Core> cores) : mode_(mode), level_(level), limit_(limit) {
@@ -54,11 +69,17 @@ Search::Search(Mode mode, Level level, int limit, QList<Core> cores) : mode_(mod
         for (const auto &l : byCcd)
             if (i < l.size()) cores_.append(l[i]);
     all_.floor = limit_ - 1;
+    if (mode_ == Mode::PerCore) {
+        stage_ = Stage::PerCore;
+        for (qsizetype i = 0; i < cores_.size(); ++i)
+            per_.append(Walk{0, limit_ - 1, true, false, false});
+    }
 }
 
-QStringList Search::cpustress(bool perCore, const QList<int> &cpus, int cycles, int kernel) const {
+QStringList Search::cpustress(bool perCore, const QList<int> &cpus, int cycles, int kernel, bool quick) const {
     QStringList a{perCore ? QStringLiteral("percore") : QStringLiteral("allcore"), QStringLiteral("--load"), QStringLiteral("co"),
                   QStringLiteral("--cycles"), QString::number(cycles), QStringLiteral("--kernel"), QString::number(kernel % KERNELS)};
+    if (quick) a << QStringLiteral("--seconds") << QString::number(QUICK_SECONDS);
     if (perCore) {
         QStringList l;
         for (int c : cpus) l << QString::number(c);
@@ -86,19 +107,22 @@ Trial Search::allCoreTrial(int value) {
     Trial t;
     t.allCore = value;
     t.what = QStringLiteral("all-core %1").arg(value);
-    t.tests << Test{cpustress(true, top, 1, trials_ + 1), int(top.size())}
-            << Test{cpustress(false, {}, s.trialCycles, trials_), s.trialCycles};
+    t.tests << Test{cpustress(true, top, 1, trials_ + 1), int(top.size()) * FULL_SECONDS}
+            << Test{cpustress(false, {}, s.trialCycles, trials_), s.trialCycles * FULL_SECONDS};
     return t;
 }
 
 Trial Search::perCoreTrial(int core, int value) {
     const LevelSpec s = spec(level_);
     Trial t;
-    t.perCore = values();
+    // Test ONE changing core at a time. Previously found offsets remain recorded in values(),
+    // but are NOT applied during isolated probes: this avoids false blame from an unstable peer.
+    t.perCore = QList<int>(cores_.size(), 0);
     t.perCore[core] = value;
     const Core &c = cores_[core];
     t.what = QStringLiteral("CCD%1 core %2 (CPU %3) at %4").arg(c.ccd).arg(c.slot).arg(c.cpus.first()).arg(value);
-    t.tests << Test{cpustress(true, {c.cpus.first()}, s.trialCycles, trials_), s.trialCycles};
+    t.tests << Test{cpustress(true, {c.cpus.first()}, s.trialCycles, trials_, true),
+                    s.trialCycles * QUICK_SECONDS};
     return t;
 }
 
@@ -110,8 +134,8 @@ Trial Search::confirmTrial() {
     if (mode_ == Mode::AllCore) t.allCore = all_.pass;
     else t.perCore = values();
     t.what = mode_ == Mode::AllCore ? QStringLiteral("confirmation of all-core %1").arg(all_.pass) : QStringLiteral("confirmation of the per-core set");
-    t.tests << Test{cpustress(true, firsts, s.confirmPerCore, trials_), s.confirmPerCore * int(firsts.size())}
-            << Test{cpustress(false, {}, s.confirmAllCore, trials_ + 1), s.confirmAllCore};
+    t.tests << Test{cpustress(true, firsts, s.confirmPerCore, trials_), s.confirmPerCore * int(firsts.size()) * FULL_SECONDS}
+            << Test{cpustress(false, {}, s.confirmAllCore, trials_ + 1), s.confirmAllCore * FULL_SECONDS};
     return t;
 }
 
@@ -122,15 +146,8 @@ QList<int> Search::values() const {
 }
 
 void Search::finishAllCore() {
-    if (mode_ == Mode::AllCore) {
-        stage_ = all_.pass < 0 ? Stage::Confirm : Stage::Done;
-        return;
-    }
-    // Every core starts from the all-core result; its own floor is the limit, since a value that failed
-    // with all cores at it says nothing about one core alone.
-    per_.clear();
-    for (int i = 0; i < cores_.size(); ++i) per_.append(Walk{all_.pass, limit_ - 1, true, false});
-    stage_ = Stage::PerCore;
+    // Per-core runs start directly in Stage::PerCore, not through this path.
+    stage_ = all_.pass < 0 ? Stage::Confirm : Stage::Done;
 }
 
 std::optional<Trial> Search::next() {
@@ -143,7 +160,7 @@ std::optional<Trial> Search::next() {
         for (int k = 0; k < cores_.size(); ++k) {
             const int i = (turn_ + k) % cores_.size();
             if (per_[i].done) continue;
-            const int c = per_[i].candidate();
+            const int c = per_[i].coreCandidate(limit_);
             if (c > 0) { per_[i].done = true; continue; }
             tested_ = i;
             cand_ = c;
@@ -171,6 +188,7 @@ void Search::report(const Outcome &o) {
     case Stage::PerCore: {
         if (tested_ < 0) return;
         Walk &w = per_[tested_];
+        w.seeded = true;
         if (o.pass) w.pass = cand_;
         else { w.floor = cand_; w.coarse = false; }
         tested_ = -1;
@@ -202,7 +220,8 @@ QString Search::stageText() const {
     case Stage::AllCore: return QStringLiteral("All-core descent (last pass %1)").arg(all_.pass);
     case Stage::PerCore: {
         const int left = int(std::count_if(per_.begin(), per_.end(), [](const Walk &w) { return !w.done; }));
-        return QStringLiteral("Per-core descent (%1 of %2 cores still going down)").arg(left).arg(per_.size());
+        return QStringLiteral("Per-core quick search (%1 of %2 cores remaining; 60 s/core validation follows)")
+            .arg(left).arg(per_.size());
     }
     case Stage::Confirm: return QStringLiteral("Confirmation");
     case Stage::Done: return QStringLiteral("Finished");
@@ -212,15 +231,21 @@ QString Search::stageText() const {
 
 int Search::estimateMinutes(Mode mode, Level level, int cores, int limit) {
     const LevelSpec s = spec(level);
-    // About: coarse steps to roughly two thirds of the limit, then three fine steps.
+    if (mode == Mode::PerCore) {
+        // Roughly: -15, then 5-point probes toward the limit, and ~2 binary bracket probes.
+        // Hardware can require more/fewer probes and repeated confirmations.
+        const int probes = 1 + std::max(0, (-limit - 15 + 4) / 5) + 2;
+        const int seconds = cores * probes * s.trialCycles * QUICK_SECONDS
+                          + cores * s.confirmPerCore * FULL_SECONDS + s.confirmAllCore * FULL_SECONDS;
+        return (seconds + 59) / 60;
+    }
     const int allTrials = std::max(1, -limit * 2 / 3 / 5) + 3;
-    int m = allTrials * (std::min(s.topCores, cores) + s.trialCycles);
-    if (mode == Mode::PerCore) m += cores * 4 * s.trialCycles;
-    return m + cores * s.confirmPerCore + s.confirmAllCore;
+    return allTrials * (std::min(s.topCores, cores) + s.trialCycles)
+           + cores * s.confirmPerCore + s.confirmAllCore;
 }
 
-static QJsonObject walkJson(int pass, int floor, bool coarse, bool done) {
-    return {{"pass", pass}, {"floor", floor}, {"coarse", coarse}, {"done", done}};
+static QJsonObject walkJson(int pass, int floor, bool coarse, bool done, bool seeded) {
+    return {{"pass", pass}, {"floor", floor}, {"coarse", coarse}, {"done", done}, {"seeded", seeded}};
 }
 
 QJsonObject Search::save() const {
@@ -230,17 +255,17 @@ QJsonObject Search::save() const {
         for (int x : c.cpus) cpus << x;
         cores << QJsonObject{{"ccd", c.ccd}, {"slot", c.slot}, {"cpus", cpus}, {"rank", c.rank}};
     }
-    for (const Walk &w : per_) per << walkJson(w.pass, w.floor, w.coarse, w.done);
+    for (const Walk &w : per_) per << walkJson(w.pass, w.floor, w.coarse, w.done, w.seeded);
     static const char *stages[] = {"all", "per", "confirm", "done"};
-    return {{"version", 1}, {"mode", mode_ == Mode::AllCore ? "all" : "per"}, {"level", name(level_)}, {"limit", limit_},
-            {"cores", cores}, {"stage", stages[int(stage_)]}, {"all", walkJson(all_.pass, all_.floor, all_.coarse, all_.done)},
+    return {{"version", 2}, {"mode", mode_ == Mode::AllCore ? "all" : "per"}, {"level", name(level_)}, {"limit", limit_},
+            {"cores", cores}, {"stage", stages[int(stage_)]}, {"all", walkJson(all_.pass, all_.floor, all_.coarse, all_.done, all_.seeded)},
             {"per", per}, {"turn", turn_}, {"tested", tested_}, {"trials", trials_}, {"cand", cand_}};
 }
 
 std::optional<Search> Search::load(const QJsonObject &o) {
     const auto level = levelFrom(o.value("level").toString());
     const QString mode = o.value("mode").toString();
-    if (o.value("version").toInt() != 1 || !level || (mode != "all" && mode != "per")) return std::nullopt;
+    if (o.value("version").toInt() != 2 || !level || (mode != "all" && mode != "per")) return std::nullopt;
     QList<Core> cores;
     for (const auto &v : o.value("cores").toArray()) {
         const QJsonObject c = v.toObject();
@@ -250,21 +275,30 @@ std::optional<Search> Search::load(const QJsonObject &o) {
         cores << k;
     }
     const int limit = o.value("limit").toInt(1);
-    if (cores.isEmpty() || limit > 0) return std::nullopt;
+    if (cores.isEmpty() || limit > -1 || limit < -50 || cores.size() > 512) return std::nullopt;
     Search s(mode == "all" ? Mode::AllCore : Mode::PerCore, *level, limit, {});
     s.cores_ = cores;  // already in test order
-    auto walk = [](const QJsonObject &w) { return Walk{w.value("pass").toInt(), w.value("floor").toInt(), w.value("coarse").toBool(), w.value("done").toBool()}; };
+    auto walk = [](const QJsonObject &w) { return Walk{w.value("pass").toInt(), w.value("floor").toInt(), w.value("coarse").toBool(),
+                                                      w.value("done").toBool(), w.value("seeded").toBool()}; };
     s.all_ = walk(o.value("all").toObject());
     for (const auto &v : o.value("per").toArray()) s.per_ << walk(v.toObject());
     const QString st = o.value("stage").toString();
+    if (st != "all" && st != "per" && st != "confirm" && st != "done") return std::nullopt;
+    if ((mode == "per" && st == "all") || (mode == "all" && st == "per")) return std::nullopt;
     s.stage_ = st == "all" ? Stage::AllCore : st == "per" ? Stage::PerCore : st == "confirm" ? Stage::Confirm : Stage::Done;
     if (!s.per_.isEmpty() && s.per_.size() != cores.size()) return std::nullopt;
+    if (s.mode_ == Mode::PerCore && s.per_.size() != cores.size()) return std::nullopt;
+    for (const Walk &w : s.per_) {
+        if (w.pass > 0 || w.pass < limit || w.floor < limit - 1 || w.floor >= w.pass) return std::nullopt;
+    }
     if ((s.stage_ == Stage::PerCore || (s.stage_ == Stage::Confirm && s.mode_ == Mode::PerCore)) && s.per_.isEmpty()) return std::nullopt;
     s.turn_ = std::clamp(o.value("turn").toInt(), 0, int(cores.size()) - 1);
     s.tested_ = o.value("tested").toInt(-1);
-    if (s.tested_ >= cores.size()) return std::nullopt;
+    if (s.tested_ >= cores.size() || s.tested_ < -1) return std::nullopt;
     s.trials_ = o.value("trials").toInt();
+    if (s.trials_ < 0 || s.trials_ > 100000) return std::nullopt;
     s.cand_ = o.value("cand").toInt();
+    if (s.cand_ < limit || s.cand_ > 0) return std::nullopt;
     return s;
 }
 

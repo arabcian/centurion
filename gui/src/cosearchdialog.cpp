@@ -4,7 +4,6 @@
 #include "privileged.h"
 #include "ryzentab.h"
 #include "scenes.h"
-#include "sysinfo.h"
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
@@ -29,8 +28,6 @@
 #include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <cmath>
-#include <limits>
 #include <memory>
 
 using namespace cosearch;
@@ -52,9 +49,11 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     resize(820, 640);
     auto *v = new QVBoxLayout(this);
     auto *explainer = new QLabel(tr(
-        "Finds negative Curve Optimizer offsets with 60-second CPU cycles: 40 s of steady FFT / integer load (like Prime95 "
-        "Small FFT and y-cruncher), then 20 s of load changes that move the clock and the idle states. All-core finds one "
-        "offset for every core; per-core then takes each core further on its own, testing it alone at its highest boost. "
+        "Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. "
+        "All-core runs 60-second cycles (40 s steady + 20 s transitions) to find one "
+        "offset for every core; per-core starts each core directly at -15, with the other cores at stock, "
+        "then brackets each core's limit with short tests and binary refinement. Full-length tests verify the "
+        "final individual offsets and their combined stability. "
         "The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. "
         "Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it."));
     explainer->setWordWrap(true);
@@ -65,13 +64,17 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     mode_ = new QComboBox;
     mode_->addItem(tr("All-core"), int(Mode::AllCore));
     mode_->addItem(tr("Per-core"), int(Mode::PerCore));
+    mode_->setCurrentIndex(mode_->findData(int(Mode::PerCore)));  // new installs prefer direct isolated searches
     level_ = new QComboBox;
     level_->addItem(tr("Fast"), name(Level::Fast));
     level_->addItem(tr("Medium"), name(Level::Medium));
     level_->addItem(tr("Long"), name(Level::Long));
-    level_->setToolTip(tr("Fast: 1 cycle per trial, 2 cores alone per all-core trial, 1-cycle confirmation.\n"
-                          "Medium: 2 cycles per trial, 4 cores alone, 2-cycle confirmation.\n"
-                          "Long: 3 cycles per trial (every kernel), 4 cores alone, 3 cycles per core + 5 all-core to confirm."));
+    level_->setToolTip(tr("Per-core: 24-second probes (12 s steady + all 10 boost/idle patterns); "
+                          "60-second cycles for final verification.\n"
+                          "Fast: 1 probe cycle, 1 confirmation cycle.\n"
+                          "Medium: 2 probe cycles, 2 confirmation cycles.\n"
+                          "Long: 3 probe cycles, 3 per-core and 5 all-core confirmation cycles. "
+                          "All-core trials use full 60-second cycles."));
     limit_ = new QSpinBox;
     limit_->setRange(-50, -5);
     limit_->setValue(-30);
@@ -88,14 +91,7 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     scene_->setToolTip(tr("Scene applied for the search: set it to the power level you will use every day, since the\n"
                           "offsets a CPU holds depend on the clocks and temperatures that level gives. Scenes that apply\n"
                           "a CPU curve profile are not offered. The previous scene is applied again afterwards."));
-    maxTemp_ = new QSpinBox;
-    maxTemp_->setRange(70, 105);
-    maxTemp_->setValue(95);
-    maxTemp_->setSuffix(QStringLiteral(" °C"));
-    maxTemp_->setToolTip(tr("The search stops (and resets the curve) at this CPU temperature. It starts only 15 °C below it."));
     row2->addWidget(scene_, 1);
-    row2->addWidget(new QLabel(tr("Max temperature:")));
-    row2->addWidget(maxTemp_);
     form->addRow(tr("CO search scene:"), row2);
     v->addLayout(form);
     estimate_ = new QLabel;
@@ -139,10 +135,6 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
         }
         if (!applying_ && trial_ && CurvePage::currentState("cpu") != expectedCurve_) {
             note(tr("CPU curve was changed externally during this trial; cancelling.")); cancel(); return;
-        }
-        const double t = temperature();
-        if (!std::isfinite(t) || t >= tempLimit_) {
-            note(tr("Temperature sensor unavailable or at/above the %1 °C limit; stopping.").arg(tempLimit_)); cancel(); return;
         }
         if (test_ && test_->state() != QProcess::NotRunning && QDateTime::currentSecsSinceEpoch() > testDeadline_) {
             note(tr("CPU test exceeded safety timeout; terminating.")); cancel();
@@ -214,11 +206,6 @@ void CoSearchDialog::closeEvent(QCloseEvent *e) {
     } else QDialog::closeEvent(e);
 }
 
-double CoSearchDialog::temperature() const {
-    // The same sensor the rest of the GUI shows: k10temp, zenpower (Tctl/Tdie) or coretemp.
-    return sysinfo::cpuTempC().value_or(std::numeric_limits<double>::quiet_NaN());
-}
-
 void CoSearchDialog::note(const QString &s) {
     log_->appendPlainText(QDateTime::currentDateTime().toString("HH:mm:ss") + "  " + s);
     status_->setText(s);
@@ -245,7 +232,6 @@ void CoSearchDialog::loadSettings() {
     mode_->setCurrentIndex(std::max(0, mode_->findData(o.value("mode").toString() == "per" ? int(Mode::PerCore) : int(Mode::AllCore))));
     level_->setCurrentIndex(std::max(0, level_->findData(o.value("level").toString())));
     limit_->setValue(o.value("limit").toInt(limit_->value()));
-    maxTemp_->setValue(o.value("max_temp").toInt(maxTemp_->value()));
     scene_->setCurrentIndex(std::max(0, scene_->findData(o.value("scene").toString())));
 }
 
@@ -255,18 +241,19 @@ void CoSearchDialog::saveSettings() const {
     if (!f.open(QIODevice::WriteOnly)) return;
     f.write(QJsonDocument(QJsonObject{{"mode", Mode(mode_->currentData().toInt()) == Mode::PerCore ? "per" : "all"},
                                       {"level", level_->currentData().toString()}, {"limit", limit_->value()},
-                                      {"max_temp", maxTemp_->value()}, {"scene", scene_->currentData().toString()}}).toJson());
+                                      {"scene", scene_->currentData().toString()}}).toJson());
     f.commit();
 }
 
-void CoSearchDialog::writeJournal() const {
+bool CoSearchDialog::writeJournal() const {
     QDir().mkpath(stateDir());
     QSaveFile f(journalPath());
-    if (!f.open(QIODevice::WriteOnly)) return;
-    f.write(QJsonDocument(QJsonObject{{"boot", bootId_}, {"search", snapshot_}, {"what", trial_ ? trial_->what : QString()},
-                                      {"scene", scene_->currentData().toString()}, {"max_temp", tempLimit_},
-                                      {"prior_scene", priorScene_}, {"attempts", attempts_}}).toJson());
-    f.commit();  // fsync + rename: the record is on disk before the SMU write that may freeze the machine
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    const QByteArray data = QJsonDocument(QJsonObject{{"boot", bootId_}, {"search", snapshot_},
+        {"what", trial_ ? trial_->what : QString()}, {"scene", scene_->currentData().toString()},
+        {"prior_scene", priorScene_}, {"attempts", attempts_}}).toJson();
+    if (f.write(data) != data.size()) return false;
+    return f.commit();  // fsync + rename: no SMU write without a recoverable on-disk record
 }
 
 bool CoSearchDialog::toolsPresent() {
@@ -286,9 +273,11 @@ void CoSearchDialog::refreshTable() {
     for (int i = 0; i < cores.size(); ++i) {
         QStringList cpus;
         for (int c : cores[i].cpus) cpus << QString::number(c);
-        const bool testing = trial_ && !trial_->perCore.isEmpty() && trial_->perCore.value(i) != v[i];
+        const bool isolated = trial_ && !trial_->perCore.isEmpty() && search_->mode() == Mode::PerCore;
+        const bool testing = isolated && trial_->perCore.value(i) != 0;
         const QStringList cells{QStringLiteral("CCD%1 / %2  (CPU %3)").arg(cores[i].ccd).arg(cores[i].slot).arg(cpus.join(',')),
-                                QString::number(v[i]), testing ? tr("testing %1").arg(trial_->perCore[i]) : QString()};
+                                QString::number(v[i]), isolated ? (testing ? tr("testing %1").arg(trial_->perCore[i])
+                                                                             : tr("stock (isolated)")) : QString()};
         for (int c = 0; c < 3; ++c) table_->setItem(i, c, new QTableWidgetItem(cells[c]));
     }
     table_->resizeColumnsToContents();
@@ -313,11 +302,6 @@ void CoSearchDialog::start() {
            tr("Use Ryzen Curve → Reset Curve Optimizer first. The SMU cannot read offsets back; "
               "the last helper-written state must explicitly be reset/0 before this search.")); return;
     }
-    tempLimit_ = maxTemp_->value();
-    const double t = temperature();
-    if (!std::isfinite(t) || t >= tempLimit_ - 15) {
-        QMessageBox::warning(this, tr("Thermal guard"), tr("A readable CPU temperature sensor (k10temp, zenpower or coretemp) below %1 °C is required before starting.").arg(tempLimit_ - 15)); return;
-    }
     const ryzen::Layout layout = ryzen::detect();
     const auto mode = Mode(mode_->currentData().toInt());
     if (mode == Mode::PerCore && !layout.parked.isEmpty()) {
@@ -334,6 +318,7 @@ void CoSearchDialog::start() {
     if (QMessageBox::warning(this, tr("Risk of a system crash"),
             tr("Undervolting may freeze or reboot the system. No applications can be protected against a hard lockup. "
                "The assistant resets the CPU curve when it can, but it cannot restore unsaved offsets. "
+               "CO Search has no custom temperature cutoff; the CPU's own firmware thermal management remains active. "
                "This search takes roughly %1 h %2 min. Continue?").arg(minutes / 60).arg(minutes % 60),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
     saveSettings();
@@ -349,7 +334,15 @@ void CoSearchDialog::offerResume() {
     const QJsonObject j = QJsonDocument::fromJson(f.readAll()).object();
     f.close();
     auto s = Search::load(j.value("search").toObject());
-    if (!s) { QFile::remove(journalPath()); return; }
+    if (!s) {
+        const auto answer = QMessageBox::warning(this, tr("Old CO search journal"),
+            tr("This interrupted search uses an incompatible or damaged strategy snapshot. "
+               "It cannot be safely resumed after the CO search rewrite. Discard the old journal? "
+               "The current CPU curve is not changed."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer == QMessageBox::Yes) QFile::remove(journalPath());
+        return;
+    }
     const bool rebooted = j.value("boot").toString() != readBootId();
     const QString what = j.value("what").toString();
     const QString text = rebooted
@@ -364,9 +357,7 @@ void CoSearchDialog::offerResume() {
     mode_->setCurrentIndex(mode_->findData(int(s->mode())));
     level_->setCurrentIndex(level_->findData(name(s->level())));
     limit_->setValue(s->limit());
-    maxTemp_->setValue(j.value("max_temp").toInt(95));
     scene_->setCurrentIndex(std::max(0, scene_->findData(j.value("scene").toString())));
-    tempLimit_ = maxTemp_->value();
     attempts_ = j.value("attempts").toArray();
     if (rebooted) {
         const auto t = s->next();  // the trial that was in flight (the snapshot is from just before it)
@@ -394,7 +385,7 @@ void CoSearchDialog::launch() {
     finished_ = false;
     bootId_ = readBootId();
     if (bootId_.isEmpty()) { running_ = false; QMessageBox::warning(this, tr("Boot identity"), tr("Cannot verify boot ID.")); return; }
-    for (QWidget *w : std::initializer_list<QWidget *>{go_, mode_, level_, limit_, scene_, maxTemp_}) w->setEnabled(false);
+    for (QWidget *w : std::initializer_list<QWidget *>{go_, mode_, level_, limit_, scene_}) w->setEnabled(false);
     stop_->setEnabled(true);
     refreshTable();
     priorScene_ = scenes::activeScene();
@@ -442,7 +433,7 @@ void CoSearchDialog::step() {
     refreshTable();
     if (!trial_) { finished_ = true; reset(tr("Search finished")); return; }
     ++trialNo_;
-    writeJournal();
+    if (!writeJournal()) { reset(tr("Cannot durably save the recovery journal; no CO offset was written.")); return; }
     const bool all = trial_->allCore.has_value();
     QJsonObject req;
     if (all) {
@@ -457,7 +448,7 @@ void CoSearchDialog::step() {
         req = {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}}}};
         expectedCurve_ = QStringLiteral("per-core");
     }
-    note(tr("Trial %1: %2 (about %3 min). %4").arg(trialNo_).arg(trial_->what).arg(trial_->minutes()).arg(search_->stageText()));
+    note(tr("Trial %1: %2 (about %3 s plus setup). %4").arg(trialNo_).arg(trial_->what).arg(trial_->seconds()).arg(search_->stageText()));
     mceBefore_ = mceCounters();
     applying_ = true;
     privileged::run(privileged::helperPath("ryzen-co-helper"), req, this, [this](const privileged::Result &r) {
@@ -477,7 +468,7 @@ void CoSearchDialog::runTest() {
     testBuf_.clear();
     testEnd_ = {};
     testStart_ = QDateTime::currentSecsSinceEpoch();
-    testDeadline_ = testStart_ + t.minutes * 60 + 120;  // the reference run and process start-up take seconds
+    testDeadline_ = testStart_ + t.seconds + 120;  // allow CPU reference calculation and process startup
     log_->appendPlainText(QStringLiteral("          centurion-cpustress ") + t.args.join(' '));
     connect(test_, &QProcess::readyReadStandardOutput, this, &CoSearchDialog::testOutput);
     connect(test_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) { testFinished(code, status != QProcess::NormalExit); });
@@ -556,7 +547,18 @@ void CoSearchDialog::validateFaultLog(Outcome o) {
         for (const QJsonValue &v : events) {
             const QJsonObject e = v.toObject();
             const QString kind = e.value("kind").toString();
-            if (kind == "thermal") { reset(tr("Thermal event during trial (not counted against the offset): %1").arg(e.value("title").toString())); return; }
+            if (kind == "thermal") {
+                // CPU temperature is not a CO Search stop criterion. Firmware still manages
+                // its own thermal throttling/limits. A kernel emergency shutdown is different:
+                // continuing to stress after a critical platform event is not defensible.
+                if (e.value("level").toString() == "critical") {
+                    reset(tr("Critical platform emergency event: %1").arg(e.value("title").toString()));
+                    return;
+                }
+                note(tr("CPU throttling event observed (continuing; no CO temperature limit): %1")
+                     .arg(e.value("title").toString()));
+                continue;
+            }
             if (kind == "mce" || kind == "lockup" || kind == "oops") {
                 note(tr("Hardware fault reported during trial: %1").arg(e.value("title").toString()));
                 o.pass = false;
@@ -574,6 +576,26 @@ void CoSearchDialog::validateFaultLog(Outcome o) {
             bool num = false;
             const int cpu = bank.section('/', 0, 0).mid(QStringLiteral("machinecheck").size()).toInt(&num);
             if (num && !o.cpus.contains(cpu)) o.cpus << cpu;
+        }
+        // A wrong result or a machine-check from a different stock core cannot be attributed
+        // to the candidate under test. Stop instead of skewing that core's search boundary.
+        if (search_->mode() == Mode::PerCore && trial_ && !trial_->perCore.isEmpty() && !o.pass) {
+            QList<int> activeCpus;
+            int activeCores = 0;
+            for (int i = 0; i < trial_->perCore.size(); ++i) {
+                if (trial_->perCore[i] == 0 || i >= search_->cores().size()) continue;
+                ++activeCores;
+                activeCpus.append(search_->cores()[i].cpus);
+            }
+            // Multiple nonzero cores means final full-set confirmation, not an isolated probe.
+            if (activeCores == 1) {
+                for (int cpu : o.cpus) {
+                    if (!activeCpus.contains(cpu)) {
+                        reset(tr("Hardware error on CPU %1 outside the isolated core; cannot attribute failure safely.").arg(cpu));
+                        return;
+                    }
+                }
+            }
         }
         finishTrial(o);
     });
@@ -666,7 +688,7 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     trial_.reset();
     if (quitting_) return;
     go_->setEnabled(resetOk);
-    for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_, maxTemp_}) w->setEnabled(true);
+    for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_}) w->setEnabled(true);
     stop_->setEnabled(false);
     refreshTable();
     note(reason);

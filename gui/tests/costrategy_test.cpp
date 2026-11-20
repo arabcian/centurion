@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
         CHECK(t.tests.size() == 2);
         CHECK(t.tests[0].args == (QStringList{"percore", "--load", "co", "--cycles", "1", "--kernel", "2", "--cpus", "1,6,0,5"}));
         CHECK(t.tests[1].args == (QStringList{"allcore", "--load", "co", "--cycles", "2", "--kernel", "1"}));
-        CHECK(t.minutes() == 4 + 2);
+        CHECK(t.seconds() == (4 + 2) * 60);
     }
 
     // All-core: the weakest core decides; steps of 5, then 1, then a confirmation.
@@ -89,6 +89,55 @@ int main(int argc, char **argv) {
         CHECK(v == QList<int>(8, -9));
         // -5 pass, -10 fail, -6..-9 pass, confirmation
         CHECK(sim.trials == 7);  // -5, -10 (fails), -6, -7, -8, -9, confirmation
+    }
+
+    // Direct -15 per physical core, with all other cores at stock during probing.
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(4));
+        const Trial first = *s.next();
+        CHECK(!first.allCore.has_value());
+        CHECK(first.perCore == (QList<int>{-15, 0, 0, 0, 0, 0, 0, 0}));
+        CHECK(first.tests.size() == 1);
+        CHECK(first.tests[0].args == (QStringList{"percore", "--load", "co", "--cycles", "1", "--kernel", "1", "--seconds", "24", "--cpus", "0"}));
+        CHECK(first.seconds() == 24);
+        s.report(Outcome{true, {}});
+        const Trial second = *s.next();
+        CHECK(second.perCore == (QList<int>{0, -15, 0, 0, 0, 0, 0, 0}));
+        CHECK(second.tests[0].args.contains("24"));
+    }
+
+    // The configured limit must also govern the initial probe: no overshoot of a -5 limit.
+    for (int limit : {-5, -10, -15, -30, -50}) {
+        Search s(Mode::PerCore, Level::Fast, limit, cpu(2));
+        CHECK(s.next()->perCore.first() == std::max(-15, limit));
+    }
+
+    // A core that cannot hold -15 is bracketed toward zero, not automatically marked -15 stable.
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        Sim sim{{{0, -2}, {1, -8}, {2, -14}, {3, 0}}};
+        const QMap<int, int> got = byCpu(s, runAll(s, sim));
+        CHECK(got == sim.stable);
+        CHECK(s.finished());
+    }
+
+    // Quick probes use isolation; the combined confirmation uses the whole discovered curve.
+    {
+        Search s(Mode::PerCore, Level::Medium, -30, cpu(2));
+        Sim sim{{{0, -25}, {1, -30}, {2, -20}, {3, -18}}};
+        std::optional<Trial> t;
+        while ((t = s.next()) && !t->what.startsWith("confirmation")) {
+            int nonzero = 0;
+            for (int v : t->perCore) nonzero += v != 0;
+            CHECK(nonzero == 1);
+            CHECK(t->tests[0].args.contains("24"));
+            s.report(sim.run(s, *t));
+        }
+        CHECK(t.has_value());
+        CHECK(t->perCore == s.values());
+        CHECK(!t->tests[0].args.contains("24"));
+        CHECK(t->tests[0].seconds == 4 * 2 * 60);
+        CHECK(t->tests[1].seconds == 2 * 60);
     }
 
     // Per-core: each core goes down to its own threshold, never past the limit.
@@ -183,6 +232,10 @@ int main(int argc, char **argv) {
         o = s.save(); o["limit"] = 5;
         CHECK(!Search::load(o));
         o = s.save(); o["cores"] = QJsonArray{};
+        CHECK(!Search::load(o));
+        o = s.save(); o["version"] = 1;
+        CHECK(!Search::load(o));  // older snapshots used all-core presearch and cannot safely resume
+        o = s.save(); o["per"] = QJsonArray{};
         CHECK(!Search::load(o));
     }
 
