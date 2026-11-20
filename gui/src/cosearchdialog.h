@@ -49,6 +49,8 @@ private:
     void note(const QString &line);
     bool toolsPresent();
     void updateEstimate();
+    void applyTuning();
+    cosearch::Tuning tuning() const;
     void loadSettings();
     void saveSettings() const;
     bool writeJournal() const;
@@ -56,7 +58,8 @@ private:
     QString saveProfile() const;
 
     QComboBox *mode_, *level_, *scene_;
-    QSpinBox *limit_;
+    QSpinBox *limit_, *initial_, *coarseStep_, *refineStep_;
+    QPushButton *applyTuning_;
     QLabel *estimate_, *status_;
     QTableWidget *table_;
     QPlainTextEdit *log_;

@@ -132,8 +132,8 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     auto *explainer = new QLabel(tr(
         "Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. "
         "All-core runs 60-second cycles (40 s steady + 20 s transitions) to find one "
-        "offset for every core; per-core starts each core directly at -15, with the other cores at stock, "
-        "then brackets each core's limit with short tests and binary refinement. Full-length tests verify the "
+        "offset for every core; per-core begins at an editable starting offset with other cores at stock, "
+        "then uses your coarse step and adaptive 3/2/1-point refinement after failure. Full-length tests verify the "
         "final individual offsets and their combined stability. "
         "The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. "
         "Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it."));
@@ -167,6 +167,31 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     row1->addWidget(limit_);
     row1->addStretch();
     form->addRow(tr("Search:"), row1);
+    auto *tuningRow = new QHBoxLayout;
+    initial_ = new QSpinBox;
+    initial_->setRange(-50, -1);
+    initial_->setValue(-15);
+    initial_->setToolTip(tr("First per-core test value. Defaults to -15; never exceeds the configured search limit or a stored reboot guard."));
+    coarseStep_ = new QSpinBox;
+    coarseStep_->setRange(1, 20);
+    coarseStep_->setValue(5);
+    coarseStep_->setToolTip(tr("Coarse downward step after a successful per-core probe. Default: 5 CO points."));
+    refineStep_ = new QSpinBox;
+    refineStep_->setRange(1, 10);
+    refineStep_->setValue(3);
+    refineStep_->setToolTip(tr("First failure switches to this refinement step (default 3). Wide gaps use its multiples; narrow gaps automatically use 2 then 1 point."));
+    applyTuning_ = new QPushButton(tr("Apply to next trials"));
+    applyTuning_->setToolTip(tr("You can change the three values during an active per-core search. Changes affect only future candidates, never the test already running or stored reboot exclusions."));
+    applyTuning_->setEnabled(false);
+    tuningRow->addWidget(new QLabel(tr("Start:")));
+    tuningRow->addWidget(initial_);
+    tuningRow->addWidget(new QLabel(tr("Coarse step:")));
+    tuningRow->addWidget(coarseStep_);
+    tuningRow->addWidget(new QLabel(tr("After failure:")));
+    tuningRow->addWidget(refineStep_);
+    tuningRow->addWidget(applyTuning_);
+    tuningRow->addStretch();
+    form->addRow(tr("Per-core controls:"), tuningRow);
     auto *row2 = new QHBoxLayout;
     scene_ = new QComboBox;
     scene_->setToolTip(tr("Scene applied for the search: set it to the power level you will use every day, since the\n"
@@ -204,7 +229,9 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
 
     loadSettings();
     for (QComboBox *c : {mode_, level_}) connect(c, &QComboBox::currentIndexChanged, this, &CoSearchDialog::updateEstimate);
-    connect(limit_, &QSpinBox::valueChanged, this, &CoSearchDialog::updateEstimate);
+    for (QSpinBox *spin : {limit_, initial_, coarseStep_, refineStep_})
+        connect(spin, &QSpinBox::valueChanged, this, &CoSearchDialog::updateEstimate);
+    connect(applyTuning_, &QPushButton::clicked, this, &CoSearchDialog::applyTuning);
     updateEstimate();
 
     guard_ = new QTimer(this);
@@ -301,13 +328,41 @@ void CoSearchDialog::note(const QString &s) {
     status_->setText(s);
 }
 
+Tuning CoSearchDialog::tuning() const {
+    return {initial_->value(), coarseStep_->value(), refineStep_->value()};
+}
+
 void CoSearchDialog::updateEstimate() {
     const auto mode = Mode(mode_->currentData().toInt());
+    const bool perCore = mode == Mode::PerCore;
+    for (QSpinBox *spin : {initial_, coarseStep_, refineStep_}) spin->setEnabled(perCore);
+    // The previous CPU curve may still be applied between finishTrial() and step().
+    // Do not replace its pending journal with a non-pending snapshot in that gap.
+    applyTuning_->setEnabled(perCore && running_ && !resetting_ && !abort_ &&
+                             search_.has_value() && search_->perCoreSearching() && trial_.has_value());
     const auto level = levelFrom(level_->currentData().toString()).value_or(Level::Fast);
     int cores = 0;
     for (const auto &l : ryzen::detect().cores) cores += l.size();
-    const int m = Search::estimateMinutes(mode, level, std::max(cores, 1), limit_->value());
+    const int m = Search::estimateMinutes(mode, level, std::max(cores, 1), limit_->value(), tuning());
     estimate_->setText(tr("Roughly %1 h %2 min for %3 cores (depends on where the offsets fail).").arg(m / 60).arg(m % 60, 2, 10, QLatin1Char('0')).arg(cores));
+}
+
+void CoSearchDialog::applyTuning() {
+    if (!running_ || resetting_ || abort_ || !search_ || !search_->perCoreSearching()) return;
+    if (!trial_) { note(tr("Changing steps is only available while a candidate is pending.")); return; }
+    const Tuning previous = search_->tuning();
+    if (!search_->setTuning(tuning())) return;
+    if (!writeJournal()) {
+        search_->setTuning(previous);
+        initial_->setValue(previous.initial);
+        coarseStep_->setValue(previous.coarseStep);
+        refineStep_->setValue(previous.refineStep);
+        note(tr("Could not save updated CO steps; previous safe tuning retained."));
+        return;
+    }
+    saveSettings();
+    note(tr("Updated future per-core trials: start %1, coarse step %2, failure step %3 (adaptive to 2/1). Current test unchanged.")
+         .arg(tuning().initial).arg(tuning().coarseStep).arg(tuning().refineStep));
 }
 
 void CoSearchDialog::loadSettings() {
@@ -322,6 +377,9 @@ void CoSearchDialog::loadSettings() {
     mode_->setCurrentIndex(std::max(0, mode_->findData(o.value("mode").toString() == "per" ? int(Mode::PerCore) : int(Mode::AllCore))));
     level_->setCurrentIndex(std::max(0, level_->findData(o.value("level").toString())));
     limit_->setValue(o.value("limit").toInt(limit_->value()));
+    initial_->setValue(o.value("initial").toInt(initial_->value()));
+    coarseStep_->setValue(o.value("coarse_step").toInt(coarseStep_->value()));
+    refineStep_->setValue(o.value("refine_step").toInt(refineStep_->value()));
     scene_->setCurrentIndex(std::max(0, scene_->findData(o.value("scene").toString())));
 }
 
@@ -331,6 +389,8 @@ void CoSearchDialog::saveSettings() const {
     if (!f.open(QIODevice::WriteOnly)) return;
     f.write(QJsonDocument(QJsonObject{{"mode", Mode(mode_->currentData().toInt()) == Mode::PerCore ? "per" : "all"},
                                       {"level", level_->currentData().toString()}, {"limit", limit_->value()},
+                                      {"initial", initial_->value()}, {"coarse_step", coarseStep_->value()},
+                                      {"refine_step", refineStep_->value()},
                                       {"scene", scene_->currentData().toString()}}).toJson());
     f.commit();
 }
@@ -415,7 +475,7 @@ void CoSearchDialog::start() {
             cores << Core{it.key(), i, it.value()[i].cpus, it.value()[i].highestPerf.value_or(-1)};
     }
     if (cores.isEmpty()) { QMessageBox::warning(this, tr("Topology"), tr("No CPU cores detected.")); return; }
-    const int minutes = Search::estimateMinutes(mode, levelFrom(level_->currentData().toString()).value_or(Level::Fast), cores.size(), limit_->value());
+    const int minutes = Search::estimateMinutes(mode, levelFrom(level_->currentData().toString()).value_or(Level::Fast), cores.size(), limit_->value(), tuning());
     if (QMessageBox::warning(this, tr("Risk of a system crash"),
             tr("Undervolting may freeze or reboot the system. No applications can be protected against a hard lockup. "
                "The assistant resets the CPU curve when it can, but it cannot restore unsaved offsets. "
@@ -423,7 +483,7 @@ void CoSearchDialog::start() {
                "This search takes roughly %1 h %2 min. Continue?").arg(minutes / 60).arg(minutes % 60),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
     saveSettings();
-    search_.emplace(mode, levelFrom(level_->currentData().toString()).value_or(Level::Fast), limit_->value(), cores);
+    search_.emplace(mode, levelFrom(level_->currentData().toString()).value_or(Level::Fast), limit_->value(), cores, tuning());
     if (!applyCrashGuards(*search_)) {
         search_.reset();
         QMessageBox::critical(this, tr("CO crash guard corrupted"),
@@ -517,6 +577,9 @@ void CoSearchDialog::offerResume() {
     mode_->setCurrentIndex(mode_->findData(int(s->mode())));
     level_->setCurrentIndex(level_->findData(name(s->level())));
     limit_->setValue(s->limit());
+    initial_->setValue(s->tuning().initial);
+    coarseStep_->setValue(s->tuning().coarseStep);
+    refineStep_->setValue(s->tuning().refineStep);
     scene_->setCurrentIndex(std::max(0, scene_->findData(j.value("scene").toString())));
     attempts_ = j.value("attempts").toArray();
     hardReboots_ = rebootCount + int(rebooted && pending);
@@ -570,6 +633,7 @@ void CoSearchDialog::launch() {
     if (bootId_.isEmpty()) { running_ = false; QMessageBox::warning(this, tr("Boot identity"), tr("Cannot verify boot ID.")); return; }
     for (QWidget *w : std::initializer_list<QWidget *>{go_, mode_, level_, limit_, scene_}) w->setEnabled(false);
     stop_->setEnabled(true);
+    updateEstimate();
     refreshTable();
     priorScene_ = scenes::activeScene();
     guard_->start();
@@ -577,6 +641,9 @@ void CoSearchDialog::launch() {
         startScene_ = scenes::activeScene();
         note(tr("%1 search, %2 level, limit %3. Every tested candidate will be cleared afterward.")
                  .arg(search_->mode() == Mode::AllCore ? tr("All-core") : tr("Per-core"), name(search_->level())).arg(search_->limit()));
+        if (search_->mode() == Mode::PerCore)
+            note(tr("Manual CO tuning: start %1 / coarse step %2 / after failure %3 (then 2 and 1 as needed). You can edit and apply these during the run.")
+                 .arg(search_->tuning().initial).arg(search_->tuning().coarseStep).arg(search_->tuning().refineStep));
         // Baseline: only kernel events logged after this point count against a trial.
         kmsgSeq_ = 0;
         scanKernel([this](bool ok, const QJsonArray &, quint64 last) {
@@ -612,6 +679,7 @@ void CoSearchDialog::step() {
     if (!running_ || resetting_) return;
     if (abort_) { reset(tr("Cancelled")); return; }
     trial_ = search_->next();
+    applyTuning_->setEnabled(trial_.has_value() && search_->perCoreSearching());
     refreshTable();
     if (!trial_) { finished_ = true; reset(tr("Search finished")); return; }
     ++trialNo_;
@@ -797,6 +865,7 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
                 : tr("FAILED: %1%2").arg(trial_->what, named.isEmpty() ? QString() : tr(" (CPU %1)").arg(named.join(','))));
     search_->report(o);
     trial_.reset();
+    applyTuning_->setEnabled(false);
     // Keep the previous trial marked PENDING on disk until a subsequent candidate has
     // its own durable journal, or until stock reset completes. Its CO voltage is still
     // applied in this gap: a late reboot must invalidate THAT trial, not claim "idle".
@@ -809,6 +878,7 @@ void CoSearchDialog::cancel() {
     if (!running_ || resetting_) return;
     abort_ = true;
     stop_->setEnabled(false);
+    applyTuning_->setEnabled(false);
     if (test_ && test_->state() != QProcess::NotRunning) {
         QPointer<QProcess> pending(test_);
         test_->terminate();
@@ -824,6 +894,7 @@ void CoSearchDialog::cancel() {
 void CoSearchDialog::reset(const QString &reason) {
     if (!running_ || resetting_) return;
     resetting_ = true;
+    applyTuning_->setEnabled(false);
     note(reason + tr(" — requesting stock reset."));
     privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
         [this, reason](const privileged::Result &r) { done(r.ok(), reason + (r.ok() ? QString() : QStringLiteral("; reset FAILED: ") + r.message())); }, 120000);
@@ -877,6 +948,7 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     running_ = false;
     resetting_ = false;
     sceneApplying_ = false;
+    updateEstimate();
     trial_.reset();
     if (quitting_) return;
     go_->setEnabled(resetOk);

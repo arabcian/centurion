@@ -7,10 +7,10 @@
 // A trial tests the best-ranked cores alone first (single-core load is where the boost and the offset's
 // effect are highest) and then every core at once.
 //
-// Per-core: skip the all-core pre-search. Every physical core starts at -15 (clamped to the user's
-// search limit), with ALL other cores at stock. Successful probes descend in steps of 5; after the first
-// failure the stable/failed bracket is bisected to one CO point. If -15 itself fails, bisect toward stock
-// instead of assuming that every chip tolerates -15. Alternating CCDs reduces consecutive heating of one.
+// Per-core: skip the all-core pre-search. The first trial, coarse descent and initial fine step
+// are user-configurable (-15 / 5 / 3 defaults). After a failure the passing/failing bracket
+// is refined using multiples of the fine step and then individual 2/1-point probes. If the
+// initial trial fails, refine toward stock. Other cores are at stock for isolated probes.
 // The short probes include steady load and all ten boost/idle transitions. Full-length verification
 // tests each core at its found offset and then the whole set together. Correlated confirmation failures
 // make the implicated core(s) less negative; untraceable failures back off all undervolted cores.
@@ -27,6 +27,19 @@ namespace cosearch {
 
 enum class Mode { AllCore, PerCore };
 enum class Level { Fast, Medium, Long };
+
+/// Per-core tuning; editable before starting or while a run is in progress. The new values
+/// take effect on the NEXT selected candidate; in-flight trials and durable crash guards stay intact.
+struct Tuning {
+    int initial = -15;      // first probe of an untested core, clamped to limit and crash guard
+    int coarseStep = 5;     // successful coarse descent, in CO points
+    int refineStep = 3;     // after first failure; adapt to multiples of 3, 2 and finally 1
+    bool valid() const {
+        return initial >= -50 && initial <= -1 && coarseStep >= 1 && coarseStep <= 20
+            && refineStep >= 1 && refineStep <= 10;
+    }
+    bool operator==(const Tuning &) const = default;
+};
 
 /// How much testing each level buys. One cycle = 60 s of centurion-cpustress --load co.
 struct LevelSpec {
@@ -70,7 +83,12 @@ struct Outcome {
 
 class Search {
 public:
-    Search(Mode mode, Level level, int limit, QList<Core> cores);
+    Search(Mode mode, Level level, int limit, QList<Core> cores, Tuning tuning = {});
+
+    /// Change only FUTURE candidates; the active test and its replay signature never change.
+    bool setTuning(Tuning tuning);
+    Tuning tuning() const { return tuning_; }
+    bool perCoreSearching() const;
 
     /// The next trial, or nullopt when the search is over (see result()).
     std::optional<Trial> next();
@@ -95,18 +113,18 @@ public:
     static std::optional<Search> load(const QJsonObject &o);
 
     /// Rough length of a whole search, for the dialog.
-    static int estimateMinutes(Mode mode, Level level, int cores, int limit);
+    static int estimateMinutes(Mode mode, Level level, int cores, int limit, Tuning tuning = {});
 
 private:
     enum class Stage { AllCore, PerCore, Confirm, Done };
     struct Walk {
         int pass = 0;          // last observed passing value; 0 is assumed stock
         int floor = 0;         // nearest failing value, or limit - 1 sentinel
-        bool coarse = true;    // all-core uses 5 then 1; per-core uses 5 then bisection
+        bool coarse = true;    // all-core uses 5 then 1; per-core uses custom step then refinement
         bool done = false;
-        bool seeded = false;   // per-core: whether the initial -15 probe has been made
+        bool seeded = false;   // per-core: whether the configured initial probe has been made
         int candidate() const; // legacy all-core descent
-        int coreCandidate(int limit) const;
+        int coreCandidate(int limit, Tuning tuning) const;
     };
     Trial allCoreTrial(int value) const;
     Trial perCoreTrial(int core, int value) const;
@@ -118,6 +136,7 @@ private:
     Mode mode_;
     Level level_;
     int limit_;
+    Tuning tuning_;
     QList<Core> cores_;
     Stage stage_ = Stage::AllCore;
     Walk all_;

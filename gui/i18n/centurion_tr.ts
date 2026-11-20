@@ -9885,4 +9885,151 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>%1 başlatılamadı.</translation>
         </message>
     </context>
+    <context>
+        <name>CoSearchDialog</name>
+        <message>
+            <source>Ryzen CO Search Assistant (experimental)</source>
+            <translation>Ryzen CO Arama Asistanı (deneysel)</translation>
+        </message>
+        <message>
+            <source>All-core</source>
+            <translation>Tüm çekirdekler</translation>
+        </message>
+        <message>
+            <source>Per-core</source>
+            <translation>Çekirdek başına</translation>
+        </message>
+        <message>
+            <source>Fast</source>
+            <translation>Hızlı</translation>
+        </message>
+        <message>
+            <source>Medium</source>
+            <translation>Orta</translation>
+        </message>
+        <message>
+            <source>Long</source>
+            <translation>Uzun</translation>
+        </message>
+        <message>
+            <source>Level:</source>
+            <translation>Seviye:</translation>
+        </message>
+        <message>
+            <source>Limit:</source>
+            <translation>Alt sınır:</translation>
+        </message>
+        <message>
+            <source>Search:</source>
+            <translation>Arama:</translation>
+        </message>
+        <message>
+            <source>Per-core controls:</source>
+            <translation>Çekirdek başına ayarlar:</translation>
+        </message>
+        <message>
+            <source>Start:</source>
+            <translation>Başlangıç:</translation>
+        </message>
+        <message>
+            <source>Coarse step:</source>
+            <translation>Kaba adım:</translation>
+        </message>
+        <message>
+            <source>After failure:</source>
+            <translation>Hata sonrası:</translation>
+        </message>
+        <message>
+            <source>Apply to next trials</source>
+            <translation>Sonraki testlere uygula</translation>
+        </message>
+        <message>
+            <source>First per-core test value. Defaults to -15; never exceeds the configured search limit or a stored reboot guard.</source>
+            <translation>Her çekirdeğin ilk deneme değeri. Varsayılan −15; belirlenen alt sınır ve kayıtlı yeniden başlama koruması aşılmaz.</translation>
+        </message>
+        <message>
+            <source>Coarse downward step after a successful per-core probe. Default: 5 CO points.</source>
+            <translation>Başarılı bir çekirdek testinden sonra daha negatif yöne gidilecek CO adımı. Varsayılan: 5 puan.</translation>
+        </message>
+        <message>
+            <source>First failure switches to this refinement step (default 3). Wide gaps use its multiples; narrow gaps automatically use 2 then 1 point.</source>
+            <translation>İlk hatadan sonra bu hassaslaştırma adımına geçilir (varsayılan 3). Geniş aralıkta katları, dar aralıkta otomatik olarak 2 ve 1 puan kullanılır.</translation>
+        </message>
+        <message>
+            <source>You can change the three values during an active per-core search. Changes affect only future candidates, never the test already running or stored reboot exclusions.</source>
+            <translation>Bu üç değer arama sürerken değiştirilebilir. Değişiklikler yalnızca sonraki adayları etkiler; çalışan test veya kayıtlı yeniden başlama dışlamaları değişmez.</translation>
+        </message>
+        <message>
+            <source>Changing steps is only available while a candidate is pending.</source>
+            <translation>Adımlar yalnızca bir aday test edilirken değiştirilebilir.</translation>
+        </message>
+        <message>
+            <source>Could not save updated CO steps; previous safe tuning retained.</source>
+            <translation>Güncel CO adımları kaydedilemedi; önceki ayarlar korundu.</translation>
+        </message>
+        <message>
+            <source>Updated future per-core trials: start %1, coarse step %2, failure step %3 (adaptive to 2/1). Current test unchanged.</source>
+            <translation>Sonraki çekirdek testleri güncellendi: başlangıç %1, kaba adım %2, hata sonrası adım %3 (gerekirse 2/1). Çalışan test değişmedi.</translation>
+        </message>
+        <message>
+            <source>Manual CO tuning: start %1 / coarse step %2 / after failure %3 (then 2 and 1 as needed). You can edit and apply these during the run.</source>
+            <translation>Manuel CO ayarları: başlangıç %1 / kaba adım %2 / hata sonrası %3 (gerekirse 2 ve 1). Arama sırasında değiştirip uygulayabilirsiniz.</translation>
+        </message>
+        <message>
+            <source>CO search scene:</source>
+            <translation>CO arama sahnesi:</translation>
+        </message>
+        <message>
+            <source>Start search</source>
+            <translation>Aramayı başlat</translation>
+        </message>
+        <message>
+            <source>Stop and reset</source>
+            <translation>Durdur ve sıfırla</translation>
+        </message>
+        <message>
+            <source>Not started. The current CPU curve must be stock.</source>
+            <translation>Başlatılmadı. Mevcut CPU eğrisi stok ayarda olmalı.</translation>
+        </message>
+        <message>
+            <source>Core</source>
+            <translation>Çekirdek</translation>
+        </message>
+        <message>
+            <source>Offset</source>
+            <translation>CO ofseti</translation>
+        </message>
+        <message>
+            <source>Now</source>
+            <translation>Şimdi</translation>
+        </message>
+        <message>
+            <source>Roughly %1 h %2 min for %3 cores (depends on where the offsets fail).</source>
+            <translation>%3 çekirdek için tahminen %1 saat %2 dakika (kararsızlık sınırına göre değişir).</translation>
+        </message>
+        <message>
+            <source>Trial %1: %2 (about %3 s plus setup). %4</source>
+            <translation>Deneme %1: %2 (yaklaşık %3 sn + hazırlık). %4</translation>
+        </message>
+        <message>
+            <source>Search finished</source>
+            <translation>Arama tamamlandı</translation>
+        </message>
+        <message>
+            <source>Resume CO search</source>
+            <translation>CO aramasına devam et</translation>
+        </message>
+        <message>
+            <source>CO search reboot lockout</source>
+            <translation>CO araması yeniden başlama kilidi</translation>
+        </message>
+        <message>
+            <source>Risk of a system crash</source>
+            <translation>Sistemin çökme riski</translation>
+        </message>
+        <message>
+            <source>Cancelled by user / guard</source>
+            <translation>Kullanıcı / koruma tarafından iptal edildi</translation>
+        </message>
+    </context>
 </TS>

@@ -47,25 +47,37 @@ int Search::Walk::candidate() const {
     return c > floor ? c : 1;
 }
 
-int Search::Walk::coreCandidate(int limit) const {
+int Search::Walk::coreCandidate(int limit, Tuning tuning) const {
     if (done || pass <= limit || pass - floor <= 1) return 1;
-    // The first per-core write is -15, not -5. With a shallower user limit, respect that limit.
     if (!seeded) {
-        // A persisted crash guard can make -15 unsafe too: never cross the failure boundary.
-        const int initial = std::max({limit, -15, floor + 1});
+        // Start at the operator's offset, respecting the SMU limit and any persistent
+        // crash exclusion. Stock 0 is always the conservative assumed passing boundary.
+        const int initial = std::max({limit, tuning.initial, floor + 1});
         return initial < pass ? initial : 1;
     }
     if (coarse) {
-        const int candidate = std::max(limit, pass - 5);
+        const int candidate = std::max(limit, pass - tuning.coarseStep);
         if (candidate < pass && candidate > floor) return candidate;
-        // At a persisted crash boundary, bisect instead of jumping past it.
+        // A persisted crash boundary or the search limit constrains this probe. Never
+        // cross it, and switch to the finer bracket search instead.
     }
-    // pass is closer to zero than floor; never retest a known pass or fail.
-    // Integer midpoint yields logarithmic refinement, including when the initial -15 fails.
-    return floor + (pass - floor + 1) / 2;
+    // pass (safe side) > floor (failed side). Never retry a failing offset or
+    // previously accepted point. With a wide bracket, approximate a bisection by
+    // jumping a MULTIPLE of the configured refinement step; near the boundary take
+    // one refinement step, then fall to 2 and 1 as the gap gets smaller.
+    const int gap = pass - floor;
+    const int available = gap - 1;
+    int delta = std::min(tuning.refineStep, available);
+    if (gap > tuning.refineStep * 2) {
+        const int half = gap / 2;
+        delta = std::max(tuning.refineStep, (half / tuning.refineStep) * tuning.refineStep);
+        delta = std::min(delta, available);
+    }
+    return pass - delta;
 }
 
-Search::Search(Mode mode, Level level, int limit, QList<Core> cores) : mode_(mode), level_(level), limit_(limit) {
+Search::Search(Mode mode, Level level, int limit, QList<Core> cores, Tuning tuning)
+    : mode_(mode), level_(level), limit_(limit), tuning_(tuning.valid() ? tuning : Tuning{}) {
     // Alternate between CCDs (slot order within each): consecutive turns heat different dies.
     QMap<int, QList<Core>> byCcd;
     for (const Core &c : cores) byCcd[c.ccd].append(c);
@@ -79,6 +91,14 @@ Search::Search(Mode mode, Level level, int limit, QList<Core> cores) : mode_(mod
         for (qsizetype i = 0; i < cores_.size(); ++i)
             per_.append(Walk{0, limit_ - 1, true, false, false});
     }
+}
+
+bool Search::perCoreSearching() const { return stage_ == Stage::PerCore; }
+
+bool Search::setTuning(Tuning tuning) {
+    if (!tuning.valid()) return false;
+    tuning_ = tuning;
+    return true;
 }
 
 QStringList Search::cpustress(bool perCore, const QList<int> &cpus, int cycles, int kernel, bool quick) const {
@@ -165,7 +185,7 @@ std::optional<Trial> Search::next() {
         for (int k = 0; k < cores_.size(); ++k) {
             const int i = (turn_ + k) % cores_.size();
             if (per_[i].done) continue;
-            const int c = per_[i].coreCandidate(limit_);
+            const int c = per_[i].coreCandidate(limit_, tuning_);
             if (c > 0) { per_[i].done = true; continue; }
             tested_ = i;
             cand_ = c;
@@ -262,8 +282,8 @@ QString Search::stageText() const {
     case Stage::AllCore: return QStringLiteral("All-core descent (last pass %1)").arg(all_.pass);
     case Stage::PerCore: {
         const int left = int(std::count_if(per_.begin(), per_.end(), [](const Walk &w) { return !w.done; }));
-        return QStringLiteral("Per-core quick search (%1 of %2 cores remaining; 60 s/core validation follows)")
-            .arg(left).arg(per_.size());
+        return QStringLiteral("Per-core search (%1/%2 cores pending; start %3, coarse %4, refine %5 -> 2 -> 1)")
+            .arg(left).arg(per_.size()).arg(tuning_.initial).arg(tuning_.coarseStep).arg(tuning_.refineStep);
     }
     case Stage::Confirm: return QStringLiteral("Confirmation");
     case Stage::Done: return QStringLiteral("Finished");
@@ -271,12 +291,17 @@ QString Search::stageText() const {
     return {};
 }
 
-int Search::estimateMinutes(Mode mode, Level level, int cores, int limit) {
+int Search::estimateMinutes(Mode mode, Level level, int cores, int limit, Tuning tuning) {
     const LevelSpec s = spec(level);
     if (mode == Mode::PerCore) {
-        // Roughly: -15, then 5-point probes toward the limit, and ~2 binary bracket probes.
-        // Hardware can require more/fewer probes and repeated confirmations.
-        const int probes = 1 + std::max(0, (-limit - 15 + 4) / 5) + 2;
+        if (!tuning.valid()) tuning = {};
+        const int first = std::max(limit, tuning.initial);
+        const int coarseProbes = 1 + std::max(0, (first - limit + tuning.coarseStep - 1) / tuning.coarseStep);
+        // Conservatively budget for both a wide first-probe failure and a fine bracket.
+        int span = std::max(-first, tuning.coarseStep);
+        int fineProbes = 0;
+        while (span > 1) { ++fineProbes; span = (span + 1) / 2; }
+        const int probes = coarseProbes + fineProbes;
         const int seconds = cores * probes * s.trialCycles * QUICK_SECONDS
                           + cores * s.confirmPerCore * FULL_SECONDS + s.confirmAllCore * FULL_SECONDS;
         return (seconds + 59) / 60;
@@ -284,6 +309,19 @@ int Search::estimateMinutes(Mode mode, Level level, int cores, int limit) {
     const int allTrials = std::max(1, -limit * 2 / 3 / 5) + 3;
     return allTrials * (std::min(s.topCores, cores) + s.trialCycles)
            + cores * s.confirmPerCore + s.confirmAllCore;
+}
+
+static QJsonObject tuningJson(Tuning tuning) {
+    return {{"initial", tuning.initial}, {"coarse_step", tuning.coarseStep}, {"refine_step", tuning.refineStep}};
+}
+
+static std::optional<Tuning> parseTuning(const QJsonObject &o) {
+    if (!o.value("initial").isDouble() || !o.value("coarse_step").isDouble() ||
+        !o.value("refine_step").isDouble()) return std::nullopt;
+    const Tuning t{o.value("initial").toInt(-99), o.value("coarse_step").toInt(-1),
+                   o.value("refine_step").toInt(-1)};
+    if (!t.valid()) return std::nullopt;
+    return t;
 }
 
 static QJsonObject walkJson(int pass, int floor, bool coarse, bool done, bool seeded) {
@@ -299,7 +337,8 @@ QJsonObject Search::save() const {
     }
     for (const Walk &w : per_) per << walkJson(w.pass, w.floor, w.coarse, w.done, w.seeded);
     static const char *stages[] = {"all", "per", "confirm", "done"};
-    return {{"version", 2}, {"mode", mode_ == Mode::AllCore ? "all" : "per"}, {"level", name(level_)}, {"limit", limit_},
+    return {{"version", 3}, {"mode", mode_ == Mode::AllCore ? "all" : "per"}, {"level", name(level_)}, {"limit", limit_},
+            {"tuning", tuningJson(tuning_)},
             {"cores", cores}, {"stage", stages[int(stage_)]}, {"all", walkJson(all_.pass, all_.floor, all_.coarse, all_.done, all_.seeded)},
             {"per", per}, {"turn", turn_}, {"tested", tested_}, {"trials", trials_}, {"cand", cand_}};
 }
@@ -307,7 +346,14 @@ QJsonObject Search::save() const {
 std::optional<Search> Search::load(const QJsonObject &o) {
     const auto level = levelFrom(o.value("level").toString());
     const QString mode = o.value("mode").toString();
-    if (o.value("version").toInt() != 2 || !level || (mode != "all" && mode != "per")) return std::nullopt;
+    const int version = o.value("version").toInt();
+    if ((version != 2 && version != 3) || !level || (mode != "all" && mode != "per")) return std::nullopt;
+    // Version 2 sessions used fixed -15/5 and binary refinement. For compatibility,
+    // recover them with the new safe defaults. The selected in-flight candidate is
+    // stored independently, and must match the journal's explicit signature.
+    const auto tuning = version == 3 ? parseTuning(o.value("tuning").toObject())
+                                     : std::optional<Tuning>(Tuning{});
+    if (!tuning) return std::nullopt;
     QList<Core> cores;
     for (const auto &v : o.value("cores").toArray()) {
         const QJsonObject c = v.toObject();
@@ -318,7 +364,7 @@ std::optional<Search> Search::load(const QJsonObject &o) {
     }
     const int limit = o.value("limit").toInt(1);
     if (cores.isEmpty() || limit > -1 || limit < -50 || cores.size() > 512) return std::nullopt;
-    Search s(mode == "all" ? Mode::AllCore : Mode::PerCore, *level, limit, {});
+    Search s(mode == "all" ? Mode::AllCore : Mode::PerCore, *level, limit, {}, *tuning);
     s.cores_ = cores;  // already in test order
     auto walk = [](const QJsonObject &w) { return Walk{w.value("pass").toInt(), w.value("floor").toInt(), w.value("coarse").toBool(),
                                                       w.value("done").toBool(), w.value("seeded").toBool()}; };

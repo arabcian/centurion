@@ -112,6 +112,64 @@ int main(int argc, char **argv) {
         CHECK(s.next()->perCore.first() == std::max(-15, limit));
     }
 
+    // Manual starting offset, coarse stride and post-failure 3 -> 2 -> 1 refinement.
+    {
+        Search s(Mode::PerCore, Level::Fast, -40, cpu(2), Tuning{-18, 7, 3});
+        const auto first = s.next();
+        CHECK(first && first->perCore.first() == -18);
+        const QJsonObject snap = s.save();
+        CHECK(snap.value("version").toInt() == 3);
+        auto restored = Search::load(snap);
+        CHECK(restored && restored->tuning() == (Tuning{-18, 7, 3}));
+        CHECK(restored && restored->inFlight() && restored->inFlight()->perCore == first->perCore);
+        s.report(Outcome{true, {}});
+        for (int k=0; k<3; ++k) {
+            auto t=s.next();
+            CHECK(t.has_value());
+            if (k == 0) CHECK(t->perCore.value(1) == -18); // alternating CCD
+            s.report(Outcome{true, {}});
+        }
+        auto t=s.next();
+        CHECK(t && t->perCore.first() == -25);
+        // Changing the stride during a pending trial must not change that trial.
+        CHECK(s.setTuning(Tuning{-20, 9, 3}));
+        CHECK(s.inFlight() && s.inFlight()->perCore == t->perCore);
+        auto saved = Search::load(s.save());
+        CHECK(saved && saved->tuning() == (Tuning{-20, 9, 3}));
+        CHECK(saved && saved->inFlight() && saved->inFlight()->perCore == t->perCore);
+        CHECK(!s.setTuning(Tuning{-20, 0, 3}));
+    }
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2), Tuning{-15, 5, 3});
+        // Fixed representative core: quick probe chronology includes the fail at -25,
+        // followed by values -23, -22, -21 as the boundary narrows.
+        for (int i=0; i<4; ++i) { const auto t=s.next(); CHECK(t.has_value()); s.report({true,{}}); }
+        for (int i=0; i<4; ++i) { const auto t=s.next(); CHECK(t.has_value()); s.report({true,{}}); }
+        const auto fail = s.next();
+        CHECK(fail && fail->perCore.first() == -25);
+        s.report({false,{}});
+        // The turn order alternates; other cores receive their own -25 attempts.
+        for (int i=0; i<3; ++i) { const auto t=s.next(); CHECK(t.has_value()); s.report({false,{}}); }
+        const auto fine = s.next();
+        CHECK(fine && fine->perCore.first() == -23);
+    }
+    {
+        // Old v2 strategy snapshots remain loadable so v3 recovery journals from
+        // the previous release do not silently become unrecoverable.
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        auto old = s.save();
+        old["version"] = 2;
+        old.remove("tuning");
+        auto loaded = Search::load(old);
+        CHECK(loaded.has_value());
+        CHECK(loaded && loaded->tuning() == Tuning{});
+        auto malformed = s.save();
+        QJsonObject t = malformed.value("tuning").toObject();
+        t["coarse_step"] = 0;
+        malformed["tuning"] = t;
+        CHECK(!Search::load(malformed));
+    }
+
     // A core that cannot hold -15 is bracketed toward zero, not automatically marked -15 stable.
     {
         Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
