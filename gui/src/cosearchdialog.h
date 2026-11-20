@@ -7,8 +7,10 @@
 // that froze or rebooted the machine resume afterwards, the trial in flight counting as failed.
 #include "coevidence.h"
 #include "costrategy.h"
+#include "ryzentab.h"
 
 #include <QDialog>
+#include <QPointer>
 #include <QHash>
 #include <QSet>
 #include <QJsonArray>
@@ -25,6 +27,7 @@ class QPushButton;
 class QSpinBox;
 class QTableWidget;
 class QTimer;
+class Notifier;
 
 class CoSearchDialog : public QDialog {
     Q_OBJECT
@@ -36,6 +39,17 @@ protected:
     void reject() override;
 private:
     void start();
+    /// Checks shared by start() and verifyProfile(); the detected layout when a search may begin.
+    std::optional<ryzen::Layout> preflight(cosearch::Mode mode);
+    /// Runs only the final verification on a saved Ryzen Curve profile (Search::startVerification).
+    void verifyProfile();
+    /// Lists the persistent crash guards (with the BIOS they were recorded under) and removes chosen ones.
+    void manageCrashGuards();
+    /// Single-core throughput on every searched core (centurion-cpustress percore --load sse): first CPU -> chunks,
+    /// and the exit code (0 pass, 1 wrong result, other / -1 = no usable run).
+    void measureThroughput(std::function<void(const QHash<int, int> &, int code)> then);
+    /// After a finished search: the curve's run (curveRun_) against a stock run made right after the reset.
+    void compareThroughput(std::function<void()> then);
     void offerResume();
     void launch();
     void step();
@@ -48,7 +62,8 @@ private:
     void cancel();
     void reset(const QString &reason);
     void done(bool resetOk, const QString &reason);
-    void note(const QString &line);
+    /// tone: a theme colour (theme::OK, DANGER, ...) for the log line and the status banner; nullptr = neutral.
+    void note(const QString &line, const char *tone = nullptr);
     bool toolsPresent();
     void updateEstimate();
     void applyTuning();
@@ -65,7 +80,7 @@ private:
     void saveResultAs();
     void loadResultIntoStarts();
     void applyPreset(const QString &name);
-    bool saveProfile(const QString &name) const;
+    bool saveProfile(const QString &name, int margin = 0) const;
 
     QComboBox *mode_, *level_, *scene_, *preset_;
     QSpinBox *limit_, *allStart_, *step_;
@@ -73,7 +88,7 @@ private:
     QLabel *estimate_, *status_;
     QTableWidget *table_;
     QPlainTextEdit *log_;
-    QPushButton *go_, *stop_, *saveResult_, *loadResult_;
+    QPushButton *go_, *stop_, *saveResult_, *loadResult_, *verifyBtn_, *guardsBtn_;
     QProcess *test_ = nullptr;
     QTimer *guard_, *watch_;
     QString testProgram_;
@@ -103,4 +118,15 @@ private:
     quint64 watchSeq_ = 0;
     bool watchBusy_ = false;
     int activeCpu_ = -1;               // the CPU centurion-cpustress last moved its single-core load to
+
+    // Read-only insights (coinsights.h): shown with the results, never change what is tested or saved.
+    QString verifiedProfile_;         // verification-only run of this saved profile (journal: "verify_profile")
+    bool confirmPassed_ = false;       // the last trial was the final verification and passed: its curve is applied
+    QHash<int, int> curveRun_;         // throughput with the found curve, first CPU -> chunks (until compared)
+    QHash<int, double> perf_;          // core index -> throughput change against stock, in percent
+    QHash<int, int> peakMhz_;          // core index -> highest clock seen while it was probed alone (journal: "peaks")
+    QPointer<QProcess> perfTest_;
+    qint64 searchStart_ = 0;           // when launch() ran, for the progress line
+    int doneAtLaunch_ = 0, estimateAtLaunch_ = 0;
+    Notifier *notifier_;
 };

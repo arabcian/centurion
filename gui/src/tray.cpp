@@ -216,8 +216,47 @@ void Tray::flushDeferred() {
 
 static void disabledEntry(QMenu *m, const QString &t) { m->addAction(t)->setEnabled(false); }
 
+/// Small menu glyph: `body` is SVG content on a 24x24 grid, drawn with `color` as stroke ("@") and, where a
+/// shape asks for it, fill ("@" too). Plasma renders the tray menu itself (DBusMenu): icons are the one
+/// styling it carries, so colours sit in the glyphs, not in the menu text.
+static QIcon menuIcon(const char *body, const char *color) {
+    QByteArray svg = QByteArrayLiteral("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='@' "
+                                       "stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>") + body + "</svg>";
+    svg.replace('@', color);
+    QSvgRenderer r(svg);
+    QIcon icon;
+    for (int px : {16, 22, 32}) {
+        QPixmap pm(px, px);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        r.render(&p, QRectF(0, 0, px, px));
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
+}
+
+namespace glyph {
+// Drawn for Centurion: plain geometric shapes on the 24 grid.
+static const char *SCENE = "<path d='M12 3 3 8l9 5 9-5z'/><path d='m3 13 9 5 9-5'/>";
+static const char *POWER = "<path d='M13 2 5 14h6l-1 8 8-12h-6z'/>";
+static const char *CPU = "<rect x='6' y='6' width='12' height='12' rx='2'/><rect x='10' y='10' width='4' height='4'/>"
+                         "<path d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'/>";
+static const char *GPU = "<rect x='2' y='6' width='20' height='12' rx='2'/><circle cx='9' cy='12' r='3'/><path d='M15 10h4M15 14h4'/>";
+static const char *TUNE = "<path d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12'/><circle cx='16' cy='6' r='2'/>"
+                          "<circle cx='10' cy='12' r='2'/><circle cx='18' cy='18' r='2'/>";
+static const char *SAFE = "<path d='M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5z' fill='@'/>"
+                          "<path d='M12 7v6M12 17v0.5' stroke='#ffffff' stroke-width='2.5'/>";
+static const char *KEYBOARD = "<rect x='2' y='6' width='20' height='12' rx='2'/><path d='M6 10h0M10 10h0M14 10h0M18 10h0M7 14h10'/>";
+static const char *FAN = "<circle cx='12' cy='12' r='2'/><path d='M12 10c-1-4 0-7 3-7s3 4-1 7M14 12c4-1 7 0 7 3s-4 3-7-1"
+                         "M12 14c1 4 0 7-3 7s-3-4 1-7M10 12c-4 1-7 0-7-3s4-3 7 1'/>";
+static const char *WINDOW = "<rect x='3' y='4' width='18' height='16' rx='2'/><path d='M3 9h18'/>";
+static const char *QUIT = "<path d='M12 3v8'/><path d='M7 6a8 8 0 1 0 10 0'/>";
+}
+
 /// Only when the user asks: one GET of the latest GitHub release, nothing sent but the request itself.
-static void checkForUpdates() {
+[[maybe_unused]] static void checkForUpdates() {
     static const QString releases = QStringLiteral("https://github.com/arabcian/centurion/releases");
     auto *nam = new QNetworkAccessManager(qApp);
     QNetworkRequest rq(QUrl(QStringLiteral("https://api.github.com/repos/arabcian/centurion/releases/latest")));
@@ -255,7 +294,7 @@ void Tray::rebuild() {
     SceneEngine *eng = win_->scenes();
     const QStringList sceneNames = scenes::names();
     if (!sceneNames.isEmpty()) {
-        QMenu *sm = menu_->addMenu(tr("Scene"));
+        QMenu *sm = menu_->addMenu(menuIcon(glyph::SCENE, theme::PURPLE), tr("Scene"));
         for (const QString &n : sceneNames) {
             QAction *a = sm->addAction(n);
             a->setCheckable(true);
@@ -288,7 +327,7 @@ void Tray::rebuild() {
     }
 
     // Power profile
-    QMenu *pm = menu_->addMenu(tr("Power Profile"));
+    QMenu *pm = menu_->addMenu(menuIcon(glyph::POWER, theme::ACCENT), tr("Power Profile"));
     HomeTab *home = win_->home();
     const QStringList profiles = home->offeredProfiles();
     if (profiles.isEmpty()) disabledEntry(pm, tr("(no platform-profile driver)"));
@@ -305,7 +344,7 @@ void Tray::rebuild() {
 
     // Ryzen (AMD only — the window has no Ryzen tab on Intel)
     if (RyzenTab *ryzen = win_->ryzen()) {
-    QMenu *rm = menu_->addMenu(tr("CPU Curve (Ryzen)"));
+    QMenu *rm = menu_->addMenu(menuIcon(glyph::CPU, theme::INFO), tr("CPU Curve (Ryzen)"));
     const QStringList rnames = ryzen->savedProfileNames();
     if (rnames.isEmpty()) disabledEntry(rm, tr("(no saved profiles)"));
     for (const QString &n : rnames)
@@ -327,7 +366,7 @@ void Tray::rebuild() {
 
     // Intel undervolt (Intel only)
     if (IntelTab *intel = win_->intel()) {
-        QMenu *im = menu_->addMenu(tr("CPU Undervolt (Intel)"));
+        QMenu *im = menu_->addMenu(menuIcon(glyph::CPU, theme::INFO), tr("CPU Undervolt (Intel)"));
         const QStringList inames = intel->savedProfileNames();
         if (inames.isEmpty()) disabledEntry(im, tr("(no saved profiles)"));
         for (const QString &n : inames)
@@ -347,7 +386,7 @@ void Tray::rebuild() {
 
     // NVIDIA
     if (NvidiaTab *nv = win_->nvidia()) {  // no NVIDIA GPU → no menu
-    QMenu *nm = menu_->addMenu(tr("GPU Curve (NVIDIA)"));
+    QMenu *nm = menu_->addMenu(menuIcon(glyph::GPU, theme::OK), tr("GPU Curve (NVIDIA)"));
     const QStringList nnames = nv->profileNames();
     const QString def = nv->defaultProfileName();
     if (nnames.isEmpty()) disabledEntry(nm, tr("(no saved profiles)"));
@@ -365,7 +404,7 @@ void Tray::rebuild() {
     }
 
     // Optimizations
-    QMenu *om = menu_->addMenu(tr("Optimizations"));
+    QMenu *om = menu_->addMenu(menuIcon(glyph::TUNE, theme::WARN), tr("Optimizations"));
     OptimizeTab *opt = win_->optimize();
     const QString game = opt->gamePreset();
     for (const QString &n : opt->presetNames())
@@ -384,17 +423,9 @@ void Tray::rebuild() {
     });
     om->setEnabled(!opt->busy());
 
-    connect(menu_->addAction(tr("Emergency safe mode…")), &QAction::triggered, this, [this] {
-        if (QMessageBox::question(nullptr, tr("Emergency safe mode"),
-                                  tr("Reset the CPU and NVIDIA curves, restore the optimizations, set the fans to Auto and "
-                                     "the power profile to Balanced?")) != QMessageBox::Yes) return;
-        notify(tr("Safe mode"), tr("Resetting to safe defaults…"));
-        win_->runSafeMode();
-    });
-
     // Keyboard lighting (Spectrum controller) — immediate, no cooldown needed.
     if (LightingTab *lt = win_->lighting()) {
-        QMenu *lm = menu_->addMenu(tr("Keyboard Lighting"));
+        QMenu *lm = menu_->addMenu(menuIcon(glyph::KEYBOARD, theme::PURPLE), tr("Keyboard Lighting"));
         if (!lt->ready()) {
             disabledEntry(lm, tr("(keyboard not read — see the Lighting tab)"));
         } else {
@@ -426,7 +457,7 @@ void Tray::rebuild() {
     // Fans: all to max / Auto, or one fan at a fixed RPM (multiples of 100).
     const QList<HomeTab::FanInfo> fans = home->fanInfo();
     if (!fans.isEmpty()) {
-        QMenu *fm = menu_->addMenu(tr("Fans"));
+        QMenu *fm = menu_->addMenu(menuIcon(glyph::FAN, theme::INFO), tr("Fans"));
         const bool maxMode = home->fansMaxMode();
         QAction *mx = fm->addAction(tr("Max all fans"));
         mx->setCheckable(true);
@@ -487,9 +518,17 @@ void Tray::rebuild() {
     }
 
     menu_->addSeparator();
-    connect(menu_->addAction(tr("Check for updates…")), &QAction::triggered, this, &checkForUpdates);
-    connect(menu_->addAction(win_->isVisible() ? tr("Hide window") : tr("Show window")), &QAction::triggered, this, &Tray::toggleWindow);
-    connect(menu_->addAction(tr("Quit")), &QAction::triggered, this, [this] {
+    // "Check for updates…" (checkForUpdates) is hidden for now; safe mode takes its place, in red.
+    connect(menu_->addAction(menuIcon(glyph::SAFE, theme::DANGER), tr("Emergency safe mode…")), &QAction::triggered, this, [this] {
+        if (QMessageBox::question(nullptr, tr("Emergency safe mode"),
+                                  tr("Reset the CPU and NVIDIA curves, restore the optimizations, set the fans to Auto and "
+                                     "the power profile to Balanced?")) != QMessageBox::Yes) return;
+        notify(tr("Safe mode"), tr("Resetting to safe defaults…"));
+        win_->runSafeMode();
+    });
+    connect(menu_->addAction(menuIcon(glyph::WINDOW, theme::MUTED), win_->isVisible() ? tr("Hide window") : tr("Show window")),
+            &QAction::triggered, this, &Tray::toggleWindow);
+    connect(menu_->addAction(menuIcon(glyph::QUIT, theme::MUTED), tr("Quit")), &QAction::triggered, this, [this] {
         win_->setForceQuit(true);
         hide();
         qApp->quit();

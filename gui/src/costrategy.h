@@ -103,6 +103,10 @@ public:
     bool exclude(int ccd, int slot);
     /// Per-core: this core's first probe (clamped to limit..0; 0 = step down from stock). Before next().
     bool setStart(int ccd, int slot, int value);
+    /// Verification only (a saved profile): skip the walk; `values` (cores() order, -50..0) go straight to
+    /// the final verification / confirmation, which backs failing cores off as usual. Before next().
+    /// All-core mode takes values[0] for every core. False on a bad list or after next().
+    bool startVerification(const QList<int> &values);
 
     /// Per-core progress of one core (cores() order), for display.
     struct CoreState {
@@ -114,6 +118,8 @@ public:
     CoreState coreState(int i) const;
 
     bool finished() const { return stage_ == Stage::Done; }
+    /// In the final verification / confirmation (every searched value applied at once).
+    bool confirming() const { return stage_ == Stage::Confirm; }
     Mode mode() const { return mode_; }
     Level level() const { return level_; }
     int limit() const { return limit_; }

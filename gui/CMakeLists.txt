@@ -49,6 +49,7 @@ add_executable(centurion
     src/cosearchdialog.cpp src/cosearchdialog.h
     src/costrategy.cpp src/costrategy.h
     src/coevidence.cpp src/coevidence.h
+    src/coinsights.cpp src/coinsights.h
     src/inteltab.cpp     src/inteltab.h
     src/vfcurvewidget.cpp src/vfcurvewidget.h
     src/nvidiatab.cpp    src/nvidiatab.h
@@ -305,6 +306,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-costrategy-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-costrategy-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME costrategy COMMAND centurion-costrategy-test)
+    add_executable(centurion-coinsights-test tests/coinsights_test.cpp src/coinsights.cpp src/coinsights.h src/costrategy.h)
+    target_link_libraries(centurion-coinsights-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-coinsights-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME coinsights COMMAND centurion-coinsights-test)
     add_executable(centurion-coevidence-test tests/coevidence_test.cpp src/coevidence.cpp src/coevidence.h src/costrategy.cpp src/costrategy.h)
     target_link_libraries(centurion-coevidence-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-coevidence-test PRIVATE QT_NO_KEYWORDS)

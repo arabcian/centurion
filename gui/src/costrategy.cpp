@@ -82,6 +82,24 @@ Search::Search(Mode mode, Level level, int limit, QList<Core> cores, Tuning tuni
 
 bool Search::perCoreSearching() const { return stage_ == Stage::PerCore; }
 
+bool Search::startVerification(const QList<int> &values) {
+    if (trials_ > 0 || values.size() != cores_.size()) return false;
+    for (int v : values) if (v > 0 || v < -50) return false;
+    if (mode_ == Mode::AllCore) {
+        all_.pass = values.first();
+        all_.coarse = false;
+        all_.done = true;
+    } else {
+        for (int i = 0; i < cores_.size(); ++i) {
+            per_[i].pass = values[i];
+            per_[i].seeded = true;
+            per_[i].done = true;
+        }
+    }
+    stage_ = Stage::Confirm;
+    return true;
+}
+
 bool Search::setTuning(Tuning tuning) {
     if (!tuning.valid()) return false;
     tuning_ = tuning;

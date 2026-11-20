@@ -620,6 +620,39 @@ int main(int argc, char **argv) {
         CHECK(!Search::load(o));
     }
 
+    // Verification only (a saved profile): no probes, straight to the whole-set verification; a failing
+    // core backs off until the set passes; the state survives save / load.
+    {
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(4));
+        QList<int> v;
+        for (const Core &c : s.cores()) v << std::max(-30, stable.value(c.cpus.first()) - 2);  // 2 points too deep
+        CHECK(!s.startVerification(v.mid(1)));          // wrong length
+        QList<int> bad = v;
+        bad[0] = 3;
+        CHECK(!s.startVerification(bad));               // positive offset
+        CHECK(s.startVerification(v));
+        CHECK(s.confirming() && !s.perCoreSearching());
+        Sim sim{stable};
+        int guard = 0;
+        while (auto t = s.next()) {
+            CHECK(t->tests.size() > 1);  // the verification, never a single-core probe
+            const auto back = Search::load(s.save());
+            CHECK(back && back->confirming());
+            s.report(sim.run(s, *t));
+            if (++guard > 200) break;
+        }
+        CHECK(s.finished());
+        for (int i = 0; i < s.cores().size(); ++i) CHECK(s.values()[i] >= stable.value(s.cores()[i].cpus.first()));
+        CHECK(!s.startVerification(v));                 // only before the first next()
+
+        Search a(Mode::AllCore, Level::Fast, -30, cpu(4));
+        CHECK(a.startVerification(QList<int>(a.cores().size(), -8)));
+        const auto t = a.next();
+        CHECK(t && t->allCore == -8);
+        a.report(Outcome{true, {}});
+        CHECK(a.finished() && a.values().first() == -8);
+    }
+
     // Levels: more testing per trial as they go up; the estimate grows with them.
     {
         CHECK(spec(Level::Fast).trialCycles < spec(Level::Long).trialCycles);

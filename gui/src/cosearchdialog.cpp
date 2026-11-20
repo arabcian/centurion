@@ -1,12 +1,17 @@
 #include "cosearchdialog.h"
+#include "coinsights.h"
+#include "notify.h"
 #include "curvepage.h"
 #include "mainwindow.h"
 #include "privileged.h"
 #include "ryzentab.h"
 #include "scenes.h"
+#include "theme.h"
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialogButtonBox>
+#include <QLineEdit>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -26,6 +31,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QThread>
@@ -44,6 +50,16 @@ static QString stateDir() {
 static QString journalPath() { return stateDir() + "/co-search-session.json"; }
 static QString crashGuardPath() { return stateDir() + "/co-search-crash-guards.json"; }
 static QString settingsPath() { return QFileInfo(scenes::dir()).path() + "/co-search.json"; }
+/// BIOS version the firmware reports; CO behaviour changes with the AGESA a BIOS update brings.
+static QString biosVersion() {
+    QFile f(QStringLiteral("/sys/class/dmi/id/bios_version"));
+    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.read(128)).trimmed() : QString();
+}
+/// Rated top clock of a CPU in MHz (cpufreq cpuinfo_max_freq; amd-pstate: its highest-performance clock), 0 = unknown.
+static int ratedMhz(int cpu) {
+    QFile f(QStringLiteral("/sys/devices/system/cpu/cpu%1/cpufreq/cpuinfo_max_freq").arg(cpu));
+    return f.open(QIODevice::ReadOnly) ? QString::fromLatin1(f.read(32)).trimmed().toInt() / 1000 : 0;
+}
 static QString readBootId() {
     QFile boot(QStringLiteral("/proc/sys/kernel/random/boot_id"));
     return boot.open(QIODevice::ReadOnly) ? QString::fromUtf8(boot.readAll()).trimmed() : QString();
@@ -106,7 +122,7 @@ static bool saveCrashGuard(const Search &s, const Trial &t) {
         } else fresh << item;
     }
     fresh << QJsonObject{{"ccd", c.ccd}, {"slot", c.slot}, {"cpus", logical},
-                         {"failed", mostConservative}};
+                         {"failed", mostConservative}, {"bios", biosVersion()}};
     QDir().mkpath(stateDir());
     QSaveFile f(crashGuardPath());
     if (!f.open(QIODevice::WriteOnly)) return false;
@@ -150,9 +166,20 @@ static bool applyCrashGuards(Search &s) {
     return true;
 }
 
-CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
+/// One coloured log line; `stamp` empty = indented continuation line (no time).
+static void logLine(QPlainTextEdit *log, const QString &stamp, const QString &text, const char *color) {
+    log->appendHtml(QStringLiteral("<span style=\"color:%1;\">%2</span><span style=\"color:%3; white-space:pre;\">%4</span>")
+        .arg(theme::MUTED, stamp.isEmpty() ? QStringLiteral("          ") : stamp + QStringLiteral("  "), color,
+             text.toHtmlEscaped().replace('\n', "<br>")));
+}
+
+static QString statusSheet(const char *tone) {
+    return theme::banner(tone ? tone : theme::MUTED, "#coStatus") + QStringLiteral(" #coStatus { padding: 5px 10px; }");
+}
+
+CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new Notifier(this)) {
     setWindowTitle(tr("Ryzen CO Search Assistant (experimental)"));
-    resize(820, 640);
+    resize(1000, 680);
     auto *v = new QVBoxLayout(this);
     auto *explainer = new QLabel(tr(
         "Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. "
@@ -167,6 +194,8 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
         "The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. "
         "Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it."));
     explainer->setWordWrap(true);
+    explainer->setObjectName("coExplainer");
+    explainer->setStyleSheet(theme::banner(theme::INFO, "#coExplainer") + QStringLiteral(" #coExplainer { padding: 6px 10px; }"));
     v->addWidget(explainer);
 
     auto *form = new QFormLayout;
@@ -241,9 +270,21 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
                                "and in Preset here. A search that did not finish its verification is saved as not verified."));
     loadResult_ = new QPushButton(tr("Use result as Start"));
     loadResult_->setToolTip(tr("Copy the Result column into the Start column (per-core), to continue from it in the next search."));
+    verifyBtn_ = new QPushButton(tr("Verify a profile…"));
+    verifyBtn_->setToolTip(tr("Run only the 20-minute verification (per-core profile) or the confirmation (all-core) on a saved "
+                              "Ryzen Curve profile, without searching: after a BIOS update, or when the weather got warmer. "
+                              "A failing core backs off as in a search; the result is saved as a new profile."));
+    guardsBtn_ = new QPushButton(tr("Crash guards…"));
+    guardsBtn_->setToolTip(tr("Values that crashed this machine are never tested again on that core. List them, with the BIOS "
+                              "they were recorded under, and remove ones you no longer trust (e.g. after a BIOS update)."));
     go_ = new QPushButton(tr("Start search"));
+    go_->setObjectName("btnAccent");
     stop_ = new QPushButton(tr("Stop and reset"));
+    stop_->setObjectName("btnDanger");
     stop_->setEnabled(false);
+    row->addWidget(guardsBtn_);
+    row->addWidget(verifyBtn_);
+    row->addSpacing(12);
     row->addWidget(saveResult_);
     row->addWidget(loadResult_);
     row->addSpacing(12);
@@ -252,9 +293,11 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     v->addLayout(row);
     status_ = new QLabel(tr("Not started. The current CPU curve must be stock."));
     status_->setWordWrap(true);
+    status_->setObjectName("coStatus");
+    status_->setStyleSheet(statusSheet(nullptr));
     v->addWidget(status_);
-    table_ = new QTableWidget(0, 4);
-    table_->setHorizontalHeaderLabels({tr("Core"), tr("Start"), tr("Result"), tr("Status")});
+    table_ = new QTableWidget(0, 5);
+    table_->setHorizontalHeaderLabels({tr("Core"), tr("Start"), tr("Result"), tr("Status"), tr("Notes")});
     table_->setToolTip(tr("Per-core: Start is the core's first probe (0 = one step below stock). Untick a core to leave "
                           "it at stock (0) for the whole search and in the saved result."));
     table_->horizontalHeader()->setStretchLastSection(true);
@@ -263,8 +306,8 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     log_ = new QPlainTextEdit;
     log_->setReadOnly(true);
     auto *split = new QHBoxLayout;
-    split->addWidget(table_, 4);
-    split->addWidget(log_, 4);
+    split->addWidget(table_, 3);  // wider than the log: the Status column carries the per-core notes
+    split->addWidget(log_, 2);
     v->addLayout(split, 1);
 
     loadSettings();
@@ -291,15 +334,16 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     guard_ = new QTimer(this);
     guard_->setInterval(1000);
     connect(guard_, &QTimer::timeout, this, [this] {
+        if (running_) updateEstimate();  // elapsed / left
         if (!running_ || resetting_ || sceneApplying_) return;
         if (scenes::gameSessions() > 0 || scenes::activeScene() != startScene_) {
-            note(tr("Scene or game tuning ownership changed; cancelling search.")); cancel(); return;
+            note(tr("Scene or game tuning ownership changed; cancelling search."), theme::WARN); cancel(); return;
         }
         if (!applying_ && trial_ && CurvePage::currentState("cpu") != expectedCurve_) {
-            note(tr("CPU curve was changed externally during this trial; cancelling.")); cancel(); return;
+            note(tr("CPU curve was changed externally during this trial; cancelling."), theme::WARN); cancel(); return;
         }
         if (test_ && test_->state() != QProcess::NotRunning && QDateTime::currentSecsSinceEpoch() > testDeadline_) {
-            note(tr("CPU test exceeded safety timeout; terminating.")); cancel();
+            note(tr("CPU test exceeded safety timeout; terminating."), theme::WARN); cancel();
         }
     });
     watch_ = new QTimer(this);
@@ -309,6 +353,8 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent) {
     connect(loadResult_, &QPushButton::clicked, this, &CoSearchDialog::loadResultIntoStarts);
     updateResultButtons();
     connect(go_, &QPushButton::clicked, this, &CoSearchDialog::start);
+    connect(verifyBtn_, &QPushButton::clicked, this, &CoSearchDialog::verifyProfile);
+    connect(guardsBtn_, &QPushButton::clicked, this, &CoSearchDialog::manageCrashGuards);
     connect(stop_, &QPushButton::clicked, this, &CoSearchDialog::cancel);
     QTimer::singleShot(0, this, &CoSearchDialog::offerResume);
 }
@@ -346,6 +392,11 @@ static bool blockingReset() {
 }
 
 CoSearchDialog::~CoSearchDialog() {
+    if (perfTest_) {  // a throughput run (with the curve, or the stock run after it): its handler must not run now
+        perfTest_->disconnect(this);
+        perfTest_->kill();
+        perfTest_->waitForFinished(2000);
+    }
     if (!running_ || resetting_) return;  // idle, or the asynchronous reset is already on its way
     guard_->stop();
     if (test_) {
@@ -383,9 +434,10 @@ void CoSearchDialog::closeEvent(QCloseEvent *e) {
     } else QDialog::closeEvent(e);
 }
 
-void CoSearchDialog::note(const QString &s) {
-    log_->appendPlainText(QDateTime::currentDateTime().toString("HH:mm:ss") + "  " + s);
+void CoSearchDialog::note(const QString &s, const char *tone) {
+    logLine(log_, QDateTime::currentDateTime().toString("HH:mm:ss"), s, tone ? tone : theme::FG_DIM);
     status_->setText(s);
+    theme::setSheet(status_, statusSheet(tone));
 }
 
 Tuning CoSearchDialog::tuning() const {
@@ -402,6 +454,23 @@ void CoSearchDialog::updateEstimate() {
     // Do not replace its pending journal with a non-pending snapshot in that gap.
     applyTuning_->setEnabled(perCore && running_ && !resetting_ && !abort_ &&
                              search_.has_value() && search_->perCoreSearching() && trial_.has_value());
+    if (running_ && search_) {
+        // Live progress: per-core from the pace of the cores finished since launch(), otherwise the launch estimate.
+        int done = 0, total = 0;
+        for (int i = 0; i < search_->cores().size(); ++i) {
+            if (search_->mode() == Mode::PerCore && search_->coreState(i).excluded) continue;
+            ++total;
+            done += search_->mode() == Mode::PerCore ? search_->coreState(i).done : search_->finished();
+        }
+        const int elapsed = int((QDateTime::currentSecsSinceEpoch() - searchStart_) / 60);
+        const int left = search_->mode() == Mode::PerCore && search_->perCoreSearching()
+            ? coinsights::etaMinutes(elapsed, done - doneAtLaunch_, total - doneAtLaunch_, estimateAtLaunch_, true)
+            : std::max(0, estimateAtLaunch_ - elapsed);
+        estimate_->setText(tr("Trial %1 · %2 / %3 cores done · %4 h %5 min elapsed · about %6 h %7 min left (estimate)")
+            .arg(trialNo_).arg(done).arg(total).arg(elapsed / 60).arg(elapsed % 60, 2, 10, QLatin1Char('0'))
+            .arg(left / 60).arg(left % 60, 2, 10, QLatin1Char('0')));
+        return;
+    }
     const auto level = levelFrom(level_->currentData().toString()).value_or(Level::Fast);
     int cores = 0;
     QList<int> starts;
@@ -422,11 +491,11 @@ void CoSearchDialog::applyTuning() {
     if (!writeJournal()) {
         search_->setTuning(previous);
         step_->setValue(previous.step);
-        note(tr("Could not save updated CO steps; previous safe tuning retained."));
+        note(tr("Could not save updated CO steps; previous safe tuning retained."), theme::DANGER);
         return;
     }
     saveSettings();
-    note(tr("Updated future per-core trials: step %1. Current test unchanged.").arg(tuning().step));
+    note(tr("Updated future per-core trials: step %1. Current test unchanged.").arg(tuning().step), theme::INFO);
 }
 
 void CoSearchDialog::reloadPresets() {
@@ -448,7 +517,7 @@ void CoSearchDialog::applyPreset(const QString &name) {
     const QJsonDocument doc = f.open(QIODevice::ReadOnly) && f.size() <= 256 * 1024
         ? QJsonDocument::fromJson(f.readAll(), &pe) : QJsonDocument();
     if (!doc.isObject()) {
-        note(tr("Preset '%1' could not be read; the Start values were not changed.").arg(name));
+        note(tr("Preset '%1' could not be read; the Start values were not changed.").arg(name), theme::DANGER);
         preset_->setCurrentIndex(0);
         return;
     }
@@ -476,7 +545,7 @@ void CoSearchDialog::applyPreset(const QString &name) {
         if (v > 0) { positive << id; v = 0; }
         starts_[key] = std::max(v, -50);
     }
-    note(tr("Preset '%1' loaded into the Start column.").arg(name));
+    note(tr("Preset '%1' loaded into the Start column.").arg(name), theme::OK);
     if (!fromAll.isEmpty()) note(tr("No per-core value, all-core value %1 used: %2").arg(coall.toInt()).arg(fromAll.join(", ")));
     if (!fromStock.isEmpty()) note(tr("No value in the preset, starting one step below stock: %1").arg(fromStock.join(", ")));
     if (!positive.isEmpty()) note(tr("Positive offsets start at 0: %1").arg(positive.join(", ")));
@@ -534,11 +603,14 @@ bool CoSearchDialog::writeJournal() const {
     if (!f.open(QIODevice::WriteOnly)) return false;
     // v3 stores the ALREADY selected candidate and whether it is still pending. On reboot,
     // report(false) updates exactly that candidate. A resolved journal must NOT replay it.
+    QJsonObject peaks;
+    for (auto it = peakMhz_.cbegin(); it != peakMhz_.cend(); ++it) peaks.insert(QString::number(it.key()), it.value());
     const QByteArray data = QJsonDocument(QJsonObject{{"version", 3}, {"boot", bootId_},
         {"search", search_->save()}, {"pending", trial_.has_value()},
         {"trial", trial_ ? trialSignature(*trial_) : QJsonObject{}},
         {"scene", scene_->currentData().toString()}, {"prior_scene", priorScene_},
-        {"reboots", hardReboots_}, {"attempts", attempts_}, {"evidence", evidence_}, {"active_cpu", activeCpu_}}).toJson();
+        {"reboots", hardReboots_}, {"attempts", attempts_}, {"evidence", evidence_}, {"active_cpu", activeCpu_},
+        {"peaks", peaks}, {"verify_profile", verifiedProfile_}}).toJson();
     if (f.write(data) != data.size()) return false;
     return f.commit();  // QSaveFile: durable commit before a new privileged SMU write
 }
@@ -576,6 +648,9 @@ void CoSearchDialog::refreshTable() {
     // The ticks are the selection for the NEXT search, editable whenever no search is running.
     const bool pickable = !running_ && Mode(mode_->currentData().toInt()) == Mode::PerCore;
     const QHash<int, int> guards = search_ ? QHash<int, int>{} : crashGuardMap();
+    QList<int> ranks;
+    for (const Core &c : cores) ranks << c.rank;
+    const QList<int> anomalies = search_ && perCore && search_->finished() ? coinsights::rankAnomalies(ranks, v) : QList<int>{};
     const QSignalBlocker block(table_);
     table_->setRowCount(cores.size());
     for (int i = 0; i < cores.size(); ++i) {
@@ -584,20 +659,53 @@ void CoSearchDialog::refreshTable() {
         QStringList cpus;
         for (int x : c.cpus) cpus << QString::number(x);
         QString status;
+        const char *tone = nullptr;  // colour of the Status cell (and the Result cell once a core is done)
+        bool testing = false, excluded = false, done = false;
         if (search_ && perCore) {
             const Search::CoreState st = search_->coreState(i);
             const bool isolated = trial_ && search_->perCoreSearching();
-            if (st.excluded) status = tr("excluded (stock)");
-            else if (isolated && trial_->perCore.value(i) != 0) status = tr("testing %1").arg(trial_->perCore[i]);
-            else if (trial_ && !isolated && !trial_->perCore.isEmpty()) status = tr("20-minute verification");
-            else if (st.done && st.failed) status = tr("done: %1 passed, %2 failed").arg(st.pass).arg(*st.failed);
-            else if (st.done) status = tr("done: %1").arg(st.pass);
-            else if (st.failed && st.pass == 0) status = tr("start failed, climbing; never %1 or below").arg(*st.failed);
-            else if (st.failed) status = tr("searching, never %1 or below").arg(*st.failed);
-            else status = tr("searching");
+            if (st.excluded) { status = tr("excluded (stock)"); tone = theme::MUTED; excluded = true; }
+            else if (isolated && trial_->perCore.value(i) != 0) { status = tr("testing %1").arg(trial_->perCore[i]); tone = theme::ACCENT; testing = true; }
+            else if (trial_ && !isolated && !trial_->perCore.isEmpty()) { status = tr("20-minute verification"); tone = theme::PURPLE; }
+            else if (st.done && st.failed) { status = tr("done: %1 passed, %2 failed").arg(st.pass).arg(*st.failed); tone = theme::OK; done = true; }
+            else if (st.done) { status = tr("done: %1").arg(st.pass); tone = theme::OK; done = true; }
+            else if (st.failed && st.pass == 0) { status = tr("start failed, climbing; never %1 or below").arg(*st.failed); tone = theme::WARN; }
+            else if (st.failed) { status = tr("searching, never %1 or below").arg(*st.failed); tone = theme::WARN; }
+            else { status = tr("searching"); tone = theme::INFO; }
         } else if (!search_ && guards.contains(key)) {
             status = tr("crash guard: never %1 or below").arg(guards.value(key));
+            tone = theme::DANGER;
         }
+        // Read-only insights on a core's result (coinsights.h), in the Notes column; a flag turns it yellow.
+        QStringList extra;
+        bool flagged = false;
+        if (search_ && v[i] < 0 && !testing) {
+            if (done && peakMhz_.contains(i)) {
+                const int rated = ratedMhz(c.cpus.first());
+                if (const auto share = coinsights::boostShare(peakMhz_.value(i), rated); share && *share < coinsights::LOW_BOOST) {
+                    extra << tr("low boost %1/%2 MHz").arg(peakMhz_.value(i)).arg(rated);
+                    flagged = true;
+                }
+            }
+            if (perf_.contains(i)) {
+                extra << tr("perf %1 %").arg(perf_.value(i), 0, 'f', 1);
+                flagged |= perf_.value(i) < coinsights::STRETCH_PERCENT;
+            }
+            if (anomalies.contains(i)) {
+                extra << tr("CPPC: test longer");
+                flagged = true;
+            }
+        }
+        QStringList tried;  // this core's probes, oldest first
+        for (const QJsonValue &a : std::as_const(attempts_))
+            if (search_ && a.toObject().value("core").toInt(-1) == i)
+                tried << QStringLiteral("%1 %2").arg(a.toObject().value("value").toInt()).arg(a.toObject().value("pass").toBool() ? u'✓' : u'✗');
+        QStringList tip;
+        if (flagged) tip << tr("low boost: never ran near its rated clock while tested alone, so its pass is weaker evidence.\n"
+                               "perf below %1 %: slower than at stock (clock stretching or lower boost).\n"
+                               "CPPC: deeper than every lower-ranked core, unusual for a top core.").arg(coinsights::STRETCH_PERCENT, 0, 'f', 0);
+        if (c.rank >= 0) tip << tr("CPPC rank %1 (higher = better core)").arg(c.rank);
+        if (!tried.isEmpty()) tip << tr("Tried: %1").arg(tried.join(QStringLiteral("   ")));
         auto *core = new QTableWidgetItem(QStringLiteral("CCD%1 / %2  (CPU %3)").arg(c.ccd).arg(c.slot).arg(cpus.join(',')));
         core->setData(Qt::UserRole, key);
         core->setFlags(pickable ? Qt::ItemFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable) : Qt::ItemFlags(Qt::ItemIsEnabled));
@@ -624,20 +732,36 @@ void CoSearchDialog::refreshTable() {
         }
         table_->setItem(i, 2, new QTableWidgetItem(search_ ? QString::number(v[i]) : QString()));
         table_->setItem(i, 3, new QTableWidgetItem(status));
+        if (tone) table_->item(i, 3)->setForeground(QColor(tone));
+        table_->setItem(i, 4, new QTableWidgetItem(extra.join(QStringLiteral(" · "))));
+        table_->item(i, 4)->setForeground(QColor(flagged ? theme::WARN : theme::MUTED));
+        if (done || testing) {
+            QFont bold = table_->font();
+            bold.setBold(true);
+            table_->item(i, done ? 2 : 3)->setFont(bold);
+            if (done) table_->item(i, 2)->setForeground(QColor(theme::OK));
+        }
+        if (excluded) for (int col : {0, 2}) table_->item(i, col)->setForeground(QColor(theme::MUTED));
+        if (testing) {
+            QColor wash(theme::ACCENT);
+            wash.setAlphaF(0.14);
+            for (int col = 0; col < 5; ++col) table_->item(i, col)->setBackground(wash);
+        }
+        if (!tip.isEmpty()) for (int col : {0, 2, 3, 4}) table_->item(i, col)->setToolTip(tip.join('\n'));
     }
     table_->resizeColumnsToContents();
 }
 
-void CoSearchDialog::start() {
-    if (running_) return;
+std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
+    if (running_ || perfTest_) return std::nullopt;
     if (QFileInfo::exists(journalPath())) {
         // Never overwrite an unresolved crash history with a fresh, unguarded search.
         offerResume();
-        return;
+        return std::nullopt;
     }
-    if (!toolsPresent()) return;
+    if (!toolsPresent()) return std::nullopt;
     if (CurvePage::currentState("cpu") != "stock" || scenes::gameSessions() > 0) {
-        QMessageBox::warning(this, tr("Search locked"), tr("Reset the CPU curve to stock and end game sessions before searching. Existing offsets must not be overwritten.")); return;
+        QMessageBox::warning(this, tr("Search locked"), tr("Reset the CPU curve to stock and end game sessions before searching. Existing offsets must not be overwritten.")); return std::nullopt;
     }
     // This helper's retained state is only *recorded* state, never an SMU read-back. Require
     // a known explicit stock write to avoid silently overwriting a saved CO configuration.
@@ -651,14 +775,20 @@ void CoSearchDialog::start() {
     if (!knownStock) {
         QMessageBox::warning(this, tr("Cannot verify stock state"),
            tr("Use Ryzen Curve → Reset Curve Optimizer first. The SMU cannot read offsets back; "
-              "the last helper-written state must explicitly be reset/0 before this search.")); return;
+              "the last helper-written state must explicitly be reset/0 before this search.")); return std::nullopt;
     }
     const ryzen::Layout layout = ryzen::detect();
-    const auto mode = Mode(mode_->currentData().toInt());
     if (mode == Mode::PerCore && !layout.parked.isEmpty()) {
-        QMessageBox::warning(this, tr("CCD parked"), tr("A CCD is parked by Optimizations: its cores cannot be tested alone. Unpark it first.")); return;
+        QMessageBox::warning(this, tr("CCD parked"), tr("A CCD is parked by Optimizations: its cores cannot be tested alone. Unpark it first.")); return std::nullopt;
     }
-    const QList<Core> cores = coresOf(layout);
+    return layout;
+}
+
+void CoSearchDialog::start() {
+    const auto mode = Mode(mode_->currentData().toInt());
+    const auto layout = preflight(mode);
+    if (!layout) return;
+    const QList<Core> cores = coresOf(*layout);
     if (cores.isEmpty()) { QMessageBox::warning(this, tr("Topology"), tr("No CPU cores detected.")); return; }
     QList<Core> skipped;
     if (mode == Mode::PerCore)
@@ -701,12 +831,229 @@ void CoSearchDialog::start() {
         const Core &c = search_->cores()[i];
         const Search::CoreState st = search_->coreState(i);
         if (st.excluded) note(tr("CCD%1 / %2 excluded: stays at stock.").arg(c.ccd).arg(c.slot));
-        else if (st.failed) note(tr("Crash guard: CCD%1 / %2 is never tested at %3 or below.").arg(c.ccd).arg(c.slot).arg(*st.failed));
+        else if (st.failed) note(tr("Crash guard: CCD%1 / %2 is never tested at %3 or below.").arg(c.ccd).arg(c.slot).arg(*st.failed), theme::WARN);
     }
+    QStringList otherBios;
+    for (const QJsonValue &v : readCrashGuards().value_or(QJsonArray{})) {
+        const QString b = v.toObject().value("bios").toString();
+        if (!b.isEmpty() && b != biosVersion())
+            otherBios << QStringLiteral("CCD%1/%2 (%3)").arg(v.toObject().value("ccd").toInt()).arg(v.toObject().value("slot").toInt()).arg(b);
+    }
+    if (!otherBios.isEmpty())
+        note(tr("Crash guards recorded under another BIOS (now %1): %2. They still apply; Crash guards… can remove them.")
+                 .arg(biosVersion(), otherBios.join(", ")), theme::WARN);
+    verifiedProfile_.clear();
+    peakMhz_.clear();
     hardReboots_ = 0;
     attempts_ = {};
     trialNo_ = 0;
     launch();
+}
+
+void CoSearchDialog::verifyProfile() {
+    QStringList profiles;
+    for (const QString &f : QDir(ryzen::profilesDir()).entryList({"*.json"}, QDir::Files, QDir::Name)) profiles << f.chopped(5);
+    if (profiles.isEmpty()) { QMessageBox::information(this, tr("Verify a profile"), tr("No saved Ryzen Curve profiles.")); return; }
+    bool ok = false;
+    const QString pick = QInputDialog::getItem(this, tr("Verify a profile"), tr("Profile to verify:"), profiles,
+                                               std::max<int>(0, profiles.indexOf(preset_->currentData().toString())), false, &ok);
+    if (!ok || pick.isEmpty()) return;
+    // Same file format as Ryzen Curve → Save Profile (and applyPreset).
+    QFile f(ryzen::profilesDir() + '/' + pick + ".json");
+    const QJsonDocument doc = f.open(QIODevice::ReadOnly) && f.size() <= 256 * 1024 ? QJsonDocument::fromJson(f.readAll()) : QJsonDocument();
+    if (!doc.isObject()) { QMessageBox::warning(this, tr("Verify a profile"), tr("Profile '%1' could not be read.").arg(pick)); return; }
+    const QJsonObject d = doc.object();
+    QHash<int, int> values;
+    bool anyPer = false;
+    for (const QJsonValue &v : d.value("cores").toArray()) {
+        const QJsonObject c = v.toObject();
+        if (c.value("ccx").toInt() != 0) continue;
+        const int key = coreKey(c.value("ccd").toInt(), c.contains("slot") ? c.value("slot").toInt() : c.value("core").toInt());
+        if (c.value("disabled").toBool()) { values.insert(key, 0); anyPer = true; }
+        else if (c.value("coper").isDouble()) { values.insert(key, c.value("coper").toInt()); anyPer = true; }
+    }
+    const QJsonValue coall = d.value("coall");
+    if (!anyPer && !coall.isDouble()) { QMessageBox::warning(this, tr("Verify a profile"), tr("Profile '%1' has no offsets.").arg(pick)); return; }
+    const Mode mode = anyPer ? Mode::PerCore : Mode::AllCore;
+    const auto layout = preflight(mode);
+    if (!layout) return;
+    const QList<Core> cores = coresOf(*layout);
+    if (cores.isEmpty()) { QMessageBox::warning(this, tr("Topology"), tr("No CPU cores detected.")); return; }
+    const auto level = levelFrom(level_->currentData().toString()).value_or(Level::Fast);
+    // The test order of the cores is the Search's own; a throwaway one gives it before the limit is known.
+    QList<int> v;
+    int deepest = 0;
+    QStringList clash, shown;
+    const QHash<int, int> guards = crashGuardMap();
+    const Search order(mode, level, limit_->value(), cores, tuning());
+    for (const Core &c : order.cores()) {
+        const int key = coreKey(c.ccd, c.slot);
+        const int x = std::clamp(mode == Mode::PerCore ? values.value(key, coall.isDouble() ? coall.toInt() : 0) : coall.toInt(), -50, 0);
+        if (guards.contains(key) && x <= guards.value(key))
+            clash << tr("CCD%1/%2 %3 (crashed at %4)").arg(c.ccd).arg(c.slot).arg(x).arg(guards.value(key));
+        v << x;
+        shown << QStringLiteral("CCD%1/%2 %3").arg(c.ccd).arg(c.slot).arg(x);
+        deepest = std::min(deepest, x);
+    }
+    if (!clash.isEmpty()) {
+        QMessageBox::warning(this, tr("Verify a profile"),
+            tr("These values are at or below a recorded crash on that core, so they are not applied: %1.\n\n"
+               "Make them less negative, or remove the guard under Crash guards… if you no longer trust it.").arg(clash.join(", ")));
+        return;
+    }
+    if (deepest == 0) { QMessageBox::information(this, tr("Verify a profile"), tr("Every core of '%1' is at stock: nothing to verify.").arg(pick)); return; }
+    search_.emplace(mode, level, std::min(limit_->value(), deepest), cores, tuning());
+    const auto t = search_->startVerification(v) ? search_->inFlight() : std::nullopt;
+    if (!t) { search_.reset(); QMessageBox::warning(this, tr("Verify a profile"), tr("The profile's values cannot be verified.")); return; }
+    if (QMessageBox::warning(this, tr("Risk of a system crash"),
+            tr("Verifying '%1' applies its offsets under load for about %2 min (longer if a core has to back off). "
+               "Undervolting may freeze or reboot the system; the curve is reset to stock afterwards. Continue?")
+                .arg(pick).arg((t->seconds() + 59) / 60),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { search_.reset(); return; }
+    saveSettings();
+    verifiedProfile_ = pick;
+    peakMhz_.clear();
+    note(tr("Verifying profile '%1': %2").arg(pick, shown.join(", ")), theme::INFO);
+    hardReboots_ = 0;
+    attempts_ = {};
+    trialNo_ = 0;
+    launch();
+}
+
+void CoSearchDialog::manageCrashGuards() {
+    if (running_) return;
+    const auto guards = readCrashGuards();
+    if (!guards) { QMessageBox::critical(this, tr("CO crash guard corrupted"), tr("The crash guard file cannot be read; it is left unchanged.")); return; }
+    if (guards->isEmpty()) { QMessageBox::information(this, tr("Crash guards"), tr("No crash guards are recorded.")); return; }
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Crash guards"));
+    dlg.resize(560, 360);
+    auto *lay = new QVBoxLayout(&dlg);
+    auto *info = new QLabel(tr("Each row is a value that crashed this machine while that core was tested alone: it and every "
+                               "more negative value are never tried on that core again. BIOS is the one the crash happened "
+                               "under (empty: recorded before Centurion kept it); current BIOS: %1.").arg(biosVersion()));
+    info->setWordWrap(true);
+    lay->addWidget(info);
+    auto *table = new QTableWidget(int(guards->size()), 3);
+    table->setHorizontalHeaderLabels({tr("Core"), tr("Never at or below"), tr("BIOS")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->hide();
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    for (int i = 0; i < guards->size(); ++i) {
+        const QJsonObject g = guards->at(i).toObject();
+        QStringList cpus;
+        for (const QJsonValue &c : g.value("cpus").toArray()) cpus << QString::number(c.toInt());
+        const QString bios = g.value("bios").toString();
+        table->setItem(i, 0, new QTableWidgetItem(QStringLiteral("CCD%1 / %2  (CPU %3)").arg(g.value("ccd").toInt()).arg(g.value("slot").toInt()).arg(cpus.join(','))));
+        table->setItem(i, 1, new QTableWidgetItem(QString::number(g.value("failed").toInt())));
+        table->item(i, 1)->setForeground(QColor(theme::DANGER));
+        table->setItem(i, 2, new QTableWidgetItem(bios));
+        if (!bios.isEmpty() && bios != biosVersion()) table->item(i, 2)->setForeground(QColor(theme::WARN));
+    }
+    table->resizeColumnsToContents();
+    lay->addWidget(table, 1);
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Close);
+    QPushButton *remove = box->addButton(tr("Remove selected"), QDialogButtonBox::DestructiveRole);
+    remove->setObjectName("btnDanger");
+    lay->addWidget(box);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(remove, &QPushButton::clicked, &dlg, [this, &dlg, table, guards] {
+        QSet<int> rows;
+        for (const QModelIndex &i : table->selectionModel()->selectedRows()) rows.insert(i.row());
+        if (rows.isEmpty()) return;
+        if (QMessageBox::warning(&dlg, tr("Remove crash guards"),
+                tr("Remove %1 guard(s)? A later search may then try values that crashed this machine before.").arg(rows.size()),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+        QJsonArray kept;
+        QStringList gone;
+        for (int i = 0; i < guards->size(); ++i) {
+            if (!rows.contains(i)) { kept << guards->at(i); continue; }
+            const QJsonObject g = guards->at(i).toObject();
+            gone << QStringLiteral("CCD%1/%2 %3").arg(g.value("ccd").toInt()).arg(g.value("slot").toInt()).arg(g.value("failed").toInt());
+        }
+        QSaveFile f(crashGuardPath());
+        const QByteArray data = QJsonDocument(QJsonObject{{"version", 1}, {"guards", kept}}).toJson();
+        if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size() || !f.commit()) {
+            QMessageBox::critical(&dlg, tr("Crash guards"), tr("Could not write the crash guard file; nothing was removed."));
+            return;
+        }
+        note(tr("Crash guards removed: %1").arg(gone.join(", ")), theme::WARN);
+        dlg.accept();
+    });
+    dlg.exec();
+    refreshTable();
+}
+
+void CoSearchDialog::measureThroughput(std::function<void(const QHash<int, int> &, int)> then) {
+    static constexpr int PERF_SECONDS = 5;
+    QStringList cpus;
+    for (int i = 0; search_ && i < search_->cores().size(); ++i)
+        if (search_->mode() == Mode::AllCore || !search_->coreState(i).excluded) cpus << QString::number(search_->cores()[i].cpus.first());
+    if (cpus.isEmpty() || testProgram_.isEmpty()) { then({}, -1); return; }
+    const QStringList args{QStringLiteral("percore"), QStringLiteral("--load"), QStringLiteral("sse"), QStringLiteral("--seconds"),
+                           QString::number(PERF_SECONDS), QStringLiteral("--cpus"), cpus.join(',')};
+    auto *p = new QProcess(this);
+    perfTest_ = p;
+    auto chunks = std::make_shared<QHash<int, int>>();
+    auto buf = std::make_shared<QByteArray>();
+    auto parse = [p, chunks, buf] {
+        *buf += p->readAllStandardOutput();
+        int nl;
+        while ((nl = buf->indexOf('\n')) >= 0) {
+            const QJsonObject o = QJsonDocument::fromJson(buf->left(nl)).object();
+            buf->remove(0, nl + 1);
+            if (o.value("ev").toString() == "core_end" && !o.value("skipped").toBool())
+                chunks->insert(o.value("cpu").toInt(-1), o.value("chunks").toInt());
+        }
+    };
+    connect(p, &QProcess::readyReadStandardOutput, this, parse);
+    auto finish = std::make_shared<std::function<void(int)>>([this, p, chunks, then, parse](int code) {
+        parse();
+        p->deleteLater();
+        perfTest_ = nullptr;
+        then(*chunks, code);
+    });
+    connect(p, &QProcess::finished, this, [finish](int code, QProcess::ExitStatus st) { (*finish)(st == QProcess::NormalExit ? code : -1); });
+    connect(p, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError e) { if (e == QProcess::FailedToStart) (*finish)(-1); });
+    QTimer::singleShot((cpus.size() * PERF_SECONDS + 90) * 1000, p, [p] { p->kill(); });
+    logLine(log_, {}, QStringLiteral("centurion-cpustress ") + args.join(' '), theme::MUTED);
+    p->start(testProgram_, args);
+}
+
+void CoSearchDialog::compareThroughput(std::function<void()> then) {
+    go_->setEnabled(false);
+    note(tr("Measuring single-core throughput at stock, to compare with the found curve…"), theme::INFO);
+    measureThroughput([this, then](const QHash<int, int> &stock, int code) {
+        go_->setEnabled(!running_);
+        const QHash<int, int> curve = std::exchange(curveRun_, {});
+        auto after = qScopeGuard([then] { then(); });
+        if (code != 0) { note(tr("The stock throughput run did not complete; no clock-stretch comparison."), theme::WARN); return; }
+        QStringList flagged;
+        double lo = 0, hi = 0;
+        bool any = false;
+        for (int i = 0; i < search_->cores().size(); ++i) {
+            const int cpu = search_->cores()[i].cpus.first();
+            if (!curve.contains(cpu) || !stock.contains(cpu)) continue;
+            const auto change = coinsights::changePercent(stock.value(cpu), curve.value(cpu));
+            if (!change) continue;
+            perf_.insert(i, *change);
+            lo = any ? std::min(lo, *change) : *change;
+            hi = any ? std::max(hi, *change) : *change;
+            any = true;
+            if (*change < coinsights::STRETCH_PERCENT)
+                flagged << QStringLiteral("CCD%1/%2 %3 %").arg(search_->cores()[i].ccd).arg(search_->cores()[i].slot).arg(*change, 0, 'f', 1);
+        }
+        if (!any) note(tr("No throughput values to compare."), theme::WARN);
+        else if (flagged.isEmpty())
+            note(tr("Clock-stretch check: no single-core throughput loss against stock (%1 % … %2 %).")
+                     .arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1), theme::OK);
+        else
+            note(tr("Clock-stretch check: lower throughput than at stock on %1. Clock stretching or a lower boost at that "
+                    "offset: 1-2 points less negative there may be faster.").arg(flagged.join(", ")), theme::WARN);
+        refreshTable();
+    });
 }
 
 void CoSearchDialog::offerResume() {
@@ -803,6 +1150,10 @@ void CoSearchDialog::offerResume() {
         step_->setValue(s->tuning().step);
         scene_->setCurrentIndex(std::max(0, scene_->findData(j.value("scene").toString())));
         attempts_ = j.value("attempts").toArray();
+        peakMhz_.clear();
+        const QJsonObject peaks = j.value("peaks").toObject();
+        for (auto it = peaks.begin(); it != peaks.end(); ++it) peakMhz_.insert(it.key().toInt(), it.value().toInt());
+        verifiedProfile_ = j.value("verify_profile").toString();
         hardReboots_ = rebootCount;
         if (pending) {
             s->report(failed);
@@ -834,7 +1185,7 @@ void CoSearchDialog::offerResume() {
         if (pending && rebooted) note(tr("System logs: %1").arg(verdict.summary));
         privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
             [this](const privileged::Result &r) {
-                if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message())); search_.reset(); return; }
+                if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message()), theme::DANGER); search_.reset(); return; }
                 const QString keep = priorScene_;
                 launch();
                 priorScene_ = keep;
@@ -905,8 +1256,25 @@ void CoSearchDialog::launch() {
     finished_ = false;
     bootId_ = readBootId();
     if (bootId_.isEmpty()) { running_ = false; QMessageBox::warning(this, tr("Boot identity"), tr("Cannot verify boot ID.")); return; }
-    for (QWidget *w : std::initializer_list<QWidget *>{go_, mode_, level_, limit_, scene_}) w->setEnabled(false);
+    for (QWidget *w : std::initializer_list<QWidget *>{go_, mode_, level_, limit_, scene_, verifyBtn_, guardsBtn_}) w->setEnabled(false);
     stop_->setEnabled(true);
+    confirmPassed_ = false;
+    curveRun_.clear();
+    perf_.clear();
+    searchStart_ = QDateTime::currentSecsSinceEpoch();
+    doneAtLaunch_ = 0;
+    int searched = 0;
+    for (int i = 0; i < search_->cores().size(); ++i) {
+        if (search_->coreState(i).excluded) continue;
+        ++searched;
+        doneAtLaunch_ += search_->coreState(i).done;
+    }
+    {
+        QList<int> starts;
+        for (const Core &c : search_->cores()) starts << starts_.value(coreKey(c.ccd, c.slot), DEFAULT_START);
+        estimateAtLaunch_ = search_->confirming() ? cosearch::VERIFY_SECONDS / 60
+            : Search::estimateMinutes(search_->mode(), search_->level(), std::max(searched - doneAtLaunch_, 1), search_->limit(), search_->tuning(), starts);
+    }
     updateEstimate();
     refreshTable();
     updateResultButtons();
@@ -956,7 +1324,23 @@ void CoSearchDialog::step() {
     trial_ = search_->next();
     applyTuning_->setEnabled(trial_.has_value() && search_->perCoreSearching());
     refreshTable();
-    if (!trial_) { finished_ = true; reset(tr("Search finished")); return; }
+    if (!trial_) {
+        finished_ = true;
+        // The final verification's curve is still applied (its journal stays pending): measure throughput with it now,
+        // the stock run follows the reset (compareThroughput), so both run on an equally warm CPU.
+        if (!confirmPassed_) { reset(tr("Search finished")); return; }
+        note(tr("Measuring single-core throughput with the found curve (clock-stretch check)…"), theme::INFO);
+        measureThroughput([this](const QHash<int, int> &chunks, int code) {
+            if (abort_) { reset(tr("Cancelled")); return; }
+            if (code == 1) {
+                finished_ = false;  // a wrong result with the found curve: not verified
+                note(tr("Wrong result during the throughput run with the found curve: it is NOT stable and is not saved as verified."), theme::DANGER);
+            }
+            curveRun_ = code == 0 ? chunks : QHash<int, int>{};
+            reset(tr("Search finished"));
+        });
+        return;
+    }
     ++trialNo_;
     evidence_ = {};
     activeCpu_ = -1;
@@ -975,7 +1359,7 @@ void CoSearchDialog::step() {
         req = {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}}}};
         expectedCurve_ = QStringLiteral("per-core");
     }
-    note(tr("Trial %1: %2 (about %3 s plus setup). %4").arg(trialNo_).arg(trial_->what).arg(trial_->seconds()).arg(search_->stageText()));
+    note(tr("Trial %1: %2 (about %3 s plus setup). %4").arg(trialNo_).arg(trial_->what).arg(trial_->seconds()).arg(search_->stageText()), theme::INFO);
     mceBefore_ = mceCounters();
     applying_ = true;
     privileged::run(privileged::helperPath("ryzen-co-helper"), req, this, [this](const privileged::Result &r) {
@@ -999,11 +1383,11 @@ void CoSearchDialog::runTest() {
     testEnd_ = {};
     testStart_ = QDateTime::currentSecsSinceEpoch();
     testDeadline_ = testStart_ + t.seconds + 120;  // allow CPU reference calculation and process startup
-    log_->appendPlainText(QStringLiteral("          centurion-cpustress ") + t.args.join(' '));
+    logLine(log_, {}, QStringLiteral("centurion-cpustress ") + t.args.join(' '), theme::MUTED);
     connect(test_, &QProcess::readyReadStandardOutput, this, &CoSearchDialog::testOutput);
     connect(test_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) { testFinished(code, status != QProcess::NormalExit); });
     connect(test_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart) { note(tr("CPU test failed to start.")); cancel(); }
+        if (e == QProcess::FailedToStart) { note(tr("CPU test failed to start."), theme::DANGER); cancel(); }
     });
     test_->start(testProgram_, t.args);
 }
@@ -1021,9 +1405,12 @@ void CoSearchDialog::testOutput() {
             activeCpu_ = o.value("cpu").toInt(-1);
             writeJournal();
         }
-        else if (ev == "error") log_->appendPlainText(tr("          wrong result on CPU %1").arg(o.value("cpu").toInt()));
+        else if (ev == "error") logLine(log_, {}, tr("          wrong result on CPU %1").arg(o.value("cpu").toInt()).trimmed(), theme::DANGER);
         else if (ev == "phase") {
             const QJsonValue mhz = o.value("mhz_max");
+            if (mhz.isDouble() && search_->perCoreSearching())  // a single core under test: its peak boost
+                for (int i = 0; i < trial_->perCore.size(); ++i)
+                    if (trial_->perCore[i] != 0) peakMhz_[i] = std::max(peakMhz_.value(i), mhz.toInt());
             status_->setText(tr("Trial %1: %2 · test %3/%4 · cycle %5 · %6 · %7%8")
                 .arg(trialNo_).arg(trial_->what).arg(testIndex_ + 1).arg(trial_->tests.size()).arg(o.value("cycle").toInt() + 1)
                 .arg(o.value("kernel").toString(), o.value("phase").toString(),
@@ -1043,7 +1430,7 @@ void CoSearchDialog::testFinished(int code, bool crashed) {
     if (crashed) {
         // A stress process that dies by a signal on an undervolted core is a failure of that offset.
         outcome_ = Outcome{false, {}, true};
-        note(tr("CPU test crashed (exit status %1). Applying additional CO safety margin.").arg(code));
+        note(tr("CPU test crashed (exit status %1). Applying additional CO safety margin.").arg(code), theme::DANGER);
     } else if (status == "fail" && code == 1) {
         QList<int> cpus;
         for (const auto &v : testEnd_.value("failed").toArray()) cpus << v.toInt();
@@ -1091,11 +1478,11 @@ void CoSearchDialog::validateFaultLog(Outcome o) {
                     return;
                 }
                 note(tr("CPU throttling event observed (continuing; no CO temperature limit): %1")
-                     .arg(e.value("title").toString()));
+                     .arg(e.value("title").toString()), theme::WARN);
                 continue;
             }
             if (kind == "mce" || kind == "lockup" || kind == "oops") {
-                note(tr("Hardware fault reported during trial: %1").arg(e.value("title").toString()));
+                note(tr("Hardware fault reported during trial: %1").arg(e.value("title").toString()), theme::DANGER);
                 o.pass = false;
             }
         }
@@ -1106,7 +1493,7 @@ void CoSearchDialog::validateFaultLog(Outcome o) {
             const auto n = now.constFind(i.key());
             if (n == now.cend() || n.value() == i.value()) continue;
             const QString bank = QFileInfo(i.key()).dir().path().section('/', -3, -2);
-            note(tr("Corrected machine-check errors counted during trial (%1: %2 → %3)").arg(bank, i.value(), n.value()));
+            note(tr("Corrected machine-check errors counted during trial (%1: %2 → %3)").arg(bank, i.value(), n.value()), theme::DANGER);
             o.pass = false;
             bool num = false;
             const int cpu = bank.section('/', 0, 0).mid(QStringLiteral("machinecheck").size()).toInt(&num);
@@ -1144,22 +1531,27 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
     watch_->stop();
     QJsonArray cpus;
     for (int c : o.cpus) cpus << c;
-    attempts_.append(QJsonObject{{"t", double(testStart_)}, {"what", trial_->what}, {"pass", o.pass}, {"cpus", cpus}});
-    QStringList named;
-    for (int c : o.cpus) named << QString::number(c);
-    note(o.pass ? tr("Passed: %1").arg(trial_->what)
-                : tr("FAILED: %1%2").arg(trial_->what, named.isEmpty() ? QString() : tr(" (CPU %1)").arg(named.join(','))));
     int probed = -1;  // per-core: the core this isolated probe was for
     if (search_->perCoreSearching())
         for (int i = 0; i < trial_->perCore.size(); ++i) if (trial_->perCore[i] != 0) probed = i;
+    QJsonObject attempt{{"t", double(testStart_)}, {"what", trial_->what}, {"pass", o.pass}, {"cpus", cpus}};
+    if (probed >= 0) { attempt["core"] = probed; attempt["value"] = trial_->perCore[probed]; }  // the row's history tooltip
+    attempts_.append(attempt);
+    confirmPassed_ = search_->confirming() && o.pass;
+    QStringList named;
+    for (int c : o.cpus) named << QString::number(c);
+    note(o.pass ? tr("Passed: %1").arg(trial_->what)
+                : tr("FAILED: %1%2").arg(trial_->what, named.isEmpty() ? QString() : tr(" (CPU %1)").arg(named.join(','))),
+         o.pass ? theme::OK : theme::DANGER);
     search_->report(o);
     if (probed >= 0 && search_->coreState(probed).done) {
         const Core &c = search_->cores()[probed];
         note(tr("CCD%1 / %2 finished at %3: it is not tested more negative than that again.")
-             .arg(c.ccd).arg(c.slot).arg(search_->coreState(probed).pass));
+             .arg(c.ccd).arg(c.slot).arg(search_->coreState(probed).pass), theme::OK);
     }
     trial_.reset();
     applyTuning_->setEnabled(false);
+    updateEstimate();
     // Keep the previous trial marked PENDING on disk until a subsequent candidate has
     // its own durable journal, or until stock reset completes. Its CO voltage is still
     // applied in this gap: a late reboot must invalidate THAT trial, not claim "idle".
@@ -1181,6 +1573,7 @@ void CoSearchDialog::cancel() {
         });
         return;
     }
+    if (perfTest_ && perfTest_->state() != QProcess::NotRunning) { perfTest_->terminate(); return; }  // its handler resets
     if (applying_ || sceneApplying_) { note(tr("Waiting for in-flight write before resetting.")); return; }
     reset(tr("Cancelled by user / guard"));
 }
@@ -1190,14 +1583,16 @@ void CoSearchDialog::reset(const QString &reason) {
     resetting_ = true;
     watch_->stop();
     applyTuning_->setEnabled(false);
-    note(reason + tr(" — requesting stock reset."));
+    note(reason + tr(" — requesting stock reset."), theme::WARN);
     privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
         [this, reason](const privileged::Result &r) { done(r.ok(), reason + (r.ok() ? QString() : QStringLiteral("; reset FAILED: ") + r.message())); }, 120000);
 }
 
-bool CoSearchDialog::saveProfile(const QString &name) const {
+bool CoSearchDialog::saveProfile(const QString &name, int margin) const {
     // Same file format as Ryzen Curve → Save Profile, so the result loads there like any other profile.
-    const QList<int> v = search_->values();
+    // `margin`: points towards stock on every undervolted core (never past 0). "bios": what it was found under.
+    QList<int> v = search_->values();
+    for (int &x : v) x = std::min(0, x + margin);
     QJsonArray cores;
     if (search_->mode() == Mode::PerCore)
         for (int i = 0; i < search_->cores().size(); ++i)
@@ -1206,7 +1601,8 @@ bool CoSearchDialog::saveProfile(const QString &name) const {
     int ccds = 0;
     for (const Core &c : search_->cores()) ccds = std::max(ccds, c.ccd + 1);
     const QJsonObject profile{{"version", "2.0.0"}, {"ccd_count", ccds},
-                              {"coall", search_->mode() == Mode::AllCore ? QJsonValue(v.value(0)) : QJsonValue()}, {"cores", cores}};
+                              {"coall", search_->mode() == Mode::AllCore ? QJsonValue(v.value(0)) : QJsonValue()}, {"cores", cores},
+                              {"bios", biosVersion()}};
     QDir().mkpath(ryzen::profilesDir());
     QSaveFile f(ryzen::profilesDir() + '/' + name + ".json");
     return f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(profile).toJson()) >= 0 && f.commit();
@@ -1223,12 +1619,31 @@ void CoSearchDialog::saveResultAs() {
     if (running_ || !search_) return;
     const QString date = QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm");
     QString name = finished_ ? tr("CO search %1").arg(date) : tr("CO search %1 (not verified)").arg(date);
-    bool ok = false;
-    name = QInputDialog::getText(this, tr("Save result as profile"),
-        finished_ ? tr("Profile name:")
-                  : tr("This search did not finish its verification: these values passed only the tests run so far.\n\nProfile name:"),
-        QLineEdit::Normal, name, &ok).trimmed();
-    if (!ok || name.isEmpty()) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Save result as profile"));
+    auto *form = new QFormLayout(&dlg);
+    if (!finished_) {
+        auto *warn = new QLabel(tr("This search did not finish its verification: these values passed only the tests run so far."));
+        warn->setWordWrap(true);
+        warn->setStyleSheet(QStringLiteral("color: %1;").arg(theme::WARN));
+        form->addRow(warn);
+    }
+    auto *nameEdit = new QLineEdit(name);
+    nameEdit->setMinimumWidth(320);
+    form->addRow(tr("Profile name:"), nameEdit);
+    auto *margin = new QSpinBox;
+    margin->setRange(0, 5);
+    margin->setSuffix(tr(" point(s) towards stock"));
+    margin->setToolTip(tr("Saved value = found value + margin on every undervolted core (never past 0). Many users keep 1-2 "
+                          "points of margin for daily use."));
+    form->addRow(tr("Margin:"), margin);
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    form->addRow(box);
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted) return;
+    name = nameEdit->text().trimmed();
+    if (name.isEmpty()) return;
     if (name.contains('/') || name.contains('\\') || name.startsWith('.') || name.size() > 100) {
         QMessageBox::warning(this, tr("Invalid name"), tr("Use a name without '/' or '\\', not starting with '.', up to 100 characters."));
         return;
@@ -1236,10 +1651,12 @@ void CoSearchDialog::saveResultAs() {
     if (QFileInfo::exists(ryzen::profilesDir() + '/' + name + ".json") &&
         QMessageBox::question(this, tr("Overwrite profile"), tr("A profile named '%1' exists. Replace it?").arg(name),
                               QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
-    if (!saveProfile(name)) { QMessageBox::critical(this, tr("Save failed"), tr("Could not write the profile.")); return; }
+    if (!saveProfile(name, margin->value())) { QMessageBox::critical(this, tr("Save failed"), tr("Could not write the profile.")); return; }
     reloadPresets();
-    note(finished_ ? tr("Result saved as Ryzen Curve profile '%1'.").arg(name)
-                   : tr("Result saved as Ryzen Curve profile '%1' (NOT verified: the search did not finish).").arg(name));
+    note((finished_ ? tr("Result saved as Ryzen Curve profile '%1'.").arg(name)
+                    : tr("Result saved as Ryzen Curve profile '%1' (NOT verified: the search did not finish).").arg(name))
+             + (margin->value() ? tr(" Margin: +%1 on every undervolted core.").arg(margin->value()) : QString()),
+         finished_ ? theme::OK : theme::WARN);
 }
 
 void CoSearchDialog::loadResultIntoStarts() {
@@ -1276,7 +1693,7 @@ void CoSearchDialog::watchTick() {
         for (const auto &r : records) {
             if (evidence_.size() >= 64) break;
             evidence_.append(r.toJson());
-            note(tr("Watcher: %1").arg(r.text));
+            note(tr("Watcher: %1").arg(r.text), theme::DANGER);
         }
         writeJournal();  // durable now: a crash a moment later must not lose it
     };
@@ -1313,7 +1730,8 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     history.append(QJsonObject{{"t", double(QDateTime::currentSecsSinceEpoch())}, {"boot", bootId_},
                               {"mode", search_ && search_->mode() == Mode::PerCore ? "per" : "all"},
                               {"level", search_ ? name(search_->level()) : QString()}, {"values", values},
-                              {"reset_ok", resetOk}, {"complete", finished_ && resetOk},
+                              {"reset_ok", resetOk}, {"complete", finished_ && resetOk}, {"bios", biosVersion()},
+                              {"verify_profile", verifiedProfile_},
                               {"notes", reason}, {"attempts", attempts_}});
     while (history.size() > 40) history.removeAt(0);
     QSaveFile target(path);
@@ -1332,11 +1750,22 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     trial_.reset();
     if (quitting_) return;
     go_->setEnabled(resetOk);
-    for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_}) w->setEnabled(true);
+    for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_, verifyBtn_, guardsBtn_}) w->setEnabled(true);
     stop_->setEnabled(false);
     refreshTable();
     updateResultButtons();
-    note(reason);
+    note(reason, resetOk ? nullptr : theme::DANGER);
+    // Searches run for hours, mostly unattended: say how it ended, outside the window too.
+    {
+        QStringList v;
+        if (search_) for (int x : search_->values()) v << QString::number(x);
+        const QString title = !resetOk ? tr("CO Search: reset FAILED")
+                            : finished_ ? tr("CO Search finished") : tr("CO Search stopped");
+        const QString body = !resetOk ? tr("The CPU curve could not be reset. Use Ryzen Curve → Reset, or reboot.")
+                           : reason + (v.isEmpty() ? QString() : QStringLiteral("\n") + tr("Values: %1").arg(v.join(' ')));
+        notifier_->notify(QStringLiteral("co-search"), title, body,
+                          {NotifyAction{tr("Show"), [this] { show(); raise(); activateWindow(); }}}, 0, [] {});
+    }
     if (!resetOk) {
         QMessageBox::critical(this, tr("Reset failed"), tr("CPU curve reset could not be confirmed. Use Ryzen Curve → Reset, or reboot before continuing."));
         return;
@@ -1344,22 +1773,30 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     if (finished_ && search_) {
         QStringList v;
         for (int x : search_->values()) v << QString::number(x);
-        const QString profile = QStringLiteral("CO search %1").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm"));
+        const QString date = QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm");
+        const QString profile = verifiedProfile_.isEmpty() ? QStringLiteral("CO search %1").arg(date)
+                                                           : QStringLiteral("%1 (verified %2)").arg(verifiedProfile_.left(60), date);
         const bool saved = saveProfile(profile);
         reloadPresets();  // the result can be the next search's preset
         note(tr("SMU reset confirmed. Result: %1. %2").arg(v.join(' '),
              !saved ? tr("Saving the profile FAILED.")
                                : tr("Saved as Ryzen Curve profile '%1': load and apply it there. Many users keep 1-2 points of margin "
-                                    "above a searched value for daily use; run long tests before relying on it.").arg(profile)));
+                                    "above a searched value for daily use; run long tests before relying on it.").arg(profile)),
+             saved ? theme::OK : theme::DANGER);
     } else {
         note(tr("SMU reset confirmed. The search did not finish; nothing was saved automatically. Save result keeps the "
-                "values found so far, marked as not verified."));
+                "values found so far, marked as not verified."), theme::WARN);
     }
     // The scene that was active before the search, if the search switched to its own.
-    auto *win = parentWidget() ? qobject_cast<MainWindow *>(parentWidget()->window()) : nullptr;
-    if (win && win->scenes() && scenes::activeScene() != priorScene_) {
-        if (priorScene_.isEmpty()) { note(tr("No scene was active before the search: the CO search scene stays applied.")); return; }
-        note(tr("Applying the previous scene '%1' again.").arg(priorScene_));
-        win->scenes()->apply(priorScene_);
-    }
+    auto restoreScene = [this] {
+        auto *win = parentWidget() ? qobject_cast<MainWindow *>(parentWidget()->window()) : nullptr;
+        if (win && win->scenes() && scenes::activeScene() != priorScene_) {
+            if (priorScene_.isEmpty()) { note(tr("No scene was active before the search: the CO search scene stays applied.")); return; }
+            note(tr("Applying the previous scene '%1' again.").arg(priorScene_));
+            win->scenes()->apply(priorScene_);
+        }
+    };
+    // Stock run now, under the same scene and on a CPU as warm as the curve's run; the scene changes after it.
+    if (!curveRun_.isEmpty()) compareThroughput(restoreScene);
+    else restoreScene();
 }
