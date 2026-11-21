@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- Health diagnostics rebuilt as interpreted reports (`docs/HEALTH_DIAGNOSTICS.md`): Evidence Lab (H02–H09),
+  Investigations (H01–H18) and the System tools S01–S18 now give a verdict, findings with what to do, tables and
+  their limits, with *Copy report* / *Save report…*; translated. Investigations opens on *Guided triage*, which
+  runs the checks of a symptom (GPU, CPU / CO, crashes after an update, storage, Wi-Fi / Bluetooth, sleep, USB).
+- H01 compares boots by kernel, NVIDIA driver, BIOS and microcode recorded per boot by the boot guard
+  (`exposure.json` → `versions`), with a binomial test against luck.
+- H12 reads the kernel's `suspend_stats` and recognises boots that went to sleep and never resumed (sleep hook
+  marker `/var/lib/centurion/sleep-inflight`, `/var/log/centurion/sleep-failed.log`).
+- H06 decodes `critical_warning` bits and error-log status codes (a rejected admin command is not a drive fault).
+- S03 decodes display identity, range limits and FreeSync / HDMI VRR ranges; S13 lists the charger's USB-PD
+  profiles; S18 flags zstd / xz firmware the kernel cannot decompress and devices without a driver; S10 flags
+  zram + zswap together and memory pressure; S04 separates link width loss from idle down-clocking.
+
+### Fixed
+- PCIe AER totals were never read: the kernel prints `TOTAL_ERR_COR 14`, the parser required a colon. Evidence
+  Lab and Events & alerts showed every AER device as Unknown.
+- NVMe Deep Health read smartctl field names from nvme-cli JSON (spare and life used missing) and showed the
+  temperature in kelvin.
+- Sleep / Resume matrix counted log lines that are never saved (always 0); NVIDIA parameters reported `0x02`
+  and `2` as different; the incident list offered every kernel warning; CO Cross-Link printed no attempt count.
+
+### Added
 - Ryzen Curve → CO Search rewritten: all-core or per-core search, fast / medium / long levels, 60 s CPU cycles
   (`centurion-cpustress --load co`: 40 s of steady FFT / NTT load in the manner of Prime95 Small FFT and y-cruncher,
   then 20 s of load changes that move the clock and the idle states), single-core trials on the best-ranked cores,

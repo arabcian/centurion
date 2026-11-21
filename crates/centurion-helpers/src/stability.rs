@@ -60,7 +60,29 @@ fn this_boot(v: &mut Value) -> Option<&mut Value> {
         let drop = boots.len().saturating_sub(MAX_BOOTS);
         boots.drain(..drop);
     }
-    boots.iter_mut().find(|b| b["boot"] == json!(id))
+    let b = boots.iter_mut().find(|b| b["boot"] == json!(id))?;
+    fill_versions(b, &versions());
+    Some(b)
+}
+
+/// The software and firmware this boot runs: kernel, BIOS, CPU microcode, NVIDIA driver (Health →
+/// Investigations groups boots by them). A value that cannot be read is left out, not guessed.
+fn versions() -> Map<String, Value> {
+    let rd = |p: &str| std::fs::read_to_string(p).map(|s| s.trim().chars().take(80).collect::<String>()).unwrap_or_default();
+    let microcode = std::fs::read_to_string("/proc/cpuinfo").ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("microcode"))?.split(':').nth(1).map(|v| v.trim().chars().take(24).collect()))
+        .unwrap_or_default();
+    [("kernel", rd("/proc/sys/kernel/osrelease")), ("bios", rd("/sys/class/dmi/id/bios_version")),
+     ("microcode", microcode), ("nvidia", rd("/sys/module/nvidia/version"))]
+        .into_iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.to_owned(), json!(v))).collect()
+}
+
+/// Adds the versions a boot entry does not have yet. The NVIDIA module can load after the entry was
+/// opened; a later call (an apply, the clean shutdown) fills it in. A recorded value is never replaced.
+fn fill_versions(b: &mut Value, now: &Map<String, Value>) {
+    if !b["versions"].is_object() { b["versions"] = json!({}); }
+    let Some(v) = b["versions"].as_object_mut() else { return };
+    for (k, x) in now { v.entry(k.clone()).or_insert_with(|| x.clone()); }
 }
 
 /// Knobs Optimizations has changed right now (tune-helper's journal: every key it holds an
@@ -306,6 +328,17 @@ pub fn field_risk(exposure: &Value, now_s: u64, current_boot: &str, boot_value: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn versions_are_filled_once_and_never_replaced() {
+        let mut b = json!({"boot": "x", "start": 1});
+        let first: Map<String, Value> = [("kernel".to_owned(), json!("6.12.1"))].into_iter().collect();
+        fill_versions(&mut b, &first);
+        assert_eq!(b["versions"]["kernel"], "6.12.1");
+        let later: Map<String, Value> = [("kernel".to_owned(), json!("6.13.0")), ("nvidia".to_owned(), json!("580.1"))].into_iter().collect();
+        fill_versions(&mut b, &later);
+        assert_eq!(b["versions"]["kernel"], "6.12.1");   // the boot ran what it ran at the start
+        assert_eq!(b["versions"]["nvidia"], "580.1");    // a module that loaded later is added
+    }
     fn boot(start: u64, end: Option<u64>, clean: Option<bool>, segs: &[(u64, &[(&str, &str)])], events: Value) -> Value {
         let segs: Vec<Value> = segs.iter().map(|(t, c)| json!({"t": t, "cfg": c.iter().map(|(k, v)| ((*k).to_owned(), json!(v))).collect::<Map<String, Value>>()})).collect();
         let mut b = json!({"boot": format!("b{start}"), "start": start, "segs": segs, "events": events});

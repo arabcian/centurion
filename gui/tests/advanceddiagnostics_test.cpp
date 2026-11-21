@@ -1,121 +1,260 @@
-// No hardware is accessed by these pure fixture tests.
+// Health → Evidence Lab / Investigations reports over fixtures: no hardware, root or GPU is touched.
 #include "../src/advanceddiagnostics.h"
+#include "../src/evidencereports.h"
+
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QTemporaryDir>
-#include <QDir>
-#include <QFile>
-#define CHECK(expr) do { if (!(expr)) { qCritical() << "FAILED" << #expr << __LINE__; return 1; } } while(false)
+
+#define CHECK(expr) do { if (!(expr)) { qCritical() << "FAILED" << #expr << "line" << __LINE__; return 1; } } while (false)
+
+using diag::Level;
+namespace ad = advanceddiagnostics;
+namespace er = evidencereports;
+
+static bool has(const diag::Report &r, Level l, const QString &needle) {
+    for (const diag::Finding &f : r.findings) if (f.level == l && (f.title + f.detail).contains(needle)) return true;
+    return false;
+}
+static QJsonObject boot(const QString &id, qint64 start, const QString &state, double hours, const QJsonObject &versions, const QJsonObject &events = {},
+                        const QJsonObject &curves = {}) {
+    QJsonObject b{{"boot", id}, {"start", double(start)}, {"state", state}, {"duration", hours * 3600}, {"events", events}, {"curves", curves}};
+    if (!versions.isEmpty()) b.insert(QStringLiteral("versions"), versions);
+    return b;
+}
+
 int main(int argc, char **argv) {
-    QTemporaryDir privateData;
-    CHECK(privateData.isValid());
-    qputenv("XDG_DATA_HOME", privateData.path().toUtf8());
-    qputenv("XDG_STATE_HOME", privateData.path().toUtf8());
+    QTemporaryDir tmp;
+    CHECK(tmp.isValid());
+    qputenv("XDG_DATA_HOME", tmp.path().toUtf8());
+    qputenv("XDG_STATE_HOME", tmp.path().toUtf8());
     QCoreApplication app(argc, argv);
-    using namespace advanceddiagnostics;
-    // Actual Linux AER sysfs files contain labelled totals, not scalar values.
-    CHECK(aerTotal(QStringLiteral("Receiver Error 2\nBad TLP 1\nTOTAL_ERR_COR: 14\n"),QStringLiteral("TOTAL_ERR_COR"))==QStringLiteral("14"));
-    CHECK(aerTotal(QStringLiteral("TOTAL_ERR_NONFATAL: 0\n"),QStringLiteral("TOTAL_ERR_NONFATAL"))==QStringLiteral("0"));
-    CHECK(aerTotal(QStringLiteral("Receiver Error 3"),QStringLiteral("TOTAL_ERR_COR")).isEmpty());
-    CHECK(aerTotal(QStringLiteral("TOTAL_ERR_COR: overflow"),QStringLiteral("TOTAL_ERR_COR")).isEmpty());
-    CHECK(saveIncident(QStringLiteral("123abcde/42"),QStringLiteral("Monitoring"),QStringLiteral("previous findings")) == QString());
-    const QJsonObject saved=incidentNote(QStringLiteral("123abcde/42"));
-    CHECK(saved.value(QStringLiteral("note")).toString()==QStringLiteral("previous findings"));
-    CHECK(saved.value(QStringLiteral("status")).toString()==QStringLiteral("Monitoring"));
-    const QString usb=usbLedger({QStringLiteral("boot=abc12345 seq=1 usb 1-2: device descriptor read/64, error -71"),
-                                 QStringLiteral("boot=abc12345 seq=1 usb 1-2: device descriptor read/64, error -71"),
-                                 QStringLiteral("USB keyboard connected normally")});
-    CHECK(usb.contains(QStringLiteral("error -71")));
-    CHECK(usb.count(QStringLiteral("error -71")) == 1);
-    CHECK(!usb.contains(QStringLiteral("keyboard connected")));
-    CHECK(usbLedger({QStringLiteral("everything normal")}).contains(QStringLiteral("coverage is limited")));
-    const QJsonObject prior{{QStringLiteral("0000:01:00.0"),QJsonObject{{QStringLiteral("current_link_speed"),QStringLiteral("16.0 GT/s")},
-                                               {QStringLiteral("current_link_width"),QStringLiteral("16")},
-                                               {QStringLiteral("aer_dev_correctable"),QStringLiteral("12")}}}};
-    const QJsonObject now{{QStringLiteral("0000:01:00.0"),QJsonObject{{QStringLiteral("current_link_speed"),QStringLiteral("8.0 GT/s")},
-                                               {QStringLiteral("current_link_width"),QStringLiteral("16")},
-                                               {QStringLiteral("aer_dev_correctable"),QStringLiteral("14")}}}};
-    CHECK(linkDelta(prior,now,true).contains(QStringLiteral("delta: 2")));
-    CHECK(linkDelta(prior,now,false).contains(QStringLiteral("No comparable same-boot")));
-    const QJsonObject oldOther{{QStringLiteral("0000:01:00.0"),QJsonObject{
-        {QStringLiteral("vendor"),QStringLiteral("0x10de")},
-        {QStringLiteral("device"),QStringLiteral("0x2684")},
-        {QStringLiteral("aer_dev_correctable"),QStringLiteral("20")}}}};
-    const QJsonObject newOther{{QStringLiteral("0000:01:00.0"),QJsonObject{
-        {QStringLiteral("vendor"),QStringLiteral("0x10de")},
-        {QStringLiteral("device"),QStringLiteral("0x2c58")},
-        {QStringLiteral("aer_dev_correctable"),QStringLiteral("25")}}}};
-    CHECK(linkDelta(oldOther,newOther,true).contains(QStringLiteral("identity changed")));
-    CHECK(!linkDelta(oldOther,newOther,true).contains(QStringLiteral("delta: 5")));
-    QJsonArray boots;
-    boots.append(QJsonObject{{QStringLiteral("boot"),QStringLiteral("a0000000")},
-                             {QStringLiteral("state"),QStringLiteral("unclean")},
-                             {QStringLiteral("duration"),240},
-                             {QStringLiteral("events"),QJsonObject{{QStringLiteral("xid"),4}}}});
-    CHECK(compareBoots(boots,{}).contains(QStringLiteral("No regression verdict")));
-    CHECK(flightCoverage(boots).contains(QStringLiteral("No previous-boot flight samples")));
-    QJsonArray flight;
-    for (const int t : {1000,1030,1060,1090,1200}) flight.append(QJsonObject{{QStringLiteral("t"),t}});
-    const QJsonArray retained{QJsonObject{{QStringLiteral("boot"),QStringLiteral("a0000000")},
-        {QStringLiteral("state"),QStringLiteral("unclean")},
-        {QStringLiteral("flight_interval"),30},{QStringLiteral("flight"),flight}}};
-    const QString coverage=flightCoverage(retained);
-    CHECK(coverage.contains(QStringLiteral("gaps >75s=1")));
-    CHECK(!coverage.contains(QStringLiteral("gaps >15s=4")));
-    // Header cadence may have been changed from 5s to 30s mid-boot.
-    const QJsonArray changedCadence{QJsonObject{{QStringLiteral("boot"),QStringLiteral("b0000000")},
-        {QStringLiteral("state"),QStringLiteral("unclean")},{QStringLiteral("flight_interval"),5},
-        {QStringLiteral("flight"),flight}}};
-    const QString uncertain=flightCoverage(changedCadence);
-    CHECK(uncertain.contains(QStringLiteral("Cadence differs")));
-    CHECK(uncertain.contains(QStringLiteral("gaps >75s=1")));
-    boots.prepend(QJsonObject{{QStringLiteral("boot"),QStringLiteral("b0000000")},
-                             {QStringLiteral("state"),QStringLiteral("clean")},
-                             {QStringLiteral("duration"),3600},
-                             {QStringLiteral("events"),QJsonObject{{QStringLiteral("xid"),1}}}});
-    boots.prepend(QJsonObject{{QStringLiteral("boot"),QStringLiteral("c0000000")},
-                             {QStringLiteral("state"),QStringLiteral("clean")},
-                             {QStringLiteral("duration"),1800},
-                             {QStringLiteral("events"),QJsonObject{{QStringLiteral("xid"),3}}}});
-    // One retained boot/sequence in both log files must count once, not twice.
-    const QString state=privateData.path()+QStringLiteral("/centurion");
-    CHECK(QDir().mkpath(state));
+
+    // Binomial tail: 6 of 6 events on a side with half the exposure is unlikely by luck; 3 of 6 is not.
+    CHECK(ad::upperTail(6, 6, 0.5) < 0.02);
+    CHECK(ad::upperTail(3, 6, 0.5) > 0.5);
+    CHECK(ad::upperTail(0, 4, 0.3) == 1.0);
+
+    // AER files as the kernel prints them ("TOTAL_%s %llu"), and the colon form.
+    CHECK(ad::aerTotal(QStringLiteral("RxErr 0\nBadTLP 3\nTOTAL_ERR_COR 3\n"), QStringLiteral("TOTAL_ERR_COR")) == QStringLiteral("3"));
+    CHECK(ad::aerTotal(QStringLiteral("TOTAL_ERR_COR: 14\n"), QStringLiteral("TOTAL_ERR_COR")) == QStringLiteral("14"));
+    CHECK(ad::aerTotal(QStringLiteral("TOTAL_ERR_COR overflow"), QStringLiteral("TOTAL_ERR_COR")).isEmpty());
+
+    // H01: unclean ends pile up after a kernel change.
     {
-        QFile kernel(state+QStringLiteral("/kernel.log"));
-        CHECK(kernel.open(QIODevice::WriteOnly));
-        CHECK(kernel.write("boot=a0000000 seq=1 PM: suspend entry\n"
-                           "boot=a0000000 seq=2 PM: resume error\n"
-                           "boot=a0000000 seq=3 usb 1-2 reset SuperSpeed\n"
-                           "boot=a0000000 seq=4 NVIDIA D3cold failed\n")>0);
+        QJsonArray boots;
+        qint64 t = 1000000;
+        for (int i = 0; i < 8; ++i, t += 40000) boots.prepend(boot(QStringLiteral("old%1").arg(i), t, QStringLiteral("clean"), 10, {{"kernel", "6.12.1"}}));
+        for (int i = 0; i < 5; ++i, t += 40000) boots.prepend(boot(QStringLiteral("new%1").arg(i), t, QStringLiteral("unclean"), 4, {{"kernel", "6.13.0"}}));
+        const diag::Report r = ad::bootRegression(boots, {}, {{"kernel", "6.13.0"}});
+        CHECK(r.verdict() == Level::Attention);
+        CHECK(has(r, Level::Attention, QStringLiteral("6.13.0")));
+        // Same versions throughout: nothing to compare, no false alarm.
+        QJsonArray same;
+        for (int i = 0; i < 4; ++i) same.append(boot(QStringLiteral("s%1").arg(i), 1000 + i, QString::fromLatin1(i == 1 ? "unclean" : "clean"), 5, {{"kernel", "6.12.1"}}));
+        CHECK(ad::bootRegression(same, {}, {}).verdict() == Level::Info);
+        // No versions anywhere: Unknown, not "no regression".
+        QJsonArray none{boot("a", 1, "clean", 3, {}), boot("b", 2, "clean", 3, {})};
+        CHECK(ad::bootRegression(none, {}, {}).verdict() == Level::Unknown);
     }
+
+    // H06: NVMe status codes and a harmless error log.
     {
-        QFile health(state+QStringLiteral("/health.log"));
-        CHECK(health.open(QIODevice::WriteOnly));
-        CHECK(health.write("boot=a0000000 seq=2 PM: resume error\n")>0);
+        bool media = false;
+        CHECK(ad::nvmeStatus(0x2002, &media) == QStringLiteral("Invalid Field in Command") && !media);
+        CHECK(ad::nvmeStatus(0x0109) == QStringLiteral("Invalid Log Page"));
+        CHECK(ad::nvmeStatus(0x0281, &media) == QStringLiteral("Unrecovered Read Error") && media);
+        const QJsonObject nv{{"ok", true}, {"controllers", QJsonArray{QJsonObject{
+            {"name", "nvme0"}, {"model", "Test SSD"}, {"smart_status", "ok"}, {"error_status", "read-only Error Information Log success"},
+            {"smart", QJsonObject{{"critical_warning", 0}, {"temp_c", 41}, {"spare_pct", 100}, {"spare_threshold_pct", 10},
+                                  {"life_used_pct", 3}, {"media_errors", 0}, {"error_log_entries", 1200}}},
+            {"error_log", QJsonObject{{"entries", 2}, {"items", QJsonArray{QJsonObject{{"error_count", 1200}, {"status_field", 0x2002}, {"sqid", 0}},
+                                                                          QJsonObject{{"error_count", 1199}, {"status_field", 0x2002}, {"sqid", 0}}}}}}}}}};
+        const diag::Report r = ad::nvmeHealth(nv);
+        CHECK(r.verdict() == Level::Ok);
+        CHECK(has(r, Level::Info, QStringLiteral("1200 logged errors are rejected admin commands")));
+        QJsonObject bad = nv;
+        QJsonArray cs = bad.value(QStringLiteral("controllers")).toArray();
+        QJsonObject c = cs.at(0).toObject();
+        QJsonObject s = c.value(QStringLiteral("smart")).toObject();
+        s.insert(QStringLiteral("critical_warning"), 0x04);
+        c.insert(QStringLiteral("smart"), s);
+        cs[0] = c;
+        bad.insert(QStringLiteral("controllers"), cs);
+        CHECK(ad::nvmeHealth(bad).verdict() == Level::Attention);
+        CHECK(ad::nvmeHealth(QJsonObject{{"ok", false}, {"error", "denied"}}).verdict() == Level::Unknown);
     }
-    const QJsonObject sleepBoots{{QStringLiteral("boots"),QJsonArray{
-        QJsonObject{{QStringLiteral("boot"),QStringLiteral("a0000000")},
-                    {QStringLiteral("state"),QStringLiteral("unclean")}}}}};
-    const QString sleep=healthReport(QStringLiteral("H12"),sleepBoots);
-    CHECK(sleep.contains(QStringLiteral("a0000000 | 2 | 2 | 1 | 1 | unclean")));
-    // Corrupt files are NOT zero-crash or cleared crash guards.
+
+    // H10: one port failing repeatedly; the same kernel record in both logs counts once.
     {
-        QFile guards(state+QStringLiteral("/co-search-crash-guards.json"));
-        CHECK(guards.open(QIODevice::WriteOnly));
-        CHECK(guards.write("{corrupt")>0);
+        QList<diagsrc::LogLine> k;
+        for (int i = 0; i < 4; ++i)
+            k << diagsrc::LogLine{"2026-11-20 10:00:0" + QString::number(i), "abc12345", "err", {}, {}, "usb 3-2: device descriptor read/64, error -71", quint64(10 + i)};
+        k << diagsrc::LogLine{"2026-11-20 10:01:00", "abc12345", "err", {}, {}, "usb usb1-port4: over-current condition", 20};
+        const diag::Report r = ad::usbStability(diagsrc::mergeUnique(k, k), {{"3-2", "Logitech Receiver"}});
+        CHECK(has(r, Level::Review, QStringLiteral("3-2")));
+        CHECK(has(r, Level::Attention, QStringLiteral("1-4")));
+        CHECK(r.tables.first().rows.first().value(3) == QStringLiteral("1") || r.tables.first().rows.at(1).value(3) == QStringLiteral("4"));
+        CHECK(ad::usbStability({}, {}).verdict() == Level::Unknown);
     }
-    CHECK(coCrossLink({},{}).contains(QStringLiteral("guard count UNKNOWN")));
+
+    // H12: a boot that went to sleep and never resumed; failed suspends this boot.
     {
-        QFile session(state+QStringLiteral("/co-search-session.json"));
-        CHECK(session.open(QIODevice::WriteOnly));
-        CHECK(session.write("{corrupt")>0);
+        ad::SleepInputs in;
+        in.currentBoot = QStringLiteral("cur-boot");
+        in.memSleep = QStringLiteral("[s2idle] deep");
+        in.stats = {{"success", "10"}, {"fail", "1"}, {"last_failed_dev", "0000:00:08.1"}, {"last_failed_errno", "-16"}, {"last_failed_step", "suspend"}};
+        in.inflight = QStringLiteral("deadbeef-1111 1700000000 suspend");
+        const QJsonArray boots{boot("deadbeef-1111", 1699990000, "unclean", 3, {}), boot("cur-boot", 1700050000, "running", 1, {})};
+        const diag::Report r = ad::sleepMatrix(in, boots);
+        CHECK(has(r, Level::Attention, QStringLiteral("never resumed")));
+        CHECK(has(r, Level::Info, QStringLiteral("EBUSY")));
+        ad::SleepInputs quiet;
+        quiet.currentBoot = QStringLiteral("x");
+        quiet.inflight = QStringLiteral("x 1700000000 suspend");  // this boot's own marker: not a dead boot
+        CHECK(!has(ad::sleepMatrix(quiet, {}), Level::Attention, QStringLiteral("never resumed")));
     }
-    CHECK(coCrossLink({},{}).contains(QStringLiteral("trial state UNKNOWN")));
-    const QString diff=compareBoots(boots,{});
-    CHECK(diff.contains(QStringLiteral("xid:")));
-    CHECK(diff.contains(QStringLiteral("change unknown")));
-    CHECK(diff.contains(QStringLiteral("Unclean boot")));
+
+    // H13: an unreadable guard file is never "no guards"; attempts are counted from the array.
+    {
+        ad::CoRecords co;
+        co.guardsValid = false;
+        co.sessionPresent = true;
+        co.session = QJsonObject{{"version", 3}, {"pending", true}, {"attempts", QJsonArray{1, 2, 3}}, {"trial", QJsonObject{{"what", "CCD0/2 -20"}}}};
+        const diag::Report r = ad::coCrossLink(co, {}, {});
+        CHECK(has(r, Level::Attention, QStringLiteral("crash-guard")));
+        CHECK(has(r, Level::Review, QStringLiteral("3 attempts")));
+        // More unclean ends under a CO profile than at stock.
+        QJsonArray boots;
+        for (int i = 0; i < 6; ++i) boots.append(boot(QStringLiteral("s%1").arg(i), i, "clean", 10, {}, {}, {{"cpu_co", "reset"}}));
+        for (int i = 0; i < 4; ++i) boots.append(boot(QStringLiteral("p%1").arg(i), 100 + i, "unclean", 2, {}, {}, {{"cpu_co", "profile:tight"}}));
+        CHECK(has(ad::coCrossLink(ad::CoRecords{}, boots, {}), Level::Review, QStringLiteral("profile:tight")));
+    }
+
+    // H15: 30 s cadence is not a gap; a real hole is.
+    {
+        QJsonArray flight;
+        for (int t : {1000, 1030, 1060, 1090, 1200}) flight.append(QJsonObject{{"t", t}, {"cpu_c", 97}});
+        QJsonObject b = boot("aaaa1111", 900, "unclean", 1, {});
+        b.insert(QStringLiteral("flight"), flight);
+        b.insert(QStringLiteral("flight_interval"), 30);
+        const diag::Report r = ad::flightCoverage(QJsonArray{b});
+        CHECK(has(r, Level::Review, QStringLiteral("1 gap")));
+        CHECK(has(r, Level::Review, QStringLiteral("97")));
+        CHECK(ad::flightCoverage({}).verdict() == Level::Unknown);
+    }
+
+    // H16: nvidia-smi -q output parsed by section.
+    {
+        const QString q = QStringLiteral(
+            "==============NVSMI LOG==============\n\nAttached GPUs                             : 1\nGPU 00000000:01:00.0\n"
+            "    ECC Mode\n        Current                           : N/A\n        Pending                           : N/A\n"
+            "    Remapped Rows\n        Correctable Error                 : 0\n        Uncorrectable Error               : 2\n"
+            "        Pending                           : Yes\n        Remapping Failure Occurred        : No\n");
+        const diag::Report r = ad::gpuMemory(QJsonObject{{"xid", QJsonArray{QJsonObject{{"code", 31}}}}}, {QStringLiteral("0000:01:00.0 · GPU · active")}, q);
+        CHECK(has(r, Level::Attention, QStringLiteral("Uncorrectable Error")));
+        CHECK(has(r, Level::Review, QStringLiteral("Pending")));
+        CHECK(has(r, Level::Ok, QStringLiteral("No memory-related Xid")));
+        CHECK(has(ad::gpuMemory(QJsonObject{{"xid", QJsonArray{QJsonObject{{"code", 48}}}}}, {}, {}), Level::Attention, QStringLiteral("48")));
+    }
+
+    // H17: notes survive, keys are validated, only health.log lines are incidents.
+    {
+        CHECK(ad::saveIncident(QStringLiteral("123abcde/42"), QStringLiteral("Monitoring"), QStringLiteral("swapped the cable")).isEmpty());
+        CHECK(ad::incidentNote(QStringLiteral("123abcde/42")).value(QStringLiteral("note")).toString() == QStringLiteral("swapped the cable"));
+        CHECK(!ad::saveIncident(QStringLiteral("../../x"), QStringLiteral("New"), {}).isEmpty());
+        CHECK(!ad::saveIncident(QStringLiteral("123abcde/43"), QStringLiteral("Bogus"), {}).isEmpty());
+        const auto health = diagsrc::parseLine(QStringLiteral("2026-11-20 10:00:00  boot=123abcde seq=42  CRITICAL XID     Xid 79: GPU has fallen off the bus  |  NVRM: Xid (PCI:0000:01:00): 79"));
+        const auto kernel = diagsrc::parseLine(QStringLiteral("2026-11-20 10:00:01  boot=123abcde seq=43  warn   [12.345678] some driver warning"));
+        CHECK(health && health->kind == QStringLiteral("xid") && health->title.startsWith(QStringLiteral("Xid 79")));
+        CHECK(kernel && kernel->kind.isEmpty() && kernel->text == QStringLiteral("some driver warning"));
+        const auto list = ad::incidents({*health, *kernel}, ad::incidentNotes());
+        CHECK(list.size() == 1 && list.first().status == QStringLiteral("Monitoring"));
+    }
+
+    // H18: findings of the checks are collected under their code.
+    {
+        diag::Report a;
+        a.code = QStringLiteral("H04");
+        a.add(Level::Attention, QStringLiteral("Xid 79 × 2"));
+        diag::Report b;
+        b.code = QStringLiteral("S04");
+        b.add(Level::Ok, QStringLiteral("fine"));
+        const diag::Report t = ad::triage(QStringLiteral("GPU"), {a, b});
+        CHECK(t.verdict() == Level::Attention && has(t, Level::Attention, QStringLiteral("H04 · Xid 79")));
+        CHECK(t.tables.first().rows.size() == 2);
+        CHECK(ad::triage(QStringLiteral("GPU"), {b}).verdict() == Level::Ok);
+    }
+
+    // H02: errors on one core's own units blame that core; shared units blame nobody.
+    {
+        const QJsonObject scan{{"mce", QJsonArray{
+            QJsonObject{{"text", "[Hardware Error]: CPU:5 (1a:44:0) MC5_STATUS[-|CE|MiscV|-|-|-|-|SyndV|-]: 0x9c2040000000011b"}, {"ts_us", 5e6}},
+            QJsonObject{{"text", "[Hardware Error]: CPU:5 (1a:44:0) MC2_STATUS[-|CE|MiscV|-|-|-|-|SyndV|-]: 0x9c2040000000011b"}, {"ts_us", 6e6}}}}};
+        QHash<int, er::CoreRef> cores{{5, {0, 2, 98304}}, {21, {0, 2, 98304}}, {8, {1, 0, 32768}}};
+        const diag::Report r = er::mceAtlas(scan, cores);
+        CHECK(has(r, Level::Review, QStringLiteral("CCD0 / core 2")));
+        CHECK(!has(r, Level::Attention, QString()));
+        const QJsonObject shared{{"mce", QJsonArray{QJsonObject{{"text", "[Hardware Error]: CPU:3 (1a:44:0) MC17_STATUS[-|UE|MiscV]: 0xbc"}}}}};
+        const diag::Report s = er::mceAtlas(shared, cores);
+        CHECK(has(s, Level::Attention, QStringLiteral("uncorrected")) && has(s, Level::Review, QStringLiteral("shared")));
+        CHECK(er::mceAtlas(QJsonObject{{"mce", QJsonArray{}}}, {}).verdict() == Level::Ok);
+    }
+
+    // H03: deltas within one boot and one device identity only.
+    {
+        const QJsonObject prev{{"boot_id", "b1"}, {"counters", QJsonArray{QJsonObject{{"dev", "0000:01:00.0"}, {"vendor", "0x10de"}, {"device", "0x2c58"}, {"cor", 100}, {"nonfatal", 0}, {"fatal", 0}}}}};
+        const QJsonObject now{{"boot_id", "b1"}, {"aer", QJsonArray{QJsonObject{{"dev", "0000:01:00.0"}, {"vendor", "0x10de"}, {"device", "0x2c58"}, {"cor", 130}, {"nonfatal", 0}, {"fatal", 0}}}}};
+        const diag::Report r = er::aerDelta(now, prev);
+        CHECK(r.tables.first().rows.first().value(2) == QStringLiteral("+30") && r.verdict() == Level::Review);
+        QJsonObject other = prev;
+        other.insert(QStringLiteral("boot_id"), QStringLiteral("b0"));
+        CHECK(er::aerDelta(now, other).tables.first().rows.first().value(2) == QStringLiteral("—"));
+        const QJsonObject fatal{{"boot_id", "b1"}, {"aer", QJsonArray{QJsonObject{{"dev", "0000:02:00.0"}, {"cor", 0}, {"nonfatal", 1}, {"fatal", 0}}}}};
+        CHECK(er::aerDelta(fatal, {}).verdict() == Level::Attention);
+    }
+
+    // H04: grouped by code with the meaning; Xid 154 shown as a case.
+    {
+        const QJsonObject scan{{"xid", QJsonArray{QJsonObject{{"kind", "xid"}, {"code", 79}, {"title", "Xid 79: GPU has fallen off the bus"}, {"ts_us", 1e6}},
+                                                QJsonObject{{"kind", "xid"}, {"code", 79}, {"title", "Xid 79: GPU has fallen off the bus"}, {"ts_us", 2e6}},
+                                                QJsonObject{{"kind", "xid"}, {"code", 13}, {"title", "Xid 13: Graphics Engine Exception"}, {"ts_us", 3e6}}}},
+                               {"xid_cases", QJsonArray{}}};
+        const diag::Report r = er::xidCases(scan);
+        CHECK(r.verdict() == Level::Attention && r.tables.first().rows.size() == 2);
+        CHECK(er::xidCases(QJsonObject{{"xid", QJsonArray{}}}).verdict() == Level::Ok);
+    }
+
+    // H05: F2FS's own need-fsck flag (superblock bit 2) and checkpoint error flag.
+    {
+        er::F2fsVolume v{"/dev/nvme0n1p3", "/", "rw,lazytime", "nvme0n1p3", {{"sb_status", "0x4"}, {"cp_status", "0x1"}}};
+        CHECK(has(er::f2fsGuard({}, {v}, {}), Level::Attention, QStringLiteral("needing fsck")));
+        v.sys = {{"sb_status", "0x0"}, {"cp_status", "0x8"}};
+        CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Attention);
+        v.sys = {{"sb_status", "0x0"}, {"cp_status", "0x81"}, {"errors", "0x0"}};
+        CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Ok);
+    }
+
+    // H09: firmware load failure per adapter.
+    {
+        const QJsonObject scan{{"boot_id", "b1"}, {"radio_events", QJsonArray{
+            QJsonObject{{"kind", "wifi"}, {"title", "Wi-Fi firmware load failure"}, {"text", "mt7925e 0000:03:00.0: Failed to load firmware"}}}}};
+        CHECK(has(er::radioLedger(scan, {}), Level::Attention, QStringLiteral("mt7925e")));
+        CHECK(er::radioLedger(QJsonObject{{"radio_events", QJsonArray{}}}, {}).verdict() == Level::Ok);
+    }
+
+    // The text export carries the verdict and every finding.
+    {
+        diag::Report r;
+        r.code = QStringLiteral("X");
+        r.title = QStringLiteral("T");
+        r.add(Level::Review, QStringLiteral("something"), QStringLiteral("why"), QStringLiteral("do this"));
+        const QString t = r.toText();
+        CHECK(t.contains(QStringLiteral("something")) && t.contains(QStringLiteral("→ do this")) && t.contains(QStringLiteral("Review")));
+    }
     return 0;
 }

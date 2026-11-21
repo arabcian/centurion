@@ -89,6 +89,7 @@ fn build(events: &[Value], topology: &[Value], aer: &[Value], mounts: &[Value]) 
     let mut f2fs = Vec::new();
     let mut radio = Vec::new();
     let mut radio_groups: BTreeMap<String, usize> = BTreeMap::new();
+    let mut xid = Vec::new();   // every NVIDIA Xid of the scan window, for the per-code view (H04, H16)
     let mut seen = BTreeSet::new();
     for event in events {
         match event["kind"].as_str().unwrap_or("") {
@@ -102,6 +103,8 @@ fn build(events: &[Value], topology: &[Value], aer: &[Value], mounts: &[Value]) 
                         else {"Unknown (missing or unmapped CPU identity)"}}));
             }
             "f2fs" => f2fs.push(event.clone()),
+            "xid" | "gsp" if xid.len() < 200 => xid.push(json!({"ts_us":event["ts_us"],"kind":event["kind"],"code":event["code"],
+                "pci":event["pci"],"level":event["level"],"title":event["title"],"text":event["text"]})),
             "wifi" | "bluetooth" => {
                 let kind = event["kind"].as_str().unwrap_or("unknown");
                 let text = event["text"].as_str().unwrap_or("");
@@ -125,7 +128,7 @@ fn build(events: &[Value], topology: &[Value], aer: &[Value], mounts: &[Value]) 
         if let Some(dev) = item["dev"].as_str() { seen.insert(dev.to_string()); }
     }
     let radio_summary: Vec<Value> = radio_groups.into_iter().map(|(device, errors)| json!({"device":device,"errors":errors})).collect();
-    json!({"mce":mce,"topology":topology,"aer":aer,"xid_cases":xid_cases(events),
+    json!({"mce":mce,"topology":topology,"aer":aer,"xid_cases":xid_cases(events),"xid":xid,
         "f2fs_events":f2fs,"f2fs_mounts":mounts,"radio_events":radio,"radio_summary":radio_summary,
         "aer_devices":seen.len(), "event_count":events.len(),
         "limitations":"Latest 300 classified events from current boot; absence of recorded events does not prove health. No CCD index inferred from L3 topology."})
@@ -165,6 +168,9 @@ mod tests {
         assert_eq!(c[0]["preceding"].as_array().unwrap().len(), 1);
         assert_eq!(c[0]["preceding"][0]["code"], 79);
         assert!(c[0]["assessment"].as_str().unwrap().contains("correlation"));
+        let r = build(&events, &[], &[], &[]);
+        assert_eq!(r["xid"].as_array().unwrap().len(), 3);
+        assert_eq!(r["xid"][0]["code"], 79);
     }
     #[test]
     fn radio_ledger_groups_device_without_inventing_hardware_ids() {

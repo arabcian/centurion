@@ -1,6 +1,7 @@
 #include "systools.h"
 #include "diagnostictools.h"
-#include "advanceddiagnostics.h"
+#include "diagreportview.h"
+#include "systemdiagnostics.h"
 
 #include "lazywidget.h"
 #include "privileged.h"
@@ -242,14 +243,6 @@ public:
         auto *run = new QPushButton(QStringLiteral("Run again"));
         auto *copy = new QPushButton(QStringLiteral("Copy"));
         top->addWidget(run);
-        if (QLatin1String(s.title) == QLatin1String("Hardware snapshot")) {
-            auto *save = new QPushButton(QStringLiteral("Save baseline"));
-            auto *compare = new QPushButton(QStringLiteral("Compare baseline"));
-            top->addWidget(save);
-            top->addWidget(compare);
-            connect(save, &QPushButton::clicked, this, [this] { setOutput(diagnostictools::saveHardwareBaseline()); });
-            connect(compare, &QPushButton::clicked, this, [this] { setOutput(diagnostictools::compareHardwareBaseline()); });
-        }
         top->addWidget(copy);
         v->addLayout(top);
         text_ = new QTextBrowser;
@@ -391,10 +384,6 @@ private:
         const QStringList c = spec_.cmds.at(i);
         const QString shown = c.join(QLatin1Char(' '));
         if (c.first() == QLatin1String("@file")) { out_ += "$ cat " + c.at(1) + '\n' + readFile(c.at(1)) + '\n'; step(i + 1); return; }
-        if (c.first() == QLatin1String("@advanced")) { out_ += advanceddiagnostics::systemReport(c.at(1)); step(i + 1); return; }
-        if (c.first() == QLatin1String("@hardware")) { out_ += diagnostictools::hardwarePreview(); step(i + 1); return; }
-        if (c.first() == QLatin1String("@edid")) { out_ += diagnostictools::edidReport(); step(i + 1); return; }
-        if (c.first() == QLatin1String("@nvparams")) { out_ += diagnostictools::moduleParameterReport(); step(i + 1); return; }
         if (c.first() == QLatin1String("@pcilink")) { out_ += QStringLiteral("$ PCIe links (sysfs)\n") + pciLinks() + '\n'; step(i + 1); return; }
         if (c.first() == QLatin1String("@glob")) {
             const QString pat = c.at(1);
@@ -454,6 +443,105 @@ private:
     bool ran_ = false, busy_ = false;
 };
 
+// An interpreted page (S01 … S18): a diag::Report instead of raw output. Extra commands of its spec run
+// first (asynchronously, bounded); their output feeds the report (S15) or its technical details.
+class DiagToolPage : public QWidget {
+public:
+    DiagToolPage(const QString &code, const QList<QStringList> &cmds, const QString &about) : code_(code), cmds_(cmds) {
+        auto *v = new QVBoxLayout(this);
+        v->setContentsMargins(8, 6, 8, 6);
+        auto *top = new QHBoxLayout;
+        auto *a = new QLabel(about);
+        a->setWordWrap(true);
+        a->setProperty("role", "muted");
+        top->addWidget(a, 1);
+        if (code_ == QLatin1String("S01")) {
+            auto *save = new QPushButton(QCoreApplication::translate("systools", "Save baseline"));
+            save->setToolTip(QCoreApplication::translate("systools", "Keep this inventory as the reference to compare with later (owner-only file)."));
+            top->addWidget(save);
+            connect(save, &QPushButton::clicked, this, [this] {
+                const QString err = diagnostictools::saveHardwareBaseline();
+                status_->setText(err.isEmpty() ? QCoreApplication::translate("systools", "Baseline saved.") : err);
+                start();
+            });
+        }
+        run_ = new QPushButton(QCoreApplication::translate("systools", "Run again"));
+        top->addWidget(run_);
+        v->addLayout(top);
+        status_ = new QLabel;
+        status_->setProperty("role", "muted");
+        v->addWidget(status_);
+        view_ = new DiagReportView;
+        v->addWidget(view_, 1);
+        connect(run_, &QPushButton::clicked, this, [this] { start(); });
+    }
+
+protected:
+    void showEvent(QShowEvent *e) override {
+        QWidget::showEvent(e);
+        if (!ran_) start();
+    }
+
+private:
+    void start() {
+        if (busy_) return;
+        ran_ = busy_ = true;
+        run_->setEnabled(false);
+        outputs_.clear();
+        view_->setMessage(QCoreApplication::translate("systools", "Reading…"));
+        step(1);  // cmds_[0] is the @diag marker
+    }
+    void step(int i) {
+        if (i >= cmds_.size()) { finish(); return; }
+        const QStringList c = cmds_.at(i);
+        const QString key = c.join(QLatin1Char(' '));
+        const QString exe = findExe(c.first());
+        if (exe.isEmpty()) { outputs_.insert(key, QString()); step(i + 1); return; }
+        auto *p = new QProcess(this);
+        p->setProcessChannelMode(QProcess::MergedChannels);
+        QPointer<QProcess> guard(p);
+        connect(p, &QProcess::finished, this, [this, p, i, key](int code, QProcess::ExitStatus st) {
+            outputs_.insert(key, st == QProcess::NormalExit && code == 0 ? QString::fromUtf8(p->readAll().left(MAX_OUT)) : QString());
+            p->deleteLater();
+            step(i + 1);
+        });
+        connect(p, &QProcess::errorOccurred, this, [this, p, i, key](QProcess::ProcessError e) {
+            if (e != QProcess::FailedToStart) return;
+            outputs_.insert(key, QString());
+            p->deleteLater();
+            step(i + 1);
+        });
+        QTimer::singleShot(CMD_TIMEOUT_MS, p, [guard] { if (guard && guard->state() != QProcess::NotRunning) guard->kill(); });
+        p->start(exe, c.mid(1));
+    }
+    void finish() {
+        busy_ = false;
+        run_->setEnabled(true);
+        diag::Report r;
+        if (code_ == QLatin1String("S01")) {
+            QString at, err;
+            const QJsonObject base = diagnostictools::loadHardwareBaseline(&at, &err);
+            r = diagnostictools::hardwareSnapshot(base, at, diagnostictools::snapshot());
+            if (base.isEmpty() && !err.isEmpty()) status_->setText(err);
+        } else if (code_ == QLatin1String("S03")) r = diagnostictools::displays();
+        else if (code_ == QLatin1String("S06")) r = diagnostictools::nvidiaParams();
+        else if (code_ == QLatin1String("S15")) r = systemdiagnostics::audio(outputs_);
+        else r = systemdiagnostics::byCode(code_);
+        if (code_ != QLatin1String("S15"))
+            for (auto it = outputs_.cbegin(); it != outputs_.cend(); ++it)
+                r.raw += QStringLiteral("\n$ %1\n%2").arg(it.key(), it.value().isEmpty() ? QCoreApplication::translate("systools", "(not installed or failed)") : it.value());
+        view_->setReport(r);
+    }
+
+    QString code_;
+    QList<QStringList> cmds_;
+    QHash<QString, QString> outputs_;
+    QPushButton *run_;
+    QLabel *status_;
+    DiagReportView *view_;
+    bool ran_ = false, busy_ = false;
+};
+
 } // namespace
 
 namespace systools {
@@ -462,28 +550,39 @@ QString installCommand(const QString &tool) { return installHint(tool); }
 
 void addPages(QTabWidget *tabs) {
     const Spec specs[] = {
-        {QT_TRANSLATE_NOOP("systools", "PCIe Link Negotiation Lab"), "S04: User-triggered same-boot link speed/width and AER counter changes. Passive; never retrains links or changes ASPM.",
-         {{"@advanced","S04"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Wi-Fi / Bluetooth Firmware Doctor"), "S07: Read-only radio identifiers, drivers, rfkill and retained firmware failures. No driver reload.",
-         {{"@advanced","S07"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Power Limit Source Map"), "S08: Read passive powercap, CPU profile, and GPU runtime state. No SMU/EC/firmware writes.",
-         {{"@advanced","S08"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Memory Architecture Explorer"), "S10: NUMA, L3 domains, THP, zram, PSI, cgroup and swap sources.",
-         {{"@advanced","S10"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "ACPI / WMI Firmware Browser"), "S11: Metadata browser only; never executes firmware methods or reads passwords.",
-         {{"@advanced","S11"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "USB-C PD / Charger Inspector"), "S13: Supported typec/power_supply exports with source units; no negotiated watt guesses.",
-         {{"@advanced","S13"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "PipeWire Audio Doctor"), "S15: Audio routing/server metadata; no service restarts or stream changes.",
-         {{"@advanced","S15"},{"wpctl","status"},{"pactl","info"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Kernel Feature & Firmware Check"), "S18: Running kernel config, driver and firmware dependencies. Missing data is unknown.",
-         {{"@advanced","S18"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Hardware snapshot"), "S01: Compare PCI topology, drivers, firmware, module versions and redacted kernel boot parameters to a user-saved baseline.",
-         {{"@hardware"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "EDID / VRR"), "S03: Read-only DRM EDID checksums, detailed timings, connector modes and known/unknown VRR exposure.",
-         {{"@edid"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "NVIDIA module parameters"), "S06: Compare modprobe.d and kernel cmdline options with effective sysfs/proc values; never wakes the GPU.",
-         {{"@nvparams"}, {"modinfo", "-p", "nvidia"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "PCIe Link Negotiation Lab"),
+         QT_TRANSLATE_NOOP("systools", "S04: the link each PCIe device trained at against what it and its slot can do, with its error counters. Never retrains a link or changes ASPM."),
+         {{"@diag", "S04"}}},
+        {QT_TRANSLATE_NOOP("systools", "Wi-Fi / Bluetooth Firmware Doctor"),
+         QT_TRANSLATE_NOOP("systools", "S07: wireless adapters, their drivers and radio switches, and firmware files the kernel could not load. No driver reload."),
+         {{"@diag", "S07"}}},
+        {QT_TRANSLATE_NOOP("systools", "Power Limit Source Map"),
+         QT_TRANSLATE_NOOP("systools", "S08: firmware power targets (PPT), platform profile, cpufreq caps, RAPL and the power source. Nothing is written or woken."),
+         {{"@diag", "S08"}}},
+        {QT_TRANSLATE_NOOP("systools", "Memory Architecture Explorer"),
+         QT_TRANSLATE_NOOP("systools", "S10: RAM, swap, zram / zswap, huge pages, memory pressure, NUMA and L3 domains, with what to change."),
+         {{"@diag", "S10"}}},
+        {QT_TRANSLATE_NOOP("systools", "ACPI / WMI Firmware Browser"),
+         QT_TRANSLATE_NOOP("systools", "S11: WMI objects and their drivers, firmware settings and ACPI tables. Never calls a firmware method or reads a password."),
+         {{"@diag", "S11"}}},
+        {QT_TRANSLATE_NOOP("systools", "USB-C PD / Charger Inspector"),
+         QT_TRANSLATE_NOOP("systools", "S13: the power profiles the charger offers, what the laptop draws, and the battery's condition."),
+         {{"@diag", "S13"}}},
+        {QT_TRANSLATE_NOOP("systools", "PipeWire Audio Doctor"),
+         QT_TRANSLATE_NOOP("systools", "S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. Nothing is restarted."),
+         {{"@diag", "S15"}, {"wpctl", "status"}, {"pactl", "info"}}},
+        {QT_TRANSLATE_NOOP("systools", "Kernel Feature & Firmware Check"),
+         QT_TRANSLATE_NOOP("systools", "S18: kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver."),
+         {{"@diag", "S18"}}},
+        {QT_TRANSLATE_NOOP("systools", "Hardware snapshot"),
+         QT_TRANSLATE_NOOP("systools", "S01: compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved."),
+         {{"@diag", "S01"}}},
+        {QT_TRANSLATE_NOOP("systools", "EDID / VRR"),
+         QT_TRANSLATE_NOOP("systools", "S03: each connected display's identity, modes and variable-refresh range from its EDID; damaged EDIDs. Read only."),
+         {{"@diag", "S03"}}},
+        {QT_TRANSLATE_NOOP("systools", "NVIDIA module parameters"),
+         QT_TRANSLATE_NOOP("systools", "S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU."),
+         {{"@diag", "S06"}, {"modinfo", "-p", "nvidia"}}},
         {"Sensors", "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
         {"CPU", "Topology, caches, frequencies and the active cpufreq driver/governor.",
          {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}, nullptr, false, true},
@@ -529,7 +628,11 @@ void addPages(QTabWidget *tabs) {
         }
         // Built on first open: the pages are rarely visited, and every widget that exists at start-up is
         // matched against the application style sheet (theme::applySheet) even while the app sits in the tray.
-        auto *page = new LazyWidget([s] { return new ToolPage(s); });
+        const bool diagPage = !s.cmds.isEmpty() && s.cmds.first().first() == QLatin1String("@diag");
+        auto *page = new LazyWidget([s, diagPage]() -> QWidget * {
+            if (diagPage) return new DiagToolPage(s.cmds.first().at(1), s.cmds, QCoreApplication::translate("systools", s.about));
+            return new ToolPage(s);
+        });
         page->setProperty("toolKey", QString::fromLatin1(s.title));
         tabs->addTab(page, title);
     }

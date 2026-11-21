@@ -81,6 +81,11 @@ add_executable(centurion
     src/healthevidence.cpp src/healthevidence.h
     src/advanceddiagnostics.cpp src/advanceddiagnostics.h
     src/advancedhealth.cpp src/advancedhealth.h
+    src/diagreport.cpp   src/diagreport.h
+    src/diagreportview.cpp src/diagreportview.h
+    src/diagsources.cpp  src/diagsources.h
+    src/evidencereports.cpp src/evidencereports.h
+    src/systemdiagnostics.cpp src/systemdiagnostics.h
     src/distroprofile.cpp src/distroprofile.h
     src/eventinfo.cpp    src/eventinfo.h
     src/klogpage.cpp     src/klogpage.h
@@ -274,11 +279,15 @@ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hico
 option(CENTURION_BUILD_TESTS "Build GUI unit tests" OFF)
 if(CENTURION_BUILD_TESTS)
     enable_testing()
-    add_executable(centurion-advanceddiagnostics-test tests/advanceddiagnostics_test.cpp src/advanceddiagnostics.cpp src/advanceddiagnostics.h)
+    # Health diagnostics (Evidence Lab, Investigations, System tools): pure report functions over fixtures.
+    set(DIAG_TEST_SOURCES src/diagreport.cpp src/diagsources.cpp src/advanceddiagnostics.cpp src/evidencereports.cpp
+        src/systemdiagnostics.cpp src/diagnostictools.cpp src/eventinfo.cpp src/distroprofile.cpp src/sleepadvice.cpp
+        src/coevidence.cpp src/costrategy.cpp)
+    add_executable(centurion-advanceddiagnostics-test tests/advanceddiagnostics_test.cpp ${DIAG_TEST_SOURCES})
     target_link_libraries(centurion-advanceddiagnostics-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-advanceddiagnostics-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME advanceddiagnostics COMMAND centurion-advanceddiagnostics-test)
-    add_executable(centurion-diagnostictools-test tests/diagnostictools_test.cpp src/diagnostictools.cpp src/diagnostictools.h)
+    add_executable(centurion-diagnostictools-test tests/diagnostictools_test.cpp ${DIAG_TEST_SOURCES})
     target_link_libraries(centurion-diagnostictools-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-diagnostictools-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME diagnostictools COMMAND centurion-diagnostictools-test)

@@ -5496,6 +5496,106 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <source>NVIDIA module parameters</source>
             <translation>NVIDIA modül parametreleri</translation>
         </message>
+        <message>
+            <source>Save baseline</source>
+            <translation>Temel durumu kaydet</translation>
+        </message>
+        <message>
+            <source>Keep this inventory as the reference to compare with later (owner-only file).</source>
+            <translation>Bu envanteri daha sonra karşılaştırmak için referans olarak sakla (yalnızca sahibin okuyabildiği dosya).</translation>
+        </message>
+        <message>
+            <source>Baseline saved.</source>
+            <translation>Temel durum kaydedildi.</translation>
+        </message>
+        <message>
+            <source>Run again</source>
+            <translation>Yeniden çalıştır</translation>
+        </message>
+        <message>
+            <source>Reading…</source>
+            <translation>Okunuyor…</translation>
+        </message>
+        <message>
+            <source>(not installed or failed)</source>
+            <translation>(kurulu değil ya da başarısız)</translation>
+        </message>
+        <message>
+            <source>PCIe Link Negotiation Lab</source>
+            <translation>PCIe Bağlantı Laboratuvarı</translation>
+        </message>
+        <message>
+            <source>S04: the link each PCIe device trained at against what it and its slot can do, with its error counters. Never retrains a link or changes ASPM.</source>
+            <translation>S04: her PCIe aygıtının kurduğu bağlantı, aygıtın ve yuvasının yapabildikleriyle karşılaştırmalı, hata sayaçlarıyla. Bağlantıyı asla yeniden eğitmez, ASPM'yi değiştirmez.</translation>
+        </message>
+        <message>
+            <source>Wi-Fi / Bluetooth Firmware Doctor</source>
+            <translation>Wi-Fi / Bluetooth Firmware Doktoru</translation>
+        </message>
+        <message>
+            <source>S07: wireless adapters, their drivers and radio switches, and firmware files the kernel could not load. No driver reload.</source>
+            <translation>S07: kablosuz bağdaştırıcılar, sürücüleri ve radyo anahtarları, çekirdeğin yükleyemediği firmware dosyaları. Sürücü yeniden yüklenmez.</translation>
+        </message>
+        <message>
+            <source>Power Limit Source Map</source>
+            <translation>Güç Sınırı Kaynak Haritası</translation>
+        </message>
+        <message>
+            <source>S08: firmware power targets (PPT), platform profile, cpufreq caps, RAPL and the power source. Nothing is written or woken.</source>
+            <translation>S08: firmware güç hedefleri (PPT), platform profili, cpufreq sınırları, RAPL ve güç kaynağı. Hiçbir şey yazılmaz ya da uyandırılmaz.</translation>
+        </message>
+        <message>
+            <source>Memory Architecture Explorer</source>
+            <translation>Bellek Mimarisi Gezgini</translation>
+        </message>
+        <message>
+            <source>S10: RAM, swap, zram / zswap, huge pages, memory pressure, NUMA and L3 domains, with what to change.</source>
+            <translation>S10: RAM, takas, zram / zswap, büyük sayfalar, bellek baskısı, NUMA ve L3 alanları; neyin değişmesi gerektiğiyle.</translation>
+        </message>
+        <message>
+            <source>ACPI / WMI Firmware Browser</source>
+            <translation>ACPI / WMI Firmware Tarayıcısı</translation>
+        </message>
+        <message>
+            <source>S11: WMI objects and their drivers, firmware settings and ACPI tables. Never calls a firmware method or reads a password.</source>
+            <translation>S11: WMI nesneleri ve sürücüleri, firmware ayarları ve ACPI tabloları. Hiçbir firmware yöntemini çağırmaz, parola okumaz.</translation>
+        </message>
+        <message>
+            <source>USB-C PD / Charger Inspector</source>
+            <translation>USB-C PD / Şarj Cihazı Denetçisi</translation>
+        </message>
+        <message>
+            <source>S13: the power profiles the charger offers, what the laptop draws, and the battery's condition.</source>
+            <translation>S13: şarj cihazının sunduğu güç profilleri, dizüstünün çektiği güç ve pilin durumu.</translation>
+        </message>
+        <message>
+            <source>PipeWire Audio Doctor</source>
+            <translation>PipeWire Ses Doktoru</translation>
+        </message>
+        <message>
+            <source>S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. Nothing is restarted.</source>
+            <translation>S15: ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin çakışıp çakışmadığı), PipeWire'ın görünümü. Hiçbir şey yeniden başlatılmaz.</translation>
+        </message>
+        <message>
+            <source>Kernel Feature &amp; Firmware Check</source>
+            <translation>Çekirdek Özellik ve Firmware Denetimi</translation>
+        </message>
+        <message>
+            <source>S18: kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver.</source>
+            <translation>S18: Centurion'ın dayandığı çekirdek seçenekleri, çekirdeğin yükleyemediği ya da açamadığı firmware, sürücüsü olmayan aygıtlar.</translation>
+        </message>
+        <message>
+            <source>S01: compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved.</source>
+            <translation>S01: PCI aygıtlarını, sürücüleri, modülleri, çekirdeği, BIOS'u, mikrokodu ve açılış parametrelerini kaydettiğiniz temel durumla karşılaştırır.</translation>
+        </message>
+        <message>
+            <source>S03: each connected display's identity, modes and variable-refresh range from its EDID; damaged EDIDs. Read only.</source>
+            <translation>S03: bağlı her ekranın kimliği, modları ve EDID'deki değişken yenileme aralığı; bozuk EDID'ler. Salt okunur.</translation>
+        </message>
+        <message>
+            <source>S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU.</source>
+            <translation>S06: yapılandırılmış NVIDIA seçenekleri, etkin değerlerle karşılaştırmalı ve ne işe yaradıklarıyla. GPU'yu asla uyandırmaz.</translation>
+        </message>
     </context>
     <context>
         <name>BackupPage</name>
@@ -10436,48 +10536,3922 @@ Profil adı:</translation>
     <context>
         <name>HealthEvidencePage</name>
         <message>
-            <source>On-demand diagnostic evidence from the current boot. The scan is read-only and may require polkit authorization.</source>
-            <translation>Geçerli açılışa ait isteğe bağlı donanım tanılama verileri. Tarama yalnızca okuma yapar ve polkit yetkisi isteyebilir.</translation>
-        </message>
-        <message>
-            <source>Scan evidence</source>
-            <translation>Kanıtları tara</translation>
-        </message>
-        <message>
-            <source>Copy current</source>
-            <translation>Geçerli raporu kopyala</translation>
-        </message>
-        <message>
-            <source>Not scanned yet. No monitoring process is running.</source>
-            <translation>Henüz tarama yapılmadı. Arka planda izleme işlemi çalışmıyor.</translation>
-        </message>
-        <message>
-            <source>H02 · Ryzen MCE Core/CCD</source>
-            <translation>H02 · Ryzen MCE Çekirdek/CCD</translation>
-        </message>
-        <message>
-            <source>H03 · PCIe AER Delta</source>
-            <translation>H03 · PCIe AER Değişimi</translation>
-        </message>
-        <message>
-            <source>H04 · NVIDIA Xid Cases</source>
-            <translation>H04 · NVIDIA Xid Vakaları</translation>
-        </message>
-        <message>
-            <source>H05 · F2FS Integrity</source>
-            <translation>H05 · F2FS Bütünlüğü</translation>
-        </message>
-        <message>
             <source>H09 · Wi-Fi / Bluetooth</source>
             <translation>H09 · Wi-Fi / Bluetooth</translation>
         </message>
         <message>
-            <source>Press Scan evidence to view this diagnostic.</source>
-            <translation>Tanılama verilerini görüntülemek için Kanıtları tara düğmesine basın.</translation>
+            <source>One read-only scan of this boot's kernel log and device counters, read five ways. Press Scan; nothing runs in the background.</source>
+            <translation>Bu açılışın çekirdek günlüğünün ve aygıt sayaçlarının salt okunur tek bir taraması, beş açıdan okunur. Tara'ya basın; arka planda hiçbir şey çalışmaz.</translation>
         </message>
         <message>
-            <source>Scanning classified kernel events and read-only topology…</source>
-            <translation>Sınıflandırılmış kernel olayları ve salt okunur topoloji taranıyor…</translation>
+            <source>Scan</source>
+            <translation>Tara</translation>
+        </message>
+        <message>
+            <source>H02 · Machine checks</source>
+            <translation>H02 · Makine denetimleri</translation>
+        </message>
+        <message>
+            <source>H03 · PCIe errors</source>
+            <translation>H03 · PCIe hataları</translation>
+        </message>
+        <message>
+            <source>H04 · NVIDIA Xid</source>
+            <translation>H04 · NVIDIA Xid</translation>
+        </message>
+        <message>
+            <source>H05 · F2FS</source>
+            <translation>H05 · F2FS</translation>
+        </message>
+        <message>
+            <source>Press Scan to read this boot's evidence.</source>
+            <translation>Bu açılışın kanıtlarını okumak için Tara'ya basın.</translation>
+        </message>
+        <message>
+            <source>Scanning the kernel log and device counters (read-only)…</source>
+            <translation>Çekirdek günlüğü ve aygıt sayaçları taranıyor (salt okunur)…</translation>
+        </message>
+        <message>
+            <source>Scan not possible: %1</source>
+            <translation>Tarama yapılamadı: %1</translation>
+        </message>
+        <message>
+            <source>Boot %1 · %2 classified event(s) read (the newest 300 at most).%3</source>
+            <translation>Açılış %1 · %2 sınıflandırılmış olay okundu (en fazla en yeni 300).%3</translation>
+        </message>
+        <message>
+            <source> AER sample not saved: %1</source>
+            <translation> AER örneği kaydedilmedi: %1</translation>
+        </message>
+    </context>
+    <context>
+        <name>diag</name>
+        <message>
+            <source>Needs attention</source>
+            <translation>İlgilenilmeli</translation>
+        </message>
+        <message>
+            <source>Review</source>
+            <translation>İncele</translation>
+        </message>
+        <message>
+            <source>Unknown</source>
+            <translation>Bilinmiyor</translation>
+        </message>
+        <message>
+            <source>No problem found</source>
+            <translation>Sorun bulunamadı</translation>
+        </message>
+        <message>
+            <source>Information</source>
+            <translation>Bilgi</translation>
+        </message>
+        <message>
+            <source>1 finding needs attention</source>
+            <translation>1 bulgu ilgilenilmeli</translation>
+        </message>
+        <message>
+            <source>%1 findings need attention</source>
+            <translation>%1 bulgu ilgilenilmeli</translation>
+        </message>
+        <message>
+            <source>, %1 to review</source>
+            <translation>, %1 incelenecek</translation>
+        </message>
+        <message>
+            <source>1 finding to review</source>
+            <translation>1 bulgu incelenecek</translation>
+        </message>
+        <message>
+            <source>%1 findings to review</source>
+            <translation>%1 bulgu incelenecek</translation>
+        </message>
+        <message>
+            <source>No problem found in the data that could be read</source>
+            <translation>Okunabilen verilerde sorun bulunamadı</translation>
+        </message>
+        <message>
+            <source>Not enough data for a verdict</source>
+            <translation>Karar için yeterli veri yok</translation>
+        </message>
+        <message>
+            <source>Information only</source>
+            <translation>Yalnızca bilgi</translation>
+        </message>
+        <message>
+            <source> · %1 source(s) unavailable</source>
+            <translation> · %1 kaynak okunamadı</translation>
+        </message>
+        <message>
+            <source>Verdict: %1 — %2</source>
+            <translation>Karar: %1 — %2</translation>
+        </message>
+        <message>
+            <source>(nothing to list)</source>
+            <translation>(listelenecek bir şey yok)</translation>
+        </message>
+        <message>
+            <source>Limits of this check:</source>
+            <translation>Bu denetimin sınırları:</translation>
+        </message>
+        <message>
+            <source>Technical details:</source>
+            <translation>Teknik ayrıntılar:</translation>
+        </message>
+    </context>
+    <context>
+        <name>diagsrc</name>
+        <message>
+            <source>record too large</source>
+            <translation>kayıt çok büyük</translation>
+        </message>
+        <message>
+            <source>cannot create %1</source>
+            <translation>%1 oluşturulamıyor</translation>
+        </message>
+        <message>
+            <source>could not write %1</source>
+            <translation>%1 yazılamadı</translation>
+        </message>
+        <message>
+            <source>PCI device</source>
+            <translation>PCI aygıtı</translation>
+        </message>
+        <message>
+            <source>PCI class %1</source>
+            <translation>PCI sınıfı %1</translation>
+        </message>
+        <message>
+            <source>%1 s</source>
+            <translation>%1 sn</translation>
+        </message>
+        <message>
+            <source>%1 min</source>
+            <translation>%1 dk</translation>
+        </message>
+        <message>
+            <source>%1 h %2 min</source>
+            <translation>%1 sa %2 dk</translation>
+        </message>
+        <message>
+            <source>%1 days</source>
+            <translation>%1 gün</translation>
+        </message>
+        <message>
+            <source>SCSI controller</source>
+            <translation>SCSI denetleyici</translation>
+        </message>
+        <message>
+            <source>SATA controller</source>
+            <translation>SATA denetleyici</translation>
+        </message>
+        <message>
+            <source>NVMe drive</source>
+            <translation>NVMe disk</translation>
+        </message>
+        <message>
+            <source>Ethernet controller</source>
+            <translation>Ethernet denetleyici</translation>
+        </message>
+        <message>
+            <source>Wireless network controller</source>
+            <translation>Kablosuz ağ denetleyicisi</translation>
+        </message>
+        <message>
+            <source>VGA controller</source>
+            <translation>VGA denetleyici</translation>
+        </message>
+        <message>
+            <source>3D controller</source>
+            <translation>3D denetleyici</translation>
+        </message>
+        <message>
+            <source>Display controller</source>
+            <translation>Ekran denetleyicisi</translation>
+        </message>
+        <message>
+            <source>Audio device</source>
+            <translation>Ses aygıtı</translation>
+        </message>
+        <message>
+            <source>Audio controller</source>
+            <translation>Ses denetleyicisi</translation>
+        </message>
+        <message>
+            <source>Multimedia controller</source>
+            <translation>Çoklu ortam denetleyicisi</translation>
+        </message>
+        <message>
+            <source>RAM controller</source>
+            <translation>RAM denetleyicisi</translation>
+        </message>
+        <message>
+            <source>Host bridge</source>
+            <translation>Ana köprü</translation>
+        </message>
+        <message>
+            <source>ISA bridge</source>
+            <translation>ISA köprüsü</translation>
+        </message>
+        <message>
+            <source>PCI bridge</source>
+            <translation>PCI köprüsü</translation>
+        </message>
+        <message>
+            <source>Bridge</source>
+            <translation>Köprü</translation>
+        </message>
+        <message>
+            <source>SD host controller</source>
+            <translation>SD kart denetleyicisi</translation>
+        </message>
+        <message>
+            <source>System peripheral</source>
+            <translation>Sistem çevre birimi</translation>
+        </message>
+        <message>
+            <source>USB controller</source>
+            <translation>USB denetleyicisi</translation>
+        </message>
+        <message>
+            <source>SMBus controller</source>
+            <translation>SMBus denetleyicisi</translation>
+        </message>
+        <message>
+            <source>Bluetooth controller</source>
+            <translation>Bluetooth denetleyicisi</translation>
+        </message>
+        <message>
+            <source>Encryption controller</source>
+            <translation>Şifreleme denetleyicisi</translation>
+        </message>
+        <message>
+            <source>Signal processing controller</source>
+            <translation>Sinyal işleme denetleyicisi</translation>
+        </message>
+        <message>
+            <source>Non-essential instrumentation</source>
+            <translation>Yardımcı ölçüm aygıtı</translation>
+        </message>
+    </context>
+    <context>
+        <name>advanceddiagnostics</name>
+        <message>
+            <source>ended cleanly</source>
+            <translation>temiz kapandı</translation>
+        </message>
+        <message>
+            <source>ended uncleanly</source>
+            <translation>temiz olmayan şekilde bitti</translation>
+        </message>
+        <message>
+            <source>running now</source>
+            <translation>şu an çalışıyor</translation>
+        </message>
+        <message>
+            <source>unknown</source>
+            <translation>bilinmiyor</translation>
+        </message>
+        <message>
+            <source>end unknown</source>
+            <translation>bitişi bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Boot Regression Detective</source>
+            <translation>Açılış Regresyon Dedektifi</translation>
+        </message>
+        <message>
+            <source>Groups finished boots by the kernel, NVIDIA driver, BIOS and CPU microcode they ran, and checks whether a version change was followed by more unclean shutdowns or hardware faults.</source>
+            <translation>Biten açılışları çalıştırdıkları çekirdek, NVIDIA sürücüsü, BIOS ve CPU mikrokoduna göre gruplar ve bir sürüm değişikliğinin ardından daha fazla temiz olmayan kapanma ya da donanım hatası gelip gelmediğini denetler.</translation>
+        </message>
+        <message>
+            <source>Only boots the boot guard closed, or found unclean at the next start, are counted.</source>
+            <translation>Yalnızca açılış koruyucusunun kapattığı ya da bir sonraki başlangıçta temiz olmayan bulduğu açılışlar sayılır.</translation>
+        </message>
+        <message>
+            <source>Faults (Xid, GSP, machine checks, uncorrectable AER, lockups…) are known only for clean boots: an unclean boot never saved its counts.</source>
+            <translation>Hatalar (Xid, GSP, makine denetimleri, düzeltilemeyen AER, kilitlenmeler…) yalnızca temiz açılışlar için bilinir: temiz olmayan bir açılış sayılarını hiç kaydedemedi.</translation>
+        </message>
+        <message>
+            <source>A rise after an update is a timing link, not proof: a new curve, game or room temperature can change at the same time.</source>
+            <translation>Güncellemeden sonraki bir artış zamansal bir bağlantıdır, kanıt değildir: yeni bir eğri, oyun ya da oda sıcaklığı aynı anda değişebilir.</translation>
+        </message>
+        <message>
+            <source>This boot runs %1</source>
+            <translation>Bu açılış şunları çalıştırıyor: %1</translation>
+        </message>
+        <message>
+            <source>Fewer than two finished boots are recorded</source>
+            <translation>İkiden az biten açılış kayıtlı</translation>
+        </message>
+        <message>
+            <source>Every boot that ends (cleanly or not) is added by centurion-boot-guard. Compare again after a few more boots.</source>
+            <translation>Biten her açılış (temiz ya da değil) centurion-boot-guard tarafından eklenir. Birkaç açılış sonra yeniden karşılaştırın.</translation>
+        </message>
+        <message>
+            <source>No boot has its versions recorded yet</source>
+            <translation>Henüz hiçbir açılışın sürümleri kaydedilmedi</translation>
+        </message>
+        <message>
+            <source>The boot guard records the kernel, BIOS, microcode and NVIDIA driver of each boot from this release on. Boots before it cannot be grouped.</source>
+            <translation>Açılış koruyucusu bu sürümden itibaren her açılışın çekirdeğini, BIOS'unu, mikrokodunu ve NVIDIA sürücüsünü kaydeder. Öncesindeki açılışlar gruplanamaz.</translation>
+        </message>
+        <message>
+            <source>Come back after a few boots, or after the next kernel or driver update.</source>
+            <translation>Birkaç açılış sonra ya da bir sonraki çekirdek veya sürücü güncellemesinden sonra tekrar bakın.</translation>
+        </message>
+        <message>
+            <source>Kernel</source>
+            <translation>Çekirdek</translation>
+        </message>
+        <message>
+            <source>NVIDIA driver</source>
+            <translation>NVIDIA sürücüsü</translation>
+        </message>
+        <message>
+            <source>BIOS</source>
+            <translation>BIOS</translation>
+        </message>
+        <message>
+            <source>CPU microcode</source>
+            <translation>CPU mikrokodu</translation>
+        </message>
+        <message>
+            <source>Version</source>
+            <translation>Sürüm</translation>
+        </message>
+        <message>
+            <source>Boots</source>
+            <translation>Açılışlar</translation>
+        </message>
+        <message>
+            <source>Hours</source>
+            <translation>Saat</translation>
+        </message>
+        <message>
+            <source>Unclean ends</source>
+            <translation>Temiz olmayan kapanış</translation>
+        </message>
+        <message>
+            <source>Faults / 10 h</source>
+            <translation>Hata / 10 sa</translation>
+        </message>
+        <message>
+            <source>Used</source>
+            <translation>Kullanım</translation>
+        </message>
+        <message>
+            <source>More unclean shutdowns since the %1 changed to %2</source>
+            <translation>%1 %2 olarak değiştiğinden beri daha fazla temiz olmayan kapanma</translation>
+        </message>
+        <message>
+            <source>%1 unclean ends in %2 h with %3, against %4 in %5 h with %6. The chance of a split this uneven by luck: %7.</source>
+            <translation>%3 ile %2 saatte %1 temiz olmayan kapanış, %6 ile %5 saatte %4. Bu kadar dengesiz bir dağılımın şans eseri olma olasılığı: %7.</translation>
+        </message>
+        <message>
+            <source>Open Boot history for those boots. If a curve or undervolt was active, test at stock first; booting the previous version confirms or clears it.</source>
+            <translation>Bu açılışlar için Açılış geçmişi'ni açın. Bir eğri ya da undervolt etkinse önce varsayılan ayarlarda test edin; önceki sürümle açılış bunu doğrular ya da temize çıkarır.</translation>
+        </message>
+        <message>
+            <source>More hardware faults since the %1 changed to %2</source>
+            <translation>%1 %2 olarak değiştiğinden beri daha fazla donanım hatası</translation>
+        </message>
+        <message>
+            <source>%1 faults in %2 clean hours with %3, against %4 in %5 h with %6 (chance by luck: %7).</source>
+            <translation>%3 ile %2 temiz saatte %1 hata, %6 ile %5 saatte %4 (şans eseri olasılığı: %7).</translation>
+        </message>
+        <message>
+            <source>Events &amp; alerts lists them by kind; Curve stability shows whether they follow a curve rather than the update.</source>
+            <translation>Olaylar ve uyarılar bunları türlerine göre listeler; Eğri kararlılığı güncellemeyi değil bir eğriyi izleyip izlemediklerini gösterir.</translation>
+        </message>
+        <message>
+            <source>No version change was followed by a clear rise in unclean shutdowns or faults</source>
+            <translation>Hiçbir sürüm değişikliğinin ardından temiz olmayan kapanmalarda ya da hatalarda belirgin bir artış yok</translation>
+        </message>
+        <message>
+            <source>%1 finished boots compared, %2 of them with recorded versions.</source>
+            <translation>%1 biten açılış karşılaştırıldı, %2 tanesinde sürümler kayıtlı.</translation>
+        </message>
+        <message>
+            <source>Every recorded boot ran the same versions</source>
+            <translation>Kayıtlı her açılış aynı sürümleri çalıştırdı</translation>
+        </message>
+        <message>
+            <source>Nothing to compare yet: the comparison starts after the first kernel, driver, BIOS or microcode change.</source>
+            <translation>Henüz karşılaştıracak bir şey yok: karşılaştırma ilk çekirdek, sürücü, BIOS ya da mikrokod değişikliğinden sonra başlar.</translation>
+        </message>
+        <message>
+            <source>%1 of %2 finished boots have no recorded versions (from before this release).</source>
+            <translation>%2 biten açılıştan %1 tanesinin kayıtlı sürümü yok (bu sürümden öncesine ait).</translation>
+        </message>
+        <message>
+            <source>status type %1, code 0x%2</source>
+            <translation>durum türü %1, kod 0x%2</translation>
+        </message>
+        <message>
+            <source>NVMe Deep Health</source>
+            <translation>NVMe Derin Sağlık</translation>
+        </message>
+        <message>
+            <source>The drive's own SMART / Health log and Error Information Log, read with nvme-cli (read-only admin commands; no self-test, format or reset).</source>
+            <translation>Diskin kendi SMART / Sağlık günlüğü ve Hata Bilgisi Günlüğü, nvme-cli ile okunur (salt okunur yönetim komutları; kendi kendine test, biçimlendirme ya da sıfırlama yok).</translation>
+        </message>
+        <message>
+            <source>SMART counters are what the drive's firmware reports; some drives under-report media errors.</source>
+            <translation>SMART sayaçları diskin firmware'inin bildirdiğidir; bazı diskler ortam hatalarını eksik bildirir.</translation>
+        </message>
+        <message>
+            <source>The error log keeps only the last entries (up to 16 are read here).</source>
+            <translation>Hata günlüğü yalnızca son girdileri tutar (burada en fazla 16'sı okunur).</translation>
+        </message>
+        <message>
+            <source>The NVMe logs could not be read</source>
+            <translation>NVMe günlükleri okunamadı</translation>
+        </message>
+        <message>
+            <source>helper unavailable or permission denied</source>
+            <translation>yardımcı kullanılamıyor ya da izin reddedildi</translation>
+        </message>
+        <message>
+            <source>No NVMe controller found</source>
+            <translation>NVMe denetleyici bulunamadı</translation>
+        </message>
+        <message>
+            <source>Drives</source>
+            <translation>Diskler</translation>
+        </message>
+        <message>
+            <source>Drive</source>
+            <translation>Disk</translation>
+        </message>
+        <message>
+            <source>Model</source>
+            <translation>Model</translation>
+        </message>
+        <message>
+            <source>Temp</source>
+            <translation>Sıcaklık</translation>
+        </message>
+        <message>
+            <source>Life used</source>
+            <translation>Kullanılan ömür</translation>
+        </message>
+        <message>
+            <source>Spare</source>
+            <translation>Yedek</translation>
+        </message>
+        <message>
+            <source>Media errors</source>
+            <translation>Ortam hataları</translation>
+        </message>
+        <message>
+            <source>Error log</source>
+            <translation>Hata günlüğü</translation>
+        </message>
+        <message>
+            <source>Unsafe shutdowns</source>
+            <translation>Güvensiz kapanmalar</translation>
+        </message>
+        <message>
+            <source>Power-on</source>
+            <translation>Çalışma süresi</translation>
+        </message>
+        <message>
+            <source>Written</source>
+            <translation>Yazılan</translation>
+        </message>
+        <message>
+            <source>Error log entries (newest first)</source>
+            <translation>Hata günlüğü girdileri (en yenisi üstte)</translation>
+        </message>
+        <message>
+            <source>Error #</source>
+            <translation>Hata no</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>Queue</source>
+            <translation>Kuyruk</translation>
+        </message>
+        <message>
+            <source>LBA</source>
+            <translation>LBA</translation>
+        </message>
+        <message>
+            <source>%1: SMART log not read</source>
+            <translation>%1: SMART günlüğü okunmadı</translation>
+        </message>
+        <message>
+            <source>spare capacity is below the drive's threshold</source>
+            <translation>yedek kapasite diskin eşiğinin altında</translation>
+        </message>
+        <message>
+            <source>temperature is outside the drive's limits</source>
+            <translation>sıcaklık diskin sınırlarının dışında</translation>
+        </message>
+        <message>
+            <source>reliability is degraded by media or internal errors</source>
+            <translation>güvenilirlik ortam ya da iç hatalar nedeniyle düşmüş</translation>
+        </message>
+        <message>
+            <source>the drive has switched itself to read-only</source>
+            <translation>disk kendini salt okunur moda almış</translation>
+        </message>
+        <message>
+            <source>the volatile memory backup has failed</source>
+            <translation>geçici bellek yedeklemesi başarısız olmuş</translation>
+        </message>
+        <message>
+            <source>the persistent memory region is read-only</source>
+            <translation>kalıcı bellek bölgesi salt okunur</translation>
+        </message>
+        <message>
+            <source>%1: critical warning — %2</source>
+            <translation>%1: kritik uyarı — %2</translation>
+        </message>
+        <message>
+            <source>The drive itself raised this flag (SMART critical_warning bit 0x%1).</source>
+            <translation>Bu bayrağı diskin kendisi kaldırdı (SMART critical_warning biti 0x%1).</translation>
+        </message>
+        <message>
+            <source>Back up now. A drive that reports this usually needs replacing.</source>
+            <translation>Hemen yedek alın. Bunu bildiren bir disk genellikle değiştirilmelidir.</translation>
+        </message>
+        <message>
+            <source>%1: spare blocks below threshold (%2 % &lt; %3 %)</source>
+            <translation>%1: yedek bloklar eşiğin altında (%%2 &lt; %%3)</translation>
+        </message>
+        <message>
+            <source>%1: %2 media error(s) in its lifetime</source>
+            <translation>%1: ömrü boyunca %2 ortam hatası</translation>
+        </message>
+        <message>
+            <source>Data the drive could not read or write cleanly at least once. A few old ones can stay constant for years; a growing count is the warning sign.</source>
+            <translation>Diskin en az bir kez temiz okuyamadığı ya da yazamadığı veriler. Birkaç eski hata yıllarca sabit kalabilir; artan bir sayı uyarı işaretidir.</translation>
+        </message>
+        <message>
+            <source>Watch the trend on Drive health; back up and run a long self-test (nvme device-self-test /dev/%1 -s 2).</source>
+            <translation>Disk sağlığı'nda eğilimi izleyin; yedek alın ve uzun bir kendi kendine test çalıştırın (nvme device-self-test /dev/%1 -s 2).</translation>
+        </message>
+        <message>
+            <source>%1: %2 % of the rated endurance used</source>
+            <translation>%1: derecelendirilmiş dayanıklılığın %%2'si kullanıldı</translation>
+        </message>
+        <message>
+            <source>Drives usually keep working past 100 %; it is the manufacturer's write rating, not a failure date.</source>
+            <translation>Diskler genellikle yüzde 100'ün ötesinde de çalışmaya devam eder; bu üreticinin yazma derecesidir, arıza tarihi değil.</translation>
+        </message>
+        <message>
+            <source>Keep backups current and plan a replacement.</source>
+            <translation>Yedekleri güncel tutun ve değişimi planlayın.</translation>
+        </message>
+        <message>
+            <source>%1: %2 minute(s) above its critical temperature (lifetime)</source>
+            <translation>%1: kritik sıcaklığının üstünde %2 dakika (ömür boyu)</translation>
+        </message>
+        <message>
+            <source>Heat shortens flash life and can cause errors.</source>
+            <translation>Isı flash ömrünü kısaltır ve hatalara yol açabilir.</translation>
+        </message>
+        <message>
+            <source>Check its heatsink / airflow; Cooling shows the fan behaviour.</source>
+            <translation>Soğutucusunu / hava akışını kontrol edin; Soğutma fan davranışını gösterir.</translation>
+        </message>
+        <message>
+            <source>%1: %2 minute(s) above its warning temperature (lifetime)</source>
+            <translation>%1: uyarı sıcaklığının üstünde %2 dakika (ömür boyu)</translation>
+        </message>
+        <message>
+            <source>%1 throttled hard %2 time(s) to cool down (lifetime)</source>
+            <translation>%1 soğumak için %2 kez sert kısıldı (ömür boyu)</translation>
+        </message>
+        <message>
+            <source>%1: %2 of %3 power cycles were unsafe shutdowns</source>
+            <translation>%1: %3 güç döngüsünden %2 tanesi güvensiz kapanmaydı</translation>
+        </message>
+        <message>
+            <source>Power was cut without the drive being told (crashes, forced power-offs). Each one risks the most recent writes.</source>
+            <translation>Güç, diske haber verilmeden kesildi (çökmeler, zorla kapatmalar). Her biri en son yazılanları riske atar.</translation>
+        </message>
+        <message>
+            <source>admin</source>
+            <translation>yönetim</translation>
+        </message>
+        <message>
+            <source>I/O %1</source>
+            <translation>G/Ç %1</translation>
+        </message>
+        <message>
+            <source>%1: the error log holds %2 media error(s)</source>
+            <translation>%1: hata günlüğünde %2 ortam hatası var</translation>
+        </message>
+        <message>
+            <source>Reads or writes that failed on the flash itself (see the table for the block address).</source>
+            <translation>Flash'ın kendisinde başarısız olan okumalar ya da yazmalar (blok adresi için tabloya bakın).</translation>
+        </message>
+        <message>
+            <source>Back up now and run a long self-test.</source>
+            <translation>Hemen yedek alın ve uzun bir kendi kendine test çalıştırın.</translation>
+        </message>
+        <message>
+            <source>%1: its %2 logged errors are rejected admin commands</source>
+            <translation>%1: kayıtlı %2 hatası reddedilmiş yönetim komutlarıdır</translation>
+        </message>
+        <message>
+            <source>A tool (smartctl, nvme-cli, the firmware updater) asked for a feature or log page the drive does not support. This raises the error count but says nothing about the drive's health.</source>
+            <translation>Bir araç (smartctl, nvme-cli, firmware güncelleyici) diskin desteklemediği bir özellik ya da günlük sayfası istedi. Bu hata sayısını artırır ama diskin sağlığı hakkında hiçbir şey söylemez.</translation>
+        </message>
+        <message>
+            <source>%1: %2 recent error-log entries are failed I/O commands</source>
+            <translation>%1: son %2 hata günlüğü girdisi başarısız G/Ç komutları</translation>
+        </message>
+        <message>
+            <source>Not media errors, but I/O commands the drive did not complete normally.</source>
+            <translation>Ortam hatası değil, diskin normal tamamlamadığı G/Ç komutları.</translation>
+        </message>
+        <message>
+            <source>Check Events &amp; alerts for NVMe timeouts or resets.</source>
+            <translation>NVMe zaman aşımları ya da sıfırlamaları için Olaylar ve uyarılar'a bakın.</translation>
+        </message>
+        <message>
+            <source>%1: error log not read</source>
+            <translation>%1: hata günlüğü okunmadı</translation>
+        </message>
+        <message>
+            <source>%1: no warning in the SMART / Health log</source>
+            <translation>%1: SMART / Sağlık günlüğünde uyarı yok</translation>
+        </message>
+        <message>
+            <source> (min %1)</source>
+            <translation> (en az %1)</translation>
+        </message>
+        <message>
+            <source>%1 h</source>
+            <translation>%1 sa</translation>
+        </message>
+        <message>
+            <source>protocol error (-71): garbled signal — cable, connector, power or interference</source>
+            <translation>protokol hatası (-71): bozuk sinyal — kablo, konnektör, güç ya da parazit</translation>
+        </message>
+        <message>
+            <source>timeout (-110): the device did not answer</source>
+            <translation>zaman aşımı (-110): aygıt yanıt vermedi</translation>
+        </message>
+        <message>
+            <source>stall (-32): the device refused the request</source>
+            <translation>takılma (-32): aygıt isteği reddetti</translation>
+        </message>
+        <message>
+            <source>timer expired (-62)</source>
+            <translation>zamanlayıcı doldu (-62)</translation>
+        </message>
+        <message>
+            <source>error %1</source>
+            <translation>hata %1</translation>
+        </message>
+        <message>
+            <source>USB Stability Watch</source>
+            <translation>USB Kararlılık İzleyicisi</translation>
+        </message>
+        <message>
+            <source>USB enumeration failures, port shutdowns and host-controller faults from the saved kernel log, grouped by port.</source>
+            <translation>Kaydedilen çekirdek günlüğünden USB tanıma hataları, bağlantı noktası kapanmaları ve ana denetleyici arızaları, bağlantı noktasına göre gruplanmış.</translation>
+        </message>
+        <message>
+            <source>The kernel log is saved while Centurion runs; only warnings and errors are kept (normal connects and disconnects are not).</source>
+            <translation>Çekirdek günlüğü Centurion çalışırken kaydedilir; yalnızca uyarılar ve hatalar tutulur (normal bağlanma ve ayrılmalar tutulmaz).</translation>
+        </message>
+        <message>
+            <source>Port paths (1-2, 3-1.4) name a position on the USB tree; after a reboot the same path is usually the same physical port.</source>
+            <translation>Bağlantı noktası yolları (1-2, 3-1.4) USB ağacında bir konumu adlandırır; yeniden başlatmadan sonra aynı yol genellikle aynı fiziksel bağlantı noktasıdır.</translation>
+        </message>
+        <message>
+            <source>No saved kernel log yet</source>
+            <translation>Henüz kaydedilmiş çekirdek günlüğü yok</translation>
+        </message>
+        <message>
+            <source>Centurion saves kernel warnings while it runs (Health → Kernel log).</source>
+            <translation>Centurion çalışırken çekirdek uyarılarını kaydeder (Sağlık → Çekirdek günlüğü).</translation>
+        </message>
+        <message>
+            <source>Enumeration failed</source>
+            <translation>Tanıma başarısız</translation>
+        </message>
+        <message>
+            <source>Over-current</source>
+            <translation>Aşırı akım</translation>
+        </message>
+        <message>
+            <source>the port drew more current than allowed and was switched off</source>
+            <translation>bağlantı noktası izin verilenden fazla akım çekti ve kapatıldı</translation>
+        </message>
+        <message>
+            <source>Port disabled (EMI?)</source>
+            <translation>Bağlantı noktası kapatıldı (EMI?)</translation>
+        </message>
+        <message>
+            <source>the hub saw electrical noise on the port and reset it</source>
+            <translation>hub bağlantı noktasında elektriksel parazit gördü ve onu sıfırladı</translation>
+        </message>
+        <message>
+            <source>Port reset failed</source>
+            <translation>Bağlantı noktası sıfırlanamadı</translation>
+        </message>
+        <message>
+            <source>USB controller died</source>
+            <translation>USB denetleyicisi durdu</translation>
+        </message>
+        <message>
+            <source>xHCI driver warning</source>
+            <translation>xHCI sürücü uyarısı</translation>
+        </message>
+        <message>
+            <source>USB problems by port</source>
+            <translation>Bağlantı noktasına göre USB sorunları</translation>
+        </message>
+        <message>
+            <source>Port</source>
+            <translation>Bağlantı noktası</translation>
+        </message>
+        <message>
+            <source>Device there now</source>
+            <translation>Şu an takılı aygıt</translation>
+        </message>
+        <message>
+            <source>Problem</source>
+            <translation>Sorun</translation>
+        </message>
+        <message>
+            <source>Count</source>
+            <translation>Sayı</translation>
+        </message>
+        <message>
+            <source>Last</source>
+            <translation>Son</translation>
+        </message>
+        <message>
+            <source>Meaning</source>
+            <translation>Anlamı</translation>
+        </message>
+        <message>
+            <source>(nothing connected)</source>
+            <translation>(takılı bir şey yok)</translation>
+        </message>
+        <message>
+            <source>%1 on %2 (%3×)</source>
+            <translation>%2 üzerinde %1 (%3×)</translation>
+        </message>
+        <message>
+            <source>Unplug what is on that port; a shorted cable or a device drawing too much power trips it.</source>
+            <translation>O bağlantı noktasındakini çıkarın; kısa devre yapmış bir kablo ya da fazla güç çeken bir aygıt bunu tetikler.</translation>
+        </message>
+        <message>
+            <source>Every device on that controller dropped off. Note what was connected; if it repeats, test without hubs and docks.</source>
+            <translation>O denetleyicideki her aygıt düştü. Neyin takılı olduğunu not edin; tekrarlarsa hub ve dock olmadan test edin.</translation>
+        </message>
+        <message>
+            <source>%1 on port %2: %3 time(s) in %4 boot(s)</source>
+            <translation>%2 bağlantı noktasında %1: %4 açılışta %3 kez</translation>
+        </message>
+        <message>
+            <source> · now there: %1</source>
+            <translation> · şu an orada: %1</translation>
+        </message>
+        <message>
+            <source>Try another cable and another port. Repeats on one port only point at the port or its hub; on every port, at the device.</source>
+            <translation>Başka bir kablo ve başka bir bağlantı noktası deneyin. Yalnızca tek bir noktada tekrarlıyorsa nokta ya da hub'ı; her noktada tekrarlıyorsa aygıtı gösterir.</translation>
+        </message>
+        <message>
+            <source>No USB failures in %1 saved kernel-log lines</source>
+            <translation>Kaydedilmiş %1 çekirdek günlüğü satırında USB hatası yok</translation>
+        </message>
+        <message>
+            <source>Only isolated USB errors (fewer than 3 per port)</source>
+            <translation>Yalnızca tekil USB hataları (bağlantı noktası başına 3'ten az)</translation>
+        </message>
+        <message>
+            <source>Single enumeration errors happen when a plug is inserted slowly or at an angle.</source>
+            <translation>Tekil tanıma hataları, fiş yavaşça ya da eğik takıldığında olur.</translation>
+        </message>
+        <message>
+            <source>device busy (EBUSY): a driver refused to suspend</source>
+            <translation>aygıt meşgul (EBUSY): bir sürücü uykuya geçmeyi reddetti</translation>
+        </message>
+        <message>
+            <source>try again (EAGAIN): usually a wakeup event arrived while suspending — harmless when rare</source>
+            <translation>yeniden dene (EAGAIN): genellikle uykuya geçerken bir uyanma olayı geldi — seyrekse zararsız</translation>
+        </message>
+        <message>
+            <source>I/O error (EIO) in a driver</source>
+            <translation>bir sürücüde G/Ç hatası (EIO)</translation>
+        </message>
+        <message>
+            <source>timeout: a device did not finish suspending or resuming</source>
+            <translation>zaman aşımı: bir aygıt uykuya geçmeyi ya da uyanmayı bitiremedi</translation>
+        </message>
+        <message>
+            <source>no such device (ENODEV)</source>
+            <translation>böyle bir aygıt yok (ENODEV)</translation>
+        </message>
+        <message>
+            <source>invalid argument (EINVAL) from a driver</source>
+            <translation>bir sürücüden geçersiz argüman (EINVAL)</translation>
+        </message>
+        <message>
+            <source>error -%1</source>
+            <translation>hata -%1</translation>
+        </message>
+        <message>
+            <source>Sleep / Resume Failure Matrix</source>
+            <translation>Uyku / Uyanma Hata Matrisi</translation>
+        </message>
+        <message>
+            <source>The kernel's own suspend counters, every recorded sleep per boot, and boots that went to sleep and never came back.</source>
+            <translation>Çekirdeğin kendi uyku sayaçları, açılış başına kaydedilen her uyku ve uykuya girip hiç geri dönmeyen açılışlar.</translation>
+        </message>
+        <message>
+            <source>The kernel counters cover this boot only; earlier boots are seen through the sleep log.</source>
+            <translation>Çekirdek sayaçları yalnızca bu açılışı kapsar; önceki açılışlar uyku günlüğünden görülür.</translation>
+        </message>
+        <message>
+            <source>A boot is recognised as dead in sleep only from this release's sleep hook on (it leaves a marker until the machine resumes).</source>
+            <translation>Bir açılışın uykuda öldüğü yalnızca bu sürümün uyku kancasından itibaren tanınır (makine uyanana kadar bir işaret bırakır).</translation>
+        </message>
+        <message>
+            <source>Kernel suspend counters not available</source>
+            <translation>Çekirdek uyku sayaçları yok</translation>
+        </message>
+        <message>
+            <source>/sys/power/suspend_stats is missing (an older kernel, or one without CONFIG_PM_SLEEP).</source>
+            <translation>/sys/power/suspend_stats yok (eski bir çekirdek ya da CONFIG_PM_SLEEP olmayan bir çekirdek).</translation>
+        </message>
+        <message>
+            <source>This boot (kernel suspend_stats)</source>
+            <translation>Bu açılış (çekirdek suspend_stats)</translation>
+        </message>
+        <message>
+            <source>Counter</source>
+            <translation>Sayaç</translation>
+        </message>
+        <message>
+            <source>Value</source>
+            <translation>Değer</translation>
+        </message>
+        <message>
+            <source>device %1</source>
+            <translation>aygıt %1</translation>
+        </message>
+        <message>
+            <source>step %1</source>
+            <translation>adım %1</translation>
+        </message>
+        <message>
+            <source>%1 resume failure(s) this boot</source>
+            <translation>Bu açılışta %1 uyanma hatası</translation>
+        </message>
+        <message>
+            <source>A device failed to resume.</source>
+            <translation>Bir aygıt uyanamadı.</translation>
+        </message>
+        <message>
+            <source>Last failure: %1</source>
+            <translation>Son hata: %1</translation>
+        </message>
+        <message>
+            <source>The device named is the first suspect: update its firmware / driver, or check Sleep &amp; wake → wake sources.</source>
+            <translation>Adı geçen aygıt ilk şüphelidir: firmware'ini / sürücüsünü güncelleyin ya da Uyku ve uyanma → uyandırma kaynaklarına bakın.</translation>
+        </message>
+        <message>
+            <source>%1 of %2 attempts to sleep failed this boot</source>
+            <translation>Bu açılışta %2 uyku denemesinden %1 tanesi başarısız oldu</translation>
+        </message>
+        <message>
+            <source>A failed suspend returns to the desktop at once; the device and step say what refused.</source>
+            <translation>Başarısız bir uyku hemen masaüstüne döner; aygıt ve adım neyin reddettiğini söyler.</translation>
+        </message>
+        <message>
+            <source>The last sleep of this boot has no resume record</source>
+            <translation>Bu açılışın son uykusunun uyanma kaydı yok</translation>
+        </message>
+        <message>
+            <source>The sleep hook's post step did not run (or is running now). That sleep is missing from the log.</source>
+            <translation>Uyku kancasının post adımı çalışmadı (ya da şu an çalışıyor). O uyku günlükte eksik.</translation>
+        </message>
+        <message>
+            <source>not in boot history</source>
+            <translation>açılış geçmişinde yok</translation>
+        </message>
+        <message>
+            <source>Boot %1 went to sleep at %2 and never resumed</source>
+            <translation>%1 açılışı %2 zamanında uykuya girdi ve hiç uyanmadı</translation>
+        </message>
+        <message>
+            <source>The machine hung or lost power while asleep or while waking (boot history: %1). Nothing after that moment was logged.</source>
+            <translation>Makine uykudayken ya da uyanırken dondu veya gücünü kaybetti (açılış geçmişi: %1). O andan sonra hiçbir şey kaydedilmedi.</translation>
+        </message>
+        <message>
+            <source>If this repeats: try the other sleep mode, check the dGPU state on the way in (table below), and look at the kernel log of the next boot for pstore records.</source>
+            <translation>Tekrarlarsa: diğer uyku modunu deneyin, girişteki dGPU durumunu kontrol edin (aşağıdaki tablo) ve pstore kayıtları için bir sonraki açılışın çekirdek günlüğüne bakın.</translation>
+        </message>
+        <message>
+            <source>(unknown boot)</source>
+            <translation>(bilinmeyen açılış)</translation>
+        </message>
+        <message>
+            <source>No sleep recorded in the sleep log</source>
+            <translation>Uyku günlüğünde kayıtlı uyku yok</translation>
+        </message>
+        <message>
+            <source>The sleep hook (centurion-sleep-log) writes one line per sleep; none is there yet, or the hook is not installed.</source>
+            <translation>Uyku kancası (centurion-sleep-log) her uyku için bir satır yazar; henüz hiç yok ya da kanca kurulu değil.</translation>
+        </message>
+        <message>
+            <source>Sleeps per boot</source>
+            <translation>Açılış başına uykular</translation>
+        </message>
+        <message>
+            <source>Boot</source>
+            <translation>Açılış</translation>
+        </message>
+        <message>
+            <source>Started</source>
+            <translation>Başladı</translation>
+        </message>
+        <message>
+            <source>Boot ended</source>
+            <translation>Açılış sonu</translation>
+        </message>
+        <message>
+            <source>Sleeps</source>
+            <translation>Uykular</translation>
+        </message>
+        <message>
+            <source>Median length</source>
+            <translation>Ortanca süre</translation>
+        </message>
+        <message>
+            <source>dGPU awake on entry</source>
+            <translation>Girişte dGPU uyanık</translation>
+        </message>
+        <message>
+            <source>No HW sleep</source>
+            <translation>Donanım uykusu yok</translation>
+        </message>
+        <message>
+            <source>Unexpected wakes</source>
+            <translation>Beklenmeyen uyanmalar</translation>
+        </message>
+        <message>
+            <source>Failed attempts</source>
+            <translation>Başarısız denemeler</translation>
+        </message>
+        <message>
+            <source>died asleep</source>
+            <translation>uykuda öldü</translation>
+        </message>
+        <message>
+            <source>The last long sleeps barely reached the hardware sleep state</source>
+            <translation>Son uzun uykular donanım uyku durumuna zar zor ulaştı</translation>
+        </message>
+        <message>
+            <source>With s2idle the platform must enter its low-power state by itself; when it does not, the battery drains almost as if awake.</source>
+            <translation>s2idle'da platform düşük güç durumuna kendisi girmelidir; girmediğinde pil neredeyse uyanıkmış gibi boşalır.</translation>
+        </message>
+        <message>
+            <source>Health → Sleep &amp; wake → "Why doesn't the hardware sleep?" names the device that blocks it.</source>
+            <translation>Sağlık → Uyku ve uyanma → "Donanım neden uyumuyor?" onu engelleyen aygıtı adlandırır.</translation>
+        </message>
+        <message>
+            <source>The NVIDIA GPU was awake at the start of %1 of %2 sleeps</source>
+            <translation>NVIDIA GPU, %2 uykunun %1 tanesinin başında uyanıktı</translation>
+        </message>
+        <message>
+            <source>A dGPU that is powered when sleep begins is the most common reason for a failed or power-hungry s2idle sleep on hybrid laptops.</source>
+            <translation>Uyku başladığında güç alan bir dGPU, hibrit dizüstülerde başarısız ya da çok güç tüketen s2idle uykusunun en yaygın nedenidir.</translation>
+        </message>
+        <message>
+            <source>Health → dGPU power shows what keeps it awake.</source>
+            <translation>Sağlık → dGPU gücü onu neyin uyanık tuttuğunu gösterir.</translation>
+        </message>
+        <message>
+            <source>%1 recorded sleep(s); none failed and no boot died asleep</source>
+            <translation>%1 kayıtlı uyku; hiçbiri başarısız olmadı ve hiçbir açılış uykuda ölmedi</translation>
+        </message>
+        <message>
+            <source>Sleep mode now: %1 (s2idle = modern standby, deep = S3).</source>
+            <translation>Şu anki uyku modu: %1 (s2idle = modern bekleme, deep = S3).</translation>
+        </message>
+        <message>
+            <source>CO Evidence Cross-Link</source>
+            <translation>CO Kanıt Bağlantısı</translation>
+        </message>
+        <message>
+            <source>Ryzen Curve → CO Search records side by side: the recovery journal, crash guards, past searches, and how often boots ended uncleanly under each Curve Optimizer state. Read-only: no guard or curve is changed here.</source>
+            <translation>Ryzen Eğrisi → CO Arama kayıtları yan yana: kurtarma günlüğü, çökme korumaları, geçmiş aramalar ve her Curve Optimizer durumunda açılışların ne sıklıkla temiz olmayan şekilde bittiği. Salt okunur: burada hiçbir koruma ya da eğri değiştirilmez.</translation>
+        </message>
+        <message>
+            <source>An unclean end under a CO profile is a timing link; the crash watcher of CO Search is what blames a core.</source>
+            <translation>Bir CO profili altında temiz olmayan bir bitiş zamansal bir bağlantıdır; bir çekirdeği suçlayan, CO Arama'nın çökme izleyicisidir.</translation>
+        </message>
+        <message>
+            <source>Curve stability (Health) lays kernel events over curve intervals in more detail.</source>
+            <translation>Eğri kararlılığı (Sağlık) çekirdek olaylarını eğri aralıklarının üzerine daha ayrıntılı yerleştirir.</translation>
+        </message>
+        <message>
+            <source>The CO Search recovery journal is unreadable</source>
+            <translation>CO Arama kurtarma günlüğü okunamıyor</translation>
+        </message>
+        <message>
+            <source>Its trial state is unknown, so the curve may not be at stock.</source>
+            <translation>Deneme durumu bilinmiyor, bu yüzden eğri varsayılan ayarda olmayabilir.</translation>
+        </message>
+        <message>
+            <source>Open Ryzen Curve → CO Search: it offers to reset to stock and discard the journal.</source>
+            <translation>Ryzen Eğrisi → CO Arama'yı açın: varsayılana sıfırlamayı ve günlüğü atmayı önerir.</translation>
+        </message>
+        <message>
+            <source>A CO Search was interrupted during a trial (%1)</source>
+            <translation>Bir CO Arama bir deneme sırasında kesildi (%1)</translation>
+        </message>
+        <message>
+            <source>%1 attempts recorded; reboots during the search: %2.</source>
+            <translation>%1 deneme kaydedildi; arama sırasındaki yeniden başlatmalar: %2.</translation>
+        </message>
+        <message>
+            <source>Open Ryzen Curve → CO Search to resume or discard it (discarding resets the curve to stock first).</source>
+            <translation>Devam etmek ya da atmak için Ryzen Eğrisi → CO Arama'yı açın (atmak önce eğriyi varsayılana sıfırlar).</translation>
+        </message>
+        <message>
+            <source>A CO Search session is in progress or was left between trials</source>
+            <translation>Bir CO Arama oturumu sürüyor ya da denemeler arasında bırakıldı</translation>
+        </message>
+        <message>
+            <source>%1 attempts recorded.</source>
+            <translation>%1 deneme kaydedildi.</translation>
+        </message>
+        <message>
+            <source>The crash-guard file is unreadable</source>
+            <translation>Çökme koruması dosyası okunamıyor</translation>
+        </message>
+        <message>
+            <source>CO Search refuses to start until it is fixed, so no guarded value is retried.</source>
+            <translation>CO Arama düzeltilene kadar başlamayı reddeder, bu yüzden korunan hiçbir değer yeniden denenmez.</translation>
+        </message>
+        <message>
+            <source>Crash guards (values at or below are never tried again)</source>
+            <translation>Çökme korumaları (bu değer ve altı bir daha denenmez)</translation>
+        </message>
+        <message>
+            <source>Core</source>
+            <translation>Çekirdek</translation>
+        </message>
+        <message>
+            <source>Logical CPUs</source>
+            <translation>Mantıksal CPU'lar</translation>
+        </message>
+        <message>
+            <source>Crashed at</source>
+            <translation>Çöktüğü değer</translation>
+        </message>
+        <message>
+            <source>BIOS then</source>
+            <translation>O zamanki BIOS</translation>
+        </message>
+        <message>
+            <source>%1 core(s) have a crash guard</source>
+            <translation>%1 çekirdekte çökme koruması var</translation>
+        </message>
+        <message>
+            <source>%1 of them were recorded under another BIOS; a new AGESA can change what a core holds, but the guards still apply.</source>
+            <translation>%1 tanesi başka bir BIOS altında kaydedildi; yeni bir AGESA bir çekirdeğin tutabildiğini değiştirebilir ama korumalar yine geçerlidir.</translation>
+        </message>
+        <message>
+            <source>Past searches (newest first)</source>
+            <translation>Geçmiş aramalar (en yenisi üstte)</translation>
+        </message>
+        <message>
+            <source>When</source>
+            <translation>Zaman</translation>
+        </message>
+        <message>
+            <source>Mode</source>
+            <translation>Mod</translation>
+        </message>
+        <message>
+            <source>Level</source>
+            <translation>Seviye</translation>
+        </message>
+        <message>
+            <source>Result</source>
+            <translation>Sonuç</translation>
+        </message>
+        <message>
+            <source>Values</source>
+            <translation>Değerler</translation>
+        </message>
+        <message>
+            <source>Note</source>
+            <translation>Not</translation>
+        </message>
+        <message>
+            <source>per-core</source>
+            <translation>çekirdek başına</translation>
+        </message>
+        <message>
+            <source>all-core</source>
+            <translation>tüm çekirdekler</translation>
+        </message>
+        <message>
+            <source>finished</source>
+            <translation>tamamlandı</translation>
+        </message>
+        <message>
+            <source>stopped</source>
+            <translation>durduruldu</translation>
+        </message>
+        <message>
+            <source>stopped, reset FAILED</source>
+            <translation>durduruldu, sıfırlama BAŞARISIZ</translation>
+        </message>
+        <message>
+            <source>The last CO Search could not confirm the reset to stock</source>
+            <translation>Son CO Arama varsayılana sıfırlamayı doğrulayamadı</translation>
+        </message>
+        <message>
+            <source>The last trial value may still have been applied when it ended.</source>
+            <translation>Bittiğinde son deneme değeri hâlâ uygulanmış olabilir.</translation>
+        </message>
+        <message>
+            <source>Reboot, or press Reset in Ryzen Curve.</source>
+            <translation>Yeniden başlatın ya da Ryzen Eğrisi'nde Sıfırla'ya basın.</translation>
+        </message>
+        <message>
+            <source>stock</source>
+            <translation>varsayılan</translation>
+        </message>
+        <message>
+            <source>Boot endings by Curve Optimizer state at the end of the boot</source>
+            <translation>Açılış sonundaki Curve Optimizer durumuna göre açılış bitişleri</translation>
+        </message>
+        <message>
+            <source>CO state</source>
+            <translation>CO durumu</translation>
+        </message>
+        <message>
+            <source>Per 100 h</source>
+            <translation>100 sa başına</translation>
+        </message>
+        <message>
+            <source>More unclean ends with CO state %1</source>
+            <translation>%1 CO durumunda daha fazla temiz olmayan bitiş</translation>
+        </message>
+        <message>
+            <source>%1 in %2 h, against %3 in %4 h at stock (chance by luck: %5).</source>
+            <translation>%2 saatte %1, varsayılanda %4 saatte %3 karşısında (şans eseri olasılığı: %5).</translation>
+        </message>
+        <message>
+            <source>Verify that profile again (CO Search → Verify), or step it towards stock.</source>
+            <translation>O profili yeniden doğrulayın (CO Arama → Doğrula) ya da varsayılana doğru gevşetin.</translation>
+        </message>
+        <message>
+            <source>%1 machine-check record(s) in this boot's kernel log</source>
+            <translation>Bu açılışın çekirdek günlüğünde %1 makine denetimi kaydı</translation>
+        </message>
+        <message>
+            <source>See Evidence Lab → H02 for the core and unit each names. Corrected errors on a core's own units under a CO offset are the classic sign of a value that is too low.</source>
+            <translation>Her birinin adlandırdığı çekirdek ve birim için Donanım Kanıt Analizi → H02'ye bakın. Bir CO ofseti altında bir çekirdeğin kendi birimlerinde düzeltilmiş hatalar, fazla düşük bir değerin klasik işaretidir.</translation>
+        </message>
+        <message>
+            <source>No interrupted search, unreadable record or excess of unclean ends under a CO profile</source>
+            <translation>Kesilmiş arama, okunamayan kayıt ya da bir CO profili altında fazla temiz olmayan bitiş yok</translation>
+        </message>
+        <message>
+            <source>Pre-crash Coverage Inspector</source>
+            <translation>Çökme Öncesi Kapsam Denetçisi</translation>
+        </message>
+        <message>
+            <source>How well the flight recorder covered the end of the previous boot, and what its last readings were.</source>
+            <translation>Uçuş kaydedicisinin önceki açılışın sonunu ne kadar iyi kapsadığı ve son okumalarının ne olduğu.</translation>
+        </message>
+        <message>
+            <source>The recorder keeps the last samples of the previous boot only (its ring); older boots have none.</source>
+            <translation>Kaydedici yalnızca önceki açılışın son örneklerini tutar (halka); daha eski açılışlarda yoktur.</translation>
+        </message>
+        <message>
+            <source>The last sample is the last moment written to disk, not the moment of the crash: a hang can follow it by up to one interval.</source>
+            <translation>Son örnek diske yazılan son andır, çökme anı değil: bir donma bunu en fazla bir aralık sonra izleyebilir.</translation>
+        </message>
+        <message>
+            <source>Boot %1 (%2): %3 samples, %4 → %5</source>
+            <translation>Açılış %1 (%2): %3 örnek, %4 → %5</translation>
+        </message>
+        <message>
+            <source>Time</source>
+            <translation>Zaman</translation>
+        </message>
+        <message>
+            <source>CPU °C</source>
+            <translation>CPU °C</translation>
+        </message>
+        <message>
+            <source>GPU °C</source>
+            <translation>GPU °C</translation>
+        </message>
+        <message>
+            <source>CPU MHz</source>
+            <translation>CPU MHz</translation>
+        </message>
+        <message>
+            <source>Package W</source>
+            <translation>Paket W</translation>
+        </message>
+        <message>
+            <source>Battery W</source>
+            <translation>Pil W</translation>
+        </message>
+        <message>
+            <source>Fans</source>
+            <translation>Fanlar</translation>
+        </message>
+        <message>
+            <source>Load</source>
+            <translation>Yük</translation>
+        </message>
+        <message>
+            <source>dGPU</source>
+            <translation>dGPU</translation>
+        </message>
+        <message>
+            <source>The last six samples. Longest gap %1 s; gaps over %2 s: %3; bad timestamps: %4.</source>
+            <translation>Son altı örnek. En uzun boşluk %1 sn; %2 sn'den uzun boşluklar: %3; hatalı zaman damgaları: %4.</translation>
+        </message>
+        <message>
+            <source>Boot %1 ended at %2 °C CPU</source>
+            <translation>%1 açılışı CPU %2 °C iken bitti</translation>
+        </message>
+        <message>
+            <source>The last reading before the crash was at the CPU's thermal limit.</source>
+            <translation>Çökmeden önceki son okuma CPU'nun ısıl sınırındaydı.</translation>
+        </message>
+        <message>
+            <source>Check Cooling; a crash at the limit can be heat-related rather than a curve.</source>
+            <translation>Soğutma'ya bakın; sınırdaki bir çökme eğriden çok ısıyla ilgili olabilir.</translation>
+        </message>
+        <message>
+            <source>Boot %1 ended with the GPU at %2 °C</source>
+            <translation>%1 açılışı GPU %2 °C iken bitti</translation>
+        </message>
+        <message>
+            <source>The recording of boot %1 has %2 gap(s)</source>
+            <translation>%1 açılışının kaydında %2 boşluk var</translation>
+        </message>
+        <message>
+            <source>Missing samples before the crash: the disk may have stalled or the machine froze gradually.</source>
+            <translation>Çökmeden önce eksik örnekler: disk takılmış ya da makine yavaş yavaş donmuş olabilir.</translation>
+        </message>
+        <message>
+            <source>Boot %1 ended uncleanly; its recording is continuous to the last sample</source>
+            <translation>%1 açılışı temiz olmayan şekilde bitti; kaydı son örneğe kadar kesintisiz</translation>
+        </message>
+        <message>
+            <source>The machine stopped within about %1 s of %2.</source>
+            <translation>Makine %2 sonrasında yaklaşık %1 sn içinde durdu.</translation>
+        </message>
+        <message>
+            <source>Boot %1 %2; its recording %3</source>
+            <translation>%1 açılışı %2; kaydı %3</translation>
+        </message>
+        <message>
+            <source>has %1 gap(s)</source>
+            <translation>%1 boşluk içeriyor</translation>
+        </message>
+        <message>
+            <source>is continuous</source>
+            <translation>kesintisiz</translation>
+        </message>
+        <message>
+            <source>The recorder interval changed during boot %1 (ring header %2 s, samples %3 s): gaps are judged against the slower one.</source>
+            <translation>Kaydedici aralığı %1 açılışı sırasında değişti (halka başlığı %2 sn, örnekler %3 sn): boşluklar yavaş olana göre değerlendirilir.</translation>
+        </message>
+        <message>
+            <source>No flight-recorder samples for the previous boot</source>
+            <translation>Önceki açılış için uçuş kaydedicisi örneği yok</translation>
+        </message>
+        <message>
+            <source>The recorder runs in centurion-boot-guard; it is off or the previous boot was too short.</source>
+            <translation>Kaydedici centurion-boot-guard içinde çalışır; kapalı ya da önceki açılış çok kısaydı.</translation>
+        </message>
+        <message>
+            <source>GPU Memory Reliability</source>
+            <translation>GPU Bellek Güvenilirliği</translation>
+        </message>
+        <message>
+            <source>NVIDIA memory-related Xid events of this boot, and — only when you ask — the driver's ECC, row-remapping and page-retirement counters.</source>
+            <translation>Bu açılışın NVIDIA bellekle ilgili Xid olayları ve — yalnızca siz istediğinizde — sürücünün ECC, satır yeniden eşleme ve sayfa emekliye ayırma sayaçları.</translation>
+        </message>
+        <message>
+            <source>GeForce GPUs have no ECC on their GDDR memory: their counters read N/A, which says nothing about the memory's health.</source>
+            <translation>GeForce GPU'ların GDDR belleğinde ECC yoktur: sayaçları N/A okunur ve bu belleğin sağlığı hakkında hiçbir şey söylemez.</translation>
+        </message>
+        <message>
+            <source>The passive part never wakes the GPU; the active query (nvidia-smi) does.</source>
+            <translation>Pasif kısım GPU'yu asla uyandırmaz; etkin sorgu (nvidia-smi) uyandırır.</translation>
+        </message>
+        <message>
+            <source>No NVIDIA GPU found on the PCI bus</source>
+            <translation>PCI veriyolunda NVIDIA GPU bulunamadı</translation>
+        </message>
+        <message>
+            <source>This boot's kernel events could not be scanned</source>
+            <translation>Bu açılışın çekirdek olayları taranamadı</translation>
+        </message>
+        <message>
+            <source>Without them no memory Xid can be seen.</source>
+            <translation>Onlar olmadan bellek Xid'i görülemez.</translation>
+        </message>
+        <message>
+            <source>Xid %1 × %2: %3</source>
+            <translation>Xid %1 × %2: %3</translation>
+        </message>
+        <message>
+            <source>The driver reported a GPU memory error.</source>
+            <translation>Sürücü bir GPU bellek hatası bildirdi.</translation>
+        </message>
+        <message>
+            <source>Run the active query below; at stock clocks, repeated memory Xids point at the card (RMA).</source>
+            <translation>Aşağıdaki etkin sorguyu çalıştırın; varsayılan saatlerde tekrarlayan bellek Xid'leri kartı gösterir (RMA).</translation>
+        </message>
+        <message>
+            <source>No memory-related Xid in this boot</source>
+            <translation>Bu açılışta bellekle ilgili Xid yok</translation>
+        </message>
+        <message>
+            <source>%1 other Xid event(s): see Evidence Lab → H04.</source>
+            <translation>%1 başka Xid olayı: Donanım Kanıt Analizi → H04'e bakın.</translation>
+        </message>
+        <message>
+            <source>NVIDIA GPUs</source>
+            <translation>NVIDIA GPU'lar</translation>
+        </message>
+        <message>
+            <source>PCI address · name · runtime power</source>
+            <translation>PCI adresi · ad · çalışma gücü</translation>
+        </message>
+        <message>
+            <source>Active query (nvidia-smi)</source>
+            <translation>Etkin sorgu (nvidia-smi)</translation>
+        </message>
+        <message>
+            <source>%1 = %2</source>
+            <translation>%1 = %2</translation>
+        </message>
+        <message>
+            <source>Memory errors the GPU could not correct.</source>
+            <translation>GPU'nun düzeltemediği bellek hataları.</translation>
+        </message>
+        <message>
+            <source>At stock clocks this is a hardware fault: contact the vendor.</source>
+            <translation>Varsayılan saatlerde bu bir donanım arızasıdır: satıcıyla iletişime geçin.</translation>
+        </message>
+        <message>
+            <source>A remap / retirement waits for the next GPU reset.</source>
+            <translation>Bir yeniden eşleme / emekliye ayırma bir sonraki GPU sıfırlamasını bekliyor.</translation>
+        </message>
+        <message>
+            <source>Reboot to apply it.</source>
+            <translation>Uygulamak için yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>The active query returned no ECC / remap section</source>
+            <translation>Etkin sorgu ECC / yeniden eşleme bölümü döndürmedi</translation>
+        </message>
+        <message>
+            <source>This GPU reports no ECC (N/A)</source>
+            <translation>Bu GPU ECC bildirmiyor (N/A)</translation>
+        </message>
+        <message>
+            <source>Normal for GeForce cards; memory faults show only as Xid events or artefacts.</source>
+            <translation>GeForce kartlar için normal; bellek arızaları yalnızca Xid olayları ya da görüntü bozulmaları olarak görünür.</translation>
+        </message>
+        <message>
+            <source>Invalid event identity</source>
+            <translation>Geçersiz olay kimliği</translation>
+        </message>
+        <message>
+            <source>Invalid status or note too long</source>
+            <translation>Geçersiz durum ya da not çok uzun</translation>
+        </message>
+        <message>
+            <source>The note store is unreadable; not overwriting it</source>
+            <translation>Not deposu okunamıyor; üzerine yazılmıyor</translation>
+        </message>
+        <message>
+            <source>Note store full (400 incidents)</source>
+            <translation>Not deposu dolu (400 olay)</translation>
+        </message>
+        <message>
+            <source>Guided triage — %1</source>
+            <translation>Rehberli triyaj — %1</translation>
+        </message>
+        <message>
+            <source>Ran %1 and collected what needs a look. Each check's full report and its limits are on its own page.</source>
+            <translation>%1 çalıştırıldı ve bakılması gerekenler toplandı. Her denetimin tam raporu ve sınırları kendi sayfasındadır.</translation>
+        </message>
+        <message>
+            <source>Checks run</source>
+            <translation>Çalıştırılan denetimler</translation>
+        </message>
+        <message>
+            <source>Check</source>
+            <translation>Denetim</translation>
+        </message>
+        <message>
+            <source>Verdict</source>
+            <translation>Karar</translation>
+        </message>
+        <message>
+            <source>Summary</source>
+            <translation>Özet</translation>
+        </message>
+        <message>
+            <source>None of the checks found a problem</source>
+            <translation>Denetimlerin hiçbiri sorun bulmadı</translation>
+        </message>
+        <message>
+            <source>If the symptom continues, note when it happens and save an incident note (H17); a pattern across boots is easier to pin down.</source>
+            <translation>Belirti sürerse ne zaman olduğunu not edin ve bir olay notu kaydedin (H17); açılışlar arasındaki bir örüntüyü yakalamak daha kolaydır.</translation>
+        </message>
+        <message>
+            <source>Invalid Command Opcode</source>
+            <translation>Geçersiz Komut Kodu</translation>
+        </message>
+        <message>
+            <source>Invalid Field in Command</source>
+            <translation>Komutta Geçersiz Alan</translation>
+        </message>
+        <message>
+            <source>Data Transfer Error</source>
+            <translation>Veri Aktarım Hatası</translation>
+        </message>
+        <message>
+            <source>Aborted due to Power Loss</source>
+            <translation>Güç Kaybı Nedeniyle İptal</translation>
+        </message>
+        <message>
+            <source>Internal Error</source>
+            <translation>İç Hata</translation>
+        </message>
+        <message>
+            <source>Command Abort Requested</source>
+            <translation>Komut İptali İstendi</translation>
+        </message>
+        <message>
+            <source>Invalid Namespace or Format</source>
+            <translation>Geçersiz Ad Alanı ya da Biçim</translation>
+        </message>
+        <message>
+            <source>Command Sequence Error</source>
+            <translation>Komut Sırası Hatası</translation>
+        </message>
+        <message>
+            <source>LBA Out of Range</source>
+            <translation>LBA Aralık Dışında</translation>
+        </message>
+        <message>
+            <source>Namespace Not Ready</source>
+            <translation>Ad Alanı Hazır Değil</translation>
+        </message>
+        <message>
+            <source>Invalid Queue Size</source>
+            <translation>Geçersiz Kuyruk Boyutu</translation>
+        </message>
+        <message>
+            <source>Invalid Firmware Slot</source>
+            <translation>Geçersiz Firmware Yuvası</translation>
+        </message>
+        <message>
+            <source>Invalid Log Page</source>
+            <translation>Geçersiz Günlük Sayfası</translation>
+        </message>
+        <message>
+            <source>Invalid Format</source>
+            <translation>Geçersiz Biçim</translation>
+        </message>
+        <message>
+            <source>Feature Not Saveable</source>
+            <translation>Özellik Kaydedilemez</translation>
+        </message>
+        <message>
+            <source>Feature Not Changeable</source>
+            <translation>Özellik Değiştirilemez</translation>
+        </message>
+        <message>
+            <source>Feature Not Namespace Specific</source>
+            <translation>Özellik Ad Alanına Özgü Değil</translation>
+        </message>
+        <message>
+            <source>Write Fault</source>
+            <translation>Yazma Hatası</translation>
+        </message>
+        <message>
+            <source>Unrecovered Read Error</source>
+            <translation>Kurtarılamayan Okuma Hatası</translation>
+        </message>
+        <message>
+            <source>End-to-end Guard Check Error</source>
+            <translation>Uçtan Uca Koruma Denetimi Hatası</translation>
+        </message>
+        <message>
+            <source>Application Tag Check Error</source>
+            <translation>Uygulama Etiketi Denetimi Hatası</translation>
+        </message>
+        <message>
+            <source>Reference Tag Check Error</source>
+            <translation>Referans Etiketi Denetimi Hatası</translation>
+        </message>
+        <message>
+            <source>Compare Failure</source>
+            <translation>Karşılaştırma Hatası</translation>
+        </message>
+        <message>
+            <source>Access Denied</source>
+            <translation>Erişim Reddedildi</translation>
+        </message>
+        <message>
+            <source>Deallocated or Unwritten Block</source>
+            <translation>Ayrılmamış ya da Yazılmamış Blok</translation>
+        </message>
+        <message>
+            <source>double-bit ECC error</source>
+            <translation>çift bit ECC hatası</translation>
+        </message>
+        <message>
+            <source>ECC page retirement / row remap recorded</source>
+            <translation>ECC sayfa emekliye ayırma / satır yeniden eşleme kaydedildi</translation>
+        </message>
+        <message>
+            <source>ECC page retirement / row remap failed</source>
+            <translation>ECC sayfa emekliye ayırma / satır yeniden eşleme başarısız</translation>
+        </message>
+        <message>
+            <source>high single-bit ECC error rate</source>
+            <translation>yüksek tek bit ECC hata oranı</translation>
+        </message>
+        <message>
+            <source>contained ECC error</source>
+            <translation>sınırlandırılmış ECC hatası</translation>
+        </message>
+        <message>
+            <source>uncontained ECC error</source>
+            <translation>sınırlandırılmamış ECC hatası</translation>
+        </message>
+        <message>
+            <source>unrecovered ECC error</source>
+            <translation>kurtarılamayan ECC hatası</translation>
+        </message>
+        <message>
+            <source>NVIDIA GPU: Xid, GSP, black screens</source>
+            <translation>NVIDIA GPU: Xid, GSP, siyah ekranlar</translation>
+        </message>
+        <message>
+            <source>CPU: machine checks, Curve Optimizer</source>
+            <translation>CPU: makine denetimleri, Curve Optimizer</translation>
+        </message>
+        <message>
+            <source>Freezes and crashes after an update</source>
+            <translation>Güncelleme sonrası donmalar ve çökmeler</translation>
+        </message>
+        <message>
+            <source>Storage: NVMe, F2FS</source>
+            <translation>Depolama: NVMe, F2FS</translation>
+        </message>
+        <message>
+            <source>Wi-Fi and Bluetooth</source>
+            <translation>Wi-Fi ve Bluetooth</translation>
+        </message>
+        <message>
+            <source>Sleep and resume</source>
+            <translation>Uyku ve uyanma</translation>
+        </message>
+        <message>
+            <source>USB devices and ports</source>
+            <translation>USB aygıtları ve bağlantı noktaları</translation>
+        </message>
+    </context>
+    <context>
+        <name>evidencereports</name>
+        <message>
+            <source>load/store</source>
+            <translation>yükleme/saklama</translation>
+        </message>
+        <message>
+            <source>instruction fetch</source>
+            <translation>komut getirme</translation>
+        </message>
+        <message>
+            <source>L2 cache</source>
+            <translation>L2 önbelleği</translation>
+        </message>
+        <message>
+            <source>decode</source>
+            <translation>kod çözme</translation>
+        </message>
+        <message>
+            <source>execution</source>
+            <translation>yürütme</translation>
+        </message>
+        <message>
+            <source>floating point</source>
+            <translation>kayan nokta</translation>
+        </message>
+        <message>
+            <source>unknown bank</source>
+            <translation>bilinmeyen banka</translation>
+        </message>
+        <message>
+            <source>core unit %1</source>
+            <translation>çekirdek birimi %1</translation>
+        </message>
+        <message>
+            <source>shared (L3 / memory / fabric), bank %1</source>
+            <translation>paylaşılan (L3 / bellek / fabric), banka %1</translation>
+        </message>
+        <message>
+            <source>Ryzen MCE Core / CCD Atlas</source>
+            <translation>Ryzen MCE Çekirdek / CCD Atlası</translation>
+        </message>
+        <message>
+            <source>Machine checks of this boot, placed on the Curve Optimizer's own core map (CCD and core slot, as Ryzen Curve numbers them) and sorted into a core's own units and shared ones.</source>
+            <translation>Bu açılışın makine denetimleri, Curve Optimizer'ın kendi çekirdek haritasına (Ryzen Eğrisi'nin numaralandırdığı CCD ve çekirdek yuvası) yerleştirilir ve çekirdeğe ait birimler ile paylaşılanlar olarak ayrılır.</translation>
+        </message>
+        <message>
+            <source>Only this boot's kernel log; machine checks of a crashed boot are printed early in the next boot and appear there.</source>
+            <translation>Yalnızca bu açılışın çekirdek günlüğü; çöken bir açılışın makine denetimleri sonraki açılışın başında yazılır ve orada görünür.</translation>
+        </message>
+        <message>
+            <source>A shared unit (L3, memory controller, fabric) cannot blame one core: RAM, EXPO or the fabric clock are as likely.</source>
+            <translation>Paylaşılan bir birim (L3, bellek denetleyicisi, fabric) tek bir çekirdeği suçlayamaz: RAM, EXPO ya da fabric saati de aynı olasılıkla sorumludur.</translation>
+        </message>
+        <message>
+            <source>not mapped</source>
+            <translation>eşlenmedi</translation>
+        </message>
+        <message>
+            <source>no CPU named</source>
+            <translation>CPU belirtilmemiş</translation>
+        </message>
+        <message>
+            <source>No machine check in this boot's kernel log</source>
+            <translation>Bu açılışın çekirdek günlüğünde makine denetimi yok</translation>
+        </message>
+        <message>
+            <source>Machine checks by core and unit</source>
+            <translation>Çekirdeğe ve birime göre makine denetimleri</translation>
+        </message>
+        <message>
+            <source>Core</source>
+            <translation>Çekirdek</translation>
+        </message>
+        <message>
+            <source>Logical CPU</source>
+            <translation>Mantıksal CPU</translation>
+        </message>
+        <message>
+            <source>Unit</source>
+            <translation>Birim</translation>
+        </message>
+        <message>
+            <source>Corrected</source>
+            <translation>Düzeltilen</translation>
+        </message>
+        <message>
+            <source>Uncorrected</source>
+            <translation>Düzeltilemeyen</translation>
+        </message>
+        <message>
+            <source>Last (uptime)</source>
+            <translation>Son (çalışma süresi)</translation>
+        </message>
+        <message>
+            <source>%1 uncorrected machine check(s)</source>
+            <translation>%1 düzeltilemeyen makine denetimi</translation>
+        </message>
+        <message>
+            <source>The CPU could not repair the error; the affected program or the whole system may have crashed.</source>
+            <translation>CPU hatayı onaramadı; etkilenen program ya da tüm sistem çökmüş olabilir.</translation>
+        </message>
+        <message>
+            <source>Undo recent Curve Optimizer / PBO / memory changes and test at stock (Ryzen Curve → Reset).</source>
+            <translation>Son Curve Optimizer / PBO / bellek değişikliklerini geri alın ve varsayılan ayarlarda test edin (Ryzen Eğrisi → Sıfırla).</translation>
+        </message>
+        <message>
+            <source>Errors on %1's own units</source>
+            <translation>%1'in kendi birimlerinde hatalar</translation>
+        </message>
+        <message>
+            <source>Corrected errors in one core's load/store, L2 or execution units, and on no other core, are the classic sign of a Curve Optimizer value that is too low for that core.</source>
+            <translation>Tek bir çekirdeğin yükleme/saklama, L2 ya da yürütme birimlerinde olup başka hiçbir çekirdekte olmayan düzeltilmiş hatalar, o çekirdek için fazla düşük bir Curve Optimizer değerinin klasik işaretidir.</translation>
+        </message>
+        <message>
+            <source>Ease that core by 2–3 CO steps, or run CO Search's verification on it.</source>
+            <translation>O çekirdeği 2–3 CO adımı gevşetin ya da onun üzerinde CO Arama doğrulamasını çalıştırın.</translation>
+        </message>
+        <message>
+            <source>Core-unit errors on %1 cores</source>
+            <translation>%1 çekirdekte çekirdek birimi hataları</translation>
+        </message>
+        <message>
+            <source>Errors spread over several cores point at something they share (voltage, clocks, an all-core offset) rather than one weak core.</source>
+            <translation>Birkaç çekirdeğe yayılmış hatalar, tek bir zayıf çekirdekten çok ortak bir şeye (voltaj, saatler, tüm çekirdeklere uygulanan ofset) işaret eder.</translation>
+        </message>
+        <message>
+            <source>Errors in shared units (L3, memory, fabric)</source>
+            <translation>Paylaşılan birimlerde hatalar (L3, bellek, fabric)</translation>
+        </message>
+        <message>
+            <source>These do not point at one core.</source>
+            <translation>Bunlar tek bir çekirdeği göstermez.</translation>
+        </message>
+        <message>
+            <source>Check memory settings (EXPO / timings) and run a memory test (Health → System tools → Memory test).</source>
+            <translation>Bellek ayarlarını (EXPO / zamanlamalar) kontrol edin ve bir bellek testi çalıştırın (Sağlık → Sistem araçları → Bellek testi).</translation>
+        </message>
+        <message>
+            <source>Core map (logical CPUs per CCD)</source>
+            <translation>Çekirdek haritası (CCD başına mantıksal CPU'lar)</translation>
+        </message>
+        <message>
+            <source>CCD</source>
+            <translation>CCD</translation>
+        </message>
+        <message>
+            <source>L3</source>
+            <translation>L3</translation>
+        </message>
+        <message>
+            <source>Logical CPUs</source>
+            <translation>Mantıksal CPU'lar</translation>
+        </message>
+        <message>
+            <source>%1 MB</source>
+            <translation>%1 MB</translation>
+        </message>
+        <message>
+            <source>A CCD with more L3 than the other is the 3D V-Cache die.</source>
+            <translation>Diğerinden daha fazla L3'e sahip CCD, 3D V-Cache kalıbıdır.</translation>
+        </message>
+        <message>
+            <source>The Curve Optimizer core map is not available on this CPU; logical CPU numbers are shown as the kernel gives them.</source>
+            <translation>Bu CPU'da Curve Optimizer çekirdek haritası yok; mantıksal CPU numaraları çekirdeğin verdiği gibi gösterilir.</translation>
+        </message>
+        <message>
+            <source>PCIe AER Delta Tracker</source>
+            <translation>PCIe AER Delta İzleyici</translation>
+        </message>
+        <message>
+            <source>PCIe Advanced Error Reporting counters of every device that has them, and how much each grew since the previous scan of this boot.</source>
+            <translation>PCIe Advanced Error Reporting sayaçlarına sahip her aygıtın sayaçları ve bu açılıştaki önceki taramadan bu yana ne kadar arttıkları.</translation>
+        </message>
+        <message>
+            <source>The counters count since boot; they say how many, not when.</source>
+            <translation>Sayaçlar açılıştan beri sayar; ne zaman değil, kaç tane olduğunu söyler.</translation>
+        </message>
+        <message>
+            <source>A few corrected errors when links change power state (ASPM) are common and harmless.</source>
+            <translation>Bağlantılar güç durumu değiştirirken (ASPM) birkaç düzeltilmiş hata yaygın ve zararsızdır.</translation>
+        </message>
+        <message>
+            <source>No device exports AER counters</source>
+            <translation>Hiçbir aygıt AER sayacı sunmuyor</translation>
+        </message>
+        <message>
+            <source>The kernel needs CONFIG_PCIEAER and the platform must grant AER to the OS.</source>
+            <translation>Çekirdekte CONFIG_PCIEAER gerekir ve platformun AER'i işletim sistemine bırakması gerekir.</translation>
+        </message>
+        <message>
+            <source>Devices with errors</source>
+            <translation>Hatası olan aygıtlar</translation>
+        </message>
+        <message>
+            <source>Device</source>
+            <translation>Aygıt</translation>
+        </message>
+        <message>
+            <source>Since last scan</source>
+            <translation>Son taramadan beri</translation>
+        </message>
+        <message>
+            <source>Non-fatal</source>
+            <translation>Ölümcül olmayan</translation>
+        </message>
+        <message>
+            <source>Fatal</source>
+            <translation>Ölümcül</translation>
+        </message>
+        <message>
+            <source>reset</source>
+            <translation>sıfırlandı</translation>
+        </message>
+        <message>
+            <source>other device</source>
+            <translation>başka aygıt</translation>
+        </message>
+        <message>
+            <source>%1: uncorrectable PCIe errors (non-fatal %2, fatal %3)</source>
+            <translation>%1: düzeltilemeyen PCIe hataları (ölümcül olmayan %2, ölümcül %3)</translation>
+        </message>
+        <message>
+            <source>Transactions were lost on this link; the driver may have reset the device.</source>
+            <translation>Bu bağlantıda işlemler kayboldu; sürücü aygıtı sıfırlamış olabilir.</translation>
+        </message>
+        <message>
+            <source>If it is the GPU or an NVMe drive: test at stock clocks, reseat if it is socketed, and check Events &amp; alerts for resets.</source>
+            <translation>GPU ya da bir NVMe disk ise: varsayılan saatlerde test edin, takılabilir bir kartsa yeniden yerleştirin ve sıfırlamalar için Olaylar ve uyarılar'a bakın.</translation>
+        </message>
+        <message>
+            <source>%1: %2 corrected errors%3</source>
+            <translation>%1: %2 düzeltilmiş hata%3</translation>
+        </message>
+        <message>
+            <source> (+%1 since the last scan)</source>
+            <translation> (son taramadan beri +%1)</translation>
+        </message>
+        <message>
+            <source>The link keeps retrying transfers: signal integrity (riser, slot, cable) or a link speed the hardware does not hold.</source>
+            <translation>Bağlantı aktarımları tekrar tekrar deniyor: sinyal bütünlüğü (riser, yuva, kablo) ya da donanımın tutamadığı bir bağlantı hızı.</translation>
+        </message>
+        <message>
+            <source>Health → System tools → PCIe Link Lab shows the link's speed and width.</source>
+            <translation>Sağlık → Sistem araçları → PCIe Bağlantı Laboratuvarı bağlantının hızını ve genişliğini gösterir.</translation>
+        </message>
+        <message>
+            <source>%1 device(s) with zero counts are not listed.</source>
+            <translation>Sayaçları sıfır olan %1 aygıt listelenmedi.</translation>
+        </message>
+        <message>
+            <source>No earlier scan of this boot: deltas start with the next scan.</source>
+            <translation>Bu açılışta önceki tarama yok: farklar bir sonraki taramayla başlar.</translation>
+        </message>
+        <message>
+            <source>No uncorrectable PCIe error and no device with a growing error count</source>
+            <translation>Düzeltilemeyen PCIe hatası ve hata sayısı artan aygıt yok</translation>
+        </message>
+        <message>
+            <source>%1 device(s) checked.</source>
+            <translation>%1 aygıt denetlendi.</translation>
+        </message>
+        <message>
+            <source>NVIDIA Xid Case Analyzer</source>
+            <translation>NVIDIA Xid Vaka Analizcisi</translation>
+        </message>
+        <message>
+            <source>Every NVIDIA Xid and GSP event of this boot grouped by code with what it means, and what came before each Xid 154 recovery.</source>
+            <translation>Bu açılışın her NVIDIA Xid ve GSP olayı, koda göre gruplanmış ve anlamıyla; her Xid 154 kurtarmasından önce ne olduğu.</translation>
+        </message>
+        <message>
+            <source>Xid 154 is the driver's recovery action, not a cause; the events before it are a time link only.</source>
+            <translation>Xid 154 sürücünün kurtarma eylemidir, neden değildir; ondan önceki olaylar yalnızca zaman bağlantısıdır.</translation>
+        </message>
+        <message>
+            <source>This boot's kernel log only.</source>
+            <translation>Yalnızca bu açılışın çekirdek günlüğü.</translation>
+        </message>
+        <message>
+            <source>No NVIDIA Xid or GSP event in this boot</source>
+            <translation>Bu açılışta NVIDIA Xid ya da GSP olayı yok</translation>
+        </message>
+        <message>
+            <source>This helper did not return Xid events</source>
+            <translation>Bu yardımcı Xid olaylarını döndürmedi</translation>
+        </message>
+        <message>
+            <source>Xid events by code</source>
+            <translation>Koda göre Xid olayları</translation>
+        </message>
+        <message>
+            <source>Code</source>
+            <translation>Kod</translation>
+        </message>
+        <message>
+            <source>Count</source>
+            <translation>Sayı</translation>
+        </message>
+        <message>
+            <source>Meaning</source>
+            <translation>Anlamı</translation>
+        </message>
+        <message>
+            <source>GPU</source>
+            <translation>GPU</translation>
+        </message>
+        <message>
+            <source>First</source>
+            <translation>İlk</translation>
+        </message>
+        <message>
+            <source>Last</source>
+            <translation>Son</translation>
+        </message>
+        <message>
+            <source>%1 × %2</source>
+            <translation>%1 × %2</translation>
+        </message>
+        <message>
+            <source>Xid 154 recoveries and what preceded them (5 min, same boot)</source>
+            <translation>Xid 154 kurtarmaları ve öncesindekiler (5 dk, aynı açılış)</translation>
+        </message>
+        <message>
+            <source>When</source>
+            <translation>Zaman</translation>
+        </message>
+        <message>
+            <source>Recovery</source>
+            <translation>Kurtarma</translation>
+        </message>
+        <message>
+            <source>Before it</source>
+            <translation>Öncesinde</translation>
+        </message>
+        <message>
+            <source>nothing captured</source>
+            <translation>hiçbir şey yakalanmadı</translation>
+        </message>
+        <message>
+            <source>%1 Xid 154 recovery request(s)</source>
+            <translation>%1 Xid 154 kurtarma isteği</translation>
+        </message>
+        <message>
+            <source>The driver asked for a GPU reset, a driver reload or a reboot to recover. The events listed before it are the candidates for the cause.</source>
+            <translation>Sürücü kurtarmak için GPU sıfırlaması, sürücü yeniden yüklemesi ya da yeniden başlatma istedi. Öncesinde listelenen olaylar nedenin adaylarıdır.</translation>
+        </message>
+        <message>
+            <source>Save your work; do what the recovery action names. Repeats at stock clocks: driver bug or hardware.</source>
+            <translation>Çalışmanızı kaydedin; kurtarma eyleminin söylediğini yapın. Varsayılan saatlerde tekrarlıyorsa: sürücü hatası ya da donanım.</translation>
+        </message>
+        <message>
+            <source>F2FS Integrity Guard</source>
+            <translation>F2FS Bütünlük Koruması</translation>
+        </message>
+        <message>
+            <source>The flags F2FS itself keeps about each mounted volume (needs fsck, checkpoint error, recorded on-disk errors), and its integrity errors in the kernel log of this and earlier boots. Nothing is repaired or remounted.</source>
+            <translation>F2FS'in bağlı her birim hakkında kendisinin tuttuğu bayraklar (fsck gerekli, checkpoint hatası, kaydedilmiş disk hataları) ve bu ile önceki açılışların çekirdek günlüğündeki bütünlük hataları. Hiçbir şey onarılmaz ya da yeniden bağlanmaz.</translation>
+        </message>
+        <message>
+            <source>The kernel's status flags need a recent kernel (6.x); older ones show only the kernel log.</source>
+            <translation>Çekirdeğin durum bayrakları yeni bir çekirdek (6.x) gerektirir; eskilerde yalnızca çekirdek günlüğü görünür.</translation>
+        </message>
+        <message>
+            <source>fsck.f2fs must run on an unmounted volume: for the root file system, from a live USB or at boot.</source>
+            <translation>fsck.f2fs bağlı olmayan bir birimde çalışmalıdır: kök dosya sistemi için canlı USB'den ya da açılışta.</translation>
+        </message>
+        <message>
+            <source>No F2FS volume is mounted</source>
+            <translation>Bağlı F2FS birimi yok</translation>
+        </message>
+        <message>
+            <source>Mounted F2FS volumes</source>
+            <translation>Bağlı F2FS birimleri</translation>
+        </message>
+        <message>
+            <source>Volume</source>
+            <translation>Birim</translation>
+        </message>
+        <message>
+            <source>Mounted at</source>
+            <translation>Bağlama noktası</translation>
+        </message>
+        <message>
+            <source>Needs fsck</source>
+            <translation>fsck gerekli</translation>
+        </message>
+        <message>
+            <source>Checkpoint</source>
+            <translation>Checkpoint</translation>
+        </message>
+        <message>
+            <source>On-disk errors</source>
+            <translation>Disk hataları</translation>
+        </message>
+        <message>
+            <source>Written (lifetime)</source>
+            <translation>Yazılan (ömür boyu)</translation>
+        </message>
+        <message>
+            <source>YES</source>
+            <translation>EVET</translation>
+        </message>
+        <message>
+            <source>no</source>
+            <translation>hayır</translation>
+        </message>
+        <message>
+            <source>error</source>
+            <translation>hata</translation>
+        </message>
+        <message>
+            <source>fsck requested</source>
+            <translation>fsck istendi</translation>
+        </message>
+        <message>
+            <source>ok</source>
+            <translation>tamam</translation>
+        </message>
+        <message>
+            <source>none</source>
+            <translation>yok</translation>
+        </message>
+        <message>
+            <source>%1 GB</source>
+            <translation>%1 GB</translation>
+        </message>
+        <message>
+            <source>%1 (%2): F2FS has marked the volume as needing fsck</source>
+            <translation>%1 (%2): F2FS birimi fsck gerektiren olarak işaretledi</translation>
+        </message>
+        <message>
+            <source>The checkpoint carries the error flag: F2FS stopped trusting its metadata. It may go read-only.</source>
+            <translation>Checkpoint hata bayrağı taşıyor: F2FS meta verisine güvenmeyi bıraktı. Salt okunura geçebilir.</translation>
+        </message>
+        <message>
+            <source>F2FS found an inconsistency and set its need-fsck flag.</source>
+            <translation>F2FS bir tutarsızlık buldu ve fsck-gerekli bayrağını koydu.</translation>
+        </message>
+        <message>
+            <source>Back up now. Then run fsck.f2fs -f on the unmounted volume (live USB for the root volume).</source>
+            <translation>Hemen yedek alın. Sonra bağlı olmayan birimde fsck.f2fs -f çalıştırın (kök birim için canlı USB).</translation>
+        </message>
+        <message>
+            <source>%1: F2FS recorded on-disk errors (flags 0x%2)</source>
+            <translation>%1: F2FS disk hataları kaydetti (bayraklar 0x%2)</translation>
+        </message>
+        <message>
+            <source>Errors F2FS met while reading metadata are kept in the superblock until fsck clears them.</source>
+            <translation>F2FS'in meta veriyi okurken karşılaştığı hatalar, fsck temizleyene kadar süper blokta tutulur.</translation>
+        </message>
+        <message>
+            <source>Back up, then fsck.f2fs -f on the unmounted volume.</source>
+            <translation>Yedek alın, sonra bağlı olmayan birimde fsck.f2fs -f çalıştırın.</translation>
+        </message>
+        <message>
+            <source>%1: an fsck is requested at the next check</source>
+            <translation>%1: bir sonraki denetimde fsck isteniyor</translation>
+        </message>
+        <message>
+            <source>%1 stop_reason: %2
+</source>
+            <translation>%1 stop_reason: %2
+</translation>
+        </message>
+        <message>
+            <source>F2FS errors in the kernel log</source>
+            <translation>Çekirdek günlüğünde F2FS hataları</translation>
+        </message>
+        <message>
+            <source>Boot</source>
+            <translation>Açılış</translation>
+        </message>
+        <message>
+            <source>Message</source>
+            <translation>İleti</translation>
+        </message>
+        <message>
+            <source>%1 F2FS integrity error(s) in this boot</source>
+            <translation>Bu açılışta %1 F2FS bütünlük hatası</translation>
+        </message>
+        <message>
+            <source>I/O failures, corrupt metadata or a failed checkpoint.</source>
+            <translation>G/Ç hataları, bozuk meta veri ya da başarısız bir checkpoint.</translation>
+        </message>
+        <message>
+            <source>Back up, check the drive (H06, Drive health), then fsck the volume.</source>
+            <translation>Yedek alın, diski denetleyin (H06, Disk sağlığı), sonra birimde fsck çalıştırın.</translation>
+        </message>
+        <message>
+            <source>F2FS errors in %1 earlier boot(s)</source>
+            <translation>%1 önceki açılışta F2FS hataları</translation>
+        </message>
+        <message>
+            <source>If fsck has run since, these are history; if not, the volume may still be inconsistent.</source>
+            <translation>O zamandan beri fsck çalıştıysa bunlar geçmiştir; çalışmadıysa birim hâlâ tutarsız olabilir.</translation>
+        </message>
+        <message>
+            <source>No F2FS flag or logged error</source>
+            <translation>F2FS bayrağı ya da günlüğe yazılmış hata yok</translation>
+        </message>
+        <message>
+            <source>%1 volume(s) checked.</source>
+            <translation>%1 birim denetlendi.</translation>
+        </message>
+        <message>
+            <source>Wi-Fi / Bluetooth Failure Ledger</source>
+            <translation>Wi-Fi / Bluetooth Hata Defteri</translation>
+        </message>
+        <message>
+            <source>Wi-Fi and Bluetooth firmware load failures, firmware crashes and controller timeouts, per adapter, in this and earlier boots.</source>
+            <translation>Wi-Fi ve Bluetooth firmware yükleme hataları, firmware çökmeleri ve denetleyici zaman aşımları; bağdaştırıcı başına, bu ve önceki açılışlarda.</translation>
+        </message>
+        <message>
+            <source>Normal reconnects and roaming are not failures and are not counted.</source>
+            <translation>Normal yeniden bağlanmalar ve dolaşım hata değildir, sayılmaz.</translation>
+        </message>
+        <message>
+            <source>Messages differ by driver; failures a driver prints at info level are not seen.</source>
+            <translation>İletiler sürücüye göre değişir; bir sürücünün bilgi seviyesinde yazdığı hatalar görülmez.</translation>
+        </message>
+        <message>
+            <source>Bluetooth</source>
+            <translation>Bluetooth</translation>
+        </message>
+        <message>
+            <source>No Wi-Fi or Bluetooth failure in this boot or the saved history</source>
+            <translation>Bu açılışta ve kayıtlı geçmişte Wi-Fi ya da Bluetooth hatası yok</translation>
+        </message>
+        <message>
+            <source>Failures per adapter</source>
+            <translation>Bağdaştırıcı başına hatalar</translation>
+        </message>
+        <message>
+            <source>Adapter</source>
+            <translation>Bağdaştırıcı</translation>
+        </message>
+        <message>
+            <source>Type</source>
+            <translation>Tür</translation>
+        </message>
+        <message>
+            <source>Firmware load</source>
+            <translation>Firmware yükleme</translation>
+        </message>
+        <message>
+            <source>Crash / reset</source>
+            <translation>Çökme / sıfırlama</translation>
+        </message>
+        <message>
+            <source>Timeout</source>
+            <translation>Zaman aşımı</translation>
+        </message>
+        <message>
+            <source>Other</source>
+            <translation>Diğer</translation>
+        </message>
+        <message>
+            <source>Boots</source>
+            <translation>Açılışlar</translation>
+        </message>
+        <message>
+            <source>Wi-Fi</source>
+            <translation>Wi-Fi</translation>
+        </message>
+        <message>
+            <source>%1: firmware failed to load (%2×)</source>
+            <translation>%1: firmware yüklenemedi (%2×)</translation>
+        </message>
+        <message>
+            <source>Without its firmware the adapter does not work at all in that boot.</source>
+            <translation>Firmware'i olmadan bağdaştırıcı o açılışta hiç çalışmaz.</translation>
+        </message>
+        <message>
+            <source>Update the firmware package (Gentoo: sys-kernel/linux-firmware) and check that the file the kernel asked for exists (S18).</source>
+            <translation>Firmware paketini güncelleyin (Gentoo: sys-kernel/linux-firmware) ve çekirdeğin istediği dosyanın var olduğunu kontrol edin (S18).</translation>
+        </message>
+        <message>
+            <source>%1: %2 firmware crash(es) / timeout(s) in %3 boot(s)</source>
+            <translation>%1: %3 açılışta %2 firmware çökmesi / zaman aşımı</translation>
+        </message>
+        <message>
+            <source>The adapter's firmware stops answering and the driver restarts it: drop-outs for the user.</source>
+            <translation>Bağdaştırıcının firmware'i yanıt vermeyi bırakıyor ve sürücü onu yeniden başlatıyor: kullanıcı için bağlantı kopmaları.</translation>
+        </message>
+        <message>
+            <source>A newer kernel or firmware often fixes it; disabling the adapter's power saving is the usual workaround.</source>
+            <translation>Daha yeni bir çekirdek ya da firmware çoğu zaman düzeltir; bağdaştırıcının güç tasarrufunu kapatmak olağan geçici çözümdür.</translation>
+        </message>
+        <message>
+            <source>Only isolated radio errors</source>
+            <translation>Yalnızca tekil radyo hataları</translation>
+        </message>
+    </context>
+    <context>
+        <name>systemdiagnostics</name>
+        <message>
+            <source>PCIe Link Negotiation Lab</source>
+            <translation>PCIe Bağlantı Laboratuvarı</translation>
+        </message>
+        <message>
+            <source>The PCIe link every device trained at, against what both ends of the link can do. A narrower link than possible is a hardware or BIOS limit; a slower one at idle is normal power saving.</source>
+            <translation>Her aygıtın kurduğu PCIe bağlantısı, bağlantının iki ucunun yapabildiğiyle karşılaştırmalı. Olabileceğinden dar bir bağlantı donanım ya da BIOS sınırıdır; boştayken daha yavaş olması normal güç tasarrufudur.</translation>
+        </message>
+        <message>
+            <source>Speed drops to save power when a device is idle (GPUs go to PCIe 1.0 at the desktop); check under load before judging the speed.</source>
+            <translation>Aygıt boştayken güç tasarrufu için hız düşer (masaüstünde GPU'lar PCIe 1.0'a iner); hızı değerlendirmeden önce yük altında kontrol edin.</translation>
+        </message>
+        <message>
+            <source>A device that is runtime-suspended shows the last link it had.</source>
+            <translation>Çalışırken askıya alınmış bir aygıt sahip olduğu son bağlantıyı gösterir.</translation>
+        </message>
+        <message>
+            <source>Device links</source>
+            <translation>Aygıt bağlantıları</translation>
+        </message>
+        <message>
+            <source>Device</source>
+            <translation>Aygıt</translation>
+        </message>
+        <message>
+            <source>Driver</source>
+            <translation>Sürücü</translation>
+        </message>
+        <message>
+            <source>Link now</source>
+            <translation>Şu anki bağlantı</translation>
+        </message>
+        <message>
+            <source>Possible</source>
+            <translation>Olası</translation>
+        </message>
+        <message>
+            <source>Power</source>
+            <translation>Güç</translation>
+        </message>
+        <message>
+            <source>AER (corr / non-fatal / fatal)</source>
+            <translation>AER (düzeltilen / ölümcül olmayan / ölümcül)</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>full link</source>
+            <translation>tam bağlantı</translation>
+        </message>
+        <message>
+            <source>narrower: x%1 of x%2</source>
+            <translation>daha dar: x%2 yerine x%1</translation>
+        </message>
+        <message>
+            <source>%1 (%2) runs at x%3 of a possible x%4</source>
+            <translation>%1 (%2), olası x%4 yerine x%3 ile çalışıyor</translation>
+        </message>
+        <message>
+            <source>Width does not drop for power saving the way speed does: a narrower link usually means a seating, riser or BIOS lane-split limit, or lanes the board does not wire (check the laptop's specification).</source>
+            <translation>Genişlik, hız gibi güç tasarrufu için düşmez: daha dar bir bağlantı genellikle yerleşim, riser ya da BIOS hat bölme sınırı ya da kartın bağlamadığı hatlar demektir (dizüstünün teknik özelliklerine bakın).</translation>
+        </message>
+        <message>
+            <source>Compare after a cold boot; if it stays narrow on a desktop, reseat the card.</source>
+            <translation>Soğuk açılıştan sonra karşılaştırın; masaüstünde dar kalırsa kartı yeniden yerleştirin.</translation>
+        </message>
+        <message>
+            <source>slower now (PCIe %1 of %2)</source>
+            <translation>şu an daha yavaş (PCIe %2 yerine %1)</translation>
+        </message>
+        <message>
+            <source>%1 PCIe port(s) / bridge(s) not listed. Possible = the lower of the device's and its port's maximum.</source>
+            <translation>%1 PCIe bağlantı noktası / köprü listelenmedi. Olası = aygıtın ve bağlı olduğu noktanın maksimumundan düşük olanı.</translation>
+        </message>
+        <message>
+            <source>No device reports a PCIe link</source>
+            <translation>Hiçbir aygıt PCIe bağlantısı bildirmiyor</translation>
+        </message>
+        <message>
+            <source>Every device trained at its full link width</source>
+            <translation>Her aygıt tam bağlantı genişliğinde kuruldu</translation>
+        </message>
+        <message>
+            <source>Lower speeds shown are power saving unless they stay low under load.</source>
+            <translation>Gösterilen düşük hızlar, yük altında da düşük kalmadıkça güç tasarrufudur.</translation>
+        </message>
+        <message>
+            <source>Wi-Fi / Bluetooth Firmware Doctor</source>
+            <translation>Wi-Fi / Bluetooth Firmware Doktoru</translation>
+        </message>
+        <message>
+            <source>Each wireless adapter with its driver and state, radio kill switches, and firmware files the kernel asked for and did not find.</source>
+            <translation>Her kablosuz bağdaştırıcı, sürücüsü ve durumuyla; radyo kapatma anahtarları ve çekirdeğin isteyip bulamadığı firmware dosyaları.</translation>
+        </message>
+        <message>
+            <source>A firmware file present on disk is not proof that it is the version the driver wants; the kernel log says what it loaded.</source>
+            <translation>Diskte bulunan bir firmware dosyası, sürücünün istediği sürüm olduğunun kanıtı değildir; neyi yüklediğini çekirdek günlüğü söyler.</translation>
+        </message>
+        <message>
+            <source>Adapters</source>
+            <translation>Bağdaştırıcılar</translation>
+        </message>
+        <message>
+            <source>Interface</source>
+            <translation>Arayüz</translation>
+        </message>
+        <message>
+            <source>State</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>registered</source>
+            <translation>kayıtlı</translation>
+        </message>
+        <message>
+            <source>No wireless adapter registered</source>
+            <translation>Kayıtlı kablosuz bağdaştırıcı yok</translation>
+        </message>
+        <message>
+            <source>Either there is none, or its driver did not load (S18 lists devices without a driver).</source>
+            <translation>Ya hiç yok ya da sürücüsü yüklenmedi (S18 sürücüsü olmayan aygıtları listeler).</translation>
+        </message>
+        <message>
+            <source>Radio switches (rfkill)</source>
+            <translation>Radyo anahtarları (rfkill)</translation>
+        </message>
+        <message>
+            <source>Name</source>
+            <translation>Ad</translation>
+        </message>
+        <message>
+            <source>Type</source>
+            <translation>Tür</translation>
+        </message>
+        <message>
+            <source>Software</source>
+            <translation>Yazılım</translation>
+        </message>
+        <message>
+            <source>Hardware</source>
+            <translation>Donanım</translation>
+        </message>
+        <message>
+            <source>blocked</source>
+            <translation>engelli</translation>
+        </message>
+        <message>
+            <source>on</source>
+            <translation>açık</translation>
+        </message>
+        <message>
+            <source>%1 (%2) is blocked in hardware</source>
+            <translation>%1 (%2) donanımsal olarak engelli</translation>
+        </message>
+        <message>
+            <source>A switch, key combination or BIOS setting turned it off; software cannot undo it.</source>
+            <translation>Bir anahtar, tuş kombinasyonu ya da BIOS ayarı onu kapattı; yazılım bunu geri alamaz.</translation>
+        </message>
+        <message>
+            <source>%1 (%2) is turned off in software</source>
+            <translation>%1 (%2) yazılımla kapatılmış</translation>
+        </message>
+        <message>
+            <source>Airplane mode or the desktop's switch; rfkill unblock turns it back on.</source>
+            <translation>Uçak modu ya da masaüstünün anahtarı; rfkill unblock onu yeniden açar.</translation>
+        </message>
+        <message>
+            <source>Firmware the kernel could not load (saved kernel log)</source>
+            <translation>Çekirdeğin yükleyemediği firmware (kaydedilen çekirdek günlüğü)</translation>
+        </message>
+        <message>
+            <source>File</source>
+            <translation>Dosya</translation>
+        </message>
+        <message>
+            <source>Requested by</source>
+            <translation>İsteyen</translation>
+        </message>
+        <message>
+            <source>On disk now</source>
+            <translation>Şu an diskte</translation>
+        </message>
+        <message>
+            <source>missing</source>
+            <translation>eksik</translation>
+        </message>
+        <message>
+            <source>Radio firmware %1 is missing</source>
+            <translation>Radyo firmware'i %1 eksik</translation>
+        </message>
+        <message>
+            <source>%1 asked for it and the file is not installed. Drivers sometimes try several versions; it matters if the adapter does not work.</source>
+            <translation>%1 bunu istedi ve dosya kurulu değil. Sürücüler bazen birkaç sürümü dener; bağdaştırıcı çalışmıyorsa önemlidir.</translation>
+        </message>
+        <message>
+            <source>Install / update the firmware package (Gentoo: sys-kernel/linux-firmware; check its USE / savedconfig selection).</source>
+            <translation>Firmware paketini kurun / güncelleyin (Gentoo: sys-kernel/linux-firmware; USE / savedconfig seçimini kontrol edin).</translation>
+        </message>
+        <message>
+            <source>Some drivers ask for optional or newer files first and fall back quietly; a missing file matters when its device does not work.</source>
+            <translation>Bazı sürücüler önce isteğe bağlı ya da daha yeni dosyaları ister ve sessizce geri düşer; eksik bir dosya, aygıtı çalışmadığında önemlidir.</translation>
+        </message>
+        <message>
+            <source>Adapters registered, no radio blocked, no radio firmware missing</source>
+            <translation>Bağdaştırıcılar kayıtlı, engelli radyo yok, eksik radyo firmware'i yok</translation>
+        </message>
+        <message>
+            <source>Power Limit Source Map</source>
+            <translation>Güç Sınırı Kaynak Haritası</translation>
+        </message>
+        <message>
+            <source>Every place a CPU / platform power limit is visible without waking anything: firmware power settings (PPT), the platform profile, cpufreq caps, RAPL, and the power source.</source>
+            <translation>Hiçbir şeyi uyandırmadan bir CPU / platform güç sınırının görülebildiği her yer: firmware güç ayarları (PPT), platform profili, cpufreq sınırları, RAPL ve güç kaynağı.</translation>
+        </message>
+        <message>
+            <source>The SMU's live limits (STAPM, fast / slow PPT in effect) are not exported by the kernel; the firmware settings here are the targets it was given.</source>
+            <translation>SMU'nun canlı sınırları (STAPM, etkin hızlı / yavaş PPT) çekirdek tarafından sunulmaz; buradaki firmware ayarları ona verilen hedeflerdir.</translation>
+        </message>
+        <message>
+            <source>The NVIDIA GPU's power limit needs nvidia-smi, which wakes the GPU: see the NVIDIA tab.</source>
+            <translation>NVIDIA GPU'nun güç sınırı nvidia-smi gerektirir ve bu GPU'yu uyandırır: NVIDIA sekmesine bakın.</translation>
+        </message>
+        <message>
+            <source>Limits and their sources</source>
+            <translation>Sınırlar ve kaynakları</translation>
+        </message>
+        <message>
+            <source>Source</source>
+            <translation>Kaynak</translation>
+        </message>
+        <message>
+            <source>Setting</source>
+            <translation>Ayar</translation>
+        </message>
+        <message>
+            <source>Value</source>
+            <translation>Değer</translation>
+        </message>
+        <message>
+            <source>Range</source>
+            <translation>Aralık</translation>
+        </message>
+        <message>
+            <source>ACPI platform profile</source>
+            <translation>ACPI platform profili</translation>
+        </message>
+        <message>
+            <source>Firmware (%1)</source>
+            <translation>Firmware (%1)</translation>
+        </message>
+        <message>
+            <source>unreadable</source>
+            <translation>okunamıyor</translation>
+        </message>
+        <message>
+            <source>cpufreq</source>
+            <translation>cpufreq</translation>
+        </message>
+        <message>
+            <source>highest clock (hardware)</source>
+            <translation>en yüksek saat (donanım)</translation>
+        </message>
+        <message>
+            <source>scaling_max_freq cap</source>
+            <translation>scaling_max_freq sınırı</translation>
+        </message>
+        <message>
+            <source>%1 of %2 policies</source>
+            <translation>%2 politikadan %1</translation>
+        </message>
+        <message>
+            <source>%1 CPU policies are capped below their top clock (lowest cap %2 MHz)</source>
+            <translation>%1 CPU politikası en yüksek saatinin altında sınırlanmış (en düşük sınır %2 MHz)</translation>
+        </message>
+        <message>
+            <source>Something set scaling_max_freq: a power daemon (TLP, power-profiles-daemon, auto-cpufreq), a thermal tool or a script.</source>
+            <translation>Bir şey scaling_max_freq ayarladı: bir güç servisi (TLP, power-profiles-daemon, auto-cpufreq), bir ısı aracı ya da bir betik.</translation>
+        </message>
+        <message>
+            <source>If it is not deliberate, find the tool that writes it; Optimizations shows Centurion's own settings.</source>
+            <translation>Kasıtlı değilse onu yazan aracı bulun; Optimizasyonlar Centurion'ın kendi ayarlarını gösterir.</translation>
+        </message>
+        <message>
+            <source>off</source>
+            <translation>kapalı</translation>
+        </message>
+        <message>
+            <source>CPU boost is off</source>
+            <translation>CPU boost kapalı</translation>
+        </message>
+        <message>
+            <source>The CPU stays at its base clock: much slower, cooler, less power.</source>
+            <translation>CPU taban saatinde kalır: çok daha yavaş, daha serin, daha az güç.</translation>
+        </message>
+        <message>
+            <source>amd-pstate</source>
+            <translation>amd-pstate</translation>
+        </message>
+        <message>
+            <source>energy preference (EPP)</source>
+            <translation>enerji tercihi (EPP)</translation>
+        </message>
+        <message>
+            <source>enabled</source>
+            <translation>etkin</translation>
+        </message>
+        <message>
+            <source>not enforced</source>
+            <translation>uygulanmıyor</translation>
+        </message>
+        <message>
+            <source>Power source</source>
+            <translation>Güç kaynağı</translation>
+        </message>
+        <message>
+            <source>now</source>
+            <translation>şu an</translation>
+        </message>
+        <message>
+            <source>AC adapter</source>
+            <translation>AC adaptör</translation>
+        </message>
+        <message>
+            <source>battery</source>
+            <translation>pil</translation>
+        </message>
+        <message>
+            <source>unknown</source>
+            <translation>bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Running on battery</source>
+            <translation>Pille çalışıyor</translation>
+        </message>
+        <message>
+            <source>Firmware applies its battery power limits (often less than half the AC limits); measurements taken now do not hold on AC.</source>
+            <translation>Firmware pil güç sınırlarını uygular (çoğu zaman AC sınırlarının yarısından az); şimdi alınan ölçümler AC'de geçerli olmaz.</translation>
+        </message>
+        <message>
+            <source>NVIDIA Dynamic Boost</source>
+            <translation>NVIDIA Dynamic Boost</translation>
+        </message>
+        <message>
+            <source>running</source>
+            <translation>çalışıyor</translation>
+        </message>
+        <message>
+            <source>not running</source>
+            <translation>çalışmıyor</translation>
+        </message>
+        <message>
+            <source>NVIDIA Dynamic Boost is active</source>
+            <translation>NVIDIA Dynamic Boost etkin</translation>
+        </message>
+        <message>
+            <source>nvidia-powerd shifts the shared power budget between CPU and GPU: CPU limits measured under a GPU load are lower than at a CPU-only load.</source>
+            <translation>nvidia-powerd ortak güç bütçesini CPU ile GPU arasında kaydırır: GPU yükü altında ölçülen CPU sınırları, yalnızca CPU yükündekinden düşüktür.</translation>
+        </message>
+        <message>
+            <source>No unexpected cap on CPU clocks or boost</source>
+            <translation>CPU saatlerinde ya da boost'ta beklenmeyen bir sınır yok</translation>
+        </message>
+        <message>
+            <source>Memory Architecture Explorer</source>
+            <translation>Bellek Mimarisi Gezgini</translation>
+        </message>
+        <message>
+            <source>How RAM, swap, compressed swap (zram / zswap), huge pages and memory pressure are set up and behaving right now.</source>
+            <translation>RAM, takas, sıkıştırılmış takas (zram / zswap), büyük sayfalar ve bellek baskısının şu an nasıl ayarlandığı ve davrandığı.</translation>
+        </message>
+        <message>
+            <source>Pressure (PSI) is an average over the last seconds / minutes, not since boot.</source>
+            <translation>Baskı (PSI) son saniyelerin / dakikaların ortalamasıdır, açılıştan beri değil.</translation>
+        </message>
+        <message>
+            <source>DIMM details (speed, timings, part numbers) need root: System tools → DMI.</source>
+            <translation>DIMM ayrıntıları (hız, zamanlamalar, parça numaraları) root gerektirir: Sistem araçları → DMI.</translation>
+        </message>
+        <message>
+            <source>Memory now</source>
+            <translation>Şu anki bellek</translation>
+        </message>
+        <message>
+            <source>Item</source>
+            <translation>Öğe</translation>
+        </message>
+        <message>
+            <source>Note</source>
+            <translation>Not</translation>
+        </message>
+        <message>
+            <source>RAM</source>
+            <translation>RAM</translation>
+        </message>
+        <message>
+            <source>%1 available (%2 %)</source>
+            <translation>%1 boş (%%2)</translation>
+        </message>
+        <message>
+            <source>Less than 10 % of RAM is available</source>
+            <translation>RAM'in yüzde 10'undan azı boş</translation>
+        </message>
+        <message>
+            <source>The kernel is close to reclaiming hard or swapping.</source>
+            <translation>Çekirdek sert geri kazanıma ya da takasa çok yakın.</translation>
+        </message>
+        <message>
+            <source>Close something large or add swap.</source>
+            <translation>Büyük bir şeyi kapatın ya da takas ekleyin.</translation>
+        </message>
+        <message>
+            <source>Swap</source>
+            <translation>Takas</translation>
+        </message>
+        <message>
+            <source>%1 of %2 used</source>
+            <translation>%2 içinden %1 kullanılıyor</translation>
+        </message>
+        <message>
+            <source>none</source>
+            <translation>yok</translation>
+        </message>
+        <message>
+            <source>%1 · %2 stored, ratio %3:1</source>
+            <translation>%1 · %2 saklanıyor, oran %3:1</translation>
+        </message>
+        <message>
+            <source>%1, pool up to %2 % of RAM</source>
+            <translation>%1, havuz RAM'in en fazla %%2'si</translation>
+        </message>
+        <message>
+            <source>zswap and zram are both on</source>
+            <translation>zswap ve zram ikisi de açık</translation>
+        </message>
+        <message>
+            <source>zswap compresses pages on their way to swap, and the swap is itself compressed by zram: pages are compressed twice and zswap's pool takes RAM that zram would use.</source>
+            <translation>zswap sayfaları takasa giderken sıkıştırır, takas da zram tarafından sıkıştırılır: sayfalar iki kez sıkıştırılır ve zswap havuzu zram'ın kullanacağı RAM'i alır.</translation>
+        </message>
+        <message>
+            <source>Use one of them: turn zswap off (zswap.enabled=0) when the swap is zram.</source>
+            <translation>Birini kullanın: takas zram ise zswap'i kapatın (zswap.enabled=0).</translation>
+        </message>
+        <message>
+            <source>with zram, 100–180 is common</source>
+            <translation>zram ile 100–180 yaygındır</translation>
+        </message>
+        <message>
+            <source>default 60</source>
+            <translation>varsayılan 60</translation>
+        </message>
+        <message>
+            <source>Transparent huge pages</source>
+            <translation>Şeffaf büyük sayfalar</translation>
+        </message>
+        <message>
+            <source>defrag: %1</source>
+            <translation>defrag: %1</translation>
+        </message>
+        <message>
+            <source>Huge pages: always, with synchronous defragmentation</source>
+            <translation>Büyük sayfalar: her zaman, eşzamanlı birleştirmeyle</translation>
+        </message>
+        <message>
+            <source>Allocations can stall while the kernel compacts memory (stutter in games). defrag=madvise or defer keeps the gain without the stalls.</source>
+            <translation>Çekirdek belleği sıkıştırırken bellek ayırmaları takılabilir (oyunlarda takılma). defrag=madvise ya da defer kazancı takılmalar olmadan korur.</translation>
+        </message>
+        <message>
+            <source>Multi-gen LRU</source>
+            <translation>Çok nesilli LRU</translation>
+        </message>
+        <message>
+            <source>on (%1)</source>
+            <translation>açık (%1)</translation>
+        </message>
+        <message>
+            <source>Memory pressure (last minute)</source>
+            <translation>Bellek baskısı (son dakika)</translation>
+        </message>
+        <message>
+            <source>some %1 % · full %2 %</source>
+            <translation>kısmi %%1 · tam %%2</translation>
+        </message>
+        <message>
+            <source>share of time tasks waited for memory</source>
+            <translation>görevlerin bellek beklediği zamanın payı</translation>
+        </message>
+        <message>
+            <source>Programs are waiting for memory (%1 % of the last minute)</source>
+            <translation>Programlar bellek bekliyor (son dakikanın %%1'i)</translation>
+        </message>
+        <message>
+            <source>The kernel is reclaiming or swapping to keep up; the desktop feels sluggish.</source>
+            <translation>Çekirdek yetişmek için geri kazanıyor ya da takas yapıyor; masaüstü ağır hissettirir.</translation>
+        </message>
+        <message>
+            <source>Free memory or add swap / zram.</source>
+            <translation>Bellek boşaltın ya da takas / zram ekleyin.</translation>
+        </message>
+        <message>
+            <source>Memory pressure (PSI) is not available: kernel without CONFIG_PSI or psi=0.</source>
+            <translation>Bellek baskısı (PSI) yok: CONFIG_PSI olmayan çekirdek ya da psi=0.</translation>
+        </message>
+        <message>
+            <source>NUMA and cache domains</source>
+            <translation>NUMA ve önbellek alanları</translation>
+        </message>
+        <message>
+            <source>Domain</source>
+            <translation>Alan</translation>
+        </message>
+        <message>
+            <source>CPUs</source>
+            <translation>CPU'lar</translation>
+        </message>
+        <message>
+            <source>NUMA %1</source>
+            <translation>NUMA %1</translation>
+        </message>
+        <message>
+            <source>L3 %1</source>
+            <translation>L3 %1</translation>
+        </message>
+        <message>
+            <source>%1 MB</source>
+            <translation>%1 MB</translation>
+        </message>
+        <message>
+            <source>%1 L3 domains: on Ryzen each is one CCD. Threads that talk a lot run faster on one of them.</source>
+            <translation>%1 L3 alanı: Ryzen'de her biri bir CCD'dir. Çok iletişim kuran iş parçacıkları bunlardan birinde daha hızlı çalışır.</translation>
+        </message>
+        <message>
+            <source>Memory set up sensibly and not under pressure</source>
+            <translation>Bellek mantıklı ayarlanmış ve baskı altında değil</translation>
+        </message>
+        <message>
+            <source>ACPI / WMI Firmware Browser</source>
+            <translation>ACPI / WMI Firmware Tarayıcısı</translation>
+        </message>
+        <message>
+            <source>The firmware interfaces the kernel found: WMI objects with the driver that claims each, firmware settings exposed through firmware-attributes, and the ACPI tables present. Nothing is called or changed.</source>
+            <translation>Çekirdeğin bulduğu firmware arayüzleri: her birini sahiplenen sürücüyle WMI nesneleri, firmware-attributes ile sunulan firmware ayarları ve bulunan ACPI tabloları. Hiçbir şey çağrılmaz ya da değiştirilmez.</translation>
+        </message>
+        <message>
+            <source>Passwords and authentication attributes are never read.</source>
+            <translation>Parolalar ve kimlik doğrulama öznitelikleri asla okunmaz.</translation>
+        </message>
+        <message>
+            <source>WMI objects</source>
+            <translation>WMI nesneleri</translation>
+        </message>
+        <message>
+            <source>GUID</source>
+            <translation>GUID</translation>
+        </message>
+        <message>
+            <source>Known as</source>
+            <translation>Bilinen adı</translation>
+        </message>
+        <message>
+            <source>Lenovo battery information — used by Centurion</source>
+            <translation>Lenovo pil bilgisi — Centurion kullanıyor</translation>
+        </message>
+        <message>
+            <source>No WMI object exported (no ACPI-WMI on this machine, or CONFIG_ACPI_WMI off)</source>
+            <translation>Sunulan WMI nesnesi yok (bu makinede ACPI-WMI yok ya da CONFIG_ACPI_WMI kapalı)</translation>
+        </message>
+        <message>
+            <source>%1 object(s) have no driver: normal for objects no Linux driver knows; Centurion talks to the Lenovo ones through ACPI directly.</source>
+            <translation>%1 nesnenin sürücüsü yok: hiçbir Linux sürücüsünün tanımadığı nesneler için normal; Centurion Lenovo nesneleriyle doğrudan ACPI üzerinden konuşur.</translation>
+        </message>
+        <message>
+            <source>Firmware settings (firmware-attributes)</source>
+            <translation>Firmware ayarları (firmware-attributes)</translation>
+        </message>
+        <message>
+            <source>Provider</source>
+            <translation>Sağlayıcı</translation>
+        </message>
+        <message>
+            <source>Allowed</source>
+            <translation>İzin verilen</translation>
+        </message>
+        <message>
+            <source>A firmware setting waits for a reboot (%1)</source>
+            <translation>Bir firmware ayarı yeniden başlatmayı bekliyor (%1)</translation>
+        </message>
+        <message>
+            <source>A changed BIOS / firmware value takes effect only after restarting.</source>
+            <translation>Değiştirilen bir BIOS / firmware değeri yalnızca yeniden başlatmadan sonra etkili olur.</translation>
+        </message>
+        <message>
+            <source>(not read)</source>
+            <translation>(okunmadı)</translation>
+        </message>
+        <message>
+            <source>ACPI tables present</source>
+            <translation>Bulunan ACPI tabloları</translation>
+        </message>
+        <message>
+            <source>Tables</source>
+            <translation>Tablolar</translation>
+        </message>
+        <message>
+            <source>Their contents are readable by root only (acpidump).</source>
+            <translation>İçerikleri yalnızca root tarafından okunabilir (acpidump).</translation>
+        </message>
+        <message>
+            <source>%1 WMI object(s), %2 firmware setting(s)</source>
+            <translation>%1 WMI nesnesi, %2 firmware ayarı</translation>
+        </message>
+        <message>
+            <source>USB-C PD / Charger Inspector</source>
+            <translation>USB-C PD / Şarj Cihazı Denetçisi</translation>
+        </message>
+        <message>
+            <source>What the connected charger offers (its USB Power Delivery profiles), what the laptop is drawing, and the battery's condition.</source>
+            <translation>Bağlı şarj cihazının sundukları (USB Power Delivery profilleri), dizüstünün çektiği güç ve pilin durumu.</translation>
+        </message>
+        <message>
+            <source>USB-PD profiles are visible only through the UCSI driver (typec_ucsi); barrel and proprietary chargers show as an online AC adapter only.</source>
+            <translation>USB-PD profilleri yalnızca UCSI sürücüsüyle (typec_ucsi) görülebilir; yuvarlak uçlu ve özel şarj cihazları yalnızca bağlı bir AC adaptör olarak görünür.</translation>
+        </message>
+        <message>
+            <source>Battery power figures are the battery's own estimate.</source>
+            <translation>Pil güç değerleri pilin kendi tahminidir.</translation>
+        </message>
+        <message>
+            <source>USB-C ports</source>
+            <translation>USB-C bağlantı noktaları</translation>
+        </message>
+        <message>
+            <source>Port</source>
+            <translation>Bağlantı noktası</translation>
+        </message>
+        <message>
+            <source>Role</source>
+            <translation>Rol</translation>
+        </message>
+        <message>
+            <source>Partner</source>
+            <translation>Karşı taraf</translation>
+        </message>
+        <message>
+            <source>Charger offers</source>
+            <translation>Şarj cihazının sundukları</translation>
+        </message>
+        <message>
+            <source>Best</source>
+            <translation>En iyisi</translation>
+        </message>
+        <message>
+            <source>PPS ≤%1 V %2 A</source>
+            <translation>PPS ≤%1 V %2 A</translation>
+        </message>
+        <message>
+            <source>connected (PD %1)</source>
+            <translation>bağlı (PD %1)</translation>
+        </message>
+        <message>
+            <source>nothing</source>
+            <translation>hiçbir şey</translation>
+        </message>
+        <message>
+            <source>not reported</source>
+            <translation>bildirilmiyor</translation>
+        </message>
+        <message>
+            <source>The USB-C charger offers at most %1</source>
+            <translation>USB-C şarj cihazı en fazla %1 sunuyor</translation>
+        </message>
+        <message>
+            <source>Gaming laptops draw far more under load: on this charger the battery can drain while plugged in, and the firmware lowers power limits.</source>
+            <translation>Oyun dizüstüleri yük altında çok daha fazla çeker: bu şarj cihazıyla pil takılıyken bile boşalabilir ve firmware güç sınırlarını düşürür.</translation>
+        </message>
+        <message>
+            <source>Use the original adapter for gaming; a USB-C charger is fine for light use.</source>
+            <translation>Oyun için orijinal adaptörü kullanın; USB-C şarj cihazı hafif kullanım için uygundur.</translation>
+        </message>
+        <message>
+            <source>Power supplies</source>
+            <translation>Güç kaynakları</translation>
+        </message>
+        <message>
+            <source>Supply</source>
+            <translation>Kaynak</translation>
+        </message>
+        <message>
+            <source>Detail</source>
+            <translation>Ayrıntı</translation>
+        </message>
+        <message>
+            <source>health %1 % of design</source>
+            <translation>sağlık: tasarımın %%1'i</translation>
+        </message>
+        <message>
+            <source>%1 cycles</source>
+            <translation>%1 döngü</translation>
+        </message>
+        <message>
+            <source>charges to %1 %</source>
+            <translation>%%1'e kadar şarj eder</translation>
+        </message>
+        <message>
+            <source>Battery holds %1 % of its design capacity</source>
+            <translation>Pil tasarım kapasitesinin %%1'ini tutuyor</translation>
+        </message>
+        <message>
+            <source>Below 80 % most makers consider a battery worn.</source>
+            <translation>Çoğu üretici yüzde 80'in altındaki bir pili yıpranmış sayar.</translation>
+        </message>
+        <message>
+            <source>Health → Battery use shows how fast it drains.</source>
+            <translation>Sağlık → Pil kullanımı ne kadar hızlı boşaldığını gösterir.</translation>
+        </message>
+        <message>
+            <source>Battery not charging: charge limit %1 %</source>
+            <translation>Pil şarj olmuyor: şarj sınırı %%1</translation>
+        </message>
+        <message>
+            <source>Charging stops at the limit to slow battery wear (conservation mode).</source>
+            <translation>Pil yıpranmasını yavaşlatmak için şarj sınırda durur (koruma modu).</translation>
+        </message>
+        <message>
+            <source>online</source>
+            <translation>bağlı</translation>
+        </message>
+        <message>
+            <source>offline</source>
+            <translation>bağlı değil</translation>
+        </message>
+        <message>
+            <source>contract %1 V × %2 A</source>
+            <translation>sözleşme %1 V × %2 A</translation>
+        </message>
+        <message>
+            <source>Plugged in, yet the battery is discharging</source>
+            <translation>Fişe takılı ama pil boşalıyor</translation>
+        </message>
+        <message>
+            <source>The load is above what the adapter supplies (or the adapter is not recognised).</source>
+            <translation>Yük, adaptörün sağladığından fazla (ya da adaptör tanınmıyor).</translation>
+        </message>
+        <message>
+            <source>Use a stronger adapter, or lower the load; check that the barrel plug is fully seated.</source>
+            <translation>Daha güçlü bir adaptör kullanın ya da yükü azaltın; yuvarlak fişin tam oturduğunu kontrol edin.</translation>
+        </message>
+        <message>
+            <source>No battery, charger or USB-C port is reported by the kernel</source>
+            <translation>Çekirdek hiçbir pil, şarj cihazı ya da USB-C bağlantı noktası bildirmiyor</translation>
+        </message>
+        <message>
+            <source>No charging problem visible</source>
+            <translation>Görünür bir şarj sorunu yok</translation>
+        </message>
+        <message>
+            <source>PipeWire Audio Doctor</source>
+            <translation>PipeWire Ses Doktoru</translation>
+        </message>
+        <message>
+            <source>Sound cards and codecs, which sound servers are running (and whether two fight over the devices), and PipeWire's own view.</source>
+            <translation>Ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin aygıtlar için çakışıp çakışmadığı) ve PipeWire'ın kendi görünümü.</translation>
+        </message>
+        <message>
+            <source>Only your own user's sound servers are seen; nothing is restarted or re-routed.</source>
+            <translation>Yalnızca kendi kullanıcınızın ses sunucuları görülür; hiçbir şey yeniden başlatılmaz ya da yeniden yönlendirilmez.</translation>
+        </message>
+        <message>
+            <source>Sound cards</source>
+            <translation>Ses kartları</translation>
+        </message>
+        <message>
+            <source>Card</source>
+            <translation>Kart</translation>
+        </message>
+        <message>
+            <source>Codec</source>
+            <translation>Kodek</translation>
+        </message>
+        <message>
+            <source>No sound card registered</source>
+            <translation>Kayıtlı ses kartı yok</translation>
+        </message>
+        <message>
+            <source>The audio driver did not load (S18 lists devices without a driver; SOF laptops also need their firmware).</source>
+            <translation>Ses sürücüsü yüklenmedi (S18 sürücüsü olmayan aygıtları listeler; SOF dizüstüleri firmware'lerine de ihtiyaç duyar).</translation>
+        </message>
+        <message>
+            <source>Sound servers running</source>
+            <translation>Çalışan ses sunucuları</translation>
+        </message>
+        <message>
+            <source>Process</source>
+            <translation>Süreç</translation>
+        </message>
+        <message>
+            <source>PulseAudio and pipewire-pulse are both running</source>
+            <translation>PulseAudio ve pipewire-pulse ikisi birden çalışıyor</translation>
+        </message>
+        <message>
+            <source>Both try to own the sound devices: missing devices, no sound, or sound on one app only.</source>
+            <translation>İkisi de ses aygıtlarını sahiplenmeye çalışır: eksik aygıtlar, ses yok ya da yalnızca bir uygulamada ses.</translation>
+        </message>
+        <message>
+            <source>Keep one: with PipeWire, disable PulseAudio's autospawn (autospawn = no) and remove it from the session start.</source>
+            <translation>Birini tutun: PipeWire ile PulseAudio'nun autospawn'ını kapatın (autospawn = no) ve oturum başlangıcından çıkarın.</translation>
+        </message>
+        <message>
+            <source>PipeWire runs without a session manager</source>
+            <translation>PipeWire bir oturum yöneticisi olmadan çalışıyor</translation>
+        </message>
+        <message>
+            <source>Without WirePlumber nothing connects devices to programs: there is no sound.</source>
+            <translation>WirePlumber olmadan hiçbir şey aygıtları programlara bağlamaz: ses yoktur.</translation>
+        </message>
+        <message>
+            <source>Start wireplumber with the session (Gentoo: media-video/wireplumber, started by the desktop or gentoo-pipewire-launcher).</source>
+            <translation>wireplumber'ı oturumla başlatın (Gentoo: media-video/wireplumber; masaüstü ya da gentoo-pipewire-launcher başlatır).</translation>
+        </message>
+        <message>
+            <source>No sound server is running for this user</source>
+            <translation>Bu kullanıcı için çalışan ses sunucusu yok</translation>
+        </message>
+        <message>
+            <source>Programs that use PulseAudio or PipeWire get no sound.</source>
+            <translation>PulseAudio ya da PipeWire kullanan programlar ses alamaz.</translation>
+        </message>
+        <message>
+            <source>HDA codec power saving after %1 s of silence</source>
+            <translation>HDA kodeki %1 sn sessizlikten sonra güç tasarrufuna geçiyor</translation>
+        </message>
+        <message>
+            <source>If sound starts with a pop or its first moment is cut off, this is why (snd_hda_intel power_save=0 stops it at a small power cost).</source>
+            <translation>Ses bir patlamayla başlıyor ya da ilk anı kesiliyorsa nedeni budur (snd_hda_intel power_save=0 küçük bir güç maliyetiyle bunu durdurur).</translation>
+        </message>
+        <message>
+            <source>Server</source>
+            <translation>Sunucu</translation>
+        </message>
+        <message>
+            <source>The default output is the dummy output</source>
+            <translation>Varsayılan çıkış sahte çıkış</translation>
+        </message>
+        <message>
+            <source>No real sound device is available to the server.</source>
+            <translation>Sunucunun kullanabileceği gerçek bir ses aygıtı yok.</translation>
+        </message>
+        <message>
+            <source>Check the cards above and the session manager.</source>
+            <translation>Yukarıdaki kartları ve oturum yöneticisini kontrol edin.</translation>
+        </message>
+        <message>
+            <source>(not installed or no answer)</source>
+            <translation>(kurulu değil ya da yanıt yok)</translation>
+        </message>
+        <message>
+            <source>Sound cards present and one sound server stack running</source>
+            <translation>Ses kartları var ve bir ses sunucusu yığını çalışıyor</translation>
+        </message>
+        <message>
+            <source>Kernel Feature &amp; Firmware Dependency Check</source>
+            <translation>Çekirdek Özellik ve Firmware Bağımlılık Denetimi</translation>
+        </message>
+        <message>
+            <source>Kernel options Centurion's features rely on, firmware files the kernel could not load, the firmware compression the kernel can read, and devices no driver has claimed.</source>
+            <translation>Centurion özelliklerinin dayandığı çekirdek seçenekleri, çekirdeğin yükleyemediği firmware dosyaları, çekirdeğin okuyabildiği firmware sıkıştırması ve hiçbir sürücünün sahiplenmediği aygıtlar.</translation>
+        </message>
+        <message>
+            <source>A built-in option (y) or a module (m) both work; a module must also be installed for this kernel.</source>
+            <translation>Gömülü bir seçenek (y) ya da modül (m) ikisi de çalışır; modülün bu çekirdek için kurulu olması da gerekir.</translation>
+        </message>
+        <message>
+            <source>Kernel options</source>
+            <translation>Çekirdek seçenekleri</translation>
+        </message>
+        <message>
+            <source>Option</source>
+            <translation>Seçenek</translation>
+        </message>
+        <message>
+            <source>Needed for</source>
+            <translation>Gerektiği yer</translation>
+        </message>
+        <message>
+            <source>The running kernel's configuration is not readable</source>
+            <translation>Çalışan çekirdeğin yapılandırması okunamıyor</translation>
+        </message>
+        <message>
+            <source>Neither /boot/config-%1 nor /proc/config.gz (CONFIG_IKCONFIG_PROC) is available, so no option is judged.</source>
+            <translation>Ne /boot/config-%1 ne de /proc/config.gz (CONFIG_IKCONFIG_PROC) var, bu yüzden hiçbir seçenek değerlendirilmedi.</translation>
+        </message>
+        <message>
+            <source>Gentoo: keep the config in /boot (make install does), or enable CONFIG_IKCONFIG_PROC.</source>
+            <translation>Gentoo: yapılandırmayı /boot'ta tutun (make install bunu yapar) ya da CONFIG_IKCONFIG_PROC'u etkinleştirin.</translation>
+        </message>
+        <message>
+            <source>not in config</source>
+            <translation>yapılandırmada yok</translation>
+        </message>
+        <message>
+            <source>%1 is off: %2 cannot work</source>
+            <translation>%1 kapalı: %2 çalışamaz</translation>
+        </message>
+        <message>
+            <source>Enable it in the kernel configuration and rebuild.</source>
+            <translation>Çekirdek yapılandırmasında etkinleştirip yeniden derleyin.</translation>
+        </message>
+        <message>
+            <source>Firmware files are zstd-compressed but the kernel cannot read them</source>
+            <translation>Firmware dosyaları zstd ile sıkıştırılmış ama çekirdek bunları okuyamıyor</translation>
+        </message>
+        <message>
+            <source>%1+ .zst files in /lib/firmware and CONFIG_FW_LOADER_COMPRESS_ZSTD is not set: every driver that needs one of them fails to load its firmware.</source>
+            <translation>/lib/firmware içinde %1+ .zst dosyası var ve CONFIG_FW_LOADER_COMPRESS_ZSTD ayarlı değil: bunlardan birine ihtiyaç duyan her sürücü firmware'ini yükleyemez.</translation>
+        </message>
+        <message>
+            <source>Enable CONFIG_FW_LOADER_COMPRESS_ZSTD, or install linux-firmware without compression (Gentoo: USE=-compress-zstd).</source>
+            <translation>CONFIG_FW_LOADER_COMPRESS_ZSTD'yi etkinleştirin ya da linux-firmware'i sıkıştırmasız kurun (Gentoo: USE=-compress-zstd).</translation>
+        </message>
+        <message>
+            <source>Firmware files are xz-compressed but the kernel cannot read them</source>
+            <translation>Firmware dosyaları xz ile sıkıştırılmış ama çekirdek bunları okuyamıyor</translation>
+        </message>
+        <message>
+            <source>%1+ .xz files and CONFIG_FW_LOADER_COMPRESS_XZ is not set.</source>
+            <translation>%1+ .xz dosyası var ve CONFIG_FW_LOADER_COMPRESS_XZ ayarlı değil.</translation>
+        </message>
+        <message>
+            <source>Enable CONFIG_FW_LOADER_COMPRESS_XZ, or install the firmware uncompressed.</source>
+            <translation>CONFIG_FW_LOADER_COMPRESS_XZ'yi etkinleştirin ya da firmware'i sıkıştırmasız kurun.</translation>
+        </message>
+        <message>
+            <source>Firmware files the kernel could not load</source>
+            <translation>Çekirdeğin yükleyemediği firmware dosyaları</translation>
+        </message>
+        <message>
+            <source>Last boot</source>
+            <translation>Son açılış</translation>
+        </message>
+        <message>
+            <source>Drivers often try newer or optional files first and fall back without a word; a missing file matters when its device misbehaves.</source>
+            <translation>Sürücüler çoğu zaman önce daha yeni ya da isteğe bağlı dosyaları dener ve sessizce geri düşer; eksik bir dosya, aygıtı sorun çıkardığında önemlidir.</translation>
+        </message>
+        <message>
+            <source>%1 firmware file(s) requested by drivers are not installed</source>
+            <translation>Sürücülerin istediği %1 firmware dosyası kurulu değil</translation>
+        </message>
+        <message>
+            <source>See the table: the requesting driver says which device needs it.</source>
+            <translation>Tabloya bakın: isteyen sürücü hangi aygıtın ihtiyaç duyduğunu söyler.</translation>
+        </message>
+        <message>
+            <source>Devices without a driver</source>
+            <translation>Sürücüsü olmayan aygıtlar</translation>
+        </message>
+        <message>
+            <source>Class</source>
+            <translation>Sınıf</translation>
+        </message>
+        <message>
+            <source>Kernel would match</source>
+            <translation>Çekirdeğin eşleyeceği</translation>
+        </message>
+        <message>
+            <source>The modalias is what a module must declare to claim the device: `modprobe --resolve-alias &lt;modalias&gt;` names one if it is installed.</source>
+            <translation>Modalias, bir modülün aygıtı sahiplenmek için bildirmesi gereken şeydir: kuruluysa `modprobe --resolve-alias &lt;modalias&gt;` birini adlandırır.</translation>
+        </message>
+        <message>
+            <source>%1 PCI device(s) have no driver</source>
+            <translation>%1 PCI aygıtının sürücüsü yok</translation>
+        </message>
+        <message>
+            <source>They do not work until a driver claims them (or they are deliberately unused).</source>
+            <translation>Bir sürücü sahiplenene kadar çalışmazlar (ya da kasıtlı olarak kullanılmıyorlardır).</translation>
+        </message>
+        <message>
+            <source>Every option Centurion relies on is enabled, no firmware is missing, every device has a driver</source>
+            <translation>Centurion'ın dayandığı her seçenek etkin, eksik firmware yok, her aygıtın sürücüsü var</translation>
+        </message>
+        <message>
+            <source>Unknown diagnostic %1</source>
+            <translation>Bilinmeyen tanılama %1</translation>
+        </message>
+        <message>
+            <source>Lenovo GameZone (profiles, GPU, thermal) — used by Centurion</source>
+            <translation>Lenovo GameZone (profiller, GPU, ısı) — Centurion kullanıyor</translation>
+        </message>
+        <message>
+            <source>Lenovo Other Method (power limits) — used by Centurion</source>
+            <translation>Lenovo Other Method (güç sınırları) — Centurion kullanıyor</translation>
+        </message>
+        <message>
+            <source>Lenovo Fan Method (fan tables) — used by Centurion</source>
+            <translation>Lenovo Fan Method (fan tabloları) — Centurion kullanıyor</translation>
+        </message>
+        <message>
+            <source>Lenovo Capability Data 00 — used by Centurion</source>
+            <translation>Lenovo Capability Data 00 — Centurion kullanıyor</translation>
+        </message>
+        <message>
+            <source>Lenovo Capability Data 01</source>
+            <translation>Lenovo Capability Data 01</translation>
+        </message>
+        <message>
+            <source>PCIe error counters (Evidence Lab H03, PCIe Link Lab)</source>
+            <translation>PCIe hata sayaçları (Donanım Kanıt Analizi H03, PCIe Bağlantı Laboratuvarı)</translation>
+        </message>
+        <message>
+            <source>crash records kept across a reboot (Boot history)</source>
+            <translation>yeniden başlatmada korunan çökme kayıtları (Açılış geçmişi)</translation>
+        </message>
+        <message>
+            <source>pstore storage in EFI variables</source>
+            <translation>EFI değişkenlerinde pstore depolaması</translation>
+        </message>
+        <message>
+            <source>readable machine-check decoding (H02, CO Search crash watcher)</source>
+            <translation>okunabilir makine denetimi çözümlemesi (H02, CO Arama çökme izleyicisi)</translation>
+        </message>
+        <message>
+            <source>AMD machine-check threshold counters (CO Search crash watcher)</source>
+            <translation>AMD makine denetimi eşik sayaçları (CO Arama çökme izleyicisi)</translation>
+        </message>
+        <message>
+            <source>hardware sleep residency on AMD (Sleep &amp; wake, H12)</source>
+            <translation>AMD'de donanım uyku süresi (Uyku ve uyanma, H12)</translation>
+        </message>
+        <message>
+            <source>suspend and its counters (H12)</source>
+            <translation>uyku ve sayaçları (H12)</translation>
+        </message>
+        <message>
+            <source>memory pressure (S10)</source>
+            <translation>bellek baskısı (S10)</translation>
+        </message>
+        <message>
+            <source>platform power profiles</source>
+            <translation>platform güç profilleri</translation>
+        </message>
+        <message>
+            <source>Lenovo WMI controls (fans, power limits, battery info)</source>
+            <translation>Lenovo WMI denetimleri (fanlar, güç sınırları, pil bilgisi)</translation>
+        </message>
+        <message>
+            <source>amd-pstate CPU frequency driver</source>
+            <translation>amd-pstate CPU frekans sürücüsü</translation>
+        </message>
+        <message>
+            <source>package power readings (flight recorder, Power Limit map)</source>
+            <translation>paket güç okumaları (uçuş kaydedicisi, Güç Sınırı haritası)</translation>
+        </message>
+        <message>
+            <source>NVMe temperatures in hwmon</source>
+            <translation>hwmon'da NVMe sıcaklıkları</translation>
+        </message>
+        <message>
+            <source>USB-C PD details (S13)</source>
+            <translation>USB-C PD ayrıntıları (S13)</translation>
+        </message>
+        <message>
+            <source>Network protection's per-program guard (nftables queue)</source>
+            <translation>Ağ korumasının program başına koruyucusu (nftables kuyruğu)</translation>
+        </message>
+        <message>
+            <source>Network protection's per-program guard (netlink queue)</source>
+            <translation>Ağ korumasının program başına koruyucusu (netlink kuyruğu)</translation>
+        </message>
+        <message>
+            <source>compressed swap in RAM</source>
+            <translation>RAM'de sıkıştırılmış takas</translation>
+        </message>
+        <message>
+            <source>F2FS file systems (H05)</source>
+            <translation>F2FS dosya sistemleri (H05)</translation>
+        </message>
+        <message>
+            <source>Not in this kernel's configuration: %1</source>
+            <translation>Bu çekirdeğin yapılandırmasında yok: %1</translation>
+        </message>
+        <message>
+            <source>An option missing from the config is usually unavailable because an option it depends on is off; a few have other names in some kernel versions.</source>
+            <translation>Yapılandırmada bulunmayan bir seçenek genellikle bağlı olduğu bir seçenek kapalı olduğu için kullanılamaz; birkaçının bazı çekirdek sürümlerinde başka adı vardır.</translation>
+        </message>
+    </context>
+    <context>
+        <name>diagnostictools</name>
+        <message>
+            <source>No baseline saved yet.</source>
+            <translation>Henüz temel durum kaydedilmedi.</translation>
+        </message>
+        <message>
+            <source>The saved baseline is unreadable or from an unknown version.</source>
+            <translation>Kayıtlı temel durum okunamıyor ya da bilinmeyen bir sürümden.</translation>
+        </message>
+        <message>
+            <source>Hardware snapshot</source>
+            <translation>Donanım anlık görüntüsü</translation>
+        </message>
+        <message>
+            <source>Compares the PCI devices, their drivers, loaded modules, kernel, BIOS, microcode and boot parameters with a baseline you saved, grouped by what changed.</source>
+            <translation>PCI aygıtlarını, sürücülerini, yüklü modülleri, çekirdeği, BIOS'u, mikrokodu ve açılış parametrelerini kaydettiğiniz temel durumla karşılaştırır, nelerin değiştiğine göre gruplar.</translation>
+        </message>
+        <message>
+            <source>A device that is powered off in hybrid graphics mode, or disabled in the BIOS, disappears from the PCI bus; that is not a fault by itself.</source>
+            <translation>Hibrit grafik modunda kapatılan ya da BIOS'ta devre dışı bırakılan bir aygıt PCI veriyolundan kaybolur; bu tek başına arıza değildir.</translation>
+        </message>
+        <message>
+            <source>Boot parameter values are compared only for hardware settings; others are kept by name.</source>
+            <translation>Açılış parametrelerinin değerleri yalnızca donanım ayarları için karşılaştırılır; diğerlerinin yalnızca adı tutulur.</translation>
+        </message>
+        <message>
+            <source>No baseline saved yet</source>
+            <translation>Henüz temel durum kaydedilmedi</translation>
+        </message>
+        <message>
+            <source>This machine has %1 PCI devices and %2 loaded modules now.</source>
+            <translation>Bu makinede şu an %1 PCI aygıtı ve %2 yüklü modül var.</translation>
+        </message>
+        <message>
+            <source>Press Save baseline while everything works; later, Compare shows exactly what changed.</source>
+            <translation>Her şey çalışırken Temel durumu kaydet'e basın; sonra Karşılaştır tam olarak neyin değiştiğini gösterir.</translation>
+        </message>
+        <message>
+            <source>System</source>
+            <translation>Sistem</translation>
+        </message>
+        <message>
+            <source>Item</source>
+            <translation>Öğe</translation>
+        </message>
+        <message>
+            <source>Baseline</source>
+            <translation>Temel durum</translation>
+        </message>
+        <message>
+            <source>Now</source>
+            <translation>Şimdi</translation>
+        </message>
+        <message>
+            <source>Kernel</source>
+            <translation>Çekirdek</translation>
+        </message>
+        <message>
+            <source>BIOS</source>
+            <translation>BIOS</translation>
+        </message>
+        <message>
+            <source>BIOS date</source>
+            <translation>BIOS tarihi</translation>
+        </message>
+        <message>
+            <source>CPU microcode</source>
+            <translation>CPU mikrokodu</translation>
+        </message>
+        <message>
+            <source>Boot parameters</source>
+            <translation>Açılış parametreleri</translation>
+        </message>
+        <message>
+            <source>%1 changed</source>
+            <translation>%1 değişti</translation>
+        </message>
+        <message>
+            <source>PCI device changes</source>
+            <translation>PCI aygıt değişiklikleri</translation>
+        </message>
+        <message>
+            <source>Address</source>
+            <translation>Adres</translation>
+        </message>
+        <message>
+            <source>Device</source>
+            <translation>Aygıt</translation>
+        </message>
+        <message>
+            <source>Change</source>
+            <translation>Değişiklik</translation>
+        </message>
+        <message>
+            <source>gone</source>
+            <translation>yok oldu</translation>
+        </message>
+        <message>
+            <source>%1 is no longer on the PCI bus (%2)</source>
+            <translation>%1 artık PCI veriyolunda değil (%2)</translation>
+        </message>
+        <message>
+            <source>Removed, disabled in the BIOS, powered off by a graphics-mode switch, or failed to come up.</source>
+            <translation>Çıkarılmış, BIOS'ta kapatılmış, grafik modu değişimiyle kapatılmış ya da başlatılamamış.</translation>
+        </message>
+        <message>
+            <source>If it should be there: cold boot, then check the BIOS and Events &amp; alerts.</source>
+            <translation>Orada olması gerekiyorsa: soğuk açılış yapın, sonra BIOS'u ve Olaylar ve uyarılar'ı kontrol edin.</translation>
+        </message>
+        <message>
+            <source>new</source>
+            <translation>yeni</translation>
+        </message>
+        <message>
+            <source>other device at this address</source>
+            <translation>bu adreste başka bir aygıt</translation>
+        </message>
+        <message>
+            <source>driver</source>
+            <translation>sürücü</translation>
+        </message>
+        <message>
+            <source>none</source>
+            <translation>yok</translation>
+        </message>
+        <message>
+            <source>%1 lost its driver (%2 before)</source>
+            <translation>%1 sürücüsünü kaybetti (önceden %2)</translation>
+        </message>
+        <message>
+            <source>The device is present but nothing drives it now.</source>
+            <translation>Aygıt duruyor ama artık onu süren bir şey yok.</translation>
+        </message>
+        <message>
+            <source>A module that failed to build or load after a kernel update is the usual cause (S18).</source>
+            <translation>Çekirdek güncellemesinden sonra derlenemeyen ya da yüklenemeyen bir modül olağan nedendir (S18).</translation>
+        </message>
+        <message>
+            <source>capability</source>
+            <translation>yetenek</translation>
+        </message>
+        <message>
+            <source>Module changes</source>
+            <translation>Modül değişiklikleri</translation>
+        </message>
+        <message>
+            <source>Module</source>
+            <translation>Modül</translation>
+        </message>
+        <message>
+            <source>loaded now</source>
+            <translation>şimdi yüklü</translation>
+        </message>
+        <message>
+            <source>not loaded now</source>
+            <translation>şimdi yüklü değil</translation>
+        </message>
+        <message>
+            <source>version</source>
+            <translation>sürüm</translation>
+        </message>
+        <message>
+            <source>Modules load on demand (a USB stick, a VPN); a module not loaded now is not necessarily missing.</source>
+            <translation>Modüller ihtiyaç oldukça yüklenir (bir USB bellek, bir VPN); şu an yüklü olmayan bir modül eksik demek değildir.</translation>
+        </message>
+        <message>
+            <source>Nothing changed since the baseline of %1</source>
+            <translation>%1 tarihli temel durumdan bu yana hiçbir şey değişmedi</translation>
+        </message>
+        <message>
+            <source>No device disappeared or lost its driver since %1</source>
+            <translation>%1 tarihinden bu yana hiçbir aygıt kaybolmadı ya da sürücüsünü yitirmedi</translation>
+        </message>
+        <message>
+            <source>%1 PCI and %2 module difference(s) listed.</source>
+            <translation>%1 PCI ve %2 modül farkı listelendi.</translation>
+        </message>
+        <message>
+            <source>Displays / EDID / VRR</source>
+            <translation>Ekranlar / EDID / VRR</translation>
+        </message>
+        <message>
+            <source>Every connected display as the kernel sees it: its identity, the modes its EDID declares, and the refresh range it offers for variable refresh (FreeSync / Adaptive-Sync / HDMI VRR). The EDID is only read.</source>
+            <translation>Bağlı her ekran, çekirdeğin gördüğü haliyle: kimliği, EDID'inin bildirdiği modlar ve değişken yenileme için sunduğu aralık (FreeSync / Adaptive-Sync / HDMI VRR). EDID yalnızca okunur.</translation>
+        </message>
+        <message>
+            <source>Whether VRR is actually on depends on the compositor and driver (KDE: Display settings → Adaptive sync); the EDID says what the display supports.</source>
+            <translation>VRR'nin gerçekten açık olup olmadığı birleştiriciye ve sürücüye bağlıdır (KDE: Ekran ayarları → Uyarlanabilir eşitleme); EDID ekranın neyi desteklediğini söyler.</translation>
+        </message>
+        <message>
+            <source>An EDID can be overridden by the kernel (drm.edid_firmware); the one shown is what the driver uses.</source>
+            <translation>EDID çekirdek tarafından geçersiz kılınabilir (drm.edid_firmware); gösterilen, sürücünün kullandığıdır.</translation>
+        </message>
+        <message>
+            <source>Connected displays</source>
+            <translation>Bağlı ekranlar</translation>
+        </message>
+        <message>
+            <source>Connector</source>
+            <translation>Bağlantı noktası</translation>
+        </message>
+        <message>
+            <source>Display</source>
+            <translation>Ekran</translation>
+        </message>
+        <message>
+            <source>Year</source>
+            <translation>Yıl</translation>
+        </message>
+        <message>
+            <source>Preferred mode</source>
+            <translation>Tercih edilen mod</translation>
+        </message>
+        <message>
+            <source>Refresh range</source>
+            <translation>Yenileme aralığı</translation>
+        </message>
+        <message>
+            <source>VRR range</source>
+            <translation>VRR aralığı</translation>
+        </message>
+        <message>
+            <source>EDID</source>
+            <translation>EDID</translation>
+        </message>
+        <message>
+            <source>(no EDID)</source>
+            <translation>(EDID yok)</translation>
+        </message>
+        <message>
+            <source>missing</source>
+            <translation>eksik</translation>
+        </message>
+        <message>
+            <source>%1 is connected but gives no EDID</source>
+            <translation>%1 bağlı ama EDID vermiyor</translation>
+        </message>
+        <message>
+            <source>The driver falls back to safe modes; a cable or adapter that drops the DDC lines does this.</source>
+            <translation>Sürücü güvenli modlara düşer; DDC hatlarını iletmeyen bir kablo ya da dönüştürücü buna yol açar.</translation>
+        </message>
+        <message>
+            <source>damaged</source>
+            <translation>bozuk</translation>
+        </message>
+        <message>
+            <source>valid, %1 block(s)</source>
+            <translation>geçerli, %1 blok</translation>
+        </message>
+        <message>
+            <source>%1: the EDID is damaged</source>
+            <translation>%1: EDID bozuk</translation>
+        </message>
+        <message>
+            <source>Its header is wrong.</source>
+            <translation>Başlığı hatalı.</translation>
+        </message>
+        <message>
+            <source>It declares %1 blocks but %2 were read.</source>
+            <translation>%1 blok bildiriyor ama %2 blok okundu.</translation>
+        </message>
+        <message>
+            <source>Checksum wrong in block %1.</source>
+            <translation>%1 numaralı blokta sağlama toplamı hatalı.</translation>
+        </message>
+        <message>
+            <source>Wrong or missing modes and no VRR follow from this. Try another cable / port; a persistent fault can be worked around with drm.edid_firmware.</source>
+            <translation>Yanlış ya da eksik modlar ve VRR'nin olmaması bunun sonucudur. Başka bir kablo / bağlantı noktası deneyin; kalıcı bir arıza drm.edid_firmware ile aşılabilir.</translation>
+        </message>
+        <message>
+            <source>%1 supports variable refresh %2–%3 Hz (%4)</source>
+            <translation>%1 değişken yenilemeyi destekliyor: %2–%3 Hz (%4)</translation>
+        </message>
+        <message>
+            <source>The range is narrower than 2:1, so low frame-rate compensation (frame doubling) cannot work below %1 Hz.</source>
+            <translation>Aralık 2:1'den dar, bu yüzden düşük kare hızı telafisi (kare ikileme) %1 Hz'in altında çalışamaz.</translation>
+        </message>
+        <message>
+            <source>The range is wide enough for low frame-rate compensation.</source>
+            <translation>Aralık düşük kare hızı telafisi için yeterince geniş.</translation>
+        </message>
+        <message>
+            <source>%1 declares a %2–%3 Hz refresh range</source>
+            <translation>%1, %2–%3 Hz yenileme aralığı bildiriyor</translation>
+        </message>
+        <message>
+            <source>Laptop panels and DisplayPort monitors announce Adaptive-Sync this way (or in a DisplayID block); it is the range VRR can use when the driver enables it.</source>
+            <translation>Dizüstü panelleri ve DisplayPort monitörleri Adaptive-Sync'i böyle (ya da bir DisplayID bloğunda) duyurur; sürücü etkinleştirdiğinde VRR'nin kullanabileceği aralıktır.</translation>
+        </message>
+        <message>
+            <source>No connected display found under /sys/class/drm</source>
+            <translation>/sys/class/drm altında bağlı ekran bulunamadı</translation>
+        </message>
+        <message>
+            <source>%1 display(s) with a valid EDID</source>
+            <translation>Geçerli EDID'e sahip %1 ekran</translation>
+        </message>
+        <message>
+            <source>NVIDIA module parameters</source>
+            <translation>NVIDIA modül parametreleri</translation>
+        </message>
+        <message>
+            <source>The NVIDIA driver options configured in modprobe.d and on the kernel command line, against the values the loaded driver runs with, with what the important ones do. The GPU is not woken.</source>
+            <translation>modprobe.d'de ve çekirdek komut satırında yapılandırılmış NVIDIA sürücü seçenekleri, yüklü sürücünün çalıştığı değerlerle karşılaştırmalı ve önemli olanların ne yaptığıyla. GPU uyandırılmaz.</translation>
+        </message>
+        <message>
+            <source>A changed option takes effect only when the module loads again (reboot). If the NVIDIA modules are in the initramfs, it carries its own copy of modprobe.d.</source>
+            <translation>Değiştirilen bir seçenek yalnızca modül yeniden yüklendiğinde (yeniden başlatma) etkili olur. NVIDIA modülleri initramfs içindeyse, initramfs kendi modprobe.d kopyasını taşır.</translation>
+        </message>
+        <message>
+            <source>Parameters</source>
+            <translation>Parametreler</translation>
+        </message>
+        <message>
+            <source>Parameter</source>
+            <translation>Parametre</translation>
+        </message>
+        <message>
+            <source>Configured</source>
+            <translation>Yapılandırılan</translation>
+        </message>
+        <message>
+            <source>Source</source>
+            <translation>Kaynak</translation>
+        </message>
+        <message>
+            <source>In effect</source>
+            <translation>Etkin</translation>
+        </message>
+        <message>
+            <source>Meaning</source>
+            <translation>Anlamı</translation>
+        </message>
+        <message>
+            <source>%1 is configured as %2 but the driver runs with %3</source>
+            <translation>%1, %2 olarak yapılandırılmış ama sürücü %3 ile çalışıyor</translation>
+        </message>
+        <message>
+            <source>Set in %1; the module has not been loaded with it.</source>
+            <translation>%1 içinde ayarlanmış; modül bu değerle yüklenmemiş.</translation>
+        </message>
+        <message>
+            <source>Reboot. With the NVIDIA modules in the initramfs (dracut), regenerate it first.</source>
+            <translation>Yeniden başlatın. NVIDIA modülleri initramfs içindeyse (dracut), önce onu yeniden oluşturun.</translation>
+        </message>
+        <message>
+            <source>not exposed</source>
+            <translation>sunulmuyor</translation>
+        </message>
+        <message>
+            <source>module not loaded</source>
+            <translation>modül yüklü değil</translation>
+        </message>
+        <message>
+            <source>The NVIDIA module is not loaded</source>
+            <translation>NVIDIA modülü yüklü değil</translation>
+        </message>
+        <message>
+            <source>Only the configuration can be shown.</source>
+            <translation>Yalnızca yapılandırma gösterilebilir.</translation>
+        </message>
+        <message>
+            <source>Wayland session with nvidia_drm.modeset off</source>
+            <translation>Wayland oturumu ve nvidia_drm.modeset kapalı</translation>
+        </message>
+        <message>
+            <source>Without kernel mode setting the compositor cannot use the NVIDIA GPU for displays.</source>
+            <translation>Çekirdek mod ayarı olmadan birleştirici ekranlar için NVIDIA GPU'yu kullanamaz.</translation>
+        </message>
+        <message>
+            <source>Add nvidia_drm.modeset=1 to the kernel command line (or options nvidia_drm modeset=1) and reboot.</source>
+            <translation>Çekirdek komut satırına nvidia_drm.modeset=1 ekleyin (ya da options nvidia_drm modeset=1) ve yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>Video memory preservation is on, but no NVIDIA sleep hook was found</source>
+            <translation>Video belleği koruma açık ama NVIDIA uyku kancası bulunamadı</translation>
+        </message>
+        <message>
+            <source>With PreserveVideoMemoryAllocations=1 the driver expects nvidia-sleep.sh to run around every suspend; without it, resume can leave a black screen or a crashed desktop.</source>
+            <translation>PreserveVideoMemoryAllocations=1 ile sürücü her uykuda nvidia-sleep.sh'nin çalışmasını bekler; çalışmazsa uyanınca siyah ekran ya da çökmüş masaüstü kalabilir.</translation>
+        </message>
+        <message>
+            <source>On OpenRC + elogind: add an elogind system-sleep hook that runs nvidia-sleep.sh suspend / resume, or set NVreg_UseKernelSuspendNotifiers=1 on drivers that support it.</source>
+            <translation>OpenRC + elogind'de: nvidia-sleep.sh suspend / resume çalıştıran bir elogind system-sleep kancası ekleyin ya da destekleyen sürücülerde NVreg_UseKernelSuspendNotifiers=1 ayarlayın.</translation>
+        </message>
+        <message>
+            <source>Every configured option is in effect</source>
+            <translation>Yapılandırılan her seçenek etkin</translation>
+        </message>
+        <message>
+            <source>kernel mode setting — required for Wayland</source>
+            <translation>çekirdek mod ayarı — Wayland için gerekli</translation>
+        </message>
+        <message>
+            <source>NVIDIA's own console framebuffer</source>
+            <translation>NVIDIA'nın kendi konsol framebuffer'ı</translation>
+        </message>
+        <message>
+            <source>runtime power-off: 0 never, 1 coarse, 2 fine-grained, 3 automatic</source>
+            <translation>çalışırken kapatma: 0 asla, 1 kaba, 2 ince taneli, 3 otomatik</translation>
+        </message>
+        <message>
+            <source>keep video memory over suspend (needs the nvidia-sleep hooks)</source>
+            <translation>uykuda video belleğini koru (nvidia-sleep kancaları gerekir)</translation>
+        </message>
+        <message>
+            <source>let the GPU power off during s2idle sleep</source>
+            <translation>s2idle uykusunda GPU'nun kapanmasına izin ver</translation>
+        </message>
+        <message>
+            <source>GSP firmware (always on with the open kernel module)</source>
+            <translation>GSP firmware (açık çekirdek modülünde her zaman açık)</translation>
+        </message>
+        <message>
+            <source>PAT memory typing</source>
+            <translation>PAT bellek türlemesi</translation>
+        </message>
+        <message>
+            <source>where video memory is saved on suspend</source>
+            <translation>uykuda video belleğinin kaydedildiği yer</translation>
+        </message>
+    </context>
+    <context>
+        <name>DiagReportView</name>
+        <message>
+            <source>Copy report</source>
+            <translation>Raporu kopyala</translation>
+        </message>
+        <message>
+            <source>Save report…</source>
+            <translation>Raporu kaydet…</translation>
+        </message>
+        <message>
+            <source>Save report</source>
+            <translation>Raporu kaydet</translation>
+        </message>
+        <message>
+            <source>Text files (*.txt)</source>
+            <translation>Metin dosyaları (*.txt)</translation>
+        </message>
+        <message>
+            <source>Could not save %1: %2</source>
+            <translation>%1 kaydedilemedi: %2</translation>
+        </message>
+        <message>
+            <source>Limits of this check:</source>
+            <translation>Bu denetimin sınırları:</translation>
+        </message>
+        <message>
+            <source>Show technical details</source>
+            <translation>Teknik ayrıntıları göster</translation>
+        </message>
+        <message>
+            <source>Hide technical details</source>
+            <translation>Teknik ayrıntıları gizle</translation>
+        </message>
+    </context>
+    <context>
+        <name>AdvancedHealthPage</name>
+        <message>
+            <source>Investigations read what Centurion already records (boot history, saved kernel logs, sleep log, CO Search records) and say what it means. Nothing runs until you press Run; no hardware setting is changed.</source>
+            <translation>İncelemeler, Centurion'ın zaten tuttuğu kayıtları (açılış geçmişi, kaydedilen çekirdek günlükleri, uyku günlüğü, CO Arama kayıtları) okur ve ne anlama geldiklerini söyler. Çalıştır'a basmadan hiçbir şey çalışmaz; hiçbir donanım ayarı değiştirilmez.</translation>
+        </message>
+        <message>
+            <source>What is going wrong? Triage runs the checks that fit and collects what needs a look.</source>
+            <translation>Ne ters gidiyor? Triyaj uygun denetimleri çalıştırır ve bakılması gerekenleri toplar.</translation>
+        </message>
+        <message>
+            <source>Run</source>
+            <translation>Çalıştır</translation>
+        </message>
+        <message>
+            <source>Query ECC (wakes the GPU)</source>
+            <translation>ECC'yi sorgula (GPU'yu uyandırır)</translation>
+        </message>
+        <message>
+            <source>Runs nvidia-smi -q -d ECC,ROW_REMAPPER,PAGE_RETIREMENT. A sleeping dGPU is woken for it.</source>
+            <translation>nvidia-smi -q -d ECC,ROW_REMAPPER,PAGE_RETIREMENT çalıştırır. Uyuyan dGPU bunun için uyandırılır.</translation>
+        </message>
+        <message>
+            <source>Open incidents</source>
+            <translation>Açık olaylar</translation>
+        </message>
+        <message>
+            <source>All incidents</source>
+            <translation>Tüm olaylar</translation>
+        </message>
+        <message>
+            <source>Show:</source>
+            <translation>Göster:</translation>
+        </message>
+        <message>
+            <source>When</source>
+            <translation>Zaman</translation>
+        </message>
+        <message>
+            <source>Kind</source>
+            <translation>Tür</translation>
+        </message>
+        <message>
+            <source>Event</source>
+            <translation>Olay</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>Status:</source>
+            <translation>Durum:</translation>
+        </message>
+        <message>
+            <source>Your notes: what you tried, what changed, what happened next (max 2000 characters). Kept privately; the kernel log is not touched.</source>
+            <translation>Notlarınız: ne denediniz, ne değişti, sonra ne oldu (en fazla 2000 karakter). Gizli tutulur; çekirdek günlüğüne dokunulmaz.</translation>
+        </message>
+        <message>
+            <source>Save note</source>
+            <translation>Notu kaydet</translation>
+        </message>
+        <message>
+            <source>Reload</source>
+            <translation>Yeniden yükle</translation>
+        </message>
+        <message>
+            <source>Pick what is going wrong and press Run.</source>
+            <translation>Ne ters gittiğini seçip Çalıştır'a basın.</translation>
+        </message>
+        <message>
+            <source>Press Run to read the sources of this investigation.</source>
+            <translation>Bu incelemenin kaynaklarını okumak için Çalıştır'a basın.</translation>
+        </message>
+        <message>
+            <source>Reading…</source>
+            <translation>Okunuyor…</translation>
+        </message>
+        <message>
+            <source>Reading %1 through health-reader (read-only)…</source>
+            <translation>%1, health-reader üzerinden okunuyor (salt okunur)…</translation>
+        </message>
+        <message>
+            <source>Not available: %1. The report says Unknown where that data was needed.</source>
+            <translation>Okunamadı: %1. Rapor, bu verinin gerektiği yerlerde Bilinmiyor diyor.</translation>
+        </message>
+        <message>
+            <source>nvidia-smi is not installed.</source>
+            <translation>nvidia-smi kurulu değil.</translation>
+        </message>
+        <message>
+            <source>Asking the driver (this wakes the GPU)…</source>
+            <translation>Sürücüye soruluyor (GPU uyanır)…</translation>
+        </message>
+        <message>
+            <source>nvidia-smi failed or timed out; ECC state unknown.</source>
+            <translation>nvidia-smi başarısız oldu ya da zaman aşımına uğradı; ECC durumu bilinmiyor.</translation>
+        </message>
+        <message>
+            <source>No classified event is saved yet (Health → Events &amp; alerts records them while Centurion runs).</source>
+            <translation>Henüz kaydedilmiş sınıflandırılmış olay yok (Sağlık → Olaylar ve uyarılar, Centurion çalışırken bunları kaydeder).</translation>
+        </message>
+        <message>
+            <source>%1 saved event(s), newest first.</source>
+            <translation>%1 kayıtlı olay, en yenisi üstte.</translation>
+        </message>
+        <message>
+            <source>Select an event.</source>
+            <translation>Bir olay seçin.</translation>
+        </message>
+        <message>
+            <source>Note saved.</source>
+            <translation>Not kaydedildi.</translation>
+        </message>
+        <message>
+            <source>Not saved: %1</source>
+            <translation>Kaydedilmedi: %1</translation>
+        </message>
+        <message>
+            <source>Guided triage: start here</source>
+            <translation>Rehberli triyaj: buradan başlayın</translation>
+        </message>
+        <message>
+            <source>Boot Regression Detective</source>
+            <translation>Açılış Regresyon Dedektifi</translation>
+        </message>
+        <message>
+            <source>NVMe Deep Health</source>
+            <translation>NVMe Derin Sağlık</translation>
+        </message>
+        <message>
+            <source>USB Stability Watch</source>
+            <translation>USB Kararlılık İzleyicisi</translation>
+        </message>
+        <message>
+            <source>Sleep / Resume Failure Matrix</source>
+            <translation>Uyku / Uyanma Hata Matrisi</translation>
+        </message>
+        <message>
+            <source>CO Evidence Cross-Link</source>
+            <translation>CO Kanıt Bağlantısı</translation>
+        </message>
+        <message>
+            <source>Pre-crash Coverage Inspector</source>
+            <translation>Çökme Öncesi Kapsam Denetçisi</translation>
+        </message>
+        <message>
+            <source>GPU Memory Reliability</source>
+            <translation>GPU Bellek Güvenilirliği</translation>
+        </message>
+        <message>
+            <source>Incident notebook</source>
+            <translation>Olay defteri</translation>
+        </message>
+        <message>
+            <source>New</source>
+            <translation>Yeni</translation>
+        </message>
+        <message>
+            <source>Investigating</source>
+            <translation>İnceleniyor</translation>
+        </message>
+        <message>
+            <source>Monitoring</source>
+            <translation>İzleniyor</translation>
+        </message>
+        <message>
+            <source>Resolved</source>
+            <translation>Çözüldü</translation>
+        </message>
+        <message>
+            <source>Reopened</source>
+            <translation>Yeniden açıldı</translation>
         </message>
     </context>
 </TS>

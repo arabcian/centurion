@@ -7,6 +7,11 @@
 STATE=/run/centurion/sleep-pre
 LOG=/var/log/centurion/sleep.log
 MAX=262144
+# On disk (survives a hang): "<boot_id> <time> <kind>" from the pre hook until the post hook. Still there
+# in a later boot = that boot went to sleep and never resumed (hang or power loss while asleep or waking).
+# The next pre hook moves it to FAILED, one JSON line per such boot, for Health → Investigations.
+INFLIGHT=/var/lib/centurion/sleep-inflight
+FAILED=/var/log/centurion/sleep-failed.log
 
 rd() { [ -r "$1" ] && head -c 256 "$1" 2>/dev/null | tr -d '\n"\\' ; }
 
@@ -39,16 +44,27 @@ wakecounts() {
 	done
 }
 
-mkdir -p /run/centurion /var/log/centurion 2>/dev/null
+mkdir -p /run/centurion /var/log/centurion /var/lib/centurion 2>/dev/null
+BOOT=$(rd /proc/sys/kernel/random/boot_id)
 
 case "$1" in
 pre)
+	if [ -r "$INFLIGHT" ]; then
+		set -- "$1" "$2" $(head -c 200 "$INFLIGHT" | tr -cd '0-9a-z_ -')
+		if [ -n "$3" ] && [ "$3" != "$BOOT" ]; then
+			[ -f "$FAILED" ] && [ "$(wc -c < "$FAILED")" -gt 65536 ] && { tail -n 200 "$FAILED" > "$FAILED.tmp" && mv -f "$FAILED.tmp" "$FAILED"; }
+			printf '{"boot":"%s","start":%s,"kind":"%s"}\n' "$3" "${4:-0}" "${5:-}" >> "$FAILED" 2>/dev/null
+			chmod 0644 "$FAILED" 2>/dev/null
+		fi
+	fi
+	printf '%s %s %s\n' "$BOOT" "$(date +%s)" "$2" > "$INFLIGHT" 2>/dev/null
 	{
 		printf '%s\n' "$(date +%s)" "$2" "$(bat)" "$(dgpu)" "$(sed -n 's/.*\[\(.*\)\].*/\1/p' /sys/power/mem_sleep 2>/dev/null)"
 		wakecounts
 	} > "$STATE.tmp" 2>/dev/null && mv -f "$STATE.tmp" "$STATE"
 	;;
 post)
+	rm -f "$INFLIGHT"
 	[ -r "$STATE" ] || exit 0
 	t0=$(sed -n 1p "$STATE"); kind=$(sed -n 2p "$STATE"); b0=$(sed -n 3p "$STATE"); g0=$(sed -n 4p "$STATE"); mode=$(sed -n 5p "$STATE")
 	t1=$(date +%s); b1=$(bat); g1=$(dgpu)

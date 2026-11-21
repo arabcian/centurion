@@ -299,11 +299,12 @@ pub fn klog(since: u64) -> Value {
 
 /// Parse Linux AER sysfs lines such as "TOTAL_ERR_COR: 14" exactly.
 /// Missing, malformed, or overflowing values are UNKNOWN, never silently zero.
+/// The kernel prints "TOTAL_ERR_COR 14" (drivers/pci/pcie/aer.c: "TOTAL_%s %llu"); a colon is accepted too.
 fn aer_total(text: &str, key: &str) -> Option<u64> {
     text.lines().find_map(|line| {
-        let (label, value) = line.split_once(':')?;
-        if label.trim() != key { return None; }
-        value.trim().parse::<u64>().ok()
+        let rest = line.trim().strip_prefix(key)?;
+        if !rest.starts_with([' ', ':', '\t']) { return None; }
+        rest.trim_start_matches([' ', ':', '\t']).trim().parse::<u64>().ok()
     })
 }
 
@@ -353,7 +354,11 @@ pub fn scan(since: u64) -> Value {
 mod tests {
     use super::*;
     #[test]
-    fn aer_sysfs_colon_format_and_unknowns() {
+    fn aer_sysfs_format_and_unknowns() {
+        // As the kernel prints it: "%s %llu" per error, then "TOTAL_%s %llu".
+        let real = "RxErr 0\nBadTLP 3\nBadDLLP 0\nRollover 0\nTimeout 0\nNonFatalErr 0\nCorrIntErr 0\nHeaderOF 0\nTOTAL_ERR_COR 3\n";
+        assert_eq!(aer_total(real, "TOTAL_ERR_COR"), Some(3));
+        assert_eq!(aer_total("TOTAL_ERR_CORX 5\n", "TOTAL_ERR_COR"), None);
         let cor = "Receiver Error 2\nBad TLP 1\nTOTAL_ERR_COR: 14\n";
         assert_eq!(aer_total(cor, "TOTAL_ERR_COR"), Some(14));
         assert_eq!(aer_total("TOTAL_ERR_FATAL: 0\n", "TOTAL_ERR_FATAL"), Some(0));

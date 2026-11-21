@@ -59,7 +59,7 @@ fn curve_states(journal: &[(String, String, String)], boot: &str) -> Value {
 }
 
 /// {"ok", "current", "boots": [newest first], "previous_unclean": {"boot","end"}|null, "pstore": {"available", "entries"}}.
-/// boot: {"boot", "start", "end"?, "duration"?, "state", "events": {kind:level: n}, "event_total", "curves": {kind: states}, "pstore": [entry indexes]}
+/// boot: {"boot", "start", "end"?, "duration"?, "state", "events": {kind:level: n}, "event_total", "curves": {kind: states}, "pstore": [entry indexes], "versions"?: {kernel, bios, microcode, nvidia}}
 /// (`load` adds "flight": [samples] to the previous boot, see `attach_flight`).
 /// Every pstore entry gains "boot" (the unclean boot it was attributed to) when there is one.
 pub fn build(exposure: &Value, journal: &str, current: &str, now: u64, pstore: &Value) -> Value {
@@ -87,6 +87,7 @@ pub fn build(exposure: &Value, journal: &str, current: &str, now: u64, pstore: &
         let total: u64 = events.values().filter_map(Value::as_u64).sum();
         let mut o = json!({"boot": id, "start": start, "state": state, "events": events, "event_total": total,
                            "curves": curve_states(&jl, id), "pstore": []});
+        if b["versions"].is_object() { o["versions"] = b["versions"].clone(); }
         if let Some(e) = end { o["end"] = json!(e); o["duration"] = json!(e.saturating_sub(start)); }
         else if state == "running" { o["duration"] = json!(now.saturating_sub(start)); }
         if state == "unclean" {
