@@ -90,16 +90,26 @@ QString aerReport(const QJsonObject &reply) {
         const QJsonObject a = v.toObject();
         const QString dev = a.value(QStringLiteral("dev")).toString();
         currentDevs.insert(dev);
+        const QJsonObject oldDevice = before.value(dev);
+        const bool verifiedIdentity = !oldDevice.value(QStringLiteral("vendor")).toString().isEmpty() &&
+            !oldDevice.value(QStringLiteral("device")).toString().isEmpty() &&
+            !a.value(QStringLiteral("vendor")).toString().isEmpty() &&
+            !a.value(QStringLiteral("device")).toString().isEmpty() &&
+            oldDevice.value(QStringLiteral("vendor"))==a.value(QStringLiteral("vendor")) &&
+            oldDevice.value(QStringLiteral("device"))==a.value(QStringLiteral("device"));
         QStringList counters;
         for (const QString &field : {"cor", "nonfatal", "fatal"}) {
             const QJsonValue count = a.value(field);
             if (!count.isDouble()) { counters << field + QStringLiteral("=Unknown"); continue; }
             const qint64 now = count.toInteger();
             QString value = QString::number(now);
-            if (sameBoot && before.contains(dev) && before.value(dev).value(field).isDouble()) {
-                const qint64 then = before.value(dev).value(field).toInteger();
-                value += (now < then ? QStringLiteral(" (reset/decrease: delta Unknown)") :
-                          QStringLiteral(" (delta +%1)").arg(now - then));
+            if (sameBoot && before.contains(dev)) {
+                if (!verifiedIdentity) value += QStringLiteral(" (endpoint identity changed/unverified; delta Unknown)");
+                else if (oldDevice.value(field).isDouble()) {
+                    const qint64 then = oldDevice.value(field).toInteger();
+                    value += (now < then ? QStringLiteral(" (reset/decrease: delta Unknown)") :
+                              QStringLiteral(" (delta +%1)").arg(now - then));
+                } else value += QStringLiteral(" (previous count unavailable; delta Unknown)");
             } else value += QStringLiteral(" (no previous sample)");
             counters << field + QStringLiteral("=") + value;
         }
@@ -115,12 +125,14 @@ QString aerReport(const QJsonObject &reply) {
         if (QDir().mkpath(QFileInfo(path()).absolutePath())) {
             QSaveFile save(path());
             const QByteArray raw = QJsonDocument(record).toJson(QJsonDocument::Compact);
-            if (save.open(QIODevice::WriteOnly) && raw.size() <= 256*1024 && save.write(raw) == raw.size() && save.commit())
-                QFile::setPermissions(path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-            else lines << QStringLiteral("Warning: last AER sample could not be saved");
+            if (raw.size() > 256*1024 || !save.open(QIODevice::WriteOnly) ||
+                !save.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) ||
+                save.write(raw) != raw.size() || !save.commit())
+                lines << QStringLiteral("Warning: last AER sample could not be saved");
+            else lines << QStringLiteral("AER sample securely saved for next on-demand comparison.");
         } else lines << QStringLiteral("Warning: cannot create AER sample directory");
     }
-    lines << QStringLiteral("\nSample saved only after user pressed Scan. PCIe idle link downclocking is normal.");
+    lines << QStringLiteral("\nSamples are only saved after Scan; PCIe idle link downclocking is normal.");
     return lines.join(QLatin1Char('\n'));
 }
 }  // namespace

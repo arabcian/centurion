@@ -214,6 +214,7 @@ QString saveHardwareBaseline() {
     if (!QDir().mkpath(QFileInfo(filename).absolutePath())) return QStringLiteral("Cannot create baseline directory");
     QSaveFile f(filename);
     if (!f.open(QIODevice::WriteOnly)) return QStringLiteral("Cannot open baseline file: ") + f.errorString();
+    if (!f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) return QStringLiteral("Cannot restrict private baseline permissions");
     QJsonObject o;
     o.insert(QStringLiteral("schema"), 1);
     o.insert(QStringLiteral("captured_at"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
@@ -221,7 +222,6 @@ QString saveHardwareBaseline() {
     const QByteArray raw = QJsonDocument(o).toJson(QJsonDocument::Indented);
     if (raw.size() > 1024*1024 || f.write(raw) != raw.size() || !f.commit())
         return QStringLiteral("Could not write baseline atomically");
-    QFile::setPermissions(filename, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     return QStringLiteral("Baseline saved: %1\nCaptured: %2\nOnly the user-requested inventory snapshot was written.\n")
         .arg(filename, o.value(QStringLiteral("captured_at")).toString());
 }

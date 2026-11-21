@@ -108,9 +108,12 @@ void AdvancedHealthPage::selectIncident() {
     const QString key=event_->currentData().toString();
     output_->setPlainText(key.isEmpty() ? tr("No retained, keyed event available. Run Health > Events & alerts first.") :
                                     advanceddiagnostics::incidentText(key));
-    // Prevent accidentally carrying a previous incident's note to a different one.
-    note_->clear();
-    incidentStatus_->setCurrentIndex(0);
+    // Load this incident's *saved* values instead of resetting them to New/empty.
+    // An unchanged Save must never silently erase an existing investigation.
+    const QJsonObject saved = advanceddiagnostics::incidentNote(key);
+    note_->setPlainText(saved.value(QStringLiteral("note")).toString());
+    const int at = incidentStatus_->findText(saved.value(QStringLiteral("status")).toString(QStringLiteral("New")));
+    incidentStatus_->setCurrentIndex(at >= 0 ? at : 0);
     save_->setEnabled(!key.isEmpty());
 }
 void AdvancedHealthPage::saveNote() {
@@ -137,6 +140,7 @@ void AdvancedHealthPage::showReport(const QString &code, const QJsonObject &boot
     message_->setText(tr("Read-only report finished. Missing data remains Unknown; not a clean-health verdict."));
     busy_=false;
     scan_->setEnabled(true);
+    feature_->setEnabled(true);
 }
 void AdvancedHealthPage::run() {
     if (busy_) return;
@@ -147,13 +151,19 @@ void AdvancedHealthPage::run() {
                      code==QStringLiteral("H16") ? QStringLiteral("diagnostics") : QStringLiteral("boots");
     busy_=true;
     scan_->setEnabled(false);
+    feature_->setEnabled(false); // a late response must not be displayed under a different diagnostic
     message_->setText(tr("Collecting requested read-only evidence…"));
     // Never try to silently fall back to zero events when polkit is denied.
     privileged::run(privileged::helperPath(QStringLiteral("health-reader")),QJsonObject{{"op",op}},this,
         [this,code](const privileged::Result &r) {
             if (!r.ok()) {
+                if (code==QStringLiteral("H16")) {
+                    showReport(code); // sysfs inventory is still readable without privileged kmsg
+                    message_->setText(tr("Kernel events unavailable (%1). Passive PCI inventory only; ECC remains Unknown.").arg(r.message()));
+                    return;
+                }
                 message_->setText(tr("Unavailable (not healthy): %1").arg(r.message()));
-                busy_=false; scan_->setEnabled(true);return;
+                busy_=false; scan_->setEnabled(true);feature_->setEnabled(true);return;
             }
             if (code==QStringLiteral("H13")) {
                 const QJsonObject boots=r.json;
@@ -172,7 +182,7 @@ void AdvancedHealthPage::run() {
             if (code==QStringLiteral("H06")) showReport(code,{}, {},r.json);
             else if (code==QStringLiteral("H16")) showReport(code,{},r.json);
             else showReport(code,r.json);
-        },30000);
+        },code==QStringLiteral("H06") ? 90000 : 30000);
 }
 void AdvancedHealthPage::activeGpuQuery() {
     if (feature_->currentData().toString()!=QStringLiteral("H16") || busy_) return;
@@ -182,12 +192,16 @@ void AdvancedHealthPage::activeGpuQuery() {
     busy_=true;gpuQuery_->setEnabled(false);scan_->setEnabled(false);
     auto *process=new QProcess(this);
     process->setProcessChannelMode(QProcess::MergedChannels);
-    connect(process,&QProcess::finished,this,[this,process](int, QProcess::ExitStatus){
+    connect(process,&QProcess::finished,this,[this,process](int code, QProcess::ExitStatus exitStatus){
+        const bool timedOut=process->property("centurionTimedOut").toBool();
+        const bool success=!timedOut && exitStatus==QProcess::NormalExit && code==0;
         const QString output=QString::fromUtf8(process->readAll().left(8192));
         output_->setPlainText(output_->toPlainText()+QStringLiteral("\n\nACTIVE NVIDIA ECC QUERY (user opted in)\n")+
-            (output.isEmpty() ? QStringLiteral("No supported ECC output; unknown.") : output));
+            (success ? (output.isEmpty() ? QStringLiteral("No ECC output; UNKNOWN.") : output) :
+                QStringLiteral("UNKNOWN: NVIDIA query failed or timed out; any partial output is not a verified ECC reading.")));
         busy_=false;gpuQuery_->setEnabled(true);scan_->setEnabled(true);
-        message_->setText(tr("Active query finished. ECC N/A is not evidence of healthy VRAM."));
+        message_->setText(success ? tr("Active query finished. ECC N/A is not evidence of healthy VRAM.") :
+                                    tr("NVIDIA query failed or timed out; GPU memory status is unknown."));
         process->deleteLater();
     });
     connect(process,&QProcess::errorOccurred,this,[this,process](QProcess::ProcessError e){
@@ -197,7 +211,9 @@ void AdvancedHealthPage::activeGpuQuery() {
         process->deleteLater();
     });
     QPointer<QProcess> guard(process);
-    QTimer::singleShot(5000,process,[guard]{if(guard && guard->state()!=QProcess::NotRunning) guard->kill();});
+    QTimer::singleShot(5000,process,[guard]{if(guard && guard->state()!=QProcess::NotRunning) {
+        guard->setProperty("centurionTimedOut", true); guard->kill();
+    }});
     process->start(exe,{QStringLiteral("--query-gpu=pci.bus_id,ecc.mode.current,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total"),
                          QStringLiteral("--format=csv,noheader")});
 }

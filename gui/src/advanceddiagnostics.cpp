@@ -1,6 +1,7 @@
 #include "advanceddiagnostics.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
 #include <QFileDevice>
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 constexpr qint64 MAX_TEXT = 1024 * 1024;
@@ -52,8 +54,9 @@ QString saveObject(const QString &path, const QJsonObject &v) {
     const QByteArray b = QJsonDocument(v).toJson(QJsonDocument::Compact);
     if (b.size() > MAX_TEXT || !QDir().mkpath(QFileInfo(path).absolutePath())) return QStringLiteral("Could not prepare private data directory");
     QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly) || f.write(b) != b.size() || !f.commit()) return QStringLiteral("Could not write private record atomically");
-    QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (!f.open(QIODevice::WriteOnly)) return QStringLiteral("Could not open private record");
+    if (!f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) ||
+        f.write(b) != b.size() || !f.commit()) return QStringLiteral("Could not write private record atomically");
     return QString();
 }
 QString when(qint64 seconds) {
@@ -132,10 +135,20 @@ QString currentPcie() {
         const QString root = QStringLiteral("/sys/bus/pci/devices/") + name + QLatin1Char('/');
         if (!QFile::exists(root + QStringLiteral("current_link_speed"))) continue;
         QJsonObject row;
-        for (const QString &key : {"current_link_speed", "current_link_width", "max_link_speed", "max_link_width",
-                                    "aer_dev_correctable", "aer_dev_nonfatal", "aer_dev_fatal"}) {
+        for (const QString &key : {"vendor", "device", "current_link_speed", "current_link_width",
+                                    "max_link_speed", "max_link_width"}) {
             const QString v = rd(root + key, 8192);
             if (!v.isEmpty()) row.insert(key, v.left(2048));
+        }
+        const std::pair<const char*,const char*> aerFiles[] = {
+            {"aer_dev_correctable", "TOTAL_ERR_COR"},
+            {"aer_dev_nonfatal", "TOTAL_ERR_NONFATAL"},
+            {"aer_dev_fatal", "TOTAL_ERR_FATAL"}
+        };
+        for (const auto &[file, total] : aerFiles) {
+            const QString v = rd(root + QString::fromLatin1(file), 8192);
+            const QString count = advanceddiagnostics::aerTotal(v, QString::fromLatin1(total));
+            if (!count.isEmpty()) row.insert(QString::fromLatin1(file), count);
         }
         links.insert(name, row);
     }
@@ -187,8 +200,19 @@ QString radioDoctor() {
         lines << QStringLiteral("Bluetooth controller: %1 (HCI registered; firmware state needs logs)").arg(name);
     for (const QString &name : entries(QStringLiteral("/sys/bus/usb/devices"))) {
         const QString b = QStringLiteral("/sys/bus/usb/devices/") + name + QLatin1Char('/');
-        if (rd(b + QStringLiteral("bDeviceClass")) != QStringLiteral("e0")) continue;
-        lines << QStringLiteral("USB wireless %1: vendor=%2 product=%3").arg(name, val(b+QStringLiteral("idVendor")),val(b+QStringLiteral("idProduct")));
+        const QString cls = rd(b + QStringLiteral("bDeviceClass"));
+        if (cls == QStringLiteral("e0")) {
+            lines << QStringLiteral("USB wireless %1: vendor=%2 product=%3").arg(name,val(b+QStringLiteral("idVendor")),val(b+QStringLiteral("idProduct")));
+        } else if (name.contains(QLatin1Char(':')) && rd(b+QStringLiteral("bInterfaceClass"))==QStringLiteral("e0")) {
+            // Many Bluetooth devices identify as a composite USB device (class 00)
+            // with a wireless-controller interface (class e0). Device-level only
+            // scanning silently misses those adapters.
+            const QString parent=name.section(QLatin1Char(':'),0,0);
+            const QString device=QStringLiteral("/sys/bus/usb/devices/")+parent+QLatin1Char('/');
+            lines << QStringLiteral("USB wireless interface %1: subclass=%2 protocol=%3 vendor=%4 product=%5")
+                .arg(name,val(b+QStringLiteral("bInterfaceSubClass")),val(b+QStringLiteral("bInterfaceProtocol")),
+                     val(device+QStringLiteral("idVendor")),val(device+QStringLiteral("idProduct")));
+        }
     }
     lines << QStringLiteral("Requested/missing firmware lines from saved health log (bounded):");
     int found=0;
@@ -317,26 +341,15 @@ QString chargerInspector() {
 }
 QString audioDoctor() {
     QStringList lines = {reportHeader(QStringLiteral("S15"), QStringLiteral("PipeWire Audio Doctor")),
-        QStringLiteral("Passive server metadata only. No restart, routing change, volume change or long-running pw-top.")};
+        QStringLiteral("Read-only server metadata. External status commands are started asynchronously by System Tools; no restart, routing change or pw-top.")};
     lines << QStringLiteral("ALSA cards:\n") + val(QStringLiteral("/proc/asound/cards"));
     lines << QStringLiteral("PipeWire user socket (absence is not proof the service is stopped):");
     QString rt=qEnvironmentVariable("XDG_RUNTIME_DIR");
     if (!rt.startsWith(QLatin1Char('/'))) rt=QStringLiteral("(unknown runtime dir)");
     lines << QStringLiteral("  %1/pipewire-0: %2").arg(rt,QFile::exists(rt+QStringLiteral("/pipewire-0")) ? QStringLiteral("exists") : QStringLiteral("unavailable"));
-    // PipeWire status commands are executed in the user's own session; absolute
-    // paths from QStandardPaths, no shell, bounded output and timeout.
-    const QList<QStringList> cmds = {{QStringLiteral("wpctl"),QStringLiteral("status")},
-                                     {QStringLiteral("pactl"),QStringLiteral("info")}};
-    for (const QStringList &cmd : cmds) {
-        const QString exe = QStandardPaths::findExecutable(cmd.first());
-        if (exe.isEmpty()) { lines << cmd.first() + QStringLiteral(": not installed"); continue; }
-        QProcess p;
-        p.setProcessChannelMode(QProcess::MergedChannels);
-        p.start(exe, cmd.mid(1));
-        if (!p.waitForStarted(1000)) { lines << cmd.first() + QStringLiteral(": unavailable"); continue; }
-        if (!p.waitForFinished(2500)) { p.kill(); p.waitForFinished(1000); lines << cmd.first() + QStringLiteral(": timeout"); continue; }
-        lines << QStringLiteral("$ ") + cmd.join(QLatin1Char(' ')) + QLatin1Char('\n') + QString::fromUtf8(p.readAll().left(12000));
-    }
+    // The ToolPage runs wpctl/pactl as async QProcess steps after this report.
+    // Do not call waitForFinished() from the UI thread here.
+    lines << QStringLiteral("wpctl status and pactl info follow asynchronously where installed.");
     lines << QStringLiteral("Xruns may require an active PipeWire monitor; this passive report does not claim zero xruns.");
     return join(lines);
 }
@@ -351,10 +364,21 @@ QString kernelDependencies() {
         // decompression output; unavailable zcat is not treated as CONFIG=n.
         const QString zcat=QStandardPaths::findExecutable(QStringLiteral("zcat"));
         if (!zcat.isEmpty()) {
-            QProcess p; p.start(zcat,{QStringLiteral("/proc/config.gz")});
+            QProcess p;
+            p.setProcessChannelMode(QProcess::MergedChannels);
+            p.start(zcat,{QStringLiteral("/proc/config.gz")});
             if (p.waitForStarted(1000)) {
-                if (!p.waitForFinished(2500)) {p.kill();p.waitForFinished(1000);}
-                else blob=QString::fromUtf8(p.readAllStandardOutput().left(2 << 20));
+                QElapsedTimer timer; timer.start();
+                QByteArray out;
+                const qsizetype limit=2 << 20;
+                while (p.state()!=QProcess::NotRunning && timer.elapsed()<2500 && out.size()<=limit) {
+                    p.waitForReadyRead(100);
+                    out += p.readAll();  // drain while child is running: no pipe deadlock
+                }
+                out += p.readAll();
+                if (p.state()!=QProcess::NotRunning) { p.kill(); p.waitForFinished(1000); }
+                else if (p.exitStatus()==QProcess::NormalExit && p.exitCode()==0 && out.size()<=limit)
+                    blob=QString::fromUtf8(out);
             }
         }
     }
@@ -429,24 +453,56 @@ QString gpuMemory(const QJsonObject &diag) {
 }
 QString sleepMatrix(const QJsonArray &boots) {
     QStringList lines={reportHeader(QStringLiteral("H12"), QStringLiteral("Sleep/Resume Failure Matrix")),
-        QStringLiteral("Sources: saved bounded kernel.log and boot ledger. Event proximity is NOT proof of a wake blocker.")};
-    int hits=0;
+        QStringLiteral("Sources: retained warning/error kernel.log and Health history; normal successful suspend/resume messages may not be retained."),
+        QStringLiteral("Counts are classified observations grouped by boot, NOT a proven wake-failure rate or causal attribution.")};
+    struct Summary { int sleep=0, failure=0, d3cold=0, usb=0; };
+    QMap<QString,Summary> grouped;
+    const QRegularExpression bootRe(QStringLiteral(R"(boot=([0-9a-fA-F]{8})\s+seq=([0-9]+))"));
+    QSet<QString> seen;
+    QStringList excerpts;
     for (const QString &line : recentLog(500)) {
         const QString l=line.toLower();
-        if (!(l.contains(QStringLiteral("suspend"))||l.contains(QStringLiteral("resume"))||l.contains(QStringLiteral("wakeup"))||
-              l.contains(QStringLiteral("d3cold"))||l.contains(QStringLiteral("pm: suspend"))||
-              (l.contains(QStringLiteral("usb"))&&l.contains(QStringLiteral("reset"))))) continue;
-        if (++hits > 70) break;
-        lines << line.left(350);
+        const bool isUsb=l.contains(QStringLiteral("usb")) && l.contains(QStringLiteral("reset"));
+        const bool isD3=l.contains(QStringLiteral("d3cold"));
+        const bool isSleep=l.contains(QStringLiteral("suspend")) || l.contains(QStringLiteral("resume")) ||
+                           l.contains(QStringLiteral("wakeup")) || l.contains(QStringLiteral("pm: suspend"));
+        if (!isUsb && !isD3 && !isSleep) continue;
+        // Health and kernel log copies of one record share the same stable key.
+        const QRegularExpressionMatch m=bootRe.match(line);
+        const QString key=m.hasMatch() ? m.captured(1).toLower()+QLatin1Char('/')+m.captured(2) : line;
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+        const QString id=m.hasMatch() ? m.captured(1).toLower() : QStringLiteral("unattributed");
+        Summary &count=grouped[id];
+        if (isSleep) ++count.sleep;
+        if (isD3) ++count.d3cold;
+        if (isUsb) ++count.usb;
+        if (l.contains(QStringLiteral("error")) || l.contains(QStringLiteral("failed")) ||
+            l.contains(QStringLiteral("timeout")) || l.contains(QStringLiteral("abort"))) ++count.failure;
+        if (excerpts.size()<50) excerpts << line.left(350);
     }
-    if (!hits) lines << QStringLiteral("No matching saved kernel records (history retention and log permissions limit coverage).");
+    lines << QStringLiteral("\nBoot | sleep/resume mentions | failure hints | D3cold | USB reset | ledger state");
+    QSet<QString> listed;
     for (const QJsonValue &v : boots) {
         const QJsonObject b=v.toObject();
-        if (b.value(QStringLiteral("state"))==QStringLiteral("unclean"))
-            lines << QStringLiteral("Unclean boot %1: not automatically attributed to suspend/resume")
-                .arg(b.value(QStringLiteral("boot")).toString().left(8));
+        const QString id=b.value(QStringLiteral("boot")).toString().left(8).toLower();
+        if (id.isEmpty() || listed.contains(id)) continue;
+        listed.insert(id);
+        const Summary c=grouped.value(id);
+        lines << QStringLiteral("%1 | %2 | %3 | %4 | %5 | %6")
+               .arg(id).arg(c.sleep).arg(c.failure).arg(c.d3cold).arg(c.usb)
+               .arg(b.value(QStringLiteral("state")).toString(QStringLiteral("Unknown")));
     }
-    lines << QStringLiteral("For residency counters and precise platform-specific diagnoses use the existing Sleep Diagnostics page.");
+    for (auto it=grouped.cbegin();it!=grouped.cend();++it) {
+        if (listed.contains(it.key())) continue;
+        const Summary &c=it.value();
+        lines << QStringLiteral("%1 | %2 | %3 | %4 | %5 | no matching boot record")
+               .arg(it.key()).arg(c.sleep).arg(c.failure).arg(c.d3cold).arg(c.usb);
+    }
+    if (grouped.isEmpty()) lines << QStringLiteral("No matching retained events; this does NOT prove successful suspend/resume.");
+    lines << QStringLiteral("\nBounded matching evidence:");
+    lines += excerpts;
+    lines << QStringLiteral("Use existing Sleep Diagnostics for residency and power counters; an unclean boot alone is not a resume failure.");
     return join(lines);
 }
 QString h18Wizard() {
@@ -463,6 +519,17 @@ QString h18Wizard() {
 } // namespace
 
 namespace advanceddiagnostics {
+QString aerTotal(const QString &text, const QString &counter) {
+    // Linux AER sysfs files are multiple human-readable lines, e.g.
+    // "Receiver Error 1\nTOTAL_ERR_COR: 2", not bare integers.
+    const QRegularExpression re(QStringLiteral("(?:^|\\n)\\s*")+QRegularExpression::escape(counter)+
+                                QStringLiteral(R"(\s*:\s*([0-9]+)\s*(?:\n|$))"));
+    const QRegularExpressionMatch m = re.match(text);
+    if (!m.hasMatch()) return {};
+    bool ok=false;
+    m.captured(1).toULongLong(&ok);
+    return ok ? m.captured(1) : QString();
+}
 QString linkDelta(const QJsonObject &before, const QJsonObject &after, bool sameBoot) {
     QStringList lines;
     if (!sameBoot) lines << QStringLiteral("No comparable same-boot previous reading (first scan or boot changed).");
@@ -475,6 +542,16 @@ QString linkDelta(const QJsonObject &before, const QJsonObject &after, bool same
                   now.value(QStringLiteral("max_link_speed")).toString(QStringLiteral("?")),
                   now.value(QStringLiteral("max_link_width")).toString(QStringLiteral("?")));
         if (sameBoot && !old.isEmpty()) {
+            // Hotplug can re-use a BDF during one boot. Do not compare unrelated endpoints.
+            const QString vendor0=old.value(QStringLiteral("vendor")).toString();
+            const QString vendor1=now.value(QStringLiteral("vendor")).toString();
+            const QString dev0=old.value(QStringLiteral("device")).toString();
+            const QString dev1=now.value(QStringLiteral("device")).toString();
+            if (!vendor0.isEmpty() && !vendor1.isEmpty() && !dev0.isEmpty() && !dev1.isEmpty() &&
+                (vendor0 != vendor1 || dev0 != dev1)) {
+                lines << QStringLiteral("  Endpoint identity changed at this PCI address; link/AER delta UNKNOWN.");
+                continue;
+            }
             for (const QString &k : {"current_link_speed","current_link_width"}) {
                 const QString a=old.value(k).toString(), b=now.value(k).toString();
                 if (!a.isEmpty() && !b.isEmpty() && a!=b) lines << QStringLiteral("  %1 changed: %2 → %3 (may be normal power management)").arg(k,a,b);
@@ -527,7 +604,7 @@ QString compareBoots(const QJsonArray &boots, const QJsonObject &contexts) {
     const QJsonObject now=clean.at(0), prev=clean.at(1);
     const QString id0=now.value(QStringLiteral("boot")).toString(), id1=prev.value(QStringLiteral("boot")).toString();
     const QJsonObject contextsBoots=contexts.value(QStringLiteral("boots")).toObject();
-    lines << QStringLiteral("Latest completed boots %1 (current) vs %2 (previous), event counts/hour:")
+    lines << QStringLiteral("Latest completed CLEAN boots %1 (newer) vs %2 (older), event counts/hour:")
                  .arg(id0.left(8),id1.left(8));
     for (const QString &field : {"kernel","nvidia","bios"})
         lines << changeText(contextsBoots.value(id1).toObject(), contextsBoots.value(id0).toObject(), field);
@@ -556,18 +633,39 @@ QString flightCoverage(const QJsonArray &boots) {
         qint64 first=0,last=0,prior=0;
         int gaps=0,invalid=0;
         qint64 maxGap=0;
+        QList<qint64> intervals;
         for (const QJsonValue &s : samples) {
             const QJsonObject o=s.toObject();
             const qint64 t=qint64(o.value(QStringLiteral("t")).toDouble());
             if (t<=0) {++invalid;continue;}
             if (!first) first=t;
-            if (prior && t>prior) { if (t-prior>15) ++gaps; maxGap=qMax(maxGap,t-prior); }
+            if (prior && t>prior) intervals << t-prior;
             if (prior && t<=prior) ++invalid;
             prior=t;last=t;
         }
-        lines << QStringLiteral("Boot %1 [%2]: %3 samples, first=%4 last=%5, longest gap=%6s, gaps >15s=%7, bad timestamps=%8")
+        // Recorder cadence can change within a boot while the ring header
+        // retains its initial value. Use a conservative threshold derived from
+        // the header AND observed median: avoid falsely accusing normal slow
+        // sampling of data loss. In this case true missing samples may go
+        // undetected, so the report must acknowledge uncertain coverage.
+        const qint64 declared=qint64(boot.value(QStringLiteral("flight_interval")).toDouble());
+        qint64 observed=0;
+        if (!intervals.isEmpty()) {
+            QList<qint64> ordered=intervals;
+            std::sort(ordered.begin(),ordered.end());
+            observed=ordered.at(ordered.size()/2);
+        }
+        const bool validDeclared=declared>=1 && declared<=120;
+        const qint64 expected=qMax(qint64(1),qMax(validDeclared ? declared : 0,observed));
+        const qint64 threshold=qMax(qint64(15),expected*5/2);
+        for (qint64 dt : intervals) { maxGap=qMax(maxGap,dt); if (dt>threshold) ++gaps; }
+        lines << QStringLiteral("Boot %1 [%2]: %3 samples, first=%4 last=%5, longest gap=%6s, gaps >%7s=%8, bad timestamps=%9")
             .arg(boot.value(QStringLiteral("boot")).toString().left(8),boot.value(QStringLiteral("state")).toString())
-            .arg(samples.size()).arg(when(first),when(last)).arg(maxGap).arg(gaps).arg(invalid);
+            .arg(samples.size()).arg(when(first),when(last)).arg(maxGap).arg(threshold).arg(gaps).arg(invalid);
+        if (validDeclared && observed>0 && declared!=observed)
+            lines << QStringLiteral("  Cadence differs between ring header (%1s) and retained median (%2s); gaps may reflect an interval change, so loss estimates are conservative.").arg(declared).arg(observed);
+        if (!validDeclared && observed==0)
+            lines << QStringLiteral("  Cadence not recoverable from saved samples; gap confidence UNKNOWN.");
         const qint64 end=qint64(boot.value(QStringLiteral("end")).toDouble());
         if (end>0 && last>0) lines << QStringLiteral("  Last persisted sample was %1 s before last reported boot activity; boot-end timestamp is not necessarily crash time.")
                                            .arg(end-last >= 0 ? QString::number(end-last) : QStringLiteral("unknown (clock skew)"));
@@ -580,13 +678,30 @@ QString flightCoverage(const QJsonArray &boots) {
 QString coCrossLink(const QJsonArray &boots, const QJsonObject &diag) {
     QStringList lines={QStringLiteral("CO attempts are evidence of attempted settings, not proof that a particular offset caused a crash.")};
     const QString root=stateDir();
-    const QJsonObject session=loadObject(root+QStringLiteral("/co-search-session.json"), 1 << 20);
-    const QJsonObject guards=loadObject(root+QStringLiteral("/co-search-crash-guards.json"), 1 << 20);
+    const QString sessionPath=root+QStringLiteral("/co-search-session.json");
+    const QString guardPath=root+QStringLiteral("/co-search-crash-guards.json");
+    const QJsonObject session=loadObject(sessionPath, 1 << 20);
+    const QJsonObject guards=loadObject(guardPath, 1 << 20);
     const QJsonArray history=loadObject(root+QStringLiteral("/co-search-runs.json"), 1 << 20).value(QStringLiteral("history")).toArray();
-    if (!session.isEmpty()) lines << QStringLiteral("In-progress/recovery journal present (details preserved, not modified). Session boot=%1")
-                                .arg(session.value(QStringLiteral("boot")).toString(QStringLiteral("unknown")));
-    const QJsonArray gs=guards.value(QStringLiteral("guards")).toArray();
-    lines << QStringLiteral("Persistent crash guards: %1 candidate(s). Guarded values must not be automatically retried.").arg(gs.size());
+    if (QFile::exists(sessionPath) && (session.value(QStringLiteral("version")).toInt()!=3 || session.isEmpty()))
+        lines << QStringLiteral("WARNING: CO recovery journal exists but is invalid/unreadable; trial state UNKNOWN. Do not ignore CO Search recovery warnings.");
+    else if (!session.isEmpty()) {
+        const QString sid=session.value(QStringLiteral("boot")).toString();
+        lines << QStringLiteral("Recovery journal present: session boot=%1, recorded attempts=%2, pending=%3")
+                  .arg(sid,session.value(QStringLiteral("attempts")).toVariant().toString(),
+                       session.value(QStringLiteral("pending")).toBool() ? QStringLiteral("yes") : QStringLiteral("no"));
+        if (session.value(QStringLiteral("pending")).toBool()) {
+            const QJsonObject trial=session.value(QStringLiteral("trial")).toObject();
+            lines << QStringLiteral("  Interrupted/pending candidate: %1, all-core=%2, per-core=%3 (not proof of failure)")
+                     .arg(trial.value(QStringLiteral("what")).toString(),trial.value(QStringLiteral("all")).toVariant().toString(),
+                          QString::fromUtf8(QJsonDocument(trial.value(QStringLiteral("per")).toArray()).toJson(QJsonDocument::Compact)).left(250));
+        }
+    }
+    const bool guardValid=!QFile::exists(guardPath) ||
+             (guards.value(QStringLiteral("version")).toInt()==1 && guards.value(QStringLiteral("guards")).isArray());
+    const QJsonArray gs=guardValid ? guards.value(QStringLiteral("guards")).toArray() : QJsonArray{};
+    if (!guardValid) lines << QStringLiteral("WARNING: Persistent CO crash guard file invalid/unreadable: guard count UNKNOWN. CO Search must refuse unsafe retries.");
+    else lines << QStringLiteral("Persistent crash guards: %1 candidate(s). Guarded values must not be automatically retried.").arg(gs.size());
     for (int idx = 0; idx < qMin(gs.size(), 32); ++idx) {
         const QJsonObject g=gs.at(idx).toObject();
         lines << QStringLiteral("  CCD%1 slot%2 at CO %3 (reported CPUs %4)")
@@ -602,6 +717,10 @@ QString coCrossLink(const QJsonArray &boots, const QJsonObject &diag) {
     }
     if (history.isEmpty()) lines << QStringLiteral("No completed search history available.");
     const QString current=diag.value(QStringLiteral("boot_id")).toString();
+    if (!session.isEmpty() && !current.isEmpty())
+        lines << (session.value(QStringLiteral("boot")).toString()==current ?
+            QStringLiteral("Recovery journal and MCE scan refer to the SAME boot (trial-time relationship still unverified).") :
+            QStringLiteral("Recovery journal belongs to a DIFFERENT boot; current MCE cannot be assigned to its trials."));
     if (!current.isEmpty()) {
         lines << QStringLiteral("Current-boot classified MCE evidence (not necessarily during a CO trial):");
         for (const QJsonValue &v : diag.value(QStringLiteral("mce")).toArray()) {
@@ -665,11 +784,15 @@ QStringList incidentKeys() {
     }
     return keys;
 }
+QJsonObject incidentNote(const QString &key) {
+    if (!QRegularExpression(QStringLiteral(R"(^[0-9a-f]{8}/[0-9]{1,20}$)")).match(key).hasMatch()) return {};
+    return loadObject(dataDir()+QStringLiteral("/incident-notes.json"))
+        .value(QStringLiteral("items")).toObject().value(key).toObject();
+}
 QString incidentText(const QString &key) {
     const QRegularExpression re(QStringLiteral(R"(^[0-9a-f]{8}/[0-9]{1,20}$)"));
     if (!re.match(key).hasMatch()) return QStringLiteral("Invalid event key");
-    const QJsonObject all=loadObject(dataDir()+QStringLiteral("/incident-notes.json"));
-    const QJsonObject e=all.value(QStringLiteral("items")).toObject().value(key).toObject();
+    const QJsonObject e=incidentNote(key);
     QString raw;
     for (const QString &line : recentLog(1000)) {
         if (line.contains(QStringLiteral("boot=")+key.section('/',0,0)+QStringLiteral(" seq=")+key.section('/',1,1)+QStringLiteral(" ")))

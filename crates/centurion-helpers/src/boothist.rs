@@ -31,7 +31,12 @@ pub fn load() -> Value {
 pub fn attach_flight(out: &mut Value, flight: &Value) {
     let Some(id) = flight["boot"].as_str() else { return };
     for b in out["boots"].as_array_mut().into_iter().flatten() {
-        if b["boot"].as_str() == Some(id) { b["flight"] = flight["samples"].clone(); }
+        if b["boot"].as_str() == Some(id) {
+            b["flight"] = flight["samples"].clone();
+            // The flight recorder interval may be configured as 5/10/30/60s.
+            // Preserve it to avoid false missing-sample warnings for slower cadences.
+            b["flight_interval"] = flight["interval"].clone();
+        }
     }
 }
 
@@ -129,6 +134,20 @@ mod tests {
         "{\"t\":1400,\"boot\":\"b1\",\"kind\":\"gpu_curve\",\"state\":\"profile:oc\"}\n",
         "not json\n",
         "{\"t\":10100,\"boot\":\"b2\",\"kind\":\"cpu_co\",\"state\":\"profile:hard\"}\n");
+
+    #[test]
+    fn flight_attachment_preserves_interval_only_on_matching_boot() {
+        let mut out = json!({"boots": [
+            {"boot":"a", "state":"unclean"},
+            {"boot":"b", "state":"clean"}]});
+        let flight = json!({"boot":"a", "interval":60,
+            "samples":[{"s":1,"t":1000},{"s":2,"t":1060}]});
+        attach_flight(&mut out, &flight);
+        assert_eq!(out["boots"][0]["flight_interval"],60);
+        assert_eq!(out["boots"][0]["flight"].as_array().unwrap().len(),2);
+        assert!(out["boots"][1].get("flight").is_none());
+        assert!(out["boots"][1].get("flight_interval").is_none());
+    }
 
     #[test]
     fn rows_states_and_curves() {

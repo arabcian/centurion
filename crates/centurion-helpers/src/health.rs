@@ -297,10 +297,20 @@ pub fn klog(since: u64) -> Value {
     }
 }
 
-/// PCIe devices with a non-zero AER total (sysfs, readable by anyone).
+/// Parse Linux AER sysfs lines such as "TOTAL_ERR_COR: 14" exactly.
+/// Missing, malformed, or overflowing values are UNKNOWN, never silently zero.
+fn aer_total(text: &str, key: &str) -> Option<u64> {
+    text.lines().find_map(|line| {
+        let (label, value) = line.split_once(':')?;
+        if label.trim() != key { return None; }
+        value.trim().parse::<u64>().ok()
+    })
+}
+
+/// PCIe AER totals, including zero values needed for meaningful deltas.
 fn aer_counters() -> Vec<Value> {
     let total = |p: std::path::PathBuf, key: &str| -> Option<u64> {
-        std::fs::read_to_string(p).ok().and_then(|s| s.lines().find_map(|l| l.strip_prefix(key)?.trim().parse().ok()))
+        std::fs::read_to_string(p).ok().and_then(|s| aer_total(&s, key))
     };
     let mut v = Vec::new();
     for e in std::fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten() {
@@ -313,6 +323,7 @@ fn aer_counters() -> Vec<Value> {
         // transitions back to zero, not just devices that have ever reported an AER.
         let class = std::fs::read_to_string(d.join("class")).unwrap_or_default();
         let vendor = std::fs::read_to_string(d.join("vendor")).unwrap_or_default();
+        let device = std::fs::read_to_string(d.join("device")).unwrap_or_default();
         let what = match (vendor.trim(), class.trim().get(..6)) {
             ("0x10de", Some("0x0300")) | ("0x10de", Some("0x0302")) => "NVIDIA GPU",
             (_, Some("0x0604")) => "PCIe port",
@@ -320,7 +331,10 @@ fn aer_counters() -> Vec<Value> {
             (_, Some("0x0280")) => "Wi-Fi",
             _ => "device",
         };
-        v.push(json!({"dev": e.file_name().to_string_lossy(), "what": what, "cor": cor, "nonfatal": nonfatal, "fatal": fatal}));
+        // BDF may be reused on hotplug. Persist the device identity with counters
+        // so the UI never subtracts readings from unrelated endpoints.
+        v.push(json!({"dev": e.file_name().to_string_lossy(), "vendor": vendor.trim(),
+            "device": device.trim(), "what": what, "cor": cor, "nonfatal": nonfatal, "fatal": fatal}));
     }
     v
 }
@@ -338,6 +352,15 @@ pub fn scan(since: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn aer_sysfs_colon_format_and_unknowns() {
+        let cor = "Receiver Error 2\nBad TLP 1\nTOTAL_ERR_COR: 14\n";
+        assert_eq!(aer_total(cor, "TOTAL_ERR_COR"), Some(14));
+        assert_eq!(aer_total("TOTAL_ERR_FATAL: 0\n", "TOTAL_ERR_FATAL"), Some(0));
+        assert_eq!(aer_total(cor, "TOTAL_ERR_FATAL"), None);
+        assert_eq!(aer_total("TOTAL_ERR_COR: unreadable\n", "TOTAL_ERR_COR"), None);
+        assert_eq!(aer_total("TOTAL_ERR_COR: 18446744073709551616", "TOTAL_ERR_COR"), None);
+    }
     #[test]
     fn scrub_kernel_addresses() {
         assert_eq!(scrub("RIP: 0010:foo+0x1/0x2 ffff8881234567ab and 0xffffffffc0123456 ok"), "RIP: 0010:foo+0x1/0x2 <addr> and <addr> ok");

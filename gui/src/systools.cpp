@@ -475,7 +475,7 @@ void addPages(QTabWidget *tabs) {
         {QT_TRANSLATE_NOOP("systools", "USB-C PD / Charger Inspector"), "S13: Supported typec/power_supply exports with source units; no negotiated watt guesses.",
          {{"@advanced","S13"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "PipeWire Audio Doctor"), "S15: Audio routing/server metadata; no service restarts or stream changes.",
-         {{"@advanced","S15"}}, nullptr, false, true},
+         {{"@advanced","S15"},{"wpctl","status"},{"pactl","info"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "Kernel Feature & Firmware Check"), "S18: Running kernel config, driver and firmware dependencies. Missing data is unknown.",
          {{"@advanced","S18"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "Hardware snapshot"), "S01: Compare PCI topology, drivers, firmware, module versions and redacted kernel boot parameters to a user-saved baseline.",
