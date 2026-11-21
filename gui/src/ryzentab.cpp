@@ -398,7 +398,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     hdr->addWidget(modeBox);
     monLbl_ = new QLabel;
     monLbl_->setTextFormat(Qt::RichText);
-    monLbl_->setToolTip("Tctl / boost from sysfs (k10temp, cpufreq). Package power needs 'VID + power'.");
+    monLbl_->setToolTip("Tctl / boost from sysfs (k10temp or zenpower, cpufreq). Package power needs 'VID + power'.");
     hdr->addSpacing(12);
     hdr->addWidget(monLbl_, 1);
     msrOn_ = new QCheckBox("VID + power");
@@ -469,7 +469,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         fillBar->addWidget(fb);
         auto *temp = new QLabel;
         temp->setProperty("role", "muted");
-        temp->setToolTip(QStringLiteral("k10temp Tccd%1 (CCD die temperature)").arg(ccd + 1));
+        temp->setToolTip(QStringLiteral("k10temp / zenpower Tccd%1 (CCD die temperature)").arg(ccd + 1));
         ccdTemps_[ccd] = temp;
         g->addWidget(title, 0, 0, 1, 3, Qt::AlignLeft | Qt::AlignVCenter);
         g->addWidget(temp, 0, 3, 1, 2, Qt::AlignCenter);
@@ -1153,12 +1153,15 @@ void RyzenTab::refreshCppc() {
 
 // ── live monitor ────────────────────────────────────────────────────────────
 
-static QString findHwmon(const QString &name) {
+/// The first hwmon chip found by `names`, in that order of preference.
+static QString findHwmon(const QStringList &names) {
     static QString cached;
-    if (!cached.isEmpty() && pp::readText(cached + "/name") == name) return cached;
+    if (!cached.isEmpty() && names.contains(pp::readText(cached + "/name").value_or(QString()))) return cached;
     const QDir d(QStringLiteral("/sys/class/hwmon"));
-    for (const QString &h : d.entryList({"hwmon*"}, QDir::Dirs))
-        if (pp::readText(d.filePath(h) + "/name") == name) return cached = d.filePath(h);
+    const QStringList chips = d.entryList({"hwmon*"}, QDir::Dirs);
+    for (const QString &name : names)
+        for (const QString &h : chips)
+            if (pp::readText(d.filePath(h) + "/name") == name) return cached = d.filePath(h);
     return {};
 }
 
@@ -1188,9 +1191,10 @@ void RyzenTab::monitorTick() {
     }
 
     // Temperatures: k10temp Tctl + one Tccd per die (CoreFreq reads the same SMU sensors over SMN).
+    // zenpower (and zenpower5) replaces k10temp on the same PCI device, with the same labels.
     QStringList sum;
     for (QLabel *l : std::as_const(ccdTemps_)) l->clear();
-    if (const QString hw = findHwmon(QStringLiteral("k10temp")); !hw.isEmpty()) {
+    if (const QString hw = findHwmon({QStringLiteral("k10temp"), QStringLiteral("zenpower")}); !hw.isEmpty()) {
         for (const QString &lf : QDir(hw).entryList({"temp*_label"}, QDir::Files)) {
             const QString label = pp::readText(hw + '/' + lf).value_or(QString());
             bool ok = false;

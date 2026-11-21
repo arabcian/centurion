@@ -45,7 +45,8 @@ void cpuAndFans(double &cpuC, double &fanRpm) {
     for (const QString &h : QDir(QStringLiteral("/sys/class/hwmon")).entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
         const QString d = QStringLiteral("/sys/class/hwmon/") + h + QLatin1Char('/');
         const QString name = readTrim(d + QStringLiteral("name"));
-        if (cpuC == 0 && (name == QLatin1String("k10temp") || name == QLatin1String("coretemp")))
+        // temp1: k10temp Tctl, zenpower Tdie (it replaces k10temp on the same device), coretemp package.
+        if (cpuC == 0 && (name == QLatin1String("k10temp") || name == QLatin1String("zenpower") || name == QLatin1String("coretemp")))
             cpuC = readTrim(d + QStringLiteral("temp1_input")).toDouble() / 1000.0;
         for (int i = 1; i <= 8; ++i) fanRpm = std::max(fanRpm, readTrim(d + QStringLiteral("fan%1_input").arg(i)).toDouble());
     }

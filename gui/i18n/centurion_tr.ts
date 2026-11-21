@@ -949,8 +949,8 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/coolingpage.cpp" line="303"/>
-            <source>&lt;span style='color:%1'&gt;No CPU temperature sensor found (k10temp / coretemp), so the test cannot run.&lt;/span&gt;</source>
-            <translation>&lt;span style='color:%1'&gt;İşlemci sıcaklık sensörü bulunamadı (k10temp / coretemp), bu yüzden test çalışamaz.&lt;/span&gt;</translation>
+            <source>&lt;span style='color:%1'&gt;No CPU temperature sensor found (k10temp / zenpower / coretemp), so the test cannot run.&lt;/span&gt;</source>
+            <translation>&lt;span style='color:%1'&gt;İşlemci sıcaklık sensörü bulunamadı (k10temp / zenpower / coretemp), bu yüzden test çalışamaz.&lt;/span&gt;</translation>
         </message>
         <message>
             <location filename="work/gui/src/coolingpage.cpp" line="312"/>

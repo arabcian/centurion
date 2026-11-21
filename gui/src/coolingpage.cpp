@@ -323,7 +323,7 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
     const bool sensor = s.value(QStringLiteral("has_sensor")).toBool();
     run_->setEnabled(sensor && !proc_);
     fanMax_->setEnabled(bool(fans_.allMax) && s.value(QStringLiteral("fans")).toInt() > 0 && !proc_ && !fanTesting_);
-    if (!sensor) live_->setText(tr("<span style='color:%1'>No CPU temperature sensor found (k10temp / coretemp), so the test cannot run.</span>").arg(theme::WARN));
+    if (!sensor) live_->setText(tr("<span style='color:%1'>No CPU temperature sensor found (k10temp / zenpower / coretemp), so the test cannot run.</span>").arg(theme::WARN));
 
     const QJsonObject base = s.value(QStringLiteral("baseline")).toObject();
     const QJsonArray runs = s.value(QStringLiteral("runs")).toArray();

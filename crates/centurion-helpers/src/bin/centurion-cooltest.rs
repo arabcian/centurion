@@ -84,7 +84,7 @@ fn run(seconds: u64) -> Value {
         return json!({"ok": false, "error": "a calibration run is in progress; try again when it is finished"});
     }
     if centurion_helpers::bench::cpu_temp_c().is_none() {
-        return json!({"ok": false, "error": "no CPU temperature sensor found (k10temp / coretemp)"});
+        return json!({"ok": false, "error": "no CPU temperature sensor found (k10temp / zenpower / coretemp)"});
     }
     let ctx: Context = cool::capture_context();
     let limit = ctx.limit_c();

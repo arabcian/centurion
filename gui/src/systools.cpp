@@ -1,5 +1,6 @@
 #include "systools.h"
 
+#include "lazywidget.h"
 #include "privileged.h"
 #include "smartpage.h"
 #include "theme.h"
@@ -490,7 +491,9 @@ void addPages(QTabWidget *tabs) {
             smart->setProperty("toolKey", QStringLiteral("SMART"));
             tabs->addTab(smart, QStringLiteral("SMART"));
         }
-        auto *page = new ToolPage(s);
+        // Built on first open: the pages are rarely visited, and every widget that exists at start-up is
+        // matched against the application style sheet (theme::applySheet) even while the app sits in the tray.
+        auto *page = new LazyWidget([s] { return new ToolPage(s); });
         page->setProperty("toolKey", QString::fromLatin1(s.title));
         tabs->addTab(page, title);
     }
