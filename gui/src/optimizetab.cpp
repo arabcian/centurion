@@ -292,7 +292,9 @@ static QString approvedFile() {
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/tune-approved.json");
 }
 static QString valuesHash(const QJsonObject &values) {
-    return QString::fromLatin1(QCryptographicHash::hash(QJsonDocument(values).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
+    // "v2": approvals before the helper kept rows that were absent at approval time (a parked CCD, SMT off…)
+    // stored a copy without them; a new prefix makes every old record stale, so each preset is approved once more.
+    return QString::fromLatin1(QCryptographicHash::hash("v2" + QJsonDocument(values).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
 }
 bool OptimizeTab::storeFresh(const QString &name, const QJsonObject &values) {
     if (!storeHas(name)) return false;

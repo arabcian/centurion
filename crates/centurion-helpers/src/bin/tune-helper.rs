@@ -1089,9 +1089,23 @@ fn op_isolate_join(req: &Value) -> Value {
 fn clean_values(values: &Map<String, Value>) -> Result<(Map<String, Value>, Vec<Value>), Vec<Value>> {
     let mut clean = Map::new();
     let mut rejected = Vec::new();
+    let mut dropped = Vec::new();
     for (k, v) in values {
         match tune::find(k) {
-            Some(t) if tune::files(t).is_empty() && !t.debugfs => {}
+            // Not present right now (a CCD parked, SMT off, another pstate mode, a device asleep): kept, so the
+            // stored preset stays whole -- apply_values skips it while it is absent. Dropping it made a scene's
+            // "replace" treat the key as left over and put it back to its original. A choice is checked against
+            // live options, which an absent row has none of: kept as given if it has a value's shape.
+            Some(t) if tune::files(t).is_empty() && !t.debugfs => match tune::validate(t, v) {
+                Ok(s) => { clean.insert(k.clone(), json!(s)); }
+                Err(_) if t.kind == tune::Kind::Choice && tune::options(t).is_empty()
+                    && v.as_str().map(str::trim).is_some_and(|s| !s.is_empty() && s.len() <= 64
+                        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"_+-.".contains(&b))) => {
+                    clean.insert(k.clone(), json!(v.as_str().unwrap().trim()));
+                }
+                // As before for an absent row: left out, not fatal; now reported.
+                Err(e) => dropped.push(json!({"key": k, "error": format!("not available here and not storable: {e}")})),
+            },
             Some(t) => match tune::validate(t, v) {
                 Ok(s) => { clean.insert(k.clone(), json!(s)); }
                 Err(e) => rejected.push(json!({"key": k, "error": e})),
@@ -1103,7 +1117,6 @@ fn clean_values(values: &Map<String, Value>) -> Result<(Map<String, Value>, Vec<
     if !rejected.is_empty() { return Err(rejected); }
     // Values the safety audit refuses are never stored (reported, not fatal:
     // one bad legacy key must not block a whole batch of scene presets).
-    let mut dropped = Vec::new();
     for i in autotune::audit(&clean, &autotune::AuditCtx::live()).into_iter().filter(|i| i.reject) {
         clean.remove(&i.key);
         dropped.push(json!({"key": i.key, "error": format!("refused by the safety audit: {}", i.msg)}));
@@ -1459,6 +1472,20 @@ mod tests {
         let presets: Map<String, Value> = (0..64).map(|i| (format!("{i:064}"), Value::Object(preset.clone()))).collect();
         let req = json!({"op": "preset_save", "presets": presets}).to_string();
         assert!(req.len() <= MAX_STDIN_BYTES, "{} bytes", req.len());
+    }
+    #[test]
+    fn approval_keeps_rows_absent_right_now() {
+        // Per-CCD rows have no files on a machine (or sandbox) without two cpufreq CCDs: the case of a
+        // preset approved while a CCD was parked or SMT was off.
+        for k in ["cpu.max_freq_ccd0", "cpu.epp_ccd0"] { if !tune::files(tune::find(k).unwrap()).is_empty() { return; } }
+        let v: Map<String, Value> = serde_json::from_value(json!({
+            "cpu.max_freq_ccd0": 4000000, "cpu.epp_ccd0": "balance_performance", "cpu.max_freq_ccd1": 99})).unwrap();
+        let (clean, dropped) = clean_values(&v).unwrap();
+        assert_eq!(clean["cpu.max_freq_ccd0"], json!("4000000"));
+        assert_eq!(clean["cpu.epp_ccd0"], json!("balance_performance"));
+        // Outside the row's range: still left out, now reported instead of vanishing.
+        assert!(!clean.contains_key("cpu.max_freq_ccd1"));
+        assert!(dropped.iter().any(|d| d["key"] == "cpu.max_freq_ccd1"));
     }
     #[test]
     fn preset_names() {
