@@ -3326,6 +3326,56 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <source>Overview</source>
             <translation>Genel bakış</translation>
         </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>Power profile, device switches, fans and live sensors</source>
+            <translation>Güç profili, cihaz anahtarları, fanlar ve canlı sensörler</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>Diagnostics, logs, sleep, network protection and backups</source>
+            <translation>Tanılama, günlükler, uyku, ağ koruması ve yedekler</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>Per-core Curve Optimizer for the CPU</source>
+            <translation>İşlemci için çekirdek başına Curve Optimizer</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>CPU voltage offsets, power and current limits</source>
+            <translation>İşlemci voltaj ofsetleri, güç ve akım sınırları</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>Voltage/frequency curve, clock offsets and memory lock</source>
+            <translation>Voltaj/frekans eğrisi, saat ofsetleri ve bellek kilidi</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>Overdrive clocks, voltage, power limit and fan curve</source>
+            <translation>Overdrive saatleri, voltaj, güç sınırı ve fan eğrisi</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>CPU and GPU power limits kept by the firmware</source>
+            <translation>Ürün yazılımının tuttuğu CPU ve GPU güç sınırları</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>System tuning knobs, presets and Autotune</source>
+            <translation>Sistem ayarları, hazır ayarlar ve Autotune</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>One name for the whole machine, switched in one click</source>
+            <translation>Tüm makine için tek bir ad, tek tıkla geçiş</translation>
+        </message>
+        <message>
+            <location filename="../src/mainwindow.cpp" line="560"/>
+            <source>Keyboard RGB effects, colours and brightness</source>
+            <translation>Klavye RGB efektleri, renkleri ve parlaklığı</translation>
+        </message>
     </context>
     <context>
         <name>NetPage</name>

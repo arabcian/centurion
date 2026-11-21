@@ -526,12 +526,60 @@ QTabWidget#homeDetailTabs::pane { border: 0; border-top: 1px solid @BORDER_SOFT;
 QTabWidget#homeDetailTabs > QTabBar::tab { padding: 5px 10px; }
 QTabWidget#homeDetailTabs > QStackedWidget { background: transparent; }
 QTabWidget#homeDetailTabs > QStackedWidget > QGroupBox { border: 0; background: transparent; padding: 6px 6px 4px 6px; }
+
+/* ── Studio polish: depth from light, not from frames ── */
+/* Top bar lit from above; its lower edge is the profile-coloured signal line (MainWindow::syncStatusChips). */
+QFrame#expTopbar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BEZEL_TOP, stop:1 @BG0); border-bottom: 0; }
+QLabel#expTopHint { color: @MUTED; font-size: 8pt; padding-bottom: 3px; }
+/* The rail darkens towards its foot; the current page is a marker and a wash, no box. */
+QFrame#expRail { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @SIDEBAR, stop:1 @BEZEL_BOT); }
+QPushButton#expNavButton { border-radius: 8px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
+QPushButton#expNavButton:checked { color: @FG; border: 1px solid transparent; border-left: 3px solid @ACCENT;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:0.75 @ACCENT_FADE, stop:1 transparent); }
+/* Cards: a softer corner and a shaded foot, so they sit on the page rather than being drawn on it. */
+QGroupBox { border-radius: 12px; border-bottom-color: @BTN_SHADE;
+    background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_ACCENT, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+/* ...lit from the corner its title sits in, in the section's own colour. */
+QGroupBox#box_red { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_DANGER, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_green { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_OK, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_yellow { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_WARN, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_blue { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_INFO, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_purple { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_PURPLE, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_grey { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT); }
+QFrame#homeDetailCard { border-radius: 12px; border-bottom-color: @BTN_SHADE; }
+/* Sub-tabs: segmented pills on the pane's hairline. */
+QTabBar::tab { margin: 4px 3px 5px 0; padding: 5px 13px; border: 1px solid transparent; border-radius: 7px; background: transparent; }
+QTabBar::tab:hover:!selected { color: @FG; background: @HILITE; }
+QTabBar::tab:selected { color: @ACCENT_HI; background: @ACCENT_TINT; border: 1px solid @ACCENT_EDGE; }
+/* Health's page list speaks the main rail's language. */
+QTreeWidget#healthNav::item { border-left: 3px solid transparent; border-radius: 7px; border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px; margin: 1px 0; }
+QTreeWidget#healthNav::item:hover:!selected { background: @HILITE; color: @FG; }
+QTreeWidget#healthNav::item:selected { color: @FG; border-left: 3px solid @ACCENT;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:1 @ACCENT_FADE); }
+/* Tables: a quieter header, a clearer current row. */
+QHeaderView::section { font-size: 8pt; padding: 5px 8px; }
+QTreeView::item:hover:!selected, QTableView::item:hover:!selected { background: @HILITE; }
+/* Menus and the tooltip: one surface, a hairline, the accent only where it points. */
+QMenu::item { padding: 6px 24px 6px 10px; }
+QMenu::item:selected { background: @ACCENT_TINT; color: @FG; }
+QToolTip { background: @BG2; border: 1px solid @EDGE; border-left: 3px solid @ACCENT; border-radius: 6px; padding: 6px 10px; }
+/* Scrollbars: slim, out of the way until hovered. */
+QScrollBar:vertical { width: 9px; margin: 4px 2px 4px 0; }
+QScrollBar:horizontal { height: 9px; margin: 0 4px 2px 4px; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: @BORDER; border-radius: 3px; margin: 0; }
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @ACCENT_SOFT; }
 )QSS");
     const QColor accent(QString::fromLatin1(ACCENT));
     // Text on the amber key: the darkest surface, unless the accent itself is dark.
     const QString onAccent = accent.lightnessF() < 0.45 ? QString::fromLatin1(FG) : QString::fromLatin1(BG0);
     // Longest names first so @BG doesn't eat @BG0 etc.
+    // Card glow: the card's top surface with a trace of a signal colour (opaque, so it stays a card colour).
+    const QByteArray cardTop = mix(BG1, BG2, 0.55).toLatin1();
+    const auto glow = [&cardTop](const char *c) { return mix(cardTop.constData(), c, 0.10); };
     const std::pair<const char *, QString> toks[] = {
+        {"@GLOW_ACCENT", glow(ACCENT)}, {"@GLOW_DANGER", glow(DANGER)}, {"@GLOW_OK", glow(OK)}, {"@GLOW_WARN", glow(WARN)},
+        {"@GLOW_INFO", glow(INFO)}, {"@GLOW_PURPLE", glow(PURPLE)},
         {"@BORDER_SOFT", BORDER_SOFT}, {"@ACCENT_SOFT", ACCENT_SOFT}, {"@DANGER_SOFT", DANGER_SOFT},
         {"@DANGER_TINT", rgba(DANGER, 0.14)}, {"@DANGER_WASH", rgba(DANGER, 0.05)}, {"@ACCENT_TINT2", rgba(ACCENT, 0.10)},
         {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_EDGE", rgba(ACCENT, 0.22)}, {"@ACCENT_FADE", rgba(ACCENT, 0.02)}, {"@FOCUS_WELL", mix(WELL, ACCENT, 0.05)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_DEEP", accent.darker(135).name()},

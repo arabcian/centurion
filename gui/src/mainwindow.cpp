@@ -6,6 +6,7 @@
 #include <QLayoutItem>
 #include <QPushButton>
 #include <QFont>
+#include <QHash>
 #include "acpievents.h"
 #include "amdgputab.h"
 #include "fwattrtab.h"
@@ -374,7 +375,15 @@ void MainWindow::installExperimentalShell() {
     expTitle_ = new QLabel;
     expTitle_->setObjectName(QStringLiteral("expTopTitle"));
     titles->addWidget(expPath_);
-    titles->addWidget(expTitle_);
+    // The title, then one muted line on what the page is for (clips first on a narrow window).
+    auto *titleRow = new QHBoxLayout;
+    titleRow->setSpacing(12);
+    titleRow->addWidget(expTitle_);
+    expHint_ = new QLabel;
+    expHint_->setObjectName(QStringLiteral("expTopHint"));
+    expHint_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    titleRow->addWidget(expHint_, 1, Qt::AlignBottom);
+    titles->addLayout(titleRow);
     topRow->addLayout(titles, 1);
     // What the machine is doing right now, on every page: the power profile and the
     // active scene. Read-only (same sources as the MangoHud line); a click opens the page.
@@ -424,6 +433,12 @@ void MainWindow::installExperimentalShell() {
     connect(find, &QPushButton::clicked, this, &MainWindow::showQuickNavigator);
     topRow->addWidget(find, 2);
     column->addWidget(top);
+    // A thin line in the power profile's colour (the Legion power-button LED): the mode reads at a glance.
+    expSignal_ = new QFrame;
+    expSignal_->setObjectName(QStringLiteral("expSignal"));
+    expSignal_->setFixedHeight(2);
+    column->addWidget(expSignal_);
+    syncStatusChips();
     tabs_->tabBar()->hide();
     tabs_->setObjectName(QStringLiteral("expPageStack"));
     // A gutter around every page, so content never touches the rail or the window edge.
@@ -438,6 +453,13 @@ void MainWindow::installExperimentalShell() {
     auto *quick = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
     quick->setContext(Qt::ApplicationShortcut);
     connect(quick, &QShortcut::activated, this, &MainWindow::showQuickNavigator);
+    // Ctrl+1…9: the Nth page in the rail (the rail lists only the pages this machine has).
+    for (int n = 1; n <= 9; ++n) {
+        auto *page = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(n)), this);
+        connect(page, &QShortcut::activated, this, [this, n] {
+            if (n <= expNavButtons_.size() && expNavButtons_[n - 1]->isEnabled()) expNavButtons_[n - 1]->click();
+        });
+    }
     rebuildExperimentalNavigation();
     // Compact automatically on small screens; manual choice persists per user.
     QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
@@ -493,7 +515,8 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setIcon(experimentalui::navigationIcon(id));
         button->setIconSize(QSize(18, 18));
         button->setText(expCollapsed_ ? QString() : label);
-        button->setToolTip(label);
+        const int position = expNavButtons_.size() + 1;
+        button->setToolTip(position <= 9 ? QStringLiteral("%1  ·  Ctrl+%2").arg(label).arg(position) : label);
         button->setEnabled(tabs_->isTabEnabled(i));
         button->setCursor(Qt::PointingHandCursor);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -546,6 +569,19 @@ void MainWindow::syncExperimentalNavigation() {
         id == QLatin1String("NVIDIA Curve") || id == QLatin1String("AMD GPU") ||
         id == QLatin1String("Firmware") ? tr("TUNING") : tr("WORKSPACE");
     expPath_->setText(QStringLiteral("CENTURION  /  ") + group);
+    static const QHash<QString, const char *> hints{
+        {QStringLiteral("Home"), QT_TR_NOOP("Power profile, device switches, fans and live sensors")},
+        {QStringLiteral("Health"), QT_TR_NOOP("Diagnostics, logs, sleep, network protection and backups")},
+        {QStringLiteral("Ryzen Curve"), QT_TR_NOOP("Per-core Curve Optimizer for the CPU")},
+        {QStringLiteral("Intel Undervolt"), QT_TR_NOOP("CPU voltage offsets, power and current limits")},
+        {QStringLiteral("NVIDIA Curve"), QT_TR_NOOP("Voltage/frequency curve, clock offsets and memory lock")},
+        {QStringLiteral("AMD GPU"), QT_TR_NOOP("Overdrive clocks, voltage, power limit and fan curve")},
+        {QStringLiteral("Firmware"), QT_TR_NOOP("CPU and GPU power limits kept by the firmware")},
+        {QStringLiteral("Optimizations"), QT_TR_NOOP("System tuning knobs, presets and Autotune")},
+        {QStringLiteral("Scenes"), QT_TR_NOOP("One name for the whole machine, switched in one click")},
+        {QStringLiteral("Lighting"), QT_TR_NOOP("Keyboard RGB effects, colours and brightness")}};
+    const char *hint = hints.value(id);
+    expHint_->setText(hint ? tr(hint) : QString());
     for (auto *button : std::as_const(expNavButtons_))
         button->setChecked(button->property("pageId").toString() == id);
 }
@@ -559,6 +595,12 @@ void MainWindow::syncStatusChips() {
         expProfileChip_->setIcon(experimentalui::dotIcon(QColor(theme::profileAccent(profile))));
         expProfileChip_->setIconSize(QSize(10, 10));
     }
+    if (!expSignal_) return;
+    const QString signal = profile.isEmpty() ? QString::fromLatin1(theme::ACCENT) : theme::profileAccent(profile);
+    const QByteArray hex = signal.toLatin1();
+    theme::setSheet(expSignal_, QStringLiteral("QFrame#expSignal { border: 0; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+                                               "stop:0 %1, stop:0.4 %2, stop:1 %3); }")
+                                    .arg(signal, theme::rgba(hex.constData(), 0.30), QString::fromLatin1(theme::BORDER_SOFT)));
     const QString scene = scenes::activeScene();
     expSceneChip_->setVisible(!scene.isEmpty());
     expSceneChip_->setText(QString(scene).replace(QLatin1Char('&'), QLatin1String("&&")));  // no mnemonic

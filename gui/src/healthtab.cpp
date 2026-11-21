@@ -150,6 +150,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     navSearch->setObjectName(QStringLiteral("healthNavSearch"));
     railLayout->addWidget(navSearch);
     navigation_ = new QTreeWidget;
+    navigation_->setObjectName(QStringLiteral("healthNav"));  // Studio: same current-page marker as the main rail
     navigation_->setHeaderHidden(true);
     navigation_->setRootIsDecorated(false);
     navigation_->setIndentation(0);  // flat list under small-caps headings: an indent strip was painted as a second selection block

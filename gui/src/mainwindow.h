@@ -85,6 +85,8 @@ private:
     QLabel *expBrandLabel_ = nullptr;
     QLabel *expTitle_ = nullptr;
     QLabel *expPath_ = nullptr;
+    QLabel *expHint_ = nullptr;              // top bar: one line on what the page is for
+    QFrame *expSignal_ = nullptr;            // under the top bar, in the power profile's colour
     QPushButton *expToggle_ = nullptr;
     QPushButton *expProfileChip_ = nullptr;  // top bar: current power profile
     QPushButton *expSceneChip_ = nullptr;    // top bar: active scene
