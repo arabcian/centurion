@@ -1009,10 +1009,13 @@ void OptimizeTab::refresh(bool fromPoll) {
     // describe only reads, so it runs unprivileged (no polkit round-trip).
     auto *p = new QProcess(this);
     QPointer<QProcess> guard(p);
-    connect(p, &QProcess::finished, this, [this, p, light](int, QProcess::ExitStatus) {
+    connect(p, &QProcess::finished, this, [this, p, light, gen = opGen_](int, QProcess::ExitStatus) {
         describing_ = false;
         const QByteArray out = p->readAllStandardOutput().trimmed();
         p->deleteLater();
+        // Started before an apply/restore: it read the values from before that write. Shown, they became the
+        // editors' values (touched is cleared after an apply) and a second Apply wrote the old values back.
+        if (gen != opGen_) { needFull_ = true; refresh(); return; }
         const QJsonObject d = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
         if (!d.value("ok").toBool()) { if (!light) needFull_ = true; return; }
         onDescribe(d, light);
@@ -2773,13 +2776,16 @@ void OptimizeTab::applyValues(const QJsonObject &values, const QString &preset) 
     if (validPresetName(preset)) req["preset"] = preset;
     runOp(req, "Apply", [this](const QJsonObject &res) {
         int written = 0, skipped = 0, refused = 0;
-        QStringList errors;
+        int notStuck = 0;
+        QStringList errors, mismatched;
         for (const auto &v : res.value("results").toArray()) {
             const QJsonObject o = v.toObject();
             written += o.value("written").toInt();
             refused += o.value("refused").toInt();
             if (o.contains("skipped")) ++skipped;
             if (!o.value("ok").toBool()) errors << o.value("key").toString() + ": " + o.value("error").toString();
+            notStuck += o.value("mismatch_count").toInt();
+            for (const QJsonValue &m : o.value("mismatch").toArray()) mismatched << o.value("key").toString() + ": " + m.toString();
         }
         QString msg = QStringLiteral("Applied: %1 file(s) written").arg(written);
         if (skipped) msg += QStringLiteral(", %1 not available").arg(skipped);
@@ -2787,8 +2793,12 @@ void OptimizeTab::applyValues(const QJsonObject &values, const QString &preset) 
         if (res.contains(QStringLiteral("guard")))
             msg += QStringLiteral(" · pressure guard watching %1 memory/writeback setting(s) for %2 s")
                        .arg(res.value("guard").toObject().value("keys").toArray().size()).arg(res.value("guard").toObject().value("seconds").toInt());
-        showStatus(msg, errors.isEmpty() ? theme::OK : theme::WARN, 10000);
+        if (!mismatched.isEmpty()) msg += QStringLiteral(" · %1 value(s) did not stick").arg(notStuck);
+        showStatus(msg, errors.isEmpty() && mismatched.isEmpty() ? theme::OK : theme::WARN, 10000);
         if (!errors.isEmpty()) QMessageBox::warning(this, "Apply", "Some settings failed:\n\n" + errors.join('\n'));
+        if (!mismatched.isEmpty())
+            QMessageBox::warning(this, "Apply", "Written, but read back differently half a second later (the kernel clamped them, "
+                                 "or firmware / another tool changed them):\n\n" + mismatched.join('\n'));
         for (Row &r : rows_) r.touched = false;
     });
 }
@@ -2911,6 +2921,7 @@ void OptimizeTab::runOp(const QJsonObject &req, const QString &what, std::functi
 
 void OptimizeTab::setBusy(bool b) {
     busy_ = b;
+    if (b) ++opGen_;
     groups_->setEnabled(!b);
     applyBtn_->setEnabled(!b);
     gameBtn_->setEnabled(!b);

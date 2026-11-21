@@ -1198,7 +1198,16 @@ void SceneEngine::start(const Scene &s) {
                 privileged::run(privileged::helperPath("tune-profile-helper"), rq, this, [done, c](const privileged::Result &r) {
                     if (r.reached && r.json.value("game_active").toBool()) { done(true, "left alone (game session active)"); return; }
                     if (!r.ok()) { done(false, r.message()); return; }
-                    done(true, c.kind == Choice::Reset ? QStringLiteral("originals restored") : "'" + c.name + "'");
+                    QString msg = c.kind == Choice::Reset ? QStringLiteral("originals restored") : "'" + c.name + "'";
+                    int n = 0;
+                    QStringList keys;
+                    for (const QJsonValue &v : r.json.value("results").toArray()) {
+                        const int m = v.toObject().value("mismatch_count").toInt();
+                        if (m > 0) { n += m; keys << v.toObject().value("key").toString(); }
+                    }
+                    // Still a success (the writes went through), but not silently: the values read back differently.
+                    if (n > 0) msg += QStringLiteral(" · ⚠ %1 value(s) did not stick (%2)").arg(n).arg(keys.join(QStringLiteral(", ")));
+                    done(true, msg);
                 }, 120000);
             };
             if (c.kind != Choice::Profile) { run(req); return; }

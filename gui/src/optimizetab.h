@@ -179,6 +179,7 @@ private:
     QJsonArray shadows_;     // tune::SHADOWS: {"global", "when", "keys"}
     bool active_ = false, busy_ = false, describing_ = false, helperMissing_ = false;
     bool needFull_ = true;                 // next describe must read the slow rows too
+    int opGen_ = 0;                        // bumped when a privileged op starts: a describe begun before it is stale
     QHash<QString, QJsonObject> slowKeep_; // slow rows as of the last full describe
 
     QLabel *banner_ = nullptr, *bannerDetail_ = nullptr, *status_ = nullptr, *bootLabel_ = nullptr;

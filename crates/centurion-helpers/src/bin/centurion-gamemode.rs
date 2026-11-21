@@ -765,7 +765,15 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
                 let v = pkexec(&json!({"op": "apply_preset", "mode": "manual", "replace": true, "preset": preset}))?;
                 if v["game_active"] == true { return Ok("left alone (game session active)".into()); }
                 if v["ok"] != true { return Err(v["error"].as_str().unwrap_or("failed").into()); }
-                Ok(match c { Err(()) => "originals restored".into(), Ok(n) => format!("\"{n}\"") })
+                let mut out = match c { Err(()) => "originals restored".to_owned(), Ok(n) => format!("\"{n}\"") };
+                // Same note as the GUI scene step: written, but read back differently.
+                let stuck: Vec<(&str, u64)> = v["results"].as_array().into_iter().flatten()
+                    .filter_map(|r| Some((r["key"].as_str()?, r["mismatch_count"].as_u64().filter(|&m| m > 0)?))).collect();
+                if !stuck.is_empty() {
+                    let keys: Vec<&str> = stuck.iter().map(|(k, _)| *k).collect();
+                    out += &format!(" · ⚠ {} value(s) did not stick ({})", stuck.iter().map(|(_, m)| m).sum::<u64>(), keys.join(", "));
+                }
+                Ok(out)
             })();
             line("Optimizations", r);
         }

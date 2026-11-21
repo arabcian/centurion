@@ -94,6 +94,9 @@ const ETC_DIR: &str = "/etc/centurion";
 const BOOT_FILE: &str = "/etc/centurion/tune-boot.json";
 const MAX_BASELINE: usize = 16_384;
 const MAX_REFCOUNT: u32 = 64;
+/// Wait before apply reads its files back (see apply_values): long enough for a synchronous kernel/firmware
+/// reaction to show, short enough to hold the tune lock only briefly.
+const VERIFY_SETTLE: Duration = Duration::from_millis(500);
 /// How long a caller is willing to wait for a busy lock before giving up.
 /// Tune ops serialise on this lock; a hung helper (D-state sysfs write,
 /// nvidia-powerd pause) must not block every other caller for good.
@@ -417,6 +420,8 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
     let rejects: Vec<autotune::Issue> = autotune::audit(values, &autotune::AuditCtx::live()).into_iter().filter(|i| i.reject).collect();
     // Files with a recorded original: IRQ and PCI rows look up hundreds of them under the tune lock.
     let mut recorded: std::collections::HashSet<PathBuf> = st.baseline.iter().map(|(_, p, _)| p.clone()).collect();
+    // (result index, tunable, file, value it should hold): read back once all rows are written.
+    let mut verify: Vec<(usize, &'static tune::Tunable, PathBuf, String)> = Vec::new();
     // Table order, not request order: pstate mode first, hot-plug last.
     let mut first = true;
     for t in TUNABLES {
@@ -462,12 +467,14 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         // PCI latency row touch 100+ files each).
         let mut todo: Vec<(PathBuf, String, bool)> = Vec::new();
         let mut prev_n = 0;
+        // Files this row should hold its value in afterwards: written ones and those already at it.
+        let mut checks: Vec<(PathBuf, String)> = Vec::new();
         for (f, data) in plan {
             let Some(orig) = tune::baseline_value(t, &f) else {
                 if tune::best_effort(t) { refused += 1; } else { errs.push(format!("{}: unreadable", f.display())); }
                 continue;
             };
-            if tune::same_value(t, &orig, &data) { continue; }
+            if tune::same_value(t, &orig, &data) { checks.push((f, data)); continue; }
             let fresh = !recorded.contains(&f);
             if fresh {
                 if st.baseline.len() >= MAX_BASELINE { errs.push("baseline full".into()); break; }
@@ -534,6 +541,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
             match tune::write_value(t, &f, &data) {
                 Ok(()) => {
                     written += 1;
+                    checks.push((f.clone(), data.clone()));
                     if !game { if let Some(g) = st.game.as_mut() { g.fresh.remove(&f); g.prev.retain(|(_, q, _)| *q != f); } }
                 }
                 Err(e) => {
@@ -583,8 +591,31 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
             r["ok"] = json!(false);
             r["error"] = json!(errs.join("; "));
         }
+        // Best-effort rows already report what the kernel refused; PCIe hardwires the latency byte etc.
+        if !tune::best_effort(t) {
+            verify.extend(checks.into_iter().map(|(f, d)| (results.len(), t, f, d)));
+        }
         results.push(r);
         if tune::is_hotplug(t.key) && written > 0 { std::thread::sleep(tune::HOTPLUG_SETTLE); tune::invalidate_topology(); }
+    }
+    // A successful write() is not proof the value is in effect: the kernel may clamp it, and firmware or
+    // another tool may change it right after (the EC re-programs limits on a power-profile write). Read every
+    // file back once, after a short settle; a mismatch is reported, `ok` stays as it was.
+    if !verify.is_empty() {
+        std::thread::sleep(VERIFY_SETTLE);
+        let mut bad: std::collections::BTreeMap<usize, Vec<String>> = std::collections::BTreeMap::new();
+        for (i, t, f, data) in &verify {
+            // Unreadable now (a policy dir gone after a pstate/hot-plug change): nothing to claim either way.
+            let Some(live) = tune::baseline_value(t, f) else { continue };
+            if !tune::same_value(t, &live, data) {
+                bad.entry(*i).or_default().push(format!("{}: set {data}, reads {live}", f.display()));
+            }
+        }
+        for (i, mut m) in bad {
+            results[i]["mismatch_count"] = json!(m.len());
+            m.truncate(4);
+            results[i]["mismatch"] = json!(m);
+        }
     }
     (results, all_ok)
 }
