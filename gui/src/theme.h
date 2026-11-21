@@ -1,6 +1,7 @@
 #pragma once
 // Single source of truth for the look — port of theme.py.
 #include <QColor>
+#include <QIcon>
 #include <QList>
 #include <QPair>
 #include <QString>
@@ -35,6 +36,8 @@ QString profileAccent(const QString &profile);
 /// Premade palettes: (id, display name), in menu order.
 QList<QPair<QString, QString>> themes();
 QString currentTheme();
+/// Three-colour preview for the theme combobox; no theme changes or I/O.
+QIcon themePreviewIcon(const QString &id);
 /// Experimental interface is selected by default on this branch; classic remains available.
 bool experimentalEnabled();
 bool saveUiMode(bool experimental);

@@ -2,6 +2,10 @@
 #include <QApplication>
 #include <QFontMetrics>
 #include <QHash>
+#include <QIcon>
+#include <QPainter>
+#include <QPixmap>
+#include <cmath>
 #include <QPalette>
 #include <QProxyStyle>
 #include <QSettings>
@@ -61,6 +65,38 @@ const Palette PALETTES[] = {
         "#eee2e8", "#bfb0b8", "#92818a", "#f4a6c0", "#a36a7e", "#9bd19a", "#efc77a", "#f27373", "#8f4444", "#8cb8e0", "#c6a6f0"}},
     {"phosphor", "Phosphor", {"#0f1711", "#141e16", "#1a261d", "#203024", "#283d2d", "#0b110d", "#243629", "#1d2b20",
         "#e2eee5", "#b0bfb4", "#819286", "#4af08a", "#2a9455", "#b5f07a", "#e8e05a", "#ff6a5a", "#94382f", "#5ed8d0", "#b6a0f0"}},
+    // Community colourways. Existing IDs stay unchanged for saved gui.ini preferences.
+    // Catppuccin: four flavour variants, including the light Latte palette.
+    {"catppuccin-mocha", "Catppuccin Mocha", {"#181825", "#1e1e2e", "#252538", "#313244", "#45475a", "#11111b", "#45465e", "#313248",
+        "#cdd6f4", "#bac2de", "#9399b2", "#cba6f7", "#9370c4", "#a6e3a1", "#f9e2af", "#f38ba8", "#974b65", "#89b4fa", "#b4befe"}},
+    {"catppuccin-macchiato", "Catppuccin Macchiato", {"#1e2030", "#24273a", "#2c3043", "#363a4f", "#494d64", "#181926", "#4b5067", "#34384d",
+        "#cad3f5", "#b8c0e0", "#939ab7", "#b7bdf8", "#797fc1", "#a6da95", "#eed49f", "#ed8796", "#974b57", "#8aadf4", "#c6a0f6"}},
+    {"catppuccin-frappe", "Catppuccin Frappé", {"#292c3c", "#303446", "#393e50", "#414559", "#51576d", "#232634", "#555b70", "#3d4256",
+        "#c6d0f5", "#b5bfe2", "#949cbb", "#ca9ee6", "#896bb2", "#a6d189", "#e5c890", "#e78284", "#9a4c4e", "#8caaee", "#babbf1"}},
+    {"catppuccin-latte", "Catppuccin Latte · Light", {"#eff1f5", "#e6e9ef", "#dce0e8", "#ccd0da", "#bcc0cc", "#ffffff", "#bcc0cc", "#d1d5df",
+        "#4c4f69", "#5c5f77", "#6c6f85", "#8839ef", "#6926bd", "#287a26", "#986000", "#d20f39", "#9b2639", "#1e66f5", "#8031a7"}},
+    {"nord", "Nord", {"#242933", "#2e3440", "#343c49", "#3b4252", "#434c5e", "#20252e", "#4c566a", "#343d4b",
+        "#eceff4", "#d8dee9", "#a5b4c6", "#88c0d0", "#5c929f", "#a3be8c", "#ebcb8b", "#bf616a", "#7c4149", "#81a1c1", "#b48ead"}},
+    {"dracula", "Dracula", {"#21222c", "#282a36", "#303241", "#383a4c", "#44475a", "#1c1d27", "#44475a", "#353748",
+        "#f8f8f2", "#d9d9db", "#9296ad", "#bd93f9", "#825eb1", "#50fa7b", "#f1fa8c", "#ff5555", "#9c3434", "#8be9fd", "#ff79c6"}},
+    {"one-dark", "One Dark", {"#21252b", "#282c34", "#30353e", "#353b45", "#424953", "#1b1e23", "#414854", "#303640",
+        "#abb2bf", "#b7bdc7", "#858f9e", "#61afef", "#3679b5", "#98c379", "#e5c07b", "#e06c75", "#8e4249", "#56b6c2", "#c678dd"}},
+    {"solarized-dark", "Solarized Dark", {"#00252d", "#002b36", "#073642", "#154651", "#205662", "#001d24", "#25535e", "#12404a",
+        "#eee8d5", "#93a1a1", "#839496", "#268bd2", "#146195", "#859900", "#b58900", "#dc322f", "#8e2728", "#2aa198", "#6c71c4"}},
+    {"solarized-light", "Solarized Light", {"#fdf6e3", "#eee8d5", "#e2dcc8", "#d5cfbd", "#c5c0b0", "#fffdf4", "#c4beac", "#ded7c4",
+        "#354e55", "#526a70", "#677d83", "#17649b", "#135080", "#637500", "#8b6500", "#c12c29", "#8c2926", "#167c74", "#6c71c4"}},
+    {"gruvbox-light", "Gruvbox Light", {"#fbf1c7", "#f2e5bc", "#ebdbb2", "#d5c4a1", "#bdae93", "#fff9e1", "#c5b38d", "#e2d2a9",
+        "#3c3836", "#504945", "#665c54", "#a84a00", "#854000", "#647300", "#946200", "#ad3028", "#85271f", "#076678", "#8f3f71"}},
+    {"rose-pine-dawn", "Rosé Pine Dawn · Light", {"#faf4ed", "#f2e9e1", "#ede2d9", "#dfdad9", "#cecacd", "#fffaf5", "#c7bdc0", "#e4dcdb",
+        "#575279", "#686284", "#797593", "#b45b70", "#8b4054", "#287b83", "#906618", "#b13b60", "#842944", "#286983", "#907aa9"}},
+    {"kanagawa-wave", "Kanagawa Wave", {"#1b1c25", "#1f1f28", "#252535", "#2a2a37", "#363646", "#16161d", "#3b3b4d", "#292938",
+        "#dcd7ba", "#c8c093", "#9699a3", "#7e9cd8", "#4c70a6", "#98bb6c", "#e6c384", "#e46876", "#8d404a", "#7fb4ca", "#957fb8"}},
+    {"ayu-mirage", "Ayu Mirage", {"#191e26", "#1f2430", "#272d39", "#303846", "#3c4554", "#141922", "#3a4352", "#2c3340",
+        "#cbccc6", "#b7babe", "#8a919d", "#ffcc66", "#ad8736", "#bae67e", "#ffd580", "#f28779", "#9a534a", "#5ccfe6", "#d4bfff"}},
+    {"github-dark", "GitHub Dark", {"#0d1117", "#161b22", "#1e2530", "#272e38", "#303946", "#090c10", "#30363d", "#252c35",
+        "#e6edf3", "#b1bac4", "#8b949e", "#58a6ff", "#326aab", "#3fb950", "#d29922", "#f85149", "#a52e32", "#79c0ff", "#bc8cff"}},
+    {"nightfox", "Nightfox", {"#171c28", "#192330", "#212e3d", "#29394a", "#374a5b", "#131923", "#3d4a5c", "#263544",
+        "#cdcecf", "#aeafb0", "#888f98", "#719cd6", "#486fa8", "#81b29a", "#dbc074", "#c94f6d", "#8b334a", "#63cdcf", "#9d79d6"}},
 };
 QString g_current = QStringLiteral("graphite");
 bool g_restart = false;
@@ -75,6 +111,32 @@ QList<QPair<QString, QString>> themes() {
     return out;
 }
 QString currentTheme() { return g_current; }
+
+QIcon themePreviewIcon(const QString &id) {
+    const Palette *selected = nullptr;
+    for (const Palette &p : PALETTES) {
+        if (id == QLatin1String(p.id)) { selected = &p; break; }
+    }
+    if (!selected) return {};
+    // Three actual colours from the preset: surface, foreground, and accent.
+    // Drawn at 2x so the chooser stays sharp on high-DPI / OLED displays.
+    QPixmap preview(76, 36);
+    preview.setDevicePixelRatio(2.0);
+    preview.fill(Qt::transparent);
+    QPainter painter(&preview);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QColor(QString::fromLatin1(selected->c[6])));
+    painter.setBrush(QColor(QString::fromLatin1(selected->c[1])));
+    painter.drawRoundedRect(QRectF(0.5, 0.5, 37, 17), 4, 4);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(QString::fromLatin1(selected->c[0])));
+    painter.drawRoundedRect(QRectF(3, 3, 9, 12), 2, 2);
+    painter.setBrush(QColor(QString::fromLatin1(selected->c[8])));
+    painter.drawRoundedRect(QRectF(14, 3, 9, 12), 2, 2);
+    painter.setBrush(QColor(QString::fromLatin1(selected->c[11])));
+    painter.drawRoundedRect(QRectF(25, 3, 9, 12), 2, 2);
+    return QIcon(preview);
+}
 
 bool experimentalEnabled() {
     const QByteArray overrideMode = qgetenv("CENTURION_UI").trimmed().toLower();
@@ -103,6 +165,12 @@ void load() {
 }
 
 bool saveTheme(const QString &id) {
+    // Never persist an unrecognised id: a typo should not silently select Graphite.
+    bool found = false;
+    for (const Palette &p : PALETTES) {
+        if (id == QLatin1String(p.id)) { found = true; break; }
+    }
+    if (!found) return false;
     QSettings s = settings();
     s.setValue(QStringLiteral("theme"), id);
     s.sync();
@@ -130,6 +198,21 @@ QString banner(const char *color, const QString &selector) {
     return selector.isEmpty() ? body : selector + QStringLiteral(" { ") + body + QStringLiteral(" }");
 }
 
+// Contrast-aware labels are necessary for light themes and high-chroma accent colours.
+static QColor textOnAccent() {
+    const QColor a(QString::fromLatin1(ACCENT));
+    const auto linear = [](double x) {
+        return x <= 0.04045 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4);
+    };
+    const double luma = 0.2126 * linear(a.redF()) + 0.7152 * linear(a.greenF())
+                      + 0.0722 * linear(a.blueF());
+    return luma > 0.179 ? QColor(QStringLiteral("#15161a")) : QColor(QStringLiteral("#ffffff"));
+}
+
+static bool lightTheme() {
+    return QColor(QString::fromLatin1(BG0)).lightnessF() > 0.62;
+}
+
 static QPalette palette() {
     QPalette p;
     auto c = [](const char *s) { return QColor(QString::fromLatin1(s)); };
@@ -139,7 +222,7 @@ static QPalette palette() {
     p.setColor(QPalette::Text, c(FG));           p.setColor(QPalette::Button, c(BG3));
     p.setColor(QPalette::ButtonText, c(FG));     p.setColor(QPalette::BrightText, c(DANGER));
     p.setColor(QPalette::Link, c(INFO));         p.setColor(QPalette::Highlight, c(ACCENT));
-    p.setColor(QPalette::HighlightedText, c(BG0)); p.setColor(QPalette::PlaceholderText, c(MUTED));
+    p.setColor(QPalette::HighlightedText, textOnAccent()); p.setColor(QPalette::PlaceholderText, c(MUTED));
     p.setColor(QPalette::Mid, c(BORDER));        p.setColor(QPalette::Light, c(BG4));
     p.setColor(QPalette::Dark, c(BG0));          p.setColor(QPalette::Shadow, c(WELL));
     for (auto r : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
@@ -571,8 +654,9 @@ QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: @BORDER
 QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @ACCENT_SOFT; }
 )QSS");
     const QColor accent(QString::fromLatin1(ACCENT));
-    // Text on the amber key: the darkest surface, unless the accent itself is dark.
-    const QString onAccent = accent.lightnessF() < 0.45 ? QString::fromLatin1(FG) : QString::fromLatin1(BG0);
+    // Dark foreground on pale accent, white foreground on deep accent.
+    const QString onAccent = textOnAccent().name();
+    const bool isLight = lightTheme();
     // Longest names first so @BG doesn't eat @BG0 etc.
     // Card glow: the card's top surface with a trace of a signal colour (opaque, so it stays a card colour).
     const QByteArray cardTop = mix(BG1, BG2, 0.55).toLatin1();
@@ -583,13 +667,14 @@ QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { backgro
         {"@BORDER_SOFT", BORDER_SOFT}, {"@ACCENT_SOFT", ACCENT_SOFT}, {"@DANGER_SOFT", DANGER_SOFT},
         {"@DANGER_TINT", rgba(DANGER, 0.14)}, {"@DANGER_WASH", rgba(DANGER, 0.05)}, {"@ACCENT_TINT2", rgba(ACCENT, 0.10)},
         {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_EDGE", rgba(ACCENT, 0.22)}, {"@ACCENT_FADE", rgba(ACCENT, 0.02)}, {"@FOCUS_WELL", mix(WELL, ACCENT, 0.05)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_DEEP", accent.darker(135).name()},
-        {"@HILITE2", "rgba(255, 255, 255, 0.09)"}, {"@HILITE", "rgba(255, 255, 255, 0.05)"}, {"@ACCENT_HALO", rgba(ACCENT, 0.28)},
-        {"@ACCENT_TOP", accent.lighter(125).name()}, {"@ACCENT_HI", accent.lighter(112).name()}, {"@ON_ACCENT", onAccent},
+        {"@HILITE2", isLight ? QStringLiteral("rgba(0, 0, 0, 0.08)") : QStringLiteral("rgba(255, 255, 255, 0.09)")},
+        {"@HILITE", isLight ? QStringLiteral("rgba(0, 0, 0, 0.04)") : QStringLiteral("rgba(255, 255, 255, 0.05)" )}, {"@ACCENT_HALO", rgba(ACCENT, 0.28)},
+        {"@ACCENT_TOP", accent.lighter(125).name()}, {"@ACCENT_HI", isLight ? accent.darker(115).name() : accent.lighter(112).name()}, {"@ON_ACCENT", onAccent},
         // Derived surfaces (each palette's own hue): bezel and page floor below the window colour,
         // the rail and well shadows below that; edges are the border lifted towards the text colour.
         {"@BEZEL_TOP", mix(BG1, BG0, 0.35)}, {"@BEZEL_BOT", mix(BG0, WELL, 0.55)}, {"@PAGE_BOT", mix(BG0, WELL, 0.65)},
-        {"@RAIL_SHADE", mix(WELL, "#000000", 0.35)}, {"@RAIL", mix(WELL, BG0, 0.25)},
-        {"@BTN_SHADE", mix(BORDER, "#000000", 0.35)}, {"@CARD_TOP", mix(BG1, BG2, 0.55)}, {"@CARD_BOT", mix(BG1, BG2, 0.15)}, {"@SIDEBAR", mix(BG0, WELL, 0.6)}, {"@ROW_ALT", mix(WELL, BG1, 0.6)},
+        {"@RAIL_SHADE", isLight ? mix(WELL, BORDER, 0.6) : mix(WELL, "#000000", 0.35)}, {"@RAIL", mix(WELL, BG0, 0.25)},
+        {"@BTN_SHADE", isLight ? mix(BORDER, FG, 0.08) : mix(BORDER, "#000000", 0.35)}, {"@CARD_TOP", mix(BG1, BG2, 0.55)}, {"@CARD_BOT", mix(BG1, BG2, 0.15)}, {"@SIDEBAR", mix(BG0, WELL, 0.6)}, {"@ROW_ALT", mix(WELL, BG1, 0.6)},
         {"@KEY_TOP", mix(BG3, BG4, 0.45)}, {"@EDGE", mix(BORDER, FG, 0.13)},
         {"@BRANDW", QString::number(brandInset())}, {"@BRANDPT", QString::number(FONT_PT + 2)},
         {"@FG_DIM", FG_DIM}, {"@BORDER", BORDER}, {"@ACCENT", ACCENT}, {"@DANGER", DANGER},

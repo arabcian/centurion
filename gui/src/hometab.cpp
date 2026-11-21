@@ -213,7 +213,11 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     headRow->addWidget(healthBadge_, 0, Qt::AlignVCenter);
     auto *themeBox = new QComboBox;
     themeBox->setToolTip(tr("Colour theme. Applied by restarting the app (a few seconds)."));
-    for (const auto &[id, name] : theme::themes()) themeBox->addItem(name, id);
+    for (const auto &[id, name] : theme::themes()) {
+        themeBox->addItem(theme::themePreviewIcon(id), name, id);
+        themeBox->setItemData(themeBox->count() - 1, name, Qt::ToolTipRole);
+    }
+    themeBox->setIconSize(QSize(38, 18));
     themeBox->setCurrentIndex(std::max(0, themeBox->findData(theme::currentTheme())));
     connect(themeBox, &QComboBox::activated, this, [this, themeBox](int i) {
         const QString id = themeBox->itemData(i).toString();
