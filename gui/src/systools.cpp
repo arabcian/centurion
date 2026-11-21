@@ -1,5 +1,6 @@
 #include "systools.h"
 #include "diagnostictools.h"
+#include "advanceddiagnostics.h"
 
 #include "lazywidget.h"
 #include "privileged.h"
@@ -390,6 +391,7 @@ private:
         const QStringList c = spec_.cmds.at(i);
         const QString shown = c.join(QLatin1Char(' '));
         if (c.first() == QLatin1String("@file")) { out_ += "$ cat " + c.at(1) + '\n' + readFile(c.at(1)) + '\n'; step(i + 1); return; }
+        if (c.first() == QLatin1String("@advanced")) { out_ += advanceddiagnostics::systemReport(c.at(1)); step(i + 1); return; }
         if (c.first() == QLatin1String("@hardware")) { out_ += diagnostictools::hardwarePreview(); step(i + 1); return; }
         if (c.first() == QLatin1String("@edid")) { out_ += diagnostictools::edidReport(); step(i + 1); return; }
         if (c.first() == QLatin1String("@nvparams")) { out_ += diagnostictools::moduleParameterReport(); step(i + 1); return; }
@@ -460,6 +462,22 @@ QString installCommand(const QString &tool) { return installHint(tool); }
 
 void addPages(QTabWidget *tabs) {
     const Spec specs[] = {
+        {QT_TRANSLATE_NOOP("systools", "PCIe Link Negotiation Lab"), "S04: User-triggered same-boot link speed/width and AER counter changes. Passive; never retrains links or changes ASPM.",
+         {{"@advanced","S04"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "Wi-Fi / Bluetooth Firmware Doctor"), "S07: Read-only radio identifiers, drivers, rfkill and retained firmware failures. No driver reload.",
+         {{"@advanced","S07"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "Power Limit Source Map"), "S08: Read passive powercap, CPU profile, and GPU runtime state. No SMU/EC/firmware writes.",
+         {{"@advanced","S08"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "Memory Architecture Explorer"), "S10: NUMA, L3 domains, THP, zram, PSI, cgroup and swap sources.",
+         {{"@advanced","S10"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "ACPI / WMI Firmware Browser"), "S11: Metadata browser only; never executes firmware methods or reads passwords.",
+         {{"@advanced","S11"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "USB-C PD / Charger Inspector"), "S13: Supported typec/power_supply exports with source units; no negotiated watt guesses.",
+         {{"@advanced","S13"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "PipeWire Audio Doctor"), "S15: Audio routing/server metadata; no service restarts or stream changes.",
+         {{"@advanced","S15"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "Kernel Feature & Firmware Check"), "S18: Running kernel config, driver and firmware dependencies. Missing data is unknown.",
+         {{"@advanced","S18"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "Hardware snapshot"), "S01: Compare PCI topology, drivers, firmware, module versions and redacted kernel boot parameters to a user-saved baseline.",
          {{"@hardware"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "EDID / VRR"), "S03: Read-only DRM EDID checksums, detailed timings, connector modes and known/unknown VRR exposure.",

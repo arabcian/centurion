@@ -79,6 +79,8 @@ add_executable(centurion
     src/systools.cpp     src/systools.h
     src/diagnostictools.cpp src/diagnostictools.h
     src/healthevidence.cpp src/healthevidence.h
+    src/advanceddiagnostics.cpp src/advanceddiagnostics.h
+    src/advancedhealth.cpp src/advancedhealth.h
     src/distroprofile.cpp src/distroprofile.h
     src/eventinfo.cpp    src/eventinfo.h
     src/klogpage.cpp     src/klogpage.h
@@ -272,6 +274,10 @@ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hico
 option(CENTURION_BUILD_TESTS "Build GUI unit tests" OFF)
 if(CENTURION_BUILD_TESTS)
     enable_testing()
+    add_executable(centurion-advanceddiagnostics-test tests/advanceddiagnostics_test.cpp src/advanceddiagnostics.cpp src/advanceddiagnostics.h)
+    target_link_libraries(centurion-advanceddiagnostics-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-advanceddiagnostics-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME advanceddiagnostics COMMAND centurion-advanceddiagnostics-test)
     add_executable(centurion-diagnostictools-test tests/diagnostictools_test.cpp src/diagnostictools.cpp src/diagnostictools.h)
     target_link_libraries(centurion-diagnostictools-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-diagnostictools-test PRIVATE QT_NO_KEYWORDS)

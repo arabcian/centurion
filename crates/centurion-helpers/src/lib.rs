@@ -26,6 +26,7 @@ pub mod display;
 pub mod fan_table;
 pub mod health;
 pub mod health_diagnostics;
+pub mod health_nvme;
 pub mod memory_spd;
 pub mod intel_uv;
 pub mod intel_uv_daemon;

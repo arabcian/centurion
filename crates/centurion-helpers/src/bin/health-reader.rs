@@ -33,6 +33,9 @@
 fn main() {
     centurion_helpers::init();
     let req = centurion_helpers::read_request(4096).unwrap_or(serde_json::Value::Null);
+    if req["op"].as_str() == Some("nvme_deep") {
+        std::process::exit(centurion_helpers::finish(centurion_helpers::health_nvme::report()));
+    }
     if req["op"].as_str() == Some("diagnostics") {
         std::process::exit(centurion_helpers::finish(centurion_helpers::health_diagnostics::report()));
     }

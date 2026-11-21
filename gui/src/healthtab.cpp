@@ -21,6 +21,7 @@
 #include "sysinfo.h"
 #include "systools.h"
 #include "healthevidence.h"
+#include "advancedhealth.h"
 #include "theme.h"
 
 #include <QDateTime>
@@ -109,6 +110,7 @@ static QString pageAbout(const QString &key) {
     static const QHash<QString, const char *> ABOUT = {
         {QStringLiteral("overview"), QT_TRANSLATE_NOOP("HealthTab", "One card per area with its level, and suggested next steps.")},
         {QStringLiteral("evidence"), QT_TRANSLATE_NOOP("HealthTab", "MCE topology, AER changes, NVIDIA Xid cases, F2FS failures and radio firmware faults.")},
+        {QStringLiteral("investigations"), QT_TRANSLATE_NOOP("HealthTab", "Read-only boot regression, NVMe, USB, sleep, CO, GPU and incident investigations.")},
         {QStringLiteral("monitor"), QT_TRANSLATE_NOOP("HealthTab", "Hardware and driver errors from the kernel, explained, with saved history per day.")},
         {QStringLiteral("boot"), QT_TRANSLATE_NOOP("HealthTab", "Every boot: how it ended, its kernel events, the curves in effect, crash records and patterns.")},
         {QStringLiteral("capabilities"), QT_TRANSLATE_NOOP("HealthTab", "Why a feature is missing: read-only kernel, helper and firmware capability checks.")},
@@ -197,6 +199,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *monitor = new QWidget;
     addPage(problems, monitor, tr("Events & alerts"), QStringLiteral("monitor"));
     addPage(problems, new HealthEvidencePage, tr("Evidence Lab"), QStringLiteral("evidence"));
+    addPage(problems, new AdvancedHealthPage, tr("Investigations"), QStringLiteral("investigations"));
     boot_ = new BootPage;
     addPage(problems, boot_, tr("Boot history"), QStringLiteral("boot"));
     addPage(problems, insights::capabilityPage(), tr("Capability Doctor"), QStringLiteral("capabilities"));
@@ -284,9 +287,13 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
             key == QLatin1String("Thermal") || key == QLatin1String("Battery") ||
             key == QLatin1String("NVIDIA") || key == QLatin1String("Graphics") ||
             key == QLatin1String("Hardware snapshot") || key == QLatin1String("EDID / VRR") ||
-            key == QLatin1String("NVIDIA module parameters")) group = deviceTools;
+            key == QLatin1String("NVIDIA module parameters") ||
+            key == QLatin1String("Power Limit Source Map") || key == QLatin1String("Memory Architecture Explorer") ||
+            key == QLatin1String("USB-C PD / Charger Inspector") ||
+            key == QLatin1String("ACPI / WMI Firmware Browser")) group = deviceTools;
         else if (key == QLatin1String("PCI") || key == QLatin1String("PCIe detail") ||
-                 key == QLatin1String("USB")) group = connectivityTools;
+                 key == QLatin1String("USB") || key == QLatin1String("PCIe Link Negotiation Lab") ||
+                 key == QLatin1String("Wi-Fi / Bluetooth Firmware Doctor")) group = connectivityTools;
         auto *item = new QTreeWidgetItem(group, {label});
         toolItems_.insert(page, item);
         toolPages_->addWidget(page);
