@@ -146,7 +146,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
 
     auto *monRow = new QHBoxLayout;
     monOn_ = new QCheckBox("Live monitor");
-    monOn_->setToolTip("throttled --monitor: every 2 s read the throttle reasons (IA32_THERM_STATUS), VCore\n"
+    monOn_->setToolTip("Every 2 s read the throttle reasons (IA32_THERM_STATUS), VCore\n"
                        "(IA32_PERF_STATUS) and RAPL energy counters. One pkexec call per sample, only while this tab is visible.");
     monLbl_ = new QLabel;
     monLbl_->setTextFormat(Qt::RichText);
@@ -173,7 +173,10 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     auto *vg = new QGridLayout(vBox);
     vg->setVerticalSpacing(3);
     const char *heads[] = {"Plane", "Offset", "Current"};
-    for (int c = 0; c < 3; ++c) vg->addWidget(muted(QString::fromLatin1(heads[c])), 0, c);
+    for (int c = 0; c < 3; ++c) {
+        planeInfo_ << muted(QString::fromLatin1(heads[c]));
+        vg->addWidget(planeInfo_.last(), 0, c);
+    }
     const QList<QPair<QString, QString>> planes{{"core", "CPU Core"}, {"cache", "CPU Cache"}, {"gpu", "Integrated GPU"},
                                                 {"uncore", "System Agent"}, {"analogio", "Analog I/O"},
                                                 {"memss", "Memory Subsystem (MemSS)"}, {"ngu", "NGU fabric"}};
@@ -194,7 +197,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     link_ = new QCheckBox("Link Core && Cache");
     link_->setChecked(true);
     link_->setToolTip("Skylake and later: core and cache are one voltage plane. The SMALLER of the two offsets is\n"
-                      "applied to both, so they should always be written with the same value (undervolt.py warns about this).");
+                      "applied to both, so they should always be written with the same value.");
     auto sync = [this](int from) {
         if (!link_->isChecked()) return;
         const int to = from == 0 ? 1 : 0;
@@ -208,12 +211,16 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
         connect(volt_[i].val, &QDoubleSpinBox::valueChanged, this, [sync, i] { sync(i); });
     }
     vg->addWidget(link_, planes.size() + 1, 0, 1, 3);
-    vg->addWidget(muted("Negative = undervolt. Start around −50 mV, test (Health → Curve stability → CPU test, idle, "
+    planeInfo_ << muted("Negative = undervolt. Start around −50 mV, test (Health → Curve stability → CPU test, idle, "
                         "suspend/resume), then step "
                         "down 10 mV at a time. Too far = freezes / MCEs; the offset is lost on reboot and S3, so a bad "
-                        "value is recovered by a power cycle."), planes.size() + 2, 0, 1, 3);
+                        "value is recovered by a power cycle.");
+    vg->addWidget(planeInfo_.last(), planes.size() + 2, 0, 1, 3);
+    noPlanes_ = muted("No voltage plane has answered yet. Press Read current; on a CPU without Intel's OC mailbox "
+                      "(any AMD CPU, or a BIOS that hides it) nothing can be offered here.");
+    vg->addWidget(noPlanes_, planes.size() + 3, 0, 1, 3);
     vg->setColumnStretch(2, 1);
-    vg->setRowStretch(planes.size() + 3, 1);
+    vg->setRowStretch(planes.size() + 4, 1);
     left->addWidget(vBox);
 
     // ── extras ──
@@ -221,20 +228,20 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     auto *xg = new QGridLayout(xBox);
     xg->setVerticalSpacing(3);
     positive_ = new QCheckBox("Allow positive offsets (overvolt, max +50 mV)");
-    positive_->setToolTip("undervolt.py --force. Only for stabilising a marginal chip; throttled refuses positive offsets.");
+    positive_->setToolTip("Force mode: only for stabilising a marginal chip. Positive offsets raise voltage, heat and wear.");
     connect(positive_, &QCheckBox::toggled, this, &IntelTab::setPositive);
     xg->addWidget(positive_, 0, 0, 1, 2);
     xg->addWidget(new QLabel("BD PROCHOT"), 1, 0);
     bdprochot_ = new QComboBox;
     bdprochot_->addItems({"untouched", "disable", "enable"});
-    bdprochot_->setToolTip("throttled Disable_BDPROCHOT (MSR_POWER_CTL bit 0). Bi-directional PROCHOT lets the EC/charger\n"
+    bdprochot_->setToolTip("Disable_BDPROCHOT (MSR_POWER_CTL bit 0). Bi-directional PROCHOT lets the EC/charger\n"
                            "throttle the CPU to minimum clocks. Disabling it removes that safety net: only for machines that\n"
                            "throttle wrongly (bad charger/sensor). The EC may turn it back on; the daemon re-applies it.");
     xg->addWidget(bdprochot_, 1, 1);
     xg->addWidget(new QLabel("cTDP level"), 2, 0);
     ctdp_ = new QComboBox;
     ctdp_->addItems({"untouched", "0 · nominal", "1 · down", "2 · up"});
-    ctdp_->setToolTip("throttled cTDP (MSR_CONFIG_TDP_CONTROL). Only levels the CPU advertises in PLATFORM_INFO are accepted.");
+    ctdp_->setToolTip("cTDP (MSR_CONFIG_TDP_CONTROL). Only levels the CPU advertises in PLATFORM_INFO are accepted.");
     xg->addWidget(ctdp_, 2, 1);
     xg->addWidget(new QLabel("C1E"), 3, 0);
     c1e_ = new QComboBox;
@@ -257,14 +264,15 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     xg->addWidget(cstOn_, 4, 0);
     xg->addLayout(cstRow, 4, 1);
     lock_ = new QCheckBox("Lock PL1/PL2 until reboot");
-    lock_->setToolTip("undervolt.py --lock-power-limit: sets bit 63 of MSR_PKG_POWER_LIMIT after writing, so neither\n"
+    lock_->setToolTip("Lock power limit: sets bit 63 of MSR_PKG_POWER_LIMIT after writing, so neither\n"
                       "firmware nor software (including this tool) can change it until the next reset.");
     xg->addWidget(lock_, 5, 0, 1, 2);
     auto *bTs = new QPushButton("Import ThrottleStop.ini…");
-    bTs->setToolTip("undervolt.py --throttlestop: read FIVRVoltage offsets from a ThrottleStop profile.");
+    bTs->setToolTip("Read FIVRVoltage offsets from a ThrottleStop profile.");
     connect(bTs, &QPushButton::clicked, this, &IntelTab::importThrottleStop);
     xg->addWidget(bTs, 6, 0, 1, 2);
     xg->setColumnStretch(1, 1);
+    xg->setRowStretch(7, 1);  // rows stay together at the top when the box is as tall as its neighbour
     left->addWidget(xBox);
 
     // ── limit reasons ──
@@ -389,8 +397,8 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
         auto *cur = new QLabel("–");
         connect(on, &QCheckBox::toggled, sp, &QWidget::setEnabled);
         on->setToolTip("Maximum current of this VR domain (0.25 A steps, floored, up to 511.75 A). Raising it can stop\n"
-                       "current-limit throttling; lowering it caps power. Read current first: a value below the stock\n"
-                       "limit shown on the right throttles the CPU. Supported by fewer CPUs than voltage offsets.");
+                       "current-limit throttling; the stock value on the right gives it back.\n"
+                       "Supported by fewer CPUs than voltage offsets.");
         lg->addWidget(on, r, 0);
         lg->addWidget(sp, r, 1);
         lg->addWidget(cur, r++, 2, 1, 2);
@@ -468,7 +476,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     pl2_ = mkPl("PL2", 90, 0.002, "Short-term package power limit and its time window.");
     mchbar_ = new QCheckBox("Mirror to MCHBAR (MMIO)");
     mchbar_->setChecked(true);
-    mchbar_->setToolTip("Write the same value to MCHBAR+0x59A0 (via /dev/mem) like intel-undervolt and throttled do:\n"
+    mchbar_->setToolTip("Write the same value to MCHBAR+0x59A0 (via /dev/mem) as well:\n"
                         "the effective limit is the lower of the MSR and MMIO copies. Skipped automatically if the\n"
                         "host bridge is unknown or /dev/mem is blocked.");
     lg->addWidget(mchbar_, r++, 0, 1, 4);
@@ -550,18 +558,18 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     right->addWidget(lBox);
 
     // ── boot / daemon ──
-    auto *dBox = box("Boot, resume & daemon", "box_green");
+    auto *dBox = box("Boot, resume && daemon", "box_green");
     auto *dg = new QGridLayout(dBox);
     dg->setVerticalSpacing(3);
     dg->addWidget(new QLabel("Store for"), 0, 0);
     bootTarget_ = new QComboBox;
     bootTarget_->addItems({"AC and battery", "AC only", "Battery only"});
-    bootTarget_->setToolTip("throttled [AC]/[BATTERY]: separate profiles per power source. The other slot in the\n"
+    bootTarget_->setToolTip("[AC]/[BATTERY]: separate profiles per power source. The other slot in the\n"
                             "stored file is kept; the daemon switches when the charger is plugged or unplugged.");
     dg->addWidget(bootTarget_, 0, 1, 1, 3);
     reapply_ = new QCheckBox("Re-apply every");
     reapply_->setChecked(true);
-    reapply_->setToolTip("Daemon only (intel-undervolt daemon / throttled Update_Rate_s): re-write power limits (PL1/PL2,\n"
+    reapply_->setToolTip("Daemon only (Update_Rate_s): re-write power limits (PL1/PL2,\n"
                          "PL4, PP0, MMIO disable), TCC, BD PROCHOT, cTDP, C1E, Speed Shift %, EPP and uncore each interval —\n"
                          "the EC restores its own PL1/PL2 on profile changes. Values set here therefore win over the same\n"
                          "settings in Optimizations (EPP, perf %, uncore) within one interval.\n"
@@ -574,7 +582,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     dg->addWidget(reapply_, 1, 0);
     dg->addWidget(interval_, 1, 1);
     hwpOn_ = new QCheckBox("EPP switching (hwphint)");
-    hwpOn_->setToolTip("intel-undervolt hwphint, run by the daemon: switch energy_performance_preference between two\n"
+    hwpOn_->setToolTip("hwphint, run by the daemon: switch energy_performance_preference between two\n"
                        "hints by CPU load or RAPL power. 'switch' only touches CPUs whose EPP is already one of the two\n"
                        "(so Optimizations settings are respected); 'force' always writes.");
     dg->addWidget(hwpOn_, 2, 0, 1, 4);
@@ -644,6 +652,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     dg->addWidget(muted("Periodic re-apply, EPP switching and the alarm need the daemon: rc-update add centurion-intel-uv-daemon default "
                         "(systemd: centurion-intel-uv-daemon.service). Without it, centurion-intel-uv applies once at boot and after resume."), 9, 0, 1, 4);
     dg->setColumnStretch(3, 1);
+    dg->setRowStretch(10, 1);
     right->addWidget(dBox);
     right->addStretch();
 
@@ -662,22 +671,33 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
         auto *work = new QTabWidget;
         work->setObjectName(QStringLiteral("intelWorkflows"));
         work->setDocumentMode(true);
-        auto makePage = [work](const QString &label, QWidget *first, QWidget *second) {
+        // Two equal columns; boxes on one row share its height (a grid cell stretches its widget), so a box
+        // that gains rows with the hardware (Arrow Lake planes, turbo groups) grows its neighbour with it.
+        // A row taller than the window scrolls with the page.
+        auto makePage = [work](const QString &label, const QList<QList<QWidget *>> &rows) {
             auto *scroll = new QScrollArea;
             scroll->setFrameShape(QFrame::NoFrame);
             scroll->setWidgetResizable(true);
             auto *page = new QWidget;
-            auto *row = new QHBoxLayout(page);
-            row->setContentsMargins(5, 7, 5, 7);
-            row->setSpacing(8);
-            row->addWidget(first, 1, Qt::AlignTop);
-            if (second) row->addWidget(second, 1, Qt::AlignTop);
+            auto *grid = new QGridLayout(page);
+            grid->setContentsMargins(5, 7, 5, 7);
+            grid->setHorizontalSpacing(8);
+            grid->setVerticalSpacing(8);
+            grid->setColumnStretch(0, 1);
+            grid->setColumnStretch(1, 1);
+            int r = 0;
+            for (const QList<QWidget *> &row : rows) {
+                for (QWidget *w : row) w->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // widths from the grid only
+                if (row.size() == 1) grid->addWidget(row[0], r, 0, 1, 2);
+                else { grid->addWidget(row[0], r, 0); grid->addWidget(row[1], r, 1); }
+                grid->setRowStretch(r, 1);  // the rows fill the page: every tab's boxes end on the same line
+                ++r;
+            }
             scroll->setWidget(page);
             work->addTab(scroll, label);
         };
-        makePage(tr("Voltage && safety"), vBox, xBox);
-        makePage(tr("Limits && throttling"), lBox, rBox);
-        makePage(tr("Startup && daemon"), dBox, nullptr);
+        makePage(tr("Voltage, safety && startup"), {{vBox, xBox}, {dBox}});
+        makePage(tr("Limits && throttling"), {{lBox, rBox}});
         root->addWidget(work, 1);
     } else {
         mid->addLayout(left, 1);
@@ -1285,6 +1305,7 @@ void IntelTab::showStatus(const QJsonObject &s) {
         bits << QStringLiteral("<span style='color:%1'>msr.allow_writes=%2</span>").arg(theme::WARN, s.value("allow_writes").toString());
 
     const QJsonObject v = s.value("voltage").toObject();
+    bool anyPlane = false;
     for (Row &r : volt_) {
         const QJsonObject o = v.value(r.key).toObject();
         // Only planes the CPU answers for (status 0) are shown: System Agent on
@@ -1293,9 +1314,13 @@ void IntelTab::showStatus(const QJsonObject &s) {
         for (QWidget *w : {static_cast<QWidget *>(r.on), static_cast<QWidget *>(r.val), static_cast<QWidget *>(r.cur)})
             w->setVisible(supported);
         if (!supported) { r.on->setChecked(false); continue; }
+        anyPlane = true;
         r.cur->setText(o.contains("mv") ? QStringLiteral("%1 mV").arg(o.value("mv").toDouble(), 0, 'f', 1) : QStringLiteral("error"));
         r.cur->setToolTip(o.contains("raw") ? "raw " + o.value("raw").toString() : o.value("error").toString());
     }
+    noPlanes_->setVisible(!anyPlane);
+    link_->setVisible(anyPlane);
+    for (QWidget *w : planeInfo_) w->setVisible(anyPlane);
     const QJsonObject ic = s.value("iccmax").toObject();
     for (Row &r : icc_) {
         const QJsonObject o = ic.value(r.key).toObject();

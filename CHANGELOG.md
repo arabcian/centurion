@@ -19,7 +19,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   profiles; S18 flags zstd / xz firmware the kernel cannot decompress and devices without a driver; S10 flags
   zram + zswap together and memory pressure; S04 separates link width loss from idle down-clocking.
 
+### Changed
+- Intel *Voltage & safety* (Studio UI): *Voltage offsets* / *Extras* and *Limits* / *Limit reasons* sit in
+  equal-width, equal-height pairs; *Startup & daemon* merged into the voltage page; pages scroll when a CPU
+  offers more controls; an empty voltage list explains why (AMD CPU or hidden OC mailbox). Classic UI unchanged.
+- Intel tab tooltips describe each option by itself instead of naming other undervolt tools.
+
 ### Fixed
+- TCC offset above 15 °C is refused on Haswell/Broadwell (4-bit field there); MCHBAR mask table gains 0x9B61
+  (Comet Lake-U) as in `throttled`.
 - PCIe AER totals were never read: the kernel prints `TOTAL_ERR_COR 14`, the parser required a colon. Evidence
   Lab and Events & alerts showed every AER device as Unknown.
 - NVMe Deep Health read smartctl field names from nvme-cli JSON (spare and life used missing) and showed the

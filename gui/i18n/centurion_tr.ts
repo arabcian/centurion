@@ -6757,14 +6757,13 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
             <translation>Sınırlar ve kısıtlama</translation>
         </message>
         <message>
-            <location filename="../src/inteltab.cpp" line="470"/>
-            <source>Startup &amp;&amp; daemon</source>
-            <translation>Başlangıç ve arka plan hizmeti</translation>
-        </message>
-        <message>
             <location filename="../src/inteltab.cpp" line="523"/>
             <source>ACTIVITY LOG  ·  MSR operations</source>
             <translation>ETKİNLİK GÜNLÜĞÜ  ·  MSR işlemleri</translation>
+        </message>
+        <message>
+            <source>Voltage, safety &amp;&amp; startup</source>
+            <translation>Voltaj, güvenlik ve başlangıç</translation>
         </message>
     </context>
     <context>

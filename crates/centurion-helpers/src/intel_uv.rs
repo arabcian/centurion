@@ -115,6 +115,9 @@ fn uv_map_refusal() -> String {
         c.map_or("?", |c| codename(c.model)), c.map_or(0, |c| c.family), c.map_or(0, |c| c.model))
 }
 
+/// Haswell and Broadwell client parts: TCC activation offset is bits 27:24 (4 bit), not 29:24.
+pub fn tcc_offset_4bit(model: u32) -> bool { matches!(model, 60 | 69 | 70 | 61 | 71) }
+
 /// Planes this CPU has: Arrow Lake-only ones dropped on other CPUs.
 pub fn cpu_planes() -> impl Iterator<Item = &'static (&'static str, u64, &'static str)> {
     let arl = is_arrow_lake();
@@ -302,7 +305,7 @@ fn vr_read(m: &Msr, cmd: u64) -> io::Result<u64> {
     if !VR_READ_COMMANDS.iter().any(|c| c.0 == cmd) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a known VR mailbox read command"));
     }
-    // 0x607 is MSR_PKGC3_IRTL on every other generation: the guard lives here, not only in the caller.
+    // 0x607 is another register on other generations (not this mailbox): the guard lives here, not only in the caller.
     if !is_arrow_lake() {
         return Err(io::Error::new(io::ErrorKind::Unsupported, "VR mailbox 0x607/0x608 exists only on Arrow Lake"));
     }
@@ -522,7 +525,7 @@ const M42_17: u64 = ((1u64 << 42) - 1) & !((1u64 << 17) - 1);
 /// Host bridge device id → MCHBAR address mask, verbatim from throttled.
 fn mchbar_mask(dev: u32) -> Option<u64> {
     Some(match dev {
-        0x5914 | 0x3EC4 | 0x9B54 => M39_15,
+        0x5914 | 0x3EC4 | 0x9B54 | 0x9B61 => M39_15,
         0x9A14 => M39_17,
         0x4601 | 0x4602 | 0x4621 | 0x4641 | 0x4660 | 0x4668 | 0x4648 | 0xA703 | 0x4640 | 0x4630
         | 0xA700 | 0xA740 | 0xA704 | 0xA702 | 0xA706 | 0xA707 | 0xA708 | 0xA716 | 0xA718
@@ -541,7 +544,7 @@ pub fn mchbar_base() -> Result<u64, String> {
         .and_then(|s| u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok());
     let (Some(ven), Some(dev)) = (rd("vendor"), rd("device")) else { return Err("PCI host bridge not readable".into()) };
     if ven != 0x8086 { return Err(format!("host bridge vendor {ven:#06x} is not Intel")); }
-    let Some(mask) = mchbar_mask(dev) else { return Err(format!("unknown host bridge {dev:#06x} (not in throttled's table)")) };
+    let Some(mask) = mchbar_mask(dev) else { return Err(format!("unknown host bridge {dev:#06x} (not in the known host bridge table)")) };
     let f = File::open(format!("{HOST_BRIDGE}/config")).map_err(|e| format!("PCI config: {e}"))?;
     let mut b = [0u8; 8];
     if f.read_at(&mut b, 0x48).map_err(|e| format!("PCI config: {e}"))? != 8 { return Err("PCI config too short".into()); }
@@ -1273,6 +1276,11 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             // intel-undervolt does a read-modify-write. RMW + the bit-30 check.
             let pi = msr.read(MSR_PLATFORM_INFO).map_err(|e| err_str(&e))?;
             if (pi >> 30) & 1 == 0 { return Err("temperature target is not programmable on this CPU".into()); }
+            // Haswell / Broadwell have a 4-bit offset (bits 27:24): above 15 °C would set reserved bits
+            // (intel-undervolt: "offsets higher than 15°C are allowed only on Skylake and newer").
+            if off > 15 && cpu_id_ref().is_some_and(|c| c.family == 6 && tcc_offset_4bit(c.model)) {
+                return Err(format!("offset {off} °C: this CPU generation takes at most 15 °C — nothing written"));
+            }
             let cur = msr.read(MSR_TEMPERATURE_TARGET).map_err(|e| err_str(&e))?;
             let tjmax = (cur >> 16) & 0xFF;
             // throttled keeps the trip point ≥ 40 °C.
@@ -1821,6 +1829,12 @@ mod tests {
         assert_eq!(icc_ceiling_a("Intel(R) Core(TM) Ultra 7 155H", 180.0), 180.0);
         assert_eq!(icc_ceiling_a("Intel(R) Core(TM) Ultra 7 255HX", 263.0), 300.0);
         assert_eq!(icc_ceiling_a("Intel(R) Core(TM) i9-14900K", 307.0), 307.0);
+    }
+
+    #[test]
+    fn tcc_offset_width_by_generation() {
+        assert!(tcc_offset_4bit(60) && tcc_offset_4bit(71));          // Haswell, Broadwell-H
+        assert!(!tcc_offset_4bit(142) && !tcc_offset_4bit(183));      // Kaby Lake, Raptor Lake
     }
 
     #[test]

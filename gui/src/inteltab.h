@@ -71,6 +71,8 @@ private:
 
     QList<Row> volt_, icc_;
     QCheckBox *link_ = nullptr, *tjOn_ = nullptr, *mchbar_ = nullptr;
+    QLabel *noPlanes_ = nullptr;      // shown while no voltage plane has answered
+    QList<QWidget *> planeInfo_;       // column heads and the undervolt note: hidden with the planes
     QSpinBox *tj_ = nullptr;
     QCheckBox *turboOn_ = nullptr;
     QSpinBox *turbo_ = nullptr;
