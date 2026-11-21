@@ -272,6 +272,13 @@ bool Search::guardAgainstCrash(int ccd, int slot, const QList<int> &cpus, int fa
     return false;
 }
 
+bool Search::guardAllCore(int failed) {
+    if (mode_ != Mode::AllCore || failed >= 0 || failed < limit_) return false;
+    all_.floor = std::max(all_.floor, failed);
+    if (all_.pass <= all_.floor) all_.pass = std::min(0, all_.floor + 1);
+    return true;
+}
+
 bool Search::exclude(int ccd, int slot) {
     if (mode_ != Mode::PerCore) return false;
     for (int i = 0; i < cores_.size(); ++i) {
@@ -457,6 +464,9 @@ std::optional<Search> Search::load(const QJsonObject &o) {
     s.all_ = walk(o.value("all").toObject());
     // Before version 4 the all-core walk had no "seeded": it had started once it passed or failed anything.
     if (version < 5) s.all_.seeded = s.all_.pass < 0 || s.all_.floor >= limit;
+    // The all-core walk is applied as it is (its pass in the confirmation, pass - 5 / floor + 1 as candidates):
+    // the same bounds as a per-core walk, or a damaged journal could go past the limit or above stock.
+    if (s.all_.pass > 0 || s.all_.pass < limit || s.all_.floor < limit - 1 || s.all_.floor >= s.all_.pass) return std::nullopt;
     for (const auto &v : o.value("per").toArray()) {
         Walk w = walk(v.toObject());
         if (version < 5) {

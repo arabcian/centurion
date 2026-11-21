@@ -99,6 +99,8 @@ public:
     std::optional<Trial> inFlight() const;
     /// Never probe `failed` or anything more negative on this physical core (a recorded crash).
     bool guardAgainstCrash(int ccd, int slot, const QList<int> &cpus, int failed);
+    /// All-core: never try `failed` or anything more negative on every core at once (a recorded crash).
+    bool guardAllCore(int failed);
     /// Per-core: leave this physical core at stock for the whole search. Call before the first next().
     bool exclude(int ccd, int slot);
     /// Per-core: this core's first probe (clamped to limit..0; 0 = step down from stock). Before next().

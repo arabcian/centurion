@@ -1537,9 +1537,37 @@ fn config_backup_inner(req: &Value) -> Result<Value, String> {
               "contents": manifest["contents"], "skipped": manifest["skipped"], "removed": removed}))
 }
 
+/// The first bytes of a child's stderr, read on a thread (the rest is drained) so the child never blocks on it.
+fn stderr_head(e: std::process::ChildStderr) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut e = e;
+        let mut b = Vec::new();
+        let _ = (&mut e).take(4096).read_to_end(&mut b);
+        let _ = std::io::copy(&mut e, &mut std::io::sink());
+        String::from_utf8_lossy(&b).trim().to_owned()
+    })
+}
+
 fn read_manifest(tar: &Path, archive: &Path) -> Result<Value, String> {
-    let o = command(tar, false).arg("-xOf").arg(archive).arg(MANIFEST).stdin(Stdio::null()).output().map_err(|e| format!("tar: {e}"))?;
-    let m: Value = serde_json::from_slice(&o.stdout[..o.stdout.len().min(1 << 20)]).map_err(|_| "not a Centurion configuration backup")?;
+    const MAX: u64 = 1 << 20;
+    // Read through a pipe with a cap: the archive is not trusted, and an oversized "manifest" must not be
+    // taken into memory whole before it is refused.
+    let mut c = command(tar, false);
+    c.arg("-xOf").arg(archive).arg(MANIFEST).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut ch = spawn(c, "tar")?;
+    let err = stderr_head(ch.stderr.take().unwrap());
+    let mut body = Vec::new();
+    let read = ch.stdout.take().unwrap().take(MAX + 1).read_to_end(&mut body);
+    let over = body.len() as u64 > MAX;
+    if over { unsafe { libc::kill(-(ch.id() as i32), libc::SIGKILL); } }
+    let status = ch.wait().map_err(|e| format!("tar: {e}"))?;
+    let err = err.join().unwrap_or_default();
+    if over { return Err("not a Centurion configuration backup (its manifest is too large)".into()); }
+    read.map_err(|e| format!("tar: {e}"))?;
+    if !status.success() {
+        return Err(format!("not a Centurion configuration backup ({})", if err.is_empty() { status.to_string() } else { err }));
+    }
+    let m: Value = serde_json::from_slice(&body).map_err(|_| "not a Centurion configuration backup")?;
     if m["format"] != CONFIG_FORMAT || m["version"] != 1 { return Err("not a Centurion configuration backup (or a newer format)".into()); }
     Ok(m)
 }
@@ -1561,11 +1589,76 @@ fn unpack(archive: &Path, top: &str, base: &Path, strict: bool) -> Result<Option
     let has = m["contents"][key].as_u64().unwrap_or(0) > 0 || (top == "user" && m["contents"]["user_state"].as_u64().unwrap_or(0) > 0);
     if !has { return Ok(None); }
     let stage = Scratch(mkdtemp(base, ".centurion-restore-")?);
-    let o = command(&tar, false).arg("-xf").arg(archive).arg("-C").arg(&stage.0)
-        .args(["--no-same-owner", "--no-same-permissions", top]).stdin(Stdio::null()).output().map_err(|e| format!("tar: {e}"))?;
-    if !o.status.success() { return Err(format!("tar failed: {}", String::from_utf8_lossy(&o.stderr).trim())); }
+    extract_limited(&tar, archive, &stage.0, top, MAX_UNPACK_BYTES, MAX_UNPACK_MEMBERS)?;
     if strict { plain_tree(&stage.0, 0)?; }
     Ok(Some(stage))
+}
+
+/// What a configuration archive may unpack to: the decompressed tar stream of four staged parts of at most
+/// MAX_STAGE each (stage_config) with room for their headers, and more members than a real one has.
+const MAX_UNPACK_BYTES: u64 = 4 * MAX_STAGE + (256 << 20);
+const MAX_UNPACK_MEMBERS: usize = 100_000;
+
+/// `tar -x` of `top` into `dir`, fed through a pipe that counts the decompressed bytes and the members on
+/// the way: an archive past either budget is stopped before it fills the disk (/var/lib as root).
+fn extract_limited(tar: &Path, archive: &Path, dir: &Path, top: &str, max_bytes: u64, max_members: usize) -> Result<(), String> {
+    let file = File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    let mut kids: Vec<Child> = Vec::new();
+    let mut src: Box<dyn Read> = match Comp::from_magic(&file) {
+        Comp::None => Box::new(file),
+        Comp::Age => return Err("not a Centurion configuration backup".into()),
+        c => {
+            let (p, args) = c.decompressor()?;
+            let mut dc = command(&p, false);
+            dc.args(args).stdin(file).stdout(Stdio::piped()).stderr(Stdio::null());
+            let mut ch = spawn(dc, "decompressor")?;
+            let out = ch.stdout.take().unwrap();
+            kids.push(ch);
+            Box::new(out)
+        }
+    };
+    let mut tc = command(tar, false);
+    tc.arg("-xf").arg("-").arg("-C").arg(dir).args(["--no-same-owner", "--no-same-permissions", top])
+        .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+    let kill = |kids: &[Child]| for k in kids { unsafe { libc::kill(-(k.id() as i32), libc::SIGKILL); } };
+    let mut t = match spawn(tc, "tar") {
+        Ok(t) => t,
+        Err(e) => { kill(&kids); for k in &mut kids { let _ = k.wait(); } return Err(e); }
+    };
+    let err = stderr_head(t.stderr.take().unwrap());
+    let mut sink = t.stdin.take().unwrap();
+    let mut scan = tarscan::Scanner::new();
+    let (mut bytes, mut members, mut over) = (0u64, 0usize, false);
+    let mut buf = vec![0u8; 64 << 10];
+    let copied: std::io::Result<()> = loop {
+        let n = match src.read(&mut buf) {
+            Ok(0) => break Ok(()),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => break Err(e),
+        };
+        bytes += n as u64;
+        scan.feed(&buf[..n], &mut |e| if matches!(e, tarscan::Event::Member(_)) { members += 1; });
+        if bytes > max_bytes || members > max_members { over = true; break Ok(()); }
+        if sink.write_all(&buf[..n]).is_err() { break Ok(()); }  // tar stopped reading: its status tells why
+    };
+    drop(sink);
+    drop(src);
+    kids.push(t);
+    if over { kill(&kids); }
+    let status: Vec<_> = kids.iter_mut().map(|k| k.wait()).collect();
+    let err = err.join().unwrap_or_default();
+    if over {
+        return Err(format!("the backup unpacks to more than {} MiB or {max_members} files; refusing to restore from it", max_bytes >> 20));
+    }
+    copied.map_err(|e| format!("reading the archive: {e}"))?;
+    let ts = status.last().unwrap().as_ref().map_err(|e| format!("tar: {e}"))?;
+    if !ts.success() { return Err(format!("tar failed: {}", if err.is_empty() { ts.to_string() } else { err })); }
+    // gzip exits 2 for warnings (trailing garbage); anything else means the stream was damaged.
+    if let Some(Ok(ds)) = status.first().filter(|_| status.len() > 1) {
+        if !(ds.success() || ds.code() == Some(2)) { return Err(format!("the archive is damaged or truncated (decompressor: {ds})")); }
+    }
+    Ok(())
 }
 
 /// The archive is not trusted: a backup holds directories and regular files only. A symbolic link in it
@@ -2215,6 +2308,48 @@ mod tests {
     }
 
     fn sh(cmd: &str) { assert!(Command::new("sh").arg("-c").arg(cmd).status().unwrap().success(), "{cmd}"); }
+
+    #[test]
+    fn manifest_is_read_with_a_cap_and_tars_status() {
+        if !(have("tar") && have("gzip")) { return; }
+        let base = tmp("manifest-cap");
+        let tar = tool("tar").unwrap();
+        let good = json!({"format": CONFIG_FORMAT, "version": 1, "contents": {}});
+        fs::write(base.join(MANIFEST), good.to_string()).unwrap();
+        sh(&format!("tar -C {} -czf {}/ok.tar.gz {MANIFEST}", base.display(), base.display()));
+        assert!(read_manifest(&tar, &base.join("ok.tar.gz")).is_ok());
+        // Over 1 MiB: refused without reading it whole (the JSON itself would be valid).
+        fs::write(base.join(MANIFEST), format!("{{\"format\": \"{CONFIG_FORMAT}\", \"version\": 1, \"pad\": \"{}\"}}", "x".repeat(2 << 20))).unwrap();
+        sh(&format!("tar -C {} -czf {}/big.tar.gz {MANIFEST}", base.display(), base.display()));
+        assert!(read_manifest(&tar, &base.join("big.tar.gz")).unwrap_err().contains("too large"));
+        // A manifest followed by a damaged stream: tar fails, so the archive is not accepted.
+        let ok = fs::read(base.join("ok.tar.gz")).unwrap();
+        let mut cut = ok.clone();
+        cut.truncate(ok.len() - 12);
+        fs::write(base.join("cut.tar.gz"), &cut).unwrap();
+        assert!(read_manifest(&tar, &base.join("cut.tar.gz")).is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn extraction_stops_at_its_budget() {
+        if !(have("tar") && have("gzip")) { return; }
+        let base = tmp("unpack-budget");
+        let tar = tool("tar").unwrap();
+        fs::create_dir_all(base.join("src/user/many")).unwrap();
+        fs::write(base.join("src/user/big"), vec![0u8; 3 << 20]).unwrap();
+        for i in 0..40 { fs::write(base.join(format!("src/user/many/{i}")), "x").unwrap(); }
+        sh(&format!("tar -C {}/src -czf {}/a.tar.gz user", base.display(), base.display()));
+        let a = base.join("a.tar.gz");
+        let out = |n: &str| { let d = base.join(n); fs::create_dir_all(&d).unwrap(); d };
+        extract_limited(&tar, &a, &out("all"), "user", 8 << 20, 100).unwrap();
+        assert_eq!(fs::metadata(base.join("all/user/big")).unwrap().len(), 3 << 20);
+        let e = extract_limited(&tar, &a, &out("bytes"), "user", 1 << 20, 100).unwrap_err();
+        assert!(e.contains("refusing"), "{e}");
+        let e = extract_limited(&tar, &a, &out("members"), "user", 8 << 20, 10).unwrap_err();
+        assert!(e.contains("refusing"), "{e}");
+        let _ = fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn encrypted_image_reads_back_with_its_key_only() {

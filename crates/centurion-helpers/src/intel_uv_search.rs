@@ -71,8 +71,13 @@ impl Search {
     pub fn from_json(v: &Value) -> Option<Search> {
         let mut s = Search::new(v["step"].as_f64()?, v["floor"].as_f64()?, v["seconds"].as_u64()?).ok()?;
         s.good = v["good"].as_f64().filter(|g| (s.floor..=0.0).contains(g))?;
-        s.testing = v["testing"].as_f64();
-        s.failed = v["failed"].as_f64();
+        // `testing` is applied again as it is (same boot): it, like `failed`, must lie in floor..0 too.
+        let offset = |k: &str| match &v[k] {
+            Value::Null => Some(None),
+            x => x.as_f64().filter(|m| (s.floor..=0.0).contains(m)).map(Some),
+        };
+        s.testing = offset("testing")?;
+        s.failed = offset("failed")?;
         s.boot = v["boot"].as_str()?.to_owned();
         Some(s)
     }
@@ -300,5 +305,13 @@ mod tests {
         let mut bad = s.to_json();
         bad["good"] = json!(-500.0);  // outside floor..0: a tampered or stale file is not resumed
         assert_eq!(Search::from_json(&bad), None);
+        for (k, v) in [("testing", json!(-500.0)), ("testing", json!(5.0)), ("testing", json!("-45")), ("failed", json!(-101.0))] {
+            let mut bad = s.to_json();
+            bad[k] = v.clone();
+            assert_eq!(Search::from_json(&bad), None, "{k} = {v}");
+        }
+        let mut none = s.to_json();
+        none["testing"] = Value::Null;
+        assert_eq!(Search::from_json(&none).map(|x| x.testing), Some(None));
     }
 }

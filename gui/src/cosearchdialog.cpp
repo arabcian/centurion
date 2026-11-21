@@ -49,6 +49,7 @@ static QString stateDir() {
 /// Written before every trial, removed when the search ends: still there at the next start = it was interrupted.
 static QString journalPath() { return stateDir() + "/co-search-session.json"; }
 static QString crashGuardPath() { return stateDir() + "/co-search-crash-guards.json"; }
+static QString allCoreGuardPath() { return stateDir() + "/co-search-allcore-guard.json"; }
 static QString settingsPath() { return QFileInfo(scenes::dir()).path() + "/co-search.json"; }
 /// BIOS version the firmware reports; CO behaviour changes with the AGESA a BIOS update brings.
 static QString biosVersion() {
@@ -97,10 +98,34 @@ static std::optional<QJsonArray> readCrashGuards() {
     return guards;
 }
 
+/// The all-core offset that crashed this machine: {"version", "failed", "bios"}, an empty object when none is
+/// recorded; nullopt when the file cannot be read (like the per-core guards: never read as "no crash").
+static std::optional<QJsonObject> readAllCoreGuard() {
+    QFile f(allCoreGuardPath());
+    if (!f.exists()) return QJsonObject{};
+    if (!f.open(QIODevice::ReadOnly) || f.size() > (64LL << 10)) return std::nullopt;
+    const QJsonObject j = QJsonDocument::fromJson(f.readAll()).object();
+    const int failed = j.value("failed").toInt(1);
+    if (j.value("version").toInt() != 1 || !j.value("failed").isDouble() || failed >= 0 || failed < -50) return std::nullopt;
+    return j;
+}
+
 // Retain failed candidates across NEW searches too, so "start again" cannot silently
 // rediscover the same destructive offset. A record is specific to the physical topology.
 static bool saveCrashGuard(const Search &s, const Trial &t) {
-    if (t.allCore.has_value() || t.perCore.size() != s.cores().size()) return true;
+    if (t.allCore.has_value()) {
+        // One offset on every core (descent or confirmation): guarded for all-core searches. The least negative
+        // crash is kept. A per-core probe tests one core alone and is not limited by it.
+        const auto old = readAllCoreGuard();
+        if (!old) return false;
+        const int failed = old->isEmpty() ? *t.allCore : std::max(*t.allCore, old->value("failed").toInt());
+        if (failed >= 0) return true;
+        QDir().mkpath(stateDir());
+        QSaveFile f(allCoreGuardPath());
+        const QByteArray data = QJsonDocument(QJsonObject{{"version", 1}, {"failed", failed}, {"bios", biosVersion()}}).toJson();
+        return f.open(QIODevice::WriteOnly) && f.write(data) == data.size() && f.commit();
+    }
+    if (t.perCore.size() != s.cores().size()) return true;
     int suspect = -1;
     for (int i = 0; i < t.perCore.size(); ++i) {
         if (t.perCore[i] >= 0) continue;
@@ -155,7 +180,9 @@ static QList<Core> coresOf(const ryzen::Layout &layout) {
 
 static bool applyCrashGuards(Search &s) {
     const auto guards = readCrashGuards();
-    if (!guards) return false;
+    const auto all = readAllCoreGuard();
+    if (!guards || !all) return false;
+    if (!all->isEmpty()) s.guardAllCore(all->value("failed").toInt());
     for (const QJsonValue &v : *guards) {
         const QJsonObject o = v.toObject();
         QList<int> cpus;
@@ -840,6 +867,8 @@ void CoSearchDialog::start() {
         if (st.excluded) note(tr("CCD%1 / %2 excluded: stays at stock.").arg(c.ccd).arg(c.slot));
         else if (st.failed) note(tr("Crash guard: CCD%1 / %2 is never tested at %3 or below.").arg(c.ccd).arg(c.slot).arg(*st.failed), theme::WARN);
     }
+    if (const auto all = readAllCoreGuard(); mode == Mode::AllCore && all && !all->isEmpty())
+        note(tr("Crash guard: all-core is never tested at %1 or below.").arg(all->value("failed").toInt()), theme::WARN);
     QStringList otherBios;
     for (const QJsonValue &v : readCrashGuards().value_or(QJsonArray{})) {
         const QString b = v.toObject().value("bios").toString();
@@ -872,21 +901,41 @@ void CoSearchDialog::verifyProfile() {
     const QJsonObject d = doc.object();
     QHash<int, int> values;
     bool anyPer = false;
+    QStringList outside;  // verified as stored or not at all: a clamped value would be verified under the profile's name
     for (const QJsonValue &v : d.value("cores").toArray()) {
         const QJsonObject c = v.toObject();
         if (c.value("ccx").toInt() != 0) continue;
         const int key = coreKey(c.value("ccd").toInt(), c.contains("slot") ? c.value("slot").toInt() : c.value("core").toInt());
         if (c.value("disabled").toBool()) { values.insert(key, 0); anyPer = true; }
-        else if (c.value("coper").isDouble()) { values.insert(key, c.value("coper").toInt()); anyPer = true; }
+        else if (c.value("coper").isDouble()) {
+            const int x = c.value("coper").toInt();
+            if (x < -50 || x > 0) outside << QString::number(x);
+            values.insert(key, x);
+            anyPer = true;
+        }
     }
     const QJsonValue coall = d.value("coall");
     if (!anyPer && !coall.isDouble()) { QMessageBox::warning(this, tr("Verify a profile"), tr("Profile '%1' has no offsets.").arg(pick)); return; }
+    if (coall.isDouble() && (coall.toInt() < -50 || coall.toInt() > 0)) outside << QString::number(coall.toInt());
+    if (!outside.isEmpty()) {
+        QMessageBox::warning(this, tr("Verify a profile"),
+            tr("Profile '%1' holds offsets outside -50…0 (%2). Only negative offsets down to -50 can be verified; "
+               "the profile is not changed.").arg(pick, outside.join(", ")));
+        return;
+    }
     const Mode mode = anyPer ? Mode::PerCore : Mode::AllCore;
     const auto layout = preflight(mode);
     if (!layout) return;
     const QList<Core> cores = coresOf(*layout);
     if (cores.isEmpty()) { QMessageBox::warning(this, tr("Topology"), tr("No CPU cores detected.")); return; }
     const auto level = levelFrom(level_->currentData().toString()).value_or(Level::Fast);
+    // Fail closed like start(): an unreadable guard file must not read as "no crash recorded".
+    const auto allGuard = readAllCoreGuard();
+    if (!readCrashGuards() || !allGuard) {
+        QMessageBox::critical(this, tr("CO crash guard corrupted"),
+            tr("The recorded unsafe CO offsets cannot be read. Verification is blocked rather than retrying a known crash value."));
+        return;
+    }
     // The test order of the cores is the Search's own; a throwaway one gives it before the limit is known.
     QList<int> v;
     int deepest = 0;
@@ -895,13 +944,15 @@ void CoSearchDialog::verifyProfile() {
     const Search order(mode, level, limit_->value(), cores, tuning());
     for (const Core &c : order.cores()) {
         const int key = coreKey(c.ccd, c.slot);
-        const int x = std::clamp(mode == Mode::PerCore ? values.value(key, coall.isDouble() ? coall.toInt() : 0) : coall.toInt(), -50, 0);
+        const int x = mode == Mode::PerCore ? values.value(key, coall.isDouble() ? coall.toInt() : 0) : coall.toInt();
         if (guards.contains(key) && x <= guards.value(key))
             clash << tr("CCD%1/%2 %3 (crashed at %4)").arg(c.ccd).arg(c.slot).arg(x).arg(guards.value(key));
         v << x;
         shown << QStringLiteral("CCD%1/%2 %3").arg(c.ccd).arg(c.slot).arg(x);
         deepest = std::min(deepest, x);
     }
+    if (mode == Mode::AllCore && !allGuard->isEmpty() && coall.toInt() <= allGuard->value("failed").toInt())
+        clash << tr("all-core %1 (crashed at %2)").arg(coall.toInt()).arg(allGuard->value("failed").toInt());
     if (!clash.isEmpty()) {
         QMessageBox::warning(this, tr("Verify a profile"),
             tr("These values are at or below a recorded crash on that core, so they are not applied: %1.\n\n"
@@ -930,8 +981,10 @@ void CoSearchDialog::verifyProfile() {
 void CoSearchDialog::manageCrashGuards() {
     if (running_) return;
     const auto guards = readCrashGuards();
-    if (!guards) { QMessageBox::critical(this, tr("CO crash guard corrupted"), tr("The crash guard file cannot be read; it is left unchanged.")); return; }
-    if (guards->isEmpty()) { QMessageBox::information(this, tr("Crash guards"), tr("No crash guards are recorded.")); return; }
+    const auto all = readAllCoreGuard();
+    if (!guards || !all) { QMessageBox::critical(this, tr("CO crash guard corrupted"), tr("The crash guard file cannot be read; it is left unchanged.")); return; }
+    if (guards->isEmpty() && all->isEmpty()) { QMessageBox::information(this, tr("Crash guards"), tr("No crash guards are recorded.")); return; }
+    const int allRow = all->isEmpty() ? -1 : int(guards->size());  // the all-core guard, last
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Crash guards"));
     dlg.resize(560, 360);
@@ -939,9 +992,12 @@ void CoSearchDialog::manageCrashGuards() {
     auto *info = new QLabel(tr("Each row is a value that crashed this machine while that core was tested alone: it and every "
                                "more negative value are never tried on that core again. BIOS is the one the crash happened "
                                "under (empty: recorded before Centurion kept it); current BIOS: %1.").arg(biosVersion()));
+    if (allRow >= 0)
+        info->setText(info->text() + ' ' + tr("\"All cores\" is an all-core offset that crashed this machine: all-core searches "
+                                              "never go to it or below."));
     info->setWordWrap(true);
     lay->addWidget(info);
-    auto *table = new QTableWidget(int(guards->size()), 3);
+    auto *table = new QTableWidget(int(guards->size()) + (allRow >= 0 ? 1 : 0), 3);
     table->setHorizontalHeaderLabels({tr("Core"), tr("Never at or below"), tr("BIOS")});
     table->horizontalHeader()->setStretchLastSection(true);
     table->verticalHeader()->hide();
@@ -959,6 +1015,14 @@ void CoSearchDialog::manageCrashGuards() {
         table->setItem(i, 2, new QTableWidgetItem(bios));
         if (!bios.isEmpty() && bios != biosVersion()) table->item(i, 2)->setForeground(QColor(theme::WARN));
     }
+    if (allRow >= 0) {
+        const QString bios = all->value("bios").toString();
+        table->setItem(allRow, 0, new QTableWidgetItem(tr("All cores (all-core search)")));
+        table->setItem(allRow, 1, new QTableWidgetItem(QString::number(all->value("failed").toInt())));
+        table->item(allRow, 1)->setForeground(QColor(theme::DANGER));
+        table->setItem(allRow, 2, new QTableWidgetItem(bios));
+        if (!bios.isEmpty() && bios != biosVersion()) table->item(allRow, 2)->setForeground(QColor(theme::WARN));
+    }
     table->resizeColumnsToContents();
     lay->addWidget(table, 1);
     auto *box = new QDialogButtonBox(QDialogButtonBox::Close);
@@ -966,7 +1030,7 @@ void CoSearchDialog::manageCrashGuards() {
     remove->setObjectName("btnDanger");
     lay->addWidget(box);
     connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    connect(remove, &QPushButton::clicked, &dlg, [this, &dlg, table, guards] {
+    connect(remove, &QPushButton::clicked, &dlg, [this, &dlg, table, guards, all, allRow] {
         QSet<int> rows;
         for (const QModelIndex &i : table->selectionModel()->selectedRows()) rows.insert(i.row());
         if (rows.isEmpty()) return;
@@ -980,11 +1044,21 @@ void CoSearchDialog::manageCrashGuards() {
             const QJsonObject g = guards->at(i).toObject();
             gone << QStringLiteral("CCD%1/%2 %3").arg(g.value("ccd").toInt()).arg(g.value("slot").toInt()).arg(g.value("failed").toInt());
         }
-        QSaveFile f(crashGuardPath());
-        const QByteArray data = QJsonDocument(QJsonObject{{"version", 1}, {"guards", kept}}).toJson();
-        if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size() || !f.commit()) {
-            QMessageBox::critical(&dlg, tr("Crash guards"), tr("Could not write the crash guard file; nothing was removed."));
-            return;
+        if (kept.size() != guards->size()) {
+            QSaveFile f(crashGuardPath());
+            const QByteArray data = QJsonDocument(QJsonObject{{"version", 1}, {"guards", kept}}).toJson();
+            if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size() || !f.commit()) {
+                QMessageBox::critical(&dlg, tr("Crash guards"), tr("Could not write the crash guard file; nothing was removed."));
+                return;
+            }
+        }
+        if (rows.contains(allRow)) {
+            if (!QFile::remove(allCoreGuardPath())) {
+                if (!gone.isEmpty()) note(tr("Crash guards removed: %1").arg(gone.join(", ")), theme::WARN);
+                QMessageBox::critical(&dlg, tr("Crash guards"), tr("Could not remove the all-core crash guard file."));
+                return;
+            }
+            gone << tr("all-core %1").arg(all->value("failed").toInt());
         }
         note(tr("Crash guards removed: %1").arg(gone.join(", ")), theme::WARN);
         dlg.accept();
@@ -1066,13 +1140,16 @@ void CoSearchDialog::compareThroughput(std::function<void()> then) {
 void CoSearchDialog::offerResume() {
     if (running_) return;
     QFile f(journalPath());
-    if (!f.open(QIODevice::ReadOnly) || f.size() > (1LL << 20)) return;
-    const QJsonObject j = QJsonDocument::fromJson(f.readAll()).object();
+    // An unreadable or oversized journal still goes to the "invalid journal" question below, or Start would
+    // return here forever without saying why.
+    const bool readable = f.open(QIODevice::ReadOnly) && f.size() <= (1LL << 20);
+    const QJsonObject j = readable ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject{};
     f.close();
     // The journal's boot is this one: the machine never restarted, so the trial in flight may still be applied
-    // (the application died or was quit while the reset failed). An unreadable boot ID counts as this boot.
+    // (the application died or was quit while the reset failed). An unreadable boot ID, or a journal whose
+    // boot cannot be read, counts as this boot.
     const QString currentBoot = readBootId();
-    const bool sameBoot = currentBoot.isEmpty() || j.value("boot").toString() == currentBoot;
+    const bool sameBoot = currentBoot.isEmpty() || !readable || j.value("boot").toString() == currentBoot;
     // Discarding removes the journal; in this boot only after a confirmed stock reset, so no candidate is left behind.
     auto discard = [this, sameBoot](std::function<void()> after) {
         if (!sameBoot) { QFile::remove(journalPath()); after(); return; }
@@ -1088,15 +1165,20 @@ void CoSearchDialog::offerResume() {
             }, 120000);
     };
     // A journal that cannot be resumed must still be removable, or every later Start lands here again.
-    auto unusable = [this, sameBoot, discard](const QString &why) {
+    auto unusable = [this, sameBoot, discard](const QString &why, bool guarded = false) {
         const auto answer = QMessageBox::warning(this, tr("Invalid CO search journal"),
-            why + "\n\n" + tr("It cannot be safely resumed, and its interrupted value cannot be identified for a crash guard. "
-                               "Discard the old journal?") + ' '
+            why + "\n\n" + (guarded ? tr("It cannot be safely resumed. Discard the old journal?")
+                                    : tr("It cannot be safely resumed, and its interrupted value cannot be identified for a crash guard. "
+                                         "Discard the old journal?")) + ' '
                 + (sameBoot ? tr("The CPU curve is reset to stock first: the interrupted value may still be applied in this boot.")
                             : tr("The CPU curve is not changed: the machine has restarted since.")),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (answer == QMessageBox::Yes) discard([this] { note(tr("Invalid CO search journal discarded.")); });
     };
+    if (!readable) {
+        unusable(tr("The interrupted CO Search journal cannot be read (or is larger than 1 MiB)."));
+        return;
+    }
     auto s = Search::load(j.value("search").toObject());
     if (!s || j.value("version").toInt() != 3) {
         unusable(tr("The interrupted CO Search journal is incompatible or damaged."));
@@ -1132,6 +1214,19 @@ void CoSearchDialog::offerResume() {
         QMessageBox::critical(this, tr("Recovery guard failed"),
             tr("Cannot save the interrupted CO candidate to the persistent crash guard. "
                "Neither resuming nor discarding the journal is safe until this is repaired."));
+        return;
+    }
+    // The journal's cores are the topology the search ran on. After a BIOS / SMT / CCD-parking change a
+    // CCD/slot may have other logical CPUs, or be gone: the stress would load the wrong CPUs and a result
+    // would be credited to the wrong physical core. (The crash guard above is keyed by CCD/slot, so it holds.)
+    auto topology = [](QList<Core> cores) {
+        for (Core &c : cores) { c.rank = -1; std::sort(c.cpus.begin(), c.cpus.end()); }
+        std::sort(cores.begin(), cores.end(), [](const Core &a, const Core &b) { return std::pair(a.ccd, a.slot) < std::pair(b.ccd, b.slot); });
+        return cores;
+    };
+    if (topology(s->cores()) != topology(coresOf(ryzen::detect()))) {
+        unusable(tr("The CPU topology changed since this search started (BIOS, SMT or a parked CCD): its cores and "
+                    "logical CPUs no longer match this machine."), true);
         return;
     }
     // Crash watcher: what the system logs say about the interrupted trial (coevidence.h). It is collected
@@ -1656,7 +1751,8 @@ bool CoSearchDialog::saveProfile(const QString &name, int margin) const {
                               {"bios", biosVersion()}};
     QDir().mkpath(ryzen::profilesDir());
     QSaveFile f(ryzen::profilesDir() + '/' + name + ".json");
-    return f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(profile).toJson()) >= 0 && f.commit();
+    const QByteArray data = QJsonDocument(profile).toJson();
+    return f.open(QIODevice::WriteOnly) && f.write(data) == data.size() && f.commit();
 }
 
 void CoSearchDialog::updateResultButtons() {

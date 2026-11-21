@@ -79,7 +79,8 @@ private:
     void fanMaxStart();
     void fanTick();
     void fanStop(bool aborted);
-    void fanRestore(int tries);
+    void fanRestore(int tries, std::function<void(bool)> done);
+    void fanCheckRestore(int tries, std::function<void(bool)> done);
 
     QLabel *context_, *live_, *verdict_;
     QProgressBar *bar_;

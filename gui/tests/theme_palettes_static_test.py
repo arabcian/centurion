@@ -95,6 +95,30 @@ for ident, display_name, values in rows:
 
 assert len(accent_sectors) >= 7, ('Pastel hue coverage too narrow', accent_sectors)
 
+
+def legible(color, bg):
+    """Mirror of theme.cpp legible(): darken a fixed colour in 10 % steps on a lighter background up to 3:1."""
+    rgb = [int(color[i:i + 2], 16) / 255.0 for i in (1, 3, 5)]
+    hexed = lambda v: '#' + ''.join(f'{round(x * 255):02x}' for x in v)
+    for _ in range(20):
+        if not (luminance(bg) > luminance(hexed(rgb)) and ratio(hexed(rgb), bg) < 3.0):
+            break
+        rgb = [x * 0.9 for x in rgb]
+    return hexed(rgb)
+
+
+# The two profile colours that are fixed hex values (not palette tokens) stay visible on every palette's
+# profile button (BG2): darkened on the light ones, unchanged on the dark ones.
+for fixed in ('#7cc6bd', '#e070b0'):
+    assert f'legible("{fixed}")' in src, fixed
+    for ident, display_name, values in rows:
+        colors = re.findall(r'"(#[0-9a-fA-F]{6})"', values)
+        shown = legible(fixed, colors[2])
+        if luminance(colors[2]) > luminance(fixed):
+            assert ratio(shown, colors[2]) >= 3.0, (ident, fixed, shown)
+        else:
+            assert shown == fixed, (ident, fixed, shown)
+
 assert 'QIcon themePreviewIcon(const QString &id);' in header
 assert 'theme::themePreviewIcon(id)' in ui
 assert 'themeBox->setIconSize(' in ui

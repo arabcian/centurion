@@ -254,6 +254,20 @@ int main(int argc, char **argv) {
         CHECK(!Search::load(bad));  // an excluded core is always at stock
     }
 
+    // A journal's all-core walk is bounded like a per-core one: never past the limit, never above stock.
+    {
+        Search s(Mode::AllCore, Level::Fast, -20, cpu(2));
+        CHECK(Search::load(s.save()));
+        for (auto [pass, floor] : {std::pair(-35, -40), std::pair(5, -21), std::pair(-10, -60), std::pair(-10, -10)}) {
+            QJsonObject bad = s.save();
+            QJsonObject w = bad.value("all").toObject();
+            w["pass"] = pass;
+            w["floor"] = floor;
+            bad["all"] = w;
+            CHECK(!Search::load(bad));
+        }
+    }
+
     // Exhaustive: every start, step, limit and stable threshold. Values on a core only ever get more
     // negative, nothing at or below a failure is retried, the result is the last pass, and with a step
     // of 1 the result is exactly the threshold.
@@ -566,6 +580,20 @@ int main(int argc, char **argv) {
             s.report(Outcome{true, {}});
         }
         CHECK(rebooted);
+    }
+
+    // An all-core crash guard: a new all-core search never goes to that offset or below, confirmation included.
+    {
+        for (int start : {-5, -20, -30}) {
+            Search s(Mode::AllCore, Level::Fast, -30, cpu(2), Tuning{start, 1});
+            CHECK(s.guardAllCore(-20));
+            CHECK(!s.guardAllCore(-40));  // past the limit: nothing to guard
+            Search per(Mode::PerCore, Level::Fast, -30, cpu(2));
+            CHECK(!per.guardAllCore(-20));  // per-core probes are not limited by an all-core crash
+            Sim sim{{{0, -28}, {1, -28}, {2, -28}, {3, -28}}};
+            runAll(s, sim);
+            CHECK(sim.minValue > -20 && s.finished() && s.values().first() == -19);
+        }
     }
 
     // A crash guard persists into a BRAND NEW search on the same topology.

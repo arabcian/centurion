@@ -2166,7 +2166,9 @@ mod tests {
         c.guard = true;
         c.blacklist = vec![Net::parse("1.2.3.4").unwrap(), Net::parse("2001:db8::/32").unwrap()];
         let s = nft_script(&c);
-        assert!(s.contains("elements = { 1.2.3.4 }") && s.contains("elements = { 2001:db8::/32 }") && s.contains("queue num 19536 bypass"));
+        // The application guard queues without `bypass`: a missing daemon must block, not allow (fail-closed).
+        assert!(s.contains("elements = { 1.2.3.4 }") && s.contains("elements = { 2001:db8::/32 }")
+                && s.contains("queue num 19536\n") && !s.contains("bypass"));
         assert!(s.matches("queue num").count() == 1 && s.contains("192.168.0.0/16"));
         c.log_conns = true;  // both hooks queued, LAN exemption left to the daemon
         let s = nft_script(&c);

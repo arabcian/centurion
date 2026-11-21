@@ -1028,6 +1028,14 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
             <source>The test failed.</source>
             <translation>Test başarısız oldu.</translation>
         </message>
+        <message>
+            <source>The fans could not be confirmed back as they were before the test: set them on the Home tab.</source>
+            <translation>Fanların testten önceki hâline döndüğü doğrulanamadı: Ana sayfa sekmesinden ayarlayın.</translation>
+        </message>
+        <message>
+            <source>The fan test was stopped.</source>
+            <translation>Fan testi durduruldu.</translation>
+        </message>
     </context>
     <context>
         <name>DayBars</name>
@@ -10499,6 +10507,22 @@ Profil adı:</translation>
         <message>
             <source>SMU reset confirmed. The search did not finish; nothing was saved automatically. Save result keeps the values found so far, marked as not verified.</source>
             <translation>SMU sıfırlaması doğrulandı. Arama bitmedi; otomatik bir şey kaydedilmedi. Sonucu kaydet, o ana kadar bulunan değerleri "doğrulanmadı" olarak saklar.</translation>
+        </message>
+        <message>
+            <source>The interrupted CO Search journal cannot be read (or is larger than 1 MiB).</source>
+            <translation>Yarıda kalan CO Arama günlüğü okunamıyor (ya da 1 MiB&apos;tan büyük).</translation>
+        </message>
+        <message>
+            <source>It cannot be safely resumed. Discard the old journal?</source>
+            <translation>Güvenle devam ettirilemez. Eski günlük silinsin mi?</translation>
+        </message>
+        <message>
+            <source>The CPU topology changed since this search started (BIOS, SMT or a parked CCD): its cores and logical CPUs no longer match this machine.</source>
+            <translation>Bu arama başladığından beri CPU topolojisi değişti (BIOS, SMT ya da park edilmiş bir CCD): çekirdekleri ve mantıksal CPU&apos;ları artık bu makineyle eşleşmiyor.</translation>
+        </message>
+        <message>
+            <source>Crash guard: all-core is never tested at %1 or below.</source>
+            <translation>Crash koruması: all-core asla %1 veya altında test edilmez.</translation>
         </message>
     </context>
     <context>

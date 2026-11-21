@@ -222,10 +222,25 @@ bool saveTheme(const QString &id) {
 void requestRestart() { g_restart = true; QCoreApplication::quit(); }
 bool restartRequested() { return g_restart; }
 
+static double luminance(const QColor &c) {
+    auto ch = [](double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * ch(c.redF()) + 0.7152 * ch(c.greenF()) + 0.0722 * ch(c.blueF());
+}
+
+/// A fixed (not palette) profile colour, darkened in 10 % steps on a light palette until its dot reads
+/// at 3:1 against the profile button (BG2), the minimum for a non-text mark. Dark palettes keep it as is.
+static QString legible(const char *hex) {
+    QColor c(QString::fromLatin1(hex));
+    const double bg = luminance(QColor(QString::fromLatin1(BG2)));
+    for (int i = 0; i < 20 && bg > luminance(c) && (bg + 0.05) / (luminance(c) + 0.05) < 3.0; ++i)
+        c = QColor::fromRgbF(float(c.redF() * 0.9), float(c.greenF() * 0.9), float(c.blueF() * 0.9));
+    return c.name();
+}
+
 QString profileAccent(const QString &p) {
     static const QHash<QString, QString> m{
-        {"low-power", INFO}, {"quiet", INFO}, {"cool", "#7cc6bd"}, {"balanced", FG},
-        {"balanced-performance", WARN}, {"performance", DANGER}, {"max-power", "#e070b0"}, {"custom", PURPLE}};
+        {"low-power", INFO}, {"quiet", INFO}, {"cool", legible("#7cc6bd")}, {"balanced", FG},
+        {"balanced-performance", WARN}, {"performance", DANGER}, {"max-power", legible("#e070b0")}, {"custom", PURPLE}};
     return m.value(p, MUTED);
 }
 

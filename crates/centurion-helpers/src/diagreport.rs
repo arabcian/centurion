@@ -89,11 +89,21 @@ fn mask_serials(text: &str) -> (String, u64) {
                 let Some(sep) = low[after..].find([':', '=']).map(|i| after + i) else { break };
                 // The value ends at a space or at JSON / list punctuation, so a log record stays well formed.
                 let rest = line[sep + 1..].trim_start_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'');
-                let token_len = rest.find(|c: char| c.is_whitespace() || "\"',;}])|".contains(c)).unwrap_or(rest.len());
+                let word = |s: &str| s.find(|c: char| c.is_whitespace() || "\"',;}])|".contains(c)).unwrap_or(s.len());
+                let mut token_len = word(rest);
                 let token = &rest[..token_len];
                 let placeholder = is_placeholder(token) || is_placeholder(rest.trim_end())
                     || rest.starts_with("Not ") || rest.starts_with("To Be Filled") || rest.starts_with("Default ");
                 if token_len == 0 || placeholder { continue; }
+                // "Serial Number: ABC DEF": after ':' the value runs on over single spaces, up to a double
+                // space, punctuation or the next "key:" / "key=". After '=' (cmdline, uevent) it is one word.
+                if line.as_bytes()[sep] == b':' {
+                    while let Some(next) = rest[token_len..].strip_prefix(' ').filter(|n| !n.starts_with(char::is_whitespace)) {
+                        let w = &next[..word(next)];
+                        if w.is_empty() || w.ends_with(':') || w.contains('=') { break; }
+                        token_len += 1 + w.len();
+                    }
+                }
                 let start = line.len() - rest.len();
                 spans.push((start, start + token_len));
             }
@@ -445,6 +455,16 @@ mod tests {
         assert!(s.contains("kernel 6.18.44"), "a version is not an address");
         assert!(s.contains("nvme0: timeout, 0x1 lost"));
         assert!(n >= 8, "masked count {n}");
+    }
+
+    #[test]
+    fn multi_word_serials_are_hidden_whole() {
+        assert_eq!(mask_serials("Serial Number: ABC DEF\n").0, "Serial Number: <hidden>\n");
+        assert_eq!(mask_serials("{\"serial\": \"AB CD\", \"x\": 1}").0, "{\"serial\": \"<hidden>\", \"x\": 1}");
+        assert_eq!(mask_serials("serial: AB CD  |  model: X").0, "serial: <hidden>  |  model: X");
+        assert_eq!(mask_serials("serial: AB model: X").0, "serial: <hidden> model: X");
+        // '=' values stay one word, so the rest of a command line survives.
+        assert_eq!(mask_serials("root=UUID=12ab-34cd ro quiet").0, "root=UUID=<hidden> ro quiet");
     }
 
     #[test]

@@ -542,33 +542,59 @@ void CoolingPage::fanStop(bool aborted) {
     fanTesting_ = false;
     setRunning(false);
     live_->clear();
-    fanRestore(0);  // no-op when the fans were never put at maximum
-    // Shows the text after the status refresh, which would otherwise hide the banner again.
-    auto show = [this](const QString &text, const char *color) {
-        tool({QStringLiteral("status")}, [this, text, color](const QJsonObject &s) { fillStatus(s); showVerdict(text, color); });
-    };
-    if (aborted) { show(tr("The fan test was stopped. The fans are back as they were."), theme::INFO); return; }
-    if (fanPeaks_.isEmpty()) { show(tr("No fan speed was read during the test."), theme::WARN); return; }
-    QStringList peaks;
-    for (double v : fanPeaks_) peaks << QString::number(qRound(v));
-    tool({QStringLiteral("fanmax"), QStringLiteral("--peaks"), peaks.join(QLatin1Char(','))}, [show](const QJsonObject &o) {
-        bool warn = false;
-        const QString text = fanMaxText(o, &warn);
-        show(text, !o.value(QStringLiteral("ok")).toBool() ? theme::WARN : warn ? theme::DANGER : theme::OK);
+    // The verdict waits for the restore (true at once when the fans were never put at maximum), so it never
+    // says the fans are back while a write is still pending or has failed.
+    fanRestore(0, [this, aborted](bool restored) {
+        // Shows the text after the status refresh, which would otherwise hide the banner again.
+        auto show = [this, restored](const QString &text, const char *color) {
+            const QString full = restored ? text
+                : tr("The fans could not be confirmed back as they were before the test: set them on the Home tab.") + "\n\n" + text;
+            const char *tone = restored ? color : theme::WARN;
+            tool({QStringLiteral("status")}, [this, full, tone](const QJsonObject &s) { fillStatus(s); showVerdict(full, tone); });
+        };
+        if (aborted) {
+            if (restored) show(tr("The fan test was stopped. The fans are back as they were."), theme::INFO);
+            else show(tr("The fan test was stopped."), theme::WARN);
+            return;
+        }
+        if (fanPeaks_.isEmpty()) { show(tr("No fan speed was read during the test."), theme::WARN); return; }
+        QStringList peaks;
+        for (double v : fanPeaks_) peaks << QString::number(qRound(v));
+        tool({QStringLiteral("fanmax"), QStringLiteral("--peaks"), peaks.join(QLatin1Char(','))}, [show](const QJsonObject &o) {
+            bool warn = false;
+            const QString text = fanMaxText(o, &warn);
+            show(text, !o.value(QStringLiteral("ok")).toBool() ? theme::WARN : warn ? theme::DANGER : theme::OK);
+        });
     });
 }
 
 // Puts the fans back as they were before the test: all to Auto, then the fixed targets that were set. Waits
 // while a Home write is still in flight (the writes are asynchronous).
-void CoolingPage::fanRestore(int tries) {
-    if (!fans_.allAuto || !fanMaxed_) return;
+void CoolingPage::fanRestore(int tries, std::function<void(bool)> done) {
+    if (!fans_.allAuto || !fanMaxed_) { done(true); return; }
     if (fans_.busy() && tries < 20) {
-        QTimer::singleShot(500, this, [this, tries] { fanRestore(tries + 1); });
+        QTimer::singleShot(500, this, [this, tries, done] { fanRestore(tries + 1, done); });
         return;
     }
     fanMaxed_ = false;
-    if (fanPrevMax_) return;  // they were at maximum before the test: leave them there
+    if (fanPrevMax_) { done(true); return; }  // they were at maximum before the test: leave them there
     fans_.allAuto();
     for (const auto &p : std::as_const(fanPrev_))
         if (p.second > 0) fans_.setTarget(p.first, p.second);
+    fanCheckRestore(0, std::move(done));
+}
+
+// The writes run one helper call at a time: once they are all done, the targets read back from the
+// hardware must be the ones from before the test. Still busy after 30 s, or another value: not restored.
+void CoolingPage::fanCheckRestore(int tries, std::function<void(bool)> done) {
+    if (fans_.busy() && tries < 60) {
+        QTimer::singleShot(500, this, [this, tries, done] { fanCheckRestore(tries + 1, done); });
+        return;
+    }
+    if (fans_.busy() || fans_.maxMode()) { done(false); return; }
+    QHash<QString, int> now;
+    for (const auto &p : fans_.targets()) now.insert(p.first, p.second);
+    for (const auto &p : std::as_const(fanPrev_))
+        if (now.value(p.first, -1) != p.second) { done(false); return; }
+    done(true);
 }
