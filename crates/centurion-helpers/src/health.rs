@@ -85,7 +85,8 @@ pub fn classify(msg: &str) -> Option<Value> {
         if code == 154 {
             if let Some(k) = after.find(" to ") { title = format!("Xid 154: recovery action → {}", clip(&after[k + 4..])); }
         }
-        return Some(json!({"kind": "xid", "code": code, "level": level, "title": title, "text": clip(msg)}));
+        let pci = rest.split("(PCI:").nth(1).and_then(|part| part.split(')').next()).unwrap_or("");
+        return Some(json!({"kind": "xid", "code": code, "pci": pci, "level": level, "title": title, "text": clip(msg)}));
     }
     let has = |s: &str| msg.contains(s);
     let ev = |kind: &str, level: &str, title: &str| Some(json!({"kind": kind, "level": level, "title": title, "text": clip(msg)}));
@@ -102,7 +103,14 @@ pub fn classify(msg: &str) -> Option<Value> {
         if !has("Machine Check") && !has("STATUS") && DETAIL.iter().any(|d| has(d)) { return None; }
         let corrected = has("Corrected") || has("events logged") || has("|CE|") || mce_status_corrected(msg);
         let level = if corrected && !has("Exception") { "warn" } else { "critical" };
-        return ev("mce", level, "CPU machine check (unstable Curve Optimizer / RAM timings, or hardware)");
+        // Preserve only identifiers directly present in the record. A printed CPU is a
+        // Linux logical CPU, not necessarily a physical core or a Curve Optimizer index.
+        let cpu = decimal_after(msg, "CPU:").or_else(|| decimal_after(msg, "CPU "));
+        let bank = decimal_after(msg, " Bank ").or_else(|| decimal_after(msg, " MC"));
+        let apic = decimal_after(msg, "APIC ID:");
+        return Some(json!({"kind": "mce", "level": level,
+            "title": "CPU machine check (cause not established)", "text": clip(msg),
+            "cpu": cpu, "bank": bank, "apic_id": apic}));
     }
     if has("AER:") || has("PCIe Bus Error") {
         if has("Corrected error") || has("severity=Correct") { return ev("aer", "warn", "PCIe corrected error"); }
@@ -126,6 +134,16 @@ pub fn classify(msg: &str) -> Option<Value> {
         if (has("I/O") && has("timeout")) || has("resetting controller") { return ev("nvme", "error", "NVMe I/O timeout / controller reset"); }
         return None;
     }
+    // F2FS: only explicit integrity, checkpoint, or I/O failures. Routine GC,
+    // mount, checkpoint completion and normal recovery chatter are not faults.
+    let lower = msg.to_ascii_lowercase();
+    if (lower.contains("f2fs-fs") || lower.starts_with("f2fs:")) &&
+        ["error:", " error ", "i/o error", "i/o failure", "corrupt", "checkpoint failed",
+         "checkpoint error", "cp_error = 1", "cp_error=1", "invalid node", "invalid blkaddr",
+         "metadata error", "failed to write checkpoint", "failed to update checkpoint",
+         "filesystem has been shutdown"].iter().any(|token| lower.contains(token)) {
+        return ev("f2fs", "critical", "F2FS integrity / checkpoint / I/O failure");
+    }
     // File systems: only the kernel's own error reports, not warnings or mount chatter.
     if has("EXT4-fs error") || msg.starts_with("BTRFS error") || (msg.starts_with("BTRFS warning") && has("csum failed"))
         || (msg.starts_with("XFS") && (has("Corruption") || has("corruption detected"))) {
@@ -135,10 +153,30 @@ pub fn classify(msg: &str) -> Option<Value> {
     if (has("i915") && has("GPU HANG")) || (msg.starts_with("xe ") && (has("Timedout job") || has("trying reset"))) {
         return ev("igpu", "error", "Intel iGPU hang / reset");
     }
-    // Wi-Fi firmware crashes.
-    if (has("iwlwifi") && has("Microcode SW error")) || (has("mt79") && has("Message") && has("timeout"))
-        || (has("firmware crashed") && ["ath9k", "ath10k", "ath11k", "ath12k"].iter().any(|d| has(d))) {
-        return ev("wifi", "warn", "Wi-Fi firmware error (the adapter resets itself)");
+    // Radio diagnostic ledger: these patterns indicate failures, not ordinary
+    // association, a manual disconnection, or an expected firmware load.
+    let wifi = ["iwlwifi", "mt79", "mt792", "ath9k", "ath10k", "ath11k", "ath12k", "rtw89", "brcmfmac"]
+        .iter().any(|driver| lower.contains(driver));
+    if wifi && (lower.contains("firmware failed") || lower.contains("failed to load firmware") ||
+                lower.contains("firmware crashed") || lower.contains("microcode sw error") ||
+                (lower.contains("message") && lower.contains("timeout")) ||
+                lower.contains("firmware timeout") || lower.contains("firmware assert") ||
+                lower.contains("firmware reset failed")) {
+        let reason = if lower.contains("failed to load") || lower.contains("firmware failed") {
+            "Wi-Fi firmware load failure"
+        } else if lower.contains("timeout") { "Wi-Fi firmware timeout" }
+        else { "Wi-Fi firmware crash/reset" };
+        return ev("wifi", "warn", reason);
+    }
+    let bluetooth = lower.contains("bluetooth:") || lower.contains("btusb") || lower.contains("btmtk");
+    if bluetooth && (lower.contains("firmware file") && lower.contains("not found") ||
+                     lower.contains("failed to load firmware") ||
+                     lower.contains("failed to load") && lower.contains("firmware") ||
+                     lower.contains("hci command") && lower.contains("timeout") ||
+                     lower.contains("command tx timeout") ||
+                     lower.contains("hardware error") ||
+                     lower.contains("controller reset failed")) {
+        return ev("bluetooth", "warn", "Bluetooth controller / firmware failure");
     }
     if has("critical temperature reached") { return ev("thermal", "critical", "Critical temperature reached (emergency shutdown)"); }
     if has("Package temperature above threshold") { return ev("thermal", "warn", "CPU package temperature above threshold (throttling)"); }
@@ -151,6 +189,13 @@ pub fn classify(msg: &str) -> Option<Value> {
         return ev("oops", "error", &title);
     }
     None
+}
+
+/// Read a decimal token after an exact delimiter, without inferring missing IDs.
+fn decimal_after(text: &str, key: &str) -> Option<u32> {
+    let tail = text.split_once(key)?.1.trim_start();
+    let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() { None } else { digits.parse().ok() }
 }
 
 /// The trailing "[module]" of a kernel message ("... foo+0x1/0x2 [amdgpu]"); "[#1]" and the like do not qualify.
@@ -254,8 +299,8 @@ pub fn klog(since: u64) -> Value {
 
 /// PCIe devices with a non-zero AER total (sysfs, readable by anyone).
 fn aer_counters() -> Vec<Value> {
-    let total = |p: std::path::PathBuf, key: &str| -> u64 {
-        std::fs::read_to_string(p).ok().and_then(|s| s.lines().find_map(|l| l.strip_prefix(key)?.trim().parse().ok())).unwrap_or(0)
+    let total = |p: std::path::PathBuf, key: &str| -> Option<u64> {
+        std::fs::read_to_string(p).ok().and_then(|s| s.lines().find_map(|l| l.strip_prefix(key)?.trim().parse().ok()))
     };
     let mut v = Vec::new();
     for e in std::fs::read_dir("/sys/bus/pci/devices").into_iter().flatten().flatten() {
@@ -264,7 +309,8 @@ fn aer_counters() -> Vec<Value> {
         let cor = total(d.join("aer_dev_correctable"), "TOTAL_ERR_COR");
         let nonfatal = total(d.join("aer_dev_nonfatal"), "TOTAL_ERR_NONFATAL");
         let fatal = total(d.join("aer_dev_fatal"), "TOTAL_ERR_FATAL");
-        if cor + nonfatal + fatal == 0 { continue; }
+        // Zero totals are also needed by the delta tracker to detect resets and
+        // transitions back to zero, not just devices that have ever reported an AER.
         let class = std::fs::read_to_string(d.join("class")).unwrap_or_default();
         let vendor = std::fs::read_to_string(d.join("vendor")).unwrap_or_default();
         let what = match (vendor.trim(), class.trim().get(..6)) {
@@ -353,6 +399,12 @@ mod tests {
         assert!(classify("BTRFS info (device nvme0n1p2): using crc32c checksum algorithm").is_none());
         assert!(classify("BTRFS warning (device nvme0n1p2): space cache v1 is being deprecated").is_none());
         assert!(classify("XFS (sda1): Mounting V5 Filesystem").is_none());
+        is("F2FS-fs (nvme0n1p3): checkpoint failed, I/O error", "f2fs", "critical");
+        is("F2FS-fs (dm-0): invalid blkaddr: 1234, type: 0", "f2fs", "critical");
+        is("F2FS-fs (nvme0n1p3): corruption detected in node", "f2fs", "critical");
+        assert!(classify("F2FS-fs (nvme0n1p3): mounted with checkpoint version = 4").is_none());
+        assert!(classify("F2FS-fs (nvme0n1p3): background GC started").is_none());
+        assert!(classify("F2FS-fs (nvme0n1p3): error_policy=remount-ro").is_none());
     }
     #[test]
     fn igpu_wifi_lines() {
@@ -366,6 +418,21 @@ mod tests {
         is("ath11k_pci 0000:03:00.0: firmware crashed: MHI_CB_EE_RDDM", "wifi", "warn");
         assert!(classify("iwlwifi 0000:02:00.0: loaded firmware version 77.2df0e0e8.0 ty-a0-gf-a0-77.ucode").is_none());
         assert!(classify("mt7921e 0000:03:00.0: ASIC revision: 79220010").is_none());
+        is("mt7925e 0000:03:00.0: firmware timeout", "wifi", "warn");
+        is("Bluetooth: hci0: Failed to load firmware /lib/firmware/mediatek/BT_RAM_CODE_MT6639.bin", "bluetooth", "warn");
+        is("Bluetooth: hci0: command tx timeout", "bluetooth", "warn");
+        assert!(classify("Bluetooth: hci0: Device setup in 421 ms").is_none());
+        assert!(classify("iwlwifi 0000:02:00.0: associated with 00:11:22:33:44:55").is_none());
+    }
+    #[test]
+    fn mce_metadata_is_evidence_not_guesswork() {
+        let e = classify("[Hardware Error]: CPU:9 (1a:44:0) MC5_STATUS[Over|UE]: 0xfe20000000000135").unwrap();
+        assert_eq!(e["cpu"], 9);
+        assert_eq!(e["bank"], 5);
+        assert_eq!(e["apic_id"], Value::Null);
+        let e = classify("mce: [Hardware Error]: CPU 3: Machine Check Exception: 5 Bank 7: be00000000800400").unwrap();
+        assert_eq!(e["cpu"], 3);
+        assert_eq!(e["bank"], 7);
     }
     #[test]
     fn thermal_oom_oops_lines() {

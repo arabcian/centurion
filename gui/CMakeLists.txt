@@ -77,6 +77,8 @@ add_executable(centurion
     src/bootpage.cpp     src/bootpage.h
     src/nvregdialog.cpp  src/nvregdialog.h
     src/systools.cpp     src/systools.h
+    src/diagnostictools.cpp src/diagnostictools.h
+    src/healthevidence.cpp src/healthevidence.h
     src/distroprofile.cpp src/distroprofile.h
     src/eventinfo.cpp    src/eventinfo.h
     src/klogpage.cpp     src/klogpage.h
@@ -270,6 +272,10 @@ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hico
 option(CENTURION_BUILD_TESTS "Build GUI unit tests" OFF)
 if(CENTURION_BUILD_TESTS)
     enable_testing()
+    add_executable(centurion-diagnostictools-test tests/diagnostictools_test.cpp src/diagnostictools.cpp src/diagnostictools.h)
+    target_link_libraries(centurion-diagnostictools-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-diagnostictools-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME diagnostictools COMMAND centurion-diagnostictools-test)
     add_executable(centurion-gui-tests tests/int64spinbox_test.cpp src/int64spinbox.cpp src/int64spinbox.h)
     target_link_libraries(centurion-gui-tests PRIVATE Qt6::Widgets)
     target_compile_definitions(centurion-gui-tests PRIVATE QT_NO_KEYWORDS)

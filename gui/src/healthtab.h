@@ -120,7 +120,9 @@ private:
     bool first_ = true, needsRoot_ = false, busy_ = false;
     int xid_ = 0, gsp_ = 0, mce_ = 0, aerN_ = 0, lockup_ = 0, other_ = 0;
     int nvme_ = 0, fs_ = 0, igpu_ = 0, wifi_ = 0, thermal_ = 0, oom_ = 0, oops_ = 0;
-    QString lastRootXid_;  // title of the Xid before an Xid 154
+    QString lastRootXid_;  // latest earlier Xid, evidence only (never a proven cause)
+    QString lastRootXidPci_, lastRootXidBoot_;
+    double lastRootXidUs_ = 0;
     QHash<QString, Group> groups_;
     qint64 seenMs_ = 0;    // Mark all seen: events up to this wall-clock time (ms since epoch) are not new; 0 = never
     BackupPage *backup_ = nullptr;

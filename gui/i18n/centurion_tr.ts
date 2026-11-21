@@ -2007,6 +2007,10 @@ Kernel uptime: %2
             <source>Detailed device reports: sensors, CPU, memory, PCI, USB, firmware.</source>
             <translation>Ayrıntılı aygıt raporları: sensörler, CPU, bellek, PCI, USB, donanım yazılımı.</translation>
         </message>
+        <message>
+            <source>Evidence Lab</source>
+            <translation>Donanım Kanıt Analizi</translation>
+        </message>
     </context>
     <context>
         <name>HomeTab</name>
@@ -5479,6 +5483,18 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <location filename="work/gui/src/systools.cpp" line="398"/>
             <source>fwupd: the devices it can update and the firmware updates it finds. Finding updates contacts the LVFS server on the internet, so this page runs only on "Run again".</source>
             <translation>fwupd: güncellenebilen aygıtlar ve bulunan donanım yazılımı güncellemeleri. Güncelleme aramak internetteki LVFS sunucusuna bağlanır, bu yüzden bu sayfa yalnızca "Run again" ile çalışır.</translation>
+        </message>
+        <message>
+            <source>Hardware snapshot</source>
+            <translation>Donanım anlık görüntüsü</translation>
+        </message>
+        <message>
+            <source>EDID / VRR</source>
+            <translation>EDID / VRR inceleyici</translation>
+        </message>
+        <message>
+            <source>NVIDIA module parameters</source>
+            <translation>NVIDIA modül parametreleri</translation>
         </message>
     </context>
     <context>
@@ -10415,6 +10431,53 @@ Profil adı:</translation>
         <message>
             <source>Machine check(s) on %1 (at %2) in its own core units: that core is blamed.</source>
             <translation>%1 (%2 değerinde) kendi çekirdek birimlerinde machine check: bu çekirdek suçlandı.</translation>
+        </message>
+    </context>
+    <context>
+        <name>HealthEvidencePage</name>
+        <message>
+            <source>On-demand diagnostic evidence from the current boot. The scan is read-only and may require polkit authorization.</source>
+            <translation>Geçerli açılışa ait isteğe bağlı donanım tanılama verileri. Tarama yalnızca okuma yapar ve polkit yetkisi isteyebilir.</translation>
+        </message>
+        <message>
+            <source>Scan evidence</source>
+            <translation>Kanıtları tara</translation>
+        </message>
+        <message>
+            <source>Copy current</source>
+            <translation>Geçerli raporu kopyala</translation>
+        </message>
+        <message>
+            <source>Not scanned yet. No monitoring process is running.</source>
+            <translation>Henüz tarama yapılmadı. Arka planda izleme işlemi çalışmıyor.</translation>
+        </message>
+        <message>
+            <source>H02 · Ryzen MCE Core/CCD</source>
+            <translation>H02 · Ryzen MCE Çekirdek/CCD</translation>
+        </message>
+        <message>
+            <source>H03 · PCIe AER Delta</source>
+            <translation>H03 · PCIe AER Değişimi</translation>
+        </message>
+        <message>
+            <source>H04 · NVIDIA Xid Cases</source>
+            <translation>H04 · NVIDIA Xid Vakaları</translation>
+        </message>
+        <message>
+            <source>H05 · F2FS Integrity</source>
+            <translation>H05 · F2FS Bütünlüğü</translation>
+        </message>
+        <message>
+            <source>H09 · Wi-Fi / Bluetooth</source>
+            <translation>H09 · Wi-Fi / Bluetooth</translation>
+        </message>
+        <message>
+            <source>Press Scan evidence to view this diagnostic.</source>
+            <translation>Tanılama verilerini görüntülemek için Kanıtları tara düğmesine basın.</translation>
+        </message>
+        <message>
+            <source>Scanning classified kernel events and read-only topology…</source>
+            <translation>Sınıflandırılmış kernel olayları ve salt okunur topoloji taranıyor…</translation>
         </message>
     </context>
 </TS>

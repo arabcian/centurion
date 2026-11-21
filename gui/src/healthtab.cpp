@@ -20,6 +20,7 @@
 #include "privileged.h"
 #include "sysinfo.h"
 #include "systools.h"
+#include "healthevidence.h"
 #include "theme.h"
 
 #include <QDateTime>
@@ -107,6 +108,7 @@ static qint64 wallMs(double tsUs) {
 static QString pageAbout(const QString &key) {
     static const QHash<QString, const char *> ABOUT = {
         {QStringLiteral("overview"), QT_TRANSLATE_NOOP("HealthTab", "One card per area with its level, and suggested next steps.")},
+        {QStringLiteral("evidence"), QT_TRANSLATE_NOOP("HealthTab", "MCE topology, AER changes, NVIDIA Xid cases, F2FS failures and radio firmware faults.")},
         {QStringLiteral("monitor"), QT_TRANSLATE_NOOP("HealthTab", "Hardware and driver errors from the kernel, explained, with saved history per day.")},
         {QStringLiteral("boot"), QT_TRANSLATE_NOOP("HealthTab", "Every boot: how it ended, its kernel events, the curves in effect, crash records and patterns.")},
         {QStringLiteral("capabilities"), QT_TRANSLATE_NOOP("HealthTab", "Why a feature is missing: read-only kernel, helper and firmware capability checks.")},
@@ -194,6 +196,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(general, overview_, tr("System overview"), QStringLiteral("overview"));
     auto *monitor = new QWidget;
     addPage(problems, monitor, tr("Events & alerts"), QStringLiteral("monitor"));
+    addPage(problems, new HealthEvidencePage, tr("Evidence Lab"), QStringLiteral("evidence"));
     boot_ = new BootPage;
     addPage(problems, boot_, tr("Boot history"), QStringLiteral("boot"));
     addPage(problems, insights::capabilityPage(), tr("Capability Doctor"), QStringLiteral("capabilities"));
@@ -279,7 +282,9 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
             key == QLatin1String("Sensors") || key == QLatin1String("CPU") ||
             key == QLatin1String("Memory") || key == QLatin1String("Storage") ||
             key == QLatin1String("Thermal") || key == QLatin1String("Battery") ||
-            key == QLatin1String("NVIDIA") || key == QLatin1String("Graphics")) group = deviceTools;
+            key == QLatin1String("NVIDIA") || key == QLatin1String("Graphics") ||
+            key == QLatin1String("Hardware snapshot") || key == QLatin1String("EDID / VRR") ||
+            key == QLatin1String("NVIDIA module parameters")) group = deviceTools;
         else if (key == QLatin1String("PCI") || key == QLatin1String("PCIe detail") ||
                  key == QLatin1String("USB")) group = connectivityTools;
         auto *item = new QTreeWidgetItem(group, {label});
@@ -668,7 +673,7 @@ void HealthTab::drainKmsg() {
     static const char *const KEYS[] = {"NVRM", "Hardware Error", "achine check", "achine Check", "AER",
                                        "PCIe Bus Error", "lockup", "LOCKUP", "stall", "D3cold", "amdgpu",
                                        ";nvme nvme", "EXT4-fs error", "BTRFS error", "csum failed", ";XFS", "GPU HANG", ";xe ",
-                                       "Microcode SW error", "mt79", "firmware crashed", "critical temperature",
+                                       "Microcode SW error", "mt79", "mt792", "firmware crashed", "firmware timeout", "Bluetooth:", "btusb", "btmtk", "F2FS-fs", "f2fs:", "critical temperature",
                                        "Package temperature above", "Out of memory", ";Oops:", ";BUG:", ";WARNING: CPU:"};
     char buf[8192];
     bool relevant = false;
@@ -777,14 +782,20 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
     QStringList aer;
     for (const QJsonValue &v : r.value(QStringLiteral("aer")).toArray()) {
         const QJsonObject a = v.toObject();
-        const qint64 bad = a.value(QStringLiteral("nonfatal")).toInteger() + a.value(QStringLiteral("fatal")).toInteger();
+        const QJsonValue corrected = a.value(QStringLiteral("cor"));
+        const QJsonValue nf = a.value(QStringLiteral("nonfatal"));
+        const QJsonValue fatal = a.value(QStringLiteral("fatal"));
+        if (corrected.isDouble() && nf.isDouble() && fatal.isDouble() &&
+            corrected.toInteger() == 0 && nf.toInteger() == 0 && fatal.toInteger() == 0) continue;
+        const qint64 bad = nf.toInteger() + fatal.toInteger();
         aer << QStringLiteral("<span style='color:%1'>%2 %3: %4 corrected, %5 uncorrectable</span>")
                    .arg(QString::fromLatin1(bad ? theme::DANGER : theme::FG_DIM))
                    .arg(a.value(QStringLiteral("what")).toString())
                    .arg(a.value(QStringLiteral("dev")).toString())
-                   .arg(a.value(QStringLiteral("cor")).toInteger()).arg(bad);
+                   .arg(corrected.isDouble() ? QString::number(corrected.toInteger()) : QStringLiteral("Unknown"))
+                   .arg(nf.isDouble() && fatal.isDouble() ? QString::number(bad) : QStringLiteral("Unknown"));
     }
-    aer_->setText(aer.isEmpty() ? QStringLiteral("<span style='color:%1'>PCIe AER counters: all zero.</span>").arg(theme::MUTED)
+    aer_->setText(aer.isEmpty() ? QStringLiteral("<span style='color:%1'>PCIe AER counters: no nonzero totals reported (some devices may be unsupported).</span>").arg(theme::MUTED)
                                 : QStringLiteral("PCIe AER counters (since boot):<br>") + aer.join(QStringLiteral("<br>")));
     updateSummary();
     applyDayFilter();
@@ -800,19 +811,25 @@ void HealthTab::addEvent(const QJsonObject &e, const QString &bootId) {
     int *counter = &other_;
     if (kind == QLatin1String("xid")) {
         counter = &xid_;
+        const QString pci = e.value(QStringLiteral("pci")).toString();
         if (code == 154) {
-            if (!lastRootXid_.isEmpty()) title += QStringLiteral("  (cause: ") + lastRootXid_ + QLatin1Char(')');
+            if (!lastRootXid_.isEmpty() && !pci.isEmpty() && pci == lastRootXidPci_ &&
+                bootId == lastRootXidBoot_ && tsUs >= lastRootXidUs_ && tsUs - lastRootXidUs_ <= 300e6)
+                title += QStringLiteral("  (preceding same-GPU Xid, NOT proven cause: ") + lastRootXid_ + QLatin1Char(')');
         } else {
             lastRootXid_ = title;
+            lastRootXidPci_ = pci;
+            lastRootXidBoot_ = bootId;
+            lastRootXidUs_ = tsUs;
         }
     } else if (kind == QLatin1String("gsp")) counter = &gsp_;
     else if (kind == QLatin1String("mce")) counter = &mce_;
     else if (kind == QLatin1String("aer")) counter = &aerN_;
     else if (kind == QLatin1String("lockup")) counter = &lockup_;
     else if (kind == QLatin1String("nvme")) counter = &nvme_;
-    else if (kind == QLatin1String("fs")) counter = &fs_;
+    else if (kind == QLatin1String("fs") || kind == QLatin1String("f2fs")) counter = &fs_;
     else if (kind == QLatin1String("igpu")) counter = &igpu_;
-    else if (kind == QLatin1String("wifi")) counter = &wifi_;
+    else if (kind == QLatin1String("wifi") || kind == QLatin1String("bluetooth")) counter = &wifi_;
     else if (kind == QLatin1String("thermal")) counter = &thermal_;
     else if (kind == QLatin1String("oom")) counter = &oom_;
     else if (kind == QLatin1String("oops")) counter = &oops_;
@@ -1023,9 +1040,11 @@ QString HealthTab::friendlyEvent(const QJsonObject &e) {
     if (kind == QLatin1String("lockup")) return tr("A CPU core or kernel task stopped responding");
     if (kind == QLatin1String("nvme")) return tr("Storage device reported an error");
     if (kind == QLatin1String("fs")) return tr("File system reported a data or metadata error");
+    if (kind == QLatin1String("f2fs")) return tr("F2FS reported an integrity, checkpoint or I/O error");
     if (kind == QLatin1String("igpu")) return tr("Integrated graphics reported a problem");
     if (kind == QLatin1String("amdgpu")) return tr("AMD graphics hung and was reset");
     if (kind == QLatin1String("wifi")) return tr("Wireless device or firmware reported a problem");
+    if (kind == QLatin1String("bluetooth")) return tr("Bluetooth firmware or controller reported a failure");
     if (kind == QLatin1String("thermal")) return tr("A temperature-related warning was recorded");
     if (kind == QLatin1String("oom")) return tr("System ran out of available memory");
     if (kind == QLatin1String("oops")) return tr("A kernel error or warning was recorded");
@@ -1119,7 +1138,7 @@ void HealthTab::eventMenu(const QPoint &pos) {
         menu.addAction(tr("Reset GPU curve to stock"), this, [this, title] { curves_->resetGpuCurve(title); });
     } else if ((kind == QLatin1String("mce") || kind == QLatin1String("lockup")) && CurvePage::currentState(QStringLiteral("cpu")) != QLatin1String("stock")) {
         menu.addAction(tr("Open the CPU curve tab"), this, [this] { Q_EMIT openTab(sysinfo::isIntel() ? QStringLiteral("Intel Undervolt") : QStringLiteral("Ryzen Curve")); });
-    } else if (kind == QLatin1String("nvme") || kind == QLatin1String("fs")) {
+    } else if (kind == QLatin1String("nvme") || kind == QLatin1String("fs") || kind == QLatin1String("f2fs")) {
         if (auto *smart = findChild<SmartPage *>()) menu.addAction(tr("Open SMART"), this, [this, smart] { showPage(smart); });
     }
     menu.exec(list_->viewport()->mapToGlobal(pos));

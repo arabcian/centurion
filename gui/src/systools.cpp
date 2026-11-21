@@ -1,4 +1,5 @@
 #include "systools.h"
+#include "diagnostictools.h"
 
 #include "lazywidget.h"
 #include "privileged.h"
@@ -240,6 +241,14 @@ public:
         auto *run = new QPushButton(QStringLiteral("Run again"));
         auto *copy = new QPushButton(QStringLiteral("Copy"));
         top->addWidget(run);
+        if (QLatin1String(s.title) == QLatin1String("Hardware snapshot")) {
+            auto *save = new QPushButton(QStringLiteral("Save baseline"));
+            auto *compare = new QPushButton(QStringLiteral("Compare baseline"));
+            top->addWidget(save);
+            top->addWidget(compare);
+            connect(save, &QPushButton::clicked, this, [this] { setOutput(diagnostictools::saveHardwareBaseline()); });
+            connect(compare, &QPushButton::clicked, this, [this] { setOutput(diagnostictools::compareHardwareBaseline()); });
+        }
         top->addWidget(copy);
         v->addLayout(top);
         text_ = new QTextBrowser;
@@ -381,6 +390,9 @@ private:
         const QStringList c = spec_.cmds.at(i);
         const QString shown = c.join(QLatin1Char(' '));
         if (c.first() == QLatin1String("@file")) { out_ += "$ cat " + c.at(1) + '\n' + readFile(c.at(1)) + '\n'; step(i + 1); return; }
+        if (c.first() == QLatin1String("@hardware")) { out_ += diagnostictools::hardwarePreview(); step(i + 1); return; }
+        if (c.first() == QLatin1String("@edid")) { out_ += diagnostictools::edidReport(); step(i + 1); return; }
+        if (c.first() == QLatin1String("@nvparams")) { out_ += diagnostictools::moduleParameterReport(); step(i + 1); return; }
         if (c.first() == QLatin1String("@pcilink")) { out_ += QStringLiteral("$ PCIe links (sysfs)\n") + pciLinks() + '\n'; step(i + 1); return; }
         if (c.first() == QLatin1String("@glob")) {
             const QString pat = c.at(1);
@@ -448,6 +460,12 @@ QString installCommand(const QString &tool) { return installHint(tool); }
 
 void addPages(QTabWidget *tabs) {
     const Spec specs[] = {
+        {QT_TRANSLATE_NOOP("systools", "Hardware snapshot"), "S01: Compare PCI topology, drivers, firmware, module versions and redacted kernel boot parameters to a user-saved baseline.",
+         {{"@hardware"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "EDID / VRR"), "S03: Read-only DRM EDID checksums, detailed timings, connector modes and known/unknown VRR exposure.",
+         {{"@edid"}}, nullptr, false, true},
+        {QT_TRANSLATE_NOOP("systools", "NVIDIA module parameters"), "S06: Compare modprobe.d and kernel cmdline options with effective sysfs/proc values; never wakes the GPU.",
+         {{"@nvparams"}, {"modinfo", "-p", "nvidia"}}, nullptr, false, true},
         {"Sensors", "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
         {"CPU", "Topology, caches, frequencies and the active cpufreq driver/governor.",
          {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}, nullptr, false, true},

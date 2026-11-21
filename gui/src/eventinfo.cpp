@@ -91,8 +91,8 @@ void xid(int code, const QString &text, Info &i) {
     case XidGroup::Recovery:
         i.meaning = tr("The driver states which recovery the GPU needs after an earlier error (a GPU reset, or a reboot). It is a "
                        "consequence, not the cause.");
-        i.causes = {tr("The Xid logged just before this one")};
-        i.steps = {tr("Look at the previous Xid in the list (the title names it when known) and follow its advice."),
+        i.causes = {tr("An earlier error may explain the recovery action, but this record does not identify root cause")};
+        i.steps = {tr("Open Evidence Lab to check earlier same-GPU Xids and GSP/PCIe events; time correlation is not proof."),
                    tr("Do the recovery the record asks for: usually a reboot.")};
         i.urgency = tr("The GPU is not in a usable state until the recovery is done.");
         break;
@@ -184,6 +184,15 @@ Info explain(const QJsonObject &e) {
         if (const QString dev = cap(text, R"(^nvme (nvme\d+))"); !dev.isEmpty()) i.facts << tr("Drive: %1").arg(dev);
         i.urgency = title.contains(QLatin1String("down")) ? tr("Critical: the drive is not reachable; writes may be lost.")
                                                           : tr("Serious if it repeats.");
+    } else if (kind == QLatin1String("f2fs")) {
+        i.meaning = tr("F2FS reported an integrity, metadata, I/O or checkpoint failure. A damaged checkpoint can affect recovery after reboot.");
+        i.causes = {tr("Storage I/O or controller failure"), tr("Earlier unclean shutdown"),
+                    tr("Unstable RAM or other hardware (not proven by this event)")};
+        i.steps = {tr("Back up important files before any repair attempt."),
+                   tr("Open Evidence Lab → F2FS Integrity and inspect the surrounding kernel log."),
+                   tr("Inspect the drive's SMART data and NVMe error history."),
+                   tr("Do not run fsck.f2fs against a mounted read-write filesystem. Use appropriate offline recovery guidance if needed.")};
+        i.urgency = tr("Serious: avoid unnecessary writes until the cause is understood.");
     } else if (kind == QLatin1String("fs")) {
         i.meaning = tr("A file system found damaged data or metadata. Depending on the file system it may now be read-only.");
         i.causes = {tr("A failing or disconnecting drive"), tr("Unstable RAM (data corrupted before it was written)"),
@@ -222,6 +231,14 @@ Info explain(const QJsonObject &e) {
         i.steps = steps;
         if (const QString drv = cap(text, R"(^(\w+))"); !drv.isEmpty()) i.facts << tr("Driver: %1").arg(drv);
         i.urgency = tr("Not dangerous; costs connectivity.");
+    } else if (kind == QLatin1String("bluetooth")) {
+        i.meaning = tr("Bluetooth firmware failed to load, its controller timed out, or the controller reported a hardware error.");
+        i.causes = {tr("Missing or mismatched linux-firmware files"), tr("Bluetooth controller firmware/driver bug"),
+                    tr("USB power management or a controller reset")};
+        i.steps = {tr("Open Evidence Lab → Wi-Fi / Bluetooth to compare error timestamps."),
+                   tr("Check kernel firmware filenames against the installed linux-firmware package."),
+                   tr("Inspect driver and firmware updates; do not flash firmware based on a single error.")};
+        i.urgency = tr("Connectivity may be unavailable; not enough evidence to conclude hardware failure.");
     } else if (kind == QLatin1String("thermal")) {
         const bool critical = title.contains(QLatin1String("Critical"), Qt::CaseInsensitive);
         i.meaning = critical ? tr("A sensor reached its critical temperature; the system shuts down to protect the hardware.")
