@@ -1,0 +1,153 @@
+diff -ruN a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-23 01:46:51.764506793 +0300
++++ b/CHANGELOG.md	2026-11-23 01:46:51.784057503 +0300
+@@ -6,6 +6,9 @@
+ ## [Unreleased]
+ 
+ ### Added
++- Home → hardware inventory: four rows from plain sysfs/procfs reads, no helper and no password: Scheduler
++  (EEVDF, BORE on or off, preemption model, sched_ext when present), CPU layout (cores and threads, SMT, L3 size per
++  cache domain), CPU power (cpufreq driver, governor, EPP, boost) and Memory policy (THP mode, swappiness, zram).
+ - 20 more knobs found by a full `/sys` dump: cache-aware scheduling `epoch_period` and `epoch_affinity_timeout`,
+   the rseq slice extension, `sched_rt_runtime_us`, `sched_rr_timeslice_ms`, the five NUMA-balancing scan knobs,
+   `fault_around_bytes`, `tlb_single_page_flush_ceiling`, `vm.laptop_mode`, `vm.oom_kill_allocating_task`, KSM
+diff -ruN a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+--- a/gui/i18n/centurion_tr.ts	2026-11-23 01:46:51.737488148 +0300
++++ b/gui/i18n/centurion_tr.ts	2026-11-23 01:46:51.779156179 +0300
+@@ -2288,6 +2288,22 @@
+             <translation>GPU modu</translation>
+         </message>
+         <message>
++            <source>Scheduler</source>
++            <translation>Zamanlayıcı</translation>
++        </message>
++        <message>
++            <source>CPU layout</source>
++            <translation>CPU düzeni</translation>
++        </message>
++        <message>
++            <source>CPU power</source>
++            <translation>CPU gücü</translation>
++        </message>
++        <message>
++            <source>Memory policy</source>
++            <translation>Bellek ilkesi</translation>
++        </message>
++        <message>
+             <location filename="work/gui/src/hometab.cpp" line="406"/>
+             <source>EC Firmware</source>
+             <translation>EC Yazılımı</translation>
+diff -ruN a/gui/src/hometab.cpp b/gui/src/hometab.cpp
+--- a/gui/src/hometab.cpp	2026-11-23 01:46:51.567190105 +0300
++++ b/gui/src/hometab.cpp	2026-11-23 01:46:51.774277588 +0300
+@@ -524,6 +524,10 @@
+             g->addWidget(w, row - 1, 1);
+         }
+     }
++    add(tr("Scheduler"), sysinfo::schedulerSummary());
++    add(tr("CPU layout"), sysinfo::cpuLayout());
++    add(tr("CPU power"), sysinfo::cpuPowerSummary());
++    add(tr("Memory policy"), sysinfo::memoryPolicy());
+     add(tr("GPU mode"), sysinfo::gpuMode());
+     add("BIOS", sysinfo::biosInfo());
+     add(tr("EC Firmware"), sysinfo::dmiClean("ec_firmware_release"));
+diff -ruN a/gui/src/sysinfo.cpp b/gui/src/sysinfo.cpp
+--- a/gui/src/sysinfo.cpp	2026-11-23 01:46:51.520218507 +0300
++++ b/gui/src/sysinfo.cpp	2026-11-23 01:46:51.773422335 +0300
+@@ -537,4 +537,79 @@
+     return joined(b);
+ }
+ 
++
++static QString trimmed(const QString &p) { return rd(p).value_or(QString()).trimmed(); }
++
++Opt schedulerSummary() {
++    QStringList b;
++    utsname u{};
++    const QString ver = uname(&u) == 0 ? QString::fromUtf8(u.version) : QString();
++    // 6.6 replaced CFS with EEVDF; BORE (CachyOS) is a layer on top of it, switched by this sysctl.
++    b << QStringLiteral("EEVDF");
++    if (QFile::exists(QStringLiteral("/proc/sys/kernel/sched_bore")))
++        b.last() += trimmed(QStringLiteral("/proc/sys/kernel/sched_bore")) == QLatin1String("1") ? QStringLiteral(" + BORE")
++                                                                                                    : QStringLiteral(" (BORE off)");
++    for (const char *m : {"PREEMPT_RT", "PREEMPT_DYNAMIC", "PREEMPT_LAZY", "PREEMPT"})
++        if (ver.contains(QLatin1String(m))) { b << QString::fromLatin1(m); break; }
++    if (QDir(QStringLiteral("/sys/kernel/sched_ext")).exists()) b << QStringLiteral("sched_ext");
++    return joined(b);
++}
++
++Opt cpuLayout() {
++    const QString base = QStringLiteral("/sys/devices/system/cpu/");
++    QSet<QString> cores;
++    int threads = 0;
++    QMap<QString, long long> l3;  // shared_cpu_list -> KiB, one entry per cache domain
++    for (const QString &e : QDir(base).entryList({QStringLiteral("cpu[0-9]*")}, QDir::Dirs)) {
++        const QString d = base + e;
++        if (rd(d + QStringLiteral("/online")).value_or(QStringLiteral("1")).trimmed() == QLatin1String("0")) continue;
++        ++threads;
++        cores << trimmed(d + QStringLiteral("/topology/physical_package_id")) + ':' + trimmed(d + QStringLiteral("/topology/core_id"));
++        for (const QString &c : QDir(d + QStringLiteral("/cache")).entryList({QStringLiteral("index[0-9]*")}, QDir::Dirs)) {
++            const QString cd = d + QStringLiteral("/cache/") + c;
++            if (trimmed(cd + QStringLiteral("/level")) != QLatin1String("3")) continue;
++            QString sz = trimmed(cd + QStringLiteral("/size"));
++            const bool m = sz.endsWith('M');
++            sz.chop(1);
++            l3.insert(trimmed(cd + QStringLiteral("/shared_cpu_list")), sz.toLongLong() * (m ? 1024 : 1));
++        }
++    }
++    if (threads == 0) return std::nullopt;
++    QStringList b{QStringLiteral("%1C/%2T").arg(cores.size()).arg(threads)};
++    const QString smt = trimmed(base + QStringLiteral("smt/control"));
++    if (!smt.isEmpty()) b << QStringLiteral("SMT ") + smt;
++    if (!l3.isEmpty()) {
++        QStringList sizes;
++        for (long long kib : l3) sizes << QStringLiteral("%1 MiB").arg(kib / 1024);
++        b << QStringLiteral("L3 ") + sizes.join(QStringLiteral(" + "));
++    }
++    return joined(b);
++}
++
++Opt cpuPowerSummary() {
++    const QString pol = QStringLiteral("/sys/devices/system/cpu/cpufreq/policy0/");
++    QStringList b;
++    const QString drv = trimmed(pol + QStringLiteral("scaling_driver"));
++    if (drv.isEmpty()) return std::nullopt;
++    b << drv;
++    if (const QString g = trimmed(pol + QStringLiteral("scaling_governor")); !g.isEmpty()) b << g;
++    if (const QString e = trimmed(pol + QStringLiteral("energy_performance_preference")); !e.isEmpty()) b << QStringLiteral("EPP ") + e;
++    QString boost = trimmed(QStringLiteral("/sys/devices/system/cpu/cpufreq/boost"));
++    if (!boost.isEmpty()) b << QStringLiteral("boost ") + (boost == QLatin1String("1") ? QStringLiteral("on") : QStringLiteral("off"));
++    return joined(b);
++}
++
++Opt memoryPolicy() {
++    QStringList b;
++    const QString thp = trimmed(QStringLiteral("/sys/kernel/mm/transparent_hugepage/enabled"));
++    const int o = thp.indexOf('['), c = thp.indexOf(']');
++    if (o >= 0 && c > o) b << QStringLiteral("THP ") + thp.mid(o + 1, c - o - 1);
++    if (const QString sw = trimmed(QStringLiteral("/proc/sys/vm/swappiness")); !sw.isEmpty()) b << QStringLiteral("swappiness ") + sw;
++    int zram = 0;
++    for (const QString &l : rd(QStringLiteral("/proc/swaps")).value_or(QString()).split('\n'))
++        if (l.startsWith(QLatin1String("/dev/zram"))) ++zram;
++    if (zram) b << QStringLiteral("zram %1").arg(zram);
++    return joined(b);
++}
++
+ } // namespace sysinfo
+diff -ruN a/gui/src/sysinfo.h b/gui/src/sysinfo.h
+--- a/gui/src/sysinfo.h	2026-11-23 01:46:51.522789303 +0300
++++ b/gui/src/sysinfo.h	2026-11-23 01:46:51.773788669 +0300
+@@ -77,6 +77,13 @@
+ Opt usbcInputs();       // UCSI power-delivery sources that are online
+ Opt gpuMode();          // "Hybrid" / "dGPU only (MUX)"
+ 
++// Kernel and CPU facts for the Home inventory (unprivileged sysfs/procfs reads; technical tokens only, so
++// nothing here needs translating).
++Opt schedulerSummary();  // "EEVDF + BORE · PREEMPT_DYNAMIC · sched_ext"
++Opt cpuLayout();         // "16C/32T · SMT on · L3 96 MiB + 32 MiB"
++Opt cpuPowerSummary();   // "amd-pstate-epp · powersave · EPP balance_performance · boost on"
++Opt memoryPolicy();      // "THP madvise · swappiness 150 · zram 2"
++
+ // nvidia-smi output parsers (the process itself is run by the caller)
+ Opt parseGpuName(const QByteArray &out);
+ Opt parseGpuLive(const QByteArray &out);
