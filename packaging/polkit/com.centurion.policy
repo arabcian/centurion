@@ -162,4 +162,14 @@
     <annotate key="org.freedesktop.policykit.exec.path">@LIBEXEC@/backup-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
+  <action id="com.centurion.sysadmin">
+    <description>Change system settings and configuration files from Centurion's Health tools</description>
+    <description xml:lang="tr">Centurion'ın Sağlık araçlarından sistem ayarlarını ve yapılandırma dosyalarını değiştir</description>
+    <message>Authentication is required to change system settings or configuration files</message>
+    <message xml:lang="tr">Sistem ayarlarını veya yapılandırma dosyalarını değiştirmek için kimlik doğrulama gerekiyor</message>
+    <!-- Never silent (see the rules file): it edits /etc/fstab, sysctl, modprobe and udev configuration. -->
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">@LIBEXEC@/sysadmin-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
 </policyconfig>

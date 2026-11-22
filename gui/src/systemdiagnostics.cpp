@@ -158,7 +158,11 @@ Report radios(const QList<diagsrc::LogLine> &kernel, const QString &root) {
         const QString name = rd(root, b + QStringLiteral("/name")), type = rd(root, b + QStringLiteral("/type"));
         k.add({name, type, soft ? tr("blocked") : tr("on"), hard ? tr("blocked") : tr("on")}, hard || soft ? Level::Review : Level::Ok);
         if (hard) r.add(Level::Review, tr("%1 (%2) is blocked in hardware").arg(name, type), tr("A switch, key combination or BIOS setting turned it off; software cannot undo it."));
-        else if (soft) r.add(Level::Info, tr("%1 (%2) is turned off in software").arg(name, type), tr("Airplane mode or the desktop's switch; rfkill unblock turns it back on."));
+        else if (soft) {
+            r.add(Level::Info, tr("%1 (%2) is turned off in software").arg(name, type), tr("Airplane mode or the desktop's switch; rfkill unblock turns it back on."))
+                .setFix(tr("Turn %1 on").arg(type), QJsonObject{{QStringLiteral("op"), QStringLiteral("rfkill")},
+                                                               {QStringLiteral("index"), rf.mid(6).toInt()}, {QStringLiteral("block"), false}});
+        }
     }
     if (!k.rows.isEmpty()) r.tables << k;
     // Missing firmware (any driver: the same evidence matters for GPU and audio firmware too).
@@ -230,12 +234,15 @@ Report powerLimits(const QString &root) {
         t.add({tr("cpufreq"), tr("scaling_max_freq cap"), QStringLiteral("%1 MHz").arg(capMin / 1000), tr("%1 of %2 policies").arg(capped).arg(cpus)}, Level::Review);
         r.add(Level::Review, tr("%1 CPU policies are capped below their top clock (lowest cap %2 MHz)").arg(capped).arg(capMin / 1000),
               tr("Something set scaling_max_freq: a power daemon (TLP, power-profiles-daemon, auto-cpufreq), a thermal tool or a script."),
-              tr("If it is not deliberate, find the tool that writes it; Optimizations shows Centurion's own settings."));
+              tr("If it is not deliberate, find the tool that writes it; Optimizations shows Centurion's own settings."))
+            .setFix(tr("Raise the cap to the hardware maximum"), QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("cpu_uncap")}});
     }
     const QString boost = rd(root, QStringLiteral("/sys/devices/system/cpu/cpufreq/boost"));
     if (!boost.isEmpty()) {
         t.add({tr("cpufreq"), QStringLiteral("boost"), boost == QStringLiteral("1") ? tr("on") : tr("off")}, boost == QStringLiteral("1") ? Level::Info : Level::Review);
-        if (boost != QStringLiteral("1")) r.add(Level::Review, tr("CPU boost is off"), tr("The CPU stays at its base clock: much slower, cooler, less power."));
+        if (boost != QStringLiteral("1"))
+            r.add(Level::Review, tr("CPU boost is off"), tr("The CPU stays at its base clock: much slower, cooler, less power."))
+                .setFix(tr("Turn CPU boost on"), QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("cpu_boost")}, {QStringLiteral("value"), QStringLiteral("1")}});
     }
     const QString pstate = rd(root, QStringLiteral("/sys/devices/system/cpu/amd_pstate/status"));
     if (!pstate.isEmpty()) t.add({tr("amd-pstate"), QStringLiteral("status"), pstate, QString()});
@@ -321,7 +328,8 @@ Report memory(const QString &root) {
     if (zswap && zram)
         r.add(Level::Review, tr("zswap and zram are both on"),
               tr("zswap compresses pages on their way to swap, and the swap is itself compressed by zram: pages are compressed twice and zswap's pool takes RAM that zram would use."),
-              tr("Use one of them: turn zswap off (zswap.enabled=0) when the swap is zram."));
+              tr("Use one of them: turn zswap off (zswap.enabled=0) when the swap is zram."))
+            .setFix(tr("Turn zswap off (until reboot)"), QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("zswap")}, {QStringLiteral("value"), QStringLiteral("N")}});
     const QString swappiness = rd(root, QStringLiteral("/proc/sys/vm/swappiness"));
     if (!swappiness.isEmpty()) t.add({QStringLiteral("vm.swappiness"), swappiness, zram ? tr("with zram, 100–180 is common") : tr("default 60")});
     const QString thp = chosen(rd(root, QStringLiteral("/sys/kernel/mm/transparent_hugepage/enabled")));
@@ -330,7 +338,8 @@ Report memory(const QString &root) {
         t.add({tr("Transparent huge pages"), thp, tr("defrag: %1").arg(defrag)}, thp == QStringLiteral("always") && defrag == QStringLiteral("always") ? Level::Review : Level::Info);
         if (thp == QStringLiteral("always") && defrag == QStringLiteral("always"))
             r.add(Level::Info, tr("Huge pages: always, with synchronous defragmentation"),
-                  tr("Allocations can stall while the kernel compacts memory (stutter in games). defrag=madvise or defer keeps the gain without the stalls."));
+                  tr("Allocations can stall while the kernel compacts memory (stutter in games). defrag=madvise or defer keeps the gain without the stalls."))
+                .setFix(tr("Set defrag to madvise (until reboot)"), QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("thp_defrag")}, {QStringLiteral("value"), QStringLiteral("madvise")}});
     }
     const QString lru = rd(root, QStringLiteral("/sys/kernel/mm/lru_gen/enabled"));
     if (!lru.isEmpty()) t.add({tr("Multi-gen LRU"), lru == QStringLiteral("0x0000") ? tr("off") : tr("on (%1)").arg(lru), QString()});
@@ -581,11 +590,13 @@ Report audio(const QHash<QString, QString> &out, const QString &root) {
               tr("Keep one: with PipeWire, disable PulseAudio's autospawn (autospawn = no) and remove it from the session start."));
     if (running.contains(QStringLiteral("pipewire")) && !running.contains(QStringLiteral("wireplumber")) && !running.contains(QStringLiteral("pipewire-media-session")))
         r.add(Level::Attention, tr("PipeWire runs without a session manager"), tr("Without WirePlumber nothing connects devices to programs: there is no sound."),
-              tr("Start wireplumber with the session (Gentoo: media-video/wireplumber, started by the desktop or gentoo-pipewire-launcher)."));
+              tr("Start wireplumber with the session (Gentoo: media-video/wireplumber, started by the desktop or gentoo-pipewire-launcher)."))
+            .setFix(tr("Restart PipeWire and WirePlumber"), QJsonObject{{QStringLiteral("op"), QStringLiteral("pipewire_restart")}});
     if (running.isEmpty()) r.add(Level::Review, tr("No sound server is running for this user"), tr("Programs that use PulseAudio or PipeWire get no sound."));
     const QString ps = rd(root, QStringLiteral("/sys/module/snd_hda_intel/parameters/power_save"));
     if (!ps.isEmpty() && ps != QStringLiteral("0"))
-        r.add(Level::Info, tr("HDA codec power saving after %1 s of silence").arg(ps), tr("If sound starts with a pop or its first moment is cut off, this is why (snd_hda_intel power_save=0 stops it at a small power cost)."));
+        r.add(Level::Info, tr("HDA codec power saving after %1 s of silence").arg(ps), tr("If sound starts with a pop or its first moment is cut off, this is why (snd_hda_intel power_save=0 stops it at a small power cost)."))
+            .setFix(tr("Turn codec power saving off (until reboot)"), QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("hda_power_save")}, {QStringLiteral("value"), QStringLiteral("0")}});
     // pactl info: which server answers, default devices.
     const QString pactl = out.value(QStringLiteral("pactl info"));
     if (!pactl.isEmpty()) {

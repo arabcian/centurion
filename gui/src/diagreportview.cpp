@@ -1,5 +1,6 @@
 #include "diagreportview.h"
 
+#include "sysadmin.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -48,7 +49,7 @@ QLabel *text(const QString &s, const char *tone = nullptr) {
     return l;
 }
 
-QWidget *findingCard(const diag::Finding &f) {
+QWidget *findingCard(const diag::Finding &f, DiagReportView *view) {
     auto *card = new QFrame;
     card->setObjectName(QStringLiteral("diagCard"));
     card->setStyleSheet(QStringLiteral("QFrame#diagCard{background:%1;border:1px solid %2;border-left:3px solid %3;border-radius:8px}"
@@ -69,6 +70,15 @@ QWidget *findingCard(const diag::Finding &f) {
     col->addLayout(head);
     if (!f.detail.isEmpty()) col->addWidget(text(f.detail, "dim"));
     if (!f.action.isEmpty()) col->addWidget(text(QStringLiteral("→ ") + f.action));
+    if (!f.fix.isEmpty()) {
+        auto *fix = new QPushButton(f.fixLabel);
+        fix->setToolTip(QCoreApplication::translate("diag", "Makes this change now (asks for the administrator password)."));
+        QObject::connect(fix, &QPushButton::clicked, view, [view, f] {
+            sysadmin::act(view, f.fixLabel, QCoreApplication::translate("diag", "%1\n\n%2?").arg(f.title, f.fixLabel), f.fix,
+                          [view](bool ok) { if (ok) Q_EMIT view->fixApplied(); });
+        });
+        col->addWidget(fix, 0, Qt::AlignLeft);
+    }
     return card;
 }
 
@@ -196,7 +206,7 @@ void DiagReportView::setReport(const diag::Report &r) {
     // Most serious first, the order within a level as the diagnostic wrote it.
     QList<diag::Finding> findings = r.findings;
     std::stable_sort(findings.begin(), findings.end(), [](const diag::Finding &a, const diag::Finding &b) { return a.level > b.level; });
-    for (const diag::Finding &f : findings) bodyLayout_->addWidget(findingCard(f));
+    for (const diag::Finding &f : findings) bodyLayout_->addWidget(findingCard(f, this));
     for (const diag::Table &t : r.tables) bodyLayout_->addWidget(tableWidget(t));
     if (!r.limits.isEmpty()) {
         auto *lim = text(tr("Limits of this check:") + QStringLiteral("\n• ") + r.limits.join(QStringLiteral("\n• ")), "muted");

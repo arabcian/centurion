@@ -50,6 +50,7 @@ pub mod par;
 pub mod pmtable;
 pub mod pstore;
 pub mod sleepdiag;
+pub mod sysadmin;
 pub mod hibernate;
 pub mod netguard;
 pub mod nvreg;

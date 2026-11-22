@@ -165,6 +165,8 @@ Apply when finished — do not apply in a loop (writes go to non-volatile memory
 
 The sub-tabs are grouped: **Overview**, **Diagnostics** (Monitor, Boot history, Curve stability, Kernel log), **Power** (Sleep, Battery use, dGPU power, Cooling), **Network**, **System info** (SMART and the tool pages) and **Backup**. Health opens on the sub-tab you had open last time.
 
+Changes from Health ask for the administrator password once (then polkit keeps it for a few minutes): the *Change:* row of a tool page (CPU boost and clock cap, drop caches, zswap, TRIM, SMART self-tests, USB autosuspend, ASPM policy, load / unload a module, firmware updates), the fix button under a report finding, the suspend mode on *Sleep*, *Enable runtime PM* on *dGPU power*, and **Configuration files** (System tools → Kernel & firmware): sysctl, modprobe, modules-load and udev files of Centurion's own, `/etc/sysctl.conf` and `/etc/fstab`. Each save shows what changes and keeps the previous version; *Restore backup…* puts any of the last 10 back. Runtime switches last until reboot; the configuration files are what makes a change permanent.
+
 ### Overview
 The first sub-tab: one card per area, coloured by its level — **ok** (green), **watch** (yellow), **attention** (red), or **no data** (grey) until there is something to judge:
 - *Kernel errors* — critical and error lines of the last 24 h and 7 days.

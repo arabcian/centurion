@@ -6,17 +6,23 @@
 #include "lazywidget.h"
 #include "privileged.h"
 #include "smartpage.h"
+#include "configpage.h"
+#include "sysadmin.h"
 #include "theme.h"
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
+#include <QCompleter>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QJsonObject>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QSet>
@@ -214,6 +220,146 @@ const QRegularExpression SERIAL_RE(
 const QSet<QString> PLACEHOLDERS = {"Not Specified", "Not Present", "None", "Unknown", "N/A", "Not Available",
                                     "To Be Filled By O.E.M.", "Default string", "Default String", "0", "00000000", ""};
 
+QString tl(const char *s) { return QCoreApplication::translate("systools", s); }
+
+QJsonObject req(const char *op, std::initializer_list<std::pair<QString, QJsonValue>> args = {}) {
+    QJsonObject o{{QStringLiteral("op"), QLatin1String(op)}};
+    for (const auto &[k, v] : args) o.insert(k, v);
+    return o;
+}
+
+QStringList dirNames(const QString &dir, const QStringList &filters = {}) {
+    return QDir(dir).entryList(filters, QDir::Dirs | QDir::NoDotAndDotDot | QDir::System, QDir::Name);
+}
+
+// The changes a tool page offers, under its toolbar (nullptr: none). Each goes through sysadmin-helper
+// (administrator password) and reads the page again when it succeeded.
+QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()> &rerun) {
+    auto *bar = new QWidget;
+    auto *h = new QHBoxLayout(bar);
+    h->setContentsMargins(0, 0, 0, 0);
+    auto *label = new QLabel(tl("Change:"));
+    label->setProperty("role", "muted");
+    h->addWidget(label);
+    auto after = [rerun](bool ok) { if (ok) rerun(); };
+    auto button = [&](const QString &text, const QString &tip, std::function<void()> f) {
+        auto *b = new QPushButton(text);
+        b->setToolTip(tip);
+        QObject::connect(b, &QPushButton::clicked, page, std::move(f));
+        h->addWidget(b);
+        return b;
+    };
+    auto act = [page, after](const QString &title, const QString &confirm, const QJsonObject &r) { sysadmin::act(page, title, confirm, r, after); };
+    if (key == QLatin1String("CPU")) {
+        const bool boost = QFile::exists(QStringLiteral("/sys/devices/system/cpu/cpufreq/boost")) ||
+                           QFile::exists(QStringLiteral("/sys/devices/system/cpu/cpufreq/policy0/boost"));
+        if (boost) {
+            button(tl("Boost on"), tl("Lets the cores run above their base clock (until reboot)."), [act] {
+                act(tl("CPU boost"), QString(), req("sysfs_set", {{"key", "cpu_boost"}, {"value", "1"}})); });
+            button(tl("Boost off"), tl("Holds the cores at their base clock: cooler and quieter, much slower (until reboot)."), [act] {
+                act(tl("CPU boost"), tl("Turn CPU boost off until the next boot?"), req("sysfs_set", {{"key", "cpu_boost"}, {"value", "0"}})); });
+        }
+        button(tl("Remove clock cap"), tl("Sets every policy's scaling_max_freq back to the hardware maximum (until something writes it again)."), [act] {
+            act(tl("CPU clock cap"), tl("Raise scaling_max_freq to the hardware maximum on every CPU policy?"), req("sysfs_set", {{"key", "cpu_uncap"}})); });
+    } else if (key == QLatin1String("Memory")) {
+        button(tl("Drop caches"), tl("Writes the page cache back and empties it (sync; drop_caches=3). Only useful before a measurement: the next reads come from disk."), [act] {
+            act(tl("Drop caches"), tl("Empty the page cache, dentries and inodes? Programs get slower for a while as files are read from disk again."), req("drop_caches")); });
+        if (QFile::exists(QStringLiteral("/sys/module/zswap/parameters/enabled"))) {
+            const bool on = readFile(QStringLiteral("/sys/module/zswap/parameters/enabled")).trimmed() == QLatin1String("Y");
+            button(on ? tl("zswap off") : tl("zswap on"), tl("Switches the compressed swap cache until the next boot (zswap.enabled= on the kernel command line keeps it)."), [act, on] {
+                act(tl("zswap"), QString(), req("sysfs_set", {{"key", "zswap"}, {"value", on ? "N" : "Y"}})); });
+        }
+    } else if (key == QLatin1String("Storage")) {
+        button(tl("TRIM all filesystems"), tl("fstrim -av: tells the SSDs which blocks are free. Safe; may take a minute."), [act] {
+            act(tl("TRIM"), tl("Run fstrim on every mounted filesystem that supports it?"), req("fstrim")); });
+    } else if (key == QLatin1String("SMART details")) {
+        auto *dev = new QComboBox;
+        for (const QString &d : dirNames(QStringLiteral("/sys/block"), {QStringLiteral("nvme*"), QStringLiteral("sd*")})) dev->addItem(d);
+        if (!dev->count()) { delete bar; return nullptr; }
+        h->addWidget(dev);
+        for (const char *kind : {"short", "long"}) {
+            const bool shortTest = QLatin1String(kind) == QLatin1String("short");
+            button(shortTest ? tl("Short self-test") : tl("Long self-test"),
+                   shortTest ? tl("A couple of minutes; the drive keeps working. The result appears here (and in Drive health) when it ends.")
+                             : tl("Reads the whole surface: from tens of minutes to hours. The drive keeps working, a bit slower."),
+                   [act, dev, kind, shortTest] {
+                act(tl("SMART self-test"), (shortTest ? tl("Start a short self-test on %1?") : tl("Start a long self-test on %1?")).arg(dev->currentText()),
+                    req("smart_test", {{"device", dev->currentText()}, {"kind", QLatin1String(kind)}}));
+            });
+        }
+    } else if (key == QLatin1String("USB")) {
+        auto *dev = new QComboBox;
+        for (const QString &d : dirNames(QStringLiteral("/sys/bus/usb/devices"))) {
+            if (d.contains(QLatin1Char(':')) || !QFile::exists(QStringLiteral("/sys/bus/usb/devices/%1/power/control").arg(d))) continue;
+            const QString base = QStringLiteral("/sys/bus/usb/devices/%1/").arg(d);
+            QString name = readFile(base + QStringLiteral("product")).trimmed();
+            if (name.startsWith(QLatin1String("(cannot"))) name.clear();
+            const QString ctl = readFile(base + QStringLiteral("power/control")).trimmed();
+            dev->addItem(QStringLiteral("%1  %2  [%3]").arg(d, name, ctl), d);
+        }
+        if (!dev->count()) { delete bar; return nullptr; }
+        h->addWidget(dev, 1);
+        button(tl("Allow autosuspend"), tl("power/control = auto: the device sleeps when idle (until reboot or re-plug)."), [act, dev] {
+            act(tl("USB power"), QString(), req("usb_power", {{"device", dev->currentData().toString()}, {"control", "auto"}})); });
+        button(tl("Keep powered"), tl("power/control = on: never suspended. Fixes a mouse or dongle that lags after idle (until reboot or re-plug)."), [act, dev] {
+            act(tl("USB power"), QString(), req("usb_power", {{"device", dev->currentData().toString()}, {"control", "on"}})); });
+    } else if (key == QLatin1String("PCIe detail")) {
+        const QString path = QStringLiteral("/sys/module/pcie_aspm/parameters/policy");
+        if (!QFile::exists(path)) { delete bar; return nullptr; }
+        auto *pol = new QComboBox;
+        QString now;
+        for (const QString &c : readFile(path).split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+            const QString v = QString(c).remove(QLatin1Char('[')).remove(QLatin1Char(']')).trimmed();
+            pol->addItem(v);
+            if (c.startsWith(QLatin1Char('['))) now = v;
+        }
+        pol->setCurrentText(now);
+        h->addWidget(new QLabel(tl("ASPM policy")));
+        h->addWidget(pol);
+        button(tl("Apply"), tl("PCIe link power management until reboot (pcie_aspm.policy= keeps it). performance: lowest latency; powersupersave: most saving."), [act, pol] {
+            act(tl("ASPM policy"), tl("Set the PCIe ASPM policy to %1 until the next boot?").arg(pol->currentText()), req("sysfs_set", {{"key", "pcie_aspm"}, {"value", pol->currentText()}})); });
+    } else if (key == QLatin1String("Kernel")) {
+        auto *mod = new QLineEdit;
+        mod->setPlaceholderText(tl("module name"));
+        mod->setFixedWidth(200);
+        auto *comp = new QCompleter(dirNames(QStringLiteral("/sys/module")), mod);
+        comp->setCaseSensitivity(Qt::CaseInsensitive);
+        mod->setCompleter(comp);
+        h->addWidget(mod);
+        button(tl("Load"), tl("modprobe <name>: until the next boot (Configuration files → modules-load keeps it)."), [act, mod] {
+            if (!mod->text().trimmed().isEmpty()) act(tl("Load module"), QString(), req("module", {{"name", mod->text().trimmed()}, {"load", true}})); });
+        button(tl("Unload"), tl("modprobe -r <name>: refused while something uses the module."), [act, mod] {
+            if (!mod->text().trimmed().isEmpty())
+                act(tl("Unload module"), tl("Unload %1? Devices it drives stop working until it is loaded again.").arg(mod->text().trimmed()),
+                    req("module", {{"name", mod->text().trimmed()}, {"load", false}})); });
+    } else if (key == QLatin1String("Firmware updates")) {
+        // fwupd asks for authorisation itself (its own polkit action): run as the user.
+        button(tl("Install updates…"), tl("fwupdmgr update: installs the updates listed above; most apply at the next reboot."), [page, rerun] {
+            if (QMessageBox::question(page, tl("Firmware updates"), tl("Install every firmware update fwupd offers? Keep the charger connected; "
+                                      "do not switch off while an update is written."), QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+                return;
+            const QString exe = findExe(QStringLiteral("fwupdmgr"));
+            if (exe.isEmpty()) { QMessageBox::warning(page, tl("Firmware updates"), tl("fwupdmgr is not installed (%1).").arg(installHint(QStringLiteral("fwupdmgr")))); return; }
+            auto *p = new QProcess(page);
+            p->setProcessChannelMode(QProcess::MergedChannels);
+            QObject::connect(p, &QProcess::finished, page, [p, page, rerun](int code, QProcess::ExitStatus) {
+                QMessageBox box(code == 0 ? QMessageBox::Information : QMessageBox::Warning, tl("Firmware updates"),
+                                code == 0 ? tl("fwupdmgr finished.") : tl("fwupdmgr reported a problem (exit %1).").arg(code), QMessageBox::Ok, page);
+                box.setDetailedText(QString::fromUtf8(p->readAll()));
+                box.exec();
+                p->deleteLater();
+                rerun();
+            });
+            p->start(exe, {QStringLiteral("update"), QStringLiteral("-y"), QStringLiteral("--no-reboot-check")});
+        });
+    } else {
+        delete bar;
+        return nullptr;
+    }
+    h->addStretch(1);
+    return bar;
+}
+
 class ToolPage : public QWidget {
 public:
     explicit ToolPage(const Spec &s) : spec_(s) {
@@ -245,6 +391,7 @@ public:
         top->addWidget(run);
         top->addWidget(copy);
         v->addLayout(top);
+        if (QWidget *bar = actionBar(QString::fromLatin1(s.title), this, [this] { ran_ = false; start(); })) v->addWidget(bar);
         text_ = new QTextBrowser;
         text_->setOpenLinks(false);  // anchors are serial toggles, not links
         text_->setLineWrapMode(QTextEdit::NoWrap);
@@ -474,6 +621,7 @@ public:
         view_ = new DiagReportView;
         v->addWidget(view_, 1);
         connect(run_, &QPushButton::clicked, this, [this] { start(); });
+        connect(view_, &DiagReportView::fixApplied, this, [this] { start(); });
     }
 
 protected:
@@ -636,6 +784,9 @@ void addPages(QTabWidget *tabs) {
         page->setProperty("toolKey", QString::fromLatin1(s.title));
         tabs->addTab(page, title);
     }
+    auto *config = new LazyWidget([] { return new ConfigPage; });
+    config->setProperty("toolKey", QStringLiteral("Configuration files"));
+    tabs->addTab(config, QCoreApplication::translate("systools", "Configuration files"));
 }
 
 } // namespace systools

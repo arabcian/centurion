@@ -46,6 +46,11 @@
  * chosen directory, / included. Like the firmware helper it always gets
  * AUTH_ADMIN: the password every time, no keep, at every level.
  *
+ * Exception: sysadmin-helper (com.centurion.sysadmin) writes system configuration
+ * files (/etc/fstab, sysctl, modprobe, udev) and runtime system settings for the
+ * Health tools. A silent grant would let any program running as the user rewrite
+ * them, so it always gets AUTH_ADMIN_KEEP (password, then polkit's cache window).
+ *
  * Single tier (no install-time choice): a wheel or sudo admin, local and
  * active, runs the helpers without a password. There is no longer a "security
  * level" knob -- the graduated auth_admin_keep / preset-only tiers were removed.
@@ -90,6 +95,8 @@ var BACKUP_ACTION = "com.centurion.backup";
 var BACKUP_HELPER = "@LIBEXEC@/backup-helper";
 var NETGUARD_ACTION = "com.centurion.netguard";
 var NETGUARD_HELPER = "@LIBEXEC@/netguard-helper";
+var SYSADMIN_ACTION = "com.centurion.sysadmin";
+var SYSADMIN_HELPER = "@LIBEXEC@/sysadmin-helper";
 
 polkit.addRule(function (action, subject) {
     // Firmware-persistent writes: always the password, never cached.
@@ -106,6 +113,11 @@ polkit.addRule(function (action, subject) {
     if (action.id === NETGUARD_ACTION ||
         (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === NETGUARD_HELPER)) {
         return adminAtConsole(subject) ? polkit.Result.AUTH_ADMIN_KEEP : polkit.Result.AUTH_ADMIN;
+    }
+    // System configuration: never silent, the password is kept for polkit's cache window.
+    if (action.id === SYSADMIN_ACTION ||
+        (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === SYSADMIN_HELPER)) {
+        return polkit.Result.AUTH_ADMIN_KEEP;
     }
     // Any other com.centurion.* id is unknown to this file: password, never cached, never silent.
     if (action.id.indexOf("com.centurion.") === 0 && ACTION_IDS.indexOf(action.id) < 0) {

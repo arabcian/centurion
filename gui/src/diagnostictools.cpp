@@ -410,7 +410,9 @@ Report nvidiaParams(const QString &root) {
     const QString modeset = effective(QStringLiteral("nvidia_drm/modeset"));
     if (qEnvironmentVariable("XDG_SESSION_TYPE") == QStringLiteral("wayland") && !modeset.isEmpty() && !sameValue(modeset, QStringLiteral("1")))
         r.add(Level::Attention, tr("Wayland session with nvidia_drm.modeset off"), tr("Without kernel mode setting the compositor cannot use the NVIDIA GPU for displays."),
-              tr("Add nvidia_drm.modeset=1 to the kernel command line (or options nvidia_drm modeset=1) and reboot."));
+              tr("Add nvidia_drm.modeset=1 to the kernel command line (or options nvidia_drm modeset=1) and reboot."))
+            .setFix(tr("Add options nvidia_drm modeset=1"), QJsonObject{{QStringLiteral("op"), QStringLiteral("config_append")}, {QStringLiteral("id"), QStringLiteral("modprobe")},
+                                                                     {QStringLiteral("line"), QStringLiteral("options nvidia_drm modeset=1")}});
     // Preserving video memory needs someone to call nvidia-sleep.sh, unless the driver uses kernel notifiers.
     const QString preserve = effective(QStringLiteral("nvidia/NVreg_PreserveVideoMemoryAllocations"));
     if (sameValue(preserve, QStringLiteral("1")) && !sameValue(proc.value(QStringLiteral("UseKernelSuspendNotifiers")), QStringLiteral("1"))) {

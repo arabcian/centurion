@@ -73,7 +73,7 @@ preset from the GUI — enabling the service early is harmless.
         legion-profile-helper  fwattr-helper  ryzen-co-helper
         tune-helper  intel-uv-helper  legion-gpu-helper
         legion-firmware-helper  lighting-helper  amdgpu-helper  legion-ec-sensors  health-reader
-        netguard-helper  backup-helper
+        netguard-helper  backup-helper  sysadmin-helper
         centurion-boot-guard                                          (root:root 0755)
         nvcurve-root-helper                                     (root:root 0700)
     /usr/share/polkit-1/actions/com.centurion.policy

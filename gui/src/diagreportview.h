@@ -19,6 +19,10 @@ public:
     void setMessage(const QString &text);
     const diag::Report &report() const { return report_; }
 
+Q_SIGNALS:
+    /// A finding's fix button changed the system: the owner reads the report again.
+    void fixApplied();
+
 private:
     void clearBody();
     diag::Report report_;

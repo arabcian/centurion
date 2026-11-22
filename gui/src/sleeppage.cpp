@@ -1,4 +1,5 @@
 #include "sleeppage.h"
+#include "sysadmin.h"
 #include "privileged.h"
 #include "sleepadvice.h"
 #include "theme.h"
@@ -16,6 +17,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QComboBox>
+#include <QSignalBlocker>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
@@ -64,6 +67,25 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
     summary_->setWordWrap(true);
     summary_->setTextFormat(Qt::RichText);
     top->addWidget(summary_, 1);
+    // Suspend mode for this boot (offered only when the firmware has more than one).
+    mode_ = new QComboBox;
+    mode_->setToolTip(tr("s2idle: modern standby, wakes fast. deep: S3, usually less drain while asleep. Until reboot: "
+                         "mem_sleep_default= on the kernel command line keeps a choice."));
+    auto *setMode = new QPushButton(tr("Use"));
+    connect(setMode, &QPushButton::clicked, this, [this] {
+        sysadmin::act(this, tr("Suspend mode"), tr("Use %1 for the next suspends of this boot?").arg(mode_->currentText()),
+                      QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("mem_sleep")},
+                                  {QStringLiteral("value"), mode_->currentText()}},
+                      [this](bool) { refresh(); });
+    });
+    modeBox_ = new QWidget;
+    auto *mh = new QHBoxLayout(modeBox_);
+    mh->setContentsMargins(0, 0, 0, 0);
+    mh->addWidget(new QLabel(tr("Suspend mode:")));
+    mh->addWidget(mode_);
+    mh->addWidget(setMode);
+    modeBox_->setVisible(false);
+    top->addWidget(modeBox_, 0, Qt::AlignTop);
     auto *bRefresh = new QPushButton(QStringLiteral("Refresh"));
     connect(bRefresh, &QPushButton::clicked, this, &SleepPage::refresh);
     top->addWidget(bRefresh, 0, Qt::AlignTop);
@@ -253,6 +275,14 @@ void SleepPage::refresh() {
     const QString modes = rd(QStringLiteral("/sys/power/mem_sleep"));
     const int a = modes.indexOf('['), b = modes.indexOf(']');
     const QString mode = a >= 0 && b > a ? modes.mid(a + 1, b - a - 1) : QString();
+    const QStringList offered = QString(modes).remove('[').remove(']').split(' ', Qt::SkipEmptyParts);
+    modeBox_->setVisible(offered.size() > 1);
+    if (offered.size() > 1) {
+        const QSignalBlocker block(mode_);
+        mode_->clear();
+        mode_->addItems(offered);
+        mode_->setCurrentText(mode);
+    }
     if (!mode.isEmpty())
         p << QStringLiteral("Suspend mode: <b>%1</b>%2").arg(mode == QLatin1String("s2idle") ? QStringLiteral("s2idle (modern standby)") : mode == QLatin1String("deep") ? QStringLiteral("deep (S3)") : mode,
                                                            modes.split(' ').size() > 1 ? QStringLiteral(" (offered: %1)").arg(QString(modes).remove('[').remove(']')) : QString());

@@ -10,10 +10,12 @@
 //     with the battery it cost and a button to switch it off (sleepadvice.h);
 //   * "Why doesn't the hardware sleep?": offered when the recent sleeps spent almost no time in the
 //     hardware low-power state; one button runs the read-only check (health-reader, sleepdiag.rs);
+//   * the suspend mode (s2idle / deep) for this boot, when the firmware offers both (sysadmin-helper);
 //   * the limit for the "lid closed, still awake" tray warning (lidwatch.h) is set here (gui.ini).
 // Everything is read on show only; nothing runs in the background. The check runs on the button only.
 #include <QWidget>
 
+class QComboBox;
 class QJsonObject;
 class QLabel;
 class QPushButton;
@@ -39,7 +41,8 @@ private:
     void checkHibernate();
     static QString hibernateText(const QString &code, const QJsonValue &detail);
     QLabel *summary_, *hint_, *sources_, *diagOut_, *hibOut_;
-    QWidget *advice_;
+    QWidget *advice_, *modeBox_;
+    QComboBox *mode_;
     QPushButton *diag_, *hib_;
     QTreeWidget *sleeps_, *wake_;
     bool filling_ = false;

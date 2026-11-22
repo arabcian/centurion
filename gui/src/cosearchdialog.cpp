@@ -1150,22 +1150,39 @@ void CoSearchDialog::offerResume() {
     // boot cannot be read, counts as this boot.
     const QString currentBoot = readBootId();
     const bool sameBoot = currentBoot.isEmpty() || !readable || j.value("boot").toString() == currentBoot;
+    // A failed removal must be said out loud: otherwise the same question comes back on every open and Start.
+    auto removeJournal = [this]() {
+        QFile rm(journalPath());
+        if (rm.remove() || !rm.exists()) return true;
+        const QFileInfo fi(journalPath()), di(fi.path());
+        QMessageBox::critical(this, tr("Cannot remove the CO search journal"),
+            tr("%1 could not be removed: %2.\nFile owner: %3, folder owner: %4.\n\nA file or folder owned by root (for example "
+               "after starting Centurion with sudo) cannot be removed from here. Remove it in a terminal:\n\nsudo rm '%1'")
+                .arg(fi.filePath(), rm.errorString(), fi.owner(), di.owner()));
+        return false;
+    };
     // Discarding removes the journal; in this boot only after a confirmed stock reset, so no candidate is left behind.
-    auto discard = [this, sameBoot](std::function<void()> after) {
-        if (!sameBoot) { QFile::remove(journalPath()); after(); return; }
+    // `unreadable`: the journal holds nothing usable, so after a failed reset it may still be removed on request.
+    auto discard = [this, sameBoot, removeJournal](std::function<void()> after, bool unreadable = false) {
+        if (!sameBoot) { if (removeJournal()) after(); return; }
         note(tr("Resetting the CPU curve to stock before discarding the interrupted search…"));
         privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
-            [this, after](const privileged::Result &r) {
+            [this, after, unreadable, removeJournal](const privileged::Result &r) {
                 if (!r.ok()) {
                     note(tr("Reset failed: %1. The journal is kept; use Ryzen Curve → Reset, or reboot.").arg(r.message()), theme::DANGER);
-                    return;
+                    if (!unreadable || QMessageBox::warning(this, tr("Reset failed"),
+                            tr("The CPU curve could not be reset to stock: %1\n\nThe journal cannot be read, so keeping it protects "
+                               "nothing and only brings this question back. Remove it anyway? The curve state stays unknown until "
+                               "Ryzen Curve → Reset succeeds or the machine restarts (a restart clears Curve Optimizer offsets).")
+                                .arg(r.message()),
+                            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+                        return;
                 }
-                QFile::remove(journalPath());
-                after();
+                if (removeJournal()) after();
             }, 120000);
     };
     // A journal that cannot be resumed must still be removable, or every later Start lands here again.
-    auto unusable = [this, sameBoot, discard](const QString &why, bool guarded = false) {
+    auto unusable = [this, sameBoot, discard, readable](const QString &why, bool guarded = false) {
         const auto answer = QMessageBox::warning(this, tr("Invalid CO search journal"),
             why + "\n\n" + (guarded ? tr("It cannot be safely resumed. Discard the old journal?")
                                     : tr("It cannot be safely resumed, and its interrupted value cannot be identified for a crash guard. "
@@ -1173,10 +1190,14 @@ void CoSearchDialog::offerResume() {
                 + (sameBoot ? tr("The CPU curve is reset to stock first: the interrupted value may still be applied in this boot.")
                             : tr("The CPU curve is not changed: the machine has restarted since.")),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (answer == QMessageBox::Yes) discard([this] { note(tr("Invalid CO search journal discarded.")); });
+        if (answer == QMessageBox::Yes) discard([this] { note(tr("Invalid CO search journal discarded.")); }, !readable);
     };
     if (!readable) {
-        unusable(tr("The interrupted CO Search journal cannot be read (or is larger than 1 MiB)."));
+        // Say why: the file, its owner and the open error (a root-owned journal is the usual case).
+        const QFileInfo fi(journalPath());
+        const QString cause = fi.size() > (1LL << 20) ? tr("it is %1 bytes").arg(fi.size())
+                                                       : tr("%1; owner %2").arg(f.errorString(), fi.owner());
+        unusable(tr("The interrupted CO Search journal cannot be read (or is larger than 1 MiB).") + "\n" + fi.filePath() + " (" + cause + ")");
         return;
     }
     auto s = Search::load(j.value("search").toObject());

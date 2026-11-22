@@ -6,6 +6,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- Health → System tools can change the system, not only read it, through a new root helper `sysadmin-helper`
+  (polkit `com.centurion.sysadmin`: the administrator password, then polkit's keep window; the existing
+  password-free helpers are unchanged). Tool pages: CPU boost / clock cap, drop caches, zswap, fstrim, SMART
+  short / long self-test, USB autosuspend per device, PCIe ASPM policy, load / unload a module, fwupd install.
+  Report findings with a concrete fix get a button (radio unblock, CPU cap / boost, zswap, huge-page defrag,
+  HDA power saving, PipeWire restart, `options nvidia_drm modeset=1`). Sleep: suspend mode (s2idle / deep) for
+  this boot. dGPU power: *Enable runtime PM* when power/control was left on.
+- *Configuration files* (System tools): sysctl, modprobe, modules-load and udev drop-ins of Centurion's own,
+  `/etc/sysctl.conf` and `/etc/fstab`, edited as a table (sysctl, modprobe, modules-load) or as text. Saving
+  shows the difference, validates the lines (fstab with `findmnt --verify`), keeps the last 10 versions in
+  `/var/lib/centurion/config-backups/` and writes atomically; any version can be restored.
 - Health diagnostics rebuilt as interpreted reports (`docs/HEALTH_DIAGNOSTICS.md`): Evidence Lab (H02–H09),
   Investigations (H01–H18) and the System tools S01–S18 now give a verdict, findings with what to do, tables and
   their limits, with *Copy report* / *Save report…*; translated. Investigations opens on *Guided triage*, which
@@ -26,6 +37,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - Intel tab tooltips describe each option by itself instead of naming other undervolt tools.
 
 ### Fixed
+- CO Search: the "Invalid CO search journal" question came back on every open when the journal could not be
+  removed (e.g. owned by root) or the reset before removing it failed, both silently. It now names the file, its
+  owner and the error, says when removal fails (with the command that removes it), and an unreadable journal can
+  be removed after a failed reset.
 - TCC offset above 15 °C is refused on Haswell/Broadwell (4-bit field there); MCHBAR mask table gains 0x9B61
   (Comet Lake-U) as in `throttled`.
 - PCIe AER totals were never read: the kernel prints `TOTAL_ERR_COR 14`, the parser required a colon. Evidence

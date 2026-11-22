@@ -1,5 +1,6 @@
 #include "dgpupage.h"
 #include "privileged.h"
+#include "sysadmin.h"
 #include "theme.h"
 #include "userhelper.h"
 
@@ -28,6 +29,9 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+
+#include <functional>
+#include <memory>
 
 #include <unistd.h>
 
@@ -67,6 +71,23 @@ bool DgpuPage::present() { return !gpuAddr().isEmpty(); }
 QString DgpuPage::devicePath() {
     const QString a = gpuAddr();
     return a.isEmpty() ? QString() : QFileInfo(PCI + '/' + a).canonicalFilePath();
+}
+
+/// PCI functions on the GPU's D3cold path whose runtime PM is off: the GPU, its sibling functions that have
+/// a driver, and the upstream port (the same set the report blames).
+static QStringList runtimePmOff() {
+    const QString addr = gpuAddr();
+    if (addr.isEmpty()) return {};
+    QStringList off;
+    const QString dev = QFileInfo(PCI + '/' + addr).canonicalFilePath();
+    if (rd(dev + "/power/control") == QLatin1String("on")) off << addr;
+    const QString slot = addr.section('.', 0, 0) + '.';
+    for (const QString &e : QDir(PCI).entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::System, QDir::Name))
+        if (e.startsWith(slot) && e != addr && QFileInfo::exists(PCI + '/' + e + "/driver") && rd(PCI + '/' + e + "/power/control") == QLatin1String("on"))
+            off << e;
+    const QString port = QFileInfo(dev + "/..").canonicalFilePath();
+    if (QFileInfo::exists(port + "/vendor") && rd(port + "/power/control") == QLatin1String("on")) off << port.section('/', -1);
+    return off;
 }
 
 static QString fmtMs(qint64 ms) {
@@ -315,7 +336,41 @@ DgpuPage::DgpuPage(QWidget *parent) : QWidget(parent) {
         "(\"Unable to change power state from D3cold to D0\"). Survives reboots (udev rule); costs idle power."));
     awake_->setChecked(QFile::exists(QStringLiteral("/etc/centurion/dgpu-awake")));
     connect(awake_, &QCheckBox::toggled, this, &DgpuPage::setAwake);
-    root->addWidget(awake_);
+    auto *awakeRow = new QHBoxLayout;
+    awakeRow->addWidget(awake_);
+    // Runtime PM switched off by hand or by a tool, while "Keep the dGPU awake" is not on: one button puts it back.
+    enablePm_ = new QPushButton(tr("Enable runtime PM"));
+    enablePm_->setToolTip(tr("Sets power/control = auto on the GPU, its sibling functions and the upstream port, so the card can power down "
+                             "when idle. Until reboot: a udev rule (or the driver's own) decides at boot."));
+    enablePm_->setVisible(false);
+    connect(enablePm_, &QPushButton::clicked, this, [this] {
+        const QStringList off = runtimePmOff();
+        if (off.isEmpty()) return;
+        if (QMessageBox::question(this, tr("Enable runtime PM"), tr("Allow runtime power management on %1?").arg(off.join(QStringLiteral(", "))),
+                                  QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+            return;
+        enablePm_->setEnabled(false);
+        // One request per function, one after the other (the password is asked once, then kept).
+        auto next = std::make_shared<std::function<void(int, QStringList)>>();
+        // The step holds itself only weakly; each pending helper call holds it strongly (no reference cycle).
+        *next = [this, off, weak = std::weak_ptr(next)](int i, QStringList errors) {
+            if (i == off.size()) {
+                enablePm_->setEnabled(true);
+                if (!errors.isEmpty()) QMessageBox::warning(this, tr("Enable runtime PM"), errors.join(QLatin1Char('\n')));
+                refresh(false);
+                return;
+            }
+            sysadmin::run(QJsonObject{{QStringLiteral("op"), QStringLiteral("pci_runtime_pm")}, {QStringLiteral("device"), off[i]}, {QStringLiteral("control"), QStringLiteral("auto")}},
+                          this, [next = weak.lock(), i, errors](bool ok, const QString &msg) mutable {
+                if (!ok) errors << msg;
+                (*next)(i + 1, errors);
+            });
+        };
+        (*next)(0, {});
+    });
+    awakeRow->addWidget(enablePm_);
+    awakeRow->addStretch(1);
+    root->addLayout(awakeRow);
 
     tree_ = new QTreeWidget;
     tree_->setColumnCount(2);
@@ -435,6 +490,7 @@ void DgpuPage::onUsage(const QJsonObject &r) {
 
 void DgpuPage::apply(const Report &sysfs) {
     last_ = sysfs;
+    enablePm_->setVisible(!awake_->isChecked() && !runtimePmOff().isEmpty());
     holders_ = sysfs.holders;
     Report r = sysfs;
     r.rows = usageRows_ + sysfs.rows;

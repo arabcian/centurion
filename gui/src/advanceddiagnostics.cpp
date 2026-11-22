@@ -962,7 +962,7 @@ Report triage(const QString &label, const QList<Report> &checks) {
         t.add({c.code + QStringLiteral(" · ") + c.title, diag::levelName(c.verdict()), c.headline()}, c.verdict());
         for (const diag::Finding &f : c.findings)
             if (f.level == Level::Attention || f.level == Level::Review || f.level == Level::Unknown)
-                r.findings << diag::Finding{f.level, c.code + QStringLiteral(" · ") + f.title, f.detail, f.action};
+                r.findings << diag::Finding{f.level, c.code + QStringLiteral(" · ") + f.title, f.detail, f.action, f.fixLabel, f.fix};
     }
     r.tables << t;
     if (!r.count(Level::Attention) && !r.count(Level::Review))

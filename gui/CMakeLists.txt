@@ -37,6 +37,8 @@ add_executable(centurion
     src/uinavigator.cpp  src/uinavigator.h
     src/theme.cpp        src/theme.h
     src/privileged.cpp   src/privileged.h
+    src/sysadmin.cpp     src/sysadmin.h
+    src/configpage.cpp   src/configpage.h
     src/platformprofile.cpp src/platformprofile.h
     src/sysinfo.cpp      src/sysinfo.h
     src/hometab.cpp      src/hometab.h

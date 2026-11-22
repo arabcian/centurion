@@ -14,6 +14,7 @@
 #include <QWidget>
 
 class QCheckBox;
+class QPushButton;
 class QLabel;
 class QTimer;
 class QTreeWidget;
@@ -45,6 +46,7 @@ private:
     void setAwake(bool on);
 
     QCheckBox *awake_;
+    QPushButton *enablePm_;
     QLabel *verdict_;
     QTreeWidget *tree_;
     QTimer *timer_;

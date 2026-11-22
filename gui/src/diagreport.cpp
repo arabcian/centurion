@@ -16,7 +16,7 @@ QString levelName(Level l) {
 }
 
 Finding &Report::add(Level l, const QString &title, const QString &detail, const QString &action) {
-    findings.append(Finding{l, title, detail, action});
+    findings.append(Finding{l, title, detail, action, {}, {}});
     return findings.last();
 }
 

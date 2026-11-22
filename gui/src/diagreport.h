@@ -3,6 +3,7 @@
 // seen, why it matters, what to do), tables of the readings, the limits of what the sources can tell, and
 // the raw text the verdict came from. Qt Core only, so every diagnostic stays testable without widgets;
 // DiagReportView (diagreportview.h) draws it, toText() is the copy / save format.
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -18,6 +19,10 @@ struct Finding {
     QString title;    // one line: what was seen
     QString detail;   // why it matters / what it means
     QString action;   // what to do (empty = nothing to do)
+    // A change that does it (sysadmin-helper request, see sysadmin.h); empty = only the text above.
+    QString fixLabel;
+    QJsonObject fix;
+    void setFix(const QString &label, const QJsonObject &request) { fixLabel = label; fix = request; }
 };
 
 struct Table {
