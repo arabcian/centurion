@@ -507,6 +507,8 @@ pub fn override_values(key: &str, live: &str, ram_kb: u64) -> Option<Vec<String>
         "zswap.max_pool_percent" => v(&[10, 20, 30]),
         // 0/1/2 are the whole range: the generic halve/double rule would only offer 1.
         "kernel.sched_burst_inherit_type" => v(&[0, 1, 2]),
+        // Halving 117 would clamp to 100 (balance on any difference); bracket the stock value instead.
+        "sched.mc_imbalance_pct" | "sched.pkg_imbalance_pct" => v(&[105, 135]),
         // Launch-block slice request (µs), measured on the game and cache loops' own threads; 0 = default slice.
         "launch.slice_us" => v(&[1000, 2000, 3000]),
         // BORE doses: halving/doubling would test penalty_offset 48 (= no burst is ever penalised, the

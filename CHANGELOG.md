@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- Scheduling-domain rows: `imbalance_pct`, `min_interval`, `max_interval` and `busy_factor` of the MC (one cache
+  domain) and PKG (balancing between CCDs) levels, written to every CPU's domain in debugfs `sched/domains/`. The
+  level is found by the domain's `name`, so the rows follow the topology; measured by the Scheduler calibration.
+- The on/off reader and writer now understand `true`/`false` files, and the swap VMA readahead row is a plain switch.
 - 11 network latency and buffering rows: softirq packet and time budgets, NAPI weight, GRO batch, TCP output
   limit, autocorking, pacing ratios, ECN, and the socket buffer ceilings `rmem_max` and `wmem_max`. Manual only: the
   Network group has no calibration phase.

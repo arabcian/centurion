@@ -188,6 +188,8 @@ pub enum Target {
     NetIf(&'static str),
     /// discard/<attr> of every mounted btrfs file system (/sys/fs/btrfs/<uuid>/discard).
     BtrfsDiscard(&'static str),
+    /// debugfs sched/domains/cpu*/domain*/<attr> of every CPU's scheduling domain whose `name` is the given level (SMT / MC / PKG).
+    SchedDomain(&'static str, &'static str),
 }
 
 pub struct Tunable {
@@ -795,7 +797,7 @@ pub const TUNABLES: &[Tunable] = &[
       int(6, 3200), NO, Target::AnyFile(&["/sys/kernel/debug/bluetooth/hci0/conn_max_interval", "/sys/kernel/debug/bluetooth/hci1/conn_max_interval"]))),
     t("mm.swap_vma_readahead", "Memory", "Swap VMA readahead",
       "How the kernel reads ahead when it swaps pages back in: true = per-VMA readahead, which follows the access pattern of each mapping (good when a game or browser touches its memory in strides), false = the older readahead around the swap slot (good for sequential swap layouts). Only matters when the machine actually swaps, including to zram. Used together with vm.page-cluster.",
-      Kind::Choice, Options::Fixed(&["true", "false"]), Target::File("/sys/kernel/mm/swap/vma_ra_enabled")),
+      Kind::Bool, NO, Target::File("/sys/kernel/mm/swap/vma_ra_enabled")),
     t("net.netdev_budget", "Network", "Receive budget per softirq (packets)",
       "How many packets one network softirq pass may process before yielding the CPU (stock 300). Higher = better throughput under heavy traffic, but other work on that core waits longer; lower = lower latency for everything else, at the risk of dropped packets on a very busy link. Works together with the time budget row below: whichever limit is hit first ends the pass.",
       int(1, 10_000), NO, Target::File("/proc/sys/net/core/netdev_budget")),
@@ -829,6 +831,30 @@ pub const TUNABLES: &[Tunable] = &[
     t("net.wmem_max", "Network", "Socket send buffer ceiling (bytes)",
       "The largest send buffer a program may request for one socket with SO_SNDBUF (stock 4194304 here). Mostly relevant to programs that send bursts of UDP or stream large files; raising it lets them queue more before blocking, at the cost of kernel memory and longer queues. Does not change what ordinary programs get by default.",
       int(4096, 1_073_741_824), NO, Target::File("/proc/sys/net/core/wmem_max")),
+    dbg(t("sched.mc_imbalance_pct", "Scheduler", "MC imbalance_pct (debugfs)",
+      "Scheduling domain MC, covering one cache domain (on this CPU, the cores that share an L3). How much busier (in percent) one group must be than another before the load balancer moves tasks between them. Stock 117 = 17% busier. Lower = tasks spread earlier and more evenly (lower wake latency, more migrations and cache misses), higher = tasks stay where they are longer. Applies to every CPU's MC domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(100, 200), NO, Target::SchedDomain("MC", "imbalance_pct"))),
+    dbg(t("sched.mc_min_interval", "Scheduler", "MC min_interval (ms) (debugfs)",
+      "Scheduling domain MC, covering one cache domain (on this CPU, the cores that share an L3). Shortest time (ms) between two periodic load-balance passes at this level; the stock value is the number of CPUs in the domain. Lower = a busy CPU sheds work sooner (better spread, more scheduler overhead), higher = fewer passes. Applies to every CPU's MC domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(1, 1000), NO, Target::SchedDomain("MC", "min_interval"))),
+    dbg(t("sched.mc_max_interval", "Scheduler", "MC max_interval (ms) (debugfs)",
+      "Scheduling domain MC, covering one cache domain (on this CPU, the cores that share an L3). Longest time (ms) between two periodic load-balance passes at this level when the CPUs are idle; the stock value is twice the number of CPUs in the domain. Lower = idle CPUs pull work in sooner at the price of wake-ups, higher = quieter idle. Applies to every CPU's MC domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(1, 2000), NO, Target::SchedDomain("MC", "max_interval"))),
+    dbg(t("sched.mc_busy_factor", "Scheduler", "MC busy_factor (debugfs)",
+      "Scheduling domain MC, covering one cache domain (on this CPU, the cores that share an L3). How many times longer the balance interval is stretched while the CPU is busy. Stock 16. Lower = busy CPUs are re-balanced more often, higher = a busy CPU is left alone for longer. Applies to every CPU's MC domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(1, 255), NO, Target::SchedDomain("MC", "busy_factor"))),
+    dbg(t("sched.pkg_imbalance_pct", "Scheduler", "PKG imbalance_pct (debugfs)",
+      "Scheduling domain PKG, covering the whole package, i.e. balancing between cache domains (CCDs). How much busier (in percent) one group must be than another before the load balancer moves tasks between them. Stock 117 = 17% busier. Lower = tasks spread earlier and more evenly (lower wake latency, more migrations and cache misses), higher = tasks stay where they are longer. Applies to every CPU's PKG domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(100, 200), NO, Target::SchedDomain("PKG", "imbalance_pct"))),
+    dbg(t("sched.pkg_min_interval", "Scheduler", "PKG min_interval (ms) (debugfs)",
+      "Scheduling domain PKG, covering the whole package, i.e. balancing between cache domains (CCDs). Shortest time (ms) between two periodic load-balance passes at this level; the stock value is the number of CPUs in the domain. Lower = a busy CPU sheds work sooner (better spread, more scheduler overhead), higher = fewer passes. Applies to every CPU's PKG domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(1, 1000), NO, Target::SchedDomain("PKG", "min_interval"))),
+    dbg(t("sched.pkg_max_interval", "Scheduler", "PKG max_interval (ms) (debugfs)",
+      "Scheduling domain PKG, covering the whole package, i.e. balancing between cache domains (CCDs). Longest time (ms) between two periodic load-balance passes at this level when the CPUs are idle; the stock value is twice the number of CPUs in the domain. Lower = idle CPUs pull work in sooner at the price of wake-ups, higher = quieter idle. Applies to every CPU's PKG domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(1, 2000), NO, Target::SchedDomain("PKG", "max_interval"))),
+    dbg(t("sched.pkg_busy_factor", "Scheduler", "PKG busy_factor (debugfs)",
+      "Scheduling domain PKG, covering the whole package, i.e. balancing between cache domains (CCDs). How many times longer the balance interval is stretched while the CPU is busy. Stock 16. Lower = busy CPUs are re-balanced more often, higher = a busy CPU is left alone for longer. Applies to every CPU's PKG domain; the kernel rebuilds the domains on CPU hot-plug and cpuset changes, which resets the value. Present only when that level exists.",
+      int(1, 255), NO, Target::SchedDomain("PKG", "busy_factor"))),
     t("wq.affinity_scope", "Scheduler", "Unbound workqueue affinity scope",
       "Kernel 6.6+: how widely an unbound work item may travel from the CPU that queued it. cache (stock) = within the same L3 - on a two-CCD Ryzen the work stays on the die that asked for it, no cross-CCD cache traffic; smt / cpu = even closer (better locality, less work-conservation); numa / system = anywhere (best for spreading heavy work, worst locality). Use together with 'Unbound workqueue CPUs', which is a hard CPU mask; this row is only the locality preference inside that mask.",
       Kind::Choice, Options::Fixed(&["cpu", "smt", "cache", "numa", "system"]), Target::File("/sys/module/workqueue/parameters/default_affinity_scope")),
@@ -2225,6 +2251,16 @@ fn btrfs_discard_files(root: &Path, attr: &str) -> Vec<PathBuf> {
     v
 }
 
+/// `<root>/cpuN/domainM/<attr>` for every domain whose `name` is `level` (domain numbers differ per topology).
+fn sched_domain_files(root: &Path, level: &str, attr: &str) -> Vec<PathBuf> {
+    numbered(root, "cpu").into_iter()
+        .flat_map(|(_, c)| numbered(&c, "domain"))
+        .filter(|(_, d)| read(&d.join("name")).as_deref() == Some(level))
+        .map(|(_, d)| d.join(attr))
+        .filter(|f| f.is_file())
+        .collect()
+}
+
 /// ("Supports Wake-on" letters, current "Wake-on" letters) as ethtool reports them.
 fn eth_wol(f: &Path) -> Option<(String, String)> {
     let dev = wifi_ifname(f)?;
@@ -2902,6 +2938,7 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
         Target::EthWol => eth_ifaces(),
         Target::NetIf(a) => net_if_files(Path::new("/sys/class/net"), a),
         Target::BtrfsDiscard(a) => btrfs_discard_files(Path::new("/sys/fs/btrfs"), a),
+        Target::SchedDomain(level, a) => sched_domain_files(Path::new("/sys/kernel/debug/sched/domains"), level, a),
         Target::EthEee => eth_ifaces().into_iter().filter(|p| eee_get(p).is_some()).collect(),
         Target::PciAspm => pci_aspm_files(),
         Target::SchedExt => if scx_available().is_empty() { vec![] } else { vec![PathBuf::from(SCX_STATE)] },
@@ -3016,8 +3053,8 @@ pub fn options(t: &Tunable) -> Vec<(String, String)> {
 
 fn bool_norm(raw: &str) -> Option<&'static str> {
     match raw.trim() {
-        "1" | "Y" | "y" | "on" => Some("1"),
-        "0" | "N" | "n" | "off" => Some("0"),
+        "1" | "Y" | "y" | "on" | "true" => Some("1"),
+        "0" | "N" | "n" | "off" | "false" => Some("0"),
         _ => None,
     }
 }
@@ -3250,9 +3287,11 @@ pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(Path
         _ if t.kind == Kind::Bool => fs.into_iter().map(|f| {
             // no_turbo speaks the opposite of "boost".
             let value = if inverted(&f) { if value == "1" { "0" } else { "1" } } else { value };
-            // Match the file's own vocabulary (module params report Y/N).
-            let yn = read(&f).is_some_and(|r| r == "Y" || r == "N");
-            let w = match (yn, value) { (true, "1") => "Y", (true, _) => "N", (false, v) => v };
+            // Match the file's own vocabulary (module params report Y/N, some mm files true/false).
+            let raw = read(&f);
+            let yn = raw.as_deref().is_some_and(|r| r == "Y" || r == "N");
+            let tf = raw.as_deref().is_some_and(|r| r == "true" || r == "false");
+            let w = match (yn, tf, value) { (true, _, "1") => "Y", (true, _, _) => "N", (_, true, "1") => "true", (_, true, _) => "false", (_, _, v) => v };
             (f, w.to_owned())
         }).collect(),
         _ => fs.into_iter().map(|f| (f, value.to_owned())).collect(),
@@ -3881,6 +3920,8 @@ mod tests {
         assert!(validate(sw, &json!("../x")).is_err());
         let b = find("kernel.sched_schedstats").unwrap();
         assert_eq!(validate(b, &json!("Y")).unwrap(), "1");
+        assert_eq!(validate(b, &json!("true")).unwrap(), "1");
+        assert_eq!(validate(b, &json!("false")).unwrap(), "0");
         assert_eq!(parse_int("0x0007"), Some(7));
         assert_eq!(validate(find("usb.autosuspend").unwrap(), &json!(-1)).unwrap(), "-1");
     }
@@ -3933,6 +3974,25 @@ mod tests {
         assert_eq!(role_matching(&g, &[0, 1]), None);
     }
     #[test]
+    fn sched_domain_levels() {
+        let root = std::env::temp_dir().join(format!("centurion-sd-{}", std::process::id()));
+        for (cpu, levels) in [(0, ["SMT", "MC", "PKG"]), (1, ["SMT", "MC", "PKG"])] {
+            for (i, l) in levels.iter().enumerate() {
+                let d = root.join(format!("cpu{cpu}/domain{i}"));
+                std::fs::create_dir_all(&d).unwrap();
+                std::fs::write(d.join("name"), format!("{l}\n")).unwrap();
+                std::fs::write(d.join("imbalance_pct"), "117\n").unwrap();
+            }
+        }
+        std::fs::remove_file(root.join("cpu1/domain2/imbalance_pct")).unwrap();
+        let mc = sched_domain_files(&root, "MC", "imbalance_pct");
+        assert_eq!(mc, vec![root.join("cpu0/domain1/imbalance_pct"), root.join("cpu1/domain1/imbalance_pct")]);
+        assert_eq!(sched_domain_files(&root, "PKG", "imbalance_pct"), vec![root.join("cpu0/domain2/imbalance_pct")]);
+        assert!(sched_domain_files(&root, "NUMA", "imbalance_pct").is_empty());
+        assert!(sched_domain_files(&root, "MC", "busy_factor").is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    #[test]
     fn same_values() {
         let wq = find("wq.cpumask").unwrap();
         assert!(same_value(wq, "0000ff00", "ff00"));
@@ -3940,6 +4000,7 @@ mod tests {
         assert!(same_value(irq, "0-3", "0,1,2,3"));
         let b = find("kernel.sched_schedstats").unwrap();
         assert!(same_value(b, "Y", "1") && !same_value(b, "Y", "N"));
+        assert!(same_value(b, "true", "1") && !same_value(b, "true", "false"));
     }
     #[test]
     fn forked_writer() {

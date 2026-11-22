@@ -1,6 +1,6 @@
 # Knob envanteri (kalibrasyon ve autotune)
 
-Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys dökümünden 37 knob eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
+Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti, /sys dökümünden 37 knob ve MC/PKG sched domain satırları eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
 
 - **Kalibrasyon**: evet = tasarım oturumunda ölçülür (makineye göre atlanma koşulu parantez içinde).
 - Her knob, dosyası bu makinede/çekirdekte yoksa atlanır (ör. `cpu.epp_boost` yalnız yamalı çekirdekte).
@@ -8,7 +8,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
 - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
 
-Özet: 246 knob · kalibre + autotune 115 · yalnız autotune kuralı 52 · hiçbiri 79
+Özet: 254 knob · kalibre + autotune 123 · yalnız autotune kuralı 52 · hiçbiri 79
 
 ## CPU (38)
 
@@ -116,7 +116,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `kernel.numa_promote_rate_limit` | hayır | — | — | memory tiering only |
 | `mm.swap_vma_readahead` | evet | load[mem] | ölçüm (joint) |  |
 
-## Scheduler (68)
+## Scheduler (76)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -188,6 +188,14 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `sched.rseq_slice_ext_nsec` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
 | `kernel.sched_rt_runtime_us` | hayır | — | — | halving it throttles real-time audio and input threads |
 | `kernel.sched_rr_timeslice_ms` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.mc_imbalance_pct` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.mc_min_interval` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.mc_max_interval` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.mc_busy_factor` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.pkg_imbalance_pct` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.pkg_min_interval` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.pkg_max_interval` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.pkg_busy_factor` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
 
 ## Storage (20)
 
