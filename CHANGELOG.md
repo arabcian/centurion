@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- 20 more knobs found by a full `/sys` dump: cache-aware scheduling `epoch_period` and `epoch_affinity_timeout`,
+  the rseq slice extension, `sched_rt_runtime_us`, `sched_rr_timeslice_ms`, the five NUMA-balancing scan knobs,
+  `fault_around_bytes`, `tlb_single_page_flush_ceiling`, `vm.laptop_mode`, `vm.oom_kill_allocating_task`, KSM
+  `use_zero_pages` and `smart_scan`, the tiering promote rate limit and the mac80211 AQL and mt76 threaded-NAPI
+  switches. Seven are measured by the calibration; the rest are manual only and listed in `calib::EXCLUDED` with the
+  reason (or, for the Wi-Fi rows, have no calibration phase).
+  The cache-aware scheduling rows now also look in `sched/llc_balancing/`, where kernel 7.3 keeps them.
 - Health → Advanced → *Kernel parameters*: the live value of every readable setting under a chosen part of `/sys`
   (scheduler, x86, CPU, memory, module parameters, or everything), debugfs included, with a filter. debugfs is
   root-only, so the page reads it through the new `health-reader {"op":"ksnap"}` (`ksnap.rs`): the same silent,

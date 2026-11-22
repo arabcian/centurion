@@ -37,7 +37,7 @@ class TurkishCatalogueTest(unittest.TestCase):
         cls.catalog = catalogue()
 
     def test_all_optimization_help_translated_in_full(self):
-        self.assertEqual(234, len(self.rows))
+        self.assertEqual(254, len(self.rows))
         texts = self.catalog['OptimizationBackend']
         for key, group, name, original in self.rows:
             with self.subTest(key=key):
@@ -63,8 +63,8 @@ class TurkishCatalogueTest(unittest.TestCase):
 
     def test_dynamic_sources_survive_lupdate(self):
         markers = (GUI / 'src/optimization_translation_sources.cpp').read_text()
-        self.assertEqual(234, markers.count('QT_TRANSLATE_NOOP("OptimizationBackend",'))
-        self.assertEqual(234, markers.count('QT_TRANSLATE_NOOP("OptimizationLabels",'))
+        self.assertEqual(254, markers.count('QT_TRANSLATE_NOOP("OptimizationBackend",'))
+        self.assertEqual(254, markers.count('QT_TRANSLATE_NOOP("OptimizationLabels",'))
         self.assertIn('src/optimization_translation_sources.cpp',
                       (GUI / 'CMakeLists.txt').read_text())
 

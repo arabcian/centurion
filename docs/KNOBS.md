@@ -1,6 +1,6 @@
 # Knob envanteri (kalibrasyon ve autotune)
 
-Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
+Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys dökümünden 20 knob eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
 
 - **Kalibrasyon**: evet = tasarım oturumunda ölçülür (makineye göre atlanma koşulu parantez içinde).
 - Her knob, dosyası bu makinede/çekirdekte yoksa atlanır (ör. `cpu.epp_boost` yalnız yamalı çekirdekte).
@@ -8,7 +8,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, 
 - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
 - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
 
-Özet: 209 knob · kalibre + autotune 107 · yalnız autotune kuralı 52 · hiçbiri 50
+Özet: 229 knob · kalibre + autotune 114 · yalnız autotune kuralı 52 · hiçbiri 63
 
 ## CPU (38)
 
@@ -53,7 +53,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, 
 | `cpu.smt` | hayır | — | yalnız kural | takes CPUs offline |
 | `cpu.ccd_park` | hayır | — | yalnız kural | takes CPUs offline |
 
-## Memory (50)
+## Memory (57)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -107,8 +107,15 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, 
 | `zswap.accept_threshold` | evet (zram varsa / swap yoksa atlanır) | load[mem] | ölçüm (joint) |  |
 | `vm.percpu_pagelist_high_fraction` | evet | idle[mem] load[mem] | kural + ölçüm |  |
 | `vm.extfrag_threshold` | evet | load[mem] | ölçüm (joint) |  |
+| `mm.fault_around_bytes` | evet | load[mem] | ölçüm (joint) |  |
+| `mm.tlb_single_page_flush_ceiling` | evet | load[mem] | ölçüm (joint) |  |
+| `vm.laptop_mode` | evet | load[mem] | ölçüm (joint) |  |
+| `vm.oom_kill_allocating_task` | hayır | — | — | behaviour, not performance |
+| `mm.ksm_use_zero_pages` | hayır | — | — | no effect without mergeable memory |
+| `mm.ksm_smart_scan` | hayır | — | — | no effect without mergeable memory |
+| `kernel.numa_promote_rate_limit` | hayır | — | — | memory tiering only |
 
-## Scheduler (58)
+## Scheduler (68)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -170,6 +177,16 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, 
 | `wq.affinity_scope` | evet | idle[cpu] load[mem+cpu] | kural + ölçüm |  |
 | `wq.cpumask` | hayır | — | yalnız kural | topology (structural) |
 | `irq.affinity` | hayır | — | yalnız kural | topology (structural) |
+| `sched.llc_epoch_period` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.llc_epoch_affinity_timeout` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.numa_scan_size_mb` | hayır | — | — | single NUMA node: no effect |
+| `sched.numa_scan_period_min_ms` | hayır | — | — | single NUMA node: no effect |
+| `sched.numa_scan_period_max_ms` | hayır | — | — | single NUMA node: no effect |
+| `sched.numa_scan_delay_ms` | hayır | — | — | single NUMA node: no effect |
+| `sched.numa_hot_threshold_ms` | hayır | — | — | memory tiering only |
+| `sched.rseq_slice_ext_nsec` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `kernel.sched_rt_runtime_us` | hayır | — | — | halving it throttles real-time audio and input threads |
+| `kernel.sched_rr_timeslice_ms` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
 
 ## Storage (20)
 
@@ -196,7 +213,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, 
 | `btrfs.discard_kbps_limit` | hayır | — | — | background TRIM pacing: the storage suite never waits for it |
 | `btrfs.discard_max_size` | hayır | — | — | background TRIM pacing: the storage suite never waits for it |
 
-## Network (13)
+## Network (16)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -213,6 +230,9 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, 
 | `net.busy_poll` | hayır | — | — | grup kalibrasyon kapsamı dışında |
 | `net.busy_read` | hayır | — | — | grup kalibrasyon kapsamı dışında |
 | `net.napi_threaded` | hayır | — | — | grup kalibrasyon kapsamı dışında |
+| `net.wifi_aql_enable` | hayır | — | — | no calibration phase for this group |
+| `net.wifi_aql_threshold` | hayır | — | — | no calibration phase for this group |
+| `net.wifi_napi_threaded` | hayır | — | — | no calibration phase for this group |
 
 ## Devices (25)
 

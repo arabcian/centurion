@@ -452,6 +452,8 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     ("sched.itmt", "preferred cores go to the load phase's ballast, not to the probes (structural)"),
     // Feature bits with no effect a run-length benchmark can resolve: deadline-class only, a bookkeeping check,
     // accounting accuracy, a filter for nearly idle tasks, or an undocumented companion switch. Manual only.
+    // Scheduler/memory knobs added from a full /sys dump: the rest are measured with the generic doses.
+    ("sched.numa_scan_size_mb", "single NUMA node: no effect"), ("sched.numa_scan_period_min_ms", "single NUMA node: no effect"), ("sched.numa_scan_period_max_ms", "single NUMA node: no effect"), ("sched.numa_scan_delay_ms", "single NUMA node: no effect"), ("sched.numa_hot_threshold_ms", "memory tiering only"), ("kernel.numa_promote_rate_limit", "memory tiering only"), ("kernel.sched_rt_runtime_us", "halving it throttles real-time audio and input threads"), ("vm.oom_kill_allocating_task", "behaviour, not performance"), ("mm.ksm_use_zero_pages", "no effect without mergeable memory"), ("mm.ksm_smart_scan", "no effect without mergeable memory"),
     ("sched.feat_hrtick_dl", "SCHED_DEADLINE entities only"), ("sched.feat_paranoid_avg", "bookkeeping check, not a policy"),
     ("sched.feat_attach_age_load", "load-tracking accuracy, not a lever"), ("sched.feat_nontask_capacity", "capacity accounting, not a lever"),
     ("sched.feat_lb_min", "filter for nearly idle tasks: below what a run resolves"), ("sched.feat_ni_rate", "undocumented companion of NI_RANDOM"),
