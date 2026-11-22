@@ -450,6 +450,11 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     // ITMT hands the preferred cores to whatever runs all the time: under load that is the ballast's
     // spinners, so the probes got the lower-ranked cores and "on" measured worse than it is.
     ("sched.itmt", "preferred cores go to the load phase's ballast, not to the probes (structural)"),
+    // Feature bits with no effect a run-length benchmark can resolve: deadline-class only, a bookkeeping check,
+    // accounting accuracy, a filter for nearly idle tasks, or an undocumented companion switch. Manual only.
+    ("sched.feat_hrtick_dl", "SCHED_DEADLINE entities only"), ("sched.feat_paranoid_avg", "bookkeeping check, not a policy"),
+    ("sched.feat_attach_age_load", "load-tracking accuracy, not a lever"), ("sched.feat_nontask_capacity", "capacity accounting, not a lever"),
+    ("sched.feat_lb_min", "filter for nearly idle tasks: below what a run resolves"), ("sched.feat_ni_rate", "undocumented companion of NI_RANDOM"),
     ("blk.kyber_read_lat_ns", "elevator tunable: manual only"), ("blk.kyber_write_lat_ns", "elevator tunable: manual only"),
     ("blk.dl_read_expire_ms", "elevator tunable: manual only"), ("blk.dl_write_expire_ms", "elevator tunable: manual only"),
     ("blk.dl_fifo_batch", "elevator tunable: manual only"), ("blk.dl_writes_starved", "elevator tunable: manual only"),
@@ -2056,6 +2061,26 @@ mod tests {
     use super::*;
     fn s(pairs: &[(Metric, f64)]) -> Sample { pairs.iter().copied().collect() }
     fn m(lat: f64, thr: f64) -> Measured { Measured { lat: Some(lat), thr: Some(thr), pwr: None, mem: None, n: 1.0 } }
+
+    /// Every EEVDF/scheduler feature bit in the table is either measured by the calibration or named in
+    /// EXCLUDED with a reason: a new bit cannot silently fall out of (or into) the plan.
+    #[test]
+    fn every_sched_feature_bit_is_measured_or_excluded() {
+        use crate::tune::{Target, TUNABLES};
+        let mut measured = 0;
+        for t in TUNABLES.iter().filter(|t| matches!(t.target, Target::SchedFeature(_))) {
+            assert!(t.key.starts_with("sched.feat_") && t.debugfs && t.group == "Scheduler", "{}", t.key);
+            if !excluded(t.key) {
+                assert!(!phases_for(t.key, t.group).is_empty(), "{} is neither measured nor excluded", t.key);
+                measured += 1;
+            }
+        }
+        // 12 bits were measured before; PICK_BUDDY, DELAY_ZERO, WA_IDLE, WA_WEIGHT, WA_BIAS, UTIL_EST, NI_RANDOM joined them.
+        assert_eq!(measured, 12 + 7);
+        for k in ["sched.feat_hrtick_dl", "sched.feat_paranoid_avg", "sched.feat_attach_age_load", "sched.feat_nontask_capacity", "sched.feat_lb_min", "sched.feat_ni_rate"] {
+            assert!(excluded(k), "{k}");
+        }
+    }
 
     #[test]
     fn fingerprint_ram_tolerance_has_no_signed_overflow() {

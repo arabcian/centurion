@@ -10,6 +10,7 @@
 #include "eventinfo.h"
 #include "sleeppage.h"
 #include "klogpage.h"
+#include "kernelparamspage.h"
 #include "dgpupage.h"
 #include "netpage.h"
 #include "overviewpage.h"
@@ -124,6 +125,7 @@ static QString pageAbout(const QString &key) {
         {QStringLiteral("curves"), QT_TRANSLATE_NOOP("HealthTab", "Stability of the CPU/GPU curves: faults seen while each was in effect.")},
         {QStringLiteral("klog"), QT_TRANSLATE_NOOP("HealthTab", "Kernel warnings and errors saved across reboots, with filters and explanations.")},
         {QStringLiteral("tools"), QT_TRANSLATE_NOOP("HealthTab", "Detailed device reports: sensors, CPU, memory, PCI, USB, firmware.")},
+        {QStringLiteral("kernelparams"), QT_TRANSLATE_NOOP("HealthTab", "Live values of kernel settings, scheduler debugfs included (read-only).")},
     };
     const auto it = ABOUT.constFind(key);
     return it == ABOUT.constEnd() ? QString() : HealthTab::tr(it.value());
@@ -212,6 +214,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(advanced, curves, tr("Curve stability"), QStringLiteral("curves"));
     klog_ = new KlogPage;
     addPage(advanced, klog_, tr("Kernel log"), QStringLiteral("klog"));
+    addPage(advanced, new KernelParamsPage, tr("Kernel parameters"), QStringLiteral("kernelparams"));
     auto *sleep = new SleepPage;
     addPage(hardware, sleep, tr("Sleep & wake"), QStringLiteral("sleep"));
     if (BatteryPage::present()) {

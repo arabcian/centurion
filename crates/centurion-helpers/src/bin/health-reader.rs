@@ -26,6 +26,16 @@
 //!                               firmware's WMI data block (one query per field through acpi_call; no
 //!                               module is loaded from here). See centurion_helpers::legion_wmi::battery_info.
 //!
+//! stdin:  {"op": "ksnap", "roots": ["/sys/kernel/debug/sched", ..]?, "max_entries": N?}
+//!                               Every readable text file below the roots (default: all of /sys, debugfs
+//!                               limited to its allowlisted subtrees) as {"p","v","w"} entries: the values
+//!                               the GUI cannot read itself because debugfs is root-only. Read-only.
+//!                               See centurion_helpers::ksnap for what is never read.
+//!
+//! stdin:  {"op": "debugfs_snapshot"}  Optimizations tab: refresh the world-readable copy of the debugfs tunable
+//!                               values (/run/centurion/debugfs.json) that the unprivileged describe reads.
+//!                               Writes only that root-owned copy; does not mount debugfs.
+//!
 //! stdin:  {"op": "boot_logo"}   Home → Boot logo: the firmware's logo variables (LBLDESP / LBLDVC) and
 //!                               the files in the ESP's EFI/Lenovo/Logo. Read-only.
 //!                               See centurion_helpers::bootlogo::status.
@@ -33,6 +43,14 @@
 fn main() {
     centurion_helpers::init();
     let req = centurion_helpers::read_request(4096).unwrap_or(serde_json::Value::Null);
+    if req["op"].as_str() == Some("ksnap") {
+        // A walk can end in a sysfs read that never returns (a device that stopped answering): kill the helper then.
+        centurion_helpers::watchdog(30);
+        std::process::exit(centurion_helpers::finish(centurion_helpers::ksnap::scan(&req)));
+    }
+    if req["op"].as_str() == Some("debugfs_snapshot") {
+        std::process::exit(centurion_helpers::finish(centurion_helpers::tune::refresh_debugfs_snapshot()));
+    }
     if req["op"].as_str() == Some("nvme_deep") {
         std::process::exit(centurion_helpers::finish(centurion_helpers::health_nvme::report()));
     }

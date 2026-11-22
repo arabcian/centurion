@@ -42,6 +42,7 @@ pub mod firewall;
 pub mod flight;
 pub mod bench;
 pub mod isolate;
+pub mod ksnap;
 pub mod legion_wmi;
 pub mod lighting;
 pub mod machine;

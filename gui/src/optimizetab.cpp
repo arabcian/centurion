@@ -983,6 +983,11 @@ void OptimizeTab::showEvent(QShowEvent *e) {
     updateLaunchPreview();
     refresh();
     poll_->start();
+    // debugfs is root-only: describe shows those rows from a copy that root writes. health-reader (read-only,
+    // silent polkit action) refreshes the copy, so they show live values and not the ones of the last apply.
+    if (const QString hr = privileged::helperPath(QStringLiteral("health-reader")); QFileInfo(hr).isExecutable())
+        privileged::run(hr, QJsonObject{{QStringLiteral("op"), QStringLiteral("debugfs_snapshot")}}, this,
+                        [this](const privileged::Result &r) { if (r.ok()) refresh(true); }, 15000);
 }
 void OptimizeTab::hideEvent(QHideEvent *e) {
     QWidget::hideEvent(e);

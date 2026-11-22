@@ -1,6 +1,6 @@
 # Knob envanteri (kalibrasyon ve autotune)
 
-Kaynak koddan üretildi (2026-11-01): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
+Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
 
 - **Kalibrasyon**: evet = tasarım oturumunda ölçülür (makineye göre atlanma koşulu parantez içinde).
 - Her knob, dosyası bu makinede/çekirdekte yoksa atlanır (ör. `cpu.epp_boost` yalnız yamalı çekirdekte).
@@ -8,7 +8,7 @@ Kaynak koddan üretildi (2026-11-01): `tune::TUNABLES`, `calib::EXCLUDED`, `cali
 - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
 - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
 
-Özet: 196 knob · kalibre + autotune 100 · yalnız autotune kuralı 52 · hiçbiri 44
+Özet: 209 knob · kalibre + autotune 107 · yalnız autotune kuralı 52 · hiçbiri 50
 
 ## CPU (38)
 
@@ -108,7 +108,7 @@ Kaynak koddan üretildi (2026-11-01): `tune::TUNABLES`, `calib::EXCLUDED`, `cali
 | `vm.percpu_pagelist_high_fraction` | evet | idle[mem] load[mem] | kural + ölçüm |  |
 | `vm.extfrag_threshold` | evet | load[mem] | ölçüm (joint) |  |
 
-## Scheduler (45)
+## Scheduler (58)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -154,6 +154,19 @@ Kaynak koddan üretildi (2026-11-01): `tune::TUNABLES`, `calib::EXCLUDED`, `cali
 | `sched.feat_place_deadline_initial` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
 | `sched.feat_place_rel_deadline` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
 | `sched.feat_wakeup_preemption` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_pick_buddy` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_delay_zero` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_wa_idle` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_wa_weight` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_wa_bias` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_util_est` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_attach_age_load` | hayır | — | — | load-tracking accuracy, not a lever |
+| `sched.feat_nontask_capacity` | hayır | — | — | capacity accounting, not a lever |
+| `sched.feat_lb_min` | hayır | — | — | filter for nearly idle tasks: below what a run resolves |
+| `sched.feat_ni_random` | evet | idle[cpu] load[mem+cpu] | ölçüm (joint) |  |
+| `sched.feat_ni_rate` | hayır | — | — | undocumented companion of NI_RANDOM |
+| `sched.feat_hrtick_dl` | hayır | — | — | SCHED_DEADLINE entities only |
+| `sched.feat_paranoid_avg` | hayır | — | — | bookkeeping check, not a policy |
 | `wq.affinity_scope` | evet | idle[cpu] load[mem+cpu] | kural + ölçüm |  |
 | `wq.cpumask` | hayır | — | yalnız kural | topology (structural) |
 | `irq.affinity` | hayır | — | yalnız kural | topology (structural) |

@@ -125,6 +125,7 @@ add_executable(centurion
     src/acpievents.cpp   src/acpievents.h
     src/smartpage.cpp    src/smartpage.h
     src/sleeppage.cpp    src/sleeppage.h
+    src/kernelparamspage.cpp src/kernelparamspage.h
     src/sleepadvice.cpp  src/sleepadvice.h
     src/flightrec.cpp    src/flightrec.h
     src/mangohud.cpp     src/mangohud.h

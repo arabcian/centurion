@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- Health → Advanced → *Kernel parameters*: the live value of every readable setting under a chosen part of `/sys`
+  (scheduler, x86, CPU, memory, module parameters, or everything), debugfs included, with a filter. debugfs is
+  root-only, so the page reads it through the new `health-reader {"op":"ksnap"}` (`ksnap.rs`): the same silent,
+  read-only polkit action as the rest of `health-reader`, no new helper and no password. It never follows
+  symlinks, skips write-only and binary files, opens debugfs only in `sched`, `x86`, `pm_qos` and `extfrag` (a
+  root-only read of other debugfs files can reset a GPU or touch hardware registers), never reads serial numbers,
+  cgroup, security or pstore trees, scrubs kernel addresses, and is bounded in entries, bytes, depth and time.
+- Optimizations refreshes the root-only copy of the debugfs values every time the tab is shown
+  (`health-reader {"op":"debugfs_snapshot"}`), so scheduler rows show live values and not those of the last apply.
+- 13 more EEVDF scheduler feature bits in Optimizations → Scheduler: `PICK_BUDDY`, `DELAY_ZERO`, `WA_IDLE`,
+  `WA_WEIGHT`, `WA_BIAS`, `UTIL_EST`, `NI_RANDOM` (measured by the calibration, chosen by autotune like the other
+  bits) and `ATTACH_AGE_LOAD`, `NONTASK_CAPACITY`, `LB_MIN`, `NI_RATE`, `HRTICK_DL`, `PARANOID_AVG` (manual only,
+  listed in `calib::EXCLUDED` with the reason). A test keeps every feature bit either measured or excluded.
 - PipeWire Doctor → *Settings…*: tick-to-set table of well-known options with a hint for each (sample rate and
   allowed rates, buffer sizes, log level, Pulse request sizes, Bluetooth headset profile, new-output volume,
   auto-mute, idle-suspend delay and ALSA headroom). Written to `50-centurion.conf` files in `~/.config/pipewire`

@@ -679,6 +679,45 @@ pub const TUNABLES: &[Tunable] = &[
     dbg(warn(t("sched.feat_wakeup_preemption", "Scheduler", "WAKEUP_PREEMPTION (debugfs)",
       "Whether a task that wakes up may preempt the running one (default on). Off = no wake-up ever preempts: the running task keeps the CPU until its slice ends or the tick moves it on, as if everything ran as SCHED_BATCH. That is the most throughput a saturated machine gives (fewest context switches, warm caches) and the worst wake-up latency - input, audio and frame threads wait for a slice boundary. A batch/compile-box setting; never for gaming or desktop use.",
       Kind::Bool, NO, Target::SchedFeature("WAKEUP_PREEMPTION")))),
+    dbg(t("sched.feat_pick_buddy", "Scheduler", "PICK_BUDDY (debugfs)",
+      "Whether the scheduler may honour the 'next' buddy when it picks the next task (default on). The buddy is set by NEXT_BUDDY wake-up preemption, by yield_to() and by cgroup dequeue/pick; with PICK_BUDDY it runs next as long as it is still eligible, which keeps a waker and its wakee on warm caches. Off = the buddy is ignored and plain EEVDF order decides: strictly fair, a little less cache locality for hand-off heavy loads (game thread to render thread, compositor to client). It only matters while something sets a buddy, which is rare with NEXT_BUDDY off.",
+      Kind::Bool, NO, Target::SchedFeature("PICK_BUDDY"))),
+    dbg(t("sched.feat_delay_zero", "Scheduler", "DELAY_ZERO (debugfs)",
+      "Companion of DELAY_DEQUEUE (default on): when a task that was kept in the competition to burn off negative lag is finally dequeued or woken, its lag is clipped to zero, so waiting out the delay never becomes a claim on extra CPU time later. Off = whatever lag it holds then is kept. No effect while DELAY_DEQUEUE is off.",
+      Kind::Bool, NO, Target::SchedFeature("DELAY_ZERO"))),
+    dbg(t("sched.feat_wa_idle", "Scheduler", "WA_IDLE (debugfs)",
+      "First step of the wake-affine decision between the waking CPU and the CPU the task last ran on (default on): take an idle one of the two straight away, or the waker's CPU when a synchronous wake-up leaves it with nothing but the waker, before any load comparison. Off = the load comparison (WA_WEIGHT) decides alone, and without it the task simply stays on its previous CPU.",
+      Kind::Bool, NO, Target::SchedFeature("WA_IDLE"))),
+    dbg(t("sched.feat_wa_weight", "Scheduler", "WA_WEIGHT (debugfs)",
+      "Second step of the wake-affine decision (default on): when neither WA_IDLE rule applies, compare the load the waker's CPU and the task's previous CPU would carry after the wake-up and pick the lighter one. Off = the task stays on its previous CPU unless WA_IDLE moved it: fewer cross-CPU moves and warmer caches, but a waker's data is no longer pulled together with its wakee.",
+      Kind::Bool, NO, Target::SchedFeature("WA_WEIGHT"))),
+    dbg(t("sched.feat_wa_bias", "Scheduler", "WA_BIAS (debugfs)",
+      "Inside the WA_WEIGHT comparison, tilts the choice towards the CPU the task last ran on by half of the domain's imbalance_pct (default on): the task moves to the waker's CPU only when that is clearly lighter. Off = no tilt, so closely matched loads make a task hop between CPUs and lose its warm caches.",
+      Kind::Bool, NO, Target::SchedFeature("WA_BIAS"))),
+    dbg(t("sched.feat_util_est", "Scheduler", "UTIL_EST (debugfs)",
+      "Utilisation estimation (default on): the utilisation a task showed around its last dequeues is remembered and used as a floor when it wakes, so schedutil and capacity-aware placement react at once to a task that always needs a lot instead of waiting for the decayed load average to climb. Off = utilisation rebuilds from the average after every sleep: slower frequency ramp-up for bursty loads (games, UI), lower clocks on idle-heavy ones.",
+      Kind::Bool, NO, Target::SchedFeature("UTIL_EST"))),
+    dbg(t("sched.feat_attach_age_load", "Scheduler", "ATTACH_AGE_LOAD (debugfs)",
+      "When a task is attached to another fair runqueue or cgroup (a move between groups, a switch into the fair class) its load average is first aged up to the current time (default on), so a task that was away for long does not bring stale load with it. Off = it is attached with the load it had when it left. Load-tracking accuracy for the balancer, not a throughput lever.",
+      Kind::Bool, NO, Target::SchedFeature("ATTACH_AGE_LOAD"))),
+    dbg(t("sched.feat_nontask_capacity", "Scheduler", "NONTASK_CAPACITY (debugfs)",
+      "Decrements a CPU's capacity by the time it does not spend running tasks (default on): interrupt handling, real-time and deadline work, stolen time under virtualisation. The balancer then places fair tasks on CPUs that really have time for them. Off = capacity ignores that time, so a CPU flooded with interrupts (network, GPU, USB) still looks fully available.",
+      Kind::Bool, NO, Target::SchedFeature("NONTASK_CAPACITY"))),
+    dbg(t("sched.feat_lb_min", "Scheduler", "LB_MIN (debugfs)",
+      "The load balancer skips tasks whose load is below 16 unless earlier balancing attempts failed (default off). On = fewer migrations of nearly idle tasks, but a runqueue full of tiny tasks can stay unbalanced longer. Off = every movable task is a candidate.",
+      Kind::Bool, NO, Target::SchedFeature("LB_MIN"))),
+    dbg(t("sched.feat_ni_random", "Scheduler", "NI_RANDOM (debugfs)",
+      "New-idle balancing (a CPU about to go idle looks for work to pull from busy neighbours) is done in proportion to its success rate, chosen by random draw (default on). On = idle entry gets cheaper on busy many-core machines where the search usually finds nothing; off = every idle entry searches: work is picked up a little sooner after a wake-up burst, at the price of more scheduler overhead on idle entry.",
+      Kind::Bool, NO, Target::SchedFeature("NI_RANDOM"))),
+    dbg(t("sched.feat_ni_rate", "Scheduler", "NI_RATE (debugfs)",
+      "Second switch of the new-idle balancing change that introduced NI_RANDOM (default on). The kernel source documents only NI_RANDOM, so what this one does exactly is not described there: treat it as an experimental on/off toggle and leave it at its default unless a measured run says otherwise.",
+      Kind::Bool, NO, Target::SchedFeature("NI_RATE"))),
+    dbg(t("sched.feat_hrtick_dl", "Scheduler", "HRTICK_DL (debugfs)",
+      "The HRTICK idea for SCHED_DEADLINE entities: arm a high-resolution timer for the exact end of a deadline runtime budget instead of waiting for the next tick (default on where the kernel was built with deferred hrtimer rearm, otherwise off). It only matters when something runs under SCHED_DEADLINE, which is rare on a desktop.",
+      Kind::Bool, NO, Target::SchedFeature("HRTICK_DL"))),
+    dbg(t("sched.feat_paranoid_avg", "Scheduler", "PARANOID_AVG (debugfs)",
+      "Off by default; the kernel source has no comment on it, and by its name it concerns the average-virtual-runtime bookkeeping that EEVDF's eligibility test rests on. Not a tuning knob: it is listed so the whole feature list is visible and is never part of a calibration or autotune decision.",
+      Kind::Bool, NO, Target::SchedFeature("PARANOID_AVG"))),
     t("wq.affinity_scope", "Scheduler", "Unbound workqueue affinity scope",
       "Kernel 6.6+: how widely an unbound work item may travel from the CPU that queued it. cache (stock) = within the same L3 - on a two-CCD Ryzen the work stays on the die that asked for it, no cross-CCD cache traffic; smt / cpu = even closer (better locality, less work-conservation); numa / system = anywhere (best for spreading heavy work, worst locality). Use together with 'Unbound workqueue CPUs', which is a hard CPU mask; this row is only the locality preference inside that mask.",
       Kind::Choice, Options::Fixed(&["cpu", "smt", "cache", "numa", "system"]), Target::File("/sys/module/workqueue/parameters/default_affinity_scope")),
@@ -1106,6 +1145,14 @@ pub fn write_debugfs_snapshot() {
     if crate::secure_dir("/run/centurion").is_ok() {
         let _ = crate::write_root_file(DEBUGFS_SNAPSHOT, Value::Object(m).to_string().as_bytes());
     }
+}
+
+/// health-reader `debugfs_snapshot`: refresh that copy on demand, for the Optimizations tab, without a
+/// password and without changing anything but the copy. Unlike the root write ops it never mounts debugfs.
+pub fn refresh_debugfs_snapshot() -> Value {
+    if !debugfs_mounted() { return json!({"ok": true, "mounted": false}); }
+    write_debugfs_snapshot();
+    json!({"ok": true, "mounted": true})
 }
 
 /// Snapshot value of a debugfs tunable; ignored unless the file is root-owned and not group/world-writable.
