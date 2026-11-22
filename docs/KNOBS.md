@@ -1,6 +1,6 @@
 # Knob envanteri (kalibrasyon ve autotune)
 
-Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys dökümünden 20 knob eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
+Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys dökümünden 26 knob eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
 
 - **Kalibrasyon**: evet = tasarım oturumunda ölçülür (makineye göre atlanma koşulu parantez içinde).
 - Her knob, dosyası bu makinede/çekirdekte yoksa atlanır (ör. `cpu.epp_boost` yalnız yamalı çekirdekte).
@@ -8,7 +8,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
 - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
 
-Özet: 229 knob · kalibre + autotune 114 · yalnız autotune kuralı 52 · hiçbiri 63
+Özet: 235 knob · kalibre + autotune 115 · yalnız autotune kuralı 52 · hiçbiri 68
 
 ## CPU (38)
 
@@ -53,7 +53,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `cpu.smt` | hayır | — | yalnız kural | takes CPUs offline |
 | `cpu.ccd_park` | hayır | — | yalnız kural | takes CPUs offline |
 
-## Memory (57)
+## Memory (58)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -114,6 +114,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `mm.ksm_use_zero_pages` | hayır | — | — | no effect without mergeable memory |
 | `mm.ksm_smart_scan` | hayır | — | — | no effect without mergeable memory |
 | `kernel.numa_promote_rate_limit` | hayır | — | — | memory tiering only |
+| `mm.swap_vma_readahead` | evet | load[mem] | ölçüm (joint) |  |
 
 ## Scheduler (68)
 
@@ -213,7 +214,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `btrfs.discard_kbps_limit` | hayır | — | — | background TRIM pacing: the storage suite never waits for it |
 | `btrfs.discard_max_size` | hayır | — | — | background TRIM pacing: the storage suite never waits for it |
 
-## Network (16)
+## Network (21)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -233,6 +234,11 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `net.wifi_aql_enable` | hayır | — | — | no calibration phase for this group |
 | `net.wifi_aql_threshold` | hayır | — | — | no calibration phase for this group |
 | `net.wifi_napi_threaded` | hayır | — | — | no calibration phase for this group |
+| `net.mt76_runtime_pm` | hayır | — | — | no calibration phase for this group |
+| `net.mt76_idle_timeout` | hayır | — | — | no calibration phase for this group |
+| `net.mt76_deep_sleep` | hayır | — | — | no calibration phase for this group |
+| `bt.conn_min_interval` | hayır | — | — | no calibration phase for this group |
+| `bt.conn_max_interval` | hayır | — | — | no calibration phase for this group |
 
 ## Devices (25)
 

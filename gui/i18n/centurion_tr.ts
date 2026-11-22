@@ -8176,6 +8176,30 @@ sudo centurion-calibrate --restore
             <translation>mt76 Wi-Fi sürücüsü: 1 = alma işlemi zamanlayıcının yerleştirip önceliklendirebileceği kendi çekirdek iş parçacığında çalışır, 0 = kesilen CPU üzerinde softirq içinde. İş parçacığı ağ yükünü oyunun kullandığı çekirdeklerden ayırır; softirq paket başına daha az yük getirir. Yalnız mt76 bağdaştırıcısıyla bulunur.</translation>
         </message>
         <message>
+            <source>mt76 Wi-Fi driver: 1 lets the radio power down between bursts of traffic once the idle timeout below has passed, which saves battery power; every wake-up from that state adds latency to the next packet (a game's first packet after a quiet moment, a ping). 0 keeps the chip awake: lowest latency, a little more idle power. Present only with an mt76 adapter.</source>
+            <translation>mt76 Wi-Fi sürücüsü: 1, aşağıdaki boşta kalma süresi geçince telsizin trafik arasında kapanmasına izin verir; bu pil gücünden tasarruf sağlar ama o durumdan her uyanış sıradaki pakete gecikme ekler (oyunun sessiz bir andan sonraki ilk paketi, bir ping). 0 çipi uyanık tutar: en düşük gecikme, biraz daha fazla boşta güç. Yalnız mt76 bağdaştırıcısıyla bulunur.</translation>
+        </message>
+        <message>
+            <source>mt76 Wi-Fi driver: how long (ms) the adapter must be idle before runtime power management may power it down (stock 84 here). Only matters while the row above is on. Shorter = saves more power but wakes (and adds latency) more often; longer = fewer wake-ups. Present only with an mt76 adapter.</source>
+            <translation>mt76 Wi-Fi sürücüsü: çalışma zamanı güç yönetiminin bağdaştırıcıyı kapatabilmesi için ne kadar süre (ms) boşta kalması gerektiği (burada standart 84). Yalnız yukarıdaki satır açıkken anlamlıdır. Kısa değer daha çok güç kazandırır ama daha sık uyanır (ve gecikme ekler); uzun değer daha az uyanma demektir. Yalnız mt76 bağdaştırıcısıyla bulunur.</translation>
+        </message>
+        <message>
+            <source>mt76 Wi-Fi driver: 1 lets the firmware enter its deepest low-power state between beacons, 0 keeps it lighter. Deep sleep saves idle power on battery and costs wake-up latency on the next packet, like the runtime power management row. Present only with an mt76 adapter whose driver offers it.</source>
+            <translation>mt76 Wi-Fi sürücüsü: 1, bellenimin işaret çerçeveleri arasında en derin düşük güç durumuna girmesine izin verir, 0 daha hafif tutar. Derin uyku pilde boşta gücü azaltır ve sıradaki pakette uyanma gecikmesi getirir, tıpkı çalışma zamanı güç yönetimi satırı gibi. Yalnız bunu sunan bir mt76 bağdaştırıcısıyla bulunur.</translation>
+        </message>
+        <message>
+            <source>Lower bound of the connection interval (units of 1.25 ms, stock 24 = 30 ms) the host proposes for new Bluetooth LE connections. A shorter interval makes a wireless mouse, keyboard or controller report more often (lower input latency) and costs the device battery. Applies to connections made after the change, not to ones already open: reconnect the device. Present only with a Bluetooth adapter.</source>
+            <translation>Ana bilgisayarın yeni Bluetooth LE bağlantıları için önerdiği bağlantı aralığının alt sınırı (1,25 ms birimiyle, standart 24 = 30 ms). Daha kısa aralık kablosuz fare, klavye veya kontrol cihazının daha sık rapor vermesini sağlar (daha düşük girdi gecikmesi) ve cihazın pilini harcar. Değişiklikten sonra kurulan bağlantılara uygulanır, açık olanlara değil: cihazı yeniden bağla. Yalnız Bluetooth bağdaştırıcısıyla bulunur.</translation>
+        </message>
+        <message>
+            <source>Upper bound of the connection interval (units of 1.25 ms, stock 40 = 50 ms) for new Bluetooth LE connections; the device and host settle on a value between the minimum and this. Keep it at or above the minimum row. Lower = tighter latency ceiling for input devices, more battery use on them. Applies to connections made after the change. Present only with a Bluetooth adapter.</source>
+            <translation>Yeni Bluetooth LE bağlantıları için bağlantı aralığının üst sınırı (1,25 ms birimiyle, standart 40 = 50 ms); cihaz ve ana bilgisayar alt sınır ile bu değer arasında bir değerde anlaşır. En küçük aralık satırına eşit veya ondan büyük tut. Düşük değer girdi cihazları için daha sıkı bir gecikme tavanı verir ve onların pilini daha çok kullanır. Değişiklikten sonra kurulan bağlantılara uygulanır. Yalnız Bluetooth bağdaştırıcısıyla bulunur.</translation>
+        </message>
+        <message>
+            <source>How the kernel reads ahead when it swaps pages back in: true = per-VMA readahead, which follows the access pattern of each mapping (good when a game or browser touches its memory in strides), false = the older readahead around the swap slot (good for sequential swap layouts). Only matters when the machine actually swaps, including to zram. Used together with vm.page-cluster.</source>
+            <translation>Çekirdeğin takastaki sayfaları geri alırken nasıl ön-okuma yaptığı: true = her eşlemenin erişim desenini izleyen VMA başına ön-okuma (bir oyun veya tarayıcı belleğine adımlarla dokunuyorsa iyi), false = takas yuvası çevresindeki eski ön-okuma (sıralı takas düzenleri için iyi). Yalnız makine gerçekten takas yaptığında, zram dahil, anlamlıdır. vm.page-cluster ile birlikte kullanılır.</translation>
+        </message>
+        <message>
             <source>Kernel 6.6+: how widely an unbound work item may travel from the CPU that queued it. cache (stock) = within the same L3 - on a two-CCD Ryzen the work stays on the die that asked for it, no cross-CCD cache traffic; smt / cpu = even closer (better locality, less work-conservation); numa / system = anywhere (best for spreading heavy work, worst locality). Use together with 'Unbound workqueue CPUs', which is a hard CPU mask; this row is only the locality preference inside that mask.</source>
             <translation>Çekirdek 6.6+: bağımsız workqueue işinin onu kuyruğa alan CPU'dan ne kadar uzağa taşınabileceği. cache (varsayılan) = aynı L3 içinde; iki CCD'li Ryzen'de iş istendiği yongada kalır, CCD'ler arası cache trafiği yoktur. smt / cpu = daha dar alan (daha iyi yerellik, daha zayıf iş dağılımı); numa / system = her yere gidebilir (ağır işi dağıtmak için en iyi, yerellik için en kötü). Bunu 'Unbound workqueue CPUs' ile birlikte kullanın: o katı CPU maskesidir, bu satır yalnızca maskenin içindeki yerellik tercihidir.</translation>
         </message>
@@ -8497,6 +8521,12 @@ sudo centurion-calibrate --restore
 <message><source>Wi-Fi airtime queue limit (debugfs)</source><translation>Wi-Fi hava süresi kuyruk sınırı (debugfs)</translation></message>
 <message><source>Wi-Fi AQL threshold (debugfs)</source><translation>Wi-Fi AQL eşiği (debugfs)</translation></message>
 <message><source>Wi-Fi threaded NAPI (mt76, debugfs)</source><translation>Wi-Fi iş parçacıklı NAPI (mt76, debugfs)</translation></message>
+<message><source>Wi-Fi runtime power management (mt76, debugfs)</source><translation>Wi-Fi çalışma zamanı güç yönetimi (mt76, debugfs)</translation></message>
+<message><source>Wi-Fi runtime-PM idle timeout (mt76, debugfs)</source><translation>Wi-Fi çalışma zamanı PM boşta süresi (mt76, debugfs)</translation></message>
+<message><source>Wi-Fi deep sleep (mt76, debugfs)</source><translation>Wi-Fi derin uyku (mt76, debugfs)</translation></message>
+<message><source>Bluetooth LE min connection interval (debugfs)</source><translation>Bluetooth LE en küçük bağlantı aralığı (debugfs)</translation></message>
+<message><source>Bluetooth LE max connection interval (debugfs)</source><translation>Bluetooth LE en büyük bağlantı aralığı (debugfs)</translation></message>
+<message><source>Swap VMA readahead</source><translation>Takas VMA ön-okuması</translation></message>
 <message><source>F2FS 1 · I/O accounting</source><translation>F2FS 1 · G/Ç istatistikleri</translation></message>
 <message><source>F2FS 1 · Idle GC mode</source><translation>F2FS 1 · Boştayken GC modu</translation></message>
 <message><source>F2FS 1 · Minimum GC sleep (ms)</source><translation>F2FS 1 · En kısa GC bekleme süresi (ms)</translation></message>

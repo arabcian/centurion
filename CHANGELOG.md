@@ -12,6 +12,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   `use_zero_pages` and `smart_scan`, the tiering promote rate limit and the mac80211 AQL and mt76 threaded-NAPI
   switches. Seven are measured by the calibration; the rest are manual only and listed in `calib::EXCLUDED` with the
   reason (or, for the Wi-Fi rows, have no calibration phase).
+- Latency and power rows from the same dump: mt76 Wi-Fi runtime power management, its idle timeout and deep sleep,
+  Bluetooth LE minimum and maximum connection interval, and the swap VMA readahead switch (measured by the calibration).
   The cache-aware scheduling rows now also look in `sched/llc_balancing/`, where kernel 7.3 keeps them.
 - Health → Advanced → *Kernel parameters*: the live value of every readable setting under a chosen part of `/sys`
   (scheduler, x86, CPU, memory, module parameters, or everything), debugfs included, with a filter. debugfs is
