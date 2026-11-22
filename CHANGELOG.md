@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- 11 network latency and buffering rows: softirq packet and time budgets, NAPI weight, GRO batch, TCP output
+  limit, autocorking, pacing ratios, ECN, and the socket buffer ceilings `rmem_max` and `wmem_max`. Manual only: the
+  Network group has no calibration phase.
+- Home → hardware inventory: four rows from plain sysfs/procfs reads, no helper and no password: Scheduler
+  (EEVDF, BORE on or off, preemption model, sched_ext when present), CPU layout (cores and threads, SMT, L3 size per
+  cache domain), CPU power (cpufreq driver, governor, EPP, boost) and Memory policy (THP mode, swappiness, zram).
 - 20 more knobs found by a full `/sys` dump: cache-aware scheduling `epoch_period` and `epoch_affinity_timeout`,
   the rseq slice extension, `sched_rt_runtime_us`, `sched_rr_timeslice_ms`, the five NUMA-balancing scan knobs,
   `fault_around_bytes`, `tlb_single_page_flush_ceiling`, `vm.laptop_mode`, `vm.oom_kill_allocating_task`, KSM

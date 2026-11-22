@@ -77,6 +77,13 @@ Opt cpuPackagePower();  // powercap RAPL energy delta between calls
 Opt usbcInputs();       // UCSI power-delivery sources that are online
 Opt gpuMode();          // "Hybrid" / "dGPU only (MUX)"
 
+// Kernel and CPU facts for the Home inventory (unprivileged sysfs/procfs reads; technical tokens only, so
+// nothing here needs translating).
+Opt schedulerSummary();  // "EEVDF + BORE · PREEMPT_DYNAMIC · sched_ext"
+Opt cpuLayout();         // "16C/32T · SMT on · L3 96 MiB + 32 MiB"
+Opt cpuPowerSummary();   // "amd-pstate-epp · powersave · EPP balance_performance · boost on"
+Opt memoryPolicy();      // "THP madvise · swappiness 150 · zram 2"
+
 // nvidia-smi output parsers (the process itself is run by the caller)
 Opt parseGpuName(const QByteArray &out);
 Opt parseGpuLive(const QByteArray &out);

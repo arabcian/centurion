@@ -524,6 +524,10 @@ QGroupBox *HomeTab::buildHardwareBox() {
             g->addWidget(w, row - 1, 1);
         }
     }
+    add(tr("Scheduler"), sysinfo::schedulerSummary());
+    add(tr("CPU layout"), sysinfo::cpuLayout());
+    add(tr("CPU power"), sysinfo::cpuPowerSummary());
+    add(tr("Memory policy"), sysinfo::memoryPolicy());
     add(tr("GPU mode"), sysinfo::gpuMode());
     add("BIOS", sysinfo::biosInfo());
     add(tr("EC Firmware"), sysinfo::dmiClean("ec_firmware_release"));

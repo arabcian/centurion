@@ -537,4 +537,79 @@ Opt parseGpuLive(const QByteArray &out) {
     return joined(b);
 }
 
+
+static QString trimmed(const QString &p) { return rd(p).value_or(QString()).trimmed(); }
+
+Opt schedulerSummary() {
+    QStringList b;
+    utsname u{};
+    const QString ver = uname(&u) == 0 ? QString::fromUtf8(u.version) : QString();
+    // 6.6 replaced CFS with EEVDF; BORE (CachyOS) is a layer on top of it, switched by this sysctl.
+    b << QStringLiteral("EEVDF");
+    if (QFile::exists(QStringLiteral("/proc/sys/kernel/sched_bore")))
+        b.last() += trimmed(QStringLiteral("/proc/sys/kernel/sched_bore")) == QLatin1String("1") ? QStringLiteral(" + BORE")
+                                                                                                    : QStringLiteral(" (BORE off)");
+    for (const char *m : {"PREEMPT_RT", "PREEMPT_DYNAMIC", "PREEMPT_LAZY", "PREEMPT"})
+        if (ver.contains(QLatin1String(m))) { b << QString::fromLatin1(m); break; }
+    if (QDir(QStringLiteral("/sys/kernel/sched_ext")).exists()) b << QStringLiteral("sched_ext");
+    return joined(b);
+}
+
+Opt cpuLayout() {
+    const QString base = QStringLiteral("/sys/devices/system/cpu/");
+    QSet<QString> cores;
+    int threads = 0;
+    QMap<QString, long long> l3;  // shared_cpu_list -> KiB, one entry per cache domain
+    for (const QString &e : QDir(base).entryList({QStringLiteral("cpu[0-9]*")}, QDir::Dirs)) {
+        const QString d = base + e;
+        if (rd(d + QStringLiteral("/online")).value_or(QStringLiteral("1")).trimmed() == QLatin1String("0")) continue;
+        ++threads;
+        cores << trimmed(d + QStringLiteral("/topology/physical_package_id")) + ':' + trimmed(d + QStringLiteral("/topology/core_id"));
+        for (const QString &c : QDir(d + QStringLiteral("/cache")).entryList({QStringLiteral("index[0-9]*")}, QDir::Dirs)) {
+            const QString cd = d + QStringLiteral("/cache/") + c;
+            if (trimmed(cd + QStringLiteral("/level")) != QLatin1String("3")) continue;
+            QString sz = trimmed(cd + QStringLiteral("/size"));
+            const bool m = sz.endsWith('M');
+            sz.chop(1);
+            l3.insert(trimmed(cd + QStringLiteral("/shared_cpu_list")), sz.toLongLong() * (m ? 1024 : 1));
+        }
+    }
+    if (threads == 0) return std::nullopt;
+    QStringList b{QStringLiteral("%1C/%2T").arg(cores.size()).arg(threads)};
+    const QString smt = trimmed(base + QStringLiteral("smt/control"));
+    if (!smt.isEmpty()) b << QStringLiteral("SMT ") + smt;
+    if (!l3.isEmpty()) {
+        QStringList sizes;
+        for (long long kib : l3) sizes << QStringLiteral("%1 MiB").arg(kib / 1024);
+        b << QStringLiteral("L3 ") + sizes.join(QStringLiteral(" + "));
+    }
+    return joined(b);
+}
+
+Opt cpuPowerSummary() {
+    const QString pol = QStringLiteral("/sys/devices/system/cpu/cpufreq/policy0/");
+    QStringList b;
+    const QString drv = trimmed(pol + QStringLiteral("scaling_driver"));
+    if (drv.isEmpty()) return std::nullopt;
+    b << drv;
+    if (const QString g = trimmed(pol + QStringLiteral("scaling_governor")); !g.isEmpty()) b << g;
+    if (const QString e = trimmed(pol + QStringLiteral("energy_performance_preference")); !e.isEmpty()) b << QStringLiteral("EPP ") + e;
+    QString boost = trimmed(QStringLiteral("/sys/devices/system/cpu/cpufreq/boost"));
+    if (!boost.isEmpty()) b << QStringLiteral("boost ") + (boost == QLatin1String("1") ? QStringLiteral("on") : QStringLiteral("off"));
+    return joined(b);
+}
+
+Opt memoryPolicy() {
+    QStringList b;
+    const QString thp = trimmed(QStringLiteral("/sys/kernel/mm/transparent_hugepage/enabled"));
+    const int o = thp.indexOf('['), c = thp.indexOf(']');
+    if (o >= 0 && c > o) b << QStringLiteral("THP ") + thp.mid(o + 1, c - o - 1);
+    if (const QString sw = trimmed(QStringLiteral("/proc/sys/vm/swappiness")); !sw.isEmpty()) b << QStringLiteral("swappiness ") + sw;
+    int zram = 0;
+    for (const QString &l : rd(QStringLiteral("/proc/swaps")).value_or(QString()).split('\n'))
+        if (l.startsWith(QLatin1String("/dev/zram"))) ++zram;
+    if (zram) b << QStringLiteral("zram %1").arg(zram);
+    return joined(b);
+}
+
 } // namespace sysinfo

@@ -1,6 +1,6 @@
 # Knob envanteri (kalibrasyon ve autotune)
 
-Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys dökümünden 26 knob eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
+Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys dökümünden 37 knob eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
 
 - **Kalibrasyon**: evet = tasarım oturumunda ölçülür (makineye göre atlanma koşulu parantez içinde).
 - Her knob, dosyası bu makinede/çekirdekte yoksa atlanır (ör. `cpu.epp_boost` yalnız yamalı çekirdekte).
@@ -8,7 +8,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
 - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
 
-Özet: 235 knob · kalibre + autotune 115 · yalnız autotune kuralı 52 · hiçbiri 68
+Özet: 246 knob · kalibre + autotune 115 · yalnız autotune kuralı 52 · hiçbiri 79
 
 ## CPU (38)
 
@@ -214,7 +214,7 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `btrfs.discard_kbps_limit` | hayır | — | — | background TRIM pacing: the storage suite never waits for it |
 | `btrfs.discard_max_size` | hayır | — | — | background TRIM pacing: the storage suite never waits for it |
 
-## Network (21)
+## Network (32)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -239,6 +239,17 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti ve /sys d
 | `net.mt76_deep_sleep` | hayır | — | — | no calibration phase for this group |
 | `bt.conn_min_interval` | hayır | — | — | no calibration phase for this group |
 | `bt.conn_max_interval` | hayır | — | — | no calibration phase for this group |
+| `net.netdev_budget` | hayır | — | — | no calibration phase for this group |
+| `net.netdev_budget_usecs` | hayır | — | — | no calibration phase for this group |
+| `net.dev_weight` | hayır | — | — | no calibration phase for this group |
+| `net.gro_normal_batch` | hayır | — | — | no calibration phase for this group |
+| `net.tcp_limit_output_bytes` | hayır | — | — | no calibration phase for this group |
+| `net.tcp_autocorking` | hayır | — | — | no calibration phase for this group |
+| `net.tcp_pacing_ss_ratio` | hayır | — | — | no calibration phase for this group |
+| `net.tcp_pacing_ca_ratio` | hayır | — | — | no calibration phase for this group |
+| `net.tcp_ecn` | hayır | — | — | no calibration phase for this group |
+| `net.rmem_max` | hayır | — | — | no calibration phase for this group |
+| `net.wmem_max` | hayır | — | — | no calibration phase for this group |
 
 ## Devices (25)
 

@@ -2288,6 +2288,22 @@ Kernel uptime: %2
             <translation>GPU modu</translation>
         </message>
         <message>
+            <source>Scheduler</source>
+            <translation>Zamanlayıcı</translation>
+        </message>
+        <message>
+            <source>CPU layout</source>
+            <translation>CPU düzeni</translation>
+        </message>
+        <message>
+            <source>CPU power</source>
+            <translation>CPU gücü</translation>
+        </message>
+        <message>
+            <source>Memory policy</source>
+            <translation>Bellek ilkesi</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/hometab.cpp" line="406"/>
             <source>EC Firmware</source>
             <translation>EC Yazılımı</translation>
@@ -8200,6 +8216,50 @@ sudo centurion-calibrate --restore
             <translation>Çekirdeğin takastaki sayfaları geri alırken nasıl ön-okuma yaptığı: true = her eşlemenin erişim desenini izleyen VMA başına ön-okuma (bir oyun veya tarayıcı belleğine adımlarla dokunuyorsa iyi), false = takas yuvası çevresindeki eski ön-okuma (sıralı takas düzenleri için iyi). Yalnız makine gerçekten takas yaptığında, zram dahil, anlamlıdır. vm.page-cluster ile birlikte kullanılır.</translation>
         </message>
         <message>
+            <source>How many packets one network softirq pass may process before yielding the CPU (stock 300). Higher = better throughput under heavy traffic, but other work on that core waits longer; lower = lower latency for everything else, at the risk of dropped packets on a very busy link. Works together with the time budget row below: whichever limit is hit first ends the pass.</source>
+            <translation>Bir ağ softirq geçişinin CPU'yu bırakmadan önce işleyebileceği paket sayısı (standart 300). Yüksek değer ağır trafikte daha iyi verim sağlar ama o çekirdekteki diğer işler daha uzun bekler; düşük değer diğer her şey için daha düşük gecikme verir, çok yoğun bir bağlantıda paket kaybı riskiyle. Aşağıdaki süre bütçesi satırıyla birlikte çalışır: hangi sınıra önce ulaşılırsa geçiş biter.</translation>
+        </message>
+        <message>
+            <source>The longest time (µs) one network softirq pass may run before yielding the CPU (stock 6666 here; the kernel default is 8000). A shorter limit caps how long packet processing can delay a game thread on the same core; a longer one favours throughput. Works together with the packet budget row above.</source>
+            <translation>Bir ağ softirq geçişinin CPU'yu bırakmadan önce çalışabileceği en uzun süre (µs) (burada standart 6666; çekirdek varsayılanı 8000). Kısa sınır paket işlemenin aynı çekirdekteki bir oyun iş parçacığını ne kadar geciktirebileceğini sınırlar; uzun sınır verimi öne alır. Yukarıdaki paket bütçesi satırıyla birlikte çalışır.</translation>
+        </message>
+        <message>
+            <source>How many packets one NAPI poll of a network device handles before it is rescheduled (stock 64). Lower = more even sharing of the CPU between devices and with other work, higher = fewer polls per second under load. Small effect on a laptop with one active adapter; changes take effect immediately for the receive path.</source>
+            <translation>Bir ağ aygıtının tek NAPI yoklamasında yeniden zamanlanmadan önce işlediği paket sayısı (standart 64). Düşük değer CPU'nun aygıtlar arasında ve diğer işlerle daha eşit paylaşılmasını sağlar, yüksek değer yük altında saniyedeki yoklama sayısını azaltır. Tek etkin bağdaştırıcılı bir dizüstüde etkisi küçüktür; alma yolunda hemen etkili olur.</translation>
+        </message>
+        <message>
+            <source>How many coalesced (GRO) segments the receive path collects before handing them to the protocol stack as one batch (stock 8). Higher = fewer stack entries and a little more throughput, lower = each segment reaches the stack sooner (slightly lower latency). Works with the GRO flush timeout row.</source>
+            <translation>Alma yolunun, birleştirilmiş (GRO) segmentleri protokol yığınına tek bir parti olarak vermeden önce kaç tane topladığı (standart 8). Yüksek değer yığına daha az giriş ve biraz daha fazla verim sağlar, düşük değer her segmentin yığına daha erken ulaşmasını sağlar (biraz daha düşük gecikme). GRO flush timeout satırıyla birlikte çalışır.</translation>
+        </message>
+        <message>
+            <source>TCP Small Queues: how many bytes one TCP socket may have waiting in the qdisc and the device queue at once (stock 4194304 here). A lower limit keeps queues short, which cuts bufferbloat and latency for interactive traffic sharing the link; a higher one lets a single bulk transfer keep the link fuller. Only matters when a connection is fast enough to fill the limit.</source>
+            <translation>TCP Small Queues: tek bir TCP soketinin aynı anda qdisc ve aygıt kuyruğunda bekletebileceği bayt sayısı (burada standart 4194304). Düşük sınır kuyrukları kısa tutar, bağlantıyı paylaşan etkileşimli trafik için tampon şişmesini ve gecikmeyi azaltır; yüksek sınır tek bir toplu aktarımın bağlantıyı daha dolu tutmasına izin verir. Yalnız bağlantı sınırı dolduracak kadar hızlıysa anlamlıdır.</translation>
+        </message>
+        <message>
+            <source>When on (stock), TCP merges several small writes into one packet if an earlier packet of that socket is still queued in the device. Fewer packets and less CPU, at the cost of holding a small write back for a moment. Off sends every write immediately: lowest latency for chatty protocols, more small packets.</source>
+            <translation>Açıkken (standart) TCP, aynı soketin önceki bir paketi hâlâ aygıtta kuyruktaysa birkaç küçük yazmayı tek pakette birleştirir. Daha az paket ve CPU kullanımı, küçük bir yazmayı bir an bekletme karşılığında. Kapalıyken her yazma hemen gönderilir: konuşkan protokoller için en düşük gecikme, daha çok küçük paket.</translation>
+        </message>
+        <message>
+            <source>Percentage of the estimated bandwidth at which TCP paces packets while in slow start (stock 200 = twice the current rate, so the window can still double each round trip). Lower = gentler, smoother start with less burst loss, higher = faster ramp-up. Only applies with a pacing qdisc such as fq or with TCP's internal pacing (BBR uses its own).</source>
+            <translation>TCP'nin yavaş başlangıç sırasında paketleri tahmini bant genişliğinin yüzde kaçıyla aralıklandırdığı (standart 200 = mevcut hızın iki katı, böylece pencere her gidiş-dönüşte yine ikiye katlanabilir). Düşük değer daha yumuşak, patlama kaybı az bir başlangıç verir, yüksek değer daha hızlı yükselir. Yalnız fq gibi bir pacing qdisc'iyle veya TCP'nin iç pacing'iyle geçerlidir (BBR kendisininkini kullanır).</translation>
+        </message>
+        <message>
+            <source>Percentage of the estimated bandwidth at which TCP paces packets after slow start (stock 120). Higher probes for more bandwidth, lower stays closer to the measured rate and keeps queues shorter. Same pacing conditions as the slow-start row.</source>
+            <translation>TCP'nin yavaş başlangıçtan sonra paketleri tahmini bant genişliğinin yüzde kaçıyla aralıklandırdığı (standart 120). Yüksek değer daha fazla bant genişliği yoklar, düşük değer ölçülen hıza daha yakın kalır ve kuyrukları daha kısa tutar. Yavaş başlangıç satırıyla aynı pacing koşulları geçerlidir.</translation>
+        </message>
+        <message>
+            <source>Explicit Congestion Notification: 0 = off, 1 = request ECN on outgoing connections and accept it on incoming ones, 2 = accept it only when the peer asks (stock). With 1, routers that support ECN can signal congestion by marking packets instead of dropping them, which helps latency on queue-managed links; a few old middleboxes mishandle it, so connections to those hosts can stall until the kernel falls back.</source>
+            <translation>Açık Tıkanıklık Bildirimi: 0 = kapalı, 1 = giden bağlantılarda ECN iste ve gelenlerde kabul et, 2 = yalnızca karşı taraf isterse kabul et (standart). 1 ile ECN destekleyen yönlendiriciler tıkanıklığı paketi düşürmek yerine işaretleyerek bildirebilir; bu, kuyruk yönetimli bağlantılarda gecikmeye yardım eder. Birkaç eski ara cihaz bunu yanlış ele alır, o sunuculara bağlantılar çekirdek geri dönene kadar takılabilir.</translation>
+        </message>
+        <message>
+            <source>The largest receive buffer a program may request for one socket with SO_RCVBUF (stock 4194304 here). Programs that ask for big UDP buffers (QUIC and game-streaming clients, capture tools) are silently capped by this; raising it lets them absorb bursts without dropping packets, at the cost of more kernel memory per such socket. Does not change what ordinary programs get by default.</source>
+            <translation>Bir programın SO_RCVBUF ile tek soket için isteyebileceği en büyük alma tamponu (burada standart 4194304). Büyük UDP tamponu isteyen programlar (QUIC ve oyun yayını istemcileri, yakalama araçları) sessizce bununla sınırlanır; yükseltmek onların paket kaybetmeden patlamaları sindirmesini sağlar, böyle her soket için daha çok çekirdek belleği harcar. Sıradan programların varsayılan olarak aldığını değiştirmez.</translation>
+        </message>
+        <message>
+            <source>The largest send buffer a program may request for one socket with SO_SNDBUF (stock 4194304 here). Mostly relevant to programs that send bursts of UDP or stream large files; raising it lets them queue more before blocking, at the cost of kernel memory and longer queues. Does not change what ordinary programs get by default.</source>
+            <translation>Bir programın SO_SNDBUF ile tek soket için isteyebileceği en büyük gönderme tamponu (burada standart 4194304). Çoğunlukla UDP patlamaları gönderen veya büyük dosya akıtan programlar için anlamlıdır; yükseltmek onların bloklanmadan önce daha çok kuyruğa almasını sağlar, çekirdek belleği ve daha uzun kuyruk karşılığında. Sıradan programların varsayılan olarak aldığını değiştirmez.</translation>
+        </message>
+        <message>
             <source>Kernel 6.6+: how widely an unbound work item may travel from the CPU that queued it. cache (stock) = within the same L3 - on a two-CCD Ryzen the work stays on the die that asked for it, no cross-CCD cache traffic; smt / cpu = even closer (better locality, less work-conservation); numa / system = anywhere (best for spreading heavy work, worst locality). Use together with 'Unbound workqueue CPUs', which is a hard CPU mask; this row is only the locality preference inside that mask.</source>
             <translation>Çekirdek 6.6+: bağımsız workqueue işinin onu kuyruğa alan CPU'dan ne kadar uzağa taşınabileceği. cache (varsayılan) = aynı L3 içinde; iki CCD'li Ryzen'de iş istendiği yongada kalır, CCD'ler arası cache trafiği yoktur. smt / cpu = daha dar alan (daha iyi yerellik, daha zayıf iş dağılımı); numa / system = her yere gidebilir (ağır işi dağıtmak için en iyi, yerellik için en kötü). Bunu 'Unbound workqueue CPUs' ile birlikte kullanın: o katı CPU maskesidir, bu satır yalnızca maskenin içindeki yerellik tercihidir.</translation>
         </message>
@@ -8527,6 +8587,17 @@ sudo centurion-calibrate --restore
 <message><source>Bluetooth LE min connection interval (debugfs)</source><translation>Bluetooth LE en küçük bağlantı aralığı (debugfs)</translation></message>
 <message><source>Bluetooth LE max connection interval (debugfs)</source><translation>Bluetooth LE en büyük bağlantı aralığı (debugfs)</translation></message>
 <message><source>Swap VMA readahead</source><translation>Takas VMA ön-okuması</translation></message>
+<message><source>Receive budget per softirq (packets)</source><translation>Softirq başına alma bütçesi (paket)</translation></message>
+<message><source>Receive time budget per softirq (µs)</source><translation>Softirq başına alma süre bütçesi (µs)</translation></message>
+<message><source>NAPI weight (packets per poll)</source><translation>NAPI ağırlığı (yoklama başına paket)</translation></message>
+<message><source>GRO batch before delivery (segments)</source><translation>GRO teslim öncesi toplu iş (segment)</translation></message>
+<message><source>TCP output limit per socket (bytes)</source><translation>Soket başına TCP çıkış sınırı (bayt)</translation></message>
+<message><source>TCP autocorking</source><translation>TCP otomatik birleştirme (autocorking)</translation></message>
+<message><source>TCP pacing rate, slow start (%)</source><translation>TCP pacing oranı, yavaş başlangıç (%)</translation></message>
+<message><source>TCP pacing rate, congestion avoidance (%)</source><translation>TCP pacing oranı, tıkanıklıktan kaçınma (%)</translation></message>
+<message><source>TCP ECN</source><translation>TCP ECN</translation></message>
+<message><source>Socket receive buffer ceiling (bytes)</source><translation>Soket alma tamponu tavanı (bayt)</translation></message>
+<message><source>Socket send buffer ceiling (bytes)</source><translation>Soket gönderme tamponu tavanı (bayt)</translation></message>
 <message><source>F2FS 1 · I/O accounting</source><translation>F2FS 1 · G/Ç istatistikleri</translation></message>
 <message><source>F2FS 1 · Idle GC mode</source><translation>F2FS 1 · Boştayken GC modu</translation></message>
 <message><source>F2FS 1 · Minimum GC sleep (ms)</source><translation>F2FS 1 · En kısa GC bekleme süresi (ms)</translation></message>
