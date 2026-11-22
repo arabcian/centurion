@@ -49,6 +49,7 @@
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QTabWidget>
+#include <QTextDocument>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QUrl>
@@ -328,19 +329,88 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *pw = new QWidget;
     auto *vw = new QVBoxLayout(pw);
     vw->setContentsMargins(6, 6, 6, 6);
+    auto *topw = new QHBoxLayout;
+    wifiIfaceLabel_ = new QLabel(tr("Adapter:"));
+    wifiIface_ = new QComboBox;
+    wifiIface_->setToolTip(tr("The wireless adapter to show (this machine has more than one)."));
+    auto *bWifiCopy = new QPushButton(tr("Copy details"));
+    bWifiCopy->setToolTip(tr("The connection and hardware details as plain text, e.g. for a bug report."));
+    topw->addWidget(wifiIfaceLabel_);
+    topw->addWidget(wifiIface_);
+    topw->addStretch(1);
+    topw->addWidget(bWifiCopy);
+    vw->addLayout(topw);
+    wifiIfaceLabel_->setVisible(false);
+    wifiIface_->setVisible(false);
+    wifiPages_ = new QTabWidget;
+    vw->addWidget(wifiPages_, 1);
+    // Connection
+    auto *pwc = new QWidget;
+    auto *vwc = new QVBoxLayout(pwc);
     wifiText_ = new QLabel;
     wifiText_->setTextFormat(Qt::RichText);
     wifiText_->setWordWrap(true);
     wifiText_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     wifiText_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    vw->addWidget(wifiText_);
+    vwc->addWidget(wifiText_);
     auto *wifiNote = new QLabel(tr("Retries and failures are totals since this connection started. Refreshes every 3 s while this tab is open."));
     wifiNote->setProperty("role", "muted");
     wifiNote->setWordWrap(true);
-    vw->addWidget(wifiNote);
-    vw->addStretch(1);
+    vwc->addWidget(wifiNote);
+    vwc->addStretch(1);
+    wifiPages_->addTab(pwc, tr("Connection"));
+    // Hardware
+    auto *pwh = new QWidget;
+    auto *vwh = new QVBoxLayout(pwh);
+    wifiHw_ = new QLabel;
+    wifiHw_->setTextFormat(Qt::RichText);
+    wifiHw_->setWordWrap(true);
+    wifiHw_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    wifiHw_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    vwh->addWidget(wifiHw_);
+    vwh->addStretch(1);
+    wifiPages_->addTab(pwh, tr("Hardware"));
+    // Nearby networks
+    auto *pwn = new QWidget;
+    auto *vwn = new QVBoxLayout(pwn);
+    auto *rwn = new QHBoxLayout;
+    wifiNetInfo_ = new QLabel;
+    wifiNetInfo_->setWordWrap(true);
+    wifiRescan_ = new QPushButton(tr("Rescan"));
+    wifiRescan_->setToolTip(tr("Asks NetworkManager for a fresh scan. The list shows the results the system already has."));
+    auto *bWifiNets = new QPushButton(tr("Refresh"));
+    rwn->addWidget(wifiNetInfo_, 1);
+    rwn->addWidget(wifiRescan_);
+    rwn->addWidget(bWifiNets);
+    vwn->addLayout(rwn);
+    wifiNets_ = makeTree({tr("Network"), tr("Signal"), tr("Channel"), tr("Band"), tr("Security"), tr("Seen"), tr("Address (BSSID)")});
+    wifiNets_->setContextMenuPolicy(Qt::NoContextMenu);
+    wifiNets_->setColumnWidth(0, 220);
+    vwn->addWidget(wifiNets_, 1);
+    auto *wifiNetNote = new QLabel(tr("Bold: the network you are connected to. A channel shared with many networks is a common cause of retries. "
+                                      "Open, WEP and WPA networks are not safe to use for anything private."));
+    wifiNetNote->setProperty("role", "muted");
+    wifiNetNote->setWordWrap(true);
+    vwn->addWidget(wifiNetNote);
+    wifiPages_->addTab(pwn, tr("Nearby networks"));
     wifiTab_ = tabs_->addTab(pw, tr("Wi-Fi"));
     tabs_->setTabVisible(wifiTab_, false);
+    connect(wifiIface_, &QComboBox::activated, this, [this] {
+        refreshWifi();
+        if (wifiPages_->currentIndex() == 1) refreshWifiHw();
+        if (wifiPages_->currentIndex() == 2) refreshWifiNets();
+    });
+    connect(wifiPages_, &QTabWidget::currentChanged, this, [this](int i) {
+        if (i == 1) refreshWifiHw();
+        if (i == 2) refreshWifiNets();
+    });
+    connect(wifiRescan_, &QPushButton::clicked, this, &NetPage::rescanWifi);
+    connect(bWifiNets, &QPushButton::clicked, this, &NetPage::refreshWifiNets);
+    connect(bWifiCopy, &QPushButton::clicked, this, [this] {
+        const auto plain = [](const QLabel *l) { QTextDocument d; d.setHtml(l->text()); return d.toPlainText().trimmed(); };
+        const QString hw = plain(wifiHw_);
+        QGuiApplication::clipboard()->setText(plain(wifiText_) + (hw.isEmpty() ? QString() : QStringLiteral("\n\n") + hw));
+    });
 
     // ── Traffic ── bytes per program per day (the netguard ledger; see traffic.rs)
     auto *pt = new QWidget;
@@ -601,6 +671,7 @@ void NetPage::hideEvent(QHideEvent *e) {
 void NetPage::poll() {
     if (isVisible() && tabs_->currentIndex() == wifiTab_) {
         refreshWifi();
+        if (wifiPages_->currentIndex() == 2) refreshWifiNets();
         wifiTimer_->start();
     } else {
         wifiTimer_->stop();
@@ -1290,8 +1361,32 @@ static int wifiEventsThisBoot() {
     return count;
 }
 
+QJsonObject NetPage::wifiReq(const char *op) const {
+    return {{"op", QLatin1String(op)}, {"iface", wifiIface_->currentText()}};
+}
+
 void NetPage::refreshWifi() {
-    runUser({{"op", "wifi"}}, [this](const QJsonObject &w) { applyWifi(w); }, 6000);
+    runUser(wifiReq("wifi"), [this](const QJsonObject &w) { applyWifi(w); }, 6000);
+}
+
+static QString wifiStandard(const QString &s, const QString &band) {
+    if (s == QLatin1String("be")) return NetPage::tr("Wi-Fi 7 (802.11be)");
+    if (s == QLatin1String("ax")) return band == QLatin1String("6") ? NetPage::tr("Wi-Fi 6E (802.11ax)") : NetPage::tr("Wi-Fi 6 (802.11ax)");
+    if (s == QLatin1String("ac")) return NetPage::tr("Wi-Fi 5 (802.11ac)");
+    if (s == QLatin1String("n")) return NetPage::tr("Wi-Fi 4 (802.11n)");
+    if (s == QLatin1String("legacy")) return NetPage::tr("802.11a/b/g (old, slow)");
+    return {};
+}
+
+static QString wifiDuration(qint64 s) {
+    if (s >= 86400) return NetPage::tr("%1 d %2 h").arg(s / 86400).arg(s % 86400 / 3600);
+    if (s >= 3600) return NetPage::tr("%1 h %2 min").arg(s / 3600).arg(s % 3600 / 60);
+    return NetPage::tr("%1 min").arg(qMax<qint64>(1, s / 60));
+}
+
+/// "<b>Label:</b> value" for the plain-text lines of the Wi-Fi pages (the Copy button turns them into text).
+static QString wifiLine(const QString &label, const QString &value) {
+    return QStringLiteral("<b>%1:</b> %2").arg(label.toHtmlEscaped(), value);
 }
 
 /// Shows the link and the station counters with plain warnings; the raw numbers come with the answer.
@@ -1301,6 +1396,16 @@ void NetPage::applyWifi(const QJsonObject &w) {
     tabs_->setTabVisible(wifiTab_, present);
     if (!present) return;
     const QString iface = str(w, "iface").toHtmlEscaped();
+    QStringList names;
+    for (const QJsonValue &x : w.value(QLatin1String("ifaces")).toArray()) names << x.toString();
+    if (names.isEmpty()) names << str(w, "iface");
+    { const QSignalBlocker b(wifiIface_);
+      QStringList have;
+      for (int i = 0; i < wifiIface_->count(); ++i) have << wifiIface_->itemText(i);
+      if (have != names) { wifiIface_->clear(); wifiIface_->addItems(names); }
+      wifiIface_->setCurrentText(str(w, "iface")); }
+    wifiIface_->setVisible(names.size() > 1);
+    wifiIfaceLabel_->setVisible(names.size() > 1);
     if (!w.value(QLatin1String("ok")).toBool()) {
         wifiText_->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::DANGER), str(w, "error").toHtmlEscaped()));
         return;
@@ -1317,15 +1422,37 @@ void NetPage::applyWifi(const QJsonObject &w) {
         const QJsonValue v = w.value(QLatin1String(k));
         return v.isNull() || v.isUndefined() ? QStringLiteral("—") : QString::number(v.toDouble(), 'f', prec);
     };
+    const auto has = [&w](const char *k) { const QJsonValue v = w.value(QLatin1String(k)); return !v.isNull() && !v.isUndefined(); };
     QStringList warn;
     for (const QJsonValue &x : w.value(QLatin1String("warn")).toArray()) warn << x.toString();
     QStringList lines;
     lines << tr("Connected to <b>%1</b> on %2.").arg(str(w, "ssid").toHtmlEscaped(), iface);
+    if (!str(w, "bssid").isEmpty()) lines << wifiLine(tr("Access point"), str(w, "bssid").toHtmlEscaped());
+    if (has("connected_secs")) lines << wifiLine(tr("Connected for"), wifiDuration(w.value(QLatin1String("connected_secs")).toInteger()));
     const QString signal = num("signal_dbm", 0);
-    lines << tr("Signal <b>%1 dBm</b>").arg(signal) + (warn.contains(QStringLiteral("weak_signal")) ? QStringLiteral(" <span style='color:%1'>%2</span>")
-                                                                                                     .arg(QLatin1String(theme::WARN), tr("weak")) : QString());
+    lines << tr("Signal <b>%1 dBm</b>").arg(signal)
+                 + (has("signal_avg_dbm") ? tr(" (average %1 dBm)").arg(num("signal_avg_dbm", 0)) : QString())
+                 + (warn.contains(QStringLiteral("weak_signal")) ? QStringLiteral(" <span style='color:%1'>%2</span>")
+                                                                      .arg(QLatin1String(theme::WARN), tr("weak")) : QString());
+    QStringList where;
+    if (has("channel")) where << tr("channel %1").arg(num("channel", 0));
+    if (!str(w, "band").isEmpty()) where << tr("%1 GHz band").arg(str(w, "band"));
+    if (has("width_mhz")) where << tr("%1 MHz wide").arg(num("width_mhz", 0));
+    if (!where.isEmpty()) lines << wifiLine(tr("Channel"), where.join(QStringLiteral(" · ")));
+    const QString std = wifiStandard(str(w, "standard"), str(w, "band"));
+    if (!std.isEmpty()) lines << wifiLine(tr("Standard"), std.toHtmlEscaped());
     lines << tr("Link rate: %1 Mb/s down, %2 Mb/s up").arg(num("rx_mbps", 1), num("tx_mbps", 1));
+    if (!str(w, "rx_mode").isEmpty() || !str(w, "tx_mode").isEmpty())
+        lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::MUTED),
+                     tr("Down: %1 · Up: %2").arg(str(w, "rx_mode").toHtmlEscaped(), str(w, "tx_mode").toHtmlEscaped()));
+    if (has("expected_mbps")) lines << wifiLine(tr("Estimated usable speed"), tr("%1 Mb/s").arg(num("expected_mbps", 0)));
+    if (has("tx_power_dbm")) lines << wifiLine(tr("Transmit power"), tr("%1 dBm").arg(num("tx_power_dbm", 1)));
+    lines << wifiLine(tr("Data this connection"), tr("%1 received, %2 sent")
+                          .arg(humanBytes(w.value(QLatin1String("rx_bytes")).toInteger()), humanBytes(w.value(QLatin1String("tx_bytes")).toInteger())));
     lines << tr("Retries: %1 % of transmitted packets · failed: %2 %").arg(num("retry_pct", 1), num("fail_pct", 1));
+    if (const int lost = w.value(QLatin1String("beacon_loss")).toInt())
+        lines << wifiLine(tr("Beacons lost"), QStringLiteral("%1 <span style='color:%2'>%3</span>")
+                              .arg(lost).arg(QLatin1String(theme::MUTED), tr("(the access point's signal dropped out now and then)")));
     if (warn.contains(QStringLiteral("weak_signal"))) lines << tr("Weak signal: move closer to the access point or check the antenna.");
     if (warn.contains(QStringLiteral("retries"))) lines << tr("Many retries: the channel is busy or the link is marginal.");
     if (warn.contains(QStringLiteral("failed"))) lines << tr("Many failed transmissions: packets are being lost on this link.");
@@ -1334,6 +1461,134 @@ void NetPage::applyWifi(const QJsonObject &w) {
                      tr("The Wi-Fi firmware crashed and restarted %n time(s) since boot (Health → Monitor).", nullptr, fw));
     if (warn.isEmpty() && !wifiEventsThisBoot()) lines << QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::OK), tr("The link looks healthy."));
     wifiText_->setText(lines.join(QStringLiteral("<br>")));
+}
+
+void NetPage::refreshWifiHw() {
+    runUser(wifiReq("wifi_hw"), [this](const QJsonObject &h) { applyWifiHw(h); }, 8000);
+}
+
+/// The adapter, its driver and what the radio is allowed to do. Rarely changes, so it is read when the page opens.
+void NetPage::applyWifiHw(const QJsonObject &h) {
+    if (!h.value(QLatin1String("ok")).toBool()) {
+        wifiHw_->setText(h.isEmpty() ? tr("No answer from the helper.") : str(h, "error").toHtmlEscaped());
+        return;
+    }
+    const auto text = [&h](const char *k) { return str(h, k).toHtmlEscaped(); };
+    const auto has = [&h](const char *k) { const QJsonValue v = h.value(QLatin1String(k)); return !v.isNull() && !v.isUndefined(); };
+    QStringList lines;
+    const QString name = (text("vendor") + QLatin1Char(' ') + text("product")).trimmed();
+    if (!name.isEmpty()) lines << wifiLine(tr("Adapter"), name);
+    lines << wifiLine(tr("Interface"), text("iface") + (has("mac") ? QStringLiteral(" · ") + text("mac") : QString()));
+    QStringList drv;
+    if (has("driver")) drv << text("driver");
+    if (has("bus")) drv << (has("slot") ? tr("%1 bus, %2").arg(text("bus"), text("slot")) : tr("%1 bus").arg(text("bus")));
+    if (!drv.isEmpty()) lines << wifiLine(tr("Driver"), drv.join(QStringLiteral(" · ")));
+    if (has("firmware")) lines << wifiLine(tr("Firmware"), text("firmware"));
+    if (has("vendor_id") && has("device_id")) lines << wifiLine(tr("Hardware ID"), text("vendor_id") + QLatin1Char(':') + text("device_id"));
+    if (has("rfkill_soft") || has("rfkill_hard")) {
+        const bool hard = h.value(QLatin1String("rfkill_hard")).toBool(), soft = h.value(QLatin1String("rfkill_soft")).toBool();
+        const QString state = hard ? tr("switched off by a hardware switch or key")
+                            : soft ? tr("switched off in software (rfkill)") : tr("on");
+        lines << wifiLine(tr("Radio"), hard || soft ? QStringLiteral("<span style='color:%1'>%2</span>").arg(QLatin1String(theme::WARN), state) : state);
+    }
+    if (has("power_save"))
+        lines << wifiLine(tr("Power save"), h.value(QLatin1String("power_save")).toBool()
+                              ? tr("on (saves power; can add latency spikes)") : tr("off (steady latency, more power)"))
+                     + QStringLiteral(" <span style='color:%1'>%2</span>").arg(QLatin1String(theme::MUTED), tr("— change it under Optimizations → Network."));
+    if (has("regdom")) {
+        const QString c = str(h, "regdom");
+        lines << wifiLine(tr("Regulatory country"), c == QLatin1String("00")
+                              ? tr("00 (world: the most cautious channels and power; set your country to unlock more)") : c.toHtmlEscaped());
+    }
+    const QJsonArray bands = h.value(QLatin1String("bands")).toArray();
+    if (!bands.isEmpty()) {
+        lines << QStringLiteral("<b>%1</b>").arg(tr("Bands"));
+        for (const QJsonValue &x : bands) {
+            const QJsonObject b = x.toObject();
+            QStringList gens;
+            for (const QJsonValue &g : b.value(QLatin1String("standards")).toArray()) {
+                const QString s = g.toString();
+                gens << (s == QLatin1String("be") ? tr("Wi-Fi 7") : s == QLatin1String("ax") ? (str(b, "band") == QLatin1String("6") ? tr("Wi-Fi 6E") : tr("Wi-Fi 6"))
+                       : s == QLatin1String("ac") ? tr("Wi-Fi 5") : tr("Wi-Fi 4"));
+            }
+            QString row = tr("%1 GHz: %n channel(s)", nullptr, b.value(QLatin1String("channels")).toInt()).arg(str(b, "band"));
+            if (!b.value(QLatin1String("max_dbm")).isNull()) row += tr(", up to %1 dBm").arg(b.value(QLatin1String("max_dbm")).toDouble(), 0, 'f', 0);
+            if (!gens.isEmpty()) row += QStringLiteral(" — ") + gens.join(QStringLiteral(", "));
+            lines << QStringLiteral("&nbsp;&nbsp;") + row.toHtmlEscaped();
+        }
+    }
+    QStringList modes;
+    for (const QJsonValue &m : h.value(QLatin1String("modes")).toArray()) modes << m.toString();
+    if (!modes.isEmpty()) lines << wifiLine(tr("Can work as"), modes.join(QStringLiteral(", ")).toHtmlEscaped());
+    if (!h.value(QLatin1String("iw")).toBool())
+        lines << tr("Install <code>iw</code> to read bands, regulatory country and power save.");
+    wifiHw_->setText(lines.join(QStringLiteral("<br>")));
+}
+
+void NetPage::refreshWifiNets() {
+    runUser(wifiReq("wifi_scan"), [this](const QJsonObject &n) { applyWifiNets(n); }, 8000);
+}
+
+/// Networks the system has seen, strongest first (the kernel's cached scan, not a new scan).
+void NetPage::applyWifiNets(const QJsonObject &n) {
+    wifiNets_->clear();
+    if (!n.value(QLatin1String("ok")).toBool()) {
+        wifiNetInfo_->setText(n.isEmpty() ? tr("No answer from the helper.") : str(n, "error").toHtmlEscaped());
+        return;
+    }
+    if (!n.value(QLatin1String("iw")).toBool()) {
+        wifiNetInfo_->setText(tr("Install <code>iw</code> to list nearby networks."));
+        return;
+    }
+    const bool canRescan = n.value(QLatin1String("can_rescan")).toBool();
+    wifiRescan_->setEnabled(canRescan);
+    if (!canRescan) wifiRescan_->setToolTip(tr("Needs NetworkManager (nmcli). The list shows the results the system already has."));
+    const QJsonArray nets = n.value(QLatin1String("networks")).toArray();
+    const QColor warn{QLatin1String(theme::WARN)}, bad{QLatin1String(theme::DANGER)};
+    for (const QJsonValue &x : nets) {
+        const QJsonObject o = x.toObject();
+        const QString ssid = str(o, "ssid");
+        const QJsonValue sig = o.value(QLatin1String("signal_dbm")), ch = o.value(QLatin1String("channel")), seen = o.value(QLatin1String("seen_ms"));
+        const QString sec = str(o, "security");
+        auto *it = new QTreeWidgetItem({ssid.isEmpty() ? tr("(hidden network)") : ssid,
+                                        sig.isNull() ? QStringLiteral("—") : tr("%1 dBm").arg(sig.toInt()),
+                                        ch.isNull() ? QStringLiteral("—") : QString::number(ch.toInt()),
+                                        tr("%1 GHz").arg(str(o, "band")), sec,
+                                        seen.isNull() ? QStringLiteral("—") : tr("%1 s ago").arg(seen.toInteger() / 1000),
+                                        str(o, "bssid")});
+        if (o.value(QLatin1String("associated")).toBool()) {
+            QFont f = it->font(0);
+            f.setBold(true);
+            for (int c = 0; c < it->columnCount(); ++c) it->setFont(c, f);
+        }
+        if (sec == QLatin1String("Open") || sec == QLatin1String("WEP")) it->setForeground(4, bad);
+        else if (sec == QLatin1String("WPA")) it->setForeground(4, warn);
+        wifiNets_->addTopLevelItem(it);
+    }
+    QString info = nets.isEmpty() ? tr("No networks in the system's scan results yet. Press Rescan.")
+                                  : tr("%n network(s) seen (results the system already has).", nullptr, n.value(QLatin1String("total")).toInt());
+    const QJsonObject load = n.value(QLatin1String("load")).toObject();
+    if (!load.isEmpty()) {
+        const int same = load.value(QLatin1String("same")).toInt(), overlap = load.value(QLatin1String("overlap")).toInt();
+        info += QLatin1Char(' ') + tr("Your channel %1 is shared with %n other network(s)", nullptr, same).arg(load.value(QLatin1String("channel")).toInt());
+        if (overlap) info += tr(", and %n more on channels that overlap it", nullptr, overlap);
+        info += QLatin1Char('.');
+    }
+    wifiNetInfo_->setText(info);
+}
+
+/// NetworkManager does the scan (polkit lets the logged-in user ask); the list is read again a few seconds later.
+void NetPage::rescanWifi() {
+    wifiRescan_->setEnabled(false);
+    wifiNetInfo_->setText(tr("Scanning…"));
+    runUser(wifiReq("wifi_rescan"), [this](const QJsonObject &r) {
+        wifiRescan_->setEnabled(true);
+        if (!r.value(QLatin1String("ok")).toBool()) {
+            wifiNetInfo_->setText(r.isEmpty() ? tr("No answer from the helper.") : str(r, "error").toHtmlEscaped());
+            return;
+        }
+        QTimer::singleShot(4000, this, [this] { if (isVisible() && wifiPages_->currentIndex() == 2) refreshWifiNets(); });
+    }, 15000);
 }
 
 /// Bans the registered block the address sits in (whois range), as one group named after its owner.

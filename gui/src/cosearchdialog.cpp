@@ -1138,7 +1138,7 @@ void CoSearchDialog::compareThroughput(std::function<void()> then) {
 }
 
 void CoSearchDialog::offerResume() {
-    if (running_) return;
+    if (running_ || !QFileInfo::exists(journalPath())) return;
     QFile f(journalPath());
     // An unreadable or oversized journal still goes to the "invalid journal" question below, or Start would
     // return here forever without saying why.

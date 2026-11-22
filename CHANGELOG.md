@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ## [Unreleased]
 
 ### Added
+- PipeWire Doctor → *Settings…*: tick-to-set table of well-known options with a hint for each (sample rate and
+  allowed rates, buffer sizes, log level, Pulse request sizes, Bluetooth headset profile, new-output volume,
+  auto-mute, idle-suspend delay and ALSA headroom). Written to `50-centurion.conf` files in `~/.config/pipewire`
+  and `~/.config/wireplumber` (no root; they override the system files without changing them), then the sound
+  servers are restarted; *Remove all changes* deletes the files.
+- EDID / VRR shows more per display: physical size, bit depth, colour formats, HDR modes with peak / black level,
+  colour spaces, audio, manufacture date, mode count, connector state, and the backlight devices. *Panel
+  controls…* sets the built-in screen's brightness and refresh rate (as the user, through `centurion-display`).
+- Health → Network → Wi-Fi shows more about the connection and the adapter. *Connection* adds access point,
+  time connected, channel / band / width, Wi-Fi generation, the link-rate details, estimated usable speed,
+  transmit power, data transferred and lost beacons. *Hardware* (new) gives adapter name, driver, bus, firmware,
+  hardware ID, radio and rfkill state, power save, regulatory country, the bands with their channels, power and
+  Wi-Fi generations, and the modes the adapter supports. *Nearby networks* (new) lists the networks the system
+  has already scanned with signal, channel, security and age, tells how many networks share your channel, and
+  has a *Rescan* button (NetworkManager). An adapter picker appears on machines with more than one adapter, and
+  *Copy details* puts the page on the clipboard. All reads stay unprivileged; no new root helper or password.
 - Health → System tools can change the system, not only read it, through a new root helper `sysadmin-helper`
   (polkit `com.centurion.sysadmin`: the administrator password, then polkit's keep window; the existing
   password-free helpers are unchanged). Tool pages: CPU boost / clock cap, drop caches, zswap, fstrim, SMART
@@ -35,8 +51,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   equal-width, equal-height pairs; *Startup & daemon* merged into the voltage page; pages scroll when a CPU
   offers more controls; an empty voltage list explains why (AMD CPU or hidden OC mailbox). Classic UI unchanged.
 - Intel tab tooltips describe each option by itself instead of naming other undervolt tools.
+- Network protection → Lookup → Port check accepts up to 1024 ports (was 64); at most 256 connections are tried at once.
 
 ### Fixed
+- CO Search: opening the window with no journal file asked "Invalid CO search journal" every time (a missing file
+  was treated as an unreadable one); the question now appears only when a journal exists.
 - CO Search: the "Invalid CO search journal" question came back on every open when the journal could not be
   removed (e.g. owned by root) or the reset before removing it failed, both silently. It now names the file, its
   owner and the error, says when removal fails (with the command that removes it), and an unreadable journal can

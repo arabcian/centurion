@@ -1,9 +1,12 @@
-//! Wi-Fi link health — Health → Network → Wi-Fi.
+//! Wi-Fi link, hardware and nearby networks — Health → Network → Wi-Fi.
 //!
-//! Read-only and unprivileged: `iw dev <if> link` and `iw dev <if> station dump` are nl80211 reads.
-//! The interface is the first wireless one under /sys/class/net; nothing is taken from the request.
-//! No Wi-Fi interface → `present: false` (the GUI hides the tab). The GUI asks only while the tab is
-//! on screen (every 3 s), so nothing runs in the background.
+//! Read-only and unprivileged: `iw dev <if> link / info / station dump / scan dump` and `iw phy <phy> info`
+//! are nl80211 reads (`scan dump` shows the kernel's cached results; it does not scan). The one action,
+//! `wifi_rescan`, asks NetworkManager (`nmcli device wifi rescan`, which polkit allows an active session).
+//! The interface is one of the wireless ones under /sys/class/net: the request may name one, but only a
+//! name found there is used. No Wi-Fi interface → `present: false` (the GUI hides the tab). The GUI asks
+//! only while the tab is on screen (link every 3 s; hardware and nearby networks when their page is
+//! opened or refreshed), so nothing runs in the background.
 
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -18,7 +21,11 @@ const FAIL_PCT: f64 = 2.0;
 #[derive(Debug, Default, PartialEq)]
 pub struct Link {
     pub connected: bool,
+    pub bssid: String,
     pub ssid: String,
+    pub freq: Option<u32>,
+    pub rx_mode: String,
+    pub tx_mode: String,
     pub signal_dbm: Option<i32>,
     pub rx_mbps: Option<f64>,
     pub tx_mbps: Option<f64>,
@@ -31,6 +38,45 @@ pub struct Station {
     pub tx_packets: u64,
     pub tx_retries: u64,
     pub tx_failed: u64,
+    pub rx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub beacon_loss: u64,
+    pub connected_secs: Option<u64>,
+    pub signal_avg_dbm: Option<i32>,
+    pub expected_mbps: Option<f64>,
+}
+
+/// `iw dev <if> info`: the interface's own address, phy and current channel.
+#[derive(Debug, Default, PartialEq)]
+pub struct Info {
+    pub addr: String,
+    pub wiphy: Option<u32>,
+    pub freq: Option<u32>,
+    pub channel: Option<u32>,
+    pub width_mhz: Option<u32>,
+    pub txpower_dbm: Option<f64>,
+}
+
+/// One access point of the scan results.
+#[derive(Debug, Default, PartialEq)]
+pub struct Bss {
+    pub bssid: String,
+    pub ssid: String,
+    pub freq: u32,
+    pub signal_dbm: Option<i32>,
+    pub security: &'static str,
+    pub seen_ms: Option<u64>,
+    pub associated: bool,
+}
+
+/// One band of `iw phy info`: usable channels, strongest allowed power, 802.11 generations it speaks.
+#[derive(Debug, Default, PartialEq)]
+pub struct Band {
+    pub name: &'static str,
+    pub channels: u32,
+    pub max_dbm: Option<f64>,
+    pub standards: Vec<&'static str>,
 }
 
 /// `key: value` pairs of iw's tab-indented output, keys trimmed. Lines without a colon are skipped.
@@ -46,12 +92,14 @@ fn first<T: std::str::FromStr>(v: &str) -> Option<T> { v.split_whitespace().next
 
 pub fn parse_link(text: &str) -> Link {
     let mut l = Link { connected: text.trim_start().starts_with("Connected to"), ..Link::default() };
+    if let Some(b) = text.trim_start().strip_prefix("Connected to ").and_then(|t| t.split_whitespace().next()) { l.bssid = b.to_owned(); }
     for (k, v) in fields(text) {
         match k {
             "SSID" => l.ssid = v.to_owned(),
+            "freq" => l.freq = first::<f64>(v).map(|f| f as u32),
             "signal" => l.signal_dbm = first(v),
-            "rx bitrate" => l.rx_mbps = first(v),
-            "tx bitrate" => l.tx_mbps = first(v),
+            "rx bitrate" => { l.rx_mbps = first(v); l.rx_mode = v.to_owned(); }
+            "tx bitrate" => { l.tx_mbps = first(v); l.tx_mode = v.to_owned(); }
             _ => {}
         }
     }
@@ -67,10 +115,189 @@ pub fn parse_station(text: &str) -> Station {
             "tx packets" => s.tx_packets = first(v).unwrap_or(0),
             "tx retries" => s.tx_retries = first(v).unwrap_or(0),
             "tx failed" => s.tx_failed = first(v).unwrap_or(0),
+            "rx packets" => s.rx_packets = first(v).unwrap_or(0),
+            "rx bytes" => s.rx_bytes = first(v).unwrap_or(0),
+            "tx bytes" => s.tx_bytes = first(v).unwrap_or(0),
+            "beacon loss" => s.beacon_loss = first(v).unwrap_or(0),
+            "connected time" => s.connected_secs = first(v),
+            "signal avg" => s.signal_avg_dbm = first(v),
+            "expected throughput" => s.expected_mbps = lead_f64(v),
             _ => {}
         }
     }
     s
+}
+
+/// The number a value starts with, even when the unit is glued to it ("866.700Mbps", "22.00 dBm").
+fn lead_f64(v: &str) -> Option<f64> {
+    let end = v.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(v.len());
+    v[..end].parse().ok()
+}
+
+pub fn parse_info(text: &str) -> Info {
+    let mut i = Info::default();
+    for l in text.lines().map(str::trim) {
+        if let Some(v) = l.strip_prefix("addr ") { i.addr = v.trim().to_owned(); }
+        else if let Some(v) = l.strip_prefix("wiphy ") { i.wiphy = v.trim().parse().ok(); }
+        else if let Some(v) = l.strip_prefix("txpower ") { i.txpower_dbm = lead_f64(v); }
+        else if let Some(v) = l.strip_prefix("channel ") {
+            // "36 (5180 MHz), width: 80 MHz, center1: 5210 MHz"
+            i.channel = first(v);
+            i.freq = v.split('(').nth(1).and_then(first);
+            i.width_mhz = v.split("width:").nth(1).and_then(first);
+        }
+    }
+    i
+}
+
+/// "2.4", "5" or "6" (GHz), empty for a frequency outside them.
+pub fn band(freq: u32) -> &'static str {
+    match freq { 2400..=2500 => "2.4", 5150..=5895 => "5", 5925..=7125 => "6", _ => "" }
+}
+
+pub fn channel(freq: u32) -> Option<u32> {
+    match freq {
+        2484 => Some(14),
+        2412..=2472 => Some((freq - 2407) / 5),
+        5150..=5895 => Some((freq - 5000) / 5),
+        5935 => Some(2),
+        5955..=7115 => Some((freq - 5950) / 5),
+        _ => None,
+    }
+}
+
+/// The 802.11 generation a bitrate line speaks: "be" (Wi-Fi 7), "ax" (6), "ac" (5), "n" (4), "legacy", or "".
+pub fn standard(mode: &str) -> &'static str {
+    if mode.contains("EHT-MCS") { "be" }
+    else if mode.contains("HE-MCS") { "ax" }
+    else if mode.contains("VHT-MCS") { "ac" }
+    else if mode.contains("MCS") { "n" }
+    else if mode.trim().is_empty() { "" }
+    else { "legacy" }
+}
+
+fn security(auth: Option<&str>, wpa: bool, privacy: bool) -> &'static str {
+    match auth {
+        Some(a) if a.contains("OWE") => "OWE",
+        Some(a) if a.contains("802.1X") => "Enterprise",
+        Some(a) if a.contains("SAE") && a.contains("PSK") => "WPA2/WPA3",
+        Some(a) if a.contains("SAE") => "WPA3",
+        Some(_) => "WPA2",
+        None if wpa => "WPA",
+        None if privacy => "WEP",
+        None => "Open",
+    }
+}
+
+/// `iw dev <if> scan dump`, strongest first. Lines of the RSN / WPA blocks are read only for their
+/// authentication suites; everything else is a plain `key: value` line one tab deep.
+pub fn parse_scan(text: &str) -> Vec<Bss> {
+    struct Raw { bss: Bss, auth: Option<String>, wpa: bool, privacy: bool }
+    let done = |r: Raw| Bss { security: security(r.auth.as_deref(), r.wpa, r.privacy), ..r.bss };
+    let mut out: Vec<Bss> = Vec::new();
+    let mut cur: Option<Raw> = None;
+    let mut in_rsn = false;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("BSS ") {
+            if let Some(r) = cur.take() { out.push(done(r)); }
+            in_rsn = false;
+            let bssid = rest.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("").to_owned();
+            cur = Some(Raw { bss: Bss { bssid, associated: line.contains("-- associated"), ..Bss::default() }, auth: None, wpa: false, privacy: false });
+            continue;
+        }
+        let Some(r) = cur.as_mut() else { continue };
+        let t = line.trim();
+        if t.contains("Authentication suites:") && in_rsn {
+            let v = t.split_once("suites:").map_or("", |(_, v)| v.trim());
+            r.auth = Some(format!("{} {v}", r.auth.as_deref().unwrap_or("")));
+        }
+        if !line.starts_with('\t') || line.starts_with("\t\t") { continue; }
+        in_rsn = t.starts_with("RSN:");
+        if in_rsn { r.auth.get_or_insert_with(String::new); }
+        if t.starts_with("WPA:") { r.wpa = true; }
+        let Some((k, v)) = t.split_once(':') else { continue };
+        let v = v.trim();
+        match k {
+            "freq" => r.bss.freq = first::<f64>(v).map_or(0, |f| f as u32),
+            "signal" => r.bss.signal_dbm = first::<f64>(v).map(|f| f.round() as i32),
+            "SSID" => r.bss.ssid = v.to_owned(),
+            "capability" => r.privacy = v.contains("Privacy"),
+            "last seen" if v.ends_with("ago") => r.bss.seen_ms = first(v),
+            _ => {}
+        }
+    }
+    if let Some(r) = cur { out.push(done(r)); }
+    out.sort_by_key(|b| std::cmp::Reverse(b.signal_dbm.unwrap_or(i32::MIN)));
+    out
+}
+
+/// How crowded the connected channel is: other networks on it, and (2.4 GHz only) on channels within
+/// four of it, which overlap it. `None` when the scan holds no associated network.
+pub fn channel_load(list: &[Bss]) -> Option<(u32, usize, usize)> {
+    let me = list.iter().find(|b| b.associated)?;
+    let ch = channel(me.freq)?;
+    let mut same = 0;
+    let mut overlap = 0;
+    for b in list.iter().filter(|b| !b.associated && band(b.freq) == band(me.freq)) {
+        let Some(c) = channel(b.freq) else { continue };
+        if c == ch { same += 1; }
+        else if band(me.freq) == "2.4" && c.abs_diff(ch) <= 4 { overlap += 1; }
+    }
+    Some((ch, same, overlap))
+}
+
+/// Bands, and the interface modes, of `iw phy <phy> info`.
+pub fn parse_phy(text: &str) -> (Vec<Band>, Vec<String>) {
+    let mut bands: Vec<Band> = Vec::new();
+    let mut modes = Vec::new();
+    let mut in_modes = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if line.starts_with("\tBand ") && t.ends_with(':') { bands.push(Band::default()); in_modes = false; continue; }
+        if t.starts_with("Supported interface modes:") { in_modes = true; continue; }
+        if in_modes {
+            if let Some(m) = t.strip_prefix("* ") { modes.push(m.to_owned()); continue; }
+            in_modes = false;
+        }
+        let Some(b) = bands.last_mut() else { continue };
+        let g = if t.starts_with("Capabilities:") { "n" }
+            else if t.starts_with("VHT Capabilities") { "ac" }
+            else if t.starts_with("HE Iftypes") { "ax" }
+            else if t.starts_with("EHT Iftypes") { "be" }
+            else { "" };
+        if !g.is_empty() && !b.standards.contains(&g) { b.standards.push(g); }
+        if let Some(f) = t.strip_prefix("* ").filter(|r| r.contains(" MHz [") && !r.contains("(disabled)")) {
+            b.channels += 1;
+            if b.name.is_empty() { b.name = band(first(f).unwrap_or(0)); }
+            let dbm = f.split(" dBm)").next().filter(|_| f.contains(" dBm)")).and_then(|h| h.rsplit('(').next()).and_then(lead_f64);
+            if dbm > b.max_dbm { b.max_dbm = dbm; }
+        }
+    }
+    (bands, modes)
+}
+
+/// The first `country XX:` of `iw reg get` ("00" is the world domain).
+pub fn parse_reg(text: &str) -> Option<String> {
+    let c = text.lines().find_map(|l| l.trim().strip_prefix("country "))?;
+    Some(c.split(':').next()?.trim().to_owned())
+}
+
+/// `name` and `name_pci` of the PCI ID database, when it is installed.
+fn pci_names(vendor: &str, device: &str) -> (Option<String>, Option<String>) {
+    for path in ["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"] {
+        let Ok(txt) = std::fs::read_to_string(path) else { continue };
+        let mut vname = None;
+        for l in txt.lines().filter(|l| !l.is_empty() && !l.starts_with('#')) {
+            if !l.starts_with('\t') {
+                if vname.is_some() { break; }
+                if let Some(r) = l.strip_prefix(vendor).filter(|r| r.starts_with("  ")) { vname = Some(r.trim().to_owned()); }
+            } else if vname.is_some() && !l.starts_with("\t\t") {
+                if let Some(r) = l[1..].strip_prefix(device).filter(|r| r.starts_with("  ")) { return (vname, Some(r.trim().to_owned())); }
+            }
+        }
+        return (vname, None);
+    }
+    (None, None)
 }
 
 fn pct(n: u64, of: u64) -> f64 { if of == 0 { 0.0 } else { n as f64 * 100.0 / of as f64 } }
@@ -84,9 +311,10 @@ pub fn warnings(s: &Station) -> Vec<&'static str> {
     w
 }
 
-/// The first interface with a Wi-Fi (nl80211 or wext) directory; one that is up comes before one that is not.
-fn wireless_iface() -> Option<String> {
-    let mut names: Vec<(bool, String)> = std::fs::read_dir("/sys/class/net").ok()?
+/// Every interface with a Wi-Fi (nl80211 or wext) directory; the ones that are up come first.
+fn wireless_ifaces() -> Vec<String> {
+    let Ok(dir) = std::fs::read_dir("/sys/class/net") else { return Vec::new() };
+    let mut names: Vec<(bool, String)> = dir
         .filter_map(Result::ok)
         .filter(|e| e.path().join("phy80211").exists() || e.path().join("wireless").exists())
         .map(|e| {
@@ -95,35 +323,152 @@ fn wireless_iface() -> Option<String> {
         })
         .collect();
     names.sort();
-    names.into_iter().next().map(|(_, n)| n)
+    names.into_iter().map(|(_, n)| n).collect()
 }
 
-fn iw_bin() -> Option<PathBuf> {
-    ["/usr/sbin", "/sbin", "/usr/bin", "/bin"].iter().map(|d| Path::new(d).join("iw")).find(|p| crate::trusted_path(p))
+/// The interface the request names if it is a wireless one, else the first.
+fn pick(req: &Value) -> (Vec<String>, Option<String>) {
+    let all = wireless_ifaces();
+    let one = req["iface"].as_str().filter(|w| all.iter().any(|n| n == w)).map(str::to_owned).or_else(|| all.first().cloned());
+    (all, one)
+}
+
+
+/// A trusted (root-owned) tool by name, e.g. `ethtool`, `nmcli`.
+fn tool(name: &str) -> Option<PathBuf> {
+    ["/usr/sbin", "/sbin", "/usr/bin", "/bin"].iter().map(|d| Path::new(d).join(name)).find(|p| crate::trusted_path(p))
+}
+
+fn run(bin: &Path, args: &[&str]) -> Result<String, String> {
+    let name = bin.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let out = Command::new(bin).args(args)
+        .env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").env("LC_ALL", "C").current_dir("/")
+        .output().map_err(|e| format!("{name}: {e}"))?;
+    if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) }
+    else {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = if err.trim().is_empty() { String::from_utf8_lossy(&out.stdout) } else { err };
+        Err(format!("{name} {}: {}", args.join(" "), err.trim()))
+    }
 }
 
 fn iw(bin: &Path, iface: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(bin).arg("dev").arg(iface).args(args)
-        .env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").env("LC_ALL", "C").current_dir("/")
-        .output().map_err(|e| format!("iw: {e}"))?;
-    if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) }
-    else { Err(format!("iw dev {iface} {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())) }
+    run(bin, &[&["dev", iface], args].concat())
 }
 
-/// Link and station counters of the first Wi-Fi interface. Errors are reported, not raised.
-pub fn status() -> Value {
-    let Some(iface) = wireless_iface() else { return json!({"ok": true, "present": false}) };
-    let Some(bin) = iw_bin() else { return json!({"ok": true, "present": true, "iface": iface, "iw": false}) };
+/// Link, station counters and channel of one Wi-Fi interface. Errors are reported, not raised.
+pub fn status(req: &Value) -> Value {
+    let (ifaces, iface) = pick(req);
+    let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
+    let Some(bin) = tool("iw") else { return json!({"ok": true, "present": true, "iface": iface, "ifaces": ifaces, "iw": false}) };
     let (link, station) = match (iw(&bin, &iface, &["link"]), iw(&bin, &iface, &["station", "dump"])) {
         (Ok(l), Ok(s)) => (parse_link(&l), parse_station(&s)),
-        (Err(e), _) | (_, Err(e)) => return json!({"ok": false, "present": true, "iface": iface, "iw": true, "error": e}),
+        (Err(e), _) | (_, Err(e)) => return json!({"ok": false, "present": true, "iface": iface, "ifaces": ifaces, "iw": true, "error": e}),
     };
-    json!({"ok": true, "present": true, "iw": true, "iface": iface, "connected": link.connected, "ssid": link.ssid,
-           "signal_dbm": station.signal_dbm.or(link.signal_dbm), "rx_mbps": link.rx_mbps,
-           "tx_mbps": station.tx_mbps.or(link.tx_mbps), "tx_packets": station.tx_packets,
-           "tx_retries": station.tx_retries, "tx_failed": station.tx_failed,
+    let info = iw(&bin, &iface, &["info"]).map(|t| parse_info(&t)).unwrap_or_default();
+    let freq = link.freq.or(info.freq);
+    let tx_mode = if link.tx_mode.is_empty() { &link.rx_mode } else { &link.tx_mode };
+    json!({"ok": true, "present": true, "iw": true, "iface": iface, "ifaces": ifaces, "connected": link.connected, "ssid": link.ssid,
+           "bssid": link.bssid, "freq": freq, "channel": info.channel.or(freq.and_then(channel)), "band": freq.map_or("", band),
+           "width_mhz": info.width_mhz, "tx_power_dbm": info.txpower_dbm,
+           "standard": standard(tx_mode), "rx_mode": link.rx_mode, "tx_mode": link.tx_mode,
+           "signal_dbm": station.signal_dbm.or(link.signal_dbm), "signal_avg_dbm": station.signal_avg_dbm, "rx_mbps": link.rx_mbps,
+           "tx_mbps": station.tx_mbps.or(link.tx_mbps), "expected_mbps": station.expected_mbps,
+           "connected_secs": station.connected_secs, "beacon_loss": station.beacon_loss,
+           "rx_packets": station.rx_packets, "rx_bytes": station.rx_bytes, "tx_bytes": station.tx_bytes,
+           "tx_packets": station.tx_packets, "tx_retries": station.tx_retries, "tx_failed": station.tx_failed,
            "retry_pct": pct(station.tx_retries, station.tx_packets), "fail_pct": pct(station.tx_failed, station.tx_packets),
            "warn": warnings(&station)})
+}
+
+fn read_trim(p: impl AsRef<Path>) -> Option<String> {
+    std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+}
+
+fn link_name(p: impl AsRef<Path>) -> Option<String> {
+    std::fs::read_link(p).ok()?.file_name().map(|n| n.to_string_lossy().into_owned())
+}
+
+/// Whether a rfkill switch of the phy blocks the radio: (software, hardware).
+fn rfkill(phy: u32) -> (Option<bool>, Option<bool>) {
+    let Ok(dir) = std::fs::read_dir(format!("/sys/class/ieee80211/phy{phy}")) else { return (None, None) };
+    let Some(e) = dir.flatten().find(|e| e.file_name().to_string_lossy().starts_with("rfkill")) else { return (None, None) };
+    let blocked = |f: &str| read_trim(e.path().join(f)).map(|v| v == "1");
+    (blocked("soft"), blocked("hard"))
+}
+
+/// The adapter behind one interface and what the driver and the radio say about themselves. Static, so the
+/// GUI asks once when the page is opened.
+pub fn hardware(req: &Value) -> Value {
+    let (_, iface) = pick(req);
+    let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
+    let dev = PathBuf::from(format!("/sys/class/net/{iface}/device"));
+    let bus = link_name(dev.join("subsystem"));
+    // PCI and SDIO keep the IDs on the device; a USB interface keeps them (and the product strings) on its parent.
+    let (vendor, product, vname, pname) = if bus.as_deref() == Some("usb") {
+        let up = dev.join("..");
+        (read_trim(up.join("idVendor")), read_trim(up.join("idProduct")), read_trim(up.join("manufacturer")), read_trim(up.join("product")))
+    } else {
+        let id = |f: &str| read_trim(dev.join(f)).map(|v| v.trim_start_matches("0x").to_ascii_lowercase());
+        let (v, d) = (id("vendor"), id("device"));
+        let (vn, dn) = match (&v, &d, bus.as_deref()) { (Some(v), Some(d), Some("pci")) => pci_names(v, d), _ => (None, None) };
+        (v, d, vn, dn)
+    };
+    let slot = std::fs::canonicalize(&dev).ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let mut out = json!({"ok": true, "present": true, "iface": iface, "driver": link_name(dev.join("driver")), "bus": bus, "slot": slot,
+                         "vendor_id": vendor, "device_id": product, "vendor": vname, "product": pname});
+    if let Some(bin) = tool("ethtool") {
+        if let Ok(t) = run(&bin, &["-i", &iface]) {
+            out["firmware"] = json!(fields(&t).find(|(k, _)| *k == "firmware-version").map(|(_, v)| v).filter(|v| !v.is_empty() && *v != "N/A"));
+        }
+    }
+    let Some(iw_bin) = tool("iw") else { out["iw"] = json!(false); return out };
+    out["iw"] = json!(true);
+    let info = iw(&iw_bin, &iface, &["info"]).map(|t| parse_info(&t)).unwrap_or_default();
+    out["mac"] = json!(read_trim(format!("/sys/class/net/{iface}/address")).or(Some(info.addr).filter(|a| !a.is_empty())));
+    out["power_save"] = json!(iw(&iw_bin, &iface, &["get", "power_save"]).ok()
+        .and_then(|t| fields(&t).next().map(|(_, v)| v.eq_ignore_ascii_case("on"))));
+    out["regdom"] = json!(run(&iw_bin, &["reg", "get"]).ok().and_then(|t| parse_reg(&t)));
+    if let Some(phy) = info.wiphy {
+        let (soft, hard) = rfkill(phy);
+        out["rfkill_soft"] = json!(soft);
+        out["rfkill_hard"] = json!(hard);
+        if let Ok(t) = run(&iw_bin, &["phy", &format!("phy{phy}"), "info"]) {
+            let (bands, modes) = parse_phy(&t);
+            out["bands"] = bands.iter().map(|b| json!({"band": b.name, "channels": b.channels, "max_dbm": b.max_dbm, "standards": b.standards})).collect();
+            out["modes"] = json!(modes);
+        }
+    }
+    out
+}
+
+/// Nearby networks from the kernel's cached scan results (NetworkManager and wpa_supplicant keep them fresh).
+pub fn scan(req: &Value) -> Value {
+    let (_, iface) = pick(req);
+    let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
+    let Some(bin) = tool("iw") else { return json!({"ok": true, "present": true, "iw": false}) };
+    let text = match iw(&bin, &iface, &["scan", "dump"]) {
+        Ok(t) => t,
+        Err(e) => return json!({"ok": false, "present": true, "iface": iface, "error": e}),
+    };
+    let list = parse_scan(&text);
+    let load = channel_load(&list).map(|(ch, same, overlap)| json!({"channel": ch, "same": same, "overlap": overlap}));
+    let nets: Vec<Value> = list.iter().take(64).map(|b| json!({
+        "bssid": b.bssid, "ssid": b.ssid, "freq": b.freq, "channel": channel(b.freq), "band": band(b.freq),
+        "signal_dbm": b.signal_dbm, "security": b.security, "seen_ms": b.seen_ms, "associated": b.associated})).collect();
+    json!({"ok": true, "present": true, "iw": true, "iface": iface, "networks": nets, "total": list.len(), "load": load,
+           "can_rescan": tool("nmcli").is_some()})
+}
+
+/// Asks NetworkManager for a fresh scan (polkit lets an active local session do that without a password).
+pub fn rescan(req: &Value) -> Value {
+    let (_, iface) = pick(req);
+    let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
+    let Some(bin) = tool("nmcli") else { return json!({"ok": false, "error": "nmcli (NetworkManager) is not installed"}) };
+    match run(&bin, &["device", "wifi", "rescan", "ifname", &iface]) {
+        Ok(_) => json!({"ok": true, "iface": iface}),
+        Err(e) => json!({"ok": false, "iface": iface, "error": e}),
+    }
 }
 
 #[cfg(test)]
@@ -161,5 +506,89 @@ mod tests {
         assert!(warnings(&good).is_empty());
         // No packets yet: no division by zero, nothing to say about the rates.
         assert!(warnings(&Station::default()).is_empty());
+    }
+
+    #[test]
+    fn link_and_info_extras() {
+        let l = parse_link(LINK);
+        assert_eq!((l.bssid.as_str(), l.freq), ("3c:52:82:11:22:33", Some(5180)));
+        assert_eq!(l.tx_mode, "780.0 MBit/s 80MHz VHT-MCS 8");
+        let i = parse_info("Interface wlan0\n\tifindex 3\n\taddr 3c:52:82:aa:bb:cc\n\ttype managed\n\twiphy 0\n\tchannel 36 (5180 MHz), width: 80 MHz, center1: 5210 MHz\n\ttxpower 22.00 dBm\n");
+        assert_eq!((i.addr.as_str(), i.wiphy, i.channel, i.freq, i.width_mhz, i.txpower_dbm),
+                   ("3c:52:82:aa:bb:cc", Some(0), Some(36), Some(5180), Some(80), Some(22.0)));
+        assert_eq!(parse_info("Interface wlan0\n\ttype managed\n"), Info::default());
+    }
+
+    #[test]
+    fn station_extras() {
+        let s = parse_station("Station 3c (on wlan0)\n\trx bytes:\t5000\n\trx packets:\t40\n\tbeacon loss:\t2\n\tconnected time:\t3661 seconds\n\tsignal avg:\t-61 dBm\n\texpected throughput:\t866.700Mbps\n");
+        assert_eq!((s.rx_bytes, s.rx_packets, s.beacon_loss, s.connected_secs, s.signal_avg_dbm, s.expected_mbps),
+                   (5000, 40, 2, Some(3661), Some(-61), Some(866.7)));
+    }
+
+    #[test]
+    fn channels_bands_and_generations() {
+        assert_eq!((band(2437), channel(2437)), ("2.4", Some(6)));
+        assert_eq!((band(2484), channel(2484)), ("2.4", Some(14)));
+        assert_eq!((band(5180), channel(5180)), ("5", Some(36)));
+        assert_eq!((band(5955), channel(5955)), ("6", Some(1)));
+        assert_eq!((band(5935), channel(5935)), ("6", Some(2)));
+        assert_eq!((band(900), channel(900)), ("", None));
+        assert_eq!(standard("866.7 MBit/s 80MHz VHT-MCS 9"), "ac");
+        assert_eq!(standard("1201.0 MBit/s 80MHz HE-MCS 11 HE-NSS 2"), "ax");
+        assert_eq!(standard("2882.0 MBit/s 160MHz EHT-MCS 11"), "be");
+        assert_eq!(standard("144.4 MBit/s MCS 15 short GI"), "n");
+        assert_eq!(standard("54.0 MBit/s"), "legacy");
+        assert_eq!(standard(""), "");
+    }
+
+    const SCAN: &str = "BSS 3c:52:82:11:22:33(on wlan0) -- associated\n\tlast seen: 1234.5s [boottime]\n\tTSF: 1 usec\n\tfreq: 5180\n\tcapability: ESS Privacy ShortSlotTime (0x0411)\n\tsignal: -52.00 dBm\n\tlast seen: 120 ms ago\n\tSSID: Home 5G: fast\n\tRSN:\t * Version: 1\n\t\t * Group cipher: CCMP\n\t\t * Pairwise ciphers: CCMP\n\t\t * Authentication suites: PSK SAE\n\t\t * Capabilities: 16-PTKSA-RC (0x000c)\n\tHT operation:\n\t\t * primary channel: 36\nBSS aa:bb:cc:00:00:01(on wlan0)\n\tfreq: 2437.0\n\tcapability: ESS Privacy (0x0411)\n\tsignal: -71.00 dBm\n\tlast seen: 900 ms ago\n\tSSID: Cafe\n\tWPA:\t * Version: 1\n\t\t * Authentication suites: PSK\nBSS aa:bb:cc:00:00:02(on wlan0)\n\tfreq: 2442\n\tcapability: ESS (0x0401)\n\tsignal: -60.00 dBm\n\tSSID: \nBSS aa:bb:cc:00:00:03(on wlan0)\n\tfreq: 2412\n\tcapability: ESS Privacy (0x0411)\n\tsignal: -80.00 dBm\n\tSSID: Old\nBSS aa:bb:cc:00:00:04(on wlan0)\n\tfreq: 2437\n\tcapability: ESS Privacy (0x0411)\n\tsignal: -85.00 dBm\n\tSSID: Corp\n\tRSN:\t * Version: 1\n\t\t * Authentication suites: IEEE 802.1X\n";
+
+    #[test]
+    fn scan_results() {
+        let l = parse_scan(SCAN);
+        assert_eq!(l.len(), 5);
+        // strongest first
+        assert_eq!(l.iter().map(|b| b.signal_dbm.unwrap()).collect::<Vec<_>>(), vec![-52, -60, -71, -80, -85]);
+        let home = &l[0];
+        assert_eq!((home.ssid.as_str(), home.bssid.as_str(), home.freq, home.associated, home.seen_ms),
+                   ("Home 5G: fast", "3c:52:82:11:22:33", 5180, true, Some(120)));
+        assert_eq!(home.security, "WPA2/WPA3");
+        assert_eq!((l[1].ssid.as_str(), l[1].security), ("", "Open"));  // hidden network, no Privacy bit
+        assert_eq!(l[2].security, "WPA");
+        assert_eq!(l[3].security, "WEP");
+        assert_eq!(l[4].security, "Enterprise");
+        assert!(parse_scan("").is_empty());
+    }
+
+    #[test]
+    fn channel_load_counts_overlap_only_on_2_4() {
+        let at = |freq, associated| Bss { freq, associated, ..Bss::default() };
+        // Me on channel 6; one more on 6, one on 11 (5 away: no overlap), one on 4 (2 away: overlaps), one on 5 GHz.
+        let l = vec![at(2437, true), at(2437, false), at(2462, false), at(2427, false), at(5180, false)];
+        assert_eq!(channel_load(&l), Some((6, 1, 1)));
+        assert_eq!(channel_load(&[at(2437, false)]), None);
+        // 5 GHz: neighbours on another channel never count.
+        assert_eq!(channel_load(&[at(5180, true), at(5200, false), at(5180, false)]), Some((36, 1, 0)));
+    }
+
+    const PHY: &str = "Wiphy phy0\n\tmax # scan SSIDs: 20\n\tSupported interface modes:\n\t\t * IBSS\n\t\t * managed\n\t\t * AP\n\t\t * monitor\n\tBand 1:\n\t\tCapabilities: 0x19ef\n\t\t\tRX LDPC\n\t\tHE Iftypes: managed\n\t\tFrequencies:\n\t\t\t* 2412 MHz [1] (22.0 dBm)\n\t\t\t* 2467 MHz [12] (disabled)\n\t\t\t* 2472 MHz [13] (20.0 dBm) (no IR)\n\tBand 2:\n\t\tCapabilities: 0x19ef\n\t\tVHT Capabilities (0x339071b2):\n\t\tHE Iftypes: managed\n\t\tHE Iftypes: AP\n\t\tFrequencies:\n\t\t\t* 5180 MHz [36] (23.0 dBm)\n\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n\tBand 4:\n\t\tHE Iftypes: managed\n\t\tEHT Iftypes: managed\n\t\tFrequencies:\n\t\t\t* 5955 MHz [1] (12.0 dBm)\n";
+
+    #[test]
+    fn phy_bands_and_modes() {
+        let (bands, modes) = parse_phy(PHY);
+        assert_eq!(modes, vec!["IBSS", "managed", "AP", "monitor"]);
+        assert_eq!(bands.len(), 3);
+        assert_eq!((bands[0].name, bands[0].channels, bands[0].max_dbm, bands[0].standards.clone()), ("2.4", 2, Some(22.0), vec!["n", "ax"]));
+        assert_eq!((bands[1].name, bands[1].channels, bands[1].standards.clone()), ("5", 2, vec!["n", "ac", "ax"]));
+        assert_eq!((bands[2].name, bands[2].channels, bands[2].standards.clone()), ("6", 1, vec!["ax", "be"]));
+        assert_eq!(parse_phy("").0.len(), 0);
+    }
+
+    #[test]
+    fn regulatory_domain() {
+        assert_eq!(parse_reg("global\ncountry DE: DFS-ETSI\n\t(2400 - 2483 @ 40), (N/A, 20)\n").as_deref(), Some("DE"));
+        assert_eq!(parse_reg("global\ncountry 00: DFS-UNSET\n").as_deref(), Some("00"));
+        assert_eq!(parse_reg(""), None);
     }
 }

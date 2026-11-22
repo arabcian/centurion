@@ -1,4 +1,5 @@
 // System tools reports over a fake sysfs / procfs tree and synthetic EDIDs: no real hardware is read.
+#include <cmath>
 #include "../src/diagnostictools.h"
 #include "../src/systemdiagnostics.h"
 
@@ -49,11 +50,17 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 9; ++i) e[72 + i] = char(range[i]);
     const char name[] = {0, 0, 0, char(0xfc), 0, 'P', 'a', 'n', 'e', 'l', '\n'};
     for (int i = 0; i < 11; ++i) e[90 + i] = name[i];
+    e[16] = char(12);                        // week 12
+    e[20] = char(0xa5); e[21] = char(34); e[22] = char(21); e[23] = char(0x78);  // digital 8 bit, 34 × 21 cm, gamma 2.2
     e[126] = 1;
     checksum(e, 0);
-    e[128] = 0x02; e[129] = 0x03; e[130] = 12;  // CTA, DTDs from byte 12
+    e[128] = 0x02; e[129] = 0x03; e[130] = 24; e[131] = char(0x70);  // CTA, DTDs from byte 24; audio, YCbCr 4:4:4 and 4:2:2
     const unsigned char vsdb[] = {0x67, 0x1a, 0x00, 0x00, 0x01, 0x00, 48, 240};  // tag 3, len 7, AMD OUI, v1, caps, 48–240
     for (int i = 0; i < 8; ++i) e[132 + i] = char(vsdb[i]);
+    const unsigned char hdr[] = {0xe6, 0x06, 0x0d, 0x01, 0x80, 0x70, 0x40};  // HDR static metadata: SDR + PQ + HLG, peak code 0x80 = 800 nits
+    for (int i = 0; i < 7; ++i) e[140 + i] = char(hdr[i]);
+    const unsigned char col[] = {0xe3, 0x05, 0xc0, 0x00};                    // colorimetry: BT.2020 YCC and RGB
+    for (int i = 0; i < 4; ++i) e[147 + i] = char(col[i]);
     checksum(e, 1);
     const diagnostictools::Edid d = diagnostictools::decodeEdid(e);
     CHECK(d.header && !d.truncated && d.badBlocks.isEmpty());
@@ -61,6 +68,10 @@ int main(int argc, char **argv) {
     CHECK(d.timings.value(0).contains(QStringLiteral("1920×1080 @ 60.00")));
     CHECK(d.rangeMin == 48 && d.rangeMax == 480);
     CHECK(d.vrrMin == 48 && d.vrrMax == 240 && d.vrrSource.contains(QStringLiteral("FreeSync")));
+    CHECK(d.widthCm == 34 && d.heightCm == 21 && d.bitDepth == 8 && d.week == 12 && std::abs(d.gamma - 2.2) < 0.001);
+    CHECK(d.audio && d.ycc444 && d.ycc422 && !d.hdmi);
+    CHECK(d.hdr == QStringList({QStringLiteral("HDR10 (PQ)"), QStringLiteral("HLG")}) && std::abs(d.maxNits - 800) < 0.01 && d.minNits > 0.4 && d.minNits < 0.6);
+    CHECK(d.colorimetry == QStringList({QStringLiteral("BT.2020 YCC"), QStringLiteral("BT.2020 RGB")}));
     QByteArray broken = e;
     broken[200] = char(broken.at(200) ^ 1);
     CHECK(diagnostictools::decodeEdid(broken).badBlocks.size() == 1);
@@ -69,6 +80,7 @@ int main(int argc, char **argv) {
     put(QStringLiteral("/sys/class/drm/card1-eDP-1/edid"), e);
     const diag::Report disp = diagnostictools::displays(root);
     CHECK(has(disp, Level::Info, QStringLiteral("48–240")));
+    CHECK(disp.tables.size() >= 2 && disp.tables.at(1).rows.at(0).value(4).contains(QStringLiteral("800 nits")));
 
     // ── NVIDIA options: hex and decimal, Y and 1 are the same value.
     CHECK(diagnostictools::sameValue(QStringLiteral("0x02"), QStringLiteral("2")));

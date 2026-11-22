@@ -39,6 +39,8 @@ add_executable(centurion
     src/privileged.cpp   src/privileged.h
     src/sysadmin.cpp     src/sysadmin.h
     src/configpage.cpp   src/configpage.h
+    src/pipewireconfig.cpp src/pipewireconfig.h
+    src/panelcontrols.cpp src/panelcontrols.h
     src/platformprofile.cpp src/platformprofile.h
     src/sysinfo.cpp      src/sysinfo.h
     src/hometab.cpp      src/hometab.h

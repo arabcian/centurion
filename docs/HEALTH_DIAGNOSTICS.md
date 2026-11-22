@@ -23,7 +23,7 @@ report* / *Save report…* export the same content as text. A source that cannot
 | | H16 | Memory-related Xids; on request nvidia-smi ECC / row-remap / page-retirement | `diagnostics`, `nvidia-smi -q -d ECC,ROW_REMAPPER,PAGE_RETIREMENT` |
 | | H17 | Incident notebook: status and notes per classified event, with its explanation | health.log, `incident-notes.json` |
 | Advanced → System tools | S01 | Hardware changes against a saved baseline, grouped (device gone, driver lost…) | sysfs, `/proc/modules`, `hardware-baseline.json` |
-| | S03 | Display identity, preferred mode, range limits, FreeSync / HDMI VRR range, damaged EDIDs | `/sys/class/drm/*/edid` |
+| | S03 | Display identity, preferred mode, range limits, FreeSync / HDMI VRR range, size, bit depth, colour formats, HDR and colour spaces, audio, backlight devices, damaged EDIDs; *Panel controls…* sets panel brightness and refresh rate (as the user, via `centurion-display`) | `/sys/class/drm/*/edid` |
 | | S04 | Link width / speed against both ends of the link; width loss vs. idle down-clocking | `current/max_link_*`, port above |
 | | S06 | NVIDIA options configured vs. in effect (0x02 = 2, Y = 1), Wayland modeset, sleep hooks | modprobe.d, cmdline, `/sys/module`, `/proc/driver/nvidia/params` |
 | | S07 | Wireless adapters, rfkill, firmware the kernel asked for and did not find | sysfs, kernel.log |

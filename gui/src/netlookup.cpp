@@ -27,7 +27,7 @@
 #include <memory>
 
 enum Tool { Whois, Dns, Ports, Ping, Trace };
-static constexpr int MAX_PORTS = 64, PORT_TIMEOUT_MS = 3000, WHOIS_TIMEOUT_MS = 40000;
+static constexpr int MAX_PORTS = 1024, PORT_WINDOW = 256, PORT_TIMEOUT_MS = 3000, WHOIS_TIMEOUT_MS = 40000;
 
 static QString str(const QJsonObject &o, const char *k) { return o.value(QLatin1String(k)).toString(); }
 
@@ -256,16 +256,25 @@ void LookupTab::runPorts(const QString &target) {
         output_->setPlainText(lines.join(QLatin1Char('\n')));
         if (results->size() == total) finish(tr("%1: %2 of %3 port(s) open over TCP").arg(target).arg(open).arg(total));
     };
-    for (int port : ports) {
-        auto *s = new QTcpSocket(job_);
-        s->setProxy(QNetworkProxy::NoProxy);
-        connect(s, &QTcpSocket::connected, job_, [=, this] { report(port, tr("open")); s->abort(); });
-        connect(s, &QTcpSocket::errorOccurred, job_, [=, this](QAbstractSocket::SocketError e) {
-            report(port, e == QAbstractSocket::ConnectionRefusedError ? tr("closed (refused)") : s->errorString());
-        });
-        QTimer::singleShot(PORT_TIMEOUT_MS, s, [=, this] { report(port, tr("no answer (filtered, or the host is down)")); s->abort(); });
-        s->connectToHost(target, quint16(port));
-    }
+    // At most PORT_WINDOW sockets are in flight, so a long list stays under the open-file limit.
+    auto next = std::make_shared<int>(0);
+    auto pump = [=, this] {
+        while (*next < total && *next - int(results->size()) < PORT_WINDOW) {
+            const int port = ports.at((*next)++);
+            auto *s = new QTcpSocket(job_);
+            s->setProxy(QNetworkProxy::NoProxy);
+            connect(s, &QTcpSocket::connected, job_, [=, this] { report(port, tr("open")); s->abort(); });
+            connect(s, &QTcpSocket::errorOccurred, job_, [=, this](QAbstractSocket::SocketError e) {
+                report(port, e == QAbstractSocket::ConnectionRefusedError ? tr("closed (refused)") : s->errorString());
+            });
+            QTimer::singleShot(PORT_TIMEOUT_MS, s, [=, this] { report(port, tr("no answer (filtered, or the host is down)")); s->abort(); });
+            s->connectToHost(target, quint16(port));
+        }
+    };
+    auto *feeder = new QTimer(job_);
+    connect(feeder, &QTimer::timeout, job_, pump);
+    pump();
+    feeder->start(20);
 }
 
 void LookupTab::runCommand(const QString &program, const QStringList &args) {

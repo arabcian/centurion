@@ -7,6 +7,8 @@
 #include "privileged.h"
 #include "smartpage.h"
 #include "configpage.h"
+#include "panelcontrols.h"
+#include "pipewireconfig.h"
 #include "sysadmin.h"
 #include "theme.h"
 
@@ -612,6 +614,18 @@ public:
                 start();
             });
         }
+        if (code_ == QLatin1String("S15")) {
+            auto *settings = new QPushButton(QCoreApplication::translate("systools", "Settings…"));
+            settings->setToolTip(QCoreApplication::translate("systools", "Edit well-known PipeWire and WirePlumber options, with a hint for each."));
+            top->addWidget(settings);
+            connect(settings, &QPushButton::clicked, this, [this] { PipewireConfigDialog(this).exec(); start(); });
+        }
+        if (code_ == QLatin1String("S03")) {
+            auto *panel = new QPushButton(QCoreApplication::translate("systools", "Panel controls…"));
+            panel->setToolTip(QCoreApplication::translate("systools", "Set the built-in screen's brightness and refresh rate."));
+            top->addWidget(panel);
+            connect(panel, &QPushButton::clicked, this, [this] { PanelControlsDialog(this).exec(); start(); });
+        }
         run_ = new QPushButton(QCoreApplication::translate("systools", "Run again"));
         top->addWidget(run_);
         v->addLayout(top);
@@ -717,7 +731,7 @@ void addPages(QTabWidget *tabs) {
          QT_TRANSLATE_NOOP("systools", "S13: the power profiles the charger offers, what the laptop draws, and the battery's condition."),
          {{"@diag", "S13"}}},
         {QT_TRANSLATE_NOOP("systools", "PipeWire Audio Doctor"),
-         QT_TRANSLATE_NOOP("systools", "S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. Nothing is restarted."),
+         QT_TRANSLATE_NOOP("systools", "S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply."),
          {{"@diag", "S15"}, {"wpctl", "status"}, {"pactl", "info"}}},
         {QT_TRANSLATE_NOOP("systools", "Kernel Feature & Firmware Check"),
          QT_TRANSLATE_NOOP("systools", "S18: kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver."),
@@ -726,7 +740,7 @@ void addPages(QTabWidget *tabs) {
          QT_TRANSLATE_NOOP("systools", "S01: compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved."),
          {{"@diag", "S01"}}},
         {QT_TRANSLATE_NOOP("systools", "EDID / VRR"),
-         QT_TRANSLATE_NOOP("systools", "S03: each connected display's identity, modes and variable-refresh range from its EDID; damaged EDIDs. Read only."),
+         QT_TRANSLATE_NOOP("systools", "S03: each connected display's identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen's brightness and refresh rate."),
          {{"@diag", "S03"}}},
         {QT_TRANSLATE_NOOP("systools", "NVIDIA module parameters"),
          QT_TRANSLATE_NOOP("systools", "S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU."),

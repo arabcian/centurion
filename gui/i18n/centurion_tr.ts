@@ -3895,6 +3895,282 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <source>Also add %1 firewall rule(s).</source>
             <translation>Ayrıca %1 güvenlik duvarı kuralı eklensin.</translation>
         </message>
+        <message>
+            <source>Adapter:</source>
+            <translation>Adaptör:</translation>
+        </message>
+        <message>
+            <source>The wireless adapter to show (this machine has more than one).</source>
+            <translation>Gösterilecek kablosuz adaptör (bu makinede birden fazla var).</translation>
+        </message>
+        <message>
+            <source>Copy details</source>
+            <translation>Ayrıntıları kopyala</translation>
+        </message>
+        <message>
+            <source>The connection and hardware details as plain text, e.g. for a bug report.</source>
+            <translation>Bağlantı ve donanım ayrıntıları düz metin olarak; örneğin hata bildirimi için.</translation>
+        </message>
+        <message>
+            <source>Connection</source>
+            <translation>Bağlantı</translation>
+        </message>
+        <message>
+            <source>Hardware</source>
+            <translation>Donanım</translation>
+        </message>
+        <message>
+            <source>Nearby networks</source>
+            <translation>Yakındaki ağlar</translation>
+        </message>
+        <message>
+            <source>Rescan</source>
+            <translation>Yeniden tara</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>Yenile</translation>
+        </message>
+        <message>
+            <source>Asks NetworkManager for a fresh scan. The list shows the results the system already has.</source>
+            <translation>NetworkManager'dan yeni bir tarama ister. Liste, sistemin zaten sahip olduğu sonuçları gösterir.</translation>
+        </message>
+        <message>
+            <source>Network</source>
+            <translation>Ağ</translation>
+        </message>
+        <message>
+            <source>Signal</source>
+            <translation>Sinyal</translation>
+        </message>
+        <message>
+            <source>Channel</source>
+            <translation>Kanal</translation>
+        </message>
+        <message>
+            <source>Band</source>
+            <translation>Bant</translation>
+        </message>
+        <message>
+            <source>Security</source>
+            <translation>Güvenlik</translation>
+        </message>
+        <message>
+            <source>Seen</source>
+            <translation>Görülme</translation>
+        </message>
+        <message>
+            <source>Address (BSSID)</source>
+            <translation>Adres (BSSID)</translation>
+        </message>
+        <message>
+            <source>Bold: the network you are connected to. A channel shared with many networks is a common cause of retries. Open, WEP and WPA networks are not safe to use for anything private.</source>
+            <translation>Kalın: bağlı olduğunuz ağ. Çok sayıda ağla paylaşılan bir kanal, yeniden denemelerin yaygın bir nedenidir. Açık, WEP ve WPA ağları özel hiçbir iş için güvenli değildir.</translation>
+        </message>
+        <message>
+            <source>802.11a/b/g (old, slow)</source>
+            <translation>802.11a/b/g (eski, yavaş)</translation>
+        </message>
+        <message>
+            <source>%1 d %2 h</source>
+            <translation>%1 g %2 sa</translation>
+        </message>
+        <message>
+            <source>%1 h %2 min</source>
+            <translation>%1 sa %2 dk</translation>
+        </message>
+        <message>
+            <source>%1 min</source>
+            <translation>%1 dk</translation>
+        </message>
+        <message>
+            <source>Access point</source>
+            <translation>Erişim noktası</translation>
+        </message>
+        <message>
+            <source>Connected for</source>
+            <translation>Bağlı kalma süresi</translation>
+        </message>
+        <message>
+            <source> (average %1 dBm)</source>
+            <translation> (ortalama %1 dBm)</translation>
+        </message>
+        <message>
+            <source>channel %1</source>
+            <translation>kanal %1</translation>
+        </message>
+        <message>
+            <source>%1 GHz band</source>
+            <translation>%1 GHz bandı</translation>
+        </message>
+        <message>
+            <source>%1 MHz wide</source>
+            <translation>%1 MHz genişlik</translation>
+        </message>
+        <message>
+            <source>Standard</source>
+            <translation>Standart</translation>
+        </message>
+        <message>
+            <source>Down: %1 · Up: %2</source>
+            <translation>İndirme: %1 · Yükleme: %2</translation>
+        </message>
+        <message>
+            <source>Estimated usable speed</source>
+            <translation>Tahmini kullanılabilir hız</translation>
+        </message>
+        <message>
+            <source>Transmit power</source>
+            <translation>İletim gücü</translation>
+        </message>
+        <message>
+            <source>Data this connection</source>
+            <translation>Bu bağlantıdaki veri</translation>
+        </message>
+        <message>
+            <source>%1 received, %2 sent</source>
+            <translation>%1 alındı, %2 gönderildi</translation>
+        </message>
+        <message>
+            <source>Beacons lost</source>
+            <translation>Kaybolan beacon sayısı</translation>
+        </message>
+        <message>
+            <source>(the access point's signal dropped out now and then)</source>
+            <translation>(erişim noktasının sinyali ara sıra kesildi)</translation>
+        </message>
+        <message>
+            <source>No answer from the helper.</source>
+            <translation>Yardımcıdan yanıt gelmedi.</translation>
+        </message>
+        <message>
+            <source>Interface</source>
+            <translation>Arayüz</translation>
+        </message>
+        <message>
+            <source>Driver</source>
+            <translation>Sürücü</translation>
+        </message>
+        <message>
+            <source>%1 bus, %2</source>
+            <translation>%1 veriyolu, %2</translation>
+        </message>
+        <message>
+            <source>%1 bus</source>
+            <translation>%1 veriyolu</translation>
+        </message>
+        <message>
+            <source>Firmware</source>
+            <translation>Aygıt yazılımı</translation>
+        </message>
+        <message>
+            <source>Hardware ID</source>
+            <translation>Donanım kimliği</translation>
+        </message>
+        <message>
+            <source>Radio</source>
+            <translation>Telsiz</translation>
+        </message>
+        <message>
+            <source>switched off by a hardware switch or key</source>
+            <translation>donanım anahtarı veya tuşuyla kapatılmış</translation>
+        </message>
+        <message>
+            <source>switched off in software (rfkill)</source>
+            <translation>yazılımla kapatılmış (rfkill)</translation>
+        </message>
+        <message>
+            <source>on</source>
+            <translation>açık</translation>
+        </message>
+        <message>
+            <source>Power save</source>
+            <translation>Güç tasarrufu</translation>
+        </message>
+        <message>
+            <source>on (saves power; can add latency spikes)</source>
+            <translation>açık (güç tasarrufu sağlar; gecikme sıçramalarına yol açabilir)</translation>
+        </message>
+        <message>
+            <source>off (steady latency, more power)</source>
+            <translation>kapalı (kararlı gecikme, daha fazla güç)</translation>
+        </message>
+        <message>
+            <source>— change it under Optimizations → Network.</source>
+            <translation>— Optimizasyonlar → Ağ altından değiştirin.</translation>
+        </message>
+        <message>
+            <source>Regulatory country</source>
+            <translation>Düzenleyici ülke (bölge kodu)</translation>
+        </message>
+        <message>
+            <source>00 (world: the most cautious channels and power; set your country to unlock more)</source>
+            <translation>00 (dünya: en temkinli kanallar ve güç; daha fazlası için ülkenizi ayarlayın)</translation>
+        </message>
+        <message>
+            <source>Bands</source>
+            <translation>Bantlar</translation>
+        </message>
+        <message>
+            <source>, up to %1 dBm</source>
+            <translation>, en çok %1 dBm</translation>
+        </message>
+        <message>
+            <source>Can work as</source>
+            <translation>Çalışabildiği modlar</translation>
+        </message>
+        <message>
+            <source>Install &lt;code&gt;iw&lt;/code&gt; to read bands, regulatory country and power save.</source>
+            <translation>Bantları, düzenleyici ülkeyi ve güç tasarrufunu okumak için &lt;code&gt;iw&lt;/code&gt; kurun.</translation>
+        </message>
+        <message>
+            <source>Install &lt;code&gt;iw&lt;/code&gt; to list nearby networks.</source>
+            <translation>Yakındaki ağları listelemek için &lt;code&gt;iw&lt;/code&gt; kurun.</translation>
+        </message>
+        <message>
+            <source>Needs NetworkManager (nmcli). The list shows the results the system already has.</source>
+            <translation>NetworkManager (nmcli) gerekir. Liste, sistemin zaten sahip olduğu sonuçları gösterir.</translation>
+        </message>
+        <message>
+            <source>(hidden network)</source>
+            <translation>(gizli ağ)</translation>
+        </message>
+        <message>
+            <source>%1 s ago</source>
+            <translation>%1 sn önce</translation>
+        </message>
+        <message>
+            <source>No networks in the system's scan results yet. Press Rescan.</source>
+            <translation>Sistemin tarama sonuçlarında henüz ağ yok. Yeniden tara'ya basın.</translation>
+        </message>
+        <message>
+            <source>Scanning…</source>
+            <translation>Taranıyor…</translation>
+        </message>
+        <message numerus="yes">
+            <source>%1 GHz: %n channel(s)</source>
+            <translation>
+                <numerusform>%1 GHz: %n kanal</numerusform>
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n network(s) seen (results the system already has).</source>
+            <translation>
+                <numerusform>%n ağ görüldü (sistemin zaten sahip olduğu sonuçlar).</numerusform>
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>Your channel %1 is shared with %n other network(s)</source>
+            <translation>
+                <numerusform>%1 numaralı kanalınızı %n başka ağ kullanıyor</numerusform>
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>, and %n more on channels that overlap it</source>
+            <translation>
+                <numerusform>, ayrıca bu kanalla çakışan kanallarda %n ağ daha</numerusform>
+            </translation>
+        </message>
     </context>
     <context>
         <name>NotifyDialog</name>

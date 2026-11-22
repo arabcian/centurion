@@ -1718,7 +1718,10 @@ pub fn handle(req: &Value) -> Value {
         "list" => return list(),
         "status" => return status(true),
         "whois" => return lookup(req["query"].as_str().or(req["ip"].as_str()).unwrap_or(""), req["asn"] == true),
-        "wifi" => return crate::wifi::status(),
+        "wifi" => return crate::wifi::status(req),
+        "wifi_hw" => return crate::wifi::hardware(req),
+        "wifi_scan" => return crate::wifi::scan(req),
+        "wifi_rescan" => return crate::wifi::rescan(req),
         _ => {}
     }
     if unsafe { libc::geteuid() } != 0 { return json!({"ok": false, "needs_root": true, "error": "this operation needs root (pkexec)"}); }

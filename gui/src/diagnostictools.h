@@ -32,6 +32,11 @@ struct Edid {
     int vrrMin = 0, vrrMax = 0;       // FreeSync or HDMI VRR block
     QString vrrSource;
     QStringList extensions;           // "CTA-861", "DisplayID"
+    int widthCm = 0, heightCm = 0, week = 0, bitDepth = 0;  // physical size, manufacture week, bits per colour (digital inputs)
+    double gamma = 0;
+    bool audio = false, ycc444 = false, ycc422 = false, hdmi = false;  // CTA-861 capabilities, HDMI vendor block
+    QStringList hdr, colorimetry;     // "HDR10 (PQ)", "HLG"; "BT.2020 RGB", "opRGB"
+    double maxNits = 0, minNits = 0;  // HDR static metadata: peak and black level, cd/m²
 };
 Edid decodeEdid(const QByteArray &data);
 diag::Report displays(const QString &root = {});

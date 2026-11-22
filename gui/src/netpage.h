@@ -11,8 +11,9 @@
 // (new lines only, while its tab is shown); the block log is watched with
 // inotify, so a new block reaches the tray without any polling. Rule changes
 // go through pkexec and take effect in the running daemon at once.
-// The Wi-Fi tab (signal, link rate, retries) appears only on a machine with a
-// wireless interface and is read by the same unprivileged helper, every 3 s while shown.
+// The Wi-Fi tab (connection, adapter hardware, nearby networks) appears only on a machine with a
+// wireless interface and is read by the same unprivileged helper: the link every 3 s while the tab is
+// shown, the adapter and the nearby networks when their page is opened or refreshed.
 // Traffic (bytes per program per day) is the netguard ledger file, read directly like the connection log.
 // Firewall (default policies, port rules) and Lookup (whois, DNS, port check, ping) are their own widgets.
 #include <QElapsedTimer>
@@ -70,6 +71,13 @@ private:
     void addIpActions(QMenu &m, const QString &ip);
     void refreshWifi();
     void applyWifi(const QJsonObject &w);
+    void refreshWifiHw();
+    void applyWifiHw(const QJsonObject &h);
+    void refreshWifiNets();
+    void applyWifiNets(const QJsonObject &n);
+    void rescanWifi();
+    /// A Wi-Fi request for the adapter picked in the list (empty: the helper takes the first).
+    QJsonObject wifiReq(const char *op) const;
     void subscriptions();
     void fillTraffic();
     /// Open ports: listening sockets from the last connection snapshot, with who can reach them.
@@ -98,6 +106,11 @@ private:
     QCheckBox *guard_, *lan_, *logConns_, *accounting_, *listening_;
     QTabWidget *tabs_;
     QLabel *wifiText_;                        // Wi-Fi tab: link and station counters
+    class QComboBox *wifiIface_ = nullptr;    // adapter picker, shown only when there are several
+    QLabel *wifiIfaceLabel_ = nullptr, *wifiHw_ = nullptr, *wifiNetInfo_ = nullptr;
+    QTabWidget *wifiPages_ = nullptr;         // Connection / Hardware / Nearby networks
+    QTreeWidget *wifiNets_ = nullptr;
+    class QPushButton *wifiRescan_ = nullptr;
     QTimer *wifiTimer_;
     int wifiTab_ = -1;
     QPointer<QListWidget> subList_;           // open Subscriptions window

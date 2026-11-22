@@ -13,6 +13,7 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <cmath>
 
 using diag::Level;
 using diag::Report;
@@ -213,6 +214,11 @@ Edid decodeEdid(const QByteArray &d) {
     const int id = (u8(d, 8) << 8) | u8(d, 9);
     e.maker = QString(QChar('@' + ((id >> 10) & 0x1f))) + QChar('@' + ((id >> 5) & 0x1f)) + QChar('@' + (id & 0x1f));
     e.year = u8(d, 17) ? 1990 + u8(d, 17) : 0;
+    e.week = u8(d, 16);
+    e.widthCm = u8(d, 21);
+    e.heightCm = u8(d, 22);
+    if (u8(d, 20) & 0x80) { static const int depth[] = {0, 6, 8, 10, 12, 14, 16, 0}; e.bitDepth = depth[(u8(d, 20) >> 4) & 7]; }
+    e.gamma = u8(d, 23) == 0xff ? 0 : (u8(d, 23) + 100) / 100.0;
     for (int off = 54; off <= 108; off += 18) {
         if (u8(d, off) == 0 && u8(d, off + 1) == 0) {
             const int tag = u8(d, off + 3);
@@ -235,11 +241,27 @@ Edid decodeEdid(const QByteArray &d) {
     for (int blk = 1; blk < std::min(e.readable, 32); ++blk) {
         const int base = blk * 128;
         if (u8(d, base) != 0x02) continue;
-        const int dtd = u8(d, base + 2);
+        const int dtd = u8(d, base + 2), caps = u8(d, base + 3);
+        e.audio = e.audio || (caps & 0x40);
+        e.ycc444 = e.ycc444 || (caps & 0x20);
+        e.ycc422 = e.ycc422 || (caps & 0x10);
         for (int i = base + 4; i < base + std::min(dtd, 127);) {
             const int hdr = u8(d, i), tag = hdr >> 5, len = hdr & 0x1f;
+            if (tag == 7 && len >= 3 && u8(d, i + 1) == 0x06) {         // HDR static metadata: EOTFs, peak and black level
+                const int eotf = u8(d, i + 2);
+                if (eotf & 0x02) e.hdr << QStringLiteral("HDR gamma");
+                if (eotf & 0x04) e.hdr << QStringLiteral("HDR10 (PQ)");
+                if (eotf & 0x08) e.hdr << QStringLiteral("HLG");
+                if (len >= 4 && u8(d, i + 4)) e.maxNits = 50.0 * std::pow(2.0, u8(d, i + 4) / 32.0);
+                if (len >= 6 && e.maxNits > 0) e.minNits = e.maxNits * std::pow(u8(d, i + 6) / 255.0, 2) / 100.0;
+            }
+            if (tag == 7 && len >= 3 && u8(d, i + 1) == 0x05) {         // colorimetry: the colour spaces beyond sRGB
+                static const char *const names[] = {"xvYCC601", "xvYCC709", "sYCC601", "opYCC601", "opRGB", "BT.2020 cYCC", "BT.2020 YCC", "BT.2020 RGB"};
+                for (int bit = 0; bit < 8; ++bit) if (u8(d, i + 2) & (1 << bit)) e.colorimetry << QLatin1String(names[bit]);
+            }
             if (tag == 3 && len >= 3) {
                 const int oui = u8(d, i + 1) | (u8(d, i + 2) << 8) | (u8(d, i + 3) << 16);
+                if (oui == 0x000c03) e.hdmi = true;
                 if (oui == 0x00001a && len >= 7) {           // AMD FreeSync: OUI, version, caps, min, max
                     e.vrrMin = u8(d, i + 6); e.vrrMax = u8(d, i + 7); e.vrrSource = QStringLiteral("FreeSync (AMD VSDB)");
                 } else if (oui == 0xc45dd8 && len >= 10) {   // HDMI Forum: VRRmin / VRRmax
@@ -264,6 +286,9 @@ Report displays(const QString &root) {
     Table t;
     t.title = tr("Connected displays");
     t.headers = {tr("Connector"), tr("Display"), tr("Year"), tr("Preferred mode"), tr("Refresh range"), tr("VRR range"), tr("EDID")};
+    Table det;
+    det.title = tr("Display details");
+    det.headers = {tr("Connector"), tr("Size"), tr("Bit depth"), tr("Colour formats"), tr("HDR"), tr("Colour spaces"), tr("Audio"), tr("Made"), tr("Modes"), tr("State")};
     int connected = 0;
     for (const QString &conn : diagsrc::dir(root + QStringLiteral("/sys/class/drm"))) {
         if (!conn.contains(QLatin1Char('-'))) continue;
@@ -279,6 +304,22 @@ Report displays(const QString &root) {
             continue;
         }
         const Edid e = decodeEdid(raw);
+        {
+            const QString dash = QStringLiteral("—");
+            QStringList fmt{QStringLiteral("RGB")};
+            if (e.ycc444) fmt << QStringLiteral("YCbCr 4:4:4");
+            if (e.ycc422) fmt << QStringLiteral("YCbCr 4:2:2");
+            QString hdr = e.hdr.isEmpty() ? dash : e.hdr.join(QStringLiteral(", "));
+            if (e.maxNits > 0) hdr += QStringLiteral(" · %1 nits peak").arg(qRound(e.maxNits)) + (e.minNits > 0 ? QStringLiteral(", %1 black").arg(e.minNits, 0, 'g', 2) : QString());
+            const int modes = diagsrc::read(b + QStringLiteral("modes"), 65536).split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+            const QString state = QStringLiteral("%1, dpms %2").arg(diagsrc::read(b + QStringLiteral("enabled")), diagsrc::read(b + QStringLiteral("dpms")));
+            det.add({port,
+                     e.widthCm && e.heightCm ? tr("%1 × %2 cm (%3″)").arg(e.widthCm).arg(e.heightCm).arg(std::hypot(e.widthCm, e.heightCm) / 2.54, 0, 'f', 1) : dash,
+                     e.bitDepth ? tr("%1 bit").arg(e.bitDepth) : dash, fmt.join(QStringLiteral(", ")), hdr,
+                     e.colorimetry.isEmpty() ? dash : e.colorimetry.join(QStringLiteral(", ")),
+                     e.audio ? (e.hdmi ? tr("HDMI audio") : tr("yes")) : dash,
+                     e.year ? QStringLiteral("%1 w%2").arg(e.year).arg(e.week) : dash, QString::number(modes), state});
+        }
         const bool bad = !e.header || e.truncated || !e.badBlocks.isEmpty();
         t.add({port, QStringLiteral("%1 %2").arg(e.maker, e.name).trimmed(), e.year ? QString::number(e.year) : QStringLiteral("—"),
                e.timings.value(0, QStringLiteral("—")), e.rangeMax ? QStringLiteral("%1–%2 Hz").arg(e.rangeMin).arg(e.rangeMax) : QStringLiteral("—"),
@@ -299,6 +340,17 @@ Report displays(const QString &root) {
         r.raw += QStringLiteral("== %1 ==\n%2\n%3\n").arg(conn, e.timings.join(QLatin1Char('\n')), diagsrc::read(b + QStringLiteral("modes"), 8192));
     }
     r.tables << t;
+    if (!det.rows.isEmpty()) r.tables << det;
+    // The backlight devices (read here; Scenes changes the brightness).
+    Table bl;
+    bl.title = tr("Backlight");
+    bl.headers = {tr("Device"), tr("Type"), tr("Brightness"), tr("Maximum")};
+    for (const QString &dev : diagsrc::dir(root + QStringLiteral("/sys/class/backlight"))) {
+        const QString d = root + QStringLiteral("/sys/class/backlight/") + dev + QLatin1Char('/');
+        bl.add({dev, diagsrc::read(d + QStringLiteral("type")), diagsrc::read(d + QStringLiteral("actual_brightness")).isEmpty() ? diagsrc::read(d + QStringLiteral("brightness")) : diagsrc::read(d + QStringLiteral("actual_brightness")),
+                diagsrc::read(d + QStringLiteral("max_brightness"))});
+    }
+    if (!bl.rows.isEmpty()) r.tables << bl;
     if (!connected) r.add(Level::Unknown, tr("No connected display found under /sys/class/drm"));
     else if (!r.count(Level::Review) && !r.count(Level::Unknown)) r.add(Level::Ok, tr("%1 display(s) with a valid EDID").arg(connected));
     return r;
