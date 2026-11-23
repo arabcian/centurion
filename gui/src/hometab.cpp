@@ -364,7 +364,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         // columns: every card edge (top, seam, bottom, centre gap) lines up by
         // construction, whatever each card's content height is.
         //   Power Profile │ Monitoring
-        //   Device        │ Live sensors / Hardware & firmware
+        //   Device        │ Hardware & Firmware / Live Sensors
         auto *plotPanel = new QGroupBox(tr("Monitoring"));
         auto *chartLayout = new QVBoxLayout(plotPanel);
         temperaturePlot_ = new experimentalui::TemperaturePlot;
@@ -375,8 +375,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         // The tab already names each page: no second title or frame inside it.
         liveSensors->setTitle(QString());
         hardware->setTitle(QString());
-        details->addTab(liveSensors, tr("Live sensors"));
-        details->addTab(hardware, tr("Hardware && firmware"));
+        details->addTab(hardware, tr("Hardware && Firmware"));  // left, shown first
+        details->addTab(liveSensors, tr("Live Sensors"));
         // A card like its neighbours; its tab bar stands where a title would.
         auto *detailCard = new QFrame;
         detailCard->setObjectName(QStringLiteral("homeDetailCard"));

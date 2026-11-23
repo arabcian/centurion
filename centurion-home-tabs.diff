@@ -1,0 +1,56 @@
+diff -ruN a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+--- a/gui/i18n/centurion_tr.ts	2026-11-23 12:35:31.006239761 +0300
++++ b/gui/i18n/centurion_tr.ts	2026-11-23 12:35:31.008039598 +0300
+@@ -2958,13 +2958,13 @@
+         </message>
+         <message>
+             <location filename="../src/hometab.cpp" line="374"/>
+-            <source>Live sensors</source>
+-            <translation>Canlı sensörler</translation>
++            <source>Live Sensors</source>
++            <translation>Canlı Sensörler</translation>
+         </message>
+         <message>
+             <location filename="../src/hometab.cpp" line="375"/>
+-            <source>Hardware &amp;&amp; firmware</source>
+-            <translation>Donanım ve aygıt yazılımı</translation>
++            <source>Hardware &amp;&amp; Firmware</source>
++            <translation>Donanım ve Aygıt Yazılımı</translation>
+         </message>
+         <message>
+             <location filename="../src/hometab.cpp" line="246"/>
+diff -ruN a/gui/src/hometab.cpp b/gui/src/hometab.cpp
+--- a/gui/src/hometab.cpp	2026-11-23 12:35:31.016056571 +0300
++++ b/gui/src/hometab.cpp	2026-11-23 12:35:31.017645518 +0300
+@@ -364,7 +364,7 @@
+         // columns: every card edge (top, seam, bottom, centre gap) lines up by
+         // construction, whatever each card's content height is.
+         //   Power Profile │ Monitoring
+-        //   Device        │ Live sensors / Hardware & firmware
++        //   Device        │ Hardware & Firmware / Live Sensors
+         auto *plotPanel = new QGroupBox(tr("Monitoring"));
+         auto *chartLayout = new QVBoxLayout(plotPanel);
+         temperaturePlot_ = new experimentalui::TemperaturePlot;
+@@ -375,8 +375,8 @@
+         // The tab already names each page: no second title or frame inside it.
+         liveSensors->setTitle(QString());
+         hardware->setTitle(QString());
+-        details->addTab(liveSensors, tr("Live sensors"));
+-        details->addTab(hardware, tr("Hardware && firmware"));
++        details->addTab(hardware, tr("Hardware && Firmware"));  // left, shown first
++        details->addTab(liveSensors, tr("Live Sensors"));
+         // A card like its neighbours; its tab bar stands where a title would.
+         auto *detailCard = new QFrame;
+         detailCard->setObjectName(QStringLiteral("homeDetailCard"));
+diff -ruN a/gui/tests/studio_v4_static_test.py b/gui/tests/studio_v4_static_test.py
+--- a/gui/tests/studio_v4_static_test.py	2026-11-23 12:35:31.023950438 +0300
++++ b/gui/tests/studio_v4_static_test.py	2026-11-23 12:35:31.025450128 +0300
+@@ -23,7 +23,7 @@
+     'AMD GPU dynamic firmware controls preserved': 'cards_ = cards()' in amd and 'rebuildForm()' in amd,
+     'Lighting physical keyboard and effect editor': 'new KeyboardView' in lighting and 'work->addWidget(kbBox)' in lighting,
+     'Disclosure spans the row': 'setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed)' in ui,
+-    'Studio tab captions escape the ampersand': all(t in intel for t in ['tr("Voltage, safety && startup")', 'tr("Limits && throttling")']) and 'tr("Hardware && firmware")' in home,
++    'Studio tab captions escape the ampersand': all(t in intel for t in ['tr("Voltage, safety && startup")', 'tr("Limits && throttling")']) and 'tr("Hardware && Firmware")' in home,
+     'Firmware sits in the Tuning group': 'id == QLatin1String("Firmware")) return QStringLiteral("TUNING")' in main,
+     'Home has no duplicate metric strip': 'expCpuValue_' not in home and 'experimentalui::strip' not in home,
+     'Stability tests are separate framed runs': all('new QGroupBox(tr("%s"))' % t in (ROOT / f).read_text() for f, t in [('cpustressbox.cpp', 'CPU test'), ('memtestbox.cpp', 'Memory test'), ('gpustressbox.cpp', 'GPU test')]),

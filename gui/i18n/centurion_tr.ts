@@ -2958,13 +2958,13 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
         </message>
         <message>
             <location filename="../src/hometab.cpp" line="374"/>
-            <source>Live sensors</source>
-            <translation>Canlı sensörler</translation>
+            <source>Live Sensors</source>
+            <translation>Canlı Sensörler</translation>
         </message>
         <message>
             <location filename="../src/hometab.cpp" line="375"/>
-            <source>Hardware &amp;&amp; firmware</source>
-            <translation>Donanım ve aygıt yazılımı</translation>
+            <source>Hardware &amp;&amp; Firmware</source>
+            <translation>Donanım ve Aygıt Yazılımı</translation>
         </message>
         <message>
             <location filename="../src/hometab.cpp" line="246"/>

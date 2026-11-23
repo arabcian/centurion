@@ -23,7 +23,7 @@ checks = {
     'AMD GPU dynamic firmware controls preserved': 'cards_ = cards()' in amd and 'rebuildForm()' in amd,
     'Lighting physical keyboard and effect editor': 'new KeyboardView' in lighting and 'work->addWidget(kbBox)' in lighting,
     'Disclosure spans the row': 'setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed)' in ui,
-    'Studio tab captions escape the ampersand': all(t in intel for t in ['tr("Voltage, safety && startup")', 'tr("Limits && throttling")']) and 'tr("Hardware && firmware")' in home,
+    'Studio tab captions escape the ampersand': all(t in intel for t in ['tr("Voltage, safety && startup")', 'tr("Limits && throttling")']) and 'tr("Hardware && Firmware")' in home,
     'Firmware sits in the Tuning group': 'id == QLatin1String("Firmware")) return QStringLiteral("TUNING")' in main,
     'Home has no duplicate metric strip': 'expCpuValue_' not in home and 'experimentalui::strip' not in home,
     'Stability tests are separate framed runs': all('new QGroupBox(tr("%s"))' % t in (ROOT / f).read_text() for f, t in [('cpustressbox.cpp', 'CPU test'), ('memtestbox.cpp', 'Memory test'), ('gpustressbox.cpp', 'GPU test')]),
