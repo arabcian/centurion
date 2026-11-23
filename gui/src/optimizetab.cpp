@@ -24,6 +24,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QDateTime>
 #include <QProgressDialog>
 #include <QHeaderView>
@@ -991,7 +992,34 @@ void OptimizeTab::showEvent(QShowEvent *e) {
 }
 void OptimizeTab::hideEvent(QHideEvent *e) {
     QWidget::hideEvent(e);
-    poll_->stop();
+    // The manual Network/Storage/Kernel pages belong to Health, not to this tab.
+    // Do not stop their live-value updates when Optimize is hidden.
+    bool homeVisible = false;
+    for (QWidget *holder : std::as_const(homeHolders_))
+        if (holder && holder->isVisible()) { homeVisible = true; break; }
+    if (!homeVisible) poll_->stop();
+}
+
+bool OptimizeTab::eventFilter(QObject *watched, QEvent *event) {
+    if (event->type() == QEvent::Show || event->type() == QEvent::Hide) {
+        for (QWidget *holder : std::as_const(homeHolders_)) {
+            if (watched != holder) continue;
+            // Delay until QStackedWidget finishes its show/hide transition.
+            QTimer::singleShot(0, this, [this] {
+                bool visible = isVisible();
+                for (QWidget *home : std::as_const(homeHolders_))
+                    if (home && home->isVisible()) { visible = true; break; }
+                if (visible) {
+                    refresh();
+                    poll_->start();
+                } else {
+                    poll_->stop();
+                }
+            });
+            break;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 // `fromPoll`: the 4 s timer. It asks for a light describe (rows that need iw / ethtool / hdparm or PCI
@@ -1128,6 +1156,7 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
         for (int i = 0; i < rows.size(); ++i) updateRow(rows_[i], rows[i].toObject());
     }
     applyShadows();
+    updateHomeBootStatuses();
 
     // Affinity choices follow the live topology.
     if (affinity_ && (topoChanged || affinity_->count() == 0) && !affinity_->view()->isVisible()) {
@@ -1456,8 +1485,20 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
     r.cur->setText(!r.available ? tr("n/a") : rootOnly ? tr("root only")
                                 : r.kind == "bool" ? (r.current == "1" ? tr("enabled") : r.current == "0" ? tr("disabled") : r.current)
                                 : QCoreApplication::translate("OptimizationOptions", r.current.toUtf8().constData()));
-    theme::setSheet(r.cur, QStringLiteral("color:%1; background:transparent;").arg(r.available && !rootOnly ? theme::FG_DIM : theme::MUTED));
-    r.cur->setToolTip(r.available ? tr("%1 file(s)").arg(o.value("files").toInt()) : tr("Not present on this kernel/hardware"));
+    // Show the separate persistent boot value next to the live readback without
+    // turning the Apply checkbox into a misleading boot-enabled indicator.
+    const QJsonValue bootRaw = boot_.value(QStringLiteral("values")).toObject().value(r.key);
+    const QString bootExpected = bootRaw.isString() ? bootRaw.toString()
+                               : bootRaw.isDouble() ? QString::number(bootRaw.toVariant().toLongLong()) : QString();
+    const bool bootDiffers = r.available && !rootOnly && !r.current.isEmpty()
+                           && !bootExpected.isEmpty() && bootExpected != r.current;
+    theme::setSheet(r.cur, QStringLiteral("color:%1; background:transparent;")
+                            .arg(bootDiffers ? theme::WARN : r.available && !rootOnly ? theme::FG_DIM : theme::MUTED));
+    QString liveTip = r.available ? tr("%1 file(s)").arg(o.value("files").toInt())
+                                  : tr("Not present on this kernel/hardware");
+    if (!bootExpected.isEmpty()) liveTip += tr("\nSaved for boot: %1").arg(bootExpected);
+    if (bootDiffers) liveTip += tr("\nThe live value differs from the saved boot preset.");
+    r.cur->setToolTip(liveTip);
 
     // Keep a user edit; otherwise follow the live value. A spin box mid-edit
     // (has focus, keyboard tracking off so no valueChanged yet) is left alone
@@ -2966,36 +3007,133 @@ void OptimizeTab::runOp(const QJsonObject &req, const QString &what, std::functi
                 QMessageBox::critical(this, what, r.message().isEmpty() ? QStringLiteral("unknown error") : r.message());
         }
         updateStateBanner();
+        updateHomeBootStatuses();
         reloadPresets();
         refresh();
     }, PKEXEC_TIMEOUT_MS);
+}
+
+// A persisted boot preset is not the same thing as checked rows in the editor.
+// Keep a read-only summary visible on every manual System Tools page so a reboot
+// cannot make saved values look as though they disappeared.
+void OptimizeTab::updateHomeBootStatuses() {
+    const QJsonObject saved = boot_.value(QStringLiteral("values")).toObject();
+    for (auto it = homeBootStatus_.cbegin(); it != homeBootStatus_.cend(); ++it) {
+        const QString home = it.key();
+        QLabel *label = it.value();
+        int stored = 0, matching = 0, different = 0, unknown = 0;
+        for (const Row &r : rows_) {
+            if (r.home != home || !saved.contains(r.key)) continue;
+            ++stored;
+            const QJsonValue raw = saved.value(r.key);
+            const QString expected = raw.isString() ? raw.toString()
+                                   : raw.isDouble() ? QString::number(raw.toVariant().toLongLong()) : QString();
+            if (!r.available || r.current.isEmpty() || expected.isEmpty()) ++unknown;
+            else if (r.current == expected) ++matching;
+            else ++different;
+        }
+        QString message;
+        if (stored == 0) {
+            message = tr("No boot settings saved for this page. Enabling centurion-tune alone does not save values.");
+        } else {
+            message = tr("Saved for boot: %1 | Live matches: %2 | Different: %3 | Unavailable: %4. ")
+                          .arg(stored).arg(matching).arg(different).arg(unknown);
+            if (different)
+                message += tr("Check the OpenRC service, boot guard and other tuning services. ");
+            message += tr("Checkboxes select pending changes; they do not indicate boot status.");
+        }
+        if (label->text() != message) label->setText(message);
+        label->setStyleSheet(QStringLiteral("color:%1; background:transparent;")
+                             .arg(different ? theme::WARN : theme::FG_DIM));
+        if (QPushButton *load = homeBootLoad_.value(home)) load->setEnabled(!busy_ && stored > 0);
+    }
+}
+
+void OptimizeTab::loadHomeBootValues(const QString &home) {
+    if (busy_) return;
+    const QJsonObject saved = boot_.value(QStringLiteral("values")).toObject();
+    bool available = false, pending = false;
+    for (const Row &r : rows_) {
+        if (r.home != home || !r.include) continue;
+        available |= saved.contains(r.key);
+        pending |= r.touched || r.include->isChecked() || (r.spin && r.spin->hasFocus());
+    }
+    if (!available) {
+        QMessageBox::information(this, tr("Load Boot Values"), tr("No boot values are saved for this page."));
+        return;
+    }
+    if (pending && QMessageBox::question(this, tr("Load Boot Values"),
+            tr("Replace this page's uncommitted editor selections with the saved boot values? "
+               "Other System Tools pages will not be changed.")) != QMessageBox::Yes) return;
+    // Never write to the system as part of loading; Apply Checked remains explicit.
+    int loaded = 0;
+    QStringList skipped;
+    for (Row &r : rows_) {
+        if (r.home != home || !r.include) continue;
+        const QSignalBlocker block(r.include);
+        r.include->setChecked(false);
+        r.touched = false;
+        setEditorValue(r, r.current);
+    }
+    for (Row &r : rows_) {
+        if (r.home != home || !r.include || !saved.contains(r.key)) continue;
+        const QJsonValue raw = saved.value(r.key);
+        const QString value = raw.isString() ? raw.toString()
+                            : raw.isDouble() ? QString::number(raw.toVariant().toLongLong()) : QString();
+        if (!validFor(r, value) || !setEditorValue(r, value)) { skipped << r.label; continue; }
+        r.touched = true;
+        const QSignalBlocker block(r.include);
+        r.include->setChecked(true);
+        ++loaded;
+    }
+    applyShadows();
+    for (Row &r : rows_) if (r.home == home) markRow(r);
+    QString message = tr("Loaded %1 saved boot setting(s) into the editor only. Nothing was applied.").arg(loaded);
+    if (!skipped.isEmpty()) message += tr(" Unavailable or invalid: %1.").arg(skipped.join(QStringLiteral(", ")));
+    QMessageBox::information(this, tr("Load Boot Values"), message);
 }
 
 QWidget *OptimizeTab::homePage(const QString &home) {
     QWidget *&holder = homeHolders_[home];
     if (holder) return holder;
     holder = new QWidget;
+    holder->installEventFilter(this);
     auto *lay = new QVBoxLayout(holder);
     lay->setContentsMargins(8, 8, 8, 0);
     auto *bar = new QWidget(holder);
-    auto *row = new QHBoxLayout(bar);
-    row->setContentsMargins(0, 0, 0, 0);
+    auto *barLayout = new QVBoxLayout(bar);
+    barLayout->setContentsMargins(0, 0, 0, 0);
+    barLayout->setSpacing(5);
     auto *note = new QLabel(QCoreApplication::translate("OptimizeTab",
         "These settings are not measured by calibration or Autotune: set them by hand. Check a row, then press Apply checked "
         "(only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row."), bar);
     note->setWordWrap(true);
     note->setProperty("role", "muted");
+    barLayout->addWidget(note);
+    auto *controls = new QHBoxLayout;
+    controls->setContentsMargins(0, 0, 0, 0);
+    auto *bootStatus = new QLabel(tr("Reading saved boot settings…"), bar);
+    bootStatus->setWordWrap(true);
+    bootStatus->setProperty("role", "muted");
+    controls->addWidget(bootStatus, 1);
+    homeBootStatus_.insert(home, bootStatus);
+    auto *load = new QPushButton(tr("Load Boot Values"), bar);
+    load->setToolTip(tr("Load this page's saved boot values into the editor without applying them to the system."));
+    connect(load, &QPushButton::clicked, this, [this, home] { loadHomeBootValues(home); });
+    controls->addWidget(load);
+    homeBootLoad_.insert(home, load);
     auto *boot = new QPushButton(QCoreApplication::translate("OptimizeTab", "⏻ Apply at boot"), bar);
     boot->setToolTip(QCoreApplication::translate("OptimizeTab", "Add this page's checked rows to the boot preset (the rest of the boot preset stays as it is)."));
     connect(boot, &QPushButton::clicked, this, [this, home] { setBoot(home); });
+    controls->addWidget(boot);
     auto *apply = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"), bar);
     apply->setObjectName("btnAccent");
     apply->setMinimumWidth(132);
     connect(apply, &QPushButton::clicked, this, [this, home] { applySelected(home); });
-    row->addWidget(note, 1);
-    row->addWidget(boot);
-    row->addWidget(apply);
+    controls->addWidget(apply);
+    barLayout->addLayout(controls);
     lay->addWidget(bar);
+    updateHomeBootStatuses();
     return holder;
 }
 
@@ -3011,6 +3149,7 @@ void OptimizeTab::setBusy(bool b) {
     defaultsBtn_->setEnabled(!b);
     bootClear_->setEnabled(!b && !boot_.isEmpty());
     if (autoBtn_) autoBtn_->setEnabled(!b && !autoRunning_);
+    updateHomeBootStatuses();
 }
 
 void OptimizeTab::showStatus(const QString &msg, const char *color, int ms) {

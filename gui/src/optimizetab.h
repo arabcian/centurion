@@ -16,6 +16,7 @@
 #include <QWidget>
 #include <functional>
 
+class QEvent;
 class QCheckBox;
 class QComboBox;
 class QGridLayout;
@@ -74,6 +75,7 @@ Q_SIGNALS:
 protected:
     void showEvent(QShowEvent *e) override;
     void hideEvent(QHideEvent *e) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     struct Option { QString value, label; };
@@ -154,6 +156,9 @@ private:
     void useForGames();
     void setBoot(const QString &home = {});  // home: add only that page's checked rows to the stored boot preset
     void clearBoot();
+    /// The boot preset is persistent; row checkboxes are transient selection state.
+    void updateHomeBootStatuses();
+    void loadHomeBootValues(const QString &home);
 
     // Autotune: tune-helper {"op":"autotune"} profiles the hardware and
     // returns a preset for the chosen base (see centurion_helpers::autotune).
@@ -212,6 +217,8 @@ private:
     QLabel *topoLabel_ = nullptr;
     QTabWidget *groups_ = nullptr;
     QHash<QString, QWidget *> homeHolders_;
+    QHash<QString, QLabel *> homeBootStatus_;
+    QHash<QString, QPushButton *> homeBootLoad_;
     QLineEdit *settingSearch_ = nullptr;
     QStringListModel *settingSearchModel_ = nullptr;
     QTimer *poll_ = nullptr, *statusTimer_ = nullptr;
