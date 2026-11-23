@@ -108,7 +108,7 @@ private:
     void openTool(QWidget *page);
     void showToolCatalog();
     void rebuildToolCatalog();
-    QWidget *toolButton(const Tool &t);
+    QWidget *toolButton(const Tool &t, bool featured = false);
     const Tool *toolOf(QWidget *page) const;
     const Tool *toolByKey(const QString &key) const;
     QStringList toolList(const QString &setting) const;
@@ -153,6 +153,10 @@ private:
     QScrollArea *toolScroll_ = nullptr;
     QWidget *toolCatalog_ = nullptr;
     int toolColumns_ = 0;
+    int toolFeaturedColumns_ = 0;
+    int toolSymptomColumns_ = 0;
+    QString toolFilter_ = QStringLiteral("all");  // all, safe, changes, recent, pinned
+    QString toolAreaFilter_;  // empty: every area; an area name otherwise
     QTreeWidgetItem *toolResults_ = nullptr; // the rail's "System tools" search results
     QLineEdit *navSearch_ = nullptr;
     QToolButton *back_ = nullptr, *forward_ = nullptr;

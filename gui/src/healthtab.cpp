@@ -71,6 +71,7 @@
 #include <QGridLayout>
 #include <QKeySequence>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QShortcut>
 #include <QToolButton>
 #include <algorithm>
@@ -238,6 +239,10 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
 
     overview_ = new OverviewPage;
     connect(overview_, &OverviewPage::worstChanged, this, &HealthTab::levelChanged);
+    connect(overview_, &OverviewPage::worstChanged, this, [this](int) {
+        if (pages_ && pages_->currentWidget() == toolDirectory_ && toolMode_ && toolMode_->currentIndex() == 0)
+            rebuildToolCatalog();
+    });
     addPage(general, overview_, tr("System overview"), QStringLiteral("overview"));
     auto *monitor = new QWidget;
     addPage(problems, monitor, tr("Events & alerts"), QStringLiteral("monitor"));
@@ -288,22 +293,42 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *catalogLayout = new QVBoxLayout(catalogView);
     catalogLayout->setContentsMargins(0, 0, 0, 0);
     catalogLayout->setSpacing(7);
-    auto *directoryHeader = new QLabel(tr("System tools"));
+    // Keep search in a stable position while the directory itself scrolls. A complete tool can
+    // still be opened in one click; browsing never launches commands or wakes the dGPU.
+    auto *directoryEyebrow = new QLabel(tr("HEALTH CENTER  /  SYSTEM TOOLS"));
+    directoryEyebrow->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;font-weight:700;letter-spacing:1px")
+                                   .arg(theme::MUTED));
+    catalogLayout->addWidget(directoryEyebrow);
+    auto *directoryHeader = new QLabel(tr("System Tools"));
+    directoryHeader->setObjectName(QStringLiteral("healthDirectoryTitle"));
     QFont directoryFont = directoryHeader->font();
     directoryFont.setBold(true);
-    directoryFont.setPointSize(directoryFont.pointSize() + 4);
+    directoryFont.setPointSize(directoryFont.pointSize() + 8);
     directoryHeader->setFont(directoryFont);
     catalogLayout->addWidget(directoryHeader);
-    auto *directoryHint = new QLabel(tr("Detailed device reports, grouped by what they are about. A tool runs only when you open it; "
-                                        "its badges say when it can change settings, wake a sleeping GPU, needs root or uses the internet."));
+    auto *directoryHint = new QLabel(tr("Find the right diagnostic by symptom, or browse tools by hardware area. "
+                                        "Nothing runs until you open a tool."));
     directoryHint->setWordWrap(true);
     directoryHint->setProperty("role", "muted");
     catalogLayout->addWidget(directoryHint);
     toolSearch_ = new QLineEdit;
-    toolSearch_->setPlaceholderText(tr("Search tools: name, part, symptom or term (fan, VRR, firmware missing, ASPM)…"));
+    toolSearch_->setPlaceholderText(tr("Search tools, error codes or symptoms — e.g. Xid 154, flicker, NVMe, firmware…"));
     toolSearch_->setClearButtonEnabled(true);
     toolSearch_->setObjectName(QStringLiteral("healthToolSearch"));
+    toolSearch_->setMinimumHeight(35);
+    toolSearch_->setStyleSheet(QStringLiteral("QLineEdit#healthToolSearch{border:1px solid %1;border-radius:9px;"
+                                               "padding:7px 12px;background:%2;}"
+                                               "QLineEdit#healthToolSearch:focus{border:1px solid %3;}")
+                               .arg(theme::BORDER, theme::WELL, theme::ACCENT));
     catalogLayout->addWidget(toolSearch_);
+    auto *catalogFocus = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this);
+    catalogFocus->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(catalogFocus, &QShortcut::activated, toolSearch_, [this] {
+        showPage(toolDirectory_);
+        showToolCatalog();
+        toolSearch_->setFocus();
+        toolSearch_->selectAll();
+    });
     toolTerms_ = new QLabel;
     toolTerms_->setWordWrap(true);
     toolTerms_->setProperty("role", "muted");
@@ -392,7 +417,13 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         }
         for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
             if (it.value() == item) {
+                // Explicitly selecting System tools goes to the directory, not a stale tool.
+                // openTool() sets replaying_ while selecting this rail item: keep that tool intact.
+                if (it.key() == toolDirectory_ && !replaying_ && toolMode_->currentIndex() != 0)
+                    toolMode_->setCurrentIndex(0);
                 pages_->setCurrentWidget(it.key());
+                if (it.key() == toolDirectory_ && toolMode_->currentIndex() == 0)
+                    rebuildToolCatalog();  // refresh recorded indicators after returning from Health
                 const QString key = item->data(0, Qt::UserRole).toString();
                 guiSettings().setValue(QStringLiteral("health/page"), key);
                 const Tool *open = it.key() == toolDirectory_ && toolMode_->currentIndex() == 1 ? toolOf(toolPages_->currentWidget()) : nullptr;
@@ -400,6 +431,10 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
                 break;
             }
         }
+    });
+    connect(navigation_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item, int) {
+        if (item == pageItems_.value(toolDirectory_) && toolMode_->currentIndex() != 0)
+            showToolCatalog();  // clicking the currently selected rail item is also a navigation action
     });
     connect(navSearch, &QLineEdit::textChanged, this, &HealthTab::filterNavigation);
     const QString lastPage = guiSettings().value(QStringLiteral("health/page"), QStringLiteral("overview")).toString();
@@ -422,7 +457,10 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         else if (target == QLatin1String("dgpu")) page = findChild<DgpuPage *>();
         else if (target == QLatin1String("sleep")) page = findChild<SleepPage *>();
         else if (target == QLatin1String("klog")) page = klog_;
-        else if (target == QLatin1String("tools")) page = toolDirectory_;
+        else if (target == QLatin1String("tools")) {
+            showToolCatalog();
+            page = toolDirectory_;
+        }
         else if (target == QLatin1String("smart")) {
             for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it)
                 if (it.value()->data(0, Qt::UserRole).toString() == QStringLiteral("smart")) {
@@ -1012,6 +1050,7 @@ void HealthTab::openTool(QWidget *page) {
 
 void HealthTab::showToolCatalog() {
     toolMode_->setCurrentIndex(0);
+    rebuildToolCatalog();
     record(QStringLiteral("page:tools"));
 }
 
@@ -1027,102 +1066,420 @@ void HealthTab::togglePin() {
     rebuildToolCatalog();
 }
 
-QWidget *HealthTab::toolButton(const Tool &t) {
+// The directory deliberately presents information before actions. One whole card opens the
+// existing page; its star is a separate, keyboard-focusable action and never opens that tool.
+QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     const toolcatalog::Info info = toolcatalog::tool(t.key);
-    const QStringList badges = toolcatalog::badges(info.flags);
-    // Every card has the same size: name on the first line, badges (or nothing) on the second. Labels, not
-    // button text: a button's text takes "&" as a shortcut marker and cannot colour its second line.
-    auto *b = new QPushButton;
-    b->setObjectName(QStringLiteral("toolCard"));
-    const int h = 2 * b->fontMetrics().height() + 14;
-    // Height in the style sheet: the application sheet's min-height would override setFixedHeight.
-    b->setStyleSheet(QStringLiteral("QPushButton#toolCard{padding:0;min-height:%1px;max-height:%1px}").arg(h));
-    b->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);  // equal columns, whatever the name's length
-    auto *col = new QVBoxLayout(b);
-    col->setContentsMargins(10, 5, 10, 5);
-    col->setSpacing(1);
-    auto *name = new QLabel(t.label);
-    name->setTextFormat(Qt::PlainText);
-    name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    auto *badge = new QLabel(badges.join(QStringLiteral(" · ")));
-    badge->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    badge->setStyleSheet(QStringLiteral("color:%1;font-size:8pt").arg(theme::WARN));
-    for (QLabel *l : {name, badge}) {
-        l->setAttribute(Qt::WA_TransparentForMouseEvents);
-        l->setStyleSheet(l->styleSheet() + QStringLiteral(";background:transparent;border:none"));
-        col->addWidget(l);
+    auto *card = new QFrame;
+    card->setObjectName(featured ? QStringLiteral("healthFeaturedTool") : QStringLiteral("healthCatalogTool"));
+    card->setStyleSheet(QStringLiteral("QFrame#%1{background:%2;border:1px solid %3;border-radius:10px;}"
+                                       "QFrame#%1:hover{border-color:%4;}")
+                        .arg(card->objectName(), theme::BG2, theme::BORDER, theme::ACCENT_SOFT));
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto *row = new QHBoxLayout(card);
+    row->setContentsMargins(featured ? 12 : 10, featured ? 11 : 8, 9, featured ? 10 : 8);
+    row->setSpacing(4);
+    auto *open = new QPushButton;
+    open->setObjectName(QStringLiteral("healthOpenTool"));
+    open->setAccessibleName(tr("Open %1").arg(t.label));
+    open->setToolTip(toolDescription(t.page, t.key));
+    open->setCursor(Qt::PointingHandCursor);
+    open->setStyleSheet(QStringLiteral("QPushButton#healthOpenTool{background:transparent;border:0;text-align:left;"
+                                       "padding:0;min-height:0;max-height:999px;}"
+                                       "QPushButton#healthOpenTool:hover{background:transparent;}"));
+    open->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto *contents = new QVBoxLayout(open);
+    contents->setContentsMargins(0, 0, 0, 0);
+    contents->setSpacing(4);
+    auto *title = new QLabel(t.label);
+    title->setTextFormat(Qt::PlainText);
+    title->setWordWrap(true);
+    title->setStyleSheet(QStringLiteral("color:%1;font-weight:700;background:transparent;border:0;").arg(theme::FG));
+    contents->addWidget(title);
+    const QString about = t.page->property("toolAbout").toString().simplified();
+    if (!about.isEmpty()) {
+        auto *description = new QLabel(about);
+        description->setWordWrap(true);
+        description->setTextFormat(Qt::PlainText);
+        description->setMaximumHeight(description->fontMetrics().lineSpacing() * (featured ? 3 : 2) + 3);
+        description->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0;").arg(theme::FG_DIM));
+        contents->addWidget(description);
     }
-    b->setToolTip(toolDescription(t.page, t.key));
+    QStringList notes = toolcatalog::badges(info.flags);
+    const bool passive = info.flags == 0;
+    if (passive) notes << tr("No special warnings listed");
+    auto *badge = new QLabel(notes.join(QStringLiteral("  ·  ")));
+    badge->setTextFormat(Qt::PlainText);
+    badge->setWordWrap(true);
+    badge->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0;")
+                         .arg(passive ? theme::FG_DIM : theme::WARN));
+    contents->addWidget(badge);
+    for (QLabel *l : {title, badge}) l->setAttribute(Qt::WA_TransparentForMouseEvents);
+    if (!about.isEmpty()) {
+        // The description label is also non-interactive, so clicking anywhere opens the tool.
+        for (QLabel *l : open->findChildren<QLabel *>()) l->setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
     QWidget *page = t.page;
-    connect(b, &QPushButton::clicked, this, [this, page] { openTool(page); });
-    return b;
+    connect(open, &QPushButton::clicked, this, [this, page] { openTool(page); });
+    row->addWidget(open, 1);
+    auto *pin = new QToolButton;
+    const bool pinned = toolList(QStringLiteral("health/pinned_tools")).contains(t.key);
+    pin->setObjectName(QStringLiteral("healthCatalogPin"));
+    pin->setText(pinned ? QStringLiteral("★") : QStringLiteral("☆"));
+    pin->setToolTip(pinned ? tr("Remove from favorites") : tr("Add to favorites"));
+    pin->setAccessibleName(pin->toolTip() + QStringLiteral(": ") + t.label);
+    pin->setCursor(Qt::PointingHandCursor);
+    pin->setStyleSheet(QStringLiteral("QToolButton#healthCatalogPin{background:transparent;border:none;color:%1;"
+                                      "font-size:15pt;padding:4px;}"
+                                      "QToolButton#healthCatalogPin:hover{color:%2;}")
+                       .arg(pinned ? theme::ACCENT : theme::FG_DIM, theme::ACCENT));
+    connect(pin, &QToolButton::clicked, this, [this, key = t.key] {
+        QStringList pinned = guiSettings().value(QStringLiteral("health/pinned_tools")).toStringList();
+        if (pinned.contains(key)) pinned.removeAll(key);
+        else pinned << key;
+        guiSettings().setValue(QStringLiteral("health/pinned_tools"), pinned);
+        rebuildToolCatalog();
+    });
+    row->addWidget(pin, 0, Qt::AlignTop);
+    return card;
 }
 
 void HealthTab::rebuildToolCatalog() {
-    if (!toolScroll_) return;
+    if (!toolScroll_ || !toolSearch_) return;
     const QString query = toolSearch_->text().trimmed();
-    const int width = toolScroll_->viewport()->width();
-    toolColumns_ = std::clamp(width / 250, 1, 4);
+    const int width = std::max(toolScroll_->viewport()->width(), 300);
+    // A compact list has room for real explanations. Four columns of labels were hard to scan.
+    toolColumns_ = std::clamp(width / 480, 1, 2);
+    toolFeaturedColumns_ = std::clamp(width / 305, 1, 4);
+    toolSymptomColumns_ = std::clamp(width / 185, 1, 6);
     const QString terms = toolcatalog::explainTerms(query);
     toolTerms_->setText(terms);
     toolTerms_->setVisible(!terms.isEmpty());
 
     auto *catalog = new QWidget;
+    catalog->setObjectName(QStringLiteral("healthToolCatalog"));
     auto *v = new QVBoxLayout(catalog);
-    v->setContentsMargins(0, 0, 6, 0);
-    v->setSpacing(6);
-    // One grid for every section: the columns line up from the top of the catalog to the bottom.
-    auto *grid = new QGridLayout;
-    grid->setHorizontalSpacing(6);
-    grid->setVerticalSpacing(6);
-    for (int c = 0; c < toolColumns_; ++c) grid->setColumnStretch(c, 1);
-    v->addLayout(grid);
-    int row = 0;
-    auto section = [&](const QString &title, const QList<const Tool *> &list) {
-        if (list.isEmpty()) return;
-        auto *heading = new QLabel(title.toUpper());
-        heading->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding-top:6px").arg(theme::FG_DIM));
-        grid->addWidget(heading, row++, 0, 1, toolColumns_);
-        for (int i = 0; i < list.size(); ++i) grid->addWidget(toolButton(*list[i]), row + i / toolColumns_, i % toolColumns_);
-        row += int((list.size() + toolColumns_ - 1) / toolColumns_);
+    v->setContentsMargins(0, 3, 6, 7);
+    v->setSpacing(13);
+
+    auto heading = [this](const QString &text, const QString &hint) -> QWidget * {
+        auto *w = new QWidget;
+        auto *layout = new QHBoxLayout(w);
+        layout->setContentsMargins(0, 5, 0, 1);
+        layout->setSpacing(10);
+        auto *title = new QLabel(text);
+        QFont f = title->font();
+        f.setBold(true);
+        f.setPointSize(f.pointSize() + 2);
+        title->setFont(f);
+        layout->addWidget(title);
+        auto *note = new QLabel(hint);
+        note->setWordWrap(true);
+        note->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM));
+        layout->addWidget(note, 1);
+        return w;
+    };
+    auto cardsGrid = [this](const QList<const Tool *> &list, int columns, bool featured) -> QWidget * {
+        auto *container = new QWidget;
+        auto *g = new QGridLayout(container);
+        g->setContentsMargins(0, 0, 0, 0);
+        g->setSpacing(7);
+        for (int c = 0; c < columns; ++c) g->setColumnStretch(c, 1);
+        for (int i = 0; i < list.size(); ++i)
+            g->addWidget(toolButton(*list[i], featured), i / columns, i % columns);
+        return container;
     };
     auto byKeys = [this](const QStringList &keys) {
-        QList<const Tool *> list;
-        for (const QString &k : keys)
-            if (const Tool *t = toolByKey(k)) list << t;
-        return list;
+        QList<const Tool *> result;
+        QSet<QString> seen;
+        for (const QString &k : keys) {
+            if (seen.contains(k)) continue;
+            if (const Tool *t = toolByKey(k)) { result << t; seen.insert(k); }
+        }
+        return result;
     };
-    int shown = 0;
-    if (query.isEmpty()) {
-        section(tr("Pinned"), byKeys(toolList(QStringLiteral("health/pinned_tools"))));
-        section(tr("Recently used"), byKeys(toolList(QStringLiteral("health/recent_tools")).mid(0, 4)));
+    auto matchesFilter = [this, &query](const Tool &t) {
+        const toolcatalog::Info info = toolcatalog::tool(t.key);
+        if (!toolAreaFilter_.isEmpty() && toolcatalog::areaName(info.area) != toolAreaFilter_) return false;
+        if (toolFilter_ == QLatin1String("safe") && info.flags != 0) return false;
+        if (toolFilter_ == QLatin1String("changes") && !(info.flags & toolcatalog::ChangesSettings)) return false;
+        if (toolFilter_ == QLatin1String("recent") && !toolList(QStringLiteral("health/recent_tools")).contains(t.key)) return false;
+        if (toolFilter_ == QLatin1String("pinned") && !toolList(QStringLiteral("health/pinned_tools")).contains(t.key)) return false;
+        return toolcatalog::matches(query, t.label + QLatin1Char('|') + toolcatalog::areaName(info.area) +
+                                   QLatin1Char('|') + t.key, info.keywords);
+    };
+
+    // These counts are taken only from the existing Overview helper's recorded indicators.
+    // A tool flag, an unrun check, or an empty response is NEVER counted as a healthy component.
+    if (query.isEmpty() && toolAreaFilter_.isEmpty() && toolFilter_ == QLatin1String("all")) {
+        const QJsonArray healthCards = overview_ ? overview_->cards() : QJsonArray{};
+        int normal = 0, watch = 0, attention = 0, unknown = 0;
+        for (const QJsonValue &cv : healthCards) {
+            const int level = cv.toObject().value(QStringLiteral("level")).toInt(-1);
+            if (level == 0) ++normal;
+            else if (level == 1) ++watch;
+            else if (level == 2) ++attention;
+            else ++unknown;
+        }
+        auto *stats = new QWidget;
+        auto *statusGrid = new QGridLayout(stats);
+        statusGrid->setContentsMargins(0, 0, 0, 0);
+        statusGrid->setSpacing(7);
+        const int statColumns = width >= 700 ? 4 : 2;
+        struct Status { QString label, count, detail; const char *color; };
+        const QString countUnavailable = tr("—");
+        const QList<Status> data = {
+            {tr("Needs attention"), healthCards.isEmpty() ? countUnavailable : QString::number(attention), tr("Recorded problems"), theme::DANGER},
+            {tr("Review"), healthCards.isEmpty() ? countUnavailable : QString::number(watch), tr("Check these indicators"), theme::WARN},
+            {tr("Normal"), healthCards.isEmpty() ? countUnavailable : QString::number(normal), tr("Checked areas only"), theme::OK},
+            {tr("Not checked"), healthCards.isEmpty() ? countUnavailable : QString::number(unknown),
+             tr("Unknown or insufficient data"), theme::FG_DIM},
+        };
+        for (int i = 0; i < data.size(); ++i) {
+            const Status &s = data[i];
+            auto *button = new QPushButton;
+            button->setObjectName(QStringLiteral("healthStatusTile"));
+            button->setCursor(Qt::PointingHandCursor);
+            button->setToolTip(tr("Open System overview. Figures come from the last recorded check, not a live scan."));
+            button->setStyleSheet(QStringLiteral("QPushButton#healthStatusTile{background:%1;border:1px solid %2;"
+                                                 "border-left:3px solid %3;border-radius:9px;text-align:left;padding:7px;}"
+                                                 "QPushButton#healthStatusTile:hover{border-color:%3;}")
+                                  .arg(theme::BG2, theme::BORDER, s.color));
+            auto *contents = new QVBoxLayout(button);
+            contents->setContentsMargins(8, 5, 8, 5);
+            contents->setSpacing(3);
+            auto *top = new QHBoxLayout;
+            auto *label = new QLabel(s.label);
+            label->setStyleSheet(QStringLiteral("color:%1;font-weight:600;background:transparent;border:0").arg(theme::FG));
+            auto *count = new QLabel(s.count);
+            count->setStyleSheet(QStringLiteral("color:%1;font-size:13pt;font-weight:700;background:transparent;border:0")
+                                 .arg(s.color));
+            top->addWidget(label, 1);
+            top->addWidget(count);
+            contents->addLayout(top);
+            auto *detail = new QLabel(s.detail);
+            detail->setWordWrap(true);
+            detail->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0").arg(theme::FG_DIM));
+            contents->addWidget(detail);
+            for (QLabel *l : {label, count, detail}) l->setAttribute(Qt::WA_TransparentForMouseEvents);
+            connect(button, &QPushButton::clicked, this, [this] { showPage(overview_); });
+            statusGrid->addWidget(button, i / statColumns, i % statColumns);
+        }
+        v->addWidget(stats);
+        auto *statusNote = new QLabel(healthCards.isEmpty()
+            ? tr("System overview has not been checked yet. Open it to read available indicators.")
+            : tr("Status reflects the last System overview reading. Not a full hardware test."));
+        statusNote->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::MUTED));
+        statusNote->setWordWrap(true);
+        v->addWidget(statusNote);
+
+        v->addWidget(heading(tr("Troubleshoot by symptom"), tr("Start a guided, read-only investigation (H18).")));
+        // Actual guided-triage categories, not decorative buttons that merely highlight a group.
+        struct Symptom { const char *key; const char *label; const char *detail; };
+        const QList<Symptom> symptoms = {
+            {"gpu", QT_TR_NOOP("GPU & display"), QT_TR_NOOP("Xid, drivers, graphics")},
+            {"storage", QT_TR_NOOP("Storage"), QT_TR_NOOP("NVMe, SMART, F2FS")},
+            {"radio", QT_TR_NOOP("Wi-Fi & Bluetooth"), QT_TR_NOOP("Firmware, disconnects")},
+            {"sleep", QT_TR_NOOP("Power & sleep"), QT_TR_NOOP("Wake, standby, drain")},
+            {"cpu", QT_TR_NOOP("CPU & stability"), QT_TR_NOOP("CO, limits, MCE")},
+            {"crash", QT_TR_NOOP("Crashes & kernel"), QT_TR_NOOP("Boots, regressions")},
+        };
+        auto *symptomGrid = new QWidget;
+        auto *sg = new QGridLayout(symptomGrid);
+        sg->setContentsMargins(0, 0, 0, 0);
+        sg->setSpacing(7);
+        for (int c = 0; c < toolSymptomColumns_; ++c) sg->setColumnStretch(c, 1);
+        for (int i = 0; i < symptoms.size(); ++i) {
+            const Symptom &symptom = symptoms.at(i);
+            auto *b = new QPushButton;
+            b->setObjectName(QStringLiteral("healthSymptomTile"));
+            b->setCursor(Qt::PointingHandCursor);
+            b->setToolTip(tr("Open the guided investigation for %1. No settings are changed.").arg(tr(symptom.label)));
+            b->setMinimumHeight(62);
+            b->setStyleSheet(QStringLiteral("QPushButton#healthSymptomTile{background:%1;border:1px solid %2;"
+                                            "border-radius:10px;padding:6px;text-align:left;}"
+                                            "QPushButton#healthSymptomTile:hover{border-color:%3;background:%4;}")
+                             .arg(theme::BG2, theme::BORDER, theme::ACCENT, theme::BG3));
+            auto *col = new QVBoxLayout(b);
+            col->setContentsMargins(8, 7, 8, 7);
+            col->setSpacing(4);
+            auto *name = new QLabel(tr(symptom.label));
+            name->setWordWrap(true);
+            name->setStyleSheet(QStringLiteral("color:%1;font-weight:700;background:transparent;border:0").arg(theme::FG));
+            auto *description = new QLabel(tr(symptom.detail));
+            description->setWordWrap(true);
+            description->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0").arg(theme::FG_DIM));
+            name->setAttribute(Qt::WA_TransparentForMouseEvents);
+            description->setAttribute(Qt::WA_TransparentForMouseEvents);
+            col->addWidget(name);
+            col->addWidget(description);
+            connect(b, &QPushButton::clicked, this, [this, key = QString::fromLatin1(symptom.key)] {
+                showPage(investigations_);
+                investigations_->startTriage(key);
+            });
+            sg->addWidget(b, i / toolSymptomColumns_, i % toolSymptomColumns_);
+        }
+        v->addWidget(symptomGrid);
+
+        QStringList recommendedKeys = toolList(QStringLiteral("health/pinned_tools"));
+        for (const QString &key : {QStringLiteral("EDID / VRR"),
+                                  QStringLiteral("Wi-Fi / Bluetooth Firmware Doctor"),
+                                  QStringLiteral("Power Limit Source Map"), QStringLiteral("Hardware snapshot")}) {
+            if (!recommendedKeys.contains(key)) recommendedKeys << key;
+        }
+        const QList<const Tool *> recommended = byKeys(recommendedKeys.mid(0, 4));
+        if (!recommended.isEmpty()) {
+            v->addWidget(heading(tr("Quick access"), tr("Your favorites first, followed by common diagnostic tools.")));
+            v->addWidget(cardsGrid(recommended, toolFeaturedColumns_, true));
+        }
     }
+
+    auto *filtersTitle = heading(tr("All tools"), tr("Open a category or filter the directory."));
+    v->addWidget(filtersTitle);
+    auto *filters = new QWidget;
+    auto *frow = new QHBoxLayout(filters);
+    frow->setContentsMargins(0, 0, 0, 0);
+    frow->setSpacing(5);
+    const QList<QPair<QString, QString>> choices = {
+        {QStringLiteral("all"), tr("All")}, {QStringLiteral("safe"), tr("No special warnings")},
+        {QStringLiteral("changes"), tr("Changes settings")}, {QStringLiteral("recent"), tr("Recent")},
+        {QStringLiteral("pinned"), tr("Favorites")},
+    };
+    for (const auto &choice : choices) {
+        auto *b = new QPushButton(choice.second);
+        const bool active = toolFilter_ == choice.first;
+        b->setCheckable(true);
+        b->setChecked(active);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setMinimumHeight(29);
+        b->setStyleSheet(QStringLiteral("QPushButton{border:1px solid %1;background:%2;border-radius:8px;"
+                                         "padding:4px 10px;}QPushButton:hover{border-color:%3;}"
+                                         "QPushButton:checked{border-color:%3;background:%4;color:%5;font-weight:700;}")
+                         .arg(theme::BORDER, theme::BG2, theme::ACCENT, theme::BG3, theme::ACCENT));
+        connect(b, &QPushButton::clicked, this, [this, filter = choice.first] {
+            toolFilter_ = filter;
+            rebuildToolCatalog();
+            toolScroll_->verticalScrollBar()->setValue(0);
+        });
+        frow->addWidget(b);
+    }
+    frow->addStretch();
+    auto *areaBox = new QComboBox;
+    areaBox->setObjectName(QStringLiteral("healthToolAreaFilter"));
+    areaBox->addItem(tr("All categories"), QString());
+    for (const toolcatalog::Area area : toolcatalog::areas())
+        areaBox->addItem(toolcatalog::areaName(area), toolcatalog::areaName(area));
+    const int areaIndex = areaBox->findData(toolAreaFilter_);
+    areaBox->setCurrentIndex(std::max(0, areaIndex));
+    areaBox->setToolTip(tr("Limit the directory to one hardware category."));
+    connect(areaBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this, areaBox](int index) {
+        toolAreaFilter_ = areaBox->itemData(index).toString();
+        rebuildToolCatalog();
+        toolScroll_->verticalScrollBar()->setValue(0);
+    });
+    frow->addWidget(areaBox);
+    v->addWidget(filters);
+    if (!toolAreaFilter_.isEmpty()) {
+        auto *clearArea = new QPushButton(tr("Category: %1    ×  Clear").arg(toolAreaFilter_));
+        clearArea->setToolTip(tr("Show tools from every hardware area."));
+        connect(clearArea, &QPushButton::clicked, this, [this] {
+            toolAreaFilter_.clear();
+            rebuildToolCatalog();
+        });
+        v->addWidget(clearArea, 0, Qt::AlignLeft);
+    }
+
+    int shown = 0;
+    // Stable numeric area IDs: names are translated and must never be used as settings keys.
+    const QStringList defaultCollapsed{QStringLiteral("0"), QStringLiteral("2"),
+        QStringLiteral("3"), QStringLiteral("4"), QStringLiteral("5"),
+        QStringLiteral("6"), QStringLiteral("7")};
+    const QStringList collapsed = guiSettings().value(QStringLiteral("health/catalog_collapsed_groups"),
+                                                       defaultCollapsed).toStringList();
     for (const toolcatalog::Area area : toolcatalog::areas()) {
         QList<const Tool *> list;
-        for (const Tool &t : std::as_const(tools_)) {
-            const toolcatalog::Info info = toolcatalog::tool(t.key);
-            if (info.area == area && toolcatalog::matches(query, t.label + QLatin1Char('|') + toolcatalog::areaName(area) + QLatin1Char('|') + t.key, info.keywords))
-                list << &t;
+        for (const Tool &t : std::as_const(tools_))
+            if (toolcatalog::tool(t.key).area == area && matchesFilter(t)) list << &t;
+        if (list.isEmpty()) continue;
+        shown += list.size();
+        const QString title = toolcatalog::areaName(area);
+        const QString areaId = QString::number(static_cast<int>(area));
+        const bool expanded = !query.isEmpty() || !collapsed.contains(areaId) || !toolAreaFilter_.isEmpty();
+        auto *section = new QFrame;
+        section->setObjectName(QStringLiteral("healthCatalogSection"));
+        section->setStyleSheet(QStringLiteral("QFrame#healthCatalogSection{background:%1;border:1px solid %2;"
+                                            "border-radius:10px;}QFrame#healthCatalogSection QLabel{border:none;background:transparent;}")
+                               .arg(theme::BG1, theme::BORDER));
+        auto *sectionLayout = new QVBoxLayout(section);
+        sectionLayout->setContentsMargins(7, 6, 7, expanded ? 8 : 6);
+        sectionLayout->setSpacing(7);
+        auto *groupRow = new QWidget;
+        auto *groupLayout = new QHBoxLayout(groupRow);
+        groupLayout->setContentsMargins(0, 0, 6, 0);
+        groupLayout->setSpacing(6);
+        auto *group = new QPushButton(QStringLiteral("%1   %2")
+                                      .arg(expanded ? QStringLiteral("▾") : QStringLiteral("▸"), title));
+        group->setObjectName(QStringLiteral("healthToolCategory"));
+        group->setAccessibleName(tr("%1 category, %2 tools, %3")
+                                  .arg(title).arg(list.size()).arg(expanded ? tr("expanded") : tr("collapsed")));
+        group->setCursor(Qt::PointingHandCursor);
+        // Matching groups remain open for search/category filters; make this explicit instead
+        // of presenting a collapse button that appears to do nothing.
+        if (!query.isEmpty() || !toolAreaFilter_.isEmpty()) {
+            group->setEnabled(false);
+            group->setToolTip(tr("Groups stay expanded while search or category filtering is active."));
         }
-        shown += int(list.size());
-        section(toolcatalog::areaName(area), list);
+        group->setStyleSheet(QStringLiteral("QPushButton#healthToolCategory{border:0;background:transparent;"
+                                            "font-weight:700;text-align:left;padding:5px 7px;}"
+                                            "QPushButton#healthToolCategory:hover{color:%1;}").arg(theme::ACCENT));
+        groupLayout->addWidget(group, 1);
+        auto *itemCount = new QLabel(tr("%1 tools").arg(list.size()));
+        itemCount->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM));
+        groupLayout->addWidget(itemCount);
+        connect(group, &QPushButton::clicked, this, [this, areaId, defaultCollapsed] {
+            QStringList hidden = guiSettings().value(QStringLiteral("health/catalog_collapsed_groups"),
+                                                       defaultCollapsed).toStringList();
+            if (hidden.contains(areaId)) hidden.removeAll(areaId);
+            else hidden << areaId;
+            guiSettings().setValue(QStringLiteral("health/catalog_collapsed_groups"), hidden);
+            rebuildToolCatalog();
+        });
+        sectionLayout->addWidget(groupRow);
+        if (expanded) sectionLayout->addWidget(cardsGrid(list, toolColumns_, false));
+        v->addWidget(section);
     }
     if (!shown) {
-        auto *none = new QLabel(tr("No tool matches “%1”. Try a part (GPU, disk, fan), a symptom or an error code; "
-                                   "the search box at the top left also finds Health pages.").arg(query));
+        auto *none = new QLabel(tr("No tool matches the current search or filter. Try a device, symptom or error code, or clear the filters."));
         none->setWordWrap(true);
-        none->setProperty("role", "muted");
+        none->setStyleSheet(QStringLiteral("color:%1;padding:12px;").arg(theme::FG_DIM));
         v->addWidget(none);
+        auto *reset = new QPushButton(tr("Clear search and filters"));
+        connect(reset, &QPushButton::clicked, this, [this] {
+            toolSearch_->clear();
+            toolFilter_ = QStringLiteral("all");
+            toolAreaFilter_.clear();
+            rebuildToolCatalog();
+        });
+        v->addWidget(reset, 0, Qt::AlignLeft);
     }
     v->addStretch();
-    delete toolCatalog_;
-    toolCatalog_ = catalog;
+    // Keep the scroll position while starring a tool or expanding one group.
+    const int scrollPos = toolScroll_->verticalScrollBar()->value();
+    QWidget *old = toolScroll_->takeWidget();
     toolScroll_->setWidget(catalog);
+    toolCatalog_ = catalog;
+    // A click can originate inside the old catalog. Destroy it only after the
+    // currently executing signal handler returns (prevents a use-after-free).
+    if (old) old->deleteLater();
+    toolScroll_->verticalScrollBar()->setValue(scrollPos);
 }
 
 bool HealthTab::eventFilter(QObject *watched, QEvent *event) {
     if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Resize &&
-        std::clamp(toolScroll_->viewport()->width() / 250, 1, 4) != toolColumns_)
+        (std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 480, 1, 2) != toolColumns_ ||
+         std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 305, 1, 4) != toolFeaturedColumns_ ||
+         std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 185, 1, 6) != toolSymptomColumns_))
         QTimer::singleShot(0, this, [this] { rebuildToolCatalog(); });  // not while the viewport is being laid out
     return QWidget::eventFilter(watched, event);
 }

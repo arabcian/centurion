@@ -163,6 +163,10 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     hint->setWordWrap(true);
     hint->setProperty("tone", "muted");
     bottom->addWidget(hint, 1);
+    auto *bTools = new QPushButton(tr("Browse System Tools"));
+    bTools->setToolTip(tr("Open the searchable tool directory without running any diagnostic."));
+    connect(bTools, &QPushButton::clicked, this, [this] { Q_EMIT openPage(QStringLiteral("tools")); });
+    bottom->addWidget(bTools);
     auto *bReport = new QPushButton(tr("Diagnostic report…"));
     connect(bReport, &QPushButton::clicked, this, &OverviewPage::report);
     bottom->addWidget(bReport);
