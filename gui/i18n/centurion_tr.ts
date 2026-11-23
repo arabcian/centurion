@@ -3256,6 +3256,18 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     <context>
         <name>MainWindow</name>
         <message>
+            <source>Network tuning</source>
+            <translation>Ağ ayarları</translation>
+        </message>
+        <message>
+            <source>Storage tuning</source>
+            <translation>Depolama ayarları</translation>
+        </message>
+        <message>
+            <source>Kernel tuning</source>
+            <translation>Çekirdek ayarları</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/mainwindow.cpp" line="77"/>
             <source>Home</source>
             <translation>Ana sayfa</translation>
@@ -7247,6 +7259,10 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
     </context>
     <context>
         <name>OptimizeTab</name>
+        <message>
+            <source>These settings are not measured by calibration or Autotune: set them by hand. Check a row, then press Apply checked (only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row.</source>
+            <translation>Bu ayarlar kalibrasyon veya Autotune tarafından ölçülmez: elle ayarlanır. Bir satırı işaretleyip İşaretlenenleri uygula'ya basın (yalnız bu sayfanın satırları). Profiller, Özgün değerleri geri yükle ve açılış varsayılanları bunlara diğer satırlar gibi davranır.</translation>
+        </message>
         <message>
             <location filename="../src/optimizetab.cpp" line="549"/>
             <source>AUTOTUNE  ·  Goals, custom weights and calibration</source>

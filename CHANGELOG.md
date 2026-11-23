@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+### Changed
+- 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
+  Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
+  bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.
+  Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
+
 ### Added
 - Scheduling-domain rows: `imbalance_pct`, `min_interval`, `max_interval` and `busy_factor` of the MC (one cache
   domain) and PKG (balancing between CCDs) levels, written to every CPU's domain in debugfs `sched/domains/`. The

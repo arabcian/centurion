@@ -2060,6 +2060,41 @@ pub fn firmware_owned(t: &Tunable, err: &str) -> bool {
 /// preset sets them only when the user checks the row on purpose, otherwise they are left as they are.
 pub fn user_switch(t: &Tunable) -> bool { matches!(t.target, Target::Rfkill(_)) }
 
+/// Rows that neither calibration nor autotune touch (docs/KNOBS.md, Autotune "—") and no built-in
+/// preset sets: the Optimizations tab leaves them out and the Health → System tools pages show them
+/// (network, storage and kernel tuning). Same keys, same presets, same apply/restore - only the page differs.
+pub const HOME_NETWORK: &[&str] = &[
+    "net.tcp_slow_start_after_idle", "net.tcp_mtu_probing", "net.netdev_max_backlog", "net.tcp_notsent_lowat",
+    "net.tcp_fastopen", "net.gro_flush_timeout", "net.napi_defer_hard_irqs", "net.busy_poll", "net.busy_read",
+    "net.napi_threaded", "net.wifi_aql_enable", "net.wifi_aql_threshold", "net.wifi_napi_threaded",
+    "net.mt76_runtime_pm", "net.mt76_idle_timeout", "net.mt76_deep_sleep", "bt.conn_min_interval",
+    "bt.conn_max_interval", "net.netdev_budget", "net.netdev_budget_usecs", "net.dev_weight",
+    "net.gro_normal_batch", "net.tcp_limit_output_bytes", "net.tcp_autocorking", "net.tcp_pacing_ss_ratio",
+    "net.tcp_pacing_ca_ratio", "net.tcp_ecn", "net.rmem_max", "net.wmem_max",
+];
+pub const HOME_STORAGE: &[&str] = &[
+    "blk.kyber_read_lat_ns", "blk.kyber_write_lat_ns", "blk.dl_read_expire_ms", "blk.dl_write_expire_ms",
+    "blk.dl_fifo_batch", "blk.dl_writes_starved", "blk.bfq_low_latency", "blk.bfq_slice_idle_ms",
+    "btrfs.discard_iops_limit", "btrfs.discard_kbps_limit", "btrfs.discard_max_size",
+];
+pub const HOME_KERNEL: &[&str] = &[
+    "thp.khp_alloc_sleep_ms", "thp.khp_max_ptes_shared", "mm.ksm_advisor", "mm.ksm_use_zero_pages", "mm.ksm_smart_scan",
+    "vm.dirtytime_expire_seconds", "vm.oom_kill_allocating_task", "kernel.numa_promote_rate_limit",
+    "kernel.yield_type", "kernel.sched_rt_runtime_us",
+    "sched.feat_attach_age_load", "sched.feat_nontask_capacity", "sched.feat_lb_min", "sched.feat_ni_rate",
+    "sched.feat_hrtick_dl", "sched.feat_paranoid_avg",
+    "sched.numa_scan_size_mb", "sched.numa_scan_period_min_ms", "sched.numa_scan_period_max_ms",
+    "sched.numa_scan_delay_ms", "sched.numa_hot_threshold_ms",
+];
+
+/// Which System tools page shows this row instead of the Optimizations tab ("" = Optimizations).
+pub fn home(key: &str) -> &'static str {
+    if HOME_NETWORK.contains(&key) { "network" }
+    else if HOME_STORAGE.contains(&key) { "storage" }
+    else if HOME_KERNEL.contains(&key) { "kernel" }
+    else { "" }
+}
+
 pub fn best_effort(t: &Tunable) -> bool {
     matches!(t.target, Target::Irq | Target::DeviceIrq(_) | Target::NetQueueMask(_) | Target::PciLatency | Target::PciAspm | Target::PciRuntimePm | Target::UsbRuntimePm | Target::UsbAutosuspendMs | Target::AhciPortRuntime | Target::AhciDisk(_))
 }
@@ -3637,7 +3672,7 @@ pub fn describe_with(light: bool) -> Value {
             "options": opts, "min": min, "max": max,
             // debugfs is root-only (0700): unprivileged callers cannot tell; root checks at write time.
             "available": !fs.is_empty() || (t.debugfs && debugfs_snapshot_has(t.key).unwrap_or(true)),
-            "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t),
+            "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t), "home": home(t.key),
             "files": fs.len(), "slow": slow_to_read(t),
             "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
         });
@@ -3972,6 +4007,20 @@ mod tests {
         assert!(role_options(&g, true).iter().all(|(k, _)| k != "ccd0"));
         assert_eq!(role_matching(&g, &(8..16).chain(24..32).collect::<Vec<_>>()).as_deref(), Some("ccd1"));
         assert_eq!(role_matching(&g, &[0, 1]), None);
+    }
+    #[test]
+    fn homes_name_real_uncalibrated_rows() {
+        let all: Vec<&str> = [HOME_NETWORK, HOME_STORAGE, HOME_KERNEL].concat();
+        let mut seen = std::collections::HashSet::new();
+        for k in &all {
+            assert!(seen.insert(*k), "{k} listed twice");
+            let t = find(k).unwrap_or_else(|| panic!("{k} is not a tunable"));
+            assert_ne!(t.group, "CPU", "{k}: CPU rows stay on the Optimizations tab");
+            assert!(!t.key.starts_with("cpu."), "{k}");
+            assert_ne!(home(k), "");
+        }
+        assert_eq!(home("vm.swappiness"), "");
+        assert_eq!(home("net.tcp_congestion"), "");
     }
     #[test]
     fn sched_domain_levels() {

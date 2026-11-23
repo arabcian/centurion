@@ -8,6 +8,8 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti, /sys dö
 - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
 - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
 
+Not: Autotune sütunu "—" olan ve hiçbir yerleşik presette geçmeyen 61 satır (`tune::HOME_NETWORK/STORAGE/KERNEL`) Optimizasyonlar sekmesinde değil, Sağlık > Sistem araçları > Ağ / Depolama / Çekirdek ayarları sayfalarında görünür.
+
 Özet: 254 knob · kalibre + autotune 123 · yalnız autotune kuralı 52 · hiçbiri 79
 
 ## CPU (38)

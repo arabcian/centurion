@@ -922,6 +922,13 @@ void HealthTab::showPage(QWidget *page) {
     pages_->setCurrentWidget(page);
 }
 
+void HealthTab::addToolPage(QWidget *page, const QString &label, ToolGroup group) {
+    QTreeWidgetItem *parent = toolNavigation_->topLevelItem(group);
+    if (!parent) return;
+    toolItems_.insert(page, new QTreeWidgetItem(parent, {label}));
+    toolPages_->addWidget(page);
+}
+
 void HealthTab::openDgpuPage() { showPage(findChild<DgpuPage *>()); }
 
 void HealthTab::refreshDays() {

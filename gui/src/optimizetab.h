@@ -49,6 +49,10 @@ public:
     /// Drift banner (DriftWatch): settings changed by something else since Centurion applied them.
     void setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply);
     void restoreAll(bool confirm = true);
+    /// Page with the rows of one System tools home (network / storage / kernel): the rows neither
+    /// calibration nor Autotune touch. Same rows, presets and restore as the tabs here; created
+    /// once, refilled whenever the rows are rebuilt.
+    QWidget *homePage(const QString &home);
     /// Pauses Scenes, then writes every knob to the value centurion-boot-guard captured at boot (calibration baseline).
     void returnToBootDefaults();
     void setSceneEngine(SceneEngine *eng) { scenes_ = eng; }
@@ -75,6 +79,7 @@ private:
     struct Option { QString value, label; };
     struct Row {
         QString key, group, label, help, kind, current;
+        QString home;      // System tools page that shows this row instead ("network", "storage", "kernel"; "" = this tab)
         QString conflict;  // another daemon fights this row (irqbalance vs irq.affinity)
         QList<Option> options;
         qint64 min = 0, max = 0;
@@ -164,7 +169,7 @@ private:
     void fillAutotuneContexts();
     void importFieldData();
 
-    void applySelected();
+    void applySelected(const QString &home = {});  // home: only that page's checked rows
     void applyValues(const QJsonObject &values, const QString &preset);
     void revertRow(const QString &key);
     void runOp(const QJsonObject &req, const QString &what, std::function<void(const QJsonObject &)> then = {});
@@ -206,6 +211,7 @@ private:
     QLineEdit *lutrisPre_ = nullptr, *lutrisPost_ = nullptr, *lutrisPrefix_ = nullptr, *steam_ = nullptr;
     QLabel *topoLabel_ = nullptr;
     QTabWidget *groups_ = nullptr;
+    QHash<QString, QWidget *> homeHolders_;
     QLineEdit *settingSearch_ = nullptr;
     QStringListModel *settingSearchModel_ = nullptr;
     QTimer *poll_ = nullptr, *statusTimer_ = nullptr;

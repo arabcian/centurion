@@ -666,7 +666,7 @@ void OptimizeTab::buildUi() {
     applyBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"));
     applyBtn_->setObjectName("btnAccent");
     applyBtn_->setMinimumWidth(132);
-    connect(applyBtn_, &QPushButton::clicked, this, &OptimizeTab::applySelected);
+    connect(applyBtn_, &QPushButton::clicked, this, [this] { applySelected(); });
     bar->addWidget(applyBtn_);
     root->addLayout(bar);
 
@@ -1199,7 +1199,7 @@ void OptimizeTab::jumpToSetting(const QString &query) {
     // Completer entries use "Group / Setting"; free-text searches match
     // labels/help/keys. Keep the source row and its include checkbox intact.
     for (Row &r : rows_) {
-        if (!r.name) continue;
+        if (!r.name || !r.home.isEmpty()) continue;
         const QString localizedGroup = QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData());
         const QString fullname = localizedGroup + QStringLiteral(" / ") + r.label;
         if (!fullname.contains(text, Qt::CaseInsensitive) &&
@@ -1253,13 +1253,35 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         r.caution = o.value("caution").toBool();
         r.conflict = o.value("conflict").toString();
         r.hotplug = o.value("hotplug").toBool();
+        r.home = o.value("home").toString();
         r.userSwitch = o.value("user_switch").toBool() || isRadioSwitch(r.key);
         rows_.append(r);
     }
 
-    for (const char *gname : GROUPS) {
-        const QString group = QString::fromLatin1(gname);
-        if (std::none_of(rows_.cbegin(), rows_.cend(), [&](const Row &r) { return r.group == group; })) continue;
+    // One tab per group, minus the rows that live on a System tools page (r.home); each of those
+    // pages is filled the same way from its own rows.
+    struct Section { QString group, home; };
+    QList<Section> sections;
+    for (const char *gname : GROUPS) sections.append(Section{QString::fromLatin1(gname), QString()});
+    for (const char *h : {"network", "storage", "kernel"}) sections.append(Section{QString(), QString::fromLatin1(h)});
+    const auto setHome = [this](const QString &home, QWidget *content) {
+        auto *lay = qobject_cast<QVBoxLayout *>(homePage(home)->layout());
+        while (lay->count() > 1) {
+            QLayoutItem *it = lay->takeAt(1);
+            if (it->widget()) it->widget()->deleteLater();
+            delete it;
+        }
+        if (content) lay->addWidget(content, 1);
+    };
+    for (const Section &sec : sections) {
+        const QString &group = sec.group;
+        const auto inSection = [&](const Row &r) {
+            return sec.home.isEmpty() ? r.group == group && r.home.isEmpty() : r.home == sec.home;
+        };
+        if (std::none_of(rows_.cbegin(), rows_.cend(), inSection)) {
+            if (!sec.home.isEmpty()) setHome(sec.home, nullptr);
+            continue;
+        }
         auto *scroll = new QScrollArea;
         scroll->setWidgetResizable(true);
         auto *page = new QWidget;
@@ -1274,8 +1296,13 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         // this function took.
         scroll->setWidget(page);
         const QString displayGroup = QCoreApplication::translate("OptimizationGroups", group.toUtf8().constData());
-        const int tab = groups_->addTab(scroll, displayGroup);
-        scroll->setProperty("optimizationGroup", group);
+        int tab = -1;
+        if (sec.home.isEmpty()) {
+            tab = groups_->addTab(scroll, displayGroup);
+            scroll->setProperty("optimizationGroup", group);
+        } else {
+            setHome(sec.home, scroll);
+        }
         const char *heads[] = {"", "Setting", "Live value", "New value", ""};
         for (int c = 0; c < 5; ++c) {
             auto *h = new QLabel(tr(heads[c]), page);
@@ -1283,9 +1310,16 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             grid->addWidget(h, 0, c);
         }
         int line = 1, available = 0;
+        QString lastGroup;
         for (int i = 0; i < rows_.size(); ++i) {
             Row &r = rows_[i];
-            if (r.group != group) continue;
+            if (!inSection(r)) continue;
+            if (!sec.home.isEmpty() && r.group != lastGroup) {  // a System tools page mixes groups: name them
+                lastGroup = r.group;
+                auto *head = new QLabel(QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData()), page);
+                head->setProperty("role", "muted");
+                grid->addWidget(head, line++, 0, 1, 5);
+            }
             const QString key = r.key;
             r.include = new QCheckBox(page);
             r.include->setToolTip(tr("Include in Apply, Save and boot preset"));
@@ -1379,13 +1413,13 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         grid->setColumnStretch(1, 2);
         grid->setColumnStretch(3, 3);
         grid->setRowStretch(line, 1);
-        groups_->setTabText(tab, QStringLiteral("%1  %2").arg(displayGroup).arg(available));
+        if (tab >= 0) groups_->setTabText(tab, QStringLiteral("%1  %2").arg(displayGroup).arg(available));
     }
     groups_->addTab(buildLaunchPage(), tr("Game launch"));
     groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), tr("Boot options"));  // built on first open
     if (settingSearchModel_) {
         QStringList entries;
-        for (const Row &r : rows_) if (!r.label.isEmpty())
+        for (const Row &r : rows_) if (!r.label.isEmpty() && r.home.isEmpty())
             entries.append(QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData())
                            + QStringLiteral(" / ") + r.label);
         entries.removeDuplicates();
@@ -2682,8 +2716,9 @@ static bool verifiedAutotunePreset(const QString &name, const QJsonObject &value
 
 // ── apply / restore ─────────────────────────────────────────────────────────
 
-void OptimizeTab::applySelected() {
-    const QJsonObject values = collectValues();
+void OptimizeTab::applySelected(const QString &home) {
+    QJsonObject values = collectValues();
+    if (!home.isEmpty()) for (const Row &r : rows_) if (r.home != home) values.remove(r.key);
     if (values.isEmpty()) { QMessageBox::information(this, "Apply", "No row is checked."); return; }
     QStringList risky;
     for (const Row &r : rows_) if (values.contains(r.key) && r.caution && differs(r)) risky << "• " + r.label + " → " + (r.combo ? r.combo->currentText() : editorValue(r));
@@ -2695,7 +2730,7 @@ void OptimizeTab::applySelected() {
     // proved against the *current boot baseline* before Apply. For ordinary
     // manual presets the legacy explicit caution confirmation still applies.
     const QJsonObject preset = presetObject(loadedPreset_);
-    const bool autoPreset = preset.value(QStringLiteral("autotune")).isObject();
+    const bool autoPreset = home.isEmpty() && preset.value(QStringLiteral("autotune")).isObject();
     // Extensive = many rows that actually change something (an autotuned preset checks every row,
     // most of them already at their live value).
     int changed = 0;
@@ -2926,11 +2961,36 @@ void OptimizeTab::runOp(const QJsonObject &req, const QString &what, std::functi
     }, PKEXEC_TIMEOUT_MS);
 }
 
+QWidget *OptimizeTab::homePage(const QString &home) {
+    QWidget *&holder = homeHolders_[home];
+    if (holder) return holder;
+    holder = new QWidget;
+    auto *lay = new QVBoxLayout(holder);
+    lay->setContentsMargins(8, 8, 8, 0);
+    auto *bar = new QWidget(holder);
+    auto *row = new QHBoxLayout(bar);
+    row->setContentsMargins(0, 0, 0, 0);
+    auto *note = new QLabel(QCoreApplication::translate("OptimizeTab",
+        "These settings are not measured by calibration or Autotune: set them by hand. Check a row, then press Apply checked "
+        "(only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row."), bar);
+    note->setWordWrap(true);
+    note->setProperty("role", "muted");
+    auto *apply = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"), bar);
+    apply->setObjectName("btnAccent");
+    apply->setMinimumWidth(132);
+    connect(apply, &QPushButton::clicked, this, [this, home] { applySelected(home); });
+    row->addWidget(note, 1);
+    row->addWidget(apply);
+    lay->addWidget(bar);
+    return holder;
+}
+
 void OptimizeTab::setBusy(bool b) {
     busy_ = b;
     if (b) ++opGen_;
     groups_->setEnabled(!b);
     applyBtn_->setEnabled(!b);
+    for (QWidget *h : std::as_const(homeHolders_)) h->setEnabled(!b);
     gameBtn_->setEnabled(!b);
     bootBtn_->setEnabled(!b);
     restoreBtn_->setEnabled(!b && active_);

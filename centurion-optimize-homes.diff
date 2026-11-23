@@ -1,0 +1,417 @@
+diff -ruN a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-23 03:27:11.361587790 +0300
++++ b/CHANGELOG.md	2026-11-23 03:27:11.363125095 +0300
+@@ -5,6 +5,12 @@
+ 
+ ## [Unreleased]
+ 
++### Changed
++- 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
++  Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
++  bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.
++  Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
++
+ ### Added
+ - Scheduling-domain rows: `imbalance_pct`, `min_interval`, `max_interval` and `busy_factor` of the MC (one cache
+   domain) and PKG (balancing between CCDs) levels, written to every CPU's domain in debugfs `sched/domains/`. The
+diff -ruN a/crates/centurion-helpers/src/tune.rs b/crates/centurion-helpers/src/tune.rs
+--- a/crates/centurion-helpers/src/tune.rs	2026-11-23 03:27:11.369096256 +0300
++++ b/crates/centurion-helpers/src/tune.rs	2026-11-23 03:27:11.370674464 +0300
+@@ -2060,6 +2060,41 @@
+ /// preset sets them only when the user checks the row on purpose, otherwise they are left as they are.
+ pub fn user_switch(t: &Tunable) -> bool { matches!(t.target, Target::Rfkill(_)) }
+ 
++/// Rows that neither calibration nor autotune touch (docs/KNOBS.md, Autotune "—") and no built-in
++/// preset sets: the Optimizations tab leaves them out and the Health → System tools pages show them
++/// (network, storage and kernel tuning). Same keys, same presets, same apply/restore - only the page differs.
++pub const HOME_NETWORK: &[&str] = &[
++    "net.tcp_slow_start_after_idle", "net.tcp_mtu_probing", "net.netdev_max_backlog", "net.tcp_notsent_lowat",
++    "net.tcp_fastopen", "net.gro_flush_timeout", "net.napi_defer_hard_irqs", "net.busy_poll", "net.busy_read",
++    "net.napi_threaded", "net.wifi_aql_enable", "net.wifi_aql_threshold", "net.wifi_napi_threaded",
++    "net.mt76_runtime_pm", "net.mt76_idle_timeout", "net.mt76_deep_sleep", "bt.conn_min_interval",
++    "bt.conn_max_interval", "net.netdev_budget", "net.netdev_budget_usecs", "net.dev_weight",
++    "net.gro_normal_batch", "net.tcp_limit_output_bytes", "net.tcp_autocorking", "net.tcp_pacing_ss_ratio",
++    "net.tcp_pacing_ca_ratio", "net.tcp_ecn", "net.rmem_max", "net.wmem_max",
++];
++pub const HOME_STORAGE: &[&str] = &[
++    "blk.kyber_read_lat_ns", "blk.kyber_write_lat_ns", "blk.dl_read_expire_ms", "blk.dl_write_expire_ms",
++    "blk.dl_fifo_batch", "blk.dl_writes_starved", "blk.bfq_low_latency", "blk.bfq_slice_idle_ms",
++    "btrfs.discard_iops_limit", "btrfs.discard_kbps_limit", "btrfs.discard_max_size",
++];
++pub const HOME_KERNEL: &[&str] = &[
++    "thp.khp_alloc_sleep_ms", "thp.khp_max_ptes_shared", "mm.ksm_advisor", "mm.ksm_use_zero_pages", "mm.ksm_smart_scan",
++    "vm.dirtytime_expire_seconds", "vm.oom_kill_allocating_task", "kernel.numa_promote_rate_limit",
++    "kernel.yield_type", "kernel.sched_rt_runtime_us",
++    "sched.feat_attach_age_load", "sched.feat_nontask_capacity", "sched.feat_lb_min", "sched.feat_ni_rate",
++    "sched.feat_hrtick_dl", "sched.feat_paranoid_avg",
++    "sched.numa_scan_size_mb", "sched.numa_scan_period_min_ms", "sched.numa_scan_period_max_ms",
++    "sched.numa_scan_delay_ms", "sched.numa_hot_threshold_ms",
++];
++
++/// Which System tools page shows this row instead of the Optimizations tab ("" = Optimizations).
++pub fn home(key: &str) -> &'static str {
++    if HOME_NETWORK.contains(&key) { "network" }
++    else if HOME_STORAGE.contains(&key) { "storage" }
++    else if HOME_KERNEL.contains(&key) { "kernel" }
++    else { "" }
++}
++
+ pub fn best_effort(t: &Tunable) -> bool {
+     matches!(t.target, Target::Irq | Target::DeviceIrq(_) | Target::NetQueueMask(_) | Target::PciLatency | Target::PciAspm | Target::PciRuntimePm | Target::UsbRuntimePm | Target::UsbAutosuspendMs | Target::AhciPortRuntime | Target::AhciDisk(_))
+ }
+@@ -3637,7 +3672,7 @@
+             "options": opts, "min": min, "max": max,
+             // debugfs is root-only (0700): unprivileged callers cannot tell; root checks at write time.
+             "available": !fs.is_empty() || (t.debugfs && debugfs_snapshot_has(t.key).unwrap_or(true)),
+-            "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t),
++            "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t), "home": home(t.key),
+             "files": fs.len(), "slow": slow_to_read(t),
+             "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
+         });
+@@ -3974,6 +4009,20 @@
+         assert_eq!(role_matching(&g, &[0, 1]), None);
+     }
+     #[test]
++    fn homes_name_real_uncalibrated_rows() {
++        let all: Vec<&str> = [HOME_NETWORK, HOME_STORAGE, HOME_KERNEL].concat();
++        let mut seen = std::collections::HashSet::new();
++        for k in &all {
++            assert!(seen.insert(*k), "{k} listed twice");
++            let t = find(k).unwrap_or_else(|| panic!("{k} is not a tunable"));
++            assert_ne!(t.group, "CPU", "{k}: CPU rows stay on the Optimizations tab");
++            assert!(!t.key.starts_with("cpu."), "{k}");
++            assert_ne!(home(k), "");
++        }
++        assert_eq!(home("vm.swappiness"), "");
++        assert_eq!(home("net.tcp_congestion"), "");
++    }
++    #[test]
+     fn sched_domain_levels() {
+         let root = std::env::temp_dir().join(format!("centurion-sd-{}", std::process::id()));
+         for (cpu, levels) in [(0, ["SMT", "MC", "PKG"]), (1, ["SMT", "MC", "PKG"])] {
+diff -ruN a/docs/KNOBS.md b/docs/KNOBS.md
+--- a/docs/KNOBS.md	2026-11-23 03:27:11.376817454 +0300
++++ b/docs/KNOBS.md	2026-11-23 03:27:11.378223207 +0300
+@@ -8,6 +8,8 @@
+ - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
+ - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
+ 
++Not: Autotune sütunu "—" olan ve hiçbir yerleşik presette geçmeyen 61 satır (`tune::HOME_NETWORK/STORAGE/KERNEL`) Optimizasyonlar sekmesinde değil, Sağlık > Sistem araçları > Ağ / Depolama / Çekirdek ayarları sayfalarında görünür.
++
+ Özet: 254 knob · kalibre + autotune 123 · yalnız autotune kuralı 52 · hiçbiri 79
+ 
+ ## CPU (38)
+diff -ruN a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+--- a/gui/i18n/centurion_tr.ts	2026-11-23 03:27:11.383858894 +0300
++++ b/gui/i18n/centurion_tr.ts	2026-11-23 03:27:11.385747023 +0300
+@@ -3256,6 +3256,18 @@
+     <context>
+         <name>MainWindow</name>
+         <message>
++            <source>Network tuning</source>
++            <translation>Ağ ayarları</translation>
++        </message>
++        <message>
++            <source>Storage tuning</source>
++            <translation>Depolama ayarları</translation>
++        </message>
++        <message>
++            <source>Kernel tuning</source>
++            <translation>Çekirdek ayarları</translation>
++        </message>
++        <message>
+             <location filename="work/gui/src/mainwindow.cpp" line="77"/>
+             <source>Home</source>
+             <translation>Ana sayfa</translation>
+@@ -7248,6 +7260,10 @@
+     <context>
+         <name>OptimizeTab</name>
+         <message>
++            <source>These settings are not measured by calibration or Autotune: set them by hand. Check a row, then press Apply checked (only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row.</source>
++            <translation>Bu ayarlar kalibrasyon veya Autotune tarafından ölçülmez: elle ayarlanır. Bir satırı işaretleyip İşaretlenenleri uygula'ya basın (yalnız bu sayfanın satırları). Profiller, Özgün değerleri geri yükle ve açılış varsayılanları bunlara diğer satırlar gibi davranır.</translation>
++        </message>
++        <message>
+             <location filename="../src/optimizetab.cpp" line="549"/>
+             <source>AUTOTUNE  ·  Goals, custom weights and calibration</source>
+             <translation>OTOMATİK AYAR  ·  Hedefler, özel ağırlıklar ve kalibrasyon</translation>
+diff -ruN a/gui/src/healthtab.cpp b/gui/src/healthtab.cpp
+--- a/gui/src/healthtab.cpp	2026-11-23 03:27:11.391679346 +0300
++++ b/gui/src/healthtab.cpp	2026-11-23 03:27:11.393084315 +0300
+@@ -922,6 +922,13 @@
+     pages_->setCurrentWidget(page);
+ }
+ 
++void HealthTab::addToolPage(QWidget *page, const QString &label, ToolGroup group) {
++    QTreeWidgetItem *parent = toolNavigation_->topLevelItem(group);
++    if (!parent) return;
++    toolItems_.insert(page, new QTreeWidgetItem(parent, {label}));
++    toolPages_->addWidget(page);
++}
++
+ void HealthTab::openDgpuPage() { showPage(findChild<DgpuPage *>()); }
+ 
+ void HealthTab::refreshDays() {
+diff -ruN a/gui/src/healthtab.h b/gui/src/healthtab.h
+--- a/gui/src/healthtab.h	2026-11-23 03:27:11.398608841 +0300
++++ b/gui/src/healthtab.h	2026-11-23 03:27:11.400061719 +0300
+@@ -50,6 +50,10 @@
+     CoolingPage *cooling() const { return cooling_; }
+     /// Show the dGPU power page (the Health tab must already be on screen).
+     void openDgpuPage();
++    /// System tools groups, in the order of the navigation tree.
++    enum ToolGroup { DeviceTools, ConnectionTools, KernelTools };
++    /// A page added to System tools after construction (the Optimizations tab's tuning pages).
++    void addToolPage(QWidget *page, const QString &label, ToolGroup group);
+ 
+ Q_SIGNALS:
+     /// The dGPU stayed awake on battery for `minutes` (BatteryPage::dgpuAwake); the tray tells the user.
+diff -ruN a/gui/src/mainwindow.cpp b/gui/src/mainwindow.cpp
+--- a/gui/src/mainwindow.cpp	2026-11-23 03:27:11.406203275 +0300
++++ b/gui/src/mainwindow.cpp	2026-11-23 03:27:11.407608806 +0300
+@@ -157,6 +157,10 @@
+     }
+     health_ = new HealthTab;
+     tabs_->addTab(health_, tr("Health"));
++    // Settings that calibration and Autotune never touch live with the system tools, not on Optimizations.
++    health_->addToolPage(optimize_->homePage(QStringLiteral("network")), tr("Network tuning"), HealthTab::ConnectionTools);
++    health_->addToolPage(optimize_->homePage(QStringLiteral("storage")), tr("Storage tuning"), HealthTab::DeviceTools);
++    health_->addToolPage(optimize_->homePage(QStringLiteral("kernel")), tr("Kernel tuning"), HealthTab::KernelTools);
+     // Cooling's fan max test drives the fans through the Home tab's own controls (the same calls as the tray menu).
+     {
+         HomeTab *home = home_;
+diff -ruN a/gui/src/optimizetab.cpp b/gui/src/optimizetab.cpp
+--- a/gui/src/optimizetab.cpp	2026-11-23 03:27:11.413670325 +0300
++++ b/gui/src/optimizetab.cpp	2026-11-23 03:27:11.415054500 +0300
+@@ -666,7 +666,7 @@
+     applyBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"));
+     applyBtn_->setObjectName("btnAccent");
+     applyBtn_->setMinimumWidth(132);
+-    connect(applyBtn_, &QPushButton::clicked, this, &OptimizeTab::applySelected);
++    connect(applyBtn_, &QPushButton::clicked, this, [this] { applySelected(); });
+     bar->addWidget(applyBtn_);
+     root->addLayout(bar);
+ 
+@@ -1199,7 +1199,7 @@
+     // Completer entries use "Group / Setting"; free-text searches match
+     // labels/help/keys. Keep the source row and its include checkbox intact.
+     for (Row &r : rows_) {
+-        if (!r.name) continue;
++        if (!r.name || !r.home.isEmpty()) continue;
+         const QString localizedGroup = QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData());
+         const QString fullname = localizedGroup + QStringLiteral(" / ") + r.label;
+         if (!fullname.contains(text, Qt::CaseInsensitive) &&
+@@ -1253,13 +1253,35 @@
+         r.caution = o.value("caution").toBool();
+         r.conflict = o.value("conflict").toString();
+         r.hotplug = o.value("hotplug").toBool();
++        r.home = o.value("home").toString();
+         r.userSwitch = o.value("user_switch").toBool() || isRadioSwitch(r.key);
+         rows_.append(r);
+     }
+ 
+-    for (const char *gname : GROUPS) {
+-        const QString group = QString::fromLatin1(gname);
+-        if (std::none_of(rows_.cbegin(), rows_.cend(), [&](const Row &r) { return r.group == group; })) continue;
++    // One tab per group, minus the rows that live on a System tools page (r.home); each of those
++    // pages is filled the same way from its own rows.
++    struct Section { QString group, home; };
++    QList<Section> sections;
++    for (const char *gname : GROUPS) sections.append(Section{QString::fromLatin1(gname), QString()});
++    for (const char *h : {"network", "storage", "kernel"}) sections.append(Section{QString(), QString::fromLatin1(h)});
++    const auto setHome = [this](const QString &home, QWidget *content) {
++        auto *lay = qobject_cast<QVBoxLayout *>(homePage(home)->layout());
++        while (lay->count() > 1) {
++            QLayoutItem *it = lay->takeAt(1);
++            if (it->widget()) it->widget()->deleteLater();
++            delete it;
++        }
++        if (content) lay->addWidget(content, 1);
++    };
++    for (const Section &sec : sections) {
++        const QString &group = sec.group;
++        const auto inSection = [&](const Row &r) {
++            return sec.home.isEmpty() ? r.group == group && r.home.isEmpty() : r.home == sec.home;
++        };
++        if (std::none_of(rows_.cbegin(), rows_.cend(), inSection)) {
++            if (!sec.home.isEmpty()) setHome(sec.home, nullptr);
++            continue;
++        }
+         auto *scroll = new QScrollArea;
+         scroll->setWidgetResizable(true);
+         auto *page = new QWidget;
+@@ -1274,8 +1296,13 @@
+         // this function took.
+         scroll->setWidget(page);
+         const QString displayGroup = QCoreApplication::translate("OptimizationGroups", group.toUtf8().constData());
+-        const int tab = groups_->addTab(scroll, displayGroup);
+-        scroll->setProperty("optimizationGroup", group);
++        int tab = -1;
++        if (sec.home.isEmpty()) {
++            tab = groups_->addTab(scroll, displayGroup);
++            scroll->setProperty("optimizationGroup", group);
++        } else {
++            setHome(sec.home, scroll);
++        }
+         const char *heads[] = {"", "Setting", "Live value", "New value", ""};
+         for (int c = 0; c < 5; ++c) {
+             auto *h = new QLabel(tr(heads[c]), page);
+@@ -1283,9 +1310,16 @@
+             grid->addWidget(h, 0, c);
+         }
+         int line = 1, available = 0;
++        QString lastGroup;
+         for (int i = 0; i < rows_.size(); ++i) {
+             Row &r = rows_[i];
+-            if (r.group != group) continue;
++            if (!inSection(r)) continue;
++            if (!sec.home.isEmpty() && r.group != lastGroup) {  // a System tools page mixes groups: name them
++                lastGroup = r.group;
++                auto *head = new QLabel(QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData()), page);
++                head->setProperty("role", "muted");
++                grid->addWidget(head, line++, 0, 1, 5);
++            }
+             const QString key = r.key;
+             r.include = new QCheckBox(page);
+             r.include->setToolTip(tr("Include in Apply, Save and boot preset"));
+@@ -1379,13 +1413,13 @@
+         grid->setColumnStretch(1, 2);
+         grid->setColumnStretch(3, 3);
+         grid->setRowStretch(line, 1);
+-        groups_->setTabText(tab, QStringLiteral("%1  %2").arg(displayGroup).arg(available));
++        if (tab >= 0) groups_->setTabText(tab, QStringLiteral("%1  %2").arg(displayGroup).arg(available));
+     }
+     groups_->addTab(buildLaunchPage(), tr("Game launch"));
+     groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), tr("Boot options"));  // built on first open
+     if (settingSearchModel_) {
+         QStringList entries;
+-        for (const Row &r : rows_) if (!r.label.isEmpty())
++        for (const Row &r : rows_) if (!r.label.isEmpty() && r.home.isEmpty())
+             entries.append(QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData())
+                            + QStringLiteral(" / ") + r.label);
+         entries.removeDuplicates();
+@@ -2682,8 +2716,9 @@
+ 
+ // ── apply / restore ─────────────────────────────────────────────────────────
+ 
+-void OptimizeTab::applySelected() {
+-    const QJsonObject values = collectValues();
++void OptimizeTab::applySelected(const QString &home) {
++    QJsonObject values = collectValues();
++    if (!home.isEmpty()) for (const Row &r : rows_) if (r.home != home) values.remove(r.key);
+     if (values.isEmpty()) { QMessageBox::information(this, "Apply", "No row is checked."); return; }
+     QStringList risky;
+     for (const Row &r : rows_) if (values.contains(r.key) && r.caution && differs(r)) risky << "• " + r.label + " → " + (r.combo ? r.combo->currentText() : editorValue(r));
+@@ -2695,7 +2730,7 @@
+     // proved against the *current boot baseline* before Apply. For ordinary
+     // manual presets the legacy explicit caution confirmation still applies.
+     const QJsonObject preset = presetObject(loadedPreset_);
+-    const bool autoPreset = preset.value(QStringLiteral("autotune")).isObject();
++    const bool autoPreset = home.isEmpty() && preset.value(QStringLiteral("autotune")).isObject();
+     // Extensive = many rows that actually change something (an autotuned preset checks every row,
+     // most of them already at their live value).
+     int changed = 0;
+@@ -2926,11 +2961,36 @@
+     }, PKEXEC_TIMEOUT_MS);
+ }
+ 
++QWidget *OptimizeTab::homePage(const QString &home) {
++    QWidget *&holder = homeHolders_[home];
++    if (holder) return holder;
++    holder = new QWidget;
++    auto *lay = new QVBoxLayout(holder);
++    lay->setContentsMargins(8, 8, 8, 0);
++    auto *bar = new QWidget(holder);
++    auto *row = new QHBoxLayout(bar);
++    row->setContentsMargins(0, 0, 0, 0);
++    auto *note = new QLabel(QCoreApplication::translate("OptimizeTab",
++        "These settings are not measured by calibration or Autotune: set them by hand. Check a row, then press Apply checked "
++        "(only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row."), bar);
++    note->setWordWrap(true);
++    note->setProperty("role", "muted");
++    auto *apply = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"), bar);
++    apply->setObjectName("btnAccent");
++    apply->setMinimumWidth(132);
++    connect(apply, &QPushButton::clicked, this, [this, home] { applySelected(home); });
++    row->addWidget(note, 1);
++    row->addWidget(apply);
++    lay->addWidget(bar);
++    return holder;
++}
++
+ void OptimizeTab::setBusy(bool b) {
+     busy_ = b;
+     if (b) ++opGen_;
+     groups_->setEnabled(!b);
+     applyBtn_->setEnabled(!b);
++    for (QWidget *h : std::as_const(homeHolders_)) h->setEnabled(!b);
+     gameBtn_->setEnabled(!b);
+     bootBtn_->setEnabled(!b);
+     restoreBtn_->setEnabled(!b && active_);
+diff -ruN a/gui/src/optimizetab.h b/gui/src/optimizetab.h
+--- a/gui/src/optimizetab.h	2026-11-23 03:27:11.420853898 +0300
++++ b/gui/src/optimizetab.h	2026-11-23 03:27:11.422212891 +0300
+@@ -49,6 +49,10 @@
+     /// Drift banner (DriftWatch): settings changed by something else since Centurion applied them.
+     void setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply);
+     void restoreAll(bool confirm = true);
++    /// Page with the rows of one System tools home (network / storage / kernel): the rows neither
++    /// calibration nor Autotune touch. Same rows, presets and restore as the tabs here; created
++    /// once, refilled whenever the rows are rebuilt.
++    QWidget *homePage(const QString &home);
+     /// Pauses Scenes, then writes every knob to the value centurion-boot-guard captured at boot (calibration baseline).
+     void returnToBootDefaults();
+     void setSceneEngine(SceneEngine *eng) { scenes_ = eng; }
+@@ -75,6 +79,7 @@
+     struct Option { QString value, label; };
+     struct Row {
+         QString key, group, label, help, kind, current;
++        QString home;      // System tools page that shows this row instead ("network", "storage", "kernel"; "" = this tab)
+         QString conflict;  // another daemon fights this row (irqbalance vs irq.affinity)
+         QList<Option> options;
+         qint64 min = 0, max = 0;
+@@ -164,7 +169,7 @@
+     void fillAutotuneContexts();
+     void importFieldData();
+ 
+-    void applySelected();
++    void applySelected(const QString &home = {});  // home: only that page's checked rows
+     void applyValues(const QJsonObject &values, const QString &preset);
+     void revertRow(const QString &key);
+     void runOp(const QJsonObject &req, const QString &what, std::function<void(const QJsonObject &)> then = {});
+@@ -206,6 +211,7 @@
+     QLineEdit *lutrisPre_ = nullptr, *lutrisPost_ = nullptr, *lutrisPrefix_ = nullptr, *steam_ = nullptr;
+     QLabel *topoLabel_ = nullptr;
+     QTabWidget *groups_ = nullptr;
++    QHash<QString, QWidget *> homeHolders_;
+     QLineEdit *settingSearch_ = nullptr;
+     QStringListModel *settingSearchModel_ = nullptr;
+     QTimer *poll_ = nullptr, *statusTimer_ = nullptr;
+diff -ruN a/gui/tests/optimization_home_test.py b/gui/tests/optimization_home_test.py
+--- a/gui/tests/optimization_home_test.py	1970-01-01 02:00:00.000000000 +0200
++++ b/gui/tests/optimization_home_test.py	2026-11-23 03:27:11.427856746 +0300
+@@ -0,0 +1,25 @@
++#!/usr/bin/env python3
++"""Rows that moved off the Optimizations tab (tune.rs HOME_*) must not be set by a built-in preset."""
++import re
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[2]
++
++
++class HomeRowsTest(unittest.TestCase):
++    def test_moved_rows_are_not_in_builtin_presets(self):
++        tune = (ROOT / 'crates/centurion-helpers/src/tune.rs').read_text()
++        moved = set()
++        for name in ('HOME_NETWORK', 'HOME_STORAGE', 'HOME_KERNEL'):
++            body = re.search(r'pub const %s: &\[&str\] = &\[(.*?)\];' % name, tune, re.S).group(1)
++            moved |= set(re.findall(r'"([^"]+)"', body))
++        self.assertGreater(len(moved), 50)
++        cpp = (ROOT / 'gui/src/optimizetab.cpp').read_text().splitlines()
++        used = set(re.findall(r'"([a-z0-9_]+\.[a-z0-9_.]+)"\s*:', '\n'.join(cpp[90:260])))
++        self.assertGreater(len(used), 30)
++        self.assertEqual(set(), moved & used)
++
++
++if __name__ == '__main__':
++    unittest.main()

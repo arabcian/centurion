@@ -50,6 +50,10 @@ public:
     CoolingPage *cooling() const { return cooling_; }
     /// Show the dGPU power page (the Health tab must already be on screen).
     void openDgpuPage();
+    /// System tools groups, in the order of the navigation tree.
+    enum ToolGroup { DeviceTools, ConnectionTools, KernelTools };
+    /// A page added to System tools after construction (the Optimizations tab's tuning pages).
+    void addToolPage(QWidget *page, const QString &label, ToolGroup group);
 
 Q_SIGNALS:
     /// The dGPU stayed awake on battery for `minutes` (BatteryPage::dgpuAwake); the tray tells the user.
