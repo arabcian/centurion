@@ -162,8 +162,8 @@ Opt systemInfo() {
     QStringList parts;
     if (auto v = dmiClean("sys_vendor")) parts << *v;
     if (auto f = dmiClean("product_family")) parts << *f;
-    QString t = parts.join(' ');
-    if (auto sku = dmiClean("product_sku")) t = t.isEmpty() ? "SKU " + *sku : t + " (SKU " + *sku + ')';
+    else if (auto v = dmiClean("product_version")) parts << *v;  // the model, when the family is not filled in
+    const QString t = parts.join(' ');  // no SKU: a long code that says nothing the model does not
     return t.isEmpty() ? Opt() : Opt(t);
 }
 

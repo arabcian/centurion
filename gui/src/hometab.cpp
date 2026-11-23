@@ -364,7 +364,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         // columns: every card edge (top, seam, bottom, centre gap) lines up by
         // construction, whatever each card's content height is.
         //   Power Profile │ Monitoring
-        //   Device        │ Hardware & Firmware / Live Sensors
+        //   Hardware & Firmware / Live Sensors │ Device
         auto *plotPanel = new QGroupBox(tr("Monitoring"));
         auto *chartLayout = new QVBoxLayout(plotPanel);
         temperaturePlot_ = new experimentalui::TemperaturePlot;
@@ -395,8 +395,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         cells->addWidget(profileBox, 0, 0);
         cells->addWidget(plotPanel, 0, 1);
         if (dev) {
-            cells->addWidget(dev, 1, 0);
-            cells->addWidget(detailCard, 1, 1);
+            cells->addWidget(detailCard, 1, 0);
+            cells->addWidget(dev, 1, 1);
         } else {
             cells->addWidget(detailCard, 1, 0, 1, 2);
         }
