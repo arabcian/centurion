@@ -456,7 +456,7 @@ void OptimizeTab::buildUi() {
     connect(bSave, &QPushButton::clicked, this, &OptimizeTab::saveAs);
     connect(bDel, &QPushButton::clicked, this, &OptimizeTab::deleteSelected);
     connect(gameBtn_, &QPushButton::clicked, this, &OptimizeTab::useForGames);
-    connect(bootBtn_, &QPushButton::clicked, this, &OptimizeTab::setBoot);
+    connect(bootBtn_, &QPushButton::clicked, this, [this] { setBoot(); });
     connect(bootClear_, &QPushButton::clicked, this, &OptimizeTab::clearBoot);
     auto *summary = muted({});
     connect(presetCombo_, &QComboBox::currentIndexChanged, this, [this, summary, bDel] {
@@ -2038,8 +2038,16 @@ void OptimizeTab::useForGames() {
     if (storeFresh(name, p.value("values").toObject())) announce(); else approvePreset(name, p.value("values").toObject(), announce);
 }
 
-void OptimizeTab::setBoot() {
-    const QJsonObject values = collectValues();
+void OptimizeTab::setBoot(const QString &home) {
+    QJsonObject values = collectValues();
+    if (!home.isEmpty()) {
+        // A page's button never replaces the stored boot preset: its checked rows are added to (or updated in) it.
+        QJsonObject merged = boot_.value("values").toObject();
+        bool any = false;
+        for (const Row &r : rows_) if (r.home == home && values.contains(r.key)) { merged[r.key] = values.value(r.key); any = true; }
+        if (!any) { QMessageBox::information(this, "Apply at boot", "Check the rows to apply at boot first."); return; }
+        values = merged;
+    }
     if (values.isEmpty()) { QMessageBox::information(this, "Apply at boot", "Check the rows to apply at boot first."); return; }
     QStringList risky;
     for (const Row &r : rows_) if (values.contains(r.key) && r.caution) risky << r.label;
@@ -2047,7 +2055,9 @@ void OptimizeTab::setBoot() {
                                  "centurion-tune OpenRC service:\n    rc-update add centurion-tune boot").arg(values.size());
     if (!risky.isEmpty()) msg += "\n\n⚠ Includes: " + risky.join(", ") + ". A bad value here is applied before you can log in.";
     if (QMessageBox::question(this, "Apply at boot", msg) != QMessageBox::Yes) return;
-    const QString name = validPresetName(loadedPreset_) ? loadedPreset_ : QStringLiteral("Custom");
+    const QString bootPreset = boot_.value("preset").toString();
+    const QString name = !home.isEmpty() && validPresetName(bootPreset) ? bootPreset
+                       : validPresetName(loadedPreset_) ? loadedPreset_ : QStringLiteral("Custom");
     runOp({{"op", "set_boot"}, {"values", values}, {"preset", name}}, "Boot preset", [this, name](const QJsonObject &res) {
         if (!res.value("ok").toBool()) {
             showStatus("Boot preset not stored: " + res.value("error").toString(), theme::DANGER, 10000);
@@ -2975,11 +2985,15 @@ QWidget *OptimizeTab::homePage(const QString &home) {
         "(only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row."), bar);
     note->setWordWrap(true);
     note->setProperty("role", "muted");
+    auto *boot = new QPushButton(QCoreApplication::translate("OptimizeTab", "⏻ Apply at boot"), bar);
+    boot->setToolTip(QCoreApplication::translate("OptimizeTab", "Add this page's checked rows to the boot preset (the rest of the boot preset stays as it is)."));
+    connect(boot, &QPushButton::clicked, this, [this, home] { setBoot(home); });
     auto *apply = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"), bar);
     apply->setObjectName("btnAccent");
     apply->setMinimumWidth(132);
     connect(apply, &QPushButton::clicked, this, [this, home] { applySelected(home); });
     row->addWidget(note, 1);
+    row->addWidget(boot);
     row->addWidget(apply);
     lay->addWidget(bar);
     return holder;

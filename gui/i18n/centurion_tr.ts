@@ -7260,6 +7260,10 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
     <context>
         <name>OptimizeTab</name>
         <message>
+            <source>Add this page's checked rows to the boot preset (the rest of the boot preset stays as it is).</source>
+            <translation>Bu sayfada işaretli satırları açılış profiline ekler (açılış profilinin geri kalanı olduğu gibi kalır).</translation>
+        </message>
+        <message>
             <source>These settings are not measured by calibration or Autotune: set them by hand. Check a row, then press Apply checked (only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row.</source>
             <translation>Bu ayarlar kalibrasyon veya Autotune tarafından ölçülmez: elle ayarlanır. Bir satırı işaretleyip İşaretlenenleri uygula'ya basın (yalnız bu sayfanın satırları). Profiller, Özgün değerleri geri yükle ve açılış varsayılanları bunlara diğer satırlar gibi davranır.</translation>
         </message>

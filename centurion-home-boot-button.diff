@@ -1,0 +1,84 @@
+diff -ruN a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+--- a/gui/i18n/centurion_tr.ts	2026-11-23 12:09:34.238005762 +0300
++++ b/gui/i18n/centurion_tr.ts	2026-11-23 12:09:34.240245779 +0300
+@@ -7260,6 +7260,10 @@
+     <context>
+         <name>OptimizeTab</name>
+         <message>
++            <source>Add this page's checked rows to the boot preset (the rest of the boot preset stays as it is).</source>
++            <translation>Bu sayfada işaretli satırları açılış profiline ekler (açılış profilinin geri kalanı olduğu gibi kalır).</translation>
++        </message>
++        <message>
+             <source>These settings are not measured by calibration or Autotune: set them by hand. Check a row, then press Apply checked (only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row.</source>
+             <translation>Bu ayarlar kalibrasyon veya Autotune tarafından ölçülmez: elle ayarlanır. Bir satırı işaretleyip İşaretlenenleri uygula'ya basın (yalnız bu sayfanın satırları). Profiller, Özgün değerleri geri yükle ve açılış varsayılanları bunlara diğer satırlar gibi davranır.</translation>
+         </message>
+diff -ruN a/gui/src/optimizetab.cpp b/gui/src/optimizetab.cpp
+--- a/gui/src/optimizetab.cpp	2026-11-23 12:09:34.248558653 +0300
++++ b/gui/src/optimizetab.cpp	2026-11-23 12:09:34.250463757 +0300
+@@ -456,7 +456,7 @@
+     connect(bSave, &QPushButton::clicked, this, &OptimizeTab::saveAs);
+     connect(bDel, &QPushButton::clicked, this, &OptimizeTab::deleteSelected);
+     connect(gameBtn_, &QPushButton::clicked, this, &OptimizeTab::useForGames);
+-    connect(bootBtn_, &QPushButton::clicked, this, &OptimizeTab::setBoot);
++    connect(bootBtn_, &QPushButton::clicked, this, [this] { setBoot(); });
+     connect(bootClear_, &QPushButton::clicked, this, &OptimizeTab::clearBoot);
+     auto *summary = muted({});
+     connect(presetCombo_, &QComboBox::currentIndexChanged, this, [this, summary, bDel] {
+@@ -2038,8 +2038,16 @@
+     if (storeFresh(name, p.value("values").toObject())) announce(); else approvePreset(name, p.value("values").toObject(), announce);
+ }
+ 
+-void OptimizeTab::setBoot() {
+-    const QJsonObject values = collectValues();
++void OptimizeTab::setBoot(const QString &home) {
++    QJsonObject values = collectValues();
++    if (!home.isEmpty()) {
++        // A page's button never replaces the stored boot preset: its checked rows are added to (or updated in) it.
++        QJsonObject merged = boot_.value("values").toObject();
++        bool any = false;
++        for (const Row &r : rows_) if (r.home == home && values.contains(r.key)) { merged[r.key] = values.value(r.key); any = true; }
++        if (!any) { QMessageBox::information(this, "Apply at boot", "Check the rows to apply at boot first."); return; }
++        values = merged;
++    }
+     if (values.isEmpty()) { QMessageBox::information(this, "Apply at boot", "Check the rows to apply at boot first."); return; }
+     QStringList risky;
+     for (const Row &r : rows_) if (values.contains(r.key) && r.caution) risky << r.label;
+@@ -2047,7 +2055,9 @@
+                                  "centurion-tune OpenRC service:\n    rc-update add centurion-tune boot").arg(values.size());
+     if (!risky.isEmpty()) msg += "\n\n⚠ Includes: " + risky.join(", ") + ". A bad value here is applied before you can log in.";
+     if (QMessageBox::question(this, "Apply at boot", msg) != QMessageBox::Yes) return;
+-    const QString name = validPresetName(loadedPreset_) ? loadedPreset_ : QStringLiteral("Custom");
++    const QString bootPreset = boot_.value("preset").toString();
++    const QString name = !home.isEmpty() && validPresetName(bootPreset) ? bootPreset
++                       : validPresetName(loadedPreset_) ? loadedPreset_ : QStringLiteral("Custom");
+     runOp({{"op", "set_boot"}, {"values", values}, {"preset", name}}, "Boot preset", [this, name](const QJsonObject &res) {
+         if (!res.value("ok").toBool()) {
+             showStatus("Boot preset not stored: " + res.value("error").toString(), theme::DANGER, 10000);
+@@ -2975,11 +2985,15 @@
+         "(only this page's rows). Presets, Restore originals and the boot defaults treat them like every other row."), bar);
+     note->setWordWrap(true);
+     note->setProperty("role", "muted");
++    auto *boot = new QPushButton(QCoreApplication::translate("OptimizeTab", "⏻ Apply at boot"), bar);
++    boot->setToolTip(QCoreApplication::translate("OptimizeTab", "Add this page's checked rows to the boot preset (the rest of the boot preset stays as it is)."));
++    connect(boot, &QPushButton::clicked, this, [this, home] { setBoot(home); });
+     auto *apply = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"), bar);
+     apply->setObjectName("btnAccent");
+     apply->setMinimumWidth(132);
+     connect(apply, &QPushButton::clicked, this, [this, home] { applySelected(home); });
+     row->addWidget(note, 1);
++    row->addWidget(boot);
+     row->addWidget(apply);
+     lay->addWidget(bar);
+     return holder;
+diff -ruN a/gui/src/optimizetab.h b/gui/src/optimizetab.h
+--- a/gui/src/optimizetab.h	2026-11-23 12:09:34.257779440 +0300
++++ b/gui/src/optimizetab.h	2026-11-23 12:09:34.259453324 +0300
+@@ -152,7 +152,7 @@
+     void saveAs();
+     void deleteSelected();
+     void useForGames();
+-    void setBoot();
++    void setBoot(const QString &home = {});  // home: add only that page's checked rows to the stored boot preset
+     void clearBoot();
+ 
+     // Autotune: tune-helper {"op":"autotune"} profiles the hardware and

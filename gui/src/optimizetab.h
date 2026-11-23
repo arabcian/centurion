@@ -152,7 +152,7 @@ private:
     void saveAs();
     void deleteSelected();
     void useForGames();
-    void setBoot();
+    void setBoot(const QString &home = {});  // home: add only that page's checked rows to the stored boot preset
     void clearBoot();
 
     // Autotune: tune-helper {"op":"autotune"} profiles the hardware and
