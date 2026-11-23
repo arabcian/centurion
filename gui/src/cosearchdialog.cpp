@@ -1395,15 +1395,12 @@ void CoSearchDialog::gatherEvidence(const QJsonObject &journal, const Search &se
                 [this, records, previousIsCrashed, offsets, cores, then](const privileged::Result &k) mutable {
                     // 2. Machine checks the kernel found in the banks early in THIS boot: left there by the reset,
                     // so they belong to the boot before - used only when that is surely the crashed one.
-                    int boot = 0;
                     if (k.ok() && previousIsCrashed) {
                         for (const QJsonValue &v : k.json.value("events").toArray()) {
                             const QJsonObject e = v.toObject();
                             if (e.value("kind").toString() != "mce" || e.value("ts_us").toDouble() > 120e6) continue;
-                            if (const auto r = coevidence::fromKernelText(e.value("text").toString(), QStringLiteral("boot-kernel"))) {
+                            if (const auto r = coevidence::fromKernelText(e.value("text").toString(), QStringLiteral("boot-kernel")))
                                 records << *r;
-                                ++boot;
-                            }
                         }
                     }
                     coevidence::Verdict v = coevidence::judge(records, cores, offsets);

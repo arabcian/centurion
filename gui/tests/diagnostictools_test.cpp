@@ -19,7 +19,7 @@ static QString root;
 static void put(const QString &path, const QByteArray &data) {
     QDir().mkpath(QFileInfo(root + path).path());
     QFile f(root + path);
-    f.open(QIODevice::WriteOnly);
+    if (!f.open(QIODevice::WriteOnly)) qFatal("cannot write fixture %s", qPrintable(f.fileName()));
     f.write(data);
 }
 static bool has(const diag::Report &r, Level l, const QString &needle) {
