@@ -188,6 +188,15 @@ int main(int argc, char **argv) {
         CHECK(t.verdict() == Level::Attention && has(t, Level::Attention, QStringLiteral("H04 · Xid 79")));
         CHECK(t.tables.first().rows.size() == 2);
         CHECK(ad::triage(QStringLiteral("GPU"), {b}).verdict() == Level::Ok);
+        // Nothing could be read: never summed up as "no problem".
+        diag::Report u;
+        u.code = QStringLiteral("H16");
+        u.add(Level::Unknown, QStringLiteral("no source"));
+        diag::Report empty;
+        empty.code = QStringLiteral("S06");
+        CHECK(ad::triage(QStringLiteral("GPU"), {u}).verdict() == Level::Unknown);
+        CHECK(ad::triage(QStringLiteral("GPU"), {u, empty}).verdict() == Level::Unknown);
+        CHECK(ad::triage(QStringLiteral("GPU"), {u, b}).verdict() == Level::Ok);
     }
 
     // H02: errors on one core's own units blame that core; shared units blame nobody.

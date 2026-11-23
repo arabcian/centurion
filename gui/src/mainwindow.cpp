@@ -158,9 +158,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     health_ = new HealthTab;
     tabs_->addTab(health_, tr("Health"));
     // Settings that calibration and Autotune never touch live with the system tools, not on Optimizations.
-    health_->addToolPage(optimize_->homePage(QStringLiteral("network")), tr("Network tuning"), HealthTab::ConnectionTools);
-    health_->addToolPage(optimize_->homePage(QStringLiteral("storage")), tr("Storage tuning"), HealthTab::DeviceTools);
-    health_->addToolPage(optimize_->homePage(QStringLiteral("kernel")), tr("Kernel tuning"), HealthTab::KernelTools);
+    health_->addToolPage(optimize_->homePage(QStringLiteral("network")), tr("Network tuning"), QStringLiteral("Network tuning"));
+    health_->addToolPage(optimize_->homePage(QStringLiteral("storage")), tr("Storage tuning"), QStringLiteral("Storage tuning"));
+    health_->addToolPage(optimize_->homePage(QStringLiteral("kernel")), tr("Kernel tuning"), QStringLiteral("Kernel tuning"));
     // Cooling's fan max test drives the fans through the Home tab's own controls (the same calls as the tray menu).
     {
         HomeTab *home = home_;

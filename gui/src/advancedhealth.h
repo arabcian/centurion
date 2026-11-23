@@ -31,8 +31,17 @@ class AdvancedHealthPage : public QWidget {
     Q_OBJECT
 public:
     explicit AdvancedHealthPage(QWidget *parent = nullptr);
+    /// Guided triage for a category ("gpu", "storage" …): selects it and runs it (read-only).
+    void startTriage(const QString &category);
+    /// Names the "Look next" links ("page:sleep", "tool:USB"); empty hides a link this system lacks.
+    void setTargetLabel(std::function<QString(const QString &)> label) { targetLabel_ = std::move(label); }
+
+Q_SIGNALS:
+    /// A "Look next" link: a Health page or System tool (toolcatalog::relatedFor).
+    void openTarget(const QString &target);
 
 private:
+    void showRelated(const QString &category);
     void updateMode();
     void run();
     void activeGpuQuery();
@@ -50,4 +59,6 @@ private:
     QTextBrowser *incidentInfo_;
     QPlainTextEdit *note_;
     QJsonObject lastEvidence_;
+    QWidget *related_ = nullptr;
+    std::function<QString(const QString &)> targetLabel_;
 };

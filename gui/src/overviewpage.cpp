@@ -1,5 +1,6 @@
 #include "overviewpage.h"
 
+#include "advanceddiagnostics.h"
 #include "batterypage.h"
 #include "dgpupage.h"
 #include "reportpreview.h"
@@ -7,6 +8,7 @@
 #include "theme.h"
 #include "userhelper.h"
 
+#include <QCoreApplication>
 #include <QDate>
 #include <QDateTime>
 #include <QDir>
@@ -90,6 +92,38 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     status_->setProperty("tone", "muted");
     heroLayout->addWidget(status_);
     outer->addWidget(hero);
+
+    // Start from the symptom: each button runs the read-only guided triage (H18) for that area.
+    auto *problems = new QFrame;
+    problems->setObjectName(QStringLiteral("healthProblems"));
+    problems->setStyleSheet(QStringLiteral("QFrame#healthProblems{background:%1;border:1px solid %2;border-radius:10px}"
+                                           "QFrame#healthProblems QLabel{background:transparent;border:none}")
+                            .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
+    auto *problemsLayout = new QVBoxLayout(problems);
+    problemsLayout->setContentsMargins(14, 10, 14, 11);
+    problemsLayout->setSpacing(6);
+    auto *problemsTitle = new QLabel(tr("Having a problem? Pick what is going wrong:"));
+    QFont problemsFont = problemsTitle->font();
+    problemsFont.setBold(true);
+    problemsTitle->setFont(problemsFont);
+    problemsLayout->addWidget(problemsTitle);
+    auto *problemsGrid = new QGridLayout;
+    problemsGrid->setSpacing(6);
+    const QList<advanceddiagnostics::TriageCategory> categories = advanceddiagnostics::triageCategories();
+    for (int i = 0; i < categories.size(); ++i) {
+        const advanceddiagnostics::TriageCategory &c = categories[i];
+        auto *b = new QPushButton(QCoreApplication::translate("advanceddiagnostics", c.shortLabel));
+        b->setToolTip(tr("%1\nRuns %2 (read-only) and shows what needs a look, then where to look next.")
+                          .arg(QCoreApplication::translate("advanceddiagnostics", c.label), c.checks.join(QStringLiteral(", "))));
+        const QString key = c.key;
+        connect(b, &QPushButton::clicked, this, [this, key] { Q_EMIT triage(key); });
+        problemsGrid->addWidget(b, i / 4, i % 4);
+    }
+    problemsLayout->addLayout(problemsGrid);
+    auto *problemsHint = new QLabel(tr("Nothing is changed and a sleeping dGPU is not woken."));
+    problemsHint->setProperty("tone", "muted");
+    problemsLayout->addWidget(problemsHint);
+    outer->addWidget(problems);
 
     auto *recommend = new QFrame;
     recommend->setObjectName(QStringLiteral("healthAdvice"));

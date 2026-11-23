@@ -16,6 +16,7 @@
 #include <QVariantMap>
 #include <QWidget>
 
+class AdvancedHealthPage;
 class BackupPage;
 class DayBars;
 class BootPage;
@@ -33,6 +34,9 @@ class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTextBrowser;
+class QPushButton;
+class QScrollArea;
+class QToolButton;
 
 class HealthTab : public QWidget {
     Q_OBJECT
@@ -50,10 +54,9 @@ public:
     CoolingPage *cooling() const { return cooling_; }
     /// Show the dGPU power page (the Health tab must already be on screen).
     void openDgpuPage();
-    /// System tools groups, in the order of the navigation tree.
-    enum ToolGroup { DeviceTools, ConnectionTools, KernelTools };
-    /// A page added to System tools after construction (the Optimizations tab's tuning pages).
-    void addToolPage(QWidget *page, const QString &label, ToolGroup group);
+    /// A page added to System tools after construction (the Optimizations tab's tuning pages). `key` is
+    /// its untranslated name in the tool catalog (toolcatalog.h): area, search words, badges.
+    void addToolPage(QWidget *page, const QString &label, const QString &key);
 
 Q_SIGNALS:
     /// The dGPU stayed awake on battery for `minutes` (BatteryPage::dgpuAwake); the tray tells the user.
@@ -94,8 +97,38 @@ private:
 
     /// Mark all seen: the events shown so far stop counting as new (gui.ini, see seenMs_).
     void markSeen();
-    /// Select `page` in its group (or in the top level), so it shows wherever it sits. Null does nothing.
+    /// Select `page` in its group (or in the top level), so it shows wherever it sits. A System tool opens
+    /// in the tool view. Null does nothing.
     void showPage(QWidget *page);
+
+    // System tools: one catalog page (search, pinned, recent, tools by area) and one tool view with a path
+    // back; no second navigation tree.
+    struct Tool { QWidget *page = nullptr; QString key, label; };
+    void addTool(QWidget *page, const QString &label, const QString &key);
+    void openTool(QWidget *page);
+    void showToolCatalog();
+    void rebuildToolCatalog();
+    QWidget *toolButton(const Tool &t);
+    const Tool *toolOf(QWidget *page) const;
+    const Tool *toolByKey(const QString &key) const;
+    QStringList toolList(const QString &setting) const;
+    void togglePin();
+
+    // "page:<key>" / "tool:<key>" targets: back / forward history and links from other pages.
+    /// Opens a target; false when this system does not have it.
+    bool navigateTo(const QString &target);
+    /// Translated name of a target, empty when this system does not have it.
+    QString targetLabel(const QString &target) const;
+    QWidget *pageByKey(const QString &key) const;
+    void record(const QString &target);
+    void stepHistory(int delta);
+    /// The rail's search: Health pages by their search words, and matching System tools in their own group.
+    void filterNavigation(const QString &query);
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
 
     /// The newest row of one event that repeats: same boot, kind, code and title, within GROUP_US.
     struct Group { QTreeWidgetItem *row = nullptr; QString base; double firstUs = 0, lastUs = 0; int n = 0; };
@@ -111,9 +144,22 @@ private:
     QStackedWidget *pages_ = nullptr;
     QHash<QWidget *, QTreeWidgetItem *> pageItems_;
     QWidget *toolDirectory_ = nullptr;
-    QTreeWidget *toolNavigation_ = nullptr;
+    QStackedWidget *toolMode_ = nullptr;     // 0: catalog, 1: one tool
     QStackedWidget *toolPages_ = nullptr;
-    QHash<QWidget *, QTreeWidgetItem *> toolItems_;
+    QList<Tool> tools_;
+    QLineEdit *toolSearch_ = nullptr;
+    QLabel *toolTerms_ = nullptr, *toolPath_ = nullptr, *toolBadges_ = nullptr;
+    QPushButton *toolPin_ = nullptr;
+    QScrollArea *toolScroll_ = nullptr;
+    QWidget *toolCatalog_ = nullptr;
+    int toolColumns_ = 0;
+    QTreeWidgetItem *toolResults_ = nullptr; // the rail's "System tools" search results
+    QLineEdit *navSearch_ = nullptr;
+    QToolButton *back_ = nullptr, *forward_ = nullptr;
+    QStringList history_;
+    int historyPos_ = -1;
+    bool replaying_ = false;
+    AdvancedHealthPage *investigations_ = nullptr;
     QLineEdit *eventSearch_ = nullptr;
     QComboBox *severityFilter_ = nullptr;
     QCheckBox *technicalEvents_ = nullptr;

@@ -30,6 +30,8 @@ Q_SIGNALS:
     void openPage(const QString &target);
     /// Worst level of the cards: the Home badge and the tray entry follow it.
     void worstChanged(int level);
+    /// "What is going wrong?": run guided triage (H18) for this category ("gpu", "sleep" …).
+    void triage(const QString &category);
 
 protected:
     void showEvent(QShowEvent *e) override;

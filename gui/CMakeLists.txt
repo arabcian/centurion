@@ -87,6 +87,7 @@ add_executable(centurion
     src/advancedhealth.cpp src/advancedhealth.h
     src/diagreport.cpp   src/diagreport.h
     src/diagreportview.cpp src/diagreportview.h
+    src/toolcatalog.cpp  src/toolcatalog.h
     src/diagsources.cpp  src/diagsources.h
     src/evidencereports.cpp src/evidencereports.h
     src/systemdiagnostics.cpp src/systemdiagnostics.h
@@ -344,6 +345,10 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME klogview COMMAND centurion-klogview-test)
+    add_executable(centurion-toolcatalog-test tests/toolcatalog_test.cpp src/toolcatalog.cpp src/toolcatalog.h ${DIAG_TEST_SOURCES})
+    target_link_libraries(centurion-toolcatalog-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-toolcatalog-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME toolcatalog COMMAND centurion-toolcatalog-test)
     add_executable(centurion-notifyprefs-test tests/notifyprefs_test.cpp src/notifyprefs.cpp src/notifyprefs.h)
     target_link_libraries(centurion-notifyprefs-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-notifyprefs-test PRIVATE QT_NO_KEYWORDS)

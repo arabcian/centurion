@@ -2027,6 +2027,126 @@ Kernel uptime: %2
             <source>Evidence Lab</source>
             <translation>Donanım Kanıt Analizi</translation>
         </message>
+        <message>
+            <source>Investigations</source>
+            <translation>İncelemeler</translation>
+        </message>
+        <message>
+            <source>Capability Doctor</source>
+            <translation>Yetenek Doktoru</translation>
+        </message>
+        <message>
+            <source>Incident Timeline…</source>
+            <translation>Olay zaman çizelgesi…</translation>
+        </message>
+        <message>
+            <source>Correlate the selected incident with boot-matched sensor and scene history.</source>
+            <translation>Seçili olayı aynı açılışa ait sensör ve sahne geçmişiyle ilişkilendirir.</translation>
+        </message>
+        <message>
+            <source>Incident Timeline</source>
+            <translation>Olay zaman çizelgesi</translation>
+        </message>
+        <message>
+            <source>Select a hardware event first.</source>
+            <translation>Önce bir donanım olayı seçin.</translation>
+        </message>
+        <message>
+            <source>Hardware Incident Timeline</source>
+            <translation>Donanım olayı zaman çizelgesi</translation>
+        </message>
+        <message>
+            <source>Technical note: Xid 154 reports recovery, not the original cause. Earlier Xid codes, machine checks and PCIe events need contextual diagnosis. Right-click an event to open the related tool or inspect its raw log.</source>
+            <translation>Teknik not: Xid 154 asıl nedeni değil, kurtarmayı bildirir. Önceki Xid kodları, makine denetimleri ve PCIe olayları bağlamıyla birlikte değerlendirilmelidir. İlgili aracı açmak ya da ham kaydı incelemek için olaya sağ tıklayın.</translation>
+        </message>
+        <message>
+            <source>System tools › %1 › %2</source>
+            <translation>Sistem araçları › %1 › %2</translation>
+        </message>
+        <message>
+            <source>★ Pinned</source>
+            <translation>★ Sabitlendi</translation>
+        </message>
+        <message>
+            <source>☆ Pin</source>
+            <translation>☆ Sabitle</translation>
+        </message>
+        <message>
+            <source>Pinned</source>
+            <translation>Sabitlenenler</translation>
+        </message>
+        <message>
+            <source>Recently used</source>
+            <translation>Son kullanılanlar</translation>
+        </message>
+        <message>
+            <source>No tool matches “%1”. Try a part (GPU, disk, fan), a symptom or an error code; the search box at the top left also finds Health pages.</source>
+            <translation>“%1” ile eşleşen araç yok. Bir parça (GPU, disk, fan), bir belirti ya da hata kodu deneyin; sol üstteki arama kutusu Sağlık sayfalarını da bulur.</translation>
+        </message>
+        <message>
+            <source>F2FS reported an integrity, checkpoint or I/O error</source>
+            <translation>F2FS bir bütünlük, denetim noktası ya da G/Ç hatası bildirdi</translation>
+        </message>
+        <message>
+            <source>Bluetooth firmware or controller reported a failure</source>
+            <translation>Bluetooth donanım yazılımı ya da denetleyicisi bir hata bildirdi</translation>
+        </message>
+        <message>
+            <source>Hardware Incident Timeline…</source>
+            <translation>Donanım olayı zaman çizelgesi…</translation>
+        </message>
+        <message>
+            <source>Counts events since startup, or since they were last marked reviewed. Reviewing does not resolve underlying issues or erase saved history.</source>
+            <translation>Açılıştan ya da son “incelendi” işaretinden bu yana olayları sayar. İncelendi olarak işaretlemek sorunu çözmez ve kayıtlı geçmişi silmez.</translation>
+        </message>
+        <message>
+            <source>Detailed device reports, grouped by what they are about. A tool runs only when you open it; its badges say when it can change settings, wake a sleeping GPU, needs root or uses the internet.</source>
+            <translation>Konularına göre gruplanmış ayrıntılı aygıt raporları. Bir araç yalnızca siz açtığınızda çalışır; rozetleri ayar değiştirebildiğini, uyuyan GPU’yu uyandırabildiğini, root gerektirdiğini ya da internet kullandığını gösterir.</translation>
+        </message>
+        <message>
+            <source>Search tools: name, part, symptom or term (fan, VRR, firmware missing, ASPM)…</source>
+            <translation>Araç ara: ad, parça, belirti ya da terim (fan, VRR, firmware eksik, ASPM)…</translation>
+        </message>
+        <message>
+            <source>← All tools</source>
+            <translation>← Tüm araçlar</translation>
+        </message>
+        <message>
+            <source>Back to the tool catalog. The open tool keeps its results.</source>
+            <translation>Araç kataloğuna döner. Açık aracın sonuçları korunur.</translation>
+        </message>
+        <message>
+            <source>Pinned tools are listed first in the catalog.</source>
+            <translation>Sabitlenen araçlar katalogda en üstte listelenir.</translation>
+        </message>
+        <message>
+            <source>MCE topology, AER changes, NVIDIA Xid cases, F2FS failures and radio firmware faults.</source>
+            <translation>MCE topolojisi, AER değişimleri, NVIDIA Xid vakaları, F2FS hataları ve kablosuz donanım yazılımı arızaları.</translation>
+        </message>
+        <message>
+            <source>Read-only boot regression, NVMe, USB, sleep, CO, GPU and incident investigations.</source>
+            <translation>Salt okunur açılış gerilemesi, NVMe, USB, uyku, CO, GPU ve olay incelemeleri.</translation>
+        </message>
+        <message>
+            <source>Why a feature is missing: read-only kernel, helper and firmware capability checks.</source>
+            <translation>Bir özellik neden yok: salt okunur çekirdek, yardımcı ve donanım yazılımı yetenek denetimleri.</translation>
+        </message>
+        <message>
+            <source>Back (Alt+Left)</source>
+            <translation>Geri (Alt+Sol)</translation>
+        </message>
+        <message>
+            <source>Forward (Alt+Right)</source>
+            <translation>İleri (Alt+Sağ)</translation>
+        </message>
+        <message>
+            <source>Search…</source>
+            <translation>Ara…</translation>
+        </message>
+        <message>
+            <source>Searches page and tool names and the words around them: error codes (Xid 79), symptoms (flicker, overheating), parts (fan, battery). Turkish or English.</source>
+            <translation>Sayfa ve araç adlarında ve ilgili sözcüklerde arar: hata kodları (Xid 79), belirtiler (titreme, ısınma), parçalar (fan, pil). Türkçe ya da İngilizce.</translation>
+        </message>
     </context>
     <context>
         <name>HomeTab</name>
@@ -4653,6 +4773,24 @@ Kaydetmeden önce seri numaraları, UUID, MAC ve IP adresleri değiştirildi.</t
             <source>Acknowledges these shutdowns; does not repair the cause. New shutdowns will appear again.</source>
             <translation>Bu kapanışları incelendi olarak işaretler; nedeni gidermez. Yeni kapanışlar tekrar görünür.</translation>
         </message>
+        <message>
+            <source>Having a problem? Pick what is going wrong:</source>
+            <translation>Bir sorun mu var? Neyin yanlış gittiğini seçin:</translation>
+        </message>
+        <message>
+            <source>%1
+Runs %2 (read-only) and shows what needs a look, then where to look next.</source>
+            <translation>%1
+%2 denetimlerini (salt okunur) çalıştırır, bakılması gerekenleri ve sonra nereye bakılacağını gösterir.</translation>
+        </message>
+        <message>
+            <source>Nothing is changed and a sleeping dGPU is not woken.</source>
+            <translation>Hiçbir şey değiştirilmez, uyuyan dGPU uyandırılmaz.</translation>
+        </message>
+        <message>
+            <source>Results reflect available logs and measurements, not a complete hardware test. Details remain available for troubleshooting.</source>
+            <translation>Sonuçlar eksiksiz bir donanım testini değil, mevcut kayıt ve ölçümleri yansıtır. Ayrıntılar sorun giderme için erişilebilir kalır.</translation>
+        </message>
     </context>
     <context>
         <name>ReportPreview</name>
@@ -5915,6 +6053,90 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <message>
             <source>S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU.</source>
             <translation>S06: yapılandırılmış NVIDIA seçenekleri, etkin değerlerle karşılaştırmalı ve ne işe yaradıklarıyla. GPU'yu asla uyandırmaz.</translation>
+        </message>
+        <message>
+            <source>Sensors</source>
+            <translation>Sensörler</translation>
+        </message>
+        <message>
+            <source>CPU</source>
+            <translation>CPU</translation>
+        </message>
+        <message>
+            <source>Memory</source>
+            <translation>Bellek</translation>
+        </message>
+        <message>
+            <source>DMI</source>
+            <translation>DMI</translation>
+        </message>
+        <message>
+            <source>PCI</source>
+            <translation>PCI</translation>
+        </message>
+        <message>
+            <source>PCIe detail</source>
+            <translation>PCIe ayrıntısı</translation>
+        </message>
+        <message>
+            <source>USB</source>
+            <translation>USB</translation>
+        </message>
+        <message>
+            <source>Storage</source>
+            <translation>Depolama</translation>
+        </message>
+        <message>
+            <source>SMART details</source>
+            <translation>SMART ayrıntıları</translation>
+        </message>
+        <message>
+            <source>NVIDIA</source>
+            <translation>NVIDIA</translation>
+        </message>
+        <message>
+            <source>Graphics</source>
+            <translation>Grafik</translation>
+        </message>
+        <message>
+            <source>Kernel</source>
+            <translation>Çekirdek</translation>
+        </message>
+        <message>
+            <source>Battery</source>
+            <translation>Pil</translation>
+        </message>
+        <message>
+            <source>Configuration files</source>
+            <translation>Yapılandırma dosyaları</translation>
+        </message>
+        <message>
+            <source>S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire&apos;s view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply.</source>
+            <translation>S15: ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin çakışıp çakışmadığı), PipeWire’ın görünümü. Rapor hiçbir şeyi yeniden başlatmaz; Ayarlar… PipeWire / WirePlumber seçeneklerini düzenler ve uyguladığınızda ses sunucularını yeniden başlatır.</translation>
+        </message>
+        <message>
+            <source>S03: each connected display&apos;s identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen&apos;s brightness and refresh rate.</source>
+            <translation>S03: bağlı her ekranın EDID’sinden kimliği, modları ve değişken yenileme aralığı, boyutu, bit derinliği, HDR ve renk desteği; bozuk EDID’ler; arka ışık aygıtları. Panel denetimleri… dahili ekranın parlaklığını ve yenileme hızını ayarlar.</translation>
+        </message>
+        <message>
+            <source>Settings…</source>
+            <translation>Ayarlar…</translation>
+        </message>
+        <message>
+            <source>Edit well-known PipeWire and WirePlumber options, with a hint for each.</source>
+            <translation>Bilinen PipeWire ve WirePlumber seçeneklerini, her biri için bir ipucuyla düzenleyin.</translation>
+        </message>
+        <message>
+            <source>Panel controls…</source>
+            <translation>Panel denetimleri…</translation>
+        </message>
+        <message>
+            <source>Set the built-in screen&apos;s brightness and refresh rate.</source>
+            <translation>Dahili ekranın parlaklığını ve yenileme hızını ayarlayın.</translation>
+        </message>
+        <message>
+            <source>Read at %1</source>
+            <translation>Okunma: %1</translation>
         </message>
     </context>
     <context>
@@ -11278,6 +11500,22 @@ Profil adı:</translation>
             <source>Technical details:</source>
             <translation>Teknik ayrıntılar:</translation>
         </message>
+        <message>
+            <source>ⓘ Terms: %1</source>
+            <translation>ⓘ Terimler: %1</translation>
+        </message>
+        <message>
+            <source>Makes this change now (asks for the administrator password).</source>
+            <translation>Bu değişikliği şimdi yapar (yönetici parolası ister).</translation>
+        </message>
+        <message>
+            <source>%1
+
+%2?</source>
+            <translation>%1
+
+%2?</translation>
+        </message>
     </context>
     <context>
         <name>diagsrc</name>
@@ -12759,6 +12997,34 @@ Profil adı:</translation>
         <message>
             <source>USB devices and ports</source>
             <translation>USB aygıtları ve bağlantı noktaları</translation>
+        </message>
+        <message>
+            <source>GPU / black screen</source>
+            <translation>GPU / siyah ekran</translation>
+        </message>
+        <message>
+            <source>CPU / instability</source>
+            <translation>CPU / kararsızlık</translation>
+        </message>
+        <message>
+            <source>Crash / freeze</source>
+            <translation>Çökme / donma</translation>
+        </message>
+        <message>
+            <source>Disk / storage</source>
+            <translation>Disk / depolama</translation>
+        </message>
+        <message>
+            <source>Wi-Fi / Bluetooth</source>
+            <translation>Wi-Fi / Bluetooth</translation>
+        </message>
+        <message>
+            <source>Sleep / wake</source>
+            <translation>Uyku / uyanma</translation>
+        </message>
+        <message>
+            <source>USB / charging</source>
+            <translation>USB / şarj</translation>
         </message>
     </context>
     <context>
@@ -15073,6 +15339,125 @@ Profil adı:</translation>
             <source>Reopened</source>
             <translation>Yeniden açıldı</translation>
         </message>
+        <message>
+            <source>Look next:</source>
+            <translation>Sıradaki adım:</translation>
+        </message>
+        <message>
+            <source>Opens this System tool; it reads its sources when it opens.</source>
+            <translation>Bu sistem aracını açar; araç açıldığında kaynaklarını okur.</translation>
+        </message>
+        <message>
+            <source>Opens this Health page.</source>
+            <translation>Bu Sağlık sayfasını açar.</translation>
+        </message>
     </context>
 <context><name>KernelParamsPage</name><message><source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here).</source><translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez).</translation></message><message><source>Scheduler (EEVDF)</source><translation>Zamanlayıcı (EEVDF)</translation></message><message><source>x86 scheduling (debugfs)</source><translation>x86 zamanlama (debugfs)</translation></message><message><source>CPU frequency and idle</source><translation>CPU frekansı ve boşta durumu</translation></message><message><source>Memory management</source><translation>Bellek yönetimi</translation></message><message><source>Kernel module parameters</source><translation>Çekirdek modülü parametreleri</translation></message><message><source>Everything under /sys</source><translation>/sys altındaki her şey</translation></message><message><source>Filter by name or value</source><translation>Ada veya değere göre süz</translation></message><message><source>Read</source><translation>Oku</translation></message><message><source>Setting</source><translation>Ayar</translation></message><message><source>Value</source><translation>Değer</translation></message><message><source>Writable</source><translation>Yazılabilir</translation></message><message><source>yes</source><translation>evet</translation></message><message><source>health-reader is not installed.</source><translation>health-reader kurulu değil.</translation></message><message><source>Reading…</source><translation>Okunuyor…</translation></message><message><source>The installed health-reader is too old for this page — reinstall Centurion.</source><translation>Kurulu health-reader bu sayfa için çok eski — Centurion'u yeniden kurun.</translation></message><message><source>debugfs is not mounted: only the sysctls are shown.</source><translation>debugfs bağlı değil: yalnızca sysctl değerleri gösteriliyor.</translation></message><message><source>%1 settings</source><translation>%1 ayar</translation></message><message><source> — list cut short (%1)</source><translation> — liste kısaltıldı (%1)</translation></message></context>
+<context>
+    <name>toolcatalog</name>
+        <message>
+            <source>CPU &amp; memory</source>
+            <translation>CPU ve bellek</translation>
+        </message>
+        <message>
+            <source>Graphics &amp; display</source>
+            <translation>Grafik ve ekran</translation>
+        </message>
+        <message>
+            <source>Storage</source>
+            <translation>Depolama</translation>
+        </message>
+        <message>
+            <source>Network &amp; wireless</source>
+            <translation>Ağ ve kablosuz</translation>
+        </message>
+        <message>
+            <source>Power &amp; thermal</source>
+            <translation>Güç ve sıcaklık</translation>
+        </message>
+        <message>
+            <source>Devices &amp; buses</source>
+            <translation>Aygıtlar ve veri yolları</translation>
+        </message>
+        <message>
+            <source>Firmware &amp; kernel</source>
+            <translation>Donanım yazılımı ve çekirdek</translation>
+        </message>
+        <message>
+            <source>System &amp; configuration</source>
+            <translation>Sistem ve yapılandırma</translation>
+        </message>
+        <message>
+            <source>Can change settings</source>
+            <translation>Ayar değiştirebilir</translation>
+        </message>
+        <message>
+            <source>May wake the dGPU</source>
+            <translation>dGPU’yu uyandırabilir</translation>
+        </message>
+        <message>
+            <source>Needs root</source>
+            <translation>Root gerekir</translation>
+        </message>
+        <message>
+            <source>Uses the internet</source>
+            <translation>İnternet kullanır</translation>
+        </message>
+        <message>
+            <source>PCIe Advanced Error Reporting: the link&apos;s own error counters. A few corrected errors are common; a growing count or uncorrected errors are not.</source>
+            <translation>PCIe Gelişmiş Hata Bildirimi: bağlantının kendi hata sayaçları. Birkaç düzeltilmiş hata olağandır; artan sayı ya da düzeltilmemiş hatalar değildir.</translation>
+        </message>
+        <message>
+            <source>PCIe Active State Power Management: lets a link drop to a low-power state when idle. Saves power; on some devices it causes errors or stalls.</source>
+            <translation>PCIe Etkin Durum Güç Yönetimi: bağlantının boştayken düşük güç durumuna geçmesini sağlar. Güç tasarrufu sağlar; bazı aygıtlarda hata ya da takılmalara yol açar.</translation>
+        </message>
+        <message>
+            <source>GPU System Processor: firmware running on newer NVIDIA GPUs. GSP timeouts often show up as freezes or black screens.</source>
+            <translation>GPU Sistem İşlemcisi: yeni NVIDIA GPU’larda çalışan donanım yazılımı. GSP zaman aşımları çoğu zaman donma ya da siyah ekran olarak görülür.</translation>
+        </message>
+        <message>
+            <source>The deepest PCIe power state: the device is switched off. A sleeping dGPU is in D3cold.</source>
+            <translation>En derin PCIe güç durumu: aygıt kapalıdır. Uyuyan bir dGPU D3cold durumundadır.</translation>
+        </message>
+        <message>
+            <source>An error code the NVIDIA driver writes to the kernel log; the number says what failed.</source>
+            <translation>NVIDIA sürücüsünün çekirdek günlüğüne yazdığı hata kodu; numara neyin başarısız olduğunu söyler.</translation>
+        </message>
+        <message>
+            <source>Machine Check Exception: the CPU reports a hardware error, e.g. from too low a voltage.</source>
+            <translation>Makine Denetimi İstisnası: CPU bir donanım hatası bildirir, örneğin fazla düşük voltaj nedeniyle.</translation>
+        </message>
+        <message>
+            <source>The data a display sends about itself: name, modes, refresh range, HDR support.</source>
+            <translation>Bir ekranın kendisi hakkında gönderdiği veri: ad, modlar, yenileme aralığı, HDR desteği.</translation>
+        </message>
+        <message>
+            <source>Variable refresh rate (FreeSync / G-SYNC): the display follows the game&apos;s frame rate.</source>
+            <translation>Değişken yenileme hızı (FreeSync / G-SYNC): ekran oyunun kare hızını izler.</translation>
+        </message>
+        <message>
+            <source>Package Power Tracking: the firmware&apos;s power limits for the CPU package.</source>
+            <translation>Paket Güç İzleme: donanım yazılımının CPU paketi için güç sınırları.</translation>
+        </message>
+        <message>
+            <source>Running Average Power Limit: the CPU&apos;s own power meter and limits.</source>
+            <translation>Running Average Power Limit: CPU’nun kendi güç ölçeri ve sınırları.</translation>
+        </message>
+        <message>
+            <source>Non-Uniform Memory Access: memory is closer to some cores than to others.</source>
+            <translation>Tekdüze Olmayan Bellek Erişimi: bellek bazı çekirdeklere diğerlerinden daha yakındır.</translation>
+        </message>
+        <message>
+            <source>Compressed swap in RAM: more usable memory for some CPU time.</source>
+            <translation>RAM’de sıkıştırılmış takas alanı: biraz CPU zamanı karşılığında daha fazla kullanılabilir bellek.</translation>
+        </message>
+        <message>
+            <source>A drive&apos;s own health record: wear, errors, temperature.</source>
+            <translation>Sürücünün kendi sağlık kaydı: aşınma, hatalar, sıcaklık.</translation>
+        </message>
+        <message>
+            <source>The Linux CPU scheduler since 6.6: decides which task runs next.</source>
+            <translation>6.6’dan beri Linux CPU zamanlayıcısı: sıradaki görevi seçer.</translation>
+        </message>
+</context>
 </TS>

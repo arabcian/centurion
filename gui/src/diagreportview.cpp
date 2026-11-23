@@ -2,6 +2,7 @@
 
 #include "sysadmin.h"
 #include "theme.h"
+#include "toolcatalog.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -20,6 +21,8 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -28,6 +31,10 @@
 using diag::Level;
 
 namespace {
+
+QSettings guiSettings() {
+    return QSettings(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/gui.ini"), QSettings::IniFormat);
+}
 
 const char *color(Level l) {
     switch (l) {
@@ -70,6 +77,15 @@ QWidget *findingCard(const diag::Finding &f, DiagReportView *view) {
     col->addLayout(head);
     if (!f.detail.isEmpty()) col->addWidget(text(f.detail, "dim"));
     if (!f.action.isEmpty()) col->addWidget(text(QStringLiteral("→ ") + f.action));
+    // Technical terms in the finding: named on one quiet line, explained on hover.
+    const QString terms = toolcatalog::explainTerms(f.title + QLatin1Char(' ') + f.detail + QLatin1Char(' ') + f.action);
+    if (!terms.isEmpty()) {
+        QStringList names;
+        for (const QString &line : terms.split(QLatin1Char('\n'))) names << line.section(QStringLiteral(" — "), 0, 0);
+        auto *glossary = text(QCoreApplication::translate("diag", "ⓘ Terms: %1").arg(names.join(QStringLiteral(" · "))), "muted");
+        glossary->setToolTip(terms);
+        col->addWidget(glossary);
+    }
     if (!f.fix.isEmpty()) {
         auto *fix = new QPushButton(f.fixLabel);
         fix->setToolTip(QCoreApplication::translate("diag", "Makes this change now (asks for the administrator password)."));
@@ -225,6 +241,9 @@ void DiagReportView::setReport(const diag::Report &r) {
             raw->setVisible(on);
             toggle->setText(on ? tr("Hide technical details") : tr("Show technical details"));
         });
+        // The choice is remembered for every report: who reads the raw output once usually wants it again.
+        connect(toggle, &QPushButton::clicked, this, [](bool on) { guiSettings().setValue(QStringLiteral("diag/technical"), on); });
+        toggle->setChecked(guiSettings().value(QStringLiteral("diag/technical"), false).toBool());
         bodyLayout_->addWidget(toggle, 0, Qt::AlignLeft);
         bodyLayout_->addWidget(raw);
     }

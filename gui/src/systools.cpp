@@ -35,6 +35,7 @@
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QTabWidget>
+#include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -626,6 +627,9 @@ public:
             top->addWidget(panel);
             connect(panel, &QPushButton::clicked, this, [this] { PanelControlsDialog(this).exec(); start(); });
         }
+        when_ = new QLabel;
+        when_->setProperty("role", "muted");
+        top->addWidget(when_);
         run_ = new QPushButton(QCoreApplication::translate("systools", "Run again"));
         top->addWidget(run_);
         v->addLayout(top);
@@ -693,13 +697,14 @@ private:
             for (auto it = outputs_.cbegin(); it != outputs_.cend(); ++it)
                 r.raw += QStringLiteral("\n$ %1\n%2").arg(it.key(), it.value().isEmpty() ? QCoreApplication::translate("systools", "(not installed or failed)") : it.value());
         view_->setReport(r);
+        when_->setText(QCoreApplication::translate("systools", "Read at %1").arg(QTime::currentTime().toString(QStringLiteral("HH:mm"))));
     }
 
     QString code_;
     QList<QStringList> cmds_;
     QHash<QString, QString> outputs_;
     QPushButton *run_;
-    QLabel *status_;
+    QLabel *status_, *when_;
     DiagReportView *view_;
     bool ran_ = false, busy_ = false;
 };
@@ -745,25 +750,25 @@ void addPages(QTabWidget *tabs) {
         {QT_TRANSLATE_NOOP("systools", "NVIDIA module parameters"),
          QT_TRANSLATE_NOOP("systools", "S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU."),
          {{"@diag", "S06"}, {"modinfo", "-p", "nvidia"}}},
-        {"Sensors", "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
-        {"CPU", "Topology, caches, frequencies and the active cpufreq driver/governor.",
+        {QT_TRANSLATE_NOOP("systools", "Sensors"), "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
+        {QT_TRANSLATE_NOOP("systools", "CPU"), "Topology, caches, frequencies and the active cpufreq driver/governor.",
          {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}, nullptr, false, true},
-        {"Memory", "Usage, swap/zram and NUMA layout.", {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
-        {"DMI", "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode", false, true},
-        {"PCI", "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.",
+        {QT_TRANSLATE_NOOP("systools", "Memory"), "Usage, swap/zram and NUMA layout.", {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
+        {QT_TRANSLATE_NOOP("systools", "DMI"), "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode", false, true},
+        {QT_TRANSLATE_NOOP("systools", "PCI"), "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.",
          {{"lspci", "-nnk"}, {"lspci", "-tv"}, {"@pcilink"}}, nullptr, false, true},
-        {"PCIe detail", "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
-        {"USB", "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
-        {"Storage", "Block devices, schedulers and mounted filesystems.",
+        {QT_TRANSLATE_NOOP("systools", "PCIe detail"), "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
+        {QT_TRANSLATE_NOOP("systools", "USB"), "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
+        {QT_TRANSLATE_NOOP("systools", "Storage"), "Block devices, schedulers and mounted filesystems.",
          {{"lsblk", "-o", "NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINTS,ROTA,SCHED"}, {"df", "-hT", "-x", "tmpfs", "-x", "devtmpfs"}}},
-        {"SMART details", "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
-        {"NVIDIA", "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
+        {QT_TRANSLATE_NOOP("systools", "SMART details"), "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
+        {QT_TRANSLATE_NOOP("systools", "NVIDIA"), "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
          {{"@file", "/proc/driver/nvidia/version"}, {"nvidia-smi", "-q"}}, nullptr, false, true},
-        {"Graphics", "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
+        {QT_TRANSLATE_NOOP("systools", "Graphics"), "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
          {{"vulkaninfo", "--summary"}, {"glxinfo", "-B"}}, nullptr, false, true},
-        {"Kernel", "Kernel version, boot command line and loaded modules.",
+        {QT_TRANSLATE_NOOP("systools", "Kernel"), "Kernel version, boot command line and loaded modules.",
          {{"uname", "-a"}, {"@file", "/proc/cmdline"}, {"lsmod"}}, nullptr, false, true},
-        {"Battery", "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
+        {QT_TRANSLATE_NOOP("systools", "Battery"), "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
          {{"@glob", "/sys/class/power_supply/*/uevent"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "Thermal"),
          QT_TRANSLATE_NOOP("systools", "Every thermal zone: its type, current temperature and trip points. Temperatures are in millidegrees Celsius, as the kernel reports them."),
@@ -796,6 +801,7 @@ void addPages(QTabWidget *tabs) {
             return new ToolPage(s);
         });
         page->setProperty("toolKey", QString::fromLatin1(s.title));
+        page->setProperty("toolAbout", QCoreApplication::translate("systools", s.about));  // the catalog's tooltip
         tabs->addTab(page, title);
     }
     auto *config = new LazyWidget([] { return new ConfigPage; });

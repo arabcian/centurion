@@ -10,10 +10,12 @@
 #include "ryzentab.h"
 #include "systemdiagnostics.h"
 #include "theme.h"
+#include "toolcatalog.h"
 
 #include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -145,6 +147,12 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     message_->setWordWrap(true);
     message_->setProperty("role", "muted");
     v->addWidget(message_);
+    // After a triage: the pages and tools that fit the category, one click away.
+    related_ = new QWidget;
+    related_->setLayout(new QGridLayout);
+    related_->layout()->setContentsMargins(0, 0, 0, 0);
+    related_->setVisible(false);
+    v->addWidget(related_);
 
     stack_ = new QStackedWidget;
     view_ = new DiagReportView;
@@ -209,6 +217,7 @@ void AdvancedHealthPage::updateMode() {
     category_->setVisible(code == QStringLiteral("H18"));
     gpuQuery_->setVisible(code == QStringLiteral("H16"));
     gpuQuery_->setEnabled(false);  // after the passive part has run
+    related_->setVisible(false);
     scan_->setText(incidents ? tr("Reload") : tr("Run"));
     message_->clear();
     if (incidents) refreshIncidents();
@@ -243,12 +252,46 @@ void AdvancedHealthPage::run() {
             QList<diag::Report> reports;
             for (const QString &c : codes) reports << investigations::reportFor(c, data);
             view_->setReport(advanceddiagnostics::triage(label, reports));
+            showRelated(category_->currentData().toString());
         } else {
             view_->setReport(investigations::reportFor(code, data));
         }
         gpuQuery_->setEnabled(code == QStringLiteral("H16"));
         message_->setText(failed.isEmpty() ? QString() : tr("Not available: %1. The report says Unknown where that data was needed.").arg(failed.join(QStringLiteral("; "))));
     });
+}
+
+void AdvancedHealthPage::startTriage(const QString &category) {
+    if (busy_) return;
+    const int f = feature_->findData(QStringLiteral("H18"));
+    const int c = category_->findData(category);
+    if (f < 0 || c < 0) return;
+    feature_->setCurrentIndex(f);
+    category_->setCurrentIndex(c);
+    run();
+}
+
+void AdvancedHealthPage::showRelated(const QString &category) {
+    auto *row = static_cast<QGridLayout *>(related_->layout());
+    while (QLayoutItem *item = row->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    auto *title = new QLabel(tr("Look next:"));
+    title->setProperty("role", "muted");
+    row->addWidget(title, 0, 0, 1, 3);
+    int links = 0;
+    for (const QString &target : toolcatalog::relatedFor(category)) {
+        const QString name = targetLabel_ ? targetLabel_(target) : QString();
+        if (name.isEmpty()) continue;  // not on this system (no dGPU, no battery …)
+        auto *b = new QPushButton(name);
+        b->setToolTip(target.startsWith(QLatin1String("tool:")) ? tr("Opens this System tool; it reads its sources when it opens.")
+                                                                : tr("Opens this Health page."));
+        connect(b, &QPushButton::clicked, this, [this, target] { Q_EMIT openTarget(target); });
+        row->addWidget(b, 1 + links / 3, links % 3);  // three a row: a narrow window does not grow
+        ++links;
+    }
+    related_->setVisible(links > 0);
 }
 
 void AdvancedHealthPage::activeGpuQuery() {

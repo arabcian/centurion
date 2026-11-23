@@ -939,13 +939,13 @@ QString saveIncident(const QString &key, const QString &status, const QString &n
 // ── H18 Guided triage ─────────────────────────────────────────────────────────
 
 QList<TriageCategory> triageCategories() {
-    return {{QStringLiteral("gpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "NVIDIA GPU: Xid, GSP, black screens"), {"H04", "H16", "S04", "S06"}},
-            {QStringLiteral("cpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU: machine checks, Curve Optimizer"), {"H02", "H13", "H15"}},
-            {QStringLiteral("crash"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Freezes and crashes after an update"), {"H01", "H15", "H13"}},
-            {QStringLiteral("storage"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Storage: NVMe, F2FS"), {"H06", "H05", "H03"}},
-            {QStringLiteral("radio"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi and Bluetooth"), {"H09", "S07", "S18"}},
-            {QStringLiteral("sleep"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep and resume"), {"H12", "H15"}},
-            {QStringLiteral("usb"), QT_TRANSLATE_NOOP("advanceddiagnostics", "USB devices and ports"), {"H10", "S13", "H03"}}};
+    return {{QStringLiteral("gpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "NVIDIA GPU: Xid, GSP, black screens"), {"H04", "H16", "S04", "S06"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "GPU / black screen")},
+            {QStringLiteral("cpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU: machine checks, Curve Optimizer"), {"H02", "H13", "H15"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU / instability")},
+            {QStringLiteral("crash"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Freezes and crashes after an update"), {"H01", "H15", "H13"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Crash / freeze")},
+            {QStringLiteral("storage"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Storage: NVMe, F2FS"), {"H06", "H05", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Disk / storage")},
+            {QStringLiteral("radio"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi and Bluetooth"), {"H09", "S07", "S18"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi / Bluetooth")},
+            {QStringLiteral("sleep"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep and resume"), {"H12", "H15"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep / wake")},
+            {QStringLiteral("usb"), QT_TRANSLATE_NOOP("advanceddiagnostics", "USB devices and ports"), {"H10", "S13", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "USB / charging")}};
 }
 
 Report triage(const QString &label, const QList<Report> &checks) {
@@ -965,7 +965,9 @@ Report triage(const QString &label, const QList<Report> &checks) {
                 r.findings << diag::Finding{f.level, c.code + QStringLiteral(" · ") + f.title, f.detail, f.action, f.fixLabel, f.fix};
     }
     r.tables << t;
-    if (!r.count(Level::Attention) && !r.count(Level::Review))
+    // "No problem" only when some check could actually read its sources; all-Unknown stays Unknown.
+    const bool anyChecked = std::any_of(checks.cbegin(), checks.cend(), [](const Report &c) { return c.verdict() == Level::Ok; });
+    if (anyChecked && !r.count(Level::Attention) && !r.count(Level::Review))
         r.add(Level::Ok, tr("None of the checks found a problem"),
               tr("If the symptom continues, note when it happens and save an incident note (H17); a pattern across boots is easier to pin down."));
     return r;

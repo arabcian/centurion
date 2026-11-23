@@ -71,7 +71,8 @@ QString saveIncident(const QString &key, const QString &status, const QString &n
 QStringList incidentStatuses();
 
 // H18: the category's checks merged into one report.
-struct TriageCategory { QString key; const char *label; QStringList checks; };
+/// `shortLabel`: a few words for a button ("GPU / display").
+struct TriageCategory { QString key; const char *label; QStringList checks; const char *shortLabel; };
 QList<TriageCategory> triageCategories();
 diag::Report triage(const QString &label, const QList<diag::Report> &checks);
 

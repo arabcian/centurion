@@ -1,0 +1,1950 @@
+diff --git a/gui/CMakeLists.txt b/gui/CMakeLists.txt
+index 88febe6..7fcc447 100644
+--- a/gui/CMakeLists.txt
++++ b/gui/CMakeLists.txt
+@@ -87,6 +87,7 @@ add_executable(centurion
+     src/advancedhealth.cpp src/advancedhealth.h
+     src/diagreport.cpp   src/diagreport.h
+     src/diagreportview.cpp src/diagreportview.h
++    src/toolcatalog.cpp  src/toolcatalog.h
+     src/diagsources.cpp  src/diagsources.h
+     src/evidencereports.cpp src/evidencereports.h
+     src/systemdiagnostics.cpp src/systemdiagnostics.h
+@@ -344,6 +345,10 @@ if(CENTURION_BUILD_TESTS)
+     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
+     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)
+     add_test(NAME klogview COMMAND centurion-klogview-test)
++    add_executable(centurion-toolcatalog-test tests/toolcatalog_test.cpp src/toolcatalog.cpp src/toolcatalog.h ${DIAG_TEST_SOURCES})
++    target_link_libraries(centurion-toolcatalog-test PRIVATE Qt6::Core)
++    target_compile_definitions(centurion-toolcatalog-test PRIVATE QT_NO_KEYWORDS)
++    add_test(NAME toolcatalog COMMAND centurion-toolcatalog-test)
+     add_executable(centurion-notifyprefs-test tests/notifyprefs_test.cpp src/notifyprefs.cpp src/notifyprefs.h)
+     target_link_libraries(centurion-notifyprefs-test PRIVATE Qt6::Core)
+     target_compile_definitions(centurion-notifyprefs-test PRIVATE QT_NO_KEYWORDS)
+diff --git a/gui/i18n/centurion_tr.ts b/gui/i18n/centurion_tr.ts
+index a3bfb85..1cbb9f5 100644
+--- a/gui/i18n/centurion_tr.ts
++++ b/gui/i18n/centurion_tr.ts
+@@ -2027,6 +2027,126 @@ Kernel uptime: %2
+             <source>Evidence Lab</source>
+             <translation>Donanım Kanıt Analizi</translation>
+         </message>
++        <message>
++            <source>Investigations</source>
++            <translation>İncelemeler</translation>
++        </message>
++        <message>
++            <source>Capability Doctor</source>
++            <translation>Yetenek Doktoru</translation>
++        </message>
++        <message>
++            <source>Incident Timeline…</source>
++            <translation>Olay zaman çizelgesi…</translation>
++        </message>
++        <message>
++            <source>Correlate the selected incident with boot-matched sensor and scene history.</source>
++            <translation>Seçili olayı aynı açılışa ait sensör ve sahne geçmişiyle ilişkilendirir.</translation>
++        </message>
++        <message>
++            <source>Incident Timeline</source>
++            <translation>Olay zaman çizelgesi</translation>
++        </message>
++        <message>
++            <source>Select a hardware event first.</source>
++            <translation>Önce bir donanım olayı seçin.</translation>
++        </message>
++        <message>
++            <source>Hardware Incident Timeline</source>
++            <translation>Donanım olayı zaman çizelgesi</translation>
++        </message>
++        <message>
++            <source>Technical note: Xid 154 reports recovery, not the original cause. Earlier Xid codes, machine checks and PCIe events need contextual diagnosis. Right-click an event to open the related tool or inspect its raw log.</source>
++            <translation>Teknik not: Xid 154 asıl nedeni değil, kurtarmayı bildirir. Önceki Xid kodları, makine denetimleri ve PCIe olayları bağlamıyla birlikte değerlendirilmelidir. İlgili aracı açmak ya da ham kaydı incelemek için olaya sağ tıklayın.</translation>
++        </message>
++        <message>
++            <source>System tools › %1 › %2</source>
++            <translation>Sistem araçları › %1 › %2</translation>
++        </message>
++        <message>
++            <source>★ Pinned</source>
++            <translation>★ Sabitlendi</translation>
++        </message>
++        <message>
++            <source>☆ Pin</source>
++            <translation>☆ Sabitle</translation>
++        </message>
++        <message>
++            <source>Pinned</source>
++            <translation>Sabitlenenler</translation>
++        </message>
++        <message>
++            <source>Recently used</source>
++            <translation>Son kullanılanlar</translation>
++        </message>
++        <message>
++            <source>No tool matches “%1”. Try a part (GPU, disk, fan), a symptom or an error code; the search box at the top left also finds Health pages.</source>
++            <translation>“%1” ile eşleşen araç yok. Bir parça (GPU, disk, fan), bir belirti ya da hata kodu deneyin; sol üstteki arama kutusu Sağlık sayfalarını da bulur.</translation>
++        </message>
++        <message>
++            <source>F2FS reported an integrity, checkpoint or I/O error</source>
++            <translation>F2FS bir bütünlük, denetim noktası ya da G/Ç hatası bildirdi</translation>
++        </message>
++        <message>
++            <source>Bluetooth firmware or controller reported a failure</source>
++            <translation>Bluetooth donanım yazılımı ya da denetleyicisi bir hata bildirdi</translation>
++        </message>
++        <message>
++            <source>Hardware Incident Timeline…</source>
++            <translation>Donanım olayı zaman çizelgesi…</translation>
++        </message>
++        <message>
++            <source>Counts events since startup, or since they were last marked reviewed. Reviewing does not resolve underlying issues or erase saved history.</source>
++            <translation>Açılıştan ya da son “incelendi” işaretinden bu yana olayları sayar. İncelendi olarak işaretlemek sorunu çözmez ve kayıtlı geçmişi silmez.</translation>
++        </message>
++        <message>
++            <source>Detailed device reports, grouped by what they are about. A tool runs only when you open it; its badges say when it can change settings, wake a sleeping GPU, needs root or uses the internet.</source>
++            <translation>Konularına göre gruplanmış ayrıntılı aygıt raporları. Bir araç yalnızca siz açtığınızda çalışır; rozetleri ayar değiştirebildiğini, uyuyan GPU’yu uyandırabildiğini, root gerektirdiğini ya da internet kullandığını gösterir.</translation>
++        </message>
++        <message>
++            <source>Search tools: name, part, symptom or term (fan, VRR, firmware missing, ASPM)…</source>
++            <translation>Araç ara: ad, parça, belirti ya da terim (fan, VRR, firmware eksik, ASPM)…</translation>
++        </message>
++        <message>
++            <source>← All tools</source>
++            <translation>← Tüm araçlar</translation>
++        </message>
++        <message>
++            <source>Back to the tool catalog. The open tool keeps its results.</source>
++            <translation>Araç kataloğuna döner. Açık aracın sonuçları korunur.</translation>
++        </message>
++        <message>
++            <source>Pinned tools are listed first in the catalog.</source>
++            <translation>Sabitlenen araçlar katalogda en üstte listelenir.</translation>
++        </message>
++        <message>
++            <source>MCE topology, AER changes, NVIDIA Xid cases, F2FS failures and radio firmware faults.</source>
++            <translation>MCE topolojisi, AER değişimleri, NVIDIA Xid vakaları, F2FS hataları ve kablosuz donanım yazılımı arızaları.</translation>
++        </message>
++        <message>
++            <source>Read-only boot regression, NVMe, USB, sleep, CO, GPU and incident investigations.</source>
++            <translation>Salt okunur açılış gerilemesi, NVMe, USB, uyku, CO, GPU ve olay incelemeleri.</translation>
++        </message>
++        <message>
++            <source>Why a feature is missing: read-only kernel, helper and firmware capability checks.</source>
++            <translation>Bir özellik neden yok: salt okunur çekirdek, yardımcı ve donanım yazılımı yetenek denetimleri.</translation>
++        </message>
++        <message>
++            <source>Back (Alt+Left)</source>
++            <translation>Geri (Alt+Sol)</translation>
++        </message>
++        <message>
++            <source>Forward (Alt+Right)</source>
++            <translation>İleri (Alt+Sağ)</translation>
++        </message>
++        <message>
++            <source>Search…</source>
++            <translation>Ara…</translation>
++        </message>
++        <message>
++            <source>Searches page and tool names and the words around them: error codes (Xid 79), symptoms (flicker, overheating), parts (fan, battery). Turkish or English.</source>
++            <translation>Sayfa ve araç adlarında ve ilgili sözcüklerde arar: hata kodları (Xid 79), belirtiler (titreme, ısınma), parçalar (fan, pil). Türkçe ya da İngilizce.</translation>
++        </message>
+     </context>
+     <context>
+         <name>HomeTab</name>
+@@ -4653,6 +4773,24 @@ Kaydetmeden önce seri numaraları, UUID, MAC ve IP adresleri değiştirildi.</t
+             <source>Acknowledges these shutdowns; does not repair the cause. New shutdowns will appear again.</source>
+             <translation>Bu kapanışları incelendi olarak işaretler; nedeni gidermez. Yeni kapanışlar tekrar görünür.</translation>
+         </message>
++        <message>
++            <source>Having a problem? Pick what is going wrong:</source>
++            <translation>Bir sorun mu var? Neyin yanlış gittiğini seçin:</translation>
++        </message>
++        <message>
++            <source>%1
++Runs %2 (read-only) and shows what needs a look, then where to look next.</source>
++            <translation>%1
++%2 denetimlerini (salt okunur) çalıştırır, bakılması gerekenleri ve sonra nereye bakılacağını gösterir.</translation>
++        </message>
++        <message>
++            <source>Nothing is changed and a sleeping dGPU is not woken.</source>
++            <translation>Hiçbir şey değiştirilmez, uyuyan dGPU uyandırılmaz.</translation>
++        </message>
++        <message>
++            <source>Results reflect available logs and measurements, not a complete hardware test. Details remain available for troubleshooting.</source>
++            <translation>Sonuçlar eksiksiz bir donanım testini değil, mevcut kayıt ve ölçümleri yansıtır. Ayrıntılar sorun giderme için erişilebilir kalır.</translation>
++        </message>
+     </context>
+     <context>
+         <name>ReportPreview</name>
+@@ -5916,6 +6054,90 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
+             <source>S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU.</source>
+             <translation>S06: yapılandırılmış NVIDIA seçenekleri, etkin değerlerle karşılaştırmalı ve ne işe yaradıklarıyla. GPU'yu asla uyandırmaz.</translation>
+         </message>
++        <message>
++            <source>Sensors</source>
++            <translation>Sensörler</translation>
++        </message>
++        <message>
++            <source>CPU</source>
++            <translation>CPU</translation>
++        </message>
++        <message>
++            <source>Memory</source>
++            <translation>Bellek</translation>
++        </message>
++        <message>
++            <source>DMI</source>
++            <translation>DMI</translation>
++        </message>
++        <message>
++            <source>PCI</source>
++            <translation>PCI</translation>
++        </message>
++        <message>
++            <source>PCIe detail</source>
++            <translation>PCIe ayrıntısı</translation>
++        </message>
++        <message>
++            <source>USB</source>
++            <translation>USB</translation>
++        </message>
++        <message>
++            <source>Storage</source>
++            <translation>Depolama</translation>
++        </message>
++        <message>
++            <source>SMART details</source>
++            <translation>SMART ayrıntıları</translation>
++        </message>
++        <message>
++            <source>NVIDIA</source>
++            <translation>NVIDIA</translation>
++        </message>
++        <message>
++            <source>Graphics</source>
++            <translation>Grafik</translation>
++        </message>
++        <message>
++            <source>Kernel</source>
++            <translation>Çekirdek</translation>
++        </message>
++        <message>
++            <source>Battery</source>
++            <translation>Pil</translation>
++        </message>
++        <message>
++            <source>Configuration files</source>
++            <translation>Yapılandırma dosyaları</translation>
++        </message>
++        <message>
++            <source>S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire&apos;s view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply.</source>
++            <translation>S15: ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin çakışıp çakışmadığı), PipeWire’ın görünümü. Rapor hiçbir şeyi yeniden başlatmaz; Ayarlar… PipeWire / WirePlumber seçeneklerini düzenler ve uyguladığınızda ses sunucularını yeniden başlatır.</translation>
++        </message>
++        <message>
++            <source>S03: each connected display&apos;s identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen&apos;s brightness and refresh rate.</source>
++            <translation>S03: bağlı her ekranın EDID’sinden kimliği, modları ve değişken yenileme aralığı, boyutu, bit derinliği, HDR ve renk desteği; bozuk EDID’ler; arka ışık aygıtları. Panel denetimleri… dahili ekranın parlaklığını ve yenileme hızını ayarlar.</translation>
++        </message>
++        <message>
++            <source>Settings…</source>
++            <translation>Ayarlar…</translation>
++        </message>
++        <message>
++            <source>Edit well-known PipeWire and WirePlumber options, with a hint for each.</source>
++            <translation>Bilinen PipeWire ve WirePlumber seçeneklerini, her biri için bir ipucuyla düzenleyin.</translation>
++        </message>
++        <message>
++            <source>Panel controls…</source>
++            <translation>Panel denetimleri…</translation>
++        </message>
++        <message>
++            <source>Set the built-in screen&apos;s brightness and refresh rate.</source>
++            <translation>Dahili ekranın parlaklığını ve yenileme hızını ayarlayın.</translation>
++        </message>
++        <message>
++            <source>Read at %1</source>
++            <translation>Okunma: %1</translation>
++        </message>
+     </context>
+     <context>
+         <name>BackupPage</name>
+@@ -11278,6 +11500,22 @@ Profil adı:</translation>
+             <source>Technical details:</source>
+             <translation>Teknik ayrıntılar:</translation>
+         </message>
++        <message>
++            <source>ⓘ Terms: %1</source>
++            <translation>ⓘ Terimler: %1</translation>
++        </message>
++        <message>
++            <source>Makes this change now (asks for the administrator password).</source>
++            <translation>Bu değişikliği şimdi yapar (yönetici parolası ister).</translation>
++        </message>
++        <message>
++            <source>%1
++
++%2?</source>
++            <translation>%1
++
++%2?</translation>
++        </message>
+     </context>
+     <context>
+         <name>diagsrc</name>
+@@ -12760,6 +12998,34 @@ Profil adı:</translation>
+             <source>USB devices and ports</source>
+             <translation>USB aygıtları ve bağlantı noktaları</translation>
+         </message>
++        <message>
++            <source>GPU / black screen</source>
++            <translation>GPU / siyah ekran</translation>
++        </message>
++        <message>
++            <source>CPU / instability</source>
++            <translation>CPU / kararsızlık</translation>
++        </message>
++        <message>
++            <source>Crash / freeze</source>
++            <translation>Çökme / donma</translation>
++        </message>
++        <message>
++            <source>Disk / storage</source>
++            <translation>Disk / depolama</translation>
++        </message>
++        <message>
++            <source>Wi-Fi / Bluetooth</source>
++            <translation>Wi-Fi / Bluetooth</translation>
++        </message>
++        <message>
++            <source>Sleep / wake</source>
++            <translation>Uyku / uyanma</translation>
++        </message>
++        <message>
++            <source>USB / charging</source>
++            <translation>USB / şarj</translation>
++        </message>
+     </context>
+     <context>
+         <name>evidencereports</name>
+@@ -15073,6 +15339,125 @@ Profil adı:</translation>
+             <source>Reopened</source>
+             <translation>Yeniden açıldı</translation>
+         </message>
++        <message>
++            <source>Look next:</source>
++            <translation>Sıradaki adım:</translation>
++        </message>
++        <message>
++            <source>Opens this System tool; it reads its sources when it opens.</source>
++            <translation>Bu sistem aracını açar; araç açıldığında kaynaklarını okur.</translation>
++        </message>
++        <message>
++            <source>Opens this Health page.</source>
++            <translation>Bu Sağlık sayfasını açar.</translation>
++        </message>
+     </context>
+ <context><name>KernelParamsPage</name><message><source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here).</source><translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez).</translation></message><message><source>Scheduler (EEVDF)</source><translation>Zamanlayıcı (EEVDF)</translation></message><message><source>x86 scheduling (debugfs)</source><translation>x86 zamanlama (debugfs)</translation></message><message><source>CPU frequency and idle</source><translation>CPU frekansı ve boşta durumu</translation></message><message><source>Memory management</source><translation>Bellek yönetimi</translation></message><message><source>Kernel module parameters</source><translation>Çekirdek modülü parametreleri</translation></message><message><source>Everything under /sys</source><translation>/sys altındaki her şey</translation></message><message><source>Filter by name or value</source><translation>Ada veya değere göre süz</translation></message><message><source>Read</source><translation>Oku</translation></message><message><source>Setting</source><translation>Ayar</translation></message><message><source>Value</source><translation>Değer</translation></message><message><source>Writable</source><translation>Yazılabilir</translation></message><message><source>yes</source><translation>evet</translation></message><message><source>health-reader is not installed.</source><translation>health-reader kurulu değil.</translation></message><message><source>Reading…</source><translation>Okunuyor…</translation></message><message><source>The installed health-reader is too old for this page — reinstall Centurion.</source><translation>Kurulu health-reader bu sayfa için çok eski — Centurion'u yeniden kurun.</translation></message><message><source>debugfs is not mounted: only the sysctls are shown.</source><translation>debugfs bağlı değil: yalnızca sysctl değerleri gösteriliyor.</translation></message><message><source>%1 settings</source><translation>%1 ayar</translation></message><message><source> — list cut short (%1)</source><translation> — liste kısaltıldı (%1)</translation></message></context>
++<context>
++    <name>toolcatalog</name>
++        <message>
++            <source>CPU &amp; memory</source>
++            <translation>CPU ve bellek</translation>
++        </message>
++        <message>
++            <source>Graphics &amp; display</source>
++            <translation>Grafik ve ekran</translation>
++        </message>
++        <message>
++            <source>Storage</source>
++            <translation>Depolama</translation>
++        </message>
++        <message>
++            <source>Network &amp; wireless</source>
++            <translation>Ağ ve kablosuz</translation>
++        </message>
++        <message>
++            <source>Power &amp; thermal</source>
++            <translation>Güç ve sıcaklık</translation>
++        </message>
++        <message>
++            <source>Devices &amp; buses</source>
++            <translation>Aygıtlar ve veri yolları</translation>
++        </message>
++        <message>
++            <source>Firmware &amp; kernel</source>
++            <translation>Donanım yazılımı ve çekirdek</translation>
++        </message>
++        <message>
++            <source>System &amp; configuration</source>
++            <translation>Sistem ve yapılandırma</translation>
++        </message>
++        <message>
++            <source>Can change settings</source>
++            <translation>Ayar değiştirebilir</translation>
++        </message>
++        <message>
++            <source>May wake the dGPU</source>
++            <translation>dGPU’yu uyandırabilir</translation>
++        </message>
++        <message>
++            <source>Needs root</source>
++            <translation>Root gerekir</translation>
++        </message>
++        <message>
++            <source>Uses the internet</source>
++            <translation>İnternet kullanır</translation>
++        </message>
++        <message>
++            <source>PCIe Advanced Error Reporting: the link&apos;s own error counters. A few corrected errors are common; a growing count or uncorrected errors are not.</source>
++            <translation>PCIe Gelişmiş Hata Bildirimi: bağlantının kendi hata sayaçları. Birkaç düzeltilmiş hata olağandır; artan sayı ya da düzeltilmemiş hatalar değildir.</translation>
++        </message>
++        <message>
++            <source>PCIe Active State Power Management: lets a link drop to a low-power state when idle. Saves power; on some devices it causes errors or stalls.</source>
++            <translation>PCIe Etkin Durum Güç Yönetimi: bağlantının boştayken düşük güç durumuna geçmesini sağlar. Güç tasarrufu sağlar; bazı aygıtlarda hata ya da takılmalara yol açar.</translation>
++        </message>
++        <message>
++            <source>GPU System Processor: firmware running on newer NVIDIA GPUs. GSP timeouts often show up as freezes or black screens.</source>
++            <translation>GPU Sistem İşlemcisi: yeni NVIDIA GPU’larda çalışan donanım yazılımı. GSP zaman aşımları çoğu zaman donma ya da siyah ekran olarak görülür.</translation>
++        </message>
++        <message>
++            <source>The deepest PCIe power state: the device is switched off. A sleeping dGPU is in D3cold.</source>
++            <translation>En derin PCIe güç durumu: aygıt kapalıdır. Uyuyan bir dGPU D3cold durumundadır.</translation>
++        </message>
++        <message>
++            <source>An error code the NVIDIA driver writes to the kernel log; the number says what failed.</source>
++            <translation>NVIDIA sürücüsünün çekirdek günlüğüne yazdığı hata kodu; numara neyin başarısız olduğunu söyler.</translation>
++        </message>
++        <message>
++            <source>Machine Check Exception: the CPU reports a hardware error, e.g. from too low a voltage.</source>
++            <translation>Makine Denetimi İstisnası: CPU bir donanım hatası bildirir, örneğin fazla düşük voltaj nedeniyle.</translation>
++        </message>
++        <message>
++            <source>The data a display sends about itself: name, modes, refresh range, HDR support.</source>
++            <translation>Bir ekranın kendisi hakkında gönderdiği veri: ad, modlar, yenileme aralığı, HDR desteği.</translation>
++        </message>
++        <message>
++            <source>Variable refresh rate (FreeSync / G-SYNC): the display follows the game&apos;s frame rate.</source>
++            <translation>Değişken yenileme hızı (FreeSync / G-SYNC): ekran oyunun kare hızını izler.</translation>
++        </message>
++        <message>
++            <source>Package Power Tracking: the firmware&apos;s power limits for the CPU package.</source>
++            <translation>Paket Güç İzleme: donanım yazılımının CPU paketi için güç sınırları.</translation>
++        </message>
++        <message>
++            <source>Running Average Power Limit: the CPU&apos;s own power meter and limits.</source>
++            <translation>Running Average Power Limit: CPU’nun kendi güç ölçeri ve sınırları.</translation>
++        </message>
++        <message>
++            <source>Non-Uniform Memory Access: memory is closer to some cores than to others.</source>
++            <translation>Tekdüze Olmayan Bellek Erişimi: bellek bazı çekirdeklere diğerlerinden daha yakındır.</translation>
++        </message>
++        <message>
++            <source>Compressed swap in RAM: more usable memory for some CPU time.</source>
++            <translation>RAM’de sıkıştırılmış takas alanı: biraz CPU zamanı karşılığında daha fazla kullanılabilir bellek.</translation>
++        </message>
++        <message>
++            <source>A drive&apos;s own health record: wear, errors, temperature.</source>
++            <translation>Sürücünün kendi sağlık kaydı: aşınma, hatalar, sıcaklık.</translation>
++        </message>
++        <message>
++            <source>The Linux CPU scheduler since 6.6: decides which task runs next.</source>
++            <translation>6.6’dan beri Linux CPU zamanlayıcısı: sıradaki görevi seçer.</translation>
++        </message>
++</context>
+ </TS>
+diff --git a/gui/src/advanceddiagnostics.cpp b/gui/src/advanceddiagnostics.cpp
+index 3efc36f..87dab3f 100644
+--- a/gui/src/advanceddiagnostics.cpp
++++ b/gui/src/advanceddiagnostics.cpp
+@@ -939,13 +939,13 @@ QString saveIncident(const QString &key, const QString &status, const QString &n
+ // ── H18 Guided triage ─────────────────────────────────────────────────────────
+ 
+ QList<TriageCategory> triageCategories() {
+-    return {{QStringLiteral("gpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "NVIDIA GPU: Xid, GSP, black screens"), {"H04", "H16", "S04", "S06"}},
+-            {QStringLiteral("cpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU: machine checks, Curve Optimizer"), {"H02", "H13", "H15"}},
+-            {QStringLiteral("crash"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Freezes and crashes after an update"), {"H01", "H15", "H13"}},
+-            {QStringLiteral("storage"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Storage: NVMe, F2FS"), {"H06", "H05", "H03"}},
+-            {QStringLiteral("radio"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi and Bluetooth"), {"H09", "S07", "S18"}},
+-            {QStringLiteral("sleep"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep and resume"), {"H12", "H15"}},
+-            {QStringLiteral("usb"), QT_TRANSLATE_NOOP("advanceddiagnostics", "USB devices and ports"), {"H10", "S13", "H03"}}};
++    return {{QStringLiteral("gpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "NVIDIA GPU: Xid, GSP, black screens"), {"H04", "H16", "S04", "S06"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "GPU / black screen")},
++            {QStringLiteral("cpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU: machine checks, Curve Optimizer"), {"H02", "H13", "H15"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU / instability")},
++            {QStringLiteral("crash"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Freezes and crashes after an update"), {"H01", "H15", "H13"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Crash / freeze")},
++            {QStringLiteral("storage"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Storage: NVMe, F2FS"), {"H06", "H05", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Disk / storage")},
++            {QStringLiteral("radio"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi and Bluetooth"), {"H09", "S07", "S18"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi / Bluetooth")},
++            {QStringLiteral("sleep"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep and resume"), {"H12", "H15"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep / wake")},
++            {QStringLiteral("usb"), QT_TRANSLATE_NOOP("advanceddiagnostics", "USB devices and ports"), {"H10", "S13", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "USB / charging")}};
+ }
+ 
+ Report triage(const QString &label, const QList<Report> &checks) {
+@@ -965,7 +965,9 @@ Report triage(const QString &label, const QList<Report> &checks) {
+                 r.findings << diag::Finding{f.level, c.code + QStringLiteral(" · ") + f.title, f.detail, f.action, f.fixLabel, f.fix};
+     }
+     r.tables << t;
+-    if (!r.count(Level::Attention) && !r.count(Level::Review))
++    // "No problem" only when some check could actually read its sources; all-Unknown stays Unknown.
++    const bool anyChecked = std::any_of(checks.cbegin(), checks.cend(), [](const Report &c) { return c.verdict() == Level::Ok; });
++    if (anyChecked && !r.count(Level::Attention) && !r.count(Level::Review))
+         r.add(Level::Ok, tr("None of the checks found a problem"),
+               tr("If the symptom continues, note when it happens and save an incident note (H17); a pattern across boots is easier to pin down."));
+     return r;
+diff --git a/gui/src/advanceddiagnostics.h b/gui/src/advanceddiagnostics.h
+index 0a17416..ac2e111 100644
+--- a/gui/src/advanceddiagnostics.h
++++ b/gui/src/advanceddiagnostics.h
+@@ -71,7 +71,8 @@ QString saveIncident(const QString &key, const QString &status, const QString &n
+ QStringList incidentStatuses();
+ 
+ // H18: the category's checks merged into one report.
+-struct TriageCategory { QString key; const char *label; QStringList checks; };
++/// `shortLabel`: a few words for a button ("GPU / display").
++struct TriageCategory { QString key; const char *label; QStringList checks; const char *shortLabel; };
+ QList<TriageCategory> triageCategories();
+ diag::Report triage(const QString &label, const QList<diag::Report> &checks);
+ 
+diff --git a/gui/src/advancedhealth.cpp b/gui/src/advancedhealth.cpp
+index 627fe84..9a2d48d 100644
+--- a/gui/src/advancedhealth.cpp
++++ b/gui/src/advancedhealth.cpp
+@@ -10,10 +10,12 @@
+ #include "ryzentab.h"
+ #include "systemdiagnostics.h"
+ #include "theme.h"
++#include "toolcatalog.h"
+ 
+ #include <QColor>
+ #include <QComboBox>
+ #include <QCoreApplication>
++#include <QGridLayout>
+ #include <QHBoxLayout>
+ #include <QHeaderView>
+ #include <QJsonArray>
+@@ -145,6 +147,12 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
+     message_->setWordWrap(true);
+     message_->setProperty("role", "muted");
+     v->addWidget(message_);
++    // After a triage: the pages and tools that fit the category, one click away.
++    related_ = new QWidget;
++    related_->setLayout(new QGridLayout);
++    related_->layout()->setContentsMargins(0, 0, 0, 0);
++    related_->setVisible(false);
++    v->addWidget(related_);
+ 
+     stack_ = new QStackedWidget;
+     view_ = new DiagReportView;
+@@ -209,6 +217,7 @@ void AdvancedHealthPage::updateMode() {
+     category_->setVisible(code == QStringLiteral("H18"));
+     gpuQuery_->setVisible(code == QStringLiteral("H16"));
+     gpuQuery_->setEnabled(false);  // after the passive part has run
++    related_->setVisible(false);
+     scan_->setText(incidents ? tr("Reload") : tr("Run"));
+     message_->clear();
+     if (incidents) refreshIncidents();
+@@ -243,6 +252,7 @@ void AdvancedHealthPage::run() {
+             QList<diag::Report> reports;
+             for (const QString &c : codes) reports << investigations::reportFor(c, data);
+             view_->setReport(advanceddiagnostics::triage(label, reports));
++            showRelated(category_->currentData().toString());
+         } else {
+             view_->setReport(investigations::reportFor(code, data));
+         }
+@@ -251,6 +261,39 @@ void AdvancedHealthPage::run() {
+     });
+ }
+ 
++void AdvancedHealthPage::startTriage(const QString &category) {
++    if (busy_) return;
++    const int f = feature_->findData(QStringLiteral("H18"));
++    const int c = category_->findData(category);
++    if (f < 0 || c < 0) return;
++    feature_->setCurrentIndex(f);
++    category_->setCurrentIndex(c);
++    run();
++}
++
++void AdvancedHealthPage::showRelated(const QString &category) {
++    auto *row = static_cast<QGridLayout *>(related_->layout());
++    while (QLayoutItem *item = row->takeAt(0)) {
++        delete item->widget();
++        delete item;
++    }
++    auto *title = new QLabel(tr("Look next:"));
++    title->setProperty("role", "muted");
++    row->addWidget(title, 0, 0, 1, 3);
++    int links = 0;
++    for (const QString &target : toolcatalog::relatedFor(category)) {
++        const QString name = targetLabel_ ? targetLabel_(target) : QString();
++        if (name.isEmpty()) continue;  // not on this system (no dGPU, no battery …)
++        auto *b = new QPushButton(name);
++        b->setToolTip(target.startsWith(QLatin1String("tool:")) ? tr("Opens this System tool; it reads its sources when it opens.")
++                                                                : tr("Opens this Health page."));
++        connect(b, &QPushButton::clicked, this, [this, target] { Q_EMIT openTarget(target); });
++        row->addWidget(b, 1 + links / 3, links % 3);  // three a row: a narrow window does not grow
++        ++links;
++    }
++    related_->setVisible(links > 0);
++}
++
+ void AdvancedHealthPage::activeGpuQuery() {
+     if (feature_->currentData().toString() != QStringLiteral("H16") || busy_) return;
+     QString exe = QStandardPaths::findExecutable(QStringLiteral("nvidia-smi"));
+diff --git a/gui/src/advancedhealth.h b/gui/src/advancedhealth.h
+index 5136ebe..6a0e583 100644
+--- a/gui/src/advancedhealth.h
++++ b/gui/src/advancedhealth.h
+@@ -31,8 +31,17 @@ class AdvancedHealthPage : public QWidget {
+     Q_OBJECT
+ public:
+     explicit AdvancedHealthPage(QWidget *parent = nullptr);
++    /// Guided triage for a category ("gpu", "storage" …): selects it and runs it (read-only).
++    void startTriage(const QString &category);
++    /// Names the "Look next" links ("page:sleep", "tool:USB"); empty hides a link this system lacks.
++    void setTargetLabel(std::function<QString(const QString &)> label) { targetLabel_ = std::move(label); }
++
++Q_SIGNALS:
++    /// A "Look next" link: a Health page or System tool (toolcatalog::relatedFor).
++    void openTarget(const QString &target);
+ 
+ private:
++    void showRelated(const QString &category);
+     void updateMode();
+     void run();
+     void activeGpuQuery();
+@@ -50,4 +59,6 @@ private:
+     QTextBrowser *incidentInfo_;
+     QPlainTextEdit *note_;
+     QJsonObject lastEvidence_;
++    QWidget *related_ = nullptr;
++    std::function<QString(const QString &)> targetLabel_;
+ };
+diff --git a/gui/src/diagreportview.cpp b/gui/src/diagreportview.cpp
+index b561c4e..90b8395 100644
+--- a/gui/src/diagreportview.cpp
++++ b/gui/src/diagreportview.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "sysadmin.h"
+ #include "theme.h"
++#include "toolcatalog.h"
+ 
+ #include <QApplication>
+ #include <QClipboard>
+@@ -20,6 +21,8 @@
+ #include <QPushButton>
+ #include <QScrollArea>
+ #include <QScrollBar>
++#include <QSettings>
++#include <QStandardPaths>
+ #include <QTreeWidget>
+ #include <QVBoxLayout>
+ 
+@@ -29,6 +32,10 @@ using diag::Level;
+ 
+ namespace {
+ 
++QSettings guiSettings() {
++    return QSettings(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/gui.ini"), QSettings::IniFormat);
++}
++
+ const char *color(Level l) {
+     switch (l) {
+     case Level::Attention: return theme::DANGER;
+@@ -70,6 +77,15 @@ QWidget *findingCard(const diag::Finding &f, DiagReportView *view) {
+     col->addLayout(head);
+     if (!f.detail.isEmpty()) col->addWidget(text(f.detail, "dim"));
+     if (!f.action.isEmpty()) col->addWidget(text(QStringLiteral("→ ") + f.action));
++    // Technical terms in the finding: named on one quiet line, explained on hover.
++    const QString terms = toolcatalog::explainTerms(f.title + QLatin1Char(' ') + f.detail + QLatin1Char(' ') + f.action);
++    if (!terms.isEmpty()) {
++        QStringList names;
++        for (const QString &line : terms.split(QLatin1Char('\n'))) names << line.section(QStringLiteral(" — "), 0, 0);
++        auto *glossary = text(QCoreApplication::translate("diag", "ⓘ Terms: %1").arg(names.join(QStringLiteral(" · "))), "muted");
++        glossary->setToolTip(terms);
++        col->addWidget(glossary);
++    }
+     if (!f.fix.isEmpty()) {
+         auto *fix = new QPushButton(f.fixLabel);
+         fix->setToolTip(QCoreApplication::translate("diag", "Makes this change now (asks for the administrator password)."));
+@@ -225,6 +241,9 @@ void DiagReportView::setReport(const diag::Report &r) {
+             raw->setVisible(on);
+             toggle->setText(on ? tr("Hide technical details") : tr("Show technical details"));
+         });
++        // The choice is remembered for every report: who reads the raw output once usually wants it again.
++        connect(toggle, &QPushButton::clicked, this, [](bool on) { guiSettings().setValue(QStringLiteral("diag/technical"), on); });
++        toggle->setChecked(guiSettings().value(QStringLiteral("diag/technical"), false).toBool());
+         bodyLayout_->addWidget(toggle, 0, Qt::AlignLeft);
+         bodyLayout_->addWidget(raw);
+     }
+diff --git a/gui/src/healthtab.cpp b/gui/src/healthtab.cpp
+index 446e973..5ed6ee4 100644
+--- a/gui/src/healthtab.cpp
++++ b/gui/src/healthtab.cpp
+@@ -24,6 +24,7 @@
+ #include "healthevidence.h"
+ #include "advancedhealth.h"
+ #include "theme.h"
++#include "toolcatalog.h"
+ 
+ #include <QDateTime>
+ #include <QDesktopServices>
+@@ -67,6 +68,12 @@
+ #include <QTreeWidget>
+ #include <QVBoxLayout>
+ #include <QSignalBlocker>
++#include <QGridLayout>
++#include <QKeySequence>
++#include <QScrollArea>
++#include <QShortcut>
++#include <QToolButton>
++#include <algorithm>
+ 
+ #include <cerrno>
+ #include <cstring>
+@@ -106,6 +113,14 @@ static qint64 wallMs(double tsUs) {
+     return bootMs + qint64(tsUs / 1000);
+ }
+ 
++// A System tool's tooltip: what it shows, then its badges.
++static QString toolDescription(QWidget *page, const QString &key) {
++    QString tip = page->property("toolAbout").toString();
++    const QStringList badges = toolcatalog::badges(toolcatalog::tool(key).flags);
++    if (!badges.isEmpty()) tip += (tip.isEmpty() ? QString() : QStringLiteral("\n\n")) + badges.join(QStringLiteral(" · "));
++    return tip;
++}
++
+ // One line per page for the navigation's tooltips: what the page answers.
+ static QString pageAbout(const QString &key) {
+     static const QHash<QString, const char *> ABOUT = {
+@@ -150,11 +165,37 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
+     railTitle->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding:5px").arg(theme::FG_DIM));
+     railLayout->addWidget(railTitle);
+     railTitle->setVisible(!theme::experimentalEnabled());  // Studio: the top bar already names the page
+-    auto *navSearch = new QLineEdit;
+-    navSearch->setPlaceholderText(tr("Find a health tool…"));
++    // Back / forward through the pages and tools opened in this session (also Alt+Left / Alt+Right).
++    auto *searchRow = new QHBoxLayout;
++    searchRow->setSpacing(2);
++    back_ = new QToolButton;
++    back_->setArrowType(Qt::LeftArrow);
++    back_->setAutoRaise(true);
++    back_->setToolTip(tr("Back (Alt+Left)"));
++    forward_ = new QToolButton;
++    forward_->setArrowType(Qt::RightArrow);
++    forward_->setAutoRaise(true);
++    forward_->setToolTip(tr("Forward (Alt+Right)"));
++    back_->setEnabled(false);
++    forward_->setEnabled(false);
++    connect(back_, &QToolButton::clicked, this, [this] { stepHistory(-1); });
++    connect(forward_, &QToolButton::clicked, this, [this] { stepHistory(1); });
++    for (auto [keys, delta] : {std::pair{QKeySequence(Qt::ALT | Qt::Key_Left), -1}, std::pair{QKeySequence(Qt::ALT | Qt::Key_Right), 1}}) {
++        auto *sc = new QShortcut(keys, this);
++        sc->setContext(Qt::WidgetWithChildrenShortcut);
++        connect(sc, &QShortcut::activated, this, [this, delta] { stepHistory(delta); });
++    }
++    navSearch_ = new QLineEdit;
++    auto *navSearch = navSearch_;
++    navSearch->setPlaceholderText(tr("Search…"));
++    navSearch->setToolTip(tr("Searches page and tool names and the words around them: error codes (Xid 79), symptoms (flicker, overheating), "
++                             "parts (fan, battery). Turkish or English."));
+     navSearch->setClearButtonEnabled(true);
+     navSearch->setObjectName(QStringLiteral("healthNavSearch"));
+-    railLayout->addWidget(navSearch);
++    searchRow->addWidget(back_);
++    searchRow->addWidget(forward_);
++    searchRow->addWidget(navSearch, 1);
++    railLayout->addLayout(searchRow);
+     navigation_ = new QTreeWidget;
+     navigation_->setObjectName(QStringLiteral("healthNav"));  // Studio: same current-page marker as the main rail
+     navigation_->setHeaderHidden(true);
+@@ -201,7 +242,14 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
+     auto *monitor = new QWidget;
+     addPage(problems, monitor, tr("Events & alerts"), QStringLiteral("monitor"));
+     addPage(problems, new HealthEvidencePage, tr("Evidence Lab"), QStringLiteral("evidence"));
+-    addPage(problems, new AdvancedHealthPage, tr("Investigations"), QStringLiteral("investigations"));
++    investigations_ = new AdvancedHealthPage;
++    addPage(problems, investigations_, tr("Investigations"), QStringLiteral("investigations"));
++    investigations_->setTargetLabel([this](const QString &target) { return targetLabel(target); });
++    connect(investigations_, &AdvancedHealthPage::openTarget, this, [this](const QString &target) { navigateTo(target); });
++    connect(overview_, &OverviewPage::triage, this, [this](const QString &category) {
++        showPage(investigations_);
++        investigations_->startTriage(category);
++    });
+     boot_ = new BootPage;
+     addPage(problems, boot_, tr("Boot history"), QStringLiteral("boot"));
+     addPage(problems, insights::capabilityPage(), tr("Capability Doctor"), QStringLiteral("capabilities"));
+@@ -226,158 +274,136 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
+     cooling_ = new CoolingPage;
+     addPage(hardware, cooling_, tr("Cooling"), QStringLiteral("cooling"));
+ 
+-    // A searchable catalog keeps all 16+ specialist tools available without
+-    // making the primary health navigation feel like a configuration console.
++    // System tools: a catalog (search, pinned, recent, tools by area) and a tool view with a path back.
++    // No second navigation tree: the rail stays the only list, and tools keep their LazyWidget (nothing runs
++    // until a tool is opened by the user).
+     toolDirectory_ = new QWidget;
+     auto *directoryLayout = new QVBoxLayout(toolDirectory_);
+     directoryLayout->setContentsMargins(10, 9, 10, 9);
+-    directoryLayout->setSpacing(9);
++    directoryLayout->setSpacing(7);
++    toolMode_ = new QStackedWidget;
++    directoryLayout->addWidget(toolMode_, 1);
++
++    auto *catalogView = new QWidget;
++    auto *catalogLayout = new QVBoxLayout(catalogView);
++    catalogLayout->setContentsMargins(0, 0, 0, 0);
++    catalogLayout->setSpacing(7);
+     auto *directoryHeader = new QLabel(tr("System tools"));
+     QFont directoryFont = directoryHeader->font();
+     directoryFont.setBold(true);
+     directoryFont.setPointSize(directoryFont.pointSize() + 4);
+     directoryHeader->setFont(directoryFont);
+-    directoryLayout->addWidget(directoryHeader);
+-    auto *directoryHint = new QLabel(tr("Explore detailed device reports when needed. Tools run only when opened; "
+-                                        "some may request privileges or wake a sleeping GPU."));
++    catalogLayout->addWidget(directoryHeader);
++    auto *directoryHint = new QLabel(tr("Detailed device reports, grouped by what they are about. A tool runs only when you open it; "
++                                        "its badges say when it can change settings, wake a sleeping GPU, needs root or uses the internet."));
+     directoryHint->setWordWrap(true);
+     directoryHint->setProperty("role", "muted");
+-    directoryLayout->addWidget(directoryHint);
+-    auto *toolSearch = new QLineEdit;
+-    toolSearch->setPlaceholderText(tr("Search all system tools…"));
+-    toolSearch->setClearButtonEnabled(true);
+-    toolSearch->setObjectName(QStringLiteral("healthToolSearch"));
+-    directoryLayout->addWidget(toolSearch);
+-    auto *toolSplit = new QSplitter(Qt::Horizontal);
+-    toolSplit->setChildrenCollapsible(false);
+-    toolNavigation_ = new QTreeWidget;
+-    toolNavigation_->setHeaderHidden(true);
+-    toolNavigation_->setRootIsDecorated(false);
+-    toolNavigation_->setIndentation(12);
+-    toolNavigation_->setMinimumWidth(150);
+-    toolNavigation_->setMaximumWidth(260);
+-    toolNavigation_->setStyleSheet(QStringLiteral("QTreeWidget::item{padding:3px 3px}"));
++    catalogLayout->addWidget(directoryHint);
++    toolSearch_ = new QLineEdit;
++    toolSearch_->setPlaceholderText(tr("Search tools: name, part, symptom or term (fan, VRR, firmware missing, ASPM)…"));
++    toolSearch_->setClearButtonEnabled(true);
++    toolSearch_->setObjectName(QStringLiteral("healthToolSearch"));
++    catalogLayout->addWidget(toolSearch_);
++    toolTerms_ = new QLabel;
++    toolTerms_->setWordWrap(true);
++    toolTerms_->setProperty("role", "muted");
++    toolTerms_->setVisible(false);
++    catalogLayout->addWidget(toolTerms_);
++    toolScroll_ = new QScrollArea;
++    toolScroll_->setWidgetResizable(true);
++    toolScroll_->setFrameShape(QFrame::NoFrame);
++    toolScroll_->viewport()->installEventFilter(this);  // the number of columns follows the width
++    catalogLayout->addWidget(toolScroll_, 1);
++    toolMode_->addWidget(catalogView);
++
++    auto *toolView = new QWidget;
++    auto *toolLayout = new QVBoxLayout(toolView);
++    toolLayout->setContentsMargins(0, 0, 0, 0);
++    toolLayout->setSpacing(4);
++    auto *toolBar = new QHBoxLayout;
++    auto *allTools = new QPushButton(tr("← All tools"));
++    allTools->setToolTip(tr("Back to the tool catalog. The open tool keeps its results."));
++    connect(allTools, &QPushButton::clicked, this, [this] { showToolCatalog(); });
++    toolBar->addWidget(allTools);
++    toolPath_ = new QLabel;
++    QFont pathFont = toolPath_->font();
++    pathFont.setBold(true);
++    toolPath_->setFont(pathFont);
++    toolBar->addWidget(toolPath_, 1);
++    toolBadges_ = new QLabel;
++    toolBadges_->setStyleSheet(QStringLiteral("color:%1").arg(theme::WARN));
++    toolBar->addWidget(toolBadges_);
++    toolPin_ = new QPushButton;
++    toolPin_->setCheckable(true);
++    toolPin_->setToolTip(tr("Pinned tools are listed first in the catalog."));
++    connect(toolPin_, &QPushButton::clicked, this, [this] { togglePin(); });
++    toolBar->addWidget(toolPin_);
++    toolLayout->addLayout(toolBar);
+     toolPages_ = new QStackedWidget;
+-    toolSplit->addWidget(toolNavigation_);
+-    toolSplit->addWidget(toolPages_);
+-    toolSplit->setStretchFactor(1, 1);
+-    toolSplit->setSizes({195, 640});
+-    directoryLayout->addWidget(toolSplit, 1);
++    toolLayout->addWidget(toolPages_, 1);
++    toolMode_->addWidget(toolView);
+     addPage(advanced, toolDirectory_, tr("System tools"), QStringLiteral("tools"));
+-    auto *deviceTools = new QTreeWidgetItem(toolNavigation_, {tr("Devices")});
+-    auto *connectivityTools = new QTreeWidgetItem(toolNavigation_, {tr("Connections")});
+-    auto *advancedTools = new QTreeWidgetItem(toolNavigation_, {tr("Kernel & firmware")});
+-    for (QTreeWidgetItem *group : {deviceTools, connectivityTools, advancedTools}) {
+-        group->setFlags(group->flags() & ~Qt::ItemIsSelectable);
+-        group->setForeground(0, QColor(theme::MUTED));
+-        group->setExpanded(true);
+-    }
++
+     QTabWidget toolsRegistry;
+     systools::addPages(&toolsRegistry);
+-    QWidget *firstTool = nullptr;
+     QWidget *smartTool = nullptr;
+     while (toolsRegistry.count()) {
+         QWidget *page = toolsRegistry.widget(0);
+         const QString label = toolsRegistry.tabText(0);
+-        // Sorted by the page's untranslated name: the tab text is translated ("Thermal" is "Termal" in
+-        // Turkish and landed under Kernel & firmware).
++        // Keyed by the page's untranslated name: the tab text is translated.
+         const QString key = page->property("toolKey").toString();
+         toolsRegistry.removeTab(0);
+-        QTreeWidgetItem *group = advancedTools;
+-        if (key == QLatin1String("SMART") || key == QLatin1String("SMART details") ||
+-            key == QLatin1String("Sensors") || key == QLatin1String("CPU") ||
+-            key == QLatin1String("Memory") || key == QLatin1String("Storage") ||
+-            key == QLatin1String("Thermal") || key == QLatin1String("Battery") ||
+-            key == QLatin1String("NVIDIA") || key == QLatin1String("Graphics") ||
+-            key == QLatin1String("Hardware snapshot") || key == QLatin1String("EDID / VRR") ||
+-            key == QLatin1String("NVIDIA module parameters") ||
+-            key == QLatin1String("Power Limit Source Map") || key == QLatin1String("Memory Architecture Explorer") ||
+-            key == QLatin1String("USB-C PD / Charger Inspector") ||
+-            key == QLatin1String("ACPI / WMI Firmware Browser")) group = deviceTools;
+-        else if (key == QLatin1String("PCI") || key == QLatin1String("PCIe detail") ||
+-                 key == QLatin1String("USB") || key == QLatin1String("PCIe Link Negotiation Lab") ||
+-                 key == QLatin1String("Wi-Fi / Bluetooth Firmware Doctor")) group = connectivityTools;
+-        auto *item = new QTreeWidgetItem(group, {label});
+-        toolItems_.insert(page, item);
+-        toolPages_->addWidget(page);
+-        if (!firstTool) firstTool = page;
+-        if (key == QLatin1String("SMART")) smartTool = page;
+-    }
+-    if (smartTool) {
+-        // The drive summary is a frequent action; give it a direct shortcut
+-        // while keeping the complete device tool catalog available.
+-        toolPages_->removeWidget(smartTool);
+-        toolItems_.remove(smartTool);
+-        for (int i = deviceTools->childCount() - 1; i >= 0; --i) {
+-            if (deviceTools->child(i)->text(0) == QLatin1String("SMART")) delete deviceTools->takeChild(i);
+-        }
+-        addPage(hardware, smartTool, tr("Drive health"), QStringLiteral("smart"));
+-        if (firstTool == smartTool) firstTool = toolPages_->count() ? toolPages_->widget(0) : nullptr;
++        // The drive summary is a frequent action: a page of its own in the rail (Drive health).
++        if (key == QLatin1String("SMART")) { smartTool = page; continue; }
++        addTool(page, label, key);
+     }
+-    if (firstTool) {
+-        toolPages_->setCurrentWidget(firstTool);
+-        toolNavigation_->setCurrentItem(toolItems_.value(firstTool));
+-    }
+-    connect(toolNavigation_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item, QTreeWidgetItem *) {
+-        if (!item || !item->parent()) return;
+-        for (auto it = toolItems_.cbegin(); it != toolItems_.cend(); ++it) {
+-            if (it.value() == item) { toolPages_->setCurrentWidget(it.key()); break; }
+-        }
+-    });
+-    connect(toolSearch, &QLineEdit::textChanged, this, [this](const QString &query) {
+-        for (int i = 0; i < toolNavigation_->topLevelItemCount(); ++i) {
+-            auto *group = toolNavigation_->topLevelItem(i);
+-            int visible = 0;
+-            for (int n = 0; n < group->childCount(); ++n) {
+-                auto *item = group->child(n);
+-                const bool match = query.isEmpty() || item->text(0).contains(query, Qt::CaseInsensitive) ||
+-                                    group->text(0).contains(query, Qt::CaseInsensitive);
+-                item->setHidden(!match);
+-                if (match) ++visible;
+-            }
+-            group->setHidden(!visible);
+-            if (!query.isEmpty()) group->setExpanded(true);
+-        }
+-    });
++    if (smartTool) addPage(hardware, smartTool, tr("Drive health"), QStringLiteral("smart"));
++    connect(toolSearch_, &QLineEdit::textChanged, this, [this] { rebuildToolCatalog(); });
+     auto *net = new NetPage;
+     connect(net, &NetPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::NETWORK, QString(), t, m); });
+     addPage(maintenance, net, tr("Network protection"), QStringLiteral("network"));
+     backup_ = new BackupPage;
+     connect(backup_, &BackupPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::BACKUP, QString(), t, m); });
+     addPage(maintenance, backup_, tr("Backups"), QStringLiteral("backup"));
++    // Search results only: matching System tools, shown in the rail while a search is typed.
++    toolResults_ = addGroup(tr("System tools"));
++    toolResults_->setHidden(true);
++    for (const Tool &t : std::as_const(tools_)) {
++        auto *item = new QTreeWidgetItem(toolResults_, {t.label});
++        item->setData(0, Qt::UserRole, QStringLiteral("tool:") + t.key);
++        item->setToolTip(0, toolDescription(t.page, t.key));
++        item->setHidden(true);
++    }
+     connect(navigation_, &QTreeWidget::currentItemChanged, this,
+             [this](QTreeWidgetItem *item, QTreeWidgetItem *) {
+         if (!item || !item->parent()) return;
++        if (item->parent() == toolResults_) {
++            // A tool found by the rail's search: open it, then leave the search so the rail shows where it is.
++            const QString target = item->data(0, Qt::UserRole).toString();
++            QTimer::singleShot(0, this, [this, target] { navigateTo(target); });
++            return;
++        }
+         for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
+             if (it.value() == item) {
+                 pages_->setCurrentWidget(it.key());
+-                guiSettings().setValue(QStringLiteral("health/page"), item->data(0, Qt::UserRole).toString());
++                const QString key = item->data(0, Qt::UserRole).toString();
++                guiSettings().setValue(QStringLiteral("health/page"), key);
++                const Tool *open = it.key() == toolDirectory_ && toolMode_->currentIndex() == 1 ? toolOf(toolPages_->currentWidget()) : nullptr;
++                record(open ? QStringLiteral("tool:") + open->key : QStringLiteral("page:") + key);
+                 break;
+             }
+         }
+     });
+-    connect(navSearch, &QLineEdit::textChanged, this, [this](const QString &query) {
+-        for (int i = 0; i < navigation_->topLevelItemCount(); ++i) {
+-            auto *group = navigation_->topLevelItem(i);
+-            int visible = 0;
+-            for (int n = 0; n < group->childCount(); ++n) {
+-                auto *item = group->child(n);
+-                const bool match = query.isEmpty() || item->text(0).contains(query, Qt::CaseInsensitive) ||
+-                                    group->text(0).contains(query, Qt::CaseInsensitive);
+-                item->setHidden(!match);
+-                if (match) ++visible;
+-            }
+-            group->setHidden(!visible);
+-            if (!query.isEmpty()) group->setExpanded(true);
+-        }
+-    });
++    connect(navSearch, &QLineEdit::textChanged, this, &HealthTab::filterNavigation);
+     const QString lastPage = guiSettings().value(QStringLiteral("health/page"), QStringLiteral("overview")).toString();
+     QTreeWidgetItem *initial = pageItems_.value(overview_);
+     for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
+         if (it.value()->data(0, Qt::UserRole).toString() == lastPage) { initial = it.value(); break; }
+     }
+     navigation_->setCurrentItem(initial);
+-    // currentItemChanged selects the page synchronously; no tool is run in the background.
++    // currentItemChanged selects the page synchronously; no tool is run in the background. System tools
++    // opens on its catalog: the last tool is not reopened (it could run a command or wake the dGPU).
++    rebuildToolCatalog();
+ 
+     connect(overview_, &OverviewPage::openPage, this, [monitor, this](const QString &target) {
+         QWidget *page = nullptr;
+@@ -899,21 +925,13 @@ void HealthTab::markSeen() {
+ 
+ void HealthTab::showPage(QWidget *page) {
+     if (!page || !pages_) return;
+-    if (toolItems_.contains(page)) {
+-        auto *toolItem = toolItems_.value(page);
+-        if (toolItem->isHidden() || toolItem->parent()->isHidden()) {
+-            if (auto *search = findChild<QLineEdit *>(QStringLiteral("healthToolSearch"))) search->clear();
+-        }
+-        toolItem->parent()->setExpanded(true);
+-        if (toolNavigation_) toolNavigation_->setCurrentItem(toolItem);
+-        page = toolDirectory_;
+-    }
++    if (toolOf(page)) { openTool(page); return; }
+     if (!pageItems_.contains(page)) return;
+     QTreeWidgetItem *item = pageItems_.value(page);
+     if (item->isHidden() || item->parent()->isHidden()) {
+         // Navigation initiated by an overview card must never be blocked by a
+         // search filter; clear it before selecting the target.
+-        if (auto *search = findChild<QLineEdit *>(QStringLiteral("healthNavSearch"))) search->clear();
++        if (navSearch_) navSearch_->clear();
+         item->setHidden(false);
+         item->parent()->setHidden(false);
+     }
+@@ -922,13 +940,258 @@ void HealthTab::showPage(QWidget *page) {
+     pages_->setCurrentWidget(page);
+ }
+ 
+-void HealthTab::addToolPage(QWidget *page, const QString &label, ToolGroup group) {
+-    QTreeWidgetItem *parent = toolNavigation_->topLevelItem(group);
+-    if (!parent) return;
+-    toolItems_.insert(page, new QTreeWidgetItem(parent, {label}));
++void HealthTab::addToolPage(QWidget *page, const QString &label, const QString &key) {
++    addTool(page, label, key);
++    if (toolResults_) {
++        auto *item = new QTreeWidgetItem(toolResults_, {label});
++        item->setData(0, Qt::UserRole, QStringLiteral("tool:") + key);
++        item->setToolTip(0, toolDescription(page, key));
++        item->setHidden(true);
++    }
++    rebuildToolCatalog();
++}
++
++// ── System tools ───────────────────────────────────────────────────────────────
++
++void HealthTab::addTool(QWidget *page, const QString &label, const QString &key) {
++    tools_ << Tool{page, key, label};
+     toolPages_->addWidget(page);
+ }
+ 
++const HealthTab::Tool *HealthTab::toolOf(QWidget *page) const {
++    for (const Tool &t : tools_)
++        if (t.page == page) return &t;
++    return nullptr;
++}
++
++const HealthTab::Tool *HealthTab::toolByKey(const QString &key) const {
++    for (const Tool &t : tools_)
++        if (t.key == key) return &t;
++    return nullptr;
++}
++
++QStringList HealthTab::toolList(const QString &setting) const {
++    QStringList keys;
++    for (const QString &k : guiSettings().value(setting).toStringList())
++        if (toolByKey(k)) keys << k;  // a tool this system no longer has is skipped, not shown as a dead button
++    return keys;
++}
++
++void HealthTab::openTool(QWidget *page) {
++    const Tool *t = toolOf(page);
++    if (!t) return;
++    const toolcatalog::Info info = toolcatalog::tool(t->key);
++    toolPath_->setText(tr("System tools › %1 › %2").arg(toolcatalog::areaName(info.area), t->label));
++    toolBadges_->setText(toolcatalog::badges(info.flags).join(QStringLiteral(" · ")));
++    const bool pinned = guiSettings().value(QStringLiteral("health/pinned_tools")).toStringList().contains(t->key);
++    toolPin_->setChecked(pinned);
++    toolPin_->setText(pinned ? tr("★ Pinned") : tr("☆ Pin"));
++    toolPages_->setCurrentWidget(page);  // a LazyWidget builds (and its tool runs) only now
++    toolMode_->setCurrentIndex(1);
++    QStringList recent = guiSettings().value(QStringLiteral("health/recent_tools")).toStringList();
++    recent.removeAll(t->key);
++    recent.prepend(t->key);
++    guiSettings().setValue(QStringLiteral("health/recent_tools"), QStringList(recent.mid(0, 6)));
++    const QString target = QStringLiteral("tool:") + t->key;
++    {
++        const bool was = replaying_;
++        replaying_ = true;  // the rail's own "page:tools" step is part of this one
++        showPage(toolDirectory_);
++        replaying_ = was;
++    }
++    record(target);
++    rebuildToolCatalog();
++}
++
++void HealthTab::showToolCatalog() {
++    toolMode_->setCurrentIndex(0);
++    record(QStringLiteral("page:tools"));
++}
++
++void HealthTab::togglePin() {
++    const Tool *t = toolOf(toolPages_->currentWidget());
++    if (!t) return;
++    QStringList pinned = guiSettings().value(QStringLiteral("health/pinned_tools")).toStringList();
++    if (pinned.contains(t->key)) pinned.removeAll(t->key);
++    else pinned << t->key;
++    guiSettings().setValue(QStringLiteral("health/pinned_tools"), pinned);
++    toolPin_->setChecked(pinned.contains(t->key));
++    toolPin_->setText(pinned.contains(t->key) ? tr("★ Pinned") : tr("☆ Pin"));
++    rebuildToolCatalog();
++}
++
++QWidget *HealthTab::toolButton(const Tool &t) {
++    const toolcatalog::Info info = toolcatalog::tool(t.key);
++    const QStringList badges = toolcatalog::badges(info.flags);
++    auto *b = new QPushButton(badges.isEmpty() ? t.label : t.label + QLatin1Char('\n') + badges.join(QStringLiteral(" · ")));
++    b->setObjectName(QStringLiteral("toolCard"));
++    // Height in the style sheet: the application sheet's min-height would override setMinimumHeight.
++    const int lines = badges.isEmpty() ? 1 : 2;
++    b->setStyleSheet(QStringLiteral("QPushButton#toolCard{text-align:left;padding:6px 10px;min-height:%1px}").arg(lines * b->fontMetrics().height() + 4));
++    b->setToolTip(toolDescription(t.page, t.key));
++    QWidget *page = t.page;
++    connect(b, &QPushButton::clicked, this, [this, page] { openTool(page); });
++    return b;
++}
++
++void HealthTab::rebuildToolCatalog() {
++    if (!toolScroll_) return;
++    const QString query = toolSearch_->text().trimmed();
++    const int width = toolScroll_->viewport()->width();
++    toolColumns_ = std::clamp(width / 250, 1, 4);
++    const QString terms = toolcatalog::explainTerms(query);
++    toolTerms_->setText(terms);
++    toolTerms_->setVisible(!terms.isEmpty());
++
++    auto *catalog = new QWidget;
++    auto *v = new QVBoxLayout(catalog);
++    v->setContentsMargins(0, 0, 6, 0);
++    v->setSpacing(6);
++    auto section = [&](const QString &title, const QList<const Tool *> &list) {
++        if (list.isEmpty()) return;
++        auto *heading = new QLabel(title.toUpper());
++        heading->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding-top:4px").arg(theme::FG_DIM));
++        v->addWidget(heading);
++        auto *grid = new QGridLayout;
++        grid->setSpacing(6);
++        for (int i = 0; i < list.size(); ++i) grid->addWidget(toolButton(*list[i]), i / toolColumns_, i % toolColumns_);
++        for (int c = 0; c < toolColumns_; ++c) grid->setColumnStretch(c, 1);
++        v->addLayout(grid);
++    };
++    auto byKeys = [this](const QStringList &keys) {
++        QList<const Tool *> list;
++        for (const QString &k : keys)
++            if (const Tool *t = toolByKey(k)) list << t;
++        return list;
++    };
++    int shown = 0;
++    if (query.isEmpty()) {
++        section(tr("Pinned"), byKeys(toolList(QStringLiteral("health/pinned_tools"))));
++        section(tr("Recently used"), byKeys(toolList(QStringLiteral("health/recent_tools")).mid(0, 4)));
++    }
++    for (const toolcatalog::Area area : toolcatalog::areas()) {
++        QList<const Tool *> list;
++        for (const Tool &t : std::as_const(tools_)) {
++            const toolcatalog::Info info = toolcatalog::tool(t.key);
++            if (info.area == area && toolcatalog::matches(query, t.label + QLatin1Char('|') + toolcatalog::areaName(area) + QLatin1Char('|') + t.key, info.keywords))
++                list << &t;
++        }
++        shown += int(list.size());
++        section(toolcatalog::areaName(area), list);
++    }
++    if (!shown) {
++        auto *none = new QLabel(tr("No tool matches “%1”. Try a part (GPU, disk, fan), a symptom or an error code; "
++                                   "the search box at the top left also finds Health pages.").arg(query));
++        none->setWordWrap(true);
++        none->setProperty("role", "muted");
++        v->addWidget(none);
++    }
++    v->addStretch();
++    delete toolCatalog_;
++    toolCatalog_ = catalog;
++    toolScroll_->setWidget(catalog);
++}
++
++bool HealthTab::eventFilter(QObject *watched, QEvent *event) {
++    if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Resize &&
++        std::clamp(toolScroll_->viewport()->width() / 250, 1, 4) != toolColumns_)
++        QTimer::singleShot(0, this, [this] { rebuildToolCatalog(); });  // not while the viewport is being laid out
++    return QWidget::eventFilter(watched, event);
++}
++
++// ── Navigation: search, targets, history ───────────────────────────────────────
++
++void HealthTab::filterNavigation(const QString &query) {
++    for (int i = 0; i < navigation_->topLevelItemCount(); ++i) {
++        auto *group = navigation_->topLevelItem(i);
++        if (group == toolResults_) continue;
++        int visible = 0;
++        for (int n = 0; n < group->childCount(); ++n) {
++            auto *item = group->child(n);
++            const bool match = toolcatalog::matches(query, item->text(0) + QLatin1Char('|') + group->text(0),
++                                                    toolcatalog::pageKeywords(item->data(0, Qt::UserRole).toString()));
++            item->setHidden(!match);
++            if (match) ++visible;
++        }
++        group->setHidden(!visible);
++        if (!query.isEmpty()) group->setExpanded(true);
++    }
++    int tools = 0;
++    for (int n = 0; n < toolResults_->childCount(); ++n) {
++        auto *item = toolResults_->child(n);
++        const QString key = item->data(0, Qt::UserRole).toString().mid(5);
++        const toolcatalog::Info info = toolcatalog::tool(key);
++        const bool match = !query.trimmed().isEmpty() &&
++                           toolcatalog::matches(query, item->text(0) + QLatin1Char('|') + toolcatalog::areaName(info.area) + QLatin1Char('|') + key, info.keywords);
++        item->setHidden(!match);
++        if (match) ++tools;
++    }
++    toolResults_->setHidden(!tools);
++    toolResults_->setExpanded(true);
++}
++
++QWidget *HealthTab::pageByKey(const QString &key) const {
++    for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it)
++        if (it.value()->data(0, Qt::UserRole).toString() == key) return it.key();
++    return nullptr;
++}
++
++QString HealthTab::targetLabel(const QString &target) const {
++    if (target.startsWith(QLatin1String("tool:"))) {
++        const Tool *t = toolByKey(target.mid(5));
++        return t ? t->label : QString();
++    }
++    if (target.startsWith(QLatin1String("page:"))) {
++        QWidget *page = pageByKey(target.mid(5));
++        return page ? pageItems_.value(page)->text(0) : QString();
++    }
++    return {};
++}
++
++bool HealthTab::navigateTo(const QString &target) {
++    if (target.startsWith(QLatin1String("tool:"))) {
++        const Tool *t = toolByKey(target.mid(5));
++        if (!t) return false;
++        if (navSearch_ && !navSearch_->text().isEmpty()) navSearch_->clear();
++        openTool(t->page);
++        return true;
++    }
++    if (target.startsWith(QLatin1String("page:"))) {
++        QWidget *page = pageByKey(target.mid(5));
++        if (!page) return false;
++        if (page == toolDirectory_ && toolMode_->currentIndex() != 0) {
++            const bool was = replaying_;
++            replaying_ = true;
++            toolMode_->setCurrentIndex(0);
++            replaying_ = was;
++        }
++        showPage(page);
++        return true;
++    }
++    return false;
++}
++
++void HealthTab::record(const QString &target) {
++    if (!replaying_ && (historyPos_ < 0 || history_.value(historyPos_) != target)) {
++        history_ = history_.mid(0, historyPos_ + 1);
++        history_ << target;
++        if (history_.size() > 50) history_.removeFirst();
++        historyPos_ = int(history_.size()) - 1;
++    }
++    if (back_) back_->setEnabled(historyPos_ > 0);
++    if (forward_) forward_->setEnabled(historyPos_ + 1 < history_.size());
++}
++
++void HealthTab::stepHistory(int delta) {
++    const int pos = historyPos_ + delta;
++    if (pos < 0 || pos >= history_.size()) return;
++    historyPos_ = pos;
++    replaying_ = true;
++    navigateTo(history_.at(pos));
++    replaying_ = false;
++    record(history_.at(pos));  // only updates the buttons while replaying_ is off and the entry matches
++}
++
+ void HealthTab::openDgpuPage() { showPage(findChild<DgpuPage *>()); }
+ 
+ void HealthTab::refreshDays() {
+diff --git a/gui/src/healthtab.h b/gui/src/healthtab.h
+index b925a17..b6d02da 100644
+--- a/gui/src/healthtab.h
++++ b/gui/src/healthtab.h
+@@ -16,6 +16,7 @@
+ #include <QVariantMap>
+ #include <QWidget>
+ 
++class AdvancedHealthPage;
+ class BackupPage;
+ class DayBars;
+ class BootPage;
+@@ -33,6 +34,9 @@ class QTimer;
+ class QTreeWidget;
+ class QTreeWidgetItem;
+ class QTextBrowser;
++class QPushButton;
++class QScrollArea;
++class QToolButton;
+ 
+ class HealthTab : public QWidget {
+     Q_OBJECT
+@@ -50,10 +54,9 @@ public:
+     CoolingPage *cooling() const { return cooling_; }
+     /// Show the dGPU power page (the Health tab must already be on screen).
+     void openDgpuPage();
+-    /// System tools groups, in the order of the navigation tree.
+-    enum ToolGroup { DeviceTools, ConnectionTools, KernelTools };
+-    /// A page added to System tools after construction (the Optimizations tab's tuning pages).
+-    void addToolPage(QWidget *page, const QString &label, ToolGroup group);
++    /// A page added to System tools after construction (the Optimizations tab's tuning pages). `key` is
++    /// its untranslated name in the tool catalog (toolcatalog.h): area, search words, badges.
++    void addToolPage(QWidget *page, const QString &label, const QString &key);
+ 
+ Q_SIGNALS:
+     /// The dGPU stayed awake on battery for `minutes` (BatteryPage::dgpuAwake); the tray tells the user.
+@@ -94,9 +97,39 @@ private:
+ 
+     /// Mark all seen: the events shown so far stop counting as new (gui.ini, see seenMs_).
+     void markSeen();
+-    /// Select `page` in its group (or in the top level), so it shows wherever it sits. Null does nothing.
++    /// Select `page` in its group (or in the top level), so it shows wherever it sits. A System tool opens
++    /// in the tool view. Null does nothing.
+     void showPage(QWidget *page);
+ 
++    // System tools: one catalog page (search, pinned, recent, tools by area) and one tool view with a path
++    // back; no second navigation tree.
++    struct Tool { QWidget *page = nullptr; QString key, label; };
++    void addTool(QWidget *page, const QString &label, const QString &key);
++    void openTool(QWidget *page);
++    void showToolCatalog();
++    void rebuildToolCatalog();
++    QWidget *toolButton(const Tool &t);
++    const Tool *toolOf(QWidget *page) const;
++    const Tool *toolByKey(const QString &key) const;
++    QStringList toolList(const QString &setting) const;
++    void togglePin();
++
++    // "page:<key>" / "tool:<key>" targets: back / forward history and links from other pages.
++    /// Opens a target; false when this system does not have it.
++    bool navigateTo(const QString &target);
++    /// Translated name of a target, empty when this system does not have it.
++    QString targetLabel(const QString &target) const;
++    QWidget *pageByKey(const QString &key) const;
++    void record(const QString &target);
++    void stepHistory(int delta);
++    /// The rail's search: Health pages by their search words, and matching System tools in their own group.
++    void filterNavigation(const QString &query);
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
++private:
++
+     /// The newest row of one event that repeats: same boot, kind, code and title, within GROUP_US.
+     struct Group { QTreeWidgetItem *row = nullptr; QString base; double firstUs = 0, lastUs = 0; int n = 0; };
+ 
+@@ -111,9 +144,22 @@ private:
+     QStackedWidget *pages_ = nullptr;
+     QHash<QWidget *, QTreeWidgetItem *> pageItems_;
+     QWidget *toolDirectory_ = nullptr;
+-    QTreeWidget *toolNavigation_ = nullptr;
++    QStackedWidget *toolMode_ = nullptr;     // 0: catalog, 1: one tool
+     QStackedWidget *toolPages_ = nullptr;
+-    QHash<QWidget *, QTreeWidgetItem *> toolItems_;
++    QList<Tool> tools_;
++    QLineEdit *toolSearch_ = nullptr;
++    QLabel *toolTerms_ = nullptr, *toolPath_ = nullptr, *toolBadges_ = nullptr;
++    QPushButton *toolPin_ = nullptr;
++    QScrollArea *toolScroll_ = nullptr;
++    QWidget *toolCatalog_ = nullptr;
++    int toolColumns_ = 0;
++    QTreeWidgetItem *toolResults_ = nullptr; // the rail's "System tools" search results
++    QLineEdit *navSearch_ = nullptr;
++    QToolButton *back_ = nullptr, *forward_ = nullptr;
++    QStringList history_;
++    int historyPos_ = -1;
++    bool replaying_ = false;
++    AdvancedHealthPage *investigations_ = nullptr;
+     QLineEdit *eventSearch_ = nullptr;
+     QComboBox *severityFilter_ = nullptr;
+     QCheckBox *technicalEvents_ = nullptr;
+diff --git a/gui/src/mainwindow.cpp b/gui/src/mainwindow.cpp
+index 54c5f8d..fbfcadc 100644
+--- a/gui/src/mainwindow.cpp
++++ b/gui/src/mainwindow.cpp
+@@ -158,9 +158,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+     health_ = new HealthTab;
+     tabs_->addTab(health_, tr("Health"));
+     // Settings that calibration and Autotune never touch live with the system tools, not on Optimizations.
+-    health_->addToolPage(optimize_->homePage(QStringLiteral("network")), tr("Network tuning"), HealthTab::ConnectionTools);
+-    health_->addToolPage(optimize_->homePage(QStringLiteral("storage")), tr("Storage tuning"), HealthTab::DeviceTools);
+-    health_->addToolPage(optimize_->homePage(QStringLiteral("kernel")), tr("Kernel tuning"), HealthTab::KernelTools);
++    health_->addToolPage(optimize_->homePage(QStringLiteral("network")), tr("Network tuning"), QStringLiteral("Network tuning"));
++    health_->addToolPage(optimize_->homePage(QStringLiteral("storage")), tr("Storage tuning"), QStringLiteral("Storage tuning"));
++    health_->addToolPage(optimize_->homePage(QStringLiteral("kernel")), tr("Kernel tuning"), QStringLiteral("Kernel tuning"));
+     // Cooling's fan max test drives the fans through the Home tab's own controls (the same calls as the tray menu).
+     {
+         HomeTab *home = home_;
+diff --git a/gui/src/overviewpage.cpp b/gui/src/overviewpage.cpp
+index 1a78e53..3a79636 100644
+--- a/gui/src/overviewpage.cpp
++++ b/gui/src/overviewpage.cpp
+@@ -1,5 +1,6 @@
+ #include "overviewpage.h"
+ 
++#include "advanceddiagnostics.h"
+ #include "batterypage.h"
+ #include "dgpupage.h"
+ #include "reportpreview.h"
+@@ -7,6 +8,7 @@
+ #include "theme.h"
+ #include "userhelper.h"
+ 
++#include <QCoreApplication>
+ #include <QDate>
+ #include <QDateTime>
+ #include <QDir>
+@@ -91,6 +93,38 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
+     heroLayout->addWidget(status_);
+     outer->addWidget(hero);
+ 
++    // Start from the symptom: each button runs the read-only guided triage (H18) for that area.
++    auto *problems = new QFrame;
++    problems->setObjectName(QStringLiteral("healthProblems"));
++    problems->setStyleSheet(QStringLiteral("QFrame#healthProblems{background:%1;border:1px solid %2;border-radius:10px}"
++                                           "QFrame#healthProblems QLabel{background:transparent;border:none}")
++                            .arg(theme::experimentalEnabled() ? theme::BG1 : theme::BG2, theme::BORDER));
++    auto *problemsLayout = new QVBoxLayout(problems);
++    problemsLayout->setContentsMargins(14, 10, 14, 11);
++    problemsLayout->setSpacing(6);
++    auto *problemsTitle = new QLabel(tr("Having a problem? Pick what is going wrong:"));
++    QFont problemsFont = problemsTitle->font();
++    problemsFont.setBold(true);
++    problemsTitle->setFont(problemsFont);
++    problemsLayout->addWidget(problemsTitle);
++    auto *problemsGrid = new QGridLayout;
++    problemsGrid->setSpacing(6);
++    const QList<advanceddiagnostics::TriageCategory> categories = advanceddiagnostics::triageCategories();
++    for (int i = 0; i < categories.size(); ++i) {
++        const advanceddiagnostics::TriageCategory &c = categories[i];
++        auto *b = new QPushButton(QCoreApplication::translate("advanceddiagnostics", c.shortLabel));
++        b->setToolTip(tr("%1\nRuns %2 (read-only) and shows what needs a look, then where to look next.")
++                          .arg(QCoreApplication::translate("advanceddiagnostics", c.label), c.checks.join(QStringLiteral(", "))));
++        const QString key = c.key;
++        connect(b, &QPushButton::clicked, this, [this, key] { Q_EMIT triage(key); });
++        problemsGrid->addWidget(b, i / 4, i % 4);
++    }
++    problemsLayout->addLayout(problemsGrid);
++    auto *problemsHint = new QLabel(tr("Nothing is changed and a sleeping dGPU is not woken."));
++    problemsHint->setProperty("tone", "muted");
++    problemsLayout->addWidget(problemsHint);
++    outer->addWidget(problems);
++
+     auto *recommend = new QFrame;
+     recommend->setObjectName(QStringLiteral("healthAdvice"));
+     recommend->setStyleSheet(QStringLiteral("QFrame#healthAdvice{background:%1;border:1px solid %2;border-radius:%3px}"
+diff --git a/gui/src/overviewpage.h b/gui/src/overviewpage.h
+index 72e3f6e..d4e9257 100644
+--- a/gui/src/overviewpage.h
++++ b/gui/src/overviewpage.h
+@@ -30,6 +30,8 @@ Q_SIGNALS:
+     void openPage(const QString &target);
+     /// Worst level of the cards: the Home badge and the tray entry follow it.
+     void worstChanged(int level);
++    /// "What is going wrong?": run guided triage (H18) for this category ("gpu", "sleep" …).
++    void triage(const QString &category);
+ 
+ protected:
+     void showEvent(QShowEvent *e) override;
+diff --git a/gui/src/systools.cpp b/gui/src/systools.cpp
+index 0936521..4ffc4ab 100644
+--- a/gui/src/systools.cpp
++++ b/gui/src/systools.cpp
+@@ -35,6 +35,7 @@
+ #include <QPushButton>
+ #include <QStandardPaths>
+ #include <QTabWidget>
++#include <QTime>
+ #include <QTimer>
+ #include <QVBoxLayout>
+ 
+@@ -626,6 +627,9 @@ public:
+             top->addWidget(panel);
+             connect(panel, &QPushButton::clicked, this, [this] { PanelControlsDialog(this).exec(); start(); });
+         }
++        when_ = new QLabel;
++        when_->setProperty("role", "muted");
++        top->addWidget(when_);
+         run_ = new QPushButton(QCoreApplication::translate("systools", "Run again"));
+         top->addWidget(run_);
+         v->addLayout(top);
+@@ -693,13 +697,14 @@ private:
+             for (auto it = outputs_.cbegin(); it != outputs_.cend(); ++it)
+                 r.raw += QStringLiteral("\n$ %1\n%2").arg(it.key(), it.value().isEmpty() ? QCoreApplication::translate("systools", "(not installed or failed)") : it.value());
+         view_->setReport(r);
++        when_->setText(QCoreApplication::translate("systools", "Read at %1").arg(QTime::currentTime().toString(QStringLiteral("HH:mm"))));
+     }
+ 
+     QString code_;
+     QList<QStringList> cmds_;
+     QHash<QString, QString> outputs_;
+     QPushButton *run_;
+-    QLabel *status_;
++    QLabel *status_, *when_;
+     DiagReportView *view_;
+     bool ran_ = false, busy_ = false;
+ };
+@@ -745,25 +750,25 @@ void addPages(QTabWidget *tabs) {
+         {QT_TRANSLATE_NOOP("systools", "NVIDIA module parameters"),
+          QT_TRANSLATE_NOOP("systools", "S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU."),
+          {{"@diag", "S06"}, {"modinfo", "-p", "nvidia"}}},
+-        {"Sensors", "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
+-        {"CPU", "Topology, caches, frequencies and the active cpufreq driver/governor.",
++        {QT_TRANSLATE_NOOP("systools", "Sensors"), "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
++        {QT_TRANSLATE_NOOP("systools", "CPU"), "Topology, caches, frequencies and the active cpufreq driver/governor.",
+          {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}, nullptr, false, true},
+-        {"Memory", "Usage, swap/zram and NUMA layout.", {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
+-        {"DMI", "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode", false, true},
+-        {"PCI", "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.",
++        {QT_TRANSLATE_NOOP("systools", "Memory"), "Usage, swap/zram and NUMA layout.", {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
++        {QT_TRANSLATE_NOOP("systools", "DMI"), "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode", false, true},
++        {QT_TRANSLATE_NOOP("systools", "PCI"), "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.",
+          {{"lspci", "-nnk"}, {"lspci", "-tv"}, {"@pcilink"}}, nullptr, false, true},
+-        {"PCIe detail", "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
+-        {"USB", "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
+-        {"Storage", "Block devices, schedulers and mounted filesystems.",
++        {QT_TRANSLATE_NOOP("systools", "PCIe detail"), "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
++        {QT_TRANSLATE_NOOP("systools", "USB"), "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
++        {QT_TRANSLATE_NOOP("systools", "Storage"), "Block devices, schedulers and mounted filesystems.",
+          {{"lsblk", "-o", "NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINTS,ROTA,SCHED"}, {"df", "-hT", "-x", "tmpfs", "-x", "devtmpfs"}}},
+-        {"SMART details", "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
+-        {"NVIDIA", "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
++        {QT_TRANSLATE_NOOP("systools", "SMART details"), "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
++        {QT_TRANSLATE_NOOP("systools", "NVIDIA"), "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
+          {{"@file", "/proc/driver/nvidia/version"}, {"nvidia-smi", "-q"}}, nullptr, false, true},
+-        {"Graphics", "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
++        {QT_TRANSLATE_NOOP("systools", "Graphics"), "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
+          {{"vulkaninfo", "--summary"}, {"glxinfo", "-B"}}, nullptr, false, true},
+-        {"Kernel", "Kernel version, boot command line and loaded modules.",
++        {QT_TRANSLATE_NOOP("systools", "Kernel"), "Kernel version, boot command line and loaded modules.",
+          {{"uname", "-a"}, {"@file", "/proc/cmdline"}, {"lsmod"}}, nullptr, false, true},
+-        {"Battery", "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
++        {QT_TRANSLATE_NOOP("systools", "Battery"), "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
+          {{"@glob", "/sys/class/power_supply/*/uevent"}}, nullptr, false, true},
+         {QT_TRANSLATE_NOOP("systools", "Thermal"),
+          QT_TRANSLATE_NOOP("systools", "Every thermal zone: its type, current temperature and trip points. Temperatures are in millidegrees Celsius, as the kernel reports them."),
+@@ -796,6 +801,7 @@ void addPages(QTabWidget *tabs) {
+             return new ToolPage(s);
+         });
+         page->setProperty("toolKey", QString::fromLatin1(s.title));
++        page->setProperty("toolAbout", QCoreApplication::translate("systools", s.about));  // the catalog's tooltip
+         tabs->addTab(page, title);
+     }
+     auto *config = new LazyWidget([] { return new ConfigPage; });
+diff --git a/b/gui/src/toolcatalog.cpp b/gui/src/toolcatalog.cpp
+new file mode 100644
+index 0000000..3145878
+--- /dev/null
++++ b/gui/src/toolcatalog.cpp
+@@ -0,0 +1,185 @@
++#include "toolcatalog.h"
++
++#include <QCoreApplication>
++#include <QHash>
++#include <QRegularExpression>
++
++namespace toolcatalog {
++
++namespace {
++
++QString tx(const char *s) { return QCoreApplication::translate("toolcatalog", s); }
++
++QStringList words(const char *list) { return QString::fromUtf8(list).split(QLatin1Char('|'), Qt::SkipEmptyParts); }
++
++const QHash<QString, Info> &tools() {
++    using A = Area;
++    static const QHash<QString, Info> t = {
++        // CPU & memory
++        {"CPU", {A::Cpu, 0, words("cpu|işlemci|processor|frekans|frequency|governor|cpufreq|pstate|boost|cpupower|lscpu|çekirdek|core")}},
++        {"Memory", {A::Cpu, 0, words("ram|bellek|swap|zram|numa|free")}},
++        {"Memory Architecture Explorer", {A::Cpu, 0, words("ram|bellek|swap|zram|zswap|huge pages|hugepage|numa|l3|memory pressure|psi|S10")}},
++        {"DMI", {A::Cpu, NeedsRoot, words("dmidecode|bios|anakart|motherboard|board|ram modülü|memory module|seri numarası|serial")}},
++        // Graphics & display
++        {"NVIDIA", {A::Graphics, MayWakeGpu, words("nvidia-smi|gpu|ekran kartı|graphics card|xid|gsp|sürücü|driver")}},
++        {"NVIDIA module parameters", {A::Graphics, 0, words("nvidia|modprobe|modül|module|parametre|parameter|gsp|nvreg|preserve video memory|uyku|S06")}},
++        {"Graphics", {A::Graphics, MayWakeGpu, words("vulkan|opengl|glx|mesa|oyun|game|dxvk|gpu")}},
++        {"EDID / VRR", {A::Graphics, ChangesSettings,
++                        words("monitör|monitor|ekran|display|vrr|freesync|g-sync|gsync|hdr|refresh|yenileme hızı|hz|titreme|flicker|"
++                              "parlaklık|brightness|edid|panel|S03")}},
++        // Storage
++        {"Storage", {A::Storage, 0, words("disk|ssd|nvme|lsblk|df|dosya sistemi|filesystem|f2fs|btrfs|ext4|scheduler|mount|bölüm|partition")}},
++        {"SMART details", {A::Storage, NeedsRoot, words("smart|smartctl|disk sağlığı|drive health|nvme|wear|aşınma|ssd|bad sector")}},
++        {"Storage tuning", {A::Storage, ChangesSettings, words("io scheduler|readahead|disk|ssd|nvme|trim|ayar")}},
++        // Network & wireless
++        {"Wi-Fi / Bluetooth Firmware Doctor",
++         {A::Network, 0, words("wifi|wi-fi|wlan|kablosuz|wireless|bluetooth|bt|firmware missing|firmware eksik|iwlwifi|mt7925|"
++                               "rtw89|rfkill|bağlantı kopuyor|disconnect|internet|S07")}},
++        {"Network tuning", {A::Network, ChangesSettings, words("ağ|network|tcp|bbr|gecikme|latency|ayar")}},
++        // Power & thermal
++        {"Sensors", {A::Power, 0, words("sıcaklık|temperature|fan|voltaj|voltage|hwmon|lm-sensors|sensör|watt")}},
++        {"Thermal", {A::Power, 0, words("sıcaklık|temperature|termal|thermal zone|trip|ısınma|overheating")}},
++        {"Battery", {A::Power, 0, words("pil|batarya|battery|şarj|charge|cycle|döngü|kapasite|capacity|wear")}},
++        {"Power Limit Source Map",
++         {A::Power, 0, words("güç|power|ppt|tdp|rapl|watt|limit|platform profile|throttling|kısılma|yavaşlama|S08")}},
++        {"USB-C PD / Charger Inspector",
++         {A::Power, 0, words("şarj aleti|adaptör|charger|usb-c|type-c|pd|power delivery|watt|şarj olmuyor|S13")}},
++        // Devices & buses
++        {"PCI", {A::Devices, 0, words("pci|lspci|aygıt|device|sürücü|driver|gpu|nvme")}},
++        {"PCIe detail", {A::Devices, NeedsRoot, words("pcie|lspci -vv|aspm|aer|link|bağlantı")}},
++        {"PCIe Link Negotiation Lab",
++         {A::Devices, 0, words("pcie|link|hız|speed|gen|lane|şerit|aspm|aer|xid 79|fallen off the bus|bant genişliği|bandwidth|S04")}},
++        {"USB", {A::Devices, 0, words("usb|lsusb|port|hub|cihaz|device|bağlantı kopması|disconnect")}},
++        // Firmware & kernel
++        {"Kernel", {A::Firmware, 0, words("kernel|çekirdek|uname|lsmod|modül|module|cmdline|boot parameters|açılış parametreleri")}},
++        {"Kernel Feature & Firmware Check",
++         {A::Firmware, 0, words("kernel config|firmware missing|firmware eksik|modül|module|driver yok|missing driver|desteklenmiyor|unsupported|S18")}},
++        {"ACPI / WMI Firmware Browser", {A::Firmware, 0, words("acpi|wmi|firmware|bios|lenovo|legion|dsdt|S11")}},
++        {"Firmware updates", {A::Firmware, UsesInternet, words("fwupd|fwupdmgr|lvfs|bios update|bios güncelleme|firmware güncelleme|güncelleme|update")}},
++        {"Security", {A::Firmware, 0, words("güvenlik|security|secure boot|mitigation|spectre|lockdown|taint|microcode|mikrokod")}},
++        {"Kernel tuning", {A::Firmware, ChangesSettings, words("sysctl|scheduler|zamanlayıcı|eevdf|kernel|çekirdek|ayar")}},
++        // System & configuration
++        {"Hardware snapshot",
++         {A::System, 0, words("baseline|referans|karşılaştır|compare|değişiklik|change|güncelleme sonrası|after update|snapshot|S01")}},
++        {"Configuration files",
++         {A::System, ChangesSettings, words("config|yapılandırma|ayar dosyası|configuration|modprobe.d|sysctl.d|grub|düzenle|edit")}},
++        {"PipeWire Audio Doctor",
++         {A::System, ChangesSettings, words("ses|audio|sound|pipewire|pulseaudio|wireplumber|mikrofon|microphone|hoparlör|speaker|cızırtı|crackling|S15")}},
++    };
++    return t;
++}
++
++}  // namespace
++
++QList<Area> areas() {
++    return {Area::Cpu, Area::Graphics, Area::Storage, Area::Network, Area::Power, Area::Devices, Area::Firmware, Area::System};
++}
++
++QString areaName(Area a) {
++    switch (a) {
++    case Area::Cpu: return tx(QT_TRANSLATE_NOOP("toolcatalog", "CPU & memory"));
++    case Area::Graphics: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Graphics & display"));
++    case Area::Storage: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Storage"));
++    case Area::Network: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Network & wireless"));
++    case Area::Power: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Power & thermal"));
++    case Area::Devices: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Devices & buses"));
++    case Area::Firmware: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Firmware & kernel"));
++    case Area::System: return tx(QT_TRANSLATE_NOOP("toolcatalog", "System & configuration"));
++    }
++    return {};
++}
++
++Info tool(const QString &key) { return tools().value(key); }
++
++QStringList pageKeywords(const QString &key) {
++    static const QHash<QString, QStringList> p = {
++        {"overview", words("genel bakış|özet|summary|overview|durum|status")},
++        {"monitor", words("xid|gsp|mce|aer|hata|error|olay|event|çökme|crash|uyarı|alert|nvidia|lockup|oom|donma|freeze")},
++        {"evidence", words("xid|mce|aer|f2fs|kanıt|evidence|firmware|radyo|radio|wifi")},
++        {"investigations", words("triage|sorun|problem|h18|başla|start|regression|nvme|usb|uyku|sleep|çökme|crash|incident|not|ecc|gpu memory")},
++        {"boot", words("boot|açılış|önyükleme|çökme|crash|kapanma|shutdown|donma|freeze|güncelleme sonrası|after update")},
++        {"capabilities", words("eksik özellik|missing feature|capability|destek|support|desteklenmiyor|unsupported|neden yok")},
++        {"curves", words("curve optimizer|co|undervolt|kararlılık|stability|mce|eğri")},
++        {"klog", words("dmesg|kernel log|çekirdek günlüğü|journal|warning|uyarı|hata")},
++        {"kernelparams", words("sysctl|scheduler|zamanlayıcı|eevdf|debugfs|kernel parametreleri|kernel parameters")},
++        {"sleep", words("uyku|suspend|resume|uyanma|wake|s0ix|s3|hibernate|kapak|lid")},
++        {"battery", words("pil|batarya|battery|drain|tüketim|şarj|charge|ömür")},
++        {"dgpu", words("dgpu|nvidia|d3cold|runtime pm|uyumuyor|uyanık|awake|hibrit|hybrid")},
++        {"cooling", words("soğutma|cooling|fan|sıcaklık|temperature|termal macun|thermal paste|ısınma")},
++        {"smart", words("disk sağlığı|drive health|smart|ssd|nvme|aşınma|wear")},
++        {"network", words("firewall|güvenlik duvarı|port|bağlantı|connection|trafik|traffic|ağ|network")},
++        {"backup", words("yedek|backup|snapshot|geri yükleme|restore|imaj|image")},
++        {"tools", words("araçlar|tools|sistem araçları")},
++    };
++    return p.value(key);
++}
++
++QStringList badges(int flags) {
++    QStringList b;
++    if (flags & ChangesSettings) b << tx(QT_TRANSLATE_NOOP("toolcatalog", "Can change settings"));
++    if (flags & MayWakeGpu) b << tx(QT_TRANSLATE_NOOP("toolcatalog", "May wake the dGPU"));
++    if (flags & NeedsRoot) b << tx(QT_TRANSLATE_NOOP("toolcatalog", "Needs root"));
++    if (flags & UsesInternet) b << tx(QT_TRANSLATE_NOOP("toolcatalog", "Uses the internet"));
++    return b;
++}
++
++QString normalize(const QString &s) {
++    QString out;
++    out.reserve(s.size());
++    for (const QChar c : s.normalized(QString::NormalizationForm_D)) {
++        if (c.category() == QChar::Mark_NonSpacing) continue;
++        if (c == QChar(0x0131) || c == QChar(0x0130)) out += QLatin1Char('i');  // ı, İ
++        else out += c.toLower();
++    }
++    return out;
++}
++
++bool matches(const QString &query, const QString &label, const QStringList &keywords) {
++    const QStringList qs = normalize(query).split(QLatin1Char(' '), Qt::SkipEmptyParts);
++    if (qs.isEmpty()) return true;
++    const QString hay = normalize(label + QLatin1Char('|') + keywords.join(QLatin1Char('|')));
++    for (const QString &w : qs)
++        if (!hay.contains(w)) return false;
++    return true;
++}
++
++QStringList relatedFor(const QString &triageKey) {
++    static const QHash<QString, QStringList> r = {
++        {"gpu", {"page:monitor", "page:evidence", "tool:NVIDIA module parameters", "tool:PCIe Link Negotiation Lab", "page:dgpu", "page:klog"}},
++        {"cpu", {"page:curves", "page:monitor", "tool:CPU", "tool:Power Limit Source Map", "page:boot"}},
++        {"crash", {"page:boot", "page:klog", "tool:Hardware snapshot", "tool:Kernel Feature & Firmware Check"}},
++        {"storage", {"page:smart", "tool:Storage", "tool:PCIe Link Negotiation Lab", "page:klog"}},
++        {"radio", {"tool:Wi-Fi / Bluetooth Firmware Doctor", "tool:Kernel Feature & Firmware Check", "page:network"}},
++        {"sleep", {"page:sleep", "page:dgpu", "page:battery"}},
++        {"usb", {"tool:USB", "tool:USB-C PD / Charger Inspector", "tool:PCI"}},
++    };
++    return r.value(triageKey);
++}
++
++QString explainTerms(const QString &text) {
++    struct Term { const char *name, *about; };
++    static const Term TERMS[] = {
++        {"AER", QT_TRANSLATE_NOOP("toolcatalog", "PCIe Advanced Error Reporting: the link's own error counters. A few corrected errors are common; a growing count or uncorrected errors are not.")},
++        {"ASPM", QT_TRANSLATE_NOOP("toolcatalog", "PCIe Active State Power Management: lets a link drop to a low-power state when idle. Saves power; on some devices it causes errors or stalls.")},
++        {"GSP", QT_TRANSLATE_NOOP("toolcatalog", "GPU System Processor: firmware running on newer NVIDIA GPUs. GSP timeouts often show up as freezes or black screens.")},
++        {"D3cold", QT_TRANSLATE_NOOP("toolcatalog", "The deepest PCIe power state: the device is switched off. A sleeping dGPU is in D3cold.")},
++        {"Xid", QT_TRANSLATE_NOOP("toolcatalog", "An error code the NVIDIA driver writes to the kernel log; the number says what failed.")},
++        {"MCE", QT_TRANSLATE_NOOP("toolcatalog", "Machine Check Exception: the CPU reports a hardware error, e.g. from too low a voltage.")},
++        {"EDID", QT_TRANSLATE_NOOP("toolcatalog", "The data a display sends about itself: name, modes, refresh range, HDR support.")},
++        {"VRR", QT_TRANSLATE_NOOP("toolcatalog", "Variable refresh rate (FreeSync / G-SYNC): the display follows the game's frame rate.")},
++        {"PPT", QT_TRANSLATE_NOOP("toolcatalog", "Package Power Tracking: the firmware's power limits for the CPU package.")},
++        {"RAPL", QT_TRANSLATE_NOOP("toolcatalog", "Running Average Power Limit: the CPU's own power meter and limits.")},
++        {"NUMA", QT_TRANSLATE_NOOP("toolcatalog", "Non-Uniform Memory Access: memory is closer to some cores than to others.")},
++        {"zram", QT_TRANSLATE_NOOP("toolcatalog", "Compressed swap in RAM: more usable memory for some CPU time.")},
++        {"SMART", QT_TRANSLATE_NOOP("toolcatalog", "A drive's own health record: wear, errors, temperature.")},
++        {"EEVDF", QT_TRANSLATE_NOOP("toolcatalog", "The Linux CPU scheduler since 6.6: decides which task runs next.")},
++    };
++    QStringList out;
++    for (const Term &t : TERMS) {
++        const QRegularExpression re(QStringLiteral("\\b%1\\b").arg(QLatin1String(t.name)), QRegularExpression::CaseInsensitiveOption);
++        if (re.match(text).hasMatch()) out << QStringLiteral("%1 — %2").arg(QLatin1String(t.name), tx(t.about));
++    }
++    return out.join(QLatin1Char('\n'));
++}
++
++}  // namespace toolcatalog
+diff --git a/b/gui/src/toolcatalog.h b/gui/src/toolcatalog.h
+new file mode 100644
+index 0000000..bfc3734
+--- /dev/null
++++ b/gui/src/toolcatalog.h
+@@ -0,0 +1,45 @@
++#pragma once
++// What the Health navigation needs to know about each page and System tool beyond its widget: the area it
++// belongs to (by purpose: CPU, graphics, storage …), words a user may search for (symptoms, error codes,
++// Turkish and English), badges (changes settings, may wake the dGPU, needs root, uses the internet), the
++// pages and tools that fit a guided-triage category, and short explanations of technical terms.
++// Qt Core only: keyed by the untranslated tool key ("toolKey" property) or Health page key, so it is testable
++// without widgets.
++#include <QList>
++#include <QString>
++#include <QStringList>
++
++namespace toolcatalog {
++
++enum class Area { Cpu, Graphics, Storage, Network, Power, Devices, Firmware, System };
++/// Display order of the areas.
++QList<Area> areas();
++QString areaName(Area a);
++
++enum Flag { ChangesSettings = 1, MayWakeGpu = 2, NeedsRoot = 4, UsesInternet = 8 };
++
++struct Info {
++    Area area = Area::System;
++    int flags = 0;
++    QStringList keywords;
++};
++/// A System tool by its untranslated key; an unknown key is a plain System tool.
++Info tool(const QString &key);
++/// Search words of a Health page (its key: "monitor", "sleep" …); empty for an unknown key.
++QStringList pageKeywords(const QString &key);
++/// The badges of `flags` as short translated words, in a fixed order.
++QStringList badges(int flags);
++
++/// Lower case without diacritics, dotless ı as i: "Isınma" and "ısınma" both become "isinma".
++QString normalize(const QString &s);
++/// Every word of `query` appears in `label` or one of `keywords` (normalized). An empty query matches.
++bool matches(const QString &query, const QString &label, const QStringList &keywords);
++
++/// Where to look next for a guided-triage category ("gpu", "cpu" …): "page:<key>" or "tool:<key>", in order.
++QStringList relatedFor(const QString &triageKey);
++
++/// Short explanations of the technical terms (AER, ASPM, GSP, D3cold …) found as whole words in `text`,
++/// one "TERM — what it is" line each; empty when none.
++QString explainTerms(const QString &text);
++
++}  // namespace toolcatalog
+diff --git a/gui/tests/advanceddiagnostics_test.cpp b/gui/tests/advanceddiagnostics_test.cpp
+index 2efb527..33050f5 100644
+--- a/gui/tests/advanceddiagnostics_test.cpp
++++ b/gui/tests/advanceddiagnostics_test.cpp
+@@ -188,6 +188,15 @@ int main(int argc, char **argv) {
+         CHECK(t.verdict() == Level::Attention && has(t, Level::Attention, QStringLiteral("H04 · Xid 79")));
+         CHECK(t.tables.first().rows.size() == 2);
+         CHECK(ad::triage(QStringLiteral("GPU"), {b}).verdict() == Level::Ok);
++        // Nothing could be read: never summed up as "no problem".
++        diag::Report u;
++        u.code = QStringLiteral("H16");
++        u.add(Level::Unknown, QStringLiteral("no source"));
++        diag::Report empty;
++        empty.code = QStringLiteral("S06");
++        CHECK(ad::triage(QStringLiteral("GPU"), {u}).verdict() == Level::Unknown);
++        CHECK(ad::triage(QStringLiteral("GPU"), {u, empty}).verdict() == Level::Unknown);
++        CHECK(ad::triage(QStringLiteral("GPU"), {u, b}).verdict() == Level::Ok);
+     }
+ 
+     // H02: errors on one core's own units blame that core; shared units blame nobody.
+diff --git a/gui/tests/studio_v4_static_test.py b/gui/tests/studio_v4_static_test.py
+index 550595b..13e29c8 100644
+--- a/gui/tests/studio_v4_static_test.py
++++ b/gui/tests/studio_v4_static_test.py
+@@ -10,7 +10,7 @@ checks = {
+     'Compact rail is actually implemented': 'collapsed ? 48 : 154' in main and 'button->setFixedHeight(32)' in main,
+     'Health keeps one searchable section list in both modes': 'split->addWidget(rail);' in health and 'healthPagePicker' not in health,
+     'Health deep links select through the navigation tree': 'navigation_->setCurrentItem(item)' in health,
+-    'System tools keep original toolPages and their tree': 'toolSplit->addWidget(toolNavigation_)' in health and 'toolPages_->addWidget(page)' in health,
++    'System tools keep original toolPages, without a second tree': 'toolNavigation_' not in health and 'toolPages_->addWidget(page)' in health,
+     'Intel has two task workspaces': all(x in intel for x in ['Voltage, safety && startup','Limits && throttling','root->addWidget(work, 1)']) and 'Startup && daemon' not in intel,
+     'Intel Classic retains original scrolling form': 'mid->addLayout(left, 1)' in intel and 'mid->addLayout(right, 1)' in intel,
+     'Firmware groups stack at full width, no duplicate': 'pl->addWidget(box);' in fw and 'studioGrid' not in fw and 'rows_.append({a, slider, spin, apply, def})' in fw,
+diff --git a/b/gui/tests/toolcatalog_static_test.py b/gui/tests/toolcatalog_static_test.py
+new file mode 100644
+index 0000000..8962a51
+--- /dev/null
++++ b/gui/tests/toolcatalog_static_test.py
+@@ -0,0 +1,28 @@
++#!/usr/bin/env python3
++"""Every System tool has an entry in the tool catalog (area, search words, badges), and the Health tab
++keeps one navigation list. Run: python3 gui/tests/toolcatalog_static_test.py"""
++from pathlib import Path
++import re
++
++SRC = Path(__file__).resolve().parents[1] / "src"
++systools = (SRC / "systools.cpp").read_text()
++catalog = (SRC / "toolcatalog.cpp").read_text()
++health = (SRC / "healthtab.cpp").read_text()
++mainwindow = (SRC / "mainwindow.cpp").read_text()
++
++specs = systools[systools.index("const Spec specs[]"):systools.index("for (const Spec &s : specs)")]
++keys = re.findall(r'^\s*\{(?:QT_TRANSLATE_NOOP\("systools", )?"([^"]+)"', specs, re.M)
++keys += re.findall(r'setProperty\("toolKey", QStringLiteral\("([^"]+)"\)\)', systools)
++keys += re.findall(r'addToolPage\([^;]*QStringLiteral\("([^"]+)"\)\)', mainwindow)
++assert len(keys) >= 30, keys
++
++checks = {f"catalog entry: {k}": re.search(r"\{\"" + re.escape(k) + r"\",\s*\{A::", catalog) is not None for k in set(keys) if k != "SMART"}
++checks["no second tool tree"] = "toolNavigation_" not in health
++checks["catalog search keeps its name"] = "healthToolSearch" in health
++checks["tools remember pins and recents"] = 'health/pinned_tools' in health and 'health/recent_tools' in health
++checks["last tool is not reopened at start-up"] = 'health/tool' not in health
++
++for name, ok in sorted(checks.items()):
++    print(("PASS" if ok else "FAIL") + " - " + name)
++assert all(checks.values()), "toolcatalog static checks failed"
++print(f"PASS: {len(checks)} static checks")
+diff --git a/b/gui/tests/toolcatalog_test.cpp b/gui/tests/toolcatalog_test.cpp
+new file mode 100644
+index 0000000..f771939
+--- /dev/null
++++ b/gui/tests/toolcatalog_test.cpp
+@@ -0,0 +1,53 @@
++// Health navigation metadata: search normalization, symptom search, triage links and term explanations.
++#include "../src/advanceddiagnostics.h"
++#include "../src/toolcatalog.h"
++
++#include <cstdio>
++
++static int failures = 0;
++#define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++failures; } } while (0)
++
++int main() {
++    namespace tc = toolcatalog;
++    // Turkish letters and case do not matter.
++    CHECK(tc::normalize(QStringLiteral("Isınma İşlemci ŞARJ ğüöç")) == QStringLiteral("isinma islemci sarj guoc"));
++    CHECK(tc::matches(QStringLiteral("islemci"), QStringLiteral("CPU"), tc::tool(QStringLiteral("CPU")).keywords));
++    CHECK(tc::matches(QStringLiteral("  "), QStringLiteral("anything"), {}));
++    // Every word must match somewhere.
++    CHECK(tc::matches(QStringLiteral("ekran titreme"), QStringLiteral("EDID / VRR"), tc::tool(QStringLiteral("EDID / VRR")).keywords));
++    CHECK(!tc::matches(QStringLiteral("ekran pil"), QStringLiteral("EDID / VRR"), tc::tool(QStringLiteral("EDID / VRR")).keywords));
++    // Symptoms and codes reach the right place.
++    CHECK(tc::matches(QStringLiteral("Xid"), QStringLiteral("Events & alerts"), tc::pageKeywords(QStringLiteral("monitor"))));
++    CHECK(tc::matches(QStringLiteral("firmware eksik"), QStringLiteral("x"), tc::tool(QStringLiteral("Wi-Fi / Bluetooth Firmware Doctor")).keywords));
++    CHECK(tc::matches(QStringLiteral("vrr"), QStringLiteral("x"), tc::tool(QStringLiteral("EDID / VRR")).keywords));
++
++    // Badges: tools that wake the dGPU or change settings say so.
++    CHECK(tc::tool(QStringLiteral("NVIDIA")).flags & tc::MayWakeGpu);
++    CHECK(!(tc::tool(QStringLiteral("NVIDIA module parameters")).flags & tc::MayWakeGpu));
++    CHECK(tc::tool(QStringLiteral("Configuration files")).flags & tc::ChangesSettings);
++    CHECK(tc::badges(tc::MayWakeGpu | tc::NeedsRoot).size() == 2);
++    CHECK(tc::tool(QStringLiteral("no such tool")).area == tc::Area::System);
++
++    // Every triage category has somewhere to go next, and none of those links wakes the dGPU.
++    for (const advanceddiagnostics::TriageCategory &c : advanceddiagnostics::triageCategories()) {
++        const QStringList rel = tc::relatedFor(c.key);
++        CHECK(!rel.isEmpty());
++        for (const QString &t : rel) {
++            CHECK(t.startsWith(QStringLiteral("page:")) || t.startsWith(QStringLiteral("tool:")));
++            if (t.startsWith(QStringLiteral("page:"))) CHECK(!tc::pageKeywords(t.mid(5)).isEmpty());
++            if (t.startsWith(QStringLiteral("tool:"))) {
++                CHECK(!tc::tool(t.mid(5)).keywords.isEmpty());
++                CHECK(!(tc::tool(t.mid(5)).flags & tc::MayWakeGpu));
++            }
++        }
++    }
++
++    // Terms: whole words only.
++    CHECK(tc::explainTerms(QStringLiteral("ASPM is enabled on 01:00.0")).startsWith(QStringLiteral("ASPM — ")));
++    CHECK(tc::explainTerms(QStringLiteral("GSP timeout, D3cold")).split(QLatin1Char('\n')).size() == 2);
++    CHECK(tc::explainTerms(QStringLiteral("GASPMX")).isEmpty());
++    CHECK(tc::explainTerms(QString()).isEmpty());
++
++    if (failures) std::fprintf(stderr, "%d failure(s)\n", failures);
++    return failures ? 1 : 0;
++}

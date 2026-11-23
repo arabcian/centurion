@@ -10,7 +10,7 @@ checks = {
     'Compact rail is actually implemented': 'collapsed ? 48 : 154' in main and 'button->setFixedHeight(32)' in main,
     'Health keeps one searchable section list in both modes': 'split->addWidget(rail);' in health and 'healthPagePicker' not in health,
     'Health deep links select through the navigation tree': 'navigation_->setCurrentItem(item)' in health,
-    'System tools keep original toolPages and their tree': 'toolSplit->addWidget(toolNavigation_)' in health and 'toolPages_->addWidget(page)' in health,
+    'System tools keep original toolPages, without a second tree': 'toolNavigation_' not in health and 'toolPages_->addWidget(page)' in health,
     'Intel has two task workspaces': all(x in intel for x in ['Voltage, safety && startup','Limits && throttling','root->addWidget(work, 1)']) and 'Startup && daemon' not in intel,
     'Intel Classic retains original scrolling form': 'mid->addLayout(left, 1)' in intel and 'mid->addLayout(right, 1)' in intel,
     'Firmware groups stack at full width, no duplicate': 'pl->addWidget(box);' in fw and 'studioGrid' not in fw and 'rows_.append({a, slider, spin, apply, def})' in fw,
