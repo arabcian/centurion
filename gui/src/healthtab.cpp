@@ -69,6 +69,8 @@
 #include <QVBoxLayout>
 #include <QSignalBlocker>
 #include <QGridLayout>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QKeySequence>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -79,6 +81,8 @@
 #include <cerrno>
 #include <cstring>
 #include <memory>
+#include <functional>
+#include <utility>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -121,6 +125,43 @@ static QString toolDescription(QWidget *page, const QString &key) {
     if (!badges.isEmpty()) tip += (tip.isEmpty() ? QString() : QStringLiteral("\n\n")) + badges.join(QStringLiteral(" · "));
     return tip;
 }
+
+// A diagnostic entry is a real, content-sized card.  Using a QPushButton with
+// child QLabel layouts caused descriptions to be cropped in compact grid cells:
+// QPushButton's own sizeHint does not reliably account for those child layouts.
+// This focusable QFrame calculates its height from its label layout and supports
+// mouse and keyboard activation without imposing a fixed or maximum height.
+class DiagnosticEntryCard final : public QFrame {
+public:
+    void setActivation(std::function<void()> activation) { activation_ = std::move(activation); }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton) event->accept();
+        else QFrame::mousePressEvent(event);
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint())) {
+            event->accept();
+            const auto action = activation_;  // the action may navigate away from this card
+            if (action) action();
+            return;
+        }
+        QFrame::mouseReleaseEvent(event);
+    }
+    void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter || event->key() == Qt::Key_Space) {
+            event->accept();
+            const auto action = activation_;
+            if (action) action();
+            return;
+        }
+        QFrame::keyPressEvent(event);
+    }
+
+private:
+    std::function<void()> activation_;
+};
 
 // One line per page for the navigation's tooltips: what the page answers.
 static QString pageAbout(const QString &key) {
@@ -1070,40 +1111,44 @@ void HealthTab::togglePin() {
 // existing page; its star is a separate, keyboard-focusable action and never opens that tool.
 QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     const toolcatalog::Info info = toolcatalog::tool(t.key);
-    auto *card = new QFrame;
+    // A content-sized clickable frame keeps the entire explanation visible and
+    // leaves the separate star control independently focusable/clickable.
+    auto *card = new DiagnosticEntryCard;
     card->setObjectName(featured ? QStringLiteral("healthFeaturedTool") : QStringLiteral("healthCatalogTool"));
+    card->setAccessibleName(tr("Open %1").arg(t.label));
+    card->setToolTip(toolDescription(t.page, t.key));
+    card->setCursor(Qt::PointingHandCursor);
+    card->setFocusPolicy(Qt::StrongFocus);
     card->setStyleSheet(QStringLiteral("QFrame#%1{background:%2;border:1px solid %3;border-radius:10px;}"
-                                       "QFrame#%1:hover{border-color:%4;}")
+                                       "QFrame#%1:hover,QFrame#%1:focus{border-color:%4;}"
+                                       "QFrame#%1 QLabel{background:transparent;border:0;}")
                         .arg(card->objectName(), theme::BG2, theme::BORDER, theme::ACCENT_SOFT));
     card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    QWidget *page = t.page;
+    card->setActivation([this, page] { openTool(page); });
+
     auto *row = new QHBoxLayout(card);
-    row->setContentsMargins(featured ? 12 : 10, featured ? 11 : 8, 9, featured ? 10 : 8);
-    row->setSpacing(4);
-    auto *open = new QPushButton;
-    open->setObjectName(QStringLiteral("healthOpenTool"));
-    open->setAccessibleName(tr("Open %1").arg(t.label));
-    open->setToolTip(toolDescription(t.page, t.key));
-    open->setCursor(Qt::PointingHandCursor);
-    open->setStyleSheet(QStringLiteral("QPushButton#healthOpenTool{background:transparent;border:0;text-align:left;"
-                                       "padding:0;min-height:0;max-height:999px;}"
-                                       "QPushButton#healthOpenTool:hover{background:transparent;}"));
-    open->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    auto *contents = new QVBoxLayout(open);
+    row->setContentsMargins(featured ? 12 : 10, featured ? 11 : 9, 9, featured ? 11 : 9);
+    row->setSpacing(7);
+    auto *textArea = new QWidget;
+    textArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    // No inner button: let the frame receive a click anywhere on the card body.
+    textArea->setAttribute(Qt::WA_TransparentForMouseEvents);
+    auto *contents = new QVBoxLayout(textArea);
     contents->setContentsMargins(0, 0, 0, 0);
-    contents->setSpacing(4);
+    contents->setSpacing(5);
     auto *title = new QLabel(t.label);
     title->setTextFormat(Qt::PlainText);
     title->setWordWrap(true);
-    title->setStyleSheet(QStringLiteral("color:%1;font-weight:700;background:transparent;border:0;").arg(theme::FG));
+    title->setStyleSheet(QStringLiteral("color:%1;font-weight:700;").arg(theme::FG));
     contents->addWidget(title);
     const QString about = t.page->property("toolAbout").toString().simplified();
     if (!about.isEmpty()) {
         auto *description = new QLabel(about);
         description->setWordWrap(true);
         description->setTextFormat(Qt::PlainText);
-        description->setMaximumHeight(description->fontMetrics().lineSpacing() * (featured ? 3 : 2) + 3);
-        description->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0;").arg(theme::FG_DIM));
-        contents->addWidget(description);
+        description->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM));
+        contents->addWidget(description);  // no line/height cap: never cut off text
     }
     QStringList notes = toolcatalog::badges(info.flags);
     const bool passive = info.flags == 0;
@@ -1111,17 +1156,11 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     auto *badge = new QLabel(notes.join(QStringLiteral("  ·  ")));
     badge->setTextFormat(Qt::PlainText);
     badge->setWordWrap(true);
-    badge->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0;")
+    badge->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;")
                          .arg(passive ? theme::FG_DIM : theme::WARN));
     contents->addWidget(badge);
-    for (QLabel *l : {title, badge}) l->setAttribute(Qt::WA_TransparentForMouseEvents);
-    if (!about.isEmpty()) {
-        // The description label is also non-interactive, so clicking anywhere opens the tool.
-        for (QLabel *l : open->findChildren<QLabel *>()) l->setAttribute(Qt::WA_TransparentForMouseEvents);
-    }
-    QWidget *page = t.page;
-    connect(open, &QPushButton::clicked, this, [this, page] { openTool(page); });
-    row->addWidget(open, 1);
+    row->addWidget(textArea, 1);
+
     auto *pin = new QToolButton;
     const bool pinned = toolList(QStringLiteral("health/pinned_tools")).contains(t.key);
     pin->setObjectName(QStringLiteral("healthCatalogPin"));
@@ -1150,8 +1189,10 @@ void HealthTab::rebuildToolCatalog() {
     const int width = std::max(toolScroll_->viewport()->width(), 300);
     // A compact list has room for real explanations. Four columns of labels were hard to scan.
     toolColumns_ = std::clamp(width / 480, 1, 2);
-    toolFeaturedColumns_ = std::clamp(width / 305, 1, 4);
-    toolSymptomColumns_ = std::clamp(width / 185, 1, 6);
+    toolFeaturedColumns_ = std::clamp(width / 390, 1, 3);
+    // Six tiny symptom tiles truncated their second lines even at desktop widths.
+    // Favor a balanced 3 x 2 grid, falling back to 2 or 1 columns when narrow.
+    toolSymptomColumns_ = width >= 1110 ? 3 : (width >= 710 ? 2 : 1);
     const QString terms = toolcatalog::explainTerms(query);
     toolTerms_->setText(terms);
     toolTerms_->setVisible(!terms.isEmpty());
@@ -1209,70 +1250,9 @@ void HealthTab::rebuildToolCatalog() {
                                    QLatin1Char('|') + t.key, info.keywords);
     };
 
-    // These counts are taken only from the existing Overview helper's recorded indicators.
-    // A tool flag, an unrun check, or an empty response is NEVER counted as a healthy component.
+    // The catalog is for finding tools, not a second health dashboard.
+    // System overview remains available in the Health navigation.
     if (query.isEmpty() && toolAreaFilter_.isEmpty() && toolFilter_ == QLatin1String("all")) {
-        const QJsonArray healthCards = overview_ ? overview_->cards() : QJsonArray{};
-        int normal = 0, watch = 0, attention = 0, unknown = 0;
-        for (const QJsonValue &cv : healthCards) {
-            const int level = cv.toObject().value(QStringLiteral("level")).toInt(-1);
-            if (level == 0) ++normal;
-            else if (level == 1) ++watch;
-            else if (level == 2) ++attention;
-            else ++unknown;
-        }
-        auto *stats = new QWidget;
-        auto *statusGrid = new QGridLayout(stats);
-        statusGrid->setContentsMargins(0, 0, 0, 0);
-        statusGrid->setSpacing(7);
-        const int statColumns = width >= 700 ? 4 : 2;
-        struct Status { QString label, count, detail; const char *color; };
-        const QString countUnavailable = tr("—");
-        const QList<Status> data = {
-            {tr("Needs attention"), healthCards.isEmpty() ? countUnavailable : QString::number(attention), tr("Recorded problems"), theme::DANGER},
-            {tr("Review"), healthCards.isEmpty() ? countUnavailable : QString::number(watch), tr("Check these indicators"), theme::WARN},
-            {tr("Normal"), healthCards.isEmpty() ? countUnavailable : QString::number(normal), tr("Checked areas only"), theme::OK},
-            {tr("Not checked"), healthCards.isEmpty() ? countUnavailable : QString::number(unknown),
-             tr("Unknown or insufficient data"), theme::FG_DIM},
-        };
-        for (int i = 0; i < data.size(); ++i) {
-            const Status &s = data[i];
-            auto *button = new QPushButton;
-            button->setObjectName(QStringLiteral("healthStatusTile"));
-            button->setCursor(Qt::PointingHandCursor);
-            button->setToolTip(tr("Open System overview. Figures come from the last recorded check, not a live scan."));
-            button->setStyleSheet(QStringLiteral("QPushButton#healthStatusTile{background:%1;border:1px solid %2;"
-                                                 "border-left:3px solid %3;border-radius:9px;text-align:left;padding:7px;}"
-                                                 "QPushButton#healthStatusTile:hover{border-color:%3;}")
-                                  .arg(theme::BG2, theme::BORDER, s.color));
-            auto *contents = new QVBoxLayout(button);
-            contents->setContentsMargins(8, 5, 8, 5);
-            contents->setSpacing(3);
-            auto *top = new QHBoxLayout;
-            auto *label = new QLabel(s.label);
-            label->setStyleSheet(QStringLiteral("color:%1;font-weight:600;background:transparent;border:0").arg(theme::FG));
-            auto *count = new QLabel(s.count);
-            count->setStyleSheet(QStringLiteral("color:%1;font-size:13pt;font-weight:700;background:transparent;border:0")
-                                 .arg(s.color));
-            top->addWidget(label, 1);
-            top->addWidget(count);
-            contents->addLayout(top);
-            auto *detail = new QLabel(s.detail);
-            detail->setWordWrap(true);
-            detail->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0").arg(theme::FG_DIM));
-            contents->addWidget(detail);
-            for (QLabel *l : {label, count, detail}) l->setAttribute(Qt::WA_TransparentForMouseEvents);
-            connect(button, &QPushButton::clicked, this, [this] { showPage(overview_); });
-            statusGrid->addWidget(button, i / statColumns, i % statColumns);
-        }
-        v->addWidget(stats);
-        auto *statusNote = new QLabel(healthCards.isEmpty()
-            ? tr("System overview has not been checked yet. Open it to read available indicators.")
-            : tr("Status reflects the last System overview reading. Not a full hardware test."));
-        statusNote->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::MUTED));
-        statusNote->setWordWrap(true);
-        v->addWidget(statusNote);
-
         v->addWidget(heading(tr("Troubleshoot by symptom"), tr("Start a guided, read-only investigation (H18).")));
         // Actual guided-triage categories, not decorative buttons that merely highlight a group.
         struct Symptom { const char *key; const char *label; const char *detail; };
@@ -1291,47 +1271,58 @@ void HealthTab::rebuildToolCatalog() {
         for (int c = 0; c < toolSymptomColumns_; ++c) sg->setColumnStretch(c, 1);
         for (int i = 0; i < symptoms.size(); ++i) {
             const Symptom &symptom = symptoms.at(i);
-            auto *b = new QPushButton;
-            b->setObjectName(QStringLiteral("healthSymptomTile"));
-            b->setCursor(Qt::PointingHandCursor);
-            b->setToolTip(tr("Open the guided investigation for %1. No settings are changed.").arg(tr(symptom.label)));
-            b->setMinimumHeight(62);
-            b->setStyleSheet(QStringLiteral("QPushButton#healthSymptomTile{background:%1;border:1px solid %2;"
-                                            "border-radius:10px;padding:6px;text-align:left;}"
-                                            "QPushButton#healthSymptomTile:hover{border-color:%3;background:%4;}")
-                             .arg(theme::BG2, theme::BORDER, theme::ACCENT, theme::BG3));
-            auto *col = new QVBoxLayout(b);
-            col->setContentsMargins(8, 7, 8, 7);
-            col->setSpacing(4);
+            auto *card = new DiagnosticEntryCard;
+            card->setObjectName(QStringLiteral("healthSymptomTile"));
+            card->setCursor(Qt::PointingHandCursor);
+            card->setFocusPolicy(Qt::StrongFocus);
+            card->setAccessibleName(tr("Investigate %1").arg(tr(symptom.label)));
+            card->setToolTip(tr("Open the guided investigation for %1. No settings are changed.").arg(tr(symptom.label)));
+            card->setMinimumHeight(84);
+            card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+            card->setStyleSheet(QStringLiteral("QFrame#healthSymptomTile{background:%1;border:1px solid %2;"
+                                               "border-radius:10px;}"
+                                               "QFrame#healthSymptomTile:hover,QFrame#healthSymptomTile:focus{"
+                                               "border-color:%3;background:%4;}"
+                                               "QFrame#healthSymptomTile QLabel{background:transparent;border:0;}")
+                                .arg(theme::BG2, theme::BORDER, theme::ACCENT, theme::BG3));
+            auto *col = new QVBoxLayout(card);
+            col->setContentsMargins(13, 10, 11, 10);
+            col->setSpacing(5);
+            auto *top = new QHBoxLayout;
+            top->setContentsMargins(0, 0, 0, 0);
+            top->setSpacing(9);
             auto *name = new QLabel(tr(symptom.label));
             name->setWordWrap(true);
-            name->setStyleSheet(QStringLiteral("color:%1;font-weight:700;background:transparent;border:0").arg(theme::FG));
+            name->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+            name->setStyleSheet(QStringLiteral("color:%1;font-weight:700;").arg(theme::FG));
+            auto *arrow = new QLabel(QStringLiteral("›"));
+            arrow->setStyleSheet(QStringLiteral("color:%1;font-weight:700;font-size:14pt;").arg(theme::ACCENT));
+            top->addWidget(name, 1);
+            top->addWidget(arrow, 0, Qt::AlignTop);
+            col->addLayout(top);
             auto *description = new QLabel(tr(symptom.detail));
             description->setWordWrap(true);
-            description->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;background:transparent;border:0").arg(theme::FG_DIM));
-            name->setAttribute(Qt::WA_TransparentForMouseEvents);
-            description->setAttribute(Qt::WA_TransparentForMouseEvents);
-            col->addWidget(name);
+            description->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+            description->setStyleSheet(QStringLiteral("color:%1;font-size:9pt;").arg(theme::FG_DIM));
             col->addWidget(description);
-            connect(b, &QPushButton::clicked, this, [this, key = QString::fromLatin1(symptom.key)] {
+            // Labels must not eat mouse clicks; the complete card is the target.
+            for (QLabel *label : {name, description, arrow})
+                label->setAttribute(Qt::WA_TransparentForMouseEvents);
+            card->setActivation([this, key = QString::fromLatin1(symptom.key)] {
                 showPage(investigations_);
                 investigations_->startTriage(key);
             });
-            sg->addWidget(b, i / toolSymptomColumns_, i % toolSymptomColumns_);
+            sg->addWidget(card, i / toolSymptomColumns_, i % toolSymptomColumns_);
         }
         v->addWidget(symptomGrid);
 
-        QStringList recommendedKeys = toolList(QStringLiteral("health/pinned_tools"));
-        for (const QString &key : {QStringLiteral("EDID / VRR"),
-                                  QStringLiteral("Wi-Fi / Bluetooth Firmware Doctor"),
-                                  QStringLiteral("Power Limit Source Map"), QStringLiteral("Hardware snapshot")}) {
-            if (!recommendedKeys.contains(key)) recommendedKeys << key;
-        }
-        const QList<const Tool *> recommended = byKeys(recommendedKeys.mid(0, 4));
-        if (!recommended.isEmpty()) {
-            v->addWidget(heading(tr("Quick access"), tr("Your favorites first, followed by common diagnostic tools.")));
-            v->addWidget(cardsGrid(recommended, toolFeaturedColumns_, true));
-        }
+        const QList<const Tool *> favorites = byKeys(toolList(QStringLiteral("health/pinned_tools")));
+        v->addWidget(heading(tr("Quick access"), favorites.isEmpty()
+            ? tr("No favorites yet. Star a tool in All tools to add it here.")
+            : tr("Only tools you have added to favorites are shown here.")));
+        if (!favorites.isEmpty())
+            v->addWidget(cardsGrid(favorites, std::min(toolFeaturedColumns_, int(favorites.size())), true));
+
     }
 
     auto *filtersTitle = heading(tr("All tools"), tr("Open a category or filter the directory."));
@@ -1478,8 +1469,9 @@ void HealthTab::rebuildToolCatalog() {
 bool HealthTab::eventFilter(QObject *watched, QEvent *event) {
     if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Resize &&
         (std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 480, 1, 2) != toolColumns_ ||
-         std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 305, 1, 4) != toolFeaturedColumns_ ||
-         std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 185, 1, 6) != toolSymptomColumns_))
+         std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 390, 1, 3) != toolFeaturedColumns_ ||
+         (std::max(toolScroll_->viewport()->width(), 300) >= 1110 ? 3 :
+          (std::max(toolScroll_->viewport()->width(), 300) >= 710 ? 2 : 1)) != toolSymptomColumns_))
         QTimer::singleShot(0, this, [this] { rebuildToolCatalog(); });  // not while the viewport is being laid out
     return QWidget::eventFilter(watched, event);
 }

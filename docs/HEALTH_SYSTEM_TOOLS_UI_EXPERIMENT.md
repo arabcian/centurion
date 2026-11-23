@@ -56,3 +56,7 @@ Derleme Qt6/QtSvg/QtDBus ve projedeki diğer ön koşulların sistemde zaten kur
 - `gui/src/overviewpage.cpp`
 - `gui/tests/health_catalog_redesign_static_test.py`
 
+
+## 24 Kasım 2026 ek düzenlemesi
+
+Bu ilk tasarım denemesindeki durum kutuları, favori olmadan Quick Access'e eklenen varsayılan araçlar ve altı sütunlu çok küçük semptom kutuları, kullanıcı geribildirimi üzerine **bir sonraki kaynak ZIP'inde** yeniden düzenlenmiştir. Güncel açıklama: `docs/HEALTH_SYSTEM_TOOLS_UI_REFINEMENT_2026-11-24.md`.
