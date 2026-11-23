@@ -125,7 +125,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     };
 
     // ── Centurion configuration ──
-    auto *cb = new QGroupBox(QStringLiteral("Centurion configuration"));
+    auto *cb = new QGroupBox(QStringLiteral("Centurion Configuration"));
     auto *cv = new QVBoxLayout(cb);
     cv->setContentsMargins(8, 6, 8, 6);
     cv->setSpacing(4);
@@ -183,7 +183,7 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     v->addWidget(cb);
 
     // ── System image ──
-    auto *sb = new QGroupBox(QStringLiteral("System image (tar of /)"));
+    auto *sb = new QGroupBox(QStringLiteral("System Image (tar of /)"));
     auto *sv = new QVBoxLayout(sb);
     sv->setContentsMargins(8, 6, 8, 6);
     sv->setSpacing(4);
@@ -558,7 +558,7 @@ void BackupPage::refreshList() {
             if (v.value(QLatin1String("ok")).toBool()) notes << tr("readable %1").arg(shortDate(str(v, "when")));
             else { notes.prepend(tr("FAILED verification %1: %2").arg(shortDate(str(v, "when")), str(v, "error"))); bad = true; }
         }
-        auto *it = new QTreeWidgetItem({e.fi.fileName(), e.image ? tr("System image") : tr("Centurion configuration"),
+        auto *it = new QTreeWidgetItem({e.fi.fileName(), e.image ? tr("System Image") : tr("Centurion Configuration"),
                                         human(e.fi.size()), e.fi.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
                                         notes.join(QStringLiteral(" · "))});
         it->setData(0, PathRole, e.fi.absoluteFilePath());
@@ -974,7 +974,7 @@ void BackupPage::systemBackup() {
 
 bool BackupPage::askNewPassphrase(QString *pass) {
     QDialog dlg(this);
-    dlg.setWindowTitle(tr("Passphrase for the image"));
+    dlg.setWindowTitle(tr("Passphrase for the Image"));
     auto *v = new QVBoxLayout(&dlg);
     auto *info = new QLabel(tr("The image is encrypted with this passphrase (age, scrypt). It is needed to verify or restore the image "
                                "and is not stored anywhere: <b>if it is lost, the image is lost</b>. An increment must use the "
@@ -1071,7 +1071,7 @@ bool BackupPage::askSecret(const QStringList &archives, QJsonObject *req) {
     }
     const QString name = archives.size() == 1 ? QFileInfo(archives.first()).fileName() : tr("%n encrypted archive(s)", nullptr, int(archives.size()));
     QDialog dlg(this);
-    dlg.setWindowTitle(tr("Encrypted image"));
+    dlg.setWindowTitle(tr("Encrypted Image"));
     auto *v = new QVBoxLayout(&dlg);
     auto *info = new QLabel(kind == QLatin1String("passphrase") ? tr("%1 is encrypted with a passphrase. Type it:").arg(name)
                           : kind == QLatin1String("recipient") ? tr("%1 is encrypted to an age key. Paste its AGE-SECRET-KEY-1… line or load the key file:").arg(name)
@@ -1159,7 +1159,7 @@ void BackupPage::showDiff(const QJsonObject &r) {
     const QJsonObject a = r.value("a").toObject(), b = r.value("b").toObject();
     const bool now = b.value(QLatin1String("current")).toBool();
     QDialog dlg(this);
-    dlg.setWindowTitle(now ? tr("Configuration: backup → now") : tr("Configuration: older → newer backup"));
+    dlg.setWindowTitle(now ? tr("Configuration: Backup → Now") : tr("Configuration: Older → Newer Backup"));
     dlg.resize(980, 640);
     auto *v = new QVBoxLayout(&dlg);
     auto *head = new QLabel(tr("<b>Before</b>: %1 (made %2)<br><b>After</b>: %3")

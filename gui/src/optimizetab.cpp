@@ -1415,8 +1415,8 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         grid->setRowStretch(line, 1);
         if (tab >= 0) groups_->setTabText(tab, QStringLiteral("%1  %2").arg(displayGroup).arg(available));
     }
-    groups_->addTab(buildLaunchPage(), tr("Game launch"));
-    groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), tr("Boot options"));  // built on first open
+    groups_->addTab(buildLaunchPage(), tr("Game Launch"));
+    groups_->addTab(new LazyWidget([] { return new BootAdvisor; }), tr("Boot Options"));  // built on first open
     if (settingSearchModel_) {
         QStringList entries;
         for (const Row &r : rows_) if (!r.label.isEmpty() && r.home.isEmpty())
@@ -2241,7 +2241,7 @@ void OptimizeTab::editAutotuneWeights() {
     const QList<double> eff = weightRow(adapted.value(QStringLiteral("weights")).toArray(), def);
     const QJsonObject effWhy = adapted.value(QStringLiteral("why")).toObject();
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("Autotune weights — %1").arg(autoGoal_->currentText()));
+    dlg.setWindowTitle(QStringLiteral("Autotune Weights — %1").arg(autoGoal_->currentText()));
     auto *form = new QFormLayout(&dlg);
     form->addRow(muted(QStringLiteral("0 = ignore this objective, 1 = the goal's normal emphasis, up to 3.\n"
                                       "Stability cannot go below 0.5. Saved per goal.\n"
@@ -2334,7 +2334,7 @@ void OptimizeTab::refreshCalibrationStatus() {
 
 void OptimizeTab::scheduleBootCalibration() {
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("Calibrate at next boot"));
+    dlg.setWindowTitle(QStringLiteral("Calibrate at Next Boot"));
     auto *form = new QFormLayout(&dlg);
     form->addRow(muted(QStringLiteral("At the next boot the boot preset and scenes are held (the machine stays at its boot state),\n"
                                       "and the sessions run once it is on AC and nobody has touched it for 5 minutes.\n"
@@ -2519,7 +2519,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     const QHash<QString, QString> since = autotunereport::changedSinceLast(d);
     auto *evidence = new QPushButton(tr("Calibration Confidence Explorer…"));
     evidence->setToolTip(tr("Inspect sample coverage, uncertainty and which knob needs more evidence; read-only."));
-    connect(evidence, &QPushButton::clicked, &dlg, [this, d] { insights::show(this, tr("Calibration confidence"), insights::confidence(d)); });
+    connect(evidence, &QPushButton::clicked, &dlg, [this, d] { insights::show(this, tr("Calibration Confidence"), insights::confidence(d)); });
     v->addWidget(evidence);
     auto *onlyChanges = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Only changes"));
     v->addWidget(onlyChanges);

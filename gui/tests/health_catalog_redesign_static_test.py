@@ -30,7 +30,7 @@ checks = {
     'symptom tiles remain fully interactive by mouse and keyboard': has_all('mouseReleaseEvent(QMouseEvent *event)', 'keyPressEvent(QKeyEvent *event)', 'Qt::Key_Return', 'Qt::Key_Space', 'setActivation([this, key = QString::fromLatin1(symptom.key)]'),
     'symptom labels and explanations word wrap': has_all('auto *name = new QLabel(tr(symptom.label))', 'auto *description = new QLabel(tr(symptom.detail))', 'description->setWordWrap(true)'),
     'favorites are the exclusive source of Quick access cards': 'const QList<const Tool *> favorites = byKeys(toolList(QStringLiteral("health/pinned_tools")))' in catalog,
-    'Quick access has a small empty state, not random default cards': all(x in catalog for x in ('No favorites yet.', 'if (!favorites.isEmpty())', 'v->addWidget(heading(tr("Quick access")')) and 'recommendedKeys' not in catalog,
+    'Quick access has a small empty state, not random default cards': all(x in catalog for x in ('No favorites yet.', 'if (!favorites.isEmpty())', 'v->addWidget(heading(tr("Quick Access")')) and 'recommendedKeys' not in catalog,
     'quick access no hardcoded EDID/firmware/power defaults': all(k not in catalog for k in ('QStringLiteral("EDID / VRR")', 'QStringLiteral("Power Limit Source Map")', 'QStringLiteral("Hardware snapshot")')),
     'favorite cards honor available width': 'std::min(toolFeaturedColumns_, int(favorites.size()))' in catalog and 'width / 390, 1, 3' in catalog,
     'cards let text grow instead of clipping': 'setMaximumHeight' not in card and 'QFrame' in card and 'auto *description = new QLabel(about)' in card,

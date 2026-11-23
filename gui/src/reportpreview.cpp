@@ -12,7 +12,7 @@
 #include <QVBoxLayout>
 
 ReportPreview::ReportPreview(const QJsonObject &preview, QWidget *parent) : QDialog(parent) {
-    setWindowTitle(tr("Diagnostic report"));
+    setWindowTitle(tr("Diagnostic Report"));
     resize(860, 560);
     auto *v = new QVBoxLayout(this);
 

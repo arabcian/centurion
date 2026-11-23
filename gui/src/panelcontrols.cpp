@@ -13,7 +13,7 @@
 #include <QVBoxLayout>
 
 PanelControlsDialog::PanelControlsDialog(QWidget *parent) : QDialog(parent) {
-    setWindowTitle(tr("Panel controls"));
+    setWindowTitle(tr("Panel Controls"));
     auto *v = new QVBoxLayout(this);
     auto *intro = new QLabel(tr("The built-in screen's brightness and refresh rate. Brightness is the backlight device in "
                                 "/sys/class/backlight; the refresh rate goes through the desktop's own tool (kscreen-doctor, "

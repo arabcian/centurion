@@ -173,7 +173,7 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
     // Firmware CPU OC (LENOVO_CPU_METHOD via legion-gpu-helper). Same store as the
     // BIOS setup page; applied by the firmware at the next boot.
     {
-        auto *oc = new QGroupBox(QStringLiteral("CPU overclocking (firmware, next boot)"));
+        auto *oc = new QGroupBox(QStringLiteral("CPU Overclocking (Firmware, Next Boot)"));
         auto *ol = new QHBoxLayout(oc);
         ol->setSpacing(10);
         auto *note = new QLabel;

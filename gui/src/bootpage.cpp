@@ -121,7 +121,7 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     auto *split = new QSplitter(Qt::Vertical);
     list_ = new QTreeWidget;
     list_->setColumnCount(5);
-    list_->setHeaderLabels({tr("Started"), tr("Lasted"), tr("Ended"), tr("Kernel events"), tr("Curves in effect")});
+    list_->setHeaderLabels({tr("Started"), tr("Lasted"), tr("Ended"), tr("Kernel Events"), tr("Curves in Effect")});
     list_->setRootIsDecorated(false);
     list_->setAlternatingRowColors(true);
     list_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);

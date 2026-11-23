@@ -450,7 +450,7 @@ void KlogPage::contextMenu(const QPoint &pos) {
         if (!ev.isEmpty()) {
             menu->addAction(tr("What does this mean?"), this, [this, ev] {
                 QDialog dlg(this);
-                dlg.setWindowTitle(tr("Kernel message explained"));
+                dlg.setWindowTitle(tr("Kernel Message Explained"));
                 dlg.resize(620, 480);
                 auto *v = new QVBoxLayout(&dlg);
                 auto *view = new QTextBrowser;

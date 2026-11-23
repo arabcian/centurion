@@ -74,7 +74,7 @@ Report mceAtlas(const QJsonObject &scan, const QHash<int, CoreRef> &cores) {
         r.add(Level::Ok, tr("No machine check in this boot's kernel log"));
     } else {
         Table t;
-        t.title = tr("Machine checks by core and unit");
+        t.title = tr("Machine Checks by Core and Unit");
         t.headers = {tr("Core"), tr("Logical CPU"), tr("Unit"), tr("Corrected"), tr("Uncorrected"), tr("Last (uptime)")};
         for (const Agg &a : by) t.add({a.core, a.cpu, a.unit, QString::number(a.ce), QString::number(a.ue), a.last},
                                      a.ue ? Level::Attention : a.own ? Level::Review : Level::Info);
@@ -106,7 +106,7 @@ Report mceAtlas(const QJsonObject &scan, const QHash<int, CoreRef> &cores) {
     }
     if (!ccds.isEmpty()) {
         Table m;
-        m.title = tr("Core map (logical CPUs per CCD)");
+        m.title = tr("Core Map (Logical CPUs per CCD)");
         m.headers = {tr("CCD"), tr("L3"), tr("Logical CPUs")};
         for (auto it = ccds.begin(); it != ccds.end(); ++it) {
             QStringList cpus = it.value().second;
@@ -147,7 +147,7 @@ Report aerDelta(const QJsonObject &scan, const QJsonObject &previous) {
     const QJsonArray now = scan.value(QStringLiteral("aer")).toArray();
     if (now.isEmpty()) { r.add(Level::Unknown, tr("No device exports AER counters"), tr("The kernel needs CONFIG_PCIEAER and the platform must grant AER to the OS.")); return r; }
     Table t;
-    t.title = tr("Devices with errors");
+    t.title = tr("Devices with Errors");
     t.headers = {tr("Device"), tr("Corrected"), tr("Since last scan"), tr("Non-fatal"), tr("Fatal")};
     int quiet = 0;
     for (const QJsonValue &v : now) {
@@ -223,7 +223,7 @@ Report xidCases(const QJsonObject &scan) {
               scan.contains(QStringLiteral("xid")) ? tr("No NVIDIA Xid or GSP event in this boot") : tr("This helper did not return Xid events"));
     } else {
         Table t;
-        t.title = tr("Xid events by code");
+        t.title = tr("Xid Events by Code");
         t.headers = {tr("Code"), tr("Count"), tr("Meaning"), tr("GPU"), tr("First"), tr("Last")};
         for (const G &g : by) {
             const Level l = g.kind == QStringLiteral("gsp") ? Level::Attention : xidLevel(g.code);
@@ -238,7 +238,7 @@ Report xidCases(const QJsonObject &scan) {
     const QJsonArray cases = scan.value(QStringLiteral("xid_cases")).toArray();
     if (!cases.isEmpty()) {
         Table c;
-        c.title = tr("Xid 154 recoveries and what preceded them (5 min, same boot)");
+        c.title = tr("Xid 154 Recoveries and What Preceded Them (5 min, same boot)");
         c.headers = {tr("When"), tr("GPU"), tr("Recovery"), tr("Before it")};
         for (const QJsonValue &v : cases) {
             const QJsonObject o = v.toObject();
@@ -300,7 +300,7 @@ Report f2fsGuard(const QJsonObject &scan, const QList<F2fsVolume> &volumes, cons
              << tr("fsck.f2fs must run on an unmounted volume: for the root file system, from a live USB or at boot.");
     if (volumes.isEmpty()) r.add(Level::Info, tr("No F2FS volume is mounted"));
     Table t;
-    t.title = tr("Mounted F2FS volumes");
+    t.title = tr("Mounted F2FS Volumes");
     t.headers = {tr("Volume"), tr("Mounted at"), tr("Needs fsck"), tr("Checkpoint"), tr("On-disk errors"), tr("Written (lifetime)")};
     for (const F2fsVolume &v : volumes) {
         quint64 sb = 0, cp = 0, err = 0;
@@ -335,7 +335,7 @@ Report f2fsGuard(const QJsonObject &scan, const QList<F2fsVolume> &volumes, cons
     if (!volumes.isEmpty()) r.tables << t;
     // Kernel log: this boot's classified errors, then the saved ones of earlier boots.
     Table e;
-    e.title = tr("F2FS errors in the kernel log");
+    e.title = tr("F2FS Errors in the Kernel Log");
     e.headers = {tr("Boot"), tr("When"), tr("Message")};
     const QString boot = scan.value(QStringLiteral("boot_id")).toString().left(8);
     QSet<QString> seen;
@@ -410,7 +410,7 @@ Report radioLedger(const QJsonObject &scan, const QList<diagsrc::LogLine> &histo
         return r;
     }
     Table t;
-    t.title = tr("Failures per adapter");
+    t.title = tr("Failures per Adapter");
     t.headers = {tr("Adapter"), tr("Type"), tr("Firmware load"), tr("Crash / reset"), tr("Timeout"), tr("Other"), tr("Boots")};
     for (const G &g : by) {
         const Level l = g.load ? Level::Attention : g.crash + g.timeout >= 3 ? Level::Review : Level::Info;

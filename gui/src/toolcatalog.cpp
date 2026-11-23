@@ -77,14 +77,14 @@ QList<Area> areas() {
 
 QString areaName(Area a) {
     switch (a) {
-    case Area::Cpu: return tx(QT_TRANSLATE_NOOP("toolcatalog", "CPU & memory"));
-    case Area::Graphics: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Graphics & display"));
+    case Area::Cpu: return tx(QT_TRANSLATE_NOOP("toolcatalog", "CPU & Memory"));
+    case Area::Graphics: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Graphics & Display"));
     case Area::Storage: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Storage"));
-    case Area::Network: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Network & wireless"));
-    case Area::Power: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Power & thermal"));
-    case Area::Devices: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Devices & buses"));
-    case Area::Firmware: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Firmware & kernel"));
-    case Area::System: return tx(QT_TRANSLATE_NOOP("toolcatalog", "System & configuration"));
+    case Area::Network: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Network & Wireless"));
+    case Area::Power: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Power & Thermal"));
+    case Area::Devices: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Devices & Buses"));
+    case Area::Firmware: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Firmware & Kernel"));
+    case Area::System: return tx(QT_TRANSLATE_NOOP("toolcatalog", "System & Configuration"));
     }
     return {};
 }

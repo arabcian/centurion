@@ -26,7 +26,7 @@ static QLabel *dim(const QString &t, const char *color = theme::MUTED) {
 }
 
 NvRegDialog::NvRegDialog(QWidget *parent) : QDialog(parent) {
-    setWindowTitle(QStringLiteral("NVIDIA driver options"));
+    setWindowTitle(QStringLiteral("NVIDIA Driver Options"));
     resize(900, 640);
     auto *root = new QVBoxLayout(this);
 

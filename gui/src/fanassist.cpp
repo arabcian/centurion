@@ -119,7 +119,7 @@ const FanCurveFan *FanAssistDialog::cpuFan() const {
 }
 
 FanAssistDialog::FanAssistDialog(const QVector<FanCurveFan> &fans, QWidget *parent) : QDialog(parent), fans_(fans) {
-    setWindowTitle(QStringLiteral("Fan curve assistant"));
+    setWindowTitle(QStringLiteral("Fan Curve Assistant"));
     auto *v = new QVBoxLayout(this);
     auto *intro = new QLabel(QStringLiteral(
         "Sets the firmware's CPU and GPU temperature limits — the chip throttles there instead of running hotter — and "

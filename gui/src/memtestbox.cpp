@@ -44,7 +44,7 @@ MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
     // A titled frame of its own: each test is a separate run, not part of the one above.
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
-    auto *frame = new QGroupBox(tr("Memory test"));
+    auto *frame = new QGroupBox(tr("Memory Test"));
     frame->setObjectName(QStringLiteral("box_purple"));
     outer->addWidget(frame);
     auto *root = new QVBoxLayout(frame);
@@ -77,7 +77,7 @@ MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
     root->addWidget(klogNote_);
 
     auto *row = new QHBoxLayout;
-    row->addWidget(new QLabel(tr("Free memory to test")));
+    row->addWidget(new QLabel(tr("Free Memory to Test")));
     percent_ = new QSpinBox;
     percent_->setRange(10, 90);
     percent_->setSingleStep(10);
@@ -106,7 +106,7 @@ MemTestBox::MemTestBox(QWidget *parent) : QWidget(parent) {
 
     results_ = new QTreeWidget;
     results_->setRootIsDecorated(false);
-    results_->setHeaderLabels({tr("Date"), tr("Tool"), tr("Memory"), tr("Duration"), tr("Result"), tr("BIOS memory timings")});
+    results_->setHeaderLabels({tr("Date"), tr("Tool"), tr("Memory"), tr("Duration"), tr("Result"), tr("BIOS Memory Timings")});
     results_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     results_->setMaximumHeight(160);
     root->addWidget(results_);

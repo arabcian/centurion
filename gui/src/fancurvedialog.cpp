@@ -110,7 +110,7 @@ void FanCurveWidget::paintEvent(QPaintEvent *) {
 
 FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QWidget *parent)
     : QDialog(parent), helper_(helper) {
-    setWindowTitle("Fan curve (Custom mode)");
+    setWindowTitle("Fan Curve (Custom Mode)");
     setAttribute(Qt::WA_DeleteOnClose);
     resize(760, 640);
     auto *v = new QVBoxLayout(this);

@@ -39,7 +39,7 @@ GpuStressBox::GpuStressBox(QWidget *parent) : QWidget(parent) {
     // A titled frame of its own: each test is a separate run, not part of the one above.
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
-    auto *frame = new QGroupBox(tr("GPU test"));
+    auto *frame = new QGroupBox(tr("GPU Test"));
     frame->setObjectName(QStringLiteral("box_green"));
     outer->addWidget(frame);
     auto *root = new QVBoxLayout(frame);
@@ -77,7 +77,7 @@ GpuStressBox::GpuStressBox(QWidget *parent) : QWidget(parent) {
     mode_->addItem(tr("VRAM"), static_cast<int>(gpustress::Mode::Vram));
     mode_->addItem(tr("Core"), static_cast<int>(gpustress::Mode::Core));
     row->addWidget(mode_);
-    percentLabel_ = new QLabel(tr("VRAM to test"));
+    percentLabel_ = new QLabel(tr("VRAM to Test"));
     row->addWidget(percentLabel_);
     percent_ = new QSpinBox;
     percent_->setRange(gpustress::MIN_PERCENT, gpustress::MAX_PERCENT);
@@ -112,7 +112,7 @@ GpuStressBox::GpuStressBox(QWidget *parent) : QWidget(parent) {
 
     results_ = new QTreeWidget;
     results_->setRootIsDecorated(false);
-    results_->setHeaderLabels({tr("Date"), tr("Test"), tr("GPU"), tr("Size"), tr("Duration"), tr("Passes"), tr("Errors"), tr("Result"), tr("GPU curve")});
+    results_->setHeaderLabels({tr("Date"), tr("Test"), tr("GPU"), tr("Size"), tr("Duration"), tr("Passes"), tr("Errors"), tr("Result"), tr("GPU Curve")});
     results_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     results_->setMaximumHeight(160);
     root->addWidget(results_);

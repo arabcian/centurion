@@ -374,7 +374,7 @@ void OverviewPage::report() {
     userhelper::run(preview, this, [this](const QJsonObject &p) {
         reporting_ = false;
         if (!p.value(QStringLiteral("ok")).toBool()) {
-            QMessageBox::warning(this, tr("Diagnostic report"), tr("The report could not be built: %1").arg(p.value(QStringLiteral("error")).toString()));
+            QMessageBox::warning(this, tr("Diagnostic Report"), tr("The report could not be built: %1").arg(p.value(QStringLiteral("error")).toString()));
             return;
         }
         ReportPreview dialog(p, this);
@@ -397,10 +397,10 @@ void OverviewPage::report() {
                               {QStringLiteral("out"), path}};
         userhelper::run(out, this, [this](const QJsonObject &w) {
             if (!w.value(QStringLiteral("ok")).toBool()) {
-                QMessageBox::warning(this, tr("Diagnostic report"), tr("The archive could not be written: %1").arg(w.value(QStringLiteral("error")).toString()));
+                QMessageBox::warning(this, tr("Diagnostic Report"), tr("The archive could not be written: %1").arg(w.value(QStringLiteral("error")).toString()));
                 return;
             }
-            QMessageBox::information(this, tr("Diagnostic report"),
+            QMessageBox::information(this, tr("Diagnostic Report"),
                 tr("Saved %1 (%2 KiB, %3 files).\n\nSerial numbers, UUIDs, MAC and IP addresses were replaced before saving.")
                     .arg(w.value(QStringLiteral("file")).toString())
                     .arg((w.value(QStringLiteral("bytes")).toInteger() + 1023) / 1024)
@@ -412,9 +412,9 @@ void OverviewPage::report() {
 QString OverviewPage::cardTitle(const QString &id) {
     if (id == QLatin1String("kernel")) return tr("Kernel errors");
     if (id == QLatin1String("unclean")) return tr("Unclean shutdowns");
-    if (id == QLatin1String("battery")) return tr("Battery health");
+    if (id == QLatin1String("battery")) return tr("Battery Health");
     if (id == QLatin1String("cooling")) return tr("Cooling test");
-    if (id == QLatin1String("disk")) return tr("Drive health");
+    if (id == QLatin1String("disk")) return tr("Drive Health");
     if (id == QLatin1String("backup")) return tr("Last backup");
     if (id == QLatin1String("dgpu")) return tr("dGPU awake time today");
     if (id == QLatin1String("sleep")) return tr("Sleep drain");

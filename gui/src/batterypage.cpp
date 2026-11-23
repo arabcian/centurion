@@ -80,7 +80,7 @@ BatteryPage::BatteryPage(QWidget *parent) : QWidget(parent) {
     now_->setTextFormat(Qt::RichText);
     root->addWidget(now_);
 
-    root->addWidget(new QLabel(QStringLiteral("<b>On battery, per scene</b>")));
+    root->addWidget(new QLabel(QStringLiteral("<b>On Battery, per Scene</b>")));
     scenes_ = table({QStringLiteral("Scene"), QStringLiteral("Time on battery"), QStringLiteral("Average draw"), QStringLiteral("Full charge lasts ~")});
     root->addWidget(scenes_, 1);
     scenesChart_ = new BarChart;
@@ -88,7 +88,7 @@ BatteryPage::BatteryPage(QWidget *parent) : QWidget(parent) {
     root->addWidget(muted(QStringLiteral("Energy actually taken from the battery while each scene was active (energy counter differences, "
                                          "sleep excluded). \"Full charge lasts\" = today's full capacity ÷ the average draw.")));
 
-    root->addWidget(new QLabel(QStringLiteral("<b>Capacity history</b>")));
+    root->addWidget(new QLabel(QStringLiteral("<b>Capacity History</b>")));
     batInfo_ = new QLabel;
     batInfo_->setTextFormat(Qt::RichText);
     batInfo_->setVisible(false);
@@ -104,7 +104,7 @@ BatteryPage::BatteryPage(QWidget *parent) : QWidget(parent) {
     capacity_ = table({QStringLiteral("Date"), QStringLiteral("Full charge"), QStringLiteral("Health"), QStringLiteral("Cycles")});
     root->addWidget(capacity_, 1);
 
-    root->addWidget(new QLabel(tr("<b>Charger use</b>")));
+    root->addWidget(new QLabel(tr("<b>Charger Use</b>")));
     advice_ = new QLabel;
     advice_->setWordWrap(true);
     root->addWidget(advice_);
@@ -301,7 +301,7 @@ QString BatteryPage::chargeFile() {
 
 void BatteryPage::setLongLife() {
     if (chargeFile_.isEmpty()) return;
-    if (QMessageBox::question(this, tr("Charge mode"),
+    if (QMessageBox::question(this, tr("Charge Mode"),
                               tr("Set the battery charge mode to Long_Life? Charging then stops around 80 %. Asks for your password.")) != QMessageBox::Yes)
         return;
     privileged::run(privileged::helperPath(QStringLiteral("legion-profile-helper")),

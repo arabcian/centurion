@@ -47,7 +47,7 @@ QByteArray encodeBootLogo(const QImage &src, int w, int h, int maxBytes) {
 bool BootLogoDialog::available() { return QFileInfo::exists(QString::fromLatin1(DESC_VAR)); }
 
 BootLogoDialog::BootLogoDialog(QWidget *parent) : QDialog(parent) {
-    setWindowTitle(tr("Boot logo"));
+    setWindowTitle(tr("Boot Logo"));
     setAttribute(Qt::WA_DeleteOnClose);
     resize(620, 560);
     auto *v = new QVBoxLayout(this);
@@ -156,7 +156,7 @@ void BootLogoDialog::apply() {
     const int w = status_.value("width").toInt(), h = status_.value("height").toInt();
     const QByteArray jpeg = encodeBootLogo(picked_, w, h, MAX_LOGO);
     if (jpeg.isEmpty()) { msg_->setText(tr("Could not encode the picture as JPEG.")); return; }
-    if (QMessageBox::question(this, tr("Boot logo"),
+    if (QMessageBox::question(this, tr("Boot Logo"),
             tr("Write this picture as the boot logo?\n\nIt is saved as EFI/Lenovo/Logo/mylogo_%1x%2.jpg on the EFI "
                "partition and the firmware's logo settings are switched on. It shows from the next boot; "
                "\"Restore Lenovo logo\" undoes it.").arg(w).arg(h)) != QMessageBox::Yes) return;
@@ -166,7 +166,7 @@ void BootLogoDialog::apply() {
                     QJsonObject{{"op", "boot_logo_set"}, {"jpeg_hex", QString::fromLatin1(jpeg.toHex())}}, this,
                     [this](const privileged::Result &r) {
         if (!r.ok()) {
-            QMessageBox::warning(this, tr("Boot logo"), tr("The boot logo was not changed:\n\n%1").arg(r.message())
+            QMessageBox::warning(this, tr("Boot Logo"), tr("The boot logo was not changed:\n\n%1").arg(r.message())
                                  + (r.json.value("state").toString() == QLatin1String("unknown")
                                         ? tr("\n\nA step could not be undone; \"Restore Lenovo logo\" puts the default back.") : QString()));
         }
@@ -175,12 +175,12 @@ void BootLogoDialog::apply() {
 }
 
 void BootLogoDialog::restore() {
-    if (QMessageBox::question(this, tr("Boot logo"), tr("Switch back to the Lenovo logo and delete the custom picture from the EFI partition?"))
+    if (QMessageBox::question(this, tr("Boot Logo"), tr("Switch back to the Lenovo logo and delete the custom picture from the EFI partition?"))
         != QMessageBox::Yes) return;
     setBusy(true);
     privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER), QJsonObject{{"op", "boot_logo_reset"}}, this,
                     [this](const privileged::Result &r) {
-        if (!r.ok()) QMessageBox::warning(this, tr("Boot logo"), tr("Could not restore the Lenovo logo:\n\n%1").arg(r.message()));
+        if (!r.ok()) QMessageBox::warning(this, tr("Boot Logo"), tr("Could not restore the Lenovo logo:\n\n%1").arg(r.message()));
         load(r.ok() ? tr("Lenovo logo restored — from the next boot.") : QString());
     }, privileged::FIRMWARE_TIMEOUT_MS);
 }

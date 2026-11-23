@@ -314,7 +314,7 @@ static QWizardPage *finishPage(MainWindow *win) {
 }
 
 FirstRunWizard::FirstRunWizard(MainWindow *win) : QWizard(win) {
-    setWindowTitle(FirstRunWizard::tr("Centurion setup"));
+    setWindowTitle(FirstRunWizard::tr("Centurion Setup"));
     setAttribute(Qt::WA_DeleteOnClose);
     setOption(QWizard::NoBackButtonOnStartPage);
     setButtonText(QWizard::CancelButton, FirstRunWizard::tr("Skip setup"));

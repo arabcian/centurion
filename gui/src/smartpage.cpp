@@ -71,7 +71,7 @@ SmartPage::SmartPage(QWidget *parent) : QWidget(parent) {
     v->addWidget(summaryView_, 1);
 
     table_ = new QTreeWidget;
-    table_->setHeaderLabels({QStringLiteral("Disk"), QStringLiteral("Model"), QStringLiteral("Temp"), QStringLiteral("Life used"),
+    table_->setHeaderLabels({QStringLiteral("Disk"), QStringLiteral("Model"), QStringLiteral("Temp"), QStringLiteral("Life Used"),
                              QStringLiteral("Spare"), QStringLiteral("Media errors"), QStringLiteral("Media, 30 days"),
                              QStringLiteral("Unsafe shutdowns"), QStringLiteral("Written"), QStringLiteral("Critical"),
                              QStringLiteral("Self-test")});

@@ -233,10 +233,10 @@ Report nvmeHealth(const QJsonObject &nv) {
     if (ctrls.isEmpty()) { r.add(Level::Unknown, tr("No NVMe controller found")); return r; }
     Table drives;
     drives.title = tr("Drives");
-    drives.headers = {tr("Drive"), tr("Model"), tr("Temp"), tr("Life used"), tr("Spare"), tr("Media errors"),
+    drives.headers = {tr("Drive"), tr("Model"), tr("Temp"), tr("Life Used"), tr("Spare"), tr("Media errors"),
                       tr("Error log"), tr("Unsafe shutdowns"), tr("Power-on"), tr("Written")};
     Table errors;
-    errors.title = tr("Error log entries (newest first)");
+    errors.title = tr("Error Log Entries (Newest First)");
     errors.headers = {tr("Drive"), tr("Error #"), tr("Status"), tr("Queue"), tr("LBA")};
     for (const QJsonValue &cv : ctrls) {
         const QJsonObject c = cv.toObject();
@@ -406,7 +406,7 @@ Report usbStability(const QList<diagsrc::LogLine> &kernel, const QHash<QString, 
         }
     }
     Table t;
-    t.title = tr("USB problems by port");
+    t.title = tr("USB Problems by Port");
     t.headers = {tr("Port"), tr("Device there now"), tr("Problem"), tr("Count"), tr("Boots"), tr("Last"), tr("Meaning")};
     QList<Hit> list = hits.values();
     std::sort(list.begin(), list.end(), [](const Hit &a, const Hit &b) { return a.level != b.level ? a.level > b.level : a.count > b.count; });
@@ -485,7 +485,7 @@ Report sleepMatrix(const SleepInputs &in, const QJsonArray &boots) {
         r.add(Level::Unknown, tr("Kernel suspend counters not available"), tr("/sys/power/suspend_stats is missing (an older kernel, or one without CONFIG_PM_SLEEP)."));
     } else {
         Table k;
-        k.title = tr("This boot (kernel suspend_stats)");
+        k.title = tr("This Boot (kernel suspend_stats)");
         k.headers = {tr("Counter"), tr("Value")};
         for (auto it = in.stats.begin(); it != in.stats.end(); ++it) k.add({it.key(), it.value().toString()},
             it.key().startsWith(QStringLiteral("failed_")) && it.value().toString().toInt() > 0 ? Level::Review : Level::Info);
@@ -572,7 +572,7 @@ Report sleepMatrix(const SleepInputs &in, const QJsonArray &boots) {
               tr("The sleep hook (centurion-sleep-log) writes one line per sleep; none is there yet, or the hook is not installed."));
     } else {
         Table t;
-        t.title = tr("Sleeps per boot");
+        t.title = tr("Sleeps per Boot");
         t.headers = {tr("Boot"), tr("Started"), tr("Boot ended"), tr("Sleeps"), tr("Median length"), tr("dGPU awake on entry"),
                      tr("No HW sleep"), tr("Unexpected wakes"), tr("Failed attempts")};
         int dgpuTotal = 0;
@@ -647,7 +647,7 @@ Report coCrossLink(const CoRecords &co, const QJsonArray &boots, const QJsonObje
         r.add(Level::Attention, tr("The crash-guard file is unreadable"), tr("CO Search refuses to start until it is fixed, so no guarded value is retried."));
     } else if (!co.guards.isEmpty()) {
         Table g;
-        g.title = tr("Crash guards (values at or below are never tried again)");
+        g.title = tr("Crash Guards (values at or below are never tried again)");
         g.headers = {tr("Core"), tr("Logical CPUs"), tr("Crashed at"), tr("BIOS then")};
         int otherBios = 0;
         for (const QJsonValue &v : co.guards) {
@@ -666,7 +666,7 @@ Report coCrossLink(const CoRecords &co, const QJsonArray &boots, const QJsonObje
     // Past searches.
     if (!co.history.isEmpty()) {
         Table h;
-        h.title = tr("Past searches (newest first)");
+        h.title = tr("Past Searches (Newest First)");
         h.headers = {tr("When"), tr("Mode"), tr("Level"), tr("Result"), tr("Values"), tr("Note")};
         for (int i = int(co.history.size()) - 1; i >= 0 && h.rows.size() < 20; --i) {
             const QJsonObject o = co.history.at(i).toObject();
@@ -700,7 +700,7 @@ Report coCrossLink(const CoRecords &co, const QJsonArray &boots, const QJsonObje
     }
     if (by.size() >= 2 || (by.size() == 1 && !by.contains(tr("stock")))) {
         Table t;
-        t.title = tr("Boot endings by Curve Optimizer state at the end of the boot");
+        t.title = tr("Boot Endings by Curve Optimizer State at the End of the Boot");
         t.headers = {tr("CO state"), tr("Boots"), tr("Hours"), tr("Unclean ends"), tr("Per 100 h")};
         const G stock = by.value(tr("stock"));
         for (auto it = by.cbegin(); it != by.cend(); ++it) {
@@ -858,7 +858,7 @@ Report gpuMemory(const QJsonObject &evidence, const QStringList &gpus, const QSt
     if (!active.isEmpty()) {
         // nvidia-smi -q layout: "Section" lines, then "    Key : Value" (indentation = depth).
         Table q;
-        q.title = tr("Active query (nvidia-smi)");
+        q.title = tr("Active Query (nvidia-smi)");
         q.headers = {tr("Counter"), tr("Value")};
         QStringList path;
         QList<int> depth;
@@ -951,12 +951,12 @@ QList<TriageCategory> triageCategories() {
 Report triage(const QString &label, const QList<Report> &checks) {
     Report r;
     r.code = QStringLiteral("H18");
-    r.title = tr("Guided triage — %1").arg(label);
+    r.title = tr("Guided Triage — %1").arg(label);
     QStringList codes;
     for (const Report &c : checks) codes << c.code;
     r.about = tr("Ran %1 and collected what needs a look. Each check's full report and its limits are on its own page.").arg(codes.join(QStringLiteral(", ")));
     Table t;
-    t.title = tr("Checks run");
+    t.title = tr("Checks Run");
     t.headers = {tr("Check"), tr("Verdict"), tr("Summary")};
     for (const Report &c : checks) {
         t.add({c.code + QStringLiteral(" · ") + c.title, diag::levelName(c.verdict()), c.headline()}, c.verdict());

@@ -265,7 +265,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *bExpL = button("Export…", rlog);
     auto *bClearL = button("Clear log", rlog, true);
     vl->addLayout(rlog);
-    connLog_ = makeTree({"Time", "Dir", "Program", "Proto", "Remote address", "Port", "Note"});
+    connLog_ = makeTree({"Time", "Dir", "Program", "Proto", "Remote Address", "Port", "Note"});
     connLog_->setColumnWidth(0, 130);
     connLog_->setColumnWidth(1, 50);
     connLog_->setColumnWidth(2, 220);
@@ -392,7 +392,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     wifiNetNote->setProperty("role", "muted");
     wifiNetNote->setWordWrap(true);
     vwn->addWidget(wifiNetNote);
-    wifiPages_->addTab(pwn, tr("Nearby networks"));
+    wifiPages_->addTab(pwn, tr("Nearby Networks"));
     wifiTab_ = tabs_->addTab(pw, tr("Wi-Fi"));
     tabs_->setTabVisible(wifiTab_, false);
     connect(wifiIface_, &QComboBox::activated, this, [this] {
@@ -471,7 +471,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     portsNote->setProperty("role", "muted");
     portsNote->setWordWrap(true);
     vp->addWidget(portsNote);
-    portsTab_ = tabs_->addTab(pp, tr("Open ports"));
+    portsTab_ = tabs_->addTab(pp, tr("Open Ports"));
     connect(bExpP, &QPushButton::clicked, this, [this] { exportTree(ports_, QStringLiteral("open-ports")); });
     connect(bPortOpen, &QPushButton::clicked, this, [this] { setPortState(QStringLiteral("open")); });
     connect(bPortLan, &QPushButton::clicked, this, [this] { setPortState(QStringLiteral("lan")); });
@@ -1021,7 +1021,7 @@ void NetPage::readLog(bool announce) {
     tabs_->setTabText(1, rows_.isEmpty() ? QStringLiteral("Blocked") : QStringLiteral("Blocked (%1)").arg(rows_.size()));
     if (announce && fresh && (!lastAlert_.isValid() || lastAlert_.elapsed() > ALERT_GAP_MS)) {
         lastAlert_.start();
-        Q_EMIT alert(QStringLiteral("Network guard"),
+        Q_EMIT alert(QStringLiteral("Network Guard"),
                      QStringLiteral("Blocked ") + first + (fresh > 1 ? QStringLiteral(" (+%1 more)").arg(fresh - 1) : QString()));
     }
 }
@@ -1236,7 +1236,7 @@ void NetPage::connDetails(const QString &ip, int pid, const QString &exe, qint64
 
     auto *d = new QDialog(this);
     d->setAttribute(Qt::WA_DeleteOnClose);
-    d->setWindowTitle(QStringLiteral("Connection details — ") + ip);
+    d->setWindowTitle(QStringLiteral("Connection Details — ") + ip);
     d->resize(760, 560);
     auto *v = new QVBoxLayout(d);
     auto *txt = new QPlainTextEdit(out.join(QLatin1Char('\n')));
@@ -1259,7 +1259,7 @@ void NetPage::ipInfo(const QString &ip) {
     if (ip.isEmpty()) return;
     auto *d = new QDialog(this);
     d->setAttribute(Qt::WA_DeleteOnClose);
-    d->setWindowTitle(QStringLiteral("IP info — ") + ip);
+    d->setWindowTitle(QStringLiteral("IP Info — ") + ip);
     d->resize(640, 520);
     auto *v = new QVBoxLayout(d);
     auto *head = new QLabel;
@@ -1685,7 +1685,7 @@ void NetPage::subscriptions() {
     if (subList_) { subList_->window()->raise(); return; }
     auto *d = new QDialog(this);
     d->setAttribute(Qt::WA_DeleteOnClose);
-    d->setWindowTitle(tr("Blocklist subscriptions"));
+    d->setWindowTitle(tr("Blocklist Subscriptions"));
     d->resize(600, 440);
     auto *v = new QVBoxLayout(d);
     auto *hint = new QLabel(tr("A published list (one address, CIDR block or range per line) is banned as one named group. "
@@ -1735,7 +1735,7 @@ void NetPage::subscriptions() {
         if (s.name.isEmpty()) err = tr("Give the list a name.");
         else if (!blocklistUrlOk(s.url)) err = tr("The address must start with https:// and name a host.");
         else for (const BlocklistSub &o : subs) if (o.name == s.name) err = tr("A list named %1 already exists.").arg(s.name);
-        if (!err.isEmpty()) { QMessageBox::warning(this, tr("Blocklist subscriptions"), err); return; }
+        if (!err.isEmpty()) { QMessageBox::warning(this, tr("Blocklist Subscriptions"), err); return; }
         QList<BlocklistSub> next = subs;
         next << s;
         saveBlocklistSubs(blocklistSettingsPath(), next);
@@ -1748,7 +1748,7 @@ void NetPage::subscriptions() {
         if (!subList_ || subList_->currentRow() < 0) return;
         const QList<BlocklistSub> subs = loadBlocklistSubs(blocklistSettingsPath());
         const BlocklistSub s = subs.value(subList_->currentRow());
-        if (QMessageBox::question(this, tr("Blocklist subscriptions"), tr("Remove %1 and stop banning its addresses?").arg(s.name)) != QMessageBox::Yes) return;
+        if (QMessageBox::question(this, tr("Blocklist Subscriptions"), tr("Remove %1 and stop banning its addresses?").arg(s.name)) != QMessageBox::Yes) return;
         QList<BlocklistSub> next = subs;
         next.removeAt(subList_->currentRow());
         saveBlocklistSubs(blocklistSettingsPath(), next);
@@ -1761,7 +1761,7 @@ void NetPage::subscriptions() {
 /// Paste or load a list; it is banned as one named group.
 void NetPage::bulkBlacklist() {
     QDialog d(this);
-    d.setWindowTitle(QStringLiteral("Blacklist many addresses"));
+    d.setWindowTitle(QStringLiteral("Blacklist Many Addresses"));
     d.resize(520, 420);
     auto *v = new QVBoxLayout(&d);
     auto *hint = new QLabel(QStringLiteral("One entry per line (commas work too): an address, a CIDR block, or a range \"first - last\". Text after # is ignored."));

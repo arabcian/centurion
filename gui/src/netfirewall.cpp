@@ -98,7 +98,7 @@ static bool ruleDialog(QWidget *parent, QJsonObject &rule, const QString &title)
     form->addRow(FirewallTab::tr("Action"), action);
     form->addRow(FirewallTab::tr("Protocol"), proto);
     form->addRow(FirewallTab::tr("Ports"), ports);
-    form->addRow(FirewallTab::tr("Remote address"), remote);
+    form->addRow(FirewallTab::tr("Remote Address"), remote);
     form->addRow(FirewallTab::tr("Interface"), iface);
     form->addRow(FirewallTab::tr("Note"), note);
     v->addLayout(form);
@@ -154,10 +154,10 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
     enabled_->setToolTip(tr("Off: the policies and rules stay saved but nothing is filtered."));
     top->addWidget(enabled_);
     top->addSpacing(14);
-    top->addWidget(new QLabel(tr("Incoming by default")));
+    top->addWidget(new QLabel(tr("Incoming by Default")));
     inbound_ = policyBox();
     top->addWidget(inbound_);
-    top->addWidget(new QLabel(tr("Outgoing by default")));
+    top->addWidget(new QLabel(tr("Outgoing by Default")));
     outbound_ = policyBox();
     top->addWidget(outbound_);
     pingIn_ = new QCheckBox(tr("Answer ping"));
@@ -176,7 +176,7 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
 
     rules_ = new QTreeWidget;
     rules_->setColumnCount(ColCount);
-    rules_->setHeaderLabels({tr("On"), tr("Direction"), tr("Action"), tr("Protocol"), tr("Ports"), tr("Remote address"), tr("Interface"), tr("Note"), tr("Hits")});
+    rules_->setHeaderLabels({tr("On"), tr("Direction"), tr("Action"), tr("Protocol"), tr("Ports"), tr("Remote Address"), tr("Interface"), tr("Note"), tr("Hits")});
     rules_->setRootIsDecorated(false);
     rules_->setAlternatingRowColors(true);
     rules_->setUniformRowHeights(true);
@@ -435,7 +435,7 @@ void FirewallTab::showInspection(const QJsonObject &report) {
 
     auto *d = new QDialog(this);
     d->setAttribute(Qt::WA_DeleteOnClose);
-    d->setWindowTitle(tr("Live firewall rules"));
+    d->setWindowTitle(tr("Live Firewall Rules"));
     d->resize(760, 560);
     auto *v = new QVBoxLayout(d);
     auto *text = new QPlainTextEdit(out.join(QLatin1Char('\n')));

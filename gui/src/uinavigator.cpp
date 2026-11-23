@@ -54,7 +54,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
     // A command palette: no title bar, the search field on top, results below.
     QDialog dialog(parent, Qt::Dialog | Qt::FramelessWindowHint);
     dialog.setObjectName(QStringLiteral("expPalette"));
-    dialog.setWindowTitle(QObject::tr("Quick navigation — Centurion"));
+    dialog.setWindowTitle(QObject::tr("Quick Navigation — Centurion"));
     dialog.resize(620, 460);
     auto *layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(1, 1, 1, 1);  // the palette's own hairline frame

@@ -390,7 +390,7 @@ void LightingTab::buildUi() {
     kl->addStretch(1);
     if (!theme::experimentalEnabled()) mid->addWidget(kbBox, 1);
 
-    auto *fxBox = new QGroupBox("Effects in this profile");
+    auto *fxBox = new QGroupBox("Effects in This Profile");
     if (theme::experimentalEnabled()) {
         fxBox->setMinimumWidth(260);
     } else {

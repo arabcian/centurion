@@ -4,7 +4,7 @@
         <name>BatteryPage</name>
         <message>
             <location filename="work/gui/src/batterypage.cpp" line="103"/>
-            <source>&lt;b&gt;Charger use&lt;/b&gt;</source>
+            <source>&lt;b&gt;Charger Use&lt;/b&gt;</source>
             <translation>&lt;b&gt;Şarj kullanımı&lt;/b&gt;</translation>
         </message>
         <message>
@@ -39,7 +39,7 @@
         </message>
         <message>
             <location filename="work/gui/src/batterypage.cpp" line="270"/>
-            <source>Charge mode</source>
+            <source>Charge Mode</source>
             <translation>Şarj modu</translation>
         </message>
         <message>
@@ -204,12 +204,12 @@
         </message>
         <message>
             <location filename="work/gui/src/bootpage.cpp" line="73"/>
-            <source>Kernel events</source>
+            <source>Kernel Events</source>
             <translation>Çekirdek olayları</translation>
         </message>
         <message>
             <location filename="work/gui/src/bootpage.cpp" line="73"/>
-            <source>Curves in effect</source>
+            <source>Curves in Effect</source>
             <translation>Etkin eğriler</translation>
         </message>
         <message>
@@ -470,7 +470,7 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
         <name>BootLogoDialog</name>
         <message>
             <location filename="work/gui/src/bootlogodialog.cpp"/>
-            <source>Boot logo</source>
+            <source>Boot Logo</source>
             <translation>Açılış logosu</translation>
         </message>
         <message>
@@ -802,7 +802,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/coolingpage.cpp" line="198"/>
-            <source>CPU temperature</source>
+            <source>CPU Temperature</source>
             <translation>İşlemci sıcaklığı</translation>
         </message>
         <message>
@@ -822,7 +822,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/coolingpage.cpp" line="198"/>
-            <source>Compared with the baseline</source>
+            <source>Compared with the Baseline</source>
             <translation>Referansla karşılaştırma</translation>
         </message>
         <message>
@@ -1366,7 +1366,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/firstrunwizard.cpp" line="317"/>
-            <source>Centurion setup</source>
+            <source>Centurion Setup</source>
             <translation>Centurion kurulumu</translation>
         </message>
         <message>
@@ -1384,7 +1384,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/healthtab.cpp" line="130"/>
-            <source>dGPU power</source>
+            <source>dGPU Power</source>
             <translation>dGPU gücü</translation>
         </message>
         <message>
@@ -1394,7 +1394,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/healthtab.cpp" line="120"/>
-            <source>Curve stability</source>
+            <source>Curve Stability</source>
             <translation>Eğri kararlılığı</translation>
         </message>
         <message>
@@ -1404,7 +1404,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/healthtab.cpp" line="128"/>
-            <source>Battery use</source>
+            <source>Battery Use</source>
             <translation>Pil kullanımı</translation>
         </message>
         <message>
@@ -1414,11 +1414,11 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/healthtab.cpp" line="122"/>
-            <source>Kernel log</source>
+            <source>Kernel Log</source>
             <translation>Çekirdek günlüğü</translation>
         </message>
         <message>
-            <source>Kernel parameters</source>
+            <source>Kernel Parameters</source>
             <translation>Çekirdek parametreleri</translation>
         </message>
         <message>
@@ -1497,7 +1497,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="work/gui/src/healthtab.cpp" line="109"/>
-            <source>Boot history</source>
+            <source>Boot History</source>
             <translation>Açılış geçmişi</translation>
         </message>
         <message>
@@ -1612,22 +1612,22 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="165"/>
-            <source>System overview</source>
+            <source>System Overview</source>
             <translation>Sistem özeti</translation>
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="167"/>
-            <source>Events &amp; alerts</source>
+            <source>Events &amp; Alerts</source>
             <translation>Olaylar ve uyarılar</translation>
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="180"/>
-            <source>Sleep &amp; wake</source>
+            <source>Sleep &amp; Wake</source>
             <translation>Uyku ve uyanma</translation>
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="196"/>
-            <source>System tools</source>
+            <source>System Tools</source>
             <translation>Sistem araçları</translation>
         </message>
         <message>
@@ -1647,12 +1647,12 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="266"/>
-            <source>Drive health</source>
+            <source>Drive Health</source>
             <translation>Disk sağlığı</translation>
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="296"/>
-            <source>Network protection</source>
+            <source>Network Protection</source>
             <translation>Ağ koruması</translation>
         </message>
         <message>
@@ -1712,7 +1712,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="446"/>
-            <source>What happened</source>
+            <source>What Happened</source>
             <translation>Ne oldu</translation>
         </message>
         <message>
@@ -1842,7 +1842,7 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="983"/>
-            <source>Event explanation</source>
+            <source>Event Explanation</source>
             <translation>Olay açıklaması</translation>
         </message>
         <message>
@@ -2060,7 +2060,7 @@ Kernel uptime: %2
             <translation>Teknik not: Xid 154 asıl nedeni değil, kurtarmayı bildirir. Önceki Xid kodları, makine denetimleri ve PCIe olayları bağlamıyla birlikte değerlendirilmelidir. İlgili aracı açmak ya da ham kaydı incelemek için olaya sağ tıklayın.</translation>
         </message>
         <message>
-            <source>System tools › %1 › %2</source>
+            <source>System Tools › %1 › %2</source>
             <translation>Sistem araçları › %1 › %2</translation>
         </message>
         <message>
@@ -2108,7 +2108,7 @@ Kernel uptime: %2
             <translation>Araç ara: ad, parça, belirti ya da terim (fan, VRR, firmware eksik, ASPM)…</translation>
         </message>
         <message>
-            <source>All tools</source>
+            <source>All Tools</source>
             <translation>Tüm araçlar</translation>
         </message>
         <message>
@@ -2147,7 +2147,7 @@ Kernel uptime: %2
             <source>Searches page and tool names and the words around them: error codes (Xid 79), symptoms (flicker, overheating), parts (fan, battery). Turkish or English.</source>
             <translation>Sayfa ve araç adlarında ve ilgili sözcüklerde arar: hata kodları (Xid 79), belirtiler (titreme, ısınma), parçalar (fan, pil). Türkçe ya da İngilizce.</translation>
         </message>
-    </context>
+    <message><location filename="../src/healthtab.cpp" line="1260"/><source>GPU &amp; Display</source><translation>GPU ve Ekran</translation></message><message><location filename="../src/healthtab.cpp" line="1263"/><source>Power &amp; Sleep</source><translation>Güç ve Uyku</translation></message><message><location filename="../src/healthtab.cpp" line="1264"/><source>CPU &amp; Stability</source><translation>CPU ve Kararlılık</translation></message><message><location filename="../src/healthtab.cpp" line="1265"/><source>Crashes &amp; Kernel</source><translation>Çökmeler ve Çekirdek</translation></message><message><location filename="../src/healthtab.cpp" line="1320"/><source>Quick Access</source><translation>Hızlı Erişim</translation></message><message><location filename="../src/healthtab.cpp" line="1256"/><source>Troubleshoot by Symptom</source><translation>Belirtiye Göre Sorun Giderme</translation></message></context>
     <context>
         <name>HomeTab</name>
         <message>
@@ -3216,7 +3216,7 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
         </message>
         <message>
             <location filename="../src/klogpage.cpp" line="454"/>
-            <source>Kernel message explained</source>
+            <source>Kernel Message Explained</source>
             <translation>Çekirdek iletisinin açıklaması</translation>
         </message>
         <message>
@@ -3376,15 +3376,15 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     <context>
         <name>MainWindow</name>
         <message>
-            <source>Network tuning</source>
+            <source>Network Tuning</source>
             <translation>Ağ ayarları</translation>
         </message>
         <message>
-            <source>Storage tuning</source>
+            <source>Storage Tuning</source>
             <translation>Depolama ayarları</translation>
         </message>
         <message>
-            <source>Kernel tuning</source>
+            <source>Kernel Tuning</source>
             <translation>Çekirdek ayarları</translation>
         </message>
         <message>
@@ -3709,7 +3709,7 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         </message>
         <message>
             <location filename="work/gui/src/netpage.cpp" line="1271"/>
-            <source>Blocklist subscriptions</source>
+            <source>Blocklist Subscriptions</source>
             <translation>Engel listesi abonelikleri</translation>
         </message>
         <message>
@@ -3859,7 +3859,7 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         </message>
         <message>
             <location filename="../src/netpage.cpp" line="392"/>
-            <source>Open ports</source>
+            <source>Open Ports</source>
             <translation>Açık portlar</translation>
         </message>
         <message>
@@ -4076,7 +4076,7 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <translation>Donanım</translation>
         </message>
         <message>
-            <source>Nearby networks</source>
+            <source>Nearby Networks</source>
             <translation>Yakındaki ağlar</translation>
         </message>
         <message>
@@ -4459,7 +4459,7 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <location filename="work/gui/src/overviewpage.cpp" line="203"/>
             <location filename="work/gui/src/overviewpage.cpp" line="226"/>
             <location filename="work/gui/src/overviewpage.cpp" line="229"/>
-            <source>Diagnostic report</source>
+            <source>Diagnostic Report</source>
             <translation>Tanılama raporu</translation>
         </message>
         <message>
@@ -4503,7 +4503,7 @@ Kaydetmeden önce seri numaraları, UUID, MAC ve IP adresleri değiştirildi.</t
         </message>
         <message>
             <location filename="work/gui/src/overviewpage.cpp" line="241"/>
-            <source>Battery health</source>
+            <source>Battery Health</source>
             <translation>Pil sağlığı</translation>
         </message>
         <message>
@@ -4585,7 +4585,7 @@ Kaydetmeden önce seri numaraları, UUID, MAC ve IP adresleri değiştirildi.</t
             <translation>Son 7 günde %1 uyku; hiçbiri pil kaybını ölçecek kadar uzun süre pilde kalmadı; uyanınca %2 dGPU hatası.</translation>
         </message>
         <message>
-            <source>Drive health</source>
+            <source>Drive Health</source>
             <translation>Disk sağlığı</translation>
         </message>
         <message>
@@ -4605,7 +4605,7 @@ Kaydetmeden önce seri numaraları, UUID, MAC ve IP adresleri değiştirildi.</t
             <translation>Son 30 günde disk denetimi yapılmadı. Denetlemek için ayrıntıları açın.</translation>
         </message>
         <message>
-            <source>A drive reports a SMART warning or wear. Back up important files, then review the drive&apos;s values.</source>
+            <source>A drive reports a SMART warning or wear. Back up important files, then review the drive's values.</source>
             <translation>Bir disk SMART uyarısı veya aşınma bildiriyor. Önemli dosyaları yedekleyin, ardından diskin değerlerini inceleyin.</translation>
         </message>
         <message>
@@ -4796,7 +4796,7 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
         <name>ReportPreview</name>
         <message>
             <location filename="work/gui/src/reportpreview.cpp" line="15"/>
-            <source>Diagnostic report</source>
+            <source>Diagnostic Report</source>
             <translation>Tanılama raporu</translation>
         </message>
         <message>
@@ -5001,7 +5001,7 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
         </message>
         <message>
             <location filename="work/gui/src/scenestab.cpp" line="350"/>
-            <source>Automatic switching</source>
+            <source>Automatic Switching</source>
             <translation>Otomatik geçiş</translation>
         </message>
         <message>
@@ -5475,7 +5475,7 @@ Bunu değiştirmek için Sağlık → Bildirimler…</translation>
         <message>
             <location filename="work/gui/src/tray.cpp" line="274"/>
             <location filename="work/gui/src/tray.cpp" line="281"/>
-            <source>CPU curve</source>
+            <source>CPU Curve</source>
             <translation>İşlemci eğrisi</translation>
         </message>
         <message>
@@ -5523,7 +5523,7 @@ Bunu değiştirmek için Sağlık → Bildirimler…</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="315"/>
-            <source>GPU curve</source>
+            <source>GPU Curve</source>
             <translation>GPU eğrisi</translation>
         </message>
         <message>
@@ -5934,7 +5934,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         </message>
         <message>
             <location filename="work/gui/src/systools.cpp" line="397"/>
-            <source>Firmware updates</source>
+            <source>Firmware Updates</source>
             <translation>Donanım yazılımı güncellemeleri</translation>
         </message>
         <message>
@@ -5943,7 +5943,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>fwupd: güncellenebilen aygıtlar ve bulunan donanım yazılımı güncellemeleri. Güncelleme aramak internetteki LVFS sunucusuna bağlanır, bu yüzden bu sayfa yalnızca "Run again" ile çalışır.</translation>
         </message>
         <message>
-            <source>Hardware snapshot</source>
+            <source>Hardware Snapshot</source>
             <translation>Donanım anlık görüntüsü</translation>
         </message>
         <message>
@@ -5951,7 +5951,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>EDID / VRR inceleyici</translation>
         </message>
         <message>
-            <source>NVIDIA module parameters</source>
+            <source>NVIDIA Module Parameters</source>
             <translation>NVIDIA modül parametreleri</translation>
         </message>
         <message>
@@ -6075,7 +6075,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>PCI</translation>
         </message>
         <message>
-            <source>PCIe detail</source>
+            <source>PCIe Detail</source>
             <translation>PCIe ayrıntısı</translation>
         </message>
         <message>
@@ -6087,7 +6087,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>Depolama</translation>
         </message>
         <message>
-            <source>SMART details</source>
+            <source>SMART Details</source>
             <translation>SMART ayrıntıları</translation>
         </message>
         <message>
@@ -6107,15 +6107,15 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>Pil</translation>
         </message>
         <message>
-            <source>Configuration files</source>
+            <source>Configuration Files</source>
             <translation>Yapılandırma dosyaları</translation>
         </message>
         <message>
-            <source>S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire&apos;s view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply.</source>
+            <source>S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply.</source>
             <translation>S15: ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin çakışıp çakışmadığı), PipeWire’ın görünümü. Rapor hiçbir şeyi yeniden başlatmaz; Ayarlar… PipeWire / WirePlumber seçeneklerini düzenler ve uyguladığınızda ses sunucularını yeniden başlatır.</translation>
         </message>
         <message>
-            <source>S03: each connected display&apos;s identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen&apos;s brightness and refresh rate.</source>
+            <source>S03: each connected display's identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen's brightness and refresh rate.</source>
             <translation>S03: bağlı her ekranın EDID’sinden kimliği, modları ve değişken yenileme aralığı, boyutu, bit derinliği, HDR ve renk desteği; bozuk EDID’ler; arka ışık aygıtları. Panel denetimleri… dahili ekranın parlaklığını ve yenileme hızını ayarlar.</translation>
         </message>
         <message>
@@ -6131,7 +6131,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>Panel denetimleri…</translation>
         </message>
         <message>
-            <source>Set the built-in screen&apos;s brightness and refresh rate.</source>
+            <source>Set the built-in screen's brightness and refresh rate.</source>
             <translation>Dahili ekranın parlaklığını ve yenileme hızını ayarlayın.</translation>
         </message>
         <message>
@@ -6318,11 +6318,11 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>doğrulama BAŞARISIZ %1: %2</translation>
         </message>
         <message>
-            <source>System image</source>
+            <source>System Image</source>
             <translation>Sistem imajı</translation>
         </message>
         <message>
-            <source>Centurion configuration</source>
+            <source>Centurion Configuration</source>
             <translation>Centurion yapılandırması</translation>
         </message>
         <message>
@@ -6360,7 +6360,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>, şifreli</translation>
         </message>
         <message>
-            <source>Passphrase for the image</source>
+            <source>Passphrase for the Image</source>
             <translation>İmaj parolası</translation>
         </message>
         <message>
@@ -6440,7 +6440,7 @@ Onu (ya da bir kopyasını) bu bilgisayarın dışına taşıyın — USB bellek
             </translation>
         </message>
         <message>
-            <source>Encrypted image</source>
+            <source>Encrypted Image</source>
             <translation>Şifreli imaj</translation>
         </message>
         <message>
@@ -6492,11 +6492,11 @@ Onu (ya da bir kopyasını) bu bilgisayarın dışına taşıyın — USB bellek
             <translation> Paketler: %1 yeni, %2 kaldırılmış, %3 farklı sürüm.</translation>
         </message>
         <message>
-            <source>Configuration: backup → now</source>
+            <source>Configuration: Backup → Now</source>
             <translation>Yapılandırma: yedek → şimdi</translation>
         </message>
         <message>
-            <source>Configuration: older → newer backup</source>
+            <source>Configuration: Older → Newer Backup</source>
             <translation>Yapılandırma: eski → yeni yedek</translation>
         </message>
         <message>
@@ -6719,7 +6719,7 @@ age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translati
     <context>
         <name>MemTestBox</name>
         <message>
-            <source>Memory test</source>
+            <source>Memory Test</source>
             <translation>Bellek testi</translation>
         </message>
         <message>
@@ -6731,7 +6731,7 @@ age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translati
             <translation>Boş belleğin bir kısmını %1 ile yazıp geri okur, bu sırada makine denetimi (MCE) olaylarını izler. Test sürerken makine yavaşlar. Her sonuç, o anki BIOS bellek zamanlamalarıyla birlikte saklanır.</translation>
         </message>
         <message>
-            <source>Free memory to test</source>
+            <source>Free Memory to Test</source>
             <translation>Test edilecek boş bellek</translation>
         </message>
         <message>
@@ -6765,7 +6765,7 @@ age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translati
             <translation>Sonuç</translation>
         </message>
         <message>
-            <source>BIOS memory timings</source>
+            <source>BIOS Memory Timings</source>
             <translation>BIOS bellek zamanlamaları</translation>
         </message>
         <message>
@@ -6866,7 +6866,7 @@ age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translati
     <context>
         <name>CpuStressBox</name>
         <message>
-            <source>CPU test</source>
+            <source>CPU Test</source>
             <translation>CPU testi</translation>
         </message>
         <message>
@@ -6959,7 +6959,7 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
             <translation>Hatalı</translation>
         </message>
         <message>
-            <source>CPU curve</source>
+            <source>CPU Curve</source>
             <translation>CPU eğrisi</translation>
         </message>
         <message>
@@ -7117,7 +7117,7 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
         <name>GpuStressBox</name>
         <message>
             <location filename="../src/gpustressbox.cpp" line="42"/>
-            <source>GPU test</source>
+            <source>GPU Test</source>
             <translation>GPU testi</translation>
         </message>
         <message>
@@ -7132,7 +7132,7 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
         </message>
         <message>
             <location filename="../src/gpustressbox.cpp" line="80"/>
-            <source>VRAM to test</source>
+            <source>VRAM to Test</source>
             <translation>Test edilecek VRAM</translation>
         </message>
         <message>
@@ -7228,7 +7228,7 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
         </message>
         <message>
             <location filename="../src/gpustressbox.cpp" line="115"/>
-            <source>GPU curve</source>
+            <source>GPU Curve</source>
             <translation>GPU eğrisi</translation>
         </message>
         <message>
@@ -7514,8 +7514,8 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
             <translation>Uygula, Kaydet ve açılış önayarına dahil et</translation>
         </message>
         <message>
-            <source>Controlled by &quot;%1&quot; while that row is checked; uncheck it to set this one</source>
-            <translation>&quot;%1&quot; işaretliyken bu ayarı o satır belirler; bunu ayarlamak için onun işaretini kaldırın</translation>
+            <source>Controlled by "%1" while that row is checked; uncheck it to set this one</source>
+            <translation>"%1" işaretliyken bu ayarı o satır belirler; bunu ayarlamak için onun işaretini kaldırın</translation>
         </message>
         <message>
             <source>Restore this setting's original value</source>
@@ -7579,7 +7579,7 @@ WRAP / RUN (Steam launch options) set it for the game, unless the launch options
 starts the game itself (PRE / POST hooks): set the variable in the game's environment there.</source><translation>NTSYNC, Windows eşzamanlama nesneleri için çekirdek sürücüsüdür (/dev/ntsync): Wine ve Proton, çok iş parçacıklı oyunlarda daha az ek yük için esync / fsync yerine bunu kullanır. Wine 11 bunu kendiliğinden kullanır; GE-Proton 10 ve benzeri derlemelerde yalnızca PROTON_USE_NTSYNC=1 ayarlandığında kullanılır. Bu açıkken centurion-gamemode WRAP / RUN (Steam başlatma seçenekleri) bu değişkeni oyun için ayarlar; başlatma seçeneklerinde zaten bulunuyorsa değiştirmez. Lutris oyunu kendisi başlatır (PRE / POST kancaları): değişkeni oyunun ortam ayarlarından belirleyin.</translation></message><message><source>Applied by the centurion-tune OpenRC service. Enable it once with:
     rc-update add centurion-tune boot</source><translation>centurion-tune OpenRC hizmeti tarafından uygulanır. Hizmeti bir kez etkinleştirin:
     rc-update add centurion-tune boot</translation></message><message><source>Measure in a scene's power context (its power profile, firmware limits and fan mode; not its
-Optimizations preset - those knobs are what is measured).</source><translation>Bir sahnenin güç koşullarında ölçüm yapar (sahnenin güç profili, firmware sınırları ve fan modu; ancak Optimization profili hariç — ölçülen ayarlar zaten bunlardır).</translation></message><message><source>Already the live value.</source><translation>Zaten etkin olan değer.</translation></message><message><source>Saves this trade-off's weights for the goal and runs Autotune again.</source><translation>Bu ödünleşimin ağırlıklarını hedef için kaydeder ve Autotune'u yeniden çalıştırır.</translation></message><message><source>↺ Return to boot-guard defaults</source><translation>↺ Açılış koruyucusunun varsayılanlarına dön</translation></message><message><source>Restore originals</source><translation>Özgün değerleri geri yükle</translation></message><message><source>Re-apply</source><translation>Yeniden uygula</translation></message><message><source>Dismiss</source><translation>Kapat</translation></message><message><source>Load</source><translation>Yükle</translation></message><message><source>Save as…</source><translation>Farklı kaydet…</translation></message><message><source>Delete</source><translation>Sil</translation></message><message><source>★ Use for games</source><translation>★ Oyunlarda kullan</translation></message><message><source>⏻ Apply at boot</source><translation>⏻ Açılışta uygula</translation></message><message><source>Clear boot</source><translation>Açılış ayarını kaldır</translation></message><message><source>⚙ Autotune</source><translation>⚙ Otomatik ayarla (Autotune)</translation></message><message><source>Weights…</source><translation>Ağırlıklar…</translation></message><message><source>Calibrate at next boot…</source><translation>Sonraki açılışta kalibre et…</translation></message><message><source>Refresh</source><translation>Yenile</translation></message><message><source>Apply checked</source><translation>İşaretlenenleri uygula</translation></message><message><source>Copy</source><translation>Kopyala</translation></message><message><source>Use these weights</source><translation>Bu ağırlıkları kullan</translation></message><message><source>Autotune for</source><translation>Şuna göre Autotune</translation></message><message><source>for</source><translation>için</translation></message><message><source>Select:</source><translation>Seçim:</translation></message><message><source>Nice</source><translation>Nice önceliği</translation></message><message><source>CPU affinity</source><translation>CPU çekirdek yakınlığı</translation></message><message><source>Time slice</source><translation>Zaman dilimi</translation></message><message><source>Game CPU share</source><translation>Oyunun CPU payı</translation></message><message><source>Scene</source><translation>Sahne</translation></message><message><source>Discovered (not in Centurion's table; shown only, set by hand, not calibrated): </source><translation>Bulunanlar (Centurion tablosunda yok; yalnızca gösterilir, elle ayarlanır ve kalibre edilmez): </translation></message><message><source>&lt;b&gt;Machine&lt;/b&gt;&amp;nbsp; %1</source><translation>&lt;b&gt;Makine&lt;/b&gt;&amp;nbsp; %1</translation></message><message><source>&lt;b&gt;Observed&lt;/b&gt;&amp;nbsp; %1</source><translation>&lt;b&gt;Gözlenen&lt;/b&gt;&amp;nbsp; %1</translation></message><message><source>&lt;b&gt;Weights&lt;/b&gt;&amp;nbsp; %1%2</source><translation>&lt;b&gt;Ağırlıklar&lt;/b&gt;&amp;nbsp; %1%2</translation></message><message><source>&lt;b&gt;Predicted&lt;/b&gt;&amp;nbsp; (calibrated settings, against the boot state) %1</source><translation>&lt;b&gt;Tahmin edilen&lt;/b&gt;&amp;nbsp; (kalibre edilmiş ayarlar, açılış durumuna göre) %1</translation></message><message><source>Trade-offs / sensitivity cut short (time budget): the list below is partial.</source><translation>Ödünleşim/duyarlılık incelemesi zaman sınırından dolayı erken kesildi: aşağıdaki liste kısmi.</translation></message><message><source>Forcefully disable Wi-Fi and Bluetooth power management</source><translation>Wi-Fi ve Bluetooth güç yönetimini zorunlu olarak kapat</translation></message><message><source>Also renice the autogroup</source><translation>Autogroup için nice önceliğini de değiştir</translation></message><message><source>Precise timers (timer slack 1 ns)</source><translation>Hassas zamanlayıcılar (timer slack 1 ns)</translation></message><message><source>Recompress cold zram pages after the game</source><translation>Oyun sonrası soğuk zram sayfalarını yeniden sıkıştır</translation></message><message><source>Undervolt CPU</source><translation>CPU undervolt uygula</translation></message><message><source>Undervolt GPU</source><translation>GPU undervolt uygula</translation></message><message><source>A/B field comparison: every other launch of a game runs at the boot defaults</source><translation>A/B gerçek oyun karşılaştırması: oyunun her ikinci başlatılması açılış varsayılanlarıyla çalışır</translation></message><message><source>Detect games started from Heroic and Bottles (no launch options needed)</source><translation>Heroic ve Bottles üzerinden başlatılan oyunları algıla (başlatma seçeneği gerekmez)</translation></message><message><source>NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)</source><translation>Wine / Proton için NTSYNC (PROTON_USE_NTSYNC=1)</translation></message><message><source>Only changes</source><translation>Yalnızca değişiklikler</translation></message><message><source>Other trade-offs on the same measurements</source><translation>Aynı ölçümlerdeki diğer ödünleşimler</translation></message><message><source>Power saving</source><translation>Güç tasarrufu</translation></message><message><source>Gaming (latency + throughput)</source><translation>Oyun (gecikme + iş hacmi)</translation></message><message><source>Bare throughput</source><translation>Salt iş hacmi</translation></message><message><source>Optimal desktop</source><translation>En uygun masaüstü</translation></message><message><source>— none (keep the current scene)</source><translation>— yok (mevcut sahneyi koru)</translation></message><message><source>none (scheduler decides)</source><translation>yok (zamanlayıcı karar verir)</translation></message><message><source>CCD%1%2 (%3)</source><translation>CCD%1%2 (%3)</translation></message><message><source>P-cores (</source><translation>P çekirdekleri (</translation></message><message><source>E-cores (</source><translation>E çekirdekleri (</translation></message><message><source>live profile</source><translation>canlı profil</translation></message><message><source>scene %1 (%2)</source><translation>sahne %1 (%2)</translation></message><message><source>boot state (no scene)</source><translation>açılış durumu (sahne yok)</translation></message><message><source>Autotune weights — %1</source><translation>Autotune ağırlıkları — %1</translation></message><message><source>Calibrate at next boot</source><translation>Sonraki açılışta kalibre et</translation></message><message><source>Autotune — %1</source><translation>Autotune — %1</translation></message><message><source>Game launch</source><translation>Oyun başlatma</translation></message><message><source>Boot options</source><translation>Açılış seçenekleri</translation></message><message><source>Fast</source><translation>Hızlı</translation></message><message><source>Balanced</source><translation>Dengeli</translation></message><message><source>Deep</source><translation>Derin</translation></message><message><source>Explore…</source><translation>Seçenekleri incele…</translation></message><message><source>Fast: main decision only. Balanced: main decision and 3 trade-offs. Deep: also explores +/-30% objective-weight sensitivity. No option applies settings automatically.</source><translation>Hızlı: yalnızca ana öneri. Dengeli: ana öneri ve 3 ödünleşim. Derin: hedef ağırlıklarının yüzde ±30 duyarlılığını da inceler. Hiçbir mod ayarları otomatik uygulamaz.</translation></message><message><source>Run trade-off comparisons on demand after the fast decision.</source><translation>Hızlı kararın ardından istenirse ödünleşim karşılaştırmalarını çalıştırır.</translation></message><message><source>Autotune · Inputs…</source><translation>Autotune · Girdiler…</translation></message><message><source>Autotune · %1…</source><translation>Autotune · %1…</translation></message><message><source>Inputs</source><translation>Girdiler</translation></message><message><source>Model</source><translation>Model</translation></message><message><source>Decision</source><translation>Karar</translation></message><message><source>Validation</source><translation>Doğrulama</translation></message><message><source>&lt;b&gt;%1&lt;/b&gt; · Inputs %2 ms · Model %3 ms · Decision %4 ms · Total %5 ms</source><translation>&lt;b&gt;%1&lt;/b&gt; · Girdiler %2 ms · Model %3 ms · Karar %4 ms · Toplam %5 ms</translation></message><message><source>Fast result: trade-offs and weight sensitivity were skipped. Use Explore after closing this report to calculate comparisons on demand.</source><translation>Hızlı sonuç: ödünleşimler ve ağırlık duyarlılığı hesaplanmadı. Bu raporu kapattıktan sonra karşılaştırmaları istediğinizde hesaplamak için Seçenekleri incele seçeneğini kullanın.</translation></message><message><source>Import game CSV…</source><translation>Oyun CSV'si içe aktar…</translation></message><message><source>Import FLM or MangoHud frame-time logs from your own recorded game sessions. This does not modify hardware settings; matching A/B game sessions are needed before they affect the model.</source><translation>Kaydedilmiş kendi oyun oturumlarınızdan FLM veya MangoHud kare süresi kayıtlarını içe aktarır. Donanım ayarlarını değiştirmez; modeli etkilemeleri için eşleşen A/B oyun oturumları gerekir.</translation></message><message><source>Import game telemetry</source><translation>Oyun telemetrisini içe aktar</translation></message><message><source>Frame-time logs (*.csv *.log *.txt);;All files (*)</source><translation>Kare süresi kayıtları (*.csv *.log *.txt);;Tüm dosyalar (*)</translation></message><message><source>Select at most four logs per import.</source><translation>Her içe aktarmada en fazla dört kayıt seçin.</translation></message><message><source>centurion-calibrate or pkexec is not installed.</source><translation>centurion-calibrate veya pkexec kurulu değil.</translation></message><message><source>Importing frame-time logs and matching recorded game sessions…</source><translation>Kare süresi kayıtları içe aktarılıyor ve kayıtlı oyun oturumlarıyla eşleştiriliyor…</translation></message><message><source>Game telemetry imported. Re-run Autotune to use matched A/B evidence.</source><translation>Oyun telemetrisi içe aktarıldı. Eşleşen A/B kanıtını kullanmak için Autotune'u yeniden çalıştırın.</translation></message><message><source>Game telemetry import failed.</source><translation>Oyun telemetrisi içe aktarılamadı.</translation></message><message><source>Game telemetry import</source><translation>Oyun telemetrisi içe aktarma</translation></message><message><source>Suggested next step: %1 (%2 of %3 settings would change, %4 uncertain effects, %5 without model evidence)</source><translation>Önerilen sonraki adım: %1 (%3 ayardan değişecek olan: %2, %4 belirsiz etki, %5 model kanıtı olmayan)</translation></message><message><source>Verify before apply</source><translation>Uygulamadan önce doğrula</translation></message><message><source>Save these exact settings as a preset and approve its root-owned copy first. Any changed value invalidates the previous ABBA verification.</source><translation>Önce bu ayarları birebir aynı haliyle profil olarak kaydedin ve root'a ait kopyasını onaylayın. Değişen herhangi bir değer önceki ABBA doğrulamasını geçersiz kılar.</translation></message><message><source>ABBA verification required</source><translation>ABBA doğrulaması gerekli</translation></message><message><source>This autotuned preset contains high-risk or extensive changes. Run a paired ABBA benchmark against your boot settings before applying it? The test temporarily changes settings, journals originals, and restores them.
+Optimizations preset - those knobs are what is measured).</source><translation>Bir sahnenin güç koşullarında ölçüm yapar (sahnenin güç profili, firmware sınırları ve fan modu; ancak Optimization profili hariç — ölçülen ayarlar zaten bunlardır).</translation></message><message><source>Already the live value.</source><translation>Zaten etkin olan değer.</translation></message><message><source>Saves this trade-off's weights for the goal and runs Autotune again.</source><translation>Bu ödünleşimin ağırlıklarını hedef için kaydeder ve Autotune'u yeniden çalıştırır.</translation></message><message><source>↺ Return to boot-guard defaults</source><translation>↺ Açılış koruyucusunun varsayılanlarına dön</translation></message><message><source>Restore originals</source><translation>Özgün değerleri geri yükle</translation></message><message><source>Re-apply</source><translation>Yeniden uygula</translation></message><message><source>Dismiss</source><translation>Kapat</translation></message><message><source>Load</source><translation>Yükle</translation></message><message><source>Save as…</source><translation>Farklı kaydet…</translation></message><message><source>Delete</source><translation>Sil</translation></message><message><source>★ Use for games</source><translation>★ Oyunlarda kullan</translation></message><message><source>⏻ Apply at boot</source><translation>⏻ Açılışta uygula</translation></message><message><source>Clear boot</source><translation>Açılış ayarını kaldır</translation></message><message><source>⚙ Autotune</source><translation>⚙ Otomatik ayarla (Autotune)</translation></message><message><source>Weights…</source><translation>Ağırlıklar…</translation></message><message><source>Calibrate at next boot…</source><translation>Sonraki açılışta kalibre et…</translation></message><message><source>Refresh</source><translation>Yenile</translation></message><message><source>Apply checked</source><translation>İşaretlenenleri uygula</translation></message><message><source>Copy</source><translation>Kopyala</translation></message><message><source>Use these weights</source><translation>Bu ağırlıkları kullan</translation></message><message><source>Autotune for</source><translation>Şuna göre Autotune</translation></message><message><source>for</source><translation>için</translation></message><message><source>Select:</source><translation>Seçim:</translation></message><message><source>Nice</source><translation>Nice önceliği</translation></message><message><source>CPU affinity</source><translation>CPU çekirdek yakınlığı</translation></message><message><source>Time slice</source><translation>Zaman dilimi</translation></message><message><source>Game CPU share</source><translation>Oyunun CPU payı</translation></message><message><source>Scene</source><translation>Sahne</translation></message><message><source>Discovered (not in Centurion's table; shown only, set by hand, not calibrated): </source><translation>Bulunanlar (Centurion tablosunda yok; yalnızca gösterilir, elle ayarlanır ve kalibre edilmez): </translation></message><message><source>&lt;b&gt;Machine&lt;/b&gt;&amp;nbsp; %1</source><translation>&lt;b&gt;Makine&lt;/b&gt;&amp;nbsp; %1</translation></message><message><source>&lt;b&gt;Observed&lt;/b&gt;&amp;nbsp; %1</source><translation>&lt;b&gt;Gözlenen&lt;/b&gt;&amp;nbsp; %1</translation></message><message><source>&lt;b&gt;Weights&lt;/b&gt;&amp;nbsp; %1%2</source><translation>&lt;b&gt;Ağırlıklar&lt;/b&gt;&amp;nbsp; %1%2</translation></message><message><source>&lt;b&gt;Predicted&lt;/b&gt;&amp;nbsp; (calibrated settings, against the boot state) %1</source><translation>&lt;b&gt;Tahmin edilen&lt;/b&gt;&amp;nbsp; (kalibre edilmiş ayarlar, açılış durumuna göre) %1</translation></message><message><source>Trade-offs / sensitivity cut short (time budget): the list below is partial.</source><translation>Ödünleşim/duyarlılık incelemesi zaman sınırından dolayı erken kesildi: aşağıdaki liste kısmi.</translation></message><message><source>Forcefully disable Wi-Fi and Bluetooth power management</source><translation>Wi-Fi ve Bluetooth güç yönetimini zorunlu olarak kapat</translation></message><message><source>Also renice the autogroup</source><translation>Autogroup için nice önceliğini de değiştir</translation></message><message><source>Precise timers (timer slack 1 ns)</source><translation>Hassas zamanlayıcılar (timer slack 1 ns)</translation></message><message><source>Recompress cold zram pages after the game</source><translation>Oyun sonrası soğuk zram sayfalarını yeniden sıkıştır</translation></message><message><source>Undervolt CPU</source><translation>CPU undervolt uygula</translation></message><message><source>Undervolt GPU</source><translation>GPU undervolt uygula</translation></message><message><source>A/B field comparison: every other launch of a game runs at the boot defaults</source><translation>A/B gerçek oyun karşılaştırması: oyunun her ikinci başlatılması açılış varsayılanlarıyla çalışır</translation></message><message><source>Detect games started from Heroic and Bottles (no launch options needed)</source><translation>Heroic ve Bottles üzerinden başlatılan oyunları algıla (başlatma seçeneği gerekmez)</translation></message><message><source>NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)</source><translation>Wine / Proton için NTSYNC (PROTON_USE_NTSYNC=1)</translation></message><message><source>Only changes</source><translation>Yalnızca değişiklikler</translation></message><message><source>Other trade-offs on the same measurements</source><translation>Aynı ölçümlerdeki diğer ödünleşimler</translation></message><message><source>Power saving</source><translation>Güç tasarrufu</translation></message><message><source>Gaming (latency + throughput)</source><translation>Oyun (gecikme + iş hacmi)</translation></message><message><source>Bare throughput</source><translation>Salt iş hacmi</translation></message><message><source>Optimal desktop</source><translation>En uygun masaüstü</translation></message><message><source>— none (keep the current scene)</source><translation>— yok (mevcut sahneyi koru)</translation></message><message><source>none (scheduler decides)</source><translation>yok (zamanlayıcı karar verir)</translation></message><message><source>CCD%1%2 (%3)</source><translation>CCD%1%2 (%3)</translation></message><message><source>P-cores (</source><translation>P çekirdekleri (</translation></message><message><source>E-cores (</source><translation>E çekirdekleri (</translation></message><message><source>live profile</source><translation>canlı profil</translation></message><message><source>scene %1 (%2)</source><translation>sahne %1 (%2)</translation></message><message><source>boot state (no scene)</source><translation>açılış durumu (sahne yok)</translation></message><message><source>Autotune Weights — %1</source><translation>Autotune ağırlıkları — %1</translation></message><message><source>Calibrate at Next Boot</source><translation>Sonraki açılışta kalibre et</translation></message><message><source>Autotune — %1</source><translation>Autotune — %1</translation></message><message><source>Game Launch</source><translation>Oyun başlatma</translation></message><message><source>Boot Options</source><translation>Açılış seçenekleri</translation></message><message><source>Fast</source><translation>Hızlı</translation></message><message><source>Balanced</source><translation>Dengeli</translation></message><message><source>Deep</source><translation>Derin</translation></message><message><source>Explore…</source><translation>Seçenekleri incele…</translation></message><message><source>Fast: main decision only. Balanced: main decision and 3 trade-offs. Deep: also explores +/-30% objective-weight sensitivity. No option applies settings automatically.</source><translation>Hızlı: yalnızca ana öneri. Dengeli: ana öneri ve 3 ödünleşim. Derin: hedef ağırlıklarının yüzde ±30 duyarlılığını da inceler. Hiçbir mod ayarları otomatik uygulamaz.</translation></message><message><source>Run trade-off comparisons on demand after the fast decision.</source><translation>Hızlı kararın ardından istenirse ödünleşim karşılaştırmalarını çalıştırır.</translation></message><message><source>Autotune · Inputs…</source><translation>Autotune · Girdiler…</translation></message><message><source>Autotune · %1…</source><translation>Autotune · %1…</translation></message><message><source>Inputs</source><translation>Girdiler</translation></message><message><source>Model</source><translation>Model</translation></message><message><source>Decision</source><translation>Karar</translation></message><message><source>Validation</source><translation>Doğrulama</translation></message><message><source>&lt;b&gt;%1&lt;/b&gt; · Inputs %2 ms · Model %3 ms · Decision %4 ms · Total %5 ms</source><translation>&lt;b&gt;%1&lt;/b&gt; · Girdiler %2 ms · Model %3 ms · Karar %4 ms · Toplam %5 ms</translation></message><message><source>Fast result: trade-offs and weight sensitivity were skipped. Use Explore after closing this report to calculate comparisons on demand.</source><translation>Hızlı sonuç: ödünleşimler ve ağırlık duyarlılığı hesaplanmadı. Bu raporu kapattıktan sonra karşılaştırmaları istediğinizde hesaplamak için Seçenekleri incele seçeneğini kullanın.</translation></message><message><source>Import game CSV…</source><translation>Oyun CSV'si içe aktar…</translation></message><message><source>Import FLM or MangoHud frame-time logs from your own recorded game sessions. This does not modify hardware settings; matching A/B game sessions are needed before they affect the model.</source><translation>Kaydedilmiş kendi oyun oturumlarınızdan FLM veya MangoHud kare süresi kayıtlarını içe aktarır. Donanım ayarlarını değiştirmez; modeli etkilemeleri için eşleşen A/B oyun oturumları gerekir.</translation></message><message><source>Import game telemetry</source><translation>Oyun telemetrisini içe aktar</translation></message><message><source>Frame-time logs (*.csv *.log *.txt);;All files (*)</source><translation>Kare süresi kayıtları (*.csv *.log *.txt);;Tüm dosyalar (*)</translation></message><message><source>Select at most four logs per import.</source><translation>Her içe aktarmada en fazla dört kayıt seçin.</translation></message><message><source>centurion-calibrate or pkexec is not installed.</source><translation>centurion-calibrate veya pkexec kurulu değil.</translation></message><message><source>Importing frame-time logs and matching recorded game sessions…</source><translation>Kare süresi kayıtları içe aktarılıyor ve kayıtlı oyun oturumlarıyla eşleştiriliyor…</translation></message><message><source>Game telemetry imported. Re-run Autotune to use matched A/B evidence.</source><translation>Oyun telemetrisi içe aktarıldı. Eşleşen A/B kanıtını kullanmak için Autotune'u yeniden çalıştırın.</translation></message><message><source>Game telemetry import failed.</source><translation>Oyun telemetrisi içe aktarılamadı.</translation></message><message><source>Game telemetry import</source><translation>Oyun telemetrisi içe aktarma</translation></message><message><source>Suggested next step: %1 (%2 of %3 settings would change, %4 uncertain effects, %5 without model evidence)</source><translation>Önerilen sonraki adım: %1 (%3 ayardan değişecek olan: %2, %4 belirsiz etki, %5 model kanıtı olmayan)</translation></message><message><source>Verify before apply</source><translation>Uygulamadan önce doğrula</translation></message><message><source>Save these exact settings as a preset and approve its root-owned copy first. Any changed value invalidates the previous ABBA verification.</source><translation>Önce bu ayarları birebir aynı haliyle profil olarak kaydedin ve root'a ait kopyasını onaylayın. Değişen herhangi bir değer önceki ABBA doğrulamasını geçersiz kılar.</translation></message><message><source>ABBA verification required</source><translation>ABBA doğrulaması gerekli</translation></message><message><source>This autotuned preset contains high-risk or extensive changes. Run a paired ABBA benchmark against your boot settings before applying it? The test temporarily changes settings, journals originals, and restores them.
 
 Some settings (SMT, power limits, TCC offset, IRQ affinity, radios…) cannot be measured by ABBA; a preset containing them never passes and can only be applied without verification.</source><translation>Bu Autotune profili yüksek riskli veya kapsamlı değişiklikler içeriyor. Uygulamadan önce açılış ayarlarınıza karşı eşleştirilmiş bir ABBA ölçümü çalıştırılsın mı? Test ayarları geçici olarak değiştirir, özgün değerleri günlüğe yazar ve geri yükler.
 
@@ -7589,7 +7589,7 @@ sudo centurion-calibrate --restore
 %1</source><translation>Profil uygulanmadı. Sonuçları kontrol edin ve gerekirse günlüğe yazılan ayarları geri yükleyin:
 sudo centurion-calibrate --restore
 
-%1</translation></message><message><source>ABBA verification passed</source><translation>ABBA doğrulaması başarılı</translation></message><message><source>At least three paired ABBA blocks showed a positive, corrected confidence interval. Only the verified preset values will be applied.</source><translation>En az üç eşleştirilmiş ABBA bloğu pozitif, düzeltilmiş bir güven aralığı gösterdi. Yalnızca doğrulanan profil değerleri uygulanacak.</translation></message><message><source>Failed to start pkexec. Nothing has been applied: %1</source><translation>pkexec başlatılamadı. Hiçbir şey uygulanmadı: %1</translation></message><message><source>High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying.</source><translation>Yüksek etkili öneri: uygulamadan önce adlandırılmış bir profil kaydedin ve eşleştirilmiş ABBA ölçümleriyle doğrulayın.</translation></message><message><source>Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains.</source><translation>Kanıt sınırlı veya belirsiz: tahmin edilen kazançlara güvenmeden önce ek kalibrasyon ya da eşleşen oyun A/B oturumları çalıştırın.</translation></message><message><source>Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement.</source><translation>Seçilen her ayarı gözden geçirin; kalibre edilmiş tahminler gerçek iş yükünde iyileşmenin kanıtı değil, öngörüdür.</translation></message><message><source>Nothing to apply: every decided setting is live already.</source><translation>Uygulanacak bir şey yok: karar verilen her ayar zaten etkin.</translation></message><message><source>Autotune · trade-offs computed; the table was left as it was.</source><translation>Autotune · ödünleşimler hesaplandı; tablo olduğu gibi bırakıldı.</translation></message></context>
+%1</translation></message><message><source>ABBA verification passed</source><translation>ABBA doğrulaması başarılı</translation></message><message><source>At least three paired ABBA blocks showed a positive, corrected confidence interval. Only the verified preset values will be applied.</source><translation>En az üç eşleştirilmiş ABBA bloğu pozitif, düzeltilmiş bir güven aralığı gösterdi. Yalnızca doğrulanan profil değerleri uygulanacak.</translation></message><message><source>Failed to start pkexec. Nothing has been applied: %1</source><translation>pkexec başlatılamadı. Hiçbir şey uygulanmadı: %1</translation></message><message><source>High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying.</source><translation>Yüksek etkili öneri: uygulamadan önce adlandırılmış bir profil kaydedin ve eşleştirilmiş ABBA ölçümleriyle doğrulayın.</translation></message><message><source>Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains.</source><translation>Kanıt sınırlı veya belirsiz: tahmin edilen kazançlara güvenmeden önce ek kalibrasyon ya da eşleşen oyun A/B oturumları çalıştırın.</translation></message><message><source>Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement.</source><translation>Seçilen her ayarı gözden geçirin; kalibre edilmiş tahminler gerçek iş yükünde iyileşmenin kanıtı değil, öngörüdür.</translation></message><message><source>Nothing to apply: every decided setting is live already.</source><translation>Uygulanacak bir şey yok: karar verilen her ayar zaten etkin.</translation></message><message><source>Autotune · trade-offs computed; the table was left as it was.</source><translation>Autotune · ödünleşimler hesaplandı; tablo olduğu gibi bırakıldı.</translation></message><message><location filename="../src/optimizetab.cpp" line="2522"/><source>Calibration Confidence</source><translation>Kalibrasyon Güven Düzeyi</translation></message></context>
     <context>
         <name>RyzenTab</name>
         <message>
@@ -7730,7 +7730,7 @@ sudo centurion-calibrate --restore
         <name>UiNavigator</name>
         <message>
             <location filename="../src/uinavigator.cpp" line="34"/>
-            <source>Quick navigation — Centurion</source>
+            <source>Quick Navigation — Centurion</source>
             <translation>Hızlı gezinme — Centurion</translation>
         </message>
         <message>
@@ -10382,7 +10382,7 @@ Yerel ağlara, bağlı olduğunuz ağdaki herkes dahildir; halka açık Wi-Fi'da
             <translation>Portlar</translation>
         </message>
         <message>
-            <source>Remote address</source>
+            <source>Remote Address</source>
             <translation>Uzak adres</translation>
         </message>
         <message>
@@ -10434,11 +10434,11 @@ Açık bağlantılar çalışmaya devam eder.</translation>
             <translation>Kapalıyken ilkeler ve kurallar kayıtlı kalır, ama hiçbir şey filtrelenmez.</translation>
         </message>
         <message>
-            <source>Incoming by default</source>
+            <source>Incoming by Default</source>
             <translation>Varsayılan gelen</translation>
         </message>
         <message>
-            <source>Outgoing by default</source>
+            <source>Outgoing by Default</source>
             <translation>Varsayılan giden</translation>
         </message>
         <message>
@@ -10648,7 +10648,7 @@ Add rules that allow DNS, NTP and web traffic first?</source>
             <translation>== Yüklü kurallar (adres listeleri hariç) ==</translation>
         </message>
         <message>
-            <source>Live firewall rules</source>
+            <source>Live Firewall Rules</source>
             <translation>Canlı güvenlik duvarı kuralları</translation>
         </message>
     </context>
@@ -10932,7 +10932,7 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>Kurtarma: %1 bu aramada başarısız sayıldı. Önce fabrika ayarına sıfırlanıyor.</translation>
         </message>
         <message>
-            <source>Ryzen CO Search Assistant (experimental)</source>
+            <source>Ryzen CO Search Assistant (Experimental)</source>
             <translation>Ryzen CO Arama Asistanı (deneysel)</translation>
         </message>
         <message>
@@ -11268,7 +11268,7 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
             <translation>CO search %1 (doğrulanmadı)</translation>
         </message>
         <message>
-            <source>Save result as profile</source>
+            <source>Save Result as Profile</source>
             <translation>Sonucu profil olarak kaydet</translation>
         </message>
         <message>
@@ -11329,7 +11329,7 @@ Profil adı:</translation>
         </message>
         <message>
             <source>The interrupted CO Search journal cannot be read (or is larger than 1 MiB).</source>
-            <translation>Yarıda kalan CO Arama günlüğü okunamıyor (ya da 1 MiB&apos;tan büyük).</translation>
+            <translation>Yarıda kalan CO Arama günlüğü okunamıyor (ya da 1 MiB'tan büyük).</translation>
         </message>
         <message>
             <source>It cannot be safely resumed. Discard the old journal?</source>
@@ -11337,13 +11337,13 @@ Profil adı:</translation>
         </message>
         <message>
             <source>The CPU topology changed since this search started (BIOS, SMT or a parked CCD): its cores and logical CPUs no longer match this machine.</source>
-            <translation>Bu arama başladığından beri CPU topolojisi değişti (BIOS, SMT ya da park edilmiş bir CCD): çekirdekleri ve mantıksal CPU&apos;ları artık bu makineyle eşleşmiyor.</translation>
+            <translation>Bu arama başladığından beri CPU topolojisi değişti (BIOS, SMT ya da park edilmiş bir CCD): çekirdekleri ve mantıksal CPU'ları artık bu makineyle eşleşmiyor.</translation>
         </message>
         <message>
             <source>Crash guard: all-core is never tested at %1 or below.</source>
             <translation>Crash koruması: all-core asla %1 veya altında test edilmez.</translation>
         </message>
-    </context>
+    <message><location filename="../src/cosearchdialog.cpp" line="986"/><source>Crash Guards</source><translation>Çökme Koruma Değerleri</translation></message></context>
     <context>
         <name>coevidence</name>
         <message>
@@ -11390,11 +11390,11 @@ Profil adı:</translation>
             <translation>Tara</translation>
         </message>
         <message>
-            <source>H02 · Machine checks</source>
+            <source>H02 · Machine Checks</source>
             <translation>H02 · Makine denetimleri</translation>
         </message>
         <message>
-            <source>H03 · PCIe errors</source>
+            <source>H03 · PCIe Errors</source>
             <translation>H03 · PCIe hataları</translation>
         </message>
         <message>
@@ -11851,7 +11851,7 @@ Profil adı:</translation>
             <translation>Sıcaklık</translation>
         </message>
         <message>
-            <source>Life used</source>
+            <source>Life Used</source>
             <translation>Kullanılan ömür</translation>
         </message>
         <message>
@@ -11879,7 +11879,7 @@ Profil adı:</translation>
             <translation>Yazılan</translation>
         </message>
         <message>
-            <source>Error log entries (newest first)</source>
+            <source>Error Log Entries (Newest First)</source>
             <translation>Hata günlüğü girdileri (en yenisi üstte)</translation>
         </message>
         <message>
@@ -12127,7 +12127,7 @@ Profil adı:</translation>
             <translation>xHCI sürücü uyarısı</translation>
         </message>
         <message>
-            <source>USB problems by port</source>
+            <source>USB Problems by Port</source>
             <translation>Bağlantı noktasına göre USB sorunları</translation>
         </message>
         <message>
@@ -12247,7 +12247,7 @@ Profil adı:</translation>
             <translation>/sys/power/suspend_stats yok (eski bir çekirdek ya da CONFIG_PM_SLEEP olmayan bir çekirdek).</translation>
         </message>
         <message>
-            <source>This boot (kernel suspend_stats)</source>
+            <source>This Boot (kernel suspend_stats)</source>
             <translation>Bu açılış (çekirdek suspend_stats)</translation>
         </message>
         <message>
@@ -12327,7 +12327,7 @@ Profil adı:</translation>
             <translation>Uyku kancası (centurion-sleep-log) her uyku için bir satır yazar; henüz hiç yok ya da kanca kurulu değil.</translation>
         </message>
         <message>
-            <source>Sleeps per boot</source>
+            <source>Sleeps per Boot</source>
             <translation>Açılış başına uykular</translation>
         </message>
         <message>
@@ -12459,7 +12459,7 @@ Profil adı:</translation>
             <translation>CO Arama düzeltilene kadar başlamayı reddeder, bu yüzden korunan hiçbir değer yeniden denenmez.</translation>
         </message>
         <message>
-            <source>Crash guards (values at or below are never tried again)</source>
+            <source>Crash Guards (values at or below are never tried again)</source>
             <translation>Çökme korumaları (bu değer ve altı bir daha denenmez)</translation>
         </message>
         <message>
@@ -12487,7 +12487,7 @@ Profil adı:</translation>
             <translation>%1 tanesi başka bir BIOS altında kaydedildi; yeni bir AGESA bir çekirdeğin tutabildiğini değiştirebilir ama korumalar yine geçerlidir.</translation>
         </message>
         <message>
-            <source>Past searches (newest first)</source>
+            <source>Past Searches (Newest First)</source>
             <translation>Geçmiş aramalar (en yenisi üstte)</translation>
         </message>
         <message>
@@ -12551,7 +12551,7 @@ Profil adı:</translation>
             <translation>varsayılan</translation>
         </message>
         <message>
-            <source>Boot endings by Curve Optimizer state at the end of the boot</source>
+            <source>Boot Endings by Curve Optimizer State at the End of the Boot</source>
             <translation>Açılış sonundaki Curve Optimizer durumuna göre açılış bitişleri</translation>
         </message>
         <message>
@@ -12759,7 +12759,7 @@ Profil adı:</translation>
             <translation>PCI adresi · ad · çalışma gücü</translation>
         </message>
         <message>
-            <source>Active query (nvidia-smi)</source>
+            <source>Active Query (nvidia-smi)</source>
             <translation>Etkin sorgu (nvidia-smi)</translation>
         </message>
         <message>
@@ -12811,7 +12811,7 @@ Profil adı:</translation>
             <translation>Not deposu dolu (400 olay)</translation>
         </message>
         <message>
-            <source>Guided triage — %1</source>
+            <source>Guided Triage — %1</source>
             <translation>Rehberli triyaj — %1</translation>
         </message>
         <message>
@@ -12819,7 +12819,7 @@ Profil adı:</translation>
             <translation>%1 çalıştırıldı ve bakılması gerekenler toplandı. Her denetimin tam raporu ve sınırları kendi sayfasındadır.</translation>
         </message>
         <message>
-            <source>Checks run</source>
+            <source>Checks Run</source>
             <translation>Çalıştırılan denetimler</translation>
         </message>
         <message>
@@ -13094,7 +13094,7 @@ Profil adı:</translation>
             <translation>Bu açılışın çekirdek günlüğünde makine denetimi yok</translation>
         </message>
         <message>
-            <source>Machine checks by core and unit</source>
+            <source>Machine Checks by Core and Unit</source>
             <translation>Çekirdeğe ve birime göre makine denetimleri</translation>
         </message>
         <message>
@@ -13166,7 +13166,7 @@ Profil adı:</translation>
             <translation>Bellek ayarlarını (EXPO / zamanlamalar) kontrol edin ve bir bellek testi çalıştırın (Sağlık → Sistem araçları → Bellek testi).</translation>
         </message>
         <message>
-            <source>Core map (logical CPUs per CCD)</source>
+            <source>Core Map (Logical CPUs per CCD)</source>
             <translation>Çekirdek haritası (CCD başına mantıksal CPU'lar)</translation>
         </message>
         <message>
@@ -13218,7 +13218,7 @@ Profil adı:</translation>
             <translation>Çekirdekte CONFIG_PCIEAER gerekir ve platformun AER'i işletim sistemine bırakması gerekir.</translation>
         </message>
         <message>
-            <source>Devices with errors</source>
+            <source>Devices with Errors</source>
             <translation>Hatası olan aygıtlar</translation>
         </message>
         <message>
@@ -13314,7 +13314,7 @@ Profil adı:</translation>
             <translation>Bu yardımcı Xid olaylarını döndürmedi</translation>
         </message>
         <message>
-            <source>Xid events by code</source>
+            <source>Xid Events by Code</source>
             <translation>Koda göre Xid olayları</translation>
         </message>
         <message>
@@ -13346,7 +13346,7 @@ Profil adı:</translation>
             <translation>%1 × %2</translation>
         </message>
         <message>
-            <source>Xid 154 recoveries and what preceded them (5 min, same boot)</source>
+            <source>Xid 154 Recoveries and What Preceded Them (5 min, same boot)</source>
             <translation>Xid 154 kurtarmaları ve öncesindekiler (5 dk, aynı açılış)</translation>
         </message>
         <message>
@@ -13398,7 +13398,7 @@ Profil adı:</translation>
             <translation>Bağlı F2FS birimi yok</translation>
         </message>
         <message>
-            <source>Mounted F2FS volumes</source>
+            <source>Mounted F2FS Volumes</source>
             <translation>Bağlı F2FS birimleri</translation>
         </message>
         <message>
@@ -13492,7 +13492,7 @@ Profil adı:</translation>
 </translation>
         </message>
         <message>
-            <source>F2FS errors in the kernel log</source>
+            <source>F2FS Errors in the Kernel Log</source>
             <translation>Çekirdek günlüğünde F2FS hataları</translation>
         </message>
         <message>
@@ -13556,7 +13556,7 @@ Profil adı:</translation>
             <translation>Bu açılışta ve kayıtlı geçmişte Wi-Fi ya da Bluetooth hatası yok</translation>
         </message>
         <message>
-            <source>Failures per adapter</source>
+            <source>Failures per Adapter</source>
             <translation>Bağdaştırıcı başına hatalar</translation>
         </message>
         <message>
@@ -13639,7 +13639,7 @@ Profil adı:</translation>
             <translation>Çalışırken askıya alınmış bir aygıt sahip olduğu son bağlantıyı gösterir.</translation>
         </message>
         <message>
-            <source>Device links</source>
+            <source>Device Links</source>
             <translation>Aygıt bağlantıları</translation>
         </message>
         <message>
@@ -13747,7 +13747,7 @@ Profil adı:</translation>
             <translation>Ya hiç yok ya da sürücüsü yüklenmedi (S18 sürücüsü olmayan aygıtları listeler).</translation>
         </message>
         <message>
-            <source>Radio switches (rfkill)</source>
+            <source>Radio Switches (rfkill)</source>
             <translation>Radyo anahtarları (rfkill)</translation>
         </message>
         <message>
@@ -13791,7 +13791,7 @@ Profil adı:</translation>
             <translation>Uçak modu ya da masaüstünün anahtarı; rfkill unblock onu yeniden açar.</translation>
         </message>
         <message>
-            <source>Firmware the kernel could not load (saved kernel log)</source>
+            <source>Firmware the Kernel Could Not Load (Saved Kernel Log)</source>
             <translation>Çekirdeğin yükleyemediği firmware (kaydedilen çekirdek günlüğü)</translation>
         </message>
         <message>
@@ -13847,7 +13847,7 @@ Profil adı:</translation>
             <translation>NVIDIA GPU'nun güç sınırı nvidia-smi gerektirir ve bu GPU'yu uyandırır: NVIDIA sekmesine bakın.</translation>
         </message>
         <message>
-            <source>Limits and their sources</source>
+            <source>Limits and Their Sources</source>
             <translation>Sınırlar ve kaynakları</translation>
         </message>
         <message>
@@ -14003,7 +14003,7 @@ Profil adı:</translation>
             <translation>DIMM ayrıntıları (hız, zamanlamalar, parça numaraları) root gerektirir: Sistem araçları → DMI.</translation>
         </message>
         <message>
-            <source>Memory now</source>
+            <source>Memory Now</source>
             <translation>Şu anki bellek</translation>
         </message>
         <message>
@@ -14127,7 +14127,7 @@ Profil adı:</translation>
             <translation>Bellek baskısı (PSI) yok: CONFIG_PSI olmayan çekirdek ya da psi=0.</translation>
         </message>
         <message>
-            <source>NUMA and cache domains</source>
+            <source>NUMA and Cache Domains</source>
             <translation>NUMA ve önbellek alanları</translation>
         </message>
         <message>
@@ -14171,7 +14171,7 @@ Profil adı:</translation>
             <translation>Parolalar ve kimlik doğrulama öznitelikleri asla okunmaz.</translation>
         </message>
         <message>
-            <source>WMI objects</source>
+            <source>WMI Objects</source>
             <translation>WMI nesneleri</translation>
         </message>
         <message>
@@ -14195,7 +14195,7 @@ Profil adı:</translation>
             <translation>%1 nesnenin sürücüsü yok: hiçbir Linux sürücüsünün tanımadığı nesneler için normal; Centurion Lenovo nesneleriyle doğrudan ACPI üzerinden konuşur.</translation>
         </message>
         <message>
-            <source>Firmware settings (firmware-attributes)</source>
+            <source>Firmware Settings (firmware-attributes)</source>
             <translation>Firmware ayarları (firmware-attributes)</translation>
         </message>
         <message>
@@ -14219,7 +14219,7 @@ Profil adı:</translation>
             <translation>(okunmadı)</translation>
         </message>
         <message>
-            <source>ACPI tables present</source>
+            <source>ACPI Tables Present</source>
             <translation>Bulunan ACPI tabloları</translation>
         </message>
         <message>
@@ -14251,7 +14251,7 @@ Profil adı:</translation>
             <translation>Pil güç değerleri pilin kendi tahminidir.</translation>
         </message>
         <message>
-            <source>USB-C ports</source>
+            <source>USB-C Ports</source>
             <translation>USB-C bağlantı noktaları</translation>
         </message>
         <message>
@@ -14303,7 +14303,7 @@ Profil adı:</translation>
             <translation>Oyun için orijinal adaptörü kullanın; USB-C şarj cihazı hafif kullanım için uygundur.</translation>
         </message>
         <message>
-            <source>Power supplies</source>
+            <source>Power Supplies</source>
             <translation>Güç kaynakları</translation>
         </message>
         <message>
@@ -14391,7 +14391,7 @@ Profil adı:</translation>
             <translation>Yalnızca kendi kullanıcınızın ses sunucuları görülür; hiçbir şey yeniden başlatılmaz ya da yeniden yönlendirilmez.</translation>
         </message>
         <message>
-            <source>Sound cards</source>
+            <source>Sound Cards</source>
             <translation>Ses kartları</translation>
         </message>
         <message>
@@ -14411,7 +14411,7 @@ Profil adı:</translation>
             <translation>Ses sürücüsü yüklenmedi (S18 sürücüsü olmayan aygıtları listeler; SOF dizüstüleri firmware'lerine de ihtiyaç duyar).</translation>
         </message>
         <message>
-            <source>Sound servers running</source>
+            <source>Sound Servers Running</source>
             <translation>Çalışan ses sunucuları</translation>
         </message>
         <message>
@@ -14495,7 +14495,7 @@ Profil adı:</translation>
             <translation>Gömülü bir seçenek (y) ya da modül (m) ikisi de çalışır; modülün bu çekirdek için kurulu olması da gerekir.</translation>
         </message>
         <message>
-            <source>Kernel options</source>
+            <source>Kernel Options</source>
             <translation>Çekirdek seçenekleri</translation>
         </message>
         <message>
@@ -14555,7 +14555,7 @@ Profil adı:</translation>
             <translation>CONFIG_FW_LOADER_COMPRESS_XZ'yi etkinleştirin ya da firmware'i sıkıştırmasız kurun.</translation>
         </message>
         <message>
-            <source>Firmware files the kernel could not load</source>
+            <source>Firmware Files the Kernel Could Not Load</source>
             <translation>Çekirdeğin yükleyemediği firmware dosyaları</translation>
         </message>
         <message>
@@ -14575,7 +14575,7 @@ Profil adı:</translation>
             <translation>Tabloya bakın: isteyen sürücü hangi aygıtın ihtiyaç duyduğunu söyler.</translation>
         </message>
         <message>
-            <source>Devices without a driver</source>
+            <source>Devices Without a Driver</source>
             <translation>Sürücüsü olmayan aygıtlar</translation>
         </message>
         <message>
@@ -14718,7 +14718,7 @@ Profil adı:</translation>
             <translation>Kayıtlı temel durum okunamıyor ya da bilinmeyen bir sürümden.</translation>
         </message>
         <message>
-            <source>Hardware snapshot</source>
+            <source>Hardware Snapshot</source>
             <translation>Donanım anlık görüntüsü</translation>
         </message>
         <message>
@@ -14778,7 +14778,7 @@ Profil adı:</translation>
             <translation>CPU mikrokodu</translation>
         </message>
         <message>
-            <source>Boot parameters</source>
+            <source>Boot Parameters</source>
             <translation>Açılış parametreleri</translation>
         </message>
         <message>
@@ -14786,7 +14786,7 @@ Profil adı:</translation>
             <translation>%1 değişti</translation>
         </message>
         <message>
-            <source>PCI device changes</source>
+            <source>PCI Device Changes</source>
             <translation>PCI aygıt değişiklikleri</translation>
         </message>
         <message>
@@ -14850,7 +14850,7 @@ Profil adı:</translation>
             <translation>yetenek</translation>
         </message>
         <message>
-            <source>Module changes</source>
+            <source>Module Changes</source>
             <translation>Modül değişiklikleri</translation>
         </message>
         <message>
@@ -14902,7 +14902,7 @@ Profil adı:</translation>
             <translation>EDID çekirdek tarafından geçersiz kılınabilir (drm.edid_firmware); gösterilen, sürücünün kullandığıdır.</translation>
         </message>
         <message>
-            <source>Connected displays</source>
+            <source>Connected Displays</source>
             <translation>Bağlı ekranlar</translation>
         </message>
         <message>
@@ -15006,7 +15006,7 @@ Profil adı:</translation>
             <translation>Geçerli EDID'e sahip %1 ekran</translation>
         </message>
         <message>
-            <source>NVIDIA module parameters</source>
+            <source>NVIDIA Module Parameters</source>
             <translation>NVIDIA modül parametreleri</translation>
         </message>
         <message>
@@ -15034,7 +15034,7 @@ Profil adı:</translation>
             <translation>Kaynak</translation>
         </message>
         <message>
-            <source>In effect</source>
+            <source>In Effect</source>
             <translation>Etkin</translation>
         </message>
         <message>
@@ -15129,7 +15129,7 @@ Profil adı:</translation>
             <source>where video memory is saved on suspend</source>
             <translation>uykuda video belleğinin kaydedildiği yer</translation>
         </message>
-    </context>
+    <message><location filename="../src/diagnostictools.cpp" line="290"/><source>Display Details</source><translation>Ekran Ayrıntıları</translation></message></context>
     <context>
         <name>DiagReportView</name>
         <message>
@@ -15356,11 +15356,11 @@ Profil adı:</translation>
 <context>
     <name>toolcatalog</name>
         <message>
-            <source>CPU &amp; memory</source>
+            <source>CPU &amp; Memory</source>
             <translation>CPU ve bellek</translation>
         </message>
         <message>
-            <source>Graphics &amp; display</source>
+            <source>Graphics &amp; Display</source>
             <translation>Grafik ve ekran</translation>
         </message>
         <message>
@@ -15368,23 +15368,23 @@ Profil adı:</translation>
             <translation>Depolama</translation>
         </message>
         <message>
-            <source>Network &amp; wireless</source>
+            <source>Network &amp; Wireless</source>
             <translation>Ağ ve kablosuz</translation>
         </message>
         <message>
-            <source>Power &amp; thermal</source>
+            <source>Power &amp; Thermal</source>
             <translation>Güç ve sıcaklık</translation>
         </message>
         <message>
-            <source>Devices &amp; buses</source>
+            <source>Devices &amp; Buses</source>
             <translation>Aygıtlar ve veri yolları</translation>
         </message>
         <message>
-            <source>Firmware &amp; kernel</source>
+            <source>Firmware &amp; Kernel</source>
             <translation>Donanım yazılımı ve çekirdek</translation>
         </message>
         <message>
-            <source>System &amp; configuration</source>
+            <source>System &amp; Configuration</source>
             <translation>Sistem ve yapılandırma</translation>
         </message>
         <message>
@@ -15404,7 +15404,7 @@ Profil adı:</translation>
             <translation>İnternet kullanır</translation>
         </message>
         <message>
-            <source>PCIe Advanced Error Reporting: the link&apos;s own error counters. A few corrected errors are common; a growing count or uncorrected errors are not.</source>
+            <source>PCIe Advanced Error Reporting: the link's own error counters. A few corrected errors are common; a growing count or uncorrected errors are not.</source>
             <translation>PCIe Gelişmiş Hata Bildirimi: bağlantının kendi hata sayaçları. Birkaç düzeltilmiş hata olağandır; artan sayı ya da düzeltilmemiş hatalar değildir.</translation>
         </message>
         <message>
@@ -15432,15 +15432,15 @@ Profil adı:</translation>
             <translation>Bir ekranın kendisi hakkında gönderdiği veri: ad, modlar, yenileme aralığı, HDR desteği.</translation>
         </message>
         <message>
-            <source>Variable refresh rate (FreeSync / G-SYNC): the display follows the game&apos;s frame rate.</source>
+            <source>Variable refresh rate (FreeSync / G-SYNC): the display follows the game's frame rate.</source>
             <translation>Değişken yenileme hızı (FreeSync / G-SYNC): ekran oyunun kare hızını izler.</translation>
         </message>
         <message>
-            <source>Package Power Tracking: the firmware&apos;s power limits for the CPU package.</source>
+            <source>Package Power Tracking: the firmware's power limits for the CPU package.</source>
             <translation>Paket Güç İzleme: donanım yazılımının CPU paketi için güç sınırları.</translation>
         </message>
         <message>
-            <source>Running Average Power Limit: the CPU&apos;s own power meter and limits.</source>
+            <source>Running Average Power Limit: the CPU's own power meter and limits.</source>
             <translation>Running Average Power Limit: CPU’nun kendi güç ölçeri ve sınırları.</translation>
         </message>
         <message>
@@ -15452,7 +15452,7 @@ Profil adı:</translation>
             <translation>RAM’de sıkıştırılmış takas alanı: biraz CPU zamanı karşılığında daha fazla kullanılabilir bellek.</translation>
         </message>
         <message>
-            <source>A drive&apos;s own health record: wear, errors, temperature.</source>
+            <source>A drive's own health record: wear, errors, temperature.</source>
             <translation>Sürücünün kendi sağlık kaydı: aşınma, hatalar, sıcaklık.</translation>
         </message>
         <message>
@@ -15460,4 +15460,4 @@ Profil adı:</translation>
             <translation>6.6’dan beri Linux CPU zamanlayıcısı: sıradaki görevi seçer.</translation>
         </message>
 </context>
-</TS>
+<context><name>PanelControlsDialog</name><message><location filename="../src/panelcontrols.cpp" line="16"/><source>Panel Controls</source><translation>Panel Kontrolleri</translation></message></context><context><name>PipewireConfigDialog</name><message><location filename="../src/pipewireconfig.cpp" line="202"/><source>PipeWire Settings</source><translation>PipeWire Ayarları</translation></message></context></TS>

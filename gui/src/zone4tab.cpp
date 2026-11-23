@@ -26,7 +26,7 @@ Zone4Tab::Zone4Tab(QWidget *parent) : QWidget(parent) {
     v->setContentsMargins(8, 6, 8, 6);
     v->setSpacing(5);
 
-    auto *box = new QGroupBox("Keyboard backlight (4 zones)");
+    auto *box = new QGroupBox("Keyboard Backlight (4 Zones)");
     auto *g = new QGridLayout(box);
     g->setContentsMargins(10, 6, 10, 8);
     g->setHorizontalSpacing(10);

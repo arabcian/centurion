@@ -205,7 +205,7 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
 
     table_ = new QTreeWidget;
     table_->setColumnCount(6);
-    table_->setHeaderLabels({tr("Date"), tr("CPU temperature"), tr("Fan"), tr("Clock"), tr("Started at"), tr("Compared with the baseline")});
+    table_->setHeaderLabels({tr("Date"), tr("CPU Temperature"), tr("Fan"), tr("Clock"), tr("Started at"), tr("Compared with the Baseline")});
     table_->setRootIsDecorated(false);
     table_->setAlternatingRowColors(true);
     for (int i = 0; i < 5; ++i) table_->header()->setSectionResizeMode(i, QHeaderView::ResizeToContents);

@@ -30,7 +30,7 @@ HealthEvidencePage::HealthEvidencePage(QWidget *parent) : QWidget(parent) {
     status_->setProperty("role", "muted");
     layout->addWidget(status_);
     tabs_ = new QTabWidget(this);
-    const QStringList names = {tr("H02 · Machine checks"), tr("H03 · PCIe errors"), tr("H04 · NVIDIA Xid"), tr("H05 · F2FS"), tr("H09 · Wi-Fi / Bluetooth")};
+    const QStringList names = {tr("H02 · Machine Checks"), tr("H03 · PCIe Errors"), tr("H04 · NVIDIA Xid"), tr("H05 · F2FS"), tr("H09 · Wi-Fi / Bluetooth")};
     for (int i = 0; i < 5; ++i) {
         views_[i] = new DiagReportView;
         views_[i]->setMessage(tr("Press Scan to read this boot's evidence."));

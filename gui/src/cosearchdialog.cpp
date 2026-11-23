@@ -205,7 +205,7 @@ static QString statusSheet(const char *tone) {
 }
 
 CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new Notifier(this)) {
-    setWindowTitle(tr("Ryzen CO Search Assistant (experimental)"));
+    setWindowTitle(tr("Ryzen CO Search Assistant (Experimental)"));
     resize(1000, 680);
     auto *v = new QVBoxLayout(this);
     auto *explainer = new QLabel(tr(
@@ -983,10 +983,10 @@ void CoSearchDialog::manageCrashGuards() {
     const auto guards = readCrashGuards();
     const auto all = readAllCoreGuard();
     if (!guards || !all) { QMessageBox::critical(this, tr("CO crash guard corrupted"), tr("The crash guard file cannot be read; it is left unchanged.")); return; }
-    if (guards->isEmpty() && all->isEmpty()) { QMessageBox::information(this, tr("Crash guards"), tr("No crash guards are recorded.")); return; }
+    if (guards->isEmpty() && all->isEmpty()) { QMessageBox::information(this, tr("Crash Guards"), tr("No crash guards are recorded.")); return; }
     const int allRow = all->isEmpty() ? -1 : int(guards->size());  // the all-core guard, last
     QDialog dlg(this);
-    dlg.setWindowTitle(tr("Crash guards"));
+    dlg.setWindowTitle(tr("Crash Guards"));
     dlg.resize(560, 360);
     auto *lay = new QVBoxLayout(&dlg);
     auto *info = new QLabel(tr("Each row is a value that crashed this machine while that core was tested alone: it and every "
@@ -1048,14 +1048,14 @@ void CoSearchDialog::manageCrashGuards() {
             QSaveFile f(crashGuardPath());
             const QByteArray data = QJsonDocument(QJsonObject{{"version", 1}, {"guards", kept}}).toJson();
             if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size() || !f.commit()) {
-                QMessageBox::critical(&dlg, tr("Crash guards"), tr("Could not write the crash guard file; nothing was removed."));
+                QMessageBox::critical(&dlg, tr("Crash Guards"), tr("Could not write the crash guard file; nothing was removed."));
                 return;
             }
         }
         if (rows.contains(allRow)) {
             if (!QFile::remove(allCoreGuardPath())) {
                 if (!gone.isEmpty()) note(tr("Crash guards removed: %1").arg(gone.join(", ")), theme::WARN);
-                QMessageBox::critical(&dlg, tr("Crash guards"), tr("Could not remove the all-core crash guard file."));
+                QMessageBox::critical(&dlg, tr("Crash Guards"), tr("Could not remove the all-core crash guard file."));
                 return;
             }
             gone << tr("all-core %1").arg(all->value("failed").toInt());
@@ -1785,7 +1785,7 @@ void CoSearchDialog::saveResultAs() {
     const QString date = QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm");
     QString name = finished_ ? tr("CO search %1").arg(date) : tr("CO search %1 (not verified)").arg(date);
     QDialog dlg(this);
-    dlg.setWindowTitle(tr("Save result as profile"));
+    dlg.setWindowTitle(tr("Save Result as Profile"));
     auto *form = new QFormLayout(&dlg);
     if (!finished_) {
         auto *warn = new QLabel(tr("This search did not finish its verification: these values passed only the tests run so far."));

@@ -353,14 +353,14 @@ void Tray::rebuild() {
             // unsaved values in the editor and could open a modal box behind the hidden window.
             if (!claimCooldown()) return;
             win_->scenes()->applyCpuProfile(n, false, [this, n](bool ok, const QString &m) {
-                notify(tr("CPU curve"), ok ? tr("Profile '%1' applied.").arg(n) : tr("Profile '%1': %2").arg(n, m));
+                notify(tr("CPU Curve"), ok ? tr("Profile '%1' applied.").arg(n) : tr("Profile '%1': %2").arg(n, m));
             });
         });
     rm->addSeparator();
     connect(rm->addAction(tr("Reset curve")), &QAction::triggered, this, [this, ryzen] {
         if (!claimCooldown()) return;
         ryzen->applyReset();
-        notify(tr("CPU curve"), tr("Resetting Curve Optimizer (coall=0)…"));
+        notify(tr("CPU Curve"), tr("Resetting Curve Optimizer (coall=0)…"));
     });
     }
 
@@ -394,7 +394,7 @@ void Tray::rebuild() {
         connect(nm->addAction(n == def ? n + "  ★" : n), &QAction::triggered, this, [this, nv, n] {
             if (!claimCooldown()) return;
             nv->applyNamedProfile(n);
-            notify(tr("GPU curve"), tr("Applying profile '%1'…").arg(n));
+            notify(tr("GPU Curve"), tr("Applying profile '%1'…").arg(n));
         });
     nm->addSeparator();
     connect(nm->addAction(tr("Reset curve")), &QAction::triggered, this, [this, nv] {

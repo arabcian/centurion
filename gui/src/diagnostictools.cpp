@@ -93,7 +93,7 @@ QJsonObject loadHardwareBaseline(QString *capturedAt, QString *error) {
 Report hardwareSnapshot(const QJsonObject &base, const QString &capturedAt, const QJsonObject &now) {
     Report r;
     r.code = QStringLiteral("S01");
-    r.title = tr("Hardware snapshot");
+    r.title = tr("Hardware Snapshot");
     r.about = tr("Compares the PCI devices, their drivers, loaded modules, kernel, BIOS, microcode and boot parameters with a baseline you saved, "
                  "grouped by what changed.");
     r.limits << tr("A device that is powered off in hybrid graphics mode, or disabled in the BIOS, disappears from the PCI bus; that is not a fault by itself.")
@@ -113,7 +113,7 @@ Report hardwareSnapshot(const QJsonObject &base, const QString &capturedAt, cons
     host.title = tr("System");
     host.headers = {tr("Item"), tr("Baseline"), tr("Now")};
     const QList<std::pair<const char *, QString>> hostKeys = {{"host/kernel", tr("Kernel")}, {"host/bios_version", tr("BIOS")}, {"host/bios_date", tr("BIOS date")},
-                                                             {"host/microcode", tr("CPU microcode")}, {"host/cmdline", tr("Boot parameters")}};
+                                                             {"host/microcode", tr("CPU microcode")}, {"host/cmdline", tr("Boot Parameters")}};
     for (const auto &[k, label] : hostKeys) {
         const QString a = base.value(QLatin1String(k)).toString(), b = now.value(QLatin1String(k)).toString();
         const bool changed = !base.isEmpty() && a != b;
@@ -139,7 +139,7 @@ Report hardwareSnapshot(const QJsonObject &base, const QString &capturedAt, cons
     QStringList sorted = bdfs.values();
     sorted.sort();
     Table pci;
-    pci.title = tr("PCI device changes");
+    pci.title = tr("PCI Device Changes");
     pci.headers = {tr("Address"), tr("Device"), tr("Change"), tr("Baseline"), tr("Now")};
     auto name = [](const QJsonObject &d) { return diagsrc::pciName(d.value(QStringLiteral("vendor")).toString(), d.value(QStringLiteral("device")).toString(), d.value(QStringLiteral("class")).toString()); };
     for (const QString &bdf : sorted) {
@@ -168,7 +168,7 @@ Report hardwareSnapshot(const QJsonObject &base, const QString &capturedAt, cons
     if (!pci.rows.isEmpty()) r.tables << pci;
     // Modules.
     Table mod;
-    mod.title = tr("Module changes");
+    mod.title = tr("Module Changes");
     mod.headers = {tr("Module"), tr("Change"), tr("Baseline"), tr("Now")};
     QSet<QString> mk;
     for (auto it = base.begin(); it != base.end(); ++it) if (it.key().startsWith(QStringLiteral("module/"))) mk.insert(it.key());
@@ -284,10 +284,10 @@ Report displays(const QString &root) {
     r.limits << tr("Whether VRR is actually on depends on the compositor and driver (KDE: Display settings → Adaptive sync); the EDID says what the display supports.")
              << tr("An EDID can be overridden by the kernel (drm.edid_firmware); the one shown is what the driver uses.");
     Table t;
-    t.title = tr("Connected displays");
+    t.title = tr("Connected Displays");
     t.headers = {tr("Connector"), tr("Display"), tr("Year"), tr("Preferred mode"), tr("Refresh range"), tr("VRR range"), tr("EDID")};
     Table det;
-    det.title = tr("Display details");
+    det.title = tr("Display Details");
     det.headers = {tr("Connector"), tr("Size"), tr("Bit depth"), tr("Colour formats"), tr("HDR"), tr("Colour spaces"), tr("Audio"), tr("Made"), tr("Modes"), tr("State")};
     int connected = 0;
     for (const QString &conn : diagsrc::dir(root + QStringLiteral("/sys/class/drm"))) {
@@ -396,7 +396,7 @@ bool sameValue(const QString &a0, const QString &b0) {
 Report nvidiaParams(const QString &root) {
     Report r;
     r.code = QStringLiteral("S06");
-    r.title = tr("NVIDIA module parameters");
+    r.title = tr("NVIDIA Module Parameters");
     r.about = tr("The NVIDIA driver options configured in modprobe.d and on the kernel command line, against the values the loaded driver runs with, "
                  "with what the important ones do. The GPU is not woken.");
     r.limits << tr("A changed option takes effect only when the module loads again (reboot). If the NVIDIA modules are in the initramfs, it carries its own copy of modprobe.d.");

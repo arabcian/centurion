@@ -102,7 +102,7 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
 
     table_ = new QTreeWidget;
     table_->setColumnCount(6);
-    table_->setHeaderLabels({QStringLiteral("Curve"), QStringLiteral("State"), QStringLiteral("In effect"), QStringLiteral("Errors"),
+    table_->setHeaderLabels({QStringLiteral("Curve"), QStringLiteral("State"), QStringLiteral("In Effect"), QStringLiteral("Errors"),
                              QStringLiteral("Per 10 h"), QStringLiteral("Last error")});
     table_->setRootIsDecorated(false);
     table_->setAlternatingRowColors(true);

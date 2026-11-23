@@ -16,7 +16,11 @@ keys += re.findall(r'setProperty\("toolKey", QStringLiteral\("([^"]+)"\)\)', sys
 keys += re.findall(r'addToolPage\([^;]*QStringLiteral\("([^"]+)"\)\)', mainwindow)
 assert len(keys) >= 30, keys
 
-checks = {f"catalog entry: {k}": re.search(r"\{\"" + re.escape(k) + r"\",\s*\{A::", catalog) is not None for k in set(keys) if k != "SMART"}
+# New Title Case captions are display-only. Verify the original catalog IDs still
+# exist and the changed captions are explicitly mapped back to those IDs.
+aliases = dict(re.findall(r'if \(display == QLatin1String\("([^"]+)"\)\) return QStringLiteral\("([^"]+)"\);', systools))
+checks = {f"catalog entry: {k}": re.search(r'\{"' + re.escape(aliases.get(k, k)) + r'",\s*\{A::', catalog) is not None for k in set(keys) if k != "SMART"}
+checks["display captions preserve canonical tool keys"] = all(k in aliases and re.search(r'\{"' + re.escape(aliases[k]) + r'",\s*\{A::', catalog) is not None for k in ("Hardware Snapshot", "NVIDIA Module Parameters", "PCIe Detail", "SMART Details", "Firmware Updates"))
 checks["no second tool tree"] = "toolNavigation_" not in health
 checks["catalog search keeps its name"] = "healthToolSearch" in health
 checks["tools remember pins and recents"] = 'health/pinned_tools' in health and 'health/recent_tools' in health

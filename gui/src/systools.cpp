@@ -61,6 +61,19 @@ struct Spec {
     bool search = false;             // a find box for the output (pages with long reports)
 };
 
+// GUI captions are Title Case, but historic tool keys are persistent identifiers.
+// Keep those keys unchanged: they index the catalog, favorites, recent tools,
+// related diagnostics and the system-action bar (SMART, PCIe ASPM, fwupd).
+QString stableToolKey(const char *caption) {
+    const QString display = QString::fromLatin1(caption);
+    if (display == QLatin1String("Hardware Snapshot")) return QStringLiteral("Hardware snapshot");
+    if (display == QLatin1String("NVIDIA Module Parameters")) return QStringLiteral("NVIDIA module parameters");
+    if (display == QLatin1String("PCIe Detail")) return QStringLiteral("PCIe detail");
+    if (display == QLatin1String("SMART Details")) return QStringLiteral("SMART details");
+    if (display == QLatin1String("Firmware Updates")) return QStringLiteral("Firmware updates");
+    return display;
+}
+
 // The package that provides each tool, per distribution family (Gentoo first: it is the project's own).
 struct ToolPkg { const char *tool, *gentoo, *arch, *fedora, *debian; };
 const ToolPkg TOOL_PKGS[] = {
@@ -338,15 +351,15 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
     } else if (key == QLatin1String("Firmware updates")) {
         // fwupd asks for authorisation itself (its own polkit action): run as the user.
         button(tl("Install updates…"), tl("fwupdmgr update: installs the updates listed above; most apply at the next reboot."), [page, rerun] {
-            if (QMessageBox::question(page, tl("Firmware updates"), tl("Install every firmware update fwupd offers? Keep the charger connected; "
+            if (QMessageBox::question(page, tl("Firmware Updates"), tl("Install every firmware update fwupd offers? Keep the charger connected; "
                                       "do not switch off while an update is written."), QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
                 return;
             const QString exe = findExe(QStringLiteral("fwupdmgr"));
-            if (exe.isEmpty()) { QMessageBox::warning(page, tl("Firmware updates"), tl("fwupdmgr is not installed (%1).").arg(installHint(QStringLiteral("fwupdmgr")))); return; }
+            if (exe.isEmpty()) { QMessageBox::warning(page, tl("Firmware Updates"), tl("fwupdmgr is not installed (%1).").arg(installHint(QStringLiteral("fwupdmgr")))); return; }
             auto *p = new QProcess(page);
             p->setProcessChannelMode(QProcess::MergedChannels);
             QObject::connect(p, &QProcess::finished, page, [p, page, rerun](int code, QProcess::ExitStatus) {
-                QMessageBox box(code == 0 ? QMessageBox::Information : QMessageBox::Warning, tl("Firmware updates"),
+                QMessageBox box(code == 0 ? QMessageBox::Information : QMessageBox::Warning, tl("Firmware Updates"),
                                 code == 0 ? tl("fwupdmgr finished.") : tl("fwupdmgr reported a problem (exit %1).").arg(code), QMessageBox::Ok, page);
                 box.setDetailedText(QString::fromUtf8(p->readAll()));
                 box.exec();
@@ -394,7 +407,7 @@ public:
         top->addWidget(run);
         top->addWidget(copy);
         v->addLayout(top);
-        if (QWidget *bar = actionBar(QString::fromLatin1(s.title), this, [this] { ran_ = false; start(); })) v->addWidget(bar);
+        if (QWidget *bar = actionBar(stableToolKey(s.title), this, [this] { ran_ = false; start(); })) v->addWidget(bar);
         text_ = new QTextBrowser;
         text_->setOpenLinks(false);  // anchors are serial toggles, not links
         text_->setLineWrapMode(QTextEdit::NoWrap);
@@ -741,13 +754,13 @@ void addPages(QTabWidget *tabs) {
         {QT_TRANSLATE_NOOP("systools", "Kernel Feature & Firmware Check"),
          QT_TRANSLATE_NOOP("systools", "S18: kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver."),
          {{"@diag", "S18"}}},
-        {QT_TRANSLATE_NOOP("systools", "Hardware snapshot"),
+        {QT_TRANSLATE_NOOP("systools", "Hardware Snapshot"),
          QT_TRANSLATE_NOOP("systools", "S01: compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved."),
          {{"@diag", "S01"}}},
         {QT_TRANSLATE_NOOP("systools", "EDID / VRR"),
          QT_TRANSLATE_NOOP("systools", "S03: each connected display's identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen's brightness and refresh rate."),
          {{"@diag", "S03"}}},
-        {QT_TRANSLATE_NOOP("systools", "NVIDIA module parameters"),
+        {QT_TRANSLATE_NOOP("systools", "NVIDIA Module Parameters"),
          QT_TRANSLATE_NOOP("systools", "S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU."),
          {{"@diag", "S06"}, {"modinfo", "-p", "nvidia"}}},
         {QT_TRANSLATE_NOOP("systools", "Sensors"), "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
@@ -757,11 +770,11 @@ void addPages(QTabWidget *tabs) {
         {QT_TRANSLATE_NOOP("systools", "DMI"), "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode", false, true},
         {QT_TRANSLATE_NOOP("systools", "PCI"), "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.",
          {{"lspci", "-nnk"}, {"lspci", "-tv"}, {"@pcilink"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "PCIe detail"), "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
+        {QT_TRANSLATE_NOOP("systools", "PCIe Detail"), "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
         {QT_TRANSLATE_NOOP("systools", "USB"), "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
         {QT_TRANSLATE_NOOP("systools", "Storage"), "Block devices, schedulers and mounted filesystems.",
          {{"lsblk", "-o", "NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINTS,ROTA,SCHED"}, {"df", "-hT", "-x", "tmpfs", "-x", "devtmpfs"}}},
-        {QT_TRANSLATE_NOOP("systools", "SMART details"), "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
+        {QT_TRANSLATE_NOOP("systools", "SMART Details"), "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
         {QT_TRANSLATE_NOOP("systools", "NVIDIA"), "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
          {{"@file", "/proc/driver/nvidia/version"}, {"nvidia-smi", "-q"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "Graphics"), "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
@@ -776,7 +789,7 @@ void addPages(QTabWidget *tabs) {
         {QT_TRANSLATE_NOOP("systools", "Security"),
          QT_TRANSLATE_NOOP("systools", "Mitigations for CPU vulnerabilities, kernel lockdown, Secure Boot, the kernel taint flags and the microcode revision."),
          {{"@dir", "/sys/devices/system/cpu/vulnerabilities"}, {"@file", "/sys/kernel/security/lockdown"}, {"mokutil", "--sb-state"}, {"@tainted"}, {"@microcode"}}},
-        {QT_TRANSLATE_NOOP("systools", "Firmware updates"),
+        {QT_TRANSLATE_NOOP("systools", "Firmware Updates"),
          QT_TRANSLATE_NOOP("systools", "fwupd: the devices it can update and the firmware updates it finds. Finding updates contacts the LVFS server on the internet, so this page runs only on \"Run again\"."),
          {{"fwupdmgr", "get-devices"}, {"fwupdmgr", "get-updates"}}, nullptr, true, true},
     };
@@ -787,7 +800,7 @@ void addPages(QTabWidget *tabs) {
             continue;
         const QString title = QCoreApplication::translate("systools", s.title);
         // The SMART summary goes in front of the raw output it summarizes.
-        // "toolKey": the untranslated name, for callers that sort the pages (the tab text is translated).
+        // "toolKey": stable historical identifier, independent of translated or re-cased tab text.
         if (s.rootTool && QLatin1String(s.rootTool) == QLatin1String("smart")) {
             auto *smart = new SmartPage;
             smart->setProperty("toolKey", QStringLiteral("SMART"));
@@ -800,13 +813,13 @@ void addPages(QTabWidget *tabs) {
             if (diagPage) return new DiagToolPage(s.cmds.first().at(1), s.cmds, QCoreApplication::translate("systools", s.about));
             return new ToolPage(s);
         });
-        page->setProperty("toolKey", QString::fromLatin1(s.title));
+        page->setProperty("toolKey", stableToolKey(s.title));
         page->setProperty("toolAbout", QCoreApplication::translate("systools", s.about));  // the catalog's tooltip
         tabs->addTab(page, title);
     }
     auto *config = new LazyWidget([] { return new ConfigPage; });
     config->setProperty("toolKey", QStringLiteral("Configuration files"));
-    tabs->addTab(config, QCoreApplication::translate("systools", "Configuration files"));
+    tabs->addTab(config, QCoreApplication::translate("systools", "Configuration Files"));
 }
 
 } // namespace systools

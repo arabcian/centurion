@@ -57,7 +57,7 @@ CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
     // A titled frame of its own: each test is a separate run, not part of the one above.
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
-    auto *frame = new QGroupBox(tr("CPU test"));
+    auto *frame = new QGroupBox(tr("CPU Test"));
     frame->setObjectName(QStringLiteral("box_yellow"));
     outer->addWidget(frame);
     auto *root = new QVBoxLayout(frame);
@@ -152,7 +152,7 @@ CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
 
     results_ = new QTreeWidget;
     results_->setRootIsDecorated(false);
-    results_->setHeaderLabels({tr("Date"), tr("Test"), tr("Duration"), tr("Errors"), tr("Result"), tr("Failed"), tr("CPU curve")});
+    results_->setHeaderLabels({tr("Date"), tr("Test"), tr("Duration"), tr("Errors"), tr("Result"), tr("Failed"), tr("CPU Curve")});
     results_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     results_->setMaximumHeight(160);
     root->addWidget(results_);

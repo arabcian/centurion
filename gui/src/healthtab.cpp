@@ -284,9 +284,9 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         if (pages_ && pages_->currentWidget() == toolDirectory_ && toolMode_ && toolMode_->currentIndex() == 0)
             rebuildToolCatalog();
     });
-    addPage(general, overview_, tr("System overview"), QStringLiteral("overview"));
+    addPage(general, overview_, tr("System Overview"), QStringLiteral("overview"));
     auto *monitor = new QWidget;
-    addPage(problems, monitor, tr("Events & alerts"), QStringLiteral("monitor"));
+    addPage(problems, monitor, tr("Events & Alerts"), QStringLiteral("monitor"));
     addPage(problems, new HealthEvidencePage, tr("Evidence Lab"), QStringLiteral("evidence"));
     investigations_ = new AdvancedHealthPage;
     addPage(problems, investigations_, tr("Investigations"), QStringLiteral("investigations"));
@@ -297,7 +297,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         investigations_->startTriage(category);
     });
     boot_ = new BootPage;
-    addPage(problems, boot_, tr("Boot history"), QStringLiteral("boot"));
+    addPage(problems, boot_, tr("Boot History"), QStringLiteral("boot"));
     addPage(problems, insights::capabilityPage(), tr("Capability Doctor"), QStringLiteral("capabilities"));
 
     auto *curves = new CurvePage;
@@ -305,18 +305,18 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     connect(curves, &CurvePage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::CURVE, QString(), t, m); });
     connect(curves, &CurvePage::curveReset, this, &HealthTab::curveReset);
     connect(this, &HealthTab::fault, curves, &CurvePage::onFault);
-    addPage(advanced, curves, tr("Curve stability"), QStringLiteral("curves"));
+    addPage(advanced, curves, tr("Curve Stability"), QStringLiteral("curves"));
     klog_ = new KlogPage;
-    addPage(advanced, klog_, tr("Kernel log"), QStringLiteral("klog"));
-    addPage(advanced, new KernelParamsPage, tr("Kernel parameters"), QStringLiteral("kernelparams"));
+    addPage(advanced, klog_, tr("Kernel Log"), QStringLiteral("klog"));
+    addPage(advanced, new KernelParamsPage, tr("Kernel Parameters"), QStringLiteral("kernelparams"));
     auto *sleep = new SleepPage;
-    addPage(hardware, sleep, tr("Sleep & wake"), QStringLiteral("sleep"));
+    addPage(hardware, sleep, tr("Sleep & Wake"), QStringLiteral("sleep"));
     if (BatteryPage::present()) {
         auto *battery = new BatteryPage;
         connect(battery, &BatteryPage::dgpuAwake, this, &HealthTab::dgpuAwake);
-        addPage(hardware, battery, tr("Battery use"), QStringLiteral("battery"));
+        addPage(hardware, battery, tr("Battery Use"), QStringLiteral("battery"));
     }
-    if (DgpuPage::present()) addPage(hardware, new DgpuPage, tr("dGPU power"), QStringLiteral("dgpu"));
+    if (DgpuPage::present()) addPage(hardware, new DgpuPage, tr("dGPU Power"), QStringLiteral("dgpu"));
     cooling_ = new CoolingPage;
     addPage(hardware, cooling_, tr("Cooling"), QStringLiteral("cooling"));
 
@@ -391,7 +391,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *allTools = new QToolButton;
     allTools->setArrowType(Qt::LeftArrow);
     allTools->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    allTools->setText(tr("All tools"));
+    allTools->setText(tr("All Tools"));
     allTools->setObjectName(QStringLiteral("allTools"));
     allTools->setStyleSheet(QStringLiteral("QToolButton#allTools{background:%1;border:1px solid %2;border-radius:7px;padding:3px 9px 3px 5px}"
                                            "QToolButton#allTools:hover{border-color:%3}").arg(theme::BG3, theme::BORDER, theme::ACCENT));
@@ -415,7 +415,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     toolPages_ = new QStackedWidget;
     toolLayout->addWidget(toolPages_, 1);
     toolMode_->addWidget(toolView);
-    addPage(advanced, toolDirectory_, tr("System tools"), QStringLiteral("tools"));
+    addPage(advanced, toolDirectory_, tr("System Tools"), QStringLiteral("tools"));
 
     QTabWidget toolsRegistry;
     systools::addPages(&toolsRegistry);
@@ -430,16 +430,16 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         if (key == QLatin1String("SMART")) { smartTool = page; continue; }
         addTool(page, label, key);
     }
-    if (smartTool) addPage(hardware, smartTool, tr("Drive health"), QStringLiteral("smart"));
+    if (smartTool) addPage(hardware, smartTool, tr("Drive Health"), QStringLiteral("smart"));
     connect(toolSearch_, &QLineEdit::textChanged, this, [this] { rebuildToolCatalog(); });
     auto *net = new NetPage;
     connect(net, &NetPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::NETWORK, QString(), t, m); });
-    addPage(maintenance, net, tr("Network protection"), QStringLiteral("network"));
+    addPage(maintenance, net, tr("Network Protection"), QStringLiteral("network"));
     backup_ = new BackupPage;
     connect(backup_, &BackupPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::BACKUP, QString(), t, m); });
     addPage(maintenance, backup_, tr("Backups"), QStringLiteral("backup"));
     // Search results only: matching System tools, shown in the rail while a search is typed.
-    toolResults_ = addGroup(tr("System tools"));
+    toolResults_ = addGroup(tr("System Tools"));
     toolResults_->setHidden(true);
     for (const Tool &t : std::as_const(tools_)) {
         auto *item = new QTreeWidgetItem(toolResults_, {t.label});
@@ -619,7 +619,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
 
     list_ = new QTreeWidget;
     list_->setColumnCount(4);
-    list_->setHeaderLabels({tr("When"), tr("Level"), tr("Component"), tr("What happened")});
+    list_->setHeaderLabels({tr("When"), tr("Level"), tr("Component"), tr("What Happened")});
     list_->setRootIsDecorated(false);
     list_->setAlternatingRowColors(true);
     list_->setUniformRowHeights(true);
@@ -1067,7 +1067,7 @@ void HealthTab::openTool(QWidget *page) {
     const Tool *t = toolOf(page);
     if (!t) return;
     const toolcatalog::Info info = toolcatalog::tool(t->key);
-    toolPath_->setText(tr("System tools › %1 › %2").arg(toolcatalog::areaName(info.area), t->label));
+    toolPath_->setText(tr("System Tools › %1 › %2").arg(toolcatalog::areaName(info.area), t->label));
     toolBadges_->setText(toolcatalog::badges(info.flags).join(QStringLiteral(" · ")));
     const bool pinned = guiSettings().value(QStringLiteral("health/pinned_tools")).toStringList().contains(t->key);
     toolPin_->setChecked(pinned);
@@ -1253,16 +1253,16 @@ void HealthTab::rebuildToolCatalog() {
     // The catalog is for finding tools, not a second health dashboard.
     // System overview remains available in the Health navigation.
     if (query.isEmpty() && toolAreaFilter_.isEmpty() && toolFilter_ == QLatin1String("all")) {
-        v->addWidget(heading(tr("Troubleshoot by symptom"), tr("Start a guided, read-only investigation (H18).")));
+        v->addWidget(heading(tr("Troubleshoot by Symptom"), tr("Start a guided, read-only investigation (H18).")));
         // Actual guided-triage categories, not decorative buttons that merely highlight a group.
         struct Symptom { const char *key; const char *label; const char *detail; };
         const QList<Symptom> symptoms = {
-            {"gpu", QT_TR_NOOP("GPU & display"), QT_TR_NOOP("Xid, drivers, graphics")},
+            {"gpu", QT_TR_NOOP("GPU & Display"), QT_TR_NOOP("Xid, drivers, graphics")},
             {"storage", QT_TR_NOOP("Storage"), QT_TR_NOOP("NVMe, SMART, F2FS")},
             {"radio", QT_TR_NOOP("Wi-Fi & Bluetooth"), QT_TR_NOOP("Firmware, disconnects")},
-            {"sleep", QT_TR_NOOP("Power & sleep"), QT_TR_NOOP("Wake, standby, drain")},
-            {"cpu", QT_TR_NOOP("CPU & stability"), QT_TR_NOOP("CO, limits, MCE")},
-            {"crash", QT_TR_NOOP("Crashes & kernel"), QT_TR_NOOP("Boots, regressions")},
+            {"sleep", QT_TR_NOOP("Power & Sleep"), QT_TR_NOOP("Wake, standby, drain")},
+            {"cpu", QT_TR_NOOP("CPU & Stability"), QT_TR_NOOP("CO, limits, MCE")},
+            {"crash", QT_TR_NOOP("Crashes & Kernel"), QT_TR_NOOP("Boots, regressions")},
         };
         auto *symptomGrid = new QWidget;
         auto *sg = new QGridLayout(symptomGrid);
@@ -1317,7 +1317,7 @@ void HealthTab::rebuildToolCatalog() {
         v->addWidget(symptomGrid);
 
         const QList<const Tool *> favorites = byKeys(toolList(QStringLiteral("health/pinned_tools")));
-        v->addWidget(heading(tr("Quick access"), favorites.isEmpty()
+        v->addWidget(heading(tr("Quick Access"), favorites.isEmpty()
             ? tr("No favorites yet. Star a tool in All tools to add it here.")
             : tr("Only tools you have added to favorites are shown here.")));
         if (!favorites.isEmpty())
@@ -1325,7 +1325,7 @@ void HealthTab::rebuildToolCatalog() {
 
     }
 
-    auto *filtersTitle = heading(tr("All tools"), tr("Open a category or filter the directory."));
+    auto *filtersTitle = heading(tr("All Tools"), tr("Open a category or filter the directory."));
     v->addWidget(filtersTitle);
     auto *filters = new QWidget;
     auto *frow = new QHBoxLayout(filters);
@@ -1724,7 +1724,7 @@ void HealthTab::showEventDetail() {
 
 void HealthTab::explainEvent(const QJsonObject &e) {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Event explanation"));
+    dialog.setWindowTitle(tr("Event Explanation"));
     dialog.resize(640, 520);
     auto *v = new QVBoxLayout(&dialog);
     auto *view = new QTextBrowser;

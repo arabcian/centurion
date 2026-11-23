@@ -13,7 +13,7 @@
 #include <QVBoxLayout>
 
 DeviceInfoDialog::DeviceInfoDialog(const QString &helper, QWidget *parent) : QDialog(parent), helper_(helper) {
-    setWindowTitle("Device information");
+    setWindowTitle("Device Information");
     setAttribute(Qt::WA_DeleteOnClose);
     resize(700, 620);
     auto *v = new QVBoxLayout(this);

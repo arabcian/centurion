@@ -91,7 +91,7 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
     top->addWidget(bRefresh, 0, Qt::AlignTop);
     root->addLayout(top);
 
-    root->addWidget(new QLabel(QStringLiteral("<b>Recent sleeps</b>")));
+    root->addWidget(new QLabel(QStringLiteral("<b>Recent Sleeps</b>")));
     sleeps_ = table({QStringLiteral("Went to sleep"), QStringLiteral("Slept"), QStringLiteral("Mode"), QStringLiteral("Battery used"),
                      QStringLiteral("Per hour"), QStringLiteral("HW sleep"), QStringLiteral("dGPU in → out"), QStringLiteral("Woken by")});
     root->addWidget(sleeps_, 2);
@@ -118,7 +118,7 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
     hibOut_->setVisible(false);
     root->addWidget(hibOut_);
 
-    root->addWidget(new QLabel(QStringLiteral("<b>Wake sources (ACPI)</b>")));
+    root->addWidget(new QLabel(QStringLiteral("<b>Wake Sources (ACPI)</b>")));
     wake_ = table({QStringLiteral("Device"), QStringLiteral("Sleep state"), QStringLiteral("May wake"), QStringLiteral("Sysfs node")});
     root->addWidget(wake_, 1);
     sources_ = muted(QString());

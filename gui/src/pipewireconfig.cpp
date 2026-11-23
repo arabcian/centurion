@@ -199,7 +199,7 @@ const char *const HEADER = "# Written by Centurion (PipeWire Doctor → Settings
 }  // namespace
 
 PipewireConfigDialog::PipewireConfigDialog(QWidget *parent) : QDialog(parent) {
-    setWindowTitle(tr("PipeWire settings"));
+    setWindowTitle(tr("PipeWire Settings"));
     resize(900, 560);
     auto *v = new QVBoxLayout(this);
     auto *intro = new QLabel(tr("Tick an option to set it; unticked options keep PipeWire's own default. The choices are written to "

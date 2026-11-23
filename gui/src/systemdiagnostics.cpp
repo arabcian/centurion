@@ -52,7 +52,7 @@ Report pcieLinks(const QString &root) {
     r.limits << tr("Speed drops to save power when a device is idle (GPUs go to PCIe 1.0 at the desktop); check under load before judging the speed.")
              << tr("A device that is runtime-suspended shows the last link it had.");
     Table t;
-    t.title = tr("Device links");
+    t.title = tr("Device Links");
     t.headers = {tr("Device"), tr("Driver"), tr("Link now"), tr("Possible"), tr("Power"), tr("AER (corr / non-fatal / fatal)"), tr("Status")};
     int bridges = 0;
     for (const QString &id : ls(root, QStringLiteral("/sys/bus/pci/devices"))) {
@@ -150,7 +150,7 @@ Report radios(const QList<diagsrc::LogLine> &kernel, const QString &root) {
     r.tables << a;
     // Kill switches.
     Table k;
-    k.title = tr("Radio switches (rfkill)");
+    k.title = tr("Radio Switches (rfkill)");
     k.headers = {tr("Name"), tr("Type"), tr("Software"), tr("Hardware")};
     for (const QString &rf : ls(root, QStringLiteral("/sys/class/rfkill"), {QStringLiteral("rfkill*")})) {
         const QString b = QStringLiteral("/sys/class/rfkill/") + rf;
@@ -169,7 +169,7 @@ Report radios(const QList<diagsrc::LogLine> &kernel, const QString &root) {
     const QMap<QString, QString> miss = missingFirmware(kernel);
     if (!miss.isEmpty()) {
         Table f;
-        f.title = tr("Firmware the kernel could not load (saved kernel log)");
+        f.title = tr("Firmware the Kernel Could Not Load (Saved Kernel Log)");
         f.headers = {tr("File"), tr("Requested by"), tr("On disk now")};
         for (auto it = miss.cbegin(); it != miss.cend(); ++it) {
             const QString found = firmwarePresent(root, it.key());
@@ -199,7 +199,7 @@ Report powerLimits(const QString &root) {
     r.limits << tr("The SMU's live limits (STAPM, fast / slow PPT in effect) are not exported by the kernel; the firmware settings here are the targets it was given.")
              << tr("The NVIDIA GPU's power limit needs nvidia-smi, which wakes the GPU: see the NVIDIA tab.");
     Table t;
-    t.title = tr("Limits and their sources");
+    t.title = tr("Limits and Their Sources");
     t.headers = {tr("Source"), tr("Setting"), tr("Value"), tr("Range")};
     const QString profile = rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile"));
     if (!profile.isEmpty()) t.add({tr("ACPI platform profile"), QStringLiteral("platform_profile"), profile, rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile_choices"))});
@@ -297,7 +297,7 @@ Report memory(const QString &root) {
     }
     auto gib = [](double g) { return QStringLiteral("%1 GiB").arg(g, 0, 'f', g < 10 ? 1 : 0); };
     Table t;
-    t.title = tr("Memory now");
+    t.title = tr("Memory Now");
     t.headers = {tr("Item"), tr("Value"), tr("Note")};
     const double total = mi.value(QStringLiteral("MemTotal")), avail = mi.value(QStringLiteral("MemAvailable"));
     const double swapT = mi.value(QStringLiteral("SwapTotal")), swapF = mi.value(QStringLiteral("SwapFree"));
@@ -361,7 +361,7 @@ Report memory(const QString &root) {
     r.tables << t;
     // Topology.
     Table topo;
-    topo.title = tr("NUMA and cache domains");
+    topo.title = tr("NUMA and Cache Domains");
     topo.headers = {tr("Domain"), tr("CPUs")};
     for (const QString &n : ls(root, QStringLiteral("/sys/devices/system/node"), {QStringLiteral("node[0-9]*")}))
         topo.add({tr("NUMA %1").arg(n), rd(root, QStringLiteral("/sys/devices/system/node/") + n + QStringLiteral("/cpulist"))});
@@ -401,7 +401,7 @@ Report firmware(const QString &root) {
         {"362A3AFE-3D96-4665-8530-96DAD5BB300E", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Capability Data 00 — used by Centurion")},
         {"7A8F5407-CB67-4D6E-B547-39B3BE018154", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Capability Data 01")}};
     Table w;
-    w.title = tr("WMI objects");
+    w.title = tr("WMI Objects");
     w.headers = {tr("GUID"), tr("Driver"), tr("Known as")};
     int unbound = 0;
     for (const QString &id : ls(root, QStringLiteral("/sys/bus/wmi/devices"))) {
@@ -418,7 +418,7 @@ Report firmware(const QString &root) {
         r.tables << w;
     }
     Table fa;
-    fa.title = tr("Firmware settings (firmware-attributes)");
+    fa.title = tr("Firmware Settings (firmware-attributes)");
     fa.headers = {tr("Provider"), tr("Setting"), tr("Value"), tr("Allowed")};
     for (const QString &prov : ls(root, QStringLiteral("/sys/class/firmware-attributes"))) {
         const QString base = QStringLiteral("/sys/class/firmware-attributes/") + prov + QStringLiteral("/attributes/");
@@ -442,7 +442,7 @@ Report firmware(const QString &root) {
     const QStringList tables = ls(root, QStringLiteral("/sys/firmware/acpi/tables"));
     if (!tables.isEmpty()) {
         Table at;
-        at.title = tr("ACPI tables present");
+        at.title = tr("ACPI Tables Present");
         at.headers = {tr("Tables")};
         QStringList names = tables;
         names.removeAll(QStringLiteral("data"));
@@ -466,7 +466,7 @@ Report charging(const QString &root) {
              << tr("Battery power figures are the battery's own estimate.");
     // Type-C ports and their partners' source capabilities.
     Table pd;
-    pd.title = tr("USB-C ports");
+    pd.title = tr("USB-C Ports");
     pd.headers = {tr("Port"), tr("Role"), tr("Partner"), tr("Charger offers"), tr("Best")};
     double bestW = 0;
     for (const QString &port : ls(root, QStringLiteral("/sys/class/typec"), {QStringLiteral("port[0-9]")})) {
@@ -503,7 +503,7 @@ Report charging(const QString &root) {
               tr("Use the original adapter for gaming; a USB-C charger is fine for light use."));
     // Power supplies.
     Table ps;
-    ps.title = tr("Power supplies");
+    ps.title = tr("Power Supplies");
     ps.headers = {tr("Supply"), tr("Type"), tr("State"), tr("Power"), tr("Detail")};
     for (const QString &s : ls(root, QStringLiteral("/sys/class/power_supply"))) {
         const QString b = QStringLiteral("/sys/class/power_supply/") + s + QLatin1Char('/');
@@ -557,7 +557,7 @@ Report audio(const QHash<QString, QString> &out, const QString &root) {
     r.about = tr("Sound cards and codecs, which sound servers are running (and whether two fight over the devices), and PipeWire's own view.");
     r.limits << tr("Only your own user's sound servers are seen; nothing is restarted or re-routed.");
     Table c;
-    c.title = tr("Sound cards");
+    c.title = tr("Sound Cards");
     c.headers = {tr("Card"), tr("Name"), tr("Codec")};
     const QString cards = rd(root, QStringLiteral("/proc/asound/cards"));
     static const QRegularExpression cardRe(QStringLiteral(R"(^\s*(\d+)\s+\[(\S+)\s*\]:\s*(.*)$)"), QRegularExpression::MultilineOption);
@@ -579,7 +579,7 @@ Report audio(const QHash<QString, QString> &out, const QString &root) {
             running.insert(comm);
     }
     Table s;
-    s.title = tr("Sound servers running");
+    s.title = tr("Sound Servers Running");
     s.headers = {tr("Process")};
     QStringList names = running.values();
     names.sort();
@@ -676,7 +676,7 @@ Report kernelDeps(const QString &config, const QList<diagsrc::LogLine> &kernel, 
         {"CONFIG_ZRAM", QT_TRANSLATE_NOOP("systemdiagnostics", "compressed swap in RAM"), false},
         {"CONFIG_F2FS_FS", QT_TRANSLATE_NOOP("systemdiagnostics", "F2FS file systems (H05)"), false}};
     Table t;
-    t.title = tr("Kernel options");
+    t.title = tr("Kernel Options");
     t.headers = {tr("Option"), tr("Value"), tr("Needed for")};
     if (config.isEmpty()) {
         r.add(Level::Unknown, tr("The running kernel's configuration is not readable"),
@@ -722,7 +722,7 @@ Report kernelDeps(const QString &config, const QList<diagsrc::LogLine> &kernel, 
         if (const auto m = direct.match(l.text); m.hasMatch()) miss.insert(m.captured(1), {l.text.section(QLatin1Char(' '), 0, 1), l.boot});
     if (!miss.isEmpty()) {
         Table f;
-        f.title = tr("Firmware files the kernel could not load");
+        f.title = tr("Firmware Files the Kernel Could Not Load");
         f.headers = {tr("File"), tr("Requested by"), tr("Last boot"), tr("On disk now")};
         int still = 0;
         for (auto m = miss.cbegin(); m != miss.cend(); ++m) {
@@ -736,7 +736,7 @@ Report kernelDeps(const QString &config, const QList<diagsrc::LogLine> &kernel, 
     }
     // PCI devices no driver has claimed (bridges and host parts excepted).
     Table u;
-    u.title = tr("Devices without a driver");
+    u.title = tr("Devices Without a Driver");
     u.headers = {tr("Device"), tr("Class"), tr("Kernel would match")};
     for (const QString &id : ls(root, QStringLiteral("/sys/bus/pci/devices"))) {
         const QString b = QStringLiteral("/sys/bus/pci/devices/") + id;

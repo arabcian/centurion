@@ -361,7 +361,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     empty_->setWordWrap(true);
     right->addWidget(empty_);
 
-    auto *autoBox = new QGroupBox(tr("Automatic switching"));
+    auto *autoBox = new QGroupBox(tr("Automatic Switching"));
     auto *ag = new QGridLayout(autoBox);
     ag->setHorizontalSpacing(10);
     ag->setVerticalSpacing(6);
