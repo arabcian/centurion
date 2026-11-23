@@ -2108,8 +2108,8 @@ Kernel uptime: %2
             <translation>Araç ara: ad, parça, belirti ya da terim (fan, VRR, firmware eksik, ASPM)…</translation>
         </message>
         <message>
-            <source>← All tools</source>
-            <translation>← Tüm araçlar</translation>
+            <source>All tools</source>
+            <translation>Tüm araçlar</translation>
         </message>
         <message>
             <source>Back to the tool catalog. The open tool keeps its results.</source>
