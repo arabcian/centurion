@@ -1909,18 +1909,6 @@ fn pci_latency_target(cfg: &Path) -> u8 {
     if class.starts_with("0x0600") { 0x00 } else if class.starts_with("0x0604") { 0x80 } else { 0x20 }
 }
 
-/// Exactly one byte at 0x0D — never a full config-space write.
-fn pci_latency_write(cfg: &Path, hex: &str) -> std::io::Result<()> {
-    use std::os::unix::fs::{FileExt, OpenOptionsExt};
-    let v = u8::from_str_radix(hex.trim(), 16)
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad latency byte"))?;
-    let f = std::fs::OpenOptions::new().write(true).custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW).open(cfg)?;
-    match f.write_at(&[v], PCI_LATENCY_OFFSET)? {
-        1 => Ok(()),
-        _ => Err(std::io::Error::new(std::io::ErrorKind::WriteZero, "short write")),
-    }
-}
-
 // ── discovery for the other targets ──────────────────────────────────────
 
 pub fn block_devs() -> Vec<PathBuf> {
@@ -3499,12 +3487,16 @@ fn is_pci_link_or_power(real: &Path) -> bool {
 const FIRMWARE_WRITE_LOCK: &str = "/run/centurion/tune/firmware-write.lock";
 
 fn firmware_write_lock() -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::AsRawFd;
     crate::secure_dir("/run/centurion").map_err(std::io::Error::other)?;
     crate::secure_dir("/run/centurion/tune").map_err(std::io::Error::other)?;
+    lock_firmware_writer(Path::new(FIRMWARE_WRITE_LOCK))
+}
+
+fn lock_firmware_writer(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
     let file = std::fs::OpenOptions::new().read(true).write(true).create(true).mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(FIRMWARE_WRITE_LOCK)?;
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(path)?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
@@ -3520,84 +3512,95 @@ fn firmware_write_lock() -> std::io::Result<std::fs::File> {
     }
 }
 
-/// Latency-byte write in a child with a deadline, like amd_x3d_mode: a device that
-/// hangs in ACPI takes only the child with it, never this helper or its lock.
+/// Exactly one byte at 0x0D, with the same timeout and lock as firmware writes.
 fn pci_latency_write_timeout(cfg: &Path, hex: &str) -> std::io::Result<()> {
-    use std::os::unix::io::AsRawFd;
-    let v = u8::from_str_radix(hex.trim(), 16).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad latency byte"))?;
+    let value = u8::from_str_radix(hex.trim(), 16)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad latency byte"))?;
     let guard = firmware_write_lock()?;
-    let lock_fd = guard.as_raw_fd();
-    let pid = unsafe { libc::fork() };
-    if pid < 0 { return Err(std::io::Error::last_os_error()); }
-    if pid == 0 {
-        // A child stuck in the kernel must not keep the tune lock or the reply pipe open.
-        for fd in 0..4096 { if fd != lock_fd { unsafe { libc::close(fd); } } }
-        let ok = pci_latency_write(cfg, &format!("{v:02x}")).is_ok();
-        unsafe { libc::_exit(if ok { 0 } else { 1 }) };
-    }
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    loop {
-        let mut st = 0;
-        let r = unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
-        if r == pid { return if libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0 { Ok(()) } else { Err(std::io::Error::other("config write failed")) }; }
-        if r < 0 { return Err(std::io::Error::last_os_error()); }
-        if std::time::Instant::now() >= end {
-            unsafe { libc::kill(pid, libc::SIGKILL); libc::waitpid(pid, &mut st, libc::WNOHANG); }
-            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut,
-                "config write timed out; hardware state unknown, later writes serialized until child exits"));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    forked_firmware_write(cfg, &[value], Some(PCI_LATENCY_OFFSET as libc::off_t), &guard)
 }
 
-/// amd_x3d_mode goes through a synchronous ACPI _DSM that stalls forever on
-/// some BIOS/AGESA versions (lutris-game-tune wraps it in `timeout 3`).
-///
-/// The write runs in a forked child that closes every inherited descriptor
-/// first. A thread (the old approach) that hangs in the kernel keeps the whole
-/// helper from exiting — and with it the tune lock, so every later tune-helper
-/// call blocked behind it. A stuck child only holds its own open of the sysfs
-/// file; this process answers and exits normally.
+/// amd_x3d_mode can stall in a synchronous ACPI _DSM. The helper can return
+/// after the deadline while the child retains the firmware lock until it exits.
 fn write_with_timeout(p: PathBuf, data: String) -> Result<(), String> {
-    use std::os::unix::ffi::OsStrExt;
-    let path = std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(|_| "bad path".to_string())?;
-    let bytes = data.into_bytes();
-    use std::os::unix::io::AsRawFd;
     let guard = firmware_write_lock().map_err(|e| format!("firmware write lock: {e}"))?;
+    forked_firmware_write(&p, data.as_bytes(), None, &guard).map_err(|e| e.to_string())
+}
+
+fn forked_firmware_write(
+    path: &Path,
+    bytes: &[u8],
+    offset: Option<libc::off_t>,
+    guard: &std::fs::File,
+) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::AsRawFd;
+
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "bad path"))?;
     let lock_fd = guard.as_raw_fd();
-    // After fork only async-signal-safe calls: open, close, write, _exit.
+    // The child can start in a multithreaded process. Prepare data before
+    // forking and use only async-signal-safe operations in the child.
     let pid = unsafe { libc::fork() };
-    if pid < 0 { return Err(format!("fork: {}", std::io::Error::last_os_error())); }
+    if pid < 0 {
+        return Err(Error::last_os_error());
+    }
     if pid == 0 {
         unsafe {
+            // Keep only the firmware lock so the child cannot hold the
+            // helper's reply pipe or its other locks open if the device stalls.
+            for fd in 0..4096 {
+                if fd != lock_fd {
+                    libc::close(fd);
+                }
+            }
             let fd = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
-            if fd < 0 { libc::_exit(*libc::__errno_location() & 0xFF); }
-            // Keep the independent firmware lock owned by the writer even
-            // if the supervising helper times out and releases its copy.
-            for other in 0..4096 { if other != fd && other != lock_fd { libc::close(other); } }
-            let n = libc::write(fd, bytes.as_ptr() as *const libc::c_void, bytes.len());
-            if n < 0 { libc::_exit(*libc::__errno_location() & 0xFF); }
-            libc::_exit(if n as usize == bytes.len() { 0 } else { 255 });
+            if fd < 0 {
+                libc::_exit(*libc::__errno_location() & 0xFF);
+            }
+            let data = bytes.as_ptr().cast::<libc::c_void>();
+            let written = match offset {
+                Some(offset) => libc::pwrite(fd, data, bytes.len(), offset),
+                None => libc::write(fd, data, bytes.len()),
+            };
+            if written < 0 {
+                libc::_exit(*libc::__errno_location() & 0xFF);
+            }
+            libc::_exit(if written as usize == bytes.len() { 0 } else { 255 });
         }
     }
+
     let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
-        let mut st = 0;
-        let r = unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
-        if r == pid {
-            if !libc::WIFEXITED(st) { return Err("writer terminated abnormally".into()); }
-            return match libc::WEXITSTATUS(st) {
-                0 => Ok(()),
-                255 => Err("short write".into()),
-                e => Err(std::io::Error::from_raw_os_error(e).to_string()),
+        let mut status = 0;
+        let result = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if result == pid {
+            return if libc::WIFEXITED(status) {
+                match libc::WEXITSTATUS(status) {
+                    0 => Ok(()),
+                    255 => Err(Error::new(ErrorKind::WriteZero, "short write")),
+                    errno => Err(Error::from_raw_os_error(errno)),
+                }
+            } else {
+                Err(Error::other("writer terminated abnormally"))
             };
         }
-        if r < 0 { return Err(format!("waitpid: {}", std::io::Error::last_os_error())); }
+        if result < 0 {
+            let error = Error::last_os_error();
+            if error.kind() != ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
         if std::time::Instant::now() >= end {
-            // SIGKILL can be deferred in uninterruptible D-state; the child
-            // keeps the firmware lock until the kernel write actually ends.
-            unsafe { libc::kill(pid, libc::SIGKILL); libc::waitpid(pid, &mut st, libc::WNOHANG); }
-            return Err("timed out after 3 s (ACPI _DSM stall?); hardware state unknown, later hazardous writes serialized".into());
+            // A kernel-stalled child can outlive SIGKILL. It keeps the lock
+            // until the kernel write ends and the child actually exits.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, &mut status, libc::WNOHANG);
+            }
+            return Err(Error::new(ErrorKind::TimedOut,
+                "write timed out after 3 s; hardware state unknown, later firmware writes serialized"));
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
@@ -4189,13 +4192,23 @@ mod tests {
     }
     #[test]
     fn forked_writer() {
-        let p = std::env::temp_dir().join(format!("centurion-x3d-{}", std::process::id()));
-        std::fs::write(&p, b"").unwrap();
-        write_with_timeout(p.clone(), "cache".into()).unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "cache");
-        std::fs::remove_file(&p).unwrap();
-        let e = write_with_timeout(p.clone(), "x".into()).unwrap_err();
-        assert!(e.contains("No such file"), "{e}");
+        let dir = std::env::temp_dir().join(format!("centurion-x3d-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("attribute");
+        let lock = lock_firmware_writer(&dir.join("lock")).unwrap();
+        std::fs::write(&path, b"").unwrap();
+        forked_firmware_write(&path, b"cache", None, &lock).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"cache");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(forked_firmware_write(&path, b"x", None, &lock).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound);
+
+        let mut expected = [0x34; 32];
+        std::fs::write(&path, expected).unwrap();
+        forked_firmware_write(&path, &[0x20], Some(PCI_LATENCY_OFFSET as libc::off_t), &lock).unwrap();
+        expected[PCI_LATENCY_OFFSET as usize] = 0x20;
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn write_guard() {
@@ -4208,25 +4221,19 @@ mod tests {
     }
 
     #[test]
-    fn stuck_pci_writer_does_not_keep_the_lock() {
-        use std::os::fd::AsRawFd;
-        let d = std::env::temp_dir().join(format!("centurion-pci-lock-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        let (lock, fifo) = (d.join("lock"), d.join("config"));
-        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
-        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
-        let open = || std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lock).unwrap();
-        let held = open();
-        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
-        // Opening a FIFO nobody reads blocks the child, like a device that hangs in ACPI.
-        let writer = std::thread::spawn({ let f = fifo.clone(); move || pci_latency_write_timeout(&f, "20") });
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        drop(held);
-        let again = open();
-        let free = unsafe { libc::flock(again.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
-        assert!(writer.join().unwrap().is_err());
-        std::fs::remove_dir_all(&d).unwrap();
-        assert!(free, "the stuck child still holds the lock");
+    fn timed_out_pci_writer_releases_lock_on_exit() {
+        let dir = std::env::temp_dir().join(format!("centurion-pci-lock-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let (lock, fifo) = (dir.join("lock"), dir.join("config"));
+        let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+
+        let guard = lock_firmware_writer(&lock).unwrap();
+        // With no reader, open blocks in the child until the deadline.
+        let result = forked_firmware_write(&fifo, &[0x20], Some(PCI_LATENCY_OFFSET as libc::off_t), &guard);
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        drop(guard);
+        assert!(lock_firmware_writer(&lock).is_ok(), "exited child still holds the lock");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

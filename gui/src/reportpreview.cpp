@@ -1,5 +1,6 @@
 #include "reportpreview.h"
 #include "theme.h"
+#include "workspacestate.h"
 
 #include <QDialogButtonBox>
 #include <QFontDatabase>
@@ -57,6 +58,8 @@ ReportPreview::ReportPreview(const QJsonObject &preview, QWidget *parent) : QDia
     split->addWidget(text_);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 3);
+    workspace::rememberSplitter(split, workspace::key(theme::experimentalEnabled(),
+                                                       QStringLiteral("health/report-preview/splitter")));
     v->addWidget(split, 1);
     if (list_->count()) list_->setCurrentRow(0);
 

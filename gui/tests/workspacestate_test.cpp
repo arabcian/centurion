@@ -4,6 +4,16 @@
 #include <QTemporaryDir>
 #include <cstdio>
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr,"Failed: %s\n",#x); return 1; } } while(false)
+class TestSplitter final : public QSplitter {
+public:
+    TestSplitter() {
+        addWidget(new QWidget);
+        addWidget(new QWidget);
+        resize(800, 200);
+    }
+    using QSplitter::moveSplitter;
+};
+
 int main(int argc,char **argv) {
     QTemporaryDir temp; CHECK(temp.isValid());
     qputenv("XDG_CONFIG_HOME",temp.path().toUtf8());
@@ -32,5 +42,28 @@ int main(int argc,char **argv) {
     const auto persisted=workspace::read(immediate);
     CHECK(persisted.value("widths").toArray().at(0).toInt()==222);
     CHECK(persisted.value("order").toArray().at(0).toInt()==1);
+    const auto classicSplit = workspace::key(false, QStringLiteral("health/incidents/splitter"));
+    const auto experimentalSplit = workspace::key(true, QStringLiteral("health/incidents/splitter"));
+    QList<int> moved;
+    {
+        TestSplitter first;
+        workspace::rememberSplitter(&first, classicSplit);
+        first.show();
+        first.moveSplitter(220, 1);
+        moved = first.sizes();
+        CHECK(moved.at(0) == 220 && moved.at(1) > moved.at(0));
+    }
+    CHECK(workspace::read(experimentalSplit).isEmpty());
+    TestSplitter reopened;
+    workspace::rememberSplitter(&reopened, classicSplit);
+    reopened.show();
+    CHECK(reopened.sizes() == moved);
+
+    workspace::write(experimentalSplit, QJsonObject{{"sizes", QJsonArray{0, 800}}});
+    TestSplitter invalid;
+    invalid.setSizes({400, 400});
+    workspace::rememberSplitter(&invalid, experimentalSplit);
+    invalid.show();
+    CHECK(invalid.sizes().at(0) == invalid.sizes().at(1));
     return 0;
 }

@@ -10,6 +10,7 @@
 #include "ryzentab.h"
 #include "systemdiagnostics.h"
 #include "theme.h"
+#include "workspacestate.h"
 #include "toolcatalog.h"
 
 #include <QColor>
@@ -210,6 +211,8 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     split->addWidget(right);
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 2);
+    workspace::rememberSplitter(split, workspace::key(theme::experimentalEnabled(),
+                                                       QStringLiteral("health/incidents/splitter")));
     ih->addWidget(split, 1);
     stack_->addWidget(incidentPage_);
     v->addWidget(stack_, 1);
