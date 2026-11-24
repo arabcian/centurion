@@ -225,6 +225,15 @@ int main(int argc, char **argv) {
         CHECK(er::aerDelta(now, other).tables.first().rows.first().value(2) == QStringLiteral("—"));
         const QJsonObject fatal{{"boot_id", "b1"}, {"aer", QJsonArray{QJsonObject{{"dev", "0000:02:00.0"}, {"cor", 0}, {"nonfatal", 1}, {"fatal", 0}}}}};
         CHECK(er::aerDelta(fatal, {}).verdict() == Level::Attention);
+        const QJsonObject missing{{"boot_id", "b1"}, {"aer", QJsonArray{QJsonObject{{"dev", "0000:02:00.0"}, {"cor", 0}}}}};
+        CHECK(er::aerDelta(missing, {}).verdict() == Level::Unknown);
+        QJsonObject changed = prev;
+        auto counters = changed.value(QStringLiteral("counters")).toArray();
+        auto endpoint = counters.first().toObject();
+        endpoint.remove(QStringLiteral("device"));
+        counters[0] = endpoint;
+        changed.insert(QStringLiteral("counters"), counters);
+        CHECK(er::aerDelta(now, changed).tables.first().rows.first().value(2) == QStringLiteral("other device"));
     }
 
     // H04: grouped by code with the meaning; Xid 154 shown as a case.

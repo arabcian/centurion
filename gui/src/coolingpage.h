@@ -58,6 +58,7 @@ class CoolingPage : public QWidget {
 public:
     explicit CoolingPage(QWidget *parent = nullptr);
     ~CoolingPage() override;
+    bool operationActive() const { return proc_ || fanTesting_ || fanRestoring_; }
     /// Plain-text verdict for an `assessment` object of the tool (shared with the tests).
     static QString verdictText(const QJsonObject &assessment, double limitC);
     /// Plain-text result of `centurion-cooltest fanmax`; `warn` is set when a fan peak is too low.
@@ -95,6 +96,7 @@ private:
     FanControls fans_;
     QTimer *fanTimer_;
     QElapsedTimer fanClock_;
+    bool fanRestoring_ = false;
     bool fanTesting_ = false, fanMaxed_ = false, fanPrevMax_ = false, fanReading_ = false;
     QList<QPair<QString, int>> fanPrev_;  // fan key and its target before the test (0 = Auto)
     QList<double> fanPeaks_;              // highest reading of each fan while at maximum

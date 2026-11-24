@@ -1551,6 +1551,23 @@ void HealthTab::filterNavigation(const QString &query) {
     toolResults_->setExpanded(true);
 }
 
+QList<HealthTab::NavigationEntry> HealthTab::navigationEntries() const {
+    QList<NavigationEntry> entries;
+    for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
+        const QString key = it.value()->data(0, Qt::UserRole).toString();
+        if (!key.isEmpty()) entries.append({QStringLiteral("page:") + key, it.value()->text(0), toolcatalog::pageKeywords(key)});
+    }
+    for (const Tool &t : tools_) {
+        const auto info = toolcatalog::tool(t.key);
+        entries.append({QStringLiteral("tool:") + t.key, t.label, info.keywords + QStringList{t.key, toolcatalog::areaName(info.area)}});
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
+        const int cmp = QString::localeAwareCompare(a.label, b.label);
+        return cmp == 0 ? a.target < b.target : cmp < 0;
+    });
+    return entries;
+}
+
 QWidget *HealthTab::pageByKey(const QString &key) const {
     for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it)
         if (it.value()->data(0, Qt::UserRole).toString() == key) return it.key();

@@ -11,6 +11,7 @@
 // pkexec poll. New critical events reach the tray as a notification.
 // Above the list, a 30-day chart of the saved events per day and kind; a click shows that day only.
 #include <QHash>
+#include <QStringList>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QVariantMap>
@@ -56,6 +57,9 @@ public:
     CoolingPage *cooling() const { return cooling_; }
     /// Show the dGPU power page (the Health tab must already be on screen).
     void openDgpuPage();
+    struct NavigationEntry { QString target, label; QStringList keywords; };
+    QList<NavigationEntry> navigationEntries() const;
+    bool openNavigationTarget(const QString &target) { return navigateTo(target); }
     /// A page added to System tools after construction (the Optimizations tab's tuning pages). `key` is
     /// its untranslated name in the tool catalog (toolcatalog.h): area, search words, badges.
     void addToolPage(QWidget *page, const QString &label, const QString &key);

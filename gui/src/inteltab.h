@@ -28,6 +28,7 @@ class IntelTab : public QWidget {
 public:
     explicit IntelTab(QWidget *parent = nullptr);
     ~IntelTab() override;
+    bool operationActive() const { return busy_; }
 
     QStringList savedProfileNames() const;
     /// Load + apply in one step (tray / game mode).

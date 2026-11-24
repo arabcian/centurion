@@ -2,6 +2,12 @@
 #include "theme.h"
 
 #include <QCoreApplication>
+#include <QContextMenuEvent>
+#include <QFileDialog>
+#include <QMenu>
+#include <QMessageBox>
+#include <QSaveFile>
+#include <QTextStream>
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
@@ -14,7 +20,7 @@
 
 namespace {
 
-constexpr int BAR_ROW = 20;
+int barRowHeight(const QFontMetrics &fm) { return std::max(20, fm.height() + 8); }
 
 QColor colorFrom(const char *hex) { return QColor(hex); }
 
@@ -22,27 +28,29 @@ QColor colorFrom(const char *hex) { return QColor(hex); }
 
 // ── LineChart ────────────────────────────────────────────────────────────────
 
-LineChart::LineChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("LineChart", "Line chart")); }
+LineChart::LineChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("LineChart", "Line chart")); setMouseTracking(true); }
 
 void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
-    points_ = points;
+    points_.clear();
+    for (const auto &pt : points) if (std::isfinite(pt.x) && std::isfinite(pt.y)) points_.append(pt);
+    plotted_.clear(); hover_ = -1;
     unit_ = yUnit;
     // Screen readers cannot see the painting: the description carries the numbers.
-    setAccessibleDescription(points.isEmpty() ? QString()
+    setAccessibleDescription(points_.isEmpty() ? QString()
         : QCoreApplication::translate("LineChart", "%1 points, %2 to %3; last value %4 %5")
-              .arg(points.size()).arg(points.first().label, points.last().label).arg(points.last().y).arg(yUnit));
+              .arg(points_.size()).arg(points_.first().label, points_.last().label).arg(points_.last().y).arg(yUnit));
     update();
 }
 
 void LineChart::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
+    plotted_.clear();
     if (points_.size() < 2) {
         p.setPen(colorFrom(theme::MUTED));
         p.drawText(rect(), Qt::AlignCenter, tr("The line appears with the second sample."));
         return;
     }
-    const QRectF r = QRectF(rect()).adjusted(44, 8, -10, -22);
     double x0 = points_.first().x, x1 = points_.first().x, y0 = points_.first().y, y1 = points_.first().y;
     for (const Point &pt : points_) {
         x0 = std::min(x0, pt.x); x1 = std::max(x1, pt.x);
@@ -50,6 +58,13 @@ void LineChart::paintEvent(QPaintEvent *) {
     }
     // Whole percent (or unit) rows around the data, at least one unit tall.
     const double lo = std::floor(y0), hi = std::max(std::ceil(y1), lo + 1);
+    const QFontMetrics fm(font());
+    const QString high = QStringLiteral("%1%2").arg(hi, 0, 'f', 0).arg(unit_);
+    const QString low = QStringLiteral("%1%2").arg(lo, 0, 'f', 0).arg(unit_);
+    const int axis = std::max(fm.horizontalAdvance(high), fm.horizontalAdvance(low)) + 8;
+    const int rowH = fm.height();
+    const QRectF r = QRectF(rect()).adjusted(axis, rowH / 2 + 2, -10, -rowH - 5);
+    if (r.width() <= 0 || r.height() <= 0) return;
     auto X = [&](double x) { return r.left() + (x1 > x0 ? (x - x0) / (x1 - x0) : 0.5) * r.width(); };
     auto Y = [&](double y) { return r.bottom() - (y - lo) / (hi - lo) * r.height(); };
 
@@ -57,14 +72,16 @@ void LineChart::paintEvent(QPaintEvent *) {
     p.drawLine(r.bottomLeft(), r.bottomRight());
     p.drawLine(r.topLeft(), r.bottomLeft());
     p.setPen(colorFrom(theme::MUTED));
-    p.drawText(QRectF(0, Y(hi) - 8, 40, 16), Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("%1%2").arg(hi, 0, 'f', 0).arg(unit_));
-    p.drawText(QRectF(0, Y(lo) - 8, 40, 16), Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("%1%2").arg(lo, 0, 'f', 0).arg(unit_));
-    p.drawText(QRectF(r.left(), r.bottom() + 3, 120, 16), Qt::AlignLeft, points_.first().label);
-    p.drawText(QRectF(r.right() - 120, r.bottom() + 3, 120, 16), Qt::AlignRight, points_.last().label);
+    p.drawText(QRectF(0, Y(hi) - rowH / 2.0, axis - 4, rowH), Qt::AlignRight | Qt::AlignVCenter, high);
+    p.drawText(QRectF(0, Y(lo) - rowH / 2.0, axis - 4, rowH), Qt::AlignRight | Qt::AlignVCenter, low);
+    const int half = int(r.width() / 2);
+    p.drawText(QRectF(r.left(), r.bottom() + 3, half, rowH), Qt::AlignLeft, fm.elidedText(points_.first().label, Qt::ElideRight, half));
+    p.drawText(QRectF(r.right() - half, r.bottom() + 3, half, rowH), Qt::AlignRight, fm.elidedText(points_.last().label, Qt::ElideLeft, half));
 
     QPainterPath path;
     for (int i = 0; i < points_.size(); ++i) {
         const QPointF q(X(points_[i].x), Y(points_[i].y));
+        plotted_.append(q);
         if (i == 0) path.moveTo(q); else path.lineTo(q);
     }
     p.setPen(QPen(colorFrom(theme::ACCENT), 2));
@@ -72,7 +89,45 @@ void LineChart::paintEvent(QPaintEvent *) {
     p.drawPath(path);
     p.setPen(Qt::NoPen);
     p.setBrush(colorFrom(theme::ACCENT));
-    for (const Point &pt : points_) p.drawEllipse(QPointF(X(pt.x), Y(pt.y)), 2.5, 2.5);
+    for (const QPointF &pt : plotted_) p.drawEllipse(pt, 2.5, 2.5);
+    if (hover_ >= 0 && hover_ < plotted_.size()) {
+        const auto pt = plotted_.at(hover_);
+        p.setPen(QPen(colorFrom(theme::FG_DIM), 1, Qt::DashLine));
+        p.drawLine(QPointF(pt.x(), r.top()), QPointF(pt.x(), r.bottom()));
+        p.setPen(QPen(colorFrom(theme::FG), 1)); p.setBrush(colorFrom(theme::ACCENT)); p.drawEllipse(pt, 4, 4);
+    }
+}
+
+void LineChart::mouseMoveEvent(QMouseEvent *e) {
+    const auto pos = e->position();
+    int best = -1; double distance = 144;
+    for (int i=0; i<plotted_.size(); ++i) {
+        const auto d = plotted_.at(i) - pos; const double d2=d.x()*d.x()+d.y()*d.y();
+        if (d2 < distance) { best=i; distance=d2; }
+    }
+    if (best != hover_) { hover_=best; update(); }
+    if (best >= 0) {
+        const auto &pt=points_.at(best);
+        QToolTip::showText(e->globalPosition().toPoint(), QStringLiteral("%1\n%2%3").arg(pt.label.toHtmlEscaped()).arg(pt.y,0,'g',10).arg(unit_.toHtmlEscaped()), this);
+    } else QToolTip::hideText();
+}
+void LineChart::leaveEvent(QEvent *e) {
+    hover_=-1; QToolTip::hideText(); update(); QWidget::leaveEvent(e);
+}
+void LineChart::contextMenuEvent(QContextMenuEvent *e) {
+    QMenu menu(this);
+    auto *exportAction=menu.addAction(QCoreApplication::translate("LineChart", "Export plotted samples…"));
+    exportAction->setEnabled(!points_.isEmpty());
+    if (menu.exec(e->globalPos()) != exportAction) return;
+    const QString path=QFileDialog::getSaveFileName(this,QCoreApplication::translate("LineChart", "Export plotted samples"),{},QStringLiteral("CSV (*.csv)"));
+    if(path.isEmpty())return;
+    // Export numeric samples only; labels can contain untrusted spreadsheet formula prefixes.
+    QSaveFile f(path);
+    if(!f.open(QIODevice::WriteOnly)) {QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());return;}
+    QTextStream out(&f); out.setRealNumberPrecision(17); out << "x,y\n";
+    for(const auto &pt:points_)out<<pt.x<<','<<pt.y<<'\n';
+    out.flush();
+    if(out.status()!=QTextStream::Ok||!f.commit())QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());
 }
 
 // ── BarChart ─────────────────────────────────────────────────────────────────
@@ -84,7 +139,7 @@ void BarChart::setBars(const QVector<Bar> &bars) {
     QStringList rows;
     for (const Bar &b : bars) rows << b.label + QStringLiteral(": ") + b.text;
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
-    setMinimumHeight(bars_.size() * BAR_ROW + 4);
+    setMinimumHeight(int(bars_.size()) * barRowHeight(fontMetrics()) + 4);
     update();
 }
 
@@ -100,19 +155,22 @@ void BarChart::paintEvent(QPaintEvent *) {
         textW = std::max(textW, fm.horizontalAdvance(b.text));
         maxV = std::max(maxV, b.value);
     }
-    labelW = std::min(labelW, width() / 2) + 10;
-    const int barMax = std::max(20, width() - labelW - textW - 16);
+    const int rowH = barRowHeight(fm);
+    if (width() < 30) return;
+    labelW = std::min(labelW + 10, width() / 2);
+    textW = std::min(textW + 4, width() / 3);
+    const int barMax = std::max(0, width() - labelW - textW - 8);
     for (int i = 0; i < bars_.size(); ++i) {
         const Bar &b = bars_[i];
-        const int y = i * BAR_ROW;
+        const int y = i * rowH;
         p.setPen(colorFrom(theme::FG_DIM));
-        p.drawText(QRect(0, y, labelW - 6, BAR_ROW), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(b.label, Qt::ElideRight, labelW - 6));
-        const int len = maxV > 0 ? int(std::round(barMax * b.value / maxV)) : 0;
+        p.drawText(QRect(0, y, labelW - 6, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(b.label, Qt::ElideRight, labelW - 6));
+        const int len = maxV > 0 && std::isfinite(b.value) ? int(std::round(barMax * std::clamp(b.value / maxV, 0.0, 1.0))) : 0;
         p.setPen(Qt::NoPen);
         p.setBrush(colorFrom(theme::ACCENT_SOFT));
-        p.drawRoundedRect(QRect(labelW, y + 4, std::max(len, 2), BAR_ROW - 8), 2, 2);
+        if (len > 0) p.drawRoundedRect(QRect(labelW, y + 4, len, rowH - 8), 2, 2);
         p.setPen(colorFrom(theme::MUTED));
-        p.drawText(QRect(labelW + len + 6, y, textW + 4, BAR_ROW), Qt::AlignLeft | Qt::AlignVCenter, b.text);
+        p.drawText(QRect(width() - textW, y, textW, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(b.text, Qt::ElideRight, textW));
     }
 }
 
@@ -153,7 +211,7 @@ QRectF DayBars::plotRect() const { return QRectF(rect()).adjusted(4, 4, -4, -18)
 
 int DayBars::columnAt(const QPointF &p) const {
     const QRectF r = plotRect();
-    if (days_.isEmpty() || !r.contains(p)) return -1;
+    if (days_.isEmpty() || r.width() <= 0 || r.height() <= 0 || !r.contains(p)) return -1;
     return std::min<int>(days_.size() - 1, int((p.x() - r.left()) / (r.width() / days_.size())));
 }
 

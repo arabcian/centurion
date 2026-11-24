@@ -12,6 +12,7 @@
 class DiagReportView;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
 class QStackedWidget;
@@ -47,6 +48,15 @@ private:
     void activeGpuQuery();
     void refreshIncidents();
     void selectIncident();
+    void filterIncidents();
+    void stashIncidentDraft();
+    void updateDraftInfo();
+    struct IncidentDraft { QString note, status; };
+    QHash<QString, IncidentDraft> drafts_;
+    QString loadedIncident_;
+    IncidentDraft originalIncident_;
+    QLineEdit *incidentSearch_;
+    QLabel *incidentCount_, *draftInfo_;
     void saveNote();
     bool busy_ = false;
     QComboBox *feature_, *category_, *incidentStatus_, *incidentFilter_;

@@ -96,6 +96,12 @@ void FanCurveWidget::paintEvent(QPaintEvent *) {
         p.drawText(QRectF(pos(s, 1).x() - 20, r.bottom() + 6, 40, 16), Qt::AlignCenter, QString::number(s));
     p.drawText(QRectF(r.left(), r.bottom() + 14, r.width(), 16), Qt::AlignRight, QStringLiteral("temperature step →"));
 
+    if (hardware_.size() == 10) {
+        QPolygonF ref;
+        for (int s = 0; s < 10; ++s) ref << pos(s, hardware_[s]);
+        p.setPen(QPen(QColor(theme::MUTED), 2, Qt::DashLine));
+        p.drawPolyline(ref);
+    }
     const QColor accent(theme::ACCENT);
     QPolygonF line;
     for (int s = 0; s < 10; ++s) line << pos(s, levels_[s]);
@@ -132,6 +138,9 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
 
     curve_ = new FanCurveWidget;
     v->addWidget(curve_, 1);
+    auto *legend = new QLabel(tr("Dashed: last EC table (when available) · Solid: editable draft"));
+    legend->setWordWrap(true);
+    v->addWidget(legend);
     connect(curve_, &FanCurveWidget::changed, this, [this] {
         refreshTable();
         apply_->setEnabled(curve_->levels() != hw_);
@@ -263,6 +272,7 @@ void FanCurveDialog::apply() {
 
 void FanCurveDialog::refreshTable() {
     const QVector<int> lv = curve_->levels();
+    curve_->setHardwareLevels(hw_);
     table_->clear();
     table_->setRowCount(10);
     table_->setColumnCount(2 + fans_.size());

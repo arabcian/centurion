@@ -1,4 +1,5 @@
 #include "nvidiatab.h"
+#include "profilediff.h"
 #include "trialbar.h"
 #include "privileged.h"
 #include "theme.h"
@@ -7,6 +8,11 @@
 #include <QPointer>
 
 #include <QComboBox>
+#include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -29,6 +35,7 @@
 #include <QScrollArea>
 #include <QGridLayout>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTimer>
@@ -316,6 +323,11 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     prow->addWidget(bDef);
     prow->addWidget(bDel);
     prow->addWidget(bDrv);
+    auto *compareProfiles = new QPushButton(tr("Compare…"));
+    connect(compareProfiles, &QPushButton::clicked, this, [this] {
+        profilediff::show(this, profileNames(), [](const QString &name) { return profilediff::read(PROFILES_DIR + '/' + name + ".json"); });
+    });
+    prow->addWidget(compareProfiles);
     sv->addLayout(prow);
     root->addWidget(status);
 
@@ -325,11 +337,13 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     voltLabel_ = lbl("Voltage: - mV", theme::INFO);
     freqLabel_ = lbl("Freq: - MHz", theme::OK);
     offLabel_ = lbl("Offset: - MHz", theme::ACCENT);
-    for (QLabel *l : {selLabel_, voltLabel_, freqLabel_, offLabel_}) { l->setMinimumWidth(96); ih->addWidget(l); }
+    for (QLabel *l : {selLabel_, voltLabel_, freqLabel_, offLabel_}) { l->setMinimumWidth(l->sizeHint().width()); ih->addWidget(l); }
     pointSpin_ = spin(MIN_OFFSET, MAX_OFFSET, " MHz", 92);
     pointSpin_->setEnabled(false);
     pointSpin_->setToolTip(tr("Total offset for the selected point(s)"));
     connect(pointSpin_, &QSpinBox::valueChanged, this, [this](int v) {
+        if (busy_ || vf_->selection().isEmpty()) return;
+        rememberCurveEdit();
         for (int i : vf_->selection()) { touchFlatten(i); setOffsetClamped(i, v); }
         curveModified_ = true;
         updateCoreOffsetUi();
@@ -351,6 +365,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         // offset = target − its base frequency. No clock lock, no compensation.
         // The offsets below are only the preview: Apply / the profile send (s, target) and the helper
         // recomputes them from the base it reads right before the write (the base moves with temperature).
+        if (busy_) return;
+        rememberCurveEdit();
         const int target = int(base_[s].y()) + offsetOf(s);
         for (int i = s; i < base_.size(); ++i) setOffsetClamped(i, target - int(base_[i].y()));
         flatFrom_ = s;
@@ -364,7 +380,9 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
             log(QStringLiteral("ℹ️ Points %1–%2 would need more than -1000 MHz; the driver will not take them that low, "
                                "so the top may not stay flat there (a Core cap of %3 MHz would hold it).").arg(first).arg(last).arg(target));
         // The flat top goes into the Core cap box (written with Cap / Apply Offsets, + compensation).
+        restoringCurve_ = true;
         coreCapSpin_->setValue(target);
+        restoringCurve_ = false;
         curveModified_ = true;
         updateCoreOffsetUi();
         recompute();
@@ -385,7 +403,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
                     "Wheel zooms at the cursor, Shift+wheel pans, +/− zoom, 0 fits."));
     connect(vf_, &VfCurveWidget::selectionChanged, this, &NvidiaTab::onSelectionChanged);
     connect(vf_, &VfCurveWidget::pointEdited, this, [this](int i, int f) {
-        if (i < 0 || i >= base_.size()) return;
+        if (busy_ || i < 0 || i >= base_.size()) return;
+        rememberCurveEdit();
         touchFlatten(i);
         setOffsetClamped(i, f - int(base_[i].y()));
         curveModified_ = true;
@@ -393,12 +412,52 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         recompute();
     });
     connect(vf_, &VfCurveWidget::selectionShifted, this, [this](int d) {
+        if (busy_ || !d || vf_->selection().isEmpty()) return;
+        rememberCurveEdit();
         for (int i : vf_->selection()) { touchFlatten(i); setOffsetClamped(i, offsetOf(i) + d); }
         curveModified_ = true;
         updateCoreOffsetUi();
         recompute();
     });
     cv->addWidget(vf_, 1);
+    auto *layers = new QHBoxLayout;
+    auto *baseLayer = new QCheckBox(tr("Reference (dashed)"));
+    auto *readLayer = new QCheckBox(tr("Last read (dotted)"));
+    baseLayer->setChecked(true); readLayer->setChecked(true);
+    baseLayer->setToolTip(tr("Offset-free base if provided by the driver, otherwise reconstructed. Not necessarily factory stock."));
+    readLayer->setToolTip(tr("Last curve returned by the driver, not live telemetry."));
+    auto updateLayers = [this, baseLayer, readLayer] { vf_->setReferenceVisibility(baseLayer->isChecked(), readLayer->isChecked()); };
+    connect(baseLayer, &QCheckBox::toggled, this, updateLayers);
+    connect(readLayer, &QCheckBox::toggled, this, updateLayers);
+    layers->addWidget(baseLayer); layers->addWidget(readLayer);
+    layers->addWidget(new QLabel(tr("Solid: draft")));
+    layers->addStretch();
+    auto *diff = new QPushButton(tr("Point comparison…"));
+    connect(diff, &QPushButton::clicked, this, [this] {
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("V/F Curve — Point Comparison"));
+        dlg.resize(840, 480);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Last accepted snapshot: %1. Reference and draft are calculated; last-read frequencies are historical, not live clocks. No hardware writes are performed.")
+            .arg(readSnapshotTime_.isEmpty() ? tr("Unavailable") : readSnapshotTime_));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *table = new QTableWidget(base_.size(), 6);
+        table->setHorizontalHeaderLabels({tr("Index"), tr("Voltage (mV)"), tr("Reference (MHz)"), tr("Last read (MHz)"), tr("Draft (MHz)"), tr("Draft offset (MHz)")});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->verticalHeader()->hide();
+        table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        for (int i = 0; i < base_.size(); ++i) {
+            const QStringList cells{QString::number(i), QString::number(base_[i].x()), QString::number(base_[i].y()),
+                i < readFreq_.size() ? QString::number(readFreq_[i]) : QStringLiteral("—"),
+                QString::number(vf_->points().value(i).y()), QString::number(offsetOf(i))};
+            for (int c = 0; c < cells.size(); ++c) table->setItem(i, c, new QTableWidgetItem(cells[c]));
+        }
+        layout->addWidget(table, 1);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        layout->addWidget(bb); dlg.exec();
+    });
+    layers->addWidget(diff); cv->addLayout(layers);
     // Compact zoom/pan bar (wheel = zoom at cursor, Shift+wheel = pan, +/−/0 keys).
     auto *gb = new QHBoxLayout;
     gb->setSpacing(6);
@@ -443,9 +502,17 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(bAll, &QPushButton::clicked, vf_, &VfCurveWidget::selectAll);
     auto *bRg = new QPushButton("Reset Graph");
     bRg->setToolTip(tr("Discard unapplied edits and show the last curve read from the GPU"));
-    connect(bRg, &QPushButton::clicked, this, [this] { profiles_->setCurrentIndex(-1); resetGraphToLastRead(); });
+    connect(bRg, &QPushButton::clicked, this, [this] { if (busy_) return; flatFrom_ = -1; profiles_->setCurrentIndex(-1); resetGraphToLastRead(); });
     gb->addWidget(bAll);
     gb->addWidget(bRg);
+    undoCurveBtn_ = new QPushButton(tr("Undo curve"));
+    redoCurveBtn_ = new QPushButton(tr("Redo curve"));
+    undoCurveBtn_->setToolTip(tr("Undo an unapplied V/F edit; never writes to the GPU."));
+    redoCurveBtn_->setToolTip(undoCurveBtn_->toolTip());
+    connect(undoCurveBtn_, &QPushButton::clicked, this, [this] { restoreCurveDraft(false); });
+    connect(redoCurveBtn_, &QPushButton::clicked, this, [this] { restoreCurveDraft(true); });
+    gb->addWidget(undoCurveBtn_); gb->addWidget(redoCurveBtn_);
+    updateCurveHistory();
     cv->addLayout(gb);
     if (!theme::experimentalEnabled()) root->addWidget(curve, 1);
 
@@ -461,7 +528,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     coreSpin_ = spin(CORE_MIN, CORE_MAX, " MHz", 96);
     coreSpin_->setToolTip(tr("Core offset for the V/F curve. Like LACT's curve shift it is applied from 30 % of the curve up\n"
                           "(point 38 of 127): the idle / low-voltage points keep their stock clocks."));
-    connect(coreSpin_, &QSpinBox::valueChanged, this, [this](int v) { coreOffset_ = v; flatFrom_ = -1; recompute(); });
+    connect(coreSpin_, &QSpinBox::valueChanged, this, [this](int v) { if (busy_) return; rememberCurveEdit(); coreOffset_ = v; flatFrom_ = -1; recompute(); });
     ch->addWidget(coreSpin_);
     ch->addSpacing(8);
     ch->addWidget(lbl("Memory:", theme::MUTED));
@@ -513,6 +580,16 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto syncCapComp = [this] {
         vf_->setCapComp(coreCapSpin_->value() >= 210 ? coreCapSpin_->value() : 0, capCompSpin_->value());
     };
+    previousCap_ = coreCapSpin_->value();
+    connect(coreCapSpin_, &QSpinBox::valueChanged, this, [this](int value) {
+        if (!restoringCurve_ && !busy_ && !base_.isEmpty()) {
+            auto before = curveDraft(); before.cap = previousCap_;
+            if (undoCurve_.isEmpty() || !(undoCurve_.last() == before)) undoCurve_.append(before);
+            if (undoCurve_.size() > 32) undoCurve_.removeFirst();
+            redoCurve_.clear(); updateCurveHistory();
+        }
+        previousCap_ = value;
+    });
     connect(coreCapSpin_, &QSpinBox::valueChanged, this, syncCapComp);
     connect(capCompSpin_, &QSpinBox::valueChanged, this, syncCapComp);
     syncCapComp();
@@ -589,7 +666,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     log_ = new QPlainTextEdit;
     log_->setObjectName("terminal");
     log_->setReadOnly(true);
-    log_->setFixedHeight(52);
+    log_->setMinimumHeight(log_->fontMetrics().lineSpacing() * 3 + 8);
+    log_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     log_->setMaximumBlockCount(1000);
     if (theme::experimentalEnabled()) {
         root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Driver output"), log_));
@@ -770,10 +848,18 @@ void NvidiaTab::log(const QString &s) {
 void NvidiaTab::setBusy(bool b) {
     busy_ = b;
     for (QPushButton *p : std::as_const(actionButtons_)) p->setEnabled(!b);
+    vf_->setEnabled(!b);
+    flattenSpin_->setEnabled(!b);
+    coreSpin_->setEnabled(!b && !curveModified_);
+    pointSpin_->setEnabled(!b && !vf_->selection().isEmpty());
+    profiles_->setEnabled(!b);
+    for (auto *spin : {coreCapSpin_, capCompSpin_, memSpin_, lockMinSpin_, lockMaxSpin_}) spin->setEnabled(!b);
+    updateCurveHistory();
 }
 
 bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, const QString &failMsg, Done done) {
     if (busy_) { log("⏳ Another operation is still running — please wait."); return false; }
+    clearCurveHistory();
     setBusy(true);
     privileged::run(helperPath(), payload, this, [=, this](const privileged::Result &r) {
         setBusy(false);
@@ -783,7 +869,10 @@ bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, cons
         } else {
             log("✘ " + failMsg + ": " + r.message());
         }
+        restoringCurve_ = true;
         if (done) done(r.ok(), r.json);
+        restoringCurve_ = false;
+        clearCurveHistory();
     }, 120000);
     return true;
 }
@@ -839,8 +928,13 @@ void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
         base.append(QPointF(mv, baseK > 0 ? floorDiv(baseK, 1000) : cur - off));
     }
     if (base.isEmpty()) { log("❌ No GPU points found in vf_curve."); return; }
+    clearCurveHistory();
     base_ = base;
     readFreq_ = freqs;
+    readSnapshotTime_ = QDateTime::currentDateTime().toString(Qt::ISODate);
+    QVector<QPointF> readPoints;
+    for (int i = 0; i < base.size(); ++i) readPoints.append(QPointF(base[i].x(), freqs[i]));
+    vf_->setReferenceCurves(base, readPoints);
     readOffsets_ = keepOffsets ? offs : QHash<int, int>();
     vf_->setPoints({});  // force re-fit for the new base
     resetGraphToLastRead();
@@ -857,6 +951,42 @@ void NvidiaTab::setOffsetClamped(int i, int total) {
     total = std::clamp(total, MIN_OFFSET, MAX_OFFSET);
     if (i < base_.size()) total = std::max(total, -int(base_[i].y()));
     pointOffsets_[i] = total - coreAt(i);
+}
+
+NvidiaTab::CurveDraft NvidiaTab::curveDraft() const {
+    return {pointOffsets_, coreOffset_, flatFrom_, flatMhz_, coreCapSpin_->value(), curveModified_};
+}
+void NvidiaTab::updateCurveHistory() {
+    if (undoCurveBtn_) undoCurveBtn_->setEnabled(!busy_ && !undoCurve_.isEmpty());
+    if (redoCurveBtn_) redoCurveBtn_->setEnabled(!busy_ && !redoCurve_.isEmpty());
+}
+void NvidiaTab::clearCurveHistory() {
+    undoCurve_.clear(); redoCurve_.clear(); updateCurveHistory();
+}
+void NvidiaTab::rememberCurveEdit() {
+    if (base_.isEmpty()) return;
+    const auto draft = curveDraft();
+    if (undoCurve_.isEmpty() || !(undoCurve_.last() == draft)) undoCurve_.append(draft);
+    if (undoCurve_.size() > 32) undoCurve_.removeFirst();
+    redoCurve_.clear(); updateCurveHistory();
+}
+void NvidiaTab::restoreCurveDraft(bool redo) {
+    if (busy_ || base_.isEmpty()) return;
+    auto &source = redo ? redoCurve_ : undoCurve_;
+    auto &target = redo ? undoCurve_ : redoCurve_;
+    const auto current = curveDraft();
+    while (!source.isEmpty() && source.last() == current) source.removeLast();
+    if (source.isEmpty()) { updateCurveHistory(); return; }
+    target.append(current);
+    if (target.size() > 32) target.removeFirst();
+    const auto draft = source.takeLast();
+    pointOffsets_ = draft.offsets; coreOffset_ = draft.core;
+    flatFrom_ = draft.flatFrom; flatMhz_ = draft.flatMhz;
+    curveModified_ = draft.modified;
+    restoringCurve_ = true;
+    coreCapSpin_->setValue(draft.cap);
+    restoringCurve_ = false;
+    updateCoreOffsetUi(); recompute(); onSelectionChanged(); updateCurveHistory();
 }
 
 void NvidiaTab::recompute() {
@@ -881,7 +1011,7 @@ void NvidiaTab::updateCoreOffsetUi() {
         coreSpin_->setValue(CORE_MIN - 1);
         theme::setSheet(coreSpin_, QStringLiteral("QSpinBox { color:%1; font-weight:600; }").arg(theme::DANGER));
     } else {
-        coreSpin_->setEnabled(true);
+        coreSpin_->setEnabled(!busy_);
         coreSpin_->setSpecialValueText(QString());
         coreSpin_->setRange(CORE_MIN, CORE_MAX);
         coreSpin_->setValue(coreOffset_);
@@ -929,7 +1059,7 @@ void NvidiaTab::onSelectionChanged() {
         voltLabel_->setText(QStringLiteral("Voltage: %1 mV").arg(p.x()));
         freqLabel_->setText(QStringLiteral("Freq: %1 MHz").arg(p.y()));
         offLabel_->setText(QStringLiteral("Offset: %1 MHz").arg(offsetOf(idx)));
-        pointSpin_->setEnabled(true);
+        pointSpin_->setEnabled(!busy_);
         pointSpin_->setValue(offsetOf(idx));
         // setPoints() announces the selection after every edit; only a real change of
         // the selection may overwrite the index typed into the Flatten box.
@@ -941,6 +1071,7 @@ void NvidiaTab::onSelectionChanged() {
 }
 
 void NvidiaTab::resetGraphToLastRead() {
+    clearCurveHistory();
     adoptOffsets(readOffsets_);
     flattenSel_.clear();
     {
@@ -998,7 +1129,7 @@ void NvidiaTab::applyOffsets() {
     runHelper({{"op", "apply_gpu_offsets"}, {"profile_name", SCRATCH}, {"profile_data", data}},
               "Offsets applied.", "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz](bool ok, const QJsonObject &) {
         QJsonArray pts;
-        if (ok) trial_->offer([this] { revertTrial(); });
+        if (ok) { clearCurveHistory(); trial_->offer([this] { revertTrial(); }); }
         if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts)) return;
         takeGpuPoints(pts, true);
         log("✅ Curve re-read from the GPU after apply.");
@@ -1030,7 +1161,7 @@ void NvidiaTab::resetCurve() {
         profiles_->setCurrentIndex(-1);
         // The op resets the curve and the core cap. Memory offset and VRAM lock are untouched on the GPU,
         // so the memory box follows NVML (below) and the lock boxes keep showing the lock that is still active.
-        coreCapSpin_->setValue(0);
+        restoringCurve_ = true; coreCapSpin_->setValue(0); restoringCurve_ = false;
         QJsonArray pts;
         if (loadCurveFile("nvcurve_reset_result.json", t0, &pts)) takeGpuPoints(pts, false);
         else { readOffsets_.clear(); resetGraphToLastRead(); }
@@ -1121,12 +1252,15 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
         if (!valid) { log(QStringLiteral("❌ Profile has an invalid offset at point %1; not loaded.").arg(i)); return; }
         offs[i] = floorDiv(khz, 1000);
     }
+    clearCurveHistory();
     adoptOffsets(offs);
 
     memSpin_->setValue(mem);
     lockMinSpin_->setValue(data.value("mem_locked_min_mhz").toInt());
     lockMaxSpin_->setValue(data.value("mem_locked_max_mhz").toInt());
+    restoringCurve_ = true;
     coreCapSpin_->setValue(data.value("gpu_clock_cap_mhz").toInt());
+    restoringCurve_ = false;
     if (data.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(data.value("gpu_clock_comp_mhz").toInt());
     flatFrom_ = data.value("flatten_from").toInt(-1);
     flatMhz_ = data.value("flatten_mhz").toInt();
@@ -1213,7 +1347,7 @@ void NvidiaTab::mirrorProfileLimits(const QString &name) {
     QFile f(PROFILES_DIR + '/' + name + ".json");
     if (!f.open(QIODevice::ReadOnly) || f.size() > 256 * 1024) return;
     const QJsonObject d = QJsonDocument::fromJson(f.readAll()).object();
-    coreCapSpin_->setValue(d.value("gpu_clock_cap_mhz").toInt());
+    restoringCurve_ = true; coreCapSpin_->setValue(d.value("gpu_clock_cap_mhz").toInt()); restoringCurve_ = false;
     if (d.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(d.value("gpu_clock_comp_mhz").toInt());
     flatFrom_ = d.value("flatten_mhz").toInt() > 0 ? d.value("flatten_from").toInt(-1) : -1;
     flatMhz_ = d.value("flatten_mhz").toInt();

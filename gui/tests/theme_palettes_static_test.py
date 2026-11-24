@@ -12,7 +12,7 @@ ui = (root / 'gui/src/hometab.cpp').read_text()
 start = src.index('const Palette PALETTES[]')
 end = src.index('QString g_current')
 rows = re.findall(r'\{"([a-z0-9-]+)", "([^"]+)", \{([^{}]+)\}\}', src[start:end])
-assert len(rows) == 56, f'Expected 56 themes, got {len(rows)}'
+assert len(rows) == 57, f'Expected 57 themes, got {len(rows)}'
 ids = [row[0] for row in rows]
 assert len(ids) == len(set(ids)), 'Theme ids must be unique'
 assert ids[0] == 'graphite', 'Default theme changed'
@@ -38,9 +38,9 @@ pastel_ids = [
     'pastel-cinnamon-cocoa', 'pastel-dusty-coral', 'pastel-marigold-ink',
     'pastel-mulberry-velvet', 'pastel-olive-smoke', 'pastel-opal-lagoon',
 ]
-assert ids[36:] == pastel_ids, 'Pastel themes missing or in unexpected order'
-assert sum('Pastel Light' in name for _, name, _ in rows[36:]) == 12
-assert sum('Pastel Dark' in name for _, name, _ in rows[36:]) == 8
+assert ids[36:56] == pastel_ids, 'Pastel themes missing or in unexpected order'
+assert sum('Pastel Light' in name for _, name, _ in rows[36:56]) == 12
+assert sum('Pastel Dark' in name for _, name, _ in rows[36:56]) == 8
 
 
 def luminance(color):
@@ -93,6 +93,11 @@ for ident, display_name, values in rows:
         hue, _, _ = colorsys.rgb_to_hsv(*accent_rgb)
         accent_sectors.add(int(hue * 8) % 8)
 
+assert ids[-1] == 'oled-black'
+oled = re.findall(r'"(#[0-9a-fA-F]{6})"', rows[-1][2])
+assert oled[0] == '#000000' and oled[5] == '#000000'
+for bg in oled[:5] + [oled[5]]:
+    for fg in oled[8:11]: assert ratio(fg,bg) >= 4.5, (fg,bg)
 assert len(accent_sectors) >= 7, ('Pastel hue coverage too narrow', accent_sectors)
 
 
@@ -128,4 +133,4 @@ assert 'if (!found) return false;' in src
 assert 'textOnAccent()' in src and 'static bool lightTheme()' in src
 assert 'p.setColor(QPalette::HighlightedText, textOnAccent())' in src
 assert '@HILITE' in src and 'isLight ?' in src
-print(f'PASS {len(rows)} themes (36 preserved + 20 pastel), 12 light / 8 dark; contrast, hue coverage, persistence, previews')
+print(f'PASS {len(rows)} themes (36 preserved + 20 pastel + OLED), 12 light / 8 dark; contrast, hue coverage, persistence, previews')

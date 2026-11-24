@@ -71,9 +71,7 @@ CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
         root->addWidget(hint);
         return;
     }
-    QProcess infoProc;
-    infoProc.start(program_, {QStringLiteral("info")});
-    if (infoProc.waitForFinished(3000)) info_ = cpustress::parseInfo(infoProc.readAllStandardOutput());
+
 
     auto *intro = new QLabel(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::MUTED,
         tr("Runs work whose correct result is known and compares every result, and watches for machine checks and "
@@ -98,9 +96,6 @@ CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
     mode_->addItem(tr("All cores"), static_cast<int>(cpustress::Mode::AllCore));
     row->addWidget(mode_);
     load_ = new QComboBox;
-    if (info_.loads.contains(QLatin1String("sse"))) load_->addItem(tr("SSE (highest boost)"), QStringLiteral("sse"));
-    if (info_.loads.contains(QLatin1String("avx2"))) load_->addItem(QStringLiteral("AVX2"), QStringLiteral("avx2"));
-    if (info_.loads.contains(QLatin1String("avx512"))) load_->addItem(QStringLiteral("AVX-512"), QStringLiteral("avx512"));
     row->addWidget(load_);
     durationLabel_ = new QLabel;
     row->addWidget(durationLabel_);
@@ -148,7 +143,7 @@ CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
     status_->setWordWrap(true);
     status_->setVisible(false);
     root->addWidget(status_);
-    if (info_.cores.isEmpty()) note(tr("centurion-cpustress could not read the CPU topology."), theme::WARN);
+    note(tr("Reading CPU test capabilities…"), theme::MUTED);
 
     results_ = new QTreeWidget;
     results_->setRootIsDecorated(false);
@@ -173,6 +168,26 @@ CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
         QTimer::singleShot(0, this, [this, msg] { Q_EMIT alert(tr("CPU test: the machine went down"), msg); });
     }
     fill();
+    auto *infoProc = new QProcess(this);
+    auto finishInfo = [this,infoProc](bool ok) {
+        if (infoProc->property("handled").toBool()) return;
+        infoProc->setProperty("handled",true);
+        if (ok) info_ = cpustress::parseInfo(infoProc->readAllStandardOutput());
+        if (info_.loads.contains(QLatin1String("sse"))) load_->addItem(tr("SSE (highest boost)"), QStringLiteral("sse"));
+        if (info_.loads.contains(QLatin1String("avx2"))) load_->addItem(QStringLiteral("AVX2"), QStringLiteral("avx2"));
+        if (info_.loads.contains(QLatin1String("avx512"))) load_->addItem(QStringLiteral("AVX-512"), QStringLiteral("avx512"));
+        run_->setEnabled(!info_.cores.isEmpty() && load_->count()>0);
+        if (!run_->isEnabled()) {
+            if (status_->text().contains(tr("Reading CPU test capabilities…"))) note(tr("centurion-cpustress could not read the CPU topology."),theme::WARN);
+            else run_->setToolTip(tr("centurion-cpustress could not read the CPU topology."));
+        }
+        else if (status_->text().contains(tr("Reading CPU test capabilities…"))) status_->hide();
+        infoProc->deleteLater();
+    };
+    connect(infoProc,&QProcess::finished,this,[infoProc,finishInfo](int code,QProcess::ExitStatus st) { finishInfo(code==0 && st==QProcess::NormalExit && !infoProc->property("timedOut").toBool()); });
+    connect(infoProc,&QProcess::errorOccurred,this,[finishInfo](QProcess::ProcessError e) { if(e==QProcess::FailedToStart) finishInfo(false); });
+    QTimer::singleShot(3000,infoProc,[infoProc] { if(infoProc->state()!=QProcess::NotRunning) { infoProc->setProperty("timedOut",true); infoProc->kill(); } });
+    infoProc->start(program_,{QStringLiteral("info")});
 }
 
 void CpuStressBox::fillDurations() {
@@ -231,6 +246,8 @@ int CpuStressBox::totalSeconds() const {
 }
 
 void CpuStressBox::start() {
+    if (info_.cores.isEmpty() || load_->count()==0) return;
+    if (releasingPreset_) { note(tr("Wait for the previous tuning preset to be restored."), theme::WARN); return; }
     runMode_ = static_cast<cpustress::Mode>(mode_->currentData().toInt());
     seconds_ = duration_->currentData().toInt();
     cycles_n_ = runMode_ == cpustress::Mode::PerCore ? cycles_->value() : 1;
@@ -343,9 +360,11 @@ void CpuStressBox::finished(int exitCode, bool crashed) {
 void CpuStressBox::releasePreset() {
     if (!presetHeld_) return;
     presetHeld_ = false;
+    releasingPreset_ = true;
     privileged::run(privileged::helperPath(QStringLiteral("tune-helper")),
                     QJsonObject{{"op", "release"}, {"owner_pid", QCoreApplication::applicationPid()}}, this,
                     [this](const privileged::Result &r) {
+                        releasingPreset_ = false;
                         if (!r.ok()) note(tr("The tuning from before the test could not be restored: %1. Use Optimizations → Restore originals.")
                                               .arg(r.message()), theme::WARN);
                     });

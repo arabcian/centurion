@@ -3,6 +3,7 @@
 // Reads/applies the V/F curve, memory offset and VRAM lock through
 // nvcurve-root-helper; live stats via NVML (dlopen, only while visible).
 #include <QHash>
+#include <QList>
 #include <QJsonObject>
 #include <QPointF>
 #include <QSet>
@@ -52,6 +53,21 @@ private:
     void log(const QString &s);
 
     // model
+    struct CurveDraft {
+        QHash<int, int> offsets;
+        int core, flatFrom, flatMhz, cap;
+        bool modified;
+        bool operator==(const CurveDraft &) const = default;
+    };
+    CurveDraft curveDraft() const;
+    void rememberCurveEdit();
+    void clearCurveHistory();
+    void updateCurveHistory();
+    void restoreCurveDraft(bool redo);
+    QList<CurveDraft> undoCurve_, redoCurve_;
+    bool restoringCurve_ = false;
+    int previousCap_ = 209;
+    QPushButton *undoCurveBtn_ = nullptr, *redoCurveBtn_ = nullptr;
     void recompute();
     // Never below -base: the graph clamps there too, so what Apply sends is what the graph shows.
     /// First point the core offset applies to — LACT's curve shift: its editor works on the
@@ -112,6 +128,7 @@ private:
     QVector<QPointF> base_;          // (mV, base MHz) of GPU-domain points
     QHash<int, int> pointOffsets_;   // per-point MHz, on top of coreOffset_
     QHash<int, int> readOffsets_;
+    QString readSnapshotTime_;
     QVector<int> readFreq_;          // MHz each GPU point actually ran at in the last read
     int coreOffset_ = 0;
     bool curveModified_ = false;

@@ -27,6 +27,9 @@ protected:
 
 private:
     void colorList();
+    void filterList();
+    QLineEdit *sceneSearch_ = nullptr;
+    quint64 editorRevision_ = 0;
     void reloadList(const QString &select = {});
     void select(const QString &name);
     void setEditor(const scenes::Scene &s);

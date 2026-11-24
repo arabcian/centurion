@@ -3,6 +3,8 @@
 // Classic mode never instantiates these widgets.
 #include "theme.h"
 #include <QFrame>
+#include <QElapsedTimer>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -168,30 +170,40 @@ inline QToolButton *disclosure(const QString &text, QWidget *panel, bool expande
 class TemperaturePlot : public QWidget {
 public:
     explicit TemperaturePlot(QWidget *parent = nullptr) : QWidget(parent) {
-        setMinimumHeight(116);
+        clock_.start();
+        setMinimumHeight(std::max(116, fontMetrics().height() * 6));
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         setAccessibleName(QObject::tr("Temperature history"));
-        setToolTip(QObject::tr("CPU and EC GPU temperatures, last 5 minutes. Missing samples are not estimated."));
+        setToolTip(QObject::tr("CPU and EC GPU temperatures. Missing samples and gaps are not estimated."));
     }
     void append(std::optional<double> cpu, std::optional<double> gpu) {
-        samples_.append({cpu, gpu});
-        while (samples_.size() > 150) samples_.removeFirst(); // 2s cadence, 5 min
+        const qint64 now = clock_.elapsed();
+        samples_.append({now, cpu, gpu});
+        while (!samples_.isEmpty() && (samples_.size() > 2048 || samples_.first().ms < now - 3600000)) samples_.removeFirst();
+        update();
+    }
+    void setRangeMinutes(int minutes) {
+        rangeMinutes_ = std::clamp(minutes, 1, 60);
         update();
     }
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        const QRectF plot = QRectF(rect()).adjusted(39, 27, -12, -25);
+        const int left = fontMetrics().horizontalAdvance(QStringLiteral("100")) + 12;
+        const int lineHeight = fontMetrics().height() + 6;
+        const QRectF plot = QRectF(rect()).adjusted(left, lineHeight + 5, -12, -lineHeight);
+        const qint64 now = clock_.elapsed(), rangeMs = qint64(rangeMinutes_) * 60000;
+        const qint64 firstMs = now - rangeMs;
         if (plot.width() < 30 || plot.height() < 30) return;
         const QColor muted(theme::MUTED), grid(theme::BORDER_SOFT);
         QFont caption = font();
-        caption.setPointSizeF(caption.pointSizeF() - 1);
+        if (caption.pointSizeF() > 2) caption.setPointSizeF(caption.pointSizeF() - 1);
         caption.setWeight(QFont::DemiBold);
         caption.setLetterSpacing(QFont::AbsoluteSpacing, 0.8);
         p.setFont(caption);
         p.setPen(muted);
-        p.drawText(QRectF(4, 3, 280, 19), Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("TEMPERATURES  ·  LAST 5 MIN"));
+        if (width() > 400) p.drawText(QRectF(4, 3, width() / 2, lineHeight), Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("Temperatures"));
         caption.setLetterSpacing(QFont::AbsoluteSpacing, 0);
         caption.setWeight(QFont::Normal);
         p.setFont(caption);
@@ -204,13 +216,13 @@ protected:
             p.setPen(QPen(grid, 1, Qt::DashLine));
             p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y));
             p.setPen(muted);
-            p.drawText(QRectF(0, y - 9, 33, 18), Qt::AlignRight | Qt::AlignVCenter, QString::number(t));
+            p.drawText(QRectF(0, y - lineHeight / 2, left - 6, lineHeight), Qt::AlignRight | Qt::AlignVCenter, QString::number(t));
         }
         p.setPen(QPen(QColor(theme::BORDER), 1));
         p.drawLine(plot.bottomLeft(), plot.bottomRight());
         p.setPen(muted);
-        p.drawText(QRectF(plot.left(), plot.bottom() + 3, 90, 17), Qt::AlignLeft, QObject::tr("-5 min"));
-        p.drawText(QRectF(plot.right() - 90, plot.bottom() + 3, 90, 17), Qt::AlignRight, QObject::tr("Now"));
+        p.drawText(QRectF(plot.left(), plot.bottom() + 3, 90, lineHeight), Qt::AlignLeft, QObject::tr("-%1 min").arg(rangeMinutes_));
+        p.drawText(QRectF(plot.right() - 90, plot.bottom() + 3, 90, lineHeight), Qt::AlignRight, QObject::tr("Now"));
         if (samples_.size() < 2) {
             p.drawText(plot, Qt::AlignCenter, QObject::tr("Waiting for sensor samples"));
             return;
@@ -239,10 +251,17 @@ protected:
                 run = QPainterPath();
             };
             qreal x = 0;
-            for (int i = 0; i < samples_.size(); ++i) {
-                const auto &value = cpu ? samples_[i].cpu : samples_[i].gpu;
-                if (!value) { if (inSegment) closeRun(x); inSegment = false; continue; }
-                x = plot.right() - (samples_.size() - 1 - i) * plot.width() / 149.0;
+            qint64 previousMs = -1;
+            for (const auto &sample : samples_) {
+                if (sample.ms < firstMs) continue;
+                const auto &value = cpu ? sample.cpu : sample.gpu;
+                if (!value || (previousMs >= 0 && sample.ms - previousMs > 6000)) {
+                    if (inSegment) closeRun(x);
+                    inSegment = false;
+                }
+                previousMs = sample.ms;
+                if (!value) continue;
+                x = plot.right() - (now - sample.ms) * plot.width() / double(rangeMs);
                 const qreal y = plot.bottom() - (std::clamp(*value, 25.0, 105.0) - 25.0) / 80.0 * plot.height();
                 if (inSegment) { path.lineTo(x, y); run.lineTo(x, y); }
                 else { path.moveTo(x, y); run.moveTo(x, y); segmentStart = x; }
@@ -252,7 +271,8 @@ protected:
             if (inSegment) closeRun(x);
             p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             p.drawPath(path);
-            if (inSegment) {  // the live reading: a dot with a halo
+            const bool live = inSegment && !samples_.isEmpty() && now - samples_.last().ms <= 6000;
+            if (live) {  // the live reading: a dot with a halo
                 QColor halo = color;
                 halo.setAlphaF(0.25);
                 p.setPen(Qt::NoPen);
@@ -263,13 +283,13 @@ protected:
                 p.setBrush(Qt::NoBrush);
             }
             // "● CPU 62°": the value only while the series is live (an asleep dGPU has none).
-            const QString text = inSegment && last ? QStringLiteral("%1  %2°").arg(name).arg(qRound(*last)) : name;
+            const QString text = live && last ? QStringLiteral("%1  %2°").arg(name).arg(qRound(*last)) : name;
             QFont f = p.font();
             f.setWeight(QFont::DemiBold);
             p.setFont(f);
             const qreal w = p.fontMetrics().horizontalAdvance(text);
-            const QRectF label(legendRight - w, 3, w, 19);
-            p.setPen(inSegment ? QColor(theme::FG) : muted);
+            const QRectF label(legendRight - w, 3, w, lineHeight);
+            p.setPen(live ? QColor(theme::FG) : muted);
             p.drawText(label, Qt::AlignLeft | Qt::AlignVCenter, text);
             p.setPen(Qt::NoPen);
             p.setBrush(color);
@@ -281,7 +301,9 @@ protected:
         draw(true, QColor(theme::ACCENT), QStringLiteral("CPU"));
     }
 private:
-    struct Sample { std::optional<double> cpu, gpu; };
+    struct Sample { qint64 ms; std::optional<double> cpu, gpu; };
     QVector<Sample> samples_;
+    QElapsedTimer clock_;
+    int rangeMinutes_ = 5;
 };
 }

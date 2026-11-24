@@ -20,6 +20,9 @@
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLineEdit>
+#include <QScrollBar>
+#include <QSignalBlocker>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
@@ -186,8 +189,14 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     incidentFilter_->addItem(tr("All incidents"), QStringLiteral("all"));
     filterRow->addWidget(new QLabel(tr("Show:")));
     filterRow->addWidget(incidentFilter_);
-    filterRow->addStretch();
+    incidentSearch_ = new QLineEdit;
+    incidentSearch_->setClearButtonEnabled(true);
+    incidentSearch_->setPlaceholderText(tr("Search saved incidents…"));
+    filterRow->addWidget(incidentSearch_, 1);
     ih->addLayout(filterRow);
+    incidentCount_ = new QLabel;
+    incidentCount_->setProperty("role", "muted");
+    ih->addWidget(incidentCount_);
     auto *split = new QSplitter(Qt::Horizontal);
     incidents_ = new QTreeWidget;
     incidents_->setHeaderLabels({tr("When"), tr("Kind"), tr("Event"), tr("Status")});
@@ -209,8 +218,12 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     rv->addLayout(srow);
     note_ = new QPlainTextEdit;
     note_->setPlaceholderText(tr("Your notes: what you tried, what changed, what happened next (max 2000 characters). Kept privately; the kernel log is not touched."));
-    note_->setMaximumHeight(110);
+    note_->setMinimumHeight(note_->fontMetrics().height() * 4);
     rv->addWidget(note_);
+    draftInfo_ = new QLabel;
+    draftInfo_->setWordWrap(true);
+    draftInfo_->setProperty("role", "muted");
+    rv->addWidget(draftInfo_);
     save_ = new QPushButton(tr("Save note"));
     rv->addWidget(save_, 0, Qt::AlignRight);
     split->addWidget(right);
@@ -226,6 +239,9 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     connect(incidents_, &QTreeWidget::currentItemChanged, this, [this] { selectIncident(); });
     connect(incidentFilter_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { refreshIncidents(); });
     connect(save_, &QPushButton::clicked, this, [this] { saveNote(); });
+    connect(incidentSearch_, &QLineEdit::textChanged, this, &AdvancedHealthPage::filterIncidents);
+    connect(note_, &QPlainTextEdit::textChanged, this, &AdvancedHealthPage::updateDraftInfo);
+    connect(incidentStatus_, &QComboBox::currentIndexChanged, this, &AdvancedHealthPage::updateDraftInfo);
     updateMode();
 }
 
@@ -338,13 +354,17 @@ void AdvancedHealthPage::activeGpuQuery() {
         finish(QString::fromUtf8(p->readAll().left(64 * 1024)), ok);
     });
     connect(p, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError e) { if (e == QProcess::FailedToStart) finish({}, false); });
-    QTimer::singleShot(10000, p, [guard] { if (guard && guard->state() != QProcess::NotRunning) { guard->setProperty("timedOut", true); guard->kill(); } });
+    QTimer::singleShot(5000, p, [guard] { if (guard && guard->state() != QProcess::NotRunning) { guard->setProperty("timedOut", true); guard->kill(); } });
     p->start(exe, {QStringLiteral("-q"), QStringLiteral("-d"), QStringLiteral("ECC,ROW_REMAPPER,PAGE_RETIREMENT")});
 }
 
 void AdvancedHealthPage::refreshIncidents() {
     const QString keep = incidents_->currentItem() ? incidents_->currentItem()->data(0, Qt::UserRole).toString() : QString();
     const bool openOnly = incidentFilter_->currentData().toString() == QStringLiteral("open");
+    const int scroll = incidents_->verticalScrollBar()->value();
+    stashIncidentDraft();
+    loadedIncident_.clear();
+    const QSignalBlocker blocker(incidents_);
     incidents_->clear();
     const auto list = advanceddiagnostics::incidents(diagsrc::savedEvents(), advanceddiagnostics::incidentNotes());
     QTreeWidgetItem *select = nullptr;
@@ -363,13 +383,55 @@ void AdvancedHealthPage::refreshIncidents() {
                                      : tr("%1 saved event(s), newest first.").arg(list.size()));
     if (select) incidents_->setCurrentItem(select);
     else if (incidents_->topLevelItemCount()) incidents_->setCurrentItem(incidents_->topLevelItem(0));
-    else selectIncident();
+    filterIncidents();
+    selectIncident();
+    incidents_->verticalScrollBar()->setValue(scroll);
+}
+
+void AdvancedHealthPage::stashIncidentDraft() {
+    if (loadedIncident_.isEmpty()) return;
+    const IncidentDraft draft{note_->toPlainText(), incidentStatus_->currentData().toString()};
+    if (draft.note != originalIncident_.note || draft.status != originalIncident_.status)
+        drafts_.insert(loadedIncident_, draft);
+    else drafts_.remove(loadedIncident_);
+}
+
+void AdvancedHealthPage::updateDraftInfo() {
+    const bool editing = !loadedIncident_.isEmpty();
+    const bool dirty = editing && (note_->toPlainText() != originalIncident_.note
+                        || incidentStatus_->currentData().toString() != originalIncident_.status);
+    const int length = int(note_->toPlainText().size());
+    draftInfo_->setText(editing ? tr("%1 / 2000 characters%2").arg(length)
+        .arg(dirty ? tr(" · Unsaved draft (kept in this window until saved or closed)") : QString()) : QString());
+    save_->setEnabled(editing && length <= 2000);
+}
+
+void AdvancedHealthPage::filterIncidents() {
+    const QString needle = incidentSearch_->text().trimmed();
+    int visible = 0;
+    QTreeWidgetItem *first = nullptr;
+    for (int i = 0; i < incidents_->topLevelItemCount(); ++i) {
+        auto *it = incidents_->topLevelItem(i);
+        bool match = needle.isEmpty() || it->data(1, Qt::UserRole).toString().contains(needle, Qt::CaseInsensitive);
+        for (int c = 0; c < it->columnCount() && !match; ++c) match = it->text(c).contains(needle, Qt::CaseInsensitive);
+        it->setHidden(!match);
+        if (match) { ++visible; if (!first) first = it; }
+    }
+    incidentCount_->setText(tr("Showing %1 / %2 incidents in this scope").arg(visible).arg(incidents_->topLevelItemCount()));
+    if (!incidents_->currentItem() || incidents_->currentItem()->isHidden()) incidents_->setCurrentItem(first);
 }
 
 void AdvancedHealthPage::selectIncident() {
+    stashIncidentDraft();
+    loadedIncident_.clear();
     QTreeWidgetItem *it = incidents_->currentItem();
-    save_->setEnabled(it);
-    if (!it) { incidentInfo_->setPlainText(tr("Select an event.")); note_->clear(); return; }
+    const QSignalBlocker b1(note_), b2(incidentStatus_);
+    if (!it || it->isHidden()) {
+        incidentInfo_->setPlainText(tr("Select an event.")); note_->clear();
+        note_->setEnabled(false); incidentStatus_->setEnabled(false); updateDraftInfo(); return;
+    }
+    note_->setEnabled(true);
+    incidentStatus_->setEnabled(true);
     const QString key = it->data(0, Qt::UserRole).toString();
     const QString title = it->text(2), text = it->data(1, Qt::UserRole).toString();
     const int code = QRegularExpression(QStringLiteral(R"(Xid (\d+))")).match(title).captured(1).toInt();
@@ -377,15 +439,25 @@ void AdvancedHealthPage::selectIncident() {
     incidentInfo_->setHtml(eventinfo::html(ev, title));
     // The saved status and note of this incident: an unchanged Save must never erase them.
     const QJsonObject saved = advanceddiagnostics::incidentNote(key);
-    note_->setPlainText(saved.value(QStringLiteral("note")).toString());
-    const int at = incidentStatus_->findData(saved.value(QStringLiteral("status")).toString(QStringLiteral("New")));
+    originalIncident_ = {saved.value(QStringLiteral("note")).toString(), saved.value(QStringLiteral("status")).toString(QStringLiteral("New"))};
+    const IncidentDraft draft = drafts_.value(key, originalIncident_);
+    loadedIncident_ = key;
+    note_->setPlainText(draft.note);
+    const int at = incidentStatus_->findData(draft.status);
     incidentStatus_->setCurrentIndex(at >= 0 ? at : 0);
+    updateDraftInfo();
 }
 
 void AdvancedHealthPage::saveNote() {
     QTreeWidgetItem *it = incidents_->currentItem();
-    if (!it) return;
+    if (!it || it->isHidden() || loadedIncident_ != it->data(0, Qt::UserRole).toString() || note_->toPlainText().size() > 2000) return;
     const QString err = advanceddiagnostics::saveIncident(it->data(0, Qt::UserRole).toString(), incidentStatus_->currentData().toString(), note_->toPlainText());
     message_->setText(err.isEmpty() ? tr("Note saved.") : tr("Not saved: %1").arg(err));
-    if (err.isEmpty()) it->setText(3, incidentStatus_->currentText());
+    if (err.isEmpty()) {
+        it->setText(3, incidentStatus_->currentText());
+        originalIncident_ = {note_->toPlainText(), incidentStatus_->currentData().toString()};
+        drafts_.remove(loadedIncident_);
+        updateDraftInfo();
+        filterIncidents();
+    }
 }

@@ -1,4 +1,5 @@
 <?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE TS>
 <TS version="2.1" language="tr_TR">
     <context>
         <name>BatteryPage</name>
@@ -2147,9 +2148,175 @@ Kernel uptime: %2
             <source>Searches page and tool names and the words around them: error codes (Xid 79), symptoms (flicker, overheating), parts (fan, battery). Turkish or English.</source>
             <translation>Sayfa ve araç adlarında ve ilgili sözcüklerde arar: hata kodları (Xid 79), belirtiler (titreme, ısınma), parçalar (fan, pil). Türkçe ya da İngilizce.</translation>
         </message>
-    <message><location filename="../src/healthtab.cpp" line="1260"/><source>GPU &amp; Display</source><translation>GPU ve Ekran</translation></message><message><location filename="../src/healthtab.cpp" line="1263"/><source>Power &amp; Sleep</source><translation>Güç ve Uyku</translation></message><message><location filename="../src/healthtab.cpp" line="1264"/><source>CPU &amp; Stability</source><translation>CPU ve Kararlılık</translation></message><message><location filename="../src/healthtab.cpp" line="1265"/><source>Crashes &amp; Kernel</source><translation>Çökmeler ve Çekirdek</translation></message><message><location filename="../src/healthtab.cpp" line="1320"/><source>Quick Access</source><translation>Hızlı Erişim</translation></message><message><location filename="../src/healthtab.cpp" line="1256"/><source>Troubleshoot by Symptom</source><translation>Belirtiye Göre Sorun Giderme</translation></message><message><source>Read-only</source><translation>Salt okunur</translation></message><message><source>Start a guided, read-only investigation.</source><translation>Rehberli, salt okunur bir inceleme başlatın.</translation></message><message><source>Tool Results</source><translation>Araç sonuçları</translation></message><message><source>Favorites</source><translation>Favoriler</translation></message><message><source>Favorites are listed at the top of the catalog.</source><translation>Favoriler kataloğun en üstünde listelenir.</translation></message><message><source>★ In Favorites</source><translation>★ Favorilerde</translation></message><message><source>☆ Add to Favorites</source><translation>☆ Favorilere ekle</translation></message><message><source>Health Pages</source><translation>Sağlık sayfaları</translation></message><message><source>Pages of the Health Center that match the search.</source><translation>Aramayla eşleşen Sağlık Merkezi sayfaları.</translation></message><message><source>Collapse All</source><translation>Tümünü daralt</translation></message><message><source>Expand All</source><translation>Tümünü genişlet</translation></message><message><source>Change these in:</source><translation>Bunları değiştirmek için:</translation></message><message><source>Related:</source><translation>İlgili:</translation></message><message><source>Opens this System tool; it reads its sources when it opens.</source><translation>Bu sistem aracını açar; araç açıldığında kaynaklarını okur.</translation></message><message><source>Opens this Health page.</source><translation>Bu Sağlık sayfasını açar.</translation></message></context>
+        <message>
+            <location filename="../src/healthtab.cpp" line="1260"/>
+            <source>GPU &amp; Display</source>
+            <translation>GPU ve Ekran</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="1263"/>
+            <source>Power &amp; Sleep</source>
+            <translation>Güç ve Uyku</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="1264"/>
+            <source>CPU &amp; Stability</source>
+            <translation>CPU ve Kararlılık</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="1265"/>
+            <source>Crashes &amp; Kernel</source>
+            <translation>Çökmeler ve Çekirdek</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="1320"/>
+            <source>Quick Access</source>
+            <translation>Hızlı Erişim</translation>
+        </message>
+        <message>
+            <location filename="../src/healthtab.cpp" line="1256"/>
+            <source>Troubleshoot by Symptom</source>
+            <translation>Belirtiye Göre Sorun Giderme</translation>
+        </message>
+        <message>
+            <source>Read-only</source>
+            <translation>Salt okunur</translation>
+        </message>
+        <message>
+            <source>Start a guided, read-only investigation.</source>
+            <translation>Rehberli, salt okunur bir inceleme başlatın.</translation>
+        </message>
+        <message>
+            <source>Tool Results</source>
+            <translation>Araç sonuçları</translation>
+        </message>
+        <message>
+            <source>Favorites</source>
+            <translation>Favoriler</translation>
+        </message>
+        <message>
+            <source>Favorites are listed at the top of the catalog.</source>
+            <translation>Favoriler kataloğun en üstünde listelenir.</translation>
+        </message>
+        <message>
+            <source>★ In Favorites</source>
+            <translation>★ Favorilerde</translation>
+        </message>
+        <message>
+            <source>☆ Add to Favorites</source>
+            <translation>☆ Favorilere ekle</translation>
+        </message>
+        <message>
+            <source>Health Pages</source>
+            <translation>Sağlık sayfaları</translation>
+        </message>
+        <message>
+            <source>Pages of the Health Center that match the search.</source>
+            <translation>Aramayla eşleşen Sağlık Merkezi sayfaları.</translation>
+        </message>
+        <message>
+            <source>Collapse All</source>
+            <translation>Tümünü daralt</translation>
+        </message>
+        <message>
+            <source>Expand All</source>
+            <translation>Tümünü genişlet</translation>
+        </message>
+        <message>
+            <source>Change these in:</source>
+            <translation>Bunları değiştirmek için:</translation>
+        </message>
+        <message>
+            <source>Related:</source>
+            <translation>İlgili:</translation>
+        </message>
+        <message>
+            <source>Opens this System tool; it reads its sources when it opens.</source>
+            <translation>Bu sistem aracını açar; araç açıldığında kaynaklarını okur.</translation>
+        </message>
+        <message>
+            <source>Opens this Health page.</source>
+            <translation>Bu Sağlık sayfasını açar.</translation>
+        </message>
+    </context>
     <context>
         <name>HomeTab</name>
+        <message>
+            <source>Color (#RRGGBB)</source>
+            <translation>Renk (#RRGGBB)</translation>
+        </message>
+        <message>
+            <source>Could not save the palette.</source>
+            <translation>Palet kaydedilemedi.</translation>
+        </message>
+        <message>
+            <source>Custom Theme</source>
+            <translation>Özel Tema</translation>
+        </message>
+        <message>
+            <source>Custom palette</source>
+            <translation>Özel palet</translation>
+        </message>
+        <message>
+            <source>Dashboard panels…</source>
+            <translation>Gösterge panelleri…</translation>
+        </message>
+        <message>
+            <source>Edit Palette…</source>
+            <translation>Paleti Düzenle…</translation>
+        </message>
+        <message>
+            <source>Edit opaque RGB colors. Changes take effect after restart. Contrast is checked for the main text and panel surfaces.</source>
+            <translation>Opak RGB renklerini düzenleyin. Değişiklikler yeniden başlatınca uygulanır. Ana metin ve panel yüzeylerinin kontrastı denetlenir.</translation>
+        </message>
+        <message>
+            <source>Export JSON…</source>
+            <translation>JSON Dışa Aktar…</translation>
+        </message>
+        <message>
+            <source>Export Palette</source>
+            <translation>Paleti Dışa Aktar</translation>
+        </message>
+        <message>
+            <source>Hardware information</source>
+            <translation>Donanım bilgileri</translation>
+        </message>
+        <message>
+            <source>Import JSON…</source>
+            <translation>JSON İçe Aktar…</translation>
+        </message>
+        <message>
+            <source>Import Palette</source>
+            <translation>Paleti İçe Aktar</translation>
+        </message>
+        <message>
+            <source>Invalid RGB color.</source>
+            <translation>Geçersiz RGB rengi.</translation>
+        </message>
+        <message>
+            <source>Invalid palette file.</source>
+            <translation>Geçersiz palet dosyası.</translation>
+        </message>
+        <message>
+            <source>JSON files (*.json)</source>
+            <translation>JSON dosyaları (*.json)</translation>
+        </message>
+        <message>
+            <source>Minimum main-text contrast: %1:1 (4.5:1 recommended). This does not cover every control.</source>
+            <translation>En düşük ana metin kontrastı: %1:1 (4,5:1 önerilir). Bu denetim tüm kontrolleri kapsamaz.</translation>
+        </message>
+        <message>
+            <source>Pick Color…</source>
+            <translation>Renk Seç…</translation>
+        </message>
+        <message>
+            <source>Restart Centurion now to apply the custom palette?</source>
+            <translation>Özel paleti uygulamak için Centurion şimdi yeniden başlatılsın mı?</translation>
+        </message>
+        <message>
+            <source>Token</source>
+            <translation>Renk belirteci</translation>
+        </message>
         <message>
             <location filename="work/gui/src/hometab.cpp" line="94"/>
             <source>Power Saver</source>
@@ -3091,6 +3258,74 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Choose the original UI or the experimental layout. Applies on restart.</source>
             <translation>Özgün arayüzü veya deneysel düzeni seçin. Yeniden başlatıldığında uygulanır.</translation>
         </message>
+        <message>
+            <source>Pending theme choice cleared.</source>
+            <translation>Bekleyen tema tercihi iptal edildi.</translation>
+        </message>
+        <message>
+            <source>Pending interface choice cleared.</source>
+            <translation>Bekleyen arayüz tercihi iptal edildi.</translation>
+        </message>
+        <message>
+            <source>Restore last page</source>
+            <translation>Son sayfayı geri yükle</translation>
+        </message>
+        <message>
+            <source>Monitoring time range</source>
+            <translation>İzleme zaman aralığı</translation>
+        </message>
+        <message>
+            <source>%1 min</source>
+            <translation>%1 dk</translation>
+        </message>
+        <message>
+            <source>Theme Gallery…</source>
+            <translation>Tema Galerisi…</translation>
+        </message>
+        <message>
+            <source>Theme Gallery</source>
+            <translation>Tema Galerisi</translation>
+        </message>
+        <message>
+            <source>Search themes…</source>
+            <translation>Temaları ara…</translation>
+        </message>
+        <message>
+            <source>All themes</source>
+            <translation>Tüm temalar</translation>
+        </message>
+        <message>
+            <source>Dark themes</source>
+            <translation>Koyu temalar</translation>
+        </message>
+        <message>
+            <source>Light themes</source>
+            <translation>Açık temalar</translation>
+        </message>
+        <message>
+            <source>Pastel themes</source>
+            <translation>Pastel temalar</translation>
+        </message>
+        <message>
+            <source>Compact controls</source>
+            <translation>Kompakt kontroller</translation>
+        </message>
+        <message>
+            <source>Reduce control padding and default layout spacing at the next start. Font sizes do not change.</source>
+            <translation>Bir sonraki açılışta kontrol dolgularını ve varsayılan yerleşim boşluklarını azaltır. Yazı boyutları değişmez.</translation>
+        </message>
+        <message>
+            <source>Could not save the density choice.</source>
+            <translation>Yoğunluk tercihi kaydedilemedi.</translation>
+        </message>
+        <message>
+            <source>Appearance</source>
+            <translation>Görünüm</translation>
+        </message>
+        <message>
+            <source>Restart Centurion now to change control density?</source>
+            <translation>Kontrol yoğunluğunu değiştirmek için Centurion şimdi yeniden başlatılsın mı?</translation>
+        </message>
     </context>
     <context>
         <name>KlogPage</name>
@@ -3299,6 +3534,26 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Cannot write %1: %2</source>
             <translation>%1 yazılamıyor: %2</translation>
         </message>
+        <message>
+            <source>Follow latest</source>
+            <translation>En yeni kayıtları takip et</translation>
+        </message>
+        <message>
+            <source>Keep following new entries when the view is at the bottom. Disable to hold the current scroll position.</source>
+            <translation>Görünüm en alttayken yeni kayıtları takip etmeye devam eder. Kaydırma konumunu korumak için kapatın.</translation>
+        </message>
+        <message>
+            <source>%1 displayed row(s).</source>
+            <translation>%1 satır görüntüleniyor.</translation>
+        </message>
+        <message>
+            <source>Showing at most the newest %1 matching records before grouping. Refine the filter to see older records.</source>
+            <translation>Gruplamadan önce eşleşen en yeni %1 kayıtla sınırlıdır. Daha eski kayıtlar için filtreyi daraltın.</translation>
+        </message>
+        <message>
+            <source>Showing up to %1 saved lines before and %2 after kernel message %3 in boot %4, independent of display filters.</source>
+            <translation>%4 açılışındaki %3 numaralı kernel mesajından önceki en fazla %1 ve sonraki en fazla %2 kayıt, görüntüleme filtrelerinden bağımsız olarak gösteriliyor.</translation>
+        </message>
     </context>
     <context>
         <name>LidWatch</name>
@@ -3334,6 +3589,18 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <location filename="../src/charts.cpp"/>
             <source>%1 points, %2 to %3; last value %4 %5</source>
             <translation>%1 nokta, %2 ile %3 arası; son değer %4 %5</translation>
+        </message>
+        <message>
+            <source>Export plotted samples…</source>
+            <translation>Grafikteki örnekleri dışa aktar…</translation>
+        </message>
+        <message>
+            <source>Export plotted samples</source>
+            <translation>Grafikteki örnekleri dışa aktar</translation>
+        </message>
+        <message>
+            <source>Export failed</source>
+            <translation>Dışa aktarma başarısız</translation>
         </message>
     </context>
     <context>
@@ -3543,6 +3810,82 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <location filename="../src/mainwindow.cpp" line="560"/>
             <source>Keyboard RGB effects, colours and brightness</source>
             <translation>Klavye RGB efektleri, renkleri ve parlaklığı</translation>
+        </message>
+        <message>
+            <source>Restart deferred</source>
+            <translation>Yeniden başlatma ertelendi</translation>
+        </message>
+        <message>
+            <source>Finish the active operations before restarting Centurion. Your preference is saved for the next start.</source>
+            <translation>Centurion’u yeniden başlatmadan önce etkin işlemleri tamamlayın. Tercihiniz sonraki açılış için kaydedildi.</translation>
+        </message>
+        <message>
+            <source>Restart Centurion</source>
+            <translation>Centurion’u Yeniden Başlat</translation>
+        </message>
+        <message>
+            <source>Restarting discards unsaved editor changes. Continue?</source>
+            <translation>Yeniden başlatma kaydedilmemiş düzenleyici değişikliklerini siler. Devam edilsin mi?</translation>
+        </message>
+        <message>
+            <source>An operation started while the confirmation was open. Restart later.</source>
+            <translation>Onay penceresi açıkken bir işlem başladı. Daha sonra yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>Active operations</source>
+            <translation>Etkin İşlemler</translation>
+        </message>
+        <message>
+            <source>Safe mode</source>
+            <translation>Güvenli Mod</translation>
+        </message>
+        <message>
+            <source>Scene apply</source>
+            <translation>Sahne uygulaması</translation>
+        </message>
+        <message>
+            <source>Device controls</source>
+            <translation>Aygıt kontrolleri</translation>
+        </message>
+        <message>
+            <source>Optimization operation</source>
+            <translation>Optimizasyon işlemi</translation>
+        </message>
+        <message>
+            <source>Backup / restore</source>
+            <translation>Yedekleme / geri yükleme</translation>
+        </message>
+        <message>
+            <source>Cooling test</source>
+            <translation>Soğutma testi</translation>
+        </message>
+        <message>
+            <source>Curve trial</source>
+            <translation>Eğri denemesi</translation>
+        </message>
+        <message>
+            <source>CPU stress test</source>
+            <translation>CPU stres testi</translation>
+        </message>
+        <message>
+            <source>GPU stress test</source>
+            <translation>GPU stres testi</translation>
+        </message>
+        <message>
+            <source>Memory test</source>
+            <translation>Bellek testi</translation>
+        </message>
+        <message>
+            <source>CO Search</source>
+            <translation>CO Arama</translation>
+        </message>
+        <message>
+            <source>Reported by existing GUI operation states; background or external jobs may not appear here.</source>
+            <translation>Mevcut arayüz işlem durumları gösterilir; arka plan veya harici işlemler burada görünmeyebilir.</translation>
+        </message>
+        <message>
+            <source>No tracked operation is active.</source>
+            <translation>İzlenen etkin işlem yok.</translation>
         </message>
     </context>
     <context>
@@ -4327,6 +4670,26 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
                 <numerusform>, ayrıca bu kanalla çakışan kanallarda %n ağ daha</numerusform>
             </translation>
         </message>
+        <message>
+            <source>Helper failed</source>
+            <translation>Yardımcı işlem başarısız</translation>
+        </message>
+        <message>
+            <source>Snapshot: %1</source>
+            <translation>Anlık görüntü: %1</translation>
+        </message>
+        <message>
+            <source>No connection snapshot yet</source>
+            <translation>Henüz bağlantı görüntüsü yok</translation>
+        </message>
+        <message>
+            <source> · Refresh failed; previous data: %1</source>
+            <translation> · Yenileme başarısız; önceki veriler: %1</translation>
+        </message>
+        <message>
+            <source>%1 listening socket(s); %2 reachable from other machines (orange: on every network). From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.</source>
+            <translation>%1 dinleyen soket; %2 tanesine diğer makinelerden erişilebilir (turuncu: her ağda). Bağlantı görüntüsünden alınmıştır; root görüntüsü kullanılmadığında bu sekme her 3 saniyede güncelleme ister.</translation>
+        </message>
     </context>
     <context>
         <name>NotifyDialog</name>
@@ -4833,6 +5196,14 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
     <context>
         <name>ScenesTab</name>
         <message>
+            <source>Compare…</source>
+            <translation>Karşılaştır…</translation>
+        </message>
+        <message>
+            <source>[Current draft]</source>
+            <translation>[Mevcut taslak]</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/scenestab.cpp" line="65"/>
             <location filename="work/gui/src/scenestab.cpp" line="173"/>
             <location filename="work/gui/src/scenestab.cpp" line="210"/>
@@ -5108,6 +5479,18 @@ Başvurduğu profiller korunur.</translation>
             <location filename="../src/scenestab.cpp" line="404"/>
             <source>AUTOMATION  ·  Triggers and active-scene rules</source>
             <translation>OTOMASYON  ·  Tetikleyiciler ve etkin sahne kuralları</translation>
+        </message>
+        <message>
+            <source>Search scenes…</source>
+            <translation>Sahnelerde ara…</translation>
+        </message>
+        <message>
+            <source>Could not load the selected scene.</source>
+            <translation>Seçilen sahne yüklenemedi.</translation>
+        </message>
+        <message>
+            <source>Could not delete scene '%1'.</source>
+            <translation>'%1' sahnesi silinemedi.</translation>
         </message>
     </context>
     <context>
@@ -6138,7 +6521,159 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <source>Read at %1</source>
             <translation>Okunma: %1</translation>
         </message>
-    <message><source>Show serials</source><translation>Seri numaralarını göster</translation></message><message><source>Hide serials</source><translation>Seri numaralarını gizle</translation></message><message><source>Serial numbers and UUIDs are hidden; click one in the output to show just that one.</source><translation>Seri numaraları ve UUID'ler gizli; yalnızca birini göstermek için çıktıda üzerine tıklayın.</translation></message><message><source>Copy</source><translation>Kopyala</translation></message><message><source>Running…</source><translation>Çalışıyor…</translation></message><message><source>Not run: %1</source><translation>Çalıştırılmadı: %1</translation></message><message><source>lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.</source><translation>lm-sensors: her hwmon yongasının sıcaklıkları, fan hızları, voltajları ve gücü.</translation></message><message><source>Topology, caches, frequencies and the active cpufreq driver/governor.</source><translation>Topoloji, önbellekler, frekanslar ve etkin cpufreq sürücüsü / frekans yöneticisi.</translation></message><message><source>Usage, swap/zram and NUMA layout.</source><translation>Kullanım, takas / zram ve NUMA düzeni.</translation></message><message><source>dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.</source><translation>dmidecode (root): firmware / BIOS, anakart ve parça numarası ile hızıyla her bellek modülü.</translation></message><message><source>Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.</source><translation>Çekirdek sürücüleriyle aygıtlar, veri yolu ağacı ve GPU'lar ile NVMe sürücülerin anlık PCIe bağlantısı.</translation></message><message><source>lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.</source><translation>lspci -vv (root): her aygıtın bağlantı yetenekleri / durumu, ASPM ve AER desteği.</translation></message><message><source>Connected USB devices and the port tree.</source><translation>Bağlı USB aygıtları ve port ağacı.</translation></message><message><source>Block devices, schedulers and mounted filesystems.</source><translation>Blok aygıtları, G/Ç zamanlayıcıları ve bağlı dosya sistemleri.</translation></message><message><source>Drive health (root): smartctl -a, or nvme smart-log, for every disk.</source><translation>Sürücü sağlığı (root): her disk için smartctl -a veya nvme smart-log.</translation></message><message><source>nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.</source><translation>nvidia-smi -q: sürücü / GPU raporunun tamamı. Kapalıysa dGPU'yu uyandırır.</translation></message><message><source>Vulkan and OpenGL drivers as games see them (may wake the dGPU).</source><translation>Oyunların gördüğü haliyle Vulkan ve OpenGL sürücüleri (dGPU'yu uyandırabilir).</translation></message><message><source>Kernel version, boot command line and loaded modules.</source><translation>Çekirdek sürümü, açılış komut satırı ve yüklü modüller.</translation></message><message><source>Every power supply as the kernel reports it (capacity, cycles, charge limits).</source><translation>Çekirdeğin bildirdiği her güç kaynağı (kapasite, döngü sayısı, şarj sınırları).</translation></message><message><source>Quick actions:</source><translation>Hızlı işlemler:</translation></message><message><source>Changes here last until the next boot. To keep one, use Configuration Files.</source><translation>Buradaki değişiklikler bir sonraki açılışa kadar geçerlidir. Kalıcı yapmak için Yapılandırma Dosyaları'nı kullanın.</translation></message><message><source>CPU boost</source><translation>CPU Boost</translation></message><message><source>Boost: on — turn off</source><translation>Boost: açık — kapat</translation></message><message><source>Boost: off — turn on</source><translation>Boost: kapalı — aç</translation></message><message><source>On: the cores run above their base clock. Off: base clock only, cooler and quieter, much slower.</source><translation>Açık: çekirdekler temel saat hızının üstüne çıkar. Kapalı: yalnızca temel saat hızı; daha serin ve sessiz, çok daha yavaş.</translation></message><message><source>zswap</source><translation>zswap</translation></message><message><source>zswap: on — turn off</source><translation>zswap: açık — kapat</translation></message><message><source>zswap: off — turn on</source><translation>zswap: kapalı — aç</translation></message><message><source>The compressed swap cache (zswap.enabled= on the kernel command line keeps the choice).</source><translation>Sıkıştırılmış takas önbelleği (çekirdek komut satırındaki zswap.enabled= seçimi kalıcı yapar).</translation></message><message><source>Install updates…</source><translation>Güncellemeleri kur…</translation></message><message><source>Pick which of the updates fwupd offers to install; most apply at the next reboot.</source><translation>fwupd'nin sunduğu güncellemelerden hangilerinin kurulacağını seçin; çoğu bir sonraki yeniden başlatmada uygulanır.</translation></message><message><source>fwupd offers no update for this system.</source><translation>fwupd bu sistem için güncelleme sunmuyor.</translation></message><message><source>Install the checked updates? Keep the charger connected; do not switch off while an update is written.</source><translation>İşaretli güncellemeler kurulsun mu? Şarj cihazını takılı tutun; bir güncelleme yazılırken kapatmayın.</translation></message><message><source>Install</source><translation>Kur</translation></message><message><source>Finished.</source><translation>Tamamlandı.</translation></message><message><source>fwupdmgr reported a problem (exit %1).</source><translation>fwupdmgr bir sorun bildirdi (çıkış kodu %1).</translation></message><message><source>fwupdmgr is not installed (%1).</source><translation>fwupdmgr kurulu değil (%1).</translation></message></context>
+        <message>
+            <source>Show serials</source>
+            <translation>Seri numaralarını göster</translation>
+        </message>
+        <message>
+            <source>Hide serials</source>
+            <translation>Seri numaralarını gizle</translation>
+        </message>
+        <message>
+            <source>Serial numbers and UUIDs are hidden; click one in the output to show just that one.</source>
+            <translation>Seri numaraları ve UUID'ler gizli; yalnızca birini göstermek için çıktıda üzerine tıklayın.</translation>
+        </message>
+        <message>
+            <source>Copy</source>
+            <translation>Kopyala</translation>
+        </message>
+        <message>
+            <source>Running…</source>
+            <translation>Çalışıyor…</translation>
+        </message>
+        <message>
+            <source>Not run: %1</source>
+            <translation>Çalıştırılmadı: %1</translation>
+        </message>
+        <message>
+            <source>lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.</source>
+            <translation>lm-sensors: her hwmon yongasının sıcaklıkları, fan hızları, voltajları ve gücü.</translation>
+        </message>
+        <message>
+            <source>Topology, caches, frequencies and the active cpufreq driver/governor.</source>
+            <translation>Topoloji, önbellekler, frekanslar ve etkin cpufreq sürücüsü / frekans yöneticisi.</translation>
+        </message>
+        <message>
+            <source>Usage, swap/zram and NUMA layout.</source>
+            <translation>Kullanım, takas / zram ve NUMA düzeni.</translation>
+        </message>
+        <message>
+            <source>dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.</source>
+            <translation>dmidecode (root): firmware / BIOS, anakart ve parça numarası ile hızıyla her bellek modülü.</translation>
+        </message>
+        <message>
+            <source>Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.</source>
+            <translation>Çekirdek sürücüleriyle aygıtlar, veri yolu ağacı ve GPU'lar ile NVMe sürücülerin anlık PCIe bağlantısı.</translation>
+        </message>
+        <message>
+            <source>lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.</source>
+            <translation>lspci -vv (root): her aygıtın bağlantı yetenekleri / durumu, ASPM ve AER desteği.</translation>
+        </message>
+        <message>
+            <source>Connected USB devices and the port tree.</source>
+            <translation>Bağlı USB aygıtları ve port ağacı.</translation>
+        </message>
+        <message>
+            <source>Block devices, schedulers and mounted filesystems.</source>
+            <translation>Blok aygıtları, G/Ç zamanlayıcıları ve bağlı dosya sistemleri.</translation>
+        </message>
+        <message>
+            <source>Drive health (root): smartctl -a, or nvme smart-log, for every disk.</source>
+            <translation>Sürücü sağlığı (root): her disk için smartctl -a veya nvme smart-log.</translation>
+        </message>
+        <message>
+            <source>nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.</source>
+            <translation>nvidia-smi -q: sürücü / GPU raporunun tamamı. Kapalıysa dGPU'yu uyandırır.</translation>
+        </message>
+        <message>
+            <source>Vulkan and OpenGL drivers as games see them (may wake the dGPU).</source>
+            <translation>Oyunların gördüğü haliyle Vulkan ve OpenGL sürücüleri (dGPU'yu uyandırabilir).</translation>
+        </message>
+        <message>
+            <source>Kernel version, boot command line and loaded modules.</source>
+            <translation>Çekirdek sürümü, açılış komut satırı ve yüklü modüller.</translation>
+        </message>
+        <message>
+            <source>Every power supply as the kernel reports it (capacity, cycles, charge limits).</source>
+            <translation>Çekirdeğin bildirdiği her güç kaynağı (kapasite, döngü sayısı, şarj sınırları).</translation>
+        </message>
+        <message>
+            <source>Quick actions:</source>
+            <translation>Hızlı işlemler:</translation>
+        </message>
+        <message>
+            <source>Changes here last until the next boot. To keep one, use Configuration Files.</source>
+            <translation>Buradaki değişiklikler bir sonraki açılışa kadar geçerlidir. Kalıcı yapmak için Yapılandırma Dosyaları'nı kullanın.</translation>
+        </message>
+        <message>
+            <source>CPU boost</source>
+            <translation>CPU Boost</translation>
+        </message>
+        <message>
+            <source>Boost: on — turn off</source>
+            <translation>Boost: açık — kapat</translation>
+        </message>
+        <message>
+            <source>Boost: off — turn on</source>
+            <translation>Boost: kapalı — aç</translation>
+        </message>
+        <message>
+            <source>On: the cores run above their base clock. Off: base clock only, cooler and quieter, much slower.</source>
+            <translation>Açık: çekirdekler temel saat hızının üstüne çıkar. Kapalı: yalnızca temel saat hızı; daha serin ve sessiz, çok daha yavaş.</translation>
+        </message>
+        <message>
+            <source>zswap</source>
+            <translation>zswap</translation>
+        </message>
+        <message>
+            <source>zswap: on — turn off</source>
+            <translation>zswap: açık — kapat</translation>
+        </message>
+        <message>
+            <source>zswap: off — turn on</source>
+            <translation>zswap: kapalı — aç</translation>
+        </message>
+        <message>
+            <source>The compressed swap cache (zswap.enabled= on the kernel command line keeps the choice).</source>
+            <translation>Sıkıştırılmış takas önbelleği (çekirdek komut satırındaki zswap.enabled= seçimi kalıcı yapar).</translation>
+        </message>
+        <message>
+            <source>Install updates…</source>
+            <translation>Güncellemeleri kur…</translation>
+        </message>
+        <message>
+            <source>Pick which of the updates fwupd offers to install; most apply at the next reboot.</source>
+            <translation>fwupd'nin sunduğu güncellemelerden hangilerinin kurulacağını seçin; çoğu bir sonraki yeniden başlatmada uygulanır.</translation>
+        </message>
+        <message>
+            <source>fwupd offers no update for this system.</source>
+            <translation>fwupd bu sistem için güncelleme sunmuyor.</translation>
+        </message>
+        <message>
+            <source>Install the checked updates? Keep the charger connected; do not switch off while an update is written.</source>
+            <translation>İşaretli güncellemeler kurulsun mu? Şarj cihazını takılı tutun; bir güncelleme yazılırken kapatmayın.</translation>
+        </message>
+        <message>
+            <source>Install</source>
+            <translation>Kur</translation>
+        </message>
+        <message>
+            <source>Finished.</source>
+            <translation>Tamamlandı.</translation>
+        </message>
+        <message>
+            <source>fwupdmgr reported a problem (exit %1).</source>
+            <translation>fwupdmgr bir sorun bildirdi (çıkış kodu %1).</translation>
+        </message>
+        <message>
+            <source>fwupdmgr is not installed (%1).</source>
+            <translation>fwupdmgr kurulu değil (%1).</translation>
+        </message>
+        <message>
+            <source>Up to 2000 matches are highlighted; Enter jumps to the next match and wraps at the end.</source>
+            <translation>En fazla 2000 eşleşme vurgulanır; Enter bir sonraki eşleşmeye, sonda ise başa gider.</translation>
+        </message>
+    </context>
     <context>
         <name>BackupPage</name>
         <message>
@@ -6704,6 +7239,108 @@ age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translati
             <source>The exclude list has %1 lines; the helper accepts at most 128.</source>
             <translation>Hariç tutma listesinde %1 satır var; yardımcı en fazla 128 kabul eder.</translation>
         </message>
+        <message>
+            <source>Checking firmware updates…</source>
+            <translation>Donanım yazılımı güncellemeleri kontrol ediliyor…</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>İptal</translation>
+        </message>
+        <message>
+            <source>Firmware query timed out.</source>
+            <translation>Donanım yazılımı sorgusu zaman aşımına uğradı.</translation>
+        </message>
+        <message>
+            <source>Firmware query failed; update availability is unknown.</source>
+            <translation>Donanım yazılımı sorgusu başarısız; güncelleme durumu bilinmiyor.</translation>
+        </message>
+        <message>
+            <source>Remaining updates were not started.</source>
+            <translation>Kalan güncellemeler başlatılmadı.</translation>
+        </message>
+        <message>
+            <source>Preview restore…</source>
+            <translation>Geri yüklemeyi önizle…</translation>
+        </message>
+        <message>
+            <source>Restore Preview</source>
+            <translation>Geri Yükleme Önizlemesi</translation>
+        </message>
+        <message>
+            <source>Select a system image first.</source>
+            <translation>Önce bir sistem imajı seçin.</translation>
+        </message>
+        <message>
+            <source>Archive metadata is missing or its increment level is unsupported. The sequence cannot be established.</source>
+            <translation>Arşiv üst verisi eksik veya artımlı yedek seviyesi desteklenmiyor. Sıra belirlenemiyor.</translation>
+        </message>
+        <message>
+            <source>Missing or inconsistent archive at level %1.</source>
+            <translation>%1 seviyesindeki arşiv eksik veya tutarsız.</translation>
+        </message>
+        <message>
+            <source>No matching local verification record</source>
+            <translation>Eşleşen yerel doğrulama kaydı yok</translation>
+        </message>
+        <message>
+            <source>Last local verification passed</source>
+            <translation>Son yerel doğrulama başarılı</translation>
+        </message>
+        <message>
+            <source>Last local verification failed</source>
+            <translation>Son yerel doğrulama başarısız</translation>
+        </message>
+        <message>
+            <source>Level %1 · %2 · %3 · %4</source>
+            <translation>Seviye %1 · %2 · %3 · %4</translation>
+        </message>
+        <message>
+            <source>The full archive name does not match the declared chain.</source>
+            <translation>Tam arşiv adı belirtilen zincirle eşleşmiyor.</translation>
+        </message>
+        <message>
+            <source>No unambiguous parent name in the metadata. Legacy chains require helper verification.</source>
+            <translation>Üst veride kesin bir üst arşiv adı yok. Eski zincirler helper doğrulaması gerektirir.</translation>
+        </message>
+        <message>
+            <source>The target directory is not available.</source>
+            <translation>Hedef dizin kullanılamıyor.</translation>
+        </message>
+        <message>
+            <source>Target is the running root filesystem. Restore will overwrite existing files.</source>
+            <translation>Hedef çalışan kök dosya sistemi. Geri yükleme mevcut dosyaların üzerine yazacaktır.</translation>
+        </message>
+        <message>
+            <source>Read-only sidecar preview. It does not inspect archive contents, validate ownership or authorize a restore. The restore helper and existing confirmations remain authoritative.</source>
+            <translation>Salt okunur üst veri önizlemesi. Arşiv içeriğini incelemez, sahipliği doğrulamaz veya geri yüklemeye yetki vermez. Geri yükleme helper ve mevcut onaylar belirleyicidir.</translation>
+        </message>
+        <message>
+            <source>Selected archive: %1
+Target: %2
+
+Proposed chain (oldest first):
+%3
+
+Review:
+%4</source>
+            <translation>Seçili arşiv: %1
+Hedef: %2
+
+Önerilen zincir (en eski önce):
+%3
+
+İnceleme:
+%4</translation>
+        </message>
+        <message>
+            <source>Unavailable</source>
+            <translation>Kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>No obvious metadata mismatch; archive contents are not verified.</source>
+            <translation>Belirgin üst veri uyuşmazlığı yok; arşiv içeriği doğrulanmadı.</translation>
+        </message>
     </context>
     <context>
         <name>blocklistsubs</name>
@@ -6865,6 +7502,10 @@ age kullanır (%1). Artımlı yedek, zincirinin şifrelemesini korur.</translati
     </context>
     <context>
         <name>CpuStressBox</name>
+        <message>
+            <source>Reading CPU test capabilities…</source>
+            <translation>CPU test yetenekleri okunuyor…</translation>
+        </message>
         <message>
             <source>CPU Test</source>
             <translation>CPU testi</translation>
@@ -7112,6 +7753,10 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
                 <numerusform>%n kernel</numerusform>
             </translation>
         </message>
+        <message>
+            <source>Wait for the previous tuning preset to be restored.</source>
+            <translation>Önceki optimizasyon ön ayarının geri yüklenmesini bekleyin.</translation>
+        </message>
     </context>
     <context>
         <name>GpuStressBox</name>
@@ -7307,9 +7952,29 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
             <source>Voltage, safety &amp;&amp; startup</source>
             <translation>Voltaj, güvenlik ve başlangıç</translation>
         </message>
+        <message>
+            <source>Compare…</source>
+            <translation>Karşılaştır…</translation>
+        </message>
     </context>
     <context>
         <name>NvidiaTab</name>
+        <message>
+            <source>Compare…</source>
+            <translation>Karşılaştır…</translation>
+        </message>
+        <message>
+            <source>Redo curve</source>
+            <translation>Eğriyi yinele</translation>
+        </message>
+        <message>
+            <source>Undo curve</source>
+            <translation>Eğriyi geri al</translation>
+        </message>
+        <message>
+            <source>Undo an unapplied V/F edit; never writes to the GPU.</source>
+            <translation>Uygulanmamış V/F düzenlemesini geri alır; GPU’ya yazmaz.</translation>
+        </message>
         <message>
             <location filename="work/gui/src/nvidiatab.cpp"/>
             <source>Blackwell hotspot needs root: nvcurve-sensors is not installed</source>
@@ -7478,9 +8143,141 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
             <source>Hottest memory sensor. All: %1</source>
             <translation>En sıcak bellek sensörü. Tümü: %1</translation>
         </message>
+        <message>
+            <source>Reference (dashed)</source>
+            <translation>Referans (kesik çizgi)</translation>
+        </message>
+        <message>
+            <source>Last read (dotted)</source>
+            <translation>Son okuma (noktalı çizgi)</translation>
+        </message>
+        <message>
+            <source>Offset-free base if provided by the driver, otherwise reconstructed. Not necessarily factory stock.</source>
+            <translation>Sürücü sağlıyorsa ofsetsiz temel eğri, aksi hâlde hesaplanan eğri. Fabrika varsayılanı olmak zorunda değildir.</translation>
+        </message>
+        <message>
+            <source>Last curve returned by the driver, not live telemetry.</source>
+            <translation>Sürücünün döndürdüğü son eğri; canlı telemetri değildir.</translation>
+        </message>
+        <message>
+            <source>Solid: draft</source>
+            <translation>Düz çizgi: taslak</translation>
+        </message>
+        <message>
+            <source>Point comparison…</source>
+            <translation>Nokta karşılaştırması…</translation>
+        </message>
+        <message>
+            <source>V/F Curve — Point Comparison</source>
+            <translation>V/F Eğrisi — Nokta Karşılaştırması</translation>
+        </message>
+        <message>
+            <source>Last accepted snapshot: %1. Reference and draft are calculated; last-read frequencies are historical, not live clocks. No hardware writes are performed.</source>
+            <translation>Son kabul edilen anlık görüntü: %1. Referans ve taslak hesaplanır; son okunan frekanslar geçmiş değerlere aittir, canlı değildir. Donanıma yazılmaz.</translation>
+        </message>
+        <message>
+            <source>Unavailable</source>
+            <translation>Kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Index</source>
+            <translation>İndeks</translation>
+        </message>
+        <message>
+            <source>Voltage (mV)</source>
+            <translation>Voltaj (mV)</translation>
+        </message>
+        <message>
+            <source>Reference (MHz)</source>
+            <translation>Referans (MHz)</translation>
+        </message>
+        <message>
+            <source>Last read (MHz)</source>
+            <translation>Son okuma (MHz)</translation>
+        </message>
+        <message>
+            <source>Draft (MHz)</source>
+            <translation>Taslak (MHz)</translation>
+        </message>
+        <message>
+            <source>Draft offset (MHz)</source>
+            <translation>Taslak ofseti (MHz)</translation>
+        </message>
     </context>
     <context>
         <name>OptimizeTab</name>
+        <message>
+            <source>A/B Verification</source>
+            <translation>A/B Doğrulaması</translation>
+        </message>
+        <message>
+            <source>Calibration Data</source>
+            <translation>Kalibrasyon Verileri</translation>
+        </message>
+        <message>
+            <source>Calibration Data…</source>
+            <translation>Kalibrasyon Verileri…</translation>
+        </message>
+        <message>
+            <source>Compare Presets…</source>
+            <translation>Presetleri Karşılaştır…</translation>
+        </message>
+        <message>
+            <source>Game Sessions</source>
+            <translation>Oyun Oturumları</translation>
+        </message>
+        <message>
+            <source>Historical records only. This viewer does not establish current model validity or modify calibration data. File timestamp: %1</source>
+            <translation>Yalnızca geçmiş kayıtlar. Bu araç modelin güncel geçerliliğini doğrulamaz veya kalibrasyon verilerini değiştirmez. Dosya zamanı: %1</translation>
+        </message>
+        <message>
+            <source>Inspect…</source>
+            <translation>İncele…</translation>
+        </message>
+        <message>
+            <source>Invalid signature.</source>
+            <translation>Geçersiz imza.</translation>
+        </message>
+        <message>
+            <source>Kernel</source>
+            <translation>Kernel</translation>
+        </message>
+        <message>
+            <source>Measurement Sessions</source>
+            <translation>Ölçüm Oturumları</translation>
+        </message>
+        <message>
+            <source>Metadata &amp; Contexts</source>
+            <translation>Meta Veriler ve Bağlamlar</translation>
+        </message>
+        <message>
+            <source>Phase ID</source>
+            <translation>Aşama Kimliği</translation>
+        </message>
+        <message>
+            <source>Power source</source>
+            <translation>Güç kaynağı</translation>
+        </message>
+        <message>
+            <source>Quality</source>
+            <translation>Kalite</translation>
+        </message>
+        <message>
+            <source>Records</source>
+            <translation>Kayıtlar</translation>
+        </message>
+        <message>
+            <source>Session</source>
+            <translation>Oturum</translation>
+        </message>
+        <message>
+            <source>Signature unavailable or exceeds the 8 MiB limit.</source>
+            <translation>İmza okunamıyor veya 8 MiB sınırını aşıyor.</translation>
+        </message>
+        <message>
+            <source>Unsupported signature format.</source>
+            <translation>Desteklenmeyen imza biçimi.</translation>
+        </message>
         <message>
             <source>Add this page's checked rows to the boot preset (the rest of the boot preset stays as it is).</source>
             <translation>Bu sayfada işaretli satırları açılış profiline ekler (açılış profilinin geri kalanı olduğu gibi kalır).</translation>
@@ -7521,8 +8318,73 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
             <source>Restore this setting's original value</source>
             <translation>Bu ayarın ilk değerini geri yükle</translation>
         </message>
-    <message><source>Setting</source><translation>Ayar</translation></message><message><source>Live value</source><translation>Geçerli değer</translation></message><message><source>New value</source><translation>Yeni değer</translation></message><message><source>n/a</source><translation>kullanılamıyor</translation></message><message><source>root only</source><translation>yalnızca root</translation></message><message><source>enabled</source><translation>etkin</translation></message><message><source>disabled</source><translation>devre dışı</translation></message><message><source>%1 file(s)</source><translation>%1 dosya</translation></message><message><source>Not present on this kernel/hardware</source><translation>Bu çekirdekte/donanımda mevcut değil</translation></message><message><source>%1  (not offered right now)</source><translation>%1  (şu anda sunulmuyor)</translation></message><message><source>&lt;br&gt;&lt;i&gt;debugfs: current values can only be read by root.&lt;/i&gt;</source><translation>&lt;br&gt;&lt;i&gt;debugfs: geçerli değerleri yalnızca root okuyabilir.&lt;/i&gt;</translation></message><message><source>&lt;br&gt;&lt;i&gt;Hot-plugs CPU cores: applied last and restored first.&lt;/i&gt;</source><translation>&lt;br&gt;&lt;i&gt;CPU çekirdeklerini çevrimiçi/çevrimdışı yapar: en son uygulanır, ilk geri alınır.&lt;/i&gt;</translation></message><message><source>May adversely affect stability, temperature or idle power consumption.</source><translation>Kararlılığı, sıcaklığı veya boşta güç tüketimini olumsuz etkileyebilir.</translation></message><message><source>Pause Scenes and write every setting back to the value centurion-boot-guard captured at the start of this boot —
-a clean baseline for calibration, even if TLP or a scene changed things since.</source><translation>Sahneleri duraklatır ve bütün ayarları bu açılışın başında centurion-boot-guard tarafından kaydedilen değerlere geri getirir — TLP veya bir sahne daha sonra ayarları değiştirmiş olsa bile kalibrasyon için temiz bir başlangıç durumu sağlar.</translation></message><message><source>Write every saved original value back (hot-plugged CPUs first).</source><translation>Kaydedilmiş bütün özgün değerleri geri yazar (çalışma sırasında takılıp çıkarılan CPU çekirdekleri ilk sırada işlenir).</translation></message><message><source>Apply the active scene again (or the preset, without a scene).</source><translation>Etkin sahneyi yeniden uygular (etkin sahne yoksa optimizasyon profilini yeniden uygular).</translation></message><message><source>Master switch. While it is on, Wi-Fi power save, runtime power management of the Wi-Fi and Bluetooth devices and
+        <message>
+            <source>Setting</source>
+            <translation>Ayar</translation>
+        </message>
+        <message>
+            <source>Live value</source>
+            <translation>Geçerli değer</translation>
+        </message>
+        <message>
+            <source>New value</source>
+            <translation>Yeni değer</translation>
+        </message>
+        <message>
+            <source>n/a</source>
+            <translation>kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>root only</source>
+            <translation>yalnızca root</translation>
+        </message>
+        <message>
+            <source>enabled</source>
+            <translation>etkin</translation>
+        </message>
+        <message>
+            <source>disabled</source>
+            <translation>devre dışı</translation>
+        </message>
+        <message>
+            <source>%1 file(s)</source>
+            <translation>%1 dosya</translation>
+        </message>
+        <message>
+            <source>Not present on this kernel/hardware</source>
+            <translation>Bu çekirdekte/donanımda mevcut değil</translation>
+        </message>
+        <message>
+            <source>%1  (not offered right now)</source>
+            <translation>%1  (şu anda sunulmuyor)</translation>
+        </message>
+        <message>
+            <source>&lt;br&gt;&lt;i&gt;debugfs: current values can only be read by root.&lt;/i&gt;</source>
+            <translation>&lt;br&gt;&lt;i&gt;debugfs: geçerli değerleri yalnızca root okuyabilir.&lt;/i&gt;</translation>
+        </message>
+        <message>
+            <source>&lt;br&gt;&lt;i&gt;Hot-plugs CPU cores: applied last and restored first.&lt;/i&gt;</source>
+            <translation>&lt;br&gt;&lt;i&gt;CPU çekirdeklerini çevrimiçi/çevrimdışı yapar: en son uygulanır, ilk geri alınır.&lt;/i&gt;</translation>
+        </message>
+        <message>
+            <source>May adversely affect stability, temperature or idle power consumption.</source>
+            <translation>Kararlılığı, sıcaklığı veya boşta güç tüketimini olumsuz etkileyebilir.</translation>
+        </message>
+        <message>
+            <source>Pause Scenes and write every setting back to the value centurion-boot-guard captured at the start of this boot —
+a clean baseline for calibration, even if TLP or a scene changed things since.</source>
+            <translation>Sahneleri duraklatır ve bütün ayarları bu açılışın başında centurion-boot-guard tarafından kaydedilen değerlere geri getirir — TLP veya bir sahne daha sonra ayarları değiştirmiş olsa bile kalibrasyon için temiz bir başlangıç durumu sağlar.</translation>
+        </message>
+        <message>
+            <source>Write every saved original value back (hot-plugged CPUs first).</source>
+            <translation>Kaydedilmiş bütün özgün değerleri geri yazar (çalışma sırasında takılıp çıkarılan CPU çekirdekleri ilk sırada işlenir).</translation>
+        </message>
+        <message>
+            <source>Apply the active scene again (or the preset, without a scene).</source>
+            <translation>Etkin sahneyi yeniden uygular (etkin sahne yoksa optimizasyon profilini yeniden uygular).</translation>
+        </message>
+        <message>
+            <source>Master switch. While it is on, Wi-Fi power save, runtime power management of the Wi-Fi and Bluetooth devices and
 Bluetooth USB autosuspend are kept off — scenes, presets, game mode and autotune cannot turn them back on.
 With NetworkManager installed a drop-in is also written so it does not re-enable Wi-Fi power save on reconnect.
 
@@ -7530,72 +8392,794 @@ Recommended if you have any wireless trouble: random Wi-Fi disconnects, an adapt
 module is reloaded or the machine is rebooted, Bluetooth devices dropping out, or ping spikes on an idle link.
 Power management of Wi-Fi and Bluetooth chips (802.11 power save, PCIe ASPM, runtime PM, USB autosuspend) has been
 unreliable on Linux for many years, and several drivers and firmwares (notably some MediaTek adapters) misbehave when
-the radio or its link is put to sleep. The price is a little more idle power.</source><translation>Ana anahtar. Etkin olduğu sürece Wi-Fi güç tasarrufu, Wi-Fi ve Bluetooth aygıtlarının çalışma zamanı güç yönetimi ve Bluetooth USB otomatik askıya alma devre dışı tutulur. Sahneler, profiller, oyun modu ve Autotune bunları yeniden etkinleştiremez. NetworkManager kuruluysa yeniden bağlanırken Wi-Fi güç tasarrufunun açılmaması için bir drop-in yapılandırması da yazılır.
+the radio or its link is put to sleep. The price is a little more idle power.</source>
+            <translation>Ana anahtar. Etkin olduğu sürece Wi-Fi güç tasarrufu, Wi-Fi ve Bluetooth aygıtlarının çalışma zamanı güç yönetimi ve Bluetooth USB otomatik askıya alma devre dışı tutulur. Sahneler, profiller, oyun modu ve Autotune bunları yeniden etkinleştiremez. NetworkManager kuruluysa yeniden bağlanırken Wi-Fi güç tasarrufunun açılmaması için bir drop-in yapılandırması da yazılır.
 
-Kablosuz bağlantıyla ilgili sorunlarda önerilir: rastgele Wi-Fi kopmaları, modül yeniden yüklenene veya sistem yeniden başlatılana kadar yanıt vermeyen adaptör, Bluetooth aygıtlarının bağlantı kaybetmesi ya da boşta duran bağlantıda ping sıçramaları. Wi-Fi ve Bluetooth yongalarının güç yönetimi (802.11 güç tasarrufu, PCIe ASPM, çalışma zamanı PM, USB otomatik askıya alma) Linux'ta uzun süredir güvenilir değildir. Özellikle bazı MediaTek adaptörlerindeki sürücüler ve firmware'ler, radyo veya bağlantısı uykuya alındığında sorun çıkarabilir. Bunun karşılığı boşta güç tüketiminin bir miktar artmasıdır.</translation></message><message><source>Make the selected preset the default of centurion-gamemode (Lutris / Steam hooks).
-A built-in preset is copied to your preset folder first.</source><translation>Seçili profili centurion-gamemode için varsayılan yapar (Lutris / Steam kancaları).
-Yerleşik profil önce kişisel profil klasörünüze kopyalanır.</translation></message><message><source>Store the checked rows as the boot preset (root-owned
-/etc/centurion/tune-boot.json, applied by the centurion-tune OpenRC service).</source><translation>İşaretlenmiş satırları açılış profili olarak kaydeder (root sahipliğindeki /etc/centurion/tune-boot.json dosyasına; centurion-tune OpenRC hizmeti tarafından uygulanır).</translation></message><message><source>Power saving: battery life and low heat first.
+Kablosuz bağlantıyla ilgili sorunlarda önerilir: rastgele Wi-Fi kopmaları, modül yeniden yüklenene veya sistem yeniden başlatılana kadar yanıt vermeyen adaptör, Bluetooth aygıtlarının bağlantı kaybetmesi ya da boşta duran bağlantıda ping sıçramaları. Wi-Fi ve Bluetooth yongalarının güç yönetimi (802.11 güç tasarrufu, PCIe ASPM, çalışma zamanı PM, USB otomatik askıya alma) Linux'ta uzun süredir güvenilir değildir. Özellikle bazı MediaTek adaptörlerindeki sürücüler ve firmware'ler, radyo veya bağlantısı uykuya alındığında sorun çıkarabilir. Bunun karşılığı boşta güç tüketiminin bir miktar artmasıdır.</translation>
+        </message>
+        <message>
+            <source>Make the selected preset the default of centurion-gamemode (Lutris / Steam hooks).
+A built-in preset is copied to your preset folder first.</source>
+            <translation>Seçili profili centurion-gamemode için varsayılan yapar (Lutris / Steam kancaları).
+Yerleşik profil önce kişisel profil klasörünüze kopyalanır.</translation>
+        </message>
+        <message>
+            <source>Store the checked rows as the boot preset (root-owned
+/etc/centurion/tune-boot.json, applied by the centurion-tune OpenRC service).</source>
+            <translation>İşaretlenmiş satırları açılış profili olarak kaydeder (root sahipliğindeki /etc/centurion/tune-boot.json dosyasına; centurion-tune OpenRC hizmeti tarafından uygulanır).</translation>
+        </message>
+        <message>
+            <source>Power saving: battery life and low heat first.
 Gaming: frame-time consistency and input latency, then throughput.
 Bare throughput: most work per second for builds, encodes, compute.
-Optimal desktop: responsive everyday use at sensible power.</source><translation>Güç tasarrufu: öncelik pil ömrü ve düşük sıcaklıktadır.
+Optimal desktop: responsive everyday use at sensible power.</source>
+            <translation>Güç tasarrufu: öncelik pil ömrü ve düşük sıcaklıktadır.
 Oyun: önce kare süresi tutarlılığı ve giriş gecikmesi, sonra toplam iş kapasitesi.
 Salt iş hacmi: derleme, kodlama ve hesaplamada saniye başına en fazla iş.
-En uygun masaüstü: makul güç tüketimiyle günlük kullanımda yüksek tepki hızı.</translation></message><message><source>Profile this machine (CPU topology, V-Cache/hybrid, cpufreq driver, C-state latencies, RAM, swap,
+En uygun masaüstü: makul güç tüketimiyle günlük kullanımda yüksek tepki hızı.</translation>
+        </message>
+        <message>
+            <source>Profile this machine (CPU topology, V-Cache/hybrid, cpufreq driver, C-state latencies, RAM, swap,
 storage, battery, GPUs, kernel) and check every row with the value the chosen base calls for.
-Nothing is written until you press Apply checked; Save turns it into a preset.</source><translation>Bu makinenin profilini çıkarır (CPU topolojisi, V-Cache/hibrit yapı, cpufreq sürücüsü, C-state gecikmeleri, RAM, takas alanı, depolama, pil, GPU'lar ve çekirdek) ve her satırı seçilen temel hedefin gerektirdiği değere göre işaretler.
-“İşaretlenenleri uygula” düğmesine basılana kadar hiçbir şey yazılmaz; “Kaydet” işlemi bunları bir profile dönüştürür.</translation></message><message><source>How much this base values latency, throughput, power, memory footprint, stability
+Nothing is written until you press Apply checked; Save turns it into a preset.</source>
+            <translation>Bu makinenin profilini çıkarır (CPU topolojisi, V-Cache/hibrit yapı, cpufreq sürücüsü, C-state gecikmeleri, RAM, takas alanı, depolama, pil, GPU'lar ve çekirdek) ve her satırı seçilen temel hedefin gerektirdiği değere göre işaretler.
+“İşaretlenenleri uygula” düğmesine basılana kadar hiçbir şey yazılmaz; “Kaydet” işlemi bunları bir profile dönüştürür.</translation>
+        </message>
+        <message>
+            <source>How much this base values latency, throughput, power, memory footprint, stability
 and how much the calibrated storage benchmarks count.
 Autotune writes a setting only when its expected gain under these weights beats leaving it alone;
-hard safety limits cannot be bought with weights.</source><translation>Bu temel hedefin gecikme, iş hacmi, güç, bellek ayak izi ve kararlılığa ne kadar önem verdiğini ve kalibre edilmiş depolama testlerinin ne kadar ağırlık taşıdığını belirler.
-Autotune, bu ağırlıklara göre beklenen kazanım ayarı olduğu gibi bırakmaktan daha yüksekse değişikliği yazar; katı güvenlik sınırları ağırlık artırılarak aşılamaz.</translation></message><message><source>The power profile the preset will run under. A knob's measured effect depends on it (EPP and boost
+hard safety limits cannot be bought with weights.</source>
+            <translation>Bu temel hedefin gecikme, iş hacmi, güç, bellek ayak izi ve kararlılığa ne kadar önem verdiğini ve kalibre edilmiş depolama testlerinin ne kadar ağırlık taşıdığını belirler.
+Autotune, bu ağırlıklara göre beklenen kazanım ayarı olduğu gibi bırakmaktan daha yüksekse değişikliği yazar; katı güvenlik sınırları ağırlık artırılarak aşılamaz.</translation>
+        </message>
+        <message>
+            <source>The power profile the preset will run under. A knob's measured effect depends on it (EPP and boost
 act differently under a 45 W and a 130 W limit): autotune reads the calibration measured under
-that profile. "Live profile" = whatever is active now; a scene = the profile that scene sets.</source><translation>Profilin çalışacağı güç profili. Bir ayarın ölçülen etkisi buna bağlıdır (EPP ve Boost, 45 W ve 130 W sınırlarında farklı davranır): Autotune o güç profili altında ölçülmüş kalibrasyon verilerini okur.
-“Canlı profil” = şu anda etkin olan profil; bir sahne seçilirse = sahnenin ayarladığı güç profili.</translation></message><message><source>Schedule centurion-calibrate sessions for the next boot: the boot preset and scenes are held, and the
+that profile. "Live profile" = whatever is active now; a scene = the profile that scene sets.</source>
+            <translation>Profilin çalışacağı güç profili. Bir ayarın ölçülen etkisi buna bağlıdır (EPP ve Boost, 45 W ve 130 W sınırlarında farklı davranır): Autotune o güç profili altında ölçülmüş kalibrasyon verilerini okur.
+“Canlı profil” = şu anda etkin olan profil; bir sahne seçilirse = sahnenin ayarladığı güç profili.</translation>
+        </message>
+        <message>
+            <source>Schedule centurion-calibrate sessions for the next boot: the boot preset and scenes are held, and the
 sessions run once the machine is on AC and nobody has touched it for 5 minutes (a key press
 stops the running one cleanly; it resumes after the next quiet stretch). Then the boot preset
-and the scene for the power source come back. The one-shot centurion-calibrate-boot service is added for that boot only.</source><translation>Bir sonraki açılış için centurion-calibrate oturumlarını planlar: açılış profili ve sahneler beklemeye alınır; makine AC gücüne bağlı olduğunda ve 5 dakika boyunca kimse kullanmadığında oturumlar çalışır (tuşa basılması çalışan oturumu düzgün biçimde durdurur; sonraki sakin aralıkta devam eder). Ardından açılış profili ve güç kaynağına uygun sahne geri yüklenir. Tek seferlik centurion-calibrate-boot hizmeti yalnızca o açılış için eklenir.</translation></message><message><source>The kernel may deliver a normal thread's sleep or wait time-out up to 50 µs late (default timer slack,
+and the scene for the power source come back. The one-shot centurion-calibrate-boot service is added for that boot only.</source>
+            <translation>Bir sonraki açılış için centurion-calibrate oturumlarını planlar: açılış profili ve sahneler beklemeye alınır; makine AC gücüne bağlı olduğunda ve 5 dakika boyunca kimse kullanmadığında oturumlar çalışır (tuşa basılması çalışan oturumu düzgün biçimde durdurur; sonraki sakin aralıkta devam eder). Ardından açılış profili ve güç kaynağına uygun sahne geri yüklenir. Tek seferlik centurion-calibrate-boot hizmeti yalnızca o açılış için eklenir.</translation>
+        </message>
+        <message>
+            <source>The kernel may deliver a normal thread's sleep or wait time-out up to 50 µs late (default timer slack,
 used to batch wake-ups). With this on, the game's whole process tree gets 1 ns: frame limiters, audio
-and Wine's waits wake when they asked to. Costs a few more timer interrupts; needs RUN / WRAP.</source><translation>Çekirdek, sıradan bir iş parçacığının uyku veya bekleme zaman aşımını 50 µs'ye kadar gecikmeli gerçekleştirebilir (uyanmaları gruplamak için kullanılan varsayılan timer slack). Bu açıkken oyunun bütün işlem ağacına 1 ns uygulanır: kare sınırlayıcıları, ses işlemleri ve Wine'ın beklemeleri istedikleri zamanda uyanır. Biraz daha fazla zamanlayıcı kesmesi oluşturur; RUN / WRAP gerektirir.</translation></message><message><source>At game start every zram page is marked idle; when game mode ends, pages the session never touched are
+and Wine's waits wake when they asked to. Costs a few more timer interrupts; needs RUN / WRAP.</source>
+            <translation>Çekirdek, sıradan bir iş parçacığının uyku veya bekleme zaman aşımını 50 µs'ye kadar gecikmeli gerçekleştirebilir (uyanmaları gruplamak için kullanılan varsayılan timer slack). Bu açıkken oyunun bütün işlem ağacına 1 ns uygulanır: kare sınırlayıcıları, ses işlemleri ve Wine'ın beklemeleri istedikleri zamanda uyanır. Biraz daha fazla zamanlayıcı kesmesi oluşturur; RUN / WRAP gerektirir.</translation>
+        </message>
+        <message>
+            <source>At game start every zram page is marked idle; when game mode ends, pages the session never touched are
 recompressed with the secondary algorithm (at most 64 MiB per device): more free RAM afterwards.
-Needs a recompression algorithm set in the boot zram configuration (it cannot be set on a live device).</source><translation>Oyun başladığında bütün zram sayfaları boşta olarak işaretlenir; oyun modu sona erdiğinde oturumun hiç dokunmadığı sayfalar ikincil algoritmayla yeniden sıkıştırılır (aygıt başına en çok 64 MiB): sonrasında daha fazla RAM boş kalır.
-Açılış zram yapılandırmasında yeniden sıkıştırma algoritmasının önceden ayarlanmış olması gerekir (çalışan aygıtta ayarlanamaz).</translation></message><message><source>The first game to start switches the machine to this scene; when the last game exits it goes back to the scene active before (or to the AC / battery scene if automatic switching is on).
-The scene's Optimizations preset is not used while playing — the ★ game preset handles tuning.</source><translation>Başlayan ilk oyun sistemi bu sahneye geçirir; son oyun kapandığında önceki etkin sahneye (otomatik geçiş açıksa AC / pil sahnesine) döner.
-Sahnenin Optimization profili oyun sırasında kullanılmaz — ayarları ★ oyun profili yönetir.</translation></message><message><source>No CPU undervolt backend for this CPU.</source><translation>Bu CPU için kullanılabilir bir undervolt altyapısı yok.</translation></message><message><source>Real games instead of benchmarks: launches alternate B (the game preset) and A (boot defaults, no
+Needs a recompression algorithm set in the boot zram configuration (it cannot be set on a live device).</source>
+            <translation>Oyun başladığında bütün zram sayfaları boşta olarak işaretlenir; oyun modu sona erdiğinde oturumun hiç dokunmadığı sayfalar ikincil algoritmayla yeniden sıkıştırılır (aygıt başına en çok 64 MiB): sonrasında daha fazla RAM boş kalır.
+Açılış zram yapılandırmasında yeniden sıkıştırma algoritmasının önceden ayarlanmış olması gerekir (çalışan aygıtta ayarlanamaz).</translation>
+        </message>
+        <message>
+            <source>The first game to start switches the machine to this scene; when the last game exits it goes back to the scene active before (or to the AC / battery scene if automatic switching is on).
+The scene's Optimizations preset is not used while playing — the ★ game preset handles tuning.</source>
+            <translation>Başlayan ilk oyun sistemi bu sahneye geçirir; son oyun kapandığında önceki etkin sahneye (otomatik geçiş açıksa AC / pil sahnesine) döner.
+Sahnenin Optimization profili oyun sırasında kullanılmaz — ayarları ★ oyun profili yönetir.</translation>
+        </message>
+        <message>
+            <source>No CPU undervolt backend for this CPU.</source>
+            <translation>Bu CPU için kullanılabilir bir undervolt altyapısı yok.</translation>
+        </message>
+        <message>
+            <source>Real games instead of benchmarks: launches alternate B (the game preset) and A (boot defaults, no
 launch boost; the game scene is the same). centurion-gamemode records every session; feed the frame-time
 logs (FLM CSV or MangoHud CSV) with
     sudo centurion-calibrate --field LOG...
-and the load model learns from them once a game has two A sessions and one B session.</source><translation>Benchmark yerine gerçek oyunları kullanır: oyun başlatmaları B (oyun profili) ve A (açılış varsayılanları, başlatma Boost'u yok; oyun sahnesi aynıdır) arasında sırayla değişir. centurion-gamemode her oturumu kaydeder; kare süresi günlüklerini (FLM CSV veya MangoHud CSV) şu komutla içeri aktarın:
+and the load model learns from them once a game has two A sessions and one B session.</source>
+            <translation>Benchmark yerine gerçek oyunları kullanır: oyun başlatmaları B (oyun profili) ve A (açılış varsayılanları, başlatma Boost'u yok; oyun sahnesi aynıdır) arasında sırayla değişir. centurion-gamemode her oturumu kaydeder; kare süresi günlüklerini (FLM CSV veya MangoHud CSV) şu komutla içeri aktarın:
     sudo centurion-calibrate --field LOG...
-Bir oyun için iki A oturumu ve bir B oturumu bulunduğunda yük modeli bunlardan öğrenir.</translation></message><message><source>Heroic and Bottles have no pre/post hook like Lutris. With this on, Centurion notices their games itself
+Bir oyun için iki A oturumu ve bir B oturumu bulunduğunda yük modeli bunlardan öğrenir.</translation>
+        </message>
+        <message>
+            <source>Heroic and Bottles have no pre/post hook like Lutris. With this on, Centurion notices their games itself
 (Heroic: HEROIC_APP_NAME in the game's environment; Bottles: a Windows program running in a bottle) and
 runs the same game start / end as the Lutris hook: game scene, ★ game preset, session record.
 Costs a process-name sweep every 15 s; game processes are only looked at while Heroic or Bottles runs.
-Games you already wrap with centurion-gamemode WRAP are left alone.</source><translation>Heroic ve Bottles'ta Lutris'teki gibi başlatma öncesi/sonrası kancalar yoktur. Bu seçenek etkinken Centurion oyunlarını kendisi algılar (Heroic: oyunun ortamındaki HEROIC_APP_NAME; Bottles: bottle içinde çalışan Windows programı) ve Lutris kancasıyla aynı başlangıç/bitiş işlemlerini yürütür: oyun sahnesi, ★ oyun profili ve oturum kaydı.
-Her 15 saniyede bir işlem adı taraması gerekir; oyun işlemleri yalnızca Heroic veya Bottles çalışırken aranır. Zaten centurion-gamemode WRAP ile başlattığınız oyunlara dokunulmaz.</translation></message><message><source>NTSYNC is the kernel's driver for Windows synchronisation objects (/dev/ntsync): Wine and Proton use it
+Games you already wrap with centurion-gamemode WRAP are left alone.</source>
+            <translation>Heroic ve Bottles'ta Lutris'teki gibi başlatma öncesi/sonrası kancalar yoktur. Bu seçenek etkinken Centurion oyunlarını kendisi algılar (Heroic: oyunun ortamındaki HEROIC_APP_NAME; Bottles: bottle içinde çalışan Windows programı) ve Lutris kancasıyla aynı başlangıç/bitiş işlemlerini yürütür: oyun sahnesi, ★ oyun profili ve oturum kaydı.
+Her 15 saniyede bir işlem adı taraması gerekir; oyun işlemleri yalnızca Heroic veya Bottles çalışırken aranır. Zaten centurion-gamemode WRAP ile başlattığınız oyunlara dokunulmaz.</translation>
+        </message>
+        <message>
+            <source>NTSYNC is the kernel's driver for Windows synchronisation objects (/dev/ntsync): Wine and Proton use it
 instead of esync / fsync for lower overhead in games with many threads. Wine 11 uses it on its own;
 GE-Proton 10 and builds like it only when PROTON_USE_NTSYNC=1 is set. With this on, centurion-gamemode
 WRAP / RUN (Steam launch options) set it for the game, unless the launch options already do. Lutris
-starts the game itself (PRE / POST hooks): set the variable in the game's environment there.</source><translation>NTSYNC, Windows eşzamanlama nesneleri için çekirdek sürücüsüdür (/dev/ntsync): Wine ve Proton, çok iş parçacıklı oyunlarda daha az ek yük için esync / fsync yerine bunu kullanır. Wine 11 bunu kendiliğinden kullanır; GE-Proton 10 ve benzeri derlemelerde yalnızca PROTON_USE_NTSYNC=1 ayarlandığında kullanılır. Bu açıkken centurion-gamemode WRAP / RUN (Steam başlatma seçenekleri) bu değişkeni oyun için ayarlar; başlatma seçeneklerinde zaten bulunuyorsa değiştirmez. Lutris oyunu kendisi başlatır (PRE / POST kancaları): değişkeni oyunun ortam ayarlarından belirleyin.</translation></message><message><source>Applied by the centurion-tune OpenRC service. Enable it once with:
-    rc-update add centurion-tune boot</source><translation>centurion-tune OpenRC hizmeti tarafından uygulanır. Hizmeti bir kez etkinleştirin:
-    rc-update add centurion-tune boot</translation></message><message><source>Measure in a scene's power context (its power profile, firmware limits and fan mode; not its
-Optimizations preset - those knobs are what is measured).</source><translation>Bir sahnenin güç koşullarında ölçüm yapar (sahnenin güç profili, firmware sınırları ve fan modu; ancak Optimization profili hariç — ölçülen ayarlar zaten bunlardır).</translation></message><message><source>Already the live value.</source><translation>Zaten etkin olan değer.</translation></message><message><source>Saves this trade-off's weights for the goal and runs Autotune again.</source><translation>Bu ödünleşimin ağırlıklarını hedef için kaydeder ve Autotune'u yeniden çalıştırır.</translation></message><message><source>↺ Return to boot-guard defaults</source><translation>↺ Açılış koruyucusunun varsayılanlarına dön</translation></message><message><source>Restore originals</source><translation>Özgün değerleri geri yükle</translation></message><message><source>Re-apply</source><translation>Yeniden uygula</translation></message><message><source>Dismiss</source><translation>Kapat</translation></message><message><source>Load</source><translation>Yükle</translation></message><message><source>Save as…</source><translation>Farklı kaydet…</translation></message><message><source>Delete</source><translation>Sil</translation></message><message><source>★ Use for games</source><translation>★ Oyunlarda kullan</translation></message><message><source>⏻ Apply at boot</source><translation>⏻ Açılışta uygula</translation></message><message><source>Clear boot</source><translation>Açılış ayarını kaldır</translation></message><message><source>⚙ Autotune</source><translation>⚙ Otomatik ayarla (Autotune)</translation></message><message><source>Weights…</source><translation>Ağırlıklar…</translation></message><message><source>Calibrate at next boot…</source><translation>Sonraki açılışta kalibre et…</translation></message><message><source>Refresh</source><translation>Yenile</translation></message><message><source>Apply checked</source><translation>İşaretlenenleri uygula</translation></message><message><source>Copy</source><translation>Kopyala</translation></message><message><source>Use these weights</source><translation>Bu ağırlıkları kullan</translation></message><message><source>Autotune for</source><translation>Şuna göre Autotune</translation></message><message><source>for</source><translation>için</translation></message><message><source>Select:</source><translation>Seçim:</translation></message><message><source>Nice</source><translation>Nice önceliği</translation></message><message><source>CPU affinity</source><translation>CPU çekirdek yakınlığı</translation></message><message><source>Time slice</source><translation>Zaman dilimi</translation></message><message><source>Game CPU share</source><translation>Oyunun CPU payı</translation></message><message><source>Scene</source><translation>Sahne</translation></message><message><source>Discovered (not in Centurion's table; shown only, set by hand, not calibrated): </source><translation>Bulunanlar (Centurion tablosunda yok; yalnızca gösterilir, elle ayarlanır ve kalibre edilmez): </translation></message><message><source>&lt;b&gt;Machine&lt;/b&gt;&amp;nbsp; %1</source><translation>&lt;b&gt;Makine&lt;/b&gt;&amp;nbsp; %1</translation></message><message><source>&lt;b&gt;Observed&lt;/b&gt;&amp;nbsp; %1</source><translation>&lt;b&gt;Gözlenen&lt;/b&gt;&amp;nbsp; %1</translation></message><message><source>&lt;b&gt;Weights&lt;/b&gt;&amp;nbsp; %1%2</source><translation>&lt;b&gt;Ağırlıklar&lt;/b&gt;&amp;nbsp; %1%2</translation></message><message><source>&lt;b&gt;Predicted&lt;/b&gt;&amp;nbsp; (calibrated settings, against the boot state) %1</source><translation>&lt;b&gt;Tahmin edilen&lt;/b&gt;&amp;nbsp; (kalibre edilmiş ayarlar, açılış durumuna göre) %1</translation></message><message><source>Trade-offs / sensitivity cut short (time budget): the list below is partial.</source><translation>Ödünleşim/duyarlılık incelemesi zaman sınırından dolayı erken kesildi: aşağıdaki liste kısmi.</translation></message><message><source>Forcefully disable Wi-Fi and Bluetooth power management</source><translation>Wi-Fi ve Bluetooth güç yönetimini zorunlu olarak kapat</translation></message><message><source>Also renice the autogroup</source><translation>Autogroup için nice önceliğini de değiştir</translation></message><message><source>Precise timers (timer slack 1 ns)</source><translation>Hassas zamanlayıcılar (timer slack 1 ns)</translation></message><message><source>Recompress cold zram pages after the game</source><translation>Oyun sonrası soğuk zram sayfalarını yeniden sıkıştır</translation></message><message><source>Undervolt CPU</source><translation>CPU undervolt uygula</translation></message><message><source>Undervolt GPU</source><translation>GPU undervolt uygula</translation></message><message><source>A/B field comparison: every other launch of a game runs at the boot defaults</source><translation>A/B gerçek oyun karşılaştırması: oyunun her ikinci başlatılması açılış varsayılanlarıyla çalışır</translation></message><message><source>Detect games started from Heroic and Bottles (no launch options needed)</source><translation>Heroic ve Bottles üzerinden başlatılan oyunları algıla (başlatma seçeneği gerekmez)</translation></message><message><source>NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)</source><translation>Wine / Proton için NTSYNC (PROTON_USE_NTSYNC=1)</translation></message><message><source>Only changes</source><translation>Yalnızca değişiklikler</translation></message><message><source>Other trade-offs on the same measurements</source><translation>Aynı ölçümlerdeki diğer ödünleşimler</translation></message><message><source>Power saving</source><translation>Güç tasarrufu</translation></message><message><source>Gaming (latency + throughput)</source><translation>Oyun (gecikme + iş hacmi)</translation></message><message><source>Bare throughput</source><translation>Salt iş hacmi</translation></message><message><source>Optimal desktop</source><translation>En uygun masaüstü</translation></message><message><source>— none (keep the current scene)</source><translation>— yok (mevcut sahneyi koru)</translation></message><message><source>none (scheduler decides)</source><translation>yok (zamanlayıcı karar verir)</translation></message><message><source>CCD%1%2 (%3)</source><translation>CCD%1%2 (%3)</translation></message><message><source>P-cores (</source><translation>P çekirdekleri (</translation></message><message><source>E-cores (</source><translation>E çekirdekleri (</translation></message><message><source>live profile</source><translation>canlı profil</translation></message><message><source>scene %1 (%2)</source><translation>sahne %1 (%2)</translation></message><message><source>boot state (no scene)</source><translation>açılış durumu (sahne yok)</translation></message><message><source>Autotune Weights — %1</source><translation>Autotune ağırlıkları — %1</translation></message><message><source>Calibrate at Next Boot</source><translation>Sonraki açılışta kalibre et</translation></message><message><source>Autotune — %1</source><translation>Autotune — %1</translation></message><message><source>Game Launch</source><translation>Oyun başlatma</translation></message><message><source>Boot Options</source><translation>Açılış seçenekleri</translation></message><message><source>Fast</source><translation>Hızlı</translation></message><message><source>Balanced</source><translation>Dengeli</translation></message><message><source>Deep</source><translation>Derin</translation></message><message><source>Explore…</source><translation>Seçenekleri incele…</translation></message><message><source>Fast: main decision only. Balanced: main decision and 3 trade-offs. Deep: also explores +/-30% objective-weight sensitivity. No option applies settings automatically.</source><translation>Hızlı: yalnızca ana öneri. Dengeli: ana öneri ve 3 ödünleşim. Derin: hedef ağırlıklarının yüzde ±30 duyarlılığını da inceler. Hiçbir mod ayarları otomatik uygulamaz.</translation></message><message><source>Run trade-off comparisons on demand after the fast decision.</source><translation>Hızlı kararın ardından istenirse ödünleşim karşılaştırmalarını çalıştırır.</translation></message><message><source>Autotune · Inputs…</source><translation>Autotune · Girdiler…</translation></message><message><source>Autotune · %1…</source><translation>Autotune · %1…</translation></message><message><source>Inputs</source><translation>Girdiler</translation></message><message><source>Model</source><translation>Model</translation></message><message><source>Decision</source><translation>Karar</translation></message><message><source>Validation</source><translation>Doğrulama</translation></message><message><source>&lt;b&gt;%1&lt;/b&gt; · Inputs %2 ms · Model %3 ms · Decision %4 ms · Total %5 ms</source><translation>&lt;b&gt;%1&lt;/b&gt; · Girdiler %2 ms · Model %3 ms · Karar %4 ms · Toplam %5 ms</translation></message><message><source>Fast result: trade-offs and weight sensitivity were skipped. Use Explore after closing this report to calculate comparisons on demand.</source><translation>Hızlı sonuç: ödünleşimler ve ağırlık duyarlılığı hesaplanmadı. Bu raporu kapattıktan sonra karşılaştırmaları istediğinizde hesaplamak için Seçenekleri incele seçeneğini kullanın.</translation></message><message><source>Import game CSV…</source><translation>Oyun CSV'si içe aktar…</translation></message><message><source>Import FLM or MangoHud frame-time logs from your own recorded game sessions. This does not modify hardware settings; matching A/B game sessions are needed before they affect the model.</source><translation>Kaydedilmiş kendi oyun oturumlarınızdan FLM veya MangoHud kare süresi kayıtlarını içe aktarır. Donanım ayarlarını değiştirmez; modeli etkilemeleri için eşleşen A/B oyun oturumları gerekir.</translation></message><message><source>Import game telemetry</source><translation>Oyun telemetrisini içe aktar</translation></message><message><source>Frame-time logs (*.csv *.log *.txt);;All files (*)</source><translation>Kare süresi kayıtları (*.csv *.log *.txt);;Tüm dosyalar (*)</translation></message><message><source>Select at most four logs per import.</source><translation>Her içe aktarmada en fazla dört kayıt seçin.</translation></message><message><source>centurion-calibrate or pkexec is not installed.</source><translation>centurion-calibrate veya pkexec kurulu değil.</translation></message><message><source>Importing frame-time logs and matching recorded game sessions…</source><translation>Kare süresi kayıtları içe aktarılıyor ve kayıtlı oyun oturumlarıyla eşleştiriliyor…</translation></message><message><source>Game telemetry imported. Re-run Autotune to use matched A/B evidence.</source><translation>Oyun telemetrisi içe aktarıldı. Eşleşen A/B kanıtını kullanmak için Autotune'u yeniden çalıştırın.</translation></message><message><source>Game telemetry import failed.</source><translation>Oyun telemetrisi içe aktarılamadı.</translation></message><message><source>Game telemetry import</source><translation>Oyun telemetrisi içe aktarma</translation></message><message><source>Suggested next step: %1 (%2 of %3 settings would change, %4 uncertain effects, %5 without model evidence)</source><translation>Önerilen sonraki adım: %1 (%3 ayardan değişecek olan: %2, %4 belirsiz etki, %5 model kanıtı olmayan)</translation></message><message><source>Verify before apply</source><translation>Uygulamadan önce doğrula</translation></message><message><source>Save these exact settings as a preset and approve its root-owned copy first. Any changed value invalidates the previous ABBA verification.</source><translation>Önce bu ayarları birebir aynı haliyle profil olarak kaydedin ve root'a ait kopyasını onaylayın. Değişen herhangi bir değer önceki ABBA doğrulamasını geçersiz kılar.</translation></message><message><source>ABBA verification required</source><translation>ABBA doğrulaması gerekli</translation></message><message><source>This autotuned preset contains high-risk or extensive changes. Run a paired ABBA benchmark against your boot settings before applying it? The test temporarily changes settings, journals originals, and restores them.
+starts the game itself (PRE / POST hooks): set the variable in the game's environment there.</source>
+            <translation>NTSYNC, Windows eşzamanlama nesneleri için çekirdek sürücüsüdür (/dev/ntsync): Wine ve Proton, çok iş parçacıklı oyunlarda daha az ek yük için esync / fsync yerine bunu kullanır. Wine 11 bunu kendiliğinden kullanır; GE-Proton 10 ve benzeri derlemelerde yalnızca PROTON_USE_NTSYNC=1 ayarlandığında kullanılır. Bu açıkken centurion-gamemode WRAP / RUN (Steam başlatma seçenekleri) bu değişkeni oyun için ayarlar; başlatma seçeneklerinde zaten bulunuyorsa değiştirmez. Lutris oyunu kendisi başlatır (PRE / POST kancaları): değişkeni oyunun ortam ayarlarından belirleyin.</translation>
+        </message>
+        <message>
+            <source>Applied by the centurion-tune OpenRC service. Enable it once with:
+    rc-update add centurion-tune boot</source>
+            <translation>centurion-tune OpenRC hizmeti tarafından uygulanır. Hizmeti bir kez etkinleştirin:
+    rc-update add centurion-tune boot</translation>
+        </message>
+        <message>
+            <source>Measure in a scene's power context (its power profile, firmware limits and fan mode; not its
+Optimizations preset - those knobs are what is measured).</source>
+            <translation>Bir sahnenin güç koşullarında ölçüm yapar (sahnenin güç profili, firmware sınırları ve fan modu; ancak Optimization profili hariç — ölçülen ayarlar zaten bunlardır).</translation>
+        </message>
+        <message>
+            <source>Already the live value.</source>
+            <translation>Zaten etkin olan değer.</translation>
+        </message>
+        <message>
+            <source>Saves this trade-off's weights for the goal and runs Autotune again.</source>
+            <translation>Bu ödünleşimin ağırlıklarını hedef için kaydeder ve Autotune'u yeniden çalıştırır.</translation>
+        </message>
+        <message>
+            <source>↺ Return to boot-guard defaults</source>
+            <translation>↺ Açılış koruyucusunun varsayılanlarına dön</translation>
+        </message>
+        <message>
+            <source>Restore originals</source>
+            <translation>Özgün değerleri geri yükle</translation>
+        </message>
+        <message>
+            <source>Re-apply</source>
+            <translation>Yeniden uygula</translation>
+        </message>
+        <message>
+            <source>Dismiss</source>
+            <translation>Kapat</translation>
+        </message>
+        <message>
+            <source>Load</source>
+            <translation>Yükle</translation>
+        </message>
+        <message>
+            <source>Save as…</source>
+            <translation>Farklı kaydet…</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>Sil</translation>
+        </message>
+        <message>
+            <source>★ Use for games</source>
+            <translation>★ Oyunlarda kullan</translation>
+        </message>
+        <message>
+            <source>⏻ Apply at boot</source>
+            <translation>⏻ Açılışta uygula</translation>
+        </message>
+        <message>
+            <source>Clear boot</source>
+            <translation>Açılış ayarını kaldır</translation>
+        </message>
+        <message>
+            <source>⚙ Autotune</source>
+            <translation>⚙ Otomatik ayarla (Autotune)</translation>
+        </message>
+        <message>
+            <source>Weights…</source>
+            <translation>Ağırlıklar…</translation>
+        </message>
+        <message>
+            <source>Calibrate at next boot…</source>
+            <translation>Sonraki açılışta kalibre et…</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>Yenile</translation>
+        </message>
+        <message>
+            <source>Apply checked</source>
+            <translation>İşaretlenenleri uygula</translation>
+        </message>
+        <message>
+            <source>Copy</source>
+            <translation>Kopyala</translation>
+        </message>
+        <message>
+            <source>Use these weights</source>
+            <translation>Bu ağırlıkları kullan</translation>
+        </message>
+        <message>
+            <source>Autotune for</source>
+            <translation>Şuna göre Autotune</translation>
+        </message>
+        <message>
+            <source>for</source>
+            <translation>için</translation>
+        </message>
+        <message>
+            <source>Select:</source>
+            <translation>Seçim:</translation>
+        </message>
+        <message>
+            <source>Nice</source>
+            <translation>Nice önceliği</translation>
+        </message>
+        <message>
+            <source>CPU affinity</source>
+            <translation>CPU çekirdek yakınlığı</translation>
+        </message>
+        <message>
+            <source>Time slice</source>
+            <translation>Zaman dilimi</translation>
+        </message>
+        <message>
+            <source>Game CPU share</source>
+            <translation>Oyunun CPU payı</translation>
+        </message>
+        <message>
+            <source>Scene</source>
+            <translation>Sahne</translation>
+        </message>
+        <message>
+            <source>Discovered (not in Centurion's table; shown only, set by hand, not calibrated): </source>
+            <translation>Bulunanlar (Centurion tablosunda yok; yalnızca gösterilir, elle ayarlanır ve kalibre edilmez): </translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Machine&lt;/b&gt;&amp;nbsp; %1</source>
+            <translation>&lt;b&gt;Makine&lt;/b&gt;&amp;nbsp; %1</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Observed&lt;/b&gt;&amp;nbsp; %1</source>
+            <translation>&lt;b&gt;Gözlenen&lt;/b&gt;&amp;nbsp; %1</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Weights&lt;/b&gt;&amp;nbsp; %1%2</source>
+            <translation>&lt;b&gt;Ağırlıklar&lt;/b&gt;&amp;nbsp; %1%2</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Predicted&lt;/b&gt;&amp;nbsp; (calibrated settings, against the boot state) %1</source>
+            <translation>&lt;b&gt;Tahmin edilen&lt;/b&gt;&amp;nbsp; (kalibre edilmiş ayarlar, açılış durumuna göre) %1</translation>
+        </message>
+        <message>
+            <source>Trade-offs / sensitivity cut short (time budget): the list below is partial.</source>
+            <translation>Ödünleşim/duyarlılık incelemesi zaman sınırından dolayı erken kesildi: aşağıdaki liste kısmi.</translation>
+        </message>
+        <message>
+            <source>Forcefully disable Wi-Fi and Bluetooth power management</source>
+            <translation>Wi-Fi ve Bluetooth güç yönetimini zorunlu olarak kapat</translation>
+        </message>
+        <message>
+            <source>Also renice the autogroup</source>
+            <translation>Autogroup için nice önceliğini de değiştir</translation>
+        </message>
+        <message>
+            <source>Precise timers (timer slack 1 ns)</source>
+            <translation>Hassas zamanlayıcılar (timer slack 1 ns)</translation>
+        </message>
+        <message>
+            <source>Recompress cold zram pages after the game</source>
+            <translation>Oyun sonrası soğuk zram sayfalarını yeniden sıkıştır</translation>
+        </message>
+        <message>
+            <source>Undervolt CPU</source>
+            <translation>CPU undervolt uygula</translation>
+        </message>
+        <message>
+            <source>Undervolt GPU</source>
+            <translation>GPU undervolt uygula</translation>
+        </message>
+        <message>
+            <source>A/B field comparison: every other launch of a game runs at the boot defaults</source>
+            <translation>A/B gerçek oyun karşılaştırması: oyunun her ikinci başlatılması açılış varsayılanlarıyla çalışır</translation>
+        </message>
+        <message>
+            <source>Detect games started from Heroic and Bottles (no launch options needed)</source>
+            <translation>Heroic ve Bottles üzerinden başlatılan oyunları algıla (başlatma seçeneği gerekmez)</translation>
+        </message>
+        <message>
+            <source>NTSYNC for Wine / Proton (PROTON_USE_NTSYNC=1)</source>
+            <translation>Wine / Proton için NTSYNC (PROTON_USE_NTSYNC=1)</translation>
+        </message>
+        <message>
+            <source>Only changes</source>
+            <translation>Yalnızca değişiklikler</translation>
+        </message>
+        <message>
+            <source>Other trade-offs on the same measurements</source>
+            <translation>Aynı ölçümlerdeki diğer ödünleşimler</translation>
+        </message>
+        <message>
+            <source>Power saving</source>
+            <translation>Güç tasarrufu</translation>
+        </message>
+        <message>
+            <source>Gaming (latency + throughput)</source>
+            <translation>Oyun (gecikme + iş hacmi)</translation>
+        </message>
+        <message>
+            <source>Bare throughput</source>
+            <translation>Salt iş hacmi</translation>
+        </message>
+        <message>
+            <source>Optimal desktop</source>
+            <translation>En uygun masaüstü</translation>
+        </message>
+        <message>
+            <source>— none (keep the current scene)</source>
+            <translation>— yok (mevcut sahneyi koru)</translation>
+        </message>
+        <message>
+            <source>none (scheduler decides)</source>
+            <translation>yok (zamanlayıcı karar verir)</translation>
+        </message>
+        <message>
+            <source>CCD%1%2 (%3)</source>
+            <translation>CCD%1%2 (%3)</translation>
+        </message>
+        <message>
+            <source>P-cores (</source>
+            <translation>P çekirdekleri (</translation>
+        </message>
+        <message>
+            <source>E-cores (</source>
+            <translation>E çekirdekleri (</translation>
+        </message>
+        <message>
+            <source>live profile</source>
+            <translation>canlı profil</translation>
+        </message>
+        <message>
+            <source>scene %1 (%2)</source>
+            <translation>sahne %1 (%2)</translation>
+        </message>
+        <message>
+            <source>boot state (no scene)</source>
+            <translation>açılış durumu (sahne yok)</translation>
+        </message>
+        <message>
+            <source>Autotune Weights — %1</source>
+            <translation>Autotune ağırlıkları — %1</translation>
+        </message>
+        <message>
+            <source>Calibrate at Next Boot</source>
+            <translation>Sonraki açılışta kalibre et</translation>
+        </message>
+        <message>
+            <source>Autotune — %1</source>
+            <translation>Autotune — %1</translation>
+        </message>
+        <message>
+            <source>Game Launch</source>
+            <translation>Oyun başlatma</translation>
+        </message>
+        <message>
+            <source>Boot Options</source>
+            <translation>Açılış seçenekleri</translation>
+        </message>
+        <message>
+            <source>Fast</source>
+            <translation>Hızlı</translation>
+        </message>
+        <message>
+            <source>Balanced</source>
+            <translation>Dengeli</translation>
+        </message>
+        <message>
+            <source>Deep</source>
+            <translation>Derin</translation>
+        </message>
+        <message>
+            <source>Explore…</source>
+            <translation>Seçenekleri incele…</translation>
+        </message>
+        <message>
+            <source>Fast: main decision only. Balanced: main decision and 3 trade-offs. Deep: also explores +/-30% objective-weight sensitivity. No option applies settings automatically.</source>
+            <translation>Hızlı: yalnızca ana öneri. Dengeli: ana öneri ve 3 ödünleşim. Derin: hedef ağırlıklarının yüzde ±30 duyarlılığını da inceler. Hiçbir mod ayarları otomatik uygulamaz.</translation>
+        </message>
+        <message>
+            <source>Run trade-off comparisons on demand after the fast decision.</source>
+            <translation>Hızlı kararın ardından istenirse ödünleşim karşılaştırmalarını çalıştırır.</translation>
+        </message>
+        <message>
+            <source>Autotune · Inputs…</source>
+            <translation>Autotune · Girdiler…</translation>
+        </message>
+        <message>
+            <source>Autotune · %1…</source>
+            <translation>Autotune · %1…</translation>
+        </message>
+        <message>
+            <source>Inputs</source>
+            <translation>Girdiler</translation>
+        </message>
+        <message>
+            <source>Model</source>
+            <translation>Model</translation>
+        </message>
+        <message>
+            <source>Decision</source>
+            <translation>Karar</translation>
+        </message>
+        <message>
+            <source>Validation</source>
+            <translation>Doğrulama</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;%1&lt;/b&gt; · Inputs %2 ms · Model %3 ms · Decision %4 ms · Total %5 ms</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt; · Girdiler %2 ms · Model %3 ms · Karar %4 ms · Toplam %5 ms</translation>
+        </message>
+        <message>
+            <source>Fast result: trade-offs and weight sensitivity were skipped. Use Explore after closing this report to calculate comparisons on demand.</source>
+            <translation>Hızlı sonuç: ödünleşimler ve ağırlık duyarlılığı hesaplanmadı. Bu raporu kapattıktan sonra karşılaştırmaları istediğinizde hesaplamak için Seçenekleri incele seçeneğini kullanın.</translation>
+        </message>
+        <message>
+            <source>Import game CSV…</source>
+            <translation>Oyun CSV'si içe aktar…</translation>
+        </message>
+        <message>
+            <source>Import FLM or MangoHud frame-time logs from your own recorded game sessions. This does not modify hardware settings; matching A/B game sessions are needed before they affect the model.</source>
+            <translation>Kaydedilmiş kendi oyun oturumlarınızdan FLM veya MangoHud kare süresi kayıtlarını içe aktarır. Donanım ayarlarını değiştirmez; modeli etkilemeleri için eşleşen A/B oyun oturumları gerekir.</translation>
+        </message>
+        <message>
+            <source>Import game telemetry</source>
+            <translation>Oyun telemetrisini içe aktar</translation>
+        </message>
+        <message>
+            <source>Frame-time logs (*.csv *.log *.txt);;All files (*)</source>
+            <translation>Kare süresi kayıtları (*.csv *.log *.txt);;Tüm dosyalar (*)</translation>
+        </message>
+        <message>
+            <source>Select at most four logs per import.</source>
+            <translation>Her içe aktarmada en fazla dört kayıt seçin.</translation>
+        </message>
+        <message>
+            <source>centurion-calibrate or pkexec is not installed.</source>
+            <translation>centurion-calibrate veya pkexec kurulu değil.</translation>
+        </message>
+        <message>
+            <source>Importing frame-time logs and matching recorded game sessions…</source>
+            <translation>Kare süresi kayıtları içe aktarılıyor ve kayıtlı oyun oturumlarıyla eşleştiriliyor…</translation>
+        </message>
+        <message>
+            <source>Game telemetry imported. Re-run Autotune to use matched A/B evidence.</source>
+            <translation>Oyun telemetrisi içe aktarıldı. Eşleşen A/B kanıtını kullanmak için Autotune'u yeniden çalıştırın.</translation>
+        </message>
+        <message>
+            <source>Game telemetry import failed.</source>
+            <translation>Oyun telemetrisi içe aktarılamadı.</translation>
+        </message>
+        <message>
+            <source>Game telemetry import</source>
+            <translation>Oyun telemetrisi içe aktarma</translation>
+        </message>
+        <message>
+            <source>Suggested next step: %1 (%2 of %3 settings would change, %4 uncertain effects, %5 without model evidence)</source>
+            <translation>Önerilen sonraki adım: %1 (%3 ayardan değişecek olan: %2, %4 belirsiz etki, %5 model kanıtı olmayan)</translation>
+        </message>
+        <message>
+            <source>Verify before apply</source>
+            <translation>Uygulamadan önce doğrula</translation>
+        </message>
+        <message>
+            <source>Save these exact settings as a preset and approve its root-owned copy first. Any changed value invalidates the previous ABBA verification.</source>
+            <translation>Önce bu ayarları birebir aynı haliyle profil olarak kaydedin ve root'a ait kopyasını onaylayın. Değişen herhangi bir değer önceki ABBA doğrulamasını geçersiz kılar.</translation>
+        </message>
+        <message>
+            <source>ABBA verification required</source>
+            <translation>ABBA doğrulaması gerekli</translation>
+        </message>
+        <message>
+            <source>This autotuned preset contains high-risk or extensive changes. Run a paired ABBA benchmark against your boot settings before applying it? The test temporarily changes settings, journals originals, and restores them.
 
-Some settings (SMT, power limits, TCC offset, IRQ affinity, radios…) cannot be measured by ABBA; a preset containing them never passes and can only be applied without verification.</source><translation>Bu Autotune profili yüksek riskli veya kapsamlı değişiklikler içeriyor. Uygulamadan önce açılış ayarlarınıza karşı eşleştirilmiş bir ABBA ölçümü çalıştırılsın mı? Test ayarları geçici olarak değiştirir, özgün değerleri günlüğe yazar ve geri yükler.
+Some settings (SMT, power limits, TCC offset, IRQ affinity, radios…) cannot be measured by ABBA; a preset containing them never passes and can only be applied without verification.</source>
+            <translation>Bu Autotune profili yüksek riskli veya kapsamlı değişiklikler içeriyor. Uygulamadan önce açılış ayarlarınıza karşı eşleştirilmiş bir ABBA ölçümü çalıştırılsın mı? Test ayarları geçici olarak değiştirir, özgün değerleri günlüğe yazar ve geri yükler.
 
-Bazı ayarlar (SMT, güç sınırları, TCC ofseti, IRQ yakınlığı, kablosuz radyolar…) ABBA ile ölçülemez; bunları içeren bir profil doğrulamayı hiçbir zaman geçemez ve yalnızca doğrulamasız uygulanabilir.</translation></message><message><source>Verify now</source><translation>Şimdi doğrula</translation></message><message><source>Apply without verification</source><translation>Doğrulamadan uygula</translation></message><message><source>ABBA verification</source><translation>ABBA doğrulaması</translation></message><message><source>Verifying preset using up to four ABBA blocks… This takes several minutes and cannot be cancelled from here.</source><translation>Profil en fazla dört ABBA bloğuyla doğrulanıyor… Bu birkaç dakika sürer ve buradan iptal edilemez.</translation></message><message><source>ABBA verification failed</source><translation>ABBA doğrulaması başarısız</translation></message><message><source>The preset was not applied. Check the results and restore journaled settings if needed:
+Bazı ayarlar (SMT, güç sınırları, TCC ofseti, IRQ yakınlığı, kablosuz radyolar…) ABBA ile ölçülemez; bunları içeren bir profil doğrulamayı hiçbir zaman geçemez ve yalnızca doğrulamasız uygulanabilir.</translation>
+        </message>
+        <message>
+            <source>Verify now</source>
+            <translation>Şimdi doğrula</translation>
+        </message>
+        <message>
+            <source>Apply without verification</source>
+            <translation>Doğrulamadan uygula</translation>
+        </message>
+        <message>
+            <source>ABBA verification</source>
+            <translation>ABBA doğrulaması</translation>
+        </message>
+        <message>
+            <source>Verifying preset using up to four ABBA blocks… This takes several minutes and cannot be cancelled from here.</source>
+            <translation>Profil en fazla dört ABBA bloğuyla doğrulanıyor… Bu birkaç dakika sürer ve buradan iptal edilemez.</translation>
+        </message>
+        <message>
+            <source>ABBA verification failed</source>
+            <translation>ABBA doğrulaması başarısız</translation>
+        </message>
+        <message>
+            <source>The preset was not applied. Check the results and restore journaled settings if needed:
 sudo centurion-calibrate --restore
 
-%1</source><translation>Profil uygulanmadı. Sonuçları kontrol edin ve gerekirse günlüğe yazılan ayarları geri yükleyin:
+%1</source>
+            <translation>Profil uygulanmadı. Sonuçları kontrol edin ve gerekirse günlüğe yazılan ayarları geri yükleyin:
 sudo centurion-calibrate --restore
 
-%1</translation></message><message><source>ABBA verification passed</source><translation>ABBA doğrulaması başarılı</translation></message><message><source>At least three paired ABBA blocks showed a positive, corrected confidence interval. Only the verified preset values will be applied.</source><translation>En az üç eşleştirilmiş ABBA bloğu pozitif, düzeltilmiş bir güven aralığı gösterdi. Yalnızca doğrulanan profil değerleri uygulanacak.</translation></message><message><source>Failed to start pkexec. Nothing has been applied: %1</source><translation>pkexec başlatılamadı. Hiçbir şey uygulanmadı: %1</translation></message><message><source>High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying.</source><translation>Yüksek etkili öneri: uygulamadan önce adlandırılmış bir profil kaydedin ve eşleştirilmiş ABBA ölçümleriyle doğrulayın.</translation></message><message><source>Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains.</source><translation>Kanıt sınırlı veya belirsiz: tahmin edilen kazançlara güvenmeden önce ek kalibrasyon ya da eşleşen oyun A/B oturumları çalıştırın.</translation></message><message><source>Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement.</source><translation>Seçilen her ayarı gözden geçirin; kalibre edilmiş tahminler gerçek iş yükünde iyileşmenin kanıtı değil, öngörüdür.</translation></message><message><source>Nothing to apply: every decided setting is live already.</source><translation>Uygulanacak bir şey yok: karar verilen her ayar zaten etkin.</translation></message><message><source>Autotune · trade-offs computed; the table was left as it was.</source><translation>Autotune · ödünleşimler hesaplandı; tablo olduğu gibi bırakıldı.</translation></message><message><location filename="../src/optimizetab.cpp" line="2522"/><source>Calibration Confidence</source><translation>Kalibrasyon Güven Düzeyi</translation></message></context>
+%1</translation>
+        </message>
+        <message>
+            <source>ABBA verification passed</source>
+            <translation>ABBA doğrulaması başarılı</translation>
+        </message>
+        <message>
+            <source>At least three paired ABBA blocks showed a positive, corrected confidence interval. Only the verified preset values will be applied.</source>
+            <translation>En az üç eşleştirilmiş ABBA bloğu pozitif, düzeltilmiş bir güven aralığı gösterdi. Yalnızca doğrulanan profil değerleri uygulanacak.</translation>
+        </message>
+        <message>
+            <source>Failed to start pkexec. Nothing has been applied: %1</source>
+            <translation>pkexec başlatılamadı. Hiçbir şey uygulanmadı: %1</translation>
+        </message>
+        <message>
+            <source>High-impact suggestion: save a named preset and validate with paired ABBA measurements before applying.</source>
+            <translation>Yüksek etkili öneri: uygulamadan önce adlandırılmış bir profil kaydedin ve eşleştirilmiş ABBA ölçümleriyle doğrulayın.</translation>
+        </message>
+        <message>
+            <source>Limited or uncertain evidence: run additional calibration or matched game A/B sessions before relying on predicted gains.</source>
+            <translation>Kanıt sınırlı veya belirsiz: tahmin edilen kazançlara güvenmeden önce ek kalibrasyon ya da eşleşen oyun A/B oturumları çalıştırın.</translation>
+        </message>
+        <message>
+            <source>Review every selected setting; calibrated estimates are predictions, not proof of a real-workload improvement.</source>
+            <translation>Seçilen her ayarı gözden geçirin; kalibre edilmiş tahminler gerçek iş yükünde iyileşmenin kanıtı değil, öngörüdür.</translation>
+        </message>
+        <message>
+            <source>Nothing to apply: every decided setting is live already.</source>
+            <translation>Uygulanacak bir şey yok: karar verilen her ayar zaten etkin.</translation>
+        </message>
+        <message>
+            <source>Autotune · trade-offs computed; the table was left as it was.</source>
+            <translation>Autotune · ödünleşimler hesaplandı; tablo olduğu gibi bırakıldı.</translation>
+        </message>
+        <message>
+            <location filename="../src/optimizetab.cpp" line="2522"/>
+            <source>Calibration Confidence</source>
+            <translation>Kalibrasyon Güven Düzeyi</translation>
+        </message>
+        <message>
+            <source>Configured weight relative to its allowed maximum; not a measured performance effect.</source>
+            <translation>Ayarlanan ağırlığın izin verilen maksimuma oranı; ölçülmüş performans etkisi değildir.</translation>
+        </message>
+        <message>
+            <source>Summary &amp; evidence</source>
+            <translation>Özet ve Kanıtlar</translation>
+        </message>
+        <message>
+            <source>Explore is a read-only report. Values below come from this result, not the editable optimization table. Use these weights to run a new Autotune before saving or applying.</source>
+            <translation>Explore salt okunur bir rapordur. Değerler düzenlenebilir optimizasyon tablosundan değil, bu sonuçtan gelir. Kaydetmeden veya uygulamadan önce bu ağırlıklarla yeni bir Autotune çalıştırın.</translation>
+        </message>
+        <message>
+            <source>Recommendations</source>
+            <translation>Öneriler</translation>
+        </message>
+        <message>
+            <source>Search settings, sources and rationale…</source>
+            <translation>Ayar, kaynak ve gerekçe ara…</translation>
+        </message>
+        <message>
+            <source> (live unverified)</source>
+            <translation> (canlı değer doğrulanmadı)</translation>
+        </message>
+        <message>
+            <source>Changes or unverified</source>
+            <translation>Farklı veya doğrulanmamış</translation>
+        </message>
+        <message>
+            <source>%1 / %2</source>
+            <translation>%1 / %2</translation>
+        </message>
+        <message>
+            <source>Select a recommendation to inspect its rationale and candidate scores.</source>
+            <translation>Gerekçeyi ve aday puanlarını incelemek için bir öneri seçin.</translation>
+        </message>
+        <message>
+            <source>Recommendation details</source>
+            <translation>Öneri ayrıntıları</translation>
+        </message>
+        <message>
+            <source>Predictions &amp; trade-offs</source>
+            <translation>Tahminler ve Ödünleşimler</translation>
+        </message>
+        <message>
+            <source>Model estimates and uncertainty are not measured benchmark gains. Missing predictions mean unavailable evidence, not zero effect.</source>
+            <translation>Model tahminleri ve belirsizlikleri ölçülmüş benchmark kazançları değildir. Eksik tahminler sıfır etkiyi değil, kanıt bulunmadığını ifade eder.</translation>
+        </message>
+        <message>
+            <source>Explore only: %1 proposed values; %2 displayed rows differ or have unverified live values. The editor was not changed.%3</source>
+            <translation>Yalnızca Explore: %1 önerilen değer; gösterilen %2 satır farklı veya canlı değerleri doğrulanmamış. Düzenleyici değiştirilmedi.%3</translation>
+        </message>
+        <message>
+            <source>%1 proposed values; %2 displayed rows differ or have unverified live values. Nothing has been written to hardware: review selections in the tab, then Apply checked.%3</source>
+            <translation>%1 önerilen değer; gösterilen %2 satır farklı veya canlı değerleri doğrulanmamış. Donanıma yazılmadı: sekmedeki seçimleri inceleyin, ardından işaretlileri uygulayın.%3</translation>
+        </message>
+        <message>
+            <source>
+Not offered on this machine/kernel: </source>
+            <translation>
+Bu donanımda/çekirdekte sunulmayanlar: </translation>
+        </message>
+        <message>
+            <source>Save as preset…</source>
+            <translation>Preset olarak kaydet…</translation>
+        </message>
+        <message>
+            <source>Save + ★ use for games</source>
+            <translation>Kaydet + ★ oyunlarda kullan</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>Kapat</translation>
+        </message>
+        <message>
+            <source>Frametime Analysis…</source>
+            <translation>Kare Süresi Analizi…</translation>
+        </message>
+        <message>
+            <source>Open frametime log</source>
+            <translation>Kare süresi günlüğünü aç</translation>
+        </message>
+        <message>
+            <source>Frametime logs (*.csv *.txt);;All files (*)</source>
+            <translation>Kare süresi günlükleri (*.csv *.txt);;Tüm dosyalar (*)</translation>
+        </message>
+        <message>
+            <source>Frametime Analysis</source>
+            <translation>Kare Süresi Analizi</translation>
+        </message>
+        <message>
+            <source>Log unavailable or larger than 16 MiB.</source>
+            <translation>Günlüğe erişilemiyor veya boyutu 16 MiB sınırını aşıyor.</translation>
+        </message>
+        <message>
+            <source>No valid samples. Use FLM interval_ns, MangoHud frametime, or one millisecond value per line.</source>
+            <translation>Geçerli örnek yok. FLM interval_ns, MangoHud frametime veya satır başına bir milisaniye değeri kullanın.</translation>
+        </message>
+        <message>
+            <source>%1 accepted samples · %2 rejected · %3 FPS (1000 / mean ms)
+Mean %4 ms · P50 %5 ms · P95 %6 ms · P99 %7 ms · Max %8 ms</source>
+            <translation>%1 kabul edilen örnek · %2 reddedilen · %3 FPS (1000 / ortalama ms)
+Ortalama %4 ms · P50 %5 ms · P95 %6 ms · P99 %7 ms · Maks %8 ms</translation>
+        </message>
+        <message>
+            <source>All valid samples are included in statistics. The chart retains bucket minima and maxima. Sample order is not elapsed time. No calibration data is written.</source>
+            <translation>İstatistikler tüm geçerli örnekleri içerir. Grafik grupların minimum ve maksimum değerlerini korur. Örnek sırası geçen süre değildir. Kalibrasyon verisi yazılmaz.</translation>
+        </message>
+        <message>
+            <source>Sample %1</source>
+            <translation>Örnek %1</translation>
+        </message>
+    </context>
     <context>
         <name>RyzenTab</name>
+        <message>
+            <source>Compare…</source>
+            <translation>Karşılaştır…</translation>
+        </message>
         <message>
             <location filename="../src/ryzentab.cpp" line="570"/>
             <source>ACTIVITY LOG  ·  Diagnostics</source>
             <translation>ETKİNLİK GÜNLÜĞÜ  ·  Tanılama</translation>
+        </message>
+        <message>
+            <source>Boot default</source>
+            <translation>Açılış varsayılanı</translation>
+        </message>
+        <message>
+            <source>Saved for boot</source>
+            <translation>Açılışta uygulanacak</translation>
+        </message>
+        <message>
+            <source>State</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>All settings</source>
+            <translation>Tüm ayarlar</translation>
+        </message>
+        <message>
+            <source>Selected</source>
+            <translation>Seçili</translation>
+        </message>
+        <message>
+            <source>Edited</source>
+            <translation>Düzenlendi</translation>
+        </message>
+        <message>
+            <source>Boot differs</source>
+            <translation>Açılış ayarından farklı</translation>
+        </message>
+        <message>
+            <source>Unavailable / unverified</source>
+            <translation>Kullanılamıyor / doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Display filter only. Hidden checked rows remain selected for Apply and Save.</source>
+            <translation>Yalnızca görünüm filtresi. Gizli işaretli satırlar Uygula ve Kaydet işlemleri için seçili kalır.</translation>
+        </message>
+        <message>
+            <source>Setting filter</source>
+            <translation>Ayar filtresi</translation>
+        </message>
+        <message>
+            <source>Filtering does not change selection.</source>
+            <translation>Filtreleme seçimi değiştirmez.</translation>
+        </message>
+        <message>
+            <source>Boot guard snapshot, not a factory default or a restore-original value.</source>
+            <translation>Açılış korumasının anlık görüntüsü; fabrika varsayılanı veya geri yükleme için saklanan özgün değer değildir.</translation>
+        </message>
+        <message>
+            <source>Saved configuration only; does not prove the boot service ran.</source>
+            <translation>Yalnızca kaydedilmiş yapılandırma; açılış servisinin çalıştığını kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Stale readback</source>
+            <translation>Güncel olmayan okuma</translation>
+        </message>
+        <message>
+            <source>Unavailable</source>
+            <translation>Kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Cached readback</source>
+            <translation>Önbellekteki okuma</translation>
+        </message>
+        <message>
+            <source>Unreadable</source>
+            <translation>Okunamıyor</translation>
+        </message>
+        <message>
+            <source>Boot matches</source>
+            <translation>Açılış ayarıyla eşleşiyor</translation>
+        </message>
+        <message>
+            <source>Boot unverified</source>
+            <translation>Açılış ayarı doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Covered by %1</source>
+            <translation>%1 tarafından kapsanıyor</translation>
+        </message>
+        <message>
+            <source>Unknown / not saved</source>
+            <translation>Bilinmiyor / kaydedilmedi</translation>
+        </message>
+        <message>
+            <source>%1: removed from boot preset</source>
+            <translation>%1: açılış profilinden kaldırılacak</translation>
+        </message>
+        <message>
+            <source>Boot preset was not cleared.</source>
+            <translation>Açılış profili temizlenemedi.</translation>
+        </message>
+        <message>
+            <source>Apply Preview</source>
+            <translation>Uygulama Önizlemesi</translation>
+        </message>
+        <message>
+            <source>Apply %1 selected setting(s) to the running system? This does not save a boot preset.</source>
+            <translation>Seçili %1 ayar çalışan sisteme uygulansın mı? Bu işlem açılış profili kaydetmez.</translation>
+        </message>
+        <message>
+            <source>
+
+These changes can cost stability, heat or idle power:
+</source>
+            <translation>
+
+Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç tüketimini artırabilir:
+</translation>
+        </message>
+        <message>
+            <source>Some unchecked drafts are no longer available: %1</source>
+            <translation>İşaretlenmemiş bazı taslaklar artık kullanılamıyor: %1</translation>
+        </message>
+        <message>
+            <source>Apply at boot</source>
+            <translation>Açılışta uygula</translation>
         </message>
     </context>
     <context>
@@ -7724,6 +9308,18 @@ sudo centurion-calibrate --restore
             <location filename="../src/smartpage.cpp" line="236"/>
             <source>%1 new media error(s) in the last %2 days: back up and run a long self-test (smartctl -t long).</source>
             <translation>Son %2 günde %1 yeni ortam hatası: yedek alın ve uzun bir öz test çalıştırın (smartctl -t long).</translation>
+        </message>
+        <message>
+            <source> · Displaying previous readings from %1</source>
+            <translation> · %1 tarihli önceki ölçümler gösteriliyor</translation>
+        </message>
+        <message>
+            <source>Check failed: %1</source>
+            <translation>Kontrol başarısız: %1</translation>
+        </message>
+        <message>
+            <source>No disks found.</source>
+            <translation>Disk bulunamadı.</translation>
         </message>
     </context>
     <context>
@@ -8805,105 +10401,1504 @@ sudo centurion-calibrate --restore
             <source>On a hybrid Intel CPU this parks the E-cores instead (the P-cores hold cpu0 and can never be parked): the game then only ever shares the ring with P-cores - a test tool for titles with bad hybrid scheduling, not a daily setting. Takes an entire CCD fully offline (every CPU in it): no scheduling, no IRQs, no cross-CCD cache-coherency traffic can reach it at all. The most deterministic possible setup for an X3D chip - the game gets sole, uncontested use of one die's cache and cores with zero interference from the other die under any circumstance - at the obvious cost of losing that die's cores entirely until restored. The Competitive preset parks the frequency CCD as its most aggressive step; only reach for this if affinity plus workqueue/IRQ steering (which achieve most of the isolation benefit without losing any cores) is not enough for what you are chasing. cpu0's CCD can never be parked (the kernel needs cpu0 online), so on a 2-CCD chip you can only ever park 'the other one'. While any CPU is offline (park or SMT off) nvidia-powerd is stopped and restarted afterwards: it cannot handle hot-unplugged CPUs and on Blackwell laptops that ends in a GSP hang (Xid 79/119 -&gt; 154, reboot needed). Dynamic Boost (+25 W GPU) is therefore off while parked. Game mode (centurion-gamemode PRE/RUN/WRAP) never takes the CCD offline: Wine/Proton count only online CPUs and map them 1:1 to CPU numbers, so the hole a parked CCD leaves (0-7,16-23) breaks thread pinning and some games do not start. There the CCD is emptied instead - the game gets the other CCD as a cgroup v2 cpuset partition (everything else is moved off it; needs the unified cgroup hierarchy, OpenRC rc_cgroup_mode="unified", otherwise the game is only pinned), IRQs and unbound kernel work are moved onto the parked CCD, and WINE_CPU_TOPOLOGY maps the game's CPUs - which isolates the game just as well.</source>
             <translation>Hibrit Intel CPU'da bunun yerine E çekirdeklerini park eder (P çekirdekleri cpu0'ı barındırır ve asla park edilemez): oyun yalnızca P çekirdekleriyle ring'i paylaşır. Kötü hibrit zamanlamalı oyunları test etmek içindir, günlük kullanım ayarı değildir. Bütün CCD'yi tamamen çevrimdışı yapar (içindeki her CPU): zamanlama, IRQ veya CCD'ler arası cache tutarlılığı trafiği ona ulaşamaz. X3D için en deterministik kurulumdur: oyun diğer yongadan hiçbir koşulda etkilenmeden tek CCD'nin cache ve çekirdeklerini tek başına kullanır. Açık bedeli, geri yüklenene kadar o CCD'nin tüm çekirdeklerinin kaybıdır. Competitive profili en agresif adım olarak frekans CCD'sini park eder; CPU affinity ile workqueue/IRQ yönlendirmesi (çekirdek kaybetmeden yalıtımın büyük kısmını sağlar) yetmiyorsa bunu kullanın. cpu0'ın CCD'si hiçbir zaman park edilemez (çekirdek cpu0'ı çevrimiçi ister); iki CCD'li işlemcide yalnızca 'öteki' CCD park edilebilir. Herhangi bir CPU çevrimdışıyken (park veya SMT kapalı) nvidia-powerd durdurulur ve sonrasında yeniden başlatılır: hot-unplug edilmiş CPU'ları yönetemez; Blackwell dizüstülerde GSP kilitlenmesine yol açabilir (Xid 79/119 -&gt; 154, yeniden başlatma gerekir). Dolayısıyla park sırasında Dynamic Boost (+25 W GPU) kapalıdır. Oyun modu (centurion-gamemode PRE/RUN/WRAP) CCD'yi asla fiziksel olarak çevrimdışı yapmaz: Wine/Proton yalnızca çevrimiçi CPU'ları sayıp CPU numaralarına 1:1 eşler; park edilmiş CCD'nin bıraktığı boşluk (0-7,16-23) iş parçacığı sabitlemesini bozar, bazı oyunlar hiç açılmaz. Bunun yerine CCD boşaltılır: oyun diğer CCD'yi cgroup v2 cpuset bölümü olarak kullanır (diğer her şey o CCD'den taşınır; birleşik cgroup hiyerarşisi gerekir, OpenRC rc_cgroup_mode="unified"; yoksa oyun yalnızca sabitlenir). IRQ'lar ve bağımsız çekirdek workqueue işleri park edilen CCD'ye taşınır; WINE_CPU_TOPOLOGY oyunun CPU eşlemesini düzenler. Böylece oyun benzer ölçüde yalıtılır.</translation>
         </message>
-    
-<message><source>Per-CPU resume latency QoS only on CCD0. 0 is unrestricted; nonzero constrains deepest allowable idle state. When these CCD rows are used, do not also apply the global wake latency knob.</source><translation>Yalnızca CCD0 içindeki CPU çekirdeklerine uygulanan uyanma gecikmesi QoS sınırı. 0 sınırsızdır; sıfırdan büyük değerler çekirdeğin girebileceği derin C-state durumlarını kısıtlar. Daha düşük uyanma gecikmesi karşılığında boşta güç tüketimi ve ısı artabilir, Boost payı azalabilir. Global CPU uyanma gecikmesi ayarıyla aynı anda uygulamayın.</translation></message>
-<message><source>Per-CPU resume latency QoS only on CCD1. A tight limit saves wake-up time at the cost of idle power/boost headroom. Requires a real second CCD.</source><translation>Yalnızca CCD1 içindeki CPU çekirdeklerine uygulanan uyanma gecikmesi QoS sınırı. 0 sınırsızdır; sıfırdan büyük değerler çekirdeğin girebileceği derin C-state durumlarını kısıtlar. Daha düşük uyanma gecikmesi karşılığında boşta güç tüketimi ve ısı artabilir, Boost payı azalabilir. Global CPU uyanma gecikmesi ayarıyla aynı anda uygulamayın.</translation></message>
-<message><source>Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source><translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. F2FS G/Ç istatistiklerini açar. Depolama gecikmesi ve erişim davranışını incelemek için yararlıdır; sayaçların çalıştırılması küçük bir ek yük doğurabilir. Başka bir genel denetim ayarıyla çakışmadığından emin olun.</translation></message>
-<message><source>F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source><translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. Boşta çalışan arka plan çöp toplama (GC) modunu belirler. Kabul edilen modlar çekirdek sürümüne göre değişebilir; yanlış seçenek yazma büyütmesini ve depolama performansını olumsuz etkileyebilir. Ölçüm yapmadan değiştirmeyin.</translation></message>
-<message><source>Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source><translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. Arka plan çöp toplama işlemleri arasındaki asgari bekleme süresini milisaniye cinsinden ayarlar. Yalnızca çekirdeğin bu sysfs kontrolünü sunduğu sistemlerde görünür; gecikme ve yazma performansını birlikte değerlendirin.</translation></message>
-<message><source>Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.</source><translation>Çalışan zram aygıtı 1 için kullanılabilecek fiziksel RAM bütçesini bayt cinsinden sınırlar. 0 bellek sınırı yok demektir. Bu değer zram sanal disk boyutu değildir; etkin swap aygıtının sıkıştırma algoritmasını değiştirmez. Çok düşük bir sınır bellek baskısında swap yazmalarının başarısız olmasına yol açabilir.</translation></message>
-<message><source>Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source><translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. F2FS G/Ç istatistiklerini açar. Depolama gecikmesi ve erişim davranışını incelemek için yararlıdır; sayaçların çalıştırılması küçük bir ek yük doğurabilir. Başka bir genel denetim ayarıyla çakışmadığından emin olun.</translation></message>
-<message><source>F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source><translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. Boşta çalışan arka plan çöp toplama (GC) modunu belirler. Kabul edilen modlar çekirdek sürümüne göre değişebilir; yanlış seçenek yazma büyütmesini ve depolama performansını olumsuz etkileyebilir. Ölçüm yapmadan değiştirmeyin.</translation></message>
-<message><source>Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source><translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. Arka plan çöp toplama işlemleri arasındaki asgari bekleme süresini milisaniye cinsinden ayarlar. Yalnızca çekirdeğin bu sysfs kontrolünü sunduğu sistemlerde görünür; gecikme ve yazma performansını birlikte değerlendirin.</translation></message>
-<message><source>Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.</source><translation>Çalışan zram aygıtı 2 için kullanılabilecek fiziksel RAM bütçesini bayt cinsinden sınırlar. 0 bellek sınırı yok demektir. Bu değer zram sanal disk boyutu değildir; etkin swap aygıtının sıkıştırma algoritmasını değiştirmez. Çok düşük bir sınır bellek baskısında swap yazmalarının başarısız olmasına yol açabilir.</translation></message>
-<message><source>Only interrupts associated with NVMe PCI controllers. Place on the non-game CCD; managed MSI-X interrupts can reject changes. irqbalance must not fight a pinned value.</source><translation>Yalnızca NVMe PCI denetleyicilerine bağlı MSI/MSI-X kesmelerinin CPU yakınlığını ayarlar. Oyun dışı CCD tercih edilebilir. Çekirdeğin yönettiği bazı MSI-X kesmeleri bu değişikliği reddedebilir. irqbalance yeniden yazmayı önlemek için durdurulur ve geri alma işleminde durumu denetlenir.</translation></message>
-<message><source>Only interrupts of physical PCI network controllers. Best effort; apply separately from the global IRQ setting.</source><translation>Yalnızca fiziksel PCI ağ denetleyicilerine ait kesmelerin CPU yakınlığını değiştirir. Global IRQ ayarından bağımsız olarak uygulanır. Çok kuyruklu aygıtlar veya çekirdeğin yönettiği IRQ hatları değişikliği reddedebilir; sonuçları oyun gecikmesi ve ağ performansıyla ölçün.</translation></message>
-<message><source>Only NVIDIA display-controller MSI interrupts, not all PCI devices in the GPU tree. May be kernel-managed; do not change for a GPU experiencing Xid errors.</source><translation>Yalnızca NVIDIA görüntü denetleyicisine ait MSI kesmelerine uygulanır; GPU ile aynı PCI ağacındaki bütün aygıtları kapsamaz. Çekirdeğin yönettiği kesmeler değişikliği reddedebilir. Xid kararlılık hataları görülen ekran kartlarında bu ayarı değiştirmeyin.</translation></message>
-<message><source>CPU mask for each physical NIC receive queue. Disabled by default on many multi-queue NICs; direct RPS to a separate CCD only if IRQ placement warrants it. RPS uses a hex CPU mask.</source><translation>Fiziksel ağ kartının her alma (RX) kuyruğu için CPU maskesini ayarlar. Çok kuyruklu kartlarda RPS çoğu kez kapalıdır; IRQ dağıtımını dikkate alarak ağ işlerini ayrı CCD üzerinde tutmak mümkün olabilir. Maske onaltılık sayı olarak sysfs üzerinden yazılır.</translation></message>
-<message><source>CPU mask for each physical NIC transmit queue. CCD-local completion work can help with busy network workloads; requires kernel queue attribute.</source><translation>Fiziksel ağ kartının her gönderme (TX) kuyruğu için CPU maskesini ayarlar. Yüksek ağ trafiğinde kuyruk yerelliği ve çekirdekler arası çalışma dağılımını etkileyebilir. Yalnızca çekirdeğin ilgili kuyruk dosyasını sunduğu arayüzlerde geçerlidir.</translation></message>
-<message><source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source><translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation></message>
-<message><source>Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.</source><translation>Bu SSD denetleyicisine özgü NVMe APST güç durumu geçişleri için gecikme toleransı sınırıdır. Genel APST satırının bu disk üzerindeki etkisini değiştirir. 0, çalışmayan güç durumlarını devre dışı bırakır; boşta güç tüketimi ve SSD sıcaklığı artabilir.</translation></message>
-<message><source>Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.</source><translation>Bu SSD denetleyicisine özgü NVMe APST güç durumu geçişleri için gecikme toleransı sınırıdır. Genel APST satırının bu disk üzerindeki etkisini değiştirir. 0, çalışmayan güç durumlarını devre dışı bırakır; boşta güç tüketimi ve SSD sıcaklığı artabilir.</translation></message>
-</context>
-<context><name>OptimizationLabels</name><message><source>amd-pstate mode</source><translation>amd-pstate modu</translation></message><message><source>intel_pstate mode</source><translation>intel_pstate modu</translation></message><message><source>Dynamic EPP (amd-pstate)</source><translation>Dinamik EPP (amd-pstate)</translation></message><message><source>Scaling governor</source><translation>Frekans yöneticisi</translation></message><message><source>Energy-performance preference</source><translation>Enerji-performans tercihi</translation></message><message><source>amd-pstate epp_boost</source><translation>amd-pstate epp_boost</translation></message><message><source>Core performance boost</source><translation>Çekirdek performans artırımı (Boost)</translation></message><message><source>Minimum frequency</source><translation>En düşük frekans</translation></message><message><source>Floor frequency (power-limit throttle target)</source><translation>Alt frekans sınırı (güç limiti nedeniyle kısılma hedefi)</translation></message><message><source>Governor · CCD0</source><translation>Frekans yöneticisi · CCD0</translation></message><message><source>Governor · CCD1</source><translation>Frekans yöneticisi · CCD1</translation></message><message><source>EPP · CCD0</source><translation>EPP · CCD0</translation></message><message><source>EPP · CCD1</source><translation>EPP · CCD1</translation></message><message><source>Boost · CCD0</source><translation>Boost · CCD0</translation></message><message><source>Boost · CCD1</source><translation>Boost · CCD1</translation></message><message><source>Max frequency · CCD0 (kHz)</source><translation>En yüksek frekans · CCD0 (kHz)</translation></message><message><source>Max frequency · CCD1 (kHz)</source><translation>En yüksek frekans · CCD1 (kHz)</translation></message><message><source>HWP dynamic boost</source><translation>HWP dinamik Boost</translation></message><message><source>Max performance (%)</source><translation>En yüksek performans (%)</translation></message><message><source>Min performance (%)</source><translation>En düşük performans (%)</translation></message><message><source>Energy-performance bias (EPB)</source><translation>Enerji-performans önceliği (EPB)</translation></message><message><source>EPP · P-cores</source><translation>EPP · P çekirdekleri</translation></message><message><source>EPP · E-cores</source><translation>EPP · E çekirdekleri</translation></message><message><source>Max frequency · P-cores (kHz)</source><translation>En yüksek frekans · P çekirdekleri (kHz)</translation></message><message><source>Max frequency · E-cores (kHz)</source><translation>En yüksek frekans · E çekirdekleri (kHz)</translation></message><message><source>Uncore max frequency (kHz)</source><translation>Uncore en yüksek frekans (kHz)</translation></message><message><source>Uncore min frequency (kHz)</source><translation>Uncore en düşük frekans (kHz)</translation></message><message><source>RAPL PL1 · long term (W)</source><translation>RAPL PL1 · uzun süreli (W)</translation></message><message><source>RAPL PL2 · short term (W)</source><translation>RAPL PL2 · kısa süreli (W)</translation></message><message><source>TCC offset (°C below TjMax)</source><translation>TCC ofseti (TjMax altındaki °C)</translation></message><message><source>3D V-Cache CCD preference</source><translation>3D V-Cache CCD tercihi</translation></message><message><source>cpuidle governor</source><translation>cpuidle yöneticisi</translation></message><message><source>Deepest C-state kept</source><translation>İzin verilen en derin C-state</translation></message><message><source>CPU wake-up latency limit (µs)</source><translation>CPU uyanma gecikmesi sınırı (µs)</translation></message><message><source>schedutil rate limit (µs)</source><translation>schedutil hız sınırlaması (µs)</translation></message><message><source>Clocksource</source><translation>Saat kaynağı (clocksource)</translation></message><message><source>THP enabled</source><translation>THP etkinleştirme</translation></message><message><source>THP shmem</source><translation>THP paylaşılan bellek (shmem)</translation></message><message><source>THP defrag</source><translation>THP bellek birleştirme (defrag)</translation></message><message><source>khugepaged defrag</source><translation>khugepaged bellek birleştirme</translation></message><message><source>mTHP 16 KB anon</source><translation>mTHP 16 KB anonim bellek</translation></message><message><source>mTHP 32 KB anon</source><translation>mTHP 32 KB anonim bellek</translation></message><message><source>mTHP 64 KB anon</source><translation>mTHP 64 KB anonim bellek</translation></message><message><source>mTHP 128 KB anon</source><translation>mTHP 128 KB anonim bellek</translation></message><message><source>mTHP 256 KB anon</source><translation>mTHP 256 KB anonim bellek</translation></message><message><source>mTHP 512 KB anon</source><translation>mTHP 512 KB anonim bellek</translation></message><message><source>mTHP 1 MB anon</source><translation>mTHP 1 MB anonim bellek</translation></message><message><source>khugepaged max_ptes_none</source><translation>khugepaged max_ptes_none</translation></message><message><source>khugepaged pages_to_scan</source><translation>khugepaged pages_to_scan</translation></message><message><source>khugepaged scan_sleep_millisecs</source><translation>khugepaged scan_sleep_millisecs</translation></message><message><source>khugepaged max_ptes_swap</source><translation>khugepaged max_ptes_swap</translation></message><message><source>khugepaged alloc_sleep_millisecs</source><translation>khugepaged alloc_sleep_millisecs</translation></message><message><source>MGLRU enabled mask</source><translation>MGLRU etkinleştirme maskesi</translation></message><message><source>MGLRU min_ttl_ms</source><translation>MGLRU min_ttl_ms</translation></message><message><source>KSM run</source><translation>KSM çalıştırma</translation></message><message><source>KSM scan advisor</source><translation>KSM tarama danışmanı</translation></message><message><source>khugepaged max_ptes_shared</source><translation>khugepaged max_ptes_shared</translation></message><message><source>THP huge zero page</source><translation>THP büyük sıfır sayfası</translation></message><message><source>Compact unevictable pages</source><translation>Taşınamaz bellek sayfalarını sıkıştır</translation></message><message><source>vm.dirtytime_expire_seconds</source><translation>vm.dirtytime_expire_seconds</translation></message><message><source>vm.max_map_count</source><translation>vm.max_map_count</translation></message><message><source>vm.swappiness</source><translation>vm.swappiness</translation></message><message><source>vm.compaction_proactiveness</source><translation>vm.compaction_proactiveness</translation></message><message><source>vm.watermark_boost_factor</source><translation>vm.watermark_boost_factor</translation></message><message><source>vm.watermark_scale_factor</source><translation>vm.watermark_scale_factor</translation></message><message><source>vm.min_free_kbytes</source><translation>vm.min_free_kbytes</translation></message><message><source>vm.zone_reclaim_mode</source><translation>vm.zone_reclaim_mode</translation></message><message><source>vm.page_lock_unfairness</source><translation>vm.page_lock_unfairness</translation></message><message><source>vm.stat_interval</source><translation>vm.stat_interval</translation></message><message><source>vm.page-cluster</source><translation>vm.page-cluster</translation></message><message><source>vm.dirty_background_ratio (%)</source><translation>vm.dirty_background_ratio (%)</translation></message><message><source>vm.dirty_ratio (%)</source><translation>vm.dirty_ratio (%)</translation></message><message><source>vm.dirty_background_bytes</source><translation>vm.dirty_background_bytes</translation></message><message><source>vm.dirty_bytes</source><translation>vm.dirty_bytes</translation></message><message><source>vm.dirty_writeback_centisecs</source><translation>vm.dirty_writeback_centisecs</translation></message><message><source>vm.dirty_expire_centisecs</source><translation>vm.dirty_expire_centisecs</translation></message><message><source>vm.vfs_cache_pressure</source><translation>vm.vfs_cache_pressure</translation></message><message><source>zswap</source><translation>zswap</translation></message><message><source>zswap compressor</source><translation>zswap sıkıştırıcı</translation></message><message><source>zswap max pool (% of RAM)</source><translation>zswap azami havuzu (RAM yüzdesi)</translation></message><message><source>zswap shrinker</source><translation>zswap bellek geri kazanımı (shrinker)</translation></message><message><source>vm.defrag_mode</source><translation>vm.defrag_mode</translation></message><message><source>THP shrink underused</source><translation>Az kullanılan THP sayfalarını küçült</translation></message><message><source>zswap accept threshold (%)</source><translation>zswap kabul eşiği (%)</translation></message><message><source>Per-CPU free page lists (fraction)</source><translation>CPU başına boş sayfa listeleri (oran)</translation></message><message><source>vm.extfrag_threshold</source><translation>vm.extfrag_threshold</translation></message><message><source>sched_ext scheduler</source><translation>sched_ext zamanlayıcısı</translation></message><message><source>split_lock_mitigate</source><translation>split_lock_mitigate</translation></message><message><source>kernel.watchdog</source><translation>kernel.watchdog</translation></message><message><source>NMI watchdog (hard-lockup detector)</source><translation>NMI watchdog (donanım kilitlenmesi algılayıcısı)</translation></message><message><source>kernel.numa_balancing</source><translation>kernel.numa_balancing</translation></message><message><source>kernel.timer_migration</source><translation>kernel.timer_migration</translation></message><message><source>sched_autogroup_enabled</source><translation>sched_autogroup_enabled</translation></message><message><source>sched_cfs_bandwidth_slice_us</source><translation>sched_cfs_bandwidth_slice_us</translation></message><message><source>RT tasks' default boost (uclamp)</source><translation>RT görevleri için varsayılan hızlandırma (uclamp)</translation></message><message><source>Energy Aware Scheduling</source><translation>Enerji duyarlı zamanlama</translation></message><message><source>sched_schedstats</source><translation>sched_schedstats</translation></message><message><source>Preferred-core scheduling (ITMT)</source><translation>Tercihli çekirdek zamanlaması (ITMT)</translation></message><message><source>Preemption model (debugfs)</source><translation>Ön alma modeli (debugfs)</translation></message><message><source>EEVDF base slice (debugfs)</source><translation>EEVDF temel zaman dilimi (debugfs)</translation></message><message><source>min_base_slice_ns (debugfs)</source><translation>min_base_slice_ns (debugfs)</translation></message><message><source>migration_cost_ns (debugfs)</source><translation>migration_cost_ns (debugfs)</translation></message><message><source>nr_migrate (debugfs)</source><translation>nr_migrate (debugfs)</translation></message><message><source>cgroup_mode (debugfs, 7.3+)</source><translation>cgroup_mode (debugfs, 7.3+)</translation></message><message><source>Cache-aware scheduling (debugfs, 7.2+)</source><translation>Önbellek duyarlı zamanlama (debugfs, 7.2+)</translation></message><message><source>llc_aggr_tolerance (debugfs, 7.2+)</source><translation>llc_aggr_tolerance (debugfs, 7.2+)</translation></message><message><source>llc_imb_pct (debugfs, 7.2+)</source><translation>llc_imb_pct (debugfs, 7.2+)</translation></message><message><source>llc_overload_pct (debugfs, 7.2+)</source><translation>llc_overload_pct (debugfs, 7.2+)</translation></message><message><source>NEXT_BUDDY (debugfs)</source><translation>NEXT_BUDDY (debugfs)</translation></message><message><source>RUN_TO_PARITY (debugfs)</source><translation>RUN_TO_PARITY (debugfs)</translation></message><message><source>BORE scheduler</source><translation>BORE zamanlayıcısı</translation></message><message><source>BORE burst inheritance</source><translation>BORE burst mirası</translation></message><message><source>BORE smoothness</source><translation>BORE yumuşatma</translation></message><message><source>BORE penalty offset</source><translation>BORE ceza ofseti</translation></message><message><source>BORE penalty scale</source><translation>BORE ceza ölçeği</translation></message><message><source>BORE burst cache lifetime (ns)</source><translation>BORE burst önbellek ömrü (ns)</translation></message><message><source>Project C yield type</source><translation>Project C yield türü</translation></message><message><source>Infinity SMT slice divisor</source><translation>Infinity SMT zaman dilimi böleni</translation></message><message><source>PREEMPT_SHORT (debugfs)</source><translation>PREEMPT_SHORT (debugfs)</translation></message><message><source>DELAY_DEQUEUE (debugfs)</source><translation>DELAY_DEQUEUE (debugfs)</translation></message><message><source>HRTICK (debugfs)</source><translation>HRTICK (debugfs)</translation></message><message><source>SIS_UTIL (debugfs)</source><translation>SIS_UTIL (debugfs)</translation></message><message><source>TTWU_QUEUE (debugfs)</source><translation>TTWU_QUEUE (debugfs)</translation></message><message><source>CACHE_HOT_BUDDY (debugfs)</source><translation>CACHE_HOT_BUDDY (debugfs)</translation></message><message><source>PLACE_LAG (debugfs)</source><translation>PLACE_LAG (debugfs)</translation></message><message><source>PLACE_DEADLINE_INITIAL (debugfs)</source><translation>PLACE_DEADLINE_INITIAL (debugfs)</translation></message><message><source>PLACE_REL_DEADLINE (debugfs)</source><translation>PLACE_REL_DEADLINE (debugfs)</translation></message><message><source>WAKEUP_PREEMPTION (debugfs)</source><translation>WAKEUP_PREEMPTION (debugfs)</translation></message><message><source>PICK_BUDDY (debugfs)</source><translation>PICK_BUDDY (debugfs)</translation></message><message><source>DELAY_ZERO (debugfs)</source><translation>DELAY_ZERO (debugfs)</translation></message><message><source>WA_IDLE (debugfs)</source><translation>WA_IDLE (debugfs)</translation></message><message><source>WA_WEIGHT (debugfs)</source><translation>WA_WEIGHT (debugfs)</translation></message><message><source>WA_BIAS (debugfs)</source><translation>WA_BIAS (debugfs)</translation></message><message><source>UTIL_EST (debugfs)</source><translation>UTIL_EST (debugfs)</translation></message><message><source>ATTACH_AGE_LOAD (debugfs)</source><translation>ATTACH_AGE_LOAD (debugfs)</translation></message><message><source>NONTASK_CAPACITY (debugfs)</source><translation>NONTASK_CAPACITY (debugfs)</translation></message><message><source>LB_MIN (debugfs)</source><translation>LB_MIN (debugfs)</translation></message><message><source>NI_RANDOM (debugfs)</source><translation>NI_RANDOM (debugfs)</translation></message><message><source>NI_RATE (debugfs)</source><translation>NI_RATE (debugfs)</translation></message><message><source>HRTICK_DL (debugfs)</source><translation>HRTICK_DL (debugfs)</translation></message><message><source>PARANOID_AVG (debugfs)</source><translation>PARANOID_AVG (debugfs)</translation></message><message><source>MC imbalance_pct (debugfs)</source><translation>MC imbalance_pct (debugfs)</translation></message>
-<message><source>MC min_interval (ms) (debugfs)</source><translation>MC min_interval (ms) (debugfs)</translation></message>
-<message><source>MC max_interval (ms) (debugfs)</source><translation>MC max_interval (ms) (debugfs)</translation></message>
-<message><source>MC busy_factor (debugfs)</source><translation>MC busy_factor (debugfs)</translation></message>
-<message><source>PKG imbalance_pct (debugfs)</source><translation>PKG imbalance_pct (debugfs)</translation></message>
-<message><source>PKG min_interval (ms) (debugfs)</source><translation>PKG min_interval (ms) (debugfs)</translation></message>
-<message><source>PKG max_interval (ms) (debugfs)</source><translation>PKG max_interval (ms) (debugfs)</translation></message>
-<message><source>PKG busy_factor (debugfs)</source><translation>PKG busy_factor (debugfs)</translation></message>
-<message><source>Unbound workqueue affinity scope</source><translation>Bağımsız workqueue işlemci yakınlığı kapsamı</translation></message><message><source>Unbound workqueue CPUs</source><translation>Bağımsız workqueue CPU'ları</translation></message><message><source>IRQ affinity</source><translation>IRQ işlemci yakınlığı</translation></message><message><source>I/O scheduler</source><translation>G/Ç zamanlayıcısı</translation></message><message><source>Writeback throttling (µs)</source><translation>Writeback hız sınırlaması (µs)</translation></message><message><source>Read-ahead (KiB)</source><translation>Önden okuma (KiB)</translation></message><message><source>rq_affinity</source><translation>rq_affinity</translation></message><message><source>nomerges</source><translation>nomerges</translation></message><message><source>I/O statistics accounting</source><translation>G/Ç istatistiklerini hesaplama</translation></message><message><source>Disk entropy contribution</source><translation>Diskin entropi katkısı</translation></message><message><source>Queue depth (nr_requests)</source><translation>Kuyruk derinliği (nr_requests)</translation></message><message><source>Max request size (KiB)</source><translation>Azami istek boyutu (KiB)</translation></message><message><source>kyber read latency target (ns)</source><translation>kyber okuma gecikmesi hedefi (ns)</translation></message><message><source>kyber write latency target (ns)</source><translation>kyber yazma gecikmesi hedefi (ns)</translation></message><message><source>mq-deadline read deadline (ms)</source><translation>mq-deadline okuma süresi (ms)</translation></message><message><source>mq-deadline write deadline (ms)</source><translation>mq-deadline yazma süresi (ms)</translation></message><message><source>mq-deadline batch size</source><translation>mq-deadline grup boyutu</translation></message><message><source>mq-deadline writes_starved</source><translation>mq-deadline writes_starved</translation></message><message><source>bfq low_latency</source><translation>bfq low_latency</translation></message><message><source>bfq slice_idle (ms)</source><translation>bfq slice_idle (ms)</translation></message><message><source>btrfs async discard IOPS limit</source><translation>btrfs asenkron discard IOPS sınırı</translation></message><message><source>btrfs async discard bandwidth limit (KiB/s)</source><translation>btrfs asenkron discard bant genişliği sınırı (KiB/sn)</translation></message><message><source>btrfs async discard max size (bytes)</source><translation>btrfs asenkron discard azami boyutu (bayt)</translation></message><message><source>TCP congestion control</source><translation>TCP tıkanıklık denetimi</translation></message><message><source>Default queueing discipline</source><translation>Varsayılan paket kuyruklama disiplini</translation></message><message><source>Wi-Fi power save</source><translation>Wi-Fi güç tasarrufu</translation></message><message><source>TCP slow start after idle</source><translation>Boşta kaldıktan sonra TCP slow start</translation></message><message><source>TCP MTU probing</source><translation>TCP MTU araştırması</translation></message><message><source>Receive backlog (packets)</source><translation>Alım birikim kuyruğu (paket)</translation></message><message><source>TCP not-sent low watermark (bytes)</source><translation>TCP gönderilmemiş veri alt eşiği (bayt)</translation></message><message><source>TCP Fast Open</source><translation>TCP Fast Open</translation></message><message><source>GRO flush timeout (ns)</source><translation>GRO boşaltma zaman aşımı (ns)</translation></message><message><source>NAPI deferred interrupts</source><translation>NAPI ertelenmiş kesmeleri</translation></message><message><source>Socket busy poll (µs)</source><translation>Soket busy poll (µs)</translation></message><message><source>Socket busy read (µs)</source><translation>Soket busy read (µs)</translation></message><message><source>Threaded NAPI</source><translation>İş parçacıklı NAPI</translation></message><message><source>PCIe ASPM policy</source><translation>PCIe ASPM ilkesi</translation></message><message><source>PCIe ASPM per link</source><translation>Bağlantı başına PCIe ASPM</translation></message><message><source>Suspend mode (mem_sleep)</source><translation>Askıya alma modu (mem_sleep)</translation></message><message><source>PCI latency timers</source><translation>PCI gecikme zamanlayıcıları</translation></message><message><source>HDA power_save (s)</source><translation>HDA power_save (sn)</translation></message><message><source>HDA power_save_controller</source><translation>HDA power_save_controller</translation></message><message><source>USB autosuspend delay (s)</source><translation>USB otomatik askıya alma gecikmesi (sn)</translation></message><message><source>USB autosuspend delay · connected (ms)</source><translation>USB otomatik askıya alma · bağlı aygıtlar (ms)</translation></message><message><source>Wake-on-LAN (Ethernet)</source><translation>Wake-on-LAN (Ethernet)</translation></message><message><source>Energy-Efficient Ethernet (EEE)</source><translation>Enerji Verimli Ethernet (EEE)</translation></message><message><source>Bluetooth radio</source><translation>Bluetooth radyosu</translation></message><message><source>Wi-Fi radio</source><translation>Wi-Fi radyosu</translation></message><message><source>WWAN (mobile broadband) radio</source><translation>WWAN (mobil geniş bant) radyosu</translation></message><message><source>Panel power savings (amdgpu ABM)</source><translation>Panel güç tasarrufu (amdgpu ABM)</translation></message><message><source>Disk APM level · disk 1</source><translation>Disk APM seviyesi · disk 1</translation></message><message><source>Disk APM level · disk 2</source><translation>Disk APM seviyesi · disk 2</translation></message><message><source>Disk APM level · disk 3</source><translation>Disk APM seviyesi · disk 3</translation></message><message><source>Disk APM level · disk 4</source><translation>Disk APM seviyesi · disk 4</translation></message><message><source>AHCI disk runtime PM timeout (ms)</source><translation>AHCI disk çalışma zamanı güç yönetimi zaman aşımı (ms)</translation></message><message><source>AHCI disk runtime PM</source><translation>AHCI disk çalışma zamanı güç yönetimi</translation></message><message><source>AHCI port runtime PM</source><translation>AHCI bağlantı noktası çalışma zamanı güç yönetimi</translation></message><message><source>PCI runtime PM</source><translation>PCI çalışma zamanı güç yönetimi</translation></message><message><source>USB runtime PM (connected devices)</source><translation>USB çalışma zamanı güç yönetimi (bağlı aygıtlar)</translation></message><message><source>SATA link power (ALPM)</source><translation>SATA bağlantı güç yönetimi (ALPM)</translation></message><message><source>NVMe APST latency tolerance (µs)</source><translation>NVMe APST gecikme toleransı (µs)</translation></message><message><source>iGPU DPM level (amdgpu)</source><translation>iGPU DPM seviyesi (amdgpu)</translation></message><message><source>iGPU max frequency (Intel, MHz)</source><translation>iGPU en yüksek frekansı (Intel, MHz)</translation></message><message><source>iGPU min frequency (Intel, MHz)</source><translation>iGPU en düşük frekansı (Intel, MHz)</translation></message><message><source>iGPU SLPC power profile (i915)</source><translation>iGPU SLPC güç profili (i915)</translation></message><message><source>MCE poll interval (s)</source><translation>MCE yoklama aralığı (sn)</translation></message><message><source>SMT</source><translation>SMT</translation></message><message><source>Park a CCD / E-cores (offline)</source><translation>CCD / E çekirdeklerini park et (çevrimdışı)</translation></message>
-<message><source>Wake latency CCD0 (µs)</source><translation>Uyanma gecikmesi CCD0 (µs)</translation></message>
-<message><source>Wake latency CCD1 (µs)</source><translation>Uyanma gecikmesi CCD1 (µs)</translation></message>
-<message><source>llc epoch_period (debugfs, 7.2+)</source><translation>llc epoch_period (debugfs, 7.2+)</translation></message>
-<message><source>llc epoch_affinity_timeout (debugfs, 7.2+)</source><translation>llc epoch_affinity_timeout (debugfs, 7.2+)</translation></message>
-<message><source>scan_size_mb (debugfs)</source><translation>scan_size_mb (debugfs)</translation></message>
-<message><source>scan_period_min_ms (debugfs)</source><translation>scan_period_min_ms (debugfs)</translation></message>
-<message><source>scan_period_max_ms (debugfs)</source><translation>scan_period_max_ms (debugfs)</translation></message>
-<message><source>scan_delay_ms (debugfs)</source><translation>scan_delay_ms (debugfs)</translation></message>
-<message><source>hot_threshold_ms (debugfs)</source><translation>hot_threshold_ms (debugfs)</translation></message>
-<message><source>rseq slice extension (debugfs)</source><translation>rseq dilim uzatma (debugfs)</translation></message>
-<message><source>sched_rt_runtime_us</source><translation>sched_rt_runtime_us</translation></message>
-<message><source>sched_rr_timeslice_ms</source><translation>sched_rr_timeslice_ms</translation></message>
-<message><source>fault_around_bytes (debugfs)</source><translation>fault_around_bytes (debugfs)</translation></message>
-<message><source>tlb_single_page_flush_ceiling (debugfs, x86)</source><translation>tlb_single_page_flush_ceiling (debugfs, x86)</translation></message>
-<message><source>vm.laptop_mode</source><translation>vm.laptop_mode</translation></message>
-<message><source>vm.oom_kill_allocating_task</source><translation>vm.oom_kill_allocating_task</translation></message>
-<message><source>KSM use_zero_pages</source><translation>KSM use_zero_pages</translation></message>
-<message><source>KSM smart_scan</source><translation>KSM smart_scan</translation></message>
-<message><source>numa_balancing_promote_rate_limit_MBps</source><translation>numa_balancing_promote_rate_limit_MBps</translation></message>
-<message><source>Wi-Fi airtime queue limit (debugfs)</source><translation>Wi-Fi hava süresi kuyruk sınırı (debugfs)</translation></message>
-<message><source>Wi-Fi AQL threshold (debugfs)</source><translation>Wi-Fi AQL eşiği (debugfs)</translation></message>
-<message><source>Wi-Fi threaded NAPI (mt76, debugfs)</source><translation>Wi-Fi iş parçacıklı NAPI (mt76, debugfs)</translation></message>
-<message><source>Wi-Fi runtime power management (mt76, debugfs)</source><translation>Wi-Fi çalışma zamanı güç yönetimi (mt76, debugfs)</translation></message>
-<message><source>Wi-Fi runtime-PM idle timeout (mt76, debugfs)</source><translation>Wi-Fi çalışma zamanı PM boşta süresi (mt76, debugfs)</translation></message>
-<message><source>Wi-Fi deep sleep (mt76, debugfs)</source><translation>Wi-Fi derin uyku (mt76, debugfs)</translation></message>
-<message><source>Bluetooth LE min connection interval (debugfs)</source><translation>Bluetooth LE en küçük bağlantı aralığı (debugfs)</translation></message>
-<message><source>Bluetooth LE max connection interval (debugfs)</source><translation>Bluetooth LE en büyük bağlantı aralığı (debugfs)</translation></message>
-<message><source>Swap VMA readahead</source><translation>Takas VMA ön-okuması</translation></message>
-<message><source>Receive budget per softirq (packets)</source><translation>Softirq başına alma bütçesi (paket)</translation></message>
-<message><source>Receive time budget per softirq (µs)</source><translation>Softirq başına alma süre bütçesi (µs)</translation></message>
-<message><source>NAPI weight (packets per poll)</source><translation>NAPI ağırlığı (yoklama başına paket)</translation></message>
-<message><source>GRO batch before delivery (segments)</source><translation>GRO teslim öncesi toplu iş (segment)</translation></message>
-<message><source>TCP output limit per socket (bytes)</source><translation>Soket başına TCP çıkış sınırı (bayt)</translation></message>
-<message><source>TCP autocorking</source><translation>TCP otomatik birleştirme (autocorking)</translation></message>
-<message><source>TCP pacing rate, slow start (%)</source><translation>TCP pacing oranı, yavaş başlangıç (%)</translation></message>
-<message><source>TCP pacing rate, congestion avoidance (%)</source><translation>TCP pacing oranı, tıkanıklıktan kaçınma (%)</translation></message>
-<message><source>TCP ECN</source><translation>TCP ECN</translation></message>
-<message><source>Socket receive buffer ceiling (bytes)</source><translation>Soket alma tamponu tavanı (bayt)</translation></message>
-<message><source>Socket send buffer ceiling (bytes)</source><translation>Soket gönderme tamponu tavanı (bayt)</translation></message>
-<message><source>F2FS 1 · I/O accounting</source><translation>F2FS 1 · G/Ç istatistikleri</translation></message>
-<message><source>F2FS 1 · Idle GC mode</source><translation>F2FS 1 · Boştayken GC modu</translation></message>
-<message><source>F2FS 1 · Minimum GC sleep (ms)</source><translation>F2FS 1 · En kısa GC bekleme süresi (ms)</translation></message>
-<message><source>zram 1 · RAM limit (bytes)</source><translation>zram 1 · RAM sınırı (bytes)</translation></message>
-<message><source>F2FS 2 · I/O accounting</source><translation>F2FS 2 · G/Ç istatistikleri</translation></message>
-<message><source>F2FS 2 · Idle GC mode</source><translation>F2FS 2 · Boştayken GC modu</translation></message>
-<message><source>F2FS 2 · Minimum GC sleep (ms)</source><translation>F2FS 2 · En kısa GC bekleme süresi (ms)</translation></message>
-<message><source>zram 2 · RAM limit (bytes)</source><translation>zram 2 · RAM sınırı (bytes)</translation></message>
-<message><source>NVMe IRQ CPU affinity</source><translation>NVMe IRQ CPU yakınlığı</translation></message>
-<message><source>Network IRQ CPU affinity</source><translation>Network IRQ CPU yakınlığı</translation></message>
-<message><source>NVIDIA GPU IRQ CPU affinity</source><translation>NVIDIA GPU IRQ CPU yakınlığı</translation></message>
-<message><source>NIC RX steering (RPS)</source><translation>Ağ kartı RX yönlendirmesi (RPS)</translation></message>
-<message><source>NIC TX steering (XPS)</source><translation>Ağ kartı TX yönlendirmesi (XPS)</translation></message>
-<message><source>NVMe 1 · I/O scheduler</source><translation>NVMe 1 · G/Ç zamanlayıcısı</translation></message>
-<message><source>NVMe 1 · Read-ahead (KiB)</source><translation>NVMe 1 · Ön okuma (KiB)</translation></message>
-<message><source>NVMe 1 · Queue depth</source><translation>NVMe 1 · Kuyruk derinliği</translation></message>
-<message><source>NVMe 1 · Completion affinity</source><translation>NVMe 1 · Tamamlama yakınlığı</translation></message>
-<message><source>NVMe 2 · I/O scheduler</source><translation>NVMe 2 · G/Ç zamanlayıcısı</translation></message>
-<message><source>NVMe 2 · Read-ahead (KiB)</source><translation>NVMe 2 · Ön okuma (KiB)</translation></message>
-<message><source>NVMe 2 · Queue depth</source><translation>NVMe 2 · Kuyruk derinliği</translation></message>
-<message><source>NVMe 2 · Completion affinity</source><translation>NVMe 2 · Tamamlama yakınlığı</translation></message>
-<message><source>NVMe 1 · APST latency (µs)</source><translation>NVMe 1 · APST gecikmesi (µs)</translation></message>
-<message><source>NVMe 2 · APST latency (µs)</source><translation>NVMe 2 · APST gecikmesi (µs)</translation></message>
-</context><context><name>OptimizationGroups</name><message><source>CPU</source><translation>CPU</translation></message><message><source>Memory</source><translation>Bellek</translation></message><message><source>Scheduler</source><translation>Zamanlayıcı</translation></message><message><source>Storage</source><translation>Depolama</translation></message><message><source>Network</source><translation>Ağ</translation></message><message><source>Devices</source><translation>Aygıtlar</translation></message><message><source>Power</source><translation>Güç</translation></message><message><source>Stability</source><translation>Kararlılık</translation></message></context><context><name>OptimizationOptions</name><message><source>enabled</source><translation>etkin</translation></message><message><source>disabled</source><translation>devre dışı</translation></message><message><source>on</source><translation>açık</translation></message><message><source>off</source><translation>kapalı</translation></message><message><source>yes</source><translation>evet</translation></message><message><source>no</source><translation>hayır</translation></message><message><source>active</source><translation>etkin</translation></message><message><source>passive</source><translation>pasif</translation></message><message><source>guided</source><translation>yönlendirmeli</translation></message><message><source>performance</source><translation>performans</translation></message><message><source>powersave</source><translation>güç tasarrufu</translation></message><message><source>balance_performance</source><translation>dengeli performans</translation></message><message><source>balance_power</source><translation>dengeli güç tasarrufu</translation></message><message><source>power</source><translation>güç tasarrufu öncelikli</translation></message><message><source>auto</source><translation>otomatik</translation></message><message><source>automatic</source><translation>otomatik</translation></message><message><source>default</source><translation>varsayılan</translation></message><message><source>none</source><translation>yok</translation></message><message><source>all</source><translation>tümü</translation></message><message><source>low</source><translation>düşük</translation></message><message><source>high</source><translation>yüksek</translation></message><message><source>medium</source><translation>orta</translation></message><message><source>full</source><translation>tam</translation></message><message><source>voluntary</source><translation>gönüllü</translation></message><message><source>offline</source><translation>çevrimdışı</translation></message><message><source>online</source><translation>çevrimiçi</translation></message><message><source>force</source><translation>zorla</translation></message><message><source>never</source><translation>asla</translation></message><message><source>always</source><translation>her zaman</translation></message><message><source>madvise</source><translation>uygulama isteğine göre (madvise)</translation></message><message><source>advise</source><translation>isteğe göre (advise)</translation></message><message><source>defer</source><translation>ertele</translation></message><message><source>defer+madvise</source><translation>ertele + madvise</translation></message><message><source>within_size</source><translation>boyut sınırında</translation></message><message><source>cache</source><translation>önbellek (V-Cache)</translation></message><message><source>frequency</source><translation>frekans</translation></message><message><source>balance</source><translation>dengeli</translation></message><message><source>lowest_nonlinear</source><translation>en düşük doğrusal olmayan frekans</translation></message><message><source>cpuinfo_min</source><translation>donanımın en düşük frekansı</translation></message><message><source>schedutil</source><translation>schedutil</translation></message><message><source>ondemand</source><translation>talep üzerine</translation></message><message><source>conservative</source><translation>tutucu</translation></message><message><source>userspace</source><translation>kullanıcı alanı</translation></message><message><source>hybrid</source><translation>hibrit</translation></message><message><source>performance-leaning</source><translation>performans öncelikli</translation></message><message><source>power-leaning</source><translation>tasarruf öncelikli</translation></message><message><source>unified</source><translation>birleşik</translation></message><message><source>legacy</source><translation>eski düzen</translation></message><message><source>dynamic</source><translation>dinamik</translation></message><message><source>aggressive</source><translation>agresif</translation></message><message><source>laptop</source><translation>dizüstü</translation></message><message><source>desktop</source><translation>masaüstü</translation></message><message><source>root only</source><translation>yalnızca root</translation></message><message><source>n/a</source><translation>kullanılamıyor</translation></message><message><source>skipped</source><translation>atlandı</translation></message><message><source>unchanged</source><translation>değişmedi</translation></message><message><source>found</source><translation>bulundu</translation></message><message><source>missing</source><translation>bulunamadı</translation></message><message><source>reset</source><translation>sıfırla</translation></message><message><source>not set</source><translation>ayarlanmadı</translation></message></context>
+        <message>
+            <source>Per-CPU resume latency QoS only on CCD0. 0 is unrestricted; nonzero constrains deepest allowable idle state. When these CCD rows are used, do not also apply the global wake latency knob.</source>
+            <translation>Yalnızca CCD0 içindeki CPU çekirdeklerine uygulanan uyanma gecikmesi QoS sınırı. 0 sınırsızdır; sıfırdan büyük değerler çekirdeğin girebileceği derin C-state durumlarını kısıtlar. Daha düşük uyanma gecikmesi karşılığında boşta güç tüketimi ve ısı artabilir, Boost payı azalabilir. Global CPU uyanma gecikmesi ayarıyla aynı anda uygulamayın.</translation>
+        </message>
+        <message>
+            <source>Per-CPU resume latency QoS only on CCD1. A tight limit saves wake-up time at the cost of idle power/boost headroom. Requires a real second CCD.</source>
+            <translation>Yalnızca CCD1 içindeki CPU çekirdeklerine uygulanan uyanma gecikmesi QoS sınırı. 0 sınırsızdır; sıfırdan büyük değerler çekirdeğin girebileceği derin C-state durumlarını kısıtlar. Daha düşük uyanma gecikmesi karşılığında boşta güç tüketimi ve ısı artabilir, Boost payı azalabilir. Global CPU uyanma gecikmesi ayarıyla aynı anda uygulamayın.</translation>
+        </message>
+        <message>
+            <source>Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
+            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. F2FS G/Ç istatistiklerini açar. Depolama gecikmesi ve erişim davranışını incelemek için yararlıdır; sayaçların çalıştırılması küçük bir ek yük doğurabilir. Başka bir genel denetim ayarıyla çakışmadığından emin olun.</translation>
+        </message>
+        <message>
+            <source>F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
+            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. Boşta çalışan arka plan çöp toplama (GC) modunu belirler. Kabul edilen modlar çekirdek sürümüne göre değişebilir; yanlış seçenek yazma büyütmesini ve depolama performansını olumsuz etkileyebilir. Ölçüm yapmadan değiştirmeyin.</translation>
+        </message>
+        <message>
+            <source>Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
+            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. Arka plan çöp toplama işlemleri arasındaki asgari bekleme süresini milisaniye cinsinden ayarlar. Yalnızca çekirdeğin bu sysfs kontrolünü sunduğu sistemlerde görünür; gecikme ve yazma performansını birlikte değerlendirin.</translation>
+        </message>
+        <message>
+            <source>Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.</source>
+            <translation>Çalışan zram aygıtı 1 için kullanılabilecek fiziksel RAM bütçesini bayt cinsinden sınırlar. 0 bellek sınırı yok demektir. Bu değer zram sanal disk boyutu değildir; etkin swap aygıtının sıkıştırma algoritmasını değiştirmez. Çok düşük bir sınır bellek baskısında swap yazmalarının başarısız olmasına yol açabilir.</translation>
+        </message>
+        <message>
+            <source>Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
+            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. F2FS G/Ç istatistiklerini açar. Depolama gecikmesi ve erişim davranışını incelemek için yararlıdır; sayaçların çalıştırılması küçük bir ek yük doğurabilir. Başka bir genel denetim ayarıyla çakışmadığından emin olun.</translation>
+        </message>
+        <message>
+            <source>F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
+            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. Boşta çalışan arka plan çöp toplama (GC) modunu belirler. Kabul edilen modlar çekirdek sürümüne göre değişebilir; yanlış seçenek yazma büyütmesini ve depolama performansını olumsuz etkileyebilir. Ölçüm yapmadan değiştirmeyin.</translation>
+        </message>
+        <message>
+            <source>Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
+            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. Arka plan çöp toplama işlemleri arasındaki asgari bekleme süresini milisaniye cinsinden ayarlar. Yalnızca çekirdeğin bu sysfs kontrolünü sunduğu sistemlerde görünür; gecikme ve yazma performansını birlikte değerlendirin.</translation>
+        </message>
+        <message>
+            <source>Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.</source>
+            <translation>Çalışan zram aygıtı 2 için kullanılabilecek fiziksel RAM bütçesini bayt cinsinden sınırlar. 0 bellek sınırı yok demektir. Bu değer zram sanal disk boyutu değildir; etkin swap aygıtının sıkıştırma algoritmasını değiştirmez. Çok düşük bir sınır bellek baskısında swap yazmalarının başarısız olmasına yol açabilir.</translation>
+        </message>
+        <message>
+            <source>Only interrupts associated with NVMe PCI controllers. Place on the non-game CCD; managed MSI-X interrupts can reject changes. irqbalance must not fight a pinned value.</source>
+            <translation>Yalnızca NVMe PCI denetleyicilerine bağlı MSI/MSI-X kesmelerinin CPU yakınlığını ayarlar. Oyun dışı CCD tercih edilebilir. Çekirdeğin yönettiği bazı MSI-X kesmeleri bu değişikliği reddedebilir. irqbalance yeniden yazmayı önlemek için durdurulur ve geri alma işleminde durumu denetlenir.</translation>
+        </message>
+        <message>
+            <source>Only interrupts of physical PCI network controllers. Best effort; apply separately from the global IRQ setting.</source>
+            <translation>Yalnızca fiziksel PCI ağ denetleyicilerine ait kesmelerin CPU yakınlığını değiştirir. Global IRQ ayarından bağımsız olarak uygulanır. Çok kuyruklu aygıtlar veya çekirdeğin yönettiği IRQ hatları değişikliği reddedebilir; sonuçları oyun gecikmesi ve ağ performansıyla ölçün.</translation>
+        </message>
+        <message>
+            <source>Only NVIDIA display-controller MSI interrupts, not all PCI devices in the GPU tree. May be kernel-managed; do not change for a GPU experiencing Xid errors.</source>
+            <translation>Yalnızca NVIDIA görüntü denetleyicisine ait MSI kesmelerine uygulanır; GPU ile aynı PCI ağacındaki bütün aygıtları kapsamaz. Çekirdeğin yönettiği kesmeler değişikliği reddedebilir. Xid kararlılık hataları görülen ekran kartlarında bu ayarı değiştirmeyin.</translation>
+        </message>
+        <message>
+            <source>CPU mask for each physical NIC receive queue. Disabled by default on many multi-queue NICs; direct RPS to a separate CCD only if IRQ placement warrants it. RPS uses a hex CPU mask.</source>
+            <translation>Fiziksel ağ kartının her alma (RX) kuyruğu için CPU maskesini ayarlar. Çok kuyruklu kartlarda RPS çoğu kez kapalıdır; IRQ dağıtımını dikkate alarak ağ işlerini ayrı CCD üzerinde tutmak mümkün olabilir. Maske onaltılık sayı olarak sysfs üzerinden yazılır.</translation>
+        </message>
+        <message>
+            <source>CPU mask for each physical NIC transmit queue. CCD-local completion work can help with busy network workloads; requires kernel queue attribute.</source>
+            <translation>Fiziksel ağ kartının her gönderme (TX) kuyruğu için CPU maskesini ayarlar. Yüksek ağ trafiğinde kuyruk yerelliği ve çekirdekler arası çalışma dağılımını etkileyebilir. Yalnızca çekirdeğin ilgili kuyruk dosyasını sunduğu arayüzlerde geçerlidir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
+            <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
+        </message>
+        <message>
+            <source>Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.</source>
+            <translation>Bu SSD denetleyicisine özgü NVMe APST güç durumu geçişleri için gecikme toleransı sınırıdır. Genel APST satırının bu disk üzerindeki etkisini değiştirir. 0, çalışmayan güç durumlarını devre dışı bırakır; boşta güç tüketimi ve SSD sıcaklığı artabilir.</translation>
+        </message>
+        <message>
+            <source>Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.</source>
+            <translation>Bu SSD denetleyicisine özgü NVMe APST güç durumu geçişleri için gecikme toleransı sınırıdır. Genel APST satırının bu disk üzerindeki etkisini değiştirir. 0, çalışmayan güç durumlarını devre dışı bırakır; boşta güç tüketimi ve SSD sıcaklığı artabilir.</translation>
+        </message>
+    </context>
+    <context>
+        <name>OptimizationLabels</name>
+        <message>
+            <source>amd-pstate mode</source>
+            <translation>amd-pstate modu</translation>
+        </message>
+        <message>
+            <source>intel_pstate mode</source>
+            <translation>intel_pstate modu</translation>
+        </message>
+        <message>
+            <source>Dynamic EPP (amd-pstate)</source>
+            <translation>Dinamik EPP (amd-pstate)</translation>
+        </message>
+        <message>
+            <source>Scaling governor</source>
+            <translation>Frekans yöneticisi</translation>
+        </message>
+        <message>
+            <source>Energy-performance preference</source>
+            <translation>Enerji-performans tercihi</translation>
+        </message>
+        <message>
+            <source>amd-pstate epp_boost</source>
+            <translation>amd-pstate epp_boost</translation>
+        </message>
+        <message>
+            <source>Core performance boost</source>
+            <translation>Çekirdek performans artırımı (Boost)</translation>
+        </message>
+        <message>
+            <source>Minimum frequency</source>
+            <translation>En düşük frekans</translation>
+        </message>
+        <message>
+            <source>Floor frequency (power-limit throttle target)</source>
+            <translation>Alt frekans sınırı (güç limiti nedeniyle kısılma hedefi)</translation>
+        </message>
+        <message>
+            <source>Governor · CCD0</source>
+            <translation>Frekans yöneticisi · CCD0</translation>
+        </message>
+        <message>
+            <source>Governor · CCD1</source>
+            <translation>Frekans yöneticisi · CCD1</translation>
+        </message>
+        <message>
+            <source>EPP · CCD0</source>
+            <translation>EPP · CCD0</translation>
+        </message>
+        <message>
+            <source>EPP · CCD1</source>
+            <translation>EPP · CCD1</translation>
+        </message>
+        <message>
+            <source>Boost · CCD0</source>
+            <translation>Boost · CCD0</translation>
+        </message>
+        <message>
+            <source>Boost · CCD1</source>
+            <translation>Boost · CCD1</translation>
+        </message>
+        <message>
+            <source>Max frequency · CCD0 (kHz)</source>
+            <translation>En yüksek frekans · CCD0 (kHz)</translation>
+        </message>
+        <message>
+            <source>Max frequency · CCD1 (kHz)</source>
+            <translation>En yüksek frekans · CCD1 (kHz)</translation>
+        </message>
+        <message>
+            <source>HWP dynamic boost</source>
+            <translation>HWP dinamik Boost</translation>
+        </message>
+        <message>
+            <source>Max performance (%)</source>
+            <translation>En yüksek performans (%)</translation>
+        </message>
+        <message>
+            <source>Min performance (%)</source>
+            <translation>En düşük performans (%)</translation>
+        </message>
+        <message>
+            <source>Energy-performance bias (EPB)</source>
+            <translation>Enerji-performans önceliği (EPB)</translation>
+        </message>
+        <message>
+            <source>EPP · P-cores</source>
+            <translation>EPP · P çekirdekleri</translation>
+        </message>
+        <message>
+            <source>EPP · E-cores</source>
+            <translation>EPP · E çekirdekleri</translation>
+        </message>
+        <message>
+            <source>Max frequency · P-cores (kHz)</source>
+            <translation>En yüksek frekans · P çekirdekleri (kHz)</translation>
+        </message>
+        <message>
+            <source>Max frequency · E-cores (kHz)</source>
+            <translation>En yüksek frekans · E çekirdekleri (kHz)</translation>
+        </message>
+        <message>
+            <source>Uncore max frequency (kHz)</source>
+            <translation>Uncore en yüksek frekans (kHz)</translation>
+        </message>
+        <message>
+            <source>Uncore min frequency (kHz)</source>
+            <translation>Uncore en düşük frekans (kHz)</translation>
+        </message>
+        <message>
+            <source>RAPL PL1 · long term (W)</source>
+            <translation>RAPL PL1 · uzun süreli (W)</translation>
+        </message>
+        <message>
+            <source>RAPL PL2 · short term (W)</source>
+            <translation>RAPL PL2 · kısa süreli (W)</translation>
+        </message>
+        <message>
+            <source>TCC offset (°C below TjMax)</source>
+            <translation>TCC ofseti (TjMax altındaki °C)</translation>
+        </message>
+        <message>
+            <source>3D V-Cache CCD preference</source>
+            <translation>3D V-Cache CCD tercihi</translation>
+        </message>
+        <message>
+            <source>cpuidle governor</source>
+            <translation>cpuidle yöneticisi</translation>
+        </message>
+        <message>
+            <source>Deepest C-state kept</source>
+            <translation>İzin verilen en derin C-state</translation>
+        </message>
+        <message>
+            <source>CPU wake-up latency limit (µs)</source>
+            <translation>CPU uyanma gecikmesi sınırı (µs)</translation>
+        </message>
+        <message>
+            <source>schedutil rate limit (µs)</source>
+            <translation>schedutil hız sınırlaması (µs)</translation>
+        </message>
+        <message>
+            <source>Clocksource</source>
+            <translation>Saat kaynağı (clocksource)</translation>
+        </message>
+        <message>
+            <source>THP enabled</source>
+            <translation>THP etkinleştirme</translation>
+        </message>
+        <message>
+            <source>THP shmem</source>
+            <translation>THP paylaşılan bellek (shmem)</translation>
+        </message>
+        <message>
+            <source>THP defrag</source>
+            <translation>THP bellek birleştirme (defrag)</translation>
+        </message>
+        <message>
+            <source>khugepaged defrag</source>
+            <translation>khugepaged bellek birleştirme</translation>
+        </message>
+        <message>
+            <source>mTHP 16 KB anon</source>
+            <translation>mTHP 16 KB anonim bellek</translation>
+        </message>
+        <message>
+            <source>mTHP 32 KB anon</source>
+            <translation>mTHP 32 KB anonim bellek</translation>
+        </message>
+        <message>
+            <source>mTHP 64 KB anon</source>
+            <translation>mTHP 64 KB anonim bellek</translation>
+        </message>
+        <message>
+            <source>mTHP 128 KB anon</source>
+            <translation>mTHP 128 KB anonim bellek</translation>
+        </message>
+        <message>
+            <source>mTHP 256 KB anon</source>
+            <translation>mTHP 256 KB anonim bellek</translation>
+        </message>
+        <message>
+            <source>mTHP 512 KB anon</source>
+            <translation>mTHP 512 KB anonim bellek</translation>
+        </message>
+        <message>
+            <source>mTHP 1 MB anon</source>
+            <translation>mTHP 1 MB anonim bellek</translation>
+        </message>
+        <message>
+            <source>khugepaged max_ptes_none</source>
+            <translation>khugepaged max_ptes_none</translation>
+        </message>
+        <message>
+            <source>khugepaged pages_to_scan</source>
+            <translation>khugepaged pages_to_scan</translation>
+        </message>
+        <message>
+            <source>khugepaged scan_sleep_millisecs</source>
+            <translation>khugepaged scan_sleep_millisecs</translation>
+        </message>
+        <message>
+            <source>khugepaged max_ptes_swap</source>
+            <translation>khugepaged max_ptes_swap</translation>
+        </message>
+        <message>
+            <source>khugepaged alloc_sleep_millisecs</source>
+            <translation>khugepaged alloc_sleep_millisecs</translation>
+        </message>
+        <message>
+            <source>MGLRU enabled mask</source>
+            <translation>MGLRU etkinleştirme maskesi</translation>
+        </message>
+        <message>
+            <source>MGLRU min_ttl_ms</source>
+            <translation>MGLRU min_ttl_ms</translation>
+        </message>
+        <message>
+            <source>KSM run</source>
+            <translation>KSM çalıştırma</translation>
+        </message>
+        <message>
+            <source>KSM scan advisor</source>
+            <translation>KSM tarama danışmanı</translation>
+        </message>
+        <message>
+            <source>khugepaged max_ptes_shared</source>
+            <translation>khugepaged max_ptes_shared</translation>
+        </message>
+        <message>
+            <source>THP huge zero page</source>
+            <translation>THP büyük sıfır sayfası</translation>
+        </message>
+        <message>
+            <source>Compact unevictable pages</source>
+            <translation>Taşınamaz bellek sayfalarını sıkıştır</translation>
+        </message>
+        <message>
+            <source>vm.dirtytime_expire_seconds</source>
+            <translation>vm.dirtytime_expire_seconds</translation>
+        </message>
+        <message>
+            <source>vm.max_map_count</source>
+            <translation>vm.max_map_count</translation>
+        </message>
+        <message>
+            <source>vm.swappiness</source>
+            <translation>vm.swappiness</translation>
+        </message>
+        <message>
+            <source>vm.compaction_proactiveness</source>
+            <translation>vm.compaction_proactiveness</translation>
+        </message>
+        <message>
+            <source>vm.watermark_boost_factor</source>
+            <translation>vm.watermark_boost_factor</translation>
+        </message>
+        <message>
+            <source>vm.watermark_scale_factor</source>
+            <translation>vm.watermark_scale_factor</translation>
+        </message>
+        <message>
+            <source>vm.min_free_kbytes</source>
+            <translation>vm.min_free_kbytes</translation>
+        </message>
+        <message>
+            <source>vm.zone_reclaim_mode</source>
+            <translation>vm.zone_reclaim_mode</translation>
+        </message>
+        <message>
+            <source>vm.page_lock_unfairness</source>
+            <translation>vm.page_lock_unfairness</translation>
+        </message>
+        <message>
+            <source>vm.stat_interval</source>
+            <translation>vm.stat_interval</translation>
+        </message>
+        <message>
+            <source>vm.page-cluster</source>
+            <translation>vm.page-cluster</translation>
+        </message>
+        <message>
+            <source>vm.dirty_background_ratio (%)</source>
+            <translation>vm.dirty_background_ratio (%)</translation>
+        </message>
+        <message>
+            <source>vm.dirty_ratio (%)</source>
+            <translation>vm.dirty_ratio (%)</translation>
+        </message>
+        <message>
+            <source>vm.dirty_background_bytes</source>
+            <translation>vm.dirty_background_bytes</translation>
+        </message>
+        <message>
+            <source>vm.dirty_bytes</source>
+            <translation>vm.dirty_bytes</translation>
+        </message>
+        <message>
+            <source>vm.dirty_writeback_centisecs</source>
+            <translation>vm.dirty_writeback_centisecs</translation>
+        </message>
+        <message>
+            <source>vm.dirty_expire_centisecs</source>
+            <translation>vm.dirty_expire_centisecs</translation>
+        </message>
+        <message>
+            <source>vm.vfs_cache_pressure</source>
+            <translation>vm.vfs_cache_pressure</translation>
+        </message>
+        <message>
+            <source>zswap</source>
+            <translation>zswap</translation>
+        </message>
+        <message>
+            <source>zswap compressor</source>
+            <translation>zswap sıkıştırıcı</translation>
+        </message>
+        <message>
+            <source>zswap max pool (% of RAM)</source>
+            <translation>zswap azami havuzu (RAM yüzdesi)</translation>
+        </message>
+        <message>
+            <source>zswap shrinker</source>
+            <translation>zswap bellek geri kazanımı (shrinker)</translation>
+        </message>
+        <message>
+            <source>vm.defrag_mode</source>
+            <translation>vm.defrag_mode</translation>
+        </message>
+        <message>
+            <source>THP shrink underused</source>
+            <translation>Az kullanılan THP sayfalarını küçült</translation>
+        </message>
+        <message>
+            <source>zswap accept threshold (%)</source>
+            <translation>zswap kabul eşiği (%)</translation>
+        </message>
+        <message>
+            <source>Per-CPU free page lists (fraction)</source>
+            <translation>CPU başına boş sayfa listeleri (oran)</translation>
+        </message>
+        <message>
+            <source>vm.extfrag_threshold</source>
+            <translation>vm.extfrag_threshold</translation>
+        </message>
+        <message>
+            <source>sched_ext scheduler</source>
+            <translation>sched_ext zamanlayıcısı</translation>
+        </message>
+        <message>
+            <source>split_lock_mitigate</source>
+            <translation>split_lock_mitigate</translation>
+        </message>
+        <message>
+            <source>kernel.watchdog</source>
+            <translation>kernel.watchdog</translation>
+        </message>
+        <message>
+            <source>NMI watchdog (hard-lockup detector)</source>
+            <translation>NMI watchdog (donanım kilitlenmesi algılayıcısı)</translation>
+        </message>
+        <message>
+            <source>kernel.numa_balancing</source>
+            <translation>kernel.numa_balancing</translation>
+        </message>
+        <message>
+            <source>kernel.timer_migration</source>
+            <translation>kernel.timer_migration</translation>
+        </message>
+        <message>
+            <source>sched_autogroup_enabled</source>
+            <translation>sched_autogroup_enabled</translation>
+        </message>
+        <message>
+            <source>sched_cfs_bandwidth_slice_us</source>
+            <translation>sched_cfs_bandwidth_slice_us</translation>
+        </message>
+        <message>
+            <source>RT tasks' default boost (uclamp)</source>
+            <translation>RT görevleri için varsayılan hızlandırma (uclamp)</translation>
+        </message>
+        <message>
+            <source>Energy Aware Scheduling</source>
+            <translation>Enerji duyarlı zamanlama</translation>
+        </message>
+        <message>
+            <source>sched_schedstats</source>
+            <translation>sched_schedstats</translation>
+        </message>
+        <message>
+            <source>Preferred-core scheduling (ITMT)</source>
+            <translation>Tercihli çekirdek zamanlaması (ITMT)</translation>
+        </message>
+        <message>
+            <source>Preemption model (debugfs)</source>
+            <translation>Ön alma modeli (debugfs)</translation>
+        </message>
+        <message>
+            <source>EEVDF base slice (debugfs)</source>
+            <translation>EEVDF temel zaman dilimi (debugfs)</translation>
+        </message>
+        <message>
+            <source>min_base_slice_ns (debugfs)</source>
+            <translation>min_base_slice_ns (debugfs)</translation>
+        </message>
+        <message>
+            <source>migration_cost_ns (debugfs)</source>
+            <translation>migration_cost_ns (debugfs)</translation>
+        </message>
+        <message>
+            <source>nr_migrate (debugfs)</source>
+            <translation>nr_migrate (debugfs)</translation>
+        </message>
+        <message>
+            <source>cgroup_mode (debugfs, 7.3+)</source>
+            <translation>cgroup_mode (debugfs, 7.3+)</translation>
+        </message>
+        <message>
+            <source>Cache-aware scheduling (debugfs, 7.2+)</source>
+            <translation>Önbellek duyarlı zamanlama (debugfs, 7.2+)</translation>
+        </message>
+        <message>
+            <source>llc_aggr_tolerance (debugfs, 7.2+)</source>
+            <translation>llc_aggr_tolerance (debugfs, 7.2+)</translation>
+        </message>
+        <message>
+            <source>llc_imb_pct (debugfs, 7.2+)</source>
+            <translation>llc_imb_pct (debugfs, 7.2+)</translation>
+        </message>
+        <message>
+            <source>llc_overload_pct (debugfs, 7.2+)</source>
+            <translation>llc_overload_pct (debugfs, 7.2+)</translation>
+        </message>
+        <message>
+            <source>NEXT_BUDDY (debugfs)</source>
+            <translation>NEXT_BUDDY (debugfs)</translation>
+        </message>
+        <message>
+            <source>RUN_TO_PARITY (debugfs)</source>
+            <translation>RUN_TO_PARITY (debugfs)</translation>
+        </message>
+        <message>
+            <source>BORE scheduler</source>
+            <translation>BORE zamanlayıcısı</translation>
+        </message>
+        <message>
+            <source>BORE burst inheritance</source>
+            <translation>BORE burst mirası</translation>
+        </message>
+        <message>
+            <source>BORE smoothness</source>
+            <translation>BORE yumuşatma</translation>
+        </message>
+        <message>
+            <source>BORE penalty offset</source>
+            <translation>BORE ceza ofseti</translation>
+        </message>
+        <message>
+            <source>BORE penalty scale</source>
+            <translation>BORE ceza ölçeği</translation>
+        </message>
+        <message>
+            <source>BORE burst cache lifetime (ns)</source>
+            <translation>BORE burst önbellek ömrü (ns)</translation>
+        </message>
+        <message>
+            <source>Project C yield type</source>
+            <translation>Project C yield türü</translation>
+        </message>
+        <message>
+            <source>Infinity SMT slice divisor</source>
+            <translation>Infinity SMT zaman dilimi böleni</translation>
+        </message>
+        <message>
+            <source>PREEMPT_SHORT (debugfs)</source>
+            <translation>PREEMPT_SHORT (debugfs)</translation>
+        </message>
+        <message>
+            <source>DELAY_DEQUEUE (debugfs)</source>
+            <translation>DELAY_DEQUEUE (debugfs)</translation>
+        </message>
+        <message>
+            <source>HRTICK (debugfs)</source>
+            <translation>HRTICK (debugfs)</translation>
+        </message>
+        <message>
+            <source>SIS_UTIL (debugfs)</source>
+            <translation>SIS_UTIL (debugfs)</translation>
+        </message>
+        <message>
+            <source>TTWU_QUEUE (debugfs)</source>
+            <translation>TTWU_QUEUE (debugfs)</translation>
+        </message>
+        <message>
+            <source>CACHE_HOT_BUDDY (debugfs)</source>
+            <translation>CACHE_HOT_BUDDY (debugfs)</translation>
+        </message>
+        <message>
+            <source>PLACE_LAG (debugfs)</source>
+            <translation>PLACE_LAG (debugfs)</translation>
+        </message>
+        <message>
+            <source>PLACE_DEADLINE_INITIAL (debugfs)</source>
+            <translation>PLACE_DEADLINE_INITIAL (debugfs)</translation>
+        </message>
+        <message>
+            <source>PLACE_REL_DEADLINE (debugfs)</source>
+            <translation>PLACE_REL_DEADLINE (debugfs)</translation>
+        </message>
+        <message>
+            <source>WAKEUP_PREEMPTION (debugfs)</source>
+            <translation>WAKEUP_PREEMPTION (debugfs)</translation>
+        </message>
+        <message>
+            <source>PICK_BUDDY (debugfs)</source>
+            <translation>PICK_BUDDY (debugfs)</translation>
+        </message>
+        <message>
+            <source>DELAY_ZERO (debugfs)</source>
+            <translation>DELAY_ZERO (debugfs)</translation>
+        </message>
+        <message>
+            <source>WA_IDLE (debugfs)</source>
+            <translation>WA_IDLE (debugfs)</translation>
+        </message>
+        <message>
+            <source>WA_WEIGHT (debugfs)</source>
+            <translation>WA_WEIGHT (debugfs)</translation>
+        </message>
+        <message>
+            <source>WA_BIAS (debugfs)</source>
+            <translation>WA_BIAS (debugfs)</translation>
+        </message>
+        <message>
+            <source>UTIL_EST (debugfs)</source>
+            <translation>UTIL_EST (debugfs)</translation>
+        </message>
+        <message>
+            <source>ATTACH_AGE_LOAD (debugfs)</source>
+            <translation>ATTACH_AGE_LOAD (debugfs)</translation>
+        </message>
+        <message>
+            <source>NONTASK_CAPACITY (debugfs)</source>
+            <translation>NONTASK_CAPACITY (debugfs)</translation>
+        </message>
+        <message>
+            <source>LB_MIN (debugfs)</source>
+            <translation>LB_MIN (debugfs)</translation>
+        </message>
+        <message>
+            <source>NI_RANDOM (debugfs)</source>
+            <translation>NI_RANDOM (debugfs)</translation>
+        </message>
+        <message>
+            <source>NI_RATE (debugfs)</source>
+            <translation>NI_RATE (debugfs)</translation>
+        </message>
+        <message>
+            <source>HRTICK_DL (debugfs)</source>
+            <translation>HRTICK_DL (debugfs)</translation>
+        </message>
+        <message>
+            <source>PARANOID_AVG (debugfs)</source>
+            <translation>PARANOID_AVG (debugfs)</translation>
+        </message>
+        <message>
+            <source>MC imbalance_pct (debugfs)</source>
+            <translation>MC imbalance_pct (debugfs)</translation>
+        </message>
+        <message>
+            <source>MC min_interval (ms) (debugfs)</source>
+            <translation>MC min_interval (ms) (debugfs)</translation>
+        </message>
+        <message>
+            <source>MC max_interval (ms) (debugfs)</source>
+            <translation>MC max_interval (ms) (debugfs)</translation>
+        </message>
+        <message>
+            <source>MC busy_factor (debugfs)</source>
+            <translation>MC busy_factor (debugfs)</translation>
+        </message>
+        <message>
+            <source>PKG imbalance_pct (debugfs)</source>
+            <translation>PKG imbalance_pct (debugfs)</translation>
+        </message>
+        <message>
+            <source>PKG min_interval (ms) (debugfs)</source>
+            <translation>PKG min_interval (ms) (debugfs)</translation>
+        </message>
+        <message>
+            <source>PKG max_interval (ms) (debugfs)</source>
+            <translation>PKG max_interval (ms) (debugfs)</translation>
+        </message>
+        <message>
+            <source>PKG busy_factor (debugfs)</source>
+            <translation>PKG busy_factor (debugfs)</translation>
+        </message>
+        <message>
+            <source>Unbound workqueue affinity scope</source>
+            <translation>Bağımsız workqueue işlemci yakınlığı kapsamı</translation>
+        </message>
+        <message>
+            <source>Unbound workqueue CPUs</source>
+            <translation>Bağımsız workqueue CPU'ları</translation>
+        </message>
+        <message>
+            <source>IRQ affinity</source>
+            <translation>IRQ işlemci yakınlığı</translation>
+        </message>
+        <message>
+            <source>I/O scheduler</source>
+            <translation>G/Ç zamanlayıcısı</translation>
+        </message>
+        <message>
+            <source>Writeback throttling (µs)</source>
+            <translation>Writeback hız sınırlaması (µs)</translation>
+        </message>
+        <message>
+            <source>Read-ahead (KiB)</source>
+            <translation>Önden okuma (KiB)</translation>
+        </message>
+        <message>
+            <source>rq_affinity</source>
+            <translation>rq_affinity</translation>
+        </message>
+        <message>
+            <source>nomerges</source>
+            <translation>nomerges</translation>
+        </message>
+        <message>
+            <source>I/O statistics accounting</source>
+            <translation>G/Ç istatistiklerini hesaplama</translation>
+        </message>
+        <message>
+            <source>Disk entropy contribution</source>
+            <translation>Diskin entropi katkısı</translation>
+        </message>
+        <message>
+            <source>Queue depth (nr_requests)</source>
+            <translation>Kuyruk derinliği (nr_requests)</translation>
+        </message>
+        <message>
+            <source>Max request size (KiB)</source>
+            <translation>Azami istek boyutu (KiB)</translation>
+        </message>
+        <message>
+            <source>kyber read latency target (ns)</source>
+            <translation>kyber okuma gecikmesi hedefi (ns)</translation>
+        </message>
+        <message>
+            <source>kyber write latency target (ns)</source>
+            <translation>kyber yazma gecikmesi hedefi (ns)</translation>
+        </message>
+        <message>
+            <source>mq-deadline read deadline (ms)</source>
+            <translation>mq-deadline okuma süresi (ms)</translation>
+        </message>
+        <message>
+            <source>mq-deadline write deadline (ms)</source>
+            <translation>mq-deadline yazma süresi (ms)</translation>
+        </message>
+        <message>
+            <source>mq-deadline batch size</source>
+            <translation>mq-deadline grup boyutu</translation>
+        </message>
+        <message>
+            <source>mq-deadline writes_starved</source>
+            <translation>mq-deadline writes_starved</translation>
+        </message>
+        <message>
+            <source>bfq low_latency</source>
+            <translation>bfq low_latency</translation>
+        </message>
+        <message>
+            <source>bfq slice_idle (ms)</source>
+            <translation>bfq slice_idle (ms)</translation>
+        </message>
+        <message>
+            <source>btrfs async discard IOPS limit</source>
+            <translation>btrfs asenkron discard IOPS sınırı</translation>
+        </message>
+        <message>
+            <source>btrfs async discard bandwidth limit (KiB/s)</source>
+            <translation>btrfs asenkron discard bant genişliği sınırı (KiB/sn)</translation>
+        </message>
+        <message>
+            <source>btrfs async discard max size (bytes)</source>
+            <translation>btrfs asenkron discard azami boyutu (bayt)</translation>
+        </message>
+        <message>
+            <source>TCP congestion control</source>
+            <translation>TCP tıkanıklık denetimi</translation>
+        </message>
+        <message>
+            <source>Default queueing discipline</source>
+            <translation>Varsayılan paket kuyruklama disiplini</translation>
+        </message>
+        <message>
+            <source>Wi-Fi power save</source>
+            <translation>Wi-Fi güç tasarrufu</translation>
+        </message>
+        <message>
+            <source>TCP slow start after idle</source>
+            <translation>Boşta kaldıktan sonra TCP slow start</translation>
+        </message>
+        <message>
+            <source>TCP MTU probing</source>
+            <translation>TCP MTU araştırması</translation>
+        </message>
+        <message>
+            <source>Receive backlog (packets)</source>
+            <translation>Alım birikim kuyruğu (paket)</translation>
+        </message>
+        <message>
+            <source>TCP not-sent low watermark (bytes)</source>
+            <translation>TCP gönderilmemiş veri alt eşiği (bayt)</translation>
+        </message>
+        <message>
+            <source>TCP Fast Open</source>
+            <translation>TCP Fast Open</translation>
+        </message>
+        <message>
+            <source>GRO flush timeout (ns)</source>
+            <translation>GRO boşaltma zaman aşımı (ns)</translation>
+        </message>
+        <message>
+            <source>NAPI deferred interrupts</source>
+            <translation>NAPI ertelenmiş kesmeleri</translation>
+        </message>
+        <message>
+            <source>Socket busy poll (µs)</source>
+            <translation>Soket busy poll (µs)</translation>
+        </message>
+        <message>
+            <source>Socket busy read (µs)</source>
+            <translation>Soket busy read (µs)</translation>
+        </message>
+        <message>
+            <source>Threaded NAPI</source>
+            <translation>İş parçacıklı NAPI</translation>
+        </message>
+        <message>
+            <source>PCIe ASPM policy</source>
+            <translation>PCIe ASPM ilkesi</translation>
+        </message>
+        <message>
+            <source>PCIe ASPM per link</source>
+            <translation>Bağlantı başına PCIe ASPM</translation>
+        </message>
+        <message>
+            <source>Suspend mode (mem_sleep)</source>
+            <translation>Askıya alma modu (mem_sleep)</translation>
+        </message>
+        <message>
+            <source>PCI latency timers</source>
+            <translation>PCI gecikme zamanlayıcıları</translation>
+        </message>
+        <message>
+            <source>HDA power_save (s)</source>
+            <translation>HDA power_save (sn)</translation>
+        </message>
+        <message>
+            <source>HDA power_save_controller</source>
+            <translation>HDA power_save_controller</translation>
+        </message>
+        <message>
+            <source>USB autosuspend delay (s)</source>
+            <translation>USB otomatik askıya alma gecikmesi (sn)</translation>
+        </message>
+        <message>
+            <source>USB autosuspend delay · connected (ms)</source>
+            <translation>USB otomatik askıya alma · bağlı aygıtlar (ms)</translation>
+        </message>
+        <message>
+            <source>Wake-on-LAN (Ethernet)</source>
+            <translation>Wake-on-LAN (Ethernet)</translation>
+        </message>
+        <message>
+            <source>Energy-Efficient Ethernet (EEE)</source>
+            <translation>Enerji Verimli Ethernet (EEE)</translation>
+        </message>
+        <message>
+            <source>Bluetooth radio</source>
+            <translation>Bluetooth radyosu</translation>
+        </message>
+        <message>
+            <source>Wi-Fi radio</source>
+            <translation>Wi-Fi radyosu</translation>
+        </message>
+        <message>
+            <source>WWAN (mobile broadband) radio</source>
+            <translation>WWAN (mobil geniş bant) radyosu</translation>
+        </message>
+        <message>
+            <source>Panel power savings (amdgpu ABM)</source>
+            <translation>Panel güç tasarrufu (amdgpu ABM)</translation>
+        </message>
+        <message>
+            <source>Disk APM level · disk 1</source>
+            <translation>Disk APM seviyesi · disk 1</translation>
+        </message>
+        <message>
+            <source>Disk APM level · disk 2</source>
+            <translation>Disk APM seviyesi · disk 2</translation>
+        </message>
+        <message>
+            <source>Disk APM level · disk 3</source>
+            <translation>Disk APM seviyesi · disk 3</translation>
+        </message>
+        <message>
+            <source>Disk APM level · disk 4</source>
+            <translation>Disk APM seviyesi · disk 4</translation>
+        </message>
+        <message>
+            <source>AHCI disk runtime PM timeout (ms)</source>
+            <translation>AHCI disk çalışma zamanı güç yönetimi zaman aşımı (ms)</translation>
+        </message>
+        <message>
+            <source>AHCI disk runtime PM</source>
+            <translation>AHCI disk çalışma zamanı güç yönetimi</translation>
+        </message>
+        <message>
+            <source>AHCI port runtime PM</source>
+            <translation>AHCI bağlantı noktası çalışma zamanı güç yönetimi</translation>
+        </message>
+        <message>
+            <source>PCI runtime PM</source>
+            <translation>PCI çalışma zamanı güç yönetimi</translation>
+        </message>
+        <message>
+            <source>USB runtime PM (connected devices)</source>
+            <translation>USB çalışma zamanı güç yönetimi (bağlı aygıtlar)</translation>
+        </message>
+        <message>
+            <source>SATA link power (ALPM)</source>
+            <translation>SATA bağlantı güç yönetimi (ALPM)</translation>
+        </message>
+        <message>
+            <source>NVMe APST latency tolerance (µs)</source>
+            <translation>NVMe APST gecikme toleransı (µs)</translation>
+        </message>
+        <message>
+            <source>iGPU DPM level (amdgpu)</source>
+            <translation>iGPU DPM seviyesi (amdgpu)</translation>
+        </message>
+        <message>
+            <source>iGPU max frequency (Intel, MHz)</source>
+            <translation>iGPU en yüksek frekansı (Intel, MHz)</translation>
+        </message>
+        <message>
+            <source>iGPU min frequency (Intel, MHz)</source>
+            <translation>iGPU en düşük frekansı (Intel, MHz)</translation>
+        </message>
+        <message>
+            <source>iGPU SLPC power profile (i915)</source>
+            <translation>iGPU SLPC güç profili (i915)</translation>
+        </message>
+        <message>
+            <source>MCE poll interval (s)</source>
+            <translation>MCE yoklama aralığı (sn)</translation>
+        </message>
+        <message>
+            <source>SMT</source>
+            <translation>SMT</translation>
+        </message>
+        <message>
+            <source>Park a CCD / E-cores (offline)</source>
+            <translation>CCD / E çekirdeklerini park et (çevrimdışı)</translation>
+        </message>
+        <message>
+            <source>Wake latency CCD0 (µs)</source>
+            <translation>Uyanma gecikmesi CCD0 (µs)</translation>
+        </message>
+        <message>
+            <source>Wake latency CCD1 (µs)</source>
+            <translation>Uyanma gecikmesi CCD1 (µs)</translation>
+        </message>
+        <message>
+            <source>llc epoch_period (debugfs, 7.2+)</source>
+            <translation>llc epoch_period (debugfs, 7.2+)</translation>
+        </message>
+        <message>
+            <source>llc epoch_affinity_timeout (debugfs, 7.2+)</source>
+            <translation>llc epoch_affinity_timeout (debugfs, 7.2+)</translation>
+        </message>
+        <message>
+            <source>scan_size_mb (debugfs)</source>
+            <translation>scan_size_mb (debugfs)</translation>
+        </message>
+        <message>
+            <source>scan_period_min_ms (debugfs)</source>
+            <translation>scan_period_min_ms (debugfs)</translation>
+        </message>
+        <message>
+            <source>scan_period_max_ms (debugfs)</source>
+            <translation>scan_period_max_ms (debugfs)</translation>
+        </message>
+        <message>
+            <source>scan_delay_ms (debugfs)</source>
+            <translation>scan_delay_ms (debugfs)</translation>
+        </message>
+        <message>
+            <source>hot_threshold_ms (debugfs)</source>
+            <translation>hot_threshold_ms (debugfs)</translation>
+        </message>
+        <message>
+            <source>rseq slice extension (debugfs)</source>
+            <translation>rseq dilim uzatma (debugfs)</translation>
+        </message>
+        <message>
+            <source>sched_rt_runtime_us</source>
+            <translation>sched_rt_runtime_us</translation>
+        </message>
+        <message>
+            <source>sched_rr_timeslice_ms</source>
+            <translation>sched_rr_timeslice_ms</translation>
+        </message>
+        <message>
+            <source>fault_around_bytes (debugfs)</source>
+            <translation>fault_around_bytes (debugfs)</translation>
+        </message>
+        <message>
+            <source>tlb_single_page_flush_ceiling (debugfs, x86)</source>
+            <translation>tlb_single_page_flush_ceiling (debugfs, x86)</translation>
+        </message>
+        <message>
+            <source>vm.laptop_mode</source>
+            <translation>vm.laptop_mode</translation>
+        </message>
+        <message>
+            <source>vm.oom_kill_allocating_task</source>
+            <translation>vm.oom_kill_allocating_task</translation>
+        </message>
+        <message>
+            <source>KSM use_zero_pages</source>
+            <translation>KSM use_zero_pages</translation>
+        </message>
+        <message>
+            <source>KSM smart_scan</source>
+            <translation>KSM smart_scan</translation>
+        </message>
+        <message>
+            <source>numa_balancing_promote_rate_limit_MBps</source>
+            <translation>numa_balancing_promote_rate_limit_MBps</translation>
+        </message>
+        <message>
+            <source>Wi-Fi airtime queue limit (debugfs)</source>
+            <translation>Wi-Fi hava süresi kuyruk sınırı (debugfs)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi AQL threshold (debugfs)</source>
+            <translation>Wi-Fi AQL eşiği (debugfs)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi threaded NAPI (mt76, debugfs)</source>
+            <translation>Wi-Fi iş parçacıklı NAPI (mt76, debugfs)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi runtime power management (mt76, debugfs)</source>
+            <translation>Wi-Fi çalışma zamanı güç yönetimi (mt76, debugfs)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi runtime-PM idle timeout (mt76, debugfs)</source>
+            <translation>Wi-Fi çalışma zamanı PM boşta süresi (mt76, debugfs)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi deep sleep (mt76, debugfs)</source>
+            <translation>Wi-Fi derin uyku (mt76, debugfs)</translation>
+        </message>
+        <message>
+            <source>Bluetooth LE min connection interval (debugfs)</source>
+            <translation>Bluetooth LE en küçük bağlantı aralığı (debugfs)</translation>
+        </message>
+        <message>
+            <source>Bluetooth LE max connection interval (debugfs)</source>
+            <translation>Bluetooth LE en büyük bağlantı aralığı (debugfs)</translation>
+        </message>
+        <message>
+            <source>Swap VMA readahead</source>
+            <translation>Takas VMA ön-okuması</translation>
+        </message>
+        <message>
+            <source>Receive budget per softirq (packets)</source>
+            <translation>Softirq başına alma bütçesi (paket)</translation>
+        </message>
+        <message>
+            <source>Receive time budget per softirq (µs)</source>
+            <translation>Softirq başına alma süre bütçesi (µs)</translation>
+        </message>
+        <message>
+            <source>NAPI weight (packets per poll)</source>
+            <translation>NAPI ağırlığı (yoklama başına paket)</translation>
+        </message>
+        <message>
+            <source>GRO batch before delivery (segments)</source>
+            <translation>GRO teslim öncesi toplu iş (segment)</translation>
+        </message>
+        <message>
+            <source>TCP output limit per socket (bytes)</source>
+            <translation>Soket başına TCP çıkış sınırı (bayt)</translation>
+        </message>
+        <message>
+            <source>TCP autocorking</source>
+            <translation>TCP otomatik birleştirme (autocorking)</translation>
+        </message>
+        <message>
+            <source>TCP pacing rate, slow start (%)</source>
+            <translation>TCP pacing oranı, yavaş başlangıç (%)</translation>
+        </message>
+        <message>
+            <source>TCP pacing rate, congestion avoidance (%)</source>
+            <translation>TCP pacing oranı, tıkanıklıktan kaçınma (%)</translation>
+        </message>
+        <message>
+            <source>TCP ECN</source>
+            <translation>TCP ECN</translation>
+        </message>
+        <message>
+            <source>Socket receive buffer ceiling (bytes)</source>
+            <translation>Soket alma tamponu tavanı (bayt)</translation>
+        </message>
+        <message>
+            <source>Socket send buffer ceiling (bytes)</source>
+            <translation>Soket gönderme tamponu tavanı (bayt)</translation>
+        </message>
+        <message>
+            <source>F2FS 1 · I/O accounting</source>
+            <translation>F2FS 1 · G/Ç istatistikleri</translation>
+        </message>
+        <message>
+            <source>F2FS 1 · Idle GC mode</source>
+            <translation>F2FS 1 · Boştayken GC modu</translation>
+        </message>
+        <message>
+            <source>F2FS 1 · Minimum GC sleep (ms)</source>
+            <translation>F2FS 1 · En kısa GC bekleme süresi (ms)</translation>
+        </message>
+        <message>
+            <source>zram 1 · RAM limit (bytes)</source>
+            <translation>zram 1 · RAM sınırı (bytes)</translation>
+        </message>
+        <message>
+            <source>F2FS 2 · I/O accounting</source>
+            <translation>F2FS 2 · G/Ç istatistikleri</translation>
+        </message>
+        <message>
+            <source>F2FS 2 · Idle GC mode</source>
+            <translation>F2FS 2 · Boştayken GC modu</translation>
+        </message>
+        <message>
+            <source>F2FS 2 · Minimum GC sleep (ms)</source>
+            <translation>F2FS 2 · En kısa GC bekleme süresi (ms)</translation>
+        </message>
+        <message>
+            <source>zram 2 · RAM limit (bytes)</source>
+            <translation>zram 2 · RAM sınırı (bytes)</translation>
+        </message>
+        <message>
+            <source>NVMe IRQ CPU affinity</source>
+            <translation>NVMe IRQ CPU yakınlığı</translation>
+        </message>
+        <message>
+            <source>Network IRQ CPU affinity</source>
+            <translation>Network IRQ CPU yakınlığı</translation>
+        </message>
+        <message>
+            <source>NVIDIA GPU IRQ CPU affinity</source>
+            <translation>NVIDIA GPU IRQ CPU yakınlığı</translation>
+        </message>
+        <message>
+            <source>NIC RX steering (RPS)</source>
+            <translation>Ağ kartı RX yönlendirmesi (RPS)</translation>
+        </message>
+        <message>
+            <source>NIC TX steering (XPS)</source>
+            <translation>Ağ kartı TX yönlendirmesi (XPS)</translation>
+        </message>
+        <message>
+            <source>NVMe 1 · I/O scheduler</source>
+            <translation>NVMe 1 · G/Ç zamanlayıcısı</translation>
+        </message>
+        <message>
+            <source>NVMe 1 · Read-ahead (KiB)</source>
+            <translation>NVMe 1 · Ön okuma (KiB)</translation>
+        </message>
+        <message>
+            <source>NVMe 1 · Queue depth</source>
+            <translation>NVMe 1 · Kuyruk derinliği</translation>
+        </message>
+        <message>
+            <source>NVMe 1 · Completion affinity</source>
+            <translation>NVMe 1 · Tamamlama yakınlığı</translation>
+        </message>
+        <message>
+            <source>NVMe 2 · I/O scheduler</source>
+            <translation>NVMe 2 · G/Ç zamanlayıcısı</translation>
+        </message>
+        <message>
+            <source>NVMe 2 · Read-ahead (KiB)</source>
+            <translation>NVMe 2 · Ön okuma (KiB)</translation>
+        </message>
+        <message>
+            <source>NVMe 2 · Queue depth</source>
+            <translation>NVMe 2 · Kuyruk derinliği</translation>
+        </message>
+        <message>
+            <source>NVMe 2 · Completion affinity</source>
+            <translation>NVMe 2 · Tamamlama yakınlığı</translation>
+        </message>
+        <message>
+            <source>NVMe 1 · APST latency (µs)</source>
+            <translation>NVMe 1 · APST gecikmesi (µs)</translation>
+        </message>
+        <message>
+            <source>NVMe 2 · APST latency (µs)</source>
+            <translation>NVMe 2 · APST gecikmesi (µs)</translation>
+        </message>
+    </context>
+    <context>
+        <name>OptimizationGroups</name>
+        <message>
+            <source>CPU</source>
+            <translation>CPU</translation>
+        </message>
+        <message>
+            <source>Memory</source>
+            <translation>Bellek</translation>
+        </message>
+        <message>
+            <source>Scheduler</source>
+            <translation>Zamanlayıcı</translation>
+        </message>
+        <message>
+            <source>Storage</source>
+            <translation>Depolama</translation>
+        </message>
+        <message>
+            <source>Network</source>
+            <translation>Ağ</translation>
+        </message>
+        <message>
+            <source>Devices</source>
+            <translation>Aygıtlar</translation>
+        </message>
+        <message>
+            <source>Power</source>
+            <translation>Güç</translation>
+        </message>
+        <message>
+            <source>Stability</source>
+            <translation>Kararlılık</translation>
+        </message>
+    </context>
+    <context>
+        <name>OptimizationOptions</name>
+        <message>
+            <source>enabled</source>
+            <translation>etkin</translation>
+        </message>
+        <message>
+            <source>disabled</source>
+            <translation>devre dışı</translation>
+        </message>
+        <message>
+            <source>on</source>
+            <translation>açık</translation>
+        </message>
+        <message>
+            <source>off</source>
+            <translation>kapalı</translation>
+        </message>
+        <message>
+            <source>yes</source>
+            <translation>evet</translation>
+        </message>
+        <message>
+            <source>no</source>
+            <translation>hayır</translation>
+        </message>
+        <message>
+            <source>active</source>
+            <translation>etkin</translation>
+        </message>
+        <message>
+            <source>passive</source>
+            <translation>pasif</translation>
+        </message>
+        <message>
+            <source>guided</source>
+            <translation>yönlendirmeli</translation>
+        </message>
+        <message>
+            <source>performance</source>
+            <translation>performans</translation>
+        </message>
+        <message>
+            <source>powersave</source>
+            <translation>güç tasarrufu</translation>
+        </message>
+        <message>
+            <source>balance_performance</source>
+            <translation>dengeli performans</translation>
+        </message>
+        <message>
+            <source>balance_power</source>
+            <translation>dengeli güç tasarrufu</translation>
+        </message>
+        <message>
+            <source>power</source>
+            <translation>güç tasarrufu öncelikli</translation>
+        </message>
+        <message>
+            <source>auto</source>
+            <translation>otomatik</translation>
+        </message>
+        <message>
+            <source>automatic</source>
+            <translation>otomatik</translation>
+        </message>
+        <message>
+            <source>default</source>
+            <translation>varsayılan</translation>
+        </message>
+        <message>
+            <source>none</source>
+            <translation>yok</translation>
+        </message>
+        <message>
+            <source>all</source>
+            <translation>tümü</translation>
+        </message>
+        <message>
+            <source>low</source>
+            <translation>düşük</translation>
+        </message>
+        <message>
+            <source>high</source>
+            <translation>yüksek</translation>
+        </message>
+        <message>
+            <source>medium</source>
+            <translation>orta</translation>
+        </message>
+        <message>
+            <source>full</source>
+            <translation>tam</translation>
+        </message>
+        <message>
+            <source>voluntary</source>
+            <translation>gönüllü</translation>
+        </message>
+        <message>
+            <source>offline</source>
+            <translation>çevrimdışı</translation>
+        </message>
+        <message>
+            <source>online</source>
+            <translation>çevrimiçi</translation>
+        </message>
+        <message>
+            <source>force</source>
+            <translation>zorla</translation>
+        </message>
+        <message>
+            <source>never</source>
+            <translation>asla</translation>
+        </message>
+        <message>
+            <source>always</source>
+            <translation>her zaman</translation>
+        </message>
+        <message>
+            <source>madvise</source>
+            <translation>uygulama isteğine göre (madvise)</translation>
+        </message>
+        <message>
+            <source>advise</source>
+            <translation>isteğe göre (advise)</translation>
+        </message>
+        <message>
+            <source>defer</source>
+            <translation>ertele</translation>
+        </message>
+        <message>
+            <source>defer+madvise</source>
+            <translation>ertele + madvise</translation>
+        </message>
+        <message>
+            <source>within_size</source>
+            <translation>boyut sınırında</translation>
+        </message>
+        <message>
+            <source>cache</source>
+            <translation>önbellek (V-Cache)</translation>
+        </message>
+        <message>
+            <source>frequency</source>
+            <translation>frekans</translation>
+        </message>
+        <message>
+            <source>balance</source>
+            <translation>dengeli</translation>
+        </message>
+        <message>
+            <source>lowest_nonlinear</source>
+            <translation>en düşük doğrusal olmayan frekans</translation>
+        </message>
+        <message>
+            <source>cpuinfo_min</source>
+            <translation>donanımın en düşük frekansı</translation>
+        </message>
+        <message>
+            <source>schedutil</source>
+            <translation>schedutil</translation>
+        </message>
+        <message>
+            <source>ondemand</source>
+            <translation>talep üzerine</translation>
+        </message>
+        <message>
+            <source>conservative</source>
+            <translation>tutucu</translation>
+        </message>
+        <message>
+            <source>userspace</source>
+            <translation>kullanıcı alanı</translation>
+        </message>
+        <message>
+            <source>hybrid</source>
+            <translation>hibrit</translation>
+        </message>
+        <message>
+            <source>performance-leaning</source>
+            <translation>performans öncelikli</translation>
+        </message>
+        <message>
+            <source>power-leaning</source>
+            <translation>tasarruf öncelikli</translation>
+        </message>
+        <message>
+            <source>unified</source>
+            <translation>birleşik</translation>
+        </message>
+        <message>
+            <source>legacy</source>
+            <translation>eski düzen</translation>
+        </message>
+        <message>
+            <source>dynamic</source>
+            <translation>dinamik</translation>
+        </message>
+        <message>
+            <source>aggressive</source>
+            <translation>agresif</translation>
+        </message>
+        <message>
+            <source>laptop</source>
+            <translation>dizüstü</translation>
+        </message>
+        <message>
+            <source>desktop</source>
+            <translation>masaüstü</translation>
+        </message>
+        <message>
+            <source>root only</source>
+            <translation>yalnızca root</translation>
+        </message>
+        <message>
+            <source>n/a</source>
+            <translation>kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>skipped</source>
+            <translation>atlandı</translation>
+        </message>
+        <message>
+            <source>unchanged</source>
+            <translation>değişmedi</translation>
+        </message>
+        <message>
+            <source>found</source>
+            <translation>bulundu</translation>
+        </message>
+        <message>
+            <source>missing</source>
+            <translation>bulunamadı</translation>
+        </message>
+        <message>
+            <source>reset</source>
+            <translation>sıfırla</translation>
+        </message>
+        <message>
+            <source>not set</source>
+            <translation>ayarlanmadı</translation>
+        </message>
+    </context>
     <context>
         <name>privileged</name>
         <message>
@@ -9000,6 +11995,22 @@ sudo centurion-calibrate --restore
             <location filename="../src/experimentalui.h"/>
             <source>Temperature history</source>
             <translation>Sıcaklık geçmişi</translation>
+        </message>
+        <message>
+            <source>Search pages, Health tools and visible controls. Enter navigates; it never applies a setting.</source>
+            <translation>Sayfaları, Sağlık araçlarını ve görünür kontrolleri ara. Enter yalnızca gezinir; hiçbir ayarı uygulamaz.</translation>
+        </message>
+        <message>
+            <source>CPU and EC GPU temperatures. Missing samples and gaps are not estimated.</source>
+            <translation>CPU ve EC GPU sıcaklıkları. Eksik örnekler ve ölçüm boşlukları tahmin edilmez.</translation>
+        </message>
+        <message>
+            <source>Temperatures</source>
+            <translation>Sıcaklıklar</translation>
+        </message>
+        <message>
+            <source>-%1 min</source>
+            <translation>-%1 dk</translation>
         </message>
     </context>
     <context>
@@ -10880,6 +13891,54 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
     <context>
         <name>CoSearchDialog</name>
         <message>
+            <source>No per-core result</source>
+            <translation>Çekirdek bazlı sonuç yok</translation>
+        </message>
+        <message>
+            <source>Guarded</source>
+            <translation>Koruma altında</translation>
+        </message>
+        <message>
+            <source>Backtracking</source>
+            <translation>Geri adım</translation>
+        </message>
+        <message>
+            <source>Verifying</source>
+            <translation>Doğrulanıyor</translation>
+        </message>
+        <message>
+            <source>Searching</source>
+            <translation>Aranıyor</translation>
+        </message>
+        <message>
+            <source>CCD %1</source>
+            <translation>CCD %1</translation>
+        </message>
+        <message>
+            <source>CCD overview</source>
+            <translation>CCD görünümü</translation>
+        </message>
+        <message>
+            <source>Core %1: %2</source>
+            <translation>Çekirdek %1: %2</translation>
+        </message>
+        <message>
+            <source>Excluded</source>
+            <translation>Hariç</translation>
+        </message>
+        <message>
+            <source>Pending</source>
+            <translation>Bekliyor</translation>
+        </message>
+        <message>
+            <source>Search done</source>
+            <translation>Arama bitti</translation>
+        </message>
+        <message>
+            <source>Testing</source>
+            <translation>Test ediliyor</translation>
+        </message>
+        <message>
             <source>On battery</source>
             <translation>Pilde</translation>
         </message>
@@ -11343,7 +14402,72 @@ Profil adı:</translation>
             <source>Crash guard: all-core is never tested at %1 or below.</source>
             <translation>Crash koruması: all-core asla %1 veya altında test edilmez.</translation>
         </message>
-    <message><location filename="../src/cosearchdialog.cpp" line="986"/><source>Crash Guards</source><translation>Çökme Koruma Değerleri</translation></message></context>
+        <message>
+            <location filename="../src/cosearchdialog.cpp" line="986"/>
+            <source>Crash Guards</source>
+            <translation>Çökme Koruma Değerleri</translation>
+        </message>
+        <message>
+            <source>Completed search cores</source>
+            <translation>Araması tamamlanan çekirdekler</translation>
+        </message>
+        <message>
+            <source>Core search: %v / %m</source>
+            <translation>Çekirdek araması: %v / %m</translation>
+        </message>
+        <message>
+            <source>Trial history…</source>
+            <translation>Deneme geçmişi…</translation>
+        </message>
+        <message>
+            <source>CO search activity log</source>
+            <translation>CO Search işlem günlüğü</translation>
+        </message>
+        <message>
+            <source>CO Search — Trial History</source>
+            <translation>CO Search — Deneme Geçmişi</translation>
+        </message>
+        <message>
+            <source>Snapshot: %1 recorded trials, %2 suspected reboots. Passing a trial is not proof of long-term stability.</source>
+            <translation>Anlık görüntü: %1 kayıtlı deneme, %2 şüpheli yeniden başlatma. Bir denemeyi geçmek uzun süreli stabilitenin kanıtı değildir.</translation>
+        </message>
+        <message>
+            <source>Filter by core, candidate, result or evidence…</source>
+            <translation>Çekirdek, aday, sonuç veya kanıta göre filtrele…</translation>
+        </message>
+        <message>
+            <source>Time</source>
+            <translation>Zaman</translation>
+        </message>
+        <message>
+            <source>Candidate</source>
+            <translation>Aday</translation>
+        </message>
+        <message>
+            <source>Evidence</source>
+            <translation>Kanıt</translation>
+        </message>
+        <message>
+            <source>Whole curve / unknown</source>
+            <translation>Tüm eğri / bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Passed</source>
+            <translation>Başarılı</translation>
+        </message>
+        <message>
+            <source>Failed / interrupted</source>
+            <translation>Başarısız / kesintiye uğradı</translation>
+        </message>
+        <message>
+            <source>All-core: %1</source>
+            <translation>Tüm çekirdekler: %1</translation>
+        </message>
+        <message>
+            <source>Interrupted candidate (not the next candidate): %1</source>
+            <translation>Kesintiye uğrayan aday (bir sonraki aday değil): %1</translation>
+        </message>
+    </context>
     <context>
         <name>coevidence</name>
         <message>
@@ -13030,6 +16154,14 @@ Profil adı:</translation>
     <context>
         <name>evidencereports</name>
         <message>
+            <source>%1 device(s) have unavailable AER counters</source>
+            <translation>%1 aygıtın AER sayaçları okunamıyor</translation>
+        </message>
+        <message>
+            <source>No uncorrectable PCIe error or elevated corrected error count found</source>
+            <translation>Düzeltilemeyen PCIe hatası veya yüksek düzeltilmiş hata sayısı bulunmadı</translation>
+        </message>
+        <message>
             <source>load/store</source>
             <translation>yükleme/saklama</translation>
         </message>
@@ -13622,6 +16754,58 @@ Profil adı:</translation>
     </context>
     <context>
         <name>systemdiagnostics</name>
+        <message>
+            <source>%1 (%2): link width could not be verified</source>
+            <translation>%1 (%2): bağlantı genişliği doğrulanamadı</translation>
+        </message>
+        <message>
+            <source>%1 (%2): uncorrectable PCIe errors recorded</source>
+            <translation>%1 (%2): düzeltilemeyen PCIe hataları kaydedildi</translation>
+        </message>
+        <message>
+            <source>Comparison</source>
+            <translation>Karşılaştırma</translation>
+        </message>
+        <message>
+            <source>Current link</source>
+            <translation>Mevcut bağlantı</translation>
+        </message>
+        <message>
+            <source>Endpoint identity changed at this PCI address or is unverified</source>
+            <translation>Bu PCI adresindeki uç aygıt kimliği değişti veya doğrulanamadı</translation>
+        </message>
+        <message>
+            <source>Link Changes Since Previous Scan</source>
+            <translation>Önceki Taramadan Sonraki Bağlantı Değişiklikleri</translation>
+        </message>
+        <message>
+            <source>Link comparison starts with the next scan of this boot.</source>
+            <translation>Bağlantı karşılaştırması bu açılışın sonraki taramasında başlar.</translation>
+        </message>
+        <message>
+            <source>Link reading changed; power state may differ</source>
+            <translation>Bağlantı ölçümü değişti; güç durumu farklı olabilir</translation>
+        </message>
+        <message>
+            <source>Link width unknown</source>
+            <translation>Bağlantı genişliği bilinmiyor</translation>
+        </message>
+        <message>
+            <source>No link reading changed among the sampled devices.</source>
+            <translation>Ölçülen aygıtlarda bağlantı değeri değişmedi.</translation>
+        </message>
+        <message>
+            <source>Not readable in this scan</source>
+            <translation>Bu taramada okunamadı</translation>
+        </message>
+        <message>
+            <source>PCI address</source>
+            <translation>PCI adresi</translation>
+        </message>
+        <message>
+            <source>Previous link</source>
+            <translation>Önceki bağlantı</translation>
+        </message>
         <message>
             <source>PCIe Link Check</source>
             <translation>PCIe Bağlantı Denetimi</translation>
@@ -14706,9 +17890,33 @@ Profil adı:</translation>
             <source>An option missing from the config is usually unavailable because an option it depends on is off; a few have other names in some kernel versions.</source>
             <translation>Yapılandırmada bulunmayan bir seçenek genellikle bağlı olduğu bir seçenek kapalı olduğu için kullanılamaz; birkaçının bazı çekirdek sürümlerinde başka adı vardır.</translation>
         </message>
+        <message>
+            <source>PCIe Upstream Relationships</source>
+            <translation>PCIe Üst Bağlantı İlişkileri</translation>
+        </message>
+        <message>
+            <source>Upstream PCI address</source>
+            <translation>Üst PCI adresi</translation>
+        </message>
+        <message>
+            <source>Device maximum</source>
+            <translation>Aygıt maksimumu</translation>
+        </message>
+        <message>
+            <source>Upstream maximum</source>
+            <translation>Üst bağlantı maksimumu</translation>
+        </message>
+        <message>
+            <source>Parent relationships come from resolved sysfs device paths. Unknown or root-bus parents are not inferred.</source>
+            <translation>Üst aygıt ilişkileri çözümlenen sysfs aygıt yollarından gelir. Bilinmeyen veya kök veri yolundaki üst aygıtlar tahmin edilmez.</translation>
+        </message>
     </context>
     <context>
         <name>diagnostictools</name>
+        <message>
+            <source>A general refresh range is not proof of VRR support. Check explicit Adaptive-Sync capability and the compositor or driver.</source>
+            <translation>Genel yenileme aralığı VRR desteğinin kanıtı değildir. Açık Adaptive-Sync desteğini ve compositor veya sürücüyü kontrol edin.</translation>
+        </message>
         <message>
             <source>No baseline saved yet.</source>
             <translation>Henüz temel durum kaydedilmedi.</translation>
@@ -15129,9 +18337,94 @@ Profil adı:</translation>
             <source>where video memory is saved on suspend</source>
             <translation>uykuda video belleğinin kaydedildiği yer</translation>
         </message>
-    <message><location filename="../src/diagnostictools.cpp" line="290"/><source>Display Details</source><translation>Ekran Ayrıntıları</translation></message></context>
+        <message>
+            <location filename="../src/diagnostictools.cpp" line="290"/>
+            <source>Display Details</source>
+            <translation>Ekran Ayrıntıları</translation>
+        </message>
+        <message>
+            <source>EDID Blocks &amp; Checksums</source>
+            <translation>EDID Blokları ve Sağlama Toplamları</translation>
+        </message>
+        <message>
+            <source>Block</source>
+            <translation>Blok</translation>
+        </message>
+        <message>
+            <source>Checksum byte</source>
+            <translation>Sağlama toplamı baytı</translation>
+        </message>
+        <message>
+            <source>Sum modulo 256</source>
+            <translation>Toplam mod 256</translation>
+        </message>
+        <message>
+            <source>Only complete blocks read from the kernel are listed. A zero checksum sum is necessary but does not prove all EDID fields are correct.</source>
+            <translation>Yalnızca kernelden okunan tam bloklar listelenir. Sağlama toplamının sıfır olması gereklidir ancak tüm EDID alanlarının doğru olduğunu kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Decoded Detailed Timings</source>
+            <translation>Çözümlenen Ayrıntılı Zamanlamalar</translation>
+        </message>
+        <message>
+            <source>Timing</source>
+            <translation>Zamanlama</translation>
+        </message>
+        <message>
+            <source>Detailed timings decoded from the EDID are not a complete list of modes offered by the driver.</source>
+            <translation>EDID'den çözümlenen ayrıntılı zamanlamalar sürücünün sunduğu modların tam listesi değildir.</translation>
+        </message>
+        <message>
+            <source>Base block</source>
+            <translation>Temel blok</translation>
+        </message>
+        <message>
+            <source>Checksum matches</source>
+            <translation>Sağlama toplamı geçerli</translation>
+        </message>
+        <message>
+            <source>Checksum mismatch</source>
+            <translation>Sağlama toplamı uyuşmuyor</translation>
+        </message>
+    </context>
     <context>
         <name>DiagReportView</name>
+        <message>
+            <source>Compare Snapshot…</source>
+            <translation>Kayıtları Karşılaştır…</translation>
+        </message>
+        <message>
+            <source>Copy preview</source>
+            <translation>Önizlemeyi kopyala</translation>
+        </message>
+        <message>
+            <source>Diagnostic Snapshot Comparison</source>
+            <translation>Diagnostik Kayıt Karşılaştırması</translation>
+        </message>
+        <message>
+            <source>Include technical details</source>
+            <translation>Teknik ayrıntıları dahil et</translation>
+        </message>
+        <message>
+            <source>Pin Snapshot</source>
+            <translation>Kaydı Sabitle</translation>
+        </message>
+        <message>
+            <source>Reports are textually identical.</source>
+            <translation>Rapor metinleri aynı.</translation>
+        </message>
+        <message>
+            <source>Reports differ. Differences are not proof of a hardware change.</source>
+            <translation>Raporlar farklı. Farklılıklar donanım değişikliğinin kanıtı değildir.</translation>
+        </message>
+        <message>
+            <source>Save preview</source>
+            <translation>Önizlemeyi kaydet</translation>
+        </message>
+        <message>
+            <source>Save preview…</source>
+            <translation>Önizlemeyi kaydet…</translation>
+        </message>
         <message>
             <source>Copy report</source>
             <translation>Raporu kopyala</translation>
@@ -15163,6 +18456,54 @@ Profil adı:</translation>
         <message>
             <source>Hide technical details</source>
             <translation>Teknik ayrıntıları gizle</translation>
+        </message>
+        <message>
+            <source>Export preview…</source>
+            <translation>Dışa Aktarma Önizlemesi…</translation>
+        </message>
+        <message>
+            <source>Search findings and readings…</source>
+            <translation>Bulguları ve ölçümleri ara…</translation>
+        </message>
+        <message>
+            <source>Filters findings and table rows only. The verdict, limits and full export are unchanged.</source>
+            <translation>Yalnızca bulguları ve tablo satırlarını filtreler. Genel değerlendirme, sınırlamalar ve tam dışa aktarma değişmez.</translation>
+        </message>
+        <message>
+            <source>All finding levels</source>
+            <translation>Tüm bulgu seviyeleri</translation>
+        </message>
+        <message>
+            <source>Report displayed: %1 · snapshot, not live data</source>
+            <translation>Rapor görüntülendi: %1 · anlık görüntü, canlı veri değil</translation>
+        </message>
+        <message>
+            <source>Jump to section…</source>
+            <translation>Bölüme git…</translation>
+        </message>
+        <message>
+            <source>Findings</source>
+            <translation>Bulgular</translation>
+        </message>
+        <message>
+            <source>Technical details</source>
+            <translation>Teknik Ayrıntılar</translation>
+        </message>
+        <message>
+            <source>Showing %1/%2 findings and %3/%4 table rows. Export includes the full report.</source>
+            <translation>%1/%2 bulgu ve %3/%4 tablo satırı gösteriliyor. Dışa aktarma tam raporu içerir.</translation>
+        </message>
+        <message>
+            <source>Export preview</source>
+            <translation>Dışa Aktarma Önizlemesi</translation>
+        </message>
+        <message>
+            <source>The complete report may contain device identifiers, paths, addresses or other private data. Review before sharing. No automatic redaction is performed.</source>
+            <translation>Tam rapor aygıt tanımlayıcıları, dosya yolları, adresler veya başka özel veriler içerebilir. Paylaşmadan önce inceleyin. Otomatik sansürleme yapılmaz.</translation>
+        </message>
+        <message>
+            <source>Copy full report</source>
+            <translation>Tam raporu kopyala</translation>
         </message>
     </context>
     <context>
@@ -15351,10 +18692,112 @@ Profil adı:</translation>
             <source>Opens this Health page.</source>
             <translation>Bu Sağlık sayfasını açar.</translation>
         </message>
-    <message><source>What is going wrong?</source><translation>Sorun ne?</translation></message><message><source>Or run one investigation:</source><translation>Ya da tek bir inceleme çalıştırın:</translation></message></context>
-<context><name>KernelParamsPage</name><message><source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here).</source><translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez).</translation></message><message><source>Scheduler (EEVDF)</source><translation>Zamanlayıcı (EEVDF)</translation></message><message><source>x86 scheduling (debugfs)</source><translation>x86 zamanlama (debugfs)</translation></message><message><source>CPU frequency and idle</source><translation>CPU frekansı ve boşta durumu</translation></message><message><source>Memory management</source><translation>Bellek yönetimi</translation></message><message><source>Kernel module parameters</source><translation>Çekirdek modülü parametreleri</translation></message><message><source>Everything under /sys</source><translation>/sys altındaki her şey</translation></message><message><source>Filter by name or value</source><translation>Ada veya değere göre süz</translation></message><message><source>Read</source><translation>Oku</translation></message><message><source>Setting</source><translation>Ayar</translation></message><message><source>Value</source><translation>Değer</translation></message><message><source>Writable</source><translation>Yazılabilir</translation></message><message><source>yes</source><translation>evet</translation></message><message><source>health-reader is not installed.</source><translation>health-reader kurulu değil.</translation></message><message><source>Reading…</source><translation>Okunuyor…</translation></message><message><source>The installed health-reader is too old for this page — reinstall Centurion.</source><translation>Kurulu health-reader bu sayfa için çok eski — Centurion'u yeniden kurun.</translation></message><message><source>debugfs is not mounted: only the sysctls are shown.</source><translation>debugfs bağlı değil: yalnızca sysctl değerleri gösteriliyor.</translation></message><message><source>%1 settings</source><translation>%1 ayar</translation></message><message><source> — list cut short (%1)</source><translation> — liste kısaltıldı (%1)</translation></message></context>
-<context>
-    <name>toolcatalog</name>
+        <message>
+            <source>What is going wrong?</source>
+            <translation>Sorun ne?</translation>
+        </message>
+        <message>
+            <source>Or run one investigation:</source>
+            <translation>Ya da tek bir inceleme çalıştırın:</translation>
+        </message>
+        <message>
+            <source>Search saved incidents…</source>
+            <translation>Kaydedilmiş olayları ara…</translation>
+        </message>
+        <message>
+            <source>%1 / 2000 characters%2</source>
+            <translation>%1 / 2000 karakter%2</translation>
+        </message>
+        <message>
+            <source> · Unsaved draft (kept in this window until saved or closed)</source>
+            <translation> · Kaydedilmemiş taslak (kaydedilene veya pencere kapatılana kadar bu pencerede tutulur)</translation>
+        </message>
+        <message>
+            <source>Showing %1 / %2 incidents in this scope</source>
+            <translation>Bu kapsamda %1 / %2 olay gösteriliyor</translation>
+        </message>
+    </context>
+    <context>
+        <name>KernelParamsPage</name>
+        <message>
+            <source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here).</source>
+            <translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez).</translation>
+        </message>
+        <message>
+            <source>Scheduler (EEVDF)</source>
+            <translation>Zamanlayıcı (EEVDF)</translation>
+        </message>
+        <message>
+            <source>x86 scheduling (debugfs)</source>
+            <translation>x86 zamanlama (debugfs)</translation>
+        </message>
+        <message>
+            <source>CPU frequency and idle</source>
+            <translation>CPU frekansı ve boşta durumu</translation>
+        </message>
+        <message>
+            <source>Memory management</source>
+            <translation>Bellek yönetimi</translation>
+        </message>
+        <message>
+            <source>Kernel module parameters</source>
+            <translation>Çekirdek modülü parametreleri</translation>
+        </message>
+        <message>
+            <source>Everything under /sys</source>
+            <translation>/sys altındaki her şey</translation>
+        </message>
+        <message>
+            <source>Filter by name or value</source>
+            <translation>Ada veya değere göre süz</translation>
+        </message>
+        <message>
+            <source>Read</source>
+            <translation>Oku</translation>
+        </message>
+        <message>
+            <source>Setting</source>
+            <translation>Ayar</translation>
+        </message>
+        <message>
+            <source>Value</source>
+            <translation>Değer</translation>
+        </message>
+        <message>
+            <source>Writable</source>
+            <translation>Yazılabilir</translation>
+        </message>
+        <message>
+            <source>yes</source>
+            <translation>evet</translation>
+        </message>
+        <message>
+            <source>health-reader is not installed.</source>
+            <translation>health-reader kurulu değil.</translation>
+        </message>
+        <message>
+            <source>Reading…</source>
+            <translation>Okunuyor…</translation>
+        </message>
+        <message>
+            <source>The installed health-reader is too old for this page — reinstall Centurion.</source>
+            <translation>Kurulu health-reader bu sayfa için çok eski — Centurion'u yeniden kurun.</translation>
+        </message>
+        <message>
+            <source>debugfs is not mounted: only the sysctls are shown.</source>
+            <translation>debugfs bağlı değil: yalnızca sysctl değerleri gösteriliyor.</translation>
+        </message>
+        <message>
+            <source>%1 settings</source>
+            <translation>%1 ayar</translation>
+        </message>
+        <message>
+            <source> — list cut short (%1)</source>
+            <translation> — liste kısaltıldı (%1)</translation>
+        </message>
+    </context>
+    <context>
+        <name>toolcatalog</name>
         <message>
             <source>Processor, Memory &amp; Board</source>
             <translation>İşlemci, bellek ve anakart</translation>
@@ -15459,6 +18902,269 @@ Profil adı:</translation>
             <source>The Linux CPU scheduler since 6.6: decides which task runs next.</source>
             <translation>6.6’dan beri Linux CPU zamanlayıcısı: sıradaki görevi seçer.</translation>
         </message>
-</context>
-<context><name>PanelControlsDialog</name><message><location filename="../src/panelcontrols.cpp" line="16"/><source>Panel Controls</source><translation>Panel Kontrolleri</translation></message></context><context><name>PipewireConfigDialog</name><message><location filename="../src/pipewireconfig.cpp" line="202"/><source>PipeWire Settings</source><translation>PipeWire Ayarları</translation></message></context><context><name>sysadmin</name><message><source>%1: working…</source><translation>%1: çalışıyor…</translation></message></context>
+    </context>
+    <context>
+        <name>PanelControlsDialog</name>
+        <message>
+            <location filename="../src/panelcontrols.cpp" line="16"/>
+            <source>Panel Controls</source>
+            <translation>Panel Kontrolleri</translation>
+        </message>
+    </context>
+    <context>
+        <name>PipewireConfigDialog</name>
+        <message>
+            <location filename="../src/pipewireconfig.cpp" line="202"/>
+            <source>PipeWire Settings</source>
+            <translation>PipeWire Ayarları</translation>
+        </message>
+    </context>
+    <context>
+        <name>sysadmin</name>
+        <message>
+            <source>%1: working…</source>
+            <translation>%1: çalışıyor…</translation>
+        </message>
+    </context>
+    <context>
+        <name>AmdGpuTab</name>
+        <message>
+            <source>Capabilities…</source>
+            <translation>Yetenekler…</translation>
+        </message>
+        <message>
+            <source>AMD GPU — Reported Capabilities</source>
+            <translation>AMD GPU — Bildirilen Yetenekler</translation>
+        </message>
+        <message>
+            <source>%1 (%2). Snapshot of controls exposed by the current driver. Availability is not a guarantee that a write will succeed.</source>
+            <translation>%1 (%2). Mevcut sürücünün sunduğu kontrollerin anlık görüntüsü. Bir kontrolün bulunması, yazma işleminin başarılı olacağını garanti etmez.</translation>
+        </message>
+        <message>
+            <source>Control</source>
+            <translation>Kontrol</translation>
+        </message>
+        <message>
+            <source>Availability</source>
+            <translation>Kullanılabilirlik</translation>
+        </message>
+        <message>
+            <source>Exposed in editor</source>
+            <translation>Düzenleyicide sunuluyor</translation>
+        </message>
+        <message>
+            <source>Not exposed</source>
+            <translation>Sunulmuyor</translation>
+        </message>
+        <message>
+            <source>Performance level</source>
+            <translation>Performans seviyesi</translation>
+        </message>
+        <message>
+            <source>Power profile</source>
+            <translation>Güç profili</translation>
+        </message>
+        <message>
+            <source>Power limit</source>
+            <translation>Güç limiti</translation>
+        </message>
+        <message>
+            <source>GPU frequency bounds</source>
+            <translation>GPU frekans sınırları</translation>
+        </message>
+        <message>
+            <source>Memory frequency bounds</source>
+            <translation>Bellek frekans sınırları</translation>
+        </message>
+        <message>
+            <source>GPU clock offset</source>
+            <translation>GPU saat frekansı ofseti</translation>
+        </message>
+        <message>
+            <source>Voltage offset</source>
+            <translation>Voltaj ofseti</translation>
+        </message>
+        <message>
+            <source>V/F curve</source>
+            <translation>V/F eğrisi</translation>
+        </message>
+        <message>
+            <source>GPU / memory states</source>
+            <translation>GPU / bellek durumları</translation>
+        </message>
+        <message>
+            <source>Fan controls</source>
+            <translation>Fan kontrolleri</translation>
+        </message>
+        <message>
+            <source>Fan curve</source>
+            <translation>Fan eğrisi</translation>
+        </message>
+    </context>
+    <context>
+        <name>FwattrTab</name>
+        <message>
+            <source>Parameter inspector…</source>
+            <translation>Parametre inceleyici…</translation>
+        </message>
+        <message>
+            <source>Firmware Parameter Inspector</source>
+            <translation>Firmware Parametre İnceleyici</translation>
+        </message>
+        <message>
+            <source>Snapshot of the firmware editor. Last-known values are not live measurements; unsupported ranges are not inferred. Opening this inspector does not rescan or write firmware.</source>
+            <translation>Firmware düzenleyicisinin anlık görüntüsü. Son bilinen değerler canlı ölçüm değildir; desteklenmeyen aralıklar tahmin edilmez. İnceleyiciyi açmak firmware'i yeniden taramaz veya yazmaz.</translation>
+        </message>
+        <message>
+            <source>Search parameter, device or access state…</source>
+            <translation>Parametre, aygıt veya erişim durumu ara…</translation>
+        </message>
+        <message>
+            <source>Parameter</source>
+            <translation>Parametre</translation>
+        </message>
+        <message>
+            <source>Device</source>
+            <translation>Aygıt</translation>
+        </message>
+        <message>
+            <source>Last known</source>
+            <translation>Son bilinen</translation>
+        </message>
+        <message>
+            <source>Draft</source>
+            <translation>Taslak</translation>
+        </message>
+        <message>
+            <source>Range</source>
+            <translation>Aralık</translation>
+        </message>
+        <message>
+            <source>Default</source>
+            <translation>Varsayılan</translation>
+        </message>
+        <message>
+            <source>Access</source>
+            <translation>Erişim</translation>
+        </message>
+        <message>
+            <source>step</source>
+            <translation>adım</translation>
+        </message>
+        <message>
+            <source>Read-only</source>
+            <translation>Salt okunur</translation>
+        </message>
+        <message>
+            <source>No valid range</source>
+            <translation>Geçerli aralık yok</translation>
+        </message>
+        <message>
+            <source>Operation in progress</source>
+            <translation>İşlem sürüyor</translation>
+        </message>
+        <message>
+            <source>Profile locked</source>
+            <translation>Profil kilitli</translation>
+        </message>
+        <message>
+            <source>WMI not verified</source>
+            <translation>WMI doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Reported available</source>
+            <translation>Kullanılabilir olarak bildirildi</translation>
+        </message>
+    </context>
+    <context>
+        <name>FanCurveDialog</name>
+        <message>
+            <source>Dashed: last EC table (when available) · Solid: editable draft</source>
+            <translation>Kesik çizgi: son EC tablosu (varsa) · Düz çizgi: düzenlenebilir taslak</translation>
+        </message>
+    </context>
+    <context>
+        <name>LightingTab</name>
+        <message>
+            <source>Undo</source>
+            <translation>Geri Al</translation>
+        </message>
+        <message>
+            <source>Redo</source>
+            <translation>Yinele</translation>
+        </message>
+        <message>
+            <source>Undo a draft effect change; nothing is written to the keyboard.</source>
+            <translation>Taslak efekt değişikliğini geri al; klavyeye hiçbir şey yazılmaz.</translation>
+        </message>
+        <message>
+            <source>Redo a draft effect change; nothing is written to the keyboard.</source>
+            <translation>Taslak efekt değişikliğini yinele; klavyeye hiçbir şey yazılmaz.</translation>
+        </message>
+    </context>
+    <context>
+        <name>theme</name>
+        <message>
+            <source>Custom palette</source>
+            <translation>Özel palet</translation>
+        </message>
+    </context>
+    <context>
+        <name>profilediff</name>
+        <message>
+            <source>%1 differing fields; %2 omitted by the display limit.</source>
+            <translation>%1 farklı alan; görüntüleme sınırı nedeniyle %2 alan gösterilmedi.</translation>
+        </message>
+        <message>
+            <source>A snapshot could not be read.</source>
+            <translation>Anlık kayıt okunamadı.</translation>
+        </message>
+        <message>
+            <source>Field</source>
+            <translation>Alan</translation>
+        </message>
+        <message>
+            <source>Left</source>
+            <translation>Sol</translation>
+        </message>
+        <message>
+            <source>Not specified</source>
+            <translation>Belirtilmemiş</translation>
+        </message>
+        <message>
+            <source>Profile Comparison</source>
+            <translation>Profil Karşılaştırma</translation>
+        </message>
+        <message>
+            <source>Right</source>
+            <translation>Sağ</translation>
+        </message>
+        <message>
+            <source>Saved configuration comparison only. Missing values are not interpreted as zero or reset. No hardware writes.</source>
+            <translation>Yalnızca kayıtlı yapılandırma karşılaştırılır. Eksik değerler sıfır veya sıfırlama olarak yorumlanmaz. Donanıma yazılmaz.</translation>
+        </message>
+        <message>
+            <source>Two readable snapshots are needed.</source>
+            <translation>Okunabilir iki kayıt gerekli.</translation>
+        </message>
+    </context>
+    <context>
+        <name>SceneEngine</name>
+        <message>
+            <source>✗ %1: referenced profile '%2' is not available</source>
+            <translation>✗ %1: başvurulan '%2' profili kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>CPU</source>
+            <translation>CPU</translation>
+        </message>
+        <message>
+            <source>GPU</source>
+            <translation>GPU</translation>
+        </message>
+        <message>
+            <source>Optimizations</source>
+            <translation>Optimizasyonlar</translation>
+        </message>
+    </context>
 </TS>

@@ -82,6 +82,18 @@ int main(int argc, char **argv) {
     CHECK(has(disp, Level::Info, QStringLiteral("48–240")));
     CHECK(disp.tables.size() >= 2 && disp.tables.at(1).rows.at(0).value(4).contains(QStringLiteral("800 nits")));
 
+    CHECK(disp.tables.size() >= 4 && disp.tables.at(2).rows.size() == 2);
+    if (disp.tables.size() >= 4 && disp.tables.at(2).rows.size() == 2) {
+        CHECK(disp.tables.at(2).rows.at(0).value(4) == QStringLiteral("0"));
+        CHECK(disp.tables.at(2).rows.at(1).value(4) == QStringLiteral("0"));
+        CHECK(disp.tables.at(2).rows.at(1).value(2) == QStringLiteral("CTA-861"));
+        CHECK(disp.tables.at(3).rows.at(0).value(1).contains(QStringLiteral("1920×1080")));
+    }
+    put(QStringLiteral("/sys/class/drm/card1-eDP-1/edid"), broken);
+    const diag::Report badDisp = diagnostictools::displays(root);
+    CHECK(badDisp.tables.size() >= 3 && badDisp.tables.at(2).levels.value(1) == Level::Review);
+    put(QStringLiteral("/sys/class/drm/card1-eDP-1/edid"), e);
+
     // ── NVIDIA options: hex and decimal, Y and 1 are the same value.
     CHECK(diagnostictools::sameValue(QStringLiteral("0x02"), QStringLiteral("2")));
     CHECK(diagnostictools::sameValue(QStringLiteral("Y"), QStringLiteral("1")));
@@ -121,6 +133,28 @@ int main(int argc, char **argv) {
     const diag::Report links = systemdiagnostics::pcieLinks(root);
     CHECK(has(links, Level::Review, QStringLiteral("x8 of a possible x16")));
     CHECK(links.tables.first().rows.first().value(5).startsWith(QStringLiteral("3")));
+
+    CHECK(links.tables.size() >= 2 && !links.tables.at(1).rows.isEmpty());
+    if (links.tables.size() >= 2 && !links.tables.at(1).rows.isEmpty()) {
+        CHECK(links.tables.at(1).rows.first().value(1) == QStringLiteral("—"));
+        CHECK(links.tables.at(1).rows.first().value(2) == QStringLiteral("32 GT/s ×16"));
+    }
+
+    // Same-boot comparisons require both endpoint identity fields; changed identity is not a link delta.
+    put(QStringLiteral("/proc/sys/kernel/random/boot_id"), "fixture-boot\n");
+    put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/vendor"), "0x10de\n");
+    put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/device"), "0x2c58\n");
+    QJsonObject sample;
+    systemdiagnostics::pcieLinks(root, {}, &sample);
+    CHECK(sample.value(QStringLiteral("boot")).toString() == QStringLiteral("fixture-boot"));
+    put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/current_link_width"), "16\n");
+    const auto changedLink = systemdiagnostics::pcieLinks(root, sample);
+    CHECK(changedLink.tables.last().rows.first().value(3).contains(QStringLiteral("Link reading changed")));
+    put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/device"), "0x2c59\n");
+    const auto changedEndpoint = systemdiagnostics::pcieLinks(root, sample);
+    CHECK(changedEndpoint.tables.last().rows.first().value(3).contains(QStringLiteral("Endpoint identity changed")));
+    put(QStringLiteral("/proc/sys/kernel/random/boot_id"), "new-boot\n");
+    CHECK(systemdiagnostics::pcieLinks(root, sample).tables.size() == 2);
 
     // ── S10: zram and zswap together.
     put(QStringLiteral("/proc/meminfo"), "MemTotal:       32000000 kB\nMemAvailable:   20000000 kB\nSwapTotal: 8000000 kB\nSwapFree: 8000000 kB\n");

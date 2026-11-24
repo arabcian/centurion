@@ -289,6 +289,14 @@ Report displays(const QString &root) {
     Table det;
     det.title = tr("Display Details");
     det.headers = {tr("Connector"), tr("Size"), tr("Bit depth"), tr("Colour formats"), tr("HDR"), tr("Colour spaces"), tr("Audio"), tr("Made"), tr("Modes"), tr("State")};
+    Table blocks;
+    blocks.title = tr("EDID Blocks & Checksums");
+    blocks.headers = {tr("Connector"), tr("Block"), tr("Type"), tr("Checksum byte"), tr("Sum modulo 256"), tr("Status")};
+    blocks.note = tr("Only complete blocks read from the kernel are listed. A zero checksum sum is necessary but does not prove all EDID fields are correct.");
+    Table modesTable;
+    modesTable.title = tr("Decoded Detailed Timings");
+    modesTable.headers = {tr("Connector"), tr("Timing")};
+    modesTable.note = tr("Detailed timings decoded from the EDID are not a complete list of modes offered by the driver.");
     int connected = 0;
     for (const QString &conn : diagsrc::dir(root + QStringLiteral("/sys/class/drm"))) {
         if (!conn.contains(QLatin1Char('-'))) continue;
@@ -304,6 +312,17 @@ Report displays(const QString &root) {
             continue;
         }
         const Edid e = decodeEdid(raw);
+        for (int block = 0; block < e.readable; ++block) {
+            int sum = 0;
+            for (int i = 0; i < 128; ++i) sum += u8(raw, block * 128 + i);
+            const int remainder = sum % 256;
+            const QString kind = block == 0 ? tr("Base block") : e.extensions.value(block - 1, QStringLiteral("—"));
+            blocks.add({conn, QString::number(block), kind,
+                        QStringLiteral("0x%1").arg(u8(raw, block * 128 + 127), 2, 16, QLatin1Char('0')),
+                        QString::number(remainder), remainder == 0 ? tr("Checksum matches") : tr("Checksum mismatch")},
+                       remainder == 0 ? Level::Info : Level::Review);
+        }
+        for (const QString &timing : e.timings) modesTable.add({conn, timing});
         {
             const QString dash = QStringLiteral("—");
             QStringList fmt{QStringLiteral("RGB")};
@@ -336,11 +355,13 @@ Report displays(const QString &root) {
                                                        : tr("The range is wide enough for low frame-rate compensation."));
         else if (e.rangeMax > e.rangeMin && e.rangeMin > 0)
             r.add(Level::Info, tr("%1 declares a %2–%3 Hz refresh range").arg(port).arg(e.rangeMin).arg(e.rangeMax),
-                  tr("Laptop panels and DisplayPort monitors announce Adaptive-Sync this way (or in a DisplayID block); it is the range VRR can use when the driver enables it."));
+                  tr("A general refresh range is not proof of VRR support. Check explicit Adaptive-Sync capability and the compositor or driver."));
         r.raw += QStringLiteral("== %1 ==\n%2\n%3\n").arg(conn, e.timings.join(QLatin1Char('\n')), diagsrc::read(b + QStringLiteral("modes"), 8192));
     }
     r.tables << t;
     if (!det.rows.isEmpty()) r.tables << det;
+    if (!blocks.rows.isEmpty()) r.tables << blocks;
+    if (!modesTable.rows.isEmpty()) r.tables << modesTable;
     // The backlight devices (read here; Scenes changes the brightness).
     Table bl;
     bl.title = tr("Backlight");

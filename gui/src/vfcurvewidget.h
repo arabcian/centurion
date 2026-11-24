@@ -24,6 +24,8 @@ public:
     int current() const { return cur_; }
     /// Full view of the curve; also resets zoom and pan.
     void fitAxes();
+    void setReferenceCurves(const QVector<QPointF> &base, const QVector<QPointF> &readback);
+    void setReferenceVisibility(bool base, bool readback);
 
     // ── zoom / pan (voltage axis; frequency auto-fits to what is visible) ──
     static constexpr double MAX_ZOOM = 12.0;
@@ -70,7 +72,8 @@ private:
     int hitTest(QPointF px) const;
     void applyView();
 
-    QVector<QPointF> pts_;
+    QVector<QPointF> pts_, baseRef_, readRef_;
+    bool showBase_ = true, showRead_ = true;
     QSet<int> sel_;
     int cur_ = 0;
     double xMin_ = 600, xMax_ = 1200, yMin_ = 0, yMax_ = 3000;

@@ -5,7 +5,9 @@
 #include <QList>
 #include <QPair>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
+#include <functional>
 
 class QApplication;
 
@@ -41,10 +43,18 @@ QIcon themePreviewIcon(const QString &id);
 /// Experimental interface is selected by default on this branch; classic remains available.
 bool experimentalEnabled();
 bool saveUiMode(bool experimental);
+/// Density is a startup presentation preference; no hardware state changes.
+bool compactDensity();
+bool saveCompactDensity(bool compact);
 /// Reads the saved choice (~/.config/centurion/gui.ini) and sets the tokens.
 void load();
 bool saveTheme(const QString &id);
+QStringList paletteColors(const QString &id);
+QStringList paletteTokenNames();
+bool validCustomPalette(const QStringList &colors);
+bool saveCustomPalette(const QStringList &colors);
 /// Quit, then start again in place with the window open (main() does the exec).
+void setRestartGuard(std::function<bool()> guard);
 void requestRestart();
 bool restartRequested();
 /// "rgba(r, g, b, a)" of a theme colour — tints for banners and selections.

@@ -90,7 +90,12 @@ private:
         bool touched = false;  // user edited the editor since the last sync
         QString shadowedBy;    // label of the checked global row that covers this one (tune::SHADOWS)
         QCheckBox *include = nullptr;
-        QLabel *name = nullptr, *cur = nullptr;
+        QLabel *name = nullptr, *cur = nullptr, *bootValue = nullptr, *baseline = nullptr, *viewState = nullptr;
+        bool cached = false;
+        QComboBox *filter = nullptr;
+        QGridLayout *grid = nullptr;
+        QWidget *stripe = nullptr;
+        int gridLine = -1;
         QComboBox *combo = nullptr;
         Int64SpinBox *spin = nullptr;  // 64-bit: dirty limits exceed INT_MAX
         QPushButton *revert = nullptr;
@@ -116,6 +121,9 @@ private:
     bool setEditorValue(Row &r, const QString &v);
     bool differs(const Row &r) const;
     void markRow(Row &r);
+    void updateRowPresentation(Row &r);
+    void setReadbackStale(bool stale);
+    QString changePreview(const QJsonObject &values, bool forBoot) const;
     /// Greys out (and unchecks) every row a checked global row covers (describe "shadows").
     void applyShadows();
     /// Checking `key` at `value` would shadow one of `keys`.
@@ -166,7 +174,7 @@ private:
     /// Per-goal objective weights (QSettings autotune/weights/<goal>); empty = goal defaults.
     QJsonObject autotuneWeights(const QString &goal) const;
     void editAutotuneWeights();
-    void showAutotuneReport(const QJsonObject &d, const QStringList &notLoaded);
+    void showAutotuneReport(const QJsonObject &d, const QStringList &notLoaded, bool exploreOnly = false);
     /// "Calibrate at next boot…": schedules centurion-calibrate sessions for the next boot (tune-helper calibrate_on_boot).
     void scheduleBootCalibration();
     /// Status line of a scheduled / running / finished boot calibration (world-readable files, no helper call).
@@ -184,7 +192,8 @@ private:
     void showStatus(const QString &msg, const char *color = nullptr, int ms = 6000);
 
     QList<Row> rows_;
-    QJsonObject topology_, state_, boot_, isolation_;
+    QJsonObject topology_, state_, boot_, isolation_, baselineValues_;
+    bool readbackStale_ = true;
     QJsonArray discovered_;  // scheduler entries the helper's table does not know (read-only)
     QJsonArray shadows_;     // tune::SHADOWS: {"global", "when", "keys"}
     bool active_ = false, busy_ = false, describing_ = false, helperMissing_ = false;

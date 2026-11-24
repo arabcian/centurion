@@ -67,6 +67,7 @@ QString dir();
 bool validName(const QString &name);
 QStringList names();
 std::optional<Scene> load(const QString &name);
+QJsonObject sceneObject(const Scene &s);
 bool save(const Scene &s, QString *err = nullptr);
 bool remove(const QString &name);
 /// centurion-display (internal-panel refresh rate and brightness; runs as the user).

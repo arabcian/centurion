@@ -24,6 +24,7 @@ class CpuStressBox : public QWidget {
     Q_OBJECT
 public:
     explicit CpuStressBox(QWidget *parent = nullptr);
+    bool operationActive() const { return proc_ || starting_ || settling_ || presetHeld_ || releasingPreset_; }
     /// A new kernel event of this session (CurvePage::onFault): machine checks and lockups count against a running test.
     void onFault(const QJsonObject &e);
     /// Whether the kernel log is read live (CurvePage::setKernelLog). When not, events come minutes late and are not counted.
@@ -67,5 +68,6 @@ private:
     qint64 id_ = 0;
     int seconds_ = 0, cycles_n_ = 1, faults_ = 0;
     QList<int> faultCpus_;
+    bool releasingPreset_ = false;
     bool cancelled_ = false, settling_ = false, kernelLive_ = true, presetHeld_ = false, starting_ = false;
 };

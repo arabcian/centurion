@@ -235,16 +235,23 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
     const QString title = event.value("title").toString();
     const double ts = event.value("ts_us").toDouble();
     out << QStringLiteral("Event: %1 · %2 · boot %3").arg(kind, title, b.left(8));
-    qint64 when = qint64(event.value("wall_ms").toDouble() / 1000);
+    const auto validTime = [](double seconds) -> qint64 {
+        // Limit to a representable, plausible calendar range; malformed JSON is unknown.
+        return std::isfinite(seconds) && seconds > 0 && seconds < 253402300800.0 ? qint64(seconds) : 0;
+    };
+    qint64 when = validTime(event.value("wall_ms").toDouble() / 1000);
+    struct Entry { qint64 time; QString source, detail; };
+    QList<Entry> timeline;
+    auto append = [&](qint64 time, const QString &source, const QString &detail) { if(time > 0) timeline.append({time,source,detail}); };
     // Current boot kernel timestamps are monotonic-since-boot; translate only if boot IDs match.
     const QString curBoot = firstLine("/proc/sys/kernel/random/boot_id");
     if (!when && !b.isEmpty() && b == curBoot && ts > 0) {
         const QByteArray up = readFile("/proc/uptime", 256);
         bool ok = false;
         const double uptime = QString::fromLatin1(up).section(' ', 0, 0).toDouble(&ok);
-        if (ok) when = QDateTime::currentSecsSinceEpoch() - qint64(uptime) + qint64(ts / 1000000.0);
+        if (ok && std::isfinite(uptime) && uptime >= 0 && ts / 1000000.0 <= uptime + 1) when = validTime(double(QDateTime::currentSecsSinceEpoch()) - uptime + ts / 1000000.0);
     }
-    if (when) out << QStringLiteral("Event wall time: %1").arg(QDateTime::fromSecsSinceEpoch(when).toString(Qt::ISODate));
+    if (when) { out << QStringLiteral("Event wall time: %1").arg(QDateTime::fromSecsSinceEpoch(when).toString(Qt::ISODate)); append(when, QStringLiteral("SELECTED EVENT"), kind + QStringLiteral(" · ") + title); }
     if (!when && b != curBoot) out << QStringLiteral("Historical event: wall clock timestamp missing; temporal correlation unavailable.");
     if (!b.isEmpty() && b.size() < 32)
         out << QStringLiteral("Archived log retained only a boot-ID prefix. Full-boot flight/curve/scene attribution is deliberately unavailable.");
@@ -259,10 +266,10 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
     const QStringList journals = QString::fromUtf8(readFile("/var/lib/centurion/oc-journal.jsonl", 512 * 1024)).split('\n');
     for (const QString &line : journals) {
         const QJsonObject j = QJsonDocument::fromJson(line.toUtf8()).object();
-        if (b.isEmpty() || j.value("boot").toString() != b) continue;
-        const qint64 t = qint64(j.value("t").toDouble());
-        if (!when || (t <= when && when - t <= 7200))
-            out << QStringLiteral("Curve change %1: %2 = %3").arg(QDateTime::fromSecsSinceEpoch(t).toString("HH:mm:ss"), j.value("kind").toString(), j.value("state").toString());
+        if (b.size()<32 || j.value("boot").toString() != b) continue;
+        const qint64 t = validTime(j.value("t").toDouble());
+        if (when && t && t <= when && when - t <= 7200)
+            append(t, QStringLiteral("CURVE"), QStringLiteral("%1 = %2").arg(j.value("kind").toString(), j.value("state").toString()));
     }
     const QString ring = (b == curBoot) ? QStringLiteral("/var/lib/centurion/flight.ring") : QStringLiteral("/var/lib/centurion/flight-prev.ring");
     const QByteArray bytes = readFile(ring, 4 * 1024 * 1024);
@@ -273,7 +280,7 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
         if (o.value("boot").isString()) ringBoot = o.value("boot").toString();
         if (o.value("s").isDouble() && o.value("t").isDouble()) samples << o;
     }
-    if (ringBoot != b || b.isEmpty()) {
+    if (ringBoot != b || b.size()<32) {
         out << QStringLiteral("No matching flight ring for this boot; no cross-boot sample mixing.");
     } else if (!when) {
         out << QStringLiteral("Event time unavailable; flight samples cannot be aligned.");
@@ -281,28 +288,23 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
         std::sort(samples.begin(), samples.end(), [](const QJsonObject &a, const QJsonObject &b) { return a.value("t").toDouble() < b.value("t").toDouble(); });
         int count = 0;
         for (const auto &s : samples) {
-            const qint64 t = qint64(s.value("t").toDouble());
-            if (std::abs(t - when) > 180 || (count++ >= 40)) continue;
-            out << QStringLiteral("%1 [%2s] CPU %3°C · GPU %4°C · CPU %5 MHz · %6 W · load %7 · dGPU %8")
-                  .arg(QDateTime::fromSecsSinceEpoch(t).toString("HH:mm:ss"))
-                  .arg(t - when).arg(human(s.value("cpu_c")), human(s.value("gpu_c")), human(s.value("mhz")),
-                                     human(s.value("pkg_w")), human(s.value("load")), human(s.value("dgpu")));
+            const qint64 t = validTime(s.value("t").toDouble());
+            if (!t || std::abs(t - when) > 180 || (count++ >= 100)) continue;
+            append(t, QStringLiteral("SENSOR"), QStringLiteral("CPU %1°C · GPU %2°C · CPU %3 MHz · %4 W · load %5 · dGPU %6")
+                  .arg(human(s.value("cpu_c")), human(s.value("gpu_c")), human(s.value("mhz")),
+                                     human(s.value("pkg_w")), human(s.value("load")), human(s.value("dgpu"))));
         }
         if (!count) out << QStringLiteral("No sensor samples within ±180 seconds of the fault (sampling interval may be too long).");
     }
     // Transactions are recorded with boot IDs. Do not infer causality from a neighboring action.
-    if (when && !b.isEmpty()) {
+    if (when && b.size()>=32) {
         const QString tx = QString::fromUtf8(readFile(rootState() + "scene-transactions.jsonl", 768 * 1024));
         int n = 0;
         for (const QString &l : tx.split('\n')) {
             const QJsonObject rec = QJsonDocument::fromJson(l.toUtf8()).object();
-            const qint64 t = qint64(rec.value("t").toDouble());
-            if (rec.value("boot").toString() != b || std::abs(t - when) > 1800 || n++ >= 12) continue;
-            out << QStringLiteral("Scene transaction %1 [%2s]: %3 · %4")
-                 .arg(QDateTime::fromSecsSinceEpoch(t).toString("HH:mm:ss"))
-                 .arg(t - when)
-                 .arg(rec.value("scene").toString())
-                 .arg(rec.value("ok").toBool() ? QStringLiteral("success") : QStringLiteral("failure / rollback"));
+            const qint64 t = validTime(rec.value("t").toDouble());
+            if (rec.value("boot").toString() != b || !t || std::abs(t - when) > 1800 || n++ >= 50) continue;
+            append(t,QStringLiteral("SCENE"), QStringLiteral("%1 · %2").arg(rec.value("scene").toString(), rec.value("ok").isBool() ? (rec.value("ok").toBool() ? QStringLiteral("success") : QStringLiteral("failure / rollback")) : QStringLiteral("unknown")));
         }
     }
     // The saved health log includes a boot-id prefix for cross-reboot disambiguation.
@@ -312,9 +314,13 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
             if (!line.contains(QStringLiteral("boot=") + b.left(8)) || line.size() < 19) continue;
             const QDateTime t = QDateTime::fromString(line.left(19), "yyyy-MM-dd HH:mm:ss");
             if (!t.isValid() || std::abs(t.toSecsSinceEpoch() - when) > 300 || n++ >= 12) continue;
-            out << QStringLiteral("Other kernel event %1: %2").arg(t.toString("HH:mm:ss"), line.mid(19, 180).trimmed());
+            append(t.toSecsSinceEpoch(), QStringLiteral("KERNEL (boot prefix only)"), line.mid(19, 180).trimmed());
         }
     }
+    std::stable_sort(timeline.begin(), timeline.end(), [](const Entry &a,const Entry &b){return a.time<b.time;});
+    if (!timeline.isEmpty()) out << QString() << QStringLiteral("CHRONOLOGICAL RECORDS (source / offset from selected event)");
+    for (const auto &entry : timeline) out << QStringLiteral("%1 [%2 s] %3: %4")
+        .arg(QDateTime::fromSecsSinceEpoch(entry.time).toString(Qt::ISODate)).arg(entry.time-when).arg(entry.source,entry.detail);
     out << QString() << QStringLiteral("Missing data means unknown, not normal. Incident history is local and no information is uploaded.");
     return out;
 }

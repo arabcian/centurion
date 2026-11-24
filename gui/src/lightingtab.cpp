@@ -337,10 +337,11 @@ void LightingTab::buildUi() {
     bright_ = new QSlider(Qt::Horizontal);
     bright_->setRange(0, MAX_BRIGHTNESS);
     bright_->setPageStep(1);
-    bright_->setFixedWidth(150);
+    bright_->setMinimumWidth(fontMetrics().horizontalAdvance(QStringLiteral("100%")) + 32);
+    bright_->setMaximumWidth(220);
     bright_->setToolTip("Backlight brightness (0 = off). Applies immediately.");
     brightLabel_ = new QLabel("–");
-    brightLabel_->setMinimumWidth(22);
+    brightLabel_->setMinimumWidth(fontMetrics().horizontalAdvance(QStringLiteral("100%")) + 4);
     logoCheck_ = new QCheckBox("Lid logo");
     logoCheck_->setToolTip("Turns the LEGION logo on the lid on or off (its colour is set like a key below).");
     reloadBtn_ = mini("Reload", "Read everything back from the keyboard");
@@ -498,8 +499,16 @@ void LightingTab::buildUi() {
     apply_->setObjectName("btnAccent");
     apply_->setToolTip("Writes the effect list into the keyboard controller. It is stored there "
                        "(survives reboots and Windows), so apply when done rather than after every click.");
+    undo_ = new QPushButton(tr("Undo"));
+    redo_ = new QPushButton(tr("Redo"));
+    undo_->setToolTip(tr("Undo a draft effect change; nothing is written to the keyboard."));
+    redo_->setToolTip(tr("Redo a draft effect change; nothing is written to the keyboard."));
+    connect(undo_, &QPushButton::clicked, this, [this] { stepEditHistory(-1); });
+    connect(redo_, &QPushButton::clicked, this, [this] { stepEditHistory(1); });
     bottom->addWidget(budget_);
     bottom->addStretch(1);
+    bottom->addWidget(undo_);
+    bottom->addWidget(redo_);
     bottom->addWidget(reset_);
     bottom->addWidget(revert_);
     bottom->addWidget(apply_);
@@ -682,6 +691,7 @@ void LightingTab::applyState(const QJsonObject &j) {
     loaded_.clear();
     for (const QJsonValue &v : j.value("effects").toArray()) loaded_ << fromJson(v.toObject());
     work_ = loaded_;
+    resetEditHistory();
     ready_ = true;
 
     filling_ = true;
@@ -695,11 +705,17 @@ void LightingTab::applyState(const QJsonObject &j) {
     refreshAll();
 }
 
+bool LightingTab::operationActive() const {
+    return busy_ || pendingSets_ > 0 || (brightDebounce_ && brightDebounce_->isActive());
+}
+
 void LightingTab::sendSet(const QJsonObject &fields, const QString &what) {
     if (!ready_) return;
     QJsonObject req = fields;
     req["op"] = "set";
+    ++pendingSets_;
     run(req, this, [this, what](const privileged::Result &r) {
+        --pendingSets_;
         if (!r.ok()) { showStatus(what + " failed: " + r.message(), theme::DANGER); reload(false); return; }
         active_ = r.json.value("profile").toInt(active_);
         brightness_ = r.json.value("brightness").toInt(brightness_);
@@ -743,6 +759,7 @@ void LightingTab::write() {
         setBusy(false);
         if (!r.ok()) { showStatus("Writing the profile failed: " + r.message(), theme::DANGER); return; }
         loaded_ = sent;
+        resetEditHistory();
         active_ = p;
         showStatus(QStringLiteral("Profile %1 written (%2 / %3 bytes).").arg(p).arg(r.json.value("bytes").toInt()).arg(REPORT_LEN), theme::OK);
         refreshAll();
@@ -762,6 +779,7 @@ void LightingTab::factoryReset() {
         if (!r.ok()) { showStatus("Reset failed: " + r.message(), theme::DANGER); return; }
         loaded_.clear();
         work_.clear();  // so reload() does not ask to discard
+        resetEditHistory();
         showStatus(QStringLiteral("Profile %1 reset to factory defaults.").arg(p), theme::OK);
         reload(false);
     });
@@ -838,7 +856,28 @@ void LightingTab::editCurrent(const std::function<void(Effect &)> &f) {
     refreshAll();
 }
 
+void LightingTab::resetEditHistory() {
+    editHistory_.clear();
+    editHistory_.append(work_);
+    editHistoryPos_ = 0;
+}
+
+void LightingTab::stepEditHistory(int delta) {
+    const int next = editHistoryPos_ + delta;
+    if (!ready_ || busy_ || next < 0 || next >= editHistory_.size()) return;
+    editHistoryPos_ = next;
+    work_ = editHistory_.at(next);
+    refreshAll();  // no helper call: the profile is written only by Apply
+}
+
 void LightingTab::refreshAll() {
+    if (editHistoryPos_ < 0) resetEditHistory();
+    else if (editHistory_.at(editHistoryPos_) != work_) {
+        editHistory_ = editHistory_.mid(0, editHistoryPos_ + 1);
+        editHistory_.append(work_);
+        if (editHistory_.size() > 32) editHistory_.removeFirst();
+        editHistoryPos_ = int(editHistory_.size()) - 1;
+    }
     refreshList();
     refreshEditor();
     refreshPreview();
@@ -962,4 +1001,6 @@ void LightingTab::refreshBudget() {
     theme::setSheet(budget_, fits ? QString() : QStringLiteral("color: %1;").arg(theme::DANGER));
     apply_->setEnabled(ready_ && !busy_ && dirty() && fits);
     revert_->setEnabled(ready_ && !busy_ && dirty());
+    undo_->setEnabled(ready_ && !busy_ && editHistoryPos_ > 0);
+    redo_->setEnabled(ready_ && !busy_ && editHistoryPos_ + 1 < editHistory_.size());
 }

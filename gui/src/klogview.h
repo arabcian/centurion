@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QString>
 #include <optional>
+#include <deque>
 #include <vector>
 
 namespace klogview {
@@ -38,6 +39,21 @@ struct Row {
     Line first;         // the first occurrence: what is shown
     int count = 1;      // occurrences in the input
     QString last;       // time of the last occurrence
+};
+
+// Collect one exact record and its neighbours from an ordered stream. Unlike the
+// normal tail view, this does not discard old records or apply display filters.
+class ContextWindow {
+public:
+    ContextWindow(QString boot, quint64 seq, int before, int after);
+    void append(const Line &line);
+    std::vector<Row> rows() const;
+    int mark() const { return mark_; }
+private:
+    QString boot_;
+    quint64 seq_;
+    int before_, after_, mark_ = -1;
+    std::deque<Line> lines_;
 };
 
 /// One row per key when `groupRepeats`, otherwise one per line. Rows keep the order of first occurrence.

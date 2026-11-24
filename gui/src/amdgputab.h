@@ -27,6 +27,7 @@ class AmdGpuTab : public QWidget {
     Q_OBJECT
 public:
     explicit AmdGpuTab(QWidget *parent = nullptr);
+    bool operationActive() const;
     static bool present() { return !amdgpu::cards().isEmpty(); }
     QStringList savedProfileNames() const;
 

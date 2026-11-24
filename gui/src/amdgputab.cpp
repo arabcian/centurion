@@ -6,6 +6,10 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDir>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QHeaderView>
+#include <QTableWidget>
 #include <QFile>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -100,6 +104,43 @@ AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
     top->addWidget(cardCombo_, 1);
     kindLabel_ = muted({});
     top->addWidget(kindLabel_, 2);
+    auto *capabilities = new QPushButton(tr("Capabilities…"));
+    connect(capabilities, &QPushButton::clicked, this, [this] {
+        if (!card()) return;
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("AMD GPU — Reported Capabilities"));
+        dlg.resize(620, 480);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("%1 (%2). Snapshot of controls exposed by the current driver. Availability is not a guarantee that a write will succeed.")
+            .arg(card()->label, card()->pciId));
+        hint->setTextFormat(Qt::PlainText); hint->setWordWrap(true); layout->addWidget(hint);
+        auto *table = new QTableWidget(0, 2);
+        table->setHorizontalHeaderLabels({tr("Control"), tr("Availability")});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->verticalHeader()->hide();
+        table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+        const auto add = [table, this](const QString &name, bool offered) {
+            const int r = table->rowCount(); table->insertRow(r);
+            table->setItem(r, 0, new QTableWidgetItem(name));
+            table->setItem(r, 1, new QTableWidgetItem(offered ? tr("Exposed in editor") : tr("Not exposed")));
+        };
+        add(tr("Performance level"), perf_ != nullptr);
+        add(tr("Power profile"), profile_ != nullptr);
+        add(tr("Power limit"), cap_ != nullptr);
+        add(tr("GPU frequency bounds"), sclkMin_ || sclkMax_);
+        add(tr("Memory frequency bounds"), mclkMin_ || mclkMax_);
+        add(tr("GPU clock offset"), sclkOffset_ != nullptr);
+        add(tr("Voltage offset"), voltOffset_ != nullptr);
+        add(tr("V/F curve"), !curve_.isEmpty());
+        add(tr("GPU / memory states"), !sclkStates_.isEmpty() || !mclkStates_.isEmpty());
+        add(tr("Fan controls"), !fan_.isEmpty() || zeroRpm_);
+        add(tr("Fan curve"), !fanCurve_.isEmpty());
+        layout->addWidget(table, 1);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        layout->addWidget(bb); dlg.exec();
+    });
+    top->addWidget(capabilities);
     outer->addLayout(top);
 
     banner_ = new QLabel;
@@ -600,6 +641,8 @@ void AmdGpuTab::apply(const QJsonObject &settings, bool trial) {
         if (trial) startTrial();
     });
 }
+
+bool AmdGpuTab::operationActive() const { return busy_ || trialTimer_->isActive(); }
 
 void AmdGpuTab::startTrial() {
     trialLeft_ = REVERT_SECONDS;

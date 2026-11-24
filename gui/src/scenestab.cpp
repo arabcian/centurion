@@ -1,4 +1,5 @@
 #include "scenestab.h"
+#include "profilediff.h"
 #include "privileged.h"
 #include "lighting.h"
 #include "mangohud.h"
@@ -12,7 +13,6 @@
 #include "ryzentab.h"
 #include "shortcuts.h"
 #include "theme.h"
-#include "experimentalui.h"
 #include "experimentalui.h"
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -39,6 +39,7 @@
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
+#include <QSignalBlocker>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
@@ -89,7 +90,12 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     left->setSpacing(6);
     auto *listBox = new QGroupBox(tr("Scenes"));
     auto *ll = new QVBoxLayout(listBox);
+    sceneSearch_ = new QLineEdit;
+    sceneSearch_->setPlaceholderText(tr("Search scenes…"));
+    sceneSearch_->setClearButtonEnabled(true);
+    ll->addWidget(sceneSearch_);
     list_ = new QListWidget;
+    connect(sceneSearch_, &QLineEdit::textChanged, this, &ScenesTab::filterList);
     list_->setFrameShape(QFrame::NoFrame);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);  // long names elide instead
     list_->setTextElideMode(Qt::ElideRight);
@@ -352,6 +358,16 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     apply_->setToolTip("Saves the scene if changed, then applies it");
     eb->addWidget(save_);
     eb->addWidget(preview_);
+    auto *diff = new QPushButton(tr("Compare…"));
+    connect(diff,&QPushButton::clicked,this,[this] {
+        const QString draftName = tr("[Current draft]"); const auto draft=fromEditor();
+        auto names=scenes::names(); names.prepend(draftName);
+        profilediff::show(this,names,[draftName,draft](const QString &name)->std::optional<QJsonObject> {
+            if(name==draftName) return scenes::sceneObject(draft);
+            const auto s=scenes::load(name); if(!s) return std::nullopt; return scenes::sceneObject(*s);
+        });
+    });
+    eb->addWidget(diff);
     eb->addWidget(apply_);
     g->addLayout(eb, row++, 0, 1, 4);
     right->addWidget(editor_);
@@ -518,9 +534,11 @@ void ScenesTab::showEvent(QShowEvent *e) {
     const bool listChanged = shown != scenes::names();
     if (listChanged) reloadList();
     fillOptions();
-    if (!listChanged || !saved.name.isEmpty()) {
+    if (!saved.name.isEmpty() && loaded_.name == saved.name) {
         setEditor(cur);
         loaded_ = saved;
+    } else if (!loaded_.name.isEmpty()) {
+        setEditor(loaded_);
     }
     updateDirty();
     reloadAuto();
@@ -541,6 +559,7 @@ void ScenesTab::fillOptions() {
 }
 
 void ScenesTab::setEditor(const Scene &s) {
+    ++editorRevision_;
     filling_ = true;
     int pi = profile_->findData(s.platformProfile);
     if (pi < 0 && !s.platformProfile.isEmpty()) {
@@ -683,9 +702,10 @@ void ScenesTab::syncExtraRows() {
 
 void ScenesTab::captureScreenBrightness() {
     auto *p = new QProcess(this);
-    connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
+    connect(p, &QProcess::finished, this, [this, p, revision = editorRevision_](int, QProcess::ExitStatus) {
         const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
         p->deleteLater();
+        if (revision != editorRevision_) return;
         if (!o.value("ok").toBool()) { setStatus("Could not read the screen brightness: " + o.value("error").toString("centurion-display failed"), theme::WARN); return; }
         screenBright_->setValue(std::clamp(o.value("percent").toInt(), 1, 100));
         setStatus(QStringLiteral("Screen brightness %1 % captured (%2).").arg(screenBright_->value()).arg(o.value("device").toString()), theme::OK);
@@ -700,7 +720,16 @@ void ScenesTab::captureScreenBrightness() {
 
 // Active scene in the theme's accent (amber in Graphite, each palette's own equivalent elsewhere), the selected
 // row in the normal text colour, the rest dimmed. Set per item: a colour in the ::item stylesheet rule would win.
+void ScenesTab::filterList() {
+    const QString query = sceneSearch_->text().trimmed();
+    for (int i = 0; i < list_->count(); ++i) {
+        auto *item = list_->item(i);
+        item->setHidden(item != list_->currentItem() && !item->text().contains(query, Qt::CaseInsensitive));
+    }
+}
+
 void ScenesTab::colorList() {
+    filterList();
     const QString active = eng_->active();
     for (int i = 0; i < list_->count(); ++i) {
         QListWidgetItem *it = list_->item(i);
@@ -736,7 +765,7 @@ void ScenesTab::reloadList(const QString &selectName) {
     empty_->setVisible(!any);
     dup_->setEnabled(any);
     del_->setEnabled(any);
-    if (!any) { loaded_ = {}; return; }
+    if (!any) { ++editorRevision_; loaded_ = {}; return; }
     const int i = names.indexOf(want);
     list_->setCurrentRow(i < 0 ? 0 : i);  // fires select(); a no-op for the scene already loaded
     colorList();
@@ -744,17 +773,37 @@ void ScenesTab::reloadList(const QString &selectName) {
 
 void ScenesTab::select(const QString &name) {
     if (name.isEmpty() || name == loaded_.name) return;
+    auto restoreSelection = [this] {
+        const QSignalBlocker blocked(list_);
+        for (int i = 0; i < list_->count(); ++i) {
+            auto *item = list_->item(i);
+            if (item->data(Qt::UserRole).toString() == loaded_.name) {
+                item->setHidden(false);
+                list_->setCurrentItem(item);
+                colorList();
+                return;
+            }
+        }
+        list_->setCurrentRow(-1);
+        colorList();
+    };
     if (fromEditor() != loaded_ && !loaded_.name.isEmpty()) {
         const auto r = QMessageBox::question(this, tr("Unsaved changes"), tr("Save the changes to '%1' first?").arg(loaded_.name),
                                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         if (r == QMessageBox::Cancel) {
-            // Put the selection back — deferred: we are inside the list's own signal.
-            QTimer::singleShot(0, this, [this] { reloadList(loaded_.name); });
+            restoreSelection();
             return;
         }
-        if (r == QMessageBox::Save && !saveCurrent()) return;
+        if (r == QMessageBox::Save && !saveCurrent()) {
+            restoreSelection();
+            return;
+        }
     }
     if (auto s = scenes::load(name)) setEditor(*s);
+    else {
+        setStatus(tr("Could not load the selected scene."), theme::DANGER);
+        restoreSelection();
+    }
 }
 
 void ScenesTab::updateDirty() {
@@ -886,8 +935,8 @@ void ScenesTab::captureFirmware() {
     setStatus(note, theme::OK);
     // The EC fan boost state belongs to the same custom-mode snapshot.
     privileged::run(privileged::helperPath("legion-profile-helper"), QJsonObject{{"fan_fullspeed", "get"}}, this,
-                    [this, note](const privileged::Result &r) {
-                        if (!r.ok()) return;
+                    [this, note, revision = editorRevision_](const privileged::Result &r) {
+                        if (!r.ok() || revision != editorRevision_) return;
                         fan_->setCurrentIndex(std::max(0, fan_->findData(r.json.value("on").toBool() ? 1 : 0)));
                         updateDirty();
                         setStatus(note + QStringLiteral(" Fan boost: %1.").arg(r.json.value("on").toBool() ? "turbo" : "auto"), theme::OK);
@@ -899,8 +948,8 @@ void ScenesTab::captureFirmware() {
 // the fan-table interface answer "unsupported" and simply keep it "unchanged".
 void ScenesTab::captureFanTable(const QString &note) {
     privileged::run(privileged::helperPath("legion-profile-helper"), QJsonObject{{"fan_table", "get"}}, this,
-                    [this, note](const privileged::Result &r) {
-                        if (!r.ok()) return;
+                    [this, note, revision = editorRevision_](const privileged::Result &r) {
+                        if (!r.ok() || revision != editorRevision_) return;
                         const QJsonArray a = r.json.value("levels").toArray();
                         if (a.size() != 10) return;
                         fanTable_.clear();
@@ -928,6 +977,11 @@ void ScenesTab::applyCurrent() {
 }
 
 void ScenesTab::newScene(bool duplicate) {
+    if (!duplicate && !loaded_.name.isEmpty() && fromEditor() != loaded_) {
+        const auto choice = QMessageBox::question(this, tr("Unsaved changes"), tr("Save the changes to '%1' first?").arg(loaded_.name),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (choice == QMessageBox::Cancel || (choice == QMessageBox::Save && !saveCurrent())) return;
+    }
     bool ok = false;
     const QString title = duplicate ? tr("Duplicate scene") : tr("New scene");
     const QString name = QInputDialog::getText(this, title, "Scene name:", QLineEdit::Normal,
@@ -953,7 +1007,8 @@ void ScenesTab::deleteScene() {
     if (n.isEmpty() || QMessageBox::question(this, tr("Delete scene"), tr("Delete scene '%1'?\n\nThe profiles it refers to are kept.").arg(n),
                                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
-    scenes::remove(n);
+    if (!scenes::remove(n)) { setStatus(tr("Could not delete scene '%1'.").arg(n), theme::DANGER); return; }
+    ++editorRevision_;
     win_->shortcuts()->sync();
     win_->optimize()->forgetGameScene(n);
     auto a = eng_->autoConfig();

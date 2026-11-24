@@ -1,5 +1,9 @@
 #include "insights.h"
 #include "optimizetab.h"
+#include "profilediff.h"
+#include "frametime.h"
+#include "charts.h"
+#include "tuningviewstate.h"
 #include "privileged.h"
 #include "inteltab.h"
 #include "ryzentab.h"
@@ -27,8 +31,12 @@
 #include <QEvent>
 #include <QDateTime>
 #include <QProgressDialog>
+#include <QProgressBar>
 #include <QHeaderView>
 #include <QTableWidget>
+#include <QMap>
+#include <QMenu>
+#include <QAction>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -45,6 +53,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -547,6 +556,75 @@ void OptimizeTab::buildUi() {
     autoRow->addWidget(weightsBtn);
     autoRow->addWidget(fieldBtn);
     autoRow->addWidget(calBtn);
+    auto *calData = new QPushButton(tr("Calibration Data…"));
+    connect(calData,&QPushButton::clicked,this,[this] {
+        const QString path=QStringLiteral("/var/lib/centurion/signature.json");
+        QFile f(path);
+        if(!f.open(QIODevice::ReadOnly) || f.size() > (8LL<<20)) { QMessageBox::warning(this,tr("Calibration Data"),tr("Signature unavailable or exceeds the 8 MiB limit.")); return; }
+        const auto bytes=f.read((8LL<<20)+1);
+        const auto doc=QJsonDocument::fromJson(bytes);
+        if(bytes.size()>(8LL<<20) || !doc.isObject()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Invalid signature.")); return; }
+        const auto sig=doc.object();
+        if(sig.value("version").toInt()!=10 || !sig.value("rows").isArray()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Unsupported signature format.")); return; }
+        QDialog dlg(this); dlg.setWindowTitle(tr("Calibration Data")); dlg.resize(970,600);
+        auto *layout=new QVBoxLayout(&dlg);
+        auto *hint=new QLabel(tr("Historical records only. This viewer does not establish current model validity or modify calibration data. File timestamp: %1").arg(QFileInfo(f).lastModified().toString(Qt::ISODate))); hint->setWordWrap(true); layout->addWidget(hint);
+        auto *tabs=new QTabWidget; layout->addWidget(tabs,1);
+        auto *summary=new QPlainTextEdit; summary->setReadOnly(true);
+        QJsonObject meta; for(const char *key:{"version","fingerprint","on_battery","strategies","contexts"}) meta.insert(QLatin1String(key),sig.value(QLatin1String(key)));
+        summary->setPlainText(QString::fromUtf8(QJsonDocument(meta).toJson())); tabs->addTab(summary,tr("Metadata & Contexts"));
+        auto *table=new QTableWidget; table->setColumnCount(5); table->setHorizontalHeaderLabels({tr("Session"),tr("Phase ID"),tr("Kernel"),tr("Power source"),tr("Records")}); table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        QMap<QString,int> counts; QMap<QString,QStringList> fields;
+        for(const auto &v:sig.value("rows").toArray()) { const auto r=v.toObject(); const QStringList cells{profilediff::display(r.value("s")),profilediff::display(r.value("ph")),r.value("k").toString(),r.value("ps").toString()}; const auto key=QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(cells)).toJson(QJsonDocument::Compact)); ++counts[key]; fields[key]=cells; }
+        for(auto it=counts.cbegin();it!=counts.cend();++it) { int row=table->rowCount(); table->insertRow(row); const auto cells=fields.value(it.key()); for(int c=0;c<4;++c)table->setItem(row,c,new QTableWidgetItem(cells[c])); table->setItem(row,4,new QTableWidgetItem(QString::number(it.value()))); }
+        tabs->addTab(table,tr("Measurement Sessions"));
+        for(const auto &part:{qMakePair(QStringLiteral("quality"),tr("Quality")),qMakePair(QStringLiteral("verify"),tr("A/B Verification")),qMakePair(QStringLiteral("fs"),tr("Game Sessions"))}) { auto *raw=new QPlainTextEdit; raw->setReadOnly(true); raw->setPlainText(QString::fromUtf8(QJsonDocument(sig.value(part.first).toArray()).toJson())); tabs->addTab(raw,part.second); }
+        auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
+    });
+
+    auto *presetDiff = new QPushButton(tr("Compare Presets…"));
+    connect(presetDiff,&QPushButton::clicked,this,[this] { profilediff::show(this,presetNames(),[this](const QString &name)->std::optional<QJsonObject> { const auto p=presetObject(name); if(p.isEmpty()) return std::nullopt; return p; }); });
+    auto *inspectMenu = new QPushButton(tr("Inspect…"));
+    auto *inspectActions = new QMenu(inspectMenu);
+    auto *calAction = inspectActions->addAction(calData->text());
+    auto *diffAction = inspectActions->addAction(presetDiff->text());
+    auto *frameAction = inspectActions->addAction(tr("Frametime Analysis…"));
+    connect(frameAction, &QAction::triggered, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("Open frametime log"), QDir::homePath(), tr("Frametime logs (*.csv *.txt);;All files (*)"));
+        if (path.isEmpty()) return;
+        QFile f(path);
+        constexpr qint64 limit = 16LL << 20;
+        if (!QFileInfo(path).isFile() || !f.open(QIODevice::ReadOnly) || f.size() > limit) {
+            QMessageBox::warning(this, tr("Frametime Analysis"), tr("Log unavailable or larger than 16 MiB.")); return;
+        }
+        const auto bytes = f.read(limit + 1);
+        if (bytes.size() > limit || f.error() != QFileDevice::NoError) {
+            QMessageBox::warning(this, tr("Frametime Analysis"), tr("Log unavailable or larger than 16 MiB.")); return;
+        }
+        const auto log = frametime::parse(std::string_view(bytes.constData(), std::size_t(bytes.size())));
+        if (!log.supported || log.ms.empty()) {
+            QMessageBox::warning(this, tr("Frametime Analysis"), tr("No valid samples. Use FLM interval_ns, MangoHud frametime, or one millisecond value per line.")); return;
+        }
+        const auto stats = frametime::stats(log.ms);
+        QDialog dlg(this); dlg.setWindowTitle(tr("Frametime Analysis")); dlg.resize(860, 520);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *summary = new QLabel(tr("%1 accepted samples · %2 rejected · %3 FPS (1000 / mean ms)\nMean %4 ms · P50 %5 ms · P95 %6 ms · P99 %7 ms · Max %8 ms")
+            .arg(qulonglong(log.ms.size())).arg(qulonglong(log.rejected)).arg(stats.fps, 0, 'f', 2)
+            .arg(stats.mean, 0, 'f', 2).arg(stats.p50, 0, 'f', 2).arg(stats.p95, 0, 'f', 2).arg(stats.p99, 0, 'f', 2).arg(stats.maximum, 0, 'f', 2));
+        summary->setTextFormat(Qt::PlainText); summary->setWordWrap(true); layout->addWidget(summary);
+        auto *hint = new QLabel(tr("All valid samples are included in statistics. The chart retains bucket minima and maxima. Sample order is not elapsed time. No calibration data is written."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *chart = new LineChart; QVector<LineChart::Point> points;
+        for (const auto &p : frametime::envelope(log.ms)) points.append({double(p.index + 1), p.ms, tr("Sample %1").arg(qulonglong(p.index + 1))});
+        chart->setPoints(points, QStringLiteral(" ms")); layout->addWidget(chart, 1);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); layout->addWidget(buttons);
+        dlg.exec();
+    });
+    calData->setParent(inspectMenu); calData->hide();
+    presetDiff->setParent(inspectMenu); presetDiff->hide();
+    connect(calAction, &QAction::triggered, calData, &QPushButton::click);
+    connect(diffAction, &QAction::triggered, presetDiff, &QPushButton::click);
+    inspectMenu->setMenu(inspectActions); autoRow->addWidget(inspectMenu);
     autoRow->addStretch(1);
     pl->addLayout(autoRow, 2, 0, 1, 8);
     pl->addWidget(calLabel_, 3, 0, 1, 8);
@@ -1036,6 +1114,7 @@ void OptimizeTab::refresh(bool fromPoll) {
     }
     if (!QFileInfo(helperPath()).isExecutable()) {
         helperMissing_ = true;
+        setReadbackStale(true);
         updateStateBanner();
         return;
     }
@@ -1052,7 +1131,7 @@ void OptimizeTab::refresh(bool fromPoll) {
         // editors' values (touched is cleared after an apply) and a second Apply wrote the old values back.
         if (gen != opGen_) { needFull_ = true; refresh(); return; }
         const QJsonObject d = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
-        if (!d.value("ok").toBool()) { if (!light) needFull_ = true; return; }
+        if (!d.value("ok").toBool()) { needFull_ = true; setReadbackStale(true); return; }
         onDescribe(d, light);
     });
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
@@ -1060,6 +1139,7 @@ void OptimizeTab::refresh(bool fromPoll) {
         describing_ = false;
         helperMissing_ = true;
         needFull_ = true;
+        setReadbackStale(true);
         updateStateBanner();
         p->deleteLater();
     });
@@ -1080,6 +1160,7 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     state_ = d.value("state").toObject();
     isolation_ = d.value("isolation").toObject();  // same describe poll: no extra cost
     boot_ = d.value("boot").toObject();
+    if (!light) baselineValues_ = bootDefaults();
     if (conflictBanner_) {
         QStringList issues;
         for (const QJsonValue &v : d.value("conflicts").toArray()) {
@@ -1139,14 +1220,18 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
             continue;
         }
         const auto it = slowKeep_.constFind(key);
-        if (it == slowKeep_.cend()) { refresh(); return; }  // nothing to fill in from: ask for everything
-        rows[i] = *it;
+        if (it == slowKeep_.cend()) { setReadbackStale(true); refresh(); return; }  // nothing to fill in from: ask for everything
+        QJsonObject cached = *it;
+        cached.insert(QStringLiteral("gui_cached"), true);
+        rows[i] = cached;
     }
 
     QStringList keys;
     for (const auto &v : rows) keys << v.toObject().value("key").toString();
     QStringList have;
     for (const Row &r : rows_) have << r.key;
+    if (light && keys != have) { setReadbackStale(true); refresh(); return; }
+    readbackStale_ = false;
     if (keys != have) {
         // A light reply carries no help texts (tune.rs): rows are only ever built from a full one.
         if (light) { refresh(); return; }
@@ -1240,6 +1325,7 @@ void OptimizeTab::jumpToSetting(const QString &query) {
         for (int i = 0; i < groups_->count(); ++i) {
             if (groups_->widget(i)->property("optimizationGroup").toString() != r.group) continue;
             groups_->setCurrentIndex(i);
+            if (r.filter) r.filter->setCurrentIndex(0);
             if (auto *scroll = qobject_cast<QScrollArea *>(groups_->widget(i)))
                 scroll->ensureWidgetVisible(r.name, 14, 40);
             // Focus the checkbox only to show keyboard users where they are.
@@ -1254,6 +1340,9 @@ void OptimizeTab::jumpToSetting(const QString &query) {
 
 void OptimizeTab::buildRows(const QJsonArray &rows) {
     const QJsonObject values = collectValues();  // keep the user's edits across a rebuild
+    QHash<QString, QString> uncheckedDrafts;
+    for (const Row &r : rows_) if (r.include && !r.include->isChecked() && r.touched)
+        uncheckedDrafts.insert(r.key, editorValue(r));
     const QJsonObject run = collectRun();
     const int tabIndex = groups_->currentIndex();
     while (groups_->count()) { QWidget *w = groups_->widget(0); groups_->removeTab(0); w->deleteLater(); }
@@ -1332,13 +1421,30 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         } else {
             setHome(sec.home, scroll);
         }
-        const char *heads[] = {"", "Setting", "Live value", "New value", ""};
-        for (int c = 0; c < 5; ++c) {
+        auto *filter = new QComboBox(page);
+        filter->addItem(tr("All settings"), 0);
+        filter->addItem(tr("Selected"), 1);
+        filter->addItem(tr("Edited"), 2);
+        filter->addItem(tr("Boot differs"), 3);
+        filter->addItem(tr("Saved for boot"), 4);
+        filter->addItem(tr("Unavailable / unverified"), 5);
+        filter->setToolTip(tr("Display filter only. Hidden checked rows remain selected for Apply and Save."));
+        filter->setAccessibleName(tr("Setting filter"));
+        grid->addWidget(filter, 0, 0, 1, 3);
+        auto *filterHint = new QLabel(tr("Filtering does not change selection."), page);
+        filterHint->setWordWrap(true);
+        filterHint->setProperty("role", "muted");
+        grid->addWidget(filterHint, 0, 3, 1, 5);
+        connect(filter, &QComboBox::currentIndexChanged, this, [this, filter](int) {
+            for (Row &r : rows_) if (r.filter == filter) updateRowPresentation(r);
+        });
+        const char *heads[] = {"", "Setting", "Live value", "Boot default", "Saved for boot", "New value", "State", ""};
+        for (int c = 0; c < 8; ++c) {
             auto *h = new QLabel(tr(heads[c]), page);
             h->setProperty("role", "muted");
-            grid->addWidget(h, 0, c);
+            grid->addWidget(h, 1, c);
         }
-        int line = 1, available = 0;
+        int line = 2, available = 0;
         QString lastGroup;
         for (int i = 0; i < rows_.size(); ++i) {
             Row &r = rows_[i];
@@ -1347,8 +1453,11 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
                 lastGroup = r.group;
                 auto *head = new QLabel(QCoreApplication::translate("OptimizationGroups", r.group.toUtf8().constData()), page);
                 head->setProperty("role", "muted");
-                grid->addWidget(head, line++, 0, 1, 5);
+                grid->addWidget(head, line++, 0, 1, 8);
             }
+            r.filter = filter;
+            r.grid = grid;
+            r.gridLine = line;
             const QString key = r.key;
             r.include = new QCheckBox(page);
             r.include->setToolTip(tr("Include in Apply, Save and boot preset"));
@@ -1365,7 +1474,19 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             r.name->setToolTip(tip);
             r.name->setTextFormat(Qt::PlainText);
             r.cur = new QLabel(page);
-            r.cur->setMinimumWidth(110);
+            r.cur->setMinimumWidth(72);
+            r.baseline = new QLabel(page);
+            r.bootValue = new QLabel(page);
+            r.viewState = new QLabel(page);
+            for (QLabel *value : {r.baseline, r.bootValue, r.viewState}) {
+                value->setTextFormat(Qt::PlainText);
+                value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+                value->setWordWrap(true);
+            }
+            r.cur->setTextFormat(Qt::PlainText);
+            r.cur->setWordWrap(true);
+            r.name->setWordWrap(true);
+            r.name->setMinimumWidth(r.name->fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMMMM")));
             r.cur->setTextInteractionFlags(Qt::TextSelectableByMouse);
             QWidget *editor;
             if (r.kind == "int") {
@@ -1412,16 +1533,20 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             // One column width for every editor, so the value controls line up.
             editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             editor->setMaximumWidth(340);
-            grid->addWidget(editor, line, 3);
-            grid->addWidget(r.revert, line, 4);
+            grid->addWidget(r.baseline, line, 3);
+            grid->addWidget(r.bootValue, line, 4);
+            grid->addWidget(editor, line, 5);
+            grid->addWidget(r.viewState, line, 6);
+            grid->addWidget(r.revert, line, 7);
             // Zebra stripe behind every other row, so a setting and its editor
             // across the wide gap read as one line. Layout itself is unchanged.
             if (line % 2 == 0) {
                 auto *stripe = new QWidget(page);
+                r.stripe = stripe;
                 stripe->setAttribute(Qt::WA_StyledBackground);
                 stripe->setStyleSheet(QStringLiteral("background: rgba(127,127,127,0.09); border-radius: 4px;"));
                 stripe->setAttribute(Qt::WA_TransparentForMouseEvents);
-                grid->addWidget(stripe, line, 0, 1, 5);
+                grid->addWidget(stripe, line, 0, 1, 8);
                 stripe->lower();
             }
             grid->setRowMinimumHeight(line, editor->sizeHint().height() + 6);  // keeps the old 4px spacing
@@ -1437,10 +1562,10 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             disc->setWordWrap(true);
             disc->setTextInteractionFlags(Qt::TextSelectableByMouse);
             disc->setProperty("role", "muted");
-            grid->addWidget(disc, line++, 0, 1, 5);
+            grid->addWidget(disc, line++, 0, 1, 8);
         }
         grid->setColumnStretch(1, 2);
-        grid->setColumnStretch(3, 3);
+        grid->setColumnStretch(5, 2);
         grid->setRowStretch(line, 1);
         if (tab >= 0) groups_->setTabText(tab, QStringLiteral("%1  %2").arg(displayGroup).arg(available));
     }
@@ -1467,12 +1592,25 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         QJsonObject p{{"values", values}, {"run", run}};
         loadPresetObject(p, nullptr, false);
     }
+    QStringList lost;
+    for (Row &r : rows_) if (uncheckedDrafts.contains(r.key)) {
+        const QString draft = uncheckedDrafts.take(r.key);
+        if (validFor(r, draft) && setEditorValue(r, draft)) {
+            r.touched = true;
+            const QSignalBlocker block(r.include);
+            r.include->setChecked(false);
+            markRow(r);
+        } else lost << r.key;
+    }
+    for (const QString &key : uncheckedDrafts.keys()) lost << key;
+    if (!lost.isEmpty()) showStatus(tr("Some unchecked drafts are no longer available: %1").arg(lost.join(QStringLiteral(", "))), theme::WARN, 10000);
 }
 
 void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
     const QString oldCurrent = r.current;
     const QString oldEditor = editorValue(r);
     r.available = o.value("available").toBool();
+    r.cached = o.value(QStringLiteral("gui_cached")).toBool();
     r.current = o.value("current").isNull() ? QString() : o.value("current").toString();
     r.min = o.value("min").toVariant().toLongLong();
     r.max = o.value("max").toVariant().toLongLong();
@@ -1490,7 +1628,7 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
     const QJsonValue bootRaw = boot_.value(QStringLiteral("values")).toObject().value(r.key);
     const QString bootExpected = bootRaw.isString() ? bootRaw.toString()
                                : bootRaw.isDouble() ? QString::number(bootRaw.toVariant().toLongLong()) : QString();
-    const bool bootDiffers = r.available && !rootOnly && !r.current.isEmpty()
+    const bool bootDiffers = !readbackStale_ && !r.cached && r.available && !rootOnly && !r.current.isEmpty()
                            && !bootExpected.isEmpty() && bootExpected != r.current;
     theme::setSheet(r.cur, QStringLiteral("color:%1; background:transparent;")
                             .arg(bootDiffers ? theme::WARN : r.available && !rootOnly ? theme::FG_DIM : theme::MUTED));
@@ -1613,6 +1751,80 @@ void OptimizeTab::markRow(Row &r) {
     const bool pending = r.include->isChecked() && differs(r);
     const char *color = !r.available || !r.shadowedBy.isEmpty() ? theme::MUTED : pending ? theme::ACCENT : r.caution ? theme::WARN : theme::FG;
     theme::setSheet(r.name, QStringLiteral("color:%1; background:transparent;%2").arg(color, pending ? " font-weight:600;" : ""));
+    updateRowPresentation(r);
+}
+
+void OptimizeTab::updateRowPresentation(Row &r) {
+    if (!r.bootValue || !r.baseline || !r.viewState) return;
+    const QJsonObject saved = boot_.value(QStringLiteral("values")).toObject();
+    const QString boot = tuningview::valueText(saved.value(r.key));
+    const QString baseline = tuningview::valueText(baselineValues_.value(r.key));
+    const auto match = tuningview::bootMatch(saved.contains(r.key), r.available && !r.cached && !readbackStale_, r.current, boot);
+    using tuningview::BootMatch;
+    r.baseline->setText(baseline.isEmpty() ? QStringLiteral("—") : baseline);
+    r.baseline->setToolTip(tr("Boot guard snapshot, not a factory default or a restore-original value."));
+    r.bootValue->setText(boot.isEmpty() ? QStringLiteral("—") : boot);
+    r.bootValue->setToolTip(tr("Saved configuration only; does not prove the boot service ran."));
+    QStringList state;
+    if (readbackStale_) state << tr("Stale readback");
+    if (!r.available) state << tr("Unavailable");
+    else if (r.cached) state << tr("Cached readback");
+    else if (r.current.isEmpty()) state << tr("Unreadable");
+    if (match == BootMatch::Matches) state << tr("Boot matches");
+    else if (match == BootMatch::Different) state << tr("Boot differs");
+    else if (match == BootMatch::Unknown) state << tr("Boot unverified");
+    if (!r.shadowedBy.isEmpty()) state << tr("Covered by %1").arg(r.shadowedBy);
+    if (r.include && r.include->isChecked()) state << tr("Selected");
+    if (r.touched && differs(r)) state << tr("Edited");
+    r.viewState->setText(state.isEmpty() ? QStringLiteral("—") : state.join(QStringLiteral(" · ")));
+    theme::setSheet(r.bootValue, QStringLiteral("color:%1; background:transparent;").arg(match == BootMatch::Different ? theme::WARN : theme::FG_DIM));
+    theme::setSheet(r.viewState, QStringLiteral("color:%1; background:transparent;").arg(match == BootMatch::Different || readbackStale_ ? theme::WARN : theme::FG_DIM));
+    theme::setSheet(r.cur, QStringLiteral("color:%1; background:transparent;").arg(readbackStale_ || r.cached || !r.available || r.current.isEmpty() ? theme::MUTED : match == BootMatch::Different ? theme::WARN : theme::FG_DIM));
+    r.cur->setAccessibleDescription(readbackStale_ ? tr("Stale readback") : r.cached ? tr("Cached readback") : QString());
+    if (r.filter && r.grid && r.gridLine >= 0) {
+        bool visible = true;
+        switch (r.filter->currentData().toInt()) {
+        case 1: visible = r.include->isChecked(); break;
+        case 2: visible = r.touched && differs(r); break;
+        case 3: visible = match == BootMatch::Different; break;
+        case 4: visible = saved.contains(r.key); break;
+        case 5: visible = !r.available || r.current.isEmpty() || readbackStale_ || r.cached; break;
+        default: break;
+        }
+        // Filtering only affects presentation; do not toggle include or change an editor.
+        // Keep a focused editor visible until the next refresh to avoid losing typed input.
+        if ((r.spin && r.spin->hasFocus()) || (r.combo && r.combo->hasFocus())) visible = true;
+        QWidget *editor = r.spin ? static_cast<QWidget *>(r.spin) : static_cast<QWidget *>(r.combo);
+        r.grid->setRowMinimumHeight(r.gridLine, visible && editor ? editor->sizeHint().height() + 6 : 0);
+        for (QWidget *widget : {static_cast<QWidget *>(r.include), static_cast<QWidget *>(r.name),
+                               static_cast<QWidget *>(r.cur), static_cast<QWidget *>(r.baseline),
+                               static_cast<QWidget *>(r.bootValue), static_cast<QWidget *>(r.viewState), editor})
+            if (widget) widget->setVisible(visible);
+        r.revert->setVisible(visible && state_.value("keys").toArray().contains(r.key));
+        if (r.stripe) r.stripe->setVisible(visible);
+    }
+}
+
+void OptimizeTab::setReadbackStale(bool stale) {
+    readbackStale_ = stale;
+    updateHomeBootStatuses();
+}
+
+QString OptimizeTab::changePreview(const QJsonObject &values, bool forBoot) const {
+    QStringList lines;
+    const QJsonObject saved = boot_.value(QStringLiteral("values")).toObject();
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        QString previous;
+        for (const Row &r : rows_) if (r.key == it.key()) {
+            if (forBoot) previous = tuningview::valueText(saved.value(r.key));
+            else if (!readbackStale_ && !r.cached && r.available) previous = r.current;
+            break;
+        }
+        lines << QStringLiteral("%1: %2 → %3").arg(it.key(), previous.isEmpty() ? tr("Unknown / not saved") : previous, tuningview::valueText(it.value()));
+    }
+    if (forBoot) for (auto it = saved.constBegin(); it != saved.constEnd(); ++it)
+        if (!values.contains(it.key())) lines << tr("%1: removed from boot preset").arg(it.key());
+    return lines.join(QLatin1Char('\n'));
 }
 
 bool OptimizeTab::wouldShadow(const QString &key, const QString &value, const QSet<QString> &keys) const {
@@ -2095,7 +2307,11 @@ void OptimizeTab::setBoot(const QString &home) {
     QString msg = QStringLiteral("Store %1 checked setting(s) as the boot preset?\n\nThey are applied early at every boot by the "
                                  "centurion-tune OpenRC service:\n    rc-update add centurion-tune boot").arg(values.size());
     if (!risky.isEmpty()) msg += "\n\n⚠ Includes: " + risky.join(", ") + ". A bad value here is applied before you can log in.";
-    if (QMessageBox::question(this, "Apply at boot", msg) != QMessageBox::Yes) return;
+    QMessageBox preview(QMessageBox::Question, tr("Apply at boot"), msg, QMessageBox::Yes | QMessageBox::No, this);
+    preview.setTextFormat(Qt::PlainText);
+    preview.setDetailedText(changePreview(values, true));
+    preview.setDefaultButton(QMessageBox::No);
+    if (preview.exec() != QMessageBox::Yes) return;
     const QString bootPreset = boot_.value("preset").toString();
     const QString name = !home.isEmpty() && validPresetName(bootPreset) ? bootPreset
                        : validPresetName(loadedPreset_) ? loadedPreset_ : QStringLiteral("Custom");
@@ -2114,7 +2330,10 @@ void OptimizeTab::setBoot(const QString &home) {
 void OptimizeTab::clearBoot() {
     if (QMessageBox::question(this, "Clear boot preset", "Stop applying a preset at boot?") != QMessageBox::Yes) return;
     runOp({{"op", "set_boot"}, {"values", QJsonValue::Null}}, "Clear boot preset",
-          [this](const QJsonObject &) { showStatus("Boot preset cleared.", theme::OK); });
+          [this](const QJsonObject &res) {
+              if (res.value("ok").toBool()) showStatus("Boot preset cleared.", theme::OK);
+              else showStatus(tr("Boot preset was not cleared."), theme::DANGER);
+          });
 }
 
 // ── autotune ────────────────────────────────────────────────────────────────
@@ -2176,7 +2395,7 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         }
         if (exploreOnly) {
             showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · trade-offs computed; the table was left as it was."), theme::OK, 8000);
-            showAutotuneReport(d, {});
+            showAutotuneReport(d, {}, true);
             return;
         }
         QStringList notLoaded;
@@ -2305,20 +2524,26 @@ void OptimizeTab::editAutotuneWeights() {
         b->setSingleStep(0.1);
         b->setDecimals(2);
         b->setValue(cur.contains(WEIGHT_KEYS[i]) ? cur.value(WEIGHT_KEYS[i]).toDouble() : def[i]);
+        auto *row = new QWidget;
+        auto *h = new QHBoxLayout(row);
+        h->setContentsMargins(0, 0, 0, 0);
+        h->addWidget(b);
+        auto *meter = new QProgressBar;
+        meter->setRange(0, int(b->maximum() * 100));
+        meter->setValue(qRound(b->value() * 100));
+        meter->setTextVisible(false);
+        meter->setAccessibleName(labels[i]);
+        meter->setToolTip(tr("Configured weight relative to its allowed maximum; not a measured performance effect."));
+        connect(b, &QDoubleSpinBox::valueChanged, meter, [meter](double value) { meter->setValue(qRound(value * 100)); });
+        h->addWidget(meter, 1);
         if (qAbs(eff[i] - def[i]) > 1e-6) {
-            auto *row = new QWidget;
-            auto *h = new QHBoxLayout(row);
-            h->setContentsMargins(0, 0, 0, 0);
-            h->addWidget(b);
             auto *hint = muted(QStringLiteral("default %1 → in effect %2").arg(def[i], 0, 'f', 2).arg(eff[i], 0, 'f', 2));
             const QString why = effWhy.value(QLatin1String(WEIGHT_KEYS[i])).toString();
             hint->setToolTip(why);
             b->setToolTip(why);
             h->addWidget(hint, 1);
-            form->addRow(labels[i], row);
-        } else {
-            form->addRow(labels[i], b);
         }
+        form->addRow(labels[i], row);
         boxes << b;
     }
     auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults);
@@ -2463,7 +2688,7 @@ void OptimizeTab::importFieldData() {
     proc->start(pkexec, args);
 }
 
-void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &notLoaded) {
+void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &notLoaded, bool exploreOnly) {
     const QJsonObject preset = d.value("preset").toObject();
     const QJsonObject values = preset.value("values").toObject();
     const QJsonObject why = d.value("rationale").toObject();
@@ -2471,9 +2696,26 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
 
     QDialog dlg(this);
     dlg.setWindowTitle(QStringLiteral("Autotune — %1").arg(d.value("goal_label").toString()));
-    dlg.resize(980, 600);
-    auto *v = new QVBoxLayout(&dlg);
-    v->setSpacing(6);
+    dlg.resize(980, 650);
+    auto *root = new QVBoxLayout(&dlg);
+    auto *tabs = new QTabWidget;
+    root->addWidget(tabs, 1);
+    const auto scrollPage = [tabs](const QString &title) {
+        auto *scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        auto *page = new QWidget;
+        auto *layout = new QVBoxLayout(page);
+        layout->setSpacing(6);
+        scroll->setWidget(page);
+        tabs->addTab(scroll, title);
+        return layout;
+    };
+    auto *v = scrollPage(tr("Summary & evidence"));
+    if (exploreOnly) {
+        auto *notice = new QLabel(tr("Explore is a read-only report. Values below come from this result, not the editable optimization table. Use these weights to run a new Autotune before saving or applying."));
+        notice->setWordWrap(true);
+        v->addWidget(notice);
+    }
     auto *head = new QLabel(QCoreApplication::translate("OptimizeTab", "<b>Machine</b>&nbsp; %1").arg(d.value("profile_summary").toString().toHtmlEscaped()));
     head->setWordWrap(true);
     head->setTextFormat(Qt::RichText);
@@ -2553,6 +2795,10 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
             v->addWidget(body);
         }
     }
+    v->addStretch();
+    auto *recommendations = new QWidget;
+    v = new QVBoxLayout(recommendations);
+    tabs->addTab(recommendations, tr("Recommendations"));
     // Source / confidence columns only when the report carries "decisions" (older helpers: old layout).
     const QHash<QString, QJsonObject> dec = autotunereport::decisionsByKey(d);
     const QJsonObject scores = d.value(QStringLiteral("scores")).toObject();
@@ -2563,13 +2809,19 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     connect(evidence, &QPushButton::clicked, &dlg, [this, d] { insights::show(this, tr("Calibration Confidence"), insights::confidence(d)); });
     v->addWidget(evidence);
     auto *onlyChanges = new QCheckBox(QCoreApplication::translate("OptimizeTab", "Only changes"));
-    v->addWidget(onlyChanges);
+    auto *filters = new QHBoxLayout;
+    filters->addWidget(onlyChanges);
+    auto *search = new QLineEdit;
+    search->setPlaceholderText(tr("Search settings, sources and rationale…"));
+    filters->addWidget(search, 1);
+    v->addLayout(filters);
     auto *table = new QTableWidget(0, rich ? 6 : 4);
     if (rich) table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Source"), QStringLiteral("Confidence"), QStringLiteral("Why (for this machine)")});
     else table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Why (for this machine)")});
     table->verticalHeader()->hide();
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->setSelectionMode(QAbstractItemView::NoSelection);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setWordWrap(true);
     table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -2597,11 +2849,13 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     for (const char *gname : GROUPS) {
         for (const Row &r : rows_) {
             if (r.group != QLatin1String(gname) || !values.contains(r.key) || notLoaded.contains(r.key)) continue;
-            const QString shown = r.combo ? r.combo->currentText() : editorValue(r);
-            const bool ch = differs(r);
+            const QString proposed = tuningview::valueText(values.value(r.key));
+            const QString shown = exploreOnly ? proposed : (r.combo ? r.combo->currentText() : editorValue(r));
+            const bool known = r.available && !r.cached && !readbackStale_ && !r.current.isEmpty();
+            const bool ch = !known || (exploreOnly ? proposed != r.current : differs(r));
             changing += ch;
             const QString was = since.value(r.key);
-            add(r.key, r.group, r.label, shown + (ch ? QString() : QStringLiteral("  (=)")) + (was.isEmpty() ? QString() : QStringLiteral("  ↻")),
+            add(r.key, r.group, r.label, shown + (!known ? tr(" (live unverified)") : ch ? QString() : QStringLiteral("  (=)")) + (was.isEmpty() ? QString() : QStringLiteral("  ↻")),
                 was.isEmpty() ? why.value(r.key).toString() : QStringLiteral("Changed since the last autotune: %1. %2").arg(was, why.value(r.key).toString()), ch);
         }
     }
@@ -2612,10 +2866,50 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
                 run.value("timerslack_ns").toInt(0) > 0 ? QStringLiteral(" · precise timers") : QString())
                 + (run.value("slice_us").toInt(0) > 0 ? QStringLiteral(" · slice %1 µs").arg(run.value("slice_us").toInt()) : QString()), why.value("run").toString(), true);
     table->resizeRowsToContents();
-    connect(onlyChanges, &QCheckBox::toggled, table, [table](bool on) {
-        for (int r = 0; r < table->rowCount(); ++r) table->setRowHidden(r, on && !table->item(r, 0)->data(Qt::UserRole).toBool());
+    onlyChanges->setText(tr("Changes or unverified"));
+    auto *count = new QLabel;
+    filters->addWidget(count);
+    const auto filter = [table, search, onlyChanges, count] {
+        int visible = 0;
+        for (int r = 0; r < table->rowCount(); ++r) {
+            const QString q = search->text().trimmed();
+            bool match = q.isEmpty();
+            for (int c = 0; c < table->columnCount(); ++c) {
+                auto *item = table->item(r, c);
+                if (item) match |= item->text().contains(q, Qt::CaseInsensitive) || item->toolTip().contains(q, Qt::CaseInsensitive);
+            }
+            const bool show = match && (!onlyChanges->isChecked() || table->item(r, 0)->data(Qt::UserRole).toBool());
+            table->setRowHidden(r, !show);
+            visible += show;
+        }
+        count->setText(tr("%1 / %2").arg(visible).arg(table->rowCount()));
+    };
+    connect(onlyChanges, &QCheckBox::toggled, table, filter);
+    connect(search, &QLineEdit::textChanged, table, filter);
+    filter();
+    auto *split = new QSplitter(Qt::Vertical);
+    split->addWidget(table);
+    auto *detail = new QPlainTextEdit;
+    detail->setReadOnly(true);
+    detail->setPlaceholderText(tr("Select a recommendation to inspect its rationale and candidate scores."));
+    detail->setAccessibleName(tr("Recommendation details"));
+    split->addWidget(detail);
+    split->setStretchFactor(0, 4); split->setStretchFactor(1, 1);
+    connect(table, &QTableWidget::currentCellChanged, detail, [table, detail](int r, int, int, int) {
+        QStringList lines;
+        if (r >= 0) for (int c = 0; c < table->columnCount(); ++c) {
+            const auto *item = table->item(r, c);
+            if (!item) continue;
+            lines << table->horizontalHeaderItem(c)->text() + QStringLiteral(": ") + item->text();
+            if (item->toolTip().startsWith(QStringLiteral("Scores"))) lines << item->toolTip();
+        }
+        detail->setPlainText(lines.join(QStringLiteral("\n")));
     });
-    v->addWidget(table, 1);
+    v->addWidget(split, 1);
+    v = scrollPage(tr("Predictions & trade-offs"));
+    auto *predictionNote = new QLabel(tr("Model estimates and uncertainty are not measured benchmark gains. Missing predictions mean unavailable evidence, not zero effect."));
+    predictionNote->setWordWrap(true);
+    v->addWidget(predictionNote);
 
     // What the calibrated part is predicted to do, other trade-offs on the same data, and the
     // decisions a small change of the weights would flip.
@@ -2694,19 +2988,21 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     for (const auto &s : d.value("skipped").toArray()) off << s.toObject().value("key").toString();
     off << notLoaded;
     off.removeDuplicates();
-    auto *foot = muted(QStringLiteral("%1 row(s) set by autotune, %2 of them change the live value (bold); every other row is checked at its "
-                                      "boot-guard default. Nothing has been written yet: review in the tab, then Apply checked.%3")
+    auto *foot = muted((exploreOnly ? tr("Explore only: %1 proposed values; %2 displayed rows differ or have unverified live values. The editor was not changed.%3")
+                                  : tr("%1 proposed values; %2 displayed rows differ or have unverified live values. Nothing has been written to hardware: review selections in the tab, then Apply checked.%3"))
                            .arg(values.size() - notLoaded.size()).arg(changing)
-                           .arg(off.isEmpty() ? QString() : QStringLiteral("\nNot offered on this machine/kernel: ") + off.join(QStringLiteral(", "))));
+                           .arg(off.isEmpty() ? QString() : tr("\nNot offered on this machine/kernel: ") + off.join(QStringLiteral(", "))));
     v->addWidget(foot);
+    v->addStretch();
+    tabs->setCurrentWidget(recommendations);
 
     auto *bb = new QDialogButtonBox;
-    auto *save = bb->addButton(QStringLiteral("Save as preset…"), QDialogButtonBox::AcceptRole);
-    QPushButton *saveGame = goal == QLatin1String("gaming") ? bb->addButton(QStringLiteral("Save + ★ use for games"), QDialogButtonBox::AcceptRole) : nullptr;
-    bb->addButton(QStringLiteral("Close"), QDialogButtonBox::RejectRole);
-    v->addWidget(bb);
+    auto *save = exploreOnly ? nullptr : bb->addButton(tr("Save as preset…"), QDialogButtonBox::AcceptRole);
+    QPushButton *saveGame = !exploreOnly && goal == QLatin1String("gaming") ? bb->addButton(tr("Save + ★ use for games"), QDialogButtonBox::AcceptRole) : nullptr;
+    bb->addButton(tr("Close"), QDialogButtonBox::RejectRole);
+    root->addWidget(bb);
     bool forGames = false;
-    connect(save, &QPushButton::clicked, &dlg, &QDialog::accept);
+    if (save) connect(save, &QPushButton::clicked, &dlg, &QDialog::accept);
     if (saveGame) connect(saveGame, &QPushButton::clicked, &dlg, [&] { forGames = true; dlg.accept(); });
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     if (dlg.exec() != QDialog::Accepted) {
@@ -2714,6 +3010,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         return;
     }
 
+    if (exploreOnly) return;
     bool ok = false;
     const QString name = QInputDialog::getText(this, QStringLiteral("Save autotuned preset"),
         QStringLiteral("Preset name (letters, digits, space, _ - .):"), QLineEdit::Normal, d.value("name").toString(), &ok).trimmed();
@@ -2773,10 +3070,14 @@ void OptimizeTab::applySelected(const QString &home) {
     if (values.isEmpty()) { QMessageBox::information(this, "Apply", "No row is checked."); return; }
     QStringList risky;
     for (const Row &r : rows_) if (values.contains(r.key) && r.caution && differs(r)) risky << "• " + r.label + " → " + (r.combo ? r.combo->currentText() : editorValue(r));
-    if (!risky.isEmpty() && QMessageBox::warning(this, "Apply",
-            "These changes can cost stability, heat or idle power:\n\n" + risky.join('\n') +
-            "\n\nEverything stays reversible with Restore originals. Continue?",
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    QString summary = tr("Apply %1 selected setting(s) to the running system? This does not save a boot preset.").arg(values.size());
+    if (!risky.isEmpty()) summary += tr("\n\nThese changes can cost stability, heat or idle power:\n") + risky.join(QLatin1Char('\n'));
+    QMessageBox preview(risky.isEmpty() ? QMessageBox::Question : QMessageBox::Warning,
+        tr("Apply Preview"), summary, QMessageBox::Yes | QMessageBox::No, this);
+    preview.setTextFormat(Qt::PlainText);
+    preview.setDetailedText(changePreview(values, false));
+    preview.setDefaultButton(QMessageBox::No);
+    if (preview.exec() != QMessageBox::Yes) return;
     // An autotuned preset with potentially destabilizing changes must be
     // proved against the *current boot baseline* before Apply. For ordinary
     // manual presets the legacy explicit caution confirmation still applies.
@@ -3018,6 +3319,7 @@ void OptimizeTab::runOp(const QJsonObject &req, const QString &what, std::functi
 // cannot make saved values look as though they disappeared.
 void OptimizeTab::updateHomeBootStatuses() {
     const QJsonObject saved = boot_.value(QStringLiteral("values")).toObject();
+    for (Row &r : rows_) updateRowPresentation(r);
     for (auto it = homeBootStatus_.cbegin(); it != homeBootStatus_.cend(); ++it) {
         const QString home = it.key();
         QLabel *label = it.value();
@@ -3028,7 +3330,7 @@ void OptimizeTab::updateHomeBootStatuses() {
             const QJsonValue raw = saved.value(r.key);
             const QString expected = raw.isString() ? raw.toString()
                                    : raw.isDouble() ? QString::number(raw.toVariant().toLongLong()) : QString();
-            if (!r.available || r.current.isEmpty() || expected.isEmpty()) ++unknown;
+            if (readbackStale_ || r.cached || !r.available || r.current.isEmpty() || expected.isEmpty()) ++unknown;
             else if (r.current == expected) ++matching;
             else ++different;
         }
@@ -3139,7 +3441,7 @@ QWidget *OptimizeTab::homePage(const QString &home) {
 
 void OptimizeTab::setBusy(bool b) {
     busy_ = b;
-    if (b) ++opGen_;
+    if (b) { ++opGen_; readbackStale_ = true; }
     groups_->setEnabled(!b);
     applyBtn_->setEnabled(!b);
     for (QWidget *h : std::as_const(homeHolders_)) h->setEnabled(!b);

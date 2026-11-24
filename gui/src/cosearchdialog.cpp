@@ -18,6 +18,8 @@
 #include <QFile>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QMap>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QJsonDocument>
@@ -29,6 +31,9 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QProgressBar>
+#include <QSplitter>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QSaveFile>
 #include <QScopeGuard>
@@ -288,7 +293,13 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     v->addLayout(form);
     estimate_ = new QLabel;
     estimate_->setProperty("role", "muted");
+    estimate_->setWordWrap(true);
     v->addWidget(estimate_);
+    coreProgress_ = new QProgressBar(this);
+    coreProgress_->setAccessibleName(tr("Completed search cores"));
+    coreProgress_->setFormat(tr("Core search: %v / %m"));
+    coreProgress_->hide();
+    v->addWidget(coreProgress_);
 
     auto *row = new QHBoxLayout;
     row->addStretch();
@@ -309,20 +320,34 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     stop_ = new QPushButton(tr("Stop and reset"));
     stop_->setObjectName("btnDanger");
     stop_->setEnabled(false);
+    auto *mapToggle = new QPushButton(tr("CCD overview"));
+    mapToggle->setCheckable(true);
+    auto *mapHost = new QWidget;
+    coreMap_ = new QGridLayout(mapHost);
+    coreMap_->setContentsMargins(0, 0, 0, 0);
+    mapHost->hide();
+    connect(mapToggle, &QPushButton::toggled, mapHost, &QWidget::setVisible);
+    auto *history = new QPushButton(tr("Trial history…"));
+    connect(history, &QPushButton::clicked, this, &CoSearchDialog::showAttemptHistory);
+    row->addWidget(mapToggle);
+    row->addWidget(history);
     row->addWidget(guardsBtn_);
     row->addWidget(verifyBtn_);
     row->addSpacing(12);
     row->addWidget(saveResult_);
     row->addWidget(loadResult_);
-    row->addSpacing(12);
-    row->addWidget(go_);
-    row->addWidget(stop_);
     v->addLayout(row);
+    auto *actions = new QHBoxLayout;
+    actions->addStretch();
+    actions->addWidget(go_);
+    actions->addWidget(stop_);
+    v->addLayout(actions);
     status_ = new QLabel(tr("Not started. The current CPU curve must be stock."));
     status_->setWordWrap(true);
     status_->setObjectName("coStatus");
     status_->setStyleSheet(statusSheet(nullptr));
     v->addWidget(status_);
+    v->addWidget(mapHost);
     table_ = new QTableWidget(0, 5);
     table_->setHorizontalHeaderLabels({tr("Core"), tr("Start"), tr("Result"), tr("Status"), tr("Notes")});
     table_->setToolTip(tr("Per-core: Start is the core's first probe (0 = one step below stock). Untick a core to leave "
@@ -332,10 +357,20 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     log_ = new QPlainTextEdit;
     log_->setReadOnly(true);
-    auto *split = new QHBoxLayout;
-    split->addWidget(table_, 3);  // wider than the log: the Status column carries the per-core notes
-    split->addWidget(log_, 2);
-    v->addLayout(split, 1);
+    log_->setAccessibleName(tr("CO search activity log"));
+    auto *split = new QSplitter(Qt::Horizontal, this);
+    split->addWidget(table_);
+    split->addWidget(log_);
+    split->setChildrenCollapsible(false);
+    split->setStretchFactor(0, 3);
+    split->setStretchFactor(1, 2);
+    const QString splitterKey = QStringLiteral("ui/co_search_splitter");
+    QSettings prefs(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    split->restoreState(prefs.value(splitterKey).toByteArray());
+    connect(split, &QSplitter::splitterMoved, split, [split, splitterKey] {
+        QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(splitterKey, split->saveState());
+    });
+    v->addWidget(split, 1);
 
     loadSettings();
     for (QComboBox *c : {mode_, level_}) connect(c, &QComboBox::currentIndexChanged, this, &CoSearchDialog::updateEstimate);
@@ -482,6 +517,7 @@ void CoSearchDialog::updateEstimate() {
     // Do not replace its pending journal with a non-pending snapshot in that gap.
     applyTuning_->setEnabled(perCore && running_ && !resetting_ && !abort_ &&
                              search_.has_value() && search_->perCoreSearching() && trial_.has_value());
+    coreProgress_->setVisible(running_ && search_ && search_->mode() == Mode::PerCore);
     if (running_ && search_) {
         // Live progress: per-core from the pace of the cores finished since launch(), otherwise the launch estimate.
         int done = 0, total = 0;
@@ -490,6 +526,9 @@ void CoSearchDialog::updateEstimate() {
             ++total;
             done += search_->mode() == Mode::PerCore ? search_->coreState(i).done : search_->finished();
         }
+        coreProgress_->setVisible(perCore && total > 0);
+        coreProgress_->setRange(0, std::max(1, total));
+        coreProgress_->setValue(done);
         const int elapsed = int((QDateTime::currentSecsSinceEpoch() - searchStart_) / 60);
         const int left = search_->mode() == Mode::PerCore && search_->perCoreSearching()
             ? coinsights::etaMinutes(elapsed, done - doneAtLaunch_, total - doneAtLaunch_, estimateAtLaunch_, true)
@@ -674,6 +713,59 @@ bool CoSearchDialog::toolsPresent() {
     return true;
 }
 
+void CoSearchDialog::showAttemptHistory() {
+    // Snapshot only: opening this inspector cannot change the active candidate or journal.
+    auto *dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(tr("CO Search — Trial History"));
+    dlg->resize(820, 480);
+    auto *layout = new QVBoxLayout(dlg);
+    auto *summary = new QLabel(tr("Snapshot: %1 recorded trials, %2 suspected reboots. Passing a trial is not proof of long-term stability.")
+        .arg(attempts_.size()).arg(hardReboots_));
+    summary->setTextFormat(Qt::PlainText);
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+    auto *filter = new QLineEdit;
+    filter->setPlaceholderText(tr("Filter by core, candidate, result or evidence…"));
+    layout->addWidget(filter);
+    auto *history = new QTableWidget(attempts_.size(), 5);
+    history->setHorizontalHeaderLabels({tr("Time"), tr("Core"), tr("Candidate"), tr("Result"), tr("Evidence")});
+    history->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    history->setSelectionBehavior(QAbstractItemView::SelectRows);
+    history->verticalHeader()->hide();
+    history->horizontalHeader()->setStretchLastSection(true);
+    const auto cores = search_ ? search_->cores() : QList<Core>{};
+    for (int i = 0; i < attempts_.size(); ++i) {
+        const auto a = attempts_.at(i).toObject();
+        const int idx = a.value("core").toInt(-1);
+        QString core = tr("Whole curve / unknown");
+        if (idx >= 0 && idx < cores.size()) core = QStringLiteral("CCD %1 / %2").arg(cores[idx].ccd).arg(cores[idx].slot);
+        const QString candidate = a.value("what").toString();
+        const QString result = a.value("pass").toBool() ? tr("Passed") : tr("Failed / interrupted");
+        const QString evidence = a.value("note").toString() + QStringLiteral(" ") + a.value("logs").toString();
+        const QStringList cells{QDateTime::fromSecsSinceEpoch(a.value("t").toInteger()).toLocalTime().toString(Qt::ISODate), core, candidate, result, evidence.trimmed()};
+        for (int c = 0; c < cells.size(); ++c) {
+            auto *item = new QTableWidgetItem(cells[c]);
+            item->setToolTip(cells[c]);
+            history->setItem(i, c, item);
+        }
+        history->item(i, 3)->setForeground(QColor(a.value("pass").toBool() ? theme::OK : theme::DANGER));
+    }
+    for (int c = 0; c < 4; ++c) history->horizontalHeader()->setSectionResizeMode(c, QHeaderView::ResizeToContents);
+    connect(filter, &QLineEdit::textChanged, history, [history](const QString &q) {
+        for (int r = 0; r < history->rowCount(); ++r) {
+            bool match = q.trimmed().isEmpty();
+            for (int c = 0; c < history->columnCount(); ++c) match |= history->item(r, c)->text().contains(q.trimmed(), Qt::CaseInsensitive);
+            history->setRowHidden(r, !match);
+        }
+    });
+    layout->addWidget(history, 1);
+    auto *close = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(close, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    layout->addWidget(close);
+    dlg->show();
+}
+
 void CoSearchDialog::refreshTable() {
     // Before any search: the detected cores, so they can be ticked off; afterwards the search's own.
     const QList<Core> cores = search_ ? search_->cores() : coresOf(ryzen::detect());
@@ -687,6 +779,8 @@ void CoSearchDialog::refreshTable() {
     const QList<int> anomalies = search_ && perCore && search_->finished() ? coinsights::rankAnomalies(ranks, v) : QList<int>{};
     const QSignalBlocker block(table_);
     table_->setRowCount(cores.size());
+    while (auto *item = coreMap_->takeAt(0)) { delete item->widget(); delete item; }
+    QMap<int, int> ccdRows, ccdColumns;
     for (int i = 0; i < cores.size(); ++i) {
         const Core &c = cores[i];
         const int key = coreKey(c.ccd, c.slot);
@@ -766,6 +860,22 @@ void CoSearchDialog::refreshTable() {
         }
         table_->setItem(i, 2, new QTableWidgetItem(search_ ? QString::number(v[i]) : QString()));
         table_->setItem(i, 3, new QTableWidgetItem(status));
+        if (!ccdRows.contains(c.ccd)) {
+            const int r = int(ccdRows.size()) * 2;
+            ccdRows.insert(c.ccd, r); ccdColumns.insert(c.ccd, 0);
+            coreMap_->addWidget(new QLabel(tr("CCD %1").arg(c.ccd)), r, 0, 1, 8);
+        }
+        const int col = ccdColumns[c.ccd]++;
+        auto *tile = new QLabel(tr("Core %1: %2").arg(c.slot).arg(search_ ? QString::number(v[i]) : QStringLiteral("—")));
+        const QString state = testing ? tr("Testing") : excluded ? tr("Excluded") : done ? tr("Search done") :
+            status.isEmpty() ? tr("No per-core result") : tone == theme::DANGER ? tr("Guarded") : tone == theme::WARN ? tr("Backtracking") :
+            tone == theme::PURPLE ? tr("Verifying") : tr("Searching");
+        tile->setText(tile->text() + QLatin1Char('\n') + state);
+        tile->setTextFormat(Qt::PlainText);
+        tile->setToolTip(core->text() + QLatin1Char('\n') + status + QLatin1Char('\n') + tip.join(QLatin1Char('\n')));
+        tile->setAccessibleName(tile->text() + QStringLiteral(" — ") + status);
+        tile->setStyleSheet(QStringLiteral("QLabel { border: 1px solid %1; color: %1; padding: 3px; }").arg(tone ? tone : theme::FG_DIM));
+        coreMap_->addWidget(tile, ccdRows.value(c.ccd) + 1, col);
         if (tone) table_->item(i, 3)->setForeground(QColor(tone));
         table_->setItem(i, 4, new QTableWidgetItem(extra.join(QStringLiteral(" · "))));
         table_->item(i, 4)->setForeground(QColor(flagged ? theme::WARN : theme::MUTED));
@@ -1280,6 +1390,16 @@ void CoSearchDialog::offerResume() {
         else
             text = tr("The application stopped while trying %1, but the machine kept running. That value counts as failed "
                       "in this search only, as a wrong result would; no crash guard is recorded.").arg(what);
+        if (pending) {
+            QStringList offsets;
+            if (interrupted->allCore) offsets << tr("All-core: %1").arg(*interrupted->allCore);
+            else for (int i = 0; i < interrupted->perCore.size() && i < s->cores().size(); ++i) {
+                if (!interrupted->perCore[i]) continue;
+                const auto &c = s->cores()[i];
+                offsets << QStringLiteral("CCD %1 / %2: %3").arg(c.ccd).arg(c.slot).arg(interrupted->perCore[i]);
+            }
+            text += "\n\n" + tr("Interrupted candidate (not the next candidate): %1").arg(offsets.join(QStringLiteral(" · ")));
+        }
         if (crashed) text += "\n\n" + tr("System logs: %1").arg(verdict.summary);
         const auto answer = QMessageBox::question(this, tr("Resume CO search"),
             text + "\n\n" + tr("Suspected reboots in this search so far: %1.").arg(rebootCount) + "\n\n"
@@ -1287,8 +1407,10 @@ void CoSearchDialog::offerResume() {
                       "stay in the table and can be saved)."),
             QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::No);
         if (answer == QMessageBox::No) {
-            discard([this, s, pending, cleanExit, failed]() mutable {
+            discard([this, s, j, pending, cleanExit, failed, rebootCount]() mutable {
                 if (pending && !cleanExit) s->report(failed);
+                attempts_ = j.value("attempts").toArray();
+                hardReboots_ = rebootCount;
                 search_ = std::move(s);
                 trial_.reset();
                 finished_ = false;
@@ -1317,10 +1439,19 @@ void CoSearchDialog::offerResume() {
         hardReboots_ = rebootCount;
         if (pending && !cleanExit) {
             s->report(failed);
-            attempts_.append(QJsonObject{{"t", double(QDateTime::currentSecsSinceEpoch())},
+            QJsonObject recovered{{"t", double(QDateTime::currentSecsSinceEpoch())},
                 {"what", interrupted->what}, {"pass", false},
                 {"note", crashed ? "reboot; unsafe candidate quarantined" : "application stopped; failed in this search only"},
-                {"logs", crashed ? verdict.summary : QString()}});
+                {"logs", crashed ? verdict.summary : QString()}};
+            if (s->mode() == Mode::PerCore && !finalStage) {
+                for (int i = 0; i < interrupted->perCore.size(); ++i) {
+                    if (interrupted->perCore[i] == 0) continue;
+                    recovered["core"] = i;
+                    recovered["value"] = interrupted->perCore[i];
+                    break;
+                }
+            }
+            attempts_.append(recovered);
         }
         if (!applyCrashGuards(*s)) {
             QMessageBox::critical(this, tr("CO crash guard corrupted"),

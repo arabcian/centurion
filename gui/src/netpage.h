@@ -136,6 +136,8 @@ private:
     QTimer *timer_;
     QFileSystemWatcher *watch_;
     QJsonArray connData_;
+    QDateTime connSnapshotTime_;
+    QString connSnapshotError_;
     QJsonObject state_;                       // last full status (kernel checks included)
     QHash<QString, QTreeWidgetItem *> rows_;  // block log: program|proto|dst|port → row
     QHash<QString, QJsonObject> whois_;       // address → registry answer, for this session

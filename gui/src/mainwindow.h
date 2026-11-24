@@ -1,6 +1,7 @@
 #pragma once
 #include <QMainWindow>
 #include <QList>
+#include <QStringList>
 
 class AmdGpuTab;
 class FwattrTab;
@@ -76,8 +77,15 @@ private:
     void syncExperimentalNavigation();
     void showQuickNavigator();
     void syncStatusChips();
+    void stepPageHistory(int delta);
+    QStringList activeOperations() const;
+    void showOperations();
+    bool safeModeRunning_ = false;
+    QList<QWidget *> pageHistory_;
+    int pageHistoryPos_ = -1;
+    bool replayingPageHistory_ = false;
     void placeHeaderControls();
-    QTabWidget *tabs_;
+    QTabWidget *tabs_ = nullptr;
     int tabW_ = -1;
     QToolButton *sectionsButton_ = nullptr;  // Classic legacy positioning helper
     QFrame *expRail_ = nullptr;

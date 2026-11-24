@@ -285,6 +285,20 @@ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hico
 option(CENTURION_BUILD_TESTS "Build GUI unit tests" OFF)
 if(CENTURION_BUILD_TESTS)
     enable_testing()
+    add_executable(centurion-frametime-test tests/frametime_test.cpp src/frametime.h)
+    add_test(NAME frametime COMMAND centurion-frametime-test)
+    add_executable(centurion-appearance-layout-test tests/appearance_layout_test.cpp src/theme.cpp src/theme.h src/charts.cpp src/charts.h)
+    target_link_libraries(centurion-appearance-layout-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-appearance-layout-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME appearance-layout COMMAND centurion-appearance-layout-test)
+    set_tests_properties(appearance-layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(centurion-theme-runtime-test tests/theme_runtime_test.cpp src/theme.cpp src/theme.h)
+    target_link_libraries(centurion-theme-runtime-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-theme-runtime-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME theme-runtime COMMAND centurion-theme-runtime-test)
+    add_executable(centurion-tuningviewstate-test tests/tuningviewstate_test.cpp src/tuningviewstate.h)
+    target_link_libraries(centurion-tuningviewstate-test PRIVATE Qt6::Core)
+    add_test(NAME tuningviewstate COMMAND centurion-tuningviewstate-test)
     # Health diagnostics (Evidence Lab, Investigations, System tools): pure report functions over fixtures.
     set(DIAG_TEST_SOURCES src/diagreport.cpp src/diagsources.cpp src/advanceddiagnostics.cpp src/evidencereports.cpp
         src/systemdiagnostics.cpp src/diagnostictools.cpp src/eventinfo.cpp src/distroprofile.cpp src/sleepadvice.cpp

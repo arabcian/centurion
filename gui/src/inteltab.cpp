@@ -1,4 +1,5 @@
 #include "inteltab.h"
+#include "profilediff.h"
 #include "trialbar.h"
 #include "privileged.h"
 #include "theme.h"
@@ -37,6 +38,7 @@
 #include "charts.h"
 #include <QTableWidget>
 #include <cmath>
+#include <algorithm>
 #include <utility>
 #include <QStandardPaths>
 #include <QTime>
@@ -75,7 +77,7 @@ static QDoubleSpinBox *dspin(double lo, double hi, double step, int dec, const Q
     s->setSingleStep(step);
     s->setDecimals(dec);
     s->setSuffix(suffix);
-    s->setFixedWidth(104);
+    s->setMinimumWidth(std::max(104, s->sizeHint().width()));
     s->setAlignment(Qt::AlignRight);
     s->setEnabled(false);
     return s;
@@ -104,6 +106,11 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     pl->addWidget(bLoad);
     pl->addWidget(bSave);
     pl->addWidget(bDel);
+    auto *compare = new QPushButton(tr("Compare…"));
+    connect(compare, &QPushButton::clicked, this, [this] {
+        profilediff::show(this, savedProfileNames(), [](const QString &name) { return profilediff::read(inteluv::profilesDir() + '/' + name + ".json"); });
+    });
+    pl->addWidget(compare);
     top->addWidget(profBox, 1);
 
     auto *gBox = box("Global", "box_grey");
@@ -409,7 +416,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     tj_ = new QSpinBox;
     tj_->setRange(0, 63);
     tj_->setSuffix(" °C");
-    tj_->setFixedWidth(104);
+    tj_->setMinimumWidth(std::max(104, tj_->sizeHint().width()));
     tj_->setAlignment(Qt::AlignRight);
     tj_->setEnabled(false);
     tjCur_ = new QLabel("–");
@@ -423,7 +430,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     turbo_ = new QSpinBox;
     turbo_->setRange(1, 255);  // base..stock once the status is read
     turbo_->setPrefix("× ");
-    turbo_->setFixedWidth(104);
+    turbo_->setMinimumWidth(std::max(104, turbo_->sizeHint().width()));
     turbo_->setAlignment(Qt::AlignRight);
     turbo_->setEnabled(false);
     turboCur_ = new QLabel("–");
@@ -462,7 +469,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
         PlRow p{new QCheckBox(label), dspin(1, 250, 1, 0, " W"), dspin(0.001, 1000, 0.5, 3, " s"), new QLabel("–")};
         p.w->setValue(w);
         p.s->setValue(s);
-        p.s->setFixedWidth(96);
+        p.s->setMinimumWidth(std::max(96, p.s->sizeHint().width()));
         p.on->setToolTip(tip);
         connect(p.on, &QCheckBox::toggled, p.w, &QWidget::setEnabled);
         connect(p.on, &QCheckBox::toggled, p.s, &QWidget::setEnabled);

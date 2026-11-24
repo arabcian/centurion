@@ -52,6 +52,7 @@ public:
     QList<FanInfo> fanInfo() const;
     bool fansMaxMode() const { return maxMode_; }
     bool fanBusy() const { return devicePending_ > 0; }
+    bool operationActive() const { return applying_ || fanBusy(); }
     void setAllFansMax();
     void setAllFansAuto() { exitMaxMode(); }
     void setFanTarget(const QString &key, int rpm);  // rpm 0 = Auto (EC all-or-nothing rule applies)

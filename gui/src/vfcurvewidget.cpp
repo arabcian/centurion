@@ -1,6 +1,7 @@
 #include "vfcurvewidget.h"
 #include "theme.h"
 #include <QKeyEvent>
+#include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -27,6 +28,20 @@ static double niceStep(double range, int targetTicks) {
     return 10 * mag;
 }
 
+void VfCurveWidget::setReferenceCurves(const QVector<QPointF> &base, const QVector<QPointF> &readback) {
+    baseRef_ = base;
+    readRef_ = readback;
+    if (!pts_.isEmpty()) applyView();
+    update();
+}
+
+void VfCurveWidget::setReferenceVisibility(bool base, bool readback) {
+    showBase_ = base;
+    showRead_ = readback;
+    if (!pts_.isEmpty()) applyView();
+    update();
+}
+
 void VfCurveWidget::fitAxes() {
     if (pts_.isEmpty()) return;
     double x0 = pts_[0].x(), x1 = x0, y1 = pts_[0].y();
@@ -45,6 +60,9 @@ void VfCurveWidget::applyView() {
     if (zoom_ <= 1.0001) {
         yMin_ = 0;
         yMax_ = fullY1_;
+        for (const auto &pt : pts_) yMax_ = std::max(yMax_, pt.y() + 100);
+        if (showBase_) for (const auto &pt : baseRef_) yMax_ = std::max(yMax_, pt.y() + 100);
+        if (showRead_) for (const auto &pt : readRef_) yMax_ = std::max(yMax_, pt.y() + 100);
     } else {
         // Frequency follows the visible points, otherwise a zoomed-in
         // stretch of the curve would be a flat line at the top.
@@ -54,6 +72,13 @@ void VfCurveWidget::applyView() {
             lo = std::min(lo, p.y());
             hi = std::max(hi, p.y());
         }
+        const auto include = [&](const QVector<QPointF> &ref) {
+            for (const auto &pt : ref) if (pt.x() >= xMin_ - 1 && pt.x() <= xMax_ + 1) {
+                lo = std::min(lo, pt.y()); hi = std::max(hi, pt.y());
+            }
+        };
+        if (showBase_) include(baseRef_);
+        if (showRead_) include(readRef_);
         if (lo > hi) { yMin_ = 0; yMax_ = fullY1_; }
         else {
             const double pad = std::max(60.0, (hi - lo) * 0.15);
@@ -105,7 +130,7 @@ void VfCurveWidget::setPoints(const QVector<QPointF> &pts) {
     const bool reshaped = pts.size() != pts_.size();
     pts_ = pts;
     if (reshaped) { sel_.clear(); cur_ = 0; anchor_ = 0; band_ = false; fitAxes(); }
-    else if (zoom_ > 1.0001 && dragIndex_ < 0 && !groupDrag_) applyView();  // keep edited points in frame
+    else if (dragIndex_ < 0 && !groupDrag_) applyView();  // keep edited points in frame
     update();
     Q_EMIT selectionChanged();
 }
@@ -165,7 +190,12 @@ void VfCurveWidget::clearSelection() {
     Q_EMIT selectionChanged();
 }
 
-QRectF VfCurveWidget::plotRect() const { return QRectF(52, 10, width() - 62, height() - 44); }
+QRectF VfCurveWidget::plotRect() const {
+    const QFontMetrics fm(font());
+    const int left = std::max(52, fm.horizontalAdvance(QStringLiteral("00000")) + fm.height() + 12);
+    const int bottom = std::max(44, fm.height() * 2 + 10);
+    return QRectF(left, 10, std::max(1, width() - left - 12), std::max(1, height() - bottom - 10));
+}
 
 QPointF VfCurveWidget::toPixel(QPointF v) const {
     const QRectF r = plotRect();
@@ -260,6 +290,16 @@ void VfCurveWidget::paintEvent(QPaintEvent *) {
         p.drawText(QRectF(r.right() - 64, y1 - 14, 60, 12), Qt::AlignRight | Qt::AlignBottom,
                    QStringLiteral("+%1").arg(compMhz_));
     }
+    const auto reference = [&](const QVector<QPointF> &points, const char *color, Qt::PenStyle style) {
+        if (points.isEmpty()) return;
+        QPainterPath ref(toPixel(points.first()));
+        for (int i = 1; i < points.size(); ++i) ref.lineTo(toPixel(points[i]));
+        p.setPen(QPen(C(color), 1.6, style));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(ref);
+    };
+    if (showBase_) reference(baseRef_, theme::MUTED, Qt::DashLine);
+    if (showRead_) reference(readRef_, theme::PURPLE, Qt::DotLine);
     QPainterPath path(toPixel(pts_[0]));
     for (int i = 1; i < pts_.size(); ++i) path.lineTo(toPixel(pts_[i]));
     p.setPen(QPen(C(theme::ACCENT), 2.2));

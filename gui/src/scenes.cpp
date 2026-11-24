@@ -133,8 +133,7 @@ std::optional<Scene> load(const QString &name) {
     return s;
 }
 
-bool save(const Scene &s, QString *err) {
-    if (!validName(s.name)) { if (err) *err = "invalid scene name"; return false; }
+QJsonObject sceneObject(const Scene &s) {
     QJsonObject o{{"version", 1}};
     if (!s.platformProfile.isEmpty()) o["platform_profile"] = s.platformProfile;
     if (!s.firmware.isEmpty()) {
@@ -163,7 +162,11 @@ bool save(const Scene &s, QString *err) {
     }
     if (!s.command.isEmpty()) o["command"] = s.command;
     if (!s.shortcut.isEmpty()) o["shortcut"] = s.shortcut;
-    return writeObject(sceneFile(s.name), o, err);
+    return o;
+}
+bool save(const Scene &s, QString *err) {
+    if (!validName(s.name)) { if (err) *err = "invalid scene name"; return false; }
+    return writeObject(sceneFile(s.name), sceneObject(s), err);
 }
 
 bool remove(const QString &name) { return validName(name) && QFile::remove(sceneFile(name)); }
@@ -959,6 +962,14 @@ QStringList SceneEngine::preview(const Scene &s) const {
                                      + (s.gpu.kind == Choice::Profile ? QStringLiteral(" (%1 s after the scene)").arg(GPU_DEFER_MS / 1000) : QString())
                                : NvidiaTab::present() ? QStringLiteral("✗ GPU curve: skipped (NVIDIA dGPU is off)")
                                                       : QStringLiteral("✗ GPU curve: skipped (no NVIDIA GPU on the bus)"));
+    const auto missing = [&](const Choice &c, const QStringList &names, const QString &component) {
+        if (c.kind == Choice::Profile && !names.contains(c.name))
+            out << QCoreApplication::translate("SceneEngine", "✗ %1: referenced profile '%2' is not available").arg(component, c.name);
+    };
+    missing(s.cpu, win_->ryzen() ? win_->ryzen()->savedProfileNames() : win_->intel() ? win_->intel()->savedProfileNames() : QStringList(),
+            QCoreApplication::translate("SceneEngine", "CPU"));
+    missing(s.gpu, win_->nvidia() ? win_->nvidia()->profileNames() : QStringList(), QCoreApplication::translate("SceneEngine", "GPU"));
+    missing(s.tuning, win_->optimize() ? win_->optimize()->presetNames() : QStringList(), QCoreApplication::translate("SceneEngine", "Optimizations"));
     if (s.tuning.kind != Choice::Unchanged)
         out << (s.tuning.kind == Choice::Reset ? QStringLiteral("Optimizations: restore originals") : "Optimizations: preset '" + s.tuning.name + "'");
     if (s.fanTable.size() == 10)

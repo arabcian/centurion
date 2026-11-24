@@ -38,6 +38,9 @@
 #include <QRegularExpression>
 #include <QPushButton>
 #include <QSettings>
+#include <QSaveFile>
+#include <QScrollBar>
+#include <QItemSelectionModel>
 #include <QShowEvent>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -310,6 +313,9 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     target_->setPlaceholderText(distroprofile::restoreHint(distroprofile::family()));
     auto *rr = folderRow(QStringLiteral("Restore to"), target_, this, QStringLiteral("Directory to restore the image into"));
     connect(action("Verify selected", rr), &QPushButton::clicked, this, &BackupPage::verifySelected);
+    auto *previewRestoreButton = action("Preview restore…", rr);
+    previewRestoreButton->setText(tr("Preview restore…"));
+    connect(previewRestoreButton, &QPushButton::clicked, this, &BackupPage::previewRestore);
     connect(action("Restore selected…", rr, "btnDanger"), &QPushButton::clicked, this, &BackupPage::systemRestore);
     sv->addLayout(rr);
     // A system image needs the password and minutes of I/O: Centurion only reminds, at the interval you set.
@@ -342,12 +348,14 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
 
     auto *pr = new QHBoxLayout;
     bar_ = new QProgressBar;
-    bar_->setFixedWidth(180);
+    bar_->setMinimumWidth(fontMetrics().horizontalAdvance(QStringLiteral("100%")) + 24);
+    bar_->setMaximumWidth(220);
     bar_->setTextVisible(false);
     bar_->hide();
     pr->addWidget(bar_);
     status_ = new QLabel(QStringLiteral("Idle."));
     status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    status_->setWordWrap(true);
     pr->addWidget(status_, 1);
     auto *bAdd = action("Add file…", pr);
     bAdd->setToolTip(QStringLiteral("List an archive that lives somewhere else (to verify or restore it)."));
@@ -369,7 +377,8 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     log_->setReadOnly(true);
     log_->setMaximumBlockCount(400);
     log_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    log_->setFixedHeight(fontMetrics().lineSpacing() * 5 + 12);
+    log_->setMinimumHeight(fontMetrics().lineSpacing() * 4 + 12);
+    log_->setMaximumHeight(fontMetrics().lineSpacing() * 12 + 24);
     v->addWidget(log_);
 
     for (QLineEdit *e : {cfgDir_, sysDir_})
@@ -497,6 +506,8 @@ void BackupPage::updateFree() {
 
 void BackupPage::refreshList() {
     const QString keepSel = selected();
+    const QStringList keepPaths = selectedPaths();
+    const int scroll = list_->verticalScrollBar()->value();
     list_->clear();
     struct Entry { QFileInfo fi; bool image; QJsonObject info; };
     QList<Entry> found;
@@ -591,7 +602,10 @@ void BackupPage::refreshList() {
                          + QStringLiteral(" · ") + head->text(4));
         head->setExpanded(true);
     }
-    if (current) list_->setCurrentItem(current);
+    if (current) list_->setCurrentItem(current, 0, QItemSelectionModel::NoUpdate);
+    for (QTreeWidgetItemIterator it(list_); *it; ++it)
+        (*it)->setSelected(keepPaths.contains((*it)->data(0, PathRole).toString()));
+    list_->verticalScrollBar()->setValue(scroll);
 }
 
 QJsonObject BackupPage::verifyRecord(const QFileInfo &fi) const {
@@ -618,8 +632,9 @@ void BackupPage::rememberVerify(const QString &path, bool ok, const QString &err
         all.remove(oldest);
     }
     QDir().mkpath(QFileInfo(verifyStatePath()).absolutePath());
-    QFile f(verifyStatePath());
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(QJsonDocument(all).toJson(QJsonDocument::Compact));
+    QSaveFile f(verifyStatePath());
+    const QByteArray data = QJsonDocument(all).toJson(QJsonDocument::Compact);
+    if (f.open(QIODevice::WriteOnly) && f.write(data) == data.size()) f.commit();
 }
 
 void BackupPage::select(const QString &path) {
@@ -629,7 +644,7 @@ void BackupPage::select(const QString &path) {
 
 QString BackupPage::selected(QString *kind) const {
     const QTreeWidgetItem *it = list_->currentItem();
-    if (!it) return {};
+    if (!it || !it->isSelected()) return {};
     if (kind) *kind = it->data(0, KindRole).toString();
     return it->data(0, PathRole).toString();
 }
@@ -1348,6 +1363,62 @@ void BackupPage::verifySelected() {
         finished(QStringLiteral("%1 is readable end to end: %L2 entries%3.").arg(QFileInfo(archive).fileName()).arg(num(r, "files"))
                      .arg(r.value("compared").toBool() ? QStringLiteral(", same count as when it was written") : QString()), true);
     });
+}
+
+void BackupPage::previewRestore() {
+    QString kind;
+    const QString archive = selected(&kind);
+    if (archive.isEmpty() || kind != QLatin1String("system")) {
+        QMessageBox::information(this, tr("Restore Preview"), tr("Select a system image first.")); return;
+    }
+    // Metadata is advisory only; the privileged restore helper validates the actual chain again.
+    const auto safeInfo = [](const QString &path) -> QJsonObject {
+        const QFileInfo fi(path + QStringLiteral(".info.json"));
+        if (!fi.isFile() || fi.isSymLink() || fi.size() > (1 << 20)) return {};
+        QFile f(fi.absoluteFilePath()); if (!f.open(QIODevice::ReadOnly)) return {};
+        const auto bytes = f.read((1 << 20) + 1); if (bytes.size() > (1 << 20)) return {};
+        const auto info = QJsonDocument::fromJson(bytes).object();
+        if (info.value("format").toString() != QLatin1String("centurion-system-backup") || info.value("version").toInt(-1) != 1) return {};
+        return info;
+    };
+    QStringList warnings, chain;
+    const QDir dir(QFileInfo(archive).absolutePath());
+    const auto first = safeInfo(archive);
+    const auto levelOf = [](const QJsonObject &info) { return info.value("level").toInt(-1); };
+    const int level = levelOf(first);
+    const QString chainName = str(first, "chain");
+    auto current = archive; auto info = first;
+    if (level < 0 || level > 6) warnings << tr("Archive metadata is missing or its increment level is unsupported. The sequence cannot be established.");
+    else for (int expected=level; expected>=0; --expected) {
+        const QFileInfo fi(current);
+        if (!fi.isFile() || fi.isSymLink() || levelOf(info)!=expected || (level>0 && str(info,"chain")!=chainName)) {
+            warnings << tr("Missing or inconsistent archive at level %1.").arg(expected); break;
+        }
+        const auto record = verifyRecord(fi);
+        QString checked = record.isEmpty() ? tr("No matching local verification record") : record.value("ok").toBool() ? tr("Last local verification passed") : tr("Last local verification failed");
+        chain.prepend(tr("Level %1 · %2 · %3 · %4").arg(expected).arg(fi.fileName(),human(fi.size()),checked));
+        if (!expected) {
+            if (level>0 && fi.fileName()!=chainName) warnings << tr("The full archive name does not match the declared chain.");
+            break;
+        }
+        const QString parent = str(info,"parent");
+        if (parent.isEmpty() || QFileInfo(parent).fileName()!=parent || !isImageName(parent) || parent.contains(QLatin1Char('\\'))) {
+            warnings << tr("No unambiguous parent name in the metadata. Legacy chains require helper verification."); break;
+        }
+        current=dir.filePath(parent); info=safeInfo(current);
+    }
+    const QString target = QFileInfo(target_->text().trimmed()).canonicalFilePath();
+    if (target.isEmpty() || !QFileInfo(target).isDir()) warnings << tr("The target directory is not available.");
+    else if (target==QLatin1String("/")) warnings << tr("Target is the running root filesystem. Restore will overwrite existing files.");
+    QDialog dlg(this); dlg.setWindowTitle(tr("Restore Preview")); dlg.resize(760,420);
+    auto *layout=new QVBoxLayout(&dlg);
+    auto *hint=new QLabel(tr("Read-only sidecar preview. It does not inspect archive contents, validate ownership or authorize a restore. The restore helper and existing confirmations remain authoritative."));
+    hint->setWordWrap(true); layout->addWidget(hint);
+    auto *report=new QPlainTextEdit; report->setReadOnly(true);
+    report->setPlainText(tr("Selected archive: %1\nTarget: %2\n\nProposed chain (oldest first):\n%3\n\nReview:\n%4")
+        .arg(archive, target.isEmpty()?tr("Unavailable"):target,chain.join(QLatin1Char('\n')),warnings.isEmpty()?tr("No obvious metadata mismatch; archive contents are not verified."):warnings.join(QLatin1Char('\n'))));
+    layout->addWidget(report,1);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
 }
 
 void BackupPage::systemRestore() {

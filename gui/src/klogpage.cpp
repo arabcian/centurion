@@ -77,7 +77,7 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
                                             "(the kernel's own ring buffer is lost at every boot)."));
     about->setWordWrap(true);
     about->setProperty("role", "muted");
-    top->addWidget(about, 1);
+    v->addWidget(about);
     scope_ = new QComboBox;
     scope_->addItems({QStringLiteral("This boot"), QStringLiteral("All saved boots")});
     top->addWidget(scope_);
@@ -85,8 +85,7 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     filter_->setPlaceholderText(tr("Filter… (a|b = either)"));
     filter_->setToolTip(tr("Shows lines containing the text (case-insensitive). Separate alternatives with |, e.g. nvme|ata|EXT4."));
     filter_->setClearButtonEnabled(true);
-    filter_->setMaximumWidth(220);
-    top->addWidget(filter_);
+    top->addWidget(filter_, 1);
     auto *bPresets = new QPushButton(tr("Quick filters ▾"));
     auto *presets = new QMenu(bPresets);
     connect(presets, &QMenu::aboutToShow, this, [this, presets] { fillPresets(presets); });
@@ -99,8 +98,16 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     bSave->setToolTip(tr("Save the lines shown now (with the current filters) to a text file, e.g. for a bug report."));
     auto *bClear = new QPushButton(QStringLiteral("Clear saved log"));
     bClear->setObjectName(QStringLiteral("btnDanger"));
-    for (auto *b : {bRefresh, bCopy, bSave, bOpen, bClear}) top->addWidget(b);
+    top->addWidget(bRefresh);
     v->addLayout(top);
+    auto *exports = new QHBoxLayout;
+    follow_ = new QCheckBox(tr("Follow latest"));
+    follow_->setChecked(true);
+    follow_->setToolTip(tr("Keep following new entries when the view is at the bottom. Disable to hold the current scroll position."));
+    exports->addWidget(follow_);
+    exports->addStretch(1);
+    for (auto *b : {bCopy, bSave, bOpen, bClear}) exports->addWidget(b);
+    v->addLayout(exports);
     connect(bSave, &QPushButton::clicked, this, &KlogPage::saveView);
 
     auto *opts = new QHBoxLayout;
@@ -124,6 +131,7 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     fb->setContentsMargins(0, 0, 0, 0);
     focusText_ = new QLabel;
     focusText_->setProperty("role", "muted");
+    focusText_->setWordWrap(true);
     fb->addWidget(focusText_, 1);
     auto *bWhole = new QPushButton(tr("Show the whole log"));
     connect(bWhole, &QPushButton::clicked, this, [this] { focusBoot_.clear(); render(); });
@@ -341,6 +349,8 @@ void KlogPage::updateInfo() {
     if (needsRoot_) s += QStringLiteral("\nKernel log is restricted (kernel.dmesg_restrict=1): captured through pkexec when this page is opened or on Refresh, "
                                         "not in the background. sysctl kernel.dmesg_restrict=0 enables continuous capture.");
     else s += QStringLiteral("\nCapturing continuously (a scan runs only when the kernel logs a warning or error).");
+    s += QLatin1Char('\n') + tr("%1 displayed row(s).").arg(displayedRows_);
+    if (tailLimited_) s += QLatin1Char(' ') + tr("Showing at most the newest %1 matching records before grouping. Refine the filter to see older records.").arg(MAX_SHOWN_LINES);
     if (hiddenMuted_) s += QLatin1Char('\n') + tr("%1 muted line(s) hidden — right-click a line to unmute its message.").arg(hiddenMuted_);
     info_->setText(s);
 }
@@ -359,6 +369,9 @@ void KlogPage::render() {
     };
     const int levelMax = LEVEL_MAX[std::clamp(level_->currentIndex(), 0, 4)];
     // Judged over the whole saved log, whatever the scope and filter: "only new" needs the earlier boots too.
+    const bool focused = !focusBoot_.isEmpty();
+    klogview::ContextWindow context(focusBoot_, focusSeq_, CONTEXT_BEFORE, CONTEXT_AFTER);
+    tailLimited_ = false;
     QHash<QString, QString> firstBoot;
     std::deque<klogview::Line> shown;  // the newest lines of the scope, level and text filter
     for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
@@ -368,29 +381,23 @@ void KlogPage::render() {
             const QString l = QString::fromUtf8(f.readLine()).trimmed();
             const std::optional<klogview::Line> p = klogview::parse(l);
             if (!p) continue;
+            if (focused) { context.append(*p); continue; }
             if (!firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
             if (!all && p->boot != boot) continue;
             if (p->level > levelMax) continue;
             if (!matches(l)) continue;
             shown.push_back(*p);
-            if (shown.size() > MAX_SHOWN_LINES) shown.pop_front();
+            if (shown.size() > MAX_SHOWN_LINES) { shown.pop_front(); tailLimited_ = true; }
         }
     }
 
-    // Opened from Monitor: only the lines around that record, the record itself in bold, no grouping.
-    const bool focused = !focusBoot_.isEmpty();
+    // Opened from Monitor: same-boot neighbours, without the normal tail cap or severity filter.
     std::vector<klogview::Row> rows;
     int mark = -1;
     hiddenMuted_ = 0;
     if (focused) {
-        const std::vector<klogview::Line> v(shown.begin(), shown.end());
-        int at = -1;
-        for (int i = 0; i < int(v.size()) && at < 0; ++i) if (v[i].boot == focusBoot_ && v[i].seq == focusSeq_) at = i;
-        if (at >= 0) {
-            const int from = std::max(0, at - CONTEXT_BEFORE), to = std::min<int>(int(v.size()), at + CONTEXT_AFTER + 1);
-            for (int i = from; i < to; ++i) rows.push_back(klogview::Row{v[i], 1, v[i].time});
-            mark = at - from;
-        }
+        rows = context.rows();
+        mark = context.mark();
     } else {
         std::vector<klogview::Line> keep;
         for (const klogview::Line &l : shown) {
@@ -401,11 +408,12 @@ void KlogPage::render() {
         rows = klogview::group(keep, group_->isChecked());
     }
 
+    displayedRows_ = int(rows.size());
     rowKey_.clear();
     rowMsg_.clear();
     focusBar_->setVisible(focused);
     if (focused)
-        focusText_->setText(tr("Showing up to %1 lines before and %2 after kernel message %3 (boot %4), the message in bold.")
+        focusText_->setText(tr("Showing up to %1 saved lines before and %2 after kernel message %3 in boot %4, independent of display filters.")
                                 .arg(CONTEXT_BEFORE).arg(CONTEXT_AFTER).arg(focusSeq_).arg(focusBoot_));
     QString html = QStringLiteral("<pre style='margin:0'>");
     for (int i = 0; i < int(rows.size()); ++i) {
@@ -427,6 +435,7 @@ void KlogPage::render() {
     const bool atEnd = vs >= text_->verticalScrollBar()->maximum() - 4;
     if (focused && rows.empty()) {
         text_->setHtml(tr("<i>Kernel message %1 is not in the saved log (yet).</i>").arg(focusSeq_));
+        updateInfo();
         return;
     }
     text_->setHtml(rows.empty() ? QStringLiteral("<i>No saved kernel warnings or errors%1.</i>").arg(all ? QString() : QStringLiteral(" for this boot")) : html);
@@ -435,7 +444,7 @@ void KlogPage::render() {
         text_->scrollToAnchor(QStringLiteral("focus"));
         return;
     }
-    text_->verticalScrollBar()->setValue(atEnd || vs == 0 ? text_->verticalScrollBar()->maximum() : vs);
+    text_->verticalScrollBar()->setValue(follow_->isChecked() && atEnd ? text_->verticalScrollBar()->maximum() : vs);
 }
 
 void KlogPage::contextMenu(const QPoint &pos) {

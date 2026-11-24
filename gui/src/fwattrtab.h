@@ -31,6 +31,7 @@ public:
     /// A firmware-attributes device with attributes, or the GameZone WMAE interface.
     static bool present();
     explicit FwattrTab(QWidget *parent = nullptr);
+    bool operationActive() const { return busy_; }
     static QList<FwAttr> discover();
     /// Values of the WMI-only GPU knobs as last read back from the EC, or
     /// empty when they have not been read this session (sysfs is stale for them).

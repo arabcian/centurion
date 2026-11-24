@@ -8,6 +8,8 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QDate>
+#include <QDateTime>
+#include <QScrollBar>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -44,6 +46,8 @@ SmartPage::SmartPage(QWidget *parent) : QWidget(parent) {
     v->addLayout(top);
     status_ = new QLabel;
     status_->setProperty("role", "muted");
+    status_->setTextFormat(Qt::PlainText);
+    status_->setWordWrap(true);
     v->addWidget(status_);
     alert_ = new QLabel;
     alert_->setWordWrap(true);
@@ -96,18 +100,22 @@ void SmartPage::showEvent(QShowEvent *e) {
 void SmartPage::start() {
     if (busy_) return;
     ran_ = busy_ = true;
-    status_->setText(tr("Reading SMART information…"));
+    status_->setText(tr("Reading SMART information…") + (lastChecked_.isValid() ? tr(" · Displaying previous readings from %1").arg(lastChecked_.toString(Qt::ISODate)) : QString()));
     privileged::run(privileged::helperPath(QStringLiteral("tune-helper")),
                     QJsonObject{{"op", "tool"}, {"tool", "smart_json"}}, this, [this](const privileged::Result &r) {
         busy_ = false;
-        if (!r.ok()) { status_->setText(QStringLiteral("Not run: ") + r.message()); return; }
+        auto failure = [this](const QString &why) {
+            status_->setText(why + (lastChecked_.isValid() ? tr(" · Displaying previous readings from %1").arg(lastChecked_.toString(Qt::ISODate)) : QString()));
+        };
+        if (!r.ok()) { failure(tr("Check failed: %1").arg(r.message())); return; }
         const QString missing = r.json.value(QStringLiteral("missing")).toString();
-        if (!missing.isEmpty()) { status_->setText(QCoreApplication::translate("systools", "(not installed — %1)").arg(missing)); return; }
+        if (!missing.isEmpty()) { failure(QCoreApplication::translate("systools", "(not installed — %1)").arg(missing)); return; }
         const QJsonArray disks = r.json.value(QStringLiteral("disks")).toArray();
-        if (disks.isEmpty()) { status_->setText(QStringLiteral("No disks found.")); return; }
+        if (disks.isEmpty()) { failure(tr("No disks found.")); return; }
         render(disks, smart::record(disks));
+        lastChecked_ = QDateTime::currentDateTime();
         status_->setText(tr("Last checked: %1 · More fields are available under technical details.")
-                             .arg(QDate::currentDate().toString(Qt::ISODate)));
+                             .arg(lastChecked_.toString(Qt::ISODate)));
     }, CALL_TIMEOUT_MS);
 }
 
@@ -118,6 +126,7 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
     theme::setSheet(alert_, QStringLiteral("color: %1").arg(QString::fromLatin1(theme::DANGER)));
     alert_->setVisible(!alerts.isEmpty());
 
+    const int tableScroll = table_->verticalScrollBar()->value();
     table_->clear();
     while (QLayoutItem *item = cardsLayout_->takeAt(0)) {
         delete item->widget();
@@ -245,4 +254,5 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         cardsLayout_->addWidget(card);
     }
     cardsLayout_->addStretch();
+    table_->verticalScrollBar()->setValue(tableScroll);
 }

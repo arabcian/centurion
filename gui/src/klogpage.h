@@ -28,7 +28,7 @@ public:
     explicit KlogPage(QWidget *parent = nullptr);
     ~KlogPage() override;
     /// Monitor's "show in kernel log": the saved lines around one kernel record (50 before, 20 after,
-    /// all boots, the record highlighted). Changing the scope or the filter shows everything again.
+    /// same boot, the record highlighted; no severity or tail filter). Changing the scope or the filter shows everything again.
     void showAt(const QString &bootId, quint64 seq);
     /// Every saved line of one boot (its 8-character tag): all boots scope, filtered to that boot.
     void showBoot(const QString &boot8);
@@ -52,7 +52,9 @@ private:
 
     QComboBox *scope_;
     QComboBox *level_;
-    QCheckBox *group_, *onlyNew_, *showMuted_;
+    QCheckBox *group_, *onlyNew_, *showMuted_, *follow_;
+    int displayedRows_ = 0;
+    bool tailLimited_ = false;
     QLineEdit *filter_;
     QTextBrowser *text_;
     QLabel *info_;

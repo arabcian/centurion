@@ -544,7 +544,11 @@ Report sleepMatrix(const SleepInputs &in, const QJsonArray &boots) {
     QMap<QString, Row> per;
     QStringList order;
     QList<sleepadvice::Sleep> parsed;
+    QSet<QByteArray> exactSleepRecords;
     for (const QJsonObject &o : in.sleeps) {
+        const QByteArray identity = QJsonDocument(o).toJson(QJsonDocument::Compact);
+        if (exactSleepRecords.contains(identity)) continue;
+        exactSleepRecords.insert(identity);
         const sleepadvice::Sleep s = sleepadvice::parse(o);
         if (s.start <= 0 || s.end < s.start) continue;
         parsed << s;
@@ -552,7 +556,7 @@ Report sleepMatrix(const SleepInputs &in, const QJsonArray &boots) {
         QString state;
         for (int i = 0; i < spans.size(); ++i) {
             const qint64 nextStart = i + 1 < spans.size() ? spans[i + 1].start : std::numeric_limits<qint64>::max();
-            if (s.start >= spans[i].start && s.start < nextStart) { id = spans[i].id.left(8); state = spans[i].state; break; }
+            if (s.start >= spans[i].start && s.start < nextStart) { id = spans[i].id; state = spans[i].state; break; }
         }
         if (!per.contains(id)) order << id;
         Row &row = per[id];
@@ -580,7 +584,7 @@ Report sleepMatrix(const SleepInputs &in, const QJsonArray &boots) {
             Row &row = per[id];
             std::sort(row.lens.begin(), row.lens.end());
             dgpuTotal += row.dgpuAwake;
-            const bool bad = deadBoots.contains(id) || std::any_of(deadBoots.begin(), deadBoots.end(), [&id](const QString &d) { return d.startsWith(id); });
+            const bool bad = deadBoots.contains(id);
             t.add({id, diagsrc::when(row.first).left(10), bad ? tr("died asleep") : stateName(row.state), QString::number(row.sleeps),
                    diagsrc::duration(row.lens.at(row.lens.size() / 2)), QString::number(row.dgpuAwake),
                    mode == QStringLiteral("s2idle") ? QString::number(row.idleHw) : QStringLiteral("—"),

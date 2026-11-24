@@ -59,6 +59,25 @@ int main(int argc, char **argv) {
     CHECK(first.value(QStringLiteral("fresh message")) == QLatin1String("aaaaaaaa"));
     CHECK(!first.contains(QStringLiteral("never seen")));
 
+    ContextWindow context(QStringLiteral("aaaaaaaa"), 10, 2, 3);
+    Line sample = lines.front();
+    for (quint64 i = 1; i <= 8000; ++i) {
+        sample.seq = i;
+        context.append(sample);
+        Line other = sample;
+        other.boot = QStringLiteral("bbbbbbbb");
+        context.append(other);
+    }
+    const auto window = context.rows();
+    CHECK(context.mark() == 2 && window.size() == 6);
+    CHECK(window.size() == 6 && window.front().first.seq == 8 && window[2].first.seq == 10 && window.back().first.seq == 13);
+    ContextWindow missing(QStringLiteral("cccccccc"), 10, 2, 3);
+    missing.append(sample);
+    CHECK(missing.mark() == -1 && missing.rows().empty());
+    ContextWindow boundary(QStringLiteral("aaaaaaaa"), 8000, 0, 0);
+    boundary.append(sample);
+    CHECK(boundary.mark() == 0 && boundary.rows().size() == 1);
+
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::printf("klogview: all checks passed\n");
     return 0;

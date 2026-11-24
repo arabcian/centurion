@@ -11,28 +11,29 @@ def source(relative):
 class SessionAuditGuards(unittest.TestCase):
     def test_rust_aer_colon_parser_and_fixture(self):
         s=source('crates/centurion-helpers/src/health.rs')
-        self.assertIn("line.split_once(':')", s)
+        self.assertIn('strip_prefix(key)', s)
         self.assertIn('aer_total(&s, key)', s)
-        self.assertIn('fn aer_sysfs_colon_format_and_unknowns()', s)
+        self.assertIn('fn aer_sysfs_format_and_unknowns()', s)
     def test_rust_aer_identifies_endpoint(self):
         s=source('crates/centurion-helpers/src/health.rs')
         self.assertIn('"vendor": vendor.trim()', s)
         self.assertIn('"device": device.trim()', s)
     def test_gui_aer_identity_and_atomic_permissions(self):
-        s=source('gui/src/healthevidence.cpp')
-        self.assertIn('verifiedIdentity', s)
-        self.assertIn('identity changed/unverified; delta Unknown',s)
-        self.assertIn('save.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)',s)
+        s=source('gui/src/evidencereports.cpp')
+        self.assertIn('sameDevice', s)
+        self.assertIn('!a.value(QStringLiteral("device")).toString().isEmpty()',s)
+        self.assertIn('f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)',source('gui/src/diagsources.cpp'))
     def test_system_pcie_actual_multiline_total(self):
-        s=source('gui/src/advanceddiagnostics.cpp')
-        self.assertIn('aerTotal(v, QString::fromLatin1(total))', s)
+        s=source('gui/src/systemdiagnostics.cpp')
+        self.assertIn('advanceddiagnostics::aerTotal(rd(root, base + QLatin1Char', s)
         self.assertIn('Endpoint identity changed at this PCI address', s)
     def test_incident_read_modify_write(self):
         gui=source('gui/src/advancedhealth.cpp')
         self.assertIn('incidentNote(key)',gui)
         self.assertIn('saved.value(QStringLiteral("note"))', gui)
         s=source('gui/src/advanceddiagnostics.cpp')
-        self.assertIn('f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)',s)
+        self.assertIn('diagsrc::saveJson(path, all)',s)
+        self.assertIn('f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)',source('gui/src/diagsources.cpp'))
     def test_nvme_helper_drained_and_timeout_coherent(self):
         rust=source('crates/centurion-helpers/src/health_nvme.rs')
         cpp=source('gui/src/advancedhealth.cpp')
@@ -42,37 +43,38 @@ class SessionAuditGuards(unittest.TestCase):
         self.assertIn('90000 : 30000',cpp)
     def test_h16_query_can_fail_safely(self):
         s=source('gui/src/advancedhealth.cpp')
-        self.assertIn('centurionTimedOut',s)
-        self.assertIn('any partial output is not a verified ECC reading',s)
-        self.assertIn('Active NVIDIA ECC query (may wake GPU)',s)
+        self.assertIn('timedOut',s)
+        self.assertIn('ok ? out : QString()',s)
+        self.assertIn('Query ECC (wakes the GPU)',s)
     def test_audio_external_checks_async(self):
         tools=source('gui/src/systools.cpp')
-        s=source('gui/src/advanceddiagnostics.cpp')
-        self.assertIn('{"@advanced","S15"},{"wpctl","status"},{"pactl","info"}',tools)
-        begin=s.index('QString audioDoctor()')
-        end=s.index('QString kernelDependencies()',begin)
-        self.assertNotIn('waitForFinished',s[begin:end].split('// Do not call waitForFinished()')[0])
+        s=source('gui/src/systemdiagnostics.cpp')
+        self.assertIn('{"@diag", "S15"}, {"wpctl", "status"}, {"pactl", "info"}',tools)
+        begin=s.index('Report audio(')
+        end=s.index('return r;',begin)
+        self.assertNotIn('waitForFinished',s[begin:end])
     def test_zcat_stdout_drained(self):
-        s=source('gui/src/advanceddiagnostics.cpp')
-        self.assertIn('out += p.readAll();  // drain while child is running',s)
+        s=source('gui/src/systemdiagnostics.cpp')
+        self.assertIn('out += p.readAllStandardOutput();  // drained while it runs',s)
     def test_co_guard_invalid_is_unknown(self):
         s=source('gui/src/advanceddiagnostics.cpp')
-        self.assertIn('guard count UNKNOWN', s)
-        self.assertIn('trial state UNKNOWN', s)
+        self.assertIn('The crash-guard file is unreadable', s)
+        self.assertIn('Its trial state is unknown', s)
     def test_sleep_deduplicated_by_boot_and_sequence(self):
         s=source('gui/src/advanceddiagnostics.cpp')
-        self.assertIn('const QString key=m.hasMatch()',s)
-        self.assertIn('if (seen.contains(key)) continue',s)
+        self.assertIn('diagsrc::mergeUnique',source('gui/tests/advanceddiagnostics_test.cpp'))
+        self.assertIn('if (exactSleepRecords.contains(identity)) continue',s)
+        self.assertIn('id = spans[i].id;',s)
     def test_flight_cadence_not_fixed_15_seconds(self):
         s=source('gui/src/advanceddiagnostics.cpp')
         self.assertIn('flight_interval',s)
-        self.assertIn('expected*5/2',s)
-        self.assertIn('Cadence differs between ring header',s)
+        self.assertIn('expected * 5 / 2',s)
+        self.assertIn('The recorder interval changed during boot',s)
         rust=source('crates/centurion-helpers/src/boothist.rs')
         self.assertIn('b["flight_interval"] = flight["interval"].clone();',rust)
     def test_gui_fixtures_added(self):
         s=source('gui/tests/advanceddiagnostics_test.cpp')
-        for token in ('gaps >75s=1','guard count UNKNOWN','trial state UNKNOWN','aerTotal(', 'incidentNote(', 'identity changed','a0000000 | 2 | 2 | 1 | 1 | unclean'):
+        for token in ('1 gap','crash-guard','aerTotal(', 'incidentNote(', 'endpoint.remove', 'never resumed'):
             self.assertIn(token,s)
 
 if __name__=='__main__':

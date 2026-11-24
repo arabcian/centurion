@@ -6,9 +6,12 @@
 #include <QPainter>
 #include <QPixmap>
 #include <cmath>
+#include <utility>
 #include <QPalette>
 #include <QProxyStyle>
 #include <QSettings>
+#include <QRegularExpression>
+#include <array>
 #include <QStyleFactory>
 
 namespace theme {
@@ -139,9 +142,15 @@ const Palette PALETTES[] = {
         "#e9eddf", "#c9d1bb", "#a4ae94", "#c7d68f", "#8d9d60", "#a0d4b0", "#e6cd8a", "#e9a09d", "#965954", "#96c9d0", "#c7b0dd"}},
     {"pastel-opal-lagoon", "Opal Lagoon · Pastel Dark", {"#172225", "#1e2c2f", "#27383b", "#30474a", "#3b585c", "#10191b", "#3d5457", "#2a3c3f",
         "#e0eced", "#b7cfd0", "#92abad", "#9dd8cc", "#619d92", "#a6d5ad", "#e8ca8b", "#e59fa2", "#945960", "#98c9e0", "#c5b0dd"}},
+    {"oled-black", "OLED Black", {"#000000", "#101010", "#181818", "#222222", "#303030", "#000000", "#414141", "#282828",
+        "#dedede", "#bcbcbc", "#a0a0a0", "#9bc8b4", "#5b8873", "#a4ce9a", "#e5c78b", "#e8a19e", "#8a4846", "#99c7da", "#c5acd9"}},
 };
 QString g_current = QStringLiteral("graphite");
+std::array<QByteArray, 19> customStorage;
 bool g_restart = false;
+bool g_experimental = true;
+bool g_compact = false;
+std::function<bool()> g_restartGuard;
 QSettings settings() {
     return QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
 }
@@ -150,16 +159,40 @@ QSettings settings() {
 QList<QPair<QString, QString>> themes() {
     QList<QPair<QString, QString>> out;
     for (const Palette &p : PALETTES) out.append({QString::fromLatin1(p.id), QString::fromLatin1(p.name)});
+    if (validCustomPalette(settings().value(QStringLiteral("customTheme/colors")).toStringList()))
+        out.append({QStringLiteral("custom"), QCoreApplication::translate("theme", "Custom palette")});
     return out;
+}
+QStringList paletteTokenNames() {
+    return {"BG0", "BG1", "BG2", "BG3", "BG4", "WELL", "BORDER", "BORDER_SOFT", "FG", "FG_DIM", "MUTED", "ACCENT", "ACCENT_SOFT", "OK", "WARN", "DANGER", "DANGER_SOFT", "INFO", "PURPLE"};
+}
+QStringList paletteColors(const QString &id) {
+    if (id == QLatin1String("custom")) {
+        const auto colors = settings().value(QStringLiteral("customTheme/colors")).toStringList();
+        if (validCustomPalette(colors)) return colors;
+    }
+    const Palette *selected = &PALETTES[0];
+    for (const Palette &p : PALETTES) if (id == QLatin1String(p.id)) selected = &p;
+    QStringList result;
+    for (const char *c : selected->c) result << QString::fromLatin1(c);
+    return result;
+}
+bool validCustomPalette(const QStringList &colors) {
+    if (colors.size() != 19) return false;
+    static const QRegularExpression rgb(QStringLiteral("^#[0-9a-fA-F]{6}$"));
+    for (const QString &c : colors) if (!rgb.match(c).hasMatch()) return false;
+    return true;
+}
+bool saveCustomPalette(const QStringList &colors) {
+    if (!validCustomPalette(colors)) return false;
+    auto s = settings();
+    s.setValue(QStringLiteral("customTheme/colors"), colors);
+    s.sync(); return s.status() == QSettings::NoError;
 }
 QString currentTheme() { return g_current; }
 
 QIcon themePreviewIcon(const QString &id) {
-    const Palette *selected = nullptr;
-    for (const Palette &p : PALETTES) {
-        if (id == QLatin1String(p.id)) { selected = &p; break; }
-    }
-    if (!selected) return {};
+    const QStringList colors = paletteColors(id);
     // Three actual colours from the preset: surface, foreground, and accent.
     // Drawn at 2x so the chooser stays sharp on high-DPI / OLED displays.
     QPixmap preview(76, 36);
@@ -167,20 +200,22 @@ QIcon themePreviewIcon(const QString &id) {
     preview.fill(Qt::transparent);
     QPainter painter(&preview);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QColor(QString::fromLatin1(selected->c[6])));
-    painter.setBrush(QColor(QString::fromLatin1(selected->c[1])));
+    painter.setPen(QColor(colors[6]));
+    painter.setBrush(QColor(colors[1]));
     painter.drawRoundedRect(QRectF(0.5, 0.5, 37, 17), 4, 4);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(QString::fromLatin1(selected->c[0])));
+    painter.setBrush(QColor(colors[0]));
     painter.drawRoundedRect(QRectF(3, 3, 9, 12), 2, 2);
-    painter.setBrush(QColor(QString::fromLatin1(selected->c[8])));
+    painter.setBrush(QColor(colors[8]));
     painter.drawRoundedRect(QRectF(14, 3, 9, 12), 2, 2);
-    painter.setBrush(QColor(QString::fromLatin1(selected->c[11])));
+    painter.setBrush(QColor(colors[11]));
     painter.drawRoundedRect(QRectF(25, 3, 9, 12), 2, 2);
     return QIcon(preview);
 }
 
-bool experimentalEnabled() {
+bool experimentalEnabled() { return g_experimental; }
+
+static bool readExperimentalChoice() {
     const QByteArray overrideMode = qgetenv("CENTURION_UI").trimmed().toLower();
     if (overrideMode == "classic") return false;
     if (overrideMode == "experimental") return true;
@@ -196,19 +231,31 @@ bool saveUiMode(bool experimental) {
 }
 
 
+bool compactDensity() { return g_compact; }
+bool saveCompactDensity(bool compact) {
+    auto s = settings(); s.setValue(QStringLiteral("ui/compact_density"), compact);
+    s.sync(); return s.status() == QSettings::NoError;
+}
+
 void load() {
+    g_compact = settings().value(QStringLiteral("ui/compact_density"), false).toBool();
+    g_experimental = readExperimentalChoice();
     const QString want = settings().value(QStringLiteral("theme")).toString();
     const Palette *p = &PALETTES[0];
     for (const Palette &x : PALETTES) if (want == QLatin1String(x.id)) p = &x;
     g_current = QString::fromLatin1(p->id);
     const char **tok[] = {&BG0, &BG1, &BG2, &BG3, &BG4, &WELL, &BORDER, &BORDER_SOFT, &FG, &FG_DIM, &MUTED,
                           &ACCENT, &ACCENT_SOFT, &OK, &WARN, &DANGER, &DANGER_SOFT, &INFO, &PURPLE};
-    for (int i = 0; i < 19; ++i) *tok[i] = p->c[i];
+    const auto custom = settings().value(QStringLiteral("customTheme/colors")).toStringList();
+    if (want == QLatin1String("custom") && validCustomPalette(custom)) {
+        g_current = want;
+        for (int i = 0; i < 19; ++i) { customStorage[i] = custom[i].toLatin1(); *tok[i] = customStorage[i].constData(); }
+    } else for (int i = 0; i < 19; ++i) *tok[i] = p->c[i];
 }
 
 bool saveTheme(const QString &id) {
     // Never persist an unrecognised id: a typo should not silently select Graphite.
-    bool found = false;
+    bool found = id == QLatin1String("custom") && validCustomPalette(settings().value(QStringLiteral("customTheme/colors")).toStringList());
     for (const Palette &p : PALETTES) {
         if (id == QLatin1String(p.id)) { found = true; break; }
     }
@@ -219,7 +266,12 @@ bool saveTheme(const QString &id) {
     return s.status() == QSettings::NoError;
 }
 
-void requestRestart() { g_restart = true; QCoreApplication::quit(); }
+void setRestartGuard(std::function<bool()> guard) { g_restartGuard = std::move(guard); }
+void requestRestart() {
+    if (g_restart || (g_restartGuard && !g_restartGuard())) return;
+    g_restart = true;
+    QCoreApplication::quit();
+}
 bool restartRequested() { return g_restart; }
 
 static double luminance(const QColor &c) {
@@ -739,6 +791,13 @@ QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { backgro
         {"@BG0", BG0}, {"@BG1", BG1}, {"@BG2", BG2}, {"@BG3", BG3}, {"@BG4", BG4}, {"@FG", FG},
         {"@FONT", QString::number(FONT_PT)}, {"@RAD", QString::number(RADIUS)}};
     for (const auto &[k, v] : toks) s.replace(QString::fromLatin1(k), v);
+    if (g_compact) s += QStringLiteral(R"QSS(
+QPushButton { padding: 2px 6px; }
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { padding-top: 1px; padding-bottom: 1px; }
+QTabBar::tab { padding-top: 3px; padding-bottom: 3px; }
+QTreeView::item, QTableView::item { padding: 1px 3px; }
+QHeaderView::section { padding: 3px 5px; }
+)QSS");
     return s;
 }
 
@@ -751,13 +810,13 @@ class Style : public QProxyStyle {
 public:
     using QProxyStyle::QProxyStyle;
     int pixelMetric(PixelMetric m, const QStyleOption *o = nullptr, const QWidget *w = nullptr) const override {
-        if (m == PM_LayoutHorizontalSpacing || m == PM_LayoutVerticalSpacing) return 4;
+        if (m == PM_LayoutHorizontalSpacing || m == PM_LayoutVerticalSpacing) return g_compact ? 2 : 4;
         return QProxyStyle::pixelMetric(m, o, w);
     }
     // Used per widget pair when the layout has no spacing at all (the nested case).
     int layoutSpacing(QSizePolicy::ControlType, QSizePolicy::ControlType, Qt::Orientation,
                       const QStyleOption * = nullptr, const QWidget * = nullptr) const override {
-        return 4;
+        return g_compact ? 2 : 4;
     }
 };
 } // namespace

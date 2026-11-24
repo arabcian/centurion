@@ -19,6 +19,7 @@ class FanCurveWidget : public QWidget {
 public:
     explicit FanCurveWidget(QWidget *parent = nullptr);
     void setLevels(const QVector<int> &l);
+    void setHardwareLevels(const QVector<int> &l) { hardware_ = l; update(); }
     QVector<int> levels() const { return levels_; }
     QSize sizeHint() const override { return {560, 280}; }
 Q_SIGNALS:
@@ -34,6 +35,7 @@ private:
     int levelAt(double y) const;
     void setPoint(int step, int level);
     QVector<int> levels_ = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    QVector<int> hardware_;
     int drag_ = -1;
 };
 

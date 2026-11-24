@@ -73,6 +73,7 @@ public:
 
     bool ready() const { return ready_; }
     bool busy() const { return busy_; }
+    bool operationActive() const;
     int activeProfile() const { return active_; }
     int brightness() const { return brightness_; }
     bool logo() const { return logo_; }
@@ -104,6 +105,8 @@ private:
     bool dirty() const { return work_ != loaded_; }
 
     // editing
+    void resetEditHistory();
+    void stepEditHistory(int delta);
     void refreshAll();          // list + editor + preview + budget
     void refreshList();
     void refreshEditor();
@@ -123,6 +126,10 @@ private:
     QList<kblayout::Key> phys_;      // empty → draw the controller matrix
     QHash<int, QString> legends_;
     QList<lighting::Effect> loaded_, work_;
+    QList<QList<lighting::Effect>> editHistory_;
+    int editHistoryPos_ = -1;
+    int pendingSets_ = 0;
+    QPushButton *undo_ = nullptr, *redo_ = nullptr;
     int active_ = 0, editProfile_ = 0, brightness_ = 0, lastOn_ = 5;
     bool logo_ = false, ready_ = false, busy_ = false, filling_ = false;
     QColor paint_ = QColor(0xe0, 0xa4, 0x58);

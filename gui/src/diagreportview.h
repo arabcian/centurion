@@ -7,6 +7,10 @@
 #include <QWidget>
 
 class QLabel;
+class QComboBox;
+class QLineEdit;
+class QScrollArea;
+class QTreeWidget;
 class QPushButton;
 class QVBoxLayout;
 
@@ -25,6 +29,17 @@ Q_SIGNALS:
 
 private:
     void clearBody();
+    void filterReport();
+    void previewExport();
+    QScrollArea *scroll_;
+    QLineEdit *search_;
+    QComboBox *severity_, *sections_;
+    QLabel *filterInfo_, *snapshot_;
+    QPushButton *preview_, *pin_, *compare_;
+    QString baselineCode_, baselineText_, baselineTime_;
+    QList<QWidget *> findingWidgets_, sectionWidgets_;
+    QList<QTreeWidget *> tables_;
+    bool hasReport_ = false;
     diag::Report report_;
     QLabel *verdict_, *headline_, *about_;
     QPushButton *copy_, *save_;

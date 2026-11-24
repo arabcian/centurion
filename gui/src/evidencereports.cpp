@@ -149,27 +149,31 @@ Report aerDelta(const QJsonObject &scan, const QJsonObject &previous) {
     Table t;
     t.title = tr("Devices with Errors");
     t.headers = {tr("Device"), tr("Corrected"), tr("Since last scan"), tr("Non-fatal"), tr("Fatal")};
-    int quiet = 0;
+    int quiet = 0, unreadable = 0;
     for (const QJsonValue &v : now) {
         const QJsonObject a = v.toObject();
         const QString dev = a.value(QStringLiteral("dev")).toString();
-        auto n = [&a](const char *k) { return a.value(QLatin1String(k)).isDouble() ? qint64(a.value(QLatin1String(k)).toDouble()) : -1; };
+        auto count = [](const QJsonValue &v) -> qint64 { return v.isDouble() ? v.toInteger(-1) : -1; };
+        auto n = [&a, count](const char *k) { return count(a.value(QLatin1String(k))); };
         const qint64 cor = n("cor"), nonfatal = n("nonfatal"), fatal = n("fatal");
         const QJsonObject old = before.value(dev);
         const bool sameDevice = !old.isEmpty() && old.value(QStringLiteral("vendor")) == a.value(QStringLiteral("vendor")) &&
-                                old.value(QStringLiteral("device")) == a.value(QStringLiteral("device")) && !a.value(QStringLiteral("vendor")).toString().isEmpty();
+                                old.value(QStringLiteral("device")) == a.value(QStringLiteral("device")) &&
+                                !a.value(QStringLiteral("vendor")).toString().isEmpty() && !a.value(QStringLiteral("device")).toString().isEmpty();
         QString delta = QStringLiteral("—");
         qint64 grew = 0;
-        if (sameDevice && old.value(QStringLiteral("cor")).isDouble() && cor >= 0) {
-            const qint64 then = qint64(old.value(QStringLiteral("cor")).toDouble());
+        const qint64 then = count(old.value(QStringLiteral("cor")));
+        if (sameDevice && then >= 0 && cor >= 0) {
             if (cor >= then) { grew = cor - then; delta = QStringLiteral("+%1").arg(grew); }
             else delta = tr("reset");
-        } else if (!old.isEmpty()) delta = tr("other device");
-        if (cor <= 0 && nonfatal <= 0 && fatal <= 0) { ++quiet; continue; }
+        } else if (!old.isEmpty() && !sameDevice) delta = tr("other device");
+        const bool missing = cor < 0 || nonfatal < 0 || fatal < 0;
+        if (missing) ++unreadable;
+        if (cor == 0 && nonfatal == 0 && fatal == 0) { ++quiet; continue; }
         const QString cls = diagsrc::read(QStringLiteral("/sys/bus/pci/devices/%1/class").arg(dev));
         const QString name = QStringLiteral("%1 · %2").arg(dev, diagsrc::pciName(a.value(QStringLiteral("vendor")).toString(), a.value(QStringLiteral("device")).toString(), cls));
         auto s = [](qint64 x) { return x < 0 ? QStringLiteral("?") : QString::number(x); };
-        const Level l = fatal > 0 || nonfatal > 0 ? Level::Attention : grew >= 10 || cor >= 100 ? Level::Review : Level::Info;
+        const Level l = fatal > 0 || nonfatal > 0 ? Level::Attention : grew >= 10 || cor >= 100 ? Level::Review : missing ? Level::Unknown : Level::Info;
         t.add({name, s(cor), delta, s(nonfatal), s(fatal)}, l);
         if (fatal > 0 || nonfatal > 0)
             r.add(Level::Attention, tr("%1: uncorrectable PCIe errors (non-fatal %2, fatal %3)").arg(name).arg(s(nonfatal), s(fatal)),
@@ -183,8 +187,9 @@ Report aerDelta(const QJsonObject &scan, const QJsonObject &previous) {
     t.note = tr("%1 device(s) with zero counts are not listed.").arg(quiet);
     r.tables << t;
     if (!sameBoot) r.limits << tr("No earlier scan of this boot: deltas start with the next scan.");
-    if (!r.count(Level::Attention) && !r.count(Level::Review))
-        r.add(Level::Ok, tr("No uncorrectable PCIe error and no device with a growing error count"), tr("%1 device(s) checked.").arg(now.size()));
+    if (unreadable) r.add(Level::Unknown, tr("%1 device(s) have unavailable AER counters").arg(unreadable));
+    if (!r.count(Level::Attention) && !r.count(Level::Review) && !r.count(Level::Unknown))
+        r.add(Level::Ok, tr("No uncorrectable PCIe error or elevated corrected error count found"), tr("%1 device(s) checked.").arg(now.size()));
     return r;
 }
 

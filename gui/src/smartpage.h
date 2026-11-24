@@ -4,6 +4,7 @@
 // self-test). Runs when first shown and on "Run again"; each run also records today's sample
 // (smartwatch.h). The raw smartctl output is on the SMART details tab.
 #include <QJsonArray>
+#include <QDateTime>
 #include <QStringList>
 #include <QWidget>
 
@@ -31,5 +32,6 @@ private:
     QWidget *cardsWidget_ = nullptr;
     QPushButton *detailsButton_ = nullptr;
     QWidget *summaryView_ = nullptr;
+    QDateTime lastChecked_;
     bool ran_ = false, busy_ = false;
 };

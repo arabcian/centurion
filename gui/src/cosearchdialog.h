@@ -23,9 +23,11 @@ class QComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QProcess;
+class QProgressBar;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
+class QGridLayout;
 class QTimer;
 class Notifier;
 
@@ -34,6 +36,7 @@ class CoSearchDialog : public QDialog {
 public:
     explicit CoSearchDialog(QWidget *parent = nullptr);
     ~CoSearchDialog() override;
+    bool operationActive() const { return running_ || applying_ || resetting_ || sceneApplying_; }
 protected:
     void closeEvent(QCloseEvent *event) override;
     void reject() override;
@@ -72,6 +75,7 @@ private:
     void saveSettings() const;
     bool writeJournal() const;
     void refreshTable();
+    void showAttemptHistory();
     void reloadPresets();
     void watchTick();
     void gatherEvidence(const QJsonObject &journal, const cosearch::Search &search, const cosearch::Trial &trial,
@@ -86,7 +90,9 @@ private:
     QSpinBox *limit_, *allStart_, *step_;
     QPushButton *applyTuning_;
     QLabel *estimate_, *status_;
+    QProgressBar *coreProgress_;
     QTableWidget *table_;
+    QGridLayout *coreMap_ = nullptr;
     QPlainTextEdit *log_;
     QPushButton *go_, *stop_, *saveResult_, *loadResult_, *verifyBtn_, *guardsBtn_;
     QProcess *test_ = nullptr;

@@ -322,7 +322,7 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
 
     const bool sensor = s.value(QStringLiteral("has_sensor")).toBool();
     run_->setEnabled(sensor && !proc_);
-    fanMax_->setEnabled(bool(fans_.allMax) && s.value(QStringLiteral("fans")).toInt() > 0 && !proc_ && !fanTesting_);
+    fanMax_->setEnabled(bool(fans_.allMax) && s.value(QStringLiteral("fans")).toInt() > 0 && !proc_ && !fanTesting_ && !fanRestoring_);
     if (!sensor) live_->setText(tr("<span style='color:%1'>No CPU temperature sensor found (k10temp / zenpower / coretemp), so the test cannot run.</span>").arg(theme::WARN));
 
     const QJsonObject base = s.value(QStringLiteral("baseline")).toObject();
@@ -411,7 +411,7 @@ void CoolingPage::setRunning(bool on) {
 }
 
 void CoolingPage::start() {
-    if (proc_) return;
+    if (proc_ || fanTesting_ || fanRestoring_) return;
     verdict_->setVisible(false);
     live_->clear();
     buf_.clear();
@@ -488,7 +488,7 @@ void CoolingPage::setFanControls(const FanControls &controls) {
 }
 
 void CoolingPage::fanMaxStart() {
-    if (!fans_.allMax || fanTesting_ || proc_) return;
+    if (!fans_.allMax || fanTesting_ || fanRestoring_ || proc_) return;
     if (QMessageBox::question(this, tr("Fan max test"),
             tr("All fans will run at maximum speed for %1 seconds, so they will be loud. Afterwards they go back to their Home-tab setting. "
                "The peak speed of each fan is compared with its baseline.").arg(FAN_SPIN_S)) != QMessageBox::Yes)
@@ -540,11 +540,13 @@ void CoolingPage::fanTick() {
 void CoolingPage::fanStop(bool aborted) {
     fanTimer_->stop();
     fanTesting_ = false;
-    setRunning(false);
+    fanRestoring_ = true;
     live_->clear();
     // The verdict waits for the restore (true at once when the fans were never put at maximum), so it never
     // says the fans are back while a write is still pending or has failed.
     fanRestore(0, [this, aborted](bool restored) {
+        fanRestoring_ = false;
+        setRunning(false);
         // Shows the text after the status refresh, which would otherwise hide the banner again.
         auto show = [this, restored](const QString &text, const char *color) {
             const QString full = restored ? text

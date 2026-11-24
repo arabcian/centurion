@@ -1,5 +1,8 @@
 #include "uinavigator.h"
 #include "experimentalui.h"
+#include "healthtab.h"
+#include "toolcatalog.h"
+#include <QScreen>
 
 #include <QAbstractButton>
 #include <QDialog>
@@ -13,7 +16,6 @@
 #include <QScrollArea>
 #include <QTabBar>
 #include <QTabWidget>
-#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QVector>
 
@@ -21,11 +23,12 @@ namespace uinavigator {
 namespace {
 struct Destination {
     int tab = -1;
+    QPointer<QWidget> page;
     QPointer<QWidget> target;
     QPointer<QTabWidget> inner;
     int innerIndex = -1;
-    QPointer<QTreeWidget> tree;
-    QTreeWidgetItem *treeItem = nullptr;
+    QPointer<HealthTab> health;
+    QString healthTarget;
     QString title;
     QString search;
 };
@@ -55,7 +58,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
     QDialog dialog(parent, Qt::Dialog | Qt::FramelessWindowHint);
     dialog.setObjectName(QStringLiteral("expPalette"));
     dialog.setWindowTitle(QObject::tr("Quick Navigation — Centurion"));
-    dialog.resize(620, 460);
+    dialog.resize(parent ? QSize(620, 460).boundedTo(parent->screen()->availableGeometry().size() - QSize(32, 32)) : QSize(620, 460));
     auto *layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(1, 1, 1, 1);  // the palette's own hairline frame
     layout->setSpacing(0);
@@ -81,7 +84,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
     results->setIconSize(QSize(18, 18));
     results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     layout->addWidget(results, 1);
-    auto *hint = new QLabel(QObject::tr("Search tabs and visible controls. Enter navigates; it never applies a setting."));
+    auto *hint = new QLabel(QObject::tr("Search pages, Health tools and visible controls. Enter navigates; it never applies a setting."));
     hint->setObjectName(QStringLiteral("expPaletteHint"));
     layout->addWidget(hint);
     search->installEventFilter(new ListKeys(results, &dialog));
@@ -93,14 +96,28 @@ void open(QTabWidget *tabs, QWidget *parent) {
         const QString detail = tabs->tabToolTip(i);
         Destination dest;
         dest.tab = i;
+        dest.page = tabs->widget(i);
         dest.title = QObject::tr("Page  /  %1").arg(label);
         dest.search = label + QLatin1Char(' ') + detail;
         destinations.append(dest);
+        if (auto *health = qobject_cast<HealthTab *>(tabs->widget(i))) {
+            for (const auto &entry : health->navigationEntries()) {
+                Destination tool;
+                tool.tab = i;
+                tool.page = tabs->widget(i);
+                tool.health = health;
+                tool.healthTarget = entry.target;
+                tool.title = QObject::tr("%1  /  %2").arg(label, entry.label);
+                tool.search = tool.title + QLatin1Char(' ') + entry.keywords.join(QLatin1Char(' '));
+                destinations.append(tool);
+            }
+        }
     }
     // Only *already visible* controls are indexed. Building unopened specialist
     // pages here could wake a sleeping dGPU or trigger a privileged probe.
     if (QWidget *page = tabs->currentWidget()) {
         const QString prefix = tabs->tabText(tabs->currentIndex());
+        int visibleControls = 0;
         for (QWidget *w : page->findChildren<QWidget *>()) {
             if (!w->isVisibleTo(page) || !w->isEnabled()) continue;
             QString label;
@@ -109,9 +126,10 @@ void open(QTabWidget *tabs, QWidget *parent) {
             else continue;
             label.remove(QLatin1Char('&'));
             if (label.trimmed().isEmpty() || label.size() > 100) continue;
-            if (destinations.size() >= 220) break;
+            if (++visibleControls > 150) break;
             Destination dest;
             dest.tab = tabs->currentIndex();
+            dest.page = page;
             dest.target = w;
             dest.title = QObject::tr("%1  /  %2").arg(prefix, label);
             dest.search = prefix + QLatin1Char(' ') + label + QLatin1Char(' ') + w->toolTip();
@@ -122,34 +140,16 @@ void open(QTabWidget *tabs, QWidget *parent) {
         // the LazyWidget content to initialize (or making extra device reads).
         for (QTabWidget *inner : page->findChildren<QTabWidget *>()) {
             if (!inner->isVisibleTo(page)) continue;
-            for (int j = 0; j < inner->count() && destinations.size() < 250; ++j) {
+            for (int j = 0; j < inner->count(); ++j) {
                 if (!inner->isTabEnabled(j)) continue;
                 Destination dest;
                 dest.tab = tabs->currentIndex();
+                dest.page = page;
                 dest.inner = inner;
                 dest.innerIndex = j;
                 dest.title = QObject::tr("%1  /  %2").arg(prefix, inner->tabText(j));
                 dest.search = dest.title + QLatin1Char(' ') + inner->tabToolTip(j);
                 destinations.append(dest);
-            }
-        }
-        // Health Center's one-level tree is also a first-class navigation
-        // target. Skip headers, hidden groups and the inner tool directory.
-        for (QTreeWidget *tree : page->findChildren<QTreeWidget *>()) {
-            if (!tree->isVisibleTo(page) || tree->objectName() == QLatin1String("experimentalQuickResults")) continue;
-            for (int r = 0; r < tree->topLevelItemCount(); ++r) {
-                QTreeWidgetItem *root = tree->topLevelItem(r);
-                for (int j = 0; j < root->childCount() && destinations.size() < 300; ++j) {
-                    QTreeWidgetItem *item = root->child(j);
-                    if (item->isHidden() || !(item->flags() & Qt::ItemIsSelectable)) continue;
-                    Destination dest;
-                    dest.tab = tabs->currentIndex();
-                    dest.tree = tree;
-                    dest.treeItem = item;
-                    dest.title = QObject::tr("%1  /  %2").arg(prefix, item->text(0));
-                    dest.search = prefix + QLatin1Char(' ') + root->text(0) + QLatin1Char(' ') + item->text(0);
-                    destinations.append(dest);
-                }
             }
         }
     }
@@ -162,24 +162,29 @@ void open(QTabWidget *tabs, QWidget *parent) {
         const QString filter = search->text().trimmed();
         for (int i = 0; i < destinations.size(); ++i) {
             const Destination &d = destinations.at(i);
-            if (!filter.isEmpty() && !d.search.contains(filter, Qt::CaseInsensitive)) continue;
+            if (!toolcatalog::matches(filter, d.search, {})) continue;
             auto *item = new QListWidgetItem(icons.value(d.tab), d.title, results);
             item->setData(Qt::UserRole, i);
         }
         if (results->count()) results->setCurrentRow(0);
     };
     QObject::connect(search, &QLineEdit::textChanged, &dialog, refill);
+    int selectedDestination = -1;
     auto select = [&] {
         QListWidgetItem *item = results->currentItem();
         if (!item) return;
         const int i = item->data(Qt::UserRole).toInt();
         if (i < 0 || i >= destinations.size()) return;
-        const Destination d = destinations.at(i);
-        if (d.tab < 0 || d.tab >= tabs->count()) return;
-        tabs->setCurrentIndex(d.tab);
+        selectedDestination = i;
+        dialog.accept();
+    };
+    auto navigate = [&](const Destination &d) {
+        const int pageIndex = d.page ? tabs->indexOf(d.page) : -1;
+        if (pageIndex < 0 || !tabs->isTabEnabled(pageIndex)) return;
+        tabs->setCurrentIndex(pageIndex);
         if (d.inner && d.innerIndex >= 0 && d.innerIndex < d.inner->count())
             d.inner->setCurrentIndex(d.innerIndex);
-        if (d.tree && d.treeItem) d.tree->setCurrentItem(d.treeItem);
+        if (d.health) d.health->openNavigationTarget(d.healthTarget);
         if (d.target) {
             // Find the nearest scroll area. Focus is purely navigational and
             // never clicks the widget, adjusts a value or writes hardware.
@@ -190,7 +195,6 @@ void open(QTabWidget *tabs, QWidget *parent) {
             }
             if (d.target->focusPolicy() != Qt::NoFocus) d.target->setFocus(Qt::OtherFocusReason);
         }
-        dialog.accept();
     };
     QObject::connect(results, &QListWidget::itemActivated, &dialog, [&](QListWidgetItem *) { select(); });
     QObject::connect(search, &QLineEdit::returnPressed, &dialog, select);
@@ -202,6 +206,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
         dialog.move(origin.x() + (parent->width() - dialog.width()) / 2,
                     origin.y() + std::max(48, (parent->height() - dialog.height()) / 5));
     }
-    dialog.exec();
+    if (dialog.exec() == QDialog::Accepted && selectedDestination >= 0)
+        navigate(destinations.at(selectedDestination));
 }
 }  // namespace uinavigator

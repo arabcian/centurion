@@ -1,0 +1,24 @@
+gui/tests/advanced_17_static_test.py: FAIL (also fails in original)
+gui/tests/boot_preset_home_ui_static_test.py: PASS
+gui/tests/experimental_layout_static_test.py: PASS
+gui/tests/experimental_ui_static_test.py: PASS
+gui/tests/gui_stage1_static_test.py: PASS
+gui/tests/health_catalog_redesign_static_test.py: PASS
+gui/tests/health_ui_static_test.py: PASS
+gui/tests/optimization_home_test.py: PASS
+gui/tests/six_features_static_test.py: PASS
+gui/tests/studio_v4_static_test.py: PASS
+gui/tests/theme_palettes_static_test.py: PASS
+gui/tests/title_case_static_test.py: PASS
+gui/tests/toolcatalog_static_test.py: PASS
+gui/tests/translation_tr_test.py: PASS
+tests/nvcurve_safety_static_test.py: PASS
+tests/test_algorithm_guardrails_static.py: PASS
+tests/test_compare_autotune_timings.py: PASS
+tests/test_evidence_lab_static.py: FAIL (also fails in original)
+tests/test_health_diagnostics_contract.py: PASS
+tests/test_nov2026_security_fixes_static.py: PASS
+tests/test_session_audit_static.py: FAIL (also fails in original)
+Total: 18/21 scripts passed
+
+CMake configuration: blocked by missing Qt6Config.cmake.

@@ -2,6 +2,8 @@
 
 #include <QRegularExpression>
 #include <QStringList>
+#include <algorithm>
+#include <utility>
 
 namespace klogview {
 
@@ -48,6 +50,30 @@ QString stem(const QString &msg) {
     }
     close();
     return best.size() >= 6 ? best : QString();
+}
+
+ContextWindow::ContextWindow(QString boot, quint64 seq, int before, int after)
+    : boot_(std::move(boot)), seq_(seq), before_(std::max(0, before)), after_(std::max(0, after)) {}
+
+void ContextWindow::append(const Line &line) {
+    if (line.boot != boot_) return;
+    if (mark_ >= 0) {
+        if (int(lines_.size()) - mark_ - 1 < after_ && line.seq != seq_) lines_.push_back(line);
+        return;
+    }
+    if (line.seq == seq_) {
+        mark_ = int(lines_.size());
+        lines_.push_back(line);
+    } else {
+        lines_.push_back(line);
+        if (int(lines_.size()) > before_) lines_.pop_front();
+    }
+}
+
+std::vector<Row> ContextWindow::rows() const {
+    std::vector<Row> result;
+    if (mark_ >= 0) for (const Line &l : lines_) result.push_back(Row{l, 1, l.time});
+    return result;
 }
 
 std::vector<Row> group(const std::vector<Line> &lines, bool groupRepeats) {

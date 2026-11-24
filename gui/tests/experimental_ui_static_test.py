@@ -45,11 +45,11 @@ check('late dGPU discovery still inserts its tab', all(
     x in main for x in ['ensureNvidiaTab()', 'tabs_->insertTab(at, nvidia_',
                      'Q_EMIT nvidiaTabAdded()']))
 check('new navigator only changes navigation state', all(
-    x in nav for x in ['setCurrentIndex', 'setCurrentItem', 'ensureWidgetVisible'])
+    x in nav for x in ['setCurrentIndex', 'openNavigationTarget', 'ensureWidgetVisible'])
     and not re.search(r'privileged::|QProcess|applyProfile|setFanTarget|run\(', nav))
 check('navigator indexes sub-tabs without activating lazy pages during search', all(
     x in nav for x in ['findChildren<QTabWidget *>', 'inner->tabText(j)',
-                     'findChildren<QTreeWidget *>', 'isVisibleTo(page)']))
+                     'navigationEntries()', 'isVisibleTo(page)']))
 check('Home route is wired to canonical main-tab navigation',
     '&HomeTab::openPageRequested' in main and 'void MainWindow::showTab' in main)
 check('experimental style uses current Centurion theme tokens', all(

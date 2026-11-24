@@ -39,6 +39,7 @@ class RyzenTab : public QWidget {
 public:
     explicit RyzenTab(QWidget *parent = nullptr);
     ~RyzenTab() override;
+    bool operationActive() const { return busy_; }
 
     QStringList savedProfileNames() const;
     /// Load + apply in one step (tray). All-core then per-core, chained.

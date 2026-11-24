@@ -43,7 +43,14 @@ static int pcieGen(double gts) { return gts >= 60 ? 6 : gts >= 30 ? 5 : gts >= 1
 
 // ── S04 PCIe Link Negotiation Lab ─────────────────────────────────────────────
 
-Report pcieLinks(const QString &root) {
+Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *sample) {
+    const QString boot = rd(root, QStringLiteral("/proc/sys/kernel/random/boot_id"));
+    const bool sameBoot = !boot.isEmpty() && previous.value(QStringLiteral("boot")).toString() == boot;
+    const QJsonObject before = sameBoot ? previous.value(QStringLiteral("links")).toObject() : QJsonObject{};
+    QJsonObject captured;
+    Table linkDelta;
+    linkDelta.title = tr("Link Changes Since Previous Scan");
+    linkDelta.headers = {tr("PCI address"), tr("Previous link"), tr("Current link"), tr("Comparison")};
     Report r;
     r.code = QStringLiteral("S04");
     r.title = tr("PCIe Link Check");
@@ -54,6 +61,11 @@ Report pcieLinks(const QString &root) {
     Table t;
     t.title = tr("Device Links");
     t.headers = {tr("Device"), tr("Driver"), tr("Link now"), tr("Possible"), tr("Power"), tr("AER (corr / non-fatal / fatal)"), tr("Status")};
+    Table topology;
+    topology.title = tr("PCIe Upstream Relationships");
+    topology.headers = {tr("Device"), tr("Upstream PCI address"), tr("Device maximum"), tr("Upstream maximum")};
+    topology.note = tr("Parent relationships come from resolved sysfs device paths. Unknown or root-bus parents are not inferred.");
+    static const QRegularExpression pciAddress(QStringLiteral(R"(^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$)"));
     int bridges = 0;
     for (const QString &id : ls(root, QStringLiteral("/sys/bus/pci/devices"))) {
         const QString base = QStringLiteral("/sys/bus/pci/devices/") + id;
@@ -66,6 +78,13 @@ Report pcieLinks(const QString &root) {
         const QString up = QFileInfo(QFileInfo(root + base).canonicalFilePath()).path();
         const double portMax = linkSpeed(diagsrc::read(up + QStringLiteral("/max_link_speed")));
         const int portW = diagsrc::read(up + QStringLiteral("/max_link_width")).toInt();
+        const QString parent = QFileInfo(up).fileName();
+        const bool parentKnown = pciAddress.match(parent).hasMatch();
+        auto link = [](double rate, int width) {
+            return rate > 0 && width > 0 ? QStringLiteral("%1 GT/s ×%2").arg(rate).arg(width) : QStringLiteral("—");
+        };
+        topology.add({id, parentKnown ? parent : QStringLiteral("—"), link(linkSpeed(max), mw),
+                      parentKnown ? link(portMax, portW) : QStringLiteral("—")});
         const double s = linkSpeed(cur), ms = std::min(linkSpeed(max), portMax > 0 ? portMax : 1e9);
         const int mw2 = portW > 0 ? std::min(mw, portW) : mw;
         const QString power = rd(root, base + QStringLiteral("/power/runtime_status"));
@@ -74,7 +93,18 @@ Report pcieLinks(const QString &root) {
         QStringList aer;
         for (const auto &[f, k] : aerFiles) aer << advanceddiagnostics::aerTotal(rd(root, base + QLatin1Char('/') + QLatin1String(f)), QLatin1String(k));
         const bool hasAer = std::any_of(aer.begin(), aer.end(), [](const QString &x) { return !x.isEmpty(); });
-        const QString name = diagsrc::pciName(rd(root, base + QStringLiteral("/vendor")), rd(root, base + QStringLiteral("/device")), cls);
+        const QString vendor = rd(root, base + QStringLiteral("/vendor")), device = rd(root, base + QStringLiteral("/device"));
+        const QString name = diagsrc::pciName(vendor, device, cls);
+        const QString current = link(s,w);
+        captured.insert(id, QJsonObject{{"vendor", vendor}, {"device", device}, {"link", current}});
+        const QJsonObject old = before.value(id).toObject();
+        if (!old.isEmpty()) {
+            const QString oldLink = old.value(QStringLiteral("link")).toString();
+            const bool identity = !vendor.isEmpty() && !device.isEmpty() && old.value(QStringLiteral("vendor")).toString() == vendor && old.value(QStringLiteral("device")).toString() == device;
+            if (!identity) linkDelta.add({id, oldLink, current, tr("Endpoint identity changed at this PCI address or is unverified")}, Level::Unknown);
+            else if (oldLink == QStringLiteral("—") || current == QStringLiteral("—")) linkDelta.add({id, oldLink, current, tr("Not readable in this scan")}, Level::Unknown);
+            else if (oldLink != current) linkDelta.add({id, oldLink, current, tr("Link reading changed; power state may differ")});
+        }
         Level l = Level::Ok;
         QString status = tr("full link");
         if (mw2 > 0 && w > 0 && w < mw2) {
@@ -88,15 +118,30 @@ Report pcieLinks(const QString &root) {
             l = Level::Info;
             status = tr("slower now (PCIe %1 of %2)").arg(pcieGen(s)).arg(pcieGen(ms));
         }
-        if (aer.size() == 3 && (aer[1].toLongLong() > 0 || aer[2].toLongLong() > 0)) l = Level::Attention;
+        if (mw2 <= 0 || w <= 0) {
+            l = Level::Unknown; status = tr("Link width unknown");
+            r.add(Level::Unknown, tr("%1 (%2): link width could not be verified").arg(name,id));
+        }
+        if (aer.size() == 3 && (aer[1].toULongLong() > 0 || aer[2].toULongLong() > 0)) {
+            l = Level::Attention;
+            r.add(Level::Attention, tr("%1 (%2): uncorrectable PCIe errors recorded").arg(name,id));
+        }
         t.add({QStringLiteral("%1 · %2").arg(id, name), driverOf(root, base), QStringLiteral("PCIe %1 x%2").arg(pcieGen(s)).arg(w),
                QStringLiteral("PCIe %1 x%2").arg(pcieGen(ms)).arg(mw2), power.isEmpty() ? QStringLiteral("—") : power,
                hasAer ? aer.join(QStringLiteral(" / ")) : QStringLiteral("—"), status}, l);
     }
     t.note = tr("%1 PCIe port(s) / bridge(s) not listed. Possible = the lower of the device's and its port's maximum.").arg(bridges);
     r.tables << t;
+    if (!topology.rows.isEmpty()) r.tables << topology;
+    if (sameBoot) {
+        for (auto it = before.begin(); it != before.end(); ++it)
+            if (!captured.contains(it.key())) linkDelta.add({it.key(), it.value().toObject().value(QStringLiteral("link")).toString(), QStringLiteral("—"), tr("Not readable in this scan")}, Level::Unknown);
+        if (!linkDelta.rows.isEmpty()) r.tables << linkDelta;
+        else r.limits << tr("No link reading changed among the sampled devices.");
+    } else r.limits << tr("Link comparison starts with the next scan of this boot.");
+    if (sample) *sample = QJsonObject{{"boot", boot}, {"links", captured}};
     if (t.rows.isEmpty()) r.add(Level::Unknown, tr("No device reports a PCIe link"));
-    else if (!r.count(Level::Review)) r.add(Level::Ok, tr("Every device trained at its full link width"),
+    else if (!r.count(Level::Review) && !r.count(Level::Attention) && !r.count(Level::Unknown)) r.add(Level::Ok, tr("Every device trained at its full link width"),
                                             tr("Lower speeds shown are power saving unless they stay low under load."));
     return r;
 }

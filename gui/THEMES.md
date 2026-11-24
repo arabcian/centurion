@@ -56,7 +56,7 @@ light themes for contrast. Every new pastel palette passes static checks for tex
 secondary/muted labels, accent readability on the darkest/lightest control surface,
 surface ordering, correct light/dark classification, and hue diversity.
 
-**Total: 56 themes** (36 unchanged + 12 new light pastels + 8 new dark pastels).
+**Total: 57 themes** (36 unchanged + 12 light pastels + 8 dark pastels + OLED Black). OLED Black uses a true black background and subdued, contrasting text; it is an appearance option, not a burn-in prevention feature.
 
 The theme selector displays an inline three-colour swatch (background, text and accent) for each preset. A colour change does not change system power profiles, tuning data, or hardware settings.
 

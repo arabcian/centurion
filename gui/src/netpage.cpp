@@ -48,6 +48,8 @@
 #include <QSet>
 #include <QShowEvent>
 #include <QSignalBlocker>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTabWidget>
 #include <QTextDocument>
 #include <QTimer>
@@ -135,6 +137,40 @@ private:
 
 static QString humanBytes(qint64 bytes) { return QLocale::c().formattedDataSize(bytes, 1, QLocale::DataSizeIecFormat); }
 
+// A tuple, not concatenated strings: distinct processes and endpoints must not
+// inherit each other's selection during a refresh. This is a snapshot identity,
+// not proof that a socket still exists when an action executes.
+static QString connectionKey(const QJsonObject &c) {
+    QJsonArray key;
+    for (const char *field : {"proto", "local", "lport", "remote", "rport", "pid", "uid", "exe"})
+        key.append(c.value(QLatin1String(field)));
+    return QString::fromUtf8(QJsonDocument(key).toJson(QJsonDocument::Compact));
+}
+
+static void rememberColumns(QTreeWidget *tree, const QString &id) {
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+        + QStringLiteral("/centurion/gui.ini");
+    const QString key = QStringLiteral("network/columns/v1/") + id;
+    QSettings st(path, QSettings::IniFormat);
+    const QVariantList widths = st.value(key).toList();
+    if (widths.size() == tree->columnCount()) {
+        for (int c = 0; c < tree->columnCount(); ++c) {
+            const int w = widths.at(c).toInt();
+            if (w >= tree->header()->minimumSectionSize() && w <= 4000) tree->setColumnWidth(c, w);
+        }
+    }
+    auto *timer = new QTimer(tree);
+    timer->setSingleShot(true);
+    timer->setInterval(350);
+    QObject::connect(tree->header(), &QHeaderView::sectionResized, timer, [timer] { timer->start(); });
+    QObject::connect(timer, &QTimer::timeout, tree, [tree, path, key] {
+        QVariantList widths;
+        for (int c = 0; c < tree->columnCount(); ++c) widths << tree->columnWidth(c);
+        QSettings settings(path, QSettings::IniFormat);
+        settings.setValue(key, widths);
+    });
+}
+
 static QTreeWidget *makeTree(const QStringList &cols) {
     auto *t = new QTreeWidget;
     t->setColumnCount(cols.size());
@@ -157,7 +193,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     status_->setTextFormat(Qt::RichText);
     status_->setWordWrap(true);
     status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    top->addWidget(status_, 1);
+    v->addWidget(status_);
     guard_ = new QCheckBox("Block non-whitelisted Wine / .exe programs");
     guard_->setToolTip("A Windows program (Wine, Proton, any runner) that is not on the whitelist and opens an\n"
                        "internet connection is cut off at its first packet and written to the Blocked log.");
@@ -199,20 +235,26 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     listening_ = new QCheckBox("Listening sockets");
     rc->addWidget(listening_);
     connInfo_ = new QLabel;
+    connInfo_->setTextFormat(Qt::PlainText);
     connInfo_->setProperty("role", "muted");
-    rc->addWidget(connInfo_, 1);
+    connInfo_->setWordWrap(true);
+    rc->addStretch(1);
     auto *bAll = button("All users (root)", rc);
     bAll->setToolTip("One snapshot through pkexec: also names the processes of other users (system daemons).");
     auto *bInfoC = button("IP info", rc);
     bInfoC->setToolTip("Reverse DNS and whois record (owner, network, country) of the remote address.");
     auto *bDetC = button("Details", rc);
     bDetC->setToolTip("Process (parent chain, command line, service), the address's history in the connection log, and a link to IP info.");
-    auto *bWlC = button("Whitelist program", rc);
-    auto *bKill = button("Kill connection", rc);
-    auto *bBlC = button("Blacklist IP", rc, true);
-    auto *bExpC = button("Export…", rc);
+    auto *connectionActions = new QHBoxLayout;
+    auto *bWlC = button("Whitelist program", connectionActions);
+    auto *bKill = button("Kill connection", connectionActions);
+    auto *bBlC = button("Blacklist IP", connectionActions, true);
+    connectionActions->addStretch(1);
+    auto *bExpC = button("Export…", connectionActions);
     bExpC->setToolTip(tr("Save the rows shown as a CSV file."));
     vc->addLayout(rc);
+    vc->addLayout(connectionActions);
+    vc->addWidget(connInfo_);
     conns_ = makeTree({"Program", "PID", "Proto", "Local", "Remote", "State", tr("Today")});
     conns_->setColumnWidth(0, 220);
     conns_->setColumnWidth(3, 190);
@@ -444,6 +486,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     vp->setContentsMargins(6, 6, 6, 6);
     auto *rp = new QHBoxLayout;
     portsInfo_ = new QLabel;
+    portsInfo_->setTextFormat(Qt::PlainText);
     portsInfo_->setProperty("role", "muted");
     portsInfo_->setWordWrap(true);
     rp->addWidget(portsInfo_, 1);
@@ -491,6 +534,13 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     lookup_ = new LookupTab([this](const QJsonObject &req, std::function<void(const QJsonObject &)> done, int ms) { runUser(req, std::move(done), ms); });
     tabs_->addTab(lookup_, tr("Lookup"));
 
+    rememberColumns(conns_, QStringLiteral("connections"));
+    rememberColumns(blocked_, QStringLiteral("blocked"));
+    rememberColumns(connLog_, QStringLiteral("log"));
+    rememberColumns(wifiNets_, QStringLiteral("wifi"));
+    rememberColumns(trafficTree_, QStringLiteral("traffic"));
+    rememberColumns(ports_, QStringLiteral("ports"));
+
     // ── wiring ──
     connect(guard_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"guard", on}}); });
     connect(lan_, &QCheckBox::toggled, this, [this](bool on) { runRoot({{"op", "set"}, {"allow_lan", on}}); });
@@ -524,6 +574,8 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         privileged::run(helper(), QJsonObject{{"op", "list"}}, this, [this](const privileged::Result &r) {
             if (!r.ok()) { QMessageBox::warning(this, "Network", r.message()); return; }
             viaRoot_ = true;  // kept until the page is hidden; the 3 s refresh would drop the names again
+            connSnapshotTime_ = QDateTime::currentDateTime();
+            connSnapshotError_.clear();
             connData_ = r.json.value(QLatin1String("conns")).toArray();
             showConns();
         });
@@ -904,7 +956,14 @@ void NetPage::refreshConns() {
     runUser({{"op", "list"}}, [this](const QJsonObject &r) {
         busy_ = false;
         if (viaRoot_) return;   // a root snapshot arrived meanwhile: it names more
-        if (!r.value(QLatin1String("ok")).toBool()) { connInfo_->setText(r.isEmpty() ? QStringLiteral("helper failed") : str(r, "error")); return; }
+        if (!r.value(QLatin1String("ok")).toBool()) {
+            connSnapshotError_ = r.isEmpty() ? tr("Helper failed") : str(r, "error");
+            if (connSnapshotError_.isEmpty()) connSnapshotError_ = tr("Helper failed");
+            showConns();
+            return;
+        }
+        connSnapshotTime_ = QDateTime::currentDateTime();
+        connSnapshotError_.clear();
         connData_ = r.value(QLatin1String("conns")).toArray();
         showConns();
     });
@@ -912,19 +971,26 @@ void NetPage::refreshConns() {
 
 QJsonObject NetPage::curConn() const {
     const QTreeWidgetItem *it = conns_->currentItem();
-    return it ? connData_.at(it->data(0, IdxRole).toInt()).toObject() : QJsonObject();
+    if (!it || !it->isSelected() || it->isHidden()) return {};
+    const int idx = it->data(0, IdxRole).toInt();
+    if (idx < 0 || idx >= connData_.size()) return {};
+    const QJsonObject c = connData_.at(idx).toObject();
+    return it->data(0, KeyRole).toString() == connectionKey(c) ? c : QJsonObject();
 }
 
 void NetPage::showConns() {
     loadTraffic();
     const QString needle = filter_->text().trimmed();
-    const QString keep = conns_->currentItem() ? conns_->currentItem()->data(0, KeyRole).toString() : QString();
+    const QString keep = conns_->currentItem() && conns_->currentItem()->isSelected() ? conns_->currentItem()->data(0, KeyRole).toString() : QString();
     const int scroll = conns_->verticalScrollBar()->value();
     const QStringList &black = blacklist_;
+    const int sortColumn = conns_->header()->sortIndicatorSection();
+    const Qt::SortOrder sortOrder = conns_->header()->sortIndicatorOrder();
     conns_->setUpdatesEnabled(false);
     conns_->setSortingEnabled(false);
     conns_->clear();
     QTreeWidgetItem *sel = nullptr;
+    int selectionMatches = 0;
     int shown = 0, wine = 0;
     for (int i = 0; i < connData_.size(); ++i) {
         const QJsonObject c = connData_.at(i).toObject();
@@ -943,7 +1009,7 @@ void NetPage::showConns() {
                                  today > 0 ? humanBytes(today) : QStringLiteral("—")});
         it->setData(6, SortRole, double(today));
         it->setData(0, IdxRole, i);
-        it->setData(0, KeyRole, QString(str(c, "proto") + local + peer));
+        it->setData(0, KeyRole, connectionKey(c));
         it->setToolTip(0, exe);
         const bool isWine = c.value(QLatin1String("wine")).toBool();
         const bool bl = c.value(QLatin1String("bl")).toBool() || black.contains(remote);
@@ -952,12 +1018,14 @@ void NetPage::showConns() {
             for (int k = 0; k < 7; ++k) it->setForeground(k, col);
         }
         conns_->addTopLevelItem(it);
-        if (it->data(0, KeyRole).toString() == keep) sel = it;
+        if (!keep.isEmpty() && it->data(0, KeyRole).toString() == keep) { sel = it; ++selectionMatches; }
         ++shown;
         wine += isWine;
     }
     conns_->setSortingEnabled(true);
-    if (sel) conns_->setCurrentItem(sel);
+    if (sortColumn >= 0) conns_->sortByColumn(sortColumn, sortOrder);
+    if (sel && selectionMatches == 1) conns_->setCurrentItem(sel);
+    else { conns_->setCurrentItem(nullptr); conns_->clearSelection(); }
     conns_->verticalScrollBar()->setValue(scroll);
     conns_->setUpdatesEnabled(true);
     // The programs holding the most remote connections: who is talking right now, at a glance.
@@ -974,6 +1042,10 @@ void NetPage::showConns() {
     connInfo_->setText(QStringLiteral("%1 shown · %2 Wine%3").arg(shown).arg(wine)
                            .arg(viaRoot_ ? QStringLiteral(" · root snapshot (not refreshing)") : QString())
                        + (busiest.isEmpty() ? QString() : tr(" · most connections: %1").arg(busiest.join(QStringLiteral(", ")))));
+    const QString snapshot = connSnapshotTime_.isValid()
+        ? tr("Snapshot: %1").arg(connSnapshotTime_.toString(Qt::ISODate)) : tr("No connection snapshot yet");
+    connInfo_->setText(connInfo_->text() + QStringLiteral(" · ") + snapshot
+        + (connSnapshotError_.isEmpty() ? QString() : tr(" · Refresh failed; previous data: %1").arg(connSnapshotError_)));
     showPorts();
 }
 
@@ -1531,7 +1603,11 @@ void NetPage::refreshWifiNets() {
 
 /// Networks the system has seen, strongest first (the kernel's cached scan, not a new scan).
 void NetPage::applyWifiNets(const QJsonObject &n) {
+    const auto *previous = wifiNets_->currentItem();
+    const QString keep = previous && previous->isSelected() ? previous->text(6) : QString();
+    const int scroll = wifiNets_->verticalScrollBar()->value();
     wifiNets_->clear();
+    QTreeWidgetItem *selected = nullptr;
     if (!n.value(QLatin1String("ok")).toBool()) {
         wifiNetInfo_->setText(n.isEmpty() ? tr("No answer from the helper.") : str(n, "error").toHtmlEscaped());
         return;
@@ -1564,7 +1640,11 @@ void NetPage::applyWifiNets(const QJsonObject &n) {
         if (sec == QLatin1String("Open") || sec == QLatin1String("WEP")) it->setForeground(4, bad);
         else if (sec == QLatin1String("WPA")) it->setForeground(4, warn);
         wifiNets_->addTopLevelItem(it);
+        if (!keep.isEmpty() && it->text(6) == keep) selected = it;
     }
+    if (selected) wifiNets_->setCurrentItem(selected);
+    else { wifiNets_->setCurrentItem(nullptr); wifiNets_->clearSelection(); }
+    wifiNets_->verticalScrollBar()->setValue(scroll);
     QString info = nets.isEmpty() ? tr("No networks in the system's scan results yet. Press Rescan.")
                                   : tr("%n network(s) seen (results the system already has).", nullptr, n.value(QLatin1String("total")).toInt());
     const QJsonObject load = n.value(QLatin1String("load")).toObject();
@@ -1871,8 +1951,10 @@ void NetPage::showPorts() {
     if (!ports_) return;
     static const QPair<int, int> eph = ephemeralPorts();
     // Rebuilt every 3 s: keep the selected row and the scroll position.
-    const QString keep = ports_->currentItem() ? ports_->currentItem()->data(0, KeyRole).toString() : QString();
+    const QString keep = ports_->currentItem() && ports_->currentItem()->isSelected() ? ports_->currentItem()->data(0, KeyRole).toString() : QString();
     const int scroll = ports_->verticalScrollBar()->value();
+    const int sortColumn = ports_->header()->sortIndicatorSection();
+    const Qt::SortOrder sortOrder = ports_->header()->sortIndicatorOrder();
     ports_->setUpdatesEnabled(false);
     ports_->setSortingEnabled(false);
     ports_->clear();
@@ -1889,9 +1971,10 @@ void NetPage::showPorts() {
         if (port == 0) continue;
         QString name = str(c, "name");
         if (name.isEmpty()) name = QLatin1Char('(') + userName(uint(c.value(QLatin1String("uid")).toInteger())) + QLatin1Char(')');
-        const QString key = name + proto + local + QString::number(port);
-        if (seen.contains(key)) continue;
-        seen.insert(key);
+        const QString key = connectionKey(c);
+        const QString group = QString::fromUtf8(QJsonDocument(QJsonArray{name, proto, local, port}).toJson(QJsonDocument::Compact));
+        if (seen.contains(group)) continue;
+        seen.insert(group);
         QString where = reach(local);
         QHostAddress a;
         const bool bound = a.setAddress(local) && !a.isLoopback();
@@ -1926,18 +2009,22 @@ void NetPage::showPorts() {
         ++total;
     }
     ports_->setSortingEnabled(true);
+    if (sortColumn >= 0) ports_->sortByColumn(sortColumn, sortOrder);
     if (sel) ports_->setCurrentItem(sel);
+    else { ports_->setCurrentItem(nullptr); ports_->clearSelection(); }
     ports_->verticalScrollBar()->setValue(scroll);
     ports_->setUpdatesEnabled(true);
     firewall_->setExposed(exposedServices);
     portsInfo_->setText(tr("%1 listening socket(s); %2 reachable from other machines (orange: on every network). "
-                           "From the connection snapshot, refreshed every 3 s while this tab is open.").arg(total).arg(exposed)
-                        + (clients ? QLatin1Char(' ') + tr("%1 grey row(s) are programs' own client sockets on temporary ports.").arg(clients) : QString()));
+                           "From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.").arg(total).arg(exposed)
+                        + (clients ? QLatin1Char(' ') + tr("%1 grey row(s) are programs' own client sockets on temporary ports.").arg(clients) : QString())
+                        + QStringLiteral(" · ") + (connSnapshotTime_.isValid() ? tr("Snapshot: %1").arg(connSnapshotTime_.toString(Qt::ISODate)) : tr("No connection snapshot yet"))
+                        + (connSnapshotError_.isEmpty() ? QString() : tr(" · Refresh failed; previous data: %1").arg(connSnapshotError_)));
 }
 
 void NetPage::setPortState(const QString &state) {
     const QTreeWidgetItem *it = ports_->currentItem();
-    if (!it) { QMessageBox::information(this, tr("Firewall"), tr("Select a port first.")); return; }
+    if (!it || !it->isSelected() || it->isHidden()) { QMessageBox::information(this, tr("Firewall"), tr("Select a port first.")); return; }
     const QString proto = it->text(1).toLower();
     const int port = it->text(2).toInt();
     QJsonObject req{{"op", "firewall"}, {"port", QJsonObject{{"proto", proto}, {"port", port}, {"state", state}}}};

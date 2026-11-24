@@ -20,6 +20,7 @@ class MemTestBox : public QWidget {
     Q_OBJECT
 public:
     explicit MemTestBox(QWidget *parent = nullptr);
+    bool operationActive() const { return proc_ || settling_; }
     /// A new kernel event of this session (CurvePage::onFault): machine checks count against a running test.
     void onFault(const QJsonObject &e);
     /// Whether the kernel log is read live (CurvePage::setKernelLog). When not, events come minutes late and are not counted.

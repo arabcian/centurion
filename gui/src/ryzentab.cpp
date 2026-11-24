@@ -1,5 +1,8 @@
+#include <algorithm>
+#include <QFontMetrics>
 #include "cosearchdialog.h"
 #include "ryzentab.h"
+#include "profilediff.h"
 #include "cpustress.h"
 #include "trialbar.h"
 #include <QShowEvent>
@@ -314,6 +317,11 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     pl->addWidget(bLoad);
     pl->addWidget(bSave);
     pl->addWidget(bDel);
+    auto *compareProfiles = new QPushButton(tr("Compare…"));
+    connect(compareProfiles,&QPushButton::clicked,this,[this] {
+        profilediff::show(this,savedProfileNames(),[](const QString &name) { return profilediff::read(ryzen::profilesDir() + '/' + name + ".json"); });
+    });
+    pl->addWidget(compareProfiles);
     top->addWidget(profBox, 1);
 
     auto *resetBox = box("Global", "box_grey");
@@ -509,8 +517,8 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
 
             auto *e = new QLineEdit;
             e->setPlaceholderText("0");
-            e->setFixedWidth(72);
-            e->setFixedHeight(20);
+            e->setMinimumWidth(std::max(72, e->fontMetrics().horizontalAdvance(QString::number(CO_MIN)) + 18));
+            e->setMinimumHeight(std::max(20, e->fontMetrics().height() + 6));
             e->setStyleSheet("padding: 0 4px;");
             e->setAlignment(Qt::AlignCenter);
             e->setValidator(new QIntValidator(CO_MIN, CO_MAX, e));

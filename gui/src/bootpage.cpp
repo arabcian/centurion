@@ -23,6 +23,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSplitter>
+#include <QScrollBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -176,9 +177,11 @@ void BootPage::apply(const QJsonObject &r) {
     const QJsonObject ps = r.value(QStringLiteral("pstore")).toObject();
     const QJsonArray entries = ps.value(QStringLiteral("entries")).toArray();
 
+    const QString previous = list_->currentItem() ? list_->currentItem()->data(0, ROLE_BOOT).toString() : QString();
+    const int scroll = list_->verticalScrollBar()->value();
     list_->blockSignals(true);
     list_->clear();
-    QTreeWidgetItem *pick = nullptr;
+    QTreeWidgetItem *pick = nullptr, *retained = nullptr;
     const QString prevBoot = r.value(QStringLiteral("previous_unclean")).toObject().value(QStringLiteral("boot")).toString();
     int unclean = 0;
     for (const QJsonValue &v : boots) {
@@ -199,6 +202,7 @@ void BootPage::apply(const QJsonObject &r) {
                         : state == QLatin1String("unknown") ? theme::MUTED : nullptr;
         if (c) for (int i = 0; i < 5; ++i) it->setForeground(i, QColor(QLatin1String(c)));
         list_->addTopLevelItem(it);
+        if (!previous.isEmpty() && it->data(0, ROLE_BOOT).toString() == previous) retained = it;
         if (state == QLatin1String("unclean")) ++unclean;
         if (!pick && (b.value(QStringLiteral("boot")).toString() == prevBoot && !prevBoot.isEmpty())) pick = it;
     }
@@ -213,8 +217,11 @@ void BootPage::apply(const QJsonObject &r) {
     list_->blockSignals(false);
     applyFilter();
     patterns_->setText(patterns(false));
-    if (pick) list_->setCurrentItem(pick);
-    else detail_->clear();
+    if (retained && !retained->isHidden()) list_->setCurrentItem(retained);
+    else if (pick && !pick->isHidden()) list_->setCurrentItem(pick);
+    // applyFilter already selected the first visible boot or displayed the empty state.
+    if (list_->currentItem() && !list_->currentItem()->isHidden()) showDetail();
+    if (retained) list_->verticalScrollBar()->setValue(scroll);
 
     bool clearable = false;
     for (const QJsonValue &e : entries) if (e.toObject().value(QStringLiteral("src")).toString() == QLatin1String("pstore")) clearable = true;

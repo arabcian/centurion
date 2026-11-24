@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <QFontMetrics>
 #include <memory>
 #include "fwattrtab.h"
 #include <QFileInfo>
@@ -12,6 +14,11 @@
 #include "experimentalui.h"
 
 #include <QDir>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QHeaderView>
+#include <QLineEdit>
+#include <QTableWidget>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -254,6 +261,49 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
     rescan_ = new QPushButton("Rescan");
     connect(rescan_, &QPushButton::clicked, this, &FwattrTab::rebuild);
     top->addWidget(rescan_);
+    auto *inspect = new QPushButton(tr("Parameter inspector…"));
+    connect(inspect, &QPushButton::clicked, this, [this] {
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("Firmware Parameter Inspector"));
+        dlg.resize(920, 520);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Snapshot of the firmware editor. Last-known values are not live measurements; unsupported ranges are not inferred. Opening this inspector does not rescan or write firmware."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *search = new QLineEdit;
+        search->setPlaceholderText(tr("Search parameter, device or access state…"));
+        layout->addWidget(search);
+        auto *table = new QTableWidget(rows_.size(), 7);
+        table->setHorizontalHeaderLabels({tr("Parameter"), tr("Device"), tr("Last known"), tr("Draft"), tr("Range"), tr("Default"), tr("Access")});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->verticalHeader()->hide();
+        table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setStretchLastSection(true);
+        for (int i = 0; i < rows_.size(); ++i) {
+            const auto &row = rows_[i]; const auto &a = row.info;
+            const bool wmi = a.viaWmi();
+            const bool known = !wmi || (wmiReady_ && !wmiStale_ && !busy_);
+            const QString range = wmi ? QStringLiteral("%1 … %2 (WMI)").arg(a.wmiMin).arg(a.wmiMax)
+                : a.ranged ? QStringLiteral("%1 … %2; %3 %4").arg(a.min).arg(a.max).arg(tr("step")).arg(a.step) : QStringLiteral("—");
+            const QString access = a.readOnly ? tr("Read-only") : (!a.ranged && !wmi) ? tr("No valid range")
+                : busy_ ? tr("Operation in progress") : locked_ ? tr("Profile locked") : !known ? tr("WMI not verified") : tr("Reported available");
+            const QStringList cells{a.displayName + QStringLiteral(" [") + a.name + QStringLiteral("]"), a.device,
+                known ? QString::number(a.current) : QStringLiteral("—"), QString::number(row.spin->value()), range,
+                a.ranged && !wmi ? QString::number(a.def) : QStringLiteral("—"), access};
+            for (int c = 0; c < cells.size(); ++c) { auto *item = new QTableWidgetItem(cells[c]); item->setToolTip(cells[c]); table->setItem(i, c, item); }
+        }
+        connect(search, &QLineEdit::textChanged, table, [table](const QString &query) {
+            for (int r = 0; r < table->rowCount(); ++r) {
+                bool match = query.trimmed().isEmpty();
+                for (int c = 0; c < table->columnCount(); ++c) match |= table->item(r, c)->text().contains(query.trimmed(), Qt::CaseInsensitive);
+                table->setRowHidden(r, !match);
+            }
+        });
+        layout->addWidget(table, 1);
+        auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+        connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        layout->addWidget(bb); dlg.exec();
+    });
+    top->addWidget(inspect);
     applyAll_ = new QPushButton("Apply All");
     applyAll_->setObjectName("btnAccent");
     connect(applyAll_, &QPushButton::clicked, this, &FwattrTab::applyAll);
@@ -266,6 +316,8 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
 
     status_ = new QLabel;
     status_->setProperty("role", "muted");
+    status_->setWordWrap(true);
+    status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     lay->addWidget(status_);
     statusTimer_ = new QTimer(this);
     statusTimer_->setSingleShot(true);
@@ -383,7 +435,7 @@ void FwattrTab::rebuild() {
                     g->addWidget(w, r, 1);
                 }
                 auto *spin = new QSpinBox;
-                spin->setFixedWidth(70);
+                spin->setMinimumWidth(std::max(70, spin->sizeHint().width()));
                 if (a.viaWmi()) spin->setRange(std::max(1, a.wmiMin), std::max(1, a.wmiMax));
                 else if (a.ranged) { spin->setRange(std::max(1, a.min), std::max(1, a.max)); spin->setSingleStep(a.step); }
                 else spin->setRange(1, std::max({1, a.current, a.def}));
@@ -420,7 +472,7 @@ void FwattrTab::rebuild() {
                 tauSlider_->setRange(20, 160);
                 tauSlider_->setEnabled(false);
                 tauSpin_ = new QSpinBox;
-                tauSpin_->setFixedWidth(70);
+                tauSpin_->setMinimumWidth(std::max(70, tauSpin_->sizeHint().width()));
                 tauSpin_->setRange(0, 999);
                 tauSpin_->setSuffix(QStringLiteral(" s"));
                 tauSpin_->setButtonSymbols(QAbstractSpinBox::NoButtons);

@@ -36,6 +36,7 @@ class BackupPage : public QWidget {
 public:
     explicit BackupPage(QWidget *parent = nullptr);
     ~BackupPage() override;
+    bool operationActive() const { return !proc_.isNull(); }
     /// *Back up now* of the Centurion configuration box (first-run wizard too); result in jobFinished.
     void configBackup();
 
@@ -85,6 +86,7 @@ private:
     void configRestore();
     void systemBackup();
     void systemRestore();
+    void previewRestore();
     void verifySelected();
     // Automatic configuration backup + system image reminder (the GUI lives in the tray, so no scheduler is needed).
     void autoTick();

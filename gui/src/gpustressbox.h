@@ -21,6 +21,7 @@ class GpuStressBox : public QWidget {
     Q_OBJECT
 public:
     explicit GpuStressBox(QWidget *parent = nullptr);
+    bool operationActive() const { return proc_ || settling_; }
     /// The page is shown (CurvePage::showEvent). `blocked`: an NVIDIA dGPU is on the bus but unusable. Listing the
     /// Vulkan devices would then wake it or hang on it, so the tool is not run and the test is not offered.
     void refresh(bool blocked);

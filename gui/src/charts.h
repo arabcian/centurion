@@ -16,10 +16,15 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *e) override;
+    void mouseMoveEvent(QMouseEvent *e) override;
+    void leaveEvent(QEvent *e) override;
+    void contextMenuEvent(QContextMenuEvent *e) override;
     QSize minimumSizeHint() const override { return {240, 120}; }
 
 private:
     QVector<Point> points_;
+    QVector<QPointF> plotted_;
+    int hover_ = -1;
     QString unit_;
 };
 

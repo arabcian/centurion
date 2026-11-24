@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
+#include <QCloseEvent>
 #include <QCompleter>
 #include <QCoreApplication>
 #include <QDialog>
@@ -38,6 +39,8 @@
 #include <QTextDocument>
 #include <QPointer>
 #include <QProcess>
+#include <QProgressDialog>
+#include <memory>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -48,6 +51,17 @@
 #include <iterator>
 
 namespace {
+
+class FirmwareUpdateDialog final : public QDialog {
+public:
+    using QDialog::QDialog;
+    bool writing = true;
+    void reject() override { if (!writing) QDialog::reject(); }
+protected:
+    void closeEvent(QCloseEvent *event) override {
+        if (writing) event->ignore(); else QDialog::closeEvent(event);
+    }
+};
 
 constexpr int CMD_TIMEOUT_MS = 20000;
 constexpr qsizetype MAX_OUT = 1 << 20;
@@ -64,7 +78,7 @@ struct Spec {
     QList<QStringList> cmds;
     const char *rootTool = nullptr;  // tune-helper {"op":"tool"} instead of cmds
     bool manual = false;             // runs only on "Run again" (it may reach the network)
-    bool search = false;             // a find box for the output (pages with long reports)
+    bool search = true;             // a find box for the output (pages with long reports)
 };
 
 // GUI captions are Title Case, but historic tool keys are persistent identifiers.
@@ -390,12 +404,42 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
         button(tl("Install updates…"), tl("Pick which of the updates fwupd offers to install; most apply at the next reboot."), [page, rerun] {
             const QString exe = findExe(QStringLiteral("fwupdmgr"));
             if (exe.isEmpty()) { QMessageBox::warning(page, tl("Firmware Updates"), tl("fwupdmgr is not installed (%1).").arg(installHint(QStringLiteral("fwupdmgr")))); return; }
-            QProcess list;
-            list.start(exe, {QStringLiteral("get-updates"), QStringLiteral("--json")});
-            list.waitForFinished(60000);
+            auto *list = new QProcess(page);
+            auto *progress = new QProgressDialog(tl("Checking firmware updates…"), tl("Cancel"), 0, 0, page);
+            progress->setWindowModality(Qt::WindowModal);
+            progress->setAutoClose(false);
+            progress->setMinimumDuration(0);
+            progress->show();
+            auto cancelled = std::make_shared<bool>(false);
+            auto timedOut = std::make_shared<bool>(false);
+            QObject::connect(progress, &QProgressDialog::canceled, list, [list, cancelled] {
+                *cancelled = true;
+                list->kill();
+            });
+            QTimer::singleShot(60000, list, [list, timedOut] {
+                if (list->state() != QProcess::NotRunning) { *timedOut = true; list->kill(); }
+            });
+            QObject::connect(list, &QProcess::errorOccurred, page, [page, list, progress](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart) return;
+                progress->hide(); progress->deleteLater();
+                QMessageBox::warning(page, tl("Firmware Updates"), list->errorString());
+                list->deleteLater();
+            });
+            QObject::connect(list, &QProcess::finished, page, [page, rerun, exe, list, progress, cancelled, timedOut](int code, QProcess::ExitStatus exit) {
+            const QByteArray output = list->readAllStandardOutput();
+            const QString error = QString::fromUtf8(list->readAllStandardError()).trimmed();
+            progress->hide(); progress->deleteLater(); list->deleteLater();
+            if (*cancelled) return;
+            if (*timedOut) { QMessageBox::warning(page, tl("Firmware Updates"), tl("Firmware query timed out.")); return; }
+            QJsonParseError parse;
+            const QJsonDocument document = QJsonDocument::fromJson(output, &parse);
+            if (exit != QProcess::NormalExit || (code != 0 && code != 2) || parse.error != QJsonParseError::NoError || !document.object().value(QStringLiteral("Devices")).isArray()) {
+                QMessageBox::warning(page, tl("Firmware Updates"), tl("Firmware query failed; update availability is unknown.") + QStringLiteral("\n") + error);
+                return;
+            }
             struct Update { QString id, text; };
             QList<Update> updates;
-            for (const QJsonValue d : QJsonDocument::fromJson(list.readAllStandardOutput()).object().value(QStringLiteral("Devices")).toArray()) {
+            for (const QJsonValue d : document.object().value(QStringLiteral("Devices")).toArray()) {
                 const QJsonObject dev = d.toObject();
                 const QJsonArray releases = dev.value(QStringLiteral("Releases")).toArray();
                 if (releases.isEmpty() || dev.value(QStringLiteral("DeviceId")).toString().isEmpty()) continue;
@@ -404,6 +448,7 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
                                                                    releases.first().toObject().value(QStringLiteral("Version")).toString())});
             }
             if (updates.isEmpty()) { QMessageBox::information(page, tl("Firmware Updates"), tl("fwupd offers no update for this system.")); return; }
+            if (code != 0) { QMessageBox::warning(page, tl("Firmware Updates"), tl("Firmware query failed; update availability is unknown.")); return; }
             QDialog pick(page);
             pick.setWindowTitle(tl("Firmware Updates"));
             auto *pv = new QVBoxLayout(&pick);
@@ -428,7 +473,8 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
                 if (choices->item(i)->checkState() == Qt::Checked) *ids << choices->item(i)->data(Qt::UserRole).toString();
             if (ids->isEmpty()) return;
             // One device after the other, the output shown as it comes.
-            auto *log = new QDialog(page);
+            auto *log = new FirmwareUpdateDialog(page);
+            log->setWindowModality(Qt::WindowModal);
             log->setAttribute(Qt::WA_DeleteOnClose);
             log->setWindowTitle(tl("Firmware Updates"));
             log->resize(640, 400);
@@ -443,11 +489,14 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
             lv->addWidget(close);
             log->show();
             auto next = std::make_shared<std::function<void()>>();
-            *next = [exe, ids, out, close, rerun, next] {
+            const std::weak_ptr<std::function<void()>> weak = next;
+            *next = [exe, ids, out, close, rerun, log, weak] {
+                const auto keep = weak.lock();
+                if (!keep) return;
                 if (ids->isEmpty()) {
                     out->appendPlainText(tl("Finished."));
+                    log->writing = false;
                     close->setEnabled(true);
-                    *next = nullptr;
                     rerun();
                     return;
                 }
@@ -455,15 +504,31 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
                 auto *p = new QProcess(out);
                 p->setProcessChannelMode(QProcess::MergedChannels);
                 QObject::connect(p, &QProcess::readyRead, out, [p, out] { out->appendPlainText(QString::fromUtf8(p->readAll()).trimmed()); });
-                QObject::connect(p, &QProcess::finished, out, [p, out, next](int code, QProcess::ExitStatus) {
-                    if (code != 0) out->appendPlainText(tl("fwupdmgr reported a problem (exit %1).").arg(code));
+                QObject::connect(p, &QProcess::finished, out, [p, out, keep, log, close](int code, QProcess::ExitStatus exit) {
                     p->deleteLater();
-                    if (*next) (*next)();
+                    if (exit != QProcess::NormalExit || code != 0) {
+                        out->appendPlainText(tl("fwupdmgr reported a problem (exit %1).").arg(code));
+                        out->appendPlainText(tl("Remaining updates were not started."));
+                        log->writing = false;
+                        close->setEnabled(true);
+                        return;
+                    }
+                    (*keep)();
+                });
+                QObject::connect(p, &QProcess::errorOccurred, out, [p, out, log, close](QProcess::ProcessError error) {
+                    if (error != QProcess::FailedToStart) return;
+                    out->appendPlainText(p->errorString());
+                    out->appendPlainText(tl("Remaining updates were not started."));
+                    log->writing = false;
+                    close->setEnabled(true);
+                    p->deleteLater();
                 });
                 out->appendPlainText(QStringLiteral("$ fwupdmgr update %1").arg(id));
                 p->start(exe, {QStringLiteral("update"), id, QStringLiteral("-y"), QStringLiteral("--no-reboot-check")});
             };
             (*next)();
+            });
+            list->start(exe, {QStringLiteral("get-updates"), QStringLiteral("--json")});
         });
     } else {
         delete bar;
@@ -482,17 +547,17 @@ public:
         auto *about = new QLabel(QCoreApplication::translate("systools", s.about));
         about->setWordWrap(true);
         about->setProperty("role", "muted");
-        top->addWidget(about, 1);
+        v->addWidget(about);
         if (s.search) {
             find_ = new QLineEdit;
             find_->setPlaceholderText(QCoreApplication::translate("systools", "Find in this output…"));
-            find_->setToolTip(QCoreApplication::translate("systools", "Every match is highlighted; Enter jumps to the next one."));
+            find_->setToolTip(QCoreApplication::translate("systools", "Up to 2000 matches are highlighted; Enter jumps to the next match and wraps at the end."));
             find_->setClearButtonEnabled(true);
-            find_->setFixedWidth(220);
+            find_->setMinimumWidth(find_->fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMMMM")));
             findCount_ = new QLabel;
             findCount_->setProperty("role", "muted");
             findCount_->setMinimumWidth(findCount_->fontMetrics().horizontalAdvance(QStringLiteral("0000/0000")));
-            top->addWidget(find_);
+            top->addWidget(find_, 1);
             top->addWidget(findCount_);
         }
         serialsBtn_ = new QPushButton(QCoreApplication::translate("systools", "Show serials"));
@@ -625,8 +690,10 @@ private:
         const QString q = find_->text();
         const QTextCursor cur = text_->textCursor();
         int n = 0, at = 0;
+        bool limited = false;
         if (!q.isEmpty()) {
             for (QTextCursor c = text_->document()->find(q, 0); !c.isNull(); c = text_->document()->find(q, c)) {
+                if (n >= 2000) { limited = true; break; }
                 ++n;
                 const bool current = c.selectionStart() == cur.selectionStart() && c.selectionEnd() == cur.selectionEnd();
                 if (current) at = n;
@@ -639,7 +706,7 @@ private:
         }
         text_->setExtraSelections(marks);
         findCount_->setText(q.isEmpty() ? QString()
-                            : n ? QStringLiteral("%1/%2").arg(at ? QString::number(at) : QStringLiteral("–")).arg(n)
+                            : n ? QStringLiteral("%1/%2%3").arg(at ? QString::number(at) : QStringLiteral("–")).arg(n).arg(limited ? QStringLiteral("+") : QString())
                                 : QCoreApplication::translate("systools", "no match"));
     }
 
@@ -805,6 +872,11 @@ private:
             r = diagnostictools::hardwareSnapshot(base, at, diagnostictools::snapshot());
             if (base.isEmpty() && !err.isEmpty()) status_->setText(err);
         } else if (code_ == QLatin1String("S03")) r = diagnostictools::displays();
+        else if (code_ == QLatin1String("S04")) {
+            QJsonObject next;
+            r = systemdiagnostics::pcieLinks({}, previousLinks_, &next);
+            previousLinks_ = next;
+        }
         else if (code_ == QLatin1String("S06")) r = diagnostictools::nvidiaParams();
         else if (code_ == QLatin1String("S15")) r = systemdiagnostics::audio(outputs_);
         else r = systemdiagnostics::byCode(code_);
@@ -818,6 +890,7 @@ private:
     QString code_;
     QList<QStringList> cmds_;
     QHash<QString, QString> outputs_;
+    QJsonObject previousLinks_;
     QPushButton *run_;
     QLabel *status_, *when_;
     DiagReportView *view_;

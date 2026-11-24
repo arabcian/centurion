@@ -6,6 +6,8 @@
 #include <QLayoutItem>
 #include <QPushButton>
 #include <QFont>
+#include <QScreen>
+#include <QFontMetrics>
 #include <QHash>
 #include "acpievents.h"
 #include "amdgputab.h"
@@ -34,6 +36,15 @@
 #include "mangohud.h"
 #include "platformprofile.h"
 #include "trialbar.h"
+#include "backuppage.h"
+#include "cosearchdialog.h"
+#include "cpustressbox.h"
+#include "gpustressbox.h"
+#include "memtestbox.h"
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QMessageBox>
+#include <QPointer>
 #include "uinavigator.h"
 #include "experimentalui.h"
 #include <QApplication>
@@ -66,7 +77,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowIcon(appIcon(128));
     // A compact, independent shell in experimental mode. The old shell remains
     // completely intact under Classic; the device pages are exactly the same.
-    resize(theme::experimentalEnabled() ? 1480 : 1080, theme::experimentalEnabled() ? 720 : 700);
+    const QSize preferred(theme::experimentalEnabled() ? 1480 : 1080, theme::experimentalEnabled() ? 720 : 700);
+    const QScreen *screen = QApplication::primaryScreen();
+    resize(screen ? preferred.boundedTo(screen->availableGeometry().size() - QSize(24, 48)) : preferred);
     setMinimumSize(620, 420);
 
     tabs_ = new QTabWidget;
@@ -229,7 +242,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         // The last selected main page is restored by identity rather than an
         // index (hardware-gated pages appear/disappear between launches).
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
-        const QString last = settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString();
+        const QString last = settings.value(QStringLiteral("ui/restore_last_page"), true).toBool()
+            ? settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString() : QStringLiteral("Home");
         for (int i = 0; i < tabs_->count(); ++i)
             if (tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
         syncExperimentalNavigation();  // the restored page, not Home, in the rail and the title
@@ -240,6 +254,51 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             settings.setValue(QStringLiteral("ui/last_page"), tabs_->tabBar()->tabData(i).toString());
         });
     }
+    QSettings windowSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    restoreGeometry(windowSettings.value(QStringLiteral("ui/window_geometry")).toByteArray());
+    theme::setRestartGuard([window = QPointer<MainWindow>(this)] {
+        if (!window) return true;
+        const QStringList operations = window->activeOperations();
+        if (!operations.isEmpty()) {
+            QMessageBox::information(window.data(), window->tr("Restart deferred"),
+                window->tr("Finish the active operations before restarting Centurion. Your preference is saved for the next start.")
+                + QStringLiteral("\n\n") + operations.join(QLatin1Char('\n')));
+            return false;
+        }
+        if (QMessageBox::question(window.data(), window->tr("Restart Centurion"),
+            window->tr("Restarting discards unsaved editor changes. Continue?"), QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel) != QMessageBox::Yes) return false;
+        if (!window || !window->activeOperations().isEmpty()) {
+            if (window) QMessageBox::information(window.data(), window->tr("Restart deferred"), window->tr("An operation started while the confirmation was open. Restart later."));
+            return false;
+        }
+        return true;
+    });
+    auto *operationsShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+O")), this);
+    connect(operationsShortcut, &QShortcut::activated, this, &MainWindow::showOperations);
+    pageHistory_.append(tabs_->currentWidget());
+    pageHistoryPos_ = 0;
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        QWidget *page = tabs_->widget(index);
+        if (!page || replayingPageHistory_ || pageHistory_.value(pageHistoryPos_) == page) return;
+        pageHistory_ = pageHistory_.mid(0, pageHistoryPos_ + 1);
+        pageHistory_.append(page);
+        if (pageHistory_.size() > 50) pageHistory_.removeFirst();
+        pageHistoryPos_ = int(pageHistory_.size()) - 1;
+    });
+    for (const int delta : {-1, 1}) {
+        auto *shortcut = new QShortcut(QKeySequence(delta < 0 ? QStringLiteral("Alt+Left") : QStringLiteral("Alt+Right")), this);
+        connect(shortcut, &QShortcut::activated, this, [this, delta] { stepPageHistory(delta); });
+    }
+    if (!theme::experimentalEnabled()) {
+        auto *quick = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
+        connect(quick, &QShortcut::activated, this, &MainWindow::showQuickNavigator);
+    }
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+        if (isVisible() && !isMinimized())
+            QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+                .setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
+    });
 }
 
 NvidiaTab *MainWindow::ensureNvidiaTab() {
@@ -356,6 +415,13 @@ void MainWindow::installExperimentalShell() {
         expUserToggled_ = true;
         setExperimentalCollapsed(!expCollapsed_);
     });
+    auto *operationsButton = new QPushButton;
+    operationsButton->setObjectName(QStringLiteral("btnMini"));
+    operationsButton->setText(QStringLiteral("…"));
+    operationsButton->setAccessibleName(tr("Active operations"));
+    operationsButton->setToolTip(tr("Active operations") + QStringLiteral(" · Ctrl+Shift+O"));
+    connect(operationsButton, &QPushButton::clicked, this, &MainWindow::showOperations);
+    rail->addWidget(operationsButton);
     rail->addWidget(expToggle_);
     auto *collapseShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
     collapseShortcut->setContext(Qt::ApplicationShortcut);
@@ -474,7 +540,12 @@ void MainWindow::installExperimentalShell() {
 void MainWindow::rebuildExperimentalNavigation() {
     if (!expNavLayout_) return;
     while (QLayoutItem *item = expNavLayout_->takeAt(0)) {
-        if (QWidget *widget = item->widget()) widget->deleteLater();
+        if (QWidget *widget = item->widget()) {
+            // A deferred old auto-exclusive button must not compete with the new rail.
+            if (auto *button = qobject_cast<QPushButton *>(widget)) button->setAutoExclusive(false);
+            widget->hide();
+            widget->deleteLater();
+        }
         delete item;
     }
     expNavButtons_.clear();
@@ -524,7 +595,8 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setEnabled(tabs_->isTabEnabled(i));
         button->setCursor(Qt::PointingHandCursor);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        button->setFixedHeight(32);
+        button->setMinimumHeight(std::max(32, button->fontMetrics().height() + 12));
+        button->setAccessibleName(label);
         QWidget *page = tabs_->widget(i);
         connect(button, &QPushButton::clicked, this, [this, page] {
             const int index = tabs_->indexOf(page);
@@ -534,13 +606,17 @@ void MainWindow::rebuildExperimentalNavigation() {
         expNavButtons_.append(button);
     }
     expNavLayout_->addStretch(1);
+    setExperimentalCollapsed(expCollapsed_);
     syncExperimentalNavigation();
 }
 
 void MainWindow::setExperimentalCollapsed(bool collapsed) {
     if (!expRail_) return;
     expCollapsed_ = collapsed;
-    expRail_->setFixedWidth(collapsed ? 48 : 154);
+    int expandedWidth = 154;
+    for (const auto *button : std::as_const(expNavButtons_))
+        expandedWidth = std::max(expandedWidth, button->fontMetrics().horizontalAdvance(button->property("navLabel").toString()) + 54);
+    expRail_->setFixedWidth(collapsed ? 48 : expandedWidth);
     expBrandLabel_->setVisible(!collapsed);
     expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
     for (auto *button : std::as_const(expNavButtons_)) {
@@ -610,6 +686,66 @@ void MainWindow::syncStatusChips() {
     expSceneChip_->setText(QString(scene).replace(QLatin1Char('&'), QLatin1String("&&")));  // no mnemonic
 }
 
+QStringList MainWindow::activeOperations() const {
+    QStringList out;
+    if (safeModeRunning_) out << tr("Safe mode");
+    if (scenes_->busy()) out << tr("Scene apply");
+    if (home_->operationActive()) out << tr("Device controls");
+    if (optimize_->busy()) out << tr("Optimization operation");
+    if (ryzen_ && ryzen_->operationActive()) out << tr("Ryzen Curve");
+    if (intel_ && intel_->operationActive()) out << tr("Intel Undervolt");
+    if (nvidia_ && nvidia_->busy()) out << tr("NVIDIA Curve");
+    if (amdgpu_ && amdgpu_->operationActive()) out << tr("AMD GPU");
+    if (fwattr_ && fwattr_->operationActive()) out << tr("Firmware");
+    if (lighting_ && lighting_->operationActive()) out << tr("Lighting");
+    if (health_->backup() && health_->backup()->operationActive()) out << tr("Backup / restore");
+    if (health_->cooling() && health_->cooling()->operationActive()) out << tr("Cooling test");
+    for (auto *trial : findChildren<TrialBar *>()) if (trial->running()) out << tr("Curve trial");
+    for (auto *box : findChildren<CpuStressBox *>()) if (box->operationActive()) out << tr("CPU stress test");
+    for (auto *box : findChildren<GpuStressBox *>()) if (box->operationActive()) out << tr("GPU stress test");
+    for (auto *box : findChildren<MemTestBox *>()) if (box->operationActive()) out << tr("Memory test");
+    for (auto *box : findChildren<CoSearchDialog *>()) if (box->operationActive()) out << tr("CO Search");
+    out.removeDuplicates();
+    return out;
+}
+
+void MainWindow::showOperations() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Active operations"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *note = new QLabel(tr("Reported by existing GUI operation states; background or external jobs may not appear here."));
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto *status = new QLabel;
+    status->setTextFormat(Qt::PlainText);
+    status->setWordWrap(true);
+    layout->addWidget(status, 1);
+    auto refresh = [this, status] {
+        const QStringList active = activeOperations();
+        status->setText(active.isEmpty() ? tr("No tracked operation is active.") : active.join(QLatin1Char('\n')));
+    };
+    QTimer timer;
+    connect(&timer, &QTimer::timeout, &dialog, refresh);
+    timer.start(500);
+    refresh();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    dialog.resize(400, 250);
+    dialog.exec();
+}
+
+void MainWindow::stepPageHistory(int delta) {
+    const int next = pageHistoryPos_ + delta;
+    if (next < 0 || next >= pageHistory_.size()) return;
+    const int index = tabs_->indexOf(pageHistory_.at(next));
+    if (index < 0 || !tabs_->isTabEnabled(index)) return;
+    replayingPageHistory_ = true;
+    pageHistoryPos_ = next;
+    tabs_->setCurrentIndex(index);
+    replayingPageHistory_ = false;
+}
+
 void MainWindow::showQuickNavigator() { uinavigator::open(tabs_, this); }
 
 void MainWindow::placeHeaderControls() {
@@ -626,7 +762,7 @@ void MainWindow::placeHeaderControls() {
 // shortening it, so a narrow window is capped here too: the bar then ends at
 // the window edge and shows its scroll buttons instead of running off-screen.
 void MainWindow::fitTabs() {
-    if (theme::experimentalEnabled()) return;
+    if (!tabs_ || theme::experimentalEnabled()) return;
     QTabBar *bar = tabs_->tabBar();
     const int room = tabs_->width() - theme::brandInset() - (sectionsButton_ ? 148 : 8);
     const int w = std::max(120, std::min(bar->sizeHint().width(), room));
@@ -655,21 +791,20 @@ void MainWindow::showEvent(QShowEvent *e) {
 }
 
 void MainWindow::runSafeMode() {
-    static bool running = false;
-    if (running) return;
-    running = true;
+    if (safeModeRunning_) return;
+    safeModeRunning_ = true;
     home_->setAllFansAuto();
     const QString tool = QStandardPaths::findExecutable(QStringLiteral("centurion-safe-mode"));
     auto *p = new QProcess(this);
     p->setProcessChannelMode(QProcess::MergedChannels);
     connect(p, &QProcess::finished, this, [this, p](int code, QProcess::ExitStatus st) {
-        running = false;
+        safeModeRunning_ = false;
         p->deleteLater();
         Q_EMIT safeModeFinished(st == QProcess::NormalExit && code == 0, QString::fromUtf8(p->readAll()).trimmed());
     });
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
-        running = false;
+        safeModeRunning_ = false;
         p->deleteLater();
         Q_EMIT safeModeFinished(false, QStringLiteral("centurion-safe-mode not found"));
     });
@@ -696,11 +831,13 @@ void MainWindow::showTab(const QString &label) {
 }
 
 void MainWindow::hideEvent(QHideEvent *e) {
+    if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
     QMainWindow::hideEvent(e);
     QTimer::singleShot(2000, this, [this] { if (!isVisible()) trimHeap(); });
 }
 
 void MainWindow::closeEvent(QCloseEvent *e) {
+    if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
     if (hideOnClose_ && !forceQuit_) { e->ignore(); hide(); return; }
     QMainWindow::closeEvent(e);
 }

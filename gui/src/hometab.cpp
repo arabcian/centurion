@@ -32,15 +32,31 @@
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QSignalBlocker>
+#include <QListWidget>
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLabel>
 #include <QFrame>
 #include <QMessageBox>
 #include <QMenu>
+#include <QAction>
+#include <QColorDialog>
+#include <QDialogButtonBox>
+#include <QDialog>
+#include <QFileDialog>
+#include <QSaveFile>
+#include <QJsonArray>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <cmath>
 #include <QWidgetAction>
 #include <QProcess>
 #include <QScrollArea>
+#include <QResizeEvent>
+#include <QSettings>
+#include <QCompleter>
+#include <QFormLayout>
+#include <functional>
 #include <QTabWidget>
 #include <QRegularExpression>
 #include <QPushButton>
@@ -52,6 +68,18 @@
 #include <QHideEvent>
 #include <QShowEvent>
 #include <QVBoxLayout>
+
+namespace {
+class DashboardScroll final : public QScrollArea {
+public:
+    std::function<void(int)> reflow;
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QScrollArea::resizeEvent(event);
+        if (reflow) reflow(viewport()->width());
+    }
+};
+}
 
 static constexpr int LIVE_POLL_MS = 2000;
 // Fan guard (see noteFanTarget): temperature at which manual fan targets are dropped, and how often it is checked.
@@ -218,30 +246,148 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         themeBox->setItemData(themeBox->count() - 1, name, Qt::ToolTipRole);
     }
     themeBox->setIconSize(QSize(38, 18));
-    themeBox->setCurrentIndex(std::max(0, themeBox->findData(theme::currentTheme())));
+    themeBox->setEditable(true);
+    themeBox->setInsertPolicy(QComboBox::NoInsert);
+    themeBox->completer()->setCaseSensitivity(Qt::CaseInsensitive);
+    themeBox->completer()->setFilterMode(Qt::MatchContains);
+    themeBox->setMaxVisibleItems(16);
+    const QSettings uiSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    const QString savedTheme = uiSettings.value(QStringLiteral("theme"), theme::currentTheme()).toString();
+    themeBox->setCurrentIndex(std::max(0, themeBox->findData(savedTheme)));
+    connect(themeBox->lineEdit(), &QLineEdit::editingFinished, themeBox, [themeBox] {
+        if (themeBox->findText(themeBox->currentText(), Qt::MatchFixedString) < 0)
+            themeBox->setEditText(themeBox->itemText(themeBox->currentIndex()));
+    });
     connect(themeBox, &QComboBox::activated, this, [this, themeBox](int i) {
         const QString id = themeBox->itemData(i).toString();
-        if (id == theme::currentTheme()) return;
         if (!theme::saveTheme(id)) { showStatus(tr("Could not save the theme choice."), 6000); return; }
+        if (id == theme::currentTheme()) { showStatus(tr("Pending theme choice cleared."), 4000); return; }
         if (QMessageBox::question(this, tr("Theme"), tr("Restart Centurion now to apply %1?").arg(themeBox->itemText(i)))
             == QMessageBox::Yes) theme::requestRestart();
         else showStatus(tr("Theme applies at the next start."), 6000);
+    });
+    auto *themeGallery = new QPushButton(tr("Theme Gallery…"));
+    connect(themeGallery, &QPushButton::clicked, this, [this, themeBox] {
+        QDialog dlg(this); dlg.setWindowTitle(tr("Theme Gallery")); dlg.resize(650, 500);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *search = new QLineEdit; search->setPlaceholderText(tr("Search themes…")); search->setClearButtonEnabled(true); layout->addWidget(search);
+        auto *family = new QComboBox; family->addItems({tr("All themes"), tr("Dark themes"), tr("Light themes"), tr("Pastel themes")}); layout->addWidget(family);
+        auto *list = new QListWidget; list->setIconSize(QSize(76, 36)); layout->addWidget(list, 1);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout->addWidget(buttons);
+        const auto rebuild = [=] {
+            const auto previous = list->currentItem() ? list->currentItem()->data(Qt::UserRole).toString() : themeBox->currentData().toString();
+            list->clear();
+            for (const auto &[id, name] : theme::themes()) {
+                if (!name.contains(search->text(), Qt::CaseInsensitive) && !id.contains(search->text(), Qt::CaseInsensitive)) continue;
+                const bool light = QColor(theme::paletteColors(id).at(0)).lightnessF() > 0.62;
+                if ((family->currentIndex()==1 && light) || (family->currentIndex()==2 && !light) || (family->currentIndex()==3 && !id.startsWith(QStringLiteral("pastel-")))) continue;
+                auto *item = new QListWidgetItem(theme::themePreviewIcon(id), name, list); item->setData(Qt::UserRole, id);
+                if (id==previous) list->setCurrentItem(item);
+            }
+            if (!list->currentItem() && list->count()) list->setCurrentRow(0);
+            buttons->button(QDialogButtonBox::Ok)->setEnabled(list->currentItem()!=nullptr);
+        };
+        connect(search, &QLineEdit::textChanged, &dlg, rebuild); connect(family, &QComboBox::currentIndexChanged, &dlg, rebuild);
+        connect(list, &QListWidget::currentItemChanged, &dlg, [=](QListWidgetItem *item) { buttons->button(QDialogButtonBox::Ok)->setEnabled(item!=nullptr); });
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        rebuild(); if (dlg.exec()!=QDialog::Accepted || !list->currentItem()) return;
+        const QString id = list->currentItem()->data(Qt::UserRole).toString();
+        if (!theme::saveTheme(id)) { showStatus(tr("Could not save the theme choice."),6000); return; }
+        themeBox->setCurrentIndex(themeBox->findData(id));
+        if (id != theme::currentTheme() && QMessageBox::question(this,tr("Theme"),tr("Restart Centurion now to apply %1?").arg(list->currentItem()->text()))==QMessageBox::Yes) theme::requestRestart();
+    });
+    auto *density = new QCheckBox(tr("Compact controls"));
+    density->setChecked(uiSettings.value(QStringLiteral("ui/compact_density"), theme::compactDensity()).toBool());
+    density->setToolTip(tr("Reduce control padding and default layout spacing at the next start. Font sizes do not change."));
+    connect(density, &QCheckBox::toggled, this, [this, density](bool on) {
+        if (!theme::saveCompactDensity(on)) { QSignalBlocker blocker(density); density->setChecked(!on); showStatus(tr("Could not save the density choice."),6000); return; }
+        if (on!=theme::compactDensity() && QMessageBox::question(this,tr("Appearance"),tr("Restart Centurion now to change control density?"))==QMessageBox::Yes) theme::requestRestart();
     });
     auto *themeLabel = muted(tr("Theme"));
     themeLabel->setWordWrap(false);
     // Preferences stay discoverable without dominating the monitoring surface.
     QWidget *preferences = nullptr;
-    QHBoxLayout *preferencesRow = nullptr;
+    auto *customTheme = new QPushButton(tr("Edit Palette…"));
+    connect(customTheme, &QPushButton::clicked, this, [this, themeBox] {
+        QDialog dlg(this); dlg.setWindowTitle(tr("Custom Theme")); dlg.resize(620, 620);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Edit opaque RGB colors. Changes take effect after restart. Contrast is checked for the main text and panel surfaces."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *table = new QTableWidget(19, 2);
+        table->setHorizontalHeaderLabels({tr("Token"), tr("Color (#RRGGBB)")});
+        table->verticalHeader()->hide(); table->horizontalHeader()->setStretchLastSection(true);
+        const auto tokens = theme::paletteTokenNames();
+        for (int i = 0; i < tokens.size(); ++i) {
+            auto *name = new QTableWidgetItem(tokens[i]); name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            table->setItem(i, 0, name); table->setItem(i, 1, new QTableWidgetItem);
+        }
+        auto readColors = [table] { QStringList out; for (int i = 0; i < 19; ++i) out << table->item(i, 1)->text().trimmed(); return out; };
+        auto fillColors = [table](const QStringList &colors) { for (int i = 0; i < 19; ++i) table->item(i, 1)->setText(colors[i]); };
+        auto *contrast = new QLabel; contrast->setWordWrap(true);
+        auto updateContrast = [readColors, contrast] {
+            const auto colors = readColors();
+            if (!theme::validCustomPalette(colors)) { contrast->setText(tr("Invalid RGB color.")); return; }
+            auto lum = [](const QColor &c) { auto ch = [](double x) { return x <= .04045 ? x / 12.92 : std::pow((x + .055) / 1.055, 2.4); }; return .2126*ch(c.redF()) + .7152*ch(c.greenF()) + .0722*ch(c.blueF()); };
+            double worst = 100;
+            for (int bg : {0,1,2,3,4,5}) { double a = lum(QColor(colors[bg])), b = lum(QColor(colors[8])); worst = std::min(worst, (std::max(a,b)+.05)/(std::min(a,b)+.05)); }
+            contrast->setText(tr("Minimum main-text contrast: %1:1 (4.5:1 recommended). This does not cover every control.").arg(worst, 0, 'f', 2));
+        };
+        fillColors(theme::paletteColors(themeBox->currentData().toString())); updateContrast();
+        connect(table, &QTableWidget::cellChanged, &dlg, updateContrast);
+        auto *tools = new QHBoxLayout;
+        auto *pick = new QPushButton(tr("Pick Color…")); auto *import = new QPushButton(tr("Import JSON…")); auto *exportBtn = new QPushButton(tr("Export JSON…"));
+        tools->addWidget(pick); tools->addWidget(import); tools->addWidget(exportBtn); tools->addStretch();
+        connect(pick, &QPushButton::clicked, &dlg, [table, &dlg] {
+            const int row = table->currentRow(); if (row < 0) return;
+            const QColor c = QColorDialog::getColor(QColor(table->item(row,1)->text()), &dlg);
+            if (c.isValid()) table->item(row,1)->setText(c.name());
+        });
+        connect(import, &QPushButton::clicked, &dlg, [&dlg, fillColors] {
+            const QString path = QFileDialog::getOpenFileName(&dlg, tr("Import Palette"), {}, tr("JSON files (*.json)")); if (path.isEmpty()) return;
+            QFile f(path); QStringList colors;
+            if (f.open(QIODevice::ReadOnly) && f.size() <= 16384) {
+                const auto o = QJsonDocument::fromJson(f.read(16385)).object();
+                if (o.value("version").toInt() == 1) for (const auto &v : o.value("colors").toArray()) colors << v.toString();
+            }
+            if (!theme::validCustomPalette(colors)) { QMessageBox::warning(&dlg, tr("Custom Theme"), tr("Invalid palette file.")); return; }
+            fillColors(colors);
+        });
+        connect(exportBtn, &QPushButton::clicked, &dlg, [&dlg, readColors] {
+            const auto colors = readColors(); if (!theme::validCustomPalette(colors)) { QMessageBox::warning(&dlg, tr("Custom Theme"), tr("Invalid RGB color.")); return; }
+            const auto path = QFileDialog::getSaveFileName(&dlg, tr("Export Palette"), {}, tr("JSON files (*.json)")); if (path.isEmpty()) return;
+            const auto bytes = QJsonDocument(QJsonObject{{"version",1},{"colors",QJsonArray::fromStringList(colors)}}).toJson();
+            QSaveFile f(path); if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size() || !f.commit()) QMessageBox::warning(&dlg, tr("Custom Theme"), f.errorString());
+        });
+        layout->addWidget(table,1); layout->addLayout(tools); layout->addWidget(contrast);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, [&dlg, readColors] {
+            if (!theme::saveCustomPalette(readColors()) || !theme::saveTheme(QStringLiteral("custom"))) { QMessageBox::warning(&dlg, tr("Custom Theme"), tr("Could not save the palette.")); return; }
+            dlg.accept();
+        });
+        layout->addWidget(buttons);
+        if (dlg.exec() != QDialog::Accepted) return;
+        int index = themeBox->findData(QStringLiteral("custom"));
+        if (index < 0) { themeBox->addItem(tr("Custom palette"), QStringLiteral("custom")); index = themeBox->count()-1; }
+        themeBox->setItemIcon(index, theme::themePreviewIcon(QStringLiteral("custom"))); themeBox->setCurrentIndex(index);
+        if (QMessageBox::question(this, tr("Custom Theme"), tr("Restart Centurion now to apply the custom palette?")) == QMessageBox::Yes) theme::requestRestart();
+    });
+    QFormLayout *preferencesRow = nullptr;
     if (theme::experimentalEnabled()) {
         preferences = new QWidget;
-        preferencesRow = new QHBoxLayout(preferences);
+        preferencesRow = new QFormLayout(preferences);
         preferencesRow->setContentsMargins(3, 3, 3, 3);
         preferencesRow->setSpacing(6);
-        preferencesRow->addWidget(themeLabel);
-        preferencesRow->addWidget(themeBox);
+        preferencesRow->addRow(themeLabel, themeBox);
+        preferencesRow->addRow(customTheme);
+        preferencesRow->addRow(themeGallery);
+        preferencesRow->addRow(density);
     } else {
         headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
         headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
+        auto *appearance = new QMenu(this);
+        for (QWidget *w : {static_cast<QWidget *>(customTheme), static_cast<QWidget *>(themeGallery), static_cast<QWidget *>(density)}) { auto *a = new QWidgetAction(appearance); a->setDefaultWidget(w); appearance->addAction(a); }
+        auto *appearanceButton = new QPushButton(tr("Appearance")); appearanceButton->setMenu(appearance); headRow->addWidget(appearanceButton);
     }
     // Both UI modes use the exact same hardware features. Saving the mode
     // changes only visual presentation and the top-level navigation shell.
@@ -250,14 +396,15 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     uiMode->setToolTip(tr("Choose the original UI or the experimental layout. Applies on restart."));
     uiMode->addItem(tr("Experimental"), QStringLiteral("experimental"));
     uiMode->addItem(tr("Classic"), QStringLiteral("classic"));
-    uiMode->setCurrentIndex(theme::experimentalEnabled() ? 0 : 1);
+    const QString savedMode = uiSettings.value(QStringLiteral("ui/mode"), theme::experimentalEnabled() ? QStringLiteral("experimental") : QStringLiteral("classic")).toString();
+    uiMode->setCurrentIndex(std::max(0, uiMode->findData(savedMode)));
     connect(uiMode, &QComboBox::activated, this, [this, uiMode](int index) {
         const bool experimental = uiMode->itemData(index).toString() == QLatin1String("experimental");
-        if (experimental == theme::experimentalEnabled()) return;
         if (!theme::saveUiMode(experimental)) {
             showStatus(tr("Could not save the interface mode."), 6000);
             return;
         }
+        if (experimental == theme::experimentalEnabled()) { showStatus(tr("Pending interface choice cleared."), 4000); return; }
         if (QMessageBox::question(this, tr("Interface"),
                 tr("Restart Centurion now to switch interface layout?")) == QMessageBox::Yes)
             theme::requestRestart();
@@ -265,7 +412,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     });
     auto *uiLabel = muted(tr("Interface"));
     uiLabel->setWordWrap(false);
-    if (preferencesRow) { preferencesRow->addWidget(uiLabel); preferencesRow->addWidget(uiMode); }
+    if (preferencesRow) { preferencesRow->addRow(uiLabel, uiMode); }
     else { headRow->addWidget(uiLabel, 0, Qt::AlignVCenter); headRow->addWidget(uiMode, 0, Qt::AlignVCenter); }
     // Interface language: same mechanism as the theme (saved, applied at the next start).
     auto *langBox = new QComboBox;
@@ -282,8 +429,15 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     auto *langLabel = muted(tr("Language"));
     langLabel->setWordWrap(false);
     if (preferencesRow) {
-        preferencesRow->addWidget(langLabel);
-        preferencesRow->addWidget(langBox);
+        preferencesRow->addRow(langLabel, langBox);
+        auto *startup = new QCheckBox(tr("Restore last page"));
+        startup->setChecked(QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+                                .value(QStringLiteral("ui/restore_last_page"), true).toBool());
+        connect(startup, &QCheckBox::toggled, this, [](bool on) {
+            QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+                .setValue(QStringLiteral("ui/restore_last_page"), on);
+        });
+        preferencesRow->addRow(startup);
         auto *settingsButton = new QPushButton(tr("Preferences"));
         settingsButton->setObjectName(QStringLiteral("btnMini"));
         auto *popup = new QMenu(settingsButton);
@@ -353,8 +507,10 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
 
     // One line, fixed height, elided: messages never push the boxes around.
     status_ = muted(QString());
-    status_->setFixedHeight(status_->fontMetrics().height() + 2);
-    status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    status_->setMinimumHeight(status_->fontMetrics().height() + 2);
+    status_->setTextFormat(Qt::PlainText);
+    status_->setWordWrap(true);
+    status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     QGroupBox *dev = buildDeviceBox();  // hosts status_ when present
     QGroupBox *hardware = buildHardwareBox();
@@ -368,6 +524,21 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *plotPanel = new QGroupBox(tr("Monitoring"));
         auto *chartLayout = new QVBoxLayout(plotPanel);
         temperaturePlot_ = new experimentalui::TemperaturePlot;
+        auto *rangeRow = new QHBoxLayout;
+        rangeRow->addStretch(1);
+        auto *range = new QComboBox;
+        range->setAccessibleName(tr("Monitoring time range"));
+        for (const int minutes : {1, 5, 15, 30, 60}) range->addItem(tr("%1 min").arg(minutes), minutes);
+        range->setCurrentIndex(std::max(0, range->findData(uiSettings.value(QStringLiteral("ui/home_plot_minutes"), 5).toInt())));
+        temperaturePlot_->setRangeMinutes(range->currentData().toInt());
+        connect(range, &QComboBox::currentIndexChanged, this, [this, range](int) {
+            const int minutes = range->currentData().toInt();
+            temperaturePlot_->setRangeMinutes(minutes);
+            QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+                .setValue(QStringLiteral("ui/home_plot_minutes"), minutes);
+        });
+        rangeRow->addWidget(range);
+        chartLayout->addLayout(rangeRow);
         chartLayout->addWidget(temperaturePlot_, 1);
         auto *details = new QTabWidget;
         details->setObjectName(QStringLiteral("homeDetailTabs"));
@@ -377,6 +548,12 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         hardware->setTitle(QString());
         details->addTab(hardware, tr("Hardware && Firmware"));  // left, shown first
         details->addTab(liveSensors, tr("Live Sensors"));
+        details->setCurrentIndex(std::clamp(QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+                                        .value(QStringLiteral("ui/home_details"), 0).toInt(), 0, 1));
+        connect(details, &QTabWidget::currentChanged, this, [](int index) {
+            QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+                .setValue(QStringLiteral("ui/home_details"), index);
+        });
         // A card like its neighbours; its tab bar stands where a title would.
         auto *detailCard = new QFrame;
         detailCard->setObjectName(QStringLiteral("homeDetailCard"));
@@ -406,10 +583,45 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         cells->setColumnStretch(1, 1);
         cells->setRowStretch(1, 1);
         // Only a window too small for the content scrolls.
-        auto *scroll = new QScrollArea;
+        auto *scroll = new DashboardScroll;
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);
         scroll->setWidget(gridHost);
+        auto *dashboardMenu = new QPushButton(tr("Dashboard panels…"));
+        auto *panelMenu = new QMenu(dashboardMenu);
+        dashboardMenu->setMenu(panelMenu);
+        auto panelChoice = [panelMenu](const QString &label, const QString &key, QWidget *panel) {
+            auto *action = panelMenu->addAction(label);
+            action->setCheckable(true);
+            QSettings s(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+            action->setChecked(s.value(key, true).toBool());
+            panel->setVisible(action->isChecked());
+            QObject::connect(action, &QAction::toggled, panel, [panel, key](bool visible) {
+                panel->setVisible(visible);
+                QSettings s(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+                s.setValue(key, visible);
+            });
+        };
+        panelChoice(tr("Monitoring"), QStringLiteral("home/showMonitoring"), plotPanel);
+        panelChoice(tr("Hardware information"), QStringLiteral("home/showHardware"), detailCard);
+        // Power profiles, device controls, and safety banners are never hidden here.
+        root->addWidget(dashboardMenu, 0, Qt::AlignRight);
+        scroll->reflow = [cells, profileBox, plotPanel, detailCard, dev, compact = false](int width) mutable {
+            const int required = std::max({760, profileBox->minimumSizeHint().width() + plotPanel->minimumSizeHint().width() + 6,
+                detailCard->minimumSizeHint().width() + (dev ? dev->minimumSizeHint().width() : 0) + 6});
+            // Hysteresis avoids oscillation when a vertical scrollbar appears.
+            const bool narrow = width < required + (compact ? 24 : 0);
+            if (narrow == compact) return;
+            compact = narrow;
+            for (QWidget *w : {static_cast<QWidget *>(profileBox), static_cast<QWidget *>(plotPanel), static_cast<QWidget *>(detailCard), static_cast<QWidget *>(dev)})
+                if (w) cells->removeWidget(w);
+            cells->addWidget(profileBox, 0, 0);
+            cells->addWidget(plotPanel, narrow ? 1 : 0, narrow ? 0 : 1);
+            cells->addWidget(detailCard, narrow ? 2 : 1, 0, 1, (!narrow && !dev) ? 2 : 1);
+            if (dev) cells->addWidget(dev, narrow ? 3 : 1, narrow ? 0 : 1);
+            cells->setColumnStretch(1, narrow ? 0 : 1);
+            for (int row = 0; row < 4; ++row) cells->setRowStretch(row, row == (narrow ? (dev ? 3 : 2) : 1) ? 1 : 0);
+        };
         root->addWidget(scroll, 1);
     } else {
         // Identical Classic layout and all existing child widgets.
@@ -1531,7 +1743,7 @@ void HomeTab::checkFanGuard() {
 // ── Profile buttons ─────────────────────────────────────────────────────────
 
 void HomeTab::showStatus(const QString &msg, int timeoutMs) {
-    status_->setText(status_->fontMetrics().elidedText(msg, Qt::ElideRight, qMax(50, status_->width())));
+    status_->setText(msg);
     status_->setToolTip(msg);
     if (timeoutMs) statusTimer_->start(timeoutMs);
 }
