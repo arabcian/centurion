@@ -12,6 +12,15 @@
 #include <QSet>
 #include <algorithm>
 namespace diagnostichistory {
+// Values are stored in workspace preferences.
+enum class RecordSource { All = 0, Report = 1, HealthLog = 2, KernelLog = 3 };
+enum class BootScope { All = 0, Identified = 1, Unresolved = 2 };
+
+constexpr bool matchesScope(RecordSource source, bool identified, RecordSource sourceFilter, BootScope bootFilter) {
+    return (sourceFilter == RecordSource::All || source == sourceFilter)
+        && (bootFilter == BootScope::All || identified == (bootFilter == BootScope::Identified));
+}
+
 struct Entry { QString id,code,title,boot,reportedBoot,time,locale,note; QJsonObject snapshot; };
 struct Archive { QList<Entry> entries; int rejected=0; bool limited=false; };
 inline bool validSnapshot(const QJsonObject &snap) {

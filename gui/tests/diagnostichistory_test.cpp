@@ -24,6 +24,12 @@ int main(int argc,char **argv) {
     auto archive=load(dir.path());CHECK(archive.entries.size()==3&&archive.rejected==0);
     CHECK(archive.entries.at(0).boot==bootA&&archive.entries.at(1).boot==bootB&&archive.entries.at(2).boot.isEmpty());
     CHECK(archive.entries.at(2).reportedBoot==QStringLiteral("12345678"));
+    CHECK(matchesScope(RecordSource::Report, !archive.entries.at(0).boot.isEmpty(), RecordSource::Report, BootScope::Identified));
+    CHECK(!matchesScope(RecordSource::Report, !archive.entries.at(2).boot.isEmpty(), RecordSource::Report, BootScope::Identified));
+    CHECK(matchesScope(RecordSource::Report, !archive.entries.at(2).boot.isEmpty(), RecordSource::All, BootScope::Unresolved));
+    CHECK(matchesScope(RecordSource::HealthLog, false, RecordSource::HealthLog, BootScope::All));
+    CHECK(!matchesScope(RecordSource::KernelLog, true, RecordSource::HealthLog, BootScope::All));
+
     auto invalid=snapshot;invalid.insert("records",QJsonArray{QJsonArray{QStringLiteral("row")}});CHECK(!validSnapshot(invalid));
     CHECK(save(dir.path(),report.code,QJsonArray{a,a,b,c}));archive=load(dir.path());CHECK(archive.entries.size()==2&&archive.rejected==2);
     CHECK(save(dir.path(),QStringLiteral("WRONG"),QJsonArray{b}));archive=load(dir.path());CHECK(archive.entries.size()==2&&archive.rejected==3);

@@ -26711,6 +26711,14 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Compare snapshots</source><translation>Anlık görüntüleri karşılaştır</translation></message>
         <message><source>Comparison requires the same report code and locale.</source><translation>Karşılaştırma için rapor kodu ve dil aynı olmalıdır.</translation></message>
         <message><source>Cross-Boot Diagnostic History</source><translation>Açılışlar Arası Tanı Geçmişi</translation></message>
+        <message><source>All sources</source><translation>Tüm kaynaklar</translation></message>
+        <message><source>Archived reports</source><translation>Arşivlenmiş raporlar</translation></message>
+        <message><source>Health log</source><translation>Sağlık günlüğü</translation></message>
+        <message><source>Kernel log</source><translation>Çekirdek günlüğü</translation></message>
+        <message><source>Any boot identity</source><translation>Tüm açılış kimlikleri</translation></message>
+        <message><source>Unresolved boot identity</source><translation>Belirlenemeyen açılış kimliği</translation></message>
+        <message><source>Source:</source><translation>Kaynak:</translation></message>
+        <message><source>Boot identity:</source><translation>Açılış kimliği:</translation></message>
         <message><source>Different capture boots.
 </source><translation>Farklı yakalama açılışları.
 </translation></message>

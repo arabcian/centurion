@@ -31,21 +31,29 @@
 namespace diagnostichistory {
 namespace {
 QString tr(const char *s) { return QCoreApplication::translate("DiagnosticHistory",s); }
-struct RecordedEvent { QString boot, reportedBoot, source, time, level, title, detail, id; quint64 sequence; };
+struct RecordedEvent {
+    QString boot, reportedBoot, time, level, title, detail, id;
+    quint64 sequence;
+    RecordSource source;
+};
+QString logName(RecordSource source) {
+    return source == RecordSource::HealthLog ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
+}
 QList<RecordedEvent> recordedEvents() {
     QList<RecordedEvent> out; QSet<QByteArray> seen;
-    const auto add=[&](const QList<diagsrc::LogLine>& lines,const QString &source) {
+    const auto add=[&](const QList<diagsrc::LogLine>& lines, RecordSource source) {
+        const auto name = logName(source);
         for(const auto &line:lines) {
             // Exact duplicate only. Different text sharing a sequence is retained,
             // and a legacy boot prefix is never promoted to a full UUID.
-            const auto key=QCryptographicHash::hash(QJsonDocument(QJsonArray{source,line.boot,QString::number(line.seq),line.time,line.level,line.kind,line.title,line.text}).toJson(QJsonDocument::Compact),QCryptographicHash::Sha256);
+            const auto key=QCryptographicHash::hash(QJsonDocument(QJsonArray{name,line.boot,QString::number(line.seq),line.time,line.level,line.kind,line.title,line.text}).toJson(QJsonDocument::Compact),QCryptographicHash::Sha256);
             if(seen.contains(key)) continue;
             seen.insert(key);
-            out.append({QString::fromStdString(fullBoot(line.boot.toStdString())),diag::redactPrivateText(line.boot).left(80),source,line.time.left(80),line.level.left(80),diag::redactPrivateText(line.title).left(300),diag::redactPrivateText(line.text).left(8192),QString::fromLatin1(key.toHex()),line.seq});
+            out.append({QString::fromStdString(fullBoot(line.boot.toStdString())),diag::redactPrivateText(line.boot).left(80),line.time.left(80),line.level.left(80),diag::redactPrivateText(line.title).left(300),diag::redactPrivateText(line.text).left(8192),QString::fromLatin1(key.toHex()),line.seq,source});
         }
     };
-    add(diagsrc::savedEvents(1000),QStringLiteral("health.log"));
-    add(diagsrc::savedKernel(1000),QStringLiteral("kernel.log"));
+    add(diagsrc::savedEvents(1000), RecordSource::HealthLog);
+    add(diagsrc::savedKernel(1000), RecordSource::KernelLog);
     return out;
 }
 QString recordText(const QJsonArray &r) {
@@ -102,6 +110,25 @@ void open(QWidget *owner) {
     auto *status=new QLabel(tr("%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)").arg(archive.entries.size()).arg(archive.rejected).arg(events.size()));layout->addWidget(status);
     if(archive.limited) layout->addWidget(new QLabel(tr("Archive scan limit reached; some files were not read.")));
     auto *filter=new QLineEdit;filter->setPlaceholderText(tr("Filter report, boot, source, time, event or note…"));filter->setMaxLength(512);layout->addWidget(filter);
+    auto *sources = new QComboBox;
+    sources->addItem(tr("All sources"), int(RecordSource::All));
+    sources->addItem(tr("Archived reports"), int(RecordSource::Report));
+    sources->addItem(tr("Health log"), int(RecordSource::HealthLog));
+    sources->addItem(tr("Kernel log"), int(RecordSource::KernelLog));
+    auto *boots = new QComboBox;
+    boots->addItem(tr("Any boot identity"), int(BootScope::All));
+    boots->addItem(tr("Full boot identity"), int(BootScope::Identified));
+    boots->addItem(tr("Unresolved boot identity"), int(BootScope::Unresolved));
+    auto *scopes = new QHBoxLayout;
+    auto *sourceLabel = new QLabel(tr("Source:"));
+    sourceLabel->setBuddy(sources);
+    scopes->addWidget(sourceLabel);
+    scopes->addWidget(sources, 1);
+    auto *bootLabel = new QLabel(tr("Boot identity:"));
+    bootLabel->setBuddy(boots);
+    scopes->addWidget(bootLabel);
+    scopes->addWidget(boots, 1);
+    layout->addLayout(scopes);
     auto *split=new QSplitter(Qt::Horizontal);layout->addWidget(split,1);
     auto *tree=new QTreeWidget;tree->setHeaderLabels({tr("Boot / report / event"),tr("Relationship")});tree->setUniformRowHeights(true);tree->header()->setSectionResizeMode(0,QHeaderView::Stretch);split->addWidget(tree);
     auto *detail=new QPlainTextEdit;detail->setReadOnly(true);split->addWidget(detail);split->setStretchFactor(1,2);
@@ -126,7 +153,7 @@ void open(QWidget *owner) {
             auto *g=new QTreeWidgetItem(tree,{e.boot.isEmpty()?tr("Unresolved event boots (not one session)"):e.boot,e.boot.isEmpty()?tr("No boot identity"):tr("Full boot identity")});
             g->setData(0,Qt::UserRole,-1);groups.insert(groupKey,g);
         }
-        const auto label=e.time+QStringLiteral(" · ")+e.source+QStringLiteral(" · ")+(e.title.isEmpty()?e.detail.left(160):e.title);
+        const auto label=e.time+QStringLiteral(" · ")+logName(e.source)+QStringLiteral(" · ")+(e.title.isEmpty()?e.detail.left(160):e.title);
         auto *item=new QTreeWidgetItem(groups.value(groupKey),{label,e.boot.isEmpty()?tr("Unlinked saved event"):tr("Recorded event boot")});
         item->setData(0,Qt::UserRole,-2-int(i));
     }
@@ -137,7 +164,7 @@ void open(QWidget *owner) {
         if(i>=0 && i<archive.entries.size()) detail->setPlainText(describe(archive.entries.at(i)));
         else if(i<=-2 && -2-i<events.size()) {
             const auto &e=events.at(-2-i);
-            detail->setPlainText(tr("Source: %1\nRecorded time: %2\nEvent boot: %3\nSequence: %4\nLevel: %5\nRecord ID: %6\n\n%7\n%8").arg(e.source,e.time,e.boot.isEmpty()?tr("Unknown / legacy"):e.boot,QString::number(e.sequence),e.level,e.id,e.title,e.detail)
+            detail->setPlainText(tr("Source: %1\nRecorded time: %2\nEvent boot: %3\nSequence: %4\nLevel: %5\nRecord ID: %6\n\n%7\n%8").arg(logName(e.source),e.time,e.boot.isEmpty()?tr("Unknown / legacy"):e.boot,QString::number(e.sequence),e.level,e.id,e.title,e.detail)
                 +(e.boot.isEmpty()?QStringLiteral("\n")+tr("Recorded boot label (not an identity): %1").arg(e.reportedBoot):QString()));
         } else detail->setPlainText(tr("Select an archived report or saved event."));
     });
@@ -147,25 +174,44 @@ void open(QWidget *owner) {
     });
     const auto applyFilter=[&]{
         const auto q=filter->text().trimmed();
+        const auto sourceFilter = static_cast<RecordSource>(sources->currentData().toInt());
+        const auto bootFilter = static_cast<BootScope>(boots->currentData().toInt());
         for(auto *group:groups) {
             bool any=false;
             for(int i=0;i<group->childCount();++i) {
                 auto *item=group->child(i);const auto n=item->data(0,Qt::UserRole).toInt();
                 bool match=q.isEmpty()||item->text(0).contains(q,Qt::CaseInsensitive)||group->text(0).contains(q,Qt::CaseInsensitive);
-                if(n>=0) {const auto &e=archive.entries.at(n);match|=e.reportedBoot.contains(q,Qt::CaseInsensitive)||e.note.contains(q,Qt::CaseInsensitive);}
-                else if(n<=-2) {const auto &e=events.at(-2-n);match|=e.reportedBoot.contains(q,Qt::CaseInsensitive)||e.detail.contains(q,Qt::CaseInsensitive)||e.level.contains(q,Qt::CaseInsensitive);}
+                if (n >= 0) {
+                    const auto &e = archive.entries.at(n);
+                    match |= e.reportedBoot.contains(q, Qt::CaseInsensitive) || e.note.contains(q, Qt::CaseInsensitive);
+                    match &= matchesScope(RecordSource::Report, !e.boot.isEmpty(), sourceFilter, bootFilter);
+                } else {
+                    const auto &e = events.at(-2 - n);
+                    match |= e.reportedBoot.contains(q, Qt::CaseInsensitive) || e.detail.contains(q, Qt::CaseInsensitive)
+                        || e.level.contains(q, Qt::CaseInsensitive);
+                    match &= matchesScope(e.source, !e.boot.isEmpty(), sourceFilter, bootFilter);
+                }
                 item->setHidden(!match);any|=match;
                 if(!match&&tree->currentItem()==item) {tree->setCurrentItem(nullptr);detail->clear();}
             }
-            group->setHidden(!any);if(any&&!q.isEmpty()) group->setExpanded(true);
+            group->setHidden(!any);if (any && (!q.isEmpty() || sourceFilter != RecordSource::All || bootFilter != BootScope::All))
+                group->setExpanded(true);
         }
     };
-    QObject::connect(filter,&QLineEdit::textChanged,&dlg,applyFilter);
     const auto key=workspace::key(theme::experimentalEnabled(),QStringLiteral("health/cross-boot-history"));
     workspace::rememberSplitter(split,key+QStringLiteral("/split"));
-    const auto saved=workspace::read(key);filter->setText(saved.value("filter").toString().left(512));
-    tree->expandAll();applyFilter();
+    const auto saved = workspace::read(key);
+    filter->setText(saved.value("filter").toString());
+    sources->setCurrentIndex(std::max(0, sources->findData(saved.value("source").toInt(-1))));
+    boots->setCurrentIndex(std::max(0, boots->findData(saved.value("boot_scope").toInt(-1))));
+    QObject::connect(filter, &QLineEdit::textChanged, &dlg, applyFilter);
+    QObject::connect(sources, &QComboBox::currentIndexChanged, &dlg, applyFilter);
+    QObject::connect(boots, &QComboBox::currentIndexChanged, &dlg, applyFilter);
+    tree->expandAll();
+    applyFilter();
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);layout->addWidget(buttons);
-    dlg.exec();workspace::write(key,QJsonObject{{"filter",filter->text()}});
+    dlg.exec();
+    workspace::write(key, QJsonObject{{"filter", filter->text()}, {"source", sources->currentData().toInt()},
+                                      {"boot_scope", boots->currentData().toInt()}});
 }
 }
