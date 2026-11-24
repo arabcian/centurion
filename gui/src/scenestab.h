@@ -18,6 +18,7 @@ class ScenesTab : public QWidget {
     Q_OBJECT
 public:
     explicit ScenesTab(MainWindow *win);
+    bool hasUnappliedChanges() const;
     /// What *Capture current* stores: the writable firmware attributes as they read now. `wmiUnread`: the
     /// GPU cTGP / boost values (WMI) were not read back this session, so they are missing.
     static QMap<QString, int> firmwareSnapshot(MainWindow *win, bool *wmiUnread = nullptr);

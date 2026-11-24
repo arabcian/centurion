@@ -372,7 +372,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         hint->setWordWrap(true); layout->addWidget(hint);
         auto *text = new QPlainTextEdit; text->setReadOnly(true); layout->addWidget(text, 1);
         const auto refresh = [this, text] { text->setPlainText(stepHistory_.join(QLatin1Char('\n'))); };
-        refresh(); connect(eng_, &SceneEngine::stepState, &dlg, refresh); connect(eng_, &SceneEngine::finished, &dlg, refresh);
+        refresh(); connect(eng_, &SceneEngine::transactionState, &dlg, refresh); connect(eng_, &SceneEngine::finished, &dlg, refresh);
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
         connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); dlg.exec();
     });
@@ -516,25 +516,20 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     for (QComboBox *c : {onAc_, onBattery_})
         connect(c, &QComboBox::currentIndexChanged, this, [this] { if (!filling_) storeAuto(); });
 
-    connect(eng_, &SceneEngine::stepState, this, [this](const QString &step, const QString &state, const QString &detail) {
-        const QString label = state == "running" ? tr("Running") : state == "returned_ok" ? tr("Helper returned success") : state == "soft_failure" ? tr("Soft failure") : state == "failed" ? tr("Failed") : state == "skipped" ? tr("Skipped") : state == "restoring" ? tr("Restoring") : state == "restore_returned_ok" ? tr("Restore returned success") : state == "restore_failed" ? tr("Restore failed") : state;
-        stepHistory_ << QStringLiteral("%1 · %2 · %3 · %4").arg(QDateTime::currentDateTime().toString(Qt::ISODate), step, label, detail.left(2048));
+    connect(eng_, &SceneEngine::transactionState, this, [this](const QString &id, const QString &scene, const QString &step, const QString &state, const QString &detail) {
+        stepHistory_ << QStringLiteral("%1 · %2 · %3 · %4 · %5 · %6").arg(QDateTime::currentDateTime().toString(Qt::ISODate), id, scene, step, scenes::outcomeLabel(state), detail.left(2048));
         while (stepHistory_.size() > 200) stepHistory_.removeFirst();
     });
     connect(eng_, &SceneEngine::started, this, [this](const QString &n) {
-        stepHistory_.clear();
-        stepHistory_ << tr("Scene started: %1").arg(n);
         apply_->setEnabled(false);
         setStatus("Applying '" + n + "'…");
     });
     connect(eng_, &SceneEngine::finished, this, [this](const QString &n, bool ok, const QStringList &log) {
         if (n.isEmpty()) { setStatus(log.join(' '), theme::FG_DIM); return; }  // informational (deferred switch)
-        stepHistory_ << (ok ? tr("Scene engine reported success") : tr("Scene engine reported problems"));
-        stepHistory_ << log;
-        while (stepHistory_.size() > 200) stepHistory_.removeFirst();
         apply_->setEnabled(list_->count() > 0);
-        setStatus((ok ? "'" + n + "' applied — " : "'" + n + "' applied with problems — ") + log.join(QStringLiteral("  ·  ")),
-                  ok ? theme::OK : theme::WARN);
+        const QString outcome = eng_->lastOutcome();
+        setStatus(tr("%1 — %2").arg(n, scenes::outcomeLabel(outcome)) + QStringLiteral(" — ") + log.join(QStringLiteral("  ·  ")),
+                  ok && outcome == QStringLiteral("returned_unverified") ? theme::FG_DIM : theme::WARN);
         reloadList(loaded_.name);  // marks the active scene
         updatePowerLabel();
     });
@@ -834,8 +829,12 @@ void ScenesTab::select(const QString &name) {
     }
 }
 
+bool ScenesTab::hasUnappliedChanges() const {
+    return !loaded_.name.isEmpty() && fromEditor() != loaded_;
+}
+
 void ScenesTab::updateDirty() {
-    const bool dirty = !loaded_.name.isEmpty() && fromEditor() != loaded_;
+    const bool dirty = hasUnappliedChanges();
     save_->setEnabled(dirty);
     editor_->setTitle(loaded_.name + (dirty ? QStringLiteral("  •") : QString()));
     // Firmware limits need Custom: say so where the choice is made.

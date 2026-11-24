@@ -210,6 +210,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     shortcuts_ = new GlobalShortcuts(scenes_, this);
     shortcuts_->sync();  // talks to the portal only when a scene has a shortcut
     tabs_->insertTab(scenesAt, new ScenesTab(this), tr("Scenes"));
+    connect(scenes_, &SceneEngine::transactionState, this, [this](const QString &id, const QString &scene, const QString &step, const QString &state) {
+        operationHistory_ << QStringLiteral("%1 · %2 · %3 · %4 · %5").arg(QDateTime::currentDateTime().toString(Qt::ISODate), id, scene, step, scenes::outcomeLabel(state));
+        while (operationHistory_.size() > 200) operationHistory_.removeFirst();
+    });
     // MangoHud overlay line: kept in a file the overlay's `exec=cat` reads (see mangohud.h).
     connect(scenes_, &SceneEngine::finished, this, &MainWindow::updateOverlay);
     connect(scenes_, &SceneEngine::activeSceneChanged, this, &MainWindow::updateOverlay);
@@ -804,7 +808,7 @@ void MainWindow::syncStatusChips() {
 QStringList MainWindow::activeOperations() const {
     QStringList out;
     if (safeModeRunning_) out << tr("Safe mode");
-    if (scenes_->busy()) out << tr("Scene apply");
+    if (scenes_->operationActive()) out << tr("Scene apply");
     if (home_->operationActive()) out << tr("Device controls");
     if (optimize_->busy()) out << tr("Optimization operation");
     if (ryzen_ && ryzen_->operationActive()) out << tr("Ryzen Curve");
@@ -826,9 +830,18 @@ QStringList MainWindow::activeOperations() const {
 
 bool MainWindow::canQuit() {
     const auto active = activeOperations();
-    if (active.isEmpty()) return true;
-    QMessageBox::information(this, tr("Exit deferred"), tr("Finish the active operations before exiting Centurion.") + QStringLiteral("\n\n") + active.join(QLatin1Char('\n')));
-    return false;
+    if (!active.isEmpty()) {
+        QMessageBox::information(this, tr("Exit deferred"), tr("Finish the active operations before exiting Centurion.") + QStringLiteral("\n\n") + active.join(QLatin1Char('\n')));
+        return false;
+    }
+    QStringList unsaved;
+    for (const auto *page : findChildren<ScenesTab *>()) if (page->hasUnappliedChanges()) unsaved << tr("Scenes");
+    if (lighting_ && lighting_->hasUnappliedChanges()) unsaved << tr("Lighting");
+    if (unsaved.isEmpty()) return true;
+    const bool discard = QMessageBox::question(this, tr("Unsaved changes"),
+        tr("Leaving Centurion will discard unsaved changes on these pages:") + QStringLiteral("\n\n") + unsaved.join(QLatin1Char('\n')),
+        QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Discard;
+    return discard && activeOperations().isEmpty();
 }
 
 void MainWindow::sampleOperations() {
@@ -854,7 +867,7 @@ void MainWindow::showOperations() {
     status->setWordWrap(true);
     layout->addWidget(status, 1);
     auto *history = new QPlainTextEdit; history->setReadOnly(true);
-    layout->addWidget(new QLabel(tr("Observed state transitions (not verified results)")));
+    layout->addWidget(new QLabel(tr("Observed transitions and scene transaction events (not independent verification)")));
     layout->addWidget(history, 2);
     auto refresh = [this, status, history] {
         sampleOperations();

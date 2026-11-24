@@ -1,3 +1,4 @@
+#include "navigationtargets.h"
 #include <algorithm>
 #include <QFontMetrics>
 #include <memory>
@@ -223,6 +224,7 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
                 const QJsonObject v = t.value(d.key).toObject();
                 auto *lbl = new QLabel(d.text);
                 auto *sb = new QSpinBox;
+                navigationtargets::mark(sb, QStringLiteral("fw.oc.") + QString::fromLatin1(d.key), QString::fromLatin1(d.text), QString::fromLatin1(d.key) + QStringLiteral(" BIOS PBO overclock hız aşırtma"));
                 sb->setRange(v.value("min").toInt(), v.value("max").toInt());
                 sb->setValue(v.value("value").toInt());
                 sb->setProperty("stored", sb->value());
@@ -267,6 +269,7 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
     connect(rescan_, &QPushButton::clicked, this, &FwattrTab::rebuild);
     top->addWidget(rescan_);
     auto *inspect = new QPushButton(tr("Parameter inspector…"));
+    navigationtargets::mark(inspect, QStringLiteral("fw.inspector"), QStringLiteral("Parameter inspector"), QStringLiteral("firmware readback parametre inceleyici"));
     connect(inspect, &QPushButton::clicked, this, [this] {
         QDialog dlg(this);
         dlg.setWindowTitle(tr("Firmware Parameter Inspector"));
@@ -309,6 +312,7 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
         auto *profileLabel = new QLabel(tr("Platform profile (last observed): %1").arg(profile.value_or(tr("Unknown"))));
         profileLabel->setTextFormat(Qt::PlainText); profileLabel->setWordWrap(true); layout->addWidget(profileLabel);
         auto *sources = new QPushButton(tr("Read Power Limit Sources…"));
+        navigationtargets::mark(sources, QStringLiteral("fw.sources"), QStringLiteral("Power Limit Sources"), QStringLiteral("PPT PL1 STAPM güç limit kaynakları"));
         sources->setEnabled(!powerSourcesPending_ && !qEnvironmentVariableIsSet("CENTURION_FWATTR_BASE"));
         auto *sourceView = new DiagReportView; sourceView->hide(); layout->addWidget(sourceView, 1);
         connect(sources, &QPushButton::clicked, &dlg, [this, sources, sourceView, &dlg] {
@@ -397,7 +401,7 @@ void FwattrTab::refreshLockState() {
 void FwattrTab::rebuild() {
     if (busy_ || wmiReading_) return;
     ++rowsRevision_;
-    while (tabs_->count()) { QWidget *w = tabs_->widget(0); tabs_->removeTab(0); w->deleteLater(); }
+    while (tabs_->count()) { QWidget *w = tabs_->widget(0); navigationtargets::forget(w); tabs_->removeTab(0); w->deleteLater(); }
     rows_.clear();
     tauLabel_ = nullptr; tauSlider_ = nullptr; tauSpin_ = nullptr; tauNote_ = nullptr;  // went with the old pages
 
@@ -464,6 +468,7 @@ void FwattrTab::rebuild() {
                     g->addWidget(w, r, 1);
                 }
                 auto *spin = new QSpinBox;
+                navigationtargets::mark(spin, QStringLiteral("fw/") + a.device + QLatin1Char('/') + a.name, a.displayName, a.name + QLatin1Char(' ') + a.device + QStringLiteral(" firmware WMI BIOS güç limit"));
                 spin->setMinimumWidth(std::max(70, spin->sizeHint().width()));
                 if (a.viaWmi()) spin->setRange(std::max(1, a.wmiMin), std::max(1, a.wmiMax));
                 else if (a.ranged) { spin->setRange(std::max(1, a.min), std::max(1, a.max)); spin->setSingleStep(a.step); }

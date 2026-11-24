@@ -1,3 +1,4 @@
+#include "navigationtargets.h"
 #include <algorithm>
 #include <QFontMetrics>
 #include "cosearchdialog.h"
@@ -303,6 +304,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     auto *profBox = box("Profile", "box_purple");
     auto *pl = new QHBoxLayout(profBox);
     profileCombo_ = new QComboBox;
+    navigationtargets::mark(profileCombo_, QStringLiteral("ryzen.profile"), QStringLiteral("Curve profile"), QStringLiteral("CO profil"));
     profileCombo_->setMinimumWidth(160);
     auto *bLoad = new QPushButton("Load"), *bSave = new QPushButton("Save"), *bDel = new QPushButton("Delete");
     bDel->setObjectName("btnDanger");
@@ -344,6 +346,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     auto *al = new QHBoxLayout(acBox);
     al->addWidget(new QLabel("Offset:"));
     coall_ = new QLineEdit;
+    navigationtargets::mark(coall_, QStringLiteral("ryzen.coall"), QStringLiteral("All-Core Offset"), QStringLiteral("curve optimizer undervolt tüm çekirdek ofset"));
     coall_->setPlaceholderText(QStringLiteral("%1 … %2").arg(CO_MIN).arg(CO_MAX));
     coall_->setFixedWidth(96);
     coall_->setAlignment(Qt::AlignCenter);
@@ -356,6 +359,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     al->addStretch();
     // The search sits with the all-core controls, as the secondary action.
     auto *coSearch = new QPushButton(tr("CO Search…"));
+    navigationtargets::mark(coSearch, QStringLiteral("ryzen.search"), QStringLiteral("CO Search"), QStringLiteral("stability kararlılık undervolt arama"));
     coSearch->setToolTip(tr("CO Search (experimental): all-core or per-core offset search with 60-second CPU cycles; "
                             "the curve is reset to stock afterwards and the result saved as a profile."));
     connect(coSearch, &QPushButton::clicked, this, [this] {
@@ -386,6 +390,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
 
     // Per-core
     auto *coreBox = box("Per-Core Offsets  (fixed SMU slot layout)", "box_green");
+    navigationtargets::mark(coreBox, QStringLiteral("ryzen.coper"), QStringLiteral("Per-Core Offsets"), QStringLiteral("CCD SMU core çekirdek ofset"));
     auto *cl = new QVBoxLayout(coreBox);
     cl->setSpacing(5);
     auto *hdr = new QHBoxLayout;
@@ -516,6 +521,8 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
             g->addWidget(id, r, 0, Qt::AlignCenter);
 
             auto *e = new QLineEdit;
+            navigationtargets::mark(e, QStringLiteral("ryzen.ccd.%1.slot.%2").arg(ccd).arg(s),
+                tr("CCD %1 / SMU slot %2").arg(ccd).arg(s), cpuHint + QStringLiteral(" CO per-core çekirdek ofset"));
             e->setPlaceholderText("0");
             e->setMinimumWidth(std::max(72, e->fontMetrics().horizontalAdvance(QString::number(CO_MIN)) + 18));
             e->setMinimumHeight(std::max(20, e->fontMetrics().height() + 6));

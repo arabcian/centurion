@@ -36,7 +36,7 @@ add_executable(centurion
     src/simulation.cpp   src/simulation.h
     src/telemetrycache.h
     src/mainwindow.cpp   src/mainwindow.h
-    src/uinavigator.cpp  src/uinavigator.h
+    src/uinavigator.cpp  src/uinavigator.h src/navigationtargets.h
     src/theme.cpp        src/theme.h
     src/privileged.cpp   src/privileged.h
     src/sysadmin.cpp     src/sysadmin.h
@@ -326,6 +326,16 @@ if(CENTURION_BUILD_TESTS)
     target_compile_definitions(centurion-appearance-layout-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME appearance-layout COMMAND centurion-appearance-layout-test)
     set_tests_properties(appearance-layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(centurion-workspacestate-test tests/workspacestate_test.cpp)
+    target_link_libraries(centurion-workspacestate-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-workspacestate-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME workspace-state COMMAND centurion-workspacestate-test)
+    set_tests_properties(workspace-state PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(centurion-navigationtargets-test tests/navigationtargets_test.cpp src/navigationtargets.h)
+    target_link_libraries(centurion-navigationtargets-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-navigationtargets-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME navigation-targets COMMAND centurion-navigationtargets-test)
+    set_tests_properties(navigation-targets PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(centurion-theme-runtime-test tests/theme_runtime_test.cpp src/theme.cpp src/theme.h)
     target_link_libraries(centurion-theme-runtime-test PRIVATE Qt6::Widgets)
     target_compile_definitions(centurion-theme-runtime-test PRIVATE QT_NO_KEYWORDS)

@@ -2,7 +2,9 @@
 #include <QSpinBox>
 #include <QTextCursor>
 #include <QMap>
+#include <QItemSelectionModel>
 #include "diagreportview.h"
+#include "workspacestate.h"
 #include "diagsources.h"
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -123,6 +125,49 @@ QWidget *findingCard(const diag::Finding &f, DiagReportView *view) {
     return card;
 }
 
+// A presentation key only; duplicate table/row keys are deliberately ambiguous.
+QString tableKey(const diag::Table &t) {
+    return QString::fromUtf8(QJsonDocument(QJsonArray{t.viewKind,t.title,QJsonArray::fromStringList(t.headers)}).toJson(QJsonDocument::Compact));
+}
+QString rowKey(const QTreeWidgetItem *item) {
+    QJsonArray row;
+    for (int c = 0; c < item->columnCount(); ++c) row.append(item->text(c));
+    return QString::fromUtf8(QJsonDocument(row).toJson(QJsonDocument::Compact));
+}
+struct TableViewState {
+    QJsonObject header;
+    QSet<QString> selected;
+    QString current;
+    bool hasCurrent = false;
+    int scroll = 0;
+};
+TableViewState captureTable(QTreeWidget *tree) {
+    TableViewState state;
+    state.header = workspace::captureHeader(tree);
+    state.scroll = tree->verticalScrollBar()->value();
+    QMap<QString,int> counts;
+    for (int i=0;i<tree->topLevelItemCount();++i) ++counts[rowKey(tree->topLevelItem(i))];
+    for (const auto *item : tree->selectedItems()) {
+        const auto key = rowKey(item); if (counts.value(key)==1 && !item->isHidden()) state.selected.insert(key);
+    }
+    if (const auto *item = tree->currentItem(); item && !item->isHidden()) {
+        state.current = rowKey(item); state.hasCurrent = counts.value(state.current)==1;
+    }
+    return state;
+}
+void restoreTable(QTreeWidget *tree,const TableViewState &state) {
+    workspace::restoreHeader(tree,state.header,true);
+    QMap<QString,int> counts;
+    for (int i=0;i<tree->topLevelItemCount();++i) ++counts[rowKey(tree->topLevelItem(i))];
+    for (int i=0;i<tree->topLevelItemCount();++i) {
+        auto *item = tree->topLevelItem(i); const auto key = rowKey(item);
+        if (counts.value(key)!=1 || item->isHidden()) continue;
+        if (state.hasCurrent && state.current==key) tree->setCurrentItem(item,0,QItemSelectionModel::NoUpdate);
+        item->setSelected(state.selected.contains(key));
+    }
+    tree->verticalScrollBar()->setValue(state.scroll);
+}
+
 QWidget *tableWidget(const diag::Table &t) {
     auto *box = new QWidget;
     auto *col = new QVBoxLayout(box);
@@ -141,6 +186,7 @@ QWidget *tableWidget(const diag::Table &t) {
         int columns = qMax(1, int(t.headers.size()));
         for (const QStringList &row : t.rows) columns = qMax(columns, int(row.size()));
         tree->setColumnCount(columns);
+        tree->setProperty("workspaceTableKey",tableKey(t));
         tree->setHeaderLabels(t.headers);
         tree->setHeaderHidden(t.headers.isEmpty());
         tree->setRootIsDecorated(false);
@@ -418,6 +464,15 @@ void DiagReportView::setReport(const diag::Report &r) {
     // Preserve position and filters only for a replacement of the same visible report.
     const bool same = hasReport_ && report_.code == r.code;
     const int oldScroll = same ? scroll_->verticalScrollBar()->value() : 0;
+    QMap<QString,TableViewState> previousTables;
+    QMap<QString,int> oldCounts;
+    if (same) {
+        for (auto *tree : tables_) ++oldCounts[tree->property("workspaceTableKey").toString()];
+        for (auto *tree : tables_) {
+            const auto key = tree->property("workspaceTableKey").toString();
+            if (oldCounts.value(key)==1) previousTables.insert(key,captureTable(tree));
+        }
+    }
     const diag::Report replacement = r;  // caller may pass report() itself
     clearBody();
     report_ = replacement;
@@ -500,6 +555,12 @@ void DiagReportView::setReport(const diag::Report &r) {
     bodyLayout_->addStretch();
     filterReport();
     bodyLayout_->activate();
+    QMap<QString,int> newCounts;
+    for (auto *tree : tables_) ++newCounts[tree->property("workspaceTableKey").toString()];
+    for (auto *tree : tables_) {
+        const auto key = tree->property("workspaceTableKey").toString();
+        if (newCounts.value(key)==1 && previousTables.contains(key)) restoreTable(tree,previousTables.value(key));
+    }
     scroll_->verticalScrollBar()->setValue(oldScroll);
 }
 

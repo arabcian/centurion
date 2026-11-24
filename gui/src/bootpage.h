@@ -64,4 +64,6 @@ private:
     QJsonObject data_;
     QElapsedTimer age_;
     bool busy_ = false;
+    bool restoringWorkspace_ = false;
+    QString savedBoot_;
 };

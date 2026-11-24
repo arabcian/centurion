@@ -72,6 +72,7 @@ bool save(const Scene &s, QString *err = nullptr);
 bool remove(const QString &name);
 /// centurion-display (internal-panel refresh rate and brightness; runs as the user).
 QString displayTool();
+QString outcomeLabel(const QString &state);
 Auto loadAuto();
 bool saveAuto(const Auto &a, QString *err = nullptr);
 
@@ -115,6 +116,8 @@ public:
     /// "✗ " = would fail or be skipped, "⚠ " = conflict or cannot be undone.
     QStringList preview(const scenes::Scene &s) const;
     bool busy() const { return busy_; }
+    bool operationActive() const;
+    QString lastOutcome() const { return lastOutcome_; }
     /// Active scene (applied by the GUI or by centurion-gamemode at game start/exit).
     QString active() const { return scenes::activeScene(); }
 
@@ -129,6 +132,7 @@ public:
 
 Q_SIGNALS:
     void started(const QString &name);
+    void transactionState(const QString &id, const QString &scene, const QString &step, const QString &state, const QString &detail);
     void stepState(const QString &step, const QString &state, const QString &detail);
     /// `log` holds one line per component, failures prefixed with "✗".
     void finished(const QString &name, bool ok, const QStringList &log);
@@ -143,6 +147,7 @@ private:
 
     void start(const scenes::Scene &s);
     void addStep(const QString &what, Step step, Step undo = {});
+    void emitStep(const QString &step, const QString &state, const QString &detail = {});
     void rollbackNext();
     void next();
     void finish();
@@ -177,6 +182,10 @@ private:
     QStringList log_;
     bool ok_ = true, busy_ = false;
     QString current_, pending_;
+    QString transactionId_, gpuDeferTransactionId_, lastOutcome_;
+    QString stepDisposition_;
+    bool incomplete_ = false;
+    int deferredInFlight_ = 0;
     bool startupPending_ = false;  // login scene waiting for the first readable power source
     bool deferred_ = false;  // a power-source switch waiting for the game to end
     bool calDeferred_ = false;  // a switch waiting for centurion-calibrate to release its hold

@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QStringList>
+#include <QSet>
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -14,6 +16,9 @@ struct Group {
     qsizetype rows = 0;
     std::array<qsizetype, 4> measured{};
     qsizetype unknownWeight = 0;
+    qint64 latest = 0; // Unix seconds; 0 = unavailable
+    QSet<int> benchmarkVersions;
+    qsizetype unknownBenchmark = 0;
 };
 inline QList<Group> summarize(const QJsonArray &rows) {
     QMap<QString, Group> groups;
@@ -30,6 +35,12 @@ inline QList<Group> summarize(const QJsonArray &rows) {
         const auto y = row.value("y").toArray();
         for (int i = 0; i < 4 && i < y.size(); ++i)
             if (y.at(i).isDouble() && std::isfinite(y.at(i).toDouble())) ++g.measured[i];
+        const auto t = row.value("t");
+        const double seconds = t.toDouble(-1);
+        if (t.isDouble() && seconds > 0 && seconds <= 253402300799. && std::trunc(seconds)==seconds)
+            g.latest=std::max(g.latest,static_cast<qint64>(seconds));
+        const int bv=row.value("bv").toInt(-1);
+        if(bv>=1 && bv<=255) g.benchmarkVersions.insert(bv); else ++g.unknownBenchmark;
         const auto w = row.value("w");
         if (!w.isDouble() || !std::isfinite(w.toDouble()) || w.toDouble() <= 0) ++g.unknownWeight;
     }

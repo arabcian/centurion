@@ -1,4 +1,6 @@
 #include "uinavigator.h"
+#include "navigationtargets.h"
+#include <QMessageBox>
 #include "experimentalui.h"
 #include "healthtab.h"
 #include "optimizetab.h"
@@ -35,6 +37,9 @@ struct Destination {
     QString healthTarget;
     QPointer<OptimizeTab> optimize;
     QString settingKey;
+    QString stableTarget;
+    QString targetTitle;
+    QString navigationNote;
     QString title;
     QString search;
 };
@@ -78,6 +83,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
     search->setObjectName(QStringLiteral("experimentalQuickSearch"));
     search->setPlaceholderText(QObject::tr("CPU, fan, Health, Scenes, tuning…"));
     search->setClearButtonEnabled(true);
+    search->setMaxLength(256);
     searchRow->addWidget(search, 1);
     auto *escape = new QLabel(QStringLiteral("Esc"));
     escape->setObjectName(QStringLiteral("expKeycap"));
@@ -90,7 +96,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
     results->setIconSize(QSize(18, 18));
     results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     layout->addWidget(results, 1);
-    auto *hint = new QLabel(QObject::tr("Search pages, Health tools and visible controls. Enter navigates; it never applies a setting."));
+    auto *hint = new QLabel(QObject::tr("Search pages, tools and settings. Enter navigates; it never applies a setting."));
     hint->setObjectName(QStringLiteral("expPaletteHint"));
     layout->addWidget(hint);
     search->installEventFilter(new ListKeys(results, &dialog));
@@ -145,13 +151,41 @@ void open(QTabWidget *tabs, QWidget *parent) {
             destinations.append(d);
         }
     }
+    // Registered targets are metadata on already constructed editors, including
+    // firmware rows in unopened tabs. Never discover(), read, or show a page here.
+    for (int i = 0; i < tabs->count(); ++i) {
+        if (!tabs->isTabEnabled(i)) continue;
+        QWidget *page = tabs->widget(i);
+        QSet<QString> registered;
+        auto add = [&](const navigationtargets::Entry &entry, bool capabilityUnknown) {
+            if (entry.id.isEmpty() || registered.contains(entry.id)) return;
+            registered.insert(entry.id);
+            Destination d;
+            d.tab = i; d.page = page; d.stableTarget = entry.id;
+            const QString translated = QCoreApplication::translate("NavigationTargets", entry.title.toUtf8().constData());
+            d.targetTitle = translated;
+            d.title = QObject::tr("%1 / %2").arg(tabs->tabText(i), translated);
+            if (capabilityUnknown) d.title += QObject::tr(" (capability not confirmed)");
+            d.navigationNote = QObject::tr("Navigation only. Opening the page can run its existing device reads; availability may change.");
+            const QString pageId = tabs->tabBar()->tabData(i).toString();
+            if (pageId == QLatin1String("NVIDIA Curve") || pageId == QLatin1String("AMD GPU"))
+                d.navigationNote += QLatin1Char(' ') + QObject::tr("Opening the GPU page may wake a device.");
+            d.search = entry.id + QLatin1Char(' ') + entry.title + QLatin1Char(' ') + translated + QLatin1Char(' ') + entry.aliases;
+            destinations.append(d);
+        };
+        for (const auto &entry : navigationtargets::entries(page)) add(entry, false);
+        if (tabs->tabBar()->tabData(i).toString() == QLatin1String("AMD GPU")) {
+            for (const auto &entry : navigationtargets::amdEntries)
+                add({QString::fromLatin1(entry.id), QString::fromLatin1(entry.title), QString::fromUtf8(entry.aliases)}, true);
+        }
+    }
     // Only *already visible* controls are indexed. Building unopened specialist
     // pages here could wake a sleeping dGPU or trigger a privileged probe.
     if (QWidget *page = tabs->currentWidget()) {
         const QString prefix = tabs->tabText(tabs->currentIndex());
         int visibleControls = 0;
         for (QWidget *w : page->findChildren<QWidget *>()) {
-            if (!w->isVisibleTo(page) || !w->isEnabled()) continue;
+            if (!w->isVisibleTo(page) || !w->isEnabled() || w->property(navigationtargets::Id).isValid()) continue;
             QString label;
             if (auto *group = qobject_cast<QGroupBox *>(w)) label = group->title();
             else if (auto *button = qobject_cast<QAbstractButton *>(w)) label = button->text();
@@ -207,8 +241,10 @@ void open(QTabWidget *tabs, QWidget *parent) {
         QList<QPair<int, int>> ranked;
         for (int i = 0; i < destinations.size(); ++i) {
             const Destination &d = destinations.at(i);
-            const int score = !d.settingKey.isEmpty() && filter.compare(d.settingKey, Qt::CaseInsensitive) == 0
-                ? 12000 : toolcatalog::navigationScore(filter, d.title, {d.search});
+            const bool exactKey = (!d.settingKey.isEmpty() && filter.compare(d.settingKey, Qt::CaseInsensitive) == 0)
+                || (!d.stableTarget.isEmpty() && filter.compare(d.stableTarget, Qt::CaseInsensitive) == 0);
+            const bool exactTitle = !d.targetTitle.isEmpty() && toolcatalog::normalize(filter) == toolcatalog::normalize(d.targetTitle);
+            const int score = exactKey ? 12000 : exactTitle ? 11000 : toolcatalog::navigationScore(filter, d.title, {d.search});
             if (score >= 0) ranked.append(qMakePair(score, i));
         }
         std::stable_sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
@@ -217,6 +253,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
             const Destination &d = destinations.at(i);
             auto *item = new QListWidgetItem(icons.value(d.tab), d.title, results);
             item->setData(Qt::UserRole, i);
+            if (!d.navigationNote.isEmpty()) item->setToolTip(d.navigationNote);
         }
         if (results->count()) results->setCurrentRow(0);
     };
@@ -234,6 +271,14 @@ void open(QTabWidget *tabs, QWidget *parent) {
         const int pageIndex = d.page ? tabs->indexOf(d.page) : -1;
         if (pageIndex < 0 || !tabs->isTabEnabled(pageIndex)) return;
         tabs->setCurrentIndex(pageIndex);
+        if (!d.stableTarget.isEmpty()) {
+            // Firmware showEvent may rebuild the entire row list. Resolve the ID
+            // only now; never keep a pointer to a stale firmware editor.
+            if (!d.page || !navigationtargets::reveal(d.page.data(), d.stableTarget))
+                QMessageBox::information(parent, QObject::tr("Navigation target unavailable"),
+                    QObject::tr("This control is not available in the current page state. No setting was applied."));
+            return;
+        }
         if (d.inner && d.innerIndex >= 0 && d.innerIndex < d.inner->count())
             d.inner->setCurrentIndex(d.innerIndex);
         if (d.health && !d.health->openNavigationTarget(d.healthTarget)) return;

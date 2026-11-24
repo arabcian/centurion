@@ -1,4 +1,5 @@
 #include "scenes.h"
+#include "sceneoutcome.h"
 #include "fwattrtab.h"
 #include "hometab.h"
 #include "inteltab.h"
@@ -43,6 +44,28 @@
 #include <unistd.h>
 
 namespace scenes {
+
+QString outcomeLabel(const QString &state) {
+    if (state == "started") return QCoreApplication::translate("SceneEngine", "Started");
+    if (state == "running") return QCoreApplication::translate("SceneEngine", "Running");
+    if (state == "returned_ok" || state == "returned_unverified") return QCoreApplication::translate("SceneEngine", "Helper returned success; independent verification unavailable");
+    if (state == "partial") return QCoreApplication::translate("SceneEngine", "Partial or skipped changes");
+    if (state == "interrupted") return QCoreApplication::translate("SceneEngine", "Interrupted by game ownership");
+    if (state == "compensated_unverified") return QCoreApplication::translate("SceneEngine", "Compensating actions returned success; restoration unverified");
+    if (state == "partial_rollback") return QCoreApplication::translate("SceneEngine", "Partial rollback");
+    if (state == "deferred_pending") return QCoreApplication::translate("SceneEngine", "Deferred GPU step pending");
+    if (state == "deferred_running") return QCoreApplication::translate("SceneEngine", "Deferred GPU step running");
+    if (state == "deferred_superseded") return QCoreApplication::translate("SceneEngine", "Deferred GPU step superseded");
+    if (state == "deferred_skipped" || state == "skipped") return QCoreApplication::translate("SceneEngine", "Skipped");
+    if (state == "deferred_failed" || state == "failed") return QCoreApplication::translate("SceneEngine", "Failed");
+    if (state == "deferred_returned_unverified") return QCoreApplication::translate("SceneEngine", "Deferred GPU helper returned success; verification unavailable");
+    if (state == "restoring") return QCoreApplication::translate("SceneEngine", "Restoring");
+    if (state == "restore_returned_ok") return QCoreApplication::translate("SceneEngine", "Restore returned success; verification unavailable");
+    if (state == "restore_failed") return QCoreApplication::translate("SceneEngine", "Restore failed");
+    if (state == "soft_failure") return QCoreApplication::translate("SceneEngine", "Soft failure");
+    if (state == "rejected") return QCoreApplication::translate("SceneEngine", "Rejected");
+    return QCoreApplication::translate("SceneEngine", "Unknown");
+}
 
 static constexpr qint64 MAX_FILE = 64 * 1024;
 
@@ -849,6 +872,8 @@ void SceneEngine::apply(const QString &name) {
     const auto s = load(name);
     if (!s) {
         nextAuto_ = false;
+        lastOutcome_ = QStringLiteral("rejected");
+        Q_EMIT transactionState(QUuid::createUuid().toString(QUuid::WithoutBraces), name, {}, lastOutcome_, {});
         Q_EMIT finished(name, false, {QStringLiteral("✗ scene '%1' not found").arg(name)});
         return;
     }
@@ -989,6 +1014,15 @@ QStringList SceneEngine::preview(const Scene &s) const {
     return out;
 }
 
+bool SceneEngine::operationActive() const {
+    return busy_ || (gpuDefer_ && gpuDefer_->isActive()) || deferredInFlight_ > 0;
+}
+
+void SceneEngine::emitStep(const QString &step, const QString &state, const QString &detail) {
+    Q_EMIT transactionState(transactionId_, current_, step, state, detail);
+    Q_EMIT stepState(step, state, detail);
+}
+
 void SceneEngine::start(const Scene &s) {
     busy_ = true;
     ok_ = true;
@@ -1004,10 +1038,17 @@ void SceneEngine::start(const Scene &s) {
     expectedProfile_ = s.platformProfile;
     verify_->stop();
     // A new scene cancels the GPU curve an earlier one still has pending (here or in centurion-gamemode).
+    if (gpuDefer_->isActive() && !gpuDeferTransactionId_.isEmpty())
+        Q_EMIT transactionState(gpuDeferTransactionId_, gpuDeferScene_, QStringLiteral("GPU curve"), QStringLiteral("deferred_superseded"), {});
     gpuDefer_->stop();
+    gpuDeferTransactionId_.clear();
+    transactionId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    lastOutcome_.clear();
+    incomplete_ = false;
     deferGpu_.clear();
     setGpuPending(QString());
     Q_EMIT started(s.name);
+    Q_EMIT transactionState(transactionId_, current_, {}, QStringLiteral("started"), {});
 
     // 0. EC fan boost FIRST: turning it off before the profile change means the fans never
     //    spin up for the new profile and then drop again.
@@ -1170,6 +1211,9 @@ void SceneEngine::start(const Scene &s) {
                 if (c.kind == Choice::Reset) { helper("intel-uv-helper", {{"op", "reset"}, {"hold", true}}, [done](bool ok, const QString &m) { done(ok, ok ? "reset (0 mV)" : m); }); return; }
                 applyCpuProfile(c.name, true, done);
             });
+        } else {
+            incomplete_ = true;
+            emitStep(QStringLiteral("CPU tuning"), QStringLiteral("skipped"));
         }
     }
 
@@ -1179,12 +1223,13 @@ void SceneEngine::start(const Scene &s) {
         addStep("GPU curve", [this, c = s.gpu, cpuStep](Done done) {
             // Always a log line: the step used to vanish without a word when the dGPU was
             // off at start-up (no NVIDIA tab), even after the card had been brought back.
-            if (!nvidiaUsable()) { done(true, NvidiaTab::present() ? "skipped (NVIDIA dGPU is off)" : "skipped (no NVIDIA GPU on the bus)"); return; }
+            if (!nvidiaUsable()) { stepDisposition_ = QStringLiteral("skipped"); done(true, NvidiaTab::present() ? "skipped (NVIDIA dGPU is off)" : "skipped (no NVIDIA GPU on the bus)"); return; }
             win_->ensureNvidiaTab();  // the card came back after start-up
             // A curve profile (undervolt / overclock) is applied GPU_DEFER_MS after the scene, in the background
             // (armed by finish()): never in the middle of the power-profile / firmware-limit / CPU-curve switch.
             if (c.kind == Choice::Profile) {
                 deferGpu_ = c.name;
+                stepDisposition_ = QStringLiteral("deferred_pending");
                 done(true, QStringLiteral("'%1' in %2 s, in the background").arg(c.name).arg(GPU_DEFER_MS / 1000));
                 return;
             }
@@ -1206,7 +1251,7 @@ void SceneEngine::start(const Scene &s) {
             // By name: tune-profile-helper takes the values from the root-owned approved store, never from this request.
             QJsonObject req{{"op", "apply_preset"}, {"mode", "manual"}, {"replace", true}, {"preset", QJsonValue::Null}};
             auto run = [this, done, c](const QJsonObject &rq) {
-                privileged::run(privileged::helperPath("tune-profile-helper"), rq, this, [done, c](const privileged::Result &r) {
+                privileged::run(privileged::helperPath("tune-profile-helper"), rq, this, [this, done, c](const privileged::Result &r) {
                     if (r.reached && r.json.value("game_active").toBool()) { done(true, "left alone (game session active)"); return; }
                     if (!r.ok()) { done(false, r.message()); return; }
                     QString msg = c.kind == Choice::Reset ? QStringLiteral("originals restored") : "'" + c.name + "'";
@@ -1217,7 +1262,7 @@ void SceneEngine::start(const Scene &s) {
                         if (m > 0) { n += m; keys << v.toObject().value("key").toString(); }
                     }
                     // Still a success (the writes went through), but not silently: the values read back differently.
-                    if (n > 0) msg += QStringLiteral(" · ⚠ %1 value(s) did not stick (%2)").arg(n).arg(keys.join(QStringLiteral(", ")));
+                    if (n > 0) { incomplete_ = true; stepDisposition_ = QStringLiteral("partial"); msg += QStringLiteral(" · ⚠ %1 value(s) did not stick (%2)").arg(n).arg(keys.join(QStringLiteral(", "))); }
                     done(true, msg);
                 }, 120000);
             };
@@ -1342,7 +1387,7 @@ void SceneEngine::start(const Scene &s) {
             QStringList argv = QProcess::splitCommand(cmd);
             if (argv.isEmpty()) { done(false, "empty command"); return; }
             const QString prog = argv.takeFirst();
-            done(QProcess::startDetached(prog, argv), prog);
+            done(QProcess::startDetached(prog, argv), QStringLiteral("user command launch"));
         });
     }
 
@@ -1375,27 +1420,33 @@ void SceneEngine::next() {
     // Never undo power/firmware settings under the game's new tuning ownership.
     if (autoApply_ && !steps_.isEmpty() && (gameSessions() > 0 || gameStarting() || gameSceneActive())) {
         log_ << QStringLiteral("a game started — remaining steps skipped; the game owns further changes");
-        for (const auto &pending : steps_) Q_EMIT stepState(pending.name, QStringLiteral("skipped"), {});
+        for (const auto &pending : steps_) emitStep(pending.name, QStringLiteral("skipped"));
         steps_.clear();
         gameTookOver_ = true;
     }
     if (steps_.isEmpty()) { finish(); return; }
     const TransactionStep step = steps_.takeFirst();
-    Q_EMIT stepState(step.name, QStringLiteral("running"), {});
+    stepDisposition_.clear();
+    emitStep(step.name, QStringLiteral("running"));
     if (step.undo) applied_.append(step);  // includes a helper's PARTIAL write before reporting failure
     step.apply([this, step](bool ok, const QString &msg) {
         // A soft failure wrote nothing (missing snapshot, wrong profile, busy tab): reported as a problem,
         // like before transactions, but the remaining steps still run and nothing is rolled back.
         const bool soft = std::exchange(softFail_, false) && !ok;
         ok_ &= ok;
-        Q_EMIT stepState(step.name, ok ? QStringLiteral("returned_ok") : soft ? QStringLiteral("soft_failure") : QStringLiteral("failed"), msg);
+        QString state = ok ? QStringLiteral("returned_ok") : soft ? QStringLiteral("soft_failure") : QStringLiteral("failed");
+        if (ok && !stepDisposition_.isEmpty()) state = stepDisposition_;
+        else if (ok && (msg.startsWith("skipped") || msg.startsWith("left alone"))) state = QStringLiteral("skipped");
+        if (state == QStringLiteral("skipped")) incomplete_ = true;
+        emitStep(step.name, state, msg);
         log_ << (ok ? QString() : QStringLiteral("✗ ")) + step.name + (msg.isEmpty() ? QString() : QStringLiteral(": ") + msg);
         if (!soft && !step.undo && !msg.startsWith("skipped") && !msg.startsWith("left alone") && !msg.startsWith("unchanged"))
             uncompensated_ = true;
         if (!ok && !soft)
-            for (const auto &pending : steps_) Q_EMIT stepState(pending.name, QStringLiteral("skipped"), {});
+            for (const auto &pending : steps_) emitStep(pending.name, QStringLiteral("skipped"));
         if (!ok && !soft) {
             steps_.clear();
+            if (!deferGpu_.isEmpty()) emitStep(QStringLiteral("GPU curve"), QStringLiteral("deferred_superseded"));
             deferGpu_.clear();
             rollingBack_ = true;
             log_ << QStringLiteral("Transaction failed; undoing captured settings in reverse order…");
@@ -1419,9 +1470,9 @@ void SceneEngine::rollbackNext() {
         return;
     }
     const TransactionStep s = applied_.takeLast();
-    Q_EMIT stepState(s.name, QStringLiteral("restoring"), {});
+    emitStep(s.name, QStringLiteral("restoring"));
     s.undo([this, what = s.name](bool ok, const QString &msg) {
-        Q_EMIT stepState(what, ok ? QStringLiteral("restore_returned_ok") : QStringLiteral("restore_failed"), msg);
+        emitStep(what, ok ? QStringLiteral("restore_returned_ok") : QStringLiteral("restore_failed"), msg);
         if (!ok) rollbackFailed_ = true;
         log_ << QStringLiteral("↩ %1: %2%3").arg(what, ok ? QStringLiteral("restored") : QStringLiteral("FAILED"),
                                                    msg.isEmpty() ? QString() : QStringLiteral(" — ") + msg);
@@ -1440,19 +1491,25 @@ void SceneEngine::finish() {
     }
     if (!gameOwns) {
         const QString activeName = fullyRestored ? priorScene_ : current_;
-        setActiveScene(activeName, !ok_ && !fullyRestored);
+        setActiveScene(activeName, (!ok_ || incomplete_) && !fullyRestored);
         seenActive_ = activeName;
     }
     if (!rollingBack_) {
+        if (gameOwns && !deferGpu_.isEmpty()) emitStep(QStringLiteral("GPU curve"), QStringLiteral("deferred_skipped"));
         if (const QString n = std::exchange(deferGpu_, QString()); !n.isEmpty() && !gameOwns) {
             gpuDeferProfile_ = n;
             gpuDeferScene_ = current_;
+            gpuDeferTransactionId_ = transactionId_;
             gpuDeferAuto_ = autoApply_;
             gpuDeferToken_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
             setGpuPending(gpuDeferToken_);
             gpuDefer_->start(GPU_DEFER_MS);
         }
     } else deferGpu_.clear();
+    const auto outcome = sceneoutcome::terminal(ok_, rollingBack_, fullyRestored, gameOwns, incomplete_,
+        gpuDefer_->isActive() && gpuDeferTransactionId_ == transactionId_);
+    lastOutcome_ = QString::fromLatin1(outcome.data(), static_cast<qsizetype>(outcome.size()));
+    Q_EMIT transactionState(transactionId_, current_, {}, lastOutcome_, {});
     // Local append-only transaction history for Incident Timeline; never log request secrets or command arguments.
     const QString stateBase = qEnvironmentVariableIsEmpty("XDG_STATE_HOME") ? QDir::homePath() + QStringLiteral("/.local/state") : qEnvironmentVariable("XDG_STATE_HOME");
     const QString path = stateBase + QStringLiteral("/centurion/scene-transactions.jsonl");
@@ -1467,6 +1524,7 @@ void SceneEngine::finish() {
         const QString currentBootId = bootIdFile.open(QIODevice::ReadOnly) ? QString::fromUtf8(bootIdFile.readAll()).trimmed() : QString();
         const QJsonObject record{{"boot", currentBootId}, {"t", double(QDateTime::currentSecsSinceEpoch())}, {"scene", current_},
                                  {"previous", priorScene_}, {"ok", ok_}, {"rolled_back", fullyRestored},
+                                 {"transaction_id", transactionId_}, {"outcome", lastOutcome_},
                                  {"partial", !ok_ && !fullyRestored}, {"game_took_over", gameOwns},
                                  {"steps", QJsonArray::fromStringList(log_)}};
         tx.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
@@ -1490,19 +1548,28 @@ void SceneEngine::finish() {
 
 void SceneEngine::gpuDeferredFire() {
     // Claimed under the state lock: a scene applied since (here or by centurion-gamemode) replaced or cancelled it.
-    if (!claimGpuPending(gpuDeferToken_)) return;
+    const QString id = std::exchange(gpuDeferTransactionId_, QString());
     const QString name = gpuDeferProfile_, scene = gpuDeferScene_;
-    auto report = [this, name, scene](bool ok, const QString &m) {
+    if (!claimGpuPending(gpuDeferToken_)) {
+        Q_EMIT transactionState(id, scene, QStringLiteral("GPU curve"), QStringLiteral("deferred_superseded"), {});
+        return;
+    }
+    auto report = [this, name, scene, id](bool ok, const QString &m) {
+        const QString state = !ok ? QStringLiteral("deferred_failed") : m == QStringLiteral("applied") ? QStringLiteral("deferred_returned_unverified") : QStringLiteral("deferred_skipped");
+        Q_EMIT transactionState(id, scene, QStringLiteral("GPU curve"), state, m);
+        if (transactionId_ != id) return; // older deferred event remains in the identified history only
         Q_EMIT finished(QString(), ok, {(ok ? QString() : QStringLiteral("✗ "))
                                         + QStringLiteral("GPU curve '%1' (%2 s after scene '%3'): %4").arg(name).arg(GPU_DEFER_MS / 1000).arg(scene, m)});
-        if (!ok && activeScene() == scene) setActiveScene(scene, true);
+        if ((!ok || state == QStringLiteral("deferred_skipped")) && activeScene() == scene) setActiveScene(scene, true);
     };
     // Same rule as the remaining steps of an automatic switch: a game that started meanwhile wins.
     if (gpuDeferAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { report(true, QStringLiteral("dropped, a game started")); return; }
     if (!nvidiaUsable()) { report(true, QStringLiteral("skipped (NVIDIA dGPU is off)")); return; }
     if (win_->nvidia() && win_->nvidia()->busy()) { report(false, QStringLiteral("the NVIDIA tab is busy; skipped")); return; }
+    ++deferredInFlight_;
+    Q_EMIT transactionState(id, scene, QStringLiteral("GPU curve"), QStringLiteral("deferred_running"), {});
     helper("nvcurve-root-helper", QJsonObject{{"op", "apply_named_profile"}, {"name", name}},
-           [report](bool ok, const QString &m) { report(ok, ok ? QStringLiteral("applied") : m); });
+           [this, report](bool ok, const QString &m) { --deferredInFlight_; report(ok, ok ? QStringLiteral("applied") : m); });
 }
 
 /// After an automatic switch the EC may still change the platform profile on its own (it re-evaluates the

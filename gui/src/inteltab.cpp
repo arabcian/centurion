@@ -1,3 +1,4 @@
+#include "navigationtargets.h"
 #include "inteltab.h"
 #include "systemdiagnostics.h"
 #include "diagreportview.h"
@@ -192,6 +193,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     for (int i = 0; i < planes.size(); ++i) {
         auto *on = new QCheckBox(planes[i].second);
         auto *sp = dspin(UV_MIN, 0.0, 1.0, 1, " mV");
+        navigationtargets::mark(sp, QStringLiteral("intel.voltage.") + planes[i].first, planes[i].second, QStringLiteral("OC mailbox undervolt voltaj ofseti") + QLatin1Char(' ') + planes[i].first);
         auto *cur = new QLabel("–");
         cur->setMinimumWidth(80);
         connect(on, &QCheckBox::toggled, sp, &QWidget::setEnabled);
@@ -230,6 +232,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     vg->addWidget(noPlanes_, planes.size() + 3, 0, 1, 3);
     vg->setColumnStretch(2, 1);
     auto *domain = new QPushButton(tr("Voltage Domains and CPU Topology…"));
+    navigationtargets::mark(domain, QStringLiteral("intel.topology"), QStringLiteral("Voltage Domains and CPU Topology"), QStringLiteral("P E SMT voltaj alanları işlemci topolojisi"));
     connect(domain, &QPushButton::clicked, this, &IntelTab::domainOverview);
     vg->addWidget(domain, planes.size() + 4, 0, 1, 3);
     vg->setRowStretch(planes.size() + 5, 1);
@@ -289,6 +292,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
 
     // ── limit reasons ──
     auto *rBox = box("Limit reasons  (MSR 0x64F / 0x6B0 / 0x6B1)", "box_blue");
+    navigationtargets::mark(rBox, QStringLiteral("intel.reasons"), QStringLiteral("Limit reasons"), QStringLiteral("throttle kısıtlama nedenleri"));
     auto *rg = new QGridLayout(rBox);
     rg->setVerticalSpacing(2);
     rg->setHorizontalSpacing(14);
@@ -398,6 +402,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
 
     // ── limits ──
     auto *lBox = box("Limits", "box_blue");
+    navigationtargets::mark(lBox, QStringLiteral("intel.limits"), QStringLiteral("Limits"), QStringLiteral("PL1 PL2 ICCmax RAPL güç akım limitleri"));
     auto *lg = new QGridLayout(lBox);
     lg->setVerticalSpacing(3);
     int r = 0;
@@ -405,6 +410,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     for (const auto &[k, label] : QList<QPair<QString, QString>>{{"core", "Core"}, {"cache", "Cache"}, {"gpu", "iGPU"}}) {
         auto *on = new QCheckBox(label);
         auto *sp = dspin(1.0, ICC_MAX, 1.0, 2, " A");
+        navigationtargets::mark(sp, QStringLiteral("intel.iccmax.") + k, QStringLiteral("IccMax / ") + label, QStringLiteral("VR current akım limiti"));
         sp->setValue(100.0);
         auto *cur = new QLabel("–");
         connect(on, &QCheckBox::toggled, sp, &QWidget::setEnabled);
@@ -419,6 +425,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     lg->addWidget(muted("Thermal"), r++, 0, 1, 4);
     tjOn_ = new QCheckBox("TCC offset");
     tj_ = new QSpinBox;
+    navigationtargets::mark(tj_, QStringLiteral("intel.tcc"), QStringLiteral("TCC offset"), QStringLiteral("TjMax thermal sıcaklık ofseti"));
     tj_->setRange(0, 63);
     tj_->setSuffix(" °C");
     tj_->setMinimumWidth(std::max(104, tj_->sizeHint().width()));
@@ -472,6 +479,8 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     lg->addWidget(muted("Package power (MSR 0x610)"), r++, 0, 1, 4);
     auto mkPl = [&](const QString &label, double w, double s, const QString &tip) {
         PlRow p{new QCheckBox(label), dspin(1, 250, 1, 0, " W"), dspin(0.001, 1000, 0.5, 3, " s"), new QLabel("–")};
+        navigationtargets::mark(p.w, QStringLiteral("intel.power.") + label, label, QStringLiteral("RAPL MSR 0x610 watt güç limiti"));
+        navigationtargets::mark(p.s, QStringLiteral("intel.time.") + label, label + QStringLiteral(" time window"), QStringLiteral("tau süre zaman penceresi"));
         p.w->setValue(w);
         p.s->setValue(s);
         p.s->setMinimumWidth(std::max(96, p.s->sizeHint().width()));
@@ -571,6 +580,7 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
 
     // ── boot / daemon ──
     auto *dBox = box("Boot, resume && daemon", "box_green");
+    navigationtargets::mark(dBox, QStringLiteral("intel.boot"), QStringLiteral("Boot resume daemon"), QStringLiteral("açılış devam servis"));
     auto *dg = new QGridLayout(dBox);
     dg->setVerticalSpacing(3);
     dg->addWidget(new QLabel("Store for"), 0, 0);

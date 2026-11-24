@@ -1,3 +1,4 @@
+#include "navigationtargets.h"
 #include "nvidiatab.h"
 #include "profilediff.h"
 #include "trialbar.h"
@@ -303,6 +304,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(bSave, &QPushButton::clicked, this, &NvidiaTab::saveProfileAs);
     prow->addWidget(bSave);
     profiles_ = new QComboBox;
+    navigationtargets::mark(profiles_, QStringLiteral("nv.profile"), QStringLiteral("Curve profile"), QStringLiteral("V/F profil"));
     profiles_->setMinimumWidth(150);
     connect(profiles_, &QComboBox::activated, this, &NvidiaTab::onProfileSelected);
     prow->addWidget(profiles_, 1);
@@ -319,6 +321,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     bDel->setObjectName("btnDanger");
     connect(bDel, &QPushButton::clicked, this, &NvidiaTab::deleteProfile);
     auto *bDrv = new QPushButton("Driver options…");
+    navigationtargets::mark(bDrv, QStringLiteral("nv.driver"), QStringLiteral("Driver options"), QStringLiteral("module parameters sürücü seçenekleri"));
     bDrv->setToolTip(tr("nvidia / nvidia-drm module options (modprobe.d), applied at the next boot."));
     connect(bDrv, &QPushButton::clicked, this, [this] { NvRegDialog(this).exec(); });
     prow->addWidget(bApplyProf);
@@ -394,6 +397,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
 
     // Curve
     auto *curve = new QGroupBox("V/F Curve");
+    navigationtargets::mark(curve, QStringLiteral("nv.curve"), QStringLiteral("V/F Curve"), QStringLiteral("voltage frequency undervolt voltaj frekans eğrisi"));
     auto *cv = new QVBoxLayout(curve);
     cv->setSpacing(4);
     cv->addLayout(ih);
@@ -435,6 +439,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     layers->addWidget(new QLabel(tr("Solid: draft")));
     layers->addStretch();
     auto *diff = new QPushButton(tr("Point comparison…"));
+    navigationtargets::mark(diff, QStringLiteral("nv.points"), QStringLiteral("Point comparison"), QStringLiteral("readback delta nokta karşılaştırma"));
     connect(diff, &QPushButton::clicked, this, [this] {
         QDialog dlg(this);
         dlg.setWindowTitle(tr("V/F Curve — Point Comparison"));
@@ -539,9 +544,11 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch->addSpacing(8);
     ch->addWidget(lbl("VRAM lock:", theme::MUTED));
     lockMinSpin_ = spin(0, 20000, " MHz", 92);
+    navigationtargets::mark(lockMinSpin_, QStringLiteral("nv.vram.min"), QStringLiteral("VRAM lock minimum"), QStringLiteral("memory clock bellek frekans kilidi"));
     lockMinSpin_->setSpecialValueText("–");
     lockMinSpin_->setToolTip(tr("Min memory clock (MHz). 0 → uses Max for both."));
     lockMaxSpin_ = spin(0, 20000, " MHz", 92);
+    navigationtargets::mark(lockMaxSpin_, QStringLiteral("nv.vram.max"), QStringLiteral("VRAM lock maximum"), QStringLiteral("memory clock bellek frekans kilidi"));
     lockMaxSpin_->setSpecialValueText("–");
     lockMaxSpin_->setToolTip(tr("Max memory clock (MHz) — the actual lock target."));
     ch->addWidget(lockMinSpin_);
@@ -560,7 +567,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     // at the flatten frequency makes the GPU use the lowest-voltage point that
     // reaches it — the flat top, whatever the points above it say.
     ch2->addWidget(lbl("Core cap:", theme::MUTED));
-    coreCapSpin_ = spin(209, 4000, " MHz", 96);  // minimum (209) is 'off': the driver takes 210+ only
+    coreCapSpin_ = spin(209, 4000, " MHz", 96);
+    navigationtargets::mark(coreCapSpin_, QStringLiteral("nv.cap"), QStringLiteral("Core clock cap"), QStringLiteral("GPU frequency çekirdek frekans sınırı"));  // minimum (209) is 'off': the driver takes 210+ only
     coreCapSpin_->setSpecialValueText(QStringLiteral("off"));
     coreCapSpin_->setToolTip(tr("Highest core clock the GPU may use (NVML locked clocks). The driver keeps every curve\n"
                              "point within ~1000 MHz of stock whatever offset it stores, so a flatten cannot pull the\n"
@@ -569,7 +577,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
                              "Apply Offsets. Cap / Uncap change it right away."));
     ch2->addWidget(coreCapSpin_);
     ch2->addWidget(lbl("+", theme::MUTED));
-    capCompSpin_ = spin(0, 500, " MHz", 90);  // 80 clipped the "z" of "0 MHz"
+    capCompSpin_ = spin(0, 500, " MHz", 90);
+    navigationtargets::mark(capCompSpin_, QStringLiteral("nv.cap.comp"), QStringLiteral("Core cap compensation"), QStringLiteral("clock offset frekans telafi"));  // 80 clipped the "z" of "0 MHz"
     capCompSpin_->setToolTip(tr("Compensation added to the core cap when it is written.\n"
                              "Blackwell GPUs run ~90-115 MHz below a locked clock: measure the gap\n"
                              "(target − clock under load) and enter it here, so the GPU lands on the value you set.\n"
@@ -611,6 +620,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch2->addSpacing(8);
     ch2->addWidget(lbl("PowerMizer:", theme::MUTED));
     powerMizer_ = new QComboBox;
+    navigationtargets::mark(powerMizer_, QStringLiteral("nv.powermizer"), QStringLiteral("PowerMizer"), QStringLiteral("performance power profile güç performans profili"));
     powerMizer_->setEnabled(false);
     powerMizer_->setToolTip(tr("Auto — the driver decides (default)\n"
                             "Adaptive — clocks drop as soon as load drops\n"

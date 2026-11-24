@@ -27,6 +27,7 @@
 
 #include "blocklistsubs.h"
 #include "traffic.h"
+#include "wifiage.h"
 
 class FirewallTab;
 class LookupTab;
@@ -113,6 +114,7 @@ private:
     quint64 wifiScanRevision_ = 0;
     QJsonObject wifiScanSnapshot_;
     QDateTime wifiScanReceived_;
+    std::optional<wifiage::Tick> wifiScanTick_;
     class QPushButton *wifiRescan_ = nullptr;
     QTimer *wifiTimer_;
     int wifiTab_ = -1;

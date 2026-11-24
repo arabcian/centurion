@@ -1,6 +1,7 @@
 #include <QUuid>
 #include "autotuneprogress.h"
 #include "calibrationcoverage.h"
+#include "calibrationmath.h"
 #include "insights.h"
 #include "optimizetab.h"
 #include "profilediff.h"
@@ -20,6 +21,8 @@
 #include "diagsources.h"
 
 #include <memory>
+#include <utility>
+#include <limits>
 #include <cmath>
 #include <QItemSelectionModel>
 #include <QElapsedTimer>
@@ -60,6 +63,9 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPolygonF>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
@@ -568,18 +574,20 @@ void OptimizeTab::buildUi() {
     autoRow->addWidget(fieldBtn);
     autoRow->addWidget(calBtn);
     auto *calData = new QPushButton(tr("Calibration Data…"));
-    connect(calData,&QPushButton::clicked,this,[this] {
-        const QString path=QStringLiteral("/var/lib/centurion/signature.json");
+    const auto viewCalibration = [this](const QString &path, bool live) {
         QFile f(path);
-        if(!f.open(QIODevice::ReadOnly) || f.size() > (8LL<<20)) { QMessageBox::warning(this,tr("Calibration Data"),tr("Signature unavailable or exceeds the 8 MiB limit.")); return; }
+        if(!QFileInfo(path).isFile() || !f.open(QIODevice::ReadOnly) || f.size() > (8LL<<20)) { QMessageBox::warning(this,tr("Calibration Data"),tr("Signature unavailable or exceeds the 8 MiB limit.")); return; }
         const auto bytes=f.read((8LL<<20)+1);
         const auto doc=QJsonDocument::fromJson(bytes);
         if(bytes.size()>(8LL<<20) || !doc.isObject()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Invalid signature.")); return; }
         const auto sig=doc.object();
-        if(sig.value("version").toInt()!=10 || !sig.value("rows").isArray()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Unsupported signature format.")); return; }
+        if(sig.value("version").toInt()!=10 || !sig.value("rows").isArray() || !sig.value("fingerprint").isObject()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Unsupported signature format.")); return; }
+        if(sig.value("rows").toArray().size()>20000) { QMessageBox::warning(this,tr("Calibration Data"),tr("Signature exceeds the viewer limit of 20,000 rows.")); return; }
         QDialog dlg(this); dlg.setWindowTitle(tr("Calibration Data")); dlg.resize(970,600);
         auto *layout=new QVBoxLayout(&dlg);
         auto *hint=new QLabel(tr("Historical records only. This viewer does not establish current model validity or modify calibration data. File timestamp: %1").arg(QFileInfo(f).lastModified().toString(Qt::ISODate))); hint->setWordWrap(true); layout->addWidget(hint);
+        auto *origin = new QLabel(live ? tr("Live signature snapshot (read-only)") : tr("External signature snapshot (not installed)"));
+        layout->addWidget(origin);
         auto *tabs=new QTabWidget; layout->addWidget(tabs,1);
         auto *summary=new QPlainTextEdit; summary->setReadOnly(true);
         QJsonObject meta; for(const char *key:{"version","fingerprint","on_battery","strategies","contexts"}) meta.insert(QLatin1String(key),sig.value(QLatin1String(key)));
@@ -589,8 +597,8 @@ void OptimizeTab::buildUi() {
         for(const auto &v:sig.value("rows").toArray()) { const auto r=v.toObject(); const QStringList cells{profilediff::display(r.value("s")),profilediff::display(r.value("ph")),r.value("k").toString(),r.value("ps").toString()}; const auto key=QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(cells)).toJson(QJsonDocument::Compact)); ++counts[key]; fields[key]=cells; }
         for(auto it=counts.cbegin();it!=counts.cend();++it) { int row=table->rowCount(); table->insertRow(row); const auto cells=fields.value(it.key()); for(int c=0;c<4;++c)table->setItem(row,c,new QTableWidgetItem(cells[c])); table->setItem(row,4,new QTableWidgetItem(QString::number(it.value()))); }
         tabs->addTab(table,tr("Measurement Sessions"));
-        auto *coverage = new QTableWidget; coverage->setColumnCount(10);
-        coverage->setHorizontalHeaderLabels({tr("Phase ID"), tr("Kernel"), tr("Context"), tr("Power source"), tr("Records"), tr("Latency"), tr("Throughput"), tr("Power"), tr("Memory"), tr("Unknown / nonpositive weight")});
+        auto *coverage = new QTableWidget; coverage->setColumnCount(12);
+        coverage->setHorizontalHeaderLabels({tr("Phase ID"), tr("Kernel"), tr("Context"), tr("Power source"), tr("Records"), tr("Latency"), tr("Throughput"), tr("Power"), tr("Memory"), tr("Unknown / nonpositive weight"),tr("Latest record"),tr("Benchmark versions")});
         coverage->setEditTriggers(QAbstractItemView::NoEditTriggers);
         coverage->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
         for (const auto &g : calibrationcoverage::summarize(sig.value("rows").toArray())) {
@@ -599,6 +607,11 @@ void OptimizeTab::buildUi() {
             cells << QString::number(g.rows);
             for (auto n : g.measured) cells << QStringLiteral("%1 / %2").arg(n).arg(g.rows);
             cells << QString::number(g.unknownWeight);
+            cells << (g.latest ? QDateTime::fromSecsSinceEpoch(g.latest).toString(Qt::ISODate) : tr("Unknown"));
+            auto versions=g.benchmarkVersions.values(); std::sort(versions.begin(),versions.end());
+            QStringList versionNames; for(int bv:versions) versionNames << QString::number(bv);
+            if(g.unknownBenchmark) versionNames << tr("Unknown (%1 records)").arg(g.unknownBenchmark);
+            cells << versionNames.join(QStringLiteral(", "));
             for (int c = 0; c < cells.size(); ++c) coverage->setItem(row,c,new QTableWidgetItem(cells.at(c)));
         }
         auto *coveragePage = new QWidget; auto *coverageLayout = new QVBoxLayout(coveragePage);
@@ -606,9 +619,97 @@ void OptimizeTab::buildUi() {
         coverageHint->setWordWrap(true); coverageLayout->addWidget(coverageHint); coverageLayout->addWidget(coverage,1);
         tabs->addTab(coveragePage,tr("Measurement Coverage"));
 
+        // Descriptive comparison only. Match the actual fingerprint tolerance, without claiming
+        // that a successful identity comparison means a usable fitted model.
+        auto *validity = new QPlainTextEdit; validity->setReadOnly(true);
+        const auto fp = sig.value("fingerprint").toObject();
+        const auto product = (diagsrc::read(QStringLiteral("/sys/class/dmi/id/product_name")) + QLatin1Char(' ') +
+            diagsrc::read(QStringLiteral("/sys/class/dmi/id/product_version"))).trimmed();
+        const auto bios = diagsrc::read(QStringLiteral("/sys/class/dmi/id/bios_version"));
+        const auto cpuMatch = QRegularExpression(QStringLiteral("(?m)^model name\\s*:\\s*([^\\r\\n]+)")).match(diagsrc::read(QStringLiteral("/proc/cpuinfo")));
+        const auto memMatch = QRegularExpression(QStringLiteral("(?m)^MemTotal:\\s*([0-9]+)\\s*kB")).match(diagsrc::read(QStringLiteral("/proc/meminfo")));
+        bool ramOk = false; const auto ram = memMatch.captured(1).toULongLong(&ramOk)/1024;
+        const double oldRam = fp.value("ram_mib").toDouble(-1);
+        QStringList checks;
+        const auto compareText = [this,&checks](const QString &label, const QString &saved, const QString &current) {
+            checks << tr("%1: saved %2 / current %3 — %4").arg(label,
+                saved.isEmpty()?tr("Unknown"):saved, current.isEmpty()?tr("Unknown"):current,
+                saved.isEmpty() || current.isEmpty()?tr("Unknown"):saved==current?tr("Match"):tr("Different"));
+        };
+        compareText(tr("Product"),fp.value("product").toString(),product);
+        compareText(tr("CPU"),fp.value("cpu").toString(),cpuMatch.captured(1).trimmed());
+        compareText(tr("BIOS"),fp.value("bios").toString(),bios);
+        if (ramOk && ram > 0 && oldRam > 0 && oldRam <= 9007199254740991. && std::trunc(oldRam)==oldRam)
+            checks << tr("RAM: saved %1 / current %2 MiB — %3 (saved RAM tolerance 2%)").arg(oldRam,0,'f',0).arg(ram).arg(calibrationmath::ramMatches(static_cast<quint64>(oldRam),ram)?tr("Match"):tr("Different"));
+        else checks << tr("RAM comparison unavailable.");
+        checks << tr("Current kernel: %1").arg(diagsrc::read(QStringLiteral("/proc/sys/kernel/osrelease")));
+        checks << tr("BIOS differences alone do not invalidate a signature. Kernel, benchmark version, context and power source affect model evidence; this view is not the solver's validity decision.");
+        validity->setPlainText(checks.join(QLatin1Char('\n'))); tabs->addTab(validity,tr("Compatibility"));
+
+        // predcheck is emitted by calib::note_predcheck_in. No inferred pairing across runs.
+        auto *predictionPage = new QWidget; auto *predictionLayout = new QVBoxLayout(predictionPage);
+        auto *predictionFilter = new QLineEdit; predictionFilter->setPlaceholderText(tr("Filter source, phase, goal or session"));
+        auto *predictionSummary = new QLabel; predictionSummary->setWordWrap(true);
+        auto *predictionTable = new QTableWidget; predictionTable->setColumnCount(10);
+        predictionTable->setHorizontalHeaderLabels({tr("Time"),tr("Session"),tr("Source"),tr("Phase"),tr("Goal"),tr("Predicted"),tr("Uncertainty (SD)"),tr("Measured"),tr("Error (measured − predicted)"),tr("Standardized error")});
+        predictionTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        predictionTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        auto *predictionChart = new LineChart;
+        predictionLayout->addWidget(predictionFilter); predictionLayout->addWidget(predictionSummary);
+        predictionLayout->addWidget(predictionTable,2); predictionLayout->addWidget(predictionChart,1);
+        const auto records = sig.value("predcheck").toArray();
+        auto refillPrediction = [this,records,predictionFilter,predictionSummary,predictionTable,predictionChart] {
+            predictionTable->setRowCount(0); QVector<LineChart::Point> points;
+            qsizetype valid=0, inside=0, invalid=0; bool gap=false; QStringList previousGroup;
+            const auto begin=std::max(qsizetype(0),records.size()-200);
+            const auto filter=predictionFilter->text().trimmed();
+            for (qsizetype i=begin;i<records.size();++i) {
+                const auto r=records.at(i).toObject();
+                const QStringList meta{profilediff::display(r.value("t")),profilediff::display(r.value("sess")),r.value("src").toString(),r.value("phase").toString(),r.value("goal").toString()};
+                if (!filter.isEmpty() && !meta.join(QLatin1Char(' ')).contains(filter,Qt::CaseInsensitive)) { gap=true; continue; }
+                const auto mu=r.value("mu"),sd=r.value("sd"),obs=r.value("obs");
+                const auto result = mu.isDouble() && sd.isDouble() && obs.isDouble() ? calibrationmath::prediction(mu.toDouble(),sd.toDouble(),obs.toDouble()) : std::optional<calibrationmath::Prediction>{};
+                QStringList cells=meta;
+                const auto displayNumber=[this](const QJsonValue &v) { return v.isDouble() && std::isfinite(v.toDouble()) ? QString::number(v.toDouble(),'g',12) : tr("Unknown"); };
+                cells << displayNumber(mu) << displayNumber(sd) << displayNumber(obs);
+                if (result) {
+                    ++valid; if(result->withinTwoSigma) ++inside;
+                    cells << QString::number(result->error,'g',12) << QString::number(result->z,'g',12);
+                    const QStringList group{meta.at(1),meta.at(2),meta.at(3),meta.at(4)};
+                    points.append({double(i+1),result->z,meta.join(QStringLiteral(" / ")),gap || group!=previousGroup}); gap=false; previousGroup=group;
+                } else { ++invalid; gap=true; cells << tr("Unknown") << tr("Unknown"); }
+                const int row=predictionTable->rowCount(); predictionTable->insertRow(row);
+                for(int c=0;c<cells.size();++c) predictionTable->setItem(row,c,new QTableWidgetItem(cells.at(c)));
+            }
+            predictionChart->setPoints(points,QStringLiteral(" SD"));
+            predictionSummary->setText(tr("Last 200 records at most; %1 valid, %2 invalid, %3 within ±2 SD. Historical objective utility, not FPS or a probability of success. Chart X is record order, not elapsed time.").arg(valid).arg(invalid).arg(inside));
+        };
+        connect(predictionFilter,&QLineEdit::textChanged,&dlg,refillPrediction); refillPrediction();
+        tabs->addTab(predictionPage,tr("Prediction Checks"));
+
         for(const auto &part:{qMakePair(QStringLiteral("quality"),tr("Quality")),qMakePair(QStringLiteral("verify"),tr("A/B Verification")),qMakePair(QStringLiteral("fs"),tr("Game Sessions"))}) { auto *raw=new QPlainTextEdit; raw->setReadOnly(true); raw->setPlainText(QString::fromUtf8(QJsonDocument(sig.value(part.first).toArray()).toJson())); tabs->addTab(raw,part.second); }
-        auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
+        auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);
+        auto *exportSnapshot=buttons->addButton(tr("Export Snapshot…"),QDialogButtonBox::ActionRole);
+        connect(exportSnapshot,&QPushButton::clicked,&dlg,[this,&dlg,bytes] {
+            if(QMessageBox::question(&dlg,tr("Export Snapshot"),tr("This copies the complete historical signature, including hardware and game metadata. Export does not anonymize it. Continue?"))!=QMessageBox::Yes) return;
+            const auto chosen=QFileDialog::getExistingDirectory(&dlg,tr("Choose a directory inside your home folder"),QDir::homePath());
+            if(chosen.isEmpty()) return;
+            const auto dir=QFileInfo(chosen).canonicalFilePath(), home=QFileInfo(QDir::homePath()).canonicalFilePath();
+            if(dir.isEmpty() || home.isEmpty() || dir==QStringLiteral("/var/lib/centurion") || dir.startsWith(QStringLiteral("/var/lib/centurion/")) || (dir!=home && !dir.startsWith(home+QLatin1Char('/')))) { QMessageBox::warning(&dlg,tr("Export Snapshot"),tr("Choose a directory inside your home folder.")); return; }
+            const auto target=QDir(dir).filePath(QStringLiteral("centurion-signature-%1.json").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+            QSaveFile out(target); out.setDirectWriteFallback(false);
+            if(QFileInfo::exists(target) || !out.open(QIODevice::WriteOnly) || !out.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner) || out.write(bytes)!=bytes.size() || !out.commit()) { QMessageBox::warning(&dlg,tr("Export Snapshot"),tr("Snapshot could not be saved.")); return; }
+            QMessageBox::information(&dlg,tr("Export Snapshot"),tr("Saved %1\nSHA-256: %2").arg(target,QString::fromLatin1(QCryptographicHash::hash(bytes,QCryptographicHash::Sha256).toHex())));
+        });
+        connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
+    };
+    auto *calMenu=new QMenu(calData);
+    calMenu->addAction(tr("Inspect Live Signature"),this,[viewCalibration] { viewCalibration(QStringLiteral("/var/lib/centurion/signature.json"),true); });
+    calMenu->addAction(tr("Inspect External Snapshot…"),this,[this,viewCalibration] {
+        const auto path=QFileDialog::getOpenFileName(this,tr("Inspect External Snapshot"),QDir::homePath(),tr("JSON files (*.json)"));
+        if(!path.isEmpty()) viewCalibration(path,false);
     });
+    calData->setMenu(calMenu);
 
     auto *presetDiff = new QPushButton(tr("Compare Presets…"));
     connect(presetDiff,&QPushButton::clicked,this,[this] { profilediff::show(this,presetNames(),[this](const QString &name)->std::optional<QJsonObject> { const auto p=presetObject(name); if(p.isEmpty()) return std::nullopt; return p; }); });
@@ -2656,6 +2757,46 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
 static const char *const WEIGHT_KEYS[] = {"latency", "throughput", "power", "footprint", "stability", "storage", "load", "heat", "budget"};
 static constexpr int N_WEIGHTS = int(sizeof(WEIGHT_KEYS) / sizeof(WEIGHT_KEYS[0]));
 
+// Normalized weight comparison. Missing helper values leave an open segment,
+// not a false zero. Numeric table in the same dialog is the accessible equivalent.
+class WeightRadar final : public QWidget {
+public:
+    WeightRadar(QList<double> base, QList<double> effective, QWidget *parent=nullptr)
+        : QWidget(parent), base_(std::move(base)), effective_(std::move(effective)) { setMinimumSize(270,260); }
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        const QPointF center(width()/2.,height()/2.);
+        const double radius=std::max(10.,std::min(width(),height())/2.-fontMetrics().height()*2.);
+        const auto point=[&](int i,double fraction) {
+            const double angle=6.283185307179586*i/N_WEIGHTS-1.5707963267948966;
+            return center+QPointF(std::cos(angle)*radius*fraction,std::sin(angle)*radius*fraction);
+        };
+        p.setPen(QPen(QColor(theme::BORDER),1));
+        for(double f:{0.25,0.5,0.75,1.0}) {
+            QPolygonF ring; for(int i=0;i<N_WEIGHTS;++i) ring << point(i,f); p.drawPolygon(ring);
+        }
+        for(int i=0;i<N_WEIGHTS;++i) {
+            p.setPen(QColor(theme::BORDER)); p.drawLine(center,point(i,1));
+            p.setPen(QColor(theme::FG)); const QPointF label=point(i,1.18);
+            p.drawText(QRectF(label.x()-15,label.y()-12,30,24),Qt::AlignCenter,QString::number(i+1));
+        }
+        const auto series=[&](const QList<double> &values,const QColor &color,Qt::PenStyle style) {
+            p.setPen(QPen(color,2,style));
+            for(int i=0;i<N_WEIGHTS;++i) {
+                const int j=(i+1)%N_WEIGHTS;
+                if(!calibrationmath::validWeight(i,values.at(i))) continue;
+                const auto a=point(i,values.at(i)/calibrationmath::high(i));
+                p.drawEllipse(a,2.5,2.5);
+                if(calibrationmath::validWeight(j,values.at(j))) p.drawLine(a,point(j,values.at(j)/calibrationmath::high(j)));
+            }
+        };
+        series(base_,QColor(theme::FG_DIM),Qt::DashLine); series(effective_,QColor(theme::ACCENT),Qt::SolidLine);
+    }
+private:
+    QList<double> base_,effective_;
+};
+
 // Fallback copy of centurion_helpers::autotune::Weights::for_goal, used only when tune-helper cannot
 // answer "autotune_defaults" (not installed yet, too old, timed out).
 static QList<double> fallbackWeights(const QString &goal) {
@@ -2677,7 +2818,7 @@ static QList<double> weightRow(const QJsonArray &row, QList<double> base) {
     const QStringList &keys = helperWeights().keys;
     for (int i = 0; i < N_WEIGHTS; ++i) {
         const qsizetype j = keys.indexOf(QString::fromLatin1(WEIGHT_KEYS[i]));
-        if (j >= 0 && j < row.size() && row.at(j).isDouble()) base[i] = row.at(j).toDouble();
+        if (j >= 0 && j < row.size() && row.at(j).isDouble() && calibrationmath::validWeight(i,row.at(j).toDouble())) base[i] = row.at(j).toDouble();
     }
     return base;
 }
@@ -2737,6 +2878,12 @@ void OptimizeTab::showAutotuneWeights() {
     const QJsonObject adapted = helperWeights().adapted.value(goal).toObject();
     const QList<double> eff = weightRow(adapted.value(QStringLiteral("weights")).toArray(), def);
     const QJsonObject effWhy = adapted.value(QStringLiteral("why")).toObject();
+    QList<bool> effectiveKnown;
+    const auto adaptedRow=adapted.value(QStringLiteral("weights")).toArray();
+    for(int i=0;i<N_WEIGHTS;++i) {
+        const auto j=helperWeights().keys.indexOf(QString::fromLatin1(WEIGHT_KEYS[i]));
+        effectiveKnown << (j>=0 && j<adaptedRow.size() && adaptedRow.at(j).isDouble() && calibrationmath::validWeight(i,adaptedRow.at(j).toDouble()));
+    }
     QDialog dlg(this);
     dlg.setWindowTitle(QStringLiteral("Autotune Weights — %1").arg(autoGoal_->currentText()));
     auto *form = new QFormLayout(&dlg);
@@ -2757,10 +2904,11 @@ void OptimizeTab::showAutotuneWeights() {
     QList<QDoubleSpinBox *> boxes;
     for (int i = 0; i < N_WEIGHTS; ++i) {
         auto *b = new QDoubleSpinBox;
-        b->setRange(i == 4 ? 0.5 : 0.0, i >= 6 ? 1.0 : 3.0);
+        b->setRange(calibrationmath::low(i), calibrationmath::high(i));
         b->setSingleStep(0.1);
         b->setDecimals(2);
-        b->setValue(cur.contains(WEIGHT_KEYS[i]) ? cur.value(WEIGHT_KEYS[i]).toDouble() : def[i]);
+        const auto saved=cur.value(WEIGHT_KEYS[i]);
+        b->setValue(saved.isDouble() && calibrationmath::validWeight(i,saved.toDouble()) ? saved.toDouble() : def[i]);
         auto *row = new QWidget;
         auto *h = new QHBoxLayout(row);
         h->setContentsMargins(0, 0, 0, 0);
@@ -2773,6 +2921,15 @@ void OptimizeTab::showAutotuneWeights() {
         meter->setToolTip(tr("Configured weight relative to its allowed maximum; not a measured performance effect."));
         connect(b, &QDoubleSpinBox::valueChanged, meter, [meter](double value) { meter->setValue(qRound(value * 100)); });
         h->addWidget(meter, 1);
+        auto *effective = new QLabel;
+        effective->setTextFormat(Qt::PlainText);
+        auto updateEffective = [this,b,effective,i,def,eff,effectiveKnown] {
+            const auto value=calibrationmath::effectiveWeight(i,b->value(),def[i],eff[i]);
+            if (!value || (qAbs(b->value()-def[i])<=1e-6 && !effectiveKnown.at(i))) effective->setText(tr("Effective weight: unknown"));
+            else effective->setText(tr("Effective preview: %1 / %2").arg(*value,0,'g',12).arg(calibrationmath::high(i),0,'g',12));
+        };
+        connect(b,&QDoubleSpinBox::valueChanged,effective,updateEffective); updateEffective();
+        h->addWidget(effective);
         if (qAbs(eff[i] - def[i]) > 1e-6) {
             auto *hint = muted(QStringLiteral("default %1 → in effect %2").arg(def[i], 0, 'f', 2).arg(eff[i], 0, 'f', 2));
             const QString why = effWhy.value(QLatin1String(WEIGHT_KEYS[i])).toString();
@@ -2783,6 +2940,26 @@ void OptimizeTab::showAutotuneWeights() {
         form->addRow(labels[i], row);
         boxes << b;
     }
+    auto *compareWeights=new QPushButton(tr("Compare Weight Profiles…")); form->addRow(compareWeights);
+    connect(compareWeights,&QPushButton::clicked,&dlg,[this,&dlg,boxes,def,eff,effectiveKnown,labels] {
+        QDialog comparison(&dlg); comparison.setWindowTitle(tr("Weight Comparison")); comparison.resize(680,530);
+        auto *layout=new QVBoxLayout(&comparison);
+        auto *hint=new QLabel(tr("Dashed: goal defaults. Solid: effective preview using the last helper response. Each axis is weight / legal maximum; stability retains its 0.5 minimum. Missing helper evidence leaves a gap. These are weights, not measured gains."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        QList<double> actual;
+        auto *table=new QTableWidget(N_WEIGHTS,4); table->setHorizontalHeaderLabels({tr("Objective"),tr("Default"),tr("Edited"),tr("Effective preview")});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setStretchLastSection(true);
+        for(int i=0;i<N_WEIGHTS;++i) {
+            auto value=calibrationmath::effectiveWeight(i,boxes[i]->value(),def[i],eff[i]);
+            if(qAbs(boxes[i]->value()-def[i])<=1e-6 && !effectiveKnown.at(i)) value.reset();
+            actual << value.value_or(std::numeric_limits<double>::quiet_NaN());
+            const QStringList cells{QStringLiteral("%1. %2").arg(i+1).arg(labels.at(i)),QString::number(def[i],'g',12),QString::number(boxes[i]->value(),'g',12),value?QString::number(*value,'g',12):tr("Unknown")};
+            for(int c=0;c<cells.size();++c) table->setItem(i,c,new QTableWidgetItem(cells.at(c)));
+        }
+        auto *radar=new WeightRadar(def,actual,&comparison); radar->setAccessibleName(tr("Weight Comparison")); layout->addWidget(radar,1); layout->addWidget(table,1);
+        auto *close=new QDialogButtonBox(QDialogButtonBox::Close); connect(close,&QDialogButtonBox::rejected,&comparison,&QDialog::reject); layout->addWidget(close); comparison.exec();
+    });
     auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults);
     connect(bb->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked, &dlg, [&] { for (int i = 0; i < N_WEIGHTS; ++i) boxes[i]->setValue(def[i]); });
     connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);

@@ -3,6 +3,7 @@
 #include "klogview.h"
 #include "privileged.h"
 #include "theme.h"
+#include "workspacestate.h"
 
 #include <QColor>
 #include <QComboBox>
@@ -104,7 +105,7 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     filter_->addItem(tr("Unclean only"), QStringLiteral("unclean"));
     filter_->addItem(tr("With kernel events"), QStringLiteral("events"));
     filter_->addItem(tr("With a CPU/GPU curve in effect"), QStringLiteral("curves"));
-    connect(filter_, &QComboBox::currentIndexChanged, this, &BootPage::applyFilter);
+
     tools->addWidget(filter_);
     tools->addStretch(1);
     bKlog_ = new QPushButton(tr("Kernel log of this boot"));
@@ -143,6 +144,24 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     split->setStretchFactor(0, 2);
     split->setStretchFactor(1, 3);
     root->addWidget(split, 1);
+    const QString stateKey = workspace::key(theme::experimentalEnabled(), QStringLiteral("boot/view"));
+    const auto saved = workspace::read(stateKey);
+    const int filterIndex = filter_->findData(saved.value("filter").toString());
+    if (filterIndex >= 0) filter_->setCurrentIndex(filterIndex);
+    savedBoot_ = saved.value("boot").toString();
+    if (!klogview::fullBootId(savedBoot_)) savedBoot_.clear();
+    workspace::rememberSplitter(split, workspace::key(theme::experimentalEnabled(), QStringLiteral("boot/splitter")));
+    connect(filter_, &QComboBox::currentIndexChanged, this, [this,stateKey]{
+        applyFilter();
+        auto state = workspace::read(stateKey); state.insert("filter",filter_->currentData().toString()); workspace::write(stateKey,state);
+    });
+    connect(list_, &QTreeWidget::currentItemChanged, this, [this,stateKey](QTreeWidgetItem *item){
+        if (restoringWorkspace_ || !item || item->isHidden()) return;
+        const QString id = item->data(0, ROLE_BOOT).toString();
+        auto state = workspace::read(stateKey);
+        if (klogview::fullBootId(id)) state.insert("boot",id); else state.remove("boot");
+        workspace::write(stateKey,state);
+    });
     patterns_ = new QLabel;
     patterns_->setWordWrap(true);
     patterns_->setTextFormat(Qt::RichText);
@@ -184,7 +203,11 @@ void BootPage::apply(const QJsonObject &r) {
     const QJsonObject ps = r.value(QStringLiteral("pstore")).toObject();
     const QJsonArray entries = ps.value(QStringLiteral("entries")).toArray();
 
-    const QString previous = list_->currentItem() ? list_->currentItem()->data(0, ROLE_BOOT).toString() : QString();
+    restoringWorkspace_ = true;
+    const bool fromSaved = !list_->currentItem() && !savedBoot_.isEmpty();
+    const QString previous = list_->currentItem() ? list_->currentItem()->data(0, ROLE_BOOT).toString() : savedBoot_;
+    savedBoot_.clear();
+    int retainedMatches = 0;
     const int scroll = list_->verticalScrollBar()->value();
     list_->blockSignals(true);
     list_->clear();
@@ -209,7 +232,7 @@ void BootPage::apply(const QJsonObject &r) {
                         : state == QLatin1String("unknown") ? theme::MUTED : nullptr;
         if (c) for (int i = 0; i < 5; ++i) it->setForeground(i, QColor(QLatin1String(c)));
         list_->addTopLevelItem(it);
-        if (!previous.isEmpty() && it->data(0, ROLE_BOOT).toString() == previous) retained = it;
+        if (!previous.isEmpty() && it->data(0, ROLE_BOOT).toString() == previous) { retained = it; ++retainedMatches; }
         if (state == QLatin1String("unclean")) ++unclean;
         if (!pick && (b.value(QStringLiteral("boot")).toString() == prevBoot && !prevBoot.isEmpty())) pick = it;
     }
@@ -224,11 +247,16 @@ void BootPage::apply(const QJsonObject &r) {
     list_->blockSignals(false);
     applyFilter();
     patterns_->setText(patterns(false));
+    if (retainedMatches != 1) retained = nullptr;
     if (retained && !retained->isHidden()) list_->setCurrentItem(retained);
     else if (pick && !pick->isHidden()) list_->setCurrentItem(pick);
     // applyFilter already selected the first visible boot or displayed the empty state.
     if (list_->currentItem() && !list_->currentItem()->isHidden()) showDetail();
-    if (retained) list_->verticalScrollBar()->setValue(scroll);
+    if (retained && !retained->isHidden()) {
+        if (fromSaved) list_->scrollToItem(retained);
+        else list_->verticalScrollBar()->setValue(scroll);
+    }
+    restoringWorkspace_ = false;
 
     bool clearable = false;
     for (const QJsonValue &e : entries) if (e.toObject().value(QStringLiteral("src")).toString() == QLatin1String("pstore")) clearable = true;
@@ -272,7 +300,10 @@ void BootPage::showDetail() {
     if (!flight.isEmpty()) out += QLatin1Char('\n') + flightrec::text(flight);
     if (state == QLatin1String("unclean")) {
         out += QLatin1Char('\n');
-        for (const QJsonValue &i : b.value(QStringLiteral("pstore")).toArray()) out += entryText(entries.at(i.toInt()).toObject()) + QLatin1Char('\n');
+        for (const QJsonValue &i : b.value(QStringLiteral("pstore")).toArray()) {
+            const int index = i.toInt(-1);
+            if (index >= 0 && index < entries.size() && entries.at(index).isObject()) out += entryText(entries.at(index).toObject()) + QLatin1Char('\n');
+        }
         const QStringList tail = klogview::fullBootId(id) ? kernelLogTail(id,LOG_LINES) : QStringList{};
         if (!uniqueBootPrefix(id)) out += tr("Legacy log attribution unavailable: boot prefix is missing or ambiguous.\n");
         out += tail.isEmpty() ? tr("── no saved kernel-log lines for this boot ──\n")

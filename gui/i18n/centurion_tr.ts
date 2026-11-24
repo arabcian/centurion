@@ -2335,6 +2335,7 @@ Kernel uptime: %2
     </context>
     <context>
         <name>HomeTab</name>
+        <message><source>GPU runtime state unavailable</source><translation>GPU çalışma durumu okunamıyor</translation></message>
         <message>
             <source>Color (#RRGGBB)</source>
             <translation>Renk (#RRGGBB)</translation>
@@ -3986,6 +3987,18 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     <context>
         <name>MainWindow</name>
         <message>
+            <source>Unsaved changes</source>
+            <translation>Kaydedilmemiş değişiklikler</translation>
+        </message>
+        <message>
+            <source>Leaving Centurion will discard unsaved changes on these pages:</source>
+            <translation>Centurion kapatılırsa şu sayfalardaki kaydedilmemiş değişiklikler kaybolacak:</translation>
+        </message>
+        <message>
+            <source>Observed transitions and scene transaction events (not independent verification)</source>
+            <translation>Gözlenen geçişler ve sahne işlem olayları (bağımsız doğrulama değil)</translation>
+        </message>
+        <message>
             <source>Network Tuning</source>
             <translation>Ağ ayarları</translation>
         </message>
@@ -4274,6 +4287,42 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     </context>
     <context>
         <name>NetPage</name>
+        <message>
+            <source>Adapter: %1 · Cached scan received: %2. Ages are lower bounds at dialog opening. Width is unknown; markers do not establish channel overlap.</source>
+            <translation>Adaptör: %1 · Önbellek taraması alındı: %2. Yaşlar pencere açılışındaki alt sınırlardır. Kanal genişliği bilinmiyor; işaretler kanal çakışmasını kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>At least %1 s old</source>
+            <translation>En az %1 sn önce</translation>
+        </message>
+        <message>
+            <source>Age unknown</source>
+            <translation>Yaş bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Minimum age</source>
+            <translation>Asgari yaş</translation>
+        </message>
+        <message>
+            <source>Freshness</source>
+            <translation>Güncellik</translation>
+        </message>
+        <message>
+            <source>Width</source>
+            <translation>Genişlik</translation>
+        </message>
+        <message>
+            <source>Stale (≥ 60 s)</source>
+            <translation>Eski (≥ 60 sn)</translation>
+        </message>
+        <message>
+            <source>Age bound below 60 s</source>
+            <translation>Yaş alt sınırı 60 sn altında</translation>
+        </message>
+        <message>
+            <source>Solid marker: minimum age below 60 s (not proof of a fresh scan). Hollow marker: stale or unknown age.</source>
+            <translation>Dolu işaret: asgari yaş 60 sn altında (yeni tarama kanıtı değil). Boş işaret: eski veya yaşı bilinmiyor.</translation>
+        </message>
         <message>
             <location filename="work/gui/src/netpage.cpp" line="169"/>
             <source>Traffic accounting</source>
@@ -5666,6 +5715,10 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
     </context>
     <context>
         <name>ScenesTab</name>
+        <message>
+            <source>%1 — %2</source>
+            <translation>%1 — %2</translation>
+        </message>
         <message>
             <source>Compare…</source>
             <translation>Karşılaştır…</translation>
@@ -10197,6 +10250,204 @@ Ortalama %4 ms · P50 %5 ms · P95 %6 ms · P99 %7 ms · Maks %8 ms</translation
             <source>Startup restore disabled.</source>
             <translation>Başlangıçta geri yükleme kapalı.</translation>
         </message>
+        <message>
+        <source>Live signature snapshot (read-only)</source>
+        <translation>Canlı imza anlık görüntüsü (salt okunur)</translation>
+    </message>
+        <message>
+        <source>External signature snapshot (not installed)</source>
+        <translation>Harici imza anlık görüntüsü (kurulmadı)</translation>
+    </message>
+        <message>
+        <source>%1: saved %2 / current %3 — %4</source>
+        <translation>%1: kayıtlı %2 / güncel %3 — %4</translation>
+    </message>
+        <message>
+        <source>Match</source>
+        <translation>Eşleşiyor</translation>
+    </message>
+        <message>
+        <source>Different</source>
+        <translation>Farklı</translation>
+    </message>
+        <message>
+        <source>Product</source>
+        <translation>Ürün</translation>
+    </message>
+        <message>
+        <source>CPU</source>
+        <translation>CPU</translation>
+    </message>
+        <message>
+        <source>BIOS</source>
+        <translation>BIOS</translation>
+    </message>
+        <message>
+        <source>RAM: saved %1 / current %2 MiB — %3 (saved RAM tolerance 2%)</source>
+        <translation>RAM: kayıtlı %1 / güncel %2 MiB — %3 (kayıtlı RAM toleransı yüzde 2)</translation>
+    </message>
+        <message>
+        <source>RAM comparison unavailable.</source>
+        <translation>RAM karşılaştırması kullanılamıyor.</translation>
+    </message>
+        <message>
+        <source>Current kernel: %1</source>
+        <translation>Güncel çekirdek: %1</translation>
+    </message>
+        <message>
+        <source>BIOS differences alone do not invalidate a signature. Kernel, benchmark version, context and power source affect model evidence; this view is not the solver's validity decision.</source>
+        <translation>Yalnızca BIOS farkı imzayı geçersiz kılmaz. Çekirdek, benchmark sürümü, bağlam ve güç kaynağı model kanıtını etkiler; bu görünüm çözücünün geçerlilik kararı değildir.</translation>
+    </message>
+        <message>
+        <source>Compatibility</source>
+        <translation>Uyumluluk</translation>
+    </message>
+        <message>
+        <source>Filter source, phase, goal or session</source>
+        <translation>Kaynak, aşama, hedef veya oturum filtrele</translation>
+    </message>
+        <message>
+        <source>Time</source>
+        <translation>Zaman</translation>
+    </message>
+        <message>
+        <source>Source</source>
+        <translation>Kaynak</translation>
+    </message>
+        <message>
+        <source>Phase</source>
+        <translation>Aşama</translation>
+    </message>
+        <message>
+        <source>Goal</source>
+        <translation>Hedef</translation>
+    </message>
+        <message>
+        <source>Predicted</source>
+        <translation>Tahmin</translation>
+    </message>
+        <message>
+        <source>Uncertainty (SD)</source>
+        <translation>Belirsizlik (standart sapma)</translation>
+    </message>
+        <message>
+        <source>Measured</source>
+        <translation>Ölçülen</translation>
+    </message>
+        <message>
+        <source>Error (measured − predicted)</source>
+        <translation>Hata (ölçülen − tahmin)</translation>
+    </message>
+        <message>
+        <source>Standardized error</source>
+        <translation>Standartlaştırılmış hata</translation>
+    </message>
+        <message>
+        <source>Last 200 records at most; %1 valid, %2 invalid, %3 within ±2 SD. Historical objective utility, not FPS or a probability of success. Chart X is record order, not elapsed time.</source>
+        <translation>En fazla son 200 kayıt; %1 geçerli, %2 geçersiz, %3 ±2 standart sapma içinde. Geçmiş hedef faydasıdır, FPS veya başarı olasılığı değildir. Grafiğin X ekseni geçen süreyi değil kayıt sırasını gösterir.</translation>
+    </message>
+        <message>
+        <source>Prediction Checks</source>
+        <translation>Tahmin Kontrolleri</translation>
+    </message>
+        <message>
+        <source>Export Snapshot…</source>
+        <translation>Anlık Görüntüyü Dışa Aktar…</translation>
+    </message>
+        <message>
+        <source>Export Snapshot</source>
+        <translation>Anlık Görüntüyü Dışa Aktar</translation>
+    </message>
+        <message>
+        <source>This copies the complete historical signature, including hardware and game metadata. Export does not anonymize it. Continue?</source>
+        <translation>Donanım ve oyun meta verileri dahil geçmiş imzanın tamamı kopyalanır. Dışa aktarma anonimleştirme yapmaz. Devam edilsin mi?</translation>
+    </message>
+        <message>
+        <source>Choose a directory inside your home folder</source>
+        <translation>Ev dizininizin içinde bir dizin seçin</translation>
+    </message>
+        <message>
+        <source>Choose a directory inside your home folder.</source>
+        <translation>Ev dizininizin içinde bir dizin seçin.</translation>
+    </message>
+        <message>
+        <source>Snapshot could not be saved.</source>
+        <translation>Anlık görüntü kaydedilemedi.</translation>
+    </message>
+        <message>
+        <source>Saved %1
+SHA-256: %2</source>
+        <translation>%1 kaydedildi
+SHA-256: %2</translation>
+    </message>
+        <message>
+        <source>Inspect Live Signature</source>
+        <translation>Canlı İmzayı İncele</translation>
+    </message>
+        <message>
+        <source>Inspect External Snapshot…</source>
+        <translation>Harici Anlık Görüntüyü İncele…</translation>
+    </message>
+        <message>
+        <source>Inspect External Snapshot</source>
+        <translation>Harici Anlık Görüntüyü İncele</translation>
+    </message>
+        <message>
+        <source>JSON files (*.json)</source>
+        <translation>JSON dosyaları (*.json)</translation>
+    </message>
+        <message>
+        <source>Effective weight: unknown</source>
+        <translation>Etkin ağırlık: bilinmiyor</translation>
+    </message>
+        <message>
+        <source>Effective preview: %1 / %2</source>
+        <translation>Etkin ağırlık önizlemesi: %1 / %2</translation>
+    </message>
+        <message>
+        <source>Latest record</source>
+        <translation>Son kayıt</translation>
+    </message>
+        <message>
+        <source>Benchmark versions</source>
+        <translation>Benchmark sürümleri</translation>
+    </message>
+        <message>
+        <source>Unknown (%1 records)</source>
+        <translation>Bilinmiyor (%1 kayıt)</translation>
+    </message>
+        <message>
+        <source>Signature exceeds the viewer limit of 20,000 rows.</source>
+        <translation>İmza, inceleyicinin 20.000 satır sınırını aşıyor.</translation>
+    </message>
+        <message>
+        <source>Compare Weight Profiles…</source>
+        <translation>Ağırlık Profillerini Karşılaştır…</translation>
+    </message>
+        <message>
+        <source>Weight Comparison</source>
+        <translation>Ağırlık Karşılaştırması</translation>
+    </message>
+        <message>
+        <source>Dashed: goal defaults. Solid: effective preview using the last helper response. Each axis is weight / legal maximum; stability retains its 0.5 minimum. Missing helper evidence leaves a gap. These are weights, not measured gains.</source>
+        <translation>Kesik çizgi: hedef varsayılanları. Düz çizgi: son helper yanıtına dayalı etkin önizleme. Her eksen ağırlık / izin verilen maksimum değer oranıdır; kararlılık en az 0,5 değerini korur. Eksik helper kanıtı boşluk bırakır. Bunlar ağırlıktır, ölçülen kazanç değildir.</translation>
+    </message>
+        <message>
+        <source>Objective</source>
+        <translation>Hedef</translation>
+    </message>
+        <message>
+        <source>Default</source>
+        <translation>Varsayılan</translation>
+    </message>
+        <message>
+        <source>Edited</source>
+        <translation>Düzenlenen</translation>
+    </message>
+        <message>
+        <source>Effective preview</source>
+        <translation>Etkin önizleme</translation>
+    </message>
     </context>
     <context>
         <name>RyzenTab</name>
@@ -10327,7 +10578,11 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>Apply at boot</source>
             <translation>Açılışta uygula</translation>
         </message>
-    </context>
+      <message>
+      <source>CCD %1 / SMU slot %2</source>
+      <translation>CCD %1 / SMU yuvası %2</translation>
+    </message>
+  </context>
     <context>
         <name>SmartPage</name>
         <message>
@@ -13176,7 +13431,31 @@ Ctrl+tekerlek: yakınlaştır; orta tuşla sürükle veya ok tuşlarıyla kaydı
             <source>%1  /  %2</source>
             <translation>%1  /  %2</translation>
         </message>
-    </context>
+      <message>
+      <source>Search pages, tools and settings. Enter navigates; it never applies a setting.</source>
+      <translation>Sayfaları, araçları ve ayarları ara. Enter yalnızca gezinir; hiçbir ayarı uygulamaz.</translation>
+    </message>
+    <message>
+      <source> (capability not confirmed)</source>
+      <translation> (donanım desteği doğrulanmadı)</translation>
+    </message>
+    <message>
+      <source>Navigation target unavailable</source>
+      <translation>Gezinme Hedefi Kullanılamıyor</translation>
+    </message>
+    <message>
+      <source>This control is not available in the current page state. No setting was applied.</source>
+      <translation>Bu kontrol mevcut sayfa durumunda kullanılamıyor. Hiçbir ayar uygulanmadı.</translation>
+    </message>
+    <message>
+      <source>Navigation only. Opening the page can run its existing device reads; availability may change.</source>
+      <translation>Yalnızca gezinme. Sayfayı açmak mevcut aygıt okumalarını başlatabilir; kullanılabilirlik değişebilir.</translation>
+    </message>
+    <message>
+      <source>Opening the GPU page may wake a device.</source>
+      <translation>GPU sayfasını açmak aygıtı uyandırabilir.</translation>
+    </message>
+  </context>
     <context>
         <name>distroprofile</name>
         <message>
@@ -21540,6 +21819,82 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <context>
         <name>SceneEngine</name>
         <message>
+            <source>Started</source>
+            <translation>Başlatıldı</translation>
+        </message>
+        <message>
+            <source>Running</source>
+            <translation>Çalışıyor</translation>
+        </message>
+        <message>
+            <source>Helper returned success; independent verification unavailable</source>
+            <translation>Yardımcı başarı bildirdi; bağımsız doğrulama yok</translation>
+        </message>
+        <message>
+            <source>Partial or skipped changes</source>
+            <translation>Kısmi veya atlanan değişiklikler</translation>
+        </message>
+        <message>
+            <source>Interrupted by game ownership</source>
+            <translation>Oyun denetimi devraldığı için kesildi</translation>
+        </message>
+        <message>
+            <source>Compensating actions returned success; restoration unverified</source>
+            <translation>Telafi işlemleri başarı bildirdi; geri yükleme doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Partial rollback</source>
+            <translation>Kısmi geri alma</translation>
+        </message>
+        <message>
+            <source>Deferred GPU step pending</source>
+            <translation>Ertelenen GPU adımı bekliyor</translation>
+        </message>
+        <message>
+            <source>Deferred GPU step running</source>
+            <translation>Ertelenen GPU adımı çalışıyor</translation>
+        </message>
+        <message>
+            <source>Deferred GPU step superseded</source>
+            <translation>Ertelenen GPU adımının yerini yeni işlem aldı</translation>
+        </message>
+        <message>
+            <source>Skipped</source>
+            <translation>Atlandı</translation>
+        </message>
+        <message>
+            <source>Failed</source>
+            <translation>Başarısız</translation>
+        </message>
+        <message>
+            <source>Deferred GPU helper returned success; verification unavailable</source>
+            <translation>Ertelenen GPU yardımcısı başarı bildirdi; doğrulama yok</translation>
+        </message>
+        <message>
+            <source>Restoring</source>
+            <translation>Geri yükleniyor</translation>
+        </message>
+        <message>
+            <source>Restore returned success; verification unavailable</source>
+            <translation>Geri yükleme başarı bildirdi; doğrulama yok</translation>
+        </message>
+        <message>
+            <source>Restore failed</source>
+            <translation>Geri yükleme başarısız</translation>
+        </message>
+        <message>
+            <source>Soft failure</source>
+            <translation>Yazma yapılmadan başarısız</translation>
+        </message>
+        <message>
+            <source>Rejected</source>
+            <translation>Reddedildi</translation>
+        </message>
+        <message>
+            <source>Unknown</source>
+            <translation>Bilinmiyor</translation>
+        </message>
+        <message>
             <source>✗ %1: referenced profile '%2' is not available</source>
             <translation>✗ %1: başvurulan '%2' profili kullanılamıyor</translation>
         </message>
@@ -21835,6 +22190,229 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <message>
       <source>Zone colours</source>
       <translation>Bölge renkleri</translation>
+    </message>
+  </context>
+  <context>
+    <name>NavigationTargets</name>
+    <message>
+      <source>Parameter inspector</source>
+      <translation>Parametre İnceleyicisi</translation>
+    </message>
+    <message>
+      <source>Power Limit Sources</source>
+      <translation>Güç Limiti Kaynakları</translation>
+    </message>
+    <message>
+      <source>All-Core Offset</source>
+      <translation>Tüm Çekirdek Ofseti</translation>
+    </message>
+    <message>
+      <source>Per-Core Offsets</source>
+      <translation>Çekirdek Başına Ofsetler</translation>
+    </message>
+    <message>
+      <source>CO Search</source>
+      <translation>CO Araması</translation>
+    </message>
+    <message>
+      <source>Curve profile</source>
+      <translation>Eğri Profili</translation>
+    </message>
+    <message>
+      <source>CPU Core</source>
+      <translation>CPU Çekirdeği</translation>
+    </message>
+    <message>
+      <source>CPU Cache</source>
+      <translation>CPU Önbelleği</translation>
+    </message>
+    <message>
+      <source>Integrated GPU</source>
+      <translation>Entegre GPU</translation>
+    </message>
+    <message>
+      <source>System Agent</source>
+      <translation>System Agent</translation>
+    </message>
+    <message>
+      <source>Analog I/O</source>
+      <translation>Analog G/Ç</translation>
+    </message>
+    <message>
+      <source>Memory Subsystem (MemSS)</source>
+      <translation>Bellek Alt Sistemi (MemSS)</translation>
+    </message>
+    <message>
+      <source>NGU fabric</source>
+      <translation>NGU Bağlantısı</translation>
+    </message>
+    <message>
+      <source>Voltage Domains and CPU Topology</source>
+      <translation>Voltaj Alanları ve CPU Topolojisi</translation>
+    </message>
+    <message>
+      <source>Limits</source>
+      <translation>Limitler</translation>
+    </message>
+    <message>
+      <source>Limit reasons</source>
+      <translation>Limit Nedenleri</translation>
+    </message>
+    <message>
+      <source>Boot resume daemon</source>
+      <translation>Açılış, Devam ve Servis</translation>
+    </message>
+    <message>
+      <source>V/F Curve</source>
+      <translation>V/F Eğrisi</translation>
+    </message>
+    <message>
+      <source>Point comparison</source>
+      <translation>Nokta Karşılaştırması</translation>
+    </message>
+    <message>
+      <source>Driver options</source>
+      <translation>Sürücü Seçenekleri</translation>
+    </message>
+    <message>
+      <source>VRAM lock minimum</source>
+      <translation>VRAM Kilidi Alt Sınırı</translation>
+    </message>
+    <message>
+      <source>VRAM lock maximum</source>
+      <translation>VRAM Kilidi Üst Sınırı</translation>
+    </message>
+    <message>
+      <source>Core clock cap</source>
+      <translation>Çekirdek Frekans Sınırı</translation>
+    </message>
+    <message>
+      <source>Core cap compensation</source>
+      <translation>Çekirdek Sınırı Telafisi</translation>
+    </message>
+    <message>
+      <source>PowerMizer</source>
+      <translation>PowerMizer</translation>
+    </message>
+    <message>
+      <source>Capabilities</source>
+      <translation>Donanım Yetenekleri</translation>
+    </message>
+    <message>
+      <source>Frequency overview</source>
+      <translation>Frekans Özeti</translation>
+    </message>
+    <message>
+      <source>Battery charge mode</source>
+      <translation>Pil Şarj Modu</translation>
+    </message>
+    <message>
+      <source>GPU mode</source>
+      <translation>GPU Modu</translation>
+    </message>
+    <message>
+      <source>Panel Over Drive</source>
+      <translation>Panel Over Drive</translation>
+    </message>
+    <message>
+      <source>Turbo fan</source>
+      <translation>Turbo Fan</translation>
+    </message>
+    <message>
+      <source>Fan curve</source>
+      <translation>Fan Eğrisi</translation>
+    </message>
+    <message>
+      <source>Max all fans</source>
+      <translation>Tüm Fanlar Maksimum</translation>
+    </message>
+    <message>
+      <source>Power Profile</source>
+      <translation>Güç Profili</translation>
+    </message>
+    <message>
+      <source>Performance level</source>
+      <translation>Performans Seviyesi</translation>
+    </message>
+    <message>
+      <source>Power profile</source>
+      <translation>Güç Profili</translation>
+    </message>
+    <message>
+      <source>Power limit</source>
+      <translation>Güç Limiti</translation>
+    </message>
+    <message>
+      <source>GPU states</source>
+      <translation>GPU Durumları</translation>
+    </message>
+    <message>
+      <source>Memory states</source>
+      <translation>Bellek Durumları</translation>
+    </message>
+    <message>
+      <source>GPU clock minimum</source>
+      <translation>GPU Minimum Frekansı</translation>
+    </message>
+    <message>
+      <source>GPU clock maximum</source>
+      <translation>GPU Maksimum Frekansı</translation>
+    </message>
+    <message>
+      <source>GPU clock offset</source>
+      <translation>GPU Frekans Ofseti</translation>
+    </message>
+    <message>
+      <source>Memory clock minimum</source>
+      <translation>Bellek Minimum Frekansı</translation>
+    </message>
+    <message>
+      <source>Memory clock maximum</source>
+      <translation>Bellek Maksimum Frekansı</translation>
+    </message>
+    <message>
+      <source>V/F curve</source>
+      <translation>V/F Eğrisi</translation>
+    </message>
+    <message>
+      <source>Voltage offset</source>
+      <translation>Voltaj Ofseti</translation>
+    </message>
+    <message>
+      <source>Zero RPM</source>
+      <translation>Sıfır Devir</translation>
+    </message>
+    <message>
+      <source>Zero-RPM stop below (°C)</source>
+      <translation>Sıfır Devir Durdurma Eşiği (°C)</translation>
+    </message>
+    <message>
+      <source>Minimum fan speed (%)</source>
+      <translation>Minimum Fan Hızı (%)</translation>
+    </message>
+    <message>
+      <source>Target temperature (°C)</source>
+      <translation>Hedef Sıcaklık (°C)</translation>
+    </message>
+    <message>
+      <source>Acoustic limit (RPM)</source>
+      <translation>Akustik Sınır (RPM)</translation>
+    </message>
+    <message>
+      <source>Acoustic target (RPM)</source>
+      <translation>Akustik Hedef (RPM)</translation>
+    </message>
+    <message>
+      <source>PBO scalar</source>
+      <translation>PBO Çarpanı</translation>
+    </message>
+    <message>
+      <source>Boost override (MHz)</source>
+      <translation>Boost Geçersiz Kılma (MHz)</translation>
+    </message>
+    <message>
+      <source>All-core CO</source>
+      <translation>Tüm Çekirdek CO</translation>
     </message>
   </context>
 </TS>

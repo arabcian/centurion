@@ -1,4 +1,6 @@
+#include "navigationtargets.h"
 #include "hometab.h"
+#include "workspacefields.h"
 #include <memory>
 #include "bootlogodialog.h"
 #include "deviceinfodialog.h"
@@ -557,6 +559,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     pauseBanner_->hide();
 
     auto *profileBox = new QGroupBox(tr("Power Profile"));
+    navigationtargets::mark(profileBox, QStringLiteral("home.power"), QStringLiteral("Power Profile"), QStringLiteral("platform profile güç profili"));
     profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     grid_ = new QGridLayout(profileBox);
     grid_->setContentsMargins(6, 2, 6, 4);
@@ -573,7 +576,10 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     QGroupBox *dev = buildDeviceBox();  // hosts status_ when present
     QGroupBox *hardware = buildHardwareBox();
     QGroupBox *liveSensors = buildLiveBox();
-    if (theme::experimentalEnabled()) {
+    livePanel_ = liveSensors;
+    const bool experimental = theme::experimentalEnabled();
+    QList<QPair<QString,QWidget *>> panels;
+    if (experimental) {
         // One 2×2 grid with shared rows and equal columns, not two independent
         // columns: every card edge (top, seam, bottom, centre gap) lines up by
         // construction, whatever each card's content height is.
@@ -619,27 +625,22 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         detailLayout->setContentsMargins(6, 4, 6, 6);
         detailLayout->addWidget(details);
 
-        for (QWidget *w : {static_cast<QWidget *>(profileBox), static_cast<QWidget *>(dev),
-                           static_cast<QWidget *>(plotPanel), static_cast<QWidget *>(detailCard)})
-            if (w) w->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        panels = {{QStringLiteral("power"),profileBox},{QStringLiteral("monitoring"),plotPanel},
+                  {QStringLiteral("hardware"),detailCard},{QStringLiteral("devices"),dev}};
+    } else {
+        panels = {{QStringLiteral("hardware"),hardware},{QStringLiteral("monitoring"),liveSensors},
+                  {QStringLiteral("power"),profileBox},{QStringLiteral("devices"),dev}};
+    }
+    {
         auto *gridHost = new QWidget;
-        gridHost->setObjectName(QStringLiteral("homeWorkspace"));
+        if (experimental) gridHost->setObjectName(QStringLiteral("homeWorkspace"));
         auto *cells = new QGridLayout(gridHost);
-        cells->setContentsMargins(0, 0, 0, 0);
-        cells->setSpacing(6);
-        cells->addWidget(profileBox, 0, 0);
-        cells->addWidget(plotPanel, 0, 1);
-        if (dev) {
-            cells->addWidget(detailCard, 1, 0);
-            cells->addWidget(dev, 1, 1);
-        } else {
-            cells->addWidget(detailCard, 1, 0, 1, 2);
+        cells->setContentsMargins(0,0,0,0); cells->setSpacing(6);
+        int index = 0;
+        for (const auto &entry : panels) if (entry.second) {
+            entry.second->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Expanding);
+            cells->addWidget(entry.second,index/2,index%2); ++index;
         }
-        // Equal halves; the top row is as tall as the profile list needs, the
-        // bottom row takes the rest of the window.
-        cells->setColumnStretch(0, 1);
-        cells->setColumnStretch(1, 1);
-        cells->setRowStretch(1, 1);
         // Only a window too small for the content scrolls.
         auto *scroll = new DashboardScroll;
         scroll->setWidgetResizable(true);
@@ -648,13 +649,18 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *dashboardMenu = new QPushButton(tr("Dashboard panels…"));
         auto *panelMenu = new QMenu(dashboardMenu);
         dashboardMenu->setMenu(panelMenu);
-        const QList<QPair<QString,QWidget *>> panels{
-            {QStringLiteral("power"),profileBox},{QStringLiteral("monitoring"),plotPanel},
-            {QStringLiteral("hardware"),detailCard},{QStringLiteral("devices"),dev}};
-        const QStringList defaultOrder{QStringLiteral("power"),QStringLiteral("monitoring"),QStringLiteral("hardware"),QStringLiteral("devices")};
+        QStringList defaultOrder;
+        for (const auto &entry : panels) defaultOrder.append(entry.first);
+        const QString orderKey = experimental ? QStringLiteral("home/experimentalPanelOrder") : QStringLiteral("home/classicPanelOrder");
+        const QString monitorKey = experimental ? QStringLiteral("home/showMonitoring") : QStringLiteral("home/classicShowMonitoring");
+        const QString hardwareKey = experimental ? QStringLiteral("home/showHardware") : QStringLiteral("home/classicShowHardware");
+        auto panelById = [&panels](const QString &id) -> QWidget * {
+            for (const auto &entry : panels) if (entry.first == id) return entry.second;
+            return nullptr;
+        };
         auto order = std::make_shared<QStringList>();
         QSettings layoutPrefs(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui"));
-        for (const auto &id : layoutPrefs.value(QStringLiteral("home/experimentalPanelOrder"),defaultOrder).toStringList())
+        for (const auto &id : layoutPrefs.value(orderKey,defaultOrder).toStringList())
             if (defaultOrder.contains(id) && !order->contains(id)) order->append(id);
         for (const auto &id : defaultOrder) if (!order->contains(id)) order->append(id);
         auto layoutState=std::make_shared<QPair<QList<QWidget *>,int>>();
@@ -665,8 +671,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
                 if (entry.first == id && entry.second && !entry.second->isHidden()) visible.append(entry.second);
             int required = 0;
             for (auto *w : visible) required = qMax(required,w->minimumSizeHint().width());
-            const int threshold = required * 2 + 12;
-            const int columns = width >= threshold + (lastColumns==1?24:0) && visible.size()>1 ? 2 : 1;
+            const int columns = workspacefields::panelColumns(width,required,lastColumns,int(visible.size()));
             if (visible==lastVisible && columns==lastColumns) return;
             lastVisible=visible; lastColumns=columns;
             for (const auto &entry : panels) if (entry.second) cells->removeWidget(entry.second);
@@ -688,15 +693,15 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             });
             return action;
         };
-        auto *monitorAction=panelChoice(tr("Monitoring"),QStringLiteral("home/showMonitoring"),plotPanel);
-        auto *hardwareAction=panelChoice(tr("Hardware information"),QStringLiteral("home/showHardware"),detailCard);
+        auto *monitorAction=panelChoice(experimental ? tr("Monitoring") : tr("Live"),monitorKey,panelById(QStringLiteral("monitoring")));
+        auto *hardwareAction=panelChoice(tr("Hardware information"),hardwareKey,panelById(QStringLiteral("hardware")));
         auto *reorder=panelMenu->addAction(tr("Reorder panels…"));
-        connect(reorder,&QAction::triggered,this,[this,order,panels,scroll,arrange] {
+        connect(reorder,&QAction::triggered,this,[this,order,panels,scroll,arrange,orderKey,defaultOrder] {
             QDialog dialog(this); dialog.setWindowTitle(tr("Reorder dashboard panels"));
             auto *v=new QVBoxLayout(&dialog); auto *list=new QListWidget; v->addWidget(list);
-            for (const auto &id : *order) for (const auto &entry : panels) if (entry.first==id) {
+            for (const auto &id : *order) for (const auto &entry : panels) if (entry.first==id && entry.second) {
                 const auto *group=qobject_cast<QGroupBox *>(entry.second);
-                auto *item=new QListWidgetItem(group?group->title():id,list); item->setData(Qt::UserRole,id);
+                auto *item=new QListWidgetItem(group?group->title():tr("Hardware information"),list); item->setData(Qt::UserRole,id);
             }
             auto *row=new QHBoxLayout; auto *up=new QPushButton(tr("Move up")); auto *down=new QPushButton(tr("Move down")); row->addWidget(up); row->addWidget(down); v->addLayout(row);
             auto move=[list](int delta) { const int i=list->currentRow(), j=i+delta; if(i<0||j<0||j>=list->count()) return; auto *item=list->takeItem(i); list->insertItem(j,item); list->setCurrentRow(j); };
@@ -705,34 +710,20 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
             if(dialog.exec()!=QDialog::Accepted)return;
             order->clear(); for(int i=0;i<list->count();++i) order->append(list->item(i)->data(Qt::UserRole).toString());
-            QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); s.setValue(QStringLiteral("home/experimentalPanelOrder"),*order);
+            QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); for (const auto &id : defaultOrder) if (!order->contains(id)) order->append(id);
+            s.setValue(orderKey,*order);
             arrange(scroll->viewport()->width());
         });
         auto *reset=panelMenu->addAction(tr("Reset dashboard layout"));
         connect(reset,&QAction::triggered,this,[=] {
             *order=defaultOrder;
-            QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); s.remove(QStringLiteral("home/experimentalPanelOrder"));
+            QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); s.remove(orderKey);
             monitorAction->setChecked(true); hardwareAction->setChecked(true); arrange(scroll->viewport()->width());
         });
         root->addWidget(dashboardMenu,0,Qt::AlignRight);
         scroll->reflow=arrange;
         arrange(scroll->viewport()->width());
         root->addWidget(scroll, 1);
-    } else {
-        // Identical Classic layout and all existing child widgets.
-        auto *cells = new QGridLayout;
-        cells->setSpacing(6);
-        const QList<QWidget *> boxes{hardware, liveSensors, profileBox, dev};
-        for (int i = 0; i < boxes.size(); ++i) {
-            if (!boxes[i]) continue;
-            boxes[i]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-            cells->addWidget(boxes[i], i / 2, i % 2);
-        }
-        cells->setRowStretch(0, 1);
-        cells->setRowStretch(1, 1);
-        cells->setColumnStretch(0, 1);
-        cells->setColumnStretch(1, 1);
-        root->addLayout(cells, 1);
     }
     if (!dev) root->addWidget(status_);
     statusTimer_ = new QTimer(this);
@@ -914,9 +905,11 @@ void HomeTab::refreshLive() {
     // Not visible (hidden to tray / other tab) → no reads.
     // particular wakes the dGPU out of D3cold.
     if (!isVisible()) return;
-    refreshGpuLive();
+    const bool sensors = livePanel_ && livePanel_->isVisible();
+    const bool chart = temperaturePlot_ && temperaturePlot_->isVisible();
+    if (sensors || chart || !dgpuProbed_) refreshGpuLive();
     const bool device = hasDeviceRows() && devicePending_ == 0;
-    if (liveBusy_ || (liveRows_.isEmpty() && !device)) return;  // never stack sweeps
+    if (liveBusy_ || ((!sensors && !chart) && !device)) return;  // never stack sweeps
 
     // The sysfs sweep runs off the GUI thread: battery/charger attributes are
     // ACPI method calls (_BST/_PSR) answered by the EC, and an EC that is busy
@@ -925,29 +918,35 @@ void HomeTab::refreshLive() {
     liveBusy_ = true;
     QList<std::function<std::optional<QString>()>> getters;
     getters.reserve(liveRows_.size());
-    for (const LiveRow &r : std::as_const(liveRows_)) getters.append(r.getter);
+    QList<int> indices;
+    for (int i=0; i<liveRows_.size(); ++i) {
+        const auto &r = liveRows_.at(i);
+        if (sensors || (chart && r.key->text() == tr("CPU Temp"))) { getters.append(r.getter); indices.append(i); }
+    }
     QPointer<HomeTab> self(this);
     // The device rows ride along: their EC-backed reads block the same way.
     std::optional<DevicePaths> paths;
     if (device) paths = devicePaths();
     const quint64 gen = deviceGen_;
-    QThreadPool::globalInstance()->start([self, getters, paths, gen] {
+    const qint64 started = monoMs();
+    QThreadPool::globalInstance()->start([self, getters, indices, paths, gen, chart, started] {
         QList<std::optional<QString>> vals;
         vals.reserve(getters.size());
         for (const auto &g : getters) vals.append(g());
         std::optional<DeviceSnap> snap;
         if (paths) snap = readDevice(*paths);
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, vals, snap, gen] {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, vals, indices, snap, gen, chart, started] {
             if (!self) return;
             self->liveBusy_ = false;
             // A sweep that read the hardware before a write started or finished would put the OLD value back
             // in the combo (the next poll corrects it, but the change looked as if it had not been applied).
             if (snap && gen == self->deviceGen_) self->applyDevice(*snap);
-            for (int i = 0; i < vals.size() && i < self->liveRows_.size(); ++i) {
+            for (int i = 0; i < vals.size(); ++i) {
+                const int row = indices.at(i);
                 const QString t = vals[i].value_or(QStringLiteral("—"));
-                if (self->liveRows_[i].value->text() != t) self->liveRows_[i].value->setText(t);
+                if (self->liveRows_[row].value->text() != t) self->liveRows_[row].value->setText(t);
             }
-            if (self->temperaturePlot_) {
+            if (chart && self->temperaturePlot_ && self->temperaturePlot_->isVisible()) {
                 auto pick = [](const QString &str) -> std::optional<double> {
                     static const QRegularExpression re(QStringLiteral("(-?\\d+(?:\\.\\d+)?)"));
                     const auto match = re.match(str);
@@ -957,15 +956,16 @@ void HomeTab::refreshLive() {
                     return ok ? std::optional<double>(v) : std::nullopt;
                 };
                 std::optional<double> cpu;
-                for (const auto &r : std::as_const(self->liveRows_)) {
-                    if (r.key->text() == self->tr("CPU Temp")) { cpu = pick(r.value->text()); break; }
+                for (int i=0; i<indices.size(); ++i) {
+                    if (self->liveRows_.at(indices.at(i)).key->text() == self->tr("CPU Temp") && vals.at(i)) { cpu = pick(*vals.at(i)); break; }
                 }
                 // An EC temperature is real only while the dGPU is awake and
                 // the last EC sample is recent. No NVML request is introduced.
                 std::optional<double> gpu;
                 if (self->ecGpuTemp_ > 0 && monoMs() - self->ecAt_ < 5000 &&
-                    self->gpuLiveValue_ && self->gpuLiveValue_->text().contains(self->tr("awake")))
+                    self->gpuRuntimeActive_)
                     gpu = self->ecGpuTemp_;
+                if (monoMs() - started >= 6000) { cpu.reset(); gpu.reset(); }
                 self->temperaturePlot_->append(cpu, gpu);
             }
         }, Qt::QueuedConnection);
@@ -977,20 +977,22 @@ void HomeTab::refreshGpuLive() {
         dgpuProbed_ = true;
         if (const QString pci = nvidiaPciDir(); !pci.isEmpty()) dgpuRuntimeStatus_ = pci + QStringLiteral("/power/runtime_status");
     }
+    gpuRuntimeActive_ = false;
     if (dgpuRuntimeStatus_.isEmpty()) return;  // no NVIDIA dGPU: row stays hidden
     // sysfs + EC only — the driver is never queried, so this cannot keep the GPU awake.
     const std::optional<QString> raw = pp::readText(dgpuRuntimeStatus_);
     const QString st = raw.value_or(QString());
     QString t;
-    if (!raw && !QFileInfo::exists(dgpuRuntimeStatus_)) {
+    if (!raw && !QFileInfo::exists(QDir::cleanPath(QFileInfo(dgpuRuntimeStatus_).absolutePath() + QStringLiteral("/..")))) {
         // iGPU-only mode / released dGPU: the device left the PCI bus. This used to read as "awake".
         t = tr("off (not on the PCI bus)");
     } else if (st == QLatin1String("suspended")) {
         t = tr("asleep (runtime suspended, ~0 W)");
-    } else if (st == QLatin1String("active") || st.isEmpty()) {
+    } else if (st == QLatin1String("active")) {
+        gpuRuntimeActive_ = true;
         t = ecGpuTemp_ > 0 && monoMs() - ecAt_ < 5000 ? tr("%1°C  ·  awake").arg(ecGpuTemp_) : tr("awake");
     } else {
-        t = st;  // suspending / resuming / error
+        t = st.isEmpty() ? tr("GPU runtime state unavailable") : st;  // suspending / resuming / error
     }
     if (gpuLiveValue_->text() != t) gpuLiveValue_->setText(t);
     gpuLiveKey_->show();
@@ -1130,6 +1132,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
 
     if (!chargeFile_.isEmpty()) {
         charge_ = new QComboBox;
+        navigationtargets::mark(charge_, QStringLiteral("home.charge"), QStringLiteral("Battery charge mode"), QStringLiteral("battery conservation pil şarj"));
         charge_->setToolTip("Battery charge mode.\nLong_Life = stop around 80% (conservation), best while mostly plugged in.\n"
                             "Standard = full charge.  Fast = rapid charge, more heat and wear.");
         for (const QString &w : rdText(chargeFile_).split(' ', Qt::SkipEmptyParts)) {
@@ -1144,6 +1147,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
     // GPU mode (MUX) — only where the Legion GameZone WMI interface exists.
     if (wmiHas("887B54E3-DDDC-4B2C-8B88-68A26A8835D0")) {
         gpuMode_ = new QComboBox;
+        navigationtargets::mark(gpuMode_, QStringLiteral("home.mux"), QStringLiteral("GPU mode"), QStringLiteral("MUX hybrid discrete ekran kartı modu"));
         gpuMode_->addItem(tr("Hybrid (iGPU + NVIDIA)"), "hybrid");
         gpuMode_->addItem(tr("dGPU only (MUX → NVIDIA)"), "dgpu");
         gpuMode_->setEnabled(false);
@@ -1174,6 +1178,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
                        "iGPU only disconnects the dGPU entirely: best battery life, but no NVIDIA until you switch back.\n"
                        "Has no effect in dGPU-only (MUX) mode.");
         auto *od = new QCheckBox(tr("Panel Over Drive"));
+        navigationtargets::mark(od, QStringLiteral("home.overdrive"), QStringLiteral("Panel Over Drive"), QStringLiteral("display response ekran tepki süresi"));
         od->setToolTip("Faster pixel response on LCD panels (less ghosting, possible overshoot).\n"
                        "Only offered when the firmware reports the panel supports it — never on OLED.");
         auto *nvBack = new QPushButton(tr("Bring NVIDIA back"));
@@ -1373,6 +1378,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
     if (!fullSpeedFile_.isEmpty() || !fanHwmon_.isEmpty() || wmiHas("DC2A8805-3A8C-41BA-A6F7-092E0089CD3B")
         || wmiHas("92549549-4BDE-4F06-AC04-CE8BF898DBAA")) {
         fullSpeed_ = new QCheckBox(tr("Turbo fan (EC full speed)"));
+        navigationtargets::mark(fullSpeed_, QStringLiteral("home.fan.turbo"), QStringLiteral("Turbo fan"), QStringLiteral("EC full speed fan tam hız"));
         fullSpeed_->setToolTip("The embedded controller's own Full Speed mode (the switch in Lenovo Vantage /\n"
                                "Legion Space). It overrides every fan target and stays on across reboots and OS\n"
                                "changes until it is turned off. Source: "
@@ -1415,11 +1421,13 @@ QGroupBox *HomeTab::buildDeviceBox() {
 
         // Entry point: one click puts every fan at max (and so into the mode above).
         maxAllBtn_ = new QPushButton(tr("Max all fans"));
+        navigationtargets::mark(maxAllBtn_, QStringLiteral("home.fan.max"), QStringLiteral("Max all fans"), QStringLiteral("maximum RPM fan maksimum devir"));
         maxAllBtn_->setToolTip("Set every fan to its maximum RPM. Controls lock until you press Disable max fans.");
         connect(maxAllBtn_, &QPushButton::clicked, this, &HomeTab::setAllFansMax);
         QPushButton *curveBtn = nullptr;
         if (fanCurveSupported()) {
         curveBtn = new QPushButton(tr("Fan curve…"));
+        navigationtargets::mark(curveBtn, QStringLiteral("home.fan.curve"), QStringLiteral("Fan curve"), QStringLiteral("EC custom fan eğrisi"));
         curveBtn->setToolTip("Edit the Custom-mode fan curve the EC follows (all fans, 10 temperature steps).");
         connect(curveBtn, &QPushButton::clicked, this, [this] {
             const auto prof = currentProfile();

@@ -33,6 +33,11 @@ jobs:
       - run: ctest --test-dir build --output-on-failure
       - run: python3 gui/tests/translation_tr_test.py
       - run: python3 gui/tests/chartaxis_native_test.py
+      - run: python3 gui/tests/workspacefields_native_test.py
+      - run: python3 gui/tests/calibrationmath_native_test.py
+      - run: python3 gui/tests/scene_wifi_native_test.py
+      - run: python3 gui/tests/scene_wifi_contract_static_test.py
+      - run: python3 gui/tests/calibrationviewer_static_test.py
       - run: python3 gui/tests/topologyfields_native_test.py
       - run: python3 gui/tests/archiveidentity_native_test.py
       - run: python3 gui/tests/canvasviewport_native_test.py

@@ -304,7 +304,7 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
             const QJsonObject rec = QJsonDocument::fromJson(l.toUtf8()).object();
             const qint64 t = validTime(rec.value("t").toDouble());
             if (rec.value("boot").toString() != b || !t || std::abs(t - when) > 1800 || n++ >= 50) continue;
-            append(t,QStringLiteral("SCENE"), QStringLiteral("%1 · %2").arg(rec.value("scene").toString(), rec.value("ok").isBool() ? (rec.value("ok").toBool() ? QStringLiteral("success") : QStringLiteral("failure / rollback")) : QStringLiteral("unknown")));
+            append(t,QStringLiteral("SCENE"), QStringLiteral("%1 · %2").arg(rec.value("scene").toString(), rec.value("outcome").isString() ? rec.value("outcome").toString() : rec.value("ok").isBool() ? (rec.value("ok").toBool() ? QStringLiteral("legacy helper success, unverified") : QStringLiteral("failure / rollback")) : QStringLiteral("unknown")));
         }
     }
     // The saved health log includes a boot-id prefix for cross-reboot disambiguation.

@@ -146,6 +146,7 @@ bool matches(const QString &query, const QString &label, const QStringList &keyw
 }
 
 int navigationScore(const QString &query, const QString &label, const QStringList &keywords) {
+    if (query.size() > 256) return -1;
     const QString q = normalize(query.trimmed());
     if (q.isEmpty()) return 0;
     if (q.size() > 128) return -1;
@@ -153,13 +154,17 @@ int navigationScore(const QString &query, const QString &label, const QStringLis
     if (name == q) return 10000;
     if (name.startsWith(q)) return 9000;
     const QString hay = normalize(label + QLatin1Char(' ') + keywords.join(QLatin1Char(' '))).left(8192);
-    if (hay.contains(q)) return 8000;
     static const QRegularExpression split(QStringLiteral("[^\\p{L}\\p{N}_]+"));
     const auto tokens = hay.split(split, Qt::SkipEmptyParts);
+    if (tokens.contains(q)) return 8500;
+    for (const auto &token : tokens) if (token.startsWith(q)) return 8200;
+    if (hay.contains(q)) return 8000;
     const auto queries = q.split(split, Qt::SkipEmptyParts);
     if (queries.isEmpty() || queries.size() > 12) return -1;
     int score = 0;
     for (const auto &word : queries) {
+        if (tokens.contains(word)) { score += 140; continue; }
+        if (std::any_of(tokens.cbegin(), tokens.cend(), [&](const QString &t) { return t.startsWith(word); })) { score += 120; continue; }
         if (hay.contains(word)) { score += 100; continue; }
         if (word.size() < 4 || word.size() > 32) return -1;
         const int maxEdits = word.size() >= 8 ? 2 : 1;

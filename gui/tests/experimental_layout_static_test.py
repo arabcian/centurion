@@ -11,7 +11,7 @@ files = {n: read(n) for n in ('hometab.cpp', 'ryzentab.cpp', 'nvidiatab.cpp',
 checks = {
  'Home actually builds real 2-column workspace': 'homeWorkspace' in files['hometab.cpp'] and 'temperaturePlot_->append(cpu, gpu)' in files['hometab.cpp'],
  'Home never introduces NVML polling': 'nvidia-smi' not in files['experimentalui.h'] and 'NVML' not in files['experimentalui.h'],
- 'Home Classic 2x2 layout retained': 'cells->addWidget(boxes[i], i / 2, i % 2)' in files['hometab.cpp'],
+ 'Home Classic order and shared adaptive grid retained': all(t in files['hometab.cpp'] for t in ['home/classicPanelOrder', 'cells->addWidget(entry.second,index/2,index%2)', '{QStringLiteral("hardware"),hardware},{QStringLiteral("monitoring"),liveSensors}']),
  'Ryzen existing SMU slot layout retained': 'slots_.append({ccd, s, e, d, id, cppc, mhz, volt, watt})' in files['ryzentab.cpp'],
  'Ryzen single authoritative CCD slot editor': 'coreGrid_ = gridHost' in files['ryzentab.cpp'] and 'root->addWidget(coreBox, 1)' in files['ryzentab.cpp'],
  'Ryzen labels use offset units, not misleading millivolts': 'Curve Optimizer offset for this slot' in files['ryzentab.cpp'] and ' mV' not in files['ryzentab.cpp'],

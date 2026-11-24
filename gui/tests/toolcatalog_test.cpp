@@ -69,6 +69,9 @@ int main() {
     CHECK(tc::navigationScore(QStringLiteral("governor"),QStringLiteral("governor")) > tc::navigationScore(QStringLiteral("governer"),QStringLiteral("governor")));
     CHECK(tc::navigationScore(QStringLiteral("unrelated"),QStringLiteral("CPU")) < 0);
     CHECK(tc::navigationScore(QString(500,QLatin1Char('a')),QStringLiteral("CPU")) < 0);
+    CHECK(tc::navigationScore(QStringLiteral("core"),QStringLiteral("CPU core")) > tc::navigationScore(QStringLiteral("core"),QStringLiteral("CPU hardcore")));
+    CHECK(tc::navigationScore(QStringLiteral("core"),QStringLiteral("CPU core")) > tc::navigationScore(QStringLiteral("core"),QStringLiteral("CPU cores")));
+    CHECK(tc::navigationScore(QStringLiteral("core"),QStringLiteral("CPU cores")) > tc::navigationScore(QStringLiteral("core"),QStringLiteral("CPU hardcore")));
     if (failures) std::fprintf(stderr, "%d failure(s)\n", failures);
     return failures ? 1 : 0;
 }

@@ -134,6 +134,8 @@ private:
 
     struct LiveRow { QLabel *key; QLabel *value; std::function<std::optional<QString>()> getter; };
     QList<LiveRow> liveRows_;
+    QGroupBox *livePanel_ = nullptr;
+    bool gpuRuntimeActive_ = false;
     QLabel *gpuLiveKey_ = nullptr, *gpuLiveValue_ = nullptr;
     QLabel *gpuHwKey_ = nullptr, *gpuHwValue_ = nullptr;
     bool liveBusy_ = false;            // a sensor sweep is running on the thread pool

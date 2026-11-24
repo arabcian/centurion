@@ -1,3 +1,4 @@
+#include "navigationtargets.h"
 #include "amdgputab.h"
 #include "charts.h"
 #include <QDateTime>
@@ -112,6 +113,7 @@ AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
     kindLabel_ = muted({});
     top->addWidget(kindLabel_, 2);
     auto *capabilities = new QPushButton(tr("Capabilities…"));
+    navigationtargets::mark(capabilities, QStringLiteral("amd.capabilities"), QStringLiteral("Capabilities"), QStringLiteral("donanım yetenekleri"));
     connect(capabilities, &QPushButton::clicked, this, [this] {
         if (!card()) return;
         QDialog dlg(this);
@@ -162,6 +164,7 @@ AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
     auto *liveRow = new QHBoxLayout;
     liveRow->addWidget(live_, 1);
     auto *frequencies = new QPushButton(tr("Frequency overview…"));
+    navigationtargets::mark(frequencies, QStringLiteral("amd.frequency"), QStringLiteral("Frequency overview"), QStringLiteral("DPM VRAM frekans inceleme"));
     connect(frequencies, &QPushButton::clicked, this, &AmdGpuTab::frequencyOverview);
     liveRow->addWidget(frequencies);
     outer->addLayout(liveRow);
@@ -359,6 +362,7 @@ void AmdGpuTab::rebuildForm() {
     };
     auto row = [](QGridLayout *g, const QString &name, QWidget *w, const QString &hint = {}) {
         const int r = g->rowCount();
+        navigationtargets::markAmd(w, name);
         g->addWidget(new QLabel(name), r, 0);
         g->addWidget(w, r, 1, Qt::AlignLeft);
         if (!hint.isEmpty()) g->addWidget(muted(hint), r, 2);
@@ -492,6 +496,7 @@ void AmdGpuTab::rebuildForm() {
             const FanValue f = snap_.fan.value(key);
             fan_.insert(key, spin(f.min, f.max, f.value, {}));
             row(fg, QString::fromUtf8(label), fan_.value(key));
+            navigationtargets::mark(fan_.value(key), QStringLiteral("amd.fan.") + key, QString::fromUtf8(label), key + QStringLiteral(" fan RPM sıcaklık devir"));
         }
         if (snap_.fanCurve) {
             auto *w = new QWidget;

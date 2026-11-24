@@ -218,11 +218,11 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
         let Some((k, v)) = t.split_once(':') else { continue };
         let v = v.trim();
         match k {
-            "freq" => r.bss.freq = first::<f64>(v).map_or(0, |f| f as u32),
-            "signal" => r.bss.signal_dbm = first::<f64>(v).map(|f| f.round() as i32),
+            "freq" => r.bss.freq = first::<f64>(v).filter(|f| f.is_finite() && *f >= 0.0 && *f <= u32::MAX as f64 && f.fract() == 0.0).map_or(0, |f| f as u32),
+            "signal" => r.bss.signal_dbm = first::<f64>(v).filter(|f| f.is_finite() && (-127.0..=0.0).contains(f)).map(|f| f.round() as i32),
             "SSID" => r.bss.ssid = v.to_owned(),
             "capability" => r.privacy = v.contains("Privacy"),
-            "last seen" if v.ends_with("ago") => r.bss.seen_ms = first(v),
+            "last seen" if v.ends_with(" ms ago") => r.bss.seen_ms = v.strip_suffix(" ms ago").and_then(|n| n.trim().parse().ok()),
             _ => {}
         }
     }
@@ -559,6 +559,15 @@ mod tests {
         assert_eq!(l[3].security, "WEP");
         assert_eq!(l[4].security, "Enterprise");
         assert!(parse_scan("").is_empty());
+    }
+
+    #[test]
+    fn scan_rejects_nonfinite_and_wrong_units() {
+        let result = parse_scan("BSS aa:bb:cc:00:00:01(on wlan0)\n\tfreq: 2437.5\n\tsignal: NaN dBm\n\tlast seen: 2 seconds ago\n");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].freq, 0);
+        assert_eq!(result[0].signal_dbm, None);
+        assert_eq!(result[0].seen_ms, None);
     }
 
     #[test]
