@@ -39,9 +39,9 @@ static QLabel *banner(CoolingPage &p) {
 
 static const char *STATUS_WARN = R"({"ok":true,"has_sensor":true,"fans":1,"limit_c":85.0,
  "context":{"profile":"custom","power":"ac","limits":{"ppt_pl1_spl":80,"ppt_pl2_sppt":110,"ppt_pl3_fppt":120,"cpu_temp":85},"threads":32},
- "baseline":{"t":1700000000,"steady_temp":84.5,"fan_rpm":4800.0,"mhz":4300.0,"start_temp":45.0,"noisy":false,"baseline":true},
- "runs":[{"t":1700000000,"steady_temp":84.5,"fan_rpm":4800.0,"mhz":4300.0,"start_temp":45.0,"noisy":false,"baseline":true},
-         {"t":1710000000,"steady_temp":84.8,"fan_rpm":5200.0,"mhz":3800.0,"start_temp":46.0,"noisy":false,"baseline":false}],
+ "baseline":{"t":1700000000,"secs":240,"steady_temp":84.5,"fan_rpm":4800.0,"mhz":4300.0,"start_temp":45.0,"noisy":false,"baseline":true},
+ "runs":[{"t":1700000000,"secs":240,"steady_temp":84.5,"fan_rpm":4800.0,"mhz":4300.0,"start_temp":45.0,"noisy":false,"baseline":true},
+         {"t":1710000000,"secs":240,"steady_temp":84.8,"fan_rpm":5200.0,"mhz":3800.0,"start_temp":46.0,"noisy":false,"baseline":false}],
  "assessment":{"level":"warn","d_temp":0.3,"d_clock_pct":11.6,"d_fan_pct":8.3,"pinned":true,
    "reasons":[{"code":"pinned","value":85.0},{"code":"clock_down","value":11.6}]}})";
 

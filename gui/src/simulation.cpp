@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QPlainTextEdit>
+#include <QScrollArea>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <memory>
@@ -75,8 +76,13 @@ QWidget *makeWorkspace(QApplication &app) {
     palette->setCurrentIndex(palette->findData(theme::currentTheme()));
     form->addRow(Simulation::tr("Live theme"),palette); layout->addLayout(form);
     auto *tabs=new QTabWidget; tabs->setObjectName(QStringLiteral("fixtureTabs")); layout->addWidget(tabs,1);
-    auto *metrics=new QWidget; auto *metricLayout=new QVBoxLayout(metrics);
-    tabs->addTab(metrics,Simulation::tr("Telemetry and Curve"));
+    auto *metrics = new QWidget;
+    auto *metricLayout = new QVBoxLayout(metrics);
+    auto *metricScroll = new QScrollArea;
+    metricScroll->setFrameShape(QFrame::NoFrame);
+    metricScroll->setWidgetResizable(true);
+    metricScroll->setWidget(metrics);
+    tabs->addTab(metricScroll,Simulation::tr("Telemetry and Curve"));
     auto *diagnostics=new QPlainTextEdit; diagnostics->setReadOnly(true); diagnostics->setObjectName(QStringLiteral("fixtureDiagnostics"));
     tabs->addTab(diagnostics,Simulation::tr("Read-only Diagnostics"));
     // A fresh private directory for these actual diagnostic parsers. Failure
