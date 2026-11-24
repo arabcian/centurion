@@ -5,7 +5,6 @@
 #include "theme.h"
 #include "workspacestate.h"
 #include <QCoreApplication>
-#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -20,7 +19,6 @@
 #include <QComboBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QSet>
 #include <QMap>
 #include <QSplitter>
 #include <QTreeWidget>
@@ -31,30 +29,27 @@
 namespace diagnostichistory {
 namespace {
 QString tr(const char *s) { return QCoreApplication::translate("DiagnosticHistory",s); }
-struct RecordedEvent {
-    QString boot, reportedBoot, time, level, title, detail, id;
-    quint64 sequence;
-    RecordSource source;
-};
-QString logName(RecordSource source) {
-    return source == RecordSource::HealthLog ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
-}
-QList<RecordedEvent> recordedEvents() {
-    QList<RecordedEvent> out; QSet<QByteArray> seen;
-    const auto add=[&](const QList<diagsrc::LogLine>& lines, RecordSource source) {
-        const auto name = logName(source);
-        for(const auto &line:lines) {
-            // Exact duplicate only. Different text sharing a sequence is retained,
-            // and a legacy boot prefix is never promoted to a full UUID.
-            const auto key=QCryptographicHash::hash(QJsonDocument(QJsonArray{name,line.boot,QString::number(line.seq),line.time,line.level,line.kind,line.title,line.text}).toJson(QJsonDocument::Compact),QCryptographicHash::Sha256);
-            if(seen.contains(key)) continue;
-            seen.insert(key);
-            out.append({QString::fromStdString(fullBoot(line.boot.toStdString())),diag::redactPrivateText(line.boot).left(80),line.time.left(80),line.level.left(80),diag::redactPrivateText(line.title).left(300),diag::redactPrivateText(line.text).left(8192),QString::fromLatin1(key.toHex()),line.seq,source});
+QString coverageText(const diagsrc::LogTail &tail, RecordSource source) {
+    QStringList rows;
+    const auto name = logName(source);
+    for (int index = 0; index < 2; ++index) {
+        const auto &file = tail.files.at(index);
+        const auto filename = index == 0 ? name + QStringLiteral(".1") : name;
+        QStringList facts;
+        switch (file.state) {
+        case diagsrc::LogFileState::Missing: facts << tr("File absent"); break;
+        case diagsrc::LogFileState::Unreadable: facts << tr("Could not read safely"); break;
+        case diagsrc::LogFileState::Read:
+            facts << tr("Read");
+            if (file.omittedBytes) facts << tr("%1 older bytes outside the scan limit").arg(file.omittedBytes);
+            if (file.rejectedLines) facts << tr("%1 invalid or oversized lines omitted").arg(file.rejectedLines);
+            if (file.incompleteTail) facts << tr("Incomplete final line omitted");
+            break;
         }
-    };
-    add(diagsrc::savedEvents(1000), RecordSource::HealthLog);
-    add(diagsrc::savedKernel(1000), RecordSource::KernelLog);
-    return out;
+        rows << tr("%1: %2").arg(filename, facts.join(QStringLiteral(" · ")));
+    }
+    if (tail.omittedLines) rows << tr("%1: %2 older records outside the display limit").arg(name).arg(tail.omittedLines);
+    return rows.join(QLatin1Char('\n'));
 }
 QString recordText(const QJsonArray &r) {
     if(r.isEmpty()) return tr("Unsupported record format");
@@ -103,11 +98,30 @@ QString compare(const Entry&a,const Entry&b) {
 }
 void open(QWidget *owner) {
     const auto archive=load(diagsrc::dataDir()+QStringLiteral("/diagnostic-history"));
-    const auto events=recordedEvents();
+    const auto health = diagsrc::savedLog(diagsrc::SavedLog::Health, 1000);
+    const auto kernel = diagsrc::savedLog(diagsrc::SavedLog::Kernel, 1000);
+    const auto events = recordedEvents(health, kernel);
     QDialog dlg(owner); dlg.setWindowTitle(tr("Cross-Boot Diagnostic History"));dlg.resize(1050,700);
     auto *layout=new QVBoxLayout(&dlg);
     auto *note=new QLabel(tr("Saved local reports and bounded saved kernel/health log tails only. Capture boot and event boot are different types of provenance. Sharing a boot does not prove a common device or cause. Wall-clock ordering is descriptive only."));note->setWordWrap(true);layout->addWidget(note);
-    auto *status=new QLabel(tr("%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)").arg(archive.entries.size()).arg(archive.rejected).arg(events.size()));layout->addWidget(status);
+    auto *status = new QLabel(tr("%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)")
+                                  .arg(archive.entries.size()).arg(archive.rejected).arg(events.size()));
+    auto *summary = new QHBoxLayout;
+    summary->addWidget(status, 1);
+    auto *showCoverage = new QPushButton(tr("Log coverage"));
+    showCoverage->setCheckable(true);
+    summary->addWidget(showCoverage);
+    layout->addLayout(summary);
+    auto *coverage = new QPlainTextEdit;
+    coverage->setReadOnly(true);
+    coverage->setMaximumHeight(130);
+    coverage->setAccessibleName(tr("Log coverage"));
+    coverage->setPlainText(coverageText(health, RecordSource::HealthLog) + QLatin1Char('\n')
+                           + coverageText(kernel, RecordSource::KernelLog) + QLatin1Char('\n')
+                           + tr("Events with a full boot identity are ordered by sequence within that boot."));
+    coverage->hide();
+    layout->addWidget(coverage);
+    QObject::connect(showCoverage, &QPushButton::toggled, coverage, &QWidget::setVisible);
     if(archive.limited) layout->addWidget(new QLabel(tr("Archive scan limit reached; some files were not read.")));
     auto *filter=new QLineEdit;filter->setPlaceholderText(tr("Filter report, boot, source, time, event or note…"));filter->setMaxLength(512);layout->addWidget(filter);
     auto *sources = new QComboBox;
@@ -167,7 +181,10 @@ void open(QWidget *owner) {
         if(i>=0 && i<archive.entries.size()) detail->setPlainText(describe(archive.entries.at(i)));
         else if(i<=-2 && -2-i<events.size()) {
             const auto &e=events.at(-2-i);
-            detail->setPlainText(tr("Source: %1\nRecorded time: %2\nEvent boot: %3\nSequence: %4\nLevel: %5\nRecord ID: %6\n\n%7\n%8").arg(logName(e.source),e.time,e.boot.isEmpty()?tr("Unknown / legacy"):e.boot,QString::number(e.sequence),e.level,e.id,e.title,e.detail)
+            QStringList files;
+            if (e.rotated) files << logName(e.source) + QStringLiteral(".1");
+            if (e.current) files << logName(e.source);
+            detail->setPlainText(tr("Source: %1\nRecorded time: %2\nEvent boot: %3\nSequence: %4\nLevel: %5\nRecord ID: %6\n\n%7\n%8").arg(files.join(QStringLiteral(", ")),e.time,e.boot.isEmpty()?tr("Unknown / legacy"):e.boot,QString::number(e.sequence),e.level,e.id,e.title,e.detail)
                 +(e.boot.isEmpty()?QStringLiteral("\n")+tr("Recorded boot label (not an identity): %1").arg(e.reportedBoot):QString()));
         } else detail->setPlainText(tr("Select an archived report or saved event."));
     });

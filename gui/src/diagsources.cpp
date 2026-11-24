@@ -13,6 +13,7 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <algorithm>
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -40,9 +41,10 @@ QString dataDir() { return QStandardPaths::writableLocation(QStandardPaths::Gene
 
 QString bootId() { return read(QStringLiteral("/proc/sys/kernel/random/boot_id"), 80); }
 
-static bool openRegular(QFile &f, const QString &path) {
+static bool openRegular(QFile &f, const QString &path, bool *missing = nullptr) {
     const QByteArray encoded = QFile::encodeName(path);
     const int fd = ::open(encoded.constData(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+    if (missing) *missing = fd < 0 && errno == ENOENT;
     if (fd < 0) return false;
     struct stat st{};
     if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || !f.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
@@ -94,19 +96,31 @@ std::optional<LogLine> parseLine(const QString &line) {
     return std::nullopt;
 }
 
-static QList<LogLine> tailOf(const QString &name, int max) {
-    QList<LogLine> out;
+LogTail savedLog(SavedLog source, int max) {
+    LogTail out;
     max = std::clamp(max, 0, 10000);
     if (!max) return out;
-    for (const QString &file : {name + QStringLiteral(".1"), name}) {
+    const QString name = source == SavedLog::Health ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
+    for (int index = 0; index < 2; ++index) {
+        const bool rotated = index == 0;
+        const QString file = rotated ? name + QStringLiteral(".1") : name;
+        auto &coverage = out.files.at(index);
         QFile f;
-        if (!openRegular(f, stateDir() + QLatin1Char('/') + file)) continue;
+        bool missing = false;
+        if (!openRegular(f, stateDir() + QLatin1Char('/') + file, &missing)) {
+            coverage.state = missing ? LogFileState::Missing : LogFileState::Unreadable;
+            continue;
+        }
+        coverage.state = LogFileState::Unreadable;
         const qint64 size = f.size(), start = std::max<qint64>(0, size - (4LL << 20));
         if (size < 0) continue;
         char previous = '\n';
         if (start > 0 && (!f.seek(start - 1) || !f.getChar(&previous))) continue;
         const auto bytes = f.read(size - start);
         if (f.error() != QFileDevice::NoError || bytes.size() != size - start) continue;
+        coverage.state = LogFileState::Read;
+        coverage.omittedBytes = start;
+        coverage.incompleteTail = !bytes.isEmpty() && !bytes.endsWith('\n');
         qsizetype pos = 0;
         if (previous != '\n') {
             const auto firstNewline = bytes.indexOf('\n');
@@ -115,10 +129,18 @@ static QList<LogLine> tailOf(const QString &name, int max) {
         }
         while (pos < bytes.size()) {
             const auto end = bytes.indexOf('\n', pos);
-            if (end < 0) break; // never parse an incomplete record
-            if (end - pos <= 8192) {
-                if (auto l = parseLine(QString::fromUtf8(bytes.constData() + pos, end - pos).trimmed())) out << *l;
-                if (out.size() > max) out.removeFirst();
+            if (end < 0) break;
+            auto line = end - pos <= 8192
+                ? parseLine(QString::fromUtf8(bytes.constData() + pos, end - pos).trimmed()) : std::nullopt;
+            if (line) {
+                line->rotated = rotated;
+                out.lines << std::move(*line);
+                if (out.lines.size() > max) {
+                    out.lines.removeFirst();
+                    ++out.omittedLines;
+                }
+            } else {
+                ++coverage.rejectedLines;
             }
             pos = end + 1;
         }
@@ -126,8 +148,8 @@ static QList<LogLine> tailOf(const QString &name, int max) {
     return out;
 }
 
-QList<LogLine> savedEvents(int max) { return tailOf(QStringLiteral("health.log"), max); }
-QList<LogLine> savedKernel(int max) { return tailOf(QStringLiteral("kernel.log"), max); }
+QList<LogLine> savedEvents(int max) { return savedLog(SavedLog::Health, max).lines; }
+QList<LogLine> savedKernel(int max) { return savedLog(SavedLog::Kernel, max).lines; }
 
 QList<LogLine> mergeUnique(const QList<LogLine> &a, const QList<LogLine> &b) {
     QList<LogLine> out;

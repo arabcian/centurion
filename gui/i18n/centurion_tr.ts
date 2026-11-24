@@ -26719,6 +26719,16 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Unresolved boot identity</source><translation>Belirlenemeyen açılış kimliği</translation></message>
         <message><source>Source:</source><translation>Kaynak:</translation></message>
         <message><source>Boot identity:</source><translation>Açılış kimliği:</translation></message>
+        <message><source>Log coverage</source><translation>Günlük kapsamı</translation></message>
+        <message><source>File absent</source><translation>Dosya yok</translation></message>
+        <message><source>Could not read safely</source><translation>Güvenli biçimde okunamadı</translation></message>
+        <message><source>Read</source><translation>Okundu</translation></message>
+        <message><source>%1 older bytes outside the scan limit</source><translation>%1 eski bayt tarama sınırının dışında</translation></message>
+        <message><source>%1 invalid or oversized lines omitted</source><translation>%1 geçersiz veya fazla uzun satır atlandı</translation></message>
+        <message><source>Incomplete final line omitted</source><translation>Tamamlanmamış son satır atlandı</translation></message>
+        <message><source>%1: %2</source><translation>%1: %2</translation></message>
+        <message><source>%1: %2 older records outside the display limit</source><translation>%1: %2 eski kayıt görüntüleme sınırının dışında</translation></message>
+        <message><source>Events with a full boot identity are ordered by sequence within that boot.</source><translation>Tam açılış kimliği olan olaylar, aynı açılış içinde sıra numarasına göre gösterilir.</translation></message>
         <message><source>Different capture boots.
 </source><translation>Farklı yakalama açılışları.
 </translation></message>

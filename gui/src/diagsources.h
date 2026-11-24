@@ -8,6 +8,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <array>
 #include <optional>
 
 namespace diagsrc {
@@ -26,14 +27,30 @@ QJsonObject loadJson(const QString &path, qint64 limit = 1 << 20);
 /// Atomic, owner-only. Empty = saved, else the reason.
 QString saveJson(const QString &path, const QJsonObject &o);
 
-/// One saved log line. health.log: "<time>  boot=<8> seq=<n>  LEVEL KIND  title  |  text";
+/// One saved log line. health.log: "<time>  boot=<UUID or legacy 8> seq=<n>  LEVEL KIND  title  |  text";
 /// kernel.log: "<time>  boot=<UUID or legacy 8> seq=<n>  LEVEL  [s.us] message" (kind and title empty).
 struct LogLine {
     QString time, boot, level, kind, title, text;
     quint64 seq = 0;
+    bool rotated = false;
     QString key() const { return boot + QLatin1Char('/') + QString::number(seq); }
 };
 std::optional<LogLine> parseLine(const QString &line);
+enum class SavedLog { Health, Kernel };
+enum class LogFileState { Missing, Unreadable, Read };
+struct LogFileCoverage {
+    LogFileState state = LogFileState::Missing;
+    qint64 omittedBytes = 0;
+    int rejectedLines = 0;
+    bool incompleteTail = false;
+};
+struct LogTail {
+    QList<LogLine> lines;
+    // Rotated first, current second, matching the file scan order.
+    std::array<LogFileCoverage, 2> files;
+    int omittedLines = 0;
+};
+LogTail savedLog(SavedLog source, int max);
 /// The newest `max` lines of health.log.1 + health.log, oldest first.
 QList<LogLine> savedEvents(int max = 3000);
 /// The newest `max` lines of kernel.log.1 + kernel.log, oldest first.

@@ -48,5 +48,34 @@ int main(int argc,char **argv) {
     // A valid-looking suffix still belongs to a partial first record.
     CHECK(writeLog("previous "));
     CHECK(diagsrc::savedKernel().isEmpty());
+    CHECK(diagsrc::savedLog(diagsrc::SavedLog::Kernel, 10).files.at(0).state == diagsrc::LogFileState::Missing);
+    const auto capped = diagsrc::savedLog(diagsrc::SavedLog::Kernel, 10).files.at(1);
+    CHECK(capped.state == diagsrc::LogFileState::Read && capped.omittedBytes > 0 && capped.rejectedLines == 1);
+    const auto put = [](const QString &name, const QByteArray &data) {
+        QFile f(diagsrc::stateDir() + QLatin1Char('/') + name);
+        return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
+    };
+    const auto healthLine = [](const QString &boot, int seq, const QByteArray &message) {
+        return QByteArray("2026-01-01 10:00:00 boot=") + boot.toLatin1() + " seq="
+            + QByteArray::number(seq) + " warn disk Disk | " + message + '\n';
+    };
+    const auto old = healthLine(bootA, 1, "old");
+    const auto repeated = healthLine(bootA, 10, "repeat");
+    CHECK(put(QStringLiteral("health.log.1"), old + repeated));
+    CHECK(put(QStringLiteral("health.log"), repeated + healthLine(bootA, 2, "clock check")
+              + healthLine(bootA, 10, "different evidence")
+              + healthLine(bootA.left(8), 20, "legacy") + "bad line\nunfinished"));
+    const auto health = diagsrc::savedLog(diagsrc::SavedLog::Health, 20);
+    CHECK(health.files.at(0).state == diagsrc::LogFileState::Read);
+    CHECK(health.files.at(1).rejectedLines == 1 && health.files.at(1).incompleteTail);
+    CHECK(diagsrc::savedLog(diagsrc::SavedLog::Health, 2).omittedLines == 4);
+    const auto records = recordedEvents(health, {});
+    CHECK(records.size() == 5 && records.first().boot.isEmpty());
+    CHECK(records.at(1).sequence == 10 && records.at(1).current && records.at(1).rotated);
+    CHECK(records.at(2).sequence == 10 && records.at(2).id != records.at(1).id);
+    CHECK(records.at(3).sequence == 2 && records.at(4).sequence == 1);
+    CHECK(QFile::link(diagsrc::stateDir() + QStringLiteral("/health.log"),
+                      diagsrc::stateDir() + QStringLiteral("/kernel.log.1")));
+    CHECK(diagsrc::savedLog(diagsrc::SavedLog::Kernel, 10).files.at(0).state == diagsrc::LogFileState::Unreadable);
     return EXIT_SUCCESS;
 }

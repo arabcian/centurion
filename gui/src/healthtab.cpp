@@ -8,6 +8,7 @@
 #include "coolingpage.h"
 #include "curvepage.h"
 #include "eventinfo.h"
+#include "diagsources.h"
 #include "sleeppage.h"
 #include "klogpage.h"
 #include "kernelparamspage.h"
@@ -763,16 +764,16 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // restart does not write this boot's history twice.
     {
         QFile b(QStringLiteral("/proc/sys/kernel/random/boot_id"));
-        if (b.open(QIODevice::ReadOnly)) savedBoot_ = QString::fromLatin1(b.readAll().trimmed());
+        if (b.open(QIODevice::ReadOnly)) savedBoot_ = QString::fromLatin1(b.readAll().trimmed()).toLower();
         QFile f(logPath());
-        const QString tag = QStringLiteral("boot=") + savedBoot_.left(8) + QStringLiteral(" seq=");
+        const QString legacyBoot = savedBoot_.left(8);
         if (!savedBoot_.isEmpty() && f.open(QIODevice::ReadOnly | QIODevice::Text)) {
             // The whole file (up to 8 MiB) used to be decoded line by line on the GUI thread at every start.
             if (f.size() > TAIL_BYTES) { f.seek(f.size() - TAIL_BYTES); f.readLine(); }
             while (!f.atEnd()) {
-                const QString l = QString::fromUtf8(f.readLine());
-                const int i = l.indexOf(tag);
-                if (i >= 0) savedSeq_ = std::max<quint64>(savedSeq_, l.mid(i + tag.size()).section(QLatin1Char(' '), 0, 0).toULongLong());
+                const auto line = diagsrc::parseLine(QString::fromUtf8(f.readLine()).trimmed());
+                if (line && (line->boot == savedBoot_ || line->boot == legacyBoot))
+                    savedSeq_ = std::max(savedSeq_, line->seq);
             }
         }
     }
@@ -1603,15 +1604,18 @@ void HealthTab::loadHistoryDay() {
     // health.log is bounded and rotated; a selected historical day may have
     // fallen out of retention. Never claim that an absent row means no event.
     const QRegularExpression pattern(QStringLiteral(
-        R"(^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\s+boot=([a-fA-F0-9]+)\s+seq=([0-9]+)\s+(\S+)\s+(\S+)\s+(.*?)\s+\|\s+(.*)$)"));
+        R"(^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\s+boot=([a-fA-F0-9-]+)\s+seq=([0-9]+)\s+(\S+)\s+(\S+)\s+(.*?)\s+\|\s+(.*)$)"));
     QSet<QString> seen;
     for (int i = 0; i < list_->topLevelItemCount(); ++i) {
         auto *it = list_->topLevelItem(i);
         if (it->data(0, Qt::UserRole + 2).toString() != dayFilter_) continue;
         const QJsonObject e = QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object();
         if (e.isEmpty()) continue;
-        seen.insert(e.value(QStringLiteral("boot_id")).toString().left(8) + QLatin1Char(':') +
-                    QString::number(quint64(e.value(QStringLiteral("seq")).toDouble())));
+        const auto boot = e.value(QStringLiteral("boot_id")).toString().toLower();
+        if (boot.isEmpty()) continue;
+        const auto sequence = QLatin1Char(':') + QString::number(quint64(e.value(QStringLiteral("seq")).toDouble()));
+        seen.insert(boot + sequence);
+        seen.insert(boot.left(8) + sequence);
     }
     QList<QByteArray> matches;
     for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
@@ -1628,7 +1632,7 @@ void HealthTab::loadHistoryDay() {
     for (auto it = matches.crbegin(); it != matches.crend(); ++it) {
         const auto match = pattern.match(QString::fromUtf8(*it));
         if (!match.hasMatch()) continue;
-        const QString key = match.captured(2) + QLatin1Char(':') + match.captured(3);
+        const QString key = match.captured(2).toLower() + QLatin1Char(':') + match.captured(3);
         if (seen.contains(key)) continue;
         seen.insert(key);
         const QString level = match.captured(4).toLower();
@@ -1886,7 +1890,7 @@ void HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
         const qint64 tsMs = qint64(e.value(QStringLiteral("ts_us")).toDouble() / 1000);
         lines << QStringLiteral("%1  boot=%2 seq=%3  %4 %5  %6  |  %7")
                      .arg(QDateTime::fromMSecsSinceEpoch(bootMs + tsMs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
-                     .arg(savedBoot_.left(8)).arg(seq)
+                     .arg(savedBoot_).arg(seq)
                      .arg(e.value(QStringLiteral("level")).toString().toUpper(), -8)
                      .arg(e.value(QStringLiteral("kind")).toString().toUpper(), -6)
                      .arg(e.value(QStringLiteral("title")).toString(), e.value(QStringLiteral("text")).toString());
