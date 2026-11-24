@@ -37,6 +37,7 @@ bool Int64SpinBox::parse(const QString &text, qint64 *out) {
 
 void Int64SpinBox::enableByteUnits() {
     byteUnits_ = true;
+    timeUnit_ = integerunits::TimeUnit::None;
     // An opt-in editor must accept the full suffix before committing; otherwise
     // keyboard tracking would replace it with the canonical value mid-keystroke.
     setKeyboardTracking(false);
@@ -44,10 +45,27 @@ void Int64SpinBox::enableByteUnits() {
     setAccessibleDescription(lineEdit()->toolTip());
 }
 
+void Int64SpinBox::enableTimeUnits(integerunits::TimeUnit canonical) {
+    const auto unit = integerunits::unitName(canonical);
+    if (unit.empty()) return;
+    byteUnits_ = false;
+    timeUnit_ = canonical;
+    setKeyboardTracking(false);
+    lineEdit()->setToolTip(tr("Canonical unit: %1. Enter ns, us, ms or s (decimal point allowed only for exact conversions). Negative special values must be entered without a unit.")
+        .arg(QString::fromLatin1(unit.data(), qsizetype(unit.size()))));
+    setAccessibleDescription(lineEdit()->toolTip());
+}
+
 bool Int64SpinBox::parseEditor(const QString &text, qint64 *out) const {
-    if (!byteUnits_) return parse(text, out);
-    const auto utf8 = text.toUtf8();
-    const auto result = integerunits::bytes(std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())));
+    if (!hasExplicitUnits()) return parse(text, out);
+    QString normalized = text;
+    if (timeUnit_ != integerunits::TimeUnit::None) {
+        normalized.replace(QChar(0x00b5), QLatin1Char('u'));
+        normalized.replace(QChar(0x03bc), QLatin1Char('u'));
+    }
+    const auto utf8 = normalized.toUtf8();
+    const std::string_view view(utf8.constData(), static_cast<std::size_t>(utf8.size()));
+    const auto result = byteUnits_ ? integerunits::bytes(view) : integerunits::time(view, timeUnit_);
     if (!result) return false;
     if (out) *out = *result;
     return true;
@@ -76,6 +94,16 @@ QAbstractSpinBox::StepEnabled Int64SpinBox::stepEnabled() const {
 QValidator::State Int64SpinBox::validate(QString &input, int &) const {
     const QString t = input.trimmed();
     if (t.isEmpty() || (t == QLatin1String("-") && min_ < 0)) return QValidator::Intermediate;
+    if (timeUnit_ != integerunits::TimeUnit::None) {
+        if (t.size() > 128) return QValidator::Invalid;
+        qint64 n = 0;
+        if (parseEditor(t, &n) && n >= min_ && n <= max_) return QValidator::Acceptable;
+        // Allow incomplete numeric input even outside the canonical range: a
+        // later suffix can make it valid (e.g. 1000 ns in a 10 us editor).
+        static const QRegularExpression partial(QStringLiteral("^[0-9]+(?:\\.[0-9]*)?\\s*(?:[numµμ])?$"));
+        if (partial.match(t).hasMatch()) return QValidator::Intermediate;
+        return QValidator::Invalid;
+    }
     if (byteUnits_) {
         qint64 n = 0;
         if (parseEditor(t, &n)) {
@@ -97,7 +125,7 @@ QValidator::State Int64SpinBox::validate(QString &input, int &) const {
 void Int64SpinBox::fixup(QString &input) const {
     qint64 n = value_;
     if (parseEditor(input, &n)) {
-        if (byteUnits_ && (n < min_ || n > max_)) n = value_;
+        if (hasExplicitUnits() && (n < min_ || n > max_)) n = value_;
         else n = qBound(min_, n, max_);
     }
     input = QString::number(n);
@@ -105,7 +133,7 @@ void Int64SpinBox::fixup(QString &input) const {
 
 void Int64SpinBox::commitText() {
     qint64 n = 0;
-    if (parseEditor(lineEdit()->text(), &n) && (!byteUnits_ || (n >= min_ && n <= max_))) setValue(n);
+    if (parseEditor(lineEdit()->text(), &n) && (!hasExplicitUnits() || (n >= min_ && n <= max_))) setValue(n);
     else showValue();
 }
 

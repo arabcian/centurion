@@ -75,6 +75,47 @@ int main(int argc, char **argv) {
     t = QStringLiteral("4 Mi");
     CHECK(s.validate(t, pos) == QValidator::Intermediate);
 
+    // Real editor: suffixes produce canonical integer values; no write path is invoked.
+    using U = integerunits::TimeUnit;
+    Int64SpinBox duration;
+    duration.setRange(-1, std::numeric_limits<qint64>::max());
+    duration.enableTimeUnits(U::Us);
+    auto *edit = duration.findChild<QLineEdit *>();
+    auto enter = [&](const QString &v) { edit->setText(v); Q_EMIT duration.editingFinished(); };
+    enter(QStringLiteral("1.5 ms"));
+    CHECK(duration.value() == 1500 && duration.text() == QStringLiteral("1500"));
+    enter(QStringLiteral("2000 ns"));
+    CHECK(duration.value() == 2);
+    enter(QStringLiteral("5 µs"));
+    CHECK(duration.value() == 5);
+    enter(QStringLiteral("1 ns"));
+    CHECK(duration.value() == 5);
+    enter(QStringLiteral("-1"));
+    CHECK(duration.value() == -1);
+    enter(QStringLiteral("-1 ms"));
+    CHECK(duration.value() == -1);
+    enter(QStringLiteral("9223372036854775807 us"));
+    CHECK(duration.value() == std::numeric_limits<qint64>::max());
+    const auto full = QJsonDocument::fromJson(QJsonDocument(QJsonObject{{"time", QJsonValue(duration.value())}}).toJson()).object();
+    CHECK(full.value("time").toInteger() == std::numeric_limits<qint64>::max());
+    duration.setRange(0, 10);
+    t = QStringLiteral("1000");
+    CHECK(duration.validate(t, pos) == QValidator::Intermediate);
+    t = QStringLiteral("1000 ns");
+    CHECK(duration.validate(t, pos) == QValidator::Acceptable);
+    enter(t);
+    CHECK(duration.value() == 1);
+    enter(QStringLiteral("1 ms"));
+    CHECK(duration.value() == 1);
+    t = QStringLiteral("1.5 m");
+    CHECK(duration.validate(t, pos) == QValidator::Intermediate);
+    t = QStringLiteral("1 ns");
+    CHECK(duration.validate(t, pos) == QValidator::Invalid);
+    duration.enableByteUnits();
+    duration.setRange(0, 1024);
+    enter(QStringLiteral("1 KiB"));
+    CHECK(duration.value() == 1024);
+
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("int64spinbox: all checks passed");
     return 0;

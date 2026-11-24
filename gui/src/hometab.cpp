@@ -169,7 +169,8 @@ void HomeTab::setHealthLevel(int level) {
     if (level < 0) return;
     const char *color = level >= 2 ? theme::DANGER : level == 1 ? theme::WARN : theme::OK;
     healthBadge_->setText(level >= 2 ? tr("Health: problem found") : level == 1 ? tr("Health: needs a look") : tr("Health: all clear"));
-    healthBadge_->setStyleSheet(QStringLiteral("color:%1").arg(QString::fromLatin1(color)));
+    healthBadge_->setProperty("healthLevel", level);
+    theme::setSheet(healthBadge_, QStringLiteral("color:%1").arg(QString::fromLatin1(color)));
     healthBadge_->setToolTip(tr("Health → Overview"));
 }
 
@@ -198,29 +199,32 @@ static QIcon profileDot(const QString &accent) {
     return icon;
 }
 
-static QPushButton *profileButton(const QString &label, const QString &accent) {
+static QPushButton *profileButton(const QString &label, const QString &profile) {
     auto *b = new QPushButton(label);
     b->setCheckable(true);
     b->setCursor(Qt::PointingHandCursor);
-    b->setIcon(profileDot(accent));
     b->setIconSize(QSize(10, 10));
     // Rows grow a little into the card's height instead of leaving it empty.
     b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     b->setMinimumHeight(28);
     b->setMaximumHeight(38);
-    const QByteArray a = accent.toLatin1();
-    // A plate per profile with its LED colour on the left edge; the active one is lit
-    // (a wash of its colour fading to the right, a matching hairline frame).
-    b->setStyleSheet(QStringLiteral(
-        "QPushButton { background: %1; color: %2; border: 1px solid %3; border-left: 3px solid %9; border-radius: 7px;"
-        " padding: 3px 12px 3px 10px; font-weight: 500; text-align: left; }"
-        "QPushButton:hover { background: %4; color: %5; border-color: %6; border-left-color: %8; }"
-        "QPushButton:checked { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %7, stop:0.55 %10, stop:1 %12);"
-        " color: %5; border-color: %11; border-left-color: %8; font-weight: 700; }")
-        .arg(theme::BG2, theme::FG_DIM, theme::BORDER_SOFT, theme::BG3, theme::FG, theme::BORDER,
-             theme::rgba(a.constData(), 0.30), theme::rgba(a.constData(), 1.0), theme::rgba(a.constData(), 0.45),
-             theme::rgba(a.constData(), 0.10), theme::rgba(a.constData(), 0.55))
-        .arg(theme::rgba(a.constData(), 0.03)));
+    theme::bindPresentation(b, [b, profile] {
+        const QString accent = theme::profileAccent(profile);
+        b->setIcon(profileDot(accent));
+        const QByteArray a = accent.toLatin1();
+        // A plate per profile with its LED colour on the left edge; the active one is lit
+        // (a wash of its colour fading to the right, a matching hairline frame).
+        b->setStyleSheet(QStringLiteral(
+            "QPushButton { background: %1; color: %2; border: 1px solid %3; border-left: 3px solid %9; border-radius: 7px;"
+            " padding: 3px 12px 3px 10px; font-weight: 500; text-align: left; }"
+            "QPushButton:hover { background: %4; color: %5; border-color: %6; border-left-color: %8; }"
+            "QPushButton:checked { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %7, stop:0.55 %10, stop:1 %12);"
+            " color: %5; border-color: %11; border-left-color: %8; font-weight: 700; }")
+            .arg(theme::BG2, theme::FG_DIM, theme::BORDER_SOFT, theme::BG3, theme::FG, theme::BORDER,
+                 theme::rgba(a.constData(), 0.30), theme::rgba(a.constData(), 1.0), theme::rgba(a.constData(), 0.45),
+                 theme::rgba(a.constData(), 0.10), theme::rgba(a.constData(), 0.55))
+            .arg(theme::rgba(a.constData(), 0.03)));
+    });
     return b;
 }
 
@@ -243,6 +247,11 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     headRow->addLayout(head, 1);
     healthBadge_ = new QLabel;
     healthBadge_->setVisible(false);
+    healthBadge_->setProperty("healthLevel", -1);
+    theme::bindPresentation(healthBadge_, [badge=healthBadge_] {
+        const int level=badge->property("healthLevel").toInt();
+        if (level >= 0) theme::setSheet(badge, QStringLiteral("color:%1").arg(level >= 2 ? theme::DANGER : level == 1 ? theme::WARN : theme::OK));
+    });
     headRow->addWidget(healthBadge_, 0, Qt::AlignVCenter);
     auto *themeBox = new QComboBox;
     themeBox->setToolTip(tr("Colour theme. Applied by restarting the app (a few seconds)."));
@@ -376,6 +385,16 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *tools = new QHBoxLayout;
         auto *pick = new QPushButton(tr("Pick Color…")); auto *import = new QPushButton(tr("Import JSON…")); auto *exportBtn = new QPushButton(tr("Export JSON…"));
         tools->addWidget(pick); tools->addWidget(import); tools->addWidget(exportBtn); tools->addStretch();
+        auto *repair = new QPushButton(tr("Improve Token Contrast"));
+        repair->setToolTip(tr("Adjust only failing foreground tokens. Surface colors are kept; changes stay in this draft until saved."));
+        connect(repair, &QPushButton::clicked, &dlg, [&dlg, readColors, fillColors, updateContrast, table] {
+            const auto colors=readColors();
+            if (!theme::validCustomPalette(colors)) { QMessageBox::warning(&dlg, tr("Custom Theme"), tr("Invalid RGB color.")); return; }
+            const auto fixed=theme::repairPaletteContrast(colors);
+            if (!fixed) { QMessageBox::warning(&dlg, tr("Custom Theme"), tr("No correction found without changing the surfaces. Edit the surface colors and try again.")); return; }
+            { const QSignalBlocker blocker(table); fillColors(*fixed); }
+            updateContrast();
+        });
         connect(pick, &QPushButton::clicked, &dlg, [table, &dlg] {
             const int row = table->currentRow(); if (row < 0) return;
             const QColor c = QColorDialog::getColor(QColor(table->item(row,1)->text()), &dlg);
@@ -397,7 +416,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             const auto bytes = QJsonDocument(QJsonObject{{"version",1},{"colors",QJsonArray::fromStringList(colors)}}).toJson();
             QSaveFile f(path); if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size() || !f.commit()) QMessageBox::warning(&dlg, tr("Custom Theme"), f.errorString());
         });
-        layout->addWidget(table,1); layout->addLayout(tools); layout->addWidget(contrast);
+        layout->addWidget(table,1); layout->addLayout(tools); layout->addWidget(repair); layout->addWidget(contrast);
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
         connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         connect(buttons, &QDialogButtonBox::accepted, &dlg, [&dlg, readColors] {
@@ -514,7 +533,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
 
     guardBanner_ = new QFrame;
     guardBanner_->setObjectName("guardBanner");
-    guardBanner_->setStyleSheet(theme::banner(theme::DANGER, QStringLiteral("#guardBanner")));
+    theme::bindPresentation(guardBanner_, [frame=guardBanner_] { theme::setSheet(frame, theme::banner(theme::DANGER, QStringLiteral("#guardBanner"))); });
     auto *gb = new QHBoxLayout(guardBanner_);
     gb->setContentsMargins(10, 6, 8, 6);
     guardText_ = new QLabel;
@@ -545,7 +564,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     // Scenes paused (Scenes tab): no automatic scene changes until resumed.
     pauseBanner_ = new QFrame;
     pauseBanner_->setObjectName("pauseBanner");
-    pauseBanner_->setStyleSheet(theme::banner(theme::WARN, QStringLiteral("#pauseBanner")));
+    theme::bindPresentation(pauseBanner_, [frame=pauseBanner_] { theme::setSheet(frame, theme::banner(theme::WARN, QStringLiteral("#pauseBanner"))); });
     auto *pb = new QHBoxLayout(pauseBanner_);
     pb->setContentsMargins(10, 6, 8, 6);
     auto *pt = new QLabel(tr("<b>⏸ Scenes paused</b> — no automatic scene changes (power source, login, game) until resumed."));
@@ -1875,7 +1894,7 @@ void HomeTab::rebuild() {
     const auto current = pp::currentProfile(handler_);
     int i = 0;
     for (const QString &name : profiles) {
-        auto *b = profileButton(profileLabel(name), theme::profileAccent(name));
+        auto *b = profileButton(profileLabel(name), name);
         b->setProperty("profile", name);
         b->setToolTip(profileDescription(name, name));
         b->setChecked(current == name);

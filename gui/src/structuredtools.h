@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QRegularExpression>
 #include <optional>
+#include "structuredpci.h"
 namespace structuredtools {
 struct Data { QStringList headers; QList<QStringList> rows; };
 inline std::optional<Data> modules(const QString &raw) {
@@ -44,7 +45,18 @@ inline std::optional<Data> powerSupply(const QString &raw) {
         if (!m.hasMatch()) return std::nullopt;
         if (!allowed.contains(m.captured(1))) continue;
         const QString key = supply + QLatin1Char('/') + m.captured(1);
-        if (seen.contains(key) || data.rows.size() >= 4096 || m.captured(2).size() > 128 || m.captured(2).isEmpty()) return std::nullopt;
+        const auto value = m.captured(2);
+        const auto name = m.captured(1);
+        const bool textual = name == QLatin1String("TYPE") || name == QLatin1String("STATUS") || name == QLatin1String("HEALTH");
+        if (seen.contains(key) || data.rows.size() >= 4096 || value.size() > 128 || value.isEmpty()) return std::nullopt;
+        if (textual) {
+            static const QRegularExpression token(QStringLiteral("^[A-Za-z0-9 _-]+$"));
+            if (!token.match(value).hasMatch()) return std::nullopt;
+        } else {
+            static const QRegularExpression integer(QStringLiteral("^-?[0-9]+$"));
+            bool ok = false; value.toLongLong(&ok);
+            if (!ok || !integer.match(value).hasMatch()) return std::nullopt;
+        }
         seen.insert(key); data.rows.append(QStringList{supply, m.captured(1), m.captured(2)});
     }
     if (data.rows.isEmpty()) return std::nullopt;
@@ -124,6 +136,34 @@ inline std::optional<Data> cpuTopology(const QString &raw) {
         result.rows.append(values);
     }
     return result;
+}
+
+inline std::optional<Data> pci(const QString &raw) {
+    const auto lines = section(raw, QStringLiteral("$ lspci -nnk"));
+    if (!lines) return std::nullopt;
+    std::vector<std::string> input;
+    input.reserve(std::size_t(lines->size()));
+    for (const auto &line : *lines) input.push_back(line.toUtf8().toStdString());
+    const auto devices = structuredpci::parse(input);
+    if (!devices) return std::nullopt;
+    Data result{{QStringLiteral("PCI address"), QStringLiteral("Class ID"), QStringLiteral("Vendor ID"),
+        QStringLiteral("Device ID"), QStringLiteral("Kernel driver"), QStringLiteral("Kernel modules")}, {}};
+    for (const auto &d : *devices) result.rows.append(QStringList{QString::fromStdString(d.address),
+        QString::fromStdString(d.classCode), QString::fromStdString(d.vendor), QString::fromStdString(d.device),
+        QString::fromStdString(d.driver), QString::fromStdString(d.modules)});
+    return result;
+}
+inline bool supported(const QString &key) {
+    return key == QLatin1String("Kernel") || key == QLatin1String("Battery") || key == QLatin1String("USB") ||
+        key == QLatin1String("CPU") || key == QLatin1String("PCI");
+}
+inline std::optional<Data> parse(const QString &key, const QString &raw) {
+    if (key == QLatin1String("Kernel")) return modules(raw);
+    if (key == QLatin1String("Battery")) return powerSupply(raw);
+    if (key == QLatin1String("USB")) return usb(raw);
+    if (key == QLatin1String("CPU")) return cpuTopology(raw);
+    if (key == QLatin1String("PCI")) return pci(raw);
+    return std::nullopt;
 }
 
 }

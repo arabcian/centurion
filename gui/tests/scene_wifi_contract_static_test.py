@@ -32,4 +32,17 @@ class Contract(unittest.TestCase):
         self.assertIn('rev != wifiScanRevision_ || iface != wifiIface_->currentText()',rescan)
         self.assertIn('rev == wifiScanRevision_ && iface == wifiIface_->currentText()',rescan)
         self.assertIn('CLOCK_BOOTTIME',s)
+    def test_channel_interval_and_adapter_contract(self):
+        gui=src('netpage.cpp')
+        helper=(ROOT/'crates/centurion-helpers/src/wifi.rs').read_text()
+        view=gui.split('auto *channelView =',1)[1].split('vwn->addLayout(rwn);',1)[0]
+        self.assertIn('wifiRange(o)',view)
+        self.assertIn('wifiage::overlapMHz',view)
+        self.assertIn('seen_boottime_ms',view)
+        self.assertIn('dump_completed_boottime_ms',view)
+        self.assertNotIn('runUser(',view)
+        self.assertIn('iface_index(&iface) != before',helper)
+        self.assertIn('iface.as_deref() != Some(requested)',helper)
+        self.assertIn('let iface = match scan_iface(req)',helper)
+        self.assertIn('selectedMatches == 1',gui)
 if __name__=='__main__': unittest.main(verbosity=2)

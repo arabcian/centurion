@@ -33,16 +33,22 @@ jobs:
       - run: ctest --test-dir build --output-on-failure
       - run: python3 gui/tests/translation_tr_test.py
       - run: python3 gui/tests/chartaxis_native_test.py
+      - run: python3 gui/tests/integerunits_native_test.py
       - run: python3 gui/tests/workspacefields_native_test.py
       - run: python3 gui/tests/calibrationmath_native_test.py
       - run: python3 gui/tests/scene_wifi_native_test.py
+      - run: python3 gui/tests/wifichannel_native_test.py
       - run: python3 gui/tests/scene_wifi_contract_static_test.py
       - run: python3 gui/tests/calibrationviewer_static_test.py
       - run: python3 gui/tests/topologyfields_native_test.py
+      - run: python3 gui/tests/deviceidentity_native_test.py
       - run: python3 gui/tests/archiveidentity_native_test.py
       - run: python3 gui/tests/canvasviewport_native_test.py
       - run: python3 gui/tests/edidfields_native_test.py
       - run: python3 gui/tests/hardwarefields_native_test.py
+      - run: python3 gui/tests/memoryfields_native_test.py
+      - run: python3 gui/tests/structuredpci_native_test.py
+      - run: python3 gui/tests/palettecontrast_native_test.py
       - run: python3 gui/tests/firewallpreview_native_test.py
       - run: python3 tests/test_firewall_preview_contract_static.py
       - name: Visual comparison artifacts

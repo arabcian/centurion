@@ -67,7 +67,101 @@ pub struct Bss {
     pub signal_dbm: Option<i32>,
     pub security: &'static str,
     pub seen_ms: Option<u64>,
+    pub seen_boottime_ms: Option<u64>,
+    pub channel_range: Option<ChannelRange>,
     pub associated: bool,
+}
+
+/// Nominal advertised contiguous channel, not observed spectral occupancy.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChannelRange { pub center_mhz: u32, pub width_mhz: u32, pub source: &'static str }
+
+#[derive(Default)]
+struct Operation {
+    primary: Option<u32>, secondary: Option<String>, ht_width: Option<String>,
+    ht: bool, vht: bool, width: Option<u32>, seg1: Option<u32>, seg2: Option<u32>,
+    unsupported: bool, invalid: bool, section: u8,
+}
+
+// Duplicate information elements/fields can be inconsistent (e.g. beacon vs probe).
+// Do not select one arbitrarily.
+fn unique<T>(slot: &mut Option<T>, value: Option<T>, invalid: &mut bool) {
+    if slot.is_some() || value.is_none() { *invalid = true; }
+    else { *slot = value; }
+}
+
+impl Operation {
+    fn line(&mut self, line: &str) {
+        let t = line.trim();
+        if line.starts_with('\t') && !line.starts_with("\t\t") {
+            self.section = 0;
+            if t.starts_with("HT operation:") { self.invalid |= self.ht; self.ht = true; self.section = 1; }
+            else if t.starts_with("VHT operation:") { self.invalid |= self.vht; self.section = 2; self.vht = true; }
+            else if t.starts_with("HE operation:") || t.starts_with("EHT operation:") || t.starts_with("HE Operation:") || t.starts_with("EHT Operation:") { self.unsupported = true; }
+            return;
+        }
+        if !line.starts_with("\t\t") { return; }
+        let Some((key, val)) = t.strip_prefix("* ").and_then(|x| x.split_once(':')) else { return; };
+        let val = val.trim();
+        match (self.section, key) {
+            (1, "primary channel") => unique(&mut self.primary, val.parse().ok(), &mut self.invalid),
+            (1, "secondary channel offset") => unique(&mut self.secondary, Some(val.to_owned()), &mut self.invalid),
+            (1, "STA channel width") => unique(&mut self.ht_width, Some(val.to_owned()), &mut self.invalid),
+            (2, "channel width") => unique(&mut self.width, first(val), &mut self.invalid),
+            (2, "center freq segment 1") => unique(&mut self.seg1, val.parse().ok(), &mut self.invalid),
+            (2, "center freq segment 2") => unique(&mut self.seg2, val.parse().ok(), &mut self.invalid),
+            _ => {}
+        }
+    }
+    fn range(&self, freq: u32) -> Option<ChannelRange> {
+        if self.invalid || self.unsupported || !matches!(band(freq), "2.4" | "5") { return None; }
+        let ch = self.primary?;
+        let primary = if band(freq) == "2.4" && (1..=13).contains(&ch) { 2407 + 5*ch }
+            else if band(freq) == "5" && (((36..=64).contains(&ch) || (100..=144).contains(&ch)) && ch % 4 == 0 || (149..=177).contains(&ch) && ch % 4 == 1) { 5000 + 5*ch }
+            else { return None; };
+        if primary != freq { return None; }
+        let (center, width, source) = if self.vht && self.width? != 0 {
+            if band(freq) != "5" { return None; }
+            let a = self.seg1?; let b = self.seg2?;
+            if !(30..=179).contains(&a) { return None; }
+            let (c, w) = match (self.width?, b) {
+                (1, 0) => (a, 80),
+                (1, b) if (30..=179).contains(&b) && a.abs_diff(b) == 8 && matches!(ch.abs_diff(a), 2 | 6) => (b, 160),
+                (2, 0) => (a, 160),
+                _ => return None, // 80+80 and unknown encodings are not contiguous
+            };
+            if !matches!((w, ch.abs_diff(c)), (80, 2 | 6) | (160, 2 | 6 | 10 | 14)) { return None; }
+            (5000 + 5*c, w, "VHT operation")
+        } else {
+            // Width=0 VHT delegates to HT. No channel inferred from capability bits alone.
+            if self.vht && (self.seg1? != 0 || self.seg2? != 0) { return None; }
+            match (self.secondary.as_deref()?, self.ht_width.as_deref()?) {
+                ("no secondary", "20 MHz") | ("no secondary", "any") => (freq, 20, "HT operation"),
+                ("above", "any") => (freq + 10, 40, "HT operation"),
+                ("below", "any") => (freq - 10, 40, "HT operation"),
+                _ => return None,
+            }
+        };
+        let (lo, hi) = if band(freq) == "2.4" { (2400,2500) } else { (5150,5895) };
+        if center-width/2 < lo || center+width/2 > hi { return None; }
+        Some(ChannelRange { center_mhz: center, width_mhz: width, source })
+    }
+}
+
+fn seen_boottime(v: &str) -> Option<u64> {
+    let secs = v.strip_suffix("s [boottime]")?.trim();
+    let (whole, frac) = secs.split_once('.').unwrap_or((secs, ""));
+    if whole.is_empty() || !whole.bytes().all(|c| c.is_ascii_digit()) || !frac.bytes().all(|c| c.is_ascii_digit()) || frac.len() > 9 { return None; }
+    let whole: u64 = whole.parse().ok()?;
+    let mut ms = 0u64;
+    for (i,c) in frac.bytes().take(3).enumerate() { ms += u64::from(c-b'0') * [100,10,1][i]; }
+    whole.checked_mul(1000)?.checked_add(ms).filter(|v| *v <= 9_007_199_254_740_991)
+}
+
+fn boot_ms() -> Option<u64> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) } != 0 || ts.tv_sec < 0 || !(0..1_000_000_000).contains(&ts.tv_nsec) { return None; }
+    (ts.tv_sec as u64).checked_mul(1000)?.checked_add(ts.tv_nsec as u64 / 1_000_000).filter(|v| *v <= 9_007_199_254_740_991)
 }
 
 /// One band of `iw phy info`: usable channels, strongest allowed power, 802.11 generations it speaks.
@@ -192,8 +286,8 @@ fn security(auth: Option<&str>, wpa: bool, privacy: bool) -> &'static str {
 /// `iw dev <if> scan dump`, strongest first. Lines of the RSN / WPA blocks are read only for their
 /// authentication suites; everything else is a plain `key: value` line one tab deep.
 pub fn parse_scan(text: &str) -> Vec<Bss> {
-    struct Raw { bss: Bss, auth: Option<String>, wpa: bool, privacy: bool }
-    let done = |r: Raw| Bss { security: security(r.auth.as_deref(), r.wpa, r.privacy), ..r.bss };
+    struct Raw { bss: Bss, auth: Option<String>, wpa: bool, privacy: bool, operation: Operation }
+    let done = |r: Raw| Bss { security: security(r.auth.as_deref(), r.wpa, r.privacy), channel_range: r.operation.range(r.bss.freq), ..r.bss };
     let mut out: Vec<Bss> = Vec::new();
     let mut cur: Option<Raw> = None;
     let mut in_rsn = false;
@@ -202,10 +296,11 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
             if let Some(r) = cur.take() { out.push(done(r)); }
             in_rsn = false;
             let bssid = rest.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("").to_owned();
-            cur = Some(Raw { bss: Bss { bssid, associated: line.contains("-- associated"), ..Bss::default() }, auth: None, wpa: false, privacy: false });
+            cur = Some(Raw { bss: Bss { bssid, associated: line.contains("-- associated"), ..Bss::default() }, auth: None, wpa: false, privacy: false, operation: Operation::default() });
             continue;
         }
         let Some(r) = cur.as_mut() else { continue };
+        r.operation.line(line);
         let t = line.trim();
         if t.contains("Authentication suites:") && in_rsn {
             let v = t.split_once("suites:").map_or("", |(_, v)| v.trim());
@@ -222,6 +317,7 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
             "signal" => r.bss.signal_dbm = first::<f64>(v).filter(|f| f.is_finite() && (-127.0..=0.0).contains(f)).map(|f| f.round() as i32),
             "SSID" => r.bss.ssid = v.to_owned(),
             "capability" => r.privacy = v.contains("Privacy"),
+            "last seen" if v.ends_with("s [boottime]") => r.bss.seen_boottime_ms = seen_boottime(v),
             "last seen" if v.ends_with(" ms ago") => r.bss.seen_ms = v.strip_suffix(" ms ago").and_then(|n| n.trim().parse().ok()),
             _ => {}
         }
@@ -442,27 +538,48 @@ pub fn hardware(req: &Value) -> Value {
     out
 }
 
+// Unlike status discovery, a scan request naming a device must not silently
+// fall back to another adapter when the selected one disappears.
+fn scan_iface(req: &Value) -> Result<Option<String>, Value> {
+    let (_, iface) = pick(req);
+    if let Some(requested) = req["iface"].as_str().filter(|s| !s.is_empty()) {
+        if iface.as_deref() != Some(requested) {
+            return Err(json!({"ok": false, "iface": requested, "error": "Selected wireless adapter is no longer available"}));
+        }
+    }
+    Ok(iface)
+}
+
+fn iface_index(iface: &str) -> Option<u32> {
+    std::fs::read_to_string(Path::new("/sys/class/net").join(iface).join("ifindex")).ok()?.trim().parse::<u32>().ok().filter(|n| *n > 0)
+}
+
 /// Nearby networks from the kernel's cached scan results (NetworkManager and wpa_supplicant keep them fresh).
 pub fn scan(req: &Value) -> Value {
-    let (_, iface) = pick(req);
+    let iface = match scan_iface(req) { Ok(i) => i, Err(e) => return e };
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
     let Some(bin) = tool("iw") else { return json!({"ok": true, "present": true, "iw": false}) };
+    let before = iface_index(&iface);
+    if before.is_none() { return json!({"ok": false, "iface": iface, "error": "Wireless adapter identity is unavailable"}); }
     let text = match iw(&bin, &iface, &["scan", "dump"]) {
         Ok(t) => t,
         Err(e) => return json!({"ok": false, "present": true, "iface": iface, "error": e}),
     };
+    let dump_completed_boottime_ms = boot_ms();
+    if iface_index(&iface) != before { return json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during scan dump"}); }
     let list = parse_scan(&text);
     let load = channel_load(&list).map(|(ch, same, overlap)| json!({"channel": ch, "same": same, "overlap": overlap}));
     let nets: Vec<Value> = list.iter().take(64).map(|b| json!({
         "bssid": b.bssid, "ssid": b.ssid, "freq": b.freq, "channel": channel(b.freq), "band": band(b.freq),
-        "signal_dbm": b.signal_dbm, "security": b.security, "seen_ms": b.seen_ms, "associated": b.associated})).collect();
-    json!({"ok": true, "present": true, "iw": true, "iface": iface, "networks": nets, "total": list.len(), "load": load,
+        "signal_dbm": b.signal_dbm, "security": b.security, "seen_ms": b.seen_ms, "associated": b.associated,
+        "seen_boottime_ms": b.seen_boottime_ms, "channel_range": b.channel_range.map(|r| json!({"center_mhz": r.center_mhz, "width_mhz": r.width_mhz, "source": r.source}))})).collect();
+    json!({"ok": true, "present": true, "iw": true, "iface": iface, "networks": nets, "total": list.len(), "load": load, "dump_completed_boottime_ms": dump_completed_boottime_ms,
            "can_rescan": tool("nmcli").is_some()})
 }
 
 /// Asks NetworkManager for a fresh scan (polkit lets an active local session do that without a password).
 pub fn rescan(req: &Value) -> Value {
-    let (_, iface) = pick(req);
+    let iface = match scan_iface(req) { Ok(i) => i, Err(e) => return e };
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
     let Some(bin) = tool("nmcli") else { return json!({"ok": false, "error": "nmcli (NetworkManager) is not installed"}) };
     match run(&bin, &["device", "wifi", "rescan", "ifname", &iface]) {
@@ -568,6 +685,28 @@ mod tests {
         assert_eq!(result[0].freq, 0);
         assert_eq!(result[0].signal_dbm, None);
         assert_eq!(result[0].seen_ms, None);
+    }
+
+    #[test]
+    fn advertised_channel_ranges_and_timestamp() {
+        fn scan(freq: u32, operation: &str) -> Bss {
+            parse_scan(&format!("BSS aa:bb:cc:00:00:01(on wlan0)\n\tfreq: {freq}\n\tlast seen: 1234.5s [boottime]\n\tSSID: \n{operation}")).remove(0)
+        }
+        let ht = "\tHT operation:\n\t\t * primary channel: 36\n\t\t * secondary channel offset: above\n\t\t * STA channel width: any\n";
+        let vht = "\tVHT operation:\n\t\t * channel width: 1 (80 MHz)\n\t\t * center freq segment 1: 42\n\t\t * center freq segment 2: 0\n";
+        let b = scan(5180,ht);
+        assert_eq!(b.seen_boottime_ms, Some(1234500)); assert!(b.ssid.is_empty());
+        assert_eq!(b.channel_range, Some(ChannelRange {center_mhz:5190,width_mhz:40,source:"HT operation"}));
+        assert_eq!(scan(5180,&format!("{ht}{vht}")).channel_range.unwrap().center_mhz,5210);
+        assert_eq!(scan(5180,&format!("{ht}{}",vht.replace("segment 2: 0","segment 2: 50"))).channel_range.unwrap().width_mhz,160);
+        for op in [format!("{ht}{vht}\tEHT Operation:\n"),format!("{ht}{ht}"),format!("{ht}{}",vht.replace("segment 2: 0","segment 2: 106")),ht.replace("primary channel: 36","primary channel: 40")] {
+            assert!(scan(5180,&op).channel_range.is_none());
+        }
+        assert!(scan(5955,ht).channel_range.is_none());
+        assert!(scan(5180, "\tSSID: HT operation:\n").channel_range.is_none());
+        assert_eq!(seen_boottime("0.001s [boottime]"),Some(1));
+        assert_eq!(seen_boottime("1.999999999 s [boottime]"),Some(1999));
+        for bad in ["-1s [boottime]","NaNs [boottime]","18446744073709551615s [boottime]","1e3s [boottime]","1 ms ago"] { assert!(seen_boottime(bad).is_none()); }
     }
 
     #[test]

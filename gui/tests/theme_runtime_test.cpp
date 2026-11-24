@@ -1,13 +1,16 @@
-// Isolated settings; no widgets, hardware access or real user config writes.
+// Isolated offscreen presentation and settings; no hardware access or real user config writes.
 #include "../src/theme.h"
-#include <QCoreApplication>
+#include <QApplication>
+#include <QLabel>
+#include <QLineEdit>
+#include <QFile>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QByteArray>
 #include <cstdio>
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "Failed: %s\n", #x); return 1; } } while (false)
 int main(int argc, char **argv) {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     QTemporaryDir tmp;
     CHECK(tmp.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, tmp.path());
@@ -82,5 +85,52 @@ int main(int argc, char **argv) {
         }
         CHECK(selection && disabled);
     }
+    auto lowContrast=original;
+    for (int i : {8,9,10,11,12,13,14,15,17,18}) lowContrast[i]=lowContrast[2];
+    const auto repaired=theme::repairPaletteContrast(lowContrast);
+    CHECK(repaired.has_value());
+    for (int i=0;i<8;++i) CHECK((*repaired)[i]==lowContrast[i]);
+    CHECK((*repaired)[16]==lowContrast[16]);
+    for (const auto &c:theme::contrastChecks(*repaired)) CHECK(c.exempt || c.ratio>=c.target);
+    CHECK(theme::repairPaletteContrast(*repaired)==repaired);
+    CHECK(!theme::repairPaletteContrast({}));
+    auto impossible=lowContrast;
+    impossible[0]=QStringLiteral("#ffffff"); impossible[1]=QStringLiteral("#000000"); impossible[2]=QStringLiteral("#808080");
+    CHECK(!theme::repairPaletteContrast(impossible));
+    for (const auto &entry:theme::themes()) {
+        if (entry.first==QStringLiteral("custom")) continue;
+        for(const auto &c:theme::contrastChecks(theme::paletteColors(entry.first))) CHECK(c.exempt || c.ratio>=c.target);
+    }
+    theme::apply(app);
+    QLabel label;
+    QLineEdit draft;
+    draft.setText(QStringLiteral("unchanged")); draft.setSelection(1,3);
+    int calls=0; int nestedRejected=0;
+    theme::bindPresentation(&label,[&] {
+        ++calls; theme::setSheet(&label,QStringLiteral("color:%1").arg(theme::WARN));
+        if(calls>1 && !theme::applyLivePalette(app,QStringLiteral("graphite"))) ++nestedRejected;
+    });
+    auto settingsBytes=[&] {
+        QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui"));
+        QFile f(s.fileName()); return f.open(QIODevice::ReadOnly)?f.readAll():QByteArray{};
+    };
+    const QByteArray before=settingsBytes(); CHECK(!before.isEmpty());
+    const quint64 initial=theme::revision();
+    for (int i=0;i<20;++i) {
+        const QString id=i%2?QStringLiteral("graphite"):QStringLiteral("pastel-mint-cream");
+        CHECK(theme::applyLivePalette(app,id)); app.processEvents();
+        CHECK(theme::profileAccent(QStringLiteral("performance"))==QString::fromLatin1(theme::DANGER));
+        CHECK(theme::profileAccent(QStringLiteral("quiet"))==QString::fromLatin1(theme::INFO));
+        CHECK(label.styleSheet()==QStringLiteral("color:%1").arg(theme::WARN));
+        CHECK(draft.text()==QStringLiteral("unchanged") && draft.selectionStart()==1 && draft.selectedText()==QStringLiteral("nch"));
+        CHECK(theme::revision()==initial+quint64(i)+1 && theme::lastLiveRefreshNanos()>=0);
+    }
+    CHECK(calls==21 && nestedRejected==20 && before==settingsBytes());
+    int deletedCalls=0;
+    auto *deleted=new QLabel;
+    theme::bindPresentation(deleted,[&]{++deletedCalls;}); delete deleted;
+    CHECK(theme::applyLivePalette(app,QStringLiteral("oled-black")) && deletedCalls==1);
+    CHECK(!theme::applyLivePalette(app,QStringLiteral("not-a-theme")) && before==settingsBytes());
+    CHECK(!theme::restartRequested());
     return 0;
 }

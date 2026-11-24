@@ -99,8 +99,12 @@ QString redactPrivateText(QString text) {
         QRegularExpression(QStringLiteral(R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)")),
         QRegularExpression(QStringLiteral(R"((?i)(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![0-9a-f:]))")),
         QRegularExpression(QStringLiteral(R"((?i)(?:/home/|/Users/)[^/\s]+)")),
-        QRegularExpression(QStringLiteral(R"((?i)\b(?:boot(?: id)?|machine(?: id)?|disk uuid|device uuid|gpu uuid|uuid)\s*[:=]\s*[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b)")),
-        QRegularExpression(QStringLiteral(R"((?im)\b(?:serial(?: number)?|hostname|host name|user name|username|seri numarası|makine adı|kullanıcı adı)\s*[:=]\s*[^\r\n]+)"))
+        QRegularExpression(QStringLiteral(R"((?i)\b(?:boot(?: id)?|machine(?: id)?|disk uuid|device uuid|gpu uuid|uuid)[ \t]*[:=][ \t]*[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b)")),
+        QRegularExpression(QStringLiteral(R"((?im)\b(?:serial(?: number)?|hostname|host name|user name|username|seri numarası|makine adı|kullanıcı adı)[ \t]*[:=][ \t]*[^\r\n]+)")),
+        QRegularExpression(QStringLiteral(R"((?i)\b(?:PARTUUID|UUID|GPU UUID|machine[- ]id|boot[- ]id)[ \t]*[:=][ \t]*(?:GPU-)?(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{4}-[0-9a-f]{4})\b)")),
+        QRegularExpression(QStringLiteral(R"((?i)\bGPU-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b)")),
+        QRegularExpression(QStringLiteral(R"((?i)(?:/run/media/|/media/)[^/\s]+)")),
+        QRegularExpression(QStringLiteral(R"((?im)^[ \t]*(?:SSID|BSSID|ID_SERIAL(?:_SHORT)?|ID_FS_UUID|ID_PART_ENTRY_UUID|POWER_SUPPLY_SERIAL_NUMBER|DMI_PRODUCT_UUID|PRETTY_HOSTNAME)[ \t]*[:=][ \t]*[^\r\n]+)"))
     };
     // Preserve PCI addresses: IPv6 detection is deliberately conservative and excludes BDF suffixes.
     for (int i = 0; i < patterns.size(); ++i) {
@@ -116,6 +120,8 @@ QString redactPrivateText(QString text) {
         }
         for (auto it = spans.crbegin(); it != spans.crend(); ++it) text.replace(it->first, it->second, QStringLiteral("[redacted]"));
     }
+    static const QRegularExpression unameHost(QStringLiteral(R"((?m)(^\$ uname -a\r?\nLinux[ \t]+)[^ \t\r\n]+)"));
+    text.replace(unameHost, QStringLiteral("\\1[redacted]"));
     return text;
 }
 
@@ -126,7 +132,10 @@ void redactPrivateFields(Report &report) {
         QStringLiteral("username"), QStringLiteral("user name"), QStringLiteral("kullanıcı adı"),
         QStringLiteral("mac"), QStringLiteral("mac address"), QStringLiteral("bssid"), QStringLiteral("address (bssid)"),
         QStringLiteral("ip"), QStringLiteral("ip address"), QStringLiteral("ip adresi"),
-        QStringLiteral("uuid"), QStringLiteral("machine id"), QStringLiteral("boot id"), QStringLiteral("boot kimliği"), QStringLiteral("host"), QStringLiteral("ssid")};
+        QStringLiteral("uuid"), QStringLiteral("machine id"), QStringLiteral("boot id"), QStringLiteral("boot kimliği"), QStringLiteral("host"), QStringLiteral("ssid"), QStringLiteral("mac adresi"),
+        QStringLiteral("disk uuid"), QStringLiteral("device uuid"), QStringLiteral("gpu uuid"), QStringLiteral("partition uuid"),
+        QStringLiteral("partuuid"), QStringLiteral("machine-id"), QStringLiteral("boot-id"), QStringLiteral("serial number field"),
+        QStringLiteral("mountpoint"), QStringLiteral("mount point"), QStringLiteral("mountpoints"), QStringLiteral("bağlama noktası")};
     for (auto &table : report.tables)
         for (qsizetype i=0; i<table.headers.size(); ++i)
             if (privateHeaders.contains(table.headers[i].simplified().toLower()))

@@ -81,6 +81,7 @@ private:
     void syncExperimentalNavigation();
     void showQuickNavigator();
     void syncStatusChips();
+    void refreshStatusChipTheme();
     void stepPageHistory(int delta);
     QStringList activeOperations() const;
     void showOperations();

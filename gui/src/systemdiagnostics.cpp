@@ -1,4 +1,10 @@
 #include "hardwarefields.h"
+#include "memoryfields.h"
+#include "deviceidentity.h"
+#include <QCryptographicHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QDateTime>
 #include "topologyfields.h"
 #include "systemdiagnostics.h"
 
@@ -21,6 +27,7 @@
 #include <cmath>
 
 #include <unistd.h>
+#include <sys/stat.h>
 
 using diag::Level;
 using diag::Report;
@@ -49,6 +56,27 @@ static QString devicePath(const QString &root, const QString &path) {
     const QString target = QFileInfo(root + path).canonicalFilePath();
     return !base.isEmpty() && target.startsWith(base + QLatin1Char('/')) ? target : QString();
 }
+// Boot-scoped, transient fingerprint: no serial, MAC or persistent machine identity.
+static QString deviceKey(const QString &root, const QString &path, const QString &bus, const QString &boot) {
+    if (boot.isEmpty()) return {};
+    const auto stamp = deviceidentity::capture((root + QStringLiteral("/sys/devices")).toStdString(),
+                                               (root + path).toStdString());
+    if (!stamp) return {};
+    QJsonArray fields{boot, bus, QString::fromStdString(stamp->path), QString::fromStdString(stamp->incarnation)};
+    const QString canonical = QStringLiteral("/sys/devices/") + QString::fromStdString(stamp->path);
+    const auto append = [&](const QString &name) { fields.append(rd(root, canonical + QLatin1Char('/') + name, 256)); };
+    if (bus == QStringLiteral("PCI")) {
+        for (const auto &name : {QStringLiteral("vendor"), QStringLiteral("device"), QStringLiteral("subsystem_vendor"),
+                                 QStringLiteral("subsystem_device"), QStringLiteral("class"), QStringLiteral("revision")}) append(name);
+        if (fields.at(4).toString().isEmpty() || fields.at(5).toString().isEmpty()) return {};
+    } else if (bus == QStringLiteral("USB")) {
+        append(QStringLiteral("idVendor")); append(QStringLiteral("idProduct"));
+    } else if (bus == QStringLiteral("Network")) append(QStringLiteral("ifindex"));
+    // Check the directory incarnation again after reading attributes.
+    if (deviceidentity::capture((root + QStringLiteral("/sys/devices")).toStdString(),
+                                (root + path).toStdString()) != stamp) return {};
+    return QString::fromLatin1(QCryptographicHash::hash(QJsonDocument(fields).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
+}
 static QString known(const QString &v) { return v.isEmpty() ? tr("unknown") : v; }
 static std::optional<double> number(const QString &v) {
     bool ok = false; const double n = v.toDouble(&ok);
@@ -58,6 +86,7 @@ static std::optional<double> number(const QString &v) {
 Table deviceTopology(const QString &root, const QJsonObject &sample) {
     struct Device { QString bus, id, path, target; };
     QList<Device> devices;
+    const QString boot = rd(root, QStringLiteral("/proc/sys/kernel/random/boot_id"));
     const QList<QPair<QString, QString>> buses{
         {QStringLiteral("PCI"), QStringLiteral("/sys/bus/pci/devices")},
         {QStringLiteral("USB"), QStringLiteral("/sys/bus/usb/devices")},
@@ -68,9 +97,9 @@ Table deviceTopology(const QString &root, const QJsonObject &sample) {
         devices << Device{bus.first, id, path, devicePath(root, path)};
     }
     std::stable_sort(devices.begin(), devices.end(), [](const Device &a, const Device &b) { return a.target.size() < b.target.size(); });
-    Table t; t.title = tr("Hardware Device Tree");
-    t.headers = {tr("Device"), tr("Bus"), tr("Parent"), tr("Vendor / device"), tr("Driver"), tr("Link now"), tr("Possible"), tr("NUMA node"), tr("Runtime state"), tr("AER (corr / non-fatal / fatal)")};
-    t.note = tr("Relationships use canonical sysfs paths only. Link and AER readings are reused from the existing PCIe scan; missing relationships and readings are unknown.");
+    Table t; t.title = tr("Hardware Device Tree"); t.viewKind = QStringLiteral("hardware-device-tree");
+    t.headers = {tr("Device"), tr("Bus"), tr("Parent"), tr("Vendor / device"), tr("Driver"), tr("Link now"), tr("Endpoint maximum"), tr("NUMA node"), tr("Runtime state"), tr("AER (corr / non-fatal / fatal)"), tr("Link / AER capture (UTC)")};
+    t.note = tr("Relationships use canonical sysfs paths only. Link and AER readings are reused from the existing PCIe scan; missing relationships and readings are unknown.") + QLatin1Char('\n') + tr("Identity is boot-scoped sysfs continuity, not proof of physical identity. NUMA -1 means no assigned node. Link reads are skipped for non-active devices; runtime PM may still race an active read.");
     QHash<QString, int> index;
     for (const auto &d : devices) {
         int parent = -1;
@@ -82,19 +111,26 @@ Table deviceTopology(const QString &root, const QJsonObject &sample) {
                 const QString next = QFileInfo(up).path(); if (next == up) break; up = next;
             }
         }
-        const auto value = [&](const QString &key) { return d.target.isEmpty() ? QString() : rd(root, d.path + QLatin1Char('/') + key); };
-        const QString runtime = value(QStringLiteral("power/runtime_status"));
+        const auto value = [&](const QString &key) { return d.target.isEmpty() ? QString() : diagsrc::read(d.target + QLatin1Char('/') + key); };
+        QString runtime = value(QStringLiteral("power/runtime_status"));
+        QString key = deviceKey(root, d.path, d.bus, boot);
         QJsonObject link = d.bus == QStringLiteral("PCI") ? sample.value(d.id).toObject() : QJsonObject{};
         QString vendor, device;
         if (d.bus == QStringLiteral("PCI")) { vendor = value(QStringLiteral("vendor")); device = value(QStringLiteral("device")); }
         if (d.bus == QStringLiteral("USB")) { vendor = value(QStringLiteral("idVendor")); device = value(QStringLiteral("idProduct")); }
-        if (vendor.isEmpty() || device.isEmpty() || link.value(QStringLiteral("vendor")).toString() != vendor || link.value(QStringLiteral("device")).toString() != device) link = {};
+        if (key.isEmpty() || link.value(QStringLiteral("identity")).toString() != key) link = {};
+        QString driver = d.target.isEmpty() ? QString() : driverOf(root, d.path);
+        QString numa = value(QStringLiteral("numa_node"));
+        const bool attached = !d.target.isEmpty() && devicePath(root, d.path) == d.target &&
+            (key.isEmpty() || deviceKey(root, d.path, d.bus, boot) == key);
+        if (!attached) { parent = -1; key.clear(); vendor.clear(); device.clear(); driver.clear(); numa.clear(); runtime.clear(); link = {}; }
         const QString identity = vendor.isEmpty() || device.isEmpty() ? tr("unknown") : vendor + QStringLiteral(" / ") + device;
         t.parents << parent;
+        t.rowKeys << key;
         t.add({d.id, d.bus, parent >= 0 ? t.rows.at(parent).value(0) : tr("unknown"), identity,
-               d.target.isEmpty() ? tr("unknown") : known(driverOf(root, d.path)), known(link.value(QStringLiteral("link")).toString()), known(link.value(QStringLiteral("maximum")).toString()),
-               known(value(QStringLiteral("numa_node"))), known(runtime), known(link.value(QStringLiteral("aer")).toString())}, d.target.isEmpty() ? Level::Unknown : Level::Info);
-        if (!d.target.isEmpty() && !index.contains(d.target)) index.insert(d.target, int(t.rows.size()) - 1);
+               known(driver), known(link.value(QStringLiteral("link")).toString()), known(link.value(QStringLiteral("maximum")).toString()),
+               known(numa), known(runtime), known(link.value(QStringLiteral("aer")).toString()), known(link.value(QStringLiteral("capturedAt")).toString())}, !attached || key.isEmpty() ? Level::Unknown : Level::Info);
+        if (attached && !index.contains(d.target)) index.insert(d.target, int(t.rows.size()) - 1);
     }
     return t;
 }
@@ -118,7 +154,8 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
     r.about = tr("The PCIe link every device trained at, against what both ends of the link can do. A narrower link than possible is a "
                  "hardware or BIOS limit; a slower one at idle is normal power saving.");
     r.limits << tr("Speed drops to save power when a device is idle (GPUs go to PCIe 1.0 at the desktop); check under load before judging the speed.")
-             << tr("A device that is runtime-suspended shows the last link it had.");
+             << tr("Non-active or unknown runtime state is not probed for PCIe link registers. Runtime PM may race an active read.")
+             << tr("Same-boot sysfs identity is best-effort continuity; identical physical replacement may not be detectable.");
     Table t;
     t.title = tr("Device Links");
     t.headers = {tr("Device"), tr("Driver"), tr("Link now"), tr("Possible"), tr("Power"), tr("AER (corr / non-fatal / fatal)"), tr("Status")};
@@ -130,17 +167,30 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
     int bridges = 0;
     for (const QString &id : ls(root, QStringLiteral("/sys/bus/pci/devices"))) {
         const QString base = QStringLiteral("/sys/bus/pci/devices/") + id;
-        const QString cur = rd(root, base + QStringLiteral("/current_link_speed")), max = rd(root, base + QStringLiteral("/max_link_speed"));
-        if (cur.isEmpty() || cur.startsWith(QStringLiteral("Unknown"))) continue;
+        const QString target = devicePath(root, base);
+        if (target.isEmpty() || !QFileInfo::exists(target + QStringLiteral("/current_link_speed"))) continue;
         const QString cls = rd(root, base + QStringLiteral("/class"));
         if (cls.startsWith(QStringLiteral("0x0604"))) { ++bridges; continue; }  // ports: their downstream device is listed
+        const QString identityKey = deviceKey(root, base, QStringLiteral("PCI"), boot);
+        const QString power = rd(root, base + QStringLiteral("/power/runtime_status"));
+        if (!deviceidentity::mayReadLink(power.toStdString())) {
+            t.add({id, driverOf(root, base), QStringLiteral("—"), QStringLiteral("—"), known(power), QStringLiteral("—"), tr("Link not probed (runtime state)")}, Level::Unknown);
+            r.add(Level::Unknown, tr("%1: link not probed (runtime state)").arg(id));
+            continue;
+        }
+        const QString cur = rd(root, base + QStringLiteral("/current_link_speed")), max = rd(root, base + QStringLiteral("/max_link_speed"));
+        if (cur.isEmpty() || cur.startsWith(QStringLiteral("Unknown"))) {
+            r.add(Level::Unknown, tr("%1: link reading unavailable").arg(id));
+            continue;
+        }
         const int w = rd(root, base + QStringLiteral("/current_link_width")).toInt(), mw = rd(root, base + QStringLiteral("/max_link_width")).toInt();
         // The link can only be as fast / wide as the port above it.
-        const QString up = QFileInfo(QFileInfo(root + base).canonicalFilePath()).path();
-        const double portMax = linkSpeed(diagsrc::read(up + QStringLiteral("/max_link_speed")));
-        const int portW = diagsrc::read(up + QStringLiteral("/max_link_width")).toInt();
+        const QString up = QFileInfo(target).path();
         const QString parent = QFileInfo(up).fileName();
         const bool parentKnown = pciAddress.match(parent).hasMatch();
+        const bool portActive = parentKnown && deviceidentity::mayReadLink(diagsrc::read(up + QStringLiteral("/power/runtime_status")).toStdString());
+        const double portMax = portActive ? linkSpeed(diagsrc::read(up + QStringLiteral("/max_link_speed"))) : 0;
+        const int portW = portActive ? diagsrc::read(up + QStringLiteral("/max_link_width")).toInt() : 0;
         auto link = [](double rate, int width) {
             return rate > 0 && width > 0 ? QStringLiteral("%1 GT/s ×%2").arg(rate).arg(width) : QStringLiteral("—");
         };
@@ -148,7 +198,6 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
                       parentKnown ? link(portMax, portW) : QStringLiteral("—")});
         const double s = linkSpeed(cur), ms = std::min(linkSpeed(max), portMax > 0 ? portMax : 1e9);
         const int mw2 = portW > 0 ? std::min(mw, portW) : mw;
-        const QString power = rd(root, base + QStringLiteral("/power/runtime_status"));
         static const std::pair<const char *, const char *> aerFiles[] = {
             {"aer_dev_correctable", "TOTAL_ERR_COR"}, {"aer_dev_nonfatal", "TOTAL_ERR_NONFATAL"}, {"aer_dev_fatal", "TOTAL_ERR_FATAL"}};
         QStringList aer;
@@ -157,15 +206,22 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
         const QString vendor = rd(root, base + QStringLiteral("/vendor")), device = rd(root, base + QStringLiteral("/device"));
         const QString name = diagsrc::pciName(vendor, device, cls);
         const QString current = link(s,w);
-        captured.insert(id, QJsonObject{{"vendor", vendor}, {"device", device}, {"link", current}, {"maximum", link(linkSpeed(max), mw)}, {"aer", hasAer ? aer.join(QStringLiteral(" / ")) : QString()}});
+        if (devicePath(root, base) != target || (!identityKey.isEmpty() && deviceKey(root, base, QStringLiteral("PCI"), boot) != identityKey) ||
+            rd(root, base + QStringLiteral("/power/runtime_status")) != power) {
+            r.add(Level::Unknown, tr("%1: device or runtime state changed during capture").arg(id));
+            continue;
+        }
+        captured.insert(id, QJsonObject{{"identity", identityKey}, {"capturedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}, {"vendor", vendor}, {"device", device}, {"link", current}, {"maximum", link(linkSpeed(max), mw)}, {"aer", hasAer ? aer.join(QStringLiteral(" / ")) : QString()}});
         const QJsonObject old = before.value(id).toObject();
         if (!old.isEmpty()) {
             const QString oldLink = old.value(QStringLiteral("link")).toString();
-            const bool identity = !vendor.isEmpty() && !device.isEmpty() && old.value(QStringLiteral("vendor")).toString() == vendor && old.value(QStringLiteral("device")).toString() == device;
+            const bool identity = !vendor.isEmpty() && !device.isEmpty() && !identityKey.isEmpty() &&
+                old.value(QStringLiteral("vendor")).toString() == vendor && old.value(QStringLiteral("device")).toString() == device &&
+                old.value(QStringLiteral("identity")).toString() == identityKey;
             if (!identity) linkDelta.add({id, oldLink, current, tr("Endpoint identity changed at this PCI address or is unverified")}, Level::Unknown);
-            else if (oldLink == QStringLiteral("—") || current == QStringLiteral("—")) linkDelta.add({id, oldLink, current, tr("Not readable in this scan")}, Level::Unknown);
+            else if (oldLink.isEmpty() || oldLink == QStringLiteral("—") || current == QStringLiteral("—")) linkDelta.add({id, oldLink, current, tr("Not readable in this scan")}, Level::Unknown);
             else if (oldLink != current) linkDelta.add({id, oldLink, current, tr("Link reading changed; power state may differ")});
-        }
+        } else if (sameBoot) linkDelta.add({id, QStringLiteral("—"), current, tr("Newly readable or added endpoint")}, Level::Info);
         Level l = Level::Ok;
         QString status = tr("full link");
         if (mw2 > 0 && w > 0 && w < mw2) {
@@ -179,19 +235,22 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
             l = Level::Info;
             status = tr("slower now (PCIe %1 of %2)").arg(pcieGen(s)).arg(pcieGen(ms));
         }
-        if (mw2 <= 0 || w <= 0) {
-            l = Level::Unknown; status = tr("Link width unknown");
-            r.add(Level::Unknown, tr("%1 (%2): link width could not be verified").arg(name,id));
+        if (mw2 <= 0 || w <= 0 || ms <= 0 || s <= 0) {
+            l = Level::Unknown; status = tr("Link speed or width unknown");
+            r.add(Level::Unknown, tr("%1 (%2): link speed or width could not be verified").arg(name,id));
         }
         if (aer.size() == 3 && (aer[1].toULongLong() > 0 || aer[2].toULongLong() > 0)) {
             l = Level::Attention;
             r.add(Level::Attention, tr("%1 (%2): uncorrectable PCIe errors recorded").arg(name,id));
         }
-        t.add({QStringLiteral("%1 · %2").arg(id, name), driverOf(root, base), QStringLiteral("PCIe %1 x%2").arg(pcieGen(s)).arg(w),
-               QStringLiteral("PCIe %1 x%2").arg(pcieGen(ms)).arg(mw2), power.isEmpty() ? QStringLiteral("—") : power,
+        const auto displayLink = [&](double rate, int width) {
+            return rate > 0 && width > 0 ? QStringLiteral("PCIe %1 x%2 (%3 GT/s)").arg(pcieGen(rate)).arg(width).arg(rate) : QStringLiteral("—");
+        };
+        t.add({QStringLiteral("%1 · %2").arg(id, name), driverOf(root, base), displayLink(s,w),
+               displayLink(ms,mw2), power.isEmpty() ? QStringLiteral("—") : power,
                hasAer ? aer.join(QStringLiteral(" / ")) : QStringLiteral("—"), status}, l);
     }
-    t.note = tr("%1 PCIe port(s) / bridge(s) not listed. Possible = the lower of the device's and its port's maximum.").arg(bridges);
+    t.note = tr("%1 PCIe port(s) / bridge(s) not listed. Possible = the lower of the device's and its port's maximum.").arg(bridges) + QLatin1Char('\n') + tr("If upstream capability is unavailable, Possible shows the endpoint maximum only.");
     r.tables << t;
     if (!topology.rows.isEmpty()) r.tables << topology;
     r.tables << deviceTopology(root, captured);
@@ -465,50 +524,90 @@ Report memory(const QString &root) {
     r.about = tr("How RAM, swap, compressed swap (zram / zswap), huge pages and memory pressure are set up and behaving right now.");
     r.limits << tr("Pressure (PSI) is an average over the last seconds / minutes, not since boot.")
              << tr("DIMM details (speed, timings, part numbers) need root: System tools → DMI.");
-    QHash<QString, double> mi;
-    for (const QString &l : rd(root, QStringLiteral("/proc/meminfo")).split(QLatin1Char('\n'))) {
-        const auto m = QRegularExpression(QStringLiteral(R"(^(\w+):\s+(\d+))")).match(l);
-        if (m.hasMatch()) mi.insert(m.captured(1), m.captured(2).toDouble() / 1024 / 1024);  // GiB
-    }
+    r.limits << tr("RAM and swap totals are the kernel /proc view, not necessarily the current cgroup limit or physical DIMM capacity. Separate snapshots may differ; do not add zram logical capacity to RAM or swap totals.");
+    // Reject truncated input rather than accept the first part of a snapshot.
+    const auto snapshot = [&root](const QString &path, qint64 limit) {
+        QFile f(root + path);
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray{};
+        QByteArray bytes;
+        while (bytes.size() <= limit) {
+            const auto chunk = f.read(std::min<qint64>(4096, limit+1-bytes.size()));
+            if (chunk.isEmpty()) break;
+            bytes += chunk;
+        }
+        return f.error() == QFileDevice::NoError && bytes.size() <= limit && bytes.endsWith('\n') ? bytes : QByteArray{};
+    };
+    const auto view = [](const QByteArray &bytes) { return std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())); };
+    const auto rawMemory = snapshot(QStringLiteral("/proc/meminfo"), 65536);
+    const auto mi = memoryfields::meminfo(view(rawMemory));
     auto gib = [](double g) { return QStringLiteral("%1 GiB").arg(g, 0, 'f', g < 10 ? 1 : 0); };
+    const auto bytesText = [&gib](std::uint64_t n) {
+        if (n < 1048576) return QStringLiteral("%1 B").arg(qulonglong(n));
+        if (n < 1073741824) return QStringLiteral("%1 MiB").arg(double(n) / 1048576.0, 0, 'f', 2);
+        return gib(double(n) / 1073741824.0);
+    };
     Table t;
     t.title = tr("Memory Now");
     t.headers = {tr("Item"), tr("Value"), tr("Note")};
-    const double total = mi.value(QStringLiteral("MemTotal")), avail = mi.value(QStringLiteral("MemAvailable"));
-    const double swapT = mi.value(QStringLiteral("SwapTotal")), swapF = mi.value(QStringLiteral("SwapFree"));
-    if (total > 0 && mi.contains(QStringLiteral("MemAvailable")) && avail <= total) {
-        t.add({tr("RAM"), gib(total), tr("%1 available (%2 %)").arg(gib(avail)).arg(avail * 100 / total, 0, 'f', 0)}, avail / total < 0.1 ? Level::Review : Level::Info);
-        if (avail / total < 0.1) r.add(Level::Review, tr("Less than 10 % of RAM is available"), tr("The kernel is close to reclaiming hard or swapping."), tr("Close something large or add swap."));
+    if (mi.total && *mi.total > 0 && mi.available && *mi.available <= *mi.total) {
+        const double fraction = double(*mi.available) / double(*mi.total);
+        t.add({tr("RAM"), bytesText(*mi.total), tr("%1 available (%2 %)").arg(bytesText(*mi.available)).arg(fraction * 100, 0, 'f', 0)}, fraction < 0.1 ? Level::Review : Level::Info);
+        if (fraction < 0.1) r.add(Level::Review, tr("Less than 10 % of RAM is available"), tr("The kernel is close to reclaiming hard or swapping."), tr("Close something large or add swap."));
+    } else {
+        t.add({tr("RAM"), mi.total && *mi.total > 0 ? bytesText(*mi.total) : tr("unknown"), tr("RAM availability is incomplete")}, Level::Unknown);
+        r.add(Level::Unknown, tr("RAM availability is incomplete"));
     }
-    else r.add(Level::Unknown, tr("RAM availability is incomplete"));
-    const bool swapKnown = mi.contains(QStringLiteral("SwapTotal")) && mi.contains(QStringLiteral("SwapFree")) && swapF <= swapT;
-    t.add({tr("Swap"), !swapKnown ? tr("unknown") : swapT > 0 ? tr("%1 of %2 used").arg(gib(swapT - swapF), gib(swapT)) : tr("none"), QString()}, swapKnown ? Level::Info : Level::Unknown);
-    // zram and zswap.
-    bool zram = false;
+    const bool swapKnown = mi.swapTotal && mi.swapFree && *mi.swapFree <= *mi.swapTotal;
+    t.add({tr("Swap"), !swapKnown ? tr("unknown") : *mi.swapTotal > 0 ? tr("%1 of %2 used").arg(bytesText(*mi.swapTotal - *mi.swapFree), bytesText(*mi.swapTotal)) : tr("none"), QString()}, swapKnown ? Level::Info : Level::Unknown);
+    if (!swapKnown) r.add(Level::Unknown, tr("Swap accounting is incomplete"));
+    // Identify active swap entries from the captured /proc/swaps list, not the
+    // existence or configured size of a zram block device.
+    const auto rawSwaps = snapshot(QStringLiteral("/proc/swaps"), 65536);
+    const auto swaps = memoryfields::swaps(view(rawSwaps));
+    Table swapDevices; swapDevices.title = tr("Active Swap Entries");
+    swapDevices.headers = {tr("Device"), tr("Type"), tr("Capacity (KiB)"), tr("Used (KiB)")};
+    swapDevices.note = tr("Kernel swap entries only. Canonical zram names are recognized; other paths are omitted for privacy. Aliases are not resolved and no device is opened.");
+    QSet<QString> activeZramNames;
+    if (swaps) for (const auto &entry : *swaps) {
+        const auto path = QString::fromUtf8(entry.path.data(), qsizetype(entry.path.size()));
+        const bool zramEntry = entry.type == "partition" && memoryfields::zramDevice(entry.path);
+        if (zramEntry) activeZramNames.insert(path.mid(5));
+        swapDevices.add({zramEntry ? path : tr("Swap entry %1").arg(swapDevices.rows.size()+1), zramEntry ? QStringLiteral("zram") : QString::fromLatin1(entry.type.data(), qsizetype(entry.type.size())), QString::number(qulonglong(entry.sizeKiB)), QString::number(qulonglong(entry.usedKiB))});
+    }
+    if (!swaps) r.limits << tr("Active swap entries are unavailable or incomplete.");
+    else if (swaps->empty()) swapDevices.note += QLatin1Char('\n') + tr("No active swap entries in this snapshot.");
+    // A configured zram device need not be active swap (it may be a filesystem).
+    bool activeZram = false;
     for (const QString &z : ls(root, QStringLiteral("/sys/block"), {QStringLiteral("zram*")})) {
         const QString b = QStringLiteral("/sys/block/") + z + QLatin1Char('/');
-        const qint64 size = rd(root, b + QStringLiteral("disksize")).toLongLong();
-        if (size <= 0) continue;
-        zram = true;
-        const QStringList mm = rd(root, b + QStringLiteral("mm_stat")).split(QLatin1Char(' '), Qt::SkipEmptyParts);
-        const double orig = mm.value(0).toDouble(), compr = mm.value(1).toDouble();
-        t.add({QStringLiteral("zram (%1)").arg(z), gib(size / 1073741824.0),
-               tr("%1 · %2 stored, ratio %3:1").arg(chosen(rd(root, b + QStringLiteral("comp_algorithm"))), gib(orig / 1073741824.0))
-                   .arg(compr > 0 ? orig / compr : 0, 0, 'f', 1)});
+        const auto sizeText = rd(root, b + QStringLiteral("disksize"), 64).toLatin1();
+        const auto size = memoryfields::unsignedInt(view(sizeText));
+        if (size && *size == 0 && !activeZramNames.contains(z)) continue;
+        if (size && *size > 0 && activeZramNames.contains(z)) activeZram = true;
+        const auto rawStats = snapshot(b + QStringLiteral("mm_stat"), 4096);
+        const auto stats = memoryfields::zramStats(view(rawStats));
+        const QString activity = activeZramNames.contains(z) ? tr("Active swap") : swaps ? tr("Not listed as canonical active swap") : tr("Swap activity unknown");
+        const QString ratio = stats && stats->compressed > 0 ? QStringLiteral("%1:1").arg(double(stats->stored)/double(stats->compressed), 0, 'f', 1) : tr("unknown");
+        const auto detail = tr("%1 · %2 · stored: %3 · compressed: %4 · resident RAM: %5 · ratio: %6")
+            .arg(activity, known(chosen(rd(root, b + QStringLiteral("comp_algorithm")))), stats ? bytesText(stats->stored) : tr("unknown"),
+                 stats ? bytesText(stats->compressed) : tr("unknown"), stats ? bytesText(stats->resident) : tr("unknown"), ratio);
+        t.add({QStringLiteral("zram (%1)").arg(z), size ? bytesText(*size) : tr("unknown"), detail}, size && stats ? Level::Info : Level::Unknown);
     }
-    const bool zswap = rd(root, QStringLiteral("/sys/module/zswap/parameters/enabled")) == QStringLiteral("Y");
-    if (!rd(root, QStringLiteral("/sys/module/zswap/parameters/enabled")).isEmpty())
-        t.add({QStringLiteral("zswap"), zswap ? tr("on") : tr("off"),
-               zswap ? tr("%1, pool up to %2 % of RAM").arg(rd(root, QStringLiteral("/sys/module/zswap/parameters/compressor")),
-                                                           rd(root, QStringLiteral("/sys/module/zswap/parameters/max_pool_percent"))) : QString()},
-              zswap && zram ? Level::Review : Level::Info);
-    if (zswap && zram)
+    if (!activeZram && !activeZramNames.isEmpty()) r.limits << tr("Canonical zram swap names could not be corroborated with a configured sysfs device.");
+    const auto zswapState = rd(root, QStringLiteral("/sys/module/zswap/parameters/enabled"));
+    const bool zswap = zswapState == QStringLiteral("Y");
+    if (!zswapState.isEmpty())
+        t.add({QStringLiteral("zswap"), zswap ? tr("on") : zswapState == QStringLiteral("N") ? tr("off") : tr("unknown"),
+               zswap ? tr("%1, pool up to %2 % of RAM").arg(known(rd(root, QStringLiteral("/sys/module/zswap/parameters/compressor"))),
+                                                           known(rd(root, QStringLiteral("/sys/module/zswap/parameters/max_pool_percent")))) : QString()},
+              zswap && activeZram ? Level::Review : zswap || zswapState == QStringLiteral("N") ? Level::Info : Level::Unknown);
+    if (zswap && activeZram)
         r.add(Level::Review, tr("zswap and zram are both on"),
-              tr("zswap compresses pages on their way to swap, and the swap is itself compressed by zram: pages are compressed twice and zswap's pool takes RAM that zram would use."),
+              tr("zswap is enabled and a canonical zram swap entry is active. Pages evicted from zswap to zram may be compressed again; this snapshot does not prove actual double compression."),
               tr("Use one of them: turn zswap off (zswap.enabled=0) when the swap is zram."))
             .setFix(tr("Turn zswap off (until reboot)"), QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("zswap")}, {QStringLiteral("value"), QStringLiteral("N")}});
     const QString swappiness = rd(root, QStringLiteral("/proc/sys/vm/swappiness"));
-    if (!swappiness.isEmpty()) t.add({QStringLiteral("vm.swappiness"), swappiness, zram ? tr("with zram, 100–180 is common") : tr("default 60")});
+    if (!swappiness.isEmpty()) t.add({QStringLiteral("vm.swappiness"), swappiness, activeZram ? tr("with zram, 100–180 is common") : tr("default 60")});
     const QString thp = chosen(rd(root, QStringLiteral("/sys/kernel/mm/transparent_hugepage/enabled")));
     const QString defrag = chosen(rd(root, QStringLiteral("/sys/kernel/mm/transparent_hugepage/defrag")));
     if (!thp.isEmpty()) {
@@ -541,6 +640,7 @@ Report memory(const QString &root) {
         r.limits << tr("Memory pressure (PSI) is not available: kernel without CONFIG_PSI or psi=0.");
     }
     r.tables << t;
+    if (swaps) r.tables << swapDevices;
     // Topology.
     Table topo;
     topo.title = tr("NUMA and Cache Domains");
@@ -731,11 +831,24 @@ Report charging(const QString &root) {
     // Type-C ports and their partners' source capabilities.
     Table pd;
     pd.title = tr("USB-C Ports");
+    pd.viewKind = QStringLiteral("pd-ports");
+    pd.note = tr("Negotiated contract is not exposed by these sources. Source profiles and supply measurements are separate.");
     pd.headers = {tr("Port"), tr("Role"), tr("Partner"), tr("Partner source capabilities"), tr("Best capacity")};
-    Table profiles; profiles.title=tr("USB Power Delivery Source Profiles");
+    Table profiles; profiles.title=tr("USB Power Delivery Source Profiles"); profiles.viewKind=QStringLiteral("pd-profiles");
     profiles.headers={tr("Port"),tr("Partner profile"),tr("Minimum voltage (V)"),tr("Maximum voltage (V)"),tr("Maximum current (A)"),tr("Capacity (W)")};
     profiles.note=tr("Source capability is not a negotiated contract or measured draw. No contract is inferred from voltage or current limits.");
     double bestW = 0;
+    bool incompleteSink = false;
+    // Compare the target inode as well as its path. A detach/reattach can
+    // reuse the same sysfs name; the second sample must not inherit the old PDOs.
+    auto identity=[](const QString &path,const QString &sysRoot)->std::optional<QPair<quint64,quint64>> {
+        const auto canonical=QFileInfo(path).canonicalFilePath();
+        if(sysRoot.isEmpty() || !canonical.startsWith(sysRoot+QLatin1Char('/'))) return std::nullopt;
+        struct stat st{};
+        const auto native=QFile::encodeName(canonical);
+        if(::stat(native.constData(),&st)!=0 || !S_ISDIR(st.st_mode)) return std::nullopt;
+        return QPair<quint64,quint64>{quint64(st.st_dev),quint64(st.st_ino)};
+    };
     for (const QString &port : ls(root, QStringLiteral("/sys/class/typec"), {QStringLiteral("port[0-9]*")})) {
         if (!QRegularExpression(QStringLiteral(R"(^port[0-9]+$)")).match(port).hasMatch()) continue;
         const QString b = QStringLiteral("/sys/class/typec/") + port;
@@ -745,38 +858,55 @@ Report charging(const QString &root) {
         double best = 0;
         const QString pdDir = QFileInfo(root + partner + QStringLiteral("/usb_power_delivery")).canonicalFilePath();
         const QString sysRoot=QFileInfo(root+QStringLiteral("/sys")).canonicalFilePath();
+        const auto portBefore=identity(root+b,sysRoot);
+        const auto partnerBefore=identity(root+partner,sysRoot);
+        const auto pdBefore=identity(pdDir,sysRoot);
         const auto roleBefore=chosen(rd(root,b+QStringLiteral("/power_role")));
+        const auto dataBefore=chosen(rd(root,b+QStringLiteral("/data_role")));
+        const auto revisionBefore=partnerBefore ? rd(root,partner+QStringLiteral("/usb_power_delivery_revision")) : QString();
         const int profileStart=int(profiles.rows.size());
-        if (connected && !sysRoot.isEmpty() && pdDir.startsWith(sysRoot+QLatin1Char('/'))) {
-            for (const QString &cap : diagsrc::dir(pdDir + QStringLiteral("/source-capabilities"))) {
+        bool completeProfiles=false;
+        if (connected && partnerBefore && pdBefore) {
+            const auto caps=diagsrc::dir(pdDir + QStringLiteral("/source-capabilities"),{QStringLiteral("*")},513);
+            completeProfiles=!caps.isEmpty() && caps.size()<=512;
+            for (const QString &cap : caps) {
                 const QString resolved=QFileInfo(pdDir + QStringLiteral("/source-capabilities/") + cap).canonicalFilePath();
-                if(!resolved.startsWith(sysRoot+QLatin1Char('/')))continue;
+                if(!resolved.startsWith(sysRoot+QLatin1Char('/'))){completeProfiles=false;continue;}
                 const QString c = resolved + QLatin1Char('/');
-                if(profiles.rows.size()>=1024)break;
+                if(profiles.rows.size()>=1024){completeProfiles=false;break;}
                 auto milli=[&](const QString &name,std::string_view unit){ const auto text=diagsrc::read(c+name,64).toLatin1(); return hardwarefields::milli(std::string_view(text.constData(),std::size_t(text.size())),unit); };
                 const auto i=milli(QStringLiteral("maximum_current"),"mA");
                 const auto fixed=milli(QStringLiteral("voltage"),"mV");
                 const auto low=fixed?fixed:milli(QStringLiteral("minimum_voltage"),"mV");
                 const auto high=fixed?fixed:milli(QStringLiteral("maximum_voltage"),"mV");
                 const bool valid=i&&low&&high&&*low<=*high;
+                if(!valid)completeProfiles=false;
                 auto show=[](const std::optional<double> &v){return v?QString::number(*v,'g',8):tr("unknown");};
                 profiles.add({port,cap,show(low),show(high),show(i),valid?QString::number(*high * *i,'g',8):tr("unknown")},valid?Level::Info:Level::Unknown);
                 if(valid){pdos<<QStringLiteral("%1–%2 V %3 A").arg(*low).arg(*high).arg(*i);best=std::max(best,*high * *i);}
             }
         }
         const auto roleAfter=chosen(rd(root,b+QStringLiteral("/power_role")));
-        const bool stable=connected==QFileInfo::exists(root+partner) && roleBefore==roleAfter
-            && pdDir==QFileInfo(root+partner+QStringLiteral("/usb_power_delivery")).canonicalFilePath();
-        if(!stable){while(profiles.rows.size()>profileStart){profiles.rows.removeLast();profiles.levels.removeLast();}pdos.clear();best=0;}
-        if(stable && roleAfter==QStringLiteral("sink"))bestW=std::max(bestW,best);
-        pd.add({port, QStringLiteral("%1 / %2").arg(roleAfter, chosen(rd(root, b + QStringLiteral("/data_role")))),
-                !stable ? tr("Changed during capture") : connected ? tr("connected (PD %1)").arg(rd(root, partner + QStringLiteral("/usb_power_delivery_revision"))) : tr("nothing"),
+        const auto dataAfter=chosen(rd(root,b+QStringLiteral("/data_role")));
+        const auto partnerAfter=identity(root+partner,sysRoot);
+        const auto pdAfterPath=QFileInfo(root+partner+QStringLiteral("/usb_power_delivery")).canonicalFilePath();
+        const auto revisionAfter=partnerAfter ? rd(root,partner+QStringLiteral("/usb_power_delivery_revision")) : QString();
+        const bool stable=portBefore && portBefore==identity(root+b,sysRoot)
+            && connected==QFileInfo::exists(root+partner) && roleBefore==roleAfter && dataBefore==dataAfter
+            && (!connected || partnerBefore.has_value()) && partnerBefore==partnerAfter
+            && pdDir==pdAfterPath && pdBefore==identity(pdAfterPath,sysRoot) && revisionBefore==revisionAfter;
+        if(!stable){while(profiles.rows.size()>profileStart){profiles.rows.removeLast();profiles.levels.removeLast();}pdos.clear();best=0;completeProfiles=false;}
+        if(connected && (roleBefore==QStringLiteral("sink") || roleAfter==QStringLiteral("sink"))) {
+            if(stable && completeProfiles)bestW=std::max(bestW,best);else incompleteSink=true;
+        }
+        pd.add({port, stable ? QStringLiteral("%1 / %2").arg(known(roleAfter),known(dataAfter)) : tr("unknown"),
+                !stable ? tr("Changed during capture") : connected ? tr("connected (PD %1)").arg(known(revisionAfter)) : tr("nothing"),
                 pdos.isEmpty() ? (connected ? tr("not reported") : QStringLiteral("—")) : pdos.join(QStringLiteral(", ")),
-                best > 0 ? watts(best) : QStringLiteral("—")});
+                best > 0 && completeProfiles ? watts(best) : connected && !completeProfiles ? tr("Maximum unknown (incomplete profiles)") : QStringLiteral("—")}, stable && (!connected || completeProfiles) ? Level::Info : Level::Unknown);
     }
     if (!pd.rows.isEmpty()) r.tables << pd;
     if (!profiles.rows.isEmpty())r.tables<<profiles;
-    if (bestW > 0 && bestW < 65)
+    if (bestW > 0 && bestW < 65 && !incompleteSink)
         r.add(Level::Review, tr("The USB-C charger offers at most %1").arg(watts(bestW)),
               tr("Gaming laptops draw far more under load: on this charger the battery can drain while plugged in, and the firmware lowers power limits."),
               tr("Use the original adapter for gaming; a USB-C charger is fine for light use."));
@@ -784,7 +914,7 @@ Report charging(const QString &root) {
     Table ps;
     ps.title = tr("Power Supplies");
     ps.headers = {tr("Supply"), tr("Type"), tr("State"), tr("Measured power"), tr("Detail")};
-    Table readings; readings.title = tr("Supply Measurements and Reported Limits");
+    Table readings; readings.title = tr("Supply Measurements and Reported Limits"); readings.viewKind=QStringLiteral("pd-supplies");
     readings.headers = {tr("Supply"), tr("Voltage now (V)"), tr("Current now (A)"), tr("Voltage max (V)"), tr("Current max (A)"), tr("Measured power (W)")};
     readings.note = tr("Reported maxima are capabilities, not a negotiated USB-PD contract. Signed measurements are preserved; direction follows the driver convention.");
     for (const QString &s : ls(root, QStringLiteral("/sys/class/power_supply"))) {

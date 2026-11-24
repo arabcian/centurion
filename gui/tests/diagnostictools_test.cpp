@@ -3,6 +3,7 @@
 #include <algorithm>
 #include "../src/diagnostictools.h"
 #include "../src/systemdiagnostics.h"
+#include "../src/hierarchyviewmodel.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -133,6 +134,9 @@ int main(int argc, char **argv) {
     const auto ids=diag::redactPrivateText(QStringLiteral("Boot ID: 12345678-1234-1234-1234-123456789012\nWMI GUID: 87654321-4321-4321-4321-210987654321"));
     CHECK(!ids.contains(QStringLiteral("12345678-1234-1234-1234-123456789012")));
     CHECK(ids.contains(QStringLiteral("87654321-4321-4321-4321-210987654321")));
+    const auto sourcePrivacy=diag::redactPrivateText(QStringLiteral("$ uname -a\nLinux secret-host 6.11.0 #1 SMP\nPARTUUID=ab12cd34-12ab-34cd-56ef-123456789abc\nMachine-ID: ab12cd3412ab34cd56ef123456789abc\nGPU UUID: GPU-11111111-2222-3333-4444-555555555555\nSSID=private-network\nID_SERIAL_SHORT=private-serial\n/run/media/private-user/disk\nWMI GUID: 87654321-4321-4321-4321-210987654321\n0000:01:00.0 Xid 154 MCE\n"));
+    for(const auto &secret:{QStringLiteral("secret-host"),QStringLiteral("ab12cd34-12ab-34cd-56ef-123456789abc"),QStringLiteral("ab12cd3412ab34cd56ef123456789abc"),QStringLiteral("GPU-11111111-2222-3333-4444-555555555555"),QStringLiteral("private-network"),QStringLiteral("private-serial"),QStringLiteral("private-user")}) CHECK(!sourcePrivacy.contains(secret));
+    CHECK(sourcePrivacy.contains(QStringLiteral("WMI GUID: 87654321-4321-4321-4321-210987654321")) && sourcePrivacy.contains(QStringLiteral("0000:01:00.0 Xid 154 MCE")));
     diag::Report original; original.add(Level::Attention,QStringLiteral("excluded evidence"));
     auto selected=original; selected.findings.clear();
     diag::Table privateTable; privateTable.headers={QStringLiteral("Serial Number"),QStringLiteral("PCI")}; privateTable.add({QStringLiteral("secret-456"),QStringLiteral("0000:01:00.0")}); selected.tables.append(privateTable);
@@ -174,6 +178,12 @@ int main(int argc, char **argv) {
     CHECK(diagnostictools::hardwareSnapshot(before, QStringLiteral("then"), before).verdict() == Level::Ok);
 
     // ── S04: a GPU trained narrower than both ends allow.
+    const QString gpu = QStringLiteral("/sys/devices/pci0000:00/0000:01:00.0");
+    put(gpu + QStringLiteral("/power/runtime_status"), "active\n");
+    put(gpu + QStringLiteral("/vendor"), "0x10de\n");
+    put(gpu + QStringLiteral("/device"), "0x2c58\n");
+    CHECK(QDir().mkpath(root + QStringLiteral("/sys/bus/pci/devices")));
+    CHECK(QFile::link(root + gpu, root + QStringLiteral("/sys/bus/pci/devices/0000:01:00.0")));
     put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/current_link_speed"), "16.0 GT/s PCIe\n");
     put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/max_link_speed"), "32.0 GT/s PCIe\n");
     put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/current_link_width"), "8\n");
@@ -204,8 +214,22 @@ int main(int argc, char **argv) {
     put(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/device"), "0x2c59\n");
     const auto changedEndpoint = systemdiagnostics::pcieLinks(root, sample);
     CHECK(changedEndpoint.tables.last().rows.first().value(3).contains(QStringLiteral("Endpoint identity changed")));
+    put(gpu + QStringLiteral("/device"), "0x2c58\n");
+    CHECK(QDir().rename(root + gpu, root + gpu + QStringLiteral("-detached")));
+    put(gpu + QStringLiteral("/vendor"), "0x10de\n"); put(gpu + QStringLiteral("/device"), "0x2c58\n");
+    put(gpu + QStringLiteral("/class"), "0x030000\n"); put(gpu + QStringLiteral("/power/runtime_status"), "active\n");
+    put(gpu + QStringLiteral("/current_link_speed"), "16.0 GT/s PCIe\n"); put(gpu + QStringLiteral("/max_link_speed"), "32.0 GT/s PCIe\n");
+    put(gpu + QStringLiteral("/current_link_width"), "16\n"); put(gpu + QStringLiteral("/max_link_width"), "16\n");
+    const auto replacement = systemdiagnostics::pcieLinks(root, sample);
+    CHECK(replacement.tables.last().rows.first().value(3).contains(QStringLiteral("Endpoint identity changed")));
+    put(gpu + QStringLiteral("/power/runtime_status"), "suspended\n");
+    QJsonObject suspended;
+    const auto sleeping = systemdiagnostics::pcieLinks(root, sample, &suspended);
+    CHECK(suspended.value(QStringLiteral("links")).toObject().isEmpty());
+    CHECK(has(sleeping, Level::Unknown, QStringLiteral("link not probed")));
+    put(gpu + QStringLiteral("/power/runtime_status"), "active\n");
     put(QStringLiteral("/proc/sys/kernel/random/boot_id"), "new-boot\n");
-    CHECK(systemdiagnostics::pcieLinks(root, sample).tables.size() == 2);
+    CHECK(systemdiagnostics::pcieLinks(root, sample).tables.size() == 3);
 
     // ── S10: zram and zswap together.
     put(QStringLiteral("/proc/meminfo"), "MemTotal:       32000000 kB\nMemAvailable:   20000000 kB\nSwapTotal: 8000000 kB\nSwapFree: 8000000 kB\n");
@@ -214,7 +238,16 @@ int main(int argc, char **argv) {
     put(QStringLiteral("/sys/block/zram0/comp_algorithm"), "lzo [zstd]\n");
     put(QStringLiteral("/sys/module/zswap/parameters/enabled"), "Y\n");
     put(QStringLiteral("/proc/pressure/memory"), "some avg10=0.00 avg60=0.50 avg300=0.10 total=1\nfull avg10=0.00 avg60=0.10 avg300=0.00 total=1\n");
+    put(QStringLiteral("/proc/swaps"), "Filename Type Size Used Priority\n/dev/zram0 partition 8000000 0 100\n");
     CHECK(has(systemdiagnostics::memory(root), Level::Review, QStringLiteral("zswap and zram")));
+    put(QStringLiteral("/proc/swaps"), "Filename Type Size Used Priority\n/swapfile file 8000000 0 -2\n");
+    CHECK(!has(systemdiagnostics::memory(root), Level::Review, QStringLiteral("zswap and zram")));
+    put(QStringLiteral("/proc/swaps"), "Filename Type Size Used Priority\n/dev/zram0 partition broken 0 100\n");
+    CHECK(!has(systemdiagnostics::memory(root), Level::Review, QStringLiteral("zswap and zram")));
+    put(QStringLiteral("/proc/meminfo"), "MemTotal: 32000000 kB\nMemAvailable: 20000000 MB\nSwapTotal: 8000000 kB\nSwapFree: 8000000 kB\n");
+    CHECK(has(systemdiagnostics::memory(root), Level::Unknown, QStringLiteral("RAM availability is incomplete")));
+    put(QStringLiteral("/proc/meminfo"), "MemTotal: 32000000 kB\nMemAvailable: 20000000 kB\nSwapTotal: 8000000 kB\nSwapFree: 8000000 kB\n");
+    put(QStringLiteral("/proc/swaps"), "Filename Type Size Used Priority\n/dev/zram0 partition 8000000 0 100\n");
 
     put(QStringLiteral("/sys/devices/system/cpu/cpu0/cache/index3/level"), "3");
     put(QStringLiteral("/sys/devices/system/cpu/cpu0/cache/index3/type"), "Unified");
@@ -247,6 +280,25 @@ int main(int argc, char **argv) {
     CHECK(has(ch, Level::Review, QStringLiteral("70 %")));
     bool profilesFound=false;for(const auto &t:ch.tables)if(t.title==QStringLiteral("USB Power Delivery Source Profiles")){CHECK(t.rows.size()==2);CHECK(t.rows.at(1).value(5)==QStringLiteral("45"));profilesFound=true;}
     CHECK(profilesFound);
+    put(QStringLiteral("/sys/class/usb_power_delivery/pd1/source-capabilities/3:fixed_supply/voltage"), "48000mV\n");
+    const auto partial=systemdiagnostics::charging(root);
+    CHECK(!has(partial,Level::Review,QStringLiteral("45 W")));
+    bool partialPort=false;
+    for(const auto &table:partial.tables)if(table.viewKind==QStringLiteral("pd-ports")){
+        CHECK(table.rows.first().value(4)==QStringLiteral("Maximum unknown (incomplete profiles)"));
+        CHECK(table.levels.first()==Level::Unknown);partialPort=true;
+    }
+    CHECK(partialPort);
+    CHECK(QDir(root+QStringLiteral("/sys/class/usb_power_delivery/pd1/source-capabilities/3:fixed_supply")).removeRecursively());
+    put(QStringLiteral("/sys/class/typec/port0/power_role"), "sink [source]\n");
+    CHECK(!has(systemdiagnostics::charging(root),Level::Review,QStringLiteral("45 W")));
+    put(QStringLiteral("/sys/class/typec/port0/power_role"), "[sink] source\n");
+    QDir typec(root+QStringLiteral("/sys/class/typec"));
+    CHECK(typec.rename(QStringLiteral("port0-partner"),QStringLiteral("detached-partner")));
+    const auto disconnected=systemdiagnostics::charging(root);
+    for(const auto &table:disconnected.tables) CHECK(table.viewKind!=QStringLiteral("pd-profiles"));
+    CHECK(typec.rename(QStringLiteral("detached-partner"),QStringLiteral("port0-partner")));
+
 
     // New topology and measurement fixtures: explicit relationships only, no added link probes.
     const QString bridge = QStringLiteral("/sys/devices/pci0000:00/0000:00:1c.0");
@@ -263,6 +315,12 @@ int main(int argc, char **argv) {
     CHECK(child >= 0 && tree.parents.at(child) >= 0 && tree.parents.at(child) < child);
     CHECK(tree.rows.at(tree.parents.at(child)).value(0) == QStringLiteral("0000:00:1c.0"));
     CHECK(tree.rows.at(child).value(5) == QStringLiteral("unknown"));
+    CHECK(!tree.rowKeys.at(child).isEmpty());
+    HierarchyViewModel hierarchy(tree);
+    const auto childIndex = hierarchy.byKey(tree.rowKeys.at(child));
+    CHECK(childIndex.isValid()); CHECK(childIndex.parent().data().toString() == QStringLiteral("0000:00:1c.0"));
+    auto duplicate = tree; duplicate.rowKeys[tree.parents.at(child)] = tree.rowKeys.at(child);
+    HierarchyViewModel ambiguous(duplicate); CHECK(!ambiguous.byKey(tree.rowKeys.at(child)).isValid());
     put(QStringLiteral("/sys/class/power_supply/USB0/type"), "USB_PD");
     put(QStringLiteral("/sys/class/power_supply/USB0/online"), "1");
     put(QStringLiteral("/sys/class/power_supply/USB0/voltage_now"), "20000000");

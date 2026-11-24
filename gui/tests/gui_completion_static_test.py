@@ -28,7 +28,7 @@ class Completion(unittest.TestCase):
     def test_calibration_bounded_read(self):
         s=src('optimizetab.cpp');self.assertIn('sig.value("version").toInt()!=10',s);self.assertIn('f.read((8LL<<20)+1)',s)
     def test_pcie_same_boot(self):
-        s=src('systemdiagnostics.cpp');self.assertIn('const bool sameBoot = !boot.isEmpty()',s);self.assertIn('!vendor.isEmpty() && !device.isEmpty()',s);self.assertIn('previousLinks_',src('systools.cpp'))
+        s=src('systemdiagnostics.cpp');self.assertIn('const bool sameBoot = !boot.isEmpty()',s);self.assertIn('!vendor.isEmpty() && !device.isEmpty()',s);self.assertIn('old.value(QStringLiteral("identity")).toString() == identityKey',s);self.assertIn('previousLinks_',src('systools.cpp'))
     def test_sleep_dedup(self):
         s=src('advanceddiagnostics.cpp');self.assertIn('exactSleepRecords.contains(identity)',s);self.assertIn('id = spans[i].id;',s)
     def test_cpu_capabilities_nonblocking(self):

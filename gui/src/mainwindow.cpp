@@ -514,8 +514,9 @@ void MainWindow::installExperimentalShell() {
     };
     expProfileChip_ = chip("Home");
     expSceneChip_ = chip("Scenes");
-    expSceneChip_->setIcon(experimentalui::navigationIcon(QStringLiteral("Scenes")));
+    theme::bindPresentation(expSceneChip_, [chip=expSceneChip_] { chip->setIcon(experimentalui::navigationIcon(QStringLiteral("Scenes"))); });
     expSceneChip_->setIconSize(QSize(14, 14));
+    connect(&theme::events(), &theme::ThemeEvents::themeChanged, this, [this](quint64) { refreshStatusChipTheme(); });
     connect(scenes_, &SceneEngine::finished, this, &MainWindow::syncStatusChips);
     connect(scenes_, &SceneEngine::activeSceneChanged, this, &MainWindow::syncStatusChips);
     connect(&pp::Watcher::instance(), &pp::Watcher::changed, this, &MainWindow::syncStatusChips);
@@ -534,7 +535,7 @@ void MainWindow::installExperimentalShell() {
     findRow->setContentsMargins(10, 0, 7, 0);
     findRow->setSpacing(8);
     auto *findIcon = new QLabel;
-    findIcon->setPixmap(experimentalui::searchIcon(theme::MUTED).pixmap(14, 14));
+    theme::bindPresentation(findIcon, [findIcon] { findIcon->setPixmap(experimentalui::searchIcon(theme::MUTED).pixmap(14, 14)); });
     auto *findText = new QLabel(tr("Jump to a page or a control"));
     findText->setObjectName(QStringLiteral("expSearchText"));
     findText->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // clips instead of forcing the width
@@ -641,7 +642,7 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setProperty("navLabel", label);
         button->setProperty("navCode", code);
         button->setProperty("pageId", id);
-        button->setIcon(experimentalui::navigationIcon(id));
+        theme::bindPresentation(button, [button,id] { button->setIcon(experimentalui::navigationIcon(id)); });
         button->setIconSize(QSize(18, 18));
         button->setText(expCollapsed_ ? QString() : label);
         const int position = expNavButtons_.size() + 1;
@@ -791,18 +792,25 @@ void MainWindow::syncStatusChips() {
     expProfileChip_->setVisible(!profile.isEmpty());
     if (!profile.isEmpty()) {
         expProfileChip_->setText(HomeTab::profileLabel(profile));
-        expProfileChip_->setIcon(experimentalui::dotIcon(QColor(theme::profileAccent(profile))));
         expProfileChip_->setIconSize(QSize(10, 10));
     }
+    expProfileChip_->setProperty("profileId", profile);
+    refreshStatusChipTheme();
+    const QString scene = scenes::activeScene();
+    expSceneChip_->setVisible(!scene.isEmpty());
+    expSceneChip_->setText(QString(scene).replace(QLatin1Char('&'), QLatin1String("&&")));  // no mnemonic
+}
+
+void MainWindow::refreshStatusChipTheme() {
+    if (!expProfileChip_) return;
+    const QString profile = expProfileChip_->property("profileId").toString();
+    if (!profile.isEmpty()) expProfileChip_->setIcon(experimentalui::dotIcon(QColor(theme::profileAccent(profile))));
     if (!expSignal_) return;
     const QString signal = profile.isEmpty() ? QString::fromLatin1(theme::ACCENT) : theme::profileAccent(profile);
     const QByteArray hex = signal.toLatin1();
     theme::setSheet(expSignal_, QStringLiteral("QFrame#expSignal { border: 0; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
                                                "stop:0 %1, stop:0.4 %2, stop:1 %3); }")
                                     .arg(signal, theme::rgba(hex.constData(), 0.30), QString::fromLatin1(theme::BORDER_SOFT)));
-    const QString scene = scenes::activeScene();
-    expSceneChip_->setVisible(!scene.isEmpty());
-    expSceneChip_->setText(QString(scene).replace(QLatin1Char('&'), QLatin1String("&&")));  // no mnemonic
 }
 
 QStringList MainWindow::activeOperations() const {

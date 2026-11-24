@@ -1,9 +1,10 @@
 #include "theme.h"
+#include "palettecontrast.h"
+#include <QElapsedTimer>
 #include <QApplication>
 #include <QFontMetrics>
 #include <QFontDatabase>
 #include <algorithm>
-#include <QHash>
 #include <QIcon>
 #include <QPainter>
 #include <QPixmap>
@@ -28,123 +29,123 @@ struct Palette {
 };
 const Palette PALETTES[] = {
     {"graphite", "Graphite", {"#121316", "#191a1e", "#202126", "#292a30", "#34363d", "#0e0f11", "#2f3137", "#24252a",
-        "#e8e6e3", "#b4b2ae", "#86868d", "#eba55b", "#a9773f", "#8fc486", "#e6c065", "#e8776c", "#8e4841", "#7fb1d5", "#b79be2"}},
+        "#e8e6e3", "#b4b2ae", "#9e9ea3", "#eba55b", "#a9773f", "#8fc486", "#e6c065", "#ea8076", "#8e4841", "#7fb1d5", "#b79be2"}},
     {"gruvbox", "Gruvbox", {"#1d2021", "#282828", "#302e2d", "#3c3836", "#504945", "#161819", "#45403d", "#34302e",
-        "#ebdbb2", "#d5c4a1", "#928374", "#fe8019", "#b35f1c", "#b8bb26", "#fabd2f", "#fb4934", "#8f2a22", "#83a598", "#d3869b"}},
+        "#ebdbb2", "#d5c4a1", "#c0b8af", "#fea55c", "#b4611f", "#bdc034", "#fabd2f", "#fda196", "#8f2a22", "#a6bfb5", "#e1abba"}},
     {"tokyo-night", "Tokyo Night", {"#16161e", "#1a1b26", "#1f2335", "#292e42", "#343a55", "#121218", "#2f344d", "#232639",
-        "#c0caf5", "#a9b1d6", "#737aa2", "#7aa2f7", "#4b6cb7", "#9ece6a", "#e0af68", "#f7768e", "#8c4050", "#7dcfff", "#bb9af7"}},
+        "#c0caf5", "#a9b1d6", "#9fa4bf", "#7da4f7", "#4b6cb7", "#9ece6a", "#e0af68", "#f88096", "#8c4050", "#7dcfff", "#bb9af7"}},
     {"horizon", "Horizon", {"#16171d", "#1c1e26", "#232530", "#2e303e", "#393b4d", "#121318", "#3d3f52", "#272936",
-        "#fdf0ed", "#d5d8da", "#6c6f93", "#e95678", "#93384b", "#29d398", "#fab795", "#f43e5c", "#8a2536", "#26bbd9", "#ee64ac"}},
+        "#fdf0ed", "#d5d8da", "#a3a5bb", "#ef869f", "#a45767", "#29d398", "#fab795", "#f88296", "#8a2536", "#26bbd9", "#f181bb"}},
     {"oxocarbon", "Oxocarbon", {"#0f0f0f", "#161616", "#1e1e1e", "#262626", "#393939", "#0b0b0b", "#353535", "#222222",
-        "#f2f4f8", "#dde1e6", "#8d8d8d", "#42be65", "#2a7a41", "#08bdba", "#f1c21b", "#ee5396", "#8a2f56", "#78a9ff", "#be95ff"}},
+        "#f2f4f8", "#dde1e6", "#a2a2a2", "#42be65", "#2a7a41", "#08bdba", "#f1c21b", "#f27bae", "#8a2f56", "#78a9ff", "#be95ff"}},
     {"monokai-pro", "Monokai Pro", {"#19181a", "#221f22", "#2d2a2e", "#363337", "#403e41", "#151416", "#444145", "#2f2c30",
-        "#fcfcfa", "#c1c0c0", "#939293", "#ffd866", "#a88f45", "#a9dc76", "#fc9867", "#ff6188", "#9a3b55", "#78dce8", "#ab9df2"}},
+        "#fcfcfa", "#c1c0c0", "#a9a9a9", "#ffd866", "#a88f45", "#a9dc76", "#fc9867", "#ff82a1", "#9a3b55", "#78dce8", "#ac9ef2"}},
     {"rose-pine", "Rosé Pine", {"#13111c", "#191724", "#1f1d2e", "#26233a", "#312e48", "#100e17", "#403d52", "#21202e",
-        "#e0def4", "#908caa", "#6e6a86", "#ebbcba", "#9a7a79", "#9ccfd8", "#f6c177", "#eb6f92", "#8f4259", "#569fba", "#c4a7e7"}},
+        "#e0def4", "#9995b1", "#9996aa", "#ebbcba", "#9a7a79", "#9ccfd8", "#f6c177", "#eb7093", "#8f4259", "#5ba2bc", "#c4a7e7"}},
     {"kanagawa-dragon", "Kanagawa Dragon", {"#0d0c0c", "#181616", "#201d1d", "#282727", "#393836", "#0a0909", "#403e3b", "#242222",
-        "#c5c9c5", "#a6a69c", "#737c73", "#b6927b", "#7a6252", "#87a987", "#c4b28a", "#c4746e", "#7a4541", "#8ba4b0", "#a292a3"}},
+        "#c5c9c5", "#a6a69c", "#9ca39c", "#bb9a84", "#7c6454", "#88aa88", "#c4b28a", "#d0918c", "#7a4541", "#8ca5b1", "#ab9cac"}},
     {"everforest", "Everforest", {"#232a2e", "#2d353b", "#343f44", "#3d484d", "#475258", "#1e2326", "#4f585e", "#384147",
-        "#d3c6aa", "#9da9a0", "#7a8478", "#a7c080", "#6d7e52", "#83c092", "#dbbc7f", "#e67e80", "#8a4b4c", "#7fbbb3", "#d699b6"}},
+        "#d3c6aa", "#bcc4be", "#bfc4be", "#b4ca93", "#7e8d66", "#9eceaa", "#dcbf84", "#f0b3b4", "#8a4b4c", "#9dcbc5", "#e2b6cb"}},
     {"synthwave", "Synthwave '84", {"#1b1628", "#241b2f", "#262335", "#2f2a42", "#3b3452", "#17121f", "#463d5e", "#2c2640",
-        "#ffffff", "#d6cfe4", "#848bbd", "#ff7edb", "#a34f8c", "#72f1b8", "#fede5d", "#fe4450", "#8f2830", "#36f9f6", "#b893ce"}},
+        "#ffffff", "#d6cfe4", "#999fc8", "#ff7edb", "#a4518d", "#72f1b8", "#fede5d", "#fe767f", "#8f2830", "#36f9f6", "#b893ce"}},
     // Originals: Legion black with its red, and a cold blue-green night.
     {"crimson", "Crimson", {"#111112", "#18181a", "#1f1f22", "#28282c", "#333338", "#0c0c0d", "#2e2e33", "#222226",
-        "#eeeeee", "#b8b8bc", "#87878e", "#e5484d", "#9c3236", "#7fc98f", "#f0c05a", "#ff7a59", "#8f4632", "#7aa7d9", "#b39ddb"}},
+        "#eeeeee", "#b8b8bc", "#9b9ba1", "#ec787c", "#a94d50", "#7fc98f", "#f0c05a", "#ff7a59", "#8f4632", "#7aa7d9", "#b39ddb"}},
     {"glacier", "Glacier", {"#0f1519", "#141c21", "#1a242a", "#213038", "#2b3d46", "#0b1013", "#26363e", "#1c282e",
-        "#e2eef2", "#a9c0c8", "#6f8a94", "#5ed3c4", "#3a8a80", "#8ed49a", "#e8c86a", "#ef7b7b", "#8a4646", "#7ab8e8", "#b4a2e6"}},
+        "#e2eef2", "#a9c0c8", "#93a7ae", "#5ed3c4", "#3a8a80", "#8ed49a", "#e8c86a", "#f08585", "#8a4646", "#7ab8e8", "#b4a2e6"}},
     // Non-blue surfaces: each tints its whole surface ladder with its own hue.
     {"ember", "Ember", {"#161110", "#1d1715", "#251d1b", "#2f2522", "#3b2e2a", "#100d0c", "#352a26", "#29211e",
-        "#eee5e2", "#bfb4b0", "#928581", "#f2784b", "#a34a2a", "#9cc77a", "#f0b85a", "#ef5a5a", "#8c3434", "#7fb3c9", "#c79bd6"}},
+        "#eee5e2", "#bfb4b0", "#a19692", "#f2784b", "#a65031", "#9cc77a", "#f0b85a", "#f17070", "#8c3434", "#7fb3c9", "#c79bd6"}},
     {"mocha", "Mocha", {"#161310", "#1c1915", "#24201b", "#2e2823", "#3a322b", "#100e0c", "#342d27", "#29231f",
-        "#eee8e2", "#bfb7b0", "#928981", "#d9a066", "#94683d", "#a7c07e", "#e8c15f", "#e07a6a", "#88463c", "#8fb1c2", "#c39ac4"}},
+        "#eee8e2", "#bfb7b0", "#a19a93", "#d9a066", "#94683d", "#a7c07e", "#e8c15f", "#e18070", "#88463c", "#8fb1c2", "#c39ac4"}},
     {"bordeaux", "Bordeaux", {"#171011", "#1d1416", "#261a1c", "#302124", "#3c292d", "#110c0d", "#362528", "#2a1d20",
-        "#eee2e5", "#bfb0b3", "#928185", "#e86a8c", "#9c3f58", "#93c98a", "#ecc068", "#ff6b5b", "#8f3a33", "#82aed6", "#c49be0"}},
+        "#eee2e5", "#bfb0b3", "#a09194", "#e86c8e", "#a34c63", "#93c98a", "#ecc068", "#ff6b5b", "#8f3a33", "#82aed6", "#c49be0"}},
     {"plum", "Plum", {"#161016", "#1c151c", "#241b24", "#2e232e", "#3a2b3a", "#100c10", "#342734", "#291f29",
-        "#eee2ee", "#bfb0bf", "#928192", "#d68be8", "#8e5a9c", "#8fd1a0", "#ebc46a", "#f07a8a", "#8c4250", "#86b4e0", "#f29ac8"}},
+        "#eee2ee", "#bfb0bf", "#a192a1", "#d68be8", "#8e5a9c", "#8fd1a0", "#ebc46a", "#f07a8a", "#8c4250", "#86b4e0", "#f29ac8"}},
     {"moss", "Moss", {"#111611", "#171c16", "#1d241c", "#252e23", "#2e392c", "#0d100c", "#293327", "#21281f",
-        "#e4eee2", "#b3bfb0", "#849281", "#9ccc65", "#62803d", "#6fd3a3", "#e3c55e", "#e8776c", "#8a4740", "#82b8c8", "#c0a0d8"}},
+        "#e4eee2", "#b3bfb0", "#96a293", "#9ccc65", "#62803d", "#6fd3a3", "#e3c55e", "#ea8076", "#8a4740", "#82b8c8", "#c0a0d8"}},
     {"jade", "Jade", {"#101715", "#141d1b", "#1a2622", "#21302b", "#293c36", "#0c110f", "#253631", "#1d2a26",
-        "#e2eeea", "#b0bfba", "#81928d", "#3fd1a0", "#24876a", "#a6d47a", "#e8c766", "#ef7b7b", "#8a4646", "#78bfd6", "#c0a2e2"}},
+        "#e2eeea", "#b0bfba", "#95a49f", "#3fd1a0", "#24876a", "#a6d47a", "#e8c766", "#f08080", "#8a4646", "#78bfd6", "#c0a2e2"}},
     {"olive", "Olive", {"#151511", "#1c1c16", "#24231c", "#2d2d23", "#39382c", "#10100c", "#333228", "#28281f",
-        "#eeede2", "#bfbeb0", "#929181", "#d8c25a", "#8d7e38", "#9fcf7c", "#f0a85a", "#e8776c", "#8a4740", "#8fb5c4", "#c2a0cf"}},
+        "#eeede2", "#bfbeb0", "#a1a193", "#d8c25a", "#8d7e38", "#9fcf7c", "#f0a85a", "#ea8379", "#8a4740", "#8fb5c4", "#c2a0cf"}},
     {"sakura", "Sakura", {"#151113", "#1b1619", "#231d20", "#2c2428", "#382d32", "#0f0d0e", "#32292d", "#272024",
-        "#eee2e8", "#bfb0b8", "#92818a", "#f4a6c0", "#a36a7e", "#9bd19a", "#efc77a", "#f27373", "#8f4444", "#8cb8e0", "#c6a6f0"}},
+        "#eee2e8", "#bfb0b8", "#a1939b", "#f4a6c0", "#a36a7e", "#9bd19a", "#efc77a", "#f27373", "#8f4444", "#8cb8e0", "#c6a6f0"}},
     {"phosphor", "Phosphor", {"#0f1711", "#141e16", "#1a261d", "#203024", "#283d2d", "#0b110d", "#243629", "#1d2b20",
-        "#e2eee5", "#b0bfb4", "#819286", "#4af08a", "#2a9455", "#b5f07a", "#e8e05a", "#ff6a5a", "#94382f", "#5ed8d0", "#b6a0f0"}},
+        "#e2eee5", "#b0bfb4", "#97a59b", "#4af08a", "#2a9455", "#b5f07a", "#e8e05a", "#ff7768", "#94382f", "#5ed8d0", "#b6a0f0"}},
     // Community colourways. Existing IDs stay unchanged for saved gui.ini preferences.
     // Catppuccin: four flavour variants, including the light Latte palette.
     {"catppuccin-mocha", "Catppuccin Mocha", {"#181825", "#1e1e2e", "#252538", "#313244", "#45475a", "#11111b", "#45465e", "#313248",
-        "#cdd6f4", "#bac2de", "#9399b2", "#cba6f7", "#9370c4", "#a6e3a1", "#f9e2af", "#f38ba8", "#974b65", "#89b4fa", "#b4befe"}},
+        "#cdd6f4", "#bac2de", "#b1b6c8", "#cba7f7", "#9370c4", "#a6e3a1", "#f9e2af", "#f59db5", "#974b65", "#8fb8fa", "#b4befe"}},
     {"catppuccin-macchiato", "Catppuccin Macchiato", {"#1e2030", "#24273a", "#2c3043", "#363a4f", "#494d64", "#181926", "#4b5067", "#34384d",
-        "#cad3f5", "#b8c0e0", "#939ab7", "#b7bdf8", "#797fc1", "#a6da95", "#eed49f", "#ed8796", "#974b57", "#8aadf4", "#c6a0f6"}},
+        "#cad3f5", "#b8c0e0", "#babfd1", "#b7bdf8", "#797fc1", "#a6da95", "#eed49f", "#f3acb6", "#974b57", "#a5c0f7", "#d1b2f8"}},
     {"catppuccin-frappe", "Catppuccin Frappé", {"#292c3c", "#303446", "#393e50", "#414559", "#51576d", "#232634", "#555b70", "#3d4256",
-        "#c6d0f5", "#b5bfe2", "#949cbb", "#ca9ee6", "#896bb2", "#a6d189", "#e5c890", "#e78284", "#9a4c4e", "#8caaee", "#babbf1"}},
+        "#c6d0f5", "#c5cde8", "#c8cddc", "#dfc4f0", "#977dbb", "#b3d89a", "#e6ca93", "#f3c1c2", "#9a4c4e", "#bccef5", "#c9caf4"}},
     {"catppuccin-latte", "Catppuccin Latte · Light", {"#eff1f5", "#e6e9ef", "#dce0e8", "#ccd0da", "#bcc0cc", "#ffffff", "#bcc0cc", "#d1d5df",
-        "#4c4f69", "#5c5f77", "#6c6f85", "#8839ef", "#6926bd", "#287a26", "#986000", "#d20f39", "#9b2639", "#1e66f5", "#8031a7"}},
+        "#4b4d67", "#4b4e62", "#4c4e5e", "#662bb3", "#6926bd", "#1e5a1c", "#6f4600", "#9f0b2b", "#9b2639", "#1548ad", "#742c97"}},
     {"nord", "Nord", {"#242933", "#2e3440", "#343c49", "#3b4252", "#434c5e", "#20252e", "#4c566a", "#343d4b",
-        "#eceff4", "#d8dee9", "#a5b4c6", "#88c0d0", "#5c929f", "#a3be8c", "#ebcb8b", "#bf616a", "#7c4149", "#81a1c1", "#b48ead"}},
+        "#eceff4", "#d8dee9", "#afbdcc", "#8fc4d3", "#5c929f", "#abc395", "#ebcb8b", "#dfb0b4", "#7c4149", "#a8bed4", "#cdb4c8"}},
     {"dracula", "Dracula", {"#21222c", "#282a36", "#303241", "#383a4c", "#44475a", "#1c1d27", "#44475a", "#353748",
-        "#f8f8f2", "#d9d9db", "#9296ad", "#bd93f9", "#825eb1", "#50fa7b", "#f1fa8c", "#ff5555", "#9c3434", "#8be9fd", "#ff79c6"}},
+        "#f8f8f2", "#d9d9db", "#b3b6c6", "#c9a7fa", "#8d6db8", "#50fa7b", "#f1fa8c", "#ff9a9a", "#9c3434", "#8be9fd", "#ff93d1"}},
     {"one-dark", "One Dark", {"#21252b", "#282c34", "#30353e", "#353b45", "#424953", "#1b1e23", "#414854", "#303640",
-        "#abb2bf", "#b7bdc7", "#858f9e", "#61afef", "#3679b5", "#98c379", "#e5c07b", "#e06c75", "#8e4249", "#56b6c2", "#c678dd"}},
+        "#b0b7c3", "#b7bdc7", "#b1b7c1", "#7cbdf2", "#4382ba", "#98c379", "#e5c07b", "#eca4a9", "#8e4249", "#73c3cd", "#d9a4e8"}},
     {"solarized-dark", "Solarized Dark", {"#00252d", "#002b36", "#073642", "#154651", "#205662", "#001d24", "#25535e", "#12404a",
-        "#eee8d5", "#93a1a1", "#839496", "#268bd2", "#146195", "#859900", "#b58900", "#dc322f", "#8e2728", "#2aa198", "#6c71c4"}},
+        "#eee8d5", "#bac3c3", "#b9c3c4", "#95c7e9", "#4280aa", "#bdc875", "#d7bf74", "#f2b0af", "#8e2728", "#8cccc7", "#bcbee4"}},
     {"solarized-light", "Solarized Light", {"#fdf6e3", "#eee8d5", "#e2dcc8", "#d5cfbd", "#c5c0b0", "#fffdf4", "#c4beac", "#ded7c4",
-        "#354e55", "#526a70", "#677d83", "#17649b", "#135080", "#637500", "#8b6500", "#c12c29", "#8c2926", "#167c74", "#6c71c4"}},
+        "#354e55", "#405257", "#435155", "#135280", "#135080", "#475400", "#664a00", "#962220", "#8c2926", "#105852", "#474a81"}},
     {"gruvbox-light", "Gruvbox Light", {"#fbf1c7", "#f2e5bc", "#ebdbb2", "#d5c4a1", "#bdae93", "#fff9e1", "#c5b38d", "#e2d2a9",
-        "#3c3836", "#504945", "#665c54", "#a84a00", "#854000", "#647300", "#946200", "#ad3028", "#85271f", "#076678", "#8f3f71"}},
+        "#3c3836", "#49423f", "#4a423d", "#703100", "#854000", "#3f4800", "#5d3d00", "#7d231d", "#85271f", "#054a58", "#692e53"}},
     {"rose-pine-dawn", "Rosé Pine Dawn · Light", {"#faf4ed", "#f2e9e1", "#ede2d9", "#dfdad9", "#cecacd", "#fffaf5", "#c7bdc0", "#e4dcdb",
-        "#575279", "#686284", "#797593", "#b45b70", "#8b4054", "#287b83", "#906618", "#b13b60", "#842944", "#286983", "#907aa9"}},
+        "#565178", "#57526f", "#575469", "#834252", "#8b4054", "#1f5e64", "#725013", "#963251", "#842944", "#235c73", "#5f506f"}},
     {"kanagawa-wave", "Kanagawa Wave", {"#1b1c25", "#1f1f28", "#252535", "#2a2a37", "#363646", "#16161d", "#3b3b4d", "#292938",
-        "#dcd7ba", "#c8c093", "#9699a3", "#7e9cd8", "#4c70a6", "#98bb6c", "#e6c384", "#e46876", "#8d404a", "#7fb4ca", "#957fb8"}},
+        "#dcd7ba", "#c8c093", "#9da0a9", "#83a0da", "#4d71a6", "#98bb6c", "#e6c384", "#e9818d", "#8d404a", "#7fb4ca", "#a998c6"}},
     {"ayu-mirage", "Ayu Mirage", {"#191e26", "#1f2430", "#272d39", "#303846", "#3c4554", "#141922", "#3a4352", "#2c3340",
-        "#cbccc6", "#b7babe", "#8a919d", "#ffcc66", "#ad8736", "#bae67e", "#ffd580", "#f28779", "#9a534a", "#5ccfe6", "#d4bfff"}},
+        "#cbccc6", "#b7babe", "#adb2ba", "#ffcc66", "#ad8736", "#bae67e", "#ffd580", "#f4998d", "#9a534a", "#5ccfe6", "#d4bfff"}},
     {"github-dark", "GitHub Dark", {"#0d1117", "#161b22", "#1e2530", "#272e38", "#303946", "#090c10", "#30363d", "#252c35",
-        "#e6edf3", "#b1bac4", "#8b949e", "#58a6ff", "#326aab", "#3fb950", "#d29922", "#f85149", "#a52e32", "#79c0ff", "#bc8cff"}},
+        "#e6edf3", "#b1bac4", "#9aa2ab", "#58a6ff", "#3a70ae", "#3fb950", "#d29922", "#fa7a74", "#a52e32", "#79c0ff", "#bc8cff"}},
     {"nightfox", "Nightfox", {"#171c28", "#192330", "#212e3d", "#29394a", "#374a5b", "#131923", "#3d4a5c", "#263544",
-        "#cdcecf", "#aeafb0", "#888f98", "#719cd6", "#486fa8", "#81b29a", "#dbc074", "#c94f6d", "#8b334a", "#63cdcf", "#9d79d6"}},
+        "#cdcecf", "#b5b6b7", "#b2b7bc", "#9ab8e2", "#5277ad", "#96bfab", "#dbc074", "#e4a6b5", "#8b334a", "#63cdcf", "#c2ace6"}},
     // Original pastel colourways: twelve light and eight dark, with non-blue surface hues.
     // Pastel surfaces are soft; active accents are deliberately deeper for readable text.
     {"pastel-mint-cream", "Mint Cream · Pastel Light", {"#e5f4ed", "#d7e9df", "#c8ded2", "#b7d2c2", "#a5c5b3", "#f6fcf8", "#abc9b8", "#c6dcd0",
-        "#24483d", "#3f6054", "#4e6a5d", "#227058", "#195b49", "#347651", "#8a6419", "#b44750", "#87333b", "#317488", "#78518d"}},
+        "#24483d", "#375349", "#3c5248", "#1b5745", "#195b49", "#26563b", "#644812", "#82333a", "#87333b", "#235362", "#604171"}},
     {"pastel-peach-sorbet", "Peach Sorbet · Pastel Light", {"#faefe4", "#f2e2d4", "#e8d3c2", "#dcc1ad", "#cba993", "#fff9f1", "#d2b39d", "#ead4c3",
-        "#51392f", "#694b3f", "#705449", "#904330", "#853b2a", "#3d7350", "#886018", "#ae4050", "#86303c", "#367083", "#7f528a"}},
+        "#51392f", "#563e34", "#533f36", "#6c3224", "#853b2a", "#274a34", "#593e10", "#742b35", "#86303c", "#234855", "#57385f"}},
     {"pastel-lilac-mist", "Lilac Mist · Pastel Light", {"#f0ebf9", "#e6def4", "#d9cfec", "#cbbde3", "#bcaad6", "#fbf8ff", "#c6b7de", "#e0d5f0",
-        "#3e3357", "#55456f", "#645675", "#6d4a9b", "#573983", "#326c58", "#875c1c", "#af4255", "#872f41", "#356a88", "#8253a5"}},
+        "#3e3357", "#4d3e64", "#4b4058", "#523875", "#573983", "#234c3e", "#5d3f13", "#752c39", "#872f41", "#24495d", "#57376e"}},
     {"pastel-sage-linen", "Sage Linen · Pastel Light", {"#eaf0e5", "#dfe8d8", "#d1dfc9", "#c2d3b6", "#afc3a2", "#f8fbf3", "#b8c9aa", "#d3ddc9",
-        "#334d36", "#4e6750", "#566856", "#436d3d", "#355d35", "#2e795f", "#8a651a", "#b34b4b", "#873639", "#356e83", "#76558e"}},
+        "#334d36", "#3d513f", "#425042", "#34542f", "#355d35", "#215643", "#634813", "#7f3535", "#873639", "#285262", "#5c426f"}},
     {"pastel-buttercream", "Buttercream · Pastel Light", {"#faf3d9", "#f3e9cb", "#eadbb8", "#dfcda5", "#d2bd8f", "#fffbee", "#d8c392", "#ecddba",
-        "#51462a", "#6c5937", "#75633e", "#835f18", "#755317", "#3b7554", "#95631a", "#b54543", "#8c3435", "#366e85", "#79568e"}},
+        "#51462a", "#5c4c2f", "#5a4c30", "#654913", "#755317", "#2b563e", "#6b4713", "#863332", "#8c3435", "#295365", "#5f436f"}},
     {"pastel-rosewater", "Rosewater · Pastel Light", {"#f8eaf0", "#f1dce5", "#e8ccd9", "#dbb8c9", "#cda5ba", "#fff8fb", "#d5afc1", "#e9cfdc",
-        "#523545", "#6f4b5b", "#705260", "#943a60", "#842d54", "#367454", "#8e651c", "#ac3f55", "#842e42", "#386d89", "#86528e"}},
+        "#523545", "#583b48", "#543d48", "#702c49", "#842d54", "#234b36", "#593f12", "#742a39", "#842e42", "#25475a", "#5a3760"}},
     {"pastel-pistachio-milk", "Pistachio Milk · Pastel Light", {"#edf4dd", "#e3edce", "#d5e2bb", "#c4d3a6", "#b2c18f", "#f9fcf1", "#bdcba3", "#dce5c4",
-        "#3e4c2a", "#56663c", "#5c6645", "#546a21", "#4c641f", "#2f7659", "#8b6316", "#b04c47", "#863532", "#356f83", "#77528b"}},
+        "#3e4c2a", "#434f2f", "#474e35", "#415119", "#4c641f", "#225440", "#634610", "#7c3532", "#863532", "#26515f", "#5d406d"}},
     {"pastel-coral-sand", "Coral Sand · Pastel Light", {"#faebe3", "#f3ded4", "#eccdc0", "#dfbaa9", "#d3a793", "#fff8f4", "#d9b19e", "#ebcfc2",
-        "#51372f", "#6b4e44", "#6e554c", "#94403c", "#8d3434", "#397456", "#895e18", "#b33d46", "#842a35", "#356f86", "#81528b"}},
+        "#51372f", "#563e36", "#524039", "#70302d", "#8d3434", "#254b38", "#5b3e10", "#78292f", "#842a35", "#234857", "#59385f"}},
     {"pastel-sea-glass", "Sea Glass · Pastel Light", {"#e3f3ef", "#d4e9e5", "#c4ddd8", "#b1d1ca", "#9dc3bb", "#f5fbfa", "#a5c9c1", "#c1dcd5",
-        "#264b49", "#406362", "#4b6765", "#1f6d68", "#175d59", "#337456", "#92611b", "#b2444c", "#87333b", "#26718b", "#78588d"}},
+        "#264b49", "#345050", "#3a4f4e", "#185450", "#175d59", "#25543e", "#674413", "#813137", "#87333b", "#1b5164", "#5a426a"}},
     {"pastel-orchid-milk", "Orchid Milk · Pastel Light", {"#f7ebf6", "#f0dcf0", "#e6cce6", "#dcbada", "#cea6cb", "#fff8fd", "#d4b1d2", "#ebd0e9",
-        "#503550", "#6a496b", "#705270", "#834383", "#773c76", "#357458", "#8b641a", "#b44354", "#873242", "#356d86", "#86519a"}},
+        "#503550", "#583c59", "#553e55", "#643364", "#773c76", "#234d3b", "#5b4111", "#772c38", "#873242", "#244a5b", "#5b3769"}},
     {"pastel-sky-cotton", "Sky Cotton · Pastel Light", {"#e8f2fa", "#dbe9f5", "#ccdfef", "#bad0e5", "#a8bfd7", "#f7fbff", "#b0c8db", "#c9dced",
-        "#30465a", "#49617a", "#516576", "#316792", "#295981", "#367652", "#8c6119", "#b0414c", "#87313e", "#2e7591", "#79518e"}},
+        "#30465a", "#3b4e63", "#3f4e5c", "#264f70", "#295981", "#27553b", "#664612", "#833039", "#87313e", "#205266", "#604070"}},
     {"pastel-sandstone", "Sandstone · Pastel Light", {"#f3efe5", "#eae3d5", "#ddd2bf", "#d0c1aa", "#c2ae93", "#fdfaf3", "#cabba3", "#e5dbca",
-        "#4b4235", "#635647", "#665948", "#725632", "#70502b", "#397452", "#8b6117", "#b44348", "#87333b", "#357188", "#79548d"}},
+        "#4b4235", "#4c4237", "#4c4336", "#554025", "#70502b", "#264c36", "#5a3f0f", "#752c2f", "#87333b", "#224958", "#543a62"}},
     {"pastel-dusty-orchid", "Dusty Orchid · Pastel Dark", {"#1e1925", "#28202e", "#332939", "#403246", "#514059", "#16121b", "#50405a", "#382e40",
-        "#ede2f0", "#cdbad4", "#a995b2", "#c7a2df", "#896d9d", "#9accae", "#dfc48e", "#e99aa7", "#925560", "#93c4cd", "#b9a1e5"}},
+        "#ede2f0", "#cdbad4", "#beaec4", "#caa6e1", "#896d9d", "#9accae", "#dfc48e", "#ea9fab", "#925560", "#93c4cd", "#bfa9e7"}},
     {"pastel-eucalyptus-night", "Eucalyptus Night · Pastel Dark", {"#17221e", "#1e2c25", "#27382f", "#304639", "#3d5747", "#111a16", "#3d5746", "#2b3b32",
-        "#e0ece4", "#b6cdbd", "#92a99a", "#a1d8b3", "#689a79", "#a5dbaa", "#e5c98b", "#e99e9b", "#925a57", "#96c9d1", "#c7a9d3"}},
+        "#e0ece4", "#b6cdbd", "#b8c7bd", "#a1d8b3", "#689a79", "#a5dbaa", "#e5c98b", "#eeb6b3", "#925a57", "#9bccd3", "#d3bcdc"}},
     {"pastel-cinnamon-cocoa", "Cinnamon Cocoa · Pastel Dark", {"#211a17", "#2b211b", "#362920", "#45342a", "#574236", "#191310", "#574235", "#3c2e25",
-        "#f0e7df", "#d4c2b4", "#b39d8b", "#e5b18e", "#a37960", "#a7d3ad", "#e5c98c", "#e69c9b", "#945c58", "#96c6d0", "#cbb1dd"}},
+        "#f0e7df", "#d4c2b4", "#c2b1a2", "#e5b18e", "#a37960", "#a7d3ad", "#e5c98c", "#e7a2a1", "#945c58", "#96c6d0", "#cbb1dd"}},
     {"pastel-dusty-coral", "Dusty Coral · Pastel Dark", {"#261b1c", "#302224", "#3b2a2c", "#4b3436", "#5d4043", "#1b1314", "#5b4144", "#402e31",
-        "#f2e3e3", "#d7bfbf", "#bba1a3", "#efa5a1", "#a87575", "#a5d3b3", "#e3c68b", "#efa2a4", "#95565b", "#98c5cf", "#c9a7d9"}},
+        "#f2e3e3", "#d7bfbf", "#c6b1b3", "#efa5a1", "#a87575", "#a5d3b3", "#e3c68b", "#efa2a4", "#95565b", "#98c5cf", "#cbaada"}},
     {"pastel-marigold-ink", "Marigold Ink · Pastel Dark", {"#222018", "#2d281d", "#383223", "#473d2a", "#594c34", "#1a1710", "#584c37", "#403627",
-        "#f0ead9", "#d7caaf", "#b6a98d", "#e2c689", "#a08752", "#a6d0aa", "#eacb8c", "#e6a19e", "#965c59", "#94c5cc", "#c8addb"}},
+        "#f0ead9", "#d7caaf", "#c7bea8", "#e2c689", "#a08752", "#a6d0aa", "#eacb8c", "#eab0ad", "#965c59", "#97c7cd", "#ceb5df"}},
     {"pastel-mulberry-velvet", "Mulberry Velvet · Pastel Dark", {"#241923", "#30202e", "#3b2938", "#4b3447", "#5d4157", "#1b121a", "#5a4055", "#412d3e",
-        "#f0e4ee", "#d9c0d5", "#b8a0b4", "#e4accf", "#a57294", "#a5d4b0", "#e7c78f", "#e99da5", "#92555e", "#97c9d0", "#c4afe3"}},
+        "#f0e4ee", "#d9c0d5", "#c6b3c3", "#e4accf", "#a57294", "#a5d4b0", "#e7c78f", "#eba7ae", "#92555e", "#97c9d0", "#c4b0e3"}},
     {"pastel-olive-smoke", "Olive Smoke · Pastel Dark", {"#1f2319", "#282d20", "#333929", "#414834", "#515b42", "#171a12", "#4c563e", "#37402e",
-        "#e9eddf", "#c9d1bb", "#a4ae94", "#c7d68f", "#8d9d60", "#a0d4b0", "#e6cd8a", "#e9a09d", "#965954", "#96c9d0", "#c7b0dd"}},
+        "#e9eddf", "#c9d1bb", "#c9cfc0", "#c7d68f", "#8d9d60", "#a8d8b7", "#e6cd8a", "#f1c2c0", "#965954", "#acd4da", "#d7c7e7"}},
     {"pastel-opal-lagoon", "Opal Lagoon · Pastel Dark", {"#172225", "#1e2c2f", "#27383b", "#30474a", "#3b585c", "#10191b", "#3d5457", "#2a3c3f",
-        "#e0eced", "#b7cfd0", "#92abad", "#9dd8cc", "#619d92", "#a6d5ad", "#e8ca8b", "#e59fa2", "#945960", "#98c9e0", "#c5b0dd"}},
+        "#e0eced", "#b7cfd0", "#bacacb", "#9dd8cc", "#619d92", "#a6d5ad", "#e8ca8b", "#ecbabc", "#945960", "#a0cde2", "#d1c0e4"}},
     {"oled-black", "OLED Black", {"#000000", "#101010", "#181818", "#222222", "#303030", "#000000", "#414141", "#282828",
         "#dedede", "#bcbcbc", "#a0a0a0", "#9bc8b4", "#5b8873", "#a4ce9a", "#e5c78b", "#e8a19e", "#8a4846", "#99c7da", "#c5acd9"}},
 };
@@ -153,6 +154,8 @@ QString g_current = QStringLiteral("graphite");
 // Token contents may change only on the GUI thread.
 std::array<std::array<char, 8>, 19> activeStorage{};
 quint64 g_revision = 0;
+qint64 g_lastLiveRefreshNanos = 0;
+bool g_refreshing = false;
 bool g_restart = false;
 bool g_experimental = true;
 bool g_compact = false;
@@ -197,6 +200,26 @@ bool validCustomPalette(const QStringList &colors) {
     for (const QString &c : colors)
         if (c.size() != 7 || !rgb.match(c).hasMatch()) return false;
     return true;
+}
+std::optional<QStringList> repairPaletteContrast(const QStringList &colors) {
+    if (!validCustomPalette(colors)) return std::nullopt;
+    palettecontrast::Palette input{};
+    for (int i=0; i<19; ++i) {
+        const QColor c(colors.at(i));
+        input[i] = {static_cast<unsigned char>(c.red()), static_cast<unsigned char>(c.green()), static_cast<unsigned char>(c.blue())};
+    }
+    const auto repaired = palettecontrast::repair(input);
+    if (!repaired) return std::nullopt;
+    QStringList result = colors;
+    for (int i : palettecontrast::foregrounds) {
+        if (input[i] == (*repaired)[i]) continue;
+        const auto &c = (*repaired)[i];
+        result[i] = QColor(c[0],c[1],c[2]).name();
+    }
+    // Use the same public audit as the editor, including selection and indicators.
+    for (const auto &check : contrastChecks(result))
+        if (!check.exempt && check.ratio < check.target) return std::nullopt;
+    return result;
 }
 bool saveCustomPalette(const QStringList &colors) {
     if (!validCustomPalette(colors)) return false;
@@ -300,6 +323,14 @@ void load() {
 
 ThemeEvents &events() { static ThemeEvents bus; return bus; }
 quint64 revision() { return g_revision; }
+qint64 lastLiveRefreshNanos() { return g_lastLiveRefreshNanos; }
+void bindPresentation(QObject *owner, std::function<void()> refresh) {
+    if (!owner || !refresh) return;
+    // Connect before the initial refresh, with receiver lifetime and no retained widget list.
+    QObject::connect(&events(), &ThemeEvents::themeChanged, owner,
+                     [refresh](quint64) { refresh(); });
+    refresh();
+}
 
 bool saveTheme(const QString &id) {
     if (!knownPalette(id)) return false;
@@ -363,10 +394,15 @@ static QString legible(const char *hex) {
 }
 
 QString profileAccent(const QString &p) {
-    static const QHash<QString, QString> m{
-        {"low-power", INFO}, {"quiet", INFO}, {"cool", legible("#7cc6bd")}, {"balanced", FG},
-        {"balanced-performance", WARN}, {"performance", DANGER}, {"max-power", legible("#e070b0")}, {"custom", PURPLE}};
-    return m.value(p, MUTED);
+    // Do not retain QString copies of theme tokens across palette revisions.
+    if (p == QLatin1String("low-power") || p == QLatin1String("quiet")) return QString::fromLatin1(INFO);
+    if (p == QLatin1String("cool")) return legible("#7cc6bd");
+    if (p == QLatin1String("balanced")) return QString::fromLatin1(FG);
+    if (p == QLatin1String("balanced-performance")) return QString::fromLatin1(WARN);
+    if (p == QLatin1String("performance")) return QString::fromLatin1(DANGER);
+    if (p == QLatin1String("max-power")) return legible("#e070b0");
+    if (p == QLatin1String("custom")) return QString::fromLatin1(PURPLE);
+    return QString::fromLatin1(MUTED);
 }
 
 QString rgba(const char *hex, double alpha) {
@@ -918,14 +954,19 @@ void applySheet(QApplication &app) { app.setStyleSheet(stylesheet()); }
 // cached icons still need semantic refresh callbacks before the real shell can
 // opt into this path. This never persists preferences or restarts the app.
 bool applyLivePalette(QApplication &app, const QString &id) {
-    if (QThread::currentThread() != app.thread()) return false;
+    if (QThread::currentThread() != app.thread() || g_refreshing) return false;
     const auto colors = lookupPalette(id);
     if (!setTokens(id, colors)) return false;
+    g_refreshing = true;
+    QElapsedTimer timer;
+    timer.start();
     app.setPalette(palette());
     applySheet(app);
     ++g_revision;
     Q_EMIT events().themeChanged(g_revision);
     for (QWidget *w : QApplication::allWidgets()) w->update();
+    g_lastLiveRefreshNanos = timer.nsecsElapsed();
+    g_refreshing = false;
     return true;
 }
 

@@ -4,6 +4,7 @@
 // were clamped to the row minimum (8192) and were saved that way.
 #include <QAbstractSpinBox>
 #include <QtGlobal>
+#include "integerunits.h"
 
 class Int64SpinBox : public QAbstractSpinBox {
     Q_OBJECT
@@ -16,6 +17,8 @@ public:
     void setRange(qint64 min, qint64 max);
     /// Opt-in only for documented byte-valued keys. Display/storage remain canonical bytes.
     void enableByteUnits();
+    void enableTimeUnits(integerunits::TimeUnit canonical);
+    bool hasExplicitUnits() const { return byteUnits_ || timeUnit_ != integerunits::TimeUnit::None; }
     /// Clamped to [minimum, maximum]; emits valueChanged when it changes.
     void setValue(qint64 v);
 
@@ -36,6 +39,7 @@ protected:
 private:
     bool parseEditor(const QString &text, qint64 *out) const;
     bool byteUnits_ = false;
+    integerunits::TimeUnit timeUnit_ = integerunits::TimeUnit::None;
     void commitText();
     void showValue();
     qint64 min_ = 0, max_ = 99, value_ = 0;

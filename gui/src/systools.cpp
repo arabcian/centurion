@@ -12,7 +12,14 @@
 #include "sysadmin.h"
 #include "theme.h"
 #include "structuredtools.h"
-#include <QTableWidget>
+#include <QTableView>
+#include <QStandardItemModel>
+#include <QVariant>
+#include <QSortFilterProxyModel>
+#include <QItemSelectionModel>
+#include <QProcessEnvironment>
+#include <QStackedWidget>
+#include <algorithm>
 #include <QHeaderView>
 
 #include <QApplication>
@@ -577,21 +584,39 @@ public:
         top->addWidget(run);
         top->addWidget(copy);
         const QString key = stableToolKey(s.title);
-        if (key == QLatin1String("Kernel") || key == QLatin1String("Battery") || key == QLatin1String("USB") || key == QLatin1String("CPU")) {
+        if (structuredtools::supported(key)) {
             structured_ = new QPushButton(QCoreApplication::translate("systools", "Structured…"));
             structured_->setEnabled(false); top->addWidget(structured_);
             connect(structured_, &QPushButton::clicked, this, [this, key] {
-                const auto parsed = key == QLatin1String("Kernel") ? structuredtools::modules(raw_) :
-                    key == QLatin1String("Battery") ? structuredtools::powerSupply(raw_) :
-                    key == QLatin1String("USB") ? structuredtools::usb(raw_) : structuredtools::cpuTopology(raw_);
-                if (!parsed) {
-                    QMessageBox::information(this, QCoreApplication::translate("systools", "Structured output"), QCoreApplication::translate("systools", "Output is missing, incomplete or unrecognized. The original raw output is still available.")); return;
-                }
+                // Freeze both views before opening a nested event loop. Preserve
+                // the original raw view's serial/UUID visibility policy.
+                const QString displayed = text_->toPlainText();
+                const auto parsed = structuredCaptureValid_ ? structuredtools::parse(key, structuredCapture_) : std::nullopt;
                 QDialog dlg(this); dlg.setWindowTitle(QCoreApplication::translate("systools", "Structured output")); dlg.resize(850, 560);
                 auto *layout = new QVBoxLayout(&dlg);
-                auto *note = new QLabel(QCoreApplication::translate("systools", "Snapshot of recognized fields only; kernel units are unchanged. Raw output remains on the tool page.")); note->setWordWrap(true); layout->addWidget(note);
-                auto *table = new QTableWidget(int(parsed->rows.size()), int(parsed->headers.size()));
-                // Keep the adapter's stable English keys discoverable by lupdate.
+                auto *note = new QLabel(parsed
+                    ? QCoreApplication::translate("systools", "Snapshot of recognized fields only; kernel units are unchanged. Raw output remains on the tool page.")
+                    : QCoreApplication::translate("systools", "Output is missing, incomplete or unrecognized. The original raw output is still available."));
+                if(parsed)note->setText(note->text()+QLatin1Char('\n')+QCoreApplication::translate("systools", "Empty cells mean not reported; they do not establish absence."));
+                note->setWordWrap(true); layout->addWidget(note);
+                auto *mode = new QComboBox;
+                mode->addItem(QCoreApplication::translate("systools", "Raw output"));
+                if (parsed) mode->addItem(QCoreApplication::translate("systools", "Structured output"));
+                layout->addWidget(mode);
+                auto *filter = new QLineEdit; filter->setClearButtonEnabled(true);
+                filter->setPlaceholderText(QCoreApplication::translate("systools", "Filter structured rows…")); layout->addWidget(filter);
+                auto *stack = new QStackedWidget;
+                auto *raw = new QPlainTextEdit(displayed); raw->setReadOnly(true);
+                raw->setLineWrapMode(QPlainTextEdit::NoWrap);
+                raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); stack->addWidget(raw);
+                auto *table = new QTableView; stack->addWidget(table); layout->addWidget(stack, 1);
+                auto *model = new QStandardItemModel(table);
+                auto *proxy = new QSortFilterProxyModel(table); proxy->setSourceModel(model);
+                proxy->setFilterKeyColumn(-1); proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+                proxy->setSortRole(Qt::UserRole); proxy->setSortCaseSensitivity(Qt::CaseInsensitive);
+                table->setModel(proxy); table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+                table->setSelectionBehavior(QAbstractItemView::SelectRows);
+                table->setSelectionMode(QAbstractItemView::ExtendedSelection);
                 [[maybe_unused]] static constexpr const char *headerKeys[] = {
                     QT_TRANSLATE_NOOP("systools", "Module"), QT_TRANSLATE_NOOP("systools", "Size (bytes)"),
                     QT_TRANSLATE_NOOP("systools", "Use count"), QT_TRANSLATE_NOOP("systools", "Used by"),
@@ -600,19 +625,64 @@ public:
                     QT_TRANSLATE_NOOP("systools", "Device"), QT_TRANSLATE_NOOP("systools", "Vendor ID"),
                     QT_TRANSLATE_NOOP("systools", "Product ID"), QT_TRANSLATE_NOOP("systools", "CPU"),
                     QT_TRANSLATE_NOOP("systools", "NODE"), QT_TRANSLATE_NOOP("systools", "SOCKET"),
-                    QT_TRANSLATE_NOOP("systools", "CORE"), QT_TRANSLATE_NOOP("systools", "ONLINE")};
-                QStringList headers; for (const auto &h : parsed->headers) headers << QCoreApplication::translate("systools", h.toUtf8().constData());
-                table->setHorizontalHeaderLabels(headers); table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-                for (qsizetype r = 0; r < parsed->rows.size(); ++r) for (qsizetype c = 0; c < parsed->rows.at(r).size(); ++c)
-                    table->setItem(int(r), int(c), new QTableWidgetItem(parsed->rows.at(r).at(c)));
-                table->setSortingEnabled(true); table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-                table->horizontalHeader()->setStretchLastSection(true); layout->addWidget(table, 1);
-                auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); auto *copyTable = buttons->addButton(QCoreApplication::translate("systools", "Copy table"), QDialogButtonBox::ActionRole);
-                connect(copyTable, &QPushButton::clicked, &dlg, [table, headers] {
+                    QT_TRANSLATE_NOOP("systools", "CORE"), QT_TRANSLATE_NOOP("systools", "ONLINE"),
+                    QT_TRANSLATE_NOOP("systools", "PCI address"), QT_TRANSLATE_NOOP("systools", "Class ID"),
+                    QT_TRANSLATE_NOOP("systools", "Device ID"), QT_TRANSLATE_NOOP("systools", "Kernel driver"),
+                    QT_TRANSLATE_NOOP("systools", "Kernel modules")};
+                QStringList headers;
+                if (parsed) {
+                    for (const auto &h : parsed->headers) headers << QCoreApplication::translate("systools", h.toUtf8().constData());
+                    model->setHorizontalHeaderLabels(headers);
+                    const QSet<QString> numeric{QStringLiteral("Size (bytes)"), QStringLiteral("Use count"), QStringLiteral("CPU"), QStringLiteral("NODE"), QStringLiteral("SOCKET"), QStringLiteral("CORE"), QStringLiteral("Bus"), QStringLiteral("Device")};
+                    for (const auto &row : parsed->rows) {
+                        QList<QStandardItem *> items;
+                        for (qsizetype c=0; c<parsed->headers.size(); ++c) {
+                            const auto value = row.value(c);
+                            auto *item = new QStandardItem(value);
+                            bool ok = false; const auto n = value.toULongLong(&ok);
+                            if (numeric.contains(parsed->headers.at(c))) {
+                                if (ok) item->setData(QVariant::fromValue(n), Qt::UserRole);
+                            } else item->setData(value, Qt::UserRole);
+                            items.append(item);
+                        }
+                        model->appendRow(items);
+                    }
+                }
+                table->setSortingEnabled(true); table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+                table->resizeColumnsToContents(); table->horizontalHeader()->setStretchLastSection(true);
+                connect(filter, &QLineEdit::textChanged, proxy, &QSortFilterProxyModel::setFilterFixedString);
+                auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+                auto *copyTable = buttons->addButton(QCoreApplication::translate("systools", "Copy visible rows"), QDialogButtonBox::ActionRole);
+                auto *copySelected = buttons->addButton(QCoreApplication::translate("systools", "Copy selected rows"), QDialogButtonBox::ActionRole);
+                auto *copyAll = buttons->addButton(QCoreApplication::translate("systools", "Copy all rows"), QDialogButtonBox::ActionRole);
+                auto *copyRaw = buttons->addButton(QCoreApplication::translate("systools", "Copy raw view"), QDialogButtonBox::ActionRole);
+                auto exportRows = [proxy,table,headers](bool selectedOnly) {
+                    QList<int> rows;
+                    if (selectedOnly) {
+                        for (const auto &idx : table->selectionModel()->selectedRows()) rows.append(idx.row());
+                        std::sort(rows.begin(), rows.end());
+                        if (rows.isEmpty()) return;
+                    } else for (int r=0; r<proxy->rowCount(); ++r) rows.append(r);
                     QStringList lines{headers.join(QLatin1Char('\t'))};
-                    for (int r = 0; r < table->rowCount(); ++r) { QStringList cells; for (int c = 0; c < table->columnCount(); ++c) cells << table->item(r,c)->text(); lines << cells.join(QLatin1Char('\t')); }
+                    for (int r : rows) { QStringList cells; for (int c=0;c<proxy->columnCount();++c) cells << proxy->index(r,c).data().toString(); lines << cells.join(QLatin1Char('\t')); }
+                    QApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
+                };
+                connect(copyTable,&QPushButton::clicked,&dlg,[exportRows]{exportRows(false);});
+                connect(copySelected,&QPushButton::clicked,&dlg,[exportRows]{exportRows(true);});
+                connect(copyAll,&QPushButton::clicked,&dlg,[model,headers]{
+                    QStringList lines{headers.join(QLatin1Char('\t'))};
+                    for(int r=0;r<model->rowCount();++r){QStringList cells;for(int c=0;c<model->columnCount();++c)cells<<model->index(r,c).data().toString();lines<<cells.join(QLatin1Char('\t'));}
                     QApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
                 });
+                connect(copyRaw,&QPushButton::clicked,&dlg,[raw]{QApplication::clipboard()->setText(raw->toPlainText());});
+                auto updateMode = [=](int i) {
+                    stack->setCurrentIndex(i); filter->setVisible(i==1); copyTable->setVisible(i==1);
+                    copySelected->setVisible(i==1); copyAll->setVisible(i==1); copyRaw->setVisible(i==0);
+                    copySelected->setEnabled(table->selectionModel()->hasSelection());
+                };
+                connect(mode,&QComboBox::currentIndexChanged,&dlg,updateMode);
+                connect(table->selectionModel(),&QItemSelectionModel::selectionChanged,&dlg,[=]{copySelected->setEnabled(table->selectionModel()->hasSelection());});
+                mode->setCurrentIndex(parsed ? 1 : 0); updateMode(mode->currentIndex());
                 connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); layout->addWidget(buttons); dlg.exec();
             });
         }
@@ -656,6 +726,7 @@ private:
         if (busy_) return;
         ran_ = busy_ = true;
         out_.clear();
+        structuredCapture_.clear(); structuredCaptureValid_=true;
         if (structured_) structured_->setEnabled(false);
         text_->setPlainText(QCoreApplication::translate("systools", "Running…"));
         serialsBtn_->setVisible(false);
@@ -769,7 +840,15 @@ private:
             int found = 0;
             for (const QString &e : QDir(dir).entryList({sub}, QDir::Dirs | QDir::NoDotAndDotDot))
                 for (const QString &f : QDir(dir + '/' + e).entryList({name}, QDir::Files)) {
-                    out_ += "$ cat " + dir + '/' + e + '/' + f + '\n' + readFile(dir + '/' + e + '/' + f) + '\n';
+                    const QString path=dir + QLatin1Char('/') + e + QLatin1Char('/') + f;
+                    const QString contents=readFile(path);
+                    const QString section=QStringLiteral("$ cat ") + path + QLatin1Char('\n') + contents + QLatin1Char('\n');
+                    out_ += section;
+                    if(pat==QLatin1String("/sys/class/power_supply/*/uevent")) {
+                        if(contents.startsWith(QStringLiteral("$ ")) || contents.contains(QStringLiteral("\n$ ")) ||
+                           section.size()>MAX_OUT-structuredCapture_.size()) structuredCaptureValid_=false;
+                        if(structuredCaptureValid_)structuredCapture_+=section;
+                    }
                     ++found;
                 }
             // A page must never stay blank: say that nothing matched.
@@ -794,12 +873,36 @@ private:
         }
         auto *p = new QProcess(this);
         p->setProcessChannelMode(QProcess::MergedChannels);
+        if (shown == QLatin1String("lspci -nnk") || shown == QLatin1String("lscpu -e") ||
+            shown == QLatin1String("lsmod") || shown == QLatin1String("lsusb")) {
+            auto env = QProcessEnvironment::systemEnvironment(); env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+            p->setProcessEnvironment(env);
+        }
         QPointer<QProcess> guard(p);
-        connect(p, &QProcess::finished, this, [this, p, i, shown](int code, QProcess::ExitStatus status) {
-            const auto output = p->readAll();
-            out_ += "$ " + shown + '\n' + QString::fromUtf8(output.left(MAX_OUT)) + '\n';
-            if (code != 0 || status != QProcess::NormalExit || output.size() > MAX_OUT)
-                out_ += QCoreApplication::translate("systools", "(command failed or output was truncated)") + QLatin1Char('\n');
+        struct Capture { QByteArray bytes; bool truncated = false; };
+        const auto captured = std::make_shared<Capture>();
+        auto drain = [p,captured] {
+            while (p->bytesAvailable() > 0) {
+                const QByteArray chunk = p->read(65536);
+                if (chunk.isEmpty()) break;
+                const auto room = qMax<qsizetype>(0, MAX_OUT-captured->bytes.size());
+                captured->bytes.append(chunk.left(room));
+                if (chunk.size() > room) captured->truncated = true;
+            }
+        };
+        connect(p, &QProcess::readyRead, this, drain);
+        connect(p, &QProcess::finished, this, [this, p, i, shown, captured, drain](int code, QProcess::ExitStatus status) {
+            drain();
+            const QString output = QString::fromUtf8(captured->bytes);
+            out_ += "$ " + shown + '\n' + output + '\n';
+            const bool valid = code == 0 && status == QProcess::NormalExit && !captured->truncated;
+            if (!valid) out_ += QCoreApplication::translate("systools", "(command failed or output was truncated)") + QLatin1Char('\n');
+            // Only the successful actual command section feeds an adapter. A
+            // forged delimiter in arbitrary raw command output cannot create one.
+            if (valid && (shown == QLatin1String("lspci -nnk") || shown == QLatin1String("lscpu -e") ||
+                shown == QLatin1String("lsmod") || shown == QLatin1String("lsusb")) &&
+                !output.startsWith(QStringLiteral("$ ")) && !output.contains(QStringLiteral("\n$ ")))
+                structuredCapture_ = QStringLiteral("$ ") + shown + QLatin1Char('\n') + output;
             p->deleteLater();
             step(i + 1);
         });
@@ -820,10 +923,10 @@ private:
     QLabel *when_;
     QLineEdit *find_ = nullptr;
     QLabel *findCount_ = nullptr;
-    QString out_, raw_;
+    QString out_, raw_, structuredCapture_;
     QSet<int> shown_;
     int serials_ = 0;
-    bool ran_ = false, busy_ = false;
+    bool ran_ = false, busy_ = false, structuredCaptureValid_ = true;
 };
 
 // An interpreted page (S01 … S18): a diag::Report instead of raw output. Extra commands of its spec run

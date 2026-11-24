@@ -22,5 +22,11 @@ int main(int argc,char **argv) {
     CHECK(!structuredtools::cpuTopology(QStringLiteral("$ lscpu -e\nCPU CORE ONLINE\n0 1 maybe\n")));
     CHECK(!structuredtools::cpuTopology(QStringLiteral("$ lscpu -e\nCPU CORE ONLINE\n0 1 yes\n0 1 no\n")));
     CHECK(!structuredtools::cpuTopology(QStringLiteral("$ lscpu -e\nCPU CORE ONLINE\n0 1 yes\n(command failed or output was truncated)\n")));
+    const auto pci=structuredtools::parse(QStringLiteral("PCI"),QStringLiteral("$ lspci -nnk\n01:00.0 VGA compatible controller [0300]: Vendor Device [10de:2c19] (rev a1)\n\tKernel driver in use: nvidia\n\tKernel modules: nouveau, nvidia\n$ lspci -tv\nignored\n"));
+    CHECK(pci && pci->rows.size()==1 && pci->rows.first().at(4)==QStringLiteral("nvidia"));
+    CHECK(!structuredtools::pci(QStringLiteral("$ lspci -nnk\n01:00.0 VGA compatible controller [0300]: Vendor Device [10de:2c19]\n(command failed or output was truncated)\n")));
+    CHECK(!structuredtools::parse(QStringLiteral("unknown"),QStringLiteral("$ lsmod\nModule Size Used by\nfuse 1 0\n")));
+    CHECK(!structuredtools::powerSupply(QStringLiteral("$ cat /sys/class/power_supply/BAT0/uevent\nPOWER_SUPPLY_CURRENT_NOW=123456789012345678901\n")));
+    CHECK(!structuredtools::powerSupply(QStringLiteral("$ cat /sys/class/power_supply/BAT0/uevent\nPOWER_SUPPLY_CAPACITY=secret\n")));
     return 0;
 }

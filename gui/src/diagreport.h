@@ -33,6 +33,7 @@ struct Table {
     QString note;
     // Optional tree presentation: one parent row index per row, strictly earlier or -1.
     QList<int> parents;
+    QStringList rowKeys; // optional transient identities; empty entries must never restore selection
     bool privateBinary = false;
     QString viewKind; // transient stable presentation ID, not exported as evidence
     void add(const QStringList &row, Level l = Level::Info) { rows << row; levels << l; }

@@ -1669,6 +1669,11 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
                 r.spin = new Int64SpinBox(page);
                 if (key == QLatin1String("vm.dirty_bytes") || key == QLatin1String("vm.dirty_background_bytes"))
                     r.spin->enableByteUnits();
+                else {
+                    const auto utf8 = key.toUtf8();
+                    const auto unit = integerunits::timeUnitForKey({utf8.constData(), static_cast<std::size_t>(utf8.size())});
+                    if (unit != integerunits::TimeUnit::None) r.spin->enableTimeUnits(unit);
+                }
                 r.spin->setMinimumWidth(120);
                 r.spin->setAccelerated(true);
                 // Keyboard tracking off means valueChanged only fires on Enter/focus-out,

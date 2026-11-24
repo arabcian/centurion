@@ -1,11 +1,16 @@
 #include "edidfields.h"
+#include "hierarchyviewmodel.h"
+#include <QTreeView>
+#include <QSortFilterProxyModel>
 #include "diagnostictools.h"
+#include "charts.h"
 #include <QPainter>
 #include <QTextBlock>
 #include <cmath>
 #include <QSpinBox>
 #include <QTextCursor>
 #include <QMap>
+#include <QRegularExpression>
 #include <QItemSelectionModel>
 #include "diagreportview.h"
 #include "workspacestate.h"
@@ -134,6 +139,8 @@ QString tableKey(const diag::Table &t) {
     return QString::fromUtf8(QJsonDocument(QJsonArray{t.viewKind,t.title,QJsonArray::fromStringList(t.headers)}).toJson(QJsonDocument::Compact));
 }
 QString rowKey(const QTreeWidgetItem *item) {
+    if (item->treeWidget() && item->treeWidget()->property("stableDeviceRows").toBool())
+        return item->data(0, Qt::UserRole).toString();
     QJsonArray row;
     for (int c = 0; c < item->columnCount(); ++c) row.append(item->text(c));
     return QString::fromUtf8(QJsonDocument(row).toJson(QJsonDocument::Compact));
@@ -152,10 +159,10 @@ TableViewState captureTable(QTreeWidget *tree) {
     QMap<QString,int> counts;
     for (int i=0;i<tree->topLevelItemCount();++i) ++counts[rowKey(tree->topLevelItem(i))];
     for (const auto *item : tree->selectedItems()) {
-        const auto key = rowKey(item); if (counts.value(key)==1 && !item->isHidden()) state.selected.insert(key);
+        const auto key = rowKey(item); if (!key.isEmpty() && counts.value(key)==1 && !item->isHidden()) state.selected.insert(key);
     }
     if (const auto *item = tree->currentItem(); item && !item->isHidden()) {
-        state.current = rowKey(item); state.hasCurrent = counts.value(state.current)==1;
+        state.current = rowKey(item); state.hasCurrent = !state.current.isEmpty() && counts.value(state.current)==1;
     }
     return state;
 }
@@ -165,14 +172,106 @@ void restoreTable(QTreeWidget *tree,const TableViewState &state) {
     for (int i=0;i<tree->topLevelItemCount();++i) ++counts[rowKey(tree->topLevelItem(i))];
     for (int i=0;i<tree->topLevelItemCount();++i) {
         auto *item = tree->topLevelItem(i); const auto key = rowKey(item);
-        if (counts.value(key)!=1 || item->isHidden()) continue;
+        if (key.isEmpty() || counts.value(key)!=1 || item->isHidden()) continue;
         if (state.hasCurrent && state.current==key) tree->setCurrentItem(item,0,QItemSelectionModel::NoUpdate);
         item->setSelected(state.selected.contains(key));
     }
     tree->verticalScrollBar()->setValue(state.scroll);
 }
 
-QWidget *tableWidget(const diag::Table &t) {
+// This dialog operates exclusively on a captured report. The model creates no
+// per-row widgets and the filter never invokes a diagnostic or hardware read.
+void exploreHardware(QWidget *owner, diag::Table table, std::shared_ptr<QJsonObject> state, QString requestedKey) {
+    // The frozen table and state outlive a report replacement in the nested event loop.
+    QDialog dlg; dlg.setWindowTitle(table.title); dlg.resize(960, 640);
+    QObject::connect(owner, &QObject::destroyed, &dlg, &QDialog::reject);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *search = new QLineEdit;
+    search->setPlaceholderText(QCoreApplication::translate("diag", "Filter hierarchy…"));
+    layout->addWidget(search);
+    auto *tree = new QTreeView;
+    auto *model = new HierarchyViewModel(table, tree);
+    auto *proxy = new QSortFilterProxyModel(tree);
+    proxy->setSourceModel(model); proxy->setRecursiveFilteringEnabled(true);
+    proxy->setFilterKeyColumn(-1); proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    tree->setModel(proxy); tree->setUniformRowHeights(true); tree->setAlternatingRowColors(true);
+    tree->setEditTriggers(QAbstractItemView::NoEditTriggers); tree->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tree->header()->setStretchLastSection(true);
+    layout->addWidget(tree, 1);
+    auto *details = new QPlainTextEdit; details->setReadOnly(true);
+    details->setMaximumHeight(dlg.fontMetrics().height() * 10);
+    layout->addWidget(details);
+    layout->addWidget(text(table.note, "muted"));
+    const auto keyOf = [proxy](const QModelIndex &index) { return proxy->mapToSource(index.siblingAtColumn(0)).data(HierarchyViewModel::KeyRole).toString(); };
+    QSet<QString> expanded;
+    for (const auto &key : state->value(QStringLiteral("expanded")).toArray())
+        if (model->byKey(key.toString()).isValid()) expanded.insert(key.toString());
+    QString wanted = requestedKey.isEmpty() ? state->value(QStringLiteral("selected")).toString() : requestedKey;
+    if (!model->byKey(wanted).isValid()) wanted.clear();
+    bool updating = true;
+    const auto restore = [&] {
+        tree->collapseAll();
+        for (const QString &key : expanded) {
+            auto index = proxy->mapFromSource(model->byKey(key));
+            for (auto p = index; p.isValid(); p = p.parent()) tree->expand(p);
+        }
+        const auto target = proxy->mapFromSource(model->byKey(wanted));
+        if (target.isValid()) {
+            for (auto p = target.parent(); p.isValid(); p = p.parent()) tree->expand(p);
+            tree->setCurrentIndex(target); tree->scrollTo(target);
+        } else { tree->selectionModel()->clear(); details->clear(); }
+    };
+    QObject::connect(tree, &QTreeView::expanded, &dlg, [&](const QModelIndex &index) {
+        if (!updating && search->text().isEmpty()) { const auto key = keyOf(index); if (!key.isEmpty()) expanded.insert(key); }
+    });
+    QObject::connect(tree, &QTreeView::collapsed, &dlg, [&](const QModelIndex &index) {
+        if (!updating && search->text().isEmpty()) expanded.remove(keyOf(index));
+    });
+    QObject::connect(tree->selectionModel(), &QItemSelectionModel::currentChanged, &dlg, [&](const QModelIndex &index) {
+        QStringList lines;
+        if (index.isValid()) {
+            const auto source = proxy->mapToSource(index.siblingAtColumn(0));
+            for (int c = 0; c < model->columnCount(); ++c)
+                lines << table.headers.value(c) + QStringLiteral(": ") + source.siblingAtColumn(c).data().toString();
+        }
+        details->setPlainText(lines.join(QLatin1Char('\n')));
+        if (!updating) wanted = keyOf(index);
+    });
+    if (!state->contains(QStringLiteral("expanded"))) {
+        tree->expandToDepth(0);
+        for (int i = 0; i < model->nodeCount(); ++i) {
+            const auto index = proxy->mapFromSource(model->atNode(i));
+            if (tree->isExpanded(index) && !keyOf(index).isEmpty()) expanded.insert(keyOf(index));
+        }
+    } else restore();
+    if (!wanted.isEmpty()) restore();
+    updating = false;
+    QObject::connect(search, &QLineEdit::textChanged, &dlg, [&](const QString &query) {
+        updating = true;
+        proxy->setFilterFixedString(query);
+        if (query.isEmpty()) restore();
+        else {
+            tree->expandAll();
+            const auto target = proxy->mapFromSource(model->byKey(wanted));
+            if (target.isValid()) tree->setCurrentIndex(target);
+            else { tree->selectionModel()->clear(); details->clear(); }
+        }
+        updating = false;
+    });
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    layout->addWidget(buttons);
+    dlg.exec();
+    QObject::disconnect(tree, nullptr, &dlg, nullptr);
+    QObject::disconnect(tree->selectionModel(), nullptr, &dlg, nullptr);
+    QObject::disconnect(search, nullptr, &dlg, nullptr);
+    QJsonArray keys;
+    // Preserve the unfiltered expansion state; never persist ambiguous/unknown IDs.
+    for (const auto &key : expanded) keys.append(key);
+    *state = QJsonObject{{"expanded", keys}, {"selected", wanted}};
+}
+
+QWidget *tableWidget(const diag::Table &t, const std::shared_ptr<QJsonObject> &hardwareState) {
     auto *box = new QWidget;
     auto *col = new QVBoxLayout(box);
     col->setContentsMargins(0, 4, 0, 0);
@@ -191,6 +290,7 @@ QWidget *tableWidget(const diag::Table &t) {
         for (const QStringList &row : t.rows) columns = qMax(columns, int(row.size()));
         tree->setColumnCount(columns);
         tree->setProperty("workspaceTableKey",tableKey(t));
+        tree->setProperty("stableDeviceRows", t.viewKind == QStringLiteral("hardware-device-tree"));
         tree->setHeaderLabels(t.headers);
         tree->setHeaderHidden(t.headers.isEmpty());
         tree->setRootIsDecorated(false);
@@ -202,6 +302,7 @@ QWidget *tableWidget(const diag::Table &t) {
         tree->setSortingEnabled(false);
         for (int i = 0; i < t.rows.size(); ++i) {
             auto *it = new QTreeWidgetItem(t.rows[i]);
+            if (t.viewKind == QStringLiteral("hardware-device-tree")) it->setData(0, Qt::UserRole, t.rowKeys.value(i));
             for (int c = 0; c < t.rows[i].size(); ++c) it->setToolTip(c, t.rows[i][c]);
             const Level l = i < t.levels.size() ? t.levels[i] : Level::Info;
             if (l == Level::Attention || l == Level::Review || l == Level::Ok) it->setForeground(0, QColor(color(l)));
@@ -231,7 +332,14 @@ QWidget *tableWidget(const diag::Table &t) {
     if (!t.rows.isEmpty() && t.parents.size() == t.rows.size()) {
         auto *explore = new QPushButton(QCoreApplication::translate("diag", "Explore hierarchy…"));
         col->addWidget(explore, 0, Qt::AlignLeft);
-        QObject::connect(explore, &QPushButton::clicked, explore, [explore, t] {
+        if (t.viewKind == QStringLiteral("hardware-device-tree")) {
+            QObject::connect(explore, &QPushButton::clicked, explore, [explore, box, t, hardwareState] {
+                QString key;
+                if (auto *flat = box->findChild<QTreeWidget *>(); flat && flat->currentItem() && flat->currentItem()->isSelected())
+                    key = flat->currentItem()->data(0, Qt::UserRole).toString();
+                exploreHardware(explore, t, hardwareState, key);
+            });
+        } else QObject::connect(explore, &QPushButton::clicked, explore, [explore, t] {
             QDialog dlg(explore->window()); dlg.setWindowTitle(t.title); dlg.resize(900, 600);
             auto *layout = new QVBoxLayout(&dlg);
             auto *search = new QLineEdit; search->setPlaceholderText(QCoreApplication::translate("diag", "Filter hierarchy…"));
@@ -419,7 +527,62 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         if(pos>=0 && pos<=offset->maximum() && pos!=offset->value()) offset->setValue(pos);
     });
     switchConnector();
-    auto *close=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(close); QObject::connect(close,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+    auto *close=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(close);
+    auto *exportBinary=close->addButton(tr("Save captured EDID…"), QDialogButtonBox::ActionRole);
+    QObject::connect(exportBinary,&QPushButton::clicked,&dlg,[&]{
+        const auto captured=captures.value(selector->currentText());
+        if (captured.isEmpty()) return;
+        if (QMessageBox::warning(&dlg,tr("Export EDID"),
+            tr("The captured bytes may contain a display serial number and may be incomplete or damaged. This saves a diagnostic copy, not a validated override. Continue?"),
+            QMessageBox::Yes|QMessageBox::No,QMessageBox::No)!=QMessageBox::Yes) return;
+        const auto path=QFileDialog::getSaveFileName(&dlg,tr("Export EDID"),QStringLiteral("edid.bin"),tr("Binary files (*.bin)"));
+        if(path.isEmpty()) return;
+        // Never open the source connector or invoke a hardware helper. No
+        // direct-write fallback: export must be an ordinary atomic file save.
+        QSaveFile f(path); f.setDirectWriteFallback(false);
+        if(!f.open(QIODevice::WriteOnly) || !f.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner) ||
+            f.write(captured)!=captured.size() || !f.commit()) QMessageBox::warning(&dlg,tr("Export EDID"),f.errorString());
+    });
+    QObject::connect(close,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+}
+
+// The visual view consumes the frozen report only. Source capabilities cannot
+// identify the negotiated contract or associate an unrelated supply with a port.
+void inspectPd(QWidget *parent,const diag::Table &ports,const diag::Table &profiles,const diag::Table &supplies) {
+    auto tr=[](const char *s){return QCoreApplication::translate("diag",s);};
+    QDialog dlg(parent); dlg.setWindowTitle(tr("USB-C PD Profile View")); dlg.resize(860,680);
+    auto *layout=new QVBoxLayout(&dlg);
+    layout->addWidget(text(tr("Captured partner capabilities only. Negotiated contract is unknown; the supply measurements below are not attributed to the selected port.")));
+    auto *selector=new QComboBox; for(const auto &row:ports.rows) selector->addItem(row.value(0)); layout->addWidget(selector);
+    auto *summary=text(QString()); layout->addWidget(summary);
+    auto *chart=new BarChart; auto *chartScroll=new QScrollArea;
+    chartScroll->setWidget(chart);chartScroll->setWidgetResizable(true); chartScroll->setMaximumHeight(210);layout->addWidget(chartScroll);
+    auto *table=new QTreeWidget;table->setRootIsDecorated(false);table->setHeaderLabels(profiles.headers.mid(1));
+    table->header()->setSectionResizeMode(QHeaderView::ResizeToContents); layout->addWidget(table,1);
+    layout->addWidget(text(tr("Independent supply measurements and reported limits")));
+    auto *supplyTable=new QTreeWidget; supplyTable->setRootIsDecorated(false);supplyTable->setHeaderLabels(supplies.headers);
+    supplyTable->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    for(const auto &row:supplies.rows) new QTreeWidgetItem(supplyTable,row);
+    layout->addWidget(supplyTable,1);
+    auto update=[&]{
+        table->clear(); QVector<BarChart::Bar> bars; const int selected=selector->currentIndex();
+        if(selected<0 || selected>=ports.rows.size())return;
+        const auto row=ports.rows.at(selected);
+        QString note=tr("Port %1 · role %2 · partner %3 · reported maximum %4").arg(row.value(0),row.value(1),row.value(2),row.value(4));
+        int plotted=0;
+        for(qsizetype i=0;i<profiles.rows.size();++i){
+            const auto &profile=profiles.rows.at(i);if(profile.value(0)!=row.value(0))continue;
+            new QTreeWidgetItem(table,profile.mid(1));
+            bool ok=false;const double capacity=profile.value(5).toDouble(&ok);
+            if(profiles.levels.value(i,Level::Unknown)!=Level::Info || !ok || !std::isfinite(capacity) || capacity<=0)continue;
+            ++plotted;if(bars.size()<32) bars.append({profile.value(1),capacity,QStringLiteral("%1 W").arg(capacity,0,'g',8)});
+        }
+        if(bars.isEmpty())note+=QStringLiteral("\n")+tr("No verified positive source capacity in this capture.");
+        else if(plotted>bars.size())note+=QStringLiteral("\n")+tr("First 32 verified profiles plotted; the table contains all captured profiles.");
+        summary->setText(note);chart->setAccessibleName(note);chart->setBars(bars);chartScroll->setVisible(!bars.isEmpty());
+    };
+    QObject::connect(selector,&QComboBox::currentIndexChanged,&dlg,update);update();
+    auto *close=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(close);QObject::connect(close,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);dlg.exec();
 }
 
 }  // namespace
@@ -608,7 +771,7 @@ void DiagReportView::setReport(const diag::Report &r) {
         bodyLayout_->addWidget(card);
     }
     for (const diag::Table &t : current.tables) {
-        auto *w = tableWidget(t);
+        auto *w = tableWidget(t, hardwareTreeState_);
         if (auto *tree = w->findChild<QTreeWidget *>()) tables_ << tree;
         if (t.viewKind == QStringLiteral("edid-bytes")) {
             diag::Table fields;
@@ -616,6 +779,12 @@ void DiagReportView::setReport(const diag::Report &r) {
             auto *inspect = new QPushButton(tr("Inspect captured EDID bytes…"));
             w->layout()->addWidget(inspect);
             connect(inspect,&QPushButton::clicked,w,[w,t,fields]{ inspectEdid(w,t,fields); });
+        }
+        if(t.viewKind==QStringLiteral("pd-ports")) {
+            diag::Table profiles,supplies;
+            for(const auto &candidate:current.tables){if(candidate.viewKind==QStringLiteral("pd-profiles"))profiles=candidate;else if(candidate.viewKind==QStringLiteral("pd-supplies"))supplies=candidate;}
+            auto *inspect=new QPushButton(tr("Visualize captured PD profiles…"));w->layout()->addWidget(inspect);
+            connect(inspect,&QPushButton::clicked,w,[w,t,profiles,supplies]{inspectPd(w,t,profiles,supplies);});
         }
         addSection(t.title, w);
         bodyLayout_->addWidget(w);
@@ -707,7 +876,13 @@ void DiagReportView::previewExport() {
     };
     auto *findings = new QTreeWidgetItem(selection, {tr("Findings")});
     findings->setFlags(findings->flags() | Qt::ItemIsAutoTristate | Qt::ItemIsUserCheckable);
-    for (const auto &f : captured.findings) add(findings, f.title);
+    for (const auto &f : captured.findings) {
+        auto *item=add(findings,f.title);
+        item->setFlags(item->flags()|Qt::ItemIsAutoTristate);
+        add(item,tr("Finding title (required with detail or action)"));
+        if(!f.detail.isEmpty()) add(item,tr("Finding detail"));
+        if(!f.action.isEmpty()) add(item,tr("Suggested action"));
+    }
     auto *tables = new QTreeWidgetItem(selection, {tr("Tables")});
     tables->setFlags(tables->flags() | Qt::ItemIsAutoTristate | Qt::ItemIsUserCheckable);
     findings->setCheckState(0, Qt::Checked);
@@ -719,25 +894,61 @@ void DiagReportView::previewExport() {
         for(int c=0;c<width;++c)add(columns,t.headers.value(c,tr("Column %1").arg(c+1)));
         auto *rows=add(item,tr("Rows"));rows->setFlags(rows->flags()|Qt::ItemIsAutoTristate);
         for(int r=0;r<t.rows.size();++r)add(rows,tr("Row %1: %2").arg(r+1).arg(t.rows.at(r).join(QStringLiteral(" · ")).left(160)));
+        if (!t.note.isEmpty()) add(item,tr("Table note"));
         if (t.privateBinary) {item->setCheckState(0,Qt::Unchecked);item->setToolTip(0,tr("Contains binary identifiers; redaction cannot guarantee privacy."));}
     }
+    auto *context = new QTreeWidgetItem(selection,{tr("Report context and limits")});
+    context->setFlags(context->flags()|Qt::ItemIsAutoTristate|Qt::ItemIsUserCheckable);
+    auto *about = add(context,tr("Report description"));
+    if(captured.about.isEmpty()) about->setDisabled(true);
+    auto *limits = add(context,tr("Source limitations")); limits->setFlags(limits->flags()|Qt::ItemIsAutoTristate);
+    for(const auto &limit:captured.limits) add(limits,limit);
+    context->setCheckState(0,Qt::Checked);
     layout->addWidget(selection);
     auto *includeRaw = new QCheckBox(tr("Include technical details")); includeRaw->setChecked(false);
     auto *redact = new QCheckBox(tr("Redact detected private data")); redact->setChecked(true);
     layout->addWidget(includeRaw); layout->addWidget(redact);
-    auto *metadata=new QCheckBox(tr("Include capture time and boot identity"));metadata->setChecked(false);layout->addWidget(metadata);
+    auto *binary = new QCheckBox(tr("Allow selected private binary tables")); layout->addWidget(binary);
+    auto *metadata=new QCheckBox(tr("Include capture time"));layout->addWidget(metadata);
+    auto *bootMetadata=new QCheckBox(tr("Include capture boot identity"));layout->addWidget(bootMetadata);
+    auto *privacyWarning=text(QString(),"muted"); layout->addWidget(privacyWarning);
+    auto updatePrivacyWarning=[=]{
+        QStringList warnings;
+        if(includeRaw->isChecked()) warnings << tr("Technical details can contain unrecognized identifiers. Inspect them manually before sharing.");
+        if(binary->isChecked()) warnings << tr("Binary tables may expose identifiers even when automatic redaction is enabled.");
+        if(!redact->isChecked()) warnings << tr("Automatic redaction is disabled.");
+        privacyWarning->setText(warnings.join(QLatin1Char('\n'))); privacyWarning->setVisible(!warnings.isEmpty());
+    };
+    connect(includeRaw,&QCheckBox::toggled,&dlg,updatePrivacyWarning);
+    connect(binary,&QCheckBox::toggled,&dlg,updatePrivacyWarning);
+    connect(redact,&QCheckBox::toggled,&dlg,updatePrivacyWarning); updatePrivacyWarning();
     auto *hashLabel=text(QString(),"muted"); layout->addWidget(hashLabel);
     auto *regenerate = new QPushButton(tr("Regenerate preview (replaces edits)")); layout->addWidget(regenerate);
     auto refresh = [=] {
         auto selected = captured;
-        selected.findings.clear(); selected.tables.clear();
-        for (int i = 0; i < findings->childCount(); ++i) if (findings->child(i)->checkState(0) == Qt::Checked) selected.findings << captured.findings.at(i);
-        int excludedRows=0,excludedColumns=0,excludedTables=0;
+        selected.findings.clear(); selected.tables.clear(); selected.limits.clear();
+        if(about->checkState(0)!=Qt::Checked) selected.about.clear();
+        for(int i=0;i<limits->childCount();++i) if(limits->child(i)->checkState(0)==Qt::Checked) selected.limits<<captured.limits.at(i);
+        int excludedFindingFields=0;
+        for (int i = 0; i < findings->childCount(); ++i) {
+            const auto *item=findings->child(i);
+            if(item->checkState(0)==Qt::Unchecked) continue;
+            auto f=captured.findings.at(i);
+            int c=1;
+            // Title is the context for selected detail/action; never export an
+            // orphan finding. The title checkbox only controls an otherwise empty finding.
+            const bool titleSelected=item->child(0)->checkState(0)==Qt::Checked;
+            if(!f.detail.isEmpty() && item->child(c++)->checkState(0)!=Qt::Checked){f.detail.clear();++excludedFindingFields;}
+            if(!f.action.isEmpty() && item->child(c)->checkState(0)!=Qt::Checked){f.action.clear();++excludedFindingFields;}
+            if(titleSelected || !f.detail.isEmpty() || !f.action.isEmpty()) selected.findings<<f;
+        }
+        int excludedRows=0,excludedColumns=0,excludedTables=0,excludedNotes=0;
         for (int i=0;i<tables->childCount();++i) {
             const auto *item=tables->child(i);const auto &source=captured.tables.at(i);
-            if(item->checkState(0)==Qt::Unchecked){++excludedTables;continue;}
+            if(item->checkState(0)==Qt::Unchecked || (source.privateBinary && !binary->isChecked())){++excludedTables;continue;}
             const auto *cols=item->child(0),*rows=item->child(1);
-            diag::Table t=source;t.headers.clear();t.rows.clear();t.levels.clear();t.parents.clear();
+            diag::Table t=source;t.headers.clear();t.rows.clear();t.levels.clear();t.parents.clear();t.rowKeys.clear();
+            if(item->childCount()>2 && item->child(2)->checkState(0)!=Qt::Checked){t.note.clear();++excludedNotes;}
             QList<int> included;
             for(int c=0;c<cols->childCount();++c){if(cols->child(c)->checkState(0)==Qt::Checked){included<<c;t.headers<<source.headers.value(c);}else ++excludedColumns;}
             if(included.isEmpty()){++excludedTables;continue;}
@@ -748,9 +959,16 @@ void DiagReportView::previewExport() {
         if (redact->isChecked()) diag::redactPrivateFields(selected);
         QString result = tr("Verdict refers to the complete original report; selected sections follow.") + QStringLiteral("\n")
             + tr("Excluded: %1 findings, %2 tables, %3 rows, %4 columns.").arg(captured.findings.size()-selected.findings.size()).arg(excludedTables).arg(excludedRows).arg(excludedColumns)+QStringLiteral("\n");
-        if(metadata->isChecked())result+=tr("Captured: %1 · boot: %2").arg(captureTime,captureBoot)+QStringLiteral("\n");
+        result+=tr("Excluded: %1 finding details/actions, %2 table notes, %3 source limitations.").arg(excludedFindingFields).arg(excludedNotes).arg(captured.limits.size()-selected.limits.size())+QStringLiteral("\n");
+        if(metadata->isChecked())result+=tr("Captured: %1").arg(captureTime)+QStringLiteral("\n");
+        if(bootMetadata->isChecked())result+=tr("Capture boot: %1").arg(captureBoot)+QStringLiteral("\n");
         result+=QStringLiteral("\n")+selected.toTextWithVerdict(captured);
-        if (redact->isChecked()) result = diag::redactPrivateText(result);
+        if (redact->isChecked()) {
+            // The known full capture ID can occur without its field label.
+            if(QRegularExpression(QStringLiteral("^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")).match(captureBoot).hasMatch())
+                result.replace(captureBoot,QStringLiteral("[redacted]"),Qt::CaseInsensitive);
+            result = diag::redactPrivateText(result);
+        }
         raw->setPlainText(result);
     };
     connect(regenerate, &QPushButton::clicked, &dlg, refresh);
@@ -770,6 +988,8 @@ void DiagReportView::previewExport() {
     connect(includeRaw, &QCheckBox::toggled, &dlg, markPending);
     connect(redact, &QCheckBox::toggled, &dlg, markPending);
     connect(metadata, &QCheckBox::toggled, &dlg, markPending);
+    connect(bootMetadata, &QCheckBox::toggled, &dlg, markPending);
+    connect(binary, &QCheckBox::toggled, &dlg, markPending);
     connect(regenerate, &QPushButton::clicked, &dlg, [=]{pending->clear();copy->setEnabled(true);save->setEnabled(true);});
     connect(save, &QPushButton::clicked, &dlg, [&dlg, raw] {
         const auto bytes = raw->toPlainText().toUtf8();

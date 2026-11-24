@@ -3550,7 +3550,19 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
       <source>Restart Centurion to apply typography preferences?</source>
       <translation>Tipografi tercihlerini uygulamak için Centurion yeniden başlatılsın mı?</translation>
     </message>
-  </context>
+      <message>
+        <source>Improve Token Contrast</source>
+        <translation>Renk Belirteci Kontrastını İyileştir</translation>
+    </message>
+    <message>
+        <source>Adjust only failing foreground tokens. Surface colors are kept; changes stay in this draft until saved.</source>
+        <translation>Yalnızca hedefi karşılamayan ön plan renklerini düzeltir. Yüzey renkleri korunur; değişiklikler kaydedilene kadar bu taslakta kalır.</translation>
+    </message>
+    <message>
+        <source>No correction found without changing the surfaces. Edit the surface colors and try again.</source>
+        <translation>Yüzey renklerini değiştirmeden bir düzeltme bulunamadı. Yüzey renklerini düzenleyip tekrar deneyin.</translation>
+    </message>
+</context>
     <context>
         <name>KlogPage</name>
         <message>
@@ -5210,7 +5222,67 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
     </message>
       <message><source>Saved firewall configuration is unavailable. Refresh first.</source><translation>Kayıtlı güvenlik duvarı yapılandırmasına erişilemiyor. Önce yenileyin.</translation></message>
     <message><source>Saved firewall configuration changed. Refresh and review first.</source><translation>Kayıtlı güvenlik duvarı yapılandırması değişti. Önce yenileyip gözden geçirin.</translation></message>
-  </context>
+      <message>
+        <source>About %1 s old (kernel timestamp)</source>
+        <translation>Yaklaşık %1 sn önce (kernel zaman damgası)</translation>
+    </message>
+    <message>
+        <source>Adapter: %1 · Cached scan received: %2. Ages refer to dialog opening. Lines show advertised contiguous ranges, not measured spectrum use.</source>
+        <translation>Adaptör: %1 · Önbellekteki taramanın alınma zamanı: %2. Yaşlar pencerenin açıldığı ana aittir. Çizgiler bildirilen bitişik aralıkları gösterir; ölçülmüş spektrum kullanımı değildir.</translation>
+    </message>
+    <message>
+        <source>%1 / %2 known; %3 unknown rows</source>
+        <translation>%2 bilinen satırdan %1 örtüşme; %3 bilinmeyen satır</translation>
+    </message>
+    <message>
+        <source>Advertised %1 MHz (%2–%3 MHz)</source>
+        <translation>Bildirilen %1 MHz (%2–%3 MHz)</translation>
+    </message>
+    <message>
+        <source>Width unknown</source>
+        <translation>Genişlik bilinmiyor</translation>
+    </message>
+    <message>
+        <source>Age</source>
+        <translation>Yaş</translation>
+    </message>
+    <message>
+        <source>Center (MHz)</source>
+        <translation>Merkez (MHz)</translation>
+    </message>
+    <message>
+        <source>Range source</source>
+        <translation>Aralık kaynağı</translation>
+    </message>
+    <message>
+        <source>Nominal overlaps</source>
+        <translation>Nominal örtüşmeler</translation>
+    </message>
+    <message>
+        <source>Observed within 60 s</source>
+        <translation>Son 60 sn içinde görüldü</translation>
+    </message>
+    <message>
+        <source>Solid marker: age or lower bound below 60 s. Hollow marker: stale or unknown age. Overlaps compare known advertised ranges in the captured list only, regardless of age; not interference or utilization. Unknown-width markers remain points.</source>
+        <translation>Dolu işaret: yaş veya alt sınır 60 sn altında. Boş işaret: eski veya yaşı bilinmiyor. Örtüşmeler yalnızca yakalanan listedeki bilinen bildirilen aralıkları yaşından bağımsız karşılaştırır; girişim veya kullanım ölçümü değildir. Genişliği bilinmeyenler nokta olarak kalır.</translation>
+    </message>
+    <message>
+        <source>Selected adapter no longer matches the cached scan.</source>
+        <translation>Seçilen adaptör artık önbellekteki taramayla eşleşmiyor.</translation>
+    </message>
+    <message numerus="yes">
+        <source>Your primary channel %1 is shared with %n other network(s)</source>
+        <translation><numerusform>Birincil %1 kanalınızı %n başka ağ paylaşıyor</numerusform></translation>
+    </message>
+    <message numerus="yes">
+        <source>, and %n more on nearby 2.4 GHz channels (primary-channel estimate)</source>
+        <translation><numerusform>, ayrıca yakın 2,4 GHz kanallarında %n ağ daha (birincil kanal tahmini)</numerusform></translation>
+    </message>
+    <message>
+        <source>No wireless adapter is available.</source>
+        <translation>Kullanılabilir kablosuz adaptör yok.</translation>
+    </message>
+</context>
     <context>
         <name>NotifyDialog</name>
         <message>
@@ -7338,6 +7410,54 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <source>Up to 2000 matches are highlighted; Enter jumps to the next match and wraps at the end.</source>
             <translation>En fazla 2000 eşleşme vurgulanır; Enter bir sonraki eşleşmeye, sonda ise başa gider.</translation>
         </message>
+        <message>
+        <source>Raw output</source>
+        <translation>Ham çıktı</translation>
+    </message>
+        <message>
+        <source>Filter structured rows…</source>
+        <translation>Yapılandırılmış satırları filtrele…</translation>
+    </message>
+        <message>
+        <source>PCI address</source>
+        <translation>PCI adresi</translation>
+    </message>
+        <message>
+        <source>Class ID</source>
+        <translation>Sınıf kimliği</translation>
+    </message>
+        <message>
+        <source>Device ID</source>
+        <translation>Aygıt kimliği</translation>
+    </message>
+        <message>
+        <source>Kernel driver</source>
+        <translation>Çekirdek sürücüsü</translation>
+    </message>
+        <message>
+        <source>Kernel modules</source>
+        <translation>Çekirdek modülleri</translation>
+    </message>
+        <message>
+        <source>Copy visible rows</source>
+        <translation>Görünen satırları kopyala</translation>
+    </message>
+        <message>
+        <source>Copy selected rows</source>
+        <translation>Seçili satırları kopyala</translation>
+    </message>
+        <message>
+        <source>Copy all rows</source>
+        <translation>Tüm satırları kopyala</translation>
+    </message>
+        <message>
+        <source>Copy raw view</source>
+        <translation>Ham görünümü kopyala</translation>
+    </message>
+        <message>
+        <source>Empty cells mean not reported; they do not establish absence.</source>
+        <translation>Boş hücreler veri bildirilmediğini gösterir; öğenin bulunmadığını kanıtlamaz.</translation>
+    </message>
     </context>
     <context>
         <name>BackupPage</name>
@@ -16438,6 +16558,46 @@ Saklanan denemeler: %4 · çıkarılan: %5
         <source>Progressive base/CTA detailed timings only; interlaced modes and unknown extensions are not plotted. Mark = timing, band = explicit VRR.</source>
         <translation>Yalnızca temel/CTA progresif ayrıntılı zamanlamalar; geçmeli modlar ve bilinmeyen uzantılar çizilmez. İşaret = zamanlama, bant = açık VRR.</translation>
     </message>
+        <message>
+        <source>Save captured EDID…</source>
+        <translation>Yakalanan EDID’yi kaydet…</translation>
+    </message>
+        <message>
+        <source>Export EDID</source>
+        <translation>EDID dışa aktarımı</translation>
+    </message>
+        <message>
+        <source>The captured bytes may contain a display serial number and may be incomplete or damaged. This saves a diagnostic copy, not a validated override. Continue?</source>
+        <translation>Yakalanan baytlar ekran seri numarası içerebilir, eksik veya bozuk olabilir. Bu işlem doğrulanmış bir EDID geçersiz kılma dosyası değil, tanılama kopyası kaydeder. Devam edilsin mi?</translation>
+    </message>
+        <message>
+        <source>Binary files (*.bin)</source>
+        <translation>İkili dosyalar (*.bin)</translation>
+    </message>
+        <message>
+        <source>USB-C PD Profile View</source>
+        <translation>USB-C PD Profil Görünümü</translation>
+    </message>
+        <message>
+        <source>Captured partner capabilities only. Negotiated contract is unknown; the supply measurements below are not attributed to the selected port.</source>
+        <translation>Yalnızca yakalanan karşı cihaz kapasiteleri. Anlaşılan PD sözleşmesi bilinmiyor; aşağıdaki güç kaynağı ölçümleri seçili bağlantı noktasına atfedilmez.</translation>
+    </message>
+        <message>
+        <source>Independent supply measurements and reported limits</source>
+        <translation>Bağımsız güç kaynağı ölçümleri ve bildirilen sınırlar</translation>
+    </message>
+        <message>
+        <source>Port %1 · role %2 · partner %3 · reported maximum %4</source>
+        <translation>Bağlantı noktası %1 · rol %2 · karşı cihaz %3 · bildirilen üst sınır %4</translation>
+    </message>
+        <message>
+        <source>No verified positive source capacity in this capture.</source>
+        <translation>Bu kayıtta doğrulanmış pozitif kaynak kapasitesi bulunmuyor.</translation>
+    </message>
+        <message>
+        <source>First 32 verified profiles plotted; the table contains all captured profiles.</source>
+        <translation>İlk 32 doğrulanmış profil çizildi; tablo yakalanan tüm profilleri içerir.</translation>
+    </message>
     </context>
     <context>
         <name>diagsrc</name>
@@ -19916,7 +20076,127 @@ Saklanan denemeler: %4 · çıkarılan: %5
             <source>Unverified core relationship</source>
             <translation>Doğrulanmamış çekirdek ilişkisi</translation>
         </message>
-    </context>
+        <message>
+        <source>Negotiated contract is not exposed by these sources. Source profiles and supply measurements are separate.</source>
+        <translation>Bu kaynaklar anlaşılan PD sözleşmesini göstermiyor. Kaynak profilleri ve güç kaynağı ölçümleri ayrıdır.</translation>
+    </message>
+        <message>
+        <source>Maximum unknown (incomplete profiles)</source>
+        <translation>Üst sınır bilinmiyor (eksik profiller)</translation>
+    </message>
+        <message>
+        <source>Endpoint maximum</source>
+        <translation>Uç aygıtın azami bağlantısı</translation>
+    </message>
+    <message>
+        <source>Link / AER capture (UTC)</source>
+        <translation>Bağlantı / AER ölçüm zamanı (UTC)</translation>
+    </message>
+    <message>
+        <source>Identity is boot-scoped sysfs continuity, not proof of physical identity. NUMA -1 means no assigned node. Link reads are skipped for non-active devices; runtime PM may still race an active read.</source>
+        <translation>Kimlik yalnızca aynı açılıştaki sysfs sürekliliğidir; fiziksel kimliğin kanıtı değildir. NUMA -1 atanmış düğüm olmadığını belirtir. Etkin olmayan aygıtların bağlantısı okunmaz; çalışma zamanı güç yönetimi etkin okuma ile yarışabilir.</translation>
+    </message>
+    <message>
+        <source>Non-active or unknown runtime state is not probed for PCIe link registers. Runtime PM may race an active read.</source>
+        <translation>Etkin olmayan veya çalışma zamanı durumu bilinmeyen aygıtların PCIe bağlantı yazmaçları sorgulanmaz. Çalışma zamanı güç yönetimi etkin okuma ile yarışabilir.</translation>
+    </message>
+    <message>
+        <source>Same-boot sysfs identity is best-effort continuity; identical physical replacement may not be detectable.</source>
+        <translation>Aynı açılıştaki sysfs kimliği sürekliliğin yaklaşık kanıtıdır; özdeş fiziksel aygıt değişimi tespit edilemeyebilir.</translation>
+    </message>
+    <message>
+        <source>Link not probed (runtime state)</source>
+        <translation>Bağlantı sorgulanmadı (çalışma zamanı durumu)</translation>
+    </message>
+    <message>
+        <source>%1: link not probed (runtime state)</source>
+        <translation>%1: bağlantı sorgulanmadı (çalışma zamanı durumu)</translation>
+    </message>
+    <message>
+        <source>%1: link reading unavailable</source>
+        <translation>%1: bağlantı ölçümü alınamadı</translation>
+    </message>
+    <message>
+        <source>%1: device or runtime state changed during capture</source>
+        <translation>%1: ölçüm sırasında aygıt veya çalışma zamanı durumu değişti</translation>
+    </message>
+    <message>
+        <source>Link speed or width unknown</source>
+        <translation>Bağlantı hızı veya genişliği bilinmiyor</translation>
+    </message>
+    <message>
+        <source>%1 (%2): link speed or width could not be verified</source>
+        <translation>%1 (%2): bağlantı hızı veya genişliği doğrulanamadı</translation>
+    </message>
+    <message>
+        <source>If upstream capability is unavailable, Possible shows the endpoint maximum only.</source>
+        <translation>Üst bağlantının kapasitesi bilinmiyorsa Olası sütunu yalnızca uç aygıtın azami kapasitesini gösterir.</translation>
+    </message>
+    <message>
+        <source>Newly readable or added endpoint</source>
+        <translation>Yeni okunabilen veya eklenen uç aygıt</translation>
+    </message>
+        <message>
+            <source>RAM and swap totals are the kernel /proc view, not necessarily the current cgroup limit or physical DIMM capacity. Separate snapshots may differ; do not add zram logical capacity to RAM or swap totals.</source>
+            <translation>RAM ve takas toplamları çekirdeğin /proc görünümüdür; mevcut cgroup sınırı veya fiziksel DIMM kapasitesi olmak zorunda değildir. Ayrı anlık görüntüler farklı olabilir; zram mantıksal kapasitesini RAM veya takas toplamına eklemeyin.</translation>
+        </message>
+        <message>
+            <source>Active Swap Entries</source>
+            <translation>Etkin Takas Girdileri</translation>
+        </message>
+        <message>
+            <source>Capacity (KiB)</source>
+            <translation>Kapasite (KiB)</translation>
+        </message>
+        <message>
+            <source>Used (KiB)</source>
+            <translation>Kullanılan (KiB)</translation>
+        </message>
+        <message>
+            <source>Kernel swap entries only. Canonical zram names are recognized; other paths are omitted for privacy. Aliases are not resolved and no device is opened.</source>
+            <translation>Yalnızca çekirdek takas girdileri. Asıl zram adları tanınır; gizlilik için diğer yollar gösterilmez. Takma adlar çözümlenmez ve hiçbir aygıt açılmaz.</translation>
+        </message>
+        <message>
+            <source>Swap entry %1</source>
+            <translation>Takas girdisi %1</translation>
+        </message>
+        <message>
+            <source>Active swap entries are unavailable or incomplete.</source>
+            <translation>Etkin takas girdileri erişilemez veya eksik.</translation>
+        </message>
+        <message>
+            <source>No active swap entries in this snapshot.</source>
+            <translation>Bu anlık görüntüde etkin takas girdisi yok.</translation>
+        </message>
+        <message>
+            <source>Active swap</source>
+            <translation>Etkin takas</translation>
+        </message>
+        <message>
+            <source>Not listed as canonical active swap</source>
+            <translation>Asıl adıyla etkin takas listesinde yok</translation>
+        </message>
+        <message>
+            <source>Swap activity unknown</source>
+            <translation>Takas etkinliği bilinmiyor</translation>
+        </message>
+        <message>
+            <source>%1 · %2 · stored: %3 · compressed: %4 · resident RAM: %5 · ratio: %6</source>
+            <translation>%1 · %2 · saklanan: %3 · sıkıştırılmış: %4 · kullanılan fiziksel RAM: %5 · oran: %6</translation>
+        </message>
+        <message>
+            <source>zswap is enabled and a canonical zram swap entry is active. Pages evicted from zswap to zram may be compressed again; this snapshot does not prove actual double compression.</source>
+            <translation>zswap etkin ve asıl adıyla bir zram takas girdisi etkin. zswap üzerinden zram aygıtına çıkarılan sayfalar yeniden sıkıştırılabilir; bu anlık görüntü gerçekten çift sıkıştırma yapıldığını kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Swap accounting is incomplete</source>
+            <translation>Takas hesaplaması eksik</translation>
+        </message>
+        <message>
+            <source>Canonical zram swap names could not be corroborated with a configured sysfs device.</source>
+            <translation>Asıl zram takas adları yapılandırılmış bir sysfs aygıtıyla doğrulanamadı.</translation>
+        </message>
+</context>
     <context>
         <name>diagnostictools</name>
         <message>
@@ -20927,7 +21207,75 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
 
 </translation>
     </message>
-</context>
+    <message>
+        <source>Finding title (required with detail or action)</source>
+        <translation>Bulgu başlığı (ayrıntı veya eylemle birlikte zorunlu)</translation>
+    </message>
+        <message>
+        <source>Finding detail</source>
+        <translation>Bulgu ayrıntısı</translation>
+    </message>
+        <message>
+        <source>Suggested action</source>
+        <translation>Önerilen eylem</translation>
+    </message>
+        <message>
+        <source>Table note</source>
+        <translation>Tablo notu</translation>
+    </message>
+        <message>
+        <source>Report context and limits</source>
+        <translation>Rapor bağlamı ve sınırlar</translation>
+    </message>
+        <message>
+        <source>Report description</source>
+        <translation>Rapor açıklaması</translation>
+    </message>
+        <message>
+        <source>Source limitations</source>
+        <translation>Kaynak sınırlamaları</translation>
+    </message>
+        <message>
+        <source>Allow selected private binary tables</source>
+        <translation>Seçili özel ikili tablolara izin ver</translation>
+    </message>
+        <message>
+        <source>Include capture time</source>
+        <translation>Yakalama zamanını dahil et</translation>
+    </message>
+        <message>
+        <source>Include capture boot identity</source>
+        <translation>Yakalamanın açılış kimliğini dahil et</translation>
+    </message>
+        <message>
+        <source>Technical details can contain unrecognized identifiers. Inspect them manually before sharing.</source>
+        <translation>Teknik ayrıntılar tanınmayan kimlik bilgileri içerebilir. Paylaşmadan önce elle inceleyin.</translation>
+    </message>
+        <message>
+        <source>Binary tables may expose identifiers even when automatic redaction is enabled.</source>
+        <translation>Otomatik maskeleme açık olsa bile ikili tablolar kimlik bilgilerini açığa çıkarabilir.</translation>
+    </message>
+        <message>
+        <source>Automatic redaction is disabled.</source>
+        <translation>Otomatik maskeleme devre dışı.</translation>
+    </message>
+        <message>
+        <source>Excluded: %1 finding details/actions, %2 table notes, %3 source limitations.</source>
+        <translation>Hariç tutulanlar: %1 bulgu ayrıntısı/eylem, %2 tablo notu, %3 kaynak sınırlaması.</translation>
+    </message>
+        <message>
+        <source>Captured: %1</source>
+        <translation>Yakalanma: %1</translation>
+    </message>
+        <message>
+        <source>Capture boot: %1</source>
+        <translation>Yakalama açılış kimliği: %1</translation>
+    </message>
+        <message>
+        <source>Visualize captured PD profiles…</source>
+        <translation>Yakalanan PD profillerini görselleştir…</translation>
+    </message>
+    </context>
     <context>
         <name>AdvancedHealthPage</name>
         <message>
@@ -22098,6 +22446,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message>
             <source>Bytes. Enter an integer in B, KiB, MiB, GiB or TiB; stored as exact bytes.</source>
             <translation>Bayt. B, KiB, MiB, GiB veya TiB cinsinden tam sayı girin; değer tam bayt olarak saklanır.</translation>
+        </message>
+        <message>
+            <source>Canonical unit: %1. Enter ns, us, ms or s (decimal point allowed only for exact conversions). Negative special values must be entered without a unit.</source>
+            <translation>Asıl birim: %1. ns, us, ms veya s girin (ondalık nokta yalnızca tam dönüşümlerde kullanılabilir). Negatif özel değerler birimsiz girilmelidir.</translation>
         </message>
     </context>
   <context>

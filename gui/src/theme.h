@@ -9,6 +9,7 @@
 #include <QStringList>
 #include <QWidget>
 #include <functional>
+#include <optional>
 
 class QApplication;
 
@@ -23,8 +24,8 @@ namespace theme {
 // before any widget exists. Stable addresses after load(); GUI-thread only.
 inline const char *BG0 = "#121316", *BG1 = "#191a1e", *BG2 = "#202126", *BG3 = "#292a30",
     *BG4 = "#34363d", *WELL = "#0e0f11", *BORDER = "#2f3137", *BORDER_SOFT = "#24252a", *FG = "#e8e6e3",
-    *FG_DIM = "#b4b2ae", *MUTED = "#86868d", *ACCENT = "#eba55b", *ACCENT_SOFT = "#a9773f",
-    *OK = "#8fc486", *WARN = "#e6c065", *DANGER = "#e8776c", *DANGER_SOFT = "#8e4841",
+    *FG_DIM = "#b4b2ae", *MUTED = "#9e9ea3", *ACCENT = "#eba55b", *ACCENT_SOFT = "#a9773f",
+    *OK = "#8fc486", *WARN = "#e6c065", *DANGER = "#ea8076", *DANGER_SOFT = "#8e4841",
     *INFO = "#7fb1d5", *PURPLE = "#b79be2";
 inline constexpr int FONT_PT = 9, RADIUS = 10;
 /// Brand mark at the start of the header bezel (MainWindow): icon size, its x and
@@ -60,6 +61,8 @@ struct ContrastCheck { QString role, foreground, background; double ratio, targe
 double contrastRatio(const QColor &a, const QColor &b);
 QList<ContrastCheck> contrastChecks(const QStringList &colors);
 bool validCustomPalette(const QStringList &colors);
+/// Draft-only correction of the audited opaque token pairs; no settings or hardware writes.
+std::optional<QStringList> repairPaletteContrast(const QStringList &colors);
 bool saveCustomPalette(const QStringList &colors);
 /// Quit, then start again in place with the window open (main() does the exec).
 void setRestartGuard(std::function<bool()> guard);
@@ -77,6 +80,10 @@ Q_SIGNALS:
 };
 ThemeEvents &events();
 quint64 revision();
+/// Presentation-only refresh bound to the receiver lifetime. Register once at
+/// construction; callbacks must not read hardware, mutate drafts or persist settings.
+void bindPresentation(QObject *owner, std::function<void()> refresh);
+qint64 lastLiveRefreshNanos();
 /// In-memory live change for migrated workspaces, not a persistent preference.
 /// Callers must refresh cached semantic icons/brushes/local styles on the signal.
 bool applyLivePalette(QApplication &app, const QString &id);
