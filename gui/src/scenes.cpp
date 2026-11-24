@@ -1354,7 +1354,14 @@ void SceneEngine::start(const Scene &s) {
                         if(!reasons.isEmpty()) exceptions << key + QStringLiteral(": ") + reasons.join(QStringLiteral("; "));
                     }
                     if(!exceptions.isEmpty()) { incomplete_=true; stepDisposition_=QStringLiteral("partial"); msg += QStringLiteral("\n") + exceptions.join(QLatin1Char('\n')); }
-                    if (!r.ok()) { done(false, r.message() + QStringLiteral("\n") + msg); return; }
+                    if (!r.ok()) {
+                        const auto applied = r.json.value("applied");
+                        softFail_ = sceneoutcome::canSkipOptimizationFailure(
+                            r.reached, applied.isBool() && !applied.toBool(),
+                            r.json.value("no_write_reason").toString().toStdString());
+                        done(false, r.message() + QStringLiteral("\n") + msg);
+                        return;
+                    }
                     done(true, msg);
                 }, 120000);
             };

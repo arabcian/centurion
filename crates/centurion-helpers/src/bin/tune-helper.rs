@@ -414,27 +414,47 @@ fn preflight_replace(values: &Map<String, Value>) -> Result<Vec<(String, PathBuf
 /// preset's values; using it as a transition rollback would be incorrect.
 type StorageStamps = std::collections::BTreeMap<PathBuf, Value>;
 type ReplaceSnapshot = (Vec<(String, PathBuf, String)>, StorageStamps, std::collections::BTreeSet<(String, PathBuf)>);
-fn snapshot_replace(st: &State, plan: &[(String, PathBuf, String)]) -> Result<ReplaceSnapshot, String> {
+enum ReplaceSnapshotError {
+    StorageIdentityUnavailable(String),
+    Rejected(String),
+}
+
+impl ReplaceSnapshotError {
+    fn reply(self) -> Value {
+        match self {
+            Self::StorageIdentityUnavailable(key) => json!({
+                "ok": false,
+                "applied": false,
+                "no_write_reason": "storage_identity_unavailable",
+                "error": format!("{key}: storage target identity unavailable"),
+            }),
+            Self::Rejected(error) => json!({"ok": false, "applied": false, "error": error}),
+        }
+    }
+}
+
+fn snapshot_replace(st: &State, plan: &[(String, PathBuf, String)]) -> Result<ReplaceSnapshot, ReplaceSnapshotError> {
     let mut old = Vec::new();
     let mut stamps = StorageStamps::new();
     let mut seen = std::collections::HashSet::new();
     for (key, path, _) in st.baseline.iter().chain(plan.iter()) {
         if !seen.insert(path.clone()) { continue; }
-        let t = tune::find(key).ok_or_else(|| format!("{key}: tunable disappeared"))?;
+        let t = tune::find(key).ok_or_else(|| ReplaceSnapshotError::Rejected(format!("{key}: tunable disappeared")))?;
         if tune::scoped_storage(t) {
-            let stamp = tune::storage_stamp(t, path).ok_or_else(|| format!("{key}: storage target identity unavailable"))?;
+            let stamp = tune::storage_stamp(t, path)
+                .ok_or_else(|| ReplaceSnapshotError::StorageIdentityUnavailable(key.clone()))?;
             if st.has(path) && st.storage_stamps.get(path) != Some(&stamp) {
-                return Err(format!("{key}: saved storage identity does not match; nothing changed"));
+                return Err(ReplaceSnapshotError::Rejected(format!("{key}: saved storage identity does not match; nothing changed")));
             }
             stamps.insert(path.clone(), stamp);
         }
         let Some(live) = tune::baseline_value(t, path) else {
             // apply_values never writes an unreadable best-effort file (counted as refused): nothing to roll back.
             if tune::best_effort(t) { continue; }
-            return Err(format!("cannot snapshot {} before replacing preset; nothing changed", path.display()));
+            return Err(ReplaceSnapshotError::Rejected(format!("cannot snapshot {} before replacing preset; nothing changed", path.display())));
         };
         if tune::scoped_storage(t) && tune::storage_stamp(t, path).as_ref() != stamps.get(path) {
-            return Err(format!("{key}: storage identity changed during snapshot"));
+            return Err(ReplaceSnapshotError::Rejected(format!("{key}: storage identity changed during snapshot")));
         }
         old.push((key.clone(), path.clone(), live));
     }
@@ -947,13 +967,23 @@ fn locked_mode<F: FnOnce(&mut State) -> Value>(full_recovery: bool, f: F) -> Val
         let errs = tune::enforce_wireless_pm();
         if !errs.is_empty() { out["wireless_pm_warnings"] = json!(errs); }
     }
+    let save_error = st.save().err();
+    record_lock_outcome(&mut out, stale, save_error);
+    out["state"] = summary(&st);
+    out
+}
+
+fn record_lock_outcome(out: &mut Value, stale: Value, save_error: Option<String>) {
+    // Stale game recovery can write before preflight. A failure saving the
+    // state is also separate from a clean read-only refusal.
+    if !stale.is_null() || save_error.is_some() {
+        if let Some(reply) = out.as_object_mut() { reply.remove("no_write_reason"); }
+    }
     if !stale.is_null() && out.is_object() { out["stale_game_released"] = stale; }
-    if let Err(e) = st.save() {
+    if let Some(e) = save_error {
         out["ok"] = json!(false);
         out["error"] = json!(e);
     }
-    out["state"] = summary(&st);
-    out
 }
 
 fn valid_preset(p: &Value) -> Option<String> {
@@ -998,7 +1028,7 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
             };
             saved = match snapshot_replace(st, &plan) {
                 Ok(s) => s,
-                Err(e) => return json!({"ok": false, "applied": false, "error": e}),
+                Err(e) => return e.reply(),
             };
             before = Some(st.clone());
             let mut stale: Vec<String> = Vec::new();
@@ -1774,6 +1804,29 @@ pub(crate) fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unavailable_storage_reports_a_clean_preflight_refusal_only() {
+        let unavailable = PathBuf::from("/nonexistent-centurion-test/queue/read_ahead_kb");
+        let plan = [("blk.read_ahead_kb".into(), unavailable, "128".into())];
+        let result = snapshot_replace(&State::default(), &plan).err().unwrap().reply();
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["applied"], false);
+        assert_eq!(result["no_write_reason"], "storage_identity_unavailable");
+
+        let mut unchanged = result.clone();
+        record_lock_outcome(&mut unchanged, Value::Null, None);
+        assert_eq!(unchanged, result);
+
+        let mut restored = result.clone();
+        record_lock_outcome(&mut restored, json!({"restored": 1}), None);
+        assert!(restored.get("no_write_reason").is_none());
+
+        let mut save_failed = result;
+        record_lock_outcome(&mut save_failed, Value::Null, Some("state save failed".into()));
+        assert!(save_failed.get("no_write_reason").is_none());
+        assert_eq!(save_failed["error"], "state save failed");
+    }
+
     #[test]
     fn damaged_state_is_not_a_fresh_state() {
         for s in ["{", "{}", "{\"version\":3,\"baseline\":[]}", "{\"baseline\":[[\"unknown\",\"/sys/x\",\"0\"]]}"] { assert!(State::decode(s).is_err(), "{s}"); }

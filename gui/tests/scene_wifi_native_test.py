@@ -10,7 +10,13 @@ code = r'''
 #include <random>
 #include <iostream>
 int main() {
+    using sceneoutcome::canSkipOptimizationFailure;
     using sceneoutcome::terminal;
+    assert(canSkipOptimizationFailure(true, true, "storage_identity_unavailable"));
+    assert(!canSkipOptimizationFailure(false, true, "storage_identity_unavailable"));
+    assert(!canSkipOptimizationFailure(true, false, "storage_identity_unavailable"));
+    assert(!canSkipOptimizationFailure(true, true, ""));
+    assert(!canSkipOptimizationFailure(true, true, "storage_identity_changed"));
     for (unsigned bits=0; bits<64; ++bits) {
         bool ok=bits&1, rollback=bits&2, restored=bits&4, game=bits&8, incomplete=bits&16, deferred=bits&32;
         auto state=terminal(ok,rollback,restored,game,incomplete,deferred);
