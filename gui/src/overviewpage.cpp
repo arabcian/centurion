@@ -27,10 +27,12 @@
 #include <algorithm>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <memory>
 #include <optional>
 
 namespace {
@@ -412,12 +414,19 @@ void OverviewPage::rebuildCards(const QJsonArray &cards) {
 
 void OverviewPage::report() {
     if (reporting_) return;
+    const auto snapshot = std::make_shared<QTemporaryDir>();
+    if (!snapshot->isValid()) {
+        QMessageBox::warning(this, tr("Diagnostic Report"), tr("The report could not be built: %1").arg(snapshot->errorString()));
+        return;
+    }
     reporting_ = true;
+    const QString snapshotPath = snapshot->filePath(QStringLiteral("snapshot.json"));
     // Preview first: the same files, with the masked text, are shown before anything is written.
     const QJsonObject preview{{QStringLiteral("op"), QStringLiteral("diag_report")},
                               {QStringLiteral("version"), QStringLiteral(CENTURION_VERSION)},
-                              {QStringLiteral("dgpu"), DgpuPage::present()}};
-    userhelper::run(preview, this, [this, preview](const QJsonObject &p) {
+                              {QStringLiteral("dgpu"), DgpuPage::present()},
+                              {QStringLiteral("snapshot"), snapshotPath}};
+    userhelper::run(preview, this, [this, preview, snapshot](const QJsonObject &p) {
         if (!p.value(QStringLiteral("ok")).toBool()) {
             reporting_ = false;
             QMessageBox::warning(this, tr("Diagnostic Report"), tr("The report could not be built: %1").arg(p.value(QStringLiteral("error")).toString()));
@@ -437,13 +446,16 @@ void OverviewPage::report() {
         if (path.isEmpty()) { reporting_ = false; return; }
         if (!path.endsWith(QLatin1String(".tar.gz"))) path += QLatin1String(".tar.gz");
 
-        const QJsonObject out{{QStringLiteral("op"), QStringLiteral("diag_report")},
+        QJsonObject out{{QStringLiteral("op"), QStringLiteral("diag_report")},
                               {QStringLiteral("version"), QStringLiteral(CENTURION_VERSION)},
                               {QStringLiteral("dgpu"), preview.value(QStringLiteral("dgpu"))},
                               {QStringLiteral("preview_schema"), 2},
                               {QStringLiteral("selected"), dialog.selection()},
                               {QStringLiteral("out"), path}};
-        userhelper::run(out, this, [this](const QJsonObject &w) {
+        if (p.value(QStringLiteral("frozen")).toBool())
+            out.insert(QStringLiteral("snapshot"), preview.value(QStringLiteral("snapshot")));
+        userhelper::run(out, this, [this, snapshot](const QJsonObject &w) {
+            snapshot->remove();
             reporting_ = false;
             if (!w.value(QStringLiteral("ok")).toBool()) {
                 QMessageBox::warning(this, tr("Diagnostic Report"), tr("The archive could not be written: %1").arg(w.value(QStringLiteral("error")).toString()));

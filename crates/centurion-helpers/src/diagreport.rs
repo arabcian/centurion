@@ -10,13 +10,14 @@
 //!
 //! stdin:  {"op":"diag_report"}                        preview: each file's status and text
 //!         {"op":"diag_report","out":"/abs/x.tar.gz"}  writes the archive
+//!         optional: "snapshot" (GUI-owned path to preserve preview bytes across requests)
 //!         optional: "version" (the GUI's version string), "dgpu": bool (NVIDIA status when present)
 
 use crate::health;
 use crate::overview;
 use serde_json::{json, Value};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 #[cfg(test)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,8 @@ const LOG_TAIL: u64 = 512 << 10;
 const JSON_MAX: u64 = 4 << 20;
 /// Lines kept of the sleep and write logs.
 const LINES: usize = 200;
+/// Serialized size limit for the GUI-owned report snapshot.
+const SNAPSHOT_MAX: u64 = 32 << 20;
 /// Text shown per file in the preview (the archive keeps everything).
 const PREVIEW_BYTES: usize = 32 << 10;
 
@@ -511,18 +514,77 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
     result
 }
 
+// Only included, already sanitized entries are needed by the save request.
+fn freeze_entries(path: &Path, entries: &[Entry]) -> std::io::Result<()> {
+    let included: Vec<_> = entries.iter().filter(|e| e.status == "included")
+        .map(|e| (&e.name, &e.text)).collect();
+    let bytes = serde_json::to_vec(&included)?;
+    if !path.is_absolute() || bytes.len() as u64 > SNAPSHOT_MAX {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid or oversized report snapshot"));
+    }
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    file.write_all(&bytes)
+}
+
+fn thaw_entries(path: &Path) -> Option<Vec<Entry>> {
+    if !path.is_absolute() { return None; }
+    let file = std::fs::OpenOptions::new().read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path).ok()?;
+    let before = file.metadata().ok()?;
+    if !before.is_file() || before.uid() != unsafe { libc::geteuid() }
+        || before.mode() & 0o077 != 0 || before.nlink() != 1 || before.len() > SNAPSHOT_MAX {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    let mut bounded = file.take(before.len() + 1);
+    bounded.read_to_end(&mut bytes).ok()?;
+    let after = bounded.get_ref().metadata().ok()?;
+    if bytes.len() as u64 != before.len() || before.len() != after.len()
+        || before.modified().ok() != after.modified().ok() {
+        return None;
+    }
+    let entries: Vec<(String, String)> = serde_json::from_slice(&bytes).ok()?;
+    if entries.len() > 32 { return None; }
+    let mut names = std::collections::BTreeSet::new();
+    for (name, _) in &entries {
+        if name.is_empty() || name.len() > 128 || name.starts_with('.')
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
+            || !names.insert(name) {
+            return None;
+        }
+    }
+    Some(entries.into_iter().map(|(name, text)| Entry { name, text, status: "included", masked: 0 }).collect())
+}
+
 /// Op "diag_report": a preview without "out", the archive with it.
 pub fn request(req: &Value) -> Value {
-    // The op is served before tune-helper's root check, and the path comes from the request.
-    if req["out"].is_string() && unsafe { libc::geteuid() } == 0 {
+    let out = req["out"].as_str();
+    let snapshot = req["snapshot"].as_str().map(Path::new);
+    // The op is served before tune-helper's root check.
+    if (out.is_some() || snapshot.is_some()) && unsafe { libc::geteuid() } == 0 {
         return json!({"ok": false, "error": "the report is written as the user, not as root"});
     }
-    let src = Sources::system();
-    let version = req["version"].as_str().unwrap_or("unknown");
     let (now, offset) = overview::local_clock();
-    let entries = collect(&src, version, req["dgpu"].as_bool().unwrap_or(false), now, offset);
-    match req["out"].as_str() {
-        None => preview(&entries),
+    let entries = if let (Some(_), Some(snapshot)) = (out, snapshot) {
+        match thaw_entries(snapshot) {
+            Some(entries) => entries,
+            None => return json!({"ok": false, "error": "invalid or missing report snapshot"}),
+        }
+    } else {
+        let version = req["version"].as_str().unwrap_or("unknown");
+        collect(&Sources::system(), version, req["dgpu"].as_bool().unwrap_or(false), now, offset)
+    };
+    match out {
+        None => {
+            let mut response = preview(&entries);
+            if let Some(snapshot) = snapshot {
+                if let Err(error) = freeze_entries(snapshot, &entries) {
+                    return json!({"ok": false, "error": format!("could not keep report snapshot: {error}")});
+                }
+                response["frozen"] = json!(true);
+            }
+            response
+        }
         Some(out) => {
             let entries = match reviewed_entries(entries, req) {
                 Ok(entries) => entries,
@@ -724,6 +786,42 @@ mod tests {
         req["selected"] = json!([{"name": "../secret", "sha256": content_digest("first")}]);
         assert!(reviewed_entries(capture(), &req).is_err());
         assert!(reviewed_entries(capture(), &json!({})).is_err());
+    }
+
+    #[test]
+    fn frozen_report_archives_the_reviewed_capture() {
+        let root = temp("frozen");
+        let snapshot = root.join("snapshot.json");
+        let source = root.join("source.log");
+        std::fs::write(&source, "UUID=private-value\noriginal\n").unwrap();
+        let (status, raw) = fetch(&source, LOG_TAIL, None);
+        let entries = [entry("source.log", status, raw),
+            entry("README.txt", "included", Some(README.to_owned()))];
+        let response = preview(&entries);
+        freeze_entries(&snapshot, &entries).unwrap();
+        assert!(freeze_entries(&snapshot, &entries).is_err());
+
+        std::fs::write(&source, "new content\n").unwrap();
+        let out = root.join("report.tar.gz");
+        let req = json!({"op": "diag_report", "out": out, "snapshot": snapshot,
+            "preview_schema": 2, "selected": [{"name": "source.log", "sha256": response["files"][0]["sha256"]}]});
+        if unsafe { libc::geteuid() } != 0 {
+            let reply = request(&req);
+            assert_eq!(reply["ok"], true, "{reply}");
+            let body = Command::new("/usr/bin/tar").arg("-xzOf").arg(&out).output().unwrap();
+            assert!(body.status.success());
+            assert_eq!(body.stdout, entries[0].text.as_bytes());
+            assert!(!String::from_utf8_lossy(&body.stdout).contains("private-value"));
+        }
+
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&snapshot, &link).unwrap();
+        assert!(thaw_entries(&link).is_none());
+        std::fs::write(&snapshot, br#"[["../escape","file"]]"#).unwrap();
+        assert!(thaw_entries(&snapshot).is_none());
+        std::fs::write(&snapshot, br#"[["source.log","tampered"]]"#).unwrap();
+        assert!(reviewed_entries(thaw_entries(&snapshot).unwrap(), &req).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
