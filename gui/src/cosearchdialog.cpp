@@ -233,6 +233,33 @@ static QString statusSheet(const char *tone) {
     return theme::banner(tone ? tone : theme::MUTED, "#coStatus") + QStringLiteral(" #coStatus { padding: 5px 10px; }");
 }
 
+// Preserve semantic roles rather than the old RGB values when changing theme.
+// Only the displayed item brushes change; no search/table reconstruction or
+// topology detection is triggered by the theme signal.
+namespace {
+constexpr int CoreForegroundRole = Qt::UserRole + 40;
+constexpr int CoreTestingRole = Qt::UserRole + 41;
+static const char *coreTone(int id) {
+    const char *const tokens[]{nullptr,theme::MUTED,theme::FG_DIM,theme::ACCENT,theme::PURPLE,theme::OK,theme::WARN,theme::INFO,theme::DANGER};
+    return id>=1 && id<9 ? tokens[id] : nullptr;
+}
+static void setCoreTone(QTableWidgetItem *item, const char *tone) {
+    for(int id=1;id<9;++id) if(coreTone(id)==tone) {
+        item->setData(CoreForegroundRole,id); item->setForeground(QColor(tone)); return;
+    }
+}
+static QColor coreTestingWash() { QColor c(theme::ACCENT); c.setAlphaF(0.14); return c; }
+static void refreshCoreColors(QTableWidget *table) {
+    const QSignalBlocker blocker(table);
+    for(int row=0;row<table->rowCount();++row) for(int col=0;col<table->columnCount();++col) {
+        auto *item=table->item(row,col); if(!item) continue;
+        if(const auto *tone=coreTone(item->data(CoreForegroundRole).toInt())) item->setForeground(QColor(tone));
+        if(item->data(CoreTestingRole).toBool()) item->setBackground(coreTestingWash());
+    }
+}
+}
+
+
 CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new Notifier(this)) {
     setWindowTitle(tr("Ryzen CO Search Assistant (Experimental)"));
     resize(1000, 680);
@@ -251,7 +278,7 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
         "Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it."));
     explainer->setWordWrap(true);
     explainer->setObjectName("coExplainer");
-    explainer->setStyleSheet(theme::banner(theme::INFO, "#coExplainer") + QStringLiteral(" #coExplainer { padding: 6px 10px; }"));
+    theme::setLiveSheet(explainer, [] { return theme::banner(theme::INFO, "#coExplainer") + QStringLiteral(" #coExplainer { padding: 6px 10px; }"); });
     v->addWidget(explainer);
 
     auto *form = new QFormLayout;
@@ -372,10 +399,11 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     status_ = new QLabel(tr("Not started. The current CPU curve must be stock."));
     status_->setWordWrap(true);
     status_->setObjectName("coStatus");
-    status_->setStyleSheet(statusSheet(nullptr));
+    theme::setLiveSheet(status_, [] { return statusSheet(nullptr); });
     v->addWidget(status_);
     v->addWidget(mapHost);
     table_ = new QTableWidget(0, 5);
+    theme::bindPresentation(table_, [table=table_] { refreshCoreColors(table); });
     table_->setHorizontalHeaderLabels({tr("Core"), tr("Start"), tr("Result"), tr("Status"), tr("Notes")});
     table_->setToolTip(tr("Per-core: Start is the core's first probe (0 = one step below stock). Untick a core to leave "
                           "it at stock (0) for the whole search and in the saved result."));
@@ -513,11 +541,13 @@ CoSearchDialog::~CoSearchDialog() {
 }
 
 void CoSearchDialog::reject() {
+    if (preparing_ || recoveryBusy_ || perfTest_) { cancel(); return; }
     if (running_) { cancel(); return; }
     QDialog::reject();
 }
 
 void CoSearchDialog::closeEvent(QCloseEvent *e) {
+    if (preparing_ || recoveryBusy_ || perfTest_) { cancel(); e->ignore(); return; }
     if (running_) {
         cancel();
         e->ignore();  // root writes and reset must finish before this controller can be destroyed
@@ -527,7 +557,7 @@ void CoSearchDialog::closeEvent(QCloseEvent *e) {
 void CoSearchDialog::note(const QString &s, const char *tone) {
     logLine(log_, QDateTime::currentDateTime().toString("HH:mm:ss"), s, tone ? tone : theme::FG_DIM);
     status_->setText(s);
-    theme::setSheet(status_, statusSheet(tone));
+    theme::setLiveSheet(status_, [tone] { return statusSheet(tone); });
 }
 
 Tuning CoSearchDialog::tuning() const {
@@ -740,35 +770,67 @@ bool CoSearchDialog::writeJournal() const {
     return f.commit();  // QSaveFile: durable commit before a new privileged SMU write
 }
 
-bool CoSearchDialog::toolsPresent() {
-    testProgram_ = QStandardPaths::findExecutable("centurion-cpustress");
-    if (testProgram_.isEmpty() || !QFileInfo(privileged::helperPath("ryzen-co-helper")).isExecutable()) {
-        QMessageBox::warning(this, tr("Missing tools"), tr("Install centurion-cpustress and ryzen-co-helper first."));
-        return false;
-    }
-    // The per-core verification needs the `power` load: an older centurion-cpustress would only fail there,
-    // after the whole search. Ask the binary itself.
-    QProcess info;
-    info.start(testProgram_, {QStringLiteral("info")});
-    const bool answered = info.waitForFinished(10000);
-    const QJsonObject loads = answered ? QJsonDocument::fromJson(info.readAllStandardOutput()).object().value("loads").toObject() : QJsonObject{};
-    if (!loads.contains(QStringLiteral("power"))) {
-        QMessageBox::warning(this, tr("Outdated centurion-cpustress"),
-            tr("The installed centurion-cpustress has no 'power' load, which the per-core verification uses. "
-               "Reinstall Centurion so that it matches this version."));
-        return false;
-    }
-    if (!loads.value(QStringLiteral("power")).toBool()) {
-        QMessageBox::warning(this, tr("CPU not supported"), tr("This CPU has no AVX2 / FMA, which the verification's power load needs."));
-        return false;
-    }
-    // On battery the firmware lowers the power limits (the result would not hold on AC), and an empty battery
-    // would end a trial like a crash. Desktops report no power supply (nullopt) and pass.
+bool CoSearchDialog::acAvailable() {
     if (scenes::onAc() == std::optional<bool>(false)) {
         QMessageBox::warning(this, tr("On battery"), tr("Connect the charger first. CO Search runs on AC power only."));
         return false;
     }
     return true;
+}
+
+// No helper writes or recovery mutation here. Do not resume from a late,
+// failed, cancelled or malformed capability reply.
+void CoSearchDialog::probeTools(std::function<void(bool)> then) {
+    if (preparing_ || running_ || recoveryBusy_ || perfTest_) return;
+    if (privileged::resourceActive(QStringLiteral("ryzen-co-helper"))) {
+        QMessageBox::warning(this,tr("Search locked"),tr("A CPU curve helper is still running. Wait for it to exit before starting or resuming."));
+        then(false); return;
+    }
+    testProgram_ = QStandardPaths::findExecutable("centurion-cpustress");
+    if (testProgram_.isEmpty() || !QFileInfo(privileged::helperPath("ryzen-co-helper")).isExecutable()) {
+        QMessageBox::warning(this, tr("Missing tools"), tr("Install centurion-cpustress and ryzen-co-helper first."));
+        then(false); return;
+    }
+    preparing_ = true; probeCancelled_ = false;
+    const bool goWas = go_->isEnabled(), verifyWas = verifyBtn_->isEnabled(), guardsWas = guardsBtn_->isEnabled(), stopWas = stop_->isEnabled();
+    go_->setEnabled(false); verifyBtn_->setEnabled(false); guardsBtn_->setEnabled(false); stop_->setEnabled(true);
+    note(tr("Checking CPU stress tool capabilities…"));
+    auto *p = new QProcess(this); toolProbe_ = p;
+    auto out = std::make_shared<QByteArray>();
+    auto overflow = std::make_shared<bool>(false);
+    auto timedOut = std::make_shared<bool>(false);
+    auto drain = [p,out,overflow] {
+        const auto chunk = p->readAllStandardOutput(); p->readAllStandardError();
+        if (chunk.size() > 65536 - out->size()) { *overflow = true; p->kill(); }
+        else if (!*overflow) out->append(chunk);
+    };
+    auto finish = [this,p,out,overflow,timedOut,drain,then,goWas,verifyWas,guardsWas,stopWas](bool exitedOk) {
+        if (toolProbe_ != p) return;
+        drain();
+        const bool cancelled = probeCancelled_;
+        const auto doc = QJsonDocument::fromJson(*out);
+        const auto loads = doc.object().value("loads").toObject();
+        toolProbe_ = nullptr; p->deleteLater(); preparing_ = false;
+        go_->setEnabled(goWas); verifyBtn_->setEnabled(verifyWas); guardsBtn_->setEnabled(guardsWas); stop_->setEnabled(stopWas);
+        if (cancelled) { note(tr("CPU stress tool capability check cancelled.")); then(false); return; }
+        if (!exitedOk || *overflow || *timedOut || !doc.isObject() || !loads.value("power").isBool()) {
+            QMessageBox::warning(this,tr("Outdated centurion-cpustress"),tr("The CPU stress tool did not return valid power-load capabilities. Check that it matches this Centurion version."));
+            then(false); return;
+        }
+        if (!loads.value("power").toBool()) {
+            QMessageBox::warning(this,tr("CPU not supported"),tr("This CPU has no AVX2 / FMA, which the verification's power load needs.")); then(false); return;
+        }
+        if (privileged::resourceActive(QStringLiteral("ryzen-co-helper"))) {
+            QMessageBox::warning(this,tr("Search locked"),tr("A CPU curve helper is still running. Wait for it to exit before starting or resuming.")); then(false); return;
+        }
+        then(acAvailable());
+    };
+    connect(p,&QProcess::readyReadStandardOutput,this,drain);
+    connect(p,&QProcess::readyReadStandardError,this,[p]{ p->readAllStandardError(); });
+    connect(p,&QProcess::finished,this,[finish](int code,QProcess::ExitStatus status){ finish(code == 0 && status == QProcess::NormalExit); });
+    connect(p,&QProcess::errorOccurred,this,[finish](QProcess::ProcessError e){ if(e == QProcess::FailedToStart) finish(false); });
+    QTimer::singleShot(10000,p,[this,p,timedOut]{ if (toolProbe_ == p && p->state() != QProcess::NotRunning) { *timedOut = true; p->kill(); } });
+    p->start(testProgram_,{QStringLiteral("info")});
 }
 
 void CoSearchDialog::showAttemptHistory() {
@@ -1024,22 +1086,23 @@ void CoSearchDialog::refreshTable() {
         tile->setTextFormat(Qt::PlainText);
         tile->setToolTip(core->text() + QLatin1Char('\n') + status + QLatin1Char('\n') + tip.join(QLatin1Char('\n')));
         tile->setAccessibleName(tile->text() + QStringLiteral(" — ") + status);
-        tile->setStyleSheet(QStringLiteral("QLabel { border: 1px solid %1; color: %1; padding: 3px; }").arg(tone ? tone : theme::FG_DIM));
+        theme::setLiveSheet(tile, [tone] { return QStringLiteral("QLabel { border: 1px solid %1; color: %1; padding: 3px; }").arg(tone ? tone : theme::FG_DIM); });
         coreMap_->addWidget(tile, ccdRows.value(c.ccd) + 1, col);
-        if (tone) table_->item(i, 3)->setForeground(QColor(tone));
+        if (tone) setCoreTone(table_->item(i, 3), tone);
         table_->setItem(i, 4, new QTableWidgetItem(extra.join(QStringLiteral(" · "))));
-        table_->item(i, 4)->setForeground(QColor(flagged ? theme::WARN : theme::MUTED));
+        setCoreTone(table_->item(i, 4), flagged ? theme::WARN : theme::MUTED);
         if (done || testing) {
             QFont bold = table_->font();
             bold.setBold(true);
             table_->item(i, done ? 2 : 3)->setFont(bold);
-            if (done) table_->item(i, 2)->setForeground(QColor(theme::OK));
+            if (done) setCoreTone(table_->item(i, 2), theme::OK);
         }
-        if (excluded) for (int col : {0, 2}) table_->item(i, col)->setForeground(QColor(theme::MUTED));
+        if (excluded) for (int col : {0, 2}) setCoreTone(table_->item(i, col), theme::MUTED);
         if (testing) {
-            QColor wash(theme::ACCENT);
-            wash.setAlphaF(0.14);
-            for (int col = 0; col < 5; ++col) table_->item(i, col)->setBackground(wash);
+            const QColor wash=coreTestingWash();
+            for (int col = 0; col < 5; ++col) {
+                auto *item=table_->item(i,col); item->setData(CoreTestingRole,true); item->setBackground(wash);
+            }
         }
         if (!tip.isEmpty()) for (int col : {0, 2, 3, 4}) table_->item(i, col)->setToolTip(tip.join('\n'));
     }
@@ -1047,13 +1110,13 @@ void CoSearchDialog::refreshTable() {
 }
 
 std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
-    if (running_ || perfTest_) return std::nullopt;
+    if (running_ || perfTest_ || preparing_ || recoveryBusy_) return std::nullopt;
     if (QFileInfo::exists(journalPath())) {
         // Never overwrite an unresolved crash history with a fresh, unguarded search.
         offerResume();
         return std::nullopt;
     }
-    if (!toolsPresent()) return std::nullopt;
+    if (!acAvailable()) return std::nullopt;
     if (CurvePage::currentState("cpu") != "stock" || scenes::gameSessions() > 0) {
         QMessageBox::warning(this, tr("Search locked"), tr("Reset the CPU curve to stock and end game sessions before searching. Existing offsets must not be overwritten.")); return std::nullopt;
     }
@@ -1079,6 +1142,11 @@ std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
 }
 
 void CoSearchDialog::start() {
+    if (operationActive()) return;
+    if (QFileInfo::exists(journalPath())) { offerResume(); return; }
+    probeTools([this](bool ok) { if (ok) startPrepared(); });
+}
+void CoSearchDialog::startPrepared() {
     const auto mode = Mode(mode_->currentData().toInt());
     const auto layout = preflight(mode);
     if (!layout) return;
@@ -1147,6 +1215,11 @@ void CoSearchDialog::start() {
 }
 
 void CoSearchDialog::verifyProfile() {
+    if (operationActive()) return;
+    if (QFileInfo::exists(journalPath())) { offerResume(); return; }
+    probeTools([this](bool ok) { if (ok) verifyPrepared(); });
+}
+void CoSearchDialog::verifyPrepared() {
     QStringList profiles;
     for (const QString &f : QDir(ryzen::profilesDir()).entryList({"*.json"}, QDir::Files, QDir::Name)) profiles << f.chopped(5);
     if (profiles.isEmpty()) { QMessageBox::information(this, tr("Verify a profile"), tr("No saved Ryzen Curve profiles.")); return; }
@@ -1239,6 +1312,7 @@ void CoSearchDialog::verifyProfile() {
 }
 
 void CoSearchDialog::manageCrashGuards() {
+    if (operationActive()) return;
     if (running_) return;
     const auto guards = readCrashGuards();
     const auto all = readAllCoreGuard();
@@ -1351,6 +1425,7 @@ void CoSearchDialog::measureThroughput(std::function<void(const QHash<int, int> 
     };
     connect(p, &QProcess::readyReadStandardOutput, this, parse);
     auto finish = std::make_shared<std::function<void(int)>>([this, p, chunks, then, parse](int code) {
+        if (perfTest_ != p) return;
         parse();
         p->deleteLater();
         perfTest_ = nullptr;
@@ -1398,7 +1473,10 @@ void CoSearchDialog::compareThroughput(std::function<void()> then) {
 }
 
 void CoSearchDialog::offerResume() {
-    if (running_ || !QFileInfo::exists(journalPath())) return;
+    if (operationActive() || !QFileInfo::exists(journalPath())) return;
+    if (privileged::resourceActive(QStringLiteral("ryzen-co-helper"))) {
+        QMessageBox::warning(this,tr("Search locked"),tr("A CPU curve helper is still running. Wait for it to exit before starting or resuming.")); return;
+    }
     QFile f(journalPath());
     // An unreadable or oversized journal still goes to the "invalid journal" question below, or Start would
     // return here forever without saying why.
@@ -1425,9 +1503,11 @@ void CoSearchDialog::offerResume() {
     // `unreadable`: the journal holds nothing usable, so after a failed reset it may still be removed on request.
     auto discard = [this, sameBoot, removeJournal](std::function<void()> after, bool unreadable = false) {
         if (!sameBoot) { if (removeJournal()) after(); return; }
+        recoveryBusy_ = true;
         note(tr("Resetting the CPU curve to stock before discarding the interrupted search…"));
         privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
             [this, after, unreadable, removeJournal](const privileged::Result &r) {
+                const auto release = qScopeGuard([this]{ recoveryBusy_ = false; });
                 if (!r.ok()) {
                     note(tr("Reset failed: %1. The journal is kept; use Ryzen Curve → Reset, or reboot.").arg(r.message()), theme::DANGER);
                     if (!unreadable || QMessageBox::warning(this, tr("Reset failed"),
@@ -1512,7 +1592,8 @@ void CoSearchDialog::offerResume() {
     }
     // Crash watcher: what the system logs say about the interrupted trial (coevidence.h). It is collected
     // before the question and used only inside this search, never for the persistent crash guard.
-    auto ask = [this, j, s, interrupted, pending, cleanExit, crashed, currentBoot, discard](const coevidence::Verdict &verdict) mutable {
+    auto ask = [this, j, s, interrupted, pending, cleanExit, crashed, currentBoot, discard, topology](const coevidence::Verdict &verdict) mutable {
+        recoveryBusy_ = false;
         // No reboot lockout: every crashed candidate is guarded for good, so a resume can never
         // repeat it and a reboot loop cannot form. Each resume is still the user's decision.
         const int rebootCount = std::max(0, j.value("reboots").toInt()) + int(crashed);
@@ -1600,7 +1681,17 @@ void CoSearchDialog::offerResume() {
             });
             return;
         }
-        if (answer != QMessageBox::Yes || !toolsPresent()) return;
+        if (answer != QMessageBox::Yes) return;
+        probeTools([this,j,s,interrupted,pending,cleanExit,crashed,currentBoot,topology,previewGuards,previewAllGuard,failed,rebootCount,what,finalStage,verdict](bool ok) mutable {
+        if (!ok) return;
+        // Capability probing was asynchronous: the reviewed journal, guards,
+        // boot and topology must still be the same before any recovery write.
+        QFile current(journalPath());
+        if (!current.open(QIODevice::ReadOnly) || current.size() > (1LL << 20) || QJsonDocument::fromJson(current.readAll()).object() != j
+            || readCrashGuards()!=previewGuards || readAllCoreGuard()!=previewAllGuard || readBootId()!=currentBoot
+            || topology(s->cores()) != topology(coresOf(ryzen::detect()))) {
+            QMessageBox::warning(this,tr("Resume CO search"),tr("Recovery journal or crash guards changed during review. Reopen the preview.")); return;
+        }
         if (scenes::gameSessions() > 0) {
             QMessageBox::warning(this, tr("Search locked"), tr("End game sessions first."));
             return;
@@ -1658,16 +1749,20 @@ void CoSearchDialog::offerResume() {
                        : tr("Recovery: %1 counted as failed in this search. Resetting to stock first.").arg(what));
         if (crashed) note(tr("System logs: %1").arg(verdict.summary));
         const std::optional<Trial> again = cleanExit ? interrupted : std::nullopt;
+        recoveryBusy_ = true;
         privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
             [this, again](const privileged::Result &r) {
+                recoveryBusy_ = false;
                 if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message()), theme::DANGER); search_.reset(); return; }
                 const QString keep = priorScene_;
                 replay_ = again;
                 launch();
                 priorScene_ = keep;
             }, 120000);
+        });
     };
     if (crashed) {
+        recoveryBusy_ = true;
         note(tr("Reading the system logs of the crashed boot…"));
         gatherEvidence(j, *s, *interrupted, ask);
     } else {
@@ -1724,6 +1819,13 @@ void CoSearchDialog::gatherEvidence(const QJsonObject &journal, const Search &se
 }
 
 void CoSearchDialog::launch() {
+    // Confirmation and recovery reset may have taken time. Recheck the
+    // recorded stock state, AC and game ownership before starting a trial.
+    if (!acAvailable()) { replay_.reset(); return; }
+    if (privileged::resourceActive(QStringLiteral("ryzen-co-helper")) || scenes::gameSessions() > 0 || CurvePage::currentState("cpu") != "stock") {
+        replay_.reset();
+        QMessageBox::warning(this,tr("Search locked"),tr("CPU curve or game tuning ownership changed before launch. No trial was started.")); return;
+    }
     ++trialGeneration_;
     running_ = true;
     abort_ = false;
@@ -2059,6 +2161,9 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
 }
 
 void CoSearchDialog::cancel() {
+    if (preparing_) { probeCancelled_ = true; stop_->setEnabled(false); if (toolProbe_) toolProbe_->kill(); return; }
+    if (recoveryBusy_) { note(tr("Waiting for recovery to finish; the journal is still protected.")); return; }
+    if (!running_ && perfTest_) { perfTest_->kill(); return; }
     if (!running_ || resetting_) return;
     abort_ = true;
     stop_->setEnabled(false);
@@ -2071,7 +2176,11 @@ void CoSearchDialog::cancel() {
         });
         return;
     }
-    if (perfTest_ && perfTest_->state() != QProcess::NotRunning) { perfTest_->terminate(); return; }  // its handler resets
+    if (perfTest_ && perfTest_->state() != QProcess::NotRunning) {
+        QPointer<QProcess> pending(perfTest_); perfTest_->terminate();
+        QTimer::singleShot(3000,this,[pending]{ if (pending && pending->state()!=QProcess::NotRunning) pending->kill(); });
+        return;
+    }  // its handler resets
     if (applying_ || sceneApplying_) { note(tr("Waiting for in-flight write before resetting.")); return; }
     reset(tr("Cancelled by user / guard"));
 }
@@ -2126,7 +2235,7 @@ void CoSearchDialog::saveResultAs() {
     if (!finished_) {
         auto *warn = new QLabel(tr("This search did not finish its verification: these values passed only the tests run so far."));
         warn->setWordWrap(true);
-        warn->setStyleSheet(QStringLiteral("color: %1;").arg(theme::WARN));
+        theme::setLiveSheet(warn, [] { return QStringLiteral("color: %1;").arg(theme::WARN); });
         form->addRow(warn);
     }
     auto *nameEdit = new QLineEdit(name);

@@ -2451,6 +2451,9 @@ Kernel uptime: %2
     </context>
     <context>
         <name>HomeTab</name>
+        <message><source>Colour theme. Changes take effect immediately without restarting.</source><translation>Renk teması. Değişiklikler yeniden başlatmadan hemen uygulanır.</translation></message>
+        <message><source>Edit opaque RGB colors. Saving applies the palette immediately. Contrast is checked for the main text and panel surfaces.</source><translation>Opak RGB renklerini düzenleyin. Kaydettiğinizde palet hemen uygulanır. Ana metin ve panel yüzeylerinin kontrastı denetlenir.</translation></message>
+        <message><source>Theme applied.</source><translation>Tema uygulandı.</translation></message>
         <message><source>GPU runtime state unavailable</source><translation>GPU çalışma durumu okunamıyor</translation></message>
         <message>
             <source>Color (#RRGGBB)</source>
@@ -4412,6 +4415,14 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <source>Restore last page</source>
             <translation>Son sayfayı geri yükle</translation>
         </message>
+        <message>
+            <source>Includes actual privileged helper lifetimes and existing GUI operation states; external jobs may not appear here.</source>
+            <translation>Gerçek yetkili yardımcı süreçlerinin yaşam döngüsü ve mevcut arayüz işlem durumları dahildir; harici işler görünmeyebilir.</translation>
+        </message>
+        <message>
+            <source>Observed transitions, scene events and actual helper exits (not independent verification)</source>
+            <translation>Gözlenen geçişler, sahne olayları ve gerçek yardımcı sonlanmaları (bağımsız doğrulama değil)</translation>
+        </message>
     </context>
     <context>
         <name>NetPage</name>
@@ -6118,7 +6129,15 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
             <source>Open the searchable tool directory without running any diagnostic.</source>
             <translation>Herhangi bir tanılama çalıştırmadan aranabilir araç dizinini açar.</translation>
         </message>
-    </context>
+        <message>
+        <source>Current CPU temperature: unavailable</source>
+        <translation>Güncel CPU sıcaklığı: kullanılamıyor</translation>
+    </message>
+    <message>
+        <source>Current CPU temperature: %1 °C</source>
+        <translation>Güncel CPU sıcaklığı: %1 °C</translation>
+    </message>
+</context>
     <context>
         <name>ReportPreview</name>
         <message>
@@ -9404,6 +9423,66 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
     <context>
         <name>NvidiaTab</name>
         <message>
+            <source>Validate Draft</source>
+            <translation>Taslağı Doğrula</translation>
+        </message>
+        <message>
+            <source>Read-only live validation using the same V/F preflight as Apply. May wake the GPU; never writes settings or requests administrator privileges.</source>
+            <translation>Uygula ile aynı V/F ön denetimini kullanan salt okunur canlı doğrulama. GPU’yu uyandırabilir; ayar yazmaz veya yönetici yetkisi istemez.</translation>
+        </message>
+        <message>
+            <source>Live validation is disabled in fixture or training mode.</source>
+            <translation>Canlı doğrulama, test verisi veya eğitim modunda devre dışıdır.</translation>
+        </message>
+        <message>
+            <source>Read a valid curve before validating edits.</source>
+            <translation>Düzenlemeleri doğrulamadan önce geçerli bir eğri okuyun.</translation>
+        </message>
+        <message>
+            <source>Validation discarded: the curve or draft changed.</source>
+            <translation>Doğrulama sonucu atıldı: eğri veya taslak değişti.</translation>
+        </message>
+        <message>
+            <source>Draft validation unavailable or rejected: %1</source>
+            <translation>Taslak doğrulaması kullanılamıyor veya reddedildi: %1</translation>
+        </message>
+        <message>
+            <source>Invalid validation response; no result accepted.</source>
+            <translation>Geçersiz doğrulama yanıtı; sonuç kabul edilmedi.</translation>
+        </message>
+        <message>
+            <source>Read-only preflight passed for %1 points. Not a stability or Apply guarantee.</source>
+            <translation>%1 nokta için salt okunur ön denetim geçti. Kararlılık veya uygulama garantisi değildir.</translation>
+        </message>
+        <message>
+            <source>V/F Draft Validation</source>
+            <translation>V/F Taslak Doğrulaması</translation>
+        </message>
+        <message>
+            <source>Frozen live preflight snapshot. Apply repeats all checks; projected values are not hardware readback or proof of stability.</source>
+            <translation>Sabitlenmiş canlı ön denetim görüntüsü. Uygula bütün kontrolleri yineler; öngörülen değerler donanımdan geri okuma veya kararlılık kanıtı değildir.</translation>
+        </message>
+        <message>
+            <source>Point</source>
+            <translation>Nokta</translation>
+        </message>
+        <message>
+            <source>Voltage (µV)</source>
+            <translation>Voltaj (µV)</translation>
+        </message>
+        <message>
+            <source>Base (kHz)</source>
+            <translation>Temel (kHz)</translation>
+        </message>
+        <message>
+            <source>Requested Delta (kHz)</source>
+            <translation>İstenen Ofset (kHz)</translation>
+        </message>
+        <message>
+            <source>Projected (kHz)</source>
+            <translation>Öngörülen (kHz)</translation>
+        </message>
+        <message>
             <source>Curve identity or voltage layout changed; requested offsets cannot be compared.</source>
             <translation>Eğri kimliği veya voltaj düzeni değişti; istenen ofsetler karşılaştırılamıyor.</translation>
         </message>
@@ -9675,9 +9754,98 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
             <source>Draft offset (MHz)</source>
             <translation>Taslak ofseti (MHz)</translation>
         </message>
-    </context>
+        <message>
+        <source>V/F History</source>
+        <translation>V/F Geçmişi</translation>
+    </message>
+    <message>
+        <source>V/F Transaction History</source>
+        <translation>V/F İşlem Geçmişi</translation>
+    </message>
+    <message>
+        <source>Recorded helper replies and frozen readback. A point match does not verify clock locks or stability. This history cannot restore hardware.</source>
+        <translation>Kaydedilen helper yanıtları ve sabit geri okuma. Nokta eşleşmesi saat kilitlerini veya kararlılığı doğrulamaz. Bu geçmiş donanımı geri yükleyemez.</translation>
+    </message>
+    <message>
+        <source>V/F history is unreadable or invalid; it has not been overwritten.</source>
+        <translation>V/F geçmişi okunamıyor veya geçersiz; üzerine yazılmadı.</translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>Zaman</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>İşlem</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>Kanıt</translation>
+    </message>
+    <message>
+        <source>GPU UUID</source>
+        <translation>GPU UUID</translation>
+    </message>
+    <message>
+        <source>V/F transaction journal unavailable; existing history preserved.</source>
+        <translation>V/F işlem günlüğü kullanılamıyor; mevcut geçmiş korundu.</translation>
+    </message>
+    <message>
+        <source>Could not record V/F reply; pending evidence preserved.</source>
+        <translation>V/F yanıtı kaydedilemedi; bekleyen kanıt korundu.</translation>
+    </message>
+    <message>
+        <source>GPU identity changed; read the curve again before applying edits.</source>
+        <translation>GPU kimliği değişti; düzenlemeleri uygulamadan önce eğriyi tekrar okuyun.</translation>
+    </message>
+    <message>
+        <source>GPU UUID identity unavailable; edited Apply and Validate are disabled.</source>
+        <translation>GPU UUID kimliği kullanılamıyor; düzenlenen eğriyi uygulama ve doğrulama devre dışı.</translation>
+    </message>
+    <message>
+        <source>Trial over: requesting GPU curve reset.</source>
+        <translation>Deneme bitti: GPU eğrisinin sıfırlanması isteniyor.</translation>
+    </message>
+    <message>
+        <source>Helper reported Apply completed; checking fresh readback.</source>
+        <translation>Helper uygulamanın tamamlandığını bildirdi; yeni geri okuma denetleniyor.</translation>
+    </message>
+</context>
     <context>
         <name>OptimizeTab</name>
+        <message><source>Historical paired benchmark evidence. Gains are objective utility differences, not FPS. The decision interval can differ from the nominal 95% interval for sequential runs. No benchmark or tuning is started.</source><translation>Geçmiş eşleştirilmiş kıyaslama kanıtı. Kazançlar hedef fayda farklarıdır, FPS değildir. Ardışık çalışmalarda karar aralığı nominal yüzde 95 aralıktan farklı olabilir. Kıyaslama veya ayarlama başlatılmaz.</translation></message>
+        <message><source>Filter preset, goal, phase or context</source><translation>Ön ayarı, hedefi, aşamayı veya bağlamı filtrele</translation></message>
+        <message><source>Complete blocks</source><translation>Tam bloklar</translation></message>
+        <message><source>Mean gain</source><translation>Ortalama kazanç</translation></message>
+        <message><source>Standard error</source><translation>Standart hata</translation></message>
+        <message><source>Decision interval</source><translation>Karar aralığı</translation></message>
+        <message><source>Historical result</source><translation>Geçmiş sonuç</translation></message>
+        <message><source>Reported pass (historical)</source><translation>Bildirilen başarılı sonuç (geçmiş)</translation></message>
+        <message><source>Not passed</source><translation>Başarılı değil</translation></message>
+        <message><source>Incomplete measurement</source><translation>Eksik ölçüm</translation></message>
+        <message><source>Inconsistent record</source><translation>Tutarsız kayıt</translation></message>
+        <message><source>Unknown evidence</source><translation>Bilinmeyen kanıt</translation></message>
+        <message><source>Recorded context: %1</source><translation>Kaydedilen bağlam: %1</translation></message>
+        <message><source>Nominal 95% interval: %1</source><translation>Nominal yüzde 95 aralık: %1</translation></message>
+        <message><source>Skipped settings: %1</source><translation>Atlanan ayarlar: %1</translation></message>
+        <message><source>OOM counts: %1</source><translation>Bellek yetersizliği (OOM) sayıları: %1</translation></message>
+        <message><source>Early termination: %1</source><translation>Erken sonlandırma: %1</translation></message>
+        <message><source>Measured objective gain / SE:</source><translation>Ölçülen hedef kazancı / standart hata:</translation></message>
+        <message><source>Verified settings (historical):</source><translation>Doğrulanan ayarlar (geçmiş):</translation></message>
+        <message><source>Measured ABBA History</source><translation>Ölçülen ABBA Geçmişi</translation></message>
+        <message><source>Imported game measurements are individual sessions. This signature does not retain enough context to establish controlled A/B pairs. No comparison or FPS improvement is inferred.</source><translation>İçe aktarılan oyun ölçümleri ayrı oturumlardır. Bu imza kontrollü A/B çiftleri kurmak için yeterli bağlamı saklamaz. Karşılaştırma veya FPS artışı çıkarımı yapılmaz.</translation></message>
+        <message><source>Filter game sessions</source><translation>Oyun oturumlarını filtrele</translation></message>
+        <message><source>Game</source><translation>Oyun</translation></message>
+        <message><source>Start</source><translation>Başlangıç</translation></message>
+        <message><source>Configuration</source><translation>Yapılandırma</translation></message>
+        <message><source>Median (ms)</source><translation>Medyan (ms)</translation></message>
+        <message><source>Tail (ms)</source><translation>Kuyruk (ms)</translation></message>
+        <message><source>Pacing (ms)</source><translation>Kare zamanlaması (ms)</translation></message>
+        <message><source>Frames</source><translation>Kareler</translation></message>
+        <message><source>Recorded reference configuration</source><translation>Kaydedilen referans yapılandırması</translation></message>
+        <message><source>Recorded changed configuration</source><translation>Kaydedilen değiştirilmiş yapılandırma</translation></message>
+        <message><source>Measured Game Sessions</source><translation>Ölçülen Oyun Oturumları</translation></message>
+        <message><source>Preset</source><translation>Ön ayar</translation></message>
         <message>
             <source>A selected setting is no longer available or overlaps another selected setting.</source>
             <translation>Seçilen ayar artık kullanılamıyor veya başka bir seçili ayarla örtüşüyor.</translation>
@@ -11253,6 +11421,192 @@ These changes can cost stability, heat or idle power:
             <source>Apply Preview</source>
             <translation>Uygulama Önizlemesi</translation>
         </message>
+        <message>
+            <source>Optimization Transaction Journal</source>
+            <translation>Optimizasyon İşlem Günlüğü</translation>
+        </message>
+        <message>
+            <source>Transaction Journal…</source>
+            <translation>İşlem Günlüğü…</translation>
+        </message>
+        <message>
+            <source>Reported failure</source>
+            <translation>Bildirilen hata</translation>
+        </message>
+        <message>
+            <source>Partial result</source>
+            <translation>Kısmi sonuç</translation>
+        </message>
+        <message>
+            <source>Skipped</source>
+            <translation>Atlandı</translation>
+        </message>
+        <message>
+            <source>Not fully verified</source>
+            <translation>Tam doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Readback mismatch</source>
+            <translation>Geri okuma uyuşmazlığı</translation>
+        </message>
+        <message>
+            <source>Checked values matched at helper readback</source>
+            <translation>Kontrol edilen değerler yardımcı geri okumasıyla eşleşti</translation>
+        </message>
+        <message>
+            <source>Local historical evidence only. Pending records have no recorded reply. A helper readback is not proof of the current state. Restore summaries are not per-key verification. Up to 100 transactions are retained (4 MiB limit).</source>
+            <translation>Yalnızca yerel geçmiş kanıtı. Bekleyen kayıtların yanıtı kaydedilmemiştir. Yardımcı geri okuması güncel durumun kanıtı değildir. Geri yükleme özetleri anahtar bazında doğrulama değildir. En fazla 100 işlem saklanır (4 MiB sınırı).</translation>
+        </message>
+        <message>
+            <source>The journal is unreadable or invalid; it has not been overwritten.</source>
+            <translation>Günlük okunamıyor veya geçersiz; üzerine yazılmadı.</translation>
+        </message>
+        <message>
+            <source>Filter transaction ID, operation, setting or result…</source>
+            <translation>İşlem kimliği, işlem, ayar veya sonuca göre filtrele…</translation>
+        </message>
+        <message>
+            <source>Transaction</source>
+            <translation>İşlem</translation>
+        </message>
+        <message>
+            <source>Operation</source>
+            <translation>İşlem türü</translation>
+        </message>
+        <message>
+            <source>Requested</source>
+            <translation>İstenen</translation>
+        </message>
+        <message>
+            <source>Result</source>
+            <translation>Sonuç</translation>
+        </message>
+        <message>
+            <source>Helper reply</source>
+            <translation>Yardımcı yanıtı</translation>
+        </message>
+        <message>
+            <source>Boot ID</source>
+            <translation>Önyükleme kimliği</translation>
+        </message>
+        <message>
+            <source>Helper receipt</source>
+            <translation>Yardımcı işlem kaydı</translation>
+        </message>
+        <message>
+            <source>Aggregate receipt; per-key result unknown</source>
+            <translation>Toplu işlem kaydı; anahtar bazında sonuç bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Pending / interrupted</source>
+            <translation>Bekliyor / kesintiye uğradı</translation>
+        </message>
+        <message>
+            <source>No per-key receipt</source>
+            <translation>Anahtar bazında işlem kaydı yok</translation>
+        </message>
+        <message>
+            <source>Could not record this transaction. The existing journal was preserved.</source>
+            <translation>Bu işlem kaydedilemedi. Mevcut günlük korundu.</translation>
+        </message>
+        <message>
+            <source>Could not record the reply. The earlier pending record was preserved.</source>
+            <translation>Yanıt kaydedilemedi. Önceki bekleyen kayıt korundu.</translation>
+        </message>
+        <message>
+            <source>Restore reported: %1 (not independently verified)</source>
+            <translation>Bildirilen geri yükleme: %1 (bağımsız doğrulanmadı)</translation>
+        </message>
+        <message>
+            <source>Restore not fully confirmed.</source>
+            <translation>Geri yükleme tam doğrulanmadı.</translation>
+        </message>
+        <message>
+            <source>Restore reported %1 file(s); deferred: %2.</source>
+            <translation>Geri yükleme bildirimi: %1 dosya; ertelenen: %2.</translation>
+        </message>
+        <message>
+            <source> · not fully verified</source>
+            <translation> · tam doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Optimization operation</source>
+            <translation>Optimizasyon işlemi</translation>
+        </message>
+        <message>
+            <source>An optimization helper is still running. Wait for its process to exit before retrying.</source>
+            <translation>Bir optimizasyon yardımcısı hâlâ çalışıyor. Yeniden denemeden önce sürecin sonlanmasını bekleyin.</translation>
+        </message>
+        <message>
+            <source> · transaction journal unavailable</source>
+            <translation> · işlem günlüğü kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Boot defaults: %1 file(s) written. Scenes are paused. %2</source>
+            <translation>Önyükleme varsayılanları: %1 dosya yazıldı. Sahneler duraklatıldı. %2</translation>
+        </message>
+            <message><source>%1 of %2 setting keys shown.</source><translation>%2 ayar anahtarından %1 tanesi gösteriliyor.</translation></message>
+        <message><source>A configuration / baseline</source><translation>A yapılandırması / referans</translation></message>
+        <message><source>Accepted samples</source><translation>Kabul edilen örnekler</translation></message>
+        <message><source>Autotune Run History</source><translation>Otomatik Ayar Çalıştırma Geçmişi</translation></message>
+        <message><source>Autotune Run History…</source><translation>Otomatik Ayar Çalıştırma Geçmişi…</translation></message>
+        <message><source>Autotune response exceeds the 16 MiB limit.</source><translation>Otomatik ayar yanıtı 16 MiB sınırını aşıyor.</translation></message>
+        <message><source>Available</source><translation>Kullanılabilir</translation></message>
+        <message><source>B configuration / candidate</source><translation>B yapılandırması / aday</translation></message>
+        <message><source>B vs A (%)</source><translation>B / A farkı (%)</translation></message>
+        <message><source>Boot / Preset</source><translation>Açılış / Ön Ayar</translation></message>
+        <message><source>Both missing</source><translation>İkisi de eksik</translation></message>
+        <message><source>Candidate B</source><translation>Aday B</translation></message>
+        <message><source>Checked draft</source><translation>İşaretli taslak</translation></message>
+        <message><source>Checked draft only</source><translation>Yalnızca işaretli taslak</translation></message>
+        <message><source>Columns</source><translation>Sütunlar</translation></message>
+        <message><source>Compare Frametime Logs</source><translation>Kare Süresi Kayıtlarını Karşılaştır</translation></message>
+        <message><source>Compare Frametime Logs…</source><translation>Kare Süresi Kayıtlarını Karşılaştır…</translation></message>
+        <message><source>Compare Solver Reports…</source><translation>Çözücü Raporlarını Karşılaştır…</translation></message>
+        <message><source>Describe common game, workload, resolution, kernel and power context</source><translation>Ortak oyunu, iş yükünü, çözünürlüğü, çekirdeği ve güç koşullarını açıklayın</translation></message>
+        <message><source>Descriptive differences only. Negative frametime and positive FPS changes indicate lower observed frame times. Repeated controlled runs are required to assess variability or causation. No data has been written to calibration.</source><translation>Yalnızca gözlenen farklar. Negatif kare süresi ve pozitif FPS değişimleri, daha düşük gözlenen kare sürelerini gösterir. Değişkenliği veya nedenselliği değerlendirmek için tekrarlanan kontrollü ölçümler gerekir. Kalibrasyona veri yazılmadı.</translation></message>
+        <message><source>Draft changed; result read-only</source><translation>Taslak değişti; sonuç salt okunur</translation></message>
+        <message><source>Elapsed (ms)</source><translation>Geçen süre (ms)</translation></message>
+        <message><source>Explore only</source><translation>Yalnızca keşif</translation></message>
+        <message><source>FPS (1000 / mean ms)</source><translation>FPS (1000 / ortalama ms)</translation></message>
+        <message><source>Filter keys or values…</source><translation>Anahtarları veya değerleri filtrele…</translation></message>
+        <message><source>Filter run ID, goal, mode or outcome…</source><translation>Çalıştırma kimliğini, hedefi, modu veya sonucu filtrele…</translation></message>
+        <message><source>Filter session, phase, kernel or power source…</source><translation>Oturumu, aşamayı, çekirdeği veya güç kaynağını filtrele…</translation></message>
+        <message><source>Frozen last helper snapshot, saved boot configuration and checked draft only. Missing values do not mean reset; stale live values cannot prove a match. This view cannot apply or merge settings.</source><translation>Son yardımcı program görüntüsü, kayıtlı açılış yapılandırması ve işaretli taslak sabitlenmiştir. Eksik değerler sıfırlama anlamına gelmez; eski canlı değerler eşleşmeyi kanıtlamaz. Bu görünüm ayarları uygulamaz veya birleştirmez.</translation></message>
+        <message><source>Hide verified equal rows</source><translation>Eşleşmesi doğrulanmış satırları gizle</translation></message>
+        <message><source>I confirm the recorded conditions are comparable except for the declared tuning change.</source><translation>Beyan edilen ayar değişikliği dışında kayıt koşullarının karşılaştırılabilir olduğunu onaylıyorum.</translation></message>
+        <message><source>Invalid value</source><translation>Geçersiz değer</translation></message>
+        <message><source>Left missing</source><translation>Sol değer eksik</translation></message>
+        <message><source>Live / Boot</source><translation>Canlı / Açılış</translation></message>
+        <message><source>Live / Boot / Preset Diff</source><translation>Canlı / Açılış / Ön Ayar Farkları</translation></message>
+        <message><source>Live / Boot / Preset Diff…</source><translation>Canlı / Açılış / Ön Ayar Farkları…</translation></message>
+        <message><source>Live / Preset</source><translation>Canlı / Ön Ayar</translation></message>
+        <message><source>Local solver reports and staging outcomes, not applied settings or measured A/B results. Pending means no terminal response was recorded. Up to 100 runs / 4 MiB are retained.</source><translation>Yerel çözücü raporları ve taslağa aktarma sonuçlarıdır; uygulanan ayarlar veya ölçülmüş A/B sonuçları değildir. Beklemede durumu, son yanıtın kaydedilmediği anlamına gelir. En fazla 100 çalıştırma / 4 MiB saklanır.</translation></message>
+        <message><source>Mean frametime (ms)</source><translation>Ortalama kare süresi (ms)</translation></message>
+        <message><source>Metric</source><translation>Ölçüt</translation></message>
+        <message><source>Mode</source><translation>Mod</translation></message>
+        <message><source>No log selected</source><translation>Kayıt seçilmedi</translation></message>
+        <message><source>No paired delta. Two distinct logs, at least 300 valid samples each, no more than 5% rejected samples, distinct configuration labels and a confirmed common context are required.</source><translation>Eşleştirilmiş fark yok. İki farklı kayıt, her birinde en az 300 geçerli örnek, en fazla yüzde 5 reddedilen örnek, farklı yapılandırma etiketleri ve onaylanmış ortak koşullar gereklidir.</translation></message>
+        <message><source>Not applicable</source><translation>Uygulanamaz</translation></message>
+        <message><source>Not checked</source><translation>İşaretlenmemiş</translation></message>
+        <message><source>Not specified</source><translation>Belirtilmemiş</translation></message>
+        <message><source>Outcome</source><translation>Sonuç</translation></message>
+        <message><source>Output limit exceeded</source><translation>Çıktı sınırı aşıldı</translation></message>
+        <message><source>P50 (ms)</source><translation>P50 (ms)</translation></message>
+        <message><source>P95 (ms)</source><translation>P95 (ms)</translation></message>
+        <message><source>P99 (ms)</source><translation>P99 (ms)</translation></message>
+        <message><source>Reference A</source><translation>Referans A</translation></message>
+        <message><source>Rejected samples</source><translation>Reddedilen örnekler</translation></message>
+        <message><source>Reset columns</source><translation>Sütunları sıfırla</translation></message>
+        <message><source>Right missing</source><translation>Sağ değer eksik</translation></message>
+        <message><source>Run ID</source><translation>Çalıştırma kimliği</translation></message>
+        <message><source>Run history could not be saved.</source><translation>Çalıştırma geçmişi kaydedilemedi.</translation></message>
+        <message><source>Scope / Coverage</source><translation>Kapsam / Kapsama</translation></message>
+        <message><source>Select Candidate B…</source><translation>Aday B’yi Seç…</translation></message>
+        <message><source>Select Reference A…</source><translation>Referans A’yı Seç…</translation></message>
+        <message><source>Select measured A and B logs from the same game, workload, resolution, graphics settings, kernel, firmware and power context. The tuning configuration may differ. This is a user-declared comparison, not a controlled experiment or model input.</source><translation>Aynı oyun, iş yükü, çözünürlük, grafik ayarları, çekirdek, firmware ve güç koşullarında ölçülmüş A ve B kayıtlarını seçin. Optimizasyon yapılandırması farklı olabilir. Bu, kullanıcı beyanına dayanan bir karşılaştırmadır; kontrollü deney veya model girdisi değildir.</translation></message>
+        <message><source>Selected preset</source><translation>Seçili ön ayar</translation></message>
+        <message><source>Staged in editor</source><translation>Editörde taslağa aktarıldı</translation></message>
     </context>
     <context>
         <name>RyzenTab</name>
@@ -14145,6 +14499,34 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
         <source>The helper reported success but exited with code %1; its result is unknown.</source>
         <translation>Yardımcı program başarı bildirdi ancak %1 koduyla çıktı; sonucu bilinmiyor.</translation>
     </message>
+        <message>
+            <source>Running</source>
+            <translation>Çalışıyor</translation>
+        </message>
+        <message>
+            <source>Timed out; process still tracked</source>
+            <translation>Zaman aşımı; süreç hâlâ izleniyor</translation>
+        </message>
+        <message>
+            <source>Owner closed; process still tracked</source>
+            <translation>Sahip kapandı; süreç hâlâ izleniyor</translation>
+        </message>
+        <message>
+            <source>Exited; outcome unknown</source>
+            <translation>Sonlandı; sonuç bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Exited; helper reported OK (not independent verification)</source>
+            <translation>Sonlandı; yardımcı başarılı bildirdi (bağımsız doğrulama değil)</translation>
+        </message>
+        <message>
+            <source>Exited; helper reported failure</source>
+            <translation>Sonlandı; yardımcı hata bildirdi</translation>
+        </message>
+        <message>
+            <source>Failed to start</source>
+            <translation>Başlatılamadı</translation>
+        </message>
     </context>
     <context>
         <name>BarChart</name>
@@ -17715,6 +18097,30 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
         <message>
             <source>Show</source>
             <translation>Göster</translation>
+        </message>
+        <message>
+            <source>Checking CPU stress tool capabilities…</source>
+            <translation>CPU stres aracı yetenekleri kontrol ediliyor…</translation>
+        </message>
+        <message>
+            <source>CPU stress tool capability check cancelled.</source>
+            <translation>CPU stres aracı yetenek kontrolü iptal edildi.</translation>
+        </message>
+        <message>
+            <source>The CPU stress tool did not return valid power-load capabilities. Check that it matches this Centurion version.</source>
+            <translation>CPU stres aracı geçerli güç yükü yetenekleri döndürmedi. Bu Centurion sürümüyle uyumlu olduğunu kontrol edin.</translation>
+        </message>
+        <message>
+            <source>Waiting for recovery to finish; the journal is still protected.</source>
+            <translation>Kurtarmanın tamamlanması bekleniyor; günlük hâlâ korunuyor.</translation>
+        </message>
+        <message>
+            <source>A CPU curve helper is still running. Wait for it to exit before starting or resuming.</source>
+            <translation>Bir CPU eğrisi yardımcısı hâlâ çalışıyor. Başlatmadan veya sürdürmeden önce sonlanmasını bekleyin.</translation>
+        </message>
+        <message>
+            <source>CPU curve or game tuning ownership changed before launch. No trial was started.</source>
+            <translation>Başlatmadan önce CPU eğrisi veya oyun ayarı sahipliği değişti. Hiçbir deneme başlatılmadı.</translation>
         </message>
     </context>
     <context>
@@ -25168,5 +25574,12 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>No recorded offset differences.</source>
             <translation>Kaydedilen ofset farkı yok.</translation>
         </message>
+    </context>
+    <context>
+        <name>TrialBar</name>
+        <message><source>Testing — back to stock in %1 s unless you keep it.</source><translation>Test ediliyor — korumazsanız %1 sn içinde stok değerlere dönüş istenecek.</translation></message>
+        <message><source>Kept.</source><translation>Korundu.</translation></message>
+        <message><source>Revert requested; see the curve panel for the result.</source><translation>Geri dönüş istendi; sonuç için eğri paneline bakın.</translation></message>
+        <message><source>Revert unavailable: no reset callback.</source><translation>Geri dönüş kullanılamıyor: sıfırlama işlevi yok.</translation></message>
     </context>
 </TS>

@@ -135,8 +135,8 @@ void Zone4Tab::paintZone(int i) {
     // Legible caption on any colour.
     const QColor fg = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000 > 140 ? QColor(Qt::black) : QColor(Qt::white);
     zone_[i]->setText(c.name(QColor::HexRgb).toUpper());
-    zone_[i]->setStyleSheet(QStringLiteral("QPushButton { background:%1; color:%2; border:1px solid %3; border-radius:6px; }")
-                                .arg(c.name(QColor::HexRgb), fg.name(QColor::HexRgb), QLatin1String(theme::BG3)));
+    theme::setLiveSheet(zone_[i], [c, fg] { return QStringLiteral("QPushButton { background:%1; color:%2; border:1px solid %3; border-radius:6px; }")
+                                .arg(c.name(QColor::HexRgb), fg.name(QColor::HexRgb), QLatin1String(theme::BG3)); });
 }
 
 void Zone4Tab::syncEnabled() {

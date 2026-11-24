@@ -11,31 +11,47 @@ fn projected(p: &VfPoint, deltas: &PointDeltas) -> i64 {
     p.base_freq_khz() + deltas.get(&(p.index as i64)).copied().unwrap_or(i64::from(p.delta_khz))
 }
 
+/// A diagnostic points only at indices actually involved in the failing check.
+#[derive(Debug)]
+pub struct GuardIssue {
+    pub message: String,
+    pub indices: Vec<usize>,
+}
+impl GuardIssue {
+    fn at(message: String, indices: Vec<usize>) -> Self { Self { message, indices } }
+}
+impl From<&str> for GuardIssue {
+    fn from(message: &str) -> Self { Self::at(message.into(), Vec::new()) }
+}
+
 /// Check that a programmed curve doesn't fold back or contain an absurd point.
 /// Only adjacent points with similar voltage are compared. The stock curve's
 /// own shape is the driver's data (Blackwell has 150-200 MHz jumps at one
 /// voltage), so only a drop the *offsets* introduce is rejected; a one-point
 /// spike shows up as such a drop on its far side.
 pub fn validate_curve_shape(state: &CurveState, deltas: &PointDeltas) -> Result<(), String> {
+    validate_curve_shape_detailed(state, deltas).map_err(|e| e.message)
+}
+pub fn validate_curve_shape_detailed(state: &CurveState, deltas: &PointDeltas) -> Result<(), GuardIssue> {
     let mut previous: Option<&VfPoint> = None;
     for p in state.points.iter().filter(|p| p.domain == Domain::Gpu && p.freq_khz != 0) {
         let base = p.base_freq_khz();
         let target = projected(p, deltas);
         if !(1_000..=6_000_000).contains(&base) || !(1_000..=6_000_000).contains(&target) {
-            return Err(format!("point {}: impossible base ({base}) or projected ({target}) kHz", p.index));
+            return Err(GuardIssue::at(format!("point {}: impossible base ({base}) or projected ({target}) kHz", p.index), vec![p.index]));
         }
         if !(300_000..=1_500_000).contains(&p.volt_uv) {
-            return Err(format!("point {}: invalid voltage {} uV", p.index, p.volt_uv));
+            return Err(GuardIssue::at(format!("point {}: invalid voltage {} uV", p.index, p.volt_uv), vec![p.index]));
         }
         if let Some(q) = previous {
             if p.volt_uv < q.volt_uv {
-                return Err(format!("voltage reversal at points {} and {}", q.index, p.index));
+                return Err(GuardIssue::at(format!("voltage reversal at points {} and {}", q.index, p.index), vec![q.index, p.index]));
             }
             if p.volt_uv - q.volt_uv <= 25_000 {
                 let step = target - projected(q, deltas);
                 let stock_step = base - q.base_freq_khz();
                 if step < -MAX_LOCAL_DOWN_KHZ && step < stock_step - MAX_LOCAL_DOWN_KHZ {
-                    return Err(format!("points {}→{}: offsets fold the curve back by {} kHz", q.index, p.index, -step));
+                    return Err(GuardIssue::at(format!("points {}→{}: offsets fold the curve back by {} kHz", q.index, p.index, -step), vec![q.index, p.index]));
                 }
             }
         }
@@ -50,38 +66,43 @@ pub fn validate_curve_shape(state: &CurveState, deltas: &PointDeltas) -> Result<
 pub fn verify_flatten_preflight(
     initial: &CurveState, confirmation: &CurveState, from: i64, mhz: i64, deltas: &PointDeltas,
 ) -> Result<(), String> {
+    verify_flatten_preflight_detailed(initial, confirmation, from, mhz, deltas).map_err(|e| e.message)
+}
+pub fn verify_flatten_preflight_detailed(
+    initial: &CurveState, confirmation: &CurveState, from: i64, mhz: i64, deltas: &PointDeltas,
+) -> Result<(), GuardIssue> {
     let target_khz = mhz.checked_mul(1000).ok_or("target frequency overflow")?;
     if initial.points.len() != confirmation.points.len() {
         return Err("GPU point count changed between reads".into());
     }
     for (p, q) in initial.points.iter().zip(&confirmation.points) {
         if p.index != q.index || p.domain != q.domain || p.volt_uv != q.volt_uv {
-            return Err(format!("point {}: domain/index/voltage changed between driver reads", p.index));
+            return Err(GuardIssue::at(format!("point {}: domain/index/voltage changed between driver reads", p.index), vec![p.index]));
         }
         if p.delta_khz != q.delta_khz {
-            return Err(format!("point {}: prior CT offset changed during preflight", p.index));
+            return Err(GuardIssue::at(format!("point {}: prior CT offset changed during preflight", p.index), vec![p.index]));
         }
         if p.domain == Domain::Gpu && p.index as i64 >= from && p.freq_khz != 0 {
             let base = p.base_freq_khz();
             let fresh = q.base_freq_khz();
             if (base - fresh).abs() > MAX_BASE_DRIFT_KHZ {
-                return Err(format!("point {}: base drifted {} kHz across reads", p.index, (base - fresh).abs()));
+                return Err(GuardIssue::at(format!("point {}: base drifted {} kHz across reads", p.index, (base - fresh).abs()), vec![p.index]));
             }
             let delta = deltas.get(&(p.index as i64))
-                .ok_or_else(|| format!("point {}: flatten delta missing", p.index))?;
+                .ok_or_else(|| GuardIssue::at(format!("point {}: flatten delta missing", p.index), vec![p.index]))?;
             let projected_khz = base.checked_add(*delta).ok_or("frequency overflow")?;
             if projected_khz != target_khz {
-                return Err(format!("point {}: flatten projected {projected_khz}, expected {target_khz} kHz", p.index));
+                return Err(GuardIssue::at(format!("point {}: flatten projected {projected_khz}, expected {target_khz} kHz", p.index), vec![p.index]));
             }
         }
     }
-    validate_curve_shape(initial, deltas)?;
+    validate_curve_shape_detailed(initial, deltas)?;
 
     // Check the point immediately before the plateau; a steep rising anchor
     // above the flat region would create a fold, regardless of CT validity.
     if let Some(anchor) = initial.points.iter().rfind(|p| p.domain == Domain::Gpu && (p.index as i64) < from && p.freq_khz > 0) {
         if projected(anchor, deltas) > target_khz + MAX_ANCHOR_OVERSHOOT_KHZ {
-            return Err(format!("point {}: anchor exceeds plateau by more than 30 MHz", anchor.index));
+            return Err(GuardIssue::at(format!("point {}: anchor exceeds plateau by more than 30 MHz", anchor.index), vec![anchor.index]));
         }
     }
     Ok(())
@@ -148,6 +169,7 @@ mod tests {
         let mut d = PointDeltas::new();
         d.extend([(29, 0), (30, -250_000), (31, 0)]); // fold: 30 drops below 29
         assert!(validate_curve_shape(&s, &d).is_err());
+        assert_eq!(validate_curve_shape_detailed(&s, &d).unwrap_err().indices, vec![29, 30]);
         d.extend([(29, 0), (30, 200_000), (31, 0)]);  // one-point spike
         assert!(validate_curve_shape(&s, &d).is_err());
     }

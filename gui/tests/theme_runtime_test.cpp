@@ -132,5 +132,33 @@ int main(int argc, char **argv) {
     CHECK(theme::applyLivePalette(app,QStringLiteral("oled-black")) && deletedCalls==1);
     CHECK(!theme::applyLivePalette(app,QStringLiteral("not-a-theme")) && before==settingsBytes());
     CHECK(!theme::restartRequested());
+    // Normal-shell preference APIs use the same snapshot as the visible palette.
+    QWidget bound;
+    int oldBinding=0, newBinding=0;
+    theme::setLiveSheet(&bound,[&]{++oldBinding; return QStringLiteral("color:%1").arg(theme::WARN);});
+    theme::setLiveSheet(&bound,[&]{++newBinding; return QStringLiteral("color:%1").arg(theme::OK);});
+    const auto children=bound.children().size();
+    draft.setText(QStringLiteral("draft")); draft.end(false); draft.insert(QStringLiteral(" edit"));
+    CHECK(draft.isUndoAvailable());
+    for(int i=0;i<20;++i) {
+        const auto id=i%2?QStringLiteral("graphite"):QStringLiteral("pastel-mint-cream");
+        CHECK(theme::applyLivePreference(app,id));
+        CHECK(theme::currentTheme()==id);
+        QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui"));
+        CHECK(s.value(QStringLiteral("theme")).toString()==id);
+        CHECK(bound.styleSheet()==QStringLiteral("color:%1").arg(theme::OK));
+        CHECK(bound.children().size()==children && draft.text()==QStringLiteral("draft edit"));
+    }
+    CHECK(oldBinding==1 && newBinding==21);
+    draft.undo(); CHECK(draft.text()==QStringLiteral("draft"));
+    CHECK(theme::applyLiveCustomPreference(app,custom));
+    CHECK(theme::currentTheme()==QStringLiteral("custom"));
+    CHECK(theme::paletteColors(QStringLiteral("custom"))==custom);
+    const auto committed=settingsBytes(); const auto committedRevision=theme::revision();
+    CHECK(!theme::applyLiveCustomPreference(app,malformed));
+    CHECK(!theme::applyLivePreference(app,QStringLiteral("not-a-theme")));
+    CHECK(settingsBytes()==committed && theme::revision()==committedRevision);
+    CHECK(theme::currentTheme()==QStringLiteral("custom") && QByteArray(theme::FG)==custom[8].toLatin1());
+    CHECK(!theme::restartRequested());
     return 0;
 }

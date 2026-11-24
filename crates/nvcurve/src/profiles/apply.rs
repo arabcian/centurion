@@ -203,13 +203,23 @@ fn revert_profile(g: Gpu, idx: u32, previous: &vfcurve::PointDeltas,
     else { format!("rollback INCOMPLETE: {}", errors.join("; ")) }
 }
 
-/// Single attempt. Caller must hold `ops::gpu_write_lock` across the call.
-/// Validation failures never write to the GPU. A write/readback failure
-/// triggers one best-effort rollback; repeated retries on an Xid GPU are unsafe.
-pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<ApplyOutcome, String> {
-    let path = profile_path(&cfg.profile_dir, name).ok_or("invalid profile name")?;
-    let p = load_profile(&path)?;
-    checked_limits(gpu_index as u32, &p)?;
+/// Read-only preflight shared by validation and actual apply. The caller of
+/// apply must still hold the GPU write lock; a preview is only a snapshot.
+struct PreparedProfile {
+    gpu: Gpu,
+    gpu_name: String,
+    raw: crate::nvapi::Buf,
+    state: CurveState,
+    previous_offsets: Vec<i32>,
+    deltas: vfcurve::PointDeltas,
+    old_mem: Option<i32>,
+    old_power: Option<u32>,
+    warnings: Vec<String>,
+}
+
+fn preflight_profile(gpu_index: usize, p: &ProfileData, cfg: &Config,
+                     expected: Option<(&str, &serde_json::Value, &serde_json::Value)>, invalid_points: &mut Vec<usize>) -> Result<PreparedProfile, String> {
+    checked_limits(gpu_index as u32, p)?;
     let (g, gname) = gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?;
     let idx = gpu_index as u32;
     let mut out = ApplyOutcome::default();
@@ -220,10 +230,22 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
     if !stale.is_empty() {
         return Err(format!("nonzero memory offsets in other P-states ({}); reset them explicitly before applying", stale.join(", ")));
     }
+    if let Some((_, _, device)) = expected {
+        if &gpu::curve_device_identity(gpu_index,g,&gname)? != device { return Err("GPU device identity changed; read the curve again".into()); }
+    }
     let (state, raw) = vfcurve::read_curve_with_raw_ct(g, &gname)?;
+    if let Some((expected_gpu, expected_points, _)) = expected {
+        let points: Vec<_> = state.points.iter()
+            .filter(|pt| pt.domain == Domain::Gpu && (pt.freq_khz > 0 || pt.volt_uv > 0))
+            .map(|pt| serde_json::json!([pt.index, pt.volt_uv])).collect();
+        if expected_gpu.is_empty() || gname != expected_gpu || points.is_empty()
+            || expected_points.as_array() != Some(&points) {
+            return Err("GPU or voltage layout changed; read the curve again".into());
+        }
+    }
     let previous_offsets = vfcurve::parse_ct_entries(raw.bytes()).into_iter().map(|(d, _)| d).collect::<Vec<_>>();
     let mask = vfcurve::get_boost_mask(g)?;
-    let deltas = prepare_deltas(&p, &state, &mask, &previous_offsets, cfg.max_delta_khz, &mut out.warnings)?;
+    let deltas = prepare_deltas(p, &state, &mask, &previous_offsets, cfg.max_delta_khz, &mut out.warnings)?;
     if let (Some((_, mhz)), Some(cap)) = (p.flatten(), p.gpu_clock_cap_mhz) {
         let actual_cap = cap + p.gpu_clock_comp_mhz.unwrap_or(0);
         if actual_cap < mhz { return Err(format!("GPU cap {actual_cap} MHz is below flatten target {mhz} MHz")); }
@@ -232,15 +254,17 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
     if state.points.iter().all(|p| p.domain != Domain::Gpu) {
         return Err("no GPU V/F points available".into());
     }
-    flatten_guard::validate_curve_shape(&state, &deltas).map_err(|e| format!("V/F safety preflight: {e}"))?;
+    flatten_guard::validate_curve_shape_detailed(&state, &deltas).map_err(|e| {
+        invalid_points.extend(e.indices); format!("V/F safety preflight: {}", e.message)
+    })?;
     // No V3 base tuples (driver without them, or rejected by the V1 cross-check in read_curve).
     if p.flatten().is_some() && !state.points.iter().any(|p| p.base_khz.is_some()) {
         out.warnings.push("offset-free V3 tuples unavailable; flatten based on live frequency minus old offset (not a stability guarantee)".into());
     }
     let (confirmation, _raw2) = vfcurve::read_curve_with_raw_ct(g, &gname)?;
     if let Some((from, mhz)) = p.flatten() {
-        flatten_guard::verify_flatten_preflight(&state, &confirmation, from, mhz, &deltas)
-            .map_err(|e| format!("Flatten safety preflight: {e}"))?;
+        flatten_guard::verify_flatten_preflight_detailed(&state, &confirmation, from, mhz, &deltas)
+            .map_err(|e| { invalid_points.extend(e.indices); format!("Flatten safety preflight: {}", e.message) })?;
     } else {
         if confirmation.points.len() != state.points.len() || state.points.iter().zip(&confirmation.points)
             .any(|(p, q)| p.index != q.index || p.domain != q.domain || p.volt_uv != q.volt_uv || p.delta_khz != q.delta_khz) {
@@ -252,8 +276,6 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
     let latest = vfcurve::read_clock_offsets(g)?;
     if latest != previous_offsets { return Err("CT changed during preflight; refusing stale write".into()); }
     if old_deltas(&deltas, &previous_offsets).len() != deltas.len() { return Err("cannot capture complete CT rollback baseline".into()); }
-    let changes = changed_points(&deltas, &previous_offsets);
-    let previous = old_deltas(&changes, &previous_offsets);
     let old_mem = limits::get_clock_offsets(idx).mem_offset_mhz;
     let old_power = limits::get_power_limit(idx).power_limit_w;
     // All fallible range checks and reads above happen before any GPU write.
@@ -263,8 +285,55 @@ pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Apply
     if p.power_limit_w.is_some() && old_power.is_none() {
         return Err("cannot capture previous power limit for rollback".into());
     }
+    if let Some((_, _, device)) = expected {
+        if &gpu::curve_device_identity(gpu_index,g,&gname)? != device { return Err("GPU identity changed during preflight".into()); }
+    }
+    Ok(PreparedProfile { gpu: g, gpu_name: gname, raw, state, previous_offsets, deltas,
+        old_mem, old_power, warnings: out.warnings })
+}
+
+/// In-memory draft validation. No profile/snapshot/journal writes, no setters,
+/// no privilege escalation. Apply independently repeats this preflight.
+pub fn validate_profile_draft(gpu_index: usize, p: &ProfileData, cfg: &Config,
+                              expected_gpu: &str, expected_points: &serde_json::Value, expected_device: &serde_json::Value, invalid_points: &mut Vec<usize>)
+    -> Result<serde_json::Value, String>
+{
+    invalid_points.clear();
+    let prepared = preflight_profile(gpu_index, p, cfg, Some((expected_gpu, expected_points, expected_device)), invalid_points)?;
+    let projected: Vec<_> = prepared.state.points.iter().filter(|pt| pt.domain == Domain::Gpu)
+        .filter_map(|pt| prepared.deltas.get(&(pt.index as i64)).map(|d| serde_json::json!({
+            "index": pt.index, "volt_uV": pt.volt_uv, "base_kHz": pt.base_freq_khz(),
+            "requested_delta_kHz": d, "projected_kHz": pt.base_freq_khz() + *d,
+        }))).collect();
+    Ok(serde_json::json!({"gpu": prepared.gpu_name, "points": projected,
+        "warnings": prepared.warnings, "timestamp": prepared.state.timestamp, "device_identity": expected_device,
+        "scope": "read_only_preflight_not_stability_or_apply_guarantee"}))
+}
+
+/// Single attempt. Caller must hold `ops::gpu_write_lock` across the call.
+/// Validation failures never write to the GPU. A write/readback failure
+/// triggers one best-effort rollback; repeated retries on an Xid GPU are unsafe.
+pub fn apply_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<ApplyOutcome, String> {
+    apply_profile_checked(gpu_index,name,cfg,None)
+}
+/// Edited GUI curve carries the frozen device and voltage layout through the
+/// actual preflight, not only a preliminary check in the root helper.
+pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
+    expected: Option<(&str, &serde_json::Value, &serde_json::Value)>) -> Result<ApplyOutcome, String> {
+    let path = profile_path(&cfg.profile_dir, name).ok_or("invalid profile name")?;
+    let p = load_profile(&path)?;
+    let PreparedProfile { gpu: g, gpu_name: gname, raw, previous_offsets, deltas,
+        old_mem, old_power, warnings, .. } = preflight_profile(gpu_index, &p, cfg, expected, &mut Vec::new())?;
+    let idx = gpu_index as u32;
+    let mut out = ApplyOutcome { warnings, ..ApplyOutcome::default() };
+    let changes = changed_points(&deltas, &previous_offsets);
+    let previous = old_deltas(&changes, &previous_offsets);
     if cfg.auto_snapshot && snapshot::save(g, &gname, &cfg.snapshot_dir, cfg.max_snapshots, Some(raw.bytes())).is_none() {
         warn!("Auto-snapshot failed");
+    }
+    if let Some((_, _, device)) = expected {
+        if &gpu::curve_device_identity(gpu_index,g,&gname)? != device { return Err("GPU identity changed before write".into()); }
+        if vfcurve::read_clock_offsets(g)? != previous_offsets { return Err("CT changed before write".into()); }
     }
     let mut changed_locks = Changed::default();
     let (rc, reason) = if changes.is_empty() { (0, String::new()) }

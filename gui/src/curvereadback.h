@@ -3,13 +3,24 @@
 #include <QJsonObject>
 #include <QSet>
 #include <QVector>
+#include <QRegularExpression>
 #include <optional>
 #include <cmath>
 namespace curvereadback {
-struct Identity { QString gpu; QVector<int> indices; QVector<qint64> voltages; };
+inline bool verifiedDevice(const QJsonObject &d) {
+    static const QRegularExpression uuid(QStringLiteral("^GPU-[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$"));
+    static const QRegularExpression pci(QStringLiteral("^[0-9a-fA-F]{4,8}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7]$"));
+    return d.value("schema").toInt() == 1 && d.value("mapping").toString() == QStringLiteral("single_visible_physical_gpu") &&
+        uuid.match(d.value("uuid").toString()).hasMatch() && pci.match(d.value("pci").toString()).hasMatch() &&
+        !d.value("driver").toString().isEmpty() && !d.value("vbios").toString().isEmpty() &&
+        d.value("driver").toString().size() <= 128 && d.value("vbios").toString().size() <= 128;
+}
+struct Identity { QString gpu; QVector<int> indices; QVector<qint64> voltages; QJsonObject device; };
 inline std::optional<Identity> identity(const QJsonObject &o, const QString &request) {
     if (request.isEmpty() || o.value("request_id").toString() != request || !o.value("vf_curve").isArray()) return std::nullopt;
     Identity result; result.gpu = o.value("gpu").toString();
+    const auto device = o.value("device_identity").toObject();
+    if (verifiedDevice(device)) result.device = device;
     const auto pts = o.value("vf_curve").toArray();
     if (result.gpu.isEmpty() || pts.isEmpty() || pts.size() > 255) return std::nullopt;
     QSet<int> seen;

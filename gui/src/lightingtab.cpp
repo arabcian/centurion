@@ -354,7 +354,7 @@ void LightingTab::buildUi() {
 
     auto *bannerFrame = new QFrame;
     bannerFrame->setObjectName("lightBanner");
-    bannerFrame->setStyleSheet(theme::banner(theme::WARN, QStringLiteral("#lightBanner")));
+    theme::setLiveSheet(bannerFrame, [] { return theme::banner(theme::WARN, QStringLiteral("#lightBanner")); });
     auto *bannerRow = new QHBoxLayout(bannerFrame);
     bannerRow->setContentsMargins(10, 5, 6, 5);
     banner_ = new QLabel;
@@ -724,7 +724,7 @@ void LightingTab::setBusy(bool b) {
 }
 
 void LightingTab::showStatus(const QString &msg, const char *color) {
-    status_->setStyleSheet(color ? QStringLiteral("color: %1;").arg(color) : QString());
+    theme::setLiveSheet(status_, [color] { return color ? QStringLiteral("color: %1;").arg(color) : QString(); });
     status_->setText(msg);
     statusTimer_->start(color == theme::DANGER ? 15000 : 5000);
 }
@@ -1086,7 +1086,7 @@ void LightingTab::refreshBudget() {
     const bool fits = used <= REPORT_LEN && work_.size() <= MAX_EFFECTS;
     budget_->setText(QStringLiteral("%1 / %2 bytes · %3 effect(s)%4").arg(used).arg(REPORT_LEN).arg(work_.size())
                          .arg(dirty() ? QStringLiteral(" · not applied") : QString()));
-    theme::setSheet(budget_, fits ? QString() : QStringLiteral("color: %1;").arg(theme::DANGER));
+    theme::setLiveSheet(budget_, [fits] { return fits ? QString() : QStringLiteral("color: %1;").arg(theme::DANGER); });
     apply_->setEnabled(ready_ && !busy_ && dirty() && fits);
     revert_->setEnabled(ready_ && !busy_ && dirty());
     undo_->setEnabled(ready_ && !busy_ && editHistoryPos_ > 0);

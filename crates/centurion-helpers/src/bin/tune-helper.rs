@@ -593,6 +593,10 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         }
         // Best-effort rows already report what the kernel refused; PCIe hardwires the latency byte etc.
         if !tune::best_effort(t) {
+            r["readback_expected"] = json!(checks.len());
+            r["readback_matched"] = json!(0);
+            r["readback_missing"] = json!(0);
+            r["mismatch_count"] = json!(0);
             verify.extend(checks.into_iter().map(|(f, d)| (results.len(), t, f, d)));
         }
         results.push(r);
@@ -606,9 +610,16 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         let mut bad: std::collections::BTreeMap<usize, Vec<String>> = std::collections::BTreeMap::new();
         for (i, t, f, data) in &verify {
             // Unreadable now (a policy dir gone after a pstate/hot-plug change): nothing to claim either way.
-            let Some(live) = tune::baseline_value(t, f) else { continue };
+            let Some(live) = tune::baseline_value(t, f) else {
+                let n = results[*i]["readback_missing"].as_u64().unwrap_or(0);
+                results[*i]["readback_missing"] = json!(n + 1);
+                continue;
+            };
             if !tune::same_value(t, &live, data) {
                 bad.entry(*i).or_default().push(format!("{}: set {data}, reads {live}", f.display()));
+            } else {
+                let n = results[*i]["readback_matched"].as_u64().unwrap_or(0);
+                results[*i]["readback_matched"] = json!(n + 1);
             }
         }
         for (i, mut m) in bad {

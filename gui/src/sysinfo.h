@@ -3,6 +3,7 @@
 // port of the helper functions in home_tab.py. Everything is sysfs /
 // procfs; the only external process is nvidia-smi, which callers run
 // asynchronously (see HomeTab) so the GUI thread never blocks on it.
+#include "telemetrycache.h"
 #include <QList>
 #include <QPair>
 #include <QMap>
@@ -48,7 +49,29 @@ Opt biosInfo();
 Opt systemInfo();
 
 // Display reads: short-lived shared cache, missing/in-flight returns nullopt.
-// Numeric cpuTempC() and batteryState() remain direct reads.
+// Numeric cpuTempC() and batteryState() remain direct safety/transaction reads.
+enum class MetricUnit { Celsius, Rpm, Watts, Percent };
+struct NumericMetric { QString key, source, device; MetricUnit unit; double value; };
+struct PresentationReading {
+    Opt text;
+    QMap<QString, double> values; // unit-bearing D-Bus compatibility keys
+    telemetry::Quality quality = telemetry::Quality::Unavailable;
+    telemetry::Tick captured{}, ttl{};
+    QList<NumericMetric> metrics{};
+    QString bootId{};
+    std::uint64_t generation = 0; // acquisition provenance; empty device means unverified
+    bool fresh() const;
+};
+telemetry::Tick presentationClock();
+enum class PresentationMetric { CpuTemp, Fans, Storage, Power, Igpu, Battery };
+PresentationReading presentationReading(PresentationMetric metric);
+struct PresentationSnapshot {
+    QList<QPair<QString, PresentationReading>> readings;
+    QMap<QString, QString> text() const;
+    QMap<QString, double> values() const;
+};
+/// Shared six display slots. Call from a worker, not the GUI event loop.
+PresentationSnapshot presentationSnapshot();
 Opt cpuTemp();
 std::optional<double> cpuTempC();  // same sensor as cpuTemp(), as a number
 Opt fans();

@@ -21,6 +21,7 @@ class QPushButton;
 class QTimer;
 
 class SceneEngine;
+namespace sysinfo { enum class PresentationMetric; }
 namespace experimentalui { class TemperaturePlot; }
 
 class HomeTab : public QWidget {
@@ -132,7 +133,7 @@ private:
     QTimer *statusTimer_ = nullptr;
     bool applying_ = false;
 
-    struct LiveRow { QLabel *key; QLabel *value; std::function<std::optional<QString>()> getter; };
+    struct LiveRow { QLabel *key; QLabel *value; std::function<std::optional<QString>()> getter; std::optional<sysinfo::PresentationMetric> metric; std::optional<sysinfo::PresentationReading> last{}; };
     QList<LiveRow> liveRows_;
     QGroupBox *livePanel_ = nullptr;
     bool gpuRuntimeActive_ = false;

@@ -205,7 +205,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     auto *railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(6, 7, 5, 6);
     auto *railTitle = new QLabel(tr("HEALTH CENTER"));
-    railTitle->setStyleSheet(QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding:5px").arg(theme::FG_DIM));
+    theme::setLiveSheet(railTitle, [] { return QStringLiteral("color:%1;font-weight:700;letter-spacing:1px;padding:5px").arg(theme::FG_DIM); });
     railLayout->addWidget(railTitle);
     railTitle->setVisible(!theme::experimentalEnabled());  // Studio: the top bar already names the page
     // Back / forward through the pages and tools opened in this session (also Alt+Left / Alt+Right).
@@ -348,8 +348,8 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // Keep search in a stable position while the directory itself scrolls. A complete tool can
     // still be opened in one click; browsing never launches commands or wakes the dGPU.
     auto *directoryEyebrow = new QLabel(tr("HEALTH CENTER  /  SYSTEM TOOLS"));
-    directoryEyebrow->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;font-weight:700;letter-spacing:1px")
-                                   .arg(theme::MUTED));
+    theme::setLiveSheet(directoryEyebrow, [] { return QStringLiteral("color:%1;font-size:8pt;font-weight:700;letter-spacing:1px")
+                                   .arg(theme::MUTED); });
     catalogLayout->addWidget(directoryEyebrow);
     auto *directoryHeader = new QLabel(tr("System Tools"));
     directoryHeader->setObjectName(QStringLiteral("healthDirectoryTitle"));
@@ -368,10 +368,10 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     toolSearch_->setClearButtonEnabled(true);
     toolSearch_->setObjectName(QStringLiteral("healthToolSearch"));
     toolSearch_->setMinimumHeight(35);
-    toolSearch_->setStyleSheet(QStringLiteral("QLineEdit#healthToolSearch{border:1px solid %1;border-radius:9px;"
+    theme::setLiveSheet(toolSearch_, [] { return QStringLiteral("QLineEdit#healthToolSearch{border:1px solid %1;border-radius:9px;"
                                                "padding:7px 12px;background:%2;}"
                                                "QLineEdit#healthToolSearch:focus{border:1px solid %3;}")
-                               .arg(theme::BORDER, theme::WELL, theme::ACCENT));
+                               .arg(theme::BORDER, theme::WELL, theme::ACCENT); });
     catalogLayout->addWidget(toolSearch_);
     auto *catalogFocus = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), this);
     catalogFocus->setContext(Qt::WidgetWithChildrenShortcut);
@@ -404,8 +404,8 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     allTools->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     allTools->setText(tr("All Tools"));
     allTools->setObjectName(QStringLiteral("allTools"));
-    allTools->setStyleSheet(QStringLiteral("QToolButton#allTools{background:%1;border:1px solid %2;border-radius:7px;padding:3px 9px 3px 5px}"
-                                           "QToolButton#allTools:hover{border-color:%3}").arg(theme::BG3, theme::BORDER, theme::ACCENT));
+    theme::setLiveSheet(allTools, [] { return QStringLiteral("QToolButton#allTools{background:%1;border:1px solid %2;border-radius:7px;padding:3px 9px 3px 5px}"
+                                           "QToolButton#allTools:hover{border-color:%3}").arg(theme::BG3, theme::BORDER, theme::ACCENT); });
     allTools->setToolTip(tr("Back to the tool catalog. The open tool keeps its results."));
     connect(allTools, &QToolButton::clicked, this, [this] { showToolCatalog(); });
     toolBar->addWidget(allTools);
@@ -415,7 +415,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     toolPath_->setFont(pathFont);
     toolBar->addWidget(toolPath_, 1);
     toolBadges_ = new QLabel;
-    toolBadges_->setStyleSheet(QStringLiteral("color:%1").arg(theme::WARN));
+    theme::setLiveSheet(toolBadges_, [] { return QStringLiteral("color:%1").arg(theme::WARN); });
     toolBar->addWidget(toolBadges_);
     toolPin_ = new QPushButton;
     toolPin_->setCheckable(true);
@@ -529,7 +529,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // The previous boot never closed (crash, hang, power cut): one band, dismissible per boot.
     band_ = new QFrame;
     band_->setVisible(false);
-    band_->setStyleSheet(QStringLiteral("QFrame{background:%1;border:1px solid %2;border-radius:6px}QLabel{border:none}").arg(theme::BG2, theme::DANGER_SOFT));
+    theme::setLiveSheet(band_, [] { return QStringLiteral("QFrame{background:%1;border:1px solid %2;border-radius:6px}QLabel{border:none}").arg(theme::BG2, theme::DANGER_SOFT); });
     auto *bandRow = new QHBoxLayout(band_);
     bandRow->setContentsMargins(8, 4, 8, 4);
     bandText_ = new QLabel;
@@ -1143,10 +1143,10 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     card->setToolTip(toolDescription(t.page, t.key));
     card->setCursor(Qt::PointingHandCursor);
     card->setFocusPolicy(Qt::StrongFocus);
-    card->setStyleSheet(QStringLiteral("QFrame#%1{background:%2;border:1px solid %3;border-radius:10px;}"
+    theme::setLiveSheet(card, [card] { return QStringLiteral("QFrame#%1{background:%2;border:1px solid %3;border-radius:10px;}"
                                        "QFrame#%1:hover,QFrame#%1:focus{border-color:%4;}"
                                        "QFrame#%1 QLabel{background:transparent;border:0;}")
-                        .arg(card->objectName(), theme::BG2, theme::BORDER, theme::ACCENT_SOFT));
+                        .arg(card->objectName(), theme::BG2, theme::BORDER, theme::ACCENT_SOFT); });
     card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     QWidget *page = t.page;
     card->setActivation([this, page] { openTool(page); });
@@ -1164,14 +1164,14 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     auto *title = new QLabel(t.label);
     title->setTextFormat(Qt::PlainText);
     title->setWordWrap(true);
-    title->setStyleSheet(QStringLiteral("color:%1;font-weight:700;").arg(theme::FG));
+    theme::setLiveSheet(title, [] { return QStringLiteral("color:%1;font-weight:700;").arg(theme::FG); });
     contents->addWidget(title);
     const QString about = t.page->property("toolAbout").toString().simplified();
     if (!about.isEmpty()) {
         auto *description = new QLabel(about);
         description->setWordWrap(true);
         description->setTextFormat(Qt::PlainText);
-        description->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM));
+        theme::setLiveSheet(description, [] { return QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM); });
         contents->addWidget(description);  // no line/height cap: never cut off text
     }
     QStringList notes = toolcatalog::badges(info.flags);
@@ -1180,8 +1180,8 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     auto *badge = new QLabel(notes.join(QStringLiteral("  ·  ")));
     badge->setTextFormat(Qt::PlainText);
     badge->setWordWrap(true);
-    badge->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;")
-                         .arg(passive ? theme::FG_DIM : theme::WARN));
+    theme::setLiveSheet(badge, [passive] { return QStringLiteral("color:%1;font-size:8pt;")
+                         .arg(passive ? theme::FG_DIM : theme::WARN); });
     contents->addWidget(badge);
     row->addWidget(textArea, 1);
 
@@ -1192,10 +1192,10 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     pin->setToolTip(pinned ? tr("Remove from favorites") : tr("Add to favorites"));
     pin->setAccessibleName(pin->toolTip() + QStringLiteral(": ") + t.label);
     pin->setCursor(Qt::PointingHandCursor);
-    pin->setStyleSheet(QStringLiteral("QToolButton#healthCatalogPin{background:transparent;border:none;color:%1;"
+    theme::setLiveSheet(pin, [pinned] { return QStringLiteral("QToolButton#healthCatalogPin{background:transparent;border:none;color:%1;"
                                       "font-size:15pt;padding:4px;}"
                                       "QToolButton#healthCatalogPin:hover{color:%2;}")
-                       .arg(pinned ? theme::ACCENT : theme::FG_DIM, theme::ACCENT));
+                       .arg(pinned ? theme::ACCENT : theme::FG_DIM, theme::ACCENT); });
     connect(pin, &QToolButton::clicked, this, [this, key = t.key] {
         QStringList pinned = guiSettings().value(QStringLiteral("health/pinned_tools")).toStringList();
         if (pinned.contains(key)) pinned.removeAll(key);
@@ -1240,7 +1240,7 @@ void HealthTab::rebuildToolCatalog() {
         layout->addWidget(title);
         auto *note = new QLabel(hint);
         note->setWordWrap(true);
-        note->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM));
+        theme::setLiveSheet(note, [] { return QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM); });
         layout->addWidget(note, 1);
         return w;
     };
@@ -1296,12 +1296,12 @@ void HealthTab::rebuildToolCatalog() {
             card->setToolTip(tr("Open the guided investigation for %1. No settings are changed.").arg(label));
             card->setMinimumHeight(84);
             card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-            card->setStyleSheet(QStringLiteral("QFrame#healthSymptomTile{background:%1;border:1px solid %2;"
+            theme::setLiveSheet(card, [] { return QStringLiteral("QFrame#healthSymptomTile{background:%1;border:1px solid %2;"
                                                "border-radius:10px;}"
                                                "QFrame#healthSymptomTile:hover,QFrame#healthSymptomTile:focus{"
                                                "border-color:%3;background:%4;}"
                                                "QFrame#healthSymptomTile QLabel{background:transparent;border:0;}")
-                                .arg(theme::BG2, theme::BORDER, theme::ACCENT, theme::BG3));
+                                .arg(theme::BG2, theme::BORDER, theme::ACCENT, theme::BG3); });
             auto *col = new QVBoxLayout(card);
             col->setContentsMargins(13, 10, 11, 10);
             col->setSpacing(5);
@@ -1311,16 +1311,16 @@ void HealthTab::rebuildToolCatalog() {
             auto *name = new QLabel(label);
             name->setWordWrap(true);
             name->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-            name->setStyleSheet(QStringLiteral("color:%1;font-weight:700;").arg(theme::FG));
+            theme::setLiveSheet(name, [] { return QStringLiteral("color:%1;font-weight:700;").arg(theme::FG); });
             auto *arrow = new QLabel(QStringLiteral("›"));
-            arrow->setStyleSheet(QStringLiteral("color:%1;font-weight:700;font-size:14pt;").arg(theme::ACCENT));
+            theme::setLiveSheet(arrow, [] { return QStringLiteral("color:%1;font-weight:700;font-size:14pt;").arg(theme::ACCENT); });
             top->addWidget(name, 1);
             top->addWidget(arrow, 0, Qt::AlignTop);
             col->addLayout(top);
             auto *description = new QLabel(QCoreApplication::translate("advanceddiagnostics", symptom.label));
             description->setWordWrap(true);
             description->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-            description->setStyleSheet(QStringLiteral("color:%1;font-size:9pt;").arg(theme::FG_DIM));
+            theme::setLiveSheet(description, [] { return QStringLiteral("color:%1;font-size:9pt;").arg(theme::FG_DIM); });
             col->addWidget(description);
             // Labels must not eat mouse clicks; the complete card is the target.
             for (QLabel *label : {name, description, arrow})
@@ -1393,10 +1393,10 @@ void HealthTab::rebuildToolCatalog() {
         b->setChecked(active);
         b->setCursor(Qt::PointingHandCursor);
         b->setMinimumHeight(29);
-        b->setStyleSheet(QStringLiteral("QPushButton{border:1px solid %1;background:%2;border-radius:8px;"
+        theme::setLiveSheet(b, [] { return QStringLiteral("QPushButton{border:1px solid %1;background:%2;border-radius:8px;"
                                          "padding:4px 10px;}QPushButton:hover{border-color:%3;}"
                                          "QPushButton:checked{border-color:%3;background:%4;color:%5;font-weight:700;}")
-                         .arg(theme::BORDER, theme::BG2, theme::ACCENT, theme::BG3, theme::ACCENT));
+                         .arg(theme::BORDER, theme::BG2, theme::ACCENT, theme::BG3, theme::ACCENT); });
         connect(b, &QPushButton::clicked, this, [this, filter = choice.first] {
             toolFilter_ = filter;
             rebuildToolCatalog();
@@ -1444,9 +1444,9 @@ void HealthTab::rebuildToolCatalog() {
         const bool expanded = !query.isEmpty() || !collapsed.contains(areaId) || !toolAreaFilter_.isEmpty();
         auto *section = new QFrame;
         section->setObjectName(QStringLiteral("healthCatalogSection"));
-        section->setStyleSheet(QStringLiteral("QFrame#healthCatalogSection{background:%1;border:1px solid %2;"
+        theme::setLiveSheet(section, [] { return QStringLiteral("QFrame#healthCatalogSection{background:%1;border:1px solid %2;"
                                             "border-radius:10px;}QFrame#healthCatalogSection QLabel{border:none;background:transparent;}")
-                               .arg(theme::BG1, theme::BORDER));
+                               .arg(theme::BG1, theme::BORDER); });
         auto *sectionLayout = new QVBoxLayout(section);
         sectionLayout->setContentsMargins(7, 6, 7, expanded ? 8 : 6);
         sectionLayout->setSpacing(7);
@@ -1466,12 +1466,12 @@ void HealthTab::rebuildToolCatalog() {
             group->setEnabled(false);
             group->setToolTip(tr("Groups stay expanded while search or category filtering is active."));
         }
-        group->setStyleSheet(QStringLiteral("QPushButton#healthToolCategory{border:0;background:transparent;"
+        theme::setLiveSheet(group, [] { return QStringLiteral("QPushButton#healthToolCategory{border:0;background:transparent;"
                                             "font-weight:700;text-align:left;padding:5px 7px;}"
-                                            "QPushButton#healthToolCategory:hover{color:%1;}").arg(theme::ACCENT));
+                                            "QPushButton#healthToolCategory:hover{color:%1;}").arg(theme::ACCENT); });
         groupLayout->addWidget(group, 1);
         auto *itemCount = new QLabel(tr("%1 tools").arg(list.size()));
-        itemCount->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM));
+        theme::setLiveSheet(itemCount, [] { return QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM); });
         groupLayout->addWidget(itemCount);
         connect(group, &QPushButton::clicked, this, [this, areaId] {
             QStringList hidden = guiSettings().value(QStringLiteral("health/catalog_collapsed_groups")).toStringList();
@@ -1487,7 +1487,7 @@ void HealthTab::rebuildToolCatalog() {
     if (!shown) {
         auto *none = new QLabel(tr("No tool matches the current search or filter. Try a device, symptom or error code, or clear the filters."));
         none->setWordWrap(true);
-        none->setStyleSheet(QStringLiteral("color:%1;padding:12px;").arg(theme::FG_DIM));
+        theme::setLiveSheet(none, [] { return QStringLiteral("color:%1;padding:12px;").arg(theme::FG_DIM); });
         v->addWidget(none);
         auto *reset = new QPushButton(tr("Clear search and filters"));
         connect(reset, &QPushButton::clicked, this, [this] {
@@ -1839,7 +1839,7 @@ void HealthTab::updateRelated(const QString &pageKey) {
         b->setCursor(Qt::PointingHandCursor);
         b->setToolTip(target.startsWith(QLatin1String("tool:")) ? tr("Opens this System tool; it reads its sources when it opens.")
                                                                 : tr("Opens this Health page."));
-        b->setStyleSheet(QStringLiteral("QPushButton{color:%1;text-decoration:underline;padding:2px 4px}").arg(theme::ACCENT));
+        theme::setLiveSheet(b, [] { return QStringLiteral("QPushButton{color:%1;text-decoration:underline;padding:2px 4px}").arg(theme::ACCENT); });
         connect(b, &QPushButton::clicked, this, [this, target] { QTimer::singleShot(0, this, [this, target] { navigateTo(target); }); });
         row->addWidget(b);
         ++links;
@@ -1920,7 +1920,7 @@ void HealthTab::updateSummary() {
     const QString label = errors ? tr("%1 reported event(s) to review").arg(errors) :
                                    tr("No new events to review");
     summary_->setText(label);
-    summary_->setStyleSheet(QStringLiteral("color:%1").arg(errors ? theme::WARN : theme::OK));
+    theme::setLiveSheet(summary_, [errors] { return QStringLiteral("color:%1").arg(errors ? theme::WARN : theme::OK); });
     summary_->setToolTip(tr("Counts events since startup, or since they were last marked reviewed. "
                             "Reviewing does not resolve underlying issues or erase saved history."));
 }

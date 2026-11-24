@@ -26,7 +26,7 @@ TrialBar::TrialBar(const QString &key, QWidget *parent) : QFrame(parent), key_(k
     connect(on_, &QCheckBox::toggled, this, [this](bool v) { guiIni().setValue(key_, v); if (!v) cancel(); });
     h->addWidget(on_);
     text_ = new QLabel;
-    text_->setTextFormat(Qt::RichText);
+    text_->setTextFormat(Qt::PlainText);
     h->addWidget(text_, 1);
     keep_ = new QPushButton(QStringLiteral("Keep"));
     keep_->setObjectName("btnAccent");
@@ -38,7 +38,7 @@ TrialBar::TrialBar(const QString &key, QWidget *parent) : QFrame(parent), key_(k
     timer_->setInterval(1000);
     connect(timer_, &QTimer::timeout, this, [this] {
         if (--left_ <= 0) { finish(false); return; }
-        text_->setText(QStringLiteral("<b style='color:%1'>Testing — back to stock in %2 s unless you keep it.</b>").arg(theme::WARN).arg(left_));
+        text_->setText(tr("Testing — back to stock in %1 s unless you keep it.").arg(left_));
     });
 }
 
@@ -49,14 +49,15 @@ void TrialBar::offer(std::function<void()> revert) {
     if (!wanted()) return;
     revertFn_ = std::move(revert);
     left_ = TRIAL_SECONDS;
-    text_->setText(QStringLiteral("<b style='color:%1'>Testing — back to stock in %2 s unless you keep it.</b>").arg(theme::WARN).arg(left_));
+    theme::setLiveSheet(text_, [] { return QStringLiteral("color:%1;font-weight:700;").arg(theme::WARN); });
+    text_->setText(tr("Testing — back to stock in %1 s unless you keep it.").arg(left_));
     keep_->show();
     revert_->show();
     timer_->start();
 }
 
 void TrialBar::cancel() {
-    if (!timer_->isActive()) return;  // nothing running (keeps a "Kept" / "Reverted" note visible)
+    if (!timer_->isActive()) return;  // nothing running (keeps the last result/request note visible)
     timer_->stop();
     revertFn_ = nullptr;
     keep_->hide();
@@ -69,7 +70,14 @@ void TrialBar::finish(bool keep) {
     timer_->stop();
     keep_->hide();
     revert_->hide();
-    if (keep) { text_->setText(QStringLiteral("<span style='color:%1'>Kept.</span>").arg(theme::OK)); return; }
-    text_->setText(QStringLiteral("<span style='color:%1'>Reverted to stock.</span>").arg(theme::FG_DIM));
+    if (keep) {
+        theme::setLiveSheet(text_, [] { return QStringLiteral("color:%1;").arg(theme::OK); });
+        text_->setText(tr("Kept.")); return;
+    }
+    // The reset callback may complete asynchronously or fail. Requesting it is
+    // not evidence of successful restoration; the owning curve panel reports results.
+    theme::setLiveSheet(text_, [] { return QStringLiteral("color:%1;").arg(theme::WARN); });
+    text_->setText(fn ? tr("Revert requested; see the curve panel for the result.")
+                      : tr("Revert unavailable: no reset callback."));
     if (fn) fn();
 }

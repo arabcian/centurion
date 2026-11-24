@@ -5,9 +5,15 @@
 #include "platformprofile.h"
 #include "scenes.h"
 #include "sysinfo.h"
+#include "telemetryservice.h"
 #include <QDBusConnection>
 #include <QDBusError>
 #include <QDBusMetaType>
+#include <QCoreApplication>
+#include <QPointer>
+#include <QThreadPool>
+#include <QTimer>
+#include <utility>
 #include <cstdio>
 
 static const char *SERVICE = "com.centurion.Centurion";
@@ -63,15 +69,55 @@ void DbusApi::SetPowerProfile(const QString &profile) {
     win_->home()->applyProfile(profile);
 }
 
-QMap<QString, QString> DbusApi::Sensors() {
-    QMap<QString, QString> m;
-    for (const auto &[key, value] : {std::pair{"cpu", sysinfo::cpuTemp()}, {"fans", sysinfo::fans()}, {"storage", sysinfo::storage()},
-                                     {"power", sysinfo::power()}, {"igpu", sysinfo::igpu()}, {"battery", sysinfo::battery()}})
-        if (value && !value->isEmpty()) m.insert(QLatin1String(key), *value);
-    return m;
+void DbusApi::enqueueSensors(bool numeric) {
+    const auto msg = message();
+    const auto bus = connection();
+    setDelayedReply(true);
+    if (sensorExpired_ || sensorRequests_.size() >= 32) {
+        bus.send(msg.createErrorReply(QDBusError::LimitsExceeded, QStringLiteral("sensor acquisition busy")));
+        return;
+    }
+    sensorRequests_.append(SensorRequest{bus, msg, numeric});
+    if (sensorPending_) return;
+    sensorPending_ = true;
+    const auto generation = ++sensorGeneration_;
+    QTimer::singleShot(5000, this, [this, generation] {
+        if (!sensorPending_ || generation != sensorGeneration_) return;
+        sensorExpired_ = true;
+        const auto requests = std::exchange(sensorRequests_, QList<SensorRequest>{});
+        for (const auto &req : requests)
+            req.connection.send(req.message.createErrorReply(QDBusError::Timeout, QStringLiteral("sensor acquisition timed out")));
+        // Do not start another worker while the slow sysfs read still runs.
+    });
+    using M = sysinfo::PresentationMetric;
+    TelemetryService::instance().request({M::CpuTemp,M::Fans,M::Storage,M::Power,M::Igpu,M::Battery}, this,
+        [this,generation](TelemetryService::Results results) {
+            if (generation != sensorGeneration_) return;
+            sensorPending_ = false; sensorExpired_ = false;
+            const auto requests = std::exchange(sensorRequests_, QList<SensorRequest>{});
+            sysinfo::PresentationSnapshot snapshot;
+            const QStringList names{QStringLiteral("cpu"),QStringLiteral("fans"),QStringLiteral("storage"),QStringLiteral("power"),QStringLiteral("igpu"),QStringLiteral("battery")};
+            bool timedOut = false;
+            for (int i=0;i<names.size();++i) {
+                auto reading = results.value(i);
+                timedOut |= reading.quality == telemetry::Quality::TimedOut || reading.quality == telemetry::Quality::Pending;
+                snapshot.readings.append({names.at(i),reading});
+            }
+            for (const auto &req : requests) {
+                if (timedOut) { req.connection.send(req.message.createErrorReply(QDBusError::Timeout,QStringLiteral("sensor acquisition incomplete"))); continue; }
+                const QVariant result = req.numeric ? QVariant::fromValue(snapshot.values()) : QVariant::fromValue(snapshot.text());
+                req.connection.send(req.message.createReply(QVariantList{result}));
+            }
+        });
 }
-
-QMap<QString, double> DbusApi::SensorValues() { return sysinfo::sensorValues(); }
+QMap<QString, QString> DbusApi::Sensors() {
+    if (calledFromDBus()) { enqueueSensors(false); return {}; }
+    return sysinfo::presentationSnapshot().text();
+}
+QMap<QString, double> DbusApi::SensorValues() {
+    if (calledFromDBus()) { enqueueSensors(true); return {}; }
+    return sysinfo::sensorValues();
+}
 
 QVariantMap DbusApi::HealthSummary() {
     QVariantMap m;

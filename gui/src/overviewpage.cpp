@@ -5,6 +5,7 @@
 #include "dgpupage.h"
 #include "reportpreview.h"
 #include "sysinfo.h"
+#include "telemetryservice.h"
 #include "theme.h"
 #include "userhelper.h"
 
@@ -91,6 +92,27 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     status_->setWordWrap(true);
     status_->setProperty("tone", "muted");
     heroLayout->addWidget(status_);
+    sensorStatus_ = new QLabel;
+    sensorStatus_->setTextFormat(Qt::PlainText); sensorStatus_->setWordWrap(true); sensorStatus_->setProperty("tone", "muted");
+    heroLayout->addWidget(sensorStatus_);
+    sensorTimer_ = new QTimer(this);
+    sensorTimer_->setInterval(1000);
+    connect(sensorTimer_, &QTimer::timeout, this, [this] {
+        if (!isVisible()) { sensorStatus_->clear(); return; }
+        sensorStatus_->setText(tr("Current CPU temperature: unavailable"));
+        if (sensorPending_) return;
+        sensorPending_ = true;
+        using M = sysinfo::PresentationMetric;
+        TelemetryService::instance().request({M::CpuTemp},this,[this](TelemetryService::Results results) {
+            sensorPending_ = false;
+            if (!isVisible()) return;
+            const auto r = results.value(int(M::CpuTemp));
+            const auto value = r.values.constFind(QStringLiteral("cpu_temp_c"));
+            if (r.fresh() && value != r.values.cend())
+                sensorStatus_->setText(tr("Current CPU temperature: %1 °C").arg(value.value(),0,'f',1));
+        });
+    });
+
     outer->addWidget(hero);
 
     // Start from the symptom: each button runs the read-only guided triage (H18) for that area.
@@ -182,7 +204,13 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
 
 void OverviewPage::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
+    sensorTimer_->start();
     refresh();
+}
+
+void OverviewPage::hideEvent(QHideEvent *e) {
+    QWidget::hideEvent(e);
+    sensorTimer_->stop(); sensorStatus_->clear();
 }
 
 void OverviewPage::scheduleRefresh() { debounce_->start(); }

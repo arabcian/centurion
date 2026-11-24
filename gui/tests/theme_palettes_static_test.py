@@ -127,7 +127,10 @@ for fixed in ('#7cc6bd', '#e070b0'):
 assert 'QIcon themePreviewIcon(const QString &id);' in header
 assert 'theme::themePreviewIcon(id)' in ui
 assert 'themeBox->setIconSize(' in ui
-assert 'theme::saveTheme(id)' in ui
+assert ui.count('theme::applyLivePreference(*qApp, id)') == 2
+assert 'theme::applyLiveCustomPreference(*qApp, readColors())' in ui
+assert 'Restart Centurion now to apply' not in ui
+assert 's.setAtomicSyncRequired(true)' in src
 assert 'QSettings::UserScope' in src
 assert 'if (!knownPalette(id)) return false;' in src
 assert 'textOnAccent()' in src and 'static bool lightTheme()' in src

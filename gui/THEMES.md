@@ -1,6 +1,6 @@
 # Centurion colour themes
 
-The Home screen **Theme** selector controls the look of the entire Qt application, for both the **Experimental** and **Classic** interfaces. Pick a theme, then accept the restart prompt, or restart the application later. The selection is saved in `~/.config/centurion/gui.ini` under the `theme` key.
+The Home screen **Theme** selector controls the look of the entire Qt application, for both the **Experimental** and **Classic** interfaces. Pick a theme to apply it in place. The selector, gallery and valid custom palette save use the same live preference path; changing UI mode, density, typography or language is still a separate restart preference. Legacy diagnostic rich text and cached brushes/icons may still need presentation migration. The selection is saved in `~/.config/centurion/gui.ini` under the `theme` key.
 
 Centurion keeps all 36 previous themes (the original 21 plus 15 community presets) and their saved IDs. Those 15 community presets are:
 

@@ -87,6 +87,13 @@ qint64 lastLiveRefreshNanos();
 /// In-memory live change for migrated workspaces, not a persistent preference.
 /// Callers must refresh cached semantic icons/brushes/local styles on the signal.
 bool applyLivePalette(QApplication &app, const QString &id);
+/// Persist the selected palette and apply the same validated snapshot in-place.
+/// An invalid palette or failed settings sync leaves the running theme unchanged.
+bool applyLivePreference(QApplication &app, const QString &id);
+bool applyLiveCustomPreference(QApplication &app, const QStringList &colors);
+/// Replaceable presentation-only stylesheet binding; one callback per widget.
+/// Capture immutable state by value, or read current presentation state at refresh.
+void setLiveSheet(QWidget *widget, std::function<QString()> render);
 void apply(QApplication &app);
 // The same in two steps, for start-up: with the application style sheet already set, every
 // addWidget()/addTab() while the window is being built re-matches the whole sheet against the

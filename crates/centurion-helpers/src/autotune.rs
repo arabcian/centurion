@@ -2563,7 +2563,7 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     // The models depend on the rows, never on the weights: fitted once (every CPU), then the main
     // decision and the explored trade-offs all read them in parallel.
     if let Some(c) = p.calibration.as_mut() { c.merge_hyp_cache(); c.use_fit_store(); }
-    prefit(goal, &p);
+    let fit_context = prefit(goal, &p);
     if let Some(c) = p.calibration.as_ref() { c.save_hyp_cache(); c.save_fit_store(); }
     let model_ms = fit_started.elapsed().as_millis();
     if report_progress {
@@ -2588,6 +2588,16 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     };
     let advice = application_advice(out["decisions"].as_array().map_or(&[][..], Vec::as_slice), &is_change);
     out["application_advice"] = advice;
+    // Record the context actually passed to prefit, not a later live-profile query.
+    // Later decisions may observe changed conditions; this is not proof of a controlled run.
+    out["prefit_context"] = json!(fit_context);
+    out["calibration_evidence"] = match p.calibration.as_ref() {
+        Some(c) => json!({"loaded": true, "kernel": c.kernel, "rows": c.rows.len(),
+            "newest": c.rows.iter().map(|r| r.t).max(),
+            "product": c.fingerprint.product, "cpu": c.fingerprint.cpu,
+            "ram_mib": c.fingerprint.ram_mib, "bios": c.fingerprint.bios}),
+        None => json!({"loaded": false}),
+    };
     out["explore_mode"] = json!(mode);
     out["explore_available"] = json!(!want_explore && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty()));
     out["timings_ms"] = json!({"inputs": inputs_ms, "model": model_ms, "decision": decision_ms, "total": total_started.elapsed().as_millis()});
@@ -2762,11 +2772,13 @@ fn round3(x: f64) -> f64 { (x * 1000.0).round() / 1000.0 }
 /// once (one phase after another), so parallel decisions share the fits instead of each refitting.
 /// Every phase is fitted here, in Fast mode too: the decision reads all of them, and only fits made
 /// before `save_fit_store` are kept for the next autotune.
-fn prefit(goal: Goal, p: &Profile) {
-    let Some(cal) = p.calibration.as_ref() else { return };
+fn prefit(goal: Goal, p: &Profile) -> Option<Value> {
+    let cal = p.calibration.as_ref()?;
     cal.set_power_pref(if goal == Goal::PowerSave { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl });
-    cal.set_target_cx(Some(calib::Calibration::context_id(&target_context(goal, p))));
+    let context = target_context(goal, p);
+    cal.set_target_cx(Some(calib::Calibration::context_id(&context)));
     cal.prefit();
+    Some(context)
 }
 
 /// A copy for one parallel decision: same data, fitted models shared.
@@ -4130,7 +4142,7 @@ mod perf_bench {
                                ("custom", Weights::for_goal(Goal::Gaming).with_overrides(&json!({"power": 0.8, "storage": 1.0, "heat": 0.3, "footprint": 0.7})))] {
                 let p = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); } q };
                 let t = std::time::Instant::now();
-                prefit(Goal::Gaming, &p);
+                let _ = prefit(Goal::Gaming, &p);
                 let t1 = t.elapsed();
                 let (main, _) = explore(Goal::Gaming, &p, w);
                 let out = assemble(Goal::Gaming, &p, w, main);
@@ -4144,7 +4156,7 @@ mod perf_bench {
                                ("store: custom weights", Weights::for_goal(Goal::Gaming).with_overrides(&json!({"power": 0.8, "storage": 1.0})))] {
                 let p = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); c.use_fit_store(); } q };
                 let t = std::time::Instant::now();
-                prefit(Goal::Gaming, &p);
+                let _ = prefit(Goal::Gaming, &p);
                 p.calibration.as_ref().unwrap().save_fit_store();
                 let t1 = t.elapsed();
                 let out = assemble(Goal::Gaming, &p, w, decide_full(Goal::Gaming, &p, w));
@@ -4155,7 +4167,7 @@ mod perf_bench {
             // The kept fits decide exactly as fresh ones.
             let (w, kept) = (outs[1].0, &outs[1].1);
             let fresh = { let mut q = p.clone(); if let Some(c) = q.calibration.as_mut() { c.invalidate(); } q };
-            prefit(Goal::Gaming, &fresh);
+            let _ = prefit(Goal::Gaming, &fresh);
             assert_eq!(assemble(Goal::Gaming, kept, w, decide_full(Goal::Gaming, kept, w))["preset"],
                        assemble(Goal::Gaming, &fresh, w, decide_full(Goal::Gaming, &fresh, w))["preset"]);
             let _ = std::fs::remove_dir_all(&dir);

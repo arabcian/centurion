@@ -49,6 +49,39 @@ pub fn get_gpu(index: usize) -> Result<(Gpu, String), NvError> {
     Ok((gpu, gpu_name(gpu)))
 }
 
+/// Identity for the GUI's index-zero curve editor. NVAPI and NVML enumeration
+/// order is NOT a join key. Until a full cross-API PCI mapping is available,
+/// require one visible physical GPU in both APIs, equal model names and a
+/// fresh NVML handle. Ambiguous multi-GPU layouts fail closed for edited Apply.
+pub fn curve_device_identity(index: usize, gpu: Gpu, name: &str) -> Result<serde_json::Value, String> {
+    let handles = enumerate_gpus().map_err(|e| e.to_string())?;
+    let n = nvml::ready()?;
+    if index != 0 || handles.as_slice() != [gpu] || n.device_count()? != 1 {
+        return Err("Cannot establish unambiguous NVAPI/NVML GPU identity".into());
+    }
+    let h = n.fresh_handle(0)?;
+    if n.handle(0)? != h { return Err("GPU handle changed; restart the helper".into()); }
+    let nvml_name = n.device_name(h)?;
+    fn normalized(s: &str) -> &str { s.trim().strip_prefix("NVIDIA ").unwrap_or(s.trim()) }
+    if name.is_empty() || normalized(name) != normalized(&nvml_name) {
+        return Err("NVAPI and NVML GPU names differ".into());
+    }
+    let uuid = n.uuid(h)?;
+    if !valid_gpu_uuid(&uuid) { return Err("Invalid GPU UUID".into()); }
+    let driver = n.driver_version()?;
+    let vbios = n.vbios_version(h)?;
+    if driver.is_empty() || vbios.is_empty() { return Err("Missing driver or VBIOS identity".into()); }
+    let pci = n.pci_identity(h)?;
+    if n.device_count()? != 1 || n.fresh_handle(0)? != h || enumerate_gpus().map_err(|e| e.to_string())?.as_slice() != [gpu] {
+        return Err("GPU topology changed during identity capture".into());
+    }
+    Ok(serde_json::json!({"schema":1,"mapping":"single_visible_physical_gpu","uuid":uuid,"pci":pci,"driver":driver,"vbios":vbios}))
+}
+fn valid_gpu_uuid(s: &str) -> bool {
+    let Some(s) = s.strip_prefix("GPU-") else { return false; };
+    s.len() == 36 && s.bytes().enumerate().all(|(i,b)| if [8,13,18,23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() })
+}
+
 /// All physical GPUs with NVML UUID / PCI bus when available.
 /// Zero GPUs is Ok(vec![]); a broken driver is Err.
 pub fn discover_gpus() -> Result<Vec<GpuInfo>, NvError> {
@@ -73,6 +106,13 @@ pub fn discover_gpus() -> Result<Vec<GpuInfo>, NvError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gpu_uuid_format() {
+        assert!(super::valid_gpu_uuid("GPU-01234567-89ab-cdef-0123-456789abcdef"));
+        for s in ["GPU-broken", "MIG-01234567-89ab-cdef-0123-456789abcdef", "GPU-01234567-89ab-cdef-0123-456789abcdeg"] {
+            assert!(!super::valid_gpu_uuid(s));
+        }
+    }
     #[test]
     fn missing_driver_is_an_error_not_a_crash() {
         if std::path::Path::new("/proc/driver/nvidia").exists() { return; }

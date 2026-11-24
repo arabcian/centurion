@@ -104,11 +104,19 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     list_->setFrameShape(QFrame::NoFrame);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);  // long names elide instead
     list_->setTextElideMode(Qt::ElideRight);
-    list_->setStyleSheet(QStringLiteral("QListWidget { background: transparent; border: none; padding: 0; outline: none; }"
+    theme::setLiveSheet(list_, [] { return QStringLiteral("QListWidget { background: transparent; border: none; padding: 0; outline: none; }"
                                         "QListWidget::item { padding: 4px 6px; border-radius: 5px; }"
                                         "QListWidget::item:selected { background: %1; }"
                                         "QListWidget::item:hover:!selected { background: %2; }")
-                             .arg(theme::BG3, theme::BG2));
+                             .arg(theme::BG3, theme::BG2); });
+    theme::bindPresentation(list_, [list=list_] {
+        const QSignalBlocker blocker(list);
+        for (int i=0; i<list->count(); ++i) {
+            auto *item=list->item(i);
+            const int role=item->data(Qt::UserRole + 1).toInt();
+            if (role) item->setForeground(QColor(QLatin1String(role==1 ? theme::ACCENT : role==2 ? theme::FG : theme::FG_DIM)));
+        }
+    });
     ll->addWidget(list_, 1);
     auto *add = new QPushButton(tr("New scene…"));
     ll->addWidget(add);
@@ -758,6 +766,7 @@ void ScenesTab::colorList() {
         QListWidgetItem *it = list_->item(i);
         const char *c = it->data(Qt::UserRole).toString() == active && !active.isEmpty() ? theme::ACCENT
                         : it == list_->currentItem() ? theme::FG : theme::FG_DIM;
+        it->setData(Qt::UserRole + 1, c == theme::ACCENT ? 1 : c == theme::FG ? 2 : 3);
         it->setForeground(QColor(QLatin1String(c)));
     }
 }
@@ -1091,5 +1100,5 @@ void ScenesTab::updatePowerLabel() {
 
 void ScenesTab::setStatus(const QString &msg, const char *color) {
     status_->setText(msg);
-    status_->setStyleSheet(QStringLiteral("color:%1; background:transparent;").arg(color ? color : theme::FG_DIM));
+    theme::setLiveSheet(status_, [color] { return QStringLiteral("color:%1; background:transparent;").arg(color ? color : theme::FG_DIM); });
 }

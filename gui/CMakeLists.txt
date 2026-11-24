@@ -34,7 +34,7 @@ set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root hel
 add_executable(centurion
     src/main.cpp
     src/simulation.cpp   src/simulation.h
-    src/telemetrycache.h
+    src/telemetrycache.h src/telemetrybroker.h src/telemetryservice.cpp src/telemetryservice.h
     src/mainwindow.cpp   src/mainwindow.h
     src/uinavigator.cpp  src/uinavigator.h src/navigationtargets.h
     src/theme.cpp        src/theme.h
@@ -58,8 +58,8 @@ add_executable(centurion
     src/coinsights.cpp src/coinsights.h
     src/inteltab.cpp     src/inteltab.h
     src/vfcurvewidget.cpp src/vfcurvewidget.h
-    src/nvidiatab.cpp    src/nvidiatab.h
-    src/optimizetab.cpp  src/optimizetab.h
+    src/nvidiatab.cpp    src/nvidiatab.h src/curvejournal.h
+    src/optimizetab.cpp  src/optimizetab.h src/autotunehistory.h src/tuningsemantic.h src/frametimepair.h
     src/optimization_translation_sources.cpp
     src/autotunereport.cpp src/autotunereport.h
     src/insights.cpp src/insights.h
@@ -291,6 +291,16 @@ if(CENTURION_BUILD_TESTS)
     add_executable(centurion-telemetrycache-test tests/telemetrycache_test.cpp src/telemetrycache.h)
     target_link_libraries(centurion-telemetrycache-test PRIVATE Threads::Threads)
     add_test(NAME telemetrycache COMMAND centurion-telemetrycache-test)
+    add_executable(centurion-telemetryservice-test tests/telemetryservice_test.cpp src/telemetryservice.cpp src/telemetryservice.h)
+    target_link_libraries(centurion-telemetryservice-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-telemetryservice-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME telemetryservice COMMAND centurion-telemetryservice-test)
+    set_tests_properties(telemetryservice PROPERTIES TIMEOUT 20)
+    add_executable(centurion-userhelper-test tests/userhelper_test.cpp src/userhelper.cpp src/userhelper.h)
+    target_link_libraries(centurion-userhelper-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-userhelper-test PRIVATE QT_NO_KEYWORDS CENTURION_HELPER_DIR="/nonexistent-centurion-test")
+    add_test(NAME userhelper COMMAND centurion-userhelper-test)
+    set_tests_properties(userhelper PROPERTIES TIMEOUT 45)
     add_executable(centurion-simulation-visual-test tests/simulation_visual_test.cpp
         src/simulation.cpp src/simulation.h src/theme.cpp src/theme.h src/charts.cpp src/charts.h
         src/vfcurvewidget.cpp src/vfcurvewidget.h src/i18n.cpp src/i18n.h)
@@ -389,7 +399,7 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-cpustress-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-cpustress-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME cpustress COMMAND centurion-cpustress-test)
-    foreach(test IN ITEMS coarchive calibrationcoverage curvereadback structuredtools autotuneprogress)
+    foreach(test IN ITEMS coarchive calibrationcoverage curvereadback curvejournal structuredtools autotuneprogress tunejournal autotunehistory)
         add_executable(centurion-${test}-test tests/${test}_test.cpp)
         target_link_libraries(centurion-${test}-test PRIVATE Qt6::Core)
         target_compile_definitions(centurion-${test}-test PRIVATE QT_NO_KEYWORDS)

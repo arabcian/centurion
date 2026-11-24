@@ -68,6 +68,7 @@ pub fn read_curve_retry(gpu_index: usize, retries: u32) -> Result<Value, String>
     let mut last = String::from("unknown error");
     for attempt in 0..=retries {
         let (g, name) = gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?;
+        let device_before = gpu::curve_device_identity(gpu_index,g,&name).ok();
         match vfcurve::read_curve(g, &name) {
             Ok(s) => {
                 let mut v = curve_json(&name, &s, monitoring::read_voltage(g).ok());
@@ -77,6 +78,8 @@ pub fn read_curve_retry(gpu_index: usize, retries: u32) -> Result<Value, String>
                 let offs = limits::get_clock_offsets(gpu_index as u32);
                 v["mem_offset_mhz"] = json!(offs.mem_offset_mhz);
                 v["gpc_offset_mhz"] = json!(offs.gpc_offset_mhz);
+                let device_after = gpu::curve_device_identity(gpu_index,g,&name).ok();
+                v["device_identity"] = if device_before == device_after { json!(device_before) } else { Value::Null };
                 return Ok(v);
             }
             Err(e) => last = e,

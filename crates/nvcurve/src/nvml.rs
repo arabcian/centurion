@@ -13,7 +13,7 @@ pub const CLOCK_MEM: u32 = 2;
 const TEMPERATURE_GPU: u32 = 0;
 const ERROR_INSUFFICIENT_SIZE: u32 = 7;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Handle(usize);
 
 pub struct Nvml {
@@ -136,17 +136,33 @@ impl Nvml {
         self.handles.lock().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
+    pub fn device_count(&self) -> Result<u32, String> {
+        self.ensure_init()?;
+        let f: unsafe extern "C" fn(*mut u32) -> u32 = self.func("nvmlDeviceGetCount_v2").or_else(|_| self.func("nvmlDeviceGetCount"))?;
+        let mut count = 0;
+        self.check(unsafe { f(&mut count) })?;
+        Ok(count)
+    }
+
+    // Identity checks deliberately bypass the index cache to detect replacement.
+    pub fn fresh_handle(&self, index: u32) -> Result<Handle, String> {
+        self.ensure_init()?;
+        let f: unsafe extern "C" fn(u32, *mut usize) -> u32 =
+            self.func("nvmlDeviceGetHandleByIndex_v2").or_else(|_| self.func("nvmlDeviceGetHandleByIndex"))?;
+        let mut h = 0usize;
+        self.check(unsafe { f(index, &mut h) })?;
+        if h == 0 { return Err("NVML returned a null device handle".into()); }
+        Ok(Handle(h))
+    }
+
     pub fn handle(&self, index: u32) -> Result<Handle, String> {
         self.ensure_init()?;
         if let Some(&h) = self.handles.lock().unwrap_or_else(|p| p.into_inner()).get(&index) {
             return Ok(Handle(h));
         }
-        let f: unsafe extern "C" fn(u32, *mut usize) -> u32 =
-            self.func("nvmlDeviceGetHandleByIndex_v2").or_else(|_| self.func("nvmlDeviceGetHandleByIndex"))?;
-        let mut h = 0usize;
-        self.check(unsafe { f(index, &mut h) })?;
-        self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(index, h);
-        Ok(Handle(h))
+        let h = self.fresh_handle(index)?;
+        self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(index, h.0);
+        Ok(h)
     }
 
     fn get1<A: Default>(&self, name: &str, h: Handle) -> Result<A, String> {
@@ -175,11 +191,27 @@ impl Nvml {
         self.string_out(|p, n| Ok(unsafe { f(h.0, p, n) }))
     }
 
-    pub fn pci_bus(&self, h: Handle) -> Result<u32, String> {
+    fn pci_info(&self, h: Handle) -> Result<PciInfoV3, String> {
         let f: unsafe extern "C" fn(usize, *mut PciInfoV3) -> u32 = self.func("nvmlDeviceGetPciInfo_v3")?;
         let mut info: PciInfoV3 = unsafe { std::mem::zeroed() };
         self.check(unsafe { f(h.0, &mut info) })?;
-        Ok(info.bus)
+        Ok(info)
+    }
+    pub fn pci_bus(&self, h: Handle) -> Result<u32, String> { Ok(self.pci_info(h)?.bus) }
+    pub fn pci_identity(&self, h: Handle) -> Result<String, String> {
+        let mut info = self.pci_info(h)?;
+        info.bus_id[31] = 0;
+        let s = unsafe { CStr::from_ptr(info.bus_id.as_ptr()) }.to_string_lossy().into_owned();
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.') { return Err("Invalid NVML PCI identity".into()); }
+        Ok(s.to_ascii_lowercase())
+    }
+    pub fn device_name(&self, h: Handle) -> Result<String, String> {
+        let f: unsafe extern "C" fn(usize, *mut c_char, u32) -> u32 = self.func("nvmlDeviceGetName")?;
+        self.string_out(|p,n| Ok(unsafe { f(h.0,p,n) }))
+    }
+    pub fn vbios_version(&self, h: Handle) -> Result<String, String> {
+        let f: unsafe extern "C" fn(usize, *mut c_char, u32) -> u32 = self.func("nvmlDeviceGetVbiosVersion")?;
+        self.string_out(|p,n| Ok(unsafe { f(h.0,p,n) }))
     }
 
     pub fn clock(&self, h: Handle, kind: u32) -> Result<u32, String> {

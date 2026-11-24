@@ -21,7 +21,7 @@ static QString helperPath() { return privileged::helperPath(QStringLiteral("tune
 static QLabel *dim(const QString &t, const char *color = theme::MUTED) {
     auto *l = new QLabel(t);
     l->setWordWrap(true);
-    l->setStyleSheet(QStringLiteral("color:%1").arg(QString::fromLatin1(color)));
+    theme::setLiveSheet(l, [color] { return QStringLiteral("color:%1").arg(QString::fromLatin1(color)); });
     return l;
 }
 

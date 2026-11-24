@@ -9,6 +9,7 @@
 #include "platformprofile.h"
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QSet>
 #include <algorithm>
@@ -251,17 +252,22 @@ static QList<Chip> scanChips() {
     return out;
 }
 
-static std::optional<double> chipTemp(const Chip &chip) {
-    if (chip.temp.isEmpty()) return std::nullopt;
+static const Input *temperatureInput(const Chip &chip) {
+    if (chip.temp.isEmpty()) return nullptr;
     const Input *chosen = &chip.temp.first();
     for (const Input &f : chip.temp)
         if (f.label.contains(QLatin1String("tctl")) || f.label.contains(QLatin1String("tdie"))
             || f.label.contains(QLatin1String("package"))) { chosen = &f; break; }
+    return chosen;
+}
+static std::optional<double> chipTemp(const Chip &chip) {
+    const auto *chosen = temperatureInput(chip);
+    if (!chosen) return std::nullopt;
     auto v = rdInt(chosen->path);
     return v ? std::optional(*v / 1000.0) : std::nullopt;
 }
 
-static Opt read_cpuTemp() {
+static std::optional<PresentationReading> read_cpuTemp() {
     const auto cs = chips();
     for (const char *want : {"k10temp", "zenpower", "coretemp"}) {
         for (const Chip &c : cs) {
@@ -278,7 +284,9 @@ static Opt read_cpuTemp() {
                     t += SEP + QString(f.label).replace(QLatin1String("tccd"), QLatin1String("CCD")) + QStringLiteral(" %1°C").arg(*v / 1000.0, 0, 'f', 0);
             }
             if (hottest >= 0) t += SEP + QStringLiteral("hottest core %1°C").arg(hottest / 1000.0, 0, 'f', 0);
-            return t;
+            PresentationReading r{t, {{QStringLiteral("cpu_temp_c"), *main}}};
+            r.metrics.append({QStringLiteral("cpu_temp_c"), temperatureInput(c)->path, QFileInfo(c.path + "/device").canonicalFilePath(), MetricUnit::Celsius, *main});
+            return r;
         }
     }
     return std::nullopt;
@@ -293,65 +301,108 @@ std::optional<double> cpuTempC() {
     return std::nullopt;
 }
 
-static Opt read_fans() {
+static bool presentationHwmonAllowed(const Chip &c);
+
+static std::optional<PresentationReading> read_fans() {
     // Several drivers (lenovo_wmi_other, legion hwmon, …) report the same physical
     // fans under the same index. One reading per index, from the chip with the
     // most fans first, so a fan only one driver knows (fan4) still shows up.
     QList<Chip> cs = chips();
     std::stable_sort(cs.begin(), cs.end(), [](const Chip &a, const Chip &b) { return a.fan.size() > b.fan.size(); });
     QMap<int, long long> rpmByIndex;
-    for (const Chip &c : std::as_const(cs))
+    QMap<int, NumericMetric> provenance;
+    for (const Chip &c : std::as_const(cs)) {
+        if (!presentationHwmonAllowed(c)) continue;
         for (const Input &f : c.fan)
-            if (!rpmByIndex.contains(f.index))
-                if (auto rpm = rdInt(f.path); rpm && *rpm > 0) rpmByIndex.insert(f.index, *rpm);
-    QStringList l;
-    for (auto it = rpmByIndex.cbegin(); it != rpmByIndex.cend(); ++it)
-        l << QStringLiteral("Fan %1 %2 RPM").arg(it.key()).arg(it.value());
-    return joined(l);
+            if (!rpmByIndex.contains(f.index) || rpmByIndex.value(f.index) == 0)
+                if (auto rpm = rdInt(f.path); rpm && *rpm >= 0) {
+                    rpmByIndex.insert(f.index, *rpm);
+                    provenance.insert(f.index, {QStringLiteral("fan%1_rpm").arg(f.index), f.path, QFileInfo(c.path + "/device").canonicalFilePath(), MetricUnit::Rpm, double(*rpm)});
+                }
+    }
+    QStringList l; QMap<QString, double> values;
+    for (auto it = rpmByIndex.cbegin(); it != rpmByIndex.cend(); ++it) {
+        if (it.value() > 0) l << QStringLiteral("Fan %1 %2 RPM").arg(it.key()).arg(it.value());
+        values.insert(QStringLiteral("fan%1_rpm").arg(it.key()), double(it.value()));
+    }
+    if (values.isEmpty()) return std::nullopt;
+    PresentationReading r{joined(l), values}; r.metrics = provenance.values(); return r;
 }
 
-static Opt read_storage() {
-    QStringList l;
-    int n = 0;
+static std::optional<PresentationReading> read_storage() {
+    QStringList l; QMap<QString, double> values;
+    int n = 0; QList<NumericMetric> metrics;
     for (const Chip &c : chips()) {
         if (c.name != QLatin1String("nvme")) continue;
         ++n;
-        if (auto t = chipTemp(c)) l << QStringLiteral("NVMe %1 %2°C").arg(n).arg(*t, 0, 'f', 0);
-    }
-    return joined(l);
-}
-
-static Opt read_power() {
-    QStringList l;
-    for (const Chip &c : chips())
-        for (const Input &f : c.power) {
-            if (l.size() >= 4) return joined(l);
-            if (auto uw = rdInt(f.path); uw && *uw > 0) l << QStringLiteral("%1 %2 W").arg(c.name).arg(*uw / 1e6, 0, 'f', 1);
+        if (auto t = chipTemp(c)) {
+            l << QStringLiteral("NVMe %1 %2°C").arg(n).arg(*t, 0, 'f', 0);
+            const auto key = QStringLiteral("nvme%1_temp_c").arg(n);
+            values.insert(key, *t);
+            metrics.append({key, temperatureInput(c)->path, QFileInfo(c.path + "/device").canonicalFilePath(), MetricUnit::Celsius, *t});
         }
-    return joined(l);
+    }
+    if (values.isEmpty()) return std::nullopt;
+    PresentationReading r{joined(l), values}; r.metrics = metrics; return r;
 }
 
-static Opt read_igpu() {
+// A display-class PCI sensor read may runtime-resume the GPU. Only sample
+// when runtime PM reports active; unknown/suspended devices are not queried.
+// This is a best-effort gate, not an atomic PM reservation.
+static bool presentationHwmonAllowed(const Chip &c) {
+    const QString device = c.path + QStringLiteral("/device");
+    const auto klass = rd(device + QStringLiteral("/class"));
+    if (!klass || !klass->startsWith(QLatin1String("0x03"))) {
+        // Known GPU hwmon without PCI evidence: don't assume it is integrated.
+        return c.name != QLatin1String("amdgpu") && c.name != QLatin1String("nouveau") && c.name != QLatin1String("nvidia");
+    }
+    return rd(device + QStringLiteral("/power/runtime_status")) == QStringLiteral("active");
+}
+
+static std::optional<PresentationReading> read_power() {
+    QStringList l; QMap<QString, double> values; QList<NumericMetric> metrics;
     for (const Chip &c : chips()) {
-        if (c.name != "amdgpu") continue;
-        QStringList b;
-        if (auto t = chipTemp(c)) b << QStringLiteral("%1°C").arg(*t, 0, 'f', 0);
+        if (!presentationHwmonAllowed(c)) continue;
+        for (const Input &f : c.power) {
+            const auto key = QStringLiteral("power_%1_w").arg(c.name);
+            // Text shows the first four reported rails; numeric API keeps the
+            // first rail for each hwmon name, as before. Never read a rail twice.
+            if (l.size() >= 4 && values.contains(key)) continue;
+            if (auto uw = rdInt(f.path); uw && *uw > 0) {
+                if (l.size() < 4) l << QStringLiteral("%1 %2 W").arg(c.name).arg(*uw / 1e6, 0, 'f', 1);
+                if (!values.contains(key)) { values.insert(key, *uw / 1e6); metrics.append({key,f.path,QFileInfo(c.path + "/device").canonicalFilePath(),MetricUnit::Watts,*uw / 1e6}); }
+            }
+        }
+    }
+    if (values.isEmpty()) return std::nullopt;
+    PresentationReading r{joined(l), values}; r.metrics = metrics; return r;
+}
+
+static std::optional<PresentationReading> read_igpu() {
+    for (const Chip &c : chips()) {
+        if (c.name != "amdgpu" || !presentationHwmonAllowed(c)) continue;
+        QStringList b; QMap<QString, double> values;
+        if (auto t = chipTemp(c)) { b << QStringLiteral("%1°C").arg(*t, 0, 'f', 0); values.insert(QStringLiteral("igpu_temp_c"), *t); }
         if (!c.power.isEmpty())
             if (auto uw = rdInt(c.power.first().path)) b << QStringLiteral("%1W").arg(*uw / 1e6, 0, 'f', 1);
         if (auto hz = rdInt(c.path + "/freq1_input")) b << QStringLiteral("%1MHz").arg(*hz / 1000000);
-        return joined(b);
+        if (b.isEmpty()) return std::nullopt;
+        PresentationReading r{joined(b), values};
+        if (values.contains(QStringLiteral("igpu_temp_c"))) r.metrics.append({QStringLiteral("igpu_temp_c"),temperatureInput(c)->path,QFileInfo(c.path + "/device").canonicalFilePath(),MetricUnit::Celsius,values.value(QStringLiteral("igpu_temp_c"))});
+        return r;
     }
     // Intel iGPU (i915 / xe): no hwmon temp on most parts, the actual GT clock is enough.
     const QStringList cards = cachedDirs(QStringLiteral("/sys/class/drm"), [](const QString &p, const QString &e) {
         return e.startsWith(QLatin1String("card")) && !e.contains('-') && rd(p + QStringLiteral("/device/vendor")) == QStringLiteral("0x8086");
     });
     for (const QString &card : cards) {
+        if (rd(card + QStringLiteral("/device/power/runtime_status")) != QStringLiteral("active")) continue;
         auto mhz = rdInt(card + "/gt/gt0/rps_act_freq_mhz");                    // i915
         if (!mhz) mhz = rdInt(card + "/device/tile0/gt0/freq0/act_freq");        // xe
         if (!mhz) continue;
         QStringList b{QStringLiteral("%1MHz").arg(*mhz)};
         if (auto max = rdInt(card + "/gt/gt0/rps_max_freq_mhz")) b << QStringLiteral("max %1MHz").arg(*max);
-        return joined(b);
+        return PresentationReading{joined(b), {}};
     }
     return std::nullopt;
 }
@@ -402,7 +453,7 @@ QString formatMinutes(int m) {
     return m >= 60 ? QStringLiteral("%1 h %2 min").arg(m / 60).arg(m % 60, 2, 10, QLatin1Char('0')) : QStringLiteral("%1 min").arg(m);
 }
 
-static Opt read_battery() {
+static std::optional<PresentationReading> read_battery() {
     const QString p = batteryDir();
     if (p.isEmpty()) return std::nullopt;
     const BatteryState st = batteryState();
@@ -417,24 +468,39 @@ static Opt read_battery() {
         b << (st.status == QLatin1String("Charging") ? QStringLiteral("full in ~") : QStringLiteral("~")) + formatMinutes(m)
                  + (st.status == QLatin1String("Charging") ? QString() : QStringLiteral(" left"));
     else if (auto uv = rdInt(p + "/voltage_now")) b << QStringLiteral("%1V").arg(*uv / 1e6, 0, 'f', 2);
-    return joined(b);
+    QMap<QString, double> values;
+    if (st.capacity >= 0) values.insert(QStringLiteral("battery_percent"), st.capacity);
+    if (st.powerW >= 0) values.insert(QStringLiteral("battery_power_w"), st.powerW);
+    if (st.fullWh > 0 && st.designWh > 0) values.insert(QStringLiteral("battery_health_percent"), 100.0 * st.fullWh / st.designWh);
+    if (b.isEmpty() && values.isEmpty()) return std::nullopt;
+    PresentationReading r{joined(b), values};
+    for (auto i=values.cbegin(); i!=values.cend(); ++i) r.metrics.append({i.key(),p,QFileInfo(p).canonicalFilePath(),i.key()==QStringLiteral("battery_power_w") ? MetricUnit::Watts : MetricUnit::Percent,i.value()});
+    return r;
 }
 
-// Fixed display-only slots; shared by Home and the textual D-Bus Sensors API.
-// CLOCK_BOOTTIME includes suspend, so a pre-suspend sample cannot survive a
-// long sleep as a fresh measurement. CPU fan guard and numeric D-Bus reads
-// intentionally retain direct acquisition paths.
-static telemetry::Tick displayClock() {
+// Shared display slots for Home and both D-Bus APIs. CLOCK_BOOTTIME includes
+// suspend. CPU fan guard and direct battery/transaction reads remain independent.
+telemetry::Tick presentationClock() {
     timespec ts{};
     if (::clock_gettime(CLOCK_BOOTTIME, &ts) == 0)
         return std::chrono::duration_cast<telemetry::Tick>(std::chrono::seconds(ts.tv_sec) + std::chrono::nanoseconds(ts.tv_nsec));
     return std::chrono::duration_cast<telemetry::Tick>(std::chrono::steady_clock::now().time_since_epoch());
 }
-#define DISPLAY_SENSOR(name, ttl) \
-    Opt name() { \
-        static telemetry::Slot<QString> slot; \
-        return slot.read(telemetry::Tick(ttl), displayClock, read_##name).value; \
-    }
+bool PresentationReading::fresh() const {
+    const auto now = presentationClock();
+    return telemetry::freshAt(quality, captured, ttl, now);
+}
+#define DISPLAY_SENSOR(name, lifetime) \
+    static PresentationReading name##Presentation() { \
+        static telemetry::Slot<PresentationReading> slot; \
+        const auto sample = slot.read(telemetry::Tick(lifetime), presentationClock, read_##name); \
+        auto value = sample.value.value_or(PresentationReading{}); \
+        static const auto boot = rd(QStringLiteral("/proc/sys/kernel/random/boot_id")).value_or(QString()); \
+        value.bootId = boot; value.generation = sample.generation; \
+        value.quality = sample.quality; value.captured = sample.captured; value.ttl = telemetry::Tick(lifetime); \
+        return value; \
+    } \
+    Opt name() { const auto value = name##Presentation(); return value.fresh() ? value.text : Opt{}; }
 DISPLAY_SENSOR(cpuTemp, 1500)
 DISPLAY_SENSOR(fans, 1500)
 DISPLAY_SENSOR(storage, 1500)
@@ -443,36 +509,39 @@ DISPLAY_SENSOR(igpu, 1500)
 DISPLAY_SENSOR(battery, 2000)
 #undef DISPLAY_SENSOR
 
-QMap<QString, double> sensorValues() {
-    // The numbers behind the Live rows above, same sources; keys carry their unit.
-    QMap<QString, double> m;
-    const auto cs = chips();
-    for (const char *want : {"k10temp", "zenpower", "coretemp"}) {
-        if (m.contains(QStringLiteral("cpu_temp_c"))) break;
-        for (const Chip &c : cs)
-            if (c.name == QLatin1String(want))
-                if (auto t = chipTemp(c)) { m.insert(QStringLiteral("cpu_temp_c"), *t); break; }
+PresentationReading presentationReading(PresentationMetric metric) {
+    switch (metric) {
+    case PresentationMetric::CpuTemp: return cpuTempPresentation();
+    case PresentationMetric::Fans: return fansPresentation();
+    case PresentationMetric::Storage: return storagePresentation();
+    case PresentationMetric::Power: return powerPresentation();
+    case PresentationMetric::Igpu: return igpuPresentation();
+    case PresentationMetric::Battery: return batteryPresentation();
     }
-    int nvme = 0;
-    for (const Chip &c : cs) {
-        for (const Input &f : c.fan)
-            if (auto rpm = rdInt(f.path); rpm && *rpm >= 0) m.insert(QStringLiteral("fan%1_rpm").arg(f.index), double(*rpm));
-        if (c.name == QLatin1String("nvme")) {
-            ++nvme;
-            if (auto t = chipTemp(c)) m.insert(QStringLiteral("nvme%1_temp_c").arg(nvme), *t);
-        }
-        for (const Input &f : c.power)
-            if (auto uw = rdInt(f.path); uw && *uw > 0 && !m.contains(QStringLiteral("power_%1_w").arg(c.name)))
-                m.insert(QStringLiteral("power_%1_w").arg(c.name), *uw / 1e6);
-        if (c.name == QLatin1String("amdgpu") && !m.contains(QStringLiteral("igpu_temp_c")))
-            if (auto t = chipTemp(c)) m.insert(QStringLiteral("igpu_temp_c"), *t);
-    }
-    const BatteryState b = batteryState();
-    if (b.capacity >= 0) m.insert(QStringLiteral("battery_percent"), b.capacity);
-    if (b.powerW >= 0) m.insert(QStringLiteral("battery_power_w"), b.powerW);
-    if (b.fullWh > 0 && b.designWh > 0) m.insert(QStringLiteral("battery_health_percent"), 100.0 * b.fullWh / b.designWh);
-    return m;
+    return {};
 }
+
+QMap<QString, QString> PresentationSnapshot::text() const {
+    QMap<QString, QString> result;
+    for (const auto &[key, reading] : readings)
+        if (reading.fresh() && reading.text && !reading.text->isEmpty()) result.insert(key, *reading.text);
+    return result;
+}
+QMap<QString, double> PresentationSnapshot::values() const {
+    QMap<QString, double> result;
+    for (const auto &entry : readings) {
+        const auto &reading = entry.second;
+        if (reading.fresh()) for (auto i = reading.values.cbegin(); i != reading.values.cend(); ++i) result.insert(i.key(), i.value());
+    }
+    return result;
+}
+PresentationSnapshot presentationSnapshot() {
+    return {{
+        {QStringLiteral("cpu"), cpuTempPresentation()}, {QStringLiteral("fans"), fansPresentation()},
+        {QStringLiteral("storage"), storagePresentation()}, {QStringLiteral("power"), powerPresentation()},
+        {QStringLiteral("igpu"), igpuPresentation()}, {QStringLiteral("battery"), batteryPresentation()}}};
+}
+QMap<QString, double> sensorValues() { return presentationSnapshot().values(); }
 
 Opt cpuPackagePower() {
     // energy_uj is a free-running counter: power = Δenergy / Δt between two polls.

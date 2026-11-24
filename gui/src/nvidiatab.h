@@ -81,7 +81,8 @@ private:
     void updateCoreOffsetUi();
     void onSelectionChanged();
     void resetGraphToLastRead();
-    bool loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out);
+    bool loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out, const QJsonObject &expectedDevice = {});
+    void showCurveTransactions();
     void applyMemOffset(const QJsonObject &result);
     void takeGpuPoints(const QJsonArray &pts, bool keepOffsets);
     void adoptOffsets(const QHash<int, int> &offs);
@@ -91,6 +92,8 @@ private:
     // actions
     void readCurve();
     void applyOffsets();
+    QJsonObject draftProfileData() const;
+    void validateDraft();
     void vramLock();
     void vramUnlock();
     void saveProfileAs();
@@ -132,6 +135,7 @@ private:
     QVector<int> pointIds_;
     QVector<qint64> pointVoltages_;
     QString readGpuName_;
+    QJsonObject readGpuDevice_;
     bool curveReadbackValid_ = false;
     QVector<int> readFreq_;          // MHz each GPU point actually ran at in the last read
     int coreOffset_ = 0;
@@ -147,4 +151,5 @@ private:
     bool flattenPending() const { return flatFrom_ >= 0 && flatFrom_ < base_.size(); }
     TrialBar *trial_ = nullptr;  // "Trial apply": auto-revert unless kept
     void revertTrial();
+    void resetCurveImpl(bool fromTrial);
 };

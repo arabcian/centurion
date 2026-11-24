@@ -37,12 +37,14 @@ class CoSearchDialog : public QDialog {
 public:
     explicit CoSearchDialog(QWidget *parent = nullptr);
     ~CoSearchDialog() override;
-    bool operationActive() const { return running_ || applying_ || resetting_ || sceneApplying_; }
+    bool operationActive() const { return running_ || applying_ || resetting_ || sceneApplying_ || preparing_ || recoveryBusy_ || !perfTest_.isNull(); }
 protected:
     void closeEvent(QCloseEvent *event) override;
     void reject() override;
 private:
     void start();
+    void startPrepared();
+    void verifyPrepared();
     /// Checks shared by start() and verifyProfile(); the detected layout when a search may begin.
     std::optional<ryzen::Layout> preflight(cosearch::Mode mode);
     /// Runs only the final verification on a saved Ryzen Curve profile (Search::startVerification).
@@ -68,7 +70,8 @@ private:
     void done(bool resetOk, const QString &reason);
     /// tone: a theme colour (theme::OK, DANGER, ...) for the log line and the status banner; nullptr = neutral.
     void note(const QString &line, const char *tone = nullptr);
-    bool toolsPresent();
+    void probeTools(std::function<void(bool)> then);
+    bool acAvailable();
     void updateEstimate();
     void updateForecast();
     void applyTuning();
@@ -99,6 +102,8 @@ private:
     QPlainTextEdit *log_;
     QPushButton *go_, *stop_, *saveResult_, *loadResult_, *verifyBtn_, *guardsBtn_;
     QProcess *test_ = nullptr;
+    QPointer<QProcess> toolProbe_;
+    bool preparing_ = false, probeCancelled_ = false, recoveryBusy_ = false;
     QTimer *guard_, *watch_;
     QString testProgram_;
 

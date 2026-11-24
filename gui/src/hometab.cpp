@@ -12,9 +12,11 @@
 #include "prewrite.h"
 #include "privileged.h"
 #include "sysinfo.h"
+#include "telemetryservice.h"
 #include "theme.h"
 #include "experimentalui.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -254,7 +256,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     });
     headRow->addWidget(healthBadge_, 0, Qt::AlignVCenter);
     auto *themeBox = new QComboBox;
-    themeBox->setToolTip(tr("Colour theme. Applied by restarting the app (a few seconds)."));
+    themeBox->setToolTip(tr("Colour theme. Changes take effect immediately without restarting."));
     for (const auto &[id, name] : theme::themes()) {
         themeBox->addItem(theme::themePreviewIcon(id), name, id);
         themeBox->setItemData(themeBox->count() - 1, name, Qt::ToolTipRole);
@@ -266,19 +268,32 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     themeBox->completer()->setFilterMode(Qt::MatchContains);
     themeBox->setMaxVisibleItems(16);
     const QSettings uiSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
-    const QString savedTheme = uiSettings.value(QStringLiteral("theme"), theme::currentTheme()).toString();
-    themeBox->setCurrentIndex(std::max(0, themeBox->findData(savedTheme)));
+    // Show the running palette, not a pending or invalid preference.
+    const auto syncThemePicker = [themeBox] {
+        const QSignalBlocker blocker(themeBox);
+        const QString id = theme::currentTheme();
+        int index = themeBox->findData(id);
+        if (index < 0 && id == QStringLiteral("custom")) {
+            themeBox->addItem(theme::themePreviewIcon(id), QCoreApplication::translate("theme", "Custom palette"), id);
+            index = themeBox->findData(id);
+        }
+        if (index >= 0) {
+            themeBox->setItemIcon(index, theme::themePreviewIcon(id));
+            themeBox->setCurrentIndex(index);
+            themeBox->setEditText(themeBox->itemText(index));
+        }
+    };
+    theme::bindPresentation(themeBox, syncThemePicker);
     connect(themeBox->lineEdit(), &QLineEdit::editingFinished, themeBox, [themeBox] {
         if (themeBox->findText(themeBox->currentText(), Qt::MatchFixedString) < 0)
             themeBox->setEditText(themeBox->itemText(themeBox->currentIndex()));
     });
-    connect(themeBox, &QComboBox::activated, this, [this, themeBox](int i) {
+    connect(themeBox, &QComboBox::activated, this, [this, themeBox, syncThemePicker](int i) {
         const QString id = themeBox->itemData(i).toString();
-        if (!theme::saveTheme(id)) { showStatus(tr("Could not save the theme choice."), 6000); return; }
-        if (id == theme::currentTheme()) { showStatus(tr("Pending theme choice cleared."), 4000); return; }
-        if (QMessageBox::question(this, tr("Theme"), tr("Restart Centurion now to apply %1?").arg(themeBox->itemText(i)))
-            == QMessageBox::Yes) theme::requestRestart();
-        else showStatus(tr("Theme applies at the next start."), 6000);
+        if (!theme::applyLivePreference(*qApp, id)) {
+            syncThemePicker(); showStatus(tr("Could not save the theme choice."), 6000); return;
+        }
+        showStatus(tr("Theme applied."), 4000);
     });
     auto *themeGallery = new QPushButton(tr("Theme Gallery…"));
     connect(themeGallery, &QPushButton::clicked, this, [this, themeBox] {
@@ -306,9 +321,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         rebuild(); if (dlg.exec()!=QDialog::Accepted || !list->currentItem()) return;
         const QString id = list->currentItem()->data(Qt::UserRole).toString();
-        if (!theme::saveTheme(id)) { showStatus(tr("Could not save the theme choice."),6000); return; }
-        themeBox->setCurrentIndex(themeBox->findData(id));
-        if (id != theme::currentTheme() && QMessageBox::question(this,tr("Theme"),tr("Restart Centurion now to apply %1?").arg(list->currentItem()->text()))==QMessageBox::Yes) theme::requestRestart();
+        if (!theme::applyLivePreference(*qApp, id)) { showStatus(tr("Could not save the theme choice."),6000); return; }
+        showStatus(tr("Theme applied."), 4000);
     });
     auto *contrastAudit = new QPushButton(tr("Palette Contrast Audit…"));
     connect(contrastAudit, &QPushButton::clicked, this, [this, themeBox] {
@@ -357,7 +371,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     connect(customTheme, &QPushButton::clicked, this, [this, themeBox] {
         QDialog dlg(this); dlg.setWindowTitle(tr("Custom Theme")); dlg.resize(620, 620);
         auto *layout = new QVBoxLayout(&dlg);
-        auto *hint = new QLabel(tr("Edit opaque RGB colors. Changes take effect after restart. Contrast is checked for the main text and panel surfaces."));
+        auto *hint = new QLabel(tr("Edit opaque RGB colors. Saving applies the palette immediately. Contrast is checked for the main text and panel surfaces."));
         hint->setWordWrap(true); layout->addWidget(hint);
         auto *table = new QTableWidget(19, 2);
         table->setHorizontalHeaderLabels({tr("Token"), tr("Color (#RRGGBB)")});
@@ -420,15 +434,12 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
         connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         connect(buttons, &QDialogButtonBox::accepted, &dlg, [&dlg, readColors] {
-            if (!theme::saveCustomPalette(readColors()) || !theme::saveTheme(QStringLiteral("custom"))) { QMessageBox::warning(&dlg, tr("Custom Theme"), tr("Could not save the palette.")); return; }
+            if (!theme::applyLiveCustomPreference(*qApp, readColors())) { QMessageBox::warning(&dlg, tr("Custom Theme"), tr("Could not save the palette.")); return; }
             dlg.accept();
         });
         layout->addWidget(buttons);
         if (dlg.exec() != QDialog::Accepted) return;
-        int index = themeBox->findData(QStringLiteral("custom"));
-        if (index < 0) { themeBox->addItem(tr("Custom palette"), QStringLiteral("custom")); index = themeBox->count()-1; }
-        themeBox->setItemIcon(index, theme::themePreviewIcon(QStringLiteral("custom"))); themeBox->setCurrentIndex(index);
-        if (QMessageBox::question(this, tr("Custom Theme"), tr("Restart Centurion now to apply the custom palette?")) == QMessageBox::Yes) theme::requestRestart();
+        showStatus(tr("Theme applied."), 4000);
     });
     QFormLayout *preferencesRow = nullptr;
     auto *typography = new QPushButton(tr("Typography…"));
@@ -870,13 +881,15 @@ QGroupBox *HomeTab::buildLiveBox() {
     g->setHorizontalSpacing(10);
     g->setVerticalSpacing(6);
 
-    const QList<QPair<QString, std::function<std::optional<QString>()>>> spec{
-        {tr("CPU Temp"), sysinfo::cpuTemp}, {tr("GPU"), nullptr}, {tr("iGPU"), sysinfo::igpu},
-        {tr("Fans"), sysinfo::fans}, {tr("Storage"), sysinfo::storage}, {tr("Power"), sysinfo::power},
-        {tr("CPU Power"), sysinfo::cpuPackagePower}, {tr("USB-C in"), sysinfo::usbcInputs},
-        {tr("Battery"), sysinfo::battery}};
+    using Metric = sysinfo::PresentationMetric;
+    struct Spec { QString name; std::function<sysinfo::Opt()> getter; std::optional<Metric> metric; };
+    const QList<Spec> spec{
+        {tr("CPU Temp"), sysinfo::cpuTemp, Metric::CpuTemp}, {tr("GPU"), nullptr, {}}, {tr("iGPU"), sysinfo::igpu, Metric::Igpu},
+        {tr("Fans"), sysinfo::fans, Metric::Fans}, {tr("Storage"), sysinfo::storage, Metric::Storage}, {tr("Power"), sysinfo::power, Metric::Power},
+        {tr("CPU Power"), sysinfo::cpuPackagePower, {}}, {tr("USB-C in"), sysinfo::usbcInputs, {}},
+        {tr("Battery"), sysinfo::battery, Metric::Battery}};
     int row = 0;
-    for (const auto &[name, getter] : spec) {
+    for (const auto &[name, getter, metric] : spec) {
         if (!getter) {  // dGPU: sysfs state + EC temperature, see refreshGpuLive()
             gpuLiveKey_ = muted(name);
             gpuLiveValue_ = new QLabel;
@@ -888,20 +901,20 @@ QGroupBox *HomeTab::buildLiveBox() {
             g->addWidget(gpuLiveValue_, row++, 1);
             continue;
         }
-        auto v = getter();
-        if (!v) continue;
+        // Do not probe hardware while constructing the Home page.
         auto *key = muted(name);
         key->setWordWrap(false);
-        auto *val = new QLabel(*v);
+        auto *val = new QLabel(QStringLiteral("—"));
         val->setProperty("role", "value");  // a readout: brighter and heavier than its label
         val->setWordWrap(true);
         g->addWidget(key, row, 0, Qt::AlignTop);
         g->addWidget(val, row++, 1);
-        liveRows_.append({key, val, getter});
+        key->hide(); val->hide();
+        liveRows_.append({key, val, getter, metric});
     }
     // EC-side readings from the legion-ec-sensors stream. The fan row is only for
     // machines / kernels with no fan hwmon; the charger row only ever shows a warning.
-    ecFansWanted_ = !sysinfo::fans().has_value();
+    ecFansWanted_ = false; // resolved by the first asynchronous fan sample
     ecFansKey_ = muted(tr("Fans (EC)"));
     ecFansValue_ = new QLabel;
     ecFansValue_->setProperty("role", "value");
@@ -928,6 +941,7 @@ void HomeTab::refreshLive() {
     const bool chart = temperaturePlot_ && temperaturePlot_->isVisible();
     if (sensors || chart || !dgpuProbed_) refreshGpuLive();
     const bool device = hasDeviceRows() && devicePending_ == 0;
+    if (sensors) for (auto &r : liveRows_) if (r.last && !r.last->fresh()) r.value->setText(QStringLiteral("—"));
     if (liveBusy_ || ((!sensors && !chart) && !device)) return;  // never stack sweeps
 
     // The sysfs sweep runs off the GUI thread: battery/charger attributes are
@@ -938,9 +952,10 @@ void HomeTab::refreshLive() {
     QList<std::function<std::optional<QString>()>> getters;
     getters.reserve(liveRows_.size());
     QList<int> indices;
+    QList<std::optional<sysinfo::PresentationMetric>> metrics;
     for (int i=0; i<liveRows_.size(); ++i) {
         const auto &r = liveRows_.at(i);
-        if (sensors || (chart && r.key->text() == tr("CPU Temp"))) { getters.append(r.getter); indices.append(i); }
+        if (sensors || (chart && r.metric == sysinfo::PresentationMetric::CpuTemp)) { getters.append(r.getter); indices.append(i); metrics.append(r.metric); }
     }
     QPointer<HomeTab> self(this);
     // The device rows ride along: their EC-backed reads block the same way.
@@ -948,35 +963,51 @@ void HomeTab::refreshLive() {
     if (device) paths = devicePaths();
     const quint64 gen = deviceGen_;
     const qint64 started = monoMs();
-    QThreadPool::globalInstance()->start([self, getters, indices, paths, gen, chart, started] {
+    QList<sysinfo::PresentationMetric> requested;
+    for (const auto &metric : metrics) if (metric) requested.append(*metric);
+    TelemetryService::instance().request(requested, this, [self, getters, indices, metrics, paths, gen, chart, started](TelemetryService::Results results) {
+        if (!self) return;
+        if (!self->isVisible()) { self->liveBusy_ = false; return; }
+        QThreadPool::globalInstance()->start([self, getters, indices, metrics, paths, gen, chart, started, results = std::move(results)] {
         QList<std::optional<QString>> vals;
         vals.reserve(getters.size());
-        for (const auto &g : getters) vals.append(g());
+        QList<std::optional<sysinfo::PresentationReading>> readings;
+        for (qsizetype i = 0; i < getters.size(); ++i) {
+            if (metrics.at(i)) {
+                auto reading = results.value(int(*metrics.at(i)));
+                vals.append(reading.text); readings.append(std::optional<sysinfo::PresentationReading>(std::move(reading)));
+            } else { vals.append(getters.at(i)()); readings.append(std::nullopt); }
+        }
         std::optional<DeviceSnap> snap;
         if (paths) snap = readDevice(*paths);
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, vals, indices, snap, gen, chart, started] {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, vals, indices, readings, snap, gen, chart, started] {
             if (!self) return;
             self->liveBusy_ = false;
             // A sweep that read the hardware before a write started or finished would put the OLD value back
             // in the combo (the next poll corrects it, but the change looked as if it had not been applied).
+            if (!self->isVisible()) return;
             if (snap && gen == self->deviceGen_) self->applyDevice(*snap);
             for (int i = 0; i < vals.size(); ++i) {
                 const int row = indices.at(i);
-                const QString t = vals[i].value_or(QStringLiteral("—"));
-                if (self->liveRows_[row].value->text() != t) self->liveRows_[row].value->setText(t);
+                const QString t = readings.at(i) && !readings.at(i)->fresh() ? QStringLiteral("—") : vals[i].value_or(QStringLiteral("—"));
+                auto &live = self->liveRows_[row]; live.last = readings.at(i);
+                if (live.value->text() != t) live.value->setText(t);
+                if (t != QStringLiteral("—")) { live.key->show(); live.value->show(); }
+                if (live.metric == sysinfo::PresentationMetric::Fans && readings.at(i)) {
+                    const auto &r = *readings.at(i);
+                    if (r.fresh() || r.quality == telemetry::Quality::Unavailable) {
+                        self->ecFansWanted_ = !r.text.has_value();
+                        if (!self->ecFansWanted_) { self->ecFansKey_->hide(); self->ecFansValue_->hide(); }
+                    }
+                }
             }
             if (chart && self->temperaturePlot_ && self->temperaturePlot_->isVisible()) {
-                auto pick = [](const QString &str) -> std::optional<double> {
-                    static const QRegularExpression re(QStringLiteral("(-?\\d+(?:\\.\\d+)?)"));
-                    const auto match = re.match(str);
-                    if (!match.hasMatch()) return std::nullopt;
-                    bool ok = false;
-                    const double v = match.captured(1).toDouble(&ok);
-                    return ok ? std::optional<double>(v) : std::nullopt;
-                };
                 std::optional<double> cpu;
-                for (int i=0; i<indices.size(); ++i) {
-                    if (self->liveRows_.at(indices.at(i)).key->text() == self->tr("CPU Temp") && vals.at(i)) { cpu = pick(*vals.at(i)); break; }
+                for (qsizetype i=0; i<indices.size(); ++i) {
+                    if (self->liveRows_.at(indices.at(i)).metric != sysinfo::PresentationMetric::CpuTemp || !readings.at(i) || !readings.at(i)->fresh()) continue;
+                    const auto &values = readings.at(i)->values;
+                    auto it = values.constFind(QStringLiteral("cpu_temp_c"));
+                    if (it != values.cend()) cpu = it.value();
                 }
                 // An EC temperature is real only while the dGPU is awake and
                 // the last EC sample is recent. No NVML request is introduced.
@@ -988,6 +1019,7 @@ void HomeTab::refreshLive() {
                 self->temperaturePlot_->append(cpu, gpu);
             }
         }, Qt::QueuedConnection);
+        });
     });
 }
 

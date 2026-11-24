@@ -1,3 +1,4 @@
+#include "privileged.h"
 #include "mainwindow.h"
 #include <QFile>
 #include <QFrame>
@@ -814,7 +815,7 @@ void MainWindow::refreshStatusChipTheme() {
 }
 
 QStringList MainWindow::activeOperations() const {
-    QStringList out;
+    QStringList out = privileged::activeOperations();
     if (safeModeRunning_) out << tr("Safe mode");
     if (scenes_->operationActive()) out << tr("Scene apply");
     if (home_->operationActive()) out << tr("Device controls");
@@ -867,7 +868,7 @@ void MainWindow::showOperations() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Active operations"));
     auto *layout = new QVBoxLayout(&dialog);
-    auto *note = new QLabel(tr("Reported by existing GUI operation states; background or external jobs may not appear here."));
+    auto *note = new QLabel(tr("Includes actual privileged helper lifetimes and existing GUI operation states; external jobs may not appear here."));
     note->setWordWrap(true);
     layout->addWidget(note);
     auto *status = new QLabel;
@@ -875,11 +876,11 @@ void MainWindow::showOperations() {
     status->setWordWrap(true);
     layout->addWidget(status, 1);
     auto *history = new QPlainTextEdit; history->setReadOnly(true);
-    layout->addWidget(new QLabel(tr("Observed transitions and scene transaction events (not independent verification)")));
+    layout->addWidget(new QLabel(tr("Observed transitions, scene events and actual helper exits (not independent verification)")));
     layout->addWidget(history, 2);
     auto refresh = [this, status, history] {
         sampleOperations();
-        const auto text = operationHistory_.join(QLatin1Char('\n'));
+        const auto text = (operationHistory_ + privileged::operationHistory()).join(QLatin1Char('\n'));
         if (history->toPlainText() != text) history->setPlainText(text);
         const QStringList active = activeOperations();
         status->setText(active.isEmpty() ? tr("No tracked operation is active.") : active.join(QLatin1Char('\n')));

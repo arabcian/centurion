@@ -8,8 +8,12 @@
 #include <utility>
 
 namespace telemetry {
-enum class Quality { Unavailable, Fresh, Pending, Expired, Failed };
+enum class Quality { Unavailable, Fresh, Pending, Expired, Failed, TimedOut };
 using Tick = std::chrono::milliseconds;
+
+inline bool freshAt(Quality quality, Tick captured, Tick ttl, Tick now) {
+    return quality == Quality::Fresh && ttl > Tick::zero() && now >= captured && now - captured < ttl;
+}
 
 template<class T> struct Sample {
     std::optional<T> value;

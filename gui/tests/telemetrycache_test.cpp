@@ -38,5 +38,21 @@ int main() {
     slot.invalidate();
     CHECK(slot.read(Tick(10),now,[&]()->std::optional<double>{clock+=15;return 90.;}).quality==Quality::Expired);
     CHECK(slot.read(Tick(10),now,read).value==0.0 && calls==4);
+    CHECK(freshAt(Quality::Fresh, Tick(100), Tick(10), Tick(109)));
+    CHECK(!freshAt(Quality::Fresh, Tick(100), Tick(10), Tick(110)));
+    CHECK(!freshAt(Quality::Fresh, Tick(100), Tick(10), Tick(99)));
+    CHECK(!freshAt(Quality::Pending, Tick(100), Tick(10), Tick(101)));
+    CHECK(!freshAt(Quality::Fresh, Tick(100), Tick(0), Tick(100)));
+    // Two consumers, one acquisition; a true zero is data, not missing.
+    struct Reading { double numeric; const char *display; };
+    Slot<Reading> shared;
+    int acquisitions = 0;
+    auto acquire = [&]() -> std::optional<Reading> { ++acquisitions; return Reading{0., "0 C"}; };
+    auto display = shared.read(Tick(100), now, acquire);
+    auto numeric = shared.read(Tick(100), now, acquire);
+    CHECK(display.value && numeric.value && numeric.value->numeric == 0. && acquisitions == 1);
+    CHECK(display.captured == numeric.captured && freshAt(display.quality, display.captured, Tick(100), now()));
+    clock += 100;
+    CHECK(!freshAt(numeric.quality, numeric.captured, Tick(100), now()));
     return 0;
 }

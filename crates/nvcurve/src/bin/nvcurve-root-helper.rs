@@ -168,13 +168,19 @@ fn op_apply_gpu_offsets(p: &Obj) -> OpResult {
             return Err(format!("profile_data 'name' ({embedded:?}) does not match profile_name ({name:?})"));
         }
     }
-    if p.contains_key("expected_gpu") || p.contains_key("expected_points") {
-        check_expected_curve(p, &ops::read_curve_retry(0, 2)?)?;
-    }
+    let expected_gpu = p.get("expected_gpu").and_then(Value::as_str).ok_or("Missing expected GPU")?;
+    let expected_points = p.get("expected_points").ok_or("Missing expected points")?;
+    let expected_device = p.get("expected_device").filter(|v| v.is_object()).ok_or("Missing verified GPU identity; update GUI and read curve again")?;
+    let observed = ops::read_curve_retry(0, 2)?;
+    check_expected_curve(p, &observed)?;
+    if &observed["device_identity"] != expected_device { return Err("GPU device identity changed; read curve again".into()); }
     ensure_dir(Path::new(PROFILES_DIR), 0o755).map_err(|e| format!("Could not prepare {PROFILES_DIR}: {e}"))?;
     write_bytes(&profile_file(name), text.as_bytes(), 0o644).map_err(|e| format!("Could not write profile: {e}"))?;
 
-    let msg = ops::apply_profile_verified(0, name, &config(), 3)?;
+    let out = nvcurve::profiles::apply::apply_profile_checked(0,name,&config(),Some((expected_gpu,expected_points,expected_device)))?;
+    if !out.errors.is_empty() { return Err(out.errors.join("; ")); }
+    let mut msg = format!("Profile '{name}' applied and verified.");
+    for warning in out.warnings { msg.push('\n'); msg.push_str(&warning); }
     refresh_result(APPLY_RESULT, p);
     Ok(msg)
 }

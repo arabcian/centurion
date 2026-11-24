@@ -128,11 +128,18 @@ void VfCurveWidget::wheelEvent(QWheelEvent *e) {
 
 void VfCurveWidget::setPoints(const QVector<QPointF> &pts) {
     const bool reshaped = pts.size() != pts_.size();
+    invalidPoints_.clear();
     pts_ = pts;
     if (reshaped) { sel_.clear(); cur_ = 0; anchor_ = 0; band_ = false; fitAxes(); }
     else if (dragIndex_ < 0 && !groupDrag_) applyView();  // keep edited points in frame
     update();
     Q_EMIT selectionChanged();
+}
+
+void VfCurveWidget::setInvalidPoints(const QSet<int> &indices) {
+    invalidPoints_.clear();
+    for (int i : indices) if (i >= 0 && i < pts_.size()) invalidPoints_.insert(i);
+    update();
 }
 
 void VfCurveWidget::setCapComp(int capMhz, int compMhz) {
@@ -334,6 +341,13 @@ void VfCurveWidget::paintEvent(QPaintEvent *) {
         p.setPen(QPen(C(theme::FG), 2));
         p.setBrush(sel_.contains(hover_) ? C(theme::WARN) : C(theme::ACCENT));
         p.drawEllipse(toPixel(pts_[hover_]), 7.5, 7.5);
+    }
+    // Cross markers remain distinct from editable selection, even without colour.
+    p.setPen(QPen(C(theme::DANGER), 2.5));
+    for (int i : invalidPoints_) {
+        const auto px = toPixel(pts_[i]);
+        p.drawLine(px + QPointF(-8, -8), px + QPointF(8, 8));
+        p.drawLine(px + QPointF(-8, 8), px + QPointF(8, -8));
     }
     if (band_) {
         QColor fill = C(theme::ACCENT);

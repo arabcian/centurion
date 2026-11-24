@@ -2,7 +2,8 @@
 // Health → Overview: one card per health area, colored by its level, and the diagnostic report button.
 // The levels come from tune-profile-helper ("overview" op, read-only, Rust, no root); this page only lays
 // them out. It refreshes when it is shown, once at start-up, when a kernel fault arrives (debounced), and
-// on Refresh — no timer.
+// on Refresh — no recurring diagnostic scans. The CPU temperature uses the shared
+// presentation service only while this page is visible.
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QWidget>
@@ -14,6 +15,7 @@ class QPushButton;
 class QScrollArea;
 class QFrame;
 class QResizeEvent;
+class QHideEvent;
 
 class OverviewPage : public QWidget {
     Q_OBJECT
@@ -35,6 +37,7 @@ Q_SIGNALS:
 
 protected:
     void showEvent(QShowEvent *e) override;
+    void hideEvent(QHideEvent *e) override;
     void resizeEvent(QResizeEvent *e) override;
 
 private:
@@ -49,6 +52,9 @@ private:
     static QString targetFor(const QString &id);
 
     QGridLayout *grid_;
+    QLabel *sensorStatus_ = nullptr;
+    QTimer *sensorTimer_ = nullptr;
+    bool sensorPending_ = false;
     QLabel *summary_, *status_, *counts_ = nullptr, *recommendation_ = nullptr;
     QPushButton *recommendButton_ = nullptr;
     QScrollArea *scroll_ = nullptr;

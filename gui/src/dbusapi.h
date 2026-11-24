@@ -13,7 +13,7 @@
 //   PowerProfile()          → s
 //   SetPowerProfile(s)                same path as the Home cards / tray menu
 //   Sensors()               → a{ss}   the Home tab's Live rows (cpu, fans, storage, power, igpu, battery);
-//                                     sysfs only, never wakes the dGPU
+//                                     sysfs only; skips non-active PCI GPU hwmon (best effort)
 //   SensorValues()          → a{sd}   the same as numbers, unit in the key (Home Assistant & co.):
 //                                     cpu_temp_c, fanN_rpm, nvmeN_temp_c, power_<hwmon>_w, igpu_temp_c,
 //                                     battery_percent, battery_power_w, battery_health_percent
@@ -28,6 +28,8 @@
 // Same trust as `centurion-gamemode SCENE`: any process of this user may call
 // it; root work still goes through the helpers and their polkit rules.
 #include <QDBusContext>
+#include <QDBusConnection>
+#include <QDBusMessage>
 #include <QObject>
 #include <QStringList>
 #include <QMap>
@@ -64,5 +66,10 @@ Q_SIGNALS:
     void SafeModeFinished(bool ok, const QString &log);
 
 private:
+    struct SensorRequest { QDBusConnection connection; QDBusMessage message; bool numeric; };
+    QList<SensorRequest> sensorRequests_;
+    bool sensorPending_ = false, sensorExpired_ = false;
+    quint64 sensorGeneration_ = 0;
+    void enqueueSensors(bool numeric);
     MainWindow *win_;
 };

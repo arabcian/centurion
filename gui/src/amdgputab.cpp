@@ -155,12 +155,12 @@ AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
     banner_ = new QLabel;
     banner_->setWordWrap(true);
     banner_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    banner_->setStyleSheet(theme::banner(theme::ACCENT) + QStringLiteral(" padding: 6px 10px;"));
+    theme::setLiveSheet(banner_, [] { return theme::banner(theme::ACCENT) + QStringLiteral(" padding: 6px 10px;"); });
     banner_->hide();
     outer->addWidget(banner_);
 
     live_ = new QLabel(QStringLiteral("—"));
-    live_->setStyleSheet(QStringLiteral("font-family: monospace; color: %1; padding-left: 2px;").arg(theme::MUTED));
+    theme::setLiveSheet(live_, [] { return QStringLiteral("font-family: monospace; color: %1; padding-left: 2px;").arg(theme::MUTED); });
     auto *liveRow = new QHBoxLayout;
     liveRow->addWidget(live_, 1);
     auto *frequencies = new QPushButton(tr("Frequency overview…"));
@@ -181,7 +181,7 @@ AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
     // Trial bar: shown after Apply until the user keeps or reverts.
     trialBar_ = new QFrame;
     trialBar_->setObjectName("trialBar");
-    trialBar_->setStyleSheet(theme::banner(theme::WARN, QStringLiteral("#trialBar")));
+    theme::setLiveSheet(trialBar_, [] { return theme::banner(theme::WARN, QStringLiteral("#trialBar")); });
     auto *tb = new QHBoxLayout(trialBar_);
     trialLabel_ = new QLabel;
     tb->addWidget(trialLabel_, 1);
@@ -703,7 +703,7 @@ void AmdGpuTab::setBusy(bool b) {
 }
 
 void AmdGpuTab::status(const QString &msg, const char *color) {
-    status_->setStyleSheet(color ? QStringLiteral("color: %1;").arg(QLatin1String(color)) : QString());
+    theme::setLiveSheet(status_, [color] { return color ? QStringLiteral("color: %1;").arg(QLatin1String(color)) : QString(); });
     status_->setText(msg);
 }
 

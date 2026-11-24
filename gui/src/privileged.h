@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <functional>
 
 namespace privileged {
@@ -29,6 +30,11 @@ struct Result {
     bool ok() const { return reached && json.value(QStringLiteral("ok")).toBool(); }
     QString message() const;  // error text for either failure kind
 };
+
+// Real process lifetime; a timed-out root process may still be running.
+QStringList activeOperations();
+QStringList operationHistory();
+bool resourceActive(const QString &helperName);
 
 using Callback = std::function<void(const Result &)>;
 

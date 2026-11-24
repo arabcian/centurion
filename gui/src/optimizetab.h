@@ -123,6 +123,10 @@ private:
     bool startupDraftChecked_ = false;
     QString startupDraftNotice_;
     void sourceWorkspace();
+    void showTransactionJournal();
+    void showAutotuneHistory();
+    void showSemanticDiff();
+    void showFrametimePair();
     QString draftFingerprint() const;
 
     static bool validFor(const Row &r, const QString &v);

@@ -438,12 +438,12 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     cl->addLayout(hdr);
     applyButtons_ = {bAll, bReset, bCores, coSearch};
 
-    const QString accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
+    const char *const accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
     auto *cards = new QHBoxLayout;
     cards->setSpacing(8);
     slots_.reserve(ccdCount_ * SLOTS_PER_CCD);
     for (int ccd = 0; ccd < ccdCount_; ++ccd) {
-        const QString accent = accents[ccd % 4];
+        const char *accent = accents[ccd % 4];
         const auto detected = layout_.cores.value(ccd);
 
         auto *card = new QFrame;
@@ -451,11 +451,11 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         // Keep the CCD's identity in its title, not a bright frame around
         // every row: instrumentation should be readable rather than decorative.
         if (theme::experimentalEnabled())
-            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-radius: 7px; }")
-                                    .arg(theme::BG1, theme::BORDER));
+            theme::setLiveSheet(card, [] { return QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-radius: 7px; }")
+                                    .arg(theme::BG1, theme::BORDER); });
         else
-            card->setStyleSheet(QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
-                                    .arg(theme::BG2, theme::BORDER_SOFT, accent));
+            theme::setLiveSheet(card, [accent] { return QStringLiteral("#ccdCard { background: %1; border: 1px solid %2; border-top: 2px solid %3; border-radius: 6px; }")
+                                    .arg(theme::BG2, theme::BORDER_SOFT, accent); });
         auto *g = new QGridLayout(card);
         g->setContentsMargins(8, 6, 8, 6);
         g->setHorizontalSpacing(14);
@@ -464,7 +464,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         // Row 0: title + quick fill
         auto *title = new QLabel(ccdName(ccd));
         ccdTitles_[ccd] = title;
-        title->setStyleSheet(QStringLiteral("color:%1; font-weight:700; font-size:11pt; background:transparent;").arg(accent));
+        theme::setLiveSheet(title, [accent] { return QStringLiteral("color:%1; font-weight:700; font-size:11pt; background:transparent;").arg(accent); });
         auto *fillBar = new QHBoxLayout;
         fillBar->setSpacing(6);
         auto *fill = new QLineEdit;
@@ -504,7 +504,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         }
         auto *line = new QFrame;
         line->setFrameShape(QFrame::HLine);
-        line->setStyleSheet(QStringLiteral("color:%1;").arg(theme::BORDER_SOFT));
+        theme::setLiveSheet(line, [] { return QStringLiteral("color:%1;").arg(theme::BORDER_SOFT); });
         g->addWidget(line, 2, 0, 1, COLS);
 
         for (int s = 0; s < SLOTS_PER_CCD; ++s) {
@@ -516,7 +516,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
             const int r = 3 + s;
 
             auto *id = new QLabel(QStringLiteral("S%1").arg(s));
-            id->setStyleSheet(QStringLiteral("color:%1; font-weight:600; background:transparent;").arg(accent));
+            theme::setLiveSheet(id, [accent] { return QStringLiteral("color:%1; font-weight:600; background:transparent;").arg(accent); });
             id->setToolTip(QStringLiteral("Fixed SMU slot %1 of CCD%2 (hardware addressing, not the OS core id)\n").arg(s).arg(ccd) + cpuHint);
             g->addWidget(id, r, 0, Qt::AlignCenter);
 
@@ -547,7 +547,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
                 auto *l = new QLabel(QStringLiteral("–"));
                 l->setMinimumWidth(44);
                 l->setAlignment(Qt::AlignCenter);
-                l->setStyleSheet(QStringLiteral("color:%1; background:transparent;").arg(theme::FG_DIM));
+                theme::setLiveSheet(l, [] { return QStringLiteral("color:%1; background:transparent;").arg(theme::FG_DIM); });
                 g->addWidget(l, r, col, Qt::AlignCenter);
                 return l;
             };
@@ -1139,8 +1139,8 @@ void RyzenTab::refreshCppc() {
             const bool isTied = tied.contains(s.slot);
             const QString mark = !v ? QString() : unresolved ? QStringLiteral("↑") : isTied ? QStringLiteral("=") : QString();
             s.cppc->setText(v ? mark + QString::number(*v) + (best ? QStringLiteral(" ★") : QString()) : QStringLiteral("–"));
-            s.cppc->setStyleSheet(QStringLiteral("color:%1;%2 background:transparent;")
-                                      .arg(v ? (best ? theme::WARN : theme::FG_DIM) : theme::MUTED, best ? " font-weight:700;" : ""));
+            theme::setLiveSheet(s.cppc, [hasValue=v.has_value(), best] { return QStringLiteral("color:%1;%2 background:transparent;")
+                                      .arg(hasValue ? (best ? theme::WARN : theme::FG_DIM) : theme::MUTED, best ? " font-weight:700;" : ""); });
             QString tip = QStringLiteral("Firmware preferred-core rank (CPPC highest_perf)") +
                           (v ? ": " + QString::number(*v) : QStringLiteral(" (not available)"));
             if (remap && v && lv)

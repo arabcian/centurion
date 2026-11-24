@@ -1,13 +1,19 @@
 #include <QUuid>
 #include "autotuneprogress.h"
+#include "autotunehistory.h"
+#include "tuningsemantic.h"
 #include "calibrationcoverage.h"
 #include "calibrationmath.h"
+#include "abverify.h"
 #include "insights.h"
 #include "optimizetab.h"
 #include "profilediff.h"
 #include "frametime.h"
+#include "frametimepair.h"
 #include "charts.h"
 #include "tuningviewstate.h"
+#include "workspacestate.h"
+#include "tunejournal.h"
 #include "privileged.h"
 #include "inteltab.h"
 #include "ryzentab.h"
@@ -106,6 +112,9 @@ static const QString UNDERVOLT_PROFILE = QStringLiteral("GAMING");
 static const QString NVCURVE_PROFILES = QStringLiteral("/etc/nvcurve/profiles");
 
 static QString helperPath() { return privileged::helperPath(QStringLiteral("tune-helper")); }
+static bool optimizationHelperActive() {
+    return privileged::resourceActive(QStringLiteral("tune-helper")) || privileged::resourceActive(QStringLiteral("tune-profile-helper"));
+}
 QString OptimizeTab::helperPathForDescribe() { return helperPath(); }
 
 // Ops that can only put saved originals back or apply an *approved* preset by name go to tune-profile-helper;
@@ -406,7 +415,7 @@ void OptimizeTab::buildUi() {
     // Drift banner: hidden until DriftWatch finds a setting changed behind Centurion's back.
     driftBar_ = new QFrame;
     driftBar_->setObjectName("driftBar");
-    driftBar_->setStyleSheet(theme::banner(theme::WARN, QStringLiteral("#driftBar")));
+    theme::setLiveSheet(driftBar_, [] { return theme::banner(theme::WARN, QStringLiteral("#driftBar")); });
     auto *dl = new QHBoxLayout(driftBar_);
     dl->setContentsMargins(10, 4, 8, 4);
     driftText_ = new QLabel;
@@ -579,7 +588,7 @@ void OptimizeTab::buildUi() {
         if(!QFileInfo(path).isFile() || !f.open(QIODevice::ReadOnly) || f.size() > (8LL<<20)) { QMessageBox::warning(this,tr("Calibration Data"),tr("Signature unavailable or exceeds the 8 MiB limit.")); return; }
         const auto bytes=f.read((8LL<<20)+1);
         const auto doc=QJsonDocument::fromJson(bytes);
-        if(bytes.size()>(8LL<<20) || !doc.isObject()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Invalid signature.")); return; }
+        if(bytes.size()>(8LL<<20) || f.error()!=QFileDevice::NoError || !doc.isObject()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Invalid signature.")); return; }
         const auto sig=doc.object();
         if(sig.value("version").toInt()!=10 || !sig.value("rows").isArray() || !sig.value("fingerprint").isObject()) { QMessageBox::warning(this,tr("Calibration Data"),tr("Unsupported signature format.")); return; }
         if(sig.value("rows").toArray().size()>20000) { QMessageBox::warning(this,tr("Calibration Data"),tr("Signature exceeds the viewer limit of 20,000 rows.")); return; }
@@ -596,7 +605,25 @@ void OptimizeTab::buildUi() {
         QMap<QString,int> counts; QMap<QString,QStringList> fields;
         for(const auto &v:sig.value("rows").toArray()) { const auto r=v.toObject(); const QStringList cells{profilediff::display(r.value("s")),profilediff::display(r.value("ph")),r.value("k").toString(),r.value("ps").toString()}; const auto key=QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(cells)).toJson(QJsonDocument::Compact)); ++counts[key]; fields[key]=cells; }
         for(auto it=counts.cbegin();it!=counts.cend();++it) { int row=table->rowCount(); table->insertRow(row); const auto cells=fields.value(it.key()); for(int c=0;c<4;++c)table->setItem(row,c,new QTableWidgetItem(cells[c])); table->setItem(row,4,new QTableWidgetItem(QString::number(it.value()))); }
-        tabs->addTab(table,tr("Measurement Sessions"));
+        auto *sessionPage=new QWidget; auto *sessionLayout=new QVBoxLayout(sessionPage);
+        auto *sessionSearch=new QLineEdit;sessionSearch->setPlaceholderText(tr("Filter session, phase, kernel or power source…"));sessionLayout->addWidget(sessionSearch);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);table->setSelectionMode(QAbstractItemView::SingleSelection);table->setSortingEnabled(true);sessionLayout->addWidget(table,1);
+        auto *sessionDetail=new QPlainTextEdit;sessionDetail->setReadOnly(true);sessionLayout->addWidget(sessionDetail,1);
+        const auto frozenRows=sig.value("rows").toArray();
+        connect(table,&QTableWidget::itemSelectionChanged,&dlg,[table,sessionDetail,frozenRows,sig] {
+            const int r=table->currentRow();if(r<0 || !table->item(r,0)){sessionDetail->clear();return;}
+            const QStringList selected{table->item(r,0)->text(),table->item(r,1)->text(),table->item(r,2)->text(),table->item(r,3)->text()};
+            QJsonArray rows,baselines;QSet<QString> contexts;
+            for(const auto &v:frozenRows){const auto o=v.toObject();if(QStringList{profilediff::display(o.value("s")),profilediff::display(o.value("ph")),o.value("k").toString(),o.value("ps").toString()}!=selected)continue;rows.append(v);const auto cx=o.value("cx").toString();if(!cx.isEmpty())contexts.insert(cx);}
+            // Baselines carry session and named phase, not row kernel. Keep them
+            // separately labelled as same-session candidates, not exact matches.
+            for(const auto &v:sig.value("baselines").toArray())if(profilediff::display(v.toObject().value("sess"))==selected.at(0))baselines.append(v);
+            QJsonObject descriptors;for(const auto &cx:contexts)if(sig.value("contexts").toObject().contains(cx))descriptors.insert(cx,sig.value("contexts").toObject().value(cx));
+            const QJsonObject evidence{{"session",selected.at(0)},{"phase",selected.at(1)},{"kernel",selected.at(2)},{"power_source",selected.at(3)},{"contexts",descriptors},{"same_session_baseline_candidates",baselines},{"rows",rows}};
+            sessionDetail->setPlainText(QString::fromUtf8(QJsonDocument(evidence).toJson()));
+        });
+        connect(sessionSearch,&QLineEdit::textChanged,&dlg,[table,sessionDetail](const QString &q){table->clearSelection();sessionDetail->clear();for(int r=0;r<table->rowCount();++r){bool match=q.isEmpty();for(int c=0;c<table->columnCount();++c)match|=table->item(r,c)->text().contains(q,Qt::CaseInsensitive);table->setRowHidden(r,!match);}});
+        tabs->addTab(sessionPage,tr("Measurement Sessions"));
         auto *coverage = new QTableWidget; coverage->setColumnCount(12);
         coverage->setHorizontalHeaderLabels({tr("Phase ID"), tr("Kernel"), tr("Context"), tr("Power source"), tr("Records"), tr("Latency"), tr("Throughput"), tr("Power"), tr("Memory"), tr("Unknown / nonpositive weight"),tr("Latest record"),tr("Benchmark versions")});
         coverage->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -687,6 +714,108 @@ void OptimizeTab::buildUi() {
         connect(predictionFilter,&QLineEdit::textChanged,&dlg,refillPrediction); refillPrediction();
         tabs->addTab(predictionPage,tr("Prediction Checks"));
 
+        // The historical signature stores actual paired ABBA measurements; retain the raw
+        // record as well. Never reconstruct a pair or infer that a saved result is valid today.
+        auto *abPage = new QWidget; auto *abLayout = new QVBoxLayout(abPage);
+        auto *abHint = new QLabel(tr("Historical paired benchmark evidence. Gains are objective utility differences, not FPS. The decision interval can differ from the nominal 95% interval for sequential runs. No benchmark or tuning is started."));
+        abHint->setWordWrap(true); abLayout->addWidget(abHint);
+        auto *abFilter = new QLineEdit; abFilter->setPlaceholderText(tr("Filter preset, goal, phase or context")); abLayout->addWidget(abFilter);
+        auto *abTable = new QTableWidget(0, 10);
+        abTable->setHorizontalHeaderLabels({tr("Time"),tr("Preset"),tr("Goal"),tr("Phase ID"),tr("Context"),tr("Complete blocks"),tr("Mean gain"),tr("Standard error"),tr("Decision interval"),tr("Historical result")});
+        abTable->setEditTriggers(QAbstractItemView::NoEditTriggers); abTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        abTable->setSelectionMode(QAbstractItemView::SingleSelection); abTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        abLayout->addWidget(abTable,2);
+        auto *abDetails = new QPlainTextEdit; abDetails->setReadOnly(true); abLayout->addWidget(abDetails,1);
+        const auto verification = sig.value("verify").toArray();
+        const auto contexts = sig.value("contexts").toObject();
+        const auto number = [this](const QJsonValue &v) { return v.isDouble() && std::isfinite(v.toDouble()) ? QString::number(v.toDouble(),'g',8) : tr("Unknown"); };
+        const auto pair = [](const QJsonValue &v) -> std::optional<abverify::Pair> {
+            const auto a=v.toArray(); if(a.size()!=2 || !a[0].isDouble() || !a[1].isDouble()) return {};
+            const abverify::Pair p{a[0].toDouble(),a[1].toDouble()};
+            return abverify::finite(p) ? std::optional<abverify::Pair>(p) : std::nullopt;
+        };
+        const auto count = [](const QJsonValue &v) { const double n=v.toDouble(-1); return v.isDouble() && n>=0 && n<=INT_MAX && std::trunc(n)==n ? int(n) : -1; };
+        const auto refillAb = [=,this] {
+            abTable->setRowCount(0); abDetails->clear();
+            const auto filter=abFilter->text().trimmed();
+            const auto begin=std::max(qsizetype(0),verification.size()-200);
+            for(qsizetype i=begin;i<verification.size();++i) {
+                const auto r=verification.at(i).toObject();
+                const QStringList meta{profilediff::display(r.value("t")),r.value("preset").toString(),r.value("goal").toString(),r.value("phase").toString(),r.value("cx").toString()};
+                if(!filter.isEmpty() && !meta.join(QLatin1Char(' ')).contains(filter,Qt::CaseInsensitive)) continue;
+                abverify::Evidence e;
+                e.schema=r.value("verification_v").toDouble(-1)==1.; e.paired=r.value("paired").toBool();
+                e.complete=r.value("complete").toBool(); e.passed=r.value("passed").toBool();
+                e.ended=r.value("ended_early").isString();
+                e.validFlags=r.value("paired").isBool() && r.value("complete").isBool() && r.value("passed").isBool() && (e.ended || r.value("ended_early").isNull());
+                e.validContext=!meta.at(4).isEmpty() && contexts.value(meta.at(4)).isObject() && r.value("verified_values").isObject();
+                e.rounds=count(r.value("rounds")); e.skipped=r.value("skipped").isArray()?int(r.value("skipped").toArray().size()):-1;
+                e.presetOoms=count(r.value("oom_kills").toObject().value("preset"));
+                e.gain=pair(r.value("gain")); e.decision=pair(r.value("decision_ci"));
+                QString state;
+                switch(abverify::status(e)) {
+                case abverify::Status::ReportedPass: state=tr("Reported pass (historical)"); break;
+                case abverify::Status::NotPassed: state=tr("Not passed"); break;
+                case abverify::Status::Incomplete: state=tr("Incomplete measurement"); break;
+                case abverify::Status::Inconsistent: state=tr("Inconsistent record"); break;
+                default: state=tr("Unknown evidence"); break;
+                }
+                QStringList cells=meta;
+                cells << (e.rounds<0?tr("Unknown"):QString::number(e.rounds));
+                const bool gainOk=e.gain && abverify::validEstimate(*e.gain);
+                cells << (gainOk?QString::number(e.gain->first,'g',8):tr("Unknown")) << (gainOk?QString::number(e.gain->second,'g',8):tr("Unknown"));
+                cells << (e.decision && abverify::validInterval(*e.decision)?QStringLiteral("%1 … %2").arg(e.decision->first,0,'g',8).arg(e.decision->second,0,'g',8):tr("Unknown")) << state;
+                const int row=abTable->rowCount(); abTable->insertRow(row);
+                for(int c=0;c<cells.size();++c) { auto *item=new QTableWidgetItem(cells.at(c).isEmpty()?tr("Unknown"):cells.at(c)); item->setData(Qt::UserRole,qlonglong(i)); abTable->setItem(row,c,item); }
+            }
+            if(abTable->rowCount()) abTable->selectRow(abTable->rowCount()-1);
+        };
+        connect(abTable,&QTableWidget::itemSelectionChanged,&dlg,[=,this] {
+            const auto items=abTable->selectedItems(); if(items.isEmpty()) {abDetails->clear();return;}
+            const auto index=items.first()->data(Qt::UserRole).toLongLong();
+            if(index<0 || index>=verification.size()) return;
+            const auto r=verification.at(index).toObject();
+            QStringList lines{tr("Recorded context: %1").arg(profilediff::display(contexts.value(r.value("cx").toString()))),
+                tr("Nominal 95% interval: %1").arg(profilediff::display(r.value("ci95"))),
+                tr("Skipped settings: %1").arg(profilediff::display(r.value("skipped"))),
+                tr("OOM counts: %1").arg(profilediff::display(r.value("oom_kills"))),
+                tr("Early termination: %1").arg(profilediff::display(r.value("ended_early"))),
+                tr("Measured objective gain / SE:")};
+            const auto objectives=r.value("objectives").toObject();
+            for(auto it=objectives.constBegin();it!=objectives.constEnd();++it) {
+                const auto value=pair(it.value()); lines << QStringLiteral("%1: %2").arg(it.key(),value && abverify::validEstimate(*value)?QStringLiteral("%1 / %2").arg(value->first,0,'g',8).arg(value->second,0,'g',8):tr("Unknown"));
+            }
+            lines << tr("Verified settings (historical):") << QString::fromUtf8(QJsonDocument(r.value("verified_values").toObject()).toJson());
+            abDetails->setPlainText(lines.join(QLatin1Char('\n')));
+        });
+        connect(abFilter,&QLineEdit::textChanged,&dlg,refillAb); refillAb();
+        tabs->addTab(abPage,tr("Measured ABBA History"));
+
+        // Imported game records do not store a stable same-context pair identity. Show the actual
+        // observations separately; do not manufacture matched comparisons from game names.
+        auto *gamePage=new QWidget; auto *gameLayout=new QVBoxLayout(gamePage);
+        auto *gameHint=new QLabel(tr("Imported game measurements are individual sessions. This signature does not retain enough context to establish controlled A/B pairs. No comparison or FPS improvement is inferred.")); gameHint->setWordWrap(true); gameLayout->addWidget(gameHint);
+        auto *gameFilter=new QLineEdit; gameFilter->setPlaceholderText(tr("Filter game sessions")); gameLayout->addWidget(gameFilter);
+        auto *gameTable=new QTableWidget(0,7); gameTable->setHorizontalHeaderLabels({tr("Game"),tr("Start"),tr("Configuration"),tr("Median (ms)"),tr("Tail (ms)"),tr("Pacing (ms)"),tr("Frames")});
+        gameTable->setEditTriggers(QAbstractItemView::NoEditTriggers); gameTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive); gameLayout->addWidget(gameTable,1);
+        const auto sessions=sig.value("fs").toArray();
+        const auto refillGame=[=,this] {
+            gameTable->setRowCount(0);
+            const auto filter=gameFilter->text().trimmed();
+            const auto begin=std::max(qsizetype(0),sessions.size()-400);
+            for(qsizetype i=begin;i<sessions.size();++i) {
+                const auto r=sessions.at(i).toObject(); const QString game=r.value("game").toString();
+                if(!filter.isEmpty() && !game.contains(filter,Qt::CaseInsensitive)) continue;
+                const auto cfg=r.value("cfg");
+                const QString config=!cfg.isArray()?tr("Unknown"):cfg.toArray().isEmpty()?tr("Recorded reference configuration"):tr("Recorded changed configuration");
+                const auto positive=[&](const QJsonValue &v) {return v.isDouble() && v.toDouble()>0?number(v):tr("Unknown");};
+                const QStringList cells{game.isEmpty()?tr("Unknown"):game,profilediff::display(r.value("start")),config,positive(r.value("med")),positive(r.value("tail")),positive(r.value("pacing")),count(r.value("n"))>0?number(r.value("n")):tr("Unknown")};
+                const int row=gameTable->rowCount(); gameTable->insertRow(row);
+                for(int c=0;c<cells.size();++c) {auto *item=new QTableWidgetItem(cells.at(c)); if(c==2) item->setToolTip(profilediff::display(cfg)); gameTable->setItem(row,c,item);}
+            }
+        };
+        connect(gameFilter,&QLineEdit::textChanged,&dlg,refillGame); refillGame();
+        tabs->addTab(gamePage,tr("Measured Game Sessions"));
         for(const auto &part:{qMakePair(QStringLiteral("quality"),tr("Quality")),qMakePair(QStringLiteral("verify"),tr("A/B Verification")),qMakePair(QStringLiteral("fs"),tr("Game Sessions"))}) { auto *raw=new QPlainTextEdit; raw->setReadOnly(true); raw->setPlainText(QString::fromUtf8(QJsonDocument(sig.value(part.first).toArray()).toJson())); tabs->addTab(raw,part.second); }
         auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);
         auto *exportSnapshot=buttons->addButton(tr("Export Snapshot…"),QDialogButtonBox::ActionRole);
@@ -717,6 +846,8 @@ void OptimizeTab::buildUi() {
     auto *inspectActions = new QMenu(inspectMenu);
     auto *calAction = inspectActions->addAction(calData->text());
     auto *diffAction = inspectActions->addAction(presetDiff->text());
+    auto *historyAction = inspectActions->addAction(tr("Autotune Run History…"));
+    connect(historyAction, &QAction::triggered, this, &OptimizeTab::showAutotuneHistory);
     auto *timelineAction = inspectActions->addAction(tr("Autotune Timeline…"));
     connect(timelineAction, &QAction::triggered, this, [this] {
         QDialog dlg(this); dlg.setWindowTitle(tr("Autotune Timeline")); dlg.resize(650,420);
@@ -729,6 +860,8 @@ void OptimizeTab::buildUi() {
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
         connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
     });
+    auto *pairAction = inspectActions->addAction(tr("Compare Frametime Logs…"));
+    connect(pairAction,&QAction::triggered,this,&OptimizeTab::showFrametimePair);
     auto *frameAction = inspectActions->addAction(tr("Frametime Analysis…"));
     connect(frameAction, &QAction::triggered, this, [this] {
         const QString path = QFileDialog::getOpenFileName(this, tr("Open frametime log"), QDir::homePath(), tr("Frametime logs (*.csv *.txt);;All files (*)"));
@@ -1813,8 +1946,8 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
                                : bootRaw.isDouble() ? QString::number(bootRaw.toVariant().toLongLong()) : QString();
     const bool bootDiffers = !readbackStale_ && !r.cached && r.available && !rootOnly && !r.current.isEmpty()
                            && !bootExpected.isEmpty() && bootExpected != r.current;
-    theme::setSheet(r.cur, QStringLiteral("color:%1; background:transparent;")
-                            .arg(bootDiffers ? theme::WARN : r.available && !rootOnly ? theme::FG_DIM : theme::MUTED));
+    theme::setLiveSheet(r.cur, [bootDiffers, readable=r.available && !rootOnly] { return QStringLiteral("color:%1; background:transparent;")
+                            .arg(bootDiffers ? theme::WARN : readable ? theme::FG_DIM : theme::MUTED); });
     QString liveTip = r.available ? tr("%1 file(s)").arg(o.value("files").toInt())
                                   : tr("Not present on this kernel/hardware");
     if (!bootExpected.isEmpty()) liveTip += tr("\nSaved for boot: %1").arg(bootExpected);
@@ -1933,7 +2066,7 @@ void OptimizeTab::markRow(Row &r) {
     if (!r.name) return;
     const bool pending = r.include->isChecked() && differs(r);
     const char *color = !r.available || !r.shadowedBy.isEmpty() ? theme::MUTED : pending ? theme::ACCENT : r.caution ? theme::WARN : theme::FG;
-    theme::setSheet(r.name, QStringLiteral("color:%1; background:transparent;%2").arg(color, pending ? " font-weight:600;" : ""));
+    theme::setLiveSheet(r.name, [color, pending] { return QStringLiteral("color:%1; background:transparent;%2").arg(color, pending ? " font-weight:600;" : ""); });
     updateRowPresentation(r);
 }
 
@@ -1960,9 +2093,11 @@ void OptimizeTab::updateRowPresentation(Row &r) {
     if (r.include && r.include->isChecked()) state << tr("Selected");
     if (r.touched && differs(r)) state << tr("Edited");
     r.viewState->setText(state.isEmpty() ? QStringLiteral("—") : state.join(QStringLiteral(" · ")));
-    theme::setSheet(r.bootValue, QStringLiteral("color:%1; background:transparent;").arg(match == BootMatch::Different ? theme::WARN : theme::FG_DIM));
-    theme::setSheet(r.viewState, QStringLiteral("color:%1; background:transparent;").arg(match == BootMatch::Different || readbackStale_ ? theme::WARN : theme::FG_DIM));
-    theme::setSheet(r.cur, QStringLiteral("color:%1; background:transparent;").arg(readbackStale_ || r.cached || !r.available || r.current.isEmpty() ? theme::MUTED : match == BootMatch::Different ? theme::WARN : theme::FG_DIM));
+    const bool different=match == BootMatch::Different;
+    const bool unknown=readbackStale_ || r.cached || !r.available || r.current.isEmpty();
+    theme::setLiveSheet(r.bootValue, [different] { return QStringLiteral("color:%1; background:transparent;").arg(different ? theme::WARN : theme::FG_DIM); });
+    theme::setLiveSheet(r.viewState, [warn=different || readbackStale_] { return QStringLiteral("color:%1; background:transparent;").arg(warn ? theme::WARN : theme::FG_DIM); });
+    theme::setLiveSheet(r.cur, [unknown, different] { return QStringLiteral("color:%1; background:transparent;").arg(unknown ? theme::MUTED : different ? theme::WARN : theme::FG_DIM); });
     r.cur->setAccessibleDescription(readbackStale_ ? tr("Stale readback") : r.cached ? tr("Cached readback") : QString());
     if (r.filter && r.grid && r.gridLine >= 0) {
         bool visible = true;
@@ -2079,8 +2214,8 @@ void OptimizeTab::updateStateBanner() {
     }
     if (!startupDraftNotice_.isEmpty()) bannerDetail_->setText(bannerDetail_->text() + QLatin1Char('\n') + startupDraftNotice_);
     active_ = state_.value("active").toBool();
-    theme::setSheet(frame, theme::banner(accent, QStringLiteral("#tuneBanner")));
-    theme::setSheet(banner_, QStringLiteral("font-weight:600; background:transparent; color:%1;").arg(accent));
+    theme::setLiveSheet(frame, [accent] { return theme::banner(accent, QStringLiteral("#tuneBanner")); });
+    theme::setLiveSheet(banner_, [accent] { return QStringLiteral("font-weight:600; background:transparent; color:%1;").arg(accent); });
     restoreBtn_->setEnabled(active_ && !busy_);
 
     const QString bootName = boot_.value("preset").toString();
@@ -2643,6 +2778,58 @@ void OptimizeTab::clearBoot() {
 }
 
 // ── autotune ────────────────────────────────────────────────────────────────
+static QString autotuneHistoryPath() {
+    const auto dir=QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    return dir.isEmpty()?QString():dir+QStringLiteral("/centurion/autotune-runs-v1.json");
+}
+
+void OptimizeTab::showAutotuneHistory() {
+    QDialog dlg(this); dlg.setWindowTitle(tr("Autotune Run History")); dlg.resize(1060,650);
+    auto *layout=new QVBoxLayout(&dlg);
+    auto *hint=new QLabel(tr("Local solver reports and staging outcomes, not applied settings or measured A/B results. Pending means no terminal response was recorded. Up to 100 runs / 4 MiB are retained."));
+    hint->setWordWrap(true); layout->addWidget(hint);
+    const auto path=autotuneHistoryPath();
+    const auto data=path.isEmpty()?std::optional<QJsonArray>{}:tunejournal::read(path);
+    if(!data) hint->setText(tr("The journal is unreadable or invalid; it has not been overwritten."));
+    auto *filter=new QLineEdit; filter->setPlaceholderText(tr("Filter run ID, goal, mode or outcome…")); layout->addWidget(filter);
+    auto *table=new QTableWidget(0,7); table->setHorizontalHeaderLabels({tr("Time"),tr("Goal"),tr("Mode"),tr("Outcome"),tr("Elapsed (ms)"),tr("Boot ID"),tr("Run ID")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->setSelectionBehavior(QAbstractItemView::SelectRows); table->setSelectionMode(QAbstractItemView::SingleSelection);
+    QMap<QString,QJsonObject> byId; QStringList names;
+    if(data) for(qsizetype i=data->size();i>0;--i) {
+        const auto record=data->at(i-1).toObject(); const auto req=record.value("request").toObject(); const auto id=record.value("id").toString();
+        byId.insert(id,record);
+        const auto outcome=record.value("outcome").toString();
+        const auto report=record.value("report").toObject();
+        if((outcome=="staged" || outcome=="explore_only" || outcome=="draft_changed") && report.value("ok").toBool() && report.value("preset").isObject())names<<id;
+        const auto label=outcome=="pending"?tr("Pending / interrupted"):outcome=="staged"?tr("Staged in editor"):outcome=="explore_only"?tr("Explore only"):outcome=="draft_changed"?tr("Draft changed; result read-only"):outcome=="timeout"?tr("Timed out"):outcome=="output_limit"?tr("Output limit exceeded"):outcome=="failed_to_start"?tr("Helper failed to start"):outcome=="failed"?tr("Request failed"):tr("Unknown");
+        const QStringList cells{record.value("started").toString(),req.value("goal").toString(),req.value("mode").toString(),label,profilediff::display(record.value("elapsed_ms")),record.value("boot").toString(),id};
+        const int r=table->rowCount(); table->insertRow(r); for(int c=0;c<cells.size();++c)table->setItem(r,c,new QTableWidgetItem(cells.at(c)));
+    }
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive); table->setSortingEnabled(true); layout->addWidget(table,1);
+    auto *detail=new QPlainTextEdit; detail->setReadOnly(true); layout->addWidget(detail,1);
+    connect(table,&QTableWidget::itemSelectionChanged,&dlg,[table,detail,byId] {
+        const int r=table->currentRow(); if(r<0 || !table->item(r,6)) {detail->clear();return;}
+        detail->setPlainText(QString::fromUtf8(QJsonDocument(byId.value(table->item(r,6)->text())).toJson()));
+    });
+    connect(filter,&QLineEdit::textChanged,&dlg,[table,detail](const QString &q){
+        table->clearSelection(); detail->clear();
+        for(int r=0;r<table->rowCount();++r){bool match=q.isEmpty();for(int c=0;c<table->columnCount();++c)match|=table->item(r,c)->text().contains(q,Qt::CaseInsensitive);table->setRowHidden(r,!match);}
+    });
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);
+    auto *compare=buttons->addButton(tr("Compare Solver Reports…"),QDialogButtonBox::ActionRole); compare->setEnabled(names.size()>=2);
+    connect(compare,&QPushButton::clicked,&dlg,[&dlg,names,byId] {
+        profilediff::show(&dlg,names,[&byId](const QString &id)->std::optional<QJsonObject>{
+            const auto record=byId.value(id); const auto report=record.value("report").toObject();
+            const auto outcome=record.value("outcome").toString();
+            if((outcome!="staged" && outcome!="explore_only" && outcome!="draft_changed") || report.isEmpty() || !report.value("ok").toBool() || !report.value("preset").isObject()) return std::nullopt;
+            auto request=record.value("request").toObject(); request.remove("progress_run_id");
+            QJsonObject comparable{{"request",request},{"boot",record.value("boot")}};
+            for(const char *k:{"preset","weights","profile","prefit_context","calibration_evidence","predicted","constraints","decisions","skipped"}) if(report.contains(QLatin1String(k))) comparable.insert(QLatin1String(k),report.value(QLatin1String(k)));
+            return comparable;
+        });
+    });
+    connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
+}
 
 void OptimizeTab::runAutotune(bool exploreOnly) {
     if (autoRunning_ || busy_) return;
@@ -2663,6 +2850,29 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
     auto elapsed = std::make_shared<QElapsedTimer>(); elapsed->start();
     const QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     auto progress = std::make_shared<autotuneprogress::Run>(runId);
+    QJsonObject req{{"op", "autotune"}, {"goal", goal}, {"mode", mode}, {"progress", true}};
+    if (exploreOnly) {
+        req = exploreReq_;
+        req["mode"] = mode;
+        req["record"] = false;  // the Fast run recorded this state already (history, "seen")
+    } else {
+        if (const QJsonObject w = autotuneWeights(goal); !w.isEmpty()) req["weights"] = w;
+        if (autoCtx_ && !autoCtx_->currentData().toString().isEmpty()) req["profile"] = autoCtx_->currentData().toString();
+        exploreReq_ = mode == QLatin1String("fast") ? req : QJsonObject();
+    }
+    req["progress_run_id"] = runId;
+    const auto historyPath = autotuneHistoryPath();
+    const QJsonObject runRecord{{"id",runId},{"started",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+        {"boot",diagsrc::bootId()},{"outcome","pending"},{"request",req},{"explore",exploreOnly}};
+    const bool tracked = !qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN") && !historyPath.isEmpty();
+    const bool recorded = tracked && QDir().mkpath(QFileInfo(historyPath).absolutePath()) && tunejournal::store(historyPath,runRecord,false);
+    if(tracked && !recorded) autoTimeline_ << tr("Run history could not be saved.");
+    const auto finishHistory = [this,historyPath,runRecord,recorded,elapsed](const QString &outcome,const QJsonObject &report,int code,const QStringList &notLoaded=QStringList{}) {
+        auto record=runRecord;
+        if(outcome==QStringLiteral("staged"))record["gui_not_loaded"]=QJsonArray::fromStringList(notLoaded);
+        if(recorded && !tunejournal::store(historyPath,autotunehistory::completed(record,outcome,report,elapsed->elapsed(),code,autoTimeline_),true))
+            autoTimeline_ << tr("Run history could not be saved.");
+    };
     autoBtn_->setEnabled(false);
     autoExploreBtn_->setEnabled(false);
     showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · Inputs…"), theme::MUTED, 0);
@@ -2672,6 +2882,16 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
     auto timedOut = std::make_shared<bool>(false);
     auto errorLog = std::make_shared<QByteArray>();
     auto partialLine = std::make_shared<QByteArray>();
+    auto output = std::make_shared<QByteArray>();
+    auto oversized = std::make_shared<bool>(false);
+    const auto drainOutput = [p,output,oversized] {
+        constexpr qsizetype cap=16LL<<20;
+        const auto chunk=p->readAllStandardOutput();
+        if(*oversized) return;
+        if(chunk.size()>cap-output->size()) { *oversized=true; output->clear(); if(p->state()!=QProcess::NotRunning)p->kill(); return; }
+        output->append(chunk);
+    };
+    connect(p,&QProcess::readyReadStandardOutput,this,drainOutput);
     connect(p, &QProcess::readyReadStandardError, this, [this, p, errorLog, partialLine, elapsed, progress] {
         const QByteArray chunk = p->readAllStandardError();
         errorLog->append(chunk);
@@ -2694,19 +2914,22 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         }
         if (partialLine->size() > 8192) partialLine->clear();
     });
-    connect(p, &QProcess::finished, this, [this, p, goal, mode, exploreOnly, timedOut, errorLog, elapsed, draft, initialDraft](int code, QProcess::ExitStatus st) {
+    connect(p, &QProcess::finished, this, [this, p, goal, mode, exploreOnly, timedOut, errorLog, elapsed, draft, initialDraft, finishHistory, drainOutput, output, oversized](int code, QProcess::ExitStatus st) {
         autoRunning_ = false;
         autoBtn_->setEnabled(!busy_);
-        const QByteArray out = p->readAllStandardOutput().trimmed();
+        drainOutput();
+        const QByteArray out = output->trimmed();
         const QByteArray err = (*errorLog + p->readAllStandardError()).trimmed();
         p->deleteLater();
         const QJsonObject d = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
-        if (*timedOut || st != QProcess::NormalExit || code != 0 || !d.value("ok").toBool()) {
+        if (*timedOut || *oversized || st != QProcess::NormalExit || code != 0 || !d.value("ok").toBool() || !d.value("preset").isObject() || !d.value("preset").toObject().value("values").isObject()) {
             autoTimeline_ << QStringLiteral("%1 ms · %2").arg(elapsed->elapsed()).arg(*timedOut ? tr("Timed out") : tr("Request failed"));
+            finishHistory(*timedOut ? QStringLiteral("timeout") : *oversized ? QStringLiteral("output_limit") : QStringLiteral("failed"), d, code);
             // No JSON reply: say why (killed at the timeout, crashed) instead of a bare "no answer".
             QString why = d.value("error").toString();
             if (why.isEmpty()) {
-                if (*timedOut) why = QStringLiteral("tune-helper did not finish within %1 s").arg(AUTOTUNE_TIMEOUT_MS / 1000);
+                if (*oversized) why = tr("Autotune response exceeds the 16 MiB limit.");
+                else if (*timedOut) why = QStringLiteral("tune-helper did not finish within %1 s").arg(AUTOTUNE_TIMEOUT_MS / 1000);
                 else if (!err.isEmpty()) why = QString::fromUtf8(err.mid(err.lastIndexOf('\n') + 1)).left(300);
                 else if (st == QProcess::CrashExit) why = QStringLiteral("tune-helper crashed");
                 else why = QStringLiteral("no answer from tune-helper");
@@ -2716,11 +2939,13 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         }
         autoTimeline_ << QStringLiteral("%1 ms · %2").arg(elapsed->elapsed()).arg(tr("Result received"));
         if (exploreOnly) {
+            finishHistory(QStringLiteral("explore_only"),d,code);
             showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · trade-offs computed; the table was left as it was."), theme::OK, 8000);
             showAutotuneReport(d, {}, true);
             return;
         }
         if (draft() != initialDraft || busy_) {
+            finishHistory(QStringLiteral("draft_changed"),d,code);
             showStatus(tr("Autotune finished, but the editor changed during the request. The draft was preserved; the result is read-only."), theme::WARN, 12000);
             showAutotuneReport(d, {}, true);
             return;
@@ -2729,32 +2954,23 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         Fill f;
         loadPresetObject(d.value("preset").toObject(), &notLoaded, true, &f);
         loadedPreset_ = d.value("name").toString();
+        finishHistory(QStringLiteral("staged"),d,code,notLoaded);
         autoExploreBtn_->setEnabled(mode == QLatin1String("fast") && d.value("explore_available").toBool());
         showStatus(QStringLiteral("Autotune · %1: every row checked — %2. Review, then Apply checked or Save.")
                        .arg(d.value("goal_label").toString(), fillSummary(f)), theme::OK, 12000);
         showAutotuneReport(d, notLoaded);
     });
-    connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
+    connect(p, &QProcess::errorOccurred, this, [this, p, finishHistory](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
         autoRunning_ = false;
         autoBtn_->setEnabled(!busy_);
         autoTimeline_ << tr("Helper failed to start");
+        finishHistory(QStringLiteral("failed_to_start"),{},-1);
         showStatus(QStringLiteral("tune-helper could not be started."), theme::DANGER);
         p->deleteLater();
     });
     QTimer::singleShot(AUTOTUNE_TIMEOUT_MS, p, [guard, timedOut] { if (guard && guard->state() != QProcess::NotRunning) { *timedOut = true; guard->kill(); } });
     p->start(helperPath(), {});
-    QJsonObject req{{"op", "autotune"}, {"goal", goal}, {"mode", mode}, {"progress", true}};
-    if (exploreOnly) {
-        req = exploreReq_;
-        req["mode"] = mode;
-        req["record"] = false;  // the Fast run recorded this state already (history, "seen")
-    } else {
-        if (const QJsonObject w = autotuneWeights(goal); !w.isEmpty()) req["weights"] = w;
-        if (autoCtx_ && !autoCtx_->currentData().toString().isEmpty()) req["profile"] = autoCtx_->currentData().toString();
-        exploreReq_ = mode == QLatin1String("fast") ? req : QJsonObject();
-    }
-    req["progress_run_id"] = runId;
     p->write(QJsonDocument(req).toJson(QJsonDocument::Compact));
     p->closeWriteChannel();
 }
@@ -3560,6 +3776,9 @@ void OptimizeTab::applySelected(const QString &home) {
         question->deleteLater();
         if (clicked == anyway) { applyValues(values, loadedPreset_); return; }
         if (clicked != verify) return;
+        if (busy_ || optimizationHelperActive()) {
+            QMessageBox::warning(this,tr("Optimization operation"),tr("An optimization helper is still running. Wait for its process to exit before retrying.")); return;
+        }
         const QString pkexec = pkexecPath();
         if (!QFileInfo(CALIBRATE).isExecutable() || pkexec.isEmpty()) {
             QMessageBox::critical(this, tr("ABBA verification"), tr("centurion-calibrate or pkexec is not installed."));
@@ -3618,7 +3837,7 @@ void OptimizeTab::applySelected(const QString &home) {
 void OptimizeTab::applyValues(const QJsonObject &values, const QString &preset) {
     QJsonObject req{{"op", "apply"}, {"mode", "manual"}, {"values", values}};
     if (validPresetName(preset)) req["preset"] = preset;
-    runOp(req, "Apply", [this](const QJsonObject &res) {
+    runOp(req, "Apply", [this, values](const QJsonObject &res) {
         int written = 0, skipped = 0, refused = 0;
         int notStuck = 0;
         QStringList errors, mismatched;
@@ -3638,12 +3857,21 @@ void OptimizeTab::applyValues(const QJsonObject &values, const QString &preset) 
             msg += QStringLiteral(" · pressure guard watching %1 memory/writeback setting(s) for %2 s")
                        .arg(res.value("guard").toObject().value("keys").toArray().size()).arg(res.value("guard").toObject().value("seconds").toInt());
         if (!mismatched.isEmpty()) msg += QStringLiteral(" · %1 value(s) did not stick").arg(notStuck);
-        showStatus(msg, errors.isEmpty() && mismatched.isEmpty() ? theme::OK : theme::WARN, 10000);
+        bool verified = !res.value("results").toArray().isEmpty() && res.value("ok").toBool();
+        QSet<QString> covered;
+        for (const auto &v : res.value("results").toArray()) {
+            const auto receipt = v.toObject(); const auto key = receipt.value("key").toString();
+            verified &= !key.isEmpty() && values.contains(key) && !covered.contains(key) && tunejournal::status(receipt) == tunereceipt::Status::Match;
+            covered.insert(key);
+        }
+        verified &= covered.size() == values.size();
+        if (!verified) msg += tr(" · not fully verified");
+        showStatus(msg, verified ? theme::OK : theme::WARN, 10000);
         if (!errors.isEmpty()) QMessageBox::warning(this, "Apply", "Some settings failed:\n\n" + errors.join('\n'));
         if (!mismatched.isEmpty())
             QMessageBox::warning(this, "Apply", "Written, but read back differently half a second later (the kernel clamped them, "
                                  "or firmware / another tool changed them):\n\n" + mismatched.join('\n'));
-        for (Row &r : rows_) r.touched = false;
+        for (Row &r : rows_) if (res.value("ok").toBool()) r.touched = false;
     });
 }
 
@@ -3670,7 +3898,14 @@ bool OptimizeTab::applyNamedPreset(const QString &name) {
 
 void OptimizeTab::revertRow(const QString &key) {
     runOp({{"op", "restore_keys"}, {"keys", QJsonArray{key}}}, "Restore",
-          [this, key](const QJsonObject &) { if (Row *r = row(key)) { r->touched = false; showStatus(r->label + " restored.", theme::OK); } });
+          [this, key](const QJsonObject &res) {
+              if (Row *r = row(key)) {
+                  const auto receipt = res.value("results").toArray().at(0).toObject();
+                  if (res.value("ok").toBool() && receipt.value("restored").toInt() > 0 && receipt.value("deferred").toInt() == 0) {
+                      r->touched = false; showStatus(tr("Restore reported: %1 (not independently verified)").arg(r->label), theme::MUTED);
+                  } else showStatus(tr("Restore not fully confirmed."),theme::WARN);
+              }
+          });
 }
 
 void OptimizeTab::restoreAll(bool confirm) {
@@ -3684,8 +3919,10 @@ void OptimizeTab::restoreAll(bool confirm) {
     }
     runOp({{"op", "restore"}}, "Restore", [this](const QJsonObject &res) {
         const QJsonObject r = res.value("results").toArray().at(0).toObject();
-        for (Row &x : rows_) x.touched = false;
-        showStatus(QStringLiteral("Restored %1 file(s).").arg(r.value("restored").toInt()), theme::OK);
+        if (res.value("ok").toBool() && r.value("deferred").toInt() == 0 && r.value("restored").isDouble())
+            for (Row &x : rows_) x.touched = false;
+        showStatus(tr("Restore reported %1 file(s); deferred: %2.").arg(r.value("restored").toInt()).arg(r.value("deferred").toInt()),
+            res.value("ok").toBool() && r.value("deferred").toInt() == 0 && r.value("restored").isDouble() ? theme::MUTED : theme::WARN);
     });
 }
 
@@ -3709,6 +3946,9 @@ void OptimizeTab::returnToBootDefaults() {
     if (!snap.value("clean").toBool())
         msg += QStringLiteral("\n\nNote: that snapshot was taken after TLP or Centurion had already run, so it may not be the pristine kernel default.");
     if (QMessageBox::question(this, title, msg) != QMessageBox::Yes) return;
+    if (busy_ || optimizationHelperActive()) {
+        QMessageBox::warning(this,tr("Optimization operation"),tr("An optimization helper is still running. Wait for its process to exit before retrying.")); return;
+    }
     if (scenes_) {
         QString err;
         if (!scenes_->setPaused(true, &err)) {
@@ -3718,10 +3958,15 @@ void OptimizeTab::returnToBootDefaults() {
     }
     runOp({{"op", "restore_defaults"}}, title, [this](const QJsonObject &res) {
         if (!res.contains("snapshot")) return;  // refused before anything was written; runOp shows the error
-        for (Row &x : rows_) x.touched = false;
         const QJsonArray failed = res.value("failed").toArray();
+        const auto applied = res.value("applied").toArray();
+        bool verified = res.value("ok").toBool() && !applied.isEmpty() && failed.isEmpty();
+        for (const auto &v : applied) verified &= tunejournal::status(v.toObject()) == tunereceipt::Status::Match;
+        const auto restore = res.value("results").toArray().at(0).toObject();
+        verified &= restore.value("errors").isArray() && restore.value("errors").toArray().isEmpty() && restore.value("deferred").toInt() == 0;
+        if (res.value("ok").toBool()) for (Row &x : rows_) x.touched = false;
         if (failed.isEmpty()) {
-            showStatus(QStringLiteral("Back at boot defaults (%1 file(s) written). Scenes are paused.").arg(res.value("written").toInt()), theme::OK, 10000);
+            showStatus(tr("Boot defaults: %1 file(s) written. Scenes are paused. %2").arg(res.value("written").toInt()).arg(verified ? tr("Checked values matched at helper readback") : tr("Not fully verified")), verified ? theme::MUTED : theme::WARN, 10000);
             return;
         }
         QStringList keys;
@@ -3741,11 +3986,106 @@ void OptimizeTab::approvePreset(const QString &name, const QJsonObject &values, 
           });
 }
 
+static QString tuneJournalPath() {
+    const auto dir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    return dir.isEmpty() ? QString() : dir + QStringLiteral("/centurion/optimization-transactions-v1.json");
+}
+static QString tuneReceiptLabel(const QJsonObject &o) {
+    using tunereceipt::Status;
+    switch (tunejournal::status(o)) {
+    case Status::Failed: return QCoreApplication::translate("OptimizeTab", "Reported failure");
+    case Status::Partial: return QCoreApplication::translate("OptimizeTab", "Partial result");
+    case Status::Skipped: return QCoreApplication::translate("OptimizeTab", "Skipped");
+    case Status::Unverified: return QCoreApplication::translate("OptimizeTab", "Not fully verified");
+    case Status::Mismatch: return QCoreApplication::translate("OptimizeTab", "Readback mismatch");
+    case Status::Match: return QCoreApplication::translate("OptimizeTab", "Checked values matched at helper readback");
+    default: return QCoreApplication::translate("OptimizeTab", "Unknown");
+    }
+}
+void OptimizeTab::showTransactionJournal() {
+    QDialog dialog(this); dialog.setWindowTitle(tr("Optimization Transaction Journal")); dialog.resize(1050, 620);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *note = new QLabel(tr("Local historical evidence only. Pending records have no recorded reply. A helper readback is not proof of the current state. Restore summaries are not per-key verification. Up to 100 transactions are retained (4 MiB limit)."));
+    note->setWordWrap(true); layout->addWidget(note);
+    const auto path = tuneJournalPath();
+    const std::optional<QJsonArray> data = path.isEmpty() ? std::optional<QJsonArray>{} : tunejournal::read(path);
+    if (!data) { note->setText(tr("The journal is unreadable or invalid; it has not been overwritten.")); }
+    auto *filter = new QLineEdit; filter->setPlaceholderText(tr("Filter transaction ID, operation, setting or result…")); layout->addWidget(filter);
+    auto *table = new QTableWidget(0, 9);
+    table->setHorizontalHeaderLabels({tr("Transaction"),tr("Time"),tr("Operation"),tr("Setting"),tr("Requested"),tr("Result"),tr("Helper reply"),tr("Boot ID"),tr("Helper receipt")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    auto add = [&](const QJsonObject &tx, const QString &key, const QJsonValue &requested, const QJsonObject &receipt, const QString &result) {
+        const QStringList cells{tx.value("id").toString(), tx.value("started").toString(), tx.value("op").toString(),key,
+            requested.isUndefined() || requested.isNull() ? QStringLiteral("—") : tuningview::valueText(requested), result, tx.value("reply").toString(), tx.value("boot").toString(),
+            QString::fromUtf8(QJsonDocument(receipt).toJson(QJsonDocument::Compact))};
+        const int row = table->rowCount(); table->insertRow(row);
+        for (int c = 0; c < cells.size(); ++c) table->setItem(row,c,new QTableWidgetItem(cells.at(c)));
+    };
+    if (data) for (qsizetype i = data->size(); i > 0; --i) {
+        const auto tx = data->at(i-1).toObject(); const auto requested = tx.value("requested").toObject();
+        const auto reply = tx.value("reply").toString();
+        const auto receipts = tx.value("receipts").toArray(); QSet<QString> reported;
+        for (const auto &v : receipts) {
+            const auto o = v.toObject(); const auto key = o.value("key").toString();
+            if (!key.isEmpty()) reported.insert(key);
+            add(tx,key,requested.value(key),o,key.isEmpty() ? tr("Aggregate receipt; per-key result unknown") : tuneReceiptLabel(o));
+        }
+        const auto unknown = reply == QStringLiteral("pending") ? tr("Pending / interrupted") : tr("No per-key receipt");
+        for (auto it = requested.constBegin(); it != requested.constEnd(); ++it)
+            if (!reported.contains(it.key())) add(tx,it.key(),it.value(),{},unknown);
+        if (receipts.isEmpty() && requested.isEmpty()) add(tx,{},QJsonValue(),{},unknown);
+    }
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive); table->horizontalHeader()->setStretchLastSection(true);
+    table->setColumnWidth(0, 230); table->setColumnWidth(1, 175); table->setColumnWidth(3, 170);
+    table->setSortingEnabled(true); layout->addWidget(table,1);
+    connect(filter,&QLineEdit::textChanged,table,[table](const QString &q) {
+        for (int r=0;r<table->rowCount();++r) { bool match=q.isEmpty(); for (int c=0;c<table->columnCount();++c) match |= table->item(r,c)->text().contains(q,Qt::CaseInsensitive); table->setRowHidden(r,!match); }
+    });
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject); layout->addWidget(buttons);
+    dialog.exec();
+}
+
 void OptimizeTab::runOp(const QJsonObject &req, const QString &what, std::function<void(const QJsonObject &)> then) {
     if (busy_) return;
+    if (optimizationHelperActive()) {
+        QMessageBox::warning(this,tr("Optimization operation"),tr("An optimization helper is still running. Wait for its process to exit before retrying.")); return;
+    }
     setBusy(true);
-    showStatus(what + "…", theme::MUTED, 0);
-    privileged::run(helperForOp(req.value(QStringLiteral("op")).toString()), req, this, [this, what, then](const privileged::Result &r) {
+    const QString op = req.value("op").toString();
+    const bool tracked = !qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN") && (op == "apply" || op == "restore" || op == "restore_keys" || op == "restore_defaults" || op == "set_boot");
+    const QString path = tracked ? tuneJournalPath() : QString();
+    QJsonObject tx;
+    bool journaled = false;
+    if (tracked) {
+        QJsonObject requested;
+        const auto values = req.value("values").toObject();
+        for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+            const auto value = it.value();
+            if (value.isDouble() || (value.isString() && value.toString().size() <= 4096)) requested.insert(it.key(),value);
+        }
+        const auto keys = op == "restore" || op == "restore_defaults" ? state_.value("keys").toArray() : req.value("keys").toArray();
+        for (const auto &key : keys) if (key.isString()) requested.insert(key.toString(),QJsonValue::Null);
+        tx = QJsonObject{{"id",QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"op",op}, {"started",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+            {"boot",diagsrc::bootId()}, {"requested",requested}, {"reply","pending"}};
+        journaled = !path.isEmpty() && QDir().mkpath(QFileInfo(path).absolutePath()) && tunejournal::store(path,tx,false);
+        // Do not disable recovery because a user-local evidence file is broken.
+        // No nested event loop between the resource check and helper dispatch.
+        if (!journaled) qWarning("Optimization journal could not record the transaction");
+    }
+    showStatus(what + "…" + (tracked && !journaled ? tr(" · transaction journal unavailable") : QString()),
+        tracked && !journaled ? theme::WARN : theme::MUTED, 0);
+    privileged::run(helperForOp(op), req, this, [this, what, then, tx, path, journaled, tracked, op](const privileged::Result &r) mutable {
+        if (tracked && !journaled) QMessageBox::warning(this,tr("Optimization Transaction Journal"),tr("Could not record this transaction. The existing journal was preserved."));
+        if (journaled) {
+            QJsonArray receipts;
+            const auto results = r.json.value("results").toArray();
+            for (const auto &v : results) if (v.isObject()) receipts.append(tunejournal::receipt(v.toObject()));
+            if (op == "restore_defaults") for (const auto &v : r.json.value("applied").toArray()) if (v.isObject()) receipts.append(tunejournal::receipt(v.toObject()));
+            tx.insert("receipts",receipts);
+            tx.insert("finished",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+            tx.insert("reply",!r.reached ? "unknown" : r.ok() ? "reported_ok" : "reported_failure");
+            if (!tunejournal::store(path,tx,true)) QMessageBox::warning(this,tr("Optimization Transaction Journal"),tr("Could not record the reply. The earlier pending record was preserved."));
+        }
         setBusy(false);
         if (!r.reached) {
             showStatus(what + " failed.", theme::DANGER);
@@ -3795,8 +4135,8 @@ void OptimizeTab::updateHomeBootStatuses() {
             message += tr("Checkboxes select pending changes; they do not indicate boot status.");
         }
         if (label->text() != message) label->setText(message);
-        label->setStyleSheet(QStringLiteral("color:%1; background:transparent;")
-                             .arg(different ? theme::WARN : theme::FG_DIM));
+        theme::setLiveSheet(label, [different] { return QStringLiteral("color:%1; background:transparent;")
+                             .arg(different ? theme::WARN : theme::FG_DIM); });
         if (QPushButton *load = homeBootLoad_.value(home)) load->setEnabled(!busy_ && stored > 0);
     }
 }
@@ -3906,7 +4246,7 @@ void OptimizeTab::setBusy(bool b) {
 
 void OptimizeTab::showStatus(const QString &msg, const char *color, int ms) {
     status_->setText(msg);
-    status_->setStyleSheet(QStringLiteral("color:%1; background:transparent;").arg(color ? color : theme::FG_DIM));
+    theme::setLiveSheet(status_, [color] { return QStringLiteral("color:%1; background:transparent;").arg(color ? color : theme::FG_DIM); });
     if (ms > 0) statusTimer_->start(ms); else statusTimer_->stop();
 }
 
@@ -3960,5 +4300,117 @@ void OptimizeTab::sourceWorkspace() {
     if (lines.isEmpty()) lines << tr("No conflict messages in the last response; this does not prove there are no conflicts.");
     if (!reportedDrift_.isEmpty()) { lines << QString() << tr("Last observed drift:") << reportedDrift_; if (!reportedDriftCandidates_.isEmpty()) lines << tr("Possible competing services: %1").arg(reportedDriftCandidates_); }
     conflicts->setPlainText(lines.join(QLatin1Char('\n'))); tabs->addTab(conflicts,tr("Conflict & drift"));
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto *semantic = buttons->addButton(tr("Live / Boot / Preset Diff…"),QDialogButtonBox::ActionRole);
+    connect(semantic,&QPushButton::clicked,this,&OptimizeTab::showSemanticDiff);
+    auto *journal = buttons->addButton(tr("Transaction Journal…"),QDialogButtonBox::ActionRole);
+    connect(journal,&QPushButton::clicked,this,&OptimizeTab::showTransactionJournal);
+    connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
+}
+
+void OptimizeTab::showSemanticDiff() {
+    using namespace tuningsemantic;
+    // Freeze all values, including the editor's checked subset. No refresh or
+    // writes are initiated by viewing, changing filters, or comparing presets.
+    struct Entry { Kind kind=Kind::Unknown; QString live; bool readable=false; bool available=false; QString draft; bool checked=false; QString coverage; };
+    QMap<QString,Entry> entries;
+    for(const auto &r:rows_) {
+        auto kind=r.kind=="int"?Kind::Integer:r.kind=="bool"?Kind::Boolean:r.kind=="choice"?Kind::Choice:Kind::Unknown;
+        entries.insert(r.key,Entry{kind,r.current,!readbackStale_ && !r.cached && r.available && !r.current.isEmpty(),r.available,editorValue(r),r.include && r.include->isChecked(),r.shadowedBy});
+    }
+    const auto boot=boot_.value("values").toObject(); const bool bootReadable=!readbackStale_;
+    const auto topology=topology_;
+    const auto normalizeRole=[topology](const QString &v){ if(v=="cache" || v=="frequency"){const int i=topology.value(v=="cache"?"cache_ccd":"frequency_ccd").toInt(-1);if(i>=0)return QStringLiteral("ccd%1").arg(i);}return v;};
+    const auto names=presetNames(); QMap<QString,QJsonObject> presets;
+    for(const auto &name:names) { const auto p=presetObject(name); if(p.value("values").isObject()) presets.insert(name,p.value("values").toObject()); }
+    QDialog dlg(this); dlg.setWindowTitle(tr("Live / Boot / Preset Diff")); dlg.resize(1120,650);
+    auto *layout=new QVBoxLayout(&dlg);
+    auto *hint=new QLabel(tr("Frozen last helper snapshot, saved boot configuration and checked draft only. Missing values do not mean reset; stale live values cannot prove a match. This view cannot apply or merge settings.")); hint->setWordWrap(true); layout->addWidget(hint);
+    auto *controls=new QHBoxLayout; auto *preset=new QComboBox; preset->addItems(presets.keys());
+    if(presets.contains(loadedPreset_))preset->setCurrentText(loadedPreset_);
+    auto *filter=new QLineEdit; filter->setPlaceholderText(tr("Filter keys or values…"));
+    auto *different=new QCheckBox(tr("Hide verified equal rows")); auto *checked=new QCheckBox(tr("Checked draft only"));
+    controls->addWidget(preset,1);controls->addWidget(filter,2);controls->addWidget(different);controls->addWidget(checked);layout->addLayout(controls);
+    auto *table=new QTableWidget(0,9);table->setHorizontalHeaderLabels({tr("Setting"),tr("Live"),tr("Boot preset"),tr("Selected preset"),tr("Checked draft"),tr("Live / Boot"),tr("Live / Preset"),tr("Boot / Preset"),tr("Scope / Coverage")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->setSelectionBehavior(QAbstractItemView::SelectRows);table->horizontalHeader()->setSectionsMovable(true);table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);layout->addWidget(table,1);
+    auto *summary=new QLabel;layout->addWidget(summary);
+    const auto relation=[this](Relation r){switch(r){case Relation::Equal:return tr("Match");case Relation::Different:return tr("Different");case Relation::LeftMissing:return tr("Left missing");case Relation::RightMissing:return tr("Right missing");case Relation::BothMissing:return tr("Both missing");case Relation::Invalid:return tr("Invalid value");default:return tr("Unknown");}};
+    // JSON integers are converted losslessly by Qt, never through double or QVariant rounding.
+    const auto text=[](const QJsonValue &v){ if(v.isString())return v.toString(); if(v.isDouble() && v.toInteger(0)==v.toInteger(1))return QString::number(v.toInteger());return QString(); };
+    const auto refill=[=,this] {
+        table->setSortingEnabled(false);table->setRowCount(0);
+        const bool hasPreset=preset->currentIndex()>=0;const auto values=presets.value(preset->currentText());
+        QSet<QString> keys;for(auto it=entries.cbegin();it!=entries.cend();++it)keys.insert(it.key());for(const auto &k:boot.keys())keys.insert(k);for(const auto &k:values.keys())keys.insert(k);
+        auto sorted=keys.values();std::sort(sorted.begin(),sorted.end());int total=0,shown=0;
+        for(const auto &key:sorted) {
+            const auto e=entries.value(key); if(checked->isChecked() && !e.checked)continue;
+            auto lv=e.live,bv=text(boot.value(key)),pv=text(values.value(key));
+            if(isCcdRoleKey(key)){lv=normalizeRole(lv);bv=normalizeRole(bv);pv=normalizeRole(pv);}
+            const auto a=lv.toUtf8(),b=bv.toUtf8(),c=pv.toUtf8();
+            const auto roleKnown=[&key](const QString &v){return !isCcdRoleKey(key) || (v!=QStringLiteral("cache") && v!=QStringLiteral("frequency"));};
+            const Value live{entries.contains(key),e.readable && roleKnown(lv),std::string_view(a.constData(),std::size_t(a.size()))};
+            const Value bootV{boot.contains(key),bootReadable && roleKnown(bv),std::string_view(b.constData(),std::size_t(b.size()))};
+            const Value presetV{values.contains(key),hasPreset && roleKnown(pv),std::string_view(c.constData(),std::size_t(c.size()))};
+            const auto lb=bootReadable?compare(e.kind,live,bootV):Relation::Unknown;
+            const auto lp=hasPreset?compare(e.kind,live,presetV):Relation::Unknown;
+            const auto bp=bootReadable && hasPreset?compare(e.kind,bootV,presetV):Relation::Unknown;
+            ++total;
+            if(different->isChecked() && lb==Relation::Equal && lp==Relation::Equal && bp==Relation::Equal)continue;
+            const QStringList cells{key,entries.contains(key)?(e.readable?e.live:tr("Unknown")):tr("Unavailable"),boot.contains(key)?profilediff::display(boot.value(key)):bootReadable?tr("Not saved"):tr("Unknown"),values.contains(key)?profilediff::display(values.value(key)):hasPreset?tr("Not specified"):tr("Unknown"),e.checked?e.draft:tr("Not checked"),relation(lb),relation(lp),relation(bp),!e.available?tr("Unavailable"):e.coverage.isEmpty()?tr("Available"):tr("Covered by %1").arg(e.coverage)};
+            bool match=filter->text().isEmpty();for(const auto &cell:cells)match|=cell.contains(filter->text(),Qt::CaseInsensitive);if(!match)continue;
+            const int r=table->rowCount();table->insertRow(r);++shown;for(int i=0;i<cells.size();++i){auto *item=new QTableWidgetItem(cells.at(i));item->setToolTip(cells.at(i));table->setItem(r,i,item);}
+        }
+        table->setSortingEnabled(true);summary->setText(tr("%1 of %2 setting keys shown.").arg(shown).arg(total));
+    };
+    connect(preset,&QComboBox::currentIndexChanged,&dlg,refill);connect(filter,&QLineEdit::textChanged,&dlg,refill);connect(different,&QCheckBox::toggled,&dlg,refill);connect(checked,&QCheckBox::toggled,&dlg,refill);refill();
+    const auto stateKey=workspace::key(theme::experimentalEnabled(),QStringLiteral("optimization/semantic-diff"));const auto state=workspace::read(stateKey);
+    auto *header=table->horizontalHeader();const int count=table->columnCount();const auto order=workspace::integers(state.value("order")),widths=workspace::integers(state.value("widths"));
+    if(workspacefields::permutation(order,count))for(int i=0;i<count;++i)header->moveSection(header->visualIndex(order[i]),i);
+    if(workspacefields::widths(widths,count,header->minimumSectionSize()))for(int i=0;i<count;++i)table->setColumnWidth(i,widths[i]);
+    const auto optionalColumn=[](int i){return (i>=1 && i<=4)||i==8;};
+    const auto hidden=state.value("hidden").toArray();if(hidden.size()==count)for(int i=1;i<count;++i)if(optionalColumn(i)&&hidden.at(i).isBool())table->setColumnHidden(i,hidden.at(i).toBool());
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);auto *columnButton=buttons->addButton(tr("Columns"),QDialogButtonBox::ActionRole);auto *menu=new QMenu(columnButton);
+    QList<QAction*> columnActions;
+    for(int i=1;i<count;++i){if(!optionalColumn(i))continue;auto *action=menu->addAction(table->horizontalHeaderItem(i)->text());columnActions<<action;action->setCheckable(true);action->setChecked(!table->isColumnHidden(i));connect(action,&QAction::toggled,table,[table,i](bool on){table->setColumnHidden(i,!on);});}columnButton->setMenu(menu);
+    menu->addSeparator();auto *reset=menu->addAction(tr("Reset columns"));connect(reset,&QAction::triggered,&dlg,[=]{for(auto *action:columnActions)action->setChecked(true);for(int i=0;i<count;++i){header->moveSection(header->visualIndex(i),i);table->setColumnWidth(i,header->defaultSectionSize());}});
+    connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);layout->addWidget(buttons);dlg.exec();
+    if(!qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN")){QJsonArray o,w,h;for(int i=0;i<count;++i){o.append(header->logicalIndex(i));w.append(table->isColumnHidden(i)?std::max(header->minimumSectionSize(),header->defaultSectionSize()):table->columnWidth(i));h.append(table->isColumnHidden(i));}workspace::write(stateKey,QJsonObject{{"order",o},{"widths",w},{"hidden",h}});}
+}
+
+void OptimizeTab::showFrametimePair() {
+    QDialog dlg(this);dlg.setWindowTitle(tr("Compare Frametime Logs"));dlg.resize(880,600);
+    auto *layout=new QVBoxLayout(&dlg);
+    auto *hint=new QLabel(tr("Select measured A and B logs from the same game, workload, resolution, graphics settings, kernel, firmware and power context. The tuning configuration may differ. This is a user-declared comparison, not a controlled experiment or model input."));hint->setWordWrap(true);layout->addWidget(hint);
+    struct Capture {frametime::Log log;QByteArray hash;QString file;};
+    std::array<std::optional<Capture>,2> captures;
+    std::array<QLabel*,2> descriptions{};
+    auto *context=new QLineEdit;context->setMaxLength(512);context->setPlaceholderText(tr("Describe common game, workload, resolution, kernel and power context"));
+    auto *configA=new QLineEdit;configA->setMaxLength(512);configA->setPlaceholderText(tr("A configuration / baseline"));
+    auto *configB=new QLineEdit;configB->setMaxLength(512);configB->setPlaceholderText(tr("B configuration / candidate"));
+    auto *same=new QCheckBox(tr("I confirm the recorded conditions are comparable except for the declared tuning change."));
+    auto *result=new QTableWidget(0,4);result->setHorizontalHeaderLabels({tr("Metric"),tr("Reference A"),tr("Candidate B"),tr("B vs A (%)")});result->setEditTriggers(QAbstractItemView::NoEditTriggers);result->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    auto *status=new QLabel;status->setWordWrap(true);
+    const auto refresh=[&] {
+        result->setRowCount(0);
+        const auto validContext=same->isChecked()&&!context->text().trimmed().isEmpty()&&!configA->text().trimmed().isEmpty()&&!configB->text().trimmed().isEmpty()&&configA->text().trimmed()!=configB->text().trimmed();
+        std::optional<frametimepair::Comparison> comparison;
+        if(captures[0]&&captures[1])comparison=frametimepair::compare(captures[0]->log,captures[1]->log,validContext,captures[0]->hash!=captures[1]->hash && captures[0]->log.ms!=captures[1]->log.ms);
+        const auto add=[&](const QString &metric,const QString &a,const QString &b,const QString &diff){int r=result->rowCount();result->insertRow(r);const QStringList cells{metric,a,b,diff};for(int c=0;c<cells.size();++c)result->setItem(r,c,new QTableWidgetItem(cells.at(c)));};
+        const auto count=[&](int i,bool rejected){return captures[i]?QString::number(qulonglong(rejected?captures[i]->log.rejected:captures[i]->log.ms.size())):tr("Unknown");};
+        add(tr("Accepted samples"),count(0,false),count(1,false),tr("Not applicable"));add(tr("Rejected samples"),count(0,true),count(1,true),tr("Not applicable"));
+        if(!comparison){status->setText(tr("No paired delta. Two distinct logs, at least 300 valid samples each, no more than 5% rejected samples, distinct configuration labels and a confirmed common context are required."));return;}
+        const auto &a=comparison->a,&b=comparison->b;
+        const auto metric=[&](const QString &label,double x,double y,int i){add(label,QString::number(x,'f',3),QString::number(y,'f',3),QString::number(comparison->delta[i],'f',2));};
+        metric(tr("Mean frametime (ms)"),a.mean,b.mean,0);metric(tr("P50 (ms)"),a.p50,b.p50,1);metric(tr("P95 (ms)"),a.p95,b.p95,2);metric(tr("P99 (ms)"),a.p99,b.p99,3);metric(tr("FPS (1000 / mean ms)"),a.fps,b.fps,4);
+        status->setText(tr("Descriptive differences only. Negative frametime and positive FPS changes indicate lower observed frame times. Repeated controlled runs are required to assess variability or causation. No data has been written to calibration."));
+    };
+    for(int i=0;i<2;++i){auto *row=new QHBoxLayout;auto *pick=new QPushButton(i==0?tr("Select Reference A…"):tr("Select Candidate B…"));descriptions[i]=new QLabel(tr("No log selected"));descriptions[i]->setTextFormat(Qt::PlainText);descriptions[i]->setWordWrap(true);row->addWidget(pick);row->addWidget(descriptions[i],1);layout->addLayout(row);
+        connect(pick,&QPushButton::clicked,&dlg,[&,i]{const auto path=QFileDialog::getOpenFileName(&dlg,tr("Open frametime log"),QDir::homePath(),tr("Frametime logs (*.csv *.txt);;All files (*)"));if(path.isEmpty())return;
+            captures[i].reset();same->setChecked(false);descriptions[i]->setText(tr("No log selected"));
+            QFile f(path);constexpr qint64 cap=16LL<<20;if(!QFileInfo(path).isFile()||!f.open(QIODevice::ReadOnly)||f.size()>cap){refresh();return;}
+            const auto bytes=f.read(cap+1);if(bytes.size()>cap||f.error()!=QFileDevice::NoError){refresh();return;}
+            auto log=frametime::parse(std::string_view(bytes.constData(),std::size_t(bytes.size())));const auto hash=QCryptographicHash::hash(bytes,QCryptographicHash::Sha256).toHex();captures[i]=Capture{std::move(log),hash,QFileInfo(path).fileName()};descriptions[i]->setText(captures[i]->file+QStringLiteral(" · SHA-256 ")+QString::fromLatin1(hash));refresh();});}
+    layout->addWidget(context);layout->addWidget(configA);layout->addWidget(configB);layout->addWidget(same);layout->addWidget(result,1);layout->addWidget(status);
+    for(auto *edit:{context,configA,configB})connect(edit,&QLineEdit::textChanged,&dlg,[&]{same->setChecked(false);refresh();});connect(same,&QCheckBox::toggled,&dlg,refresh);refresh();
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(buttons);connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);dlg.exec();
 }

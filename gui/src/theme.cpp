@@ -950,12 +950,9 @@ void applyBase(QApplication &app) {
 
 void applySheet(QApplication &app) { app.setStyleSheet(stylesheet()); }
 
-// For fully migrated workspaces only. Legacy local QSS, model item brushes and
-// cached icons still need semantic refresh callbacks before the real shell can
-// opt into this path. This never persists preferences or restarts the app.
-bool applyLivePalette(QApplication &app, const QString &id) {
+// Refresh presentation only; do not reconstruct pages or invoke hardware probes.
+static bool applyPaletteSnapshot(QApplication &app, const QString &id, const QStringList &colors) {
     if (QThread::currentThread() != app.thread() || g_refreshing) return false;
-    const auto colors = lookupPalette(id);
     if (!setTokens(id, colors)) return false;
     g_refreshing = true;
     QElapsedTimer timer;
@@ -968,6 +965,57 @@ bool applyLivePalette(QApplication &app, const QString &id) {
     g_lastLiveRefreshNanos = timer.nsecsElapsed();
     g_refreshing = false;
     return true;
+}
+
+bool applyLivePalette(QApplication &app, const QString &id) {
+    if (QThread::currentThread() != app.thread() || g_refreshing) return false;
+    return applyPaletteSnapshot(app, id, lookupPalette(id));
+}
+
+static bool persistAndApply(QApplication &app, const QString &id, const QStringList &colors, bool replaceCustom) {
+    if (QThread::currentThread() != app.thread() || g_refreshing || !validCustomPalette(colors)) return false;
+    // Commit both custom colors and selection in the same atomic INI sync. Do not
+    // change the live palette if the preference cannot be persisted.
+    auto s = settings();
+    s.setAtomicSyncRequired(true);
+    if (replaceCustom) s.setValue(QStringLiteral("customTheme/colors"), colors);
+    s.setValue(QStringLiteral("theme"), id);
+    s.sync();
+    if (s.status() != QSettings::NoError) return false;
+    return applyPaletteSnapshot(app, id, colors);
+}
+
+bool applyLivePreference(QApplication &app, const QString &id) {
+    if (QThread::currentThread() != app.thread() || g_refreshing) return false;
+    return persistAndApply(app, id, lookupPalette(id), false);
+}
+
+bool applyLiveCustomPreference(QApplication &app, const QStringList &colors) {
+    return persistAndApply(app, QStringLiteral("custom"), colors, true);
+}
+
+namespace {
+class LiveSheetBinding final : public QObject {
+public:
+    explicit LiveSheetBinding(QWidget *widget) : QObject(widget) {
+        QObject::connect(&events(), &ThemeEvents::themeChanged, this,
+                         [this, widget](quint64) { refresh(widget); });
+    }
+    void refresh(QWidget *widget) const {
+        if (render) setSheet(widget, render());
+    }
+    std::function<QString()> render;
+};
+}
+void setLiveSheet(QWidget *widget, std::function<QString()> render) {
+    if (!widget || !render) return;
+    LiveSheetBinding *binding = nullptr;
+    for (QObject *child : widget->children()) {
+        if ((binding = dynamic_cast<LiveSheetBinding *>(child))) break;
+    }
+    if (!binding) binding = new LiveSheetBinding(widget);
+    binding->render = std::move(render);
+    binding->refresh(widget);
 }
 
 void apply(QApplication &app) {

@@ -3,12 +3,15 @@
 #include "profilediff.h"
 #include "trialbar.h"
 #include "privileged.h"
+#include "userhelper.h"
 #include "theme.h"
 #include "experimentalui.h"
 #include "vfcurvewidget.h"
 #include <QPointer>
 #include <QUuid>
 #include "curvereadback.h"
+#include "curvejournal.h"
+#include "diagsources.h"
 
 #include <QComboBox>
 #include <QCheckBox>
@@ -254,7 +257,7 @@ static QString throttleText(unsigned long long m) {
 
 static QLabel *lbl(const QString &t, const char *color, bool bold = false) {
     auto *l = new QLabel(t);
-    l->setStyleSheet(QStringLiteral("color:%1;%2").arg(QString::fromLatin1(color), bold ? " font-weight:600;" : ""));
+    theme::setLiveSheet(l, [color, bold] { return QStringLiteral("color:%1;%2").arg(QString::fromLatin1(color), bold ? " font-weight:600;" : ""); });
     return l;
 }
 
@@ -464,7 +467,10 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         layout->addWidget(bb); dlg.exec();
     });
-    layers->addWidget(diff); cv->addLayout(layers);
+    layers->addWidget(diff);
+    auto *bTransactions = new QPushButton(tr("V/F History"));
+    connect(bTransactions,&QPushButton::clicked,this,&NvidiaTab::showCurveTransactions);
+    layers->addWidget(bTransactions); cv->addLayout(layers);
     // Compact zoom/pan bar (wheel = zoom at cursor, Shift+wheel = pan, +/−/0 keys).
     auto *gb = new QHBoxLayout;
     gb->setSpacing(6);
@@ -639,6 +645,11 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *bApply = new QPushButton("Apply Offsets");
     bApply->setObjectName("btnAccent");
     connect(bApply, &QPushButton::clicked, this, &NvidiaTab::applyOffsets);
+    auto *bValidate = new QPushButton(tr("Validate Draft"));
+    bValidate->setToolTip(tr("Read-only live validation using the same V/F preflight as Apply. May wake the GPU; never writes settings or requests administrator privileges."));
+    connect(bValidate, &QPushButton::clicked, this, &NvidiaTab::validateDraft);
+    for (auto *spin : {coreCapSpin_, capCompSpin_, memSpin_, lockMinSpin_, lockMaxSpin_})
+        connect(spin, &QSpinBox::valueChanged, vf_, [this] { vf_->setInvalidPoints({}); });
     resetBtn_ = new QPushButton("Reset Curve");
     resetBtn_->setObjectName("btnDanger");
     connect(resetBtn_, &QPushButton::clicked, this, &NvidiaTab::resetCurve);
@@ -661,9 +672,11 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
                   });
     });
     ch2->addWidget(readBtn_);
+    ch2->addWidget(bValidate);
     ch2->addWidget(bApply);
     ch2->addWidget(resetBtn_);
     ch2->addWidget(bResetAll);
+
     if (theme::experimentalEnabled()) {
         // Give the actual V/F graph the full page width. The former right
         // sidebar (and a static instruction card) shrank the working graph.
@@ -673,7 +686,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     } else {
         root->addWidget(ctl);
     }
-    actionButtons_ = {bSave, bDef, bApplyProf, bDel, bLock, bUnlock, bCap, bUncap, readBtn_, bApply, resetBtn_, bResetAll};
+    actionButtons_ = {bSave, bDef, bApplyProf, bDel, bLock, bUnlock, bCap, bUncap, readBtn_, bValidate, bApply, resetBtn_, bResetAll};
 
     log_ = new QPlainTextEdit;
     log_->setObjectName("terminal");
@@ -760,7 +773,7 @@ void NvidiaTab::pollStats() {
     if (auto r = nvml_->eventReasons()) {
         const QString t = throttleText(*r);
         throttle_->setText(QStringLiteral("Limit: ") + (t.isEmpty() ? QStringLiteral("—") : t));
-        theme::setSheet(throttle_, QStringLiteral("color:%1;").arg(t.isEmpty() ? theme::FG_DIM : theme::WARN));
+        theme::setLiveSheet(throttle_, [empty=t.isEmpty()] { return QStringLiteral("color:%1;").arg(empty ? theme::FG_DIM : theme::WARN); });
     }
     if (!tempsTried_) {
         tempsTried_ = true;
@@ -875,12 +888,66 @@ void NvidiaTab::setBusy(bool b) {
     updateCurveHistory();
 }
 
+static QString curveJournalPath() {
+    const auto dir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    return dir.isEmpty() ? QString() : dir + QStringLiteral("/centurion/vf-transactions-v1.json");
+}
+void NvidiaTab::showCurveTransactions() {
+    auto *dlg = new QDialog(this); dlg->setAttribute(Qt::WA_DeleteOnClose); dlg->resize(850,550);
+    dlg->setWindowTitle(tr("V/F Transaction History"));
+    auto *layout = new QVBoxLayout(dlg);
+    auto *note = new QLabel(tr("Recorded helper replies and frozen readback. A point match does not verify clock locks or stability. This history cannot restore hardware."));
+    note->setWordWrap(true); layout->addWidget(note);
+    const auto path = curveJournalPath();
+    const auto entries = path.isEmpty() ? std::optional<QJsonArray>{} : tunejournal::read(path);
+    if (!entries) note->setText(tr("V/F history is unreadable or invalid; it has not been overwritten."));
+    auto *table = new QTableWidget(dlg); table->setColumnCount(4);
+    table->setHorizontalHeaderLabels({tr("Time"),tr("Operation"),tr("Evidence"),tr("GPU UUID")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    auto *detail = new QPlainTextEdit(dlg); detail->setReadOnly(true);
+    layout->addWidget(table,1); layout->addWidget(detail,1);
+    if (entries) for (qsizetype i=entries->size();i>0;--i) {
+        const auto row = entries->at(i-1).toObject(); const auto ev = row.value("evidence").toObject();
+        const int at = table->rowCount(); table->insertRow(at);
+        auto *first = new QTableWidgetItem(row.value("time").toString()); first->setData(Qt::UserRole,QJsonDocument(row).toJson(QJsonDocument::Indented)); table->setItem(at,0,first);
+        table->setItem(at,1,new QTableWidgetItem(row.value("operation").toString()));
+        table->setItem(at,2,new QTableWidgetItem(ev.value("status").toString()));
+        table->setItem(at,3,new QTableWidgetItem(ev.value("device").toObject().value("uuid").toString()));
+    }
+    connect(table,&QTableWidget::itemSelectionChanged,dlg,[table,detail]{
+        const auto *item = table->item(table->currentRow(),0);
+        detail->setPlainText(item ? QString::fromUtf8(item->data(Qt::UserRole).toByteArray()) : QString());
+    });
+    if (table->rowCount()) table->selectRow(0);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+    connect(buttons,&QDialogButtonBox::rejected,dlg,&QDialog::close); dlg->show();
+}
+
 bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, const QString &failMsg, Done done) {
     if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) { log(tr("Hardware operations are disabled for the curve fixture.")); return false; }
     if (busy_) { log("⏳ Another operation is still running — please wait."); return false; }
     clearCurveHistory();
     setBusy(true);
-    privileged::run(helperPath(), payload, this, [=, this](const privileged::Result &r) {
+    const QString op = payload.value("op").toString();
+    const auto requestId = payload.value("request_id").toString();
+    const bool tracked = !qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN") && !requestId.isEmpty() &&
+        (op == QStringLiteral("apply_gpu_offsets") || op == QStringLiteral("apply_named_profile") || op == QStringLiteral("reset_gpu_curve"));
+    const auto journalPath = tracked ? curveJournalPath() : QString();
+    QJsonObject tx;
+    if (tracked) tx = {{"id",requestId},{"operation",op},{"time",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+                   {"boot",diagsrc::bootId()},{"requested",payload},{"evidence",QJsonObject{{"status","pending"}}}};
+    const bool journaled = tracked && !journalPath.isEmpty() && QDir().mkpath(QFileInfo(journalPath).absolutePath()) && tunejournal::store(journalPath,tx,false);
+    if (tracked && !journaled) log(tr("V/F transaction journal unavailable; existing history preserved."));
+    privileged::run(helperPath(), payload, this, [=, this](const privileged::Result &r) mutable {
+        if (journaled) {
+            const auto file = op == QStringLiteral("reset_gpu_curve") ? QStringLiteral("nvcurve_reset_result.json") : QStringLiteral("nvcurve_apply_result.json");
+            const auto observed = r.ok() ? curvejournal::readResult(RUN_DIR + '/' + file) : QJsonObject{};
+            tx["completed"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+            tx["evidence"] = curvejournal::inspect(payload,observed,r.reached,r.ok());
+            if (!tunejournal::store(journalPath,tx,true)) log(tr("Could not record V/F reply; pending evidence preserved."));
+        }
         setBusy(false);
         if (r.ok()) {
             for (const QString &line : r.json.value("message").toString().split('\n', Qt::SkipEmptyParts)) log(line);
@@ -898,19 +965,19 @@ bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, cons
 
 /// Match the atomic root result to this exact request. An older helper or
 /// another concurrent caller may leave a file, but it cannot verify this request.
-bool NvidiaTab::loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out) {
-    const QString path = RUN_DIR + '/' + file;
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly) || f.size() > 1024 * 1024) {
-        log(tr("Curve readback unavailable; read the curve again before applying edits.")); return false;
-    }
-    const auto o = QJsonDocument::fromJson(f.read(1024 * 1024 + 1)).object();
+bool NvidiaTab::loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out, const QJsonObject &expectedDevice) {
+    const auto o = curvejournal::readResult(RUN_DIR + '/' + file);
     const auto identity = curvereadback::identity(o, requestId);
     if (!identity) {
         log(tr("Curve readback is invalid or belongs to another request. Update the helper if necessary.")); return false;
     }
+    if (!expectedDevice.isEmpty() && expectedDevice != identity->device) {
+        log(tr("GPU identity changed; read the curve again before applying edits.")); return false;
+    }
     *out = o.value("vf_curve").toArray();
     readGpuName_ = identity->gpu;
+    readGpuDevice_ = identity->device;
+    if (readGpuDevice_.isEmpty()) log(tr("GPU UUID identity unavailable; edited Apply and Validate are disabled."));
     applyMemOffset(o);
     return true;
 }
@@ -1034,13 +1101,13 @@ void NvidiaTab::updateCoreOffsetUi() {
         coreSpin_->setRange(CORE_MIN - 1, CORE_MAX);
         coreSpin_->setSpecialValueText("⚠ curve");
         coreSpin_->setValue(CORE_MIN - 1);
-        theme::setSheet(coreSpin_, QStringLiteral("QSpinBox { color:%1; font-weight:600; }").arg(theme::DANGER));
+        theme::setLiveSheet(coreSpin_, [] { return QStringLiteral("QSpinBox { color:%1; font-weight:600; }").arg(theme::DANGER); });
     } else {
         coreSpin_->setEnabled(!busy_);
         coreSpin_->setSpecialValueText(QString());
         coreSpin_->setRange(CORE_MIN, CORE_MAX);
         coreSpin_->setValue(coreOffset_);
-        theme::setSheet(coreSpin_, QString());
+        theme::setLiveSheet(coreSpin_, [] { return QString(); });
     }
 }
 
@@ -1128,9 +1195,95 @@ void NvidiaTab::readCurve() {
     });
 }
 
+QJsonObject NvidiaTab::draftProfileData() const {
+    QJsonObject deltas;
+    for (int i = 0; i < base_.size(); ++i)
+        if (const int o = offsetOf(i)) deltas.insert(QString::number(pointIds_.at(i)), qint64(o) * 1000);
+    const int mem = memSpin_->value(), lmax = lockMaxSpin_->value();
+    const int lmin = lockMinSpin_->value() ? lockMinSpin_->value() : lmax;
+    return QJsonObject{{"name", SCRATCH}, {"curve_deltas", deltas},
+                           {"mem_offset_mhz", mem}, {"power_limit_w", QJsonValue()},  // 0 must be sent: absent = 'leave the old offset'
+                           {"mem_locked_min_mhz", lmax ? QJsonValue(lmin) : QJsonValue()},
+                           {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
+                           {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
+                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()},
+                           {"flatten_from", flattenPending() ? QJsonValue(pointIds_.at(flatFrom_)) : QJsonValue()},
+                           {"flatten_mhz", flattenPending() ? QJsonValue(flatMhz_) : QJsonValue()}};
+}
+
+void NvidiaTab::validateDraft() {
+    if (busy_) return;
+    if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE") || qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN")) {
+        log(tr("Live validation is disabled in fixture or training mode.")); return;
+    }
+    if (!curveReadbackValid_ || base_.isEmpty() || pointIds_.size() != base_.size() || pointVoltages_.size() != base_.size()) {
+        log(tr("Read a valid curve before validating edits.")); return;
+    }
+    if (readGpuDevice_.isEmpty()) { log(tr("GPU UUID identity unavailable; edited Apply and Validate are disabled.")); return; }
+    const auto data = draftProfileData();
+    QJsonArray expectedPoints;
+    for (qsizetype i = 0; i < pointIds_.size(); ++i)
+        expectedPoints.append(QJsonArray{pointIds_.at(i), pointVoltages_.at(i)});
+    const auto ids = pointIds_; const auto volts = pointVoltages_; const auto gpu = readGpuName_; const auto device = readGpuDevice_;
+    vf_->setInvalidPoints({});
+    setBusy(true);
+    userhelper::runProgram(QStandardPaths::findExecutable(QStringLiteral("nvcurve")), {QStringLiteral("validate-draft")},
+        {{"profile_data", data}, {"expected_gpu", gpu}, {"expected_points", expectedPoints}, {"expected_device",device}}, this,
+        [this, data, ids, volts, gpu, device](const QJsonObject &reply) {
+            setBusy(false);
+            if (!curveReadbackValid_ || ids != pointIds_ || volts != pointVoltages_ || gpu != readGpuName_ || device != readGpuDevice_ || data != draftProfileData()) {
+                log(tr("Validation discarded: the curve or draft changed.")); return;
+            }
+            if (!reply.value("ok").toBool()) {
+                QSet<int> invalid;
+                for (const auto &v : reply.value("invalid_points").toArray()) {
+                    const int row = ids.indexOf(v.toInt(-1));
+                    if (row >= 0) invalid.insert(row);
+                }
+                vf_->setInvalidPoints(invalid);
+                log(tr("Draft validation unavailable or rejected: %1").arg(reply.value("error").toString()));
+                return;
+            }
+            const auto validation = reply.value("validation").toObject();
+            const auto points = validation.value("points").toArray();
+            if (validation.value("gpu").toString() != gpu || validation.value("device_identity").toObject() != device || points.isEmpty() || points.size() > ids.size() ||
+                validation.value("scope").toString() != QStringLiteral("read_only_preflight_not_stability_or_apply_guarantee")) {
+                log(tr("Invalid validation response; no result accepted.")); return;
+            }
+            QSet<int> seen;
+            for (const auto &v : points) {
+                const auto pt = v.toObject(); const int id = pt.value("index").toInt(-1); const int row = ids.indexOf(id);
+                if (row < 0 || seen.contains(id) || pt.value("volt_uV").toInteger(-1) != volts.at(row) ||
+                    !pt.value("base_kHz").isDouble() || !pt.value("requested_delta_kHz").isDouble() || !pt.value("projected_kHz").isDouble()) {
+                    log(tr("Invalid validation response; no result accepted.")); return;
+                }
+                seen.insert(id);
+            }
+            log(tr("Read-only preflight passed for %1 points. Not a stability or Apply guarantee.").arg(points.size()));
+            auto *dlg = new QDialog(this); dlg->setAttribute(Qt::WA_DeleteOnClose); dlg->setWindowTitle(tr("V/F Draft Validation")); dlg->resize(680, 460);
+            auto *layout = new QVBoxLayout(dlg);
+            auto *hint = new QLabel(tr("Frozen live preflight snapshot. Apply repeats all checks; projected values are not hardware readback or proof of stability."));
+            hint->setWordWrap(true); layout->addWidget(hint);
+            for (const auto &v : validation.value("warnings").toArray()) {
+                auto *warning = new QLabel(v.toString()); warning->setTextFormat(Qt::PlainText); warning->setWordWrap(true); layout->addWidget(warning);
+            }
+            auto *table = new QTableWidget(points.size(), 5, dlg);
+            table->setHorizontalHeaderLabels({tr("Point"), tr("Voltage (µV)"), tr("Base (kHz)"), tr("Requested Delta (kHz)"), tr("Projected (kHz)")});
+            table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            const QStringList keys{QStringLiteral("index"), QStringLiteral("volt_uV"), QStringLiteral("base_kHz"), QStringLiteral("requested_delta_kHz"), QStringLiteral("projected_kHz")};
+            for (int i = 0; i < points.size(); ++i)
+                for (int j = 0; j < keys.size(); ++j)
+                    table->setItem(i, j, new QTableWidgetItem(QString::number(points.at(i).toObject().value(keys.at(j)).toInteger())));
+            table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents); layout->addWidget(table);
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+            connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close); dlg->show();
+        });
+}
+
 void NvidiaTab::applyOffsets() {
     if (busy_) return;
     if (!curveReadbackValid_) { log(tr("Read a valid curve before applying edits.")); return; }
+    if (readGpuDevice_.isEmpty()) { log(tr("GPU UUID identity unavailable; edited Apply and Validate are disabled.")); return; }
     if (base_.isEmpty()) { log("❌ No curve loaded yet — read the current curve or load a profile first."); return; }
     QJsonObject deltas;
     for (int i = 0; i < base_.size(); ++i)
@@ -1142,30 +1295,23 @@ void NvidiaTab::applyOffsets() {
     if (deltas.isEmpty() && !gpuHasSettings && lmax == 0 && coreCapSpin_->value() < 210) { log("No offsets to apply."); return; }
     if (lmax && lmin > lmax) { log("⚠️ VRAM lock: Min cannot be greater than Max."); return; }
 
-    const QJsonObject data{{"name", SCRATCH}, {"curve_deltas", deltas},
-                           {"mem_offset_mhz", mem}, {"power_limit_w", QJsonValue()},  // 0 must be sent: absent = 'leave the old offset'
-                           {"mem_locked_min_mhz", lmax ? QJsonValue(lmin) : QJsonValue()},
-                           {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
-                           {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
-                           {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()},
-                           {"flatten_from", flattenPending() ? QJsonValue(pointIds_.at(flatFrom_)) : QJsonValue()},
-                           {"flatten_mhz", flattenPending() ? QJsonValue(flatMhz_) : QJsonValue()}};
+    const QJsonObject data = draftProfileData();
     const QString t0 = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const int flatFrom = flattenPending() ? flatFrom_ : -1, flatMhz = flatMhz_;
     QHash<int, int> requested;
     for (int i = 0; i < base_.size(); ++i) requested.insert(i, offsetOf(i));
     const QVector<QPointF> baseBefore = base_;
-    const auto idsBefore = pointIds_; const auto voltsBefore = pointVoltages_; const auto gpuBefore = readGpuName_;
+    const auto idsBefore = pointIds_; const auto voltsBefore = pointVoltages_; const auto gpuBefore = readGpuName_; const auto deviceBefore = readGpuDevice_;
     QJsonArray expectedPoints;
     for (qsizetype i = 0; i < pointIds_.size(); ++i)
         expectedPoints.append(QJsonArray{pointIds_.at(i), pointVoltages_.at(i)});
     runHelper({{"op", "apply_gpu_offsets"}, {"request_id", t0}, {"expected_gpu", gpuBefore},
-               {"expected_points", expectedPoints}, {"profile_name", SCRATCH}, {"profile_data", data}},
-              "Offsets applied.", "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz, idsBefore, voltsBefore, gpuBefore](bool ok, const QJsonObject &) {
+               {"expected_points", expectedPoints}, {"expected_device",deviceBefore}, {"profile_name", SCRATCH}, {"profile_data", data}},
+              tr("Helper reported Apply completed; checking fresh readback."), "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz, idsBefore, voltsBefore, gpuBefore, deviceBefore](bool ok, const QJsonObject &) {
         curveReadbackValid_ = false;
         QJsonArray pts;
         if (ok) { clearCurveHistory(); trial_->offer([this] { revertTrial(); }); }
-        if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts)) return;
+        if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts, deviceBefore)) return;
         takeGpuPoints(pts, true);
         log("✅ Curve re-read from the GPU after apply.");
         if (idsBefore != pointIds_ || voltsBefore != pointVoltages_ || gpuBefore != readGpuName_) {
@@ -1183,17 +1329,18 @@ void NvidiaTab::applyOffsets() {
 // resetCurve() refuses while another op runs: retry until it can, or the time-out would revert nothing.
 void NvidiaTab::revertTrial() {
     if (busy_) { QTimer::singleShot(1500, this, &NvidiaTab::revertTrial); return; }
-    log("Trial over: GPU curve back to stock.");
-    resetCurve();
+    log(tr("Trial over: requesting GPU curve reset."));
+    resetCurveImpl(true);
 }
 
-void NvidiaTab::resetCurve() {
+void NvidiaTab::resetCurve() { resetCurveImpl(false); }
+void NvidiaTab::resetCurveImpl(bool fromTrial) {
     if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) return;
     if (busy_) { log("⏳ Another operation is still running — please wait."); return; }  // tray can call this while busy
     trial_->cancel();
     resetBtn_->setText("Resetting…");
     const QString t0 = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    runHelper({{"op", "reset_gpu_curve"}, {"request_id", t0}}, "Reset successful.", "Reset failed", [this, t0](bool ok, const QJsonObject &) {
+    runHelper({{"op", "reset_gpu_curve"}, {"request_id", t0}, {"origin", fromTrial ? QStringLiteral("trial") : QStringLiteral("manual")}}, "Reset successful.", "Reset failed", [this, t0](bool ok, const QJsonObject &) {
         resetBtn_->setText("Reset Curve");
         curveReadbackValid_ = false;
         if (!ok) return;
