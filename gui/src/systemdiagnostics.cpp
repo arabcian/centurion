@@ -46,7 +46,7 @@ static int pcieGen(double gts) { return gts >= 60 ? 6 : gts >= 30 ? 5 : gts >= 1
 Report pcieLinks(const QString &root) {
     Report r;
     r.code = QStringLiteral("S04");
-    r.title = tr("PCIe Link Negotiation Lab");
+    r.title = tr("PCIe Link Check");
     r.about = tr("The PCIe link every device trained at, against what both ends of the link can do. A narrower link than possible is a "
                  "hardware or BIOS limit; a slower one at idle is normal power saving.");
     r.limits << tr("Speed drops to save power when a device is idle (GPUs go to PCIe 1.0 at the desktop); check under load before judging the speed.")
@@ -126,7 +126,7 @@ static QMap<QString, QString> missingFirmware(const QList<diagsrc::LogLine> &ker
 Report radios(const QList<diagsrc::LogLine> &kernel, const QString &root) {
     Report r;
     r.code = QStringLiteral("S07");
-    r.title = tr("Wi-Fi / Bluetooth Firmware Doctor");
+    r.title = tr("Wi-Fi & Bluetooth Check");
     r.about = tr("Each wireless adapter with its driver and state, radio kill switches, and firmware files the kernel asked for and did not find.");
     r.limits << tr("A firmware file present on disk is not proof that it is the version the driver wants; the kernel log says what it loaded.");
     Table a;
@@ -193,7 +193,7 @@ Report radios(const QList<diagsrc::LogLine> &kernel, const QString &root) {
 Report powerLimits(const QString &root) {
     Report r;
     r.code = QStringLiteral("S08");
-    r.title = tr("Power Limit Source Map");
+    r.title = tr("Power Limits");
     r.about = tr("Every place a CPU / platform power limit is visible without waking anything: firmware power settings (PPT), the platform "
                  "profile, cpufreq caps, RAPL, and the power source.");
     r.limits << tr("The SMU's live limits (STAPM, fast / slow PPT in effect) are not exported by the kernel; the firmware settings here are the targets it was given.")
@@ -286,7 +286,7 @@ Report powerLimits(const QString &root) {
 Report memory(const QString &root) {
     Report r;
     r.code = QStringLiteral("S10");
-    r.title = tr("Memory Architecture Explorer");
+    r.title = tr("Memory Layout");
     r.about = tr("How RAM, swap, compressed swap (zram / zswap), huge pages and memory pressure are set up and behaving right now.");
     r.limits << tr("Pressure (PSI) is an average over the last seconds / minutes, not since boot.")
              << tr("DIMM details (speed, timings, part numbers) need root: System tools → DMI.");
@@ -390,7 +390,7 @@ Report memory(const QString &root) {
 Report firmware(const QString &root) {
     Report r;
     r.code = QStringLiteral("S11");
-    r.title = tr("ACPI / WMI Firmware Browser");
+    r.title = tr("ACPI & WMI Firmware");
     r.about = tr("The firmware interfaces the kernel found: WMI objects with the driver that claims each, firmware settings exposed through "
                  "firmware-attributes, and the ACPI tables present. Nothing is called or changed.");
     r.limits << tr("Passwords and authentication attributes are never read.");
@@ -460,7 +460,7 @@ Report firmware(const QString &root) {
 Report charging(const QString &root) {
     Report r;
     r.code = QStringLiteral("S13");
-    r.title = tr("USB-C PD / Charger Inspector");
+    r.title = tr("USB-C Charger");
     r.about = tr("What the connected charger offers (its USB Power Delivery profiles), what the laptop is drawing, and the battery's condition.");
     r.limits << tr("USB-PD profiles are visible only through the UCSI driver (typec_ucsi); barrel and proprietary chargers show as an online AC adapter only.")
              << tr("Battery power figures are the battery's own estimate.");
@@ -553,7 +553,7 @@ Report charging(const QString &root) {
 Report audio(const QHash<QString, QString> &out, const QString &root) {
     Report r;
     r.code = QStringLiteral("S15");
-    r.title = tr("PipeWire Audio Doctor");
+    r.title = tr("Audio (PipeWire)");
     r.about = tr("Sound cards and codecs, which sound servers are running (and whether two fight over the devices), and PipeWire's own view.");
     r.limits << tr("Only your own user's sound servers are seen; nothing is restarted or re-routed.");
     Table c;
@@ -650,7 +650,7 @@ QString configValue(const QString &config, const QString &option) {
 Report kernelDeps(const QString &config, const QList<diagsrc::LogLine> &kernel, const QString &root) {
     Report r;
     r.code = QStringLiteral("S18");
-    r.title = tr("Kernel Feature & Firmware Dependency Check");
+    r.title = tr("Kernel Features & Firmware");
     r.about = tr("Kernel options Centurion's features rely on, firmware files the kernel could not load, the firmware compression the kernel can read, "
                  "and devices no driver has claimed.");
     r.limits << tr("A built-in option (y) or a module (m) both work; a module must also be installed for this kernel.");

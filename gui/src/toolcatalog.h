@@ -37,6 +37,8 @@ bool matches(const QString &query, const QString &label, const QStringList &keyw
 
 /// Where to look next for a guided-triage category ("gpu", "cpu" …): "page:<key>" or "tool:<key>", in order.
 QStringList relatedFor(const QString &triageKey);
+/// The System tools (and pages) that cover the same ground as a Health page ("smart", "cooling" …); empty for none.
+QStringList relatedForPage(const QString &pageKey);
 
 /// Short explanations of the technical terms (AER, ASPM, GSP, D3cold …) found as whole words in `text`,
 /// one "TERM — what it is" line each; empty when none.

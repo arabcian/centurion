@@ -16,8 +16,8 @@ const QHash<QString, Info> &tools() {
     using A = Area;
     static const QHash<QString, Info> t = {
         // CPU & memory
-        {"CPU", {A::Cpu, 0, words("cpu|işlemci|processor|frekans|frequency|governor|cpufreq|pstate|boost|cpupower|lscpu|çekirdek|core")}},
-        {"Memory", {A::Cpu, 0, words("ram|bellek|swap|zram|numa|free")}},
+        {"CPU", {A::Cpu, ChangesSettings, words("cpu|işlemci|processor|frekans|frequency|governor|cpufreq|pstate|boost|cpupower|lscpu|çekirdek|core")}},
+        {"Memory", {A::Cpu, ChangesSettings, words("ram|bellek|swap|zram|numa|free")}},
         {"Memory Architecture Explorer", {A::Cpu, 0, words("ram|bellek|swap|zram|zswap|huge pages|hugepage|numa|l3|memory pressure|psi|S10")}},
         {"DMI", {A::Cpu, NeedsRoot, words("dmidecode|bios|anakart|motherboard|board|ram modülü|memory module|seri numarası|serial")}},
         // Graphics & display
@@ -28,8 +28,8 @@ const QHash<QString, Info> &tools() {
                         words("monitör|monitor|ekran|display|vrr|freesync|g-sync|gsync|hdr|refresh|yenileme hızı|hz|titreme|flicker|"
                               "parlaklık|brightness|edid|panel|S03")}},
         // Storage
-        {"Storage", {A::Storage, 0, words("disk|ssd|nvme|lsblk|df|dosya sistemi|filesystem|f2fs|btrfs|ext4|scheduler|mount|bölüm|partition")}},
-        {"SMART details", {A::Storage, NeedsRoot, words("smart|smartctl|disk sağlığı|drive health|nvme|wear|aşınma|ssd|bad sector")}},
+        {"Storage", {A::Storage, ChangesSettings, words("disk|ssd|nvme|lsblk|df|dosya sistemi|filesystem|f2fs|btrfs|ext4|scheduler|mount|bölüm|partition")}},
+        {"SMART details", {A::Storage, NeedsRoot | ChangesSettings, words("smart|smartctl|disk sağlığı|drive health|nvme|wear|aşınma|ssd|bad sector")}},
         {"Storage tuning", {A::Storage, ChangesSettings, words("io scheduler|readahead|disk|ssd|nvme|trim|ayar")}},
         // Network & wireless
         {"Wi-Fi / Bluetooth Firmware Doctor",
@@ -46,16 +46,16 @@ const QHash<QString, Info> &tools() {
          {A::Power, 0, words("şarj aleti|adaptör|charger|usb-c|type-c|pd|power delivery|watt|şarj olmuyor|S13")}},
         // Devices & buses
         {"PCI", {A::Devices, 0, words("pci|lspci|aygıt|device|sürücü|driver|gpu|nvme")}},
-        {"PCIe detail", {A::Devices, NeedsRoot, words("pcie|lspci -vv|aspm|aer|link|bağlantı")}},
+        {"PCIe detail", {A::Devices, NeedsRoot | ChangesSettings, words("pcie|lspci -vv|aspm|aer|link|bağlantı")}},
         {"PCIe Link Negotiation Lab",
          {A::Devices, 0, words("pcie|link|hız|speed|gen|lane|şerit|aspm|aer|xid 79|fallen off the bus|bant genişliği|bandwidth|S04")}},
-        {"USB", {A::Devices, 0, words("usb|lsusb|port|hub|cihaz|device|bağlantı kopması|disconnect")}},
+        {"USB", {A::Devices, ChangesSettings, words("usb|lsusb|port|hub|cihaz|device|bağlantı kopması|disconnect")}},
         // Firmware & kernel
-        {"Kernel", {A::Firmware, 0, words("kernel|çekirdek|uname|lsmod|modül|module|cmdline|boot parameters|açılış parametreleri")}},
+        {"Kernel", {A::Firmware, ChangesSettings, words("kernel|çekirdek|uname|lsmod|modül|module|cmdline|boot parameters|açılış parametreleri")}},
         {"Kernel Feature & Firmware Check",
          {A::Firmware, 0, words("kernel config|firmware missing|firmware eksik|modül|module|driver yok|missing driver|desteklenmiyor|unsupported|S18")}},
         {"ACPI / WMI Firmware Browser", {A::Firmware, 0, words("acpi|wmi|firmware|bios|lenovo|legion|dsdt|S11")}},
-        {"Firmware updates", {A::Firmware, UsesInternet, words("fwupd|fwupdmgr|lvfs|bios update|bios güncelleme|firmware güncelleme|güncelleme|update")}},
+        {"Firmware updates", {A::Firmware, UsesInternet | ChangesSettings, words("fwupd|fwupdmgr|lvfs|bios update|bios güncelleme|firmware güncelleme|güncelleme|update")}},
         {"Security", {A::Firmware, 0, words("güvenlik|security|secure boot|mitigation|spectre|lockdown|taint|microcode|mikrokod")}},
         {"Kernel tuning", {A::Firmware, ChangesSettings, words("sysctl|scheduler|zamanlayıcı|eevdf|kernel|çekirdek|ayar")}},
         // System & configuration
@@ -77,14 +77,14 @@ QList<Area> areas() {
 
 QString areaName(Area a) {
     switch (a) {
-    case Area::Cpu: return tx(QT_TRANSLATE_NOOP("toolcatalog", "CPU & Memory"));
-    case Area::Graphics: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Graphics & Display"));
-    case Area::Storage: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Storage"));
-    case Area::Network: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Network & Wireless"));
-    case Area::Power: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Power & Thermal"));
-    case Area::Devices: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Devices & Buses"));
-    case Area::Firmware: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Firmware & Kernel"));
-    case Area::System: return tx(QT_TRANSLATE_NOOP("toolcatalog", "System & Configuration"));
+    case Area::Cpu: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Processor, Memory & Board"));
+    case Area::Graphics: return tx(QT_TRANSLATE_NOOP("toolcatalog", "GPU, Drivers & Displays"));
+    case Area::Storage: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Drives & File Systems"));
+    case Area::Network: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Wi-Fi, Bluetooth & Network"));
+    case Area::Power: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Power, Battery & Temperatures"));
+    case Area::Devices: return tx(QT_TRANSLATE_NOOP("toolcatalog", "PCIe & USB Devices"));
+    case Area::Firmware: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Kernel, Firmware & Security"));
+    case Area::System: return tx(QT_TRANSLATE_NOOP("toolcatalog", "Config Files, Audio & Snapshot"));
     }
     return {};
 }
@@ -154,6 +154,18 @@ QStringList relatedFor(const QString &triageKey) {
         {"usb", {"tool:USB", "tool:USB-C PD / Charger Inspector", "tool:PCI"}},
     };
     return r.value(triageKey);
+}
+
+QStringList relatedForPage(const QString &pageKey) {
+    static const QHash<QString, QStringList> r = {
+        {"smart", {"tool:SMART details", "tool:Storage", "tool:Storage tuning"}},
+        {"cooling", {"tool:Sensors", "tool:Thermal", "tool:Power Limit Source Map"}},
+        {"battery", {"tool:Battery", "tool:USB-C PD / Charger Inspector", "page:sleep"}},
+        {"dgpu", {"tool:NVIDIA module parameters", "tool:PCIe Link Negotiation Lab"}},
+        {"kernelparams", {"tool:Kernel tuning", "tool:Kernel"}},
+        {"sleep", {"page:battery", "page:dgpu"}},
+    };
+    return r.value(pageKey);
 }
 
 QString explainTerms(const QString &text) {

@@ -17,14 +17,20 @@
 #include <QComboBox>
 #include <QCompleter>
 #include <QCoreApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QSet>
@@ -71,6 +77,14 @@ QString stableToolKey(const char *caption) {
     if (display == QLatin1String("PCIe Detail")) return QStringLiteral("PCIe detail");
     if (display == QLatin1String("SMART Details")) return QStringLiteral("SMART details");
     if (display == QLatin1String("Firmware Updates")) return QStringLiteral("Firmware updates");
+    if (display == QLatin1String("PCIe Link Check")) return QStringLiteral("PCIe Link Negotiation Lab");
+    if (display == QLatin1String("Wi-Fi & Bluetooth Check")) return QStringLiteral("Wi-Fi / Bluetooth Firmware Doctor");
+    if (display == QLatin1String("Power Limits")) return QStringLiteral("Power Limit Source Map");
+    if (display == QLatin1String("Memory Layout")) return QStringLiteral("Memory Architecture Explorer");
+    if (display == QLatin1String("ACPI & WMI Firmware")) return QStringLiteral("ACPI / WMI Firmware Browser");
+    if (display == QLatin1String("USB-C Charger")) return QStringLiteral("USB-C PD / Charger Inspector");
+    if (display == QLatin1String("Audio (PipeWire)")) return QStringLiteral("PipeWire Audio Doctor");
+    if (display == QLatin1String("Kernel Features & Firmware")) return QStringLiteral("Kernel Feature & Firmware Check");
     return display;
 }
 
@@ -252,11 +266,21 @@ QStringList dirNames(const QString &dir, const QStringList &filters = {}) {
 // (administrator password) and reads the page again when it succeeded.
 QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()> &rerun) {
     auto *bar = new QWidget;
-    auto *h = new QHBoxLayout(bar);
-    h->setContentsMargins(0, 0, 0, 0);
-    auto *label = new QLabel(tl("Change:"));
+    auto *outer = new QVBoxLayout(bar);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(2);
+    auto *h = new QHBoxLayout;
+    outer->addLayout(h);
+    auto *label = new QLabel(tl("Quick actions:"));
     label->setProperty("role", "muted");
     h->addWidget(label);
+    // The answer of the last action, in place of a dialog; before that, how long a change lasts.
+    auto *status = new QLabel;
+    status->setProperty("role", "muted");
+    status->setWordWrap(true);
+    outer->addWidget(status);
+    if (QStringList{"CPU", "Memory", "USB", "PCIe detail", "Kernel"}.contains(key))
+        status->setText(tl("Changes here last until the next boot. To keep one, use Configuration Files."));
     auto after = [rerun](bool ok) { if (ok) rerun(); };
     auto button = [&](const QString &text, const QString &tip, std::function<void()> f) {
         auto *b = new QPushButton(text);
@@ -265,26 +289,39 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
         h->addWidget(b);
         return b;
     };
-    auto act = [page, after](const QString &title, const QString &confirm, const QJsonObject &r) { sysadmin::act(page, title, confirm, r, after); };
+    auto act = [page, after, status](const QString &title, const QString &confirm, const QJsonObject &r) {
+        sysadmin::act(page, title, confirm, r, after, status);
+    };
+    // A toggle shows the state it would change, read again after each action.
+    auto toggle = [page, rerun, status, h](const QString &title, const std::function<bool()> &isOn, const QString &onText,
+                                          const QString &offText, const QString &tip, const std::function<QJsonObject(bool)> &request) {
+        auto *b = new QPushButton;
+        b->setToolTip(tip);
+        auto show = [b, isOn, onText, offText] { b->setText(isOn() ? onText : offText); };
+        show();
+        QObject::connect(b, &QPushButton::clicked, page, [page, rerun, status, title, isOn, request, show] {
+            sysadmin::act(page, title, QString(), request(isOn()), [rerun, show](bool ok) { show(); if (ok) rerun(); }, status);
+        });
+        h->addWidget(b);
+    };
     if (key == QLatin1String("CPU")) {
-        const bool boost = QFile::exists(QStringLiteral("/sys/devices/system/cpu/cpufreq/boost")) ||
-                           QFile::exists(QStringLiteral("/sys/devices/system/cpu/cpufreq/policy0/boost"));
-        if (boost) {
-            button(tl("Boost on"), tl("Lets the cores run above their base clock (until reboot)."), [act] {
-                act(tl("CPU boost"), QString(), req("sysfs_set", {{"key", "cpu_boost"}, {"value", "1"}})); });
-            button(tl("Boost off"), tl("Holds the cores at their base clock: cooler and quieter, much slower (until reboot)."), [act] {
-                act(tl("CPU boost"), tl("Turn CPU boost off until the next boot?"), req("sysfs_set", {{"key", "cpu_boost"}, {"value", "0"}})); });
-        }
+        QString boostFile = QStringLiteral("/sys/devices/system/cpu/cpufreq/boost");
+        if (!QFile::exists(boostFile)) boostFile = QStringLiteral("/sys/devices/system/cpu/cpufreq/policy0/boost");
+        if (QFile::exists(boostFile))
+            toggle(tl("CPU boost"), [boostFile] { return readFile(boostFile).trimmed() == QLatin1String("1"); },
+                   tl("Boost: on — turn off"), tl("Boost: off — turn on"),
+                   tl("On: the cores run above their base clock. Off: base clock only, cooler and quieter, much slower."),
+                   [](bool on) { return req("sysfs_set", {{"key", "cpu_boost"}, {"value", on ? "0" : "1"}}); });
         button(tl("Remove clock cap"), tl("Sets every policy's scaling_max_freq back to the hardware maximum (until something writes it again)."), [act] {
             act(tl("CPU clock cap"), tl("Raise scaling_max_freq to the hardware maximum on every CPU policy?"), req("sysfs_set", {{"key", "cpu_uncap"}})); });
     } else if (key == QLatin1String("Memory")) {
         button(tl("Drop caches"), tl("Writes the page cache back and empties it (sync; drop_caches=3). Only useful before a measurement: the next reads come from disk."), [act] {
             act(tl("Drop caches"), tl("Empty the page cache, dentries and inodes? Programs get slower for a while as files are read from disk again."), req("drop_caches")); });
-        if (QFile::exists(QStringLiteral("/sys/module/zswap/parameters/enabled"))) {
-            const bool on = readFile(QStringLiteral("/sys/module/zswap/parameters/enabled")).trimmed() == QLatin1String("Y");
-            button(on ? tl("zswap off") : tl("zswap on"), tl("Switches the compressed swap cache until the next boot (zswap.enabled= on the kernel command line keeps it)."), [act, on] {
-                act(tl("zswap"), QString(), req("sysfs_set", {{"key", "zswap"}, {"value", on ? "N" : "Y"}})); });
-        }
+        if (QFile::exists(QStringLiteral("/sys/module/zswap/parameters/enabled")))
+            toggle(tl("zswap"), [] { return readFile(QStringLiteral("/sys/module/zswap/parameters/enabled")).trimmed() == QLatin1String("Y"); },
+                   tl("zswap: on — turn off"), tl("zswap: off — turn on"),
+                   tl("The compressed swap cache (zswap.enabled= on the kernel command line keeps the choice)."),
+                   [](bool on) { return req("sysfs_set", {{"key", "zswap"}, {"value", on ? "N" : "Y"}}); });
     } else if (key == QLatin1String("Storage")) {
         button(tl("TRIM all filesystems"), tl("fstrim -av: tells the SSDs which blocks are free. Safe; may take a minute."), [act] {
             act(tl("TRIM"), tl("Run fstrim on every mounted filesystem that supports it?"), req("fstrim")); });
@@ -333,7 +370,7 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
         h->addWidget(new QLabel(tl("ASPM policy")));
         h->addWidget(pol);
         button(tl("Apply"), tl("PCIe link power management until reboot (pcie_aspm.policy= keeps it). performance: lowest latency; powersupersave: most saving."), [act, pol] {
-            act(tl("ASPM policy"), tl("Set the PCIe ASPM policy to %1 until the next boot?").arg(pol->currentText()), req("sysfs_set", {{"key", "pcie_aspm"}, {"value", pol->currentText()}})); });
+            act(tl("ASPM policy"), QString(), req("sysfs_set", {{"key", "pcie_aspm"}, {"value", pol->currentText()}})); });
     } else if (key == QLatin1String("Kernel")) {
         auto *mod = new QLineEdit;
         mod->setPlaceholderText(tl("module name"));
@@ -350,23 +387,83 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
                     req("module", {{"name", mod->text().trimmed()}, {"load", false}})); });
     } else if (key == QLatin1String("Firmware updates")) {
         // fwupd asks for authorisation itself (its own polkit action): run as the user.
-        button(tl("Install updates…"), tl("fwupdmgr update: installs the updates listed above; most apply at the next reboot."), [page, rerun] {
-            if (QMessageBox::question(page, tl("Firmware Updates"), tl("Install every firmware update fwupd offers? Keep the charger connected; "
-                                      "do not switch off while an update is written."), QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
-                return;
+        button(tl("Install updates…"), tl("Pick which of the updates fwupd offers to install; most apply at the next reboot."), [page, rerun] {
             const QString exe = findExe(QStringLiteral("fwupdmgr"));
             if (exe.isEmpty()) { QMessageBox::warning(page, tl("Firmware Updates"), tl("fwupdmgr is not installed (%1).").arg(installHint(QStringLiteral("fwupdmgr")))); return; }
-            auto *p = new QProcess(page);
-            p->setProcessChannelMode(QProcess::MergedChannels);
-            QObject::connect(p, &QProcess::finished, page, [p, page, rerun](int code, QProcess::ExitStatus) {
-                QMessageBox box(code == 0 ? QMessageBox::Information : QMessageBox::Warning, tl("Firmware Updates"),
-                                code == 0 ? tl("fwupdmgr finished.") : tl("fwupdmgr reported a problem (exit %1).").arg(code), QMessageBox::Ok, page);
-                box.setDetailedText(QString::fromUtf8(p->readAll()));
-                box.exec();
-                p->deleteLater();
-                rerun();
-            });
-            p->start(exe, {QStringLiteral("update"), QStringLiteral("-y"), QStringLiteral("--no-reboot-check")});
+            QProcess list;
+            list.start(exe, {QStringLiteral("get-updates"), QStringLiteral("--json")});
+            list.waitForFinished(60000);
+            struct Update { QString id, text; };
+            QList<Update> updates;
+            for (const QJsonValue d : QJsonDocument::fromJson(list.readAllStandardOutput()).object().value(QStringLiteral("Devices")).toArray()) {
+                const QJsonObject dev = d.toObject();
+                const QJsonArray releases = dev.value(QStringLiteral("Releases")).toArray();
+                if (releases.isEmpty() || dev.value(QStringLiteral("DeviceId")).toString().isEmpty()) continue;
+                updates.append({dev.value(QStringLiteral("DeviceId")).toString(),
+                                QStringLiteral("%1   %2 → %3").arg(dev.value(QStringLiteral("Name")).toString(), dev.value(QStringLiteral("Version")).toString(),
+                                                                   releases.first().toObject().value(QStringLiteral("Version")).toString())});
+            }
+            if (updates.isEmpty()) { QMessageBox::information(page, tl("Firmware Updates"), tl("fwupd offers no update for this system.")); return; }
+            QDialog pick(page);
+            pick.setWindowTitle(tl("Firmware Updates"));
+            auto *pv = new QVBoxLayout(&pick);
+            auto *note = new QLabel(tl("Install the checked updates? Keep the charger connected; do not switch off while an update is written."));
+            note->setWordWrap(true);
+            pv->addWidget(note);
+            auto *choices = new QListWidget;
+            for (const Update &u : updates) {
+                auto *item = new QListWidgetItem(u.text, choices);
+                item->setData(Qt::UserRole, u.id);
+                item->setCheckState(Qt::Checked);
+            }
+            pv->addWidget(choices);
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+            buttons->button(QDialogButtonBox::Ok)->setText(tl("Install"));
+            QObject::connect(buttons, &QDialogButtonBox::accepted, &pick, &QDialog::accept);
+            QObject::connect(buttons, &QDialogButtonBox::rejected, &pick, &QDialog::reject);
+            pv->addWidget(buttons);
+            if (pick.exec() != QDialog::Accepted) return;
+            auto ids = std::make_shared<QStringList>();
+            for (int i = 0; i < choices->count(); ++i)
+                if (choices->item(i)->checkState() == Qt::Checked) *ids << choices->item(i)->data(Qt::UserRole).toString();
+            if (ids->isEmpty()) return;
+            // One device after the other, the output shown as it comes.
+            auto *log = new QDialog(page);
+            log->setAttribute(Qt::WA_DeleteOnClose);
+            log->setWindowTitle(tl("Firmware Updates"));
+            log->resize(640, 400);
+            auto *lv = new QVBoxLayout(log);
+            auto *out = new QPlainTextEdit;
+            out->setReadOnly(true);
+            out->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+            lv->addWidget(out);
+            auto *close = new QDialogButtonBox(QDialogButtonBox::Close);
+            close->setEnabled(false);  // not while an update is written
+            QObject::connect(close, &QDialogButtonBox::rejected, log, &QDialog::close);
+            lv->addWidget(close);
+            log->show();
+            auto next = std::make_shared<std::function<void()>>();
+            *next = [exe, ids, out, close, rerun, next] {
+                if (ids->isEmpty()) {
+                    out->appendPlainText(tl("Finished."));
+                    close->setEnabled(true);
+                    *next = nullptr;
+                    rerun();
+                    return;
+                }
+                const QString id = ids->takeFirst();
+                auto *p = new QProcess(out);
+                p->setProcessChannelMode(QProcess::MergedChannels);
+                QObject::connect(p, &QProcess::readyRead, out, [p, out] { out->appendPlainText(QString::fromUtf8(p->readAll()).trimmed()); });
+                QObject::connect(p, &QProcess::finished, out, [p, out, next](int code, QProcess::ExitStatus) {
+                    if (code != 0) out->appendPlainText(tl("fwupdmgr reported a problem (exit %1).").arg(code));
+                    p->deleteLater();
+                    if (*next) (*next)();
+                });
+                out->appendPlainText(QStringLiteral("$ fwupdmgr update %1").arg(id));
+                p->start(exe, {QStringLiteral("update"), id, QStringLiteral("-y"), QStringLiteral("--no-reboot-check")});
+            };
+            (*next)();
         });
     } else {
         delete bar;
@@ -398,12 +495,15 @@ public:
             top->addWidget(find_);
             top->addWidget(findCount_);
         }
-        serialsBtn_ = new QPushButton(QStringLiteral("Show serials"));
-        serialsBtn_->setToolTip(QStringLiteral("Serial numbers and UUIDs are hidden; click one in the output to show just that one."));
+        serialsBtn_ = new QPushButton(QCoreApplication::translate("systools", "Show serials"));
+        serialsBtn_->setToolTip(QCoreApplication::translate("systools", "Serial numbers and UUIDs are hidden; click one in the output to show just that one."));
         serialsBtn_->setVisible(false);
         top->addWidget(serialsBtn_);
-        auto *run = new QPushButton(QStringLiteral("Run again"));
-        auto *copy = new QPushButton(QStringLiteral("Copy"));
+        when_ = new QLabel;  // the same place as on the report pages: the time, then Run again
+        when_->setProperty("role", "muted");
+        top->addWidget(when_);
+        auto *run = new QPushButton(QCoreApplication::translate("systools", "Run again"));
+        auto *copy = new QPushButton(QCoreApplication::translate("systools", "Copy"));
         top->addWidget(run);
         top->addWidget(copy);
         v->addLayout(top);
@@ -446,14 +546,14 @@ private:
         if (busy_) return;
         ran_ = busy_ = true;
         out_.clear();
-        text_->setPlainText(QStringLiteral("Running…"));
+        text_->setPlainText(QCoreApplication::translate("systools", "Running…"));
         serialsBtn_->setVisible(false);
         if (spec_.rootTool) {
             privileged::run(privileged::helperPath(QStringLiteral("tune-helper")),
                             QJsonObject{{"op", "tool"}, {"tool", QString::fromLatin1(spec_.rootTool)}}, this,
                             [this](const privileged::Result &r) {
                 busy_ = false;
-                setOutput(r.ok() ? r.json.value("output").toString() : QStringLiteral("Not run: ") + r.message());
+                setOutput(r.ok() ? r.json.value("output").toString() : QCoreApplication::translate("systools", "Not run: %1").arg(r.message()));
             }, 120000);
             return;
         }
@@ -467,6 +567,7 @@ private:
 
     void setOutput(const QString &raw) {
         raw_ = raw;
+        when_->setText(QCoreApplication::translate("systools", "Read at %1").arg(QTime::currentTime().toString(QStringLiteral("HH:mm"))));
         shown_.clear();  // a fresh run starts hidden again
         render(false);
     }
@@ -495,7 +596,7 @@ private:
         serials_ = n;
         text_->setHtml(html);
         serialsBtn_->setVisible(n > 0);
-        serialsBtn_->setText(shown_.size() < n ? QStringLiteral("Show serials") : QStringLiteral("Hide serials"));
+        serialsBtn_->setText(shown_.size() < n ? QCoreApplication::translate("systools", "Show serials") : QCoreApplication::translate("systools", "Hide serials"));
         if (keepScroll) { text_->verticalScrollBar()->setValue(vs); text_->horizontalScrollBar()->setValue(hs); }
         highlight();   // setHtml dropped the previous highlights
     }
@@ -598,6 +699,7 @@ private:
     Spec spec_;
     QTextBrowser *text_;
     QPushButton *serialsBtn_;
+    QLabel *when_;
     QLineEdit *find_ = nullptr;
     QLabel *findCount_ = nullptr;
     QString out_, raw_;
@@ -730,58 +832,58 @@ QString installCommand(const QString &tool) { return installHint(tool); }
 
 void addPages(QTabWidget *tabs) {
     const Spec specs[] = {
-        {QT_TRANSLATE_NOOP("systools", "PCIe Link Negotiation Lab"),
-         QT_TRANSLATE_NOOP("systools", "S04: the link each PCIe device trained at against what it and its slot can do, with its error counters. Never retrains a link or changes ASPM."),
+        {QT_TRANSLATE_NOOP("systools", "PCIe Link Check"),
+         QT_TRANSLATE_NOOP("systools", "The link each PCIe device trained at against what it and its slot can do, with its error counters. Never retrains a link or changes ASPM."),
          {{"@diag", "S04"}}},
-        {QT_TRANSLATE_NOOP("systools", "Wi-Fi / Bluetooth Firmware Doctor"),
-         QT_TRANSLATE_NOOP("systools", "S07: wireless adapters, their drivers and radio switches, and firmware files the kernel could not load. No driver reload."),
+        {QT_TRANSLATE_NOOP("systools", "Wi-Fi & Bluetooth Check"),
+         QT_TRANSLATE_NOOP("systools", "Wireless adapters, their drivers and radio switches, and firmware files the kernel could not load. No driver reload."),
          {{"@diag", "S07"}}},
-        {QT_TRANSLATE_NOOP("systools", "Power Limit Source Map"),
-         QT_TRANSLATE_NOOP("systools", "S08: firmware power targets (PPT), platform profile, cpufreq caps, RAPL and the power source. Nothing is written or woken."),
+        {QT_TRANSLATE_NOOP("systools", "Power Limits"),
+         QT_TRANSLATE_NOOP("systools", "Firmware power targets (PPT), platform profile, cpufreq caps, RAPL and the power source. Nothing is written or woken."),
          {{"@diag", "S08"}}},
-        {QT_TRANSLATE_NOOP("systools", "Memory Architecture Explorer"),
-         QT_TRANSLATE_NOOP("systools", "S10: RAM, swap, zram / zswap, huge pages, memory pressure, NUMA and L3 domains, with what to change."),
+        {QT_TRANSLATE_NOOP("systools", "Memory Layout"),
+         QT_TRANSLATE_NOOP("systools", "RAM, swap, zram / zswap, huge pages, memory pressure, NUMA and L3 domains, with what to change."),
          {{"@diag", "S10"}}},
-        {QT_TRANSLATE_NOOP("systools", "ACPI / WMI Firmware Browser"),
-         QT_TRANSLATE_NOOP("systools", "S11: WMI objects and their drivers, firmware settings and ACPI tables. Never calls a firmware method or reads a password."),
+        {QT_TRANSLATE_NOOP("systools", "ACPI & WMI Firmware"),
+         QT_TRANSLATE_NOOP("systools", "WMI objects and their drivers, firmware settings and ACPI tables. Never calls a firmware method or reads a password."),
          {{"@diag", "S11"}}},
-        {QT_TRANSLATE_NOOP("systools", "USB-C PD / Charger Inspector"),
-         QT_TRANSLATE_NOOP("systools", "S13: the power profiles the charger offers, what the laptop draws, and the battery's condition."),
+        {QT_TRANSLATE_NOOP("systools", "USB-C Charger"),
+         QT_TRANSLATE_NOOP("systools", "The power profiles the charger offers, what the laptop draws, and the battery's condition."),
          {{"@diag", "S13"}}},
-        {QT_TRANSLATE_NOOP("systools", "PipeWire Audio Doctor"),
-         QT_TRANSLATE_NOOP("systools", "S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply."),
+        {QT_TRANSLATE_NOOP("systools", "Audio (PipeWire)"),
+         QT_TRANSLATE_NOOP("systools", "Sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply."),
          {{"@diag", "S15"}, {"wpctl", "status"}, {"pactl", "info"}}},
-        {QT_TRANSLATE_NOOP("systools", "Kernel Feature & Firmware Check"),
-         QT_TRANSLATE_NOOP("systools", "S18: kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver."),
+        {QT_TRANSLATE_NOOP("systools", "Kernel Features & Firmware"),
+         QT_TRANSLATE_NOOP("systools", "Kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver."),
          {{"@diag", "S18"}}},
         {QT_TRANSLATE_NOOP("systools", "Hardware Snapshot"),
-         QT_TRANSLATE_NOOP("systools", "S01: compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved."),
+         QT_TRANSLATE_NOOP("systools", "Compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved."),
          {{"@diag", "S01"}}},
         {QT_TRANSLATE_NOOP("systools", "EDID / VRR"),
-         QT_TRANSLATE_NOOP("systools", "S03: each connected display's identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen's brightness and refresh rate."),
+         QT_TRANSLATE_NOOP("systools", "Each connected display's identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen's brightness and refresh rate."),
          {{"@diag", "S03"}}},
         {QT_TRANSLATE_NOOP("systools", "NVIDIA Module Parameters"),
-         QT_TRANSLATE_NOOP("systools", "S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU."),
+         QT_TRANSLATE_NOOP("systools", "NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU."),
          {{"@diag", "S06"}, {"modinfo", "-p", "nvidia"}}},
-        {QT_TRANSLATE_NOOP("systools", "Sensors"), "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.", {{"sensors"}}},
-        {QT_TRANSLATE_NOOP("systools", "CPU"), "Topology, caches, frequencies and the active cpufreq driver/governor.",
+        {QT_TRANSLATE_NOOP("systools", "Sensors"), QT_TRANSLATE_NOOP("systools", "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip."), {{"sensors"}}},
+        {QT_TRANSLATE_NOOP("systools", "CPU"), QT_TRANSLATE_NOOP("systools", "Topology, caches, frequencies and the active cpufreq driver/governor."),
          {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Memory"), "Usage, swap/zram and NUMA layout.", {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
-        {QT_TRANSLATE_NOOP("systools", "DMI"), "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.", {}, "dmidecode", false, true},
-        {QT_TRANSLATE_NOOP("systools", "PCI"), "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.",
+        {QT_TRANSLATE_NOOP("systools", "Memory"), QT_TRANSLATE_NOOP("systools", "Usage, swap/zram and NUMA layout."), {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
+        {QT_TRANSLATE_NOOP("systools", "DMI"), QT_TRANSLATE_NOOP("systools", "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed."), {}, "dmidecode", false, true},
+        {QT_TRANSLATE_NOOP("systools", "PCI"), QT_TRANSLATE_NOOP("systools", "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives."),
          {{"lspci", "-nnk"}, {"lspci", "-tv"}, {"@pcilink"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "PCIe Detail"), "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.", {}, "pcie", false, true},
-        {QT_TRANSLATE_NOOP("systools", "USB"), "Connected USB devices and the port tree.", {{"lsusb"}, {"lsusb", "-t"}}},
-        {QT_TRANSLATE_NOOP("systools", "Storage"), "Block devices, schedulers and mounted filesystems.",
+        {QT_TRANSLATE_NOOP("systools", "PCIe Detail"), QT_TRANSLATE_NOOP("systools", "lspci -vv (root): link capabilities/status, ASPM and AER capability of every device."), {}, "pcie", false, true},
+        {QT_TRANSLATE_NOOP("systools", "USB"), QT_TRANSLATE_NOOP("systools", "Connected USB devices and the port tree."), {{"lsusb"}, {"lsusb", "-t"}}},
+        {QT_TRANSLATE_NOOP("systools", "Storage"), QT_TRANSLATE_NOOP("systools", "Block devices, schedulers and mounted filesystems."),
          {{"lsblk", "-o", "NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINTS,ROTA,SCHED"}, {"df", "-hT", "-x", "tmpfs", "-x", "devtmpfs"}}},
-        {QT_TRANSLATE_NOOP("systools", "SMART Details"), "Drive health (root): smartctl -a, or nvme smart-log, for every disk.", {}, "smart", false, true},
-        {QT_TRANSLATE_NOOP("systools", "NVIDIA"), "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.",
+        {QT_TRANSLATE_NOOP("systools", "SMART Details"), QT_TRANSLATE_NOOP("systools", "Drive health (root): smartctl -a, or nvme smart-log, for every disk."), {}, "smart", false, true},
+        {QT_TRANSLATE_NOOP("systools", "NVIDIA"), QT_TRANSLATE_NOOP("systools", "nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down."),
          {{"@file", "/proc/driver/nvidia/version"}, {"nvidia-smi", "-q"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Graphics"), "Vulkan and OpenGL drivers as games see them (may wake the dGPU).",
+        {QT_TRANSLATE_NOOP("systools", "Graphics"), QT_TRANSLATE_NOOP("systools", "Vulkan and OpenGL drivers as games see them (may wake the dGPU)."),
          {{"vulkaninfo", "--summary"}, {"glxinfo", "-B"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Kernel"), "Kernel version, boot command line and loaded modules.",
+        {QT_TRANSLATE_NOOP("systools", "Kernel"), QT_TRANSLATE_NOOP("systools", "Kernel version, boot command line and loaded modules."),
          {{"uname", "-a"}, {"@file", "/proc/cmdline"}, {"lsmod"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Battery"), "Every power supply as the kernel reports it (capacity, cycles, charge limits).",
+        {QT_TRANSLATE_NOOP("systools", "Battery"), QT_TRANSLATE_NOOP("systools", "Every power supply as the kernel reports it (capacity, cycles, charge limits)."),
          {{"@glob", "/sys/class/power_supply/*/uevent"}}, nullptr, false, true},
         {QT_TRANSLATE_NOOP("systools", "Thermal"),
          QT_TRANSLATE_NOOP("systools", "Every thermal zone: its type, current temperature and trip points. Temperatures are in millidegrees Celsius, as the kernel reports them."),

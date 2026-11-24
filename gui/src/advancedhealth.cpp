@@ -127,10 +127,29 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     help->setWordWrap(true);
     help->setProperty("role", "muted");
     v->addWidget(help);
+    // Step 1: what is going wrong. Each button runs the guided triage for that area.
+    auto *triageTitle = new QLabel(tr("What is going wrong?"));
+    QFont triageFont = triageTitle->font();
+    triageFont.setBold(true);
+    triageTitle->setFont(triageFont);
+    v->addWidget(triageTitle);
+    auto *triageGrid = new QGridLayout;
+    const QList<advanceddiagnostics::TriageCategory> categories = advanceddiagnostics::triageCategories();
+    for (int i = 0; i < categories.size(); ++i) {
+        auto *b = new QPushButton(QCoreApplication::translate("advanceddiagnostics", categories[i].shortLabel));
+        b->setToolTip(QCoreApplication::translate("advanceddiagnostics", categories[i].label));
+        connect(b, &QPushButton::clicked, this, [this, key = categories[i].key] { startTriage(key); });
+        triageGrid->addWidget(b, i / 4, i % 4);
+    }
+    v->addLayout(triageGrid);
+    // Step 2: one investigation of its own.
+    auto *advancedTitle = new QLabel(tr("Or run one investigation:"));
+    advancedTitle->setProperty("role", "muted");
+    v->addWidget(advancedTitle);
     auto *top = new QHBoxLayout;
     feature_ = new QComboBox;
     for (const auto &[code, name] : features())
-        feature_->addItem(QString::fromLatin1(code) + QStringLiteral(" · ") + tr(name), QString::fromLatin1(code));
+        feature_->addItem(tr(name), QString::fromLatin1(code));
     top->addWidget(feature_, 1);
     category_ = new QComboBox;
     for (const advanceddiagnostics::TriageCategory &c : advanceddiagnostics::triageCategories())

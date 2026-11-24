@@ -16,6 +16,8 @@
 #include <QVariantMap>
 #include <QWidget>
 
+#include <functional>
+
 class AdvancedHealthPage;
 class BackupPage;
 class DayBars;
@@ -93,6 +95,10 @@ private:
     QJsonObject eventOf(const QTreeWidgetItem *item) const;
     /// The explanation pane under the list follows the selected row.
     void showEventDetail();
+    /// What can be done about an event on another page now (open dGPU power, reset the GPU curve …); empty for none.
+    QList<QPair<QString, std::function<void()>>> eventActions(const QJsonObject &e);
+    /// The links above a Health page to the System tools that cover the same ground (toolcatalog::relatedForPage).
+    void updateRelated(const QString &pageKey);
     static QString friendlyEvent(const QJsonObject &e);
 
     /// Mark all seen: the events shown so far stop counting as new (gui.ini, see seenMs_).
@@ -140,6 +146,8 @@ private:
     QString savedBoot_;         // boot_id savedSeq_ belongs to
     QTreeWidget *list_;
     QTextBrowser *eventDetail_ = nullptr;
+    QWidget *eventActions_ = nullptr;   // buttons under the explanation of the selected event
+    QWidget *relatedBar_ = nullptr;     // "Related:" links above the current page
     QTreeWidget *navigation_ = nullptr;
     QStackedWidget *pages_ = nullptr;
     QHash<QWidget *, QTreeWidgetItem *> pageItems_;

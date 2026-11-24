@@ -1592,8 +1592,8 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="157"/>
-            <source>At a glance</source>
-            <translation>Genel bakış</translation>
+            <source>Start</source>
+            <translation>Başlangıç</translation>
         </message>
         <message>
             <location filename="../src/healthtab.cpp" line="158"/>
@@ -2147,7 +2147,7 @@ Kernel uptime: %2
             <source>Searches page and tool names and the words around them: error codes (Xid 79), symptoms (flicker, overheating), parts (fan, battery). Turkish or English.</source>
             <translation>Sayfa ve araç adlarında ve ilgili sözcüklerde arar: hata kodları (Xid 79), belirtiler (titreme, ısınma), parçalar (fan, pil). Türkçe ya da İngilizce.</translation>
         </message>
-    <message><location filename="../src/healthtab.cpp" line="1260"/><source>GPU &amp; Display</source><translation>GPU ve Ekran</translation></message><message><location filename="../src/healthtab.cpp" line="1263"/><source>Power &amp; Sleep</source><translation>Güç ve Uyku</translation></message><message><location filename="../src/healthtab.cpp" line="1264"/><source>CPU &amp; Stability</source><translation>CPU ve Kararlılık</translation></message><message><location filename="../src/healthtab.cpp" line="1265"/><source>Crashes &amp; Kernel</source><translation>Çökmeler ve Çekirdek</translation></message><message><location filename="../src/healthtab.cpp" line="1320"/><source>Quick Access</source><translation>Hızlı Erişim</translation></message><message><location filename="../src/healthtab.cpp" line="1256"/><source>Troubleshoot by Symptom</source><translation>Belirtiye Göre Sorun Giderme</translation></message></context>
+    <message><location filename="../src/healthtab.cpp" line="1260"/><source>GPU &amp; Display</source><translation>GPU ve Ekran</translation></message><message><location filename="../src/healthtab.cpp" line="1263"/><source>Power &amp; Sleep</source><translation>Güç ve Uyku</translation></message><message><location filename="../src/healthtab.cpp" line="1264"/><source>CPU &amp; Stability</source><translation>CPU ve Kararlılık</translation></message><message><location filename="../src/healthtab.cpp" line="1265"/><source>Crashes &amp; Kernel</source><translation>Çökmeler ve Çekirdek</translation></message><message><location filename="../src/healthtab.cpp" line="1320"/><source>Quick Access</source><translation>Hızlı Erişim</translation></message><message><location filename="../src/healthtab.cpp" line="1256"/><source>Troubleshoot by Symptom</source><translation>Belirtiye Göre Sorun Giderme</translation></message><message><source>Read-only</source><translation>Salt okunur</translation></message><message><source>Start a guided, read-only investigation.</source><translation>Rehberli, salt okunur bir inceleme başlatın.</translation></message><message><source>Tool Results</source><translation>Araç sonuçları</translation></message><message><source>Favorites</source><translation>Favoriler</translation></message><message><source>Favorites are listed at the top of the catalog.</source><translation>Favoriler kataloğun en üstünde listelenir.</translation></message><message><source>★ In Favorites</source><translation>★ Favorilerde</translation></message><message><source>☆ Add to Favorites</source><translation>☆ Favorilere ekle</translation></message><message><source>Health Pages</source><translation>Sağlık sayfaları</translation></message><message><source>Pages of the Health Center that match the search.</source><translation>Aramayla eşleşen Sağlık Merkezi sayfaları.</translation></message><message><source>Collapse All</source><translation>Tümünü daralt</translation></message><message><source>Expand All</source><translation>Tümünü genişlet</translation></message><message><source>Change these in:</source><translation>Bunları değiştirmek için:</translation></message><message><source>Related:</source><translation>İlgili:</translation></message><message><source>Opens this System tool; it reads its sources when it opens.</source><translation>Bu sistem aracını açar; araç açıldığında kaynaklarını okur.</translation></message><message><source>Opens this Health page.</source><translation>Bu Sağlık sayfasını açar.</translation></message></context>
     <context>
         <name>HomeTab</name>
         <message>
@@ -5979,80 +5979,80 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>(kurulu değil ya da başarısız)</translation>
         </message>
         <message>
-            <source>PCIe Link Negotiation Lab</source>
-            <translation>PCIe Bağlantı Laboratuvarı</translation>
+            <source>PCIe Link Check</source>
+            <translation>PCIe Bağlantı Denetimi</translation>
         </message>
         <message>
-            <source>S04: the link each PCIe device trained at against what it and its slot can do, with its error counters. Never retrains a link or changes ASPM.</source>
-            <translation>S04: her PCIe aygıtının kurduğu bağlantı, aygıtın ve yuvasının yapabildikleriyle karşılaştırmalı, hata sayaçlarıyla. Bağlantıyı asla yeniden eğitmez, ASPM'yi değiştirmez.</translation>
+            <source>The link each PCIe device trained at against what it and its slot can do, with its error counters. Never retrains a link or changes ASPM.</source>
+            <translation>Her PCIe aygıtının kurduğu bağlantı, aygıtın ve yuvasının yapabildikleriyle karşılaştırmalı, hata sayaçlarıyla. Bağlantıyı asla yeniden eğitmez, ASPM'yi değiştirmez.</translation>
         </message>
         <message>
-            <source>Wi-Fi / Bluetooth Firmware Doctor</source>
-            <translation>Wi-Fi / Bluetooth Firmware Doktoru</translation>
+            <source>Wi-Fi &amp; Bluetooth Check</source>
+            <translation>Wi-Fi ve Bluetooth Denetimi</translation>
         </message>
         <message>
-            <source>S07: wireless adapters, their drivers and radio switches, and firmware files the kernel could not load. No driver reload.</source>
-            <translation>S07: kablosuz bağdaştırıcılar, sürücüleri ve radyo anahtarları, çekirdeğin yükleyemediği firmware dosyaları. Sürücü yeniden yüklenmez.</translation>
+            <source>Wireless adapters, their drivers and radio switches, and firmware files the kernel could not load. No driver reload.</source>
+            <translation>Kablosuz bağdaştırıcılar, sürücüleri ve radyo anahtarları, çekirdeğin yükleyemediği firmware dosyaları. Sürücü yeniden yüklenmez.</translation>
         </message>
         <message>
-            <source>Power Limit Source Map</source>
-            <translation>Güç Sınırı Kaynak Haritası</translation>
+            <source>Power Limits</source>
+            <translation>Güç Sınırları</translation>
         </message>
         <message>
-            <source>S08: firmware power targets (PPT), platform profile, cpufreq caps, RAPL and the power source. Nothing is written or woken.</source>
-            <translation>S08: firmware güç hedefleri (PPT), platform profili, cpufreq sınırları, RAPL ve güç kaynağı. Hiçbir şey yazılmaz ya da uyandırılmaz.</translation>
+            <source>Firmware power targets (PPT), platform profile, cpufreq caps, RAPL and the power source. Nothing is written or woken.</source>
+            <translation>Firmware güç hedefleri (PPT), platform profili, cpufreq sınırları, RAPL ve güç kaynağı. Hiçbir şey yazılmaz ya da uyandırılmaz.</translation>
         </message>
         <message>
-            <source>Memory Architecture Explorer</source>
-            <translation>Bellek Mimarisi Gezgini</translation>
+            <source>Memory Layout</source>
+            <translation>Bellek Düzeni</translation>
         </message>
         <message>
-            <source>S10: RAM, swap, zram / zswap, huge pages, memory pressure, NUMA and L3 domains, with what to change.</source>
-            <translation>S10: RAM, takas, zram / zswap, büyük sayfalar, bellek baskısı, NUMA ve L3 alanları; neyin değişmesi gerektiğiyle.</translation>
+            <source>RAM, swap, zram / zswap, huge pages, memory pressure, NUMA and L3 domains, with what to change.</source>
+            <translation>RAM, takas, zram / zswap, büyük sayfalar, bellek baskısı, NUMA ve L3 alanları; neyin değişmesi gerektiğiyle.</translation>
         </message>
         <message>
-            <source>ACPI / WMI Firmware Browser</source>
-            <translation>ACPI / WMI Firmware Tarayıcısı</translation>
+            <source>ACPI &amp; WMI Firmware</source>
+            <translation>ACPI ve WMI Firmware</translation>
         </message>
         <message>
-            <source>S11: WMI objects and their drivers, firmware settings and ACPI tables. Never calls a firmware method or reads a password.</source>
-            <translation>S11: WMI nesneleri ve sürücüleri, firmware ayarları ve ACPI tabloları. Hiçbir firmware yöntemini çağırmaz, parola okumaz.</translation>
+            <source>WMI objects and their drivers, firmware settings and ACPI tables. Never calls a firmware method or reads a password.</source>
+            <translation>WMI nesneleri ve sürücüleri, firmware ayarları ve ACPI tabloları. Hiçbir firmware yöntemini çağırmaz, parola okumaz.</translation>
         </message>
         <message>
-            <source>USB-C PD / Charger Inspector</source>
-            <translation>USB-C PD / Şarj Cihazı Denetçisi</translation>
+            <source>USB-C Charger</source>
+            <translation>USB-C Şarj Cihazı</translation>
         </message>
         <message>
-            <source>S13: the power profiles the charger offers, what the laptop draws, and the battery's condition.</source>
-            <translation>S13: şarj cihazının sunduğu güç profilleri, dizüstünün çektiği güç ve pilin durumu.</translation>
+            <source>The power profiles the charger offers, what the laptop draws, and the battery's condition.</source>
+            <translation>Şarj cihazının sunduğu güç profilleri, dizüstünün çektiği güç ve pilin durumu.</translation>
         </message>
         <message>
-            <source>PipeWire Audio Doctor</source>
-            <translation>PipeWire Ses Doktoru</translation>
+            <source>Audio (PipeWire)</source>
+            <translation>Ses (PipeWire)</translation>
         </message>
         <message>
             <source>S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. Nothing is restarted.</source>
             <translation>S15: ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin çakışıp çakışmadığı), PipeWire'ın görünümü. Hiçbir şey yeniden başlatılmaz.</translation>
         </message>
         <message>
-            <source>Kernel Feature &amp; Firmware Check</source>
-            <translation>Çekirdek Özellik ve Firmware Denetimi</translation>
+            <source>Kernel Features &amp; Firmware</source>
+            <translation>Çekirdek Özellikleri ve Firmware</translation>
         </message>
         <message>
-            <source>S18: kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver.</source>
-            <translation>S18: Centurion'ın dayandığı çekirdek seçenekleri, çekirdeğin yükleyemediği ya da açamadığı firmware, sürücüsü olmayan aygıtlar.</translation>
+            <source>Kernel options Centurion relies on, firmware the kernel could not load or decompress, devices without a driver.</source>
+            <translation>Centurion'ın dayandığı çekirdek seçenekleri, çekirdeğin yükleyemediği ya da açamadığı firmware, sürücüsü olmayan aygıtlar.</translation>
         </message>
         <message>
-            <source>S01: compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved.</source>
-            <translation>S01: PCI aygıtlarını, sürücüleri, modülleri, çekirdeği, BIOS'u, mikrokodu ve açılış parametrelerini kaydettiğiniz temel durumla karşılaştırır.</translation>
+            <source>Compare PCI devices, drivers, modules, kernel, BIOS, microcode and boot parameters with a baseline you saved.</source>
+            <translation>PCI aygıtlarını, sürücüleri, modülleri, çekirdeği, BIOS'u, mikrokodu ve açılış parametrelerini kaydettiğiniz temel durumla karşılaştırır.</translation>
         </message>
         <message>
             <source>S03: each connected display's identity, modes and variable-refresh range from its EDID; damaged EDIDs. Read only.</source>
             <translation>S03: bağlı her ekranın kimliği, modları ve EDID'deki değişken yenileme aralığı; bozuk EDID'ler. Salt okunur.</translation>
         </message>
         <message>
-            <source>S06: NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU.</source>
-            <translation>S06: yapılandırılmış NVIDIA seçenekleri, etkin değerlerle karşılaştırmalı ve ne işe yaradıklarıyla. GPU'yu asla uyandırmaz.</translation>
+            <source>NVIDIA options configured against the values in effect, with what they do. Never wakes the GPU.</source>
+            <translation>Yapılandırılmış NVIDIA seçenekleri, etkin değerlerle karşılaştırmalı ve ne işe yaradıklarıyla. GPU'yu asla uyandırmaz.</translation>
         </message>
         <message>
             <source>Sensors</source>
@@ -6111,12 +6111,12 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <translation>Yapılandırma dosyaları</translation>
         </message>
         <message>
-            <source>S15: sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply.</source>
-            <translation>S15: ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin çakışıp çakışmadığı), PipeWire’ın görünümü. Rapor hiçbir şeyi yeniden başlatmaz; Ayarlar… PipeWire / WirePlumber seçeneklerini düzenler ve uyguladığınızda ses sunucularını yeniden başlatır.</translation>
+            <source>Sound cards and codecs, which sound servers run (and whether two fight), PipeWire's view. The report restarts nothing; Settings… edits PipeWire / WirePlumber options and restarts the sound servers when you apply.</source>
+            <translation>Ses kartları ve kodekler, hangi ses sunucularının çalıştığı (ve ikisinin çakışıp çakışmadığı), PipeWire’ın görünümü. Rapor hiçbir şeyi yeniden başlatmaz; Ayarlar… PipeWire / WirePlumber seçeneklerini düzenler ve uyguladığınızda ses sunucularını yeniden başlatır.</translation>
         </message>
         <message>
-            <source>S03: each connected display's identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen's brightness and refresh rate.</source>
-            <translation>S03: bağlı her ekranın EDID’sinden kimliği, modları ve değişken yenileme aralığı, boyutu, bit derinliği, HDR ve renk desteği; bozuk EDID’ler; arka ışık aygıtları. Panel denetimleri… dahili ekranın parlaklığını ve yenileme hızını ayarlar.</translation>
+            <source>Each connected display's identity, modes and variable-refresh range, size, bit depth, HDR and colour support from its EDID; damaged EDIDs; backlight devices. Panel controls… sets the built-in screen's brightness and refresh rate.</source>
+            <translation>Bağlı her ekranın EDID’sinden kimliği, modları ve değişken yenileme aralığı, boyutu, bit derinliği, HDR ve renk desteği; bozuk EDID’ler; arka ışık aygıtları. Panel denetimleri… dahili ekranın parlaklığını ve yenileme hızını ayarlar.</translation>
         </message>
         <message>
             <source>Settings…</source>
@@ -6138,7 +6138,7 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <source>Read at %1</source>
             <translation>Okunma: %1</translation>
         </message>
-    </context>
+    <message><source>Show serials</source><translation>Seri numaralarını göster</translation></message><message><source>Hide serials</source><translation>Seri numaralarını gizle</translation></message><message><source>Serial numbers and UUIDs are hidden; click one in the output to show just that one.</source><translation>Seri numaraları ve UUID'ler gizli; yalnızca birini göstermek için çıktıda üzerine tıklayın.</translation></message><message><source>Copy</source><translation>Kopyala</translation></message><message><source>Running…</source><translation>Çalışıyor…</translation></message><message><source>Not run: %1</source><translation>Çalıştırılmadı: %1</translation></message><message><source>lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip.</source><translation>lm-sensors: her hwmon yongasının sıcaklıkları, fan hızları, voltajları ve gücü.</translation></message><message><source>Topology, caches, frequencies and the active cpufreq driver/governor.</source><translation>Topoloji, önbellekler, frekanslar ve etkin cpufreq sürücüsü / frekans yöneticisi.</translation></message><message><source>Usage, swap/zram and NUMA layout.</source><translation>Kullanım, takas / zram ve NUMA düzeni.</translation></message><message><source>dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed.</source><translation>dmidecode (root): firmware / BIOS, anakart ve parça numarası ile hızıyla her bellek modülü.</translation></message><message><source>Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives.</source><translation>Çekirdek sürücüleriyle aygıtlar, veri yolu ağacı ve GPU'lar ile NVMe sürücülerin anlık PCIe bağlantısı.</translation></message><message><source>lspci -vv (root): link capabilities/status, ASPM and AER capability of every device.</source><translation>lspci -vv (root): her aygıtın bağlantı yetenekleri / durumu, ASPM ve AER desteği.</translation></message><message><source>Connected USB devices and the port tree.</source><translation>Bağlı USB aygıtları ve port ağacı.</translation></message><message><source>Block devices, schedulers and mounted filesystems.</source><translation>Blok aygıtları, G/Ç zamanlayıcıları ve bağlı dosya sistemleri.</translation></message><message><source>Drive health (root): smartctl -a, or nvme smart-log, for every disk.</source><translation>Sürücü sağlığı (root): her disk için smartctl -a veya nvme smart-log.</translation></message><message><source>nvidia-smi -q: the full driver/GPU report. Wakes the dGPU if it is powered down.</source><translation>nvidia-smi -q: sürücü / GPU raporunun tamamı. Kapalıysa dGPU'yu uyandırır.</translation></message><message><source>Vulkan and OpenGL drivers as games see them (may wake the dGPU).</source><translation>Oyunların gördüğü haliyle Vulkan ve OpenGL sürücüleri (dGPU'yu uyandırabilir).</translation></message><message><source>Kernel version, boot command line and loaded modules.</source><translation>Çekirdek sürümü, açılış komut satırı ve yüklü modüller.</translation></message><message><source>Every power supply as the kernel reports it (capacity, cycles, charge limits).</source><translation>Çekirdeğin bildirdiği her güç kaynağı (kapasite, döngü sayısı, şarj sınırları).</translation></message><message><source>Quick actions:</source><translation>Hızlı işlemler:</translation></message><message><source>Changes here last until the next boot. To keep one, use Configuration Files.</source><translation>Buradaki değişiklikler bir sonraki açılışa kadar geçerlidir. Kalıcı yapmak için Yapılandırma Dosyaları'nı kullanın.</translation></message><message><source>CPU boost</source><translation>CPU Boost</translation></message><message><source>Boost: on — turn off</source><translation>Boost: açık — kapat</translation></message><message><source>Boost: off — turn on</source><translation>Boost: kapalı — aç</translation></message><message><source>On: the cores run above their base clock. Off: base clock only, cooler and quieter, much slower.</source><translation>Açık: çekirdekler temel saat hızının üstüne çıkar. Kapalı: yalnızca temel saat hızı; daha serin ve sessiz, çok daha yavaş.</translation></message><message><source>zswap</source><translation>zswap</translation></message><message><source>zswap: on — turn off</source><translation>zswap: açık — kapat</translation></message><message><source>zswap: off — turn on</source><translation>zswap: kapalı — aç</translation></message><message><source>The compressed swap cache (zswap.enabled= on the kernel command line keeps the choice).</source><translation>Sıkıştırılmış takas önbelleği (çekirdek komut satırındaki zswap.enabled= seçimi kalıcı yapar).</translation></message><message><source>Install updates…</source><translation>Güncellemeleri kur…</translation></message><message><source>Pick which of the updates fwupd offers to install; most apply at the next reboot.</source><translation>fwupd'nin sunduğu güncellemelerden hangilerinin kurulacağını seçin; çoğu bir sonraki yeniden başlatmada uygulanır.</translation></message><message><source>fwupd offers no update for this system.</source><translation>fwupd bu sistem için güncelleme sunmuyor.</translation></message><message><source>Install the checked updates? Keep the charger connected; do not switch off while an update is written.</source><translation>İşaretli güncellemeler kurulsun mu? Şarj cihazını takılı tutun; bir güncelleme yazılırken kapatmayın.</translation></message><message><source>Install</source><translation>Kur</translation></message><message><source>Finished.</source><translation>Tamamlandı.</translation></message><message><source>fwupdmgr reported a problem (exit %1).</source><translation>fwupdmgr bir sorun bildirdi (çıkış kodu %1).</translation></message><message><source>fwupdmgr is not installed (%1).</source><translation>fwupdmgr kurulu değil (%1).</translation></message></context>
     <context>
         <name>BackupPage</name>
         <message>
@@ -13623,8 +13623,8 @@ Profil adı:</translation>
     <context>
         <name>systemdiagnostics</name>
         <message>
-            <source>PCIe Link Negotiation Lab</source>
-            <translation>PCIe Bağlantı Laboratuvarı</translation>
+            <source>PCIe Link Check</source>
+            <translation>PCIe Bağlantı Denetimi</translation>
         </message>
         <message>
             <source>The PCIe link every device trained at, against what both ends of the link can do. A narrower link than possible is a hardware or BIOS limit; a slower one at idle is normal power saving.</source>
@@ -13711,8 +13711,8 @@ Profil adı:</translation>
             <translation>Gösterilen düşük hızlar, yük altında da düşük kalmadıkça güç tasarrufudur.</translation>
         </message>
         <message>
-            <source>Wi-Fi / Bluetooth Firmware Doctor</source>
-            <translation>Wi-Fi / Bluetooth Firmware Doktoru</translation>
+            <source>Wi-Fi &amp; Bluetooth Check</source>
+            <translation>Wi-Fi ve Bluetooth Denetimi</translation>
         </message>
         <message>
             <source>Each wireless adapter with its driver and state, radio kill switches, and firmware files the kernel asked for and did not find.</source>
@@ -13831,8 +13831,8 @@ Profil adı:</translation>
             <translation>Bağdaştırıcılar kayıtlı, engelli radyo yok, eksik radyo firmware'i yok</translation>
         </message>
         <message>
-            <source>Power Limit Source Map</source>
-            <translation>Güç Sınırı Kaynak Haritası</translation>
+            <source>Power Limits</source>
+            <translation>Güç Sınırları</translation>
         </message>
         <message>
             <source>Every place a CPU / platform power limit is visible without waking anything: firmware power settings (PPT), the platform profile, cpufreq caps, RAPL, and the power source.</source>
@@ -13987,8 +13987,8 @@ Profil adı:</translation>
             <translation>CPU saatlerinde ya da boost'ta beklenmeyen bir sınır yok</translation>
         </message>
         <message>
-            <source>Memory Architecture Explorer</source>
-            <translation>Bellek Mimarisi Gezgini</translation>
+            <source>Memory Layout</source>
+            <translation>Bellek Düzeni</translation>
         </message>
         <message>
             <source>How RAM, swap, compressed swap (zram / zswap), huge pages and memory pressure are set up and behaving right now.</source>
@@ -14159,8 +14159,8 @@ Profil adı:</translation>
             <translation>Bellek mantıklı ayarlanmış ve baskı altında değil</translation>
         </message>
         <message>
-            <source>ACPI / WMI Firmware Browser</source>
-            <translation>ACPI / WMI Firmware Tarayıcısı</translation>
+            <source>ACPI &amp; WMI Firmware</source>
+            <translation>ACPI ve WMI Firmware</translation>
         </message>
         <message>
             <source>The firmware interfaces the kernel found: WMI objects with the driver that claims each, firmware settings exposed through firmware-attributes, and the ACPI tables present. Nothing is called or changed.</source>
@@ -14235,8 +14235,8 @@ Profil adı:</translation>
             <translation>%1 WMI nesnesi, %2 firmware ayarı</translation>
         </message>
         <message>
-            <source>USB-C PD / Charger Inspector</source>
-            <translation>USB-C PD / Şarj Cihazı Denetçisi</translation>
+            <source>USB-C Charger</source>
+            <translation>USB-C Şarj Cihazı</translation>
         </message>
         <message>
             <source>What the connected charger offers (its USB Power Delivery profiles), what the laptop is drawing, and the battery's condition.</source>
@@ -14379,8 +14379,8 @@ Profil adı:</translation>
             <translation>Görünür bir şarj sorunu yok</translation>
         </message>
         <message>
-            <source>PipeWire Audio Doctor</source>
-            <translation>PipeWire Ses Doktoru</translation>
+            <source>Audio (PipeWire)</source>
+            <translation>Ses (PipeWire)</translation>
         </message>
         <message>
             <source>Sound cards and codecs, which sound servers are running (and whether two fight over the devices), and PipeWire's own view.</source>
@@ -14483,8 +14483,8 @@ Profil adı:</translation>
             <translation>Ses kartları var ve bir ses sunucusu yığını çalışıyor</translation>
         </message>
         <message>
-            <source>Kernel Feature &amp; Firmware Dependency Check</source>
-            <translation>Çekirdek Özellik ve Firmware Bağımlılık Denetimi</translation>
+            <source>Kernel Features &amp; Firmware</source>
+            <translation>Çekirdek Özellikleri ve Firmware</translation>
         </message>
         <message>
             <source>Kernel options Centurion's features rely on, firmware files the kernel could not load, the firmware compression the kernel can read, and devices no driver has claimed.</source>
@@ -15351,41 +15351,41 @@ Profil adı:</translation>
             <source>Opens this Health page.</source>
             <translation>Bu Sağlık sayfasını açar.</translation>
         </message>
-    </context>
+    <message><source>What is going wrong?</source><translation>Sorun ne?</translation></message><message><source>Or run one investigation:</source><translation>Ya da tek bir inceleme çalıştırın:</translation></message></context>
 <context><name>KernelParamsPage</name><message><source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here).</source><translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez).</translation></message><message><source>Scheduler (EEVDF)</source><translation>Zamanlayıcı (EEVDF)</translation></message><message><source>x86 scheduling (debugfs)</source><translation>x86 zamanlama (debugfs)</translation></message><message><source>CPU frequency and idle</source><translation>CPU frekansı ve boşta durumu</translation></message><message><source>Memory management</source><translation>Bellek yönetimi</translation></message><message><source>Kernel module parameters</source><translation>Çekirdek modülü parametreleri</translation></message><message><source>Everything under /sys</source><translation>/sys altındaki her şey</translation></message><message><source>Filter by name or value</source><translation>Ada veya değere göre süz</translation></message><message><source>Read</source><translation>Oku</translation></message><message><source>Setting</source><translation>Ayar</translation></message><message><source>Value</source><translation>Değer</translation></message><message><source>Writable</source><translation>Yazılabilir</translation></message><message><source>yes</source><translation>evet</translation></message><message><source>health-reader is not installed.</source><translation>health-reader kurulu değil.</translation></message><message><source>Reading…</source><translation>Okunuyor…</translation></message><message><source>The installed health-reader is too old for this page — reinstall Centurion.</source><translation>Kurulu health-reader bu sayfa için çok eski — Centurion'u yeniden kurun.</translation></message><message><source>debugfs is not mounted: only the sysctls are shown.</source><translation>debugfs bağlı değil: yalnızca sysctl değerleri gösteriliyor.</translation></message><message><source>%1 settings</source><translation>%1 ayar</translation></message><message><source> — list cut short (%1)</source><translation> — liste kısaltıldı (%1)</translation></message></context>
 <context>
     <name>toolcatalog</name>
         <message>
-            <source>CPU &amp; Memory</source>
-            <translation>CPU ve bellek</translation>
+            <source>Processor, Memory &amp; Board</source>
+            <translation>İşlemci, bellek ve anakart</translation>
         </message>
         <message>
-            <source>Graphics &amp; Display</source>
-            <translation>Grafik ve ekran</translation>
+            <source>GPU, Drivers &amp; Displays</source>
+            <translation>GPU, sürücüler ve ekranlar</translation>
         </message>
         <message>
-            <source>Storage</source>
-            <translation>Depolama</translation>
+            <source>Drives &amp; File Systems</source>
+            <translation>Diskler ve dosya sistemleri</translation>
         </message>
         <message>
-            <source>Network &amp; Wireless</source>
-            <translation>Ağ ve kablosuz</translation>
+            <source>Wi-Fi, Bluetooth &amp; Network</source>
+            <translation>Wi-Fi, Bluetooth ve ağ</translation>
         </message>
         <message>
-            <source>Power &amp; Thermal</source>
-            <translation>Güç ve sıcaklık</translation>
+            <source>Power, Battery &amp; Temperatures</source>
+            <translation>Güç, pil ve sıcaklıklar</translation>
         </message>
         <message>
-            <source>Devices &amp; Buses</source>
-            <translation>Aygıtlar ve veri yolları</translation>
+            <source>PCIe &amp; USB Devices</source>
+            <translation>PCIe ve USB aygıtları</translation>
         </message>
         <message>
-            <source>Firmware &amp; Kernel</source>
-            <translation>Donanım yazılımı ve çekirdek</translation>
+            <source>Kernel, Firmware &amp; Security</source>
+            <translation>Çekirdek, firmware ve güvenlik</translation>
         </message>
         <message>
-            <source>System &amp; Configuration</source>
-            <translation>Sistem ve yapılandırma</translation>
+            <source>Config Files, Audio &amp; Snapshot</source>
+            <translation>Yapılandırma, ses ve donanım anlık görüntüsü</translation>
         </message>
         <message>
             <source>Can change settings</source>
@@ -15460,4 +15460,5 @@ Profil adı:</translation>
             <translation>6.6’dan beri Linux CPU zamanlayıcısı: sıradaki görevi seçer.</translation>
         </message>
 </context>
-<context><name>PanelControlsDialog</name><message><location filename="../src/panelcontrols.cpp" line="16"/><source>Panel Controls</source><translation>Panel Kontrolleri</translation></message></context><context><name>PipewireConfigDialog</name><message><location filename="../src/pipewireconfig.cpp" line="202"/><source>PipeWire Settings</source><translation>PipeWire Ayarları</translation></message></context></TS>
+<context><name>PanelControlsDialog</name><message><location filename="../src/panelcontrols.cpp" line="16"/><source>Panel Controls</source><translation>Panel Kontrolleri</translation></message></context><context><name>PipewireConfigDialog</name><message><location filename="../src/pipewireconfig.cpp" line="202"/><source>PipeWire Settings</source><translation>PipeWire Ayarları</translation></message></context><context><name>sysadmin</name><message><source>%1: working…</source><translation>%1: çalışıyor…</translation></message></context>
+</TS>

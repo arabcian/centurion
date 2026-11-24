@@ -23,6 +23,7 @@
 #include "systools.h"
 #include "healthevidence.h"
 #include "advancedhealth.h"
+#include "advanceddiagnostics.h"
 #include "theme.h"
 #include "toolcatalog.h"
 
@@ -249,8 +250,18 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     navigation_->setStyleSheet(QStringLiteral("QTreeWidget{background:transparent;border:0}QTreeWidget::item{padding:4px 6px}QTreeWidget::branch{background:transparent}"));
     railLayout->addWidget(navigation_, 1);
     split->addWidget(rail);
+    auto *pageArea = new QWidget;
+    auto *pageLayout = new QVBoxLayout(pageArea);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->setSpacing(0);
+    relatedBar_ = new QWidget;
+    relatedBar_->setLayout(new QHBoxLayout);
+    relatedBar_->layout()->setContentsMargins(8, 4, 8, 0);
+    relatedBar_->setVisible(false);
+    pageLayout->addWidget(relatedBar_);
     pages_ = new QStackedWidget;
-    split->addWidget(pages_);
+    pageLayout->addWidget(pages_, 1);
+    split->addWidget(pageArea);
     split->setStretchFactor(1, 1);
     split->setSizes({178, 880});
 
@@ -272,7 +283,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         item->setToolTip(0, pageAbout(key));
         pageItems_.insert(page, item);
     };
-    auto *general = addGroup(tr("At a glance"));
+    auto *general = addGroup(tr("Start"));
     auto *problems = addGroup(tr("Problems"));
     auto *hardware = addGroup(tr("Hardware"));
     auto *maintenance = addGroup(tr("Maintenance"));
@@ -408,14 +419,14 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     toolBar->addWidget(toolBadges_);
     toolPin_ = new QPushButton;
     toolPin_->setCheckable(true);
-    toolPin_->setToolTip(tr("Pinned tools are listed first in the catalog."));
+    toolPin_->setToolTip(tr("Favorites are listed at the top of the catalog."));
     connect(toolPin_, &QPushButton::clicked, this, [this] { togglePin(); });
     toolBar->addWidget(toolPin_);
     toolLayout->addLayout(toolBar);
     toolPages_ = new QStackedWidget;
     toolLayout->addWidget(toolPages_, 1);
     toolMode_->addWidget(toolView);
-    addPage(advanced, toolDirectory_, tr("System Tools"), QStringLiteral("tools"));
+    addPage(general, toolDirectory_, tr("System Tools"), QStringLiteral("tools"));
 
     QTabWidget toolsRegistry;
     systools::addPages(&toolsRegistry);
@@ -439,7 +450,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     connect(backup_, &BackupPage::alert, this, [this](const QString &t, const QString &m) { Q_EMIT alert(notifyprefs::BACKUP, QString(), t, m); });
     addPage(maintenance, backup_, tr("Backups"), QStringLiteral("backup"));
     // Search results only: matching System tools, shown in the rail while a search is typed.
-    toolResults_ = addGroup(tr("System Tools"));
+    toolResults_ = addGroup(tr("Tool Results"));
     toolResults_->setHidden(true);
     for (const Tool &t : std::as_const(tools_)) {
         auto *item = new QTreeWidgetItem(toolResults_, {t.label});
@@ -466,6 +477,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
                 if (it.key() == toolDirectory_ && toolMode_->currentIndex() == 0)
                     rebuildToolCatalog();  // refresh recorded indicators after returning from Health
                 const QString key = item->data(0, Qt::UserRole).toString();
+                updateRelated(key);
                 guiSettings().setValue(QStringLiteral("health/page"), key);
                 const Tool *open = it.key() == toolDirectory_ && toolMode_->currentIndex() == 1 ? toolOf(toolPages_->currentWidget()) : nullptr;
                 record(open ? QStringLiteral("tool:") + open->key : QStringLiteral("page:") + key);
@@ -602,16 +614,14 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     filterRow->addWidget(technicalEvents_);
     auto *timelineButton = new QPushButton(tr("Incident Timeline…"));
     timelineButton->setToolTip(tr("Correlate the selected incident with boot-matched sensor and scene history."));
+    timelineButton->setEnabled(false);  // until an event is selected
     filterRow->addWidget(timelineButton);
     connect(timelineButton, &QPushButton::clicked, this, [this] {
         QTreeWidgetItem *selected = list_ ? list_->currentItem() : nullptr;
         const QJsonObject event = selected
             ? QJsonDocument::fromJson(selected->data(0, Qt::UserRole).toByteArray()).object()
             : QJsonObject{};
-        if (event.isEmpty()) {
-            QMessageBox::information(this, tr("Incident Timeline"), tr("Select a hardware event first."));
-            return;
-        }
+        if (event.isEmpty()) return;
         insights::show(this, tr("Hardware Incident Timeline"),
                        insights::incident(event, event.value("boot_id").toString()));
     });
@@ -661,10 +671,22 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     eventDetail_ = new QTextBrowser;
     eventDetail_->setOpenLinks(false);
     eventDetail_->setPlaceholderText(tr("Select an event to see what it means, its usual causes and what to do."));
-    eventSplit->addWidget(eventDetail_);
+    auto *detailPane = new QWidget;
+    auto *detailLayout = new QVBoxLayout(detailPane);
+    detailLayout->setContentsMargins(0, 0, 0, 0);
+    detailLayout->addWidget(eventDetail_, 1);
+    eventActions_ = new QWidget;
+    eventActions_->setLayout(new QHBoxLayout);
+    eventActions_->layout()->setContentsMargins(0, 0, 0, 0);
+    eventActions_->setVisible(false);
+    detailLayout->addWidget(eventActions_);
+    eventSplit->addWidget(detailPane);
     eventSplit->setStretchFactor(0, 3);
     eventSplit->setStretchFactor(1, 2);
     connect(list_, &QTreeWidget::currentItemChanged, this, &HealthTab::showEventDetail);
+    connect(list_, &QTreeWidget::currentItemChanged, timelineButton, [timelineButton](QTreeWidgetItem *item) {
+        timelineButton->setEnabled(item && !QJsonDocument::fromJson(item->data(0, Qt::UserRole).toByteArray()).object().isEmpty());
+    });
     root->addWidget(eventSplit, 1);
 
     aer_ = new QLabel;
@@ -1035,6 +1057,8 @@ void HealthTab::addToolPage(QWidget *page, const QString &label, const QString &
         item->setHidden(true);
     }
     rebuildToolCatalog();
+    if (QTreeWidgetItem *current = navigation_->currentItem())  // the open page may link to this tool
+        updateRelated(current->data(0, Qt::UserRole).toString());
 }
 
 // ── System tools ───────────────────────────────────────────────────────────────
@@ -1071,7 +1095,7 @@ void HealthTab::openTool(QWidget *page) {
     toolBadges_->setText(toolcatalog::badges(info.flags).join(QStringLiteral(" · ")));
     const bool pinned = guiSettings().value(QStringLiteral("health/pinned_tools")).toStringList().contains(t->key);
     toolPin_->setChecked(pinned);
-    toolPin_->setText(pinned ? tr("★ Pinned") : tr("☆ Pin"));
+    toolPin_->setText(pinned ? tr("★ In Favorites") : tr("☆ Add to Favorites"));
     toolPages_->setCurrentWidget(page);  // a LazyWidget builds (and its tool runs) only now
     toolMode_->setCurrentIndex(1);
     QStringList recent = guiSettings().value(QStringLiteral("health/recent_tools")).toStringList();
@@ -1103,7 +1127,7 @@ void HealthTab::togglePin() {
     else pinned << t->key;
     guiSettings().setValue(QStringLiteral("health/pinned_tools"), pinned);
     toolPin_->setChecked(pinned.contains(t->key));
-    toolPin_->setText(pinned.contains(t->key) ? tr("★ Pinned") : tr("☆ Pin"));
+    toolPin_->setText(pinned.contains(t->key) ? tr("★ In Favorites") : tr("☆ Add to Favorites"));
     rebuildToolCatalog();
 }
 
@@ -1152,7 +1176,7 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
     }
     QStringList notes = toolcatalog::badges(info.flags);
     const bool passive = info.flags == 0;
-    if (passive) notes << tr("No special warnings listed");
+    if (passive) notes << tr("Read-only");
     auto *badge = new QLabel(notes.join(QStringLiteral("  ·  ")));
     badge->setTextFormat(Qt::PlainText);
     badge->setWordWrap(true);
@@ -1253,30 +1277,23 @@ void HealthTab::rebuildToolCatalog() {
     // The catalog is for finding tools, not a second health dashboard.
     // System overview remains available in the Health navigation.
     if (query.isEmpty() && toolAreaFilter_.isEmpty() && toolFilter_ == QLatin1String("all")) {
-        v->addWidget(heading(tr("Troubleshoot by Symptom"), tr("Start a guided, read-only investigation (H18).")));
-        // Actual guided-triage categories, not decorative buttons that merely highlight a group.
-        struct Symptom { const char *key; const char *label; const char *detail; };
-        const QList<Symptom> symptoms = {
-            {"gpu", QT_TR_NOOP("GPU & Display"), QT_TR_NOOP("Xid, drivers, graphics")},
-            {"storage", QT_TR_NOOP("Storage"), QT_TR_NOOP("NVMe, SMART, F2FS")},
-            {"radio", QT_TR_NOOP("Wi-Fi & Bluetooth"), QT_TR_NOOP("Firmware, disconnects")},
-            {"sleep", QT_TR_NOOP("Power & Sleep"), QT_TR_NOOP("Wake, standby, drain")},
-            {"cpu", QT_TR_NOOP("CPU & Stability"), QT_TR_NOOP("CO, limits, MCE")},
-            {"crash", QT_TR_NOOP("Crashes & Kernel"), QT_TR_NOOP("Boots, regressions")},
-        };
+        v->addWidget(heading(tr("Troubleshoot by Symptom"), tr("Start a guided, read-only investigation.")));
+        // The guided-triage categories, the same list System Overview offers.
+        const QList<advanceddiagnostics::TriageCategory> symptoms = advanceddiagnostics::triageCategories();
         auto *symptomGrid = new QWidget;
         auto *sg = new QGridLayout(symptomGrid);
         sg->setContentsMargins(0, 0, 0, 0);
         sg->setSpacing(7);
         for (int c = 0; c < toolSymptomColumns_; ++c) sg->setColumnStretch(c, 1);
         for (int i = 0; i < symptoms.size(); ++i) {
-            const Symptom &symptom = symptoms.at(i);
+            const advanceddiagnostics::TriageCategory &symptom = symptoms.at(i);
+            const QString label = QCoreApplication::translate("advanceddiagnostics", symptom.shortLabel);
             auto *card = new DiagnosticEntryCard;
             card->setObjectName(QStringLiteral("healthSymptomTile"));
             card->setCursor(Qt::PointingHandCursor);
             card->setFocusPolicy(Qt::StrongFocus);
-            card->setAccessibleName(tr("Investigate %1").arg(tr(symptom.label)));
-            card->setToolTip(tr("Open the guided investigation for %1. No settings are changed.").arg(tr(symptom.label)));
+            card->setAccessibleName(tr("Investigate %1").arg(label));
+            card->setToolTip(tr("Open the guided investigation for %1. No settings are changed.").arg(label));
             card->setMinimumHeight(84);
             card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
             card->setStyleSheet(QStringLiteral("QFrame#healthSymptomTile{background:%1;border:1px solid %2;"
@@ -1291,7 +1308,7 @@ void HealthTab::rebuildToolCatalog() {
             auto *top = new QHBoxLayout;
             top->setContentsMargins(0, 0, 0, 0);
             top->setSpacing(9);
-            auto *name = new QLabel(tr(symptom.label));
+            auto *name = new QLabel(label);
             name->setWordWrap(true);
             name->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
             name->setStyleSheet(QStringLiteral("color:%1;font-weight:700;").arg(theme::FG));
@@ -1300,7 +1317,7 @@ void HealthTab::rebuildToolCatalog() {
             top->addWidget(name, 1);
             top->addWidget(arrow, 0, Qt::AlignTop);
             col->addLayout(top);
-            auto *description = new QLabel(tr(symptom.detail));
+            auto *description = new QLabel(QCoreApplication::translate("advanceddiagnostics", symptom.label));
             description->setWordWrap(true);
             description->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
             description->setStyleSheet(QStringLiteral("color:%1;font-size:9pt;").arg(theme::FG_DIM));
@@ -1308,7 +1325,7 @@ void HealthTab::rebuildToolCatalog() {
             // Labels must not eat mouse clicks; the complete card is the target.
             for (QLabel *label : {name, description, arrow})
                 label->setAttribute(Qt::WA_TransparentForMouseEvents);
-            card->setActivation([this, key = QString::fromLatin1(symptom.key)] {
+            card->setActivation([this, key = symptom.key] {
                 showPage(investigations_);
                 investigations_->startTriage(key);
             });
@@ -1317,7 +1334,7 @@ void HealthTab::rebuildToolCatalog() {
         v->addWidget(symptomGrid);
 
         const QList<const Tool *> favorites = byKeys(toolList(QStringLiteral("health/pinned_tools")));
-        v->addWidget(heading(tr("Quick Access"), favorites.isEmpty()
+        v->addWidget(heading(tr("Favorites"), favorites.isEmpty()
             ? tr("No favorites yet. Star a tool in All tools to add it here.")
             : tr("Only tools you have added to favorites are shown here.")));
         if (!favorites.isEmpty())
@@ -1325,6 +1342,39 @@ void HealthTab::rebuildToolCatalog() {
 
     }
 
+    // The rail's search finds pages too: show the matching Health pages here as well.
+    if (!query.isEmpty()) {
+        QList<QTreeWidgetItem *> found;
+        for (int g = 0; g < navigation_->topLevelItemCount(); ++g) {
+            QTreeWidgetItem *group = navigation_->topLevelItem(g);
+            if (group == toolResults_) continue;
+            for (int n = 0; n < group->childCount(); ++n) {
+                QTreeWidgetItem *item = group->child(n);
+                if (pageItems_.key(item) == toolDirectory_) continue;
+                if (toolcatalog::matches(query, item->text(0) + QLatin1Char('|') + group->text(0),
+                                         toolcatalog::pageKeywords(item->data(0, Qt::UserRole).toString())))
+                    found << item;
+            }
+        }
+        if (!found.isEmpty()) {
+            v->addWidget(heading(tr("Health Pages"), tr("Pages of the Health Center that match the search.")));
+            auto *pagesGrid = new QWidget;
+            auto *pg = new QGridLayout(pagesGrid);
+            pg->setContentsMargins(0, 0, 0, 0);
+            pg->setSpacing(7);
+            for (int i = 0; i < found.size(); ++i) {
+                auto *b = new QPushButton(found[i]->text(0));
+                b->setToolTip(found[i]->toolTip(0));
+                b->setCursor(Qt::PointingHandCursor);
+                connect(b, &QPushButton::clicked, this, [this, page = pageItems_.key(found[i])] { showPage(page); });
+                pg->addWidget(b, i / toolFeaturedColumns_, i % toolFeaturedColumns_);
+            }
+            v->addWidget(pagesGrid);
+        }
+    }
+
+    // Stable numeric area IDs: names are translated and must never be used as settings keys. Every group starts expanded.
+    const QStringList collapsed = guiSettings().value(QStringLiteral("health/catalog_collapsed_groups")).toStringList();
     auto *filtersTitle = heading(tr("All Tools"), tr("Open a category or filter the directory."));
     v->addWidget(filtersTitle);
     auto *filters = new QWidget;
@@ -1332,7 +1382,7 @@ void HealthTab::rebuildToolCatalog() {
     frow->setContentsMargins(0, 0, 0, 0);
     frow->setSpacing(5);
     const QList<QPair<QString, QString>> choices = {
-        {QStringLiteral("all"), tr("All")}, {QStringLiteral("safe"), tr("No special warnings")},
+        {QStringLiteral("all"), tr("All")}, {QStringLiteral("safe"), tr("Read-only")},
         {QStringLiteral("changes"), tr("Changes settings")}, {QStringLiteral("recent"), tr("Recent")},
         {QStringLiteral("pinned"), tr("Favorites")},
     };
@@ -1355,6 +1405,16 @@ void HealthTab::rebuildToolCatalog() {
         frow->addWidget(b);
     }
     frow->addStretch();
+    auto *groupsButton = new QPushButton(collapsed.isEmpty() ? tr("Collapse All") : tr("Expand All"));
+    groupsButton->setEnabled(query.isEmpty() && toolAreaFilter_.isEmpty());  // groups stay open while filtering
+    connect(groupsButton, &QPushButton::clicked, this, [this, expand = !collapsed.isEmpty()] {
+        QStringList ids;
+        if (!expand)
+            for (const toolcatalog::Area area : toolcatalog::areas()) ids << QString::number(static_cast<int>(area));
+        guiSettings().setValue(QStringLiteral("health/catalog_collapsed_groups"), ids);
+        rebuildToolCatalog();
+    });
+    frow->addWidget(groupsButton);
     auto *areaBox = new QComboBox;
     areaBox->setObjectName(QStringLiteral("healthToolAreaFilter"));
     areaBox->addItem(tr("All categories"), QString());
@@ -1371,23 +1431,8 @@ void HealthTab::rebuildToolCatalog() {
     });
     frow->addWidget(areaBox);
     v->addWidget(filters);
-    if (!toolAreaFilter_.isEmpty()) {
-        auto *clearArea = new QPushButton(tr("Category: %1    ×  Clear").arg(toolAreaFilter_));
-        clearArea->setToolTip(tr("Show tools from every hardware area."));
-        connect(clearArea, &QPushButton::clicked, this, [this] {
-            toolAreaFilter_.clear();
-            rebuildToolCatalog();
-        });
-        v->addWidget(clearArea, 0, Qt::AlignLeft);
-    }
 
     int shown = 0;
-    // Stable numeric area IDs: names are translated and must never be used as settings keys.
-    const QStringList defaultCollapsed{QStringLiteral("0"), QStringLiteral("2"),
-        QStringLiteral("3"), QStringLiteral("4"), QStringLiteral("5"),
-        QStringLiteral("6"), QStringLiteral("7")};
-    const QStringList collapsed = guiSettings().value(QStringLiteral("health/catalog_collapsed_groups"),
-                                                       defaultCollapsed).toStringList();
     for (const toolcatalog::Area area : toolcatalog::areas()) {
         QList<const Tool *> list;
         for (const Tool &t : std::as_const(tools_))
@@ -1428,9 +1473,8 @@ void HealthTab::rebuildToolCatalog() {
         auto *itemCount = new QLabel(tr("%1 tools").arg(list.size()));
         itemCount->setStyleSheet(QStringLiteral("color:%1;font-size:8pt;").arg(theme::FG_DIM));
         groupLayout->addWidget(itemCount);
-        connect(group, &QPushButton::clicked, this, [this, areaId, defaultCollapsed] {
-            QStringList hidden = guiSettings().value(QStringLiteral("health/catalog_collapsed_groups"),
-                                                       defaultCollapsed).toStringList();
+        connect(group, &QPushButton::clicked, this, [this, areaId] {
+            QStringList hidden = guiSettings().value(QStringLiteral("health/catalog_collapsed_groups")).toStringList();
             if (hidden.contains(areaId)) hidden.removeAll(areaId);
             else hidden << areaId;
             guiSettings().setValue(QStringLiteral("health/catalog_collapsed_groups"), hidden);
@@ -1717,9 +1761,74 @@ QJsonObject HealthTab::eventOf(const QTreeWidgetItem *item) const {
 
 void HealthTab::showEventDetail() {
     if (!eventDetail_) return;
+    auto *row = static_cast<QHBoxLayout *>(eventActions_->layout());
+    while (QLayoutItem *item = row->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    eventActions_->setVisible(false);
     const QJsonObject e = eventOf(list_->currentItem());
     if (e.isEmpty()) { eventDetail_->clear(); return; }
     eventDetail_->setHtml(eventinfo::html(e, friendlyEvent(e)));
+    QList<QPair<QString, std::function<void()>>> actions;
+    if (e.contains(QStringLiteral("seq")) && !e.value(QStringLiteral("boot_id")).toString().isEmpty())
+        actions.append({tr("Show in kernel log"), [this, e] { showInKlog(e); }});
+    actions << eventActions(e);
+    for (const auto &[label, act] : std::as_const(actions)) {
+        auto *b = new QPushButton(label);
+        connect(b, &QPushButton::clicked, this, act);
+        row->addWidget(b);
+    }
+    row->addStretch(1);
+    eventActions_->setVisible(!actions.isEmpty());
+}
+
+QList<QPair<QString, std::function<void()>>> HealthTab::eventActions(const QJsonObject &e) {
+    const QString kind = e.value(QStringLiteral("kind")).toString();
+    const int code = e.value(QStringLiteral("code")).toInt();
+    const QString title = e.value(QStringLiteral("title")).toString();
+    QList<QPair<QString, std::function<void()>>> out;
+    // The page the event points to, only when there is something to do there now.
+    static const QList<int> gpuCurveXids{13, 31, 43, 62, 119, 120};
+    if (kind == QLatin1String("d3cold") || (kind == QLatin1String("xid") && code == 79)) {
+        if (auto *dgpu = findChild<DgpuPage *>()) out.append({tr("Open dGPU power"), [this, dgpu] { showPage(dgpu); }});
+    } else if (kind == QLatin1String("xid") && gpuCurveXids.contains(code) && CurvePage::currentState(QStringLiteral("gpu")) != QLatin1String("stock")) {
+        out.append({tr("Reset GPU curve to stock"), [this, title] { curves_->resetGpuCurve(title); }});
+    } else if ((kind == QLatin1String("mce") || kind == QLatin1String("lockup")) && CurvePage::currentState(QStringLiteral("cpu")) != QLatin1String("stock")) {
+        out.append({tr("Open the CPU curve tab"), [this] { Q_EMIT openTab(sysinfo::isIntel() ? QStringLiteral("Intel Undervolt") : QStringLiteral("Ryzen Curve")); }});
+    } else if (kind == QLatin1String("nvme") || kind == QLatin1String("fs") || kind == QLatin1String("f2fs")) {
+        if (auto *smart = findChild<SmartPage *>()) out.append({tr("Open SMART"), [this, smart] { showPage(smart); }});
+    }
+    return out;
+}
+
+void HealthTab::updateRelated(const QString &pageKey) {
+    auto *row = static_cast<QHBoxLayout *>(relatedBar_->layout());
+    while (QLayoutItem *item = row->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    int links = 0;
+    for (const QString &target : toolcatalog::relatedForPage(pageKey)) {
+        const QString name = targetLabel(target);
+        if (name.isEmpty()) continue;  // not on this system
+        if (!links) {
+            auto *title = new QLabel(pageKey == QLatin1String("kernelparams") ? tr("Change these in:") : tr("Related:"));
+            title->setProperty("role", "muted");
+            row->addWidget(title);
+        }
+        auto *b = new QPushButton(name);
+        b->setFlat(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setToolTip(target.startsWith(QLatin1String("tool:")) ? tr("Opens this System tool; it reads its sources when it opens.")
+                                                                : tr("Opens this Health page."));
+        b->setStyleSheet(QStringLiteral("QPushButton{color:%1;text-decoration:underline;padding:2px 4px}").arg(theme::ACCENT));
+        connect(b, &QPushButton::clicked, this, [this, target] { QTimer::singleShot(0, this, [this, target] { navigateTo(target); }); });
+        row->addWidget(b);
+        ++links;
+    }
+    row->addStretch(1);
+    relatedBar_->setVisible(links > 0);
 }
 
 void HealthTab::explainEvent(const QJsonObject &e) {
@@ -1771,8 +1880,6 @@ void HealthTab::eventMenu(const QPoint &pos) {
     }
     const QJsonObject e = QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object();
     const QString kind = e.value(QStringLiteral("kind")).toString();
-    const int code = e.value(QStringLiteral("code")).toInt();
-    const QString title = e.value(QStringLiteral("title")).toString();
     QMenu menu(this);
     menu.addAction(tr("Explain this event"), this, [this, e] { explainEvent(e); });
     menu.addAction(tr("Show in kernel log"), this, [this, e] { showInKlog(e); });
@@ -1786,18 +1893,7 @@ void HealthTab::eventMenu(const QPoint &pos) {
     });
     menu.addAction(tr("Show only %1 events").arg(kind.toUpper()), this, [this, kind] { eventSearch_->setText(kind.toUpper()); });
     menu.addSeparator();
-    // The page the event points to, only when there is something to do there now.
-    static const QList<int> gpuCurveXids{13, 31, 43, 62, 119, 120};
-    if (kind == QLatin1String("d3cold") || (kind == QLatin1String("xid") && code == 79)) {
-        if (auto *dgpu = findChild<DgpuPage *>())
-            menu.addAction(tr("Open dGPU power"), this, [this, dgpu] { showPage(dgpu); });
-    } else if (kind == QLatin1String("xid") && gpuCurveXids.contains(code) && CurvePage::currentState(QStringLiteral("gpu")) != QLatin1String("stock")) {
-        menu.addAction(tr("Reset GPU curve to stock"), this, [this, title] { curves_->resetGpuCurve(title); });
-    } else if ((kind == QLatin1String("mce") || kind == QLatin1String("lockup")) && CurvePage::currentState(QStringLiteral("cpu")) != QLatin1String("stock")) {
-        menu.addAction(tr("Open the CPU curve tab"), this, [this] { Q_EMIT openTab(sysinfo::isIntel() ? QStringLiteral("Intel Undervolt") : QStringLiteral("Ryzen Curve")); });
-    } else if (kind == QLatin1String("nvme") || kind == QLatin1String("fs") || kind == QLatin1String("f2fs")) {
-        if (auto *smart = findChild<SmartPage *>()) menu.addAction(tr("Open SMART"), this, [this, smart] { showPage(smart); });
-    }
+    for (const auto &[label, act] : eventActions(e)) menu.addAction(label, this, act);
     menu.exec(list_->viewport()->mapToGlobal(pos));
 }
 

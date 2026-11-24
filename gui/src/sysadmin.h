@@ -6,6 +6,7 @@
 #include <QString>
 #include <functional>
 
+class QLabel;
 class QObject;
 class QWidget;
 
@@ -17,8 +18,9 @@ using Done = std::function<void(bool ok, const QString &message)>;
 void run(const QJsonObject &req, QObject *ctx, Done cb, int timeoutMs = 120000);
 
 /// Asks `confirm` (skipped when empty), runs `req`, shows the answer, then calls `after(ok)`.
+/// The answer goes in `status` when given (inline, no dialog), else in a message box.
 /// `req` {"op":"pipewire_restart"} restarts the user's sound servers without root.
 void act(QWidget *parent, const QString &title, const QString &confirm, const QJsonObject &req,
-         std::function<void(bool)> after = {});
+         std::function<void(bool)> after = {}, QLabel *status = nullptr);
 
 }  // namespace sysadmin

@@ -25,6 +25,9 @@ int main() {
     CHECK(tc::tool(QStringLiteral("NVIDIA")).flags & tc::MayWakeGpu);
     CHECK(!(tc::tool(QStringLiteral("NVIDIA module parameters")).flags & tc::MayWakeGpu));
     CHECK(tc::tool(QStringLiteral("Configuration files")).flags & tc::ChangesSettings);
+    // Every tool with a "Change:" bar (systools.cpp actionBar) is badged, so "Read-only" does not list it.
+    for (const char *k : {"CPU", "Memory", "Storage", "USB", "Kernel", "PCIe detail", "SMART details", "Firmware updates"})
+        CHECK(tc::tool(QString::fromLatin1(k)).flags & tc::ChangesSettings);
     CHECK(tc::badges(tc::MayWakeGpu | tc::NeedsRoot).size() == 2);
     CHECK(tc::tool(QStringLiteral("no such tool")).area == tc::Area::System);
 
@@ -39,6 +42,19 @@ int main() {
                 CHECK(!tc::tool(t.mid(5)).keywords.isEmpty());
                 CHECK(!(tc::tool(t.mid(5)).flags & tc::MayWakeGpu));
             }
+        }
+    }
+
+    // Health pages that overlap a System tool link to it; the links go somewhere real and never wake the dGPU.
+    CHECK(tc::relatedForPage(QStringLiteral("kernelparams")).contains(QStringLiteral("tool:Kernel tuning")));
+    CHECK(tc::relatedForPage(QStringLiteral("smart")).contains(QStringLiteral("tool:SMART details")));
+    CHECK(tc::relatedForPage(QStringLiteral("no such page")).isEmpty());
+    for (const char *page : {"smart", "cooling", "battery", "dgpu", "kernelparams", "sleep"}) {
+        const QStringList rel = tc::relatedForPage(QString::fromLatin1(page));
+        CHECK(!rel.isEmpty());
+        for (const QString &t : rel) {
+            if (t.startsWith(QStringLiteral("page:"))) CHECK(!tc::pageKeywords(t.mid(5)).isEmpty());
+            else CHECK(t.startsWith(QStringLiteral("tool:")) && !tc::tool(t.mid(5)).keywords.isEmpty() && !(tc::tool(t.mid(5)).flags & tc::MayWakeGpu));
         }
     }
 
