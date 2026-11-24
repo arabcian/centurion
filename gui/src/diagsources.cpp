@@ -12,6 +12,10 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
+#include <algorithm>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace diagsrc {
 
@@ -36,10 +40,30 @@ QString dataDir() { return QStandardPaths::writableLocation(QStandardPaths::Gene
 
 QString bootId() { return read(QStringLiteral("/proc/sys/kernel/random/boot_id"), 80); }
 
+static bool openRegular(QFile &f, const QString &path) {
+    const QByteArray encoded = QFile::encodeName(path);
+    const int fd = ::open(encoded.constData(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+    if (fd < 0) return false;
+    struct stat st{};
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || !f.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+        ::close(fd); return false;
+    }
+    return true;
+}
+
+std::optional<QByteArray> readRecord(const QString &path, qint64 limit) {
+    QFile f;
+    if (limit < 0 || limit > (32LL << 20) || !openRegular(f, path)) return std::nullopt;
+    const qint64 size = f.size();
+    if (size < 0 || size > limit) return std::nullopt;
+    const auto data = f.read(limit + 1);
+    if (f.error() != QFileDevice::NoError || data.size() != size || f.size() != size || !f.atEnd()) return std::nullopt;
+    return data;
+}
+
 QJsonObject loadJson(const QString &path, qint64 limit) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly) || f.size() > limit) return {};
-    return QJsonDocument::fromJson(f.readAll()).object();
+    const auto data = readRecord(path, limit);
+    return data ? QJsonDocument::fromJson(*data).object() : QJsonObject{};
 }
 
 QString saveJson(const QString &path, const QJsonObject &o) {
@@ -56,23 +80,42 @@ QString saveJson(const QString &path, const QJsonObject &o) {
 std::optional<LogLine> parseLine(const QString &line) {
     static const QRegularExpression health(QStringLiteral(R"(^(\S+ \S+)\s+boot=(\S+) seq=(\d+)\s+(\S+)\s+(\S+)\s+(.*?)\s+\|\s+(.*)$)"));
     static const QRegularExpression kernel(QStringLiteral(R"(^(\S+ \S+)\s+boot=(\S+) seq=(\d+)\s+(\S+)\s+\[\s*[\d.]+\]\s?(.*)$)"));
-    if (const auto m = kernel.match(line); m.hasMatch())
-        return LogLine{m.captured(1), m.captured(2).toLower(), m.captured(4).toLower(), {}, {}, m.captured(5), m.captured(3).toULongLong()};
-    if (const auto m = health.match(line); m.hasMatch())
+    if (const auto m = kernel.match(line); m.hasMatch()) {
+        bool ok = false; const auto seq = m.captured(3).toULongLong(&ok);
+        if (!ok) return std::nullopt;
+        return LogLine{m.captured(1), m.captured(2).toLower(), m.captured(4).toLower(), {}, {}, m.captured(5), seq};
+    }
+    if (const auto m = health.match(line); m.hasMatch()) {
+        bool ok = false; const auto seq = m.captured(3).toULongLong(&ok);
+        if (!ok) return std::nullopt;
         return LogLine{m.captured(1), m.captured(2).toLower(), m.captured(4).toLower(), m.captured(5).toLower(),
-                       m.captured(6), m.captured(7), m.captured(3).toULongLong()};
+                       m.captured(6), m.captured(7), seq};
+    }
     return std::nullopt;
 }
 
 static QList<LogLine> tailOf(const QString &name, int max) {
     QList<LogLine> out;
+    max = std::clamp(max, 0, 10000);
+    if (!max) return out;
     for (const QString &file : {name + QStringLiteral(".1"), name}) {
-        QFile f(stateDir() + QLatin1Char('/') + file);
-        if (!f.open(QIODevice::ReadOnly)) continue;
-        if (f.size() > (4 << 20)) { f.seek(f.size() - (4 << 20)); f.readLine(8192); }
-        while (!f.atEnd()) {
-            if (auto l = parseLine(QString::fromUtf8(f.readLine(8192)).trimmed())) out << *l;
-            if (out.size() > max) out.removeFirst();
+        QFile f;
+        if (!openRegular(f, stateDir() + QLatin1Char('/') + file)) continue;
+        const qint64 size = f.size(), start = std::max<qint64>(0, size - (4LL << 20));
+        if (size < 0 || !f.seek(start)) continue;
+        const auto bytes = f.read(size - start);
+        if (f.error() != QFileDevice::NoError) continue;
+        qsizetype pos = start ? bytes.indexOf('\n') : -1;
+        if (start && pos < 0) continue;
+        ++pos;
+        while (pos < bytes.size()) {
+            const auto end = bytes.indexOf('\n', pos);
+            if (end < 0) break; // never parse an incomplete record
+            if (end - pos <= 8192) {
+                if (auto l = parseLine(QString::fromUtf8(bytes.constData() + pos, end - pos).trimmed())) out << *l;
+                if (out.size() > max) out.removeFirst();
+            }
+            pos = end + 1;
         }
     }
     return out;

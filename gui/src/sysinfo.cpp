@@ -1,5 +1,6 @@
 #include "sysinfo.h"
 #include "telemetrycache.h"
+#include "sensorincarnation.h"
 #include <time.h>
 #include <cmath>
 #include <QElapsedTimer>
@@ -174,18 +175,19 @@ Opt systemInfo() {
 /// zones, DRM cards), filtered once by `keep` and re-listed at most every 30 s.
 /// Thread-safe: the Live getters run on a worker thread.
 static QStringList cachedDirs(const QString &dir, bool (*keep)(const QString &path, const QString &entry)) {
-    struct Entry { QStringList paths; QElapsedTimer age; };
+    struct Entry { QStringList paths; std::optional<telemetry::Tick> scanned; };
     static QMutex mu;
     static QHash<QString, Entry> cache;
     const QMutexLocker lock(&mu);
     const QString key = dir + QChar(0) + QString::number(quintptr(keep));
     Entry &e = cache[key];
-    if (!e.age.isValid() || e.age.elapsed() > 30000) {
+    const auto now = presentationClock();
+    if (!e.scanned || now < *e.scanned || now - *e.scanned >= telemetry::Tick(30000)) {
         e.paths.clear();
         const QDir d(dir);
         for (const QString &n : d.entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::System, QDir::Name))
             if (const QString p = d.filePath(n); keep(p, n)) e.paths << p;
-        e.age.restart();
+        e.scanned = now;
     }
     return e.paths;
 }
@@ -195,7 +197,17 @@ static QStringList cachedDirs(const QString &dir, bool (*keep)(const QString &pa
 /// One `<kind>N_input` file with its N and lower-cased label (both fixed for the
 /// chip's lifetime, so they are read once per scan, not once per poll).
 struct Input { QString path; int index; QString label; };
-struct Chip { QString name, path; QList<Input> temp, fan, power; };
+struct Chip { QString name, path; QList<Input> temp, fan, power; std::optional<sensorincarnation::Identity> identity; QString canonical; };
+static bool chipCurrent(const Chip &c) {
+    return !c.canonical.isEmpty() && QFileInfo(c.path).canonicalFilePath() == c.canonical &&
+        sensorincarnation::same(QFile::encodeName(c.path).constData(),c.identity);
+}
+// A replaced hwmon number must not inherit the old driver's labels/units.
+static std::optional<long long> chipRead(const Chip &c, const QString &path) {
+    if (!chipCurrent(c)) return {};
+    const auto value = rdInt(path);
+    return chipCurrent(c) ? value : std::nullopt;
+}
 
 static QList<Chip> scanChips();
 // hwmon chips only appear/disappear on module load or hot-plug, and a chip's
@@ -207,9 +219,13 @@ static QList<Chip> scanChips();
 static QList<Chip> chips() {
     static QMutex mu;
     static QList<Chip> cache;
-    static QElapsedTimer age;
+    static std::optional<telemetry::Tick> scanned;
     const QMutexLocker lock(&mu);
-    if (!age.isValid() || age.elapsed() > 30000 || cache.isEmpty()) { cache = scanChips(); age.restart(); }
+    const auto now = presentationClock();
+    if (!scanned || now < *scanned || now - *scanned >= telemetry::Tick(30000) || cache.isEmpty() ||
+        std::any_of(cache.cbegin(),cache.cend(),[](const Chip &c){return !chipCurrent(c);})) {
+        cache = scanChips(); scanned = now;
+    }
     return cache;  // implicitly shared: a copy is a refcount bump
 }
 
@@ -243,10 +259,13 @@ static QList<Chip> scanChips() {
     const QDir d(QStringLiteral("/sys/class/hwmon"));
     for (const QString &e : d.entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::System, QDir::Name)) {
         const QString p = d.filePath(e);
+        const auto identity = sensorincarnation::identify(QFile::encodeName(p).constData());
+        const auto canonical = QFileInfo(p).canonicalFilePath();
+        if (!identity || canonical.isEmpty()) continue;
         if (auto n = rd(p + "/name"); n && !n->isEmpty()) {
-            Chip c{*n, p, {}, {}, {}};
+            Chip c{*n, p, {}, {}, {}, identity, canonical};
             scanInputs(c);
-            out.append(std::move(c));
+            if (chipCurrent(c)) out.append(std::move(c));
         }
     }
     return out;
@@ -263,7 +282,7 @@ static const Input *temperatureInput(const Chip &chip) {
 static std::optional<double> chipTemp(const Chip &chip) {
     const auto *chosen = temperatureInput(chip);
     if (!chosen) return std::nullopt;
-    auto v = rdInt(chosen->path);
+    auto v = chipRead(chip, chosen->path);
     return v ? std::optional(*v / 1000.0) : std::nullopt;
 }
 
@@ -278,12 +297,13 @@ static std::optional<PresentationReading> read_cpuTemp() {
             long long hottest = -1;
             for (const Input &f : c.temp) {
                 // coretemp: "Core N" per physical core; show the hottest next to the package.
-                if (f.label.startsWith(QLatin1String("core "))) { if (auto v = rdInt(f.path)) hottest = std::max(hottest, *v); continue; }
+                if (f.label.startsWith(QLatin1String("core "))) { if (auto v = chipRead(c, f.path)) hottest = std::max(hottest, *v); continue; }
                 if (!f.label.startsWith(QLatin1String("tccd"))) continue;
-                if (auto v = rdInt(f.path))
+                if (auto v = chipRead(c, f.path))
                     t += SEP + QString(f.label).replace(QLatin1String("tccd"), QLatin1String("CCD")) + QStringLiteral(" %1°C").arg(*v / 1000.0, 0, 'f', 0);
             }
             if (hottest >= 0) t += SEP + QStringLiteral("hottest core %1°C").arg(hottest / 1000.0, 0, 'f', 0);
+            if (!chipCurrent(c)) continue;
             PresentationReading r{t, {{QStringLiteral("cpu_temp_c"), *main}}};
             r.metrics.append({QStringLiteral("cpu_temp_c"), temperatureInput(c)->path, QFileInfo(c.path + "/device").canonicalFilePath(), MetricUnit::Celsius, *main});
             return r;
@@ -315,7 +335,7 @@ static std::optional<PresentationReading> read_fans() {
         if (!presentationHwmonAllowed(c)) continue;
         for (const Input &f : c.fan)
             if (!rpmByIndex.contains(f.index) || rpmByIndex.value(f.index) == 0)
-                if (auto rpm = rdInt(f.path); rpm && *rpm >= 0) {
+                if (auto rpm = chipRead(c, f.path); rpm && *rpm >= 0) {
                     rpmByIndex.insert(f.index, *rpm);
                     provenance.insert(f.index, {QStringLiteral("fan%1_rpm").arg(f.index), f.path, QFileInfo(c.path + "/device").canonicalFilePath(), MetricUnit::Rpm, double(*rpm)});
                 }
@@ -350,13 +370,14 @@ static std::optional<PresentationReading> read_storage() {
 // when runtime PM reports active; unknown/suspended devices are not queried.
 // This is a best-effort gate, not an atomic PM reservation.
 static bool presentationHwmonAllowed(const Chip &c) {
+    if (!chipCurrent(c)) return false;
     const QString device = c.path + QStringLiteral("/device");
     const auto klass = rd(device + QStringLiteral("/class"));
     if (!klass || !klass->startsWith(QLatin1String("0x03"))) {
         // Known GPU hwmon without PCI evidence: don't assume it is integrated.
         return c.name != QLatin1String("amdgpu") && c.name != QLatin1String("nouveau") && c.name != QLatin1String("nvidia");
     }
-    return rd(device + QStringLiteral("/power/runtime_status")) == QStringLiteral("active");
+    return rd(device + QStringLiteral("/power/runtime_status")) == QStringLiteral("active") && chipCurrent(c);
 }
 
 static std::optional<PresentationReading> read_power() {
@@ -368,7 +389,7 @@ static std::optional<PresentationReading> read_power() {
             // Text shows the first four reported rails; numeric API keeps the
             // first rail for each hwmon name, as before. Never read a rail twice.
             if (l.size() >= 4 && values.contains(key)) continue;
-            if (auto uw = rdInt(f.path); uw && *uw > 0) {
+            if (auto uw = chipRead(c, f.path); uw && *uw > 0) {
                 if (l.size() < 4) l << QStringLiteral("%1 %2 W").arg(c.name).arg(*uw / 1e6, 0, 'f', 1);
                 if (!values.contains(key)) { values.insert(key, *uw / 1e6); metrics.append({key,f.path,QFileInfo(c.path + "/device").canonicalFilePath(),MetricUnit::Watts,*uw / 1e6}); }
             }
@@ -384,9 +405,9 @@ static std::optional<PresentationReading> read_igpu() {
         QStringList b; QMap<QString, double> values;
         if (auto t = chipTemp(c)) { b << QStringLiteral("%1°C").arg(*t, 0, 'f', 0); values.insert(QStringLiteral("igpu_temp_c"), *t); }
         if (!c.power.isEmpty())
-            if (auto uw = rdInt(c.power.first().path)) b << QStringLiteral("%1W").arg(*uw / 1e6, 0, 'f', 1);
-        if (auto hz = rdInt(c.path + "/freq1_input")) b << QStringLiteral("%1MHz").arg(*hz / 1000000);
-        if (b.isEmpty()) return std::nullopt;
+            if (auto uw = chipRead(c, c.power.first().path)) b << QStringLiteral("%1W").arg(*uw / 1e6, 0, 'f', 1);
+        if (auto hz = chipRead(c, c.path + "/freq1_input")) b << QStringLiteral("%1MHz").arg(*hz / 1000000);
+        if (b.isEmpty() || !chipCurrent(c)) continue;
         PresentationReading r{joined(b), values};
         if (values.contains(QStringLiteral("igpu_temp_c"))) r.metrics.append({QStringLiteral("igpu_temp_c"),temperatureInput(c)->path,QFileInfo(c.path + "/device").canonicalFilePath(),MetricUnit::Celsius,values.value(QStringLiteral("igpu_temp_c"))});
         return r;

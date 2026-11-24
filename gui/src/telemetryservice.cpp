@@ -42,13 +42,9 @@ void TelemetryService::finish(quint64 id, bool timedOut) {
     Waiter w = std::move(it.value()); waiters_.erase(it);
     disconnect(w.ownerConnection); w.timer->stop(); w.timer->deleteLater();
     if (!w.owner) return;
-    if (!timedOut && sysinfo::presentationClock() >= w.deadline) {
-        // A queued completion arriving after the deadline cannot count as success.
-        for (auto i=w.results.begin(); i!=w.results.end(); ++i) {
-            *i = sysinfo::PresentationReading{}; i->quality = telemetry::Quality::TimedOut;
-        }
-        timedOut = true;
-    }
+    // Previously collected readings retain their own quality. Only pending
+    // acquisitions time out; actual freshness is still checked below.
+    timedOut = timedOut || sysinfo::presentationClock() >= w.deadline;
     for (int i : w.pending) { sysinfo::PresentationReading r; r.quality = timedOut ? telemetry::Quality::TimedOut : telemetry::Quality::Unavailable; w.results.insert(i,r); }
     // Check freshness again at actual delivery, including time in the GUI queue.
     for (auto i = w.results.begin(); i != w.results.end(); ++i) {
@@ -68,14 +64,21 @@ void TelemetryService::launch(int index) {
         try { reading = reader(static_cast<Metric>(index)); } catch (...) { reading.quality = telemetry::Quality::Failed; }
         QMetaObject::invokeMethod(QCoreApplication::instance(),[self,index,token,reading=std::move(reading)] {
             if (!self || !self->flights_.finish(std::size_t(index),token)) return;
-            QList<quint64> ready;
+            QList<quint64> ready, expired;
+            const auto delivered = sysinfo::presentationClock();
             for (auto it=self->waiters_.begin(); it!=self->waiters_.end(); ++it) {
-                if (!it->pending.remove(index)) continue;
+                if (!it->pending.contains(index)) continue;
+                // The timer event may be queued behind this completion after a
+                // stall/suspend. Decide per waiter, before accepting the value.
+                if (delivered >= it->deadline) { expired.append(it.key()); continue; }
+                it->pending.remove(index);
                 it->results.insert(index,reading);
                 if (it->pending.isEmpty()) ready.append(it.key());
             }
-            // A callback may issue a new request or destroy its owner.
-            for (auto id : ready) { if (!self) break; self->finish(id,false); }
+            // Callbacks may issue a new request or destroy the service. Never
+            // hold iterators across them; a late flight cannot satisfy a new ID.
+            for (auto id : expired) { if (!self) return; self->finish(id,true); }
+            for (auto id : ready) { if (!self) return; self->finish(id,false); }
         },Qt::QueuedConnection);
     });
 }

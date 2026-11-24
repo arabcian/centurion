@@ -16,6 +16,16 @@ int main(int argc,char **argv) {
     auto other=device; other["uuid"]="GPU-ffffffff-89ab-cdef-0123-456789abcdef"; reply["device_identity"]=other; CHECK(status()==QStringLiteral("device_changed")); reply["device_identity"]=device;
     point["freq_offset_kHz"]=-110000; reply["vf_curve"]=QJsonArray{point}; CHECK(status()==QStringLiteral("point_or_memory_mismatch"));
     data["flatten_from"]=3; req["profile_data"]=data; CHECK(status()==QStringLiteral("observed_only"));
+    QJsonObject planPoint{{"index",3},{"volt_uV",600000},{"base_kHz",1310000},{"requested_delta_kHz",-110000},{"projected_kHz",1200000}};
+    QJsonObject plan{{"schema",1},{"device_identity",device},{"scope","gpu_point_plan_only"},{"points",QJsonArray{planPoint}}};
+    reply["apply_plan"]=plan;
+    CHECK(status()==QStringLiteral("point_match_only"));
+    planPoint["requested_delta_kHz"]=-120000; planPoint["projected_kHz"]=1190000;
+    plan["points"]=QJsonArray{planPoint}; reply["apply_plan"]=plan;
+    CHECK(status()==QStringLiteral("point_or_memory_mismatch"));
+    planPoint["projected_kHz"]=1190001; plan["points"]=QJsonArray{planPoint}; reply["apply_plan"]=plan;
+    CHECK(status()==QStringLiteral("observed_only"));
+    reply.remove("apply_plan");
     point["volt_uV"]=625000; reply["vf_curve"]=QJsonArray{point}; CHECK(status()==QStringLiteral("layout_changed"));
     other["uuid"]="broken"; CHECK(!curvereadback::verifiedDevice(other));
     return 0;

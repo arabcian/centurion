@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 pub mod fid {
     pub const INITIALIZE: u32 = 0x0150_E828;
     pub const ENUM_PHYSICAL_GPUS: u32 = 0xE5AC_921F;
+    pub const GET_BUS_ID: u32 = 0x1BE0_B8E5;
     pub const GET_FULL_NAME: u32 = 0xCEEE_8E9F;
     pub const GET_VFP_CURVE: u32 = 0x2153_7AD4;
     pub const GET_CLOCK_BOOST_MASK: u32 = 0x507B_4B59;

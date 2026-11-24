@@ -34,7 +34,8 @@ set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root hel
 add_executable(centurion
     src/main.cpp
     src/simulation.cpp   src/simulation.h
-    src/telemetrycache.h src/telemetrybroker.h src/telemetryservice.cpp src/telemetryservice.h
+    src/simulation_shell.cpp src/simulation_shell.h src/simulationguard.h
+    src/telemetrycache.h src/sensorincarnation.h src/telemetrybroker.h src/telemetryservice.cpp src/telemetryservice.h
     src/mainwindow.cpp   src/mainwindow.h
     src/uinavigator.cpp  src/uinavigator.h src/navigationtargets.h
     src/theme.cpp        src/theme.h
@@ -58,7 +59,7 @@ add_executable(centurion
     src/coinsights.cpp src/coinsights.h
     src/inteltab.cpp     src/inteltab.h
     src/vfcurvewidget.cpp src/vfcurvewidget.h
-    src/nvidiatab.cpp    src/nvidiatab.h src/curvejournal.h
+    src/nvidiatab.cpp    src/nvidiatab.h src/curvejournal.h src/curveplan.h
     src/optimizetab.cpp  src/optimizetab.h src/autotunehistory.h src/tuningsemantic.h src/frametimepair.h
     src/optimization_translation_sources.cpp
     src/autotunereport.cpp src/autotunereport.h
@@ -124,7 +125,7 @@ add_executable(centurion
     src/cpustress.cpp    src/cpustress.h
     src/cpustressbox.cpp src/cpustressbox.h
     src/driftwatch.cpp   src/driftwatch.h
-    src/smartwatch.cpp   src/smartwatch.h
+    src/smartwatch.cpp   src/smartwatch.h src/smarthistory.cpp src/smarttrend.h
     src/lidwatch.cpp     src/lidwatch.h
     src/acpievents.cpp   src/acpievents.h
     src/smartpage.cpp    src/smartpage.h
@@ -288,7 +289,11 @@ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hico
 option(CENTURION_BUILD_TESTS "Build GUI unit tests" OFF)
 if(CENTURION_BUILD_TESTS)
     enable_testing()
-    add_executable(centurion-diagnostichistory-test tests/diagnostichistory_test.cpp src/diagreport.cpp)
+    add_executable(centurion-smarthistory-test tests/smarthistory_test.cpp src/smarthistory.cpp)
+    target_link_libraries(centurion-smarthistory-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-smarthistory-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME smarthistory COMMAND centurion-smarthistory-test)
+    add_executable(centurion-diagnostichistory-test tests/diagnostichistory_test.cpp src/diagreport.cpp src/diagsources.cpp)
     target_link_libraries(centurion-diagnostichistory-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-diagnostichistory-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME diagnostichistory COMMAND centurion-diagnostichistory-test)
@@ -314,6 +319,13 @@ if(CENTURION_BUILD_TESTS)
     target_compile_definitions(centurion-userhelper-test PRIVATE QT_NO_KEYWORDS CENTURION_HELPER_DIR="/nonexistent-centurion-test")
     add_test(NAME userhelper COMMAND centurion-userhelper-test)
     set_tests_properties(userhelper PROPERTIES TIMEOUT 45)
+    add_executable(centurion-privileged-lifecycle-test tests/privileged_lifecycle_test.cpp src/privileged.cpp)
+    target_link_libraries(centurion-privileged-lifecycle-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-privileged-lifecycle-test PRIVATE QT_NO_KEYWORDS
+        CENTURION_HELPER_DIR="/nonexistent-centurion-test" CENTURION_VERSION="fixture" CENTURION_PRIVILEGED_FIXTURE)
+    add_test(NAME privileged-lifecycle COMMAND centurion-privileged-lifecycle-test)
+    set_tests_properties(privileged-lifecycle PROPERTIES TIMEOUT 80)
+
     add_executable(centurion-simulation-visual-test tests/simulation_visual_test.cpp
         src/simulation.cpp src/simulation.h src/theme.cpp src/theme.h src/charts.cpp src/charts.h
         src/vfcurvewidget.cpp src/vfcurvewidget.h src/i18n.cpp src/i18n.h)

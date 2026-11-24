@@ -14,6 +14,8 @@
 #include "mainwindow.h"
 #include "sysinfo.h"
 #include "simulation.h"
+#include "simulation_shell.h"
+#include "simulationguard.h"
 #include "theme.h"
 #include "tray.h"
 #include <QApplication>
@@ -275,6 +277,26 @@ static void warnUnknownModel() {
 }
 
 int main(int argc, char **argv) {
+    // Internal launcher entry, never fall through to a live GUI on failure.
+    for (int i=1; i<argc; ++i) if (std::strcmp(argv[i], "--simulate-shell") == 0) {
+        if (argc != 2 || !simulationguard::enter()) {
+            std::fputs("centurion: real-shell simulation isolation unavailable; refusing to start.\n", stderr);
+            return 2;
+        }
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+        for (const char *var : {"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"})
+            qputenv(var, QByteArray("/state/") + var);
+        ::chmod("/state/XDG_RUNTIME_DIR", 0700);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("/state/XDG_CONFIG_HOME"));
+        QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, QStringLiteral("/state/XDG_CONFIG_HOME"));
+        QApplication app(argc, argv);
+        app.setApplicationName("Centurion Simulation");
+        app.setApplicationVersion(CENTURION_VERSION);
+        theme::load(); i18n::install(app);
+        app.installEventFilter(new NoComboWheel(&app));
+        app.installEventFilter(new SpinSelectAll(&app));
+        return simulation::runRealShell(app);
+    }
     // Dispatch before settings, device checks, sockets, tray or MainWindow.
     // No real hardware object or helper route is reachable in this workspace.
     bool simulated = false;

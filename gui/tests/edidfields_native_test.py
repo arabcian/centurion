@@ -16,6 +16,8 @@ int main(){
  std::vector<uint8_t>d(256); for(int i=1;i<7;i++)d[i]=255; d[126]=1; fix(d,0); d[128]=2; d[129]=3; d[130]=12; d[132]=0x67; fix(d,1);
  auto a=inspect(d); assert(trusted(a)); bounds(a,d.size()); assert(a.fields.size()>16); assert(!trusted(inspect(std::span(d).first(128))));
  d[200]^=1; assert(!trusted(inspect(d))); d[200]^=1;
+ d[130]=0;fix(d,1);assert(!trusted(inspect(d)));d[130]=12;fix(d,1);
+ auto trailing=d;trailing.push_back(0x77);auto partial=inspect(trailing);assert(!trusted(partial));assert(partial.fields.back().kind==Kind::Unknown && partial.fields.back().offset==256);bounds(partial,trailing.size());
  d[126]=0;fix(d,0); assert(!trusted(inspect(d))); d[126]=1;fix(d,0);
  for(int end=0;end<256;++end)for(int len=0;len<32;++len){d[130]=end;d[132]=uint8_t(0x60|len);fix(d,1);auto v=inspect(d);bounds(v,d.size()); if(end!=0&&(end<4||end>127||(end>4&&5+len>end))) assert(!trusted(v));}
  // A 2560x1600 progressive timing: 287.24 MHz / (2720*1760) = 60 Hz.

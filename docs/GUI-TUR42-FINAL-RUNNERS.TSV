@@ -1,0 +1,13 @@
+runner	exit	seconds
+gui/tests/tur42_calibration_safety_static_test.py	0	1.49
+gui/tests/tur41_optimization_static_test.py	0	3.26
+gui/tests/abverify_native_test.py	0	4.03
+gui/tests/calibrationmath_native_test.py	0	7.75
+gui/tests/calibrationviewer_static_test.py	0	3.38
+gui/tests/co_reboot_native_test.py	0	4.38
+gui/tests/co_walk_native_test.py	1	2.78
+gui/tests/curveplan_incarnation_native_test.py	0	3.76
+tests/nvcurve_safety_static_test.py	0	2.15
+gui/tests/tur38_scene_lifecycle_static_test.py	0	2.0
+tests/test_algorithm_guardrails_static.py	0	1.81
+gui/tests/co_walk_native_test.py (retry after source assertion update)	0	-

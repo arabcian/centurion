@@ -23,5 +23,14 @@ int main(int argc,char **argv) {
     CHECK(workspace::integers(QJsonArray{1,2.5}).empty());
     workspace::settings().setValue(experimental,QByteArray("{invalid")); CHECK(workspace::read(experimental).isEmpty());
     workspace::settings().setValue(experimental,QByteArray(32769,'a')); CHECK(workspace::read(experimental).isEmpty());
+    const auto immediate=workspace::key(false,QStringLiteral("immediate"));
+    {
+        QTreeWidget closing; closing.setColumnCount(2); closing.header()->setStretchLastSection(false);
+        workspace::rememberHeader(&closing,immediate,true);
+        closing.setColumnWidth(0,222); closing.header()->moveSection(0,1);
+    }
+    const auto persisted=workspace::read(immediate);
+    CHECK(persisted.value("widths").toArray().at(0).toInt()==222);
+    CHECK(persisted.value("order").toArray().at(0).toInt()==1);
     return 0;
 }

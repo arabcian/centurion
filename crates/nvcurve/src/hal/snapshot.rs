@@ -50,12 +50,12 @@ pub fn save(gpu: Gpu, gpu_name: &str, dir: &str, max_snapshots: usize, raw: Opti
     // Store a stable UUID in new snapshots; older snapshots retain the GPU
     // name and must still be checked before restore.
     let gpu_uuid = gpu::enumerate_gpus().ok().and_then(|handles| {
-        let idx = handles.iter().position(|&h| h == gpu)? as u32;
-        let n = crate::nvml::ready().ok()?;
-        n.uuid(n.handle(idx).ok()?).ok()
+        let idx = handles.iter().position(|&h| h == gpu)?;
+        let device = gpu::curve_device_identity(idx,gpu,gpu_name).ok()?;
+        device["uuid"].as_str().map(str::to_owned)
     });
     let meta = json!({
-        "gpu": gpu_name, "gpu_uuid": gpu_uuid, "timestamp": timefmt::iso_now(), "file": bin.to_string_lossy(),
+        "gpu": gpu_name, "gpu_uuid": gpu_uuid, "identity_schema": 1, "timestamp": timefmt::iso_now(), "file": bin.to_string_lossy(),
         "size": raw.len(), "offsets_kHz": offs, "nonzero_offsets": nonzero,
     });
     if let Err(e) = write_json(&meta_path, &meta, 0o644) {
@@ -143,12 +143,16 @@ pub fn restore(gpu: Gpu, dir: &str, filepath: Option<&str>) -> Result<(), String
     if meta["size"].as_u64() != Some(CT_SIZE as u64) {
         return Err("Snapshot metadata size does not match ClockBoostTable".into());
     }
+    let handles = gpu::enumerate_gpus().map_err(|e| e.to_string())?;
+    if handles.as_slice() != [gpu] {
+        return Err("Snapshot restore requires unambiguous single-GPU identity; multi-GPU restore is not verified".into());
+    }
+    if meta.get("identity_schema").is_some() && (meta["identity_schema"].as_u64() != Some(1) || !meta["gpu_uuid"].is_string()) {
+        return Err("Snapshot has no verified GPU UUID or has an unsupported identity schema".into());
+    }
     if let Some(expected_uuid) = meta["gpu_uuid"].as_str() {
-        let handles = gpu::enumerate_gpus().map_err(|e| e.to_string())?;
-        let idx = handles.iter().position(|&h| h == gpu)
-            .ok_or("Cannot locate GPU for snapshot UUID verification")? as u32;
-        let n = crate::nvml::ready()?;
-        let got = n.uuid(n.handle(idx)?)?;
+        let identity = gpu::curve_device_identity(0,gpu,&live_name)?;
+        let got = identity["uuid"].as_str().ok_or("GPU UUID unavailable")?;
         if got != expected_uuid { return Err(format!("Snapshot GPU UUID {expected_uuid} != active {got}")); }
     }
     let current_mask = get_boost_mask(gpu)?;

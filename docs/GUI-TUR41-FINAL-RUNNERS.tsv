@@ -1,0 +1,11 @@
+runner	exit	seconds
+gui/tests/tur41_optimization_static_test.py	0	1.65
+gui/tests/operationreceipt_native_test.py	0	5.95
+gui/tests/abverify_native_test.py	0	3.36
+gui/tests/calibrationviewer_static_test.py	0	2.35
+gui/tests/translation_tr_test.py	0	2.75
+gui/tests/bootreceiptcoverage_native_test.py	0	8.99
+gui/tests/tur29_contract_static_test.py	0	2.04
+gui/tests/tur36_lifecycle_static_test.py	0	2.19
+tests/test_nov2026_security_fixes_static.py	0	1.39
+tests/test_session_audit_static.py	0	1.11

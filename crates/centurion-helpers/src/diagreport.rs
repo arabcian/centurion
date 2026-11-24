@@ -15,8 +15,10 @@
 use crate::health;
 use crate::overview;
 use serde_json::{json, Value};
-use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -27,7 +29,7 @@ const JSON_MAX: u64 = 4 << 20;
 /// Lines kept of the sleep and write logs.
 const LINES: usize = 200;
 /// Text shown per file in the preview (the archive keeps everything).
-const PREVIEW_BYTES: usize = 64 << 10;
+const PREVIEW_BYTES: usize = 32 << 10;
 
 /// Where the inputs live. The system paths are the real ones; tests point them at temp folders.
 pub struct Sources {
@@ -238,6 +240,31 @@ fn mask_home(text: &str) -> (String, u64) {
     (out, n)
 }
 
+// Structured records can carry private fields without a textual label delimiter.
+fn mask_json_fields(value: &mut Value) -> u64 {
+    match value {
+        Value::Object(fields) => fields.iter_mut().map(|(key, value)| {
+            let normalized = key.to_ascii_lowercase().replace(['-', ' '], "_");
+            let private = matches!(normalized.as_str(), "hostname" | "host_name" | "username" | "user_name" |
+                "machine_id" | "boot_id" | "boot" | "ssid" | "bssid" | "mac" | "mac_address" |
+                "serial" | "serial_number" | "id_serial" | "id_serial_short" | "uuid" | "gpu_uuid" |
+                "disk_uuid" | "partuuid" | "asset_tag" | "ip_address" | "mountpoint" | "mount_point");
+            if private && !value.is_null() && value.as_str() != Some("<hidden>") {
+                *value = Value::String("<hidden>".to_owned()); 1
+            } else { mask_json_fields(value) }
+        }).sum(),
+        Value::Array(items) => items.iter_mut().map(mask_json_fields).sum(),
+        Value::String(text) => { let (masked, count) = sanitize(text); *text = masked; count },
+        _ => 0,
+    }
+}
+
+fn mask_structured(raw: &str) -> Option<(String, u64)> {
+    let mut json = serde_json::from_str::<Value>(raw).ok()?;
+    let count = mask_json_fields(&mut json);
+    Some((serde_json::to_string(&json).ok()?, count))
+}
+
 /// Everything a text goes through before it is kept, with the number of values masked.
 pub fn sanitize(text: &str) -> (String, u64) {
     let scrubbed = health::scrub(text);
@@ -253,38 +280,72 @@ pub fn sanitize(text: &str) -> (String, u64) {
 // ── collecting ───────────────────────────────────────────────────────────────
 
 /// (status, text) of one file: the last `lines` lines, or the last `tail` bytes.
+// Open the actual descriptor first; reject symlinks, FIFOs and changing whole-file captures.
 fn fetch(path: &Path, tail: u64, lines: Option<usize>) -> (&'static str, Option<String>) {
-    match std::fs::metadata(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ("not present", None),
-        Err(_) => ("unreadable", None),
-        Ok(m) if !m.is_file() => ("unreadable", None),
-        Ok(_) => match overview::read_tail(path, tail) {
-            None => ("unreadable", None),
-            Some(t) => {
-                let t = match lines {
-                    Some(n) => { let v: Vec<&str> = t.lines().collect(); v[v.len().saturating_sub(n)..].join("\n") + "\n" }
-                    None => t,
-                };
-                ("included", Some(t))
-            }
-        },
-    }
+    read_bounded(path, tail, lines, false)
 }
-
 fn json_file(path: &Path) -> (&'static str, Option<String>) {
-    match std::fs::metadata(path) {
-        Ok(m) if m.len() > JSON_MAX => ("too large", None),
-        _ => fetch(path, JSON_MAX, None),
+    read_bounded(path, JSON_MAX, None, true)
+}
+fn read_bounded(path: &Path, cap: u64, lines: Option<usize>, whole: bool) -> (&'static str, Option<String>) {
+    let mut file = match std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ("not present", None),
+        Err(_) => return ("unreadable", None),
+    };
+    let Ok(before) = file.metadata() else { return ("unreadable", None); };
+    if !before.is_file() { return ("unreadable", None); }
+    if whole && before.len() > cap { return ("too large", None); }
+    let start = before.len().saturating_sub(cap);
+    if file.seek(SeekFrom::Start(start)).is_err() { return ("unreadable", None); }
+    let mut bytes = Vec::new();
+    if (&mut file).take(cap + 1).read_to_end(&mut bytes).is_err() { return ("unreadable", None); }
+    if whole {
+        let Ok(after) = file.metadata() else { return ("unreadable", None); };
+        if bytes.len() as u64 > cap { return ("too large", None); }
+        if bytes.len() as u64 != before.len() || before.len() != after.len() || before.modified().ok() != after.modified().ok() {
+            return ("unreadable", None);
+        }
+    } else {
+        bytes.truncate(cap as usize);
+        if start > 0 {
+            // Never export a partial first log line whose identity key may have been cut away.
+            let Some(newline) = bytes.iter().position(|&b| b == b'\n') else { return ("too large", None); };
+            bytes.drain(..=newline);
+        }
+        // Ignore an incomplete final line as well (concurrent append / cap).
+        if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+            let Some(newline) = bytes.iter().rposition(|&b| b == b'\n') else { return ("unreadable", None); };
+            bytes.truncate(newline + 1);
+        }
     }
+    let Ok(text) = String::from_utf8(bytes) else { return ("unreadable", None); };
+    let text = match lines {
+        Some(n) => { let v: Vec<&str> = text.lines().collect(); v[v.len().saturating_sub(n)..].join("\n") + "\n" }
+        None => text,
+    };
+    ("included", Some(text))
 }
 
 fn entry(name: &str, status: &'static str, raw: Option<String>) -> Entry {
-    let (text, masked) = raw.map(|r| sanitize(&r)).unwrap_or_default();
+    let (text, masked) = match raw {
+        Some(r) if name.ends_with(".json") => match mask_structured(&r) {
+            Some((text, count)) if text.len() as u64 <= JSON_MAX => (text, count),
+            other => return Entry { name: name.to_owned(), status: if other.is_some() { "too large" } else { "unreadable" }, text: String::new(), masked: 0 },
+        },
+        Some(r) => sanitize(&r),
+        None => (String::new(), 0),
+    };
     Entry { name: name.to_owned(), status, text, masked }
 }
 
 fn read_trim(p: &Path) -> Option<String> {
-    std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(p).ok()?;
+    if !file.metadata().ok()?.is_file() { return None; }
+    let mut data = Vec::new();
+    file.take(4097).read_to_end(&mut data).ok()?;
+    if data.len() > 4096 { return None; }
+    String::from_utf8(data).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
 }
 
 fn system_text(src: &Sources, version: &str, now: i64, offset: i64) -> String {
@@ -315,12 +376,14 @@ Files
   exposure.json     boot record: how each boot ended
   writes.log        the last 200 writes Centurion made to sysfs / firmware
 
-Replaced before saving
+Best-effort redaction before saving (not a guarantee of anonymity)
   serial numbers, UUIDs and asset tags   -> <hidden>
   MAC addresses                          -> <mac>
   IPv4 and IPv6 addresses                -> <ip>
   user names in home-folder paths        -> <user>
   kernel addresses                       -> <addr>
+Only selected files with matching preview digests are archived.
+Logs are bounded tails; long previews may be incomplete.
 Look through the files before you attach them anywhere public.
 ";
 
@@ -334,14 +397,14 @@ pub fn collect(src: &Sources, version: &str, dgpu: bool, now: i64, offset: i64) 
         let (status, raw) = fetch(&src.state.join(name), LOG_TAIL, None);
         v.push(entry(name, status, raw));
     }
-    let (status, raw) = fetch(&src.log_dir.join("sleep.log"), u64::MAX / 2, Some(LINES));
+    let (status, raw) = fetch(&src.log_dir.join("sleep.log"), LOG_TAIL, Some(LINES));
     v.push(entry("sleep.log", status, raw));
     for (name, path) in [("cooling.json", src.state.join("cooling.json")), ("battery.json", src.state.join("battery.json")),
                          ("dgpu-usage.json", src.state.join("dgpu.json")), ("exposure.json", src.lib_dir.join("exposure.json"))] {
         let (status, raw) = json_file(&path);
         v.push(entry(name, status, raw));
     }
-    let (status, raw) = fetch(&src.log_dir.join("writes.log"), u64::MAX / 2, Some(LINES));
+    let (status, raw) = fetch(&src.log_dir.join("writes.log"), LOG_TAIL, Some(LINES));
     v.push(entry("writes.log", status, raw));
     if dgpu {
         let text = serde_json::to_string_pretty(&crate::dgpu::status()).ok();
@@ -355,11 +418,44 @@ pub fn collect(src: &Sources, version: &str, dgpu: bool, now: i64, offset: i64) 
 /// The file list and each file's text, cut to PREVIEW_BYTES on a character boundary.
 fn preview(entries: &[Entry]) -> Value {
     let files: Vec<Value> = entries.iter().map(|e| {
-        let cut = e.text.char_indices().map(|(i, _)| i).find(|&i| i >= PREVIEW_BYTES).unwrap_or(e.text.len());
-        json!({"name": e.name, "status": e.status, "bytes": e.text.len(), "masked": e.masked, "text": &e.text[..cut]})
+        let mut cut = e.text.len().min(PREVIEW_BYTES);
+        while !e.text.is_char_boundary(cut) { cut -= 1; }
+        json!({"name": e.name, "status": e.status, "bytes": e.text.len(), "masked": e.masked,
+               "sha256": content_digest(&e.text), "truncated": cut < e.text.len(), "text": &e.text[..cut]})
     }).collect();
     let masked: u64 = entries.iter().map(|e| e.masked).sum();
-    json!({"ok": true, "files": files, "masked": masked})
+    json!({"ok": true, "preview_schema": 2, "files": files, "masked": masked})
+}
+
+fn content_digest(text: &str) -> String {
+    crate::bootlogo::sha256(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join("")
+}
+
+// The GUI approves a set of named, sanitized byte streams. A changed source must be reviewed again.
+// The caller never supplies archive entry names or contents directly to the packer.
+fn reviewed_entries(entries: Vec<Entry>, req: &Value) -> Result<Vec<Entry>, &'static str> {
+    if req["preview_schema"].as_u64() != Some(2) { return Err("review the report with the current preview before saving"); }
+    let selection = req["selected"].as_array().ok_or("missing report selection")?;
+    if selection.is_empty() || selection.len() > entries.len() { return Err("invalid report selection"); }
+    let mut selected = std::collections::BTreeMap::new();
+    for value in selection {
+        let name = value["name"].as_str().ok_or("invalid selected file")?;
+        let digest = value["sha256"].as_str().ok_or("missing preview digest")?;
+        if name.len() > 128 || digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) || selected.insert(name, digest).is_some() {
+            return Err("invalid or duplicate selected file");
+        }
+    }
+    let mut result = Vec::new();
+    for entry in entries {
+        if let Some(digest) = selected.remove(entry.name.as_str()) {
+            if entry.status != "included" || content_digest(&entry.text) != digest {
+                return Err("report contents changed after preview; reopen the report and review again");
+            }
+            result.push(entry);
+        }
+    }
+    if !selected.is_empty() { return Err("selected report file unavailable"); }
+    Ok(result)
 }
 
 /// Writes the included entries as <root>/<name> in a private staging folder, packs them with tar and
@@ -376,8 +472,8 @@ pub fn write_archive(entries: &[Entry], root: &str, out: &Path) -> Result<u64, S
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let stage = std::env::temp_dir().join(format!("centurion-report-{}-{nanos}", std::process::id()));
     let dir = stage.join(root);
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let result = pack(entries, root, tar, &stage, &dir, out);
+    std::fs::DirBuilder::new().mode(0o700).create(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    let result = std::fs::create_dir(&dir).map_err(|e| e.to_string()).and_then(|_| pack(entries, root, tar, &stage, &dir, out));
     let _ = std::fs::remove_dir_all(&stage);
     result
 }
@@ -391,19 +487,20 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
         .arg("-czf").arg(&archive).arg("-C").arg(stage).arg(root)
         .status().map_err(|e| format!("tar: {e}"))?;
     if !status.success() { return Err(format!("tar failed ({status})")); }
-    let tmp = out.with_file_name(format!("{}.partial", out.file_name().and_then(|n| n.to_str()).unwrap_or("report.tar.gz")));
-    {
-        // A leftover (or planted link) is removed, never written through.
-        let _ = std::fs::remove_file(&tmp);
-        let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)
-            .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let tmp = out.with_file_name(format!(".centurion-report-{}-{}.partial", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
+    let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let result = (|| {
         let mut src = std::fs::File::open(&archive).map_err(|e| format!("{}: {e}", archive.display()))?;
-        std::io::copy(&mut src, &mut dst).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        let bytes = std::io::copy(&mut src, &mut dst).map_err(|e| format!("{}: {e}", tmp.display()))?;
         dst.flush().map_err(|e| e.to_string())?;
-    }
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, out).map_err(|e| format!("{}: {e}", out.display()))?;
-    Ok(std::fs::metadata(out).map_err(|e| e.to_string())?.len())
+        dst.sync_all().map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, out).map_err(|e| format!("{}: {e}", out.display()))?;
+        Ok(bytes)
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&tmp); }
+    result
 }
 
 /// Op "diag_report": a preview without "out", the archive with it.
@@ -419,6 +516,10 @@ pub fn request(req: &Value) -> Value {
     match req["out"].as_str() {
         None => preview(&entries),
         Some(out) => {
+            let entries = match reviewed_entries(entries, req) {
+                Ok(entries) => entries,
+                Err(error) => return json!({"ok": false, "error": error}),
+            };
             let root = format!("centurion-report-{}", overview::ymd(now, offset));
             match write_archive(&entries, &root, Path::new(out)) {
                 Ok(bytes) => json!({"ok": true, "file": out, "bytes": bytes,
@@ -557,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn a_planted_partial_link_is_replaced_not_followed() {
+    fn a_planted_fixed_partial_link_is_not_followed() {
         let root = temp("partial-link");
         let victim = root.join("victim.conf");
         std::fs::write(&victim, "ORIGINAL").unwrap();
@@ -583,6 +684,37 @@ mod tests {
     }
 
     #[test]
+    fn structured_and_bounded_capture() {
+        let (text, count) = mask_structured(r#"{"boot":"secret-boot","nested":[{"hostname":"secret-host","ssid":"secret-wifi","value":3}]}"#).unwrap();
+        assert!(serde_json::from_str::<Value>(&text).is_ok());
+        assert!(mask_structured("{broken").is_none());
+        assert_eq!(count, 3); assert!(!text.contains("secret-")); assert!(text.contains("3"));
+        let root = temp("bounded-capture"); let path = root.join("log");
+        std::fs::write(&path, "serial=long-secret-without-newline").unwrap();
+        assert_ne!(fetch(&path, 8, None).0, "included");
+        std::fs::write(&path, "secret-prefix\ncomplete\npartial").unwrap();
+        assert_eq!(fetch(&path, 18, None).1.as_deref(), Some("complete\n"));
+        let link = root.join("link"); std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert_eq!(fetch(&link, 32, None).0, "unreadable");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reviewed_selection_rejects_changed_duplicate_and_unknown_entries() {
+        let capture = || vec![Entry { name: "a.txt".into(), status: "included", text: "first".into(), masked: 0 },
+            Entry { name: "b.txt".into(), status: "included", text: "second".into(), masked: 0 }];
+        let mut req = json!({"preview_schema": 2, "selected": [{"name": "a.txt", "sha256": content_digest("first")}]});
+        assert_eq!(reviewed_entries(capture(), &req).unwrap().len(), 1);
+        let mut changed = capture(); changed[0].text.push('!');
+        assert!(reviewed_entries(changed, &req).is_err());
+        let item = req["selected"][0].clone(); req["selected"].as_array_mut().unwrap().push(item);
+        assert!(reviewed_entries(capture(), &req).is_err());
+        req["selected"] = json!([{"name": "../secret", "sha256": content_digest("first")}]);
+        assert!(reviewed_entries(capture(), &req).is_err());
+        assert!(reviewed_entries(capture(), &json!({})).is_err());
+    }
+
+    #[test]
     fn preview_lists_every_file_with_its_status() {
         let entries = vec![
             Entry { name: "a.txt".into(), status: "included", text: "é".repeat(PREVIEW_BYTES), masked: 2 },
@@ -593,5 +725,7 @@ mod tests {
         assert_eq!(p["files"][1]["status"], "unreadable");
         let shown = p["files"][0]["text"].as_str().unwrap();
         assert!(shown.len() <= PREVIEW_BYTES && shown.is_char_boundary(shown.len()));
+        assert_eq!(p["files"][0]["truncated"], true);
+        assert_eq!(p["files"][0]["sha256"], content_digest(&entries[0].text));
     }
 }

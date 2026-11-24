@@ -14,6 +14,7 @@
 #include "privileged.h"
 #include "ryzentab.h"
 #include <algorithm>
+#include <utility>
 #include <QDir>
 #include <QDateTime>
 #include <QFile>
@@ -882,6 +883,17 @@ void SceneEngine::apply(const QString &name) {
     start(*s);
 }
 
+bool SceneEngine::applyTracked(const QString &name, std::uint64_t cpuLease, std::function<void(const QString &)> done) {
+    if (!done || !cpuLease || operationActive() || !pending_.isEmpty() || gameSessions() > 0 || gameStarting() || gameSceneActive()) return false;
+    const auto s = load(name);
+    if (!s) return false;
+    nextAuto_ = false;
+    trackedCpuLease_ = cpuLease;
+    trackedDone_ = std::move(done);
+    start(*s);
+    return true;
+}
+
 /// The NVIDIA dGPU is on the bus, has a driver bound AND the driver actually
 /// initialised it (/proc/driver/nvidia/gpus lists it; "nvidia-smi: No devices were
 /// found" = empty). After iGPU-only / a firmware power cut the PCI function can stay
@@ -904,18 +916,21 @@ void SceneEngine::addStep(const QString &what, Step step, Step undo) {
 }
 
 void SceneEngine::helper(const QString &name, const QJsonObject &req, Done done,
-                         std::function<QString(const QJsonObject &)> describe) {
-    privileged::run(privileged::helperPath(name), req, this, [done, describe](const privileged::Result &r) {
+                         std::function<QString(const QJsonObject &)> describe, std::uint64_t cpuLease) {
+    auto callback = [done, describe](const privileged::Result &r) {
         if (!r.ok()) { done(false, r.message().isEmpty() ? QStringLiteral("failed") : r.message()); return; }
         done(true, describe ? describe(r.json) : QString());
-    }, 120000);
+    };
+    // A transaction cannot roll back or advance before the previous root process exits.
+    // A CPU lease is supplied only by the scene step that actually owns it (never tray calls).
+    privileged::runUntilExit(privileged::helperPath(name), req, this, callback, 120000, {}, cpuLease);
 }
 
 /// Applies a saved CPU profile (Ryzen Curve Optimizer or Intel undervolt, by vendor) straight from its
 /// file through the helper. Used by the scene step and by the tray: nothing is loaded into the tab's
 /// editor (unsaved values there stay as they are) and no dialog is ever opened.
 /// `fromScene`: Intel only -- the profile is recorded for centurion-intel-uv-daemon (see intel_uv_daemon).
-void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done) {
+void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done, std::uint64_t cpuLease) {
     if (win_->ryzen()) {
         QFile f(ryzen::profilesDir() + '/' + name + ".json");
         if (!f.open(QIODevice::ReadOnly) || f.size() > 256 * 1024) { done(false, "profile '" + name + "' not found"); return; }
@@ -931,15 +946,15 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
         }
         const QJsonValue coall = d.value("coall");
         if (!coall.isDouble() && entries.isEmpty()) { done(false, "profile '" + name + "' has no offsets"); return; }
-        auto perCore = [this, entries, done, name] {
+        auto perCore = [this, entries, done, name, cpuLease] {
             if (entries.isEmpty()) { done(true, "'" + name + "'"); return; }
             helper("ryzen-co-helper", {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}, {"profile", name}}}},
-                   [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); });
+                   [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); }, {}, cpuLease);
         };
         // Per-core batch resets every core to 0 first, so all-core only without per-core values — as the tab.
         if (coall.isDouble() && entries.isEmpty())
             helper("ryzen-co-helper", {{"op", "set_coall"}, {"params", QJsonObject{{"value", coall.toInt()}, {"profile", name}}}},
-                   [perCore, done](bool ok, const QString &m) { if (ok) perCore(); else done(false, m); });
+                   [perCore, done](bool ok, const QString &m) { if (ok) perCore(); else done(false, m); }, {}, cpuLease);
         else perCore();
         return;
     }
@@ -947,7 +962,7 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
         QFile f(inteluv::profilesDir() + '/' + name + ".json");
         if (!f.open(QIODevice::ReadOnly) || f.size() > 64 * 1024) { done(false, "profile '" + name + "' not found"); return; }
         helper("intel-uv-helper", {{"op", "apply"}, {"hold", fromScene}, {"profile", QJsonDocument::fromJson(f.readAll()).object()}},
-               [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); });
+               [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); }, {}, cpuLease);
         return;
     }
     done(false, "no CPU curve backend for this CPU");
@@ -1126,7 +1141,7 @@ void SceneEngine::start(const Scene &s) {
         };
         addStep("Fan boost", [this, on = s.fanFullSpeed == 1](Done done) {
             // A transaction must snapshot the previous value before it may touch the EC.
-            privileged::run(privileged::helperPath("legion-profile-helper"), QJsonObject{{"fan_fullspeed", "get"}}, this,
+            privileged::runUntilExit(privileged::helperPath("legion-profile-helper"), QJsonObject{{"fan_fullspeed", "get"}}, this,
                 [this, done, on](const privileged::Result &before) {
                     if (!before.ok() || !before.json.value("on").isBool()) {
                         softFail_ = true;  // nothing written: a problem line, not a rollback
@@ -1151,10 +1166,12 @@ void SceneEngine::start(const Scene &s) {
                 const auto h = pp::primaryHandler();
                 QJsonObject req{{"profile", old}};
                 if (h) req["handler"] = h->node;
-                privileged::run(privileged::helperPath("legion-profile-helper"), req, this,
+                privileged::runUntilExit(privileged::helperPath("legion-profile-helper"), req, this,
                                 [old, done](const privileged::Result &r) {
-                                    done(r.ok() && r.json.value("effective").toString(old) == old,
-                                         r.ok() ? QStringLiteral("requested previous %1").arg(old) : r.message());
+                                    const QString effective = r.json.value("effective").toString();
+                                    const bool restored = r.ok() && effective == old;
+                                    done(restored, !r.ok() ? r.message() : restored ? QStringLiteral("helper reported previous %1").arg(old)
+                                         : QStringLiteral("previous profile readback missing or mismatched"));
                                 }, 120000);
             };
         }
@@ -1162,16 +1179,17 @@ void SceneEngine::start(const Scene &s) {
             const auto h = pp::primaryHandler();
             QJsonObject req{{"profile", p}};
             if (h) req["handler"] = h->node;
-            privileged::run(privileged::helperPath("legion-profile-helper"), req, this, [this, p, h, done](const privileged::Result &r) {
+            privileged::runUntilExit(privileged::helperPath("legion-profile-helper"), req, this, [this, p, h, done](const privileged::Result &r) {
                 if (!r.ok()) { done(false, r.message().isEmpty() ? QStringLiteral("failed") : r.message()); return; }
                 const QString eff = r.json.value("effective").toString();
                 auto settle = [this, p, done](const QString &now) {
                     Q_EMIT win_->home()->profileChanged(now);  // Firmware tab relocks now, not at its next poll
                     if (now == p) { done(true, HomeTab::profileLabel(p)); return; }
+                    if (now.isEmpty()) { done(false, QStringLiteral("effective power profile could not be read")); return; }
                     done(false, QStringLiteral("asked for %1 but the firmware is on %2 (that mode may not be available in this power state)")
                                     .arg(HomeTab::profileLabel(p), HomeTab::profileLabel(now)));
                 };
-                if (eff.isEmpty() || eff == p) { settle(p); return; }
+                if (eff == p) { settle(eff); return; }
                 // The EC can still be settling: look once more before calling it a mismatch.
                 QTimer::singleShot(1000, this, [h, eff, settle] {
                     const auto cur = pp::currentProfile(h);
@@ -1185,10 +1203,10 @@ void SceneEngine::start(const Scene &s) {
     if (has(PlanStep::FanBoostCheck)) {
         addStep("Fan boost check", [this, on = s.fanFullSpeed == 1](Done done) {
             const QString h = privileged::helperPath("legion-profile-helper");
-            privileged::run(h, QJsonObject{{"fan_fullspeed", "get"}}, this, [this, h, on, done](const privileged::Result &r) {
-                if (!r.ok()) { softFail_ = true; done(false, "could not verify fan boost after power profile: " + r.message()); return; }
+            privileged::runUntilExit(h, QJsonObject{{"fan_fullspeed", "get"}}, this, [this, h, on, done](const privileged::Result &r) {
+                if (!r.ok() || !r.json.value("on").isBool()) { softFail_ = true; done(false, "could not verify fan boost after power profile: " + r.message()); return; }
                 if (r.json.value("on").toBool() == on) { done(true, "unchanged"); return; }
-                privileged::run(h, QJsonObject{{"device", "fan_fullspeed"}, {"value", on ? "1" : "0"}}, this,
+                privileged::runUntilExit(h, QJsonObject{{"device", "fan_fullspeed"}, {"value", on ? "1" : "0"}}, this,
                                 [done](const privileged::Result &r2) { done(r2.ok(), r2.ok() ? QStringLiteral("re-applied after the profile change") : r2.message()); });
             });
         }, [this](Done done) {
@@ -1213,7 +1231,7 @@ void SceneEngine::start(const Scene &s) {
         if (!oldFirmware.isEmpty()) {
             const bool partial = oldFirmware.size() != s.firmware.size();
             undoFirmware = [this, oldFirmware, partial](Done done) {
-                privileged::run(privileged::helperPath("fwattr-helper"),
+                privileged::runUntilExit(privileged::helperPath("fwattr-helper"),
                                 QJsonDocument(oldFirmware).toJson(QJsonDocument::Compact), this,
                                 [done, partial](const privileged::Result &r) {
                                     done(r.ok(), !r.ok() ? r.message()
@@ -1245,17 +1263,18 @@ void SceneEngine::start(const Scene &s) {
                 else if (a->ranged) batch.append(QJsonObject{{"path", a->path}, {"value", it.value()}});
                 else ++unknown;
             }
+            if (unknown) incomplete_ = true;
             const QString note = unknown ? QStringLiteral(" (%1 not present here)").arg(unknown) : QString();
             auto afterSysfs = [this, wmi, note, done, n = batch.size()](bool ok, const QString &msg) {
                 if (!ok) { done(false, msg); return; }
                 if (wmi.isEmpty()) { done(true, QStringLiteral("%1 value(s)").arg(n) + note); return; }
-                if (!nvidiaUsable()) { done(true, QStringLiteral("%1 value(s); %2 GPU value(s) skipped (NVIDIA dGPU is off)").arg(n).arg(wmi.size()) + note); return; }
+                if (!nvidiaUsable()) { incomplete_ = true; done(true, QStringLiteral("%1 value(s); %2 GPU value(s) skipped (NVIDIA dGPU is off)").arg(n).arg(wmi.size()) + note); return; }
                 helper("legion-gpu-helper", {{"op", "apply"}, {"values", wmi}}, [done, n, note, w = wmi.size()](bool ok, const QString &m) {
                     done(ok, ok ? QStringLiteral("%1 value(s) + %2 GPU (WMI)").arg(n).arg(w) + note : "GPU (WMI): " + m);
                 });
             };
             if (batch.isEmpty()) { afterSysfs(true, {}); return; }
-            privileged::run(privileged::helperPath("fwattr-helper"), QJsonDocument(batch).toJson(QJsonDocument::Compact), this,
+            privileged::runUntilExit(privileged::helperPath("fwattr-helper"), QJsonDocument(batch).toJson(QJsonDocument::Compact), this,
                                 [afterSysfs](const privileged::Result &r) {
                                     if (r.ok()) { afterSysfs(true, {}); return; }
                                     QStringList bad;
@@ -1270,13 +1289,13 @@ void SceneEngine::start(const Scene &s) {
     if (has(PlanStep::CpuRyzen) || has(PlanStep::CpuIntel) || has(PlanStep::CpuUnsupported)) {
         if (has(PlanStep::CpuRyzen)) {
             addStep("CPU curve", [this, c = s.cpu](Done done) {
-                if (c.kind == Choice::Reset) { helper("ryzen-co-helper", {{"op", "reset"}}, [done](bool ok, const QString &m) { done(ok, ok ? "reset (0)" : m); }); return; }
-                applyCpuProfile(c.name, true, done);
+                if (c.kind == Choice::Reset) { helper("ryzen-co-helper", {{"op", "reset"}}, [done](bool ok, const QString &m) { done(ok, ok ? "reset (0)" : m); }, {}, trackedCpuLease_); return; }
+                applyCpuProfile(c.name, true, done, trackedCpuLease_);
             });
         } else if (has(PlanStep::CpuIntel)) {
             addStep("CPU undervolt", [this, c = s.cpu](Done done) {
-                if (c.kind == Choice::Reset) { helper("intel-uv-helper", {{"op", "reset"}, {"hold", true}}, [done](bool ok, const QString &m) { done(ok, ok ? "reset (0 mV)" : m); }); return; }
-                applyCpuProfile(c.name, true, done);
+                if (c.kind == Choice::Reset) { helper("intel-uv-helper", {{"op", "reset"}, {"hold", true}}, [done](bool ok, const QString &m) { done(ok, ok ? "reset (0 mV)" : m); }, {}, trackedCpuLease_); return; }
+                applyCpuProfile(c.name, true, done, trackedCpuLease_);
             });
         } else {
             incomplete_ = true;
@@ -1318,7 +1337,7 @@ void SceneEngine::start(const Scene &s) {
             // By name: tune-profile-helper takes the values from the root-owned approved store, never from this request.
             QJsonObject req{{"op", "apply_preset"}, {"mode", "manual"}, {"replace", true}, {"preset", QJsonValue::Null}};
             auto run = [this, done, c](const QJsonObject &rq) {
-                privileged::run(privileged::helperPath("tune-profile-helper"), rq, this, [this, done, c](const privileged::Result &r) {
+                privileged::runUntilExit(privileged::helperPath("tune-profile-helper"), rq, this, [this, done, c](const privileged::Result &r) {
                     if (r.reached && r.json.value("game_active").toBool()) { done(true, "left alone (game session active)"); return; }
                     QString msg = c.kind == Choice::Reset ? QStringLiteral("originals restored") : "'" + c.name + "'";
                     QStringList exceptions;
@@ -1347,7 +1366,7 @@ void SceneEngine::start(const Scene &s) {
             if (OptimizeTab::storeFresh(c.name, values)) { run(req); return; }
             // First use, or the preset changed since it was approved (a built-in updated with the
             // program): approve (store root-owned) once, then apply by name.
-            privileged::run(privileged::helperPath("tune-helper"),
+            privileged::runUntilExit(privileged::helperPath("tune-helper"),
                             QJsonObject{{"op", "preset_save"}, {"name", c.name}, {"values", values}}, this,
                             [run, req, done, name = c.name, values](const privileged::Result &r) {
                                 if (!r.ok()) { done(false, r.message()); return; }
@@ -1365,7 +1384,7 @@ void SceneEngine::start(const Scene &s) {
                 done(true, "skipped (the EC uses its own curve outside the Custom power profile)");
                 return;
             }
-            privileged::run(privileged::helperPath("legion-profile-helper"), QJsonObject{{"fan_table", "get"}}, this,
+            privileged::runUntilExit(privileged::helperPath("legion-profile-helper"), QJsonObject{{"fan_table", "get"}}, this,
                 [this, lv, done](const privileged::Result &old) {
                     const QJsonArray levels = old.json.value("levels").toArray();
                     oldFanTable_.clear();
@@ -1396,7 +1415,7 @@ void SceneEngine::start(const Scene &s) {
     // 6. Keyboard lighting — as the user when the udev rule allows it, pkexec otherwise.
     if (has(PlanStep::Spectrum)) {
         addStep("Lighting", [this, p = s.lightProfile, b = s.lightBrightness](Done done) {
-            if (!lighting::present()) { done(true, "no Spectrum keyboard here; skipped"); return; }
+            if (!lighting::present()) { stepDisposition_ = QStringLiteral("skipped"); done(true, "no Spectrum keyboard here; skipped"); return; }
             QJsonObject req{{"op", "set"}};
             if (p >= 0) req["profile"] = p;
             if (b >= 0) req["brightness"] = b;
@@ -1412,7 +1431,7 @@ void SceneEngine::start(const Scene &s) {
     // 6a. 4-zone RGB keyboard — the same request as the Lighting tab's Apply.
     if (has(PlanStep::Zone4)) {
         addStep("4-zone lighting", [this, z = s.zone4](Done done) {
-            if (!lighting::zone4Present()) { done(true, "no 4-zone keyboard here; skipped"); return; }
+            if (!lighting::zone4Present()) { stepDisposition_ = QStringLiteral("skipped"); done(true, "no 4-zone keyboard here; skipped"); return; }
             QJsonObject req = z;
             req["op"] = "z4_set";
             lighting::run(req, this, [done, eff = z.value("effect").toString()](const privileged::Result &r) {
@@ -1439,11 +1458,12 @@ void SceneEngine::start(const Scene &s) {
     if (has(PlanStep::Display)) {
         addStep("Display", [this, hz = s.refresh](Done done) {
             auto *p = new QProcess(this);
-            connect(p, &QProcess::finished, this, [p, done](int, QProcess::ExitStatus) {
+            connect(p, &QProcess::finished, this, [p, done](int code, QProcess::ExitStatus status) {
                 const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
                 p->deleteLater();
-                done(o.value("ok").toBool(), o.value("ok").toBool() ? o.value("message").toString()
-                                                                    : o.value("error").toString(QStringLiteral("centurion-display failed")));
+                const bool ok = status == QProcess::NormalExit && code == 0 && o.value("ok").toBool();
+                done(ok, ok ? o.value("message").toString()
+                            : o.value("error").toString(QStringLiteral("centurion-display failed")));
             });
             connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
                 if (e != QProcess::FailedToStart) return;
@@ -1469,11 +1489,12 @@ void SceneEngine::start(const Scene &s) {
     if (has(PlanStep::Brightness)) {
         addStep("Screen brightness", [this, pct = s.screenBrightness](Done done) {
             auto *p = new QProcess(this);
-            connect(p, &QProcess::finished, this, [p, done](int, QProcess::ExitStatus) {
+            connect(p, &QProcess::finished, this, [p, done](int code, QProcess::ExitStatus status) {
                 const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
                 p->deleteLater();
-                done(o.value("ok").toBool(), o.value("ok").toBool() ? o.value("message").toString()
-                                                                    : o.value("error").toString(QStringLiteral("centurion-display failed")));
+                const bool ok = status == QProcess::NormalExit && code == 0 && o.value("ok").toBool();
+                done(ok, ok ? o.value("message").toString()
+                            : o.value("error").toString(QStringLiteral("centurion-display failed")));
             });
             connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
                 if (e != QProcess::FailedToStart) return;
@@ -1491,7 +1512,7 @@ void SceneEngine::start(const Scene &s) {
 void SceneEngine::next() {
     // A game owns the machine if it starts during an automatic scene switch.
     // Never undo power/firmware settings under the game's new tuning ownership.
-    if (autoApply_ && !steps_.isEmpty() && (gameSessions() > 0 || gameStarting() || gameSceneActive())) {
+    if ((autoApply_ || trackedDone_) && !steps_.isEmpty() && (gameSessions() > 0 || gameStarting() || gameSceneActive())) {
         log_ << QStringLiteral("a game started — remaining steps skipped; the game owns further changes");
         for (const auto &pending : steps_) emitStep(pending.name, QStringLiteral("skipped"));
         steps_.clear();
@@ -1506,6 +1527,9 @@ void SceneEngine::next() {
         // A soft failure wrote nothing (missing snapshot, wrong profile, busy tab): reported as a problem,
         // like before transactions, but the remaining steps still run and nothing is rolled back.
         const bool soft = std::exchange(softFail_, false) && !ok;
+        // Snapshot failure / explicit no-write: do not later compensate a write
+        // that never happened, using a stale snapshot from another step.
+        if (soft && step.undo) applied_.removeLast();
         ok_ &= ok;
         QString state = ok ? QStringLiteral("returned_ok") : soft ? QStringLiteral("soft_failure") : QStringLiteral("failed");
         if (ok && !stepDisposition_.isEmpty()) state = stepDisposition_;
@@ -1534,7 +1558,7 @@ void SceneEngine::rollbackNext() {
     if (applied_.isEmpty()) { finish(); return; }
     // Same rule as next(): a game that started meanwhile owns the machine; undoing the power profile or
     // limits now would write under centurion-gamemode's tuning.
-    if (autoApply_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) {
+    if ((autoApply_ || trackedDone_) && (gameSessions() > 0 || gameStarting() || gameSceneActive())) {
         log_ << QStringLiteral("a game started — rollback stopped; the game owns further changes");
         applied_.clear();
         rollbackFailed_ = true;
@@ -1554,8 +1578,9 @@ void SceneEngine::rollbackNext() {
 }
 
 void SceneEngine::finish() {
-    busy_ = false;
-    const bool gameOwns = gameTookOver_ || (autoApply_ && (gameSessions() > 0 || gameStarting() || gameSceneActive()));
+    // Keep busy through terminal signals: a synchronous listener must not overwrite
+    // the current transaction or steal its tracked completion.
+    const bool gameOwns = gameTookOver_ || ((autoApply_ || trackedDone_) && (gameSessions() > 0 || gameStarting() || gameSceneActive()));
     gameTookOver_ = false;
     const bool fullyRestored = rollingBack_ && !rollbackFailed_ && !uncompensated_;
     if (rollingBack_) {
@@ -1602,7 +1627,12 @@ void SceneEngine::finish() {
                                  {"steps", QJsonArray::fromStringList(log_)}};
         tx.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
     }
+    const QString outcomeReceipt = lastOutcome_;
+    auto tracked = std::exchange(trackedDone_, {});
+    trackedCpuLease_ = 0;
     Q_EMIT finished(current_, ok_, log_);
+    if (tracked) tracked(outcomeReceipt);
+    busy_ = false;
     if (gameOwns) {
         pending_.clear();
         pendingAuto_ = false;

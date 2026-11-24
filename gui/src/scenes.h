@@ -21,6 +21,7 @@
 #include <QObject>
 #include <QStringList>
 #include <functional>
+#include <cstdint>
 #include <optional>
 
 class MainWindow;
@@ -112,6 +113,10 @@ public:
     /// Applies a saved scene. While one is running, the latest request is
     /// queued and runs right after (an AC flip mid-apply is never lost).
     void apply(const QString &name);
+    // Starts only when idle; no name-based matching or replaceable pending request.
+    // Callback reports the main transaction outcome (deferred GPU work is separate).
+    bool applyTracked(const QString &name, std::uint64_t cpuLease,
+                      std::function<void(const QString &outcome)> done);
     /// Dry run: one line per component of what applying `s` would do here, read-only (nothing is written).
     /// "✗ " = would fail or be skipped, "⚠ " = conflict or cannot be undone.
     QStringList preview(const scenes::Scene &s) const;
@@ -131,7 +136,8 @@ public:
     bool setPaused(bool on, QString *err = nullptr);
     std::optional<bool> powerSource() const { return ac_; }
     /// Applies a saved CPU profile from its file (no tab editor, no dialogs); `done(ok, message)`.
-    void applyCpuProfile(const QString &name, bool fromScene, std::function<void(bool ok, const QString &msg)> done);
+    void applyCpuProfile(const QString &name, bool fromScene, std::function<void(bool ok, const QString &msg)> done,
+                         std::uint64_t cpuLease = 0);
 
 Q_SIGNALS:
     void started(const QString &name);
@@ -171,7 +177,7 @@ private:
     void startupApply();
     void gpuDeferredFire();
     void helper(const QString &name, const QJsonObject &req, Done done,
-                std::function<QString(const QJsonObject &)> describe = {});
+                std::function<QString(const QJsonObject &)> describe = {}, std::uint64_t cpuLease = 0);
 
     MainWindow *win_;
     struct TransactionStep { QString name; Step apply; Step undo; };
@@ -184,6 +190,8 @@ private:
     bool softFail_ = false;          // set by a step right before done(false): nothing was written
     QStringList log_;
     bool ok_ = true, busy_ = false;
+    std::uint64_t trackedCpuLease_ = 0;
+    std::function<void(const QString &)> trackedDone_;
     QString current_, pending_;
     QString transactionId_, gpuDeferTransactionId_, lastOutcome_;
     QString stepDisposition_;

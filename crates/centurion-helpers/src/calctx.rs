@@ -112,6 +112,7 @@ pub fn run_helper(name: &str, req: &Value) -> Result<Value, String> {
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("{name}: {e}"))?;
     child.stdin.take().ok_or("no stdin")?.write_all(req.to_string().as_bytes()).map_err(|e| format!("{name}: {e}"))?;
     let out = child.wait_with_output().map_err(|e| format!("{name}: {e}"))?;
+    if !out.status.success() { return Err(format!("{name}: process failed ({})", out.status)); }
     let text = String::from_utf8_lossy(&out.stdout);
     text.lines().last().and_then(|l| serde_json::from_str::<Value>(l).ok())
         .ok_or_else(|| format!("{name}: {}", String::from_utf8_lossy(&out.stderr).trim()))
@@ -280,43 +281,69 @@ fn write_power(profile: Option<&str>, fw: &Map<String, Value>, fan: Option<bool>
         } else {
             let (mut batch, mut wmi) = (Vec::new(), Map::new());
             for (attr, val) in fw {
-                let Some(v) = val.as_i64() else { continue };
+                let Some(v) = val.as_i64() else { errs.push(format!("{attr}: invalid firmware value")); continue };
                 if let Some((_, key)) = GPU_KEYS.iter().find(|(a, _)| a == attr) { wmi.insert((*key).into(), json!(v)); continue; }
                 if let Some(d) = fw_dir(attr) { batch.push(json!({"path": d.join("current_value"), "value": v})); }
+                else { errs.push(format!("{attr}: firmware target unavailable")); }
             }
             if !batch.is_empty() { if let Err(e) = run_helper("fwattr-helper", &Value::Array(batch)).and_then(|v| ok(&v)) { errs.push(format!("firmware limits: {e}")); } }
-            if !wmi.is_empty() && crate::dgpu_usable() {
-                if let Err(e) = run_helper("legion-gpu-helper", &json!({"op": "apply", "values": wmi})).and_then(|v| ok(&v)) { errs.push(format!("GPU limits: {e}")); }
+            if !wmi.is_empty() {
+                if crate::dgpu_usable() {
+                    if let Err(e) = run_helper("legion-gpu-helper", &json!({"op": "apply", "values": wmi})).and_then(|v| ok(&v)) { errs.push(format!("GPU limits: {e}")); }
+                } else { errs.push("GPU firmware limits unavailable".into()); }
             }
         }
     }
     // The EC may reset the fan flag on a profile change.
     if let (Some(on), Some(_)) = (fan, profile) {
         if crate::legion_wmi::fan_fullspeed_get().ok() != Some(on) {
-            let _ = run_helper("legion-profile-helper", &json!({"device": "fan_fullspeed", "value": if on { "1" } else { "0" }}));
+            if let Err(e) = run_helper("legion-profile-helper", &json!({"device": "fan_fullspeed", "value": if on { "1" } else { "0" }})).and_then(|v| ok(&v)) { errs.push(format!("fan: {e}")); }
         }
+    }
+    if let Some(p) = profile { if current_profile().as_deref() != Some(p) { errs.push("profile readback mismatch".into()); } }
+    if let Some(on) = fan { if crate::legion_wmi::fan_fullspeed_get().ok() != Some(on) { errs.push("fan readback mismatch".into()); } }
+    if !fw.is_empty() {
+        let after = snapshot(fw);
+        for (k, v) in fw { if after["firmware"].get(k) != Some(v) { errs.push(format!("{k}: firmware readback mismatch")); } }
     }
     errs
 }
 
-/// Writes a scene's power context, journaling the originals first. Returns the problems (the
-/// session then runs in whatever context is live; it is recorded as such).
+/// Writes a scene's power context, journaling the complete original first.
+/// No mutation is attempted if a required baseline cannot be captured.
 pub fn apply_scene_power(scene: &Value) -> Vec<String> {
     let (profile, fw, fan) = scene_power(scene);
     if profile.is_none() && fw.is_empty() && fan.is_none() { return vec!["the scene sets no power profile, firmware limits or fan mode".into()]; }
+    if recovery_exists(SCENE_JOURNAL) { return vec!["scene recovery pending; restore first".into()]; }
     let orig = snapshot(&fw);
-    if crate::secure_dir("/run/centurion").is_ok() { let _ = crate::write_root_file(SCENE_JOURNAL, orig.to_string().as_bytes()); }
+    if (profile.is_some() && orig["profile"].as_str().is_none()) || (fan.is_some() && orig["fan"].as_bool().is_none())
+        || fw.iter().any(|(k,v)| v.as_i64().is_none() || orig["firmware"][k].as_i64().is_none()) {
+        return vec!["scene original or target value unavailable; no write".into()];
+    }
+    if !fw.is_empty() && profile.as_deref().or_else(|| orig["profile"].as_str()) != Some("custom") {
+        return vec!["firmware limits require a Custom scene".into()];
+    }
+    if let Err(e) = crate::secure_dir("/run/centurion").and_then(|_| crate::write_root_file(SCENE_JOURNAL, orig.to_string().as_bytes())) { return vec![e]; }
     write_power(profile.as_deref(), &fw, fan)
 }
 
-/// Puts back what `apply_scene_power` changed (no-op without a journal).
+pub fn recovery_exists(path: &str) -> bool {
+    !matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+}
+
+/// Puts back what `apply_scene_power` changed (no-op only when absent).
 pub fn restore_scene_power() -> Vec<String> {
-    let Some(orig) = crate::read_root_file(SCENE_JOURNAL, 64 * 1024).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return Vec::new() };
-    let fw = orig["firmware"].as_object().cloned().unwrap_or_default();
-    // Limits are only writable in Custom: write them while Custom is still active, then the profile.
-    let mut errs = if fw.is_empty() { Vec::new() } else { write_power(None, &fw, None) };
-    errs.extend(write_power(orig["profile"].as_str(), &Map::new(), orig["fan"].as_bool()));
-    if errs.is_empty() { let _ = std::fs::remove_file(SCENE_JOURNAL); }
+    if !recovery_exists(SCENE_JOURNAL) { return Vec::new(); }
+    let Some(orig) = crate::read_root_file(SCENE_JOURNAL, 64 * 1024).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return vec!["scene journal unreadable; retained".into()] };
+    let Some(fw) = orig["firmware"].as_object() else { return vec!["scene journal schema invalid; retained".into()] };
+    if fw.values().any(|v| v.as_i64().is_none()) || !(orig["profile"].is_null() || orig["profile"].is_string()) || !(orig["fan"].is_null() || orig["fan"].is_boolean()) {
+        return vec!["scene journal schema invalid; retained".into()];
+    }
+    // Limits are only writable in Custom. Do not switch away while any
+    // limit is still unrestored; retain the journal for an explicit retry.
+    let mut errs = if fw.is_empty() { Vec::new() } else { write_power(None, fw, None) };
+    if errs.is_empty() { errs.extend(write_power(orig["profile"].as_str(), &Map::new(), orig["fan"].as_bool())); }
+    if errs.is_empty() { if let Err(e) = std::fs::remove_file(SCENE_JOURNAL) { errs.push(format!("scene journal: {e}")); } }
     errs
 }
 

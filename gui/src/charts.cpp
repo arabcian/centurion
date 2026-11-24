@@ -282,15 +282,61 @@ void LineChart::contextMenuEvent(QContextMenuEvent *e) {
 
 // ── BarChart ─────────────────────────────────────────────────────────────────
 
-BarChart::BarChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("BarChart", "Bar chart")); }
+BarChart::BarChart(QWidget *parent) : QWidget(parent) {
+    setAccessibleName(QCoreApplication::translate("BarChart", "Bar chart"));
+    setFocusPolicy(Qt::StrongFocus);
+}
 
 void BarChart::setBars(const QVector<Bar> &bars) {
     bars_ = bars;
+    minV_ = maxV_ = 0;
+    for (const auto &b : bars_) if (std::isfinite(b.value)) { minV_ = std::min(minV_,b.value); maxV_ = std::max(maxV_,b.value); }
+    setViewRange(0,bars_.size());
+}
+
+void BarChart::setViewRange(qsizetype begin, qsizetype end) {
+    const auto n = bars_.size();
+    if (!n) { begin_ = end_ = 0; }
+    else {
+        begin_ = std::clamp<qsizetype>(begin,0,n-1);
+        end_ = std::clamp<qsizetype>(end,begin_+1,n);
+        end_ = begin_ + std::min<qsizetype>(128,end_-begin_);
+    }
+    refreshView();
+}
+
+void BarChart::refreshView() {
     QStringList rows;
-    for (const Bar &b : bars) rows << b.label + QStringLiteral(": ") + (std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"));
+    for (qsizetype i=begin_; i<end_; ++i) {
+        const auto &b=bars_.at(i);
+        rows << b.label + QStringLiteral(": ") + (std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"));
+    }
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
-    setMinimumHeight(int(bars_.size()) * barRowHeight(fontMetrics()) + 4);
+    setMinimumHeight(int(end_-begin_) * barRowHeight(fontMetrics()) + 4);
     update();
+}
+
+void BarChart::changeEvent(QEvent *e) {
+    QWidget::changeEvent(e);
+    if (e->type()==QEvent::FontChange) refreshView();
+}
+
+void BarChart::keyPressEvent(QKeyEvent *e) {
+    if (bars_.isEmpty()) { QWidget::keyPressEvent(e); return; }
+    const auto count=end_-begin_;
+    if (e->key()==Qt::Key_Home) setViewRange(0,bars_.size());
+    else if (e->key()==Qt::Key_PageUp) { const auto b=std::max<qsizetype>(0,begin_-count); setViewRange(b,b+count); }
+    else if (e->key()==Qt::Key_PageDown) { const auto b=std::min(begin_+count,bars_.size()-count); setViewRange(b,b+count); }
+    else { QWidget::keyPressEvent(e); return; }
+    e->accept();
+}
+
+void BarChart::wheelEvent(QWheelEvent *e) {
+    if (!(e->modifiers() & Qt::ControlModifier) || !e->angleDelta().y() || bars_.isEmpty()) { QWidget::wheelEvent(e); return; }
+    const auto count=end_-begin_;
+    const auto wanted=e->angleDelta().y()>0?std::max<qsizetype>(1,count/2):std::min<qsizetype>(128,count*2);
+    setViewRange(begin_,begin_+std::min(wanted,bars_.size()-begin_));
+    e->accept();
 }
 
 void BarChart::paintEvent(QPaintEvent *) {
@@ -299,11 +345,11 @@ void BarChart::paintEvent(QPaintEvent *) {
     p.setRenderHint(QPainter::Antialiasing);
     const QFontMetrics fm(font());
     int labelW = 0, textW = 0;
-    double minV = 0, maxV = 0;
-    for (const Bar &b : bars_) {
+    const double minV = minV_, maxV = maxV_;
+    for (qsizetype i=begin_; i<end_; ++i) {
+        const auto &b=bars_.at(i);
         labelW = std::max(labelW, fm.horizontalAdvance(b.label));
         textW = std::max(textW, fm.horizontalAdvance(std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable")));
-        if (std::isfinite(b.value)) { minV = std::min(minV,b.value); maxV = std::max(maxV,b.value); }
     }
     const int rowH = barRowHeight(fm);
     if (width() < 30) return;
@@ -313,9 +359,9 @@ void BarChart::paintEvent(QPaintEvent *) {
     const auto range = chartaxis::Range::make(minV,maxV);
     if (!range) return;
     const double zero = range->fraction(0);
-    for (int i = 0; i < bars_.size(); ++i) {
+    for (qsizetype i = begin_; i < end_; ++i) {
         const Bar &b = bars_[i];
-        const int y = i * rowH;
+        const int y = int(i-begin_) * rowH;
         p.setPen(colorFrom(theme::FG_DIM));
         p.drawText(QRect(0, y, labelW - 6, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(b.label, Qt::ElideRight, labelW - 6));
         const bool finite = std::isfinite(b.value);
@@ -336,12 +382,23 @@ void BarChart::paintEvent(QPaintEvent *) {
 
 void BarChart::contextMenuEvent(QContextMenuEvent *e) {
     if(bars_.isEmpty())return;
-    const auto frozen=bars_;
-    QMenu m(this);auto *table=m.addAction(QCoreApplication::translate("ChartData","View data table"));auto *csv=m.addAction(QCoreApplication::translate("ChartData","Export all data"));const auto action=m.exec(e->globalPos());if(!action)return;
+    const auto frozen=bars_, visible=bars_.mid(begin_,end_-begin_);
+    QMenu m(this);
+    auto *table=m.addAction(QCoreApplication::translate("ChartData","View visible data table"));
+    auto *csv=m.addAction(QCoreApplication::translate("ChartData","Export all data"));
+    auto *csvVisible=m.addAction(QCoreApplication::translate("ChartData","Export visible data"));
+    auto *previous=m.addAction(QCoreApplication::translate("BarChart","Previous rows")); previous->setEnabled(begin_>0);
+    auto *next=m.addAction(QCoreApplication::translate("BarChart","Next rows")); next->setEnabled(end_<bars_.size());
+    auto *reset=m.addAction(QCoreApplication::translate("BarChart","Reset view"));
+    const auto action=m.exec(e->globalPos());if(!action)return;
+    const auto count=end_-begin_;
+    if(action==previous) { const auto b=std::max<qsizetype>(0,begin_-count); setViewRange(b,b+count); return; }
+    if(action==next) { const auto b=std::min(begin_+count,bars_.size()-count); setViewRange(b,b+count); return; }
+    if(action==reset) {setViewRange(0,bars_.size());return;}
     QList<QStringList> rows;
-    for(const auto &b:frozen)rows.append(QStringList{b.label,std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"),std::isfinite(b.value)?QString::number(b.value,'g',17):QString()});
+    for(const auto &b:(action==csv?frozen:visible))rows.append(QStringList{b.label,std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"),std::isfinite(b.value)?QString::number(b.value,'g',17):QString()});
     if(action==table)chartdata::table(this,{QCoreApplication::translate("ChartData","Label"),QCoreApplication::translate("ChartData","Display value"),QCoreApplication::translate("ChartData","Numeric value")},rows);
-    else if(action==csv)chartdata::exportRows(this,QStringLiteral("label,display_value,numeric_value"),rows,2);
+    else if(action==csv||action==csvVisible)chartdata::exportRows(this,QStringLiteral("label,display_value,numeric_value"),rows,2);
 }
 
 // ── DayBars ──────────────────────────────────────────────────────────────────

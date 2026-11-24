@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <functional>
+#include <cstdint>
 #include <optional>
 
 class QCloseEvent;
@@ -37,7 +38,7 @@ class CoSearchDialog : public QDialog {
 public:
     explicit CoSearchDialog(QWidget *parent = nullptr);
     ~CoSearchDialog() override;
-    bool operationActive() const { return running_ || applying_ || resetting_ || sceneApplying_ || preparing_ || recoveryBusy_ || !perfTest_.isNull(); }
+    bool operationActive() const { return finalizing_ || running_ || applying_ || resetting_ || sceneApplying_ || preparing_ || recoveryBusy_ || !perfTest_.isNull() || cpuLease_ != 0; }
 protected:
     void closeEvent(QCloseEvent *event) override;
     void reject() override;
@@ -57,6 +58,8 @@ private:
     /// After a finished search: the curve's run (curveRun_) against a stock run made right after the reset.
     void compareThroughput(std::function<void()> then);
     void offerResume();
+    void beginRecovery();
+    void endRecovery();
     void launch();
     void step();
     void runTest();
@@ -67,6 +70,8 @@ private:
     void scanKernel(std::function<void(bool, const QJsonArray &, quint64)> then);
     void cancel();
     void reset(const QString &reason);
+    void requestStockReset(const QString &reason);
+    void releaseCpuLease();
     void done(bool resetOk, const QString &reason);
     /// tone: a theme colour (theme::OK, DANGER, ...) for the log line and the status banner; nullptr = neutral.
     void note(const QString &line, const char *tone = nullptr);
@@ -103,7 +108,8 @@ private:
     QPushButton *go_, *stop_, *saveResult_, *loadResult_, *verifyBtn_, *guardsBtn_;
     QProcess *test_ = nullptr;
     QPointer<QProcess> toolProbe_;
-    bool preparing_ = false, probeCancelled_ = false, recoveryBusy_ = false;
+    bool preparing_ = false, probeCancelled_ = false, recoveryBusy_ = false, recoveryCancelled_ = false;
+    bool recoveryGoWas_ = false, recoveryVerifyWas_ = false, recoveryGuardsWas_ = false, recoveryStopWas_ = false;
     QTimer *guard_, *watch_;
     QString testProgram_;
 
@@ -119,8 +125,9 @@ private:
     bool cleanExit_ = false;           // application quit with a confirmed stock reset: the pending trial is repeated, not failed
     std::optional<cosearch::Trial> replay_;  // resume after a clean exit: run this in-flight trial again instead of next()
 
+    std::uint64_t cpuLease_ = 0; // retained until stock reset/throughput actually exits
     bool running_ = false, abort_ = false, applying_ = false, resetting_ = false, finished_ = false;
-    bool sceneApplying_ = false, quitting_ = false;
+    bool sceneApplying_ = false, quitting_ = false, finalizing_ = false;
     qint64 testStart_ = 0, testDeadline_ = 0;
     quint64 kmsgSeq_ = 0;
     QHash<QString, QString> mceBefore_;

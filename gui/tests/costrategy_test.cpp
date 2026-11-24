@@ -774,6 +774,28 @@ int main(int argc, char **argv) {
             search.report(sim.run(search,*actual));
         }
     }
+    // A damaged or aliased topology may not dispatch a stress/offset trial.
+    {
+        auto duplicate = cpu(2);
+        duplicate[1].cpus = duplicate[0].cpus;
+        Search bad(Mode::PerCore, Level::Fast, -30, duplicate);
+        CHECK(!bad.next());
+        CHECK(!Search::load(bad.save()));
+        Search empty(Mode::AllCore, Level::Fast, -30, {});
+        CHECK(!empty.startVerification({}));
+        CHECK(!empty.next());
+        Search all(Mode::AllCore, Level::Fast, -20, cpu(1));
+        CHECK(!all.startVerification({-10, -11}));
+        CHECK(!all.startVerification({-21, -21}));
+        CHECK(all.guardAllCore(-12));
+        CHECK(!all.startVerification({-12, -12}));
+        CHECK(all.startVerification({-11, -11}));
+        Search per(Mode::PerCore, Level::Fast, -20, cpu(1));
+        const auto first = per.cores().first();
+        CHECK(per.exclude(first.ccd, first.slot));
+        CHECK(!per.startVerification({-1, 0}));
+        CHECK(per.startVerification({0, -1}));
+    }
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("costrategy: all checks passed");
     return 0;

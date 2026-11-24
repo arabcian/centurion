@@ -2,6 +2,7 @@
 
 #include "privileged.h"
 #include "smartwatch.h"
+#include "smarttrend.h"
 #include "theme.h"
 
 #include <QAbstractItemView>
@@ -11,6 +12,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QHeaderView>
 #include <QSet>
 #include <QDateTime>
@@ -30,11 +32,14 @@
 
 namespace {
 
-constexpr int CALL_TIMEOUT_MS = 120000;
 constexpr int TREND_DAYS = 30;
 
 QString num(std::optional<double> x, const QString &suffix = {}) {
     return x ? QString::number(*x) + suffix : QStringLiteral("—");
+}
+
+QString countText(smarttrend::Count value) {
+    return value ? QString::number(qlonglong(*value)) : QStringLiteral("—");
 }
 
 void historyWorkspace(QWidget *owner) {
@@ -46,7 +51,7 @@ void historyWorkspace(QWidget *owner) {
     if(!snapshot) layout->addWidget(new QLabel(SmartPage::tr("History could not be read or is damaged. The file is preserved.")));
     auto *row=new QHBoxLayout;auto *device=new QComboBox;auto *period=new QComboBox;
     period->addItem(SmartPage::tr("All recorded days"),0);period->addItem(SmartPage::tr("Last 30 days"),30);period->addItem(SmartPage::tr("Last 90 days"),90);
-    for(auto it=all.cbegin();it!=all.cend();++it) if(smart::usableIdentity(it.key())) device->addItem(it.value().toObject().value("model").toString()+QStringLiteral(" · ")+it.key().section(QLatin1Char('|'),-1),it.key());
+    for(auto it=all.constBegin();it!=all.constEnd();++it) if(smart::usableIdentity(it.key())) device->addItem(it.value().toObject().value("model").toString()+QStringLiteral(" · ")+it.key().section(QLatin1Char('|'),-1),it.key());
     row->addWidget(device,1);row->addWidget(period);layout->addLayout(row);
     auto *table=new QTreeWidget;table->setHeaderLabels({SmartPage::tr("Date"),SmartPage::tr("Temperature (°C)"),SmartPage::tr("Life used (%)"),SmartPage::tr("Spare (%)"),SmartPage::tr("Spare threshold (%)"),SmartPage::tr("Media errors"),SmartPage::tr("Unsafe shutdowns"),SmartPage::tr("Written (TB)"),SmartPage::tr("Power-on hours"),SmartPage::tr("Critical warning")});
     table->setRootIsDecorated(false);table->setAlternatingRowColors(true);table->setUniformRowHeights(true);table->header()->setSectionResizeMode(QHeaderView::ResizeToContents);layout->addWidget(table,1);
@@ -86,12 +91,18 @@ SmartPage::SmartPage(QWidget *parent) : QWidget(parent) {
     auto *history=new QPushButton(tr("Recorded History…"));top->addWidget(history);
     connect(history,&QPushButton::clicked,this,[this]{historyWorkspace(this);});
     v->addLayout(top);
+    auto *automatic = new QCheckBox(tr("Automatic daily SMART sampling"));
+    automatic->setChecked(smart::automaticSamplingEnabled());
+    automatic->setToolTip(tr("Opt in to an unattended daily check for authorized administrators. Drives may wake; no self-test is started. Checked hourly while Centurion is running."));
+    connect(automatic, &QCheckBox::toggled, this, [](bool enabled) { smart::setAutomaticSamplingEnabled(enabled); });
+    v->addWidget(automatic);
     status_ = new QLabel;
     status_->setProperty("role", "muted");
     status_->setTextFormat(Qt::PlainText);
     status_->setWordWrap(true);
     v->addWidget(status_);
     alert_ = new QLabel;
+    alert_->setTextFormat(Qt::PlainText);
     alert_->setWordWrap(true);
     alert_->setVisible(false);
     v->addWidget(alert_);
@@ -143,8 +154,7 @@ void SmartPage::start() {
     if (busy_) return;
     ran_ = busy_ = true;
     status_->setText(tr("Reading SMART information…") + (lastChecked_.isValid() ? tr(" · Displaying previous readings from %1").arg(lastChecked_.toString(Qt::ISODate)) : QString()));
-    privileged::run(privileged::helperPath(QStringLiteral("tune-helper")),
-                    QJsonObject{{"op", "tool"}, {"tool", "smart_json"}}, this, [this](const privileged::Result &r) {
+    smart::requestSample(this, [this](const privileged::Result &r, const smart::RecordResult &record) {
         busy_ = false;
         auto failure = [this](const QString &why) {
             status_->setText(why + (lastChecked_.isValid() ? tr(" · Displaying previous readings from %1").arg(lastChecked_.toString(Qt::ISODate)) : QString()));
@@ -152,13 +162,20 @@ void SmartPage::start() {
         if (!r.ok()) { failure(tr("Check failed: %1").arg(r.message())); return; }
         const QString missing = r.json.value(QStringLiteral("missing")).toString();
         if (!missing.isEmpty()) { failure(QCoreApplication::translate("systools", "(not installed — %1)").arg(missing)); return; }
+        if (!r.json.value("disks").isArray()) { failure(tr("Invalid SMART reply.")); return; }
         const QJsonArray disks = r.json.value(QStringLiteral("disks")).toArray();
         if (disks.isEmpty()) { failure(tr("No disks found.")); return; }
-        render(disks, smart::record(disks));
+        render(disks, record.alerts);
         lastChecked_ = QDateTime::currentDateTime();
-        status_->setText(tr("Last checked: %1 · More fields are available under technical details.")
-                             .arg(lastChecked_.toString(Qt::ISODate)));
-    }, CALL_TIMEOUT_MS);
+        QString status = tr("Last checked: %1 · More fields are available under technical details.").arg(lastChecked_.toString(Qt::ISODate));
+        if (record.status == smart::RecordStatus::Partial) status += tr(" · History saved partially; some drives had no usable sample.");
+        else if (record.status == smart::RecordStatus::NoUsableSamples) status += tr(" · No usable history sample.");
+        else if (record.status == smart::RecordStatus::Unavailable) status += tr(" · History could not be saved.");
+        status_->setText(status);
+    }, [this] {
+        status_->setText(tr("SMART check timed out; waiting for the helper to exit before another check.") +
+            (lastChecked_.isValid() ? tr(" · Displaying previous readings from %1").arg(lastChecked_.toString(Qt::ISODate)) : QString()));
+    });
 }
 
 void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
@@ -183,6 +200,7 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
             table_->addTopLevelItem(new QTreeWidgetItem({dev, d.value(QStringLiteral("error")).toString()}));
             auto *failure = new QLabel(tr("%1 — Couldn't read SMART data: %2")
                                        .arg(dev, d.value(QStringLiteral("error")).toString()));
+            failure->setTextFormat(Qt::PlainText);
             failure->setWordWrap(true);
             failure->setProperty("tone", "warn");
             cardsLayout_->addWidget(failure);
@@ -191,27 +209,30 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         // Trend: media errors against the first sample from the last 30 days.
         const auto id=d.value(QStringLiteral("id")).toString();
         const QJsonArray samples = smart::usableIdentity(id)&&!duplicates.contains(id)?all.value(id).toObject().value(QStringLiteral("samples")).toArray():QJsonArray{};
-        std::optional<double> base;
+        smarttrend::Interval interval;
+        const QString today = QDate::currentDate().toString(Qt::ISODate);
         for (const QJsonValue &s : samples) {
             const QJsonObject o = s.toObject();
-            if (o.value(QStringLiteral("d")).toString() >= cutoff) { base = smart::field(o, "media_errors"); break; }
+            const QString day = o.value(QStringLiteral("d")).toString();
+            // Today's just-saved observation is not an independent baseline.
+            if (day >= cutoff && day < today) interval.observe(smart::counter(o, "media_errors"));
         }
-        const auto media = smart::field(d, "media_errors");
-        const std::optional<double> delta = media && base ? std::optional<double>(*media - *base) : std::nullopt;
+        const auto media = smart::counter(d, "media_errors");
+        const auto delta = interval.delta(media);
         const auto temp = smart::field(d, "temp_c"), life = smart::field(d, "life_used_pct");
         const auto spare = smart::field(d, "spare_pct"), threshold = smart::field(d, "spare_threshold_pct");
-        const auto crit = smart::field(d, "critical_warning");
+        const auto crit = smart::counter(d, "critical_warning");
         const QJsonValue passedV = d.value(QStringLiteral("passed"));
 
         const QString spareTxt = spare ? num(spare, QStringLiteral(" %")) + (threshold ? QStringLiteral(" (min %1)").arg(*threshold) : QString())
                                        : QStringLiteral("—");
-        const QString deltaTxt = delta ? (*delta > 0 ? QStringLiteral("+%1").arg(*delta) : QString::number(*delta)) : QStringLiteral("—");
+        const QString deltaTxt = delta ? (*delta > 0 ? QStringLiteral("+%1").arg(qlonglong(*delta)) : countText(delta)) : QStringLiteral("—");
         const QString passedTxt = passedV.isBool() ? (passedV.toBool() ? QStringLiteral("PASSED") : QStringLiteral("FAILED")) : QStringLiteral("—");
 
         auto *it = new QTreeWidgetItem({dev, d.value(QStringLiteral("model")).toString(), num(temp, QStringLiteral(" °C")),
-                                        num(life, QStringLiteral(" %")), spareTxt, num(media), deltaTxt,
-                                        num(smart::field(d, "unsafe_shutdowns")), num(smart::field(d, "written_tb"), QStringLiteral(" TB")),
-                                        num(crit), passedTxt});
+                                        num(life, QStringLiteral(" %")), spareTxt, countText(media), deltaTxt,
+                                        countText(smart::counter(d, "unsafe_shutdowns")), num(smart::field(d, "written_tb"), QStringLiteral(" TB")),
+                                        countText(crit), passedTxt});
         auto mark = [it](int col, const char *color) { it->setForeground(col, QColor(color)); };
         if (crit && *crit != 0) mark(9, theme::DANGER);
         if (passedV.isBool() && !passedV.toBool()) mark(10, theme::DANGER);
@@ -223,7 +244,7 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         const bool faulty = (crit && *crit != 0) || (passedV.isBool() && !passedV.toBool()) ||
                             (spare && threshold && *spare < *threshold);
         const bool caution = !faulty && ((delta && *delta > 0) || (life && *life >= 80));
-        const bool insufficient = !crit && !passedV.isBool() && !temp && !life && !media;
+        const bool insufficient = !crit && !passedV.isBool() && !(spare && threshold);
         auto *card = new QFrame;
         card->setObjectName(QStringLiteral("driveCard"));
         card->setStyleSheet(QStringLiteral("QFrame#driveCard{background:%1;border:1px solid %2;border-radius:11px}"
@@ -248,10 +269,11 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         heading->addWidget(verdict);
         col->addLayout(heading);
         auto *location = new QLabel(dev);
+        location->setTextFormat(Qt::PlainText);
         location->setProperty("tone", "muted");
         col->addWidget(location);
         auto *metrics = new QLabel(tr("Temperature: %1    ·    Life used: %2    ·    Media errors: %3")
-                                    .arg(num(temp, tr(" °C")), num(life, tr(" %")), num(media)));
+                                    .arg(num(temp, tr(" °C")), num(life, tr(" %")), countText(media)));
         metrics->setWordWrap(true);
         col->addWidget(metrics);
         QString note;
@@ -266,7 +288,8 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         col->addWidget(description);
         // What the counters add up to: age, write rate, a wear projection, temperature.
         QStringList insights;
-        const auto hours = smart::field(d, "power_on_hours"), written = smart::field(d, "written_tb");
+        const auto hours = smart::counter(d, "power_on_hours");
+        const auto written = smart::field(d, "written_tb");
         if (hours && *hours > 0) {
             const double days = *hours / 24.0;
             insights << (days >= 365 ? tr("Powered on for %1 years (%L2 h).").arg(days / 365.0, 0, 'f', 1).arg(qint64(*hours))
@@ -286,10 +309,10 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         }
         if (temp && *temp >= 70 && *temp < 150)   // above that a sensor reads garbage, not heat
             insights << tr("Running hot (%1 °C): NVMe drives throttle around 70–80 °C; a heatsink or airflow helps.").arg(*temp);
-        if (const auto unsafe = smart::field(d, "unsafe_shutdowns"); unsafe && hours && *hours > 0 && *unsafe > 0 && *unsafe / (*hours / 24.0) > 0.2)
+        if (const auto unsafe = smart::counter(d, "unsafe_shutdowns"); unsafe && hours && *hours > 0 && *unsafe > 0 && *unsafe / (*hours / 24.0) > 0.2)
             insights << tr("%1 unsafe shutdowns: power was cut without the drive being told (forced power-offs, crashes). "
-                           "Each one risks recently written data.").arg(*unsafe);
-        if (delta && *delta > 0) insights << tr("%1 new media error(s) in the last %2 days: back up and run a long self-test (smartctl -t long).").arg(*delta).arg(TREND_DAYS);
+                           "Each one risks recently written data.").arg(qlonglong(*unsafe));
+        if (delta && *delta > 0) insights << tr("%1 new media error(s) in the last %2 days: back up and run a long self-test (smartctl -t long).").arg(qlonglong(*delta)).arg(TREND_DAYS);
         if (!insights.isEmpty()) {
             auto *more = new QLabel(QStringLiteral("• ") + insights.join(QStringLiteral("\n• ")));
             more->setWordWrap(true);

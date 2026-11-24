@@ -8,6 +8,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSplitter>
 #include <QVBoxLayout>
 
@@ -16,10 +17,10 @@ ReportPreview::ReportPreview(const QJsonObject &preview, QWidget *parent) : QDia
     resize(860, 560);
     auto *v = new QVBoxLayout(this);
 
-    auto *intro = new QLabel(tr("These are the files of the report, as they will be saved. Serial numbers, UUIDs, "
-                                "MAC and IP addresses have already been replaced in the text (%1 value(s) so far). "
-                                "Nothing is sent anywhere: the archive is written only to the place you choose.")
+    auto *intro = new QLabel(tr("Select files to save. Automatic redaction is best effort (%1 detected values). Review before sharing. "
+                                "Long files show only a prefix and are excluded by default. Selected files must still match this preview when saved.")
                                  .arg(preview.value(QStringLiteral("masked")).toInteger()));
+    intro->setTextFormat(Qt::PlainText);
     intro->setWordWrap(true);
     v->addWidget(intro);
 
@@ -33,7 +34,19 @@ ReportPreview::ReportPreview(const QJsonObject &preview, QWidget *parent) : QDia
         const QJsonObject o = f.toObject();
         const QString status = o.value(QStringLiteral("status")).toString();
         auto *it = new QListWidgetItem(o.value(QStringLiteral("name")).toString() + QStringLiteral("   ") + statusText(status));
+        const bool truncated = o.value(QStringLiteral("truncated")).toBool(true);
+        const QString digest = o.value(QStringLiteral("sha256")).toString();
+        const bool eligible = preview.value(QStringLiteral("preview_schema")).toInt() == 2 && status == QLatin1String("included")
+            && QRegularExpression(QStringLiteral("^[0-9a-f]{64}$")).match(digest).hasMatch();
         it->setData(Qt::UserRole, o.value(QStringLiteral("text")).toString());
+        it->setFlags(it->flags() & ~Qt::ItemIsUserCheckable);
+        if (eligible) {
+            it->setData(Qt::UserRole + 1, o.value(QStringLiteral("name")).toString());
+            it->setData(Qt::UserRole + 2, digest);
+            it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+            it->setCheckState(truncated ? Qt::Unchecked : Qt::Checked);
+            if (truncated) it->setText(it->text() + tr(" (partial preview; full file if selected)"));
+        }
         if (status != QLatin1String("included")) it->setForeground(QColor(QLatin1String(theme::MUTED)));
         list_->addItem(it);
     }
@@ -48,10 +61,25 @@ ReportPreview::ReportPreview(const QJsonObject &preview, QWidget *parent) : QDia
     if (list_->count()) list_->setCurrentRow(0);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-    buttons->button(QDialogButtonBox::Save)->setText(tr("Save…"));
+    auto *save = buttons->button(QDialogButtonBox::Save);
+    save->setText(tr("Save…"));
+    const auto updateSave = [this, save] { save->setEnabled(!selection().isEmpty()); };
+    connect(list_, &QListWidget::itemChanged, this, updateSave);
+    updateSave();
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     v->addWidget(buttons);
+}
+
+QJsonArray ReportPreview::selection() const {
+    QJsonArray result;
+    for (int i = 0; i < list_->count(); ++i) {
+        const auto *item = list_->item(i);
+        if (item->checkState() != Qt::Checked || !(item->flags() & Qt::ItemIsUserCheckable)) continue;
+        result.append(QJsonObject{{QStringLiteral("name"), item->data(Qt::UserRole + 1).toString()},
+                                  {QStringLiteral("sha256"), item->data(Qt::UserRole + 2).toString()}});
+    }
+    return result;
 }
 
 QString ReportPreview::statusText(const QString &status) {

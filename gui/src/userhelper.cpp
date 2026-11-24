@@ -1,3 +1,4 @@
+#include "simulationguard.h"
 #include "userhelper.h"
 #include "privileged.h"
 
@@ -21,6 +22,11 @@ void run(const QJsonObject &request, QObject *context, Callback cb, int timeoutM
 void runProgram(const QString &exe, const QStringList &args, const QJsonObject &request,
                 QObject *context, Callback cb, int timeoutMs) {
     if (!context) return;
+    if (simulationguard::active.load()) {
+        ++simulationguard::blockedUser;
+        QTimer::singleShot(0, context, [cb] { cb(failure(QStringLiteral("simulation: external helper blocked"))); });
+        return;
+    }
     if (!QFileInfo(exe).isExecutable()) { QTimer::singleShot(0, context, [cb] { cb(failure(QStringLiteral("read-only helper is not installed"))); }); return; }
     constexpr qsizetype limit = 4 * 1024 * 1024;
     const QByteArray input = QJsonDocument(request).toJson(QJsonDocument::Compact);

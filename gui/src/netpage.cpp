@@ -190,7 +190,7 @@ static QTreeWidget *makeTree(const QStringList &cols) {
 
 static std::optional<wifiage::Tick> wifiBootTick() {
     timespec ts{};
-    if (::clock_gettime(CLOCK_BOOTTIME, &ts) != 0 || ts.tv_sec < 0) return {};
+    if (::clock_gettime(CLOCK_BOOTTIME, &ts) != 0 || ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) return {};
     const auto sec = static_cast<wifiage::Tick>(ts.tv_sec);
     if (sec > (std::numeric_limits<wifiage::Tick>::max() - 999) / 1000) return {};
     return sec * 1000 + static_cast<wifiage::Tick>(ts.tv_nsec / 1000000);

@@ -1,0 +1,12 @@
+runner	exit	seconds
+gui/tests/edidfields_native_test.py	0	18.94
+gui/tests/chartaxis_native_test.py	0	12.24
+gui/tests/firewallpreview_native_test.py	0	17.54
+gui/tests/wifichannel_native_test.py	0	9.78
+gui/tests/workspacefields_native_test.py	0	16.27
+gui/tests/translation_tr_test.py	0	2.78
+gui/tests/health_ui_static_test.py	0	2.69
+gui/tests/advanced_17_static_test.py	0	2.7
+gui/tests/title_case_static_test.py	0	1.91
+gui/tests/tur30_history_native_test.py	0	9.11
+tests/test_firewall_preview_contract_static.py	0	2.1

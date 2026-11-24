@@ -1,3 +1,4 @@
+#include "simulationguard.h"
 #include "privileged.h"
 #include "operationregistry.h"
 #include "systools.h"
@@ -32,8 +33,10 @@ static QString describe(const operations::Entry &e) {
         break;
     }
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(e.time.time_since_epoch()).count();
+    const QString resource = e.lease && e.resource == "CO Search session"
+        ? QCoreApplication::translate("privileged", "CO Search session") : QString::fromStdString(e.resource);
     return QStringLiteral("%1 · #%2 · %3 · %4").arg(QDateTime::fromMSecsSinceEpoch(qint64(ms),QTimeZone::utc()).toString(Qt::ISODateWithMs))
-        .arg(qulonglong(e.id)).arg(QString::fromStdString(e.resource), QCoreApplication::translate("privileged", phase));
+        .arg(qulonglong(e.id)).arg(resource, QCoreApplication::translate("privileged", phase));
 }
 QStringList activeOperations() {
     QStringList out;
@@ -47,6 +50,15 @@ bool resourceActive(const QString &helperName) {
 QStringList operationHistory() {
     QStringList out; for (const auto &e : registry.history()) out << describe(e); return out;
 }
+
+std::uint64_t acquireCpuCurveLease(QObject *ctx) {
+    if (!ctx) return 0;
+    const auto id = registry.tryLease("CO Search session", {{operations::Resource::CpuCurve, operations::Access::Write}});
+    if (!id) return 0;
+    QObject::connect(ctx, &QObject::destroyed, QCoreApplication::instance(), [id] { registry.abandonLease(*id); });
+    return *id;
+}
+bool releaseCpuCurveLease(std::uint64_t id) { return registry.releaseLease(id); }
 
 static constexpr int EXIT_DISMISSED = 126, EXIT_NOT_AUTHORIZED = 127;
 
@@ -64,21 +76,31 @@ void run(const QString &helper, const QJsonObject &payload, QObject *ctx, Callba
     run(helper, QJsonDocument(payload).toJson(QJsonDocument::Compact), ctx, std::move(cb), timeoutMs);
 }
 
-void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callback cb, int timeoutMs) {
+static void runInternal(const QString &helper, const QByteArray &payload, QObject *ctx, Callback cb, int timeoutMs,
+                        bool waitForExit, std::function<void()> onTimeout, std::uint64_t lease) {
     QPointer<QObject> guard(ctx);
     auto fail = [&](const QString &msg) {
         Result r; r.error = msg;
         QTimer::singleShot(0, ctx, [cb, r] { cb(r); });
     };
+    if (simulationguard::active.load()) {
+        ++simulationguard::blockedRoot;
+        return fail(QStringLiteral("simulation: privileged request blocked"));
+    }
     // install.sh's PGO training run walks every tab of a real GUI build: it
     // must never reach a root helper (hardware writes during a compile).
     if (qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN")) return fail(QStringLiteral("disabled during the PGO training run"));
     // Fixed locations, like the Rust side: never resolve pkexec through $PATH.
     QString pkexec;
+#ifdef CENTURION_PRIVILEGED_FIXTURE
+    // Compiled only into the dedicated CTest binary. No pkexec, no host helper.
+    pkexec = QCoreApplication::applicationFilePath();
+#else
     for (const char *c : {"/usr/bin/pkexec", "/bin/pkexec"})
         if (QFileInfo(QString::fromLatin1(c)).isFile()) { pkexec = QString::fromLatin1(c); break; }
     if (pkexec.isEmpty()) return fail(QCoreApplication::translate("privileged", "pkexec was not found. Install polkit (%1).").arg(systools::installCommand(QStringLiteral("pkexec"))));
     if (!QFileInfo(helper).isFile()) return fail(QCoreApplication::translate("privileged", "helper not found: %1").arg(helper));
+#endif
 
     // Not parented to `ctx`: a QProcess destructor kills *and waits* for its
     // child. Once pkexec has exec'd the root helper, our kill() is refused
@@ -90,7 +112,11 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
     // No new GUI-side gate is imposed on emergency reset or session cleanup; backend locks remain authoritative.
     const auto helperName=QFileInfo(helper).fileName().toStdString();
     const auto op=QJsonDocument::fromJson(payload).object().value(QStringLiteral("op")).toString().toStdString();
-    const auto reservation=registry.tryBegin(helperName,operations::classify(helperName,op));
+    auto claims = operations::classify(helperName,op);
+    // Orchestrated sequences must not use the unowned emergency override:
+    // starting a reset before a previous write exits can leave the curve dirty.
+    if (waitForExit) claims.recoveryOverride = false;
+    const auto reservation=registry.tryBegin(helperName,std::move(claims),lease);
     if(!reservation) return fail(QCoreApplication::translate("privileged", "A conflicting operation is still running; no helper was started."));
     const auto operation=*reservation;
     auto *proc = new QProcess(QCoreApplication::instance());
@@ -124,26 +150,36 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
         timer->stop();
         if (guard) cb(r);
     };
-    auto reap = [proc] {
-        if (proc->state() == QProcess::NotRunning) proc->deleteLater();
-        // else: deleted from the finished() handler once it really exits.
+    const QPointer<QProcess> processGuard(proc);
+    auto requestKill = [processGuard] {
+#ifndef CENTURION_PRIVILEGED_FIXTURE
+        if (processGuard) processGuard->kill();
+#else
+        // Simulate an authorized root process that the GUI cannot kill.
+        Q_UNUSED(processGuard);
+#endif
     };
 
     QObject::connect(timer, &QTimer::timeout, proc, [=] {
         *timedOut = true;
         registry.transition(operation, operations::Phase::TimedOut);
-        proc->kill();  // works while pkexec still waits for authorization
         Result r;
         r.error = QCoreApplication::translate("privileged", "the helper did not finish in time. If an authorization dialog is still open, close it and try again. Otherwise the helper may still be finishing in the background (it stops on its own within a few minutes): check the current values before retrying.");
-        finish(r);
-        reap();
+        if (waitForExit) {
+            if (guard && onTimeout) onTimeout();
+            // Root may ignore kill(). Keep the lease and callback until finished().
+            requestKill();
+        } else {
+            requestKill();
+            finish(r);
+        }
     });
     QObject::connect(proc, &QProcess::errorOccurred, proc, [=](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
         registry.finish(operation, operations::Outcome::NotStarted);
         Result r; r.error = QCoreApplication::translate("privileged", "could not start pkexec: %1").arg(proc->errorString());
+        proc->deleteLater();
         finish(r);
-        reap();
     });
     QObject::connect(proc, &QProcess::finished, proc, [=](int code, QProcess::ExitStatus exitStatus) {
         proc->deleteLater();
@@ -157,7 +193,9 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
         // anything else slipped onto stdout first.
         const QByteArray last = out.mid(out.lastIndexOf('\n') + 1);
         const QJsonDocument doc = QJsonDocument::fromJson(last);
-        if (*timedOut || *oversized || exitStatus != QProcess::NormalExit) {
+        if (*timedOut) {
+            r.error = QCoreApplication::translate("privileged", "The helper timed out; it has now exited, but its result is unknown.");
+        } else if (*oversized || exitStatus != QProcess::NormalExit) {
             r.error = QCoreApplication::translate("privileged", "The helper crashed or exceeded the reply size limit; its result is unknown.");
         } else if (doc.isObject() && !doc.object().isEmpty() && code != 0 && doc.object().value(QStringLiteral("ok")).toBool()) {
             r.error = QCoreApplication::translate("privileged", "The helper reported success but exited with code %1; its result is unknown.").arg(code);
@@ -196,10 +234,22 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
     proc->setArguments({helper});
     proc->setProcessChannelMode(QProcess::SeparateChannels);
     proc->start();
-    if (proc->state() == QProcess::NotRunning) return;  // FailedToStart already handled
+    if (!processGuard || proc->state() == QProcess::NotRunning) return;  // FailedToStart already handled
     proc->write(payload);
     proc->closeWriteChannel();
     timer->start(timeoutMs);
+}
+
+void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callback cb, int timeoutMs) {
+    runInternal(helper, payload, ctx, std::move(cb), timeoutMs, false, {}, 0);
+}
+void runUntilExit(const QString &helper, const QJsonObject &payload, QObject *ctx, Callback cb, int timeoutMs,
+                  std::function<void()> onTimeout, std::uint64_t lease) {
+    runUntilExit(helper, QJsonDocument(payload).toJson(QJsonDocument::Compact), ctx, std::move(cb), timeoutMs, std::move(onTimeout), lease);
+}
+void runUntilExit(const QString &helper, const QByteArray &payload, QObject *ctx, Callback cb, int timeoutMs,
+                  std::function<void()> onTimeout, std::uint64_t lease) {
+    runInternal(helper, payload, ctx, std::move(cb), timeoutMs, true, std::move(onTimeout), lease);
 }
 
 } // namespace privileged

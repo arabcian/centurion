@@ -458,7 +458,7 @@ void OptimizeTab::buildUi() {
         const QString what = QStringLiteral("Wi-Fi / Bluetooth power management lock");
         wirelessLock_->setEnabled(false);
         showStatus(what + QStringLiteral("…"), theme::MUTED, 0);
-        privileged::run(helperForOp(QStringLiteral("set_wireless_pm_lock")), QJsonObject{{"op", "set_wireless_pm_lock"}, {"on", on}}, this,
+        privileged::runUntilExit(helperForOp(QStringLiteral("set_wireless_pm_lock")), QJsonObject{{"op", "set_wireless_pm_lock"}, {"on", on}}, this,
                         [this, what, revert](const privileged::Result &r) {
             wirelessLock_->setEnabled(true);
             if (!r.reached) {
@@ -473,7 +473,7 @@ void OptimizeTab::buildUi() {
                 showStatus(what + QStringLiteral(" updated."), theme::OK, 4000);
             }
             refresh();
-        }, PKEXEC_TIMEOUT_MS);
+        }, PKEXEC_TIMEOUT_MS, [this] { showStatus(tr("Optimization helper timed out; waiting for its process to exit."), theme::WARN, 0); });
     });
 
     // Presets
@@ -747,7 +747,7 @@ void OptimizeTab::buildUi() {
                 const QStringList meta{profilediff::display(r.value("t")),r.value("preset").toString(),r.value("goal").toString(),r.value("phase").toString(),r.value("cx").toString()};
                 if(!filter.isEmpty() && !meta.join(QLatin1Char(' ')).contains(filter,Qt::CaseInsensitive)) continue;
                 abverify::Evidence e;
-                e.schema=r.value("verification_v").toDouble(-1)==1.; e.paired=r.value("paired").toBool();
+                e.schema=r.value("verification_v").toDouble(-1)==1. || r.value("verification_v").toDouble(-1)==2. || r.value("verification_v").toDouble(-1)==3.; e.paired=r.value("paired").toBool();
                 e.complete=r.value("complete").toBool(); e.passed=r.value("passed").toBool();
                 e.ended=r.value("ended_early").isString();
                 e.validFlags=r.value("paired").isBool() && r.value("complete").isBool() && r.value("passed").isBool() && (e.ended || r.value("ended_early").isNull());
@@ -2241,6 +2241,11 @@ void OptimizeTab::updateStateBanner() {
         accent = theme::DANGER;
         banner_->setText("tune-helper is not installed");
         bannerDetail_->setText("Expected at " + helperPath() + ". Run install.sh (or the ebuild) to install the helpers.");
+    } else if (state_.value("unknown").toBool()) {
+        accent = theme::DANGER;
+        banner_->setText(tr("Optimization recovery state unknown"));
+        bannerDetail_->setTextFormat(Qt::PlainText);
+        bannerDetail_->setText(tr("The helper could not read the saved originals. Do not assume the system is at its original values."));
     } else if (state_.value("active").toBool()) {
         accent = theme::WARN;
         const int games = state_.value("refcount").toInt();
@@ -3774,18 +3779,24 @@ static bool verifiedAutotunePreset(const QString &name, const QJsonObject &value
     for (int i = records.size() - 1; i >= 0; --i) {
         const QJsonObject v = records.at(i).toObject();
         if (v.value(QStringLiteral("preset")).toString() != name ||
-            v.value(QStringLiteral("verification_v")).toInt() != 1 ||
+            v.value(QStringLiteral("verified_values")).toObject() != values) continue;
+        if (v.value(QStringLiteral("verification_v")).toDouble(-1) != 3. ||
+            !v.value("coverage_confirmed").toBool() || !v.value("context_confirmed").toBool() ||
+            diagsrc::bootId().isEmpty() || v.value("boot_id").toString() != diagsrc::bootId() ||
+            !v.value("restore_confirmed").toBool() || !v.value("ended_early").isNull() ||
+            v.value("oom_kills").toObject().value("boot").toInt(-1) != 0 ||
+            v.value("oom_kills").toObject().value("preset").toInt(-1) != 0 ||
             !v.value(QStringLiteral("paired")).toBool() ||
             !v.value(QStringLiteral("complete")).toBool() ||
             !v.value(QStringLiteral("passed")).toBool() ||
             v.value(QStringLiteral("rounds")).toInt() < 3 ||
-            !v.value(QStringLiteral("skipped")).toArray().isEmpty() ||
-            v.value(QStringLiteral("verified_values")).toObject() != values) continue;
-        const qint64 when = static_cast<qint64>(v.value(QStringLiteral("t")).toDouble());
-        if (when <= 0 || now < when || now - when > 24 * 3600) continue;
+            !v.value(QStringLiteral("skipped")).isArray() ||
+            !v.value(QStringLiteral("skipped")).toArray().isEmpty()) return false;
+        const double when = v.value(QStringLiteral("t")).toDouble(-1);
+        if (!(when > 0 && when <= now && now - when <= 24 * 3600)) return false;
         const QJsonArray ci = v.value(QStringLiteral("decision_ci")).toArray();
         if (ci.size() != 2 || !ci.at(0).isDouble() || !ci.at(1).isDouble() ||
-            ci.at(0).toDouble() <= 0.0 || ci.at(1).toDouble() < ci.at(0).toDouble()) continue;
+            ci.at(0).toDouble() <= 0.0 || ci.at(1).toDouble() < ci.at(0).toDouble()) return false;
         return true;
     }
     return false;
@@ -3876,7 +3887,7 @@ void OptimizeTab::applySelected(const QString &home) {
                 QMessageBox::information(this, tr("ABBA verification passed"),
                     tr("At least three paired ABBA blocks showed a positive, corrected confidence interval. "
                        "Only the verified preset values will be applied."));
-                applyValues(values, name);
+                applyValues(values, name, true);
             });
         connect(proc, &QProcess::errorOccurred, this, [this, proc, progress](QProcess::ProcessError err) {
             if (err != QProcess::FailedToStart) return;
@@ -3890,16 +3901,17 @@ void OptimizeTab::applySelected(const QString &home) {
         proc->start(pkexec,
             QStringList{CALIBRATE, QStringLiteral("--verify"), loadedPreset_,
                         QStringLiteral("--rounds"), QStringLiteral("4"),
-                        QStringLiteral("--sequential"), QStringLiteral("--require-improvement")});
+                        QStringLiteral("--sequential"), QStringLiteral("--no-fan-lock"), QStringLiteral("--require-improvement")});
         progress->show();
         return;
     }
-    applyValues(values, loadedPreset_);
+    applyValues(values, loadedPreset_, autoPreset && highRisk);
 }
 
-void OptimizeTab::applyValues(const QJsonObject &values, const QString &preset) {
+void OptimizeTab::applyValues(const QJsonObject &values, const QString &preset, bool requireVerified) {
     QJsonObject req{{"op", "apply"}, {"mode", "manual"}, {"values", values}};
     if (validPresetName(preset)) req["preset"] = preset;
+    if (requireVerified) req["require_verified"] = true;
     runOp(req, "Apply", [this, values](const QJsonObject &res) {
         int written = 0, skipped = 0, refused = 0;
         int notStuck = 0;
@@ -3934,7 +3946,12 @@ void OptimizeTab::applyValues(const QJsonObject &values, const QString &preset) 
         if (!mismatched.isEmpty())
             QMessageBox::warning(this, "Apply", "Written, but read back differently half a second later (the kernel clamped them, "
                                  "or firmware / another tool changed them):\n\n" + mismatched.join('\n'));
-        for (Row &r : rows_) if (res.value("ok").toBool()) r.touched = false;
+        // Preserve drafts whose result is skipped, missing, partial or mismatched.
+        for (const auto &v : res.value("results").toArray()) {
+            const auto receipt = v.toObject();
+            if (res.value("ok").toBool() && values.contains(receipt.value("key").toString()) && tunejournal::status(receipt) == tunereceipt::Status::Match)
+                if (Row *r = row(receipt.value("key").toString())) r->touched = false;
+        }
     });
 }
 
@@ -3963,8 +3980,13 @@ void OptimizeTab::revertRow(const QString &key) {
     runOp({{"op", "restore_keys"}, {"keys", QJsonArray{key}}}, "Restore",
           [this, key](const QJsonObject &res) {
               if (Row *r = row(key)) {
-                  const auto receipt = res.value("results").toArray().at(0).toObject();
-                  if (res.value("ok").toBool() && receipt.value("restored").toInt() > 0 && receipt.value("deferred").toInt() == 0) {
+                  const auto rows = res.value("results").toArray();
+                  bool matched = false;
+                  if (!rows.isEmpty()) for (const auto &v : rows.at(0).toObject().value("per_key").toArray()) {
+                      const auto o = v.toObject();
+                      if (o.value("key").toString() == key && tunejournal::status(o) == tunereceipt::Status::Match) matched = true;
+                  }
+                  if (res.value("ok").toBool() && matched) {
                       r->touched = false; showStatus(tr("Restore reported: %1 (not independently verified)").arg(r->label), theme::MUTED);
                   } else showStatus(tr("Restore not fully confirmed."),theme::WARN);
               }
@@ -3981,7 +4003,8 @@ void OptimizeTab::restoreAll(bool confirm) {
         if (QMessageBox::question(this, "Restore originals", msg) != QMessageBox::Yes) return;
     }
     runOp({{"op", "restore"}}, "Restore", [this](const QJsonObject &res) {
-        const QJsonObject r = res.value("results").toArray().at(0).toObject();
+        const auto rows = res.value("results").toArray();
+        const QJsonObject r = rows.isEmpty() ? QJsonObject{} : rows.at(0).toObject();
         if (res.value("ok").toBool() && r.value("deferred").toInt() == 0 && r.value("restored").isDouble())
             for (Row &x : rows_) x.touched = false;
         showStatus(tr("Restore reported %1 file(s); deferred: %2.").arg(r.value("restored").toInt()).arg(r.value("deferred").toInt()),
@@ -4020,14 +4043,15 @@ void OptimizeTab::returnToBootDefaults() {
         }
     }
     runOp({{"op", "restore_defaults"}}, title, [this](const QJsonObject &res) {
-        if (!res.contains("snapshot")) return;  // refused before anything was written; runOp shows the error
+        if (!res.contains("snapshot")) { showStatus(tr("Restore not fully confirmed."),theme::WARN); return; }
         const QJsonArray failed = res.value("failed").toArray();
         const auto applied = res.value("applied").toArray();
         bool verified = res.value("ok").toBool() && !applied.isEmpty() && failed.isEmpty();
         for (const auto &v : applied) verified &= tunejournal::status(v.toObject()) == tunereceipt::Status::Match;
-        const auto restore = res.value("results").toArray().at(0).toObject();
+        const auto results = res.value("results").toArray();
+        const auto restore = results.isEmpty() ? QJsonObject{} : results.at(0).toObject();
         verified &= restore.value("errors").isArray() && restore.value("errors").toArray().isEmpty() && restore.value("deferred").toInt() == 0;
-        if (res.value("ok").toBool()) for (Row &x : rows_) x.touched = false;
+        if (verified) for (Row &x : rows_) x.touched = false;
         if (failed.isEmpty()) {
             showStatus(tr("Boot defaults: %1 file(s) written. Scenes are paused. %2").arg(res.value("written").toInt()).arg(verified ? tr("Checked values matched at helper readback") : tr("Not fully verified")), verified ? theme::MUTED : theme::WARN, 10000);
             return;
@@ -4068,7 +4092,7 @@ static QString tuneReceiptLabel(const QJsonObject &o) {
 void OptimizeTab::showTransactionJournal() {
     QDialog dialog(this); dialog.setWindowTitle(tr("Optimization Transaction Journal")); dialog.resize(1050, 620);
     auto *layout = new QVBoxLayout(&dialog);
-    auto *note = new QLabel(tr("Local historical evidence only. Pending records have no recorded reply. A helper readback is not proof of the current state. Restore summaries are not per-key verification. Up to 100 transactions are retained (4 MiB limit)."));
+    auto *note = new QLabel(tr("Local historical evidence only. Pending records have no recorded reply. A helper readback is not proof of the current state. Restore summaries without per-key receipts are unverified. Up to 100 transactions are retained (4 MiB limit); unresolved records are not evicted."));
     note->setWordWrap(true); layout->addWidget(note);
     const auto path = tuneJournalPath();
     const std::optional<QJsonArray> data = path.isEmpty() ? std::optional<QJsonArray>{} : tunejournal::read(path);
@@ -4137,12 +4161,17 @@ void OptimizeTab::runOp(const QJsonObject &req, const QString &what, std::functi
     }
     showStatus(what + "…" + (tracked && !journaled ? tr(" · transaction journal unavailable") : QString()),
         tracked && !journaled ? theme::WARN : theme::MUTED, 0);
-    privileged::run(helperForOp(op), req, this, [this, what, then, tx, path, journaled, tracked, op](const privileged::Result &r) mutable {
+    privileged::runUntilExit(helperForOp(op), req, this, [this, what, then, tx, path, journaled, tracked, op](const privileged::Result &r) mutable {
         if (tracked && !journaled) QMessageBox::warning(this,tr("Optimization Transaction Journal"),tr("Could not record this transaction. The existing journal was preserved."));
         if (journaled) {
             QJsonArray receipts;
             const auto results = r.json.value("results").toArray();
-            for (const auto &v : results) if (v.isObject()) receipts.append(tunejournal::receipt(v.toObject()));
+            for (const auto &v : results) if (v.isObject()) {
+                const auto o = v.toObject();
+                receipts.append(tunejournal::receipt(o));
+                for (const auto &row : o.value("per_key").toArray())
+                    if (row.isObject()) receipts.append(tunejournal::receipt(row.toObject()));
+            }
             if (op == "restore_defaults") for (const auto &v : r.json.value("applied").toArray()) if (v.isObject()) receipts.append(tunejournal::receipt(v.toObject()));
             tx.insert("receipts",receipts);
             tx.insert("finished",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
@@ -4164,7 +4193,7 @@ void OptimizeTab::runOp(const QJsonObject &req, const QString &what, std::functi
         updateHomeBootStatuses();
         reloadPresets();
         refresh();
-    }, PKEXEC_TIMEOUT_MS);
+    }, PKEXEC_TIMEOUT_MS, [this] { showStatus(tr("Optimization helper timed out; waiting for its process to exit."), theme::WARN, 0); });
 }
 
 // A persisted boot preset is not the same thing as checked rows in the editor.
@@ -4339,7 +4368,7 @@ void OptimizeTab::sourceWorkspace() {
     for (const Row &r : rows_) {
         QStringList owner;
         if (owned.contains(r.key)) owner << tr("Centurion saved original");
-        if (tlp.contains(r.key)) owner << tr("TLP original recorded");
+        if (tlp.contains(r.key)) owner << tr("TLP candidate at capture (not verified)");
         if (saved.contains(r.key)) owner << tr("Boot configuration");
         const QString unknown = tr("Unknown");
         const QString quality = readbackStale_ ? tr("Stale readback") : !r.available ? tr("Unavailable") : r.cached ? tr("Cached readback") : r.current.isEmpty() ? tr("Unreadable") : tr("Last helper readback");

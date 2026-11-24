@@ -358,8 +358,8 @@ fn cmd_gpus() {
     let gpus = gpu::discover_gpus().unwrap_or_else(|e| die(1, format!("nvcurve: {e}")));
     if gpus.is_empty() { println!("No NVIDIA GPUs detected."); return; }
     for g in gpus {
-        let pci = g.pci_bus_id.map(|b| format!("PCI 0x{b:04x}")).unwrap_or_else(|| "PCI N/A".into());
-        println!("  [{}] {}  —  {}  —  {pci}", g.index, g.name, g.uuid.as_deref().unwrap_or("N/A"));
+        let pci = g.pci_address.as_deref().unwrap_or("PCI N/A");
+        println!("  [{}] {}  —  {}  —  {pci} ({})", g.index, g.name, g.uuid.as_deref().unwrap_or("N/A"), g.identity_evidence.unwrap_or("identity unavailable"));
     }
 }
 

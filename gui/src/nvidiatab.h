@@ -81,7 +81,7 @@ private:
     void updateCoreOffsetUi();
     void onSelectionChanged();
     void resetGraphToLastRead();
-    bool loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out, const QJsonObject &expectedDevice = {});
+    bool loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out, const QJsonObject &expectedDevice = {}, QJsonObject *result = nullptr);
     void showCurveTransactions();
     void applyMemOffset(const QJsonObject &result);
     void takeGpuPoints(const QJsonArray &pts, bool keepOffsets);

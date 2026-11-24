@@ -12,6 +12,7 @@
 #include <QTimer>
 #include <algorithm>
 #include <initializer_list>
+#include <memory>
 #include <utility>
 
 namespace lighting {
@@ -231,34 +232,51 @@ static void runDirect(const QJsonObject &req, QObject *ctx, privileged::Callback
     const QString helper = privileged::helperPath(QStringLiteral("lighting-helper"));
     if (!QFileInfo(helper).isFile()) return fail(QStringLiteral("helper not found: ") + helper);
 
-    // Runs as the user: killing it on timeout is allowed, so a plain parent is fine.
+    // Keep the transaction busy until the actual process exit, even when a
+    // device I/O syscall delays SIGKILL. Never start fallback/rollback early.
     auto *proc = new QProcess(QCoreApplication::instance());
     auto *timer = new QTimer(proc);
     timer->setSingleShot(true);
-    auto done = std::make_shared<bool>(false);
+    struct State { bool done = false; QString failure; QByteArray out; };
+    auto state = std::make_shared<State>();
     auto finish = [=](const privileged::Result &r) {
-        if (std::exchange(*done, true)) return;
+        if (std::exchange(state->done, true)) return;
         timer->stop();
         if (guard) cb(r);
     };
+    const auto drain = [=] {
+        const auto chunk = proc->readAllStandardOutput();
+        proc->readAllStandardError();
+        if (!state->failure.isEmpty()) return;
+        constexpr qsizetype limit = 4 * 1024 * 1024;
+        if (chunk.size() > limit - state->out.size()) {
+            state->failure = QStringLiteral("lighting-helper exceeded the reply size limit");
+            state->out.clear(); proc->kill();
+        } else state->out.append(chunk);
+    };
+    QObject::connect(proc, &QProcess::readyReadStandardOutput, proc, drain);
+    QObject::connect(proc, &QProcess::readyReadStandardError, proc, drain);
     QObject::connect(timer, &QTimer::timeout, proc, [=] {
-        privileged::Result r; r.error = QStringLiteral("lighting-helper did not answer in time");
-        finish(r);
+        if (state->failure.isEmpty()) state->failure = QStringLiteral("lighting-helper timed out; result unknown");
         proc->kill();
     });
     QObject::connect(proc, &QProcess::errorOccurred, proc, [=](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
         privileged::Result r; r.error = QStringLiteral("could not start lighting-helper: ") + proc->errorString();
-        finish(r);
-        proc->deleteLater();
+        proc->deleteLater(); finish(r);
     });
-    QObject::connect(proc, &QProcess::finished, proc, [=](int code, QProcess::ExitStatus) {
-        proc->deleteLater();
-        const QByteArray out = proc->readAllStandardOutput().trimmed();
-        const QJsonDocument doc = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1));
+    QObject::connect(proc, &QProcess::finished, proc, [=](int code, QProcess::ExitStatus status) {
+        drain(); proc->deleteLater();
         privileged::Result r;
-        if (doc.isObject() && !doc.object().isEmpty()) { r.reached = true; r.json = doc.object(); }
-        else r.error = QStringLiteral("lighting-helper exited with code %1").arg(code);
+        if (!state->failure.isEmpty()) r.error = state->failure;
+        else if (status != QProcess::NormalExit) r.error = QStringLiteral("lighting-helper crashed; result unknown");
+        else {
+            const QByteArray out = state->out.trimmed();
+            const auto doc = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1));
+            const auto reply = doc.object();
+            if (reply.value("ok").isBool() && (code == 0 || !reply.value("ok").toBool())) { r.reached = true; r.json = reply; }
+            else r.error = QStringLiteral("lighting-helper invalid reply or unsuccessful exit (%1)").arg(code);
+        }
         finish(r);
     });
     proc->setProgram(helper);
@@ -274,7 +292,7 @@ void run(const QJsonObject &req, QObject *ctx, privileged::Callback cb, bool ele
     QPointer<QObject> guard(ctx);
     runDirect(req, ctx, [req, guard, cb, elevate](const privileged::Result &r) {
         if (elevate && r.reached && r.json.value("denied").toBool() && guard) {
-            privileged::run(privileged::helperPath(QStringLiteral("lighting-helper")), req, guard.data(), cb, 60000);
+            privileged::runUntilExit(privileged::helperPath(QStringLiteral("lighting-helper")), req, guard.data(), cb, 60000);
             return;
         }
         cb(r);

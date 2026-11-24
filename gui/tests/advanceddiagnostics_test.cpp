@@ -172,6 +172,15 @@ int main(int argc, char **argv) {
         const auto kernel = diagsrc::parseLine(QStringLiteral("2026-11-20 10:00:01  boot=123abcde seq=43  warn   [12.345678] some driver warning"));
         CHECK(health && health->kind == QStringLiteral("xid") && health->title.startsWith(QStringLiteral("Xid 79")));
         CHECK(kernel && kernel->kind.isEmpty() && kernel->text == QStringLiteral("some driver warning"));
+        CHECK(!diagsrc::parseLine(QStringLiteral("2026-11-20 10:00:01  boot=123abcde seq=18446744073709551616 warn [12.3] invalid")));
+        QTemporaryDir bounded; CHECK(bounded.isValid());
+        const QString record=bounded.filePath(QStringLiteral("record.json"));
+        { QFile f(record); CHECK(f.open(QIODevice::WriteOnly)); CHECK(f.write("{}") == 2); }
+        CHECK(diagsrc::readRecord(record,2).has_value());
+        CHECK(!diagsrc::readRecord(record,1).has_value());
+        const QString link=bounded.filePath(QStringLiteral("link.json")); CHECK(QFile::link(record,link));
+        CHECK(!diagsrc::readRecord(link,100).has_value());
+
         const auto list = ad::incidents({*health, *kernel}, ad::incidentNotes());
         CHECK(list.size() == 1 && list.first().status == QStringLiteral("Monitoring"));
     }

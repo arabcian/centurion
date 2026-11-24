@@ -6294,6 +6294,14 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
         <source>Current CPU temperature: %1 °C</source>
         <translation>Güncel CPU sıcaklığı: %1 °C</translation>
     </message>
+    <message>
+        <source>Saved %1 (%2 KiB, %3 files).
+
+Selected files matched the preview. Automatic redaction is best effort; review before sharing.</source>
+        <translation>%1 kaydedildi (%2 KiB, %3 dosya).
+
+Seçilen dosyalar önizlemeyle eşleşti. Otomatik anonimleştirme kesin sonuç garantilemez; paylaşmadan önce inceleyin.</translation>
+    </message>
 </context>
     <context>
         <name>ReportPreview</name>
@@ -6332,7 +6340,15 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
             <source>unreadable, left out</source>
             <translation>okunamadı, dışarıda bırakıldı</translation>
         </message>
-    </context>
+        <message>
+        <source>Select files to save. Automatic redaction is best effort (%1 detected values). Review before sharing. Long files show only a prefix and are excluded by default. Selected files must still match this preview when saved.</source>
+        <translation>Kaydedilecek dosyaları seçin. Otomatik anonimleştirme kesin sonuç garantilemez (%1 tespit edilen değer). Paylaşmadan önce inceleyin. Uzun dosyaların yalnızca başlangıcı gösterilir ve bunlar varsayılan olarak seçilmez. Kaydedilen dosyalar bu önizlemeyle eşleşmelidir.</translation>
+    </message>
+    <message>
+        <source> (partial preview; full file if selected)</source>
+        <translation> (kısmi önizleme; seçilirse dosyanın tamamı)</translation>
+    </message>
+</context>
     <context>
         <name>ScenesTab</name>
         <message>
@@ -9806,6 +9822,18 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
             <translation>Eğri kimliği veya voltaj düzeni değişti; istenen ofsetler karşılaştırılamıyor.</translation>
         </message>
         <message>
+            <source>Actual Apply plan: %1 GPU point offsets differ from readback.</source>
+            <translation>Gerçek uygulama planı: %1 GPU noktasının ofseti geri okumadan farklı.</translation>
+        </message>
+        <message>
+            <source>Actual Apply plan: all GPU point offsets match readback; clock locks and stability are not verified.</source>
+            <translation>Gerçek uygulama planı: bütün GPU nokta ofsetleri geri okumayla eşleşiyor; saat kilitleri ve kararlılık doğrulanmadı.</translation>
+        </message>
+        <message>
+            <source>Actual Apply plan is missing or invalid; exact flatten/readback comparison unavailable.</source>
+            <translation>Gerçek uygulama planı eksik veya geçersiz; düzleştirme ve geri okuma kesin olarak karşılaştırılamıyor.</translation>
+        </message>
+        <message>
             <source>Curve readback is invalid or belongs to another request. Update the helper if necessary.</source>
             <translation>Eğri geri okuması geçersiz veya başka bir isteğe ait. Gerekirse yardımcı programı güncelleyin.</translation>
         </message>
@@ -10298,8 +10326,20 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
             <translation>Güncelliğini yitirmiş geri okuma</translation>
         </message>
         <message>
-            <source>TLP original recorded</source>
-            <translation>TLP özgün değeri kayıtlı</translation>
+            <source>TLP candidate at capture (not verified)</source>
+            <translation>Kayıt anında olası TLP kaynağı (doğrulanmadı)</translation>
+        </message>
+        <message>
+            <source>Optimization helper timed out; waiting for its process to exit.</source>
+            <translation>Optimizasyon yardımcısı zaman aşımına uğradı; işlemin gerçekten sonlanması bekleniyor.</translation>
+        </message>
+        <message>
+            <source>Optimization recovery state unknown</source>
+            <translation>Optimizasyon kurtarma durumu bilinmiyor</translation>
+        </message>
+        <message>
+            <source>The helper could not read the saved originals. Do not assume the system is at its original values.</source>
+            <translation>Yardımcı program kayıtlı özgün değerleri okuyamadı. Sistemin özgün değerlerinde olduğunu varsaymayın.</translation>
         </message>
         <message>
             <source>The draft changed during review. Reopen the report before selecting recommendations.</source>
@@ -11773,8 +11813,8 @@ These changes can cost stability, heat or idle power:
             <translation>Kontrol edilen değerler yardımcı geri okumasıyla eşleşti</translation>
         </message>
         <message>
-            <source>Local historical evidence only. Pending records have no recorded reply. A helper readback is not proof of the current state. Restore summaries are not per-key verification. Up to 100 transactions are retained (4 MiB limit).</source>
-            <translation>Yalnızca yerel geçmiş kanıtı. Bekleyen kayıtların yanıtı kaydedilmemiştir. Yardımcı geri okuması güncel durumun kanıtı değildir. Geri yükleme özetleri anahtar bazında doğrulama değildir. En fazla 100 işlem saklanır (4 MiB sınırı).</translation>
+            <source>Local historical evidence only. Pending records have no recorded reply. A helper readback is not proof of the current state. Restore summaries without per-key receipts are unverified. Up to 100 transactions are retained (4 MiB limit); unresolved records are not evicted.</source>
+            <translation>Yalnızca yerel geçmiş kanıtı. Bekleyen kayıtlarda yanıt yoktur. Yardımcı programın geri okuması güncel durumu kanıtlamaz. Ayar başına makbuzu olmayan geri yükleme özetleri doğrulanmamıştır. En çok 100 işlem saklanır (4 MiB sınırı); sonuçlanmamış kayıtlar silinmez.</translation>
         </message>
         <message>
             <source>The journal is unreadable or invalid; it has not been overwritten.</source>
@@ -12265,7 +12305,35 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
         <message><source>Unsafe shutdowns</source><translation>Güvensiz kapanmalar</translation></message>
         <message><source>Written (TB)</source><translation>Yazılan (TB)</translation></message>
         <message><source>History could not be read or is damaged. The file is preserved.</source><translation>Geçmiş okunamadı veya bozuk. Dosya korundu.</translation></message>
-    </context>
+        <message>
+        <source>Automatic daily SMART sampling</source>
+        <translation>Otomatik günlük SMART ölçümü</translation>
+    </message>
+    <message>
+        <source>Opt in to an unattended daily check for authorized administrators. Drives may wake; no self-test is started. Checked hourly while Centurion is running.</source>
+        <translation>Yetkili yöneticiler için gözetimsiz günlük kontrolü etkinleştirir. Sürücüler uyanabilir; kendi kendini sınama başlatılmaz. Centurion çalışırken saatlik kontrol edilir.</translation>
+    </message>
+    <message>
+        <source> · History saved partially; some drives had no usable sample.</source>
+        <translation> · Geçmiş kısmen kaydedildi; bazı sürücülerden kullanılabilir ölçüm alınamadı.</translation>
+    </message>
+    <message>
+        <source> · No usable history sample.</source>
+        <translation> · Kullanılabilir geçmiş ölçümü yok.</translation>
+    </message>
+    <message>
+        <source> · History could not be saved.</source>
+        <translation> · Geçmiş kaydedilemedi.</translation>
+    </message>
+    <message>
+        <source>Invalid SMART reply.</source>
+        <translation>Geçersiz SMART yanıtı.</translation>
+    </message>
+    <message>
+        <source>SMART check timed out; waiting for the helper to exit before another check.</source>
+        <translation>SMART kontrolü zaman aşımına uğradı; yeni kontrol öncesi yardımcı sürecin çıkışı bekleniyor.</translation>
+    </message>
+</context>
     <context>
         <name>UiNavigator</name>
         <message>
@@ -14889,7 +14957,15 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
         </message>
             <message><source>Rejected: conflicting resource reservation</source><translation>Reddedildi: çakışan kaynak rezervasyonu</translation></message>
         <message><source>A conflicting operation is still running; no helper was started.</source><translation>Çakışan işlem hâlâ çalışıyor; yardımcı program başlatılmadı.</translation></message>
-    </context>
+        <message>
+            <source>The helper timed out; it has now exited, but its result is unknown.</source>
+            <translation>Yardımcı zaman aşımına uğradı; artık sonlandı, ancak sonucu bilinmiyor.</translation>
+        </message>
+            <message>
+            <source>CO Search session</source>
+            <translation>CO Arama oturumu</translation>
+        </message>
+        </context>
     <context>
         <name>BarChart</name>
         <message>
@@ -14901,7 +14977,19 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
       <source>Unavailable</source>
       <translation>Kullanılamıyor</translation>
     </message>
-  </context>
+      <message>
+        <source>Previous rows</source>
+        <translation>Önceki Satırlar</translation>
+    </message>
+    <message>
+        <source>Next rows</source>
+        <translation>Sonraki Satırlar</translation>
+    </message>
+    <message>
+        <source>Reset view</source>
+        <translation>Görünümü Sıfırla</translation>
+    </message>
+</context>
     <context>
         <name>VfCurveWidget</name>
         <message>
@@ -17141,6 +17229,18 @@ Açık bağlantılar çalışmaya devam eder. Devam edilsin mi?</translation>
     <context>
         <name>CoSearchDialog</name>
         <message>
+            <source>Wait until the current scene operation finishes before starting CO Search.</source>
+            <translation>CO Araması başlatmadan önce mevcut sahne işleminin bitmesini bekleyin.</translation>
+        </message>
+        <message>
+            <source>Previous scene restoration could not be started.</source>
+            <translation>Önceki sahnenin geri yüklenmesi başlatılamadı.</translation>
+        </message>
+        <message>
+            <source>Previous scene restoration: %1. See Scene Execution Log.</source>
+            <translation>Önceki sahnenin geri yüklenmesi: %1. Sahne Yürütme Günlüğüne bakın.</translation>
+        </message>
+        <message>
             <source>No per-core result</source>
             <translation>Çekirdek bazlı sonuç yok</translation>
         </message>
@@ -18571,7 +18671,39 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
         <message><source>Decision</source><translation>Karar</translation></message>
         <message><source>Showing newest %1 events; %2 earlier events not displayed.</source><translation>En yeni %1 olay gösteriliyor; %2 eski olay gösterilmiyor.</translation></message>
         <message><source>Decision timeline</source><translation>Karar zaman çizelgesi</translation></message>
-    </context>
+        <message>
+            <source>CPU helper timed out; waiting for its actual exit before continuing.</source>
+            <translation>CPU yardımcısı zaman aşımına uğradı; devam etmeden önce gerçekten sonlanması bekleniyor.</translation>
+        </message>
+            <message>
+            <source>Search cancelled before the first trial</source>
+            <translation>Arama ilk denemeden önce iptal edildi</translation>
+        </message>
+            <message>
+            <source>CPU curve ownership is unavailable; no search trial was started.</source>
+            <translation>CPU eğrisi işlem rezervasyonu alınamadı; arama denemesi başlatılmadı.</translation>
+        </message>
+            <message>
+            <source> — CPU curve ownership unavailable; no reset dispatched.</source>
+            <translation> — CPU eğrisi işlem rezervasyonu alınamadı; sıfırlama başlatılmadı.</translation>
+        </message>
+            <message>
+            <source>Recovery cancelled after stock reset; the journal is kept.</source>
+            <translation>Stok değerine sıfırlamadan sonra kurtarma iptal edildi; günlük korundu.</translation>
+        </message>
+            <message>
+            <source>Recovery cancelled; stock reset was not confirmed: %1. The journal is kept.</source>
+            <translation>Kurtarma iptal edildi; stok değerine sıfırlama doğrulanamadı: %1. Günlük korundu.</translation>
+        </message>
+            <message>
+            <source>Recovery cancelled; the journal is kept.</source>
+            <translation>Kurtarma iptal edildi; günlük korundu.</translation>
+        </message>
+            <message>
+            <source>Recovery cancellation requested; waiting for the current helper to finish. The journal is protected.</source>
+            <translation>Kurtarma iptali istendi; mevcut yardımcının sonlanması bekleniyor. Günlük korunuyor.</translation>
+        </message>
+        </context>
     <context>
         <name>coevidence</name>
         <message>
@@ -23766,7 +23898,19 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <source>Brightness</source>
             <translation>Parlaklık</translation>
         </message>
-    </context>
+        <message>
+        <source>Verified progressive base/CTA detailed timings only; not a complete list of modes offered by the driver.</source>
+        <translation>Yalnızca doğrulanmış temel blok ve CTA progresif ayrıntılı zamanlamaları; sürücünün sunduğu tüm modların listesi değildir.</translation>
+    </message>
+    <message>
+        <source>Progressive Timing Details</source>
+        <translation>Progresif Zamanlama Ayrıntıları</translation>
+    </message>
+    <message>
+        <source>%1 changed connection state during capture</source>
+        <translation>%1 bağlantı durumu okuma sırasında değişti</translation>
+    </message>
+</context>
     <context>
         <name>DiagReportView</name>
         <message>
@@ -26671,6 +26815,10 @@ Kayıt kimliği: %6
     <message>
         <source>Numeric value</source>
         <translation>Sayısal değer</translation>
+    </message>
+    <message>
+        <source>View visible data table</source>
+        <translation>Görünür Veri Tablosunu Aç</translation>
     </message>
 </context>
 </TS>

@@ -127,6 +127,14 @@ struct Lock(#[allow(dead_code)] fs::File);
 /// sysfs write would then freeze every later caller (GUI, game launcher)
 /// along with it. Poll `LOCK_NB` until `LOCK_TIMEOUT`, then fail with a
 /// clear "busy" error so the caller can surface it instead of hanging.
+fn calibration_recovery_pending() -> bool {
+    const P: &str = "/run/centurion/calibrate.json";
+    if calctx::recovery_exists(calctx::SCENE_JOURNAL) || calctx::recovery_exists("/run/centurion/calibrate-fan.json") { return true; }
+    match fs::symlink_metadata(P) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        _ => !read_root_file(P, 8 << 20).and_then(|s| serde_json::from_str::<Value>(&s).ok()).is_some_and(|v| v.as_array().is_some_and(|a| a.is_empty())),
+    }
+}
 fn lock() -> Result<Lock, String> {
     secure_dir(RUN_DIR)?;
     secure_dir(STATE_DIR)?;
@@ -136,6 +144,7 @@ fn lock() -> Result<Lock, String> {
     let deadline = Instant::now() + LOCK_TIMEOUT;
     loop {
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            if calibration_recovery_pending() { return Err("calibration recovery pending; run centurion-calibrate --restore first".into()); }
             return Ok(Lock(f));
         }
         let err = std::io::Error::last_os_error();
@@ -170,6 +179,8 @@ fn lock() -> Result<Lock, String> {
 struct State {
     /// (key, path, original) in first-write order.
     baseline: Vec<(String, PathBuf, String)>,
+    /// Root-captured, boot-local identity for hotplug-sensitive storage targets.
+    storage_stamps: std::collections::BTreeMap<PathBuf, Value>,
     /// Running game sessions: (owner pid, owner start time). The owner is the
     /// process that stays alive for the whole game (centurion-gamemode WRAP, or the
     /// launcher that ran PRE); None = untracked, ended only by a release.
@@ -196,7 +207,8 @@ struct GameLayer {
     prev: Vec<(String, PathBuf, String)>,
 }
 
-/// Keys TLP manages; their first-seen value on a TLP system is TLP's, not the kernel's.
+/// TLP candidate: presence of its runtime directory and an overlapping key family
+/// are not evidence that TLP was the last writer.
 fn origin_of(key: &str) -> &'static str {
     const TLP: &[&str] = &["pm.", "usb.", "pci.aspm", "cpu.epp", "cpu.governor", "cpu.boost", "cpu.dynamic_epp", "cpu.min_freq",
                            "cpu.max_freq", "snd.", "net.wifi", "net.wol", "disk.", "gpu.amdgpu_abm", "gpu.amdgpu_dpm", "kernel.watchdog",
@@ -204,13 +216,46 @@ fn origin_of(key: &str) -> &'static str {
     if Path::new("/run/tlp").is_dir() && TLP.iter().any(|p| key.starts_with(p)) { "tlp" } else { "system" }
 }
 
+fn valid_state_entry(e: &Value) -> bool {
+    e.as_array().is_some_and(|a| a.len() == 3)
+        && e[0].as_str().is_some_and(|key| tune::find(key).is_some())
+        && e[1].as_str().is_some_and(|path| Path::new(path).is_absolute())
+        && e[2].is_string()
+}
+
 impl State {
-    fn load() -> State {
-        let Some(text) = read_root_file(STATE_FILE, 8 << 20) else { return State::default() };
-        let Ok(v) = serde_json::from_str::<Value>(&text) else { return State::default() };
+    fn load() -> Result<State, String> {
+        let text = match read_root_file(STATE_FILE, 8 << 20) {
+            Some(text) => text,
+            None => match fs::symlink_metadata(STATE_FILE) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(State::default()),
+                _ => return Err("optimization state is unreadable or unsafe; original records preserved".into()),
+            },
+        };
+        Self::decode(&text)
+    }
+
+    fn decode(text: &str) -> Result<State, String> {
+        let v: Value = serde_json::from_str(text).map_err(|_| "invalid optimization state JSON")?;
+        let invalid = || "invalid optimization state schema; original records preserved".to_owned();
+        // Never silently discard an original from a corrupted or newer state file.
+        if v.get("version").is_some_and(|x| x.as_u64() != Some(2)) { return Err(invalid()); }
+        let rows = v["baseline"].as_array().ok_or_else(invalid)?;
+        if rows.len() > MAX_BASELINE || rows.iter().any(|e| !valid_state_entry(e)) {
+            return Err(invalid());
+        }
+        if let Some(g) = v.get("game").filter(|g| !g.is_null()) {
+            if !g.is_object() || !g["prev"].as_array().is_some_and(|a| a.len() <= MAX_BASELINE && a.iter().all(valid_state_entry))
+                || !g["fresh"].as_array().is_some_and(|a| a.len() <= MAX_BASELINE && a.iter().all(Value::is_string)) {
+                return Err(invalid());
+            }
+        }
+        if v.get("sessions").is_some_and(|a| !a.as_array().is_some_and(|a| a.len() <= MAX_REFCOUNT as usize && a.iter().all(Value::is_object))) {
+            return Err(invalid());
+        }
         let baseline = v["baseline"].as_array().map(|a| a.iter().filter_map(|e| {
             let key = e[0].as_str()?;
-            tune::find(key)?; // drop anything the table no longer knows
+            tune::find(key)?; // already validated above
             Some((key.to_owned(), PathBuf::from(e[1].as_str()?), e[2].as_str()?.to_owned()))
         }).take(MAX_BASELINE).collect()).unwrap_or_default();
         let sessions: Vec<(Option<i32>, Option<u64>)> = match v["sessions"].as_array() {
@@ -221,8 +266,17 @@ impl State {
             // state written by an older helper: untracked sessions
             None => vec![(None, None); v["refcount"].as_u64().unwrap_or(0).min(MAX_REFCOUNT as u64) as usize],
         };
-        State {
+        let storage_stamps = match v.get("storage_stamps") {
+            None => Default::default(), // legacy originals are retained but not automatically written to storage
+            Some(m) => {
+                let m = m.as_object().ok_or_else(invalid)?;
+                if m.len() > MAX_BASELINE || m.iter().any(|(p, stamp)| !Path::new(p).is_absolute() || !stamp.is_object()) { return Err(invalid()); }
+                m.iter().map(|(p, stamp)| (PathBuf::from(p), stamp.clone())).collect()
+            }
+        };
+        Ok(State {
             baseline,
+            storage_stamps,
             sessions,
             preset: v["preset"].as_str().map(str::to_owned),
             source: v["source"].as_str().map(str::to_owned),
@@ -237,7 +291,7 @@ impl State {
                     Some((key.to_owned(), PathBuf::from(e[1].as_str()?), e[2].as_str()?.to_owned()))
                 }).take(MAX_BASELINE).collect()).unwrap_or_default(),
             }),
-        }
+        })
     }
 
     fn save(&self) -> Result<(), String> {
@@ -245,13 +299,20 @@ impl State {
             .filter(|(k, _)| self.baseline.iter().any(|(b, _, _)| b == *k)).map(|(k, o)| (k.clone(), json!(o))).collect();
         let game = self.game.as_ref().map(|g| json!({"preset": g.preset, "source": g.source, "fresh": g.fresh,
             "prev": g.prev.iter().map(|(k, p, v)| json!([k, p, v])).collect::<Vec<_>>()}));
+        let storage_stamps: Map<String, Value> = self.storage_stamps.iter()
+            .filter(|(p, _)| self.has(p)).map(|(p, v)| Ok((p.to_str().ok_or("invalid storage path encoding")?.to_owned(), v.clone())))
+            .collect::<Result<_, &str>>()?;
         let v = json!({
-            "origins": origins, "game": game,
+            "version": 2, "origins": origins, "game": game, "storage_stamps": storage_stamps,
             "baseline": self.baseline.iter().map(|(k, p, v)| json!([k, p, v])).collect::<Vec<_>>(),
                       "refcount": self.refcount(), "preset": self.preset, "source": self.source,
                       "sessions": self.sessions.iter().map(|(p, t)| json!({"pid": p, "start": t})).collect::<Vec<_>>(),
         });
-        write_root_file(STATE_FILE, &serde_json::to_vec_pretty(&v).unwrap())
+        let bytes = serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?;
+        if bytes.len() > (8 << 20) || self.baseline.len() > MAX_BASELINE {
+            return Err("optimization state exceeds the readable limit; originals preserved".into());
+        }
+        write_root_file(STATE_FILE, &bytes)
     }
 
     fn has(&self, p: &Path) -> bool { self.baseline.iter().any(|(_, q, _)| q == p) }
@@ -271,7 +332,8 @@ fn summary(st: &State) -> Value {
     let mut keys: Vec<&str> = Vec::new();
     for (k, _, _) in &st.baseline { if !keys.contains(&k.as_str()) { keys.push(k); } }
     let tlp: Vec<&String> = st.origins.iter().filter(|(k, o)| *o == "tlp" && keys.contains(&k.as_str())).map(|(k, _)| k).collect();
-    json!({"active": !st.baseline.is_empty(), "refcount": st.refcount(), "preset": st.preset,
+    json!({"active": !st.baseline.is_empty() || st.game.is_some(), "refcount": st.refcount(), "preset": st.preset,
+        "pending_game_restore": st.game.is_some() && st.sessions.is_empty(),
         "source": st.source, "saved_files": st.baseline.len(), "keys": keys, "tlp_originals": tlp})
 }
 
@@ -350,30 +412,45 @@ fn preflight_replace(values: &Map<String, Value>) -> Result<Vec<(String, PathBuf
 /// Capture the *currently enforced* values of both old and new targets.
 /// The existing baseline contains first-seen defaults, not the previous
 /// preset's values; using it as a transition rollback would be incorrect.
-fn snapshot_replace(st: &State, plan: &[(String, PathBuf, String)]) -> Result<Vec<(String, PathBuf, String)>, String> {
+type StorageStamps = std::collections::BTreeMap<PathBuf, Value>;
+type ReplaceSnapshot = (Vec<(String, PathBuf, String)>, StorageStamps, std::collections::BTreeSet<(String, PathBuf)>);
+fn snapshot_replace(st: &State, plan: &[(String, PathBuf, String)]) -> Result<ReplaceSnapshot, String> {
     let mut old = Vec::new();
+    let mut stamps = StorageStamps::new();
     let mut seen = std::collections::HashSet::new();
     for (key, path, _) in st.baseline.iter().chain(plan.iter()) {
         if !seen.insert(path.clone()) { continue; }
         let t = tune::find(key).ok_or_else(|| format!("{key}: tunable disappeared"))?;
+        if tune::scoped_storage(t) {
+            let stamp = tune::storage_stamp(t, path).ok_or_else(|| format!("{key}: storage target identity unavailable"))?;
+            if st.has(path) && st.storage_stamps.get(path) != Some(&stamp) {
+                return Err(format!("{key}: saved storage identity does not match; nothing changed"));
+            }
+            stamps.insert(path.clone(), stamp);
+        }
         let Some(live) = tune::baseline_value(t, path) else {
             // apply_values never writes an unreadable best-effort file (counted as refused): nothing to roll back.
             if tune::best_effort(t) { continue; }
             return Err(format!("cannot snapshot {} before replacing preset; nothing changed", path.display()));
         };
+        if tune::scoped_storage(t) && tune::storage_stamp(t, path).as_ref() != stamps.get(path) {
+            return Err(format!("{key}: storage identity changed during snapshot"));
+        }
         old.push((key.clone(), path.clone(), live));
     }
-    Ok(old)
+    Ok((old, stamps, plan.iter().map(|(k, p, _)| (k.clone(), p.clone())).collect()))
 }
 
-fn rollback_replace(st: &mut State, before: State, saved: &[(String, PathBuf, String)], mut out: Value) -> Value {
+fn rollback_replace(st: &mut State, before: State, saved: &ReplaceSnapshot, mut out: Value) -> Value {
     // Only files that actually moved: rewriting an untouched file the kernel refuses (a managed IRQ,
     // a suspended device) would fail again and report an incomplete rollback that changed nothing.
-    let changed: Vec<(String, PathBuf, String)> = saved.iter().filter(|(k, p, v)| {
+    let changed: Vec<(String, PathBuf, String)> = saved.0.iter().filter(|(k, p, v)| {
         let Some(t) = tune::find(k) else { return true };
+        if tune::scoped_storage(t) && tune::storage_stamp(t, p).as_ref() != saved.1.get(p) { return true; }
         tune::baseline_value(t, p).map_or(true, |live| !tune::same_value(t, &live, v))
     }).cloned().collect();
-    let (_, errors, _, failed) = write_back(&changed);
+    let (_, errors, _, failed, per_key) = write_back(&changed, &saved.1);
+    out["rollback_per_key"] = json!(per_key);
     out["ok"] = json!(false);
     out["applied"] = json!(false);
     out["rolled_back"] = json!(errors.is_empty() && failed.is_empty());
@@ -383,7 +460,10 @@ fn rollback_replace(st: &mut State, before: State, saved: &[(String, PathBuf, St
         // Preserve originals for future retry even for stale keys that a
         // partially completed restore had removed from the live state.
         for (key, path, original) in before.baseline {
-            if !st.has(&path) { st.baseline.push((key, path, original)); }
+            if !st.has(&path) {
+                if let Some(stamp) = before.storage_stamps.get(&path) { st.storage_stamps.insert(path.clone(), stamp.clone()); }
+                st.baseline.push((key, path, original));
+            }
         }
         st.preset = None;
         st.source = Some("manual".into());
@@ -397,6 +477,9 @@ fn rollback_replace(st: &mut State, before: State, saved: &[(String, PathBuf, St
 /// `game`: the writes belong to the game layer (see GameLayer); any other apply made while a game runs
 /// takes the files it writes out of that layer, so the game's end leaves them alone.
 fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec<Value>, bool) {
+    apply_values_checked(st, values, game, None)
+}
+fn apply_values_checked(st: &mut State, values: &Map<String, Value>, game: bool, replacement: Option<&ReplaceSnapshot>) -> (Vec<Value>, bool) {
     // A global row wins over the narrower rows it covers (tune::SHADOWS): those are left out, not
     // the whole preset - scenes filled at boot defaults carry both.
     let mut results = Vec::new();
@@ -424,7 +507,7 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
     // Files with a recorded original: IRQ and PCI rows look up hundreds of them under the tune lock.
     let mut recorded: std::collections::HashSet<PathBuf> = st.baseline.iter().map(|(_, p, _)| p.clone()).collect();
     // (result index, tunable, file, value it should hold): read back once all rows are written.
-    let mut verify: Vec<(usize, &'static tune::Tunable, PathBuf, String)> = Vec::new();
+    let mut verify: Vec<(usize, &'static tune::Tunable, PathBuf, String, Option<Value>)> = Vec::new();
     // Table order, not request order: pstate mode first, hot-plug last.
     let mut first = true;
     for t in TUNABLES {
@@ -444,6 +527,14 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
             continue;
         }
         let fs = tune::files(t);
+        if let Some(snapshot) = replacement.filter(|_| tune::scoped_storage(t)) {
+            let expected: std::collections::BTreeSet<&PathBuf> = snapshot.2.iter().filter(|(k, _)| k == t.key).map(|(_, p)| p).collect();
+            if fs.iter().collect::<std::collections::BTreeSet<_>>() != expected {
+                results.push(json!({"key": t.key, "ok": false, "error": "storage target set changed since replacement preflight"}));
+                all_ok = false;
+                continue;
+            }
+        }
         if fs.is_empty() {
             // Absent hardware/kernel feature is not an error for a portable preset.
             results.push(json!({"key": t.key, "ok": true, "skipped": "not available"}));
@@ -472,17 +563,37 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
         let mut prev_n = 0;
         // Files this row should hold its value in afterwards: written ones and those already at it.
         let mut checks: Vec<(PathBuf, String)> = Vec::new();
+        let mut row_stamps = StorageStamps::new();
         for (f, data) in plan {
+            if tune::scoped_storage(t) {
+                let Some(stamp) = tune::storage_stamp(t, &f) else { errs.push("storage target identity unavailable".into()); continue };
+                if let Some(snapshot) = replacement {
+                    if snapshot.1.get(&f) != Some(&stamp) || !snapshot.2.contains(&(t.key.to_owned(), f.clone())) {
+                        errs.push("replacement storage target differs from preflight".into()); continue;
+                    }
+                }
+                if st.baseline.iter().any(|(_, p, _)| p != &f && p.canonicalize().ok().as_ref() == Some(&f)) {
+                    errs.push("legacy alias overlaps a current storage target; original preserved".into()); continue;
+                }
+                if recorded.contains(&f) && st.storage_stamps.get(&f) != Some(&stamp) {
+                    errs.push("saved storage identity does not match; original preserved".into()); continue;
+                }
+                row_stamps.insert(f.clone(), stamp);
+            }
             let Some(orig) = tune::baseline_value(t, &f) else {
                 if tune::best_effort(t) { refused += 1; } else { errs.push(format!("{}: unreadable", f.display())); }
                 continue;
             };
+            if tune::scoped_storage(t) && tune::storage_stamp(t, &f).as_ref() != row_stamps.get(&f) {
+                errs.push("storage identity changed during original read".into()); continue;
+            }
             if tune::same_value(t, &orig, &data) { checks.push((f, data)); continue; }
             let fresh = !recorded.contains(&f);
             if fresh {
                 if st.baseline.len() >= MAX_BASELINE { errs.push("baseline full".into()); break; }
                 recorded.insert(f.clone());
                 st.baseline.push((t.key.to_owned(), f.clone(), orig));
+                if let Some(stamp) = row_stamps.get(&f) { st.storage_stamps.insert(f.clone(), stamp.clone()); }
                 st.origins.entry(t.key.to_owned()).or_insert_with(|| origin_of(t.key).to_owned());
                 if let (true, Some(g)) = (game, st.game.as_mut()) { g.fresh.insert(f.clone()); }
             } else if let (true, Some(g)) = (game, st.game.as_mut()) {
@@ -507,8 +618,8 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
                 todo.clear();
             }
         }
-        // Pass 2: write. A failed write changed nothing, so its fresh
-        // baseline entry is dropped again (saved with the rest at the end).
+        // Pass 2: write. Failure (including timeout) does not establish that
+        // the kernel left the original untouched. Keep those originals for recovery.
         let mut unchanged: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
         let mut fw_owned = false;
         // nvidia-powerd must be gone before any CPU goes offline (see tune::powerd_pause).
@@ -540,15 +651,23 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
                 }
             }
         }
-        for (f, data, fresh) in todo {
-            match tune::write_value(t, &f, &data) {
+        for (f, data, _fresh) in todo {
+            let result = if tune::scoped_storage(t) {
+                // A dynamic slot may have moved since planning. Never silently
+                // follow its new device or apply to a target no longer in the row.
+                if !tune::files(t).contains(&f) { Err("storage slot changed before write".into()) }
+                else { row_stamps.get(&f).ok_or_else(|| "storage stamp missing".to_owned())
+                    .and_then(|stamp| tune::write_scoped_storage(t, &f, &data, stamp)) }
+            } else { tune::write_value(t, &f, &data) };
+            match result {
                 Ok(()) => {
                     written += 1;
                     checks.push((f.clone(), data.clone()));
                     if !game { if let Some(g) = st.game.as_mut() { g.fresh.remove(&f); g.prev.retain(|(_, q, _)| *q != f); } }
                 }
                 Err(e) => {
-                    if fresh { unchanged.insert(f); }
+                    // A timed-out or rejected operation can have side effects.
+                    // Do not remove the saved original on an ambiguous failure.
                     if tune::firmware_owned(t, &e) { fw_owned = true; }
                     else if tune::best_effort(t) { refused += 1; } else { errs.push(e); }
                 }
@@ -600,7 +719,10 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
             r["readback_matched"] = json!(0);
             r["readback_missing"] = json!(0);
             r["mismatch_count"] = json!(0);
-            verify.extend(checks.into_iter().map(|(f, d)| (results.len(), t, f, d)));
+            verify.extend(checks.into_iter().map(|(f, d)| {
+                let stamp = row_stamps.get(&f).cloned();
+                (results.len(), t, f, d, stamp)
+            }));
         }
         results.push(r);
         if tune::is_hotplug(t.key) && written > 0 { std::thread::sleep(tune::HOTPLUG_SETTLE); tune::invalidate_topology(); }
@@ -611,15 +733,20 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
     if !verify.is_empty() {
         std::thread::sleep(VERIFY_SETTLE);
         let mut bad: std::collections::BTreeMap<usize, Vec<String>> = std::collections::BTreeMap::new();
-        for (i, t, f, data) in &verify {
-            // Unreadable now (a policy dir gone after a pstate/hot-plug change): nothing to claim either way.
-            let Some(live) = tune::baseline_value(t, f) else {
+        for (i, t, f, data, stamp) in &verify {
+            // A different device at the same path is not readback evidence.
+            let live = if tune::scoped_storage(t) && (stamp.is_none() || tune::storage_stamp(t, f) != *stamp) { None }
+                else { tune::baseline_value(t, f) };
+            let live = if tune::scoped_storage(t) && tune::storage_stamp(t, f) != *stamp { None } else { live };
+            let Some(live) = live else {
                 let n = results[*i]["readback_missing"].as_u64().unwrap_or(0);
                 results[*i]["readback_missing"] = json!(n + 1);
+                if tune::scoped_storage(t) || replacement.is_some() { all_ok = false; results[*i]["ok"] = json!(false); }
                 continue;
             };
             if !tune::same_value(t, &live, data) {
                 bad.entry(*i).or_default().push(format!("{}: set {data}, reads {live}", f.display()));
+                if tune::scoped_storage(t) || replacement.is_some() { all_ok = false; results[*i]["ok"] = json!(false); }
             } else {
                 let n = results[*i]["readback_matched"].as_u64().unwrap_or(0);
                 results[*i]["readback_matched"] = json!(n + 1);
@@ -634,22 +761,45 @@ fn apply_values(st: &mut State, values: &Map<String, Value>, game: bool) -> (Vec
     (results, all_ok)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RestoreEvidence { Failed, Deferred, PolicySkipped, WrittenUnknown, Mismatch, Matched }
+fn restore_receipts(items: &[(String, PathBuf, String)], evidence: &[RestoreEvidence]) -> Vec<Value> {
+    let mut rows: std::collections::BTreeMap<&str, [usize; 6]> = std::collections::BTreeMap::new();
+    for ((key, _, _), result) in items.iter().zip(evidence.iter()) {
+        let c = rows.entry(key).or_default();
+        c[match result {
+            RestoreEvidence::Failed => 0, RestoreEvidence::Deferred => 1, RestoreEvidence::PolicySkipped => 2,
+            RestoreEvidence::WrittenUnknown => 3, RestoreEvidence::Mismatch => 4, RestoreEvidence::Matched => 5,
+        }] += 1;
+    }
+    rows.into_iter().map(|(key, c)| {
+        let expected: usize = c.iter().sum();
+        json!({"key":key,"ok":c[5]==expected,"written":c[3]+c[4]+c[5],"restored":c[5],
+            "refused":c[0]+c[1]+c[2],"deferred":c[1]+c[2],"policy_skipped":c[2],
+            "readback_expected":expected,"readback_matched":c[5],"readback_missing":c[0]+c[1]+c[2]+c[3],"mismatch_count":c[4]})
+    }).collect()
+}
+
 /// Writes `items` (key, file, value) back. Hot-plug knobs first (CPUs must be online
 /// before their cpufreq/cpuidle files accept writes), then the rest in the given
 /// order (first-write order: pstate mode before governor/EPP).
-/// Returns (written, errors, deferred best-effort rows, indexes of items NOT written back).
-fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize, std::collections::HashSet<usize>) {
+/// Returns (verified, errors, deferred rows, indexes NOT verified, per-key receipts).
+fn write_back(items: &[(String, PathBuf, String)], stamps: &StorageStamps) -> (usize, Vec<Value>, usize, std::collections::HashSet<usize>, Vec<Value>) {
     let mut order: Vec<usize> = (0..items.len()).collect();
     order.sort_by_key(|&i| (!tune::is_hotplug(&items[i].0), i));
     let (mut n, mut errs, mut deferred) = (0, Vec::new(), 0);
     let mut failed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut evidence = vec![RestoreEvidence::Failed; items.len()];
     let mut hotplug_done = false;
     let wireless = tune::wireless_lock();
     for &i in &order {
         let (key, f, orig) = &items[i];
-        // Master switch: the radios' originals are dropped, not written back.
+        // Master switch outranks restore, but do not discard an original that
+        // has not been restored. It can be retried after the switch is off.
         if let Some(w) = &wireless {
-            if key == "net.wifi_power_save" || w.iter().any(|d| f.starts_with(d.join("power")) || f.starts_with(d.join("link"))) { continue; }
+            if key == "net.wifi_power_save" || w.iter().any(|d| f.starts_with(d.join("power")) || f.starts_with(d.join("link"))) {
+                evidence[i] = RestoreEvidence::PolicySkipped; failed.insert(i); deferred += 1; continue;
+            }
         }
         // CPUs come back first: give them time before their cpufreq files are written.
         if !hotplug_done && !tune::is_hotplug(key) {
@@ -663,26 +813,51 @@ fn write_back(items: &[(String, PathBuf, String)]) -> (usize, Vec<Value>, usize,
         if tune::offlines_cpus(key, orig) {
             if let Err(e) = tune::powerd_pause() { failed.insert(i); errs.push(json!({"key": key, "error": e})); continue; }
         }
-        let res = match tune::find(key) { Some(t) => tune::write_value(t, f, orig), None => tune::write_checked(f, orig) };
+        let res = match tune::find(key) {
+            Some(t) if tune::scoped_storage(t) => stamps.get(f).ok_or_else(|| "saved storage identity unavailable; restore refused".to_owned())
+                .and_then(|stamp| tune::write_scoped_storage(t, f, orig, stamp)),
+            Some(t) => tune::write_value(t, f, orig),
+            None => Err("unknown restore key".into()),
+        };
         match res {
-            Ok(()) => n += 1,
-            // Per-policy files vanish when the pstate mode is restored first; not an error.
-            Err(_) if !f.exists() => {}
-            // The latency byte of a device in the GPU tree or in runtime suspend is never written (apply
-            // refuses it the same way) and PCIe hardwires it to 0: nothing to give back, and keeping the
-            // entry would block restore, boot defaults and calibration for good.
-            Err(e) if matches!(tune::find(key).map(|t| &t.target), Some(tune::Target::PciLatency)) && e.contains("skipped (GPU tree or suspended device)") => {}
+            Ok(()) => evidence[i] = RestoreEvidence::WrittenUnknown,
+            Err(_) if !f.exists() => {
+                failed.insert(i);
+                errs.push(json!({"key": key, "error": "restore target no longer available"}));
+            }
+            // A previously writable PCI function may now be suspended. Never
+            // wake it just to restore; keep the original for a later retry.
+            Err(e) if matches!(tune::find(key).map(|t| &t.target), Some(tune::Target::PciLatency)) && e.contains("skipped (GPU tree or suspended device)") => { evidence[i] = RestoreEvidence::Deferred; failed.insert(i); deferred += 1; }
             // Best-effort rows (IRQs, PCI/USB devices): not an error, but the
             // original stays recorded for the next restore instead of being lost.
-            Err(_) if tune::find(key).is_some_and(tune::best_effort) => { failed.insert(i); deferred += 1; }
+            Err(_) if tune::find(key).is_some_and(tune::best_effort) => { evidence[i] = RestoreEvidence::Deferred; failed.insert(i); deferred += 1; }
             Err(e) => { failed.insert(i); errs.push(json!({"key": key, "error": e})); }
         }
     }
     if let Err(e) = tune::powerd_resume() { errs.push(json!({"key": "nvidia-powerd", "error": e})); }
+    // Verify after the entire batch, including any later rows which may reset
+    // earlier ones. A successful write syscall is not sufficient evidence.
+    if evidence.contains(&RestoreEvidence::WrittenUnknown) {
+        std::thread::sleep(VERIFY_SETTLE);
+        for (i, (key, f, orig)) in items.iter().enumerate() {
+            if evidence[i] != RestoreEvidence::WrittenUnknown { continue; }
+            if let Some(t) = tune::find(key) {
+                let identity_ok = || !tune::scoped_storage(t) || (stamps.contains_key(f) && tune::storage_stamp(t, f).as_ref() == stamps.get(f));
+                if identity_ok() {
+                    if let Some(live) = tune::baseline_value(t, f).filter(|_| identity_ok()) {
+                        evidence[i] = if tune::same_value(t, &live, orig) { RestoreEvidence::Matched } else { RestoreEvidence::Mismatch };
+                    }
+                }
+            }
+            if evidence[i] == RestoreEvidence::Matched { n += 1; }
+            else { failed.insert(i); errs.push(json!({"key":key,"error":"restore readback missing or different"})); }
+        }
+    }
     // The daemon comes back with the affinity it would have fought (only if we stopped it).
     // irqbalance resume belongs after state.baseline has dropped the last pinned IRQ entry.
     // Restarting here would race a still-active per-device pin.
-    (n, errs, deferred, failed)
+    let per_key = restore_receipts(items, &evidence);
+    (n, errs, deferred, failed, per_key)
 }
 
 /// Writes saved originals back (all of them, or only the knobs in `only`).
@@ -693,7 +868,7 @@ fn restore_entries(st: &mut State, only: Option<&[String]>) -> Value {
     // Entries whose original could not be written back stay in the baseline:
     // dropping them would lose the only record of the original value while the
     // knob is still changed. A later restore (GUI, POST, service stop) retries.
-    let (n, mut errs, deferred, failed) = write_back(&items);
+    let (n, mut errs, deferred, failed, per_key) = write_back(&items, &st.storage_stamps);
     // Game mode is over: give the game's CPUs back to the whole system.
     if only.is_none() {
         if let Err(e) = centurion_helpers::isolate::teardown() { errs.push(json!({"key": "game partition", "error": e})); }
@@ -712,7 +887,7 @@ fn restore_entries(st: &mut State, only: Option<&[String]>) -> Value {
     // written back (those stay recorded for the next restore attempt).
     if only.is_none() { st.sessions.clear(); st.game = None; }
     if st.baseline.is_empty() { st.sessions.clear(); st.game = None; st.preset = None; st.source = None; }
-    let mut r = json!({"restored": n, "errors": errs});
+    let mut r = json!({"restored": n, "errors": errs, "per_key": per_key});
     if deferred > 0 { r["deferred"] = json!(deferred); }
     r
 }
@@ -722,11 +897,11 @@ fn restore_entries(st: &mut State, only: Option<&[String]>) -> Value {
 /// set go back to that layer's value and keep their recorded original. Everything else stays as it is.
 fn end_game(st: &mut State) -> Value {
     // State written by an older helper has no layer record: the old full restore.
-    let Some(g) = st.game.take() else { return restore_entries(st, None) };
+    let Some(mut g) = st.game.take() else { return restore_entries(st, None) };
     let fresh_idx: Vec<usize> = (0..st.baseline.len()).filter(|&i| g.fresh.contains(&st.baseline[i].1)).collect();
     let mut items: Vec<(String, PathBuf, String)> = fresh_idx.iter().map(|&i| st.baseline[i].clone()).collect();
     items.extend(g.prev.iter().filter(|(_, f, _)| st.has(f)).cloned());
-    let (n, mut errs, deferred, failed) = write_back(&items);
+    let (n, mut errs, deferred, failed, per_key) = write_back(&items, &st.storage_stamps);
     if let Err(e) = centurion_helpers::isolate::teardown() { errs.push(json!({"key": "game partition", "error": e})); }
     let drop: std::collections::HashSet<usize> = fresh_idx.iter().enumerate().filter(|(j, _)| !failed.contains(j)).map(|(_, &i)| i).collect();
     let mut i = 0;
@@ -735,25 +910,43 @@ fn end_game(st: &mut State) -> Value {
         if let Err(e) = tune::irqbalance_resume() { errs.push(json!({"key": "irqbalance", "error": e})); }
     }
     st.sessions.clear();
-    st.preset = g.preset;
-    st.source = g.source;
+    st.preset = g.preset.clone();
+    st.source = g.source.clone();
     if st.baseline.is_empty() { st.preset = None; st.source = None; }
-    else if st.source.is_none() { st.source = Some("manual".into()); }  // originals that could not be restored
-    let mut r = json!({"restored": n, "errors": errs});
+    else if st.source.is_none() { st.source = Some("manual".into()); }
+    if !failed.is_empty() || !errs.is_empty() {
+        // Do not lose the pre-game values when restoring only that layer fails.
+        let fresh_n = fresh_idx.len();
+        g.fresh = items.iter().take(fresh_n).enumerate().filter(|(i, _)| failed.contains(i)).map(|(_, (_, p, _))| p.clone()).collect();
+        g.prev = items.iter().skip(fresh_n).enumerate().filter(|(i, _)| failed.contains(&(i+fresh_n))).map(|(_, row)| row.clone()).collect();
+        st.game = Some(g);
+    }
+    let mut r = json!({"restored": n, "errors": errs, "per_key": per_key});
     if deferred > 0 { r["deferred"] = json!(deferred); }
     r
 }
 
-fn locked<F: FnOnce(&mut State) -> Value>(f: F) -> Value {
+fn locked<F: FnOnce(&mut State) -> Value>(f: F) -> Value { locked_mode(false, f) }
+fn locked_mode<F: FnOnce(&mut State) -> Value>(full_recovery: bool, f: F) -> Value {
     let _l = match lock() { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
-    let mut st = State::load();
+    let mut st = match State::load() { Ok(st) => st, Err(e) => return json!({"ok": false, "error": e}) };
     // A game whose launcher was killed never sends POST: end its session here,
     // and when it was the last one, restore exactly as the last POST would.
     let mut stale = Value::Null;
-    if st.prune() > 0 && st.sessions.is_empty() && st.source.as_deref() == Some("game") {
+    let pruned = st.prune();
+    if !full_recovery && st.sessions.is_empty() && (st.game.is_some() || (pruned > 0 && st.source.as_deref() == Some("game"))) {
         stale = end_game(&mut st);
+        if !restore_confirmed(&stale) {
+            let saved = st.save().err();
+            return json!({"ok": false, "error": "stale game restoration incomplete; retry restore before applying new settings", "stale_game_released": stale, "state_error": saved, "state": summary(&st)});
+        }
     }
     let mut out = f(&mut st);
+    let wrote = out["results"].as_array().is_some_and(|a| a.iter().any(|r| r["written"].as_u64().unwrap_or(0) > 0 || r["restored"].as_u64().unwrap_or(0) > 0));
+    if wrote || out["applied"].as_bool() == Some(true) || stale["restored"].as_u64().unwrap_or(0) > 0 {
+        let errs = tune::enforce_wireless_pm();
+        if !errs.is_empty() { out["wireless_pm_warnings"] = json!(errs); }
+    }
     if !stale.is_null() && out.is_object() { out["stale_game_released"] = stale; }
     if let Err(e) = st.save() {
         out["ok"] = json!(false);
@@ -783,9 +976,16 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
     let owner = if mode == "game" { session_owner(req) } else { (None, None) };
     let base = autotune::Pressure::sample();
     let out = locked(|st| {
+        if req["require_verified"].as_bool() == Some(true) {
+            if mode != "manual" || replace || st.refcount() != 0 || st.game.is_some() || st.baseline.iter().any(|(k, _, _)| k != "pci.latency_timer") {
+                return json!({"ok":false,"applied":false,"error":"verified Apply requires the same clean baseline and no game session"});
+            }
+            let Some(name) = preset.as_deref() else { return json!({"ok":false,"applied":false,"error":"verified Apply requires a named preset"}); };
+            if let Err(e) = abverify::authorize(name, values) { return json!({"ok":false,"applied":false,"error":e}); }
+        }
         let mut restored = Value::Null;
         let mut before = None;
-        let mut saved = Vec::new();
+        let mut saved = ReplaceSnapshot::default();
         if replace {
             // A scene switch (e.g. AC → battery) must not yank a running game's tuning.
             if st.refcount() > 0 {
@@ -835,7 +1035,7 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
             if !replace { st.preset = preset.clone().or(st.preset.take()); }
             st.source = Some(mode.to_owned());
         }
-        let (results, mut ok) = apply_values(st, values, mode == "game");
+        let (results, mut ok) = apply_values_checked(st, values, mode == "game", replace.then_some(&saved));
         // Best-effort per-device refusals (managed IRQs, suspended PCI/USB devices) stay "refused" in
         // the results but do not fail a replace: the kernel refuses them on every attempt, so a scene
         // switch would always roll back, while the same preset applied by hand succeeds.
@@ -899,23 +1099,45 @@ fn spawn_guard(keys: &[String], base: autotune::Pressure) -> bool {
     if let Some(v) = verdict {
         let restored = match lock() {
             Ok(_l) => {
-                let mut st = State::load();
-                let r = restore_entries(&mut st, Some(keys));
-                let _ = st.save();
-                r
+                // Recheck under the same lock used by mutations; the last sample
+                // may precede a different Apply or Restore.
+                match State::load() {
+                    Err(e) => json!({"error": e}),
+                    Ok(_) if applied.iter().any(|(k, v)| tune::find(k).and_then(tune::current) != *v) =>
+                        json!({"skipped": "settings changed before guard acquired the lock"}),
+                    Ok(mut st) => {
+                        let mut r = restore_entries(&mut st, Some(keys));
+                        if let Err(e) = st.save() { r["state_error"] = json!(e); }
+                        r
+                    }
+                }
             }
             Err(e) => json!({"error": e}),
         };
-        centurion_helpers::defaults::record(keys, true);
+        if restored["restored"].as_u64().unwrap_or(0) > 0 {
+            centurion_helpers::defaults::record(keys, true);
+        }
         let body = json!({"time": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
                           "verdict": v, "keys": keys, "restored": restored});
         let _ = write_root_file(GUARD_FILE, &serde_json::to_vec_pretty(&body).unwrap());
         // Warning level: the Health tab keeps it in its kernel-log history.
-        let _ = fs::write("/dev/kmsg", format!("<4>centurion: autotune guard restored {} after {v}\n", keys.join(",")));
+        let _ = fs::write("/dev/kmsg", format!("<4>centurion: autotune guard verdict {v}; verified restored files: {}\n", restored["restored"].as_u64().unwrap_or(0)));
         tune::write_debugfs_snapshot();
     }
     let _ = fs::remove_file(GUARD_PID);
     unsafe { libc::_exit(0) }
+}
+
+fn restore_confirmed(r: &Value) -> bool {
+    r["errors"].as_array().is_some_and(|a| a.is_empty()) && r["deferred"].as_u64().unwrap_or(0) == 0
+}
+
+fn apply_readback_confirmed(r: &Value) -> bool {
+    let expected = r["readback_expected"].as_u64().unwrap_or(0);
+    r["ok"].as_bool() == Some(true) && r.get("skipped").is_none()
+        && expected > 0 && r["readback_matched"].as_u64() == Some(expected)
+        && r["readback_missing"].as_u64() == Some(0) && r["mismatch_count"].as_u64() == Some(0)
+        && r["refused"].as_u64().unwrap_or(0) == 0
 }
 
 fn op_release(req: &Value) -> Value {
@@ -941,21 +1163,37 @@ fn op_release(req: &Value) -> Value {
             return json!({"ok": true, "restored": false, "message": format!("{} game(s) still running", st.refcount())});
         }
         let r = end_game(st);
-        let ok = r["errors"].as_array().map_or(true, |a| a.is_empty());
+        let ok = restore_confirmed(&r);
         json!({"ok": ok, "restored": true, "results": [r], "error": (!ok).then_some("some values could not be restored")})
     })
 }
 
+fn restore_scope(req: &Value) -> Result<Option<Vec<String>>, &'static str> {
+    match req["op"].as_str() {
+        Some("restore") if req["keys"].is_null() => Ok(None),
+        Some("restore_keys") => {
+            let a = req["keys"].as_array().filter(|a| !a.is_empty() && a.len() <= TUNABLES.len())
+                .ok_or("restore_keys requires a nonempty array of known keys")?;
+            let mut keys = Vec::new();
+            for v in a {
+                let k = v.as_str().filter(|k| tune::find(k).is_some()).ok_or("unknown restore key")?;
+                if keys.iter().any(|x: &String| x == k) { return Err("duplicate restore key"); }
+                keys.push(k.to_owned());
+            }
+            Ok(Some(keys))
+        }
+        _ => Err("invalid restore scope"),
+    }
+}
+
 fn op_restore(req: &Value) -> Value {
-    let keys: Option<Vec<String>> = match &req["keys"] {
-        Value::Null => None,
-        Value::Array(a) if a.len() <= TUNABLES.len() => Some(a.iter().filter_map(|k| k.as_str())
-        .filter(|k| tune::find(k).is_some()).map(str::to_owned).collect()),
-        _ => return json!({"ok": false, "error": "keys must be an array of known keys"}),
+    let keys = match restore_scope(req) {
+        Ok(keys) => keys,
+        Err(e) => return json!({"ok": false, "error": e}),
     };
-    locked(|st| {
+    locked_mode(keys.is_none(), |st| {
         let r = restore_entries(st, keys.as_deref());
-        let ok = r["errors"].as_array().map_or(true, |a| a.is_empty());
+        let ok = restore_confirmed(&r);
         json!({"ok": ok, "results": [r], "error": (!ok).then_some("some values could not be restored")})
     })
 }
@@ -972,17 +1210,21 @@ fn op_restore_defaults() -> Value {
         .filter(|(k, v)| tune::find(k).is_some_and(|t| centurion_helpers::defaults::storable(t, v)))
         .map(|(k, v)| (k.clone(), json!(v))).collect();
     if values.is_empty() { return json!({"ok": false, "error": "the boot-default snapshot holds no known settings"}); }
-    locked(|st| {
+    locked_mode(true, |st| {
         let r = restore_entries(st, None);
+        if !restore_confirmed(&r) {
+            return json!({"ok": false, "results": [r], "error": "restore of saved originals incomplete; boot defaults not applied"});
+        }
         let (results, all_ok) = apply_values(st, &values, false);
-        let failed: Vec<String> = results.iter().filter(|x| x["ok"] == json!(false))
-            .filter_map(|x| x["key"].as_str().map(str::to_owned)).collect();
-        // A knob now at its boot value has nothing left to undo; one that failed keeps its recorded original.
-        st.baseline.retain(|(k, _, _)| !values.contains_key(k) || failed.contains(k));
+        let verified: std::collections::BTreeSet<&str> = results.iter().filter(|x| apply_readback_confirmed(x))
+            .filter_map(|x| x["key"].as_str()).collect();
+        let failed: Vec<String> = values.keys().filter(|k| !verified.contains(k.as_str())).cloned().collect();
+        // Only a fully verified row may release its recovery originals.
+        st.baseline.retain(|(k, _, _)| !verified.contains(k.as_str()));
         if st.baseline.is_empty() { st.sessions.clear(); st.game = None; st.preset = None; st.source = None; }
         let written: u64 = results.iter().filter_map(|x| x["written"].as_u64()).sum();
-        let restore_ok = r["errors"].as_array().map_or(true, |a| a.is_empty());
-        let ok = all_ok && restore_ok;
+        let restore_ok = restore_confirmed(&r);
+        let ok = all_ok && restore_ok && failed.is_empty();
         json!({"ok": ok, "results": [r], "applied": results, "written": written, "failed": failed,
                "snapshot": {"clean": d.clean, "kernel": d.kernel, "keys": values.len()},
                "error": (!ok).then_some("some settings could not be returned to their boot default")})
@@ -1270,6 +1512,7 @@ const NM_DROPIN_BODY: &str = "# Written by Centurion: Wi-Fi/Bluetooth power-mana
 /// the switch is on it also gets a drop-in that disables it (removed again when switched off).
 fn op_set_wireless_pm_lock(req: &Value) -> Value {
     let Some(on) = req["on"].as_bool() else { return json!({"ok": false, "error": "on must be true or false"}) };
+    let _l = match lock() { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     if let Err(e) = secure_dir(ETC_DIR) { return json!({"ok": false, "error": e}); }
     let mut warnings: Vec<String> = Vec::new();
     if on {
@@ -1409,7 +1652,10 @@ fn run() -> Value {
     let op = req["op"].as_str().unwrap_or("");
     if op == "describe" {
         let mut d = tune::describe_with(req["light"].as_bool().unwrap_or(false));
-        d["state"] = summary(&State::load());
+        d["state"] = match State::load() {
+            Ok(st) => summary(&st),
+            Err(e) => json!({"active": false, "unknown": true, "error": e}),
+        };
         d["boot"] = boot_preset().unwrap_or(Value::Null);
         d["root"] = json!(is_root());
         d["wireless_pm_lock"] = json!(tune::wireless_pm_locked());
@@ -1509,10 +1755,8 @@ fn run() -> Value {
     };
     // Unprivileged describe reads the debugfs values from this copy (debugfs stays root-only).
     if matches!(op, "snapshot" | "apply" | "apply_preset" | "release" | "restore" | "restore_keys" | "restore_defaults" | "boot" | "prune") { tune::write_debugfs_snapshot(); }
-    // The master switch outranks whatever this op just changed.
+    // The master switch is enforced while holding the tune lock, not here.
     if matches!(op, "apply" | "apply_preset" | "release" | "restore" | "restore_keys" | "restore_defaults" | "boot") {
-        let errs = tune::enforce_wireless_pm();
-        if !errs.is_empty() { out["wireless_pm_warnings"] = json!(errs); }
         // Field stability record: which knobs are changed from now on (see centurion_helpers::stability).
         centurion_helpers::stability::record_now();
     }
@@ -1530,6 +1774,13 @@ pub(crate) fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn damaged_state_is_not_a_fresh_state() {
+        for s in ["{", "{}", "{\"version\":3,\"baseline\":[]}", "{\"baseline\":[[\"unknown\",\"/sys/x\",\"0\"]]}"] { assert!(State::decode(s).is_err(), "{s}"); }
+        assert!(State::decode("{\"baseline\":[]}").is_ok());
+        assert!(restore_scope(&json!({"op":"restore_keys"})).is_err());
+        assert!(restore_scope(&json!({"op":"restore_keys","keys":[]})).is_err());
+    }
     #[test]
     fn boot_receipt_identity_is_full_and_nonzero() {
         assert!(valid_receipt_boot("01234567-89ab-cdef-0123-456789abcdef"));

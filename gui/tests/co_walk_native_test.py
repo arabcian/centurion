@@ -23,7 +23,7 @@ assert function and tuning and walk, 'native test could not locate current searc
 # The simulation below mirrors Search::report() (Stage::PerCore) and setStart(); fail if they change.
 for fragment in ['if (w.up) w.done = true;', 'w.floor = std::max(w.floor, cand_);',
                  'if (w.pass < 0) w.done = true;\n            else w.up = true;',
-                 'per_[i].start = std::clamp(value, limit_, 0);', 'per_.append(Walk{0, limit_ - 1, true, false, false});']:
+                 'per_[i].start = std::clamp(value, limit_, 0);', 'all_.floor = std::clamp(limit_, -50, -1) - 1;', 'per_.append(Walk{0, all_.floor, true, false, false});']:
     assert fragment in source, f'costrategy.cpp changed: {fragment!r}'
 compiler = shutil.which('g++')
 if compiler is None:

@@ -1869,7 +1869,7 @@ fn pci_unsafe_to_touch(file: &Path, tree: &[PathBuf], need_active: bool) -> bool
     // <dev>/link/l1_aspm and <dev>/power/control belong to <dev>; <dev>/config is <dev>'s own.
     if dev.file_name().is_some_and(|n| n == "link" || n == "power") { dev = dev.parent().unwrap_or(dev); }
     if tree.iter().any(|t| t == dev) { return true; }
-    need_active && !matches!(read(&dev.join("power/runtime_status")).as_deref(), None | Some("active"))
+    need_active && read(&dev.join("power/runtime_status")).as_deref() != Some("active")
 }
 
 fn pci_config_files() -> Vec<PathBuf> {
@@ -1897,10 +1897,6 @@ fn is_pci_config(p: &Path) -> bool {
 /// reads go through pci_config_pm_runtime_get(), which resumes a D3cold device
 /// and its parent bridge — the 4 s describe poll kept the RTX dGPU from ever
 /// staying asleep while the Optimizations tab was open.
-fn pci_runtime_suspended(cfg: &Path) -> bool {
-    cfg.parent().and_then(|d| read(&d.join("power/runtime_status"))).as_deref() == Some("suspended")
-}
-
 fn pci_latency_read(cfg: &Path) -> Option<u8> {
     use std::os::unix::fs::FileExt;
     let f = std::fs::File::open(cfg).ok()?;
@@ -2863,6 +2859,59 @@ fn sched_feature_state(raw: &str, name: &str) -> Option<&'static str> {
 #[cfg(test)]
 pub fn sched_feature_state_for_test(raw: &str, name: &str) -> Option<&'static str> { sched_feature_state(raw, name) }
 
+/// These targets are plain sysfs attributes whose names can be reused after
+/// device removal. Do not generalize to command-backed or CPU-policy targets.
+pub fn scoped_storage(t: &Tunable) -> bool {
+    matches!(t.target, Target::NvmeQueue(..) | Target::F2fs(..) | Target::ZramMemLimit(..) | Target::PerBlock(..))
+}
+
+/// Boot-local incarnation evidence. For NVMe queues also require a non-placeholder
+/// namespace WWID. The inode is not a durable physical identifier across boots.
+/// Capture is passive; no block-device or PCI configuration file is opened.
+pub fn storage_stamp(t: &Tunable, path: &Path) -> Option<Value> {
+    if !scoped_storage(t) || !files(t).iter().any(|p| p == path) { return None; }
+    storage_stamp_at(Path::new("/sys"), path, matches!(t.target, Target::NvmeQueue(..)))
+}
+
+fn storage_stamp_at(root: &Path, path: &Path, nvme: bool) -> Option<Value> {
+    use std::os::unix::fs::MetadataExt;
+    let real = path.canonicalize().ok()?;
+    if !real.starts_with(root) || real == root { return None; }
+    let parent = real.parent()?;
+    let first = std::fs::metadata(&real).ok()?;
+    let dir = std::fs::metadata(parent).ok()?;
+    if !first.is_file() || !dir.is_dir() { return None; }
+    let wwid = if nvme {
+        if parent.file_name()?.to_str()? != "queue" { return None; }
+        Some(read(&parent.parent()?.join("wwid")).filter(|w| valid_draft_wwid(w))?)
+    } else { None };
+    let second = std::fs::metadata(&real).ok()?;
+    let dir2 = std::fs::metadata(parent).ok()?;
+    if path.canonicalize().ok()? != real || (first.dev(), first.ino()) != (second.dev(), second.ino())
+        || (dir.dev(), dir.ino()) != (dir2.dev(), dir2.ino()) { return None; }
+    Some(json!({"path":real,"dev":first.dev(),"ino":first.ino(),"parent_dev":dir.dev(),"parent_ino":dir.ino(),"wwid":wwid}))
+}
+
+/// Use the actual opened attribute descriptor for the write. Checking a path
+/// and then calling the normal writer would reopen it after a hotplug race.
+/// No truncate on open: the identity is checked before the first write.
+pub fn write_scoped_storage(t: &Tunable, path: &Path, data: &str, expected: &Value) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    if storage_stamp(t, path).as_ref() != Some(expected) { return Err("storage target identity changed".into()); }
+    let real = Path::new(expected["path"].as_str().ok_or("storage stamp path missing")?);
+    let mut fd = std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(real).map_err(|e| e.to_string())?;
+    let meta = fd.metadata().map_err(|e| e.to_string())?;
+    if !meta.is_file() || expected["dev"].as_u64() != Some(meta.dev()) || expected["ino"].as_u64() != Some(meta.ino())
+        || storage_stamp(t, path).as_ref() != Some(expected) {
+        return Err("storage descriptor no longer matches the planned target".into());
+    }
+    if fd.write(data.as_bytes()).map_err(|e| e.to_string())? != data.len() { return Err("short sysfs write".into()); }
+    if storage_stamp(t, path).as_ref() != Some(expected) { return Err("storage target changed during write; result unknown".into()); }
+    Ok(())
+}
+
 /// Writes one tunable value to one concrete target, dispatching the targets
 /// that are not plain files. Everything else goes through write_checked.
 pub fn write_value(t: &Tunable, f: &Path, data: &str) -> Result<(), String> {
@@ -2957,7 +3006,7 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
             .map(|(_, s)| s.join("disable"))
             .filter(|p| p.is_file())
             .collect(),
-        Target::PerBlock(f) => block_devs().into_iter().map(|d| d.join("queue").join(f)).filter(|p| p.is_file()).collect(),
+        Target::PerBlock(f) => block_devs().into_iter().map(|d| d.join("queue").join(f)).filter(|p| p.is_file()).filter_map(|p| canonical_in_sysfs(&p)).collect(),
         Target::Mce => numbered(Path::new("/sys/devices/system/machinecheck"), "machinecheck").into_iter()
             .map(|(_, p)| p.join("check_interval")).filter(|p| p.is_file()).collect(),
         Target::AmdgpuDpm => amdgpu_dpm_files(),
@@ -3133,8 +3182,14 @@ fn current_with(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
             // Hardwired-zero (PCIe) functions ignore the write; they don't make it "stock".
             // Suspended functions are skipped (not woken): the byte is restored with
             // the rest of config space on resume, so the awake ones tell the state.
-            let tuned = fs.iter().filter(|f| !pci_runtime_suspended(f))
-                .all(|f| pci_latency_read(f).map_or(true, |b| b == pci_latency_target(f) || b == 0));
+            let tree = gpu_tree();
+            let mut tuned = true;
+            let mut count = 0;
+            for f in fs.iter().filter(|f| !pci_unsafe_to_touch(f, &tree, true)) {
+                let b = pci_latency_read(f)?; count += 1;
+                tuned &= b == pci_latency_target(f) || b == 0;
+            }
+            if count == 0 { return None; }
             return Some(if tuned { "tuned".into() } else { "stock".into() });
         }
         Target::WqCpumask => {
@@ -3334,7 +3389,11 @@ pub fn plan_with(t: &Tunable, value: &str, fs: Vec<PathBuf>) -> Result<Vec<(Path
 /// Value to save in the baseline for one concrete file.
 pub fn baseline_value(t: &Tunable, f: &Path) -> Option<String> {
     match t.target {
-        Target::PciLatency => return pci_latency_read(f).map(|b| format!("{b:02x}")),
+        Target::PciLatency => {
+            let real = canonical_in_sysfs(f)?;
+            if !is_pci_config(&real) || pci_unsafe_to_touch(&real, &gpu_tree(), true) { return None; }
+            return pci_latency_read(&real).map(|b| format!("{b:02x}"));
+        },
         Target::WifiPowerSave => return wifi_get(f),
         Target::EthWol => return wol_get(f),
         Target::EthEee => return eee_get(f),
@@ -3757,6 +3816,22 @@ pub fn describe_with(light: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn storage_stamp_detects_replaced_attribute() {
+        let root = std::env::temp_dir().join(format!("centurion-stamp-{}", std::process::id()));
+        let dir = root.join("nvme0n1/queue");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(root.join("nvme0n1/wwid"), "eui.0011223344556677").unwrap();
+        let file = dir.join("nr_requests");
+        std::fs::write(&file, "64").unwrap();
+        let old = storage_stamp_at(&root, &file, true).unwrap();
+        std::fs::rename(&file, dir.join("old")).unwrap();
+        std::fs::write(&file, "64").unwrap();
+        assert_ne!(storage_stamp_at(&root, &file, true), Some(old));
+        std::fs::write(root.join("nvme0n1/wwid"), "unknown").unwrap();
+        assert!(storage_stamp_at(&root, &file, true).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn persistent_draft_identity_is_not_a_slot_number() {
         assert!(valid_draft_wwid("eui.0011223344556677"));

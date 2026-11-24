@@ -2,6 +2,8 @@
 // UI preferences only. No helper invocation, tuning writes or opaque Qt state blobs.
 #include "workspacefields.h"
 #include <QHeaderView>
+#include <QCoreApplication>
+#include <memory>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -75,13 +77,25 @@ inline void rememberHeader(QTreeWidget *tree, const QString &path, bool allowSor
     restoreHeader(tree, obj, allowSort);
     tree->header()->setSectionsMovable(true);
     auto *timer = new QTimer(tree); timer->setSingleShot(true); timer->setInterval(350);
-    QObject::connect(tree->header(), &QHeaderView::sectionResized, timer, [timer]{timer->start();});
-    QObject::connect(tree->header(), &QHeaderView::sectionMoved, timer, [timer]{timer->start();});
-    if (allowSort) QObject::connect(tree->header(), &QHeaderView::sortIndicatorChanged, timer, [timer]{timer->start();});
-    QObject::connect(timer, &QTimer::timeout, tree, [tree,path,allowSort]{
-        auto state = captureHeader(tree); if (!allowSort) {state.remove("sort"); state.remove("descending");}
-        write(path,state);
-    });
+    struct Pending { QJsonObject snapshot; bool dirty = false; };
+    const auto pending = std::make_shared<Pending>();
+    const auto flush = [pending,path] {
+        if (!pending->dirty) return;
+        write(path,pending->snapshot); pending->dirty = false;
+    };
+    const auto changed = [tree,timer,pending,allowSort] {
+        pending->snapshot = captureHeader(tree);
+        if (!allowSort) {pending->snapshot.remove("sort"); pending->snapshot.remove("descending");}
+        pending->dirty = true; timer->start();
+    };
+    QObject::connect(tree->header(), &QHeaderView::sectionResized, timer, changed);
+    QObject::connect(tree->header(), &QHeaderView::sectionMoved, timer, changed);
+    if (allowSort) QObject::connect(tree->header(), &QHeaderView::sortIndicatorChanged, timer, changed);
+    QObject::connect(timer, &QTimer::timeout, timer, flush);
+    // QObject::destroyed runs before its children are deleted. Flush the cached
+    // snapshot without dereferencing the partially destroyed QWidget.
+    QObject::connect(tree, &QObject::destroyed, timer, flush);
+    if (auto *app = QCoreApplication::instance()) QObject::connect(app, &QCoreApplication::aboutToQuit, timer, flush);
 }
 inline void rememberSplitter(QSplitter *splitter, const QString &path) {
     const auto saved = integers(read(path).value("sizes"));

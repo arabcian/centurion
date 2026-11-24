@@ -27,7 +27,11 @@ inline Inspection inspect(std::span<const std::uint8_t> data) {
         bool structure=true;
         if (b && data[base]==2) {
             const auto end=std::size_t(data[base+2]); field(base,4,Kind::ExtensionHeader,2);
-            if (end==0) field(base+4,123,Kind::Padding);
+            if (end==0) {
+                const bool empty = std::all_of(data.begin()+base+4,data.begin()+base+127,[](auto byte){return byte==0;});
+                structure = empty && (data[base+3] & 0x0f) == 0;
+                field(base+4,123,structure?Kind::Padding:Kind::Unknown);
+            }
             else if (end<4 || end>127) { structure=false; field(base+4,123,Kind::Unknown); }
             else {
                 for (std::size_t pos=4;pos<end;) {
@@ -43,6 +47,8 @@ inline Inspection inspect(std::span<const std::uint8_t> data) {
         field(base+127,1,Kind::Checksum);
         out.blocks.push_back({b,b<out.declared,(sum&255)==0,structure});
     }
+    const auto mapped = std::min<std::size_t>(32,data.size()/128)*128;
+    if (mapped < data.size()) field(mapped, data.size()-mapped, Kind::Unknown);
     return out;
 }
 inline bool trusted(const Inspection &i) {

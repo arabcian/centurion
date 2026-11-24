@@ -524,6 +524,7 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     v->addLayout(actions);
     status_ = new QLabel(tr("Not started. The current CPU curve must be stock."));
     status_->setWordWrap(true);
+    status_->setTextFormat(Qt::PlainText);
     status_->setObjectName("coStatus");
     theme::setLiveSheet(status_, [] { return statusSheet(nullptr); });
     v->addWidget(status_);
@@ -558,7 +559,7 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     for (QSpinBox *spin : {limit_, allStart_, step_})
         connect(spin, &QSpinBox::valueChanged, this, &CoSearchDialog::updateEstimate);
     connect(preset_, &QComboBox::activated, this, [this] {
-        if (running_ || preset_->currentData().toString().isEmpty()) return;
+        if (running_ || finalizing_ || preset_->currentData().toString().isEmpty()) return;
         applyPreset(preset_->currentData().toString());
     });
     connect(mode_, &QComboBox::currentIndexChanged, this, [this] { if (!running_) refreshTable(); });
@@ -668,13 +669,13 @@ CoSearchDialog::~CoSearchDialog() {
 
 void CoSearchDialog::reject() {
     if (preparing_ || recoveryBusy_ || perfTest_) { cancel(); return; }
-    if (running_) { cancel(); return; }
+    if (running_ || cpuLease_ || finalizing_) { cancel(); return; }
     QDialog::reject();
 }
 
 void CoSearchDialog::closeEvent(QCloseEvent *e) {
     if (preparing_ || recoveryBusy_ || perfTest_) { cancel(); e->ignore(); return; }
-    if (running_) {
+    if (running_ || cpuLease_ || finalizing_) {
         cancel();
         e->ignore();  // root writes and reset must finish before this controller can be destroyed
     } else QDialog::closeEvent(e);
@@ -693,9 +694,9 @@ Tuning CoSearchDialog::tuning() const {
 void CoSearchDialog::updateEstimate() {
     const auto mode = Mode(mode_->currentData().toInt());
     const bool perCore = mode == Mode::PerCore;
-    step_->setEnabled(perCore);
-    preset_->setEnabled(perCore && !running_);
-    allStart_->setEnabled(!perCore && !running_);
+    step_->setEnabled(perCore && !finalizing_);
+    preset_->setEnabled(perCore && !running_ && !finalizing_);
+    allStart_->setEnabled(!perCore && !running_ && !finalizing_);
     // The previous CPU curve may still be applied between finishTrial() and step().
     // Do not replace its pending journal with a non-pending snapshot in that gap.
     applyTuning_->setEnabled(perCore && running_ && !resetting_ && !abort_ &&
@@ -1587,7 +1588,6 @@ void CoSearchDialog::compareThroughput(std::function<void()> then) {
     go_->setEnabled(false);
     note(tr("Measuring single-core throughput at stock, to compare with the found curve…"), theme::INFO);
     measureThroughput([this, then](const QHash<int, int> &stock, int code) {
-        go_->setEnabled(!running_);
         const QHash<int, int> curve = std::exchange(curveRun_, {});
         auto after = qScopeGuard([then] { then(); });
         if (code != 0) { note(tr("The stock throughput run did not complete; no clock-stretch comparison."), theme::WARN); return; }
@@ -1617,8 +1617,25 @@ void CoSearchDialog::compareThroughput(std::function<void()> then) {
     });
 }
 
+void CoSearchDialog::beginRecovery() {
+    Q_ASSERT(!recoveryBusy_);
+    recoveryBusy_ = true;
+    recoveryCancelled_ = false;
+    recoveryGoWas_ = go_->isEnabled(); recoveryVerifyWas_ = verifyBtn_->isEnabled();
+    recoveryGuardsWas_ = guardsBtn_->isEnabled(); recoveryStopWas_ = stop_->isEnabled();
+    go_->setEnabled(false); verifyBtn_->setEnabled(false); guardsBtn_->setEnabled(false); stop_->setEnabled(true);
+}
+void CoSearchDialog::endRecovery() {
+    if (!recoveryBusy_) return;
+    recoveryBusy_ = false;
+    go_->setEnabled(recoveryGoWas_); verifyBtn_->setEnabled(recoveryVerifyWas_);
+    guardsBtn_->setEnabled(recoveryGuardsWas_); stop_->setEnabled(recoveryStopWas_);
+    updateResultButtons();
+}
+
 void CoSearchDialog::offerResume() {
     if (operationActive() || !QFileInfo::exists(journalPath())) return;
+    recoveryCancelled_ = false;
     if (privileged::resourceActive(QStringLiteral("ryzen-co-helper"))) {
         QMessageBox::warning(this,tr("Search locked"),tr("A CPU curve helper is still running. Wait for it to exit before starting or resuming.")); return;
     }
@@ -1648,11 +1665,16 @@ void CoSearchDialog::offerResume() {
     // `unreadable`: the journal holds nothing usable, so after a failed reset it may still be removed on request.
     auto discard = [this, sameBoot, removeJournal](std::function<void()> after, bool unreadable = false) {
         if (!sameBoot) { if (removeJournal()) after(); return; }
-        recoveryBusy_ = true;
+        beginRecovery();
         note(tr("Resetting the CPU curve to stock before discarding the interrupted search…"));
-        privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
+        privileged::runUntilExit(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
             [this, after, unreadable, removeJournal](const privileged::Result &r) {
-                const auto release = qScopeGuard([this]{ recoveryBusy_ = false; });
+                const auto release = qScopeGuard([this]{ endRecovery(); });
+                if (recoveryCancelled_) {
+                    note(r.ok() ? tr("Recovery cancelled after stock reset; the journal is kept.") :
+                        tr("Recovery cancelled; stock reset was not confirmed: %1. The journal is kept.").arg(r.message()), r.ok() ? theme::WARN : theme::DANGER);
+                    return;
+                }
                 if (!r.ok()) {
                     note(tr("Reset failed: %1. The journal is kept; use Ryzen Curve → Reset, or reboot.").arg(r.message()), theme::DANGER);
                     if (!unreadable || QMessageBox::warning(this, tr("Reset failed"),
@@ -1664,7 +1686,7 @@ void CoSearchDialog::offerResume() {
                         return;
                 }
                 if (removeJournal()) after();
-            }, 120000);
+            }, 120000, [this] { note(tr("CPU helper timed out; waiting for its actual exit before continuing."), theme::WARN); });
     };
     // A journal that cannot be resumed must still be removable, or every later Start lands here again.
     auto unusable = [this, sameBoot, discard, readable](const QString &why, bool guarded = false) {
@@ -1738,7 +1760,8 @@ void CoSearchDialog::offerResume() {
     // Crash watcher: what the system logs say about the interrupted trial (coevidence.h). It is collected
     // before the question and used only inside this search, never for the persistent crash guard.
     auto ask = [this, j, s, interrupted, pending, cleanExit, crashed, currentBoot, discard, topology](const coevidence::Verdict &verdict) mutable {
-        recoveryBusy_ = false;
+        endRecovery();
+        if (recoveryCancelled_) { note(tr("Recovery cancelled; the journal is kept."), theme::WARN); return; }
         // No reboot lockout: every crashed candidate is guarded for good, so a resume can never
         // repeat it and a reboot loop cannot form. Each resume is still the user's decision.
         const int rebootCount = std::max(0, j.value("reboots").toInt()) + int(crashed);
@@ -1907,20 +1930,24 @@ void CoSearchDialog::offerResume() {
                        : tr("Recovery: %1 counted as failed in this search. Resetting to stock first.").arg(what));
         if (crashed) note(tr("System logs: %1").arg(verdict.summary));
         const std::optional<Trial> again = cleanExit ? interrupted : std::nullopt;
-        recoveryBusy_ = true;
-        privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
+        beginRecovery();
+        privileged::runUntilExit(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
             [this, again](const privileged::Result &r) {
-                recoveryBusy_ = false;
+                endRecovery();
                 if (!r.ok()) { note(tr("Reset failed: %1. Not resuming.").arg(r.message()), theme::DANGER); search_.reset(); return; }
+                if (recoveryCancelled_) {
+                    search_.reset(); replay_.reset();
+                    note(tr("Recovery cancelled after stock reset; the journal is kept."), theme::WARN); return;
+                }
                 const QString keep = priorScene_;
                 replay_ = again;
                 launch();
                 priorScene_ = keep;
-            }, 120000);
+            }, 120000, [this] { note(tr("CPU helper timed out; waiting for its actual exit before continuing."), theme::WARN); });
         });
     };
     if (crashed) {
-        recoveryBusy_ = true;
+        beginRecovery();
         note(tr("Reading the system logs of the crashed boot…"));
         gatherEvidence(j, *s, *interrupted, ask);
     } else {
@@ -1941,6 +1968,7 @@ void CoSearchDialog::gatherEvidence(const QJsonObject &journal, const Search &se
     const QList<Core> cores = search.cores();
     privileged::run(privileged::helperPath("health-reader"), QJsonObject{{"op", "boots"}}, this,
         [this, records, crashed, offsets, cores, then](const privileged::Result &b) mutable {
+            if (recoveryCancelled_) { then({}); return; } // no new evidence request after Cancel
             // 3. pstore records the boot history attributes to the crashed boot (a kernel panic's last lines).
             bool previousIsCrashed = false;
             if (b.ok()) {
@@ -1984,6 +2012,11 @@ void CoSearchDialog::launch() {
         replay_.reset();
         QMessageBox::warning(this,tr("Search locked"),tr("CPU curve or game tuning ownership changed before launch. No trial was started.")); return;
     }
+    auto *ownerWindow = parentWidget() ? qobject_cast<MainWindow *>(parentWidget()->window()) : nullptr;
+    if (ownerWindow && ownerWindow->scenes() && ownerWindow->scenes()->operationActive()) {
+        replay_.reset();
+        QMessageBox::warning(this, tr("Search locked"), tr("Wait until the current scene operation finishes before starting CO Search.")); return;
+    }
     ++trialGeneration_;
     running_ = true;
     abort_ = false;
@@ -2007,6 +2040,14 @@ void CoSearchDialog::launch() {
     const auto generation = trialGeneration_;
     auto begin = [this, generation] {
         if (generation != trialGeneration_ || !running_ || resetting_) return;
+        if (abort_ || scenes::onAc() == std::optional<bool>(false) || scenes::gameSessions() > 0) {
+            reset(tr("Search cancelled before the first trial")); return;
+        }
+        cpuLease_ = privileged::acquireCpuCurveLease(this);
+        if (!cpuLease_) {
+            // Never reset someone else's live CPU operation on a reservation failure.
+            done(false, tr("CPU curve ownership is unavailable; no search trial was started.")); return;
+        }
         startScene_ = scenes::activeScene();
         note(tr("%1 search, %2 level, limit %3. Every tested candidate will be cleared afterward.")
                  .arg(search_->mode() == Mode::AllCore ? tr("All-core") : tr("Per-core"), name(search_->level())).arg(search_->limit()));
@@ -2099,7 +2140,7 @@ void CoSearchDialog::step() {
     note(decisionText(*trial_), theme::INFO);
     mceBefore_ = mceCounters();
     applying_ = true;
-    privileged::run(privileged::helperPath("ryzen-co-helper"), req, this, [this](const privileged::Result &r) {
+    privileged::runUntilExit(privileged::helperPath("ryzen-co-helper"), req, this, [this](const privileged::Result &r) {
         applying_ = false;
         if (!running_) return;
         if (!r.ok()) { reset(tr("SMU write rejected: %1").arg(r.message())); return; }
@@ -2110,7 +2151,7 @@ void CoSearchDialog::step() {
         testIndex_ = 0;
         outcome_ = Outcome{true, {}};
         runTest();
-    }, 120000);
+    }, 120000, [this] { note(tr("CPU helper timed out; waiting for its actual exit before continuing."), theme::WARN); }, cpuLease_);
 }
 
 void CoSearchDialog::runTest() {
@@ -2327,7 +2368,11 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
 
 void CoSearchDialog::cancel() {
     if (preparing_) { probeCancelled_ = true; stop_->setEnabled(false); if (toolProbe_) toolProbe_->kill(); return; }
-    if (recoveryBusy_) { note(tr("Waiting for recovery to finish; the journal is still protected.")); return; }
+    if (recoveryBusy_) {
+        recoveryCancelled_ = true; stop_->setEnabled(false);
+        note(tr("Recovery cancellation requested; waiting for the current helper to finish. The journal is protected."), theme::WARN);
+        return;
+    }
     if (!running_ && perfTest_) { perfTest_->kill(); return; }
     if (!running_ || resetting_) return;
     abort_ = true;
@@ -2358,8 +2403,27 @@ void CoSearchDialog::reset(const QString &reason) {
     watch_->stop();
     applyTuning_->setEnabled(false);
     note(reason + tr(" — requesting stock reset."), theme::WARN);
-    privileged::run(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
-        [this, reason](const privileged::Result &r) { done(r.ok(), reason + (r.ok() ? QString() : QStringLiteral("; reset FAILED: ") + r.message())); }, 120000);
+    requestStockReset(reason);
+}
+
+void CoSearchDialog::requestStockReset(const QString &reason) {
+    if (!running_ || !resetting_) return;
+    // An emergency reset may have started while the search owned the lease.
+    // Wait asynchronously; never let the orchestrated reset overtake a live write.
+    if (privileged::resourceActive(QStringLiteral("ryzen-co-helper")) ||
+        privileged::resourceActive(QStringLiteral("intel-uv-helper"))) {
+        QTimer::singleShot(250, this, [this, reason] { requestStockReset(reason); });
+        return;
+    }
+    if (!cpuLease_) cpuLease_ = privileged::acquireCpuCurveLease(this);
+    if (!cpuLease_) { done(false, reason + tr(" — CPU curve ownership unavailable; no reset dispatched.")); return; }
+    privileged::runUntilExit(privileged::helperPath("ryzen-co-helper"), QJsonObject{{"op", "reset"}}, this,
+        [this, reason](const privileged::Result &r) { done(r.ok(), reason + (r.ok() ? QString() : QStringLiteral("; reset FAILED: ") + r.message())); },
+        120000, [this] { note(tr("CPU helper timed out; waiting for its actual exit before continuing."), theme::WARN); }, cpuLease_);
+}
+
+void CoSearchDialog::releaseCpuLease() {
+    if (cpuLease_ && privileged::releaseCpuCurveLease(cpuLease_)) cpuLease_ = 0;
 }
 
 bool CoSearchDialog::saveProfile(const QString &name, int margin) const {
@@ -2386,12 +2450,12 @@ bool CoSearchDialog::saveProfile(const QString &name, int margin) const {
 void CoSearchDialog::updateResultButtons() {
     bool any = false;
     if (search_) for (int x : search_->values()) any |= x < 0;
-    saveResult_->setEnabled(!running_ && any);
-    loadResult_->setEnabled(!running_ && any);
+    saveResult_->setEnabled(!operationActive() && any);
+    loadResult_->setEnabled(!operationActive() && any);
 }
 
 void CoSearchDialog::saveResultAs() {
-    if (running_ || !search_) return;
+    if (operationActive() || !search_) return;
     const QString date = QDateTime::currentDateTime().toString("yyyy-MM-dd HHmm");
     QString name = finished_ ? tr("CO search %1").arg(date) : tr("CO search %1 (not verified)").arg(date);
     QDialog dlg(this);
@@ -2435,7 +2499,7 @@ void CoSearchDialog::saveResultAs() {
 }
 
 void CoSearchDialog::loadResultIntoStarts() {
-    if (running_ || !search_) return;
+    if (operationActive() || !search_) return;
     const QList<int> v = search_->values();
     QStringList set;
     for (int i = 0; i < search_->cores().size(); ++i) {
@@ -2546,6 +2610,7 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     // Never erase evidence merely because the algorithm finished: an unsuccessful stock
     // reset can leave the last CO value applied and the recovery journal is still needed.
     if (!quitting_ && resetOk) QFile::remove(journalPath());
+    finalizing_ = resetOk && !quitting_;
     running_ = false;
     resetting_ = false;
     sceneApplying_ = false;
@@ -2554,9 +2619,10 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     trial_.reset();
     if (resetOk) estimate_->setText(tr("Search load remaining: 0 s. Throughput comparison and scene restoration are separate."));
     else estimate_->setText(tr("Remaining time unknown: stock reset was not confirmed."));
-    if (quitting_) return;
-    go_->setEnabled(resetOk);
-    for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_, verifyBtn_, guardsBtn_}) w->setEnabled(true);
+    if (quitting_) { releaseCpuLease(); return; }
+    if (!resetOk) releaseCpuLease();
+    go_->setEnabled(false);
+    for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_, verifyBtn_, guardsBtn_}) w->setEnabled(!finalizing_);
     stop_->setEnabled(false);
     refreshTable();
     updateResultButtons();
@@ -2593,13 +2659,35 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
         note(tr("SMU reset confirmed. The search did not finish; nothing was saved automatically. Save result keeps the "
                 "values found so far, marked as not verified."), theme::WARN);
     }
-    // The scene that was active before the search, if the search switched to its own.
-    auto restoreScene = [this] {
+    // Keep the CPU lease through the tracked restoration transaction, including
+    // its CPU steps. A queued/replaced request with the same name is not a receipt.
+    auto finishRestoration = [this] {
+        releaseCpuLease();
+        finalizing_ = false;
+        go_->setEnabled(!operationActive());
+        for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_, verifyBtn_, guardsBtn_}) w->setEnabled(!operationActive());
+        updateEstimate();
+        estimate_->setText(tr("Search load remaining: 0 s. Throughput comparison and scene restoration are separate."));
+        updateResultButtons();
+    };
+    auto restoreScene = [this, finishRestoration] {
         auto *win = parentWidget() ? qobject_cast<MainWindow *>(parentWidget()->window()) : nullptr;
-        if (win && win->scenes() && scenes::activeScene() != priorScene_) {
-            if (priorScene_.isEmpty()) { note(tr("No scene was active before the search: the CO search scene stays applied.")); return; }
-            note(tr("Applying the previous scene '%1' again.").arg(priorScene_));
-            win->scenes()->apply(priorScene_);
+        if (scenes::activeScene() == priorScene_) { finishRestoration(); return; }
+        if (priorScene_.isEmpty()) { note(tr("No scene was active before the search: the CO search scene stays applied.")); finishRestoration(); return; }
+        if (!win || !win->scenes()) {
+            note(tr("Previous scene restoration could not be started."), theme::WARN);
+            finishRestoration(); return;
+        }
+        note(tr("Applying the previous scene '%1' again.").arg(priorScene_));
+        const QPointer<CoSearchDialog> alive(this);
+        if (!win->scenes()->applyTracked(priorScene_, cpuLease_, [alive, finishRestoration](const QString &outcome) {
+            if (!alive) return;
+            alive->note(tr("Previous scene restoration: %1. See Scene Execution Log.").arg(scenes::outcomeLabel(outcome)),
+                        outcome == QStringLiteral("returned_unverified") ? theme::INFO : theme::WARN);
+            finishRestoration();
+        })) {
+            note(tr("Previous scene restoration could not be started."), theme::WARN);
+            finishRestoration();
         }
     };
     // Stock run now, under the same scene and on a CPU as warm as the curve's run; the scene changes after it.

@@ -99,7 +99,12 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
     sensorTimer_->setInterval(1000);
     connect(sensorTimer_, &QTimer::timeout, this, [this] {
         if (!isVisible()) { sensorStatus_->clear(); return; }
-        sensorStatus_->setText(tr("Current CPU temperature: unavailable"));
+        // Keep only still-fresh evidence visible while the shared flight runs;
+        // do not flash unavailable on every timer tick before its reply arrives.
+        if (!lastCpuReading_ || !lastCpuReading_->fresh()) {
+            lastCpuReading_.reset();
+            sensorStatus_->setText(tr("Current CPU temperature: unavailable"));
+        }
         if (sensorPending_) return;
         sensorPending_ = true;
         using M = sysinfo::PresentationMetric;
@@ -108,8 +113,21 @@ OverviewPage::OverviewPage(QWidget *parent) : QWidget(parent) {
             if (!isVisible()) return;
             const auto r = results.value(int(M::CpuTemp));
             const auto value = r.values.constFind(QStringLiteral("cpu_temp_c"));
-            if (r.fresh() && value != r.values.cend())
+            if (r.fresh() && value != r.values.cend()) {
+                lastCpuReading_ = r;
                 sensorStatus_->setText(tr("Current CPU temperature: %1 °C").arg(value.value(),0,'f',1));
+                const auto left = r.captured + r.ttl - sysinfo::presentationClock();
+                // Expire the display independently of the next acquisition.
+                QTimer::singleShot(int(std::clamp<qint64>(left.count() + 1, 1, 30000)), this, [this] {
+                    if (isVisible() && lastCpuReading_ && !lastCpuReading_->fresh()) {
+                        lastCpuReading_.reset();
+                        sensorStatus_->setText(tr("Current CPU temperature: unavailable"));
+                    }
+                });
+            } else if (!lastCpuReading_ || !lastCpuReading_->fresh()) {
+                lastCpuReading_.reset();
+                sensorStatus_->setText(tr("Current CPU temperature: unavailable"));
+            }
         });
     });
 
@@ -210,7 +228,7 @@ void OverviewPage::showEvent(QShowEvent *e) {
 
 void OverviewPage::hideEvent(QHideEvent *e) {
     QWidget::hideEvent(e);
-    sensorTimer_->stop(); sensorStatus_->clear();
+    sensorTimer_->stop(); lastCpuReading_.reset(); sensorStatus_->clear();
 }
 
 void OverviewPage::scheduleRefresh() { debounce_->start(); }
@@ -399,14 +417,14 @@ void OverviewPage::report() {
     const QJsonObject preview{{QStringLiteral("op"), QStringLiteral("diag_report")},
                               {QStringLiteral("version"), QStringLiteral(CENTURION_VERSION)},
                               {QStringLiteral("dgpu"), DgpuPage::present()}};
-    userhelper::run(preview, this, [this](const QJsonObject &p) {
-        reporting_ = false;
+    userhelper::run(preview, this, [this, preview](const QJsonObject &p) {
         if (!p.value(QStringLiteral("ok")).toBool()) {
+            reporting_ = false;
             QMessageBox::warning(this, tr("Diagnostic Report"), tr("The report could not be built: %1").arg(p.value(QStringLiteral("error")).toString()));
             return;
         }
         ReportPreview dialog(p, this);
-        if (dialog.exec() != QDialog::Accepted) return;
+        if (dialog.exec() != QDialog::Accepted) { reporting_ = false; return; }
 
         QString tag;
         for (const QChar ch : sysinfo::dmiClean(QStringLiteral("product_name")).value_or(QString())) {
@@ -416,20 +434,23 @@ void OverviewPage::report() {
         const QString name = QStringLiteral("centurion-report-%1-%2.tar.gz").arg(tag, QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")));
         QString path = QFileDialog::getSaveFileName(this, tr("Save diagnostic report"), QDir::homePath() + QLatin1Char('/') + name,
                                                     tr("Compressed archives (*.tar.gz)"));
-        if (path.isEmpty()) return;
+        if (path.isEmpty()) { reporting_ = false; return; }
         if (!path.endsWith(QLatin1String(".tar.gz"))) path += QLatin1String(".tar.gz");
 
         const QJsonObject out{{QStringLiteral("op"), QStringLiteral("diag_report")},
                               {QStringLiteral("version"), QStringLiteral(CENTURION_VERSION)},
-                              {QStringLiteral("dgpu"), DgpuPage::present()},
+                              {QStringLiteral("dgpu"), preview.value(QStringLiteral("dgpu"))},
+                              {QStringLiteral("preview_schema"), 2},
+                              {QStringLiteral("selected"), dialog.selection()},
                               {QStringLiteral("out"), path}};
         userhelper::run(out, this, [this](const QJsonObject &w) {
+            reporting_ = false;
             if (!w.value(QStringLiteral("ok")).toBool()) {
                 QMessageBox::warning(this, tr("Diagnostic Report"), tr("The archive could not be written: %1").arg(w.value(QStringLiteral("error")).toString()));
                 return;
             }
             QMessageBox::information(this, tr("Diagnostic Report"),
-                tr("Saved %1 (%2 KiB, %3 files).\n\nSerial numbers, UUIDs, MAC and IP addresses were replaced before saving.")
+                tr("Saved %1 (%2 KiB, %3 files).\n\nSelected files matched the preview. Automatic redaction is best effort; review before sharing.")
                     .arg(w.value(QStringLiteral("file")).toString())
                     .arg((w.value(QStringLiteral("bytes")).toInteger() + 1023) / 1024)
                     .arg(w.value(QStringLiteral("included")).toInt()));

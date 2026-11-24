@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QWidget>
+#include "sysinfo.h"
 
 class QGridLayout;
 class QLabel;
@@ -55,6 +56,7 @@ private:
     QLabel *sensorStatus_ = nullptr;
     QTimer *sensorTimer_ = nullptr;
     bool sensorPending_ = false;
+    std::optional<sysinfo::PresentationReading> lastCpuReading_;
     QLabel *summary_, *status_, *counts_ = nullptr, *recommendation_ = nullptr;
     QPushButton *recommendButton_ = nullptr;
     QScrollArea *scroll_ = nullptr;

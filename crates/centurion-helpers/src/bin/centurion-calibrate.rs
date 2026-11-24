@@ -117,68 +117,123 @@ fn io_budget_bytes(gib: f64) -> Result<u64, String> {
 fn num<T: std::str::FromStr + PartialOrd + Default>(args: &[String], name: &str) -> Option<T> { num_opt(args, name).unwrap_or_else(|e| die(&e)) }
 fn now() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 
-/// Originals of every file written, persisted before each write.
-struct Journal { entries: Vec<(String, PathBuf, String)> }
+/// Originals of every file written, persisted before each write. A legacy
+/// three-column entry remains recoverable for static targets, never for storage
+/// whose name can be reused by a different device.
+#[derive(Default)]
+struct Journal { entries: Vec<(String, PathBuf, String, Option<Value>)> }
 
 impl Journal {
-    fn load() -> Journal {
-        let v: Value = std::fs::read_to_string(JOURNAL).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!([]));
-        let entries = v.as_array().into_iter().flatten().filter_map(|e| {
-            Some((e[0].as_str()?.to_owned(), PathBuf::from(e[1].as_str()?), e[2].as_str()?.to_owned()))
-        }).collect();
-        Journal { entries }
+    fn load() -> Result<Journal, String> {
+        let text = match centurion_helpers::read_root_file(JOURNAL, 8 << 20) {
+            Some(s) => s,
+            None => match std::fs::symlink_metadata(JOURNAL) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Journal::default()),
+                _ => return Err("calibration journal unreadable; preserved".into()),
+            },
+        };
+        Self::decode(&text)
+    }
+    fn decode(text: &str) -> Result<Journal, String> {
+        let v: Value = serde_json::from_str(text).map_err(|_| "calibration journal invalid; preserved")?;
+        let rows = v.as_array().ok_or("calibration journal not an array")?;
+        let mut entries = Vec::new();
+        let mut paths = std::collections::BTreeSet::new();
+        for e in rows {
+            let row = e.as_array().filter(|a| a.len() == 3 || a.len() == 4).ok_or("invalid journal entry")?;
+            let key = row[0].as_str().filter(|k| tune::find(k).is_some()).ok_or("invalid journal key")?;
+            let path = row[1].as_str().filter(|p| std::path::Path::new(p).is_absolute()).ok_or("invalid journal path")?;
+            let orig = row[2].as_str().ok_or("invalid original value")?;
+            let stamp = match row.get(3) {
+                None | Some(Value::Null) => None,
+                Some(v) if v.is_object() => Some(v.clone()),
+                _ => return Err("invalid journal target identity".into()),
+            };
+            if !paths.insert(PathBuf::from(path)) { return Err("duplicate journal path; preserved".into()); }
+            entries.push((key.to_owned(), PathBuf::from(path), orig.to_owned(), stamp));
+        }
+        Ok(Journal { entries })
     }
     fn save(&self) -> Result<(), String> {
-        let v: Vec<Value> = self.entries.iter().map(|(k, p, o)| json!([k, p, o])).collect();
+        let v: Vec<Value> = self.entries.iter().map(|(k, p, o, stamp)| json!([k, p, o, stamp])).collect();
+        let body = serde_json::to_vec(&v).map_err(|e| e.to_string())?;
+        if body.len() > (8 << 20) { return Err("calibration journal exceeds recovery limit".into()); }
         centurion_helpers::secure_dir("/run/centurion")?;
-        centurion_helpers::write_root_file(JOURNAL, &serde_json::to_vec(&v).unwrap())
+        centurion_helpers::write_root_file(JOURNAL, &body)
     }
-    /// Sets a tune key, journaling each file's original first.
+    fn identity(t: &tune::Tunable, path: &std::path::Path, stamp: Option<&Value>) -> bool {
+        !tune::scoped_storage(t) || (stamp.is_some() && tune::storage_stamp(t, path).as_ref() == stamp)
+    }
+    fn write(t: &tune::Tunable, path: &std::path::Path, data: &str, stamp: Option<&Value>) -> Result<(), String> {
+        if !tune::files(t).iter().any(|p| p == path) { return Err("journal target no longer belongs to key".into()); }
+        if tune::scoped_storage(t) {
+            tune::write_scoped_storage(t, path, data, stamp.ok_or("missing storage target identity")?)
+        } else { tune::write_value(t, path, data) }
+    }
+    /// Preflight every concrete target before the first write. Persist the
+    /// entire set of originals before a partial application can occur.
     fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         let t = tune::find(key).ok_or_else(|| format!("{key}: unknown"))?;
         let v = tune::validate(t, &Value::String(value.to_owned())).or_else(|_| {
             value.parse::<i64>().map_err(|e| e.to_string()).and_then(|n| tune::validate(t, &json!(n)))
         })?;
-        let mut written = 0usize;
-        for (f, data) in tune::plan(t, &v)? {
-            let Some(orig) = tune::baseline_value(t, &f) else { continue };
-            if !self.entries.iter().any(|(_, p, _)| *p == f) {
-                self.entries.push((key.to_owned(), f.clone(), orig));
-                self.save()?;
+        let plan = tune::plan(t, &v)?;
+        if plan.is_empty() { return Err(format!("{key}: no target")); }
+        let mut pending = Vec::new();
+        let mut writes = Vec::new();
+        for (f, data) in plan {
+            let stamp = if tune::scoped_storage(t) { Some(tune::storage_stamp(t, &f).ok_or("storage target identity unavailable")?) } else { None };
+            let orig = tune::baseline_value(t, &f).ok_or_else(|| format!("{key}: original unavailable for {}", f.display()))?;
+            if !Self::identity(t, &f, stamp.as_ref()) { return Err("target changed while reading original".into()); }
+            if let Some((old_key, _, _, old_stamp)) = self.entries.iter().find(|(_, p, _, _)| *p == f) {
+                if old_key.as_str() != key || old_stamp != &stamp { return Err("journal alias or target identity changed".into()); }
+            } else {
+                if pending.iter().any(|(_, p, _, _)| *p == f) { return Err("duplicate planned target".into()); }
+                pending.push((key.to_owned(), f.clone(), orig, stamp.clone()));
             }
-            tune::write_value(t, &f, &data)?;
-            written += 1;
+            writes.push((f, data, stamp));
         }
-        // Files whose original cannot be read are skipped (nothing to put back). When that is every
-        // file, nothing changed: the run would measure the reference under the candidate's label - a
-        // silent "no effect" that made knobs look blind. Refused instead (left out of the session).
-        if written == 0 { return Err(format!("{key}: no file could be read back, nothing written")); }
+        let old_len = self.entries.len();
+        self.entries.extend(pending);
+        if let Err(e) = self.save() { self.entries.truncate(old_len); return Err(e); }
+        for (f, data, stamp) in &writes { Self::write(t, f, data, stamp.as_ref())?; }
+        for (f, data, stamp) in &writes {
+            if !Self::identity(t, f, stamp.as_ref()) || !tune::baseline_value(t, f).is_some_and(|v| tune::same_value(t, &v, data))
+                || !Self::identity(t, f, stamp.as_ref()) { return Err(format!("{key} {}: candidate readback not confirmed", f.display())); }
+        }
         Ok(())
     }
-    /// Puts every original back. The I/O scheduler goes first: switching the elevator resets
-    /// the queue's nr_requests and (bfq) writeback throttling, so a journaled original of those
-    /// must be written after it, not before.
+    /// Scheduler first: switching the elevator can reset other queue values.
     fn restore(&mut self) -> Vec<String> {
         let mut errs = Vec::new();
-        let mut failed: Vec<(String, PathBuf, String)> = Vec::new();
         let sched = |k: &str| k == "blk.scheduler";
-        let order = self.entries.iter().filter(|e| sched(&e.0)).chain(self.entries.iter().rev().filter(|e| !sched(&e.0)));
-        for (k, f, o) in order {
-            if let Some(t) = tune::find(k) {
-                if let Err(e) = tune::write_value(t, f, o) {
-                    if f.exists() {
-                        errs.push(format!("{k} {}: {e}", f.display()));
-                        failed.push((k.clone(), f.clone(), o.clone()));
-                    }
-                }
+        let mut failed = std::collections::BTreeSet::new();
+        let order = self.entries.iter().enumerate().filter(|(_, e)| sched(&e.0))
+            .chain(self.entries.iter().enumerate().rev().filter(|(_, e)| !sched(&e.0)));
+        for (i, (k, f, o, stamp)) in order {
+            let result = tune::find(k).ok_or_else(|| "unknown restore key".to_owned())
+                .and_then(|t| Self::write(t, f, o, stamp.as_ref()));
+            if let Err(e) = result { errs.push(format!("{k} {}: {e}", f.display())); failed.insert(i); }
+        }
+        for (i, (k, f, o, stamp)) in self.entries.iter().enumerate() {
+            if failed.contains(&i) { continue; }
+            if !tune::find(k).is_some_and(|t| Self::identity(t, f, stamp.as_ref()) &&
+                tune::baseline_value(t, f).is_some_and(|v| tune::same_value(t, &v, o)) && Self::identity(t, f, stamp.as_ref())) {
+                failed.insert(i); errs.push(format!("{k} {}: restore readback not confirmed", f.display()));
             }
         }
-        // An original that could not be written back stays journaled (the journal used to be deleted
-        // regardless, and with it the only record of the value): the next restore tries it again, and
-        // a later set() of the same file keeps this original instead of recording the changed value.
-        failed.reverse();  // back into first-write order
-        self.entries = failed;
-        if self.entries.is_empty() { let _ = std::fs::remove_file(JOURNAL); } else if let Err(e) = self.save() { errs.push(format!("journal: {e}")); }
+        // A later scheduler restore can reset queue values that succeeded this
+        // time. Preserve the whole transaction on partial failure for retry.
+        let original = std::mem::take(&mut self.entries);
+        self.entries = if failed.is_empty() { Vec::new() } else { original.clone() };
+        let result = if self.entries.is_empty() {
+            match std::fs::remove_file(JOURNAL) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        } else { self.save() };
+        if let Err(e) = result { self.entries = original; errs.push(format!("journal: {e}")); }
         errs
     }
 }
@@ -908,7 +963,7 @@ const POWER_WAIT: Duration = Duration::from_secs(120);
 
 impl Runner<'_> {
     fn new<'a>(c: &'a Ctx, rate: u64, ram: u64) -> Runner<'a> {
-        Runner { j: Journal { entries: Vec::new() }, c, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
+        Runner { j: Journal::default(), c, rate, ram, ballast: None, restarts: 0, runs: 0, t0: Instant::now(), busy: 0, base: Vec::new(),
                  cool: [None; 4], last_hot: None, disp0: None, disp_off: 0, gate_s: 0.0, forced: 0, disk_hot: 0, slc: 0, irq_ref: Default::default(), parasites: BTreeMap::new(), io_before: 0, io_session: 0,
                  ac0: centurion_helpers::power::on_ac_settled(), power_lost: false, power_waits: 0, unwritable: Vec::new(), dropped: 0, braked: Vec::new(), preflight_retries: 0, preflight_skips: 0, preflight_secs: 0.0, shifted: false, barren: 0, soak_s: 0.0 }
     }
@@ -950,7 +1005,7 @@ impl Runner<'_> {
         if !dead { return Ok(()); }
         if self.ballast.is_some() {
             self.restarts += 1;
-            let _ = self.j.restore();
+            self.restore_settled()?;
             if self.restarts > 2 { return Err("ballast stopped by the brakes repeatedly: load phase ends here".into()); }
         } else { eprintln!("\nbuilding memory pressure (with fragmented free memory) ..."); }
         let b = Ballast::start(&self.c.exe)?;
@@ -993,10 +1048,10 @@ impl Runner<'_> {
     /// the in-flight record goes too. It used to stay until the next run's own record replaced it, so
     /// a hang in between (model fitting, building the ballast, a cool-down gate) was blamed on knobs
     /// that had already been restored and made them a permanent unsafe set. A failed restore keeps it.
-    fn restore_settled(&mut self) {
+    fn restore_settled(&mut self) -> Result<(), String> {
         let errs = self.j.restore();
         for e in &errs { eprintln!("\nrestore: {e}"); }
-        if errs.is_empty() { centurion_helpers::stability::inflight_clear(); }
+        if errs.is_empty() { centurion_helpers::stability::inflight_clear(); Ok(()) } else { Err("calibration restore incomplete; stop measurements".into()) }
     }
     /// One run of `cfg` (all other knobs at their reference). None = a value could not be written,
     /// or the run was thrown away. `BARREN_MAX` thrown-away runs in a row end the phase (Err).
@@ -1062,7 +1117,7 @@ impl Runner<'_> {
                 // Counted as refused, not also as a run thrown away (the report counted it twice).
                 // The session's own starting point (the dirty window's reference) cannot be set: runs go on without it.
                 self.base.retain(|(bk, bv)| !(bk == k && bv == v));
-                self.restore_settled();
+                self.restore_settled()?;
                 return Ok(None);
             }
         }
@@ -1076,13 +1131,13 @@ impl Runner<'_> {
                     (Some(t), Some(limit)) if t >= limit => {
                         eprintln!("\nstorage run skipped: drive at {t:.0} °C (warning {limit:.0} °C)");
                         self.dropped += 1;
-                        self.restore_settled();
+                        self.restore_settled()?;
                         return Ok(None);
                     }
                     (None, _) | (_, None) => {
                         eprintln!("\nstorage run skipped: NVMe temperature or warning limit unavailable");
                         self.dropped += 1;
-                        self.restore_settled();
+                        self.restore_settled()?;
                         return Ok(None);
                     }
                     _ => {}
@@ -1104,7 +1159,7 @@ impl Runner<'_> {
             (Phase::Io, Some(d)) => bench::disk_temp_c(d).zip(bench::disk_temp_warn(d)).filter(|(t, w)| t >= w),
             _ => None,
         };
-        self.restore_settled();
+        self.restore_settled()?;
         if phase == Phase::Io {
             let w1 = self.c.disk.as_deref().and_then(bench::disk_written_bytes);
             self.io_session += match (written0, w1) { (Some(a), Some(b)) if b >= a => b - a, _ => io_est };
@@ -1904,7 +1959,7 @@ fn phase_factors(its: &[&Item]) -> Vec<Factor> { its.iter().map(|i| Factor { key
 
 /// One design session over every phase. Returns false when the session's power source went away
 /// and did not come back (the caller ends; the boot calibration waits for it and resumes).
-fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram: u64, kernel: &str, budget: f64, dp: &Depth, progressive: bool, seed: u64, confirm: bool) -> bool {
+fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram: u64, kernel: &str, budget: f64, dp: &Depth, progressive: bool, seed: u64, confirm: bool) -> Result<bool, String> {
     let refs: BTreeMap<String, String> = items.iter().map(|i| (i.key.clone(), i.reference.clone())).collect();
     for (k, r) in &refs {
         // References are kept per measurement context: a knob whose live value follows the power
@@ -1925,7 +1980,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
                   ctx.disk.as_deref().unwrap_or("the drive"));
     }
     let phases = without_io(split_adaptive(items, ctx, budget, cal), io_ok);
-    if phases.is_empty() { eprintln!("nothing to design: fewer than two testable knobs"); return true; }
+    if phases.is_empty() { eprintln!("nothing to design: fewer than two testable knobs"); return Ok(true); }
     let mut rn = Runner::new(ctx, rate, ram);
     rn.io_before = cal.io_written(today());
     for (ph, its, secs) in &phases {
@@ -1937,12 +1992,13 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
             if surprising { eprintln!("{}: {:.0} % of the recent confirmations were SURPRISES: this session chases doubt first", ph.name(), sr.unwrap_or(0.0) * 100.0); }
             Depth::progressive(p.stage(), its.len(), p.polish, surprising)
         } else { *dp };
-        if let Err(e) = design_phase(cal, &mut rn, *ph, its, *secs, &pdp, kernel, seed, confirm, &refs) { eprintln!("\n{e}"); if STOP.load(Ordering::SeqCst) || rn.power_lost || rn.shifted { break; } }
+        if let Err(e) = design_phase(cal, &mut rn, *ph, its, *secs, &pdp, kernel, seed, confirm, &refs) { eprintln!("\n{e}"); if STOP.load(Ordering::SeqCst) || rn.power_lost || rn.shifted || !rn.j.entries.is_empty() { break; } }
     }
     // Keeps the in-flight record when a value could not be put back (it is still in effect).
-    rn.restore_settled();
+    let restore_error = rn.restore_settled().err();
     if rn.io_session > 0 { cal.note_io(today(), rn.io_session); save(cal); }
     if let Some(b) = rn.ballast.take() { b.stop(); }
+    if let Some(e) = restore_error { return Err(e); }
     cal.prune_contexts(&ctx.cx);
     if rn.gate_s >= 10.0 { eprintln!("\nwaited {:.0} s in all for the die (and the drive in the IO phase) to cool back to its starting temperature between runs", rn.gate_s); }
     save(cal);
@@ -1968,7 +2024,7 @@ fn design_main(cal: &mut Calibration, items: &[Item], ctx: &Ctx, rate: u64, ram:
     println!("signature: {} design run(s) stored. `centurion-calibrate --show` for effects and interactions; run again to add evidence.", cal.rows.len());
     println!("autotune decides all calibrated knobs jointly from it on its next run (GUI Autotune or centurion-autotune <goal>).");
     if rn.power_lost { println!("the session ended early: its power source went away (the measured runs are kept)"); }
-    !rn.power_lost
+    Ok(!rn.power_lost)
 }
 
 fn show_model(c: &Calibration) {
@@ -2024,6 +2080,22 @@ fn show(c: &Calibration) {
     }
 }
 
+/// Shared with tune-helper, also held by manual recovery and field import.
+fn calibration_lock() -> Result<std::fs::File, String> {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::io::AsRawFd;
+    centurion_helpers::secure_dir("/run/centurion")?;
+    centurion_helpers::secure_dir("/run/centurion/tune")?;
+    let lock = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK).open(TUNE_LOCK).map_err(|e| e.to_string())?;
+    let m = lock.metadata().map_err(|e| e.to_string())?;
+    if !m.is_file() || m.uid() != 0 || m.mode() & 0o022 != 0 { return Err("unsafe calibration lock file".into()); }
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 { return Err("Centurion is applying something; try again".into()); }
+    lock.set_len(0).map_err(|e| e.to_string())?;
+    (&lock).write_all(format!("calibrate {}\n", std::process::id()).as_bytes()).map_err(|e| e.to_string())?;
+    Ok(lock)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Disposable children: no machine checks, just measure / hold memory.
@@ -2043,6 +2115,14 @@ fn main() {
     let flag = |f: &str| args.iter().any(|a| a == f);
     let opt = |f: &str| args.iter().position(|a| a == f).and_then(|i| args.get(i + 1)).cloned();
     if flag("--status") { println!("{}", boot_status()); return; }
+    // The signature must be loaded AFTER acquiring the lock, not before. Read-only
+    // commands and the boot supervisor never hold a lock across a child run.
+    let _lock = if flag("--show") || flag("--list") || (!flag("--restore") && ["--boot-run", "--schedule-boot", "--cancel-boot"].iter().any(|f| flag(f))) {
+        None
+    } else {
+        if unsafe { libc::geteuid() } != 0 { die("needs root (sudo centurion-calibrate)"); }
+        Some(calibration_lock().unwrap_or_else(|e| die(&e)))
+    };
     // What is on disk decides what a session may do with the file: another machine's signature is set
     // aside, a damaged one too (continuing from its backup when that is this machine's) - before, a
     // damaged file read as "other hardware" and the calibration silently started from nothing.
@@ -2120,24 +2200,21 @@ fn main() {
     }
     if unsafe { libc::geteuid() } != 0 { die("needs root (sudo centurion-calibrate)"); }
     if flag("--restore") {
-        fan_unlock();  // before the scene's originals (see Teardown)
-        for e in centurion_helpers::calctx::restore_scene_power() { eprintln!("scene power context: {e}"); }
+        if centurion_helpers::calibration_hold().is_some() { die("live calibration hold: stop it before manual recovery"); }
+        let mut j = Journal::load().unwrap_or_else(|e| die(&e));
+        let n = j.entries.len();
+        let mut errs = j.restore();
+        if let Err(e) = fan_unlock() { errs.push(e); }
+        if errs.is_empty() { errs.extend(centurion_helpers::calctx::restore_scene_power()); }
+        let left = j.entries.len();
+        println!("restored {} of {n} file(s)", n - left);
+        if left > 0 && flag("--drop") {
+            std::fs::remove_file(JOURNAL).unwrap_or_else(|e| die(&format!("journal: {e}")));
+            println!("{left} original(s) explicitly dropped; live values may remain changed");
+        } else if left > 0 { eprintln!("{left} original(s) retained; run --restore again"); }
+        if !errs.is_empty() { die(&format!("restoration incomplete: {}", errs.join("; "))); }
         centurion_helpers::stability::inflight_clear();
         if centurion_helpers::calibration_hold().is_none() { let _ = std::fs::remove_file(centurion_helpers::CALIBRATION_HOLD); centurion_helpers::stability::record_calibration(false); }
-        let mut j = Journal::load();
-        let n = j.entries.len();
-        let errs = j.restore();
-        let left = j.entries.len();
-        println!("restored {} of {n} file(s){}", n - left, if errs.is_empty() { String::new() } else { format!(", errors: {}", errs.join("; ")) });
-        if left > 0 {
-            if flag("--drop") {
-                j.entries.clear();
-                let _ = std::fs::remove_file(JOURNAL);
-                println!("{left} original(s) that cannot be written back were dropped from the journal (a reboot returns them to their defaults)");
-            } else {
-                println!("{left} original(s) are kept in the journal; run --restore again, or --restore --drop to give them up");
-            }
-        }
         return;
     }
     if flag("--schedule-boot") || flag("--cancel-boot") {
@@ -2150,6 +2227,11 @@ fn main() {
         return;
     }
     if flag("--boot-run") { std::process::exit(boot_run()); }
+    if !Journal::load().unwrap_or_else(|e| die(&e)).entries.is_empty()
+        || centurion_helpers::calctx::recovery_exists(FAN_JOURNAL)
+        || centurion_helpers::calctx::recovery_exists(centurion_helpers::calctx::SCENE_JOURNAL) {
+        die("an interrupted run left changes: sudo centurion-calibrate --restore first");
+    }
     // Before anything below writes the signature (--field too): a signature of other hardware (or a damaged file) is set aside,
     // not merged or overwritten.
     if let Prior::SetAside(why) = prior {
@@ -2163,21 +2245,19 @@ fn main() {
         match field_import(&mut cal, &files, opt("--game")) { Ok(m) => println!("{m}"), Err(e) => die(&e) }
         return;
     }
-    if !Journal::load().entries.is_empty() { die("an interrupted run left changes: sudo centurion-calibrate --restore first"); }
-    let state_active = std::fs::read_to_string(TUNE_STATE).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .is_some_and(|v| preset_baseline(&v));
+    let state_active = match centurion_helpers::read_root_file(TUNE_STATE, 8 << 20) {
+        Some(text) => {
+            let v: Value = serde_json::from_str(&text).unwrap_or_else(|_| die("optimization state invalid; restore originals first"));
+            if !v["baseline"].is_array() || v.get("version").is_some_and(|x| x.as_u64() != Some(2)) { die("optimization state schema invalid"); }
+            preset_baseline(&v) || !v["game"].is_null() || v["sessions"].as_array().is_some_and(|a| !a.is_empty())
+                || v["refcount"].as_u64().unwrap_or(0) > 0
+        }
+        None => match std::fs::symlink_metadata(TUNE_STATE) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            _ => die("optimization state unreadable; restore originals first"),
+        },
+    };
     if state_active { die("an Optimizations preset is active: Restore originals first, so every knob is measured from the boot state"); }
-    let _ = centurion_helpers::secure_dir("/run/centurion");
-    if let Err(e) = centurion_helpers::secure_dir("/run/centurion/tune") { die(&format!("lock dir: {e}")); }
-    let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(TUNE_LOCK).unwrap_or_else(|e| die(&format!("lock: {e}")));
-    if unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX | libc::LOCK_NB) } != 0 { die("Centurion is applying something; try again"); }
-    // The lock is held for the whole run on purpose (a scene or game preset applied in the middle would
-    // be measured as if it were the knob under test). Say who holds it, so tune-helper can answer at once
-    // with the reason instead of "another tune operation is still running" after its 8 s wait.
-    {
-        let _ = lock.set_len(0);
-        let _ = (&lock).write_all(format!("calibrate {}\n", std::process::id()).as_bytes());
-    }
     unsafe {
         libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
         libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
@@ -2208,7 +2288,7 @@ fn main() {
             Ok(v) => {
                 td.scene = true;
                 let errs = centurion_helpers::calctx::apply_scene_power(&v);
-                for e in &errs { eprintln!("scene \"{sc}\": {e}"); }
+                if !errs.is_empty() { drop(td); die(&format!("scene {sc}: {}", errs.join("; "))); }
                 eprintln!("measuring in scene \"{sc}\"'s power context (its Optimizations preset is not applied: those knobs are what is measured)");
                 std::thread::sleep(Duration::from_secs(3));
             }
@@ -2216,7 +2296,9 @@ fn main() {
         }
     }
     let src = bench::power_source();
-    if src != "battery" && !flag("--no-fan-lock") { td.fan = fan_lock(); }
+    if src != "battery" && !flag("--no-fan-lock") {
+        match fan_lock() { Ok(fan) => td.fan = fan, Err(e) => { drop(td); die(&e); } }
+    }
     let bat_period = if src == "battery" {
         eprint!("battery: measuring how often the discharge reading updates ... ");
         let p = bench::battery_cadence(Duration::from_secs(14));
@@ -2278,11 +2360,13 @@ fn main() {
                             phase == "load", flag("--sequential"), flag("--require-improvement"));
         centurion_helpers::autotune::evidence_taint(&ev0);
         drop(td); // restore fan, power context and calibration hold before failing
+        ensure_recovery_clear();
         if let Err(e) = r { die(&format!("--verify: {e}")); }
         return;
     }
     if flag("--gpu-coupling") {
-        if let Err(e) = coupling_main(&mut cal, secs.unwrap_or(120)) { eprintln!("centurion-calibrate --gpu-coupling: {e}"); }
+        if let Err(e) = coupling_main(&mut cal, secs.unwrap_or(120)) { drop(td); die(&format!("--gpu-coupling: {e}")); }
+        drop(td); ensure_recovery_clear();
         return;
     }
 
@@ -2294,13 +2378,17 @@ fn main() {
         for i in 0..n {
             if STOP.load(Ordering::SeqCst) { break; }
             if n > 1 { eprintln!("\n══ session {} of {n} ══", i + 1); }
-            power_ok = design_main(&mut cal, &items, &ctx, rate, ram, &kernel, budget, &dp, progressive, seed.wrapping_add(i * 0x9E37), !flag("--no-confirm"));
+            power_ok = match design_main(&mut cal, &items, &ctx, rate, ram, &kernel, budget, &dp, progressive, seed.wrapping_add(i * 0x9E37), !flag("--no-confirm")) {
+                Ok(ok) => ok,
+                Err(e) => { drop(td); die(&e); }
+            };
             if !power_ok { break; }
         }
         centurion_helpers::autotune::evidence_taint(&ev0);
         // EX_TEMPFAIL: the boot calibration takes it as "try again once the machine is back on AC".
         // The teardown runs first (process::exit skips destructors).
-        if !power_ok { drop(td); std::process::exit(EXIT_POWER); }
+        drop(td); ensure_recovery_clear();
+        if !power_ok { std::process::exit(EXIT_POWER); }
         return;
     }
     // Budget: least-measured first until the time is used.
@@ -2317,7 +2405,7 @@ fn main() {
     eprintln!("{} measurement(s), {runs} runs, ~{:.0} of ~{:.0} min for the full signature · Ctrl-C restores and stops",
               chosen.len(), spent / 60.0, total_secs / 60.0);
 
-    let mut j = Journal { entries: Vec::new() };
+    let mut j = Journal::default();
     let mut done = 0usize;
     let mut ballast: Option<Ballast> = None;
     let mut restarts = 0;
@@ -2339,7 +2427,7 @@ fn main() {
                 if let Some(b) = ballast.as_mut() {
                     if !b.alive() {
                         restarts += 1;
-                        let _ = j.restore();
+                        if !j.restore().is_empty() { break 'items; }
                         if restarts > 2 { eprintln!("\nballast stopped by the brakes repeatedly: load phase ends here"); break 'items; }
                         match Ballast::start(&ctx.exe) { Ok(nb) => *b = nb, Err(e) => { eprintln!("\n{e}"); break 'items; } }
                     }
@@ -2350,7 +2438,7 @@ fn main() {
                 let _ = std::io::stderr().flush();
                 if let Err(e) = apply(&mut j, &it.key, v, rate, ram) {
                     eprintln!("\n{}: {v}: {e} — value skipped", it.key);
-                    let _ = j.restore();
+                    if !j.restore().is_empty() { break 'items; }
                     continue;
                 }
                 let r = match it.phase { Phase::Idle => run_idle(it.benches, &ctx).map(|s| (s, false)), Phase::Load => run_load(it.benches, &ctx),
@@ -2361,7 +2449,8 @@ fn main() {
                 }
             }
         }
-        for e in j.restore() { eprintln!("\nrestore: {e}"); }
+        let errs = j.restore();
+        if !errs.is_empty() { eprintln!("restore: {}", errs.join("; ")); break 'items; }
         let refs = samples.remove(&it.reference).unwrap_or_default();
         let t = now();
         for v in &unsafe_vals { cal.add(&it.key, &it.reference, v, it.phase, None, ( true, t, &kernel)); }
@@ -2374,19 +2463,21 @@ fn main() {
         let _ = centurion_helpers::secure_dir(centurion_helpers::defaults::DIR);
         let _ = centurion_helpers::write_root_file(calib::FILE, &serde_json::to_vec(&cal.to_json()).unwrap());
     }
-    for e in j.restore() { eprintln!("\nrestore: {e}"); }
+    let restore_errors = j.restore();
     if let Some(b) = ballast { b.stop(); }
     centurion_helpers::autotune::evidence_taint(&ev0);
     eprintln!();
     let _ = centurion_helpers::secure_dir(centurion_helpers::defaults::DIR);
     // die() skips destructors: the teardown (fan lock, scene power context, hold) runs first.
     if let Err(e) = centurion_helpers::write_root_file(calib::FILE, &serde_json::to_vec(&cal.to_json()).unwrap()) { drop(td); die(&format!("save: {e}")); }
+    if !restore_errors.is_empty() { drop(td); die(&format!("restoration incomplete: {}", restore_errors.join("; "))); }
     if STOP.load(Ordering::SeqCst) { println!("interrupted: measured knobs are saved, everything is restored"); }
     let (left, _) = plan(rounds, scale, ram, &None, "both", &cal, &disk, battery_now);
     let uncovered = left.iter().filter(|i| i.phase != Phase::Io && cal.coverage(&i.key, i.phase) == 0).count();
     println!("signature: {} key(s) measured; {uncovered} measurement(s) never run yet. `centurion-calibrate --show` for details; run again to extend/refine it.",
              cal.keys.len());
     println!("autotune uses it on its next run (GUI Autotune or centurion-autotune <goal>).");
+    drop(td); ensure_recovery_clear();
 }
 
 // ── session conditions ───────────────────────────────────────────────────────
@@ -2400,9 +2491,10 @@ impl Drop for Teardown {
     fn drop(&mut self) {
         // Reverse order of setup: the fan lock (taken on top of the scene) first, then the scene's
         // originals — the other way round the lock's journal (the scene's fan state) won.
-        if self.fan.is_some() { fan_unlock(); }
-        if self.scene { for e in centurion_helpers::calctx::restore_scene_power() { eprintln!("scene power context: {e}"); } }
-        centurion_helpers::stability::inflight_clear();
+        let fan_ok = if self.fan.is_some() { match fan_unlock() { Ok(()) => true, Err(e) => { eprintln!("{e}"); false } } } else { !centurion_helpers::calctx::recovery_exists(FAN_JOURNAL) };
+        if self.scene && fan_ok { for e in centurion_helpers::calctx::restore_scene_power() { eprintln!("scene power context: {e}"); } }
+        if !centurion_helpers::calctx::recovery_exists(JOURNAL) && !centurion_helpers::calctx::recovery_exists(FAN_JOURNAL)
+            && !centurion_helpers::calctx::recovery_exists(centurion_helpers::calctx::SCENE_JOURNAL) { centurion_helpers::stability::inflight_clear(); }
         if self.exposure { centurion_helpers::stability::record_calibration(false); }
         if self.hold { let _ = std::fs::remove_file(centurion_helpers::CALIBRATION_HOLD); }
     }
@@ -2418,33 +2510,40 @@ fn take_hold(why: &str) -> bool {
     let me = std::process::id() as i32;
     let body = json!({"pid": me, "start": centurion_helpers::proc_start_time(me), "why": why, "t": now()});
     if let Err(e) = centurion_helpers::secure_dir("/run/centurion").and_then(|_| centurion_helpers::write_root_file(centurion_helpers::CALIBRATION_HOLD, body.to_string().as_bytes())) {
-        eprintln!("calibration hold not written ({e}): a scene switched meanwhile would be measured as a knob");
-        return false;
+        die(&format!("calibration hold not written: {e}"));
     }
     true
 }
 
 const FAN_JOURNAL: &str = "/run/centurion/calibrate-fan.json";
+fn ensure_recovery_clear() {
+    if [JOURNAL, FAN_JOURNAL, centurion_helpers::calctx::SCENE_JOURNAL].iter().any(|p| centurion_helpers::calctx::recovery_exists(p)) {
+        die("calibration restoration incomplete; run --restore before another session");
+    }
+}
 
 /// On AC the EC fan is held at full speed for the session: its curve has hysteresis and follows the
 /// die temperature, so two identical runs met different cooling depending on what ran before.
 /// Returns the original state when it was changed.
-fn fan_lock() -> Option<bool> {
-    let orig = centurion_helpers::legion_wmi::fan_fullspeed_get().ok()?;
-    if orig { return None; }
-    let _ = centurion_helpers::write_root_file(FAN_JOURNAL, json!({"orig": orig}).to_string().as_bytes());
-    match centurion_helpers::legion_wmi::fan_fullspeed_set(true) {
-        Ok(_) => { eprintln!("fans held at full speed for the session (constant cooling; --no-fan-lock to leave them on auto)"); std::thread::sleep(Duration::from_secs(4)); Some(orig) }
-        Err(e) => { let _ = std::fs::remove_file(FAN_JOURNAL); eprintln!("fan lock not available ({e}): cooling follows the fan curve"); None }
-    }
+fn fan_lock() -> Result<Option<bool>, String> {
+    let Ok(orig) = centurion_helpers::legion_wmi::fan_fullspeed_get() else { return Ok(None) };
+    if orig { return Ok(None); }
+    if centurion_helpers::calctx::recovery_exists(FAN_JOURNAL) { return Err("fan recovery pending".into()); }
+    centurion_helpers::write_root_file(FAN_JOURNAL, json!({"orig": orig}).to_string().as_bytes())?;
+    centurion_helpers::legion_wmi::fan_fullspeed_set(true).map_err(|e| format!("fan lock failed; journal retained: {e}"))?;
+    if centurion_helpers::legion_wmi::fan_fullspeed_get().ok() != Some(true) { return Err("fan lock readback mismatch; journal retained".into()); }
+    eprintln!("fans held at full speed for the session (constant cooling; --no-fan-lock to leave them on auto)");
+    std::thread::sleep(Duration::from_secs(4));
+    Ok(Some(orig))
 }
 
-fn fan_unlock() {
-    let Some(v) = centurion_helpers::read_root_file(FAN_JOURNAL, 4096).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return };
-    match centurion_helpers::legion_wmi::fan_fullspeed_set(v["orig"].as_bool().unwrap_or(false)) {
-        Ok(_) => { let _ = std::fs::remove_file(FAN_JOURNAL); }
-        Err(e) => eprintln!("fan mode not restored ({e}); sudo centurion-calibrate --restore tries again"),
-    }
+fn fan_unlock() -> Result<(), String> {
+    if !centurion_helpers::calctx::recovery_exists(FAN_JOURNAL) { return Ok(()); }
+    let v = centurion_helpers::read_root_file(FAN_JOURNAL, 4096).and_then(|s| serde_json::from_str::<Value>(&s).ok()).ok_or("fan journal unreadable; retained")?;
+    let orig = v["orig"].as_bool().ok_or("fan journal invalid; retained")?;
+    centurion_helpers::legion_wmi::fan_fullspeed_set(orig).map_err(|e| format!("fan mode not restored: {e}"))?;
+    if centurion_helpers::legion_wmi::fan_fullspeed_get().ok() != Some(orig) { return Err("fan restore readback mismatch; journal retained".into()); }
+    std::fs::remove_file(FAN_JOURNAL).map_err(|e| format!("fan journal: {e}"))
 }
 
 // ── calibration at the next boot ─────────────────────────────────────────────
@@ -2691,6 +2790,18 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
         cfg.push((k.clone(), val));
     }
     if cfg.is_empty() { return Err(format!("\"{name}\" changes nothing here (all its values are live already)")); }
+    if cfg.iter().any(|(k, _)| tune::find(k).is_some_and(tune::scoped_storage)) {
+        return Err("per-device workload binding is not implemented; storage target Apply authorization unavailable".into());
+    }
+    if cfg.iter().any(|(k, _)| calib::dev_key(k)) {
+        return Err("device workload verification is not implemented; no Apply authorization can be issued".into());
+    }
+    if cfg.iter().any(|(k, _)| calib::io_key(k)) && !with_io {
+        return Err("storage/dirty settings require explicit --io verification".into());
+    }
+    let measured_context = centurion_helpers::calctx::capture(None);
+    let verification_baseline = if skipped.is_empty() { centurion_helpers::abverify::baseline(preset_values).ok() } else { None };
+
     // `--goal all`: every goal's gain from the same runs; the preset's own goal (from its name) decides
     // the sequential stop and the model check.
     let all_goals = goal.as_deref() == Some("all");
@@ -2699,6 +2810,9 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
         [("gam", Goal::Gaming), ("throughput", Goal::Throughput), ("compile", Goal::Throughput), ("power", Goal::PowerSave), ("battery", Goal::PowerSave)]
             .iter().find(|(p, _)| n.contains(p)).map(|x| x.1)
     }).unwrap_or(Goal::Desktop);
+    if with_io && ctx.disk.is_none() { return Err("IO verification requested but no eligible disk is available".into()); }
+    let boot = centurion_helpers::bootguard::boot_id();
+    if boot.is_empty() { return Err("verification requires a known boot identity".into()); }
     let rounds = rounds.clamp(2, 12);
     // The reference runs are the live state. Their rows may join the design log only when that state
     // is the calibration's reference for every knob the idle model holds: a knob whose live value
@@ -2713,6 +2827,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
               cfg.len(), if skipped.is_empty() { String::new() } else { format!("; not written: {}", skipped.join(", ")) }, goal.label(), main.name(),
               if sequential { format!("up to {rounds}, stopping once decided") } else { rounds.to_string() });
     let mut rn = Runner::new(ctx, rate, ram);
+    rn.io_before = cal.io_written(today());
     let bs = if load { Benches { cpu_mem: true, cpu: true, ..Default::default() } } else { Benches { cpu_mem: true, cpu: true, idle: true, io: false } };
     let none: Cfg = Vec::new();
     let mut runs: BTreeMap<usize, Vec<Run>> = BTreeMap::new();
@@ -2762,13 +2877,23 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
         // Sequential: after every block from the third, stop once the goal's interval at the per-look
         // level (Bonferroni over the looks the rounds allow) excludes 0.
         if sequential && r + 1 >= SEQ_MIN && r + 1 < rounds {
-            let d = block_diffs(joint_utility(&vruns(&rows_of(&runs, &tags), goal)).into_iter());
-            if seq_decided(&d, looks) { decided_at = Some(r + 1); eprintln!("\ndecided after {} ABBA block(s): stopping", r + 1); break; }
+            let observed = rows_of(&runs, &tags);
+            if observed.len() != phases.len() || !verification_coverage(&runs, &phases, goal, r + 1) { continue; }
+            let d = block_diffs(joint_utility(&vruns(&observed, goal)).into_iter());
+            if d.len() == r + 1 && seq_decided(&d, looks) { decided_at = Some(r + 1); eprintln!("\ndecided after {} ABBA block(s): stopping", r + 1); break; }
         }
     }
-    for e in rn.j.restore() { eprintln!("\nrestore: {e}"); }
+    let restore_errors = rn.j.restore();
+    for e in &restore_errors { eprintln!("\nrestore: {e}"); }
+    if !restore_errors.is_empty() { ended = Some("verification restoration incomplete".into()); }
+    if STOP.load(Ordering::SeqCst) { ended = Some("interrupted".into()); }
     if let Some(b) = rn.ballast.take() { b.stop(); }
-    centurion_helpers::stability::inflight_clear();
+    if restore_errors.is_empty() { centurion_helpers::stability::inflight_clear(); }
+    if rn.io_session > 0 { cal.note_io(today(), rn.io_session); }
+    let coverage_confirmed = verification_coverage(&runs, &phases, goal, decided_at.unwrap_or(rounds));
+    let context_confirmed = measured_context["power"] != "?" && rn.power_waits == 0 && !rn.power_lost
+        && measured_context == centurion_helpers::calctx::capture(None)
+        && verification_baseline.is_some() && verification_baseline == centurion_helpers::abverify::baseline(preset_values).ok();
     eprintln!();
     let mut objectives = serde_json::Map::new();
     let mut stored = false;
@@ -2786,16 +2911,16 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
             }
         }
         // The runs join the design log when every change is a knob the model calibrates from the same reference.
-        if ph == Phase::Idle && drifted.is_empty() && cfg.iter().all(|(k, _)| cal.refs.contains_key(k) && calib::phases_for(k, tune::find(k).map_or("", |t| t.group)).iter().any(|p| p.0 == Phase::Idle)) {
+        if coverage_confirmed && context_confirmed && ended.is_none() && ooms == [0, 0] && ph == Phase::Idle && drifted.is_empty() && cfg.iter().all(|(k, _)| cal.refs.contains_key(k) && calib::phases_for(k, tune::find(k).map_or("", |t| t.group)).iter().any(|p| p.0 == Phase::Idle)) {
             cal.put_session(ph, sess, rows.clone());
             stored = true;
         }
     }
-    let gain = paired_stats(&block_diffs(joint_utility(&tagged).into_iter()));
+    let gain = if tagged.len() == phases.len() { paired_stats(&block_diffs(joint_utility(&tagged).into_iter())) } else { None };
     let (um, use_) = gain.as_ref().map_or((f64::NAN, f64::NAN), |g| (g.mean, g.se));
     let blocks = gain.as_ref().map_or(0, |g| g.n);
     // Every other goal's gain from the same runs (`--goal all`).
-    let others: Vec<(Goal, Option<Paired>)> = if all_goals {
+    let others: Vec<(Goal, Option<Paired>)> = if all_goals && prows.len() == phases.len() {
         Goal::ALL.into_iter().filter(|g| *g != goal).map(|g| (g, paired_stats(&block_diffs(joint_utility(&vruns(&prows, g)).into_iter())))).collect()
     } else { Vec::new() };
     // What the model predicts for the calibrated part of the preset (main phase, the session's context).
@@ -2834,24 +2959,29 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     }
     if stored { println!("  the runs joined the design log (every change is a calibrated knob)"); }
     else if !drifted.is_empty() { println!("  the runs stay out of the design log: {} differ(s) from the calibration's reference now", drifted.join(", ")); }
+    let full = blocks == decided_at.unwrap_or(rounds) && tagged.len() == phases.len();
+    let complete = full && coverage_confirmed && context_confirmed && skipped.is_empty() && blocks >= 3 && ended.is_none() && ooms == [0, 0];
     cal.verify.push(json!({"t": now(), "preset": name, "goal": goal.key(), "changes": cfg.len(), "rounds": blocks, "paired": true, "objectives": objectives,
                            "gain": [round3(um), round3(use_)], "ci95": gain.as_ref().map(|g| json!([round3(g.lo), round3(g.hi)])),
-                           "phase": main.name(), "verification_v": 1, "verified_values": preset_values,
-                           "skipped": skipped, "complete": skipped.is_empty() && blocks >= 3 && ended.is_none(),
+                           "phase": main.name(), "verification_v": centurion_helpers::abverify::VERSION, "verified_values": preset_values,
+                           "coverage_confirmed": coverage_confirmed, "context_confirmed": context_confirmed,
+                           "baseline": verification_baseline, "measured_context": measured_context,
+                           "boot_id": boot, "kernel": kernel, "planned_rounds": rounds, "restore_confirmed": restore_errors.is_empty(),
+                           "skipped": skipped, "complete": complete,
                            "ended_early": ended,
                            "decision_ci": if lo.is_finite() && hi.is_finite() { json!([lo, hi]) } else { Value::Null },
-                           "passed": ended.is_none() && verification_passes(blocks, &skipped, lo, ooms[1]),
+                           "passed": complete && verification_passes(blocks, &skipped, lo, ooms[1]),
                            "oom_kills": {"boot": ooms[0], "preset": ooms[1]},
                            "sequential": sequential.then(|| json!({"looks": looks, "decided_at": decided_at})),
                            "gains": (!others.is_empty()).then(|| others.iter().map(|(g, p)| (g.key().to_owned(), p.as_ref().map_or(Value::Null, |p| json!([round3(p.mean), round3(p.se)])))).collect::<serde_json::Map<_, _>>()),
                            "predicted": pred.map(|p| json!([p.0, round3(p.1), round3(p.2)])), "cx": ctx.cx}));
     let drop = cal.verify.len().saturating_sub(20);
     cal.verify.drain(..drop);
-    save(cal);
+    if !cfg!(test) { cal.save()?; cal.keep_system_fits(); }
     // Fail closed, as before: a verification that could not run to its end is not a pass.
     if let Some(e) = ended { return Err(format!("{e} ({blocks} complete ABBA block(s) reported above and kept)")); }
-    if require_improvement && !verification_passes(blocks, &skipped, lo, ooms[1]) {
-        return Err(format!("ABBA did not verify a positive improvement: {blocks} blocks, decision CI [{lo:+.4}, {hi:+.4}], {} skipped, {} OOM kill(s) under the preset", skipped.len(), ooms[1]));
+    if require_improvement && !(complete && verification_passes(blocks, &skipped, lo, ooms[1])) {
+        return Err(format!("ABBA did not verify a positive improvement (metric coverage {coverage_confirmed}, context {context_confirmed}): {blocks} blocks, decision CI [{lo:+.4}, {hi:+.4}], {} skipped, {} OOM kill(s) under the preset", skipped.len(), ooms[1]));
     }
     Ok(())
 }
@@ -2865,12 +2995,27 @@ fn verification_passes(blocks: usize, skipped: &[String], lower_bound: f64, pres
 /// (round, position) tags of one phase's kept verify runs.
 fn tags_of(tags: &BTreeMap<usize, Vec<(usize, usize)>>, pi: usize) -> Vec<(usize, usize)> { tags.get(&pi).cloned().unwrap_or_default() }
 
+/// All scheduled slots must use the same actual finite metric vocabulary in
+/// each phase. The normal model's 80% coverage is useful for learning but not
+/// sufficient for an authorization receipt. Each weighted objective must exist.
+fn verification_coverage(runs: &BTreeMap<usize, Vec<Run>>, phases: &[Phase], goal: Goal, blocks: usize) -> bool {
+    if blocks < 3 { return false; }
+    phases.iter().all(|ph| {
+        let Some(rs) = runs.get(&ph.idx()).filter(|rs| rs.len() == blocks * 4) else { return false };
+        let valid = |m: Metric, s: &Sample| s.get(&m).is_some_and(|v| v.is_finite() && *v + m.eps() > 0.0);
+        let vocabulary: Vec<Metric> = Metric::ALL.into_iter().filter(|m| valid(*m, &rs[0].s)).collect();
+        let w = goal_wts(goal, *ph);
+        if (0..4).any(|o| w[o] != 0.0 && !vocabulary.iter().any(|m| obj_index(*m) == o)) { return false; }
+        !vocabulary.is_empty() && rs.iter().all(|r| r.full && Metric::ALL.into_iter().all(|m| valid(m,&r.s) == vocabulary.contains(&m)))
+    })
+}
+
 /// Every phase's kept runs with goal `g`'s utility in that phase.
 fn vruns(prows: &[(Phase, Vec<Row>, Vec<(usize, usize)>)], g: Goal) -> Vec<Vec<VRun>> {
     prows.iter().map(|(ph, rows, tg)| {
         let wts = goal_wts(g, *ph);
         rows.iter().zip(tg).map(|(r, &(round, pos))| VRun { round, pos, b: !r.cfg.is_empty(), y: r.y,
-            u: (0..4).filter(|o| r.y[*o].is_finite()).map(|o| wts[o] * r.y[o]).sum() }).collect()
+            u: if (0..4).any(|o| wts[o] != 0.0 && r.y[o].is_finite()) { (0..4).filter(|o| r.y[*o].is_finite()).map(|o| wts[o] * r.y[o]).sum() } else { f64::NAN } }).collect()
     }).collect()
 }
 
@@ -2920,16 +3065,26 @@ struct VRun { round: usize, pos: usize, b: bool, y: [f64; 4], u: f64 }
 /// once a run dropped out.
 fn joint_utility(phases: &[Vec<VRun>]) -> Vec<(usize, bool, f64)> {
     let mut by: BTreeMap<(usize, usize), (bool, f64, usize)> = BTreeMap::new();
-    for ph in phases { for r in ph { let e = by.entry((r.round, r.pos)).or_insert((r.b, 0.0, 0)); e.1 += r.u; e.2 += 1; } }
-    by.into_iter().filter(|(_, v)| v.2 == phases.len()).map(|((round, _), (b, u, _))| (round, b, u)).collect()
+    let mut invalid = std::collections::BTreeSet::new();
+    for ph in phases {
+        let mut seen = std::collections::BTreeSet::new();
+        for r in ph {
+            let key = (r.round, r.pos);
+            let b = (r.pos == 1 || r.pos == 2) == (r.round % 2 == 0);
+            if r.pos >= 4 || r.b != b || !r.u.is_finite() || !seen.insert(key) { invalid.insert(key); continue; }
+            let e = by.entry(key).or_insert((b, 0.0, 0)); e.1 += r.u; e.2 += 1;
+        }
+    }
+    by.into_iter().filter(|(k, v)| !invalid.contains(k) && v.2 == phases.len() && v.1.is_finite())
+        .map(|((round, _), (b, u, _))| (round, b, u)).collect()
 }
 
 /// One B-A difference per ABBA block (round): mean of its B runs minus mean of its A runs; a block
-/// missing either side gives none.
+/// missing any of its four measurements gives none.
 fn block_diffs(xs: impl Iterator<Item = (usize, bool, f64)>) -> Vec<f64> {
     let mut by: BTreeMap<usize, [(f64, usize); 2]> = BTreeMap::new();
     for (r, b, v) in xs { let e = &mut by.entry(r).or_insert([(0.0, 0); 2])[b as usize]; e.0 += v; e.1 += 1; }
-    by.values().filter(|s| s[0].1 > 0 && s[1].1 > 0).map(|s| s[1].0 / s[1].1 as f64 - s[0].0 / s[0].1 as f64).collect()
+    by.values().filter(|s| s[0].1 == 2 && s[1].1 == 2 && s.iter().all(|x| x.0.is_finite())).map(|s| (s[1].0 - s[0].0) / 2.0).filter(|x| x.is_finite()).collect()
 }
 
 /// Mean of paired differences, its standard error and a 95 % t interval. None with fewer than 2.
@@ -2975,7 +3130,7 @@ fn coupling_main(cal: &mut Calibration, secs: u64) -> Result<(), String> {
     let epp_ok = tune::find("cpu.epp").is_some_and(|t| !tune::files(t).is_empty())
         && tune::find("cpu.dynamic_epp").and_then(tune::current).as_deref() != Some("enabled");
     let (key, hi, lo) = if epp_ok { ("cpu.epp", "performance", "power") } else { ("cpu.boost", "1", "0") };
-    let mut j = Journal { entries: Vec::new() };
+    let mut j = Journal::default();
     let blocks = ((secs / 15).max(4) / 2 * 2) as usize;
     eprintln!("coupling: {blocks} blocks of 15 s, {key} {hi} / {lo} alternating; keep the game running");
     let mut acc: [Vec<(f64, f64, f64, f64)>; 2] = [Vec::new(), Vec::new()];
@@ -2990,7 +3145,9 @@ fn coupling_main(cal: &mut Calibration, secs: u64) -> Result<(), String> {
         }
         eprint!("\r  block {}/{blocks}", b + 1);
     }
-    for e in j.restore() { eprintln!("\nrestore: {e}"); }
+    let errs = j.restore();
+    if !errs.is_empty() { return Err(format!("restoration incomplete: {}", errs.join("; "))); }
+    if STOP.load(Ordering::SeqCst) { return Err("coupling interrupted".into()); }
     eprintln!();
     let mean = |v: &[(f64, f64, f64, f64)], f: fn(&(f64, f64, f64, f64)) -> f64| v.iter().map(f).sum::<f64>() / v.len().max(1) as f64;
     let (lo_s, hi_s) = (&acc[0], &acc[1]);
@@ -3017,6 +3174,25 @@ fn coupling_main(cal: &mut Calibration, secs: u64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_journal_rejects_duplicates_and_invalid_identity() {
+        let row = json!(["cpu.boost", "/sys/example", "1"]);
+        assert_eq!(Journal::decode(&json!([row.clone()]).to_string()).unwrap().entries.len(), 1);
+        assert!(Journal::decode(&json!([row.clone(), row]).to_string()).is_err());
+        assert!(Journal::decode(r#"[["cpu.boost","/sys/example","1",42]]"#).is_err());
+        assert!(Journal::decode(r#"[["cpu.boost","relative","1"]]"#).is_err());
+        assert!(Journal::decode("{}").is_err());
+    }
+    #[test]
+    fn verification_coverage_rejects_partial_and_different_metrics() {
+        let sample: Sample = Metric::ALL.into_iter().map(|m| (m, 1.0)).collect();
+        let mut runs = BTreeMap::new();
+        runs.insert(Phase::Idle.idx(), (0..12).map(|i| Run { cfg: Vec::new(), s: sample.clone(), order: i, t: i as u64, w: 1.0, temp: None, full: true }).collect::<Vec<_>>());
+        assert!(verification_coverage(&runs, &[Phase::Idle], Goal::Desktop, 3));
+        runs.get_mut(&Phase::Idle.idx()).unwrap()[0].s.remove(&Metric::CpuSingle);
+        assert!(!verification_coverage(&runs, &[Phase::Idle], Goal::Desktop, 3));
+        assert!(!verification_coverage(&runs, &[Phase::Idle, Phase::Io], Goal::Desktop, 3));
+    }
     fn meta() -> Meta { Meta { src: calib::PowerSrc::Rapl, cx: String::new(), sd: Default::default() } }
     #[test]
     fn early_shift_runs_at_the_second_reference_only() {
@@ -3148,7 +3324,7 @@ mod tests {
         let j = joint_utility(&[idle, io]);
         assert_eq!(j.len(), 11, "the slot io lost is left out of the sum");
         let d = block_diffs(j.into_iter());
-        assert_eq!(d.len(), 3);
+        assert_eq!(d.len(), 2);
         assert!(d.iter().all(|x| (x - 0.2).abs() < 1e-12), "{d:?}: 0.1 per phase, never a round's drift");
         // Summing by index (the old pairing) mixed rounds once a run dropped out.
         let (a, b) = (mk(None), mk(Some((0, 1))));
@@ -3158,7 +3334,9 @@ mod tests {
         assert!((st.mean - 0.105).abs() < 1e-12 && st.n == 4);
         assert!((st.hi - st.mean - 3.182 * st.se).abs() < 1e-12 && st.lo < st.mean);
         assert!(paired_stats(&[0.1]).is_none());
-        assert_eq!(block_diffs([(0, true, 1.0), (1, false, 0.0), (1, true, 0.5)].into_iter()), vec![0.5], "a block without an A side gives nothing");
+        assert_eq!(block_diffs([(0, true, 1.0), (1, false, 0.0), (1, true, 0.5)].into_iter()), Vec::<f64>::new(), "incomplete blocks give nothing");
+        let mut dup = mk(None); dup.push(VRun { round: 0, pos: 1, b: true, y: [0.0; 4], u: 0.1 });
+        assert_eq!(block_diffs(joint_utility(&[dup, mk(None)]).into_iter()).len(), 2);
         assert!(t975(1) > 12.0 && (t975(1000) - 1.96).abs() < 0.01);
     }
     #[test]

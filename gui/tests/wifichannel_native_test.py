@@ -28,6 +28,8 @@ int main() {
  assert(!ageFromSnapshot(UINT64_MAX,{},1400,1500,1800).ms);
  assert(!ageFromSnapshot({},1234,{}, {},1800).ms);
  assert(!ageFromSnapshot({},1234,1600,1500,1800).ms);
+ assert(!ageFromSnapshot(10,1234,1600,1500,1800).ms);
+ assert(!ageFromSnapshot(10,1450,1400,1500,1800).ms);
  std::mt19937 rng(19);
  for (int i=0;i<100000;++i) {
    const int f=5150+rng()%746, g=5150+rng()%746, w=20*(1+rng()%9);

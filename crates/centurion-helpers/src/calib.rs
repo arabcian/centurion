@@ -1825,10 +1825,11 @@ impl Calibration {
     pub fn save(&self) -> Result<(), String> {
         static BACKED_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         crate::secure_dir(crate::defaults::DIR)?;
-        if !BACKED_UP.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if !BACKED_UP.load(std::sync::atomic::Ordering::SeqCst) {
             if let Some(old) = crate::read_root_file(FILE, MAX_FILE).filter(|t| serde_json::from_str::<Value>(t).is_ok_and(|v| v.is_object())) {
-                let _ = crate::write_root_file(BACKUP, old.as_bytes());
+                crate::write_root_file(BACKUP, old.as_bytes())?;
             }
+            BACKED_UP.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         let mut body = serde_json::to_vec(&self.to_json()).map_err(|e| e.to_string())?;
         if body.len() as u64 > MAX_FILE * 3 / 4 {
@@ -1840,6 +1841,7 @@ impl Calibration {
                 body = serde_json::to_vec(&c.to_json()).map_err(|e| e.to_string())?;
             }
         }
+        if body.len() as u64 > MAX_FILE { return Err("signature exceeds readable size limit; previous file preserved".into()); }
         crate::write_root_file(FILE, &body)
     }
     /// One prediction checked against a measurement (confirmation or `--verify`); the last 200 are kept.

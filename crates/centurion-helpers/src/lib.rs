@@ -12,6 +12,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
+pub mod abverify;
 pub mod amdgpu;
 pub mod autotune;
 pub mod backup;

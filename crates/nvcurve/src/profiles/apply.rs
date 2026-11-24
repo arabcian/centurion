@@ -16,6 +16,8 @@ pub struct ApplyOutcome {
     pub warnings: Vec<String>,
     /// Exactly what the driver must return after the V/F write.
     pub deltas: vfcurve::PointDeltas,
+    /// Frozen GPU-point plan from the actual transaction (not a separate preview).
+    pub point_plan: Vec<serde_json::Value>,
 }
 
 fn checked_limits(idx: u32, p: &ProfileData) -> Result<(), String> {
@@ -219,6 +221,8 @@ struct PreparedProfile {
 
 fn preflight_profile(gpu_index: usize, p: &ProfileData, cfg: &Config,
                      expected: Option<(&str, &serde_json::Value, &serde_json::Value)>, invalid_points: &mut Vec<usize>) -> Result<PreparedProfile, String> {
+    gpu::init_nvapi().map_err(|e| e.to_string())?;
+    gpu::require_single_profile_target(gpu_index)?;
     checked_limits(gpu_index as u32, p)?;
     let (g, gname) = gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?;
     let idx = gpu_index as u32;
@@ -322,7 +326,7 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
     expected: Option<(&str, &serde_json::Value, &serde_json::Value)>) -> Result<ApplyOutcome, String> {
     let path = profile_path(&cfg.profile_dir, name).ok_or("invalid profile name")?;
     let p = load_profile(&path)?;
-    let PreparedProfile { gpu: g, gpu_name: gname, raw, previous_offsets, deltas,
+    let PreparedProfile { gpu: g, gpu_name: gname, raw, state, previous_offsets, deltas,
         old_mem, old_power, warnings, .. } = preflight_profile(gpu_index, &p, cfg, expected, &mut Vec::new())?;
     let idx = gpu_index as u32;
     let mut out = ApplyOutcome { warnings, ..ApplyOutcome::default() };
@@ -334,6 +338,10 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
     if let Some((_, _, device)) = expected {
         if &gpu::curve_device_identity(gpu_index,g,&gname)? != device { return Err("GPU identity changed before write".into()); }
         if vfcurve::read_clock_offsets(g)? != previous_offsets { return Err("CT changed before write".into()); }
+    }
+    gpu::require_single_profile_target(gpu_index)?;
+    if gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?.0 != g {
+        return Err("GPU handle changed before profile write".into());
     }
     let mut changed_locks = Changed::default();
     let (rc, reason) = if changes.is_empty() { (0, String::new()) }
@@ -425,6 +433,11 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
     if p.gpu_clock_cap_mhz.is_some() || p.mem_locked_max_mhz.is_some() {
         out.warnings.push("NVML lock setters succeeded, but the driver does not expose the prior/current locked range for exact read-back".into());
     }
+    out.point_plan = state.points.iter().filter(|pt| pt.domain == Domain::Gpu && (pt.freq_khz > 0 || pt.volt_uv > 0))
+        .filter_map(|pt| deltas.get(&(pt.index as i64)).map(|d| serde_json::json!({
+            "index": pt.index, "volt_uV": pt.volt_uv, "base_kHz": pt.base_freq_khz(),
+            "requested_delta_kHz": d, "projected_kHz": pt.base_freq_khz() + *d,
+        }))).collect();
     out.deltas = deltas;
     Ok(out)
 }
@@ -453,7 +466,10 @@ pub fn run_autoload(cfg: &Config) -> i32 {
         Ok(g) => g,
         Err(e) => { error!("Failed to initialize NvAPI: {e}"); return 1; }
     };
-    if gpus.is_empty() { warn!("No GPUs discovered."); }
+    if gpus.len() != 1 || gpu::require_single_profile_target(0).is_err() {
+        error!("Autoload skipped: mixed NVAPI/NVML profile target is unavailable or multi-GPU; no profile applied");
+        return 1;
+    }
     let key_to_idx: BTreeMap<String, usize> = gpus.iter().map(|g| (g.stable_key(), g.index)).collect();
     let mut plan: BTreeMap<usize, (&str, &str)> = BTreeMap::new();
     for (key, prof) in &cfg.auto_load_profiles {

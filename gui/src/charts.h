@@ -51,13 +51,19 @@ public:
     struct Bar { QString label; double value; QString text; };
     explicit BarChart(QWidget *parent = nullptr);
     void setBars(const QVector<Bar> &bars);
-
+    void setViewRange(qsizetype begin, qsizetype end);
+    QPair<qsizetype, qsizetype> viewRange() const { return {begin_, end_}; }
 protected:
     void paintEvent(QPaintEvent *e) override;
     void contextMenuEvent(QContextMenuEvent *e) override;
-
+    void keyPressEvent(QKeyEvent *e) override;
+    void wheelEvent(QWheelEvent *e) override;
+    void changeEvent(QEvent *e) override;
 private:
     QVector<Bar> bars_;
+    qsizetype begin_ = 0, end_ = 0;
+    double minV_ = 0, maxV_ = 0;
+    void refreshView();
 };
 
 /// One column per day, stacked by event kind. A click reports the day; `setSelected` outlines it.

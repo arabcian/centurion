@@ -3,6 +3,7 @@
 // file reads, the logs Centurion saves (health.log: classified kernel faults; kernel.log: every kernel
 // warning), private per-user records, and human names for PCI devices. Qt Core only.
 #include <QJsonObject>
+#include <QByteArray>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -20,6 +21,7 @@ QString stateDir();
 /// ~/.local/share/centurion (the diagnostics' own private records).
 QString dataDir();
 QString bootId();
+std::optional<QByteArray> readRecord(const QString &path, qint64 limit);
 QJsonObject loadJson(const QString &path, qint64 limit = 1 << 20);
 /// Atomic, owner-only. Empty = saved, else the reason.
 QString saveJson(const QString &path, const QJsonObject &o);

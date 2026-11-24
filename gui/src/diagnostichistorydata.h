@@ -2,6 +2,7 @@
 // Existing diagnostic-history v1 archive reader. Bounded and read-only.
 #include "diagnostichistory.h"
 #include "diagreport.h"
+#include "diagsources.h"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -38,12 +39,11 @@ inline Archive load(const QString &dir) {
     qsizetype bytes=0; int fileCount=0;
     for(const auto &fi:files) {
         if(++fileCount>128 || bytes>=32*1024*1024) {out.limited=true;break;}
-        QFile f(fi.absoluteFilePath());
-        if(!f.open(QIODevice::ReadOnly) || f.size()>1024*1024) {++out.rejected;continue;}
-        if(f.size()>32*1024*1024-bytes) {out.limited=true;break;}
-        const auto data=f.read(qMin<qint64>(1024*1024+1,32*1024*1024-bytes)); bytes+=data.size();
-        if(data.size()>1024*1024 || !f.atEnd()) {++out.rejected;continue;}
-        const auto o=QJsonDocument::fromJson(data).object(); const auto entries=o.value("entries").toArray();
+        if(fi.size()>32*1024*1024-bytes) {out.limited=true;break;}
+        const auto data=diagsrc::readRecord(fi.absoluteFilePath(),qMin<qint64>(1024*1024,32*1024*1024-bytes));
+        if(!data) {++out.rejected;continue;}
+        bytes+=data->size();
+        const auto o=QJsonDocument::fromJson(*data).object(); const auto entries=o.value("entries").toArray();
         if(o.value("version").toInt()!=1 || !o.value("entries").isArray() || entries.size()>20) {++out.rejected;continue;}
         for(const auto &v:entries) {
             const auto e=v.toObject(), snap=e.value("snapshot").toObject();

@@ -5,6 +5,24 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 def src(p): return (ROOT / p).read_text()
 class Invariants(unittest.TestCase):
+    def test_t40_identity_and_actual_plan_contract(self):
+        g=src('crates/nvcurve/src/hal/gpu.rs'); a=src('crates/nvcurve/src/profiles/apply.rs')
+        ops=src('crates/nvcurve/src/ops.rs'); root=src('crates/nvcurve/src/bin/nvcurve-root-helper.rs')
+        j=src('gui/src/curvejournal.h'); n=src('gui/src/nvidiatab.cpp')
+        self.assertIn('bus_mapping(&api, &buses)',g)
+        self.assertIn('unique_bus_inventory_only',g)
+        self.assertIn('capture()? != ml',g)
+        self.assertNotIn('nv.handle(i as u32)',g)
+        body=a[a.index('pub fn apply_profile_checked('):a.index('pub fn apply_with_retry(')]
+        self.assertLess(body.index('gpu::require_single_profile_target(gpu_index)?'),body.index('vfcurve::write_prepared_offsets(g, &changes'))
+        self.assertIn('out.point_plan = state.points.iter()',body)
+        self.assertIn('"points":out.point_plan',root)
+        self.assertIn('device_before.is_none() || device_before != device_after',ops)
+        self.assertIn('curveplan::validate(layout,points)',j)
+        self.assertIn('plan->at(index)',j)
+        self.assertIn('curvejournal::preparedPlan(result,*identity)',n)
+        self.assertNotIn('flatMhz - int(base_[i].y())',n)
+
     def test_nvapi_version_word_matches_nvidia_macro(self):
         # MAKE_NVAPI_VERSION = sizeof | ver<<16 in a u32; the driver builds its constant the same
         # way, so the 88 844-byte V3 request is 0x35B0C. Refusing it disabled the V3 base tuples.

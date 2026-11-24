@@ -68,5 +68,5 @@ class Stage3(unittest.TestCase):
     def test_smart_reading_freshness(self):
         s=src('smartpage.cpp')
         self.assertIn('Displaying previous readings from %1',s)
-        self.assertLess(s.index('render(disks, smart::record(disks))'),s.index('lastChecked_ = QDateTime::currentDateTime()'))
+        self.assertLess(s.index('render(disks, record.alerts)'),s.index('lastChecked_ = QDateTime::currentDateTime()'))
 if __name__=='__main__': unittest.main()

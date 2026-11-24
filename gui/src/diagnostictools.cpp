@@ -234,12 +234,11 @@ Edid decodeEdid(const QByteArray &d) {
             }
             continue;
         }
-        const int clk = u8(d, off) | (u8(d, off + 1) << 8);
-        const int ha = u8(d, off + 2) | ((u8(d, off + 4) & 0xf0) << 4), hb = u8(d, off + 3) | ((u8(d, off + 4) & 0x0f) << 8);
-        const int va = u8(d, off + 5) | ((u8(d, off + 7) & 0xf0) << 4), vb = u8(d, off + 6) | ((u8(d, off + 7) & 0x0f) << 8);
-        if (clk && ha + hb && va + vb)
-            e.timings << QStringLiteral("%1×%2 @ %3 Hz").arg(ha).arg(va).arg(clk * 10000.0 / ((ha + hb) * (va + vb)), 0, 'f', 2);
     }
+    const auto timingData = std::span(reinterpret_cast<const std::uint8_t *>(d.constData()), std::size_t(d.size()));
+    for (const auto &timing : edidfields::progressiveTimings(timingData))
+        e.timings << QStringLiteral("%1×%2 @ %3 Hz").arg(timing.hActive).arg(timing.vActive).arg(timing.refreshHz(), 0, 'f', 2);
+    if (!e.structuralValid || e.rangeMin <= 0 || e.rangeMax < e.rangeMin) e.rangeMin = e.rangeMax = 0;
     // Multiple explicit ranges must agree before reporting one as verified evidence.
     bool conflictingVrr = false;
     auto vrr = [&](int minimum, int maximum, const QString &source) {
@@ -285,6 +284,11 @@ Edid decodeEdid(const QByteArray &d) {
         }
     }
     // Do not advertise an explicit VRR capability from damaged or contradictory data.
+    if (!e.structuralValid) {
+        // A damaged capture is evidence of a read problem, not valid capability data.
+        e.hdr.clear(); e.colorimetry.clear(); e.maxNits = e.minNits = 0;
+        e.audio = e.ycc444 = e.ycc422 = e.hdmi = false;
+    }
     if (!e.structuralValid || conflictingVrr || e.vrrMin <= 0 || e.vrrMax < e.vrrMin) {
         e.vrrMin = e.vrrMax = 0; e.vrrSource.clear();
     }
@@ -312,7 +316,7 @@ Report displays(const QString &root) {
     Table modesTable;
     modesTable.title = tr("Decoded Detailed Timings");
     modesTable.headers = {tr("Connector"), tr("Timing")};
-    modesTable.note = tr("Detailed timings decoded from the EDID are not a complete list of modes offered by the driver.");
+    modesTable.note = tr("Verified progressive base/CTA detailed timings only; not a complete list of modes offered by the driver.");
     Table bytes;
     bytes.title = tr("EDID Binary Inspector");
     bytes.privateBinary = true;
@@ -320,7 +324,7 @@ Report displays(const QString &root) {
     bytes.headers = {tr("Connector"), tr("Block"), tr("Offset"), tr("Hexadecimal"), tr("ASCII")};
     bytes.note = tr("Read-only bytes from the kernel. EDID may contain a display serial number; review before exporting.");
     Table timingDetails;
-    timingDetails.title = tr("Base Block Timing Details");
+    timingDetails.title = tr("Progressive Timing Details");
     timingDetails.headers = {tr("Connector"), tr("Offset"), tr("Active H/V"), tr("Blanking H/V"), tr("Total H/V"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)")};
     Table fields;
     fields.title = tr("EDID Field Map");
@@ -336,6 +340,10 @@ Report displays(const QString &root) {
         const QString port = conn.section(QLatin1Char('-'), 1);
         QFile f(b + QStringLiteral("edid"));
         const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(32 * 128 + 1) : QByteArray();
+        if (diagsrc::read(b + QStringLiteral("status")) != QStringLiteral("connected")) {
+            r.add(Level::Unknown, tr("%1 changed connection state during capture").arg(port));
+            continue;
+        }
         for (int off = 0; off < std::min<qsizetype>(raw.size(), 4096); off += 16) {
             const auto chunk = raw.mid(off, std::min(16, 4096 - off));
             QString ascii;
@@ -365,15 +373,11 @@ Report displays(const QString &root) {
             }
         };
         for (const auto &f : inspection.fields) fields.add({conn, QStringLiteral("0x%1").arg(qulonglong(f.offset),4,16,QLatin1Char('0')), QString::number(qulonglong(f.length)), fieldName(f.kind), f.tag < 0 ? QStringLiteral("—") : QStringLiteral("0x%1").arg(f.tag,2,16,QLatin1Char('0'))});
-        for (int off = 54; off <= 108; off += 18) {
-            const int clk = u8(raw, off) | (u8(raw, off+1) << 8);
-            if (!clk) continue;
-            const int ha = u8(raw, off+2) | ((u8(raw, off+4)&0xf0)<<4), hb = u8(raw, off+3) | ((u8(raw, off+4)&0x0f)<<8);
-            const int va = u8(raw, off+5) | ((u8(raw, off+7)&0xf0)<<4), vb = u8(raw, off+6) | ((u8(raw, off+7)&0x0f)<<8);
-            if (!(ha+hb) || !(va+vb)) continue;
-            auto pair = [](int h,int v) { return QStringLiteral("%1 / %2").arg(h).arg(v); };
-            timingDetails.add({conn, QStringLiteral("0x%1").arg(off, 2, 16, QLatin1Char('0')), pair(ha,va), pair(hb,vb), pair(ha+hb,va+vb),
-                QString::number(clk/100.0,'f',2), QString::number(clk*10000.0/((ha+hb)*(va+vb)),'f',2)});
+        for (const auto &timing : edidfields::progressiveTimings({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())})) {
+            auto pair = [](unsigned h,unsigned v) { return QStringLiteral("%1 / %2").arg(h).arg(v); };
+            timingDetails.add({conn, QStringLiteral("0x%1").arg(qulonglong(timing.offset), 4, 16, QLatin1Char('0')),
+                pair(timing.hActive,timing.vActive), pair(timing.hBlank,timing.vBlank), pair(timing.hActive+timing.hBlank,timing.vActive+timing.vBlank),
+                QString::number(timing.pixelClock10kHz/100.0,'f',2), QString::number(timing.refreshHz(),'f',2)});
         }
         for (int block = 0; block < std::min(e.readable, 32); ++block) {
             int sum = 0;

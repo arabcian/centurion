@@ -181,7 +181,12 @@ fn op_apply_gpu_offsets(p: &Obj) -> OpResult {
     if !out.errors.is_empty() { return Err(out.errors.join("; ")); }
     let mut msg = format!("Profile '{name}' applied and verified.");
     for warning in out.warnings { msg.push('\n'); msg.push_str(&warning); }
-    refresh_result(APPLY_RESULT, p);
+    if let Ok(mut v) = ops::read_curve_retry(0, 2) {
+        // Receipt belongs to the actual checked apply, not the earlier Validate button.
+        v["apply_plan"] = json!({"schema":1,"device_identity":expected_device,
+            "points":out.point_plan,"scope":"gpu_point_plan_only"});
+        write_result(APPLY_RESULT, &v, p);
+    }
     Ok(msg)
 }
 
@@ -397,6 +402,12 @@ fn run() -> Value {
         Ok(f) => f,
         Err(e) => return json!({"ok": false, "error": e}),
     };
+    // A calibration may have acquired its hold while this request waited.
+    if CURVE_WRITES.contains(&op) {
+        if let Some(pid) = calibration_hold() {
+            return json!({"ok": false, "calibrating": true, "error": format!("calibration (pid {pid}) started while waiting for GPU lock")});
+        }
+    }
     match handler(obj) {
         Ok(m) => {
             // Curve journal (Health → Curve stability): which curve is in effect from now on.

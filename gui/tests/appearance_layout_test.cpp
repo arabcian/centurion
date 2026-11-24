@@ -58,6 +58,12 @@ int main(int argc, char **argv) {
     CHECK(!chart.grab().isNull());
     BarChart bar; bar.setBars({{QStringLiteral("negative"),-10,QStringLiteral("-10")},{QStringLiteral("positive"),5,QStringLiteral("5")},{QStringLiteral("missing"),std::numeric_limits<double>::quiet_NaN(),QStringLiteral("unknown")}});
     bar.resize(500,150); CHECK(!bar.grab().isNull());
+    QVector<BarChart::Bar> many(100000, {QStringLiteral("sample"), 1.0, QStringLiteral("1")});
+    bar.setBars(many); CHECK(bar.viewRange().first==0 && bar.viewRange().second==128);
+    bar.setViewRange(100,200); CHECK(bar.viewRange().first==100 && bar.viewRange().second==200);
+    bar.setViewRange(999999,999999); CHECK(bar.viewRange().first==99999 && bar.viewRange().second==100000);
+    bar.setBars({}); CHECK(bar.viewRange().first==0 && bar.viewRange().second==0);
+
     Zone4Canvas zone;zone.resize(400,120);zone.show();app.processEvents();
     int chosen=-1;zone.editZone=[&](int i){chosen=i;};
     CHECK(zone.hitZone({50,60})==0 && zone.hitZone({350,60})==3);

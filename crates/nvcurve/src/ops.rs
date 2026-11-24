@@ -75,11 +75,18 @@ pub fn read_curve_retry(gpu_index: usize, retries: u32) -> Result<Value, String>
                 // The memory offset the GUI shows must come from where it is written
                 // (NVML, effective MHz) — the ClockBoostTable's memory-domain points
                 // use another unit and are clamped by the driver.
-                let offs = limits::get_clock_offsets(gpu_index as u32);
-                v["mem_offset_mhz"] = json!(offs.mem_offset_mhz);
-                v["gpc_offset_mhz"] = json!(offs.gpc_offset_mhz);
+                // Never associate NVML offsets with an unverified NVAPI index.
+                if device_before.is_some() {
+                    let offs = limits::get_clock_offsets(gpu_index as u32);
+                    v["mem_offset_mhz"] = json!(offs.mem_offset_mhz);
+                    v["gpc_offset_mhz"] = json!(offs.gpc_offset_mhz);
+                }
                 let device_after = gpu::curve_device_identity(gpu_index,g,&name).ok();
-                v["device_identity"] = if device_before == device_after { json!(device_before) } else { Value::Null };
+                if device_before.is_none() || device_before != device_after {
+                    v["mem_offset_mhz"] = Value::Null;
+                    v["gpc_offset_mhz"] = Value::Null;
+                    v["device_identity"] = Value::Null;
+                } else { v["device_identity"] = json!(device_before); }
                 return Ok(v);
             }
             Err(e) => last = e,
@@ -107,12 +114,17 @@ pub fn apply_profile_verified(gpu_index: usize, name: &str, cfg: &Config, _max_r
 /// Hotspot/VRAM temperatures, throttle reasons, PowerMizer and the driver's
 /// offset ranges in one object (`nvcurve sensors --json`, helper op).
 pub fn sensors_json(gpu_index: usize) -> Value {
+    let unknown = || json!({"architecture":null,"hotspot_c":null,"vram_c":null,"vram_partitions":[],"channels":[],"sensor_source":"unavailable","throttle":null,"power_mizer":null,"offset_ranges":{"gpc_mhz":null,"mem_mhz":null},"identity_error":"ambiguous or changed GPU identity"});
+    let Ok((g, name)) = gpu::get_gpu(gpu_index) else { return unknown(); };
+    let Ok(identity) = gpu::curve_device_identity(gpu_index, g, &name) else { return unknown(); };
     let arch = nvml::ready().ok().and_then(|n| n.architecture(n.handle(gpu_index as u32).ok()?).ok());
-    let s = gpu::get_gpu(gpu_index).ok().map(|(g, _)| sensors::read(g, arch)).unwrap_or_default();
+    let s = sensors::read(g, arch);
     let t = limits::get_throttle(gpu_index as u32);
     let pm = limits::get_power_mizer(gpu_index as u32).ok();
     let r = limits::get_offset_ranges(gpu_index as u32);
+    if gpu::curve_device_identity(gpu_index, g, &name).ok().as_ref() != Some(&identity) { return unknown(); }
     json!({
+        "device_identity": identity,
         "architecture": arch,
         "hotspot_c": s.hotspot_c, "vram_c": s.vram_c,
         "vram_partitions": s.vram_partitions, "channels": s.channels, "sensor_source": s.source,

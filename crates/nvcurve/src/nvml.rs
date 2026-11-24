@@ -202,7 +202,19 @@ impl Nvml {
         let mut info = self.pci_info(h)?;
         info.bus_id[31] = 0;
         let s = unsafe { CStr::from_ptr(info.bus_id.as_ptr()) }.to_string_lossy().into_owned();
-        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.') { return Err("Invalid NVML PCI identity".into()); }
+        let valid = (|| {
+            let (domain, rest) = s.split_once(':')?;
+            let (bus, rest) = rest.split_once(':')?;
+            let (device, function) = rest.split_once('.')?;
+            if !matches!(domain.len(), 4 | 8) || bus.len() != 2 || device.len() != 2 || function.len() != 1
+                || ![domain,bus,device,function].iter().all(|v| v.bytes().all(|b| b.is_ascii_hexdigit())) { return None; }
+            let d = u32::from_str_radix(domain,16).ok()?;
+            let b = u32::from_str_radix(bus,16).ok()?;
+            let dev = u32::from_str_radix(device,16).ok()?;
+            let f = u32::from_str_radix(function,16).ok()?;
+            (d == info.domain && b == info.bus && dev == info.device && dev <= 31 && f <= 7).then_some(())
+        })();
+        if valid.is_none() { return Err("Invalid or inconsistent NVML PCI identity".into()); }
         Ok(s.to_ascii_lowercase())
     }
     pub fn device_name(&self, h: Handle) -> Result<String, String> {

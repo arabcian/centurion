@@ -9,6 +9,7 @@
 #include <QString>
 #include <QStringList>
 #include <functional>
+#include <cstdint>
 
 namespace privileged {
 
@@ -37,6 +38,18 @@ QStringList operationHistory();
 bool resourceActive(const QString &helperName);
 
 using Callback = std::function<void(const Result &)>;
+// Session lease covers the gaps between helper processes. GUI-process only.
+// Ordinary helpers cannot write a leased CPU curve. Emergency recovery stays available.
+std::uint64_t acquireCpuCurveLease(QObject *context);
+bool releaseCpuCurveLease(std::uint64_t id);
+// Timeout is reported immediately via onTimeout, but the result callback is
+// deferred until the actual process exit. A timed-out reply is never success.
+void runUntilExit(const QString &helper, const QJsonObject &payload, QObject *context,
+                  Callback cb, int timeoutMs = 60000, std::function<void()> onTimeout = {},
+                  std::uint64_t lease = 0);
+void runUntilExit(const QString &helper, const QByteArray &payload, QObject *context,
+                  Callback cb, int timeoutMs = 60000, std::function<void()> onTimeout = {},
+                  std::uint64_t lease = 0);
 
 /// Starts `pkexec helper`, writes `payload` to stdin. `context` bounds the
 /// callback's lifetime (not invoked if context is destroyed first).

@@ -965,7 +965,7 @@ bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, cons
 
 /// Match the atomic root result to this exact request. An older helper or
 /// another concurrent caller may leave a file, but it cannot verify this request.
-bool NvidiaTab::loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out, const QJsonObject &expectedDevice) {
+bool NvidiaTab::loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out, const QJsonObject &expectedDevice, QJsonObject *result) {
     const auto o = curvejournal::readResult(RUN_DIR + '/' + file);
     const auto identity = curvereadback::identity(o, requestId);
     if (!identity) {
@@ -974,6 +974,7 @@ bool NvidiaTab::loadCurveFile(const QString &file, const QString &requestId, QJs
     if (!expectedDevice.isEmpty() && expectedDevice != identity->device) {
         log(tr("GPU identity changed; read the curve again before applying edits.")); return false;
     }
+    if (result) *result = o;
     *out = o.value("vf_curve").toArray();
     readGpuName_ = identity->gpu;
     readGpuDevice_ = identity->device;
@@ -1297,7 +1298,7 @@ void NvidiaTab::applyOffsets() {
 
     const QJsonObject data = draftProfileData();
     const QString t0 = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const int flatFrom = flattenPending() ? flatFrom_ : -1, flatMhz = flatMhz_;
+    const int flatFrom = flattenPending() ? flatFrom_ : -1;
     QHash<int, int> requested;
     for (int i = 0; i < base_.size(); ++i) requested.insert(i, offsetOf(i));
     const QVector<QPointF> baseBefore = base_;
@@ -1307,22 +1308,31 @@ void NvidiaTab::applyOffsets() {
         expectedPoints.append(QJsonArray{pointIds_.at(i), pointVoltages_.at(i)});
     runHelper({{"op", "apply_gpu_offsets"}, {"request_id", t0}, {"expected_gpu", gpuBefore},
                {"expected_points", expectedPoints}, {"expected_device",deviceBefore}, {"profile_name", SCRATCH}, {"profile_data", data}},
-              tr("Helper reported Apply completed; checking fresh readback."), "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz, idsBefore, voltsBefore, gpuBefore, deviceBefore](bool ok, const QJsonObject &) {
+              tr("Helper reported Apply completed; checking fresh readback."), "Apply failed", [this, t0, requested, baseBefore, flatFrom, idsBefore, voltsBefore, gpuBefore, deviceBefore](bool ok, const QJsonObject &) {
         curveReadbackValid_ = false;
         QJsonArray pts;
         if (ok) { clearCurveHistory(); trial_->offer([this] { revertTrial(); }); }
-        if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts, deviceBefore)) return;
+        QJsonObject result;
+        if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts, deviceBefore, &result)) return;
         takeGpuPoints(pts, true);
         log("✅ Curve re-read from the GPU after apply.");
         if (idsBefore != pointIds_ || voltsBefore != pointVoltages_ || gpuBefore != readGpuName_) {
             log(tr("Curve identity or voltage layout changed; requested offsets cannot be compared.")); return;
         }
-        // Flattened points were asked for the target on the base the helper read, not on the old one.
-        QHash<int, int> req = requested;
-        QVector<QPointF> before = baseBefore;
-        if (flatFrom >= 0 && before.size() == base_.size())
-            for (int i = flatFrom; i < base_.size(); ++i) { before[i] = base_[i]; req[i] = flatMhz - int(base_[i].y()); }
-        reportClamping(before, req);
+        const auto identity = curvereadback::identity(result,t0);
+        const auto plan = identity ? curvejournal::preparedPlan(result,*identity) : std::nullopt;
+        if (plan) {
+            int mismatches = 0;
+            for (const auto &v : pts) {
+                const auto p = v.toObject();
+                if (p.value("domain").toString() != QStringLiteral("gpu")) continue;
+                if (p.value("freq_offset_kHz").toInteger() != plan->at(p.value("index").toInt()).delta) ++mismatches;
+            }
+            log(mismatches ? tr("Actual Apply plan: %1 GPU point offsets differ from readback.").arg(mismatches)
+                           : tr("Actual Apply plan: all GPU point offsets match readback; clock locks and stability are not verified."));
+        } else if (flatFrom >= 0 || result.contains("apply_plan")) {
+            log(tr("Actual Apply plan is missing or invalid; exact flatten/readback comparison unavailable."));
+        } else reportClamping(baseBefore, requested);
     });
 }
 

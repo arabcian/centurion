@@ -120,6 +120,10 @@ int main(int argc, char **argv) {
     broken[200] = char(broken.at(200) ^ 1);
     CHECK(diagnostictools::decodeEdid(broken).badBlocks.size() == 1);
     CHECK(diagnostictools::decodeEdid(broken).vrrMax == 0);
+    CHECK(diagnostictools::decodeEdid(broken).timings.isEmpty());
+    CHECK(diagnostictools::decodeEdid(broken).hdr.isEmpty());
+    QByteArray interlaced=e; interlaced[71]=char(quint8(interlaced.at(71))|0x80); checksum(interlaced,0);
+    CHECK(diagnostictools::decodeEdid(interlaced).timings.isEmpty());
     QByteArray undeclared=e; undeclared[126]=0; checksum(undeclared,0);
     CHECK(!diagnostictools::decodeEdid(undeclared).structuralValid && diagnostictools::decodeEdid(undeclared).vrrMax==0);
     CHECK(diagnostictools::decodeEdid(e.left(128)).vrrMax==0);
@@ -142,7 +146,7 @@ int main(int argc, char **argv) {
     bool foundBinary=false, foundTimings=false;
     for (const auto &table : disp.tables) {
         if (table.title == QStringLiteral("EDID Binary Inspector")) { CHECK(table.rows.size()==16); CHECK(table.rows.first().value(2)==QStringLiteral("0x0000")); foundBinary=true; }
-        if (table.title == QStringLiteral("Base Block Timing Details")) { CHECK(!table.rows.isEmpty()); foundTimings=true; }
+        if (table.title == QStringLiteral("Progressive Timing Details")) { CHECK(!table.rows.isEmpty()); foundTimings=true; }
     }
     CHECK(foundBinary && foundTimings);
     QByteArray shortCta=e; shortCta[130]=7; checksum(shortCta,1);

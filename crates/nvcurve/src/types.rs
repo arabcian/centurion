@@ -72,6 +72,8 @@ pub struct GpuInfo {
     pub index: usize,
     pub uuid: Option<String>,
     pub pci_bus_id: Option<u32>,
+    pub pci_address: Option<String>,
+    pub identity_evidence: Option<&'static str>,
 }
 
 impl GpuInfo {

@@ -3,6 +3,8 @@
 #include <QJsonArray>
 #include <QMap>
 #include <algorithm>
+#include <set>
+#include <utility>
 
 namespace cosearch {
 
@@ -72,19 +74,36 @@ Search::Search(Mode mode, Level level, int limit, QList<Core> cores, Tuning tuni
     for (int i = 0; cores_.size() < cores.size(); ++i)
         for (const auto &l : byCcd)
             if (i < l.size()) cores_.append(l[i]);
-    all_.floor = limit_ - 1;
+    all_.floor = std::clamp(limit_, -50, -1) - 1;
     if (mode_ == Mode::PerCore) {
         stage_ = Stage::PerCore;
         for (qsizetype i = 0; i < cores_.size(); ++i)
-            per_.append(Walk{0, limit_ - 1, true, false, false});
+            per_.append(Walk{0, all_.floor, true, false, false});
     }
+}
+
+static bool validTopology(const QList<Core> &cores, int limit) {
+    if (cores.isEmpty() || cores.size() > 512 || limit < -50 || limit > -1) return false;
+    std::set<std::pair<int, int>> physical;
+    std::set<int> logical;
+    for (const Core &c : cores) {
+        if (c.ccd < 0 || c.slot < 0 || c.cpus.isEmpty() || !physical.emplace(c.ccd, c.slot).second) return false;
+        for (int cpu : c.cpus) if (cpu < 0 || !logical.insert(cpu).second) return false;
+    }
+    return true;
 }
 
 bool Search::perCoreSearching() const { return stage_ == Stage::PerCore; }
 
 bool Search::startVerification(const QList<int> &values) {
-    if (trials_ > 0 || values.size() != cores_.size()) return false;
-    for (int v : values) if (v > 0 || v < -50) return false;
+    if (trials_ > 0 || !validTopology(cores_, limit_) || values.size() != cores_.size()) return false;
+    for (int v : values) if (v > 0 || v < limit_) return false;
+    if (mode_ == Mode::AllCore) {
+        for (int v : values) if (v != values.first() || v <= all_.floor) return false;
+    } else {
+        for (qsizetype i = 0; i < values.size(); ++i)
+            if (values[i] <= per_[i].floor || (per_[i].excluded && values[i] != 0)) return false;
+    }
     if (mode_ == Mode::AllCore) {
         all_.pass = values.first();
         all_.coarse = false;
@@ -220,6 +239,7 @@ void Search::finishAllCore() {
 }
 
 std::optional<Trial> Search::next() {
+    if (!validTopology(cores_, limit_)) return std::nullopt;
     if (stage_ == Stage::AllCore) {
         const int c = all_.candidate(tuning_.allCoreStart);
         if (c <= 0) {
@@ -285,6 +305,7 @@ std::optional<Search::WorkEstimate> Search::remainingIfPass(bool pending, bool f
 }
 
 std::optional<Trial> Search::inFlight() const {
+    if (!validTopology(cores_, limit_)) return std::nullopt;
     if (stage_ == Stage::AllCore && cand_ < 0) return allCoreTrial(cand_);
     if (stage_ == Stage::PerCore && tested_ >= 0 && tested_ < cores_.size() && cand_ < 0)
         return perCoreTrial(tested_, cand_);
@@ -491,7 +512,7 @@ std::optional<Search> Search::load(const QJsonObject &o) {
         cores << k;
     }
     const int limit = o.value("limit").toInt(1);
-    if (cores.isEmpty() || limit > -1 || limit < -50 || cores.size() > 512) return std::nullopt;
+    if (!validTopology(cores, limit)) return std::nullopt;
     Search s(mode == "all" ? Mode::AllCore : Mode::PerCore, *level, limit, {}, *tuning);
     s.cores_ = cores;  // already in test order
     auto walk = [](const QJsonObject &w) { return Walk{w.value("pass").toInt(), w.value("floor").toInt(), w.value("coarse").toBool(),

@@ -42,8 +42,9 @@ struct Age {
 inline Age ageFromSnapshot(std::optional<Tick> seen, std::optional<Tick> observed,
                            std::optional<Tick> dump, std::optional<Tick> receipt,
                            std::optional<Tick> now) {
-    if (!receipt || !now || *receipt > *now) return {};
-    const bool dumpValid = dump && *dump <= *receipt;
+    if (!receipt || !now || *receipt > *now || (dump && *dump > *receipt) ||
+        (observed && (*observed > *receipt || (dump && *observed > *dump)))) return {};
+    const bool dumpValid = dump.has_value();
     if (observed && *observed <= *receipt && (!dump || (dumpValid && *observed <= *dump)))
         return {*now - *observed, true};
     return {age(seen, elapsed(dumpValid ? dump : receipt, now)), false};

@@ -45,9 +45,16 @@ inline bool store(const QString &path, const QJsonObject &record, bool replace) 
     if (replace != (at >= 0)) return false;
     if (replace) a->replace(at,record); else a->append(record);
     while (a->size() > maxRows || encode(*a).size() > limit) {
-        // Never remove the record we are completing to satisfy retention.
-        if (a->first().toObject().value("id").toString() == id) return false;
-        a->removeFirst();
+        // Never evict an unresolved transaction or the record being written.
+        // If no completed record can be removed, refuse the append atomically.
+        qsizetype victim = -1;
+        for (qsizetype i = 0; i < a->size(); ++i) {
+            const auto row = a->at(i).toObject();
+            if (row.value("id").toString() != id && row.value("reply").toString() != QStringLiteral("pending")
+                && row.value("outcome").toString() != QStringLiteral("pending")) { victim = i; break; }
+        }
+        if (victim < 0) return false;
+        a->removeAt(victim);
     }
     const auto bytes = encode(*a);
     QSaveFile f(path);
@@ -62,7 +69,7 @@ inline tunereceipt::Status status(const QJsonObject &o) {
 // Retain only structured fields, not helper stderr, command lines, paths or raw replies.
 inline QJsonObject receipt(const QJsonObject &o) {
     QJsonObject out;
-    for (const auto *key : {"key","value","ok","written","refused","readback_expected","readback_matched","readback_missing","mismatch_count","restored","deferred"}) {
+    for (const auto *key : {"key","value","ok","written","refused","readback_expected","readback_matched","readback_missing","mismatch_count","restored","deferred","policy_skipped"}) {
         const auto v = o.value(QLatin1String(key));
         if (v.isBool() || v.isDouble() || (v.isString() && v.toString().size() <= 4096)) out.insert(QLatin1String(key),v);
     }
