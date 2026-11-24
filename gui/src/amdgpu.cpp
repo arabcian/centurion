@@ -41,6 +41,7 @@ QList<Card> cards() {
         Card c;
         c.name = n;
         c.dev = dev;
+        c.devicePath = QFileInfo(dev).canonicalFilePath();
         for (const QString &h : QDir(dev + QStringLiteral("/hwmon")).entryList(QDir::Dirs | QDir::NoDotAndDotDot))
             if (text(dev + "/hwmon/" + h + "/name") == QLatin1String("amdgpu")) { c.hwmon = dev + "/hwmon/" + h; break; }
         c.pciId = text(dev + "/vendor").mid(2) + ':' + text(dev + "/device").mid(2);
@@ -165,6 +166,26 @@ Snapshot read(const Card &c) {
         if (auto v = parseFanValue(readFile(fan + QLatin1String(file)))) s.fan.insert(QLatin1String(key), *v);
     s.fanCurve = parseFanCurve(readFile(fan + QStringLiteral("fan_curve")));
     return s;
+}
+
+bool sameDevice(const Card &c) {
+    if (c.devicePath.isEmpty() || QFileInfo(c.dev).canonicalFilePath() != c.devicePath) return false;
+    if (QFileInfo(QFileInfo(c.dev + "/driver").symLinkTarget()).fileName() != QLatin1String("amdgpu")) return false;
+    const auto vendor = text(c.dev + "/vendor"), device = text(c.dev + "/device");
+    return !vendor.isEmpty() && !device.isEmpty() && vendor.mid(2) + ':' + device.mid(2) == c.pciId;
+}
+
+bool runtimeActive(const Card &c) {
+    return sameDevice(c) && text(c.dev + "/power/runtime_status") == QLatin1String("active");
+}
+
+std::optional<std::vector<topologyfields::Dpm>> readDpm(const Card &c, bool memory) {
+    // No explicit wake or power-state changes. A runtime transition may race a read;
+    // discard results if status/identity no longer match after it.
+    if (!runtimeActive(c)) return {};
+    const auto raw = readFile(c.dev + (memory ? "/pp_dpm_mclk" : "/pp_dpm_sclk"));
+    if (raw.size() >= 65536 || !runtimeActive(c)) return {};
+    return topologyfields::dpm(std::string_view(raw.constData(), size_t(raw.size())));
 }
 
 Live readLive(const Card &c) {

@@ -2,6 +2,10 @@
 #include <QFontMetrics>
 #include <memory>
 #include "fwattrtab.h"
+#include "systemdiagnostics.h"
+#include "diagreportview.h"
+#include <QDateTime>
+#include <QThread>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QSaveFile>
@@ -121,6 +125,7 @@ QList<FwAttr> FwattrTab::discover() {
             if (!cur || !def || !mn || !mx || !st || !disp) continue;
             FwAttr f;
             f.device = dev; f.name = name; f.path = a + "current_value"; f.displayName = *disp;
+            f.capturedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
             f.current = *cur; f.def = *def; f.min = *mn; f.max = *mx; f.step = std::max(*st, 1);
             // Some BIOS revisions report min=max=step=0 (gpu_nv_ctgp etc.): no usable range.
             f.ranged = !(*mn == 0 && *mx == 0 && *st == 0);
@@ -272,8 +277,8 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
         auto *search = new QLineEdit;
         search->setPlaceholderText(tr("Search parameter, device or access state…"));
         layout->addWidget(search);
-        auto *table = new QTableWidget(rows_.size(), 7);
-        table->setHorizontalHeaderLabels({tr("Parameter"), tr("Device"), tr("Last known"), tr("Draft"), tr("Range"), tr("Default"), tr("Access")});
+        auto *table = new QTableWidget(rows_.size(), 9);
+        table->setHorizontalHeaderLabels({tr("Parameter"), tr("Device"), tr("Last known"), tr("Draft"), tr("Range"), tr("Default"), tr("Access"), tr("Source"), tr("Captured at")});
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table->verticalHeader()->hide();
         table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
@@ -288,7 +293,8 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
                 : busy_ ? tr("Operation in progress") : locked_ ? tr("Profile locked") : !known ? tr("WMI not verified") : tr("Reported available");
             const QStringList cells{a.displayName + QStringLiteral(" [") + a.name + QStringLiteral("]"), a.device,
                 known ? QString::number(a.current) : QStringLiteral("—"), QString::number(row.spin->value()), range,
-                a.ranged && !wmi ? QString::number(a.def) : QStringLiteral("—"), access};
+                a.ranged && !wmi ? QString::number(a.def) : QStringLiteral("—"), access,
+                wmi ? tr("WMI readback") : tr("sysfs snapshot"), known && !a.capturedAt.isEmpty() ? a.capturedAt : tr("Unknown")};
             for (int c = 0; c < cells.size(); ++c) { auto *item = new QTableWidgetItem(cells[c]); item->setToolTip(cells[c]); table->setItem(i, c, item); }
         }
         connect(search, &QLineEdit::textChanged, table, [table](const QString &query) {
@@ -299,6 +305,28 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
             }
         });
         layout->addWidget(table, 1);
+        const auto profile = pp::Watcher::instance().current();
+        auto *profileLabel = new QLabel(tr("Platform profile (last observed): %1").arg(profile.value_or(tr("Unknown"))));
+        profileLabel->setTextFormat(Qt::PlainText); profileLabel->setWordWrap(true); layout->addWidget(profileLabel);
+        auto *sources = new QPushButton(tr("Read Power Limit Sources…"));
+        sources->setEnabled(!powerSourcesPending_ && !qEnvironmentVariableIsSet("CENTURION_FWATTR_BASE"));
+        auto *sourceView = new DiagReportView; sourceView->hide(); layout->addWidget(sourceView, 1);
+        connect(sources, &QPushButton::clicked, &dlg, [this, sources, sourceView, &dlg] {
+            if (powerSourcesPending_) return;
+            powerSourcesPending_ = true; sources->setEnabled(false);
+            auto report = std::make_shared<diag::Report>();
+            auto *worker = QThread::create([report] {
+                *report = systemdiagnostics::powerLimits();
+                // This inspector is strictly informational, even when S08 has actionable findings.
+                for (auto &f : report->findings) { f.fix = {}; f.fixLabel.clear(); }
+            });
+            connect(worker, &QThread::finished, this, [this] { powerSourcesPending_ = false; });
+            connect(worker, &QThread::finished, &dlg, [sources, sourceView, report] {
+                sources->setEnabled(true); sourceView->setReport(*report); sourceView->show();
+            });
+            connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+            worker->start();
+        });
         auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
         connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         layout->addWidget(bb); dlg.exec();
@@ -644,7 +672,7 @@ void FwattrTab::applyAll() {
                 const QJsonObject res = results.at(k).toObject();
                 const int requested = items.at(k).toObject().value(QStringLiteral("value")).toInt();
                 const auto actual = readInt(row.info.path);
-                if (actual) row.info.current = *actual;
+                if (actual) { row.info.current = *actual; row.info.capturedAt = QDateTime::currentDateTime().toString(Qt::ISODate); }
                 if (res.value("ok").toBool() && res.value("path").toString() == row.info.path && actual && *actual == requested) ++applied;
                 else failures << row.info.name + ": " + res.value("error").toString(tr("Write or direct readback not verified"));
             }
@@ -728,6 +756,7 @@ void FwattrTab::readWmi() {
             if (have) {
                 const int v = o.value("value").toInt();
                 row.info.current = v;
+                row.info.capturedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
                 // Range from the helper: for cTGP it follows the GPU model (vBIOS
                 // max power limit minus Dynamic Boost), cached while the dGPU sleeps.
                 if (o.contains("min") && o.contains("max")) {

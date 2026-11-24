@@ -5,6 +5,14 @@ import unittest
 root = Path(__file__).resolve().parents[1]
 def src(name): return (root / 'src' / name).read_text()
 class Completion(unittest.TestCase):
+    def test_startup_draft_qjsonobject_const_iteration(self):
+        body=src('optimizetab.cpp').split('void OptimizeTab::restoreStartupDraft() {',1)[1].split('void OptimizeTab::draftWorkspace()',1)[0]
+        self.assertIn('const auto values=record.value("values").toObject();',body)
+        self.assertIn('values.constBegin()',body)
+        self.assertIn('values.constEnd()',body)
+        self.assertNotIn('values.cbegin()',body)
+        self.assertNotIn('values.cend()',body)
+        self.assertIn('r->include->setChecked(false)',body)
     def test_curve_undo_draft_only(self):
         s=src('nvidiatab.cpp'); body=s.split('void NvidiaTab::restoreCurveDraft(bool redo) {',1)[1].split('void NvidiaTab::recompute()',1)[0]
         self.assertIn('if (busy_ || base_.isEmpty()) return;',body)

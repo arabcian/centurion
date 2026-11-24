@@ -1,4 +1,5 @@
 #include "hardwarefields.h"
+#include "topologyfields.h"
 #include "systemdiagnostics.h"
 
 #include "advanceddiagnostics.h"
@@ -404,25 +405,53 @@ Report powerLimits(const QString &root) {
 
 Table cpuTopology(const QString &root) {
     Table cpu; cpu.title = tr("CPU Package and Core Topology");
-    cpu.headers = {tr("Domain"), tr("Logical CPU"), tr("Online"), tr("Thread siblings"), tr("Core type")};
-    QMap<QString, int> packages, cores;
-    for (const auto &id : ls(root, QStringLiteral("/sys/devices/system/cpu"), {QStringLiteral("cpu[0-9]*")})) {
-        const QString base = QStringLiteral("/sys/devices/system/cpu/") + id + QLatin1Char('/');
-        const QString pkg = rd(root, base + QStringLiteral("topology/physical_package_id"));
-        const QString core = rd(root, base + QStringLiteral("topology/core_id"));
+    cpu.headers = {tr("Domain"), tr("Logical CPU"), tr("Online"), tr("Thread siblings"), tr("Core type"), tr("Die ID"), tr("Topology evidence")};
+    cpu.note = tr("Core groups require mutually consistent sibling lists. Core type is the kernel's raw value; frequency and SMT do not establish P/E type.");
+    struct Entry { QString name, base, siblings; topologyfields::Cpu data; };
+    QList<Entry> entries;
+    QHash<int, int> byId;
+    auto parseInt = [](const QString &v) { return topologyfields::integer(v.toStdString()); };
+    const auto online = topologyfields::cpuList(rd(root, QStringLiteral("/sys/devices/system/cpu/online")).toStdString());
+    for (const auto &name : ls(root, QStringLiteral("/sys/devices/system/cpu"), {QStringLiteral("cpu[0-9]*")})) {
+        const auto id = parseInt(name.mid(3));
+        if (!id || byId.contains(*id) || entries.size() >= 65536) continue;
+        const QString base = QStringLiteral("/sys/devices/system/cpu/") + name + QLatin1Char('/');
+        const auto siblings = rd(root, base + QStringLiteral("topology/thread_siblings_list"));
+        topologyfields::Cpu data{*id, parseInt(rd(root, base + QStringLiteral("topology/physical_package_id"))),
+            parseInt(rd(root, base + QStringLiteral("topology/core_id"))), parseInt(rd(root, base + QStringLiteral("topology/die_id"))),
+            topologyfields::cpuList(siblings.toStdString(), 256)};
+        byId.insert(*id, int(entries.size())); entries << Entry{name, base, siblings, std::move(data)};
+    }
+    QMap<int, int> packages, cores;
+    for (const auto &entry : entries) {
+        const auto &d = entry.data;
         int parent = -1;
-        if (!pkg.isEmpty() && pkg != QStringLiteral("-1")) {
-            if (!packages.contains(pkg)) { packages.insert(pkg, int(cpu.rows.size())); cpu.parents << -1; cpu.add({tr("Package %1").arg(pkg)}); }
-            parent = packages.value(pkg);
-            const QString die = rd(root, base + QStringLiteral("topology/die_id"));
-            const QString siblings = rd(root, base + QStringLiteral("topology/thread_siblings_list"));
-            if (!core.isEmpty() && core != QStringLiteral("-1") && (!siblings.isEmpty() || (!die.isEmpty() && die != QStringLiteral("-1")))) {
-                const QString key = pkg + QLatin1Char('/') + core + QLatin1Char('/') + die + QLatin1Char('/') + siblings;
-                if (!cores.contains(key)) { cores.insert(key, int(cpu.rows.size())); cpu.parents << parent; cpu.add({tr("Core %1").arg(core)}); }
-                parent = cores.value(key);
-            }
+        if (d.package) {
+            if (!packages.contains(*d.package)) { packages.insert(*d.package, int(cpu.rows.size())); cpu.parents << -1; cpu.add({tr("Package %1").arg(*d.package)}); }
+            parent = packages.value(*d.package);
         }
-        cpu.parents << parent; cpu.add({id, id, known(rd(root, base + QStringLiteral("online"))), known(rd(root, base + QStringLiteral("topology/thread_siblings_list"))), known(rd(root, base + QStringLiteral("topology/core_type")))});
+        // Limit comparisons even for corrupt input claiming tens of thousands of SMT siblings.
+        bool verified = d.siblings && !d.siblings->empty() && d.siblings->size() <= 256 && topologyfields::sameCore(d, d);
+        if (verified) for (int sibling : *d.siblings) {
+            const auto found = byId.constFind(sibling);
+            if (found == byId.cend() || !topologyfields::sameCore(d, entries.at(found.value()).data)) { verified = false; break; }
+        }
+        if (verified) {
+            const int key = d.siblings->front();
+            if (!cores.contains(key)) { cores.insert(key, int(cpu.rows.size())); cpu.parents << parent; cpu.add({tr("Core %1").arg(*d.core)}); }
+            parent = cores.value(key);
+        }
+        QString state = rd(root, entry.base + QStringLiteral("online"));
+        if (state != QStringLiteral("0") && state != QStringLiteral("1")) state.clear();
+        if (online) {
+            const QString global = std::binary_search(online->begin(), online->end(), d.id) ? QStringLiteral("1") : QStringLiteral("0");
+            if (state.isEmpty()) state = global;
+            else if (state != global) state.clear(); // conflicting reads, possibly CPU hotplug
+        }
+        cpu.parents << parent;
+        cpu.add({entry.name, entry.name, known(state), known(entry.siblings), known(rd(root, entry.base + QStringLiteral("topology/core_type"))),
+                 d.die ? QString::number(*d.die) : tr("unknown"), verified ? tr("Consistent sibling declarations") : tr("Unverified core relationship")},
+                 verified && !state.isEmpty() ? Level::Info : Level::Unknown);
     }
     return cpu;
 }

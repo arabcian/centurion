@@ -2065,7 +2065,7 @@ void OptimizeTab::restoreStartupDraft() {
     const auto values=record.value("values").toObject();
     if(values.size()>512){startupDraftNotice_=tr("Draft exceeds the setting limit.");return;}
     const auto bootValues=boot_.value("values").toObject(); int restored=0,skipped=0; QStringList mismatch;
-    for(auto it=values.cbegin();it!=values.cend();++it){
+    for(auto it=values.constBegin();it!=values.constEnd();++it){
         auto *r=row(it.key()); const auto saved=it.value().toObject(); const auto value=saved.value("draft").toString();
         if(!r||!persistentDraftKey(it.key())||!r->include||r->include->isChecked()||r->touched||!r->available||r->cached||!r->shadowedBy.isEmpty()||r->current.isEmpty()||!validFor(*r,value)||(r->spin&&r->spin->hasFocus())||(r->combo&&r->combo->hasFocus())){++skipped;continue;}
         if(!setEditorValue(*r,value)){++skipped;continue;}

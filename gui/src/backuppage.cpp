@@ -1,4 +1,5 @@
 #include "backuppage.h"
+#include "archiveidentity.h"
 #include <QTimer>
 
 #include "distroprofile.h"
@@ -38,6 +39,8 @@
 #include <QRegularExpression>
 #include <QPushButton>
 #include <QSettings>
+#include <QHash>
+#include <QSet>
 #include <QSaveFile>
 #include <QScrollBar>
 #include <QItemSelectionModel>
@@ -553,7 +556,7 @@ void BackupPage::refreshList() {
                 if (num(info, "level") > 0) notes << tr("increment %1").arg(num(info, "level"));
                 if (str(info, "encryption") == QLatin1String("passphrase")) notes << tr("encrypted (passphrase)");
                 else if (info.value(QLatin1String("encrypted")).toBool()) notes << tr("encrypted (key)");
-                if (!str(info, "verified").isEmpty()) notes << tr("verified %1").arg(shortDate(str(info, "verified")));
+                if (!str(info, "verified").isEmpty()) notes << tr("Sidecar reports verification %1 (identity not established)").arg(shortDate(str(info, "verified")));
                 if (info.value(QLatin1String("include_home")).toBool()) notes << tr("with /home");
                 if (num(info, "tar_status") == 2) notes << tr("tar reported errors");
                 if (!str(info, "kernel").isEmpty()) notes << tr("kernel %1").arg(str(info, "kernel"));
@@ -608,20 +611,27 @@ void BackupPage::refreshList() {
     list_->verticalScrollBar()->setValue(scroll);
 }
 
+static QString archiveIdentity(const QString &path) {
+    const auto id = archiveidentity::read(QFile::encodeName(path).constData());
+    return id ? QString::fromStdString(*id) : QString();
+}
+
 QJsonObject BackupPage::verifyRecord(const QFileInfo &fi) const {
     const QJsonObject all = readJson(verifyStatePath());
     const QJsonObject r = all.value(fi.absoluteFilePath()).toObject();
-    // Only for the file as it was then: a rewritten archive is not the one that was checked.
-    if (r.isEmpty() || num(r, "size") != fi.size() || num(r, "mtime") != fi.lastModified().toSecsSinceEpoch()) return {};
+    // Legacy second-resolution records lack inode/ctime identity. Do not promote them to current verification.
+    const auto identity = archiveIdentity(fi.absoluteFilePath());
+    if (identity.isEmpty() || str(r, "identity") != identity) return {};
     return r;
 }
 
-void BackupPage::rememberVerify(const QString &path, bool ok, const QString &error) {
+void BackupPage::rememberVerify(const QString &path, bool ok, const QString &error, const QString &expectedIdentity) {
     const QFileInfo fi(path);
-    if (!fi.exists()) return;
+    const auto identity = archiveIdentity(fi.absoluteFilePath());
+    if (identity.isEmpty() || (!expectedIdentity.isEmpty() && expectedIdentity != identity)) return;
     QJsonObject all = readJson(verifyStatePath());
     all.insert(fi.absoluteFilePath(), QJsonObject{{"ok", ok}, {"when", QDateTime::currentDateTime().toString(Qt::ISODate)},
-                                                  {"error", error.left(200)}, {"size", fi.size()},
+                                                  {"error", error.left(200)}, {"identity", identity}, {"size", fi.size()},
                                                   {"mtime", fi.lastModified().toSecsSinceEpoch()}});
     // Bounded: forget files that are gone, then the oldest beyond 300.
     for (const QString &k : all.keys()) if (!QFileInfo::exists(k)) all.remove(k);
@@ -1326,8 +1336,19 @@ void BackupPage::verifySelected() {
         for (const QString &p : paths) list.append(p);
         req["archives"] = list;
     }
+    QHash<QString, QString> identities, resultPaths;
+    for (const auto &p : paths) {
+        const auto identity = archiveIdentity(p);
+        const auto canonical = QFileInfo(p).canonicalFilePath();
+        if (identity.isEmpty() || canonical.isEmpty() || resultPaths.contains(canonical)) { finished(tr("Archive identity unavailable: %1").arg(p), false); return; }
+        identities.insert(p, identity); resultPaths.insert(canonical, p);
+    }
     log_->clear();
-    run(req, root, QStringLiteral("Verifying…"), [this, paths](const QJsonObject &r) {
+    run(req, root, QStringLiteral("Verifying…"), [this, paths, identities, resultPaths](const QJsonObject &r) {
+        const auto unchanged = [&identities](const QString &p) {
+            const auto before = identities.value(p);
+            return !before.isEmpty() && archiveIdentity(p) == before;
+        };
         auto chainNote = [this](const QJsonObject &o) {
             if (!str(o, "chain_error").isEmpty())
                 log(tr("%1: readable, but its image set is incomplete — %2").arg(QFileInfo(str(o, "archive")).fileName(), str(o, "chain_error")), theme::WARN);
@@ -1337,9 +1358,19 @@ void BackupPage::verifySelected() {
         if (paths.size() > 1) {
             if (!r.contains(QLatin1String("results"))) { finished(tr("Verification failed: ") + str(r, "error"), false); return; }
             int good = 0;
-            for (const QJsonValue &v : r.value("results").toArray()) {
+            QHash<QString, int> occurrences;
+            const auto results = r.value("results").toArray();
+            for (const auto &v : results) ++occurrences[str(v.toObject(), "archive")];
+            bool valid = results.size() == paths.size();
+            for (const QJsonValue &v : results) {
                 const QJsonObject o = v.toObject();
-                const QString name = QFileInfo(str(o, "archive")).fileName();
+                const auto returned = str(o, "archive");
+                const auto path = resultPaths.value(returned);
+                const QString name = QFileInfo(returned).fileName();
+                if (occurrences.value(returned) != 1 || !unchanged(path) || QFileInfo(path).canonicalFilePath() != returned) {
+                    valid = false;
+                    log(tr("Archive changed or result identity unmatched: %1").arg(returned), theme::WARN); continue;
+                }
                 if (o.value("ok").toBool()) {
                     ++good;
                     log(tr("%1: readable end to end, %L2 entries").arg(name).arg(num(o, "files")), theme::OK);
@@ -1347,18 +1378,21 @@ void BackupPage::verifySelected() {
                 } else {
                     log(QStringLiteral("%1: %2").arg(name, str(o, "error")), theme::DANGER);
                 }
-                if (!str(o, "archive").isEmpty() && !o.value("needs_key").toBool()) rememberVerify(str(o, "archive"), o.value("ok").toBool(), str(o, "error"));
+                if (!str(o, "archive").isEmpty() && !o.value("needs_key").toBool()) rememberVerify(path, o.value("ok").toBool(), str(o, "error"), identities.value(path));
             }
-            finished(tr("%1 of %2 archive(s) verified.").arg(good).arg(paths.size()), good == paths.size());
+            finished(tr("%1 of %2 archive(s) verified.").arg(good).arg(paths.size()), valid && good == paths.size());
             return;
         }
         const QString archive = paths.first();
+        if (!unchanged(archive) || ((reached || r.value("ok").toBool()) && (resultPaths.value(str(r, "archive")) != archive || QFileInfo(archive).canonicalFilePath() != str(r, "archive")))) {
+            finished(tr("Archive changed or result identity unmatched: %1").arg(archive), false); return;
+        }
         if (!r.value("ok").toBool()) {
-            if (reached && !r.value("needs_key").toBool() && !r.value("cancelled").toBool()) rememberVerify(archive, false, str(r, "error"));
+            if (reached && !r.value("needs_key").toBool() && !r.value("cancelled").toBool()) rememberVerify(archive, false, str(r, "error"), identities.value(archive));
             finished(QStringLiteral("%1 did NOT verify: %2").arg(QFileInfo(archive).fileName(), str(r, "error")), false);
             return;
         }
-        rememberVerify(archive, true, QString());
+        rememberVerify(archive, true, QString(), identities.value(archive));
         chainNote(r);
         finished(QStringLiteral("%1 is readable end to end: %L2 entries%3.").arg(QFileInfo(archive).fileName()).arg(num(r, "files"))
                      .arg(r.value("compared").toBool() ? QStringLiteral(", same count as when it was written") : QString()), true);
@@ -1372,7 +1406,10 @@ void BackupPage::previewRestore() {
         QMessageBox::information(this, tr("Restore Preview"), tr("Select an archive first.")); return;
     }
     if (kind == QLatin1String("config")) {
-        run({{"op", "config_inspect"}, {"archive", archive}}, false, tr("Reading configuration manifest…"), [this, archive](const QJsonObject &r) {
+        const auto identity = archiveIdentity(archive);
+        if (identity.isEmpty()) { finished(tr("Archive identity unavailable: %1").arg(archive), false); return; }
+        run({{"op", "config_inspect"}, {"archive", archive}}, false, tr("Reading configuration manifest…"), [this, archive, identity](const QJsonObject &r) {
+            if (archiveIdentity(archive) != identity) { finished(tr("Archive changed or result identity unmatched: %1").arg(archive), false); return; }
             if (!r.value("ok").toBool()) { finished(tr("Manifest unavailable: %1").arg(str(r,"error")),false); return; }
             const auto manifest = r.value("manifest").toObject();
             const auto contents = manifest.value("contents").toObject();
@@ -1415,14 +1452,21 @@ void BackupPage::previewRestore() {
     const int level = levelOf(first);
     const QString chainName = str(first, "chain");
     auto current = archive; auto info = first;
+    QSet<QString> visitedArchives;
     if (level < 0 || level > 6) warnings << tr("Archive metadata is missing or its increment level is unsupported. The sequence cannot be established.");
     else for (int expected=level; expected>=0; --expected) {
         const QFileInfo fi(current);
+        const auto identity = archiveIdentity(current);
+        if (identity.isEmpty() || visitedArchives.contains(identity)) {
+            warnings << tr("Archive identity missing or repeated in the chain at level %1.").arg(expected); break;
+        }
+        visitedArchives.insert(identity);
         if (!fi.isFile() || fi.isSymLink() || levelOf(info)!=expected || (level>0 && str(info,"chain")!=chainName)) {
             warnings << tr("Missing or inconsistent archive at level %1.").arg(expected); break;
         }
         const auto record = verifyRecord(fi);
         QString checked = record.isEmpty() ? tr("No matching local verification record") : record.value("ok").toBool() ? tr("Last local verification passed") : tr("Last local verification failed");
+        if (!record.isEmpty()) checked += QStringLiteral(" · ") + str(record, "when");
         chain.prepend(tr("Level %1 · %2 · %3 · %4").arg(expected).arg(fi.fileName(),human(fi.size()),checked));
         if (!expected) {
             if (level>0 && fi.fileName()!=chainName) warnings << tr("The full archive name does not match the declared chain.");

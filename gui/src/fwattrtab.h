@@ -15,6 +15,7 @@ class QSpinBox;
 
 struct FwAttr {
     QString device, name, path, displayName;
+    QString capturedAt; // last successful value read, not a live sample
     int current = 0, def = 0, min = 0, max = 0, step = 1;
     bool ranged = true;
     bool readOnly = false;       // status / identity attribute, or one whose write is a hardware action
@@ -66,6 +67,7 @@ private:
     QTimer *statusTimer_;
     bool locked_ = false, busy_ = false, wmiReady_ = false;
     bool wmiReading_ = false;
+    bool powerSourcesPending_ = false;
     quint64 rowsRevision_ = 0;
     bool wmiStale_ = true;  // WMI rows not read since the last rebuild/apply
     void showEvent(QShowEvent *e) override;

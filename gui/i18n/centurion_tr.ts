@@ -8022,6 +8022,22 @@ Hedef: %2
         <translation>Salt okunur yan dosya önizlemesi. Sistem imajları için burada dosya düzeyinde önizleme desteklenmez. Arşiv içeriği incelenmez, sahiplik doğrulanmaz ve geri yüklemeye yetki verilmez. Geri yükleme yardımcısı ve mevcut onaylar yetkilidir.</translation>
     </message>
 
+        <message>
+            <source>Archive identity unavailable: %1</source>
+            <translation>Arşiv kimliği alınamadı: %1</translation>
+        </message>
+        <message>
+            <source>Archive changed or result identity unmatched: %1</source>
+            <translation>Arşiv değişti veya sonuç kimliği eşleşmedi: %1</translation>
+        </message>
+        <message>
+            <source>Sidecar reports verification %1 (identity not established)</source>
+            <translation>Yan dosyada %1 doğrulaması bildiriliyor (kimlik doğrulanmadı)</translation>
+        </message>
+        <message>
+            <source>Archive identity missing or repeated in the chain at level %1.</source>
+            <translation>Zincirin %1 seviyesinde arşiv kimliği eksik veya yinelenmiş.</translation>
+        </message>
     </context>
     <context>
         <name>blocklistsubs</name>
@@ -19529,7 +19545,27 @@ Saklanan denemeler: %4 · çıkarılan: %5
         <source>Voltage now (V)</source>
         <translation>Anlık gerilim (V)</translation>
     </message>
-</context>
+    <message>
+            <source>Die ID</source>
+            <translation>Die kimliği</translation>
+        </message>
+        <message>
+            <source>Topology evidence</source>
+            <translation>Topoloji kanıtı</translation>
+        </message>
+        <message>
+            <source>Core groups require mutually consistent sibling lists. Core type is the kernel's raw value; frequency and SMT do not establish P/E type.</source>
+            <translation>Çekirdek grupları karşılıklı tutarlı kardeş işlemci listeleri gerektirir. Çekirdek türü kernel tarafından bildirilen ham değerdir; frekans ve SMT, P/E türünü kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Consistent sibling declarations</source>
+            <translation>Tutarlı kardeş işlemci bildirimleri</translation>
+        </message>
+        <message>
+            <source>Unverified core relationship</source>
+            <translation>Doğrulanmamış çekirdek ilişkisi</translation>
+        </message>
+    </context>
     <context>
         <name>diagnostictools</name>
         <message>
@@ -21143,7 +21179,47 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <source>Supported range not reported.</source>
         <translation>Desteklenen aralık bildirilmemiş.</translation>
     </message>
-</context>
+    <message>
+            <source>GPU inactive or identity unavailable</source>
+            <translation>GPU etkin değil veya kimliği alınamadı</translation>
+        </message>
+        <message>
+            <source>Expired clock sample: %1 (excluded from chart)</source>
+            <translation>Süresi geçmiş saat örneği: %1 (grafik dışında)</translation>
+        </message>
+        <message>
+            <source>Selected device identity changed; reported clock data is unavailable.</source>
+            <translation>Seçilen aygıtın kimliği değişti; bildirilen saat verisi kullanılamıyor.</translation>
+        </message>
+        <message>
+            <source>Read active-device DPM states…</source>
+            <translation>Etkin aygıtın DPM durumlarını oku…</translation>
+        </message>
+        <message>
+            <source>Memory DPM states</source>
+            <translation>Bellek DPM durumları</translation>
+        </message>
+        <message>
+            <source>Core DPM states</source>
+            <translation>Çekirdek DPM durumları</translation>
+        </message>
+        <message>
+            <source>Unavailable, inactive or unrecognized DPM format.</source>
+            <translation>Erişilemiyor, etkin değil veya DPM biçimi tanınmıyor.</translation>
+        </message>
+        <message>
+            <source>State %1: %2 MHz %3</source>
+            <translation>Durum %1: %2 MHz %3</translation>
+        </message>
+        <message>
+            <source>(driver-marked active)</source>
+            <translation>(sürücü tarafından etkin olarak işaretlendi)</translation>
+        </message>
+        <message>
+            <source>Snapshot time: %1</source>
+            <translation>Anlık görüntü zamanı: %1</translation>
+        </message>
+    </context>
     <context>
         <name>FwattrTab</name>
         <message>
@@ -21261,6 +21337,30 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message>
             <source>WMI write returned; refreshing hardware values.</source>
             <translation>WMI yazma yanıtı alındı; donanım değerleri yenileniyor.</translation>
+        </message>
+        <message>
+            <source>Source</source>
+            <translation>Kaynak</translation>
+        </message>
+        <message>
+            <source>Captured at</source>
+            <translation>Okuma zamanı</translation>
+        </message>
+        <message>
+            <source>WMI readback</source>
+            <translation>WMI geri okuması</translation>
+        </message>
+        <message>
+            <source>sysfs snapshot</source>
+            <translation>sysfs anlık görüntüsü</translation>
+        </message>
+        <message>
+            <source>Platform profile (last observed): %1</source>
+            <translation>Platform profili (son gözlem): %1</translation>
+        </message>
+        <message>
+            <source>Read Power Limit Sources…</source>
+            <translation>Güç limiti kaynaklarını oku…</translation>
         </message>
     </context>
     <context>

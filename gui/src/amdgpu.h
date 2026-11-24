@@ -8,6 +8,7 @@
 #include <QPair>
 #include <QString>
 #include <optional>
+#include "topologyfields.h"
 
 namespace amdgpu {
 
@@ -18,6 +19,7 @@ struct Card {
     QString pciId;       // "1002:7480"
     QString label;       // shown in the card picker
     bool integrated = false;
+    QString devicePath; // canonical sysfs identity at discovery
 };
 QList<Card> cards();
 
@@ -64,6 +66,10 @@ struct Live {
     std::optional<double> edgeC, junctionC, powerW;
 };
 Live readLive(const Card &c);
+// Presentation-only checks. Do not use as the helper write authorization.
+bool sameDevice(const Card &c);
+bool runtimeActive(const Card &c);
+std::optional<std::vector<topologyfields::Dpm>> readDpm(const Card &c, bool memory);
 
 QByteArray readFile(const QString &path);
 

@@ -80,7 +80,7 @@ private:
     void runDiff(const QJsonObject &req);
     void showDiff(const QJsonObject &r);
     // Verification results of this user's runs (state file), shown in the list's Notes.
-    void rememberVerify(const QString &path, bool ok, const QString &error);
+    void rememberVerify(const QString &path, bool ok, const QString &error, const QString &expectedIdentity = {});
     QJsonObject verifyRecord(const QFileInfo &fi) const;
 
     void configRestore();

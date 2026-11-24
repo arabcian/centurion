@@ -41,6 +41,27 @@ int main(int argc, char **argv) {
     CHECK(tmp.isValid());
     root = tmp.path();
 
+    // Sparse CPU numbering, canonicalized SMT siblings and conflicting offline state.
+    const QString cpuBase = QStringLiteral("/sys/devices/system/cpu/");
+    put(cpuBase + "online", "0,8");
+    for (const QString &id : {QStringLiteral("cpu0"), QStringLiteral("cpu8"), QStringLiteral("cpu10")}) {
+        const QString t = cpuBase + id + "/topology/";
+        put(t + "physical_package_id", "0"); put(t + "die_id", "0"); put(t + "core_id", "1");
+        put(t + "thread_siblings_list", id == "cpu0" ? "0,8" : id == "cpu8" ? "8,0" : "0,10");
+    }
+    put(cpuBase + "cpu10/online", "1"); // contradicts global online list
+    const auto topology = systemdiagnostics::cpuTopology(root);
+    int parent0 = -2, parent8 = -3, parent10 = -4;
+    for (int i = 0; i < topology.rows.size(); ++i) {
+        const auto &row = topology.rows.at(i);
+        if (row.value(0) == "cpu0") parent0 = topology.parents.at(i);
+        if (row.value(0) == "cpu8") parent8 = topology.parents.at(i);
+        if (row.value(0) == "cpu10") { parent10 = topology.parents.at(i); CHECK(row.value(2) == "unknown"); CHECK(topology.levels.at(i) == Level::Unknown); }
+    }
+    CHECK(parent0 >= 0 && parent0 == parent8 && parent10 >= 0 && parent10 != parent0);
+    QDir(root + cpuBase).removeRecursively();
+
+
     // ── EDID: identity, preferred timing, range limits with the +255 offset, FreeSync block in a CTA extension.
     QByteArray e(256, '\0');
     const QByteArray header = QByteArray::fromHex("00ffffffffffff00");

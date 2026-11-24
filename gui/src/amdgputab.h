@@ -66,6 +66,7 @@ private:
     amdgpu::Snapshot snap_;
     amdgpu::Live lastLive_;
     QString lastLiveTime_;
+    qint64 lastLiveBootMs_ = -1;
     QJsonObject before_;   // settings before the trial apply (the revert target)
 
     QComboBox *cardCombo_, *presetCombo_, *profileCombo_;

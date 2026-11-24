@@ -33,9 +33,14 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <cmath>
+#include <time.h>
 
 using namespace amdgpu;
 
+static qint64 bootMs() {
+    timespec ts{};
+    return ::clock_gettime(CLOCK_BOOTTIME, &ts) == 0 ? qint64(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000 : -1;
+}
 static constexpr int LIVE_MS = 1500, REVERT_SECONDS = 20, UV_STEP_MV = 10;
 static constexpr int SANE_MHZ = 4000;
 static const char *const HELPER = "amdgpu-helper";
@@ -269,7 +274,7 @@ const Card *AmdGpuTab::card() const {
 
 void AmdGpuTab::selectCard(int) {
     if (!card()) return;
-    lastLive_ = {}; lastLiveTime_.clear();
+    lastLive_ = {}; lastLiveTime_.clear(); lastLiveBootMs_ = -1;
     snap_ = read(*card());
     rebuildForm();
     const QJsonObject now = settingsOf(snap_);
@@ -597,14 +602,20 @@ void AmdGpuTab::fill(const QJsonObject &s) {
 
 void AmdGpuTab::pollLive() {
     if (!card() || !isVisible()) return;
-    // An integrated GPU is always awake; a discrete one in runtime suspend is not woken for a readout.
-    if (!card()->integrated && amdgpu::readFile(card()->dev + "/power/runtime_status").trimmed() == "suspended") {
-        lastLive_ = {}; lastLiveTime_.clear();
-        live_->setText(QStringLiteral("asleep (runtime suspended)"));
+    // Fail closed for an unidentified card or a discrete GPU without a confirmed active state.
+    const Card selected = *card();
+    if (!sameDevice(selected) || (!selected.integrated && !runtimeActive(selected))) {
+        lastLive_ = {}; lastLiveTime_.clear(); lastLiveBootMs_ = -1;
+        live_->setText(tr("GPU inactive or identity unavailable"));
         return;
     }
-    const Live l = readLive(*card());
-    lastLive_ = l; lastLiveTime_ = QDateTime::currentDateTime().toString(Qt::ISODate);
+    const auto started = bootMs();
+    const Live l = readLive(selected);
+    if (!sameDevice(selected) || (!selected.integrated && !runtimeActive(selected))) {
+        lastLive_ = {}; lastLiveTime_.clear(); lastLiveBootMs_ = -1;
+        live_->setText(tr("GPU inactive or identity unavailable")); return;
+    }
+    lastLive_ = l; lastLiveBootMs_ = started; lastLiveTime_ = QDateTime::currentDateTime().toString(Qt::ISODate);
     QStringList p;
     if (l.sclk) p << QStringLiteral("GPU %1 MHz").arg(*l.sclk);
     if (l.mclk) p << QStringLiteral("MEM %1 MHz").arg(*l.mclk);
@@ -622,8 +633,15 @@ void AmdGpuTab::frequencyOverview() {
     QDialog dialog(this); dialog.setWindowTitle(tr("AMD GPU Frequency Overview")); dialog.resize(680, 480);
     auto *layout = new QVBoxLayout(&dialog);
     layout->addWidget(muted(card()->label + QStringLiteral(" · ") + card()->pciId));
+    const Card selected = *card();
+    const auto now = bootMs();
+    const bool fresh = lastLiveBootMs_ >= 0 && now >= lastLiveBootMs_ && now - lastLiveBootMs_ < 2 * LIVE_MS
+        && sameDevice(selected) && (selected.integrated || runtimeActive(selected));
     layout->addWidget(muted(lastLiveTime_.isEmpty() ? tr("Current clock sample unavailable (GPU may be asleep).")
-                                                     : tr("Last clock sample: %1 (snapshot, not live)").arg(lastLiveTime_)));
+        : fresh ? tr("Last clock sample: %1 (snapshot, not live)").arg(lastLiveTime_)
+        : tr("Expired clock sample: %1 (excluded from chart)").arg(lastLiveTime_)));
+    const bool identity = sameDevice(selected);
+    if (!identity) layout->addWidget(muted(tr("Selected device identity changed; reported clock data is unavailable.")));
     auto *scroll = new QScrollArea; scroll->setWidgetResizable(true);
     auto *host = new QWidget; auto *content = new QVBoxLayout(host);
     auto add = [&](const QString &title, const QString &range, const QList<amdgpu::State> &states,
@@ -643,8 +661,28 @@ void AmdGpuTab::frequencyOverview() {
         if (!bars.isEmpty()) { auto *chart = new BarChart; chart->setBars(bars); box->addWidget(chart); }
         content->addWidget(group);
     };
-    add(tr("GPU core"), QStringLiteral("SCLK"), snap_.od.sclk, lastLive_.sclk, sclkMin_, sclkMax_);
-    add(tr("GPU memory"), QStringLiteral("MCLK"), snap_.od.mclk, lastLive_.mclk, mclkMin_, mclkMax_);
+    if (identity) {
+        add(tr("GPU core"), QStringLiteral("SCLK"), snap_.od.sclk, fresh ? lastLive_.sclk : std::nullopt, sclkMin_, sclkMax_);
+        add(tr("GPU memory"), QStringLiteral("MCLK"), snap_.od.mclk, fresh ? lastLive_.mclk : std::nullopt, mclkMin_, mclkMax_);
+    }
+    auto *dpmButton = new QPushButton(tr("Read active-device DPM states…"));
+    auto *dpmText = new QLabel; dpmText->setTextFormat(Qt::PlainText); dpmText->setWordWrap(true);
+    dpmText->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    dpmButton->setEnabled(identity);
+    content->addWidget(dpmButton); content->addWidget(dpmText);
+    connect(dpmButton, &QPushButton::clicked, &dialog, [this, selected, dpmText] {
+        QStringList lines;
+        for (bool memory : {false, true}) {
+            lines << (memory ? tr("Memory DPM states") : tr("Core DPM states"));
+            const auto states = readDpm(selected, memory);
+            if (!states) { lines << tr("Unavailable, inactive or unrecognized DPM format."); continue; }
+            for (const auto &state : *states) lines << tr("State %1: %2 MHz %3").arg(state.index).arg(state.mhz)
+                .arg(state.active ? tr("(driver-marked active)") : QString());
+        }
+        if (!runtimeActive(selected)) { dpmText->setText(tr("GPU inactive or identity unavailable")); return; }
+        lines << tr("Snapshot time: %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate));
+        dpmText->setText(lines.join(QLatin1Char('\n')));
+    });
     content->addWidget(muted(tr("Read-only snapshot. Reported overdrive points are not necessarily active DPM states. No settings are applied.")));
     content->addStretch(); scroll->setWidget(host); layout->addWidget(scroll, 1);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
