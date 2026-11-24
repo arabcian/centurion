@@ -65,5 +65,25 @@ int main(int argc,char **argv) {
     workspace::rememberSplitter(&invalid, experimentalSplit);
     invalid.show();
     CHECK(invalid.sizes().at(0) == invalid.sizes().at(1));
+    constexpr int recordIdentityRole = Qt::UserRole + 1;
+    QTreeWidget history;
+    auto *group = new QTreeWidgetItem(&history, QStringList{QStringLiteral("boot")});
+    auto *savedItem = new QTreeWidgetItem(group, QStringList{QStringLiteral("record")});
+    savedItem->setData(0, recordIdentityRole, QStringLiteral("event/abc"));
+    auto *newItem = new QTreeWidgetItem(QStringList{QStringLiteral("newer")});
+    group->insertChild(0, newItem);
+    newItem->setData(0, recordIdentityRole, QStringLiteral("event/def"));
+    workspace::restoreSelection(&history, QStringLiteral("event/abc"), recordIdentityRole);
+    CHECK(history.currentItem() == savedItem);
+    history.setCurrentItem(nullptr);
+    group->setHidden(true);
+    workspace::restoreSelection(&history, QStringLiteral("event/abc"), recordIdentityRole);
+    CHECK(!history.currentItem());
+    group->setHidden(false);
+    workspace::restoreSelection(&history, QStringLiteral("event/gone"), recordIdentityRole);
+    CHECK(!history.currentItem());
+    newItem->setData(0, recordIdentityRole, QStringLiteral("event/abc"));
+    workspace::restoreSelection(&history, QStringLiteral("event/abc"), recordIdentityRole);
+    CHECK(!history.currentItem());
     return 0;
 }

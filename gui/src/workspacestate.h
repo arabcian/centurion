@@ -10,6 +10,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QSplitter>
 #include <QTimer>
 #include <QVariant>
@@ -97,6 +98,23 @@ inline void rememberHeader(QTreeWidget *tree, const QString &path, bool allowSor
     QObject::connect(tree, &QObject::destroyed, timer, flush);
     if (auto *app = QCoreApplication::instance()) QObject::connect(app, &QCoreApplication::aboutToQuit, timer, flush);
 }
+inline void restoreSelection(QTreeWidget *tree, const QString &id, int role) {
+    if (id.isEmpty()) return;
+    QTreeWidgetItem *match = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        auto *item = *it;
+        if (item->data(0, role).toString() != id) continue;
+        if (match) return; // An ambiguous identity cannot recover a specific record.
+        match = item;
+    }
+    if (!match || !match->flags().testFlag(Qt::ItemIsSelectable)) return;
+    for (auto *item = match; item; item = item->parent()) {
+        if (item->isHidden()) return;
+    }
+    tree->setCurrentItem(match);
+    tree->scrollToItem(match);
+}
+
 inline void rememberSplitter(QSplitter *splitter, const QString &path) {
     const auto saved = integers(read(path).value("sizes"));
     splitter->setChildrenCollapsible(false);

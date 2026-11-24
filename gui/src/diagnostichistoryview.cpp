@@ -133,6 +133,7 @@ void open(QWidget *owner) {
     auto *tree=new QTreeWidget;tree->setHeaderLabels({tr("Boot / report / event"),tr("Relationship")});tree->setUniformRowHeights(true);tree->header()->setSectionResizeMode(0,QHeaderView::Stretch);split->addWidget(tree);
     auto *detail=new QPlainTextEdit;detail->setReadOnly(true);split->addWidget(detail);split->setStretchFactor(1,2);
     auto *bar=new QHBoxLayout;auto *left=new QComboBox;auto *right=new QComboBox;auto *diff=new QPushButton(tr("Compare snapshots"));bar->addWidget(left,1);bar->addWidget(right,1);bar->addWidget(diff);layout->addLayout(bar);
+    constexpr int recordIdentityRole = Qt::UserRole + 1;
     QMap<QString,QTreeWidgetItem*> groups;
     for(qsizetype i=0;i<archive.entries.size();++i) {
         const auto &e=archive.entries.at(i);
@@ -144,6 +145,7 @@ void open(QWidget *owner) {
         }
         const auto label=e.time+QStringLiteral(" · ")+e.code+QStringLiteral(" · ")+e.title;
         auto *item=new QTreeWidgetItem(groups.value(groupKey),{label,tr("Archived report (capture boot)")});item->setData(0,Qt::UserRole,int(i));
+        item->setData(0, recordIdentityRole, QStringLiteral("report/") + e.id);
         left->addItem(label,int(i));right->addItem(label,int(i));
     }
     for(qsizetype i=0;i<events.size();++i) {
@@ -156,6 +158,7 @@ void open(QWidget *owner) {
         const auto label=e.time+QStringLiteral(" · ")+logName(e.source)+QStringLiteral(" · ")+(e.title.isEmpty()?e.detail.left(160):e.title);
         auto *item=new QTreeWidgetItem(groups.value(groupKey),{label,e.boot.isEmpty()?tr("Unlinked saved event"):tr("Recorded event boot")});
         item->setData(0,Qt::UserRole,-2-int(i));
+        item->setData(0, recordIdentityRole, QStringLiteral("event/") + e.id);
     }
     if(right->count()>1) right->setCurrentIndex(1);
     diff->setEnabled(left->count()>1);
@@ -209,9 +212,12 @@ void open(QWidget *owner) {
     QObject::connect(boots, &QComboBox::currentIndexChanged, &dlg, applyFilter);
     tree->expandAll();
     applyFilter();
+    workspace::restoreSelection(tree, saved.value("selected_record").toString(), recordIdentityRole);
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);layout->addWidget(buttons);
     dlg.exec();
+    const auto *current = tree->currentItem();
     workspace::write(key, QJsonObject{{"filter", filter->text()}, {"source", sources->currentData().toInt()},
-                                      {"boot_scope", boots->currentData().toInt()}});
+                                      {"boot_scope", boots->currentData().toInt()},
+                                      {"selected_record", current ? current->data(0, recordIdentityRole).toString() : QString()}});
 }
 }
