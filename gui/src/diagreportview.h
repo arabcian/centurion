@@ -41,6 +41,7 @@ private:
     QPushButton *preview_, *pin_, *compare_, *archive_, *evidence_;
     QString capturedAt_, captureBoot_;
     std::shared_ptr<QJsonObject> hardwareTreeState_ = std::make_shared<QJsonObject>();
+    std::shared_ptr<QJsonObject> acpiTreeState_ = std::make_shared<QJsonObject>();
     QString baselineCode_, baselineText_, baselineTime_;
     QList<QWidget *> findingWidgets_, sectionWidgets_;
     QList<QTreeWidget *> tables_;

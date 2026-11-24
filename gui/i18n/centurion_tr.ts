@@ -1131,6 +1131,18 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
             <source>The fan test was stopped.</source>
             <translation>Fan testi durduruldu.</translation>
         </message>
+        <message>
+            <source>Pareto Lab…</source>
+            <translation>Pareto Laboratuvarı…</translation>
+        </message>
+        <message>
+            <source>Compare clean test runs under the same context and duration; no hardware writes.</source>
+            <translation>Aynı bağlam ve sürede yapılmış temiz test çalıştırmalarını karşılaştırır; donanıma yazma yapılmaz.</translation>
+        </message>
+        <message>
+            <source>Fan / Temperature Pareto Lab</source>
+            <translation>Fan / Sıcaklık Pareto Laboratuvarı</translation>
+        </message>
     </context>
     <context>
         <name>DayBars</name>
@@ -1210,6 +1222,18 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
             <location filename="work/gui/src/dgpupage.cpp" line="430"/>
             <source>Unavailable</source>
             <translation>Kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Enable runtime PM</source>
+            <translation>Çalışma zamanı güç yönetimini etkinleştir</translation>
+        </message>
+        <message>
+            <source>Sets power/control = auto on the GPU, its sibling functions and the upstream port, so the card can power down when idle. Until reboot: a udev rule (or the driver&apos;s own) decides at boot.</source>
+            <translation>GPU&apos;da, kardeş işlevlerinde ve üst porttaki power/control değerini auto yapar, böylece kart boştayken kapanabilir. Yeniden başlatmaya kadar geçerli: açılışta bir udev kuralı (veya sürücünün kendisi) karar verir.</translation>
+        </message>
+        <message>
+            <source>Allow runtime power management on %1?</source>
+            <translation>%1 için çalışma zamanı güç yönetimine izin verilsin mi?</translation>
         </message>
     </context>
     <context>
@@ -2331,6 +2355,98 @@ Kernel uptime: %2
         <message>
             <source>Opens this Health page.</source>
             <translation>Bu Sağlık sayfasını açar.</translation>
+        </message>
+        <message>
+            <source>HEALTH CENTER  /  SYSTEM TOOLS</source>
+            <translation>SAĞLIK MERKEZİ  /  SİSTEM ARAÇLARI</translation>
+        </message>
+        <message>
+            <source>Find the right diagnostic by symptom, or browse tools by hardware area. Nothing runs until you open a tool.</source>
+            <translation>Doğru tanılamayı belirtiye göre bulun ya da araçlara donanım alanına göre göz atın. Bir aracı açana kadar hiçbir şey çalışmaz.</translation>
+        </message>
+        <message>
+            <source>Search tools, error codes or symptoms — e.g. Xid 154, flicker, NVMe, firmware…</source>
+            <translation>Araç, hata kodu veya belirti arayın — ör. Xid 154, titreme, NVMe, firmware…</translation>
+        </message>
+        <message>
+            <source>Open %1</source>
+            <translation>%1 aç</translation>
+        </message>
+        <message>
+            <source>Remove from favorites</source>
+            <translation>Favorilerden çıkar</translation>
+        </message>
+        <message>
+            <source>Add to favorites</source>
+            <translation>Favorilere ekle</translation>
+        </message>
+        <message>
+            <source>Investigate %1</source>
+            <translation>%1 incele</translation>
+        </message>
+        <message>
+            <source>Open the guided investigation for %1. No settings are changed.</source>
+            <translation>%1 için rehberli incelemeyi açar. Hiçbir ayar değiştirilmez.</translation>
+        </message>
+        <message>
+            <source>No favorites yet. Star a tool in All tools to add it here.</source>
+            <translation>Henüz favori yok. Buraya eklemek için Tüm araçlar&apos;da bir aracı yıldızlayın.</translation>
+        </message>
+        <message>
+            <source>Only tools you have added to favorites are shown here.</source>
+            <translation>Burada yalnızca favorilere eklediğiniz araçlar gösterilir.</translation>
+        </message>
+        <message>
+            <source>Open a category or filter the directory.</source>
+            <translation>Bir kategori açın veya dizini filtreleyin.</translation>
+        </message>
+        <message>
+            <source>All</source>
+            <translation>Tümü</translation>
+        </message>
+        <message>
+            <source>Changes settings</source>
+            <translation>Ayarları değiştirir</translation>
+        </message>
+        <message>
+            <source>Recent</source>
+            <translation>Son kullanılanlar</translation>
+        </message>
+        <message>
+            <source>All categories</source>
+            <translation>Tüm kategoriler</translation>
+        </message>
+        <message>
+            <source>Limit the directory to one hardware category.</source>
+            <translation>Dizini tek bir donanım kategorisiyle sınırla.</translation>
+        </message>
+        <message>
+            <source>%1 category, %2 tools, %3</source>
+            <translation>%1 kategorisi, %2 araç, %3</translation>
+        </message>
+        <message>
+            <source>expanded</source>
+            <translation>genişletilmiş</translation>
+        </message>
+        <message>
+            <source>collapsed</source>
+            <translation>daraltılmış</translation>
+        </message>
+        <message>
+            <source>Groups stay expanded while search or category filtering is active.</source>
+            <translation>Arama veya kategori filtresi etkinken gruplar genişletilmiş kalır.</translation>
+        </message>
+        <message>
+            <source>%1 tools</source>
+            <translation>%1 araç</translation>
+        </message>
+        <message>
+            <source>No tool matches the current search or filter. Try a device, symptom or error code, or clear the filters.</source>
+            <translation>Geçerli arama veya filtreyle eşleşen araç yok. Bir aygıt, belirti veya hata kodu deneyin ya da filtreleri temizleyin.</translation>
+        </message>
+        <message>
+            <source>Clear search and filters</source>
+            <translation>Aramayı ve filtreleri temizle</translation>
         </message>
     </context>
     <context>
@@ -5282,6 +5398,158 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         <source>No wireless adapter is available.</source>
         <translation>Kullanılabilir kablosuz adaptör yok.</translation>
     </message>
+        <message>
+            <source>Wi-Fi 7 (802.11be)</source>
+            <translation>Wi-Fi 7 (802.11be)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 6E (802.11ax)</source>
+            <translation>Wi-Fi 6E (802.11ax)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 6 (802.11ax)</source>
+            <translation>Wi-Fi 6 (802.11ax)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 5 (802.11ac)</source>
+            <translation>Wi-Fi 5 (802.11ac)</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 4 (802.11n)</source>
+            <translation>Wi-Fi 4 (802.11n)</translation>
+        </message>
+        <message>
+            <source>%1 Mb/s</source>
+            <translation>%1 Mb/s</translation>
+        </message>
+        <message>
+            <source>%1 dBm</source>
+            <translation>%1 dBm</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 7</source>
+            <translation>Wi-Fi 7</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 6E</source>
+            <translation>Wi-Fi 6E</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 6</source>
+            <translation>Wi-Fi 6</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 5</source>
+            <translation>Wi-Fi 5</translation>
+        </message>
+        <message>
+            <source>Wi-Fi 4</source>
+            <translation>Wi-Fi 4</translation>
+        </message>
+        <message>
+            <source>Bind scope</source>
+            <translation>Bağlanma kapsamı</translation>
+        </message>
+        <message>
+            <source>Saved firewall</source>
+            <translation>Kayıtlı güvenlik duvarı</translation>
+        </message>
+        <message>
+            <source>PID</source>
+            <translation>PID</translation>
+        </message>
+        <message>
+            <source>UID</source>
+            <translation>UID</translation>
+        </message>
+        <message>
+            <source>Family</source>
+            <translation>Adres ailesi</translation>
+        </message>
+        <message>
+            <source>Bind scope is not proof of reachability. Routing, firewall rules, network namespaces and IPv6-only socket options may change access. Port actions affect the protocol and port, not just the selected address or process. All users (root) on the Connections tab can identify more socket owners.</source>
+            <translation>Bağlanma kapsamı erişilebilirlik kanıtı değildir. Yönlendirme, güvenlik duvarı, ağ ad alanları ve yalnız IPv6 soket seçenekleri erişimi değiştirebilir. Port işlemleri seçilen adres veya süreçle sınırlı değildir; protokolü ve portu etkiler. Bağlantılar sekmesindeki Tüm kullanıcılar (root) daha fazla soket sahibini belirleyebilir.</translation>
+        </message>
+        <message>
+            <source>Adapter</source>
+            <translation>Bağdaştırıcı</translation>
+        </message>
+        <message>
+            <source>%1 GHz</source>
+            <translation>%1 GHz</translation>
+        </message>
+        <message>
+            <source>Loopback only</source>
+            <translation>Yalnızca geri döngü</translation>
+        </message>
+        <message>
+            <source>IPv4 wildcard</source>
+            <translation>IPv4 tüm yerel adresler</translation>
+        </message>
+        <message>
+            <source>IPv6 wildcard (dual-stack unknown)</source>
+            <translation>IPv6 tüm yerel adresler (çift yığın bilinmiyor)</translation>
+        </message>
+        <message>
+            <source>Link-local address</source>
+            <translation>Bağlantı yerel adresi</translation>
+        </message>
+        <message>
+            <source>Private / unique-local address</source>
+            <translation>Özel / benzersiz yerel adres</translation>
+        </message>
+        <message>
+            <source>Shared address space</source>
+            <translation>Paylaşılan adres alanı</translation>
+        </message>
+        <message>
+            <source>Multicast address</source>
+            <translation>Çok noktaya yayın adresi</translation>
+        </message>
+        <message>
+            <source>Specific address</source>
+            <translation>Belirli adres</translation>
+        </message>
+        <message>
+            <source>Unknown bind scope</source>
+            <translation>Bağlanma kapsamı bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Unknown owner</source>
+            <translation>Sahibi bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Possible UDP client (ephemeral port)</source>
+            <translation>Olası UDP istemcisi (geçici port)</translation>
+        </message>
+        <message>
+            <source>off</source>
+            <translation>kapalı</translation>
+        </message>
+        <message>
+            <source>Unknown saved policy</source>
+            <translation>Kayıtlı politika bilinmiyor</translation>
+        </message>
+        <message>
+            <source>IPv6 (IPv4-mapped)</source>
+            <translation>IPv6 (IPv4 eşlemeli)</translation>
+        </message>
+        <message>
+            <source>Saved policy reported in the socket snapshot; effective access has not been tested.</source>
+            <translation>Soket anlık görüntüsünde bildirilen kayıtlı politika; fiili erişim test edilmedi.</translation>
+        </message>
+        <message>
+            <source>%1 unconnected socket(s); %2 non-loopback binds; %3 unknown bind scopes. Orange marks wildcard binds, not confirmed exposure. From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.</source>
+            <translation>%1 bağlantısız soket; %2 geri döngü dışı bağlanma; %3 bilinmeyen kapsam. Turuncu, doğrulanmış erişimi değil tüm yerel adreslere bağlanmayı belirtir. Root görüntüsü kullanılmadıkça sekme 3 saniyede bir güncelleme ister.</translation>
+        </message>
+        <message>
+            <source>%1 UDP socket(s) may be clients; an ephemeral port alone is not proof.</source>
+            <translation>%1 UDP soketi istemci olabilir; geçici port tek başına kanıt değildir.</translation>
+        </message>
+        <message>
+            <source>Socket snapshot is unavailable, changed or ambiguous. Refresh and select again.</source>
+            <translation>Soket anlık görüntüsü kullanılamıyor, değişti veya belirsiz. Yenileyip tekrar seçin.</translation>
+        </message>
 </context>
     <context>
         <name>NotifyDialog</name>
@@ -5339,6 +5607,102 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <location filename="work/gui/src/notifydialog.cpp" line="38"/>
             <source>While a game runs, hold these alerts and send one summary when it ends</source>
             <translation>Bir oyun çalışırken bu uyarıları beklet, oyun bitince tek özet gönder</translation>
+        </message>
+        <message>
+            <source>Bind scope</source>
+            <translation>Bağlanma kapsamı</translation>
+        </message>
+        <message>
+            <source>Saved firewall</source>
+            <translation>Kayıtlı güvenlik duvarı</translation>
+        </message>
+        <message>
+            <source>Family</source>
+            <translation>Adres ailesi</translation>
+        </message>
+        <message>
+            <source>PID</source>
+            <translation>PID</translation>
+        </message>
+        <message>
+            <source>UID</source>
+            <translation>UID</translation>
+        </message>
+        <message>
+            <source>Bind scope is not proof of reachability. Routing, firewall rules, network namespaces and IPv6-only socket options may change access. Port actions affect the protocol and port, not just the selected address or process. All users (root) on the Connections tab can identify more socket owners.</source>
+            <translation>Bağlanma kapsamı erişilebilirlik kanıtı değildir. Yönlendirme, güvenlik duvarı, ağ ad alanları ve yalnız IPv6 soket seçenekleri erişimi değiştirebilir. Port işlemleri seçilen adres veya süreçle sınırlı değildir; protokolü ve portu etkiler. Bağlantılar sekmesindeki Tüm kullanıcılar (root) daha fazla soket sahibini belirleyebilir.</translation>
+        </message>
+        <message>
+            <source>Loopback only</source>
+            <translation>Yalnızca geri döngü</translation>
+        </message>
+        <message>
+            <source>IPv4 wildcard</source>
+            <translation>IPv4 tüm yerel adresler</translation>
+        </message>
+        <message>
+            <source>IPv6 wildcard (dual-stack unknown)</source>
+            <translation>IPv6 tüm yerel adresler (çift yığın bilinmiyor)</translation>
+        </message>
+        <message>
+            <source>Link-local address</source>
+            <translation>Bağlantı yerel adresi</translation>
+        </message>
+        <message>
+            <source>Private / unique-local address</source>
+            <translation>Özel / benzersiz yerel adres</translation>
+        </message>
+        <message>
+            <source>Shared address space</source>
+            <translation>Paylaşılan adres alanı</translation>
+        </message>
+        <message>
+            <source>Multicast address</source>
+            <translation>Çok noktaya yayın adresi</translation>
+        </message>
+        <message>
+            <source>Specific address</source>
+            <translation>Belirli adres</translation>
+        </message>
+        <message>
+            <source>Unknown bind scope</source>
+            <translation>Bağlanma kapsamı bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Possible UDP client (ephemeral port)</source>
+            <translation>Olası UDP istemcisi (geçici port)</translation>
+        </message>
+        <message>
+            <source>Unknown saved policy</source>
+            <translation>Kayıtlı politika bilinmiyor</translation>
+        </message>
+        <message>
+            <source>IPv6 (IPv4-mapped)</source>
+            <translation>IPv6 (IPv4 eşlemeli)</translation>
+        </message>
+        <message>
+            <source>Saved policy reported in the socket snapshot; effective access has not been tested.</source>
+            <translation>Soket anlık görüntüsünde bildirilen kayıtlı politika; fiili erişim test edilmedi.</translation>
+        </message>
+        <message>
+            <source>%1 unconnected socket(s); %2 non-loopback binds; %3 unknown bind scopes. Orange marks wildcard binds, not confirmed exposure. From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.</source>
+            <translation>%1 bağlantısız soket; %2 geri döngü dışı bağlanma; %3 bilinmeyen kapsam. Turuncu, doğrulanmış erişimi değil tüm yerel adreslere bağlanmayı belirtir. Root görüntüsü kullanılmadıkça sekme 3 saniyede bir güncelleme ister.</translation>
+        </message>
+        <message>
+            <source>%1 UDP socket(s) may be clients; an ephemeral port alone is not proof.</source>
+            <translation>%1 UDP soketi istemci olabilir; geçici port tek başına kanıt değildir.</translation>
+        </message>
+        <message>
+            <source>Unknown owner</source>
+            <translation>Sahibi bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Socket snapshot is unavailable, changed or ambiguous. Refresh and select again.</source>
+            <translation>Soket anlık görüntüsü kullanılamıyor, değişti veya belirsiz. Yenileyip tekrar seçin.</translation>
+        </message>
+        <message>
+            <source>off</source>
+            <translation>kapalı</translation>
         </message>
     </context>
     <context>
@@ -5746,6 +6110,14 @@ Runs %2 (read-only) and shows what needs a look, then where to look next.</sourc
             <source>Results reflect available logs and measurements, not a complete hardware test. Details remain available for troubleshooting.</source>
             <translation>Sonuçlar eksiksiz bir donanım testini değil, mevcut kayıt ve ölçümleri yansıtır. Ayrıntılar sorun giderme için erişilebilir kalır.</translation>
         </message>
+        <message>
+            <source>Browse System Tools</source>
+            <translation>Sistem Araçlarına Göz At</translation>
+        </message>
+        <message>
+            <source>Open the searchable tool directory without running any diagnostic.</source>
+            <translation>Herhangi bir tanılama çalıştırmadan aranabilir araç dizinini açar.</translation>
+        </message>
     </context>
     <context>
         <name>ReportPreview</name>
@@ -6145,6 +6517,30 @@ Başvurduğu profiller korunur.</translation>
         <translation>Sahne motoru sorun bildirdi</translation>
     </message>
 
+        <message>
+            <source>Preview</source>
+            <translation>Önizleme</translation>
+        </message>
+        <message>
+            <source>Shows what Apply would change on this machine; writes nothing</source>
+            <translation>Uygula&apos;nın bu makinede neyi değiştireceğini gösterir; hiçbir şey yazmaz</translation>
+        </message>
+        <message>
+            <source>Preview: %1</source>
+            <translation>Önizleme: %1</translation>
+        </message>
+        <message>
+            <source>
+
+Nothing was written. Values are read now and may differ at apply time.</source>
+            <translation>
+
+Hiçbir şey yazılmadı. Değerler şimdi okunur ve uygulama anında farklı olabilir.</translation>
+        </message>
+        <message>
+            <source>Active, but its last apply had failed steps: only partly in effect</source>
+            <translation>Etkin, ancak son uygulamasında başarısız adımlar vardı: yalnızca kısmen geçerli</translation>
+        </message>
     </context>
     <context>
         <name>SleepPage</name>
@@ -6308,6 +6704,26 @@ Başvurduğu profiller korunur.</translation>
             <location filename="work/gui/src/sleeppage.cpp" line="186"/>
             <source>No setting above explains it. The raw counters are shown below for comparison.</source>
             <translation>Yukarıdaki ayarlardan hiçbiri açıklamıyor. Karşılaştırmak için ham sayaçlar aşağıda.</translation>
+        </message>
+        <message>
+            <source>s2idle: modern standby, wakes fast. deep: S3, usually less drain while asleep. Until reboot: mem_sleep_default= on the kernel command line keeps a choice.</source>
+            <translation>s2idle: modern bekleme, hızlı uyanır. deep: S3, uykudayken genellikle daha az pil tüketir. Yeniden başlatmaya kadar geçerli: çekirdek komut satırındaki mem_sleep_default= bir seçimi kalıcı tutar.</translation>
+        </message>
+        <message>
+            <source>Use</source>
+            <translation>Kullan</translation>
+        </message>
+        <message>
+            <source>Suspend mode</source>
+            <translation>Uyku modu</translation>
+        </message>
+        <message>
+            <source>Use %1 for the next suspends of this boot?</source>
+            <translation>Bu açılıştaki sonraki uykular için %1 kullanılsın mı?</translation>
+        </message>
+        <message>
+            <source>Suspend mode:</source>
+            <translation>Uyku modu:</translation>
         </message>
     </context>
     <context>
@@ -6795,6 +7211,38 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <location filename="../src/tray.cpp"/>
             <source>Centurion %1 is the latest release.</source>
             <translation>Centurion %1 en son sürüm.</translation>
+        </message>
+        <message>
+            <source>Safe mode: done</source>
+            <translation>Güvenli mod: tamamlandı</translation>
+        </message>
+        <message>
+            <source>Safe mode: some steps failed</source>
+            <translation>Güvenli mod: bazı adımlar başarısız oldu</translation>
+        </message>
+        <message>
+            <source>Centurion — scene: %1 (partly applied)</source>
+            <translation>Centurion — sahne: %1 (kısmen uygulandı)</translation>
+        </message>
+        <message>
+            <source>Emergency safe mode…</source>
+            <translation>Acil durum güvenli modu…</translation>
+        </message>
+        <message>
+            <source>Emergency safe mode</source>
+            <translation>Acil durum güvenli modu</translation>
+        </message>
+        <message>
+            <source>Reset the CPU and NVIDIA curves, restore the optimizations, set the fans to Auto and the power profile to Balanced?</source>
+            <translation>İşlemci ve NVIDIA eğrileri sıfırlansın, optimizasyonlar geri yüklensin, fanlar Otomatik&apos;e ve güç profili Dengeli&apos;ye ayarlansın mı?</translation>
+        </message>
+        <message>
+            <source>Resetting to safe defaults…</source>
+            <translation>Güvenli varsayılanlara sıfırlanıyor…</translation>
+        </message>
+        <message>
+            <source>Safe mode</source>
+            <translation>Güvenli Mod</translation>
         </message>
     </context>
     <context>
@@ -7458,6 +7906,38 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <source>Empty cells mean not reported; they do not establish absence.</source>
         <translation>Boş hücreler veri bildirilmediğini gösterir; öğenin bulunmadığını kanıtlamaz.</translation>
     </message>
+        <message>
+            <source>Vendor ID</source>
+            <translation>Üretici kimliği</translation>
+        </message>
+        <message>
+            <source>NODE</source>
+            <translation>NODE</translation>
+        </message>
+        <message>
+            <source>SOCKET</source>
+            <translation>SOCKET</translation>
+        </message>
+        <message>
+            <source>CORE</source>
+            <translation>CORE</translation>
+        </message>
+        <message>
+            <source>ONLINE</source>
+            <translation>ONLINE</translation>
+        </message>
+        <message>
+            <source>Bus</source>
+            <translation>Veri yolu</translation>
+        </message>
+        <message>
+            <source>Device</source>
+            <translation>Aygıt</translation>
+        </message>
+        <message>
+            <source>Product ID</source>
+            <translation>Ürün kimliği</translation>
+        </message>
     </context>
     <context>
         <name>BackupPage</name>
@@ -8369,6 +8849,10 @@ Hedef: %2
             <source>%1 MiB</source>
             <translation>%1 MiB</translation>
         </message>
+        <message>
+            <source>The kernel log is not readable without a password here, so machine checks are not counted during the test; only the test&apos;s own results are.</source>
+            <translation>Kernel günlüğü burada parolasız okunamıyor, bu yüzden test sırasında makine denetimleri sayılmaz; yalnızca testin kendi sonuçları sayılır.</translation>
+        </message>
     </context>
     <context>
         <name>CpuStressBox</name>
@@ -8799,6 +9283,32 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
             <location filename="../src/gpustressbox.cpp" line="311"/>
             <source>%1 MiB</source>
             <translation>%1 MiB</translation>
+        </message>
+        <message>
+            <source>Checks a GPU curve or memory offset with Vulkan compute work. Needs centurion-gpustress, which is installed next to centurion-cooltest.</source>
+            <translation>Bir GPU eğrisini veya bellek ofsetini Vulkan hesaplama işiyle denetler. centurion-cooltest&apos;in yanına kurulan centurion-gpustress gerekir.</translation>
+        </message>
+        <message>
+            <source>Loads the GPU with Vulkan compute work whose correct result is known and counts every wrong result, and watches for GPU errors in the kernel log meanwhile. Run the VRAM test after changing a memory clock offset and the Core test after changing a core curve (undervolt / overclock). The screen may stutter while it runs. A pass is evidence, not proof. Each result is kept with the GPU curve in effect.</source>
+            <translation>GPU&apos;yu doğru sonucu bilinen Vulkan hesaplama işiyle yükler, her yanlış sonucu sayar ve bu sırada çekirdek günlüğündeki GPU hatalarını izler. Bellek saat ofsetini değiştirdikten sonra VRAM testini, çekirdek eğrisini değiştirdikten sonra (undervolt / overclock) Çekirdek testini çalıştırın. Çalışırken ekran takılabilir. Geçmek bir kanıttır, ispat değildir. Her sonuç, etkin GPU eğrisiyle birlikte saklanır.</translation>
+        </message>
+        <message>
+            <source>The kernel log is not readable without a password here, so GPU errors are not counted during the test; only the test&apos;s own results are.</source>
+            <translation>Çekirdek günlüğü burada parolasız okunamıyor, bu yüzden test sırasında GPU hataları sayılmaz; yalnızca testin kendi sonuçları sayılır.</translation>
+        </message>
+        <message>
+            <source>The NVIDIA GPU is off or not initialised, so it is not probed (listing its Vulkan device could wake it or hang). Switch it on and open this page again.</source>
+            <translation>NVIDIA GPU kapalı veya başlatılmamış, bu yüzden yoklanmaz (Vulkan aygıtını listelemek onu uyandırabilir veya kilitleyebilir). Açın ve bu sayfayı yeniden açın.</translation>
+        </message>
+        <message numerus="yes">
+            <source>%1 test on %2: %3 of %4 min, %n pass(es)</source>
+            <translation>
+                <numerusform>%2 üzerinde %1 testi: %3 / %4 dk, %n geçiş</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>GPU errors: %1 wrong result(s) from the test, %2 GPU error(s) in the kernel log. The curve or offset in effect is not stable.</source>
+            <translation>GPU hataları: testten %1 yanlış sonuç, çekirdek günlüğünde %2 GPU hatası. Etkin eğri veya ofset kararlı değil.</translation>
         </message>
     </context>
     <context>
@@ -10568,6 +11078,181 @@ SHA-256: %2</translation>
         <source>Effective preview</source>
         <translation>Etkin önizleme</translation>
     </message>
+        <message>
+            <source>Game uclamp minimum</source>
+            <translation>Oyun uclamp alt sınırı</translation>
+        </message>
+        <message>
+            <source>Game uclamp maximum</source>
+            <translation>Oyun uclamp üst sınırı</translation>
+        </message>
+        <message>
+            <source>Protect game memory</source>
+            <translation>Oyun belleğini koru</translation>
+        </message>
+        <message>
+            <source>Firmware limits (readback): </source>
+            <translation>Firmware sınırları (geri okuma): </translation>
+        </message>
+        <message>
+            <source>Optimization conflicts: </source>
+            <translation>Optimizasyon çakışmaları: </translation>
+        </message>
+        <message>
+            <source>Swap tiers (read-only): </source>
+            <translation>Swap katmanları (salt okunur): </translation>
+        </message>
+        <message>
+            <source>Adaptive X3D (follow cache/frequency profile)</source>
+            <translation>Uyarlanabilir X3D (önbellek/frekans profilini izle)</translation>
+        </message>
+        <message>
+            <source>
+Saved for boot: %1</source>
+            <translation>
+Açılış için kaydedilen: %1</translation>
+        </message>
+        <message>
+            <source>
+The live value differs from the saved boot preset.</source>
+            <translation>
+Canlı değer kayıtlı açılış ön ayarından farklı.</translation>
+        </message>
+        <message>
+            <source>Calibration Confidence Explorer…</source>
+            <translation>Kalibrasyon Güveni Gezgini…</translation>
+        </message>
+        <message>
+            <source>Inspect sample coverage, uncertainty and which knob needs more evidence; read-only.</source>
+            <translation>Örnek kapsamını, belirsizliği ve hangi ayarın daha fazla kanıta ihtiyaç duyduğunu inceleyin; salt okunur.</translation>
+        </message>
+        <message>
+            <source>No boot settings saved for this page. Enabling centurion-tune alone does not save values.</source>
+            <translation>Bu sayfa için kayıtlı açılış ayarı yok. Yalnızca centurion-tune&apos;u etkinleştirmek değerleri kaydetmez.</translation>
+        </message>
+        <message>
+            <source>Saved for boot: %1 | Live matches: %2 | Different: %3 | Unavailable: %4. </source>
+            <translation>Açılış için kayıtlı: %1 | Canlı eşleşen: %2 | Farklı: %3 | Kullanılamayan: %4. </translation>
+        </message>
+        <message>
+            <source>Check the OpenRC service, boot guard and other tuning services. </source>
+            <translation>OpenRC servisini, açılış korumasını ve diğer ayar servislerini kontrol edin. </translation>
+        </message>
+        <message>
+            <source>Checkboxes select pending changes; they do not indicate boot status.</source>
+            <translation>Onay kutuları bekleyen değişiklikleri seçer; açılış durumunu göstermez.</translation>
+        </message>
+        <message>
+            <source>Load Boot Values</source>
+            <translation>Açılış Değerlerini Yükle</translation>
+        </message>
+        <message>
+            <source>No boot values are saved for this page.</source>
+            <translation>Bu sayfa için kayıtlı açılış değeri yok.</translation>
+        </message>
+        <message>
+            <source>Replace this page&apos;s uncommitted editor selections with the saved boot values? Other System Tools pages will not be changed.</source>
+            <translation>Bu sayfanın kaydedilmemiş düzenleyici seçimleri kayıtlı açılış değerleriyle değiştirilsin mi? Diğer Sistem Araçları sayfaları değiştirilmez.</translation>
+        </message>
+        <message>
+            <source>Loaded %1 saved boot setting(s) into the editor only. Nothing was applied.</source>
+            <translation>%1 kayıtlı açılış ayarı yalnızca düzenleyiciye yüklendi. Hiçbir şey uygulanmadı.</translation>
+        </message>
+        <message>
+            <source> Unavailable or invalid: %1.</source>
+            <translation> Kullanılamayan veya geçersiz: %1.</translation>
+        </message>
+        <message>
+            <source>Reading saved boot settings…</source>
+            <translation>Kayıtlı açılış ayarları okunuyor…</translation>
+        </message>
+        <message>
+            <source>Load this page&apos;s saved boot values into the editor without applying them to the system.</source>
+            <translation>Bu sayfanın kayıtlı açılış değerlerini sisteme uygulamadan düzenleyiciye yükle.</translation>
+        </message>
+        <message>
+            <source>All settings</source>
+            <translation>Tüm ayarlar</translation>
+        </message>
+        <message>
+            <source>Selected</source>
+            <translation>Seçili</translation>
+        </message>
+        <message>
+            <source>Boot differs</source>
+            <translation>Açılış ayarından farklı</translation>
+        </message>
+        <message>
+            <source>Saved for boot</source>
+            <translation>Açılışta uygulanacak</translation>
+        </message>
+        <message>
+            <source>Unavailable / unverified</source>
+            <translation>Kullanılamıyor / doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Display filter only. Hidden checked rows remain selected for Apply and Save.</source>
+            <translation>Yalnızca görünüm filtresi. Gizli işaretli satırlar Uygula ve Kaydet işlemleri için seçili kalır.</translation>
+        </message>
+        <message>
+            <source>Setting filter</source>
+            <translation>Ayar filtresi</translation>
+        </message>
+        <message>
+            <source>Filtering does not change selection.</source>
+            <translation>Filtreleme seçimi değiştirmez.</translation>
+        </message>
+        <message>
+            <source>Some unchecked drafts are no longer available: %1</source>
+            <translation>İşaretlenmemiş bazı taslaklar artık kullanılamıyor: %1</translation>
+        </message>
+        <message>
+            <source>Boot guard snapshot, not a factory default or a restore-original value.</source>
+            <translation>Açılış korumasının anlık görüntüsü; fabrika varsayılanı veya geri yükleme için saklanan özgün değer değildir.</translation>
+        </message>
+        <message>
+            <source>Saved configuration only; does not prove the boot service ran.</source>
+            <translation>Yalnızca kaydedilmiş yapılandırma; açılış servisinin çalıştığını kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Boot matches</source>
+            <translation>Açılış ayarıyla eşleşiyor</translation>
+        </message>
+        <message>
+            <source>Boot unverified</source>
+            <translation>Açılış ayarı doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>Unknown / not saved</source>
+            <translation>Bilinmiyor / kaydedilmedi</translation>
+        </message>
+        <message>
+            <source>%1: removed from boot preset</source>
+            <translation>%1: açılış profilinden kaldırılacak</translation>
+        </message>
+        <message>
+            <source>Apply at boot</source>
+            <translation>Açılışta uygula</translation>
+        </message>
+        <message>
+            <source>Boot preset was not cleared.</source>
+            <translation>Açılış profili temizlenemedi.</translation>
+        </message>
+        <message>
+            <source>Apply %1 selected setting(s) to the running system? This does not save a boot preset.</source>
+            <translation>Seçili %1 ayar çalışan sisteme uygulansın mı? Bu işlem açılış profili kaydetmez.</translation>
+        </message>
+        <message>
+            <source>
+
+These changes can cost stability, heat or idle power:
+</source>
+            <translation>Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç tüketimini artırabilir:</translation>
+        </message>
+        <message>
+            <source>Apply Preview</source>
+            <translation>Uygulama Önizlemesi</translation>
+        </message>
     </context>
     <context>
         <name>RyzenTab</name>
@@ -10702,6 +11387,22 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
       <source>CCD %1 / SMU slot %2</source>
       <translation>CCD %1 / SMU yuvası %2</translation>
     </message>
+        <message>
+            <source>CO Search…</source>
+            <translation>CO Search…</translation>
+        </message>
+        <message>
+            <source>CO Search (experimental): all-core or per-core offset search with 60-second CPU cycles; the curve is reset to stock afterwards and the result saved as a profile.</source>
+            <translation>CO Search (deneysel): 60 saniyelik işlemci döngüleriyle tüm çekirdek veya çekirdek bazlı ofset araması; eğri sonrasında stoka sıfırlanır ve sonuç bir profil olarak kaydedilir.</translation>
+        </message>
+        <message>
+            <source>Busy</source>
+            <translation>Meşgul</translation>
+        </message>
+        <message>
+            <source>Finish the current CPU curve write or trial first.</source>
+            <translation>Önce mevcut işlemci eğrisi yazmasını veya denemesini bitirin.</translation>
+        </message>
   </context>
     <context>
         <name>SmartPage</name>
@@ -10841,6 +11542,14 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
         <message>
             <source>No disks found.</source>
             <translation>Disk bulunamadı.</translation>
+        </message>
+        <message>
+            <source> °C</source>
+            <translation> °C</translation>
+        </message>
+        <message>
+            <source> %</source>
+            <translation> %</translation>
         </message>
     </context>
     <context>
@@ -11932,35 +12641,19 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
         </message>
         <message>
             <source>Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
-            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. F2FS G/Ç istatistiklerini açar. Depolama gecikmesi ve erişim davranışını incelemek için yararlıdır; sayaçların çalıştırılması küçük bir ek yük doğurabilir. Başka bir genel denetim ayarıyla çakışmadığından emin olun.</translation>
+            <translation>Yalnızca mevcut bir F2FS dosya sistemi örneği için geçerlidir; sysfs kimliğine göre sıralanır. F2FS G/Ç istatistiklerini açar. Depolama gecikmesi ve erişim davranışını incelemek için yararlıdır; sayaçların çalıştırılması küçük bir ek yük doğurabilir. Başka bir genel denetim ayarıyla çakışmadığından emin olun.</translation>
         </message>
         <message>
             <source>F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
-            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. Boşta çalışan arka plan çöp toplama (GC) modunu belirler. Kabul edilen modlar çekirdek sürümüne göre değişebilir; yanlış seçenek yazma büyütmesini ve depolama performansını olumsuz etkileyebilir. Ölçüm yapmadan değiştirmeyin.</translation>
+            <translation>Yalnızca mevcut bir F2FS dosya sistemi örneği için geçerlidir; sysfs kimliğine göre sıralanır. Boşta çalışan arka plan çöp toplama (GC) modunu belirler. Kabul edilen modlar çekirdek sürümüne göre değişebilir; yanlış seçenek yazma büyütmesini ve depolama performansını olumsuz etkileyebilir. Ölçüm yapmadan değiştirmeyin.</translation>
         </message>
         <message>
             <source>Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
-            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 1 için geçerlidir; sysfs kimliğine göre sıralanır. Arka plan çöp toplama işlemleri arasındaki asgari bekleme süresini milisaniye cinsinden ayarlar. Yalnızca çekirdeğin bu sysfs kontrolünü sunduğu sistemlerde görünür; gecikme ve yazma performansını birlikte değerlendirin.</translation>
+            <translation>Yalnızca mevcut bir F2FS dosya sistemi örneği için geçerlidir; sysfs kimliğine göre sıralanır. Arka plan çöp toplama işlemleri arasındaki asgari bekleme süresini milisaniye cinsinden ayarlar. Yalnızca çekirdeğin bu sysfs kontrolünü sunduğu sistemlerde görünür; gecikme ve yazma performansını birlikte değerlendirin.</translation>
         </message>
         <message>
             <source>Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.</source>
-            <translation>Çalışan zram aygıtı 1 için kullanılabilecek fiziksel RAM bütçesini bayt cinsinden sınırlar. 0 bellek sınırı yok demektir. Bu değer zram sanal disk boyutu değildir; etkin swap aygıtının sıkıştırma algoritmasını değiştirmez. Çok düşük bir sınır bellek baskısında swap yazmalarının başarısız olmasına yol açabilir.</translation>
-        </message>
-        <message>
-            <source>Enable F2FS per-instance I/O statistics; useful for latency diagnosis, with some overhead. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
-            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. F2FS G/Ç istatistiklerini açar. Depolama gecikmesi ve erişim davranışını incelemek için yararlıdır; sayaçların çalıştırılması küçük bir ek yük doğurabilir. Başka bir genel denetim ayarıyla çakışmadığından emin olun.</translation>
-        </message>
-        <message>
-            <source>F2FS idle garbage-collection mode. Kernel-version dependent; changing it may affect write amplification; leave default unless benchmarked. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
-            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. Boşta çalışan arka plan çöp toplama (GC) modunu belirler. Kabul edilen modlar çekirdek sürümüne göre değişebilir; yanlış seçenek yazma büyütmesini ve depolama performansını olumsuz etkileyebilir. Ölçüm yapmadan değiştirmeyin.</translation>
-        </message>
-        <message>
-            <source>Throttle F2FS background garbage collector between passes. Only if exposed by this kernel. Only affects one live F2FS instance, sorted by sysfs identifier; do not combine with a conflicting global controller.</source>
-            <translation>Yalnızca mevcut F2FS dosya sistemi örneği 2 için geçerlidir; sysfs kimliğine göre sıralanır. Arka plan çöp toplama işlemleri arasındaki asgari bekleme süresini milisaniye cinsinden ayarlar. Yalnızca çekirdeğin bu sysfs kontrolünü sunduğu sistemlerde görünür; gecikme ve yazma performansını birlikte değerlendirin.</translation>
-        </message>
-        <message>
-            <source>Physical RAM budget for the active zram device (0 = no memory limit). This is not the virtual disksize, and cannot change the compression algorithm of an active swap device.</source>
-            <translation>Çalışan zram aygıtı 2 için kullanılabilecek fiziksel RAM bütçesini bayt cinsinden sınırlar. 0 bellek sınırı yok demektir. Bu değer zram sanal disk boyutu değildir; etkin swap aygıtının sıkıştırma algoritmasını değiştirmez. Çok düşük bir sınır bellek baskısında swap yazmalarının başarısız olmasına yol açabilir.</translation>
+            <translation>Çalışan zram aygıtı için kullanılabilecek fiziksel RAM bütçesini bayt cinsinden sınırlar. 0 bellek sınırı yok demektir. Bu değer zram sanal disk boyutu değildir; etkin swap aygıtının sıkıştırma algoritmasını değiştirmez. Çok düşük bir sınır bellek baskısında swap yazmalarının başarısız olmasına yol açabilir.</translation>
         </message>
         <message>
             <source>Only interrupts associated with NVMe PCI controllers. Place on the non-game CCD; managed MSI-X interrupts can reject changes. irqbalance must not fight a pinned value.</source>
@@ -11987,36 +12680,8 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
         </message>
         <message>
-            <source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
-            <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
-        </message>
-        <message>
-            <source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
-            <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
-        </message>
-        <message>
-            <source>Applies only to NVMe slot 1 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
-            <translation>Yalnızca NVMe yuvası 1 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
-        </message>
-        <message>
             <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
             <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
-        </message>
-        <message>
-            <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
-            <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
-        </message>
-        <message>
-            <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
-            <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
-        </message>
-        <message>
-            <source>Applies only to NVMe slot 2 (sorted by controller serial/namespace). Overrides the global block row for this device. Check the displayed device model before saving presets.</source>
-            <translation>Yalnızca NVMe yuvası 2 için geçerlidir; aygıtlar geçici /dev/nvmeX sırası yerine denetleyici seri numarası ve namespace değerine göre sıralanır. Bu diskin genel blok ayarından daha özgül bir denetimdir. Profil kaydetmeden önce GUI’de gösterilen SSD modeli/seri numarasını kontrol edin; küresel blok ayarlarıyla çakışabilir.</translation>
-        </message>
-        <message>
-            <source>Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.</source>
-            <translation>Bu SSD denetleyicisine özgü NVMe APST güç durumu geçişleri için gecikme toleransı sınırıdır. Genel APST satırının bu disk üzerindeki etkisini değiştirir. 0, çalışmayan güç durumlarını devre dışı bırakır; boşta güç tüketimi ve SSD sıcaklığı artabilir.</translation>
         </message>
         <message>
             <source>Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.</source>
@@ -13583,6 +14248,38 @@ Ctrl+tekerlek: yakınlaştır; orta tuşla sürükle veya ok tuşlarıyla kaydı
       <source>Opening the GPU page may wake a device.</source>
       <translation>GPU sayfasını açmak aygıtı uyandırabilir.</translation>
     </message>
+        <message>
+            <source>Waiting for sensor samples</source>
+            <translation>Sensör örnekleri bekleniyor</translation>
+        </message>
+        <message>
+            <source>Read-only diagnosis of why hardware controls may be unavailable. No root prompts or GPU wake-up.</source>
+            <translation>Donanım denetimlerinin neden kullanılamayabileceğinin salt okunur tanısı. Root parolası sorulmaz, GPU uyandırılmaz.</translation>
+        </message>
+        <message>
+            <source>Scan capabilities</source>
+            <translation>Yetenekleri tara</translation>
+        </message>
+        <message>
+            <source>Now</source>
+            <translation>Şimdi</translation>
+        </message>
+        <message>
+            <source>Quick Navigation — Centurion</source>
+            <translation>Hızlı gezinme — Centurion</translation>
+        </message>
+        <message>
+            <source>CPU, fan, Health, Scenes, tuning…</source>
+            <translation>CPU, fan, Sağlık, Sahneler, ince ayar…</translation>
+        </message>
+        <message>
+            <source>Page  /  %1</source>
+            <translation>Sayfa  /  %1</translation>
+        </message>
+        <message>
+            <source>%1 / %2</source>
+            <translation>%1 / %2</translation>
+        </message>
   </context>
     <context>
         <name>distroprofile</name>
@@ -14894,6 +15591,82 @@ system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklen
             <source>Kernel record</source>
             <translation>Çekirdek kaydı</translation>
         </message>
+        <message>
+            <source>An earlier error may explain the recovery action, but this record does not identify root cause</source>
+            <translation>Daha önceki bir hata kurtarma eylemini açıklayabilir, ancak bu kayıt kök nedeni belirlemez</translation>
+        </message>
+        <message>
+            <source>Open Evidence Lab to check earlier same-GPU Xids and GSP/PCIe events; time correlation is not proof.</source>
+            <translation>Aynı GPU&apos;daki daha önceki Xid&apos;leri ve GSP/PCIe olaylarını kontrol etmek için Donanım Kanıt Analizi&apos;ni açın; zaman korelasyonu kanıt değildir.</translation>
+        </message>
+        <message>
+            <source>F2FS reported an integrity, metadata, I/O or checkpoint failure. A damaged checkpoint can affect recovery after reboot.</source>
+            <translation>F2FS bir bütünlük, meta veri, G/Ç veya checkpoint hatası bildirdi. Hasarlı bir checkpoint yeniden başlatma sonrasındaki kurtarmayı etkileyebilir.</translation>
+        </message>
+        <message>
+            <source>Storage I/O or controller failure</source>
+            <translation>Depolama G/Ç veya denetleyici hatası</translation>
+        </message>
+        <message>
+            <source>Earlier unclean shutdown</source>
+            <translation>Daha önceki düzensiz kapanma</translation>
+        </message>
+        <message>
+            <source>Unstable RAM or other hardware (not proven by this event)</source>
+            <translation>Kararsız RAM veya başka bir donanım (bu olayla kanıtlanmaz)</translation>
+        </message>
+        <message>
+            <source>Back up important files before any repair attempt.</source>
+            <translation>Herhangi bir onarım denemesinden önce önemli dosyaları yedekleyin.</translation>
+        </message>
+        <message>
+            <source>Open Evidence Lab → F2FS Integrity and inspect the surrounding kernel log.</source>
+            <translation>Donanım Kanıt Analizi → F2FS Bütünlüğü&apos;nü açın ve çevredeki çekirdek günlüğünü inceleyin.</translation>
+        </message>
+        <message>
+            <source>Inspect the drive&apos;s SMART data and NVMe error history.</source>
+            <translation>Sürücünün SMART verilerini ve NVMe hata geçmişini inceleyin.</translation>
+        </message>
+        <message>
+            <source>Do not run fsck.f2fs against a mounted read-write filesystem. Use appropriate offline recovery guidance if needed.</source>
+            <translation>Bağlı ve okuma-yazma durumundaki bir dosya sisteminde fsck.f2fs çalıştırmayın. Gerekirse uygun çevrimdışı kurtarma yönergelerini kullanın.</translation>
+        </message>
+        <message>
+            <source>Serious: avoid unnecessary writes until the cause is understood.</source>
+            <translation>Ciddi: neden anlaşılana kadar gereksiz yazmalardan kaçının.</translation>
+        </message>
+        <message>
+            <source>Bluetooth firmware failed to load, its controller timed out, or the controller reported a hardware error.</source>
+            <translation>Bluetooth firmware&apos;i yüklenemedi, denetleyicisi zaman aşımına uğradı veya denetleyici bir donanım hatası bildirdi.</translation>
+        </message>
+        <message>
+            <source>Missing or mismatched linux-firmware files</source>
+            <translation>Eksik veya uyumsuz linux-firmware dosyaları</translation>
+        </message>
+        <message>
+            <source>Bluetooth controller firmware/driver bug</source>
+            <translation>Bluetooth denetleyici firmware/sürücü hatası</translation>
+        </message>
+        <message>
+            <source>USB power management or a controller reset</source>
+            <translation>USB güç yönetimi veya bir denetleyici sıfırlaması</translation>
+        </message>
+        <message>
+            <source>Open Evidence Lab → Wi-Fi / Bluetooth to compare error timestamps.</source>
+            <translation>Hata zaman damgalarını karşılaştırmak için Donanım Kanıt Analizi → Wi-Fi / Bluetooth&apos;u açın.</translation>
+        </message>
+        <message>
+            <source>Check kernel firmware filenames against the installed linux-firmware package.</source>
+            <translation>Çekirdekteki firmware dosya adlarını kurulu linux-firmware paketiyle karşılaştırın.</translation>
+        </message>
+        <message>
+            <source>Inspect driver and firmware updates; do not flash firmware based on a single error.</source>
+            <translation>Sürücü ve firmware güncellemelerini inceleyin; tek bir hataya dayanarak firmware yazmayın.</translation>
+        </message>
+        <message>
+            <source>Connectivity may be unavailable; not enough evidence to conclude hardware failure.</source>
+            <translation>Bağlantı kullanılamıyor olabilir; donanım arızası sonucuna varmak için yeterli kanıt yok.</translation>
+        </message>
     </context>
     <context>
         <name>FirewallTab</name>
@@ -15291,6 +16064,24 @@ Add rules that allow DNS, NTP and web traffic first?</source>
       <source>Pinned saved snapshot: %1</source>
       <translation>Sabitlenen kayıtlı anlık görüntü: %1</translation>
     </message>
+        <message>
+            <source>Potentially exposed services relying on the saved default policy (snapshot, not a reachability test):
+%1</source>
+            <translation>Kayıtlı varsayılan politikaya dayanan potansiyel olarak erişilebilir servisler (anlık görüntü, erişim testi değil):
+%1</translation>
+        </message>
+        <message>
+            <source>These non-loopback sockets may be affected by the stricter default policy. Actual reachability is unverified:
+
+%1
+
+Connections already open keep working. Continue?</source>
+            <translation>Bu geri döngü dışı soketler daha katı varsayılan politikadan etkilenebilir. Fiili erişim doğrulanmadı:
+
+%1
+
+Açık bağlantılar çalışmaya devam eder. Devam edilsin mi?</translation>
+        </message>
   </context>
     <context>
         <name>LookupTab</name>
@@ -15515,6 +16306,24 @@ Adres veya AS numarası, kayıt kurumlarının yanı sıra bu servise de gönder
         <message>
             <source>%1 could not be started.</source>
             <translation>%1 başlatılamadı.</translation>
+        </message>
+        <message>
+            <source>Potentially exposed services relying on the saved default policy (snapshot, not a reachability test):
+%1</source>
+            <translation>Kayıtlı varsayılan politikaya dayanan potansiyel olarak erişilebilir servisler (anlık görüntü, erişim testi değil):
+%1</translation>
+        </message>
+        <message>
+            <source>These non-loopback sockets may be affected by the stricter default policy. Actual reachability is unverified:
+
+%1
+
+Connections already open keep working. Continue?</source>
+            <translation>Bu geri döngü dışı soketler daha katı varsayılan politikadan etkilenebilir. Fiili erişim doğrulanmadı:
+
+%1
+
+Açık bağlantılar çalışmaya devam eder. Devam edilsin mi?</translation>
         </message>
     </context>
     <context>
@@ -16337,6 +17146,576 @@ Saklanan denemeler: %4 · çıkarılan: %5
         <source>Remaining time unknown: stock reset was not confirmed.</source>
         <translation>Kalan süre bilinmiyor: stok değerlere sıfırlama doğrulanmadı.</translation>
     </message>
+        <message>
+            <source>Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. All-core runs 60-second cycles (40 s steady + 20 s transitions) to find one offset for every core, from its Start. Per-core tests one core at a time (the others at stock) from that core&apos;s Start (typed in the table, or taken from a saved preset), going more negative by your step; the first failure ends that core and keeps its last passing value, and nothing as negative as the failed value is tried on it again. If a core&apos;s Start fails, it climbs back towards stock by the step. A value that crashed the machine is never tried on that core again, in any later search either. Untick a core to leave it at stock. The final per-core set is then verified for 20 minutes with the whole curve applied, single-core loads alternating with all-core loads up to the power limit. The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it.</source>
+            <translation>FFT / tamsayı iş yükü ve boost/boşta geçişleriyle negatif Curve Optimizer ofsetlerini bulur. Tüm çekirdek modu, her çekirdek için tek bir ofset bulmak üzere kendi Başlangıç değerinden 60 saniyelik döngüler (40 s sabit + 20 s geçiş) çalıştırır. Çekirdek bazlı mod her seferinde tek çekirdeği (diğerleri stokta) o çekirdeğin Başlangıç değerinden (tabloya yazılan ya da kayıtlı bir ön ayardan alınan) test eder ve adımınız kadar daha negatife iner; ilk başarısızlık o çekirdeği bitirir ve son geçen değeri tutar, başarısız değer kadar negatif hiçbir değer o çekirdekte bir daha denenmez. Bir çekirdeğin Başlangıç değeri başarısız olursa adım adım stoka doğru geri çıkar. Makineyi çökerten bir değer o çekirdekte, sonraki aramalarda da, bir daha asla denenmez. Bir çekirdeği stokta bırakmak için işaretini kaldırın. Son çekirdek bazlı set ardından tüm eğri uygulanmış halde 20 dakika doğrulanır; tek çekirdek yükleri güç sınırına kadar tüm çekirdek yükleriyle dönüşümlü çalışır. Arama bittiğinde eğri stoka sıfırlanır; sonuç uygulanmaz, bir Ryzen Eğrisi profili olarak kaydedilir. Geçmek uzun vadeli kararlılığın kanıtı DEĞİLDİR. Tam bir donma yine yeniden başlatma gerektirebilir: arama sonrasında devam edebilir.</translation>
+        </message>
+        <message>
+            <source>Per-core: 24-second probes (12 s steady + all 10 boost/idle patterns), then a 20-minute verification of the whole set at every level.
+Fast: 1 probe cycle. Medium: 2 probe cycles. Long: 3 probe cycles.
+All-core trials use full 60-second cycles; its confirmation is 1 / 2 / 3 cycles per core and 1 / 2 / 5 all-core cycles.</source>
+            <translation>Çekirdek bazlı: 24 saniyelik yoklamalar (12 s sabit + 10 boost/boşta deseninin tamamı), ardından her seviyede tüm setin 20 dakikalık doğrulaması.
+Hızlı: 1 yoklama döngüsü. Orta: 2 yoklama döngüsü. Uzun: 3 yoklama döngüsü.
+Tüm çekirdek denemeleri tam 60 saniyelik döngüler kullanır; onayı çekirdek başına 1 / 2 / 3 döngü ve 1 / 2 / 5 tüm çekirdek döngüsüdür.</translation>
+        </message>
+        <message>
+            <source>Most negative offset to try. The CPU&apos;s own allowed range (ryzen-co-helper) still applies.</source>
+            <translation>Denenecek en negatif ofset. İşlemcinin kendi izin verilen aralığı (ryzen-co-helper) yine geçerlidir.</translation>
+        </message>
+        <message>
+            <source>Scene applied for the search: set it to the power level you will use every day, since the
+offsets a CPU holds depend on the clocks and temperatures that level gives. Scenes that apply
+a CPU curve profile are not offered. The previous scene is applied again afterwards.</source>
+            <translation>Arama için uygulanan sahne: bunu her gün kullanacağınız güç seviyesine ayarlayın, çünkü
+bir işlemcinin tutabildiği ofsetler o seviyenin verdiği saat hızlarına ve sıcaklıklara bağlıdır. İşlemci
+eğri profili uygulayan sahneler sunulmaz. Önceki sahne sonrasında yeniden uygulanır.</translation>
+        </message>
+        <message>
+            <source>Verify a profile…</source>
+            <translation>Profil doğrula…</translation>
+        </message>
+        <message>
+            <source>Run only the 20-minute verification (per-core profile) or the confirmation (all-core) on a saved Ryzen Curve profile, without searching: after a BIOS update, or when the weather got warmer. A failing core backs off as in a search; the result is saved as a new profile.</source>
+            <translation>Kayıtlı bir Ryzen Eğrisi profilinde arama yapmadan yalnızca 20 dakikalık doğrulamayı (çekirdek bazlı profil) veya onayı (tüm çekirdek) çalıştırır: bir BIOS güncellemesinden sonra ya da havalar ısındığında. Başarısız olan çekirdek aramadaki gibi geri çekilir; sonuç yeni bir profil olarak kaydedilir.</translation>
+        </message>
+        <message>
+            <source>Crash guards…</source>
+            <translation>Crash korumaları…</translation>
+        </message>
+        <message>
+            <source>Values that crashed this machine are never tested again on that core. List them, with the BIOS they were recorded under, and remove ones you no longer trust (e.g. after a BIOS update).</source>
+            <translation>Bu makineyi çökerten değerler o çekirdekte bir daha test edilmez. Kaydedildikleri BIOS ile birlikte listeleyin ve artık güvenmediklerinizi kaldırın (ör. bir BIOS güncellemesinden sonra).</translation>
+        </message>
+        <message>
+            <source>Scene or game tuning ownership changed; cancelling search.</source>
+            <translation>Sahne veya oyun ayarı sahipliği değişti; arama iptal ediliyor.</translation>
+        </message>
+        <message>
+            <source>CPU curve was changed externally during this trial; cancelling.</source>
+            <translation>İşlemci eğrisi bu deneme sırasında dışarıdan değiştirildi; iptal ediliyor.</translation>
+        </message>
+        <message>
+            <source>CPU test exceeded safety timeout; terminating.</source>
+            <translation>İşlemci testi güvenlik zaman aşımını aştı; sonlandırılıyor.</translation>
+        </message>
+        <message>
+            <source>Application closed during search</source>
+            <translation>Arama sırasında uygulama kapatıldı</translation>
+        </message>
+        <message>
+            <source>(keep the current settings)</source>
+            <translation>(mevcut ayarları koru)</translation>
+        </message>
+        <message>
+            <source>Missing tools</source>
+            <translation>Eksik araçlar</translation>
+        </message>
+        <message>
+            <source>Install centurion-cpustress and ryzen-co-helper first.</source>
+            <translation>Önce centurion-cpustress ve ryzen-co-helper kurun.</translation>
+        </message>
+        <message>
+            <source>low boost %1/%2 MHz</source>
+            <translation>düşük boost %1/%2 MHz</translation>
+        </message>
+        <message>
+            <source>perf %1 %</source>
+            <translation>performans %1 %</translation>
+        </message>
+        <message>
+            <source>CPPC: test longer</source>
+            <translation>CPPC: daha uzun test edin</translation>
+        </message>
+        <message>
+            <source>low boost: never ran near its rated clock while tested alone, so its pass is weaker evidence.
+perf below %1 %: slower than at stock (clock stretching or lower boost).
+CPPC: deeper than every lower-ranked core, unusual for a top core.</source>
+            <translation>düşük boost: tek başına test edilirken nominal saat hızına hiç yaklaşmadı, bu yüzden geçmesi daha zayıf bir kanıttır.
+performans %1 % altında: stoktakinden yavaş (saat esnemesi ya da daha düşük boost).
+CPPC: daha düşük sıralı her çekirdekten daha derinde; en iyi çekirdek için olağan dışı.</translation>
+        </message>
+        <message>
+            <source>CPPC rank %1 (higher = better core)</source>
+            <translation>CPPC sırası %1 (yüksek = daha iyi çekirdek)</translation>
+        </message>
+        <message>
+            <source>Tried: %1</source>
+            <translation>Denenen: %1</translation>
+        </message>
+        <message>
+            <source>Search locked</source>
+            <translation>Arama kilitli</translation>
+        </message>
+        <message>
+            <source>Reset the CPU curve to stock and end game sessions before searching. Existing offsets must not be overwritten.</source>
+            <translation>Aramadan önce işlemci eğrisini stoka sıfırlayın ve oyun oturumlarını bitirin. Mevcut ofsetlerin üzerine yazılmamalıdır.</translation>
+        </message>
+        <message>
+            <source>Cannot verify stock state</source>
+            <translation>Stok durum doğrulanamıyor</translation>
+        </message>
+        <message>
+            <source>Use Ryzen Curve → Reset Curve Optimizer first. The SMU cannot read offsets back; the last helper-written state must explicitly be reset/0 before this search.</source>
+            <translation>Önce Ryzen Eğrisi → Curve Optimizer&apos;ı sıfırla&apos;yı kullanın. SMU ofsetleri geri okuyamaz; yardımcının son yazdığı durum bu aramadan önce açıkça sıfırlama/0 olmalıdır.</translation>
+        </message>
+        <message>
+            <source>CCD parked</source>
+            <translation>CCD park edilmiş</translation>
+        </message>
+        <message>
+            <source>A CCD is parked by Optimizations: its cores cannot be tested alone. Unpark it first.</source>
+            <translation>Bir CCD Optimizasyonlar tarafından park edilmiş: çekirdekleri tek başına test edilemez. Önce parktan çıkarın.</translation>
+        </message>
+        <message>
+            <source>Topology</source>
+            <translation>Topoloji</translation>
+        </message>
+        <message>
+            <source>No CPU cores detected.</source>
+            <translation>İşlemci çekirdeği algılanmadı.</translation>
+        </message>
+        <message>
+            <source>Undervolting may freeze or reboot the system. No applications can be protected against a hard lockup. The assistant resets the CPU curve when it can, but it cannot restore unsaved offsets. CO Search has no custom temperature cutoff; the CPU&apos;s own firmware thermal management remains active. This search takes roughly %1 h %2 min. Continue?</source>
+            <translation>Undervolt sistemi dondurabilir veya yeniden başlatabilir. Hiçbir uygulama tam bir kilitlenmeye karşı korunamaz. Yardımcı, yapabildiğinde işlemci eğrisini sıfırlar, ancak kaydedilmemiş ofsetleri geri getiremez. CO Search&apos;ün özel bir sıcaklık kesme sınırı yoktur; işlemcinin kendi firmware ısıl yönetimi etkin kalır. Bu arama yaklaşık %1 sa %2 dk sürer. Devam edilsin mi?</translation>
+        </message>
+        <message>
+            <source>CO crash guard corrupted</source>
+            <translation>CO crash koruması bozuk</translation>
+        </message>
+        <message>
+            <source>The recorded unsafe CO offsets cannot be read. Search is blocked rather than retrying a known crash value.</source>
+            <translation>Kaydedilen güvensiz CO ofsetleri okunamıyor. Bilinen bir çökme değerini yeniden denemek yerine arama engellendi.</translation>
+        </message>
+        <message>
+            <source>Crash guards recorded under another BIOS (now %1): %2. They still apply; Crash guards… can remove them.</source>
+            <translation>Başka bir BIOS altında kaydedilmiş crash korumaları (şimdi %1): %2. Hâlâ geçerlidir; Crash korumaları… ile kaldırılabilirler.</translation>
+        </message>
+        <message>
+            <source>Verify a profile</source>
+            <translation>Profil doğrula</translation>
+        </message>
+        <message>
+            <source>No saved Ryzen Curve profiles.</source>
+            <translation>Kayıtlı Ryzen Eğrisi profili yok.</translation>
+        </message>
+        <message>
+            <source>Profile to verify:</source>
+            <translation>Doğrulanacak profil:</translation>
+        </message>
+        <message>
+            <source>Profile &apos;%1&apos; could not be read.</source>
+            <translation>&apos;%1&apos; profili okunamadı.</translation>
+        </message>
+        <message>
+            <source>Profile &apos;%1&apos; has no offsets.</source>
+            <translation>&apos;%1&apos; profilinde ofset yok.</translation>
+        </message>
+        <message>
+            <source>Profile &apos;%1&apos; holds offsets outside -50…0 (%2). Only negative offsets down to -50 can be verified; the profile is not changed.</source>
+            <translation>&apos;%1&apos; profili -50…0 dışında ofsetler içeriyor (%2). Yalnızca -50&apos;ye kadar negatif ofsetler doğrulanabilir; profil değiştirilmez.</translation>
+        </message>
+        <message>
+            <source>The recorded unsafe CO offsets cannot be read. Verification is blocked rather than retrying a known crash value.</source>
+            <translation>Kaydedilen güvensiz CO ofsetleri okunamıyor. Bilinen bir çökme değerini yeniden denemek yerine doğrulama engellendi.</translation>
+        </message>
+        <message>
+            <source>CCD%1/%2 %3 (crashed at %4)</source>
+            <translation>CCD%1/%2 %3 (%4 değerinde çöktü)</translation>
+        </message>
+        <message>
+            <source>all-core %1 (crashed at %2)</source>
+            <translation>tüm çekirdek %1 (%2 değerinde çöktü)</translation>
+        </message>
+        <message>
+            <source>These values are at or below a recorded crash on that core, so they are not applied: %1.
+
+Make them less negative, or remove the guard under Crash guards… if you no longer trust it.</source>
+            <translation>Bu değerler o çekirdekte kaydedilmiş bir çökmenin seviyesinde veya altında, bu yüzden uygulanmazlar: %1.
+
+Daha az negatif yapın ya da artık güvenmiyorsanız korumayı Crash korumaları… altından kaldırın.</translation>
+        </message>
+        <message>
+            <source>Every core of &apos;%1&apos; is at stock: nothing to verify.</source>
+            <translation>&apos;%1&apos; profilinin her çekirdeği stokta: doğrulanacak bir şey yok.</translation>
+        </message>
+        <message>
+            <source>The profile&apos;s values cannot be verified.</source>
+            <translation>Profilin değerleri doğrulanamıyor.</translation>
+        </message>
+        <message>
+            <source>Verifying &apos;%1&apos; applies its offsets under load for about %2 min (longer if a core has to back off). Undervolting may freeze or reboot the system; the curve is reset to stock afterwards. Continue?</source>
+            <translation>&apos;%1&apos; doğrulaması ofsetlerini yaklaşık %2 dk yük altında uygular (bir çekirdek geri çekilmek zorunda kalırsa daha uzun). Undervolt sistemi dondurabilir veya yeniden başlatabilir; eğri sonrasında stoka sıfırlanır. Devam edilsin mi?</translation>
+        </message>
+        <message>
+            <source>Verifying profile &apos;%1&apos;: %2</source>
+            <translation>&apos;%1&apos; profili doğrulanıyor: %2</translation>
+        </message>
+        <message>
+            <source>The crash guard file cannot be read; it is left unchanged.</source>
+            <translation>Crash koruma dosyası okunamıyor; değiştirilmeden bırakıldı.</translation>
+        </message>
+        <message>
+            <source>No crash guards are recorded.</source>
+            <translation>Kayıtlı crash koruması yok.</translation>
+        </message>
+        <message>
+            <source>Each row is a value that crashed this machine while that core was tested alone: it and every more negative value are never tried on that core again. BIOS is the one the crash happened under (empty: recorded before Centurion kept it); current BIOS: %1.</source>
+            <translation>Her satır, o çekirdek tek başına test edilirken bu makineyi çökerten bir değerdir: bu değer ve daha negatif her değer o çekirdekte bir daha denenmez. BIOS, çökmenin olduğu BIOS&apos;tur (boş: Centurion bunu tutmaya başlamadan önce kaydedilmiş); mevcut BIOS: %1.</translation>
+        </message>
+        <message>
+            <source>&quot;All cores&quot; is an all-core offset that crashed this machine: all-core searches never go to it or below.</source>
+            <translation>&quot;Tüm çekirdekler&quot;, bu makineyi çökerten bir tüm çekirdek ofsetidir: tüm çekirdek aramaları bu değere veya altına asla inmez.</translation>
+        </message>
+        <message>
+            <source>Never at or below</source>
+            <translation>Asla bu değer veya altı</translation>
+        </message>
+        <message>
+            <source>All cores (all-core search)</source>
+            <translation>Tüm çekirdekler (tüm çekirdek araması)</translation>
+        </message>
+        <message>
+            <source>Remove selected</source>
+            <translation>Seçileni kaldır</translation>
+        </message>
+        <message>
+            <source>Remove crash guards</source>
+            <translation>Crash korumalarını kaldır</translation>
+        </message>
+        <message>
+            <source>Remove %1 guard(s)? A later search may then try values that crashed this machine before.</source>
+            <translation>%1 koruma kaldırılsın mı? Sonraki bir arama bu makineyi daha önce çökerten değerleri deneyebilir.</translation>
+        </message>
+        <message>
+            <source>Could not write the crash guard file; nothing was removed.</source>
+            <translation>Crash koruma dosyası yazılamadı; hiçbir şey kaldırılmadı.</translation>
+        </message>
+        <message>
+            <source>Crash guards removed: %1</source>
+            <translation>Kaldırılan crash korumaları: %1</translation>
+        </message>
+        <message>
+            <source>Could not remove the all-core crash guard file.</source>
+            <translation>Tüm çekirdek crash koruma dosyası kaldırılamadı.</translation>
+        </message>
+        <message>
+            <source>all-core %1</source>
+            <translation>tüm çekirdek %1</translation>
+        </message>
+        <message>
+            <source>Measuring single-core throughput at stock, to compare with the found curve…</source>
+            <translation>Bulunan eğriyle karşılaştırmak için stokta tek çekirdek iş hacmi ölçülüyor…</translation>
+        </message>
+        <message>
+            <source>The stock throughput run did not complete; no clock-stretch comparison.</source>
+            <translation>Stok iş hacmi çalıştırması tamamlanmadı; saat esnemesi karşılaştırması yok.</translation>
+        </message>
+        <message>
+            <source>No throughput values to compare.</source>
+            <translation>Karşılaştırılacak iş hacmi değeri yok.</translation>
+        </message>
+        <message>
+            <source>Clock-stretch check: no single-core throughput loss against stock (%1 % … %2 %).</source>
+            <translation>Saat esnemesi kontrolü: stoka göre tek çekirdek iş hacmi kaybı yok (%1 % … %2 %).</translation>
+        </message>
+        <message>
+            <source>Clock-stretch check: lower throughput than at stock on %1. Clock stretching or a lower boost at that offset: 1-2 points less negative there may be faster.</source>
+            <translation>Saat esnemesi kontrolü: %1 üzerinde stoktakinden düşük iş hacmi. O ofsette saat esnemesi veya daha düşük boost var: orada 1-2 puan daha az negatif daha hızlı olabilir.</translation>
+        </message>
+        <message>
+            <source>Cannot remove the CO search journal</source>
+            <translation>CO arama günlüğü kaldırılamıyor</translation>
+        </message>
+        <message>
+            <source>%1 could not be removed: %2.
+File owner: %3, folder owner: %4.
+
+A file or folder owned by root (for example after starting Centurion with sudo) cannot be removed from here. Remove it in a terminal:
+
+sudo rm &apos;%1&apos;</source>
+            <translation>%1 kaldırılamadı: %2.
+Dosya sahibi: %3, klasör sahibi: %4.
+
+root&apos;a ait bir dosya veya klasör (örneğin Centurion sudo ile başlatıldıktan sonra) buradan kaldırılamaz. Bir terminalde kaldırın:
+
+sudo rm &apos;%1&apos;</translation>
+        </message>
+        <message>
+            <source>Reset failed</source>
+            <translation>Sıfırlama başarısız</translation>
+        </message>
+        <message>
+            <source>The CPU curve could not be reset to stock: %1
+
+The journal cannot be read, so keeping it protects nothing and only brings this question back. Remove it anyway? The curve state stays unknown until Ryzen Curve → Reset succeeds or the machine restarts (a restart clears Curve Optimizer offsets).</source>
+            <translation>İşlemci eğrisi stoka sıfırlanamadı: %1
+
+Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca bu soruyu geri getirir. Yine de kaldırılsın mı? Ryzen Eğrisi → Sıfırla başarılı olana veya makine yeniden başlayana kadar eğri durumu bilinmez kalır (yeniden başlatma Curve Optimizer ofsetlerini temizler).</translation>
+        </message>
+        <message>
+            <source>it is %1 bytes</source>
+            <translation>%1 bayt</translation>
+        </message>
+        <message>
+            <source>%1; owner %2</source>
+            <translation>%1; sahibi %2</translation>
+        </message>
+        <message>
+            <source>Boot identity</source>
+            <translation>Açılış kimliği</translation>
+        </message>
+        <message>
+            <source>Cannot verify boot ID; recovery is blocked.</source>
+            <translation>Açılış kimliği doğrulanamıyor; kurtarma engellendi.</translation>
+        </message>
+        <message>
+            <source>Recovery guard failed</source>
+            <translation>Kurtarma koruması başarısız</translation>
+        </message>
+        <message>
+            <source>Cannot save the interrupted CO candidate to the persistent crash guard. Neither resuming nor discarding the journal is safe until this is repaired.</source>
+            <translation>Kesilen CO adayı kalıcı crash korumasına kaydedilemiyor. Bu onarılana kadar günlüğe devam etmek de onu atmak da güvenli değildir.</translation>
+        </message>
+        <message>
+            <source>the last resolved trial</source>
+            <translation>son çözümlenen deneme</translation>
+        </message>
+        <message>
+            <source>The search stopped after its previous trial was already resolved. No candidate will be replayed.</source>
+            <translation>Arama, önceki denemesi zaten çözümlendikten sonra durdu. Hiçbir aday yeniden oynatılmayacak.</translation>
+        </message>
+        <message>
+            <source>End game sessions first.</source>
+            <translation>Önce oyun oturumlarını bitirin.</translation>
+        </message>
+        <message>
+            <source>Recorded crash exclusions cannot be read. No CO value was written.</source>
+            <translation>Kaydedilen çökme dışlamaları okunamıyor. Hiçbir CO değeri yazılmadı.</translation>
+        </message>
+        <message>
+            <source>Recovery journal failed</source>
+            <translation>Kurtarma günlüğü başarısız</translation>
+        </message>
+        <message>
+            <source>Cannot durably commit the recovered state. No CO value was applied.</source>
+            <translation>Kurtarılan durum kalıcı olarak kaydedilemiyor. Hiçbir CO değeri uygulanmadı.</translation>
+        </message>
+        <message>
+            <source>Recovery: continuing after last resolved trial. Resetting to stock first.</source>
+            <translation>Kurtarma: son çözümlenen denemeden sonra devam ediliyor. Önce stoka sıfırlanıyor.</translation>
+        </message>
+        <message>
+            <source>Recovery: %1 marked unsafe and excluded. Resetting to stock first.</source>
+            <translation>Kurtarma: %1 güvensiz olarak işaretlendi ve dışlandı. Önce stoka sıfırlanıyor.</translation>
+        </message>
+        <message>
+            <source>Reset failed: %1. Not resuming.</source>
+            <translation>Sıfırlama başarısız: %1. Devam edilmiyor.</translation>
+        </message>
+        <message>
+            <source>Cannot verify boot ID.</source>
+            <translation>Açılış kimliği doğrulanamıyor.</translation>
+        </message>
+        <message>
+            <source>%1 search, %2 level, limit %3. Every tested candidate will be cleared afterward.</source>
+            <translation>%1 araması, %2 seviyesi, sınır %3. Test edilen her aday sonrasında temizlenecek.</translation>
+        </message>
+        <message>
+            <source>Cannot read classified kernel events; not starting.</source>
+            <translation>Sınıflandırılmış çekirdek olayları okunamıyor; başlatılmıyor.</translation>
+        </message>
+        <message>
+            <source>MCA threshold counters are not readable here: corrected errors count only once the kernel logs them (its MCE poll can take up to 5 minutes), so a pass is weaker evidence.</source>
+            <translation>MCA eşik sayaçları burada okunamıyor: düzeltilen hatalar ancak çekirdek bunları günlüğe yazınca sayılır (MCE yoklaması 5 dakikaya kadar sürebilir), bu yüzden geçmek daha zayıf bir kanıttır.</translation>
+        </message>
+        <message>
+            <source>Scenes are not available here; choose &quot;keep the current settings&quot;.</source>
+            <translation>Sahneler burada kullanılamıyor; &quot;mevcut ayarları koru&quot; seçeneğini seçin.</translation>
+        </message>
+        <message>
+            <source>Applying the CO search scene &apos;%1&apos;…</source>
+            <translation>CO arama sahnesi &apos;%1&apos; uygulanıyor…</translation>
+        </message>
+        <message>
+            <source>The CO search scene failed to apply: %1</source>
+            <translation>CO arama sahnesi uygulanamadı: %1</translation>
+        </message>
+        <message>
+            <source>Cancelled</source>
+            <translation>İptal edildi</translation>
+        </message>
+        <message>
+            <source>Measuring single-core throughput with the found curve (clock-stretch check)…</source>
+            <translation>Bulunan eğriyle tek çekirdek iş hacmi ölçülüyor (saat esnemesi kontrolü)…</translation>
+        </message>
+        <message>
+            <source>Wrong result during the throughput run with the found curve: it is NOT stable and is not saved as verified.</source>
+            <translation>Bulunan eğriyle iş hacmi çalıştırması sırasında yanlış sonuç: kararlı DEĞİL ve doğrulanmış olarak kaydedilmedi.</translation>
+        </message>
+        <message>
+            <source>Cannot durably save the recovery journal; no CO offset was written.</source>
+            <translation>Kurtarma günlüğü kalıcı olarak kaydedilemiyor; hiçbir CO ofseti yazılmadı.</translation>
+        </message>
+        <message>
+            <source>SMU write rejected: %1</source>
+            <translation>SMU yazması reddedildi: %1</translation>
+        </message>
+        <message>
+            <source>Cancelled after in-flight write</source>
+            <translation>Süren yazma sonrasında iptal edildi</translation>
+        </message>
+        <message>
+            <source>CPU test failed to start.</source>
+            <translation>İşlemci testi başlatılamadı.</translation>
+        </message>
+        <message>
+            <source>          wrong result on CPU %1</source>
+            <translation>          CPU %1 üzerinde yanlış sonuç</translation>
+        </message>
+        <message>
+            <source>Trial %1: %2 · test %3/%4 · cycle %5 · %6 · %7%8</source>
+            <translation>Deneme %1: %2 · test %3/%4 · döngü %5 · %6 · %7%8</translation>
+        </message>
+        <message>
+            <source>Cancelled while testing</source>
+            <translation>Test sırasında iptal edildi</translation>
+        </message>
+        <message>
+            <source>CPU test crashed (exit status %1). Applying additional CO safety margin.</source>
+            <translation>İşlemci testi çöktü (çıkış durumu %1). Ek CO güvenlik payı uygulanıyor.</translation>
+        </message>
+        <message>
+            <source>CPU test did not complete (%1): %2</source>
+            <translation>İşlemci testi tamamlanmadı (%1): %2</translation>
+        </message>
+        <message>
+            <source>Cancelled after CPU test</source>
+            <translation>İşlemci testinden sonra iptal edildi</translation>
+        </message>
+        <message>
+            <source>Cannot read classified kernel events; stopping without claiming a clean test.</source>
+            <translation>Sınıflandırılmış çekirdek olayları okunamıyor; temiz test iddia edilmeden duruluyor.</translation>
+        </message>
+        <message>
+            <source>Critical platform emergency event: %1</source>
+            <translation>Kritik platform acil durum olayı: %1</translation>
+        </message>
+        <message>
+            <source>CPU throttling event observed (continuing; no CO temperature limit): %1</source>
+            <translation>İşlemci kısma olayı görüldü (devam ediliyor; CO sıcaklık sınırı yok): %1</translation>
+        </message>
+        <message>
+            <source>Hardware fault reported during trial: %1</source>
+            <translation>Deneme sırasında donanım hatası bildirildi: %1</translation>
+        </message>
+        <message>
+            <source>Corrected machine-check errors counted during trial (%1: %2 → %3)</source>
+            <translation>Deneme sırasında sayılan düzeltilmiş machine-check hataları (%1: %2 → %3)</translation>
+        </message>
+        <message>
+            <source>Hardware error on CPU %1 outside the isolated core; cannot attribute failure safely.</source>
+            <translation>Yalıtılmış çekirdek dışında, CPU %1 üzerinde donanım hatası; başarısızlık güvenle ilişkilendirilemiyor.</translation>
+        </message>
+        <message>
+            <source>Cannot persist a crash guard after a stress worker crash; stopping.</source>
+            <translation>Bir stres işçisi çöktükten sonra crash koruması kalıcı kaydedilemiyor; duruluyor.</translation>
+        </message>
+        <message>
+            <source>Passed: %1</source>
+            <translation>Geçti: %1</translation>
+        </message>
+        <message>
+            <source>FAILED: %1%2</source>
+            <translation>BAŞARISIZ: %1%2</translation>
+        </message>
+        <message>
+            <source> (CPU %1)</source>
+            <translation> (CPU %1)</translation>
+        </message>
+        <message>
+            <source>Waiting for in-flight write before resetting.</source>
+            <translation>Sıfırlamadan önce süren yazma bekleniyor.</translation>
+        </message>
+        <message>
+            <source> — requesting stock reset.</source>
+            <translation> — stok sıfırlama isteniyor.</translation>
+        </message>
+        <message>
+            <source>This search did not finish its verification: these values passed only the tests run so far.</source>
+            <translation>Bu arama doğrulamasını bitirmedi: bu değerler yalnızca şimdiye kadar çalıştırılan testleri geçti.</translation>
+        </message>
+        <message>
+            <source> point(s) towards stock</source>
+            <translation> puan stoka doğru</translation>
+        </message>
+        <message>
+            <source>Saved value = found value + margin on every undervolted core (never past 0). Many users keep 1-2 points of margin for daily use.</source>
+            <translation>Kaydedilen değer = bulunan değer + pay, undervolt yapılan her çekirdekte (asla 0&apos;ı geçmez). Birçok kullanıcı günlük kullanım için 1-2 puan pay bırakır.</translation>
+        </message>
+        <message>
+            <source>Margin:</source>
+            <translation>Pay:</translation>
+        </message>
+        <message>
+            <source> Margin: +%1 on every undervolted core.</source>
+            <translation> Pay: undervolt yapılan her çekirdekte +%1.</translation>
+        </message>
+        <message>
+            <source>CO Search: reset FAILED</source>
+            <translation>CO Search: sıfırlama BAŞARISIZ</translation>
+        </message>
+        <message>
+            <source>CO Search finished</source>
+            <translation>CO Search bitti</translation>
+        </message>
+        <message>
+            <source>CO Search stopped</source>
+            <translation>CO Search durdu</translation>
+        </message>
+        <message>
+            <source>The CPU curve could not be reset. Use Ryzen Curve → Reset, or reboot.</source>
+            <translation>İşlemci eğrisi sıfırlanamadı. Ryzen Eğrisi → Sıfırla&apos;yı kullanın veya yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>Values: %1</source>
+            <translation>Değerler: %1</translation>
+        </message>
+        <message>
+            <source>CPU curve reset could not be confirmed. Use Ryzen Curve → Reset, or reboot before continuing.</source>
+            <translation>İşlemci eğrisi sıfırlaması doğrulanamadı. Devam etmeden önce Ryzen Eğrisi → Sıfırla&apos;yı kullanın veya yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>SMU reset confirmed. Result: %1. %2</source>
+            <translation>SMU sıfırlaması doğrulandı. Sonuç: %1. %2</translation>
+        </message>
+        <message>
+            <source>Saving the profile FAILED.</source>
+            <translation>Profil kaydedilemedi.</translation>
+        </message>
+        <message>
+            <source>Saved as Ryzen Curve profile &apos;%1&apos;: load and apply it there. Many users keep 1-2 points of margin above a searched value for daily use; run long tests before relying on it.</source>
+            <translation>&apos;%1&apos; adlı Ryzen Eğrisi profili olarak kaydedildi: orada yükleyip uygulayın. Birçok kullanıcı günlük kullanım için aranan değerin üstünde 1-2 puan pay bırakır; ona güvenmeden önce uzun testler çalıştırın.</translation>
+        </message>
+        <message>
+            <source>No scene was active before the search: the CO search scene stays applied.</source>
+            <translation>Aramadan önce etkin bir sahne yoktu: CO arama sahnesi uygulanmış kalır.</translation>
+        </message>
+        <message>
+            <source>Applying the previous scene &apos;%1&apos; again.</source>
+            <translation>Önceki sahne &apos;%1&apos; yeniden uygulanıyor.</translation>
+        </message>
+        <message>
+            <source>Notes</source>
+            <translation>Notlar</translation>
+        </message>
+        <message>
+            <source>BIOS</source>
+            <translation>BIOS</translation>
+        </message>
+        <message>
+            <source>Show</source>
+            <translation>Göster</translation>
+        </message>
     </context>
     <context>
         <name>coevidence</name>
@@ -18741,6 +20120,130 @@ Saklanan denemeler: %4 · çıkarılan: %5
     <context>
         <name>systemdiagnostics</name>
         <message>
+            <source>The firmware interfaces the kernel found: WMI objects with the driver that claims each, firmware settings exposed through firmware-attributes, and the ACPI tables present. No setting is changed. Reading some kernel attributes (an ACPI device&apos;s status, some firmware-attributes values) makes the kernel evaluate the matching firmware method.</source>
+            <translation>Çekirdeğin bulduğu firmware arayüzleri: bağlı sürücüleriyle WMI nesneleri, firmware-attributes üzerinden sunulan firmware ayarları ve mevcut ACPI tabloları. Hiçbir ayar değiştirilmez. Bazı çekirdek özniteliklerini okumak (ACPI aygıtının status değeri, bazı firmware-attributes değerleri) çekirdeğin ilgili firmware metodunu çalıştırmasına yol açar.</translation>
+        </message>
+        <message>
+            <source>Device inventory unavailable or inaccessible: %1</source>
+            <translation>Aygıt envanteri yok veya erişilemiyor: %1</translation>
+        </message>
+        <message>
+            <source>Device inventory capped at 512 entries: %1</source>
+            <translation>Aygıt envanteri 512 kayıtla sınırlandırıldı: %1</translation>
+        </message>
+        <message>
+            <source>Device unavailable or detached</source>
+            <translation>Aygıt yok veya bağlantısı kopmuş</translation>
+        </message>
+        <message>
+            <source>Bound driver observed</source>
+            <translation>Bağlı sürücü gözlemlendi</translation>
+        </message>
+        <message>
+            <source>Driver link unresolved</source>
+            <translation>Sürücü bağlantısı çözümlenemedi</translation>
+        </message>
+        <message>
+            <source>No driver link observed</source>
+            <translation>Sürücü bağlantısı gözlemlenmedi</translation>
+        </message>
+        <message>
+            <source>Driver evidence</source>
+            <translation>Sürücü kanıtı</translation>
+        </message>
+        <message>
+            <source>GUID instances</source>
+            <translation>GUID örnekleri</translation>
+        </message>
+        <message>
+            <source>%1 object(s) have no observed driver link. A missing link is not proof of a firmware failure. GUID instance counts describe this inventory only.</source>
+            <translation>%1 nesnede sürücü bağlantısı gözlemlenmedi. Eksik bağlantı firmware arızasının kanıtı değildir. GUID örnek sayıları yalnızca bu envanteri tanımlar.</translation>
+        </message>
+        <message>
+            <source>Only kernel-exposed device objects are shown, not the complete AML namespace. Centurion invokes no AML, EC or WMI method itself; reading Status makes the kernel evaluate the device&apos;s _STA.</source>
+            <translation>Yalnız çekirdeğin sunduğu aygıt nesneleri gösterilir, AML ad alanının tamamı değil. Centurion kendisi AML, EC veya WMI metodu çağırmaz; Status değerini okumak çekirdeğin aygıtın _STA metodunu çalıştırmasına yol açar.</translation>
+        </message>
+        <message>
+            <source>ACPI / WMI Kernel Evidence</source>
+            <translation>ACPI / WMI Çekirdek Kanıtları</translation>
+        </message>
+        <message>
+            <source>Time</source>
+            <translation>Zaman</translation>
+        </message>
+        <message>
+            <source>Boot ID</source>
+            <translation>Açılış kimliği</translation>
+        </message>
+        <message>
+            <source>Sequence</source>
+            <translation>Sıra</translation>
+        </message>
+        <message>
+            <source>Evidence type</source>
+            <translation>Kanıt türü</translation>
+        </message>
+        <message>
+            <source>Candidate devices</source>
+            <translation>Aday aygıtlar</translation>
+        </message>
+        <message>
+            <source>Candidates in inventory</source>
+            <translation>Envanterdeki adaylar</translation>
+        </message>
+        <message>
+            <source>Kernel message</source>
+            <translation>Çekirdek mesajı</translation>
+        </message>
+        <message>
+            <source>Currently observed drivers</source>
+            <translation>Şu anda gözlemlenen sürücüler</translation>
+        </message>
+        <message>
+            <source>Exact identifier mentions and driver-prefix candidates refer to the current inventory, not proof of the historical binding or cause. Only full matching boot IDs are used; legacy prefixes are excluded. Saved kernel logs are incomplete and no new scan is started.</source>
+            <translation>Tam kimlik ifadeleri ve sürücü öneki adayları güncel envanteri gösterir; geçmişteki sürücü bağlantısının veya olay nedeninin kanıtı değildir. Yalnızca tam eşleşen açılış kimlikleri kullanılır; eski kısa önekler dışlanır. Kayıtlı çekirdek günlükleri eksik olabilir ve yeni tarama başlatılmaz.</translation>
+        </message>
+        <message>
+            <source>Exact instance mention</source>
+            <translation>Tam örnek kimliği ifadesi</translation>
+        </message>
+        <message>
+            <source>GUID or mixed identifier mention</source>
+            <translation>GUID veya karma kimlik ifadesi</translation>
+        </message>
+        <message>
+            <source>Driver prefix candidate</source>
+            <translation>Sürücü öneki adayı</translation>
+        </message>
+        <message>
+            <source>ACPI / WMI class only</source>
+            <translation>Yalnızca ACPI / WMI sınıfı</translation>
+        </message>
+        <message>
+            <source>More candidates omitted</source>
+            <translation>Diğer adaylar gösterilmiyor</translation>
+        </message>
+        <message>
+            <source>No matching current-boot ACPI / WMI evidence in the supplied saved kernel log; absence of evidence does not mean no events occurred.</source>
+            <translation>Verilen kayıtlı çekirdek günlüğünde güncel açılışa ait eşleşen ACPI / WMI kanıtı yok; kanıt yokluğu olay gerçekleşmediği anlamına gelmez.</translation>
+        </message>
+        <message>
+            <source>ACPI / WMI evidence capped at 256 newest matching records.</source>
+            <translation>ACPI / WMI kanıtları en yeni 256 eşleşen kayıtla sınırlandırıldı.</translation>
+        </message>
+        <message>
+            <source>Only fixed-size table headers are inspected. Length is the value declared by the header, not a verified file size. AML is not interpreted or executed; checksum verification is not claimed.</source>
+            <translation>Yalnızca sabit boyutlu tablo başlıkları incelenir. Uzunluk, başlığın bildirdiği değerdir; doğrulanmış dosya boyutu değildir. AML yorumlanmaz veya çalıştırılmaz; sağlama toplamı doğrulaması yapıldığı iddia edilmez.</translation>
+        </message>
+        <message>
+            <source>ACPI table directory unavailable or inaccessible: %1</source>
+            <translation>ACPI tablo dizini yok veya erişilemiyor: %1</translation>
+        </message>
+        <message>
+            <source>ACPI table inventory is bounded; additional entries may be omitted.</source>
+            <translation>ACPI tablo envanteri sınırlıdır; ek kayıtlar gösterilmeyebilir.</translation>
+        </message>
+        <message>
             <source>%1 (%2): link width could not be verified</source>
             <translation>%1 (%2): bağlantı genişliği doğrulanamadı</translation>
         </message>
@@ -20196,6 +21699,178 @@ Saklanan denemeler: %4 · çıkarılan: %5
             <source>Canonical zram swap names could not be corroborated with a configured sysfs device.</source>
             <translation>Asıl zram takas adları yapılandırılmış bir sysfs aygıtıyla doğrulanamadı.</translation>
         </message>
+        <message>
+            <source>ACPI table headers are readable only by root; they are not read without privileges.</source>
+            <translation>ACPI tablo başlıklarını yalnız root okuyabilir; yetki olmadan okunmazlar.</translation>
+        </message>
+        <message>
+            <source>Turn %1 on</source>
+            <translation>%1 aç</translation>
+        </message>
+        <message>
+            <source>Raise the cap to the hardware maximum</source>
+            <translation>Sınırı donanım azamisine yükselt</translation>
+        </message>
+        <message>
+            <source>Turn CPU boost on</source>
+            <translation>İşlemci boost&apos;unu aç</translation>
+        </message>
+        <message>
+            <source>Turn zswap off (until reboot)</source>
+            <translation>zswap&apos;ı kapat (yeniden başlatmaya kadar)</translation>
+        </message>
+        <message>
+            <source>Set defrag to madvise (until reboot)</source>
+            <translation>Defrag&apos;ı madvise yap (yeniden başlatmaya kadar)</translation>
+        </message>
+        <message>
+            <source>Level</source>
+            <translation>Seviye</translation>
+        </message>
+        <message>
+            <source>Unreadable</source>
+            <translation>Okunamıyor</translation>
+        </message>
+        <message>
+            <source>USB-PD profiles depend on kernel and driver exposure; barrel and proprietary chargers may show only as an online AC adapter.</source>
+            <translation>USB-PD profilleri çekirdeğin ve sürücünün sunduğu bilgiye bağlıdır; barrel ve özel şarj cihazları yalnızca çevrimiçi bir AC adaptörü olarak görünebilir.</translation>
+        </message>
+        <message>
+            <source>Restart PipeWire and WirePlumber</source>
+            <translation>PipeWire ve WirePlumber&apos;ı yeniden başlat</translation>
+        </message>
+        <message>
+            <source>Turn codec power saving off (until reboot)</source>
+            <translation>Codec güç tasarrufunu kapat (yeniden başlatmaya kadar)</translation>
+        </message>
+        <message>
+            <source>CPU Cache Sharing Domains</source>
+            <translation>CPU Önbellek Paylaşım Alanları</translation>
+        </message>
+        <message>
+            <source>Size</source>
+            <translation>Boyut</translation>
+        </message>
+        <message>
+            <source>Shared CPUs</source>
+            <translation>Paylaşan CPU&apos;lar</translation>
+        </message>
+        <message>
+            <source>Cache sharing is kernel-reported topology, not proof of physical CCD identity.</source>
+            <translation>Önbellek paylaşımı çekirdeğin bildirdiği topolojidir; fiziksel CCD kimliğinin kanıtı değildir.</translation>
+        </message>
+        <message>
+            <source>SMBIOS Memory Devices</source>
+            <translation>SMBIOS Bellek Aygıtları</translation>
+        </message>
+        <message>
+            <source>Entry</source>
+            <translation>Kayıt</translation>
+        </message>
+        <message>
+            <source>Capacity (MiB)</source>
+            <translation>Kapasite (MiB)</translation>
+        </message>
+        <message>
+            <source>Rated transfer rate (MT/s)</source>
+            <translation>Bildirilen aktarım hızı (MT/s)</translation>
+        </message>
+        <message>
+            <source>Configured transfer rate (MT/s)</source>
+            <translation>Yapılandırılan aktarım hızı (MT/s)</translation>
+        </message>
+        <message>
+            <source>Invalid or incomplete record</source>
+            <translation>Geçersiz veya eksik kayıt</translation>
+        </message>
+        <message>
+            <source>Empty slot</source>
+            <translation>Boş yuva</translation>
+        </message>
+        <message>
+            <source>Reported device</source>
+            <translation>Bildirilen aygıt</translation>
+        </message>
+        <message>
+            <source>Firmware-reported records, not measured RAM speed. Missing or inaccessible SMBIOS data is unknown; no privilege escalation.</source>
+            <translation>Firmware kayıtlarıdır, ölçülmüş RAM hızı değildir. Eksik veya erişilemeyen SMBIOS verisi bilinmiyor; yetki yükseltme yapılmaz.</translation>
+        </message>
+        <message>
+            <source>SMBIOS memory device entries are unavailable.</source>
+            <translation>SMBIOS bellek aygıtı kayıtları kullanılamıyor.</translation>
+        </message>
+        <message>
+            <source>Table</source>
+            <translation>Tablo</translation>
+        </message>
+        <message>
+            <source>Signature</source>
+            <translation>İmza</translation>
+        </message>
+        <message>
+            <source>Length (bytes)</source>
+            <translation>Uzunluk (bayt)</translation>
+        </message>
+        <message>
+            <source>Revision</source>
+            <translation>Revizyon</translation>
+        </message>
+        <message>
+            <source>Read status</source>
+            <translation>Okuma durumu</translation>
+        </message>
+        <message>
+            <source>Unsupported or incomplete header</source>
+            <translation>Desteklenmeyen veya eksik başlık</translation>
+        </message>
+        <message>
+            <source>Header read</source>
+            <translation>Başlık okundu</translation>
+        </message>
+        <message>
+            <source>ACPI table listing is unavailable or inaccessible.</source>
+            <translation>ACPI tablo listesi kullanılamıyor veya erişilemiyor.</translation>
+        </message>
+        <message>
+            <source>Partner source capabilities</source>
+            <translation>Karşı aygıtın kaynak kapasiteleri</translation>
+        </message>
+        <message>
+            <source>Best capacity</source>
+            <translation>En yüksek kapasite</translation>
+        </message>
+        <message>
+            <source>USB Power Delivery Source Profiles</source>
+            <translation>USB Power Delivery Kaynak Profilleri</translation>
+        </message>
+        <message>
+            <source>Partner profile</source>
+            <translation>Karşı aygıt profili</translation>
+        </message>
+        <message>
+            <source>Minimum voltage (V)</source>
+            <translation>En düşük voltaj (V)</translation>
+        </message>
+        <message>
+            <source>Maximum voltage (V)</source>
+            <translation>En yüksek voltaj (V)</translation>
+        </message>
+        <message>
+            <source>Maximum current (A)</source>
+            <translation>En yüksek akım (A)</translation>
+        </message>
+        <message>
+            <source>Capacity (W)</source>
+            <translation>Kapasite (W)</translation>
+        </message>
+        <message>
+            <source>Source capability is not a negotiated contract or measured draw. No contract is inferred from voltage or current limits.</source>
+            <translation>Kaynak kapasitesi anlaşılmış güç sözleşmesi veya ölçülen tüketim değildir. Voltaj veya akım sınırlarından sözleşme çıkarılmaz.</translation>
+        </message>
+        <message>
+            <source>Changed during capture</source>
+            <translation>Yakalama sırasında değişti</translation>
+        </message>
 </context>
     <context>
         <name>diagnostictools</name>
@@ -20948,6 +22623,82 @@ Saklanan denemeler: %4 · çıkarılan: %5
             <source>Changed during capture</source>
             <translation>Yakalama sırasında değişti</translation>
         </message>
+        <message>
+            <source>Bit depth</source>
+            <translation>Bit derinliği</translation>
+        </message>
+        <message>
+            <source>Colour formats</source>
+            <translation>Renk biçimleri</translation>
+        </message>
+        <message>
+            <source>HDR</source>
+            <translation>HDR</translation>
+        </message>
+        <message>
+            <source>Colour spaces</source>
+            <translation>Renk uzayları</translation>
+        </message>
+        <message>
+            <source>Made</source>
+            <translation>Üretim</translation>
+        </message>
+        <message>
+            <source>Modes</source>
+            <translation>Modlar</translation>
+        </message>
+        <message>
+            <source>%1 × %2 cm (%3″)</source>
+            <translation>%1 × %2 cm (%3″)</translation>
+        </message>
+        <message>
+            <source>%1 bit</source>
+            <translation>%1 bit</translation>
+        </message>
+        <message>
+            <source>HDMI audio</source>
+            <translation>HDMI ses</translation>
+        </message>
+        <message>
+            <source>Backlight</source>
+            <translation>Arka ışık</translation>
+        </message>
+        <message>
+            <source>Maximum</source>
+            <translation>En yüksek</translation>
+        </message>
+        <message>
+            <source>In effect</source>
+            <translation>Geçerli</translation>
+        </message>
+        <message>
+            <source>Add options nvidia_drm modeset=1</source>
+            <translation>options nvidia_drm modeset=1 ekle</translation>
+        </message>
+        <message>
+            <source>Audio</source>
+            <translation>Ses</translation>
+        </message>
+        <message>
+            <source>State</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>Type</source>
+            <translation>Tür</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>Durum</translation>
+        </message>
+        <message>
+            <source>yes</source>
+            <translation>evet</translation>
+        </message>
+        <message>
+            <source>Brightness</source>
+            <translation>Parlaklık</translation>
+        </message>
     </context>
     <context>
         <name>DiagReportView</name>
@@ -21275,6 +23026,42 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <source>Visualize captured PD profiles…</source>
         <translation>Yakalanan PD profillerini görselleştir…</translation>
     </message>
+        <message>
+            <source>Inspect captured EDID bytes…</source>
+            <translation>Yakalanan EDID baytlarını incele…</translation>
+        </message>
+        <message>
+            <source>Columns</source>
+            <translation>Sütunlar</translation>
+        </message>
+        <message>
+            <source>Column %1</source>
+            <translation>Sütun %1</translation>
+        </message>
+        <message>
+            <source>Rows</source>
+            <translation>Satırlar</translation>
+        </message>
+        <message>
+            <source>Row %1: %2</source>
+            <translation>Satır %1: %2</translation>
+        </message>
+        <message>
+            <source>Contains binary identifiers; redaction cannot guarantee privacy.</source>
+            <translation>İkili tanımlayıcılar içerir; maskeleme gizliliği garanti edemez.</translation>
+        </message>
+        <message>
+            <source>Excluded: %1 findings, %2 tables, %3 rows, %4 columns.</source>
+            <translation>Hariç tutulan: %1 bulgu, %2 tablo, %3 satır, %4 sütun.</translation>
+        </message>
+        <message>
+            <source>Preview SHA-256: %1</source>
+            <translation>Önizleme SHA-256: %1</translation>
+        </message>
+        <message>
+            <source>Selection changed. Regenerate preview before exporting.</source>
+            <translation>Seçim değişti. Dışa aktarmadan önce önizlemeyi yeniden oluştur.</translation>
+        </message>
     </context>
     <context>
         <name>AdvancedHealthPage</name>
@@ -21724,6 +23511,50 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Panel Controls</source>
             <translation>Panel Kontrolleri</translation>
         </message>
+        <message>
+            <source>The built-in screen&apos;s brightness and refresh rate. Brightness is the backlight device in /sys/class/backlight; the refresh rate goes through the desktop&apos;s own tool (kscreen-doctor, wlr-randr or xrandr), because the compositor owns it. Nothing needs a password.</source>
+            <translation>Dahili ekranın parlaklığı ve yenileme hızı. Parlaklık /sys/class/backlight içindeki arka ışık aygıtıdır; yenileme hızını compositor yönettiği için masaüstünün kendi aracı (kscreen-doctor, wlr-randr veya xrandr) ayarlar. Hiçbiri parola gerektirmez.</translation>
+        </message>
+        <message>
+            <source>Set brightness</source>
+            <translation>Parlaklığı ayarla</translation>
+        </message>
+        <message>
+            <source>Set refresh rate</source>
+            <translation>Yenileme hızını ayarla</translation>
+        </message>
+        <message>
+            <source>centurion-display failed</source>
+            <translation>centurion-display başarısız oldu</translation>
+        </message>
+        <message>
+            <source>Brightness: %1</source>
+            <translation>Parlaklık: %1</translation>
+        </message>
+        <message>
+            <source>Refresh rate: %1</source>
+            <translation>Yenileme hızı: %1</translation>
+        </message>
+        <message>
+            <source>%1 Hz</source>
+            <translation>%1 Hz</translation>
+        </message>
+        <message>
+            <source>centurion-display not found.</source>
+            <translation>centurion-display bulunamadı.</translation>
+        </message>
+        <message>
+            <source>Brightness</source>
+            <translation>Parlaklık</translation>
+        </message>
+        <message>
+            <source>Refresh rate</source>
+            <translation>Yenileme hızı</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>Kapat</translation>
+        </message>
     </context>
     <context>
         <name>PipewireConfigDialog</name>
@@ -21732,12 +23563,116 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>PipeWire Settings</source>
             <translation>PipeWire Ayarları</translation>
         </message>
+        <message>
+            <source>Tick an option to set it; unticked options keep PipeWire&apos;s own default. The choices are written to 50-centurion.conf files in ~/.config/pipewire and ~/.config/wireplumber, which override the system files without changing them. Applying restarts the sound servers, so audio stops for a moment.</source>
+            <translation>Ayarlamak için bir seçeneği işaretleyin; işaretsiz seçenekler PipeWire&apos;ın kendi varsayılanını korur. Seçimler ~/.config/pipewire ve ~/.config/wireplumber içindeki 50-centurion.conf dosyalarına yazılır; bunlar sistem dosyalarını değiştirmeden onları geçersiz kılar. Uygulamak ses sunucularını yeniden başlatır, bu yüzden ses bir an kesilir.</translation>
+        </message>
+        <message>
+            <source>Save and restart sound servers</source>
+            <translation>Kaydet ve ses sunucularını yeniden başlat</translation>
+        </message>
+        <message>
+            <source>Remove all changes</source>
+            <translation>Tüm değişiklikleri kaldır</translation>
+        </message>
+        <message>
+            <source>Deletes the 50-centurion.conf files and restarts the sound servers.</source>
+            <translation>50-centurion.conf dosyalarını siler ve ses sunucularını yeniden başlatır.</translation>
+        </message>
+        <message>
+            <source>built-in</source>
+            <translation>yerleşik</translation>
+        </message>
+        <message>
+            <source>“%1” is not valid: %2</source>
+            <translation>“%1” geçerli değil: %2</translation>
+        </message>
+        <message>
+            <source>write rates such as 44100 48000, separated by spaces.</source>
+            <translation>hızları 44100 48000 gibi, boşlukla ayırarak yazın.</translation>
+        </message>
+        <message>
+            <source>write samples/rate, for example 256/48000.</source>
+            <translation>örnek/hız olarak yazın, örneğin 256/48000.</translation>
+        </message>
+        <message>
+            <source>The buffer sizes must satisfy: smallest ≤ buffer size ≤ largest (now %1, %2, %3).</source>
+            <translation>Arabellek boyutları şunu sağlamalı: en küçük ≤ arabellek boyutu ≤ en büyük (şimdi %1, %2, %3).</translation>
+        </message>
+        <message>
+            <source>Saved. PipeWire, pipewire-pulse and WirePlumber are restarted.</source>
+            <translation>Kaydedildi. PipeWire, pipewire-pulse ve WirePlumber yeniden başlatıldı.</translation>
+        </message>
+        <message>
+            <source>Changes removed. The sound servers run with their own defaults again.</source>
+            <translation>Değişiklikler kaldırıldı. Ses sunucuları yeniden kendi varsayılanlarıyla çalışıyor.</translation>
+        </message>
+        <message>
+            <source>Restarting the sound servers…</source>
+            <translation>Ses sunucuları yeniden başlatılıyor…</translation>
+        </message>
+        <message>
+            <source>The files are written, but the restart failed: %1</source>
+            <translation>Dosyalar yazıldı, ancak yeniden başlatma başarısız oldu: %1</translation>
+        </message>
+        <message>
+            <source>Set</source>
+            <translation>Ayarla</translation>
+        </message>
+        <message>
+            <source>Option</source>
+            <translation>Seçenek</translation>
+        </message>
+        <message>
+            <source>Value</source>
+            <translation>Değer</translation>
+        </message>
+        <message>
+            <source>Default</source>
+            <translation>Varsayılan</translation>
+        </message>
+        <message>
+            <source>Setting</source>
+            <translation>Ayar</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>Kapat</translation>
+        </message>
+        <message>
+            <source>%1: %2</source>
+            <translation>%1: %2</translation>
+        </message>
     </context>
     <context>
         <name>sysadmin</name>
         <message>
             <source>%1: working…</source>
             <translation>%1: çalışıyor…</translation>
+        </message>
+        <message>
+            <source>PipeWire restarted (gentoo-pipewire-launcher restart).</source>
+            <translation>PipeWire yeniden başlatıldı (gentoo-pipewire-launcher restart).</translation>
+        </message>
+        <message>
+            <source>gentoo-pipewire-launcher could not be started.</source>
+            <translation>gentoo-pipewire-launcher başlatılamadı.</translation>
+        </message>
+        <message>
+            <source>Neither gentoo-pipewire-launcher nor systemctl was found: restart the sound servers with the session.</source>
+            <translation>Ne gentoo-pipewire-launcher ne de systemctl bulundu: ses sunucularını oturumla birlikte yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>PipeWire, pipewire-pulse and WirePlumber restarted.</source>
+            <translation>PipeWire, pipewire-pulse ve WirePlumber yeniden başlatıldı.</translation>
+        </message>
+        <message>
+            <source>Failed.</source>
+            <translation>Başarısız.</translation>
+        </message>
+        <message>
+            <source>Done.</source>
+            <translation>Tamamlandı.</translation>
         </message>
     </context>
     <context>
@@ -22060,6 +23995,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message>
             <source>Read Power Limit Sources…</source>
             <translation>Güç limiti kaynaklarını oku…</translation>
+        </message>
+        <message>
+            <source>Unknown</source>
+            <translation>Bilinmiyor</translation>
         </message>
     </context>
     <context>
@@ -22839,4 +24778,395 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
       <translation>Tüm Çekirdek CO</translation>
     </message>
   </context>
+    <context>
+        <name>ConfigPage</name>
+        <message>
+            <source>Key</source>
+            <translation>Anahtar</translation>
+        </message>
+        <message>
+            <source>Command</source>
+            <translation>Komut</translation>
+        </message>
+        <message>
+            <source>Loaded now</source>
+            <translation>Şu an yüklü</translation>
+        </message>
+        <message>
+            <source>Kernel settings (sysctl, Centurion&apos;s file)</source>
+            <translation>Çekirdek ayarları (sysctl, Centurion&apos;un dosyası)</translation>
+        </message>
+        <message>
+            <source>Applied at once (sysctl -p) and at every boot. Emptying the file removes it; values already applied stay until reboot.</source>
+            <translation>Hemen (sysctl -p) ve her açılışta uygulanır. Dosyayı boşaltmak onu kaldırır; zaten uygulanmış değerler yeniden başlatmaya kadar kalır.</translation>
+        </message>
+        <message>
+            <source>Module options and blacklist (modprobe.d)</source>
+            <translation>Modül seçenekleri ve kara liste (modprobe.d)</translation>
+        </message>
+        <message>
+            <source>Takes effect the next time the module loads; for drivers in the initramfs, regenerate it (dracut) and reboot.</source>
+            <translation>Modül bir sonraki yüklendiğinde etkili olur; initramfs içindeki sürücüler için onu yeniden oluşturun (dracut) ve yeniden başlatın.</translation>
+        </message>
+        <message>
+            <source>Modules loaded at boot (modules-load.d)</source>
+            <translation>Açılışta yüklenen modüller (modules-load.d)</translation>
+        </message>
+        <message>
+            <source>One module per line, loaded at every boot (OpenRC: the modules-load service; systemd: systemd-modules-load).</source>
+            <translation>Satır başına bir modül, her açılışta yüklenir (OpenRC: modules-load servisi; systemd: systemd-modules-load).</translation>
+        </message>
+        <message>
+            <source>udev rules (Centurion&apos;s file)</source>
+            <translation>udev kuralları (Centurion&apos;un dosyası)</translation>
+        </message>
+        <message>
+            <source>Rules are reloaded on save and apply to devices added from then on (or after a reboot).</source>
+            <translation>Kurallar kaydedince yeniden yüklenir ve o andan sonra eklenen aygıtlara (veya yeniden başlatmadan sonra) uygulanır.</translation>
+        </message>
+        <message>
+            <source>System sysctl.conf</source>
+            <translation>Sistem sysctl.conf</translation>
+        </message>
+        <message>
+            <source>The distribution&apos;s own file: applied at once (sysctl -p) and at every boot.</source>
+            <translation>Dağıtımın kendi dosyası: hemen (sysctl -p) ve her açılışta uygulanır.</translation>
+        </message>
+        <message>
+            <source>Filesystems mounted at boot (fstab)</source>
+            <translation>Açılışta bağlanan dosya sistemleri (fstab)</translation>
+        </message>
+        <message>
+            <source>Checked with findmnt --verify before it is saved; nothing is mounted. A wrong entry can still stop the machine from booting normally: keep a live USB at hand when changing the root or boot lines.</source>
+            <translation>Kaydedilmeden önce findmnt --verify ile denetlenir; hiçbir şey bağlanmaz. Hatalı bir girdi yine de makinenin normal açılmasını engelleyebilir: kök veya boot satırlarını değiştirirken yanınızda bir canlı USB bulundurun.</translation>
+        </message>
+        <message numerus="yes">
+            <source>  … %n unchanged line(s)</source>
+            <translation>
+                <numerusform>  … %n değişmemiş satır</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>System configuration files, edited here and saved with the administrator password. Every save is checked first, shows what changes, and keeps the previous version (the last 10) for Restore.</source>
+            <translation>Burada düzenlenen ve yönetici parolasıyla kaydedilen sistem yapılandırma dosyaları. Her kayıt önce denetlenir, neyin değiştiğini gösterir ve Geri yükleme için önceki sürümü (son 10) tutar.</translation>
+        </message>
+        <message>
+            <source>Read the file from disk again (drops unsaved changes).</source>
+            <translation>Dosyayı diskten yeniden oku (kaydedilmemiş değişiklikler atılır).</translation>
+        </message>
+        <message>
+            <source>Restore backup…</source>
+            <translation>Yedeği geri yükle…</translation>
+        </message>
+        <message>
+            <source>Add…</source>
+            <translation>Ekle…</translation>
+        </message>
+        <message>
+            <source>Remove selected</source>
+            <translation>Seçileni kaldır</translation>
+        </message>
+        <message>
+            <source>Settings</source>
+            <translation>Ayarlar</translation>
+        </message>
+        <message>
+            <source>Drop the unsaved changes to %1?</source>
+            <translation>%1 dosyasındaki kaydedilmemiş değişiklikler atılsın mı?</translation>
+        </message>
+        <message>
+            <source>(does not exist yet: saving creates it)</source>
+            <translation>(henüz yok: kaydetmek onu oluşturur)</translation>
+        </message>
+        <message>
+            <source>%1 cannot be read by this user.</source>
+            <translation>%1 bu kullanıcı tarafından okunamıyor.</translation>
+        </message>
+        <message>
+            <source>Add to %1</source>
+            <translation>%1 dosyasına ekle</translation>
+        </message>
+        <message>
+            <source>key, e.g. vm.swappiness</source>
+            <translation>anahtar, ör. vm.swappiness</translation>
+        </message>
+        <message>
+            <source>module</source>
+            <translation>modül</translation>
+        </message>
+        <message>
+            <source>value</source>
+            <translation>değer</translation>
+        </message>
+        <message>
+            <source>parameters, e.g. modeset=1</source>
+            <translation>parametreler, ör. modeset=1</translation>
+        </message>
+        <message>
+            <source>value (now: %1)</source>
+            <translation>değer (şimdi: %1)</translation>
+        </message>
+        <message>
+            <source>No changes to save.</source>
+            <translation>Kaydedilecek değişiklik yok.</translation>
+        </message>
+        <message>
+            <source>%1 will be changed as below. The current version is kept as a backup.</source>
+            <translation>%1 aşağıdaki gibi değiştirilecek. Mevcut sürüm yedek olarak tutulur.</translation>
+        </message>
+        <message>
+            <source>Save %1</source>
+            <translation>%1 dosyasını kaydet</translation>
+        </message>
+        <message>
+            <source>Saved. </source>
+            <translation>Kaydedildi. </translation>
+        </message>
+        <message>
+            <source>Not saved: </source>
+            <translation>Kaydedilmedi: </translation>
+        </message>
+        <message>
+            <source>Restore backup</source>
+            <translation>Yedeği geri yükle</translation>
+        </message>
+        <message>
+            <source>No backup of %1 yet.</source>
+            <translation>%1 için henüz yedek yok.</translation>
+        </message>
+        <message>
+            <source>Version of %1 saved before the change at:</source>
+            <translation>%1 dosyasının değişiklikten önce kaydedilen sürümü:</translation>
+        </message>
+        <message>
+            <source>Restore %1</source>
+            <translation>%1 dosyasını geri yükle</translation>
+        </message>
+        <message>
+            <source>%1 goes back to the version from %2. The current version is kept as a backup too.</source>
+            <translation>%1, %2 tarihli sürüme döner. Mevcut sürüm de yedek olarak tutulur.</translation>
+        </message>
+        <message>
+            <source>Restore</source>
+            <translation>Geri yükle</translation>
+        </message>
+        <message>
+            <source>Not restored: </source>
+            <translation>Geri yüklenmedi: </translation>
+        </message>
+        <message>
+            <source>Value</source>
+            <translation>Değer</translation>
+        </message>
+        <message>
+            <source>Now</source>
+            <translation>Şimdi</translation>
+        </message>
+        <message>
+            <source>Module</source>
+            <translation>Modül</translation>
+        </message>
+        <message>
+            <source>Parameters</source>
+            <translation>Parametreler</translation>
+        </message>
+        <message>
+            <source>Reload</source>
+            <translation>Yeniden yükle</translation>
+        </message>
+        <message>
+            <source>Save…</source>
+            <translation>Kaydet…</translation>
+        </message>
+        <message>
+            <source>Text</source>
+            <translation>Metin</translation>
+        </message>
+        <message>
+            <source>Unsaved changes</source>
+            <translation>Kaydedilmemiş değişiklikler</translation>
+        </message>
+        <message>
+            <source>yes</source>
+            <translation>evet</translation>
+        </message>
+        <message>
+            <source>no</source>
+            <translation>hayır</translation>
+        </message>
+        <message>
+            <source>Save</source>
+            <translation>Kaydet</translation>
+        </message>
+        <message>
+            <source>Saving…</source>
+            <translation>Kaydediliyor…</translation>
+        </message>
+    </context>
+    <context>
+        <name>PipewireConfig</name>
+        <message>
+            <source>Sample rate</source>
+            <translation>Örnekleme hızı</translation>
+        </message>
+        <message>
+            <source>The rate the sound graph runs at when no stream asks for another. 48000 suits most hardware and video; 44100 only matters for CD-style music.</source>
+            <translation>Hiçbir akış başka bir hız istemediğinde ses grafiğinin çalıştığı hız. 48000 çoğu donanıma ve videoya uyar; 44100 yalnızca CD tarzı müzik için önemlidir.</translation>
+        </message>
+        <message>
+            <source>Allowed sample rates</source>
+            <translation>İzin verilen örnekleme hızları</translation>
+        </message>
+        <message>
+            <source>Rates PipeWire may switch to so a stream is played without resampling, for example 44100 48000 96000. Separate them with spaces.</source>
+            <translation>Bir akışın yeniden örneklenmeden çalınması için PipeWire&apos;ın geçebileceği hızlar, örneğin 44100 48000 96000. Boşlukla ayırın.</translation>
+        </message>
+        <message>
+            <source>Buffer size (quantum)</source>
+            <translation>Arabellek boyutu (quantum)</translation>
+        </message>
+        <message>
+            <source>Buffer size in samples: at 48000 Hz, 1024 is about 21 ms. Lower means less delay but a higher risk of crackling (xruns).</source>
+            <translation>Örnek cinsinden arabellek boyutu: 48000 Hz&apos;de 1024 yaklaşık 21 ms&apos;dir. Düşük değer daha az gecikme ama daha yüksek cızırtı (xrun) riski demektir.</translation>
+        </message>
+        <message>
+            <source>Smallest buffer</source>
+            <translation>En küçük arabellek</translation>
+        </message>
+        <message>
+            <source>The smallest buffer any program may ask for. Raise it (256 or 512) when a low-latency program makes everything crackle.</source>
+            <translation>Herhangi bir programın isteyebileceği en küçük arabellek. Düşük gecikmeli bir program her şeyi cızırdatıyorsa yükseltin (256 veya 512).</translation>
+        </message>
+        <message>
+            <source>Largest buffer</source>
+            <translation>En büyük arabellek</translation>
+        </message>
+        <message>
+            <source>The largest buffer used while no program asks for low latency. A bigger value saves power and CPU time.</source>
+            <translation>Hiçbir program düşük gecikme istemezken kullanılan en büyük arabellek. Daha büyük değer güç ve işlemci zamanı kazandırır.</translation>
+        </message>
+        <message>
+            <source>Power-of-two buffers</source>
+            <translation>İkinin kuvveti arabellekler</translation>
+        </message>
+        <message>
+            <source>Round requested buffer sizes to a power of two. Turn it off only for a program that insists on other sizes.</source>
+            <translation>İstenen arabellek boyutlarını ikinin kuvvetine yuvarla. Yalnızca başka boyutlarda ısrar eden bir program için kapatın.</translation>
+        </message>
+        <message>
+            <source>Log level</source>
+            <translation>Günlük seviyesi</translation>
+        </message>
+        <message>
+            <source>0 off, 1 errors, 2 warnings, 3 info, 4 debug, 5 trace. Raise it to 3 or 4 only while hunting a problem; the log is long.</source>
+            <translation>0 kapalı, 1 hatalar, 2 uyarılar, 3 bilgi, 4 hata ayıklama, 5 iz. Yalnızca bir sorun ararken 3 veya 4&apos;e yükseltin; günlük uzun olur.</translation>
+        </message>
+        <message>
+            <source>Pulse clients: smallest request</source>
+            <translation>Pulse istemcileri: en küçük istek</translation>
+        </message>
+        <message>
+            <source>Smallest request size for PulseAudio programs, written samples/rate, for example 256/48000 (5 ms). Raise it if a browser or game crackles.</source>
+            <translation>PulseAudio programları için en küçük istek boyutu, örnek/hız olarak yazılır, örneğin 256/48000 (5 ms). Bir tarayıcı veya oyun cızırdıyorsa yükseltin.</translation>
+        </message>
+        <message>
+            <source>Pulse clients: smallest buffer</source>
+            <translation>Pulse istemcileri: en küçük arabellek</translation>
+        </message>
+        <message>
+            <source>Smallest buffer the Pulse server asks the graph for, written samples/rate, for example 512/48000.</source>
+            <translation>Pulse sunucusunun ses grafiğinden istediği en küçük arabellek, örnek/hız olarak yazılır, örneğin 512/48000.</translation>
+        </message>
+        <message>
+            <source>Bluetooth: switch to headset mode</source>
+            <translation>Bluetooth: kulaklık moduna geç</translation>
+        </message>
+        <message>
+            <source>Switch a Bluetooth headset to its call profile (with microphone, lower sound quality) when a program records. Turn it off to keep the music profile.</source>
+            <translation>Bir program kayıt yaptığında Bluetooth kulaklığı arama profiline (mikrofonlu, daha düşük ses kalitesi) geçir. Müzik profilini korumak için kapatın.</translation>
+        </message>
+        <message>
+            <source>Bluetooth: preferred profile</source>
+            <translation>Bluetooth: tercih edilen profil</translation>
+        </message>
+        <message>
+            <source>Prefer better quality or lower latency when a Bluetooth profile is chosen automatically.</source>
+            <translation>Bir Bluetooth profili otomatik seçildiğinde daha iyi kaliteyi veya daha düşük gecikmeyi tercih et.</translation>
+        </message>
+        <message>
+            <source>Volume of a new output</source>
+            <translation>Yeni bir çıkışın ses seviyesi</translation>
+        </message>
+        <message>
+            <source>The volume (0 to 1) a sound output gets the first time it is seen. 0.064 is about 40 % on the usual cubic volume scale.</source>
+            <translation>Bir ses çıkışının ilk görüldüğünde aldığı ses seviyesi (0 ile 1 arası). 0.064, olağan kübik ses ölçeğinde yaklaşık yüzde 40&apos;tır.</translation>
+        </message>
+        <message>
+            <source>Mute when wired headphones are unplugged</source>
+            <translation>Kablolu kulaklık çıkarılınca sesi kapat</translation>
+        </message>
+        <message>
+            <source>Mute all outputs when the active wired headphones or speakers disconnect, so sound does not suddenly come from the speakers.</source>
+            <translation>Etkin kablolu kulaklık veya hoparlör bağlantısı kesildiğinde tüm çıkışları sessize al, böylece ses aniden hoparlörlerden gelmez.</translation>
+        </message>
+        <message>
+            <source>Mute when Bluetooth audio disconnects</source>
+            <translation>Bluetooth ses bağlantısı kesilince sesi kapat</translation>
+        </message>
+        <message>
+            <source>The same for Bluetooth headphones and speakers.</source>
+            <translation>Aynısı Bluetooth kulaklık ve hoparlörler için.</translation>
+        </message>
+        <message>
+            <source>Pause players when their output disappears</source>
+            <translation>Çıkışları kaybolan oynatıcıları duraklat</translation>
+        </message>
+        <message>
+            <source>Pause media players whose output device was removed.</source>
+            <translation>Çıkış aygıtı kaldırılan medya oynatıcılarını duraklat.</translation>
+        </message>
+        <message>
+            <source>Idle suspend delay (s)</source>
+            <translation>Boşta askıya alma gecikmesi (s)</translation>
+        </message>
+        <message>
+            <source>Seconds an idle sound device waits before it is suspended. 0 keeps it open: it ends the pop or the cut-off first second some speakers and DACs give after silence, and costs a little power.</source>
+            <translation>Boştaki bir ses aygıtının askıya alınmadan önce beklediği saniye. 0 onu açık tutar: bazı hoparlör ve DAC&apos;lerin sessizlikten sonra verdiği patlama sesini veya kesilen ilk saniyeyi giderir ve biraz güç harcar.</translation>
+        </message>
+        <message>
+            <source>Device buffer headroom (samples)</source>
+            <translation>Aygıt arabellek payı (örnek)</translation>
+        </message>
+        <message>
+            <source>Extra samples of safety margin in the sound device&apos;s buffer. It can reduce crackling on some hardware, and adds that much delay.</source>
+            <translation>Ses aygıtının arabelleğinde fazladan güvenlik payı örnekleri. Bazı donanımlarda cızırtıyı azaltabilir ve o kadar gecikme ekler.</translation>
+        </message>
+    </context>
+    <context>
+        <name>coarchive</name>
+        <message>
+            <source>Unknown or different CPU topology. Per-core comparison is unavailable.</source>
+            <translation>CPU topolojisi bilinmiyor veya farklı. Çekirdek başına karşılaştırma yapılamıyor.</translation>
+        </message>
+        <message>
+            <source>Missing or ambiguous core identity.</source>
+            <translation>Eksik veya belirsiz çekirdek kimliği.</translation>
+        </message>
+        <message>
+            <source>Recorded offsets only; this is not a stability comparison.</source>
+            <translation>Yalnız kaydedilen ofsetler; bu bir kararlılık karşılaştırması değildir.</translation>
+        </message>
+        <message>
+            <source>BIOS versions differ.</source>
+            <translation>BIOS sürümleri farklı.</translation>
+        </message>
+        <message>
+            <source>Search modes differ.</source>
+            <translation>Arama modları farklı.</translation>
+        </message>
+        <message>
+            <source>No recorded offset differences.</source>
+            <translation>Kaydedilen ofset farkı yok.</translation>
+        </message>
+    </context>
 </TS>

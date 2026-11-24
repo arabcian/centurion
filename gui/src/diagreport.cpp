@@ -97,7 +97,7 @@ QString redactPrivateText(QString text) {
     static const QList<QRegularExpression> patterns{
         QRegularExpression(QStringLiteral(R"((?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b)")),
         QRegularExpression(QStringLiteral(R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)")),
-        QRegularExpression(QStringLiteral(R"((?i)(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![0-9a-f:]))")),
+        QRegularExpression(QStringLiteral(R"((?i)(?<![\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:]))")),
         QRegularExpression(QStringLiteral(R"((?i)(?:/home/|/Users/)[^/\s]+)")),
         QRegularExpression(QStringLiteral(R"((?i)\b(?:boot(?: id)?|machine(?: id)?|disk uuid|device uuid|gpu uuid|uuid)[ \t]*[:=][ \t]*[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b)")),
         QRegularExpression(QStringLiteral(R"((?im)\b(?:serial(?: number)?|hostname|host name|user name|username|seri numarası|makine adı|kullanıcı adı)[ \t]*[:=][ \t]*[^\r\n]+)")),
@@ -115,6 +115,8 @@ QString redactPrivateText(QString text) {
         while (matches.hasNext()) {
             const auto m = matches.next();
             const auto end = m.capturedEnd();
+            // An IPv6 address has all eight groups or a "::"; "18:22:05" and "0C14:00:" have neither.
+            if (!m.captured().contains(QStringLiteral("::")) && m.captured().count(QLatin1Char(':')) != 7) continue;
             if (pci.match(m.captured()).hasMatch() && end < text.size() && text[end] == QLatin1Char('.')) continue;
             spans.append(qMakePair(m.capturedStart(), m.capturedLength()));
         }

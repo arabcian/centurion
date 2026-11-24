@@ -301,7 +301,8 @@ mod tests {
         {
             if !Load::Power.supported() { return; }
             let mut b = vec![0u64; BUF_WORDS];
-            let wide: [(&str, unsafe fn(u64, &mut [u64], u32) -> u64); 2] = [("256", x86::power256), ("512", x86::power512)];
+            type PowerFn = unsafe fn(u64, &mut [u64], u32) -> u64;
+            let wide: [(&str, PowerFn); 2] = [("256", x86::power256), ("512", x86::power512)];
             for (name, f) in wide {
                 if name == "512" && !is_x86_feature_detected!("avx512f") { continue; }
                 for seed in 0..8 {

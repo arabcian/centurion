@@ -1,6 +1,7 @@
 // System tools reports over a fake sysfs / procfs tree and synthetic EDIDs: no real hardware is read.
 #include <cmath>
 #include <algorithm>
+#include <unistd.h>
 #include "../src/diagnostictools.h"
 #include "../src/systemdiagnostics.h"
 #include "../src/hierarchyviewmodel.h"
@@ -131,6 +132,10 @@ int main(int argc, char **argv) {
     const auto redacted=diag::redactPrivateText(QStringLiteral("192.168.1.42 aa:bb:cc:dd:ee:ff 0000:01:00.0 Xid 154\nSerial: secret-123\n/home/private/file"));
     CHECK(!redacted.contains(QStringLiteral("192.168.1.42")) && !redacted.contains(QStringLiteral("aa:bb:cc:dd:ee:ff")) && !redacted.contains(QStringLiteral("secret-123")) && !redacted.contains(QStringLiteral("/home/private")));
     CHECK(redacted.contains(QStringLiteral("0000:01:00.0")) && redacted.contains(QStringLiteral("Xid 154")));
+    // IPv6 is masked, times, ACPI IDs and C++/Rust paths are not.
+    const auto v6=diag::redactPrivateText(QStringLiteral("inet6 fe80::1ff:fe23:4567:890a/64 2001:db8:85a3:0:0:8a2e:370:7334 at 2026-11-24 18:22:05 acpi PNP0C14:00: core::panicking std::string"));
+    CHECK(!v6.contains(QStringLiteral("fe80::1ff")) && !v6.contains(QStringLiteral("2001:db8")));
+    CHECK(v6.contains(QStringLiteral("18:22:05")) && v6.contains(QStringLiteral("PNP0C14:00:")) && v6.contains(QStringLiteral("core::panicking")) && v6.contains(QStringLiteral("std::string")));
     const auto ids=diag::redactPrivateText(QStringLiteral("Boot ID: 12345678-1234-1234-1234-123456789012\nWMI GUID: 87654321-4321-4321-4321-210987654321"));
     CHECK(!ids.contains(QStringLiteral("12345678-1234-1234-1234-123456789012")));
     CHECK(ids.contains(QStringLiteral("87654321-4321-4321-4321-210987654321")));
@@ -262,6 +267,60 @@ int main(int argc, char **argv) {
     bool acpiFound=false;const auto firmware=systemdiagnostics::firmware(root);
     for(const auto &t:firmware.tables)if(t.title==QStringLiteral("ACPI Tables Present")){CHECK(t.rows.first().value(1)==QStringLiteral("DSDT"));acpiFound=true;}
     CHECK(acpiFound);
+
+    // S11 uses supplied saved log records and fake sysfs only; detached GUIDs
+    // remain candidates, and a legacy boot prefix cannot join current evidence.
+    const QString fwBoot = QStringLiteral("12345678-1234-1234-1234-123456789abc");
+    const QString guid = QStringLiteral("887B54E3-DDDC-4B2C-8B88-68A26A8835D0");
+    put(QStringLiteral("/proc/sys/kernel/random/boot_id"), fwBoot.toLatin1());
+    const QString fwDev = QStringLiteral("/sys/devices/platform/PNP0C14:00/") + guid;
+    put(fwDev + QStringLiteral("/modalias"), "wmi:887B54E3-DDDC-4B2C-8B88-68A26A8835D0");
+    CHECK(QDir().mkpath(root + QStringLiteral("/sys/bus/wmi/devices")));
+    CHECK(QDir().mkpath(root + QStringLiteral("/sys/bus/wmi/drivers/lenovo-wmi")));
+    CHECK(QFile::link(root + fwDev, root + QStringLiteral("/sys/bus/wmi/devices/") + guid));
+    CHECK(QFile::link(root + QStringLiteral("/sys/bus/wmi/drivers/lenovo-wmi"), root + fwDev + QStringLiteral("/driver")));
+    CHECK(::symlink(QFile::encodeName(root + fwDev + QStringLiteral("-missing")).constData(),
+                    QFile::encodeName(root + QStringLiteral("/sys/bus/wmi/devices/") + guid + QStringLiteral("-1")).constData()) == 0);
+    CHECK(QDir().mkpath(root + QStringLiteral("/sys/bus/acpi/devices")));
+    // Real layout: the ACPI node lives under LNXSYSTM:00; the platform device links to it with firmware_node.
+    CHECK(QDir().mkpath(root + QStringLiteral("/sys/devices/LNXSYSTM:00/PNP0C14:00")));
+    CHECK(QFile::link(root + QStringLiteral("/sys/devices/LNXSYSTM:00/PNP0C14:00"), root + QStringLiteral("/sys/bus/acpi/devices/PNP0C14:00")));
+    CHECK(QFile::link(root + QStringLiteral("/sys/devices/LNXSYSTM:00/PNP0C14:00"), root + QStringLiteral("/sys/devices/platform/PNP0C14:00/firmware_node")));
+    const QList<diagsrc::LogLine> fwLogs{
+        {"t",fwBoot.left(8),"warn",{},{},"wmi: " + guid,1},
+        {"t",fwBoot,"warn",{},{},"wmi: " + guid,2},
+        {"t",fwBoot,"warn",{},{},"lenovo-wmi: event",3},
+        {"t",fwBoot,"warn",{},{},"ACPI: PNP0C14:00: event",4},
+        {"t",fwBoot,"warn",{},{},"unrelated: event",5}};
+    const auto fwReport = systemdiagnostics::firmware(root, fwLogs);
+    bool wmiFound=false, evidenceFound=false;
+    for (const auto &table : fwReport.tables) {
+        if (table.title == QStringLiteral("WMI Objects")) {
+            wmiFound=true; CHECK(table.rows.size()==2);
+            for (const auto &row:table.rows) CHECK(row.value(5)==QStringLiteral("2"));
+        }
+        if (table.title == QStringLiteral("ACPI / WMI Kernel Evidence")) {
+            evidenceFound=true; CHECK(table.rows.size()==3);
+            for (const auto &row:table.rows) {
+                CHECK(row.value(1)==fwBoot);
+                if (row.value(2)==QStringLiteral("2")) CHECK(row.value(5)==QStringLiteral("2"));
+                if (row.value(2)==QStringLiteral("3")) CHECK(row.value(3)==QStringLiteral("Driver prefix candidate"));
+            }
+        }
+    }
+    CHECK(wmiFound && evidenceFound);
+    bool treeFound=false;
+    for (const auto &table : fwReport.tables) if (table.viewKind == QStringLiteral("acpi-wmi-tree")) {
+        treeFound=true; int acpiRow=-1, wmiRow=-1;
+        for (int i=0;i<table.rows.size();++i) {
+            if (table.rows[i].value(0)==QStringLiteral("PNP0C14:00")) acpiRow=i;
+            if (table.rows[i].value(0)==guid) wmiRow=i;
+        }
+        CHECK(acpiRow>=0 && wmiRow>=0 && table.parents.value(wmiRow)==acpiRow);
+    }
+    CHECK(treeFound);
+    // Restore the fixture boot used by subsequent topology tests.
+    put(QStringLiteral("/proc/sys/kernel/random/boot_id"), "new-boot\n");
 
     // ── S13: the charger's PD profiles.
     put(QStringLiteral("/sys/class/typec/port0/power_role"), "[sink] source\n");

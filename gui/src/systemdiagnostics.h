@@ -17,7 +17,7 @@ diag::Report pcieLinks(const QString &root = {}, const QJsonObject &previous = {
 diag::Report radios(const QList<diagsrc::LogLine> &kernel, const QString &root = {});  // S07
 diag::Report powerLimits(const QString &root = {});                                    // S08
 diag::Report memory(const QString &root = {});                                         // S10
-diag::Report firmware(const QString &root = {});                                       // S11
+diag::Report firmware(const QString &root = {}, const QList<diagsrc::LogLine> &kernel = {});                                       // S11
 diag::Report charging(const QString &root = {});                                       // S13
 /// `outputs`: "wpctl status" / "pactl info" → their output (empty = not installed / failed).
 diag::Report audio(const QHash<QString, QString> &outputs, const QString &root = {});   // S15

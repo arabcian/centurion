@@ -2351,8 +2351,7 @@ mod tests {
 
     #[test]
     fn queue_fail_closed_only_when_guarding() {
-        let mut c = Config::default();
-        c.log_conns = true;
+        let mut c = Config { log_conns: true, ..Default::default() };
         let log_only = nft_script(&c);
         assert!(log_only.contains("queue num 19536 bypass"));
         c.guard = true;

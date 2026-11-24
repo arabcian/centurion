@@ -8,6 +8,7 @@
 #include "systools.h"
 #include "theme.h"
 #include "workspacestate.h"
+#include "socketbind.h"
 
 #include <QCheckBox>
 #include <QCollator>
@@ -467,7 +468,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         info->setWordWrap(true); layout->addWidget(info);
         auto *scene = new QGraphicsScene(&dlg);
         auto *view = new QGraphicsView(scene); view->setMinimumHeight(155); layout->addWidget(view,1);
-        const QPen axis(QColor(theme::FG_DIM)), marker(QColor(theme::ACCENT));
+        const QPen axis{QColor(theme::FG_DIM)}, marker{QColor(theme::ACCENT)};
         const auto nets = snapshot.value(QStringLiteral("networks")).toArray();
         // Compare only unique captured BSSID/frequency rows with known intervals.
         // A duplicate key is ambiguous and not counted as another access point.
@@ -512,7 +513,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                     .arg(str(o,"ssid"),str(o,"bssid")).arg(f.toInt()).arg(signal.toDouble())
                     .arg(ageText(age),range ? tr("Advertised %1 MHz (%2–%3 MHz)").arg(range->width).arg(range->low).arg(range->high) : tr("Width unknown"));
                 if (range) {
-                    QPen span(QColor(theme::ACCENT)); span.setWidthF(2.0); if (!recent) span.setStyle(Qt::DashLine);
+                    QPen span{QColor(theme::ACCENT)}; span.setWidthF(2.0); if (!recent) span.setStyle(Qt::DashLine);
                     const double lo = left+190.0*(range->low-lower)/(upper-lower), hi = left+190.0*(range->high-lower)/(upper-lower);
                     auto *line = scene->addLine(lo,y,hi,y,span); line->setToolTip(tip.toHtmlEscaped());
                 }
@@ -701,15 +702,15 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     for (QPushButton *b : {bPortOpen, bPortLan, bPortClose, bPortDefault}) rp->addWidget(b);
     auto *bExpP = button("Export…", rp);
     vp->addLayout(rp);
-    ports_ = makeTree({tr("Program"), tr("Proto"), tr("Port"), tr("Bound to"), tr("Reachable from"), tr("Usually"), tr("Firewall")});
+    ports_ = makeTree({tr("Program"), tr("Proto"), tr("Port"), tr("Bound to"), tr("Bind scope"), tr("Usually"), tr("Saved firewall"), tr("PID"), tr("UID"), tr("Family")});
     ports_->setColumnWidth(0, 200);
     ports_->setColumnWidth(3, 170);
     ports_->setColumnWidth(4, 170);
     ports_->setSortingEnabled(true);
     vp->addWidget(ports_, 1);
-    auto *portsNote = new QLabel(tr("A program bound to 0.0.0.0 / :: answers on every network this machine joins (café Wi-Fi too). "
-                                    "Bind it to 127.0.0.1 in its settings, or stop the service, if nothing else needs to reach it. "
-                                    "\"All users (root)\" on the Connections tab names the system services."));
+    auto *portsNote = new QLabel(tr("Bind scope is not proof of reachability. Routing, firewall rules, network namespaces and IPv6-only socket options may change access. "
+                                    "Port actions affect the protocol and port, not just the selected address or process. "
+                                    "All users (root) on the Connections tab can identify more socket owners."));
     portsNote->setProperty("role", "muted");
     portsNote->setWordWrap(true);
     vp->addWidget(portsNote);
@@ -833,11 +834,13 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         const auto recorded = it->data(0, RecordedConnectionRole).toJsonObject();
         if (!recorded.isEmpty()) m.addAction(tr("Preview saved firewall rules…"), this, [this, recorded] { firewall_->previewConnection(recorded); });
     });
-    menuFor(ports_, [this](QMenu &m, QTreeWidgetItem *) {
-        m.addAction(tr("Open"), this, [this] { setPortState(QStringLiteral("open")); });
-        m.addAction(tr("LAN only"), this, [this] { setPortState(QStringLiteral("lan")); });
-        m.addAction(tr("Close"), this, [this] { setPortState(QStringLiteral("closed")); });
-        m.addAction(tr("Use default"), this, [this] { setPortState(QStringLiteral("default")); });
+    menuFor(ports_, [this](QMenu &m, QTreeWidgetItem *it) {
+        const QString key = it->data(0, KeyRole).toString();
+        if (key.isEmpty()) return;
+        m.addAction(tr("Open"), this, [this, key] { setPortState(QStringLiteral("open"), key); });
+        m.addAction(tr("LAN only"), this, [this, key] { setPortState(QStringLiteral("lan"), key); });
+        m.addAction(tr("Close"), this, [this, key] { setPortState(QStringLiteral("closed"), key); });
+        m.addAction(tr("Use default"), this, [this, key] { setPortState(QStringLiteral("default"), key); });
     });
     menuFor(bl_, [this](QMenu &m, QTreeWidgetItem *it) {
         const QString entry = it->data(0, IpRole).toString();
@@ -2162,20 +2165,18 @@ QString portService(const QString &proto, int port) {
     return it == table.constEnd() ? QString() : QString::fromLatin1(it.value());
 }
 
-// "127.0.0.1" / "::1": this machine only; "0.0.0.0" / "::": every network; private ranges: that LAN.
-QString reach(const QString &addr) {
-    QHostAddress a;
-    if (!a.setAddress(addr)) return addr;
-    if (a.isLoopback()) return NetPage::tr("this computer only");
-    if (a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6 || a == QHostAddress::Any) return NetPage::tr("every network");
-    if (a.isLinkLocal()) return NetPage::tr("the local link");
-    static const QList<QPair<QHostAddress, int>> PRIVATE = {QHostAddress::parseSubnet(QStringLiteral("10.0.0.0/8")),
-                                                           QHostAddress::parseSubnet(QStringLiteral("172.16.0.0/12")),
-                                                           QHostAddress::parseSubnet(QStringLiteral("192.168.0.0/16")),
-                                                           QHostAddress::parseSubnet(QStringLiteral("100.64.0.0/10"))};
-    for (const auto &net : PRIVATE) if (a.isInSubnet(net)) return NetPage::tr("that local network");
-    if (a.isUniqueLocalUnicast()) return NetPage::tr("that local network");
-    return NetPage::tr("that address (public)");
+QString bindScope(socketbind::Bind bind) {
+    using socketbind::Scope;
+    switch (bind.scope) {
+    case Scope::Loopback: return NetPage::tr("Loopback only");
+    case Scope::Wildcard: return bind.family == 4 ? NetPage::tr("IPv4 wildcard") : NetPage::tr("IPv6 wildcard (dual-stack unknown)");
+    case Scope::LinkLocal: return NetPage::tr("Link-local address");
+    case Scope::Private: return NetPage::tr("Private / unique-local address");
+    case Scope::Shared: return NetPage::tr("Shared address space");
+    case Scope::Multicast: return NetPage::tr("Multicast address");
+    case Scope::Specific: return NetPage::tr("Specific address");
+    default: return NetPage::tr("Unknown bind scope");
+    }
 }
 }  // namespace
 
@@ -2201,8 +2202,7 @@ void NetPage::showPorts() {
     ports_->setSortingEnabled(false);
     ports_->clear();
     QTreeWidgetItem *sel = nullptr;
-    int exposed = 0, total = 0, clients = 0;
-    QSet<QString> seen;
+    int exposed = 0, total = 0, clients = 0, unknown = 0, selectionMatches = 0;
     QStringList exposedServices;
     for (const QJsonValue &v : std::as_const(connData_)) {
         const QJsonObject c = v.toObject();
@@ -2210,65 +2210,86 @@ void NetPage::showPorts() {
         const QString proto = str(c, "proto"), local = str(c, "local"), state = str(c, "state");
         if (proto == QLatin1String("tcp") && state != QLatin1String("LISTEN")) continue;
         const int port = c.value(QLatin1String("lport")).toInt();
-        if (port == 0) continue;
+        if (port <= 0 || port > 65535 || (proto != QLatin1String("tcp") && proto != QLatin1String("udp"))) continue;
+        const auto uid = c.value(QLatin1String("uid")).toInteger(-1);
         QString name = str(c, "name");
-        if (name.isEmpty()) name = QLatin1Char('(') + userName(uint(c.value(QLatin1String("uid")).toInteger())) + QLatin1Char(')');
+        if (name.isEmpty()) name = uid >= 0 && uid <= 0xffffffffLL ? QLatin1Char('(') + userName(uint(uid)) + QLatin1Char(')') : tr("Unknown owner");
         const QString key = connectionKey(c);
-        const QString group = QString::fromUtf8(QJsonDocument(QJsonArray{name, proto, local, port}).toJson(QJsonDocument::Compact));
-        if (seen.contains(group)) continue;
-        seen.insert(group);
-        QString where = reach(local);
-        QHostAddress a;
-        const bool bound = a.setAddress(local) && !a.isLoopback();
-        // The firewall's answer counts only while the daemon enforces it.
-        const QString fw = state_.value(QLatin1String("running")).toBool() ? str(c, "fw") : QString();
+        const auto bind = socketbind::classify(local.toStdString());
+        const QString where = bindScope(bind);
+        const bool bound = socketbind::potentiallyNonlocal(bind);
+        if (bind.scope == socketbind::Scope::Unknown) ++unknown;
+        // This is the helper's saved-config assessment, not an effective ruleset trace.
+        const QString fw = str(c, "fw");
         const bool conditional = !fw.isEmpty() && c.value(QLatin1String("fw_conditional")).toBool();
-        const bool walled = bound && fw == QLatin1String("blocked") && !conditional;
-        const bool outside = bound && !walled;
-        if (walled) where = tr("nobody (firewall)");
-        else if (bound && fw == QLatin1String("lan") && !conditional) where = tr("local networks (firewall)");
+        const bool outside = bound;
         QString usually = portService(proto, port);
         const bool client = proto == QLatin1String("udp") && usually.isEmpty() && port >= eph.first && port <= eph.second;
-        if (client) usually = tr("a program's own client socket (temporary port)");
-        QString wall = !bound ? QStringLiteral("—") : fw == QLatin1String("open") ? tr("open") : fw == QLatin1String("lan") ? tr("LAN only")
-                       : fw == QLatin1String("blocked") ? tr("closed") : tr("no rules");
-        if (bound && conditional) wall += QStringLiteral(" *");
-        auto *it = new SortItem({name, proto.toUpper(), QString::number(port), local, where, usually, wall});
-        if (wall.endsWith(QLatin1Char('*'))) it->setToolTip(6, tr("A rule limited to certain addresses or an interface also applies to this port."));
+        if (client) usually = tr("Possible UDP client (ephemeral port)");
+        QString wall = fw == QLatin1String("open") ? tr("open") : fw == QLatin1String("lan") ? tr("LAN only")
+                       : fw == QLatin1String("blocked") ? tr("closed") : fw == QLatin1String("off") ? tr("off") : tr("Unknown saved policy");
+        if (conditional) wall += QStringLiteral(" *");
+        const auto pid = c.value(QLatin1String("pid")).toInteger();
+        const QString family = bind.family == 4 ? QStringLiteral("IPv4") : bind.family == 6
+            ? (bind.mapped ? tr("IPv6 (IPv4-mapped)") : QStringLiteral("IPv6")) : tr("Unknown bind scope");
+        auto *it = new SortItem({name, proto.toUpper(), QString::number(port), local, where, usually, wall,
+            pid > 0 ? QString::number(pid) : QStringLiteral("—"), uid >= 0 && uid <= 0xffffffffLL ? QString::number(uid) : QStringLiteral("—"), family});
+        it->setToolTip(6, tr("Saved policy reported in the socket snapshot; effective access has not been tested."));
+        if (conditional) it->setToolTip(6, it->toolTip(6) + QLatin1Char(' ') + tr("A rule limited to certain addresses or an interface also applies to this port."));
         it->setToolTip(0, str(c, "exe"));
         it->setData(0, KeyRole, key);
-        if (client) {
-            ++clients;
-            for (int k = 0; k < 7; ++k) it->setForeground(k, QColor(QLatin1String(theme::MUTED)));
-        } else if (outside) {
+        it->setData(7, SortRole, double(pid));
+        it->setData(8, SortRole, double(uid));
+        if (client) ++clients;
+        if (outside) {
             ++exposed;
             if (c.value(QLatin1String("fw_default")).toBool()) exposedServices << QStringLiteral("%1: %2 %3 (%4)").arg(usually.isEmpty() ? name : usually, proto).arg(port).arg(name);
-            const bool any = a == QHostAddress::AnyIPv4 || a == QHostAddress::AnyIPv6;
-            if (any && fw != QLatin1String("lan")) for (int k = 0; k < 7; ++k) it->setForeground(k, QColor(QLatin1String(theme::WARN)));
+            if (bind.scope == socketbind::Scope::Wildcard) for (int k = 0; k < it->columnCount(); ++k) it->setForeground(k, QColor(QLatin1String(theme::WARN)));
         }
         ports_->addTopLevelItem(it);
-        if (key == keep) sel = it;
+        if (!keep.isEmpty() && key == keep) { sel = it; ++selectionMatches; }
         ++total;
     }
     ports_->setSortingEnabled(true);
     if (sortColumn >= 0) ports_->sortByColumn(sortColumn, sortOrder);
-    if (sel) ports_->setCurrentItem(sel);
+    if (sel && selectionMatches == 1) ports_->setCurrentItem(sel);
     else { ports_->setCurrentItem(nullptr); ports_->clearSelection(); }
     ports_->verticalScrollBar()->setValue(scroll);
     ports_->setUpdatesEnabled(true);
+    exposedServices.removeDuplicates();
     firewall_->setExposed(exposedServices);
-    portsInfo_->setText(tr("%1 listening socket(s); %2 reachable from other machines (orange: on every network). "
-                           "From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.").arg(total).arg(exposed)
-                        + (clients ? QLatin1Char(' ') + tr("%1 grey row(s) are programs' own client sockets on temporary ports.").arg(clients) : QString())
+    portsInfo_->setText(tr("%1 unconnected socket(s); %2 non-loopback binds; %3 unknown bind scopes. Orange marks wildcard binds, not confirmed exposure. "
+                           "From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.").arg(total).arg(exposed).arg(unknown)
+                        + (clients ? QLatin1Char(' ') + tr("%1 UDP socket(s) may be clients; an ephemeral port alone is not proof.").arg(clients) : QString())
                         + QStringLiteral(" · ") + (connSnapshotTime_.isValid() ? tr("Snapshot: %1").arg(connSnapshotTime_.toString(Qt::ISODate)) : tr("No connection snapshot yet"))
                         + (connSnapshotError_.isEmpty() ? QString() : tr(" · Refresh failed; previous data: %1").arg(connSnapshotError_)));
 }
 
-void NetPage::setPortState(const QString &state) {
+void NetPage::setPortState(const QString &state, const QString &snapshotKey) {
     const QTreeWidgetItem *it = ports_->currentItem();
-    if (!it || !it->isSelected() || it->isHidden()) { QMessageBox::information(this, tr("Firewall"), tr("Select a port first.")); return; }
-    const QString proto = it->text(1).toLower();
-    const int port = it->text(2).toInt();
+    if (snapshotKey.isEmpty() && (!it || !it->isSelected() || it->isHidden())) { QMessageBox::information(this, tr("Firewall"), tr("Select a port first.")); return; }
+    const QString key = snapshotKey.isEmpty() ? it->data(0, KeyRole).toString() : snapshotKey;
+    // This is a unique captured tuple, not a kernel socket cookie or proof of PID lifetime.
+    // Never silently retarget a context-menu action to the newly selected row.
+    const auto resolve = [&]() -> QJsonObject {
+        if (key.isEmpty() || !connSnapshotError_.isEmpty() || !connSnapshotTime_.isValid()) return {};
+        QJsonObject matched;
+        for (const auto &v : std::as_const(connData_)) {
+            const auto c = v.toObject();
+            if (connectionKey(c) != key || !str(c, "remote").isEmpty()) continue;
+            const auto p = str(c, "proto");
+            const auto n = c.value(QLatin1String("lport")).toInt();
+            if ((p != QLatin1String("tcp") && p != QLatin1String("udp")) || n <= 0 || n > 65535 ||
+                (p == QLatin1String("tcp") && str(c, "state") != QLatin1String("LISTEN"))) continue;
+            if (!matched.isEmpty()) return {};
+            matched = c;
+        }
+        return matched;
+    };
+    const auto target = resolve();
+    if (target.isEmpty()) { QMessageBox::warning(this, tr("Firewall"), tr("Socket snapshot is unavailable, changed or ambiguous. Refresh and select again.")); return; }
+    const QString proto = str(target, "proto");
+    const int port = target.value(QLatin1String("lport")).toInt();
     const auto revision = state_.value("firewall").toObject();
     if (state_.contains("config_error") || !revision.value("rules").isArray()) { QMessageBox::warning(this,tr("Firewall"),tr("Saved firewall configuration is unavailable. Refresh first.")); return; }
     auto canonical = revision; canonical.remove(QStringLiteral("shadowed"));
@@ -2278,6 +2299,7 @@ void NetPage::setPortState(const QString &state) {
         req.insert(QStringLiteral("enabled"), true);
     }
     if (revision != state_.value("firewall").toObject()) { QMessageBox::warning(this,tr("Firewall"),tr("Saved firewall configuration changed. Refresh and review first.")); return; }
+    if (resolve() != target) { QMessageBox::warning(this, tr("Firewall"), tr("Socket snapshot is unavailable, changed or ambiguous. Refresh and select again.")); return; }
     runRoot(req);
 }
 

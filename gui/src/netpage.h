@@ -84,7 +84,7 @@ private:
     /// Open ports: listening sockets from the last connection snapshot, with who can reach them.
     void showPorts();
     /// Open ports → open / lan / closed / default: one inbound port in the firewall.
-    void setPortState(const QString &state);
+    void setPortState(const QString &state, const QString &snapshotKey = {});
     void inspectFirewall();
     /// Writes a list's visible rows (headers first) to a CSV file the user picks.
     void exportTree(QTreeWidget *tree, const QString &name);

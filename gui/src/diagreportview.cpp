@@ -290,7 +290,7 @@ QWidget *tableWidget(const diag::Table &t, const std::shared_ptr<QJsonObject> &h
         for (const QStringList &row : t.rows) columns = qMax(columns, int(row.size()));
         tree->setColumnCount(columns);
         tree->setProperty("workspaceTableKey",tableKey(t));
-        tree->setProperty("stableDeviceRows", t.viewKind == QStringLiteral("hardware-device-tree"));
+        tree->setProperty("stableDeviceRows", (t.viewKind == QStringLiteral("hardware-device-tree") || t.viewKind == QStringLiteral("acpi-wmi-tree")));
         tree->setHeaderLabels(t.headers);
         tree->setHeaderHidden(t.headers.isEmpty());
         tree->setRootIsDecorated(false);
@@ -302,7 +302,7 @@ QWidget *tableWidget(const diag::Table &t, const std::shared_ptr<QJsonObject> &h
         tree->setSortingEnabled(false);
         for (int i = 0; i < t.rows.size(); ++i) {
             auto *it = new QTreeWidgetItem(t.rows[i]);
-            if (t.viewKind == QStringLiteral("hardware-device-tree")) it->setData(0, Qt::UserRole, t.rowKeys.value(i));
+            if ((t.viewKind == QStringLiteral("hardware-device-tree") || t.viewKind == QStringLiteral("acpi-wmi-tree"))) it->setData(0, Qt::UserRole, t.rowKeys.value(i));
             for (int c = 0; c < t.rows[i].size(); ++c) it->setToolTip(c, t.rows[i][c]);
             const Level l = i < t.levels.size() ? t.levels[i] : Level::Info;
             if (l == Level::Attention || l == Level::Review || l == Level::Ok) it->setForeground(0, QColor(color(l)));
@@ -332,7 +332,7 @@ QWidget *tableWidget(const diag::Table &t, const std::shared_ptr<QJsonObject> &h
     if (!t.rows.isEmpty() && t.parents.size() == t.rows.size()) {
         auto *explore = new QPushButton(QCoreApplication::translate("diag", "Explore hierarchy…"));
         col->addWidget(explore, 0, Qt::AlignLeft);
-        if (t.viewKind == QStringLiteral("hardware-device-tree")) {
+        if ((t.viewKind == QStringLiteral("hardware-device-tree") || t.viewKind == QStringLiteral("acpi-wmi-tree"))) {
             QObject::connect(explore, &QPushButton::clicked, explore, [explore, box, t, hardwareState] {
                 QString key;
                 if (auto *flat = box->findChild<QTreeWidget *>(); flat && flat->currentItem() && flat->currentItem()->isSelected())
@@ -771,7 +771,7 @@ void DiagReportView::setReport(const diag::Report &r) {
         bodyLayout_->addWidget(card);
     }
     for (const diag::Table &t : current.tables) {
-        auto *w = tableWidget(t, hardwareTreeState_);
+        auto *w = tableWidget(t, t.viewKind == QStringLiteral("acpi-wmi-tree") ? acpiTreeState_ : hardwareTreeState_);
         if (auto *tree = w->findChild<QTreeWidget *>()) tables_ << tree;
         if (t.viewKind == QStringLiteral("edid-bytes")) {
             diag::Table fields;

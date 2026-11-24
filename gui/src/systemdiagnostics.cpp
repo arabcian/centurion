@@ -1,4 +1,5 @@
 #include "hardwarefields.h"
+#include "acpievidence.h"
 #include "memoryfields.h"
 #include "deviceidentity.h"
 #include <QCryptographicHash>
@@ -715,12 +716,13 @@ Report memory(const QString &root) {
 
 // ── S11 ACPI / WMI Firmware Browser ───────────────────────────────────────────
 
-Report firmware(const QString &root) {
+Report firmware(const QString &root, const QList<diagsrc::LogLine> &kernel) {
     Report r;
     r.code = QStringLiteral("S11");
     r.title = tr("ACPI & WMI Firmware");
     r.about = tr("The firmware interfaces the kernel found: WMI objects with the driver that claims each, firmware settings exposed through "
-                 "firmware-attributes, and the ACPI tables present. Nothing is called or changed.");
+                 "firmware-attributes, and the ACPI tables present. No setting is changed. Reading some kernel attributes (an ACPI device's "
+                 "status, some firmware-attributes values) makes the kernel evaluate the matching firmware method.");
     r.limits << tr("Passwords and authentication attributes are never read.");
     static const QHash<QString, const char *> knownGuids = {
         {"887B54E3-DDDC-4B2C-8B88-68A26A8835D0", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo GameZone (profiles, GPU, thermal) — used by Centurion")},
@@ -728,52 +730,142 @@ Report firmware(const QString &root) {
         {"92549549-4BDE-4F06-AC04-CE8BF898DBAA", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Fan Method (fan tables) — used by Centurion")},
         {"362A3AFE-3D96-4665-8530-96DAD5BB300E", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Capability Data 00 — used by Centurion")},
         {"7A8F5407-CB67-4D6E-B547-39B3BE018154", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Capability Data 01")}};
-    Table w;
-    w.title = tr("WMI Objects");
-    w.headers = {tr("GUID"), tr("Driver"), tr("Known as"), tr("Instance")};
-    int unbound = 0;
-    for (const QString &id : ls(root, QStringLiteral("/sys/bus/wmi/devices"))) {
-        const QString guid = id.section(QLatin1Char('-'), 0, 4).toUpper();
-        const QString drv = driverOf(root, QStringLiteral("/sys/bus/wmi/devices/") + id);
-        QString name = knownGuids.contains(guid) ? tr(knownGuids.value(guid)) : QString();
-        // A GUID prefix alone does not identify a WMI method.
-        if (drv.isEmpty()) ++unbound;
-        const bool valid = QRegularExpression(QStringLiteral(R"(^[0-9A-F]{8}-(?:[0-9A-F]{4}-){3}[0-9A-F]{12}$)")).match(guid).hasMatch();
-        w.add({valid ? guid : tr("unknown"), drv.isEmpty() ? tr("none") : drv, valid ? name : QString(), id}, valid ? Level::Info : Level::Unknown);
-    }
-    if (w.rows.isEmpty()) r.add(Level::Info, tr("No WMI object exported (no ACPI-WMI on this machine, or CONFIG_ACPI_WMI off)"));
-    else {
-        w.note = tr("%1 object(s) have no driver: normal for objects no Linux driver knows; Centurion talks to the Lenovo ones through ACPI directly.").arg(unbound);
-        r.tables << w;
-    }
-    Table acpi; acpi.title = tr("Exposed ACPI / WMI Device Hierarchy");
-    acpi.headers = {tr("Device"), tr("Bus"), tr("HID / GUID"), tr("UID"), tr("Status"), tr("Driver"), tr("Modalias")};
-    acpi.note = tr("Only kernel-exposed device objects are shown, not the complete AML namespace. No method is executed.");
-    struct AcpiEntry { QString bus, id, path, target; };
+    // Use one captured inventory for both views and the log evidence index.
+    struct AcpiEntry { QString bus, id, path, target, guid, driver, driverState; bool noLink = false; };
     QList<AcpiEntry> entries;
     for (const auto &bus : {QStringLiteral("acpi"), QStringLiteral("wmi")}) {
         const QString base = QStringLiteral("/sys/bus/") + bus + QStringLiteral("/devices/");
-        for (const auto &id : ls(root, base)) entries << AcpiEntry{bus, id, base + id, devicePath(root, base + id)};
+        const QDir directory(root + base);
+        if (!directory.exists() || !directory.isReadable())
+            r.limits << tr("Device inventory unavailable or inaccessible: %1").arg(base);
+        const auto ids = diagsrc::dir(root + base, {QStringLiteral("*")}, 513);
+        if (ids.size() > 512) r.limits << tr("Device inventory capped at 512 entries: %1").arg(base);
+        for (const auto &id : ids.mid(0, 512)) {
+            AcpiEntry e{bus, id, base + id, devicePath(root, base + id), {}, {}, {}};
+            if (bus == QStringLiteral("wmi"))
+                e.guid = QString::fromStdString(acpievidence::wmiGuid(id.toStdString())).toUpper();
+            if (!e.target.isEmpty() && !QFileInfo(e.target).isDir()) e.target.clear();
+            if (e.target.isEmpty()) e.driverState = tr("Device unavailable or detached");
+            else {
+                const QFileInfo link(e.target + QStringLiteral("/driver"));
+                const QString drivers = QFileInfo(root + QStringLiteral("/sys/bus/") + bus + QStringLiteral("/drivers")).canonicalFilePath();
+                const QString target = link.canonicalFilePath();
+                if (link.isSymLink() && !drivers.isEmpty() && target.startsWith(drivers + QLatin1Char('/')) && QFileInfo(target).isDir()) {
+                    e.driver = QFileInfo(target).fileName();
+                    e.driverState = tr("Bound driver observed");
+                } else if (link.isSymLink() || link.exists()) e.driverState = tr("Driver link unresolved");
+                else { e.driverState = tr("No driver link observed"); e.noLink = true; }
+            }
+            if (!e.target.isEmpty() && devicePath(root, e.path) != e.target) {
+                e.target.clear(); e.driver.clear(); e.noLink = false; e.driverState = tr("Device unavailable or detached");
+            }
+            entries << e;
+        }
     }
     std::stable_sort(entries.begin(), entries.end(), [](const AcpiEntry &a, const AcpiEntry &b) { return a.target.size() < b.target.size(); });
+    QHash<QString, int> guidCounts;
+    for (const auto &e : entries) if (!e.guid.isEmpty()) ++guidCounts[e.guid];
+    Table w;
+    w.title = tr("WMI Objects");
+    w.headers = {tr("GUID"), tr("Driver"), tr("Known as"), tr("Instance"), tr("Driver evidence"), tr("GUID instances")};
+    int unbound = 0;
+    for (const auto &e : entries) {
+        if (e.bus != QStringLiteral("wmi")) continue;
+        const bool valid = !e.guid.isEmpty();
+        if (e.noLink) ++unbound;
+        const QString name = valid && knownGuids.contains(e.guid) ? tr(knownGuids.value(e.guid)) : QString();
+        w.add({known(e.guid), known(e.driver), name, e.id, e.driverState, valid ? QString::number(guidCounts.value(e.guid)) : tr("unknown")},
+              valid && !e.target.isEmpty() ? Level::Info : Level::Unknown);
+    }
+    if (w.rows.isEmpty()) r.add(Level::Unknown, tr("No WMI object exported (no ACPI-WMI on this machine, or CONFIG_ACPI_WMI off)"));
+    else {
+        w.note = tr("%1 object(s) have no observed driver link. A missing link is not proof of a firmware failure. GUID instance counts describe this inventory only.").arg(unbound);
+        r.tables << w;
+    }
+    Table acpi; acpi.title = tr("Exposed ACPI / WMI Device Hierarchy");
+    acpi.viewKind = QStringLiteral("acpi-wmi-tree");
+    acpi.headers = {tr("Device"), tr("Bus"), tr("HID / GUID"), tr("UID"), tr("Status"), tr("Driver"), tr("Modalias"), tr("Driver evidence")};
+    acpi.note = tr("Only kernel-exposed device objects are shown, not the complete AML namespace. Centurion invokes no AML, EC or WMI method itself; reading Status makes the kernel evaluate the device's _STA.");
     QHash<QString, int> seen;
+    std::vector<acpievidence::Object> objects;
+    QStringList labels, observedDrivers;
+    const QString boot = rd(root, QStringLiteral("/proc/sys/kernel/random/boot_id"), 80);
     for (const auto &e : entries) {
         int parent = -1;
         if (!e.target.isEmpty()) {
             QString up = QFileInfo(e.target).path();
             for (int depth = 0; depth < 64 && up.size() > 1; ++depth) {
                 if (seen.contains(up)) { parent = seen.value(up); break; }
+                // A WMI device sits under the platform device; that one names its ACPI node by firmware_node.
+                const QString node = QFileInfo(up + QStringLiteral("/firmware_node")).canonicalFilePath();
+                if (!node.isEmpty() && seen.contains(node)) { parent = seen.value(node); break; }
                 const QString next = QFileInfo(up).path(); if (next == up) break; up = next;
             }
         }
-        auto val = [&](const QString &name) { return e.target.isEmpty() ? tr("unknown") : known(rd(root, e.path + QLatin1Char('/') + name, 512)); };
+        auto val = [&](const QString &name) {
+            if (e.target.isEmpty()) return tr("unknown");
+            const QFileInfo attr(e.target + QLatin1Char('/') + name);
+            if (attr.isSymLink() || !attr.isFile()) return tr("unknown");
+            return known(diagsrc::read(attr.filePath(), 512));
+        };
+        const bool wmi = e.bus == QStringLiteral("wmi");
         acpi.parents << parent;
-        acpi.add({e.id, e.bus, e.bus == QStringLiteral("wmi") ? e.id.section(QLatin1Char('-'), 0, 4) : val(QStringLiteral("hid")), val(QStringLiteral("uid")), val(QStringLiteral("status")),
-                  e.target.isEmpty() ? tr("unknown") : known(driverOf(root, e.path)), val(QStringLiteral("modalias"))}, e.target.isEmpty() ? Level::Unknown : Level::Info);
+        acpi.rowKeys << deviceKey(root, e.path, e.bus, boot);
+        acpi.add({e.id, e.bus, wmi ? known(e.guid) : val(QStringLiteral("hid")), val(QStringLiteral("uid")), val(QStringLiteral("status")),
+                  known(e.driver), val(QStringLiteral("modalias")), e.driverState}, e.target.isEmpty() || (wmi && e.guid.isEmpty()) ? Level::Unknown : Level::Info);
         if (!e.target.isEmpty() && !seen.contains(e.target)) seen.insert(e.target, int(acpi.rows.size()) - 1);
+        // Include unresolved but named objects as candidates so a detached
+        // duplicate GUID cannot make another instance look unique.
+        if (!wmi || !e.guid.isEmpty()) {
+            objects.push_back({e.id.toStdString(), e.guid.toStdString(), e.driver.toStdString(), wmi});
+            QString label = e.bus + QLatin1Char('/') + e.id;
+            if (e.target.isEmpty()) label += QStringLiteral(" (") + e.driverState + QLatin1Char(')');
+            labels << label;
+            observedDrivers << e.driver;
+        }
     }
     if (!acpi.rows.isEmpty()) r.tables << acpi;
     else r.add(Level::Unknown, tr("No exposed ACPI or WMI device hierarchy could be read"));
+
+    Table events;
+    events.title = tr("ACPI / WMI Kernel Evidence");
+    events.headers = {tr("Time"), tr("Boot ID"), tr("Sequence"), tr("Evidence type"), tr("Candidate devices"), tr("Candidates in inventory"), tr("Kernel message"), tr("Currently observed drivers")};
+    events.note = tr("Exact identifier mentions and driver-prefix candidates refer to the current inventory, not proof of the historical binding or cause. Only full matching boot IDs are used; legacy prefixes are excluded. Saved kernel logs are incomplete and no new scan is started.");
+    const acpievidence::Index index(objects);
+    int matching = 0;
+    QSet<QString> eventKeys;
+    for (qsizetype i = kernel.size(); i > 0 && kernel.size()-i < 4000; --i) {
+        const auto &line = kernel.at(i-1);
+        const QString key = line.boot.toLower() + QLatin1Char('/') + QString::number(line.seq);
+        if (!acpievidence::sameBoot(boot.toStdString(), line.boot.toStdString()) || eventKeys.contains(key)) continue;
+        eventKeys.insert(key);
+        const auto m = index.match(line.text.toStdString());
+        if (m.kind == acpievidence::Kind::None) continue;
+        ++matching;
+        if (events.rows.size() >= 256) continue;
+        QString reason;
+        switch (m.kind) {
+        case acpievidence::Kind::Instance: reason = tr("Exact instance mention"); break;
+        case acpievidence::Kind::Guid: reason = tr("GUID or mixed identifier mention"); break;
+        case acpievidence::Kind::Driver: reason = tr("Driver prefix candidate"); break;
+        case acpievidence::Kind::ClassOnly: reason = tr("ACPI / WMI class only"); break;
+        default: break;
+        }
+        QStringList candidates, drivers;
+        for (auto n : m.objects) {
+            candidates << labels.at(qsizetype(n));
+            const auto &driver = observedDrivers.at(qsizetype(n));
+            if (!driver.isEmpty() && !drivers.contains(driver)) drivers << driver;
+        }
+        if (m.count > m.objects.size()) candidates << tr("More candidates omitted");
+        events.add({line.time, line.boot, QString::number(line.seq), reason,
+                    candidates.isEmpty() ? tr("unknown") : candidates.join(QStringLiteral(", ")),
+                    QString::number(qulonglong(m.count)), line.text, drivers.isEmpty() ? tr("unknown") : drivers.join(QStringLiteral(", "))},
+                   m.kind == acpievidence::Kind::Driver || m.count != 1 ? Level::Unknown : Level::Info);
+    }
+    if (!events.rows.isEmpty()) r.tables << events;
+    else r.limits << tr("No matching current-boot ACPI / WMI evidence in the supplied saved kernel log; absence of evidence does not mean no events occurred.");
+    if (matching > 256) r.limits << tr("ACPI / WMI evidence capped at 256 newest matching records.");
     Table fa;
     fa.title = tr("Firmware Settings (firmware-attributes)");
     fa.headers = {tr("Provider"), tr("Setting"), tr("Value"), tr("Allowed")};
@@ -798,15 +890,24 @@ Report firmware(const QString &root) {
     if (!fa.rows.isEmpty()) r.tables << fa;
     Table at; at.title = tr("ACPI Tables Present");
     at.headers = {tr("Table"),tr("Signature"),tr("Length (bytes)"),tr("Revision"),tr("Read status")};
-    at.note=tr("Only fixed-size table headers are inspected. AML is not interpreted or executed; checksum verification is not claimed.");
+    at.note=tr("Only fixed-size table headers are inspected. Length is the value declared by the header, not a verified file size. AML is not interpreted or executed; checksum verification is not claimed.");
+    bool tableCap = false, tableRootOnly = false;
     for(const auto &suffix:{QString(),QStringLiteral("/dynamic")}){
         const auto dir=QStringLiteral("/sys/firmware/acpi/tables")+suffix;
-        for(const auto &name:ls(root,dir)){
-            if(at.rows.size()>=256)break;
+        const QFileInfo folder(root+dir);
+        const QFileInfo base(root+QStringLiteral("/sys/firmware/acpi/tables"));
+        if (base.isSymLink() || folder.isSymLink() || !folder.isDir() || !QDir(root+dir).isReadable()) {
+            r.limits << tr("ACPI table directory unavailable or inaccessible: %1").arg(dir);
+            continue;
+        }
+        const auto names = diagsrc::dir(root+dir, {QStringLiteral("*")}, 513);
+        if (names.size()>512) tableCap = true;
+        for(const auto &name:names.mid(0,512)){
+            if(at.rows.size()>=256){tableCap = true;break;}
             const auto path=root+dir+QLatin1Char('/')+name;
             if(!QFileInfo(path).isFile() || QFileInfo(path).isSymLink())continue;
             QFile f(path); const auto label=suffix.isEmpty()?name:QStringLiteral("dynamic/")+name;
-            if(!f.open(QIODevice::ReadOnly)){at.add({label,tr("unknown"),tr("unknown"),tr("unknown"),tr("Unreadable")},Level::Unknown);continue;}
+            if(!f.open(QIODevice::ReadOnly)){if(!QFileInfo(path).isReadable()) tableRootOnly = true;at.add({label,tr("unknown"),tr("unknown"),tr("unknown"),tr("Unreadable")},Level::Unknown);continue;}
             const auto raw=f.read(36);
             // FACS and RSDP have different header layouts; do not decode them as SDT headers.
             const auto h=(raw.startsWith("FACS")||raw.startsWith("RSD PTR "))?std::optional<hardwarefields::AcpiHeader>{}:hardwarefields::acpiHeader({reinterpret_cast<const std::uint8_t*>(raw.constData()),std::size_t(raw.size())});
@@ -814,6 +915,8 @@ Report firmware(const QString &root) {
             at.add({label,QString::fromLatin1(raw.left(4)),QString::number(h->length),QString::number(h->revision),tr("Header read")});
         }
     }
+    if(tableCap) r.limits << tr("ACPI table inventory is bounded; additional entries may be omitted.");
+    if(tableRootOnly) r.limits << tr("ACPI table headers are readable only by root; they are not read without privileges.");
     if(!at.rows.isEmpty())r.tables<<at; else r.limits<<tr("ACPI table listing is unavailable or inaccessible.");
     r.add(Level::Info, tr("%1 WMI object(s), %2 firmware setting(s)").arg(w.rows.size()).arg(fa.rows.size()));
     return r;
@@ -1182,7 +1285,7 @@ Report byCode(const QString &code) {
     if (code == QStringLiteral("S07")) return radios(diagsrc::savedKernel());
     if (code == QStringLiteral("S08")) return powerLimits();
     if (code == QStringLiteral("S10")) return memory();
-    if (code == QStringLiteral("S11")) return firmware();
+    if (code == QStringLiteral("S11")) return firmware({}, diagsrc::savedKernel());
     if (code == QStringLiteral("S13")) return charging();
     if (code == QStringLiteral("S18")) return kernelDeps(kernelConfig(), diagsrc::savedKernel());
     Report r;

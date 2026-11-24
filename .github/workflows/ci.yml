@@ -38,6 +38,8 @@ jobs:
       - run: python3 gui/tests/calibrationmath_native_test.py
       - run: python3 gui/tests/scene_wifi_native_test.py
       - run: python3 gui/tests/wifichannel_native_test.py
+      - run: python3 gui/tests/socketbind_native_test.py
+      - run: python3 gui/tests/acpievidence_native_test.py
       - run: python3 gui/tests/scene_wifi_contract_static_test.py
       - run: python3 gui/tests/calibrationviewer_static_test.py
       - run: python3 gui/tests/topologyfields_native_test.py

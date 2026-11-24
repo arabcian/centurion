@@ -1216,7 +1216,7 @@ void BackupPage::showDiff(const QJsonObject &r) {
     tree->header()->resizeSection(0, 460);
     tree->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     v->addWidget(tree, 1);
-    const QColor ok(QLatin1String(theme::OK)), bad(QLatin1String(theme::DANGER)), warn(QLatin1String(theme::WARN)), muted(QLatin1String(theme::MUTED));
+    const QColor ok{QLatin1String(theme::OK)}, bad{QLatin1String(theme::DANGER)}, warn{QLatin1String(theme::WARN)}, muted{QLatin1String(theme::MUTED)};
     auto branch = [&](const QString &title, int n) {
         auto *it = new QTreeWidgetItem(tree, {QStringLiteral("%1 (%2)").arg(title).arg(n)});
         QFont f = it->font(0);

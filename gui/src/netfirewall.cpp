@@ -238,7 +238,7 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
         const QString in = inbound_->currentData().toString(), out = outbound_->currentData().toString();
         if (on && (in != QLatin1String("allow") || out != QLatin1String("allow"))) {
             QString ask = tr("Turn the firewall on? New incoming connections: %1. New outgoing connections: %2.").arg(policyName(in), policyName(out));
-            if (in != QLatin1String("allow") && !exposed_.isEmpty()) ask += QStringLiteral("\n\n") + tr("Services other machines can reach now:\n%1").arg(exposed_.mid(0, 12).join(QLatin1Char('\n')));
+            if (in != QLatin1String("allow") && !exposed_.isEmpty()) ask += QStringLiteral("\n\n") + tr("Potentially exposed services relying on the saved default policy (snapshot, not a reachability test):\n%1").arg(exposed_.mid(0, 12).join(QLatin1Char('\n')));
             if (QMessageBox::question(this, tr("Firewall"), ask) != QMessageBox::Yes) { restore(); return; }
         }
         submitChange({{"enabled", on}}, revision);
@@ -367,7 +367,7 @@ void FirewallTab::policyChosen(bool inbound) {
     const bool stricter = policy != QLatin1String("allow") && fw_.value(QLatin1String(key)).toString(QStringLiteral("allow")) == QLatin1String("allow");
     if (stricter && enabled_->isChecked() && inbound && !exposed_.isEmpty()) {
         const QStringList shown = exposed_.mid(0, 12);
-        if (QMessageBox::question(this, tr("Firewall"), tr("Other machines can reach these services now and will lose access unless a rule allows them:\n\n%1\n\nConnections already open keep working. Continue?")
+        if (QMessageBox::question(this, tr("Firewall"), tr("These non-loopback sockets may be affected by the stricter default policy. Actual reachability is unverified:\n\n%1\n\nConnections already open keep working. Continue?")
                                       .arg(shown.join(QLatin1Char('\n')))) != QMessageBox::Yes) { restore(); return; }
     }
     if (stricter && !inbound) {
