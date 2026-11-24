@@ -534,10 +534,10 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         const Scene s = fromEditor();
         QDialog dlg(this); dlg.setWindowTitle(tr("Preview: %1").arg(s.name)); dlg.resize(1000,620);
         auto *layout=new QVBoxLayout(&dlg);
-        auto *note=new QLabel(tr("Nothing was written. This is the requested execution order; prerequisites, current values and rollback snapshots are rechecked at execution. The draft is not saved."));
+        auto *note=new QLabel(tr("This preview shows the requested order. If a step fails, the scene continues with the remaining eligible steps and keeps settings already applied."));
         note->setWordWrap(true);layout->addWidget(note);
         auto *tabs=new QTabWidget; layout->addWidget(tabs,1);
-        auto *table=new QTableWidget;table->setColumnCount(5);table->setHorizontalHeaderLabels({tr("Order"),tr("Component"),tr("Current"),tr("Requested"),tr("Prerequisite / rollback")});
+        auto *table=new QTableWidget;table->setColumnCount(5);table->setHorizontalHeaderLabels({tr("Order"),tr("Component"),tr("Current"),tr("Requested"),tr("Execution notes")});
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->setSelectionBehavior(QAbstractItemView::SelectRows);table->setWordWrap(true);
         const auto rows=eng_->orderedPreview(s);table->setRowCount(rows.size());
         for(int r=0;r<rows.size();++r){table->setItem(r,0,new QTableWidgetItem(QString::number(r+1)));for(int c=0;c<rows[r].size();++c){auto *item=new QTableWidgetItem(rows[r][c]);item->setToolTip(rows[r][c]);table->setItem(r,c+1,item);}}

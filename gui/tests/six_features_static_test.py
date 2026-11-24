@@ -10,21 +10,19 @@ read = lambda name: (src / name).read_text()
 scene = read('scenes.cpp')
 ins = read('insights.cpp')
 co = read('cosearchdialog.cpp')
+step_runner = scene.split('void SceneEngine::next()', 1)[1].split('void SceneEngine::finish()', 1)[0]
+step_callback = step_runner.split('step.apply(', 1)[1]
 checks = {
   'new GUI source linked': 'src/insights.cpp src/insights.h' in cmake and 'src/cosearchdialog.cpp src/cosearchdialog.h' in cmake,
   'unit test linked to CTest': 'add_test(NAME insights COMMAND centurion-insights-test)' in cmake,
   'incident timeline in Health': 'Hardware Incident Timeline' in read('healthtab.cpp') and 'insights::incident(' in read('healthtab.cpp'),
   'incident boot guard': 'ringBoot != b' in ins and 'if (b.isEmpty())' in ins,
   'scene tx log with boot identity': 'scene-transactions.jsonl' in scene and '"boot", currentBootId' in scene,
-  'scene failure short circuits': 'if (!ok && !soft) {\n            steps_.clear();' in scene,
-  'write-free failures do not roll back': 'std::exchange(softFail_, false) && !ok' in scene,
+  'scene logs failures and advances without clearing remaining steps': 'QStringLiteral("failed")' in step_callback and 'steps_.clear()' not in step_callback and '&SceneEngine::next' in step_callback,
+  'scene uses the partial approved-preset operation': '{"op", "apply_scene_preset"}' in scene and 'rollbackNext' not in scene,
+  'scene still verifies fan boost after changing profiles': '{"fan_fullspeed", "get"}' in scene,
   'CO search reads live MCA counters': 'mceCounters()' in co and 'error_count' in co,
   'CO search resets when destroyed mid-search': '~CoSearchDialog()' in co and 'blockingReset()' in co,
-  'scene rollback reverse order': 'applied_.takeLast()' in scene,
-  'scene snapshot before fan write': '{"fan_fullspeed", "get"}' in scene,
-  'scene fan curve snapshot': '{"fan_table", "get"}' in scene and 'oldFanTable_' in scene,
-  'scene firmware old value snapshot': 'oldFirmware.append' in scene,
-  'nonreversible scene outcomes warned': 'uncompensated_' in scene and 'Partial rollback' in scene,
   'autotune confidence UI': 'insights::confidence(d)' in read('optimizetab.cpp'),
   'pareto UI': 'insights::pareto(' in read('coolingpage.cpp'),
   'pareto context gating': 'g.size() < 2' in ins and 'highStart - lowStart > 3.0' in ins,

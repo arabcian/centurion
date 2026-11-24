@@ -155,9 +155,8 @@ private:
     using Step = std::function<void(Done)>;
 
     void start(const scenes::Scene &s);
-    void addStep(const QString &what, Step step, Step undo = {});
+    void addStep(const QString &what, Step step);
     void emitStep(const QString &step, const QString &state, const QString &detail = {});
-    void rollbackNext();
     void next();
     void finish();
     void pollPower(bool timerTick = false);
@@ -180,14 +179,9 @@ private:
                 std::function<QString(const QJsonObject &)> describe = {}, std::uint64_t cpuLease = 0);
 
     MainWindow *win_;
-    struct TransactionStep { QString name; Step apply; Step undo; };
+    struct TransactionStep { QString name; Step apply; };
     QList<TransactionStep> steps_;
-    QList<TransactionStep> applied_;    // attempted writes, reversed on error (includes partly-applied failures)
     QString priorScene_;
-    int oldFanBoost_ = -1;          // captured through the helper before the first write
-    QVector<int> oldFanTable_;     // captured by fan_table:get before write
-    bool rollingBack_ = false, rollbackFailed_ = false, uncompensated_ = false;
-    bool softFail_ = false;          // set by a step right before done(false): nothing was written
     QStringList log_;
     bool ok_ = true, busy_ = false;
     std::uint64_t trackedCpuLease_ = 0;

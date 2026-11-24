@@ -6733,12 +6733,12 @@ Hiçbir şey yazılmadı. Değerler şimdi okunur ve uygulama anında farklı ol
             <source>Active, but its last apply had failed steps: only partly in effect</source>
             <translation>Etkin, ancak son uygulamasında başarısız adımlar vardı: yalnızca kısmen geçerli</translation>
         </message>
-            <message><source>Nothing was written. This is the requested execution order; prerequisites, current values and rollback snapshots are rechecked at execution. The draft is not saved.</source><translation>Hiçbir değer yazılmadı. Bu istenen yürütme sırasıdır; ön koşullar, mevcut değerler ve geri alma kayıtları yürütme sırasında tekrar kontrol edilir. Taslak kaydedilmedi.</translation></message>
+            <message><source>This preview shows the requested order. If a step fails, the scene continues with the remaining eligible steps and keeps settings already applied.</source><translation>Bu önizleme istenen sırayı gösterir. Bir adım başarısız olursa sahne, uygun kalan adımlara devam eder ve uygulanmış ayarları korur.</translation></message>
         <message><source>Order</source><translation>Sıra</translation></message>
         <message><source>Component</source><translation>Bileşen</translation></message>
         <message><source>Current</source><translation>Mevcut</translation></message>
         <message><source>Requested</source><translation>İstenen</translation></message>
-        <message><source>Prerequisite / rollback</source><translation>Ön koşul / geri alma</translation></message>
+        <message><source>Execution notes</source><translation>Yürütme notları</translation></message>
         <message><source>Execution plan</source><translation>Yürütme planı</translation></message>
         <message><source>Current dependencies</source><translation>Mevcut bağımlılıklar</translation></message>
         <message><source>Simulate the saved automatic power-source policy with hypothetical guards. No scene, command or hardware operation is executed. Time and game-profile triggers are not simulated here.</source><translation>Kayıtlı otomatik güç kaynağı politikasını varsayımsal koruma koşullarıyla simüle edin. Hiçbir sahne, komut veya donanım işlemi yürütülmez. Zaman ve oyun profili tetikleyicileri burada simüle edilmez.</translation></message>
@@ -25596,15 +25596,13 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Fan boost</source><translation>Fan hızlandırma</translation></message>
         <message><source>Full speed</source><translation>Tam hız</translation></message>
         <message><source>Automatic</source><translation>Otomatik</translation></message>
-        <message><source>Snapshot before write; restore on rollback</source><translation>Yazmadan önce değerleri kaydet; geri almada geri yükle</translation></message>
+        <message><source>Applied at execution</source><translation>Yürütme sırasında uygulanır</translation></message>
         <message><source>Power profile</source><translation>Güç profili</translation></message>
-        <message><source>Readback at execution; restore when previous profile is known</source><translation>Yürütme sırasında geri oku; önceki profil biliniyorsa geri yükle</translation></message>
+        <message><source>Readback at execution</source><translation>Yürütme sırasında geri okunur</translation></message>
         <message><source>Fan boost check</source><translation>Fan hızlandırma kontrolü</translation></message>
         <message><source>Recheck after power-profile change</source><translation>Güç profili değiştikten sonra tekrar kontrol et</translation></message>
         <message><source>Firmware limits</source><translation>Firmware sınırları</translation></message>
-        <message><source>WMI or unreadable values may not be restorable</source><translation>WMI veya okunamayan değerler geri yüklenemeyebilir</translation></message>
         <message><source>CPU curve</source><translation>CPU eğrisi</translation></message>
-        <message><source>No automatic rollback for this step</source><translation>Bu adımda otomatik geri alma yok</translation></message>
         <message><source>CPU undervolt</source><translation>CPU düşük voltaj ayarı</translation></message>
         <message><source>CPU tuning</source><translation>CPU ayarı</translation></message>
         <message><source>Unsupported backend; skipped</source><translation>Desteklenmeyen arka uç; atlanır</translation></message>
@@ -25627,7 +25625,7 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Desktop helper at execution only</source><translation>Masaüstü yardımcısı yalnızca yürütmede</translation></message>
         <message><source>Command</source><translation>Komut</translation></message>
         <message><source>Not applicable</source><translation>Uygulanamaz</translation></message>
-        <message><source>User command is never run by this preview; no rollback</source><translation>Bu önizleme kullanıcı komutunu asla çalıştırmaz; geri alma yok</translation></message>
+        <message><source>User command runs at execution</source><translation>Kullanıcı komutu yürütme sırasında çalışır</translation></message>
         <message><source>Screen brightness</source><translation>Ekran parlaklığı</translation></message>
         <message><source>After command; desktop helper at execution only</source><translation>Komuttan sonra; masaüstü yardımcısı yalnızca yürütmede</translation></message>
         <message><source>Automatic switching is disabled.</source><translation>Otomatik geçiş devre dışı.</translation></message>

@@ -10,21 +10,14 @@ code = r'''
 #include <random>
 #include <iostream>
 int main() {
-    using sceneoutcome::canSkipOptimizationFailure;
     using sceneoutcome::terminal;
-    assert(canSkipOptimizationFailure(true, true, "storage_identity_unavailable"));
-    assert(!canSkipOptimizationFailure(false, true, "storage_identity_unavailable"));
-    assert(!canSkipOptimizationFailure(true, false, "storage_identity_unavailable"));
-    assert(!canSkipOptimizationFailure(true, true, ""));
-    assert(!canSkipOptimizationFailure(true, true, "storage_identity_changed"));
-    for (unsigned bits=0; bits<64; ++bits) {
-        bool ok=bits&1, rollback=bits&2, restored=bits&4, game=bits&8, incomplete=bits&16, deferred=bits&32;
-        auto state=terminal(ok,rollback,restored,game,incomplete,deferred);
-        assert((state=="returned_unverified")==(!game&&!rollback&&ok&&!incomplete&&!deferred));
+    for (unsigned bits=0; bits<16; ++bits) {
+        bool ok=bits&1, game=bits&2, incomplete=bits&4, deferred=bits&8;
+        auto state=terminal(ok,game,incomplete,deferred);
         if (game) assert(state=="interrupted");
-        else if (rollback) assert(state==(restored?"compensated_unverified":"partial_rollback"));
         else if (!ok||incomplete) assert(state=="partial");
         else if (deferred) assert(state=="deferred_pending");
+        else assert(state=="returned_unverified");
     }
     using namespace wifiage;
     assert(!integer(NAN)); assert(!integer(INFINITY)); assert(!integer(-1)); assert(!integer(1.5));
@@ -43,7 +36,7 @@ int main() {
         const double x=double(r()%20000)-10000;
         assert(validSignal(x)==(x>=-127&&x<=0));
     }
-    std::cout << "PASS: 64 scene outcome combinations + 100000 age/clock/signal cases\n";
+    std::cout << "PASS: 16 scene outcome combinations + 100000 age/clock/signal cases\n";
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:

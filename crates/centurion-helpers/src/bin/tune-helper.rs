@@ -38,6 +38,7 @@
 //!   {"op":"boot"}                                      apply the boot preset (OpenRC service) + saved wake sources
 //!   {"op":"wakeup_set","device":"XHC0","enabled":bool} tune-helper only: ACPI wake source on/off, remembered for every boot
 //!   {"op":"apply_preset","preset":"name","mode":"manual"|"game","replace":bool,"soft_park":bool,"owner_pid":N}
+//!   {"op":"apply_scene_preset","preset":"name"|null}  replace, retaining successful writes on partial failure
 //!       like apply, but the values are read from the root-owned store /etc/centurion/presets/<name>.json,
 //!       never from the request ("preset":null with replace:true = no preset: restore what the previous one set)
 //!   {"op":"preset_save","name":"..","values":{..}} | {"op":"preset_save","presets":{name:{..}}}   tune-helper only:
@@ -118,7 +119,7 @@ fn profile_role() -> bool { env!("CARGO_BIN_NAME") == "tune-profile-helper" }
 /// Ops tune-profile-helper serves as root. None can put a value on the kernel that the user has not approved:
 /// stored presets by name, restoring saved originals, game-session bookkeeping, fixed read-only tools, and the
 /// root-owned boot preset. (Read-only ops that need no root are answered before this check.)
-const PROFILE_OPS: &[&str] = &["snapshot", "apply_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "zram", "tool", "boot"];
+const PROFILE_OPS: &[&str] = &["snapshot", "apply_preset", "apply_scene_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "zram", "tool", "boot"];
 
 struct Lock(#[allow(dead_code)] fs::File);
 
@@ -962,7 +963,8 @@ fn locked_mode<F: FnOnce(&mut State) -> Value>(full_recovery: bool, f: F) -> Val
         }
     }
     let mut out = f(&mut st);
-    let wrote = out["results"].as_array().is_some_and(|a| a.iter().any(|r| r["written"].as_u64().unwrap_or(0) > 0 || r["restored"].as_u64().unwrap_or(0) > 0));
+    let wrote = out["results"].as_array().is_some_and(|a| a.iter().any(|r| r["written"].as_u64().unwrap_or(0) > 0 || r["restored"].as_u64().unwrap_or(0) > 0))
+        || out["restored"]["restored"].as_u64().unwrap_or(0) > 0;
     if wrote || out["applied"].as_bool() == Some(true) || stale["restored"].as_u64().unwrap_or(0) > 0 {
         let errs = tune::enforce_wireless_pm();
         if !errs.is_empty() { out["wireless_pm_warnings"] = json!(errs); }
@@ -992,16 +994,49 @@ fn valid_preset(p: &Value) -> Option<String> {
 
 fn op_apply(req: &Value) -> Value {
     let Some(values) = req["values"].as_object() else { return json!({"ok": false, "error": "values must be an object"}) };
-    apply_with(values, req)
+    apply_with(values, req, false)
 }
 
-/// Core of `apply` (values from the request: tune-helper only) and `apply_preset` (values from the approved store).
-fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
+fn obsolete_restore_ok(restored: &Value) -> bool {
+    !restored["errors"].as_array().is_some_and(|a| !a.is_empty())
+        && restored["deferred"].as_u64().unwrap_or(0) == 0
+}
+
+fn restore_obsolete(st: &mut State, values: &Map<String, Value>) -> Value {
+    let mut stale = Vec::new();
+    for (key, _, _) in &st.baseline {
+        if !values.contains_key(key) && !stale.contains(key) { stale.push(key.clone()); }
+    }
+    if stale.is_empty() { Value::Null } else { restore_entries(st, Some(&stale)) }
+}
+
+fn apply_scene_values(
+    st: &mut State,
+    values: &Map<String, Value>,
+    preset: Option<String>,
+    restore: impl FnOnce(&mut State, &Map<String, Value>) -> Value,
+    apply: impl FnOnce(&mut State, &Map<String, Value>) -> (Vec<Value>, bool),
+) -> Value {
+    st.preset = None;
+    st.source = Some("manual".into());
+    let restored = restore(st, values);
+    // Independently validated targets can still be applied after a restore
+    // failure. Originals and device identities remain in the shared state.
+    let (results, settings_ok) = apply(st, values);
+    let ok = settings_ok && obsolete_restore_ok(&restored);
+    if ok { st.preset = preset; }
+    if values.is_empty() && st.baseline.is_empty() { st.source = None; }
+    json!({"ok": ok, "applied": ok, "results": results, "restored": restored,
+           "error": (!ok).then_some("some settings could not be applied")})
+}
+
+/// Core of direct `apply` and the approved-preset operations.
+fn apply_with(values: &Map<String, Value>, req: &Value, scene_apply: bool) -> Value {
     if values.len() > TUNABLES.len() { return json!({"ok": false, "error": "too many values"}); }
-    let mode = req["mode"].as_str().unwrap_or("manual");
+    let mode = if scene_apply { "manual" } else { req["mode"].as_str().unwrap_or("manual") };
     if !["manual", "game"].contains(&mode) { return json!({"ok": false, "error": "mode must be manual or game"}); }
     let preset = valid_preset(&req["preset"]);
-    let replace = req["replace"].as_bool().unwrap_or(false);
+    let replace = scene_apply || req["replace"].as_bool().unwrap_or(false);
     if replace && mode != "manual" { return json!({"ok": false, "error": "replace is only valid in manual mode"}); }
     let owner = if mode == "game" { session_owner(req) } else { (None, None) };
     let base = autotune::Pressure::sample();
@@ -1022,6 +1057,10 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
                 return json!({"ok": false, "applied": false, "game_active": true,
                     "error": format!("game mode is active ({} session(s)); tuning left unchanged", st.refcount())});
             }
+            if scene_apply {
+                return apply_scene_values(st, values, preset.clone(), restore_obsolete,
+                                          |st, values| apply_values(st, values, false));
+            }
             let plan = match preflight_replace(values) {
                 Ok(p) => p,
                 Err(errors) => return json!({"ok": false, "applied": false, "error": "replacement preflight rejected values; previous preset unchanged", "results": errors}),
@@ -1031,13 +1070,8 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
                 Err(e) => return e.reply(),
             };
             before = Some(st.clone());
-            let mut stale: Vec<String> = Vec::new();
-            for (k, _, _) in &st.baseline {
-                if !values.contains_key(k) && !stale.contains(k) { stale.push(k.clone()); }
-            }
-            if !stale.is_empty() { restored = restore_entries(st, Some(&stale)); }
-            if restored["errors"].as_array().is_some_and(|a| !a.is_empty())
-                || restored["deferred"].as_u64().unwrap_or(0) != 0 {
+            restored = restore_obsolete(st, values);
+            if !obsolete_restore_ok(&restored) {
                 return rollback_replace(st, before.take().unwrap(), &saved, json!({
                     "ok": false, "applied": false, "error": "could not restore obsolete settings before replacement",
                     "restored": restored,
@@ -1069,13 +1103,14 @@ fn apply_with(values: &Map<String, Value>, req: &Value) -> Value {
         // Best-effort per-device refusals (managed IRQs, suspended PCI/USB devices) stay "refused" in
         // the results but do not fail a replace: the kernel refuses them on every attempt, so a scene
         // switch would always roll back, while the same preset applied by hand succeeds.
-        if restored["errors"].as_array().is_some_and(|a| !a.is_empty()) { ok = false; }
+        ok &= obsolete_restore_ok(&restored);
         if values.is_empty() && st.baseline.is_empty() { st.source = None; }
         let result = json!({"ok": ok, "applied": ok, "results": results, "restored": restored,
             "error": (!ok).then_some("some settings could not be applied")});
-        if replace && !ok {
-            rollback_replace(st, before.take().unwrap(), &saved, result)
-        } else { result }
+        match before {
+            Some(before) if !ok => rollback_replace(st, before, &saved, result),
+            _ => result,
+        }
     });
     guard_after(out, base)
 }
@@ -1427,16 +1462,16 @@ fn store_preset(name: &str) -> Result<Map<String, Value>, String> {
     v["values"].as_object().cloned().ok_or_else(|| format!("preset '{name}' has no values"))
 }
 
-fn op_apply_preset(req: &Value) -> Value {
-    let mode = req["mode"].as_str().unwrap_or("manual");
+fn op_apply_preset(req: &Value, scene_apply: bool) -> Value {
+    let mode = if scene_apply { "manual" } else { req["mode"].as_str().unwrap_or("manual") };
     let mut values = match req["preset"].as_str() {
         Some(n) => match store_preset(n) { Ok(m) => m, Err(e) => return json!({"ok": false, "error": e}) },
         // No preset + replace (a scene that resets tuning): restore what the previous preset had set.
-        None if mode == "manual" && req["replace"].as_bool() == Some(true) => Map::new(),
+        None if req["preset"].is_null() && (scene_apply || (mode == "manual" && req["replace"].as_bool() == Some(true))) => Map::new(),
         None => return json!({"ok": false, "error": "preset must be a name"}),
     };
     let parked = if mode == "game" && req["soft_park"].as_bool().unwrap_or(false) { tune::soft_park_values(&mut values) } else { None };
-    let mut r = apply_with(&values, req);
+    let mut r = apply_with(&values, req, scene_apply);
     if let (Some(role), true) = (parked, r.is_object()) { r["parked"] = json!(role); }
     r
 }
@@ -1727,7 +1762,8 @@ fn run() -> Value {
     let mut out = match op {
         "snapshot" => json!({"ok": true}),
         "apply" => op_apply(&req),
-        "apply_preset" => op_apply_preset(&req),
+        "apply_preset" => op_apply_preset(&req, false),
+        "apply_scene_preset" => op_apply_preset(&req, true),
         "release" => op_release(&req),
         // Ends game sessions whose launcher died (pruning runs in every locked op).
         "prune" => locked(|_| json!({"ok": true})),
@@ -1784,9 +1820,9 @@ fn run() -> Value {
         _ => json!({"ok": false, "error": "unknown op"}),
     };
     // Unprivileged describe reads the debugfs values from this copy (debugfs stays root-only).
-    if matches!(op, "snapshot" | "apply" | "apply_preset" | "release" | "restore" | "restore_keys" | "restore_defaults" | "boot" | "prune") { tune::write_debugfs_snapshot(); }
+    if matches!(op, "snapshot" | "apply" | "apply_preset" | "apply_scene_preset" | "release" | "restore" | "restore_keys" | "restore_defaults" | "boot" | "prune") { tune::write_debugfs_snapshot(); }
     // The master switch is enforced while holding the tune lock, not here.
-    if matches!(op, "apply" | "apply_preset" | "release" | "restore" | "restore_keys" | "restore_defaults" | "boot") {
+    if matches!(op, "apply" | "apply_preset" | "apply_scene_preset" | "release" | "restore" | "restore_keys" | "restore_defaults" | "boot") {
         // Field stability record: which knobs are changed from now on (see centurion_helpers::stability).
         centurion_helpers::stability::record_now();
     }
@@ -1804,6 +1840,27 @@ pub(crate) fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scene_apply_keeps_writes_and_originals_after_failures() {
+        let old = ("blk.read_ahead_kb".into(), PathBuf::from("/sys/example"), "128".into());
+        let new = ("vm.swappiness".into(), PathBuf::from("/proc/sys/vm/swappiness"), "60".into());
+        let mut st = State { preset: Some("previous".into()), baseline: vec![old.clone()], ..Default::default() };
+        let requested = Map::from_iter([("vm.swappiness".into(), json!(10)), ("blk.scheduler".into(), json!("none"))]);
+        let reply = apply_scene_values(&mut st, &requested, Some("daily".into()),
+            |_, _| json!({"restored": 0, "errors": [{"key": "blk.read_ahead_kb", "error": "identity unavailable"}]}),
+            |st, _| {
+                st.baseline.push(new.clone());
+                (vec![json!({"key": "blk.scheduler", "ok": false, "written": 0}),
+                      json!({"key": "vm.swappiness", "ok": true, "written": 1})], false)
+            });
+        assert_eq!(st.baseline, [old, new]);
+        assert!(st.preset.is_none());
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["results"][1]["written"], 1);
+        assert!(reply.get("rolled_back").is_none());
+        assert_eq!(reply["restored"]["errors"][0]["key"], "blk.read_ahead_kb");
+    }
+
     #[test]
     fn unavailable_storage_reports_a_clean_preflight_refusal_only() {
         let unavailable = PathBuf::from("/nonexistent-centurion-test/queue/read_ahead_kb");

@@ -700,23 +700,36 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
                 batch.push(json!({"path": dir.join("current_value"), "value": v}));
             }
             let note = if unknown > 0 { format!(" ({unknown} not present here)") } else { String::new() };
-            if !batch.is_empty() {
-                let v = pkexec_helper(&format!("{HELPER_DIR}/fwattr-helper"), &Value::Array(batch.clone()))?;
-                if v["ok"] != true {
-                    let bad: Vec<String> = v["results"].as_array().into_iter().flatten()
-                        .filter(|x| x["ok"] != true).filter_map(|x| x["error"].as_str().map(str::to_owned)).collect();
-                    return Err(if bad.is_empty() { v["error"].as_str().unwrap_or("failed").into() } else { bad.join("; ") });
+            let mut details = Vec::new();
+            let sysfs = (|| -> Result<(), String> {
+                if batch.is_empty() { return Ok(()); }
+                let v = pkexec_helper(&format!("{HELPER_DIR}/fwattr-helper"), &json!(batch))?;
+                if v["ok"] == true { return Ok(()); }
+                let bad: Vec<&str> = v["results"].as_array().into_iter().flatten()
+                    .filter(|x| x["ok"] != true).filter_map(|x| x["error"].as_str()).collect();
+                Err(if bad.is_empty() { v["error"].as_str().unwrap_or("failed").into() } else { bad.join("; ") })
+            })();
+            match &sysfs {
+                Ok(()) => details.push(format!("{} sysfs value(s)", batch.len())),
+                Err(e) => details.push(format!("sysfs: {e}")),
+            }
+            let gpu = || -> Result<String, String> {
+                if !nvidia_usable() {
+                    return Ok(format!("{} GPU value(s) skipped (NVIDIA dGPU is off)", wmi.len()));
+                }
+                let v = pkexec_helper(&format!("{HELPER_DIR}/legion-gpu-helper"), &json!({"op": "apply", "values": wmi}))?;
+                if v["ok"] != true { return Err(v["error"].as_str().unwrap_or("failed").into()); }
+                Ok(format!("{} GPU value(s) (WMI)", wmi.len()))
+            };
+            let mut ok = sysfs.is_ok();
+            if !wmi.is_empty() {
+                match gpu() {
+                    Ok(msg) => details.push(msg),
+                    Err(e) => { ok = false; details.push(format!("GPU (WMI): {e}")); }
                 }
             }
-            if !wmi.is_empty() && !nvidia_usable() {
-                return Ok(format!("{} value(s); {} GPU value(s) skipped (NVIDIA dGPU is off){note}", batch.len(), wmi.len()));
-            }
-            if !wmi.is_empty() {
-                let v = pkexec_helper(&format!("{HELPER_DIR}/legion-gpu-helper"), &json!({"op": "apply", "values": wmi}))?;
-                if v["ok"] != true { return Err(format!("GPU (WMI): {}", v["error"].as_str().unwrap_or("failed"))); }
-            }
-            Ok(format!("{} value(s){}{note}", batch.len(),
-                       if wmi.is_empty() { String::new() } else { format!(" + {} GPU (WMI)", wmi.len()) }))
+            let summary = details.join("; ") + &note;
+            if ok { Ok(summary) } else { Err(summary) }
         })();
         line("firmware limits", r);
     }
@@ -762,9 +775,18 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
         if let Some(c) = scene_choice(&s["tuning"]) {
             let r = (|| -> Result<String, String> {
                 let preset = match &c { Err(()) => Value::Null, Ok(n) => json!(n) };
-                let v = pkexec(&json!({"op": "apply_preset", "mode": "manual", "replace": true, "preset": preset}))?;
+                let v = pkexec(&json!({"op": "apply_scene_preset", "preset": preset}))?;
                 if v["game_active"] == true { return Ok("left alone (game session active)".into()); }
-                if v["ok"] != true { return Err(v["error"].as_str().unwrap_or("failed").into()); }
+                if v["ok"] != true {
+                    let mut details = vec![v["error"].as_str().unwrap_or("failed").to_owned()];
+                    for row in v["results"].as_array().into_iter().flatten()
+                        .chain(v["restored"]["errors"].as_array().into_iter().flatten()) {
+                        if let Some(error) = row["error"].as_str() {
+                            details.push(format!("{}: {error}", row["key"].as_str().unwrap_or("?")));
+                        }
+                    }
+                    return Err(details.join("; "));
+                }
                 let mut out = match c { Err(()) => "originals restored".to_owned(), Ok(n) => format!("\"{n}\"") };
                 // Same note as the GUI scene step: written, but read back differently.
                 let stuck: Vec<(&str, u64)> = v["results"].as_array().into_iter().flatten()
