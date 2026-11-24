@@ -2,6 +2,13 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <limits>
+
+qint64 addTrafficCounter(qint64 a, qint64 b) {
+    a = qMax(qint64(0), a); b = qMax(qint64(0), b);
+    const auto max = std::numeric_limits<qint64>::max();
+    return b > max - a ? max : a + b;
+}
 
 QString trafficFilePath() { return QStringLiteral("/var/lib/centurion/traffic.json"); }
 
@@ -23,5 +30,5 @@ qint64 trafficBytes(const TrafficDays &days, const QString &day, const QString &
     const auto d = days.constFind(day);
     if (d == days.constEnd()) return 0;
     const auto p = d->constFind(program);
-    return p == d->constEnd() ? 0 : p->tx + p->rx;
+    return p == d->constEnd() ? 0 : addTrafficCounter(p->tx, p->rx);
 }

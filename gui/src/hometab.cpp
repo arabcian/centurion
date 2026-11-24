@@ -590,38 +590,75 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *dashboardMenu = new QPushButton(tr("Dashboard panels…"));
         auto *panelMenu = new QMenu(dashboardMenu);
         dashboardMenu->setMenu(panelMenu);
-        auto panelChoice = [panelMenu](const QString &label, const QString &key, QWidget *panel) {
-            auto *action = panelMenu->addAction(label);
-            action->setCheckable(true);
-            QSettings s(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
-            action->setChecked(s.value(key, true).toBool());
-            panel->setVisible(action->isChecked());
-            QObject::connect(action, &QAction::toggled, panel, [panel, key](bool visible) {
+        const QList<QPair<QString,QWidget *>> panels{
+            {QStringLiteral("power"),profileBox},{QStringLiteral("monitoring"),plotPanel},
+            {QStringLiteral("hardware"),detailCard},{QStringLiteral("devices"),dev}};
+        const QStringList defaultOrder{QStringLiteral("power"),QStringLiteral("monitoring"),QStringLiteral("hardware"),QStringLiteral("devices")};
+        auto order = std::make_shared<QStringList>();
+        QSettings layoutPrefs(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui"));
+        for (const auto &id : layoutPrefs.value(QStringLiteral("home/experimentalPanelOrder"),defaultOrder).toStringList())
+            if (defaultOrder.contains(id) && !order->contains(id)) order->append(id);
+        for (const auto &id : defaultOrder) if (!order->contains(id)) order->append(id);
+        auto layoutState=std::make_shared<QPair<QList<QWidget *>,int>>();
+        auto arrange = [cells,panels,order,layoutState](int width) {
+            auto &[lastVisible,lastColumns]=*layoutState;
+            QList<QWidget *> visible;
+            for (const auto &id : *order) for (const auto &entry : panels)
+                if (entry.first == id && entry.second && !entry.second->isHidden()) visible.append(entry.second);
+            int required = 0;
+            for (auto *w : visible) required = qMax(required,w->minimumSizeHint().width());
+            const int threshold = required * 2 + 12;
+            const int columns = width >= threshold + (lastColumns==1?24:0) && visible.size()>1 ? 2 : 1;
+            if (visible==lastVisible && columns==lastColumns) return;
+            lastVisible=visible; lastColumns=columns;
+            for (const auto &entry : panels) if (entry.second) cells->removeWidget(entry.second);
+            for (int i=0; i<visible.size(); ++i)
+                cells->addWidget(visible[i],i/columns,i%columns,1,columns==2 && i==visible.size()-1 && i%2==0 ? 2:1);
+            cells->setColumnStretch(0,1); cells->setColumnStretch(1,columns==2?1:0);
+            for (int i=0; i<4; ++i) cells->setRowStretch(i,i==(visible.size()-1)/columns?1:0);
+        };
+        // New children are hidden only by an explicit visibility choice, not because Home itself is hidden.
+        profileBox->show(); if (dev) dev->show();
+        auto panelChoice = [panelMenu,scroll,arrange](const QString &label,const QString &key,QWidget *panel) {
+            auto *action=panelMenu->addAction(label); action->setCheckable(true);
+            QSettings settings(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui"));
+            action->setChecked(settings.value(key,true).toBool()); panel->setVisible(action->isChecked());
+            QObject::connect(action,&QAction::toggled,panel,[panel,key,scroll,arrange](bool visible) {
                 panel->setVisible(visible);
-                QSettings s(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
-                s.setValue(key, visible);
+                QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); s.setValue(key,visible);
+                arrange(scroll->viewport()->width());
             });
+            return action;
         };
-        panelChoice(tr("Monitoring"), QStringLiteral("home/showMonitoring"), plotPanel);
-        panelChoice(tr("Hardware information"), QStringLiteral("home/showHardware"), detailCard);
-        // Power profiles, device controls, and safety banners are never hidden here.
-        root->addWidget(dashboardMenu, 0, Qt::AlignRight);
-        scroll->reflow = [cells, profileBox, plotPanel, detailCard, dev, compact = false](int width) mutable {
-            const int required = std::max({760, profileBox->minimumSizeHint().width() + plotPanel->minimumSizeHint().width() + 6,
-                detailCard->minimumSizeHint().width() + (dev ? dev->minimumSizeHint().width() : 0) + 6});
-            // Hysteresis avoids oscillation when a vertical scrollbar appears.
-            const bool narrow = width < required + (compact ? 24 : 0);
-            if (narrow == compact) return;
-            compact = narrow;
-            for (QWidget *w : {static_cast<QWidget *>(profileBox), static_cast<QWidget *>(plotPanel), static_cast<QWidget *>(detailCard), static_cast<QWidget *>(dev)})
-                if (w) cells->removeWidget(w);
-            cells->addWidget(profileBox, 0, 0);
-            cells->addWidget(plotPanel, narrow ? 1 : 0, narrow ? 0 : 1);
-            cells->addWidget(detailCard, narrow ? 2 : 1, 0, 1, (!narrow && !dev) ? 2 : 1);
-            if (dev) cells->addWidget(dev, narrow ? 3 : 1, narrow ? 0 : 1);
-            cells->setColumnStretch(1, narrow ? 0 : 1);
-            for (int row = 0; row < 4; ++row) cells->setRowStretch(row, row == (narrow ? (dev ? 3 : 2) : 1) ? 1 : 0);
-        };
+        auto *monitorAction=panelChoice(tr("Monitoring"),QStringLiteral("home/showMonitoring"),plotPanel);
+        auto *hardwareAction=panelChoice(tr("Hardware information"),QStringLiteral("home/showHardware"),detailCard);
+        auto *reorder=panelMenu->addAction(tr("Reorder panels…"));
+        connect(reorder,&QAction::triggered,this,[this,order,panels,scroll,arrange] {
+            QDialog dialog(this); dialog.setWindowTitle(tr("Reorder dashboard panels"));
+            auto *v=new QVBoxLayout(&dialog); auto *list=new QListWidget; v->addWidget(list);
+            for (const auto &id : *order) for (const auto &entry : panels) if (entry.first==id) {
+                const auto *group=qobject_cast<QGroupBox *>(entry.second);
+                auto *item=new QListWidgetItem(group?group->title():id,list); item->setData(Qt::UserRole,id);
+            }
+            auto *row=new QHBoxLayout; auto *up=new QPushButton(tr("Move up")); auto *down=new QPushButton(tr("Move down")); row->addWidget(up); row->addWidget(down); v->addLayout(row);
+            auto move=[list](int delta) { const int i=list->currentRow(), j=i+delta; if(i<0||j<0||j>=list->count()) return; auto *item=list->takeItem(i); list->insertItem(j,item); list->setCurrentRow(j); };
+            connect(up,&QPushButton::clicked,&dialog,[move]{move(-1);}); connect(down,&QPushButton::clicked,&dialog,[move]{move(1);});
+            auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel); v->addWidget(buttons);
+            connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+            if(dialog.exec()!=QDialog::Accepted)return;
+            order->clear(); for(int i=0;i<list->count();++i) order->append(list->item(i)->data(Qt::UserRole).toString());
+            QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); s.setValue(QStringLiteral("home/experimentalPanelOrder"),*order);
+            arrange(scroll->viewport()->width());
+        });
+        auto *reset=panelMenu->addAction(tr("Reset dashboard layout"));
+        connect(reset,&QAction::triggered,this,[=] {
+            *order=defaultOrder;
+            QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); s.remove(QStringLiteral("home/experimentalPanelOrder"));
+            monitorAction->setChecked(true); hardwareAction->setChecked(true); arrange(scroll->viewport()->width());
+        });
+        root->addWidget(dashboardMenu,0,Qt::AlignRight);
+        scroll->reflow=arrange;
+        arrange(scroll->viewport()->width());
         root->addWidget(scroll, 1);
     } else {
         // Identical Classic layout and all existing child widgets.

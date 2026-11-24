@@ -420,17 +420,50 @@ void DiagReportView::previewExport() {
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Export preview"));
     auto *layout = new QVBoxLayout(&dlg);
-    layout->addWidget(text(tr("The complete report may contain device identifiers, paths, addresses or other private data. Review before sharing. No automatic redaction is performed.")));
+    layout->addWidget(text(tr("Reports may contain private data. Automatic redaction is best effort only. Review and edit the preview before sharing.")));
     const diag::Report captured = report_;
     const QString fullReport = report_.toText();
     auto *raw = new QPlainTextEdit(fullReport);
-    auto *includeRaw = new QCheckBox(tr("Include technical details")); includeRaw->setChecked(true);
-    layout->addWidget(includeRaw);
-    connect(includeRaw, &QCheckBox::toggled, &dlg, [raw, captured](bool on) {
-        auto selected = captured; if (!on) selected.raw.clear();
-        raw->setPlainText(selected.toText());
-    });
-    raw->setReadOnly(true);
+    auto *selection = new QTreeWidget; selection->setHeaderHidden(true);
+    selection->setMaximumHeight(fontMetrics().height() * 9);
+    auto add = [](QTreeWidgetItem *parent, const QString &label) {
+        auto *item = new QTreeWidgetItem(parent, {label});
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, Qt::Checked); return item;
+    };
+    auto *findings = new QTreeWidgetItem(selection, {tr("Findings")});
+    findings->setFlags(findings->flags() | Qt::ItemIsAutoTristate | Qt::ItemIsUserCheckable);
+    for (const auto &f : captured.findings) add(findings, f.title);
+    auto *tables = new QTreeWidgetItem(selection, {tr("Tables")});
+    tables->setFlags(tables->flags() | Qt::ItemIsAutoTristate | Qt::ItemIsUserCheckable);
+    findings->setCheckState(0, Qt::Checked);
+    for (const auto &t : captured.tables) {
+        auto *item=add(tables, t.title);
+        // Binary EDID can encode a serial number that text redaction cannot detect.
+        if (t.title == QCoreApplication::translate("diagnostictools", "EDID Binary Inspector")) item->setCheckState(0,Qt::Unchecked);
+    }
+    layout->addWidget(selection);
+    auto *includeRaw = new QCheckBox(tr("Include technical details")); includeRaw->setChecked(false);
+    auto *redact = new QCheckBox(tr("Redact detected private data")); redact->setChecked(true);
+    layout->addWidget(includeRaw); layout->addWidget(redact);
+    auto *regenerate = new QPushButton(tr("Regenerate preview (replaces edits)")); layout->addWidget(regenerate);
+    auto refresh = [=] {
+        auto selected = captured;
+        selected.findings.clear(); selected.tables.clear();
+        for (int i = 0; i < findings->childCount(); ++i) if (findings->child(i)->checkState(0) == Qt::Checked) selected.findings << captured.findings.at(i);
+        for (int i = 0; i < tables->childCount(); ++i) if (tables->child(i)->checkState(0) == Qt::Checked) selected.tables << captured.tables.at(i);
+        if (!includeRaw->isChecked()) selected.raw.clear();
+        if (redact->isChecked()) diag::redactPrivateFields(selected);
+        QString result = tr("Verdict refers to the complete original report; selected sections follow.") + QStringLiteral("\n\n") + selected.toTextWithVerdict(captured);
+        if (redact->isChecked()) result = diag::redactPrivateText(result);
+        raw->setPlainText(result);
+    };
+    connect(regenerate, &QPushButton::clicked, &dlg, refresh);
+    connect(selection, &QTreeWidget::itemChanged, &dlg, refresh);
+    connect(includeRaw, &QCheckBox::toggled, &dlg, refresh);
+    connect(redact, &QCheckBox::toggled, &dlg, refresh);
+    refresh();
+    raw->setReadOnly(false);
     raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     layout->addWidget(raw, 1);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);

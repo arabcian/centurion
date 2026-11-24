@@ -2,6 +2,7 @@
 #include "../src/traffic.h"
 
 #include <cstdio>
+#include <limits>
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++failures; } } while (0)
@@ -21,6 +22,10 @@ int main() {
     CHECK(parseTraffic("{}").isEmpty());
     CHECK(parseTraffic(R"({"days":{"d":{"p":{"tx":"x"}}}})").value(QStringLiteral("d")).value(QStringLiteral("p")).tx == 0);
 
+    const auto maximum=std::numeric_limits<qint64>::max();
+    CHECK(addTrafficCounter(maximum-5,10)==maximum);
+    CHECK(addTrafficCounter(-1,10)==10);
+    CHECK(addTrafficCounter(20,30)==50);
     if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }
     std::printf("traffic: all checks passed\n");
     return 0;

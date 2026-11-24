@@ -245,8 +245,10 @@ Edid decodeEdid(const QByteArray &d) {
         e.audio = e.audio || (caps & 0x40);
         e.ycc444 = e.ycc444 || (caps & 0x20);
         e.ycc422 = e.ycc422 || (caps & 0x10);
-        for (int i = base + 4; i < base + std::min(dtd, 127);) {
+        if (dtd < 4 || dtd > 127) continue;
+        for (int i = base + 4; i < base + dtd;) {
             const int hdr = u8(d, i), tag = hdr >> 5, len = hdr & 0x1f;
+            if (i + 1 + len > base + dtd) break;  // truncated block must not borrow bytes from DTD/checksum
             if (tag == 7 && len >= 3 && u8(d, i + 1) == 0x06) {         // HDR static metadata: EOTFs, peak and black level
                 const int eotf = u8(d, i + 2);
                 if (eotf & 0x02) e.hdr << QStringLiteral("HDR gamma");
@@ -297,6 +299,13 @@ Report displays(const QString &root) {
     modesTable.title = tr("Decoded Detailed Timings");
     modesTable.headers = {tr("Connector"), tr("Timing")};
     modesTable.note = tr("Detailed timings decoded from the EDID are not a complete list of modes offered by the driver.");
+    Table bytes;
+    bytes.title = tr("EDID Binary Inspector");
+    bytes.headers = {tr("Connector"), tr("Block"), tr("Offset"), tr("Hexadecimal"), tr("ASCII")};
+    bytes.note = tr("Read-only bytes from the kernel. EDID may contain a display serial number; review before exporting.");
+    Table timingDetails;
+    timingDetails.title = tr("Base Block Timing Details");
+    timingDetails.headers = {tr("Connector"), tr("Offset"), tr("Active H/V"), tr("Blanking H/V"), tr("Total H/V"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)")};
     int connected = 0;
     for (const QString &conn : diagsrc::dir(root + QStringLiteral("/sys/class/drm"))) {
         if (!conn.contains(QLatin1Char('-'))) continue;
@@ -306,12 +315,29 @@ Report displays(const QString &root) {
         const QString port = conn.section(QLatin1Char('-'), 1);
         QFile f(b + QStringLiteral("edid"));
         const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(32 * 128) : QByteArray();
+        for (int off = 0; off < raw.size(); off += 16) {
+            const auto chunk = raw.mid(off, 16);
+            QString ascii;
+            for (const char c : chunk) ascii += QLatin1Char(uchar(c) >= 32 && uchar(c) <= 126 ? c : '.');
+            bytes.add({conn, QString::number(off / 128), QStringLiteral("0x%1").arg(off, 4, 16, QLatin1Char('0')),
+                QString::fromLatin1(chunk.toHex(' ')).toUpper(), ascii});
+        }
         if (raw.size() < 128) {
             t.add({port, tr("(no EDID)"), QStringLiteral("—"), QStringLiteral("—"), QStringLiteral("—"), QStringLiteral("—"), tr("missing")}, Level::Unknown);
             r.add(Level::Unknown, tr("%1 is connected but gives no EDID").arg(port), tr("The driver falls back to safe modes; a cable or adapter that drops the DDC lines does this."));
             continue;
         }
         const Edid e = decodeEdid(raw);
+        for (int off = 54; off <= 108; off += 18) {
+            const int clk = u8(raw, off) | (u8(raw, off+1) << 8);
+            if (!clk) continue;
+            const int ha = u8(raw, off+2) | ((u8(raw, off+4)&0xf0)<<4), hb = u8(raw, off+3) | ((u8(raw, off+4)&0x0f)<<8);
+            const int va = u8(raw, off+5) | ((u8(raw, off+7)&0xf0)<<4), vb = u8(raw, off+6) | ((u8(raw, off+7)&0x0f)<<8);
+            if (!(ha+hb) || !(va+vb)) continue;
+            auto pair = [](int h,int v) { return QStringLiteral("%1 / %2").arg(h).arg(v); };
+            timingDetails.add({conn, QStringLiteral("0x%1").arg(off, 2, 16, QLatin1Char('0')), pair(ha,va), pair(hb,vb), pair(ha+hb,va+vb),
+                QString::number(clk/100.0,'f',2), QString::number(clk*10000.0/((ha+hb)*(va+vb)),'f',2)});
+        }
         for (int block = 0; block < e.readable; ++block) {
             int sum = 0;
             for (int i = 0; i < 128; ++i) sum += u8(raw, block * 128 + i);
@@ -372,6 +398,8 @@ Report displays(const QString &root) {
                 diagsrc::read(d + QStringLiteral("max_brightness"))});
     }
     if (!bl.rows.isEmpty()) r.tables << bl;
+    if (!bytes.rows.isEmpty()) r.tables << bytes;
+    if (!timingDetails.rows.isEmpty()) r.tables << timingDetails;
     if (!connected) r.add(Level::Unknown, tr("No connected display found under /sys/class/drm"));
     else if (!r.count(Level::Review) && !r.count(Level::Unknown)) r.add(Level::Ok, tr("%1 display(s) with a valid EDID").arg(connected));
     return r;

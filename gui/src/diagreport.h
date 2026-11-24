@@ -49,8 +49,12 @@ struct Report {
     /// One line for the top of the report, e.g. "2 findings need attention".
     QString headline() const;
     QString toText() const;
+    QString toTextWithVerdict(const Report &original) const;
 };
 
 QString levelName(Level l);
+/// Conservative best-effort privacy filter, not an anonymization guarantee.
+QString redactPrivateText(QString text);
+void redactPrivateFields(Report &report);
 
 }  // namespace diag

@@ -16,6 +16,9 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSlider>
+#include <QSettings>
+#include <QMenu>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -384,6 +387,8 @@ void LightingTab::buildUi() {
     auto *paintBtn = mini("Paint selection", "Selected keys become a static colour (taken out of any other effect)");
     auto *offBtn = mini("Turn off selection", "Selected keys are removed from every effect and stay dark");
     paintRow->addWidget(paintColor_);
+    auto *savedColors = new QPushButton(tr("Saved Colors…"));
+    paintRow->addWidget(savedColors);
     paintRow->addWidget(paintBtn);
     paintRow->addWidget(offBtn);
     paintRow->addStretch(1);
@@ -555,6 +560,24 @@ void LightingTab::buildUi() {
     connect(paintColor_, &QToolButton::clicked, this, [this, updatePaintIcon] {
         const QColor c = QColorDialog::getColor(paint_, this, "Paint colour");
         if (c.isValid()) { paint_ = c; updatePaintIcon(); }
+    });
+    connect(savedColors,&QPushButton::clicked,this,[this,savedColors,updatePaintIcon] {
+        QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui"));
+        const QString key=QStringLiteral("lighting/paintPalette");
+        QStringList palette;
+        static const QRegularExpression rgb(QStringLiteral("^#[0-9a-fA-F]{6}$"));
+        for (const auto &color:s.value(key).toStringList())
+            if(rgb.match(color).hasMatch() && !palette.contains(color.toLower()) && palette.size()<32) palette<<color.toLower();
+        QMenu menu(this);
+        auto *save=menu.addAction(tr("Save current paint color")); save->setEnabled(palette.size()<32 && !palette.contains(paint_.name()));
+        auto *clear=menu.addAction(tr("Clear saved colors")); clear->setEnabled(!palette.isEmpty());
+        menu.addSeparator();
+        for(const auto &color:palette) { QPixmap swatch(20,14); swatch.fill(QColor(color)); auto *a=menu.addAction(QIcon(swatch),color); a->setData(color); }
+        auto *chosen=menu.exec(savedColors->mapToGlobal(QPoint(0,savedColors->height())));
+        if (!chosen) return;
+        if (chosen==save) { palette<<paint_.name(); s.setValue(key,palette); }
+        else if(chosen==clear) { if(QMessageBox::question(this,tr("Saved Colors"),tr("Clear the saved paint colors?"))==QMessageBox::Yes) s.remove(key); }
+        else { const QColor color(chosen->data().toString()); if(color.isValid()) { paint_=color; updatePaintIcon(); } }
     });
     connect(paintBtn, &QPushButton::clicked, this, [this] { paintSelection(paint_); });
     connect(offBtn, &QPushButton::clicked, this, [this] {
@@ -888,9 +911,11 @@ void LightingTab::refreshList() {
     filling_ = true;
     const int keep = list_->currentRow();
     list_->clear();
+    int step=0;
     for (const Effect &e : work_) {
+        ++step;
         const QString keys = e.allKeys() ? QStringLiteral("all lights") : QStringLiteral("%1 lights").arg(e.keys.size());
-        auto *it = new QListWidgetItem(swatch(e), typeName(e.type) + QStringLiteral("  ·  ") + keys);
+        auto *it = new QListWidgetItem(swatch(e), QStringLiteral("%1. ").arg(step) + typeName(e.type) + QStringLiteral("  ·  ") + keys);
         if (needsHost(e.type)) it->setToolTip("Needs Windows (audio or screen capture) — kept as is, not editable here");
         list_->addItem(it);
     }

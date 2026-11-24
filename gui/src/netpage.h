@@ -110,6 +110,9 @@ private:
     QLabel *wifiIfaceLabel_ = nullptr, *wifiHw_ = nullptr, *wifiNetInfo_ = nullptr;
     QTabWidget *wifiPages_ = nullptr;         // Connection / Hardware / Nearby networks
     QTreeWidget *wifiNets_ = nullptr;
+    quint64 wifiScanRevision_ = 0;
+    QJsonObject wifiScanSnapshot_;
+    QDateTime wifiScanReceived_;
     class QPushButton *wifiRescan_ = nullptr;
     QTimer *wifiTimer_;
     int wifiTab_ = -1;

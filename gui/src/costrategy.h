@@ -93,6 +93,8 @@ public:
 
     /// The next trial, or nullopt when the search is over (see result()).
     std::optional<Trial> next();
+    /// Exact next dispatch on a copy; never advances the live search.
+    std::optional<Trial> previewNext() const;
     /// The result of the trial last returned by next().
     void report(const Outcome &o);
     /// Reconstruct the CURRENT in-flight candidate from an after-next() snapshot, without advancing.

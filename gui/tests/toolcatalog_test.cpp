@@ -64,6 +64,11 @@ int main() {
     CHECK(tc::explainTerms(QStringLiteral("GASPMX")).isEmpty());
     CHECK(tc::explainTerms(QString()).isEmpty());
 
+    CHECK(tc::navigationScore(QStringLiteral("governer"),QStringLiteral("Scaling governor")) >= 0);
+    CHECK(tc::navigationScore(QStringLiteral("işlemci"),QStringLiteral("CPU"),{QStringLiteral("İşlemci")}) >= 0);
+    CHECK(tc::navigationScore(QStringLiteral("governor"),QStringLiteral("governor")) > tc::navigationScore(QStringLiteral("governer"),QStringLiteral("governor")));
+    CHECK(tc::navigationScore(QStringLiteral("unrelated"),QStringLiteral("CPU")) < 0);
+    CHECK(tc::navigationScore(QString(500,QLatin1Char('a')),QStringLiteral("CPU")) < 0);
     if (failures) std::fprintf(stderr, "%d failure(s)\n", failures);
     return failures ? 1 : 0;
 }

@@ -16,6 +16,8 @@ struct TrafficTotal {
 /// local day (YYYY-MM-DD) → program → totals
 using TrafficDays = QMap<QString, QMap<QString, TrafficTotal>>;
 
+/// Saturating addition of non-negative ledger counters (never signed-overflows).
+qint64 addTrafficCounter(qint64 a, qint64 b);
 QString trafficFilePath();
 TrafficDays parseTraffic(const QByteArray &json);
 /// Sent + received of one program on one day; 0 when it has none.

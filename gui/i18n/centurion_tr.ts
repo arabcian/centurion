@@ -3326,6 +3326,26 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Restart Centurion now to change control density?</source>
             <translation>Kontrol yoğunluğunu değiştirmek için Centurion şimdi yeniden başlatılsın mı?</translation>
         </message>
+            <message>
+            <source>Reorder panels…</source>
+            <translation>Panelleri yeniden sırala…</translation>
+        </message>
+        <message>
+            <source>Reorder dashboard panels</source>
+            <translation>Gösterge panellerini yeniden sırala</translation>
+        </message>
+        <message>
+            <source>Move up</source>
+            <translation>Yukarı taşı</translation>
+        </message>
+        <message>
+            <source>Move down</source>
+            <translation>Aşağı taşı</translation>
+        </message>
+        <message>
+            <source>Reset dashboard layout</source>
+            <translation>Gösterge düzenini sıfırla</translation>
+        </message>
     </context>
     <context>
         <name>KlogPage</name>
@@ -3601,6 +3621,22 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
         <message>
             <source>Export failed</source>
             <translation>Dışa aktarma başarısız</translation>
+        </message>
+            <message>
+            <source>No recorded samples.</source>
+            <translation>Kayıtlı örnek yok.</translation>
+        </message>
+        <message>
+            <source>Export visible samples…</source>
+            <translation>Görünür örnekleri dışa aktar…</translation>
+        </message>
+        <message>
+            <source>Reset zoom</source>
+            <translation>Yakınlaştırmayı sıfırla</translation>
+        </message>
+        <message>
+            <source>Zoom in (Ctrl+Wheel)</source>
+            <translation>Yakınlaştır (Ctrl+Tekerlek)</translation>
         </message>
     </context>
     <context>
@@ -4689,6 +4725,42 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         <message>
             <source>%1 listening socket(s); %2 reachable from other machines (orange: on every network). From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.</source>
             <translation>%1 dinleyen soket; %2 tanesine diğer makinelerden erişilebilir (turuncu: her ağda). Bağlantı görüntüsünden alınmıştır; root görüntüsü kullanılmadığında bu sekme her 3 saniyede güncelleme ister.</translation>
+        </message>
+            <message>
+            <source>Channel View…</source>
+            <translation>Kanal Görünümü…</translation>
+        </message>
+        <message>
+            <source>Wi-Fi Channel View</source>
+            <translation>Wi-Fi Kanal Görünümü</translation>
+        </message>
+        <message>
+            <source>Cached scan received: %1. Frequency markers only; channel widths are not reported by this scan.</source>
+            <translation>Önbellekteki taramanın alınma zamanı: %1. Yalnızca frekans işaretleri; bu tarama kanal genişliklerini bildirmiyor.</translation>
+        </message>
+        <message>
+            <source>Unknown</source>
+            <translation>Bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Frequency (MHz)</source>
+            <translation>Frekans (MHz)</translation>
+        </message>
+        <message>
+            <source>Daily Traffic Charts…</source>
+            <translation>Günlük Trafik Grafikleri…</translation>
+        </message>
+        <message>
+            <source>Daily Traffic Charts</source>
+            <translation>Günlük Trafik Grafikleri</translation>
+        </message>
+        <message>
+            <source>Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros.</source>
+            <translation>Anlık bant genişliği değil, kaydedilmiş günlük toplamlar. Eksik günler ölçülmüş sıfır değildir.</translation>
+        </message>
+        <message>
+            <source>Total</source>
+            <translation>Toplam</translation>
         </message>
     </context>
     <context>
@@ -9051,6 +9123,10 @@ Ortalama %4 ms · P50 %5 ms · P95 %6 ms · P99 %7 ms · Maks %8 ms</translation
             <source>Sample %1</source>
             <translation>Örnek %1</translation>
         </message>
+            <message>
+            <source>Setting unavailable on this machine: %1</source>
+            <translation>Bu makinede ayar kullanılamıyor: %1</translation>
+        </message>
     </context>
     <context>
         <name>RyzenTab</name>
@@ -12012,6 +12088,14 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>-%1 min</source>
             <translation>-%1 dk</translation>
         </message>
+            <message>
+            <source>%1 / %2 · %3</source>
+            <translation>%1 / %2 · %3</translation>
+        </message>
+        <message>
+            <source>%1  /  %2</source>
+            <translation>%1  /  %2</translation>
+        </message>
     </context>
     <context>
         <name>distroprofile</name>
@@ -14466,6 +14550,18 @@ Profil adı:</translation>
         <message>
             <source>Interrupted candidate (not the next candidate): %1</source>
             <translation>Kesintiye uğrayan aday (bir sonraki aday değil): %1</translation>
+        </message>
+            <message>
+            <source>Next candidate preview: %1 (%2 s of tests, excluding overhead). %3</source>
+            <translation>Sonraki aday önizlemesi: %1 (ek işlem süresi hariç %2 sn test). %3</translation>
+        </message>
+        <message>
+            <source>No further candidate in the current search state.</source>
+            <translation>Mevcut arama durumunda başka aday yok.</translation>
+        </message>
+        <message>
+            <source>Next candidate unavailable: crash guard could not be read.</source>
+            <translation>Sonraki aday kullanılamıyor: çökme koruması okunamadı.</translation>
         </message>
     </context>
     <context>
@@ -18386,6 +18482,50 @@ Profil adı:</translation>
             <source>Checksum mismatch</source>
             <translation>Sağlama toplamı uyuşmuyor</translation>
         </message>
+            <message>
+            <source>EDID Binary Inspector</source>
+            <translation>EDID İkili Veri İnceleyicisi</translation>
+        </message>
+        <message>
+            <source>Offset</source>
+            <translation>Ofset</translation>
+        </message>
+        <message>
+            <source>Hexadecimal</source>
+            <translation>Onaltılık</translation>
+        </message>
+        <message>
+            <source>ASCII</source>
+            <translation>ASCII</translation>
+        </message>
+        <message>
+            <source>Read-only bytes from the kernel. EDID may contain a display serial number; review before exporting.</source>
+            <translation>Çekirdekten alınan salt okunur baytlar. EDID ekran seri numarası içerebilir; dışa aktarmadan önce inceleyin.</translation>
+        </message>
+        <message>
+            <source>Base Block Timing Details</source>
+            <translation>Temel Blok Zamanlama Ayrıntıları</translation>
+        </message>
+        <message>
+            <source>Active H/V</source>
+            <translation>Etkin H/V</translation>
+        </message>
+        <message>
+            <source>Blanking H/V</source>
+            <translation>Boşluk H/V</translation>
+        </message>
+        <message>
+            <source>Total H/V</source>
+            <translation>Toplam H/V</translation>
+        </message>
+        <message>
+            <source>Pixel Clock (MHz)</source>
+            <translation>Piksel Saati (MHz)</translation>
+        </message>
+        <message>
+            <source>Refresh (Hz)</source>
+            <translation>Yenileme (Hz)</translation>
+        </message>
     </context>
     <context>
         <name>DiagReportView</name>
@@ -18504,6 +18644,26 @@ Profil adı:</translation>
         <message>
             <source>Copy full report</source>
             <translation>Tam raporu kopyala</translation>
+        </message>
+            <message>
+            <source>Reports may contain private data. Automatic redaction is best effort only. Review and edit the preview before sharing.</source>
+            <translation>Raporlar özel veriler içerebilir. Otomatik maskeleme kusursuz değildir. Paylaşmadan önce önizlemeyi inceleyip düzenleyin.</translation>
+        </message>
+        <message>
+            <source>Tables</source>
+            <translation>Tablolar</translation>
+        </message>
+        <message>
+            <source>Redact detected private data</source>
+            <translation>Algılanan özel verileri maskele</translation>
+        </message>
+        <message>
+            <source>Regenerate preview (replaces edits)</source>
+            <translation>Önizlemeyi yeniden oluştur (düzenlemeleri değiştirir)</translation>
+        </message>
+        <message>
+            <source>Verdict refers to the complete original report; selected sections follow.</source>
+            <translation>Değerlendirme özgün raporun tamamına aittir; seçilen bölümler aşağıdadır.</translation>
         </message>
     </context>
     <context>
@@ -19100,6 +19260,26 @@ Profil adı:</translation>
         <message>
             <source>Redo a draft effect change; nothing is written to the keyboard.</source>
             <translation>Taslak efekt değişikliğini yinele; klavyeye hiçbir şey yazılmaz.</translation>
+        </message>
+            <message>
+            <source>Saved Colors…</source>
+            <translation>Kayıtlı Renkler…</translation>
+        </message>
+        <message>
+            <source>Save current paint color</source>
+            <translation>Mevcut boyama rengini kaydet</translation>
+        </message>
+        <message>
+            <source>Clear saved colors</source>
+            <translation>Kayıtlı renkleri temizle</translation>
+        </message>
+        <message>
+            <source>Saved Colors</source>
+            <translation>Kayıtlı Renkler</translation>
+        </message>
+        <message>
+            <source>Clear the saved paint colors?</source>
+            <translation>Kayıtlı boyama renkleri temizlensin mi?</translation>
         </message>
     </context>
     <context>

@@ -1,6 +1,7 @@
 #include "netpage.h"
 
 #include "blocklistsubs.h"
+#include "charts.h"
 #include "netfirewall.h"
 #include "netlookup.h"
 #include "privileged.h"
@@ -23,6 +24,11 @@
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QGuiApplication>
+#include <QGraphicsView>
+#include <QGraphicsScene>
+#include <QGraphicsItem>
+#include <QPen>
+#include <QBrush>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QHideEvent>
@@ -424,6 +430,52 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     rwn->addWidget(wifiNetInfo_, 1);
     rwn->addWidget(wifiRescan_);
     rwn->addWidget(bWifiNets);
+    auto *channelView = new QPushButton(tr("Channel View…")); rwn->addWidget(channelView);
+    connect(channelView, &QPushButton::clicked, this, [this] {
+        QDialog dlg(this); dlg.setWindowTitle(tr("Wi-Fi Channel View")); dlg.resize(780, 560);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *info = new QLabel(tr("Cached scan received: %1. Frequency markers only; channel widths are not reported by this scan.")
+            .arg(wifiScanReceived_.isValid() ? wifiScanReceived_.toString(Qt::ISODate) : tr("Unknown")));
+        info->setWordWrap(true); layout->addWidget(info);
+        auto *scene = new QGraphicsScene(&dlg);
+        auto *view = new QGraphicsView(scene); view->setMinimumHeight(155); layout->addWidget(view,1);
+        const QPen axis(QColor(theme::FG_DIM)), marker(QColor(theme::ACCENT));
+        for (int bandIndex = 0; bandIndex < 3; ++bandIndex) {
+            const int lower = bandIndex == 0 ? 2400 : bandIndex == 1 ? 5150 : 5925;
+            const int upper = bandIndex == 0 ? 2500 : bandIndex == 1 ? 5895 : 7125;
+            const int left = bandIndex * 220 + 30;
+            scene->addLine(left, 120, left+190,120,axis);
+            scene->addLine(left, 15, left,120,axis);
+            for (int db : {-100,-50,0}) {
+                const double y = 120 - (db+100)*1.05;
+                scene->addLine(left-3,y,left+190,y,QPen(QColor(theme::BORDER_SOFT)));
+            }
+            auto *label = scene->addText(QStringLiteral("%1–%2 MHz").arg(lower).arg(upper)); label->setDefaultTextColor(QColor(theme::FG)); label->setPos(left,123);
+            for (const auto &v : wifiScanSnapshot_.value(QStringLiteral("networks")).toArray()) {
+                const auto o = v.toObject(); const int f = o.value(QStringLiteral("freq")).toInt();
+                const auto signal = o.value(QStringLiteral("signal_dbm"));
+                if (f < lower || f > upper || !signal.isDouble() || signal.toDouble() < -100 || signal.toDouble() > 0) continue;
+                const double x = left + 190.0*(f-lower)/(upper-lower), y = 120-(signal.toDouble()+100)*1.05;
+                auto *dot = scene->addEllipse(x-3,y-3,6,6,marker,QBrush(QColor(theme::ACCENT)));
+                dot->setToolTip(QStringLiteral("%1 · %2 · %3 MHz · %4 dBm").arg(str(o,"ssid"),str(o,"bssid")).arg(f).arg(signal.toDouble()).toHtmlEscaped());
+            }
+        }
+        auto *tree = makeTree({tr("Network"), tr("Address (BSSID)"), tr("Band"), tr("Channel"), tr("Frequency (MHz)"), tr("Signal")});
+        layout->addWidget(tree,1);
+        const auto nets = wifiScanSnapshot_.value(QStringLiteral("networks")).toArray();
+        for (const auto &v : nets) {
+            const auto o = v.toObject();
+            const auto f = o.value(QStringLiteral("freq")); const auto sig = o.value(QStringLiteral("signal_dbm"));
+            auto *item = new SortItem({str(o,"ssid").isEmpty() ? tr("(hidden network)") : str(o,"ssid"), str(o,"bssid"), str(o,"band"),
+                o.value(QStringLiteral("channel")).isDouble() ? QString::number(o.value(QStringLiteral("channel")).toInt()) : tr("Unknown"),
+                f.isDouble() && f.toInt() > 0 ? QString::number(f.toInt()) : tr("Unknown"), sig.isDouble() ? QString::number(sig.toDouble()) + QStringLiteral(" dBm") : tr("Unknown")});
+            if (f.isDouble()) item->setData(4, SortRole, f.toDouble());
+            tree->addTopLevelItem(item);
+        }
+        tree->setSortingEnabled(true); tree->sortByColumn(4, Qt::AscendingOrder);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+        connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+    });
     vwn->addLayout(rwn);
     wifiNets_ = makeTree({tr("Network"), tr("Signal"), tr("Channel"), tr("Band"), tr("Security"), tr("Seen"), tr("Address (BSSID)")});
     wifiNets_->setContextMenuPolicy(Qt::NoContextMenu);
@@ -438,6 +490,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     wifiTab_ = tabs_->addTab(pw, tr("Wi-Fi"));
     tabs_->setTabVisible(wifiTab_, false);
     connect(wifiIface_, &QComboBox::activated, this, [this] {
+        ++wifiScanRevision_; wifiScanSnapshot_ = {}; wifiScanReceived_ = {}; wifiNets_->clear();
         refreshWifi();
         if (wifiPages_->currentIndex() == 1) refreshWifiHw();
         if (wifiPages_->currentIndex() == 2) refreshWifiNets();
@@ -468,6 +521,42 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     trafficMode_->addItem(tr("Totals per program"));
     trafficMode_->setToolTip(tr("Totals add up the shown days for each program: who used the most data this month."));
     rt->addWidget(trafficMode_);
+    auto *chartTraffic = new QPushButton(tr("Daily Traffic Charts…"));
+    rt->addWidget(chartTraffic);
+    connect(chartTraffic, &QPushButton::clicked, this, [this] {
+        const TrafficDays captured = trafficDays_;
+        QDialog dlg(this); dlg.setWindowTitle(tr("Daily Traffic Charts")); dlg.resize(760, 620);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *program = new QComboBox; program->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        QSet<QString> names;
+        for (const auto &day : captured) for (auto it = day.cbegin(); it != day.cend(); ++it) names.insert(it.key());
+        QStringList sorted = names.values(); sorted.sort(); program->addItems(sorted); layout->addWidget(program);
+        auto *metric = new QComboBox; metric->addItems({tr("Sent"), tr("Received"), tr("Total"), tr("Connections")}); layout->addWidget(metric);
+        auto *chart = new LineChart; layout->addWidget(chart, 1);
+        auto *table = makeTree({tr("Day"), tr("Sent"), tr("Received"), tr("Connections")}); layout->addWidget(table, 1);
+        auto update = [=] {
+            QVector<LineChart::Point> points; table->clear();
+            QDate previousDate;
+            const auto keys = captured.keys();
+            for (qsizetype i = qMax(qsizetype(0), keys.size() - TRAFFIC_DAYS_SHOWN); i < keys.size(); ++i) {
+                const auto date = QDate::fromString(keys[i], Qt::ISODate);
+                const auto &day = captured[keys[i]];
+                if (!date.isValid() || !day.contains(program->currentText())) continue;
+                const auto t = day.value(program->currentText());
+                const qint64 value = metric->currentIndex() == 0 ? t.tx : metric->currentIndex() == 1 ? t.rx : metric->currentIndex() == 2 ? addTrafficCounter(t.tx, t.rx) : t.conns;
+                points.append({double(date.toJulianDay()), double(value), keys[i], previousDate.isValid() && previousDate.daysTo(date)>1});
+                previousDate=date;
+                table->addTopLevelItem(new QTreeWidgetItem({keys[i], QString::number(t.tx), QString::number(t.rx), QString::number(t.conns)}));
+            }
+            chart->setPoints(points, metric->currentIndex() == 3 ? QString() : QStringLiteral(" B"));
+        };
+        connect(program, &QComboBox::currentIndexChanged, &dlg, update);
+        connect(metric, &QComboBox::currentIndexChanged, &dlg, update);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); update(); dlg.exec();
+    });
     auto *bExpT = button("Export…", rt);
     vt->addLayout(rt);
     trafficTree_ = makeTree({tr("Day"), tr("Program"), tr("Sent"), tr("Received"), tr("Connections")});
@@ -909,9 +998,9 @@ void NetPage::fillTraffic() {
             const QMap<QString, TrafficTotal> &of = trafficDays_.value(days.at(i));
             for (auto p = of.cbegin(); p != of.cend(); ++p) {
                 TrafficTotal &t = sum[p.key()];
-                t.tx += p.value().tx;
-                t.rx += p.value().rx;
-                t.conns += p.value().conns;
+                t.tx = addTrafficCounter(t.tx, p.value().tx);
+                t.rx = addTrafficCounter(t.rx, p.value().rx);
+                t.conns = addTrafficCounter(t.conns, p.value().conns);
             }
         }
         for (auto p = sum.cbegin(); p != sum.cend(); ++p) {
@@ -931,7 +1020,7 @@ void NetPage::fillTraffic() {
             QList<QPair<QString, TrafficTotal>> progs;
             const QMap<QString, TrafficTotal> &of = trafficDays_.value(day);
             for (auto p = of.cbegin(); p != of.cend(); ++p) progs << qMakePair(p.key(), p.value());
-            std::sort(progs.begin(), progs.end(), [](const auto &a, const auto &b) { return a.second.tx + a.second.rx > b.second.tx + b.second.rx; });
+            std::sort(progs.begin(), progs.end(), [](const auto &a, const auto &b) { return addTrafficCounter(a.second.tx, a.second.rx) > addTrafficCounter(b.second.tx, b.second.rx); });
             for (const auto &pr : progs) {
                 const TrafficTotal &t = pr.second;
                 auto *it = new SortItem({day, pr.first, humanBytes(t.tx), humanBytes(t.rx), QString::number(t.conns)});
@@ -1438,7 +1527,8 @@ QJsonObject NetPage::wifiReq(const char *op) const {
 }
 
 void NetPage::refreshWifi() {
-    runUser(wifiReq("wifi"), [this](const QJsonObject &w) { applyWifi(w); }, 6000);
+    const auto iface = wifiIface_->currentText();
+    runUser(wifiReq("wifi"), [this,iface](const QJsonObject &w) { if (iface == wifiIface_->currentText()) applyWifi(w); }, 6000);
 }
 
 static QString wifiStandard(const QString &s, const QString &band) {
@@ -1471,11 +1561,13 @@ void NetPage::applyWifi(const QJsonObject &w) {
     QStringList names;
     for (const QJsonValue &x : w.value(QLatin1String("ifaces")).toArray()) names << x.toString();
     if (names.isEmpty()) names << str(w, "iface");
+    const auto previousIface = wifiIface_->currentText();
     { const QSignalBlocker b(wifiIface_);
       QStringList have;
       for (int i = 0; i < wifiIface_->count(); ++i) have << wifiIface_->itemText(i);
       if (have != names) { wifiIface_->clear(); wifiIface_->addItems(names); }
       wifiIface_->setCurrentText(str(w, "iface")); }
+    if (previousIface != wifiIface_->currentText()) { ++wifiScanRevision_; wifiScanSnapshot_ = {}; wifiScanReceived_ = {}; wifiNets_->clear(); }
     wifiIface_->setVisible(names.size() > 1);
     wifiIfaceLabel_->setVisible(names.size() > 1);
     if (!w.value(QLatin1String("ok")).toBool()) {
@@ -1598,7 +1690,15 @@ void NetPage::applyWifiHw(const QJsonObject &h) {
 }
 
 void NetPage::refreshWifiNets() {
-    runUser(wifiReq("wifi_scan"), [this](const QJsonObject &n) { applyWifiNets(n); }, 8000);
+    const auto rev = ++wifiScanRevision_;
+    const QString iface = wifiIface_->currentText();
+    runUser(wifiReq("wifi_scan"), [this, rev, iface](const QJsonObject &n) {
+        if (rev != wifiScanRevision_ || iface != wifiIface_->currentText()) return;
+        if (!iface.isEmpty() && n.value(QStringLiteral("ok")).toBool() && str(n,"iface") != iface) return;
+        wifiScanSnapshot_ = n.value(QStringLiteral("ok")).toBool() ? n : QJsonObject();
+        wifiScanReceived_ = wifiScanSnapshot_.isEmpty() ? QDateTime() : QDateTime::currentDateTimeUtc();
+        applyWifiNets(n);
+    }, 8000);
 }
 
 /// Networks the system has seen, strongest first (the kernel's cached scan, not a new scan).

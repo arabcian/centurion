@@ -11,6 +11,7 @@
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <cstdio>
+#include <limits>
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "Failed: %s\n", #x); return 1; } } while (false)
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
@@ -38,5 +39,15 @@ int main(int argc, char **argv) {
             }
         }
     }
+    LineChart chart; QVector<LineChart::Point> samples;
+    for (int i=0;i<100000;++i) samples.append({double(i),i==50000?100000.0:double(i%10),QString::number(i)});
+    samples[10].y=std::numeric_limits<double>::quiet_NaN();
+    chart.setPoints(samples,QStringLiteral("ms"));
+    CHECK(chart.viewRange().second==99999);
+    chart.setViewRange(200,400); CHECK(chart.viewRange().first==200 && chart.viewRange().second==400);
+    chart.setViewRange(-20,200000); CHECK(chart.viewRange().first==0 && chart.viewRange().second==99999);
+    chart.resize(800,500); chart.show(); app.processEvents(); CHECK(!chart.grab().isNull());
+    chart.setViewRange(999999,999999); CHECK(chart.viewRange().second-chart.viewRange().first==1);
+    chart.resetView(); CHECK(chart.viewRange().second==99999);
     return 0;
 }

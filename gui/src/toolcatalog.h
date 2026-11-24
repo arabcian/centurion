@@ -34,6 +34,8 @@ QStringList badges(int flags);
 QString normalize(const QString &s);
 /// Every word of `query` appears in `label` or one of `keywords` (normalized). An empty query matches.
 bool matches(const QString &query, const QString &label, const QStringList &keywords);
+/// Navigation only: -1 is no match, larger scores are better. Bounded typo matching.
+int navigationScore(const QString &query, const QString &label, const QStringList &keywords = {});
 
 /// Where to look next for a guided-triage category ("gpu", "cpu" …): "page:<key>" or "tool:<key>", in order.
 QStringList relatedFor(const QString &triageKey);

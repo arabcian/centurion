@@ -1,10 +1,14 @@
 #include "uinavigator.h"
 #include "experimentalui.h"
 #include "healthtab.h"
+#include "optimizetab.h"
+#include "tuningnavigation.h"
 #include "toolcatalog.h"
 #include <QScreen>
+#include <algorithm>
 
 #include <QAbstractButton>
+#include <QCoreApplication>
 #include <QDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -29,6 +33,8 @@ struct Destination {
     int innerIndex = -1;
     QPointer<HealthTab> health;
     QString healthTarget;
+    QPointer<OptimizeTab> optimize;
+    QString settingKey;
     QString title;
     QString search;
 };
@@ -113,6 +119,32 @@ void open(QTabWidget *tabs, QWidget *parent) {
             }
         }
     }
+    // Static metadata is available even if describe has never run. Hardware support
+    // remains unknown until the user actually opens a destination.
+    OptimizeTab *optimize = nullptr; HealthTab *healthPage = nullptr;
+    int optIndex = -1, healthIndex = -1;
+    for (int i = 0; i < tabs->count(); ++i) {
+        if (auto *o = qobject_cast<OptimizeTab *>(tabs->widget(i))) { optimize = o; optIndex = i; }
+        if (auto *h = qobject_cast<HealthTab *>(tabs->widget(i))) { healthPage = h; healthIndex = i; }
+    }
+    if (optimize && optIndex >= 0 && tabs->isTabEnabled(optIndex)) {
+        for (const auto &entry : tuningnavigation::entries) {
+            Destination d;
+            d.optimize = optimize; d.settingKey = QString::fromLatin1(entry.key);
+            d.tab = optIndex; d.page = optimize;
+            const QString group = QCoreApplication::translate("OptimizationGroups", entry.group);
+            const QString label = QCoreApplication::translate("OptimizationLabels", entry.label);
+            const QString home = QString::fromLatin1(entry.home);
+            if (!home.isEmpty()) {
+                if (!healthPage || !tabs->isTabEnabled(healthIndex)) continue;
+                d.tab = healthIndex; d.page = healthPage; d.health = healthPage;
+                d.healthTarget = QStringLiteral("tool:") + home.left(1).toUpper() + home.mid(1) + QStringLiteral(" tuning");
+            }
+            d.title = QObject::tr("%1 / %2 · %3").arg(tabs->tabText(d.tab), group, label);
+            d.search = d.settingKey + QLatin1Char(' ') + QString::fromUtf8(entry.label) + QLatin1Char(' ') + group + QLatin1Char(' ') + label;
+            destinations.append(d);
+        }
+    }
     // Only *already visible* controls are indexed. Building unopened specialist
     // pages here could wake a sleeping dGPU or trigger a privileged probe.
     if (QWidget *page = tabs->currentWidget()) {
@@ -153,6 +185,18 @@ void open(QTabWidget *tabs, QWidget *parent) {
             }
         }
     }
+    for (int i=0; i<tabs->count(); ++i) {
+        QWidget *page = tabs->widget(i);
+        if (i == tabs->currentIndex() || !tabs->isTabEnabled(i)) continue;
+        for (QTabWidget *inner : page->findChildren<QTabWidget *>()) {
+            for (int j=0; j<inner->count(); ++j) {
+                if (!inner->isTabEnabled(j)) continue;
+                Destination d; d.tab=i; d.page=page; d.inner=inner; d.innerIndex=j;
+                d.title=QObject::tr("%1  /  %2").arg(tabs->tabText(i),inner->tabText(j));
+                d.search=d.title+QLatin1Char(' ')+inner->tabToolTip(j); destinations.append(d);
+            }
+        }
+    }
     // Each result carries the icon of the page it leads to.
     QVector<QIcon> icons;
     for (int i = 0; i < tabs->count(); ++i)
@@ -160,9 +204,17 @@ void open(QTabWidget *tabs, QWidget *parent) {
     auto refill = [&] {
         results->clear();
         const QString filter = search->text().trimmed();
+        QList<QPair<int, int>> ranked;
         for (int i = 0; i < destinations.size(); ++i) {
             const Destination &d = destinations.at(i);
-            if (!toolcatalog::matches(filter, d.search, {})) continue;
+            const int score = !d.settingKey.isEmpty() && filter.compare(d.settingKey, Qt::CaseInsensitive) == 0
+                ? 12000 : toolcatalog::navigationScore(filter, d.title, {d.search});
+            if (score >= 0) ranked.append(qMakePair(score, i));
+        }
+        std::stable_sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+        for (int n = 0; n < ranked.size() && n < 100; ++n) {
+            const int i = ranked.at(n).second;
+            const Destination &d = destinations.at(i);
             auto *item = new QListWidgetItem(icons.value(d.tab), d.title, results);
             item->setData(Qt::UserRole, i);
         }
@@ -184,7 +236,8 @@ void open(QTabWidget *tabs, QWidget *parent) {
         tabs->setCurrentIndex(pageIndex);
         if (d.inner && d.innerIndex >= 0 && d.innerIndex < d.inner->count())
             d.inner->setCurrentIndex(d.innerIndex);
-        if (d.health) d.health->openNavigationTarget(d.healthTarget);
+        if (d.health && !d.health->openNavigationTarget(d.healthTarget)) return;
+        if (d.optimize && !d.settingKey.isEmpty()) d.optimize->navigateSetting(d.settingKey);
         if (d.target) {
             // Find the nearest scroll area. Focus is purely navigational and
             // never clicks the widget, adjusts a value or writes hardware.

@@ -3,6 +3,7 @@
 // events per day (Monitor). QPainter only, in the theme colours; they hold what they are given and nothing else.
 #include <QColor>
 #include <QMap>
+#include <QPair>
 #include <QVector>
 #include <QWidget>
 
@@ -10,20 +11,28 @@
 /// labels are printed under the axis.
 class LineChart : public QWidget {
 public:
-    struct Point { double x; double y; QString label; };
+    struct Point { double x; double y; QString label; bool breakBefore = false; };
     explicit LineChart(QWidget *parent = nullptr);
     void setPoints(const QVector<Point> &points, const QString &yUnit);
+    /// A view-only half-open sample range; invalid requests are clamped.
+    void setViewRange(qsizetype begin, qsizetype end);
+    QPair<qsizetype,qsizetype> viewRange() const { return {begin_,end_}; }
+    void resetView() { setViewRange(0,points_.size()); }
 
 protected:
     void paintEvent(QPaintEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void leaveEvent(QEvent *e) override;
     void contextMenuEvent(QContextMenuEvent *e) override;
+    void wheelEvent(QWheelEvent *e) override;
+    void keyPressEvent(QKeyEvent *e) override;
     QSize minimumSizeHint() const override { return {240, 120}; }
 
 private:
     QVector<Point> points_;
     QVector<QPointF> plotted_;
+    QVector<qsizetype> plottedIndices_;
+    qsizetype begin_ = 0, end_ = 0;
     int hover_ = -1;
     QString unit_;
 };

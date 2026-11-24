@@ -730,6 +730,23 @@ int main(int argc, char **argv) {
         std::printf("clean-exit replays: %d\n", replays);
     }
 
+    // A preview must not consume a trial or mutate the persisted search state.
+    for (const auto mode : {Mode::PerCore, Mode::AllCore}) {
+        Search search(mode, Level::Fast, -30, cpu(4), Tuning{-5,2});
+        if (mode == Mode::PerCore) startAll(search,-15);
+        Sim sim{stable};
+        for (int i=0; i<1000; ++i) {
+            const auto before=search.save();
+            const auto preview=search.previewNext();
+            CHECK(search.save()==before);
+            const auto actual=search.next();
+            CHECK(bool(preview)==bool(actual));
+            if (!actual || !preview) break;
+            CHECK(preview->what==actual->what && preview->perCore==actual->perCore && preview->allCore==actual->allCore);
+            CHECK(preview->seconds()==actual->seconds());
+            search.report(sim.run(search,*actual));
+        }
+    }
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("costrategy: all checks passed");
     return 0;

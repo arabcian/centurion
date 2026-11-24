@@ -1,6 +1,7 @@
 #include "diagreport.h"
 
 #include <QCoreApplication>
+#include <QRegularExpression>
 
 namespace diag {
 
@@ -51,11 +52,13 @@ QString Report::headline() const {
     return s;
 }
 
-QString Report::toText() const {
+QString Report::toText() const { return toTextWithVerdict(*this); }
+
+QString Report::toTextWithVerdict(const Report &original) const {
     QStringList out;
     out << QStringLiteral("%1 — %2").arg(code, title);
     if (!about.isEmpty()) out << about;
-    out << QCoreApplication::translate("diag", "Verdict: %1 — %2").arg(levelName(verdict()), headline()) << QString();
+    out << QCoreApplication::translate("diag", "Verdict: %1 — %2").arg(levelName(original.verdict()), original.headline()) << QString();
     for (const Finding &f : findings) {
         out << QStringLiteral("[%1] %2").arg(levelName(f.level), f.title);
         if (!f.detail.isEmpty()) out << QStringLiteral("    ") + f.detail;
@@ -84,6 +87,46 @@ QString Report::toText() const {
     }
     if (!raw.trimmed().isEmpty()) out << QString() << QCoreApplication::translate("diag", "Technical details:") << raw.trimmed();
     return out.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+
+QString redactPrivateText(QString text) {
+    // MACs require six octets, unlike PCI addresses. Keep error codes and PCI BDFs.
+    static const QList<QRegularExpression> patterns{
+        QRegularExpression(QStringLiteral(R"((?i)\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b)")),
+        QRegularExpression(QStringLiteral(R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)")),
+        QRegularExpression(QStringLiteral(R"((?i)(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![0-9a-f:]))")),
+        QRegularExpression(QStringLiteral(R"((?i)(?:/home/|/Users/)[^/\s]+)")),
+        QRegularExpression(QStringLiteral(R"((?im)\b(?:serial(?: number)?|hostname|host name|user name|username|seri numarası|makine adı|kullanıcı adı)\s*[:=]\s*[^\r\n]+)"))
+    };
+    // Preserve PCI addresses: IPv6 detection is deliberately conservative and excludes BDF suffixes.
+    for (int i = 0; i < patterns.size(); ++i) {
+        if (i != 2) { text.replace(patterns[i], QStringLiteral("[redacted]")); continue; }
+        static const QRegularExpression pci(QStringLiteral(R"((?i)^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}$)"));
+        auto matches = patterns[i].globalMatch(text);
+        QList<QPair<qsizetype, qsizetype>> spans;
+        while (matches.hasNext()) {
+            const auto m = matches.next();
+            const auto end = m.capturedEnd();
+            if (pci.match(m.captured()).hasMatch() && end < text.size() && text[end] == QLatin1Char('.')) continue;
+            spans.append(qMakePair(m.capturedStart(), m.capturedLength()));
+        }
+        for (auto it = spans.crbegin(); it != spans.crend(); ++it) text.replace(it->first, it->second, QStringLiteral("[redacted]"));
+    }
+    return text;
+}
+
+void redactPrivateFields(Report &report) {
+    static const QStringList privateHeaders{QStringLiteral("serial"), QStringLiteral("serial number"),
+        QStringLiteral("serial no"), QStringLiteral("seri numarası"), QStringLiteral("seri no"),
+        QStringLiteral("hostname"), QStringLiteral("host name"), QStringLiteral("makine adı"),
+        QStringLiteral("username"), QStringLiteral("user name"), QStringLiteral("kullanıcı adı"),
+        QStringLiteral("mac"), QStringLiteral("mac address"), QStringLiteral("bssid"), QStringLiteral("address (bssid)"),
+        QStringLiteral("ip"), QStringLiteral("ip address"), QStringLiteral("ip adresi")};
+    for (auto &table : report.tables)
+        for (qsizetype i=0; i<table.headers.size(); ++i)
+            if (privateHeaders.contains(table.headers[i].simplified().toLower()))
+                for (auto &row : table.rows)
+                    if (i<row.size() && !row[i].isEmpty()) row[i]=QStringLiteral("[redacted]");
 }
 
 }  // namespace diag

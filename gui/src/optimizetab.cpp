@@ -1242,6 +1242,12 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     }
     applyShadows();
     updateHomeBootStatuses();
+    if (!pendingNavigationKey_.isEmpty()) {
+        const QString key = std::exchange(pendingNavigationKey_, QString());
+        bool visible = isVisible();
+        for (QWidget *holder : std::as_const(homeHolders_)) if (holder && holder->isVisible()) visible = true;
+        if (visible && !focusSettingKey(key)) showStatus(tr("Setting unavailable on this machine: %1").arg(key));
+    }
 
     // Affinity choices follow the live topology.
     if (affinity_ && (topoChanged || affinity_->count() == 0) && !affinity_->view()->isVisible()) {
@@ -1304,6 +1310,26 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     reloadPresets(presetCombo_->currentData().toString(), true);
     // Out of the describe callback: it may open a question.
     if (!radioRepairOffered_) QTimer::singleShot(0, this, &OptimizeTab::offerRadioRepairApproval);
+}
+
+bool OptimizeTab::focusSettingKey(const QString &key) {
+    Row *r = row(key);
+    if (!r || !r->name) return false;
+    if (r->home.isEmpty()) {
+        for (int i=0; i<groups_->count(); ++i)
+            if (groups_->widget(i)->property("optimizationGroup").toString() == r->group) { groups_->setCurrentIndex(i); break; }
+    } else if (!homeHolders_.value(r->home) || !homeHolders_.value(r->home)->isVisible()) return false;
+    if (r->filter) r->filter->setCurrentIndex(0);
+    for (QWidget *p = r->name->parentWidget(); p; p=p->parentWidget())
+        if (auto *scroll = qobject_cast<QScrollArea *>(p)) { scroll->ensureWidgetVisible(r->name,14,40); break; }
+    if (r->include && r->include->isEnabled()) r->include->setFocus(Qt::OtherFocusReason);
+    return true;
+}
+
+void OptimizeTab::navigateSetting(const QString &key) {
+    pendingNavigationKey_ = key;
+    if (focusSettingKey(key)) pendingNavigationKey_.clear();
+    // The selected page already requests describe on show. Do not launch another query here.
 }
 
 void OptimizeTab::jumpToSetting(const QString &query) {
@@ -2444,31 +2470,8 @@ static QList<double> fallbackWeights(const QString &goal) {
 
 // tune-helper's "autotune_defaults" reply (read-only op, no authentication; asked once per run of the GUI).
 struct HelperWeights { QJsonObject goals, adapted; QStringList keys; };
-static const HelperWeights &helperWeights() {
+static HelperWeights &helperWeights() {
     static HelperWeights h;
-    static bool asked = false;
-    QJsonObject &goals = h.goals;
-    QStringList &keys = h.keys;
-    if (!asked) {
-        asked = true;
-        QProcess p;
-        p.start(helperPath(), {});
-        if (p.waitForStarted(2000)) {
-            p.write(R"({"op":"autotune_defaults"})");
-            p.closeWriteChannel();
-            if (p.waitForFinished(3000) && p.exitStatus() == QProcess::NormalExit) {
-                const QJsonObject r = QJsonDocument::fromJson(p.readAllStandardOutput()).object();
-                if (r.value(QStringLiteral("ok")).toBool()) {
-                    goals = r.value(QStringLiteral("goals")).toObject();
-                    h.adapted = r.value(QStringLiteral("adapted")).toObject();
-                    for (const auto &k : r.value(QStringLiteral("keys")).toArray()) keys << k.toString();
-                }
-            } else {
-                p.kill();
-                p.waitForFinished(500);
-            }
-        }
-    }
     return h;
 }
 
@@ -2493,6 +2496,43 @@ QJsonObject OptimizeTab::autotuneWeights(const QString &goal) const {
 }
 
 void OptimizeTab::editAutotuneWeights() {
+    if (weightsPending_ || busy_) return;
+    if (!helperWeights().goals.isEmpty()) { showAutotuneWeights(); return; }
+    weightsPending_ = true;
+    const QString goal = autoGoal_->currentData().toString();
+    auto *p = new QProcess(QCoreApplication::instance());
+    const QPointer<OptimizeTab> alive(this);
+    auto complete = [p, alive, goal](bool success) {
+        const auto bytes = p->readAllStandardOutput();
+        p->deleteLater();
+        if (!alive) return;
+        alive->weightsPending_ = false;
+        if (success && bytes.size() <= 1024 * 1024) {
+            const auto r = QJsonDocument::fromJson(bytes).object();
+            if (r.value(QStringLiteral("ok")).toBool()) {
+                HelperWeights h;
+                h.goals = r.value(QStringLiteral("goals")).toObject();
+                h.adapted = r.value(QStringLiteral("adapted")).toObject();
+                for (const auto &k : r.value(QStringLiteral("keys")).toArray()) h.keys << k.toString();
+                helperWeights() = h;
+            }
+        }
+        if (alive->isVisible() && !alive->busy() && alive->autoGoal_->currentData().toString() == goal)
+            alive->showAutotuneWeights();
+    };
+    connect(p, &QProcess::finished, p, [complete](int code, QProcess::ExitStatus status) {
+        complete(code == 0 && status == QProcess::NormalExit);
+    });
+    connect(p, &QProcess::errorOccurred, p, [complete](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) complete(false);
+    });
+    QTimer::singleShot(5000, p, [p] { if (p->state() != QProcess::NotRunning) p->kill(); });
+    p->start(helperPath(), {});
+    p->write(R"({"op":"autotune_defaults"})");
+    p->closeWriteChannel();
+}
+
+void OptimizeTab::showAutotuneWeights() {
     const QString goal = autoGoal_->currentData().toString();
     const QList<double> def = defaultWeights(goal);
     const QJsonObject cur = autotuneWeights(goal);

@@ -248,6 +248,11 @@ std::optional<Trial> Search::next() {
     return std::nullopt;
 }
 
+std::optional<Trial> Search::previewNext() const {
+    Search copy = *this;
+    return copy.next();
+}
+
 std::optional<Trial> Search::inFlight() const {
     if (stage_ == Stage::AllCore && cand_ < 0) return allCoreTrial(cand_);
     if (stage_ == Stage::PerCore && tested_ >= 0 && tested_ < cores_.size() && cand_ < 0)

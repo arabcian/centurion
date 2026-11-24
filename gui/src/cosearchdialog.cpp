@@ -1400,6 +1400,22 @@ void CoSearchDialog::offerResume() {
             }
             text += "\n\n" + tr("Interrupted candidate (not the next candidate): %1").arg(offsets.join(QStringLiteral(" · ")));
         }
+        // Preview follows exactly the same report/guard/replay order as the real resume.
+        Search preview = *s;
+        if (pending && !cleanExit) preview.report(failed);
+        if (applyCrashGuards(preview)) {
+            const auto next = pending && cleanExit ? interrupted : preview.previewNext();
+            if (next) {
+                QStringList values;
+                if (next->allCore) values << tr("All-core: %1").arg(*next->allCore);
+                else for (int i = 0; i < next->perCore.size() && i < preview.cores().size(); ++i) {
+                    const auto &c = preview.cores()[i];
+                    values << QStringLiteral("CCD %1 / %2: %3").arg(c.ccd).arg(c.slot).arg(next->perCore[i]);
+                }
+                text += "\n\n" + tr("Next candidate preview: %1 (%2 s of tests, excluding overhead). %3")
+                    .arg(next->what).arg(next->seconds()).arg(values.join(QStringLiteral(" · ")));
+            } else text += "\n\n" + tr("No further candidate in the current search state.");
+        } else text += "\n\n" + tr("Next candidate unavailable: crash guard could not be read.");
         if (crashed) text += "\n\n" + tr("System logs: %1").arg(verdict.summary);
         const auto answer = QMessageBox::question(this, tr("Resume CO search"),
             text + "\n\n" + tr("Suspected reboots in this search so far: %1.").arg(rebootCount) + "\n\n"

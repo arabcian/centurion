@@ -37,6 +37,8 @@ public:
 
     /// Built-in and user presets, as shown in the combo (tray menu).
     QStringList presetNames() const;
+    /// Read-only focus request, also supported before first describe.
+    void navigateSetting(const QString &key);
     /// Saved or built-in preset by name (file I/O only, no UI); {} if unknown.
     QJsonObject presetObject(const QString &name) const;
     /// A scene was deleted: drop it as the game scene (tune.json), so centurion-gamemode is not sent to a missing scene.
@@ -107,6 +109,8 @@ private:
     void onDescribe(const QJsonObject &d, bool light = false);
     void buildRows(const QJsonArray &rows);
     void jumpToSetting(const QString &query);
+    bool focusSettingKey(const QString &key);
+    QString pendingNavigationKey_;
     void updateRow(Row &r, const QJsonObject &o);
     void updateStateBanner();
     class QFrame *driftBar_ = nullptr;
@@ -174,6 +178,8 @@ private:
     /// Per-goal objective weights (QSettings autotune/weights/<goal>); empty = goal defaults.
     QJsonObject autotuneWeights(const QString &goal) const;
     void editAutotuneWeights();
+    void showAutotuneWeights();
+    bool weightsPending_ = false;
     void showAutotuneReport(const QJsonObject &d, const QStringList &notLoaded, bool exploreOnly = false);
     /// "Calibrate at next boot…": schedules centurion-calibrate sessions for the next boot (tune-helper calibrate_on_boot).
     void scheduleBootCalibration();

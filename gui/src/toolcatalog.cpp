@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include <QHash>
 #include <QRegularExpression>
+#include <algorithm>
+#include <array>
 
 namespace toolcatalog {
 
@@ -141,6 +143,44 @@ bool matches(const QString &query, const QString &label, const QStringList &keyw
     for (const QString &w : qs)
         if (!hay.contains(w)) return false;
     return true;
+}
+
+int navigationScore(const QString &query, const QString &label, const QStringList &keywords) {
+    const QString q = normalize(query.trimmed());
+    if (q.isEmpty()) return 0;
+    if (q.size() > 128) return -1;
+    const QString name = normalize(label);
+    if (name == q) return 10000;
+    if (name.startsWith(q)) return 9000;
+    const QString hay = normalize(label + QLatin1Char(' ') + keywords.join(QLatin1Char(' '))).left(8192);
+    if (hay.contains(q)) return 8000;
+    static const QRegularExpression split(QStringLiteral("[^\\p{L}\\p{N}_]+"));
+    const auto tokens = hay.split(split, Qt::SkipEmptyParts);
+    const auto queries = q.split(split, Qt::SkipEmptyParts);
+    if (queries.isEmpty() || queries.size() > 12) return -1;
+    int score = 0;
+    for (const auto &word : queries) {
+        if (hay.contains(word)) { score += 100; continue; }
+        if (word.size() < 4 || word.size() > 32) return -1;
+        const int maxEdits = word.size() >= 8 ? 2 : 1;
+        int best = maxEdits + 1;
+        for (const auto &token : tokens) {
+            if (token.size() > 32 || qAbs(token.size() - word.size()) > maxEdits) continue;
+            std::array<int, 33> prev{}, cur{};
+            for (int j = 0; j <= token.size(); ++j) prev[j] = j;
+            for (int i = 1; i <= word.size(); ++i) {
+                cur[0] = i;
+                for (int j = 1; j <= token.size(); ++j)
+                    cur[j] = std::min({prev[j] + 1, cur[j-1] + 1, prev[j-1] + int(word[i-1] != token[j-1])});
+                prev.swap(cur);
+            }
+            best = std::min(best, prev[token.size()]);
+            if (best == 0) break;
+        }
+        if (best > maxEdits) return -1;
+        score += 30 - best * 10;
+    }
+    return score;
 }
 
 QStringList relatedFor(const QString &triageKey) {

@@ -89,6 +89,24 @@ int main(int argc, char **argv) {
         CHECK(disp.tables.at(2).rows.at(1).value(2) == QStringLiteral("CTA-861"));
         CHECK(disp.tables.at(3).rows.at(0).value(1).contains(QStringLiteral("1920×1080")));
     }
+    bool foundBinary=false, foundTimings=false;
+    for (const auto &table : disp.tables) {
+        if (table.title == QStringLiteral("EDID Binary Inspector")) { CHECK(table.rows.size()==16); CHECK(table.rows.first().value(2)==QStringLiteral("0x0000")); foundBinary=true; }
+        if (table.title == QStringLiteral("Base Block Timing Details")) { CHECK(!table.rows.isEmpty()); foundTimings=true; }
+    }
+    CHECK(foundBinary && foundTimings);
+    QByteArray shortCta=e; shortCta[130]=7; checksum(shortCta,1);
+    CHECK(diagnostictools::decodeEdid(shortCta).vrrMin<=0);
+    const auto redacted=diag::redactPrivateText(QStringLiteral("192.168.1.42 aa:bb:cc:dd:ee:ff 0000:01:00.0 Xid 154\nSerial: secret-123\n/home/private/file"));
+    CHECK(!redacted.contains(QStringLiteral("192.168.1.42")) && !redacted.contains(QStringLiteral("aa:bb:cc:dd:ee:ff")) && !redacted.contains(QStringLiteral("secret-123")) && !redacted.contains(QStringLiteral("/home/private")));
+    CHECK(redacted.contains(QStringLiteral("0000:01:00.0")) && redacted.contains(QStringLiteral("Xid 154")));
+    diag::Report original; original.add(Level::Attention,QStringLiteral("excluded evidence"));
+    auto selected=original; selected.findings.clear();
+    diag::Table privateTable; privateTable.headers={QStringLiteral("Serial Number"),QStringLiteral("PCI")}; privateTable.add({QStringLiteral("secret-456"),QStringLiteral("0000:01:00.0")}); selected.tables.append(privateTable);
+    diag::redactPrivateFields(selected);
+    CHECK(!selected.toTextWithVerdict(original).contains(QStringLiteral("secret-456")));
+    CHECK(selected.toTextWithVerdict(original).contains(original.headline()));
+    CHECK(!selected.toTextWithVerdict(original).contains(QStringLiteral("excluded evidence")));
     put(QStringLiteral("/sys/class/drm/card1-eDP-1/edid"), broken);
     const diag::Report badDisp = diagnostictools::displays(root);
     CHECK(badDisp.tables.size() >= 3 && badDisp.tables.at(2).levels.value(1) == Level::Review);
