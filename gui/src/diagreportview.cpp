@@ -1,4 +1,5 @@
 #include "edidfields.h"
+#include "acpievents.h"
 #include "hierarchyviewmodel.h"
 #include <QTreeView>
 #include <QSortFilterProxyModel>
@@ -10,9 +11,12 @@
 #include <QSpinBox>
 #include <QTextCursor>
 #include <QMap>
+#include <QHash>
 #include <QRegularExpression>
 #include <QItemSelectionModel>
 #include "diagreportview.h"
+#include "diagnostichistoryview.h"
+#include <QInputDialog>
 #include "workspacestate.h"
 #include "diagsources.h"
 #include <QJsonArray>
@@ -269,6 +273,48 @@ void exploreHardware(QWidget *owner, diag::Table table, std::shared_ptr<QJsonObj
     // Preserve the unfiltered expansion state; never persist ambiguous/unknown IDs.
     for (const auto &key : expanded) keys.append(key);
     *state = QJsonObject{{"expanded", keys}, {"selected", wanted}};
+}
+
+// An explicit, read-only subscription to the already implemented ACPI generic
+// netlink family. History is bounded to this viewing session; no firmware
+// methods, helper commands or extra diagnostic scans are invoked.
+void inspectAcpiNotifications(QWidget *owner, const diag::Table &inventory, std::shared_ptr<QJsonObject> state) {
+    auto tr=[](const char *s){return QCoreApplication::translate("diag",s);};
+    QDialog dlg; dlg.setWindowTitle(tr("Live ACPI notifications"));dlg.resize(960,640);
+    QObject::connect(owner,&QObject::destroyed,&dlg,&QDialog::reject);
+    auto *layout=new QVBoxLayout(&dlg);
+    layout->addWidget(text(tr("Events are received only while this viewer is open. Device links use exact identifiers in the captured inventory; they are not proof of historical binding or cause."),"muted"));
+    auto *status=text(QString());layout->addWidget(status);
+    auto *events=new QTreeWidget;events->setRootIsDecorated(false);events->setUniformRowHeights(true);
+    events->setHeaderLabels({tr("Received (UTC)"),tr("Device class"),tr("Bus ID"),tr("Type (hex)"),tr("Data (hex)"),tr("Inventory match"),tr("Kernel sequence")});
+    events->header()->setSectionResizeMode(QHeaderView::ResizeToContents);events->header()->setStretchLastSection(true);layout->addWidget(events,1);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(buttons);
+    auto *jump=buttons->addButton(tr("Inspect matched device…"),QDialogButtonBox::ActionRole);jump->setEnabled(false);
+    auto *clear=buttons->addButton(tr("Clear visible notifications"),QDialogButtonBox::ActionRole);
+    AcpiEvents receiver;
+    quint64 gaps=0,evicted=0,received=0;
+    auto updateStatus=[&]{status->setText(receiver.active()?tr("Received: %1 · older rows omitted: %2 · observed capture gaps: %3").arg(received).arg(evicted).arg(gaps):tr("ACPI netlink subscription unavailable (unsupported or inaccessible)."));};
+    updateStatus();
+    QHash<QString,QStringList> keys;
+    for(qsizetype i=0;i<inventory.rows.size();++i){const auto id=inventory.rows.at(i).value(0);if(!id.isEmpty())keys[id]<<inventory.rowKeys.value(i);}
+    QObject::connect(&receiver,&AcpiEvents::captureGap,&dlg,[&]{++gaps;updateStatus();});
+    QObject::connect(&receiver,&AcpiEvents::notification,&dlg,[&](const QString &cls,const QString &id,uint type,uint data,uint sequence){
+        ++received;
+        const auto candidates=keys.value(id);
+        const QString key=candidates.size()==1?candidates.first():QString();
+        auto *row=new QTreeWidgetItem({QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs),cls,id,
+            QStringLiteral("0x%1").arg(type,0,16),QStringLiteral("0x%1").arg(data,0,16),
+            !key.isEmpty()?tr("Exact identifier candidate"):candidates.size()>1?tr("Ambiguous identifier"):tr("No verified inventory link"),QString::number(sequence)});
+        row->setData(0,Qt::UserRole,key);events->addTopLevelItem(row);
+        while(events->topLevelItemCount()>512){delete events->takeTopLevelItem(0);++evicted;}
+        updateStatus();
+    });
+    QObject::connect(events,&QTreeWidget::itemSelectionChanged,&dlg,[&]{jump->setEnabled(events->currentItem()&&!events->currentItem()->data(0,Qt::UserRole).toString().isEmpty()&&events->currentItem()->isSelected());});
+    QObject::connect(jump,&QPushButton::clicked,&dlg,[&]{if(auto *item=events->currentItem();item&&item->isSelected()){const auto key=item->data(0,Qt::UserRole).toString();if(!key.isEmpty())exploreHardware(&dlg,inventory,state,key);}});
+    QObject::connect(clear,&QPushButton::clicked,&dlg,[&]{evicted+=quint64(events->topLevelItemCount());events->clear();updateStatus();});
+    QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);dlg.exec();
+    QObject::disconnect(&receiver,nullptr,&dlg,nullptr);
+    QObject::disconnect(events,nullptr,&dlg,nullptr);
 }
 
 QWidget *tableWidget(const diag::Table &t, const std::shared_ptr<QJsonObject> &hardwareState) {
@@ -569,6 +615,7 @@ void inspectPd(QWidget *parent,const diag::Table &ports,const diag::Table &profi
         if(selected<0 || selected>=ports.rows.size())return;
         const auto row=ports.rows.at(selected);
         QString note=tr("Port %1 · role %2 · partner %3 · reported maximum %4").arg(row.value(0),row.value(1),row.value(2),row.value(4));
+        note+=QStringLiteral("\n")+tr("Power operation mode: %1").arg(row.value(5));
         int plotted=0;
         for(qsizetype i=0;i<profiles.rows.size();++i){
             const auto &profile=profiles.rows.at(i);if(profile.value(0)!=row.value(0))continue;
@@ -614,6 +661,8 @@ DiagReportView::DiagReportView(QWidget *parent) : QWidget(parent) {
     actions->addWidget(pin_); actions->addWidget(compare_);
     archive_ = new QPushButton(tr("History…")); archive_->setEnabled(false);
     actions->addWidget(archive_); connect(archive_, &QPushButton::clicked, this, &DiagReportView::archiveWorkspace);
+    auto *crossBoot = new QPushButton(tr("Cross-Boot History…"));
+    actions->addWidget(crossBoot); connect(crossBoot,&QPushButton::clicked,this,[this]{diagnostichistory::open(this);});
     evidence_ = new QPushButton(tr("Evidence…")); evidence_->setEnabled(false);
     actions->addWidget(evidence_); connect(evidence_, &QPushButton::clicked, this, &DiagReportView::evidenceWorkspace);
     connect(pin_, &QPushButton::clicked, this, [this] {
@@ -779,6 +828,10 @@ void DiagReportView::setReport(const diag::Report &r) {
             auto *inspect = new QPushButton(tr("Inspect captured EDID bytes…"));
             w->layout()->addWidget(inspect);
             connect(inspect,&QPushButton::clicked,w,[w,t,fields]{ inspectEdid(w,t,fields); });
+        }
+        if(t.viewKind==QStringLiteral("acpi-wmi-tree")) {
+            auto *listen=new QPushButton(tr("Live ACPI notifications…"));w->layout()->addWidget(listen);
+            connect(listen,&QPushButton::clicked,w,[w,t,state=acpiTreeState_]{inspectAcpiNotifications(w,t,state);});
         }
         if(t.viewKind==QStringLiteral("pd-ports")) {
             diag::Table profiles,supplies;
@@ -1037,17 +1090,19 @@ void DiagReportView::archiveWorkspace() {
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     auto *save = buttons->addButton(tr("Archive current snapshot"), QDialogButtonBox::ActionRole);
     auto *remove = buttons->addButton(tr("Delete selected snapshot"), QDialogButtonBox::DestructiveRole);
+    auto *editNote = buttons->addButton(tr("Edit snapshot note…"), QDialogButtonBox::ActionRole);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     auto render = [&] {
-        const int i = list->currentIndex(); remove->setEnabled(i >= 0);
+        const int i = list->currentIndex(); remove->setEnabled(i >= 0); editNote->setEnabled(i>=0);
         if (i < 0 || i >= entries->size()) { output->setPlainText(tr("No saved snapshots.")); return; }
         const auto entry = entries->at(i).toObject();
         if (entry.value(QStringLiteral("locale")).toString() != locale) { output->setPlainText(tr("Snapshot locale differs; translated field names cannot be compared reliably.")); return; }
         const auto diff = diag::archiveDiff(entry.value(QStringLiteral("snapshot")).toObject(), captured);
         output->setPlainText(tr("Stored capture: %1 · boot %2\nCurrent capture: %3 · boot %4\nRows are compared without order; changed rows appear as removed and added. A difference is not evidence of causation.\n\n")
             .arg(entry.value(QStringLiteral("time")).toString(), entry.value(QStringLiteral("boot")).toString(), capturedAt, boot)
-            + (diff.isEmpty() ? tr("No structured differences.") : diff.join(QLatin1Char('\n'))));
+            + (diff.isEmpty() ? tr("No structured differences.") : diff.join(QLatin1Char('\n')))
+            + QStringLiteral("\n\n") + tr("Note: %1").arg(entry.value("note").toString()));
     };
     auto refill = [&] {
         const QSignalBlocker block(list); list->clear();
@@ -1063,6 +1118,12 @@ void DiagReportView::archiveWorkspace() {
         auto latest = read();
         if (!latest) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History changed or is damaged.")); return; }
         if (adding) {
+            for(const auto &v:*latest) {
+                const auto e=v.toObject();
+                if(e.value("time").toString()==capturedAt && e.value("boot").toString()==boot && e.value("locale").toString()==locale && e.value("snapshot").toObject()==captured) {
+                    QMessageBox::information(&dlg,tr("Diagnostic History"),tr("This capture is already archived."));return;
+                }
+            }
             if (latest->size() >= 20) { QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return; }
             latest->append(QJsonObject{{"id", QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"time", capturedAt}, {"boot", boot}, {"locale", locale}, {"snapshot", captured}});
         } else {
@@ -1075,6 +1136,25 @@ void DiagReportView::archiveWorkspace() {
     };
     connect(save, &QPushButton::clicked, &dlg, [&] { change(true); });
     connect(remove, &QPushButton::clicked, &dlg, [&] { change(false); });
+    connect(editNote,&QPushButton::clicked,&dlg,[&]{
+        const auto id=list->currentData().toString(); if(id.isEmpty()) return;
+        const auto old=entries->at(list->currentIndex()).toObject().value("note").toString();
+        bool ok=false;const auto note=QInputDialog::getMultiLineText(&dlg,tr("Diagnostic History"),tr("Local snapshot note (redaction is best effort)"),old,&ok);
+        if(!ok) return;
+        if(note.size()>4096) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("Note exceeds 4096 characters."));return;}
+        QLockFile lock(path+QStringLiteral(".lock"));
+        if(!lock.tryLock(0)) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History is currently in use."));return;}
+        auto latest=read();if(!latest) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
+        for(qsizetype i=0;i<latest->size();++i) {
+            auto e=latest->at(i).toObject(); if(e.value("id").toString()!=id) continue;
+            if(e.value("note").toString()!=old) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
+            e.insert("note",diag::redactPrivateText(note));latest->replace(i,e);
+            const auto error=diagsrc::saveJson(path,QJsonObject{{"version",1},{"entries",*latest}});
+            if(!error.isEmpty()) {QMessageBox::warning(&dlg,tr("Diagnostic History"),error);return;}
+            entries=latest;refill();list->setCurrentIndex(list->findData(id));return;
+        }
+        QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));
+    });
     refill(); dlg.exec();
 }
 

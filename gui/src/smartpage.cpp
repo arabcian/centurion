@@ -8,11 +8,17 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QDate>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QComboBox>
+#include <QHeaderView>
+#include <QSet>
 #include <QDateTime>
 #include <QScrollBar>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QFrame>
 #include <QScrollArea>
@@ -31,6 +37,40 @@ QString num(std::optional<double> x, const QString &suffix = {}) {
     return x ? QString::number(*x) + suffix : QStringLiteral("—");
 }
 
+void historyWorkspace(QWidget *owner) {
+    const auto snapshot=smart::historySnapshot();
+    const auto all=snapshot.value_or(QJsonObject{}).value(QStringLiteral("disks")).toObject();
+    QDialog dlg(owner);dlg.setWindowTitle(SmartPage::tr("Recorded Drive History"));dlg.resize(1100,650);
+    auto *layout=new QVBoxLayout(&dlg);
+    auto *note=new QLabel(SmartPage::tr("Saved daily SMART samples only. Opening this view does not query drives or start a self-test. Missing values are not zero; older ambiguous identities are excluded."));note->setWordWrap(true);layout->addWidget(note);
+    if(!snapshot) layout->addWidget(new QLabel(SmartPage::tr("History could not be read or is damaged. The file is preserved.")));
+    auto *row=new QHBoxLayout;auto *device=new QComboBox;auto *period=new QComboBox;
+    period->addItem(SmartPage::tr("All recorded days"),0);period->addItem(SmartPage::tr("Last 30 days"),30);period->addItem(SmartPage::tr("Last 90 days"),90);
+    for(auto it=all.cbegin();it!=all.cend();++it) if(smart::usableIdentity(it.key())) device->addItem(it.value().toObject().value("model").toString()+QStringLiteral(" · ")+it.key().section(QLatin1Char('|'),-1),it.key());
+    row->addWidget(device,1);row->addWidget(period);layout->addLayout(row);
+    auto *table=new QTreeWidget;table->setHeaderLabels({SmartPage::tr("Date"),SmartPage::tr("Temperature (°C)"),SmartPage::tr("Life used (%)"),SmartPage::tr("Spare (%)"),SmartPage::tr("Spare threshold (%)"),SmartPage::tr("Media errors"),SmartPage::tr("Unsafe shutdowns"),SmartPage::tr("Written (TB)"),SmartPage::tr("Power-on hours"),SmartPage::tr("Critical warning")});
+    table->setRootIsDecorated(false);table->setAlternatingRowColors(true);table->setUniformRowHeights(true);table->header()->setSectionResizeMode(QHeaderView::ResizeToContents);layout->addWidget(table,1);
+    auto *summary=new QLabel;layout->addWidget(summary);
+    const auto refresh=[&]{
+        table->clear();const auto samples=all.value(device->currentData().toString()).toObject().value("samples").toArray();
+        const int days=period->currentData().toInt();const auto cutoff=QDate::currentDate().addDays(-days);
+        for(qsizetype i=samples.size();i>0;--i) {
+            const auto sample=samples.at(i-1).toObject();const auto date=QDate::fromString(sample.value("d").toString(),Qt::ISODate);
+            if(!date.isValid()||(days>0&&date<cutoff)) continue;
+            QStringList cells{date.toString(Qt::ISODate)};
+            for(const char *key:{"temp_c","life_used_pct","spare_pct","spare_threshold_pct","media_errors","unsafe_shutdowns","written_tb","power_on_hours","critical_warning"}) {
+                const auto value=sample.value(QLatin1String(key));
+                // Qt6 preserves signed 64-bit integers in parsed JSON. Do not round counters through double display.
+                cells<< (value.isDouble()?QString::fromUtf8(QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact)).mid(1).chopped(1):QStringLiteral("—"));
+            }
+            auto *item=new QTreeWidgetItem(table,cells);item->setToolTip(0,sample.value("captured_utc").toString());
+        }
+        summary->setText(SmartPage::tr("%1 recorded days. No entry means no retained measurement.").arg(table->topLevelItemCount()));
+    };
+    QObject::connect(device,&QComboBox::currentIndexChanged,&dlg,[&](int){refresh();});QObject::connect(period,&QComboBox::currentIndexChanged,&dlg,[&](int){refresh();});refresh();
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);layout->addWidget(buttons);dlg.exec();
+}
+
 } // namespace
 
 SmartPage::SmartPage(QWidget *parent) : QWidget(parent) {
@@ -43,6 +83,8 @@ SmartPage::SmartPage(QWidget *parent) : QWidget(parent) {
     top->addWidget(about, 1);
     auto *run = new QPushButton(tr("Check drives"));
     top->addWidget(run);
+    auto *history=new QPushButton(tr("Recorded History…"));top->addWidget(history);
+    connect(history,&QPushButton::clicked,this,[this]{historyWorkspace(this);});
     v->addLayout(top);
     status_ = new QLabel;
     status_->setProperty("role", "muted");
@@ -132,6 +174,8 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
         delete item->widget();
         delete item;
     }
+    QSet<QString> ids,duplicates;
+    for(const auto &v:disks) {const auto id=v.toObject().value("id").toString();if(ids.contains(id)) duplicates.insert(id);ids.insert(id);}
     for (const QJsonValue &v : disks) {
         const QJsonObject d = v.toObject();
         const QString dev = d.value(QStringLiteral("dev")).toString();
@@ -145,7 +189,8 @@ void SmartPage::render(const QJsonArray &disks, const QStringList &alerts) {
             continue;
         }
         // Trend: media errors against the first sample from the last 30 days.
-        const QJsonArray samples = all.value(d.value(QStringLiteral("id")).toString()).toObject().value(QStringLiteral("samples")).toArray();
+        const auto id=d.value(QStringLiteral("id")).toString();
+        const QJsonArray samples = smart::usableIdentity(id)&&!duplicates.contains(id)?all.value(id).toObject().value(QStringLiteral("samples")).toArray():QJsonArray{};
         std::optional<double> base;
         for (const QJsonValue &s : samples) {
             const QJsonObject o = s.toObject();

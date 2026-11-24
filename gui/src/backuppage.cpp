@@ -715,24 +715,25 @@ void BackupPage::run(const QJsonObject &req, bool root, const QString &what, Don
     setBusy(true, what);
     QPointer<BackupPage> self(this);
     connect(p, &QProcess::readyReadStandardOutput, this, [this, p] { while (p->canReadLine()) onLine(p->readLine()); });
-    auto end = [self, p, done](const QJsonObject &fallback) {
+    auto end = [self, p, done](const QJsonObject &fallback, bool normalSuccess) {
         p->deleteLater();
         if (!self) return;
         while (p->canReadLine()) self->onLine(p->readLine());
         self->proc_ = nullptr;
         self->setBusy(false);
-        done(self->final_.isEmpty() ? fallback : self->final_);
+        const auto reply=self->final_;
+        done(reply.isEmpty() || (reply.value("ok").toBool() && !normalSuccess) ? fallback : reply);
     };
-    connect(p, &QProcess::finished, p, [end, p](int code, QProcess::ExitStatus) {
+    connect(p, &QProcess::finished, p, [end, p](int code, QProcess::ExitStatus status) {
         const QString err = QString::fromUtf8(p->readAllStandardError().left(2048)).trimmed();
         QString msg = code == 126 ? QStringLiteral("the authorization request was dismissed.")
                     : code == 127 ? QStringLiteral("polkit did not authorize this action.")
                     : err.isEmpty() ? QStringLiteral("the helper exited with code %1.").arg(code) : err;
-        end(QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), msg}});
+        end(QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), msg}}, status==QProcess::NormalExit && code==0);
     });
     connect(p, &QProcess::errorOccurred, p, [end, p](QProcess::ProcessError e) {
         if (e == QProcess::FailedToStart)
-            end(QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("could not start: ") + p->errorString()}});
+            end(QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("could not start: ") + p->errorString()}}, false);
     });
     if (root) { p->setProgram(pkexec); p->setArguments({helper()}); }
     else p->setProgram(helper());
@@ -1408,15 +1409,16 @@ void BackupPage::previewRestore() {
     if (kind == QLatin1String("config")) {
         const auto identity = archiveIdentity(archive);
         if (identity.isEmpty()) { finished(tr("Archive identity unavailable: %1").arg(archive), false); return; }
-        run({{"op", "config_inspect"}, {"archive", archive}}, false, tr("Reading configuration manifest…"), [this, archive, identity](const QJsonObject &r) {
+        const auto show=[this, archive, identity](const QJsonObject &r) {
             if (archiveIdentity(archive) != identity) { finished(tr("Archive changed or result identity unmatched: %1").arg(archive), false); return; }
             if (!r.value("ok").toBool()) { finished(tr("Manifest unavailable: %1").arg(str(r,"error")),false); return; }
             const auto manifest = r.value("manifest").toObject();
             const auto contents = manifest.value("contents").toObject();
             finished(tr("Manifest read; archive contents not verified."),true);
-            QDialog dlg(this); dlg.setWindowTitle(tr("Configuration Restore Preview")); dlg.resize(720,420);
+            QDialog dlg(this); dlg.setWindowTitle(tr("Configuration Restore Preview")); dlg.resize(960,620);
             auto *layout = new QVBoxLayout(&dlg);
-            auto *hint = new QLabel(tr("Read-only manifest. File-level replacement and permissions are not established by this manifest. Existing files not present in the archive are not deleted by configuration restore."));
+            const bool listed=r.value("advisory").toBool() && r.value("members").isArray();
+            auto *hint = new QLabel(listed?tr("Archive members only; candidates are not verified restore actions. Archive modes are not target permissions. No target access or extraction was performed. Existing files absent from the archive are not deleted by configuration restore."):tr("Read-only manifest. File-level replacement and permissions are not established by this manifest. Existing files not present in the archive are not deleted by configuration restore."));
             hint->setWordWrap(true); layout->addWidget(hint);
             auto *tree = new QTreeWidget; tree->setHeaderLabels({tr("Scope"),tr("Declared entries"),tr("Restore target")});
             auto *root = new QTreeWidgetItem(tree,{QFileInfo(archive).fileName()});
@@ -1428,24 +1430,52 @@ void BackupPage::previewRestore() {
             add("user_state",tr("User state"),tr("Not restored"));
             add("system",tr("System configuration"),tr("System configuration directories"));
             add("system_profile",tr("System profile"),tr("Not restored"));
-            root->setExpanded(true); tree->header()->setSectionResizeMode(QHeaderView::ResizeToContents); layout->addWidget(tree,1);
+            root->setExpanded(true); tree->header()->setSectionResizeMode(QHeaderView::ResizeToContents); layout->addWidget(tree);
+            if(listed){
+                auto *search=new QLineEdit;search->setPlaceholderText(tr("Filter archive members…"));layout->addWidget(search);
+                auto *members=new QTreeWidget;members->setHeaderLabels({tr("Archive path"),tr("Type"),tr("Bytes"),tr("Archive mode"),tr("Restore scope")});
+                members->setAlternatingRowColors(true);members->setUniformRowHeights(true);members->header()->setSectionResizeMode(0,QHeaderView::Stretch);
+                const auto rows=r.value("members").toArray();
+                for(const auto &v:rows){const auto m=v.toObject();const auto scope=str(m,"scope"),kind=str(m,"kind");
+                    const auto label=scope==QLatin1String("user_candidate")?tr("User candidate"):scope==QLatin1String("system_candidate")?tr("System candidate"):tr("Not restored");
+                    const auto type=kind==QLatin1String("file")?tr("File"):kind==QLatin1String("directory")?tr("Directory"):tr("Link (not followed)");
+                    auto *row=new QTreeWidgetItem(members,{str(m,"path"),type,QString::number(m.value("bytes").toInteger()),str(m,"archive_mode"),label});row->setToolTip(0,str(m,"path"));
+                }
+                connect(search,&QLineEdit::textChanged,members,[members](const QString &q){for(int i=0;i<members->topLevelItemCount();++i){auto *row=members->topLevelItem(i);row->setHidden(!row->text(0).contains(q,Qt::CaseInsensitive)&&!row->text(4).contains(q,Qt::CaseInsensitive));}});
+                layout->addWidget(members,3);
+            }
             auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
             connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+        };
+        run({{"op","config_preview"},{"archive",archive}},false,tr("Reading archive members…"),[this,archive,identity,show](const QJsonObject &r){
+            if(r.value("ok").toBool()){show(r);return;}
+            if(archiveIdentity(archive)!=identity){show(r);return;}
+            // Preserve compatibility with the old helper, not a fallback for
+            // unsafe archives, cancelled jobs or a failed integrity check.
+            const QString error=str(r,"error");
+            const bool legacy=error==QLatin1String("unknown op: config_preview")||error==QLatin1String("configuration preview supports gzip or uncompressed tar");
+            if(legacy && QMessageBox::question(this,tr("File-level preview unavailable"),tr("%1\nRead the declared manifest only instead?").arg(error))==QMessageBox::Yes)
+                run({{"op","config_inspect"},{"archive",archive}},false,tr("Reading configuration manifest…"),show);
+            else finished(tr("Manifest unavailable: %1").arg(str(r,"error")),false);
         });
         return;
     }
     if (kind != QLatin1String("system")) return;
     // Metadata is advisory only; the privileged restore helper validates the actual chain again.
-    const auto safeInfo = [](const QString &path) -> QJsonObject {
+    QHash<QString,QString> capturedIdentities;
+    const auto safeInfo = [&capturedIdentities](const QString &path) -> QJsonObject {
         const QFileInfo fi(path + QStringLiteral(".info.json"));
         if (!fi.isFile() || fi.isSymLink() || fi.size() > (1 << 20)) return {};
+        const auto before=archiveIdentity(fi.absoluteFilePath());if(before.isEmpty())return {};
         QFile f(fi.absoluteFilePath()); if (!f.open(QIODevice::ReadOnly)) return {};
-        const auto bytes = f.read((1 << 20) + 1); if (bytes.size() > (1 << 20)) return {};
+        const auto bytes = f.read((1 << 20) + 1); if (bytes.size() > (1 << 20)||archiveIdentity(fi.absoluteFilePath())!=before) return {};
+        capturedIdentities.insert(fi.absoluteFilePath(),before);
         const auto info = QJsonDocument::fromJson(bytes).object();
         if (info.value("format").toString() != QLatin1String("centurion-system-backup") || info.value("version").toInt(-1) != 1) return {};
         return info;
     };
-    QStringList warnings, chain;
+    QStringList warnings;
+    QList<QStringList> chain;
     const QDir dir(QFileInfo(archive).absolutePath());
     const auto first = safeInfo(archive);
     const auto levelOf = [](const QJsonObject &info) { return info.value("level").toInt(-1); };
@@ -1461,13 +1491,16 @@ void BackupPage::previewRestore() {
             warnings << tr("Archive identity missing or repeated in the chain at level %1.").arg(expected); break;
         }
         visitedArchives.insert(identity);
+        capturedIdentities.insert(current,identity);
+        const auto sidecarIdentity=archiveIdentity(current+QStringLiteral(".info.json"));
+        if(sidecarIdentity.isEmpty()||capturedIdentities.value(QFileInfo(current+QStringLiteral(".info.json")).absoluteFilePath())!=sidecarIdentity){warnings<<tr("Archive metadata identity is unavailable or changed.");break;}
         if (!fi.isFile() || fi.isSymLink() || levelOf(info)!=expected || (level>0 && str(info,"chain")!=chainName)) {
             warnings << tr("Missing or inconsistent archive at level %1.").arg(expected); break;
         }
         const auto record = verifyRecord(fi);
         QString checked = record.isEmpty() ? tr("No matching local verification record") : record.value("ok").toBool() ? tr("Last local verification passed") : tr("Last local verification failed");
         if (!record.isEmpty()) checked += QStringLiteral(" · ") + str(record, "when");
-        chain.prepend(tr("Level %1 · %2 · %3 · %4").arg(expected).arg(fi.fileName(),human(fi.size()),checked));
+        chain.prepend(QStringList{QString::number(expected),fi.fileName(),human(fi.size()),checked});
         if (!expected) {
             if (level>0 && fi.fileName()!=chainName) warnings << tr("The full archive name does not match the declared chain.");
             break;
@@ -1485,10 +1518,13 @@ void BackupPage::previewRestore() {
     auto *layout=new QVBoxLayout(&dlg);
     auto *hint=new QLabel(tr("Read-only sidecar preview. File-level preview is unsupported for system images here. It does not inspect archive contents, validate ownership or authorize a restore. The restore helper and existing confirmations remain authoritative."));
     hint->setWordWrap(true); layout->addWidget(hint);
-    auto *report=new QPlainTextEdit; report->setReadOnly(true);
-    report->setPlainText(tr("Selected archive: %1\nTarget: %2\n\nProposed chain (oldest first):\n%3\n\nReview:\n%4")
-        .arg(archive, target.isEmpty()?tr("Unavailable"):target,chain.join(QLatin1Char('\n')),warnings.isEmpty()?tr("No obvious metadata mismatch; archive contents are not verified."):warnings.join(QLatin1Char('\n'))));
-    layout->addWidget(report,1);
+    auto *selectedLabel=new QLabel(tr("Selected archive: %1\nTarget: %2").arg(archive,target.isEmpty()?tr("Unavailable"):target));selectedLabel->setTextFormat(Qt::PlainText);selectedLabel->setWordWrap(true);layout->addWidget(selectedLabel);
+    auto *tree=new QTreeWidget;tree->setHeaderLabels({tr("Level"),tr("Archive"),tr("Size"),tr("Verification record")});tree->header()->setSectionResizeMode(1,QHeaderView::Stretch);
+    QTreeWidgetItem *parent=nullptr;
+    for(const auto &row:chain){auto *item=parent?new QTreeWidgetItem(parent,row):new QTreeWidgetItem(tree,row);parent=item;}
+    tree->expandAll();layout->addWidget(tree,1);
+    for(auto it=capturedIdentities.cbegin();it!=capturedIdentities.cend();++it)if(archiveIdentity(it.key())!=it.value()){warnings<<tr("An archive or metadata file changed during preview.");break;}
+    auto *review=new QLabel(warnings.isEmpty()?tr("No obvious metadata mismatch; archive contents are not verified."):warnings.join(QLatin1Char('\n')));review->setTextFormat(Qt::PlainText);review->setWordWrap(true);layout->addWidget(review);
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
 }
 

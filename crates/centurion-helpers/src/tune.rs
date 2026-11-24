@@ -3648,6 +3648,54 @@ pub fn swap_tiers_from(raw: &str) -> Vec<Value> {
     }).collect()
 }
 
+/// Draft metadata is advisory: it never authorizes a write. Fixed system-wide
+/// targets can survive a restart; device slots need a unique physical identity.
+/// Network namespaces, transient zram/F2FS and arbitrary device groups are excluded.
+fn draft_identity(t: &Tunable, fs: &[PathBuf]) -> Option<String> {
+    let fixed = |p: &str| p.starts_with("/proc/sys/vm/") || p.starts_with("/proc/sys/kernel/")
+        || p.starts_with("/sys/kernel/mm/") || p.starts_with("/sys/kernel/debug/sched/")
+        || p.starts_with("/sys/module/") || p == "/sys/power/mem_sleep";
+    match t.target {
+        Target::File(p) if fixed(p) => Some(format!("fixed:{p}")),
+        Target::DirtyBytes { bytes, ratio } => Some(format!("dirty:{bytes}:{ratio}")),
+        Target::SchedFeature(name) => Some(format!("sched-feature:{name}")),
+        Target::SchedDomain(level, attr) => Some(format!("sched-domain:{level}:{attr}")),
+        Target::AnyFile(paths) if paths.iter().all(|p| fixed(p)) => Some(format!("fixed-alternatives:{}", paths.join("|"))),
+        Target::NvmeQueue(attr, slot) => {
+            if fs.len() != 1 { return None; }
+            let devices = nvme_namespaces();
+            let (serial_ns, dev) = devices.get(slot)?;
+            let wwid = read(&dev.join("wwid"))?;
+            if !valid_draft_wwid(&wwid) || serial_ns.len() > 512 ||
+                devices.iter().filter(|(s, _)| s == serial_ns).count() != 1 ||
+                std::fs::read_dir("/sys/block").ok()?.filter_map(Result::ok).filter(|e| read(&e.path().join("wwid")).as_deref() == Some(wwid.as_str())).count() != 1 {
+                return None;
+            }
+            // Bind the identity to the actual queue file used by this describe.
+            if canonical_in_sysfs(&dev.join("queue").join(attr)).as_ref() != fs.first() || files(t).as_slice() != fs { return None; }
+            Some(json!(["nvme-queue", serial_ns, wwid, attr]).to_string())
+        }
+        _ => None,
+    }
+}
+
+fn valid_draft_wwid(s: &str) -> bool {
+    // Kernel WWIDs use eui., uuid. or nvme. formats. Reject placeholders and
+    // control characters. Serial/namespace uniqueness is checked separately.
+    if s.len() > 512 || !s.bytes().all(|c| c.is_ascii_graphic()) { return false; }
+    let hex = |x: &str| !x.is_empty() && x.bytes().all(|c| c.is_ascii_hexdigit());
+    let nonzero = |x: &str| x.bytes().any(|c| c.is_ascii_hexdigit() && c != b'0');
+    if let Some(x) = s.strip_prefix("eui.") { return matches!(x.len(), 16 | 32) && hex(x) && nonzero(x); }
+    if let Some(x) = s.strip_prefix("uuid.") {
+        return x.len()==36 && x.bytes().enumerate().all(|(i,c)| if [8,13,18,23].contains(&i) { c==b'-' } else { c.is_ascii_hexdigit() }) && nonzero(x);
+    }
+    if let Some(x) = s.strip_prefix("nvme.") {
+        let parts: Vec<_> = x.split('-').collect();
+        return parts.len()==4 && parts[0].len()==4 && parts[3].len()==8 && parts.iter().all(|p| hex(p)) && nonzero(parts[1]) && nonzero(parts[3]);
+    }
+    false
+}
+
 /// Tunable list for the GUI.
 pub fn describe() -> Value { describe_with(false) }
 
@@ -3662,6 +3710,7 @@ pub fn describe_with(light: bool) -> Value {
     let rows: Vec<Value> = TUNABLES.iter().filter(|t| vendor_ok(t)).map(|t| {
         if light && slow_to_read(t) { return json!({"key": t.key, "cached": true}); }
         let fs = files(t);
+        let draft = draft_identity(t, &fs);
         let (min, max) = match t.kind { Kind::Int { min, max } => (json!(min), json!(max)), _ => (Value::Null, Value::Null) };
         let opts: Vec<Value> = options(t).into_iter().map(|(v, l)| json!({"value": v, "label": l})).collect();
         let mut row = json!({
@@ -3671,9 +3720,14 @@ pub fn describe_with(light: bool) -> Value {
             // debugfs is root-only (0700): unprivileged callers cannot tell; root checks at write time.
             "available": !fs.is_empty() || (t.debugfs && debugfs.as_ref().map(|m| m.contains_key(t.key)).unwrap_or(true)),
             "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t), "home": home(t.key),
-            "files": fs.len(), "slow": slow_to_read(t),
+            "files": fs.len(), "slow": slow_to_read(t), "draft_identity": draft,
             "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs.as_ref().and_then(|m| m.get(t.key)).and_then(Value::as_str).map(str::to_owned) } else { None }),
         });
+        if matches!(t.target, Target::NvmeQueue(..)) && row["draft_identity"].as_str() != draft_identity(t, &fs).as_deref() {
+            row["draft_identity"] = Value::Null;
+            row["current"] = Value::Null;
+            row["available"] = json!(false);
+        }
         if !light { row["help"] = json!(t.help); }
         if matches!(t.target, Target::Irq | Target::DeviceIrq(_)) && irqbalance_running() {
             row["conflict"] = json!("irqbalance is running: it would undo this setting within seconds. Applying a CCD stops it; restoring starts it again.");
@@ -3703,6 +3757,15 @@ pub fn describe_with(light: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn persistent_draft_identity_is_not_a_slot_number() {
+        assert!(valid_draft_wwid("eui.0011223344556677"));
+        for s in ["", "eui.000000", "uuid.0000-0000", "eui.12\n34", "unknown"] { assert!(!valid_draft_wwid(s)); }
+        assert!(draft_identity(find("thp.enabled").unwrap(), &[]).is_some());
+        for t in TUNABLES.iter().filter(|t| matches!(t.target, Target::NvmeQueue(..) | Target::F2fs(..) | Target::ZramMemLimit(..) | Target::DiskApm(..))) {
+            assert!(draft_identity(t, &[]).is_none());
+        }
+    }
     fn two_ccd() -> Vec<Ccx> {
         vec![
             Ccx { index: 0, cpus: (0..8).chain(16..24).collect(), l3_kib: 98304, max_khz: 5_200_000 },

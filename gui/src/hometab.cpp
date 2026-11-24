@@ -609,6 +609,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     livePanel_ = liveSensors;
     const bool experimental = theme::experimentalEnabled();
     QList<QPair<QString,QWidget *>> panels;
+    QTabWidget *detailTabs=nullptr;
     if (experimental) {
         // One 2×2 grid with shared rows and equal columns, not two independent
         // columns: every card edge (top, seam, bottom, centre gap) lines up by
@@ -635,6 +636,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         chartLayout->addLayout(rangeRow);
         chartLayout->addWidget(temperaturePlot_, 1);
         auto *details = new QTabWidget;
+        detailTabs=details;
         details->setObjectName(QStringLiteral("homeDetailTabs"));
         details->setDocumentMode(true);
         // The tab already names each page: no second title or frame inside it.
@@ -724,7 +726,28 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             return action;
         };
         auto *monitorAction=panelChoice(experimental ? tr("Monitoring") : tr("Live"),monitorKey,panelById(QStringLiteral("monitoring")));
-        auto *hardwareAction=panelChoice(tr("Hardware information"),hardwareKey,panelById(QStringLiteral("hardware")));
+        auto *hardwareAction=panelChoice(experimental ? tr("Hardware and sensors panel") : tr("Hardware information"),hardwareKey,panelById(QStringLiteral("hardware")));
+        QAction *hardwareDetail=nullptr, *sensorDetail=nullptr;
+        if (detailTabs) {
+            hardwareDetail=panelMenu->addAction(tr("Hardware & firmware detail"));
+            sensorDetail=panelMenu->addAction(tr("Live sensors detail"));
+            hardwareDetail->setCheckable(true); sensorDetail->setCheckable(true);
+            bool h=layoutPrefs.value(QStringLiteral("home/showHardwareDetail"),true).toBool();
+            bool l=layoutPrefs.value(QStringLiteral("home/showSensorDetail"),true).toBool();
+            if (!h && !l) h=l=true; // corrupt settings cannot strand an empty card
+            hardwareDetail->setChecked(h); sensorDetail->setChecked(l);
+            auto detailVisibility=[=] {
+                const bool hw=hardwareDetail->isChecked(), live=sensorDetail->isChecked();
+                detailTabs->setTabVisible(0,hw); detailTabs->setTabVisible(1,live);
+                hardwareDetail->setEnabled(live); sensorDetail->setEnabled(hw);
+                QSettings prefs(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui"));
+                prefs.setValue(QStringLiteral("home/showHardwareDetail"),hw); prefs.setValue(QStringLiteral("home/showSensorDetail"),live);
+                arrange(scroll->viewport()->width());
+            };
+            connect(hardwareDetail,&QAction::toggled,detailTabs,detailVisibility);
+            connect(sensorDetail,&QAction::toggled,detailTabs,detailVisibility);
+            detailVisibility();
+        }
         auto *reorder=panelMenu->addAction(tr("Reorder panels…"));
         connect(reorder,&QAction::triggered,this,[this,order,panels,scroll,arrange,orderKey,defaultOrder] {
             QDialog dialog(this); dialog.setWindowTitle(tr("Reorder dashboard panels"));
@@ -748,7 +771,10 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         connect(reset,&QAction::triggered,this,[=] {
             *order=defaultOrder;
             QSettings s(QSettings::IniFormat,QSettings::UserScope,QStringLiteral("centurion"),QStringLiteral("gui")); s.remove(orderKey);
-            monitorAction->setChecked(true); hardwareAction->setChecked(true); arrange(scroll->viewport()->width());
+            monitorAction->setChecked(true); hardwareAction->setChecked(true);
+            if (hardwareDetail) hardwareDetail->setChecked(true);
+            if (sensorDetail) sensorDetail->setChecked(true);
+            arrange(scroll->viewport()->width());
         });
         root->addWidget(dashboardMenu,0,Qt::AlignRight);
         scroll->reflow=arrange;

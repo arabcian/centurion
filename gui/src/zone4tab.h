@@ -8,6 +8,7 @@
 #include <array>
 
 class QComboBox;
+class Zone4Canvas;
 class QLabel;
 class QGridLayout;
 class QPushButton;
@@ -25,11 +26,14 @@ private:
     void save() const;
     void syncEnabled();
     void paintZone(int i);
+    void editZone(int i);
     void apply(bool off);
 
     std::array<QColor, 4> colors_{QColor("#ffffff"), QColor("#ffffff"), QColor("#ffffff"), QColor("#ffffff")};
     std::array<QPushButton *, 4> zone_{};
     QGridLayout *zonesLayout_=nullptr;
+    Zone4Canvas *canvas_=nullptr;
+    QWidget *canvasHost_=nullptr;
     int zoneColumns_=0;
     QComboBox *effect_ = nullptr, *speed_ = nullptr, *brightness_ = nullptr, *direction_ = nullptr;
     QLabel *speedLabel_ = nullptr, *directionLabel_ = nullptr, *zonesLabel_ = nullptr, *status_ = nullptr;

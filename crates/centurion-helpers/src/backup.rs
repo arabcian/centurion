@@ -1578,6 +1578,66 @@ pub fn config_inspect(req: &Value) -> Value {
     match r { Ok(m) => json!({"ok": true, "manifest": m}), Err(e) => fail(e) }
 }
 
+/// An unprivileged, bounded stream listing. No extraction, target stat, writes
+/// or restore permission. Only ordinary GNU/ustar configuration archives are
+/// supported; the existing restore engine is independent of this advisory view.
+pub fn config_preview(req: &Value) -> Value {
+    let result: Result<Value,String>=(||{
+        if is_root(){return Err("configuration preview runs as the user".into());}
+        let path=abs_file(&req["archive"])?;
+        let file=fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW|libc::O_NONBLOCK).open(&path).map_err(|e|e.to_string())?;
+        let initial=file.metadata().map_err(|e|e.to_string())?;
+        if !initial.is_file(){return Err("not a regular archive".into());}
+        let mut child=None;
+        let mut src: Box<dyn Read + '_> = match Comp::from_magic(&file){
+            Comp::None=>Box::new(&file),
+            Comp::Gzip=>{
+                let (p,args)=Comp::Gzip.decompressor()?;
+                let mut cmd=command(&p,false);cmd.args(args).stdin(file.try_clone().map_err(|e|e.to_string())?).stdout(Stdio::piped()).stderr(Stdio::null());
+                let mut ch=spawn(cmd,"decompressor")?;
+                let out=ch.stdout.take().unwrap();child=Some(ch);Box::new(out)
+            },
+            _=>return Err("configuration preview supports gzip or uncompressed tar".into()),
+        };
+        let mut scan=tarscan::Scanner::configuration_preview();let mut buf=[0u8;64*1024];let mut bytes=0u64;
+        let start=Instant::now();
+        let read:Result<(),String>=(||{
+            loop {
+                if cancelled()||start.elapsed()>Duration::from_secs(30){return Err("configuration preview cancelled or timed out".into());}
+                let n=src.read(&mut buf).map_err(|e|e.to_string())?;if n==0{break;}
+                bytes+=n as u64;if bytes>MAX_UNPACK_BYTES{return Err("configuration preview exceeds decompression budget".into());}
+                scan.feed(&buf[..n],&mut |_|{});if scan.broken{return Err("unsupported, unsafe or oversized configuration archive listing".into());}
+            } Ok(())
+        })();
+        drop(src);
+        if let Some(mut ch)=child {
+            if read.is_err(){unsafe{libc::kill(-(ch.id() as i32),libc::SIGKILL);}}
+            let status=ch.wait().map_err(|e|e.to_string())?;
+            if read.is_ok()&&!status.success(){return Err("decompression failed".into());}
+        }
+        read?;
+        if cancelled(){return Err("configuration preview cancelled".into());}
+        let final_meta=file.metadata().map_err(|e|e.to_string())?;
+        if (initial.dev(),initial.ino(),initial.size(),initial.mtime(),initial.mtime_nsec(),initial.ctime(),initial.ctime_nsec()) != (final_meta.dev(),final_meta.ino(),final_meta.size(),final_meta.mtime(),final_meta.mtime_nsec(),final_meta.ctime(),final_meta.ctime_nsec()) {return Err("archive changed during preview".into());}
+        let preview=scan.into_preview().ok_or("incomplete configuration archive")?;
+        let manifest:Value=serde_json::from_slice(&preview.manifest.ok_or("configuration manifest missing")?).map_err(|_|"invalid configuration manifest")?;
+        if manifest["format"]!=CONFIG_FORMAT || manifest["version"]!=1{return Err("unsupported configuration manifest".into());}
+        let rows:Vec<Value>=preview.members.into_iter().map(|m|{
+            let regular=matches!(m.kind,0|b'0');
+            let kind=if regular{"file"}else if m.kind==b'5'{"directory"}else{"link"};
+            let scope=if let Some(p)=m.path.strip_prefix("user/config/"){
+                if USER_CONFIG_DIRS.iter().any(|d|p.strip_prefix(*d).is_some_and(|rest|rest.starts_with('/'))){"user_candidate"}else{"not_restored"}
+            }else if let Some(p)=m.path.strip_prefix("system/"){
+                let direct=|prefix:&str,names:&[&str]|p.strip_prefix(prefix).is_some_and(|n|names.contains(&n));
+                let child=|prefix:&str|p.strip_prefix(prefix).is_some_and(|n|!n.is_empty()&&!n.contains('/')&&safe_name(std::ffi::OsStr::new(n)).is_some());
+                if direct("etc/centurion/",ETC_RESTORE)||direct("var/lib/centurion/",VARLIB_RESTORE)||p=="etc/nvcurve/config.json"||p=="etc/modprobe.d/zz-centurion-nvidia.conf"||child("etc/centurion/presets/")||child("etc/nvcurve/profiles/"){"system_candidate"}else{"not_restored"}
+            }else{"not_restored"};
+            json!({"path":m.path,"kind":kind,"bytes":m.size,"archive_mode":format!("{:04o}",m.mode&0o7777),"scope":if regular{scope}else{"not_restored"}})
+        }).collect();
+        Ok(json!({"ok":true,"manifest":manifest,"members":rows,"advisory":true}))
+    })();result.unwrap_or_else(fail)
+}
+
 /// Extracts one top-level directory of a configuration backup into a 0700
 /// scratch directory; ownership and modes from the archive are not applied.
 /// `strict` (every restore): links and special files are refused. A comparison only reads regular files and

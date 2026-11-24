@@ -10,7 +10,9 @@
 class QComboBox;
 class QLabel;
 class QLineEdit;
-class QTreeWidget;
+class QTableView;
+class QSortFilterProxyModel;
+class KernelParamsModel;
 class QPushButton;
 
 class KernelParamsPage : public QWidget {
@@ -20,12 +22,15 @@ public:
 
 private:
     void read();
-    void fill(const QJsonArray &entries);
+    bool fill(const QJsonArray &entries);
     void applyFilter();
     QComboBox *scope_;
     QLineEdit *filter_;
     QLabel *status_;
-    QTreeWidget *tree_;
+    QTableView *tree_;
+    KernelParamsModel *model_;
+    QSortFilterProxyModel *proxy_;
+    QString viewScope_;
     bool busy_ = false;
     QJsonArray captured_;
     QJsonObject capturedMeta_;

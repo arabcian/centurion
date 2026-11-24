@@ -52,16 +52,34 @@ int main(int argc, char **argv) {
         put(t + "thread_siblings_list", id == "cpu0" ? "0,8" : id == "cpu8" ? "8,0" : "0,10");
     }
     put(cpuBase + "cpu10/online", "1"); // contradicts global online list
+    put("/sys/bus/event_source/devices/cpu_core/cpus", "0,8");
+    put("/sys/bus/event_source/devices/cpu_atom/cpus", "10");
     const auto topology = systemdiagnostics::cpuTopology(root);
     int parent0 = -2, parent8 = -3, parent10 = -4;
     for (int i = 0; i < topology.rows.size(); ++i) {
         const auto &row = topology.rows.at(i);
-        if (row.value(0) == "cpu0") parent0 = topology.parents.at(i);
-        if (row.value(0) == "cpu8") parent8 = topology.parents.at(i);
+        if (row.value(0) == "cpu0") { parent0 = topology.parents.at(i); CHECK(row.value(7) == "Performance PMU (cpu_core)"); }
+        if (row.value(0) == "cpu8") { parent8 = topology.parents.at(i); CHECK(row.value(7) == "Performance PMU (cpu_core)"); }
         if (row.value(0) == "cpu10") { parent10 = topology.parents.at(i); CHECK(row.value(2) == "unknown"); CHECK(topology.levels.at(i) == Level::Unknown); }
     }
     CHECK(parent0 >= 0 && parent0 == parent8 && parent10 >= 0 && parent10 != parent0);
     QDir(root + cpuBase).removeRecursively();
+    const QString fwBase = QStringLiteral("/sys/class/firmware-attributes/test/attributes/ppt_pl1_spl/");
+    put(fwBase + "type", "integer"); put(fwBase + "current_value", "140");
+    put(fwBase + "default_value", "120"); put(fwBase + "min_value", "30");
+    put(fwBase + "max_value", "150"); put(fwBase + "scalar_increment", "1");
+    bool seenTarget = false;
+    for (const auto &table : systemdiagnostics::powerLimits(root).tables) {
+        if (table.title != "Firmware Power Target Evidence") continue;
+        CHECK(table.rows.size() == 1);
+        CHECK(table.rows.first().value(2) == "140" && table.rows.first().value(3) == "120");
+        CHECK(table.rows.first().value(5) == "Reported target (not enforcement)");
+        seenTarget = true;
+    }
+    CHECK(seenTarget);
+    QDir(root + QStringLiteral("/sys/class/firmware-attributes")).removeRecursively();
+    QDir(root + QStringLiteral("/sys/bus/event_source")).removeRecursively();
+
 
 
     // ── EDID: identity, preferred timing, range limits with the +255 offset, FreeSync block in a CTA extension.
@@ -352,6 +370,15 @@ int main(int argc, char **argv) {
     put(QStringLiteral("/sys/class/typec/port0/power_role"), "sink [source]\n");
     CHECK(!has(systemdiagnostics::charging(root),Level::Review,QStringLiteral("45 W")));
     put(QStringLiteral("/sys/class/typec/port0/power_role"), "[sink] source\n");
+    put(QStringLiteral("/sys/class/typec/port0/power_operation_mode"), "usb_power_delivery\n");
+    put(QStringLiteral("/sys/class/usb_power_delivery/pd1/source-capabilities/3:battery/minimum_voltage"), "9000mV\n");
+    put(QStringLiteral("/sys/class/usb_power_delivery/pd1/source-capabilities/3:battery/maximum_voltage"), "20000mV\n");
+    put(QStringLiteral("/sys/class/usb_power_delivery/pd1/source-capabilities/3:battery/maximum_power"), "60000mW\n");
+    const auto batteryPdo=systemdiagnostics::charging(root);
+    bool batteryPdoFound=false,modeFound=false;
+    for(const auto &t:batteryPdo.tables){if(t.viewKind==QStringLiteral("pd-profiles"))for(const auto &row:t.rows){if(row.value(1)==QStringLiteral("3:battery")){CHECK(row.value(5)==QStringLiteral("60"));CHECK(row.value(4)==QStringLiteral("unknown"));batteryPdoFound=true;}}
+        if(t.viewKind==QStringLiteral("pd-ports")){CHECK(t.rows.first().value(5)==QStringLiteral("usb_power_delivery"));modeFound=true;}}
+    CHECK(batteryPdoFound&&modeFound);
     QDir typec(root+QStringLiteral("/sys/class/typec"));
     CHECK(typec.rename(QStringLiteral("port0-partner"),QStringLiteral("detached-partner")));
     const auto disconnected=systemdiagnostics::charging(root);

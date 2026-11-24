@@ -8,6 +8,7 @@
 #include "canvasviewport.h"
 #include "lighting.h"
 #include <QPainterPath>
+#include <QElapsedTimer>
 #include <QSet>
 #include <functional>
 #include <QWidget>
@@ -99,6 +100,7 @@ Q_SIGNALS:
 
 protected:
     void showEvent(QShowEvent *e) override;
+    void hideEvent(QHideEvent *e) override;
 
 private:
     void buildUi();
@@ -119,6 +121,8 @@ private:
     void refreshList();
     void refreshEditor();
     void refreshPreview();
+    void syncPreviewTimer();
+    bool draftFits() const;
     void refreshBudget();
     void moveKeys(const QSet<int> &keys, int into);  // make `keys` exclusive to effect `into` (-1: drop them)
     void paintSelection(const QColor &c);
@@ -156,4 +160,8 @@ private:
     QHBoxLayout *chips_;
     QWidget *speedRow_, *dirRow_, *cwRow_, *colorRow_;
     QTimer *brightDebounce_, *statusTimer_;
+    QTimer *previewTimer_=nullptr;
+    QCheckBox *animatePreview_=nullptr;
+    QElapsedTimer previewClock_;
+    QWidget *layoutEditor_=nullptr, *effectsEditor_=nullptr;
 };

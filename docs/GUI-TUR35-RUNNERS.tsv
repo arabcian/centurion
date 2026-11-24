@@ -1,0 +1,63 @@
+﻿Runner	İlk exit	Seconds	İlk sonuç	Final ayrı koşu
+gui/tests/abverify_native_test.py	0	1.81	PASS	Tekrar çalıştırılmadı
+gui/tests/acpievidence_native_test.py	0	11.74	PASS	Tekrar çalıştırılmadı
+gui/tests/advanced_17_static_test.py	0	2.38	PASS	Tekrar çalıştırılmadı
+gui/tests/archiveidentity_native_test.py	0	5.93	PASS	Tekrar çalıştırılmadı
+gui/tests/boot_preset_home_ui_static_test.py	0	3.12	PASS	Tekrar çalıştırılmadı
+gui/tests/bootreceiptcoverage_native_test.py	0	8.69	PASS	Tekrar çalıştırılmadı
+gui/tests/calibrationmath_native_test.py	0	6.13	PASS	Tekrar çalıştırılmadı
+gui/tests/calibrationviewer_static_test.py	0	1.83	PASS	Tekrar çalıştırılmadı
+gui/tests/canvasviewport_native_test.py	0	5.64	PASS	Tekrar çalıştırılmadı
+gui/tests/chartaxis_native_test.py	0	7.05	PASS	Tekrar çalıştırılmadı
+gui/tests/co_reboot_native_test.py	0	3.46	PASS	Tekrar çalıştırılmadı
+gui/tests/co_walk_native_test.py	0	2.15	PASS	Tekrar çalıştırılmadı
+gui/tests/cohistory_sceneplan_native_test.py	0	7.36	PASS	Tekrar çalıştırılmadı
+gui/tests/deviceidentity_native_test.py	0	5.36	PASS	Tekrar çalıştırılmadı
+gui/tests/edidfields_native_test.py	0	12.24	PASS	Tekrar çalıştırılmadı
+gui/tests/experimental_layout_static_test.py	0	2.51	PASS	Tekrar çalıştırılmadı
+gui/tests/experimental_ui_static_test.py	0	2.60	PASS	Tekrar çalıştırılmadı
+gui/tests/firewallpreview_native_test.py	0	13.99	PASS	Tekrar çalıştırılmadı
+gui/tests/gui_completion_static_test.py	0	2.26	PASS	PASS
+gui/tests/gui_stage1_static_test.py	0	1.95	PASS	Tekrar çalıştırılmadı
+gui/tests/gui_stage2_static_test.py	0	2.15	PASS	Tekrar çalıştırılmadı
+gui/tests/gui_stage3_static_test.py	0	1.49	PASS	PASS
+gui/tests/gui_stage4_static_test.py	0	2.64	PASS	Tekrar çalıştırılmadı
+gui/tests/hardwarefields_native_test.py	0	6.79	PASS	Tekrar çalıştırılmadı
+gui/tests/health_catalog_redesign_static_test.py	0	1.39	PASS	Tekrar çalıştırılmadı
+gui/tests/health_ui_static_test.py	0	1.20	PASS	Tekrar çalıştırılmadı
+gui/tests/integerunits_native_test.py	0	9.39	PASS	Tekrar çalıştırılmadı
+gui/tests/memoryfields_native_test.py	0	7.35	PASS	Tekrar çalıştırılmadı
+gui/tests/navigationtargets_static_test.py	0	3.01	PASS	PASS
+gui/tests/operationreceipt_native_test.py	0	5.05	PASS	Tekrar çalıştırılmadı
+gui/tests/optimization_home_test.py	0	2.40	PASS	Tekrar çalıştırılmadı
+gui/tests/palettecontrast_native_test.py	0	10.01	PASS	Tekrar çalıştırılmadı
+gui/tests/powerprovenance_native_test.py	0	7.10	PASS	Tekrar çalıştırılmadı
+gui/tests/scene_wifi_contract_static_test.py	0	1.90	PASS	Tekrar çalıştırılmadı
+gui/tests/scene_wifi_native_test.py	0	5.65	PASS	Tekrar çalıştırılmadı
+gui/tests/six_features_static_test.py	0	1.49	PASS	Tekrar çalıştırılmadı
+gui/tests/socketbind_native_test.py	0	6.61	PASS	PASS
+gui/tests/structuredpci_native_test.py	0	24.20	PASS	Tekrar çalıştırılmadı
+gui/tests/studio_v4_static_test.py	0	1.40	PASS	Tekrar çalıştırılmadı
+gui/tests/telemetrybroker_native_test.py	0	1.74	PASS	Tekrar çalıştırılmadı
+gui/tests/theme_palettes_static_test.py	0	1.40	PASS	Tekrar çalıştırılmadı
+gui/tests/title_case_static_test.py	0	2.40	PASS	PASS
+gui/tests/toolcatalog_static_test.py	0	1.41	PASS	Tekrar çalıştırılmadı
+gui/tests/topologyfields_native_test.py	0	10.19	PASS	Tekrar çalıştırılmadı
+gui/tests/translation_tr_test.py	0	2.01	PASS	PASS
+gui/tests/tuningcomparison_native_test.py	0	4.77	PASS	Tekrar çalıştırılmadı
+gui/tests/tur29_contract_static_test.py	0	1.54	PASS	PASS
+gui/tests/tur30_history_native_test.py	0	7.75	PASS	Tekrar çalıştırılmadı
+gui/tests/tur30_sleep_hook_test.py	0	1.55	PASS	Tekrar çalıştırılmadı
+gui/tests/tur31_diagnostic_native_test.py	0	11.64	PASS	Tekrar çalıştırılmadı
+gui/tests/tur32_presentation_native_test.py	0	4.90	PASS	Tekrar çalıştırılmadı
+gui/tests/tur35_network_boot_native_test.py	0	6.79	PASS	PASS
+gui/tests/wifichannel_native_test.py	0	5.24	PASS	Tekrar çalıştırılmadı
+gui/tests/workspacefields_native_test.py	0	13.74	PASS	Tekrar çalıştırılmadı
+tests/nvcurve_safety_static_test.py	0	1.49	PASS	Tekrar çalıştırılmadı
+tests/test_algorithm_guardrails_static.py	0	1.93	PASS	Tekrar çalıştırılmadı
+tests/test_compare_autotune_timings.py	0	1.85	PASS	Tekrar çalıştırılmadı
+tests/test_evidence_lab_static.py	0	2.10	PASS	Tekrar çalıştırılmadı
+tests/test_firewall_preview_contract_static.py	0	1.96	PASS	PASS
+tests/test_health_diagnostics_contract.py	0	1.70	PASS	Tekrar çalıştırılmadı
+tests/test_nov2026_security_fixes_static.py	0	2.70	PASS	Tekrar çalıştırılmadı
+tests/test_session_audit_static.py	0	2.50	PASS	Tekrar çalıştırılmadı

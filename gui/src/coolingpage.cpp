@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <limits>
+#include "profilediff.h"
 
 // Fan max test: the fans are read for FAN_WAIT_S before they go to maximum, then FAN_SPIN_S at maximum.
 static constexpr int FAN_WAIT_S = 5;
@@ -87,6 +89,7 @@ QString CoolingPage::verdictText(const QJsonObject &a, double limitC) {
     const double dTemp = a.value(QStringLiteral("d_temp")).toDouble();
     QString t;
     if (level == QLatin1String("inconclusive")) {
+        if (!std::isnan(reason(a,"duration_mismatch"))) return tr("Test durations differ or were not recorded. Repeat with the same duration before comparing cooling.");
         if (!std::isnan(reason(a, "noisy")))
             return tr("Other programs were using the CPU during the test, so this run cannot be compared with the baseline. "
                       "Close them and run the test again.");
@@ -204,8 +207,8 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     root->addWidget(trend_);
 
     table_ = new QTreeWidget;
-    table_->setColumnCount(6);
-    table_->setHeaderLabels({tr("Date"), tr("CPU Temperature"), tr("Fan"), tr("Clock"), tr("Started at"), tr("Compared with the Baseline")});
+    table_->setColumnCount(7);
+    table_->setHeaderLabels({tr("Date"), tr("CPU Temperature"), tr("Fan"), tr("Clock"), tr("Started at"), tr("Compared with the Baseline"), tr("Duration (s)")});
     table_->setRootIsDecorated(false);
     table_->setAlternatingRowColors(true);
     for (int i = 0; i < 5; ++i) table_->header()->setSectionResizeMode(i, QHeaderView::ResizeToContents);
@@ -327,21 +330,26 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
 
     const QJsonObject base = s.value(QStringLiteral("baseline")).toObject();
     const QJsonArray runs = s.value(QStringLiteral("runs")).toArray();
+    const auto showNumber=[](const QJsonObject &r,const char *key,int decimals,double factor=1.0,const QString &unit={}) {
+        const auto v=r.value(QLatin1String(key));return v.isDouble()&&std::isfinite(v.toDouble())?QString::number(v.toDouble()*factor,'f',decimals)+unit:QStringLiteral("—");
+    };
     bool anyClean = false;
     for (int i = runs.size() - 1; i >= 0; --i) {
         const QJsonObject r = runs.at(i).toObject();
         auto *it = new QTreeWidgetItem(table_);
         it->setText(0, QDateTime::fromSecsSinceEpoch(qint64(r.value(QStringLiteral("t")).toDouble())).toString(QStringLiteral("yyyy-MM-dd HH:mm")));
-        it->setText(1, tr("%1 °C").arg(r.value(QStringLiteral("steady_temp")).toDouble(), 0, 'f', 1));
-        it->setText(2, r.value(QStringLiteral("fan_rpm")).isNull() ? QStringLiteral("–") : tr("%1 rpm").arg(qRound(r.value(QStringLiteral("fan_rpm")).toDouble())));
-        it->setText(3, r.value(QStringLiteral("mhz")).isNull() ? QStringLiteral("–") : tr("%1 GHz").arg(r.value(QStringLiteral("mhz")).toDouble() / 1000.0, 0, 'f', 2));
-        it->setText(4, tr("%1 °C").arg(r.value(QStringLiteral("start_temp")).toDouble(), 0, 'f', 0));
+        it->setText(1, showNumber(r,"steady_temp",1,1,QStringLiteral(" °C")));
+        it->setText(2, showNumber(r,"fan_rpm",0,1,QStringLiteral(" rpm")));
+        it->setText(3, showNumber(r,"mhz",2,0.001,QStringLiteral(" GHz")));
+        it->setText(4, showNumber(r,"start_temp",0,1,QStringLiteral(" °C")));
+        it->setText(6,showNumber(r,"secs",0));it->setToolTip(0,profilediff::display(r.value("ctx")));
         const bool noisy = r.value(QStringLiteral("noisy")).toBool();
         if (!noisy) anyClean = true;
         if (r.value(QStringLiteral("baseline")).toBool()) it->setText(5, tr("baseline"));
         else if (noisy) it->setText(5, tr("other programs were busy: not compared"));
-        else if (!base.isEmpty())
+        else if (!base.isEmpty() && r.value("secs").isDouble() && r.value("secs")==base.value("secs") && r.value("steady_temp").isDouble() && base.value("steady_temp").isDouble())
             it->setText(5, tr("%1 °C").arg(QString::asprintf("%+.1f", r.value(QStringLiteral("steady_temp")).toDouble() - base.value(QStringLiteral("steady_temp")).toDouble())));
+        else if(!base.isEmpty()) it->setText(5,tr("Duration or measurement not comparable"));
     }
     // Runs under other settings: listed greyed with what differs, never compared (the table used to hide them).
     const QJsonArray others = s.value(QStringLiteral("others")).toArray();
@@ -349,10 +357,11 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
         const QJsonObject r = v.toObject();
         auto *it = new QTreeWidgetItem(table_);
         it->setText(0, QDateTime::fromSecsSinceEpoch(qint64(r.value(QStringLiteral("t")).toDouble())).toString(QStringLiteral("yyyy-MM-dd HH:mm")));
-        it->setText(1, tr("%1 °C").arg(r.value(QStringLiteral("steady_temp")).toDouble(), 0, 'f', 1));
-        it->setText(2, r.value(QStringLiteral("fan_rpm")).isNull() ? QStringLiteral("–") : tr("%1 rpm").arg(qRound(r.value(QStringLiteral("fan_rpm")).toDouble())));
-        it->setText(3, r.value(QStringLiteral("mhz")).isNull() ? QStringLiteral("–") : tr("%1 GHz").arg(r.value(QStringLiteral("mhz")).toDouble() / 1000.0, 0, 'f', 2));
-        it->setText(4, tr("%1 °C").arg(r.value(QStringLiteral("start_temp")).toDouble(), 0, 'f', 0));
+        it->setText(1, showNumber(r,"steady_temp",1,1,QStringLiteral(" °C")));
+        it->setText(2, showNumber(r,"fan_rpm",0,1,QStringLiteral(" rpm")));
+        it->setText(3, showNumber(r,"mhz",2,0.001,QStringLiteral(" GHz")));
+        it->setText(4, showNumber(r,"start_temp",0,1,QStringLiteral(" °C")));
+        it->setText(6,showNumber(r,"secs",0));it->setToolTip(0,profilediff::display(r.value("ctx")));
         QStringList diff;
         for (const QJsonValue &d : r.value(QStringLiteral("differs")).toArray()) {
             const QJsonObject o = d.toObject();
@@ -361,7 +370,7 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
         }
         it->setText(5, tr("other settings, not compared: %1").arg(diff.join(QStringLiteral(", "))));
         it->setToolTip(5, it->text(5));
-        for (int col = 0; col < 6; ++col) it->setForeground(col, QColor(QString::fromLatin1(theme::MUTED)));
+        for (int col = 0; col < 7; ++col) it->setForeground(col, QColor(QString::fromLatin1(theme::MUTED)));
     }
     baseline_->setEnabled(anyClean);
     forget_->setEnabled(!runs.isEmpty());
@@ -372,7 +381,8 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
     for (const QJsonValue &v : runs) {
         const QJsonObject r = v.toObject();
         if (r.value(QStringLiteral("noisy")).toBool()) continue;
-        const double t = r.value(QStringLiteral("t")).toDouble(), temp = r.value(QStringLiteral("steady_temp")).toDouble();
+        const double t = r.value(QStringLiteral("t")).toDouble(), temp = r.value(QStringLiteral("steady_temp")).toDouble(std::numeric_limits<double>::quiet_NaN());
+        if(t<=0) continue;
         points << LineChart::Point{(t - t0) / 86400.0, temp,
                                    QDateTime::fromSecsSinceEpoch(qint64(t)).toString(QStringLiteral("yyyy-MM-dd")) + QStringLiteral(" · ") + tr("%1 °C").arg(temp, 0, 'f', 1)};
     }

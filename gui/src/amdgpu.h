@@ -20,6 +20,7 @@ struct Card {
     QString label;       // shown in the card picker
     bool integrated = false;
     QString devicePath; // canonical sysfs identity at discovery
+    QString incarnation; // transient stat dev/inode; not a physical hardware identifier
 };
 QList<Card> cards();
 

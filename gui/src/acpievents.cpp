@@ -11,9 +11,6 @@
 
 namespace {
 constexpr char FAMILY[] = "acpi_event", GROUP[] = "acpi_mc_group";
-constexpr int ATTR_EVENT = 1;  // ACPI_GENL_ATTR_EVENT
-// struct acpi_genl_event (drivers/acpi/event.c), natural alignment: 44 bytes.
-struct GenlEvent { char deviceClass[20]; char busId[15]; uint32_t type; uint32_t data; };
 
 // Calls f(type, payload, length) for each attribute; stops at the first malformed one.
 template <class F> void forAttrs(const char *p, size_t len, F f) {
@@ -59,12 +56,13 @@ bool resolve(int fd, uint16_t *family, uint32_t *group) {
     req.g.version = 1;
     if (::send(fd, &req, req.n.nlmsg_len, 0) < 0) return false;
     alignas(4) char buf[4096];
-    const ssize_t len = ::recv(fd, buf, sizeof buf, 0);
-    if (len <= 0) return false;
+    sockaddr_nl sender{}; socklen_t senderLen=sizeof(sender);
+    const ssize_t len = ::recvfrom(fd, buf, sizeof buf, MSG_TRUNC, reinterpret_cast<sockaddr*>(&sender), &senderLen);
+    if (len <= 0 || size_t(len)>sizeof(buf) || senderLen!=sizeof(sender) || sender.nl_family!=AF_NETLINK || sender.nl_pid!=0) return false;
     *family = 0;
     *group = 0;
     forMessages(buf, size_t(len), [&](const nlmsghdr &h, const char *m) {
-        if (h.nlmsg_type != GENL_ID_CTRL || h.nlmsg_len < NLMSG_HDRLEN + GENL_HDRLEN) return;  // NLMSG_ERROR: unknown family
+        if (h.nlmsg_seq != 1 || h.nlmsg_type != GENL_ID_CTRL || h.nlmsg_len < NLMSG_HDRLEN + GENL_HDRLEN) return;  // NLMSG_ERROR: unknown family
         forAttrs(m + NLMSG_HDRLEN + GENL_HDRLEN, h.nlmsg_len - NLMSG_HDRLEN - GENL_HDRLEN, [&](int t, const char *d, size_t n) {
             if (t == CTRL_ATTR_FAMILY_ID && n >= 2) memcpy(family, d, 2);
             if (t != CTRL_ATTR_MCAST_GROUPS) return;
@@ -83,27 +81,11 @@ bool resolve(int fd, uint16_t *family, uint32_t *group) {
 }
 } // namespace
 
-namespace acpievents {
-std::vector<Event> parse(const void *buf, size_t len, uint16_t family) {
-    std::vector<Event> out;
-    forMessages(static_cast<const char *>(buf), len, [&](const nlmsghdr &h, const char *m) {
-        if (h.nlmsg_type != family || h.nlmsg_len < NLMSG_HDRLEN + GENL_HDRLEN) return;
-        forAttrs(m + NLMSG_HDRLEN + GENL_HDRLEN, h.nlmsg_len - NLMSG_HDRLEN - GENL_HDRLEN, [&](int t, const char *d, size_t n) {
-            if (t != ATTR_EVENT || n < sizeof(GenlEvent)) return;
-            GenlEvent e;
-            memcpy(&e, d, sizeof e);
-            out.push_back({cstr(e.deviceClass, sizeof e.deviceClass), cstr(e.busId, sizeof e.busId), e.type, e.data});
-        });
-    });
-    return out;
-}
-} // namespace acpievents
-
 AcpiEvents::AcpiEvents(QObject *parent) : QObject(parent) {
     const int fd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_GENERIC);
     if (fd < 0) return;
     const timeval wait{0, 500000};  // the family lookup must never hang the GUI
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, sizeof wait);
+    if (::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, sizeof wait) != 0) { ::close(fd); return; }
     uint32_t group = 0;
     if (!resolve(fd, &family_, &group) || ::setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof group) != 0
         || ::fcntl(fd, F_SETFL, O_NONBLOCK) != 0) {
@@ -118,12 +100,20 @@ AcpiEvents::AcpiEvents(QObject *parent) : QObject(parent) {
 
 void AcpiEvents::drain() {
     alignas(4) char buf[8192];
-    for (;;) {
-        const ssize_t len = ::recv(fd_, buf, sizeof buf, 0);
-        // ENOBUFS: the socket overflowed and events were dropped; what is queued after it is still good.
-        if (len < 0 && (errno == EINTR || errno == ENOBUFS)) continue;
-        if (len <= 0) return;  // EAGAIN: drained
-        for (const acpievents::Event &e : acpievents::parse(buf, size_t(len), family_))
-            Q_EMIT event(QString::fromStdString(e.deviceClass), QString::fromStdString(e.busId), e.type, e.data);
+    // Bound each activation; a busy multicast group must not monopolize Qt.
+    for (int i=0;i<64;++i) {
+        sockaddr_nl sender{}; socklen_t senderLen=sizeof(sender);
+        const ssize_t len=::recvfrom(fd_,buf,sizeof(buf),MSG_TRUNC,reinterpret_cast<sockaddr*>(&sender),&senderLen);
+        if(len<0 && errno==EINTR)continue;
+        if(len<0 && errno==ENOBUFS){Q_EMIT captureGap();continue;}
+        if(len<=0)return;
+        if(size_t(len)>sizeof(buf)||senderLen!=sizeof(sender)||sender.nl_family!=AF_NETLINK||sender.nl_pid!=0){Q_EMIT captureGap();continue;}
+        const auto parsed=acpievents::parseChecked(buf,size_t(len),family_);
+        if(!parsed){Q_EMIT captureGap();continue;}
+        for(const auto &e:*parsed){
+            const auto cls=QString::fromStdString(e.deviceClass),id=QString::fromStdString(e.busId);
+            Q_EMIT event(cls,id,e.type,e.data);
+            Q_EMIT notification(cls,id,e.type,e.data,e.sequence);
+        }
     }
 }

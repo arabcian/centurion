@@ -32,6 +32,8 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QThread>
+#include <memory>
 #include <QVBoxLayout>
 #include <cmath>
 #include <time.h>
@@ -673,20 +675,64 @@ void AmdGpuTab::frequencyOverview() {
     auto *dpmButton = new QPushButton(tr("Read active-device DPM states…"));
     auto *dpmText = new QLabel; dpmText->setTextFormat(Qt::PlainText); dpmText->setWordWrap(true);
     dpmText->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    dpmButton->setEnabled(identity);
+    dpmButton->setEnabled(identity && !dpmPending_);
+    if (dpmPending_) dpmText->setText(tr("Previous DPM read is still running; reopen after it finishes."));
     content->addWidget(dpmButton); content->addWidget(dpmText);
-    connect(dpmButton, &QPushButton::clicked, &dialog, [this, selected, dpmText] {
-        QStringList lines;
-        for (bool memory : {false, true}) {
-            lines << (memory ? tr("Memory DPM states") : tr("Core DPM states"));
-            const auto states = readDpm(selected, memory);
-            if (!states) { lines << tr("Unavailable, inactive or unrecognized DPM format."); continue; }
-            for (const auto &state : *states) lines << tr("State %1: %2 MHz %3").arg(state.index).arg(state.mhz)
-                .arg(state.active ? tr("(driver-marked active)") : QString());
-        }
-        if (!runtimeActive(selected)) { dpmText->setText(tr("GPU inactive or identity unavailable")); return; }
-        lines << tr("Snapshot time: %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate));
-        dpmText->setText(lines.join(QLatin1Char('\n')));
+    connect(dpmButton, &QPushButton::clicked, &dialog, [this, selected, dpmText, dpmButton, &dialog] {
+        if (dpmPending_) return;
+        dpmPending_ = true; dpmButton->setEnabled(false);
+        dpmText->setText(tr("Reading DPM states…"));
+        struct Capture {
+            std::optional<std::vector<topologyfields::Dpm>> core, memory;
+            qint64 captured = -1;
+            QString utc;
+            bool valid = false;
+        };
+        auto result = std::make_shared<Capture>();
+        auto expired = std::make_shared<bool>(false); // GUI thread only
+        const auto started = bootMs();
+        auto *worker = QThread::create([selected, result] {
+            if (runtimeActive(selected)) {
+                result->core = readDpm(selected, false);
+                result->memory = readDpm(selected, true);
+                result->valid = runtimeActive(selected);
+            }
+            result->captured = bootMs();
+            result->utc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+        });
+        connect(worker, &QThread::finished, this, [this] { dpmPending_ = false; });
+        connect(worker, &QThread::finished, &dialog, [this, selected, result, expired, started, dpmText, dpmButton] {
+            dpmButton->setEnabled(true);
+            const auto now = bootMs();
+            if (*expired || started < 0 || result->captured < started || now < result->captured || now - started >= 5000) {
+                *expired = true; dpmText->setText(tr("DPM read expired; late result discarded.")); return;
+            }
+            // Stop the pending deadline even on an unavailable result.
+            *expired = true;
+            const auto *current = card();
+            if (!result->valid || !current || current->name != selected.name || current->devicePath != selected.devicePath ||
+                current->incarnation != selected.incarnation || !sameDevice(selected)) {
+                dpmText->setText(tr("GPU inactive or identity unavailable")); return;
+            }
+            QStringList lines;
+            for (bool memory : {false, true}) {
+                lines << (memory ? tr("Memory DPM states") : tr("Core DPM states"));
+                const auto &states = memory ? result->memory : result->core;
+                if (!states) { lines << tr("Unavailable, inactive or unrecognized DPM format."); continue; }
+                for (const auto &state : *states) lines << tr("State %1: %2 MHz %3").arg(state.index).arg(state.mhz)
+                    .arg(state.active ? tr("(driver-marked active)") : QString());
+            }
+            lines << tr("Snapshot time: %1").arg(result->utc);
+            dpmText->setText(lines.join(QLatin1Char('\n')));
+        });
+        // A blocked sysfs read cannot be forcibly interrupted safely. Keep the
+        // worker slot occupied until it really returns, but expire its GUI result.
+        QTimer::singleShot(5000, &dialog, [expired, dpmText] {
+            if (*expired) return;
+            *expired = true; dpmText->setText(tr("DPM read timed out; waiting for the read worker to return."));
+        });
+        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+        worker->start();
     });
     content->addWidget(muted(tr("Read-only snapshot. Reported overdrive points are not necessarily active DPM states. No settings are applied.")));
     content->addStretch(); scroll->setWidget(host); layout->addWidget(scroll, 1);

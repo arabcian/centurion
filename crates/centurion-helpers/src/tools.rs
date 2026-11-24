@@ -107,6 +107,8 @@ fn disks() -> Vec<String> {
 
 /// Stable per disk and free of the serial number: model, capacity, and a 48-bit FNV-1a hash of the serial.
 fn disk_id(model: &str, capacity: u64, serial: &str) -> String {
+    // Without a serial, identical model/capacity drives cannot be distinguished.
+    if serial.trim().is_empty() || model.trim().is_empty() || capacity == 0 { return String::new(); }
     let h = serial.trim().bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
     format!("{}|{}|{:012x}", model.trim(), capacity, h & 0xffff_ffff_ffff)
 }
@@ -329,5 +331,7 @@ mod tests {
         assert_eq!(id, disk_id("Model X", 512, "SERIAL-1"));
         assert!(id.starts_with("Model X|512|"));
         assert!(!id.contains("SERIAL"));
+        assert!(disk_id("Model X", 512, " ").is_empty());
+        assert!(disk_id("Model X", 0, "SERIAL-1").is_empty());
     }
 }

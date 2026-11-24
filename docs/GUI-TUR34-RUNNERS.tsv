@@ -1,0 +1,62 @@
+Runner	Tam koşu exit	Seconds	Tam koşu	Ayrı koşu
+gui/tests/acpievidence_native_test.py	0	14.21	PASS	
+gui/tests/advanced_17_static_test.py	0	1.71	PASS	
+gui/tests/archiveidentity_native_test.py	0	6.46	PASS	
+gui/tests/boot_preset_home_ui_static_test.py	0	1.60	PASS	
+gui/tests/calibrationmath_native_test.py	0	6.12	PASS	
+gui/tests/calibrationviewer_static_test.py	0	2.56	PASS	
+gui/tests/canvasviewport_native_test.py	0	5.65	PASS	
+gui/tests/chartaxis_native_test.py	0	5.79	PASS	
+gui/tests/co_reboot_native_test.py	0	4.13	PASS	
+gui/tests/co_walk_native_test.py	0	1.94	PASS	
+gui/tests/deviceidentity_native_test.py	0	6.30	PASS	
+gui/tests/edidfields_native_test.py	0	13.02	PASS	
+gui/tests/experimental_layout_static_test.py	0	1.90	PASS	
+gui/tests/experimental_ui_static_test.py	0	1.31	PASS	
+gui/tests/firewallpreview_native_test.py	0	12.49	PASS	
+gui/tests/gui_completion_static_test.py	0	2.21	PASS	PASS
+gui/tests/gui_stage1_static_test.py	0	1.97	PASS	
+gui/tests/gui_stage2_static_test.py	0	1.19	PASS	
+gui/tests/gui_stage3_static_test.py	0	2.34	PASS	
+gui/tests/gui_stage4_static_test.py	0	1.30	PASS	
+gui/tests/hardwarefields_native_test.py	0	6.23	PASS	
+gui/tests/health_ui_static_test.py	0	1.55	PASS	
+gui/tests/integerunits_native_test.py	0	10.20	PASS	
+gui/tests/memoryfields_native_test.py	0	7.20	PASS	
+gui/tests/navigationtargets_static_test.py	0	1.50	PASS	
+gui/tests/palettecontrast_native_test.py	0	7.78	PASS	
+gui/tests/scene_wifi_native_test.py	0	4.46	PASS	
+gui/tests/six_features_static_test.py	0	1.64	PASS	
+gui/tests/socketbind_native_test.py	0	6.96	PASS	
+gui/tests/structuredpci_native_test.py			SONUÇ YOK	
+gui/tests/studio_v4_static_test.py			SONUÇ YOK	
+gui/tests/theme_palettes_static_test.py			SONUÇ YOK	
+gui/tests/toolcatalog_static_test.py			SONUÇ YOK	
+gui/tests/topologyfields_native_test.py			SONUÇ YOK	
+gui/tests/wifichannel_native_test.py			SONUÇ YOK	
+gui/tests/workspacefields_native_test.py			SONUÇ YOK	
+tests/nvcurve_safety_static_test.py			SONUÇ YOK	
+tests/test_algorithm_guardrails_static.py			SONUÇ YOK	
+tests/test_compare_autotune_timings.py			SONUÇ YOK	
+tests/test_evidence_lab_static.py			SONUÇ YOK	
+tests/test_firewall_preview_contract_static.py			SONUÇ YOK	
+tests/test_health_diagnostics_contract.py			SONUÇ YOK	
+tests/test_nov2026_security_fixes_static.py			SONUÇ YOK	
+tests/test_session_audit_static.py			SONUÇ YOK	
+gui/tests/abverify_native_test.py			SONUÇ YOK	
+gui/tests/operationreceipt_native_test.py			SONUÇ YOK	
+gui/tests/telemetrybroker_native_test.py			SONUÇ YOK	
+gui/tests/tuningcomparison_native_test.py			SONUÇ YOK	
+gui/tests/cohistory_sceneplan_native_test.py			SONUÇ YOK	
+gui/tests/scene_wifi_contract_static_test.py			SONUÇ YOK	
+gui/tests/translation_tr_test.py			SONUÇ YOK	PASS
+gui/tests/optimization_home_test.py			SONUÇ YOK	
+gui/tests/health_catalog_redesign_static_test.py			SONUÇ YOK	
+gui/tests/title_case_static_test.py			SONUÇ YOK	
+gui/tests/tur29_contract_static_test.py			SONUÇ YOK	
+gui/tests/tur30_history_native_test.py			SONUÇ YOK	
+gui/tests/tur30_sleep_hook_test.py			SONUÇ YOK	
+gui/tests/tur31_diagnostic_native_test.py			SONUÇ YOK	
+gui/tests/tur32_presentation_native_test.py			SONUÇ YOK	
+gui/tests/bootreceiptcoverage_native_test.py			SONUÇ YOK	
+gui/tests/powerprovenance_native_test.py			SONUÇ YOK	PASS

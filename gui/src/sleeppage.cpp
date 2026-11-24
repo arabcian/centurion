@@ -2,6 +2,7 @@
 #include "sysadmin.h"
 #include "privileged.h"
 #include "sleepadvice.h"
+#include "diagnostichistory.h"
 #include "theme.h"
 #include "charts.h"
 #include <QDialog>
@@ -349,7 +350,9 @@ void SleepPage::fillSleeps() {
         const QString status = o.value("status_before").toString();
         QString used = (!status.isEmpty() && !onBattery) ? status : QStringLiteral("—"), per = QStringLiteral("—");
         // The legacy hook writes 0 for missing counters; never infer a full discharge from that sentinel.
-        if (onBattery && t0 > 0 && t1 > t0 && full > 0 && e0 > 0 && e1 > 0 && e0 >= e1) {
+        const bool compatible=(!o.contains("unit_after")||(!o.value("unit_after").toString().isEmpty()&&o.value("unit_after")==o.value("unit")))
+            && (!o.contains("status_after")||o.value("status_after").toString()==QLatin1String("Discharging"));
+        if (onBattery && compatible && t0 > 0 && t1 > t0 && full > 0 && e0 > 0 && e1 > 0 && e0 >= e1) {
             const double pct = 100.0 * (e0 - e1) / full;
             used = QStringLiteral("%1%").arg(pct, 0, 'f', 1);
             if (o.value("unit").toString() == QLatin1String("uWh")) used += QStringLiteral(" (%1 Wh)").arg((e0 - e1) / 1e6, 0, 'f', 2);
@@ -367,6 +370,8 @@ void SleepPage::fillSleeps() {
         auto *it = new QTreeWidgetItem({t0 > 0 ? QDateTime::fromSecsSinceEpoch(t0).toString(QStringLiteral("yyyy-MM-dd HH:mm")) : QStringLiteral("—"), dur,
                                         o.value("mode").toString().isEmpty() ? o.value("kind").toString() : o.value("mode").toString(),
                                         used, per, hw, o.value("dgpu_before").toString() + QStringLiteral(" → ") + o.value("dgpu_after").toString(), woke});
+        const auto boot=QString::fromStdString(diagnostichistory::fullBoot(o.value("boot").toString().toStdString()));
+        it->setToolTip(0,tr("Recorded boot: %1\nBattery status after resume: %2\nCounter unit after resume: %3").arg(boot.isEmpty()?tr("Unknown / legacy"):boot,o.value("status_after").toString(QStringLiteral("—")),o.value("unit_after").toString(QStringLiteral("—"))));
         // A sleep that kept the SoC mostly awake, or drained fast, stands out.
         if ((hwKnown && seconds > 600 && hwUs / 1e6 / double(seconds) < 0.5) || (per != QLatin1String("—") && per.section(' ', 0, 0).toDouble() > 2.0))
             for (int i = 0; i < 8; ++i) it->setForeground(i, QColor(QLatin1String(theme::WARN)));

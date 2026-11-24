@@ -17,7 +17,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QTreeWidget>
+#include <QTableView>
+#include <QSortFilterProxyModel>
+#include <QScrollBar>
+#include <QItemSelectionModel>
+#include <QTimer>
+#include "kernelparamsmodel.h"
+#include "workspacestate.h"
 #include <QVBoxLayout>
 
 // The sched_* sysctls are world-readable: listed from /proc/sys/kernel in the scheduler scope.
@@ -65,17 +71,47 @@ KernelParamsPage::KernelParamsPage(QWidget *parent) : QWidget(parent) {
     status_->setStyleSheet(QStringLiteral("color:%1;").arg(theme::FG_DIM));
     lay->addWidget(status_);
 
-    tree_ = new QTreeWidget;
-    tree_->setColumnCount(3);
-    tree_->setHeaderLabels({tr("Setting"), tr("Value"), tr("Writable")});
-    tree_->setRootIsDecorated(false);
-    tree_->setUniformRowHeights(true);
+    tree_ = new QTableView;
+    model_ = new KernelParamsModel(tree_);
+    proxy_ = new QSortFilterProxyModel(tree_);
+    proxy_->setSourceModel(model_);
+    proxy_->setFilterRole(KernelParamsModel::SearchRole);
+    proxy_->setFilterKeyColumn(0);
+    proxy_->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    tree_->setModel(proxy_);
+    tree_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tree_->verticalHeader()->hide();
+    tree_->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    tree_->verticalHeader()->setDefaultSectionSize(fontMetrics().height()+8);
     tree_->setAlternatingRowColors(true);
-    tree_->header()->setSectionResizeMode(0, QHeaderView::Interactive);
-    tree_->header()->resizeSection(0, 520);
-    tree_->header()->setStretchLastSection(false);
-    tree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    tree_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
+    tree_->horizontalHeader()->resizeSection(0, 520);
+    tree_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    tree_->setSortingEnabled(true); tree_->sortByColumn(0,Qt::AscendingOrder);
     lay->addWidget(tree_, 1);
+    const auto stateKey=workspace::key(theme::experimentalEnabled(),QStringLiteral("health/kernel-parameters"));
+    const auto saved=workspace::read(stateKey);
+    const auto scopeIndex=scope_->findData(saved.value(QStringLiteral("scope")).toString());
+    if(scopeIndex>=0) scope_->setCurrentIndex(scopeIndex);
+    filter_->setMaxLength(512); filter_->setText(saved.value(QStringLiteral("filter")).toString());
+    const auto width=saved.value(QStringLiteral("width")).toInt(520);
+    if(width>=40 && width<=4000) tree_->setColumnWidth(0,width);
+    const auto sort=saved.value(QStringLiteral("sort")).toInt(0);
+    if(sort>=0 && sort<3) tree_->sortByColumn(sort,saved.value(QStringLiteral("descending")).toBool()?Qt::DescendingOrder:Qt::AscendingOrder);
+    applyFilter();
+    const auto saveState=[this,stateKey] {
+        workspace::write(stateKey,QJsonObject{{"scope",scope_->currentData().toString()},{"filter",filter_->text()},
+            {"width",tree_->columnWidth(0)},{"sort",tree_->horizontalHeader()->sortIndicatorSection()},
+            {"descending",tree_->horizontalHeader()->sortIndicatorOrder()==Qt::DescendingOrder}});
+    };
+    auto *stateTimer=new QTimer(this); stateTimer->setSingleShot(true); stateTimer->setInterval(250);
+    connect(stateTimer,&QTimer::timeout,this,saveState);
+    connect(filter_,&QLineEdit::textChanged,stateTimer,[stateTimer]{stateTimer->start();});
+    connect(scope_,&QComboBox::activated,this,[saveState](int){saveState();});
+    connect(tree_->horizontalHeader(),&QHeaderView::sectionResized,stateTimer,[stateTimer]{stateTimer->start();});
+    connect(tree_->horizontalHeader(),&QHeaderView::sortIndicatorChanged,stateTimer,[stateTimer]{stateTimer->start();});
 
     connect(btn, &QPushButton::clicked, this, &KernelParamsPage::read);
     connect(scope_, &QComboBox::activated, this, &KernelParamsPage::read);
@@ -92,13 +128,14 @@ void KernelParamsPage::read() {
     scope_->setEnabled(false);
     capturedScope_.clear();
     captured_ = QJsonArray{};
-    tree_->clear();
-    status_->setText(tr("Reading…"));
+    if(viewScope_!=root) { model_->clear(); viewScope_=root; }
+    status_->setText(model_->rowCount()>0?tr("Reading… previous capture is shown until the new read completes."):tr("Reading…"));
     privileged::run(helper, QJsonObject{{"op", "ksnap"}, {"roots", QJsonArray{root}}}, this, [this, root](const privileged::Result &r) {
         busy_ = false;
         scope_->setEnabled(true);
-        if (!r.ok()) { status_->setText(r.message()); return; }
-        if (!r.json.contains(QStringLiteral("entries"))) {
+        if (!r.ok()) { model_->clear(); status_->setText(r.message()); return; }
+        if (!r.json.value(QStringLiteral("entries")).isArray()) {
+            model_->clear();
             status_->setText(r.json.value(QStringLiteral("ok")).toBool() ? tr("The installed health-reader is too old for this page — reinstall Centurion.") : r.message());
             return;
         }
@@ -109,7 +146,7 @@ void KernelParamsPage::read() {
             for (const QJsonValue &v : sys) entries.append(v);  // the tree sorts
             if (!r.json.value(QStringLiteral("debugfs_mounted")).toBool()) msg = tr("debugfs is not mounted: only the sysctls are shown.") + QLatin1Char(' ');
         }
-        fill(entries);
+        if(!fill(entries)) { model_->clear(); status_->setText(tr("Invalid or duplicate setting paths in capture.")); return; }
         msg += tr("%1 settings").arg(entries.size());
         if (r.json.value(QStringLiteral("truncated")).toBool()) msg += tr(" — list cut short (%1)").arg(r.json.value(QStringLiteral("reason")).toString());
         status_->setText(msg);
@@ -122,32 +159,20 @@ void KernelParamsPage::read() {
     }, 60000);
 }
 
-void KernelParamsPage::fill(const QJsonArray &entries) {
-    tree_->setUpdatesEnabled(false);
-    tree_->clear();
-    QList<QTreeWidgetItem *> items;
-    items.reserve(entries.size());
-    for (const QJsonValue &v : entries) {
-        const QJsonObject e = v.toObject();
-        const QString value = e.value(QStringLiteral("v")).toString();
-        const QString first = value.section(QLatin1Char('\n'), 0, 0);
-        auto *it = new QTreeWidgetItem({e.value(QStringLiteral("p")).toString(), value.contains(QLatin1Char('\n')) ? first + QStringLiteral(" …") : first,
-                                        e.value(QStringLiteral("w")).toBool() ? tr("yes") : QString()});
-        it->setToolTip(1, value);
-        items.append(it);
-    }
-    tree_->addTopLevelItems(items);
-    tree_->sortItems(0, Qt::AscendingOrder);
-    tree_->setUpdatesEnabled(true);
-    applyFilter();
+bool KernelParamsPage::fill(const QJsonArray &entries) {
+    const auto path=tree_->currentIndex().data(KernelParamsModel::PathRole).toString();
+    const auto anchor=tree_->indexAt(QPoint(1,1)).data(KernelParamsModel::PathRole).toString();
+    if(!model_->replace(entries)) return false;
+    const auto selected=proxy_->mapFromSource(model_->byPath(path));
+    if(selected.isValid()) tree_->selectionModel()->setCurrentIndex(selected,QItemSelectionModel::ClearAndSelect|QItemSelectionModel::Rows);
+    else tree_->selectionModel()->clear();
+    const auto top=proxy_->mapFromSource(model_->byPath(anchor));
+    if(top.isValid()) tree_->scrollTo(top,QAbstractItemView::PositionAtTop);
+    return true;
 }
 
 void KernelParamsPage::applyFilter() {
-    const QString f = filter_->text().trimmed();
-    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
-        auto *it = tree_->topLevelItem(i);
-        it->setHidden(!f.isEmpty() && !it->text(0).contains(f, Qt::CaseInsensitive) && !it->text(1).contains(f, Qt::CaseInsensitive));
-    }
+    proxy_->setFilterFixedString(filter_->text().trimmed());
 }
 
 void KernelParamsPage::exportSnapshot() {

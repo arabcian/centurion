@@ -28,5 +28,11 @@ int main(int argc,char **argv) {
     CHECK(!structuredtools::parse(QStringLiteral("unknown"),QStringLiteral("$ lsmod\nModule Size Used by\nfuse 1 0\n")));
     CHECK(!structuredtools::powerSupply(QStringLiteral("$ cat /sys/class/power_supply/BAT0/uevent\nPOWER_SUPPLY_CURRENT_NOW=123456789012345678901\n")));
     CHECK(!structuredtools::powerSupply(QStringLiteral("$ cat /sys/class/power_supply/BAT0/uevent\nPOWER_SUPPLY_CAPACITY=secret\n")));
+    const auto mem=structuredtools::parse(QStringLiteral("Memory"),QStringLiteral("$ free -b\ntotal used free shared buff/cache available\nMem: 100 20 30 5 50 80\nSwap: 100 0 100\n"));
+    CHECK(mem && mem->rows.size()==2 && mem->rows.at(0).at(6)==QStringLiteral("80"));
+    CHECK(!structuredtools::memory(QStringLiteral("$ free -b\ntotal used free shared buff/cache available\nMem: 100 20 30 5 50 80\nSwap: invalid 0 100\n")));
+    const auto mod=structuredtools::moduleParameters(QStringLiteral("$ modinfo -p nvidia\nNVreg_A: description (int)\nNVreg_B: (charp)\n"));
+    CHECK(mod && mod->rows.size()==2 && mod->rows.first().at(0)==QStringLiteral("NVreg_A"));
+    CHECK(!structuredtools::moduleParameters(QStringLiteral("$ modinfo -p nvidia\nNVreg_A: (int)\nNVreg_A: (int)\n")));
     return 0;
 }

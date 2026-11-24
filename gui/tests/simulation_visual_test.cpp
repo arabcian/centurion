@@ -63,6 +63,7 @@ int main(int argc,char **argv) {
     const bool fullMatrix=locale==QStringLiteral("en") && scale==QStringLiteral("1") && mode==QStringLiteral("experimental");
     CHECK(QDir().mkpath(output));
     const QString baseline=qEnvironmentVariable("CENTURION_VISUAL_BASELINES");
+    if(qEnvironmentVariableIsSet("CENTURION_VISUAL_REQUIRE_BASELINES")) CHECK(!baseline.isEmpty() && QDir(baseline).exists());
     const QStringList ids{QStringLiteral("graphite"),QStringLiteral("pastel-mint-cream"),QStringLiteral("oled-black"),QStringLiteral("gruvbox")};
     CHECK(theme::saveUiMode(mode==QStringLiteral("experimental"))); CHECK(theme::saveCompactDensity(true));
     CHECK(theme::saveTheme(ids.first())); theme::load();theme::apply(app);
@@ -113,7 +114,7 @@ int main(int argc,char **argv) {
         for(const auto &id:ids){
             if(!fullMatrix && id!=QStringLiteral("pastel-mint-cream") && id!=QStringLiteral("oled-black")) continue;
             CHECK(theme::applyLivePalette(app,id));
-            for(const QSize size:{QSize(900,600),QSize(1280,800)}){
+            for(const QSize size:{QSize(760,540),QSize(900,600),QSize(1280,800)}){
                 tabs->setCurrentIndex(0);
                 root->resize(size);root->update();app.processEvents();
                 CHECK(root->size()==size);

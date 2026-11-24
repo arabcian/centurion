@@ -47,6 +47,8 @@
 #include <QMessageBox>
 #include <QPointer>
 #include "uinavigator.h"
+#include "navigationtargets.h"
+#include "tuningnavigation.h"
 #include "experimentalui.h"
 #include <QApplication>
 #include <QProcess>
@@ -709,7 +711,7 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
 }
 
 void MainWindow::showNavigationPreferences() {
-    struct Target { QString id, label, healthTarget; };
+    struct Target { QString id, label, healthTarget, pageId{}, controlId{}, settingKey{}; };
     QList<Target> targets;
     for (int i = 0; i < tabs_->count(); ++i) {
         const QString id = tabs_->tabBar()->tabData(i).toString();
@@ -722,19 +724,62 @@ void MainWindow::showNavigationPreferences() {
     QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
     const QString key = QStringLiteral("ui/navigation_favorites_v1");
     QStringList favorites = st.value(key).toStringList();
+    favorites.removeDuplicates();
+    // Resolve explicitly pinned metadata without constructing a lazy page. A
+    // temporarily unavailable device/control is retained, not silently unpinned.
+    for (const auto &id : std::as_const(favorites)) {
+        if (id.startsWith(QLatin1String("setting/"))) {
+            for (const auto &entry : tuningnavigation::entries) {
+                const auto k = QString::fromLatin1(entry.key);
+                if (id.mid(8) != k) continue;
+                const auto home = QString::fromLatin1(entry.home);
+                const auto label = QCoreApplication::translate("OptimizationLabels",entry.label);
+                const auto healthTarget = home.isEmpty() ? QString() : QStringLiteral("tool:") + home.left(1).toUpper() + home.mid(1) + QStringLiteral(" tuning");
+                targets.append(Target{id, tr("Optimizations") + QStringLiteral(" / ") + label, healthTarget, QStringLiteral("Optimizations"), {}, k});
+                break;
+            }
+        } else if (id.startsWith(QLatin1String("control/"))) {
+            const auto path = id.mid(8); const auto slash = path.indexOf(QLatin1Char('/'));
+            if (slash <= 0) continue;
+            const auto pageId = path.left(slash), control = path.mid(slash+1);
+            for (int i=0;i<tabs_->count();++i) {
+                if (!tabs_->isTabEnabled(i) || tabs_->tabBar()->tabData(i).toString()!=pageId) continue;
+                for (const auto &entry : navigationtargets::entries(tabs_->widget(i))) if (entry.id==control)
+                    targets.append(Target{id,tabs_->tabText(i)+QStringLiteral(" / ")+QCoreApplication::translate("NavigationTargets",entry.title.toUtf8().constData()),{},pageId,control,{}});
+                // The fixed AMD catalog is metadata only, not proof of support.
+                if (pageId==QLatin1String("AMD GPU") && !navigationtargets::resolve(tabs_->widget(i),control)) {
+                    for (const auto &entry : navigationtargets::amdEntries) if (control==QLatin1String(entry.id))
+                        targets.append(Target{id,tabs_->tabText(i)+QStringLiteral(" / ")+QCoreApplication::translate("NavigationTargets",entry.title),{},pageId,control,{}});
+                }
+            }
+        }
+    }
     QSet<QString> valid;
     for (const auto &target : targets) valid.insert(target.id);
-    for (qsizetype i = favorites.size(); i > 0; --i) if (!valid.contains(favorites.at(i - 1))) favorites.removeAt(i - 1);
+    for (qsizetype i = favorites.size(); i > 0; --i) {
+        const auto &id = favorites.at(i-1);
+        if (!valid.contains(id) && !id.startsWith(QLatin1String("control/")) && !id.startsWith(QLatin1String("setting/"))) favorites.removeAt(i-1);
+    }
     favorites.removeDuplicates();
     st.setValue(key, favorites);
     QMenu menu(this);
     if (favorites.isEmpty()) menu.addAction(tr("No navigation favorites"))->setEnabled(false);
+    for (const auto &id : std::as_const(favorites)) if (!valid.contains(id)) menu.addAction(tr("Unavailable favorite: %1").arg(id))->setEnabled(false);
     for (const auto &target : targets) {
         if (!favorites.contains(target.id)) continue;
         connect(menu.addAction(target.label), &QAction::triggered, this, [this, target] {
-            if (!target.healthTarget.isEmpty()) {
+            if (!target.controlId.isEmpty()) {
+                for (int i=0;i<tabs_->count();++i) if (tabs_->isTabEnabled(i) && tabs_->tabBar()->tabData(i).toString()==target.pageId) {
+                    tabs_->setCurrentIndex(i);
+                    if (!navigationtargets::reveal(tabs_->widget(i),target.controlId)) QMessageBox::information(this,tr("Navigation target unavailable"),tr("This control is not available in the current page state. No setting was applied."));
+                    return;
+                }
+            } else if (!target.healthTarget.isEmpty()) {
                 const int index = tabs_->indexOf(health_);
-                if (index >= 0 && tabs_->isTabEnabled(index)) { tabs_->setCurrentIndex(index); health_->openNavigationTarget(target.healthTarget); }
+                if (index >= 0 && tabs_->isTabEnabled(index)) { tabs_->setCurrentIndex(index); if (health_->openNavigationTarget(target.healthTarget) && !target.settingKey.isEmpty() && optimize_) optimize_->navigateSetting(target.settingKey); }
+            } else if (!target.settingKey.isEmpty()) {
+                const int index = tabs_->indexOf(optimize_);
+                if (index>=0 && tabs_->isTabEnabled(index)) { tabs_->setCurrentIndex(index); optimize_->navigateSetting(target.settingKey); }
             } else {
                 for (int i = 0; i < tabs_->count(); ++i)
                     if (tabs_->isTabEnabled(i) && tabs_->tabBar()->tabData(i).toString() == target.id.mid(5)) { tabs_->setCurrentIndex(i); break; }
@@ -742,6 +787,10 @@ void MainWindow::showNavigationPreferences() {
         });
     }
     auto *edit = menu.addMenu(tr("Manage navigation favorites"));
+    for (const auto &id : std::as_const(favorites)) if (!valid.contains(id)) {
+        auto *remove = edit->addAction(tr("Remove unavailable favorite: %1").arg(id));
+        connect(remove,&QAction::triggered,&menu,[&,id]{ favorites.removeAll(id); st.setValue(key,favorites); });
+    }
     for (const auto &target : targets) {
         auto *action = edit->addAction(target.label);
         action->setCheckable(true); action->setChecked(favorites.contains(target.id));
@@ -760,7 +809,7 @@ void MainWindow::showNavigationPreferences() {
         connect(action, &QAction::triggered, &menu, [&, id] { st.setValue(prefix + QStringLiteral("startup"), id); });
     };
     addStartup(QStringLiteral("last"), tr("Restore last page"));
-    for (const auto &target : targets) if (target.healthTarget.isEmpty()) addStartup(target.id.mid(5), target.label);
+    for (const auto &target : targets) if (target.id.startsWith(QLatin1String("page/"))) addStartup(target.id.mid(5), target.label);
     menu.exec(QCursor::pos());
 }
 

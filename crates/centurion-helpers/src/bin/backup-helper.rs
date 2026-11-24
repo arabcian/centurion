@@ -35,6 +35,7 @@ fn main() {
     let out = match op {
         "config_backup" => backup::config_backup(&req),
         "config_inspect" => backup::config_inspect(&req),
+        "config_preview" => backup::config_preview(&req),
         "config_restore_user" => backup::config_restore_user(&req),
         "config_diff" => backup::config_diff(&req),
         "verify" => backup::verify(&req),

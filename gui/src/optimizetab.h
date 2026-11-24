@@ -82,7 +82,7 @@ protected:
 private:
     struct Option { QString value, label; };
     struct Row {
-        QString key, group, label, help, kind, current;
+        QString key, group, label, help, kind, current, draftIdentity;
         QString home;      // System tools page that shows this row instead ("network", "storage", "kernel"; "" = this tab)
         QString conflict;  // another daemon fights this row (irqbalance vs irq.affinity)
         QList<Option> options;

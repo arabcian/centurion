@@ -88,6 +88,9 @@ const RUN_DIR: &str = "/run/centurion";
 const STATE_DIR: &str = "/run/centurion/tune";
 const STATE_FILE: &str = "/run/centurion/tune/state.json";
 const LOCK_FILE: &str = "/run/centurion/tune/lock";
+const BOOT_RECEIPT: &str = "/run/centurion/tune/boot-receipt.json";
+const BOOT_RECEIPT_LOCK: &str = "/run/centurion/tune/boot-receipt.lock";
+const BOOT_RECEIPT_LIMIT: usize = 1024 * 1024;
 const GUARD_PID: &str = "/run/centurion/tune/guard.pid";
 const GUARD_FILE: &str = "/run/centurion/tune/guard.json";
 const ETC_DIR: &str = "/etc/centurion";
@@ -1290,6 +1293,77 @@ fn boot_preset() -> Option<Value> {
     read_root_file(BOOT_FILE, 256 * 1024).and_then(|s| serde_json::from_str(&s).ok())
 }
 
+// Evidence only: a separate nonblocking lock prevents interleaved receipts.
+// Failure to record must never disable tuning or the existing restore path.
+// A pending record survives a killed process for the remainder of this boot.
+struct BootReceipt { _lock: fs::File, record: Value }
+fn receipt_time() -> Option<u64> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+fn valid_receipt_boot(id: &str) -> bool {
+    id.len() == 36 && id.bytes().enumerate().all(|(i, b)|
+        if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() })
+        && id.bytes().any(|b| b.is_ascii_hexdigit() && b != b'0')
+}
+fn save_boot_receipt(record: &Value) -> Result<(), String> {
+    let bytes = serde_json::to_vec(record).map_err(|e| e.to_string())?;
+    if bytes.len() > BOOT_RECEIPT_LIMIT { return Err("boot receipt exceeds size limit".into()); }
+    write_root_file(BOOT_RECEIPT, &bytes)
+}
+impl BootReceipt {
+    fn begin() -> Result<Self, String> {
+        secure_dir(RUN_DIR)?; secure_dir(STATE_DIR)?;
+        let f = fs::OpenOptions::new().create(true).read(true).write(true).mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK).open(BOOT_RECEIPT_LOCK)
+            .map_err(|e| e.to_string())?;
+        if !f.metadata().map_err(|e| e.to_string())?.is_file() { return Err("invalid boot receipt lock".into()); }
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 { return Err("another boot receipt is active".into()); }
+        let boot = centurion_helpers::bootguard::boot_id();
+        if !valid_receipt_boot(&boot) { return Err("boot identity unavailable".into()); }
+        let record = json!({"version":1,"boot_id":boot,"started":receipt_time(),"phase":"pending"});
+        save_boot_receipt(&record)?;
+        Ok(Self { _lock:f, record })
+    }
+    fn complete(mut self, out: &Value) -> Result<(), String> {
+        self.record["phase"] = json!("returned");
+        self.record["finished"] = json!(receipt_time());
+        for field in ["ok","applied","boot_preset_name","boot_requested","message"] {
+            if let Some(v) = out.get(field) { self.record[field] = v.clone(); }
+        }
+        self.record["has_error"] = json!(out["error"].is_string());
+        self.record["wake_error_count"] = json!(out["boot_wake_errors"].as_array().map_or(0, Vec::len));
+        self.record["wireless_warning_count"] = json!(out["wireless_pm_warnings"].as_array().map_or(0, Vec::len));
+        self.record["guard_armed"] = json!(out["guard"].is_object());
+        // Keep the existing per-key readback evidence rather than infer success
+        // from a service exit code. No raw sysfs paths or stderr in this record.
+        if let Some(rows) = out["results"].as_array() {
+            let results: Vec<Value> = rows.iter().map(|r| {
+                let mut fields = Map::new();
+                for key in ["key","value","ok","written","refused","readback_expected","readback_matched","readback_missing","mismatch_count","skipped"] {
+                    if let Some(v) = r.get(key) { fields.insert(key.into(), v.clone()); }
+                }
+                Value::Object(fields)
+            }).collect();
+            self.record["results"] = json!(results);
+        }
+        // A too-large result leaves the earlier pending record, never an
+        // unqualified success without receipts.
+        save_boot_receipt(&self.record)
+    }
+}
+fn op_boot_receipt() -> Value {
+    let Some(record) = read_root_file(BOOT_RECEIPT, BOOT_RECEIPT_LIMIT as u64)
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok()) else {
+        return json!({"ok":false,"error":"no readable boot helper receipt"});
+    };
+    let boot = centurion_helpers::bootguard::boot_id();
+    if !valid_receipt_boot(&boot) || record["boot_id"].as_str() != Some(boot.as_str()) || record["version"] != 1 ||
+        !matches!(record["phase"].as_str(), Some("pending" | "returned")) {
+        return json!({"ok":false,"error":"boot helper receipt does not match this boot or schema"});
+    }
+    json!({"ok":true,"receipt":record})
+}
+
 fn op_boot() -> Value {
     // Fallback snapshot when centurion-boot-guard is not enabled (runs before the preset).
     let _ = centurion_helpers::defaults::capture();
@@ -1299,17 +1373,20 @@ fn op_boot() -> Value {
     // A calibration scheduled for this boot measures from the boot state: the preset waits for it
     // (centurion-calibrate --boot-run applies it when it is done).
     if centurion_helpers::calctx::boot_calibration_pending() {
-        return json!({"ok": true, "applied": false, "message": "boot preset held: a calibration is scheduled for this boot (it applies the preset when done)"});
+        return json!({"ok": true, "applied": false, "message": "boot preset held: a calibration is scheduled for this boot (it applies the preset when done)", "boot_wake_errors":wake_errs});
     }
-    let Some(b) = boot_preset() else { return json!({"ok": true, "applied": false, "message": "no boot preset"}) };
-    let Some(values) = b["values"].as_object().cloned() else { return json!({"ok": false, "error": "boot preset has no values"}) };
+    let Some(b) = boot_preset() else { return json!({"ok": true, "applied": false, "message": "no boot preset", "boot_wake_errors":wake_errs}) };
+    let Some(values) = b["values"].as_object().cloned() else { return json!({"ok": false, "error": "boot preset has no values", "boot_wake_errors":wake_errs}) };
     let base = autotune::Pressure::sample();
-    let out = locked(|st| {
+    let mut out = locked(|st| {
         st.preset = valid_preset(&b["preset"]);
         st.source = Some("boot".into());
         let (results, ok) = apply_values(st, &values, false);
         json!({"ok": ok, "applied": true, "results": results, "error": (!ok).then_some("some settings could not be applied")})
     });
+    out["boot_preset_name"] = json!(valid_preset(&b["preset"]));
+    out["boot_requested"] = json!(values.keys().collect::<Vec<_>>());
+    out["boot_wake_errors"] = json!(wake_errs);
     guard_after(out, base)
 }
 
@@ -1341,6 +1418,7 @@ fn run() -> Value {
     }
     // Read-only ops any user may run; health needs root only when the kernel log is restricted.
     match op {
+        "boot_receipt" => return op_boot_receipt(),
         "health" => return centurion_helpers::health::scan(req["since"].as_u64().unwrap_or(0)),
         "klog" => return centurion_helpers::health::klog(req["since"].as_u64().unwrap_or(0)),
         "overview" => return centurion_helpers::overview::request(&req),
@@ -1367,6 +1445,9 @@ fn run() -> Value {
         return json!({"ok": false, "error": format!("'{op}' is not available in tune-profile-helper (it needs tune-helper)")});
     }
     if !is_root() { return json!({"ok": false, "error": format!("'{op}' needs root (run through pkexec)")}); }
+    let boot_receipt = if op == "boot" {
+        match BootReceipt::begin() { Ok(r) => Some(r), Err(e) => { eprintln!("tune-helper: boot receipt unavailable: {e}"); None } }
+    } else { None };
     let mut out = match op {
         "snapshot" => json!({"ok": true}),
         "apply" => op_apply(&req),
@@ -1435,6 +1516,9 @@ fn run() -> Value {
         // Field stability record: which knobs are changed from now on (see centurion_helpers::stability).
         centurion_helpers::stability::record_now();
     }
+    if let Some(receipt) = boot_receipt {
+        if let Err(e) = receipt.complete(&out) { eprintln!("tune-helper: boot receipt incomplete: {e}"); }
+    }
     out
 }
 
@@ -1446,6 +1530,13 @@ pub(crate) fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn boot_receipt_identity_is_full_and_nonzero() {
+        assert!(valid_receipt_boot("01234567-89ab-cdef-0123-456789abcdef"));
+        for id in ["", "01234567", "00000000-0000-0000-0000-000000000000", "01234567-89ab-cdef-0123-456789abcdez"] {
+            assert!(!valid_receipt_boot(id));
+        }
+    }
     #[test]
     fn profile_role_cannot_take_values() {
         for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear", "flight_interval"] {

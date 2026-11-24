@@ -9,6 +9,8 @@
 #include "theme.h"
 #include "workspacestate.h"
 #include "socketbind.h"
+#include "processidentity.h"
+#include "klogview.h"
 
 #include <QCheckBox>
 #include <QCollator>
@@ -155,10 +157,13 @@ static QString humanBytes(qint64 bytes) { return QLocale::c().formattedDataSize(
 
 // A tuple, not concatenated strings: distinct processes and endpoints must not
 // inherit each other's selection during a refresh. This is a snapshot identity,
-// not proof that a socket still exists when an action executes.
+// not proof that a socket still exists when an action executes. New helpers
+// add kernel cookie, namespace and process lifetime; old helpers retain the tuple.
 static QString connectionKey(const QJsonObject &c) {
     QJsonArray key;
     for (const char *field : {"proto", "local", "lport", "remote", "rport", "pid", "uid", "exe"})
+        key.append(c.value(QLatin1String(field)));
+    for (const char *field : {"boot_id", "netns", "family", "socket_cookie", "socket_inode", "process_start_ticks", "process_exe"})
         key.append(c.value(QLatin1String(field)));
     return QString::fromUtf8(QJsonDocument(key).toJson(QJsonDocument::Compact));
 }
@@ -280,7 +285,8 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     vc->addLayout(rc);
     vc->addLayout(connectionActions);
     vc->addWidget(connInfo_);
-    conns_ = makeTree({"Program", "PID", "Proto", "Local", "Remote", "State", tr("Today")});
+    conns_ = makeTree({"Program", "PID", "Proto", "Local", "Remote", "State", tr("Program Today")});
+    conns_->headerItem()->setToolTip(6, tr("Recorded bytes for the program path, not this process or socket. Missing data is unknown."));
     conns_->setColumnWidth(0, 220);
     conns_->setColumnWidth(3, 190);
     conns_->setColumnWidth(4, 230);
@@ -597,7 +603,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         const TrafficDays captured = trafficDays_;
         QDialog dlg(this); dlg.setWindowTitle(tr("Daily Traffic Charts")); dlg.resize(760, 620);
         auto *layout = new QVBoxLayout(&dlg);
-        auto *hint = new QLabel(tr("Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros. Chart coordinates are approximate; the table contains exact counters (saturated at INT64_MAX)."));
+        auto *hint = new QLabel(tr("Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros. Chart coordinates are approximate; ≥ marks a counter at the INT64_MAX saturation limit. Totals are per program path, not per process lifetime."));
         hint->setWordWrap(true); layout->addWidget(hint);
         if (!trafficValid_) {
             auto *warning = new QLabel(tr("Traffic ledger is unavailable or invalid. No measurements can be displayed."));
@@ -640,7 +646,8 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                 const qint64 value = metric->currentIndex() == 0 ? t.tx : metric->currentIndex() == 1 ? t.rx : metric->currentIndex() == 2 ? total : t.conns;
                 points.append({double(date.toJulianDay()), double(value), it.key(), previousDate.isValid() && previousDate.daysTo(date)>1});
                 previousDate = date;
-                auto *row = new SortItem({it.key(), QString::number(t.tx), QString::number(t.rx), QString::number(total), QString::number(t.conns)});
+                const auto counter = [](qint64 n) { return (n == std::numeric_limits<qint64>::max() ? QStringLiteral("≥") : QString()) + QString::number(n); };
+                auto *row = new SortItem({it.key(), counter(t.tx), counter(t.rx), counter(total), counter(t.conns)});
                 row->setData(1, SortRole, t.tx); row->setData(2, SortRole, t.rx); row->setData(3, SortRole, total); row->setData(4, SortRole, t.conns);
                 table->addTopLevelItem(row);
             }
@@ -749,7 +756,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     connect(logFilter_, &QLineEdit::textChanged, this, &NetPage::filterConnLog);
     auto logIp = [this] { auto *it = connLog_->currentItem(); return it ? it->data(0, IpRole).toString() : QString(); };
     auto detConn = [this](const QJsonObject &c) {
-        connDetails(str(c, "remote"), c.value(QLatin1String("pid")).toInt(), str(c, "exe"), c.value(QLatin1String("uid")).toInteger(-1), str(c, "state"));
+        connDetails(str(c, "remote"), c.value(QLatin1String("pid")).toInt(), str(c, "exe"), c.value(QLatin1String("uid")).toInteger(-1), str(c, "state"), c);
     };
     auto detLog = [this](QTreeWidgetItem *it) {
         if (it) connDetails(it->data(0, IpRole).toString(), it->data(0, PidRole).toInt(), it->data(0, ExeRole).toString(), it->data(0, UidRole).toLongLong(), QString());
@@ -771,20 +778,32 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     connect(listening_, &QCheckBox::toggled, this, &NetPage::showConns);
     connect(tabs_, &QTabWidget::currentChanged, this, &NetPage::poll);
     connect(bAll, &QPushButton::clicked, this, [this] {
-        privileged::run(helper(), QJsonObject{{"op", "list"}}, this, [this](const privileged::Result &r) {
-            if (!r.ok()) { QMessageBox::warning(this, "Network", r.message()); return; }
+        const auto generation = connViewGeneration_, request = ++connRootGeneration_;
+        const auto started = wifiBootTick();
+        privileged::run(helper(), QJsonObject{{"op", "list"}}, this, [this, generation, request, started](const privileged::Result &r) {
+            if (generation != connViewGeneration_ || request != connRootGeneration_ || !isVisible()) return;
+            if (!r.ok() || !r.json.value(QLatin1String("conns")).isArray()) { connSnapshotError_ = tr("Helper failed"); showConns(); QMessageBox::warning(this, "Network", r.message()); return; }
             viaRoot_ = true;  // kept until the page is hidden; the 3 s refresh would drop the names again
             connSnapshotTime_ = QDateTime::currentDateTime();
+            connSnapshotTick_ = started;
             connSnapshotError_.clear();
             connData_ = r.json.value(QLatin1String("conns")).toArray();
             showConns();
         });
     });
     auto wlConn = [this](const QJsonObject &c) {
+        if (!connSnapshotFresh()) { QMessageBox::warning(this, tr("Network"), tr("Connection snapshot expired. Refresh before changing rules.")); return; }
+        int matches = 0;
+        for (const auto &v : std::as_const(connData_)) if (connectionKey(v.toObject()) == connectionKey(c)) ++matches;
+        if (matches != 1) return;
         if (!c.value(QLatin1String("wine")).toBool()) { QMessageBox::information(this, "Network", "Select a connection of a Wine / .exe program (shown in purple)."); return; }
         changeList("whitelist", "add", str(c, "exe"));
     };
     auto killConn = [this](const QJsonObject &c) {
+        if (!connSnapshotFresh()) { QMessageBox::warning(this, tr("Network"), tr("Connection snapshot expired. Refresh before changing rules.")); return; }
+        int matches = 0;
+        for (const auto &v : std::as_const(connData_)) if (connectionKey(v.toObject()) == connectionKey(c)) ++matches;
+        if (matches != 1) return;
         if (str(c, "remote").isEmpty()) return;
         runRoot({{"op", "kill"}, {"proto", c.value(QLatin1String("proto"))}, {"lport", c.value(QLatin1String("lport"))},
                  {"remote", c.value(QLatin1String("remote"))}, {"rport", c.value(QLatin1String("rport"))}}, false);
@@ -811,6 +830,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         const bool wine = c.value(QLatin1String("wine")).toBool();
         if (!str(c, "remote").isEmpty()) {
             m.addAction(QStringLiteral("Details…"), this, [detConn, c] { detConn(c); });
+            m.addAction(tr("Preview saved firewall rules…"), this, [this, c] { firewall_->previewConnection(c); });
             addIpActions(m, str(c, "remote"));
             m.addSeparator();
             m.addAction(QStringLiteral("Kill connection"), this, [killConn, c] { killConn(c); });
@@ -924,6 +944,8 @@ void NetPage::hideEvent(QHideEvent *e) {
     timer_->stop();
     wifiTimer_->stop();
     viaRoot_ = false;
+    ++connViewGeneration_;
+    connSnapshotTick_.reset();
 }
 
 /// The connection list and the connection log refresh only while they are what the user is looking at.
@@ -937,6 +959,9 @@ void NetPage::poll() {
     }
     if (isVisible() && (tabs_->currentIndex() == 0 || tabs_->currentIndex() == portsTab_ || tabs_->currentIndex() == firewallTab_)) {
         if (!viaRoot_) refreshConns();
+        else if (!connSnapshotFresh() && !connInfo_->property("snapshotExpired").toBool()) {
+            showConns();
+        }
         timer_->start();
     } else if (isVisible() && tabs_->currentIndex() == LOG_TAB) {
         readConnLog();
@@ -953,10 +978,10 @@ void NetPage::runUser(const QJsonObject &req, std::function<void(const QJsonObje
     if (!QFileInfo(helper()).isExecutable()) { status_->setText(QStringLiteral("netguard-helper is not installed.")); cb({}); return; }
     auto *p = new QProcess(this);
     QPointer<QProcess> guard(p);
-    connect(p, &QProcess::finished, this, [p, cb](int, QProcess::ExitStatus) {
+    connect(p, &QProcess::finished, this, [p, cb](int code, QProcess::ExitStatus exit) {
         const QByteArray out = p->readAllStandardOutput().trimmed();
         p->deleteLater();
-        cb(QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object());
+        cb(exit == QProcess::NormalExit && code == 0 ? QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object() : QJsonObject{});
     });
     connect(p, &QProcess::errorOccurred, this, [p, cb](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
@@ -1167,20 +1192,28 @@ void NetPage::fillTraffic() {
 void NetPage::refreshConns() {
     if (busy_) return;
     busy_ = true;
-    runUser({{"op", "list"}}, [this](const QJsonObject &r) {
+    const auto generation = connViewGeneration_;
+    const auto started = wifiBootTick();
+    runUser({{"op", "list"}}, [this, generation, started](const QJsonObject &r) {
         busy_ = false;
-        if (viaRoot_) return;   // a root snapshot arrived meanwhile: it names more
-        if (!r.value(QLatin1String("ok")).toBool()) {
+        if (generation != connViewGeneration_ || !isVisible() || viaRoot_) return;   // a root snapshot arrived meanwhile: it names more
+        if (!r.value(QLatin1String("ok")).toBool() || !r.value(QLatin1String("conns")).isArray()) {
             connSnapshotError_ = r.isEmpty() ? tr("Helper failed") : str(r, "error");
             if (connSnapshotError_.isEmpty()) connSnapshotError_ = tr("Helper failed");
             showConns();
             return;
         }
         connSnapshotTime_ = QDateTime::currentDateTime();
+        connSnapshotTick_ = started;
         connSnapshotError_.clear();
         connData_ = r.value(QLatin1String("conns")).toArray();
         showConns();
     });
+}
+
+bool NetPage::connSnapshotFresh() const {
+    const auto now = wifiBootTick();
+    return connSnapshotError_.isEmpty() && connSnapshotTick_ && now && processidentity::fresh(*connSnapshotTick_, *now, 15000);
 }
 
 QJsonObject NetPage::curConn() const {
@@ -1218,13 +1251,16 @@ void NetPage::showConns() {
             continue;
         const QString local = endpoint(str(c, "local"), c.value(QLatin1String("lport")).toInt());
         const QString peer = remote.isEmpty() ? QStringLiteral("*") : endpoint(remote, c.value(QLatin1String("rport")).toInt());
-        const qint64 today = trafficBytes(trafficDays_, QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")), exe.isEmpty() ? name : exe);
+        const auto day = trafficDays_.constFind(QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")));
+        const bool hasToday = trafficValid_ && !exe.isEmpty() && day != trafficDays_.cend() && day->contains(exe);
+        const qint64 today = hasToday ? trafficBytes(trafficDays_, day.key(), exe) : 0;
         auto *it = new SortItem({name, pid ? QString::number(pid) : QString(), str(c, "proto").toUpper(), local, peer, state,
-                                 today > 0 ? humanBytes(today) : QStringLiteral("—")});
-        it->setData(6, SortRole, double(today));
+                                 hasToday ? humanBytes(today) : QStringLiteral("—")});
+        if (hasToday) it->setData(6, SortRole, today);
         it->setData(0, IdxRole, i);
         it->setData(0, KeyRole, connectionKey(c));
-        it->setToolTip(0, exe);
+        it->setToolTip(0, exe + QStringLiteral("\n") + (str(c,"process_start_ticks").isEmpty() ? tr("Process lifetime unknown") : tr("Recorded process start ticks: %1").arg(str(c,"process_start_ticks"))));
+        it->setToolTip(1, str(c,"socket_cookie").isEmpty() ? tr("Socket cookie unavailable") : tr("Recorded socket cookie: %1").arg(str(c,"socket_cookie")));
         const bool isWine = c.value(QLatin1String("wine")).toBool();
         const bool bl = c.value(QLatin1String("bl")).toBool() || black.contains(remote);
         if (bl || isWine) {
@@ -1246,7 +1282,7 @@ void NetPage::showConns() {
     QHash<QString, int> perProgram;
     for (const QJsonValue &v : std::as_const(connData_)) {
         const QJsonObject c = v.toObject();
-        if (!str(c, "remote").isEmpty() && !str(c, "name").isEmpty()) ++perProgram[str(c, "name")];
+        if (!str(c, "remote").isEmpty() && !str(c, "exe").isEmpty()) ++perProgram[str(c, "exe")];
     }
     QList<QPair<int, QString>> top;
     for (auto i = perProgram.cbegin(); i != perProgram.cend(); ++i) top << qMakePair(i.value(), i.key());
@@ -1255,11 +1291,14 @@ void NetPage::showConns() {
     for (int i = 0; i < std::min<int>(3, top.size()); ++i) busiest << QStringLiteral("%1 %2").arg(top.at(i).second).arg(top.at(i).first);
     connInfo_->setText(QStringLiteral("%1 shown · %2 Wine%3").arg(shown).arg(wine)
                            .arg(viaRoot_ ? QStringLiteral(" · root snapshot (not refreshing)") : QString())
-                       + (busiest.isEmpty() ? QString() : tr(" · most connections: %1").arg(busiest.join(QStringLiteral(", ")))));
+                       + (busiest.isEmpty() ? QString() : tr(" · most connections by program path: %1").arg(busiest.join(QStringLiteral(", ")))));
     const QString snapshot = connSnapshotTime_.isValid()
         ? tr("Snapshot: %1").arg(connSnapshotTime_.toString(Qt::ISODate)) : tr("No connection snapshot yet");
     connInfo_->setText(connInfo_->text() + QStringLiteral(" · ") + snapshot
         + (connSnapshotError_.isEmpty() ? QString() : tr(" · Refresh failed; previous data: %1").arg(connSnapshotError_)));
+    const bool expired = !connSnapshotFresh();
+    connInfo_->setProperty("snapshotExpired", expired);
+    if (expired) connInfo_->setText(connInfo_->text() + tr(" · Snapshot expired or age unknown"));
     showPorts();
 }
 
@@ -1406,17 +1445,20 @@ void NetPage::filterConnLog() {
 // ── Details: process (from /proc), the address's history in the connection log, link to IP info ──
 static QByteArray procFile(int pid, const char *name) {
     QFile f(QStringLiteral("/proc/%1/%2").arg(pid).arg(QLatin1String(name)));
-    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    return f.open(QIODevice::ReadOnly) ? f.read(65537) : QByteArray();
 }
 static QString procCmd(int pid) {
     QByteArray b = procFile(pid, "cmdline");
     b.replace('\0', ' ');
     return QString::fromLocal8Bit(b).trimmed();
 }
-struct ProcStat { QString comm, state; int ppid = 0; qint64 start = 0; bool ok = false; };
+struct ProcStat { QString comm, state; int ppid = 0; qint64 start = 0; std::optional<uint64_t> ticks; bool ok = false; };
 static ProcStat procStat(int pid) {
     ProcStat s;
     const QByteArray b = procFile(pid, "stat");
+    if (b.size() > 65536) return s;
+    s.ticks = processidentity::startTicks(std::string_view(b.constData(), size_t(b.size())), uint64_t(pid));
+    if (!s.ticks || *s.ticks > uint64_t(std::numeric_limits<qint64>::max())) return s;
     const int l = b.indexOf('('), r = b.lastIndexOf(')');
     if (l < 0 || r < l) return s;
     s.comm = QString::fromLocal8Bit(b.mid(l + 1, r - l - 1));
@@ -1429,7 +1471,9 @@ static ProcStat procStat(int pid) {
     if (st.open(QIODevice::ReadOnly))
         for (const QByteArray &ln : st.readAll().split('\n'))
             if (ln.startsWith("btime ")) btime = ln.mid(6).toLongLong();
-    s.start = btime + f[19].toLongLong() / qMax(1L, sysconf(_SC_CLK_TCK));
+    const auto seconds = qint64(*s.ticks) / qMax(1L, sysconf(_SC_CLK_TCK));
+    if (btime < 0 || seconds > std::numeric_limits<qint64>::max() - btime) return s;
+    s.start = btime > 0 ? btime + seconds : 0;
     s.ok = true;
     return s;
 }
@@ -1440,36 +1484,58 @@ static QString duration(qint64 s) {
     return QStringLiteral("%1 d").arg(qRound(s / 8640.0) / 10.0);
 }
 
-void NetPage::connDetails(const QString &ip, int pid, const QString &exe, qint64 uid, const QString &state) {
+void NetPage::connDetails(const QString &ip, int pid, const QString &exe, qint64 uid, const QString &state, const QJsonObject &identity) {
     if (ip.isEmpty()) return;
     QStringList out;
     const auto when = [](qint64 t) { return QDateTime::fromSecsSinceEpoch(t).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")); };
 
-    // Process: only trusted while it is the same program (a log pid may have been reused).
+    // Never enrich a historical PID or a legacy tuple with a current process.
     out << QStringLiteral("== Process ==");
-    const ProcStat ps = pid > 0 ? procStat(pid) : ProcStat();
-    const QString liveExe = pid > 0 ? QFileInfo(QStringLiteral("/proc/%1/exe").arg(pid)).symLinkTarget() : QString();
-    // A Wine program is logged under its .exe; the process itself is the Wine loader.
-    const bool alive = ps.ok && (exe.isEmpty() || liveExe.isEmpty() || liveExe == exe || baseName(liveExe).startsWith(QLatin1String("wine")));
+    const ProcStat ps = pid > 0 && !str(identity,"process_start_ticks").isEmpty() ? procStat(pid) : ProcStat();
+    auto readExe = [pid] {
+        if (pid <= 0) return QByteArray{};
+        const auto path = QStringLiteral("/proc/%1/exe").arg(pid).toLocal8Bit();
+        QByteArray buf(4096, '\0');
+        const auto n = ::readlink(path.constData(), buf.data(), size_t(buf.size()));
+        if (n <= 0 || n >= buf.size()) return QByteArray{};
+        buf.resize(qsizetype(n)); return buf;
+    };
+    QFile bootFile(QStringLiteral("/proc/sys/kernel/random/boot_id"));
+    const QByteArray boot = bootFile.open(QIODevice::ReadOnly) ? bootFile.read(64).trimmed() : QByteArray{};
+    const auto expectedBoot = str(identity,"boot_id").toUtf8(), expectedTicks = str(identity,"process_start_ticks").toUtf8(), expectedExe = str(identity,"process_exe").toUtf8();
+    const auto matches = [&](const ProcStat &stat, const QByteArray &actualExe) {
+        return stat.ok && klogview::fullBootId(QString::fromLatin1(boot)) &&
+            processidentity::matches(expectedBoot.toStdString(), boot.toStdString(), expectedTicks.toStdString(), stat.ticks,
+                                     expectedExe.toStdString(), actualExe.toStdString());
+    };
+    const bool alive = ps.ok && matches(ps, readExe());
     if (pid <= 0) out << QStringLiteral("No process known for this connection (short-lived, or owned by another user: use \"All users (root)\").");
-    else if (!alive) out << QStringLiteral("pid %1 has already exited (or was reused).").arg(pid);
+    else if (!alive) out << tr("PID %1: current process lifetime cannot be verified; live details withheld.").arg(pid);
     if (!exe.isEmpty()) out << QStringLiteral("Program:   %1").arg(exe);
     if (uid >= 0) out << QStringLiteral("User:      %1 (uid %2)").arg(userName(uint(uid))).arg(uid);
     if (alive) {
+        const auto firstLiveLine = out.size();
         out << QStringLiteral("PID:       %1   state %2   name %3").arg(pid).arg(ps.state, ps.comm);
-        out << QStringLiteral("Started:   %1 (%2 ago)").arg(when(ps.start), duration(QDateTime::currentSecsSinceEpoch() - ps.start));
+        if (ps.start > 0 && ps.start <= QDateTime::currentSecsSinceEpoch()) out << QStringLiteral("Started:   %1 (%2 ago)").arg(when(ps.start), duration(QDateTime::currentSecsSinceEpoch() - ps.start));
         out << QStringLiteral("Command:   %1").arg(procCmd(pid));
         const QString cwd = QFileInfo(QStringLiteral("/proc/%1/cwd").arg(pid)).symLinkTarget();
         if (!cwd.isEmpty()) out << QStringLiteral("Work dir:  %1").arg(cwd);
         const QString cg = QString::fromLocal8Bit(procFile(pid, "cgroup")).trimmed().section(QLatin1Char('\n'), -1).section(QLatin1Char(':'), 2);
         if (!cg.isEmpty() && cg != QLatin1String("/")) out << QStringLiteral("Cgroup:    %1").arg(cg);
-        out << QStringLiteral("Started by (parent chain):");
+        out << tr("Current parent chain (not historical ownership):");
         int cur = ps.ppid;
         for (int depth = 0; cur > 0 && depth < 12; ++depth) {
             const ProcStat pp = procStat(cur);
-            if (!pp.ok) break;
-            out << QStringLiteral("  %1 (pid %2)  %3").arg(pp.comm).arg(cur).arg(procCmd(cur));
+            if (!pp.ok || !pp.ticks || *pp.ticks > *ps.ticks) break;
+            const auto cmd = procCmd(cur);
+            const auto check = procStat(cur);
+            if (!check.ok || check.ticks != pp.ticks) break;
+            out << QStringLiteral("  %1 (pid %2)  %3").arg(pp.comm).arg(cur).arg(cmd);
             cur = pp.ppid;
+        }
+        if (!matches(procStat(pid), readExe())) {
+            while (out.size() > firstLiveLine) out.removeLast();
+            out << tr("Process changed while reading; live details discarded.");
         }
     }
     if (!state.isEmpty() && state.at(0).isUpper()) out << QStringLiteral("TCP state: %1").arg(state);
@@ -2262,17 +2328,18 @@ void NetPage::showPorts() {
                            "From the connection snapshot; this tab requests updates every 3 s unless using a root snapshot.").arg(total).arg(exposed).arg(unknown)
                         + (clients ? QLatin1Char(' ') + tr("%1 UDP socket(s) may be clients; an ephemeral port alone is not proof.").arg(clients) : QString())
                         + QStringLiteral(" · ") + (connSnapshotTime_.isValid() ? tr("Snapshot: %1").arg(connSnapshotTime_.toString(Qt::ISODate)) : tr("No connection snapshot yet"))
-                        + (connSnapshotError_.isEmpty() ? QString() : tr(" · Refresh failed; previous data: %1").arg(connSnapshotError_)));
+                        + (connSnapshotError_.isEmpty() ? QString() : tr(" · Refresh failed; previous data: %1").arg(connSnapshotError_))
+                        + (connSnapshotFresh() ? QString() : tr(" · Snapshot expired or age unknown")));
 }
 
 void NetPage::setPortState(const QString &state, const QString &snapshotKey) {
     const QTreeWidgetItem *it = ports_->currentItem();
     if (snapshotKey.isEmpty() && (!it || !it->isSelected() || it->isHidden())) { QMessageBox::information(this, tr("Firewall"), tr("Select a port first.")); return; }
     const QString key = snapshotKey.isEmpty() ? it->data(0, KeyRole).toString() : snapshotKey;
-    // This is a unique captured tuple, not a kernel socket cookie or proof of PID lifetime.
+    // A captured tuple may include a cookie and lifetime fields; it does not prove the socket is still live.
     // Never silently retarget a context-menu action to the newly selected row.
     const auto resolve = [&]() -> QJsonObject {
-        if (key.isEmpty() || !connSnapshotError_.isEmpty() || !connSnapshotTime_.isValid()) return {};
+        if (key.isEmpty() || !connSnapshotError_.isEmpty() || !connSnapshotTime_.isValid() || !connSnapshotFresh()) return {};
         QJsonObject matched;
         for (const auto &v : std::as_const(connData_)) {
             const auto c = v.toObject();

@@ -103,6 +103,20 @@
             <source>~%1 % of design capacity lost per year</source>
             <translation>Yılda tasarım kapasitesinin yaklaşık %1 % kadarı kaybediliyor</translation>
         </message>
+            <message><source>Capture: %1
+Boot: %2
+Battery status: %3
+Charge: %4
+Energy: %5
+Power: %6
+Battery replacement cannot be established from these records.</source><translation>Yakalama: %1
+Açılış: %2
+Pil durumu: %3
+Şarj: %4
+Enerji: %5
+Güç: %6
+Pil değişimi bu kayıtlardan belirlenemez.</translation></message>
+        <message><source>Historical capacity readings do not identify battery replacement. Interpret wear trends only for the same battery.</source><translation>Geçmiş kapasite okumaları pil değişimini belirlemez. Aşınma eğilimlerini yalnızca aynı pil için yorumlayın.</translation></message>
     </context>
     <context>
         <name>BootPage</name>
@@ -719,6 +733,42 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
             <source>Lenovo logo restored — from the next boot.</source>
             <translation>Lenovo logosuna dönüldü — bir sonraki açılıştan itibaren.</translation>
         </message>
+        <message>
+            <source>Device not identified</source>
+            <translation>Aygıt tanımlanamadı</translation>
+        </message>
+        <message>
+            <source>Saved kernel observations by kind, severity, code and reported device label (not physical identity):</source>
+            <translation>Tür, önem, kod ve bildirilen aygıt etiketine göre kayıtlı kernel gözlemleri (fiziksel kimlik değil):</translation>
+        </message>
+        <message>
+            <source>Only retained classified records are counted; an absent observation is not zero incidents.</source>
+            <translation>Yalnızca saklanan sınıflandırılmış kayıtlar sayılır; gözlem olmaması olay sayısının sıfır olduğu anlamına gelmez.</translation>
+        </message>
+        <message>
+            <source>Saved kernel log unavailable.</source>
+            <translation>Kayıtlı kernel günlüğü kullanılamıyor.</translation>
+        </message>
+        <message>
+            <source>Saved log comparison is bounded or incomplete.</source>
+            <translation>Kayıtlı günlük karşılaştırması sınırlı veya eksik.</translation>
+        </message>
+        <message>
+            <source>%1: %2 retained sequences, %3 duplicates, %4 conflicting sequences discarded.</source>
+            <translation>%1: %2 saklanan sıra numarası, %3 yinelenen kayıt, %4 atılan çelişkili sıra numarası.</translation>
+        </message>
+        <message>
+            <source>Sequence limit reached.</source>
+            <translation>Sıra numarası sınırına ulaşıldı.</translation>
+        </message>
+        <message>
+            <source>Not observed / unknown</source>
+            <translation>Gözlemlenmedi / bilinmiyor</translation>
+        </message>
+        <message>
+            <source>No classified observations in the retained log for these boots.</source>
+            <translation>Bu açılışlar için saklanan günlükte sınıflandırılmış gözlem yok.</translation>
+        </message>
     </context>
     <context>
         <name>CoolingPage</name>
@@ -1143,6 +1193,9 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
             <source>Fan / Temperature Pareto Lab</source>
             <translation>Fan / Sıcaklık Pareto Laboratuvarı</translation>
         </message>
+            <message><source>Duration (s)</source><translation>Süre (sn)</translation></message>
+        <message><source>Duration or measurement not comparable</source><translation>Süre veya ölçüm karşılaştırılabilir değil</translation></message>
+        <message><source>Test durations differ or were not recorded. Repeat with the same duration before comparing cooling.</source><translation>Test süreleri farklı veya kaydedilmemiş. Soğutmayı karşılaştırmadan önce aynı süreyle tekrar deneyin.</translation></message>
     </context>
     <context>
         <name>DayBars</name>
@@ -1163,7 +1216,31 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
                 <numerusform>%1: %n olay</numerusform>
             </translation>
         </message>
-    </context>
+        <message>
+        <source>Show all days</source>
+        <translation>Tüm günleri göster</translation>
+    </message>
+    <message>
+        <source>Earlier days</source>
+        <translation>Önceki günler</translation>
+    </message>
+    <message>
+        <source>Later days</source>
+        <translation>Sonraki günler</translation>
+    </message>
+    <message>
+        <source>Date</source>
+        <translation>Tarih</translation>
+    </message>
+    <message>
+        <source>Event kind</source>
+        <translation>Olay türü</translation>
+    </message>
+    <message>
+        <source>Count</source>
+        <translation>Sayı</translation>
+    </message>
+</context>
     <context>
         <name>DgpuPage</name>
         <message>
@@ -3681,6 +3758,18 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
         <source>No correction found without changing the surfaces. Edit the surface colors and try again.</source>
         <translation>Yüzey renklerini değiştirmeden bir düzeltme bulunamadı. Yüzey renklerini düzenleyip tekrar deneyin.</translation>
     </message>
+    <message>
+        <source>Hardware and sensors panel</source>
+        <translation>Donanım ve sensör paneli</translation>
+    </message>
+    <message>
+        <source>Hardware &amp; firmware detail</source>
+        <translation>Donanım ve firmware ayrıntısı</translation>
+    </message>
+    <message>
+        <source>Live sensors detail</source>
+        <translation>Canlı sensör ayrıntısı</translation>
+    </message>
 </context>
     <context>
         <name>KlogPage</name>
@@ -4422,6 +4511,22 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
         <message>
             <source>Observed transitions, scene events and actual helper exits (not independent verification)</source>
             <translation>Gözlenen geçişler, sahne olayları ve gerçek yardımcı sonlanmaları (bağımsız doğrulama değil)</translation>
+        </message>
+        <message>
+            <source>Navigation target unavailable</source>
+            <translation>Gezinme hedefi kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>This control is not available in the current page state. No setting was applied.</source>
+            <translation>Bu kontrol mevcut sayfa durumunda kullanılamıyor. Hiçbir ayar uygulanmadı.</translation>
+        </message>
+        <message>
+            <source>Remove unavailable favorite: %1</source>
+            <translation>Kullanılamayan favoriyi kaldır: %1</translation>
+        </message>
+        <message>
+            <source>Unavailable favorite: %1</source>
+            <translation>Kullanılamayan favori: %1</translation>
         </message>
     </context>
     <context>
@@ -5715,6 +5820,58 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <source>off</source>
             <translation>kapalı</translation>
         </message>
+        <message>
+            <source>Program Today</source>
+            <translation>Programın Bugünkü Trafiği</translation>
+        </message>
+        <message>
+            <source>Recorded bytes for the program path, not this process or socket. Missing data is unknown.</source>
+            <translation>Bu süreç veya soket için değil, program yolu için kaydedilmiş baytlar. Eksik veri bilinmiyor.</translation>
+        </message>
+        <message>
+            <source>Connection snapshot expired. Refresh before changing rules.</source>
+            <translation>Bağlantı anlık görüntüsünün süresi doldu. Kuralları değiştirmeden önce yenileyin.</translation>
+        </message>
+        <message>
+            <source>Process lifetime unknown</source>
+            <translation>Süreç ömrü bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Recorded process start ticks: %1</source>
+            <translation>Kayıtlı süreç başlangıç tick değeri: %1</translation>
+        </message>
+        <message>
+            <source>Socket cookie unavailable</source>
+            <translation>Soket cookie kimliği kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Recorded socket cookie: %1</source>
+            <translation>Kayıtlı soket cookie kimliği: %1</translation>
+        </message>
+        <message>
+            <source> · most connections by program path: %1</source>
+            <translation> · program yoluna göre en çok bağlantı: %1</translation>
+        </message>
+        <message>
+            <source> · Snapshot expired or age unknown</source>
+            <translation> · Anlık görüntü eski veya yaşı bilinmiyor</translation>
+        </message>
+        <message>
+            <source>PID %1: current process lifetime cannot be verified; live details withheld.</source>
+            <translation>PID %1: güncel süreç ömrü doğrulanamadı; canlı ayrıntılar gösterilmiyor.</translation>
+        </message>
+        <message>
+            <source>Current parent chain (not historical ownership):</source>
+            <translation>Güncel üst süreç zinciri (geçmiş sahiplik değil):</translation>
+        </message>
+        <message>
+            <source>Process changed while reading; live details discarded.</source>
+            <translation>Okuma sırasında süreç değişti; canlı ayrıntılar atıldı.</translation>
+        </message>
+        <message>
+            <source>Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros. Chart coordinates are approximate; ≥ marks a counter at the INT64_MAX saturation limit. Totals are per program path, not per process lifetime.</source>
+            <translation>Anlık bant genişliği değil, kayıtlı günlük toplamlar. Eksik günler ölçülmüş sıfır değildir. Grafik koordinatları yaklaşıktır; ≥ işareti INT64_MAX doyum sınırındaki sayacı belirtir. Toplamlar süreç ömrüne değil program yoluna aittir.</translation>
+        </message>
     </context>
     <context>
         <name>OverviewPage</name>
@@ -6768,6 +6925,12 @@ Hiçbir şey yazılmadı. Değerler şimdi okunur ve uygulama anında farklı ol
             <source>Suspend mode:</source>
             <translation>Uyku modu:</translation>
         </message>
+            <message><source>Recorded boot: %1
+Battery status after resume: %2
+Counter unit after resume: %3</source><translation>Kayıtlı açılış: %1
+Uyanma sonrası pil durumu: %2
+Uyanma sonrası sayaç birimi: %3</translation></message>
+        <message><source>Unknown / legacy</source><translation>Bilinmiyor / eski kayıt</translation></message>
     </context>
     <context>
         <name>Tray</name>
@@ -7981,7 +8144,55 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
             <source>Product ID</source>
             <translation>Ürün kimliği</translation>
         </message>
-    </context>
+        <message>
+        <source>Memory kind</source>
+        <translation>Bellek türü</translation>
+    </message>
+    <message>
+        <source>Total (bytes)</source>
+        <translation>Toplam (bayt)</translation>
+    </message>
+    <message>
+        <source>Used (bytes)</source>
+        <translation>Kullanılan (bayt)</translation>
+    </message>
+    <message>
+        <source>Free (bytes)</source>
+        <translation>Boş (bayt)</translation>
+    </message>
+    <message>
+        <source>Shared (bytes)</source>
+        <translation>Paylaşılan (bayt)</translation>
+    </message>
+    <message>
+        <source>Buffer/cache (bytes)</source>
+        <translation>Tampon/önbellek (bayt)</translation>
+    </message>
+    <message>
+        <source>Available (bytes)</source>
+        <translation>Kullanılabilir (bayt)</translation>
+    </message>
+    <message>
+        <source>Discovered NVIDIA module parameters</source>
+        <translation>Keşfedilen NVIDIA modül parametreleri</translation>
+    </message>
+    <message>
+        <source>Parameter</source>
+        <translation>Parametre</translation>
+    </message>
+    <message>
+        <source>Module description</source>
+        <translation>Modül açıklaması</translation>
+    </message>
+    <message>
+        <source>Installed module metadata only; not a running value or permission to write.</source>
+        <translation>Yalnızca kurulu modülün üstverisi; çalışan değer veya yazma izni değildir.</translation>
+    </message>
+    <message>
+        <source>Module parameter metadata is missing or unrecognized.</source>
+        <translation>Modül parametre üstverisi eksik veya tanınmıyor.</translation>
+    </message>
+</context>
     <context>
         <name>BackupPage</name>
         <message>
@@ -8734,7 +8945,91 @@ Hedef: %2
             <source>Archive identity missing or repeated in the chain at level %1.</source>
             <translation>Zincirin %1 seviyesinde arşiv kimliği eksik veya yinelenmiş.</translation>
         </message>
-    </context>
+        <message>
+        <source>Archive members only; candidates are not verified restore actions. Archive modes are not target permissions. No target access or extraction was performed. Existing files absent from the archive are not deleted by configuration restore.</source>
+        <translation>Yalnızca arşiv üyeleri; adaylar doğrulanmış geri yükleme eylemleri değildir. Arşiv kipleri hedef izinleri değildir. Hedefe erişilmedi veya dosya çıkarılmadı. Arşivde bulunmayan mevcut dosyalar yapılandırma geri yüklemesinde silinmez.</translation>
+    </message>
+    <message>
+        <source>Filter archive members…</source>
+        <translation>Arşiv üyelerini filtrele…</translation>
+    </message>
+    <message>
+        <source>Archive path</source>
+        <translation>Arşiv yolu</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Tür</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bayt</translation>
+    </message>
+    <message>
+        <source>Archive mode</source>
+        <translation>Arşiv izin kipi</translation>
+    </message>
+    <message>
+        <source>Restore scope</source>
+        <translation>Geri yükleme kapsamı</translation>
+    </message>
+    <message>
+        <source>User candidate</source>
+        <translation>Kullanıcı dosyası adayı</translation>
+    </message>
+    <message>
+        <source>System candidate</source>
+        <translation>Sistem dosyası adayı</translation>
+    </message>
+    <message>
+        <source>File</source>
+        <translation>Dosya</translation>
+    </message>
+    <message>
+        <source>Directory</source>
+        <translation>Dizin</translation>
+    </message>
+    <message>
+        <source>Link (not followed)</source>
+        <translation>Bağlantı (izlenmedi)</translation>
+    </message>
+    <message>
+        <source>Reading archive members…</source>
+        <translation>Arşiv üyeleri okunuyor…</translation>
+    </message>
+    <message>
+        <source>File-level preview unavailable</source>
+        <translation>Dosya düzeyinde önizleme kullanılamıyor</translation>
+    </message>
+    <message>
+        <source>%1
+Read the declared manifest only instead?</source>
+        <translation>%1
+Bunun yerine yalnızca bildirilen manifest okunsun mu?</translation>
+    </message>
+    <message>
+        <source>Archive metadata identity is unavailable or changed.</source>
+        <translation>Arşiv üstveri kimliği kullanılamıyor veya değişti.</translation>
+    </message>
+    <message>
+        <source>Selected archive: %1
+Target: %2</source>
+        <translation>Seçilen arşiv: %1
+Hedef: %2</translation>
+    </message>
+    <message>
+        <source>Level</source>
+        <translation>Seviye</translation>
+    </message>
+    <message>
+        <source>Verification record</source>
+        <translation>Doğrulama kaydı</translation>
+    </message>
+    <message>
+        <source>An archive or metadata file changed during preview.</source>
+        <translation>Önizleme sırasında bir arşiv veya üstveri dosyası değişti.</translation>
+    </message>
+</context>
     <context>
         <name>blocklistsubs</name>
         <message>
@@ -11637,7 +11932,23 @@ These changes can cost stability, heat or idle power:
         <message><source>Dropped measurements</source><translation>Atılan ölçümler</translation></message>
         <message><source>Refused measurements</source><translation>Reddedilen ölçümler</translation></message>
         <message><source>Ended early</source><translation>Erken sonlandı</translation></message>
-    </context>
+        <message>
+        <source>Save or restore global settings and identified NVMe queue editors. Other device slots are excluded. Changed identities are skipped. Restored values are never automatically checked or applied.</source>
+        <translation>Genel ayarları ve kimliği doğrulanmış NVMe kuyruk düzenleyicilerini kaydedin veya geri yükleyin. Diğer aygıt yuvaları kapsam dışıdır. Kimliği değişenler atlanır. Geri yüklenen değerler otomatik işaretlenmez veya uygulanmaz.</translation>
+    </message>
+    <message>
+        <source>Some drafts are no longer available or their target changed: %1</source>
+        <translation>Bazı taslaklar artık kullanılamıyor veya hedefleri değişti: %1</translation>
+    </message>
+    <message>
+        <source>The draft file cannot be safely read or replaced.</source>
+        <translation>Taslak dosyası güvenli biçimde okunamıyor veya değiştirilemiyor.</translation>
+    </message>
+    <message>
+        <source>The saved draft changed or is busy. Open it again.</source>
+        <translation>Kayıtlı taslak değişti veya meşgul. Yeniden açın.</translation>
+    </message>
+</context>
     <context>
         <name>RyzenTab</name>
         <message>
@@ -11936,6 +12247,24 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source> %</source>
             <translation> %</translation>
         </message>
+            <message><source>%1 recorded days. No entry means no retained measurement.</source><translation>%1 kayıtlı gün. Kayıt yoksa saklanan ölçüm de yoktur.</translation></message>
+        <message><source>All recorded days</source><translation>Tüm kayıtlı günler</translation></message>
+        <message><source>Critical warning</source><translation>Kritik uyarı</translation></message>
+        <message><source>Date</source><translation>Tarih</translation></message>
+        <message><source>Last 30 days</source><translation>Son 30 gün</translation></message>
+        <message><source>Last 90 days</source><translation>Son 90 gün</translation></message>
+        <message><source>Life used (%)</source><translation>Kullanılan ömür (%)</translation></message>
+        <message><source>Media errors</source><translation>Ortam hataları</translation></message>
+        <message><source>Power-on hours</source><translation>Çalışma süresi (saat)</translation></message>
+        <message><source>Recorded Drive History</source><translation>Kayıtlı Disk Geçmişi</translation></message>
+        <message><source>Recorded History…</source><translation>Kayıtlı Geçmiş…</translation></message>
+        <message><source>Saved daily SMART samples only. Opening this view does not query drives or start a self-test. Missing values are not zero; older ambiguous identities are excluded.</source><translation>Yalnızca kayıtlı günlük SMART örnekleri. Bu görünümü açmak diskleri sorgulamaz veya self-test başlatmaz. Eksik değerler sıfır değildir; eski belirsiz kimlikler kapsam dışıdır.</translation></message>
+        <message><source>Spare (%)</source><translation>Yedek alan (%)</translation></message>
+        <message><source>Spare threshold (%)</source><translation>Yedek alan eşiği (%)</translation></message>
+        <message><source>Temperature (°C)</source><translation>Sıcaklık (°C)</translation></message>
+        <message><source>Unsafe shutdowns</source><translation>Güvensiz kapanmalar</translation></message>
+        <message><source>Written (TB)</source><translation>Yazılan (TB)</translation></message>
+        <message><source>History could not be read or is damaged. The file is preserved.</source><translation>Geçmiş okunamadı veya bozuk. Dosya korundu.</translation></message>
     </context>
     <context>
         <name>UiNavigator</name>
@@ -14585,7 +14914,55 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>Voltage/frequency points. Left/Right extend the selection, Up/Down change the selected points by 1 MHz (Shift: 15), Ctrl+A selects all, Esc clears.</source>
             <translation>Voltaj/frekans noktaları. Sol/Sağ seçimi genişletir, Yukarı/Aşağı seçili noktaları 1 MHz değiştirir (Shift: 15), Ctrl+A hepsini seçer, Esc temizler.</translation>
         </message>
-    </context>
+        <message>
+        <source>Inspect visible curve points</source>
+        <translation>Görünen eğri noktalarını incele</translation>
+    </message>
+    <message>
+        <source>Export visible curve points</source>
+        <translation>Görünen eğri noktalarını dışa aktar</translation>
+    </message>
+    <message>
+        <source>Export all curve points</source>
+        <translation>Tüm eğri noktalarını dışa aktar</translation>
+    </message>
+    <message>
+        <source>Display index</source>
+        <translation>Görüntüleme indeksi</translation>
+    </message>
+    <message>
+        <source>Voltage (mV)</source>
+        <translation>Voltaj (mV)</translation>
+    </message>
+    <message>
+        <source>Draft (MHz)</source>
+        <translation>Taslak (MHz)</translation>
+    </message>
+    <message>
+        <source>Base (MHz)</source>
+        <translation>Temel (MHz)</translation>
+    </message>
+    <message>
+        <source>Readback (MHz)</source>
+        <translation>Geri okuma (MHz)</translation>
+    </message>
+    <message>
+        <source>Draft − base (MHz)</source>
+        <translation>Taslak − temel (MHz)</translation>
+    </message>
+    <message>
+        <source>Readback − draft (MHz)</source>
+        <translation>Geri okuma − taslak (MHz)</translation>
+    </message>
+    <message>
+        <source>Selected (0/1)</source>
+        <translation>Seçili (0/1)</translation>
+    </message>
+    <message>
+        <source>Validator marker (0/1)</source>
+        <translation>Doğrulayıcı işareti (0/1)</translation>
+    </message>
+</context>
     <context>
         <name>KeyboardView</name>
         <message>
@@ -14952,6 +15329,22 @@ system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklen
             <location filename="../src/distroprofile.cpp" line="153"/>
             <source>Compiled shaders; Steam rebuilds them</source>
             <translation>Derlenmiş gölgelendiriciler; Steam yeniden oluşturur</translation>
+        </message>
+        <message>
+            <source>Add favorite</source>
+            <translation>Favoriye ekle</translation>
+        </message>
+        <message>
+            <source>Remove favorite</source>
+            <translation>Favoriden kaldır</translation>
+        </message>
+        <message>
+            <source>Navigation favorites</source>
+            <translation>Gezinme favorileri</translation>
+        </message>
+        <message>
+            <source>Favorite limit reached.</source>
+            <translation>Favori sınırına ulaşıldı.</translation>
         </message>
     </context>
     <context>
@@ -16740,6 +17133,10 @@ Connections already open keep working. Continue?</source>
 
 Açık bağlantılar çalışmaya devam eder. Devam edilsin mi?</translation>
         </message>
+        <message>
+            <source>Choose direction</source>
+            <translation>Yön seçin</translation>
+        </message>
     </context>
     <context>
         <name>CoSearchDialog</name>
@@ -18435,7 +18832,79 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
         <source>First 32 verified profiles plotted; the table contains all captured profiles.</source>
         <translation>İlk 32 doğrulanmış profil çizildi; tablo yakalanan tüm profilleri içerir.</translation>
     </message>
-    </context>
+        <message>
+        <source>Live ACPI notifications</source>
+        <translation>Canlı ACPI bildirimleri</translation>
+    </message>
+    <message>
+        <source>Live ACPI notifications…</source>
+        <translation>Canlı ACPI bildirimleri…</translation>
+    </message>
+    <message>
+        <source>Events are received only while this viewer is open. Device links use exact identifiers in the captured inventory; they are not proof of historical binding or cause.</source>
+        <translation>Olaylar yalnızca bu pencere açıkken alınır. Aygıt bağlantıları kaydedilmiş envanterdeki tam tanımlayıcıları kullanır; geçmiş bağlantının veya nedenselliğin kanıtı değildir.</translation>
+    </message>
+    <message>
+        <source>Received (UTC)</source>
+        <translation>Alınma zamanı (UTC)</translation>
+    </message>
+    <message>
+        <source>Device class</source>
+        <translation>Aygıt sınıfı</translation>
+    </message>
+    <message>
+        <source>Bus ID</source>
+        <translation>Veriyolu kimliği</translation>
+    </message>
+    <message>
+        <source>Type (hex)</source>
+        <translation>Tür (onaltılık)</translation>
+    </message>
+    <message>
+        <source>Data (hex)</source>
+        <translation>Veri (onaltılık)</translation>
+    </message>
+    <message>
+        <source>Inventory match</source>
+        <translation>Envanter eşleşmesi</translation>
+    </message>
+    <message>
+        <source>Inspect matched device…</source>
+        <translation>Eşleşen aygıtı incele…</translation>
+    </message>
+    <message>
+        <source>Clear visible notifications</source>
+        <translation>Görünen bildirimleri temizle</translation>
+    </message>
+    <message>
+        <source>Received: %1 · older rows omitted: %2 · observed capture gaps: %3</source>
+        <translation>Alınan: %1 · çıkarılan eski satır: %2 · gözlenen kayıt boşluğu: %3</translation>
+    </message>
+    <message>
+        <source>ACPI netlink subscription unavailable (unsupported or inaccessible).</source>
+        <translation>ACPI netlink aboneliği kullanılamıyor (desteklenmiyor veya erişilemiyor).</translation>
+    </message>
+    <message>
+        <source>Exact identifier candidate</source>
+        <translation>Tam tanımlayıcı adayı</translation>
+    </message>
+    <message>
+        <source>Ambiguous identifier</source>
+        <translation>Belirsiz tanımlayıcı</translation>
+    </message>
+    <message>
+        <source>No verified inventory link</source>
+        <translation>Doğrulanmış envanter bağlantısı yok</translation>
+    </message>
+    <message>
+        <source>Power operation mode: %1</source>
+        <translation>Güç çalışma modu: %1</translation>
+    </message>
+    <message>
+        <source>Kernel sequence</source>
+        <translation>Kernel sıra numarası</translation>
+    </message>
+</context>
     <context>
         <name>diagsrc</name>
         <message>
@@ -22329,7 +22798,147 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <source>Changed during capture</source>
             <translation>Yakalama sırasında değişti</translation>
         </message>
-</context>
+    <message>
+        <source>Upstream current link</source>
+        <translation>Üst PCIe bağlantısının anlık değeri</translation>
+    </message>
+    <message>
+        <source>Upstream runtime state</source>
+        <translation>Üst PCIe çalışma durumu</translation>
+    </message>
+    <message>
+        <source>Capture (UTC)</source>
+        <translation>Ölçüm zamanı (UTC)</translation>
+    </message>
+    <message>
+        <source>Parent relationships require a resolved PCI device path and a stable boot-scoped identity. Upstream link reads require active runtime state; unknown parents are not inferred.</source>
+        <translation>Üst aygıt ilişkileri çözümlenmiş PCI aygıt yolu ve açılışa özgü kararlı kimlik gerektirir. Bağlantı yalnızca etkin çalışma durumunda okunur; bilinmeyen üst aygıtlar varsayılmaz.</translation>
+    </message>
+    <message>
+        <source>Power operation mode</source>
+        <translation>Güç çalışma modu</translation>
+    </message>
+    <message>
+        <source>Verified Cache / CPU Architecture</source>
+        <translation>Doğrulanmış Önbellek / CPU Mimarisi</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>Kanıt</translation>
+    </message>
+    <message>
+        <source>Only reciprocal kernel cache declarations establish a group. CPU membership is not a physical CCD or NUMA assignment. Incomplete groups are shown separately.</source>
+        <translation>Yalnızca karşılıklı kernel önbellek bildirimleri bir grup oluşturur. CPU üyeliği fiziksel CCD veya NUMA ataması değildir. Eksik gruplar ayrı gösterilir.</translation>
+    </message>
+    <message>
+        <source>L3 cache %1</source>
+        <translation>L3 önbellek %1</translation>
+    </message>
+    <message>
+        <source>Unverified cache declaration (CPU %1)</source>
+        <translation>Doğrulanmamış önbellek bildirimi (CPU %1)</translation>
+    </message>
+    <message>
+        <source>Reciprocal declarations</source>
+        <translation>Karşılıklı bildirimler</translation>
+    </message>
+    <message>
+        <source>Incomplete or conflicting declarations</source>
+        <translation>Eksik veya çelişkili bildirimler</translation>
+    </message>
+    <message>
+        <source>Logical CPU %1</source>
+        <translation>Mantıksal CPU %1</translation>
+    </message>
+    <message>
+        <source>Cache architecture display capped at 8192 rows.</source>
+        <translation>Önbellek mimarisi görünümü 8192 satırla sınırlıdır.</translation>
+    </message>
+    <message>
+        <source>Cache architecture capture is incomplete or reached its safety limit; no verified graph is available.</source>
+        <translation>Önbellek mimarisi kaydı eksik veya güvenlik sınırına ulaştı; doğrulanmış grafik yok.</translation>
+    </message>
+    <message>
+            <source>Firmware Power Target Evidence</source>
+            <translation>Firmware Güç Hedefi Kanıtları</translation>
+        </message>
+        <message>
+            <source>Attribute</source>
+            <translation>Öznitelik</translation>
+        </message>
+        <message>
+            <source>Current target</source>
+            <translation>Mevcut hedef</translation>
+        </message>
+        <message>
+            <source>Reported default</source>
+            <translation>Bildirilen varsayılan</translation>
+        </message>
+        <message>
+            <source>Reported range</source>
+            <translation>Bildirilen aralık</translation>
+        </message>
+        <message>
+            <source>Captured at</source>
+            <translation>Ölçüm zamanı</translation>
+        </message>
+        <message>
+            <source>Source path</source>
+            <translation>Kaynak yolu</translation>
+        </message>
+        <message>
+            <source>Firmware native units unless explicitly reported. A default is metadata, not a measured stock limit. A target is not evidence of enforcement. No direct WMI commands are issued.</source>
+            <translation>Açıkça bildirilmedikçe firmware yerel birimleri kullanılır. Varsayılan değer üstveridir, ölçülmüş stok limit değildir. Hedef, uygulandığının kanıtı değildir. Doğrudan WMI komutu gönderilmez.</translation>
+        </message>
+        <message>
+            <source>step</source>
+            <translation>adım</translation>
+        </message>
+        <message>
+            <source>Current target unavailable</source>
+            <translation>Mevcut hedef okunamadı</translation>
+        </message>
+        <message>
+            <source>Target outside reported range</source>
+            <translation>Hedef bildirilen aralığın dışında</translation>
+        </message>
+        <message>
+            <source>Range unavailable</source>
+            <translation>Aralık okunamadı</translation>
+        </message>
+        <message>
+            <source>Reported target (not enforcement)</source>
+            <translation>Bildirilen hedef (uygulama kanıtı değil)</translation>
+        </message>
+        <message>
+            <source>Platform profile unavailable or changed during capture; do not compare these targets as a single profile.</source>
+            <translation>Platform profili okunamadı veya ölçüm sırasında değişti; bu hedefleri tek bir profil olarak karşılaştırmayın.</translation>
+        </message>
+        <message>
+            <source>Intel PMU evidence</source>
+            <translation>Intel PMU kanıtı</translation>
+        </message>
+        <message>
+            <source>Intel hybrid PMU membership is shown separately; missing or conflicting lists do not identify a core type.</source>
+            <translation>Intel hibrit PMU üyeliği ayrı gösterilir; eksik veya çelişkili listeler çekirdek türünü belirlemez.</translation>
+        </message>
+        <message>
+            <source>Performance PMU (cpu_core)</source>
+            <translation>Performans PMU (cpu_core)</translation>
+        </message>
+        <message>
+            <source>Efficiency PMU (cpu_atom)</source>
+            <translation>Verimlilik PMU (cpu_atom)</translation>
+        </message>
+        <message>
+            <source>Conflicting PMU membership</source>
+            <translation>Çelişkili PMU üyeliği</translation>
+        </message>
+        <message>
+            <source>Topology changed during capture</source>
+            <translation>Ölçüm sırasında topoloji değişti</translation>
+        </message>
+    </context>
     <context>
         <name>diagnostictools</name>
         <message>
@@ -23520,6 +24129,12 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Selection changed. Regenerate preview before exporting.</source>
             <translation>Seçim değişti. Dışa aktarmadan önce önizlemeyi yeniden oluştur.</translation>
         </message>
+            <message><source>Cross-Boot History…</source><translation>Açılışlar Arası Geçmiş…</translation></message>
+        <message><source>Edit snapshot note…</source><translation>Anlık görüntü notunu düzenle…</translation></message>
+        <message><source>Local snapshot note (redaction is best effort)</source><translation>Yerel anlık görüntü notu (maskeleme mümkün olduğu ölçüde yapılır)</translation></message>
+        <message><source>Note exceeds 4096 characters.</source><translation>Not 4096 karakteri aşıyor.</translation></message>
+        <message><source>Note: %1</source><translation>Not: %1</translation></message>
+        <message><source>This capture is already archived.</source><translation>Bu yakalama zaten arşivlenmiş.</translation></message>
     </context>
     <context>
         <name>AdvancedHealthPage</name>
@@ -23862,6 +24477,8 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>JSON files (*.json)</source><translation>JSON dosyaları (*.json)</translation></message>
         <message><source>Snapshot could not be saved.</source><translation>Anlık görüntü kaydedilemedi.</translation></message>
         <message><source>Saved %1 captured settings.</source><translation>Yakalanan %1 ayar kaydedildi.</translation></message>
+            <message><source>Invalid or duplicate setting paths in capture.</source><translation>Yakalamada geçersiz veya yinelenen ayar yolları var.</translation></message>
+        <message><source>Reading… previous capture is shown until the new read completes.</source><translation>Okunuyor… yeni okuma tamamlanana kadar önceki yakalama gösteriliyor.</translation></message>
     </context>
     <context>
         <name>toolcatalog</name>
@@ -24319,6 +24936,22 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Snapshot time: %1</source>
             <translation>Anlık görüntü zamanı: %1</translation>
         </message>
+        <message>
+            <source>Previous DPM read is still running; reopen after it finishes.</source>
+            <translation>Önceki DPM okuması sürüyor; bitince pencereyi yeniden açın.</translation>
+        </message>
+        <message>
+            <source>Reading DPM states…</source>
+            <translation>DPM durumları okunuyor…</translation>
+        </message>
+        <message>
+            <source>DPM read expired; late result discarded.</source>
+            <translation>DPM okuma süresi doldu; geciken sonuç atıldı.</translation>
+        </message>
+        <message>
+            <source>DPM read timed out; waiting for the read worker to return.</source>
+            <translation>DPM okuması zaman aşımına uğradı; okuma işçisinin dönmesi bekleniyor.</translation>
+        </message>
     </context>
     <context>
         <name>FwattrTab</name>
@@ -24558,7 +25191,51 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
       <source>Could not save palette.</source>
       <translation>Palet kaydedilemedi.</translation>
     </message>
-  </context>
+      <message>
+        <source>Animate draft preview</source>
+        <translation>Taslak önizlemesini canlandır</translation>
+    </message>
+    <message>
+        <source>Approximate software animation only. Reactive and host effects remain static; no keyboard commands are sent.</source>
+        <translation>Yalnızca yaklaşık yazılım animasyonu. Tepkisel ve ana sistem efektleri sabit kalır; klavyeye komut gönderilmez.</translation>
+    </message>
+    <message>
+        <source>Speed: %1</source>
+        <translation>Hız: %1</translation>
+    </message>
+    <message>
+        <source>Direction code: %1</source>
+        <translation>Yön kodu: %1</translation>
+    </message>
+    <message>
+        <source>Rotation code: %1</source>
+        <translation>Dönüş kodu: %1</translation>
+    </message>
+    <message>
+        <source>Colors: %1</source>
+        <translation>Renkler: %1</translation>
+    </message>
+    <message>
+        <source>Host effect — kept unchanged; software animation unavailable.</source>
+        <translation>Ana sistem efekti — değiştirilmeden korunur; yazılım animasyonu kullanılamıyor.</translation>
+    </message>
+    <message>
+        <source>Reactive effect — static preview only.</source>
+        <translation>Tepkisel efekt — yalnızca sabit önizleme.</translation>
+    </message>
+    <message>
+        <source>Profile %1 sent (%2 / %3 bytes); independent readback not verified.</source>
+        <translation>Profil %1 gönderildi (%2 / %3 bayt); bağımsız geri okuma doğrulanmadı.</translation>
+    </message>
+    <message>
+        <source>Draft exceeds controller capacity or contains invalid effect fields.</source>
+        <translation>Taslak denetleyici kapasitesini aşıyor veya geçersiz efekt alanları içeriyor.</translation>
+    </message>
+    <message>
+        <source>Draft report size; Apply sends the effect list to the controller.</source>
+        <translation>Taslak rapor boyutu; Uygula efekt listesini denetleyiciye gönderir.</translation>
+    </message>
+</context>
     <context>
         <name>theme</name>
         <message>
@@ -25096,14 +25773,162 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
       <source>Supported running init system not detected.</source>
       <translation>Desteklenen çalışan init sistemi algılanamadı.</translation>
     </message>
-  </context>
+      <message>
+        <source>OpenRC markers do not establish when or which settings were applied.</source>
+        <translation>OpenRC işaretleri hangi ayarların ne zaman uygulandığını kanıtlamaz.</translation>
+    </message>
+    <message>
+        <source>Last recorded boot helper attempt</source>
+        <translation>Kaydedilen son açılış helper denemesi</translation>
+    </message>
+    <message>
+        <source>Reading boot helper receipt…</source>
+        <translation>Açılış helper kaydı okunuyor…</translation>
+    </message>
+    <message>
+        <source>Setting</source>
+        <translation>Ayar</translation>
+    </message>
+    <message>
+        <source>Requested value</source>
+        <translation>İstenen değer</translation>
+    </message>
+    <message>
+        <source>Written</source>
+        <translation>Yazılan</translation>
+    </message>
+    <message>
+        <source>Verified</source>
+        <translation>Doğrulanan</translation>
+    </message>
+    <message>
+        <source>Missing</source>
+        <translation>Eksik</translation>
+    </message>
+    <message>
+        <source>Outcome</source>
+        <translation>Sonuç</translation>
+    </message>
+    <message>
+        <source>No current-boot helper receipt is available. Enabled or active does not imply applied.</source>
+        <translation>Bu açılışa ait helper kaydı yok. Etkin veya aktif olması uygulandığını göstermez.</translation>
+    </message>
+    <message>
+        <source>Started: %1 — no completed helper receipt (running or interrupted).</source>
+        <translation>Başlangıç: %1 — tamamlanmış helper kaydı yok (çalışıyor veya kesintiye uğramış).</translation>
+    </message>
+    <message>
+        <source>Invalid boot helper receipt.</source>
+        <translation>Geçersiz açılış helper kaydı.</translation>
+    </message>
+    <message>
+        <source>Started: %1; returned: %2</source>
+        <translation>Başlangıç: %1; dönüş: %2</translation>
+    </message>
+    <message>
+        <source>Helper reported result: %1</source>
+        <translation>Helper tarafından bildirilen sonuç: %1</translation>
+    </message>
+    <message>
+        <source>Returned success</source>
+        <translation>Başarı bildirildi</translation>
+    </message>
+    <message>
+        <source>Returned failure</source>
+        <translation>Hata bildirildi</translation>
+    </message>
+    <message>
+        <source>Preset was not applied by this invocation.</source>
+        <translation>Bu çağrı hazır ayarı uygulamadı.</translation>
+    </message>
+    <message>
+        <source>Preset: %1</source>
+        <translation>Hazır ayar: %1</translation>
+    </message>
+    <message>
+        <source>Helper reported an error. See the service log for details.</source>
+        <translation>Helper hata bildirdi. Ayrıntılar için servis günlüğüne bakın.</translation>
+    </message>
+    <message>
+        <source>Wake source errors: %1</source>
+        <translation>Uyandırma kaynağı hataları: %1</translation>
+    </message>
+    <message>
+        <source>Wireless policy warnings: %1</source>
+        <translation>Kablosuz ilke uyarıları: %1</translation>
+    </message>
+    <message>
+        <source>A pressure guard was armed; later rollback is not covered by this receipt.</source>
+        <translation>Basınç koruması etkinleştirildi; sonraki geri alma bu kaydın kapsamında değildir.</translation>
+    </message>
+    <message>
+        <source>Matched at readback</source>
+        <translation>Geri okumada eşleşti</translation>
+    </message>
+    <message>
+        <source>Mismatch</source>
+        <translation>Uyuşmazlık</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Atlandı</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>Başarısız</translation>
+    </message>
+    <message>
+        <source>Partial</source>
+        <translation>Kısmi</translation>
+    </message>
+    <message>
+        <source>Unverified</source>
+        <translation>Doğrulanmadı</translation>
+    </message>
+    <message>
+        <source>No receipt</source>
+        <translation>Kayıt yok</translation>
+    </message>
+    <message>
+        <source>Matched at recorded readback: %1 / %2 requested settings.</source>
+        <translation>Kaydedilen geri okumada eşleşen ayarlar: %1 / %2.</translation>
+    </message>
+    <message>
+        <source>Receipt keys are inconsistent; no aggregate verification is claimed.</source>
+        <translation>Kayıt anahtarları tutarsız; toplu doğrulama sonucu bildirilmiyor.</translation>
+    </message>
+    <message>
+        <source>Historical boot-helper result only; not proof of current values or service invocation.</source>
+        <translation>Yalnızca geçmiş açılış helper sonucu; güncel değerleri veya servis çağrısını kanıtlamaz.</translation>
+    </message>
+</context>
   <context>
     <name>Zone4Tab</name>
     <message>
       <source>Zone colours</source>
       <translation>Bölge renkleri</translation>
     </message>
-  </context>
+      <message>
+        <source>Four-zone keyboard preview</source>
+        <translation>Dört bölgeli klavye önizlemesi</translation>
+    </message>
+    <message>
+        <source>Click or use Left/Right to select a zone. Enter edits its color. Ctrl+wheel zooms; middle drag pans; Home fits.</source>
+        <translation>Bölgeyi seçmek için tıklayın veya sol/sağ okları kullanın. Enter rengini düzenler. Ctrl+tekerlek yakınlaştırır; orta tuşla sürükleme kaydırır; Home sığdırır.</translation>
+    </message>
+    <message>
+        <source>Fit keyboard</source>
+        <translation>Klavyeyi sığdır</translation>
+    </message>
+    <message>
+        <source>Zone %1 colour</source>
+        <translation>%1. bölgenin rengi</translation>
+    </message>
+    <message>
+        <source>Sent to controller; readback unavailable</source>
+        <translation>Denetleyiciye gönderildi; geri okuma kullanılamıyor</translation>
+    </message>
+</context>
   <context>
     <name>NavigationTargets</name>
     <message>
@@ -25730,5 +26555,122 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Saved options are unavailable in the installed driver. Apply is disabled to avoid deleting them.</source><translation>Kayıtlı seçenekler kurulu sürücüde bulunamadı. Silinmelerini önlemek için Uygula devre dışı.</translation></message>
         <message><source>Read-only (unsupported type)</source><translation>Salt okunur (desteklenmeyen tür)</translation></message>
         <message><source>Discovered options have type checks only, not reviewed driver-specific safety limits. Incorrect values can prevent the GPU driver from starting. Write these changes for the next boot?</source><translation>Keşfedilen seçenekler yalnızca tür açısından doğrulanır; sürücüye özgü güvenlik sınırları incelenmemiştir. Yanlış değerler GPU sürücüsünün başlatılmasını engelleyebilir. Sonraki açılış için değişiklikler yazılsın mı?</translation></message>
+</context>
+<context><name>DiagnosticHistory</name>
+        <message><source>%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)</source><translation>%1 anlık görüntü · %2 reddedilen kayıt veya dosya · %3 kayıtlı günlük girdisi (kaynak başına en çok 1000)</translation></message>
+        <message><source>Archive scan limit reached; some files were not read.</source><translation>Arşiv tarama sınırına ulaşıldı; bazı dosyalar okunmadı.</translation></message>
+        <message><source>Archived report (capture boot)</source><translation>Arşivlenmiş rapor (yakalama açılışı)</translation></message>
+        <message><source>Boot / report / event</source><translation>Açılış / rapor / olay</translation></message>
+        <message><source>Capture boot relationship unknown.
+</source><translation>Yakalama açılışlarının ilişkisi bilinmiyor.
+</translation></message>
+        <message><source>Compare snapshots</source><translation>Anlık görüntüleri karşılaştır</translation></message>
+        <message><source>Comparison requires the same report code and locale.</source><translation>Karşılaştırma için rapor kodu ve dil aynı olmalıdır.</translation></message>
+        <message><source>Cross-Boot Diagnostic History</source><translation>Açılışlar Arası Tanı Geçmişi</translation></message>
+        <message><source>Different capture boots.
+</source><translation>Farklı yakalama açılışları.
+</translation></message>
+        <message><source>Display limit reached; archived snapshot is unchanged.</source><translation>Görüntüleme sınırına ulaşıldı; arşivlenmiş anlık görüntü değiştirilmedi.</translation></message>
+        <message><source>Evidence limit</source><translation>Kanıt sınırı</translation></message>
+        <message><source>Filter report, boot, source, time, event or note…</source><translation>Rapor, açılış, kaynak, zaman, olay veya notu filtrele…</translation></message>
+        <message><source>Finding</source><translation>Bulgu</translation></message>
+        <message><source>Full boot identity</source><translation>Tam açılış kimliği</translation></message>
+        <message><source>No boot identity</source><translation>Açılış kimliği yok</translation></message>
+        <message><source>No structured record differences.</source><translation>Yapılandırılmış kayıt farkı yok.</translation></message>
+        <message><source>Readings</source><translation>Okumalar</translation></message>
+        <message><source>Recorded boot label (not an identity): %1</source><translation>Kayıtlı açılış etiketi (kimlik değil): %1</translation></message>
+        <message><source>Recorded boot label (not an identity): %1
+</source><translation>Kayıtlı açılış etiketi (kimlik değil): %1
+</translation></message>
+        <message><source>Recorded event boot</source><translation>Olayın kayıtlı açılışı</translation></message>
+        <message><source>Relationship</source><translation>İlişki</translation></message>
+        <message><source>Report verdict changed.
+</source><translation>Rapor değerlendirmesi değişti.
+</translation></message>
+        <message><source>Report: %1
+Capture time: %2
+Capture boot: %3
+Locale: %4
+Note: %5
+
+</source><translation>Rapor: %1
+Yakalama zamanı: %2
+Yakalama açılışı: %3
+Dil: %4
+Not: %5
+
+</translation></message>
+        <message><source>Same capture boot.
+</source><translation>Aynı yakalama açılışı.
+</translation></message>
+        <message><source>Same report type; changed records are removed/added. Not a causal or device identity comparison.
+
+</source><translation>Aynı rapor türü; değişen kayıtlar çıkarılan/eklenen olarak gösterilir. Nedensellik veya aygıt kimliği karşılaştırması değildir.
+
+</translation></message>
+        <message><source>Saved local reports and bounded saved kernel/health log tails only. Capture boot and event boot are different types of provenance. Sharing a boot does not prove a common device or cause. Wall-clock ordering is descriptive only.</source><translation>Yalnızca yerel kayıtlı raporlar ve sınırlı kernel/sağlık günlüğü sonları. Yakalama açılışı ve olay açılışı farklı kaynak bilgisi türleridir. Aynı açılış, ortak aygıtı veya nedeni kanıtlamaz. Duvar saati sıralaması yalnızca bilgilendirme amaçlıdır.</translation></message>
+        <message><source>Select an archived report or saved event.</source><translation>Arşivlenmiş bir rapor veya kayıtlı olay seçin.</translation></message>
+        <message><source>Source: %1
+Recorded time: %2
+Event boot: %3
+Sequence: %4
+Level: %5
+Record ID: %6
+
+%7
+%8</source><translation>Kaynak: %1
+Kayıt zamanı: %2
+Olay açılışı: %3
+Sıra: %4
+Düzey: %5
+Kayıt kimliği: %6
+
+%7
+%8</translation></message>
+        <message><source>Unknown / legacy</source><translation>Bilinmiyor / eski kayıt</translation></message>
+        <message><source>Unknown capture boot</source><translation>Yakalama açılışı bilinmiyor</translation></message>
+        <message><source>Unlinked capture</source><translation>Bağlantısız yakalama</translation></message>
+        <message><source>Unlinked saved event</source><translation>Bağlantısız kayıtlı olay</translation></message>
+        <message><source>Unresolved event boots (not one session)</source><translation>Çözümlenemeyen olay açılışları (tek oturum değil)</translation></message>
+        <message><source>Unsupported record format</source><translation>Desteklenmeyen kayıt biçimi</translation></message>
+</context>
+<context>
+    <name>ChartData</name>
+    <message>
+        <source>Chart data</source>
+        <translation>Grafik verileri</translation>
+    </message>
+    <message>
+        <source>Export chart data</source>
+        <translation>Grafik verilerini dışa aktar</translation>
+    </message>
+    <message>
+        <source>Export failed</source>
+        <translation>Dışa aktarma başarısız</translation>
+    </message>
+    <message>
+        <source>View data table</source>
+        <translation>Veri tablosunu göster</translation>
+    </message>
+    <message>
+        <source>Export all data</source>
+        <translation>Tüm verileri dışa aktar</translation>
+    </message>
+    <message>
+        <source>Export visible data</source>
+        <translation>Görünen verileri dışa aktar</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Etiket</translation>
+    </message>
+    <message>
+        <source>Display value</source>
+        <translation>Görüntülenen değer</translation>
+    </message>
+    <message>
+        <source>Numeric value</source>
+        <translation>Sayısal değer</translation>
+    </message>
 </context>
 </TS>

@@ -66,6 +66,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
     void wheelEvent(QWheelEvent *) override;
+    void contextMenuEvent(QContextMenuEvent *) override;
 
 private:
     QRectF plotRect() const;

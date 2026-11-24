@@ -1,4 +1,5 @@
 #include "zone4tab.h"
+#include "zone4canvas.h"
 #include "lighting.h"
 #include "theme.h"
 #include <QColorDialog>
@@ -78,16 +79,25 @@ Zone4Tab::Zone4Tab(QWidget *parent) : QWidget(parent) {
         zone_[i] = new QPushButton;
         zone_[i]->setMinimumSize(fontMetrics().horizontalAdvance(QStringLiteral("#FFFFFF"))+18,fontMetrics().height()+20);
         zone_[i]->setToolTip(QStringLiteral("Zone %1 (left to right) — click to pick its colour.").arg(i + 1));
-        connect(zone_[i], &QPushButton::clicked, this, [this, i] {
-            const QColor c = QColorDialog::getColor(colors_[i], this, QStringLiteral("Zone %1 colour").arg(i + 1));
-            if (!c.isValid()) return;
-            colors_[i] = c;
-            paintZone(i);
-        });
+        connect(zone_[i], &QPushButton::clicked, this, [this, i] { editZone(i); });
         zonesLayout_->addWidget(zone_[i],i/2,i%2);
     }
     g->addWidget(zonesLabel_, row, 0);
     g->addLayout(zonesLayout_, row++, 1);
+    canvasHost_=new QWidget;
+    auto *canvasLayout=new QVBoxLayout(canvasHost_);
+    canvasLayout->setContentsMargins(0,0,0,0);
+    auto *controls=new QHBoxLayout;
+    auto *out=new QPushButton(QStringLiteral("−")); auto *in=new QPushButton(QStringLiteral("+"));
+    auto *fit=new QPushButton(tr("Fit keyboard"));
+    controls->addStretch(1);controls->addWidget(out);controls->addWidget(in);controls->addWidget(fit);
+    canvasLayout->addLayout(controls);
+    canvas_=new Zone4Canvas; canvas_->editZone=[this](int i){editZone(i);};
+    canvasLayout->addWidget(canvas_);
+    connect(out,&QPushButton::clicked,canvas_,[this]{canvas_->zoomBy(1/1.2);});
+    connect(in,&QPushButton::clicked,canvas_,[this]{canvas_->zoomBy(1.2);});
+    connect(fit,&QPushButton::clicked,canvas_,&Zone4Canvas::fit);
+    g->addWidget(canvasHost_,row++,1);
     g->setColumnStretch(1, 1);
     v->addWidget(box);
 
@@ -130,7 +140,15 @@ void Zone4Tab::reflowZones() {
     zoneColumns_=cols;
 }
 
+void Zone4Tab::editZone(int i) {
+    if(busy_ || i<0 || i>=4) return;
+    canvas_->selectZone(i);
+    const QColor c=QColorDialog::getColor(colors_[i],this,tr("Zone %1 colour").arg(i+1));
+    if(c.isValid() && !busy_){colors_[i]=c;paintZone(i);}
+}
+
 void Zone4Tab::paintZone(int i) {
+    if(canvas_)canvas_->setColors(colors_);
     const QColor &c = colors_[i];
     // Legible caption on any colour.
     const QColor fg = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000 > 140 ? QColor(Qt::black) : QColor(Qt::white);
@@ -149,7 +167,9 @@ void Zone4Tab::syncEnabled() {
     directionLabel_->setVisible(dir);
     direction_->setVisible(dir);
     zonesLabel_->setVisible(colors);
-    for (QPushButton *b : zone_) b->setVisible(colors);
+    for (QPushButton *b : zone_) {b->setVisible(colors);b->setEnabled(!busy_);}
+    canvasHost_->setVisible(colors);canvasHost_->setEnabled(!busy_);
+    for(auto *control:{effect_,brightness_,speed_,direction_})control->setEnabled(!busy_);
     apply_->setEnabled(!busy_);
     off_->setEnabled(!busy_);
 }
@@ -202,6 +222,6 @@ void Zone4Tab::apply(bool off) {
             return;
         }
         if (!off) save();
-        status_->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::OK, off ? QStringLiteral("Lights off") : QStringLiteral("Applied")));
+        status_->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::OK, off ? QStringLiteral("Lights off") : tr("Sent to controller; readback unavailable")));
     });
 }

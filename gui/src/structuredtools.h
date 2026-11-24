@@ -6,6 +6,7 @@
 #include <QRegularExpression>
 #include <optional>
 #include "structuredpci.h"
+#include "diagnosticprotocols.h"
 namespace structuredtools {
 struct Data { QStringList headers; QList<QStringList> rows; };
 inline std::optional<Data> modules(const QString &raw) {
@@ -153,9 +154,32 @@ inline std::optional<Data> pci(const QString &raw) {
         QString::fromStdString(d.driver), QString::fromStdString(d.modules)});
     return result;
 }
+inline std::optional<Data> memory(const QString &raw) {
+    const auto lines=section(raw,QStringLiteral("$ free -b"));
+    if(!lines)return std::nullopt;
+    std::vector<std::string> input;
+    for(const auto &line:*lines)input.push_back(line.toStdString());
+    const auto parsed=diagnosticprotocols::freeBytes(input);
+    if(!parsed)return std::nullopt;
+    Data data{{QStringLiteral("Memory kind"),QStringLiteral("Total (bytes)"),QStringLiteral("Used (bytes)"),
+        QStringLiteral("Free (bytes)"),QStringLiteral("Shared (bytes)"),QStringLiteral("Buffer/cache (bytes)"),QStringLiteral("Available (bytes)")},{}};
+    for(const auto &row:*parsed){QStringList fields{QString::fromStdString(row.name)};for(auto n:row.bytes)fields<<QString::number(qulonglong(n));data.rows<<fields;}
+    return data;
+}
+inline std::optional<Data> moduleParameters(const QString &raw) {
+    const auto lines=section(raw,QStringLiteral("$ modinfo -p nvidia"));
+    if(!lines)return std::nullopt;
+    std::vector<std::string> input;
+    for(const auto &line:*lines)input.push_back(line.toStdString());
+    const auto parsed=diagnosticprotocols::parameters(input);
+    if(!parsed)return std::nullopt;
+    Data data{{QStringLiteral("Parameter"),QStringLiteral("Module description")},{}};
+    for(const auto &row:*parsed)data.rows<<QStringList{QString::fromStdString(row.name),QString::fromStdString(row.description).trimmed()};
+    return data;
+}
 inline bool supported(const QString &key) {
     return key == QLatin1String("Kernel") || key == QLatin1String("Battery") || key == QLatin1String("USB") ||
-        key == QLatin1String("CPU") || key == QLatin1String("PCI");
+        key == QLatin1String("CPU") || key == QLatin1String("PCI") || key == QLatin1String("Memory");
 }
 inline std::optional<Data> parse(const QString &key, const QString &raw) {
     if (key == QLatin1String("Kernel")) return modules(raw);
@@ -163,6 +187,7 @@ inline std::optional<Data> parse(const QString &key, const QString &raw) {
     if (key == QLatin1String("USB")) return usb(raw);
     if (key == QLatin1String("CPU")) return cpuTopology(raw);
     if (key == QLatin1String("PCI")) return pci(raw);
+    if (key == QLatin1String("Memory")) return memory(raw);
     return std::nullopt;
 }
 

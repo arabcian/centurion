@@ -2,6 +2,10 @@
 #include "amdgpu.h"
 #include "sysinfo.h"
 #include "theme.h"
+#include "userhelper.h"
+#include "tunejournal.h"
+#include "bootreceiptcoverage.h"
+#include "diagnostichistory.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -17,6 +21,9 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QHeaderView>
+#include <QTableWidget>
 #include <QPointer>
 #include <QVariantMap>
 #include <QFile>
@@ -28,6 +35,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShowEvent>
+#include <QSignalBlocker>
 #include <QSysInfo>
 #include <QVBoxLayout>
 
@@ -82,7 +90,7 @@ namespace {
 // successful application from a service's enabled/started state.
 void inspectBootService(QWidget *parent) {
     auto tr = [](const char *s) { return QCoreApplication::translate("BootServiceInspector", s); };
-    QDialog dlg(parent); dlg.setWindowTitle(tr("Boot Service Inspector")); dlg.resize(700, 450);
+    QDialog dlg(parent); dlg.setWindowTitle(tr("Boot Service Inspector")); dlg.resize(900, 680);
     auto *layout = new QVBoxLayout(&dlg);
     auto *hint = new QLabel(tr("Service state is not proof that tuning was applied. Compare saved values with live readback in Optimizations. No services are started or changed.")); hint->setWordWrap(true); layout->addWidget(hint);
     auto *out = new QPlainTextEdit; out->setReadOnly(true); layout->addWidget(out, 1);
@@ -111,7 +119,7 @@ void inspectBootService(QWidget *parent) {
         const auto marker = [&](const QString &state) { const QFileInfo dir(QStringLiteral("/run/openrc/") + state); if (!dir.isDir() || !dir.isReadable()) return unknown; const QFileInfo f(dir.absoluteFilePath() + QStringLiteral("/centurion-tune")); return f.exists() || f.isSymLink() ? tr("Present") : tr("Not found"); };
         append(tr("Started marker: %1").arg(marker(QStringLiteral("started"))));
         append(tr("Failed marker: %1").arg(marker(QStringLiteral("failed"))));
-        append(tr("Last run and per-setting result: unknown (OpenRC marker is not an apply receipt)."));
+        append(tr("OpenRC markers do not establish when or which settings were applied."));
     }
     if (QFileInfo::exists(QStringLiteral("/run/systemd/system"))) {
         append(tr("systemd read-only properties"));
@@ -137,6 +145,52 @@ void inspectBootService(QWidget *parent) {
             }
         });
     } else if (!QFileInfo::exists(QStringLiteral("/run/openrc"))) append(tr("Supported running init system not detected."));
+    auto *receiptBox = new QGroupBox(tr("Last recorded boot helper attempt"), &dlg);
+    auto *receiptLayout = new QVBoxLayout(receiptBox);
+    auto *receiptInfo = new QLabel(tr("Reading boot helper receipt…")); receiptInfo->setWordWrap(true); receiptInfo->setTextFormat(Qt::PlainText); receiptLayout->addWidget(receiptInfo);
+    auto *table = new QTableWidget(0,6); table->setHorizontalHeaderLabels({tr("Setting"),tr("Requested value"),tr("Written"),tr("Verified"),tr("Missing"),tr("Outcome")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->setSelectionBehavior(QAbstractItemView::SelectRows); table->verticalHeader()->hide();
+    table->horizontalHeader()->setSectionResizeMode(0,QHeaderView::Stretch); table->horizontalHeader()->setSectionResizeMode(1,QHeaderView::ResizeToContents); table->horizontalHeader()->setStretchLastSection(true);
+    receiptLayout->addWidget(table); layout->addWidget(receiptBox,2);
+    userhelper::run(QJsonObject{{"op","boot_receipt"}}, &dlg, [boot,receiptInfo,table,tr](const QJsonObject &reply) {
+        const auto r=reply.value("receipt").toObject();
+        if (!reply.value("ok").toBool() || r.value("version").toInt()!=1 || diagnostichistory::fullBoot(boot.toStdString()).empty() || r.value("boot_id").toString()!=boot) {
+            receiptInfo->setText(tr("No current-boot helper receipt is available. Enabled or active does not imply applied.")); return;
+        }
+        auto timestamp = [tr](const QJsonValue &v) { const auto t=v.toInteger(-1); return t>0 && t<253402300800LL ? QDateTime::fromSecsSinceEpoch(t).toLocalTime().toString(Qt::ISODate) : tr("Unknown"); };
+        const QString started=timestamp(r.value("started"));
+        if (r.value("phase").toString()==QStringLiteral("pending")) { receiptInfo->setText(tr("Started: %1 — no completed helper receipt (running or interrupted).").arg(started)); return; }
+        if (r.value("phase").toString()!=QStringLiteral("returned") || !r.value("ok").isBool()) { receiptInfo->setText(tr("Invalid boot helper receipt.")); return; }
+        const auto rows=r.value("results").toArray(); const auto requested=r.value("boot_requested").toArray();
+        if (rows.size()>1024 || requested.size()>1024) { receiptInfo->setText(tr("Invalid boot helper receipt.")); return; }
+        QStringList lines{tr("Started: %1; returned: %2").arg(started,timestamp(r.value("finished"))),
+            tr("Helper reported result: %1").arg(r.value("ok").toBool()?tr("Returned success"):tr("Returned failure"))};
+        if (r.value("applied").isBool() && !r.value("applied").toBool()) lines << tr("Preset was not applied by this invocation.");
+        if (r.value("boot_preset_name").isString()) lines << tr("Preset: %1").arg(r.value("boot_preset_name").toString());
+        if (r.value("message").isString()) lines << r.value("message").toString().left(1024);
+        if (r.value("has_error").toBool()) lines << tr("Helper reported an error. See the service log for details.");
+        if (r.value("wake_error_count").toInteger()>0) lines << tr("Wake source errors: %1").arg(r.value("wake_error_count").toInteger());
+        if (r.value("wireless_warning_count").toInteger()>0) lines << tr("Wireless policy warnings: %1").arg(r.value("wireless_warning_count").toInteger());
+        if (r.value("guard_armed").toBool()) lines << tr("A pressure guard was armed; later rollback is not covered by this receipt.");
+        using tunereceipt::Status;
+        auto statusText=[tr](Status status) { switch(status) {
+            case Status::Match:return tr("Matched at readback"); case Status::Mismatch:return tr("Mismatch"); case Status::Skipped:return tr("Skipped");
+            case Status::Failed:return tr("Failed"); case Status::Partial:return tr("Partial"); case Status::Unverified:return tr("Unverified"); default:return tr("Unknown"); }};
+        std::vector<std::string> expected; std::vector<bootreceiptcoverage::Row> evidence;
+        for (const auto &v : requested) expected.push_back(v.toString().toStdString());
+        auto count=[](const QJsonObject &o,const char *key) { const auto n=o.value(QLatin1String(key)).toInteger(-1); return n>=0?QString::number(n):QStringLiteral("—"); };
+        auto add=[table](const QStringList &cells) { const int i=table->rowCount(); table->insertRow(i); for(int j=0;j<cells.size();++j) table->setItem(i,j,new QTableWidgetItem(cells.at(j))); };
+        for (const auto &v:rows) { const auto o=v.toObject(); const auto key=o.value("key").toString();
+            const auto status=tunejournal::status(o); evidence.push_back({key.toStdString(),status});
+            const auto value=o.value("value"); add({key,value.isString()?value.toString():value.isDouble()?QString::number(value.toInteger()):QStringLiteral("—"),count(o,"written"),count(o,"readback_matched"),count(o,"readback_missing"),statusText(status)});
+        }
+        const auto coverage=bootreceiptcoverage::assess(expected,evidence);
+        for (const auto &key:coverage.missing) add({QString::fromStdString(key),QStringLiteral("—"),QStringLiteral("—"),QStringLiteral("—"),QStringLiteral("—"),tr("No receipt")});
+        if (!coverage.consistent) lines << tr("Receipt keys are inconsistent; no aggregate verification is claimed.");
+        else if (coverage.requested>0) lines << tr("Matched at recorded readback: %1 / %2 requested settings.").arg(qulonglong(coverage.matched)).arg(qulonglong(coverage.requested));
+        lines << tr("Historical boot-helper result only; not proof of current values or service invocation.");
+        receiptInfo->setText(lines.join(QLatin1Char('\n')));
+    });
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons); QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
 }
 }

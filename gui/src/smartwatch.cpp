@@ -9,6 +9,10 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QTimer>
+#include <QSet>
+#include <QLockFile>
+#include <QDateTime>
+#include <cmath>
 
 #include <grp.h>
 #include <unistd.h>
@@ -70,27 +74,66 @@ namespace smart {
 std::optional<double> field(const QJsonObject &o, const char *key) {
     const QJsonValue v = o.value(QLatin1String(key));
     if (!v.isDouble()) return std::nullopt;
-    return v.toDouble();
+    const double n=v.toDouble();
+    return std::isfinite(n)?std::optional<double>(n):std::nullopt;
 }
 
-QJsonObject loadHistory() {
-    QFile f(historyFile());
-    return f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject{};
+bool usableIdentity(const QString &id) {
+    // Low 48 bits of the FNV offset basis == empty serial hash from old helpers.
+    if(id.isEmpty() || id.size()>512 || id.endsWith(QStringLiteral("|9ce484222325"))) return false;
+    const auto hash=id.section(QLatin1Char('|'),-1), capacity=id.section(QLatin1Char('|'),-2,-2), model=id.section(QLatin1Char('|'),0,-3);
+    bool ok=false;const auto cap=capacity.toULongLong(&ok);
+    if(!ok || cap==0 || model.trimmed().isEmpty() || hash.size()!=12) return false;
+    for(const auto ch:hash) if(!((ch>=QLatin1Char('0')&&ch<=QLatin1Char('9'))||(ch>=QLatin1Char('a')&&ch<=QLatin1Char('f')))) return false;
+    return true;
 }
+static std::optional<QJsonObject> readHistory() {
+    QFile f(historyFile());
+    if(!f.exists()) return QJsonObject{};
+    if(!f.open(QIODevice::ReadOnly) || f.size()>16*1024*1024) return std::nullopt;
+    const auto bytes=f.read(16*1024*1024+1); if(bytes.size()>16*1024*1024 || !f.atEnd()) return std::nullopt;
+    QJsonParseError error; const auto doc=QJsonDocument::fromJson(bytes,&error);
+    if(error.error!=QJsonParseError::NoError || !doc.isObject() || !doc.object().value("disks").isObject()) return std::nullopt;
+    const auto disks=doc.object().value("disks").toObject();
+    if(disks.size()>512) return std::nullopt;
+    for(auto it=disks.cbegin();it!=disks.cend();++it) {
+        const auto disk=it.value().toObject();const auto samples=disk.value("samples").toArray();
+        if(!disk.value("samples").isArray() || samples.size()>MAX_DAYS) return std::nullopt;
+        QString previous;
+        for(const auto &v:samples) {
+            const auto date=v.toObject().value("d").toString();
+            if(!QDate::fromString(date,Qt::ISODate).isValid() || (!previous.isEmpty() && date<=previous)) return std::nullopt;
+            previous=date;
+        }
+    }
+    return doc.object();
+}
+std::optional<QJsonObject> historySnapshot() { return readHistory(); }
+QJsonObject loadHistory() { return historySnapshot().value_or(QJsonObject{}); }
 
 QStringList record(const QJsonArray &disks) {
     const QString today = todayIso();
-    QJsonObject hist = loadHistory();
+    if(!QDir().mkpath(QFileInfo(historyFile()).absolutePath())) return {};
+    QLockFile lock(historyFile()+QStringLiteral(".lock")); if(!lock.tryLock(0)) return {};
+    const auto stored=readHistory(); if(!stored) return {}; // never overwrite unreadable history
+    QJsonObject hist=*stored;
+    QSet<QString> seen,duplicate;
+    for(const auto &v:disks) {
+        const auto id=v.toObject().value("id").toString();
+        if(seen.contains(id)) duplicate.insert(id);
+        seen.insert(id);
+    }
     QJsonObject all = hist.value(QStringLiteral("disks")).toObject();
     QStringList alerts;
     for (const QJsonValue &v : disks) {
         const QJsonObject d = v.toObject();
         const QString id = d.value(QStringLiteral("id")).toString();
-        if (id.isEmpty() || d.contains(QStringLiteral("error"))) continue;
+        if (!usableIdentity(id) || duplicate.contains(id) || d.contains(QStringLiteral("error"))) continue;
         const QString model = d.value(QStringLiteral("model")).toString();
 
         QJsonObject disk = all.value(id).toObject();
         QJsonArray samples = disk.value(QStringLiteral("samples")).toArray();
+        if(!samples.isEmpty() && samples.last().toObject().value("d").toString()>today) continue;
         // Baseline: the latest sample from an earlier day.
         QJsonObject prev;
         for (const QJsonValue &s : samples)
@@ -100,6 +143,7 @@ QStringList record(const QJsonArray &disks) {
         QJsonObject s = d;
         for (const char *k : {"id", "dev", "model", "capacity_bytes"}) s.remove(QLatin1String(k));
         s[QStringLiteral("d")] = today;
+        s[QStringLiteral("captured_utc")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         if (!samples.isEmpty() && samples.last().toObject().value(QStringLiteral("d")).toString() == today) samples.removeLast();
         samples.append(s);
         while (samples.size() > MAX_DAYS) samples.removeFirst();
@@ -116,12 +160,10 @@ QStringList record(const QJsonArray &disks) {
     }
     hist[QStringLiteral("disks")] = all;
     hist[QStringLiteral("sampled")] = today;
-    QDir().mkpath(QFileInfo(historyFile()).absolutePath());
-    QSaveFile f(historyFile());
-    if (f.open(QIODevice::WriteOnly)) {
-        f.write(QJsonDocument(hist).toJson(QJsonDocument::Compact));
-        f.commit();
-    }
+    const auto bytes=QJsonDocument(hist).toJson(QJsonDocument::Compact);
+    if(all.size()>512 || bytes.size()>16*1024*1024) return alerts;
+    QSaveFile f(historyFile()); f.setDirectWriteFallback(false);
+    if(f.open(QIODevice::WriteOnly) && f.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner) && f.write(bytes)==bytes.size()) f.commit();
     return alerts;
 }
 

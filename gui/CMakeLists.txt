@@ -70,7 +70,7 @@ add_executable(centurion
     src/bootadvisor.cpp  src/bootadvisor.h
     src/bundle.cpp       src/bundle.h
     src/lighting.cpp     src/lighting.h
-    src/canvasviewport.h src/lightingtab.cpp  src/lightingtab.h
+    src/canvasviewport.h src/lightingpreview.h src/zone4canvas.h src/lightingtab.cpp  src/lightingtab.h
     src/zone4tab.cpp     src/zone4tab.h
     src/kblayout.cpp     src/kblayout.h
     src/amdgpu.cpp       src/amdgpu.h
@@ -89,6 +89,7 @@ add_executable(centurion
     src/advancedhealth.cpp src/advancedhealth.h
     src/diagreport.cpp   src/diagreport.h
     src/diagreportview.cpp src/diagreportview.h
+    src/diagnostichistoryview.cpp src/diagnostichistoryview.h src/diagnostichistory.h src/diagnostichistorydata.h
     src/toolcatalog.cpp  src/toolcatalog.h
     src/diagsources.cpp  src/diagsources.h
     src/evidencereports.cpp src/evidencereports.h
@@ -128,7 +129,7 @@ add_executable(centurion
     src/acpievents.cpp   src/acpievents.h
     src/smartpage.cpp    src/smartpage.h
     src/sleeppage.cpp    src/sleeppage.h
-    src/kernelparamspage.cpp src/kernelparamspage.h
+    src/kernelparamspage.cpp src/kernelparamspage.h src/kernelparamsmodel.h src/incrementalrows.h
     src/sleepadvice.cpp  src/sleepadvice.h
     src/flightrec.cpp    src/flightrec.h
     src/mangohud.cpp     src/mangohud.h
@@ -287,6 +288,14 @@ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hico
 option(CENTURION_BUILD_TESTS "Build GUI unit tests" OFF)
 if(CENTURION_BUILD_TESTS)
     enable_testing()
+    add_executable(centurion-diagnostichistory-test tests/diagnostichistory_test.cpp src/diagreport.cpp)
+    target_link_libraries(centurion-diagnostichistory-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-diagnostichistory-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME diagnostichistory COMMAND centurion-diagnostichistory-test)
+    add_executable(centurion-kernelparamsmodel-test tests/kernelparamsmodel_test.cpp)
+    target_link_libraries(centurion-kernelparamsmodel-test PRIVATE Qt6::Core)
+    target_compile_definitions(centurion-kernelparamsmodel-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME kernelparamsmodel COMMAND centurion-kernelparamsmodel-test)
     add_executable(centurion-tur29-ui-test tests/tur29_ui_test.cpp)
     target_link_libraries(centurion-tur29-ui-test PRIVATE Qt6::Widgets)
     target_compile_definitions(centurion-tur29-ui-test PRIVATE QT_NO_KEYWORDS)
@@ -317,19 +326,17 @@ if(CENTURION_BUILD_TESTS)
         add_dependencies(centurion-simulation-visual-test centurion)
         target_compile_definitions(centurion-simulation-visual-test PRIVATE CENTURION_TEST_QM="${CMAKE_CURRENT_BINARY_DIR}/centurion_tr.qm")
     endif()
-    foreach(scale IN ITEMS 1 1.25 1.5 2)
+    foreach(scale IN ITEMS 1 1.25 1.5 1.75 2)
         set(visual_languages en)
         if(Qt6LinguistTools_FOUND)
             list(APPEND visual_languages tr)
         endif()
         foreach(lang IN LISTS visual_languages)
-            set(visual_mode experimental)
-            if((scale STREQUAL "1.25" AND lang STREQUAL "en") OR (scale STREQUAL "1.5" AND lang STREQUAL "tr"))
-                set(visual_mode classic)
-            endif()
-            add_test(NAME simulation-visual-${lang}-${scale} COMMAND centurion-simulation-visual-test)
-            set_tests_properties(simulation-visual-${lang}-${scale} PROPERTIES
-                ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=${scale};QT_FONT_DPI=96;CENTURION_LANG=${lang};CENTURION_VISUAL_MODE=${visual_mode};LC_ALL=C.UTF-8")
+            foreach(visual_mode IN ITEMS experimental classic)
+                add_test(NAME simulation-visual-${visual_mode}-${lang}-${scale} COMMAND centurion-simulation-visual-test)
+                set_tests_properties(simulation-visual-${visual_mode}-${lang}-${scale} PROPERTIES
+                    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=${scale};QT_FONT_DPI=96;CENTURION_LANG=${lang};CENTURION_VISUAL_MODE=${visual_mode};LC_ALL=C.UTF-8")
+            endforeach()
         endforeach()
     endforeach()
 
@@ -358,6 +365,9 @@ if(CENTURION_BUILD_TESTS)
     add_executable(centurion-tuningviewstate-test tests/tuningviewstate_test.cpp src/tuningviewstate.h)
     target_link_libraries(centurion-tuningviewstate-test PRIVATE Qt6::Core)
     add_test(NAME tuningviewstate COMMAND centurion-tuningviewstate-test)
+    add_executable(centurion-draftidentity-test tests/draftidentity_test.cpp)
+    target_link_libraries(centurion-draftidentity-test PRIVATE Qt6::Core)
+    add_test(NAME draftidentity COMMAND centurion-draftidentity-test)
     # Health diagnostics (Evidence Lab, Investigations, System tools): pure report functions over fixtures.
     set(DIAG_TEST_SOURCES src/diagreport.cpp src/diagsources.cpp src/advanceddiagnostics.cpp src/evidencereports.cpp
         src/systemdiagnostics.cpp src/diagnostictools.cpp src/eventinfo.cpp src/distroprofile.cpp src/sleepadvice.cpp

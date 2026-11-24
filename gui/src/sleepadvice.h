@@ -23,6 +23,8 @@ inline constexpr qint64 MAX_AWAKE_S = 2 * 3600;
 struct Sleep {
     qint64 start = 0, end = 0;
     QStringList wokeBy;            // kernel wakeup-source names
+    QString boot, unit, unitAfter, statusAfter;
+    bool postContext = false;
     QString statusBefore;          // battery status when it went to sleep ("Discharging" = on battery)
     double energyBefore = 0, energyAfter = 0, full = 0;
     bool hasHwSleep = false;       // the sleep hook recorded the hardware sleep time (0 is a reading too)

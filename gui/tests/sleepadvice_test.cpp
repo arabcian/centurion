@@ -49,6 +49,12 @@ int main(int argc, char **argv) {
         CHECK(qAbs(a[0].awakePct - 2.0) < 1e-6);
     }
 
+    // Never compute an awake-energy delta across a known boot or unit change.
+    auto changed=rows;
+    changed[0].boot=QStringLiteral("a");changed[1].boot=QStringLiteral("b");changed[2].boot=QStringLiteral("c");
+    a=analyse(changed,resolve);CHECK(a.size()==1 && a[0].awakePct==0);
+    changed=rows;changed[0].unit=QStringLiteral("uWh");changed[1].unit=QStringLiteral("uAh");
+    a=analyse(changed,resolve);CHECK(a.size()==1 && a[0].awakePct==0);
     // A single wake is not a pattern.
     CHECK(analyse(rows.mid(0, 1), resolve).isEmpty());
 

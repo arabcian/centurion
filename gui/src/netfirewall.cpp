@@ -496,12 +496,21 @@ void FirewallTab::previewConnection(const QJsonObject &record) {
     auto *layout = new QVBoxLayout(&dlg);
     auto *hint = new QLabel(tr("Hypothetical new local TCP/UDP connection. Only the saved Centurion chain is evaluated, not live nftables, connection state, other firewalls, blacklist, Wine guard or NAT. No access guarantee. Unknown interface-dependent matches remain unknown.")); hint->setWordWrap(true); layout->addWidget(hint);
     auto *form = new QFormLayout; layout->addLayout(form);
-    auto *dir = new QComboBox; dir->addItem(tr("Incoming"), "in"); dir->addItem(tr("Outgoing"), "out");
+    auto *dir = new QComboBox; dir->addItem(tr("Choose direction"), QString()); dir->addItem(tr("Incoming"), "in"); dir->addItem(tr("Outgoing"), "out");
     auto *proto = new QComboBox; proto->addItem("TCP", "tcp"); proto->addItem("UDP", "udp");
     auto *peer = new QLineEdit(str(record, "remote")); peer->setMaxLength(64);
     auto *port = new QSpinBox; port->setRange(0, 65535); port->setSpecialValueText(tr("Unknown"));
     auto *iface = new QLineEdit; iface->setMaxLength(15); iface->setPlaceholderText(tr("Unknown interface"));
-    if (!record.isEmpty()) { const auto d = str(record, "dir"); const auto p = str(record, "proto"); dir->setCurrentIndex(dir->findData(d)); proto->setCurrentIndex(proto->findData(p)); port->setValue(record.value(d == "in" ? "lport" : "rport").toInt()); }
+    if (!record.isEmpty()) {
+        const auto d = str(record, "dir"); const auto p = str(record, "proto");
+        dir->setCurrentIndex(qMax(0, dir->findData(d))); proto->setCurrentIndex(proto->findData(p));
+        const auto recordedPort = [record, dir] {
+            const auto direction = dir->currentData().toString();
+            return direction == "in" ? record.value("lport").toInt() : direction == "out" ? record.value("rport").toInt() : 0;
+        };
+        port->setValue(recordedPort());
+        connect(dir, &QComboBox::currentIndexChanged, &dlg, [port, recordedPort] { port->setValue(recordedPort()); });
+    }
     form->addRow(tr("Direction"), dir); form->addRow(tr("Protocol"), proto); form->addRow(tr("Remote Address"), peer); form->addRow(tr("Destination Port"), port); form->addRow(tr("Interface"), iface);
     auto *result = new QLabel; result->setTextFormat(Qt::PlainText); result->setWordWrap(true); layout->addWidget(result);
     auto refresh = [=] { auto eval = [&](const QJsonObject &c) { return firewallConnectionPreview(c, dir->currentData().toString(), proto->currentData().toString(), peer->text(), port->value(), iface->text()); }; result->setText(tr("Current saved snapshot: %1").arg(eval(saved)) + (pinned.isEmpty() ? QString() : QStringLiteral("\n") + tr("Pinned saved snapshot: %1").arg(eval(pinned)))); };

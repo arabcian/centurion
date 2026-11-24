@@ -19,6 +19,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPointer>
+#include <QPushButton>
+#include <QSettings>
+#include <QHash>
+#include <QSet>
 #include <QScrollArea>
 #include <QTabBar>
 #include <QTabWidget>
@@ -40,6 +44,7 @@ struct Destination {
     QString stableTarget;
     QString targetTitle;
     QString navigationNote;
+    QString favoriteId;
     QString title;
     QString search;
 };
@@ -98,7 +103,12 @@ void open(QTabWidget *tabs, QWidget *parent) {
     layout->addWidget(results, 1);
     auto *hint = new QLabel(QObject::tr("Search pages, tools and settings. Enter navigates; it never applies a setting."));
     hint->setObjectName(QStringLiteral("expPaletteHint"));
-    layout->addWidget(hint);
+    auto *footer = new QHBoxLayout;
+    footer->addWidget(hint, 1);
+    auto *favorite = new QPushButton(QObject::tr("Add favorite"));
+    favorite->setEnabled(false);
+    footer->addWidget(favorite);
+    layout->addLayout(footer);
     search->installEventFilter(new ListKeys(results, &dialog));
 
     QVector<Destination> destinations;
@@ -111,6 +121,8 @@ void open(QTabWidget *tabs, QWidget *parent) {
         dest.page = tabs->widget(i);
         dest.title = QObject::tr("Page  /  %1").arg(label);
         dest.search = label + QLatin1Char(' ') + detail;
+        const QString pageId = tabs->tabBar()->tabData(i).toString();
+        if (!pageId.isEmpty()) dest.favoriteId = QStringLiteral("page/") + pageId;
         destinations.append(dest);
         if (auto *health = qobject_cast<HealthTab *>(tabs->widget(i))) {
             for (const auto &entry : health->navigationEntries()) {
@@ -119,6 +131,11 @@ void open(QTabWidget *tabs, QWidget *parent) {
                 tool.page = tabs->widget(i);
                 tool.health = health;
                 tool.healthTarget = entry.target;
+                tool.favoriteId = QStringLiteral("health/") + entry.target;
+                if (entry.target.startsWith(QLatin1String("tool:"))) {
+                    const auto info = toolcatalog::tool(entry.target.mid(5));
+                    tool.navigationNote = toolcatalog::badges(info.flags).join(QStringLiteral(" · "));
+                }
                 tool.title = QObject::tr("%1  /  %2").arg(label, entry.label);
                 tool.search = tool.title + QLatin1Char(' ') + entry.keywords.join(QLatin1Char(' '));
                 destinations.append(tool);
@@ -137,6 +154,7 @@ void open(QTabWidget *tabs, QWidget *parent) {
         for (const auto &entry : tuningnavigation::entries) {
             Destination d;
             d.optimize = optimize; d.settingKey = QString::fromLatin1(entry.key);
+            d.favoriteId = QStringLiteral("setting/") + d.settingKey;
             d.tab = optIndex; d.page = optimize;
             const QString group = QCoreApplication::translate("OptimizationGroups", entry.group);
             const QString label = QCoreApplication::translate("OptimizationLabels", entry.label);
@@ -162,12 +180,13 @@ void open(QTabWidget *tabs, QWidget *parent) {
             registered.insert(entry.id);
             Destination d;
             d.tab = i; d.page = page; d.stableTarget = entry.id;
+            const auto pageId = tabs->tabBar()->tabData(i).toString();
+            if (!pageId.isEmpty()) d.favoriteId = QStringLiteral("control/") + pageId + QLatin1Char('/') + entry.id;
             const QString translated = QCoreApplication::translate("NavigationTargets", entry.title.toUtf8().constData());
             d.targetTitle = translated;
             d.title = QObject::tr("%1 / %2").arg(tabs->tabText(i), translated);
             if (capabilityUnknown) d.title += QObject::tr(" (capability not confirmed)");
             d.navigationNote = QObject::tr("Navigation only. Opening the page can run its existing device reads; availability may change.");
-            const QString pageId = tabs->tabBar()->tabData(i).toString();
             if (pageId == QLatin1String("NVIDIA Curve") || pageId == QLatin1String("AMD GPU"))
                 d.navigationNote += QLatin1Char(' ') + QObject::tr("Opening the GPU page may wake a device.");
             d.search = entry.id + QLatin1Char(' ') + entry.title + QLatin1Char(' ') + translated + QLatin1Char(' ') + entry.aliases;
@@ -231,6 +250,33 @@ void open(QTabWidget *tabs, QWidget *parent) {
             }
         }
     }
+    QHash<QString,int> stableCounts;
+    for (const auto &d : destinations) if (!d.stableTarget.isEmpty()) ++stableCounts[d.stableTarget];
+    destinations.erase(std::remove_if(destinations.begin(), destinations.end(), [&](const Destination &d) {
+        return !d.stableTarget.isEmpty() && stableCounts.value(d.stableTarget) != 1;
+    }), destinations.end());
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    const QString favoriteKey = QStringLiteral("ui/navigation_favorites_v1");
+    const auto selectedFavorite = [&]() -> QString {
+        const auto *item = results->currentItem();
+        if (!item) return {};
+        const int i = item->data(Qt::UserRole).toInt();
+        return i >= 0 && i < destinations.size() ? destinations.at(i).favoriteId : QString();
+    };
+    const auto updateFavorite = [&] {
+        const auto id = selectedFavorite();
+        favorite->setEnabled(!id.isEmpty());
+        favorite->setText(settings.value(favoriteKey).toStringList().contains(id) ? QObject::tr("Remove favorite") : QObject::tr("Add favorite"));
+    };
+    QObject::connect(results, &QListWidget::currentItemChanged, &dialog, [&] { updateFavorite(); });
+    QObject::connect(favorite, &QPushButton::clicked, &dialog, [&] {
+        const auto id = selectedFavorite(); if (id.isEmpty()) return;
+        auto list = settings.value(favoriteKey).toStringList();
+        if (list.contains(id)) list.removeAll(id);
+        else if (list.size() < 512) list.append(id);
+        else { QMessageBox::information(&dialog, QObject::tr("Navigation favorites"), QObject::tr("Favorite limit reached.")); return; }
+        settings.setValue(favoriteKey,list); updateFavorite();
+    });
     // Each result carries the icon of the page it leads to.
     QVector<QIcon> icons;
     for (int i = 0; i < tabs->count(); ++i)

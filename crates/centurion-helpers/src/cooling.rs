@@ -385,7 +385,12 @@ pub fn latest_assessment(runs: &[Value], key: &str, limit_c: f64) -> Option<(Val
     let base = baseline_for(runs, key)?;
     let last = runs.iter().rev().find(|r| r["key"] == key)?;
     if is_baseline(last) { return None; }
-    let a = assess(&metrics_of(base)?, &metrics_of(last)?, limit_c, base["noisy"] == true, last["noisy"] == true);
+    let mut a = assess(&metrics_of(base)?, &metrics_of(last)?, limit_c, base["noisy"] == true, last["noisy"] == true);
+    // Same firmware key does not establish the same duration (custom test length).
+    if base["secs"].as_u64().unwrap_or(0) == 0 || base["secs"].as_u64() != last["secs"].as_u64() {
+        a.level = Level::Inconclusive;
+        a.reasons = vec![("duration_mismatch", 0.0)];
+    }
     Some((last.clone(), a))
 }
 
@@ -605,6 +610,11 @@ mod tests {
         let (last, a) = latest_assessment(&back, &c.key(), 95.0).unwrap();
         assert_eq!(last["t"], 2);
         assert_eq!(a.level, Level::Warn);
+        let mut different = back.clone();
+        different.last_mut().unwrap()["secs"] = json!(120);
+        let (_, a) = latest_assessment(&different, &c.key(), 95.0).unwrap();
+        assert_eq!(a.level, Level::Inconclusive);
+        assert_eq!(a.reasons[0].0, "duration_mismatch");
         assert!(load_runs(&dir.join("missing.json")).is_empty());
         std::fs::write(&file, b"{not json").unwrap();
         assert!(load_runs(&file).is_empty());

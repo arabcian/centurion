@@ -84,7 +84,7 @@ QWidget *makeWorkspace(QApplication &app) {
     const auto fakeRoot=std::make_shared<QTemporaryDir>();
     auto *sensor = new QLabel; sensor->setWordWrap(true); sensor->setObjectName(QStringLiteral("fixtureSensors")); metricLayout->addWidget(sensor);
     auto *chart = new LineChart; chart->setObjectName(QStringLiteral("fixtureChart")); chart->setContextMenuPolicy(Qt::PreventContextMenu); metricLayout->addWidget(chart,1);
-    auto *curve = new VfCurveWidget; curve->setObjectName(QStringLiteral("fixtureCurve")); metricLayout->addWidget(curve,2);
+    auto *curve = new VfCurveWidget; curve->setObjectName(QStringLiteral("fixtureCurve")); curve->setContextMenuPolicy(Qt::PreventContextMenu); metricLayout->addWidget(curve,2);
     auto *edit = new QSpinBox; edit->setObjectName(QStringLiteral("fixtureDraft")); edit->setRange(-100,100); edit->setSuffix(QStringLiteral(" MHz"));
     auto *editForm = new QFormLayout; editForm->addRow(Simulation::tr("Simulated draft offset"),edit); metricLayout->addLayout(editForm);
     auto *apply = new QPushButton(Simulation::tr("Apply to simulated memory only")); apply->setObjectName(QStringLiteral("fixtureApply")); metricLayout->addWidget(apply);

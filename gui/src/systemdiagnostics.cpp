@@ -1,4 +1,5 @@
 #include "hardwarefields.h"
+#include "diagnosticprotocols.h"
 #include "acpievidence.h"
 #include "memoryfields.h"
 #include "deviceidentity.h"
@@ -7,6 +8,7 @@
 #include <QJsonDocument>
 #include <QDateTime>
 #include "topologyfields.h"
+#include "powerprovenance.h"
 #include "systemdiagnostics.h"
 
 #include "advanceddiagnostics.h"
@@ -38,6 +40,14 @@ namespace systemdiagnostics {
 
 static QString tr(const char *s) { return QCoreApplication::translate("systemdiagnostics", s); }
 static QString rd(const QString &root, const QString &p, qint64 limit = 64 * 1024) { return diagsrc::read(root + p, limit); }
+// Reject oversized evidence instead of accepting a valid-looking prefix.
+static QString evidenceRead(const QString &root, const QString &p, qint64 limit = 65536) {
+    QFile f(root + p);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    const QByteArray raw = f.read(limit + 1);
+    if (f.error() != QFileDevice::NoError || raw.size() > limit || raw.contains('\0')) return {};
+    return QString::fromUtf8(raw).trimmed();
+}
 static QStringList ls(const QString &root, const QString &p, const QStringList &f = {QStringLiteral("*")}) { return diagsrc::dir(root + p, f); }
 /// The bracketed choice of a sysfs list ("always [madvise] never" → "madvise"), else the text.
 static QString chosen(const QString &s) {
@@ -162,8 +172,8 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
     t.headers = {tr("Device"), tr("Driver"), tr("Link now"), tr("Possible"), tr("Power"), tr("AER (corr / non-fatal / fatal)"), tr("Status")};
     Table topology;
     topology.title = tr("PCIe Upstream Relationships");
-    topology.headers = {tr("Device"), tr("Upstream PCI address"), tr("Device maximum"), tr("Upstream maximum")};
-    topology.note = tr("Parent relationships come from resolved sysfs device paths. Unknown or root-bus parents are not inferred.");
+    topology.headers = {tr("Device"), tr("Upstream PCI address"), tr("Device maximum"), tr("Upstream maximum"), tr("Upstream current link"), tr("Upstream runtime state"), tr("Capture (UTC)")};
+    topology.note = tr("Parent relationships require a resolved PCI device path and a stable boot-scoped identity. Upstream link reads require active runtime state; unknown parents are not inferred.");
     static const QRegularExpression pciAddress(QStringLiteral(R"(^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$)"));
     int bridges = 0;
     for (const QString &id : ls(root, QStringLiteral("/sys/bus/pci/devices"))) {
@@ -188,17 +198,19 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
         // The link can only be as fast / wide as the port above it.
         const QString up = QFileInfo(target).path();
         const QString parent = QFileInfo(up).fileName();
-        const bool parentKnown = pciAddress.match(parent).hasMatch();
-        const bool portActive = parentKnown && deviceidentity::mayReadLink(diagsrc::read(up + QStringLiteral("/power/runtime_status")).toStdString());
+        const QString parentPath = QStringLiteral("/sys/bus/pci/devices/") + parent;
+        const bool parentKnown = pciAddress.match(parent).hasMatch() && devicePath(root, parentPath) == up;
+        const QString parentIdentity = parentKnown ? deviceKey(root, parentPath, QStringLiteral("PCI"), boot) : QString();
+        const QString parentPower = parentKnown ? diagsrc::read(up + QStringLiteral("/power/runtime_status")) : QString();
+        const bool portActive = parentKnown && !parentIdentity.isEmpty() && deviceidentity::mayReadLink(parentPower.toStdString());
         const double portMax = portActive ? linkSpeed(diagsrc::read(up + QStringLiteral("/max_link_speed"))) : 0;
         const int portW = portActive ? diagsrc::read(up + QStringLiteral("/max_link_width")).toInt() : 0;
+        const double portCurrent = portActive ? linkSpeed(diagsrc::read(up + QStringLiteral("/current_link_speed"))) : 0;
+        const int portCurrentWidth = portActive ? diagsrc::read(up + QStringLiteral("/current_link_width")).toInt() : 0;
         auto link = [](double rate, int width) {
             return rate > 0 && width > 0 ? QStringLiteral("%1 GT/s ×%2").arg(rate).arg(width) : QStringLiteral("—");
         };
-        topology.add({id, parentKnown ? parent : QStringLiteral("—"), link(linkSpeed(max), mw),
-                      parentKnown ? link(portMax, portW) : QStringLiteral("—")});
-        const double s = linkSpeed(cur), ms = std::min(linkSpeed(max), portMax > 0 ? portMax : 1e9);
-        const int mw2 = portW > 0 ? std::min(mw, portW) : mw;
+        const double s = linkSpeed(cur);
         static const std::pair<const char *, const char *> aerFiles[] = {
             {"aer_dev_correctable", "TOTAL_ERR_COR"}, {"aer_dev_nonfatal", "TOTAL_ERR_NONFATAL"}, {"aer_dev_fatal", "TOTAL_ERR_FATAL"}};
         QStringList aer;
@@ -212,6 +224,16 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
             r.add(Level::Unknown, tr("%1: device or runtime state changed during capture").arg(id));
             continue;
         }
+        const bool parentStable = parentKnown && !parentIdentity.isEmpty() && devicePath(root, parentPath) == up &&
+            deviceKey(root, parentPath, QStringLiteral("PCI"), boot) == parentIdentity &&
+            diagsrc::read(up + QStringLiteral("/power/runtime_status")) == parentPower;
+        const double ms = std::min(linkSpeed(max), parentStable && portMax > 0 ? portMax : 1e9);
+        const int mw2 = parentStable && portW > 0 ? std::min(mw, portW) : mw;
+        const QString captureTime = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+        topology.add({id, parentStable ? parent : QStringLiteral("—"), link(linkSpeed(max), mw),
+                      parentStable ? link(portMax, portW) : QStringLiteral("—"),
+                      parentStable ? link(portCurrent, portCurrentWidth) : QStringLiteral("—"),
+                      parentStable ? known(parentPower) : tr("unknown"), captureTime}, parentKnown && !parentStable ? Level::Unknown : Level::Info);
         captured.insert(id, QJsonObject{{"identity", identityKey}, {"capturedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}, {"vendor", vendor}, {"device", device}, {"link", current}, {"maximum", link(linkSpeed(max), mw)}, {"aer", hasAer ? aer.join(QStringLiteral(" / ")) : QString()}});
         const QJsonObject old = before.value(id).toObject();
         if (!old.isEmpty()) {
@@ -370,22 +392,42 @@ Report powerLimits(const QString &root) {
     t.headers = {tr("Source"), tr("Setting"), tr("Value"), tr("Range")};
     const QString profile = rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile"));
     if (!profile.isEmpty()) t.add({tr("ACPI platform profile"), QStringLiteral("platform_profile"), profile, rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile_choices"))});
+    Table fw; fw.title = tr("Firmware Power Target Evidence");
+    fw.headers = {tr("Provider"), tr("Attribute"), tr("Current target"), tr("Reported default"), tr("Reported range"), tr("Evidence"), tr("Captured at"), tr("Source path")};
+    fw.note = tr("Firmware native units unless explicitly reported. A default is metadata, not a measured stock limit. A target is not evidence of enforcement. No direct WMI commands are issued.");
     // Firmware power attributes (lenovo-wmi-other, asus-armoury, …): integers only, never authentication.
     for (const QString &prov : ls(root, QStringLiteral("/sys/class/firmware-attributes"))) {
         const QString base = QStringLiteral("/sys/class/firmware-attributes/") + prov + QStringLiteral("/attributes/");
         for (const QString &a : ls(root, base)) {
             const QString low = a.toLower();
             if (!(low.contains(QStringLiteral("ppt")) || low.contains(QStringLiteral("spl")) || low.contains(QStringLiteral("tdp")) ||
-                  low.contains(QStringLiteral("power_limit")) || low.contains(QStringLiteral("nv_")) || low.contains(QStringLiteral("dynamic_boost"))))
+                  low.contains(QStringLiteral("power_limit")) || low.contains(QStringLiteral("stapm")) || low.contains(QStringLiteral("nv_")) || low.contains(QStringLiteral("dynamic_boost"))))
                 continue;
+            if (a == QStringLiteral("dgpu_enable") || a == QStringLiteral("dgpu_didvid") || a == QStringLiteral("gpu_mode")) continue;
             if (rd(root, base + a + QStringLiteral("/type")) != QStringLiteral("integer")) continue;
-            const QString v = rd(root, base + a + QStringLiteral("/current_value"), 64);
-            const QString mn = rd(root, base + a + QStringLiteral("/min_value"), 64), mx = rd(root, base + a + QStringLiteral("/max_value"), 64);
+            if (fw.rows.size() >= 4096) break;
+            const QString v = evidenceRead(root, base + a + QStringLiteral("/current_value"), 64);
+            const QString mn = evidenceRead(root, base + a + QStringLiteral("/min_value"), 64), mx = evidenceRead(root, base + a + QStringLiteral("/max_value"), 64);
             const QString disp = rd(root, base + a + QStringLiteral("/display_name"), 200);
-            t.add({tr("Firmware (%1)").arg(prov), disp.isEmpty() ? a : QStringLiteral("%1 (%2)").arg(disp, a), v.isEmpty() ? tr("unreadable") : v,
-                   mn.isEmpty() || mx.isEmpty() ? QString() : QStringLiteral("%1 … %2").arg(mn, mx)});
+            const QString def = evidenceRead(root, base + a + QStringLiteral("/default_value"), 64);
+            const QString step = evidenceRead(root, base + a + QStringLiteral("/scalar_increment"), 64);
+            const auto current = powerprovenance::integer(v.toStdString());
+            const auto factory = powerprovenance::integer(def.toStdString());
+            const auto range = powerprovenance::range(mn.toStdString(), mx.toStdString(), step.toStdString());
+            const QString rangeText = range ? QStringLiteral("%1 … %2 (%3 %4)").arg(mn, mx, tr("step"), step) : tr("unknown");
+            const bool outside = current && range && !range->contains(*current);
+            const QString evidence = !current ? tr("Current target unavailable") : outside ? tr("Target outside reported range") : !range ? tr("Range unavailable") : tr("Reported target (not enforcement)");
+            t.add({tr("Firmware (%1)").arg(prov), disp.isEmpty() ? a : QStringLiteral("%1 (%2)").arg(disp, a), current ? v : tr("unreadable"), rangeText}, !current || outside ? Level::Unknown : Level::Info);
+            fw.add({prov, a, current ? v : tr("unknown"), factory ? def : tr("unknown"), rangeText, evidence,
+                    QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs), base + a + QStringLiteral("/current_value")},
+                   !current || outside || !range ? Level::Unknown : Level::Info);
         }
     }
+    const QString profileAfter = rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile"));
+    if (profile.isEmpty() || profileAfter.isEmpty() || profileAfter != profile) {
+        fw.note += QLatin1Char(' ') + tr("Platform profile unavailable or changed during capture; do not compare these targets as a single profile.");
+    }
+    if (!fw.rows.isEmpty()) r.tables << fw;
     // cpufreq: a scaling cap below the hardware maximum.
     const qint64 hwMax = rd(root, QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")).toLongLong();
     qint64 capMin = 0;
@@ -465,8 +507,13 @@ Report powerLimits(const QString &root) {
 
 Table cpuTopology(const QString &root) {
     Table cpu; cpu.title = tr("CPU Package and Core Topology");
-    cpu.headers = {tr("Domain"), tr("Logical CPU"), tr("Online"), tr("Thread siblings"), tr("Core type"), tr("Die ID"), tr("Topology evidence")};
+    cpu.headers = {tr("Domain"), tr("Logical CPU"), tr("Online"), tr("Thread siblings"), tr("Core type"), tr("Die ID"), tr("Topology evidence"), tr("Intel PMU evidence")};
     cpu.note = tr("Core groups require mutually consistent sibling lists. Core type is the kernel's raw value; frequency and SMT do not establish P/E type.");
+    cpu.note += QLatin1Char(' ') + tr("Intel hybrid PMU membership is shown separately; missing or conflicting lists do not identify a core type.");
+    const QString corePath = QStringLiteral("/sys/bus/event_source/devices/cpu_core/cpus");
+    const QString atomPath = QStringLiteral("/sys/bus/event_source/devices/cpu_atom/cpus");
+    const auto pmuCore = topologyfields::cpuList(evidenceRead(root, corePath).toStdString());
+    const auto pmuAtom = topologyfields::cpuList(evidenceRead(root, atomPath).toStdString());
     struct Entry { QString name, base, siblings; topologyfields::Cpu data; };
     QList<Entry> entries;
     QHash<int, int> byId;
@@ -508,10 +555,30 @@ Table cpuTopology(const QString &root) {
             if (state.isEmpty()) state = global;
             else if (state != global) state.clear(); // conflicting reads, possibly CPU hotplug
         }
+        QString pmu = tr("unknown");
+        if (state == QStringLiteral("1")) {
+            using powerprovenance::PmuKind;
+            auto kind = powerprovenance::pmuKind(d.id, pmuCore, pmuAtom);
+            if (verified && kind != PmuKind::Unknown) for (int sibling : *d.siblings) {
+                const auto other = powerprovenance::pmuKind(sibling, pmuCore, pmuAtom);
+                if (other != PmuKind::Unknown && other != kind) { kind = PmuKind::Conflict; break; }
+            }
+            switch (kind) {
+            case PmuKind::Core: pmu = tr("Performance PMU (cpu_core)"); break;
+            case PmuKind::Atom: pmu = tr("Efficiency PMU (cpu_atom)"); break;
+            case PmuKind::Conflict: pmu = tr("Conflicting PMU membership"); break;
+            case PmuKind::Unknown: break;
+            }
+        }
         cpu.parents << parent;
         cpu.add({entry.name, entry.name, known(state), known(entry.siblings), known(rd(root, entry.base + QStringLiteral("topology/core_type"))),
-                 d.die ? QString::number(*d.die) : tr("unknown"), verified ? tr("Consistent sibling declarations") : tr("Unverified core relationship")},
+                 d.die ? QString::number(*d.die) : tr("unknown"), verified ? tr("Consistent sibling declarations") : tr("Unverified core relationship"), pmu},
                  verified && !state.isEmpty() ? Level::Info : Level::Unknown);
+    }
+    if (pmuCore != topologyfields::cpuList(evidenceRead(root, corePath).toStdString()) ||
+        pmuAtom != topologyfields::cpuList(evidenceRead(root, atomPath).toStdString()) ||
+        online != topologyfields::cpuList(rd(root, QStringLiteral("/sys/devices/system/cpu/online")).toStdString())) {
+        for (auto &row : cpu.rows) if (row.size() >= 8 && row.at(1).startsWith(QStringLiteral("cpu"))) row[7] = tr("Topology changed during capture");
     }
     return cpu;
 }
@@ -670,24 +737,65 @@ Report memory(const QString &root) {
     Table caches; caches.title = tr("CPU Cache Sharing Domains");
     caches.headers = {tr("Level"), tr("Type"), tr("Size"), tr("Shared CPUs"), tr("Source")};
     QSet<QString> cacheKeys;
-    for (const auto &id : ls(root, QStringLiteral("/sys/devices/system/cpu"), {QStringLiteral("cpu[0-9]*")})) {
+    std::map<unsigned,std::vector<diagnosticprotocols::Cache>> cacheDeclarations;
+    unsigned cacheCaptureCount=0;
+    std::size_t cacheMembers=0;
+    const auto cacheCpuNames=diagsrc::dir(root+QStringLiteral("/sys/devices/system/cpu"),{QStringLiteral("cpu[0-9]*")},513);
+    bool cacheIncomplete=cacheCpuNames.size()>512;
+    for (const auto &id : cacheCpuNames.mid(0,512)) {
+        const auto cpuId=hardwarefields::number(id.mid(3).toStdString());
+        if(!cpuId || *cpuId>65535)continue;
         const QString base=QStringLiteral("/sys/devices/system/cpu/")+id+QStringLiteral("/cache/");
-        for (const auto &index : ls(root,base,{QStringLiteral("index[0-9]*")})) {
+        const auto cacheIndices=diagsrc::dir(root+base,{QStringLiteral("index[0-9]*")},513);
+        if(cacheIndices.size()>512)cacheIncomplete=true;
+        for (const auto &index : cacheIndices.mid(0,512)) {
             const auto path=base+index+QLatin1Char('/');
             const auto level=rd(root,path+QStringLiteral("level"),16), type=rd(root,path+QStringLiteral("type"),32), size=rd(root,path+QStringLiteral("size"),32);
             const auto list=rd(root,path+QStringLiteral("shared_cpu_list"),65536).toLatin1();
             const auto parsed=hardwarefields::cpuList(std::string_view(list.constData(),std::size_t(list.size())));
             QString shared; if(parsed) { QStringList ids; for(std::size_t i=0;i<parsed->size();) {auto first=(*parsed)[i],last=first; ++i; while(i<parsed->size()&&(*parsed)[i]==last+1)last=(*parsed)[i++]; ids<<(first==last?QString::number(first):QStringLiteral("%1-%2").arg(first).arg(last));} shared=ids.join(QLatin1Char(',')); }
+            if(parsed && cacheCaptureCount<16384 && parsed->size()<=4096 && cacheMembers+parsed->size()<=262144){
+                cacheMembers+=parsed->size();
+                cacheDeclarations[*cpuId].push_back({*cpuId,level.toStdString(),type.toStdString(),size.toStdString(),*parsed});
+            }else cacheIncomplete=true;
+            ++cacheCaptureCount;
             const QString key=level+QLatin1Char('/')+type+QLatin1Char('/')+size+QLatin1Char('/')+shared;
-            if(!shared.isEmpty() && cacheKeys.contains(key))continue;
+            if(!shared.isEmpty() && cacheKeys.contains(key)){if(cacheCaptureCount>=16384)break;continue;}
             if(!shared.isEmpty())cacheKeys.insert(key);
             caches.add({known(level),known(type),known(size),known(shared),id+QLatin1Char('/')+index}, shared.isEmpty()?Level::Unknown:Level::Info);
-            if(caches.rows.size()>=4096)break;
+            if(caches.rows.size()>=4096 || cacheCaptureCount>=16384)break;
         }
-        if(caches.rows.size()>=4096)break;
+        if(caches.rows.size()>=4096 || cacheCaptureCount>=16384)break;
     }
     caches.note=tr("Cache sharing is kernel-reported topology, not proof of physical CCD identity.");
     if(!caches.rows.isEmpty())r.tables<<caches;
+    Table architecture; architecture.title=tr("Verified Cache / CPU Architecture");
+    architecture.headers={tr("Domain"),tr("Shared CPUs"),tr("Evidence")};
+    architecture.note=tr("Only reciprocal kernel cache declarations establish a group. CPU membership is not a physical CCD or NUMA assignment. Incomplete groups are shown separately.");
+    if(!cacheIncomplete && cacheCaptureCount<16384 && caches.rows.size()<4096){
+        QSet<QString> seenDomains;
+        for(const auto &[logical,declarations]:cacheDeclarations)for(const auto &cache:declarations){
+            if(architecture.rows.size()>=8192)break;
+            if(cache.level!="3")continue;
+            QStringList members; for(const auto member:cache.members)members<<QString::number(member);
+            const QString joined=members.join(QLatin1Char(','));
+            const QString key=QString::fromStdString(cache.level+"/"+cache.type+"/"+cache.size)+QLatin1Char('/')+joined;
+            if(seenDomains.contains(key))continue;
+            const bool verified=diagnosticprotocols::verifiedCache(cache,cacheDeclarations);
+            if(verified)seenDomains.insert(key);
+            const int parent=int(architecture.rows.size());
+            architecture.parents<<-1;
+            architecture.add({verified?tr("L3 cache %1").arg(QString::fromStdString(cache.size)):tr("Unverified cache declaration (CPU %1)").arg(logical),joined,
+                verified?tr("Reciprocal declarations"):tr("Incomplete or conflicting declarations")},verified?Level::Info:Level::Unknown);
+            if(verified)for(const auto member:cache.members){
+                if(architecture.rows.size()>=8192)break;
+                architecture.parents<<parent;
+                architecture.add({tr("Logical CPU %1").arg(member),QString(),tr("Reciprocal declarations")});
+            }
+        }
+        if(architecture.rows.size()>=8192)r.limits<<tr("Cache architecture display capped at 8192 rows.");
+    }else r.limits<<tr("Cache architecture capture is incomplete or reached its safety limit; no verified graph is available.");
+    if(!architecture.rows.isEmpty())r.tables<<architecture;
     Table dimms; dimms.title=tr("SMBIOS Memory Devices");
     dimms.headers={tr("Entry"),tr("State"),tr("Capacity (MiB)"),tr("Rated transfer rate (MT/s)"),tr("Configured transfer rate (MT/s)")};
     for(const auto &id:ls(root,QStringLiteral("/sys/firmware/dmi/entries"),{QStringLiteral("17-*")})){
@@ -936,7 +1044,7 @@ Report charging(const QString &root) {
     pd.title = tr("USB-C Ports");
     pd.viewKind = QStringLiteral("pd-ports");
     pd.note = tr("Negotiated contract is not exposed by these sources. Source profiles and supply measurements are separate.");
-    pd.headers = {tr("Port"), tr("Role"), tr("Partner"), tr("Partner source capabilities"), tr("Best capacity")};
+    pd.headers = {tr("Port"), tr("Role"), tr("Partner"), tr("Partner source capabilities"), tr("Best capacity"), tr("Power operation mode")};
     Table profiles; profiles.title=tr("USB Power Delivery Source Profiles"); profiles.viewKind=QStringLiteral("pd-profiles");
     profiles.headers={tr("Port"),tr("Partner profile"),tr("Minimum voltage (V)"),tr("Maximum voltage (V)"),tr("Maximum current (A)"),tr("Capacity (W)")};
     profiles.note=tr("Source capability is not a negotiated contract or measured draw. No contract is inferred from voltage or current limits.");
@@ -966,6 +1074,7 @@ Report charging(const QString &root) {
         const auto pdBefore=identity(pdDir,sysRoot);
         const auto roleBefore=chosen(rd(root,b+QStringLiteral("/power_role")));
         const auto dataBefore=chosen(rd(root,b+QStringLiteral("/data_role")));
+        const auto modeBefore=rd(root,b+QStringLiteral("/power_operation_mode"),64);
         const auto revisionBefore=partnerBefore ? rd(root,partner+QStringLiteral("/usb_power_delivery_revision")) : QString();
         const int profileStart=int(profiles.rows.size());
         bool completeProfiles=false;
@@ -977,25 +1086,26 @@ Report charging(const QString &root) {
                 if(!resolved.startsWith(sysRoot+QLatin1Char('/'))){completeProfiles=false;continue;}
                 const QString c = resolved + QLatin1Char('/');
                 if(profiles.rows.size()>=1024){completeProfiles=false;break;}
-                auto milli=[&](const QString &name,std::string_view unit){ const auto text=diagsrc::read(c+name,64).toLatin1(); return hardwarefields::milli(std::string_view(text.constData(),std::size_t(text.size())),unit); };
-                const auto i=milli(QStringLiteral("maximum_current"),"mA");
-                const auto fixed=milli(QStringLiteral("voltage"),"mV");
-                const auto low=fixed?fixed:milli(QStringLiteral("minimum_voltage"),"mV");
-                const auto high=fixed?fixed:milli(QStringLiteral("maximum_voltage"),"mV");
-                const bool valid=i&&low&&high&&*low<=*high;
+                const auto field=[&](const char *name){ return diagsrc::read(c+QLatin1String(name),64).toStdString(); };
+                const auto parsed=diagnosticprotocols::pdo(cap.section(QLatin1Char(':'),1).toStdString(),
+                    field("voltage"),field("minimum_voltage"),field("maximum_voltage"),field("maximum_current"),
+                    field("maximum_power"),field("pps_power_limited"));
+                const bool valid=parsed.watts.has_value();
                 if(!valid)completeProfiles=false;
                 auto show=[](const std::optional<double> &v){return v?QString::number(*v,'g',8):tr("unknown");};
-                profiles.add({port,cap,show(low),show(high),show(i),valid?QString::number(*high * *i,'g',8):tr("unknown")},valid?Level::Info:Level::Unknown);
-                if(valid){pdos<<QStringLiteral("%1–%2 V %3 A").arg(*low).arg(*high).arg(*i);best=std::max(best,*high * *i);}
+                profiles.add({port,cap,show(parsed.low),show(parsed.high),show(parsed.current),show(parsed.watts)},valid?Level::Info:Level::Unknown);
+                if(valid){pdos<<QStringLiteral("%1–%2 V · %3 W").arg(*parsed.low).arg(*parsed.high).arg(*parsed.watts);best=std::max(best,*parsed.watts);}
+
             }
         }
         const auto roleAfter=chosen(rd(root,b+QStringLiteral("/power_role")));
         const auto dataAfter=chosen(rd(root,b+QStringLiteral("/data_role")));
+        const auto modeAfter=rd(root,b+QStringLiteral("/power_operation_mode"),64);
         const auto partnerAfter=identity(root+partner,sysRoot);
         const auto pdAfterPath=QFileInfo(root+partner+QStringLiteral("/usb_power_delivery")).canonicalFilePath();
         const auto revisionAfter=partnerAfter ? rd(root,partner+QStringLiteral("/usb_power_delivery_revision")) : QString();
         const bool stable=portBefore && portBefore==identity(root+b,sysRoot)
-            && connected==QFileInfo::exists(root+partner) && roleBefore==roleAfter && dataBefore==dataAfter
+            && connected==QFileInfo::exists(root+partner) && roleBefore==roleAfter && dataBefore==dataAfter && modeBefore==modeAfter
             && (!connected || partnerBefore.has_value()) && partnerBefore==partnerAfter
             && pdDir==pdAfterPath && pdBefore==identity(pdAfterPath,sysRoot) && revisionBefore==revisionAfter;
         if(!stable){while(profiles.rows.size()>profileStart){profiles.rows.removeLast();profiles.levels.removeLast();}pdos.clear();best=0;completeProfiles=false;}
@@ -1005,7 +1115,7 @@ Report charging(const QString &root) {
         pd.add({port, stable ? QStringLiteral("%1 / %2").arg(known(roleAfter),known(dataAfter)) : tr("unknown"),
                 !stable ? tr("Changed during capture") : connected ? tr("connected (PD %1)").arg(known(revisionAfter)) : tr("nothing"),
                 pdos.isEmpty() ? (connected ? tr("not reported") : QStringLiteral("—")) : pdos.join(QStringLiteral(", ")),
-                best > 0 && completeProfiles ? watts(best) : connected && !completeProfiles ? tr("Maximum unknown (incomplete profiles)") : QStringLiteral("—")}, stable && (!connected || completeProfiles) ? Level::Info : Level::Unknown);
+                best > 0 && completeProfiles ? watts(best) : connected && !completeProfiles ? tr("Maximum unknown (incomplete profiles)") : QStringLiteral("—"), stable && (modeAfter == QLatin1String("usb_power_delivery") || modeAfter == QLatin1String("default") || modeAfter == QLatin1String("1.5A") || modeAfter == QLatin1String("3.0A")) ? modeAfter : tr("unknown")}, stable && (!connected || completeProfiles) ? Level::Info : Level::Unknown);
     }
     if (!pd.rows.isEmpty()) r.tables << pd;
     if (!profiles.rows.isEmpty())r.tables<<profiles;

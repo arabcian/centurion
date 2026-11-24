@@ -1507,6 +1507,32 @@ fn dump_all(d: &Diag) -> Result<Vec<Sock>, String> {
     match err { Some(e) if out.is_empty() => Err(format!("sock_diag: {e} (kernel: INET_DIAG, INET_TCP_DIAG, INET_UDP_DIAG)")), _ => Ok(out) }
 }
 
+// Only for the presentation snapshot. The daemon's existing ownership and verdict
+// algorithms remain unchanged. Read process identity on both sides of the fd scan.
+fn proc_start_ticks(pid: i32) -> Option<u64> {
+    parse_proc_start_ticks(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?, pid)
+}
+fn parse_proc_start_ticks(stat: &str, pid: i32) -> Option<u64> {
+    let (prefix, tail) = stat.rsplit_once(')')?;
+    if prefix.split_once(" (")?.0.parse::<i32>().ok()? != pid { return None; }
+    tail.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProcIdentity { ticks: u64, exe: String }
+fn proc_identity(pid: i32) -> Option<ProcIdentity> {
+    let ticks = proc_start_ticks(pid)?;
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?.into_os_string().into_string().ok()?;
+    if exe.is_empty() || proc_start_ticks(pid)? != ticks { return None; }
+    Some(ProcIdentity { ticks, exe })
+}
+struct SnapshotOwner { name: String, exe: String, wine: bool, identity: ProcIdentity, inodes: HashSet<u32> }
+fn socket_cookie(s: &Sock) -> Option<String> {
+    let bytes = &s.id[40..48];
+    if bytes.iter().all(|&b| b == 255) { return None; }
+    Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(""))
+}
+
 /// Every TCP/UDP socket with its owner. Unprivileged: owners of the caller's own processes only.
 pub fn list() -> Value {
     let cfg = Config::load().unwrap_or_default();
@@ -1516,21 +1542,38 @@ pub fn list() -> Value {
     };
     let want: HashSet<u32> = socks.iter().map(|s| s.inode).filter(|&i| i != 0).collect();
     let owners = owners_of(&want);
-    let mut procs: HashMap<i32, (String, String, bool)> = HashMap::new();  // pid → (name, exe, wine)
+    let boot = crate::bootguard::boot_id();
+    let netns = std::fs::read_link("/proc/self/ns/net").ok().and_then(|p| p.into_os_string().into_string().ok());
+    // Recheck ownership and identity after the initial owner lookup; a PID alone is not evidence.
+    let mut procs: HashMap<i32, Option<SnapshotOwner>> = HashMap::new();
     let conns: Vec<Value> = socks.iter().map(|s| {
         let pid = owners.get(&s.inode).copied().unwrap_or(0);
-        let (name, exe, wine) = if pid == 0 { (String::new(), String::new(), false) } else {
+        let owner = if pid == 0 { None } else {
             procs.entry(pid).or_insert_with(|| {
-                let exe = exe_of(pid).unwrap_or_default();
-                if is_wine_loader(&exe) { let id = wine_ident(pid, &exe); (basename(&id).to_owned(), id, true) }
-                else { (comm(pid), exe, false) }
-            }).clone()
+                let before = proc_identity(pid)?;
+                let inodes: HashSet<u32> = socket_inodes(pid).filter(|i| want.contains(i)).collect();
+                let exe = exe_of(pid)?;
+                let (name, display, wine) = if is_wine_loader(&exe) {
+                    let id = wine_ident(pid, &exe); (basename(&id).to_owned(), id, true)
+                } else { (comm(pid), exe, false) };
+                if proc_identity(pid)? != before { return None; }
+                Some(SnapshotOwner { name, exe: display, wine, identity: before, inodes })
+            }).as_ref().filter(|owner| owner.inodes.contains(&s.inode))
         };
+        // Preserve the reported PID as a candidate if the owner disappears, but
+        // do not attach another process's program name or verified identity.
+        let (name, exe, wine) = owner.map(|o| (o.name.as_str(),o.exe.as_str(),o.wine)).unwrap_or(("","",false));
         let mut c = json!({"proto": if s.proto == TCP { "tcp" } else { "udp" }, "state": state_name(s),
                "local": s.src.to_string(), "lport": s.sport,
                "remote": if s.dport == 0 { String::new() } else { s.dst.to_string() }, "rport": s.dport,
                "uid": s.uid, "pid": pid, "name": name, "exe": exe, "wine": wine,
-               "bl": s.dport != 0 && cfg.blacklisted(s.dst)});
+               "bl": s.dport != 0 && cfg.blacklisted(s.dst),
+               "boot_id": boot, "netns": netns, "family": s.family,
+               "socket_cookie": socket_cookie(s), "socket_inode": s.inode});
+        if let Some(owner) = owner {
+            c["process_start_ticks"] = json!(owner.identity.ticks.to_string());
+            c["process_exe"] = json!(owner.identity.exe);
+        }
         if s.dport == 0 && (s.proto == UDP || s.state == TCP_LISTEN) {
             let (state, conditional) = cfg.fw.listen_state(s.proto == TCP, s.sport);
             c["fw"] = json!(state);
@@ -2114,6 +2157,19 @@ fn server_of(hops: &[(String, String)]) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_process_lifetime_fields() {
+        let line = format!("42 (weird ) name) S{} 18446744073709551615 0", " 0".repeat(18));
+        assert_eq!(parse_proc_start_ticks(&line, 42), Some(u64::MAX));
+        assert_eq!(parse_proc_start_ticks(&line, 43), None);
+        assert_eq!(parse_proc_start_ticks("42 (foo) S 0", 42), None);
+        let mut packet = [0u8; 72]; packet[0] = AF_INET;
+        packet[44..52].fill(255);
+        let s = parse_sock(&packet, TCP).unwrap(); assert!(socket_cookie(&s).is_none());
+        packet[44..52].copy_from_slice(&[0,1,2,3,4,5,6,7]);
+        let s = parse_sock(&packet, TCP).unwrap(); assert_eq!(socket_cookie(&s).as_deref(), Some("0001020304050607"));
+    }
 
     #[test]
     fn nets() {

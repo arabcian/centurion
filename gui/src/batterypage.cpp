@@ -1,5 +1,6 @@
 #include "batterypage.h"
 #include "batteryadvice.h"
+#include "diagsources.h"
 #include "charts.h"
 #include "dgpupage.h"
 #include "dgpuusage.h"
@@ -26,6 +27,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 static constexpr int TICK_MS = 60000, NOW_MS = 5000;
 static constexpr qint64 MAX_GAP_MS = 10 * 60 * 1000;  // a longer gap between samples is not counted
@@ -89,6 +91,7 @@ BatteryPage::BatteryPage(QWidget *parent) : QWidget(parent) {
                                          "sleep excluded). \"Full charge lasts\" = today's full capacity ÷ the average draw.")));
 
     root->addWidget(new QLabel(QStringLiteral("<b>Capacity History</b>")));
+    root->addWidget(muted(tr("Historical capacity readings do not identify battery replacement. Interpret wear trends only for the same battery.")));
     batInfo_ = new QLabel;
     batInfo_->setTextFormat(Qt::RichText);
     batInfo_->setVisible(false);
@@ -249,7 +252,11 @@ void BatteryPage::sampleCapacity() {
     if (!b.present || b.fullWh <= 0) return;
     QJsonArray cap = data_.value(QStringLiteral("capacity")).toArray();
     const QString today = QDate::currentDate().toString(Qt::ISODate);
-    QJsonObject e{{"d", today}, {"full", std::round(b.fullWh * 100) / 100}};
+    QJsonObject e{{"d", today}, {"full", std::round(b.fullWh * 100) / 100},
+                  {"captured_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}, {"boot",diagsrc::bootId()}, {"status",b.status}};
+    if(std::isfinite(b.energyWh) && b.energyWh>=0) e["energy_wh"]=b.energyWh;
+    if(std::isfinite(b.powerW) && b.powerW>=0) e["power_w"]=b.powerW;
+    if(b.capacity>=0 && b.capacity<=100) e["capacity_pct"]=b.capacity;
     if (b.designWh > 0) e["design"] = std::round(b.designWh * 100) / 100;
     if (b.cycles >= 0) e["cycles"] = b.cycles;
     if (!cap.isEmpty() && cap.last().toObject().value(QStringLiteral("d")).toString() == today) cap.removeLast();
@@ -373,9 +380,12 @@ void BatteryPage::refreshTables() {
     for (int i = cap.size() - 1; i >= 0; --i) {
         const QJsonObject e = cap.at(i).toObject();
         const double full = e.value(QStringLiteral("full")).toDouble(), design = e.value(QStringLiteral("design")).toDouble();
-        capacity_->addTopLevelItem(new QTreeWidgetItem({e.value(QStringLiteral("d")).toString(), QStringLiteral("%1 Wh").arg(full, 0, 'f', 1),
-                                                        design > 0 ? QStringLiteral("%1%").arg(100 * full / design, 0, 'f', 1) : QStringLiteral("—"),
-                                                        e.contains(QStringLiteral("cycles")) ? QString::number(e.value(QStringLiteral("cycles")).toInt()) : QStringLiteral("—")}));
+        auto *item=new QTreeWidgetItem({e.value(QStringLiteral("d")).toString(), full>0?QStringLiteral("%1 Wh").arg(full, 0, 'f', 1):QStringLiteral("—"),
+                                                        design > 0 && full>0 ? QStringLiteral("%1%").arg(100 * full / design, 0, 'f', 1) : QStringLiteral("—"),
+                                                        e.value(QStringLiteral("cycles")).isDouble() ? QString::number(e.value(QStringLiteral("cycles")).toInt()) : QStringLiteral("—")});
+        const auto metric=[&](const char *key,const QString &unit) {const auto v=e.value(QLatin1String(key));return v.isDouble()?QString::number(v.toDouble(),'f',2)+unit:QStringLiteral("—");};
+        item->setToolTip(0,tr("Capture: %1\nBoot: %2\nBattery status: %3\nCharge: %4\nEnergy: %5\nPower: %6\nBattery replacement cannot be established from these records.").arg(e.value("captured_utc").toString(QStringLiteral("—")),e.value("boot").toString(QStringLiteral("—")),e.value("status").toString(QStringLiteral("—")),metric("capacity_pct",QStringLiteral(" %")),metric("energy_wh",QStringLiteral(" Wh")),metric("power_w",QStringLiteral(" W"))));
+        capacity_->addTopLevelItem(item);
     }
     if (cap.size() >= 2) {
         const QJsonObject a = cap.first().toObject(), z = cap.last().toObject();
@@ -393,7 +403,7 @@ void BatteryPage::refreshTables() {
         const QJsonObject e = v.toObject();
         const double design = e.value(QStringLiteral("design")).toDouble();
         const QDate d = QDate::fromString(e.value(QStringLiteral("d")).toString(), Qt::ISODate);
-        if (design > 0 && d.isValid()) health << LineChart::Point{double(d.toJulianDay()), 100 * e.value(QStringLiteral("full")).toDouble() / design, d.toString(Qt::ISODate)};
+        if (d.isValid()) health << LineChart::Point{double(d.toJulianDay()), design>0 && e.value("full").toDouble()>0 ? 100 * e.value("full").toDouble() / design : std::numeric_limits<double>::quiet_NaN(), d.toString(Qt::ISODate)};
     }
     healthChart_->setPoints(health, QStringLiteral(" %"));
 

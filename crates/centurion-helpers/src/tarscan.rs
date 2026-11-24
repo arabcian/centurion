@@ -32,6 +32,36 @@ pub enum Event {
 
 enum Data { Skip, Keep(Vec<u8>) }
 
+/// Strict, bounded *advisory* configuration preview. Never used to authorize
+/// extraction, writes or incremental deletions. No path is resolved on disk.
+#[derive(Debug)]
+pub struct PreviewMember { pub path: String, pub kind: u8, pub size: u64, pub mode: u64 }
+#[derive(Default)]
+pub struct Preview {
+    pub members: Vec<PreviewMember>,
+    pub manifest: Option<Vec<u8>>,
+    seen: std::collections::BTreeSet<String>,
+    name_bytes: usize,
+}
+impl Preview {
+    fn member(&mut self, raw: &[u8], kind: u8, size: u64, mode: u64) -> bool {
+        if raw.starts_with(b"/") || raw.len()>1024 || raw.iter().any(|b| b.is_ascii_control()) { return false; }
+        let mut relative=raw;
+        while let Some(rest)=relative.strip_prefix(b"./"){relative=rest;}
+        if relative.starts_with(b"/"){return false;}
+        let path=norm(relative);
+        if !plain_path(&path) || path.contains(&b'\\') {return false;}
+        let Ok(path)=String::from_utf8(path) else {return false;};
+        self.name_bytes=self.name_bytes.saturating_add(path.len());
+        if self.members.len()>=4096 || self.name_bytes>512*1024 || !self.seen.insert(path.clone()) {return false;}
+        if !matches!(kind,0|b'0'|b'5'|b'1'|b'2') {return false;}
+        // Restore refuses links under user/system. Do not present the same
+        // archive as a valid list of restore candidates when such links exist.
+        if matches!(kind,b'1'|b'2') && (path=="user"||path.starts_with("user/")||path=="system"||path.starts_with("system/")){return false;}
+        self.members.push(PreviewMember{path,kind,size,mode});true
+    }
+}
+
 pub struct Scanner {
     hdr: Vec<u8>,
     /// Bytes of member data still to pass (including the padding to a full block).
@@ -51,6 +81,7 @@ pub struct Scanner {
     zeros: u8,
     pub broken: bool,
     pub ended: bool,
+    preview: Option<Preview>,
 }
 
 impl Default for Scanner { fn default() -> Self { Scanner::new() } }
@@ -58,8 +89,11 @@ impl Default for Scanner { fn default() -> Self { Scanner::new() } }
 impl Scanner {
     pub fn new() -> Scanner {
         Scanner { hdr: Vec::with_capacity(BLOCK), left: 0, content: 0, data: Data::Skip, kind: 0, name: Vec::new(),
-                  long_name: None, pax_path: None, pax_dumpdir: None, pax_size: None, sparse_ext: false, zeros: 0, broken: false, ended: false }
+                  long_name: None, pax_path: None, pax_dumpdir: None, pax_size: None, sparse_ext: false, zeros: 0, broken: false, ended: false, preview: None }
     }
+
+    pub fn configuration_preview() -> Self { let mut s=Self::new();s.preview=Some(Preview::default());s }
+    pub fn into_preview(self) -> Option<Preview> {if self.complete() && self.long_name.is_none(){self.preview}else{None}}
 
     /// Feeds the next bytes of the (decompressed) stream; events are reported as soon as they are complete.
     pub fn feed(&mut self, mut buf: &[u8], on: &mut dyn FnMut(Event)) {
@@ -86,6 +120,7 @@ impl Scanner {
                 self.hdr.clear();
             }
         }
+        if self.preview.is_some() && self.ended && buf.iter().any(|b|*b!=0){self.broken=true;}
     }
 
     /// Incomplete metadata or member contents at EOF must not authorize incremental deletions.
@@ -109,6 +144,10 @@ impl Scanner {
         if !checksum_ok(h) { self.broken = true; return; }
         let Some(mut size) = number(&h[124..136]) else { self.broken = true; return };
         self.kind = h[156];
+        // PAX/global/sparse/incremental metadata requires a different preview
+        // schema. Refuse rather than claiming a complete list with ambiguous paths.
+        if self.preview.is_some() && !matches!(self.kind,0|b'0'|b'5'|b'1'|b'2'|b'L'|b'K') {self.broken=true;return;}
+        if self.preview.is_some() && self.kind==b'K' && size>MAX_META {self.broken=true;return;}
         if !matches!(self.kind, b'x' | b'g' | b'L' | b'K') { if let Some(s) = self.pax_size.take() { size = s; } }
         self.content = size;
         self.data = Data::Skip;
@@ -132,6 +171,14 @@ impl Scanner {
                 let dd = self.pax_dumpdir.take();
                 self.name = self.member_name(h);
                 let n = norm(&self.name);
+                if let Some(preview)=self.preview.as_mut(){
+                    let Some(mode)=number(&h[100..108]) else {self.broken=true;return;};
+                    if !preview.member(&self.name,self.kind,size,mode){self.broken=true;return;}
+                    if n==b"Centurion-BACKUP.json" {
+                        if !matches!(self.kind,0|b'0') {self.broken=true;return;}
+                        match keep(MAX_META){Some(d)=>self.data=d,None=>{self.broken=true;return;}}
+                    }
+                }
                 on(Event::Member(n.clone()));
                 if let Some(v) = dd.filter(|_| self.kind == b'5') { on(Event::Dumpdir(dumpdir(&n, &v))); }
             }
@@ -180,6 +227,7 @@ impl Scanner {
                 }
             }
             b'D' => on(Event::Dumpdir(dumpdir(&norm(&self.name), &v))),
+            0|b'0' if norm(&self.name)==b"Centurion-BACKUP.json" => {if let Some(p)=self.preview.as_mut(){p.manifest=Some(v);}},
             _ => {}
         }
     }
@@ -286,6 +334,28 @@ mod tests {
         let mut out = Vec::new();
         for c in bytes.chunks(chunk) { s.feed(c, &mut |e| out.push(e)); }
         (out, s.broken)
+    }
+
+    #[test]
+    fn strict_config_preview_members_and_limits() {
+        let body=b"{}";
+        let mut archive=hdr(b"Centurion-BACKUP.json",b'0',body.len() as u64);
+        archive.extend_from_slice(body);archive.resize(2*BLOCK,0);
+        archive.extend(hdr(b"user/config/centurion/",b'5',0));
+        archive.extend(hdr(b"user/config/centurion/gui.ini",b'0',0));
+        archive.resize(archive.len()+2*BLOCK,0);
+        let mut scan=Scanner::configuration_preview();
+        for bytes in archive.chunks(37){scan.feed(bytes,&mut |_|{});}
+        let p=scan.into_preview().expect("valid listing");
+        assert_eq!(p.manifest.as_deref(),Some(&body[..]));assert_eq!(p.members.len(),3);
+        assert_eq!(p.members[2].path,"user/config/centurion/gui.ini");
+        for path in [&b"../bad"[..],b"/bad",b".//bad",b"a/../bad",b"a//bad",b"a\\bad"]{
+            let mut scan=Scanner::configuration_preview();scan.feed(&hdr(path,b'0',0),&mut |_|{});assert!(scan.broken);
+        }
+        let mut scan=Scanner::configuration_preview();let a=hdr(b"x",b'0',0);scan.feed(&a,&mut |_|{});scan.feed(&a,&mut |_|{});assert!(scan.broken);
+        let mut scan=Scanner::configuration_preview();scan.feed(&archive[..archive.len()-1],&mut |_|{});assert!(scan.into_preview().is_none());
+        let mut scan=Scanner::configuration_preview();scan.feed(&archive,&mut |_|{});scan.feed(b"extra",&mut |_|{});assert!(scan.into_preview().is_none());
+        let mut scan=Scanner::configuration_preview();scan.feed(&hdr(b"x",b'x',0),&mut |_|{});assert!(scan.broken);
     }
 
     #[test]

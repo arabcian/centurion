@@ -5,15 +5,7 @@
 // AC and platform-profile changes already have event paths of their own (power_supply uevents,
 // sysfs_notify); this is for what has none: the Spectrum brightness Fn+Space cycles in the EC.
 #include <QObject>
-#include <cstdint>
-#include <string>
-#include <vector>
-
-namespace acpievents {
-struct Event { std::string deviceClass, busId; uint32_t type = 0, data = 0; };
-/// The events in one recv() buffer, from messages of genetlink family `family` (others skipped).
-std::vector<Event> parse(const void *buf, size_t len, uint16_t family);
-} // namespace acpievents
+#include "acpinetlink.h"
 
 class AcpiEvents : public QObject {
     Q_OBJECT
@@ -24,6 +16,9 @@ public:
 
 Q_SIGNALS:
     void event(const QString &deviceClass, const QString &busId, uint type, uint data);
+    // Reports an observed overflow or rejected/truncated datagram, not an event count.
+    void captureGap();
+    void notification(const QString &deviceClass, const QString &busId, uint type, uint data, uint sequence);
 
 private:
     void drain();

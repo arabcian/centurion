@@ -271,7 +271,9 @@ pub fn sleep_stats(log: &str, now: i64) -> SleepStats {
         if o["dgpu_after"] == "error" { s.dgpu_errors += 1; }
         let h = (o["end"].as_i64().unwrap_or(start) - start) as f64 / 3600.0;
         let (e0, e1, full) = (o["energy_before"].as_f64().unwrap_or(0.0), o["energy_after"].as_f64().unwrap_or(0.0), o["full"].as_f64().unwrap_or(0.0));
-        if o["status_before"] == "Discharging" && full > 0.0 && e0 >= e1 && h >= SLEEP_MIN_H {
+        let compatible = (o.get("unit_after").is_none() || (o["unit_after"].as_str().is_some_and(|u| !u.is_empty()) && o["unit_after"] == o["unit"]))
+            && (o.get("status_after").is_none() || o["status_after"] == "Discharging");
+        if compatible && o["status_before"] == "Discharging" && full > 0.0 && e0 > 0.0 && e1 > 0.0 && e0 >= e1 && h >= SLEEP_MIN_H {
             s.pct += 100.0 * (e0 - e1) / full;
             s.hours += h;
         }

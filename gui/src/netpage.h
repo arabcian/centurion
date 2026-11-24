@@ -67,7 +67,7 @@ private:
     void readConnLog();
     void filterConnLog();
     void ipInfo(const QString &ip);
-    void connDetails(const QString &ip, int pid, const QString &exe, qint64 uid, const QString &state);
+    void connDetails(const QString &ip, int pid, const QString &exe, qint64 uid, const QString &state, const QJsonObject &identity = {});
     void whois(const QString &ip, std::function<void(const QJsonObject &)> cb);
     void addIpActions(QMenu &m, const QString &ip);
     void refreshWifi();
@@ -142,6 +142,9 @@ private:
     QFileSystemWatcher *watch_;
     QJsonArray connData_;
     QDateTime connSnapshotTime_;
+    std::optional<wifiage::Tick> connSnapshotTick_;
+    quint64 connViewGeneration_ = 0, connRootGeneration_ = 0;
+    bool connSnapshotFresh() const;
     QString connSnapshotError_;
     QJsonObject state_;                       // last full status (kernel checks included)
     QHash<QString, QTreeWidgetItem *> rows_;  // block log: program|proto|dst|port → row

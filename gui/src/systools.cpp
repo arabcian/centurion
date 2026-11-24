@@ -628,7 +628,10 @@ public:
                     QT_TRANSLATE_NOOP("systools", "CORE"), QT_TRANSLATE_NOOP("systools", "ONLINE"),
                     QT_TRANSLATE_NOOP("systools", "PCI address"), QT_TRANSLATE_NOOP("systools", "Class ID"),
                     QT_TRANSLATE_NOOP("systools", "Device ID"), QT_TRANSLATE_NOOP("systools", "Kernel driver"),
-                    QT_TRANSLATE_NOOP("systools", "Kernel modules")};
+                    QT_TRANSLATE_NOOP("systools", "Kernel modules"), QT_TRANSLATE_NOOP("systools", "Memory kind"),
+                    QT_TRANSLATE_NOOP("systools", "Total (bytes)"), QT_TRANSLATE_NOOP("systools", "Used (bytes)"),
+                    QT_TRANSLATE_NOOP("systools", "Free (bytes)"), QT_TRANSLATE_NOOP("systools", "Shared (bytes)"),
+                    QT_TRANSLATE_NOOP("systools", "Buffer/cache (bytes)"), QT_TRANSLATE_NOOP("systools", "Available (bytes)")};
                 QStringList headers;
                 if (parsed) {
                     for (const auto &h : parsed->headers) headers << QCoreApplication::translate("systools", h.toUtf8().constData());
@@ -640,7 +643,7 @@ public:
                             const auto value = row.value(c);
                             auto *item = new QStandardItem(value);
                             bool ok = false; const auto n = value.toULongLong(&ok);
-                            if (numeric.contains(parsed->headers.at(c))) {
+                            if (numeric.contains(parsed->headers.at(c)) || parsed->headers.at(c).endsWith(QStringLiteral(" (bytes)"))) {
                                 if (ok) item->setData(QVariant::fromValue(n), Qt::UserRole);
                             } else item->setData(value, Qt::UserRole);
                             items.append(item);
@@ -874,7 +877,7 @@ private:
         auto *p = new QProcess(this);
         p->setProcessChannelMode(QProcess::MergedChannels);
         if (shown == QLatin1String("lspci -nnk") || shown == QLatin1String("lscpu -e") ||
-            shown == QLatin1String("lsmod") || shown == QLatin1String("lsusb")) {
+            shown == QLatin1String("lsmod") || shown == QLatin1String("lsusb") || shown == QLatin1String("free -b")) {
             auto env = QProcessEnvironment::systemEnvironment(); env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
             p->setProcessEnvironment(env);
         }
@@ -900,7 +903,7 @@ private:
             // Only the successful actual command section feeds an adapter. A
             // forged delimiter in arbitrary raw command output cannot create one.
             if (valid && (shown == QLatin1String("lspci -nnk") || shown == QLatin1String("lscpu -e") ||
-                shown == QLatin1String("lsmod") || shown == QLatin1String("lsusb")) &&
+                shown == QLatin1String("lsmod") || shown == QLatin1String("lsusb") || shown == QLatin1String("free -b")) &&
                 !output.startsWith(QStringLiteral("$ ")) && !output.contains(QStringLiteral("\n$ ")))
                 structuredCapture_ = QStringLiteral("$ ") + shown + QLatin1Char('\n') + output;
             p->deleteLater();
@@ -989,7 +992,7 @@ private:
         if (busy_) return;
         ran_ = busy_ = true;
         run_->setEnabled(false);
-        outputs_.clear();
+        outputs_.clear(); rawOutputs_.clear();
         view_->setMessage(QCoreApplication::translate("systools", "Reading…"));
         step(1);  // cmds_[0] is the @diag marker
     }
@@ -1001,9 +1004,20 @@ private:
         if (exe.isEmpty()) { outputs_.insert(key, QString()); step(i + 1); return; }
         auto *p = new QProcess(this);
         p->setProcessChannelMode(QProcess::MergedChannels);
+        auto env=QProcessEnvironment::systemEnvironment(); env.insert(QStringLiteral("LC_ALL"),QStringLiteral("C")); p->setProcessEnvironment(env);
         QPointer<QProcess> guard(p);
-        connect(p, &QProcess::finished, this, [this, p, i, key](int code, QProcess::ExitStatus st) {
-            outputs_.insert(key, st == QProcess::NormalExit && code == 0 ? QString::fromUtf8(p->readAll().left(MAX_OUT)) : QString());
+        struct Capture { QByteArray bytes; bool truncated=false; };
+        const auto capture=std::make_shared<Capture>();
+        auto drain=[p,capture]{while(p->bytesAvailable()>0){const auto chunk=p->read(65536);if(chunk.isEmpty())break;
+            const auto room=qMax<qsizetype>(0,MAX_OUT-capture->bytes.size());capture->bytes+=chunk.left(room);
+            if(chunk.size()>room)capture->truncated=true;}};
+        connect(p,&QProcess::readyRead,this,drain);
+        connect(p, &QProcess::finished, this, [this, p, i, key, capture, drain](int code, QProcess::ExitStatus st) {
+            drain();
+            const bool valid=st==QProcess::NormalExit&&code==0&&!capture->truncated;
+            const auto output=QString::fromUtf8(capture->bytes);
+            outputs_.insert(key,valid?output:QString());
+            rawOutputs_.insert(key,valid?output:output+QLatin1Char('\n')+QCoreApplication::translate("systools","(command failed or output was truncated)"));
             p->deleteLater();
             step(i + 1);
         });
@@ -1031,19 +1045,29 @@ private:
             r = systemdiagnostics::pcieLinks({}, previousLinks_, &next);
             previousLinks_ = next;
         }
-        else if (code_ == QLatin1String("S06")) r = diagnostictools::nvidiaParams();
+        else if (code_ == QLatin1String("S06")) {
+            r = diagnostictools::nvidiaParams();
+            const auto captured=outputs_.value(QStringLiteral("modinfo -p nvidia"));
+            const auto parsed=(!captured.startsWith(QStringLiteral("$ ")) && !captured.contains(QStringLiteral("\n$ ")))
+                ? structuredtools::moduleParameters(QStringLiteral("$ modinfo -p nvidia\n")+captured):std::nullopt;
+            if(parsed){diag::Table t;t.title=QCoreApplication::translate("systools","Discovered NVIDIA module parameters");
+                t.headers={QCoreApplication::translate("systools","Parameter"),QCoreApplication::translate("systools","Module description")};
+                t.rows=parsed->rows;for(qsizetype i=0;i<t.rows.size();++i)t.levels<<diag::Level::Info;
+                t.note=QCoreApplication::translate("systools","Installed module metadata only; not a running value or permission to write.");r.tables<<t;
+            }else r.limits<<QCoreApplication::translate("systools","Module parameter metadata is missing or unrecognized.");
+        }
         else if (code_ == QLatin1String("S15")) r = systemdiagnostics::audio(outputs_);
         else r = systemdiagnostics::byCode(code_);
         if (code_ != QLatin1String("S15"))
             for (auto it = outputs_.cbegin(); it != outputs_.cend(); ++it)
-                r.raw += QStringLiteral("\n$ %1\n%2").arg(it.key(), it.value().isEmpty() ? QCoreApplication::translate("systools", "(not installed or failed)") : it.value());
+                r.raw += QStringLiteral("\n$ %1\n%2").arg(it.key(), rawOutputs_.value(it.key(),it.value().isEmpty() ? QCoreApplication::translate("systools", "(not installed or failed)") : it.value()));
         view_->setReport(r);
         when_->setText(QCoreApplication::translate("systools", "Read at %1").arg(QTime::currentTime().toString(QStringLiteral("HH:mm"))));
     }
 
     QString code_;
     QList<QStringList> cmds_;
-    QHash<QString, QString> outputs_;
+    QHash<QString, QString> outputs_, rawOutputs_;
     QJsonObject previousLinks_;
     QPushButton *run_;
     QLabel *status_, *when_;
@@ -1095,7 +1119,7 @@ void addPages(QTabWidget *tabs) {
         {QT_TRANSLATE_NOOP("systools", "Sensors"), QT_TRANSLATE_NOOP("systools", "lm-sensors: temperatures, fan speeds, voltages and power of every hwmon chip."), {{"sensors"}}},
         {QT_TRANSLATE_NOOP("systools", "CPU"), QT_TRANSLATE_NOOP("systools", "Topology, caches, frequencies and the active cpufreq driver/governor."),
          {{"lscpu"}, {"lscpu", "-e"}, {"cpupower", "frequency-info"}}, nullptr, false, true},
-        {QT_TRANSLATE_NOOP("systools", "Memory"), QT_TRANSLATE_NOOP("systools", "Usage, swap/zram and NUMA layout."), {{"free", "-h"}, {"swapon", "--show"}, {"numactl", "-H"}}},
+        {QT_TRANSLATE_NOOP("systools", "Memory"), QT_TRANSLATE_NOOP("systools", "Usage, swap/zram and NUMA layout."), {{"free", "-h"}, {"free", "-b"}, {"swapon", "--show"}, {"numactl", "-H"}}},
         {QT_TRANSLATE_NOOP("systools", "DMI"), QT_TRANSLATE_NOOP("systools", "dmidecode (root): firmware/BIOS, board, and every memory module with its part number and speed."), {}, "dmidecode", false, true},
         {QT_TRANSLATE_NOOP("systools", "PCI"), QT_TRANSLATE_NOOP("systools", "Devices with their kernel drivers, the bus tree, and the live PCIe link of GPUs and NVMe drives."),
          {{"lspci", "-nnk"}, {"lspci", "-tv"}, {"@pcilink"}}, nullptr, false, true},

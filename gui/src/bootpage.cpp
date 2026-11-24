@@ -1,6 +1,8 @@
 #include "bootpage.h"
 #include "flightrec.h"
 #include "klogview.h"
+#include "eventinfo.h"
+#include "bootcomparison.h"
 #include "privileged.h"
 #include "theme.h"
 #include "workspacestate.h"
@@ -31,6 +33,8 @@
 #include <QScrollBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <memory>
+#include <map>
 
 static constexpr qint64 TAIL_BYTES = 512 << 10;   // same bound as KlogPage: only the end of the saved log is read
 static constexpr int LOG_LINES = 50;
@@ -505,7 +509,7 @@ void BootPage::compareSelectedBoots() {
     QSet<QString> duplicate;
     for (const auto &v : data_.value(QStringLiteral("boots")).toArray()) {
         const auto b = v.toObject(); const auto id = b.value(QStringLiteral("boot")).toString();
-        if (id.isEmpty()) continue;
+        if (!klogview::fullBootId(id)) continue;
         if (captured.contains(id)) duplicate.insert(id);
         captured.insert(id, b);
     }
@@ -515,6 +519,38 @@ void BootPage::compareSelectedBoots() {
         const auto label = row->text(0) + QStringLiteral(" · ") + id;
         before->addItem(label, id); after->addItem(label, id);
     }
+    // Freeze the bounded saved log once, not on each combo-box change. Only
+    // full UUIDs are comparable; a lexical address is not physical device identity.
+    std::map<QString, bootcomparison::Boot> evidence;
+    bool logLimited = false, logRead = false;
+    const QRegularExpression device(QStringLiteral(R"((?:\b[0-9a-fA-F]{4}:)?\b[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]\b|\bnvme[0-9]+(?:n[0-9]+)?\b)"));
+    for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
+        logRead = true;
+        if (f.size() > TAIL_BYTES) { logLimited = true; if (!f.seek(f.size()-TAIL_BYTES)) continue; f.readLine(65537); }
+        qint64 remaining = TAIL_BYTES;
+        while (!f.atEnd() && remaining > 0) {
+            const auto raw = f.readLine(qMin(qint64(65537),remaining+1));
+            if (raw.isEmpty()) break;
+            remaining -= raw.size();
+            if (remaining < 0 || raw.size() > 65536 || !raw.endsWith('\n')) { logLimited=true; break; }
+            const auto line = klogview::parse(QString::fromUtf8(raw));
+            if (!line || !klogview::fullBootId(line->boot) || !captured.contains(line->boot) || duplicate.contains(line->boot)) continue;
+            const auto ev = eventinfo::classifyLine(line->msg);
+            QString category;
+            if (!ev.isEmpty()) {
+                const auto m = device.match(line->msg);
+                const auto code = ev.value(QStringLiteral("code"));
+                category = ev.value(QStringLiteral("kind")).toString() + QStringLiteral(" / ") + ev.value(QStringLiteral("level")).toString() + QStringLiteral(" / ") + ev.value(QStringLiteral("title")).toString();
+                if (code.isDouble()) category += QStringLiteral(" / ") + QString::number(code.toInt());
+                category += QStringLiteral(" / ") + (m.hasMatch() ? m.captured().toLower() : tr("Device not identified"));
+            }
+            evidence[line->boot].add(line->seq, {line->text.toStdString(),category.toStdString()});
+        }
+        if (!f.atEnd()) logLimited=true;
+    }
+    const auto observations = std::make_shared<const std::map<QString,bootcomparison::Boot>>(std::move(evidence));
     layout->addWidget(new QLabel(tr("Before"))); layout->addWidget(before);
     layout->addWidget(new QLabel(tr("After"))); layout->addWidget(after);
     auto *detail = new QPlainTextEdit; detail->setReadOnly(true); layout->addWidget(detail, 1);
@@ -522,7 +558,31 @@ void BootPage::compareSelectedBoots() {
     if (const auto *row = list_->currentItem(); row && !row->isHidden()) after->setCurrentIndex(qMax(0, after->findData(row->data(0, ROLE_BOOT))));
     auto update = [=, this] {
         const QString a = before->currentData().toString(), b = after->currentData().toString();
-        detail->setPlainText(a.isEmpty() || b.isEmpty() || a == b ? tr("Select two different visible boot records.") : compareBoots(captured.value(a), captured.value(b)));
+        if (a.isEmpty() || b.isEmpty() || a == b) { detail->setPlainText(tr("Select two different visible boot records.")); return; }
+        QString text = compareBoots(captured.value(a), captured.value(b));
+        text += QStringLiteral("\n\n") + tr("Saved kernel observations by kind, severity, code and reported device label (not physical identity):");
+        text += QStringLiteral("\n") + tr("Only retained classified records are counted; an absent observation is not zero incidents.");
+        if (!logRead) text += QStringLiteral("\n") + tr("Saved kernel log unavailable.");
+        if (logLimited) text += QStringLiteral("\n") + tr("Saved log comparison is bounded or incomplete.");
+        const auto counts = [&](const QString &id) {
+            const auto it = observations->find(id);
+            if (it == observations->end()) return std::map<std::string,uint64_t>{};
+            text += QStringLiteral("\n") + tr("%1: %2 retained sequences, %3 duplicates, %4 conflicting sequences discarded.").arg(id).arg(qulonglong(it->second.records.size())).arg(qulonglong(it->second.duplicates)).arg(qulonglong(it->second.conflicts));
+            if (it->second.capped) text += QStringLiteral("\n") + tr("Sequence limit reached.");
+            return it->second.counts();
+        };
+        const auto left = counts(a), right = counts(b);
+        QSet<QString> keys;
+        for (const auto &[key,count] : left) { Q_UNUSED(count); keys.insert(QString::fromStdString(key)); }
+        for (const auto &[key,count] : right) { Q_UNUSED(count); keys.insert(QString::fromStdString(key)); }
+        QStringList sorted = keys.values(); sorted.sort();
+        const auto display = [&](const auto &map, const QString &key) {
+            const auto count=bootcomparison::observed(map,key.toStdString());
+            return count ? QString::number(qulonglong(*count)) : tr("Not observed / unknown");
+        };
+        for (const auto &key : sorted) text += QStringLiteral("\n  %1: %2 → %3").arg(key,display(left,key),display(right,key));
+        if (sorted.isEmpty()) text += QStringLiteral("\n") + tr("No classified observations in the retained log for these boots.");
+        detail->setPlainText(text);
     };
     connect(before, &QComboBox::currentIndexChanged, &dlg, update);
     connect(after, &QComboBox::currentIndexChanged, &dlg, update);

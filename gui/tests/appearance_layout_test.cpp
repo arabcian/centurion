@@ -1,5 +1,8 @@
 #include "../src/theme.h"
 #include "../src/charts.h"
+#include "../src/zone4canvas.h"
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QApplication>
 #include <QComboBox>
 #include <QGroupBox>
@@ -55,5 +58,19 @@ int main(int argc, char **argv) {
     CHECK(!chart.grab().isNull());
     BarChart bar; bar.setBars({{QStringLiteral("negative"),-10,QStringLiteral("-10")},{QStringLiteral("positive"),5,QStringLiteral("5")},{QStringLiteral("missing"),std::numeric_limits<double>::quiet_NaN(),QStringLiteral("unknown")}});
     bar.resize(500,150); CHECK(!bar.grab().isNull());
+    Zone4Canvas zone;zone.resize(400,120);zone.show();app.processEvents();
+    int chosen=-1;zone.editZone=[&](int i){chosen=i;};
+    CHECK(zone.hitZone({50,60})==0 && zone.hitZone({350,60})==3);
+    zone.selectZone(2);zone.zoomBy(2.);zone.resize(640,160);app.processEvents();
+    CHECK(zone.selectedZone()==2 && !zone.grab().isNull());
+    QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier);QCoreApplication::sendEvent(&zone,&enter);CHECK(chosen==2);
+    QKeyEvent left(QEvent::KeyPress,Qt::Key_Left,Qt::NoModifier);QCoreApplication::sendEvent(&zone,&left);CHECK(zone.selectedZone()==1);
+    zone.fit();CHECK(zone.hitZone({80,80})==0 && zone.hitZone({560,80})==3);
+    DayBars days;days.setDays({{QStringLiteral("2026-01-01"),{}},{QStringLiteral("2026-01-02"),{{QStringLiteral("Xid"),1}}},{QStringLiteral("2026-01-03"),{}}});
+    days.setViewRange(1,3);CHECK(days.viewRange().first==1 && days.viewRange().second==3);
+    QString selected;QObject::connect(&days,&DayBars::dayClicked,&days,[&](const QString &d){selected=d;});
+    QKeyEvent home(QEvent::KeyPress,Qt::Key_Home,Qt::NoModifier);QCoreApplication::sendEvent(&days,&home);CHECK(selected==QStringLiteral("2026-01-02"));
+    days.setViewRange(100,100);CHECK(days.viewRange().first==2 && days.viewRange().second==3);
+    days.setDays({});CHECK(days.viewRange().first==0 && days.viewRange().second==0);
     return 0;
 }

@@ -1,5 +1,8 @@
 #include "vfcurvewidget.h"
 #include "theme.h"
+#include "charts.h"
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QKeyEvent>
 #include <QFontMetrics>
 #include <QMouseEvent>
@@ -217,10 +220,14 @@ QPointF VfCurveWidget::toValue(QPointF px) const {
 }
 
 int VfCurveWidget::hitTest(QPointF px) const {
+    const auto area=plotRect();
+    if(!area.contains(px))return -1;
     int best = -1;
     double bestD = 16 * 16;  // px radius
     for (int i = 0; i < pts_.size(); ++i) {
-        const QPointF d = toPixel(pts_[i]) - px;
+        const QPointF point=toPixel(pts_[i]);
+        if(!area.contains(point))continue;
+        const QPointF d = point - px;
         const double dd = d.x() * d.x() + d.y() * d.y();
         if (dd < bestD) { bestD = dd; best = i; }
     }
@@ -364,6 +371,7 @@ void VfCurveWidget::paintEvent(QPaintEvent *) {
 }
 
 void VfCurveWidget::mousePressEvent(QMouseEvent *e) {
+    if(e->button()!=Qt::LeftButton || !plotRect().contains(e->position())){e->ignore();return;}
     setFocus();
     const int hit = hitTest(e->position());
     const bool ctrl = e->modifiers() & Qt::ControlModifier;
@@ -422,7 +430,7 @@ void VfCurveWidget::mouseMoveEvent(QMouseEvent *e) {
     }
     if (band_) {
         bandEnd_ = e->position();
-        const QRectF box = QRectF(bandStart_, bandEnd_).normalized();
+        const QRectF box = QRectF(bandStart_, bandEnd_).normalized().intersected(plotRect());
         QSet<int> s = bandBase_;
         for (int i = 0; i < pts_.size(); ++i) if (box.contains(toPixel(pts_[i]))) s.insert(i);
         if (s != sel_) { sel_ = s; Q_EMIT selectionChanged(); }
@@ -445,7 +453,8 @@ void VfCurveWidget::leaveEvent(QEvent *e) {
     if (hover_ >= 0) { hover_ = -1; unsetCursor(); update(); }
 }
 
-void VfCurveWidget::mouseReleaseEvent(QMouseEvent *) {
+void VfCurveWidget::mouseReleaseEvent(QMouseEvent *e) {
+    if(e->button()!=Qt::LeftButton){e->ignore();return;}
     if (dragIndex_ >= 0) Q_EMIT pointEdited(dragIndex_, int(std::lround(dragFreq_)));
     dragIndex_ = -1;
     groupDrag_ = false;
@@ -480,4 +489,33 @@ void VfCurveWidget::keyPressEvent(QKeyEvent *e) {
     default: return QWidget::keyPressEvent(e);
     }
     update();
+}
+
+void VfCurveWidget::contextMenuEvent(QContextMenuEvent *e) {
+    if(pts_.isEmpty()||dragIndex_>=0||groupDrag_||band_)return;
+    // Freeze the displayed curves before any nested modal event loop.
+    const auto draft=pts_,base=baseRef_,read=readRef_;
+    const auto invalid=invalidPoints_,selection=sel_;
+    const double lo=xMin_,hi=xMax_;
+    QMenu menu(this);
+    auto *table=menu.addAction(tr("Inspect visible curve points"));
+    auto *visible=menu.addAction(tr("Export visible curve points"));
+    auto *all=menu.addAction(tr("Export all curve points"));
+    const auto chosen=menu.exec(e->globalPos());if(!chosen)return;
+    QList<QStringList> rows;
+    const auto num=[](double n){return std::isfinite(n)?QString::number(n,'g',17):QString();};
+    // Only same-length, same-voltage displayed reference layouts can be aligned.
+    // This is presentation, not a hardware identity or Apply validation.
+    const auto aligned=[&draft](const QVector<QPointF> &ref){
+        if(ref.size()!=draft.size())return false;
+        for(qsizetype i=0;i<draft.size();++i)if(!std::isfinite(ref[i].x())||ref[i].x()!=draft[i].x())return false;
+        return true;
+    };
+    const bool b=aligned(base),r=aligned(read);
+    for(qsizetype i=0;i<draft.size();++i){
+        const auto p=draft[i];if(chosen!=all&&(p.x()<lo||p.x()>hi))continue;
+        rows.append(QStringList{QString::number(i),num(p.x()),num(p.y()),b?num(base[i].y()):QString(),r?num(read[i].y()):QString(),b?num(p.y()-base[i].y()):QString(),r?num(read[i].y()-p.y()):QString(),selection.contains(int(i))?QStringLiteral("1"):QStringLiteral("0"),invalid.contains(int(i))?QStringLiteral("1"):QStringLiteral("0")});
+    }
+    if(chosen==table)chartdata::table(this,{tr("Display index"),tr("Voltage (mV)"),tr("Draft (MHz)"),tr("Base (MHz)"),tr("Readback (MHz)"),tr("Draft − base (MHz)"),tr("Readback − draft (MHz)"),tr("Selected (0/1)"),tr("Validator marker (0/1)")},rows);
+    else chartdata::exportRows(this,QStringLiteral("display_index,voltage_mv,draft_mhz,base_mhz,readback_mhz,draft_minus_base_mhz,readback_minus_draft_mhz,selected,validator_marker"),rows,0);
 }

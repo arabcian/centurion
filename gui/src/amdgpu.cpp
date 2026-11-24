@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QRegularExpression>
+#include <sys/stat.h>
 
 namespace amdgpu {
 
@@ -28,6 +29,12 @@ static QList<int> numbers(const QString &s) {
     return out;
 }
 
+static QString incarnation(const QString &path) {
+    struct stat st{};
+    if (path.isEmpty() || ::stat(QFile::encodeName(path).constData(), &st) != 0 || !S_ISDIR(st.st_mode)) return {};
+    return QStringLiteral("%1:%2").arg(qulonglong(st.st_dev)).arg(qulonglong(st.st_ino));
+}
+
 QList<Card> cards() {
     QList<Card> out;
     // Dev aid (like CENTURION_FWATTR_BASE): CENTURION_AMDGPU_DRM=<dir with cardN/device> for screenshots and tests.
@@ -42,6 +49,7 @@ QList<Card> cards() {
         c.name = n;
         c.dev = dev;
         c.devicePath = QFileInfo(dev).canonicalFilePath();
+        c.incarnation = incarnation(c.devicePath);
         for (const QString &h : QDir(dev + QStringLiteral("/hwmon")).entryList(QDir::Dirs | QDir::NoDotAndDotDot))
             if (text(dev + "/hwmon/" + h + "/name") == QLatin1String("amdgpu")) { c.hwmon = dev + "/hwmon/" + h; break; }
         c.pciId = text(dev + "/vendor").mid(2) + ':' + text(dev + "/device").mid(2);
@@ -169,10 +177,12 @@ Snapshot read(const Card &c) {
 }
 
 bool sameDevice(const Card &c) {
-    if (c.devicePath.isEmpty() || QFileInfo(c.dev).canonicalFilePath() != c.devicePath) return false;
+    if (c.devicePath.isEmpty() || c.incarnation.isEmpty() || QFileInfo(c.dev).canonicalFilePath() != c.devicePath ||
+        incarnation(c.devicePath) != c.incarnation) return false;
     if (QFileInfo(QFileInfo(c.dev + "/driver").symLinkTarget()).fileName() != QLatin1String("amdgpu")) return false;
     const auto vendor = text(c.dev + "/vendor"), device = text(c.dev + "/device");
-    return !vendor.isEmpty() && !device.isEmpty() && vendor.mid(2) + ':' + device.mid(2) == c.pciId;
+    return !vendor.isEmpty() && !device.isEmpty() && vendor.mid(2) + ':' + device.mid(2) == c.pciId &&
+        QFileInfo(c.dev).canonicalFilePath() == c.devicePath && incarnation(c.devicePath) == c.incarnation;
 }
 
 bool runtimeActive(const Card &c) {

@@ -2,6 +2,7 @@
 #include "autotuneprogress.h"
 #include "autotunehistory.h"
 #include "tuningsemantic.h"
+#include "draftidentity.h"
 #include "calibrationcoverage.h"
 #include "calibrationmath.h"
 #include "abverify.h"
@@ -77,6 +78,8 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QLockFile>
+#include <QSignalBlocker>
 #include <QScrollArea>
 #include <QSet>
 #include <QSpacerItem>
@@ -1673,7 +1676,9 @@ void OptimizeTab::jumpToSetting(const QString &query) {
 }
 
 void OptimizeTab::buildRows(const QJsonArray &rows) {
-    const QJsonObject values = collectValues();  // keep the user's edits across a rebuild
+    QJsonObject values = collectValues();  // keep the user's edits across a rebuild
+    QHash<QString,QString> previousIdentities;
+    for (const Row &r : rows_) previousIdentities.insert(r.key,r.draftIdentity);
     QHash<QString, QString> uncheckedDrafts;
     for (const Row &r : rows_) if (r.include && !r.include->isChecked() && r.touched)
         uncheckedDrafts.insert(r.key, editorValue(r));
@@ -1927,13 +1932,17 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
     if (const QString n = qEnvironmentVariable("CENTURION_OPT_LOAD"); !n.isEmpty() && values.isEmpty())
         QTimer::singleShot(0, this, [this, n] { const int i = presetCombo_->findData(n); if (i >= 0) { presetCombo_->setCurrentIndex(i); loadSelected(); } });
 
+    QStringList lost;
+    for (const Row &r : rows_) if (previousIdentities.contains(r.key) && previousIdentities.value(r.key)!=r.draftIdentity) {
+        if (values.contains(r.key) || uncheckedDrafts.contains(r.key)) lost << r.key;
+        values.remove(r.key); uncheckedDrafts.remove(r.key);
+    }
     if (!values.isEmpty() || !run.isEmpty()) {
         // Restores exactly what was checked before the rebuild: no boot-default fill, or a row the
         // user had unchecked would come back checked.
         QJsonObject p{{"values", values}, {"run", run}};
         loadPresetObject(p, nullptr, false);
     }
-    QStringList lost;
     for (Row &r : rows_) if (uncheckedDrafts.contains(r.key)) {
         const QString draft = uncheckedDrafts.take(r.key);
         if (validFor(r, draft) && setEditorValue(r, draft)) {
@@ -1944,12 +1953,27 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
         } else lost << r.key;
     }
     for (const QString &key : uncheckedDrafts.keys()) lost << key;
-    if (!lost.isEmpty()) showStatus(tr("Some unchecked drafts are no longer available: %1").arg(lost.join(QStringLiteral(", "))), theme::WARN, 10000);
+    if (!lost.isEmpty()) showStatus(tr("Some drafts are no longer available or their target changed: %1").arg(lost.join(QStringLiteral(", "))), theme::WARN, 10000);
 }
 
 void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
     const QString oldCurrent = r.current;
     const QString oldEditor = editorValue(r);
+    const QString identity = draftidentity::identity(r.key, o.value("draft_identity"));
+    const bool targetChanged = (!r.draftIdentity.isEmpty() || r.touched) && r.draftIdentity != identity;
+    r.draftIdentity = identity;
+    if (r.key.startsWith(QStringLiteral("blk.nvme1.")) || r.key.startsWith(QStringLiteral("blk.nvme2."))) {
+        const QString label=QCoreApplication::translate("OptimizationLabels",o.value("label").toString().toUtf8().constData());
+        if (!label.isEmpty() && label!=r.label) { r.label=label; r.name->setText((r.caution || !r.conflict.isEmpty()?QStringLiteral("⚠ "):QString())+label); }
+    }
+    if (targetChanged) {
+        // A numbered device slot must not retain an edit for its predecessor.
+        const QSignalBlocker blocker(r.include);
+        if (r.spin) { const QSignalBlocker b(r.spin); r.spin->clearFocus(); }
+        if (r.combo) { const QSignalBlocker b(r.combo); r.combo->clearFocus(); }
+        r.touched = false;
+        r.include->setChecked(false);
+    }
     r.available = o.value("available").toBool();
     r.cached = o.value(QStringLiteral("gui_cached")).toBool();
     r.current = o.value("current").isNull() ? QString() : o.value("current").toString();
@@ -1983,7 +2007,7 @@ void OptimizeTab::updateRow(Row &r, const QJsonObject &o) {
     // (has focus, keyboard tracking off so no valueChanged yet) is left alone
     // outright - re-syncing its range/value while someone is still typing a
     // 7-digit kHz number is what let the periodic poll stomp on it before.
-    const bool midEdit = r.spin && r.spin->hasFocus();
+    const bool midEdit = !targetChanged && r.spin && r.spin->hasFocus();
     const QString want = (r.touched || midEdit) ? oldEditor : r.current;
     if (r.combo) {
         bool same = r.options.size() == opts.size();
@@ -2304,12 +2328,6 @@ void OptimizeTab::reloadPresets(const QString &select, bool poll) {
     Q_EMIT presetCombo_->currentIndexChanged(presetCombo_->currentIndex());
 }
 
-// Only persistent global scalar settings are eligible; a numbered device slot can
-// be reassigned after a reboot and must never be restored by its GUI key alone.
-static bool persistentDraftKey(const QString &key) {
-    return key.startsWith(QStringLiteral("vm.")) || key.startsWith(QStringLiteral("sched."));
-}
-
 QString OptimizeTab::draftFingerprint() const {
     const QString machine = diagsrc::read(QStringLiteral("/etc/machine-id"), 128);
     if (machine.isEmpty() || topology_.isEmpty()) return {};
@@ -2324,8 +2342,8 @@ void OptimizeTab::restoreStartupDraft() {
     startupDraftChecked_=true;
     if(!QSettings().value(QStringLiteral("optimization/restore_draft_on_start"),false).toBool())return;
     if(!QFileInfo::exists(draftPath()))return;
-    const auto record=diagsrc::loadJson(draftPath()); const auto fingerprint=draftFingerprint();
-    if(fingerprint.isEmpty() || record.value("version").toInt()!=1 || record.value("fingerprint").toString()!=fingerprint || !record.value("values").isObject()) {
+    const auto record=draftidentity::record(draftidentity::snapshot(draftPath())); const auto fingerprint=draftFingerprint();
+    if(!draftidentity::validRecord(record,fingerprint)) {
         startupDraftNotice_=tr("Saved startup draft is damaged or incompatible. No editors changed.");return;
     }
     const auto values=record.value("values").toObject();
@@ -2333,7 +2351,7 @@ void OptimizeTab::restoreStartupDraft() {
     const auto bootValues=boot_.value("values").toObject(); int restored=0,skipped=0; QStringList mismatch;
     for(auto it=values.constBegin();it!=values.constEnd();++it){
         auto *r=row(it.key()); const auto saved=it.value().toObject(); const auto value=saved.value("draft").toString();
-        if(!r||!persistentDraftKey(it.key())||!r->include||r->include->isChecked()||r->touched||!r->available||r->cached||!r->shadowedBy.isEmpty()||r->current.isEmpty()||!validFor(*r,value)||(r->spin&&r->spin->hasFocus())||(r->combo&&r->combo->hasFocus())){++skipped;continue;}
+        if(!r||!draftidentity::compatible(record.value("version").toInt(),it.key(),saved,r->draftIdentity)||!r->include||r->include->isChecked()||r->touched||!r->available||r->cached||!r->shadowedBy.isEmpty()||r->current.isEmpty()||!validFor(*r,value)||(r->spin&&r->spin->hasFocus())||(r->combo&&r->combo->hasFocus())){++skipped;continue;}
         if(!setEditorValue(*r,value)){++skipped;continue;}
         // No apply, no helper calls; never check restored editors.
         const QSignalBlocker blocker(r->include);r->include->setChecked(false);r->touched=true;markRow(*r);++restored;
@@ -2352,7 +2370,7 @@ void OptimizeTab::draftWorkspace() {
     if (fingerprint.isEmpty()) { QMessageBox::warning(this, tr("Optimization Draft"), tr("Machine or topology identity is unavailable.")); return; }
     const QString path = draftPath();
     QMessageBox choice(this); choice.setWindowTitle(tr("Optimization Draft"));
-    choice.setText(tr("Save or restore global VM/scheduler editor values. Device-scoped settings are excluded until stable identity is available. Restored values are never automatically checked or applied."));
+    choice.setText(tr("Save or restore global settings and identified NVMe queue editors. Other device slots are excluded. Changed identities are skipped. Restored values are never automatically checked or applied."));
     auto *store = choice.addButton(tr("Save draft"), QMessageBox::ActionRole);
     auto *load = choice.addButton(tr("Restore draft"), QMessageBox::ActionRole);
     auto *discard = choice.addButton(tr("Delete saved draft"), QMessageBox::DestructiveRole);
@@ -2369,22 +2387,42 @@ void OptimizeTab::draftWorkspace() {
     if (choice.clickedButton() == store) {
         QJsonObject values;
         const auto bootValues = boot_.value(QStringLiteral("values")).toObject();
-        for (const Row &r : rows_) if (persistentDraftKey(r.key) && r.include && r.available && (r.touched || r.include->isChecked())) {
+        for (const Row &r : rows_) if (!r.draftIdentity.isEmpty() && r.include && r.available && !r.cached && !r.current.isEmpty() && r.shadowedBy.isEmpty() && (r.touched || r.include->isChecked())) {
             const QString value = editorValue(r);
-            if (validFor(r, value)) values.insert(r.key, QJsonObject{{"draft", value}, {"live", r.cached ? QString() : r.current}, {"boot", tuningview::valueText(bootValues.value(r.key))}});
+            if (validFor(r, value)) values.insert(r.key, QJsonObject{{"draft", value}, {"live", r.current}, {"boot", tuningview::valueText(bootValues.value(r.key))}, {"identity",r.draftIdentity}});
         }
         if (values.isEmpty()) { QMessageBox::information(this, tr("Optimization Draft"), tr("No eligible edited values to save.")); return; }
-        if (QFileInfo::exists(path) && QMessageBox::question(this, tr("Optimization Draft"), tr("Replace the saved draft?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+        const auto previous=draftidentity::snapshot(path);
+        if (!previous) { QMessageBox::warning(this,tr("Optimization Draft"),tr("The draft file cannot be safely read or replaced.")); return; }
+        if (previous->exists && QMessageBox::question(this, tr("Optimization Draft"), tr("Replace the saved draft?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         if (busy_ || active_ || describing_ || readbackStale_ || fingerprint != draftFingerprint()) return;
-        const QString error = diagsrc::saveJson(path, QJsonObject{{"version", 1}, {"fingerprint", fingerprint}, {"saved", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}, {"values", values}});
+        // The overwrite confirmation runs a nested event loop. Reject any
+        // changed editor or identity rather than saving the old snapshot.
+        for (auto it=values.constBegin();it!=values.constEnd();++it) {
+            const Row *r=row(it.key()); const auto saved=it.value().toObject();
+            if (!r || !r->available || r->cached || !r->shadowedBy.isEmpty() || r->draftIdentity!=saved.value("identity").toString() ||
+                editorValue(*r)!=saved.value("draft").toString() || r->current!=saved.value("live").toString() ||
+                tuningview::valueText(boot_.value("values").toObject().value(r->key))!=saved.value("boot").toString()) {
+                QMessageBox::warning(this,tr("Optimization Draft"),tr("Settings changed during review. Open the draft again.")); return;
+            }
+        }
+        if (!QDir().mkpath(QFileInfo(path).absolutePath())) { QMessageBox::warning(this,tr("Optimization Draft"),tr("The draft file cannot be safely read or replaced.")); return; }
+        QLockFile lock(path+QStringLiteral(".lock"));
+        if (!lock.tryLock(0) || draftidentity::snapshot(path)!=previous) { QMessageBox::warning(this,tr("Optimization Draft"),tr("The saved draft changed or is busy. Open it again.")); return; }
+        const QString error = diagsrc::saveJson(path, QJsonObject{{"version", 2}, {"fingerprint", fingerprint}, {"saved", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}, {"values", values}});
         if (!error.isEmpty()) QMessageBox::warning(this, tr("Optimization Draft"), error);
         else showStatus(tr("Editor draft saved. No settings applied."));
     } else if (choice.clickedButton() == discard) {
-        if (QMessageBox::question(this, tr("Optimization Draft"), tr("Delete only the saved editor draft?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes && QFileInfo::exists(path) && !QFile::remove(path))
-            QMessageBox::warning(this, tr("Optimization Draft"), tr("Could not delete the saved draft."));
+        const auto previous=draftidentity::snapshot(path);
+        if (!previous) { QMessageBox::warning(this,tr("Optimization Draft"),tr("The draft file cannot be safely read or replaced.")); return; }
+        if (!previous->exists || QMessageBox::question(this, tr("Optimization Draft"), tr("Delete only the saved editor draft?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+        QLockFile lock(path+QStringLiteral(".lock"));
+        if (!lock.tryLock(0) || draftidentity::snapshot(path)!=previous) { QMessageBox::warning(this,tr("Optimization Draft"),tr("The saved draft changed or is busy. Open it again.")); return; }
+        if (!QFile::remove(path)) QMessageBox::warning(this,tr("Optimization Draft"),tr("Could not delete the saved draft."));
     } else if (choice.clickedButton() == load) {
-        const auto record = diagsrc::loadJson(path);
-        if (record.value(QStringLiteral("version")).toInt() != 1 || record.value(QStringLiteral("fingerprint")).toString() != fingerprint || !record.value(QStringLiteral("values")).isObject()) {
+        const auto previous=draftidentity::snapshot(path);
+        const auto record=draftidentity::record(previous);
+        if (!draftidentity::validRecord(record,fingerprint)) {
             QMessageBox::warning(this, tr("Optimization Draft"), tr("Draft missing, damaged, incompatible, or from a different topology.")); return;
         }
         const auto values = record.value(QStringLiteral("values")).toObject();
@@ -2394,7 +2432,7 @@ void OptimizeTab::draftWorkspace() {
         const auto bootValues = boot_.value(QStringLiteral("values")).toObject();
         for (auto it = values.begin(); it != values.end(); ++it) {
             Row *r = row(it.key()); const auto saved = it.value().toObject(); const auto v = saved.value(QStringLiteral("draft")).toString();
-            if (!r || !persistentDraftKey(it.key()) || !r->include || !r->available || !validFor(*r, v) || r->cached || !r->shadowedBy.isEmpty()) { skipped << it.key(); continue; }
+            if (!r || !draftidentity::compatible(record.value("version").toInt(),it.key(),saved,r->draftIdentity) || !r->include || !r->available || r->current.isEmpty() || !validFor(*r, v) || r->cached || !r->shadowedBy.isEmpty()) { skipped << it.key(); continue; }
             accepted.insert(it.key(), v);
             const QString live = saved.value(QStringLiteral("live")).toString();
             const QString boot = saved.value(QStringLiteral("boot")).toString();
@@ -2405,16 +2443,16 @@ void OptimizeTab::draftWorkspace() {
         if (accepted.isEmpty()) { QMessageBox::information(this, tr("Optimization Draft"), tr("No compatible draft values.") + QLatin1Char('\n') + preview.join(QLatin1Char('\n'))); return; }
         // Modal review can run event-loop callbacks: use a frozen current state to reject a stale preview.
         QJsonObject reviewState;
-        for (auto it = accepted.cbegin(); it != accepted.cend(); ++it) { const Row *r = row(it.key()); reviewState.insert(it.key(), QJsonArray{r->current, editorValue(*r), r->include->isChecked(), tuningview::valueText(bootValues.value(r->key))}); }
+        for (auto it = accepted.cbegin(); it != accepted.cend(); ++it) { const Row *r = row(it.key()); reviewState.insert(it.key(), QJsonArray{r->current, editorValue(*r), r->include->isChecked(), tuningview::valueText(bootValues.value(r->key)), r->draftIdentity}); }
         QDialog review(this); review.setWindowTitle(tr("Restore editor draft")); review.resize(650, 450);
         auto *layout = new QVBoxLayout(&review); layout->addWidget(muted(tr("Restoring replaces only the listed editors and unchecks those rows. No hardware write.")));
         auto *text = new QPlainTextEdit(preview.join(QLatin1Char('\n'))); text->setReadOnly(true); layout->addWidget(text, 1);
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); connect(buttons, &QDialogButtonBox::accepted, &review, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &review, &QDialog::reject); layout->addWidget(buttons);
         if (review.exec() != QDialog::Accepted) return;
-        if (busy_ || active_ || describing_ || readbackStale_ || fingerprint != draftFingerprint()) return;
+        if (busy_ || active_ || describing_ || readbackStale_ || fingerprint != draftFingerprint() || draftidentity::snapshot(path)!=previous) return;
         for (auto it = accepted.cbegin(); it != accepted.cend(); ++it) {
             Row *r = row(it.key());
-            if (!r || !r->include || !r->available || !validFor(*r, it.value()) || r->cached || !r->shadowedBy.isEmpty() || reviewState.value(it.key()).toArray() != QJsonArray{r->current, editorValue(*r), r->include->isChecked(), tuningview::valueText(boot_.value(QStringLiteral("values")).toObject().value(r->key))}) {
+            if (!r || !r->include || !r->available || !validFor(*r, it.value()) || r->cached || !r->shadowedBy.isEmpty() || reviewState.value(it.key()).toArray() != QJsonArray{r->current, editorValue(*r), r->include->isChecked(), tuningview::valueText(boot_.value(QStringLiteral("values")).toObject().value(r->key)), r->draftIdentity}) {
                 QMessageBox::warning(this, tr("Optimization Draft"), tr("Settings changed during review. Open the draft again.")); return;
             }
         }

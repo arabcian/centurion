@@ -79,6 +79,7 @@ private:
     QTimer *liveTimer_, *trialTimer_;
     int trialLeft_ = 0;
     bool busy_ = false;
+    bool dpmPending_ = false; // at most one read worker, including after dialog closure
 
     // Form (null when the card lacks the control)
     QComboBox *perf_ = nullptr, *profile_ = nullptr;

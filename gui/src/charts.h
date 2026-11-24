@@ -4,8 +4,16 @@
 #include <QColor>
 #include <QMap>
 #include <QPair>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
+
+// Shared frozen presentation data; export fields from numericFrom onward must
+// be numeric or empty, preceding text fields are spreadsheet-safe escaped.
+namespace chartdata {
+void table(QWidget *parent,const QStringList &headers,const QList<QStringList> &rows);
+void exportRows(QWidget *parent,const QString &header,const QList<QStringList> &rows,int numericFrom);
+}
 
 /// Line over x (any increasing number, e.g. a day number); `label` is the hover text, and the first and last
 /// labels are printed under the axis.
@@ -46,6 +54,7 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *e) override;
+    void contextMenuEvent(QContextMenuEvent *e) override;
 
 private:
     QVector<Bar> bars_;
@@ -59,6 +68,8 @@ public:
     explicit DayBars(QWidget *parent = nullptr);
     void setDays(const QVector<Day> &days);
     void setSelected(const QString &date);
+    void setViewRange(qsizetype begin, qsizetype end);
+    QPair<qsizetype,qsizetype> viewRange() const {return {begin_,end_};}
     /// The segment colour of an event kind (the same kind has the same colour everywhere).
     static QColor colorOf(const QString &kind);
 
@@ -70,6 +81,8 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void keyPressEvent(QKeyEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
+    void wheelEvent(QWheelEvent *e) override;
+    void contextMenuEvent(QContextMenuEvent *e) override;
     QSize minimumSizeHint() const override { return {240, 90}; }
 
 private:
@@ -77,5 +90,6 @@ private:
     int columnAt(const QPointF &p) const;
 
     QVector<Day> days_;
+    qsizetype begin_=0,end_=0;
     QString selected_;
 };

@@ -6,6 +6,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QTableView>
+#include <QStandardItemModel>
 #include <QHeaderView>
 #include <QVBoxLayout>
 #include "theme.h"
@@ -67,7 +68,31 @@ private:
     QVector<LineChart::Point> points_; QString unit_;
 };
 
+// Text fields from a log are never emitted as executable spreadsheet formulas.
+QString csvText(QString value) {
+    value.prepend(QLatin1Char('\''));
+    value.replace(QLatin1Char('"'),QStringLiteral("\"\""));
+    return QLatin1Char('"')+value+QLatin1Char('"');
+}
 } // namespace
+
+namespace chartdata {
+void table(QWidget *parent,const QStringList &headers,const QList<QStringList> &rows) {
+    QDialog d(parent);d.setWindowTitle(QCoreApplication::translate("ChartData","Chart data"));d.resize(720,480);
+    auto *layout=new QVBoxLayout(&d);auto *view=new QTableView;auto *model=new QStandardItemModel(view);
+    model->setHorizontalHeaderLabels(headers);
+    for(const auto &row:rows){QList<QStandardItem*> items;for(const auto &cell:row)items<<new QStandardItem(cell);model->appendRow(items);}
+    view->setModel(model);view->setEditTriggers(QAbstractItemView::NoEditTriggers);view->horizontalHeader()->setStretchLastSection(true);layout->addWidget(view);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&d,&QDialog::reject);layout->addWidget(buttons);d.exec();
+}
+void exportRows(QWidget *parent,const QString &header,const QList<QStringList> &rows,int numericFrom) {
+    const auto path=QFileDialog::getSaveFileName(parent,QCoreApplication::translate("ChartData","Export chart data"),{},QStringLiteral("CSV (*.csv)"));if(path.isEmpty())return;
+    QSaveFile f(path);if(!f.open(QIODevice::WriteOnly)){QMessageBox::warning(parent,QCoreApplication::translate("ChartData","Export failed"),f.errorString());return;}
+    QTextStream out(&f);out<<header<<'\n';for(const auto &row:rows){for(int i=0;i<row.size();++i){if(i)out<<',';out<<(i<numericFrom?csvText(row[i]):row[i]);}out<<'\n';}out.flush();
+    if(out.status()!=QTextStream::Ok||!f.commit())QMessageBox::warning(parent,QCoreApplication::translate("ChartData","Export failed"),f.errorString());
+}
+
+} // namespace chartdata
 
 // ── LineChart ────────────────────────────────────────────────────────────────
 
@@ -309,6 +334,16 @@ void BarChart::paintEvent(QPaintEvent *) {
     }
 }
 
+void BarChart::contextMenuEvent(QContextMenuEvent *e) {
+    if(bars_.isEmpty())return;
+    const auto frozen=bars_;
+    QMenu m(this);auto *table=m.addAction(QCoreApplication::translate("ChartData","View data table"));auto *csv=m.addAction(QCoreApplication::translate("ChartData","Export all data"));const auto action=m.exec(e->globalPos());if(!action)return;
+    QList<QStringList> rows;
+    for(const auto &b:frozen)rows.append(QStringList{b.label,std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"),std::isfinite(b.value)?QString::number(b.value,'g',17):QString()});
+    if(action==table)chartdata::table(this,{QCoreApplication::translate("ChartData","Label"),QCoreApplication::translate("ChartData","Display value"),QCoreApplication::translate("ChartData","Numeric value")},rows);
+    else if(action==csv)chartdata::exportRows(this,QStringLiteral("label,display_value,numeric_value"),rows,2);
+}
+
 // ── DayBars ──────────────────────────────────────────────────────────────────
 
 DayBars::DayBars(QWidget *parent) : QWidget(parent) {
@@ -319,7 +354,7 @@ DayBars::DayBars(QWidget *parent) : QWidget(parent) {
 }
 
 void DayBars::setDays(const QVector<Day> &days) {
-    days_ = days;
+    days_ = days;begin_=0;end_=days_.size();
     QStringList rows;
     for (const Day &d : days) {
         qint64 n = 0;
@@ -348,7 +383,8 @@ QRectF DayBars::plotRect() const { return QRectF(rect()).adjusted(4, 4, -4, -fon
 int DayBars::columnAt(const QPointF &p) const {
     const QRectF r = plotRect();
     if (days_.isEmpty() || r.width() <= 0 || r.height() <= 0 || !r.contains(p)) return -1;
-    return std::min<int>(days_.size() - 1, int((p.x() - r.left()) / (r.width() / days_.size())));
+    if(end_<=begin_)return -1;
+    return int(std::min(end_-1,begin_+qsizetype((p.x()-r.left())/(r.width()/(end_-begin_)))));
 }
 
 void DayBars::paintEvent(QPaintEvent *) {
@@ -358,16 +394,18 @@ void DayBars::paintEvent(QPaintEvent *) {
     const QRectF r = plotRect();
     if (r.width()<=0 || r.height()<=0) return;
     qint64 maxTotal = 1;
-    for (const Day &d : days_) {
+    for(qsizetype i=begin_;i<end_;++i) {
+        const Day &d=days_.at(i);
         qint64 total = 0;
         for (int n : d.kinds) total += std::max(0,n);
         maxTotal = std::max(maxTotal, total);
     }
-    const double colW = r.width() / days_.size();
+    if(end_<=begin_)return;
+    const double colW = r.width() / (end_-begin_);
     const double barW = std::max(0.0, colW * 0.7);
-    for (int i = 0; i < days_.size(); ++i) {
+    for (qsizetype i=begin_;i<end_;++i) {
         const Day &d = days_[i];
-        const double x = r.left() + i * colW + (colW - barW) / 2;
+        const double x = r.left() + (i-begin_) * colW + (colW - barW) / 2;
         double yBottom = r.bottom();
         for (auto it = d.kinds.cbegin(); it != d.kinds.cend(); ++it) {
             if (it.value() <= 0) continue;
@@ -380,7 +418,7 @@ void DayBars::paintEvent(QPaintEvent *) {
         if (d.date == selected_) {
             p.setPen(QPen(colorFrom(theme::FG), 1));
             p.setBrush(Qt::NoBrush);
-            p.drawRect(QRectF(r.left() + i * colW, r.top(), colW, r.height()));
+            p.drawRect(QRectF(r.left() + (i-begin_) * colW, r.top(), colW, r.height()));
         }
     }
     p.setPen(QPen(colorFrom(theme::BORDER_SOFT)));
@@ -388,13 +426,13 @@ void DayBars::paintEvent(QPaintEvent *) {
     p.setPen(colorFrom(theme::MUTED));
     const auto half=r.width()/2;
     const auto fm=fontMetrics();
-    p.drawText(QRectF(r.left(),r.bottom()+2,half,fm.height()),Qt::AlignLeft,fm.elidedText(days_.first().date.mid(5),Qt::ElideRight,int(half)));
-    p.drawText(QRectF(r.right()-half,r.bottom()+2,half,fm.height()),Qt::AlignRight,fm.elidedText(days_.last().date.mid(5),Qt::ElideLeft,int(half)));
+    p.drawText(QRectF(r.left(),r.bottom()+2,half,fm.height()),Qt::AlignLeft,fm.elidedText(days_.at(begin_).date.mid(5),Qt::ElideRight,int(half)));
+    p.drawText(QRectF(r.right()-half,r.bottom()+2,half,fm.height()),Qt::AlignRight,fm.elidedText(days_.at(end_-1).date.mid(5),Qt::ElideLeft,int(half)));
 }
 
 void DayBars::mousePressEvent(QMouseEvent *e) {
     const int i = columnAt(e->position());
-    if (i >= 0) Q_EMIT dayClicked(days_[i].date);
+    if (e->button()==Qt::LeftButton && i >= 0) Q_EMIT dayClicked(days_[i].date);
 }
 
 void DayBars::mouseMoveEvent(QMouseEvent *e) {
@@ -409,11 +447,32 @@ void DayBars::keyPressEvent(QKeyEvent *e) {
     if (days_.isEmpty() || (e->key()!=Qt::Key_Left && e->key()!=Qt::Key_Right && e->key()!=Qt::Key_Home && e->key()!=Qt::Key_End)) {
         QWidget::keyPressEvent(e); return;
     }
-    qsizetype i=0;
-    while (i<days_.size() && days_[i].date!=selected_) ++i;
-    if (e->key()==Qt::Key_Home) i=0;
-    else if (e->key()==Qt::Key_End) i=days_.size()-1;
-    else if (i==days_.size()) i=0;
-    else i=std::clamp(i+(e->key()==Qt::Key_Left?-1:1),qsizetype(0),days_.size()-1);
+    if(end_<=begin_)return;
+    qsizetype i=begin_;
+    while (i<end_ && days_[i].date!=selected_) ++i;
+    if (e->key()==Qt::Key_Home) i=begin_;
+    else if (e->key()==Qt::Key_End) i=end_-1;
+    else if (i==end_) i=begin_;
+    else i=std::clamp(i+(e->key()==Qt::Key_Left?-1:1),begin_,end_-1);
     setSelected(days_[i].date); Q_EMIT dayClicked(selected_); e->accept();
+}
+
+void DayBars::setViewRange(qsizetype begin,qsizetype end) {
+    begin_=std::clamp(begin,qsizetype(0),days_.size());end_=std::clamp(end,begin_,days_.size());
+    if(begin_==end_&&!days_.isEmpty()){begin_=std::min(begin_,days_.size()-1);end_=begin_+1;}update();
+}
+void DayBars::wheelEvent(QWheelEvent *e) {
+    if(!(e->modifiers()&Qt::ControlModifier)||days_.isEmpty()||!e->angleDelta().y()){e->ignore();return;}
+    const auto count=end_-begin_;const auto length=std::clamp(e->angleDelta().y()>0?count*3/4:count+std::max(qsizetype(1),count/3),qsizetype(1),days_.size());
+    const auto first=std::clamp(begin_+(count-length)/2,qsizetype(0),days_.size()-length);setViewRange(first,first+length);e->accept();
+}
+void DayBars::contextMenuEvent(QContextMenuEvent *e) {
+    if(days_.isEmpty())return;
+    const auto all=days_,visible=days_.mid(begin_,end_-begin_);
+    QMenu m(this);auto *reset=m.addAction(tr("Show all days"));auto *left=m.addAction(tr("Earlier days"));auto *right=m.addAction(tr("Later days"));m.addSeparator();auto *table=m.addAction(QCoreApplication::translate("ChartData","View data table"));auto *csv=m.addAction(QCoreApplication::translate("ChartData","Export all data"));auto *current=m.addAction(QCoreApplication::translate("ChartData","Export visible data"));
+    const auto action=m.exec(e->globalPos());if(!action)return;
+    if(action==reset){setViewRange(0,days_.size());return;}
+    if(action==left||action==right){const auto count=end_-begin_;const auto start=std::clamp(begin_+(action==left?-1:1)*std::max(qsizetype(1),count/2),qsizetype(0),days_.size()-count);setViewRange(start,start+count);return;}
+    QList<QStringList> rows;for(const auto &d:(action==csv?all:visible)){if(d.kinds.isEmpty())rows.append(QStringList{d.date,QString(),QString()});else for(auto i=d.kinds.cbegin();i!=d.kinds.cend();++i)rows.append(QStringList{d.date,i.key(),QString::number(i.value())});}
+    if(action==table)chartdata::table(this,{tr("Date"),tr("Event kind"),tr("Count")},rows);else if(action==csv||action==current)chartdata::exportRows(this,QStringLiteral("date,event_kind,count"),rows,2);
 }

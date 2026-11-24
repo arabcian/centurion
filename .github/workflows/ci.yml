@@ -42,6 +42,13 @@ jobs:
       - run: python3 gui/tests/tuningcomparison_native_test.py
       - run: python3 gui/tests/cohistory_sceneplan_native_test.py
       - run: python3 gui/tests/tur29_contract_static_test.py
+      - run: python3 gui/tests/tur30_history_native_test.py
+      - run: python3 gui/tests/tur31_diagnostic_native_test.py
+      - run: python3 gui/tests/tur32_presentation_native_test.py
+      - run: python3 gui/tests/bootreceiptcoverage_native_test.py
+      - run: python3 gui/tests/powerprovenance_native_test.py
+      - run: python3 gui/tests/tur35_network_boot_native_test.py
+      - run: python3 gui/tests/tur30_sleep_hook_test.py
       - run: python3 gui/tests/scene_wifi_native_test.py
       - run: python3 gui/tests/wifichannel_native_test.py
       - run: python3 gui/tests/socketbind_native_test.py

@@ -27,6 +27,9 @@ namespace smart {
 /// The number under `key`, or nullopt when it is absent or null.
 std::optional<double> field(const QJsonObject &o, const char *key);
 QJsonObject loadHistory();
+std::optional<QJsonObject> historySnapshot();
+// Older helpers could generate the same ID for all serial-less disks.
+bool usableIdentity(const QString &id);
 /// Stores today's sample of each disk (replacing today's earlier one) and returns the alert lines.
 /// Entries carrying an "error" are skipped.
 QStringList record(const QJsonArray &disks);

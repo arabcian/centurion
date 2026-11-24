@@ -1,4 +1,6 @@
 #include "lightingtab.h"
+#include "lightingpreview.h"
+#include <QHideEvent>
 #include "theme.h"
 #include "experimentalui.h"
 #include <QCheckBox>
@@ -402,9 +404,13 @@ void LightingTab::buildUi() {
     mid->setSpacing(5);
 
     auto *kbBox = new QGroupBox("Layout");
+    layoutEditor_=kbBox;
     auto *kl = new QVBoxLayout(kbBox);
     kb_ = new KeyboardView;
     auto *viewControls=new QHBoxLayout;
+    animatePreview_=new QCheckBox(tr("Animate draft preview"));
+    animatePreview_->setToolTip(tr("Approximate software animation only. Reactive and host effects remain static; no keyboard commands are sent."));
+    viewControls->addWidget(animatePreview_);
     viewControls->addStretch(1);
     auto *zoomOut=mini(QStringLiteral("−"),tr("Zoom keyboard out"));
     auto *zoomIn=mini(QStringLiteral("+"),tr("Zoom keyboard in"));
@@ -444,6 +450,7 @@ void LightingTab::buildUi() {
     if (!theme::experimentalEnabled()) mid->addWidget(kbBox, 1);
 
     auto *fxBox = new QGroupBox("Effects in This Profile");
+    effectsEditor_=fxBox;
     if (theme::experimentalEnabled()) {
         fxBox->setMinimumWidth(260);
     } else {
@@ -694,6 +701,9 @@ void LightingTab::buildUi() {
     connect(apply_, &QPushButton::clicked, this, &LightingTab::write);
     connect(reset_, &QPushButton::clicked, this, &LightingTab::factoryReset);
 
+    previewTimer_=new QTimer(this);previewTimer_->setInterval(80);
+    connect(previewTimer_,&QTimer::timeout,this,&LightingTab::refreshPreview);
+    connect(animatePreview_,&QCheckBox::toggled,this,[this]{syncPreviewTimer();refreshPreview();});
     setBusy(true);  // until the first read
     refreshAll();
 }
@@ -702,6 +712,20 @@ void LightingTab::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
     // Windows / Fn+Space may have changed profile or brightness meanwhile.
     refreshIfClean();
+    syncPreviewTimer();
+}
+
+void LightingTab::hideEvent(QHideEvent *e) {
+    if(previewTimer_)previewTimer_->stop();
+    QWidget::hideEvent(e);
+}
+
+void LightingTab::syncPreviewTimer() {
+    if(!previewTimer_)return;
+    const bool supported=std::any_of(work_.cbegin(),work_.cend(),[](const Effect &e){return lightingpreview::animated(e.type);});
+    if(isVisible() && ready_ && !busy_ && animatePreview_->isChecked() && supported){
+        if(!previewTimer_->isActive()){previewClock_.start();previewTimer_->start();}
+    } else previewTimer_->stop();
 }
 
 QSet<int> LightingTab::zoneKeys(Zone z) const {
@@ -720,7 +744,8 @@ void LightingTab::setBusy(bool b) {
     for (QWidget *w : std::initializer_list<QWidget *>{profile_, bright_, logoCheck_, reloadBtn_, reset_})
         w->setEnabled(en);
     reloadBtn_->setEnabled(!b);
-    refreshBudget();
+    layoutEditor_->setEnabled(en);effectsEditor_->setEnabled(en);
+    syncPreviewTimer();refreshBudget();
 }
 
 void LightingTab::showStatus(const QString &msg, const char *color) {
@@ -835,7 +860,7 @@ void LightingTab::setBrightness(int b) {
 void LightingTab::setLightsOn(bool on) { setBrightness(on ? std::max(1, lastOn_) : 0); }
 
 void LightingTab::write() {
-    if (!ready_ || busy_ || !dirty()) return;
+    if (!ready_ || busy_ || !dirty() || !draftFits()) return;
     const int p = editProfile_;
     QJsonArray fx;
     for (const Effect &e : work_) fx.append(toJson(e));
@@ -847,7 +872,7 @@ void LightingTab::write() {
         loaded_ = sent;
         resetEditHistory();
         active_ = p;
-        showStatus(QStringLiteral("Profile %1 written (%2 / %3 bytes).").arg(p).arg(r.json.value("bytes").toInt()).arg(REPORT_LEN), theme::OK);
+        showStatus(tr("Profile %1 sent (%2 / %3 bytes); independent readback not verified.").arg(p).arg(r.json.value("bytes").toInt()).arg(REPORT_LEN), theme::OK);
         refreshAll();
         Q_EMIT stateChanged();
     });
@@ -966,6 +991,7 @@ void LightingTab::refreshAll() {
     }
     refreshList();
     refreshEditor();
+    syncPreviewTimer();
     refreshPreview();
     refreshBudget();
 }
@@ -979,7 +1005,14 @@ void LightingTab::refreshList() {
         ++step;
         const QString keys = e.allKeys() ? QStringLiteral("all lights") : QStringLiteral("%1 lights").arg(e.keys.size());
         auto *it = new QListWidgetItem(swatch(e), QStringLiteral("%1. ").arg(step) + typeName(e.type) + QStringLiteral("  ·  ") + keys);
-        if (needsHost(e.type)) it->setToolTip("Needs Windows (audio or screen capture) — kept as is, not editable here");
+        QStringList details;
+        if(hasSpeed(e.type))details<<tr("Speed: %1").arg(e.speed);
+        if(hasDirection(e.type))details<<tr("Direction code: %1").arg(e.direction);
+        if(hasClockwise(e.type))details<<tr("Rotation code: %1").arg(e.clockwise);
+        if(e.colorMode==ColorList)details<<tr("Colors: %1").arg(e.colors.size());
+        if(needsHost(e.type))details<<tr("Host effect — kept unchanged; software animation unavailable.");
+        else if(!lightingpreview::animated(e.type)&&e.type!=Static)details<<tr("Reactive effect — static preview only.");
+        if(!details.isEmpty())it->setToolTip(details.join(QLatin1Char('\n')));
         list_->addItem(it);
     }
     list_->setCurrentRow(std::clamp(keep, work_.isEmpty() ? -1 : 0, int(work_.size()) - 1));
@@ -1067,13 +1100,26 @@ void LightingTab::refreshPreview() {
     QHash<int, QColor> colors;
     QSet<int> animated;
     const QList<int> order = map_.unique();
+    QHash<int,int> ranks;
+    for(int i=0;i<order.size();++i)ranks.insert(order[i],i);
+    const bool animate=previewTimer_ && previewTimer_->isActive();
+    const double time=animate?previewClock_.elapsed()/1000.:0.;
     for (const Effect &e : work_) {
         const QList<int> keys = e.allKeys() ? order : e.keys;
+        const bool moving=animate && lightingpreview::animated(e.type);
         for (int n = 0; n < keys.size(); ++n) {
             const int k = keys[n];
+            if(!ranks.contains(k))continue;
             QColor c;
-            if (e.colorMode == ColorList && !e.colors.isEmpty()) c = e.colors[n % std::max<qsizetype>(1, e.type == Static ? 1 : e.colors.size())];
-            else c = QColor::fromHsv(int(order.indexOf(k) * 360.0 / std::max<qsizetype>(1, order.size())) % 360, 190, 235);
+            const double position=double(ranks.value(k))/std::max<qsizetype>(1,order.size());
+            if(moving){
+                const auto frame=lightingpreview::frame(e.type,e.speed,e.direction,e.clockwise,time,position,std::size_t(e.colors.size()));
+                if(e.colorMode==ColorList&&!e.colors.isEmpty())c=e.colors.at(qsizetype(frame.color));
+                else c=QColor::fromHsvF(frame.hue,.75,.92);
+                if(c.isValid())c=QColor::fromRgbF(c.redF()*frame.brightness,c.greenF()*frame.brightness,c.blueF()*frame.brightness);
+            } else if (e.colorMode == ColorList && !e.colors.isEmpty()) c = e.colors[n % std::max<qsizetype>(1, e.type == Static ? 1 : e.colors.size())];
+            else c = QColor::fromHsv(int(position*360.)%360,190,235);
+            if(!c.isValid())c=Qt::black;
             colors.insert(k, c);  // later effects draw over earlier ones
             if (e.type != Static) animated.insert(k); else animated.remove(k);
         }
@@ -1081,12 +1127,24 @@ void LightingTab::refreshPreview() {
     kb_->setPreview(colors, animated);
 }
 
+bool LightingTab::draftFits() const {
+    if(work_.size()>MAX_EFFECTS)return false;
+    for(const auto &e:work_){
+        // Mirror the helper's structural limits, including preserved host effects.
+        if(e.type<1||e.type>13||e.speed<0||e.speed>3||e.direction<0||e.direction>4||e.clockwise<0||e.clockwise>2||e.colorMode<0||e.colorMode>2||e.colors.size()>32||e.keys.isEmpty()||e.keys.size()>255)return false;
+        for(const auto &c:e.colors)if(!c.isValid())return false;
+        for(int key:e.keys)if(key<1||key>65535)return false;
+    }
+    return encodedLen(work_)<=REPORT_LEN;
+}
+
 void LightingTab::refreshBudget() {
     const int used = encodedLen(work_);
-    const bool fits = used <= REPORT_LEN && work_.size() <= MAX_EFFECTS;
+    const bool fits = draftFits();
     budget_->setText(QStringLiteral("%1 / %2 bytes · %3 effect(s)%4").arg(used).arg(REPORT_LEN).arg(work_.size())
                          .arg(dirty() ? QStringLiteral(" · not applied") : QString()));
     theme::setLiveSheet(budget_, [fits] { return fits ? QString() : QStringLiteral("color: %1;").arg(theme::DANGER); });
+    budget_->setToolTip(!fits?tr("Draft exceeds controller capacity or contains invalid effect fields."):tr("Draft report size; Apply sends the effect list to the controller."));
     apply_->setEnabled(ready_ && !busy_ && dirty() && fits);
     revert_->setEnabled(ready_ && !busy_ && dirty());
     undo_->setEnabled(ready_ && !busy_ && editHistoryPos_ > 0);
