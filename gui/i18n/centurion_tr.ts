@@ -548,7 +548,19 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
             <source>Select two different visible boot records.</source>
             <translation>Görünen iki farklı açılış kaydını seçin.</translation>
         </message>
-    </context>
+      <message>
+      <source>Open exact boot UUID records; legacy tags are separate candidates.</source>
+      <translation>Tam boot UUID kayıtlarını aç; eski etiketler ayrı adaylardır.</translation>
+    </message>
+    <message>
+      <source>── Legacy prefix candidates (not verified as this boot) ──
+%1
+</source>
+      <translation>── Eski önek adayları (bu açılışa ait olduğu doğrulanmadı) ──
+%1
+</translation>
+    </message>
+  </context>
     <context>
         <name>BootLogoDialog</name>
         <message>
@@ -3765,7 +3777,95 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Showing up to %1 saved lines before and %2 after kernel message %3 in boot %4, independent of display filters.</source>
             <translation>%4 açılışındaki %3 numaralı kernel mesajından önceki en fazla %1 ve sonraki en fazla %2 kayıt, görüntüleme filtrelerinden bağımsız olarak gösteriliyor.</translation>
         </message>
-    </context>
+      <message>
+      <source>Exact boot UUID or legacy tag</source>
+      <translation>Tam boot UUID veya eski etiket</translation>
+    </message>
+    <message>
+      <source>Device or driver token</source>
+      <translation>Aygıt veya sürücü belirteci</translation>
+    </message>
+    <message>
+      <source>Identity</source>
+      <translation>Kimlik</translation>
+    </message>
+    <message>
+      <source>All event types</source>
+      <translation>Tüm olay türleri</translation>
+    </message>
+    <message>
+      <source>Unclassified</source>
+      <translation>Sınıflandırılmamış</translation>
+    </message>
+    <message>
+      <source>Event code (optional)</source>
+      <translation>Olay kodu (isteğe bağlı)</translation>
+    </message>
+    <message>
+      <source>Event</source>
+      <translation>Olay</translation>
+    </message>
+    <message>
+      <source>From date (YYYY-MM-DD)</source>
+      <translation>Başlangıç tarihi (YYYY-AA-GG)</translation>
+    </message>
+    <message>
+      <source>To date (YYYY-MM-DD)</source>
+      <translation>Bitiş tarihi (YYYY-AA-GG)</translation>
+    </message>
+    <message>
+      <source>Recorded local date</source>
+      <translation>Kaydedilen yerel tarih</translation>
+    </message>
+    <message>
+      <source>Kernel log capture failed or timed out.</source>
+      <translation>Çekirdek günlüğü alımı başarısız oldu veya zaman aşımına uğradı.</translation>
+    </message>
+    <message>
+      <source>Kernel log reply has an invalid or different boot identity.</source>
+      <translation>Çekirdek günlüğü yanıtının boot kimliği geçersiz veya farklı.</translation>
+    </message>
+    <message>
+      <source>Malformed kernel log record; capture cursor not advanced.</source>
+      <translation>Bozuk çekirdek günlüğü kaydı; alım imleci ilerletilmedi.</translation>
+    </message>
+    <message>
+      <source>Kernel log write failed; capture cursor not advanced.</source>
+      <translation>Çekirdek günlüğü yazılamadı; alım imleci ilerletilmedi.</translation>
+    </message>
+    <message>
+      <source>Context ignores all display filters.</source>
+      <translation>Bağlam görünümü tüm görüntüleme filtrelerini yok sayar.</translation>
+    </message>
+    <message>
+      <source>Invalid boot identity, event code or date range.</source>
+      <translation>Geçersiz boot kimliği, olay kodu veya tarih aralığı.</translation>
+    </message>
+    <message>
+      <source>Matching saved records: %1. Legacy eight-character boot tags are not full boot identities; use All saved boots to inspect them separately.</source>
+      <translation>Eşleşen kayıtlar: %1. Eski sekiz karakterli boot etiketleri tam kimlik değildir; bunları ayrı incelemek için Tüm kayıtlı açılışlar seçeneğini kullanın.</translation>
+    </message>
+    <message>
+      <source> — Legacy identity; actual boot not verified.</source>
+      <translation> — Eski kimlik; gerçek açılış doğrulanmadı.</translation>
+    </message>
+    <message>
+      <source> [legacy boot tag]</source>
+      <translation> [eski boot etiketi]</translation>
+    </message>
+    <message>
+      <source>No saved records match the selected filters.</source>
+      <translation>Seçilen filtrelerle eşleşen kayıt yok.</translation>
+    </message>
+    <message>
+      <source>Advanced filters</source>
+      <translation>Gelişmiş filtreler</translation>
+    </message>
+    <message>
+      <source> Advanced filters active.</source>
+      <translation> Gelişmiş filtreler etkin.</translation>
+    </message>
+  </context>
     <context>
         <name>LidWatch</name>
         <message>
@@ -3829,7 +3929,23 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Zoom in (Ctrl+Wheel)</source>
             <translation>Yakınlaştır (Ctrl+Tekerlek)</translation>
         </message>
-    </context>
+      <message>
+      <source>Gap before sample</source>
+      <translation>Örnek öncesinde veri boşluğu</translation>
+    </message>
+    <message>
+      <source>Sample</source>
+      <translation>Örnek</translation>
+    </message>
+    <message>
+      <source>Continuity</source>
+      <translation>Süreklilik</translation>
+    </message>
+    <message>
+      <source>View visible samples as table…</source>
+      <translation>Görünen örnekleri tablo olarak aç…</translation>
+    </message>
+  </context>
     <context>
         <name>MainText</name>
         <message>
@@ -12973,7 +13089,11 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>Bar chart</source>
             <translation>Çubuk grafik</translation>
         </message>
-    </context>
+      <message>
+      <source>Unavailable</source>
+      <translation>Kullanılamıyor</translation>
+    </message>
+  </context>
     <context>
         <name>VfCurveWidget</name>
         <message>
@@ -12994,7 +13114,13 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>Keyboard lighting layout</source>
             <translation>Klavye aydınlatma düzeni</translation>
         </message>
-    </context>
+      <message>
+      <source>
+Ctrl+wheel: zoom; middle drag or arrow keys: pan; Home: fit.</source>
+      <translation>
+Ctrl+tekerlek: yakınlaştır; orta tuşla sürükle veya ok tuşlarıyla kaydır; Home: sığdır.</translation>
+    </message>
+  </context>
     <context>
         <name>FanCurveWidget</name>
         <message>
@@ -21182,7 +21308,53 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Clear the saved paint colors?</source>
             <translation>Kayıtlı boyama renkleri temizlensin mi?</translation>
         </message>
-    </context>
+      <message>
+      <source>Zoom keyboard out</source>
+      <translation>Klavyeyi uzaklaştır</translation>
+    </message>
+    <message>
+      <source>Zoom keyboard in</source>
+      <translation>Klavyeyi yakınlaştır</translation>
+    </message>
+    <message>
+      <source>Fit keyboard</source>
+      <translation>Klavyeyi sığdır</translation>
+    </message>
+    <message>
+      <source>Import HEX palette…</source>
+      <translation>HEX paleti içe aktar…</translation>
+    </message>
+    <message>
+      <source>Import HEX palette</source>
+      <translation>HEX paleti içe aktar</translation>
+    </message>
+    <message>
+      <source>Enter up to 32 opaque #RRGGBB colors, separated by spaces, commas or newlines. This replaces only the saved paint palette.</source>
+      <translation>Boşluk, virgül veya satır sonuyla ayrılmış en fazla 32 opak #RRGGBB renk girin. Yalnızca kayıtlı boya paleti değiştirilir.</translation>
+    </message>
+    <message>
+      <source>Palette is too large.</source>
+      <translation>Palet çok büyük.</translation>
+    </message>
+    <message>
+      <source>Invalid HEX color: %1</source>
+      <translation>Geçersiz HEX rengi: %1</translation>
+    </message>
+    <message>
+      <source>Palette must contain 1–32 unique colors.</source>
+      <translation>Palet 1–32 benzersiz renk içermelidir.</translation>
+    </message>
+    <message>
+      <source>Replace saved palette with %1 colors?
+%2</source>
+      <translation>Kayıtlı palet %1 renkle değiştirilsin mi?
+%2</translation>
+    </message>
+    <message>
+      <source>Could not save palette.</source>
+      <translation>Palet kaydedilemedi.</translation>
+    </message>
+  </context>
     <context>
         <name>theme</name>
         <message>
@@ -21556,6 +21728,13 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <message>
       <source>Supported running init system not detected.</source>
       <translation>Desteklenen çalışan init sistemi algılanamadı.</translation>
+    </message>
+  </context>
+  <context>
+    <name>Zone4Tab</name>
+    <message>
+      <source>Zone colours</source>
+      <translation>Bölge renkleri</translation>
     </message>
   </context>
 </TS>

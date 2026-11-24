@@ -5,6 +5,7 @@
 // own key map, and writes it on Apply. Brightness, logo and the active
 // profile apply immediately (tray and scenes use the same calls).
 #include "kblayout.h"
+#include "canvasviewport.h"
 #include "lighting.h"
 #include <QPainterPath>
 #include <QSet>
@@ -35,6 +36,8 @@ public:
     QSize minimumSizeHint() const override;
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int w) const override;
+    void zoomView(double factor);
+    void resetView();
 
 Q_SIGNALS:
     void selectionChanged();
@@ -45,6 +48,8 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
+    void wheelEvent(QWheelEvent *e) override;
+    void keyPressEvent(QKeyEvent *e) override;
 
 private:
     struct Cell { int code; QRectF rect; bool bar; QString label; QPainterPath shape; };
@@ -62,6 +67,9 @@ private:
     QList<Cell> cells_;
     QHash<int, QColor> colors_;
     QSet<int> animated_, sel_;
+    canvasviewport::View viewport_;
+    QPointF panStart_;
+    bool panning_=false;
     bool dragging_ = false, dragAdd_ = true;
     int lastCode_ = 0;
 };

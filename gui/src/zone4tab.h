@@ -9,6 +9,7 @@
 
 class QComboBox;
 class QLabel;
+class QGridLayout;
 class QPushButton;
 
 class Zone4Tab : public QWidget {
@@ -16,7 +17,10 @@ class Zone4Tab : public QWidget {
 public:
     explicit Zone4Tab(QWidget *parent = nullptr);
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 private:
+    void reflowZones();
     void load();
     void save() const;
     void syncEnabled();
@@ -25,6 +29,8 @@ private:
 
     std::array<QColor, 4> colors_{QColor("#ffffff"), QColor("#ffffff"), QColor("#ffffff"), QColor("#ffffff")};
     std::array<QPushButton *, 4> zone_{};
+    QGridLayout *zonesLayout_=nullptr;
+    int zoneColumns_=0;
     QComboBox *effect_ = nullptr, *speed_ = nullptr, *brightness_ = nullptr, *direction_ = nullptr;
     QLabel *speedLabel_ = nullptr, *directionLabel_ = nullptr, *zonesLabel_ = nullptr, *status_ = nullptr;
     QPushButton *apply_ = nullptr, *off_ = nullptr;

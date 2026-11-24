@@ -3,9 +3,10 @@
 // collapses repeats, and tells whether a message was seen in an earlier boot. No widgets here;
 // tests/klogview_test.cpp covers it.
 //
-// Saved line: "<local time>  boot=<8 chars> seq=<n>  <LEVEL>  [<s>.<us>] <message>".
+// Saved line: "<local time>  boot=<UUID or legacy 8 chars> seq=<n>  <LEVEL>  [<s>.<us>] <message>".
 #include <QHash>
 #include <QString>
+#include <QRegularExpression>
 #include <optional>
 #include <deque>
 #include <vector>
@@ -15,7 +16,7 @@ namespace klogview {
 struct Line {
     QString text;       // the saved line, trimmed
     QString time;       // "yyyy-MM-dd HH:mm:ss"
-    QString boot;       // boot tag, 8 characters
+    QString boot;       // full boot UUID or legacy eight-character tag (not equivalent)
     quint64 seq = 0;
     int level = 4;      // 0 EMERG … 4 WARN (see levelIndex)
     QString msg;
@@ -26,6 +27,17 @@ struct Line {
 int levelIndex(const QString &name);
 
 std::optional<Line> parse(const QString &saved);
+bool fullBootId(const QString &id);
+/// Exact typed fields; empty values mean no restriction. Date bounds refer to
+/// recorded local wall-clock dates, not monotonic time.
+struct Filter {
+    QString boot, kind, device, fromDate, toDate;
+    int code = -1;
+    bool valid() const;
+    /// Precompile the literal device token once before scanning the log.
+    QRegularExpression devicePattern() const;
+    bool matches(const Line &line, const QString &eventKind, int eventCode, const QRegularExpression &token) const;
+};
 
 /// A message with its numbers (counters, addresses, process ids) replaced by '#'. Repeats of one
 /// message differ only in those, so they share a key.

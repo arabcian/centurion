@@ -70,7 +70,7 @@ add_executable(centurion
     src/bootadvisor.cpp  src/bootadvisor.h
     src/bundle.cpp       src/bundle.h
     src/lighting.cpp     src/lighting.h
-    src/lightingtab.cpp  src/lightingtab.h
+    src/canvasviewport.h src/lightingtab.cpp  src/lightingtab.h
     src/zone4tab.cpp     src/zone4tab.h
     src/kblayout.cpp     src/kblayout.h
     src/amdgpu.cpp       src/amdgpu.h
@@ -100,7 +100,7 @@ add_executable(centurion
     src/notifyprefs.cpp  src/notifyprefs.h
     src/notifydialog.cpp src/notifydialog.h
     src/batteryadvice.cpp src/batteryadvice.h
-    src/charts.cpp       src/charts.h
+    src/charts.cpp       src/charts.h src/chartaxis.h
     src/dgpupage.cpp     src/dgpupage.h
     src/netpage.cpp      src/netpage.h
     src/netfirewall.cpp  src/netfirewall.h

@@ -13,6 +13,9 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QWheelEvent>
+#include <QKeyEvent>
+#include <QInputDialog>
 #include <QPainter>
 #include <QPushButton>
 #include <QSlider>
@@ -69,6 +72,7 @@ static QIcon swatch(const Effect &e, int size = 14) {
 KeyboardView::KeyboardView(QWidget *parent) : QWidget(parent) {
     setAccessibleName(tr("Keyboard lighting layout"));
     setMouseTracking(false);
+    setFocusPolicy(Qt::StrongFocus);
     QSizePolicy sp(QSizePolicy::Expanding, QSizePolicy::Preferred);
     sp.setHeightForWidth(true);
     setSizePolicy(sp);
@@ -88,6 +92,7 @@ void KeyboardView::setKeyMap(const KeyMap &m) {
     legends_ = kblayout::legends(phys_);
     updateToolTip();
     sel_.clear();
+    viewport_.reset();
     layoutCells();
     updateGeometry();
     update();
@@ -97,7 +102,8 @@ void KeyboardView::updateToolTip() {
     setToolTip(QStringLiteral("Click a key to select it · drag to select several · Ctrl/Shift-click to add or remove")
                + (phys_.isEmpty() ? QStringLiteral("\nLayout: controller matrix (unknown board)")
                                   : QStringLiteral("\nLayout: %1 · legends: %2")
-                                        .arg(kblayout::formName(kblayout::formOf(map_)), kblayout::activeLayoutName())));
+                                        .arg(kblayout::formName(kblayout::formOf(map_)), kblayout::activeLayoutName()))
+               + tr("\nCtrl+wheel: zoom; middle drag or arrow keys: pan; Home: fit."));
 }
 
 void KeyboardView::setPreview(const QHash<int, QColor> &c, const QSet<int> &a) {
@@ -141,7 +147,7 @@ void KeyboardView::resizeEvent(QResizeEvent *e) {
 
 void KeyboardView::layoutCells() {
     cells_.clear();
-    if (map_.isEmpty()) return;
+    if (map_.isEmpty() || width()<=2 || height()<=2) return;
     if (!phys_.isEmpty()) layoutPhysical();
     else layoutMatrix();
 }
@@ -150,8 +156,8 @@ void KeyboardView::layoutPhysical() {
     const bool logo = map_.extra.count(0) < map_.extra.size();
     const QRectF b = physBounds();
     const double rowsTotal = b.height() + (logo ? LOGO_ROWS : 0);
-    const double u = std::min(double(width()) / b.width(), double(height()) / (rowsTotal * KEY_ASPECT));
-    const double rh = u * KEY_ASPECT, gap = std::max(1.5, u * 0.06);
+    const double u = std::min(double(width()) / b.width(), double(std::max(0,height()-2)) / (rowsTotal * KEY_ASPECT));
+    const double rh = u * KEY_ASPECT, gap = std::min(u*0.20,std::max(1.5, u * 0.06));
     const double x0 = (width() - u * b.width()) / 2.0, y0 = 1;
     auto px = [&](const QRectF &r) {
         return QRectF(x0 + (r.x() - b.x()) * u, y0 + (r.y() - b.y()) * rh, r.width() * u, r.height() * rh);
@@ -188,8 +194,8 @@ void KeyboardView::layoutPhysical() {
 void KeyboardView::layoutMatrix() {
     const bool logo = map_.extra.count(0) < map_.extra.size();
     const double rowsTotal = map_.rows + (logo ? LOGO_ROWS : 0);
-    const double u = std::min(double(width()) / map_.cols, double(height()) / (rowsTotal * KEY_ASPECT));
-    const double h = u * KEY_ASPECT, gap = std::max(1.5, u * 0.06);
+    const double u = std::min(double(width()) / map_.cols, double(std::max(0,height()-2)) / (rowsTotal * KEY_ASPECT));
+    const double h = u * KEY_ASPECT, gap = std::min(u*0.20,std::max(1.5, u * 0.06));
     const double x0 = (width() - u * map_.cols) / 2.0, y0 = 1;
     for (const KeyMap::Span &s : map_.spans()) {
         QRectF r(x0 + s.col * u + gap, y0 + s.row * h + gap, s.width * u - 2 * gap, h - 2 * gap);
@@ -220,6 +226,10 @@ void KeyboardView::paintEvent(QPaintEvent *) {
         p.drawText(rect(), Qt::AlignCenter, "No key map yet");
         return;
     }
+    const auto shift=viewport_.offset();
+    p.translate(width()*(0.5+shift.x),height()*(0.5+shift.y));
+    p.scale(viewport_.zoom(),viewport_.zoom());
+    p.translate(-width()*0.5,-height()*0.5);
     const QColor off(QString::fromLatin1(theme::BG3)), border(QString::fromLatin1(theme::BORDER)),
         accent(QString::fromLatin1(theme::ACCENT));
     QFont f = font();
@@ -264,8 +274,12 @@ void KeyboardView::paintEvent(QPaintEvent *) {
 }
 
 int KeyboardView::codeAt(const QPointF &pt) const {
+    if (width()<=0 || height()<=0 || !rect().contains(pt.toPoint())) return 0;
+    const auto inv=viewport_.inverse({pt.x()/width(),pt.y()/height()});
+    const QPointF base(inv.x*width(),inv.y*height());
+    // Exact physical geometry first; no overlapping padded hit areas at zoom.
     for (const Cell &c : cells_)
-        if (c.shape.isEmpty() ? c.rect.adjusted(-2, -3, 2, 3).contains(pt) : c.shape.contains(pt)) return c.code;
+        if (c.shape.isEmpty() ? c.rect.contains(base) : c.shape.contains(base)) return c.code;
     return 0;
 }
 
@@ -278,6 +292,7 @@ void KeyboardView::touch(int code) {
 }
 
 void KeyboardView::mousePressEvent(QMouseEvent *e) {
+    if (e->button()==Qt::MiddleButton) { panning_=true; dragging_=false; panStart_=e->position(); e->accept(); return; }
     if (e->button() != Qt::LeftButton) return;
     const int code = codeAt(e->position());
     const bool additive = e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
@@ -290,10 +305,32 @@ void KeyboardView::mousePressEvent(QMouseEvent *e) {
 }
 
 void KeyboardView::mouseMoveEvent(QMouseEvent *e) {
+    if(panning_ && width()>0 && height()>0) { const auto d=e->position()-panStart_; panStart_=e->position(); viewport_.pan({d.x()/width(),d.y()/height()}); update(); return; }
     if (dragging_) touch(codeAt(e->position()));
 }
-
-void KeyboardView::mouseReleaseEvent(QMouseEvent *) { dragging_ = false; }
+void KeyboardView::mouseReleaseEvent(QMouseEvent *e) {
+    if(e->button()==Qt::MiddleButton) panning_=false;
+    if(e->button()==Qt::LeftButton) dragging_=false;
+}
+void KeyboardView::zoomView(double factor) { viewport_.zoomAt(factor,{0.5,0.5}); update(); }
+void KeyboardView::resetView() { viewport_.reset(); update(); }
+void KeyboardView::wheelEvent(QWheelEvent *e) {
+    if (!(e->modifiers()&Qt::ControlModifier) || width()<=0 || height()<=0 || !e->angleDelta().y()) { e->ignore(); return; }
+    viewport_.zoomAt(std::pow(1.2,e->angleDelta().y()/120.0),{e->position().x()/width(),e->position().y()/height()}); update(); e->accept();
+}
+void KeyboardView::keyPressEvent(QKeyEvent *e) {
+    switch(e->key()) {
+    case Qt::Key_Plus: case Qt::Key_Equal: zoomView(1.2); break;
+    case Qt::Key_Minus: zoomView(1/1.2); break;
+    case Qt::Key_Home: resetView(); break;
+    case Qt::Key_Left: viewport_.pan({0.1,0}); break;
+    case Qt::Key_Right: viewport_.pan({-0.1,0}); break;
+    case Qt::Key_Up: viewport_.pan({0,0.1}); break;
+    case Qt::Key_Down: viewport_.pan({0,-0.1}); break;
+    default: QWidget::keyPressEvent(e); return;
+    }
+    update(); e->accept();
+}
 
 // ── tab ─────────────────────────────────────────────────────────────────────
 
@@ -367,6 +404,16 @@ void LightingTab::buildUi() {
     auto *kbBox = new QGroupBox("Layout");
     auto *kl = new QVBoxLayout(kbBox);
     kb_ = new KeyboardView;
+    auto *viewControls=new QHBoxLayout;
+    viewControls->addStretch(1);
+    auto *zoomOut=mini(QStringLiteral("−"),tr("Zoom keyboard out"));
+    auto *zoomIn=mini(QStringLiteral("+"),tr("Zoom keyboard in"));
+    auto *fit=mini(tr("Fit keyboard"));
+    for(auto *button:{zoomOut,zoomIn,fit}) viewControls->addWidget(button);
+    connect(zoomOut,&QPushButton::clicked,kb_,[this]{kb_->zoomView(1/1.2);});
+    connect(zoomIn,&QPushButton::clicked,kb_,[this]{kb_->zoomView(1.2);});
+    connect(fit,&QPushButton::clicked,kb_,&KeyboardView::resetView);
+    kl->addLayout(viewControls);
     kl->addWidget(kb_);
     auto *selRow = new QHBoxLayout;
     selRow->setSpacing(4);
@@ -571,11 +618,27 @@ void LightingTab::buildUi() {
         QMenu menu(this);
         auto *save=menu.addAction(tr("Save current paint color")); save->setEnabled(palette.size()<32 && !palette.contains(paint_.name()));
         auto *clear=menu.addAction(tr("Clear saved colors")); clear->setEnabled(!palette.isEmpty());
+        auto *import=menu.addAction(tr("Import HEX palette…"));
         menu.addSeparator();
         for(const auto &color:palette) { QPixmap swatch(20,14); swatch.fill(QColor(color)); auto *a=menu.addAction(QIcon(swatch),color); a->setData(color); }
         auto *chosen=menu.exec(savedColors->mapToGlobal(QPoint(0,savedColors->height())));
         if (!chosen) return;
         if (chosen==save) { palette<<paint_.name(); s.setValue(key,palette); }
+        else if(chosen==import) {
+            bool accepted=false;
+            const auto input=QInputDialog::getMultiLineText(this,tr("Import HEX palette"),tr("Enter up to 32 opaque #RRGGBB colors, separated by spaces, commas or newlines. This replaces only the saved paint palette."),palette.join(QLatin1Char('\n')),&accepted);
+            if(!accepted) return;
+            if(input.size()>4096) { QMessageBox::warning(this,tr("Import HEX palette"),tr("Palette is too large.")); return; }
+            QStringList proposed;
+            for(const auto &part:input.split(QRegularExpression(QStringLiteral("[\\s,]+")),Qt::SkipEmptyParts)) {
+                if(!rgb.match(part).hasMatch()) { QMessageBox::warning(this,tr("Import HEX palette"),tr("Invalid HEX color: %1").arg(part)); return; }
+                if(!proposed.contains(part.toLower())) proposed<<part.toLower();
+            }
+            if(proposed.isEmpty()||proposed.size()>32) { QMessageBox::warning(this,tr("Import HEX palette"),tr("Palette must contain 1–32 unique colors.")); return; }
+            if(QMessageBox::question(this,tr("Import HEX palette"),tr("Replace saved palette with %1 colors?\n%2").arg(proposed.size()).arg(proposed.join(QStringLiteral(", "))))!=QMessageBox::Yes) return;
+            s.setValue(key,proposed); s.sync();
+            if(s.status()!=QSettings::NoError) QMessageBox::warning(this,tr("Import HEX palette"),tr("Could not save palette."));
+        }
         else if(chosen==clear) { if(QMessageBox::question(this,tr("Saved Colors"),tr("Clear the saved paint colors?"))==QMessageBox::Yes) s.remove(key); }
         else { const QColor color(chosen->data().toString()); if(color.isValid()) { paint_=color; updatePaintIcon(); } }
     });

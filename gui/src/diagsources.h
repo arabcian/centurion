@@ -25,7 +25,7 @@ QJsonObject loadJson(const QString &path, qint64 limit = 1 << 20);
 QString saveJson(const QString &path, const QJsonObject &o);
 
 /// One saved log line. health.log: "<time>  boot=<8> seq=<n>  LEVEL KIND  title  |  text";
-/// kernel.log: "<time>  boot=<8> seq=<n>  LEVEL  [s.us] message" (kind and title empty).
+/// kernel.log: "<time>  boot=<UUID or legacy 8> seq=<n>  LEVEL  [s.us] message" (kind and title empty).
 struct LogLine {
     QString time, boot, level, kind, title, text;
     quint64 seq = 0;

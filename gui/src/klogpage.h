@@ -28,10 +28,10 @@ public:
     explicit KlogPage(QWidget *parent = nullptr);
     ~KlogPage() override;
     /// Monitor's "show in kernel log": the saved lines around one kernel record (50 before, 20 after,
-    /// same boot, the record highlighted; no severity or tail filter). Changing the scope or the filter shows everything again.
+    /// same boot, the record highlighted; no severity or tail filter). Filters do not hide the focused record; use Show the whole log to exit context.
     void showAt(const QString &bootId, quint64 seq);
-    /// Every saved line of one boot (its 8-character tag): all boots scope, filtered to that boot.
-    void showBoot(const QString &boot8);
+    /// Every saved line of one boot (its exact UUID or legacy tag): all boots scope, filtered to that boot.
+    void showBoot(const QString &bootId);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -40,7 +40,7 @@ private:
     void capture();
     void drainKmsg();
     void onReply(const QJsonObject &r, bool viaRoot);
-    void persist(const QJsonArray &records, const QString &bootId);
+    bool persist(const QJsonArray &records, const QString &bootId);
     void render();
     void updateInfo();
     void contextMenu(const QPoint &pos);
@@ -51,7 +51,9 @@ private:
     static QString logPath();
 
     QComboBox *scope_;
-    QComboBox *level_;
+    QComboBox *level_, *kind_;
+    QLineEdit *bootFilter_, *deviceFilter_, *codeFilter_, *fromFilter_, *toFilter_;
+    QLabel *filterInfo_;
     QCheckBox *group_, *onlyNew_, *showMuted_, *follow_;
     int displayedRows_ = 0;
     bool tailLimited_ = false;
@@ -64,7 +66,7 @@ private:
     int kmsgFd_ = -1;
     quint64 lastSeq_ = 0, savedSeq_ = 0;
     QString bootId_;
-    QString focusBoot_;          // boot tag (8 chars) of the record showAt() was given; empty = off
+    QString focusBoot_;          // exact recorded boot identity of the record showAt() was given; empty = off
     quint64 focusSeq_ = 0;
     bool needsRoot_ = false, busy_ = false, shownOnce_ = false;
     QSet<QString> muted_;                 // normalized messages hidden by the user (gui.ini klog/muted)

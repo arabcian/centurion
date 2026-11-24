@@ -49,5 +49,11 @@ int main(int argc, char **argv) {
     chart.resize(800,500); chart.show(); app.processEvents(); CHECK(!chart.grab().isNull());
     chart.setViewRange(999999,999999); CHECK(chart.viewRange().second-chart.viewRange().first==1);
     chart.resetView(); CHECK(chart.viewRange().second==99999);
+    chart.setPoints({{0,-std::numeric_limits<double>::max(),QStringLiteral("min")},{1,std::numeric_limits<double>::max(),QStringLiteral("max")}},QStringLiteral(" W"));
+    CHECK(!chart.grab().isNull());
+    chart.setPoints({{0,0,QStringLiteral("zero")},{1,std::numeric_limits<double>::denorm_min(),QStringLiteral("tiny")}},QStringLiteral(" W"));
+    CHECK(!chart.grab().isNull());
+    BarChart bar; bar.setBars({{QStringLiteral("negative"),-10,QStringLiteral("-10")},{QStringLiteral("positive"),5,QStringLiteral("5")},{QStringLiteral("missing"),std::numeric_limits<double>::quiet_NaN(),QStringLiteral("unknown")}});
+    bar.resize(500,150); CHECK(!bar.grab().isNull());
     return 0;
 }

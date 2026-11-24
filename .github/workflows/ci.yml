@@ -32,6 +32,8 @@ jobs:
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
       - run: python3 gui/tests/translation_tr_test.py
+      - run: python3 gui/tests/chartaxis_native_test.py
+      - run: python3 gui/tests/canvasviewport_native_test.py
       - run: python3 gui/tests/edidfields_native_test.py
       - run: python3 gui/tests/hardwarefields_native_test.py
       - run: python3 gui/tests/firewallpreview_native_test.py

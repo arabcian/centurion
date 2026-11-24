@@ -1,4 +1,13 @@
 #include "charts.h"
+#include "chartaxis.h"
+#include <QAbstractTableModel>
+#include <QVariant>
+#include <utility>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QTableView>
+#include <QHeaderView>
+#include <QVBoxLayout>
 #include "theme.h"
 
 #include <QCoreApplication>
@@ -25,6 +34,38 @@ namespace {
 int barRowHeight(const QFontMetrics &fm) { return std::max(20, fm.height() + 8); }
 
 QColor colorFrom(const char *hex) { return QColor(hex); }
+
+// A snapshot model, not one QWidget/item per sample; opening a large table is bounded by the data copy.
+class SampleModel final : public QAbstractTableModel {
+public:
+    SampleModel(QVector<LineChart::Point> points, QString unit, QObject *parent)
+        : QAbstractTableModel(parent), points_(std::move(points)), unit_(std::move(unit)) {}
+    int rowCount(const QModelIndex &p = {}) const override { return p.isValid() ? 0 : int(points_.size()); }
+    int columnCount(const QModelIndex &p = {}) const override { return p.isValid() ? 0 : 4; }
+    QVariant data(const QModelIndex &i, int role) const override {
+        if (!i.isValid() || i.row()<0 || i.row()>=points_.size() || role!=Qt::DisplayRole) return {};
+        const auto &p=points_.at(i.row());
+        switch(i.column()) {
+        case 0: return p.label;
+        case 1: return QString::number(p.x,'g',17);
+        case 2: return QString::number(p.y,'g',17);
+        case 3: return p.breakBefore ? QCoreApplication::translate("LineChart", "Gap before sample") : QString();
+        default: return {};
+        }
+    }
+    QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
+        if (orientation!=Qt::Horizontal || role!=Qt::DisplayRole) return QAbstractTableModel::headerData(section,orientation,role);
+        switch(section) {
+        case 0: return QCoreApplication::translate("LineChart", "Sample");
+        case 1: return QStringLiteral("X");
+        case 2: return QStringLiteral("Y (%1)").arg(unit_);
+        case 3: return QCoreApplication::translate("LineChart", "Continuity");
+        default: return {};
+        }
+    }
+private:
+    QVector<LineChart::Point> points_; QString unit_;
+};
 
 } // namespace
 
@@ -91,26 +132,39 @@ void LineChart::paintEvent(QPaintEvent *) {
         x0 = std::min(x0, pt.x); x1 = std::max(x1, pt.x);
         y0 = std::min(y0, pt.y); y1 = std::max(y1, pt.y);
     }
-    // Whole percent (or unit) rows around the data, at least one unit tall.
-    const double lo = std::floor(y0), hi = std::max(std::ceil(y1), lo + 1);
-    if (!std::isfinite(x1-x0) || !std::isfinite(hi-lo)) return;
-    const double ySpan=hi-lo;
+    const auto xr = chartaxis::Range::make(x0,x1), yr = chartaxis::Range::make(y0,y1);
+    if (!xr || !yr) return;
+    const auto ticks = yr->ticks(unsigned(std::clamp(height() / 60, 1, 4)));
     const QFontMetrics fm(font());
-    const QString high = QStringLiteral("%1%2").arg(hi, 0, 'f', 0).arg(unit_);
-    const QString low = QStringLiteral("%1%2").arg(lo, 0, 'f', 0).arg(unit_);
-    const int axis = std::max(fm.horizontalAdvance(high), fm.horizontalAdvance(low)) + 8;
+    QStringList labels;
+    int axis = 0;
+    for (const double tick : ticks) {
+        const auto label = QString::number(tick, 'g', 17) + unit_;
+        // Use shorter labels unless distinct ticks would become indistinguishable.
+        labels << label;
+    }
+    QStringList shortLabels;
+    for (const double tick : ticks) shortLabels << QString::number(tick, 'g', 6) + unit_;
+    auto uniqueLabels = shortLabels; uniqueLabels.removeDuplicates();
+    if (uniqueLabels.size() == shortLabels.size()) labels = shortLabels;
+    for (const auto &label : labels) axis = std::max(axis, fm.horizontalAdvance(label));
+    axis = std::min(axis + 8, width() / 2);
     const int rowH = fm.height();
     const QRectF r = QRectF(rect()).adjusted(axis, rowH / 2 + 2, -10, -rowH - 5);
     if (r.width() <= 0 || r.height() <= 0) return;
-    auto X = [&](double x) { return r.left() + (x1 > x0 ? (x - x0) / (x1 - x0) : 0.5) * r.width(); };
-    auto Y = [&](double y) { return r.bottom() - (ySpan>0?(y-lo)/ySpan:0.5)*r.height(); };
-
+    auto X = [&](double x) { return r.left() + xr->fraction(x) * r.width(); };
+    auto Y = [&](double y) { return r.bottom() - yr->fraction(y)*r.height(); };
     p.setPen(QPen(colorFrom(theme::BORDER_SOFT)));
     p.drawLine(r.bottomLeft(), r.bottomRight());
     p.drawLine(r.topLeft(), r.bottomLeft());
-    p.setPen(colorFrom(theme::MUTED));
-    p.drawText(QRectF(0, Y(hi) - rowH / 2.0, axis - 4, rowH), Qt::AlignRight | Qt::AlignVCenter, high);
-    p.drawText(QRectF(0, Y(lo) - rowH / 2.0, axis - 4, rowH), Qt::AlignRight | Qt::AlignVCenter, low);
+    for (size_t i=0; i<ticks.size(); ++i) {
+        const double y=Y(ticks[i]);
+        p.setPen(QPen(colorFrom(theme::BORDER_SOFT),1,Qt::DotLine));
+        p.drawLine(QPointF(r.left(),y),QPointF(r.right(),y));
+        p.setPen(colorFrom(theme::MUTED));
+        p.drawText(QRectF(0,y-rowH/2.0,axis-4,rowH),Qt::AlignRight|Qt::AlignVCenter,
+                   fm.elidedText(labels.at(qsizetype(i)),Qt::ElideRight,axis-4));
+    }
     const int half = int(r.width() / 2);
     p.drawText(QRectF(r.left(), r.bottom() + 3, half, rowH), Qt::AlignLeft, fm.elidedText(points_[begin_].label, Qt::ElideRight, half));
     p.drawText(QRectF(r.right() - half, r.bottom() + 3, half, rowH), Qt::AlignRight, fm.elidedText(points_[end_-1].label, Qt::ElideLeft, half));
@@ -169,21 +223,34 @@ void LineChart::contextMenuEvent(QContextMenuEvent *e) {
     QMenu menu(this);
     auto *exportAction=menu.addAction(QCoreApplication::translate("LineChart", "Export plotted samples…"));
     auto *exportVisible=menu.addAction(QCoreApplication::translate("LineChart", "Export visible samples…"));
+    auto *table=menu.addAction(QCoreApplication::translate("LineChart", "View visible samples as table…"));
+    table->setEnabled(begin_<end_);
     auto *reset=menu.addAction(QCoreApplication::translate("LineChart", "Reset zoom"));
     auto *zoom=menu.addAction(QCoreApplication::translate("LineChart", "Zoom in (Ctrl+Wheel)"));
     exportAction->setEnabled(!points_.isEmpty()); exportVisible->setEnabled(begin_<end_);
     reset->setEnabled(begin_!=0 || end_!=points_.size()); zoom->setEnabled(end_-begin_>2);
     const auto action=menu.exec(e->globalPos());
+    if (action==table) {
+        QDialog dialog(this); dialog.setWindowTitle(table->text()); dialog.resize(650,450);
+        auto *layout=new QVBoxLayout(&dialog); auto *view=new QTableView(&dialog);
+        view->setModel(new SampleModel(points_.mid(begin_,end_-begin_),unit_,view));
+        view->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        view->horizontalHeader()->setStretchLastSection(true); layout->addWidget(view);
+        auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close,&dialog);
+        QObject::connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject); layout->addWidget(buttons);
+        dialog.exec(); return;
+    }
     if (action==reset) { resetView(); return; }
     if (action==zoom) { const auto trim=std::max(qsizetype(1),(end_-begin_)/4); if(end_-begin_<=2) return; setViewRange(begin_+trim,end_-trim); return; }
     if (action!=exportAction && action!=exportVisible) return;
+    const auto frozen=action==exportVisible?points_.mid(begin_,end_-begin_):points_;
     const QString path=QFileDialog::getSaveFileName(this,QCoreApplication::translate("LineChart", "Export plotted samples"),{},QStringLiteral("CSV (*.csv)"));
     if(path.isEmpty())return;
     // Export numeric samples only; labels can contain untrusted spreadsheet formula prefixes.
     QSaveFile f(path);
     if(!f.open(QIODevice::WriteOnly)) {QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());return;}
-    QTextStream out(&f); out.setRealNumberPrecision(17); out << "x,y\n";
-    for(qsizetype i=action==exportVisible?begin_:0;i<(action==exportVisible?end_:points_.size());++i) { const auto &pt=points_[i]; out<<pt.x<<','<<pt.y<<'\n'; }
+    QTextStream out(&f); out.setRealNumberPrecision(17); out << "x,y,break_before\n";
+    for(const auto &pt:frozen) out<<pt.x<<','<<pt.y<<','<<(pt.breakBefore?1:0)<<'\n';
     out.flush();
     if(out.status()!=QTextStream::Ok||!f.commit())QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());
 }
@@ -195,7 +262,7 @@ BarChart::BarChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreA
 void BarChart::setBars(const QVector<Bar> &bars) {
     bars_ = bars;
     QStringList rows;
-    for (const Bar &b : bars) rows << b.label + QStringLiteral(": ") + b.text;
+    for (const Bar &b : bars) rows << b.label + QStringLiteral(": ") + (std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"));
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
     setMinimumHeight(int(bars_.size()) * barRowHeight(fontMetrics()) + 4);
     update();
@@ -207,28 +274,38 @@ void BarChart::paintEvent(QPaintEvent *) {
     p.setRenderHint(QPainter::Antialiasing);
     const QFontMetrics fm(font());
     int labelW = 0, textW = 0;
-    double maxV = 0;
+    double minV = 0, maxV = 0;
     for (const Bar &b : bars_) {
         labelW = std::max(labelW, fm.horizontalAdvance(b.label));
-        textW = std::max(textW, fm.horizontalAdvance(b.text));
-        maxV = std::max(maxV, b.value);
+        textW = std::max(textW, fm.horizontalAdvance(std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable")));
+        if (std::isfinite(b.value)) { minV = std::min(minV,b.value); maxV = std::max(maxV,b.value); }
     }
     const int rowH = barRowHeight(fm);
     if (width() < 30) return;
     labelW = std::min(labelW + 10, width() / 2);
     textW = std::min(textW + 4, width() / 3);
     const int barMax = std::max(0, width() - labelW - textW - 8);
+    const auto range = chartaxis::Range::make(minV,maxV);
+    if (!range) return;
+    const double zero = range->fraction(0);
     for (int i = 0; i < bars_.size(); ++i) {
         const Bar &b = bars_[i];
         const int y = i * rowH;
         p.setPen(colorFrom(theme::FG_DIM));
         p.drawText(QRect(0, y, labelW - 6, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(b.label, Qt::ElideRight, labelW - 6));
-        const int len = maxV > 0 && std::isfinite(b.value) ? int(std::round(barMax * std::clamp(b.value / maxV, 0.0, 1.0))) : 0;
+        const bool finite = std::isfinite(b.value);
+        const double value = finite ? range->fraction(b.value) : zero;
+        const int from = int(std::round(barMax * std::min(zero,value)));
+        const int to = int(std::round(barMax * std::max(zero,value)));
         p.setPen(Qt::NoPen);
         p.setBrush(colorFrom(theme::ACCENT_SOFT));
-        if (len > 0) p.drawRoundedRect(QRect(labelW, y + 4, len, rowH - 8), 2, 2);
+        if (to > from) p.drawRoundedRect(QRect(labelW+from,y+4,to-from,rowH-8),2,2);
+        if (minV < 0 && maxV > 0) {
+            p.setPen(colorFrom(theme::FG_DIM));
+            const int x=labelW+int(std::round(barMax*zero)); p.drawLine(x,y+2,x,y+rowH-2);
+        }
         p.setPen(colorFrom(theme::MUTED));
-        p.drawText(QRect(width() - textW, y, textW, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(b.text, Qt::ElideRight, textW));
+        p.drawText(QRect(width() - textW, y, textW, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(finite ? b.text : QCoreApplication::translate("BarChart", "Unavailable"), Qt::ElideRight, textW));
     }
 }
 
@@ -237,6 +314,7 @@ void BarChart::paintEvent(QPaintEvent *) {
 DayBars::DayBars(QWidget *parent) : QWidget(parent) {
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::StrongFocus);
     setAccessibleName(tr("Kernel events per day"));
 }
 
@@ -244,9 +322,9 @@ void DayBars::setDays(const QVector<Day> &days) {
     days_ = days;
     QStringList rows;
     for (const Day &d : days) {
-        int n = 0;
-        for (int c : d.kinds) n += c;
-        if (n) rows << tr("%1: %n event(s)", nullptr, n).arg(d.date);
+        qint64 n = 0;
+        for (int c : d.kinds) n += std::max(0,c);
+        if (n) rows << QStringLiteral("%1: %2").arg(d.date).arg(n);
     }
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
     update();
@@ -265,7 +343,7 @@ QColor DayBars::colorOf(const QString &kind) {
     return colorFrom(PALETTE[sum % int(std::size(PALETTE))]);
 }
 
-QRectF DayBars::plotRect() const { return QRectF(rect()).adjusted(4, 4, -4, -18); }
+QRectF DayBars::plotRect() const { return QRectF(rect()).adjusted(4, 4, -4, -fontMetrics().height()-5); }
 
 int DayBars::columnAt(const QPointF &p) const {
     const QRectF r = plotRect();
@@ -278,14 +356,15 @@ void DayBars::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF r = plotRect();
-    int maxTotal = 1;
+    if (r.width()<=0 || r.height()<=0) return;
+    qint64 maxTotal = 1;
     for (const Day &d : days_) {
-        int total = 0;
-        for (int n : d.kinds) total += n;
+        qint64 total = 0;
+        for (int n : d.kinds) total += std::max(0,n);
         maxTotal = std::max(maxTotal, total);
     }
     const double colW = r.width() / days_.size();
-    const double barW = std::max(2.0, colW * 0.7);
+    const double barW = std::max(0.0, colW * 0.7);
     for (int i = 0; i < days_.size(); ++i) {
         const Day &d = days_[i];
         const double x = r.left() + i * colW + (colW - barW) / 2;
@@ -307,8 +386,10 @@ void DayBars::paintEvent(QPaintEvent *) {
     p.setPen(QPen(colorFrom(theme::BORDER_SOFT)));
     p.drawLine(r.bottomLeft(), r.bottomRight());
     p.setPen(colorFrom(theme::MUTED));
-    p.drawText(QRectF(r.left(), r.bottom() + 2, 80, 14), Qt::AlignLeft, days_.first().date.mid(5));
-    p.drawText(QRectF(r.right() - 80, r.bottom() + 2, 80, 14), Qt::AlignRight, days_.last().date.mid(5));
+    const auto half=r.width()/2;
+    const auto fm=fontMetrics();
+    p.drawText(QRectF(r.left(),r.bottom()+2,half,fm.height()),Qt::AlignLeft,fm.elidedText(days_.first().date.mid(5),Qt::ElideRight,int(half)));
+    p.drawText(QRectF(r.right()-half,r.bottom()+2,half,fm.height()),Qt::AlignRight,fm.elidedText(days_.last().date.mid(5),Qt::ElideLeft,int(half)));
 }
 
 void DayBars::mousePressEvent(QMouseEvent *e) {
@@ -322,4 +403,17 @@ void DayBars::mouseMoveEvent(QMouseEvent *e) {
     QStringList parts;
     for (auto it = days_[i].kinds.cbegin(); it != days_[i].kinds.cend(); ++it) parts << QStringLiteral("%1 ×%2").arg(it.key()).arg(it.value());
     setToolTip(QStringLiteral("%1  %2").arg(days_[i].date, parts.isEmpty() ? tr("no events") : parts.join(QStringLiteral(", "))));
+}
+
+void DayBars::keyPressEvent(QKeyEvent *e) {
+    if (days_.isEmpty() || (e->key()!=Qt::Key_Left && e->key()!=Qt::Key_Right && e->key()!=Qt::Key_Home && e->key()!=Qt::Key_End)) {
+        QWidget::keyPressEvent(e); return;
+    }
+    qsizetype i=0;
+    while (i<days_.size() && days_[i].date!=selected_) ++i;
+    if (e->key()==Qt::Key_Home) i=0;
+    else if (e->key()==Qt::Key_End) i=days_.size()-1;
+    else if (i==days_.size()) i=0;
+    else i=std::clamp(i+(e->key()==Qt::Key_Left?-1:1),qsizetype(0),days_.size()-1);
+    setSelected(days_[i].date); Q_EMIT dayClicked(selected_); e->accept();
 }

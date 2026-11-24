@@ -12,6 +12,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -71,11 +72,11 @@ Zone4Tab::Zone4Tab(QWidget *parent) : QWidget(parent) {
     g->addWidget(direction_, row++, 1);
 
     zonesLabel_ = muted("Zone colours");
-    auto *zh = new QHBoxLayout;
-    zh->setSpacing(6);
+    zonesLayout_=new QGridLayout;
+    zonesLayout_->setSpacing(6);
     for (int i = 0; i < 4; ++i) {
         zone_[i] = new QPushButton;
-        zone_[i]->setMinimumSize(96, 44);
+        zone_[i]->setMinimumSize(fontMetrics().horizontalAdvance(QStringLiteral("#FFFFFF"))+18,fontMetrics().height()+20);
         zone_[i]->setToolTip(QStringLiteral("Zone %1 (left to right) — click to pick its colour.").arg(i + 1));
         connect(zone_[i], &QPushButton::clicked, this, [this, i] {
             const QColor c = QColorDialog::getColor(colors_[i], this, QStringLiteral("Zone %1 colour").arg(i + 1));
@@ -83,10 +84,10 @@ Zone4Tab::Zone4Tab(QWidget *parent) : QWidget(parent) {
             colors_[i] = c;
             paintZone(i);
         });
-        zh->addWidget(zone_[i], 1);
+        zonesLayout_->addWidget(zone_[i],i/2,i%2);
     }
     g->addWidget(zonesLabel_, row, 0);
-    g->addLayout(zh, row++, 1);
+    g->addLayout(zonesLayout_, row++, 1);
     g->setColumnStretch(1, 1);
     v->addWidget(box);
 
@@ -114,6 +115,19 @@ Zone4Tab::Zone4Tab(QWidget *parent) : QWidget(parent) {
     load();
     for (int i = 0; i < 4; ++i) paintZone(i);
     syncEnabled();
+    reflowZones();
+}
+
+void Zone4Tab::resizeEvent(QResizeEvent *event) { QWidget::resizeEvent(event); reflowZones(); }
+void Zone4Tab::reflowZones() {
+    if(!zonesLayout_ || !zone_[3]) return;
+    const int available=width()-fontMetrics().horizontalAdvance(tr("Zone colours"))-60;
+    const int cell=fontMetrics().horizontalAdvance(QStringLiteral("#FFFFFF"))+24;
+    const int cols=available>=4*cell?4:2;
+    if(cols==zoneColumns_) return;
+    for(auto *button:zone_) zonesLayout_->removeWidget(button);
+    for(int i=0;i<4;++i) { zonesLayout_->setColumnStretch(i,i<cols?1:0); zonesLayout_->addWidget(zone_[i],i/cols,i%cols); }
+    zoneColumns_=cols;
 }
 
 void Zone4Tab::paintZone(int i) {

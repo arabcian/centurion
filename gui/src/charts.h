@@ -68,6 +68,7 @@ Q_SIGNALS:
 protected:
     void paintEvent(QPaintEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;
+    void keyPressEvent(QKeyEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     QSize minimumSizeHint() const override { return {240, 90}; }
 

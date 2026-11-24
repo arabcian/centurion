@@ -554,7 +554,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         band_->setVisible(show);
     });
     QTimer::singleShot(4000, boot_, &BootPage::reload);
-    connect(boot_, &BootPage::openKernelLog, this, [this](const QString &boot8) { klog_->showBoot(boot8); showPage(klog_); });
+    connect(boot_, &BootPage::openKernelLog, this, [this](const QString &bootId) { klog_->showBoot(bootId); showPage(klog_); });
 
     seenMs_ = guiSettings().value(QStringLiteral("health/seen_ms"), 0).toLongLong();
     auto *top = new QHBoxLayout;

@@ -20,6 +20,8 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QIntValidator>
+#include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -125,6 +127,37 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     opts->addWidget(showMuted_);
     opts->addStretch(1);
     v->addLayout(opts);
+    auto *typedPanel=new QWidget(this);
+    auto *typed = new QFormLayout(typedPanel);
+    typed->setContentsMargins(0,0,0,0);
+    auto *identity = new QHBoxLayout;
+    bootFilter_ = new QLineEdit; bootFilter_->setPlaceholderText(tr("Exact boot UUID or legacy tag")); bootFilter_->setMaxLength(36);
+    deviceFilter_ = new QLineEdit; deviceFilter_->setPlaceholderText(tr("Device or driver token")); deviceFilter_->setMaxLength(128);
+    identity->addWidget(bootFilter_,1); identity->addWidget(deviceFilter_,1);
+    typed->addRow(tr("Identity"),identity);
+    auto *event = new QHBoxLayout;
+    kind_ = new QComboBox;
+    kind_->addItem(tr("All event types"),QString());
+    for (const auto *key : {"xid","gsp","mce","aer","lockup","d3cold","amdgpu","nvme","fs","igpu","wifi","thermal","oom","oops"})
+        kind_->addItem(QString::fromLatin1(key).toUpper(),QString::fromLatin1(key));
+    kind_->addItem(tr("Unclassified"),QStringLiteral("unclassified"));
+    codeFilter_=new QLineEdit; codeFilter_->setPlaceholderText(tr("Event code (optional)"));
+    codeFilter_->setValidator(new QIntValidator(0,2147483647,codeFilter_));
+    event->addWidget(kind_,1); event->addWidget(codeFilter_,1); typed->addRow(tr("Event"),event);
+    auto *dates = new QHBoxLayout;
+    fromFilter_=new QLineEdit; fromFilter_->setPlaceholderText(tr("From date (YYYY-MM-DD)")); fromFilter_->setMaxLength(10);
+    toFilter_=new QLineEdit; toFilter_->setPlaceholderText(tr("To date (YYYY-MM-DD)")); toFilter_->setMaxLength(10);
+    dates->addWidget(fromFilter_,1); dates->addWidget(toFilter_,1); typed->addRow(tr("Recorded local date"),dates);
+    auto *typedToggle=new QPushButton(tr("Advanced filters")); typedToggle->setCheckable(true);
+    typedToggle->setChecked(false); typedPanel->hide();
+    connect(typedToggle,&QPushButton::toggled,typedPanel,&QWidget::setVisible);
+    v->addWidget(typedToggle,0,Qt::AlignLeft); v->addWidget(typedPanel);
+    filterInfo_=new QLabel; filterInfo_->setWordWrap(true); filterInfo_->setProperty("role","muted"); v->addWidget(filterInfo_);
+    auto *filterDelay=new QTimer(this); filterDelay->setSingleShot(true); filterDelay->setInterval(250);
+    connect(filterDelay,&QTimer::timeout,this,&KlogPage::render);
+    for(auto *edit : {filter_,bootFilter_,deviceFilter_,codeFilter_,fromFilter_,toFilter_})
+        connect(edit,&QLineEdit::textChanged,filterDelay,[filterDelay]{filterDelay->start();});
+    connect(kind_,&QComboBox::currentIndexChanged,this,&KlogPage::render);
 
     focusBar_ = new QWidget;
     auto *fb = new QHBoxLayout(focusBar_);
@@ -150,10 +183,9 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     info_->setProperty("role", "muted");
     v->addWidget(info_);
 
-    connect(scope_, &QComboBox::currentIndexChanged, this, [this] { focusBoot_.clear(); render(); });
-    connect(filter_, &QLineEdit::textChanged, this, [this] { focusBoot_.clear(); render(); });
-    connect(level_, &QComboBox::currentIndexChanged, this, [this] { focusBoot_.clear(); render(); });
-    for (QCheckBox *c : {group_, onlyNew_, showMuted_}) connect(c, &QCheckBox::toggled, this, [this] { focusBoot_.clear(); render(); });
+    connect(scope_, &QComboBox::currentIndexChanged, this, &KlogPage::render);
+    connect(level_, &QComboBox::currentIndexChanged, this, &KlogPage::render);
+    for (QCheckBox *c : {group_, onlyNew_, showMuted_}) connect(c, &QCheckBox::toggled, this, &KlogPage::render);
     connect(bRefresh, &QPushButton::clicked, this, &KlogPage::capture);
     connect(bCopy, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(text_->toPlainText()); });
     connect(bOpen, &QPushButton::clicked, this, [] { QDesktopServices::openUrl(QUrl::fromLocalFile(logPath())); });
@@ -172,19 +204,19 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     }
 
     QFile b(QStringLiteral("/proc/sys/kernel/random/boot_id"));
-    if (b.open(QIODevice::ReadOnly)) bootId_ = QString::fromLatin1(b.readAll().trimmed());
+    if (b.open(QIODevice::ReadOnly)) bootId_ = QString::fromLatin1(b.readAll().trimmed()).toLower();
 
     // Resume point: highest seq of this boot in the tail of the file, so a
     // restart of the app does not write the same records twice.
     {
-        QFile f(logPath());
-        const QString tag = QStringLiteral("boot=") + bootId_.left(8) + QStringLiteral(" seq=");
-        if (!bootId_.isEmpty() && f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            if (f.size() > TAIL_BYTES) { f.seek(f.size() - TAIL_BYTES); f.readLine(); }
+        // Prefix-only rows are deliberately not used as a cursor for a full UUID.
+        for (const auto &path : {logPath()+QStringLiteral(".1"),logPath()}) {
+            QFile f(path);
+            if (!klogview::fullBootId(bootId_) || !f.open(QIODevice::ReadOnly|QIODevice::Text)) continue;
+            if (f.size()>TAIL_BYTES) { f.seek(f.size()-TAIL_BYTES); f.readLine(); }
             while (!f.atEnd()) {
-                const QString l = QString::fromUtf8(f.readLine());
-                const int i = l.indexOf(tag);
-                if (i >= 0) savedSeq_ = std::max<quint64>(savedSeq_, l.mid(i + tag.size()).section(QLatin1Char(' '), 0, 0).toULongLong());
+                const auto l=klogview::parse(QString::fromUtf8(f.readLine()));
+                if (l && l->boot==bootId_) savedSeq_=std::max(savedSeq_,l->seq);
             }
         }
         lastSeq_ = savedSeq_;
@@ -223,19 +255,19 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
 KlogPage::~KlogPage() { if (kmsgFd_ >= 0) ::close(kmsgFd_); }
 
 void KlogPage::showAt(const QString &bootId, quint64 seq) {
-    // The scope and filter signals clear any earlier focus, so the focus is set after them.
+    // Use the exact recorded identity; never silently attach a legacy prefix to a UUID.
     scope_->setCurrentIndex(1);
     filter_->clear();
-    focusBoot_ = bootId.left(8);
+    focusBoot_ = bootId.toLower();
     focusSeq_ = seq;
     render();
 }
 
-void KlogPage::showBoot(const QString &boot8) {
-    scope_->setCurrentIndex(1);
-    filter_->setText(QStringLiteral("boot=") + boot8.left(8));
-    focusBoot_.clear();
-    render();
+void KlogPage::showBoot(const QString &bootId) {
+    focusBoot_.clear(); scope_->setCurrentIndex(1);
+    filter_->clear(); deviceFilter_->clear(); codeFilter_->clear(); fromFilter_->clear(); toFilter_->clear();
+    kind_->setCurrentIndex(0); level_->setCurrentIndex(0); onlyNew_->setChecked(false); showMuted_->setChecked(true);
+    bootFilter_->setText(bootId.toLower()); render();
 }
 
 void KlogPage::showEvent(QShowEvent *e) {
@@ -275,10 +307,11 @@ void KlogPage::capture() {
     }
     auto *p = new QProcess(this);
     QPointer<QProcess> guard(p);
-    connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
+    connect(p, &QProcess::finished, this, [this, p](int exitCode, QProcess::ExitStatus status) {
         busy_ = false;
         const QByteArray out = p->readAllStandardOutput().trimmed();
         p->deleteLater();
+        if (status!=QProcess::NormalExit || exitCode!=0) { info_->setText(tr("Kernel log capture failed or timed out.")); return; }
         onReply(QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object(), false);
     });
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
@@ -298,8 +331,20 @@ void KlogPage::onReply(const QJsonObject &r, bool viaRoot) {
         info_->setText(QStringLiteral("Capture failed: ") + r.value(QStringLiteral("error")).toString());
         return;
     }
-    persist(r.value(QStringLiteral("records")).toArray(), r.value(QStringLiteral("boot_id")).toString());
-    lastSeq_ = std::max<quint64>(lastSeq_, quint64(r.value(QStringLiteral("last_seq")).toDouble()));
+    const auto replyBoot=r.value(QStringLiteral("boot_id")).toString().toLower();
+    const auto seq=r.value(QStringLiteral("last_seq")).toInteger(-1);
+    if (!klogview::fullBootId(replyBoot) || replyBoot!=bootId_ || seq<0 || quint64(seq)<lastSeq_ || !r.value(QStringLiteral("records")).isArray()) {
+        info_->setText(tr("Kernel log reply has an invalid or different boot identity.")); return;
+    }
+    const auto records=r.value(QStringLiteral("records")).toArray();
+    qint64 previous=-1;
+    for(const auto &record:records) {
+        const auto n=record.toObject().value(QStringLiteral("seq")).toInteger(-1);
+        if(n<=previous || n>seq) { info_->setText(tr("Malformed kernel log record; capture cursor not advanced.")); return; }
+        previous=n;
+    }
+    if (!persist(records,replyBoot)) return;
+    lastSeq_ = std::max(lastSeq_,quint64(seq));
     Q_UNUSED(viaRoot);
     updateInfo();
     render();
@@ -311,8 +356,8 @@ QString KlogPage::logPath() {
     return dir + QStringLiteral("/centurion/kernel.log");
 }
 
-void KlogPage::persist(const QJsonArray &records, const QString &bootId) {
-    if (!bootId.isEmpty() && bootId != bootId_) { bootId_ = bootId; savedSeq_ = 0; }
+bool KlogPage::persist(const QJsonArray &records, const QString &bootId) {
+    if (!klogview::fullBootId(bootId) || bootId!=bootId_) return false;
     timespec now{};
     ::clock_gettime(CLOCK_MONOTONIC, &now);  // kernel timestamps count from boot
     const qint64 bootMs = QDateTime::currentMSecsSinceEpoch() - (qint64(now.tv_sec) * 1000 + now.tv_nsec / 1000000);
@@ -320,26 +365,35 @@ void KlogPage::persist(const QJsonArray &records, const QString &bootId) {
     quint64 top = savedSeq_;
     for (const QJsonValue &rv : records) {
         const QJsonObject o = rv.toObject();
-        const quint64 seq = quint64(o.value(QStringLiteral("seq")).toDouble());
+        const auto seqValue=o.value(QStringLiteral("seq")).toInteger(-1);
+        const auto tsValue=o.value(QStringLiteral("ts_us")).toInteger(-1);
+        const auto lvlValue=o.value(QStringLiteral("level")).toInteger(-1);
+        if(seqValue<0 || tsValue<0 || lvlValue<0 || lvlValue>4 || !o.value(QStringLiteral("msg")).isString()) {
+            info_->setText(tr("Malformed kernel log record; capture cursor not advanced.")); return false;
+        }
+        const quint64 seq=quint64(seqValue);
         if (seq <= savedSeq_) continue;
         top = std::max(top, seq);
-        const int lvl = std::clamp(o.value(QStringLiteral("level")).toInt(4), 0, 4);
-        const qint64 tsMs = qint64(o.value(QStringLiteral("ts_us")).toDouble() / 1000);
+        const int lvl=int(lvlValue);
+        const qint64 tsMs=tsValue/1000;
+        auto message=o.value(QStringLiteral("msg")).toString();
+        message.replace(QLatin1Char('\n'),QStringLiteral(" ⏎ ")); message.replace(QLatin1Char('\r'),QStringLiteral(" ⏎ "));
         lines << QStringLiteral("%1  boot=%2 seq=%3  %4  [%5.%6] %7")
                      .arg(QDateTime::fromMSecsSinceEpoch(bootMs + tsMs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
-                     .arg(bootId_.left(8)).arg(seq)
+                     .arg(bootId_).arg(seq)
                      .arg(QString::fromLatin1(LEVELS[lvl]), -5)
                      .arg(tsMs / 1000).arg((tsMs % 1000) * 1000, 6, 10, QLatin1Char('0'))
-                     .arg(o.value(QStringLiteral("msg")).toString());
+                     .arg(message);
     }
-    if (lines.isEmpty()) return;
+    if (lines.isEmpty()) return true;
     const QString path = logPath();
     QDir().mkpath(QFileInfo(path).absolutePath());
     if (QFileInfo(path).size() > LOG_MAX_BYTES) { QFile::remove(path + QStringLiteral(".1")); QFile::rename(path, path + QStringLiteral(".1")); }
     QFile f(path);
-    if (!f.open(QIODevice::Append | QIODevice::Text)) { info_->setText(QStringLiteral("Cannot write ") + path); return; }
-    QTextStream(&f) << lines.join(QLatin1Char('\n')) << '\n';
-    savedSeq_ = top;
+    if (!f.open(QIODevice::Append | QIODevice::Text)) { info_->setText(QStringLiteral("Cannot write ") + path); return false; }
+    const QByteArray bytes=(lines.join(QLatin1Char('\n'))+QLatin1Char('\n')).toUtf8();
+    if(f.write(bytes)!=bytes.size() || !f.flush()) { info_->setText(tr("Kernel log write failed; capture cursor not advanced.")); return false; }
+    savedSeq_ = top; return true;
 }
 
 void KlogPage::updateInfo() {
@@ -357,7 +411,12 @@ void KlogPage::updateInfo() {
 
 void KlogPage::render() {
     const bool all = scope_->currentIndex() == 1;
-    const QString boot = bootId_.left(8);
+    const QString boot = bootId_;
+    bool codeOk=false;
+    const auto code=codeFilter_->text().toInt(&codeOk);
+    const klogview::Filter typed{bootFilter_->text().trimmed(),kind_->currentData().toString(),deviceFilter_->text().trimmed(),fromFilter_->text().trimmed(),toFilter_->text().trimmed(),codeFilter_->text().isEmpty()?-1:(codeOk?code:-2)};
+    const bool valid=typed.valid();
+    const auto devicePattern=typed.devicePattern();
     // "a|b|c": any of the alternatives.
     QStringList needles;
     for (const QString &n : filter_->text().split(QLatin1Char('|'), Qt::SkipEmptyParts))
@@ -373,6 +432,7 @@ void KlogPage::render() {
     klogview::ContextWindow context(focusBoot_, focusSeq_, CONTEXT_BEFORE, CONTEXT_AFTER);
     tailLimited_ = false;
     QHash<QString, QString> firstBoot;
+    int matching=0; hiddenMuted_=0;
     std::deque<klogview::Line> shown;  // the newest lines of the scope, level and text filter
     for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
         QFile f(path);
@@ -383,9 +443,15 @@ void KlogPage::render() {
             if (!p) continue;
             if (focused) { context.append(*p); continue; }
             if (!firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
-            if (!all && p->boot != boot) continue;
+            if (!all && (!klogview::fullBootId(boot) || p->boot != boot)) continue;
             if (p->level > levelMax) continue;
-            if (!matches(l)) continue;
+            if (!matches(l) || !valid) continue;
+            QJsonObject event;
+            if (!typed.kind.isEmpty() || typed.code>=0) event=eventinfo::classifyLine(p->msg);
+            if (!typed.matches(*p,event.value(QStringLiteral("kind")).toString(),event.value(QStringLiteral("code")).toInt(-1),devicePattern)) continue;
+            if (muted_.contains(p->key) && !showMuted_->isChecked()) { ++hiddenMuted_; continue; }
+            if (onlyNew_->isChecked() && firstBoot.value(p->key)!=p->boot) continue;
+            ++matching;
             shown.push_back(*p);
             if (shown.size() > MAX_SHOWN_LINES) { shown.pop_front(); tailLimited_ = true; }
         }
@@ -394,17 +460,11 @@ void KlogPage::render() {
     // Opened from Monitor: same-boot neighbours, without the normal tail cap or severity filter.
     std::vector<klogview::Row> rows;
     int mark = -1;
-    hiddenMuted_ = 0;
     if (focused) {
         rows = context.rows();
         mark = context.mark();
     } else {
-        std::vector<klogview::Line> keep;
-        for (const klogview::Line &l : shown) {
-            if (muted_.contains(l.key) && !showMuted_->isChecked()) { ++hiddenMuted_; continue; }
-            if (onlyNew_->isChecked() && firstBoot.value(l.key) != l.boot) continue;
-            keep.push_back(l);
-        }
+        const std::vector<klogview::Line> keep(shown.begin(),shown.end());
         rows = klogview::group(keep, group_->isChecked());
     }
 
@@ -412,14 +472,18 @@ void KlogPage::render() {
     rowKey_.clear();
     rowMsg_.clear();
     focusBar_->setVisible(focused);
+    const bool advancedActive=!typed.boot.isEmpty() || !typed.kind.isEmpty() || !typed.device.isEmpty() || !typed.fromDate.isEmpty() || !typed.toDate.isEmpty() || typed.code!=-1;
+    filterInfo_->setText(focused ? tr("Context ignores all display filters.") : !valid ? tr("Invalid boot identity, event code or date range.") : tr("Matching saved records: %1. Legacy eight-character boot tags are not full boot identities; use All saved boots to inspect them separately.").arg(matching) + (advancedActive ? tr(" Advanced filters active.") : QString()));
     if (focused)
         focusText_->setText(tr("Showing up to %1 saved lines before and %2 after kernel message %3 in boot %4, independent of display filters.")
-                                .arg(CONTEXT_BEFORE).arg(CONTEXT_AFTER).arg(focusSeq_).arg(focusBoot_));
+                                .arg(CONTEXT_BEFORE).arg(CONTEXT_AFTER).arg(focusSeq_).arg(focusBoot_)
+                                + (!klogview::fullBootId(focusBoot_) ? tr(" — Legacy identity; actual boot not verified.") : QString()));
     QString html = QStringLiteral("<pre style='margin:0'>");
     for (int i = 0; i < int(rows.size()); ++i) {
         const klogview::Row &r = rows.at(i);
         const klogview::Line &l = r.first;
         QString plain = l.text;
+        if (!klogview::fullBootId(l.boot)) plain += tr(" [legacy boot tag]");
         if (r.count > 1) plain += tr("  ×%1, last %2").arg(r.count).arg(r.last.mid(11));
         if (muted_.contains(l.key)) plain += tr("  [muted]");
         rowKey_.insert(plain.trimmed(), l.key);  // the context menu finds the message by its line text
@@ -438,7 +502,7 @@ void KlogPage::render() {
         updateInfo();
         return;
     }
-    text_->setHtml(rows.empty() ? QStringLiteral("<i>No saved kernel warnings or errors%1.</i>").arg(all ? QString() : QStringLiteral(" for this boot")) : html);
+    text_->setHtml(rows.empty() ? QStringLiteral("<i>%1</i>").arg(tr("No saved records match the selected filters.").toHtmlEscaped()) : html);
     updateInfo();
     if (mark >= 0) {
         text_->scrollToAnchor(QStringLiteral("focus"));
@@ -510,7 +574,10 @@ void KlogPage::fillPresets(QMenu *menu) {
     for (const Preset &p : PRESETS)
         menu->addAction(tr(p.label), this, [this, f = QString::fromLatin1(p.filter)] { filter_->setText(f); });
     menu->addSeparator();
-    menu->addAction(tr("Clear filter"), this, [this] { filter_->clear(); });
+    menu->addAction(tr("Clear filter"), this, [this] {
+        filter_->clear(); bootFilter_->clear(); deviceFilter_->clear(); codeFilter_->clear();
+        fromFilter_->clear(); toFilter_->clear(); kind_->setCurrentIndex(0);
+    });
 }
 
 void KlogPage::saveView() {

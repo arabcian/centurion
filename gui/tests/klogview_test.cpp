@@ -59,6 +59,21 @@ int main(int argc, char **argv) {
     CHECK(first.value(QStringLiteral("fresh message")) == QLatin1String("aaaaaaaa"));
     CHECK(!first.contains(QStringLiteral("never seen")));
 
+    const auto full=at("2026-10-29 01:00:00  boot=aaaaaaaa-1111-2222-3333-444444444444 seq=7  ERR [1.0] nvme nvme1: timeout");
+    const auto collision=at("2026-10-29 01:00:00  boot=aaaaaaaa-aaaa-bbbb-cccc-dddddddddddd seq=7  ERR [1.0] nvme nvme10: timeout");
+    CHECK(fullBootId(full.boot)); CHECK(!fullBootId(QStringLiteral("aaaaaaaa")));
+    CHECK(!parse(QStringLiteral("2026-10-29 01:00:00 boot=aaaaaaaa seq=18446744073709551616 ERR [1.0] x")));
+    CHECK(!parse(QStringLiteral("2026-10-29 01:00:00 boot=not-a-boot seq=1 ERR [1.0] x")));
+    Filter f{full.boot,QStringLiteral("nvme"),QStringLiteral("nvme1"),QStringLiteral("2026-10-29"),QStringLiteral("2026-10-29"),5};
+    CHECK(f.valid()); CHECK(f.matches(full,QStringLiteral("nvme"),5,f.devicePattern()));
+    CHECK(!f.matches(collision,QStringLiteral("nvme"),5,f.devicePattern()));
+    CHECK(!f.matches(full,QStringLiteral("nvme"),6,f.devicePattern()));
+    f.boot.clear(); CHECK(!f.matches(collision,QStringLiteral("nvme"),5,f.devicePattern()));
+    f.fromDate=QStringLiteral("2026-02-30"); CHECK(!f.valid());
+    ContextWindow exact(full.boot,7,2,3); exact.append(collision); exact.append(*a); exact.append(full);
+    CHECK(exact.rows().size()==1 && exact.rows()[0].first.boot==full.boot);
+    CHECK(group({full,collision},true).size()==2);
+
     ContextWindow context(QStringLiteral("aaaaaaaa"), 10, 2, 3);
     Line sample = lines.front();
     for (quint64 i = 1; i <= 8000; ++i) {

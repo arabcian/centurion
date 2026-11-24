@@ -1,6 +1,7 @@
 #include "klogview.h"
 
 #include <QRegularExpression>
+#include <QDate>
 #include <QStringList>
 #include <algorithm>
 #include <utility>
@@ -9,6 +10,37 @@ namespace klogview {
 
 static const QRegularExpression SAVED(QStringLiteral(R"(^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+boot=(\S+)\s+seq=(\d+)\s+(\S+)\s+\[[^\]]*\]\s?(.*)$)"));
 static const QRegularExpression DIGITS(QStringLiteral(R"(\d+)"));
+
+bool fullBootId(const QString &id) {
+    static const QRegularExpression uuid(QStringLiteral("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"));
+    return uuid.match(id).hasMatch();
+}
+static bool legacyBootId(const QString &id) {
+    static const QRegularExpression prefix(QStringLiteral("^[0-9a-fA-F]{8}$"));
+    return prefix.match(id).hasMatch();
+}
+
+bool Filter::valid() const {
+    const auto dateValid=[](const QString &s) { return s.isEmpty() || (s.size()==10 && QDate::fromString(s,Qt::ISODate).isValid()); };
+    return (boot.isEmpty() || fullBootId(boot) || legacyBootId(boot)) && dateValid(fromDate) && dateValid(toDate)
+        && (fromDate.isEmpty() || toDate.isEmpty() || fromDate<=toDate) && code>=-1;
+}
+QRegularExpression Filter::devicePattern() const {
+    return QRegularExpression(QStringLiteral("(?<![A-Za-z0-9_])%1(?![A-Za-z0-9_])").arg(QRegularExpression::escape(device)),QRegularExpression::CaseInsensitiveOption);
+}
+// Caller validates date and identity once before scanning.
+bool Filter::matches(const Line &line,const QString &eventKind,int eventCode,const QRegularExpression &token) const {
+    if (!boot.isEmpty() && line.boot.compare(boot,Qt::CaseInsensitive)!=0) return false;
+    if (!kind.isEmpty() && (kind==QLatin1String("unclassified") ? !eventKind.isEmpty() : eventKind!=kind)) return false;
+    if (code>=0 && code!=eventCode) return false;
+    if (!device.isEmpty()) {
+        // A literal token in the message, not an inferred hardware identity.
+        // Token boundaries prevent nvme1 from matching nvme10.
+        if (!token.match(line.msg).hasMatch()) return false;
+    }
+    const auto date=line.time.left(10);
+    return (fromDate.isEmpty() || date>=fromDate) && (toDate.isEmpty() || date<=toDate);
+}
 
 int levelIndex(const QString &name) {
     static const QStringList names{QStringLiteral("EMERG"), QStringLiteral("ALERT"), QStringLiteral("CRIT"),
@@ -25,8 +57,12 @@ std::optional<Line> parse(const QString &saved) {
     Line l;
     l.text = text;
     l.time = m.captured(1);
-    l.boot = m.captured(2);
-    l.seq = m.captured(3).toULongLong();
+    if (!QDate::fromString(l.time.left(10),Qt::ISODate).isValid()) return std::nullopt;
+    l.boot = m.captured(2).toLower();
+    if (!fullBootId(l.boot) && !legacyBootId(l.boot)) return std::nullopt;
+    bool seqOk=false;
+    l.seq = m.captured(3).toULongLong(&seqOk);
+    if (!seqOk) return std::nullopt;
     l.level = level;
     l.msg = m.captured(5);
     l.key = normalize(l.msg);
@@ -81,13 +117,14 @@ std::vector<Row> group(const std::vector<Line> &lines, bool groupRepeats) {
     QHash<QString, size_t> at;  // key → its row
     for (const Line &l : lines) {
         if (groupRepeats) {
-            if (const auto it = at.constFind(l.key); it != at.constEnd()) {
+            const auto identity = l.boot + QLatin1Char('/') + l.key;
+            if (const auto it = at.constFind(identity); it != at.constEnd()) {
                 Row &r = rows[it.value()];
                 ++r.count;
                 r.last = l.time;
                 continue;
             }
-            at.insert(l.key, rows.size());
+            at.insert(identity, rows.size());
         }
         rows.push_back(Row{l, 1, l.time});
     }

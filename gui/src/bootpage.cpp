@@ -1,5 +1,6 @@
 #include "bootpage.h"
 #include "flightrec.h"
+#include "klogview.h"
 #include "privileged.h"
 #include "theme.h"
 
@@ -109,8 +110,8 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     bKlog_ = new QPushButton(tr("Kernel log of this boot"));
     bKlog_->setToolTip(tr("Open the saved kernel log filtered to the selected boot."));
     connect(bKlog_, &QPushButton::clicked, this, [this] {
-        if (auto *it = list_->currentItem(); it && !it->isHidden() && uniqueBootPrefix(it->data(0, ROLE_BOOT).toString()))
-            Q_EMIT openKernelLog(it->data(0, ROLE_BOOT).toString().left(8));
+        if (auto *it = list_->currentItem(); it && !it->isHidden() && klogview::fullBootId(it->data(0, ROLE_BOOT).toString()))
+            Q_EMIT openKernelLog(it->data(0, ROLE_BOOT).toString());
     });
     tools->addWidget(bKlog_);
     auto *compare = new QPushButton(tr("Compare boots…"));
@@ -242,8 +243,8 @@ void BootPage::showDetail() {
     auto *it = list_->currentItem();
     if (!it || it->isHidden()) { bKlog_->setEnabled(false); detail_->clear(); return; }
     const QString id = it->data(0, ROLE_BOOT).toString();
-    bKlog_->setEnabled(uniqueBootPrefix(id));
-    bKlog_->setToolTip(uniqueBootPrefix(id) ? tr("Open the saved kernel log filtered to the selected boot.") : tr("No unique eight-character boot tag is available; the legacy kernel log cannot identify this boot safely."));
+    bKlog_->setEnabled(klogview::fullBootId(id));
+    bKlog_->setToolTip(tr("Open exact boot UUID records; legacy tags are separate candidates."));
     const QJsonArray entries = data_.value(QStringLiteral("pstore")).toObject().value(QStringLiteral("entries")).toArray();
     auto entryText = [](const QJsonObject &e) {
         return tr("── pstore: %1 (%2, %3, %4) ──\n%5\n").arg(e.value(QStringLiteral("name")).toString(), e.value(QStringLiteral("kind")).toString(),
@@ -272,10 +273,14 @@ void BootPage::showDetail() {
     if (state == QLatin1String("unclean")) {
         out += QLatin1Char('\n');
         for (const QJsonValue &i : b.value(QStringLiteral("pstore")).toArray()) out += entryText(entries.at(i.toInt()).toObject()) + QLatin1Char('\n');
-        const QStringList tail = uniqueBootPrefix(id) ? kernelLogTail(id.left(8), LOG_LINES) : QStringList{};
+        const QStringList tail = klogview::fullBootId(id) ? kernelLogTail(id,LOG_LINES) : QStringList{};
         if (!uniqueBootPrefix(id)) out += tr("Legacy log attribution unavailable: boot prefix is missing or ambiguous.\n");
         out += tail.isEmpty() ? tr("── no saved kernel-log lines for this boot ──\n")
                               : tr("── last %1 saved kernel-log lines of this boot ──\n%2\n").arg(tail.size()).arg(tail.join(QLatin1Char('\n')));
+        if (uniqueBootPrefix(id)) {
+            const auto legacy=kernelLogTail(id.left(8),LOG_LINES);
+            if (!legacy.isEmpty()) out += tr("── Legacy prefix candidates (not verified as this boot) ──\n%1\n").arg(legacy.join(QLatin1Char('\n')));
+        }
     }
     detail_->setPlainText(out);
 }
@@ -322,8 +327,7 @@ QString BootPage::logPath() {
     return dir + QStringLiteral("/centurion/kernel.log");
 }
 
-QStringList BootPage::kernelLogTail(const QString &boot8, int lines) {
-    const QString tag = QStringLiteral("boot=") + boot8 + QStringLiteral(" seq=");
+QStringList BootPage::kernelLogTail(const QString &bootId, int lines) {
     QStringList out;
     for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
         QFile f(path);
@@ -331,7 +335,8 @@ QStringList BootPage::kernelLogTail(const QString &boot8, int lines) {
         if (f.size() > TAIL_BYTES) { f.seek(f.size() - TAIL_BYTES); f.readLine(); }
         while (!f.atEnd()) {
             const QString l = QString::fromUtf8(f.readLine()).trimmed();
-            if (!l.contains(tag)) continue;
+            const auto parsed=klogview::parse(l);
+            if (!parsed || parsed->boot!=bootId.toLower()) continue;
             out << l;
             if (out.size() > lines) out.removeFirst();
         }
