@@ -91,5 +91,6 @@ private:
 
     scenes::Scene loaded_;           // as last saved / loaded
     QMap<QString, int> firmware_;    // editor copy of the firmware snapshot
+    QStringList stepHistory_;
     bool filling_ = false;
 };

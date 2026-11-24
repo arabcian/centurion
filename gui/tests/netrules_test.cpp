@@ -2,6 +2,7 @@
 #include "../src/netrules.h"
 
 #include <cstdio>
+#include <QJsonArray>
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++failures; } } while (0)
@@ -32,6 +33,14 @@ int main() {
     CHECK(reverseDnsName(s("192.0.2.5")) == s("5.2.0.192.in-addr.arpa"));
     CHECK(reverseDnsName(s("2001:db8::1")).startsWith(s("1.0.0.0.")) && reverseDnsName(s("2001:db8::1")).endsWith(s("8.b.d.0.1.0.0.2.ip6.arpa")));
     CHECK(reverseDnsName(s("nope")).isEmpty());
+
+    const QJsonObject rule1{{"id",1},{"dir","in"},{"ports","22"},{"action","allow"}};
+    const QJsonObject rule2{{"id",2},{"dir","in"},{"ports","443"},{"action","block"}};
+    const QJsonObject rules{{"rules",QJsonArray{rule1,rule2}}};
+    CHECK(firewallConfigDiff(rules,rules).isEmpty());
+    CHECK(firewallConfigDiff(rules,QJsonObject{{"rules",QJsonArray{rule2,rule1}}}).size()==2);
+    CHECK(firewallConfigDiff(rules,QJsonObject{{"rules",QJsonArray{rule1}}}).size()==1);
+    CHECK(firewallConfigDiff(rules,QJsonObject{{"rules",QJsonArray{rule1,rule1}}}).size()==1);
 
     if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }
     std::printf("netrules: all checks passed\n");

@@ -1375,20 +1375,25 @@ void SceneEngine::next() {
     // Never undo power/firmware settings under the game's new tuning ownership.
     if (autoApply_ && !steps_.isEmpty() && (gameSessions() > 0 || gameStarting() || gameSceneActive())) {
         log_ << QStringLiteral("a game started — remaining steps skipped; the game owns further changes");
+        for (const auto &pending : steps_) Q_EMIT stepState(pending.name, QStringLiteral("skipped"), {});
         steps_.clear();
         gameTookOver_ = true;
     }
     if (steps_.isEmpty()) { finish(); return; }
     const TransactionStep step = steps_.takeFirst();
+    Q_EMIT stepState(step.name, QStringLiteral("running"), {});
     if (step.undo) applied_.append(step);  // includes a helper's PARTIAL write before reporting failure
     step.apply([this, step](bool ok, const QString &msg) {
         // A soft failure wrote nothing (missing snapshot, wrong profile, busy tab): reported as a problem,
         // like before transactions, but the remaining steps still run and nothing is rolled back.
         const bool soft = std::exchange(softFail_, false) && !ok;
         ok_ &= ok;
+        Q_EMIT stepState(step.name, ok ? QStringLiteral("returned_ok") : soft ? QStringLiteral("soft_failure") : QStringLiteral("failed"), msg);
         log_ << (ok ? QString() : QStringLiteral("✗ ")) + step.name + (msg.isEmpty() ? QString() : QStringLiteral(": ") + msg);
         if (!soft && !step.undo && !msg.startsWith("skipped") && !msg.startsWith("left alone") && !msg.startsWith("unchanged"))
             uncompensated_ = true;
+        if (!ok && !soft)
+            for (const auto &pending : steps_) Q_EMIT stepState(pending.name, QStringLiteral("skipped"), {});
         if (!ok && !soft) {
             steps_.clear();
             deferGpu_.clear();
@@ -1414,7 +1419,9 @@ void SceneEngine::rollbackNext() {
         return;
     }
     const TransactionStep s = applied_.takeLast();
+    Q_EMIT stepState(s.name, QStringLiteral("restoring"), {});
     s.undo([this, what = s.name](bool ok, const QString &msg) {
+        Q_EMIT stepState(what, ok ? QStringLiteral("restore_returned_ok") : QStringLiteral("restore_failed"), msg);
         if (!ok) rollbackFailed_ = true;
         log_ << QStringLiteral("↩ %1: %2%3").arg(what, ok ? QStringLiteral("restored") : QStringLiteral("FAILED"),
                                                    msg.isEmpty() ? QString() : QStringLiteral(" — ") + msg);

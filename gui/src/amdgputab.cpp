@@ -1,4 +1,6 @@
 #include "amdgputab.h"
+#include "charts.h"
+#include <QDateTime>
 #include "privileged.h"
 #include "theme.h"
 #include <QApplication>
@@ -152,7 +154,12 @@ AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
 
     live_ = new QLabel(QStringLiteral("—"));
     live_->setStyleSheet(QStringLiteral("font-family: monospace; color: %1; padding-left: 2px;").arg(theme::MUTED));
-    outer->addWidget(live_);
+    auto *liveRow = new QHBoxLayout;
+    liveRow->addWidget(live_, 1);
+    auto *frequencies = new QPushButton(tr("Frequency overview…"));
+    connect(frequencies, &QPushButton::clicked, this, &AmdGpuTab::frequencyOverview);
+    liveRow->addWidget(frequencies);
+    outer->addLayout(liveRow);
 
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
@@ -262,6 +269,7 @@ const Card *AmdGpuTab::card() const {
 
 void AmdGpuTab::selectCard(int) {
     if (!card()) return;
+    lastLive_ = {}; lastLiveTime_.clear();
     snap_ = read(*card());
     rebuildForm();
     const QJsonObject now = settingsOf(snap_);
@@ -591,10 +599,12 @@ void AmdGpuTab::pollLive() {
     if (!card() || !isVisible()) return;
     // An integrated GPU is always awake; a discrete one in runtime suspend is not woken for a readout.
     if (!card()->integrated && amdgpu::readFile(card()->dev + "/power/runtime_status").trimmed() == "suspended") {
+        lastLive_ = {}; lastLiveTime_.clear();
         live_->setText(QStringLiteral("asleep (runtime suspended)"));
         return;
     }
     const Live l = readLive(*card());
+    lastLive_ = l; lastLiveTime_ = QDateTime::currentDateTime().toString(Qt::ISODate);
     QStringList p;
     if (l.sclk) p << QStringLiteral("GPU %1 MHz").arg(*l.sclk);
     if (l.mclk) p << QStringLiteral("MEM %1 MHz").arg(*l.mclk);
@@ -605,6 +615,40 @@ void AmdGpuTab::pollLive() {
     if (l.junctionC) p << QStringLiteral("hotspot %1 °C").arg(*l.junctionC, 0, 'f', 0);
     if (l.fanRpm) p << QStringLiteral("fan %1 rpm").arg(*l.fanRpm);
     live_->setText(p.isEmpty() ? QStringLiteral("—") : p.join(QStringLiteral("   ·   ")));
+}
+
+void AmdGpuTab::frequencyOverview() {
+    if (!card()) return;
+    QDialog dialog(this); dialog.setWindowTitle(tr("AMD GPU Frequency Overview")); dialog.resize(680, 480);
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->addWidget(muted(card()->label + QStringLiteral(" · ") + card()->pciId));
+    layout->addWidget(muted(lastLiveTime_.isEmpty() ? tr("Current clock sample unavailable (GPU may be asleep).")
+                                                     : tr("Last clock sample: %1 (snapshot, not live)").arg(lastLiveTime_)));
+    auto *scroll = new QScrollArea; scroll->setWidgetResizable(true);
+    auto *host = new QWidget; auto *content = new QVBoxLayout(host);
+    auto add = [&](const QString &title, const QString &range, const QList<amdgpu::State> &states,
+                   std::optional<int> live, QSpinBox *lo, QSpinBox *hi) {
+        auto *group = new QGroupBox(title); auto *box = new QVBoxLayout(group);
+        QVector<BarChart::Bar> bars;
+        auto point = [&](const QString &label, int mhz) { if (mhz >= 0) bars << BarChart::Bar{label, double(mhz), QStringLiteral("%1 MHz").arg(mhz)}; };
+        if (const auto reported = snap_.od.range(range); reported && reported->first >= 0 && reported->second >= reported->first) {
+            point(tr("Supported minimum"), reported->first); point(tr("Supported maximum"), reported->second);
+        } else box->addWidget(muted(tr("Supported range not reported.")));
+        if (live) point(tr("Last measured clock"), *live); else box->addWidget(muted(tr("Clock sample unavailable.")));
+        for (const auto &state : states) point(tr("Reported OD point %1").arg(state.index), state.mhz);
+        if (lo && hi) {
+            point(tr("Draft minimum"), lo->value()); point(tr("Draft maximum"), hi->value());
+            if (lo->value() > hi->value()) box->addWidget(muted(tr("Invalid draft: minimum exceeds maximum.")));
+        }
+        if (!bars.isEmpty()) { auto *chart = new BarChart; chart->setBars(bars); box->addWidget(chart); }
+        content->addWidget(group);
+    };
+    add(tr("GPU core"), QStringLiteral("SCLK"), snap_.od.sclk, lastLive_.sclk, sclkMin_, sclkMax_);
+    add(tr("GPU memory"), QStringLiteral("MCLK"), snap_.od.mclk, lastLive_.mclk, mclkMin_, mclkMax_);
+    content->addWidget(muted(tr("Read-only snapshot. Reported overdrive points are not necessarily active DPM states. No settings are applied.")));
+    content->addStretch(); scroll->setWidget(host); layout->addWidget(scroll, 1);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject); layout->addWidget(buttons); dialog.exec();
 }
 
 // ── apply / trial / reset ───────────────────────────────────────────────────

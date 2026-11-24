@@ -48,6 +48,7 @@ public:
     /// "Bring NVIDIA back" / leaving iGPU-only). Returns the tab, or nullptr.
     NvidiaTab *ensureNvidiaTab();
     /// Set by the tray's Quit: closeEvent then really closes instead of hiding.
+    bool canQuit();
     void setForceQuit(bool v) { forceQuit_ = v; }
     void setHideOnClose(bool v) { hideOnClose_ = v; }
     /// Shows (and raises) the window on the tab with this label.
@@ -80,6 +81,8 @@ private:
     void stepPageHistory(int delta);
     QStringList activeOperations() const;
     void showOperations();
+    void sampleOperations();
+    QStringList observedOperations_, operationHistory_;
     bool safeModeRunning_ = false;
     QList<QWidget *> pageHistory_;
     int pageHistoryPos_ = -1;

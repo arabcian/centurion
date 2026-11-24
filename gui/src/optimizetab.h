@@ -59,7 +59,7 @@ public:
     /// Pauses Scenes, then writes every knob to the value centurion-boot-guard captured at boot (calibration baseline).
     void returnToBootDefaults();
     void setSceneEngine(SceneEngine *eng) { scenes_ = eng; }
-    bool busy() const { return busy_; }
+    bool busy() const { return busy_ || autoRunning_; }
     bool tuningActive() const { return active_; }
     QString gamePreset() const;
     /// The root-owned approved copy of `name` exists and still holds `values`.
@@ -118,6 +118,8 @@ private:
     std::function<void()> driftReapply_;
     void updateLaunchPreview();
     void saveUndervolt();
+    void draftWorkspace();
+    QString draftFingerprint() const;
 
     static bool validFor(const Row &r, const QString &v);
     QString editorValue(const Row &r) const;
@@ -217,6 +219,7 @@ private:
     // The request of the last Fast result: Explore… asks the same question (goal, weights, profile).
     QJsonObject exploreReq_;
     bool autoRunning_ = false;
+    QStringList autoTimeline_;
     QSpinBox *nice_ = nullptr;
     QComboBox *sliceUs_ = nullptr, *gameShare_ = nullptr, *uclampMin_ = nullptr, *uclampMax_ = nullptr, *memoryLow_ = nullptr;
     QCheckBox *zramRecompress_ = nullptr;

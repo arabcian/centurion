@@ -31,6 +31,9 @@ struct Table {
     QList<QStringList> rows;
     QList<Level> levels;  // one per row; colours the row's first cell
     QString note;
+    // Optional tree presentation: one parent row index per row, strictly earlier or -1.
+    QList<int> parents;
+    bool privateBinary = false;
     void add(const QStringList &row, Level l = Level::Info) { rows << row; levels << l; }
 };
 
@@ -56,5 +59,9 @@ QString levelName(Level l);
 /// Conservative best-effort privacy filter, not an anonymization guarantee.
 QString redactPrivateText(QString text);
 void redactPrivateFields(Report &report);
+// Structured, redacted snapshot for local history: no raw dumps or executable fixes.
+QJsonObject archiveSnapshot(const Report &report);
+// Empty difference for equal unordered records; incompatible schema is explicit.
+QStringList archiveDiff(const QJsonObject &before, const QJsonObject &after);
 
 }  // namespace diag

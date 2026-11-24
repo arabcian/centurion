@@ -3346,7 +3346,67 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Reset dashboard layout</source>
             <translation>Gösterge düzenini sıfırla</translation>
         </message>
-    </context>
+        <message>
+        <source>All palettes</source>
+        <translation>Tüm paletler</translation>
+    </message>
+    <message>
+        <source>Background</source>
+        <translation>Arka plan</translation>
+    </message>
+    <message>
+        <source>Below target</source>
+        <translation>Hedefin altında</translation>
+    </message>
+    <message>
+        <source>Contrast / target</source>
+        <translation>Kontrast / hedef</translation>
+    </message>
+    <message>
+        <source>Exempt</source>
+        <translation>Muaf</translation>
+    </message>
+    <message>
+        <source>Foreground</source>
+        <translation>Ön plan</translation>
+    </message>
+    <message>
+        <source>Minimum main-text contrast: %1:1; %2 token pairs below target. This is not a rendered-control audit.</source>
+        <translation>En düşük ana metin kontrastı: %1:1; %2 renk çifti hedefin altında. Bu, çizilen kontrollerin denetimi değildir.</translation>
+    </message>
+    <message>
+        <source>Opaque token-pair audit: 4.5:1 for normal text and 3:1 for indicators. Disabled controls are exempt. Derived gradients, alpha blending and actual rendered controls require separate visual testing.</source>
+        <translation>Opak renk çifti denetimi: normal metin için 4,5:1, göstergeler için 3:1. Devre dışı kontroller muaftır. Türetilmiş geçişler, alfa karışımı ve çizilen kontroller ayrı görsel test gerektirir.</translation>
+    </message>
+    <message>
+        <source>Palette</source>
+        <translation>Palet</translation>
+    </message>
+    <message>
+        <source>Palette Contrast Audit</source>
+        <translation>Palet Kontrast Denetimi</translation>
+    </message>
+    <message>
+        <source>Palette Contrast Audit…</source>
+        <translation>Palet Kontrast Denetimi…</translation>
+    </message>
+    <message>
+        <source>Pass</source>
+        <translation>Geçti</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>Sonuç</translation>
+    </message>
+    <message>
+        <source>Role</source>
+        <translation>Rol</translation>
+    </message>
+    <message>
+        <source>Show only below-target pairs</source>
+        <translation>Yalnızca hedefin altındaki çiftleri göster</translation>
+    </message>
+</context>
     <context>
         <name>KlogPage</name>
         <message>
@@ -3923,6 +3983,27 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <source>No tracked operation is active.</source>
             <translation>İzlenen etkin işlem yok.</translation>
         </message>
+    <message>
+        <source>Exit deferred</source>
+        <translation>Çıkış ertelendi</translation>
+    </message>
+    <message>
+        <source>Finish the active operations before exiting Centurion.</source>
+        <translation>Centurion’dan çıkmadan önce etkin işlemleri tamamlayın.</translation>
+    </message>
+    <message>
+        <source>%1 · Observed active: %2</source>
+        <translation>%1 · Etkin olduğu gözlemlendi: %2</translation>
+    </message>
+    <message>
+        <source>%1 · No longer observed: %2 (outcome unknown)</source>
+        <translation>%1 · Artık gözlemlenmiyor: %2 (sonuç bilinmiyor)</translation>
+    </message>
+    <message>
+        <source>Observed state transitions (not verified results)</source>
+        <translation>Gözlemlenen durum geçişleri (doğrulanmış sonuçlar değil)</translation>
+    </message>
+
     </context>
     <context>
         <name>NetPage</name>
@@ -5564,6 +5645,63 @@ Başvurduğu profiller korunur.</translation>
             <source>Could not delete scene '%1'.</source>
             <translation>'%1' sahnesi silinemedi.</translation>
         </message>
+    <message>
+        <source>Execution Log…</source>
+        <translation>Yürütme Günlüğü…</translation>
+    </message>
+    <message>
+        <source>Scene Execution</source>
+        <translation>Sahne Yürütme</translation>
+    </message>
+    <message>
+        <source>Actual transaction callbacks. A successful helper response is not independent hardware readback.</source>
+        <translation>Gerçek işlem geri çağrıları. Başarılı yardımcı yanıtı, bağımsız donanım geri okuması değildir.</translation>
+    </message>
+    <message>
+        <source>Running</source>
+        <translation>Çalışıyor</translation>
+    </message>
+    <message>
+        <source>Helper returned success</source>
+        <translation>Yardımcı başarı bildirdi</translation>
+    </message>
+    <message>
+        <source>Soft failure</source>
+        <translation>Yazma içermeyen hata</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>Başarısız</translation>
+    </message>
+    <message>
+        <source>Skipped</source>
+        <translation>Atlandı</translation>
+    </message>
+    <message>
+        <source>Restoring</source>
+        <translation>Geri yükleniyor</translation>
+    </message>
+    <message>
+        <source>Restore returned success</source>
+        <translation>Geri yükleme başarı bildirdi</translation>
+    </message>
+    <message>
+        <source>Restore failed</source>
+        <translation>Geri yükleme başarısız</translation>
+    </message>
+    <message>
+        <source>Scene started: %1</source>
+        <translation>Sahne başlatıldı: %1</translation>
+    </message>
+    <message>
+        <source>Scene engine reported success</source>
+        <translation>Sahne motoru başarı bildirdi</translation>
+    </message>
+    <message>
+        <source>Scene engine reported problems</source>
+        <translation>Sahne motoru sorun bildirdi</translation>
+    </message>
+
     </context>
     <context>
         <name>SleepPage</name>
@@ -7413,6 +7551,75 @@ Hedef: %2
             <source>No obvious metadata mismatch; archive contents are not verified.</source>
             <translation>Belirgin üst veri uyuşmazlığı yok; arşiv içeriği doğrulanmadı.</translation>
         </message>
+    <message>
+        <source>Select an archive first.</source>
+        <translation>Önce bir arşiv seçin.</translation>
+    </message>
+    <message>
+        <source>Reading configuration manifest…</source>
+        <translation>Yapılandırma manifesti okunuyor…</translation>
+    </message>
+    <message>
+        <source>Manifest unavailable: %1</source>
+        <translation>Manifest kullanılamıyor: %1</translation>
+    </message>
+    <message>
+        <source>Manifest read; archive contents not verified.</source>
+        <translation>Manifest okundu; arşiv içeriği doğrulanmadı.</translation>
+    </message>
+    <message>
+        <source>Configuration Restore Preview</source>
+        <translation>Yapılandırma Geri Yükleme Önizlemesi</translation>
+    </message>
+    <message>
+        <source>Read-only manifest. File-level replacement and permissions are not established by this manifest. Existing files not present in the archive are not deleted by configuration restore.</source>
+        <translation>Salt okunur manifest. Bu manifest dosya düzeyinde değiştirme ve izin bilgilerini doğrulamaz. Arşivde olmayan mevcut dosyalar yapılandırma geri yüklemesinde silinmez.</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Kapsam</translation>
+    </message>
+    <message>
+        <source>Declared entries</source>
+        <translation>Bildirilen girdiler</translation>
+    </message>
+    <message>
+        <source>Restore target</source>
+        <translation>Geri yükleme hedefi</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+        <source>User configuration</source>
+        <translation>Kullanıcı yapılandırması</translation>
+    </message>
+    <message>
+        <source>User state</source>
+        <translation>Kullanıcı durumu</translation>
+    </message>
+    <message>
+        <source>Not restored</source>
+        <translation>Geri yüklenmez</translation>
+    </message>
+    <message>
+        <source>System configuration</source>
+        <translation>Sistem yapılandırması</translation>
+    </message>
+    <message>
+        <source>System configuration directories</source>
+        <translation>Sistem yapılandırma dizinleri</translation>
+    </message>
+    <message>
+        <source>System profile</source>
+        <translation>Sistem profili</translation>
+    </message>
+    <message>
+        <source>Read-only sidecar preview. File-level preview is unsupported for system images here. It does not inspect archive contents, validate ownership or authorize a restore. The restore helper and existing confirmations remain authoritative.</source>
+        <translation>Salt okunur yan dosya önizlemesi. Sistem imajları için burada dosya düzeyinde önizleme desteklenmez. Arşiv içeriği incelenmez, sahiplik doğrulanmaz ve geri yüklemeye yetki verilmez. Geri yükleme yardımcısı ve mevcut onaylar yetkilidir.</translation>
+    </message>
+
     </context>
     <context>
         <name>blocklistsubs</name>
@@ -8028,7 +8235,71 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
             <source>Compare…</source>
             <translation>Karşılaştır…</translation>
         </message>
-    </context>
+        <message>
+        <source>Domain sharing is not inferred from names or frequencies. A raw core type is shown only when the kernel reports it.</source>
+        <translation>Alan paylaşımı adlardan veya frekanslardan çıkarılmaz. Ham çekirdek türü yalnızca çekirdek bildirirse gösterilir.</translation>
+    </message>
+    <message>
+        <source>Draft</source>
+        <translation>Taslak</translation>
+    </message>
+    <message>
+        <source>Intel Voltage Domains and CPU Topology</source>
+        <translation>Intel Gerilim Alanları ve CPU Topolojisi</translation>
+    </message>
+    <message>
+        <source>Last voltage readback: %1 (snapshot, not live)</source>
+        <translation>Son gerilim okuması: %1 (anlık görüntü, canlı değil)</translation>
+    </message>
+    <message>
+        <source>Mailbox status</source>
+        <translation>Mailbox durumu</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Hayır</translation>
+    </message>
+    <message>
+        <source>No voltage readback has been captured.</source>
+        <translation>Gerilim okuması kaydedilmedi.</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>Ofset</translation>
+    </message>
+    <message>
+        <source>Plane</source>
+        <translation>Gerilim düzlemi</translation>
+    </message>
+    <message>
+        <source>Selected</source>
+        <translation>Seçili</translation>
+    </message>
+    <message>
+        <source>Unavailable</source>
+        <translation>Kullanılamıyor</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+        <source>Voltage Domain Readback</source>
+        <translation>Gerilim Alanı Okuması</translation>
+    </message>
+    <message>
+        <source>Voltage Domains and CPU Topology…</source>
+        <translation>Gerilim Alanları ve CPU Topolojisi…</translation>
+    </message>
+    <message>
+        <source>Voltage plane support is based on the last OC mailbox response. Logical CPU topology comes from sysfs. No voltage probe or write is started here.</source>
+        <translation>Gerilim düzlemi desteği son OC mailbox yanıtına dayanır. Mantıksal CPU topolojisi sysfs'ten gelir. Burada gerilim testi veya yazma işlemi başlatılmaz.</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Evet</translation>
+    </message>
+</context>
     <context>
         <name>NvidiaTab</name>
         <message>
@@ -9127,7 +9398,176 @@ Ortalama %4 ms · P50 %5 ms · P95 %6 ms · P99 %7 ms · Maks %8 ms</translation
             <source>Setting unavailable on this machine: %1</source>
             <translation>Bu makinede ayar kullanılamıyor: %1</translation>
         </message>
-    </context>
+        <message>
+        <source> (baseline changed or unavailable)</source>
+        <translation> (temel değer değişti veya kullanılamıyor)</translation>
+    </message>
+    <message>
+        <source>Could not delete the saved draft.</source>
+        <translation>Kayıtlı taslak silinemedi.</translation>
+    </message>
+    <message>
+        <source>Delete only the saved editor draft?</source>
+        <translation>Yalnızca kayıtlı düzenleyici taslağı silinsin mi?</translation>
+    </message>
+    <message>
+        <source>Delete saved draft</source>
+        <translation>Kayıtlı taslağı sil</translation>
+    </message>
+    <message>
+        <source>Draft exceeds the setting limit.</source>
+        <translation>Taslak ayar sınırını aşıyor.</translation>
+    </message>
+    <message>
+        <source>Draft missing, damaged, incompatible, or from a different topology.</source>
+        <translation>Taslak eksik, bozuk, uyumsuz veya farklı bir topolojiye ait.</translation>
+    </message>
+    <message>
+        <source>Draft restored to unchecked editors. No settings applied.</source>
+        <translation>Taslak işaretlenmemiş düzenleyicilere geri yüklendi. Hiçbir ayar uygulanmadı.</translation>
+    </message>
+    <message>
+        <source>Draft…</source>
+        <translation>Taslak…</translation>
+    </message>
+    <message>
+        <source>Editor draft saved. No settings applied.</source>
+        <translation>Düzenleyici taslağı kaydedildi. Hiçbir ayar uygulanmadı.</translation>
+    </message>
+    <message>
+        <source>Machine or topology identity is unavailable.</source>
+        <translation>Makine veya topoloji kimliği kullanılamıyor.</translation>
+    </message>
+    <message>
+        <source>No compatible draft values.</source>
+        <translation>Uyumlu taslak değeri yok.</translation>
+    </message>
+    <message>
+        <source>No eligible edited values to save.</source>
+        <translation>Kaydedilebilecek düzenlenmiş değer yok.</translation>
+    </message>
+    <message>
+        <source>Optimization Draft</source>
+        <translation>Optimizasyon Taslağı</translation>
+    </message>
+    <message>
+        <source>Replace the saved draft?</source>
+        <translation>Kayıtlı taslak değiştirilsin mi?</translation>
+    </message>
+    <message>
+        <source>Restore draft</source>
+        <translation>Taslağı geri yükle</translation>
+    </message>
+    <message>
+        <source>Restore editor draft</source>
+        <translation>Düzenleyici taslağını geri yükle</translation>
+    </message>
+    <message>
+        <source>Restoring replaces only the listed editors and unchecks those rows. No hardware write.</source>
+        <translation>Geri yükleme yalnızca listelenen düzenleyicileri değiştirir ve bu satırların işaretini kaldırır. Donanıma yazılmaz.</translation>
+    </message>
+    <message>
+        <source>Save draft</source>
+        <translation>Taslağı kaydet</translation>
+    </message>
+    <message>
+        <source>Save or restore an editor-only draft without applying it.</source>
+        <translation>Yalnızca düzenleyici taslağını uygulamadan kaydedin veya geri yükleyin.</translation>
+    </message>
+    <message>
+        <source>Save or restore global VM/scheduler editor values. Device-scoped settings are excluded until stable identity is available. Restored values are never automatically checked or applied.</source>
+        <translation>Genel VM/zamanlayıcı düzenleyici değerlerini kaydedin veya geri yükleyin. Kararlı kimlik bulunana dek aygıta özgü ayarlar dışarıda bırakılır. Geri yüklenen değerler otomatik işaretlenmez veya uygulanmaz.</translation>
+    </message>
+    <message>
+        <source>Settings changed during review. Open the draft again.</source>
+        <translation>İnceleme sırasında ayarlar değişti. Taslağı yeniden açın.</translation>
+    </message>
+    <message>
+        <source>Skipped: %1</source>
+        <translation>Atlanan: %1</translation>
+    </message>
+    <message>
+        <source>Wait for a fresh, idle settings readback before managing drafts.</source>
+        <translation>Taslakları yönetmeden önce boşta ve güncel ayar okuması alınmasını bekleyin.</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>Bağlam</translation>
+    </message>
+    <message>
+        <source>Latency</source>
+        <translation>Gecikme</translation>
+    </message>
+    <message>
+        <source>Throughput</source>
+        <translation>İş hacmi</translation>
+    </message>
+    <message>
+        <source>Power</source>
+        <translation>Güç</translation>
+    </message>
+    <message>
+        <source>Memory</source>
+        <translation>Bellek</translation>
+    </message>
+    <message>
+        <source>Unknown / nonpositive weight</source>
+        <translation>Bilinmeyen / pozitif olmayan ağırlık</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+        <source>Counts of recorded finite objective values, grouped by phase, kernel, context and power source. Null values are not measurements. These counts do not establish model validity or sufficient coverage.</source>
+        <translation>Aşama, çekirdek, bağlam ve güç kaynağına göre gruplandırılan sonlu hedef ölçümlerinin sayıları. Null değerler ölçüm değildir. Bu sayılar model geçerliliğini veya yeterli kapsamı kanıtlamaz.</translation>
+    </message>
+    <message>
+        <source>Measurement Coverage</source>
+        <translation>Ölçüm Kapsamı</translation>
+    </message>
+    <message>
+        <source>Autotune Timeline…</source>
+        <translation>Autotune Zaman Çizelgesi…</translation>
+    </message>
+    <message>
+        <source>Autotune Timeline</source>
+        <translation>Autotune Zaman Çizelgesi</translation>
+    </message>
+    <message>
+        <source>Elapsed times from actual helper stage markers. No percentage is estimated; a stage marker is not a successful result.</source>
+        <translation>Yardımcının gerçek aşama işaretlerinden elde edilen süreler. Yüzde tahmini yapılmaz; aşama işareti başarılı sonuç anlamına gelmez.</translation>
+    </message>
+    <message>
+        <source>Request started</source>
+        <translation>İstek başlatıldı</translation>
+    </message>
+    <message>
+        <source>Solver returned</source>
+        <translation>Çözücü sonuç döndürdü</translation>
+    </message>
+    <message>
+        <source>Timed out</source>
+        <translation>Zaman aşımı</translation>
+    </message>
+    <message>
+        <source>Request failed</source>
+        <translation>İstek başarısız</translation>
+    </message>
+    <message>
+        <source>Result received</source>
+        <translation>Sonuç alındı</translation>
+    </message>
+    <message>
+        <source>Helper failed to start</source>
+        <translation>Yardımcı başlatılamadı</translation>
+    </message>
+    <message>
+        <source>Autotune finished, but the editor changed during the request. The draft was preserved; the result is read-only.</source>
+        <translation>Autotune tamamlandı ancak istek sırasında düzenleyici değişti. Taslak korundu; sonuç salt okunur.</translation>
+    </message>
+
+</context>
     <context>
         <name>RyzenTab</name>
         <message>
@@ -13746,6 +14186,31 @@ Add rules that allow DNS, NTP and web traffic first?</source>
             <source>Live Firewall Rules</source>
             <translation>Canlı güvenlik duvarı kuralları</translation>
         </message>
+    <message>
+        <source>Pin rules</source>
+        <translation>Kuralları sabitle</translation>
+    </message>
+    <message>
+        <source>Compare rules…</source>
+        <translation>Kuralları karşılaştır…</translation>
+    </message>
+    <message>
+        <source>Saved Firewall Rule Diff</source>
+        <translation>Kayıtlı Güvenlik Duvarı Kural Farkı</translation>
+    </message>
+    <message>
+        <source>Compares helper-reported saved rules and their order, not the effective kernel ruleset. No firewall changes are made.</source>
+        <translation>Çekirdekte etkin olan kuralları değil, yardımcının bildirdiği kayıtlı kuralları ve sıralarını karşılaştırır. Güvenlik duvarında değişiklik yapmaz.</translation>
+    </message>
+    <message>
+        <source>No recorded changes.</source>
+        <translation>Kaydedilmiş değişiklik yok.</translation>
+    </message>
+    <message>
+        <source>Saved rules changed while the editor was open. Review the current rules and try again.</source>
+        <translation>Düzenleyici açıkken kayıtlı kurallar değişti. Güncel kuralları inceleyip yeniden deneyin.</translation>
+    </message>
+
     </context>
     <context>
         <name>LookupTab</name>
@@ -14563,6 +15028,91 @@ Profil adı:</translation>
             <source>Next candidate unavailable: crash guard could not be read.</source>
             <translation>Sonraki aday kullanılamıyor: çökme koruması okunamadı.</translation>
         </message>
+    <message>
+        <source>Session archive…</source>
+        <translation>Oturum arşivi…</translation>
+    </message>
+    <message>
+        <source>Session archive</source>
+        <translation>Oturum arşivi</translation>
+    </message>
+    <message>
+        <source>The archive is unreadable, oversized or incompatible.</source>
+        <translation>Arşiv okunamıyor, boyut sınırını aşıyor veya uyumsuz.</translation>
+    </message>
+    <message>
+        <source>Historical evidence only. A completed search is not proof of long-term stability. Legacy sessions may lack physical topology.</source>
+        <translation>Yalnızca geçmiş kanıtlar. Tamamlanan arama uzun süreli kararlılığı kanıtlamaz. Eski oturumlarda fiziksel topoloji eksik olabilir.</translation>
+    </message>
+    <message>
+        <source>CCD</source>
+        <translation>CCD</translation>
+    </message>
+    <message>
+        <source>Logical CPUs</source>
+        <translation>Mantıksal CPU’lar</translation>
+    </message>
+    <message>
+        <source>CO</source>
+        <translation>CO</translation>
+    </message>
+    <message>
+        <source>Walk state</source>
+        <translation>Arama durumu</translation>
+    </message>
+    <message>
+        <source>Last failed</source>
+        <translation>Son başarısız değer</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <translation>Tamamlandı</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>Tamamlanmadı</translation>
+    </message>
+    <message>
+        <source>No saved sessions.</source>
+        <translation>Kayıtlı oturum yok.</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+        <source>Walk completed</source>
+        <translation>Arama tamamlandı</translation>
+    </message>
+    <message>
+        <source>Boot: %1
+BIOS: %2
+Reset confirmed: %3
+Trials retained: %4 · omitted: %5
+%6</source>
+        <translation>Açılış: %1
+BIOS: %2
+Sıfırlama doğrulandı: %3
+Saklanan denemeler: %4 · çıkarılan: %5
+%6</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Evet</translation>
+    </message>
+    <message>
+        <source>No / unknown</source>
+        <translation>Hayır / bilinmiyor</translation>
+    </message>
+    <message>
+        <source>Could not save CO session history; existing archive was preserved.</source>
+        <translation>CO oturum geçmişi kaydedilemedi; mevcut arşiv korundu.</translation>
+    </message>
+    <message>
+        <source>Whole-curve verification passed: %1</source>
+        <translation>Tüm eğri doğrulaması başarılı: %1</translation>
+    </message>
+
     </context>
     <context>
         <name>coevidence</name>
@@ -14736,7 +15286,27 @@ Profil adı:</translation>
 
 %2?</translation>
         </message>
-    </context>
+        <message>
+        <source>Explore hierarchy…</source>
+        <translation>Hiyerarşiyi incele…</translation>
+    </message>
+    <message>
+        <source>Filter hierarchy…</source>
+        <translation>Hiyerarşiyi filtrele…</translation>
+    </message>
+    <message>
+        <source>Incompatible diagnostic snapshot schema or report code.</source>
+        <translation>Uyumsuz tanılama anlık görüntüsü şeması veya rapor kodu.</translation>
+    </message>
+    <message>
+        <source>Invalid diagnostic snapshot record.</source>
+        <translation>Geçersiz tanılama anlık görüntüsü kaydı.</translation>
+    </message>
+    <message>
+        <source>Report verdict changed.</source>
+        <translation>Rapor değerlendirmesi değişti.</translation>
+    </message>
+</context>
     <context>
         <name>diagsrc</name>
         <message>
@@ -18006,7 +18576,167 @@ Profil adı:</translation>
             <source>Parent relationships come from resolved sysfs device paths. Unknown or root-bus parents are not inferred.</source>
             <translation>Üst aygıt ilişkileri çözümlenen sysfs aygıt yollarından gelir. Bilinmeyen veya kök veri yolundaki üst aygıtlar tahmin edilmez.</translation>
         </message>
-    </context>
+        <message>
+        <source>%1 reported L3 sharing domains; CCD identity is not inferred from cache sharing.</source>
+        <translation>Bildirilen %1 L3 paylaşım alanı; önbellek paylaşımından CCD kimliği çıkarılmaz.</translation>
+    </message>
+    <message>
+        <source>Bus</source>
+        <translation>Veri yolu</translation>
+    </message>
+    <message>
+        <source>CPU Package and Core Topology</source>
+        <translation>CPU Paket ve Çekirdek Topolojisi</translation>
+    </message>
+    <message>
+        <source>CPU cap or boost state is incomplete</source>
+        <translation>CPU sınırı veya boost durumu eksik</translation>
+    </message>
+    <message>
+        <source>Charging information is limited to reported readings</source>
+        <translation>Şarj bilgisi bildirilen ölçümlerle sınırlıdır</translation>
+    </message>
+    <message>
+        <source>Core %1</source>
+        <translation>Çekirdek %1</translation>
+    </message>
+    <message>
+        <source>Core type</source>
+        <translation>Çekirdek türü</translation>
+    </message>
+    <message>
+        <source>Current max (A)</source>
+        <translation>Azami akım (A)</translation>
+    </message>
+    <message>
+        <source>Current now (A)</source>
+        <translation>Anlık akım (A)</translation>
+    </message>
+    <message>
+        <source>Distance vector</source>
+        <translation>Uzaklık vektörü</translation>
+    </message>
+    <message>
+        <source>Exposed ACPI / WMI Device Hierarchy</source>
+        <translation>Çekirdeğin Sunduğu ACPI / WMI Aygıt Hiyerarşisi</translation>
+    </message>
+    <message>
+        <source>Grouped by reported source, not a causal enforcement order. Firmware attribute units are not inferred; live SMU limits may differ.</source>
+        <translation>Nedensel uygulama sırasına göre değil, bildirilen kaynağa göre gruplandı. Ürün yazılımı özniteliklerinin birimi varsayılmaz; canlı SMU sınırları farklı olabilir.</translation>
+    </message>
+    <message>
+        <source>HID / GUID</source>
+        <translation>HID / GUID</translation>
+    </message>
+    <message>
+        <source>Hardware Device Tree</source>
+        <translation>Donanım Aygıt Ağacı</translation>
+    </message>
+    <message>
+        <source>Instance</source>
+        <translation>Örnek kimliği</translation>
+    </message>
+    <message>
+        <source>Logical CPU</source>
+        <translation>Mantıksal CPU</translation>
+    </message>
+    <message>
+        <source>Measured power</source>
+        <translation>Ölçülen güç</translation>
+    </message>
+    <message>
+        <source>Measured power (W)</source>
+        <translation>Ölçülen güç (W)</translation>
+    </message>
+    <message>
+        <source>Memory pressure reading is incomplete</source>
+        <translation>Bellek baskısı ölçümü eksik</translation>
+    </message>
+    <message>
+        <source>Memory total (KiB)</source>
+        <translation>Toplam bellek (KiB)</translation>
+    </message>
+    <message>
+        <source>Modalias</source>
+        <translation>Modalias</translation>
+    </message>
+    <message>
+        <source>NUMA Memory and Distances</source>
+        <translation>NUMA Belleği ve Uzaklıkları</translation>
+    </message>
+    <message>
+        <source>NUMA node</source>
+        <translation>NUMA düğümü</translation>
+    </message>
+    <message>
+        <source>No exposed ACPI or WMI device hierarchy could be read</source>
+        <translation>Sunulan ACPI veya WMI aygıt hiyerarşisi okunamadı</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>Düğüm</translation>
+    </message>
+    <message>
+        <source>Online</source>
+        <translation>Çevrimiçi</translation>
+    </message>
+    <message>
+        <source>Only kernel-exposed device objects are shown, not the complete AML namespace. No method is executed.</source>
+        <translation>Tam AML ad alanı değil, yalnızca çekirdeğin sunduğu aygıt nesneleri gösterilir. Hiçbir metot çalıştırılmaz.</translation>
+    </message>
+    <message>
+        <source>Package %1</source>
+        <translation>Paket %1</translation>
+    </message>
+    <message>
+        <source>Parent</source>
+        <translation>Üst aygıt</translation>
+    </message>
+    <message>
+        <source>Power Limit Sources</source>
+        <translation>Güç Sınırı Kaynakları</translation>
+    </message>
+    <message>
+        <source>RAM availability is incomplete</source>
+        <translation>Kullanılabilir RAM bilgisi eksik</translation>
+    </message>
+    <message>
+        <source>Relationships use canonical sysfs paths only. Link and AER readings are reused from the existing PCIe scan; missing relationships and readings are unknown.</source>
+        <translation>İlişkiler yalnızca kanonik sysfs yollarını kullanır. Bağlantı ve AER ölçümleri mevcut PCIe taramasından alınır; eksik ilişkiler ve ölçümler bilinmiyor olarak gösterilir.</translation>
+    </message>
+    <message>
+        <source>Reported maxima are capabilities, not a negotiated USB-PD contract. Signed measurements are preserved; direction follows the driver convention.</source>
+        <translation>Bildirilen azami değerler kapasitedir, anlaşılmış USB-PD sözleşmesi değildir. İşaretli ölçümler korunur; yön sürücünün kuralına bağlıdır.</translation>
+    </message>
+    <message>
+        <source>Runtime state</source>
+        <translation>Çalışma zamanı durumu</translation>
+    </message>
+    <message>
+        <source>Supply Measurements and Reported Limits</source>
+        <translation>Güç Kaynağı Ölçümleri ve Bildirilen Sınırlar</translation>
+    </message>
+    <message>
+        <source>Thread siblings</source>
+        <translation>Aynı çekirdeğin iş parçacıkları</translation>
+    </message>
+    <message>
+        <source>UID</source>
+        <translation>UID</translation>
+    </message>
+    <message>
+        <source>Vendor / device</source>
+        <translation>Üretici / aygıt</translation>
+    </message>
+    <message>
+        <source>Voltage max (V)</source>
+        <translation>Azami gerilim (V)</translation>
+    </message>
+    <message>
+        <source>Voltage now (V)</source>
+        <translation>Anlık gerilim (V)</translation>
+    </message>
+</context>
     <context>
         <name>diagnostictools</name>
         <message>
@@ -18665,7 +19395,75 @@ Profil adı:</translation>
             <source>Verdict refers to the complete original report; selected sections follow.</source>
             <translation>Değerlendirme özgün raporun tamamına aittir; seçilen bölümler aşağıdadır.</translation>
         </message>
-    </context>
+        <message>
+        <source>Archive current snapshot</source>
+        <translation>Mevcut anlık görüntüyü arşivle</translation>
+    </message>
+    <message>
+        <source>Could not create history directory.</source>
+        <translation>Geçmiş dizini oluşturulamadı.</translation>
+    </message>
+    <message>
+        <source>Delete only this archived snapshot?</source>
+        <translation>Yalnızca bu arşivlenmiş anlık görüntü silinsin mi?</translation>
+    </message>
+    <message>
+        <source>Delete selected snapshot</source>
+        <translation>Seçili anlık görüntüyü sil</translation>
+    </message>
+    <message>
+        <source>Diagnostic History</source>
+        <translation>Tanılama Geçmişi</translation>
+    </message>
+    <message>
+        <source>History changed or is damaged.</source>
+        <translation>Geçmiş değişti veya bozuk.</translation>
+    </message>
+    <message>
+        <source>History is currently in use.</source>
+        <translation>Geçmiş şu anda kullanılıyor.</translation>
+    </message>
+    <message>
+        <source>History is damaged or uses an unsupported schema; it has not been overwritten.</source>
+        <translation>Geçmiş bozuk veya desteklenmeyen bir şema kullanıyor; üzerine yazılmadı.</translation>
+    </message>
+    <message>
+        <source>History is full. Delete an old snapshot first.</source>
+        <translation>Geçmiş dolu. Önce eski bir anlık görüntüyü silin.</translation>
+    </message>
+    <message>
+        <source>History…</source>
+        <translation>Geçmiş…</translation>
+    </message>
+    <message>
+        <source>Local, manually saved snapshots. Raw text and executable fixes are omitted; redaction is best effort. Up to 20 entries per report, 1 MiB total per report. Capture boot is not evidence boot.</source>
+        <translation>Yerel, elle kaydedilen anlık görüntüler. Ham metin ve çalıştırılabilir düzeltmeler çıkarılır; maskeleme kesin garanti değildir. Rapor başına en çok 20 kayıt ve toplam 1 MiB. Kayıt açılış kimliği kanıtın açılış kimliği değildir.</translation>
+    </message>
+    <message>
+        <source>No saved snapshots.</source>
+        <translation>Kayıtlı anlık görüntü yok.</translation>
+    </message>
+    <message>
+        <source>No structured differences.</source>
+        <translation>Yapılandırılmış fark yok.</translation>
+    </message>
+    <message>
+        <source>Snapshot locale differs; translated field names cannot be compared reliably.</source>
+        <translation>Anlık görüntünün dili farklı; çevrilmiş alan adları güvenilir biçimde karşılaştırılamaz.</translation>
+    </message>
+    <message>
+        <source>Stored capture: %1 · boot %2
+Current capture: %3 · boot %4
+Rows are compared without order; changed rows appear as removed and added. A difference is not evidence of causation.
+
+</source>
+        <translation>Kayıtlı görüntü: %1 · açılış %2
+Mevcut görüntü: %3 · açılış %4
+Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar silinmiş ve eklenmiş olarak gösterilir. Fark, nedensellik kanıtı değildir.
+
+</translation>
+    </message>
+</context>
     <context>
         <name>AdvancedHealthPage</name>
         <message>
@@ -19160,7 +19958,71 @@ Profil adı:</translation>
             <source>Fan curve</source>
             <translation>Fan eğrisi</translation>
         </message>
-    </context>
+        <message>
+        <source>AMD GPU Frequency Overview</source>
+        <translation>AMD GPU Frekans Görünümü</translation>
+    </message>
+    <message>
+        <source>Clock sample unavailable.</source>
+        <translation>Saat hızı örneği kullanılamıyor.</translation>
+    </message>
+    <message>
+        <source>Current clock sample unavailable (GPU may be asleep).</source>
+        <translation>Anlık saat hızı örneği yok (GPU uyuyor olabilir).</translation>
+    </message>
+    <message>
+        <source>Draft maximum</source>
+        <translation>Taslak azami değer</translation>
+    </message>
+    <message>
+        <source>Draft minimum</source>
+        <translation>Taslak asgari değer</translation>
+    </message>
+    <message>
+        <source>Frequency overview…</source>
+        <translation>Frekans görünümü…</translation>
+    </message>
+    <message>
+        <source>GPU core</source>
+        <translation>GPU çekirdeği</translation>
+    </message>
+    <message>
+        <source>GPU memory</source>
+        <translation>GPU belleği</translation>
+    </message>
+    <message>
+        <source>Invalid draft: minimum exceeds maximum.</source>
+        <translation>Geçersiz taslak: asgari değer azami değeri aşıyor.</translation>
+    </message>
+    <message>
+        <source>Last clock sample: %1 (snapshot, not live)</source>
+        <translation>Son saat hızı örneği: %1 (anlık görüntü, canlı değil)</translation>
+    </message>
+    <message>
+        <source>Last measured clock</source>
+        <translation>Son ölçülen saat hızı</translation>
+    </message>
+    <message>
+        <source>Read-only snapshot. Reported overdrive points are not necessarily active DPM states. No settings are applied.</source>
+        <translation>Salt okunur anlık görüntü. Bildirilen overdrive noktaları etkin DPM durumları olmak zorunda değildir. Hiçbir ayar uygulanmaz.</translation>
+    </message>
+    <message>
+        <source>Reported OD point %1</source>
+        <translation>Bildirilen OD noktası %1</translation>
+    </message>
+    <message>
+        <source>Supported maximum</source>
+        <translation>Desteklenen azami değer</translation>
+    </message>
+    <message>
+        <source>Supported minimum</source>
+        <translation>Desteklenen asgari değer</translation>
+    </message>
+    <message>
+        <source>Supported range not reported.</source>
+        <translation>Desteklenen aralık bildirilmemiş.</translation>
+    </message>
+</context>
     <context>
         <name>FwattrTab</name>
         <message>
@@ -19288,7 +20150,43 @@ Profil adı:</translation>
             <source>Custom palette</source>
             <translation>Özel palet</translation>
         </message>
-    </context>
+        <message>
+        <source>Text</source>
+        <translation>Metin</translation>
+    </message>
+    <message>
+        <source>Secondary text</source>
+        <translation>İkincil metin</translation>
+    </message>
+    <message>
+        <source>Muted text</source>
+        <translation>Soluk metin</translation>
+    </message>
+    <message>
+        <source>Status text</source>
+        <translation>Durum metni</translation>
+    </message>
+    <message>
+        <source>Focus / indicator</source>
+        <translation>Odak / gösterge</translation>
+    </message>
+    <message>
+        <source>Input placeholder</source>
+        <translation>Giriş yer tutucusu</translation>
+    </message>
+    <message>
+        <source>Disabled text (exempt)</source>
+        <translation>Devre dışı metin (muaf)</translation>
+    </message>
+    <message>
+        <source>Selection text</source>
+        <translation>Seçim metni</translation>
+    </message>
+    <message>
+        <source>Chart mark</source>
+        <translation>Grafik işareti</translation>
+    </message>
+</context>
     <context>
         <name>profilediff</name>
         <message>
@@ -19347,4 +20245,39 @@ Profil adı:</translation>
             <translation>Optimizasyonlar</translation>
         </message>
     </context>
+<context>
+    <name>FirewallDiff</name>
+    <message>
+        <source>Cannot compare: missing or duplicate rule identity.</source>
+        <translation>Karşılaştırılamıyor: eksik veya yinelenen kural kimliği.</translation>
+    </message>
+    <message>
+        <source>On</source>
+        <translation>Açık</translation>
+    </message>
+    <message>
+        <source>Off</source>
+        <translation>Kapalı</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+        <source>Rule %1 removed (position %2)</source>
+        <translation>%1 numaralı kural kaldırıldı (sıra %2)</translation>
+    </message>
+    <message>
+        <source>Rule %1 position: %2 → %3</source>
+        <translation>%1 numaralı kuralın sırası: %2 → %3</translation>
+    </message>
+    <message>
+        <source>Rule %1 · %2: %3 → %4</source>
+        <translation>Kural %1 · %2: %3 → %4</translation>
+    </message>
+    <message>
+        <source>Rule %1 added (position %2)</source>
+        <translation>%1 numaralı kural eklendi (sıra %2)</translation>
+    </message>
+</context>
 </TS>

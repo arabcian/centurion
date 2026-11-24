@@ -28,6 +28,11 @@
 #include <tuple>
 #include <QCoreApplication>
 #include <QDate>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
+#include <QDateTime>
+#include <QTreeWidget>
 #include <QDir>
 #include <QFileDialog>
 #include <QComboBox>
@@ -358,6 +363,19 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     apply_->setToolTip("Saves the scene if changed, then applies it");
     eb->addWidget(save_);
     eb->addWidget(preview_);
+    auto *execution = new QPushButton(tr("Execution Log…"));
+    eb->addWidget(execution);
+    connect(execution, &QPushButton::clicked, this, [this] {
+        QDialog dlg(this); dlg.setWindowTitle(tr("Scene Execution")); dlg.resize(760, 450);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Actual transaction callbacks. A successful helper response is not independent hardware readback."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *text = new QPlainTextEdit; text->setReadOnly(true); layout->addWidget(text, 1);
+        const auto refresh = [this, text] { text->setPlainText(stepHistory_.join(QLatin1Char('\n'))); };
+        refresh(); connect(eng_, &SceneEngine::stepState, &dlg, refresh); connect(eng_, &SceneEngine::finished, &dlg, refresh);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); dlg.exec();
+    });
     auto *diff = new QPushButton(tr("Compare…"));
     connect(diff,&QPushButton::clicked,this,[this] {
         const QString draftName = tr("[Current draft]"); const auto draft=fromEditor();
@@ -498,12 +516,22 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     for (QComboBox *c : {onAc_, onBattery_})
         connect(c, &QComboBox::currentIndexChanged, this, [this] { if (!filling_) storeAuto(); });
 
+    connect(eng_, &SceneEngine::stepState, this, [this](const QString &step, const QString &state, const QString &detail) {
+        const QString label = state == "running" ? tr("Running") : state == "returned_ok" ? tr("Helper returned success") : state == "soft_failure" ? tr("Soft failure") : state == "failed" ? tr("Failed") : state == "skipped" ? tr("Skipped") : state == "restoring" ? tr("Restoring") : state == "restore_returned_ok" ? tr("Restore returned success") : state == "restore_failed" ? tr("Restore failed") : state;
+        stepHistory_ << QStringLiteral("%1 · %2 · %3 · %4").arg(QDateTime::currentDateTime().toString(Qt::ISODate), step, label, detail.left(2048));
+        while (stepHistory_.size() > 200) stepHistory_.removeFirst();
+    });
     connect(eng_, &SceneEngine::started, this, [this](const QString &n) {
+        stepHistory_.clear();
+        stepHistory_ << tr("Scene started: %1").arg(n);
         apply_->setEnabled(false);
         setStatus("Applying '" + n + "'…");
     });
     connect(eng_, &SceneEngine::finished, this, [this](const QString &n, bool ok, const QStringList &log) {
         if (n.isEmpty()) { setStatus(log.join(' '), theme::FG_DIM); return; }  // informational (deferred switch)
+        stepHistory_ << (ok ? tr("Scene engine reported success") : tr("Scene engine reported problems"));
+        stepHistory_ << log;
+        while (stepHistory_.size() > 200) stepHistory_.removeFirst();
         apply_->setEnabled(list_->count() > 0);
         setStatus((ok ? "'" + n + "' applied — " : "'" + n + "' applied with problems — ") + log.join(QStringLiteral("  ·  ")),
                   ok ? theme::OK : theme::WARN);

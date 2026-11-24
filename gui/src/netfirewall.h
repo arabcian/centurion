@@ -45,7 +45,7 @@ private:
     QComboBox *inbound_, *outbound_;
     QLabel *info_;
     QTreeWidget *rules_;
-    QJsonObject status_, fw_;
+    QJsonObject status_, fw_, pinnedFw_;
     QHash<QString, qint64> hits_;   // "r<id>" → packets, from the last inspection
     QStringList exposed_;
 };

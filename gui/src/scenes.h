@@ -129,6 +129,7 @@ public:
 
 Q_SIGNALS:
     void started(const QString &name);
+    void stepState(const QString &step, const QString &state, const QString &detail);
     /// `log` holds one line per component, failures prefixed with "✗".
     void finished(const QString &name, bool ok, const QStringList &log);
     void powerSourceChanged(bool onAc);

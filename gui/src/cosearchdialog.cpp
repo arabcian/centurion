@@ -1,4 +1,6 @@
 #include "cosearchdialog.h"
+#include "coarchive.h"
+#include <QUuid>
 #include "coinsights.h"
 #include "notify.h"
 #include "curvepage.h"
@@ -331,6 +333,9 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     connect(history, &QPushButton::clicked, this, &CoSearchDialog::showAttemptHistory);
     row->addWidget(mapToggle);
     row->addWidget(history);
+    auto *archive = new QPushButton(tr("Session archive…"));
+    connect(archive, &QPushButton::clicked, this, &CoSearchDialog::showSessionArchive);
+    row->addWidget(archive);
     row->addWidget(guardsBtn_);
     row->addWidget(verifyBtn_);
     row->addSpacing(12);
@@ -764,6 +769,49 @@ void CoSearchDialog::showAttemptHistory() {
     connect(close, &QDialogButtonBox::rejected, dlg, &QDialog::close);
     layout->addWidget(close);
     dlg->show();
+}
+
+void CoSearchDialog::showSessionArchive() {
+    const auto entries = coarchive::read(stateDir() + QStringLiteral("/co-search-runs.json"));
+    if (!entries) { QMessageBox::warning(this, tr("Session archive"), tr("The archive is unreadable, oversized or incompatible.")); return; }
+    QDialog dlg(this); dlg.setWindowTitle(tr("Session archive")); dlg.resize(850, 540);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *hint = new QLabel(tr("Historical evidence only. A completed search is not proof of long-term stability. Legacy sessions may lack physical topology."));
+    hint->setWordWrap(true); layout->addWidget(hint);
+    auto *pick = new QComboBox; layout->addWidget(pick);
+    auto *table = new QTableWidget; table->setColumnCount(6);
+    table->setHorizontalHeaderLabels({tr("CCD"), tr("Core"), tr("Logical CPUs"), tr("CO"), tr("Walk state"), tr("Last failed")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    layout->addWidget(table, 1);
+    auto *details = new QPlainTextEdit; details->setReadOnly(true); layout->addWidget(details, 1);
+    for (qsizetype i = entries->size(); i > 0; --i) {
+        const auto r = entries->at(i - 1).toObject();
+        pick->addItem(QDateTime::fromSecsSinceEpoch(r.value("t").toInteger()).toLocalTime().toString(Qt::ISODate)
+            + QStringLiteral(" · ") + (r.value("complete").toBool() ? tr("Completed") : tr("Incomplete")), int(i - 1));
+    }
+    auto render = [&] {
+        table->setRowCount(0);
+        if (pick->currentIndex() < 0) { details->setPlainText(tr("No saved sessions.")); return; }
+        const auto r = entries->at(pick->currentData().toInt()).toObject();
+        auto unknown = tr("Unknown");
+        for (const auto &v : r.value("topology").toArray()) {
+            const auto core = v.toObject();
+            QStringList cpus; for (const auto &cpu : core.value("cpus").toArray()) cpus << QString::number(cpu.toInt(-1));
+            auto number = [&](const char *key) { return core.value(QLatin1String(key)).isDouble() ? QString::number(core.value(QLatin1String(key)).toInt()) : unknown; };
+            const auto state = core.value("excluded").toBool() ? tr("Excluded") : !core.value("walk_done").isBool() ? unknown : core.value("walk_done").toBool() ? tr("Walk completed") : tr("Incomplete");
+            const QStringList cells{number("ccd"), number("slot"), cpus.join(' '), number("value"), state, number("failed")};
+            const int row = table->rowCount(); table->insertRow(row);
+            for (int c = 0; c < cells.size(); ++c) table->setItem(row, c, new QTableWidgetItem(cells.at(c)));
+        }
+        const auto verified = r.value("verification_passed");
+        details->setPlainText(tr("Boot: %1\nBIOS: %2\nReset confirmed: %3\nTrials retained: %4 · omitted: %5\n%6")
+            .arg(r.value("boot").toString(), r.value("bios").toString(), r.value("reset_ok").toBool() ? tr("Yes") : tr("No / unknown"))
+            .arg(r.value("attempts").toArray().size()).arg(r.value("omitted_attempts").toInt()).arg(r.value("notes").toString())
+            + QStringLiteral("\n") + tr("Whole-curve verification passed: %1").arg(!verified.isBool() ? unknown : verified.toBool() ? tr("Yes") : tr("No / unknown")));
+    };
+    connect(pick, &QComboBox::currentIndexChanged, &dlg, render); render();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); dlg.exec();
 }
 
 void CoSearchDialog::refreshTable() {
@@ -2033,24 +2081,32 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     // Persist a bounded evidence record. "passed" means only the tests run here, not curve stability.
     QDir().mkpath(stateDir());
     const QString path = stateDir() + "/co-search-runs.json";
-    QFile prev(path);
-    QJsonArray history;
-    if (prev.open(QIODevice::ReadOnly) && prev.size() < (1LL << 20))
-        history = QJsonDocument::fromJson(prev.readAll()).object().value("history").toArray();
-    QJsonArray values;
-    if (search_) for (int x : search_->values()) values << x;
-    history.append(QJsonObject{{"t", double(QDateTime::currentSecsSinceEpoch())}, {"boot", bootId_},
-                              {"mode", search_ && search_->mode() == Mode::PerCore ? "per" : "all"},
-                              {"level", search_ ? name(search_->level()) : QString()}, {"values", values},
-                              {"reset_ok", resetOk}, {"complete", finished_ && resetOk}, {"bios", biosVersion()},
-                              {"verify_profile", verifiedProfile_},
-                              {"notes", reason}, {"attempts", attempts_}});
-    while (history.size() > 40) history.removeAt(0);
-    QSaveFile target(path);
-    if (target.open(QIODevice::WriteOnly)) {
-        target.write(QJsonDocument(QJsonObject{{"version", 2}, {"history", history}}).toJson());
-        target.commit();
+    QJsonArray values, topology;
+    if (search_) {
+        for (int x : search_->values()) values << x;
+        for (int i = 0; i < search_->cores().size(); ++i) {
+            const auto &c = search_->cores().at(i);
+            QJsonArray cpus; for (int cpu : c.cpus) cpus << cpu;
+            QJsonObject row{{"ccd", c.ccd}, {"slot", c.slot}, {"cpus", cpus}, {"value", values.at(i)}};
+            if (search_->mode() == Mode::PerCore) {
+                const auto st = search_->coreState(i);
+                row["walk_done"] = st.done; row["excluded"] = st.excluded;
+                row["last_pass"] = st.pass;
+                if (st.failed) row["failed"] = *st.failed;
+            }
+            topology << row;
+        }
     }
+    const bool archived = coarchive::append(path, QJsonObject{
+        {"id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+        {"t", QDateTime::currentSecsSinceEpoch()}, {"boot", bootId_},
+        {"mode", search_ && search_->mode() == Mode::PerCore ? "per" : "all"},
+        {"level", search_ ? name(search_->level()) : QString()}, {"values", values},
+        {"topology", topology}, {"reset_ok", resetOk}, {"complete", finished_ && resetOk},
+        {"verification_passed", finished_ && confirmPassed_},
+        {"bios", biosVersion()}, {"verify_profile", verifiedProfile_}, {"notes", reason},
+        {"attempts", attempts_}, {"reboots", hardReboots_}});
+    if (!archived && !quitting_) note(tr("Could not save CO session history; existing archive was preserved."), theme::WARN);
     // A freeze or an application quit leaves the journal behind for a resume; a search that ended here does not.
     // Never erase evidence merely because the algorithm finished: an unsuccessful stock
     // reset can leave the last CO value applied and the recovery journal is still needed.

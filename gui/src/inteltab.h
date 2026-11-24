@@ -48,6 +48,9 @@ private:
     bool validate(const QJsonObject &p);
     void readStatus();
     void showStatus(const QJsonObject &s);
+    void domainOverview();
+    QJsonObject voltageSnapshot_;
+    QString voltageSnapshotTime_;
     std::optional<bool> uvLock_;  // result of the last probe_uv_lock (session only)
     void runOp(const QJsonObject &req, std::function<void(const QJsonObject &)> then = {});
     void setBusy(bool b);

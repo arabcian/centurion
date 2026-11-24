@@ -1,5 +1,6 @@
 // System tools reports over a fake sysfs / procfs tree and synthetic EDIDs: no real hardware is read.
 #include <cmath>
+#include <algorithm>
 #include "../src/diagnostictools.h"
 #include "../src/systemdiagnostics.h"
 
@@ -9,6 +10,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QTemporaryDir>
 
 #define CHECK(x) do { if (!(x)) { qCritical() << "FAILED" << #x << "line" << __LINE__; return 1; } } while (false)
@@ -198,6 +201,47 @@ int main(int argc, char **argv) {
     const diag::Report ch = systemdiagnostics::charging(root);
     CHECK(has(ch, Level::Review, QStringLiteral("45 W")));
     CHECK(has(ch, Level::Review, QStringLiteral("70 %")));
+
+    // New topology and measurement fixtures: explicit relationships only, no added link probes.
+    const QString bridge = QStringLiteral("/sys/devices/pci0000:00/0000:00:1c.0");
+    const QString endpoint = bridge + QStringLiteral("/0000:06:00.0");
+    put(bridge + QStringLiteral("/vendor"), "0x8086");
+    put(endpoint + QStringLiteral("/vendor"), "0x1234");
+    put(endpoint + QStringLiteral("/device"), "0x5678");
+    CHECK(QFile::link(root + bridge, root + QStringLiteral("/sys/bus/pci/devices/0000:00:1c.0")));
+    CHECK(QFile::link(root + endpoint, root + QStringLiteral("/sys/bus/pci/devices/0000:06:00.0")));
+    const auto tree = systemdiagnostics::deviceTopology(root);
+    CHECK(tree.parents.size() == tree.rows.size());
+    int child = -1;
+    for (int i = 0; i < tree.rows.size(); ++i) if (tree.rows[i].value(0) == QStringLiteral("0000:06:00.0")) child = i;
+    CHECK(child >= 0 && tree.parents.at(child) >= 0 && tree.parents.at(child) < child);
+    CHECK(tree.rows.at(tree.parents.at(child)).value(0) == QStringLiteral("0000:00:1c.0"));
+    CHECK(tree.rows.at(child).value(5) == QStringLiteral("unknown"));
+    put(QStringLiteral("/sys/class/power_supply/USB0/type"), "USB_PD");
+    put(QStringLiteral("/sys/class/power_supply/USB0/online"), "1");
+    put(QStringLiteral("/sys/class/power_supply/USB0/voltage_now"), "20000000");
+    put(QStringLiteral("/sys/class/power_supply/USB0/current_max"), "3000000");
+    auto chargeRow = [](const diag::Report &r) { for (const auto &table : r.tables) if (table.title == QStringLiteral("Supply Measurements and Reported Limits")) for (const auto &row : table.rows) if (row.value(0) == QStringLiteral("USB0")) return row; return QStringList{}; };
+    CHECK(chargeRow(systemdiagnostics::charging(root)).value(5) == QStringLiteral("unknown"));
+    put(QStringLiteral("/sys/class/power_supply/USB0/current_now"), "-1000000");
+    CHECK(chargeRow(systemdiagnostics::charging(root)).value(5) == QStringLiteral("-20"));
+    QTemporaryDir empty;
+    CHECK(empty.isValid());
+    CHECK(systemdiagnostics::memory(empty.path()).verdict() == Level::Unknown);
+    CHECK(systemdiagnostics::powerLimits(empty.path()).verdict() == Level::Unknown);
+    // Structured history ignores row ordering, preserves multiplicity and does not retain raw/fix or binary data.
+    diag::Report saved; saved.code = QStringLiteral("fixture"); saved.raw = QStringLiteral("private raw marker");
+    saved.add(Level::Review, QStringLiteral("Example")).setFix(QStringLiteral("fix"), QJsonObject{{"secret", "private fix marker"}});
+    diag::Table history; history.title = QStringLiteral("Values"); history.headers = {QStringLiteral("Serial Number"), QStringLiteral("Value")};
+    history.add({QStringLiteral("private serial marker"), QStringLiteral("one")}); history.add({QStringLiteral("private serial marker"), QStringLiteral("two")}); saved.tables << history;
+    diag::Table binary; binary.title = QStringLiteral("Localized binary"); binary.privateBinary = true; binary.add({QStringLiteral("private binary marker")}); saved.tables << binary;
+    const auto record = diag::archiveSnapshot(saved);
+    CHECK(!QJsonDocument(record).toJson().contains("private"));
+    std::swap(saved.tables[0].rows[0], saved.tables[0].rows[1]);
+    CHECK(diag::archiveDiff(record, diag::archiveSnapshot(saved)).isEmpty());
+    saved.tables[0].rows[0][1] = QStringLiteral("three");
+    CHECK(diag::archiveDiff(record, diag::archiveSnapshot(saved)).size() == 2);
+    CHECK(!diag::archiveDiff({}, record).isEmpty());
 
     // ── S15: two PulseAudio servers.
     put(QStringLiteral("/proc/asound/cards"), " 0 [Generic        ]: HDA-Intel - HD-Audio Generic\n");

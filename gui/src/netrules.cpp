@@ -101,3 +101,42 @@ QString reverseDnsName(const QString &ip) {
     }
     return parts.join(QLatin1Char('.')) + QStringLiteral(".ip6.arpa");
 }
+
+#include <QJsonArray>
+#include <QMap>
+#include <QCoreApplication>
+
+QStringList firewallConfigDiff(const QJsonObject &before, const QJsonObject &after) {
+    auto tr = [](const char *s) { return QCoreApplication::translate("FirewallDiff", s); };
+    struct Entry { QJsonObject rule; int position; };
+    auto decode = [](const QJsonObject &o, QMap<qint64, Entry> &out) {
+        if (!o.value("rules").isArray()) return false;
+        int position = 0;
+        for (const auto &v : o.value("rules").toArray()) {
+            const auto r = v.toObject(); const qint64 id = r.value("id").toInteger(-1);
+            if (id <= 0 || out.contains(id)) return false;
+            out.insert(id, {r, ++position});
+        }
+        return true;
+    };
+    QMap<qint64, Entry> a,b;
+    if (!decode(before,a) || !decode(after,b)) return {tr("Cannot compare: missing or duplicate rule identity.")};
+    QStringList out;
+    auto show = [&](const QJsonValue &v) { return v.isString() ? v.toString() : v.isBool() ? (v.toBool() ? tr("On") : tr("Off")) : v.isDouble() ? QString::number(v.toDouble()) : tr("Unknown"); };
+    for (const char *key : {"enabled", "inbound", "outbound", "ping_in", "ping_out"}) {
+        const auto k = QLatin1String(key);
+        if (before.value(k) != after.value(k)) out << QStringLiteral("%1: %2 → %3").arg(k,show(before.value(k)),show(after.value(k)));
+    }
+    for (auto it = a.cbegin(); it != a.cend(); ++it) {
+        const auto id = it.key(); const auto other = b.constFind(id);
+        if (other == b.cend()) { out << tr("Rule %1 removed (position %2)").arg(id).arg(it->position); continue; }
+        if (it->position != other->position) out << tr("Rule %1 position: %2 → %3").arg(id).arg(it->position).arg(other->position);
+        for (const char *key : {"enabled", "dir", "action", "proto", "ports", "remote", "iface", "note"}) {
+            const auto k = QLatin1String(key);
+            if (it->rule.value(k) != other->rule.value(k)) out << tr("Rule %1 · %2: %3 → %4").arg(id).arg(k,show(it->rule.value(k)),show(other->rule.value(k)));
+        }
+    }
+    for (auto it = b.cbegin(); it != b.cend(); ++it) if (!a.contains(it.key()))
+        out << tr("Rule %1 added (position %2)").arg(it.key()).arg(it->position);
+    return out;
+}

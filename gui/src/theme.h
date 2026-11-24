@@ -51,6 +51,10 @@ void load();
 bool saveTheme(const QString &id);
 QStringList paletteColors(const QString &id);
 QStringList paletteTokenNames();
+struct ContrastCheck { QString role, foreground, background; double ratio, target; bool exempt = false; };
+/// WCAG sRGB contrast for opaque colors; invalid palette -> no checks.
+double contrastRatio(const QColor &a, const QColor &b);
+QList<ContrastCheck> contrastChecks(const QStringList &colors);
 bool validCustomPalette(const QStringList &colors);
 bool saveCustomPalette(const QStringList &colors);
 /// Quit, then start again in place with the window open (main() does the exec).

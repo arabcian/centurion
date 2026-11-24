@@ -201,6 +201,19 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
     auto *bDel = button(tr("Remove"));
     bDel->setObjectName(QStringLiteral("btnDanger"));
     row->addStretch(1);
+    auto *pin = button(tr("Pin rules"));
+    auto *diff = button(tr("Compare rules…"));
+    diff->setEnabled(false);
+    connect(pin, &QPushButton::clicked, this, [this, diff] { if (!fw_.value("rules").isArray()) return; pinnedFw_ = fw_; diff->setEnabled(true); });
+    connect(diff, &QPushButton::clicked, this, [this] {
+        const auto changes = firewallConfigDiff(pinnedFw_, fw_);
+        QDialog dlg(this); dlg.setWindowTitle(tr("Saved Firewall Rule Diff")); dlg.resize(740, 440);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Compares helper-reported saved rules and their order, not the effective kernel ruleset. No firewall changes are made."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *text = new QPlainTextEdit(changes.isEmpty() ? tr("No recorded changes.") : changes.join(QLatin1Char('\n'))); text->setReadOnly(true); layout->addWidget(text, 1);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+    });
     auto *bCheck = button(tr("Check live rules…"));
     bCheck->setToolTip(tr("Asks the kernel what is really loaded: hit counters for every rule, and other firewalls on this machine that can override these rules. Needs the administrator password."));
     v->addLayout(row);
@@ -361,7 +374,10 @@ void FirewallTab::policyChosen(bool inbound) {
 
 void FirewallTab::addRule() {
     QJsonObject r{{"dir", "in"}, {"action", "allow"}, {"proto", "tcp"}};
-    if (ruleDialog(this, r, tr("Add firewall rule"))) Q_EMIT changeRequested({{"add", QJsonArray{r}}});
+    const auto revision = fw_;
+    if (!ruleDialog(this, r, tr("Add firewall rule"))) return;
+    if (revision != fw_) { QMessageBox::warning(this,tr("Firewall"),tr("Saved rules changed while the editor was open. Review the current rules and try again.")); return; }
+    Q_EMIT changeRequested({{"add", QJsonArray{r}}});
 }
 
 void FirewallTab::editRule() {
@@ -370,7 +386,11 @@ void FirewallTab::editRule() {
     for (const QJsonValue &x : fw_.value(QLatin1String("rules")).toArray()) {
         QJsonObject r = x.toObject();
         if (r.value(QLatin1String("id")).toInt() != ids.first()) continue;
-        if (ruleDialog(this, r, tr("Edit firewall rule"))) Q_EMIT changeRequested({{"update", QJsonArray{r}}});
+        const auto revision = fw_;
+        if (ruleDialog(this, r, tr("Edit firewall rule"))) {
+            if (revision != fw_) { QMessageBox::warning(this,tr("Firewall"),tr("Saved rules changed while the editor was open. Review the current rules and try again.")); return; }
+            Q_EMIT changeRequested({{"update", QJsonArray{r}}});
+        }
         return;
     }
 }

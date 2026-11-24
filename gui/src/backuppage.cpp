@@ -1368,9 +1368,36 @@ void BackupPage::verifySelected() {
 void BackupPage::previewRestore() {
     QString kind;
     const QString archive = selected(&kind);
-    if (archive.isEmpty() || kind != QLatin1String("system")) {
-        QMessageBox::information(this, tr("Restore Preview"), tr("Select a system image first.")); return;
+    if (archive.isEmpty()) {
+        QMessageBox::information(this, tr("Restore Preview"), tr("Select an archive first.")); return;
     }
+    if (kind == QLatin1String("config")) {
+        run({{"op", "config_inspect"}, {"archive", archive}}, false, tr("Reading configuration manifest…"), [this, archive](const QJsonObject &r) {
+            if (!r.value("ok").toBool()) { finished(tr("Manifest unavailable: %1").arg(str(r,"error")),false); return; }
+            const auto manifest = r.value("manifest").toObject();
+            const auto contents = manifest.value("contents").toObject();
+            finished(tr("Manifest read; archive contents not verified."),true);
+            QDialog dlg(this); dlg.setWindowTitle(tr("Configuration Restore Preview")); dlg.resize(720,420);
+            auto *layout = new QVBoxLayout(&dlg);
+            auto *hint = new QLabel(tr("Read-only manifest. File-level replacement and permissions are not established by this manifest. Existing files not present in the archive are not deleted by configuration restore."));
+            hint->setWordWrap(true); layout->addWidget(hint);
+            auto *tree = new QTreeWidget; tree->setHeaderLabels({tr("Scope"),tr("Declared entries"),tr("Restore target")});
+            auto *root = new QTreeWidgetItem(tree,{QFileInfo(archive).fileName()});
+            const auto add = [&](const char *key, const QString &scope, const QString &target) {
+                const auto count = contents.value(QLatin1String(key));
+                new QTreeWidgetItem(root,{scope,count.isDouble() ? QString::number(count.toInteger()) : tr("Unknown"),target});
+            };
+            add("user_config",tr("User configuration"),QStringLiteral("~/.config"));
+            add("user_state",tr("User state"),tr("Not restored"));
+            add("system",tr("System configuration"),tr("System configuration directories"));
+            add("system_profile",tr("System profile"),tr("Not restored"));
+            root->setExpanded(true); tree->header()->setSectionResizeMode(QHeaderView::ResizeToContents); layout->addWidget(tree,1);
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+            connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+        });
+        return;
+    }
+    if (kind != QLatin1String("system")) return;
     // Metadata is advisory only; the privileged restore helper validates the actual chain again.
     const auto safeInfo = [](const QString &path) -> QJsonObject {
         const QFileInfo fi(path + QStringLiteral(".info.json"));
@@ -1412,7 +1439,7 @@ void BackupPage::previewRestore() {
     else if (target==QLatin1String("/")) warnings << tr("Target is the running root filesystem. Restore will overwrite existing files.");
     QDialog dlg(this); dlg.setWindowTitle(tr("Restore Preview")); dlg.resize(760,420);
     auto *layout=new QVBoxLayout(&dlg);
-    auto *hint=new QLabel(tr("Read-only sidecar preview. It does not inspect archive contents, validate ownership or authorize a restore. The restore helper and existing confirmations remain authoritative."));
+    auto *hint=new QLabel(tr("Read-only sidecar preview. File-level preview is unsupported for system images here. It does not inspect archive contents, validate ownership or authorize a restore. The restore helper and existing confirmations remain authoritative."));
     hint->setWordWrap(true); layout->addWidget(hint);
     auto *report=new QPlainTextEdit; report->setReadOnly(true);
     report->setPlainText(tr("Selected archive: %1\nTarget: %2\n\nProposed chain (oldest first):\n%3\n\nReview:\n%4")

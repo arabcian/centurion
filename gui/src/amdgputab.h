@@ -45,6 +45,7 @@ private:
     void fill(const QJsonObject &s);
     void updateBanner();
     void pollLive();
+    void frequencyOverview();
 
     void apply(const QJsonObject &settings, bool trial);
     void resetCard();
@@ -63,6 +64,8 @@ private:
 
     QList<amdgpu::Card> cards_;
     amdgpu::Snapshot snap_;
+    amdgpu::Live lastLive_;
+    QString lastLiveTime_;
     QJsonObject before_;   // settings before the trial apply (the revert target)
 
     QComboBox *cardCombo_, *presetCombo_, *profileCombo_;

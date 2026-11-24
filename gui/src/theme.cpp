@@ -279,6 +279,36 @@ static double luminance(const QColor &c) {
     return 0.2126 * ch(c.redF()) + 0.7152 * ch(c.greenF()) + 0.0722 * ch(c.blueF());
 }
 
+double contrastRatio(const QColor &a, const QColor &b) {
+    if (!a.isValid() || !b.isValid() || a.alpha() != 255 || b.alpha() != 255) return 0;
+    const double x = luminance(a), y = luminance(b);
+    return (qMax(x, y) + .05) / (qMin(x, y) + .05);
+}
+static QColor accentTextColor(const QColor &accent) {
+    const QColor dark(Qt::black), light(Qt::white);
+    return contrastRatio(dark, accent) >= contrastRatio(light, accent) ? dark : light;
+}
+QList<ContrastCheck> contrastChecks(const QStringList &colors) {
+    if (!validCustomPalette(colors)) return {};
+    QList<ContrastCheck> checks;
+    const auto names = paletteTokenNames();
+    auto add = [&](const QString &role, int fg, int bg, double target, bool exempt = false) {
+        checks << ContrastCheck{role, names.at(fg), names.at(bg), contrastRatio(QColor(colors.at(fg)), QColor(colors.at(bg))), target, exempt};
+    };
+    for (int bg = 0; bg <= 5; ++bg) {
+        add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Text")), 8, bg, 4.5);
+        add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Secondary text")), 9, bg, 4.5);
+        add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Muted text")), 10, bg, 4.5);
+        for (int fg : {11, 13, 14, 15, 17, 18}) add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Status text")), fg, bg, 4.5);
+        add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Focus / indicator")), 11, bg, 3.0);
+    }
+    add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Input placeholder")), 10, 5, 4.5);
+    add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Disabled text (exempt)")), 10, 1, 4.5, true);
+    checks << ContrastCheck{QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Selection text")), QStringLiteral("ON_ACCENT"), QStringLiteral("ACCENT"), contrastRatio(accentTextColor(QColor(colors.at(11))), QColor(colors.at(11))), 4.5, false};
+    for (int fg : {11, 12, 13, 14, 15, 17, 18}) add(QString::fromLatin1(QT_TRANSLATE_NOOP("theme", "Chart mark")), fg, 2, 3.0);
+    return checks;
+}
+
 /// A fixed (not palette) profile colour, darkened in 10 % steps on a light palette until its dot reads
 /// at 3:1 against the profile button (BG2), the minimum for a non-text mark. Dark palettes keep it as is.
 static QString legible(const char *hex) {
@@ -309,13 +339,7 @@ QString banner(const char *color, const QString &selector) {
 
 // Contrast-aware labels are necessary for light themes and high-chroma accent colours.
 static QColor textOnAccent() {
-    const QColor a(QString::fromLatin1(ACCENT));
-    const auto linear = [](double x) {
-        return x <= 0.04045 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4);
-    };
-    const double luma = 0.2126 * linear(a.redF()) + 0.7152 * linear(a.greenF())
-                      + 0.0722 * linear(a.blueF());
-    return luma > 0.179 ? QColor(QStringLiteral("#15161a")) : QColor(QStringLiteral("#ffffff"));
+    return accentTextColor(QColor(QString::fromLatin1(ACCENT)));
 }
 
 static bool lightTheme() {

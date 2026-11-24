@@ -11,6 +11,8 @@
 
 namespace systemdiagnostics {
 
+diag::Table cpuTopology(const QString &root = {});
+diag::Table deviceTopology(const QString &root = {}, const QJsonObject &sample = {});
 diag::Report pcieLinks(const QString &root = {}, const QJsonObject &previous = {}, QJsonObject *sample = nullptr);                                     // S04
 diag::Report radios(const QList<diagsrc::LogLine> &kernel, const QString &root = {});  // S07
 diag::Report powerLimits(const QString &root = {});                                    // S08

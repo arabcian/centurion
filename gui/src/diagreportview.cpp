@@ -1,4 +1,12 @@
 #include "diagreportview.h"
+#include "diagsources.h"
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QCryptographicHash>
+#include <QLockFile>
+#include <QSet>
+#include <QUuid>
+#include "i18n.h"
 
 #include "sysadmin.h"
 #include "theme.h"
@@ -36,6 +44,8 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <optional>
+#include <QFileInfo>
 
 using diag::Level;
 
@@ -164,6 +174,52 @@ QWidget *tableWidget(const diag::Table &t) {
                              tree->horizontalScrollBar()->sizeHint().height());
         col->addWidget(tree);
     }
+    if (!t.rows.isEmpty() && t.parents.size() == t.rows.size()) {
+        auto *explore = new QPushButton(QCoreApplication::translate("diag", "Explore hierarchy…"));
+        col->addWidget(explore, 0, Qt::AlignLeft);
+        QObject::connect(explore, &QPushButton::clicked, explore, [explore, t] {
+            QDialog dlg(explore->window()); dlg.setWindowTitle(t.title); dlg.resize(900, 600);
+            auto *layout = new QVBoxLayout(&dlg);
+            auto *search = new QLineEdit; search->setPlaceholderText(QCoreApplication::translate("diag", "Filter hierarchy…"));
+            layout->addWidget(search);
+            auto *tree = new QTreeWidget; tree->setColumnCount(qMax(1, int(t.headers.size())));
+            tree->setHeaderLabels(t.headers); tree->setUniformRowHeights(true);
+            tree->setAlternatingRowColors(true); tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            QList<QTreeWidgetItem *> items;
+            for (int i = 0; i < t.rows.size(); ++i) {
+                auto *item = new QTreeWidgetItem(t.rows.at(i));
+                const int parent = t.parents.at(i);
+                if (parent >= 0 && parent < i) items.at(parent)->addChild(item);
+                else tree->addTopLevelItem(item);
+                for (int c = 0; c < t.rows.at(i).size(); ++c) item->setToolTip(c, t.rows.at(i).at(c));
+                items << item;
+            }
+            tree->expandToDepth(1);
+            tree->header()->setStretchLastSection(true);
+            tree->resizeColumnToContents(0);
+            layout->addWidget(tree, 1);
+            auto *details = new QPlainTextEdit; details->setReadOnly(true); details->setMaximumHeight(dlg.fontMetrics().height() * 8);
+            layout->addWidget(details);
+            QObject::connect(tree, &QTreeWidget::currentItemChanged, &dlg, [details, t](QTreeWidgetItem *item) {
+                QStringList lines;
+                if (item) for (int c = 0; c < t.headers.size(); ++c) lines << t.headers.at(c) + QStringLiteral(": ") + item->text(c);
+                details->setPlainText(lines.join(QLatin1Char('\n')));
+            });
+            QObject::connect(search, &QLineEdit::textChanged, &dlg, [tree, items](const QString &query) {
+                // Reverse insertion order: a matching descendant keeps its ancestors visible.
+                for (auto it = items.crbegin(); it != items.crend(); ++it) {
+                    auto *item = *it; bool match = query.isEmpty();
+                    for (int c = 0; c < tree->columnCount() && !match; ++c) match = item->text(c).contains(query, Qt::CaseInsensitive);
+                    for (int c = 0; c < item->childCount() && !match; ++c) match = !item->child(c)->isHidden();
+                    item->setHidden(!match);
+                    if (match && !query.isEmpty()) item->setExpanded(true);
+                }
+            });
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+            QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+            layout->addWidget(buttons); dlg.exec();
+        });
+    }
     if (!t.note.isEmpty()) col->addWidget(text(t.note, "muted"));
     return box;
 }
@@ -195,6 +251,8 @@ DiagReportView::DiagReportView(QWidget *parent) : QWidget(parent) {
     pin_ = new QPushButton(tr("Pin Snapshot")); compare_ = new QPushButton(tr("Compare Snapshot…"));
     pin_->setEnabled(false); compare_->setEnabled(false);
     actions->addWidget(pin_); actions->addWidget(compare_);
+    archive_ = new QPushButton(tr("History…")); archive_->setEnabled(false);
+    actions->addWidget(archive_); connect(archive_, &QPushButton::clicked, this, &DiagReportView::archiveWorkspace);
     connect(pin_, &QPushButton::clicked, this, [this] {
         if (!hasReport_) return;
         baselineCode_ = report_.code; baselineText_ = report_.toText(); baselineTime_ = snapshot_->text();
@@ -293,7 +351,7 @@ void DiagReportView::setMessage(const QString &s) {
     for (QWidget *w : {static_cast<QWidget *>(search_), static_cast<QWidget *>(severity_), static_cast<QWidget *>(sections_)}) w->setEnabled(false);
     snapshot_->clear();
     filterInfo_->clear();
-    preview_->setEnabled(false); pin_->setEnabled(false); compare_->setEnabled(false);
+    preview_->setEnabled(false); pin_->setEnabled(false); compare_->setEnabled(false); archive_->setEnabled(false);
     verdict_->clear();
     verdict_->setVisible(false);
     headline_->setText(s);
@@ -321,6 +379,8 @@ void DiagReportView::setReport(const diag::Report &r) {
     severity_->setEnabled(true);
     sections_->setEnabled(true);
     preview_->setEnabled(true); pin_->setEnabled(true); compare_->setEnabled(baselineCode_ == report_.code && !baselineText_.isEmpty());
+    capturedAt_ = QDateTime::currentDateTimeUtc().toString(Qt::ISODate); captureBoot_ = diagsrc::bootId();
+    archive_->setEnabled(!current.code.isEmpty());
     snapshot_->setText(tr("Report displayed: %1 · snapshot, not live data").arg(QDateTime::currentDateTime().toString(Qt::ISODate)));
     sections_->addItem(tr("Jump to section…"));
     auto addSection = [this](const QString &name, QWidget *w) {
@@ -440,7 +500,7 @@ void DiagReportView::previewExport() {
     for (const auto &t : captured.tables) {
         auto *item=add(tables, t.title);
         // Binary EDID can encode a serial number that text redaction cannot detect.
-        if (t.title == QCoreApplication::translate("diagnostictools", "EDID Binary Inspector")) item->setCheckState(0,Qt::Unchecked);
+        if (t.privateBinary) item->setCheckState(0,Qt::Unchecked);
     }
     layout->addWidget(selection);
     auto *includeRaw = new QCheckBox(tr("Include technical details")); includeRaw->setChecked(false);
@@ -479,4 +539,80 @@ void DiagReportView::previewExport() {
     layout->addWidget(buttons);
     dlg.resize(850, 600);
     dlg.exec();
+}
+
+void DiagReportView::archiveWorkspace() {
+    if (!hasReport_ || report_.code.isEmpty()) return;
+    const auto captured = diag::archiveSnapshot(report_);
+    const QString capturedAt = capturedAt_, boot = captureBoot_, locale = i18n::effective();
+    const QString dir = diagsrc::dataDir() + QStringLiteral("/diagnostic-history");
+    const QString path = dir + QLatin1Char('/') + QString::fromLatin1(QCryptographicHash::hash(report_.code.toUtf8(), QCryptographicHash::Sha256).toHex()) + QStringLiteral(".json");
+    if (!QDir().mkpath(dir)) { QMessageBox::warning(this, tr("Diagnostic History"), tr("Could not create history directory.")); return; }
+    auto read = [&]() -> std::optional<QJsonArray> {
+        if (!QFileInfo::exists(path)) return QJsonArray{};
+        const auto o = diagsrc::loadJson(path);
+        if (o.value(QStringLiteral("version")).toInt() != 1 || !o.value(QStringLiteral("entries")).isArray()) return std::nullopt;
+        const auto entries = o.value(QStringLiteral("entries")).toArray();
+        if (entries.size() > 20) return std::nullopt;
+        QSet<QString> ids;
+        for (const auto &v : entries) {
+            const auto e = v.toObject();
+            if (e.value(QStringLiteral("id")).toString().isEmpty() || !e.value(QStringLiteral("snapshot")).isObject()) return std::nullopt;
+            const QString id = e.value(QStringLiteral("id")).toString();
+            if (ids.contains(id)) return std::nullopt;
+            ids.insert(id);
+            const auto snap = e.value(QStringLiteral("snapshot")).toObject();
+            if (snap.value(QStringLiteral("version")).toInt() != 1 || snap.value(QStringLiteral("code")) != captured.value(QStringLiteral("code")) || !snap.value(QStringLiteral("records")).isArray() || !diag::archiveDiff(snap, snap).isEmpty()) return std::nullopt;
+        }
+        return entries;
+    };
+    auto entries = read();
+    if (!entries) { QMessageBox::warning(this, tr("Diagnostic History"), tr("History is damaged or uses an unsupported schema; it has not been overwritten.")); return; }
+    QDialog dlg(this); dlg.setWindowTitle(tr("Diagnostic History")); dlg.resize(950, 600);
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addWidget(text(tr("Local, manually saved snapshots. Raw text and executable fixes are omitted; redaction is best effort. Up to 20 entries per report, 1 MiB total per report. Capture boot is not evidence boot.")));
+    auto *list = new QComboBox; layout->addWidget(list);
+    auto *output = new QPlainTextEdit; output->setReadOnly(true); layout->addWidget(output, 1);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto *save = buttons->addButton(tr("Archive current snapshot"), QDialogButtonBox::ActionRole);
+    auto *remove = buttons->addButton(tr("Delete selected snapshot"), QDialogButtonBox::DestructiveRole);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    auto render = [&] {
+        const int i = list->currentIndex(); remove->setEnabled(i >= 0);
+        if (i < 0 || i >= entries->size()) { output->setPlainText(tr("No saved snapshots.")); return; }
+        const auto entry = entries->at(i).toObject();
+        if (entry.value(QStringLiteral("locale")).toString() != locale) { output->setPlainText(tr("Snapshot locale differs; translated field names cannot be compared reliably.")); return; }
+        const auto diff = diag::archiveDiff(entry.value(QStringLiteral("snapshot")).toObject(), captured);
+        output->setPlainText(tr("Stored capture: %1 · boot %2\nCurrent capture: %3 · boot %4\nRows are compared without order; changed rows appear as removed and added. A difference is not evidence of causation.\n\n")
+            .arg(entry.value(QStringLiteral("time")).toString(), entry.value(QStringLiteral("boot")).toString(), capturedAt, boot)
+            + (diff.isEmpty() ? tr("No structured differences.") : diff.join(QLatin1Char('\n'))));
+    };
+    auto refill = [&] {
+        const QSignalBlocker block(list); list->clear();
+        for (const auto &v : *entries) { const auto e = v.toObject(); list->addItem(e.value(QStringLiteral("time")).toString() + QStringLiteral(" · ") + e.value(QStringLiteral("boot")).toString(), e.value(QStringLiteral("id")).toString()); }
+        list->setCurrentIndex(list->count() - 1); render();
+    };
+    connect(list, &QComboBox::currentIndexChanged, &dlg, [&](int) { render(); });
+    auto change = [&](bool adding) {
+        const QString selected = list->currentData().toString();
+        if (!adding && (selected.isEmpty() || QMessageBox::question(&dlg, tr("Diagnostic History"), tr("Delete only this archived snapshot?")) != QMessageBox::Yes)) return;
+        QLockFile lock(path + QStringLiteral(".lock"));
+        if (!lock.tryLock(0)) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History is currently in use.")); return; }
+        auto latest = read();
+        if (!latest) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History changed or is damaged.")); return; }
+        if (adding) {
+            if (latest->size() >= 20) { QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return; }
+            latest->append(QJsonObject{{"id", QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"time", capturedAt}, {"boot", boot}, {"locale", locale}, {"snapshot", captured}});
+        } else {
+            for (qsizetype i = latest->size(); i > 0; --i) if (latest->at(i-1).toObject().value(QStringLiteral("id")).toString() == selected) latest->removeAt(i-1);
+        }
+        const QString error = diagsrc::saveJson(path, QJsonObject{{"version", 1}, {"entries", *latest}});
+        lock.unlock();
+        if (!error.isEmpty()) { QMessageBox::warning(&dlg, tr("Diagnostic History"), error); return; }
+        entries = latest; refill();
+    };
+    connect(save, &QPushButton::clicked, &dlg, [&] { change(true); });
+    connect(remove, &QPushButton::clicked, &dlg, [&] { change(false); });
+    refill(); dlg.exec();
 }

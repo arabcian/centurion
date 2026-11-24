@@ -76,6 +76,7 @@ private:
     bool writeJournal() const;
     void refreshTable();
     void showAttemptHistory();
+    void showSessionArchive();
     void reloadPresets();
     void watchTick();
     void gatherEvidence(const QJsonObject &journal, const cosearch::Search &search, const cosearch::Trial &trial,

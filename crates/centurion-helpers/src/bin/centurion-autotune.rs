@@ -90,7 +90,7 @@ fn goal_cmd(args: &[String]) {
             .unwrap_or_else(|| { eprintln!("--weights requires key=value[,key=value]"); usage() });
         parse_weights(raw).unwrap_or_else(|e| { eprintln!("--weights: {e}"); usage() })
     } else { Value::Null };
-    let mut opts = json!({"explore": !args.iter().any(|a| a == "--no-explore")});
+    let mut opts = json!({"explore": !args.iter().any(|a| a == "--no-explore"), "progress": args.iter().any(|a| a == "--progress")});
     if let Some(i) = args.iter().position(|a| a == "--profile") {
         let p = args.get(i + 1).filter(|s| !s.starts_with("--"))
             .unwrap_or_else(|| { eprintln!("--profile requires a power profile name"); usage() });

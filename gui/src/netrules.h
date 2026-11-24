@@ -20,3 +20,9 @@ QString lookupHost(const QString &text);
 bool validHost(const QString &host);
 /// The DNS name that holds an address's PTR record, or empty when `ip` is not an address.
 QString reverseDnsName(const QString &ip);
+
+#include <QJsonObject>
+#include <QStringList>
+/// Compare helper-reported saved configurations, not the effective nftables ruleset.
+/// Incompatible/missing identities are explicitly rejected.
+QStringList firewallConfigDiff(const QJsonObject &before, const QJsonObject &after);

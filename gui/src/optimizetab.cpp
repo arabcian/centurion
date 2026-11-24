@@ -1,3 +1,4 @@
+#include "calibrationcoverage.h"
 #include "insights.h"
 #include "optimizetab.h"
 #include "profilediff.h"
@@ -14,8 +15,10 @@
 #include "theme.h"
 #include "experimentalui.h"
 #include "autotunereport.h"
+#include "diagsources.h"
 
 #include <memory>
+#include <QElapsedTimer>
 #include <unistd.h>
 #include <QApplication>
 #include <QCoreApplication>
@@ -578,6 +581,23 @@ void OptimizeTab::buildUi() {
         for(const auto &v:sig.value("rows").toArray()) { const auto r=v.toObject(); const QStringList cells{profilediff::display(r.value("s")),profilediff::display(r.value("ph")),r.value("k").toString(),r.value("ps").toString()}; const auto key=QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(cells)).toJson(QJsonDocument::Compact)); ++counts[key]; fields[key]=cells; }
         for(auto it=counts.cbegin();it!=counts.cend();++it) { int row=table->rowCount(); table->insertRow(row); const auto cells=fields.value(it.key()); for(int c=0;c<4;++c)table->setItem(row,c,new QTableWidgetItem(cells[c])); table->setItem(row,4,new QTableWidgetItem(QString::number(it.value()))); }
         tabs->addTab(table,tr("Measurement Sessions"));
+        auto *coverage = new QTableWidget; coverage->setColumnCount(10);
+        coverage->setHorizontalHeaderLabels({tr("Phase ID"), tr("Kernel"), tr("Context"), tr("Power source"), tr("Records"), tr("Latency"), tr("Throughput"), tr("Power"), tr("Memory"), tr("Unknown / nonpositive weight")});
+        coverage->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        coverage->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+        for (const auto &g : calibrationcoverage::summarize(sig.value("rows").toArray())) {
+            const int row = coverage->rowCount(); coverage->insertRow(row);
+            QStringList cells; for (const auto &field : g.fields) cells << (field.isEmpty() ? tr("Unknown") : field);
+            cells << QString::number(g.rows);
+            for (auto n : g.measured) cells << QStringLiteral("%1 / %2").arg(n).arg(g.rows);
+            cells << QString::number(g.unknownWeight);
+            for (int c = 0; c < cells.size(); ++c) coverage->setItem(row,c,new QTableWidgetItem(cells.at(c)));
+        }
+        auto *coveragePage = new QWidget; auto *coverageLayout = new QVBoxLayout(coveragePage);
+        auto *coverageHint = new QLabel(tr("Counts of recorded finite objective values, grouped by phase, kernel, context and power source. Null values are not measurements. These counts do not establish model validity or sufficient coverage."));
+        coverageHint->setWordWrap(true); coverageLayout->addWidget(coverageHint); coverageLayout->addWidget(coverage,1);
+        tabs->addTab(coveragePage,tr("Measurement Coverage"));
+
         for(const auto &part:{qMakePair(QStringLiteral("quality"),tr("Quality")),qMakePair(QStringLiteral("verify"),tr("A/B Verification")),qMakePair(QStringLiteral("fs"),tr("Game Sessions"))}) { auto *raw=new QPlainTextEdit; raw->setReadOnly(true); raw->setPlainText(QString::fromUtf8(QJsonDocument(sig.value(part.first).toArray()).toJson())); tabs->addTab(raw,part.second); }
         auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
     });
@@ -588,6 +608,18 @@ void OptimizeTab::buildUi() {
     auto *inspectActions = new QMenu(inspectMenu);
     auto *calAction = inspectActions->addAction(calData->text());
     auto *diffAction = inspectActions->addAction(presetDiff->text());
+    auto *timelineAction = inspectActions->addAction(tr("Autotune Timeline…"));
+    connect(timelineAction, &QAction::triggered, this, [this] {
+        QDialog dlg(this); dlg.setWindowTitle(tr("Autotune Timeline")); dlg.resize(650,420);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Elapsed times from actual helper stage markers. No percentage is estimated; a stage marker is not a successful result."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *out = new QPlainTextEdit; out->setReadOnly(true); layout->addWidget(out,1);
+        auto refresh = [this,out] { const auto s = autoTimeline_.join(QLatin1Char('\n')); if (out->toPlainText()!=s) out->setPlainText(s); };
+        QTimer timer; connect(&timer,&QTimer::timeout,&dlg,refresh); timer.start(300); refresh();
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+        connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+    });
     auto *frameAction = inspectActions->addAction(tr("Frametime Analysis…"));
     connect(frameAction, &QAction::triggered, this, [this] {
         const QString path = QFileDialog::getOpenFileName(this, tr("Open frametime log"), QDir::homePath(), tr("Frametime logs (*.csv *.txt);;All files (*)"));
@@ -742,6 +774,10 @@ void OptimizeTab::buildUi() {
     auto *refreshBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Refresh"));
     connect(refreshBtn, &QPushButton::clicked, this, &OptimizeTab::refresh);
     bar->addWidget(refreshBtn);
+    auto *draftBtn = new QPushButton(tr("Draft…"));
+    draftBtn->setToolTip(tr("Save or restore an editor-only draft without applying it."));
+    connect(draftBtn, &QPushButton::clicked, this, &OptimizeTab::draftWorkspace);
+    bar->addWidget(draftBtn);
     applyBtn_ = new QPushButton(QCoreApplication::translate("OptimizeTab", "Apply checked"));
     applyBtn_->setObjectName("btnAccent");
     applyBtn_->setMinimumWidth(132);
@@ -1986,6 +2022,92 @@ void OptimizeTab::reloadPresets(const QString &select, bool poll) {
     Q_EMIT presetCombo_->currentIndexChanged(presetCombo_->currentIndex());
 }
 
+// Only persistent global scalar settings are eligible; a numbered device slot can
+// be reassigned after a reboot and must never be restored by its GUI key alone.
+static bool persistentDraftKey(const QString &key) {
+    return key.startsWith(QStringLiteral("vm.")) || key.startsWith(QStringLiteral("sched."));
+}
+
+QString OptimizeTab::draftFingerprint() const {
+    const QString machine = diagsrc::read(QStringLiteral("/etc/machine-id"), 128);
+    if (machine.isEmpty() || topology_.isEmpty()) return {};
+    return QString::fromLatin1(QCryptographicHash::hash(machine.toUtf8() + '\n' + QJsonDocument(topology_).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
+}
+
+void OptimizeTab::draftWorkspace() {
+    if (busy_ || active_ || describing_ || readbackStale_ || rows_.isEmpty()) {
+        QMessageBox::information(this, tr("Optimization Draft"), tr("Wait for a fresh, idle settings readback before managing drafts.")); return;
+    }
+    const QString fingerprint = draftFingerprint();
+    if (fingerprint.isEmpty()) { QMessageBox::warning(this, tr("Optimization Draft"), tr("Machine or topology identity is unavailable.")); return; }
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/optimization-draft-v1.json");
+    QMessageBox choice(this); choice.setWindowTitle(tr("Optimization Draft"));
+    choice.setText(tr("Save or restore global VM/scheduler editor values. Device-scoped settings are excluded until stable identity is available. Restored values are never automatically checked or applied."));
+    auto *store = choice.addButton(tr("Save draft"), QMessageBox::ActionRole);
+    auto *load = choice.addButton(tr("Restore draft"), QMessageBox::ActionRole);
+    auto *discard = choice.addButton(tr("Delete saved draft"), QMessageBox::DestructiveRole);
+    choice.addButton(QMessageBox::Cancel); choice.exec();
+    if (busy_ || active_ || describing_ || readbackStale_ || fingerprint != draftFingerprint()) return;
+    if (choice.clickedButton() == store) {
+        QJsonObject values;
+        const auto bootValues = boot_.value(QStringLiteral("values")).toObject();
+        for (const Row &r : rows_) if (persistentDraftKey(r.key) && r.include && r.available && (r.touched || r.include->isChecked())) {
+            const QString value = editorValue(r);
+            if (validFor(r, value)) values.insert(r.key, QJsonObject{{"draft", value}, {"live", r.cached ? QString() : r.current}, {"boot", tuningview::valueText(bootValues.value(r.key))}});
+        }
+        if (values.isEmpty()) { QMessageBox::information(this, tr("Optimization Draft"), tr("No eligible edited values to save.")); return; }
+        if (QFileInfo::exists(path) && QMessageBox::question(this, tr("Optimization Draft"), tr("Replace the saved draft?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+        if (busy_ || active_ || describing_ || readbackStale_ || fingerprint != draftFingerprint()) return;
+        const QString error = diagsrc::saveJson(path, QJsonObject{{"version", 1}, {"fingerprint", fingerprint}, {"saved", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}, {"values", values}});
+        if (!error.isEmpty()) QMessageBox::warning(this, tr("Optimization Draft"), error);
+        else showStatus(tr("Editor draft saved. No settings applied."));
+    } else if (choice.clickedButton() == discard) {
+        if (QMessageBox::question(this, tr("Optimization Draft"), tr("Delete only the saved editor draft?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes && QFileInfo::exists(path) && !QFile::remove(path))
+            QMessageBox::warning(this, tr("Optimization Draft"), tr("Could not delete the saved draft."));
+    } else if (choice.clickedButton() == load) {
+        const auto record = diagsrc::loadJson(path);
+        if (record.value(QStringLiteral("version")).toInt() != 1 || record.value(QStringLiteral("fingerprint")).toString() != fingerprint || !record.value(QStringLiteral("values")).isObject()) {
+            QMessageBox::warning(this, tr("Optimization Draft"), tr("Draft missing, damaged, incompatible, or from a different topology.")); return;
+        }
+        const auto values = record.value(QStringLiteral("values")).toObject();
+        if (values.size() > 512) { QMessageBox::warning(this, tr("Optimization Draft"), tr("Draft exceeds the setting limit.")); return; }
+        QStringList preview, skipped;
+        QMap<QString, QString> accepted;
+        const auto bootValues = boot_.value(QStringLiteral("values")).toObject();
+        for (auto it = values.begin(); it != values.end(); ++it) {
+            Row *r = row(it.key()); const auto saved = it.value().toObject(); const auto v = saved.value(QStringLiteral("draft")).toString();
+            if (!r || !persistentDraftKey(it.key()) || !r->include || !r->available || !validFor(*r, v) || r->cached || !r->shadowedBy.isEmpty()) { skipped << it.key(); continue; }
+            accepted.insert(it.key(), v);
+            const QString live = saved.value(QStringLiteral("live")).toString();
+            const QString boot = saved.value(QStringLiteral("boot")).toString();
+            const bool mismatch = live.isEmpty() || live != r->current || boot != tuningview::valueText(bootValues.value(r->key));
+            preview << QStringLiteral("%1: %2 → %3%4").arg(r->key, editorValue(*r), v, mismatch ? tr(" (baseline changed or unavailable)") : QString());
+        }
+        if (!skipped.isEmpty()) preview << tr("Skipped: %1").arg(skipped.join(QStringLiteral(", ")));
+        if (accepted.isEmpty()) { QMessageBox::information(this, tr("Optimization Draft"), tr("No compatible draft values.") + QLatin1Char('\n') + preview.join(QLatin1Char('\n'))); return; }
+        // Modal review can run event-loop callbacks: use a frozen current state to reject a stale preview.
+        QJsonObject reviewState;
+        for (auto it = accepted.cbegin(); it != accepted.cend(); ++it) { const Row *r = row(it.key()); reviewState.insert(it.key(), QJsonArray{r->current, editorValue(*r), r->include->isChecked(), tuningview::valueText(bootValues.value(r->key))}); }
+        QDialog review(this); review.setWindowTitle(tr("Restore editor draft")); review.resize(650, 450);
+        auto *layout = new QVBoxLayout(&review); layout->addWidget(muted(tr("Restoring replaces only the listed editors and unchecks those rows. No hardware write.")));
+        auto *text = new QPlainTextEdit(preview.join(QLatin1Char('\n'))); text->setReadOnly(true); layout->addWidget(text, 1);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); connect(buttons, &QDialogButtonBox::accepted, &review, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &review, &QDialog::reject); layout->addWidget(buttons);
+        if (review.exec() != QDialog::Accepted) return;
+        if (busy_ || active_ || describing_ || readbackStale_ || fingerprint != draftFingerprint()) return;
+        for (auto it = accepted.cbegin(); it != accepted.cend(); ++it) {
+            Row *r = row(it.key());
+            if (!r || !r->include || !r->available || !validFor(*r, it.value()) || r->cached || !r->shadowedBy.isEmpty() || reviewState.value(it.key()).toArray() != QJsonArray{r->current, editorValue(*r), r->include->isChecked(), tuningview::valueText(boot_.value(QStringLiteral("values")).toObject().value(r->key))}) {
+                QMessageBox::warning(this, tr("Optimization Draft"), tr("Settings changed during review. Open the draft again.")); return;
+            }
+        }
+        for (auto it = accepted.cbegin(); it != accepted.cend(); ++it) {
+            Row *r = row(it.key()); if (!setEditorValue(*r, it.value())) continue;
+            const QSignalBlocker blocker(r->include); r->include->setChecked(false); r->touched = true; markRow(*r);
+        }
+        applyShadows(); showStatus(tr("Draft restored to unchecked editors. No settings applied."));
+    }
+}
+
 QJsonObject OptimizeTab::collectValues() const {
     QJsonObject v;
     for (const Row &r : rows_) {
@@ -2371,7 +2493,17 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
     if (!QFileInfo(helperPath()).isExecutable()) { helperMissing_ = true; updateStateBanner(); return; }
     const QString goal = exploreOnly ? exploreReq_.value("goal").toString() : autoGoal_->currentData().toString();
     const QString mode = exploreOnly ? QStringLiteral("balanced") : autoMode_->currentData().toString();
+    auto draft = [this] {
+        QJsonObject editors;
+        for (const auto &r : rows_) if (r.include && (r.touched || r.include->isChecked()))
+            editors[r.key] = QJsonObject{{"value",editorValue(r)}, {"checked",r.include->isChecked()}, {"touched",r.touched}};
+        return QJsonObject{{"rows",editors},{"run",collectRun()},{"selected_preset",loadedPreset_}};
+    };
+    const auto initialDraft = draft();
     autoRunning_ = true;
+    autoTimeline_.clear(); autoTimeline_ << tr("Request started");
+    auto elapsed = std::make_shared<QElapsedTimer>(); elapsed->start();
+    auto lastStage = std::make_shared<int>(-1);
     autoBtn_->setEnabled(false);
     autoExploreBtn_->setEnabled(false);
     showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · Inputs…"), theme::MUTED, 0);
@@ -2381,9 +2513,10 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
     auto timedOut = std::make_shared<bool>(false);
     auto errorLog = std::make_shared<QByteArray>();
     auto partialLine = std::make_shared<QByteArray>();
-    connect(p, &QProcess::readyReadStandardError, this, [this, p, errorLog, partialLine] {
+    connect(p, &QProcess::readyReadStandardError, this, [this, p, errorLog, partialLine, elapsed, lastStage] {
         const QByteArray chunk = p->readAllStandardError();
         errorLog->append(chunk);
+        if (errorLog->size() > 32768) *errorLog = errorLog->right(32768);
         partialLine->append(chunk);
         int end = -1;
         while ((end = partialLine->indexOf('\n')) >= 0) {
@@ -2391,23 +2524,28 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
             partialLine->remove(0, end + 1);
             if (!line.startsWith("CENTURION_STAGE ")) continue;
             const QByteArray stage = line.mid(sizeof("CENTURION_STAGE ") - 1);
-            QString label;
-            if (stage == "inputs") label = QCoreApplication::translate("OptimizeTab", "Inputs");
-            else if (stage == "model") label = QCoreApplication::translate("OptimizeTab", "Model");
-            else if (stage == "decision") label = QCoreApplication::translate("OptimizeTab", "Decision");
-            else if (stage == "validation") label = QCoreApplication::translate("OptimizeTab", "Validation");
-            if (!label.isEmpty()) showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · %1…").arg(label), theme::MUTED, 0);
+            QString label; int order = -1;
+            if (stage == "inputs") { order = 0; label = QCoreApplication::translate("OptimizeTab", "Inputs"); }
+            else if (stage == "model") { order = 1; label = QCoreApplication::translate("OptimizeTab", "Model"); }
+            else if (stage == "decision") { order = 2; label = QCoreApplication::translate("OptimizeTab", "Decision"); }
+            else if (stage == "validation") { order = 3; label = QCoreApplication::translate("OptimizeTab", "Validation"); }
+            else if (stage == "finished") { order = 4; label = tr("Solver returned"); }
+            if (order < 0 || order <= *lastStage) continue;
+            *lastStage = order;
+            autoTimeline_ << QStringLiteral("%1 ms · %2").arg(elapsed->elapsed()).arg(label);
+            showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · %1…").arg(label), theme::MUTED, 0);
         }
         if (partialLine->size() > 8192) partialLine->clear();
     });
-    connect(p, &QProcess::finished, this, [this, p, goal, mode, exploreOnly, timedOut, errorLog](int, QProcess::ExitStatus st) {
+    connect(p, &QProcess::finished, this, [this, p, goal, mode, exploreOnly, timedOut, errorLog, elapsed, draft, initialDraft](int code, QProcess::ExitStatus st) {
         autoRunning_ = false;
         autoBtn_->setEnabled(!busy_);
         const QByteArray out = p->readAllStandardOutput().trimmed();
         const QByteArray err = (*errorLog + p->readAllStandardError()).trimmed();
         p->deleteLater();
         const QJsonObject d = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
-        if (!d.value("ok").toBool()) {
+        if (*timedOut || st != QProcess::NormalExit || code != 0 || !d.value("ok").toBool()) {
+            autoTimeline_ << QStringLiteral("%1 ms · %2").arg(elapsed->elapsed()).arg(*timedOut ? tr("Timed out") : tr("Request failed"));
             // No JSON reply: say why (killed at the timeout, crashed) instead of a bare "no answer".
             QString why = d.value("error").toString();
             if (why.isEmpty()) {
@@ -2419,8 +2557,14 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
             showStatus(QStringLiteral("Autotune failed: %1").arg(why), theme::DANGER, 10000);
             return;
         }
+        autoTimeline_ << QStringLiteral("%1 ms · %2").arg(elapsed->elapsed()).arg(tr("Result received"));
         if (exploreOnly) {
             showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · trade-offs computed; the table was left as it was."), theme::OK, 8000);
+            showAutotuneReport(d, {}, true);
+            return;
+        }
+        if (draft() != initialDraft || busy_) {
+            showStatus(tr("Autotune finished, but the editor changed during the request. The draft was preserved; the result is read-only."), theme::WARN, 12000);
             showAutotuneReport(d, {}, true);
             return;
         }
@@ -2437,6 +2581,7 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         if (e != QProcess::FailedToStart) return;
         autoRunning_ = false;
         autoBtn_->setEnabled(!busy_);
+        autoTimeline_ << tr("Helper failed to start");
         showStatus(QStringLiteral("tune-helper could not be started."), theme::DANGER);
         p->deleteLater();
     });

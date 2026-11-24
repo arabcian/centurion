@@ -1,4 +1,6 @@
 #include "inteltab.h"
+#include "systemdiagnostics.h"
+#include "diagreportview.h"
 #include "profilediff.h"
 #include "trialbar.h"
 #include "privileged.h"
@@ -227,7 +229,10 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
                       "(any AMD CPU, or a BIOS that hides it) nothing can be offered here.");
     vg->addWidget(noPlanes_, planes.size() + 3, 0, 1, 3);
     vg->setColumnStretch(2, 1);
-    vg->setRowStretch(planes.size() + 4, 1);
+    auto *domain = new QPushButton(tr("Voltage Domains and CPU Topology…"));
+    connect(domain, &QPushButton::clicked, this, &IntelTab::domainOverview);
+    vg->addWidget(domain, planes.size() + 4, 0, 1, 3);
+    vg->setRowStretch(planes.size() + 5, 1);
     left->addWidget(vBox);
 
     // ── extras ──
@@ -1299,6 +1304,29 @@ void IntelTab::readStatus() {
     runOp({{"op", "status"}});
 }
 
+void IntelTab::domainOverview() {
+    diag::Report report;
+    report.code = QStringLiteral("IntelTopology"); report.title = tr("Intel Voltage Domains and CPU Topology");
+    report.about = tr("Voltage plane support is based on the last OC mailbox response. Logical CPU topology comes from sysfs. No voltage probe or write is started here.");
+    report.limits << tr("Domain sharing is not inferred from names or frequencies. A raw core type is shown only when the kernel reports it.");
+    diag::Table domains; domains.title = tr("Voltage Domain Readback");
+    domains.headers = {tr("Plane"), tr("Mailbox status"), tr("Offset"), tr("Draft"), tr("Selected")};
+    if (voltageSnapshotTime_.isEmpty()) report.add(diag::Level::Unknown, tr("No voltage readback has been captured."));
+    else report.add(diag::Level::Info, tr("Last voltage readback: %1 (snapshot, not live)").arg(voltageSnapshotTime_));
+    for (const Row &r : volt_) {
+        const auto data = voltageSnapshot_.value(r.key).toObject();
+        const bool supported = data.value(QStringLiteral("mv")).isDouble() && data.value(QStringLiteral("status")).toInt(-1) == 0;
+        domains.add({r.on->text(), data.value(QStringLiteral("status")).isDouble() ? QString::number(data.value(QStringLiteral("status")).toInt()) : tr("Unknown"),
+            supported ? QStringLiteral("%1 mV").arg(data.value(QStringLiteral("mv")).toDouble(), 0, 'f', 1) : tr("Unknown"),
+            supported ? QStringLiteral("%1 mV").arg(r.val->value(), 0, 'f', 1) : tr("Unavailable"),
+            supported && r.on->isChecked() ? tr("Yes") : tr("No")}, supported ? diag::Level::Info : diag::Level::Unknown);
+    }
+    report.tables << domains << systemdiagnostics::cpuTopology();
+    QDialog dlg(this); dlg.setWindowTitle(report.title); dlg.resize(900, 600);
+    auto *layout = new QVBoxLayout(&dlg); auto *view = new DiagReportView; view->setReport(report); layout->addWidget(view, 1);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); layout->addWidget(buttons); dlg.exec();
+}
+
 void IntelTab::showStatus(const QJsonObject &s) {
     QStringList bits;
     const QJsonObject cpu = s.value("cpu").toObject();
@@ -1312,6 +1340,7 @@ void IntelTab::showStatus(const QJsonObject &s) {
         bits << QStringLiteral("<span style='color:%1'>msr.allow_writes=%2</span>").arg(theme::WARN, s.value("allow_writes").toString());
 
     const QJsonObject v = s.value("voltage").toObject();
+    voltageSnapshot_ = v; voltageSnapshotTime_ = QDateTime::currentDateTime().toString(Qt::ISODate);
     bool anyPlane = false;
     for (Row &r : volt_) {
         const QJsonObject o = v.value(r.key).toObject();

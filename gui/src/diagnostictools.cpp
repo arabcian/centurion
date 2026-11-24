@@ -301,6 +301,7 @@ Report displays(const QString &root) {
     modesTable.note = tr("Detailed timings decoded from the EDID are not a complete list of modes offered by the driver.");
     Table bytes;
     bytes.title = tr("EDID Binary Inspector");
+    bytes.privateBinary = true;
     bytes.headers = {tr("Connector"), tr("Block"), tr("Offset"), tr("Hexadecimal"), tr("ASCII")};
     bytes.note = tr("Read-only bytes from the kernel. EDID may contain a display serial number; review before exporting.");
     Table timingDetails;

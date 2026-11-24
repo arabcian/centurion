@@ -1,6 +1,9 @@
 #include "diagreport.h"
 
 #include <QCoreApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QMap>
 #include <QRegularExpression>
 
 namespace diag {
@@ -127,6 +130,49 @@ void redactPrivateFields(Report &report) {
             if (privateHeaders.contains(table.headers[i].simplified().toLower()))
                 for (auto &row : table.rows)
                     if (i<row.size() && !row[i].isEmpty()) row[i]=QStringLiteral("[redacted]");
+}
+
+QJsonObject archiveSnapshot(const Report &source) {
+    Report report = source;
+    redactPrivateFields(report);
+    QJsonArray records;
+    auto safe = [](const QString &text) { return redactPrivateText(text); };
+    for (const Finding &f : report.findings)
+        records.append(QJsonArray{QStringLiteral("finding"), int(f.level), safe(f.title), safe(f.detail), safe(f.action)});
+    for (const Table &t : report.tables) {
+        // EDID binary data can encode serials even after textual masking.
+        if (t.privateBinary) continue;
+        QJsonArray headers; for (const auto &h : t.headers) headers.append(safe(h));
+        records.append(QJsonArray{QStringLiteral("table"), safe(t.title), headers, safe(t.note)});
+        for (qsizetype i = 0; i < t.rows.size(); ++i) {
+            QJsonArray cells; for (const auto &v : t.rows.at(i)) cells.append(safe(v));
+            records.append(QJsonArray{QStringLiteral("row"), safe(t.title), headers, cells, int(t.levels.value(i, Level::Info))});
+        }
+    }
+    for (const auto &limit : report.limits) records.append(QJsonArray{QStringLiteral("limit"), safe(limit)});
+    return QJsonObject{{"version", 1}, {"code", report.code}, {"title", safe(report.title)}, {"verdict", int(report.verdict())}, {"records", records}};
+}
+
+QStringList archiveDiff(const QJsonObject &before, const QJsonObject &after) {
+    auto valid = [](const QJsonObject &o) { return o.value(QStringLiteral("version")).toInt() == 1 && !o.value(QStringLiteral("code")).toString().isEmpty() && o.value(QStringLiteral("records")).isArray(); };
+    if (!valid(before) || !valid(after) || before.value(QStringLiteral("code")) != after.value(QStringLiteral("code")))
+        return {QCoreApplication::translate("diag", "Incompatible diagnostic snapshot schema or report code.")};
+    QMap<QByteArray, int> delta;
+    for (const auto &v : before.value(QStringLiteral("records")).toArray()) {
+        if (!v.isArray()) return {QCoreApplication::translate("diag", "Invalid diagnostic snapshot record.")};
+        --delta[QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact)];
+    }
+    for (const auto &v : after.value(QStringLiteral("records")).toArray()) {
+        if (!v.isArray()) return {QCoreApplication::translate("diag", "Invalid diagnostic snapshot record.")};
+        ++delta[QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact)];
+    }
+    QStringList out;
+    if (before.value(QStringLiteral("verdict")) != after.value(QStringLiteral("verdict"))) out << QCoreApplication::translate("diag", "Report verdict changed.");
+    for (auto it = delta.cbegin(); it != delta.cend(); ++it) {
+        if (it.value() == 0) continue;
+        out << QStringLiteral("%1%2 × %3").arg(it.value() > 0 ? QStringLiteral("+") : QStringLiteral("−")).arg(qAbs(it.value())).arg(QString::fromUtf8(it.key()));
+    }
+    return out;
 }
 
 }  // namespace diag

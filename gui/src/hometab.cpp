@@ -296,6 +296,38 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         themeBox->setCurrentIndex(themeBox->findData(id));
         if (id != theme::currentTheme() && QMessageBox::question(this,tr("Theme"),tr("Restart Centurion now to apply %1?").arg(list->currentItem()->text()))==QMessageBox::Yes) theme::requestRestart();
     });
+    auto *contrastAudit = new QPushButton(tr("Palette Contrast Audit…"));
+    connect(contrastAudit, &QPushButton::clicked, this, [this, themeBox] {
+        QDialog dlg(this); dlg.setWindowTitle(tr("Palette Contrast Audit")); dlg.resize(840, 560);
+        auto *layout = new QVBoxLayout(&dlg);
+        auto *hint = new QLabel(tr("Opaque token-pair audit: 4.5:1 for normal text and 3:1 for indicators. Disabled controls are exempt. Derived gradients, alpha blending and actual rendered controls require separate visual testing."));
+        hint->setWordWrap(true); layout->addWidget(hint);
+        auto *picker = new QComboBox; picker->addItem(tr("All palettes"), QString());
+        for (const auto &[id, name] : theme::themes()) picker->addItem(name, id);
+        layout->addWidget(picker);
+        auto *table = new QTableWidget; table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setColumnCount(6); table->setHorizontalHeaderLabels({tr("Palette"), tr("Role"), tr("Foreground"), tr("Background"), tr("Contrast / target"), tr("Result")});
+        table->verticalHeader()->hide(); table->horizontalHeader()->setStretchLastSection(true);
+        layout->addWidget(table, 1);
+        auto *onlyFail = new QCheckBox(tr("Show only below-target pairs")); onlyFail->setChecked(true); layout->addWidget(onlyFail);
+        auto rebuild = [=] {
+            table->setSortingEnabled(false); table->setRowCount(0);
+            const auto selected = picker->currentData().toString();
+            for (const auto &[id, name] : theme::themes()) {
+                if (!selected.isEmpty() && selected != id) continue;
+                for (const auto &c : theme::contrastChecks(theme::paletteColors(id))) {
+                    if (onlyFail->isChecked() && (c.exempt || c.ratio >= c.target)) continue;
+                    const int row = table->rowCount(); table->insertRow(row);
+                    const QStringList values{name, QCoreApplication::translate("theme", c.role.toUtf8().constData()), c.foreground, c.background, QStringLiteral("%1 / %2").arg(c.ratio, 0, 'f', 2).arg(c.target, 0, 'f', 1), c.exempt ? tr("Exempt") : c.ratio >= c.target ? tr("Pass") : tr("Below target")};
+                    for (int col = 0; col < values.size(); ++col) table->setItem(row, col, new QTableWidgetItem(values.at(col)));
+                }
+            }
+            table->resizeColumnsToContents(); table->setSortingEnabled(true);
+        };
+        connect(picker, &QComboBox::currentIndexChanged, &dlg, rebuild); connect(onlyFail, &QCheckBox::toggled, &dlg, rebuild);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); layout->addWidget(buttons);
+        picker->setCurrentIndex(qMax(0, picker->findData(themeBox->currentData()))); rebuild(); dlg.exec();
+    });
     auto *density = new QCheckBox(tr("Compact controls"));
     density->setChecked(uiSettings.value(QStringLiteral("ui/compact_density"), theme::compactDensity()).toBool());
     density->setToolTip(tr("Reduce control padding and default layout spacing at the next start. Font sizes do not change."));
@@ -327,10 +359,12 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto updateContrast = [readColors, contrast] {
             const auto colors = readColors();
             if (!theme::validCustomPalette(colors)) { contrast->setText(tr("Invalid RGB color.")); return; }
-            auto lum = [](const QColor &c) { auto ch = [](double x) { return x <= .04045 ? x / 12.92 : std::pow((x + .055) / 1.055, 2.4); }; return .2126*ch(c.redF()) + .7152*ch(c.greenF()) + .0722*ch(c.blueF()); };
-            double worst = 100;
-            for (int bg : {0,1,2,3,4,5}) { double a = lum(QColor(colors[bg])), b = lum(QColor(colors[8])); worst = std::min(worst, (std::max(a,b)+.05)/(std::min(a,b)+.05)); }
-            contrast->setText(tr("Minimum main-text contrast: %1:1 (4.5:1 recommended). This does not cover every control.").arg(worst, 0, 'f', 2));
+            double worst = 21.0; int below = 0;
+            for (const auto &check : theme::contrastChecks(colors)) {
+                if (check.role == QStringLiteral("Text")) worst = qMin(worst, check.ratio);
+                if (!check.exempt && check.ratio < check.target) ++below;
+            }
+            contrast->setText(tr("Minimum main-text contrast: %1:1; %2 token pairs below target. This is not a rendered-control audit.").arg(worst, 0, 'f', 2).arg(below));
         };
         fillColors(theme::paletteColors(themeBox->currentData().toString())); updateContrast();
         connect(table, &QTableWidget::cellChanged, &dlg, updateContrast);
@@ -381,12 +415,13 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         preferencesRow->addRow(themeLabel, themeBox);
         preferencesRow->addRow(customTheme);
         preferencesRow->addRow(themeGallery);
+        preferencesRow->addRow(contrastAudit);
         preferencesRow->addRow(density);
     } else {
         headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
         headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
         auto *appearance = new QMenu(this);
-        for (QWidget *w : {static_cast<QWidget *>(customTheme), static_cast<QWidget *>(themeGallery), static_cast<QWidget *>(density)}) { auto *a = new QWidgetAction(appearance); a->setDefaultWidget(w); appearance->addAction(a); }
+        for (QWidget *w : {static_cast<QWidget *>(customTheme), static_cast<QWidget *>(themeGallery), static_cast<QWidget *>(contrastAudit), static_cast<QWidget *>(density)}) { auto *a = new QWidgetAction(appearance); a->setDefaultWidget(w); appearance->addAction(a); }
         auto *appearanceButton = new QPushButton(tr("Appearance")); appearanceButton->setMenu(appearance); headRow->addWidget(appearanceButton);
     }
     // Both UI modes use the exact same hardware features. Saving the mode

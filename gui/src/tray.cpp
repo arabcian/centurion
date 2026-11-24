@@ -529,6 +529,7 @@ void Tray::rebuild() {
     connect(menu_->addAction(menuIcon(glyph::WINDOW, theme::MUTED), win_->isVisible() ? tr("Hide window") : tr("Show window")),
             &QAction::triggered, this, &Tray::toggleWindow);
     connect(menu_->addAction(menuIcon(glyph::QUIT, theme::MUTED), tr("Quit")), &QAction::triggered, this, [this] {
+        if (!win_->canQuit()) return;
         win_->setForceQuit(true);
         hide();
         qApp->quit();

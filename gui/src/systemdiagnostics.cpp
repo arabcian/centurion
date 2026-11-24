@@ -4,6 +4,8 @@
 
 #include <QCoreApplication>
 #include <QDirIterator>
+#include <QDir>
+#include <optional>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -37,6 +39,63 @@ static QString driverOf(const QString &root, const QString &devDir) {
     return d.exists() ? QFileInfo(d.canonicalFilePath()).fileName() : QString();
 }
 static QString watts(double w) { return QStringLiteral("%1 W").arg(w, 0, 'f', w < 10 ? 1 : 0); }
+
+// A sysfs link is useful as identity only if its canonical target is inside the
+// selected fixture/host devices tree. Never follow a broken or escaping link.
+static QString devicePath(const QString &root, const QString &path) {
+    const QString base = QFileInfo(root + QStringLiteral("/sys/devices")).canonicalFilePath();
+    const QString target = QFileInfo(root + path).canonicalFilePath();
+    return !base.isEmpty() && target.startsWith(base + QLatin1Char('/')) ? target : QString();
+}
+static QString known(const QString &v) { return v.isEmpty() ? tr("unknown") : v; }
+static std::optional<double> number(const QString &v) {
+    bool ok = false; const double n = v.toDouble(&ok);
+    return ok && std::isfinite(n) ? std::optional<double>(n) : std::nullopt;
+}
+
+Table deviceTopology(const QString &root, const QJsonObject &sample) {
+    struct Device { QString bus, id, path, target; };
+    QList<Device> devices;
+    const QList<QPair<QString, QString>> buses{
+        {QStringLiteral("PCI"), QStringLiteral("/sys/bus/pci/devices")},
+        {QStringLiteral("USB"), QStringLiteral("/sys/bus/usb/devices")},
+        {QStringLiteral("NVMe"), QStringLiteral("/sys/class/nvme")},
+        {QStringLiteral("Network"), QStringLiteral("/sys/class/net")}};
+    for (const auto &bus : buses) for (const auto &id : ls(root, bus.second)) {
+        const QString path = bus.second + QLatin1Char('/') + id;
+        devices << Device{bus.first, id, path, devicePath(root, path)};
+    }
+    std::stable_sort(devices.begin(), devices.end(), [](const Device &a, const Device &b) { return a.target.size() < b.target.size(); });
+    Table t; t.title = tr("Hardware Device Tree");
+    t.headers = {tr("Device"), tr("Bus"), tr("Parent"), tr("Vendor / device"), tr("Driver"), tr("Link now"), tr("Possible"), tr("NUMA node"), tr("Runtime state"), tr("AER (corr / non-fatal / fatal)")};
+    t.note = tr("Relationships use canonical sysfs paths only. Link and AER readings are reused from the existing PCIe scan; missing relationships and readings are unknown.");
+    QHash<QString, int> index;
+    for (const auto &d : devices) {
+        int parent = -1;
+        if (!d.target.isEmpty()) {
+            QString up = QFileInfo(d.target).path();
+            // Strictly shorten every iteration, with a depth bound.
+            for (int depth = 0; depth < 64 && up.size() > 1; ++depth) {
+                if (index.contains(up)) { parent = index.value(up); break; }
+                const QString next = QFileInfo(up).path(); if (next == up) break; up = next;
+            }
+        }
+        const auto value = [&](const QString &key) { return d.target.isEmpty() ? QString() : rd(root, d.path + QLatin1Char('/') + key); };
+        const QString runtime = value(QStringLiteral("power/runtime_status"));
+        QJsonObject link = d.bus == QStringLiteral("PCI") ? sample.value(d.id).toObject() : QJsonObject{};
+        QString vendor, device;
+        if (d.bus == QStringLiteral("PCI")) { vendor = value(QStringLiteral("vendor")); device = value(QStringLiteral("device")); }
+        if (d.bus == QStringLiteral("USB")) { vendor = value(QStringLiteral("idVendor")); device = value(QStringLiteral("idProduct")); }
+        if (vendor.isEmpty() || device.isEmpty() || link.value(QStringLiteral("vendor")).toString() != vendor || link.value(QStringLiteral("device")).toString() != device) link = {};
+        const QString identity = vendor.isEmpty() || device.isEmpty() ? tr("unknown") : vendor + QStringLiteral(" / ") + device;
+        t.parents << parent;
+        t.add({d.id, d.bus, parent >= 0 ? t.rows.at(parent).value(0) : tr("unknown"), identity,
+               d.target.isEmpty() ? tr("unknown") : known(driverOf(root, d.path)), known(link.value(QStringLiteral("link")).toString()), known(link.value(QStringLiteral("maximum")).toString()),
+               known(value(QStringLiteral("numa_node"))), known(runtime), known(link.value(QStringLiteral("aer")).toString())}, d.target.isEmpty() ? Level::Unknown : Level::Info);
+        if (!d.target.isEmpty() && !index.contains(d.target)) index.insert(d.target, int(t.rows.size()) - 1);
+    }
+    return t;
+}
 
 double linkSpeed(const QString &s) { return QRegularExpression(QStringLiteral(R"(([\d.]+)\s*GT/s)")).match(s).captured(1).toDouble(); }
 static int pcieGen(double gts) { return gts >= 60 ? 6 : gts >= 30 ? 5 : gts >= 15 ? 4 : gts >= 7 ? 3 : gts >= 4 ? 2 : gts > 0 ? 1 : 0; }
@@ -96,7 +155,7 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
         const QString vendor = rd(root, base + QStringLiteral("/vendor")), device = rd(root, base + QStringLiteral("/device"));
         const QString name = diagsrc::pciName(vendor, device, cls);
         const QString current = link(s,w);
-        captured.insert(id, QJsonObject{{"vendor", vendor}, {"device", device}, {"link", current}});
+        captured.insert(id, QJsonObject{{"vendor", vendor}, {"device", device}, {"link", current}, {"maximum", link(linkSpeed(max), mw)}, {"aer", hasAer ? aer.join(QStringLiteral(" / ")) : QString()}});
         const QJsonObject old = before.value(id).toObject();
         if (!old.isEmpty()) {
             const QString oldLink = old.value(QStringLiteral("link")).toString();
@@ -133,6 +192,7 @@ Report pcieLinks(const QString &root, const QJsonObject &previous, QJsonObject *
     t.note = tr("%1 PCIe port(s) / bridge(s) not listed. Possible = the lower of the device's and its port's maximum.").arg(bridges);
     r.tables << t;
     if (!topology.rows.isEmpty()) r.tables << topology;
+    r.tables << deviceTopology(root, captured);
     if (sameBoot) {
         for (auto it = before.begin(); it != before.end(); ++it)
             if (!captured.contains(it.key())) linkDelta.add({it.key(), it.value().toObject().value(QStringLiteral("link")).toString(), QStringLiteral("—"), tr("Not readable in this scan")}, Level::Unknown);
@@ -260,18 +320,19 @@ Report powerLimits(const QString &root) {
             const QString v = rd(root, base + a + QStringLiteral("/current_value"), 64);
             const QString mn = rd(root, base + a + QStringLiteral("/min_value"), 64), mx = rd(root, base + a + QStringLiteral("/max_value"), 64);
             const QString disp = rd(root, base + a + QStringLiteral("/display_name"), 200);
-            t.add({tr("Firmware (%1)").arg(prov), disp.isEmpty() ? a : QStringLiteral("%1 (%2)").arg(disp, a), v.isEmpty() ? tr("unreadable") : v + QStringLiteral(" W"),
-                   mn.isEmpty() ? QString() : QStringLiteral("%1 … %2 W").arg(mn, mx)});
+            t.add({tr("Firmware (%1)").arg(prov), disp.isEmpty() ? a : QStringLiteral("%1 (%2)").arg(disp, a), v.isEmpty() ? tr("unreadable") : v,
+                   mn.isEmpty() || mx.isEmpty() ? QString() : QStringLiteral("%1 … %2").arg(mn, mx)});
         }
     }
     // cpufreq: a scaling cap below the hardware maximum.
     const qint64 hwMax = rd(root, QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")).toLongLong();
     qint64 capMin = 0;
-    int capped = 0, cpus = 0;
+    int capped = 0, cpus = 0, readableCpus = 0;
     for (const QString &c : ls(root, QStringLiteral("/sys/devices/system/cpu/cpufreq"), {QStringLiteral("policy*")})) {
         const qint64 m = rd(root, QStringLiteral("/sys/devices/system/cpu/cpufreq/") + c + QStringLiteral("/scaling_max_freq")).toLongLong();
         const qint64 hm = rd(root, QStringLiteral("/sys/devices/system/cpu/cpufreq/") + c + QStringLiteral("/cpuinfo_max_freq")).toLongLong();
         ++cpus;
+        if (m > 0 && hm > 0) ++readableCpus;
         if (m > 0 && hm > 0 && m < hm * 98 / 100) { ++capped; capMin = capMin ? std::min(capMin, m) : m; }
     }
     if (hwMax) t.add({tr("cpufreq"), tr("highest clock (hardware)"), QStringLiteral("%1 MHz").arg(hwMax / 1000), QString()});
@@ -283,7 +344,7 @@ Report powerLimits(const QString &root) {
             .setFix(tr("Raise the cap to the hardware maximum"), QJsonObject{{QStringLiteral("op"), QStringLiteral("sysfs_set")}, {QStringLiteral("key"), QStringLiteral("cpu_uncap")}});
     }
     const QString boost = rd(root, QStringLiteral("/sys/devices/system/cpu/cpufreq/boost"));
-    if (!boost.isEmpty()) {
+    if (boost == QStringLiteral("0") || boost == QStringLiteral("1")) {
         t.add({tr("cpufreq"), QStringLiteral("boost"), boost == QStringLiteral("1") ? tr("on") : tr("off")}, boost == QStringLiteral("1") ? Level::Info : Level::Review);
         if (boost != QStringLiteral("1"))
             r.add(Level::Review, tr("CPU boost is off"), tr("The CPU stays at its base clock: much slower, cooler, less power."))
@@ -301,7 +362,7 @@ Report powerLimits(const QString &root) {
             const QString lim = rd(root, b + QStringLiteral("constraint_%1_power_limit_uw").arg(c));
             if (lim.isEmpty()) continue;
             t.add({QStringLiteral("RAPL %1").arg(z), QStringLiteral("%1 / %2").arg(name, rd(root, b + QStringLiteral("constraint_%1_name").arg(c))),
-                   watts(lim.toDouble() / 1e6), rd(root, b + QStringLiteral("enabled")) == QStringLiteral("1") ? tr("enabled") : tr("not enforced")});
+                   number(lim) && *number(lim) >= 0 ? watts(*number(lim) / 1e6) : tr("unknown"), known(rd(root, b + QStringLiteral("enabled")))});
         }
     }
     // Power source.
@@ -322,8 +383,47 @@ Report powerLimits(const QString &root) {
     if (powerd) r.add(Level::Info, tr("NVIDIA Dynamic Boost is active"),
                       tr("nvidia-powerd shifts the shared power budget between CPU and GPU: CPU limits measured under a GPU load are lower than at a CPU-only load."));
     r.tables << t;
-    if (!r.count(Level::Review) && !r.count(Level::Attention)) r.add(Level::Ok, tr("No unexpected cap on CPU clocks or boost"));
+    Table hierarchy; hierarchy.title = tr("Power Limit Sources");
+    hierarchy.headers = t.headers;
+    hierarchy.note = tr("Grouped by reported source, not a causal enforcement order. Firmware attribute units are not inferred; live SMU limits may differ.");
+    QMap<QString, int> sourceRows;
+    for (const auto &row : t.rows) {
+        const QString source = row.value(0);
+        if (!sourceRows.contains(source)) {
+            sourceRows.insert(source, int(hierarchy.rows.size()));
+            hierarchy.parents << -1; hierarchy.add({source});
+        }
+        hierarchy.parents << sourceRows.value(source); hierarchy.add(row);
+    }
+    r.tables << hierarchy;
+    if (cpus == 0 || readableCpus != cpus || (boost != QStringLiteral("0") && boost != QStringLiteral("1"))) r.add(Level::Unknown, tr("CPU cap or boost state is incomplete"));
+    else if (!r.count(Level::Review) && !r.count(Level::Attention)) r.add(Level::Ok, tr("No unexpected cap on CPU clocks or boost"));
     return r;
+}
+
+Table cpuTopology(const QString &root) {
+    Table cpu; cpu.title = tr("CPU Package and Core Topology");
+    cpu.headers = {tr("Domain"), tr("Logical CPU"), tr("Online"), tr("Thread siblings"), tr("Core type")};
+    QMap<QString, int> packages, cores;
+    for (const auto &id : ls(root, QStringLiteral("/sys/devices/system/cpu"), {QStringLiteral("cpu[0-9]*")})) {
+        const QString base = QStringLiteral("/sys/devices/system/cpu/") + id + QLatin1Char('/');
+        const QString pkg = rd(root, base + QStringLiteral("topology/physical_package_id"));
+        const QString core = rd(root, base + QStringLiteral("topology/core_id"));
+        int parent = -1;
+        if (!pkg.isEmpty() && pkg != QStringLiteral("-1")) {
+            if (!packages.contains(pkg)) { packages.insert(pkg, int(cpu.rows.size())); cpu.parents << -1; cpu.add({tr("Package %1").arg(pkg)}); }
+            parent = packages.value(pkg);
+            const QString die = rd(root, base + QStringLiteral("topology/die_id"));
+            const QString siblings = rd(root, base + QStringLiteral("topology/thread_siblings_list"));
+            if (!core.isEmpty() && core != QStringLiteral("-1") && (!siblings.isEmpty() || (!die.isEmpty() && die != QStringLiteral("-1")))) {
+                const QString key = pkg + QLatin1Char('/') + core + QLatin1Char('/') + die + QLatin1Char('/') + siblings;
+                if (!cores.contains(key)) { cores.insert(key, int(cpu.rows.size())); cpu.parents << parent; cpu.add({tr("Core %1").arg(core)}); }
+                parent = cores.value(key);
+            }
+        }
+        cpu.parents << parent; cpu.add({id, id, known(rd(root, base + QStringLiteral("online"))), known(rd(root, base + QStringLiteral("topology/thread_siblings_list"))), known(rd(root, base + QStringLiteral("topology/core_type")))});
+    }
+    return cpu;
 }
 
 // ── S10 Memory Architecture Explorer ──────────────────────────────────────────
@@ -346,11 +446,13 @@ Report memory(const QString &root) {
     t.headers = {tr("Item"), tr("Value"), tr("Note")};
     const double total = mi.value(QStringLiteral("MemTotal")), avail = mi.value(QStringLiteral("MemAvailable"));
     const double swapT = mi.value(QStringLiteral("SwapTotal")), swapF = mi.value(QStringLiteral("SwapFree"));
-    if (total > 0) {
+    if (total > 0 && mi.contains(QStringLiteral("MemAvailable")) && avail <= total) {
         t.add({tr("RAM"), gib(total), tr("%1 available (%2 %)").arg(gib(avail)).arg(avail * 100 / total, 0, 'f', 0)}, avail / total < 0.1 ? Level::Review : Level::Info);
         if (avail / total < 0.1) r.add(Level::Review, tr("Less than 10 % of RAM is available"), tr("The kernel is close to reclaiming hard or swapping."), tr("Close something large or add swap."));
     }
-    t.add({tr("Swap"), swapT > 0 ? tr("%1 of %2 used").arg(gib(swapT - swapF), gib(swapT)) : tr("none"), QString()});
+    else r.add(Level::Unknown, tr("RAM availability is incomplete"));
+    const bool swapKnown = mi.contains(QStringLiteral("SwapTotal")) && mi.contains(QStringLiteral("SwapFree")) && swapF <= swapT;
+    t.add({tr("Swap"), !swapKnown ? tr("unknown") : swapT > 0 ? tr("%1 of %2 used").arg(gib(swapT - swapF), gib(swapT)) : tr("none"), QString()}, swapKnown ? Level::Info : Level::Unknown);
     // zram and zswap.
     bool zram = false;
     for (const QString &z : ls(root, QStringLiteral("/sys/block"), {QStringLiteral("zram*")})) {
@@ -392,15 +494,20 @@ Report memory(const QString &root) {
     const QString psi = rd(root, QStringLiteral("/proc/pressure/memory"));
     if (!psi.isEmpty()) {
         const auto avg = [&psi](const QString &kind, const QString &win) {
-            return QRegularExpression(kind + QStringLiteral(R"(.*?)") + win + QStringLiteral(R"(=([\d.]+))")).match(psi).captured(1).toDouble();
+            return number(QRegularExpression(kind + QStringLiteral(R"(.*?)") + win + QStringLiteral(R"(=([\d.]+))")).match(psi).captured(1));
         };
-        const double some60 = avg(QStringLiteral("some"), QStringLiteral("avg60")), full60 = avg(QStringLiteral("full"), QStringLiteral("avg60"));
+        const auto some = avg(QStringLiteral("some"), QStringLiteral("avg60")), full = avg(QStringLiteral("full"), QStringLiteral("avg60"));
+        if (!some || !full || *some < 0 || *full < 0 || *some > 100 || *full > 100) r.add(Level::Unknown, tr("Memory pressure reading is incomplete"));
+        else {
+        const double some60 = *some, full60 = *full;
         t.add({tr("Memory pressure (last minute)"), tr("some %1 % · full %2 %").arg(some60).arg(full60),
                tr("share of time tasks waited for memory")}, full60 > 5 || some60 > 20 ? Level::Review : Level::Ok);
         if (full60 > 5 || some60 > 20)
             r.add(Level::Review, tr("Programs are waiting for memory (%1 % of the last minute)").arg(std::max(some60, full60)),
                   tr("The kernel is reclaiming or swapping to keep up; the desktop feels sluggish."), tr("Free memory or add swap / zram."));
+        }
     } else {
+        r.add(Level::Unknown, tr("Memory pressure reading is incomplete"));
         r.limits << tr("Memory pressure (PSI) is not available: kernel without CONFIG_PSI or psi=0.");
     }
     r.tables << t;
@@ -414,8 +521,9 @@ Report memory(const QString &root) {
     for (const QString &c : ls(root, QStringLiteral("/sys/devices/system/cpu"), {QStringLiteral("cpu[0-9]*")}))
         for (const QString &ix : ls(root, QStringLiteral("/sys/devices/system/cpu/") + c + QStringLiteral("/cache"), {QStringLiteral("index*")})) {
             const QString b = QStringLiteral("/sys/devices/system/cpu/") + c + QStringLiteral("/cache/") + ix + QLatin1Char('/');
-            if (rd(root, b + QStringLiteral("level")) == QStringLiteral("3"))
-                l3.insert(rd(root, b + QStringLiteral("size")) + QLatin1Char('|') + rd(root, b + QStringLiteral("shared_cpu_list")));
+            const QString shared = rd(root, b + QStringLiteral("shared_cpu_list"));
+            if (rd(root, b + QStringLiteral("level")) == QStringLiteral("3") && !shared.isEmpty())
+                l3.insert(rd(root, b + QStringLiteral("size")) + QLatin1Char('|') + shared);
         }
     QStringList l3s = l3.values();
     std::sort(l3s.begin(), l3s.end());
@@ -424,9 +532,19 @@ Report memory(const QString &root) {
         const int kib = size.endsWith(QLatin1Char('K')) ? size.chopped(1).toInt() : 0;
         topo.add({tr("L3 %1").arg(kib ? tr("%1 MB").arg(kib / 1024) : size), g.section(QLatin1Char('|'), 1)});
     }
-    if (l3s.size() > 1) topo.note = tr("%1 L3 domains: on Ryzen each is one CCD. Threads that talk a lot run faster on one of them.").arg(l3s.size());
+    if (l3s.size() > 1) topo.note = tr("%1 reported L3 sharing domains; CCD identity is not inferred from cache sharing.").arg(l3s.size());
     r.tables << topo;
-    if (!r.count(Level::Review)) r.add(Level::Ok, tr("Memory set up sensibly and not under pressure"));
+    const Table cpu = cpuTopology(root);
+    if (!cpu.rows.isEmpty()) r.tables << cpu;
+    Table nodes; nodes.title = tr("NUMA Memory and Distances");
+    nodes.headers = {tr("Node"), tr("CPUs"), tr("Memory total (KiB)"), tr("Distance vector")};
+    for (const auto &id : ls(root, QStringLiteral("/sys/devices/system/node"), {QStringLiteral("node[0-9]*")})) {
+        const QString base = QStringLiteral("/sys/devices/system/node/") + id + QLatin1Char('/');
+        const auto m = QRegularExpression(QStringLiteral(R"(MemTotal:\s+(\d+)\s+kB)")).match(rd(root, base + QStringLiteral("meminfo")));
+        nodes.add({id, known(rd(root, base + QStringLiteral("cpulist"))), known(m.captured(1)), known(rd(root, base + QStringLiteral("distance")))});
+    }
+    if (!nodes.rows.isEmpty()) r.tables << nodes;
+    if (!r.count(Level::Review) && !r.count(Level::Unknown)) r.add(Level::Ok, tr("Memory set up sensibly and not under pressure"));
     return r;
 }
 
@@ -439,7 +557,7 @@ Report firmware(const QString &root) {
     r.about = tr("The firmware interfaces the kernel found: WMI objects with the driver that claims each, firmware settings exposed through "
                  "firmware-attributes, and the ACPI tables present. Nothing is called or changed.");
     r.limits << tr("Passwords and authentication attributes are never read.");
-    static const QHash<QString, const char *> known = {
+    static const QHash<QString, const char *> knownGuids = {
         {"887B54E3-DDDC-4B2C-8B88-68A26A8835D0", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo GameZone (profiles, GPU, thermal) — used by Centurion")},
         {"DC2A8805-3A8C-41BA-A6F7-092E0089CD3B", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Other Method (power limits) — used by Centurion")},
         {"92549549-4BDE-4F06-AC04-CE8BF898DBAA", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Fan Method (fan tables) — used by Centurion")},
@@ -447,21 +565,50 @@ Report firmware(const QString &root) {
         {"7A8F5407-CB67-4D6E-B547-39B3BE018154", QT_TRANSLATE_NOOP("systemdiagnostics", "Lenovo Capability Data 01")}};
     Table w;
     w.title = tr("WMI Objects");
-    w.headers = {tr("GUID"), tr("Driver"), tr("Known as")};
+    w.headers = {tr("GUID"), tr("Driver"), tr("Known as"), tr("Instance")};
     int unbound = 0;
     for (const QString &id : ls(root, QStringLiteral("/sys/bus/wmi/devices"))) {
         const QString guid = id.section(QLatin1Char('-'), 0, 4).toUpper();
         const QString drv = driverOf(root, QStringLiteral("/sys/bus/wmi/devices/") + id);
-        QString name = known.contains(guid) ? tr(known.value(guid)) : QString();
-        if (guid.startsWith(QStringLiteral("C3A03776"))) name = tr("Lenovo battery information — used by Centurion");
+        QString name = knownGuids.contains(guid) ? tr(knownGuids.value(guid)) : QString();
+        // A GUID prefix alone does not identify a WMI method.
         if (drv.isEmpty()) ++unbound;
-        w.add({guid, drv.isEmpty() ? tr("none") : drv, name}, name.isEmpty() ? Level::Info : Level::Ok);
+        const bool valid = QRegularExpression(QStringLiteral(R"(^[0-9A-F]{8}-(?:[0-9A-F]{4}-){3}[0-9A-F]{12}$)")).match(guid).hasMatch();
+        w.add({valid ? guid : tr("unknown"), drv.isEmpty() ? tr("none") : drv, valid ? name : QString(), id}, valid ? Level::Info : Level::Unknown);
     }
     if (w.rows.isEmpty()) r.add(Level::Info, tr("No WMI object exported (no ACPI-WMI on this machine, or CONFIG_ACPI_WMI off)"));
     else {
         w.note = tr("%1 object(s) have no driver: normal for objects no Linux driver knows; Centurion talks to the Lenovo ones through ACPI directly.").arg(unbound);
         r.tables << w;
     }
+    Table acpi; acpi.title = tr("Exposed ACPI / WMI Device Hierarchy");
+    acpi.headers = {tr("Device"), tr("Bus"), tr("HID / GUID"), tr("UID"), tr("Status"), tr("Driver"), tr("Modalias")};
+    acpi.note = tr("Only kernel-exposed device objects are shown, not the complete AML namespace. No method is executed.");
+    struct AcpiEntry { QString bus, id, path, target; };
+    QList<AcpiEntry> entries;
+    for (const auto &bus : {QStringLiteral("acpi"), QStringLiteral("wmi")}) {
+        const QString base = QStringLiteral("/sys/bus/") + bus + QStringLiteral("/devices/");
+        for (const auto &id : ls(root, base)) entries << AcpiEntry{bus, id, base + id, devicePath(root, base + id)};
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const AcpiEntry &a, const AcpiEntry &b) { return a.target.size() < b.target.size(); });
+    QHash<QString, int> seen;
+    for (const auto &e : entries) {
+        int parent = -1;
+        if (!e.target.isEmpty()) {
+            QString up = QFileInfo(e.target).path();
+            for (int depth = 0; depth < 64 && up.size() > 1; ++depth) {
+                if (seen.contains(up)) { parent = seen.value(up); break; }
+                const QString next = QFileInfo(up).path(); if (next == up) break; up = next;
+            }
+        }
+        auto val = [&](const QString &name) { return e.target.isEmpty() ? tr("unknown") : known(rd(root, e.path + QLatin1Char('/') + name, 512)); };
+        acpi.parents << parent;
+        acpi.add({e.id, e.bus, e.bus == QStringLiteral("wmi") ? e.id.section(QLatin1Char('-'), 0, 4) : val(QStringLiteral("hid")), val(QStringLiteral("uid")), val(QStringLiteral("status")),
+                  e.target.isEmpty() ? tr("unknown") : known(driverOf(root, e.path)), val(QStringLiteral("modalias"))}, e.target.isEmpty() ? Level::Unknown : Level::Info);
+        if (!e.target.isEmpty() && !seen.contains(e.target)) seen.insert(e.target, int(acpi.rows.size()) - 1);
+    }
+    if (!acpi.rows.isEmpty()) r.tables << acpi;
+    else r.add(Level::Unknown, tr("No exposed ACPI or WMI device hierarchy could be read"));
     Table fa;
     fa.title = tr("Firmware Settings (firmware-attributes)");
     fa.headers = {tr("Provider"), tr("Setting"), tr("Value"), tr("Allowed")};
@@ -514,7 +661,8 @@ Report charging(const QString &root) {
     pd.title = tr("USB-C Ports");
     pd.headers = {tr("Port"), tr("Role"), tr("Partner"), tr("Charger offers"), tr("Best")};
     double bestW = 0;
-    for (const QString &port : ls(root, QStringLiteral("/sys/class/typec"), {QStringLiteral("port[0-9]")})) {
+    for (const QString &port : ls(root, QStringLiteral("/sys/class/typec"), {QStringLiteral("port[0-9]*")})) {
+        if (!QRegularExpression(QStringLiteral(R"(^port[0-9]+$)")).match(port).hasMatch()) continue;
         const QString b = QStringLiteral("/sys/class/typec/") + port;
         const QString partner = b + QStringLiteral("-partner");
         const bool connected = QFile::exists(root + partner);
@@ -528,11 +676,11 @@ Report charging(const QString &root) {
                 double v = diagsrc::read(c + QStringLiteral("voltage")).remove(QStringLiteral("mV")).toDouble() / 1000;
                 if (cap.contains(QStringLiteral("programmable"))) {
                     v = diagsrc::read(c + QStringLiteral("maximum_voltage")).remove(QStringLiteral("mV")).toDouble() / 1000;
-                    pdos << tr("PPS ≤%1 V %2 A").arg(v).arg(i);
-                } else if (v > 0) {
+                    if (v > 0 && i > 0 && std::isfinite(v * i)) pdos << tr("PPS ≤%1 V %2 A").arg(v).arg(i);
+                } else if (v > 0 && i > 0 && std::isfinite(v * i)) {
                     pdos << QStringLiteral("%1 V %2 A").arg(v).arg(i);
                 }
-                best = std::max(best, v * i);
+                if (v > 0 && i > 0 && std::isfinite(v * i)) best = std::max(best, v * i);
             }
         }
         bestW = std::max(bestW, best);
@@ -549,20 +697,30 @@ Report charging(const QString &root) {
     // Power supplies.
     Table ps;
     ps.title = tr("Power Supplies");
-    ps.headers = {tr("Supply"), tr("Type"), tr("State"), tr("Power"), tr("Detail")};
+    ps.headers = {tr("Supply"), tr("Type"), tr("State"), tr("Measured power"), tr("Detail")};
+    Table readings; readings.title = tr("Supply Measurements and Reported Limits");
+    readings.headers = {tr("Supply"), tr("Voltage now (V)"), tr("Current now (A)"), tr("Voltage max (V)"), tr("Current max (A)"), tr("Measured power (W)")};
+    readings.note = tr("Reported maxima are capabilities, not a negotiated USB-PD contract. Signed measurements are preserved; direction follows the driver convention.");
     for (const QString &s : ls(root, QStringLiteral("/sys/class/power_supply"))) {
         const QString b = QStringLiteral("/sys/class/power_supply/") + s + QLatin1Char('/');
         const QString type = rd(root, b + QStringLiteral("type"));
+        if (type == QStringLiteral("Battery") && rd(root, b + QStringLiteral("scope")) == QStringLiteral("Device")) continue;
+        const auto vNow = number(rd(root, b + QStringLiteral("voltage_now"))), iNow = number(rd(root, b + QStringLiteral("current_now")));
+        const auto vMax = number(rd(root, b + QStringLiteral("voltage_max"))), iMax = number(rd(root, b + QStringLiteral("current_max")));
+        const auto reportedPower = number(rd(root, b + QStringLiteral("power_now")));
+        std::optional<double> measured;
+        if (reportedPower) measured = *reportedPower / 1e6;
+        else if (vNow && iNow && *vNow > 0 && std::isfinite((*vNow / 1e6) * (*iNow / 1e6))) measured = (*vNow / 1e6) * (*iNow / 1e6);
+        auto scaled = [](const std::optional<double> &n) { return n ? QString::number(*n / 1e6, 'g', 8) : tr("unknown"); };
+        readings.add({s, scaled(vNow), scaled(iNow), scaled(vMax), scaled(iMax), measured ? QString::number(*measured, 'g', 8) : tr("unknown")});
         if (type == QStringLiteral("Battery")) {
-            if (rd(root, b + QStringLiteral("scope")) == QStringLiteral("Device")) continue;  // a mouse or a headset
             const double full = rd(root, b + QStringLiteral("energy_full")).toDouble(), design = rd(root, b + QStringLiteral("energy_full_design")).toDouble();
-            double w = rd(root, b + QStringLiteral("power_now")).toDouble() / 1e6;
-            if (w <= 0) w = rd(root, b + QStringLiteral("current_now")).toDouble() * rd(root, b + QStringLiteral("voltage_now")).toDouble() / 1e12;
+
             const QString status = rd(root, b + QStringLiteral("status"));
             const QString cycles = rd(root, b + QStringLiteral("cycle_count"));
             const QString end = rd(root, b + QStringLiteral("charge_control_end_threshold"));
             const double health = design > 0 ? full * 100 / design : 0;
-            ps.add({s, tr("battery"), QStringLiteral("%1, %2 %").arg(status, rd(root, b + QStringLiteral("capacity"))), w > 0 ? watts(w) : QStringLiteral("—"),
+            ps.add({s, tr("battery"), QStringLiteral("%1, %2 %").arg(status, rd(root, b + QStringLiteral("capacity"))), measured ? watts(*measured) : QStringLiteral("—"),
                     QStringList{health > 0 ? tr("health %1 % of design").arg(health, 0, 'f', 0) : QString(),
                                 cycles.isEmpty() || cycles == QStringLiteral("0") ? QString() : tr("%1 cycles").arg(cycles),
                                 end.isEmpty() ? QString() : tr("charges to %1 %").arg(end)}.filter(QRegularExpression(QStringLiteral("."))).join(QStringLiteral(" · "))},
@@ -573,13 +731,13 @@ Report charging(const QString &root) {
             if (status == QStringLiteral("Not charging") && !end.isEmpty())
                 r.add(Level::Info, tr("Battery not charging: charge limit %1 %").arg(end), tr("Charging stops at the limit to slow battery wear (conservation mode)."));
         } else if (type == QStringLiteral("Mains") || type.startsWith(QStringLiteral("USB"))) {
-            const bool online = rd(root, b + QStringLiteral("online")) == QStringLiteral("1");
-            const double v = rd(root, b + QStringLiteral("voltage_now")).toDouble() / 1e6, imax = rd(root, b + QStringLiteral("current_max")).toDouble() / 1e6;
-            ps.add({s, type, online ? tr("online") : tr("offline"), v > 0 && imax > 0 && online ? watts(v * imax) : QStringLiteral("—"),
-                    v > 0 && imax > 0 ? tr("contract %1 V × %2 A").arg(v, 0, 'f', 1).arg(imax, 0, 'f', 2) : chosen(rd(root, b + QStringLiteral("usb_type")))});
+            const QString online = rd(root, b + QStringLiteral("online"));
+            ps.add({s, type, online == QStringLiteral("1") ? tr("online") : online == QStringLiteral("0") ? tr("offline") : tr("unknown"),
+                    online == QStringLiteral("1") && measured ? watts(*measured) : QStringLiteral("—"), chosen(rd(root, b + QStringLiteral("usb_type")))});
         }
     }
     r.tables << ps;
+    if (!readings.rows.isEmpty()) r.tables << readings;
     bool acOnline = false, discharging = false;
     for (const QStringList &row : ps.rows) {
         if (row.value(1) != tr("battery") && row.value(2) == tr("online")) acOnline = true;
@@ -589,7 +747,7 @@ Report charging(const QString &root) {
         r.add(Level::Review, tr("Plugged in, yet the battery is discharging"), tr("The load is above what the adapter supplies (or the adapter is not recognised)."),
               tr("Use a stronger adapter, or lower the load; check that the barrel plug is fully seated."));
     if (ps.rows.isEmpty() && pd.rows.isEmpty()) r.add(Level::Unknown, tr("No battery, charger or USB-C port is reported by the kernel"));
-    else if (!r.count(Level::Review) && !r.count(Level::Attention)) r.add(Level::Ok, tr("No charging problem visible"));
+    else if (!r.count(Level::Review) && !r.count(Level::Attention)) r.add(Level::Info, tr("Charging information is limited to reported readings"));
     return r;
 }
 

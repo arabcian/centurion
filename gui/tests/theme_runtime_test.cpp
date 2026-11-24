@@ -46,5 +46,19 @@ int main(int argc, char **argv) {
     CHECK(theme::saveTheme(QStringLiteral("graphite")));
     theme::load();
     CHECK(theme::paletteColors(theme::currentTheme()) == original);
+    CHECK(theme::contrastRatio(QColor(Qt::black), QColor(Qt::white)) > 20.99);
+    CHECK(theme::contrastRatio(QColor(Qt::black), QColor(Qt::black)) == 1.0);
+    CHECK(theme::contrastChecks({}).isEmpty());
+    for (const auto &entry : theme::themes()) {
+        const auto checks = theme::contrastChecks(theme::paletteColors(entry.first));
+        CHECK(!checks.isEmpty());
+        bool selection = false, disabled = false;
+        for (const auto &check : checks) {
+            CHECK(check.ratio >= 1 && check.ratio <= 21.00001);
+            if (check.role == QStringLiteral("Selection text")) { CHECK(check.ratio >= 4.5); selection = true; }
+            if (check.exempt) disabled = true;
+        }
+        CHECK(selection && disabled);
+    }
     return 0;
 }

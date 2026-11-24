@@ -63,6 +63,8 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QDateTime>
+#include <QPlainTextEdit>
 #include <QStyle>
 #include <utility>
 #include <malloc.h>
@@ -256,6 +258,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     }
     QSettings windowSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
     restoreGeometry(windowSettings.value(QStringLiteral("ui/window_geometry")).toByteArray());
+    auto *operationObserver = new QTimer(this);
+    connect(operationObserver, &QTimer::timeout, this, &MainWindow::sampleOperations);
+    operationObserver->start(500);
     theme::setRestartGuard([window = QPointer<MainWindow>(this)] {
         if (!window) return true;
         const QStringList operations = window->activeOperations();
@@ -709,6 +714,24 @@ QStringList MainWindow::activeOperations() const {
     return out;
 }
 
+bool MainWindow::canQuit() {
+    const auto active = activeOperations();
+    if (active.isEmpty()) return true;
+    QMessageBox::information(this, tr("Exit deferred"), tr("Finish the active operations before exiting Centurion.") + QStringLiteral("\n\n") + active.join(QLatin1Char('\n')));
+    return false;
+}
+
+void MainWindow::sampleOperations() {
+    const auto now = activeOperations();
+    const auto time = QDateTime::currentDateTime().toString(Qt::ISODate);
+    for (const auto &name : now) if (!observedOperations_.contains(name))
+        operationHistory_ << tr("%1 · Observed active: %2").arg(time, name);
+    for (const auto &name : observedOperations_) if (!now.contains(name))
+        operationHistory_ << tr("%1 · No longer observed: %2 (outcome unknown)").arg(time, name);
+    observedOperations_ = now;
+    while (operationHistory_.size() > 200) operationHistory_.removeFirst();
+}
+
 void MainWindow::showOperations() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Active operations"));
@@ -720,7 +743,13 @@ void MainWindow::showOperations() {
     status->setTextFormat(Qt::PlainText);
     status->setWordWrap(true);
     layout->addWidget(status, 1);
-    auto refresh = [this, status] {
+    auto *history = new QPlainTextEdit; history->setReadOnly(true);
+    layout->addWidget(new QLabel(tr("Observed state transitions (not verified results)")));
+    layout->addWidget(history, 2);
+    auto refresh = [this, status, history] {
+        sampleOperations();
+        const auto text = operationHistory_.join(QLatin1Char('\n'));
+        if (history->toPlainText() != text) history->setPlainText(text);
         const QStringList active = activeOperations();
         status->setText(active.isEmpty() ? tr("No tracked operation is active.") : active.join(QLatin1Char('\n')));
     };
@@ -839,5 +868,6 @@ void MainWindow::hideEvent(QHideEvent *e) {
 void MainWindow::closeEvent(QCloseEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
     if (hideOnClose_ && !forceQuit_) { e->ignore(); hide(); return; }
+    if (!canQuit()) { e->ignore(); return; }
     QMainWindow::closeEvent(e);
 }
