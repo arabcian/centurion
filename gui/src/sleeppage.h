@@ -14,6 +14,8 @@
 //   * the limit for the "lid closed, still awake" tray warning (lidwatch.h) is set here (gui.ini).
 // Everything is read on show only; nothing runs in the background. The check runs on the button only.
 #include <QWidget>
+#include <QJsonObject>
+#include <QList>
 
 class QComboBox;
 class QJsonObject;
@@ -32,6 +34,8 @@ protected:
 private:
     void refresh();
     void fillSleeps();
+    void historyWorkspace();
+    QList<QJsonObject> historyRows_;
     void fillWake();
     void fillAdvice(const QList<QJsonObject> &rowsOldestFirst);
     void setWake(const QString &dev, bool on);

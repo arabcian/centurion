@@ -253,6 +253,8 @@ DiagReportView::DiagReportView(QWidget *parent) : QWidget(parent) {
     actions->addWidget(pin_); actions->addWidget(compare_);
     archive_ = new QPushButton(tr("History…")); archive_->setEnabled(false);
     actions->addWidget(archive_); connect(archive_, &QPushButton::clicked, this, &DiagReportView::archiveWorkspace);
+    evidence_ = new QPushButton(tr("Evidence…")); evidence_->setEnabled(false);
+    actions->addWidget(evidence_); connect(evidence_, &QPushButton::clicked, this, &DiagReportView::evidenceWorkspace);
     connect(pin_, &QPushButton::clicked, this, [this] {
         if (!hasReport_) return;
         baselineCode_ = report_.code; baselineText_ = report_.toText(); baselineTime_ = snapshot_->text();
@@ -351,7 +353,7 @@ void DiagReportView::setMessage(const QString &s) {
     for (QWidget *w : {static_cast<QWidget *>(search_), static_cast<QWidget *>(severity_), static_cast<QWidget *>(sections_)}) w->setEnabled(false);
     snapshot_->clear();
     filterInfo_->clear();
-    preview_->setEnabled(false); pin_->setEnabled(false); compare_->setEnabled(false); archive_->setEnabled(false);
+    preview_->setEnabled(false); pin_->setEnabled(false); compare_->setEnabled(false); archive_->setEnabled(false); evidence_->setEnabled(false);
     verdict_->clear();
     verdict_->setVisible(false);
     headline_->setText(s);
@@ -380,7 +382,7 @@ void DiagReportView::setReport(const diag::Report &r) {
     sections_->setEnabled(true);
     preview_->setEnabled(true); pin_->setEnabled(true); compare_->setEnabled(baselineCode_ == report_.code && !baselineText_.isEmpty());
     capturedAt_ = QDateTime::currentDateTimeUtc().toString(Qt::ISODate); captureBoot_ = diagsrc::bootId();
-    archive_->setEnabled(!current.code.isEmpty());
+    archive_->setEnabled(!current.code.isEmpty()); evidence_->setEnabled(true);
     snapshot_->setText(tr("Report displayed: %1 · snapshot, not live data").arg(QDateTime::currentDateTime().toString(Qt::ISODate)));
     sections_->addItem(tr("Jump to section…"));
     auto addSection = [this](const QString &name, QWidget *w) {
@@ -615,4 +617,60 @@ void DiagReportView::archiveWorkspace() {
     connect(save, &QPushButton::clicked, &dlg, [&] { change(true); });
     connect(remove, &QPushButton::clicked, &dlg, [&] { change(false); });
     refill(); dlg.exec();
+}
+
+void DiagReportView::evidenceWorkspace() {
+    if (!hasReport_) return;
+    // Only explicit containment and parent edges from this report. No correlation is inferred.
+    auto captured = report_;
+    diag::redactPrivateFields(captured);
+    QDialog dlg(this); dlg.setWindowTitle(tr("Evidence Relationships")); dlg.resize(880, 580);
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addWidget(text(tr("Direct references in this captured report, not causal relationships. No new hardware scan is performed.")));
+    auto *filter = new QLineEdit; filter->setPlaceholderText(tr("Filter evidence…")); layout->addWidget(filter);
+    auto *split = new QSplitter(Qt::Horizontal);
+    auto *tree = new QTreeWidget; tree->setHeaderLabels({tr("Evidence"), tr("Relationship")});
+    tree->header()->setSectionResizeMode(0, QHeaderView::Stretch); tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    auto *detail = new QPlainTextEdit; detail->setReadOnly(true);
+    split->addWidget(tree); split->addWidget(detail); split->setStretchFactor(0, 3); split->setStretchFactor(1, 2); layout->addWidget(split, 1);
+    auto *root = new QTreeWidgetItem(tree, {captured.code + QStringLiteral(" · ") + captured.title, tr("Captured report")});
+    root->setData(0, Qt::UserRole, diag::redactPrivateText(captured.about) + QStringLiteral("\n") + capturedAt_ + QStringLiteral("\n") + captureBoot_);
+    int nodes = 1;
+    constexpr int MaxNodes = 400;
+    auto node = [&](QTreeWidgetItem *parent, const QString &label, const QString &edge, const QString &content) -> QTreeWidgetItem * {
+        if (nodes >= MaxNodes) return nullptr;
+        ++nodes; auto *item = new QTreeWidgetItem(parent, {diag::redactPrivateText(label).left(300), edge});
+        item->setData(0, Qt::UserRole, diag::redactPrivateText(content).left(8192)); return item;
+    };
+    for (const auto &f : captured.findings) {
+        if (!node(root, f.title, tr("Contains finding"), diag::levelName(f.level) + QStringLiteral("\n") + f.detail + QStringLiteral("\n") + f.action)) break;
+    }
+    for (const auto &t : captured.tables) {
+        if (t.privateBinary) continue;
+        auto *table = node(root, t.title, tr("Contains readings"), t.note);
+        if (!table) break;
+        QList<QTreeWidgetItem *> items;
+        for (qsizetype i = 0; i < t.rows.size(); ++i) {
+            const auto &cells = t.rows.at(i);
+            const int parent = t.parents.value(i, -1);
+            const bool linked = parent >= 0 && parent < items.size();
+            QStringList fields;
+            for (qsizetype c = 0; c < cells.size(); ++c) fields << t.headers.value(c) + QStringLiteral(": ") + cells.at(c);
+            auto *entry = node(linked ? items.at(parent) : table, cells.value(0), linked ? tr("Reported parent") : tr("Contains row"), fields.join(QLatin1Char('\n')));
+            if (!entry) break;
+            items.append(entry);
+        }
+    }
+    for (const auto &limit : captured.limits) if (!node(root, limit, tr("Evidence limit"), limit)) break;
+    if (nodes >= MaxNodes) layout->addWidget(text(tr("Evidence display limited to 400 nodes. The full report is unchanged.")));
+    connect(tree, &QTreeWidget::currentItemChanged, detail, [detail](QTreeWidgetItem *item, QTreeWidgetItem *) { detail->setPlainText(item ? item->data(0, Qt::UserRole).toString() : QString()); });
+    connect(filter, &QLineEdit::textChanged, tree, [root](const QString &query) {
+        const auto visit = [&](auto &&self, QTreeWidgetItem *item) -> bool {
+            bool match = query.isEmpty() || item->text(0).contains(query, Qt::CaseInsensitive) || item->text(1).contains(query, Qt::CaseInsensitive) || item->data(0, Qt::UserRole).toString().contains(query, Qt::CaseInsensitive);
+            for (int i = 0; i < item->childCount(); ++i) match |= self(self, item->child(i));
+            item->setHidden(!match); if (match && !query.isEmpty()) item->setExpanded(true); return match;
+        }; visit(visit, root);
+    });
+    root->setExpanded(true); tree->setCurrentItem(root);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); layout->addWidget(buttons); dlg.exec();
 }

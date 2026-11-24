@@ -119,6 +119,7 @@ private:
     void updateLaunchPreview();
     void saveUndervolt();
     void draftWorkspace();
+    void sourceWorkspace();
     QString draftFingerprint() const;
 
     static bool validFor(const Row &r, const QString &v);
@@ -210,6 +211,9 @@ private:
     QHash<QString, QJsonObject> slowKeep_; // slow rows as of the last full describe
 
     QLabel *banner_ = nullptr, *bannerDetail_ = nullptr, *status_ = nullptr, *bootLabel_ = nullptr;
+    QJsonArray reportedConflicts_;
+    QStringList reportedDrift_;
+    QString reportedDriftCandidates_;
     QLabel *conflictBanner_ = nullptr;  // hardware policy and swap tier diagnostics (read-only)
     SceneEngine *scenes_ = nullptr;
     QPushButton *defaultsBtn_ = nullptr;

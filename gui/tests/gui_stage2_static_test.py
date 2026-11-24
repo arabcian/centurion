@@ -32,7 +32,13 @@ class Stage2(unittest.TestCase):
         body=s.split('void OptimizeTab::showAutotuneReport',1)[1]
         self.assertIn('exploreOnly ? proposed',body)
         self.assertIn('exploreOnly ? nullptr : bb->addButton',body)
-        self.assertLess(body.index('if (exploreOnly) return;'),body.index('collectValues()'))
+        # Selection-only path is explicitly scoped to non-Explore reports.
+        stage = body.split('if (!exploreOnly) {\n        const auto initialSelection = collectValues();',1)[1].split('v = scrollPage(tr("Predictions & trade-offs"))',1)[0]
+        self.assertIn('r.include->setChecked(keys.contains(r.key))',stage)
+        for forbidden in ('applyValues(', 'privileged::run(', 'runOp(', 'writeUserPreset('):
+            self.assertNotIn(forbidden,stage)
+        save = body.split('if (exploreOnly) return;',1)[1]
+        self.assertIn('collectValues()',save)
         self.assertIn('!r.cached && !readbackStale_',body)
     def test_inspectors_do_not_write(self):
         for filename,marker,end in [('fwattrtab.cpp','auto *inspect = new QPushButton(tr("Parameter inspector…"))','top->addWidget(inspect)'),('amdgputab.cpp','auto *capabilities = new QPushButton','top->addWidget(capabilities)')]:

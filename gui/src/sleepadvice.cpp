@@ -2,6 +2,7 @@
 #include <QMap>
 #include <QSet>
 #include <algorithm>
+#include <cmath>
 
 namespace sleepadvice {
 
@@ -14,8 +15,9 @@ Sleep parse(const QJsonObject &o) {
     s.energyBefore = o.value("energy_before").toDouble();
     s.energyAfter = o.value("energy_after").toDouble();
     s.full = o.value("full").toDouble();
-    s.hasHwSleep = !o.value("hw_sleep_us").toString().isEmpty();
-    s.hwSleepUs = o.value("hw_sleep_us").toString().toDouble();
+    bool hwOk = false;
+    s.hwSleepUs = o.value("hw_sleep_us").toString().toDouble(&hwOk);
+    s.hasHwSleep = hwOk && std::isfinite(s.hwSleepUs) && s.hwSleepUs >= 0;
     return s;
 }
 
@@ -53,7 +55,7 @@ QList<Advice> analyse(const QList<Sleep> &rows, const std::function<QString(cons
             const Sleep &n = rows.at(i + 1);
             const qint64 gap = n.start - s.end;
             const bool battery = s.statusBefore == QLatin1String("Discharging") && n.statusBefore == QLatin1String("Discharging");
-            if (battery && gap > 0 && gap <= MAX_AWAKE_S && s.full > 0 && s.energyAfter >= n.energyBefore)
+            if (battery && gap > 0 && gap <= MAX_AWAKE_S && s.full > 0 && s.energyAfter > 0 && n.energyBefore > 0 && s.energyAfter >= n.energyBefore)
                 pct = 100.0 * (s.energyAfter - n.energyBefore) / s.full;
         }
         for (const QString &d : devices) {

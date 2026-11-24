@@ -81,7 +81,7 @@ private:
     void updateCoreOffsetUi();
     void onSelectionChanged();
     void resetGraphToLastRead();
-    bool loadCurveFile(const QString &file, qint64 notBeforeMs, QJsonArray *out);
+    bool loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out);
     void applyMemOffset(const QJsonObject &result);
     void takeGpuPoints(const QJsonArray &pts, bool keepOffsets);
     void adoptOffsets(const QHash<int, int> &offs);
@@ -129,6 +129,10 @@ private:
     QHash<int, int> pointOffsets_;   // per-point MHz, on top of coreOffset_
     QHash<int, int> readOffsets_;
     QString readSnapshotTime_;
+    QVector<int> pointIds_;
+    QVector<qint64> pointVoltages_;
+    QString readGpuName_;
+    bool curveReadbackValid_ = false;
     QVector<int> readFreq_;          // MHz each GPU point actually ran at in the last read
     int coreOffset_ = 0;
     bool curveModified_ = false;

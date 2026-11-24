@@ -1,6 +1,7 @@
 #include "autotunereport.h"
 
 #include <QStringList>
+#include <cmath>
 
 namespace autotunereport {
 
@@ -25,9 +26,10 @@ QString badge(const QString &source) {
 QString confidence(const QJsonObject &d) {
     QStringList p;
     QJsonArray g = d.value(QStringLiteral("in_context")).toArray();
-    if (g.size() != 2) g = d.value(QStringLiteral("alone")).toArray();
-    if (g.size() == 2) p << QStringLiteral("%1 ± %2").arg(g[0].toDouble(), 0, 'f', 3).arg(g[1].toDouble(), 0, 'f', 3).prepend(g[0].toDouble() >= 0 ? QStringLiteral("+") : QString());
-    if (const double n = d.value(QStringLiteral("n")).toDouble(); n > 0) p << QStringLiteral("n %1").arg(n, 0, 'g', 3);
+    auto valid = [](const QJsonArray &a) { return a.size() == 2 && a[0].isDouble() && a[1].isDouble() && std::isfinite(a[0].toDouble()) && std::isfinite(a[1].toDouble()) && a[1].toDouble() >= 0; };
+    if (!valid(g)) g = d.value(QStringLiteral("alone")).toArray();
+    if (valid(g)) p << QStringLiteral("%1 ± %2").arg(g[0].toDouble(), 0, 'f', 3).arg(g[1].toDouble(), 0, 'f', 3).prepend(g[0].toDouble() >= 0 ? QStringLiteral("+") : QString());
+    if (const double n = d.value(QStringLiteral("n")).toDouble(); std::isfinite(n) && n > 0 && std::trunc(n) == n) p << QStringLiteral("n %1").arg(n, 0, 'g', 3);
     if (d.value(QStringLiteral("seen")).isBool() && !d.value(QStringLiteral("seen")).toBool()) p << QStringLiteral("unseen");
     return p.join(QStringLiteral(" · "));
 }
@@ -49,7 +51,9 @@ QString scoreTrace(const QJsonArray &trace) {
         const QJsonObject o = v.toObject();
         const QJsonValue val = o.value(QStringLiteral("value"));
         const QString s = val.isString() ? val.toString() : QString::number(val.toDouble(), 'g', 12);
-        p << QStringLiteral("%1 %2").arg(s).arg(o.value(QStringLiteral("u")).toDouble(), 0, 'f', 2);
+        const auto score = o.value(QStringLiteral("u"));
+        if ((!val.isString() && !val.isDouble()) || !score.isDouble() || !std::isfinite(score.toDouble())) continue;
+        p << QStringLiteral("%1 %2").arg(s).arg(score.toDouble(), 0, 'f', 2);
     }
     return p.join(QStringLiteral(" → "));
 }

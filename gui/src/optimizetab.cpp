@@ -18,6 +18,8 @@
 #include "diagsources.h"
 
 #include <memory>
+#include <cmath>
+#include <QItemSelectionModel>
 #include <QElapsedTimer>
 #include <unistd.h>
 #include <QApplication>
@@ -387,7 +389,11 @@ void OptimizeTab::buildUi() {
     conflictBanner_->setObjectName("optimizationConflicts");
     conflictBanner_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     conflictBanner_->hide();
-    root->addWidget(conflictBanner_);
+    auto *conflictRow = new QHBoxLayout;
+    conflictRow->addWidget(conflictBanner_, 1);
+    auto *sourceInspector = new QPushButton(tr("Sources & Conflicts…"));
+    connect(sourceInspector, &QPushButton::clicked, this, &OptimizeTab::sourceWorkspace);
+    conflictRow->addWidget(sourceInspector); root->addLayout(conflictRow);
 
     // Drift banner: hidden until DriftWatch finds a setting changed behind Centurion's back.
     driftBar_ = new QFrame;
@@ -1197,6 +1203,7 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
     isolation_ = d.value("isolation").toObject();  // same describe poll: no extra cost
     boot_ = d.value("boot").toObject();
     if (!light) baselineValues_ = bootDefaults();
+    reportedConflicts_ = d.value("conflicts").toArray();
     if (conflictBanner_) {
         QStringList issues;
         for (const QJsonValue &v : d.value("conflicts").toArray()) {
@@ -3005,7 +3012,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     else table->setHorizontalHeaderLabels({QStringLiteral("Group"), QStringLiteral("Setting"), QStringLiteral("Value"), QStringLiteral("Why (for this machine)")});
     table->verticalHeader()->hide();
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setSelectionMode(exploreOnly ? QAbstractItemView::SingleSelection : QAbstractItemView::ExtendedSelection);
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setWordWrap(true);
     table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
@@ -3021,6 +3028,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         else c->setToolTip(QCoreApplication::translate("OptimizeTab", "Already the live value."));
         for (auto *it : {a, b, c, e}) it->setToolTip(reason);
         a->setData(Qt::UserRole, changes);
+        a->setData(Qt::UserRole + 1, key);
         table->setItem(r, 0, a); table->setItem(r, 1, b); table->setItem(r, 2, c);
         if (!rich) { table->setItem(r, 3, e); return; }
         const QJsonObject o = dec.value(key);
@@ -3091,6 +3099,36 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         detail->setPlainText(lines.join(QStringLiteral("\n")));
     });
     v->addWidget(split, 1);
+    if (!exploreOnly) {
+        const auto initialSelection = collectValues();
+        auto *stage = new QPushButton(tr("Keep only selected recommendations checked"));
+        stage->setToolTip(tr("Select rows with Ctrl or Shift. Only the selected setting rows remain checked in the draft; nothing is applied. Launch configuration is unchanged."));
+        v->addWidget(stage);
+        connect(stage, &QPushButton::clicked, &dlg, [this, &dlg, table, values, initialSelection] {
+            QSet<QString> keys;
+            for (const auto &index : table->selectionModel()->selectedRows()) {
+                const QString key = table->item(index.row(), 0)->data(Qt::UserRole + 1).toString();
+                if (!values.contains(key) || !initialSelection.contains(key) || table->isRowHidden(index.row())) {
+                    QMessageBox::warning(&dlg, tr("Recommendation selection"), tr("Select only available setting recommendations, not launch or unavailable rows.")); return;
+                }
+                keys.insert(key);
+            }
+            if (keys.isEmpty()) return;
+            if (busy_ || autoRunning_ || initialSelection != collectValues()) {
+                QMessageBox::warning(&dlg, tr("Recommendation selection"), tr("The draft changed during review. Reopen the report before selecting recommendations.")); return;
+            }
+            for (const auto &key : keys) {
+                const Row *r = row(key);
+                if (!r || !r->available || !r->include || !r->shadowedBy.isEmpty() || !validFor(*r, editorValue(*r)) || wouldShadow(key, editorValue(*r), keys)) {
+                    QMessageBox::warning(&dlg, tr("Recommendation selection"), tr("A selected setting is no longer available or overlaps another selected setting.")); return;
+                }
+            }
+            // Only selection changes. Keep the existing Apply checked and autotune verification path.
+            for (Row &r : rows_) if (r.include) { const QSignalBlocker blocker(r.include); r.include->setChecked(keys.contains(r.key)); }
+            applyShadows(); for (Row &r : rows_) markRow(r);
+            showStatus(tr("Selected recommendations staged; no settings applied.")); dlg.reject();
+        });
+    }
     v = scrollPage(tr("Predictions & trade-offs"));
     auto *predictionNote = new QLabel(tr("Model estimates and uncertainty are not measured benchmark gains. Missing predictions mean unavailable evidence, not zero effect."));
     predictionNote->setWordWrap(true);
@@ -3102,7 +3140,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         QStringList p;
         for (const char *k : {"latency", "throughput", "power", "memory"}) {
             const QJsonArray a = o.value(QLatin1String(k)).toArray();
-            if (a.size() == 2) p << QStringLiteral("%1 %2 % ± %3").arg(QLatin1String(k)).arg(a[0].toDouble() * 100.0, 0, 'f', 1).arg(a[1].toDouble() * 100.0, 0, 'f', 1);
+            if (a.size() == 2 && a[0].isDouble() && a[1].isDouble() && std::isfinite(a[0].toDouble()) && std::isfinite(a[1].toDouble()) && a[1].toDouble() >= 0) p << QStringLiteral("%1 %2 % ± %3").arg(QLatin1String(k)).arg(a[0].toDouble() * 100.0, 0, 'f', 1).arg(a[1].toDouble() * 100.0, 0, 'f', 1);
         }
         return p.join(QStringLiteral(" · "));
     };
@@ -3647,6 +3685,7 @@ void OptimizeTab::showStatus(const QString &msg, const char *color, int ms) {
 
 void OptimizeTab::setDrift(const QStringList &lines, const QString &culprits, std::function<void()> reapply) {
     if (!driftBar_) return;
+    reportedDrift_ = lines; reportedDriftCandidates_ = culprits;
     driftReapply_ = std::move(reapply);
     if (lines.isEmpty()) { driftBar_->hide(); return; }
     QStringList esc;
@@ -3655,4 +3694,44 @@ void OptimizeTab::setDrift(const QStringList &lines, const QString &culprits, st
     driftText_->setText(QStringLiteral("<b>Changed by something other than Centurion since it applied them:</b><br>") + esc.join(QStringLiteral("<br>"))
                         + (culprits.isEmpty() ? QString() : QStringLiteral("<br><i>Running / enabled: ") + culprits.toHtmlEscaped() + QStringLiteral("</i>")));
     driftBar_->show();
+}
+
+void OptimizeTab::sourceWorkspace() {
+    QDialog dlg(this); dlg.setWindowTitle(tr("Optimization Sources & Conflicts")); dlg.resize(1040, 650);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *note = new QLabel(tr("Snapshot of the last helper report and current draft. Saved originals show Centurion ownership history, not proof of the current writer. Running services are candidates only.")); note->setWordWrap(true); note->setTextFormat(Qt::PlainText); layout->addWidget(note);
+    auto *tabs = new QTabWidget; layout->addWidget(tabs, 1);
+    auto *page = new QWidget; auto *v = new QVBoxLayout(page);
+    auto *search = new QLineEdit; search->setPlaceholderText(tr("Filter setting keys and sources…")); v->addWidget(search);
+    auto *table = new QTableWidget(0, 7); table->setHorizontalHeaderLabels({tr("Setting"),tr("Live"),tr("Boot preset"),tr("Draft"),tr("Readback quality"),tr("Recorded ownership"),tr("Policy conflict / coverage")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    const auto saved = boot_.value("values").toObject(); const auto owned = state_.value("keys").toArray(); const auto tlp = state_.value("tlp_originals").toArray();
+    for (const Row &r : rows_) {
+        QStringList owner;
+        if (owned.contains(r.key)) owner << tr("Centurion saved original");
+        if (tlp.contains(r.key)) owner << tr("TLP original recorded");
+        if (saved.contains(r.key)) owner << tr("Boot configuration");
+        const QString unknown = tr("Unknown");
+        const QString quality = readbackStale_ ? tr("Stale readback") : !r.available ? tr("Unavailable") : r.cached ? tr("Cached readback") : r.current.isEmpty() ? tr("Unreadable") : tr("Last helper readback");
+        QStringList policy; if (!r.conflict.isEmpty()) policy << r.conflict; if (!r.shadowedBy.isEmpty()) policy << tr("Covered by %1").arg(r.shadowedBy);
+        const QStringList cells{r.key, r.current.isEmpty() ? unknown : r.current, saved.contains(r.key) ? tuningview::valueText(saved.value(r.key)) : tr("Not saved"), r.include ? editorValue(r) : unknown, quality, owner.isEmpty() ? unknown : owner.join(QStringLiteral(" · ")), policy.join(QStringLiteral(" · "))};
+        const int n = table->rowCount(); table->insertRow(n);
+        for (int c = 0; c < cells.size(); ++c) table->setItem(n, c, new QTableWidgetItem(cells.at(c)));
+    }
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents); table->horizontalHeader()->setStretchLastSection(true); table->setSortingEnabled(true); v->addWidget(table, 1); tabs->addTab(page, tr("Setting sources"));
+    connect(search, &QLineEdit::textChanged, table, [table](const QString &q) { for (int r = 0; r < table->rowCount(); ++r) { bool match = q.isEmpty(); for (int c = 0; c < table->columnCount(); ++c) match |= table->item(r,c)->text().contains(q, Qt::CaseInsensitive); table->setRowHidden(r, !match); } });
+    auto *relations = new QTableWidget(0, 3); relations->setHorizontalHeaderLabels({tr("Covering setting"),tr("Required value"),tr("Covered setting")}); relations->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    for (const auto &entry : shadows_) {
+        const auto o = entry.toObject(); for (const auto &key : o.value("keys").toArray()) {
+            int r = relations->rowCount(); relations->insertRow(r); const QStringList cells{o.value("global").toString(),o.value("when").isString() ? o.value("when").toString() : tr("Any value"),key.toString()};
+            for (int c = 0; c < cells.size(); ++c) relations->setItem(r,c,new QTableWidgetItem(cells.at(c)));
+        }
+    }
+    relations->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents); relations->horizontalHeader()->setStretchLastSection(true); tabs->addTab(relations,tr("Coverage rules"));
+    auto *conflicts = new QPlainTextEdit; conflicts->setReadOnly(true); QStringList lines;
+    for (const auto &entry : reportedConflicts_) { const auto o = entry.toObject(); lines << o.value("kind").toString() + QStringLiteral(": ") + o.value("message").toString(); }
+    if (lines.isEmpty()) lines << tr("No conflict messages in the last response; this does not prove there are no conflicts.");
+    if (!reportedDrift_.isEmpty()) { lines << QString() << tr("Last observed drift:") << reportedDrift_; if (!reportedDriftCandidates_.isEmpty()) lines << tr("Possible competing services: %1").arg(reportedDriftCandidates_); }
+    conflicts->setPlainText(lines.join(QLatin1Char('\n'))); tabs->addTab(conflicts,tr("Conflict & drift"));
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
 }

@@ -49,17 +49,23 @@ fn name_param<'a>(p: &'a Obj, key: &str) -> Result<&'a str, String> {
 /// Result files for the unprivileged GUI: root-owned 0755 dir that must not
 /// be a symlink; the file is replaced atomically (never opened through a
 /// pre-planted link).
-fn write_result(file: &str, v: &Value) {
+fn write_result(file: &str, v: &Value, request: &Obj) {
+    // Correlate the atomic result with the caller, not filesystem wall-clock time.
+    let mut result = v.clone();
+    if let Some(id) = request.get("request_id").and_then(Value::as_str)
+        .filter(|id| id.len() == 36 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')) {
+        result["request_id"] = json!(id);
+    }
     let dir = Path::new(RESULT_DIR);
     if let Ok(md) = std::fs::symlink_metadata(dir) {
         if !md.is_dir() { log::warn!("{RESULT_DIR} is not a directory — result not written"); return; }
     }
     if ensure_dir(dir, 0o755).is_err() { return; }
-    if let Err(e) = write_json(&dir.join(file), v, 0o644) { log::warn!("result write failed: {e}"); }
+    if let Err(e) = write_json(&dir.join(file), &result, 0o644) { log::warn!("result write failed: {e}"); }
 }
 
-fn refresh_result(file: &str) {
-    if let Ok(v) = ops::read_curve_retry(0, 2) { write_result(file, &v); }
+fn refresh_result(file: &str, request: &Obj) {
+    if let Ok(v) = ops::read_curve_retry(0, 2) { write_result(file, &v, request); }
 }
 
 fn is_int(v: &Value) -> Option<i64> { v.as_i64().filter(|_| v.is_i64() || v.is_u64()) }
@@ -129,10 +135,26 @@ fn validate_profile_data(d: &Obj) -> Result<(), String> {
 
 // ── ops ─────────────────────────────────────────────────────────────────────
 
-fn op_read_gpu_curve(_: &Obj) -> OpResult {
+fn op_read_gpu_curve(p: &Obj) -> OpResult {
     let v = ops::read_curve_retry(0, 2).map_err(|e| format!("Failed to read V/F curve: {e}"))?;
-    write_result(READ_RESULT, &v);
+    write_result(READ_RESULT, &v, p);
     Ok("Curve read successfully.".into())
+}
+
+// Optional preflight for the GUI's edited curve. Legacy named profiles keep their
+// existing hardware validation path. This is layout/name identity, not a UUID.
+fn check_expected_curve(p: &Obj, observed: &Value) -> Result<(), String> {
+    let (Some(name), Some(points)) = (p.get("expected_gpu").and_then(Value::as_str), p.get("expected_points").and_then(Value::as_array)) else {
+        return Err("Incomplete curve identity".into());
+    };
+    if name.is_empty() || points.is_empty() || points.len() > MAX_CURVE_POINTS as usize || observed["gpu"].as_str() != Some(name) {
+        return Err("GPU or curve identity changed; read the curve again".into());
+    }
+    let rows = observed["vf_curve"].as_array().ok_or("Missing live curve")?;
+    let live: Vec<Value> = rows.iter().filter(|r| r["domain"] == "gpu")
+        .map(|r| json!([r["index"], r["volt_uV"]])).collect();
+    if &live != points { return Err("GPU voltage layout changed; read the curve again".into()); }
+    Ok(())
 }
 
 fn op_apply_gpu_offsets(p: &Obj) -> OpResult {
@@ -146,11 +168,14 @@ fn op_apply_gpu_offsets(p: &Obj) -> OpResult {
             return Err(format!("profile_data 'name' ({embedded:?}) does not match profile_name ({name:?})"));
         }
     }
+    if p.contains_key("expected_gpu") || p.contains_key("expected_points") {
+        check_expected_curve(p, &ops::read_curve_retry(0, 2)?)?;
+    }
     ensure_dir(Path::new(PROFILES_DIR), 0o755).map_err(|e| format!("Could not prepare {PROFILES_DIR}: {e}"))?;
     write_bytes(&profile_file(name), text.as_bytes(), 0o644).map_err(|e| format!("Could not write profile: {e}"))?;
 
     let msg = ops::apply_profile_verified(0, name, &config(), 3)?;
-    refresh_result(APPLY_RESULT);
+    refresh_result(APPLY_RESULT, p);
     Ok(msg)
 }
 
@@ -158,13 +183,13 @@ fn op_apply_named_profile(p: &Obj) -> OpResult {
     let name = name_param(p, "name")?;
     if !profile_file(name).is_file() { return Err(format!("Profile not found: {name}")); }
     let msg = ops::apply_profile_verified(0, name, &config(), 3).map_err(|e| format!("Apply failed: {e}"))?;
-    refresh_result(APPLY_RESULT);
+    refresh_result(APPLY_RESULT, p);
     Ok(msg)
 }
 
-fn op_reset_gpu_curve(_: &Obj) -> OpResult {
+fn op_reset_gpu_curve(p: &Obj) -> OpResult {
     let msg = ops::reset_gpu_curve_verified(0)?;
-    refresh_result(RESET_RESULT);
+    refresh_result(RESET_RESULT, p);
     Ok(msg)
 }
 
@@ -200,9 +225,9 @@ fn op_reset_gpu_clocklock(_: &Obj) -> OpResult {
     Ok("GPU core clock unlocked (back to the V/F curve's own maximum).".into())
 }
 
-fn op_reset_all(_: &Obj) -> OpResult {
+fn op_reset_all(p: &Obj) -> OpResult {
     let (done, errs) = ops::reset_everything(0);
-    refresh_result(RESET_RESULT);
+    refresh_result(RESET_RESULT, p);
     let mut msg = done.join("\n");
     if !errs.is_empty() { return Err(format!("{}{}{}", msg, if msg.is_empty() { "" } else { "\n" }, errs.join("; "))); }
     if msg.is_empty() { msg = "Already at stock.".into(); }
@@ -392,6 +417,13 @@ fn main() {
 mod tests {
     use super::*;
     fn o(v: Value) -> Obj { v.as_object().unwrap().clone() }
+    #[test]
+    fn edited_curve_identity() {
+        let observed = json!({"gpu":"A", "vf_curve":[{"domain":"gpu","index":3,"volt_uV":600000}]});
+        assert!(check_expected_curve(&o(json!({"expected_gpu":"A","expected_points":[[3,600000]]})), &observed).is_ok());
+        assert!(check_expected_curve(&o(json!({"expected_gpu":"B","expected_points":[[3,600000]]})), &observed).is_err());
+        assert!(check_expected_curve(&o(json!({"expected_gpu":"A","expected_points":[[4,600000]]})), &observed).is_err());
+    }
     #[test]
     fn schema() {
         assert!(validate_profile_data(&o(json!({"name":"A (b)","curve_deltas":{"0":-15000,"126":0},

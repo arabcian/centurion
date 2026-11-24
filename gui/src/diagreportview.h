@@ -32,11 +32,12 @@ private:
     void filterReport();
     void previewExport();
     void archiveWorkspace();
+    void evidenceWorkspace();
     QScrollArea *scroll_;
     QLineEdit *search_;
     QComboBox *severity_, *sections_;
     QLabel *filterInfo_, *snapshot_;
-    QPushButton *preview_, *pin_, *compare_, *archive_;
+    QPushButton *preview_, *pin_, *compare_, *archive_, *evidence_;
     QString capturedAt_, captureBoot_;
     QString baselineCode_, baselineText_, baselineTime_;
     QList<QWidget *> findingWidgets_, sectionWidgets_;

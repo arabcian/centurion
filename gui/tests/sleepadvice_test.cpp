@@ -26,6 +26,9 @@ int main(int argc, char **argv) {
         return {};
     };
 
+    CHECK(!parse(QJsonObject{{"hw_sleep_us", "unreadable"}}).hasHwSleep);
+    CHECK(!parse(QJsonObject{{"hw_sleep_us", "-1"}}).hasHwSleep);
+    CHECK(parse(QJsonObject{{"hw_sleep_us", "0"}}).hasHwSleep);
     CHECK(parse(QJsonObject{{"woke_by", "a,b"}}).wokeBy == (QStringList{"a", "b"}));
     CHECK(isUserWake("PNP0C0D:00") && isUserWake("LNXPWRBN:00") && isUserWake("LID0") && isUserWake("PWRB"));
     CHECK(!isUserWake("XHC0") && !isUserWake("0000:00:14.0"));

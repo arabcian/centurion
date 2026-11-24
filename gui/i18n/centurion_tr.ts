@@ -5706,6 +5706,38 @@ Başvurduğu profiller korunur.</translation>
     <context>
         <name>SleepPage</name>
         <message>
+            <source>%1 records in selected mode; unavailable measurements are omitted.</source>
+            <translation>Seçili modda %1 kayıt; alınamayan ölçümler gösterilmez.</translation>
+        </message>
+        <message>
+            <source>All recorded modes</source>
+            <translation>Kayıtlı tüm modlar</translation>
+        </message>
+        <message>
+            <source>Incomplete record</source>
+            <translation>Eksik kayıt</translation>
+        </message>
+        <message>
+            <source>Recorded completed sleep sessions only. Missing or invalid readings leave gaps. Historical logs do not identify every boot or prove the cause of a wake.</source>
+            <translation>Yalnızca kaydedilen tamamlanmış uyku oturumları. Eksik veya geçersiz ölçümler boşluk bırakır. Geçmiş kayıtlar her açılışı tanımlamaz veya uyanma nedenini kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Recorded hardware sleep residency (%)</source>
+            <translation>Kaydedilen donanım uyku oranı (%)</translation>
+        </message>
+        <message>
+            <source>Recorded sleep duration (hours)</source>
+            <translation>Kaydedilen uyku süresi (saat)</translation>
+        </message>
+        <message>
+            <source>Sleep History</source>
+            <translation>Uyku Geçmişi</translation>
+        </message>
+        <message>
+            <source>Sleep History…</source>
+            <translation>Uyku Geçmişi…</translation>
+        </message>
+        <message>
             <source>Can this machine hibernate?</source>
             <translation>Bu makine hazırda bekletebilir mi?</translation>
         </message>
@@ -6353,6 +6385,58 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
     </context>
     <context>
         <name>systools</name>
+        <message>
+            <source>(command failed or output was truncated)</source>
+            <translation>(komut başarısız oldu veya çıktı kesildi)</translation>
+        </message>
+        <message>
+            <source>Copy table</source>
+            <translation>Tabloyu kopyala</translation>
+        </message>
+        <message>
+            <source>Output is missing, incomplete or unrecognized. The original raw output is still available.</source>
+            <translation>Çıktı eksik, tamamlanmamış veya tanınmıyor. Özgün ham çıktı hâlâ erişilebilir.</translation>
+        </message>
+        <message>
+            <source>Snapshot of recognized fields only; kernel units are unchanged. Raw output remains on the tool page.</source>
+            <translation>Yalnızca tanınan alanların anlık görüntüsü; çekirdek birimleri değiştirilmedi. Ham çıktı araç sayfasında durur.</translation>
+        </message>
+        <message>
+            <source>Structured output</source>
+            <translation>Yapılandırılmış çıktı</translation>
+        </message>
+        <message>
+            <source>Structured…</source>
+            <translation>Yapılandırılmış…</translation>
+        </message>
+        <message>
+            <source>Module</source>
+            <translation>Modül</translation>
+        </message>
+        <message>
+            <source>Size (bytes)</source>
+            <translation>Boyut (bayt)</translation>
+        </message>
+        <message>
+            <source>Use count</source>
+            <translation>Kullanım sayısı</translation>
+        </message>
+        <message>
+            <source>Used by</source>
+            <translation>Kullananlar</translation>
+        </message>
+        <message>
+            <source>Supply</source>
+            <translation>Güç kaynağı</translation>
+        </message>
+        <message>
+            <source>Kernel field</source>
+            <translation>Çekirdek alanı</translation>
+        </message>
+        <message>
+            <source>Raw value</source>
+            <translation>Ham değer</translation>
+        </message>
         <message>
             <source>Find in this output…</source>
             <translation>Bu çıktıda ara…</translation>
@@ -8303,6 +8387,34 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
     <context>
         <name>NvidiaTab</name>
         <message>
+            <source>Curve identity or voltage layout changed; requested offsets cannot be compared.</source>
+            <translation>Eğri kimliği veya voltaj düzeni değişti; istenen ofsetler karşılaştırılamıyor.</translation>
+        </message>
+        <message>
+            <source>Curve readback is invalid or belongs to another request. Update the helper if necessary.</source>
+            <translation>Eğri geri okuması geçersiz veya başka bir isteğe ait. Gerekirse yardımcı programı güncelleyin.</translation>
+        </message>
+        <message>
+            <source>Curve readback unavailable; read the curve again before applying edits.</source>
+            <translation>Eğri geri okuması alınamadı; düzenlemeleri uygulamadan önce eğriyi yeniden okuyun.</translation>
+        </message>
+        <message>
+            <source>Hardware operations are disabled for the curve fixture.</source>
+            <translation>Eğri test verisi kullanılırken donanım işlemleri devre dışıdır.</translation>
+        </message>
+        <message>
+            <source>Read a valid curve before applying edits.</source>
+            <translation>Düzenlemeleri uygulamadan önce geçerli bir eğri okuyun.</translation>
+        </message>
+        <message>
+            <source>Read a valid curve before saving edits.</source>
+            <translation>Düzenlemeleri kaydetmeden önce geçerli bir eğri okuyun.</translation>
+        </message>
+        <message>
+            <source>Readback matches requested curve offsets and frequencies within display tolerance; clock limits are not verified by this comparison.</source>
+            <translation>Geri okunan değerler, gösterim toleransı içinde istenen eğri ofsetleri ve frekanslarla eşleşiyor; bu karşılaştırma saat hızı limitlerini doğrulamaz.</translation>
+        </message>
+        <message>
             <source>Compare…</source>
             <translation>Karşılaştır…</translation>
         </message>
@@ -8549,6 +8661,154 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
     </context>
     <context>
         <name>OptimizeTab</name>
+        <message>
+            <source>A selected setting is no longer available or overlaps another selected setting.</source>
+            <translation>Seçilen ayar artık kullanılamıyor veya başka bir seçili ayarla örtüşüyor.</translation>
+        </message>
+        <message>
+            <source>Any value</source>
+            <translation>Herhangi bir değer</translation>
+        </message>
+        <message>
+            <source>Boot configuration</source>
+            <translation>Açılış yapılandırması</translation>
+        </message>
+        <message>
+            <source>Boot preset</source>
+            <translation>Açılış önayarı</translation>
+        </message>
+        <message>
+            <source>Cached readback</source>
+            <translation>Önbellekten geri okuma</translation>
+        </message>
+        <message>
+            <source>Centurion saved original</source>
+            <translation>Centurion özgün değeri kaydetmiş</translation>
+        </message>
+        <message>
+            <source>Conflict &amp; drift</source>
+            <translation>Çakışma ve sapma</translation>
+        </message>
+        <message>
+            <source>Coverage rules</source>
+            <translation>Kapsama kuralları</translation>
+        </message>
+        <message>
+            <source>Covered by %1</source>
+            <translation>%1 tarafından kapsanıyor</translation>
+        </message>
+        <message>
+            <source>Covered setting</source>
+            <translation>Kapsanan ayar</translation>
+        </message>
+        <message>
+            <source>Covering setting</source>
+            <translation>Kapsayan ayar</translation>
+        </message>
+        <message>
+            <source>Draft</source>
+            <translation>Taslak</translation>
+        </message>
+        <message>
+            <source>Filter setting keys and sources…</source>
+            <translation>Ayar anahtarlarını ve kaynakları filtrele…</translation>
+        </message>
+        <message>
+            <source>Keep only selected recommendations checked</source>
+            <translation>Yalnızca seçili önerileri işaretli bırak</translation>
+        </message>
+        <message>
+            <source>Last helper readback</source>
+            <translation>Yardımcı programın son geri okuması</translation>
+        </message>
+        <message>
+            <source>Last observed drift:</source>
+            <translation>Son gözlemlenen sapma:</translation>
+        </message>
+        <message>
+            <source>Live</source>
+            <translation>Canlı</translation>
+        </message>
+        <message>
+            <source>No conflict messages in the last response; this does not prove there are no conflicts.</source>
+            <translation>Son yanıtta çakışma mesajı yok; bu, çakışma bulunmadığını kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>Not saved</source>
+            <translation>Kaydedilmemiş</translation>
+        </message>
+        <message>
+            <source>Optimization Sources &amp; Conflicts</source>
+            <translation>Optimizasyon Kaynakları ve Çakışmaları</translation>
+        </message>
+        <message>
+            <source>Policy conflict / coverage</source>
+            <translation>Politika çakışması / kapsamı</translation>
+        </message>
+        <message>
+            <source>Possible competing services: %1</source>
+            <translation>Olası çakışan hizmetler: %1</translation>
+        </message>
+        <message>
+            <source>Readback quality</source>
+            <translation>Geri okuma kalitesi</translation>
+        </message>
+        <message>
+            <source>Recommendation selection</source>
+            <translation>Öneri seçimi</translation>
+        </message>
+        <message>
+            <source>Recorded ownership</source>
+            <translation>Kayıtlı sahiplik</translation>
+        </message>
+        <message>
+            <source>Required value</source>
+            <translation>Gerekli değer</translation>
+        </message>
+        <message>
+            <source>Select only available setting recommendations, not launch or unavailable rows.</source>
+            <translation>Yalnızca kullanılabilir ayar önerilerini seçin; başlatma veya kullanılamayan satırları seçmeyin.</translation>
+        </message>
+        <message>
+            <source>Select rows with Ctrl or Shift. Only the selected setting rows remain checked in the draft; nothing is applied. Launch configuration is unchanged.</source>
+            <translation>Ctrl veya Shift ile satır seçin. Taslakta yalnızca seçili ayar satırları işaretli kalır; hiçbir ayar uygulanmaz. Başlatma yapılandırması değişmez.</translation>
+        </message>
+        <message>
+            <source>Selected recommendations staged; no settings applied.</source>
+            <translation>Seçili öneriler taslağa alındı; hiçbir ayar uygulanmadı.</translation>
+        </message>
+        <message>
+            <source>Setting sources</source>
+            <translation>Ayar kaynakları</translation>
+        </message>
+        <message>
+            <source>Snapshot of the last helper report and current draft. Saved originals show Centurion ownership history, not proof of the current writer. Running services are candidates only.</source>
+            <translation>Son yardımcı program raporu ve geçerli taslağın anlık görüntüsü. Kaydedilen özgün değerler Centurion sahiplik geçmişini gösterir; geçerli yazan kaynağı kanıtlamaz. Çalışan hizmetler yalnızca olası kaynaklardır.</translation>
+        </message>
+        <message>
+            <source>Sources &amp; Conflicts…</source>
+            <translation>Kaynaklar ve Çakışmalar…</translation>
+        </message>
+        <message>
+            <source>Stale readback</source>
+            <translation>Güncelliğini yitirmiş geri okuma</translation>
+        </message>
+        <message>
+            <source>TLP original recorded</source>
+            <translation>TLP özgün değeri kayıtlı</translation>
+        </message>
+        <message>
+            <source>The draft changed during review. Reopen the report before selecting recommendations.</source>
+            <translation>İnceleme sırasında taslak değişti. Önerileri seçmeden önce raporu yeniden açın.</translation>
+        </message>
+        <message>
+            <source>Unavailable</source>
+            <translation>Kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Unreadable</source>
+            <translation>Okunamıyor</translation>
+        </message>
         <message>
             <source>A/B Verification</source>
             <translation>A/B Doğrulaması</translation>
@@ -19259,6 +19519,58 @@ Saklanan denemeler: %4 · çıkarılan: %5
     </context>
     <context>
         <name>DiagReportView</name>
+        <message>
+            <source>Captured report</source>
+            <translation>Yakalanan rapor</translation>
+        </message>
+        <message>
+            <source>Contains finding</source>
+            <translation>Bulgu içerir</translation>
+        </message>
+        <message>
+            <source>Contains readings</source>
+            <translation>Ölçüm içerir</translation>
+        </message>
+        <message>
+            <source>Contains row</source>
+            <translation>Satır içerir</translation>
+        </message>
+        <message>
+            <source>Direct references in this captured report, not causal relationships. No new hardware scan is performed.</source>
+            <translation>Bu rapordaki doğrudan referanslar gösterilir; nedensellik ilişkisi kurulmaz. Yeni donanım taraması yapılmaz.</translation>
+        </message>
+        <message>
+            <source>Evidence Relationships</source>
+            <translation>Kanıt İlişkileri</translation>
+        </message>
+        <message>
+            <source>Evidence display limited to 400 nodes. The full report is unchanged.</source>
+            <translation>Kanıt görünümü 400 düğümle sınırlıdır. Tam rapor değişmedi.</translation>
+        </message>
+        <message>
+            <source>Evidence limit</source>
+            <translation>Kanıtın sınırı</translation>
+        </message>
+        <message>
+            <source>Evidence</source>
+            <translation>Kanıt</translation>
+        </message>
+        <message>
+            <source>Evidence…</source>
+            <translation>Kanıtlar…</translation>
+        </message>
+        <message>
+            <source>Filter evidence…</source>
+            <translation>Kanıtları filtrele…</translation>
+        </message>
+        <message>
+            <source>Relationship</source>
+            <translation>İlişki</translation>
+        </message>
+        <message>
+            <source>Reported parent</source>
+            <translation>Bildirilen üst öğe</translation>
+        </message>
         <message>
             <source>Compare Snapshot…</source>
             <translation>Kayıtları Karşılaştır…</translation>

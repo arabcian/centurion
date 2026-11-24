@@ -3,6 +3,12 @@
 #include "privileged.h"
 #include "sleepadvice.h"
 #include "theme.h"
+#include "charts.h"
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QSet>
+#include <limits>
+#include <cmath>
 #include "userhelper.h"
 #include <QDateTime>
 #include <QSettings>
@@ -91,7 +97,11 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
     top->addWidget(bRefresh, 0, Qt::AlignTop);
     root->addLayout(top);
 
-    root->addWidget(new QLabel(QStringLiteral("<b>Recent Sleeps</b>")));
+    auto *historyHead = new QHBoxLayout;
+    historyHead->addWidget(new QLabel(QStringLiteral("<b>Recent Sleeps</b>")), 1);
+    auto *history = new QPushButton(tr("Sleep History…")); historyHead->addWidget(history);
+    connect(history, &QPushButton::clicked, this, &SleepPage::historyWorkspace);
+    root->addLayout(historyHead);
     sleeps_ = table({QStringLiteral("Went to sleep"), QStringLiteral("Slept"), QStringLiteral("Mode"), QStringLiteral("Battery used"),
                      QStringLiteral("Per hour"), QStringLiteral("HW sleep"), QStringLiteral("dGPU in → out"), QStringLiteral("Woken by")});
     root->addWidget(sleeps_, 2);
@@ -303,6 +313,7 @@ void SleepPage::refresh() {
 
 void SleepPage::fillSleeps() {
     sleeps_->clear();
+    historyRows_.clear();
     QFile f(QString::fromLatin1(SLEEP_LOG));
     if (!f.open(QIODevice::ReadOnly)) {
         hint_->setText(QStringLiteral("No sleep log yet. It is written by the centurion-sleep-log system-sleep hook (installed by install.sh / the ebuild) "
@@ -311,12 +322,17 @@ void SleepPage::fillSleeps() {
         diag_->setVisible(false);
         return;
     }
-    if (f.size() > (1 << 20)) f.seek(f.size() - (1 << 20));
+    if (f.size() > (1 << 20)) { f.seek(f.size() - (1 << 20)); f.readLine(); }
     QList<QJsonObject> rows;
     for (const QByteArray &l : f.readAll().split('\n')) {
         const QJsonObject o = QJsonDocument::fromJson(l).object();
         if (!o.isEmpty()) rows << o;
     }
+    QSet<QByteArray> seen;
+    QList<QJsonObject> unique;
+    for (const auto &o : rows) { const auto key = QJsonDocument(o).toJson(QJsonDocument::Compact); if (!seen.contains(key)) { seen.insert(key); unique << o; } }
+    rows = unique;
+    historyRows_ = rows.mid(std::max(qsizetype(0), rows.size() - MAX_ROWS));
     fillAdvice(rows);
     QList<sleepadvice::Sleep> parsed;
     for (const QJsonObject &o : rows) parsed << sleepadvice::parse(o);
@@ -325,12 +341,15 @@ void SleepPage::fillSleeps() {
     double drainSum = 0, hoursSum = 0;
     for (const QJsonObject &o : rows.mid(0, MAX_ROWS)) {
         const qint64 t0 = o.value("start").toInteger(), t1 = o.value("end").toInteger();
-        const double h = (t1 - t0) / 3600.0;
-        const QString dur = t1 > t0 ? (h >= 1 ? QStringLiteral("%1 h %2 min").arg(int(h)).arg(int(h * 60) % 60) : QStringLiteral("%1 min").arg((t1 - t0 + 30) / 60)) : QStringLiteral("—");
+        const qint64 seconds = t0 > 0 && t1 > t0 ? t1 - t0 : 0;
+        const double h = seconds / 3600.0;
+        const QString dur = seconds > 0 ? (h >= 1 ? QStringLiteral("%1 h %2 min").arg(seconds / 3600).arg(seconds / 60 % 60) : QStringLiteral("%1 min").arg((seconds + 30) / 60)) : QStringLiteral("—");
         const double e0 = o.value("energy_before").toDouble(), e1 = o.value("energy_after").toDouble(), full = o.value("full").toDouble();
         const bool onBattery = o.value("status_before").toString() == QLatin1String("Discharging");
-        QString used = QStringLiteral("on AC"), per = QStringLiteral("—");
-        if (onBattery && full > 0 && e0 >= e1) {
+        const QString status = o.value("status_before").toString();
+        QString used = (!status.isEmpty() && !onBattery) ? status : QStringLiteral("—"), per = QStringLiteral("—");
+        // The legacy hook writes 0 for missing counters; never infer a full discharge from that sentinel.
+        if (onBattery && t0 > 0 && t1 > t0 && full > 0 && e0 > 0 && e1 > 0 && e0 >= e1) {
             const double pct = 100.0 * (e0 - e1) / full;
             used = QStringLiteral("%1%").arg(pct, 0, 'f', 1);
             if (o.value("unit").toString() == QLatin1String("uWh")) used += QStringLiteral(" (%1 Wh)").arg((e0 - e1) / 1e6, 0, 'f', 2);
@@ -338,17 +357,18 @@ void SleepPage::fillSleeps() {
         } else if (!onBattery && o.value("status_before").toString().isEmpty()) {
             used = QStringLiteral("—");
         }
-        const bool hwKnown = !o.value("hw_sleep_us").toString().isEmpty();
-        const double hwUs = o.value("hw_sleep_us").toString().toDouble();
-        const QString hw = (hwKnown && t1 > t0) ? QStringLiteral("%1%").arg(std::min(100.0, hwUs / 1e6 / double(t1 - t0) * 100), 0, 'f', 0) : QStringLiteral("—");
+        const auto sample = sleepadvice::parse(o);
+        const double hwUs = sample.hwSleepUs;
+        const bool hwKnown = sample.hasHwSleep && t0 > 0 && t1 > t0 && hwUs <= double(seconds)*1e6;
+        const QString hw = (hwKnown && seconds > 0) ? QStringLiteral("%1%").arg(std::min(100.0, hwUs / 1e6 / double(seconds) * 100), 0, 'f', 0) : QStringLiteral("—");
         QString woke = o.value("woke_by").toString();
         woke.replace(',', QStringLiteral(", "));
         if (woke.isEmpty() && !o.value("wake_irq").toString().isEmpty()) woke = QStringLiteral("IRQ ") + o.value("wake_irq").toString();
-        auto *it = new QTreeWidgetItem({QDateTime::fromSecsSinceEpoch(t0).toString(QStringLiteral("yyyy-MM-dd HH:mm")), dur,
+        auto *it = new QTreeWidgetItem({t0 > 0 ? QDateTime::fromSecsSinceEpoch(t0).toString(QStringLiteral("yyyy-MM-dd HH:mm")) : QStringLiteral("—"), dur,
                                         o.value("mode").toString().isEmpty() ? o.value("kind").toString() : o.value("mode").toString(),
                                         used, per, hw, o.value("dgpu_before").toString() + QStringLiteral(" → ") + o.value("dgpu_after").toString(), woke});
         // A sleep that kept the SoC mostly awake, or drained fast, stands out.
-        if ((hwKnown && t1 - t0 > 600 && hwUs / 1e6 / double(t1 - t0) < 0.5) || (per != QLatin1String("—") && per.section(' ', 0, 0).toDouble() > 2.0))
+        if ((hwKnown && seconds > 600 && hwUs / 1e6 / double(seconds) < 0.5) || (per != QLatin1String("—") && per.section(' ', 0, 0).toDouble() > 2.0))
             for (int i = 0; i < 8; ++i) it->setForeground(i, QColor(QLatin1String(theme::WARN)));
         if (o.value("dgpu_after").toString() == QLatin1String("error"))
             for (int i = 0; i < 8; ++i) it->setForeground(i, QColor(QLatin1String(theme::DANGER)));
@@ -432,4 +452,36 @@ void SleepPage::fillAdvice(const QList<QJsonObject> &rowsOldestFirst) {
         h->addWidget(b, 0, Qt::AlignTop);
         advice_->layout()->addWidget(line);
     }
+}
+
+void SleepPage::historyWorkspace() {
+    const auto rows = historyRows_;
+    QDialog dlg(this); dlg.setWindowTitle(tr("Sleep History")); dlg.resize(900, 650);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *note = new QLabel(tr("Recorded completed sleep sessions only. Missing or invalid readings leave gaps. Historical logs do not identify every boot or prove the cause of a wake.")); note->setWordWrap(true); layout->addWidget(note);
+    auto *mode = new QComboBox; mode->addItem(tr("All recorded modes"), QString());
+    QSet<QString> modes; for (const auto &o : rows) { const QString m = o.value("mode").toString().isEmpty() ? o.value("kind").toString() : o.value("mode").toString(); if (!m.isEmpty() && !modes.contains(m)) { modes.insert(m); mode->addItem(m,m); } }
+    layout->addWidget(mode);
+    auto *duration = new LineChart; auto *residency = new LineChart;
+    layout->addWidget(new QLabel(tr("Recorded sleep duration (hours)"))); layout->addWidget(duration,1);
+    layout->addWidget(new QLabel(tr("Recorded hardware sleep residency (%)"))); layout->addWidget(residency,1);
+    auto *count = new QLabel; layout->addWidget(count);
+    const auto refresh = [=, this] {
+        QVector<LineChart::Point> lengths, shares;
+        const double missing = std::numeric_limits<double>::quiet_NaN();
+        for (const auto &o : rows) {
+            const QString m = o.value("mode").toString().isEmpty() ? o.value("kind").toString() : o.value("mode").toString();
+            if (!mode->currentData().toString().isEmpty() && m != mode->currentData().toString()) continue;
+            const auto s = sleepadvice::parse(o); const double x = double(lengths.size());
+            const bool valid = s.start > 0 && s.end > s.start;
+            const double len = valid ? double(s.end-s.start) : 0;
+            const QString label = valid ? QDateTime::fromSecsSinceEpoch(s.start).toString(Qt::ISODate) + QStringLiteral(" · ") + m : tr("Incomplete record");
+            lengths.append({x, valid ? len/3600 : missing, label});
+            shares.append({x, valid && s.hasHwSleep && s.hwSleepUs <= len*1e6 ? s.hwSleepUs/(len*1e6)*100 : missing, label});
+        }
+        duration->setPoints(lengths,QStringLiteral(" h")); residency->setPoints(shares,QStringLiteral(" %"));
+        count->setText(tr("%1 records in selected mode; unavailable measurements are omitted.").arg(lengths.size()));
+    };
+    connect(mode,&QComboBox::currentIndexChanged,&dlg,[refresh](int){refresh();}); refresh();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); layout->addWidget(buttons); dlg.exec();
 }

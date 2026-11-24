@@ -6,6 +6,8 @@
 #include "experimentalui.h"
 #include "vfcurvewidget.h"
 #include <QPointer>
+#include <QUuid>
+#include "curvereadback.h"
 
 #include <QComboBox>
 #include <QCheckBox>
@@ -447,7 +449,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         table->verticalHeader()->hide();
         table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
         for (int i = 0; i < base_.size(); ++i) {
-            const QStringList cells{QString::number(i), QString::number(base_[i].x()), QString::number(base_[i].y()),
+            const QStringList cells{QString::number(pointIds_.value(i, i)), QString::number(base_[i].x()), QString::number(base_[i].y()),
                 i < readFreq_.size() ? QString::number(readFreq_[i]) : QStringLiteral("—"),
                 QString::number(vf_->points().value(i).y()), QString::number(offsetOf(i))};
             for (int c = 0; c < cells.size(); ++c) table->setItem(i, c, new QTableWidgetItem(cells[c]));
@@ -701,7 +703,12 @@ void NvidiaTab::showEvent(QShowEvent *e) {
         // Dev aid: CENTURION_NVCURVE_FAKE=/path/read.json renders a canned curve.
         if (const QString fake = qEnvironmentVariable("CENTURION_NVCURVE_FAKE"); !fake.isEmpty()) {
             QFile f(fake);
-            if (f.open(QIODevice::ReadOnly)) takeGpuPoints(QJsonDocument::fromJson(f.readAll()).object().value("vf_curve").toArray(), true);
+            if (f.open(QIODevice::ReadOnly) && f.size() <= 1024 * 1024) {
+                auto fixture = QJsonDocument::fromJson(f.read(1024 * 1024 + 1)).object();
+                fixture["request_id"] = QStringLiteral("fixture");
+                if (curvereadback::identity(fixture, QStringLiteral("fixture"))) takeGpuPoints(fixture.value("vf_curve").toArray(), true);
+            }
+            curveReadbackValid_ = false;
             // CENTURION_NVCURVE_VIEW="zoom,pan" (e.g. "4,0.3") for zoomed screenshots.
             if (const QStringList v = qEnvironmentVariable("CENTURION_NVCURVE_VIEW").split(','); v.size() == 2) {
                 vf_->setZoom(v[0].toDouble());
@@ -711,6 +718,7 @@ void NvidiaTab::showEvent(QShowEvent *e) {
             QTimer::singleShot(0, this, &NvidiaTab::readCurve);
         }
     }
+    if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) return;
     if (!nvml_) nvml_ = Nvml::open();
     syncPowerMizer();
     pollStats();
@@ -858,6 +866,7 @@ void NvidiaTab::setBusy(bool b) {
 }
 
 bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, const QString &failMsg, Done done) {
+    if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) { log(tr("Hardware operations are disabled for the curve fixture.")); return false; }
     if (busy_) { log("⏳ Another operation is still running — please wait."); return false; }
     clearCurveHistory();
     setBusy(true);
@@ -877,19 +886,21 @@ bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, cons
     return true;
 }
 
-/// Result files are written by root into /run/nvcurve-gui. Only accept one
-/// written by *this* operation — the Python tab would happily re-read a
-/// stale file from an earlier op if the helper's best-effort write failed.
-bool NvidiaTab::loadCurveFile(const QString &file, qint64 notBeforeMs, QJsonArray *out) {
+/// Match the atomic root result to this exact request. An older helper or
+/// another concurrent caller may leave a file, but it cannot verify this request.
+bool NvidiaTab::loadCurveFile(const QString &file, const QString &requestId, QJsonArray *out) {
     const QString path = RUN_DIR + '/' + file;
-    const QFileInfo fi(path);
-    if (!fi.exists()) { log("❌ Result file not found: " + path); return false; }
-    if (fi.lastModified().toMSecsSinceEpoch() + 1000 < notBeforeMs) { log("❌ Result file is stale: " + path); return false; }
     QFile f(path);
-    if (!f.open(QIODevice::ReadOnly) || f.size() > 1024 * 1024) { log("❌ Cannot read " + path); return false; }
-    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
-    if (!o.contains("vf_curve")) { log("❌ 'vf_curve' missing in " + file); return false; }
+    if (!f.open(QIODevice::ReadOnly) || f.size() > 1024 * 1024) {
+        log(tr("Curve readback unavailable; read the curve again before applying edits.")); return false;
+    }
+    const auto o = QJsonDocument::fromJson(f.read(1024 * 1024 + 1)).object();
+    const auto identity = curvereadback::identity(o, requestId);
+    if (!identity) {
+        log(tr("Curve readback is invalid or belongs to another request. Update the helper if necessary.")); return false;
+    }
     *out = o.value("vf_curve").toArray();
+    readGpuName_ = identity->gpu;
     applyMemOffset(o);
     return true;
 }
@@ -909,7 +920,8 @@ void NvidiaTab::applyMemOffset(const QJsonObject &result) {
 /// driver-clamped), so they must never feed the mem spin — see applyMemOffset().
 void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
     QVector<QPointF> base;
-    QVector<int> freqs;
+    QVector<int> freqs, ids;
+    QVector<qint64> voltages;
     QHash<int, int> offs;
     for (const auto &v : pts) {
         const QJsonObject p = v.toObject();
@@ -923,6 +935,8 @@ void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
         // computed against a wrong base: offsets grew on each read/apply round.
         // The driver's offset-free base frequency (V3 base tuple) is used when present.
         const qint64 baseK = qint64(p.value("base_kHz").toDouble());
+        ids.append(p.value("index").toInt());
+        voltages.append(p.value("volt_uV").toInteger());
         offs[base.size()] = off;
         freqs.append(cur);
         base.append(QPointF(mv, baseK > 0 ? floorDiv(baseK, 1000) : cur - off));
@@ -930,6 +944,7 @@ void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
     if (base.isEmpty()) { log("❌ No GPU points found in vf_curve."); return; }
     clearCurveHistory();
     base_ = base;
+    pointIds_ = ids; pointVoltages_ = voltages; curveReadbackValid_ = true;
     readFreq_ = freqs;
     readSnapshotTime_ = QDateTime::currentDateTime().toString(Qt::ISODate);
     QVector<QPointF> readPoints;
@@ -1086,11 +1101,13 @@ void NvidiaTab::resetGraphToLastRead() {
 // ── actions ─────────────────────────────────────────────────────────────────
 
 void NvidiaTab::readCurve() {
+    if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) return;
     if (busy_) { log("⏳ Another operation is still running — please wait."); return; }  // else the button text would stick
     readBtn_->setText("Reading…");
-    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
-    runHelper({{"op", "read_gpu_curve"}}, QString(), "Curve read failed", [this, t0](bool ok, const QJsonObject &) {
+    const QString t0 = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    runHelper({{"op", "read_gpu_curve"}, {"request_id", t0}}, QString(), "Curve read failed", [this, t0](bool ok, const QJsonObject &) {
         readBtn_->setText("Read Curve");
+        curveReadbackValid_ = false;
         QJsonArray pts;
         if (!ok || !loadCurveFile("nvcurve_read.json", t0, &pts)) return;
         flatFrom_ = -1;
@@ -1102,10 +1119,12 @@ void NvidiaTab::readCurve() {
 }
 
 void NvidiaTab::applyOffsets() {
+    if (busy_) return;
+    if (!curveReadbackValid_) { log(tr("Read a valid curve before applying edits.")); return; }
     if (base_.isEmpty()) { log("❌ No curve loaded yet — read the current curve or load a profile first."); return; }
     QJsonObject deltas;
     for (int i = 0; i < base_.size(); ++i)
-        if (const int o = offsetOf(i)) deltas.insert(QString::number(i), qint64(o) * 1000);
+        if (const int o = offsetOf(i)) deltas.insert(QString::number(pointIds_.at(i)), qint64(o) * 1000);
     const int mem = memSpin_->value(), lmax = lockMaxSpin_->value();
     const int lmin = lockMinSpin_->value() ? lockMinSpin_->value() : lmax;
     bool gpuHasSettings = mem != readMem_;  // setting everything back to 0 is an apply, not a no-op
@@ -1119,20 +1138,29 @@ void NvidiaTab::applyOffsets() {
                            {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
                            {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
                            {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()},
-                           {"flatten_from", flattenPending() ? QJsonValue(flatFrom_) : QJsonValue()},
+                           {"flatten_from", flattenPending() ? QJsonValue(pointIds_.at(flatFrom_)) : QJsonValue()},
                            {"flatten_mhz", flattenPending() ? QJsonValue(flatMhz_) : QJsonValue()}};
-    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+    const QString t0 = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const int flatFrom = flattenPending() ? flatFrom_ : -1, flatMhz = flatMhz_;
     QHash<int, int> requested;
     for (int i = 0; i < base_.size(); ++i) requested.insert(i, offsetOf(i));
     const QVector<QPointF> baseBefore = base_;
-    runHelper({{"op", "apply_gpu_offsets"}, {"profile_name", SCRATCH}, {"profile_data", data}},
-              "Offsets applied.", "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz](bool ok, const QJsonObject &) {
+    const auto idsBefore = pointIds_; const auto voltsBefore = pointVoltages_; const auto gpuBefore = readGpuName_;
+    QJsonArray expectedPoints;
+    for (qsizetype i = 0; i < pointIds_.size(); ++i)
+        expectedPoints.append(QJsonArray{pointIds_.at(i), pointVoltages_.at(i)});
+    runHelper({{"op", "apply_gpu_offsets"}, {"request_id", t0}, {"expected_gpu", gpuBefore},
+               {"expected_points", expectedPoints}, {"profile_name", SCRATCH}, {"profile_data", data}},
+              "Offsets applied.", "Apply failed", [this, t0, requested, baseBefore, flatFrom, flatMhz, idsBefore, voltsBefore, gpuBefore](bool ok, const QJsonObject &) {
+        curveReadbackValid_ = false;
         QJsonArray pts;
         if (ok) { clearCurveHistory(); trial_->offer([this] { revertTrial(); }); }
         if (!ok || !loadCurveFile("nvcurve_apply_result.json", t0, &pts)) return;
         takeGpuPoints(pts, true);
         log("✅ Curve re-read from the GPU after apply.");
+        if (idsBefore != pointIds_ || voltsBefore != pointVoltages_ || gpuBefore != readGpuName_) {
+            log(tr("Curve identity or voltage layout changed; requested offsets cannot be compared.")); return;
+        }
         // Flattened points were asked for the target on the base the helper read, not on the old one.
         QHash<int, int> req = requested;
         QVector<QPointF> before = baseBefore;
@@ -1150,12 +1178,14 @@ void NvidiaTab::revertTrial() {
 }
 
 void NvidiaTab::resetCurve() {
+    if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) return;
     if (busy_) { log("⏳ Another operation is still running — please wait."); return; }  // tray can call this while busy
     trial_->cancel();
     resetBtn_->setText("Resetting…");
-    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
-    runHelper({{"op", "reset_gpu_curve"}}, "Reset successful.", "Reset failed", [this, t0](bool ok, const QJsonObject &) {
+    const QString t0 = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    runHelper({{"op", "reset_gpu_curve"}, {"request_id", t0}}, "Reset successful.", "Reset failed", [this, t0](bool ok, const QJsonObject &) {
         resetBtn_->setText("Reset Curve");
+        curveReadbackValid_ = false;
         if (!ok) return;
         flatFrom_ = -1;
         profiles_->setCurrentIndex(-1);
@@ -1163,8 +1193,8 @@ void NvidiaTab::resetCurve() {
         // so the memory box follows NVML (below) and the lock boxes keep showing the lock that is still active.
         restoringCurve_ = true; coreCapSpin_->setValue(0); restoringCurve_ = false;
         QJsonArray pts;
-        if (loadCurveFile("nvcurve_reset_result.json", t0, &pts)) takeGpuPoints(pts, false);
-        else { readOffsets_.clear(); resetGraphToLastRead(); }
+        if (loadCurveFile("nvcurve_reset_result.json", t0, &pts)) takeGpuPoints(pts, true);
+        // Keep the last observed curve rather than presenting an assumed reset.
     });
 }
 
@@ -1234,11 +1264,17 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
     const int mem = (data.contains("mem_offset_mhz") ? data.value("mem_offset_mhz")
                                                      : data.value("vram_p0_offset_mhz")).toInt();
 
+    const int requestedFlat = data.value("flatten_mhz").toInt();
+    const int requestedFrom = data.value("flatten_from").toInt(-1);
+    const auto flatIt = std::lower_bound(pointIds_.cbegin(), pointIds_.cend(), requestedFrom);
+    if (requestedFlat > 0 && (requestedFrom < 0 || flatIt == pointIds_.cend())) {
+        log(QStringLiteral("❌ Profile flatten range has no matching active GPU points; not loaded.")); return;
+    }
     QHash<int, int> offs;
     for (int i = 0; i < base_.size(); ++i) {
         // A hand-edited profile must not slip a non-integer, non-finite or out-of-range
         // delta (nvapi MIN/MAX_DELTA_KHZ) into the preview; reject the whole profile instead.
-        const QJsonValue value = deltas.value(QString::number(i));
+        const QJsonValue value = deltas.value(QString::number(pointIds_.at(i)));
         bool valid = true;
         qint64 khz = 0;
         if (value.isString()) {
@@ -1262,8 +1298,8 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
     coreCapSpin_->setValue(data.value("gpu_clock_cap_mhz").toInt());
     restoringCurve_ = false;
     if (data.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(data.value("gpu_clock_comp_mhz").toInt());
-    flatFrom_ = data.value("flatten_from").toInt(-1);
-    flatMhz_ = data.value("flatten_mhz").toInt();
+    flatFrom_ = requestedFlat > 0 ? int(flatIt - pointIds_.cbegin()) : -1;
+    flatMhz_ = requestedFlat;
     if (flatMhz_ <= 0) flatFrom_ = -1;
     flattenSel_.clear();
     {
@@ -1278,13 +1314,14 @@ void NvidiaTab::applyProfileToUi(const QJsonObject &data, const QString &name) {
 }
 
 void NvidiaTab::saveProfileAs() {
+    if (!curveReadbackValid_) { log(tr("Read a valid curve before saving edits.")); return; }
     bool ok = false;
     const QString name = QInputDialog::getText(this, "Profile Name", "Enter profile name:", QLineEdit::Normal,
                                                profiles_->currentText().remove(STAR), &ok).trimmed();
     if (!ok || name.isEmpty()) return;
     QJsonObject deltas;
     for (int i = 0; i < base_.size(); ++i)
-        if (const int o = offsetOf(i)) deltas.insert(QString::number(i), qint64(o) * 1000);
+        if (const int o = offsetOf(i)) deltas.insert(QString::number(pointIds_.at(i)), qint64(o) * 1000);
     const int lmax = lockMaxSpin_->value(), lmin = lockMinSpin_->value() ? lockMinSpin_->value() : lmax;
     const QJsonObject data{{"name", name}, {"curve_deltas", deltas}, {"mem_offset_mhz", memSpin_->value()},
                            {"power_limit_w", QJsonValue()},
@@ -1292,7 +1329,7 @@ void NvidiaTab::saveProfileAs() {
                            {"mem_locked_max_mhz", lmax ? QJsonValue(lmax) : QJsonValue()},
                            {"gpu_clock_cap_mhz", coreCapSpin_->value() >= 210 ? QJsonValue(coreCapSpin_->value()) : QJsonValue()},
                            {"gpu_clock_comp_mhz", capCompSpin_->value() ? QJsonValue(capCompSpin_->value()) : QJsonValue()},
-                           {"flatten_from", flattenPending() ? QJsonValue(flatFrom_) : QJsonValue()},
+                           {"flatten_from", flattenPending() ? QJsonValue(pointIds_.at(flatFrom_)) : QJsonValue()},
                            {"flatten_mhz", flattenPending() ? QJsonValue(flatMhz_) : QJsonValue()}};
     runHelper({{"op", "write_nvcurve_profile"}, {"name", name},
                {"content", QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Indented))}},
@@ -1323,15 +1360,18 @@ void NvidiaTab::deleteProfile() {
 }
 
 void NvidiaTab::applyNamedProfile(const QString &name) {
-    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
-    runHelper({{"op", "apply_named_profile"}, {"name", name}}, QString(), "Could not apply '" + name + "'",
+    const QString t0 = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    runHelper({{"op", "apply_named_profile"}, {"request_id", t0}, {"name", name}}, QString(), "Could not apply '" + name + "'",
               [this, t0, name](bool ok, const QJsonObject &) {
+        curveReadbackValid_ = false;
         if (!ok) return;
         trial_->offer([this] { revertTrial(); });
         selectProfile(name);        // tray quick-apply: the box still showed the previous pick
-        mirrorProfileLimits(name);  // core cap / VRAM lock the profile just set (NVML cannot read them back)
         QJsonArray pts;
-        if (loadCurveFile("nvcurve_apply_result.json", t0, &pts)) takeGpuPoints(pts, true);
+        if (loadCurveFile("nvcurve_apply_result.json", t0, &pts)) {
+            takeGpuPoints(pts, true);
+            mirrorProfileLimits(name);  // requested limits, not hardware readback
+        }
     });
 }
 
@@ -1349,7 +1389,7 @@ void NvidiaTab::mirrorProfileLimits(const QString &name) {
     const QJsonObject d = QJsonDocument::fromJson(f.readAll()).object();
     restoringCurve_ = true; coreCapSpin_->setValue(d.value("gpu_clock_cap_mhz").toInt()); restoringCurve_ = false;
     if (d.contains("gpu_clock_comp_mhz")) capCompSpin_->setValue(d.value("gpu_clock_comp_mhz").toInt());
-    flatFrom_ = d.value("flatten_mhz").toInt() > 0 ? d.value("flatten_from").toInt(-1) : -1;
+    flatFrom_ = d.value("flatten_mhz").toInt() > 0 ? pointIds_.indexOf(d.value("flatten_from").toInt(-1)) : -1;
     flatMhz_ = d.value("flatten_mhz").toInt();
     if (d.value("mem_locked_max_mhz").toInt() > 0) {
         lockMinSpin_->setValue(d.value("mem_locked_min_mhz").toInt());
@@ -1379,7 +1419,7 @@ void NvidiaTab::reportClamping(const QVector<QPointF> &baseBefore, const QHash<i
         if (!runs.isEmpty() && runs.back().kind == kind && runs.back().to == i - 1) { runs.back().to = i; runs.back().got = got; }
         else runs.append({i, i, w, got, kind});
     }
-    if (runs.isEmpty()) return;
+    if (runs.isEmpty()) { log(tr("Readback matches requested curve offsets and frequencies within display tolerance; clock limits are not verified by this comparison.")); return; }
     for (const Run &r : runs) {
         const QString pts = r.from == r.to ? QStringLiteral("point %1").arg(r.from) : QStringLiteral("points %1–%2").arg(r.from).arg(r.to);
         log(r.kind == 1 ? QStringLiteral("⚠️ %1: the driver stored a smaller offset than requested (asked %2 MHz, kept %3 MHz).").arg(pts).arg(r.want).arg(r.got)

@@ -11,6 +11,9 @@
 #include "pipewireconfig.h"
 #include "sysadmin.h"
 #include "theme.h"
+#include "structuredtools.h"
+#include <QTableWidget>
+#include <QHeaderView>
 
 #include <QApplication>
 #include <QClipboard>
@@ -175,7 +178,9 @@ QString findExe(const QString &name) {
 
 QString readFile(const QString &path) {
     QFile f(path);
-    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.read(MAX_OUT)) : QStringLiteral("(cannot read %1)\n").arg(path);
+    if (!f.open(QIODevice::ReadOnly)) return QStringLiteral("(cannot read %1)\n").arg(path);
+    const QByteArray data = f.read(MAX_OUT + 1);
+    return QString::fromUtf8(data.left(MAX_OUT)) + (data.size() > MAX_OUT ? QStringLiteral("\n(output truncated)\n") : QString());
 }
 
 QString pciLinks() {
@@ -571,6 +576,40 @@ public:
         auto *copy = new QPushButton(QCoreApplication::translate("systools", "Copy"));
         top->addWidget(run);
         top->addWidget(copy);
+        const QString key = stableToolKey(s.title);
+        if (key == QLatin1String("Kernel") || key == QLatin1String("Battery")) {
+            structured_ = new QPushButton(QCoreApplication::translate("systools", "Structured…"));
+            structured_->setEnabled(false); top->addWidget(structured_);
+            connect(structured_, &QPushButton::clicked, this, [this, key] {
+                const auto parsed = key == QLatin1String("Kernel") ? structuredtools::modules(raw_) : structuredtools::powerSupply(raw_);
+                if (!parsed) {
+                    QMessageBox::information(this, QCoreApplication::translate("systools", "Structured output"), QCoreApplication::translate("systools", "Output is missing, incomplete or unrecognized. The original raw output is still available.")); return;
+                }
+                QDialog dlg(this); dlg.setWindowTitle(QCoreApplication::translate("systools", "Structured output")); dlg.resize(850, 560);
+                auto *layout = new QVBoxLayout(&dlg);
+                auto *note = new QLabel(QCoreApplication::translate("systools", "Snapshot of recognized fields only; kernel units are unchanged. Raw output remains on the tool page.")); note->setWordWrap(true); layout->addWidget(note);
+                auto *table = new QTableWidget(int(parsed->rows.size()), int(parsed->headers.size()));
+                // Keep the adapter's stable English keys discoverable by lupdate.
+                [[maybe_unused]] static constexpr const char *headerKeys[] = {
+                    QT_TRANSLATE_NOOP("systools", "Module"), QT_TRANSLATE_NOOP("systools", "Size (bytes)"),
+                    QT_TRANSLATE_NOOP("systools", "Use count"), QT_TRANSLATE_NOOP("systools", "Used by"),
+                    QT_TRANSLATE_NOOP("systools", "Supply"), QT_TRANSLATE_NOOP("systools", "Kernel field"),
+                    QT_TRANSLATE_NOOP("systools", "Raw value")};
+                QStringList headers; for (const auto &h : parsed->headers) headers << QCoreApplication::translate("systools", h.toUtf8().constData());
+                table->setHorizontalHeaderLabels(headers); table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+                for (qsizetype r = 0; r < parsed->rows.size(); ++r) for (qsizetype c = 0; c < parsed->rows.at(r).size(); ++c)
+                    table->setItem(int(r), int(c), new QTableWidgetItem(parsed->rows.at(r).at(c)));
+                table->setSortingEnabled(true); table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+                table->horizontalHeader()->setStretchLastSection(true); layout->addWidget(table, 1);
+                auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); auto *copyTable = buttons->addButton(QCoreApplication::translate("systools", "Copy table"), QDialogButtonBox::ActionRole);
+                connect(copyTable, &QPushButton::clicked, &dlg, [table, headers] {
+                    QStringList lines{headers.join(QLatin1Char('\t'))};
+                    for (int r = 0; r < table->rowCount(); ++r) { QStringList cells; for (int c = 0; c < table->columnCount(); ++c) cells << table->item(r,c)->text(); lines << cells.join(QLatin1Char('\t')); }
+                    QApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
+                });
+                connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); layout->addWidget(buttons); dlg.exec();
+            });
+        }
         v->addLayout(top);
         if (QWidget *bar = actionBar(stableToolKey(s.title), this, [this] { ran_ = false; start(); })) v->addWidget(bar);
         text_ = new QTextBrowser;
@@ -611,6 +650,7 @@ private:
         if (busy_) return;
         ran_ = busy_ = true;
         out_.clear();
+        if (structured_) structured_->setEnabled(false);
         text_->setPlainText(QCoreApplication::translate("systools", "Running…"));
         serialsBtn_->setVisible(false);
         if (spec_.rootTool) {
@@ -632,6 +672,7 @@ private:
 
     void setOutput(const QString &raw) {
         raw_ = raw;
+        if (structured_) structured_->setEnabled(true);
         when_->setText(QCoreApplication::translate("systools", "Read at %1").arg(QTime::currentTime().toString(QStringLiteral("HH:mm"))));
         shown_.clear();  // a fresh run starts hidden again
         render(false);
@@ -748,8 +789,11 @@ private:
         auto *p = new QProcess(this);
         p->setProcessChannelMode(QProcess::MergedChannels);
         QPointer<QProcess> guard(p);
-        connect(p, &QProcess::finished, this, [this, p, i, shown](int, QProcess::ExitStatus) {
-            out_ += "$ " + shown + '\n' + QString::fromUtf8(p->readAll().left(MAX_OUT)) + '\n';
+        connect(p, &QProcess::finished, this, [this, p, i, shown](int code, QProcess::ExitStatus status) {
+            const auto output = p->readAll();
+            out_ += "$ " + shown + '\n' + QString::fromUtf8(output.left(MAX_OUT)) + '\n';
+            if (code != 0 || status != QProcess::NormalExit || output.size() > MAX_OUT)
+                out_ += QCoreApplication::translate("systools", "(command failed or output was truncated)") + QLatin1Char('\n');
             p->deleteLater();
             step(i + 1);
         });
@@ -766,6 +810,7 @@ private:
     Spec spec_;
     QTextBrowser *text_;
     QPushButton *serialsBtn_;
+    QPushButton *structured_ = nullptr;
     QLabel *when_;
     QLineEdit *find_ = nullptr;
     QLabel *findCount_ = nullptr;

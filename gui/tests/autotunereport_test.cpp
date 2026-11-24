@@ -30,6 +30,9 @@ int main(int argc, char **argv) {
     CHECK(confidence(d["cpu.epp_boost"]).isEmpty());
     CHECK(confidence(d["vm.swappiness"]) == "unseen");
     CHECK(confidence(QJsonObject{{"alone", QJsonArray{-0.05, 0.01}}}) == "-0.050 ± 0.010");
+    CHECK(confidence(QJsonObject{{"alone", QJsonArray{QJsonValue(), 0.01}}}).isEmpty());
+    CHECK(confidence(QJsonObject{{"alone", QJsonArray{0.2, -0.01}}}).isEmpty());
+    CHECK(scoreTrace(QJsonArray{QJsonObject{{"value", 5}}}).isEmpty());
     CHECK(scoreTrace(rep["scores"]["thp"].toArray()) == "(leave) 0.00 → always -0.30 → 512 0.25");
     const QJsonObject withDiff = QJsonDocument::fromJson(R"json({"diff_vs_last": [
         {"key": "vm.swappiness", "from": 60, "value": 10, "why": "new data"},
