@@ -47,7 +47,8 @@ Opt kernel();
 Opt biosInfo();
 Opt systemInfo();
 
-// Live (cheap sysfs reads)
+// Display reads: short-lived shared cache, missing/in-flight returns nullopt.
+// Numeric cpuTempC() and batteryState() remain direct reads.
 Opt cpuTemp();
 std::optional<double> cpuTempC();  // same sensor as cpuTemp(), as a number
 Opt fans();

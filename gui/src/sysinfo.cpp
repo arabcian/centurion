@@ -1,4 +1,6 @@
 #include "sysinfo.h"
+#include "telemetrycache.h"
+#include <time.h>
 #include <cmath>
 #include <QElapsedTimer>
 #include <QMutex>
@@ -259,7 +261,7 @@ static std::optional<double> chipTemp(const Chip &chip) {
     return v ? std::optional(*v / 1000.0) : std::nullopt;
 }
 
-Opt cpuTemp() {
+static Opt read_cpuTemp() {
     const auto cs = chips();
     for (const char *want : {"k10temp", "zenpower", "coretemp"}) {
         for (const Chip &c : cs) {
@@ -291,7 +293,7 @@ std::optional<double> cpuTempC() {
     return std::nullopt;
 }
 
-Opt fans() {
+static Opt read_fans() {
     // Several drivers (lenovo_wmi_other, legion hwmon, …) report the same physical
     // fans under the same index. One reading per index, from the chip with the
     // most fans first, so a fan only one driver knows (fan4) still shows up.
@@ -308,7 +310,7 @@ Opt fans() {
     return joined(l);
 }
 
-Opt storage() {
+static Opt read_storage() {
     QStringList l;
     int n = 0;
     for (const Chip &c : chips()) {
@@ -319,7 +321,7 @@ Opt storage() {
     return joined(l);
 }
 
-Opt power() {
+static Opt read_power() {
     QStringList l;
     for (const Chip &c : chips())
         for (const Input &f : c.power) {
@@ -329,7 +331,7 @@ Opt power() {
     return joined(l);
 }
 
-Opt igpu() {
+static Opt read_igpu() {
     for (const Chip &c : chips()) {
         if (c.name != "amdgpu") continue;
         QStringList b;
@@ -400,7 +402,7 @@ QString formatMinutes(int m) {
     return m >= 60 ? QStringLiteral("%1 h %2 min").arg(m / 60).arg(m % 60, 2, 10, QLatin1Char('0')) : QStringLiteral("%1 min").arg(m);
 }
 
-Opt battery() {
+static Opt read_battery() {
     const QString p = batteryDir();
     if (p.isEmpty()) return std::nullopt;
     const BatteryState st = batteryState();
@@ -417,6 +419,29 @@ Opt battery() {
     else if (auto uv = rdInt(p + "/voltage_now")) b << QStringLiteral("%1V").arg(*uv / 1e6, 0, 'f', 2);
     return joined(b);
 }
+
+// Fixed display-only slots; shared by Home and the textual D-Bus Sensors API.
+// CLOCK_BOOTTIME includes suspend, so a pre-suspend sample cannot survive a
+// long sleep as a fresh measurement. CPU fan guard and numeric D-Bus reads
+// intentionally retain direct acquisition paths.
+static telemetry::Tick displayClock() {
+    timespec ts{};
+    if (::clock_gettime(CLOCK_BOOTTIME, &ts) == 0)
+        return std::chrono::duration_cast<telemetry::Tick>(std::chrono::seconds(ts.tv_sec) + std::chrono::nanoseconds(ts.tv_nsec));
+    return std::chrono::duration_cast<telemetry::Tick>(std::chrono::steady_clock::now().time_since_epoch());
+}
+#define DISPLAY_SENSOR(name, ttl) \
+    Opt name() { \
+        static telemetry::Slot<QString> slot; \
+        return slot.read(telemetry::Tick(ttl), displayClock, read_##name).value; \
+    }
+DISPLAY_SENSOR(cpuTemp, 1500)
+DISPLAY_SENSOR(fans, 1500)
+DISPLAY_SENSOR(storage, 1500)
+DISPLAY_SENSOR(power, 1500)
+DISPLAY_SENSOR(igpu, 1500)
+DISPLAY_SENSOR(battery, 2000)
+#undef DISPLAY_SENSOR
 
 QMap<QString, double> sensorValues() {
     // The numbers behind the Live rows above, same sources; keys carry their unit.

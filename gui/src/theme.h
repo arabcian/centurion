@@ -2,6 +2,7 @@
 // Single source of truth for the look — port of theme.py.
 #include <QColor>
 #include <QIcon>
+#include <QObject>
 #include <QList>
 #include <QPair>
 #include <QString>
@@ -19,7 +20,7 @@ namespace theme {
 // reserved for what is active: the selected tab, primary actions, slider fill,
 // checked state, focus.
 // Values of the active palette (see PALETTES in theme.cpp), set by load()
-// before any widget exists; a theme change restarts the app.
+// before any widget exists. Stable addresses after load(); GUI-thread only.
 inline const char *BG0 = "#121316", *BG1 = "#191a1e", *BG2 = "#202126", *BG3 = "#292a30",
     *BG4 = "#34363d", *WELL = "#0e0f11", *BORDER = "#2f3137", *BORDER_SOFT = "#24252a", *FG = "#e8e6e3",
     *FG_DIM = "#b4b2ae", *MUTED = "#86868d", *ACCENT = "#eba55b", *ACCENT_SOFT = "#a9773f",
@@ -66,6 +67,16 @@ QString rgba(const char *hex, double alpha);
 /// Callout frame: a faint wash of `color` with a matching hairline. `selector`
 /// scopes it (e.g. "#tuneBanner") so child labels keep their own look.
 QString banner(const char *color, const QString &selector = QString());
+class ThemeEvents : public QObject {
+    Q_OBJECT
+Q_SIGNALS:
+    void themeChanged(quint64 revision);
+};
+ThemeEvents &events();
+quint64 revision();
+/// In-memory live change for migrated workspaces, not a persistent preference.
+/// Callers must refresh cached semantic icons/brushes/local styles on the signal.
+bool applyLivePalette(QApplication &app, const QString &id);
 void apply(QApplication &app);
 // The same in two steps, for start-up: with the application style sheet already set, every
 // addWidget()/addTab() while the window is being built re-matches the whole sheet against the

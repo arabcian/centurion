@@ -129,7 +129,7 @@ assert 'theme::themePreviewIcon(id)' in ui
 assert 'themeBox->setIconSize(' in ui
 assert 'theme::saveTheme(id)' in ui
 assert 'QSettings::UserScope' in src
-assert 'if (!found) return false;' in src
+assert 'if (!knownPalette(id)) return false;' in src
 assert 'textOnAccent()' in src and 'static bool lightTheme()' in src
 assert 'p.setColor(QPalette::HighlightedText, textOnAccent())' in src
 assert '@HILITE' in src and 'isLight ?' in src

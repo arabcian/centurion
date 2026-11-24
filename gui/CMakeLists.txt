@@ -33,6 +33,8 @@ set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root hel
 
 add_executable(centurion
     src/main.cpp
+    src/simulation.cpp   src/simulation.h
+    src/telemetrycache.h
     src/mainwindow.cpp   src/mainwindow.h
     src/uinavigator.cpp  src/uinavigator.h
     src/theme.cpp        src/theme.h
@@ -285,6 +287,38 @@ install(FILES data/centurion.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hico
 option(CENTURION_BUILD_TESTS "Build GUI unit tests" OFF)
 if(CENTURION_BUILD_TESTS)
     enable_testing()
+    find_package(Threads REQUIRED)
+    add_executable(centurion-telemetrycache-test tests/telemetrycache_test.cpp src/telemetrycache.h)
+    target_link_libraries(centurion-telemetrycache-test PRIVATE Threads::Threads)
+    add_test(NAME telemetrycache COMMAND centurion-telemetrycache-test)
+    add_executable(centurion-simulation-visual-test tests/simulation_visual_test.cpp
+        src/simulation.cpp src/simulation.h src/theme.cpp src/theme.h src/charts.cpp src/charts.h
+        src/vfcurvewidget.cpp src/vfcurvewidget.h src/i18n.cpp src/i18n.h)
+    target_link_libraries(centurion-simulation-visual-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-simulation-visual-test PRIVATE QT_NO_KEYWORDS)
+    qt_add_resources(centurion-simulation-visual-test visualtheme PREFIX /theme BASE data/theme FILES
+        data/theme/check.png data/theme/check@2x.png data/theme/chev-down.png data/theme/chev-down@2x.png
+        data/theme/chev-up.png data/theme/chev-up@2x.png data/theme/chev-down-off.png data/theme/chev-down-off@2x.png)
+    if(Qt6LinguistTools_FOUND)
+        add_dependencies(centurion-simulation-visual-test centurion)
+        target_compile_definitions(centurion-simulation-visual-test PRIVATE CENTURION_TEST_QM="${CMAKE_CURRENT_BINARY_DIR}/centurion_tr.qm")
+    endif()
+    foreach(scale IN ITEMS 1 1.25 1.5 2)
+        set(visual_languages en)
+        if(Qt6LinguistTools_FOUND)
+            list(APPEND visual_languages tr)
+        endif()
+        foreach(lang IN LISTS visual_languages)
+            set(visual_mode experimental)
+            if((scale STREQUAL "1.25" AND lang STREQUAL "en") OR (scale STREQUAL "1.5" AND lang STREQUAL "tr"))
+                set(visual_mode classic)
+            endif()
+            add_test(NAME simulation-visual-${lang}-${scale} COMMAND centurion-simulation-visual-test)
+            set_tests_properties(simulation-visual-${lang}-${scale} PROPERTIES
+                ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=${scale};QT_FONT_DPI=96;CENTURION_LANG=${lang};CENTURION_VISUAL_MODE=${visual_mode};LC_ALL=C.UTF-8")
+        endforeach()
+    endforeach()
+
     add_executable(centurion-frametime-test tests/frametime_test.cpp src/frametime.h)
     add_test(NAME frametime COMMAND centurion-frametime-test)
     add_executable(centurion-appearance-layout-test tests/appearance_layout_test.cpp src/theme.cpp src/theme.h src/charts.cpp src/charts.h)
@@ -303,6 +337,7 @@ if(CENTURION_BUILD_TESTS)
     set(DIAG_TEST_SOURCES src/diagreport.cpp src/diagsources.cpp src/advanceddiagnostics.cpp src/evidencereports.cpp
         src/systemdiagnostics.cpp src/diagnostictools.cpp src/eventinfo.cpp src/distroprofile.cpp src/sleepadvice.cpp
         src/coevidence.cpp src/costrategy.cpp)
+    target_sources(centurion-simulation-visual-test PRIVATE ${DIAG_TEST_SOURCES})
     add_executable(centurion-advanceddiagnostics-test tests/advanceddiagnostics_test.cpp ${DIAG_TEST_SOURCES})
     target_link_libraries(centurion-advanceddiagnostics-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-advanceddiagnostics-test PRIVATE QT_NO_KEYWORDS)

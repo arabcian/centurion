@@ -20592,4 +20592,79 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <translation>%1 numaralı kural eklendi (sıra %2)</translation>
     </message>
 </context>
+  <context>
+    <name>Simulation</name>
+    <message>
+      <source>Telemetry and Curve</source>
+      <translation>Telemetri ve Eğri</translation>
+    </message>
+    <message>
+      <source>Read-only Diagnostics</source>
+      <translation>Salt Okunur Tanılama</translation>
+    </message>
+    <message>
+      <source>Could not create the isolated fixture.</source>
+      <translation>İzole test ortamı oluşturulamadı.</translation>
+    </message>
+    <message>
+      <source>Centurion — Hardware Simulation</source>
+      <translation>Centurion — Donanım Simülasyonu</translation>
+    </message>
+    <message>
+      <source>SIMULATION — fixture data only. No hardware, helper, daemon or real profile access.</source>
+      <translation>SİMÜLASYON — Yalnızca örnek veriler. Donanıma, yardımcı programa, hizmete veya gerçek profile erişilmez.</translation>
+    </message>
+    <message>
+      <source>AMD dual-CCD / NVIDIA</source>
+      <translation>AMD çift CCD / NVIDIA</translation>
+    </message>
+    <message>
+      <source>Intel hybrid / NVIDIA</source>
+      <translation>Intel hibrit / NVIDIA</translation>
+    </message>
+    <message>
+      <source>Intel non-hybrid / no GPU</source>
+      <translation>Intel hibrit olmayan / GPU yok</translation>
+    </message>
+    <message>
+      <source>AMD / AMD GPU</source>
+      <translation>AMD / AMD GPU</translation>
+    </message>
+    <message>
+      <source>Missing sensors</source>
+      <translation>Eksik sensörler</translation>
+    </message>
+    <message>
+      <source>Sleeping NVIDIA GPU</source>
+      <translation>Uyuyan NVIDIA GPU</translation>
+    </message>
+    <message>
+      <source>Fixture</source>
+      <translation>Test Senaryosu</translation>
+    </message>
+    <message>
+      <source>Live theme</source>
+      <translation>Canlı Tema</translation>
+    </message>
+    <message>
+      <source>Simulated draft offset</source>
+      <translation>Simüle Edilen Taslak Ofseti</translation>
+    </message>
+    <message>
+      <source>Apply to simulated memory only</source>
+      <translation>Yalnızca Simülasyon Belleğine Uygula</translation>
+    </message>
+    <message>
+      <source>Simulated readback: %1 MHz offset. No hardware write.</source>
+      <translation>Simüle edilen geri okuma: %1 MHz ofset. Donanıma yazılmadı.</translation>
+    </message>
+    <message>
+      <source>CPU: %1 · GPU: %2</source>
+      <translation>CPU: %1 · GPU: %2</translation>
+    </message>
+    <message>
+      <source>Unavailable</source>
+      <translation>Kullanılamıyor</translation>
+    </message>
+  </context>
 </TS>

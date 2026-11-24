@@ -13,6 +13,7 @@
 #include "i18n.h"
 #include "mainwindow.h"
 #include "sysinfo.h"
+#include "simulation.h"
 #include "theme.h"
 #include "tray.h"
 #include <QApplication>
@@ -41,6 +42,7 @@
 #include <QTabWidget>
 #include <QThread>
 #include <QTimer>
+#include <QTemporaryDir>
 #include <QSocketNotifier>
 #include <csignal>
 #include <cstdio>
@@ -273,6 +275,22 @@ static void warnUnknownModel() {
 }
 
 int main(int argc, char **argv) {
+    // Dispatch before settings, device checks, sockets, tray or MainWindow.
+    // No real hardware object or helper route is reachable in this workspace.
+    bool simulated = false;
+    for (int i = 1; i < argc; ++i) if (QByteArray(argv[i]) == "--simulate") simulated = true;
+    if (simulated) {
+        QTemporaryDir sandbox;
+        if (!sandbox.isValid()) return 1;
+        for (const char *var : {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"})
+            qputenv(var, QFile::encodeName(sandbox.path()));
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, sandbox.path());
+        QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, sandbox.path());
+        QApplication app(argc, argv);
+        app.setApplicationName("Centurion Simulation");
+        theme::load(); i18n::install(app);
+        return simulation::run(app);
+    }
     QApplication app(argc, argv);
     app.setApplicationName("Centurion");
     app.setApplicationVersion(CENTURION_VERSION);

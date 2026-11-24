@@ -258,7 +258,7 @@ void DayBars::setSelected(const QString &date) {
 }
 
 QColor DayBars::colorOf(const QString &kind) {
-    static const char *const PALETTE[] = {theme::INFO, theme::WARN, theme::DANGER, theme::OK, theme::PURPLE,
+    const char *const PALETTE[] = {theme::INFO, theme::WARN, theme::DANGER, theme::OK, theme::PURPLE,
                                           theme::ACCENT, theme::FG_DIM, theme::ACCENT_SOFT, theme::DANGER_SOFT};
     int sum = 0;  // not qHash: its seed changes between runs
     for (const QChar c : kind) sum += c.unicode();

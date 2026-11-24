@@ -13,6 +13,8 @@
 #include <QRegularExpression>
 #include <array>
 #include <QStyleFactory>
+#include <QThread>
+#include <cstring>
 
 namespace theme {
 
@@ -146,7 +148,10 @@ const Palette PALETTES[] = {
         "#dedede", "#bcbcbc", "#a0a0a0", "#9bc8b4", "#5b8873", "#a4ce9a", "#e5c78b", "#e8a19e", "#8a4846", "#99c7da", "#c5acd9"}},
 };
 QString g_current = QStringLiteral("graphite");
-std::array<QByteArray, 19> customStorage;
+// Stable addresses for every semantic token, including repeated custom colors.
+// Token contents may change only on the GUI thread.
+std::array<std::array<char, 8>, 19> activeStorage{};
+quint64 g_revision = 0;
 bool g_restart = false;
 bool g_experimental = true;
 bool g_compact = false;
@@ -166,17 +171,23 @@ QList<QPair<QString, QString>> themes() {
 QStringList paletteTokenNames() {
     return {"BG0", "BG1", "BG2", "BG3", "BG4", "WELL", "BORDER", "BORDER_SOFT", "FG", "FG_DIM", "MUTED", "ACCENT", "ACCENT_SOFT", "OK", "WARN", "DANGER", "DANGER_SOFT", "INFO", "PURPLE"};
 }
-QStringList paletteColors(const QString &id) {
+static QStringList lookupPalette(const QString &id) {
     if (id == QLatin1String("custom")) {
         const auto colors = settings().value(QStringLiteral("customTheme/colors")).toStringList();
-        if (validCustomPalette(colors)) return colors;
+        return validCustomPalette(colors) ? colors : QStringList{};
     }
-    const Palette *selected = &PALETTES[0];
-    for (const Palette &p : PALETTES) if (id == QLatin1String(p.id)) selected = &p;
-    QStringList result;
-    for (const char *c : selected->c) result << QString::fromLatin1(c);
-    return result;
+    for (const Palette &p : PALETTES) if (id == QLatin1String(p.id)) {
+        QStringList result;
+        for (const char *c : p.c) result << QString::fromLatin1(c);
+        return result;
+    }
+    return {};
 }
+QStringList paletteColors(const QString &id) {
+    const auto colors = lookupPalette(id);
+    return colors.isEmpty() ? lookupPalette(QStringLiteral("graphite")) : colors;
+}
+
 bool validCustomPalette(const QStringList &colors) {
     if (colors.size() != 19) return false;
     static const QRegularExpression rgb(QStringLiteral("^#[0-9a-fA-F]{6}$"));
@@ -237,29 +248,34 @@ bool saveCompactDensity(bool compact) {
     s.sync(); return s.status() == QSettings::NoError;
 }
 
+static bool knownPalette(const QString &id) { return !lookupPalette(id).isEmpty(); }
+
+static void setTokens(const QString &id, const QStringList &colors) {
+    const char **tok[] = {&BG0, &BG1, &BG2, &BG3, &BG4, &WELL, &BORDER, &BORDER_SOFT, &FG, &FG_DIM, &MUTED,
+                          &ACCENT, &ACCENT_SOFT, &OK, &WARN, &DANGER, &DANGER_SOFT, &INFO, &PURPLE};
+    for (int i = 0; i < 19; ++i) {
+        const QByteArray value = colors.at(i).toLatin1();
+        std::memcpy(activeStorage[i].data(), value.constData(), 7);
+        activeStorage[i][7] = '\0';
+        *tok[i] = activeStorage[i].data();
+    }
+    g_current = id;
+}
+
 void load() {
     g_compact = settings().value(QStringLiteral("ui/compact_density"), false).toBool();
     g_experimental = readExperimentalChoice();
     const QString want = settings().value(QStringLiteral("theme")).toString();
-    const Palette *p = &PALETTES[0];
-    for (const Palette &x : PALETTES) if (want == QLatin1String(x.id)) p = &x;
-    g_current = QString::fromLatin1(p->id);
-    const char **tok[] = {&BG0, &BG1, &BG2, &BG3, &BG4, &WELL, &BORDER, &BORDER_SOFT, &FG, &FG_DIM, &MUTED,
-                          &ACCENT, &ACCENT_SOFT, &OK, &WARN, &DANGER, &DANGER_SOFT, &INFO, &PURPLE};
-    const auto custom = settings().value(QStringLiteral("customTheme/colors")).toStringList();
-    if (want == QLatin1String("custom") && validCustomPalette(custom)) {
-        g_current = want;
-        for (int i = 0; i < 19; ++i) { customStorage[i] = custom[i].toLatin1(); *tok[i] = customStorage[i].constData(); }
-    } else for (int i = 0; i < 19; ++i) *tok[i] = p->c[i];
+    const auto colors = lookupPalette(want);
+    if (colors.isEmpty()) setTokens(QStringLiteral("graphite"), lookupPalette(QStringLiteral("graphite")));
+    else setTokens(want, colors);
 }
 
+ThemeEvents &events() { static ThemeEvents bus; return bus; }
+quint64 revision() { return g_revision; }
+
 bool saveTheme(const QString &id) {
-    // Never persist an unrecognised id: a typo should not silently select Graphite.
-    bool found = id == QLatin1String("custom") && validCustomPalette(settings().value(QStringLiteral("customTheme/colors")).toStringList());
-    for (const Palette &p : PALETTES) {
-        if (id == QLatin1String(p.id)) { found = true; break; }
-    }
-    if (!found) return false;
+    if (!knownPalette(id)) return false;
     QSettings s = settings();
     s.setValue(QStringLiteral("theme"), id);
     s.sync();
@@ -852,6 +868,22 @@ void applyBase(QApplication &app) {
 }
 
 void applySheet(QApplication &app) { app.setStyleSheet(stylesheet()); }
+
+// For fully migrated workspaces only. Legacy local QSS, model item brushes and
+// cached icons still need semantic refresh callbacks before the real shell can
+// opt into this path. This never persists preferences or restarts the app.
+bool applyLivePalette(QApplication &app, const QString &id) {
+    if (QThread::currentThread() != app.thread()) return false;
+    const auto colors = lookupPalette(id);
+    if (!validCustomPalette(colors)) return false;
+    setTokens(id, colors);
+    app.setPalette(palette());
+    applySheet(app);
+    ++g_revision;
+    Q_EMIT events().themeChanged(g_revision);
+    for (QWidget *w : QApplication::allWidgets()) w->update();
+    return true;
+}
 
 void apply(QApplication &app) {
     applyBase(app);
