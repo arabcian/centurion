@@ -3496,7 +3496,48 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
             <source>Open navigation preferences (Ctrl+Shift+F)</source>
             <translation>Navigasyon tercihlerini aç (Ctrl+Shift+F)</translation>
         </message>
-    </context>
+    
+    <message>
+      <source>Typography…</source>
+      <translation>Tipografi…</translation>
+    </message>
+    <message>
+      <source>Typography</source>
+      <translation>Tipografi</translation>
+    </message>
+    <message>
+      <source>Use system interface font</source>
+      <translation>Sistem arayüz yazı tipini kullan</translation>
+    </message>
+    <message>
+      <source>Use a fixed-width numeric editor font</source>
+      <translation>Sayısal düzenleyicide sabit genişlikli yazı tipi kullan</translation>
+    </message>
+    <message>
+      <source>Temperature · Fan Speed · Configuration</source>
+      <translation>Sıcaklık · Fan Hızı · Yapılandırma</translation>
+    </message>
+    <message>
+      <source>Interface Font</source>
+      <translation>Arayüz Yazı Tipi</translation>
+    </message>
+    <message>
+      <source>Point Size</source>
+      <translation>Punto Boyutu</translation>
+    </message>
+    <message>
+      <source>Numeric Font</source>
+      <translation>Sayısal Yazı Tipi</translation>
+    </message>
+    <message>
+      <source>Could not save typography preferences.</source>
+      <translation>Tipografi tercihleri kaydedilemedi.</translation>
+    </message>
+    <message>
+      <source>Restart Centurion to apply typography preferences?</source>
+      <translation>Tipografi tercihlerini uygulamak için Centurion yeniden başlatılsın mı?</translation>
+    </message>
+  </context>
     <context>
         <name>KlogPage</name>
         <message>
@@ -4997,7 +5038,14 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <source>Traffic ledger is invalid, unsupported or too large; no counters are available.</source>
             <translation>Trafik kaydı geçersiz, desteklenmiyor veya çok büyük; sayaçlar kullanılamıyor.</translation>
         </message>
-    </context>
+    
+    <message>
+      <source>Preview saved firewall rules…</source>
+      <translation>Kayıtlı Güvenlik Duvarı Kurallarını Önizle…</translation>
+    </message>
+      <message><source>Saved firewall configuration is unavailable. Refresh first.</source><translation>Kayıtlı güvenlik duvarı yapılandırmasına erişilemiyor. Önce yenileyin.</translation></message>
+    <message><source>Saved firewall configuration changed. Refresh and review first.</source><translation>Kayıtlı güvenlik duvarı yapılandırması değişti. Önce yenileyip gözden geçirin.</translation></message>
+  </context>
     <context>
         <name>NotifyDialog</name>
         <message>
@@ -14661,7 +14709,40 @@ Add rules that allow DNS, NTP and web traffic first?</source>
         <translation>Düzenleyici açıkken kayıtlı kurallar değişti. Güncel kuralları inceleyip yeniden deneyin.</translation>
     </message>
 
-    </context>
+    
+    <message>
+      <source>Connection preview…</source>
+      <translation>Bağlantı Önizlemesi…</translation>
+    </message>
+    <message>
+      <source>Saved Firewall Connection Preview</source>
+      <translation>Kayıtlı Güvenlik Duvarı Bağlantı Önizlemesi</translation>
+    </message>
+    <message>
+      <source>Hypothetical new local TCP/UDP connection. Only the saved Centurion chain is evaluated, not live nftables, connection state, other firewalls, blacklist, Wine guard or NAT. No access guarantee. Unknown interface-dependent matches remain unknown.</source>
+      <translation>Varsayımsal yeni yerel TCP/UDP bağlantısı. Yalnızca kayıtlı Centurion zinciri değerlendirilir; canlı nftables, bağlantı durumu, diğer güvenlik duvarları, kara liste, Wine koruması ve NAT değerlendirilmez. Erişim garantisi yoktur. Arayüze bağlı belirsiz eşleşmeler bilinmiyor olarak kalır.</translation>
+    </message>
+    <message>
+      <source>Unknown</source>
+      <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+      <source>Unknown interface</source>
+      <translation>Bilinmeyen arayüz</translation>
+    </message>
+    <message>
+      <source>Destination Port</source>
+      <translation>Hedef Port</translation>
+    </message>
+    <message>
+      <source>Current saved snapshot: %1</source>
+      <translation>Güncel kayıtlı anlık görüntü: %1</translation>
+    </message>
+    <message>
+      <source>Pinned saved snapshot: %1</source>
+      <translation>Sabitlenen kayıtlı anlık görüntü: %1</translation>
+    </message>
+  </context>
     <context>
         <name>LookupTab</name>
         <message>
@@ -21320,4 +21401,161 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <translation>Bayt. B, KiB, MiB, GiB veya TiB cinsinden tam sayı girin; değer tam bayt olarak saklanır.</translation>
         </message>
     </context>
+  <context>
+    <name>FirewallPreview</name>
+    <message>
+      <source>Unknown — incomplete or unsupported saved configuration or packet fields.</source>
+      <translation>Bilinmiyor — kayıtlı yapılandırma veya paket alanları eksik ya da desteklenmiyor.</translation>
+    </message>
+    <message>
+      <source>Saved firewall is disabled; effective verdict is unknown.</source>
+      <translation>Kayıtlı güvenlik duvarı devre dışı; gerçek karar bilinmiyor.</translation>
+    </message>
+    <message>
+      <source>Allow within saved chain</source>
+      <translation>Kayıtlı zincirde izin ver</translation>
+    </message>
+    <message>
+      <source>Block within saved chain</source>
+      <translation>Kayıtlı zincirde engelle</translation>
+    </message>
+    <message>
+      <source>Reject within saved chain</source>
+      <translation>Kayıtlı zincirde reddet</translation>
+    </message>
+    <message>
+      <source>Rule %1: %2</source>
+      <translation>Kural %1: %2</translation>
+    </message>
+    <message>
+      <source>Default policy: %1</source>
+      <translation>Varsayılan politika: %1</translation>
+    </message>
+  </context>
+  <context>
+    <name>BootAdvisor</name>
+    <message>
+      <source>Boot Service Inspector…</source>
+      <translation>Önyükleme Hizmeti İnceleyicisi…</translation>
+    </message>
+  </context>
+  <context>
+    <name>BootServiceInspector</name>
+    <message>
+      <source>Boot Service Inspector</source>
+      <translation>Önyükleme Hizmeti İnceleyicisi</translation>
+    </message>
+    <message>
+      <source>Service state is not proof that tuning was applied. Compare saved values with live readback in Optimizations. No services are started or changed.</source>
+      <translation>Hizmet durumu ayarların uygulandığının kanıtı değildir. Optimizasyonlar bölümünde kayıtlı değerleri canlı geri okumayla karşılaştırın. Hiçbir hizmet başlatılmaz veya değiştirilmez.</translation>
+    </message>
+    <message>
+      <source>Current boot ID: %1</source>
+      <translation>Geçerli önyükleme kimliği: %1</translation>
+    </message>
+    <message>
+      <source>Unknown</source>
+      <translation>Bilinmiyor</translation>
+    </message>
+    <message>
+      <source>Boot guard: %1</source>
+      <translation>Önyükleme koruması: %1</translation>
+    </message>
+    <message>
+      <source>Guard record belongs to another boot: %1</source>
+      <translation>Koruma kaydı başka bir önyüklemeye ait: %1</translation>
+    </message>
+    <message>
+      <source>Recorded guard trip: %1</source>
+      <translation>Kayıtlı koruma tetiklenmesi: %1</translation>
+    </message>
+    <message>
+      <source>Yes</source>
+      <translation>Evet</translation>
+    </message>
+    <message>
+      <source>No</source>
+      <translation>Hayır</translation>
+    </message>
+    <message>
+      <source>Boot guard record unavailable: %1</source>
+      <translation>Önyükleme koruması kaydına erişilemiyor: %1</translation>
+    </message>
+    <message>
+      <source>OpenRC evidence</source>
+      <translation>OpenRC Kanıtları</translation>
+    </message>
+    <message>
+      <source>Runlevel entries: %1</source>
+      <translation>Çalışma düzeyi kayıtları: %1</translation>
+    </message>
+    <message>
+      <source>None found</source>
+      <translation>Bulunamadı</translation>
+    </message>
+    <message>
+      <source>Present</source>
+      <translation>Mevcut</translation>
+    </message>
+    <message>
+      <source>Not found</source>
+      <translation>Bulunamadı</translation>
+    </message>
+    <message>
+      <source>Started marker: %1</source>
+      <translation>Başlatılmış işareti: %1</translation>
+    </message>
+    <message>
+      <source>Failed marker: %1</source>
+      <translation>Başarısızlık işareti: %1</translation>
+    </message>
+    <message>
+      <source>Last run and per-setting result: unknown (OpenRC marker is not an apply receipt).</source>
+      <translation>Son çalışma ve ayar bazında sonuç: bilinmiyor (OpenRC işareti uygulama makbuzu değildir).</translation>
+    </message>
+    <message>
+      <source>systemd read-only properties</source>
+      <translation>Salt Okunur systemd Özellikleri</translation>
+    </message>
+    <message>
+      <source>Unit file state: %1</source>
+      <translation>Birim dosyası durumu: %1</translation>
+    </message>
+    <message>
+      <source>Loaded unit unavailable: %1</source>
+      <translation>Yüklü birime erişilemiyor: %1</translation>
+    </message>
+    <message>
+      <source>Properties unavailable: %1</source>
+      <translation>Özelliklere erişilemiyor: %1</translation>
+    </message>
+    <message>
+      <source>Load state: %1</source>
+      <translation>Yükleme durumu: %1</translation>
+    </message>
+    <message>
+      <source>Active state: %1</source>
+      <translation>Etkinlik durumu: %1</translation>
+    </message>
+    <message>
+      <source>Substate: %1</source>
+      <translation>Alt durum: %1</translation>
+    </message>
+    <message>
+      <source>Service result: %1</source>
+      <translation>Hizmet sonucu: %1</translation>
+    </message>
+    <message>
+      <source>Main exit status: %1</source>
+      <translation>Ana süreç çıkış durumu: %1</translation>
+    </message>
+    <message>
+      <source>Last main process exit: %1</source>
+      <translation>Ana sürecin son çıkışı: %1</translation>
+    </message>
+    <message>
+      <source>Supported running init system not detected.</source>
+      <translation>Desteklenen çalışan init sistemi algılanamadı.</translation>
+    </message>
+  </context>
 </TS>

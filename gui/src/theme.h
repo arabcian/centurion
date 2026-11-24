@@ -47,6 +47,9 @@ bool saveUiMode(bool experimental);
 /// Density is a startup presentation preference; no hardware state changes.
 bool compactDensity();
 bool saveCompactDensity(bool compact);
+struct Typography { QString family, numericFamily; int points = FONT_PT; };
+Typography typographyPreference();
+bool saveTypography(const Typography &value);
 /// Reads the saved choice (~/.config/centurion/gui.ini) and sets the tokens.
 void load();
 bool saveTheme(const QString &id);

@@ -77,7 +77,7 @@ static const char *const LOG_FILE = "/var/log/centurion/netguard.log";
 static const char *const CONN_LOG = "/var/log/centurion/connections.log";
 static constexpr int LOG_TAB = 2, MAX_LOG_ROWS = 3000, TRAFFIC_DAYS_SHOWN = 30;
 static constexpr qint64 LOG_TAIL = 512 * 1024;  // of an existing log, only the end is loaded
-enum { IdxRole = Qt::UserRole, KeyRole, ExeRole, IpRole, SortRole, PidRole, UidRole };
+enum { IdxRole = Qt::UserRole, KeyRole, ExeRole, IpRole, SortRole, PidRole, UidRole, RecordedConnectionRole };
 
 static QString helper() { return privileged::helperPath(QStringLiteral("netguard-helper")); }
 static QString str(const QJsonObject &o, const char *k) { return o.value(QLatin1String(k)).toString(); }
@@ -740,7 +740,10 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         });
     };
     menuFor(conns_, [this, wlConn, killConn, detConn](QMenu &m, QTreeWidgetItem *it) {
-        const QJsonObject c = connData_.at(it->data(0, IdxRole).toInt()).toObject();
+        const int idx = it->data(0, IdxRole).toInt();
+        if (idx < 0 || idx >= connData_.size()) return;
+        const QJsonObject c = connData_.at(idx).toObject();
+        if (it->data(0, KeyRole).toString() != connectionKey(c)) return;
         const bool wine = c.value(QLatin1String("wine")).toBool();
         if (!str(c, "remote").isEmpty()) {
             m.addAction(QStringLiteral("Details…"), this, [detConn, c] { detConn(c); });
@@ -764,6 +767,8 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         const qint64 uid = it->data(0, UidRole).toLongLong();
         m.addAction(QStringLiteral("Details…"), this, [=, this] { connDetails(ip, pid, exe, uid, QString()); });
         addIpActions(m, ip);
+        const auto recorded = it->data(0, RecordedConnectionRole).toJsonObject();
+        if (!recorded.isEmpty()) m.addAction(tr("Preview saved firewall rules…"), this, [this, recorded] { firewall_->previewConnection(recorded); });
     });
     menuFor(ports_, [this](QMenu &m, QTreeWidgetItem *) {
         m.addAction(tr("Open"), this, [this] { setPortState(QStringLiteral("open")); });
@@ -1281,6 +1286,7 @@ void NetPage::readConnLog() {
                                         in ? QStringLiteral("← in") : QStringLiteral("→ out"), name, str(o, "proto").toUpper(), remote,
                                         QString::number(o.value(QLatin1String(in ? "lport" : "rport")).toInt()), note});
         it->setData(0, IpRole, remote);
+        it->setData(0, RecordedConnectionRole, QJsonObject{{"dir", o.value("dir")}, {"proto", o.value("proto")}, {"remote", o.value("remote")}, {"lport", o.value("lport")}, {"rport", o.value("rport")}});
         it->setData(0, PidRole, pid);
         it->setData(0, ExeRole, exe);
         it->setData(0, UidRole, o.value(QLatin1String("uid")).toInteger(-1));
@@ -2181,11 +2187,15 @@ void NetPage::setPortState(const QString &state) {
     if (!it || !it->isSelected() || it->isHidden()) { QMessageBox::information(this, tr("Firewall"), tr("Select a port first.")); return; }
     const QString proto = it->text(1).toLower();
     const int port = it->text(2).toInt();
-    QJsonObject req{{"op", "firewall"}, {"port", QJsonObject{{"proto", proto}, {"port", port}, {"state", state}}}};
+    const auto revision = state_.value("firewall").toObject();
+    if (state_.contains("config_error") || !revision.value("rules").isArray()) { QMessageBox::warning(this,tr("Firewall"),tr("Saved firewall configuration is unavailable. Refresh first.")); return; }
+    auto canonical = revision; canonical.remove(QStringLiteral("shadowed"));
+    QJsonObject req{{"op", "firewall"}, {"expected_firewall", canonical}, {"port", QJsonObject{{"proto", proto}, {"port", port}, {"state", state}}}};
     if (state != QLatin1String("default") && !state_.value(QLatin1String("firewall")).toObject().value(QLatin1String("enabled")).toBool()) {
         if (QMessageBox::question(this, tr("Firewall"), tr("The firewall is off, so this rule would do nothing. Turn it on? Rules already saved on the Firewall tab take effect too.")) != QMessageBox::Yes) return;
         req.insert(QStringLiteral("enabled"), true);
     }
+    if (revision != state_.value("firewall").toObject()) { QMessageBox::warning(this,tr("Firewall"),tr("Saved firewall configuration changed. Refresh and review first.")); return; }
     runRoot(req);
 }
 

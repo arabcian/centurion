@@ -1711,6 +1711,21 @@ fn covers_local(n: &Net) -> bool {
             .iter().filter_map(|a| a.parse().ok()).any(|ip| n.contains(ip))
 }
 
+fn expected_firewall_matches(req: &Value, fw: &Firewall) -> bool {
+    req.get("expected_firewall").map_or(true, |expected| expected == &fw.to_json())
+}
+
+#[cfg(test)]
+#[test]
+fn firewall_expected_snapshot_guard() {
+    let fw = Firewall::default();
+    assert!(expected_firewall_matches(&json!({}), &fw));
+    assert!(expected_firewall_matches(&json!({"expected_firewall": fw.to_json()}), &fw));
+    assert!(!expected_firewall_matches(&json!({"expected_firewall": null}), &fw));
+    let mut changed = fw.clone(); changed.enabled = true;
+    assert!(!expected_firewall_matches(&json!({"expected_firewall": fw.to_json()}), &changed));
+}
+
 /// One request of netguard-helper. `list` and `status` work for any user; the rest is root-only.
 pub fn handle(req: &Value) -> Value {
     let op = req["op"].as_str().unwrap_or("");
@@ -1786,6 +1801,11 @@ pub fn handle(req: &Value) -> Value {
             if cfg.whitelist.len() > MAX_WHITELIST { return json!({"ok": false, "error": "whitelist is full"}); }
         }
         "firewall" => {
+            // Compare under the existing helper lock, before apply, nft validation, save or reload.
+            // Optional for compatibility with CLI and older clients.
+            if !expected_firewall_matches(req, &cfg.fw) {
+                return json!({"ok": false, "conflict": true, "error": "saved firewall changed; refresh and review before applying"});
+            }
             let before = cfg.fw.blocking();
             if let Err(e) = cfg.fw.apply(req) { return json!({"ok": false, "error": e}); }
             // Ask the kernel before saving: a rule it refuses would keep the whole new rule set from loading.

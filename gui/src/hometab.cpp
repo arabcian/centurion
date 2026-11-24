@@ -56,6 +56,9 @@
 #include <QSettings>
 #include <QCompleter>
 #include <QFormLayout>
+#include <QFontComboBox>
+#include <QFontDatabase>
+#include <QSpinBox>
 #include <functional>
 #include <QTabWidget>
 #include <QRegularExpression>
@@ -407,6 +410,29 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         if (QMessageBox::question(this, tr("Custom Theme"), tr("Restart Centurion now to apply the custom palette?")) == QMessageBox::Yes) theme::requestRestart();
     });
     QFormLayout *preferencesRow = nullptr;
+    auto *typography = new QPushButton(tr("Typography…"));
+    connect(typography, &QPushButton::clicked, this, [this] {
+        QDialog dlg(this); dlg.setWindowTitle(tr("Typography"));
+        auto *layout = new QVBoxLayout(&dlg); auto *form = new QFormLayout; layout->addLayout(form);
+        const auto pref = theme::typographyPreference(); const auto installed = QFontDatabase::families();
+        auto *system = new QCheckBox(tr("Use system interface font")); system->setChecked(pref.family.isEmpty() || !installed.contains(pref.family));
+        auto *family = new QFontComboBox; family->setCurrentFont(QFont(pref.family.isEmpty() || !installed.contains(pref.family) ? QFontDatabase::systemFont(QFontDatabase::GeneralFont).family() : pref.family));
+        auto *mono = new QCheckBox(tr("Use a fixed-width numeric editor font")); mono->setChecked(!pref.numericFamily.isEmpty());
+        auto *numeric = new QFontComboBox; numeric->setFontFilters(QFontComboBox::MonospacedFonts); numeric->setCurrentFont(QFont(installed.contains(pref.numericFamily) ? pref.numericFamily : QFontDatabase::systemFont(QFontDatabase::FixedFont).family()));
+        auto *points = new QSpinBox; points->setRange(8,14); points->setValue(pref.points); points->setSuffix(QStringLiteral(" pt"));
+        auto *sample = new QLabel(tr("Temperature · Fan Speed · Configuration")); sample->setWordWrap(true);
+        auto *number = new QLabel(QStringLiteral("0123456789  −125.75  2560 × 1600")); number->setWordWrap(true);
+        form->addRow(system); form->addRow(tr("Interface Font"), family); form->addRow(tr("Point Size"),points); form->addRow(mono); form->addRow(tr("Numeric Font"),numeric);
+        layout->addWidget(sample); layout->addWidget(number);
+        auto refresh = [=] { family->setEnabled(!system->isChecked()); numeric->setEnabled(mono->isChecked()); QFont f = system->isChecked() ? QFontDatabase::systemFont(QFontDatabase::GeneralFont) : family->currentFont(); f.setPointSize(points->value()); sample->setStyleSheet(QStringLiteral("font-size:%1pt;").arg(points->value())); sample->setFont(f); QFont n = mono->isChecked() ? numeric->currentFont() : f; n.setPointSize(points->value()); number->setStyleSheet(QStringLiteral("font-size:%1pt;").arg(points->value())); number->setFont(n); };
+        connect(system,&QCheckBox::toggled,&dlg,refresh); connect(mono,&QCheckBox::toggled,&dlg,refresh); connect(family,&QFontComboBox::currentFontChanged,&dlg,refresh); connect(numeric,&QFontComboBox::currentFontChanged,&dlg,refresh); connect(points,&QSpinBox::valueChanged,&dlg,refresh);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save|QDialogButtonBox::Cancel|QDialogButtonBox::Reset); layout->addWidget(buttons);
+        connect(buttons->button(QDialogButtonBox::Reset),&QPushButton::clicked,&dlg,[=]{system->setChecked(true);mono->setChecked(false);points->setValue(theme::FONT_PT);refresh();});
+        connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);
+        connect(buttons,&QDialogButtonBox::accepted,&dlg,[&]{ if (!theme::saveTypography({system->isChecked()?QString():family->currentFont().family(),mono->isChecked()?numeric->currentFont().family():QString(),points->value()})) { QMessageBox::warning(&dlg,tr("Typography"),tr("Could not save typography preferences.")); return; } dlg.accept(); });
+        refresh();
+        if (dlg.exec() == QDialog::Accepted && QMessageBox::question(this,tr("Typography"),tr("Restart Centurion to apply typography preferences?")) == QMessageBox::Yes) theme::requestRestart();
+    });
     if (theme::experimentalEnabled()) {
         preferences = new QWidget;
         preferencesRow = new QFormLayout(preferences);
@@ -417,11 +443,12 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         preferencesRow->addRow(themeGallery);
         preferencesRow->addRow(contrastAudit);
         preferencesRow->addRow(density);
+        preferencesRow->addRow(typography);
     } else {
         headRow->addWidget(themeLabel, 0, Qt::AlignVCenter);
         headRow->addWidget(themeBox, 0, Qt::AlignVCenter);
         auto *appearance = new QMenu(this);
-        for (QWidget *w : {static_cast<QWidget *>(customTheme), static_cast<QWidget *>(themeGallery), static_cast<QWidget *>(contrastAudit), static_cast<QWidget *>(density)}) { auto *a = new QWidgetAction(appearance); a->setDefaultWidget(w); appearance->addAction(a); }
+        for (QWidget *w : {static_cast<QWidget *>(customTheme), static_cast<QWidget *>(themeGallery), static_cast<QWidget *>(contrastAudit), static_cast<QWidget *>(density), static_cast<QWidget *>(typography)}) { auto *a = new QWidgetAction(appearance); a->setDefaultWidget(w); appearance->addAction(a); }
         auto *appearanceButton = new QPushButton(tr("Appearance")); appearanceButton->setMenu(appearance); headRow->addWidget(appearanceButton);
     }
     // Both UI modes use the exact same hardware features. Saving the mode

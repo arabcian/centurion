@@ -34,6 +34,8 @@ jobs:
       - run: python3 gui/tests/translation_tr_test.py
       - run: python3 gui/tests/edidfields_native_test.py
       - run: python3 gui/tests/hardwarefields_native_test.py
+      - run: python3 gui/tests/firewallpreview_native_test.py
+      - run: python3 tests/test_firewall_preview_contract_static.py
       - name: Visual comparison artifacts
         if: always()
         uses: actions/upload-artifact@v4

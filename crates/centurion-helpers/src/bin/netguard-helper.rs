@@ -15,6 +15,7 @@
 //!     {"op":"firewall", "enabled": bool, "inbound"|"outbound": "allow|block|reject", "ping_in"|"ping_out": bool,
 //!      "add": [rule], "front": bool, "update": [rule with id], "remove": [id], "move": {"id": n, "by": ±1},
 //!      "port": {"proto": "tcp|udp", "port": n, "state": "open|closed|lan|default"}}   every field optional
+//!       optional expected_firewall: exact saved configuration snapshot; stale requests are refused under the lock.
 //!       rule: {"dir": "in|out", "action": "allow|block|reject", "proto": "tcp|udp|any", "ports": "80, 8000-8100",
 //!              "remote": "lan | address, cidr, range", "iface": "wg*", "note": text, "enabled": bool}
 //!     {"op":"fw_inspect"}   the live table, hit counters and other filter chains on the same hooks

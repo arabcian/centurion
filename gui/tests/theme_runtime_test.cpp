@@ -30,6 +30,13 @@ int main(int argc, char **argv) {
     CHECK(!theme::compactDensity());
     theme::load(); CHECK(theme::compactDensity());
     CHECK(theme::saveCompactDensity(false)); theme::load(); CHECK(!theme::compactDensity());
+    CHECK(theme::typographyPreference().points == theme::FONT_PT);
+    CHECK(!theme::saveTypography({{}, {}, 100}));
+    CHECK(!theme::saveTypography({QStringLiteral("bad;family"), {}, 9}));
+    CHECK(theme::saveTypography({QStringLiteral("Missing font"), QStringLiteral("Missing fixed font"), 12}));
+    CHECK(theme::typographyPreference().points == 12);
+    CHECK(theme::typographyPreference().numericFamily == QStringLiteral("Missing fixed font"));
+    CHECK(theme::saveTypography({}));
     CHECK(theme::saveTheme(QStringLiteral("oled-black"))); theme::load();
     CHECK(QByteArray(theme::BG0) == QByteArray("#000000"));
     const auto original = theme::paletteColors(QStringLiteral("graphite"));

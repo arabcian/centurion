@@ -6,6 +6,19 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QDir>
+#include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusObjectPath>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QPointer>
+#include <QVariantMap>
 #include <QFile>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -62,6 +75,70 @@ static QLabel *muted(const QString &t) {
     l->setProperty("role", "muted");
     l->setWordWrap(true);
     return l;
+}
+
+namespace {
+// Explicitly requested, read-only. Do not run systemctl/rc-service or infer
+// successful application from a service's enabled/started state.
+void inspectBootService(QWidget *parent) {
+    auto tr = [](const char *s) { return QCoreApplication::translate("BootServiceInspector", s); };
+    QDialog dlg(parent); dlg.setWindowTitle(tr("Boot Service Inspector")); dlg.resize(700, 450);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *hint = new QLabel(tr("Service state is not proof that tuning was applied. Compare saved values with live readback in Optimizations. No services are started or changed.")); hint->setWordWrap(true); layout->addWidget(hint);
+    auto *out = new QPlainTextEdit; out->setReadOnly(true); layout->addWidget(out, 1);
+    auto append = [out](const QString &line) { out->appendPlainText(line); };
+    const auto boot = readAll(QStringLiteral("/proc/sys/kernel/random/boot_id"));
+    append(tr("Current boot ID: %1").arg(boot.isEmpty() ? tr("Unknown") : boot));
+    QFile guard(QStringLiteral("/var/lib/centurion/boot-guard.json"));
+    const auto unknown = tr("Unknown");
+    if (guard.open(QIODevice::ReadOnly)) {
+        const auto data = guard.read(16385); const auto obj = data.size() <= 16384 ? QJsonDocument::fromJson(data).object() : QJsonObject{};
+        const auto id = obj.value("boot_id").toString(), state = obj.value("state").toString();
+        append(tr("Boot guard: %1").arg(!boot.isEmpty() && id == boot && (state == "armed" || state == "ok" || state == "paused") ? state : unknown));
+        if (!id.isEmpty() && id != boot) append(tr("Guard record belongs to another boot: %1").arg(id));
+        if (obj.value("tripped").isBool()) append(tr("Recorded guard trip: %1").arg(obj.value("tripped").toBool() ? tr("Yes") : tr("No")));
+    } else append(tr("Boot guard record unavailable: %1").arg(guard.errorString()));
+    if (QFileInfo::exists(QStringLiteral("/run/openrc"))) {
+        append(tr("OpenRC evidence"));
+        const QDir runlevels(QStringLiteral("/etc/runlevels")); QStringList enabled;
+        bool readable = runlevels.exists() && QFileInfo(runlevels.absolutePath()).isReadable();
+        if (readable) for (const auto &name : runlevels.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            const auto dir = runlevels.filePath(name); if (!QFileInfo(dir).isReadable()) { readable = false; continue; }
+            const QFileInfo link(QDir(dir).filePath(QStringLiteral("centurion-tune")));
+            if (link.exists() || link.isSymLink()) enabled << name;
+        }
+        append(tr("Runlevel entries: %1").arg(!enabled.isEmpty() ? enabled.join(", ") : readable ? tr("None found") : unknown));
+        const auto marker = [&](const QString &state) { const QFileInfo dir(QStringLiteral("/run/openrc/") + state); if (!dir.isDir() || !dir.isReadable()) return unknown; const QFileInfo f(dir.absoluteFilePath() + QStringLiteral("/centurion-tune")); return f.exists() || f.isSymLink() ? tr("Present") : tr("Not found"); };
+        append(tr("Started marker: %1").arg(marker(QStringLiteral("started"))));
+        append(tr("Failed marker: %1").arg(marker(QStringLiteral("failed"))));
+        append(tr("Last run and per-setting result: unknown (OpenRC marker is not an apply receipt)."));
+    }
+    if (QFileInfo::exists(QStringLiteral("/run/systemd/system"))) {
+        append(tr("systemd read-only properties"));
+        const auto bus = QDBusConnection::systemBus();
+        const QString svc = QStringLiteral("org.freedesktop.systemd1"), mgr = QStringLiteral("/org/freedesktop/systemd1"), manager = svc + QStringLiteral(".Manager");
+        auto query = [bus,svc,mgr,manager](const QString &method) { auto m = QDBusMessage::createMethodCall(svc,mgr,manager,method); m << QStringLiteral("centurion-tune.service"); return bus.asyncCall(m, 3000); };
+        auto *enabled = new QDBusPendingCallWatcher(query(QStringLiteral("GetUnitFileState")), &dlg);
+        QObject::connect(enabled, &QDBusPendingCallWatcher::finished, &dlg, [append,tr](QDBusPendingCallWatcher *w) { QDBusPendingReply<QString> r = *w; append(tr("Unit file state: %1").arg(r.isError() ? r.error().name() : r.value())); w->deleteLater(); });
+        auto *unit = new QDBusPendingCallWatcher(query(QStringLiteral("GetUnit")), &dlg);
+        QObject::connect(unit, &QDBusPendingCallWatcher::finished, &dlg, [&,append,tr,bus,svc](QDBusPendingCallWatcher *w) {
+            QDBusPendingReply<QDBusObjectPath> r = *w; w->deleteLater();
+            if (r.isError()) { append(tr("Loaded unit unavailable: %1").arg(r.error().name())); return; }
+            for (const auto &type : {QStringLiteral("Unit"), QStringLiteral("Service")}) {
+                auto m = QDBusMessage::createMethodCall(svc,r.value().path(),QStringLiteral("org.freedesktop.DBus.Properties"),QStringLiteral("GetAll")); m << (svc + QLatin1Char('.') + type);
+                auto *props = new QDBusPendingCallWatcher(bus.asyncCall(m, 3000), &dlg);
+                QObject::connect(props, &QDBusPendingCallWatcher::finished, &dlg, [append,tr,type,unknown](QDBusPendingCallWatcher *w2) {
+                    QDBusPendingReply<QVariantMap> pr = *w2; w2->deleteLater(); if (pr.isError()) { append(tr("Properties unavailable: %1").arg(pr.error().name())); return; }
+                    const auto v = pr.value();
+                    const auto field = [&](const char *k) { const auto val = v.value(QLatin1String(k)); return val.isValid() ? val.toString() : unknown; };
+                    if (type == "Unit") { append(tr("Load state: %1").arg(field("LoadState"))); append(tr("Active state: %1").arg(field("ActiveState"))); append(tr("Substate: %1").arg(field("SubState"))); }
+                    else { append(tr("Service result: %1").arg(field("Result"))); append(tr("Main exit status: %1").arg(field("ExecMainStatus"))); bool ok = false; const auto us = v.value("ExecMainExitTimestamp").toULongLong(&ok); append(tr("Last main process exit: %1").arg(ok && us > 0 && us/1000 < 253402300800000ULL ? QDateTime::fromMSecsSinceEpoch(qint64(us/1000)).toString(Qt::ISODate) : unknown)); }
+                });
+            }
+        });
+    } else if (!QFileInfo::exists(QStringLiteral("/run/openrc"))) append(tr("Supported running init system not detected."));
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons); QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+}
 }
 
 BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
@@ -298,6 +375,9 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
     cmdline_ = muted(QString());
     cmdline_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     v->addWidget(cmdline_);
+    auto *service = new QPushButton(tr("Boot Service Inspector…"));
+    connect(service, &QPushButton::clicked, this, [this] { inspectBootService(this); });
+    v->addWidget(service);
 
     // Same column widths in every section, so names / states line up across boxes.
     QList<QLabel *> nameLabels, statusLabels;

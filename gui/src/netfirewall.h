@@ -20,6 +20,7 @@ public:
     void applyStatus(const QJsonObject &status);
     /// A request was refused: back to what is really configured.
     void restore();
+    void previewConnection(const QJsonObject &record = {});
     /// Services other machines can reach now ("SSH: tcp 22"), named when inbound is about to be blocked.
     void setExposed(const QStringList &services) { exposed_ = services; }
     /// The answer of {"op":"fw_inspect"}: fills the hit counters and opens the report.
@@ -32,6 +33,7 @@ Q_SIGNALS:
 
 private:
     void fill();
+    void submitChange(QJsonObject request, const QJsonObject &expected);
     void addRule();
     void editRule();
     void toggleRules();

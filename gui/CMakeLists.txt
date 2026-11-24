@@ -105,7 +105,7 @@ add_executable(centurion
     src/netpage.cpp      src/netpage.h
     src/netfirewall.cpp  src/netfirewall.h
     src/netlookup.cpp    src/netlookup.h
-    src/netrules.cpp     src/netrules.h
+    src/netrules.cpp     src/netrules.h src/firewallpreview.h
     src/blocklistsubs.cpp src/blocklistsubs.h
     src/traffic.cpp      src/traffic.h
     src/backuppage.cpp   src/backuppage.h

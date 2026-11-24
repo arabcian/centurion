@@ -26,3 +26,7 @@ QString reverseDnsName(const QString &ip);
 /// Compare helper-reported saved configurations, not the effective nftables ruleset.
 /// Incompatible/missing identities are explicitly rejected.
 QStringList firewallConfigDiff(const QJsonObject &before, const QJsonObject &after);
+/// Hypothetical local NEW TCP/UDP saved-chain decision, never an effective verdict.
+QString firewallConnectionPreview(const QJsonObject &config, const QString &direction,
+                                  const QString &protocol, const QString &peer, int destinationPort,
+                                  const QString &iface = {});

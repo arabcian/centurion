@@ -1,6 +1,8 @@
 #include "theme.h"
 #include <QApplication>
 #include <QFontMetrics>
+#include <QFontDatabase>
+#include <algorithm>
 #include <QHash>
 #include <QIcon>
 #include <QPainter>
@@ -155,6 +157,8 @@ quint64 g_revision = 0;
 bool g_restart = false;
 bool g_experimental = true;
 bool g_compact = false;
+Typography g_typography;
+QString g_numericFamily;
 std::function<bool()> g_restartGuard;
 QSettings settings() {
     return QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
@@ -248,6 +252,23 @@ bool saveCompactDensity(bool compact) {
     s.sync(); return s.status() == QSettings::NoError;
 }
 
+static bool validFontName(const QString &s) {
+    return s.size() <= 160 && !s.contains(QLatin1Char('"')) && !s.contains(QLatin1Char('\\')) &&
+           !s.contains(QLatin1Char(';')) && !s.contains(QLatin1Char('{')) && !s.contains(QLatin1Char('}')) &&
+           std::none_of(s.cbegin(), s.cend(), [](QChar c) { return c.category() == QChar::Other_Control; });
+}
+Typography typographyPreference() {
+    const auto v = settings().value(QStringLiteral("ui/typography/v1")).toStringList();
+    if (v.size() != 3 || !validFontName(v[0]) || !validFontName(v[1])) return {};
+    bool ok = false; const int points = v[2].toInt(&ok);
+    return ok && points >= 8 && points <= 14 ? Typography{v[0], v[1], points} : Typography{};
+}
+bool saveTypography(const Typography &v) {
+    if (!validFontName(v.family) || !validFontName(v.numericFamily) || v.points < 8 || v.points > 14) return false;
+    auto s = settings(); s.setValue(QStringLiteral("ui/typography/v1"), QStringList{v.family,v.numericFamily,QString::number(v.points)});
+    s.sync(); return s.status() == QSettings::NoError;
+}
+
 static bool knownPalette(const QString &id) { return !lookupPalette(id).isEmpty(); }
 
 static void setTokens(const QString &id, const QStringList &colors) {
@@ -263,6 +284,7 @@ static void setTokens(const QString &id, const QStringList &colors) {
 }
 
 void load() {
+    g_typography = typographyPreference();
     g_compact = settings().value(QStringLiteral("ui/compact_density"), false).toBool();
     g_experimental = readExperimentalChoice();
     const QString want = settings().value(QStringLiteral("theme")).toString();
@@ -392,7 +414,7 @@ static QString mix(const char *a, const char *b, double t) {
 int brandInset() {
     // Same font the style sheet gives QLabel#appWordmark (family from the desktop).
     QFont f = QApplication::font();
-    f.setPointSize(FONT_PT + 2);
+    f.setPointSize(g_typography.points + 2);
     f.setWeight(QFont::Bold);
     return BRAND_X + BRAND_ICON + BRAND_GAP + QFontMetrics(f).horizontalAdvance(QStringLiteral("Centurion"))
            + (experimentalEnabled() ? 118 : 22);
@@ -838,6 +860,14 @@ QTabBar::tab { padding-top: 3px; padding-bottom: 3px; }
 QTreeView::item, QTableView::item { padding: 1px 3px; }
 QHeaderView::section { padding: 3px 5px; }
 )QSS");
+    if (g_typography.points != FONT_PT) {
+        // Scale every point-size token in the shared QSS, preserving relative hierarchy.
+        const QRegularExpression re(QStringLiteral(R"(font-size:\s*(\d+)pt)"));
+        auto it = re.globalMatch(s); QList<QPair<qsizetype, QPair<qsizetype, QString>>> changes;
+        while (it.hasNext()) { const auto m = it.next(); changes.append({m.capturedStart(1), {m.capturedLength(1), QString::number(qMax(6, qRound(m.captured(1).toInt() * double(g_typography.points) / FONT_PT)))}}); }
+        for (auto i = changes.crbegin(); i != changes.crend(); ++i) s.replace(i->first, i->second.first, i->second.second);
+    }
+    if (!g_numericFamily.isEmpty()) s += QStringLiteral("\nQAbstractSpinBox { font-family: \"%1\"; }\n").arg(g_numericFamily);
     return s;
 }
 
@@ -864,6 +894,16 @@ public:
 void applyBase(QApplication &app) {
     // Fusion honours all of the QSS; native styles each ignore a different subset.
     app.setStyle(new Style(QStyleFactory::create(QStringLiteral("Fusion"))));
+    const auto installed = QFontDatabase::families();
+    QFont font = app.font();
+    if (!g_typography.family.isEmpty() && installed.contains(g_typography.family)) font.setFamily(g_typography.family);
+    if (!g_typography.family.isEmpty() || g_typography.points != FONT_PT) { font.setPointSize(g_typography.points); app.setFont(font); }
+    g_numericFamily.clear();
+    if (!g_typography.numericFamily.isEmpty()) {
+        const QString chosen = installed.contains(g_typography.numericFamily) && QFontDatabase::isFixedPitch(g_typography.numericFamily)
+                ? g_typography.numericFamily : QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+        if (validFontName(chosen)) g_numericFamily = chosen;
+    }
     app.setPalette(palette());
 }
 

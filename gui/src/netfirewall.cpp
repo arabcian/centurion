@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -201,10 +202,13 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
     auto *bDel = button(tr("Remove"));
     bDel->setObjectName(QStringLiteral("btnDanger"));
     row->addStretch(1);
-    auto *pin = button(tr("Pin rules"));
-    auto *diff = button(tr("Compare rules…"));
+    v->addLayout(row);
+    auto *reviewRow = new QHBoxLayout;
+    auto reviewButton = [reviewRow](const QString &text) { auto *b = new QPushButton(text); reviewRow->addWidget(b); return b; };
+    auto *pin = reviewButton(tr("Pin rules"));
+    auto *diff = reviewButton(tr("Compare rules…"));
     diff->setEnabled(false);
-    connect(pin, &QPushButton::clicked, this, [this, diff] { if (!fw_.value("rules").isArray()) return; pinnedFw_ = fw_; diff->setEnabled(true); });
+    connect(pin, &QPushButton::clicked, this, [this, diff] { if (status_.contains("config_error") || !fw_.value("rules").isArray()) return; pinnedFw_ = fw_; diff->setEnabled(true); });
     connect(diff, &QPushButton::clicked, this, [this] {
         const auto changes = firewallConfigDiff(pinnedFw_, fw_);
         QDialog dlg(this); dlg.setWindowTitle(tr("Saved Firewall Rule Diff")); dlg.resize(740, 440);
@@ -214,9 +218,12 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
         auto *text = new QPlainTextEdit(changes.isEmpty() ? tr("No recorded changes.") : changes.join(QLatin1Char('\n'))); text->setReadOnly(true); layout->addWidget(text, 1);
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons); connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
     });
-    auto *bCheck = button(tr("Check live rules…"));
+    auto *impact = reviewButton(tr("Connection preview…"));
+    connect(impact, &QPushButton::clicked, this, [this] { previewConnection(); });
+    auto *bCheck = reviewButton(tr("Check live rules…"));
     bCheck->setToolTip(tr("Asks the kernel what is really loaded: hit counters for every rule, and other firewalls on this machine that can override these rules. Needs the administrator password."));
-    v->addLayout(row);
+    reviewRow->addStretch(1);
+    v->addLayout(reviewRow);
 
     auto *note = new QLabel(tr("The first matching rule decides, from the top down; the default policy applies when none matches. "
                                "Loopback, replies to existing connections, and what the network itself needs (DHCP, IPv6 neighbour discovery) always pass. "
@@ -227,16 +234,17 @@ FirewallTab::FirewallTab(QWidget *parent) : QWidget(parent) {
     v->addWidget(note);
 
     connect(enabled_, &QCheckBox::clicked, this, [this](bool on) {
+        const auto revision = fw_;
         const QString in = inbound_->currentData().toString(), out = outbound_->currentData().toString();
         if (on && (in != QLatin1String("allow") || out != QLatin1String("allow"))) {
             QString ask = tr("Turn the firewall on? New incoming connections: %1. New outgoing connections: %2.").arg(policyName(in), policyName(out));
             if (in != QLatin1String("allow") && !exposed_.isEmpty()) ask += QStringLiteral("\n\n") + tr("Services other machines can reach now:\n%1").arg(exposed_.mid(0, 12).join(QLatin1Char('\n')));
             if (QMessageBox::question(this, tr("Firewall"), ask) != QMessageBox::Yes) { restore(); return; }
         }
-        Q_EMIT changeRequested({{"enabled", on}});
+        submitChange({{"enabled", on}}, revision);
     });
-    connect(pingIn_, &QCheckBox::clicked, this, [this](bool on) { Q_EMIT changeRequested({{"ping_in", on}}); });
-    connect(pingOut_, &QCheckBox::clicked, this, [this](bool on) { Q_EMIT changeRequested({{"ping_out", on}}); });
+    connect(pingIn_, &QCheckBox::clicked, this, [this](bool on) { submitChange({{"ping_in", on}}, fw_); });
+    connect(pingOut_, &QCheckBox::clicked, this, [this](bool on) { submitChange({{"ping_out", on}}, fw_); });
     connect(inbound_, &QComboBox::activated, this, [this] { policyChosen(true); });
     connect(outbound_, &QComboBox::activated, this, [this] { policyChosen(false); });
     connect(bAdd, &QPushButton::clicked, this, &FirewallTab::addRule);
@@ -340,7 +348,18 @@ QList<int> FirewallTab::selectedIds() const {
     return ids;
 }
 
+void FirewallTab::submitChange(QJsonObject request, const QJsonObject &expected) {
+    if (status_.contains("config_error") || !expected.value("rules").isArray() || expected != fw_) {
+        restore(); QMessageBox::warning(this, tr("Firewall"), tr("Saved rules changed while the editor was open. Review the current rules and try again.")); return;
+    }
+    auto canonical = expected;
+    canonical.remove(QStringLiteral("shadowed")); // derived status metadata, not saved config
+    request.insert(QStringLiteral("expected_firewall"), canonical);
+    Q_EMIT changeRequested(request);
+}
+
 void FirewallTab::policyChosen(bool inbound) {
+    const auto revision = fw_;
     QComboBox *box = inbound ? inbound_ : outbound_;
     const QString policy = box->currentData().toString();
     const char *key = inbound ? "inbound" : "outbound";
@@ -369,7 +388,7 @@ void FirewallTab::policyChosen(bool inbound) {
             return;
         }
     }
-    Q_EMIT changeRequested(req);
+    submitChange(req, revision);
 }
 
 void FirewallTab::addRule() {
@@ -377,7 +396,7 @@ void FirewallTab::addRule() {
     const auto revision = fw_;
     if (!ruleDialog(this, r, tr("Add firewall rule"))) return;
     if (revision != fw_) { QMessageBox::warning(this,tr("Firewall"),tr("Saved rules changed while the editor was open. Review the current rules and try again.")); return; }
-    Q_EMIT changeRequested({{"add", QJsonArray{r}}});
+    submitChange({{"add", QJsonArray{r}}}, revision);
 }
 
 void FirewallTab::editRule() {
@@ -389,7 +408,7 @@ void FirewallTab::editRule() {
         const auto revision = fw_;
         if (ruleDialog(this, r, tr("Edit firewall rule"))) {
             if (revision != fw_) { QMessageBox::warning(this,tr("Firewall"),tr("Saved rules changed while the editor was open. Review the current rules and try again.")); return; }
-            Q_EMIT changeRequested({{"update", QJsonArray{r}}});
+            submitChange({{"update", QJsonArray{r}}}, revision);
         }
         return;
     }
@@ -404,20 +423,21 @@ void FirewallTab::toggleRules() {
         r[QStringLiteral("enabled")] = !r.value(QLatin1String("enabled")).toBool(true);
         update.append(r);
     }
-    if (!update.isEmpty()) Q_EMIT changeRequested({{"update", update}});
+    if (!update.isEmpty()) submitChange({{"update", update}}, fw_);
 }
 
 void FirewallTab::removeRules() {
+    const auto revision = fw_;
     const QList<int> ids = selectedIds();
     if (ids.isEmpty() || QMessageBox::question(this, tr("Firewall"), tr("Remove %1 rule(s)?").arg(ids.size())) != QMessageBox::Yes) return;
     QJsonArray a;
     for (int id : ids) a.append(id);
-    Q_EMIT changeRequested({{"remove", a}});
+    submitChange({{"remove", a}}, revision);
 }
 
 void FirewallTab::moveRule(int by) {
     const QList<int> ids = selectedIds();
-    if (ids.size() == 1) Q_EMIT changeRequested({{"move", QJsonObject{{"id", ids.first()}, {"by", by}}}});
+    if (ids.size() == 1) submitChange({{"move", QJsonObject{{"id", ids.first()}, {"by", by}}}}, fw_);
 }
 
 void FirewallTab::showInspection(const QJsonObject &report) {
@@ -467,4 +487,24 @@ void FirewallTab::showInspection(const QJsonObject &report) {
     connect(box, &QDialogButtonBox::rejected, d, &QDialog::close);
     v->addWidget(box);
     d->show();
+}
+
+void FirewallTab::previewConnection(const QJsonObject &record) {
+    const auto saved = status_.contains("config_error") ? QJsonObject{} : fw_;
+    const auto pinned = pinnedFw_; // frozen, read-only snapshots
+    QDialog dlg(this); dlg.setWindowTitle(tr("Saved Firewall Connection Preview")); dlg.resize(640, 400);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *hint = new QLabel(tr("Hypothetical new local TCP/UDP connection. Only the saved Centurion chain is evaluated, not live nftables, connection state, other firewalls, blacklist, Wine guard or NAT. No access guarantee. Unknown interface-dependent matches remain unknown.")); hint->setWordWrap(true); layout->addWidget(hint);
+    auto *form = new QFormLayout; layout->addLayout(form);
+    auto *dir = new QComboBox; dir->addItem(tr("Incoming"), "in"); dir->addItem(tr("Outgoing"), "out");
+    auto *proto = new QComboBox; proto->addItem("TCP", "tcp"); proto->addItem("UDP", "udp");
+    auto *peer = new QLineEdit(str(record, "remote")); peer->setMaxLength(64);
+    auto *port = new QSpinBox; port->setRange(0, 65535); port->setSpecialValueText(tr("Unknown"));
+    auto *iface = new QLineEdit; iface->setMaxLength(15); iface->setPlaceholderText(tr("Unknown interface"));
+    if (!record.isEmpty()) { const auto d = str(record, "dir"); const auto p = str(record, "proto"); dir->setCurrentIndex(dir->findData(d)); proto->setCurrentIndex(proto->findData(p)); port->setValue(record.value(d == "in" ? "lport" : "rport").toInt()); }
+    form->addRow(tr("Direction"), dir); form->addRow(tr("Protocol"), proto); form->addRow(tr("Remote Address"), peer); form->addRow(tr("Destination Port"), port); form->addRow(tr("Interface"), iface);
+    auto *result = new QLabel; result->setTextFormat(Qt::PlainText); result->setWordWrap(true); layout->addWidget(result);
+    auto refresh = [=] { auto eval = [&](const QJsonObject &c) { return firewallConnectionPreview(c, dir->currentData().toString(), proto->currentData().toString(), peer->text(), port->value(), iface->text()); }; result->setText(tr("Current saved snapshot: %1").arg(eval(saved)) + (pinned.isEmpty() ? QString() : QStringLiteral("\n") + tr("Pinned saved snapshot: %1").arg(eval(pinned)))); };
+    connect(dir, &QComboBox::currentIndexChanged, &dlg, refresh); connect(proto, &QComboBox::currentIndexChanged, &dlg, refresh); connect(peer, &QLineEdit::textChanged, &dlg, refresh); connect(port, &QSpinBox::valueChanged, &dlg, refresh); connect(iface, &QLineEdit::textChanged, &dlg, refresh); refresh();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons); connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); dlg.exec();
 }

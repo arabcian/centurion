@@ -42,6 +42,17 @@ int main() {
     CHECK(firewallConfigDiff(rules,QJsonObject{{"rules",QJsonArray{rule1}}}).size()==1);
     CHECK(firewallConfigDiff(rules,QJsonObject{{"rules",QJsonArray{rule1,rule1}}}).size()==1);
 
+    QJsonObject realRule{{"id",7},{"dir","in"},{"proto","tcp"},{"ports","80,81"},{"remote","2001:db8::1/32"},{"iface",""},{"enabled",true},{"action","reject"}};
+    QJsonObject realCfg{{"enabled",true},{"inbound","block"},{"outbound","allow"},{"rules",QJsonArray{realRule}}};
+    realCfg["shadowed"] = QJsonArray{}; // helper status adds derived metadata
+    CHECK(firewallConnectionPreview(realCfg,"in","tcp","2001:db8::2",81).contains("Rule 7"));
+    CHECK(firewallConnectionPreview(realCfg,"in","udp","2001:db8::2",81).contains("Default policy"));
+    realRule["ports"]="80-81"; realRule["remote"]="2001:db8::/32";
+    const QJsonObject equivalent{{"enabled",true},{"inbound","block"},{"outbound","allow"},{"rules",QJsonArray{realRule}}};
+    CHECK(firewallConfigDiff(realCfg,equivalent).isEmpty());
+    realRule["unsupported_expression"]="ct state";
+    realCfg["rules"]=QJsonArray{realRule};
+    CHECK(firewallConnectionPreview(realCfg,"in","tcp","2001:db8::2",81).startsWith("Unknown"));
     if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }
     std::printf("netrules: all checks passed\n");
     return 0;
