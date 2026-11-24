@@ -48,4 +48,30 @@ inline Inspection inspect(std::span<const std::uint8_t> data) {
 inline bool trusted(const Inspection &i) {
     return i.header && i.complete && !i.blocks.empty() && std::all_of(i.blocks.begin(),i.blocks.end(),[](const Block &b){return b.declared && b.checksum && b.structure;});
 }
+// Only complete, structurally trusted captures are eligible for a timing plot.
+// Unknown extension formats remain opaque. Interlaced DTDs are not mixed with
+// progressive frame rates: their vertical fields have different semantics.
+struct Timing {
+    std::size_t offset;
+    unsigned hActive, hBlank, vActive, vBlank, pixelClock10kHz;
+    double refreshHz() const { return double(pixelClock10kHz) * 10000.0 / ((hActive+hBlank)*(vActive+vBlank)); }
+};
+inline std::vector<Timing> progressiveTimings(std::span<const std::uint8_t> data) {
+    const auto inspection = inspect(data);
+    std::vector<Timing> out;
+    if (!trusted(inspection)) return out;
+    for (const auto &f : inspection.fields) {
+        if (f.kind != Kind::DetailedTiming || f.length != 18) continue;
+        const auto d = data.subspan(f.offset, f.length);
+        if (d[17] & 0x80) continue;
+        const unsigned clock = unsigned(d[0]) | (unsigned(d[1]) << 8);
+        const unsigned ha = unsigned(d[2]) | ((unsigned(d[4]) & 0xf0) << 4);
+        const unsigned hb = unsigned(d[3]) | ((unsigned(d[4]) & 0x0f) << 8);
+        const unsigned va = unsigned(d[5]) | ((unsigned(d[7]) & 0xf0) << 4);
+        const unsigned vb = unsigned(d[6]) | ((unsigned(d[7]) & 0x0f) << 8);
+        if (!clock || !ha || !hb || !va || !vb) continue;
+        out.push_back({f.offset, ha, hb, va, vb, clock});
+    }
+    return out;
+}
 } // namespace edidfields

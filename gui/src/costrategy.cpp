@@ -266,6 +266,24 @@ std::optional<Trial> Search::previewNext() const {
     return copy.next();
 }
 
+std::optional<Search::WorkEstimate> Search::remainingIfPass(bool pending, bool failPending) const {
+    Search copy = *this;
+    if (pending) copy.report(Outcome{!failPending, {}});
+    WorkEstimate work;
+    // A finite budget keeps malformed/unexpected state from blocking the GUI.
+    for (int i = 0; i < 4096; ++i) {
+        const auto trial = copy.next();
+        if (!trial) return work;
+        const int seconds = trial->seconds();
+        if (seconds <= 0 || trial->tests.isEmpty()) return std::nullopt;
+        work.seconds += seconds;
+        ++work.trials;
+        work.tests += int(trial->tests.size());
+        copy.report(Outcome{true, {}});
+    }
+    return std::nullopt;
+}
+
 std::optional<Trial> Search::inFlight() const {
     if (stage_ == Stage::AllCore && cand_ < 0) return allCoreTrial(cand_);
     if (stage_ == Stage::PerCore && tested_ >= 0 && tested_ < cores_.size() && cand_ < 0)

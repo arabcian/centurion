@@ -1,4 +1,8 @@
 #include "edidfields.h"
+#include "diagnostictools.h"
+#include <QPainter>
+#include <QTextBlock>
+#include <cmath>
 #include <QSpinBox>
 #include <QTextCursor>
 #include <QMap>
@@ -274,6 +278,51 @@ QWidget *tableWidget(const diag::Table &t) {
     return box;
 }
 
+// Read-only, common Hz axis. The band is only an explicit decoded VRR range;
+// DTD marks are advertised progressive modes, not current compositor state.
+class EdidTimingPlot final : public QWidget {
+public:
+    explicit EdidTimingPlot(QWidget *parent = nullptr) : QWidget(parent) { setMinimumHeight(86); }
+    void setData(std::vector<edidfields::Timing> timings, int minimum, int maximum) {
+        timings_ = std::move(timings); minimum_ = minimum; maximum_ = maximum; selected_ = -1; update();
+    }
+    void selectOffset(int offset) { selected_ = offset; update(); }
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        const QColor fg(theme::FG), accent(theme::ACCENT), info(theme::INFO);
+        p.setPen(fg);
+        if (timings_.empty() && maximum_ <= 0) {
+            p.drawText(rect().adjusted(8, 4, -8, -4), Qt::AlignCenter | Qt::TextWordWrap,
+                       QCoreApplication::translate("diag", "No verified progressive timing or explicit VRR range to plot."));
+            return;
+        }
+        double high = std::max(60.0, double(maximum_));
+        for (const auto &t : timings_) high = std::max(high, t.refreshHz());
+        high = std::ceil(high / 10.0) * 10.0;
+        const double left = 12, right = width() - 12;
+        if (right <= left) return;
+        const auto x = [&](double hz) { return left + hz / high * (right-left); };
+        const int axis = height()/2;
+        p.setPen(QPen(QColor(theme::BORDER), 2)); p.drawLine(QPointF(left,axis),QPointF(right,axis));
+        if (minimum_ > 0 && maximum_ >= minimum_) {
+            p.setPen(QPen(info, 7, Qt::SolidLine, Qt::RoundCap));
+            p.drawLine(QPointF(x(minimum_),axis-13),QPointF(x(maximum_),axis-13));
+        }
+        for (const auto &t : timings_) {
+            const auto hz = x(t.refreshHz());
+            const bool selected = selected_ >= int(t.offset) && selected_ < int(t.offset+18);
+            p.setPen(QPen(selected ? accent : fg, selected ? 3 : 1));
+            p.drawLine(QPointF(hz,axis-4),QPointF(hz,axis+(selected?15:8)));
+        }
+        p.setPen(fg); p.drawText(QRectF(left,axis+20,right-left,22),Qt::AlignLeft,QStringLiteral("0 Hz"));
+        p.drawText(QRectF(left,axis+20,right-left,22),Qt::AlignRight,QStringLiteral("%1 Hz").arg(high,0,'f',0));
+    }
+private:
+    std::vector<edidfields::Timing> timings_;
+    int minimum_ = 0, maximum_ = 0, selected_ = -1;
+};
+
 // Inspect the frozen report, never re-open a connector or change an EDID override.
 void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &fields) {
     auto tr = [](const char *s) { return QCoreApplication::translate("diag", s); };
@@ -282,19 +331,29 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         bool ok = false; const auto offset = row.value(2).toInt(&ok,16);
         auto &capture = captures[row.value(0)];
         if (!ok || offset != capture.size() || offset < 0 || offset >= 4096) return;
-        const auto chunk = QByteArray::fromHex(row.value(3).toLatin1());
-        if (chunk.isEmpty() || chunk.size() > 16) return;
+        const QByteArray hex = row.value(3).toLatin1().toLower();
+        const auto chunk = QByteArray::fromHex(hex);
+        if (chunk.isEmpty() || chunk.size() > 16 || offset + chunk.size() > 4096 || chunk.toHex(' ') != hex) return;
         capture.append(chunk);
     }
     if (captures.isEmpty()) return;
-    QDialog dlg(parent); dlg.setWindowTitle(tr("EDID Byte Inspector")); dlg.resize(760, 500);
+    QDialog dlg(parent); dlg.setWindowTitle(tr("EDID Byte Inspector")); dlg.resize(860, 720);
     auto *layout = new QVBoxLayout(&dlg);
     layout->addWidget(text(tr("Captured bytes only. The connector may have changed since the report was collected.")));
     auto *selector = new QComboBox; selector->addItems(captures.keys()); layout->addWidget(selector);
-    auto *offset = new QSpinBox; offset->setDisplayIntegerBase(16); offset->setPrefix(QStringLiteral("0x")); layout->addWidget(offset);
-    auto *detail = text(QString()); layout->addWidget(detail);
+    auto *summary = text(QString()); layout->addWidget(summary);
+    auto *plot = new EdidTimingPlot; layout->addWidget(plot);
+    auto *timingTree = new QTreeWidget; timingTree->setRootIsDecorated(false);
+    timingTree->setHeaderLabels({tr("Offset"), tr("Active"), tr("Total"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)")});
+    timingTree->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    auto *split = new QSplitter(Qt::Vertical); split->addWidget(timingTree); layout->addWidget(split, 1);
+    auto *bytePanel = new QWidget; auto *byteLayout = new QVBoxLayout(bytePanel); byteLayout->setContentsMargins(0,0,0,0);
+    auto *offset = new QSpinBox; offset->setDisplayIntegerBase(16); offset->setPrefix(QStringLiteral("0x"));
+    offset->setAccessibleName(tr("Selected byte offset")); byteLayout->addWidget(offset);
+    auto *detail = text(QString()); byteLayout->addWidget(detail);
     auto *raw = new QPlainTextEdit; raw->setReadOnly(true); raw->setLineWrapMode(QPlainTextEdit::NoWrap);
-    raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); layout->addWidget(raw, 1);
+    raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); byteLayout->addWidget(raw, 1);
+    split->addWidget(bytePanel); split->setSizes({170,300});
     auto update = [&] {
         const auto capture = captures.value(selector->currentText()); const int pos = offset->value();
         if (pos < 0 || pos >= capture.size()) return;
@@ -313,19 +372,53 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
             if (!block.declared || !block.structure) info += QStringLiteral(" · ") + tr("Invalid extension boundaries or unexpected block count.");
         }
         if(capture.size()>=4096)info+=QStringLiteral("\n")+tr("Display capped at 4096 bytes; completeness is not established by this view.");
-        detail->setText(info);
+        detail->setText(info); plot->selectOffset(pos);
+        const QSignalBlocker rawBlock(raw), treeBlock(timingTree);
         auto cursor=raw->textCursor(); cursor.movePosition(QTextCursor::Start); cursor.movePosition(QTextCursor::Down,QTextCursor::MoveAnchor,pos/16);
         cursor.movePosition(QTextCursor::StartOfLine); cursor.movePosition(QTextCursor::Right,QTextCursor::MoveAnchor,8+(pos%16)*3);
         cursor.movePosition(QTextCursor::Right,QTextCursor::KeepAnchor,2); raw->setTextCursor(cursor); raw->ensureCursorVisible();
+        timingTree->clearSelection();
+        for (int i=0; i<timingTree->topLevelItemCount(); ++i) {
+            auto *item=timingTree->topLevelItem(i); const int start=item->data(0,Qt::UserRole).toInt();
+            if (pos>=start && pos-start<18) { timingTree->setCurrentItem(item); break; }
+        }
     };
     auto switchConnector = [&] {
         const auto capture=captures.value(selector->currentText());
-        const QSignalBlocker blocker(offset); offset->setRange(0,int(capture.size())-1); offset->setValue(0);
+        const QSignalBlocker blocker(offset), rawBlock(raw), treeBlock(timingTree);
+        offset->setRange(0,int(capture.size())-1); offset->setValue(0);
         QStringList lines; for (int i=0;i<capture.size();i+=16) lines << QStringLiteral("0x%1  %2").arg(i,4,16,QLatin1Char('0')).arg(QString::fromLatin1(capture.mid(i,16).toHex(' ')).toUpper());
-        raw->setPlainText(lines.join(QLatin1Char('\n'))); update();
+        raw->setPlainText(lines.join(QLatin1Char('\n')));
+        auto decoded=diagnostictools::decodeEdid(capture);
+        auto timings=edidfields::progressiveTimings({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
+        // The source reads one extra byte to detect a cap. A frozen report stores
+        // at most 4096 bytes, so it cannot prove completeness at the cap.
+        if (capture.size()>=4096 || !decoded.structuralValid) { timings.clear(); decoded.vrrMin=decoded.vrrMax=0; }
+        QString status=decoded.vrrMax>0 ? tr("Explicit VRR: %1–%2 Hz (%3)").arg(decoded.vrrMin).arg(decoded.vrrMax).arg(decoded.vrrSource)
+            : tr("Explicit VRR range unavailable; a general refresh range is not VRR evidence.");
+        status+=QStringLiteral("\n")+tr("Progressive base/CTA detailed timings only; interlaced modes and unknown extensions are not plotted. Mark = timing, band = explicit VRR.");
+        summary->setText(status); plot->setAccessibleName(status); plot->setData(timings,decoded.vrrMin,decoded.vrrMax);
+        timingTree->clear();
+        for (const auto &t: timings) {
+            auto *item=new QTreeWidgetItem(timingTree,{QStringLiteral("0x%1").arg(qulonglong(t.offset),4,16,QLatin1Char('0')),
+                QStringLiteral("%1 × %2").arg(t.hActive).arg(t.vActive),QStringLiteral("%1 × %2").arg(t.hActive+t.hBlank).arg(t.vActive+t.vBlank),
+                QString::number(t.pixelClock10kHz/100.0,'f',2),QString::number(t.refreshHz(),'f',2)});
+            item->setData(0,Qt::UserRole,int(t.offset));
+        }
+        update();
     };
     QObject::connect(selector,&QComboBox::currentIndexChanged,&dlg,switchConnector);
-    QObject::connect(offset,&QSpinBox::valueChanged,&dlg,update); switchConnector();
+    QObject::connect(offset,&QSpinBox::valueChanged,&dlg,update);
+    QObject::connect(timingTree,&QTreeWidget::itemSelectionChanged,&dlg,[&]{
+        const auto items=timingTree->selectedItems(); if (!items.isEmpty()) offset->setValue(items.first()->data(0,Qt::UserRole).toInt());
+    });
+    QObject::connect(raw,&QPlainTextEdit::cursorPositionChanged,&dlg,[&]{
+        const auto cursor=raw->textCursor(); const int column=cursor.positionInBlock();
+        if(column<8) return;
+        const int pos=cursor.blockNumber()*16+(column-8)/3;
+        if(pos>=0 && pos<=offset->maximum() && pos!=offset->value()) offset->setValue(pos);
+    });
+    switchConnector();
     auto *close=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(close); QObject::connect(close,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
 }
 
@@ -518,11 +611,11 @@ void DiagReportView::setReport(const diag::Report &r) {
         auto *w = tableWidget(t);
         if (auto *tree = w->findChild<QTreeWidget *>()) tables_ << tree;
         if (t.viewKind == QStringLiteral("edid-bytes")) {
-            for (const auto &fields : current.tables) if (fields.viewKind == QStringLiteral("edid-fields")) {
-                auto *inspect = new QPushButton(tr("Inspect captured EDID bytes…"));
-                w->layout()->addWidget(inspect);
-                connect(inspect,&QPushButton::clicked,w,[w,t,fields]{ inspectEdid(w,t,fields); }); break;
-            }
+            diag::Table fields;
+            for (const auto &candidate : current.tables) if (candidate.viewKind == QStringLiteral("edid-fields")) { fields=candidate; break; }
+            auto *inspect = new QPushButton(tr("Inspect captured EDID bytes…"));
+            w->layout()->addWidget(inspect);
+            connect(inspect,&QPushButton::clicked,w,[w,t,fields]{ inspectEdid(w,t,fields); });
         }
         addSection(t.title, w);
         bodyLayout_->addWidget(w);

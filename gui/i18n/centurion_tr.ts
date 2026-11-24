@@ -13352,6 +13352,14 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>pkexec was not found. Install polkit (%1).</source>
             <translation>pkexec bulunamadı. polkit paketini kurun (%1).</translation>
         </message>
+        <message>
+        <source>The helper crashed or exceeded the reply size limit; its result is unknown.</source>
+        <translation>Yardımcı program çöktü veya yanıt boyutu sınırını aştı; sonucu bilinmiyor.</translation>
+    </message>
+        <message>
+        <source>The helper reported success but exited with code %1; its result is unknown.</source>
+        <translation>Yardımcı program başarı bildirdi ancak %1 koduyla çıktı; sonucu bilinmiyor.</translation>
+    </message>
     </context>
     <context>
         <name>BarChart</name>
@@ -16173,6 +16181,42 @@ Saklanan denemeler: %4 · çıkarılan: %5
             <source>No recorded offset differences.</source>
             <translation>Kaydedilen ofset farkı yok.</translation>
         </message>
+        <message>
+        <source>Trial %1 · %2 / %3 cores done · %4 h %5 min elapsed</source>
+        <translation>Deneme %1 · %2 / %3 çekirdek tamamlandı · %4 sa %5 dk geçti</translation>
+    </message>
+        <message>
+        <source>Remaining time unknown during preparation, result checks, cancellation or restoration.</source>
+        <translation>Hazırlık, sonuç kontrolü, iptal veya geri yükleme sırasında kalan süre bilinmiyor.</translation>
+    </message>
+        <message>
+        <source>Planned test time elapsed; waiting for the actual result. Remaining time unknown.</source>
+        <translation>Planlanan test süresi doldu; gerçek sonuç bekleniyor. Kalan süre bilinmiyor.</translation>
+    </message>
+        <message>
+        <source>Current trial planned load remaining: %1</source>
+        <translation>Mevcut denemede kalan planlı yük süresi: %1</translation>
+    </message>
+        <message>
+        <source>If current and later trials pass: %1</source>
+        <translation>Mevcut ve sonraki denemeler geçerse: %1</translation>
+    </message>
+        <message>
+        <source>If current trial fails and later trials pass: %1</source>
+        <translation>Mevcut deneme başarısız olur, sonrakiler geçerse: %1</translation>
+    </message>
+        <message>
+        <source>Conditional estimates only. Retries, helper latency and restoration are unknown.</source>
+        <translation>Yalnızca koşullu tahminler. Tekrarlar, yardımcı program gecikmesi ve geri yükleme süreleri bilinmiyor.</translation>
+    </message>
+        <message>
+        <source>Search load remaining: 0 s. Throughput comparison and scene restoration are separate.</source>
+        <translation>Kalan arama yükü: 0 sn. İş hacmi karşılaştırması ve sahne geri yükleme ayrı işlemlerdir.</translation>
+    </message>
+        <message>
+        <source>Remaining time unknown: stock reset was not confirmed.</source>
+        <translation>Kalan süre bilinmiyor: stok değerlere sıfırlama doğrulanmadı.</translation>
+    </message>
     </context>
     <context>
         <name>coevidence</name>
@@ -16366,7 +16410,35 @@ Saklanan denemeler: %4 · çıkarılan: %5
         <source>Report verdict changed.</source>
         <translation>Rapor değerlendirmesi değişti.</translation>
     </message>
-</context>
+    <message>
+        <source>No verified progressive timing or explicit VRR range to plot.</source>
+        <translation>Grafikte gösterilebilecek doğrulanmış progresif zamanlama veya açık VRR aralığı yok.</translation>
+    </message>
+        <message>
+        <source>Active</source>
+        <translation>Etkin</translation>
+    </message>
+        <message>
+        <source>Total</source>
+        <translation>Toplam</translation>
+    </message>
+        <message>
+        <source>Selected byte offset</source>
+        <translation>Seçili bayt konumu</translation>
+    </message>
+        <message>
+        <source>Explicit VRR: %1–%2 Hz (%3)</source>
+        <translation>Açık VRR: %1–%2 Hz (%3)</translation>
+    </message>
+        <message>
+        <source>Explicit VRR range unavailable; a general refresh range is not VRR evidence.</source>
+        <translation>Açık VRR aralığı mevcut değil; genel yenileme aralığı VRR kanıtı değildir.</translation>
+    </message>
+        <message>
+        <source>Progressive base/CTA detailed timings only; interlaced modes and unknown extensions are not plotted. Mark = timing, band = explicit VRR.</source>
+        <translation>Yalnızca temel/CTA progresif ayrıntılı zamanlamalar; geçmeli modlar ve bilinmeyen uzantılar çizilmez. İşaret = zamanlama, bant = açık VRR.</translation>
+    </message>
+    </context>
     <context>
         <name>diagsrc</name>
         <message>

@@ -478,7 +478,7 @@ static bool blockingReset() {
     if (!p.waitForStarted(3000)) return false;
     p.write(QJsonDocument(QJsonObject{{"op", "reset"}}).toJson(QJsonDocument::Compact) + '\n');
     p.closeWriteChannel();
-    if (!p.waitForFinished(15000)) return false;
+    if (!p.waitForFinished(15000) || p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0) return false;
     const QByteArray out = p.readAllStandardOutput().trimmed();
     return QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object().value("ok").toBool();
 }
@@ -546,7 +546,7 @@ void CoSearchDialog::updateEstimate() {
                              search_.has_value() && search_->perCoreSearching() && trial_.has_value());
     coreProgress_->setVisible(running_ && search_ && search_->mode() == Mode::PerCore);
     if (running_ && search_) {
-        // Live progress: per-core from the pace of the cores finished since launch(), otherwise the launch estimate.
+        // Core completion is independent of the conditional workload estimate.
         int done = 0, total = 0;
         for (int i = 0; i < search_->cores().size(); ++i) {
             if (search_->mode() == Mode::PerCore && search_->coreState(i).excluded) continue;
@@ -556,18 +556,35 @@ void CoSearchDialog::updateEstimate() {
         coreProgress_->setVisible(perCore && total > 0);
         coreProgress_->setRange(0, std::max(1, total));
         coreProgress_->setValue(done);
-        const int elapsed = int((QDateTime::currentSecsSinceEpoch() - searchStart_) / 60);
-        const int left = search_->mode() == Mode::PerCore && search_->perCoreSearching()
-            ? coinsights::etaMinutes(elapsed, done - doneAtLaunch_, total - doneAtLaunch_, estimateAtLaunch_, true)
-            : std::max(0, estimateAtLaunch_ - elapsed);
-        if (search_->confirming() || resetting_ || search_->finished()) {
-            estimate_->setText(tr("Trial %1 · %2 h %3 min elapsed · remaining time unknown (verification, retries or restoration)")
-                .arg(trialNo_).arg(elapsed / 60).arg(elapsed % 60));
+        const qint64 elapsed = searchElapsed_.isValid() ? searchElapsed_.elapsed() / 1000 : 0;
+        const QString progress = tr("Trial %1 · %2 / %3 cores done · %4 h %5 min elapsed")
+            .arg(trialNo_).arg(done).arg(total).arg(elapsed / 3600).arg((elapsed / 60) % 60);
+        if (resetting_ || abort_ || sceneApplying_ || applying_ || !trial_ || !testElapsed_.isValid() ||
+            testIndex_ < 0 || testIndex_ >= trial_->tests.size()) {
+            estimate_->setText(progress + QStringLiteral("\n") + tr("Remaining time unknown during preparation, result checks, cancellation or restoration."));
             return;
         }
-        estimate_->setText(tr("Trial %1 · %2 / %3 cores done · %4 h %5 min elapsed · about %6 h %7 min left (estimate)")
-            .arg(trialNo_).arg(done).arg(total).arg(elapsed / 60).arg(elapsed % 60, 2, 10, QLatin1Char('0'))
-            .arg(left / 60).arg(left % 60, 2, 10, QLatin1Char('0')));
+        const qint64 spent = testElapsed_.elapsed() / 1000;
+        const qint64 planned = trial_->tests[testIndex_].seconds;
+        if (spent >= planned) {
+            estimate_->setText(progress + QStringLiteral("\n") + tr("Planned test time elapsed; waiting for the actual result. Remaining time unknown."));
+            return;
+        }
+        qint64 current = planned - spent;
+        for (int i = testIndex_+1; i < trial_->tests.size(); ++i) current += trial_->tests[i].seconds;
+        auto duration = [](qint64 seconds) { return QStringLiteral("%1:%2:%3").arg(seconds/3600).arg((seconds/60)%60,2,10,QLatin1Char('0')).arg(seconds%60,2,10,QLatin1Char('0')); };
+        QString details = tr("Current trial planned load remaining: %1").arg(duration(current));
+        const qint64 overhead = measuredTests_ ? measuredOverheadMs_ / measuredTests_ : 0;
+        auto projected = [&](const cosearch::Search::WorkEstimate &work) {
+            const qint64 futureTests = work.tests + trial_->tests.size() - testIndex_ - 1;
+            // 2.5 seconds kernel debounce per trial; unknown helper latency and
+            // restoration are excluded rather than invented.
+            return current + work.seconds + (futureTests * overhead + (qint64(work.trials)+1)*2500)/1000;
+        };
+        if (passForecast_) details += QStringLiteral("\n") + tr("If current and later trials pass: %1").arg(duration(projected(*passForecast_)));
+        if (failForecast_) details += QStringLiteral("\n") + tr("If current trial fails and later trials pass: %1").arg(duration(projected(*failForecast_)));
+        details += QStringLiteral("\n") + tr("Conditional estimates only. Retries, helper latency and restoration are unknown.");
+        estimate_->setText(progress + QStringLiteral("\n") + details);
         return;
     }
     const auto level = levelFrom(level_->currentData().toString()).value_or(Level::Fast);
@@ -582,6 +599,13 @@ void CoSearchDialog::updateEstimate() {
     estimate_->setText(tr("Roughly %1 h %2 min for %3 cores (depends on where the offsets fail).").arg(m / 60).arg(m % 60, 2, 10, QLatin1Char('0')).arg(cores));
 }
 
+void CoSearchDialog::updateForecast() {
+    passForecast_.reset(); failForecast_.reset();
+    if (!search_ || !trial_) return;
+    passForecast_ = search_->remainingIfPass(true);
+    failForecast_ = search_->remainingIfPass(true, true);
+}
+
 void CoSearchDialog::applyTuning() {
     if (!running_ || resetting_ || abort_ || !search_ || !search_->perCoreSearching()) return;
     if (!trial_) { note(tr("Changing steps is only available while a candidate is pending.")); return; }
@@ -594,6 +618,8 @@ void CoSearchDialog::applyTuning() {
         return;
     }
     saveSettings();
+    updateForecast();
+    updateEstimate();
     note(tr("Updated future per-core trials: step %1. Current test unchanged.").arg(tuning().step), theme::INFO);
 }
 
@@ -1698,6 +1724,7 @@ void CoSearchDialog::gatherEvidence(const QJsonObject &journal, const Search &se
 }
 
 void CoSearchDialog::launch() {
+    ++trialGeneration_;
     running_ = true;
     abort_ = false;
     finished_ = false;
@@ -1709,26 +1736,17 @@ void CoSearchDialog::launch() {
     confirmPassed_ = false;
     curveRun_.clear();
     perf_.clear();
-    searchStart_ = QDateTime::currentSecsSinceEpoch();
-    doneAtLaunch_ = 0;
-    int searched = 0;
-    for (int i = 0; i < search_->cores().size(); ++i) {
-        if (search_->coreState(i).excluded) continue;
-        ++searched;
-        doneAtLaunch_ += search_->coreState(i).done;
-    }
-    {
-        QList<int> starts;
-        for (const Core &c : search_->cores()) starts << starts_.value(coreKey(c.ccd, c.slot), DEFAULT_START);
-        estimateAtLaunch_ = search_->confirming() ? cosearch::VERIFY_SECONDS / 60
-            : Search::estimateMinutes(search_->mode(), search_->level(), std::max(searched - doneAtLaunch_, 1), search_->limit(), search_->tuning(), starts);
-    }
+    searchElapsed_.start(); testElapsed_.invalidate();
+    measuredOverheadMs_ = 0; measuredTests_ = 0;
+    passForecast_.reset(); failForecast_.reset();
     updateEstimate();
     refreshTable();
     updateResultButtons();
     priorScene_ = scenes::activeScene();
     guard_->start();
-    auto begin = [this] {
+    const auto generation = trialGeneration_;
+    auto begin = [this, generation] {
+        if (generation != trialGeneration_ || !running_ || resetting_) return;
         startScene_ = scenes::activeScene();
         note(tr("%1 search, %2 level, limit %3. Every tested candidate will be cleared afterward.")
                  .arg(search_->mode() == Mode::AllCore ? tr("All-core") : tr("Per-core"), name(search_->level())).arg(search_->limit()));
@@ -1737,8 +1755,8 @@ void CoSearchDialog::launch() {
                     "Start climbs back by the step. You can change the step during the run.").arg(search_->tuning().step));
         // Baseline: only kernel events logged after this point count against a trial.
         kmsgSeq_ = 0;
-        scanKernel([this](bool ok, const QJsonArray &, quint64 last) {
-            if (!running_ || resetting_) return;
+        scanKernel([this, generation](bool ok, const QJsonArray &, quint64 last) {
+            if (generation != trialGeneration_ || !running_ || resetting_) return;
             if (!ok) { reset(tr("Cannot read classified kernel events; not starting.")); return; }
             kmsgSeq_ = last;
             if (mceCounters().isEmpty())
@@ -1754,9 +1772,10 @@ void CoSearchDialog::launch() {
     sceneApplying_ = true;
     note(tr("Applying the CO search scene '%1'…").arg(scene));
     auto conn = std::make_shared<QMetaObject::Connection>();
-    *conn = connect(win->scenes(), &SceneEngine::finished, this, [this, conn, scene, begin](const QString &n, bool ok, const QStringList &log) {
+    *conn = connect(win->scenes(), &SceneEngine::finished, this, [this, conn, scene, begin, generation](const QString &n, bool ok, const QStringList &log) {
         if (n != scene) return;
         disconnect(*conn);
+        if (generation != trialGeneration_) return;
         sceneApplying_ = false;
         if (!running_ || resetting_) return;
         if (!ok) { reset(tr("The CO search scene failed to apply: %1").arg(log.filter(QStringLiteral("✗")).join("; "))); return; }
@@ -1792,7 +1811,10 @@ void CoSearchDialog::step() {
         });
         return;
     }
+    ++trialGeneration_;
     ++trialNo_;
+    testElapsed_.invalidate();
+    updateForecast();
     evidence_ = {};
     activeCpu_ = -1;
     if (!writeJournal()) { reset(tr("Cannot durably save the recovery journal; no CO offset was written.")); return; }
@@ -1834,12 +1856,21 @@ void CoSearchDialog::runTest() {
     testBuf_.clear();
     testEnd_ = {};
     testStart_ = QDateTime::currentSecsSinceEpoch();
+    testElapsed_.start();
     testDeadline_ = testStart_ + t.seconds + 120;  // allow CPU reference calculation and process startup
     logLine(log_, {}, QStringLiteral("centurion-cpustress ") + t.args.join(' '), theme::MUTED);
-    connect(test_, &QProcess::readyReadStandardOutput, this, &CoSearchDialog::testOutput);
-    connect(test_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) { testFinished(code, status != QProcess::NormalExit); });
-    connect(test_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart) { note(tr("CPU test failed to start."), theme::DANGER); cancel(); }
+    const auto generation = trialGeneration_;
+    const QPointer<QProcess> process(test_);
+    auto current = [this, process, generation] { return process && test_ == process.data() && currentTrial(generation); };
+    connect(test_, &QProcess::readyReadStandardOutput, this, [this, current] { if (current()) testOutput(); });
+    connect(test_, &QProcess::finished, this, [this, current](int code, QProcess::ExitStatus status) {
+        if (current()) testFinished(code, status != QProcess::NormalExit);
+    });
+    connect(test_, &QProcess::errorOccurred, this, [this, current](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart && current()) {
+            test_->deleteLater(); test_ = nullptr;
+            note(tr("CPU test failed to start."), theme::DANGER); cancel();
+        }
     });
     test_->start(testProgram_, t.args);
 }
@@ -1873,6 +1904,8 @@ void CoSearchDialog::testOutput() {
 
 void CoSearchDialog::testFinished(int code, bool crashed) {
     if (!test_) return;
+    const qint64 measured = testElapsed_.isValid() ? testElapsed_.elapsed() : -1;
+    testElapsed_.invalidate();
     testOutput();                                            // what is left in the pipe
     if (!testBuf_.isEmpty()) { testBuf_ += '\n'; testOutput(); }  // a last line without its newline
     test_->deleteLater();
@@ -1890,12 +1923,20 @@ void CoSearchDialog::testFinished(int code, bool crashed) {
     } else if (status != "pass" || code != 0) {
         reset(tr("CPU test did not complete (%1): %2").arg(status.isEmpty() ? QString::number(code) : status, testEnd_.value("msg").toString()));
         return;
-    } else if (++testIndex_ < trial_->tests.size()) {
-        runTest();
-        return;
+    } else {
+        // Record overhead from completed successful tests only, never from a
+        // crash, failed calculation or a truncated run.
+        if (measured >= 0) {
+            const qint64 expected = qint64(trial_->tests[testIndex_].seconds) * 1000;
+            measuredOverheadMs_ += std::max(qint64(0), measured - expected);
+            ++measuredTests_;
+        }
+        if (++testIndex_ < trial_->tests.size()) { runTest(); return; }
     }
     // Allow the Health kernel-event debounce to flush before interpreting this result.
-    QTimer::singleShot(2500, this, [this] {
+    const auto generation = trialGeneration_;
+    QTimer::singleShot(2500, this, [this, generation] {
+        if (!currentTrial(generation)) return;
         if (abort_) { reset(tr("Cancelled after CPU test")); return; }
         validateFaultLog(outcome_);
     });
@@ -1912,8 +1953,9 @@ void CoSearchDialog::scanKernel(std::function<void(bool, const QJsonArray &, qui
 }
 
 void CoSearchDialog::validateFaultLog(Outcome o) {
-    scanKernel([this, o](bool ok, const QJsonArray &events, quint64 last) mutable {
-        if (!running_ || resetting_) return;
+    const auto generation = trialGeneration_;
+    scanKernel([this, o, generation](bool ok, const QJsonArray &events, quint64 last) mutable {
+        if (!currentTrial(generation)) return;
         if (abort_) { reset(tr("Cancelled after CPU test")); return; }
         // An unreadable kernel log is NOT evidence of a clean trial.
         if (!ok) { reset(tr("Cannot read classified kernel events; stopping without claiming a clean test.")); return; }
@@ -1980,6 +2022,7 @@ void CoSearchDialog::validateFaultLog(Outcome o) {
 }
 
 void CoSearchDialog::finishTrial(const Outcome &o) {
+    ++trialGeneration_;
     watch_->stop();
     QJsonArray cpus;
     for (int c : o.cpus) cpus << c;
@@ -2009,7 +2052,10 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
     // applied in this gap: a late reboot must invalidate THAT trial, not claim "idle".
     // A failed write for the next trial triggers reset; the old candidate stays quarantinable.
     refreshTable();
-    QTimer::singleShot(0, this, &CoSearchDialog::step);
+    const auto generation = trialGeneration_;
+    QTimer::singleShot(0, this, [this, generation] {
+        if (generation == trialGeneration_ && running_ && !resetting_) step();
+    });
 }
 
 void CoSearchDialog::cancel() {
@@ -2033,6 +2079,8 @@ void CoSearchDialog::cancel() {
 void CoSearchDialog::reset(const QString &reason) {
     if (!running_ || resetting_) return;
     resetting_ = true;
+    testElapsed_.invalidate();
+    ++trialGeneration_;
     watch_->stop();
     applyTuning_->setEnabled(false);
     note(reason + tr(" — requesting stock reset."), theme::WARN);
@@ -2141,8 +2189,9 @@ void CoSearchDialog::watchTick() {
         if (mceWatch_.contains(i.key()) && mceWatch_.value(i.key()) != i.value())
             if (const auto r = coevidence::fromCounterPath(i.key())) fresh << *r;
     mceWatch_ = now;
-    auto keep = [this](const QList<coevidence::Record> &records) {
-        if (records.isEmpty() || !running_ || !trial_) return;
+    const auto generation = trialGeneration_;
+    auto keep = [this, generation](const QList<coevidence::Record> &records) {
+        if (records.isEmpty() || !currentTrial(generation)) return;
         for (const auto &r : records) {
             if (evidence_.size() >= 64) break;
             evidence_.append(r.toJson());
@@ -2154,9 +2203,10 @@ void CoSearchDialog::watchTick() {
     if (watchBusy_) return;
     watchBusy_ = true;
     privileged::run(privileged::helperPath("health-reader"), QJsonObject{{"since", double(watchSeq_)}}, this,
-        [this, keep](const privileged::Result &r) {
+        [this, keep, generation](const privileged::Result &r) {
+            // Release the single-flight slot even if the result was superseded.
             watchBusy_ = false;
-            if (!r.ok()) return;
+            if (!currentTrial(generation) || !r.ok()) return;
             watchSeq_ = std::max(watchSeq_, quint64(r.json.value("last_seq").toDouble()));
             QList<coevidence::Record> records;
             for (const QJsonValue &v : r.json.value("events").toArray()) {
@@ -2221,6 +2271,8 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
     replay_.reset();
     updateEstimate();
     trial_.reset();
+    if (resetOk) estimate_->setText(tr("Search load remaining: 0 s. Throughput comparison and scene restoration are separate."));
+    else estimate_->setText(tr("Remaining time unknown: stock reset was not confirmed."));
     if (quitting_) return;
     go_->setEnabled(resetOk);
     for (QWidget *w : std::initializer_list<QWidget *>{mode_, level_, limit_, scene_, verifyBtn_, guardsBtn_}) w->setEnabled(true);

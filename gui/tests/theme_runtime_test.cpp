@@ -45,6 +45,15 @@ int main(int argc, char **argv) {
     custom[8] = QStringLiteral("#aabbcc");
     CHECK(!theme::saveCustomPalette({QStringLiteral("#ffffff")}));
     CHECK(theme::saveCustomPalette(custom));
+    auto malformed = custom;
+    malformed[8] += QLatin1Char('\n');
+    CHECK(!theme::validCustomPalette(malformed));
+    CHECK(!theme::saveCustomPalette(malformed));
+    CHECK(theme::paletteColors(QStringLiteral("custom")) == custom);
+    malformed[8] = QStringLiteral("#aabbc");
+    CHECK(!theme::saveCustomPalette(malformed));
+    malformed[8] = QStringLiteral("#aabbcg");
+    CHECK(!theme::saveCustomPalette(malformed));
     CHECK(theme::saveTheme(QStringLiteral("custom")));
     theme::load();
     CHECK(theme::currentTheme() == QStringLiteral("custom"));
@@ -53,6 +62,12 @@ int main(int argc, char **argv) {
     CHECK(theme::saveTheme(QStringLiteral("graphite")));
     theme::load();
     CHECK(theme::paletteColors(theme::currentTheme()) == original);
+    const char *const address = theme::FG;
+    for (int i=0; i<20; ++i) {
+        CHECK(theme::saveTheme(i%2 ? QStringLiteral("graphite") : QStringLiteral("custom")));
+        theme::load(); CHECK(theme::FG == address);
+        CHECK(QByteArray(theme::FG) == (i%2 ? original[8] : custom[8]).toLatin1());
+    }
     CHECK(theme::contrastRatio(QColor(Qt::black), QColor(Qt::white)) > 20.99);
     CHECK(theme::contrastRatio(QColor(Qt::black), QColor(Qt::black)) == 1.0);
     CHECK(theme::contrastChecks({}).isEmpty());

@@ -16,7 +16,6 @@
 #include <array>
 #include <QStyleFactory>
 #include <QThread>
-#include <cstring>
 
 namespace theme {
 
@@ -195,7 +194,8 @@ QStringList paletteColors(const QString &id) {
 bool validCustomPalette(const QStringList &colors) {
     if (colors.size() != 19) return false;
     static const QRegularExpression rgb(QStringLiteral("^#[0-9a-fA-F]{6}$"));
-    for (const QString &c : colors) if (!rgb.match(c).hasMatch()) return false;
+    for (const QString &c : colors)
+        if (c.size() != 7 || !rgb.match(c).hasMatch()) return false;
     return true;
 }
 bool saveCustomPalette(const QStringList &colors) {
@@ -271,16 +271,21 @@ bool saveTypography(const Typography &v) {
 
 static bool knownPalette(const QString &id) { return !lookupPalette(id).isEmpty(); }
 
-static void setTokens(const QString &id, const QStringList &colors) {
+static bool setTokens(const QString &id, const QStringList &colors) {
+    // Validate the entire palette before modifying any stable token storage.
+    if (!validCustomPalette(colors)) return false;
     const char **tok[] = {&BG0, &BG1, &BG2, &BG3, &BG4, &WELL, &BORDER, &BORDER_SOFT, &FG, &FG_DIM, &MUTED,
                           &ACCENT, &ACCENT_SOFT, &OK, &WARN, &DANGER, &DANGER_SOFT, &INFO, &PURPLE};
     for (int i = 0; i < 19; ++i) {
-        const QByteArray value = colors.at(i).toLatin1();
-        std::memcpy(activeStorage[i].data(), value.constData(), 7);
+        // Every code unit is known ASCII and the string has exactly seven units.
+        // Avoid the fixed-width memcpy from a QByteArray empty-storage pointer under LTO.
+        const QString &value = colors.at(i);
+        for (int j = 0; j < 7; ++j) activeStorage[i][j] = value.at(j).toLatin1();
         activeStorage[i][7] = '\0';
         *tok[i] = activeStorage[i].data();
     }
     g_current = id;
+    return true;
 }
 
 void load() {
@@ -289,8 +294,8 @@ void load() {
     g_experimental = readExperimentalChoice();
     const QString want = settings().value(QStringLiteral("theme")).toString();
     const auto colors = lookupPalette(want);
-    if (colors.isEmpty()) setTokens(QStringLiteral("graphite"), lookupPalette(QStringLiteral("graphite")));
-    else setTokens(want, colors);
+    if (!setTokens(want, colors))
+        setTokens(QStringLiteral("graphite"), lookupPalette(QStringLiteral("graphite")));
 }
 
 ThemeEvents &events() { static ThemeEvents bus; return bus; }
@@ -915,8 +920,7 @@ void applySheet(QApplication &app) { app.setStyleSheet(stylesheet()); }
 bool applyLivePalette(QApplication &app, const QString &id) {
     if (QThread::currentThread() != app.thread()) return false;
     const auto colors = lookupPalette(id);
-    if (!validCustomPalette(colors)) return false;
-    setTokens(id, colors);
+    if (!setTokens(id, colors)) return false;
     app.setPalette(palette());
     applySheet(app);
     ++g_revision;

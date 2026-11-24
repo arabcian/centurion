@@ -337,7 +337,7 @@ Report displays(const QString &root) {
         QFile f(b + QStringLiteral("edid"));
         const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(32 * 128 + 1) : QByteArray();
         for (int off = 0; off < std::min<qsizetype>(raw.size(), 4096); off += 16) {
-            const auto chunk = raw.mid(off, 16);
+            const auto chunk = raw.mid(off, std::min(16, 4096 - off));
             QString ascii;
             for (const char c : chunk) ascii += QLatin1Char(uchar(c) >= 32 && uchar(c) <= 126 ? c : '.');
             bytes.add({conn, QString::number(off / 128), QStringLiteral("0x%1").arg(off, 4, 16, QLatin1Char('0')),

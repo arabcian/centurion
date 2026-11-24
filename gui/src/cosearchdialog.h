@@ -10,6 +10,7 @@
 #include "ryzentab.h"
 
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QHash>
 #include <QSet>
@@ -69,6 +70,7 @@ private:
     void note(const QString &line, const char *tone = nullptr);
     bool toolsPresent();
     void updateEstimate();
+    void updateForecast();
     void applyTuning();
     cosearch::Tuning tuning() const;
     void loadSettings();
@@ -126,6 +128,10 @@ private:
     QHash<QString, QString> mceWatch_;
     quint64 watchSeq_ = 0;
     bool watchBusy_ = false;
+    quint64 trialGeneration_ = 0; // invalidates late read-only callbacks across trials/resets/sessions
+    bool currentTrial(quint64 generation) const {
+        return generation == trialGeneration_ && running_ && !resetting_ && trial_.has_value();
+    }
     int activeCpu_ = -1;               // the CPU centurion-cpustress last moved its single-core load to
 
     // Read-only insights (coinsights.h): shown with the results, never change what is tested or saved.
@@ -135,7 +141,9 @@ private:
     QHash<int, double> perf_;          // core index -> throughput change against stock, in percent
     QHash<int, int> peakMhz_;          // core index -> highest clock seen while it was probed alone (journal: "peaks")
     QPointer<QProcess> perfTest_;
-    qint64 searchStart_ = 0;           // when launch() ran, for the progress line
-    int doneAtLaunch_ = 0, estimateAtLaunch_ = 0;
+    QElapsedTimer searchElapsed_, testElapsed_; // display only; safety deadline remains independent
+    qint64 measuredOverheadMs_ = 0;
+    int measuredTests_ = 0;
+    std::optional<cosearch::Search::WorkEstimate> passForecast_, failForecast_;
     Notifier *notifier_;
 };

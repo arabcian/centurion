@@ -77,17 +77,22 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
         finish(r);
         reap();
     });
-    QObject::connect(proc, &QProcess::finished, proc, [=](int code, QProcess::ExitStatus) {
+    QObject::connect(proc, &QProcess::finished, proc, [=](int code, QProcess::ExitStatus exitStatus) {
         proc->deleteLater();
         if (*done) return;  // already reported (timeout); just clean up
         Result r;
-        const QByteArray out = proc->readAllStandardOutput().trimmed();
+        const QByteArray rawOut = proc->readAllStandardOutput();
+        const QByteArray out = rawOut.trimmed();
         const QString err = QString::fromUtf8(proc->readAllStandardError().left(4096)).trimmed();
         // The helper prints exactly one JSON line; take the last line in case
         // anything else slipped onto stdout first.
         const QByteArray last = out.mid(out.lastIndexOf('\n') + 1);
         const QJsonDocument doc = QJsonDocument::fromJson(last);
-        if (doc.isObject() && !doc.object().isEmpty()) {
+        if (exitStatus != QProcess::NormalExit || rawOut.size() > 4 * 1024 * 1024) {
+            r.error = QCoreApplication::translate("privileged", "The helper crashed or exceeded the reply size limit; its result is unknown.");
+        } else if (doc.isObject() && !doc.object().isEmpty() && code != 0 && doc.object().value(QStringLiteral("ok")).toBool()) {
+            r.error = QCoreApplication::translate("privileged", "The helper reported success but exited with code %1; its result is unknown.").arg(code);
+        } else if (doc.isObject() && !doc.object().isEmpty()) {
             r.reached = true;
             r.json = doc.object();
             // Version handshake: an older install's helpers send no or another helper_version.

@@ -80,6 +80,22 @@ int main(int argc, char **argv) {
         const auto recovered=s.previewNext(); CHECK(recovered && recovered->reason==DecisionReason::FailedStartRecovery);
         CHECK(recovered && recovered->failureBoundary== -15);
     }
+    // Forecasts use the actual dispatcher on a copy, including verification.
+    for (Mode mode : {Mode::AllCore, Mode::PerCore}) for (Level level : {Level::Fast, Level::Medium, Level::Long}) {
+        Search s(mode,level,-30,cpu(2),Tuning{-5,3});
+        const auto first=s.next(); CHECK(first); if(!first) continue;
+        const auto saved=s.save();
+        for(bool fail : {false,true}) {
+            const auto forecast=s.remainingIfPass(true,fail);
+            CHECK(forecast); CHECK(s.save()==saved);
+            Search copy=s; copy.report(Outcome{!fail,{}});
+            qint64 seconds=0; int count=0, tests=0;
+            while(auto t=copy.next()) { seconds+=t->seconds(); ++count; tests+=int(t->tests.size()); copy.report(Outcome{true,{}}); if(count>4096) break; }
+            CHECK(copy.finished());
+            if(forecast) { CHECK(forecast->seconds==seconds); CHECK(forecast->trials==count); CHECK(forecast->tests==tests); }
+            const auto terminal=copy.remainingIfPass(false); CHECK(terminal && terminal->seconds==0 && terminal->trials==0);
+        }
+    }
     // Test order alternates between CCDs.
     {
         Search s(Mode::AllCore, Level::Fast, -30, cpu(4));

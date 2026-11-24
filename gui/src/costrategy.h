@@ -98,6 +98,11 @@ public:
     std::optional<Trial> next();
     /// Exact next dispatch on a copy; never advances the live search.
     std::optional<Trial> previewNext() const;
+    struct WorkEstimate { qint64 seconds = 0; int trials = 0, tests = 0; };
+    // Conditional scenario, not a statistical interval or worst-case bound.
+    // Simulates only on a copy; pending means this is an after-next() state.
+    // The current trial is excluded from the returned work.
+    std::optional<WorkEstimate> remainingIfPass(bool pending, bool failPending = false) const;
     /// The result of the trial last returned by next().
     void report(const Outcome &o);
     /// Reconstruct the CURRENT in-flight candidate from an after-next() snapshot, without advancing.
