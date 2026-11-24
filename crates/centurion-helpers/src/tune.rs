@@ -1273,42 +1273,39 @@ pub fn debugfs_mounted() -> bool {
 pub const DEBUGFS_SNAPSHOT: &str = "/run/centurion/debugfs.json";
 
 /// Root only. Atomic (temp + rename), mode 0644, in a root-owned 0755 directory.
-pub fn write_debugfs_snapshot() {
-    if unsafe { libc::geteuid() } != 0 || !ensure_debugfs() { return; }
+fn save_debugfs_snapshot() -> Result<(), String> {
+    if unsafe { libc::geteuid() } != 0 { return Err("debugfs snapshot requires root".into()); }
     let mut m = Map::new();
-    for t in TUNABLES.iter().filter(|t| t.debugfs && vendor_ok(t)) {
-        if let Some(v) = current(t) { m.insert(t.key.to_owned(), Value::String(v)); }
+    if debugfs_mounted() {
+        for t in TUNABLES.iter().filter(|t| t.debugfs && vendor_ok(t)) {
+            let fs = files(t);
+            // A present but unreadable field is not an absent kernel capability.
+            if !fs.is_empty() { m.insert(t.key.to_owned(), current_with(t,&fs).map(Value::String).unwrap_or(Value::Null)); }
+        }
     }
-    if crate::secure_dir("/run/centurion").is_ok() {
-        let _ = crate::write_root_file(DEBUGFS_SNAPSHOT, Value::Object(m).to_string().as_bytes());
-    }
+    crate::secure_dir("/run/centurion")?;
+    crate::write_root_file(DEBUGFS_SNAPSHOT, Value::Object(m).to_string().as_bytes())
+}
+pub fn write_debugfs_snapshot() {
+    if unsafe { libc::geteuid() } == 0 && ensure_debugfs() { let _ = save_debugfs_snapshot(); }
 }
 
-/// health-reader `debugfs_snapshot`: refresh that copy on demand, for the Optimizations tab, without a
-/// password and without changing anything but the copy. Unlike the root write ops it never mounts debugfs.
+/// Read-only refresh does not mount debugfs; atomically replaces stale values if unmounted.
 pub fn refresh_debugfs_snapshot() -> Value {
-    if !debugfs_mounted() { return json!({"ok": true, "mounted": false}); }
-    write_debugfs_snapshot();
-    json!({"ok": true, "mounted": true})
+    let mounted = debugfs_mounted();
+    match save_debugfs_snapshot() {
+        Ok(()) => json!({"ok":true,"mounted":mounted}),
+        Err(e) => json!({"ok":false,"mounted":mounted,"error":e}),
+    }
 }
 
-/// Snapshot value of a debugfs tunable; ignored unless the file is root-owned and not group/world-writable.
-fn debugfs_snapshot_value(key: &str) -> Option<String> {
+/// Read the root-owned snapshot once per describe, rather than once per row.
+fn debugfs_snapshot() -> Option<Map<String, Value>> {
+    if !debugfs_mounted() { return None; }
     use std::os::unix::fs::MetadataExt;
-    let md = std::fs::metadata(DEBUGFS_SNAPSHOT).ok()?;
-    if md.uid() != 0 || md.mode() & 0o022 != 0 { return None; }
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(DEBUGFS_SNAPSHOT).ok()?).ok()?;
-    v.get(key)?.as_str().map(str::to_owned)
-}
-
-/// Some(true/false) = the root-written snapshot lists / does not list this debugfs key (the
-/// tunable exists on this kernel or not); None when no trustworthy snapshot exists yet.
-fn debugfs_snapshot_has(key: &str) -> Option<bool> {
-    use std::os::unix::fs::MetadataExt;
-    let md = std::fs::metadata(DEBUGFS_SNAPSHOT).ok()?;
-    if md.uid() != 0 || md.mode() & 0o022 != 0 { return None; }
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(DEBUGFS_SNAPSHOT).ok()?).ok()?;
-    Some(v.get(key).is_some())
+    let md = std::fs::symlink_metadata(DEBUGFS_SNAPSHOT).ok()?;
+    if !md.is_file() || md.uid() != 0 || md.mode() & 0o022 != 0 || md.len() > 1 << 20 { return None; }
+    serde_json::from_str(&std::fs::read_to_string(DEBUGFS_SNAPSHOT).ok()?).ok()
 }
 
 /// Mounts debugfs if needed (root only). Never fails the request.
@@ -2103,7 +2100,7 @@ pub fn best_effort(t: &Tunable) -> bool {
 
 /// Runs a root-trusted binary with a clean environment and a hard timeout.
 /// Returns (success, stdout). Never a shell; stdin/stderr closed.
-fn run_tool(bin: &Path, args: &[&str], timeout: std::time::Duration) -> Option<(bool, String)> {
+pub(crate) fn run_tool(bin: &Path, args: &[&str], timeout: std::time::Duration) -> Option<(bool, String)> {
     use std::io::Read;
     use std::process::{Command, Stdio};
     let mut child = Command::new(bin).args(args).env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
@@ -3661,6 +3658,7 @@ pub fn describe() -> Value { describe_with(false) }
 /// poll's reply (built here, piped, parsed there, then ignored — the GUI only reads them when it
 /// builds its rows, which it does from a full describe).
 pub fn describe_with(light: bool) -> Value {
+    let debugfs = debugfs_snapshot();
     let rows: Vec<Value> = TUNABLES.iter().filter(|t| vendor_ok(t)).map(|t| {
         if light && slow_to_read(t) { return json!({"key": t.key, "cached": true}); }
         let fs = files(t);
@@ -3671,10 +3669,10 @@ pub fn describe_with(light: bool) -> Value {
             "kind": match t.kind { Kind::Choice => "choice", Kind::Int { .. } => "int", Kind::Bool => "bool" },
             "options": opts, "min": min, "max": max,
             // debugfs is root-only (0700): unprivileged callers cannot tell; root checks at write time.
-            "available": !fs.is_empty() || (t.debugfs && debugfs_snapshot_has(t.key).unwrap_or(true)),
+            "available": !fs.is_empty() || (t.debugfs && debugfs.as_ref().map(|m| m.contains_key(t.key)).unwrap_or(true)),
             "debugfs": t.debugfs, "caution": t.caution, "hotplug": is_hotplug(t.key), "user_switch": user_switch(t), "home": home(t.key),
             "files": fs.len(), "slow": slow_to_read(t),
-            "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs_snapshot_value(t.key) } else { None }),
+            "current": current_with(t, &fs).or_else(|| if t.debugfs { debugfs.as_ref().and_then(|m| m.get(t.key)).and_then(Value::as_str).map(str::to_owned) } else { None }),
         });
         if !light { row["help"] = json!(t.help); }
         if matches!(t.target, Target::Irq | Target::DeviceIrq(_)) && irqbalance_running() {

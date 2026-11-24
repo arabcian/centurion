@@ -600,7 +600,7 @@ void OptimizeTab::buildUi() {
         auto *tabs=new QTabWidget; layout->addWidget(tabs,1);
         auto *summary=new QPlainTextEdit; summary->setReadOnly(true);
         QJsonObject meta; for(const char *key:{"version","fingerprint","on_battery","strategies","contexts"}) meta.insert(QLatin1String(key),sig.value(QLatin1String(key)));
-        summary->setPlainText(QString::fromUtf8(QJsonDocument(meta).toJson())); tabs->addTab(summary,tr("Metadata & Contexts"));
+        summary->setPlainText(profilediff::display(meta)); tabs->addTab(summary,tr("Metadata & Contexts"));
         auto *table=new QTableWidget; table->setColumnCount(5); table->setHorizontalHeaderLabels({tr("Session"),tr("Phase ID"),tr("Kernel"),tr("Power source"),tr("Records")}); table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
         QMap<QString,int> counts; QMap<QString,QStringList> fields;
         for(const auto &v:sig.value("rows").toArray()) { const auto r=v.toObject(); const QStringList cells{profilediff::display(r.value("s")),profilediff::display(r.value("ph")),r.value("k").toString(),r.value("ps").toString()}; const auto key=QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(cells)).toJson(QJsonDocument::Compact)); ++counts[key]; fields[key]=cells; }
@@ -620,7 +620,7 @@ void OptimizeTab::buildUi() {
             for(const auto &v:sig.value("baselines").toArray())if(profilediff::display(v.toObject().value("sess"))==selected.at(0))baselines.append(v);
             QJsonObject descriptors;for(const auto &cx:contexts)if(sig.value("contexts").toObject().contains(cx))descriptors.insert(cx,sig.value("contexts").toObject().value(cx));
             const QJsonObject evidence{{"session",selected.at(0)},{"phase",selected.at(1)},{"kernel",selected.at(2)},{"power_source",selected.at(3)},{"contexts",descriptors},{"same_session_baseline_candidates",baselines},{"rows",rows}};
-            sessionDetail->setPlainText(QString::fromUtf8(QJsonDocument(evidence).toJson()));
+            sessionDetail->setPlainText(profilediff::display(evidence));
         });
         connect(sessionSearch,&QLineEdit::textChanged,&dlg,[table,sessionDetail](const QString &q){table->clearSelection();sessionDetail->clear();for(int r=0;r<table->rowCount();++r){bool match=q.isEmpty();for(int c=0;c<table->columnCount();++c)match|=table->item(r,c)->text().contains(q,Qt::CaseInsensitive);table->setRowHidden(r,!match);}});
         tabs->addTab(sessionPage,tr("Measurement Sessions"));
@@ -785,7 +785,7 @@ void OptimizeTab::buildUi() {
             for(auto it=objectives.constBegin();it!=objectives.constEnd();++it) {
                 const auto value=pair(it.value()); lines << QStringLiteral("%1: %2").arg(it.key(),value && abverify::validEstimate(*value)?QStringLiteral("%1 / %2").arg(value->first,0,'g',8).arg(value->second,0,'g',8):tr("Unknown"));
             }
-            lines << tr("Verified settings (historical):") << QString::fromUtf8(QJsonDocument(r.value("verified_values").toObject()).toJson());
+            lines << tr("Verified settings (historical):") << profilediff::display(r.value("verified_values"));
             abDetails->setPlainText(lines.join(QLatin1Char('\n')));
         });
         connect(abFilter,&QLineEdit::textChanged,&dlg,refillAb); refillAb();
@@ -816,7 +816,25 @@ void OptimizeTab::buildUi() {
         };
         connect(gameFilter,&QLineEdit::textChanged,&dlg,refillGame); refillGame();
         tabs->addTab(gamePage,tr("Measured Game Sessions"));
-        for(const auto &part:{qMakePair(QStringLiteral("quality"),tr("Quality")),qMakePair(QStringLiteral("verify"),tr("A/B Verification")),qMakePair(QStringLiteral("fs"),tr("Game Sessions"))}) { auto *raw=new QPlainTextEdit; raw->setReadOnly(true); raw->setPlainText(QString::fromUtf8(QJsonDocument(sig.value(part.first).toArray()).toJson())); tabs->addTab(raw,part.second); }
+        auto *qualityPage=new QWidget; auto *qualityLayout=new QVBoxLayout(qualityPage);
+        auto *qualityTable=new QTableWidget(0,8);
+        qualityTable->setHorizontalHeaderLabels({tr("Session"),tr("Phase ID"),tr("Runs"),tr("Reference runs"),tr("Weak measurements"),tr("Dropped measurements"),tr("Refused measurements"),tr("Ended early")});
+        qualityTable->setEditTriggers(QAbstractItemView::NoEditTriggers); qualityTable->setSelectionBehavior(QAbstractItemView::SelectRows); qualityTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        qualityLayout->addWidget(qualityTable,1);
+        auto *qualityDetails=new QPlainTextEdit; qualityDetails->setReadOnly(true); qualityLayout->addWidget(qualityDetails,1);
+        const auto quality=sig.value("quality").toArray();
+        for(qsizetype i=std::max(qsizetype(0),quality.size()-1000);i<quality.size();++i) {
+            const auto record=quality.at(i).toObject(); const int r=qualityTable->rowCount(); qualityTable->insertRow(r); int c=0;
+            for(const char *key:{"sess","phase","runs","refs","weak","dropped","refused","ended_early"}) {
+                auto *item=new QTableWidgetItem(profilediff::display(record.value(QLatin1String(key))));
+                if(c==0) item->setData(Qt::UserRole,qlonglong(i));
+                qualityTable->setItem(r,c++,item);
+            }
+        }
+        connect(qualityTable,&QTableWidget::itemSelectionChanged,&dlg,[qualityTable,qualityDetails,quality]{
+            const auto *item=qualityTable->item(qualityTable->currentRow(),0); qualityDetails->setPlainText(item?profilediff::display(quality.at(item->data(Qt::UserRole).toLongLong())):QString());
+        });
+        qualityTable->setSortingEnabled(true); tabs->addTab(qualityPage,tr("Quality"));
         auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);
         auto *exportSnapshot=buttons->addButton(tr("Export Snapshot…"),QDialogButtonBox::ActionRole);
         connect(exportSnapshot,&QPushButton::clicked,&dlg,[this,&dlg,bytes] {
@@ -1014,7 +1032,7 @@ void OptimizeTab::buildUi() {
     status_->setWordWrap(true);
     bar->addWidget(status_, 1);
     auto *refreshBtn = new QPushButton(QCoreApplication::translate("OptimizeTab", "Refresh"));
-    connect(refreshBtn, &QPushButton::clicked, this, &OptimizeTab::refresh);
+    connect(refreshBtn, &QPushButton::clicked, this, &OptimizeTab::refreshDebugfs);
     bar->addWidget(refreshBtn);
     auto *draftBtn = new QPushButton(tr("Draft…"));
     draftBtn->setToolTip(tr("Save or restore an editor-only draft without applying it."));
@@ -1338,14 +1356,21 @@ void OptimizeTab::showEvent(QShowEvent *e) {
     fillGameScenes();  // scenes may have been added or deleted meanwhile
     fillAutotuneContexts();
     updateLaunchPreview();
-    refresh();
+    refreshDebugfs();
     poll_->start();
-    // debugfs is root-only: describe shows those rows from a copy that root writes. health-reader (read-only,
-    // silent polkit action) refreshes the copy, so they show live values and not the ones of the last apply.
-    if (const QString hr = privileged::helperPath(QStringLiteral("health-reader")); QFileInfo(hr).isExecutable())
-        privileged::run(hr, QJsonObject{{QStringLiteral("op"), QStringLiteral("debugfs_snapshot")}}, this,
-                        [this](const privileged::Result &r) { if (r.ok()) refresh(true); }, 15000);
 }
+void OptimizeTab::refreshDebugfs() {
+    if (debugfsRefreshing_) return;
+    if (!qEnvironmentVariableIsEmpty("CENTURION_TUNE_FAKE")) { refresh(); return; }
+    // Refresh the existing privileged read-only snapshot before the full describe.
+    // The old showEvent raced a describe and its callback could be discarded.
+    const QString hr = privileged::helperPath(QStringLiteral("health-reader"));
+    if (!QFileInfo(hr).isExecutable()) { refresh(); return; }
+    debugfsRefreshing_ = true;
+    privileged::run(hr,QJsonObject{{QStringLiteral("op"),QStringLiteral("debugfs_snapshot")}},this,
+        [this](const privileged::Result &) { debugfsRefreshing_=false; needFull_=true; refresh(); },15000);
+}
+
 void OptimizeTab::hideEvent(QHideEvent *e) {
     QWidget::hideEvent(e);
     // The manual Network/Storage/Kernel pages belong to Health, not to this tab.
@@ -1384,7 +1409,7 @@ bool OptimizeTab::eventFilter(QObject *watched, QEvent *event) {
 void OptimizeTab::refresh(bool fromPoll) {
     if (!fromPoll) needFull_ = true;
     refreshCalibrationStatus();
-    if (describing_ || busy_) return;
+    if (describing_ || busy_ || debugfsRefreshing_) return;
     // CENTURION_TUNE_FAKE=/path/describe.json renders canned data (dev only).
     if (const QString fake = qEnvironmentVariable("CENTURION_TUNE_FAKE"); !fake.isEmpty()) {
         onDescribe(readJsonFile(fake));
@@ -2809,7 +2834,7 @@ void OptimizeTab::showAutotuneHistory() {
     auto *detail=new QPlainTextEdit; detail->setReadOnly(true); layout->addWidget(detail,1);
     connect(table,&QTableWidget::itemSelectionChanged,&dlg,[table,detail,byId] {
         const int r=table->currentRow(); if(r<0 || !table->item(r,6)) {detail->clear();return;}
-        detail->setPlainText(QString::fromUtf8(QJsonDocument(byId.value(table->item(r,6)->text())).toJson()));
+        detail->setPlainText(profilediff::display(byId.value(table->item(r,6)->text())));
     });
     connect(filter,&QLineEdit::textChanged,&dlg,[table,detail](const QString &q){
         table->clearSelection(); detail->clear();
@@ -4017,7 +4042,7 @@ void OptimizeTab::showTransactionJournal() {
     auto add = [&](const QJsonObject &tx, const QString &key, const QJsonValue &requested, const QJsonObject &receipt, const QString &result) {
         const QStringList cells{tx.value("id").toString(), tx.value("started").toString(), tx.value("op").toString(),key,
             requested.isUndefined() || requested.isNull() ? QStringLiteral("—") : tuningview::valueText(requested), result, tx.value("reply").toString(), tx.value("boot").toString(),
-            QString::fromUtf8(QJsonDocument(receipt).toJson(QJsonDocument::Compact))};
+            profilediff::display(receipt)};
         const int row = table->rowCount(); table->insertRow(row);
         for (int c = 0; c < cells.size(); ++c) table->setItem(row,c,new QTableWidgetItem(cells.at(c)));
     };

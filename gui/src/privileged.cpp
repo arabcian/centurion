@@ -27,6 +27,7 @@ static QString describe(const operations::Entry &e) {
         case operations::Outcome::ReportedOk: phase = QT_TRANSLATE_NOOP("privileged", "Exited; helper reported OK (not independent verification)"); break;
         case operations::Outcome::ReportedFailure: phase = QT_TRANSLATE_NOOP("privileged", "Exited; helper reported failure"); break;
         case operations::Outcome::NotStarted: phase = QT_TRANSLATE_NOOP("privileged", "Failed to start"); break;
+        case operations::Outcome::Conflict: phase = QT_TRANSLATE_NOOP("privileged", "Rejected: conflicting resource reservation"); break;
         }
         break;
     }
@@ -85,8 +86,14 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
     // the owning tab goes away — blocked the GUI thread until the helper
     // exited on its own. The process now lives until it has really finished
     // and only then deletes itself; `guard` decides whether the callback runs.
+    // Reservation and registration occur in the same event-loop turn, before pkexec starts.
+    // No new GUI-side gate is imposed on emergency reset or session cleanup; backend locks remain authoritative.
+    const auto helperName=QFileInfo(helper).fileName().toStdString();
+    const auto op=QJsonDocument::fromJson(payload).object().value(QStringLiteral("op")).toString().toStdString();
+    const auto reservation=registry.tryBegin(helperName,operations::classify(helperName,op));
+    if(!reservation) return fail(QCoreApplication::translate("privileged", "A conflicting operation is still running; no helper was started."));
+    const auto operation=*reservation;
     auto *proc = new QProcess(QCoreApplication::instance());
-    const auto operation = registry.begin(QFileInfo(helper).fileName().toStdString());
     if (ctx) QObject::connect(ctx, &QObject::destroyed, proc, [operation] {
         registry.transition(operation, operations::Phase::OwnerGone);
     });
@@ -97,7 +104,8 @@ void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callbac
     auto oversized = std::make_shared<bool>(false);
     auto stdoutBuf = std::make_shared<QByteArray>();
     auto stderrBuf = std::make_shared<QByteArray>();
-    constexpr qsizetype outputLimit = 4 * 1024 * 1024, errorLimit = 4096;
+    const qsizetype outputLimit = helperName == "health-reader" && op == "ksnap" ? 80 * 1024 * 1024 : 4 * 1024 * 1024;
+    constexpr qsizetype errorLimit = 4096;
     auto drainOut = [=] {
         const auto chunk = proc->readAllStandardOutput();
         if (*oversized) return; // continue draining even when root ignores kill()

@@ -5,6 +5,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
+#include <QSaveFile>
+#include <QDateTime>
+#include <QJsonDocument>
+#include <QMessageBox>
+#include <QSysInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonObject>
@@ -49,6 +55,10 @@ KernelParamsPage::KernelParamsPage(QWidget *parent) : QWidget(parent) {
     row->addWidget(scope_);
     row->addWidget(filter_, 1);
     row->addWidget(btn);
+    export_ = new QPushButton(tr("Export and Save As…"));
+    export_->setEnabled(false);
+    row->addWidget(export_);
+    connect(export_, &QPushButton::clicked, this, &KernelParamsPage::exportSnapshot);
     lay->addLayout(row);
 
     status_ = new QLabel;
@@ -78,10 +88,16 @@ void KernelParamsPage::read() {
     if (!QFileInfo(helper).isExecutable()) { status_->setText(tr("health-reader is not installed.")); return; }
     const QString root = scope_->currentData().toString();
     busy_ = true;
+    export_->setEnabled(false);
+    scope_->setEnabled(false);
+    capturedScope_.clear();
+    captured_ = QJsonArray{};
+    tree_->clear();
     status_->setText(tr("Reading…"));
     privileged::run(helper, QJsonObject{{"op", "ksnap"}, {"roots", QJsonArray{root}}}, this, [this, root](const privileged::Result &r) {
         busy_ = false;
-        if (!r.reached) { status_->setText(r.message()); return; }
+        scope_->setEnabled(true);
+        if (!r.ok()) { status_->setText(r.message()); return; }
         if (!r.json.contains(QStringLiteral("entries"))) {
             status_->setText(r.json.value(QStringLiteral("ok")).toBool() ? tr("The installed health-reader is too old for this page — reinstall Centurion.") : r.message());
             return;
@@ -97,6 +113,12 @@ void KernelParamsPage::read() {
         msg += tr("%1 settings").arg(entries.size());
         if (r.json.value(QStringLiteral("truncated")).toBool()) msg += tr(" — list cut short (%1)").arg(r.json.value(QStringLiteral("reason")).toString());
         status_->setText(msg);
+        captured_ = entries;
+        capturedMeta_ = r.json; capturedMeta_.remove(QStringLiteral("entries"));
+        capturedScope_ = root;
+        capturedAt_ = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        capturedStatus_ = msg;
+        export_->setEnabled(true);
     }, 60000);
 }
 
@@ -126,4 +148,18 @@ void KernelParamsPage::applyFilter() {
         auto *it = tree_->topLevelItem(i);
         it->setHidden(!f.isEmpty() && !it->text(0).contains(f, Qt::CaseInsensitive) && !it->text(1).contains(f, Qt::CaseInsensitive));
     }
+}
+
+void KernelParamsPage::exportSnapshot() {
+    if (busy_ || capturedScope_.isEmpty()) return;
+    if (QMessageBox::question(this, tr("Export kernel settings"), tr("The snapshot can contain private device identifiers and configuration. All captured rows, including hidden rows and multiline values, will be saved. Continue?")) != QMessageBox::Yes) return;
+    const auto path = QFileDialog::getSaveFileName(this, tr("Export kernel settings"), QStringLiteral("centurion-kernel-settings.json"), tr("JSON files (*.json)"));
+    if (path.isEmpty()) return;
+    const QJsonObject snapshot{{"schema", 1}, {"value_limit_bytes",4096}, {"scope", capturedScope_}, {"captured_utc", capturedAt_}, {"kernel", QSysInfo::kernelVersion()}, {"status", capturedStatus_}, {"capture_receipt", capturedMeta_}, {"entries", captured_}};
+    const auto bytes = QJsonDocument(snapshot).toJson(QJsonDocument::Indented);
+    QSaveFile f(path); f.setDirectWriteFallback(false);
+    if (!f.open(QIODevice::WriteOnly) || !f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) || f.write(bytes) != bytes.size() || !f.commit()) {
+        QMessageBox::warning(this, tr("Export kernel settings"), tr("Snapshot could not be saved.")); return;
+    }
+    QMessageBox::information(this, tr("Export kernel settings"), tr("Saved %1 captured settings.").arg(captured_.size()));
 }

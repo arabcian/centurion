@@ -4,12 +4,14 @@
 // health-reader's read-only "ksnap" op: silent polkit action, nothing is written, see ksnap.rs).
 // Read on the button only, never in the background. The scheduler scope also lists the sched_* sysctls.
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QWidget>
 
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QTreeWidget;
+class QPushButton;
 
 class KernelParamsPage : public QWidget {
     Q_OBJECT
@@ -25,4 +27,9 @@ private:
     QLabel *status_;
     QTreeWidget *tree_;
     bool busy_ = false;
+    QJsonArray captured_;
+    QJsonObject capturedMeta_;
+    QString capturedScope_, capturedAt_, capturedStatus_;
+    QPushButton *export_ = nullptr;
+    void exportSnapshot();
 };

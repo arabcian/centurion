@@ -33,6 +33,9 @@
 #include <QPlainTextEdit>
 #include <QDateTime>
 #include <QTreeWidget>
+#include <QTabWidget>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QDir>
 #include <QFileDialog>
 #include <QComboBox>
@@ -114,7 +117,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         for (int i=0; i<list->count(); ++i) {
             auto *item=list->item(i);
             const int role=item->data(Qt::UserRole + 1).toInt();
-            if (role) item->setForeground(QColor(QLatin1String(role==1 ? theme::ACCENT : role==2 ? theme::FG : theme::FG_DIM)));
+            if (role) item->setForeground(QColor(QLatin1String(role==1 ? theme::OK : role==2 ? theme::FG : theme::FG_DIM)));
         }
     });
     ll->addWidget(list_, 1);
@@ -378,9 +381,29 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         auto *layout = new QVBoxLayout(&dlg);
         auto *hint = new QLabel(tr("Actual transaction callbacks. A successful helper response is not independent hardware readback."));
         hint->setWordWrap(true); layout->addWidget(hint);
-        auto *text = new QPlainTextEdit; text->setReadOnly(true); layout->addWidget(text, 1);
-        const auto refresh = [this, text] { text->setPlainText(stepHistory_.join(QLatin1Char('\n'))); };
-        refresh(); connect(eng_, &SceneEngine::transactionState, &dlg, refresh); connect(eng_, &SceneEngine::finished, &dlg, refresh);
+        auto *all = new QCheckBox(tr("Show all events")); layout->addWidget(all);
+        auto *tree = new QTreeWidget; tree->setColumnCount(4);
+        tree->setHeaderLabels({tr("Time / Scene"),tr("Step"),tr("Result"),tr("Details")});
+        tree->setAlternatingRowColors(true); tree->header()->setSectionResizeMode(QHeaderView::Interactive);
+        tree->header()->resizeSection(0,210); tree->header()->resizeSection(1,130); tree->header()->resizeSection(2,180); tree->header()->setStretchLastSection(true);
+        layout->addWidget(tree,1);
+        auto *detail = new QPlainTextEdit; detail->setReadOnly(true); detail->setMaximumHeight(130); layout->addWidget(detail);
+        connect(tree,&QTreeWidget::currentItemChanged,&dlg,[detail](QTreeWidgetItem *it,QTreeWidgetItem *){detail->setPlainText(it?it->data(0,Qt::UserRole).toString():QString());});
+        const auto refresh = [this, tree, all] {
+            tree->clear(); QHash<QString,QTreeWidgetItem*> groups;
+            for(const auto &e:stepHistory_) {
+                const bool routine = e.state=="running" || e.state=="returned_ok" || e.state=="deferred_running" || e.state=="restoring" || e.state=="restore_returned_ok";
+                if(!all->isChecked() && routine) continue;
+                auto *group=groups.value(e.id,nullptr);
+                if(!group){group=new QTreeWidgetItem(tree,{e.time + QStringLiteral("  ·  ") + e.scene}); group->setToolTip(0,e.id); group->setData(0,Qt::UserRole,e.id); groups.insert(e.id,group);}
+                QString label=scenes::outcomeLabel(e.state);
+                if(e.state=="returned_ok" || e.state=="returned_unverified" || e.state=="deferred_returned_unverified")label=tr("Returned (not verified)");
+                if(e.step.isEmpty()){group->setText(2,label); if(e.state=="partial" || e.state=="partial_rollback" || e.state=="interrupted")group->setForeground(2,QColor(theme::WARN));}
+                else {auto *item=new QTreeWidgetItem(group,{e.time.section('T',1),e.step,label,e.detail.section('\n',0,0)}); item->setToolTip(3,e.detail); item->setData(0,Qt::UserRole,e.detail); if(e.state=="failed" || e.state=="restore_failed" || e.state=="deferred_failed")item->setForeground(2,QColor(theme::DANGER));}
+            }
+            if(tree->topLevelItemCount()) tree->topLevelItem(tree->topLevelItemCount()-1)->setExpanded(true);
+        };
+        refresh(); connect(all,&QCheckBox::toggled,&dlg,refresh); connect(eng_, &SceneEngine::transactionState, &dlg, refresh); connect(eng_, &SceneEngine::finished, &dlg, refresh);
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
         connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); dlg.exec();
     });
@@ -509,8 +532,29 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(apply_, &QPushButton::clicked, this, &ScenesTab::applyCurrent);
     connect(preview_, &QPushButton::clicked, this, [this] {
         const Scene s = fromEditor();
-        QMessageBox::information(this, tr("Preview: %1").arg(s.name),
-                                 eng_->preview(s).join('\n') + tr("\n\nNothing was written. Values are read now and may differ at apply time."));
+        QDialog dlg(this); dlg.setWindowTitle(tr("Preview: %1").arg(s.name)); dlg.resize(1000,620);
+        auto *layout=new QVBoxLayout(&dlg);
+        auto *note=new QLabel(tr("Nothing was written. This is the requested execution order; prerequisites, current values and rollback snapshots are rechecked at execution. The draft is not saved."));
+        note->setWordWrap(true);layout->addWidget(note);
+        auto *tabs=new QTabWidget; layout->addWidget(tabs,1);
+        auto *table=new QTableWidget;table->setColumnCount(5);table->setHorizontalHeaderLabels({tr("Order"),tr("Component"),tr("Current"),tr("Requested"),tr("Prerequisite / rollback")});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->setSelectionBehavior(QAbstractItemView::SelectRows);table->setWordWrap(true);
+        const auto rows=eng_->orderedPreview(s);table->setRowCount(rows.size());
+        for(int r=0;r<rows.size();++r){table->setItem(r,0,new QTableWidgetItem(QString::number(r+1)));for(int c=0;c<rows[r].size();++c){auto *item=new QTableWidgetItem(rows[r][c]);item->setToolTip(rows[r][c]);table->setItem(r,c+1,item);}}
+        table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);table->horizontalHeader()->setStretchLastSection(true);
+        table->setColumnWidth(0,60);table->setColumnWidth(1,145);table->setColumnWidth(2,160);table->setColumnWidth(3,270);table->resizeRowsToContents();
+        tabs->addTab(table,tr("Execution plan"));
+        auto *diagnostics=new QPlainTextEdit;diagnostics->setReadOnly(true);diagnostics->setPlainText(eng_->preview(s).join(QLatin1Char('\n')));tabs->addTab(diagnostics,tr("Current dependencies"));
+        auto *sim=new QWidget;auto *sv=new QVBoxLayout(sim);
+        auto *desc=new QLabel(tr("Simulate the saved automatic power-source policy with hypothetical guards. No scene, command or hardware operation is executed. Time and game-profile triggers are not simulated here."));desc->setWordWrap(true);sv->addWidget(desc);
+        auto *source=new QComboBox;source->addItem(tr("On AC"),true);source->addItem(tr("On battery"),false);sv->addWidget(source);
+        auto *cal=new QCheckBox(tr("Calibration active"));auto *game=new QCheckBox(tr("Game owns tuning"));auto *busy=new QCheckBox(tr("Scene running"));auto *same=new QCheckBox(tr("Running scene matches target"));
+        for(auto *c:{cal,game,busy,same})sv->addWidget(c);
+        auto *result=new QLabel;result->setTextFormat(Qt::PlainText);result->setWordWrap(true);sv->addWidget(result);sv->addStretch(1);
+        auto update=[=,this]{same->setEnabled(busy->isChecked());result->setText(eng_->sourceDryRun(source->currentData().toBool(),cal->isChecked(),game->isChecked(),busy->isChecked(),same->isChecked()));};
+        connect(source,&QComboBox::currentIndexChanged,&dlg,update);for(auto *c:{cal,game,busy,same})connect(c,&QCheckBox::toggled,&dlg,update);update();
+        tabs->addTab(sim,tr("Trigger dry run"));
+        auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(buttons);connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);dlg.exec();
     });
     connect(fwCapture_, &QPushButton::clicked, this, &ScenesTab::captureFirmware);
     connect(fanClear_, &QPushButton::clicked, this, [this] { fanTable_.clear(); updateFanTableLabel(); updateDirty(); });
@@ -525,7 +569,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         connect(c, &QComboBox::currentIndexChanged, this, [this] { if (!filling_) storeAuto(); });
 
     connect(eng_, &SceneEngine::transactionState, this, [this](const QString &id, const QString &scene, const QString &step, const QString &state, const QString &detail) {
-        stepHistory_ << QStringLiteral("%1 · %2 · %3 · %4 · %5 · %6").arg(QDateTime::currentDateTime().toString(Qt::ISODate), id, scene, step, scenes::outcomeLabel(state), detail.left(2048));
+        stepHistory_.append(StepEvent{QDateTime::currentDateTime().toString(Qt::ISODate), id, scene, step, state, detail.size() > 16384 ? detail.left(16384) + QStringLiteral("\n…") : detail});
         while (stepHistory_.size() > 200) stepHistory_.removeFirst();
     });
     connect(eng_, &SceneEngine::started, this, [this](const QString &n) {
@@ -536,8 +580,11 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         if (n.isEmpty()) { setStatus(log.join(' '), theme::FG_DIM); return; }  // informational (deferred switch)
         apply_->setEnabled(list_->count() > 0);
         const QString outcome = eng_->lastOutcome();
-        setStatus(tr("%1 — %2").arg(n, scenes::outcomeLabel(outcome)) + QStringLiteral(" — ") + log.join(QStringLiteral("  ·  ")),
-                  ok && outcome == QStringLiteral("returned_unverified") ? theme::FG_DIM : theme::WARN);
+        if (ok && scenes::activeScene()==n && (outcome == "partial" || outcome == "returned_unverified" || outcome == "deferred_pending")) {
+            setStatus(outcome == "partial" ? tr("%1 — active; exceptions in Execution Log.").arg(n) : tr("%1 — active; see Execution Log for verification and pending steps.").arg(n), theme::OK);
+        } else {
+            setStatus(tr("%1 — %2. See Execution Log.").arg(n, scenes::outcomeLabel(outcome)), theme::WARN);
+        }
         reloadList(loaded_.name);  // marks the active scene
         updatePowerLabel();
     });
@@ -764,9 +811,9 @@ void ScenesTab::colorList() {
     const QString active = eng_->active();
     for (int i = 0; i < list_->count(); ++i) {
         QListWidgetItem *it = list_->item(i);
-        const char *c = it->data(Qt::UserRole).toString() == active && !active.isEmpty() ? theme::ACCENT
+        const char *c = it->data(Qt::UserRole).toString() == active && !active.isEmpty() ? theme::OK
                         : it == list_->currentItem() ? theme::FG : theme::FG_DIM;
-        it->setData(Qt::UserRole + 1, c == theme::ACCENT ? 1 : c == theme::FG ? 2 : 3);
+        it->setData(Qt::UserRole + 1, c == theme::OK ? 1 : c == theme::FG ? 2 : 3);
         it->setForeground(QColor(QLatin1String(c)));
     }
 }
@@ -786,7 +833,7 @@ void ScenesTab::reloadList(const QString &selectName) {
         if (n == eng_->active()) {
             QFont f = it->font(); f.setBold(true); it->setFont(f);
             const bool partial = scenes::activeScenePartial();
-            if (partial) it->setText(it->text() + QStringLiteral("  ·  partial"));
+            // Selection identity is distinct from individual step verification; retain the tooltip.
             it->setToolTip(partial ? tr("Active, but its last apply had failed steps: only partly in effect") : tr("Active"));
         }
         list_->addItem(it);

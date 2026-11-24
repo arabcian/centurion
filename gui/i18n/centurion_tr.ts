@@ -6560,6 +6560,30 @@ Hiçbir şey yazılmadı. Değerler şimdi okunur ve uygulama anında farklı ol
             <source>Active, but its last apply had failed steps: only partly in effect</source>
             <translation>Etkin, ancak son uygulamasında başarısız adımlar vardı: yalnızca kısmen geçerli</translation>
         </message>
+            <message><source>Nothing was written. This is the requested execution order; prerequisites, current values and rollback snapshots are rechecked at execution. The draft is not saved.</source><translation>Hiçbir değer yazılmadı. Bu istenen yürütme sırasıdır; ön koşullar, mevcut değerler ve geri alma kayıtları yürütme sırasında tekrar kontrol edilir. Taslak kaydedilmedi.</translation></message>
+        <message><source>Order</source><translation>Sıra</translation></message>
+        <message><source>Component</source><translation>Bileşen</translation></message>
+        <message><source>Current</source><translation>Mevcut</translation></message>
+        <message><source>Requested</source><translation>İstenen</translation></message>
+        <message><source>Prerequisite / rollback</source><translation>Ön koşul / geri alma</translation></message>
+        <message><source>Execution plan</source><translation>Yürütme planı</translation></message>
+        <message><source>Current dependencies</source><translation>Mevcut bağımlılıklar</translation></message>
+        <message><source>Simulate the saved automatic power-source policy with hypothetical guards. No scene, command or hardware operation is executed. Time and game-profile triggers are not simulated here.</source><translation>Kayıtlı otomatik güç kaynağı politikasını varsayımsal koruma koşullarıyla simüle edin. Hiçbir sahne, komut veya donanım işlemi yürütülmez. Zaman ve oyun profili tetikleyicileri burada simüle edilmez.</translation></message>
+        <message><source>On AC</source><translation>Adaptörde</translation></message>
+        <message><source>Calibration active</source><translation>Kalibrasyon etkin</translation></message>
+        <message><source>Game owns tuning</source><translation>Ayarlar oyunun denetiminde</translation></message>
+        <message><source>Scene running</source><translation>Sahne çalışıyor</translation></message>
+        <message><source>Running scene matches target</source><translation>Çalışan sahne hedefle eşleşiyor</translation></message>
+        <message><source>Trigger dry run</source><translation>Tetikleyici deneme yürütmesi</translation></message>
+            <message><source>Show all events</source><translation>Tüm olayları göster</translation></message>
+        <message><source>Time / Scene</source><translation>Zaman / Sahne</translation></message>
+        <message><source>Step</source><translation>Adım</translation></message>
+        <message><source>Result</source><translation>Sonuç</translation></message>
+        <message><source>Details</source><translation>Ayrıntılar</translation></message>
+        <message><source>Returned (not verified)</source><translation>Yanıt alındı (doğrulanmadı)</translation></message>
+        <message><source>%1 — active; exceptions in Execution Log.</source><translation>%1 — etkin; istisnalar Yürütme Günlüğünde.</translation></message>
+        <message><source>%1 — active; see Execution Log for verification and pending steps.</source><translation>%1 — etkin; doğrulama ve bekleyen adımlar için Yürütme Günlüğüne bakın.</translation></message>
+        <message><source>%1 — %2. See Execution Log.</source><translation>%1 — %2. Yürütme Günlüğüne bakın.</translation></message>
     </context>
     <context>
         <name>SleepPage</name>
@@ -11607,6 +11631,12 @@ These changes can cost stability, heat or idle power:
         <message><source>Select measured A and B logs from the same game, workload, resolution, graphics settings, kernel, firmware and power context. The tuning configuration may differ. This is a user-declared comparison, not a controlled experiment or model input.</source><translation>Aynı oyun, iş yükü, çözünürlük, grafik ayarları, çekirdek, firmware ve güç koşullarında ölçülmüş A ve B kayıtlarını seçin. Optimizasyon yapılandırması farklı olabilir. Bu, kullanıcı beyanına dayanan bir karşılaştırmadır; kontrollü deney veya model girdisi değildir.</translation></message>
         <message><source>Selected preset</source><translation>Seçili ön ayar</translation></message>
         <message><source>Staged in editor</source><translation>Editörde taslağa aktarıldı</translation></message>
+            <message><source>Runs</source><translation>Denemeler</translation></message>
+        <message><source>Reference runs</source><translation>Referans denemeleri</translation></message>
+        <message><source>Weak measurements</source><translation>Zayıf ölçümler</translation></message>
+        <message><source>Dropped measurements</source><translation>Atılan ölçümler</translation></message>
+        <message><source>Refused measurements</source><translation>Reddedilen ölçümler</translation></message>
+        <message><source>Ended early</source><translation>Erken sonlandı</translation></message>
     </context>
     <context>
         <name>RyzenTab</name>
@@ -11757,7 +11787,8 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>Finish the current CPU curve write or trial first.</source>
             <translation>Önce mevcut işlemci eğrisi yazmasını veya denemesini bitirin.</translation>
         </message>
-  </context>
+          <message><source>Compared by recorded CCD / CCX / slot, not by array order. All-core and per-core values are separate. Matching slot numbers do not establish matching physical CPUs or stability.</source><translation>Dizi sırasına değil, kayıtlı CCD / CCX / yuva bilgisine göre karşılaştırılır. Tüm çekirdek ve çekirdek başına değerler ayrıdır. Eşleşen yuva numaraları aynı fiziksel CPU'yu veya kararlılığı kanıtlamaz.</translation></message>
+    </context>
     <context>
         <name>SmartPage</name>
         <message>
@@ -14527,6 +14558,8 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>Failed to start</source>
             <translation>Başlatılamadı</translation>
         </message>
+            <message><source>Rejected: conflicting resource reservation</source><translation>Reddedildi: çakışan kaynak rezervasyonu</translation></message>
+        <message><source>A conflicting operation is still running; no helper was started.</source><translation>Çakışan işlem hâlâ çalışıyor; yardımcı program başlatılmadı.</translation></message>
     </context>
     <context>
         <name>BarChart</name>
@@ -18122,6 +18155,25 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <source>CPU curve or game tuning ownership changed before launch. No trial was started.</source>
             <translation>Başlatmadan önce CPU eğrisi veya oyun ayarı sahipliği değişti. Hiçbir deneme başlatılmadı.</translation>
         </message>
+            <message><source>Passed observed tests</source><translation>Gözlenen testler geçti</translation></message>
+        <message><source>Observed failure</source><translation>Gözlenen hata</translation></message>
+        <message><source>Interrupted / recovery failure</source><translation>Kesinti / kurtarma hatası</translation></message>
+        <message><source>Unknown / legacy evidence</source><translation>Bilinmeyen / eski kanıt</translation></message>
+        <message><source>CCD Evidence and Decision Timeline</source><translation>CCD Kanıtı ve Karar Zaman Çizelgesi</translation></message>
+        <message><source>Only identified isolated probes count towards the heatmap. P = pass, F = failure, I = interruption. Blank means no eligible observation, not stock stability. Different boot conditions can affect results.</source><translation>Isı haritasında yalnızca kimliği belirlenmiş izole denemeler sayılır. P = başarılı, F = hatalı, I = kesinti. Boş alan uygun gözlem olmadığını belirtir, stok kararlılığını değil. Farklı açılış koşulları sonuçları etkileyebilir.</translation></message>
+        <message><source>%1 isolated candidate cells; %2 other, invalid or legacy records excluded from counts.</source><translation>%1 izole aday hücresi; %2 diğer, geçersiz veya eski kayıt sayıma alınmadı.</translation></message>
+        <message><source>Physical core</source><translation>Fiziksel çekirdek</translation></message>
+        <message><source>Recorded CO</source><translation>Kayıtlı CO</translation></message>
+        <message><source>Conflicting observations</source><translation>Çelişkili gözlemler</translation></message>
+        <message><source>Isolated probe heatmap</source><translation>İzole deneme ısı haritası</translation></message>
+        <message><source>Filter event ID, boot, core, decision or result…</source><translation>Olay kimliğini, açılışı, çekirdeği, kararı veya sonucu filtrele…</translation></message>
+        <message><source>Selected time</source><translation>Seçim zamanı</translation></message>
+        <message><source>Boot</source><translation>Açılış</translation></message>
+        <message><source>Event ID</source><translation>Olay kimliği</translation></message>
+        <message><source>Scope</source><translation>Kapsam</translation></message>
+        <message><source>Decision</source><translation>Karar</translation></message>
+        <message><source>Showing newest %1 events; %2 earlier events not displayed.</source><translation>En yeni %1 olay gösteriliyor; %2 eski olay gösterilmiyor.</translation></message>
+        <message><source>Decision timeline</source><translation>Karar zaman çizelgesi</translation></message>
     </context>
     <context>
         <name>coevidence</name>
@@ -23723,6 +23775,8 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Selection changed. Regenerate preview before exporting.</source>
             <translation>Seçim değişti. Dışa aktarmadan önce önizlemeyi yeniden oluştur.</translation>
         </message>
+            <message><source>Investigation category (use System Overview to start guided triage).</source><translation>İnceleme kategorisi (yönlendirmeli tanı için Sistem Özeti'ni kullanın).</translation></message>
+        <message><source>Use System Overview to start guided triage, or rerun the selected category.</source><translation>Yönlendirmeli tanı için Sistem Özeti'ni kullanın veya seçili kategoriyi tekrar çalıştırın.</translation></message>
     </context>
     <context>
         <name>KernelParamsPage</name>
@@ -23802,6 +23856,12 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source> — list cut short (%1)</source>
             <translation> — liste kısaltıldı (%1)</translation>
         </message>
+            <message><source>Export and Save As…</source><translation>Dışa Aktar ve Farklı Kaydet…</translation></message>
+        <message><source>Export kernel settings</source><translation>Çekirdek ayarlarını dışa aktar</translation></message>
+        <message><source>The snapshot can contain private device identifiers and configuration. All captured rows, including hidden rows and multiline values, will be saved. Continue?</source><translation>Anlık görüntü özel aygıt kimlikleri ve yapılandırma içerebilir. Gizli satırlar ve çok satırlı değerler dahil yakalanan tüm kayıtlar kaydedilecek. Devam edilsin mi?</translation></message>
+        <message><source>JSON files (*.json)</source><translation>JSON dosyaları (*.json)</translation></message>
+        <message><source>Snapshot could not be saved.</source><translation>Anlık görüntü kaydedilemedi.</translation></message>
+        <message><source>Saved %1 captured settings.</source><translation>Yakalanan %1 ayar kaydedildi.</translation></message>
     </context>
     <context>
         <name>toolcatalog</name>
@@ -24580,6 +24640,37 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Two readable snapshots are needed.</source>
             <translation>Okunabilir iki kayıt gerekli.</translation>
         </message>
+            <message><source>All-core CO</source><translation>Tüm çekirdek CO</translation></message>
+        <message><source>Curve offset</source><translation>Eğri ofseti</translation></message>
+        <message><source>Physical cores</source><translation>Fiziksel çekirdekler</translation></message>
+        <message><source>Firmware limits</source><translation>Firmware sınırları</translation></message>
+        <message><source>CPU PL1 (W)</source><translation>CPU PL1 (W)</translation></message>
+        <message><source>CPU PL2 (W)</source><translation>CPU PL2 (W)</translation></message>
+        <message><source>CPU PL3 (W)</source><translation>CPU PL3 (W)</translation></message>
+        <message><source>CPU cross-load limit (W)</source><translation>CPU ortak yük sınırı (W)</translation></message>
+        <message><source>CPU temperature (°C)</source><translation>CPU sıcaklığı (°C)</translation></message>
+        <message><source>GPU temperature (°C)</source><translation>GPU sıcaklığı (°C)</translation></message>
+        <message><source>GPU cTGP (W)</source><translation>GPU cTGP (W)</translation></message>
+        <message><source>GPU Dynamic Boost ceiling (W)</source><translation>GPU Dynamic Boost üst sınırı (W)</translation></message>
+        <message><source>GPU Dynamic Boost floor (W)</source><translation>GPU Dynamic Boost alt sınırı (W)</translation></message>
+        <message><source>Fan curve</source><translation>Fan eğrisi</translation></message>
+        <message><source>Full-speed fans</source><translation>Tam hızlı fanlar</translation></message>
+        <message><source>Context ID</source><translation>Bağlam kimliği</translation></message>
+        <message><source>Session ID</source><translation>Oturum kimliği</translation></message>
+        <message><source>Reference runs</source><translation>Referans denemeleri</translation></message>
+        <message><source>Runs</source><translation>Denemeler</translation></message>
+        <message><source>Weak measurements</source><translation>Zayıf ölçümler</translation></message>
+        <message><source>Dropped measurements</source><translation>Atılan ölçümler</translation></message>
+        <message><source>Refused measurements</source><translation>Reddedilen ölçümler</translation></message>
+        <message><source>Noise (recorded objective order)</source><translation>Gürültü (kayıtlı hedef sırası)</translation></message>
+        <message><source>Ended early</source><translation>Erken sonlandı</translation></message>
+        <message><source>Power waits</source><translation>Güç beklemeleri</translation></message>
+        <message><source>Unknown</source><translation>Bilinmiyor</translation></message>
+        <message><source>Yes</source><translation>Evet</translation></message>
+        <message><source>No</source><translation>Hayır</translation></message>
+        <message><source>More nested data in exported snapshot</source><translation>Dışa aktarılan görüntüde daha fazla iç içe veri var</translation></message>
+        <message><source>Additional entries omitted from view</source><translation>Ek kayıtlar görünüm sınırı nedeniyle gösterilmiyor</translation></message>
+        <message><source>Empty</source><translation>Boş</translation></message>
     </context>
     <context>
         <name>SceneEngine</name>
@@ -24675,6 +24766,58 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Optimizations</source>
             <translation>Optimizasyonlar</translation>
         </message>
+            <message><source>Reset to defaults</source><translation>Varsayılana sıfırla</translation></message>
+        <message><source>Restore originals</source><translation>Özgün değerleri geri yükle</translation></message>
+        <message><source>Profile: %1</source><translation>Profil: %1</translation></message>
+        <message><source>Read at execution / unknown</source><translation>Yürütme sırasında okunacak / bilinmiyor</translation></message>
+        <message><source>Requires Custom at execution</source><translation>Yürütme sırasında Custom profili gerekir</translation></message>
+        <message><source>Custom prerequisite not currently satisfied</source><translation>Custom ön koşulu şu anda sağlanmıyor</translation></message>
+        <message><source>Fan boost</source><translation>Fan hızlandırma</translation></message>
+        <message><source>Full speed</source><translation>Tam hız</translation></message>
+        <message><source>Automatic</source><translation>Otomatik</translation></message>
+        <message><source>Snapshot before write; restore on rollback</source><translation>Yazmadan önce değerleri kaydet; geri almada geri yükle</translation></message>
+        <message><source>Power profile</source><translation>Güç profili</translation></message>
+        <message><source>Readback at execution; restore when previous profile is known</source><translation>Yürütme sırasında geri oku; önceki profil biliniyorsa geri yükle</translation></message>
+        <message><source>Fan boost check</source><translation>Fan hızlandırma kontrolü</translation></message>
+        <message><source>Recheck after power-profile change</source><translation>Güç profili değiştikten sonra tekrar kontrol et</translation></message>
+        <message><source>Firmware limits</source><translation>Firmware sınırları</translation></message>
+        <message><source>WMI or unreadable values may not be restorable</source><translation>WMI veya okunamayan değerler geri yüklenemeyebilir</translation></message>
+        <message><source>CPU curve</source><translation>CPU eğrisi</translation></message>
+        <message><source>No automatic rollback for this step</source><translation>Bu adımda otomatik geri alma yok</translation></message>
+        <message><source>CPU undervolt</source><translation>CPU düşük voltaj ayarı</translation></message>
+        <message><source>CPU tuning</source><translation>CPU ayarı</translation></message>
+        <message><source>Unsupported backend; skipped</source><translation>Desteklenmeyen arka uç; atlanır</translation></message>
+        <message><source>GPU curve</source><translation>GPU eğrisi</translation></message>
+        <message><source>Deferred profile after scene completion; GPU must be usable</source><translation>Profil sahne sonrasına ertelenir; GPU kullanılabilir olmalı</translation></message>
+        <message><source>GPU must be usable; reset is immediate after any CPU gap</source><translation>GPU kullanılabilir olmalı; CPU beklemesi sonrasında sıfırlanır</translation></message>
+        <message><source>Replace preset; game ownership checked at execution</source><translation>Ön ayarı değiştir; oyun sahipliği yürütmede kontrol edilir</translation></message>
+        <message><source>Fan curve</source><translation>Fan eğrisi</translation></message>
+        <message><source>Lighting</source><translation>Aydınlatma</translation></message>
+        <message><source>Profile %1 / brightness %2</source><translation>Profil %1 / parlaklık %2</translation></message>
+        <message><source>Unchanged</source><translation>Değişmedi</translation></message>
+        <message><source>Spectrum capability checked at execution</source><translation>Spectrum desteği yürütmede kontrol edilir</translation></message>
+        <message><source>4-zone lighting</source><translation>4 bölgeli aydınlatma</translation></message>
+        <message><source>Keyboard capability checked at execution</source><translation>Klavye desteği yürütmede kontrol edilir</translation></message>
+        <message><source>Keyboard light</source><translation>Klavye ışığı</translation></message>
+        <message><source>Panel Over Drive</source><translation>Panel Over Drive</translation></message>
+        <message><source>On</source><translation>Açık</translation></message>
+        <message><source>Off</source><translation>Kapalı</translation></message>
+        <message><source>Display</source><translation>Ekran</translation></message>
+        <message><source>Desktop helper at execution only</source><translation>Masaüstü yardımcısı yalnızca yürütmede</translation></message>
+        <message><source>Command</source><translation>Komut</translation></message>
+        <message><source>Not applicable</source><translation>Uygulanamaz</translation></message>
+        <message><source>User command is never run by this preview; no rollback</source><translation>Bu önizleme kullanıcı komutunu asla çalıştırmaz; geri alma yok</translation></message>
+        <message><source>Screen brightness</source><translation>Ekran parlaklığı</translation></message>
+        <message><source>After command; desktop helper at execution only</source><translation>Komuttan sonra; masaüstü yardımcısı yalnızca yürütmede</translation></message>
+        <message><source>Automatic switching is disabled.</source><translation>Otomatik geçiş devre dışı.</translation></message>
+        <message><source>Automatic switching is paused.</source><translation>Otomatik geçiş duraklatıldı.</translation></message>
+        <message><source>Deferred until calibration ends.</source><translation>Kalibrasyon bitene kadar ertelendi.</translation></message>
+        <message><source>Deferred until game ownership ends.</source><translation>Oyun sahipliği bitene kadar ertelendi.</translation></message>
+        <message><source>No scene selected for this power source.</source><translation>Bu güç kaynağı için sahne seçilmedi.</translation></message>
+        <message><source>Matching scene already running; clear obsolete queued request.</source><translation>Eşleşen sahne çalışıyor; eski bekleyen istek temizlenir.</translation></message>
+        <message><source>Queue latest scene: %1</source><translation>Son sahneyi sıraya al: %1</translation></message>
+        <message><source>Would request scene: %1</source><translation>İstenecek sahne: %1</translation></message>
+        <message><source>Referenced scene is missing: %1</source><translation>Başvurulan sahne bulunamadı: %1</translation></message>
     </context>
 <context>
     <name>FirewallDiff</name>
@@ -25582,4 +25725,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Revert requested; see the curve panel for the result.</source><translation>Geri dönüş istendi; sonuç için eğri paneline bakın.</translation></message>
         <message><source>Revert unavailable: no reset callback.</source><translation>Geri dönüş kullanılamıyor: sıfırlama işlevi yok.</translation></message>
     </context>
+<context><name>NvRegDialog</name>
+        <message><source>Driver option discovery failed.</source><translation>Sürücü seçenekleri keşfedilemedi.</translation></message>
+        <message><source>Saved options are unavailable in the installed driver. Apply is disabled to avoid deleting them.</source><translation>Kayıtlı seçenekler kurulu sürücüde bulunamadı. Silinmelerini önlemek için Uygula devre dışı.</translation></message>
+        <message><source>Read-only (unsupported type)</source><translation>Salt okunur (desteklenmeyen tür)</translation></message>
+        <message><source>Discovered options have type checks only, not reviewed driver-specific safety limits. Incorrect values can prevent the GPU driver from starting. Write these changes for the next boot?</source><translation>Keşfedilen seçenekler yalnızca tür açısından doğrulanır; sürücüye özgü güvenlik sınırları incelenmemiştir. Yanlış değerler GPU sürücüsünün başlatılmasını engelleyebilir. Sonraki açılış için değişiklikler yazılsın mı?</translation></message>
+</context>
 </TS>

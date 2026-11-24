@@ -92,6 +92,7 @@ private:
 
     scenes::Scene loaded_;           // as last saved / loaded
     QMap<QString, int> firmware_;    // editor copy of the firmware snapshot
-    QStringList stepHistory_;
+    struct StepEvent { QString time, id, scene, step, state, detail; };
+    QList<StepEvent> stepHistory_;
     bool filling_ = false;
 };

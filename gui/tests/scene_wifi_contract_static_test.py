@@ -15,7 +15,7 @@ class Contract(unittest.TestCase):
         self.assertIn('sceneoutcome::terminal',s)
         self.assertIn('deferredInFlight_ > 0',s)
         self.assertIn('if (scenes_->operationActive())',src('mainwindow.cpp'))
-        self.assertIn('detail.left(2048)',src('scenestab.cpp'))
+        self.assertIn('detail.left(16384)',src('scenestab.cpp')) # grouped per-key exception detail, still bounded
     def test_quit_rechecks_after_dialog(self):
         s=src('mainwindow.cpp').split('bool MainWindow::canQuit()',1)[1].split('void MainWindow::sampleOperations()',1)[0]
         self.assertIn('page->hasUnappliedChanges()',s)

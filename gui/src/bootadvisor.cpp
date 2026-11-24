@@ -175,6 +175,7 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
         "desktop, audio and games, at a small throughput cost.",
         true, false, [] { return QSysInfo::kernelVersion().contains("PREEMPT_DYNAMIC") || readAll("/proc/version").contains("PREEMPT_DYNAMIC"); },
         tokenOr("preempt=full", {}));
+    excl("preempt-mode");
     cmd("nowatchdog", "Disables the soft/hard lockup detectors (a periodic timer interrupt on every CPU). Less background jitter; "
         "the kernel no longer reports lockups by itself.", true, false, always, tokenOr("nowatchdog", {}));
     cmd("nmi_watchdog=0", "No NMI watchdog: frees one hardware performance counter per CPU (profilers, MangoHud) and removes its "
@@ -183,6 +184,7 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
     cmd("tsc=nowatchdog", "Stops the clocksource watchdog from periodically cross-checking the TSC against HPET: one less "
         "timer interrupt source, meant for tight latency requirements. Only on a stable TSC — if dmesg ever shows "
         "\"Marking TSC unstable\", leave this out.", false, false, always, tokenOr("tsc=nowatchdog", {}));
+    excl("tsc-reliability");
     cmd("threadirqs", "Runs device interrupt handlers as kernel threads, so their priority can be set (rtirq, rtkit): "
         "the classic fix for audio crackle and input jitter under load. Slightly more overhead per interrupt.",
         false, false, always, tokenOr("threadirqs", {}));
@@ -196,6 +198,7 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
         "with few idle states, like Zen.", false, false,
         [] { return readAll("/sys/devices/system/cpu/cpuidle/available_governors").contains("teo"); },
         tokenOr("cpuidle.governor=teo", [] { return readAll("/sys/devices/system/cpu/cpuidle/current_governor") == "teo" ? 1 : 0; }));
+    excl("idle-governor");
 
     cmd("rcu_nocbs=all", "Offloads RCU callback processing from every CPU to rcuo kthreads the scheduler can move around: "
         "fewer softirq bursts on the CPU a game or audio thread is running on. Needs CONFIG_RCU_NOCB_CPU (no-op without it).",
@@ -211,6 +214,17 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
         "tsc=nowatchdog — only when the TSC has never been marked unstable on this machine.", false, true,
         [] { return cpuFlag("constant_tsc") && cpuFlag("nonstop_tsc"); }, tokenOr("tsc=reliable", {}));
 
+    // Extra opt-in choices: no automatic bootloader writes; documented kernel parameters.
+    // https://docs.kernel.org/admin-guide/kernel-parameters.html
+    excl("tsc-reliability");
+    cmd("cpuidle.governor=menu", "Alternative idle-state predictor; compare wake latency and idle power with teo.", false, false,
+        [] {return readAll("/sys/devices/system/cpu/cpuidle/available_governors").split(' ').contains("menu");}, tokenOr("cpuidle.governor=menu",{}));
+    excl("idle-governor");
+    cmd("preempt=voluntary", "Fewer preemption points for throughput-oriented workloads; may increase UI latency.", false, false,
+        [] {return readAll("/proc/version").contains("PREEMPT_DYNAMIC");}, tokenOr("preempt=voluntary",{}));
+    excl("preempt-mode");
+    cmd("noautogroup", "Disable automatic scheduler task grouping; may help specialized scheduling tests but can worsen desktop responsiveness.", false, true,
+        [] {return QFile::exists("/proc/sys/kernel/sched_autogroup_enabled");},tokenOr("noautogroup",{}));
     grp = QStringLiteral("Performance");
     cmd("amd_pstate=active", "Boot straight into the amd-pstate EPP driver (the mode the CPU tab's EPP / dynamic EPP settings need). "
         "The CPU tab can switch it at runtime too; this makes it the default from the first second.",
@@ -264,6 +278,28 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
         [vuln] { const QString v = vuln("spec_rstack_overflow"); return !v.isEmpty() && !v.startsWith("Not affected"); },
         tokenOr("spec_rstack_overflow=off", [vuln] { return vuln("spec_rstack_overflow").startsWith("Vulnerable") ? 1 : 0; }));
 
+    cmd("page_alloc.shuffle=1", "Randomize page allocator free lists; workload-dependent cache placement and less predictable allocation order.", false,false,
+        [hasParam]{return hasParam("page_alloc","shuffle");},tokenOr("page_alloc.shuffle=1",{}));
+    cmd("transparent_hugepage_shmem=advise", "Use shared-memory huge pages only for advised regions; requires the shmem THP policy.",false,false,
+        []{return QFile::exists("/sys/kernel/mm/transparent_hugepage/shmem_enabled");},tokenOr("transparent_hugepage_shmem=advise",{}));
+    excl("shmem-thp");
+    cmd("transparent_hugepage_shmem=never", "Disable shared-memory THP by default; compare fragmentation and latency in the actual workload.",false,false,
+        []{return QFile::exists("/sys/kernel/mm/transparent_hugepage/shmem_enabled");},tokenOr("transparent_hugepage_shmem=never",{}));
+    excl("shmem-thp");
+    cmd("numa_balancing=disable", "Disable automatic NUMA page migration; may reduce scanning overhead for pinned workloads but worsen multi-node placement.",false,true,
+        []{return QFile::exists("/proc/sys/kernel/numa_balancing");},tokenOr("numa_balancing=disable",{}));
+    excl("numa-balancing");
+    cmd("numa_balancing=enable", "Enable automatic NUMA placement; useful for workloads spanning memory nodes, with sampling overhead.",false,false,
+        []{return QFile::exists("/proc/sys/kernel/numa_balancing");},tokenOr("numa_balancing=enable",{}));
+    excl("numa-balancing");
+    cmd("pci=pcie_bus_perf", "Tune PCIe payload/read request sizes against the upstream bus; compare throughput and device stability.",false,true,
+        []{return QFile::exists("/sys/bus/pci/devices");},tokenOr("pci=pcie_bus_perf",{}));
+    cmd("iommu.strict=1", "Synchronous DMA unmap invalidation; improves device isolation where supported, with possible throughput cost.",false,false,
+        []{return QFile::exists("/sys/class/iommu");},tokenOr("iommu.strict=1",{}));
+    excl("iommu-strict");
+    cmd("iommu.strict=0", "Deferred DMA invalidation may reduce I/O overhead but weakens isolation; not for untrusted devices.",false,true,
+        []{return QFile::exists("/sys/class/iommu");},tokenOr("iommu.strict=0",{}));
+    excl("iommu-strict");
     grp = QStringLiteral("Stability");
     cmd("amdgpu.sg_display=0", "Keeps the AMD iGPU's scanout buffer in VRAM instead of system memory: the known fix for white "
         "or flickering screens on Raphael / Phoenix iGPUs (Hybrid mode).", false, false,
@@ -295,6 +331,11 @@ BootAdvisor::BootAdvisor(QWidget *parent) : QWidget(parent) {
         "the platform has it).", false, false, always,
         tokenOr("panic=10", [] { return readAll("/proc/sys/kernel/panic") == "10" ? 1 : 0; }));
 
+    cmd("log_buf_len=4M", "Increase the kernel log ring for long failure traces; reserves more memory.",false,false,always,tokenOr("log_buf_len=4M",{}));
+    cmd("printk.time=1", "Include timing in kernel console messages to help diagnose boot and resume delays.",false,false,
+        [hasParam]{return hasParam("printk","time");},tokenOr("printk.time=1",{}));
+    cmd("no_console_suspend", "Keep the console active during suspend troubleshooting; may affect sleep timing and power use.",false,true,always,tokenOr("no_console_suspend",{}));
+    cmd("cpuhp.parallel=0", "Serialize secondary CPU bring-up for boot/hotplug troubleshooting; may slow boot and has no effect without parallel hotplug support.",false,true,always,tokenOr("cpuhp.parallel=0",{}));
     grp = QStringLiteral("Power saving");
     cmd("mem_sleep_default=deep", "Suspend to S3 instead of s2idle by default: far lower overnight drain, slower resume. "
         "(Devices tab: Suspend mode switches it at runtime.)", false, false,

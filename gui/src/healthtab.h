@@ -166,7 +166,6 @@ private:
     QWidget *toolCatalog_ = nullptr;
     int toolColumns_ = 0;
     int toolFeaturedColumns_ = 0;
-    int toolSymptomColumns_ = 0;
     QString toolFilter_ = QStringLiteral("all");  // all, safe, changes, recent, pinned
     QString toolAreaFilter_;  // empty: every area; an area name otherwise
     QTreeWidgetItem *toolResults_ = nullptr; // the rail's "System tools" search results

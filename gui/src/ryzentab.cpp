@@ -4,6 +4,7 @@
 #include "cosearchdialog.h"
 #include "ryzentab.h"
 #include "profilediff.h"
+#include "ryzenprofilediff.h"
 #include "cpustress.h"
 #include "trialbar.h"
 #include <QShowEvent>
@@ -321,7 +322,10 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     pl->addWidget(bDel);
     auto *compareProfiles = new QPushButton(tr("Compare…"));
     connect(compareProfiles,&QPushButton::clicked,this,[this] {
-        profilediff::show(this,savedProfileNames(),[](const QString &name) { return profilediff::read(ryzen::profilesDir() + '/' + name + ".json"); });
+        profilediff::show(this,savedProfileNames(),[](const QString &name) -> std::optional<QJsonObject> {
+            const auto raw=profilediff::read(ryzen::profilesDir() + '/' + name + ".json");
+            return raw?ryzenprofilediff::normalize(*raw):std::nullopt;
+        },tr("Compared by recorded CCD / CCX / slot, not by array order. All-core and per-core values are separate. Matching slot numbers do not establish matching physical CPUs or stability."));
     });
     pl->addWidget(compareProfiles);
     top->addWidget(profBox, 1);

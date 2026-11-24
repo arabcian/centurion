@@ -1,5 +1,6 @@
 #include "scenes.h"
 #include "sceneoutcome.h"
+#include "sceneplanfields.h"
 #include "fwattrtab.h"
 #include "hometab.h"
 #include "inteltab.h"
@@ -835,8 +836,8 @@ void SceneEngine::checkGameEnd() {
 }
 
 void SceneEngine::applyForSource(bool onAc) {
-    if (auto_.paused) { deferred_ = false; return; }
-    if (calibrationHold()) {
+    if (sceneplan::sourceAction(auto_.paused,false,false,true,false,false)==sceneplan::SourceAction::Paused) { deferred_ = false; return; }
+    if (sceneplan::sourceAction(false,calibrationHold(),false,true,false,false)==sceneplan::SourceAction::CalibrationDeferred) {
         if (!calDeferred_) Q_EMIT finished(QString(), true, {QStringLiteral("a calibration is measuring — scene switch deferred until it ends")});
         calDeferred_ = true;
         retunePoll();
@@ -848,15 +849,16 @@ void SceneEngine::applyForSource(bool onAc) {
     // A game scene that is still set counts too: while the session is momentarily untracked (owner exited,
     // PRE only half done) a charger flap used to drop straight to the daily scene under the running game.
     // checkGameEnd() clears an orphaned game scene after ~15 s and applies the right scene itself.
-    if (gameSessions() > 0 || gameStarting() || gameSceneActive()) {
+    if (sceneplan::sourceAction(false,false,gameSessions() > 0 || gameStarting() || gameSceneActive(),true,false,false)==sceneplan::SourceAction::GameDeferred) {
         if (!deferred_) Q_EMIT finished(QString(), true, {QStringLiteral("power source changed — scene switch deferred until the game exits")});
         deferred_ = true;
         return;
     }
     deferred_ = false;
     const QString n = onAc ? auto_.onAc : auto_.onBattery;
-    if (n.isEmpty()) return;
-    if (busy_ && n == current_) {
+    const auto action=sceneplan::sourceAction(false,false,false,!n.isEmpty(),busy_,n==current_);
+    if (action==sceneplan::SourceAction::NoTarget) return;
+    if (action==sceneplan::SourceAction::Coalesce) {
         // The scene being applied right now is already the right one: drop a stale request for the other source
         // instead of applying it and then switching straight back.
         pending_.clear();
@@ -949,6 +951,68 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
         return;
     }
     done(false, "no CPU curve backend for this CPU");
+}
+
+static std::vector<sceneplan::Step> requestedSteps(const Scene &s, sceneplan::Cpu cpu) {
+    return sceneplan::steps({s.fanFullSpeed >= 0, !s.platformProfile.isEmpty(), !s.firmware.isEmpty(),
+        s.cpu.kind != Choice::Unchanged, s.gpu.kind != Choice::Unchanged, s.tuning.kind != Choice::Unchanged,
+        s.fanTable.size() == 10, s.lightProfile >= 0 || s.lightBrightness >= 0, !s.zone4.isEmpty(),
+        s.kbdLevel >= 0, s.panelOd >= 0, s.refresh > 0, !s.command.isEmpty(), s.screenBrightness > 0, cpu});
+}
+
+QList<QStringList> SceneEngine::orderedPreview(const Scene &s) const {
+    using PlanStep = sceneplan::Step;
+    auto tr=[](const char *text){return QCoreApplication::translate("SceneEngine",text);};
+    const auto plan=requestedSteps(s, win_->ryzen()?sceneplan::Cpu::Ryzen:win_->intel()?sceneplan::Cpu::Intel:sceneplan::Cpu::None);
+    const auto current=pp::currentProfile(pp::primaryHandler()).value_or(QString());
+    const auto after=s.platformProfile.isEmpty()?current:s.platformProfile;
+    auto choice=[&](const Choice& c){return c.kind==Choice::Reset?tr("Reset to defaults"):tr("Profile: %1").arg(c.name);};
+    const auto unknown=tr("Read at execution / unknown");
+    const auto custom=after==QStringLiteral("custom")?tr("Requires Custom at execution"):tr("Custom prerequisite not currently satisfied");
+    QList<QStringList> rows;
+    for(auto step:plan) {
+        QStringList row;
+        switch(step) {
+        case PlanStep::FanBoost: row={tr("Fan boost"),unknown,s.fanFullSpeed?tr("Full speed"):tr("Automatic"),tr("Snapshot before write; restore on rollback")};break;
+        case PlanStep::Power: row={tr("Power profile"),current.isEmpty()?unknown:current,s.platformProfile,tr("Readback at execution; restore when previous profile is known")};break;
+        case PlanStep::FanBoostCheck: row={tr("Fan boost check"),unknown,s.fanFullSpeed?tr("Full speed"):tr("Automatic"),tr("Recheck after power-profile change")};break;
+        case PlanStep::Firmware: {
+            QStringList values; for(auto it=s.firmware.constBegin();it!=s.firmware.constEnd();++it) values<<QStringLiteral("%1 = %2").arg(it.key()).arg(it.value());
+            row={tr("Firmware limits"),unknown,values.join(QStringLiteral("; ")),custom+QStringLiteral(" · ")+tr("WMI or unreadable values may not be restorable")};break;
+        }
+        case PlanStep::CpuRyzen: row={tr("CPU curve"),unknown,choice(s.cpu),tr("No automatic rollback for this step")};break;
+        case PlanStep::CpuIntel: row={tr("CPU undervolt"),unknown,choice(s.cpu),tr("No automatic rollback for this step")};break;
+        case PlanStep::CpuUnsupported: row={tr("CPU tuning"),unknown,choice(s.cpu),tr("Unsupported backend; skipped")};break;
+        case PlanStep::Gpu: row={tr("GPU curve"),unknown,choice(s.gpu),s.gpu.kind==Choice::Profile?tr("Deferred profile after scene completion; GPU must be usable"):tr("GPU must be usable; reset is immediate after any CPU gap")};break;
+        case PlanStep::Optimization: row={tr("Optimizations"),unknown,s.tuning.kind==Choice::Reset?tr("Restore originals"):choice(s.tuning),tr("Replace preset; game ownership checked at execution")};break;
+        case PlanStep::FanCurve: {QStringList levels;for(int n:s.fanTable)levels<<QString::number(n);row={tr("Fan curve"),unknown,levels.join(QLatin1Char(' ')),custom+QStringLiteral(" · ")+tr("Snapshot before write; restore on rollback")};break;}
+        case PlanStep::Spectrum: row={tr("Lighting"),unknown,tr("Profile %1 / brightness %2").arg(s.lightProfile<0?tr("Unchanged"):QString::number(s.lightProfile),s.lightBrightness<0?tr("Unchanged"):QString::number(s.lightBrightness)),tr("Spectrum capability checked at execution")};break;
+        case PlanStep::Zone4: row={tr("4-zone lighting"),unknown,QString::fromUtf8(QJsonDocument(s.zone4).toJson(QJsonDocument::Compact)),tr("Keyboard capability checked at execution")};break;
+        case PlanStep::Keyboard: row={tr("Keyboard light"),unknown,QString::number(s.kbdLevel),tr("No automatic rollback for this step")};break;
+        case PlanStep::PanelOd: row={tr("Panel Over Drive"),unknown,s.panelOd?tr("On"):tr("Off"),tr("No automatic rollback for this step")};break;
+        case PlanStep::Display: row={tr("Display"),unknown,QStringLiteral("%1 Hz").arg(s.refresh),tr("Desktop helper at execution only")};break;
+        case PlanStep::Command: row={tr("Command"),tr("Not applicable"),s.command,tr("User command is never run by this preview; no rollback")};break;
+        case PlanStep::Brightness: row={tr("Screen brightness"),unknown,QStringLiteral("%1 %").arg(s.screenBrightness),tr("After command; desktop helper at execution only")};break;
+        }
+        rows.append(row);
+    }
+    return rows;
+}
+
+QString SceneEngine::sourceDryRun(bool onAc, bool calibrating, bool game, bool busy, bool sameTarget) const {
+    auto tr=[](const char *text){return QCoreApplication::translate("SceneEngine",text);};
+    if(!auto_.enabled)return tr("Automatic switching is disabled.");
+    const QString target=onAc?auto_.onAc:auto_.onBattery;
+    switch(sceneplan::sourceAction(auto_.paused,calibrating,game,!target.isEmpty(),busy,sameTarget)) {
+    case sceneplan::SourceAction::Paused:return tr("Automatic switching is paused.");
+    case sceneplan::SourceAction::CalibrationDeferred:return tr("Deferred until calibration ends.");
+    case sceneplan::SourceAction::GameDeferred:return tr("Deferred until game ownership ends.");
+    case sceneplan::SourceAction::NoTarget:return tr("No scene selected for this power source.");
+    case sceneplan::SourceAction::Coalesce:return tr("Matching scene already running; clear obsolete queued request.");
+    case sceneplan::SourceAction::Queue:return tr("Queue latest scene: %1").arg(target);
+    case sceneplan::SourceAction::Apply:return load(target)?tr("Would request scene: %1").arg(target):tr("Referenced scene is missing: %1").arg(target);
+    }
+    return {};
 }
 
 QStringList SceneEngine::preview(const Scene &s) const {
@@ -1050,9 +1114,12 @@ void SceneEngine::start(const Scene &s) {
     Q_EMIT started(s.name);
     Q_EMIT transactionState(transactionId_, current_, {}, QStringLiteral("started"), {});
 
+    using PlanStep = sceneplan::Step;
+    const auto planned=requestedSteps(s, win_->ryzen()?sceneplan::Cpu::Ryzen:win_->intel()?sceneplan::Cpu::Intel:sceneplan::Cpu::None);
+    const auto has=[&](PlanStep step){return sceneplan::contains(planned,step);};
     // 0. EC fan boost FIRST: turning it off before the profile change means the fans never
     //    spin up for the new profile and then drop again.
-    if (s.fanFullSpeed >= 0) {
+    if (has(PlanStep::FanBoost)) {
         auto restoreFan = [this](Done done) {
             if (oldFanBoost_ < 0) { done(true, "no fan write was attempted; snapshot was unavailable"); return; }
             helper("legion-profile-helper", QJsonObject{{"device", "fan_fullspeed"}, {"value", QString::number(oldFanBoost_)}}, done);
@@ -1076,7 +1143,7 @@ void SceneEngine::start(const Scene &s) {
     //    The firmware may settle on another profile than the one asked for (some modes are refused on battery,
     //    or the EC overrides it a moment later). That used to be reported as a success under the requested
     //    name, with the Firmware tab told "profile = requested": now it is a problem line with the real profile.
-    if (!s.platformProfile.isEmpty()) {
+    if (has(PlanStep::Power)) {
         const QString old = pp::currentProfile(pp::primaryHandler()).value_or(QString());
         Step undoProfile;
         if (!old.isEmpty() && pp::VALID_PROFILES.contains(old)) {
@@ -1115,7 +1182,7 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // The EC may reset the flag on a profile change: re-assert only if it no longer matches.
-    if (s.fanFullSpeed >= 0 && !s.platformProfile.isEmpty()) {
+    if (has(PlanStep::FanBoostCheck)) {
         addStep("Fan boost check", [this, on = s.fanFullSpeed == 1](Done done) {
             const QString h = privileged::helperPath("legion-profile-helper");
             privileged::run(h, QJsonObject{{"fan_fullspeed", "get"}}, this, [this, h, on, done](const privileged::Result &r) {
@@ -1131,7 +1198,7 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 2. Firmware limits (sysfs attributes + the WMI-only GPU knobs).
-    if (!s.firmware.isEmpty()) {
+    if (has(PlanStep::Firmware)) {
         QJsonArray oldFirmware;
         for (const FwAttr &a : FwattrTab::discover()) {
             if (!s.firmware.contains(a.name) || a.viaWmi() || !a.ranged || a.readOnly) continue;
@@ -1200,13 +1267,13 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 3. CPU curve: Ryzen Curve Optimizer or Intel undervolt, by vendor.
-    if (s.cpu.kind != Choice::Unchanged) {
-        if (win_->ryzen()) {
+    if (has(PlanStep::CpuRyzen) || has(PlanStep::CpuIntel) || has(PlanStep::CpuUnsupported)) {
+        if (has(PlanStep::CpuRyzen)) {
             addStep("CPU curve", [this, c = s.cpu](Done done) {
                 if (c.kind == Choice::Reset) { helper("ryzen-co-helper", {{"op", "reset"}}, [done](bool ok, const QString &m) { done(ok, ok ? "reset (0)" : m); }); return; }
                 applyCpuProfile(c.name, true, done);
             });
-        } else if (win_->intel()) {
+        } else if (has(PlanStep::CpuIntel)) {
             addStep("CPU undervolt", [this, c = s.cpu](Done done) {
                 if (c.kind == Choice::Reset) { helper("intel-uv-helper", {{"op", "reset"}, {"hold", true}}, [done](bool ok, const QString &m) { done(ok, ok ? "reset (0 mV)" : m); }); return; }
                 applyCpuProfile(c.name, true, done);
@@ -1218,8 +1285,8 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 4. NVIDIA V/F curve.
-    const bool cpuStep = s.cpu.kind != Choice::Unchanged && (win_->ryzen() || win_->intel());
-    if (s.gpu.kind != Choice::Unchanged) {
+    const bool cpuStep = has(PlanStep::CpuRyzen) || has(PlanStep::CpuIntel);
+    if (has(PlanStep::Gpu)) {
         addStep("GPU curve", [this, c = s.gpu, cpuStep](Done done) {
             // Always a log line: the step used to vanish without a word when the dGPU was
             // off at start-up (no NVIDIA tab), even after the card had been brought back.
@@ -1246,23 +1313,29 @@ void SceneEngine::start(const Scene &s) {
 
     // 5. Optimizations preset — "replace": knobs the new preset does not set
     //    go back to their originals, and a running game's tuning is left alone.
-    if (s.tuning.kind != Choice::Unchanged) {
+    if (has(PlanStep::Optimization)) {
         addStep("Optimizations", [this, c = s.tuning](Done done) {
             // By name: tune-profile-helper takes the values from the root-owned approved store, never from this request.
             QJsonObject req{{"op", "apply_preset"}, {"mode", "manual"}, {"replace", true}, {"preset", QJsonValue::Null}};
             auto run = [this, done, c](const QJsonObject &rq) {
                 privileged::run(privileged::helperPath("tune-profile-helper"), rq, this, [this, done, c](const privileged::Result &r) {
                     if (r.reached && r.json.value("game_active").toBool()) { done(true, "left alone (game session active)"); return; }
-                    if (!r.ok()) { done(false, r.message()); return; }
                     QString msg = c.kind == Choice::Reset ? QStringLiteral("originals restored") : "'" + c.name + "'";
-                    int n = 0;
-                    QStringList keys;
+                    QStringList exceptions;
                     for (const QJsonValue &v : r.json.value("results").toArray()) {
-                        const int m = v.toObject().value("mismatch_count").toInt();
-                        if (m > 0) { n += m; keys << v.toObject().value("key").toString(); }
+                        const auto row=v.toObject(); const QString key=row.value("key").toString(); QStringList reasons;
+                        if (!row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
+                        if (!row.value("error").toString().isEmpty()) reasons << row.value("error").toString();
+                        if (row.value("refused").toInt()>0) reasons << QStringLiteral("%1 refused writes").arg(row.value("refused").toInt());
+                        if (row.value("mismatch_count").toInt()>0) reasons << QStringLiteral("%1 value(s) did not stick").arg(row.value("mismatch_count").toInt());
+                        if (row.value("readback_missing").toInt()>0) reasons << QStringLiteral("%1 readbacks missing").arg(row.value("readback_missing").toInt());
+                        const auto mismatches=row.value("mismatch").toArray();
+                        for(const auto &m:mismatches) reasons << m.toString();
+                        if(row.value("mismatch_count").toInt()>mismatches.size()) reasons << QStringLiteral("%1 additional mismatch details not included by helper").arg(row.value("mismatch_count").toInt()-mismatches.size());
+                        if(!reasons.isEmpty()) exceptions << key + QStringLiteral(": ") + reasons.join(QStringLiteral("; "));
                     }
-                    // Still a success (the writes went through), but not silently: the values read back differently.
-                    if (n > 0) { incomplete_ = true; stepDisposition_ = QStringLiteral("partial"); msg += QStringLiteral(" · ⚠ %1 value(s) did not stick (%2)").arg(n).arg(keys.join(QStringLiteral(", "))); }
+                    if(!exceptions.isEmpty()) { incomplete_=true; stepDisposition_=QStringLiteral("partial"); msg += QStringLiteral("\n") + exceptions.join(QLatin1Char('\n')); }
+                    if (!r.ok()) { done(false, r.message() + QStringLiteral("\n") + msg); return; }
                     done(true, msg);
                 }, 120000);
             };
@@ -1286,7 +1359,7 @@ void SceneEngine::start(const Scene &s) {
 
     // 5a. Custom-mode fan curve — only while the Custom power profile is active (the EC follows
     //     the table there and nowhere else); skipped with a note otherwise, not an error.
-    if (s.fanTable.size() == 10) {
+    if (has(PlanStep::FanCurve)) {
         addStep("Fan curve", [this, lv = s.fanTable](Done done) {
             if (pp::currentProfile(pp::primaryHandler()) != QStringLiteral("custom")) {
                 done(true, "skipped (the EC uses its own curve outside the Custom power profile)");
@@ -1321,7 +1394,7 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 6. Keyboard lighting — as the user when the udev rule allows it, pkexec otherwise.
-    if (s.lightProfile >= 0 || s.lightBrightness >= 0) {
+    if (has(PlanStep::Spectrum)) {
         addStep("Lighting", [this, p = s.lightProfile, b = s.lightBrightness](Done done) {
             if (!lighting::present()) { done(true, "no Spectrum keyboard here; skipped"); return; }
             QJsonObject req{{"op", "set"}};
@@ -1337,7 +1410,7 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 6a. 4-zone RGB keyboard — the same request as the Lighting tab's Apply.
-    if (!s.zone4.isEmpty()) {
+    if (has(PlanStep::Zone4)) {
         addStep("4-zone lighting", [this, z = s.zone4](Done done) {
             if (!lighting::zone4Present()) { done(true, "no 4-zone keyboard here; skipped"); return; }
             QJsonObject req = z;
@@ -1349,13 +1422,13 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 6b. White keyboard backlight level, 6c. panel Over Drive.
-    if (s.kbdLevel >= 0) {
+    if (has(PlanStep::Keyboard)) {
         addStep("Keyboard light", [this, n = s.kbdLevel](Done done) {
             helper("legion-profile-helper", {{"device", "kbd_backlight"}, {"value", QString::number(n)}}, done,
                    [n](const QJsonObject &) { return QStringLiteral("level %1").arg(n); });
         });
     }
-    if (s.panelOd >= 0) {
+    if (has(PlanStep::PanelOd)) {
         addStep("Panel Over Drive", [this, on = s.panelOd == 1](Done done) {
             helper("legion-gpu-helper", {{"op", "set_panel_od"}, {"on", on}}, done,
                    [on](const QJsonObject &) { return on ? QStringLiteral("on") : QStringLiteral("off"); });
@@ -1363,7 +1436,7 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 6d. Internal panel refresh rate — as the user, through the desktop's own tool (centurion-display).
-    if (s.refresh > 0) {
+    if (has(PlanStep::Display)) {
         addStep("Display", [this, hz = s.refresh](Done done) {
             auto *p = new QProcess(this);
             connect(p, &QProcess::finished, this, [p, done](int, QProcess::ExitStatus) {
@@ -1382,7 +1455,7 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 7. User command (display mode, audio profile…) — as the user, no shell.
-    if (!s.command.isEmpty()) {
+    if (has(PlanStep::Command)) {
         addStep("Command", [cmd = s.command](Done done) {
             QStringList argv = QProcess::splitCommand(cmd);
             if (argv.isEmpty()) { done(false, "empty command"); return; }
@@ -1393,7 +1466,7 @@ void SceneEngine::start(const Scene &s) {
 
     // 8. Screen brightness — last, after the command (which may switch display mode or GPU and reset the
     // backlight). As the user, through centurion-display (sysfs / logind SetBrightness / brightnessctl).
-    if (s.screenBrightness > 0) {
+    if (has(PlanStep::Brightness)) {
         addStep("Screen brightness", [this, pct = s.screenBrightness](Done done) {
             auto *p = new QProcess(this);
             connect(p, &QProcess::finished, this, [p, done](int, QProcess::ExitStatus) {
@@ -1525,7 +1598,7 @@ void SceneEngine::finish() {
         const QJsonObject record{{"boot", currentBootId}, {"t", double(QDateTime::currentSecsSinceEpoch())}, {"scene", current_},
                                  {"previous", priorScene_}, {"ok", ok_}, {"rolled_back", fullyRestored},
                                  {"transaction_id", transactionId_}, {"outcome", lastOutcome_},
-                                 {"partial", !ok_ && !fullyRestored}, {"game_took_over", gameOwns},
+                                 {"partial", (!ok_ || incomplete_) && !fullyRestored}, {"game_took_over", gameOwns},
                                  {"steps", QJsonArray::fromStringList(log_)}};
         tx.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
     }

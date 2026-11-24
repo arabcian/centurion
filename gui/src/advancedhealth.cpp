@@ -130,25 +130,6 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     help->setWordWrap(true);
     help->setProperty("role", "muted");
     v->addWidget(help);
-    // Step 1: what is going wrong. Each button runs the guided triage for that area.
-    auto *triageTitle = new QLabel(tr("What is going wrong?"));
-    QFont triageFont = triageTitle->font();
-    triageFont.setBold(true);
-    triageTitle->setFont(triageFont);
-    v->addWidget(triageTitle);
-    auto *triageGrid = new QGridLayout;
-    const QList<advanceddiagnostics::TriageCategory> categories = advanceddiagnostics::triageCategories();
-    for (int i = 0; i < categories.size(); ++i) {
-        auto *b = new QPushButton(QCoreApplication::translate("advanceddiagnostics", categories[i].shortLabel));
-        b->setToolTip(QCoreApplication::translate("advanceddiagnostics", categories[i].label));
-        connect(b, &QPushButton::clicked, this, [this, key = categories[i].key] { startTriage(key); });
-        triageGrid->addWidget(b, i / 4, i % 4);
-    }
-    v->addLayout(triageGrid);
-    // Step 2: one investigation of its own.
-    auto *advancedTitle = new QLabel(tr("Or run one investigation:"));
-    advancedTitle->setProperty("role", "muted");
-    v->addWidget(advancedTitle);
     auto *top = new QHBoxLayout;
     feature_ = new QComboBox;
     for (const auto &[code, name] : features())
@@ -157,7 +138,7 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     category_ = new QComboBox;
     for (const advanceddiagnostics::TriageCategory &c : advanceddiagnostics::triageCategories())
         category_->addItem(QCoreApplication::translate("advanceddiagnostics", c.label), c.key);
-    category_->setToolTip(tr("What is going wrong? Triage runs the checks that fit and collects what needs a look."));
+    category_->setToolTip(tr("Investigation category (use System Overview to start guided triage)."));
     top->addWidget(category_, 1);
     scan_ = new QPushButton(tr("Run"));
     top->addWidget(scan_);
@@ -256,7 +237,7 @@ void AdvancedHealthPage::updateMode() {
     scan_->setText(incidents ? tr("Reload") : tr("Run"));
     message_->clear();
     if (incidents) refreshIncidents();
-    else view_->setMessage(code == QStringLiteral("H18") ? tr("Pick what is going wrong and press Run.") : tr("Press Run to read the sources of this investigation."));
+    else view_->setMessage(code == QStringLiteral("H18") ? tr("Use System Overview to start guided triage, or rerun the selected category.") : tr("Press Run to read the sources of this investigation."));
 }
 
 void AdvancedHealthPage::run() {

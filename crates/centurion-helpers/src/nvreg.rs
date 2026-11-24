@@ -153,32 +153,106 @@ fn configured() -> Vec<(String, String, String, String)> {
     out
 }
 
+/// Installed-module metadata is authoritative for discovery, not for semantic safety.
+#[derive(Clone, Debug)]
+struct Discovered { module: &'static str, name: String, desc: String, ty: String }
+
+fn parse_modinfo(module: &'static str, text: &str) -> Vec<Discovered> {
+    let mut out = Vec::new();
+    for line in text.lines().take(2048) {
+        let Some((name, desc)) = line.split_once(':') else { continue };
+        if name.is_empty() || name.len() > 128 || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') { continue; }
+        let desc = desc.trim();
+        let ty = desc.strip_suffix(')').and_then(|s| s.rsplit_once('(')).map(|(_, t)| t.trim()).unwrap_or("");
+        out.push(Discovered { module, name: name.into(), desc: desc.chars().take(2048).collect(), ty: ty.into() });
+    }
+    out
+}
+fn discover() -> Vec<Discovered> {
+    let Some(bin) = ["/usr/sbin/modinfo", "/sbin/modinfo", "/usr/bin/modinfo", "/bin/modinfo"].iter()
+        .map(PathBuf::from).find(|p| crate::trusted_path(p)) else { return vec![] };
+    let mut out = Vec::new();
+    for module in ["nvidia", "nvidia_drm"] {
+        if let Some((true, text)) = crate::tune::run_tool(&bin, &["-p", module], std::time::Duration::from_secs(3)) {
+            if text.len() < 64 * 1024 { out.extend(parse_modinfo(module, &text)); }
+        }
+    }
+    out
+}
+fn unique<'a>(catalog: &'a [Discovered], name: &str) -> Option<&'a Discovered> {
+    let mut matches = catalog.iter().filter(|p| p.name == name);
+    let p = matches.next()?;
+    if matches.next().is_some() { None } else { Some(p) }
+}
+fn dynamic_kind(ty: &str) -> Option<&'static str> {
+    match ty { "bool" => Some("bool"), "int" | "uint" | "long" | "ulong" | "short" | "ushort" | "byte" | "ullong" => Some("scalar"), _ => None }
+}
+fn validate_dynamic(p: &Discovered, raw: &str) -> Result<String, String> {
+    // No unreviewed string/array/command syntax in a root-owned modprobe file.
+    let raw = raw.trim();
+    let err = || format!("{}: unsupported type or out-of-range value ({})", p.name, p.ty);
+    if p.ty == "bool" { return match raw { "0" | "N" | "n" => Ok("0".into()), "1" | "Y" | "y" => Ok("1".into()), _ => Err(err()) }; }
+    if raw.len() > 24 { return Err(err()); }
+    let n = if let Some(h) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) { i128::from_str_radix(h, 16).ok() } else { raw.parse::<i128>().ok() }.ok_or_else(|| err())?;
+    let (lo, hi) = match p.ty.as_str() {
+        "int" => (i32::MIN as i128, i32::MAX as i128), "uint" => (0, u32::MAX as i128),
+        "short" => (i16::MIN as i128, i16::MAX as i128), "ushort" => (0, u16::MAX as i128),
+        "byte" => (0, u8::MAX as i128), "long" => (isize::MIN as i128, isize::MAX as i128),
+        "ulong" => (0, usize::MAX as i128), "ullong" => (0, u64::MAX as i128), _ => return Err(err()),
+    };
+    if !(lo..=hi).contains(&n) { return Err(err()); }
+    Ok(n.to_string())
+}
+fn running_dynamic(p: &Discovered) -> Option<String> {
+    if let Some(known) = find(&p.name).filter(|k| k.module == p.module) { return running(known); }
+    if p.module == "nvidia" {
+        let data = std::fs::read_to_string("/proc/driver/nvidia/params").unwrap_or_default();
+        let key = p.name.strip_prefix("NVreg_").unwrap_or(&p.name);
+        if let Some(v) = data.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix(':')) { return Some(v.trim().trim_matches('"').to_owned()); }
+    }
+    std::fs::read_to_string(format!("/sys/module/{}/parameters/{}", p.module, p.name)).ok().map(|v| v.trim().to_owned())
+}
 pub fn describe() -> Value {
     let conf = configured();
+    let catalog = discover();
     let loaded = Path::new("/proc/driver/nvidia/params").is_file();
-    let params: Vec<Value> = PARAMS.iter().map(|p| {
+    let params: Vec<Value> = catalog.iter().map(|p| {
         let srcs: Vec<Value> = conf.iter().filter(|c| c.1 == p.module && c.2 == p.name)
             .map(|c| json!({"source": c.0, "value": c.3})).collect();
         let centurion = conf.iter().rfind(|c| c.0 == CENTURION_FILE && c.1 == p.module && c.2 == p.name).map(|c| c.3.clone());
         let next = conf.iter().rfind(|c| c.1 == p.module && c.2 == p.name).map(|c| c.3.clone());
-        let (kind, extra) = match p.kind {
+        let known = find(&p.name).filter(|k| k.module == p.module);
+        let (kind, extra) = if unique(&catalog, &p.name).is_none() { ("readonly", json!(null)) }
+        else if let Some(k) = known { match k.kind {
             Kind::Bool => ("bool", json!(null)),
             Kind::Choice(o) => ("choice", json!(o.iter().map(|(v, l)| json!([v, l])).collect::<Vec<_>>())),
             Kind::Int(lo, hi) => ("int", json!([lo, hi])),
-            Kind::Path => ("path", json!(null)),
-            Kind::Dwords => ("dwords", json!(null)),
-        };
-        json!({"module": p.module, "name": p.name, "kind": kind, "options": extra, "desc": p.desc,
-               "running": running(p), "sources": srcs, "centurion": centurion, "next_boot": next})
+            Kind::Path => ("path", json!(null)), Kind::Dwords => ("dwords", json!(null)),
+        }} else { (dynamic_kind(&p.ty).unwrap_or("readonly"), json!(null)) };
+        let description = if let Some(k)=known { format!("{} — {}", p.desc, k.desc) } else { p.desc.clone() };
+        json!({"module": p.module, "name": p.name, "kind": kind, "options": extra, "desc": description,
+               "discovered_type": p.ty, "reviewed": known.is_some(), "running": running_dynamic(p), "sources": srcs, "centurion": centurion, "next_boot": next})
     }).collect();
-    json!({"ok": true, "loaded": loaded, "file": CENTURION_FILE, "params": params})
+    let unavailable: Vec<Value> = conf.iter().filter(|c| c.0 == CENTURION_FILE && (unique(&catalog, &c.2).is_none() || !catalog.iter().any(|p| p.module == c.1 && p.name == c.2)))
+        .map(|c| json!({"module":c.1,"name":c.2,"value":c.3})).collect();
+    json!({"ok": !catalog.is_empty(), "error": if catalog.is_empty() { "modinfo could not discover NVIDIA module parameters" } else { "" },
+           "loaded": loaded, "file": CENTURION_FILE, "params": params, "unavailable_saved":unavailable})
 }
 
 /// Rewrites Centurion's file from `values` (name -> value; null or absent = not set).
 pub fn set(values: &Map<String, Value>) -> Result<usize, String> {
     let mut lines: Vec<(&str, Vec<String>)> = vec![("nvidia", vec![]), ("nvidia_drm", vec![])];
+    let catalog = discover();
+    if catalog.is_empty() { return Err("modinfo could not verify installed NVIDIA options; file unchanged".into()); }
+    // Refuse to silently erase a setting which the installed driver no longer exposes.
+    for c in configured().iter().filter(|c| c.0 == CENTURION_FILE) {
+        let Some(p)=unique(&catalog,&c.2).filter(|p| p.module==c.1) else { return Err(format!("{}: saved option unavailable; file unchanged",c.2)); };
+        if find(&p.name).filter(|k| k.module==p.module).is_none() && dynamic_kind(&p.ty).is_none() {
+            return Err(format!("{}: saved option has unsupported type; file unchanged",p.name));
+        }
+    }
     for (k, v) in values {
-        let p = find(k).ok_or_else(|| format!("{k}: not a managed option"))?;
+        let p = unique(&catalog, k).ok_or_else(|| format!("{k}: not an unambiguous installed module option"))?;
         let v = match v {
             Value::Null => continue,
             Value::String(s) => s.clone(),
@@ -186,7 +260,7 @@ pub fn set(values: &Map<String, Value>) -> Result<usize, String> {
             Value::Bool(b) => if *b { "1".into() } else { "0".into() },
             _ => return Err(format!("{k}: bad value")),
         };
-        let v = validate(p, &v)?;
+        let v = if let Some(known)=find(k).filter(|known| known.module==p.module) { validate(known, &v)? } else { validate_dynamic(p, &v)? };
         lines.iter_mut().find(|l| l.0 == p.module).unwrap().1.push(format!("{}={v}", p.name));
     }
     let n: usize = lines.iter().map(|l| l.1.len()).sum();
@@ -226,7 +300,20 @@ pub fn parse_saved(text: &str) -> Map<String, Value> {
 /// Restore from a backup: rebuilds Centurion's file from the options of `text` that pass validation.
 /// Returns how many were written; with none, the current file is left as it is.
 pub fn restore_from(text: &str) -> Result<usize, String> {
-    let values = parse_saved(text);
+    let mut values = parse_saved(text);
+    let catalog = discover();
+    for line in text.lines() {
+        let mut tokens = line.split('#').next().unwrap_or("").split_whitespace();
+        if tokens.next()!=Some("options") { continue; }
+        let Some(module)=tokens.next().map(|s|s.replace('-',"_")) else {continue};
+        for kv in tokens {
+            let Some((key,value))=kv.split_once('=') else {continue};
+            if find(key).is_some() {continue;}
+            if let Some(p)=unique(&catalog,key).filter(|p|p.module==module) {
+                if let Ok(v)=validate_dynamic(p,value) { values.insert(key.to_owned(),json!(v)); }
+            }
+        }
+    }
     if values.is_empty() { return Ok(0); }
     set(&values)
 }
@@ -234,6 +321,17 @@ pub fn restore_from(text: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn discovered_types_and_injection() {
+        let catalog = parse_modinfo("nvidia", "NVreg_Test:example: description (uint)\nNVreg_Text:(charp)\nnot valid:(int)\nNVreg_Ambiguous:one (int)\nNVreg_Ambiguous:two (uint)\nFlag:(bool)");
+        assert_eq!(catalog.len(),5);
+        assert!(unique(&catalog,"NVreg_Ambiguous").is_none());
+        let p=unique(&catalog,"NVreg_Test").unwrap();
+        assert_eq!(validate_dynamic(p,"0xffffffff").unwrap(),"4294967295");
+        for bad in ["-1","4294967296","0;foo=1","1\noptions loop max_loop=5","1 2"] {assert!(validate_dynamic(p,bad).is_err());}
+        assert!(validate_dynamic(unique(&catalog,"NVreg_Text").unwrap(),"/tmp/x").is_err());
+        assert_eq!(validate_dynamic(unique(&catalog,"Flag").unwrap(),"Y").unwrap(),"1");
+    }
     #[test]
     fn validation() {
         let d = find("NVreg_DynamicPowerManagement").unwrap();

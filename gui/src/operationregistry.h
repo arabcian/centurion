@@ -1,6 +1,7 @@
 #pragma once
 // GUI-process registry. Tracks actual helper lifetime, not widget polling.
 // This is not a cross-process hardware lock: root helpers keep their own locks.
+#include "operationclaims.h"
 #include <cstdint>
 #include <chrono>
 #include <map>
@@ -11,19 +12,26 @@
 
 namespace operations {
 enum class Phase { Running, TimedOut, OwnerGone, Exited };
-enum class Outcome { Unknown, ReportedOk, ReportedFailure, NotStarted };
-struct Entry { std::uint64_t id; std::string resource; Phase phase; Outcome outcome; std::chrono::system_clock::time_point time; };
+enum class Outcome { Unknown, ReportedOk, ReportedFailure, NotStarted, Conflict };
+struct Entry { std::uint64_t id; std::string resource; Phase phase; Outcome outcome; std::chrono::system_clock::time_point time; std::vector<Claim> claims; };
 class Registry {
     std::uint64_t next_ = 0;
     std::map<std::uint64_t, Entry> active_;
     std::deque<Entry> history_;
     void record(const Entry &e) { history_.push_back(e); if (history_.size() > 200) history_.pop_front(); }
 public:
-    std::uint64_t begin(std::string resource) {
+    // Called on the GUI thread. All claims are checked before any is acquired;
+    // the entry owns them until finish(), including after timeout or owner loss.
+    std::optional<std::uint64_t> tryBegin(std::string resource, RequestClaims request) {
         const auto id = ++next_;
-        Entry e{id, std::move(resource), Phase::Running, Outcome::Unknown, std::chrono::system_clock::now()};
+        Entry e{id, std::move(resource), Phase::Running, Outcome::Unknown, std::chrono::system_clock::now(), std::move(request.claims)};
+        if (!request.recoveryOverride) for (const auto &item : active_) for (const auto &a : item.second.claims)
+            for (const auto &b : e.claims) if (conflicts(a,b)) {
+                e.phase=Phase::Exited; e.outcome=Outcome::Conflict; record(e); return std::nullopt;
+            }
         active_.emplace(id, e); record(e); return id;
     }
+    std::uint64_t begin(std::string resource) { return *tryBegin(std::move(resource),{}); }
     bool transition(std::uint64_t id, Phase phase) {
         auto it = active_.find(id);
         if (it == active_.end() || phase == Phase::Exited || phase == Phase::Running || it->second.phase == phase) return false;

@@ -1,6 +1,6 @@
 #pragma once
-// NVIDIA → Driver options: a curated set of nvidia / nvidia-drm module
-// options (modprobe.d). Reads `tune-helper {"op":"nvreg_describe"}`
+// NVIDIA → Driver options: discover installed nvidia / nvidia-drm module
+// options (modprobe.d), retaining reviewed validators for known parameters. Reads `tune-helper {"op":"nvreg_describe"}`
 // unprivileged; Apply writes Centurion's own modprobe.d file through pkexec.
 #include <QDialog>
 #include <QJsonObject>
@@ -19,7 +19,8 @@ public:
 
 private:
     struct Row {
-        QString name, kind;
+        QString name, kind, original;
+        bool reviewed = false;
         QComboBox *combo = nullptr;
         QLineEdit *edit = nullptr;
         QLabel *running = nullptr, *others = nullptr;

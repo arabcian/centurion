@@ -1214,9 +1214,6 @@ void HealthTab::rebuildToolCatalog() {
     // A compact list has room for real explanations. Four columns of labels were hard to scan.
     toolColumns_ = std::clamp(width / 480, 1, 2);
     toolFeaturedColumns_ = std::clamp(width / 390, 1, 3);
-    // Six tiny symptom tiles truncated their second lines even at desktop widths.
-    // Favor a balanced 3 x 2 grid, falling back to 2 or 1 columns when narrow.
-    toolSymptomColumns_ = width >= 1110 ? 3 : (width >= 710 ? 2 : 1);
     const QString terms = toolcatalog::explainTerms(query);
     toolTerms_->setText(terms);
     toolTerms_->setVisible(!terms.isEmpty());
@@ -1277,62 +1274,6 @@ void HealthTab::rebuildToolCatalog() {
     // The catalog is for finding tools, not a second health dashboard.
     // System overview remains available in the Health navigation.
     if (query.isEmpty() && toolAreaFilter_.isEmpty() && toolFilter_ == QLatin1String("all")) {
-        v->addWidget(heading(tr("Troubleshoot by Symptom"), tr("Start a guided, read-only investigation.")));
-        // The guided-triage categories, the same list System Overview offers.
-        const QList<advanceddiagnostics::TriageCategory> symptoms = advanceddiagnostics::triageCategories();
-        auto *symptomGrid = new QWidget;
-        auto *sg = new QGridLayout(symptomGrid);
-        sg->setContentsMargins(0, 0, 0, 0);
-        sg->setSpacing(7);
-        for (int c = 0; c < toolSymptomColumns_; ++c) sg->setColumnStretch(c, 1);
-        for (int i = 0; i < symptoms.size(); ++i) {
-            const advanceddiagnostics::TriageCategory &symptom = symptoms.at(i);
-            const QString label = QCoreApplication::translate("advanceddiagnostics", symptom.shortLabel);
-            auto *card = new DiagnosticEntryCard;
-            card->setObjectName(QStringLiteral("healthSymptomTile"));
-            card->setCursor(Qt::PointingHandCursor);
-            card->setFocusPolicy(Qt::StrongFocus);
-            card->setAccessibleName(tr("Investigate %1").arg(label));
-            card->setToolTip(tr("Open the guided investigation for %1. No settings are changed.").arg(label));
-            card->setMinimumHeight(84);
-            card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-            theme::setLiveSheet(card, [] { return QStringLiteral("QFrame#healthSymptomTile{background:%1;border:1px solid %2;"
-                                               "border-radius:10px;}"
-                                               "QFrame#healthSymptomTile:hover,QFrame#healthSymptomTile:focus{"
-                                               "border-color:%3;background:%4;}"
-                                               "QFrame#healthSymptomTile QLabel{background:transparent;border:0;}")
-                                .arg(theme::BG2, theme::BORDER, theme::ACCENT, theme::BG3); });
-            auto *col = new QVBoxLayout(card);
-            col->setContentsMargins(13, 10, 11, 10);
-            col->setSpacing(5);
-            auto *top = new QHBoxLayout;
-            top->setContentsMargins(0, 0, 0, 0);
-            top->setSpacing(9);
-            auto *name = new QLabel(label);
-            name->setWordWrap(true);
-            name->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-            theme::setLiveSheet(name, [] { return QStringLiteral("color:%1;font-weight:700;").arg(theme::FG); });
-            auto *arrow = new QLabel(QStringLiteral("›"));
-            theme::setLiveSheet(arrow, [] { return QStringLiteral("color:%1;font-weight:700;font-size:14pt;").arg(theme::ACCENT); });
-            top->addWidget(name, 1);
-            top->addWidget(arrow, 0, Qt::AlignTop);
-            col->addLayout(top);
-            auto *description = new QLabel(QCoreApplication::translate("advanceddiagnostics", symptom.label));
-            description->setWordWrap(true);
-            description->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-            theme::setLiveSheet(description, [] { return QStringLiteral("color:%1;font-size:9pt;").arg(theme::FG_DIM); });
-            col->addWidget(description);
-            // Labels must not eat mouse clicks; the complete card is the target.
-            for (QLabel *label : {name, description, arrow})
-                label->setAttribute(Qt::WA_TransparentForMouseEvents);
-            card->setActivation([this, key = symptom.key] {
-                showPage(investigations_);
-                investigations_->startTriage(key);
-            });
-            sg->addWidget(card, i / toolSymptomColumns_, i % toolSymptomColumns_);
-        }
-        v->addWidget(symptomGrid);
-
         const QList<const Tool *> favorites = byKeys(toolList(QStringLiteral("health/pinned_tools")));
         v->addWidget(heading(tr("Favorites"), favorites.isEmpty()
             ? tr("No favorites yet. Star a tool in All tools to add it here.")
@@ -1513,9 +1454,7 @@ void HealthTab::rebuildToolCatalog() {
 bool HealthTab::eventFilter(QObject *watched, QEvent *event) {
     if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Resize &&
         (std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 480, 1, 2) != toolColumns_ ||
-         std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 390, 1, 3) != toolFeaturedColumns_ ||
-         (std::max(toolScroll_->viewport()->width(), 300) >= 1110 ? 3 :
-          (std::max(toolScroll_->viewport()->width(), 300) >= 710 ? 2 : 1)) != toolSymptomColumns_))
+         std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 390, 1, 3) != toolFeaturedColumns_))
         QTimer::singleShot(0, this, [this] { rebuildToolCatalog(); });  // not while the viewport is being laid out
     return QWidget::eventFilter(watched, event);
 }

@@ -50,7 +50,7 @@ assert 'config->setProperty("toolKey", QStringLiteral("Configuration files"))' i
 for name in ("Network", "Storage", "Kernel"):
     assert f'tr("{name} Tuning"), QStringLiteral("{name} tuning")' in mw
 assert '"health/pinned_tools"' in h and '"health/recent_tools"' in h
-assert all(f'tr("{name}")' in h for name in ("Troubleshoot by Symptom", "Favorites", "All Tools"))
+assert all(f'tr("{name}")' in h for name in ("Favorites", "All Tools"))
 for bad in ('QT_TR_NOOP("GPU & display")', 'QT_TR_NOOP("CPU & stability")',
             'QT_TR_NOOP("Crashes & kernel")', 'QT_TRANSLATE_NOOP("toolcatalog", "CPU & memory")'):
     assert bad not in h + tc

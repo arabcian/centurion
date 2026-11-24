@@ -115,6 +115,9 @@ public:
     /// Dry run: one line per component of what applying `s` would do here, read-only (nothing is written).
     /// "✗ " = would fail or be skipped, "⚠ " = conflict or cannot be undone.
     QStringList preview(const scenes::Scene &s) const;
+    // Same requested-step selection as start(); no execution or command launch.
+    QList<QStringList> orderedPreview(const scenes::Scene &s) const;
+    QString sourceDryRun(bool onAc, bool calibrating, bool game, bool busy, bool sameTarget) const;
     bool busy() const { return busy_; }
     bool operationActive() const;
     QString lastOutcome() const { return lastOutcome_; }

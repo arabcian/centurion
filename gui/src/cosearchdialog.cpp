@@ -1,5 +1,10 @@
 #include "cosearchdialog.h"
 #include "coarchive.h"
+#include "profilediff.h"
+#include "cohistory.h"
+#include <QTabWidget>
+#include <QBrush>
+#include <set>
 #include <QUuid>
 #include "coinsights.h"
 #include "notify.h"
@@ -103,6 +108,127 @@ static QJsonObject trialSignature(const Trial &t) {
     return QJsonObject{{"what", t.what},
                        {"all", t.allCore ? QJsonValue(*t.allCore) : QJsonValue(QJsonValue::Null)},
                        {"per", per}, {"seconds", t.seconds()}};
+}
+
+// Reconstruct scope from the real selected trial, not from its display text.
+static QJsonObject selectedEvidence(const Search &search, const Trial &trial, const QString &boot) {
+    const bool isolated = search.perCoreSearching() && !trial.allCore;
+    QJsonObject o{{"event_boot", boot}, {"scope", isolated ? "isolated" : search.confirming() ? "verification" : "all-core"},
+                  {"decision", int(trial.reason)}, {"planned_seconds", trial.seconds()}};
+    if (trial.previousPass) o["previous_pass"] = *trial.previousPass;
+    if (trial.failureBoundary) o["failure_boundary"] = *trial.failureBoundary;
+    if (trial.allCore) o["all_offset"] = *trial.allCore;
+    if (isolated && trial.perCore.size() == search.cores().size()) {
+        int index = -1;
+        for (int i = 0; i < trial.perCore.size(); ++i) if (trial.perCore[i] != 0) {
+            if (index >= 0) { index = -1; break; }
+            index = i;
+        }
+        if (index >= 0) {
+            const auto &c = search.cores().at(index);
+            o["core"] = index; o["ccd"] = c.ccd; o["slot"] = c.slot; o["value"] = trial.perCore.at(index);
+        } else o["scope"] = QStringLiteral("unknown");
+    } else if (!trial.allCore) {
+        QJsonArray offsets; for (int x : trial.perCore) offsets << x;
+        o["curve_offsets"] = offsets;
+    }
+    return o;
+}
+
+static QString observedLabel(const QJsonObject &o) {
+    auto tr=[](const char *s){return QCoreApplication::translate("CoSearchDialog",s);};
+    switch (cohistory::outcome(o)) {
+    case cohistory::Result::Passed: return tr("Passed observed tests");
+    case cohistory::Result::Failed: return tr("Observed failure");
+    case cohistory::Result::Interrupted: return tr("Interrupted / recovery failure");
+    default: return tr("Unknown / legacy evidence");
+    }
+}
+
+// Frozen archive and active-session snapshots use the same view. No helper, journal or live-state mutation.
+static void showEvidence(QWidget *parent, const QJsonObject &record) {
+    auto tr=[](const char *s){return QCoreApplication::translate("CoSearchDialog",s);};
+    QDialog dlg(parent); dlg.setWindowTitle(tr("CCD Evidence and Decision Timeline")); dlg.resize(1050, 660);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *hint = new QLabel(tr("Only identified isolated probes count towards the heatmap. P = pass, F = failure, I = interruption. Blank means no eligible observation, not stock stability. Different boot conditions can affect results."));
+    hint->setWordWrap(true); layout->addWidget(hint);
+    auto *tabs = new QTabWidget; layout->addWidget(tabs, 1);
+    auto *heat = new QWidget; auto *hv = new QVBoxLayout(heat);
+    const auto summary = cohistory::summarizeRecord(record);
+    auto *quality = new QLabel(tr("%1 isolated candidate cells; %2 other, invalid or legacy records excluded from counts.")
+        .arg(qulonglong(summary.cells.size())).arg(qulonglong(summary.rejected)));
+    quality->setWordWrap(true); hv->addWidget(quality);
+    auto *map = new QTableWidget; map->setEditTriggers(QAbstractItemView::NoEditTriggers); hv->addWidget(map,1);
+    std::set<int> offsets;
+    for (const auto &[key, counts] : summary.cells) { Q_UNUSED(counts); offsets.insert(std::get<2>(key)); }
+    QStringList headers{tr("Physical core"),tr("Recorded CO"),tr("Walk state")};
+    QMap<int,int> columns;
+    for (int offset : offsets) { columns.insert(offset, int(headers.size())); headers << QString::number(offset); }
+    map->setColumnCount(headers.size()); map->setHorizontalHeaderLabels(headers);
+    const auto topology = record.value("topology").toArray();
+    map->setRowCount(int(std::min<qsizetype>(topology.size(),512)));
+    for (int row=0;row<map->rowCount();++row) {
+        const auto c=topology.at(row).toObject(); const int ccd=c.value("ccd").toInt(-1), slot=c.value("slot").toInt(-1);
+        const bool excluded=c.value("excluded").toBool();
+        auto cell=[&](int col,const QString &text){ auto *item=new QTableWidgetItem(text); map->setItem(row,col,item); return item; };
+        cell(0,ccd<0||slot<0 ? tr("Unknown") : QStringLiteral("CCD %1 / %2").arg(ccd).arg(slot));
+        cell(1,c.value("value").isDouble()?QString::number(c.value("value").toInt()):tr("Unknown"));
+        cell(2,excluded?tr("Excluded"):c.value("walk_done").isBool()?(c.value("walk_done").toBool()?tr("Walk completed"):tr("Incomplete")):tr("Unknown"));
+        for (int offset : offsets) {
+            const auto it=summary.cells.find({ccd,slot,offset}); if (it==summary.cells.end()) continue;
+            const auto &n=it->second;
+            auto *item=cell(columns.value(offset),QStringLiteral("P:%1 F:%2 I:%3").arg(qulonglong(n.passed)).arg(qulonglong(n.failed)).arg(qulonglong(n.interrupted)));
+            const auto state=n.contradictory()?tr("Conflicting observations"):n.failed?tr("Observed failure"):n.interrupted?tr("Interrupted / recovery failure"):tr("Passed observed tests");
+            item->setToolTip(state); item->setData(Qt::UserRole, n.contradictory()?3:n.failed?2:n.interrupted?1:0);
+            // Text carries the full status even if color is unavailable.
+        }
+    }
+    theme::bindPresentation(map,[map]{
+        for(int r=0;r<map->rowCount();++r) for(int c=3;c<map->columnCount();++c) if(auto *i=map->item(r,c)) {
+            const int state=i->data(Qt::UserRole).toInt();
+            i->setForeground(QBrush(QColor(state==0?theme::OK:state==2?theme::DANGER:theme::WARN)));
+        }
+    });
+    map->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    tabs->addTab(heat,tr("Isolated probe heatmap"));
+    auto *timeline=new QWidget; auto *tv=new QVBoxLayout(timeline);
+    auto *filter=new QLineEdit; filter->setPlaceholderText(tr("Filter event ID, boot, core, decision or result…")); filter->setClearButtonEnabled(true); tv->addWidget(filter);
+    auto *events=new QTableWidget; events->setColumnCount(7); events->setHorizontalHeaderLabels({tr("Selected time"),tr("Boot"),tr("Event ID"),tr("Scope"),tr("Candidate"),tr("Decision"),tr("Result")});
+    events->setSelectionBehavior(QAbstractItemView::SelectRows); events->setSelectionMode(QAbstractItemView::SingleSelection); events->setEditTriggers(QAbstractItemView::NoEditTriggers); tv->addWidget(events,2);
+    auto *detail=new QPlainTextEdit; detail->setReadOnly(true); tv->addWidget(detail,1);
+    auto attempts=record.value("attempts").toArray();
+    if(record.value("unresolved_event").isObject()) attempts.append(record.value("unresolved_event"));
+    constexpr int maxRows=4096;
+    const auto first=std::max<qsizetype>(0,attempts.size()-maxRows);
+    if(first) { auto *n=new QLabel(tr("Showing newest %1 events; %2 earlier events not displayed.").arg(maxRows).arg(first)); tv->insertWidget(0,n); }
+    events->setRowCount(int(attempts.size()-first));
+    for(int row=0;row<events->rowCount();++row) {
+        const auto a=attempts.at(first+row).toObject();
+        const auto stamp=a.value("selected_ms").toInteger();
+        const auto time=stamp>0?QDateTime::fromMSecsSinceEpoch(stamp).toLocalTime().toString(Qt::ISODateWithMs):a.value("t").toInteger()>0?QDateTime::fromSecsSinceEpoch(a.value("t").toInteger()).toLocalTime().toString(Qt::ISODate):tr("Unknown");
+        Trial t; const int decision=a.value("decision").toInt(-1);
+        if(decision>=int(DecisionReason::Unknown)&&decision<=int(DecisionReason::Replay)) t.reason=DecisionReason(decision);
+        if(a.value("previous_pass").isDouble())t.previousPass=a.value("previous_pass").toInt();
+        if(a.value("failure_boundary").isDouble())t.failureBoundary=a.value("failure_boundary").toInt();
+        QString scope=a.value("scope").toString();
+        if(scope==QStringLiteral("isolated")) scope=QStringLiteral("CCD %1 / %2").arg(a.value("ccd").toInt(-1)).arg(a.value("slot").toInt(-1));
+        else if(scope==QStringLiteral("verification"))scope=tr("Whole-curve verification");
+        else if(scope==QStringLiteral("all-core"))scope=tr("All-core");
+        else scope=tr("Unknown");
+        const QStringList cells{time,a.value("event_boot").toString(tr("Unknown")),cohistory::eventId(a).isEmpty()?tr("Unknown"):cohistory::eventId(a),scope,a.value("what").toString(),decisionText(t),observedLabel(a)};
+        for(int c=0;c<cells.size();++c){auto *i=new QTableWidgetItem(cells[c]);i->setToolTip(cells[c]);events->setItem(row,c,i);}
+    }
+    events->horizontalHeader()->setStretchLastSection(true);
+    QObject::connect(events,&QTableWidget::currentCellChanged,&dlg,[=](int row,int,int,int){
+        detail->setPlainText(row>=0?profilediff::display(attempts.at(first+row)):QString());
+    });
+    QObject::connect(filter,&QLineEdit::textChanged,&dlg,[=](const QString &q){
+        for(int r=0;r<events->rowCount();++r){bool match=q.trimmed().isEmpty();for(int c=0;c<events->columnCount();++c)match|=events->item(r,c)->text().contains(q.trimmed(),Qt::CaseInsensitive);events->setRowHidden(r,!match);}
+        if(events->currentRow()>=0&&events->isRowHidden(events->currentRow())){events->setCurrentItem(nullptr);detail->clear();}
+    });
+    if(events->rowCount()) events->selectRow(events->rowCount()-1);
+    tabs->addTab(timeline,tr("Decision timeline"));
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons); QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
 }
 
 static std::optional<QJsonArray> readCrashGuards() {
@@ -763,10 +889,12 @@ bool CoSearchDialog::writeJournal() const {
     const QByteArray data = QJsonDocument(QJsonObject{{"version", 3}, {"boot", bootId_},
         {"search", search_->save()}, {"pending", trial_.has_value()},
         {"trial", trial_ ? trialSignature(*trial_) : QJsonObject{}},
+        {"dispatch", trial_ ? trialEvidence_ : QJsonObject{}},
         {"scene", scene_->currentData().toString()}, {"prior_scene", priorScene_},
         {"reboots", hardReboots_}, {"attempts", attempts_}, {"evidence", evidence_}, {"active_cpu", activeCpu_},
-        {"peaks", peaks}, {"verify_profile", verifiedProfile_}, {"clean_exit", cleanExit_}}).toJson();
-    if (f.write(data) != data.size()) return false;
+        {"peaks", peaks}, {"verify_profile", verifiedProfile_}, {"clean_exit", cleanExit_}}).toJson(QJsonDocument::Compact);
+    // Never commit a new journal that the existing recovery reader would reject as oversized.
+    if (data.size() > (1LL << 20) || f.write(data) != data.size()) return false;
     return f.commit();  // QSaveFile: durable commit before a new privileged SMU write
 }
 
@@ -880,6 +1008,17 @@ void CoSearchDialog::showAttemptHistory() {
         }
     });
     layout->addWidget(history, 1);
+    auto *evidenceBtn = new QPushButton(tr("CCD Evidence and Decision Timeline")); layout->addWidget(evidenceBtn);
+    QJsonArray topology;
+    const auto snapshotValues=search_?search_->values():QList<int>{};
+    if (search_) for (int i=0;i<cores.size();++i) {
+        const auto &c=cores.at(i); QJsonObject row{{"ccd",c.ccd},{"slot",c.slot},{"value",snapshotValues.value(i)}};
+        if(search_->mode()==Mode::PerCore){const auto st=search_->coreState(i);row["excluded"]=st.excluded;row["walk_done"]=st.done;}
+        topology.append(row);
+    }
+    QJsonObject snapshot{{"mode",search_&&search_->mode()==Mode::PerCore?"per":"all"},{"topology",topology},{"attempts",attempts_}};
+    if(trial_&&!trialEvidence_.isEmpty()){auto current=trialEvidence_;current["what"]=trial_->what;snapshot["unresolved_event"]=current;}
+    connect(evidenceBtn,&QPushButton::clicked,dlg,[dlg,snapshot]{showEvidence(dlg,snapshot);});
     auto *close = new QDialogButtonBox(QDialogButtonBox::Close);
     connect(close, &QDialogButtonBox::rejected, dlg, &QDialog::close);
     layout->addWidget(close);
@@ -936,6 +1075,10 @@ void CoSearchDialog::showSessionArchive() {
     auto *exportBtn = buttons->addButton(tr("Export selected session…"), QDialogButtonBox::ActionRole);
     auto *deleteBtn = buttons->addButton(tr("Delete selected session…"), QDialogButtonBox::ActionRole);
     auto *compareBtn = buttons->addButton(tr("Compare sessions…"), QDialogButtonBox::ActionRole);
+    auto *evidenceBtn = buttons->addButton(tr("CCD Evidence and Decision Timeline"), QDialogButtonBox::ActionRole);
+    connect(evidenceBtn,&QPushButton::clicked,&dlg,[&] {
+        if (pick->currentIndex() >= 0) showEvidence(&dlg, entries->at(pick->currentData().toInt()).toObject());
+    });
     connect(exportBtn,&QPushButton::clicked,&dlg,[&] {
         if (pick->currentIndex()<0) return;
         const auto record=entries->at(pick->currentData().toInt()).toObject();
@@ -1210,6 +1353,7 @@ void CoSearchDialog::startPrepared() {
     peakMhz_.clear();
     hardReboots_ = 0;
     attempts_ = {};
+    trialEvidence_ = {};
     trialNo_ = 0;
     launch();
 }
@@ -1307,6 +1451,7 @@ void CoSearchDialog::verifyPrepared() {
     note(tr("Verifying profile '%1': %2").arg(pick, shown.join(", ")), theme::INFO);
     hardReboots_ = 0;
     attempts_ = {};
+    trialEvidence_ = {};
     trialNo_ = 0;
     launch();
 }
@@ -1709,6 +1854,15 @@ void CoSearchDialog::offerResume() {
         verifiedProfile_ = j.value("verify_profile").toString();
         hardReboots_ = rebootCount;
         if (pending && !cleanExit) {
+            auto recoveredEvidence = selectedEvidence(*s, *interrupted, j.value("boot").toString());
+            const auto oldDispatch = j.value("dispatch").toObject();
+            const auto oldId = cohistory::eventId(oldDispatch);
+            if (!oldId.isEmpty() && oldDispatch.value("event_boot") == j.value("boot")) {
+                recoveredEvidence["event_id"] = oldId;
+                recoveredEvidence["selected_ms"] = oldDispatch.value("selected_ms");
+                for (const char *key : {"decision", "previous_pass", "failure_boundary"})
+                    if (oldDispatch.value(key).isDouble()) recoveredEvidence[key] = oldDispatch.value(key);
+            }
             s->report(failed);
             QJsonObject recovered{{"t", double(QDateTime::currentSecsSinceEpoch())},
                 {"what", interrupted->what}, {"pass", false},
@@ -1722,6 +1876,10 @@ void CoSearchDialog::offerResume() {
                     break;
                 }
             }
+            for (auto it = recoveredEvidence.constBegin(); it != recoveredEvidence.constEnd(); ++it) recovered[it.key()] = it.value();
+            recovered["observed_result"] = QStringLiteral("interrupted");
+            recovered["resolved_ms"] = QDateTime::currentMSecsSinceEpoch();
+            recovered["resolved_boot"] = currentBoot;
             attempts_.append(recovered);
         }
         if (!applyCrashGuards(*s)) {
@@ -1919,6 +2077,9 @@ void CoSearchDialog::step() {
     updateForecast();
     evidence_ = {};
     activeCpu_ = -1;
+    trialEvidence_ = selectedEvidence(*search_, *trial_, bootId_);
+    trialEvidence_["event_id"] = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    trialEvidence_["selected_ms"] = QDateTime::currentMSecsSinceEpoch();
     if (!writeJournal()) { reset(tr("Cannot durably save the recovery journal; no CO offset was written.")); return; }
     const bool all = trial_->allCore.has_value();
     QJsonObject req;
@@ -2133,7 +2294,11 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
         for (int i = 0; i < trial_->perCore.size(); ++i) if (trial_->perCore[i] != 0) probed = i;
     QJsonObject attempt{{"t", double(testStart_)}, {"what", trial_->what}, {"pass", o.pass}, {"cpus", cpus}, {"decision", int(trial_->reason)}, {"planned_seconds", trial_->seconds()}};
     if (probed >= 0) { attempt["core"] = probed; attempt["value"] = trial_->perCore[probed]; }  // the row's history tooltip
+    for (auto it = trialEvidence_.constBegin(); it != trialEvidence_.constEnd(); ++it) attempt[it.key()] = it.value();
+    attempt["observed_result"] = o.interrupted ? "interrupted" : o.pass ? "pass" : "fail";
+    attempt["resolved_ms"] = QDateTime::currentMSecsSinceEpoch();
     attempts_.append(attempt);
+    trialEvidence_ = {};
     confirmPassed_ = search_->confirming() && o.pass;
     QStringList named;
     for (int c : o.cpus) named << QString::number(c);
@@ -2360,7 +2525,7 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
         QJsonObject canonical; for(auto it=keys.cbegin();it!=keys.cend();++it)canonical.insert(it.key(),it.value());
         if (!identity.isEmpty() && keys.size()==topology.size()) fingerprint=QString::fromLatin1(QCryptographicHash::hash(identity+'\n'+cpu.toUtf8()+'\n'+QJsonDocument(canonical).toJson(QJsonDocument::Compact),QCryptographicHash::Sha256).toHex());
     }
-    const bool archived = coarchive::append(path, QJsonObject{
+    auto archiveRecord = QJsonObject{
         {"id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
         {"t", QDateTime::currentSecsSinceEpoch()}, {"boot", bootId_},
         {"mode", search_ && search_->mode() == Mode::PerCore ? "per" : "all"},
@@ -2368,7 +2533,14 @@ void CoSearchDialog::done(bool resetOk, const QString &reason) {
         {"topology", topology}, {"cpu_fingerprint",fingerprint}, {"cpu_model",cpu}, {"reset_ok", resetOk}, {"complete", finished_ && resetOk},
         {"verification_passed", finished_ && confirmPassed_},
         {"bios", biosVersion()}, {"verify_profile", verifiedProfile_}, {"notes", reason},
-        {"attempts", attempts_}, {"reboots", hardReboots_}});
+        {"attempts", attempts_}, {"reboots", hardReboots_}};
+    if (trial_ && !trialEvidence_.isEmpty()) {
+        auto unresolved = trialEvidence_; unresolved["what"] = trial_->what;
+        unresolved["observed_result"] = QStringLiteral("unknown");
+        archiveRecord["unresolved_event"] = unresolved;
+    }
+    const bool archived = coarchive::append(path, archiveRecord);
+    trialEvidence_ = {};
     if (!archived && !quitting_) note(tr("Could not save CO session history; existing archive was preserved."), theme::WARN);
     // A freeze or an application quit leaves the journal behind for a resume; a search that ended here does not.
     // Never erase evidence merely because the algorithm finished: an unsuccessful stock

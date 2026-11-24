@@ -911,14 +911,14 @@ void NvidiaTab::showCurveTransactions() {
     if (entries) for (qsizetype i=entries->size();i>0;--i) {
         const auto row = entries->at(i-1).toObject(); const auto ev = row.value("evidence").toObject();
         const int at = table->rowCount(); table->insertRow(at);
-        auto *first = new QTableWidgetItem(row.value("time").toString()); first->setData(Qt::UserRole,QJsonDocument(row).toJson(QJsonDocument::Indented)); table->setItem(at,0,first);
+        auto *first = new QTableWidgetItem(row.value("time").toString()); first->setData(Qt::UserRole,profilediff::display(row)); table->setItem(at,0,first);
         table->setItem(at,1,new QTableWidgetItem(row.value("operation").toString()));
         table->setItem(at,2,new QTableWidgetItem(ev.value("status").toString()));
         table->setItem(at,3,new QTableWidgetItem(ev.value("device").toObject().value("uuid").toString()));
     }
     connect(table,&QTableWidget::itemSelectionChanged,dlg,[table,detail]{
         const auto *item = table->item(table->currentRow(),0);
-        detail->setPlainText(item ? QString::fromUtf8(item->data(Qt::UserRole).toByteArray()) : QString());
+        detail->setPlainText(item ? item->data(Qt::UserRole).toString() : QString());
     });
     if (table->rowCount()) table->selectRow(0);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);

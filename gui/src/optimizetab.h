@@ -106,6 +106,8 @@ private:
     void buildUi();
     QWidget *buildLaunchPage();
     void refresh(bool fromPoll = false);
+    void refreshDebugfs();
+    bool debugfsRefreshing_ = false;
     void onDescribe(const QJsonObject &d, bool light = false);
     void buildRows(const QJsonArray &rows);
     void jumpToSetting(const QString &query);

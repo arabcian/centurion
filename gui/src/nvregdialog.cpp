@@ -15,12 +15,15 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
+#include <QTimer>
+#include <QPointer>
 
 static QString helperPath() { return privileged::helperPath(QStringLiteral("tune-helper")); }
 
 static QLabel *dim(const QString &t, const char *color = theme::MUTED) {
     auto *l = new QLabel(t);
     l->setWordWrap(true);
+    l->setTextFormat(Qt::PlainText);
     theme::setLiveSheet(l, [color] { return QStringLiteral("color:%1").arg(QString::fromLatin1(color)); });
     return l;
 }
@@ -58,12 +61,15 @@ NvRegDialog::NvRegDialog(QWidget *parent) : QDialog(parent) {
 }
 
 void NvRegDialog::load() {
+    apply_->setEnabled(false);
     auto *p = new QProcess(this);
-    connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
+    QTimer::singleShot(12000,p,[p]{ if(p->state()!=QProcess::NotRunning)p->kill(); });
+    connect(p,&QProcess::errorOccurred,this,[this,p](QProcess::ProcessError e){ if(e==QProcess::FailedToStart){status_->setText(tr("Driver option discovery failed.")); p->deleteLater();} });
+    connect(p, &QProcess::finished, this, [this, p](int code, QProcess::ExitStatus exit) {
         const QByteArray out = p->readAllStandardOutput().trimmed();
         p->deleteLater();
         const QJsonObject d = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
-        if (d.value(QStringLiteral("ok")).toBool()) build(d);
+        if (exit==QProcess::NormalExit && code==0 && d.value(QStringLiteral("ok")).toBool()) build(d);
         else status_->setText(QStringLiteral("Cannot read driver options: ") + d.value(QStringLiteral("error")).toString());
     });
     p->start(helperPath(), {});
@@ -83,6 +89,8 @@ void NvRegDialog::build(const QJsonObject &d) {
         .arg(file, d.value(QStringLiteral("loaded")).toBool() ? QString()
                                                                : QStringLiteral("<br><b>The nvidia module is not loaded:</b> no running values.")));
 
+    bool canApply = d.value("unavailable_saved").toArray().isEmpty();
+    if(!canApply) status_->setText(tr("Saved options are unavailable in the installed driver. Apply is disabled to avoid deleting them."));
     int r = 0;
     const char *heads[] = {"Option", "Running", "Also set in", "Centurion value"};
     for (int c = 0; c < 4; ++c) grid_->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(QString::fromLatin1(heads[c]))), r, c);
@@ -94,6 +102,7 @@ void NvRegDialog::build(const QJsonObject &d) {
         row.kind = o.value(QStringLiteral("kind")).toString();
         const QString module = o.value(QStringLiteral("module")).toString();
         const QString centurion = o.value(QStringLiteral("centurion")).toString();
+        row.original=centurion; row.reviewed=o.value("reviewed").toBool();
 
         auto *name = new QLabel(QStringLiteral("%1 <span style='color:%2'>(%3)</span>")
                                     .arg(row.name, QString::fromLatin1(theme::MUTED), module));
@@ -101,6 +110,7 @@ void NvRegDialog::build(const QJsonObject &d) {
         grid_->addWidget(name, r, 0);
         row.running = new QLabel(o.value(QStringLiteral("running")).isString() ? o.value(QStringLiteral("running")).toString()
                                                                                  : QStringLiteral("—"));
+        row.running->setTextFormat(Qt::PlainText);
         grid_->addWidget(row.running, r, 1);
         QStringList others;
         for (const QJsonValue &s : o.value(QStringLiteral("sources")).toArray()) {
@@ -125,11 +135,13 @@ void NvRegDialog::build(const QJsonObject &d) {
                 }
             }
             const int i = row.combo->findData(centurion);
-            row.combo->setCurrentIndex(centurion.isEmpty() || i < 0 ? 0 : i);
+            if(i<0 && !centurion.isEmpty()) row.combo->addItem(centurion,centurion);
+            row.combo->setCurrentIndex(row.combo->findData(centurion));
             grid_->addWidget(row.combo, r, 3);
         } else {
             row.edit = new QLineEdit(centurion);
             row.edit->setPlaceholderText(QStringLiteral("not set"));
+            if(row.kind=="readonly") {row.edit->setReadOnly(true); row.edit->setPlaceholderText(tr("Read-only (unsupported type)")); if(!centurion.isEmpty())canApply=false;}
             if (row.kind == QLatin1String("int")) {
                 const QJsonArray mm = o.value(QStringLiteral("options")).toArray();
                 row.edit->setPlaceholderText(QStringLiteral("not set (%1–%2)").arg(mm.at(0).toInteger()).arg(mm.at(1).toInteger()));
@@ -145,14 +157,19 @@ void NvRegDialog::build(const QJsonObject &d) {
     grid_->setColumnStretch(2, 2);
     grid_->setColumnStretch(3, 2);
     grid_->setRowStretch(r, 1);
+    apply_->setEnabled(canApply);
 }
 
 void NvRegDialog::apply() {
     QJsonObject values;
+    bool advanced=false;
     for (const Row &row : rows_) {
         const QString v = row.combo ? row.combo->currentData().toString() : row.edit->text().trimmed();
+        if(row.kind=="readonly") continue;
+        if(!row.reviewed && v!=row.original)advanced=true;
         if (!v.isEmpty()) values.insert(row.name, v);
     }
+    if(advanced && QMessageBox::question(this,windowTitle(),tr("Discovered options have type checks only, not reviewed driver-specific safety limits. Incorrect values can prevent the GPU driver from starting. Write these changes for the next boot?"))!=QMessageBox::Yes)return;
     if (values.contains(QStringLiteral("NVreg_EnableGpuFirmware")) && values.value(QStringLiteral("NVreg_EnableGpuFirmware")).toString() == QLatin1String("0")
         && QMessageBox::question(this, windowTitle(),
                QStringLiteral("GSP firmware off has no effect on RTX 50 / the open kernel modules, and on other GPUs "

@@ -126,6 +126,7 @@ private:
     QHash<QString, QString> mceBefore_;
     QString startScene_, priorScene_, bootId_;
     QJsonArray attempts_;
+    QJsonObject trialEvidence_; // observation metadata only, never used to select a candidate
     QSet<int> excluded_;               // per-core: cores the user left out (coreKey(ccd, slot))
     QHash<int, int> starts_;           // per-core: each core's start (coreKey -> offset), typed or from a preset
     // Crash watcher (coevidence.h) of the trial in flight: what it saw, committed to the journal at once.

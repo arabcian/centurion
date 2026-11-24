@@ -681,6 +681,7 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
         const int desired = qBound(expandedWidth, expExpandedWidth_, maximum);
         expSplitter_->setSizes({desired, std::max(1, width() - desired)});
     }
+    expSplitter_->setHandleWidth(collapsed ? 1 : 6);
     expSplitter_->handle(1)->setEnabled(!collapsed);
     expBrandLabel_->setVisible(!collapsed);
     expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
@@ -694,6 +695,13 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
         heading->setVisible(!collapsed);
     for (QLabel *version : expRail_->findChildren<QLabel *>(QStringLiteral("expBrandVersion")))
         version->setVisible(!collapsed);
+    expRail_->setSizePolicy(collapsed ? QSizePolicy::Ignored : QSizePolicy::Preferred, QSizePolicy::Expanding);
+    expRail_->layout()->setSizeConstraint(collapsed ? QLayout::SetNoConstraint : QLayout::SetDefaultConstraint);
+    expRail_->layout()->invalidate();
+    if (collapsed) {
+        expRail_->setFixedWidth(48);
+        expSplitter_->setSizes({48, std::max(1, expSplitter_->width() - 49)});
+    }
     if (expUserToggled_) {
         QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
         st.setValue(QStringLiteral("ui/rail_collapsed"), collapsed);

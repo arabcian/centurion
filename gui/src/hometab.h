@@ -2,6 +2,7 @@
 // Home tab: power-profile switcher + hardware inventory + live sensors.
 // Port of home_tab.py.
 #include "platformprofile.h"
+#include "sysinfo.h"
 #include <QHash>
 #include <QSet>
 #include <QWidget>
@@ -21,7 +22,6 @@ class QPushButton;
 class QTimer;
 
 class SceneEngine;
-namespace sysinfo { enum class PresentationMetric; }
 namespace experimentalui { class TemperaturePlot; }
 
 class HomeTab : public QWidget {
