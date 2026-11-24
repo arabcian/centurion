@@ -67,6 +67,7 @@ struct Test {
     int seconds = 0;  // expected test length, without startup/reference overhead
 };
 
+enum class DecisionReason { Unknown, InitialProbe, CoarseDescent, FineDescent, StepDescent, FailedStartRecovery, FinalVerification, Replay };
 /// What to try next: the offsets to apply, then the tests to run in order (stop at the first failure).
 struct Trial {
     std::optional<int> allCore;  // set: one offset on every core
@@ -74,6 +75,8 @@ struct Trial {
     QList<Test> tests;
     QString what;                // for the log and the crash note
     int seconds() const;
+    DecisionReason reason = DecisionReason::Unknown;
+    std::optional<int> previousPass, failureBoundary; // evidence/guard bound, not proof of stability
 };
 
 struct Outcome {

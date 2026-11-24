@@ -11,8 +11,11 @@ class Stage3(unittest.TestCase):
         self.assertIn('item->setHidden(!match)',body)
         self.assertNotIn('report_',body)
         self.assertIn('QSaveFile f(path)',s)
-        self.assertIn('f.write(data) != data.size()',s)
-        self.assertIn('const QString fullReport = report_.toText()',s)
+        self.assertIn('f.write(bytes) != bytes.size()',s)
+        self.assertIn('const diag::Report captured = report_',s)
+        self.assertIn('connect(copy_, &QPushButton::clicked, this, &DiagReportView::previewExport)',s)
+        self.assertIn('connect(save_, &QPushButton::clicked, this, &DiagReportView::previewExport)',s)
+        self.assertIn('copy->setEnabled(false);save->setEnabled(false)',s)
     def test_no_old_report_on_message(self):
         s=src('diagreportview.cpp').split('void DiagReportView::setMessage',1)[1].split('void DiagReportView::setReport',1)[0]
         for token in ('report_ = {};','hasReport_ = false','copy_->setEnabled(false)','save_->setEnabled(false)','preview_->setEnabled(false)'):

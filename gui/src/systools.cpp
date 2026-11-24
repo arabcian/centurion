@@ -577,11 +577,13 @@ public:
         top->addWidget(run);
         top->addWidget(copy);
         const QString key = stableToolKey(s.title);
-        if (key == QLatin1String("Kernel") || key == QLatin1String("Battery")) {
+        if (key == QLatin1String("Kernel") || key == QLatin1String("Battery") || key == QLatin1String("USB") || key == QLatin1String("CPU")) {
             structured_ = new QPushButton(QCoreApplication::translate("systools", "Structured…"));
             structured_->setEnabled(false); top->addWidget(structured_);
             connect(structured_, &QPushButton::clicked, this, [this, key] {
-                const auto parsed = key == QLatin1String("Kernel") ? structuredtools::modules(raw_) : structuredtools::powerSupply(raw_);
+                const auto parsed = key == QLatin1String("Kernel") ? structuredtools::modules(raw_) :
+                    key == QLatin1String("Battery") ? structuredtools::powerSupply(raw_) :
+                    key == QLatin1String("USB") ? structuredtools::usb(raw_) : structuredtools::cpuTopology(raw_);
                 if (!parsed) {
                     QMessageBox::information(this, QCoreApplication::translate("systools", "Structured output"), QCoreApplication::translate("systools", "Output is missing, incomplete or unrecognized. The original raw output is still available.")); return;
                 }
@@ -594,7 +596,11 @@ public:
                     QT_TRANSLATE_NOOP("systools", "Module"), QT_TRANSLATE_NOOP("systools", "Size (bytes)"),
                     QT_TRANSLATE_NOOP("systools", "Use count"), QT_TRANSLATE_NOOP("systools", "Used by"),
                     QT_TRANSLATE_NOOP("systools", "Supply"), QT_TRANSLATE_NOOP("systools", "Kernel field"),
-                    QT_TRANSLATE_NOOP("systools", "Raw value")};
+                    QT_TRANSLATE_NOOP("systools", "Raw value"), QT_TRANSLATE_NOOP("systools", "Bus"),
+                    QT_TRANSLATE_NOOP("systools", "Device"), QT_TRANSLATE_NOOP("systools", "Vendor ID"),
+                    QT_TRANSLATE_NOOP("systools", "Product ID"), QT_TRANSLATE_NOOP("systools", "CPU"),
+                    QT_TRANSLATE_NOOP("systools", "NODE"), QT_TRANSLATE_NOOP("systools", "SOCKET"),
+                    QT_TRANSLATE_NOOP("systools", "CORE"), QT_TRANSLATE_NOOP("systools", "ONLINE")};
                 QStringList headers; for (const auto &h : parsed->headers) headers << QCoreApplication::translate("systools", h.toUtf8().constData());
                 table->setHorizontalHeaderLabels(headers); table->setEditTriggers(QAbstractItemView::NoEditTriggers);
                 for (qsizetype r = 0; r < parsed->rows.size(); ++r) for (qsizetype c = 0; c < parsed->rows.at(r).size(); ++c)

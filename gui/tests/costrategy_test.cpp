@@ -69,6 +69,17 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     const QMap<int, int> stable{{0, -17}, {1, -23}, {2, -30}, {3, -12}, {4, -26}, {5, -9}, {6, -21}, {7, -35}};
 
+    // Read-only decision metadata follows the real dispatch, without changing durable snapshots.
+    {
+        Search s(Mode::PerCore,Level::Fast,-30,cpu(2),Tuning{-5,3}); startAll(s,-15);
+        const auto before=s.save(); const auto preview=s.previewNext();
+        CHECK(preview && preview->reason==DecisionReason::InitialProbe && s.save()==before);
+        auto actual=s.next(); CHECK(actual && preview && actual->perCore==preview->perCore && actual->reason==preview->reason);
+        s.report(Outcome{false,{}});
+        for(int i=0;i<3;++i){ auto t=s.next(); CHECK(t); s.report(Outcome{true,{}}); }
+        const auto recovered=s.previewNext(); CHECK(recovered && recovered->reason==DecisionReason::FailedStartRecovery);
+        CHECK(recovered && recovered->failureBoundary== -15);
+    }
     // Test order alternates between CCDs.
     {
         Search s(Mode::AllCore, Level::Fast, -30, cpu(4));

@@ -119,6 +119,9 @@ private:
     void updateLaunchPreview();
     void saveUndervolt();
     void draftWorkspace();
+    void restoreStartupDraft();
+    bool startupDraftChecked_ = false;
+    QString startupDraftNotice_;
     void sourceWorkspace();
     QString draftFingerprint() const;
 

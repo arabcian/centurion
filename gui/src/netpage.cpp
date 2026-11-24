@@ -15,6 +15,10 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDate>
+#include <QDateEdit>
+#include <QSpinBox>
+#include <QSignalBlocker>
+#include <QMetaType>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
@@ -53,7 +57,6 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QShowEvent>
-#include <QSignalBlocker>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -97,7 +100,10 @@ public:
     bool operator<(const QTreeWidgetItem &o) const override {
         const int c = treeWidget() ? treeWidget()->sortColumn() : 0;
         const QVariant a = data(c, SortRole), b = o.data(c, SortRole);
-        if (a.isValid() && b.isValid()) return a.toDouble() < b.toDouble();
+        if (a.isValid() && b.isValid()) {
+            if (a.metaType().id() == QMetaType::LongLong && b.metaType().id() == QMetaType::LongLong) return a.toLongLong() < b.toLongLong();
+            return a.toDouble() < b.toDouble();
+        }
         const Key x = key(text(c)), y = key(o.text(c));
         if (x.rank != y.rank) return x.rank < y.rank;
         if (x.rank == 0) return x.num < y.num;
@@ -527,33 +533,74 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         const TrafficDays captured = trafficDays_;
         QDialog dlg(this); dlg.setWindowTitle(tr("Daily Traffic Charts")); dlg.resize(760, 620);
         auto *layout = new QVBoxLayout(&dlg);
-        auto *hint = new QLabel(tr("Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros."));
+        auto *hint = new QLabel(tr("Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros. Chart coordinates are approximate; the table contains exact counters (saturated at INT64_MAX)."));
         hint->setWordWrap(true); layout->addWidget(hint);
+        if (!trafficValid_) {
+            auto *warning = new QLabel(tr("Traffic ledger is unavailable or invalid. No measurements can be displayed."));
+            warning->setWordWrap(true); layout->addWidget(warning); dlg.exec(); return;
+        }
+        auto *range = new QHBoxLayout;
+        auto *first = new QDateEdit; auto *last = new QDateEdit;
+        const auto end = captured.isEmpty() ? QDate::currentDate() : QDate::fromString(captured.lastKey(), Qt::ISODate);
+        const auto begin = captured.isEmpty() ? end : QDate::fromString(captured.firstKey(), Qt::ISODate);
+        for (auto *edit : {first, last}) { edit->setCalendarPopup(true); edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd")); edit->setDateRange(begin, end); }
+        first->setDate(qMax(begin, end.addDays(1 - TRAFFIC_DAYS_SHOWN))); last->setDate(end);
+        range->addWidget(new QLabel(tr("From"))); range->addWidget(first);
+        range->addWidget(new QLabel(tr("To"))); range->addWidget(last);
+        auto *topN = new QSpinBox; topN->setRange(1, 100); topN->setValue(20);
+        range->addWidget(new QLabel(tr("Top programs"))); range->addWidget(topN); layout->addLayout(range);
         auto *program = new QComboBox; program->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-        QSet<QString> names;
-        for (const auto &day : captured) for (auto it = day.cbegin(); it != day.cend(); ++it) names.insert(it.key());
-        QStringList sorted = names.values(); sorted.sort(); program->addItems(sorted); layout->addWidget(program);
+        layout->addWidget(program);
         auto *metric = new QComboBox; metric->addItems({tr("Sent"), tr("Received"), tr("Total"), tr("Connections")}); layout->addWidget(metric);
         auto *chart = new LineChart; layout->addWidget(chart, 1);
-        auto *table = makeTree({tr("Day"), tr("Sent"), tr("Received"), tr("Connections")}); layout->addWidget(table, 1);
+        auto *table = makeTree({tr("Day"), tr("Sent (B)"), tr("Received (B)"), tr("Total (B)"), tr("Connections")}); layout->addWidget(table, 1);
         auto update = [=] {
             QVector<LineChart::Point> points; table->clear();
             QDate previousDate;
-            const auto keys = captured.keys();
-            for (qsizetype i = qMax(qsizetype(0), keys.size() - TRAFFIC_DAYS_SHOWN); i < keys.size(); ++i) {
-                const auto date = QDate::fromString(keys[i], Qt::ISODate);
-                const auto &day = captured[keys[i]];
-                if (!date.isValid() || !day.contains(program->currentText())) continue;
-                const auto t = day.value(program->currentText());
-                const qint64 value = metric->currentIndex() == 0 ? t.tx : metric->currentIndex() == 1 ? t.rx : metric->currentIndex() == 2 ? addTrafficCounter(t.tx, t.rx) : t.conns;
-                points.append({double(date.toJulianDay()), double(value), keys[i], previousDate.isValid() && previousDate.daysTo(date)>1});
-                previousDate=date;
-                table->addTopLevelItem(new QTreeWidgetItem({keys[i], QString::number(t.tx), QString::number(t.rx), QString::number(t.conns)}));
+            const QString start = first->date().toString(Qt::ISODate), finish = last->date().toString(Qt::ISODate);
+            const QStringList ranked = rankTraffic(captured, start, finish).mid(0, topN->value());
+            const int kind = program->currentData(Qt::UserRole + 1).toInt();
+            const QString name = program->currentData().toString();
+            for (auto it = captured.lowerBound(start); it != captured.cend() && it.key() <= finish; ++it) {
+                const auto date = QDate::fromString(it.key(), Qt::ISODate);
+                const auto &day = it.value();
+                if (kind == 0 && !day.contains(name)) continue;
+                if (kind == 1 && day.isEmpty()) continue;
+                if (kind == 2) {
+                    bool hasOther = false;
+                    for (auto p = day.cbegin(); p != day.cend(); ++p) if (!ranked.contains(p.key())) { hasOther = true; break; }
+                    if (!hasOther) continue;
+                }
+                const auto t = kind == 0 ? day.value(name) : sumTraffic(day, kind == 2 ? ranked : QStringList{});
+                const qint64 total = addTrafficCounter(t.tx, t.rx);
+                const qint64 value = metric->currentIndex() == 0 ? t.tx : metric->currentIndex() == 1 ? t.rx : metric->currentIndex() == 2 ? total : t.conns;
+                points.append({double(date.toJulianDay()), double(value), it.key(), previousDate.isValid() && previousDate.daysTo(date)>1});
+                previousDate = date;
+                auto *row = new SortItem({it.key(), QString::number(t.tx), QString::number(t.rx), QString::number(total), QString::number(t.conns)});
+                row->setData(1, SortRole, t.tx); row->setData(2, SortRole, t.rx); row->setData(3, SortRole, total); row->setData(4, SortRole, t.conns);
+                table->addTopLevelItem(row);
             }
             chart->setPoints(points, metric->currentIndex() == 3 ? QString() : QStringLiteral(" B"));
         };
+        auto rebuild = [=] {
+            const QString selected = program->currentData().toString();
+            const int previous = program->currentData(Qt::UserRole + 1).toInt();
+            QSignalBlocker blocker(program);
+            program->clear();
+            program->addItem(tr("All recorded programs")); program->setItemData(0, 1, Qt::UserRole + 1);
+            const auto names = rankTraffic(captured, first->date().toString(Qt::ISODate), last->date().toString(Qt::ISODate));
+            for (const auto &name : names.mid(0, topN->value())) program->addItem(name, name);
+            if (names.size() > topN->value()) { program->addItem(tr("Other programs (outside top N)")); program->setItemData(program->count() - 1, 2, Qt::UserRole + 1); }
+            if (previous == 2) program->setCurrentIndex(qMax(0, program->findData(2, Qt::UserRole + 1)));
+            else if (previous == 0 && !selected.isEmpty()) program->setCurrentIndex(qMax(0, program->findData(selected)));
+            update();
+        };
+        connect(first, &QDateEdit::dateChanged, &dlg, [=](const QDate &date) { if (last->date() < date) last->setDate(date); rebuild(); });
+        connect(last, &QDateEdit::dateChanged, &dlg, [=](const QDate &date) { if (first->date() > date) first->setDate(date); rebuild(); });
+        connect(topN, &QSpinBox::valueChanged, &dlg, rebuild);
         connect(program, &QComboBox::currentIndexChanged, &dlg, update);
         connect(metric, &QComboBox::currentIndexChanged, &dlg, update);
+        rebuild();
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
         connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject); update(); dlg.exec();
     });
@@ -981,7 +1028,12 @@ bool NetPage::loadTraffic() {
     trafficDays_.clear();
     QFile f(trafficFilePath());
     trafficReadable_ = fi.exists() && f.open(QIODevice::ReadOnly);
-    if (trafficReadable_) trafficDays_ = parseTraffic(f.readAll());
+    trafficValid_ = false;
+    if (trafficReadable_) {
+        auto result = decodeTraffic(f.read(TrafficMaxBytes + 1));
+        trafficValid_ = result.valid;
+        trafficDays_ = std::move(result.days);
+    }
     return true;
 }
 
@@ -1006,9 +1058,9 @@ void NetPage::fillTraffic() {
         for (auto p = sum.cbegin(); p != sum.cend(); ++p) {
             auto *it = new SortItem({first.isEmpty() ? QString() : tr("since %1").arg(first), p.key(), humanBytes(p.value().tx),
                                      humanBytes(p.value().rx), QString::number(p.value().conns)});
-            it->setData(2, SortRole, double(p.value().tx));
-            it->setData(3, SortRole, double(p.value().rx));
-            it->setData(4, SortRole, double(p.value().conns));
+            it->setData(2, SortRole, p.value().tx);
+            it->setData(3, SortRole, p.value().rx);
+            it->setData(4, SortRole, p.value().conns);
             trafficTree_->addTopLevelItem(it);
         }
         trafficTree_->setSortingEnabled(true);
@@ -1024,15 +1076,17 @@ void NetPage::fillTraffic() {
             for (const auto &pr : progs) {
                 const TrafficTotal &t = pr.second;
                 auto *it = new SortItem({day, pr.first, humanBytes(t.tx), humanBytes(t.rx), QString::number(t.conns)});
-                it->setData(2, SortRole, double(t.tx));
-                it->setData(3, SortRole, double(t.rx));
-                it->setData(4, SortRole, double(t.conns));
+                it->setData(2, SortRole, t.tx);
+                it->setData(3, SortRole, t.rx);
+                it->setData(4, SortRole, t.conns);
                 trafficTree_->addTopLevelItem(it);
             }
         }
     }
     if (!trafficReadable_ && !trafficSeen_.isNull())
         trafficInfo_->setText(tr("Cannot read %1: this account needs membership in the wheel group.").arg(trafficFilePath()));
+    else if (trafficReadable_ && !trafficValid_)
+        trafficInfo_->setText(tr("Traffic ledger is invalid, unsupported or too large; no counters are available."));
     else if (trafficDays_.isEmpty())
         trafficInfo_->setText(tr("No traffic recorded yet. Switch on Traffic accounting above; a program's bytes appear when its connection closes."));
     else

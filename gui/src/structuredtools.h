@@ -50,4 +50,80 @@ inline std::optional<Data> powerSupply(const QString &raw) {
     if (data.rows.isEmpty()) return std::nullopt;
     return data;
 }
+// Extract exactly one captured command section; never execute a command on
+// behalf of the structured viewer. Unexpected lines are rejected by adapters.
+inline std::optional<QStringList> section(const QString &raw, const QString &command) {
+    if (raw.size() > 1024 * 1024) return std::nullopt;
+    QStringList rows;
+    bool inside = false, found = false;
+    for (const auto &line : raw.split(QLatin1Char('\n'))) {
+        if (line.startsWith(QStringLiteral("$ "))) {
+            inside = line == command;
+            if (inside && found) return std::nullopt;
+            found = found || inside;
+        } else if (inside && !line.trimmed().isEmpty()) {
+            if (rows.size() >= 4096 || line.size() > 4096) return std::nullopt;
+            rows.append(line.trimmed());
+        }
+    }
+    return found && !rows.isEmpty() ? std::optional<QStringList>(rows) : std::nullopt;
+}
+
+inline std::optional<Data> usb(const QString &raw) {
+    const auto lines = section(raw, QStringLiteral("$ lsusb"));
+    if (!lines) return std::nullopt;
+    Data result{{QStringLiteral("Bus"), QStringLiteral("Device"), QStringLiteral("Vendor ID"), QStringLiteral("Product ID")}, {}};
+    const QRegularExpression row(QStringLiteral("^Bus ([0-9]{3}) Device ([0-9]{3}): ID ([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?: .*)?$"));
+    QSet<QString> seen;
+    for (const auto &line : *lines) {
+        const auto m = row.match(line);
+        if (!m.hasMatch()) return std::nullopt;
+        const auto key = m.captured(1) + QLatin1Char(':') + m.captured(2);
+        if (seen.contains(key)) return std::nullopt;
+        seen.insert(key);
+        // Do not copy free-form device descriptions into structured exports.
+        result.rows.append(QStringList{m.captured(1), m.captured(2), m.captured(3).toLower(), m.captured(4).toLower()});
+    }
+    return result;
+}
+
+inline std::optional<Data> cpuTopology(const QString &raw) {
+    const auto lines = section(raw, QStringLiteral("$ lscpu -e"));
+    if (!lines || lines->size() < 2) return std::nullopt;
+    const QRegularExpression space(QStringLiteral("\\s+"));
+    const auto headers = lines->first().split(space, Qt::SkipEmptyParts);
+    const QStringList keys{QStringLiteral("CPU"), QStringLiteral("NODE"), QStringLiteral("SOCKET"), QStringLiteral("CORE"), QStringLiteral("ONLINE")};
+    if (!headers.contains(QStringLiteral("CPU")) || !headers.contains(QStringLiteral("CORE"))) return std::nullopt;
+    QList<int> columns;
+    Data result;
+    for (const auto &key : keys) {
+        const auto column = headers.indexOf(key);
+        if (column < 0) continue;
+        if (headers.lastIndexOf(key) != column) return std::nullopt;
+        columns.append(int(column)); result.headers.append(key);
+    }
+    QSet<qulonglong> seen;
+    const QRegularExpression integer(QStringLiteral("^[0-9]+$"));
+    for (qsizetype i = 1; i < lines->size(); ++i) {
+        const auto fields = lines->at(i).split(space, Qt::SkipEmptyParts);
+        if (fields.size() != headers.size()) return std::nullopt;
+        QStringList values;
+        for (qsizetype c = 0; c < columns.size(); ++c) {
+            const auto value = fields.at(columns.at(c));
+            const auto key = result.headers.at(c);
+            if (key == QStringLiteral("ONLINE")) {
+                if (value != QStringLiteral("yes") && value != QStringLiteral("no") && value != QStringLiteral("-")) return std::nullopt;
+            } else if (value != QStringLiteral("-") || key == QStringLiteral("CPU")) {
+                bool ok = false;
+                const auto n = value.toULongLong(&ok);
+                if (!integer.match(value).hasMatch() || !ok) return std::nullopt;
+                if (key == QStringLiteral("CPU")) { if (seen.contains(n)) return std::nullopt; seen.insert(n); }
+            }
+            values.append(value);
+        }
+        result.rows.append(values);
+    }
+    return result;
+}
+
 }

@@ -1,3 +1,4 @@
+#include "edidfields.h"
 #include "diagnostictools.h"
 
 #include "diagsources.h"
@@ -202,7 +203,9 @@ Edid decodeEdid(const QByteArray &d) {
     e.header = d.startsWith(QByteArray::fromHex("00ffffffffffff00"));
     e.declared = u8(d, 126) + 1;
     e.readable = int(d.size() / 128);
+    const auto inspected = edidfields::inspect({reinterpret_cast<const std::uint8_t *>(d.constData()), std::size_t(d.size())});
     e.truncated = e.readable < e.declared;
+    e.structuralValid = edidfields::trusted(inspected);
     for (int blk = 0; blk < std::min(e.readable, 32); ++blk) {
         int sum = 0;
         for (int i = blk * 128; i < blk * 128 + 128; ++i) sum += u8(d, i);
@@ -237,8 +240,15 @@ Edid decodeEdid(const QByteArray &d) {
         if (clk && ha + hb && va + vb)
             e.timings << QStringLiteral("%1×%2 @ %3 Hz").arg(ha).arg(va).arg(clk * 10000.0 / ((ha + hb) * (va + vb)), 0, 'f', 2);
     }
+    // Multiple explicit ranges must agree before reporting one as verified evidence.
+    bool conflictingVrr = false;
+    auto vrr = [&](int minimum, int maximum, const QString &source) {
+        if (minimum <= 0 || maximum < minimum) { conflictingVrr = true; return; }
+        if (e.vrrMax && (e.vrrMin != minimum || e.vrrMax != maximum)) conflictingVrr = true;
+        if (!e.vrrMax) { e.vrrMin = minimum; e.vrrMax = maximum; e.vrrSource = source; }
+    };
     // CTA-861 data blocks: vendor-specific blocks carry the variable refresh ranges.
-    for (int blk = 1; blk < std::min(e.readable, 32); ++blk) {
+    for (int blk = 1; blk < std::min({e.readable, e.declared, 32}); ++blk) {
         const int base = blk * 128;
         if (u8(d, base) != 0x02) continue;
         const int dtd = u8(d, base + 2), caps = u8(d, base + 3);
@@ -265,14 +275,18 @@ Edid decodeEdid(const QByteArray &d) {
                 const int oui = u8(d, i + 1) | (u8(d, i + 2) << 8) | (u8(d, i + 3) << 16);
                 if (oui == 0x000c03) e.hdmi = true;
                 if (oui == 0x00001a && len >= 7) {           // AMD FreeSync: OUI, version, caps, min, max
-                    e.vrrMin = u8(d, i + 6); e.vrrMax = u8(d, i + 7); e.vrrSource = QStringLiteral("FreeSync (AMD VSDB)");
+                    vrr(u8(d, i + 6), u8(d, i + 7), QStringLiteral("FreeSync (AMD VSDB)"));
                 } else if (oui == 0xc45dd8 && len >= 10) {   // HDMI Forum: VRRmin / VRRmax
                     const int mn = u8(d, i + 9) & 0x3f, mx = ((u8(d, i + 9) & 0xc0) << 2) | u8(d, i + 10);
-                    if (mx > 0 && e.vrrMax == 0) { e.vrrMin = mn; e.vrrMax = mx; e.vrrSource = QStringLiteral("HDMI 2.1 VRR"); }
+                    if (mx > 0) vrr(mn, mx, QStringLiteral("HDMI 2.1 VRR"));
                 }
             }
             i += len + 1;
         }
+    }
+    // Do not advertise an explicit VRR capability from damaged or contradictory data.
+    if (!e.structuralValid || conflictingVrr || e.vrrMin <= 0 || e.vrrMax < e.vrrMin) {
+        e.vrrMin = e.vrrMax = 0; e.vrrSource.clear();
     }
     return e;
 }
@@ -302,11 +316,17 @@ Report displays(const QString &root) {
     Table bytes;
     bytes.title = tr("EDID Binary Inspector");
     bytes.privateBinary = true;
+    bytes.viewKind = QStringLiteral("edid-bytes");
     bytes.headers = {tr("Connector"), tr("Block"), tr("Offset"), tr("Hexadecimal"), tr("ASCII")};
     bytes.note = tr("Read-only bytes from the kernel. EDID may contain a display serial number; review before exporting.");
     Table timingDetails;
     timingDetails.title = tr("Base Block Timing Details");
     timingDetails.headers = {tr("Connector"), tr("Offset"), tr("Active H/V"), tr("Blanking H/V"), tr("Total H/V"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)")};
+    Table fields;
+    fields.title = tr("EDID Field Map");
+    fields.viewKind = QStringLiteral("edid-fields");
+    fields.headers = {tr("Connector"), tr("Offset"), tr("Length (bytes)"), tr("Field"), tr("Tag")};
+    fields.note = tr("Offsets refer to the captured binary; unknown fields are not interpreted.");
     int connected = 0;
     for (const QString &conn : diagsrc::dir(root + QStringLiteral("/sys/class/drm"))) {
         if (!conn.contains(QLatin1Char('-'))) continue;
@@ -315,8 +335,8 @@ Report displays(const QString &root) {
         ++connected;
         const QString port = conn.section(QLatin1Char('-'), 1);
         QFile f(b + QStringLiteral("edid"));
-        const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(32 * 128) : QByteArray();
-        for (int off = 0; off < raw.size(); off += 16) {
+        const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(32 * 128 + 1) : QByteArray();
+        for (int off = 0; off < std::min<qsizetype>(raw.size(), 4096); off += 16) {
             const auto chunk = raw.mid(off, 16);
             QString ascii;
             for (const char c : chunk) ascii += QLatin1Char(uchar(c) >= 32 && uchar(c) <= 126 ? c : '.');
@@ -329,6 +349,22 @@ Report displays(const QString &root) {
             continue;
         }
         const Edid e = decodeEdid(raw);
+        const auto inspection = edidfields::inspect({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())});
+        const auto fieldName = [](edidfields::Kind kind) -> QString {
+            using K = edidfields::Kind;
+            switch (kind) {
+            case K::Header: return tr("Header"); case K::Manufacturer: return tr("Manufacturer ID");
+            case K::Product: return tr("Product ID"); case K::Serial: return tr("Serial number field");
+            case K::Manufacture: return tr("Manufacture date"); case K::Version: return tr("EDID version");
+            case K::Parameters: return tr("Display parameters"); case K::Chromaticity: return tr("Chromaticity");
+            case K::Established: return tr("Established timings"); case K::Standard: return tr("Standard timings");
+            case K::DetailedTiming: return tr("Detailed timing"); case K::Descriptor: return tr("Display descriptor");
+            case K::ExtensionCount: return tr("Extension count"); case K::Checksum: return tr("Checksum byte");
+            case K::ExtensionHeader: return tr("Extension header"); case K::CtaData: return tr("CTA data block");
+            case K::Padding: return tr("Padding"); default: return tr("Unknown");
+            }
+        };
+        for (const auto &f : inspection.fields) fields.add({conn, QStringLiteral("0x%1").arg(qulonglong(f.offset),4,16,QLatin1Char('0')), QString::number(qulonglong(f.length)), fieldName(f.kind), f.tag < 0 ? QStringLiteral("—") : QStringLiteral("0x%1").arg(f.tag,2,16,QLatin1Char('0'))});
         for (int off = 54; off <= 108; off += 18) {
             const int clk = u8(raw, off) | (u8(raw, off+1) << 8);
             if (!clk) continue;
@@ -339,7 +375,7 @@ Report displays(const QString &root) {
             timingDetails.add({conn, QStringLiteral("0x%1").arg(off, 2, 16, QLatin1Char('0')), pair(ha,va), pair(hb,vb), pair(ha+hb,va+vb),
                 QString::number(clk/100.0,'f',2), QString::number(clk*10000.0/((ha+hb)*(va+vb)),'f',2)});
         }
-        for (int block = 0; block < e.readable; ++block) {
+        for (int block = 0; block < std::min(e.readable, 32); ++block) {
             int sum = 0;
             for (int i = 0; i < 128; ++i) sum += u8(raw, block * 128 + i);
             const int remainder = sum % 256;
@@ -366,7 +402,7 @@ Report displays(const QString &root) {
                      e.audio ? (e.hdmi ? tr("HDMI audio") : tr("yes")) : dash,
                      e.year ? QStringLiteral("%1 w%2").arg(e.year).arg(e.week) : dash, QString::number(modes), state});
         }
-        const bool bad = !e.header || e.truncated || !e.badBlocks.isEmpty();
+        const bool bad = !e.structuralValid;
         t.add({port, QStringLiteral("%1 %2").arg(e.maker, e.name).trimmed(), e.year ? QString::number(e.year) : QStringLiteral("—"),
                e.timings.value(0, QStringLiteral("—")), e.rangeMax ? QStringLiteral("%1–%2 Hz").arg(e.rangeMin).arg(e.rangeMax) : QStringLiteral("—"),
                e.vrrMax ? QStringLiteral("%1–%2 Hz · %3").arg(e.vrrMin).arg(e.vrrMax).arg(e.vrrSource) : QStringLiteral("—"),
@@ -374,12 +410,12 @@ Report displays(const QString &root) {
         if (bad)
             r.add(Level::Review, tr("%1: the EDID is damaged").arg(port),
                   !e.header ? tr("Its header is wrong.") : e.truncated ? tr("It declares %1 blocks but %2 were read.").arg(e.declared).arg(e.readable)
-                                                                     : tr("Checksum wrong in block %1.").arg(e.badBlocks.join(QStringLiteral(", "))),
+                                                                     : !e.badBlocks.isEmpty() ? tr("Checksum wrong in block %1.").arg(e.badBlocks.join(QStringLiteral(", "))) : tr("Invalid extension boundaries or unexpected block count."),
                   tr("Wrong or missing modes and no VRR follow from this. Try another cable / port; a persistent fault can be worked around with drm.edid_firmware."));
         else if (e.vrrMax)
             r.add(Level::Info, tr("%1 supports variable refresh %2–%3 Hz (%4)").arg(port).arg(e.vrrMin).arg(e.vrrMax).arg(e.vrrSource),
                   e.vrrMin && e.vrrMax < e.vrrMin * 2 ? tr("The range is narrower than 2:1, so low frame-rate compensation (frame doubling) cannot work below %1 Hz.").arg(e.vrrMin)
-                                                       : tr("The range is wide enough for low frame-rate compensation."));
+                                                       : tr("The range ratio alone does not prove low frame-rate compensation is supported."));
         else if (e.rangeMax > e.rangeMin && e.rangeMin > 0)
             r.add(Level::Info, tr("%1 declares a %2–%3 Hz refresh range").arg(port).arg(e.rangeMin).arg(e.rangeMax),
                   tr("A general refresh range is not proof of VRR support. Check explicit Adaptive-Sync capability and the compositor or driver."));
@@ -401,6 +437,7 @@ Report displays(const QString &root) {
     if (!bl.rows.isEmpty()) r.tables << bl;
     if (!bytes.rows.isEmpty()) r.tables << bytes;
     if (!timingDetails.rows.isEmpty()) r.tables << timingDetails;
+    if (!fields.rows.isEmpty()) r.tables << fields;
     if (!connected) r.add(Level::Unknown, tr("No connected display found under /sys/class/drm"));
     else if (!r.count(Level::Review) && !r.count(Level::Unknown)) r.add(Level::Ok, tr("%1 display(s) with a valid EDID").arg(connected));
     return r;

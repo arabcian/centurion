@@ -58,6 +58,7 @@ public:
     void setFanTarget(const QString &key, int rpm);  // rpm 0 = Auto (EC all-or-nothing rule applies)
 
 Q_SIGNALS:
+    void navigationPreferencesRequested();
     /// Emitted after a successful switch (Firmware Attributes tab unlocks on "custom").
     void profileChanged(const QString &profile);
     /// The NVIDIA dGPU was rescanned and its driver loaded again.

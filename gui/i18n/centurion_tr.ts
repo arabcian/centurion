@@ -466,6 +466,88 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
             <source>No recorded boot matches this filter.</source>
             <translation>Bu süzgece uyan kayıtlı açılış yok.</translation>
         </message>
+            <message>
+            <source>Compare boots…</source>
+            <translation>Açılışları karşılaştır…</translation>
+        </message>
+        <message>
+            <source>No unique eight-character boot tag is available; the legacy kernel log cannot identify this boot safely.</source>
+            <translation>Benzersiz sekiz karakterli açılış etiketi yok; eski çekirdek günlüğü bu açılışı güvenle tanımlayamıyor.</translation>
+        </message>
+        <message>
+            <source>Legacy log attribution unavailable: boot prefix is missing or ambiguous.
+</source>
+            <translation>Eski günlük ilişkilendirmesi yok: açılış öneki eksik veya belirsiz.
+</translation>
+        </message>
+        <message>
+            <source>unknown / not recorded</source>
+            <translation>bilinmiyor / kaydedilmemiş</translation>
+        </message>
+        <message>
+            <source>Before: %1</source>
+            <translation>Önce: %1</translation>
+        </message>
+        <message>
+            <source>After: %1</source>
+            <translation>Sonra: %1</translation>
+        </message>
+        <message>
+            <source>  %1: %2 (unchanged)</source>
+            <translation>  %1: %2 (değişmedi)</translation>
+        </message>
+        <message>
+            <source>Recorded versions</source>
+            <translation>Kayıtlı sürümler</translation>
+        </message>
+        <message>
+            <source>Recorded curve states (missing does not establish stock)</source>
+            <translation>Kayıtlı eğri durumları (eksik kayıt fabrika ayarını kanıtlamaz)</translation>
+        </message>
+        <message>
+            <source>Boot state: %1 → %2</source>
+            <translation>Açılış durumu: %1 → %2</translation>
+        </message>
+        <message>
+            <source>Recorded duration (seconds): %1 → %2</source>
+            <translation>Kayıtlı süre (saniye): %1 → %2</translation>
+        </message>
+        <message>
+            <source>Recorded kernel event total: %1 → %2</source>
+            <translation>Kayıtlı çekirdek olayı toplamı: %1 → %2</translation>
+        </message>
+        <message>
+            <source>Recorded event categories</source>
+            <translation>Kayıtlı olay kategorileri</translation>
+        </message>
+        <message>
+            <source>Kernel event counts are not comparable: both boots must have a clean recorded end.</source>
+            <translation>Çekirdek olayı sayıları karşılaştırılamaz: her iki açılışın da düzgün kapanış kaydı olmalıdır.</translation>
+        </message>
+        <message>
+            <source>Attributed pstore entries (not a crash count): %1 → %2</source>
+            <translation>İlişkilendirilmiş pstore kayıtları (çökme sayısı değil): %1 → %2</translation>
+        </message>
+        <message>
+            <source>Boot guard / preset history: unavailable in this snapshot.</source>
+            <translation>Açılış koruması / önayar geçmişi: bu anlık görüntüde yok.</translation>
+        </message>
+        <message>
+            <source>Compare boots</source>
+            <translation>Açılışları karşılaştır</translation>
+        </message>
+        <message>
+            <source>Before</source>
+            <translation>Önce</translation>
+        </message>
+        <message>
+            <source>After</source>
+            <translation>Sonra</translation>
+        </message>
+        <message>
+            <source>Select two different visible boot records.</source>
+            <translation>Görünen iki farklı açılış kaydını seçin.</translation>
+        </message>
     </context>
     <context>
         <name>BootLogoDialog</name>
@@ -3406,7 +3488,15 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
         <source>Show only below-target pairs</source>
         <translation>Yalnızca hedefin altındaki çiftleri göster</translation>
     </message>
-</context>
+        <message>
+            <source>Navigation favorites and startup page</source>
+            <translation>Navigasyon favorileri ve başlangıç sayfası</translation>
+        </message>
+        <message>
+            <source>Open navigation preferences (Ctrl+Shift+F)</source>
+            <translation>Navigasyon tercihlerini aç (Ctrl+Shift+F)</translation>
+        </message>
+    </context>
     <context>
         <name>KlogPage</name>
         <message>
@@ -4004,6 +4094,26 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
         <translation>Gözlemlenen durum geçişleri (doğrulanmış sonuçlar değil)</translation>
     </message>
 
+            <message>
+            <source>Navigation favorites and startup page</source>
+            <translation>Navigasyon favorileri ve başlangıç sayfası</translation>
+        </message>
+        <message>
+            <source>No navigation favorites</source>
+            <translation>Navigasyon favorisi yok</translation>
+        </message>
+        <message>
+            <source>Manage navigation favorites</source>
+            <translation>Navigasyon favorilerini yönet</translation>
+        </message>
+        <message>
+            <source>Startup page</source>
+            <translation>Başlangıç sayfası</translation>
+        </message>
+        <message>
+            <source>Restore last page</source>
+            <translation>Son sayfayı geri yükle</translation>
+        </message>
     </context>
     <context>
         <name>NetPage</name>
@@ -4842,6 +4952,50 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         <message>
             <source>Total</source>
             <translation>Toplam</translation>
+        </message>
+            <message>
+            <source>Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros. Chart coordinates are approximate; the table contains exact counters (saturated at INT64_MAX).</source>
+            <translation>Anlık bant genişliği değil, kayıtlı günlük toplamlar. Eksik günler ölçülmüş sıfır değildir. Grafik koordinatları yaklaşık; tabloda tam sayaçlar bulunur (INT64_MAX sınırında doyurulur).</translation>
+        </message>
+        <message>
+            <source>Traffic ledger is unavailable or invalid. No measurements can be displayed.</source>
+            <translation>Trafik kaydı yok veya geçersiz. Ölçümler gösterilemiyor.</translation>
+        </message>
+        <message>
+            <source>From</source>
+            <translation>Başlangıç</translation>
+        </message>
+        <message>
+            <source>To</source>
+            <translation>Bitiş</translation>
+        </message>
+        <message>
+            <source>Top programs</source>
+            <translation>En çok trafik üreten programlar</translation>
+        </message>
+        <message>
+            <source>Sent (B)</source>
+            <translation>Gönderilen (B)</translation>
+        </message>
+        <message>
+            <source>Received (B)</source>
+            <translation>Alınan (B)</translation>
+        </message>
+        <message>
+            <source>Total (B)</source>
+            <translation>Toplam (B)</translation>
+        </message>
+        <message>
+            <source>All recorded programs</source>
+            <translation>Kayıtlı tüm programlar</translation>
+        </message>
+        <message>
+            <source>Other programs (outside top N)</source>
+            <translation>Diğer programlar (ilk N dışında)</translation>
+        </message>
+        <message>
+            <source>Traffic ledger is invalid, unsupported or too large; no counters are available.</source>
+            <translation>Trafik kaydı geçersiz, desteklenmiyor veya çok büyük; sayaçlar kullanılamıyor.</translation>
         </message>
     </context>
     <context>
@@ -9827,7 +9981,43 @@ Ortalama %4 ms · P50 %5 ms · P95 %6 ms · P99 %7 ms · Maks %8 ms</translation
         <translation>Autotune tamamlandı ancak istek sırasında düzenleyici değişti. Taslak korundu; sonuç salt okunur.</translation>
     </message>
 
-</context>
+        <message>
+            <source>Startup draft not restored: another tuning operation is active.</source>
+            <translation>Başlangıç taslağı yüklenmedi: başka bir ayar işlemi etkin.</translation>
+        </message>
+        <message>
+            <source>Saved startup draft is damaged or incompatible. No editors changed.</source>
+            <translation>Kaydedilen başlangıç taslağı bozuk veya uyumsuz. Hiçbir editör değişmedi.</translation>
+        </message>
+        <message>
+            <source>Startup draft: %1 restored unchecked, %2 skipped. No settings applied.</source>
+            <translation>Başlangıç taslağı: %1 işaretsiz geri yüklendi, %2 atlandı. Hiçbir ayar uygulanmadı.</translation>
+        </message>
+        <message>
+            <source>Baseline changed: %1</source>
+            <translation>Temel değer değişti: %1</translation>
+        </message>
+        <message>
+            <source>Disable startup restore</source>
+            <translation>Başlangıçta geri yüklemeyi kapat</translation>
+        </message>
+        <message>
+            <source>Enable startup restore</source>
+            <translation>Başlangıçta geri yüklemeyi aç</translation>
+        </message>
+        <message>
+            <source>Could not save startup restore preference.</source>
+            <translation>Başlangıçta geri yükleme tercihi kaydedilemedi.</translation>
+        </message>
+        <message>
+            <source>Startup restore enabled for unchecked editors.</source>
+            <translation>İşaretsiz editörler için başlangıçta geri yükleme etkin.</translation>
+        </message>
+        <message>
+            <source>Startup restore disabled.</source>
+            <translation>Başlangıçta geri yükleme kapalı.</translation>
+        </message>
+    </context>
     <context>
         <name>RyzenTab</name>
         <message>
@@ -15373,6 +15563,114 @@ Saklanan denemeler: %4 · çıkarılan: %5
         <translation>Tüm eğri doğrulaması başarılı: %1</translation>
     </message>
 
+        <message>
+            <source>Initial probe (limited by safety bounds)</source>
+            <translation>İlk deneme (güvenlik sınırlarıyla kısıtlı)</translation>
+        </message>
+        <message>
+            <source>Coarse all-core descent</source>
+            <translation>Tüm çekirdeklerde kaba azaltma</translation>
+        </message>
+        <message>
+            <source>Fine all-core descent</source>
+            <translation>Tüm çekirdeklerde ince azaltma</translation>
+        </message>
+        <message>
+            <source>Per-core step descent</source>
+            <translation>Çekirdek başına kademeli azaltma</translation>
+        </message>
+        <message>
+            <source>Failed start: moving towards stock</source>
+            <translation>Başarısız başlangıç: stok değere yaklaşma</translation>
+        </message>
+        <message>
+            <source>Whole-curve verification</source>
+            <translation>Tüm eğrinin doğrulanması</translation>
+        </message>
+        <message>
+            <source>Replay of recorded interrupted candidate</source>
+            <translation>Kaydedilmiş kesintiye uğrayan adayın tekrarı</translation>
+        </message>
+        <message>
+            <source>Decision reason unavailable</source>
+            <translation>Karar gerekçesi bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Recorded search value: %1</source>
+            <translation>Kaydedilen arama değeri: %1</translation>
+        </message>
+        <message>
+            <source>Excluded failure boundary: %1 and below</source>
+            <translation>Dışlanan hata sınırı: %1 ve altı</translation>
+        </message>
+        <message>
+            <source>Trial %1 · %2 h %3 min elapsed · remaining time unknown (verification, retries or restoration)</source>
+            <translation>Deneme %1 · geçen %2 sa %3 dk · kalan süre bilinmiyor (doğrulama, tekrar veya geri yükleme)</translation>
+        </message>
+        <message>
+            <source>Filter CCD, core or candidate…</source>
+            <translation>CCD, çekirdek veya adayı filtrele…</translation>
+        </message>
+        <message>
+            <source>Export selected session…</source>
+            <translation>Seçili oturumu dışa aktar…</translation>
+        </message>
+        <message>
+            <source>Delete selected session…</source>
+            <translation>Seçili oturumu sil…</translation>
+        </message>
+        <message>
+            <source>Compare sessions…</source>
+            <translation>Oturumları karşılaştır…</translation>
+        </message>
+        <message>
+            <source>Historical logs may contain private system details. Export this frozen record?</source>
+            <translation>Geçmiş günlükler özel sistem bilgileri içerebilir. Bu sabit kaydı dışa aktar?</translation>
+        </message>
+        <message>
+            <source>Choose a new export file outside Centurion state.</source>
+            <translation>Centurion durum dizini dışında yeni bir dışa aktarma dosyası seç.</translation>
+        </message>
+        <message>
+            <source>Could not export session.</source>
+            <translation>Oturum dışa aktarılamadı.</translation>
+        </message>
+        <message>
+            <source>Delete this historical session only? The recovery journal and crash guards are not changed.</source>
+            <translation>Yalnız bu geçmiş oturum silinsin mi? Kurtarma günlüğü ve çökme korumaları değişmez.</translation>
+        </message>
+        <message>
+            <source>Archive changed or could not be saved. Reopen the archive.</source>
+            <translation>Arşiv değişti veya kaydedilemedi. Arşivi yeniden aç.</translation>
+        </message>
+        <message>
+            <source>Recovery journal or crash guards changed during review. Reopen the preview.</source>
+            <translation>İnceleme sırasında kurtarma günlüğü veya çökme korumaları değişti. Önizlemeyi yeniden aç.</translation>
+        </message>
+        <message>
+            <source>Unknown or different CPU topology. Per-core comparison is unavailable.</source>
+            <translation>CPU topolojisi bilinmiyor veya farklı. Çekirdek başına karşılaştırma yapılamıyor.</translation>
+        </message>
+        <message>
+            <source>Missing or ambiguous core identity.</source>
+            <translation>Eksik veya belirsiz çekirdek kimliği.</translation>
+        </message>
+        <message>
+            <source>Recorded offsets only; this is not a stability comparison.</source>
+            <translation>Yalnız kaydedilen ofsetler; bu bir kararlılık karşılaştırması değildir.</translation>
+        </message>
+        <message>
+            <source>BIOS versions differ.</source>
+            <translation>BIOS sürümleri farklı.</translation>
+        </message>
+        <message>
+            <source>Search modes differ.</source>
+            <translation>Arama modları farklı.</translation>
+        </message>
+        <message>
+            <source>No recorded offset differences.</source>
+            <translation>Kaydedilen ofset farkı yok.</translation>
+        </message>
     </context>
     <context>
         <name>coevidence</name>
@@ -15700,6 +15998,34 @@ Saklanan denemeler: %4 · çıkarılan: %5
         <message>
             <source>Non-essential instrumentation</source>
             <translation>Yardımcı ölçüm aygıtı</translation>
+        </message>
+        <message>
+            <source>EDID Byte Inspector</source>
+            <translation>EDID Bayt İnceleyici</translation>
+        </message>
+        <message>
+            <source>Captured bytes only. The connector may have changed since the report was collected.</source>
+            <translation>Yalnız yakalanan baytlar. Rapor oluşturulduktan sonra bağlantı değişmiş olabilir.</translation>
+        </message>
+        <message>
+            <source>Byte %1 · block %2 · value %3</source>
+            <translation>Bayt %1 · blok %2 · değer %3</translation>
+        </message>
+        <message>
+            <source>Checksum matches</source>
+            <translation>Sağlama toplamı eşleşiyor</translation>
+        </message>
+        <message>
+            <source>Checksum mismatch</source>
+            <translation>Sağlama toplamı uyuşmuyor</translation>
+        </message>
+        <message>
+            <source>Invalid extension boundaries or unexpected block count.</source>
+            <translation>Geçersiz uzantı sınırları veya beklenmeyen blok sayısı.</translation>
+        </message>
+        <message>
+            <source>Display capped at 4096 bytes; completeness is not established by this view.</source>
+            <translation>Görüntüleme 4096 baytla sınırlıdır; bu görünüm verinin tam olduğunu kanıtlamaz.</translation>
         </message>
     </context>
     <context>
@@ -19516,6 +19842,238 @@ Saklanan denemeler: %4 · çıkarılan: %5
             <source>Refresh (Hz)</source>
             <translation>Yenileme (Hz)</translation>
         </message>
+        <message>
+            <source>EDID Field Map</source>
+            <translation>EDID Alan Haritası</translation>
+        </message>
+        <message>
+            <source>Field</source>
+            <translation>Alan</translation>
+        </message>
+        <message>
+            <source>Tag</source>
+            <translation>Etiket</translation>
+        </message>
+        <message>
+            <source>Offsets refer to the captured binary; unknown fields are not interpreted.</source>
+            <translation>Ofsetler yakalanan ikili veriye aittir; bilinmeyen alanlar yorumlanmaz.</translation>
+        </message>
+        <message>
+            <source>Header</source>
+            <translation>Başlık</translation>
+        </message>
+        <message>
+            <source>Manufacturer ID</source>
+            <translation>Üretici kimliği</translation>
+        </message>
+        <message>
+            <source>Product ID</source>
+            <translation>Ürün kimliği</translation>
+        </message>
+        <message>
+            <source>Serial number field</source>
+            <translation>Seri numarası alanı</translation>
+        </message>
+        <message>
+            <source>Manufacture date</source>
+            <translation>Üretim tarihi</translation>
+        </message>
+        <message>
+            <source>EDID version</source>
+            <translation>EDID sürümü</translation>
+        </message>
+        <message>
+            <source>Display parameters</source>
+            <translation>Ekran parametreleri</translation>
+        </message>
+        <message>
+            <source>Chromaticity</source>
+            <translation>Renk koordinatları</translation>
+        </message>
+        <message>
+            <source>Established timings</source>
+            <translation>Yerleşik zamanlamalar</translation>
+        </message>
+        <message>
+            <source>Standard timings</source>
+            <translation>Standart zamanlamalar</translation>
+        </message>
+        <message>
+            <source>Detailed timing</source>
+            <translation>Ayrıntılı zamanlama</translation>
+        </message>
+        <message>
+            <source>Display descriptor</source>
+            <translation>Ekran tanımlayıcısı</translation>
+        </message>
+        <message>
+            <source>Extension count</source>
+            <translation>Uzantı sayısı</translation>
+        </message>
+        <message>
+            <source>Extension header</source>
+            <translation>Uzantı başlığı</translation>
+        </message>
+        <message>
+            <source>CTA data block</source>
+            <translation>CTA veri bloğu</translation>
+        </message>
+        <message>
+            <source>Padding</source>
+            <translation>Dolgu</translation>
+        </message>
+        <message>
+            <source>Unknown</source>
+            <translation>Bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Invalid extension boundaries or unexpected block count.</source>
+            <translation>Geçersiz uzantı sınırları veya beklenmeyen blok sayısı.</translation>
+        </message>
+        <message>
+            <source>The range ratio alone does not prove low frame-rate compensation is supported.</source>
+            <translation>Aralık oranı tek başına düşük kare hızı telafisi desteğini kanıtlamaz.</translation>
+        </message>
+        <message>
+            <source>CPU Cache Sharing Domains</source>
+            <translation>CPU Önbellek Paylaşım Alanları</translation>
+        </message>
+        <message>
+            <source>Level</source>
+            <translation>Düzey</translation>
+        </message>
+        <message>
+            <source>Size</source>
+            <translation>Boyut</translation>
+        </message>
+        <message>
+            <source>Shared CPUs</source>
+            <translation>Paylaşan CPU'lar</translation>
+        </message>
+        <message>
+            <source>Cache sharing is kernel-reported topology, not proof of physical CCD identity.</source>
+            <translation>Önbellek paylaşımı çekirdeğin bildirdiği topolojidir; fiziksel CCD kimliğinin kanıtı değildir.</translation>
+        </message>
+        <message>
+            <source>SMBIOS Memory Devices</source>
+            <translation>SMBIOS Bellek Aygıtları</translation>
+        </message>
+        <message>
+            <source>Entry</source>
+            <translation>Kayıt</translation>
+        </message>
+        <message>
+            <source>Capacity (MiB)</source>
+            <translation>Kapasite (MiB)</translation>
+        </message>
+        <message>
+            <source>Rated transfer rate (MT/s)</source>
+            <translation>Bildirilen aktarım hızı (MT/s)</translation>
+        </message>
+        <message>
+            <source>Configured transfer rate (MT/s)</source>
+            <translation>Yapılandırılan aktarım hızı (MT/s)</translation>
+        </message>
+        <message>
+            <source>Unreadable</source>
+            <translation>Okunamadı</translation>
+        </message>
+        <message>
+            <source>Invalid or incomplete record</source>
+            <translation>Geçersiz veya eksik kayıt</translation>
+        </message>
+        <message>
+            <source>Empty slot</source>
+            <translation>Boş yuva</translation>
+        </message>
+        <message>
+            <source>Reported device</source>
+            <translation>Bildirilen aygıt</translation>
+        </message>
+        <message>
+            <source>Firmware-reported records, not measured RAM speed. Missing or inaccessible SMBIOS data is unknown; no privilege escalation.</source>
+            <translation>Firmware kayıtlarıdır, ölçülmüş RAM hızı değildir. Eksik veya erişilemeyen SMBIOS verisi bilinmiyor; yetki yükseltme yapılmaz.</translation>
+        </message>
+        <message>
+            <source>SMBIOS memory device entries are unavailable.</source>
+            <translation>SMBIOS bellek aygıtı kayıtları kullanılamıyor.</translation>
+        </message>
+        <message>
+            <source>Table</source>
+            <translation>Tablo</translation>
+        </message>
+        <message>
+            <source>Signature</source>
+            <translation>İmza</translation>
+        </message>
+        <message>
+            <source>Length (bytes)</source>
+            <translation>Uzunluk (bayt)</translation>
+        </message>
+        <message>
+            <source>Revision</source>
+            <translation>Revizyon</translation>
+        </message>
+        <message>
+            <source>Read status</source>
+            <translation>Okuma durumu</translation>
+        </message>
+        <message>
+            <source>Only fixed-size table headers are inspected. AML is not interpreted or executed; checksum verification is not claimed.</source>
+            <translation>Yalnız sabit boyutlu tablo başlıkları incelenir. AML yorumlanmaz veya çalıştırılmaz; sağlama toplamı doğrulaması iddia edilmez.</translation>
+        </message>
+        <message>
+            <source>Unsupported or incomplete header</source>
+            <translation>Desteklenmeyen veya eksik başlık</translation>
+        </message>
+        <message>
+            <source>Header read</source>
+            <translation>Başlık okundu</translation>
+        </message>
+        <message>
+            <source>ACPI table listing is unavailable or inaccessible.</source>
+            <translation>ACPI tablo listesi kullanılamıyor veya erişilemiyor.</translation>
+        </message>
+        <message>
+            <source>Partner source capabilities</source>
+            <translation>Karşı aygıtın kaynak kapasiteleri</translation>
+        </message>
+        <message>
+            <source>Best capacity</source>
+            <translation>En yüksek kapasite</translation>
+        </message>
+        <message>
+            <source>USB Power Delivery Source Profiles</source>
+            <translation>USB Power Delivery Kaynak Profilleri</translation>
+        </message>
+        <message>
+            <source>Partner profile</source>
+            <translation>Karşı aygıt profili</translation>
+        </message>
+        <message>
+            <source>Minimum voltage (V)</source>
+            <translation>En düşük voltaj (V)</translation>
+        </message>
+        <message>
+            <source>Maximum voltage (V)</source>
+            <translation>En yüksek voltaj (V)</translation>
+        </message>
+        <message>
+            <source>Maximum current (A)</source>
+            <translation>En yüksek akım (A)</translation>
+        </message>
+        <message>
+            <source>Capacity (W)</source>
+            <translation>Kapasite (W)</translation>
+        </message>
+        <message>
+            <source>Source capability is not a negotiated contract or measured draw. No contract is inferred from voltage or current limits.</source>
+            <translation>Kaynak kapasitesi anlaşılmış güç sözleşmesi veya ölçülen tüketim değildir. Voltaj veya akım sınırlarından sözleşme çıkarılmaz.</translation>
+        </message>
+        <message>
+            <source>Changed during capture</source>
+            <translation>Yakalama sırasında değişti</translation>
+        </message>
     </context>
     <context>
         <name>DiagReportView</name>
@@ -19986,6 +20544,50 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Showing %1 / %2 incidents in this scope</source>
             <translation>Bu kapsamda %1 / %2 olay gösteriliyor</translation>
         </message>
+        <message>
+            <source>Inspect captured EDID bytes…</source>
+            <translation>Yakalanan EDID baytlarını incele…</translation>
+        </message>
+        <message>
+            <source>Columns</source>
+            <translation>Sütunlar</translation>
+        </message>
+        <message>
+            <source>Column %1</source>
+            <translation>Sütun %1</translation>
+        </message>
+        <message>
+            <source>Rows</source>
+            <translation>Satırlar</translation>
+        </message>
+        <message>
+            <source>Row %1: %2</source>
+            <translation>Satır %1: %2</translation>
+        </message>
+        <message>
+            <source>Contains binary identifiers; redaction cannot guarantee privacy.</source>
+            <translation>İkili tanımlayıcılar içerir; maskeleme gizliliği garanti edemez.</translation>
+        </message>
+        <message>
+            <source>Include capture time and boot identity</source>
+            <translation>Yakalama zamanı ve açılış kimliğini dahil et</translation>
+        </message>
+        <message>
+            <source>Excluded: %1 findings, %2 tables, %3 rows, %4 columns.</source>
+            <translation>Hariç tutulan: %1 bulgu, %2 tablo, %3 satır, %4 sütun.</translation>
+        </message>
+        <message>
+            <source>Captured: %1 · boot: %2</source>
+            <translation>Yakalama: %1 · açılış: %2</translation>
+        </message>
+        <message>
+            <source>Preview SHA-256: %1</source>
+            <translation>Önizleme SHA-256: %1</translation>
+        </message>
+        <message>
+            <source>Selection changed. Regenerate preview before exporting.</source>
+            <translation>Seçim değişti. Dışa aktarmadan önce önizlemeyi yeniden oluştur.</translation>
+        </message>
     </context>
     <context>
         <name>KernelParamsPage</name>
@@ -20409,6 +21011,50 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Reported available</source>
             <translation>Kullanılabilir olarak bildirildi</translation>
         </message>
+            <message>
+            <source>Firmware changes</source>
+            <translation>Firmware değişiklikleri</translation>
+        </message>
+        <message>
+            <source>A parameter changed or cannot be read. Rescan and review the draft before applying.</source>
+            <translation>Bir parametre değişti veya okunamıyor. Uygulamadan önce yeniden tarayın ve taslağı inceleyin.</translation>
+        </message>
+        <message>
+            <source>WMI (last read, not a fresh verification)</source>
+            <translation>WMI (son okuma, güncel doğrulama değil)</translation>
+        </message>
+        <message>
+            <source>sysfs (direct read)</source>
+            <translation>sysfs (doğrudan okuma)</translation>
+        </message>
+        <message>
+            <source>Review the exact firmware values to be sent. The numbers use the firmware's native units. Cancel sends no write request.</source>
+            <translation>Gönderilecek kesin firmware değerlerini inceleyin. Sayılar firmware birimlerindedir. İptal yazma isteği göndermez.</translation>
+        </message>
+        <message>
+            <source>A parameter changed during confirmation. Nothing was sent.</source>
+            <translation>Onay sırasında bir parametre değişti. Hiçbir istek gönderilmedi.</translation>
+        </message>
+        <message>
+            <source>%1: write returned, but direct readback did not verify the requested value.</source>
+            <translation>%1: yazma yanıtı alındı ancak doğrudan geri okuma istenen değeri doğrulamadı.</translation>
+        </message>
+        <message>
+            <source>%1 = %2 (readback matches)</source>
+            <translation>%1 = %2 (geri okuma eşleşiyor)</translation>
+        </message>
+        <message>
+            <source>Write or direct readback not verified</source>
+            <translation>Yazma veya doğrudan geri okuma doğrulanmadı</translation>
+        </message>
+        <message>
+            <source>WMI phase not sent because the sysfs phase was not fully verified. Review and retry separately.</source>
+            <translation>sysfs aşaması tamamen doğrulanmadığı için WMI aşaması gönderilmedi. İnceleyin ve ayrı olarak yeniden deneyin.</translation>
+        </message>
+        <message>
+            <source>WMI write returned; refreshing hardware values.</source>
+            <translation>WMI yazma yanıtı alındı; donanım değerleri yenileniyor.</translation>
+        </message>
     </context>
     <context>
         <name>FanCurveDialog</name>
@@ -20667,4 +21313,11 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
       <translation>Kullanılamıyor</translation>
     </message>
   </context>
+    <context>
+        <name>Int64SpinBox</name>
+        <message>
+            <source>Bytes. Enter an integer in B, KiB, MiB, GiB or TiB; stored as exact bytes.</source>
+            <translation>Bayt. B, KiB, MiB, GiB veya TiB cinsinden tam sayı girin; değer tam bayt olarak saklanır.</translation>
+        </message>
+    </context>
 </TS>

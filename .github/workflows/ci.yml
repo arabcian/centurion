@@ -32,3 +32,12 @@ jobs:
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
       - run: python3 gui/tests/translation_tr_test.py
+      - run: python3 gui/tests/edidfields_native_test.py
+      - run: python3 gui/tests/hardwarefields_native_test.py
+      - name: Visual comparison artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qt-visual-artifacts
+          path: build/visual-artifacts
+          if-no-files-found: ignore

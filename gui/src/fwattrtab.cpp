@@ -281,7 +281,7 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
         for (int i = 0; i < rows_.size(); ++i) {
             const auto &row = rows_[i]; const auto &a = row.info;
             const bool wmi = a.viaWmi();
-            const bool known = !wmi || (wmiReady_ && !wmiStale_ && !busy_);
+            const bool known = !wmi || (row.wmiKnown && wmiReady_ && !wmiStale_ && !busy_ && !wmiReading_);
             const QString range = wmi ? QStringLiteral("%1 … %2 (WMI)").arg(a.wmiMin).arg(a.wmiMax)
                 : a.ranged ? QStringLiteral("%1 … %2; %3 %4").arg(a.min).arg(a.max).arg(tr("step")).arg(a.step) : QStringLiteral("—");
             const QString access = a.readOnly ? tr("Read-only") : (!a.ranged && !wmi) ? tr("No valid range")
@@ -336,9 +336,9 @@ void FwattrTab::showStatus(const QString &m, int t) {
 
 void FwattrTab::setBusy(bool b) {
     busy_ = b;
-    tabs_->setEnabled(!b && !locked_);
-    applyAll_->setEnabled(!b && !locked_);
-    rescan_->setEnabled(!b);
+    tabs_->setEnabled(!b && !locked_ && !wmiReading_);
+    applyAll_->setEnabled(!b && !locked_ && !wmiReading_);
+    rescan_->setEnabled(!b && !wmiReading_);
 }
 
 void FwattrTab::refreshLockState() {
@@ -367,7 +367,8 @@ void FwattrTab::refreshLockState() {
 }
 
 void FwattrTab::rebuild() {
-    if (busy_) return;
+    if (busy_ || wmiReading_) return;
+    ++rowsRevision_;
     while (tabs_->count()) { QWidget *w = tabs_->widget(0); tabs_->removeTab(0); w->deleteLater(); }
     rows_.clear();
     tauLabel_ = nullptr; tauSlider_ = nullptr; tauSpin_ = nullptr; tauNote_ = nullptr;  // went with the old pages
@@ -540,8 +541,53 @@ int FwattrTab::snapped(const Row &r) const {
     return std::clamp(r.info.min + k * r.info.step, r.info.min, r.info.max);
 }
 
+bool FwattrTab::confirmChanges(const QList<int> &indices) {
+    if (busy_ || wmiReading_ || locked_ || indices.isEmpty()) return false;
+    const auto revision = rowsRevision_;
+    struct Change { int index; QString path, key; int oldValue, draft; };
+    QList<Change> captured;
+    QStringList lines;
+    for (int i : indices) {
+        if (i < 0 || i >= rows_.size()) return false;
+        const auto &row = rows_.at(i); const auto &a = row.info;
+        if (a.readOnly || (!a.ranged && !a.viaWmi())) return false;
+        if (a.viaWmi() && (!wmiReady_ || wmiStale_ || !row.wmiKnown)) return false;
+        // Firmware sysfs reads are direct, never display-cache evidence. A
+        // change since the last scan requires another explicit rescan/review.
+        const auto current = a.viaWmi() ? std::optional<int>(a.current) : readInt(a.path);
+        if (!current || *current != a.current) {
+            QMessageBox::warning(this, tr("Firmware changes"), tr("A parameter changed or cannot be read. Rescan and review the draft before applying."));
+            return false;
+        }
+        const int value = snapped(row);
+        captured.append(Change{i, a.path, a.wmiKey, *current, value});
+        const QString transport = a.viaWmi() ? tr("WMI (last read, not a fresh verification)") : tr("sysfs (direct read)");
+        lines << QStringLiteral("%1 / %2: %3 → %4 · %5").arg(a.device, a.name).arg(*current).arg(value).arg(transport);
+    }
+    QMessageBox dialog(QMessageBox::Question, tr("Firmware changes"),
+        tr("Review the exact firmware values to be sent. The numbers use the firmware's native units. Cancel sends no write request."),
+        QMessageBox::Ok | QMessageBox::Cancel, this);
+    dialog.setTextFormat(Qt::PlainText);
+    dialog.setInformativeText(lines.join(QLatin1Char('\n')));
+    dialog.setDefaultButton(QMessageBox::Cancel);
+    if (dialog.exec() != QMessageBox::Ok) return false;
+    refreshLockState();
+    if (busy_ || wmiReading_ || locked_ || revision != rowsRevision_) return false;
+    for (const auto &change : captured) {
+        if (change.index >= rows_.size()) return false;
+        const auto &row = rows_.at(change.index);
+        if (row.info.path != change.path || row.info.wmiKey != change.key || row.info.current != change.oldValue || snapped(row) != change.draft) return false;
+        if (!row.info.viaWmi() && readInt(change.path) != std::optional<int>(change.oldValue)) {
+            QMessageBox::warning(this, tr("Firmware changes"), tr("A parameter changed during confirmation. Nothing was sent.")); return false;
+        }
+        if (row.info.viaWmi() && (!wmiReady_ || wmiStale_ || !row.wmiKnown)) return false;
+    }
+    return true;
+}
+
 void FwattrTab::applyRow(int index) {
-    if (busy_ || locked_ || index < 0 || index >= rows_.size()) return;
+    if (busy_ || wmiReading_ || locked_ || index < 0 || index >= rows_.size() || rows_[index].info.readOnly) return;
+    if (!confirmChanges({index})) return;
     if (rows_[index].info.viaWmi()) { applyWmi({index}); return; }
     if (!rows_[index].info.ranged) return;
     const int value = snapped(rows_[index]);
@@ -556,31 +602,38 @@ void FwattrTab::applyRow(int index) {
                 QMessageBox::critical(this, "Error", name + " not written:\n" + (r.message().isEmpty() ? "unknown error" : r.message()));
                 return;
             }
-            if (index < rows_.size()) rows_[index].info.current = value;
-            showStatus(QStringLiteral("%1 = %2 written").arg(name).arg(value));
+            if (index >= rows_.size()) return;
+            const auto actual = readInt(rows_[index].info.path);
+            if (actual) rows_[index].info.current = *actual;
+            if (!actual || *actual != value) {
+                showStatus(tr("%1: write returned, but direct readback did not verify the requested value.").arg(name), 10000);
+                return;
+            }
+            showStatus(tr("%1 = %2 (readback matches)").arg(name).arg(value));
         });
 }
 
 void FwattrTab::applyAll() {
-    if (busy_ || locked_) return;
+    if (busy_ || wmiReading_ || locked_) return;
     QList<int> changed, wmiChanged;
     QJsonArray items;
     for (int i = 0; i < rows_.size(); ++i) {
         Row &r = rows_[i];
-        if (r.info.viaWmi()) { if (wmiReady_ && r.spin->value() != r.info.current) wmiChanged << i; continue; }
+        if (r.info.readOnly) continue;
+        if (r.info.viaWmi()) { if (wmiReady_ && !wmiStale_ && r.wmiKnown && r.spin->value() != r.info.current) wmiChanged << i; continue; }
         if (!r.info.ranged) continue;
         const int v = snapped(r);
-        r.spin->setValue(v);
         if (v == r.info.current) continue;
         changed << i;
         items.append(QJsonObject{{"path", r.info.path}, {"value", v}});
     }
     if (changed.isEmpty() && wmiChanged.isEmpty()) { QMessageBox::information(this, "Apply All", "No changes to apply."); return; }
+    if (!confirmChanges(changed + wmiChanged)) return;
     if (changed.isEmpty()) { applyWmi(wmiChanged); return; }
-
+    for (int i : changed) rows_[i].spin->setValue(snapped(rows_[i]));
     setBusy(true);
     privileged::run(helperPath(), QJsonDocument(items).toJson(QJsonDocument::Compact), this,
-        [this, changed, wmiChanged](const privileged::Result &r) {
+        [this, changed, wmiChanged, items](const privileged::Result &r) {
             setBusy(false);
             if (!r.reached) { QMessageBox::critical(this, "Authorization failed", r.error); return; }
             const QJsonArray results = r.json.value("results").toArray();
@@ -589,37 +642,48 @@ void FwattrTab::applyAll() {
             for (int k = 0; k < changed.size(); ++k) {
                 Row &row = rows_[changed[k]];
                 const QJsonObject res = results.at(k).toObject();
-                if (res.value("ok").toBool()) { row.info.current = row.spin->value(); ++applied; }
-                else failures << row.info.name + ": " + res.value("error").toString(r.message().isEmpty() ? "unknown error" : r.message());
+                const int requested = items.at(k).toObject().value(QStringLiteral("value")).toInt();
+                const auto actual = readInt(row.info.path);
+                if (actual) row.info.current = *actual;
+                if (res.value("ok").toBool() && res.value("path").toString() == row.info.path && actual && *actual == requested) ++applied;
+                else failures << row.info.name + ": " + res.value("error").toString(tr("Write or direct readback not verified"));
             }
             if (failures.isEmpty()) showStatus(QStringLiteral("Applied %1 attribute(s)").arg(applied));
             else QMessageBox::warning(this, "Some writes failed",
                 QStringLiteral("%1/%2 attribute(s) applied.\n\nFailures:\n").arg(applied).arg(changed.size()) + failures.join('\n'));
-            if (!wmiChanged.isEmpty()) applyWmi(wmiChanged);
+            if (!wmiChanged.isEmpty()) {
+                if (failures.isEmpty() && r.ok()) applyWmi(wmiChanged);
+                else showStatus(tr("WMI phase not sent because the sysfs phase was not fully verified. Review and retry separately."), 10000);
+            }
         });
 }
 
 void FwattrTab::applyWmi(const QList<int> &indices) {
-    if (busy_ || locked_ || indices.isEmpty()) return;
+    if (busy_ || wmiReading_ || locked_ || indices.isEmpty()) return;
     if (!wmiReady_) {
         QMessageBox::warning(this, "acpi_call needed", QStringLiteral("These attributes are written through acpi_call, which is not available.\n"
                                             "Load it with: modprobe acpi_call (install: %1).").arg(systools::installCommand(QStringLiteral("acpi_call"))));
         return;
     }
     QJsonObject vals;
-    for (int i : indices) vals[rows_[i].info.wmiKey] = rows_[i].spin->value();
+    for (int i : indices) {
+        if (i < 0 || i >= rows_.size() || rows_[i].info.readOnly || !rows_[i].info.viaWmi() || !rows_[i].wmiKnown || wmiStale_) return;
+        vals[rows_[i].info.wmiKey] = rows_[i].spin->value();
+    }
     setBusy(true);
     privileged::run(gpuHelperPath(), QJsonObject{{"op", "apply"}, {"values", vals}}, this,
-        [this, indices](const privileged::Result &r) {
+        [this](const privileged::Result &r) {
             setBusy(false);
-            if (!r.reached) { QMessageBox::critical(this, "Authorization failed", r.error); return; }
+            wmiStale_ = true;
+            if (!r.reached) { QMessageBox::critical(this, "Authorization failed", r.error); readWmi(); return; }
             QStringList fails, oks;
             for (const auto &x : r.json.value("results").toArray()) {
                 const QJsonObject o = x.toObject();
                 (o.value("ok").toBool() ? oks : fails) << o.value("message").toString();
             }
             if (!fails.isEmpty()) QMessageBox::warning(this, "WMI write failed", fails.join('\n'));
-            if (!oks.isEmpty()) showStatus(oks.join(" · "), 5000);
+            if (!oks.isEmpty()) showStatus(tr("WMI write returned; refreshing hardware values.") + QStringLiteral(" · ") + oks.join(" · "), 5000);
+            wmiStale_ = true;
             readWmi();  // show what the EC holds now
         });
 }
@@ -627,10 +691,16 @@ void FwattrTab::applyWmi(const QList<int> &indices) {
 void FwattrTab::readWmi() {
     bool any = false;
     for (const Row &r : std::as_const(rows_)) any |= r.info.viaWmi();
-    if (!any || busy_) return;
-    wmiStale_ = false;
-    privileged::run(gpuHelperPath(), QJsonObject{{"op", "status"}}, this, [this](const privileged::Result &r) {
-        wmiReady_ = r.reached && r.json.value("acpi").toBool();
+    if (!any || busy_ || wmiReading_) return;
+    wmiReading_ = true;
+    const auto revision = rowsRevision_;
+    setBusy(false);
+    privileged::run(gpuHelperPath(), QJsonObject{{"op", "status"}}, this, [this, revision](const privileged::Result &r) {
+        wmiReading_ = false;
+        setBusy(false);
+        if (revision != rowsRevision_) { wmiStale_ = true; return; }
+        wmiReady_ = r.ok() && r.json.value("acpi").toBool();
+        wmiStale_ = !wmiReady_;
         const QJsonObject vals = r.json.value("values").toObject();
         tauSeconds_ = r.json.value("pl1_tau_s").toInt();
         showTau();
@@ -653,7 +723,8 @@ void FwattrTab::readWmi() {
         for (Row &row : rows_) {
             if (!row.info.viaWmi()) continue;
             const QJsonObject o = vals.value(row.info.wmiKey).toObject();
-            const bool have = wmiReady_ && o.contains("value");
+            const bool have = wmiReady_ && o.value("value").isDouble();
+            row.wmiKnown = have;
             if (have) {
                 const int v = o.value("value").toInt();
                 row.info.current = v;
@@ -691,7 +762,7 @@ void FwattrTab::showTau() {
 
 QMap<QString, int> FwattrTab::wmiValues() const {
     QMap<QString, int> out;
-    if (!wmiReady_ || wmiStale_) return out;
-    for (const Row &r : rows_) if (r.info.viaWmi()) out.insert(r.info.name, r.info.current);
+    if (!wmiReady_ || wmiStale_ || wmiReading_) return out;
+    for (const Row &r : rows_) if (r.info.viaWmi() && r.wmiKnown) out.insert(r.info.name, r.info.current);
     return out;
 }

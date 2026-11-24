@@ -1,4 +1,6 @@
 #include "int64spinbox.h"
+#include "integerunits.h"
+#include <QRegularExpression>
 
 #include <QLineEdit>
 #include <limits>
@@ -33,6 +35,24 @@ bool Int64SpinBox::parse(const QString &text, qint64 *out) {
     return ok;
 }
 
+void Int64SpinBox::enableByteUnits() {
+    byteUnits_ = true;
+    // An opt-in editor must accept the full suffix before committing; otherwise
+    // keyboard tracking would replace it with the canonical value mid-keystroke.
+    setKeyboardTracking(false);
+    lineEdit()->setToolTip(tr("Bytes. Enter an integer in B, KiB, MiB, GiB or TiB; stored as exact bytes."));
+    setAccessibleDescription(lineEdit()->toolTip());
+}
+
+bool Int64SpinBox::parseEditor(const QString &text, qint64 *out) const {
+    if (!byteUnits_) return parse(text, out);
+    const auto utf8 = text.toUtf8();
+    const auto result = integerunits::bytes(std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())));
+    if (!result) return false;
+    if (out) *out = *result;
+    return true;
+}
+
 qint64 Int64SpinBox::stepped(qint64 v, qint64 step, int steps, qint64 min, qint64 max) {
     qint64 d = 0, r = 0;
     if (__builtin_mul_overflow(step, qint64(steps), &d) || __builtin_add_overflow(v, d, &r))
@@ -56,6 +76,16 @@ QAbstractSpinBox::StepEnabled Int64SpinBox::stepEnabled() const {
 QValidator::State Int64SpinBox::validate(QString &input, int &) const {
     const QString t = input.trimmed();
     if (t.isEmpty() || (t == QLatin1String("-") && min_ < 0)) return QValidator::Intermediate;
+    if (byteUnits_) {
+        qint64 n = 0;
+        if (parseEditor(t, &n)) {
+            if (n > max_) return QValidator::Invalid;
+            return n >= min_ ? QValidator::Acceptable : QValidator::Intermediate;
+        }
+        static const QRegularExpression partial(QStringLiteral("^[0-9]+\\s*(?:[KMGT](?:i)?)$"));
+        if (partial.match(t).hasMatch()) return QValidator::Intermediate;
+        return QValidator::Invalid;
+    }
     for (int i = 0; i < t.size(); ++i)
         if (!t[i].isDigit() && !(i == 0 && t[i] == QLatin1Char('-') && min_ < 0)) return QValidator::Invalid;
     qint64 n = 0;
@@ -66,13 +96,16 @@ QValidator::State Int64SpinBox::validate(QString &input, int &) const {
 
 void Int64SpinBox::fixup(QString &input) const {
     qint64 n = value_;
-    if (parse(input, &n)) n = qBound(min_, n, max_);
+    if (parseEditor(input, &n)) {
+        if (byteUnits_ && (n < min_ || n > max_)) n = value_;
+        else n = qBound(min_, n, max_);
+    }
     input = QString::number(n);
 }
 
 void Int64SpinBox::commitText() {
     qint64 n = 0;
-    if (parse(lineEdit()->text(), &n)) setValue(n);
+    if (parseEditor(lineEdit()->text(), &n) && (!byteUnits_ || (n >= min_ && n <= max_))) setValue(n);
     else showValue();
 }
 

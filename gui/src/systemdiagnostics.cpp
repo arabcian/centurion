@@ -1,3 +1,4 @@
+#include "hardwarefields.h"
 #include "systemdiagnostics.h"
 
 #include "advanceddiagnostics.h"
@@ -536,6 +537,41 @@ Report memory(const QString &root) {
     r.tables << topo;
     const Table cpu = cpuTopology(root);
     if (!cpu.rows.isEmpty()) r.tables << cpu;
+    Table caches; caches.title = tr("CPU Cache Sharing Domains");
+    caches.headers = {tr("Level"), tr("Type"), tr("Size"), tr("Shared CPUs"), tr("Source")};
+    QSet<QString> cacheKeys;
+    for (const auto &id : ls(root, QStringLiteral("/sys/devices/system/cpu"), {QStringLiteral("cpu[0-9]*")})) {
+        const QString base=QStringLiteral("/sys/devices/system/cpu/")+id+QStringLiteral("/cache/");
+        for (const auto &index : ls(root,base,{QStringLiteral("index[0-9]*")})) {
+            const auto path=base+index+QLatin1Char('/');
+            const auto level=rd(root,path+QStringLiteral("level"),16), type=rd(root,path+QStringLiteral("type"),32), size=rd(root,path+QStringLiteral("size"),32);
+            const auto list=rd(root,path+QStringLiteral("shared_cpu_list"),65536).toLatin1();
+            const auto parsed=hardwarefields::cpuList(std::string_view(list.constData(),std::size_t(list.size())));
+            QString shared; if(parsed) { QStringList ids; for(std::size_t i=0;i<parsed->size();) {auto first=(*parsed)[i],last=first; ++i; while(i<parsed->size()&&(*parsed)[i]==last+1)last=(*parsed)[i++]; ids<<(first==last?QString::number(first):QStringLiteral("%1-%2").arg(first).arg(last));} shared=ids.join(QLatin1Char(',')); }
+            const QString key=level+QLatin1Char('/')+type+QLatin1Char('/')+size+QLatin1Char('/')+shared;
+            if(!shared.isEmpty() && cacheKeys.contains(key))continue;
+            if(!shared.isEmpty())cacheKeys.insert(key);
+            caches.add({known(level),known(type),known(size),known(shared),id+QLatin1Char('/')+index}, shared.isEmpty()?Level::Unknown:Level::Info);
+            if(caches.rows.size()>=4096)break;
+        }
+        if(caches.rows.size()>=4096)break;
+    }
+    caches.note=tr("Cache sharing is kernel-reported topology, not proof of physical CCD identity.");
+    if(!caches.rows.isEmpty())r.tables<<caches;
+    Table dimms; dimms.title=tr("SMBIOS Memory Devices");
+    dimms.headers={tr("Entry"),tr("State"),tr("Capacity (MiB)"),tr("Rated transfer rate (MT/s)"),tr("Configured transfer rate (MT/s)")};
+    for(const auto &id:ls(root,QStringLiteral("/sys/firmware/dmi/entries"),{QStringLiteral("17-*")})){
+        if(dimms.rows.size()>=256)break;
+        QFile f(root+QStringLiteral("/sys/firmware/dmi/entries/")+id+QStringLiteral("/raw"));
+        if(!f.open(QIODevice::ReadOnly)){dimms.add({id,tr("Unreadable"),tr("unknown"),tr("unknown"),tr("unknown")},Level::Unknown);continue;}
+        const auto raw=f.read(0x22); // formatted numeric fields only; never read serial or locator strings
+        const auto parsed=hardwarefields::memoryDevice({reinterpret_cast<const std::uint8_t*>(raw.constData()),std::size_t(raw.size())});
+        if(!parsed){dimms.add({id,tr("Invalid or incomplete record"),tr("unknown"),tr("unknown"),tr("unknown")},Level::Unknown);continue;}
+        auto rate=[](const std::optional<unsigned>& value){return value?QString::number(*value):tr("unknown");};
+        dimms.add({id,parsed->empty?tr("Empty slot"):parsed->bytes?tr("Reported device"):tr("unknown"),parsed->bytes?QString::number(qulonglong(*parsed->bytes/1048576)):tr("unknown"),rate(parsed->speed),rate(parsed->configured)},parsed->empty||parsed->bytes?Level::Info:Level::Unknown);
+    }
+    dimms.note=tr("Firmware-reported records, not measured RAM speed. Missing or inaccessible SMBIOS data is unknown; no privilege escalation.");
+    if(!dimms.rows.isEmpty())r.tables<<dimms; else r.limits<<tr("SMBIOS memory device entries are unavailable.");
     Table nodes; nodes.title = tr("NUMA Memory and Distances");
     nodes.headers = {tr("Node"), tr("CPUs"), tr("Memory total (KiB)"), tr("Distance vector")};
     for (const auto &id : ls(root, QStringLiteral("/sys/devices/system/node"), {QStringLiteral("node[0-9]*")})) {
@@ -631,18 +667,25 @@ Report firmware(const QString &root) {
         }
     }
     if (!fa.rows.isEmpty()) r.tables << fa;
-    const QStringList tables = ls(root, QStringLiteral("/sys/firmware/acpi/tables"));
-    if (!tables.isEmpty()) {
-        Table at;
-        at.title = tr("ACPI Tables Present");
-        at.headers = {tr("Tables")};
-        QStringList names = tables;
-        names.removeAll(QStringLiteral("data"));
-        names.removeAll(QStringLiteral("dynamic"));
-        at.add({names.join(QLatin1Char(' '))});
-        at.note = tr("Their contents are readable by root only (acpidump).");
-        r.tables << at;
+    Table at; at.title = tr("ACPI Tables Present");
+    at.headers = {tr("Table"),tr("Signature"),tr("Length (bytes)"),tr("Revision"),tr("Read status")};
+    at.note=tr("Only fixed-size table headers are inspected. AML is not interpreted or executed; checksum verification is not claimed.");
+    for(const auto &suffix:{QString(),QStringLiteral("/dynamic")}){
+        const auto dir=QStringLiteral("/sys/firmware/acpi/tables")+suffix;
+        for(const auto &name:ls(root,dir)){
+            if(at.rows.size()>=256)break;
+            const auto path=root+dir+QLatin1Char('/')+name;
+            if(!QFileInfo(path).isFile() || QFileInfo(path).isSymLink())continue;
+            QFile f(path); const auto label=suffix.isEmpty()?name:QStringLiteral("dynamic/")+name;
+            if(!f.open(QIODevice::ReadOnly)){at.add({label,tr("unknown"),tr("unknown"),tr("unknown"),tr("Unreadable")},Level::Unknown);continue;}
+            const auto raw=f.read(36);
+            // FACS and RSDP have different header layouts; do not decode them as SDT headers.
+            const auto h=(raw.startsWith("FACS")||raw.startsWith("RSD PTR "))?std::optional<hardwarefields::AcpiHeader>{}:hardwarefields::acpiHeader({reinterpret_cast<const std::uint8_t*>(raw.constData()),std::size_t(raw.size())});
+            if(!h){at.add({label,tr("unknown"),tr("unknown"),tr("unknown"),tr("Unsupported or incomplete header")},Level::Unknown);continue;}
+            at.add({label,QString::fromLatin1(raw.left(4)),QString::number(h->length),QString::number(h->revision),tr("Header read")});
+        }
     }
+    if(!at.rows.isEmpty())r.tables<<at; else r.limits<<tr("ACPI table listing is unavailable or inaccessible.");
     r.add(Level::Info, tr("%1 WMI object(s), %2 firmware setting(s)").arg(w.rows.size()).arg(fa.rows.size()));
     return r;
 }
@@ -654,12 +697,15 @@ Report charging(const QString &root) {
     r.code = QStringLiteral("S13");
     r.title = tr("USB-C Charger");
     r.about = tr("What the connected charger offers (its USB Power Delivery profiles), what the laptop is drawing, and the battery's condition.");
-    r.limits << tr("USB-PD profiles are visible only through the UCSI driver (typec_ucsi); barrel and proprietary chargers show as an online AC adapter only.")
+    r.limits << tr("USB-PD profiles depend on kernel and driver exposure; barrel and proprietary chargers may show only as an online AC adapter.")
              << tr("Battery power figures are the battery's own estimate.");
     // Type-C ports and their partners' source capabilities.
     Table pd;
     pd.title = tr("USB-C Ports");
-    pd.headers = {tr("Port"), tr("Role"), tr("Partner"), tr("Charger offers"), tr("Best")};
+    pd.headers = {tr("Port"), tr("Role"), tr("Partner"), tr("Partner source capabilities"), tr("Best capacity")};
+    Table profiles; profiles.title=tr("USB Power Delivery Source Profiles");
+    profiles.headers={tr("Port"),tr("Partner profile"),tr("Minimum voltage (V)"),tr("Maximum voltage (V)"),tr("Maximum current (A)"),tr("Capacity (W)")};
+    profiles.note=tr("Source capability is not a negotiated contract or measured draw. No contract is inferred from voltage or current limits.");
     double bestW = 0;
     for (const QString &port : ls(root, QStringLiteral("/sys/class/typec"), {QStringLiteral("port[0-9]*")})) {
         if (!QRegularExpression(QStringLiteral(R"(^port[0-9]+$)")).match(port).hasMatch()) continue;
@@ -669,27 +715,38 @@ Report charging(const QString &root) {
         QStringList pdos;
         double best = 0;
         const QString pdDir = QFileInfo(root + partner + QStringLiteral("/usb_power_delivery")).canonicalFilePath();
-        if (connected && !pdDir.isEmpty()) {
+        const QString sysRoot=QFileInfo(root+QStringLiteral("/sys")).canonicalFilePath();
+        const auto roleBefore=chosen(rd(root,b+QStringLiteral("/power_role")));
+        const int profileStart=int(profiles.rows.size());
+        if (connected && !sysRoot.isEmpty() && pdDir.startsWith(sysRoot+QLatin1Char('/'))) {
             for (const QString &cap : diagsrc::dir(pdDir + QStringLiteral("/source-capabilities"))) {
-                const QString c = pdDir + QStringLiteral("/source-capabilities/") + cap + QLatin1Char('/');
-                const double i = diagsrc::read(c + QStringLiteral("maximum_current")).remove(QStringLiteral("mA")).toDouble() / 1000;
-                double v = diagsrc::read(c + QStringLiteral("voltage")).remove(QStringLiteral("mV")).toDouble() / 1000;
-                if (cap.contains(QStringLiteral("programmable"))) {
-                    v = diagsrc::read(c + QStringLiteral("maximum_voltage")).remove(QStringLiteral("mV")).toDouble() / 1000;
-                    if (v > 0 && i > 0 && std::isfinite(v * i)) pdos << tr("PPS ≤%1 V %2 A").arg(v).arg(i);
-                } else if (v > 0 && i > 0 && std::isfinite(v * i)) {
-                    pdos << QStringLiteral("%1 V %2 A").arg(v).arg(i);
-                }
-                if (v > 0 && i > 0 && std::isfinite(v * i)) best = std::max(best, v * i);
+                const QString resolved=QFileInfo(pdDir + QStringLiteral("/source-capabilities/") + cap).canonicalFilePath();
+                if(!resolved.startsWith(sysRoot+QLatin1Char('/')))continue;
+                const QString c = resolved + QLatin1Char('/');
+                if(profiles.rows.size()>=1024)break;
+                auto milli=[&](const QString &name,std::string_view unit){ const auto text=diagsrc::read(c+name,64).toLatin1(); return hardwarefields::milli(std::string_view(text.constData(),std::size_t(text.size())),unit); };
+                const auto i=milli(QStringLiteral("maximum_current"),"mA");
+                const auto fixed=milli(QStringLiteral("voltage"),"mV");
+                const auto low=fixed?fixed:milli(QStringLiteral("minimum_voltage"),"mV");
+                const auto high=fixed?fixed:milli(QStringLiteral("maximum_voltage"),"mV");
+                const bool valid=i&&low&&high&&*low<=*high;
+                auto show=[](const std::optional<double> &v){return v?QString::number(*v,'g',8):tr("unknown");};
+                profiles.add({port,cap,show(low),show(high),show(i),valid?QString::number(*high * *i,'g',8):tr("unknown")},valid?Level::Info:Level::Unknown);
+                if(valid){pdos<<QStringLiteral("%1–%2 V %3 A").arg(*low).arg(*high).arg(*i);best=std::max(best,*high * *i);}
             }
         }
-        bestW = std::max(bestW, best);
-        pd.add({port, QStringLiteral("%1 / %2").arg(chosen(rd(root, b + QStringLiteral("/power_role"))), chosen(rd(root, b + QStringLiteral("/data_role")))),
-                connected ? tr("connected (PD %1)").arg(rd(root, partner + QStringLiteral("/usb_power_delivery_revision"))) : tr("nothing"),
+        const auto roleAfter=chosen(rd(root,b+QStringLiteral("/power_role")));
+        const bool stable=connected==QFileInfo::exists(root+partner) && roleBefore==roleAfter
+            && pdDir==QFileInfo(root+partner+QStringLiteral("/usb_power_delivery")).canonicalFilePath();
+        if(!stable){while(profiles.rows.size()>profileStart){profiles.rows.removeLast();profiles.levels.removeLast();}pdos.clear();best=0;}
+        if(stable && roleAfter==QStringLiteral("sink"))bestW=std::max(bestW,best);
+        pd.add({port, QStringLiteral("%1 / %2").arg(roleAfter, chosen(rd(root, b + QStringLiteral("/data_role")))),
+                !stable ? tr("Changed during capture") : connected ? tr("connected (PD %1)").arg(rd(root, partner + QStringLiteral("/usb_power_delivery_revision"))) : tr("nothing"),
                 pdos.isEmpty() ? (connected ? tr("not reported") : QStringLiteral("—")) : pdos.join(QStringLiteral(", ")),
                 best > 0 ? watts(best) : QStringLiteral("—")});
     }
     if (!pd.rows.isEmpty()) r.tables << pd;
+    if (!profiles.rows.isEmpty())r.tables<<profiles;
     if (bestW > 0 && bestW < 65)
         r.add(Level::Review, tr("The USB-C charger offers at most %1").arg(watts(bestW)),
               tr("Gaming laptops draw far more under load: on this charger the battery can drain while plugged in, and the firmware lowers power limits."),

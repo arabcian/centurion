@@ -63,6 +63,18 @@ int main(int argc, char **argv) {
     CHECK(jv.toInteger() == big);
     CHECK(QString::number(jv.toVariant().toLongLong()) == QStringLiteral("13175391846"));
 
+    s.enableByteUnits();
+    s.findChild<QLineEdit *>()->setText(QStringLiteral("16 GiB"));
+    Q_EMIT s.editingFinished();
+    CHECK(s.value() == 17179869184LL);
+    CHECK(s.text() == QStringLiteral("17179869184"));
+    t = QStringLiteral("9999999999999999999 GiB");
+    CHECK(s.validate(t, pos) == QValidator::Invalid);
+    t = QStringLiteral("1.5 GiB");
+    CHECK(s.validate(t, pos) == QValidator::Invalid);
+    t = QStringLiteral("4 Mi");
+    CHECK(s.validate(t, pos) == QValidator::Intermediate);
+
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("int64spinbox: all checks passed");
     return 0;

@@ -222,7 +222,13 @@ void Search::finishAllCore() {
 std::optional<Trial> Search::next() {
     if (stage_ == Stage::AllCore) {
         const int c = all_.candidate(tuning_.allCoreStart);
-        if (c <= 0) { cand_ = c; ++trials_; return allCoreTrial(c); }
+        if (c <= 0) {
+            cand_ = c; ++trials_; auto trial = allCoreTrial(c);
+            trial.reason = !all_.seeded ? DecisionReason::InitialProbe : all_.coarse ? DecisionReason::CoarseDescent : DecisionReason::FineDescent;
+            if (all_.pass < 0) trial.previousPass = all_.pass;
+            if (all_.floor >= limit_) trial.failureBoundary = all_.floor;
+            return trial;
+        }
         finishAllCore();
     }
     if (stage_ == Stage::PerCore) {
@@ -235,7 +241,12 @@ std::optional<Trial> Search::next() {
             cand_ = c;
             turn_ = (i + 1) % cores_.size();
             ++trials_;
-            return perCoreTrial(i, c);
+            auto trial = perCoreTrial(i, c);
+            const auto &walk = per_[i];
+            trial.reason = walk.up ? DecisionReason::FailedStartRecovery : !walk.seeded ? DecisionReason::InitialProbe : DecisionReason::StepDescent;
+            if (walk.pass < 0) trial.previousPass = walk.pass;
+            if (walk.floor >= limit_) trial.failureBoundary = walk.floor;
+            return trial;
         }
         stage_ = Stage::Confirm;
     }
@@ -243,7 +254,9 @@ std::optional<Trial> Search::next() {
         const QList<int> v = values();
         if (std::all_of(v.begin(), v.end(), [](int x) { return x == 0; })) { stage_ = Stage::Done; return std::nullopt; }
         ++trials_;
-        return mode_ == Mode::PerCore ? verifyTrial() : confirmTrial();
+        auto trial = mode_ == Mode::PerCore ? verifyTrial() : confirmTrial();
+        trial.reason = DecisionReason::FinalVerification;
+        return trial;
     }
     return std::nullopt;
 }

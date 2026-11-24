@@ -465,13 +465,9 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     langLabel->setWordWrap(false);
     if (preferencesRow) {
         preferencesRow->addRow(langLabel, langBox);
-        auto *startup = new QCheckBox(tr("Restore last page"));
-        startup->setChecked(QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
-                                .value(QStringLiteral("ui/restore_last_page"), true).toBool());
-        connect(startup, &QCheckBox::toggled, this, [](bool on) {
-            QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
-                .setValue(QStringLiteral("ui/restore_last_page"), on);
-        });
+        auto *startup = new QPushButton(tr("Navigation favorites and startup page"));
+        startup->setToolTip(tr("Open navigation preferences (Ctrl+Shift+F)"));
+        connect(startup, &QPushButton::clicked, this, [this] { Q_EMIT navigationPreferencesRequested(); });
         preferencesRow->addRow(startup);
         auto *settingsButton = new QPushButton(tr("Preferences"));
         settingsButton->setObjectName(QStringLiteral("btnMini"));

@@ -2525,11 +2525,24 @@ pub fn autotune(goal: Goal) -> Value { autotune_with(goal, &Profile::gather()) }
 /// (`Weights::adapted`); a weight the caller sets is used as given.
 /// `opts`: {"profile": power profile the preset is for (a scene's), "explore": false to skip the
 /// alternatives and sensitivity}.
+// Progress remains opt-in and on stderr. The run identifier is a bounded,
+// printable token supplied by the caller, not inferred from a running process.
+fn progress_event(run: &Value, sequence: u32, phase: &str) -> Option<Value> {
+    let id = run.as_str()?;
+    if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return None;
+    }
+    Some(json!({"version": 1, "run_id": id, "sequence": sequence, "phase": phase}))
+}
+
 pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let total_started = std::time::Instant::now();
     let mode = match explore_mode(opts) { Ok(m) => m, Err(e) => return json!({"ok": false, "error": e}) };
     let report_progress = opts["progress"] == true;
-    if report_progress { eprintln!("CENTURION_STAGE inputs"); }
+    if report_progress {
+        if let Some(event) = progress_event(&opts["progress_run_id"], 1, "inputs") { eprintln!("CENTURION_EVENT {event}"); }
+        else { eprintln!("CENTURION_STAGE inputs"); }
+    }
     let mut p = Profile::gather();
     p.load_field_risk();
     p.target_profile = opts["profile"].as_str().filter(|s| !s.is_empty() && s.len() <= 32).map(str::to_owned);
@@ -2542,7 +2555,10 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let w = w.with_overrides(weights);
     let inputs_ms = total_started.elapsed().as_millis();
     let want_explore = mode != "fast" && opts["explore"] != false && p.calibration.as_ref().is_some_and(|c| !c.rows.is_empty());
-    if report_progress { eprintln!("CENTURION_STAGE model"); }
+    if report_progress {
+        if let Some(event) = progress_event(&opts["progress_run_id"], 2, "model") { eprintln!("CENTURION_EVENT {event}"); }
+        else { eprintln!("CENTURION_STAGE model"); }
+    }
     let fit_started = std::time::Instant::now();
     // The models depend on the rows, never on the weights: fitted once (every CPU), then the main
     // decision and the explored trade-offs all read them in parallel.
@@ -2550,11 +2566,17 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     prefit(goal, &p);
     if let Some(c) = p.calibration.as_ref() { c.save_hyp_cache(); c.save_fit_store(); }
     let model_ms = fit_started.elapsed().as_millis();
-    if report_progress { eprintln!("CENTURION_STAGE decision"); }
+    if report_progress {
+        if let Some(event) = progress_event(&opts["progress_run_id"], 3, "decision") { eprintln!("CENTURION_EVENT {event}"); }
+        else { eprintln!("CENTURION_STAGE decision"); }
+    }
     let t_decide = std::time::Instant::now();
     let (main, ex) = if want_explore { let (m, e) = explore_with(goal, &p, w, mode == "deep"); (m, Some(e)) } else { (decide_full(goal, &p, w), None) };
     let decision_ms = t_decide.elapsed().as_millis();
-    if report_progress { eprintln!("CENTURION_STAGE validation"); }
+    if report_progress {
+        if let Some(event) = progress_event(&opts["progress_run_id"], 4, "validation") { eprintln!("CENTURION_EVENT {event}"); }
+        else { eprintln!("CENTURION_STAGE validation"); }
+    }
     let mut out = assemble(goal, &p, w, main);
     // A setting that is live already is not a change (for another scene's preset every value is one:
     // the live values belong to the current scene).
@@ -2606,7 +2628,10 @@ pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
         }
     }
     out["timings_ms"]["total"] = json!(total_started.elapsed().as_millis());
-    if report_progress { eprintln!("CENTURION_STAGE finished"); }
+    if report_progress {
+        if let Some(event) = progress_event(&opts["progress_run_id"], 5, "finished") { eprintln!("CENTURION_EVENT {event}"); }
+        else { eprintln!("CENTURION_STAGE finished"); }
+    }
     out
 }
 
@@ -2909,6 +2934,19 @@ fn validate_static(t: &tune::Tunable, v: &Value) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn structured_progress_preserves_run_and_phase() {
+        let event = super::progress_event(&serde_json::json!("run-123"), 2, "model").unwrap();
+        assert_eq!(event["version"], 1);
+        assert_eq!(event["run_id"], "run-123");
+        assert_eq!(event["sequence"], 2);
+        assert_eq!(event["phase"], "model");
+        assert!(event.get("total").is_none());
+        assert!(super::progress_event(&serde_json::json!("bad\nrun"), 1, "inputs").is_none());
+        assert!(super::progress_event(&serde_json::json!("x".repeat(65)), 1, "inputs").is_none());
+        assert!(super::progress_event(&serde_json::Value::Null, 1, "inputs").is_none());
+    }
+
     use super::*;
 
     pub(super) fn legion() -> Profile {

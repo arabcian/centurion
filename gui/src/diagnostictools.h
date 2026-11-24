@@ -22,7 +22,7 @@ QJsonObject loadHardwareBaseline(QString *capturedAt, QString *error);
 
 // S03.
 struct Edid {
-    bool header = false, truncated = false;
+    bool header = false, truncated = false, structuralValid = false;
     int declared = 0, readable = 0;
     QStringList badBlocks;            // "1 (CTA-861)" for every block whose checksum fails
     QString maker, name;              // three-letter PNP id, monitor name / panel text

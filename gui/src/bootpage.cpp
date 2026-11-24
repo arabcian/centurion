@@ -6,6 +6,9 @@
 #include <QColor>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QSet>
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -106,10 +109,13 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     bKlog_ = new QPushButton(tr("Kernel log of this boot"));
     bKlog_->setToolTip(tr("Open the saved kernel log filtered to the selected boot."));
     connect(bKlog_, &QPushButton::clicked, this, [this] {
-        if (auto *it = list_->currentItem(); it && !it->data(0, ROLE_BOOT).toString().isEmpty())
+        if (auto *it = list_->currentItem(); it && !it->isHidden() && uniqueBootPrefix(it->data(0, ROLE_BOOT).toString()))
             Q_EMIT openKernelLog(it->data(0, ROLE_BOOT).toString().left(8));
     });
     tools->addWidget(bKlog_);
+    auto *compare = new QPushButton(tr("Compare boots…"));
+    connect(compare, &QPushButton::clicked, this, &BootPage::compareSelectedBoots);
+    tools->addWidget(compare);
     auto *bCopy = new QPushButton(tr("Copy details"));
     connect(bCopy, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(detail_->toPlainText()); });
     tools->addWidget(bCopy);
@@ -234,8 +240,10 @@ void BootPage::apply(const QJsonObject &r) {
 
 void BootPage::showDetail() {
     auto *it = list_->currentItem();
-    if (!it) { detail_->clear(); return; }
+    if (!it || it->isHidden()) { bKlog_->setEnabled(false); detail_->clear(); return; }
     const QString id = it->data(0, ROLE_BOOT).toString();
+    bKlog_->setEnabled(uniqueBootPrefix(id));
+    bKlog_->setToolTip(uniqueBootPrefix(id) ? tr("Open the saved kernel log filtered to the selected boot.") : tr("No unique eight-character boot tag is available; the legacy kernel log cannot identify this boot safely."));
     const QJsonArray entries = data_.value(QStringLiteral("pstore")).toObject().value(QStringLiteral("entries")).toArray();
     auto entryText = [](const QJsonObject &e) {
         return tr("── pstore: %1 (%2, %3, %4) ──\n%5\n").arg(e.value(QStringLiteral("name")).toString(), e.value(QStringLiteral("kind")).toString(),
@@ -250,7 +258,7 @@ void BootPage::showDetail() {
     QJsonObject b;
     for (const QJsonValue &v : data_.value(QStringLiteral("boots")).toArray()) if (v.toObject().value(QStringLiteral("boot")).toString() == id) b = v.toObject();
     const QString state = b.value(QStringLiteral("state")).toString();
-    out += tr("Boot %1 — %2\n").arg(id.left(8), stateText(state));
+    out += tr("Boot %1 — %2\n").arg(id, stateText(state));
     out += tr("Started: %1").arg(when(qint64(b.value(QStringLiteral("start")).toDouble())));
     if (b.contains(QStringLiteral("end"))) out += tr("   Last seen alive: %1").arg(when(qint64(b.value(QStringLiteral("end")).toDouble())));
     out += QLatin1String("\n");
@@ -264,7 +272,8 @@ void BootPage::showDetail() {
     if (state == QLatin1String("unclean")) {
         out += QLatin1Char('\n');
         for (const QJsonValue &i : b.value(QStringLiteral("pstore")).toArray()) out += entryText(entries.at(i.toInt()).toObject()) + QLatin1Char('\n');
-        const QStringList tail = kernelLogTail(id.left(8), LOG_LINES);
+        const QStringList tail = uniqueBootPrefix(id) ? kernelLogTail(id.left(8), LOG_LINES) : QStringList{};
+        if (!uniqueBootPrefix(id)) out += tr("Legacy log attribution unavailable: boot prefix is missing or ambiguous.\n");
         out += tail.isEmpty() ? tr("── no saved kernel-log lines for this boot ──\n")
                               : tr("── last %1 saved kernel-log lines of this boot ──\n%2\n").arg(tail.size()).arg(tail.join(QLatin1Char('\n')));
     }
@@ -345,7 +354,7 @@ void BootPage::applyFilter() {
         for (int i = 0; i < list_->topLevelItemCount() && !first; ++i)
             if (!list_->topLevelItem(i)->isHidden()) first = list_->topLevelItem(i);
         list_->setCurrentItem(first);   // none: the detail of a hidden boot must not stay on screen
-        if (!first) detail_->setPlainText(list_->topLevelItemCount() ? tr("No recorded boot matches this filter.") : QString());
+        if (!first) { bKlog_->setEnabled(false); detail_->setPlainText(list_->topLevelItemCount() ? tr("No recorded boot matches this filter.") : QString()); }
     }
 }
 
@@ -402,22 +411,88 @@ QString BootPage::comparedWithPrevious(const QJsonObject &boot) const {
         if (boots.at(i).toObject().value(QStringLiteral("boot")) == boot.value(QStringLiteral("boot"))) { at = i; break; }
     if (at < 0 || at + 1 >= boots.size()) return {};
     const QJsonObject prev = boots.at(at + 1).toObject();
+    return tr("Compared with the boot before (%1):\n%2\n").arg(when(prev.value(QStringLiteral("start")).toInteger()), compareBoots(prev, boot));
+}
+
+bool BootPage::uniqueBootPrefix(const QString &id) const {
+    if (id.size() < 8) return false;
+    int matches = 0;
+    for (const auto &v : data_.value(QStringLiteral("boots")).toArray())
+        if (v.toObject().value(QStringLiteral("boot")).toString().startsWith(id.left(8))) ++matches;
+    return matches == 1;
+}
+
+QString BootPage::compareBoots(const QJsonObject &before, const QJsonObject &after) const {
     QStringList out;
-    const QJsonObject a = prev.value(QStringLiteral("curves")).toObject(), b = boot.value(QStringLiteral("curves")).toObject();
-    QStringList keys = a.keys() + b.keys();
-    keys.removeDuplicates();
-    for (const QString &k : std::as_const(keys)) {
-        const QString x = a.value(k).toString(), y = b.value(k).toString();
-        if (x != y) out << tr("  %1: %2 → %3").arg(k, x.isEmpty() ? tr("stock") : x, y.isEmpty() ? tr("stock") : y);
+    const auto unknown = tr("unknown / not recorded");
+    const auto text = [&unknown](const QJsonValue &v) -> QString {
+        if (v.isString() && !v.toString().isEmpty()) return v.toString();
+        if (v.isDouble() && v.toInteger(-1) >= 0) return QString::number(v.toInteger());
+        return unknown;
+    };
+    out << tr("Before: %1").arg(text(before.value(QStringLiteral("boot")))) << tr("After: %1").arg(text(after.value(QStringLiteral("boot"))));
+    auto compareObject = [&](const QString &title, const QJsonObject &a, const QJsonObject &b, const QStringList &expected = {}) {
+        out << QString() << title;
+        QStringList keys = a.keys() + b.keys() + expected;
+        keys.removeDuplicates(); keys.sort();
+        if (keys.isEmpty()) out << unknown;
+        for (const auto &key : keys) {
+            const auto x = text(a.value(key)), y = text(b.value(key));
+            if (x == unknown || y == unknown || x != y) out << QStringLiteral("  %1: %2 → %3").arg(key, x, y);
+            else out << tr("  %1: %2 (unchanged)").arg(key, x);
+        }
+    };
+    compareObject(tr("Recorded versions"), before.value(QStringLiteral("versions")).toObject(), after.value(QStringLiteral("versions")).toObject(), {QStringLiteral("kernel"), QStringLiteral("bios"), QStringLiteral("microcode"), QStringLiteral("nvidia")});
+    compareObject(tr("Recorded curve states (missing does not establish stock)"), before.value(QStringLiteral("curves")).toObject(), after.value(QStringLiteral("curves")).toObject());
+    const auto sa = before.value(QStringLiteral("state")).toString(), sb = after.value(QStringLiteral("state")).toString();
+    out << QString() << tr("Boot state: %1 → %2").arg(stateText(sa), stateText(sb));
+    out << tr("Recorded duration (seconds): %1 → %2").arg(text(before.value(QStringLiteral("duration"))), text(after.value(QStringLiteral("duration"))));
+    if (sa == QLatin1String("clean") && sb == QLatin1String("clean")) {
+        out << tr("Recorded kernel event total: %1 → %2").arg(text(before.value(QStringLiteral("event_total"))), text(after.value(QStringLiteral("event_total"))));
+        compareObject(tr("Recorded event categories"), before.value(QStringLiteral("events")).toObject(), after.value(QStringLiteral("events")).toObject());
+    } else out << tr("Kernel event counts are not comparable: both boots must have a clean recorded end.");
+    const auto pstoreCount = [&unknown](const QJsonObject &boot) {
+        const auto v = boot.value(QStringLiteral("pstore"));
+        return v.isArray() ? QString::number(v.toArray().size()) : unknown;
+    };
+    out << tr("Attributed pstore entries (not a crash count): %1 → %2").arg(pstoreCount(before), pstoreCount(after));
+    out << tr("Boot guard / preset history: unavailable in this snapshot.");
+    return out.join(QLatin1Char('\n'));
+}
+
+void BootPage::compareSelectedBoots() {
+    QDialog dlg(this); dlg.setWindowTitle(tr("Compare boots")); dlg.resize(800, 620);
+    auto *layout = new QVBoxLayout(&dlg);
+    auto *before = new QComboBox; auto *after = new QComboBox;
+    // Freeze the visible records; a subsequent helper refresh cannot replace one of the selected boots.
+    QMap<QString, QJsonObject> captured;
+    QSet<QString> duplicate;
+    for (const auto &v : data_.value(QStringLiteral("boots")).toArray()) {
+        const auto b = v.toObject(); const auto id = b.value(QStringLiteral("boot")).toString();
+        if (id.isEmpty()) continue;
+        if (captured.contains(id)) duplicate.insert(id);
+        captured.insert(id, b);
     }
-    const QString sa = prev.value(QStringLiteral("state")).toString(), sb = boot.value(QStringLiteral("state")).toString();
-    // Events are recorded when a boot ends cleanly: a running or unclean boot has none to compare.
-    const int ea = prev.value(QStringLiteral("event_total")).toInt(), eb = boot.value(QStringLiteral("event_total")).toInt();
-    if (ea != eb && sa == QLatin1String("clean") && sb == QLatin1String("clean")) out << tr("  kernel events: %1 → %2").arg(ea).arg(eb);
-    if (sa != sb && sa != QLatin1String("running") && sb != QLatin1String("running"))
-        out << tr("  ended: %1 → %2").arg(stateText(prev.value(QStringLiteral("state")).toString()), stateText(boot.value(QStringLiteral("state")).toString()));
-    if (out.isEmpty()) return tr("Compared with the boot before: nothing changed in curves or events.\n");
-    return tr("Compared with the boot before (%1):\n%2\n").arg(when(qint64(prev.value(QStringLiteral("start")).toDouble())), out.join(QLatin1Char('\n')));
+    for (int i = 0; i < list_->topLevelItemCount(); ++i) {
+        auto *row = list_->topLevelItem(i); const auto id = row->data(0, ROLE_BOOT).toString();
+        if (row->isHidden() || !captured.contains(id) || duplicate.contains(id)) continue;
+        const auto label = row->text(0) + QStringLiteral(" · ") + id;
+        before->addItem(label, id); after->addItem(label, id);
+    }
+    layout->addWidget(new QLabel(tr("Before"))); layout->addWidget(before);
+    layout->addWidget(new QLabel(tr("After"))); layout->addWidget(after);
+    auto *detail = new QPlainTextEdit; detail->setReadOnly(true); layout->addWidget(detail, 1);
+    if (before->count() > 1) before->setCurrentIndex(1);
+    if (const auto *row = list_->currentItem(); row && !row->isHidden()) after->setCurrentIndex(qMax(0, after->findData(row->data(0, ROLE_BOOT))));
+    auto update = [=, this] {
+        const QString a = before->currentData().toString(), b = after->currentData().toString();
+        detail->setPlainText(a.isEmpty() || b.isEmpty() || a == b ? tr("Select two different visible boot records.") : compareBoots(captured.value(a), captured.value(b)));
+    };
+    connect(before, &QComboBox::currentIndexChanged, &dlg, update);
+    connect(after, &QComboBox::currentIndexChanged, &dlg, update);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    update(); dlg.exec();
 }
 
 void BootPage::saveReport() {

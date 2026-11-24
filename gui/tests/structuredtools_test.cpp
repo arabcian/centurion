@@ -13,5 +13,14 @@ int main(int argc,char **argv) {
     CHECK(p && p->rows.size() == 3 && p->rows.at(1).at(2) == QStringLiteral("-1200"));
     CHECK(!structuredtools::powerSupply(QStringLiteral("$ cat /sys/class/power_supply/BAT0/uevent\nPOWER_SUPPLY_CAPACITY=12\nPOWER_SUPPLY_CAPACITY=13\n")));
     CHECK(!structuredtools::powerSupply(QStringLiteral("$ cat /sys/class/power_supply/BAT0/uevent\n(cannot read)\n")));
+    const auto usb = structuredtools::usb(QStringLiteral("$ lsusb\nBus 001 Device 003: ID 1234:abcd a device\n$ lsusb -t\nanything\n"));
+    CHECK(usb && usb->rows.size() == 1 && usb->rows.first().at(3) == QStringLiteral("abcd"));
+    CHECK(!structuredtools::usb(QStringLiteral("$ lsusb\nBus 001 Device 003: ID 1234:abcd\n(truncated)\n")));
+    CHECK(!structuredtools::usb(QStringLiteral("$ lsusb\nBus 001 Device 003: ID 1234:abcd\nBus 001 Device 003: ID 1234:abcd\n")));
+    const auto cpu = structuredtools::cpuTopology(QStringLiteral("$ lscpu\nCPU info\n$ lscpu -e\nCPU NODE SOCKET CORE ONLINE MAXMHZ\n0 0 0 0 yes 4000\n2 - 0 1 no -\n$ cpupower frequency-info\n"));
+    CHECK(cpu && cpu->rows.size() == 2 && cpu->rows.at(1).at(1) == QStringLiteral("-"));
+    CHECK(!structuredtools::cpuTopology(QStringLiteral("$ lscpu -e\nCPU CORE ONLINE\n0 1 maybe\n")));
+    CHECK(!structuredtools::cpuTopology(QStringLiteral("$ lscpu -e\nCPU CORE ONLINE\n0 1 yes\n0 1 no\n")));
+    CHECK(!structuredtools::cpuTopology(QStringLiteral("$ lscpu -e\nCPU CORE ONLINE\n0 1 yes\n(command failed or output was truncated)\n")));
     return 0;
 }

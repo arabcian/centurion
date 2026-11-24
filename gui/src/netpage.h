@@ -133,7 +133,7 @@ private:
     int firewallTab_ = -1;
     TrafficDays trafficDays_;                 // Traffic ledger, reread when the file changed
     QDateTime trafficSeen_;
-    bool trafficReadable_ = false;
+    bool trafficReadable_ = false, trafficValid_ = false;
     QListWidget *wl_;
     QStringList blacklist_;
     QTimer *timer_;

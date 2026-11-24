@@ -1,3 +1,7 @@
+#include "edidfields.h"
+#include <QSpinBox>
+#include <QTextCursor>
+#include <QMap>
 #include "diagreportview.h"
 #include "diagsources.h"
 #include <QJsonArray>
@@ -224,6 +228,61 @@ QWidget *tableWidget(const diag::Table &t) {
     return box;
 }
 
+// Inspect the frozen report, never re-open a connector or change an EDID override.
+void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &fields) {
+    auto tr = [](const char *s) { return QCoreApplication::translate("diag", s); };
+    QMap<QString, QByteArray> captures;
+    for (const auto &row : bytes.rows) {
+        bool ok = false; const auto offset = row.value(2).toInt(&ok,16);
+        auto &capture = captures[row.value(0)];
+        if (!ok || offset != capture.size() || offset < 0 || offset >= 4096) return;
+        const auto chunk = QByteArray::fromHex(row.value(3).toLatin1());
+        if (chunk.isEmpty() || chunk.size() > 16) return;
+        capture.append(chunk);
+    }
+    if (captures.isEmpty()) return;
+    QDialog dlg(parent); dlg.setWindowTitle(tr("EDID Byte Inspector")); dlg.resize(760, 500);
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->addWidget(text(tr("Captured bytes only. The connector may have changed since the report was collected.")));
+    auto *selector = new QComboBox; selector->addItems(captures.keys()); layout->addWidget(selector);
+    auto *offset = new QSpinBox; offset->setDisplayIntegerBase(16); offset->setPrefix(QStringLiteral("0x")); layout->addWidget(offset);
+    auto *detail = text(QString()); layout->addWidget(detail);
+    auto *raw = new QPlainTextEdit; raw->setReadOnly(true); raw->setLineWrapMode(QPlainTextEdit::NoWrap);
+    raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); layout->addWidget(raw, 1);
+    auto update = [&] {
+        const auto capture = captures.value(selector->currentText()); const int pos = offset->value();
+        if (pos < 0 || pos >= capture.size()) return;
+        const auto inspection = edidfields::inspect({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
+        QString info = tr("Byte %1 · block %2 · value %3").arg(pos).arg(pos/128).arg(QStringLiteral("0x%1").arg(quint8(capture.at(pos)),2,16,QLatin1Char('0')));
+        for (const auto &row : fields.rows) {
+            if (row.value(0) != selector->currentText()) continue;
+            bool startOk=false, lenOk=false; const int start=row.value(1).toInt(&startOk,16), len=row.value(2).toInt(&lenOk);
+            if (startOk && lenOk && start>=0 && len>0 && pos>=start && pos-start<len) {
+                info += QStringLiteral("\n%1 · %2 + %3").arg(row.value(3),row.value(1),row.value(2)); break;
+            }
+        }
+        if (std::size_t(pos/128)<inspection.blocks.size()) {
+            const auto &block=inspection.blocks[std::size_t(pos/128)];
+            info += QStringLiteral("\n") + (block.checksum ? tr("Checksum matches") : tr("Checksum mismatch"));
+            if (!block.declared || !block.structure) info += QStringLiteral(" · ") + tr("Invalid extension boundaries or unexpected block count.");
+        }
+        if(capture.size()>=4096)info+=QStringLiteral("\n")+tr("Display capped at 4096 bytes; completeness is not established by this view.");
+        detail->setText(info);
+        auto cursor=raw->textCursor(); cursor.movePosition(QTextCursor::Start); cursor.movePosition(QTextCursor::Down,QTextCursor::MoveAnchor,pos/16);
+        cursor.movePosition(QTextCursor::StartOfLine); cursor.movePosition(QTextCursor::Right,QTextCursor::MoveAnchor,8+(pos%16)*3);
+        cursor.movePosition(QTextCursor::Right,QTextCursor::KeepAnchor,2); raw->setTextCursor(cursor); raw->ensureCursorVisible();
+    };
+    auto switchConnector = [&] {
+        const auto capture=captures.value(selector->currentText());
+        const QSignalBlocker blocker(offset); offset->setRange(0,int(capture.size())-1); offset->setValue(0);
+        QStringList lines; for (int i=0;i<capture.size();i+=16) lines << QStringLiteral("0x%1  %2").arg(i,4,16,QLatin1Char('0')).arg(QString::fromLatin1(capture.mid(i,16).toHex(' ')).toUpper());
+        raw->setPlainText(lines.join(QLatin1Char('\n'))); update();
+    };
+    QObject::connect(selector,&QComboBox::currentIndexChanged,&dlg,switchConnector);
+    QObject::connect(offset,&QSpinBox::valueChanged,&dlg,update); switchConnector();
+    auto *close=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(close); QObject::connect(close,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
+}
+
 }  // namespace
 
 DiagReportView::DiagReportView(QWidget *parent) : QWidget(parent) {
@@ -318,18 +377,10 @@ DiagReportView::DiagReportView(QWidget *parent) : QWidget(parent) {
         }
     });
 
-    connect(copy_, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(report_.toText()); });
-    connect(save_, &QPushButton::clicked, this, [this] {
-        const QString name = QStringLiteral("centurion-%1-%2.txt")
-                                 .arg(report_.code.toLower(), QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmm")));
-        const QByteArray data = report_.toText().toUtf8();
-        const QString path = QFileDialog::getSaveFileName(this, tr("Save report"), QDir::homePath() + QLatin1Char('/') + name,
-                                                          tr("Text files (*.txt)"));
-        if (path.isEmpty()) return;
-        QSaveFile f(path);
-        if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size() || !f.commit())
-            headline_->setText(tr("Could not save %1: %2").arg(path, f.errorString()));
-    });
+    // All external exports use the same frozen review path; binary and raw data
+    // require explicit selection instead of bypassing review via the main buttons.
+    connect(copy_, &QPushButton::clicked, this, &DiagReportView::previewExport);
+    connect(save_, &QPushButton::clicked, this, &DiagReportView::previewExport);
     setMessage(QString());
 }
 
@@ -411,6 +462,13 @@ void DiagReportView::setReport(const diag::Report &r) {
     for (const diag::Table &t : current.tables) {
         auto *w = tableWidget(t);
         if (auto *tree = w->findChild<QTreeWidget *>()) tables_ << tree;
+        if (t.viewKind == QStringLiteral("edid-bytes")) {
+            for (const auto &fields : current.tables) if (fields.viewKind == QStringLiteral("edid-fields")) {
+                auto *inspect = new QPushButton(tr("Inspect captured EDID bytes…"));
+                w->layout()->addWidget(inspect);
+                connect(inspect,&QPushButton::clicked,w,[w,t,fields]{ inspectEdid(w,t,fields); }); break;
+            }
+        }
         addSection(t.title, w);
         bodyLayout_->addWidget(w);
     }
@@ -484,8 +542,8 @@ void DiagReportView::previewExport() {
     auto *layout = new QVBoxLayout(&dlg);
     layout->addWidget(text(tr("Reports may contain private data. Automatic redaction is best effort only. Review and edit the preview before sharing.")));
     const diag::Report captured = report_;
-    const QString fullReport = report_.toText();
-    auto *raw = new QPlainTextEdit(fullReport);
+    auto *raw = new QPlainTextEdit;
+    const QString captureTime = capturedAt_, captureBoot = captureBoot_;
     auto *selection = new QTreeWidget; selection->setHeaderHidden(true);
     selection->setMaximumHeight(fontMetrics().height() * 9);
     auto add = [](QTreeWidgetItem *parent, const QString &label) {
@@ -500,30 +558,50 @@ void DiagReportView::previewExport() {
     tables->setFlags(tables->flags() | Qt::ItemIsAutoTristate | Qt::ItemIsUserCheckable);
     findings->setCheckState(0, Qt::Checked);
     for (const auto &t : captured.tables) {
-        auto *item=add(tables, t.title);
-        // Binary EDID can encode a serial number that text redaction cannot detect.
-        if (t.privateBinary) item->setCheckState(0,Qt::Unchecked);
+        auto *item=add(tables,t.title);
+        item->setFlags(item->flags()|Qt::ItemIsAutoTristate);
+        auto *columns=add(item,tr("Columns"));columns->setFlags(columns->flags()|Qt::ItemIsAutoTristate);
+        int width=int(t.headers.size());for(const auto &row:t.rows)width=qMax(width,int(row.size()));
+        for(int c=0;c<width;++c)add(columns,t.headers.value(c,tr("Column %1").arg(c+1)));
+        auto *rows=add(item,tr("Rows"));rows->setFlags(rows->flags()|Qt::ItemIsAutoTristate);
+        for(int r=0;r<t.rows.size();++r)add(rows,tr("Row %1: %2").arg(r+1).arg(t.rows.at(r).join(QStringLiteral(" · ")).left(160)));
+        if (t.privateBinary) {item->setCheckState(0,Qt::Unchecked);item->setToolTip(0,tr("Contains binary identifiers; redaction cannot guarantee privacy."));}
     }
     layout->addWidget(selection);
     auto *includeRaw = new QCheckBox(tr("Include technical details")); includeRaw->setChecked(false);
     auto *redact = new QCheckBox(tr("Redact detected private data")); redact->setChecked(true);
     layout->addWidget(includeRaw); layout->addWidget(redact);
+    auto *metadata=new QCheckBox(tr("Include capture time and boot identity"));metadata->setChecked(false);layout->addWidget(metadata);
+    auto *hashLabel=text(QString(),"muted"); layout->addWidget(hashLabel);
     auto *regenerate = new QPushButton(tr("Regenerate preview (replaces edits)")); layout->addWidget(regenerate);
     auto refresh = [=] {
         auto selected = captured;
         selected.findings.clear(); selected.tables.clear();
         for (int i = 0; i < findings->childCount(); ++i) if (findings->child(i)->checkState(0) == Qt::Checked) selected.findings << captured.findings.at(i);
-        for (int i = 0; i < tables->childCount(); ++i) if (tables->child(i)->checkState(0) == Qt::Checked) selected.tables << captured.tables.at(i);
+        int excludedRows=0,excludedColumns=0,excludedTables=0;
+        for (int i=0;i<tables->childCount();++i) {
+            const auto *item=tables->child(i);const auto &source=captured.tables.at(i);
+            if(item->checkState(0)==Qt::Unchecked){++excludedTables;continue;}
+            const auto *cols=item->child(0),*rows=item->child(1);
+            diag::Table t=source;t.headers.clear();t.rows.clear();t.levels.clear();t.parents.clear();
+            QList<int> included;
+            for(int c=0;c<cols->childCount();++c){if(cols->child(c)->checkState(0)==Qt::Checked){included<<c;t.headers<<source.headers.value(c);}else ++excludedColumns;}
+            if(included.isEmpty()){++excludedTables;continue;}
+            for(int r=0;r<rows->childCount();++r){if(rows->child(r)->checkState(0)!=Qt::Checked){++excludedRows;continue;}QStringList cells;for(int c:included)cells<<source.rows.at(r).value(c);t.add(cells,source.levels.value(r,Level::Info));}
+            selected.tables<<t;
+        }
         if (!includeRaw->isChecked()) selected.raw.clear();
         if (redact->isChecked()) diag::redactPrivateFields(selected);
-        QString result = tr("Verdict refers to the complete original report; selected sections follow.") + QStringLiteral("\n\n") + selected.toTextWithVerdict(captured);
+        QString result = tr("Verdict refers to the complete original report; selected sections follow.") + QStringLiteral("\n")
+            + tr("Excluded: %1 findings, %2 tables, %3 rows, %4 columns.").arg(captured.findings.size()-selected.findings.size()).arg(excludedTables).arg(excludedRows).arg(excludedColumns)+QStringLiteral("\n");
+        if(metadata->isChecked())result+=tr("Captured: %1 · boot: %2").arg(captureTime,captureBoot)+QStringLiteral("\n");
+        result+=QStringLiteral("\n")+selected.toTextWithVerdict(captured);
         if (redact->isChecked()) result = diag::redactPrivateText(result);
         raw->setPlainText(result);
     };
     connect(regenerate, &QPushButton::clicked, &dlg, refresh);
-    connect(selection, &QTreeWidget::itemChanged, &dlg, refresh);
-    connect(includeRaw, &QCheckBox::toggled, &dlg, refresh);
-    connect(redact, &QCheckBox::toggled, &dlg, refresh);
+
+    connect(raw,&QPlainTextEdit::textChanged,&dlg,[=]{hashLabel->setText(tr("Preview SHA-256: %1").arg(QString::fromLatin1(QCryptographicHash::hash(raw->toPlainText().toUtf8(),QCryptographicHash::Sha256).toHex())));});
     refresh();
     raw->setReadOnly(false);
     raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -532,10 +610,17 @@ void DiagReportView::previewExport() {
     auto *copy = buttons->addButton(tr("Copy preview"), QDialogButtonBox::ActionRole);
     connect(copy, &QPushButton::clicked, &dlg, [raw] { QApplication::clipboard()->setText(raw->toPlainText()); });
     auto *save = buttons->addButton(tr("Save preview…"), QDialogButtonBox::ActionRole);
+    auto *pending = text(QString(), "muted"); layout->addWidget(pending);
+    auto markPending = [=]{pending->setText(tr("Selection changed. Regenerate preview before exporting."));copy->setEnabled(false);save->setEnabled(false);};
+    connect(selection, &QTreeWidget::itemChanged, &dlg, markPending);
+    connect(includeRaw, &QCheckBox::toggled, &dlg, markPending);
+    connect(redact, &QCheckBox::toggled, &dlg, markPending);
+    connect(metadata, &QCheckBox::toggled, &dlg, markPending);
+    connect(regenerate, &QPushButton::clicked, &dlg, [=]{pending->clear();copy->setEnabled(true);save->setEnabled(true);});
     connect(save, &QPushButton::clicked, &dlg, [&dlg, raw] {
         const auto bytes = raw->toPlainText().toUtf8();
         const auto path = QFileDialog::getSaveFileName(&dlg, tr("Save preview"), {}, tr("Text files (*.txt)")); if (path.isEmpty()) return;
-        QSaveFile f(path); if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size() || !f.commit()) QMessageBox::warning(&dlg, tr("Save preview"), f.errorString());
+        QSaveFile f(path); if (!f.open(QIODevice::WriteOnly) || !f.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner) || f.write(bytes) != bytes.size() || !f.commit()) QMessageBox::warning(&dlg, tr("Save preview"), f.errorString());
     });
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     layout->addWidget(buttons);

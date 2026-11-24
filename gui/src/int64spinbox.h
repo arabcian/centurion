@@ -14,6 +14,8 @@ public:
     qint64 minimum() const { return min_; }
     qint64 maximum() const { return max_; }
     void setRange(qint64 min, qint64 max);
+    /// Opt-in only for documented byte-valued keys. Display/storage remain canonical bytes.
+    void enableByteUnits();
     /// Clamped to [minimum, maximum]; emits valueChanged when it changes.
     void setValue(qint64 v);
 
@@ -32,6 +34,8 @@ protected:
     StepEnabled stepEnabled() const override;
 
 private:
+    bool parseEditor(const QString &text, qint64 *out) const;
+    bool byteUnits_ = false;
     void commitText();
     void showValue();
     qint64 min_ = 0, max_ = 99, value_ = 0;

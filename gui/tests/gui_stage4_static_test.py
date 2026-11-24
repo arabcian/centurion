@@ -27,7 +27,11 @@ class Stage4(unittest.TestCase):
         m=s('mainwindow.cpp');h=s('hometab.cpp');t=s('experimentalui.h')
         self.assertIn('replayingPageHistory_',m)
         self.assertIn('pageHistory_.size() > 50',m)
-        self.assertIn('ui/restore_last_page',h)
+        self.assertIn('ui/restore_last_page',m)  # legacy preference migration
+        self.assertIn('ui/experimental/',m)
+        self.assertIn('ui/classic/',m)
+        self.assertIn('navigationPreferencesRequested',h)
+        self.assertIn('tabs_->isTabEnabled',m)
         self.assertIn('cells->removeWidget(entry.second)',h)
         self.assertIn('threshold + (lastColumns==1?24:0)',h)
         self.assertIn('home/experimentalPanelOrder',h)

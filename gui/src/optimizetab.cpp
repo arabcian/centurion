@@ -1,3 +1,5 @@
+#include <QUuid>
+#include "autotuneprogress.h"
 #include "calibrationcoverage.h"
 #include "insights.h"
 #include "optimizetab.h"
@@ -1165,7 +1167,7 @@ void OptimizeTab::refresh(bool fromPoll) {
     // describe only reads, so it runs unprivileged (no polkit round-trip).
     auto *p = new QProcess(this);
     QPointer<QProcess> guard(p);
-    connect(p, &QProcess::finished, this, [this, p, light, gen = opGen_](int, QProcess::ExitStatus) {
+    connect(p, &QProcess::finished, this, [this, p, light, gen = opGen_](int exitCode, QProcess::ExitStatus exitStatus) {
         describing_ = false;
         const QByteArray out = p->readAllStandardOutput().trimmed();
         p->deleteLater();
@@ -1173,7 +1175,7 @@ void OptimizeTab::refresh(bool fromPoll) {
         // editors' values (touched is cleared after an apply) and a second Apply wrote the old values back.
         if (gen != opGen_) { needFull_ = true; refresh(); return; }
         const QJsonObject d = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
-        if (!d.value("ok").toBool()) { needFull_ = true; setReadbackStale(true); return; }
+        if (exitStatus != QProcess::NormalExit || exitCode != 0 || !d.value("ok").toBool()) { needFull_ = true; setReadbackStale(true); return; }
         onDescribe(d, light);
     });
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
@@ -1349,6 +1351,10 @@ void OptimizeTab::onDescribe(const QJsonObject &d, bool light) {
         topoLabel_->setText(lines.join("<br>"));
     }
     updateLaunchPreview();
+    if (!light && !startupDraftChecked_ && !rows_.isEmpty()) {
+        if (!busy_ && !autoRunning_ && !state_.value("active").toBool()) restoreStartupDraft();
+        else { startupDraftChecked_=true; if(QSettings().value(QStringLiteral("optimization/restore_draft_on_start"),false).toBool())startupDraftNotice_=tr("Startup draft not restored: another tuning operation is active."); }
+    }
     updateStateBanner();
     reloadPresets(presetCombo_->currentData().toString(), true);
     // Out of the describe callback: it may open a question.
@@ -1560,6 +1566,8 @@ void OptimizeTab::buildRows(const QJsonArray &rows) {
             QWidget *editor;
             if (r.kind == "int") {
                 r.spin = new Int64SpinBox(page);
+                if (key == QLatin1String("vm.dirty_bytes") || key == QLatin1String("vm.dirty_background_bytes"))
+                    r.spin->enableByteUnits();
                 r.spin->setMinimumWidth(120);
                 r.spin->setAccelerated(true);
                 // Keyboard tracking off means valueChanged only fires on Enter/focus-out,
@@ -1963,6 +1971,7 @@ void OptimizeTab::updateStateBanner() {
         banner_->setText("System at its original values");
         bannerDetail_->setText("Nothing changed by Centurion is in effect. Every change you apply is recorded and reversible.");
     }
+    if (!startupDraftNotice_.isEmpty()) bannerDetail_->setText(bannerDetail_->text() + QLatin1Char('\n') + startupDraftNotice_);
     active_ = state_.value("active").toBool();
     theme::setSheet(frame, theme::banner(accent, QStringLiteral("#tuneBanner")));
     theme::setSheet(banner_, QStringLiteral("font-weight:600; background:transparent; color:%1;").arg(accent));
@@ -2041,20 +2050,56 @@ QString OptimizeTab::draftFingerprint() const {
     return QString::fromLatin1(QCryptographicHash::hash(machine.toUtf8() + '\n' + QJsonDocument(topology_).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
 }
 
+static QString draftPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/optimization-draft-v1.json");
+}
+
+void OptimizeTab::restoreStartupDraft() {
+    startupDraftChecked_=true;
+    if(!QSettings().value(QStringLiteral("optimization/restore_draft_on_start"),false).toBool())return;
+    if(!QFileInfo::exists(draftPath()))return;
+    const auto record=diagsrc::loadJson(draftPath()); const auto fingerprint=draftFingerprint();
+    if(fingerprint.isEmpty() || record.value("version").toInt()!=1 || record.value("fingerprint").toString()!=fingerprint || !record.value("values").isObject()) {
+        startupDraftNotice_=tr("Saved startup draft is damaged or incompatible. No editors changed.");return;
+    }
+    const auto values=record.value("values").toObject();
+    if(values.size()>512){startupDraftNotice_=tr("Draft exceeds the setting limit.");return;}
+    const auto bootValues=boot_.value("values").toObject(); int restored=0,skipped=0; QStringList mismatch;
+    for(auto it=values.cbegin();it!=values.cend();++it){
+        auto *r=row(it.key()); const auto saved=it.value().toObject(); const auto value=saved.value("draft").toString();
+        if(!r||!persistentDraftKey(it.key())||!r->include||r->include->isChecked()||r->touched||!r->available||r->cached||!r->shadowedBy.isEmpty()||r->current.isEmpty()||!validFor(*r,value)||(r->spin&&r->spin->hasFocus())||(r->combo&&r->combo->hasFocus())){++skipped;continue;}
+        if(!setEditorValue(*r,value)){++skipped;continue;}
+        // No apply, no helper calls; never check restored editors.
+        const QSignalBlocker blocker(r->include);r->include->setChecked(false);r->touched=true;markRow(*r);++restored;
+        if(saved.value("live").toString()!=r->current||saved.value("boot").toString()!=tuningview::valueText(bootValues.value(r->key)))mismatch<<r->key;
+    }
+    applyShadows();
+    startupDraftNotice_=tr("Startup draft: %1 restored unchecked, %2 skipped. No settings applied.").arg(restored).arg(skipped);
+    if(!mismatch.isEmpty())startupDraftNotice_+=QStringLiteral("\n")+tr("Baseline changed: %1").arg(mismatch.join(QStringLiteral(", ")));
+}
+
 void OptimizeTab::draftWorkspace() {
     if (busy_ || active_ || describing_ || readbackStale_ || rows_.isEmpty()) {
         QMessageBox::information(this, tr("Optimization Draft"), tr("Wait for a fresh, idle settings readback before managing drafts.")); return;
     }
     const QString fingerprint = draftFingerprint();
     if (fingerprint.isEmpty()) { QMessageBox::warning(this, tr("Optimization Draft"), tr("Machine or topology identity is unavailable.")); return; }
-    const QString path = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/optimization-draft-v1.json");
+    const QString path = draftPath();
     QMessageBox choice(this); choice.setWindowTitle(tr("Optimization Draft"));
     choice.setText(tr("Save or restore global VM/scheduler editor values. Device-scoped settings are excluded until stable identity is available. Restored values are never automatically checked or applied."));
     auto *store = choice.addButton(tr("Save draft"), QMessageBox::ActionRole);
     auto *load = choice.addButton(tr("Restore draft"), QMessageBox::ActionRole);
     auto *discard = choice.addButton(tr("Delete saved draft"), QMessageBox::DestructiveRole);
+    const bool startupEnabled=QSettings().value(QStringLiteral("optimization/restore_draft_on_start"),false).toBool();
+    auto *startup=choice.addButton(startupEnabled?tr("Disable startup restore"):tr("Enable startup restore"),QMessageBox::ActionRole);
     choice.addButton(QMessageBox::Cancel); choice.exec();
     if (busy_ || active_ || describing_ || readbackStale_ || fingerprint != draftFingerprint()) return;
+    if (choice.clickedButton()==startup) {
+        QSettings settings;settings.setValue(QStringLiteral("optimization/restore_draft_on_start"),!startupEnabled);settings.sync();
+        if(settings.status()!=QSettings::NoError)QMessageBox::warning(this,tr("Optimization Draft"),tr("Could not save startup restore preference."));
+        else showStatus(!startupEnabled?tr("Startup restore enabled for unchecked editors."):tr("Startup restore disabled."));
+        return;
+    }
     if (choice.clickedButton() == store) {
         QJsonObject values;
         const auto bootValues = boot_.value(QStringLiteral("values")).toObject();
@@ -2510,7 +2555,8 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
     autoRunning_ = true;
     autoTimeline_.clear(); autoTimeline_ << tr("Request started");
     auto elapsed = std::make_shared<QElapsedTimer>(); elapsed->start();
-    auto lastStage = std::make_shared<int>(-1);
+    const QString runId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    auto progress = std::make_shared<autotuneprogress::Run>(runId);
     autoBtn_->setEnabled(false);
     autoExploreBtn_->setEnabled(false);
     showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · Inputs…"), theme::MUTED, 0);
@@ -2520,7 +2566,7 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
     auto timedOut = std::make_shared<bool>(false);
     auto errorLog = std::make_shared<QByteArray>();
     auto partialLine = std::make_shared<QByteArray>();
-    connect(p, &QProcess::readyReadStandardError, this, [this, p, errorLog, partialLine, elapsed, lastStage] {
+    connect(p, &QProcess::readyReadStandardError, this, [this, p, errorLog, partialLine, elapsed, progress] {
         const QByteArray chunk = p->readAllStandardError();
         errorLog->append(chunk);
         if (errorLog->size() > 32768) *errorLog = errorLog->right(32768);
@@ -2529,16 +2575,14 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         while ((end = partialLine->indexOf('\n')) >= 0) {
             const QByteArray line = partialLine->left(end).trimmed();
             partialLine->remove(0, end + 1);
-            if (!line.startsWith("CENTURION_STAGE ")) continue;
-            const QByteArray stage = line.mid(sizeof("CENTURION_STAGE ") - 1);
-            QString label; int order = -1;
-            if (stage == "inputs") { order = 0; label = QCoreApplication::translate("OptimizeTab", "Inputs"); }
-            else if (stage == "model") { order = 1; label = QCoreApplication::translate("OptimizeTab", "Model"); }
-            else if (stage == "decision") { order = 2; label = QCoreApplication::translate("OptimizeTab", "Decision"); }
-            else if (stage == "validation") { order = 3; label = QCoreApplication::translate("OptimizeTab", "Validation"); }
-            else if (stage == "finished") { order = 4; label = tr("Solver returned"); }
-            if (order < 0 || order <= *lastStage) continue;
-            *lastStage = order;
+            const auto stage = progress->accept(line);
+            if (!stage) continue;
+            QString label;
+            if (*stage == 0) label = QCoreApplication::translate("OptimizeTab", "Inputs");
+            else if (*stage == 1) label = QCoreApplication::translate("OptimizeTab", "Model");
+            else if (*stage == 2) label = QCoreApplication::translate("OptimizeTab", "Decision");
+            else if (*stage == 3) label = QCoreApplication::translate("OptimizeTab", "Validation");
+            else if (*stage == 4) label = tr("Solver returned");
             autoTimeline_ << QStringLiteral("%1 ms · %2").arg(elapsed->elapsed()).arg(label);
             showStatus(QCoreApplication::translate("OptimizeTab", "Autotune · %1…").arg(label), theme::MUTED, 0);
         }
@@ -2604,6 +2648,7 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         if (autoCtx_ && !autoCtx_->currentData().toString().isEmpty()) req["profile"] = autoCtx_->currentData().toString();
         exploreReq_ = mode == QLatin1String("fast") ? req : QJsonObject();
     }
+    req["progress_run_id"] = runId;
     p->write(QJsonDocument(req).toJson(QJsonDocument::Compact));
     p->closeWriteChannel();
 }

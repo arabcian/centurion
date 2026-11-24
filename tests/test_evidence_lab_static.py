@@ -84,7 +84,7 @@ class EvidenceLabIntegration(unittest.TestCase):
     def test_edid_parser_has_checksum_and_bounds(self):
         s=src('gui/src/diagnostictools.cpp')
         for term in ['d.size() < 128','d.startsWith(QByteArray::fromHex','sum % 256','e.truncated = e.readable < e.declared',
-                     'read(32 * 128)','A general refresh range is not proof of VRR support']:
+                     'read(32 * 128 + 1)','edidfields::trusted(inspected)','!e.structuralValid || conflictingVrr','A general refresh range is not proof of VRR support']:
             self.assertIn(term,s)
 
     def test_module_params_do_not_treat_comments_as_options(self):

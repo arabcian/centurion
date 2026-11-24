@@ -56,6 +56,10 @@
 #include <QKeySequence>
 #include <QMenu>
 #include <QSettings>
+#include <QSplitter>
+#include <QSplitterHandle>
+#include <QSet>
+#include <QCursor>
 #include <QShortcut>
 #include <QStandardPaths>
 #include <QToolButton>
@@ -110,6 +114,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     home_ = new HomeTab;
     tabs_->addTab(home_, tr("Home"));
     connect(home_, &HomeTab::openPageRequested, this, &MainWindow::showTab);
+    connect(home_, &HomeTab::navigationPreferencesRequested, this, &MainWindow::showNavigationPreferences);
     const int scenesAt = tabs_->count();  // Scenes sits right after Home; built last (it reads every tab)
     // Every tab below exists only where its hardware/firmware interface does,
     // so nobody is offered a control their machine can't honour.
@@ -238,26 +243,38 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // Lid shut for long while awake (warm in a bag): the tray warns once per closing.
     lid_ = new LidWatch(this);
 
+    assignPageIds();
     if (theme::experimentalEnabled()) {
         arrangeTabs();
         installExperimentalShell();
-        // The last selected main page is restored by identity rather than an
-        // index (hardware-gated pages appear/disappear between launches).
-        QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
-        const QString last = settings.value(QStringLiteral("ui/restore_last_page"), true).toBool()
-            ? settings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")).toString() : QStringLiteral("Home");
-        for (int i = 0; i < tabs_->count(); ++i)
-            if (tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
-        syncExperimentalNavigation();  // the restored page, not Home, in the rail and the title
-        connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
-            if (i < 0 || i >= tabs_->count()) return;
-            syncExperimentalNavigation();
-            QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
-            settings.setValue(QStringLiteral("ui/last_page"), tabs_->tabBar()->tabData(i).toString());
-        });
     }
+    // Keep startup history independent across the two shells. Migrate the old
+    // Experimental preference without changing Classic's previous Home default.
+    const QString workspace = theme::experimentalEnabled() ? QStringLiteral("ui/experimental/") : QStringLiteral("ui/classic/");
+    QSettings startupSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    const QString defaultMode = theme::experimentalEnabled() && startupSettings.value(QStringLiteral("ui/restore_last_page"), true).toBool()
+        ? QStringLiteral("last") : QStringLiteral("Home");
+    const QString mode = startupSettings.value(workspace + QStringLiteral("startup"), defaultMode).toString();
+    const QString last = mode == QLatin1String("last")
+        ? startupSettings.value(workspace + QStringLiteral("last_page"), theme::experimentalEnabled() ? startupSettings.value(QStringLiteral("ui/last_page"), QStringLiteral("Home")) : QVariant(QStringLiteral("Home"))).toString() : mode;
+    tabs_->setCurrentIndex(0);
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (tabs_->isTabEnabled(i) && tabs_->tabBar()->tabData(i).toString() == last) { tabs_->setCurrentIndex(i); break; }
+    syncExperimentalNavigation();
+    connect(tabs_, &QTabWidget::currentChanged, this, [this, workspace](int i) {
+        if (i < 0 || i >= tabs_->count()) return;
+        syncExperimentalNavigation();
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+        settings.setValue(workspace + QStringLiteral("last_page"), tabs_->tabBar()->tabData(i).toString());
+    });
+    auto *navigationPreferences = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), this);
+    navigationPreferences->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(navigationPreferences, &QShortcut::activated, this, &MainWindow::showNavigationPreferences);
+    tabs_->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabs_->tabBar(), &QWidget::customContextMenuRequested, this, [this] { showNavigationPreferences(); });
     QSettings windowSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
     restoreGeometry(windowSettings.value(QStringLiteral("ui/window_geometry")).toByteArray());
+    if (expRail_) setExperimentalCollapsed(expUserToggled_ ? expCollapsed_ : width() < 1010);
     auto *operationObserver = new QTimer(this);
     connect(operationObserver, &QTimer::timeout, this, &MainWindow::sampleOperations);
     operationObserver->start(500);
@@ -313,6 +330,7 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
     const int at = tabs_->indexOf(amdgpu_ ? static_cast<QWidget *>(amdgpu_) : static_cast<QWidget *>(optimize_));
     tabs_->insertTab(at, nvidia_, tr("NVIDIA Curve"));
     tabW_ = -1;
+    assignPageIds();
     if (theme::experimentalEnabled()) { arrangeTabs(); rebuildExperimentalNavigation(); }
     fitTabs();
     Q_EMIT nvidiaTabAdded();
@@ -323,7 +341,7 @@ NvidiaTab *MainWindow::ensureNvidiaTab() {
 // We rearrange existing QTabWidget pages, never reparent or recreate them:
 // Home, Health and all vendor-specific operations keep their connections,
 // timers, system helpers and security guard rails.
-void MainWindow::arrangeTabs() {
+void MainWindow::assignPageIds() {
     // The Scenes page is not SceneEngine; it is the remaining QTabWidget page.
     // Preserve every original tab, including fallback zone-lighting devices.
     const QStringList originalNames{QStringLiteral("Home"), QStringLiteral("Health"),
@@ -341,6 +359,14 @@ void MainWindow::arrangeTabs() {
             if (!id.isEmpty()) tabs_->tabBar()->setTabData(i, id);
         }
     }
+}
+
+void MainWindow::arrangeTabs() {
+    assignPageIds();
+    const QStringList originalNames{QStringLiteral("Home"), QStringLiteral("Health"),
+        QStringLiteral("Ryzen Curve"), QStringLiteral("Intel Undervolt"),
+        QStringLiteral("NVIDIA Curve"), QStringLiteral("AMD GPU"), QStringLiteral("Firmware"),
+        QStringLiteral("Optimizations"), QStringLiteral("Scenes"), QStringLiteral("Lighting")};
     int target = 0;
     for (const QString &id : originalNames) {
         int from = -1;
@@ -370,7 +396,11 @@ void MainWindow::installExperimentalShell() {
     shellLayout->setContentsMargins(0, 0, 0, 0);
     shellLayout->setSpacing(0);
 
-    expRail_ = new QFrame(shell);
+    expSplitter_ = new QSplitter(Qt::Horizontal, shell);
+    expSplitter_->setChildrenCollapsible(false);
+    expSplitter_->setHandleWidth(6);
+    shellLayout->addWidget(expSplitter_);
+    expRail_ = new QFrame(expSplitter_);
     expRail_->setObjectName(QStringLiteral("expRail"));
     auto *rail = new QVBoxLayout(expRail_);
     rail->setContentsMargins(6, 8, 6, 6);
@@ -431,7 +461,12 @@ void MainWindow::installExperimentalShell() {
     auto *collapseShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
     collapseShortcut->setContext(Qt::ApplicationShortcut);
     connect(collapseShortcut, &QShortcut::activated, expToggle_, &QPushButton::click);
-    shellLayout->addWidget(expRail_);
+    auto *favoritesButton = new QPushButton(QStringLiteral("☆"));
+    favoritesButton->setAccessibleName(tr("Navigation favorites and startup page"));
+    favoritesButton->setToolTip(tr("Navigation favorites and startup page") + QStringLiteral(" · Ctrl+Shift+F"));
+    connect(favoritesButton, &QPushButton::clicked, this, &MainWindow::showNavigationPreferences);
+    rail->insertWidget(rail->count() - 1, favoritesButton);
+    expSplitter_->addWidget(expRail_);
 
     auto *content = new QWidget;
     content->setObjectName(QStringLiteral("expContent"));
@@ -522,7 +557,15 @@ void MainWindow::installExperimentalShell() {
     pageLayout->setContentsMargins(8, 6, 8, 4);
     pageLayout->addWidget(tabs_);
     column->addWidget(pageHost, 1);
-    shellLayout->addWidget(content, 1);
+    expSplitter_->addWidget(content);
+    expSplitter_->setStretchFactor(0, 0);
+    expSplitter_->setStretchFactor(1, 1);
+    connect(expSplitter_, &QSplitter::splitterMoved, this, [this](int, int) {
+        if (expCollapsed_) return;
+        expExpandedWidth_ = expRail_->width();
+        QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+        st.setValue(QStringLiteral("ui/rail_width"), expExpandedWidth_);
+    });
     setCentralWidget(shell);
 
     auto *quick = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
@@ -535,6 +578,8 @@ void MainWindow::installExperimentalShell() {
             if (n <= expNavButtons_.size() && expNavButtons_[n - 1]->isEnabled()) expNavButtons_[n - 1]->click();
         });
     }
+    QSettings widthSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    expExpandedWidth_ = qBound(0, widthSettings.value(QStringLiteral("ui/rail_width"), 0).toInt(), 480);
     rebuildExperimentalNavigation();
     // Compact automatically on small screens; manual choice persists per user.
     QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
@@ -621,7 +666,16 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     int expandedWidth = 154;
     for (const auto *button : std::as_const(expNavButtons_))
         expandedWidth = std::max(expandedWidth, button->fontMetrics().horizontalAdvance(button->property("navLabel").toString()) + 54);
-    expRail_->setFixedWidth(collapsed ? 48 : expandedWidth);
+    if (collapsed) {
+        expRail_->setFixedWidth(48);
+    } else {
+        const int maximum = std::max(480, expandedWidth);
+        expRail_->setMaximumWidth(maximum);
+        expRail_->setMinimumWidth(expandedWidth);
+        const int desired = qBound(expandedWidth, expExpandedWidth_, maximum);
+        expSplitter_->setSizes({desired, std::max(1, width() - desired)});
+    }
+    expSplitter_->handle(1)->setEnabled(!collapsed);
     expBrandLabel_->setVisible(!collapsed);
     expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
     for (auto *button : std::as_const(expNavButtons_)) {
@@ -638,6 +692,62 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
         QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
         st.setValue(QStringLiteral("ui/rail_collapsed"), collapsed);
     }
+}
+
+void MainWindow::showNavigationPreferences() {
+    struct Target { QString id, label, healthTarget; };
+    QList<Target> targets;
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const QString id = tabs_->tabBar()->tabData(i).toString();
+        if (!id.isEmpty() && tabs_->isTabEnabled(i)) targets.append(Target{QStringLiteral("page/") + id, tabs_->tabText(i), {}});
+        if (tabs_->widget(i) == health_ && tabs_->isTabEnabled(i)) {
+            for (const auto &entry : health_->navigationEntries())
+                targets.append(Target{QStringLiteral("health/") + entry.target, tr("Health") + QStringLiteral(" / ") + entry.label, entry.target});
+        }
+    }
+    QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
+    const QString key = QStringLiteral("ui/navigation_favorites_v1");
+    QStringList favorites = st.value(key).toStringList();
+    QSet<QString> valid;
+    for (const auto &target : targets) valid.insert(target.id);
+    for (qsizetype i = favorites.size(); i > 0; --i) if (!valid.contains(favorites.at(i - 1))) favorites.removeAt(i - 1);
+    favorites.removeDuplicates();
+    st.setValue(key, favorites);
+    QMenu menu(this);
+    if (favorites.isEmpty()) menu.addAction(tr("No navigation favorites"))->setEnabled(false);
+    for (const auto &target : targets) {
+        if (!favorites.contains(target.id)) continue;
+        connect(menu.addAction(target.label), &QAction::triggered, this, [this, target] {
+            if (!target.healthTarget.isEmpty()) {
+                const int index = tabs_->indexOf(health_);
+                if (index >= 0 && tabs_->isTabEnabled(index)) { tabs_->setCurrentIndex(index); health_->openNavigationTarget(target.healthTarget); }
+            } else {
+                for (int i = 0; i < tabs_->count(); ++i)
+                    if (tabs_->isTabEnabled(i) && tabs_->tabBar()->tabData(i).toString() == target.id.mid(5)) { tabs_->setCurrentIndex(i); break; }
+            }
+        });
+    }
+    auto *edit = menu.addMenu(tr("Manage navigation favorites"));
+    for (const auto &target : targets) {
+        auto *action = edit->addAction(target.label);
+        action->setCheckable(true); action->setChecked(favorites.contains(target.id));
+        connect(action, &QAction::toggled, &menu, [&, id = target.id](bool on) {
+            if (on && !favorites.contains(id)) favorites.append(id);
+            if (!on) favorites.removeAll(id);
+            st.setValue(key, favorites);
+        });
+    }
+    auto *startup = menu.addMenu(tr("Startup page"));
+    const QString prefix = theme::experimentalEnabled() ? QStringLiteral("ui/experimental/") : QStringLiteral("ui/classic/");
+    const QString defaultMode = theme::experimentalEnabled() && st.value(QStringLiteral("ui/restore_last_page"), true).toBool() ? QStringLiteral("last") : QStringLiteral("Home");
+    const QString selected = st.value(prefix + QStringLiteral("startup"), defaultMode).toString();
+    auto addStartup = [&](const QString &id, const QString &label) {
+        auto *action = startup->addAction(label); action->setCheckable(true); action->setChecked(id == selected);
+        connect(action, &QAction::triggered, &menu, [&, id] { st.setValue(prefix + QStringLiteral("startup"), id); });
+    };
+    addStartup(QStringLiteral("last"), tr("Restore last page"));
+    for (const auto &target : targets) if (target.healthTarget.isEmpty()) addStartup(target.id.mid(5), target.label);
+    menu.exec(QCursor::pos());
 }
 
 void MainWindow::syncExperimentalNavigation() {
@@ -802,7 +912,7 @@ void MainWindow::resizeEvent(QResizeEvent *e) {
     QMainWindow::resizeEvent(e);
     fitTabs();
     placeHeaderControls();
-    if (expRail_ && !expUserToggled_) setExperimentalCollapsed(width() < 1010);
+    if (expRail_ && !expUserToggled_ && expCollapsed_ != (width() < 1010)) setExperimentalCollapsed(width() < 1010);
 }
 
 void MainWindow::showEvent(QShowEvent *e) {

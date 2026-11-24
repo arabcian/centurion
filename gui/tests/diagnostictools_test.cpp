@@ -78,6 +78,12 @@ int main(int argc, char **argv) {
     QByteArray broken = e;
     broken[200] = char(broken.at(200) ^ 1);
     CHECK(diagnostictools::decodeEdid(broken).badBlocks.size() == 1);
+    CHECK(diagnostictools::decodeEdid(broken).vrrMax == 0);
+    QByteArray undeclared=e; undeclared[126]=0; checksum(undeclared,0);
+    CHECK(!diagnostictools::decodeEdid(undeclared).structuralValid && diagnostictools::decodeEdid(undeclared).vrrMax==0);
+    CHECK(diagnostictools::decodeEdid(e.left(128)).vrrMax==0);
+    QByteArray invalidRange=e; invalidRange[138]=char(250); checksum(invalidRange,1);
+    CHECK(diagnostictools::decodeEdid(invalidRange).vrrMax==0);
     CHECK(diagnostictools::decodeEdid(e.left(128)).truncated);
     put(QStringLiteral("/sys/class/drm/card1-eDP-1/status"), "connected\n");
     put(QStringLiteral("/sys/class/drm/card1-eDP-1/edid"), e);
@@ -103,6 +109,9 @@ int main(int argc, char **argv) {
     const auto redacted=diag::redactPrivateText(QStringLiteral("192.168.1.42 aa:bb:cc:dd:ee:ff 0000:01:00.0 Xid 154\nSerial: secret-123\n/home/private/file"));
     CHECK(!redacted.contains(QStringLiteral("192.168.1.42")) && !redacted.contains(QStringLiteral("aa:bb:cc:dd:ee:ff")) && !redacted.contains(QStringLiteral("secret-123")) && !redacted.contains(QStringLiteral("/home/private")));
     CHECK(redacted.contains(QStringLiteral("0000:01:00.0")) && redacted.contains(QStringLiteral("Xid 154")));
+    const auto ids=diag::redactPrivateText(QStringLiteral("Boot ID: 12345678-1234-1234-1234-123456789012\nWMI GUID: 87654321-4321-4321-4321-210987654321"));
+    CHECK(!ids.contains(QStringLiteral("12345678-1234-1234-1234-123456789012")));
+    CHECK(ids.contains(QStringLiteral("87654321-4321-4321-4321-210987654321")));
     diag::Report original; original.add(Level::Attention,QStringLiteral("excluded evidence"));
     auto selected=original; selected.findings.clear();
     diag::Table privateTable; privateTable.headers={QStringLiteral("Serial Number"),QStringLiteral("PCI")}; privateTable.add({QStringLiteral("secret-456"),QStringLiteral("0000:01:00.0")}); selected.tables.append(privateTable);
@@ -186,6 +195,20 @@ int main(int argc, char **argv) {
     put(QStringLiteral("/proc/pressure/memory"), "some avg10=0.00 avg60=0.50 avg300=0.10 total=1\nfull avg10=0.00 avg60=0.10 avg300=0.00 total=1\n");
     CHECK(has(systemdiagnostics::memory(root), Level::Review, QStringLiteral("zswap and zram")));
 
+    put(QStringLiteral("/sys/devices/system/cpu/cpu0/cache/index3/level"), "3");
+    put(QStringLiteral("/sys/devices/system/cpu/cpu0/cache/index3/type"), "Unified");
+    put(QStringLiteral("/sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list"), "0-3");
+    QByteArray dimm(34,0);dimm[0]=17;dimm[1]=34;dimm[13]=0x20;
+    put(QStringLiteral("/sys/firmware/dmi/entries/17-0/raw"),dimm);
+    auto memory=systemdiagnostics::memory(root); bool cacheFound=false,dimmFound=false;
+    for(const auto &t:memory.tables){if(t.title==QStringLiteral("CPU Cache Sharing Domains")){CHECK(t.rows.first().value(3)==QStringLiteral("0-3"));cacheFound=true;}if(t.title==QStringLiteral("SMBIOS Memory Devices")){CHECK(t.rows.first().value(2)==QStringLiteral("8192"));dimmFound=true;}}
+    CHECK(cacheFound&&dimmFound);
+    QByteArray acpi(36,0);acpi.replace(0,4,"DSDT");acpi[4]=36;acpi[8]=2;
+    put(QStringLiteral("/sys/firmware/acpi/tables/DSDT"),acpi);
+    bool acpiFound=false;const auto firmware=systemdiagnostics::firmware(root);
+    for(const auto &t:firmware.tables)if(t.title==QStringLiteral("ACPI Tables Present")){CHECK(t.rows.first().value(1)==QStringLiteral("DSDT"));acpiFound=true;}
+    CHECK(acpiFound);
+
     // ── S13: the charger's PD profiles.
     put(QStringLiteral("/sys/class/typec/port0/power_role"), "[sink] source\n");
     put(QStringLiteral("/sys/class/typec/port0-partner/usb_power_delivery_revision"), "3.0\n");
@@ -201,6 +224,8 @@ int main(int argc, char **argv) {
     const diag::Report ch = systemdiagnostics::charging(root);
     CHECK(has(ch, Level::Review, QStringLiteral("45 W")));
     CHECK(has(ch, Level::Review, QStringLiteral("70 %")));
+    bool profilesFound=false;for(const auto &t:ch.tables)if(t.title==QStringLiteral("USB Power Delivery Source Profiles")){CHECK(t.rows.size()==2);CHECK(t.rows.at(1).value(5)==QStringLiteral("45"));profilesFound=true;}
+    CHECK(profilesFound);
 
     // New topology and measurement fixtures: explicit relationships only, no added link probes.
     const QString bridge = QStringLiteral("/sys/devices/pci0000:00/0000:00:1c.0");

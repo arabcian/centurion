@@ -19,6 +19,7 @@ class NvidiaTab;
 class OptimizeTab;
 class RyzenTab;
 class QTabWidget;
+class QSplitter;
 class QToolButton;
 class QFrame;
 class QVBoxLayout;
@@ -71,7 +72,9 @@ protected:
 
 private:
     void fitTabs();
+    void assignPageIds();
     void arrangeTabs();
+    void showNavigationPreferences();
     void installExperimentalShell();
     void rebuildExperimentalNavigation();
     void setExperimentalCollapsed(bool collapsed);
@@ -92,6 +95,8 @@ private:
     int tabW_ = -1;
     QToolButton *sectionsButton_ = nullptr;  // Classic legacy positioning helper
     QFrame *expRail_ = nullptr;
+    QSplitter *expSplitter_ = nullptr;
+    int expExpandedWidth_ = 0;
     QVBoxLayout *expNavLayout_ = nullptr;
     QLabel *expBrandLabel_ = nullptr;
     QLabel *expTitle_ = nullptr;

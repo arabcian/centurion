@@ -31,7 +31,7 @@ public:
     /// A firmware-attributes device with attributes, or the GameZone WMAE interface.
     static bool present();
     explicit FwattrTab(QWidget *parent = nullptr);
-    bool operationActive() const { return busy_; }
+    bool operationActive() const { return busy_ || wmiReading_; }
     static QList<FwAttr> discover();
     /// Values of the WMI-only GPU knobs as last read back from the EC, or
     /// empty when they have not been read this session (sysfs is stale for them).
@@ -42,7 +42,8 @@ public Q_SLOTS:
     void rebuild();
 
 private:
-    struct Row { FwAttr info; QSlider *slider; QSpinBox *spin; QPushButton *apply = nullptr; QPushButton *def = nullptr; };
+    struct Row { FwAttr info; QSlider *slider; QSpinBox *spin; QPushButton *apply = nullptr; QPushButton *def = nullptr; bool wmiKnown = false; };
+    bool confirmChanges(const QList<int> &indices);
     void applyRow(int index);
     void applyAll();
     void applyWmi(const QList<int> &indices);  // write WMI-handled rows via legion-gpu-helper
@@ -64,6 +65,8 @@ private:
     QTabWidget *tabs_;
     QTimer *statusTimer_;
     bool locked_ = false, busy_ = false, wmiReady_ = false;
+    bool wmiReading_ = false;
+    quint64 rowsRevision_ = 0;
     bool wmiStale_ = true;  // WMI rows not read since the last rebuild/apply
     void showEvent(QShowEvent *e) override;
 };

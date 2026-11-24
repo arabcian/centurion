@@ -48,6 +48,9 @@ private:
     QString patterns(bool everyCurve) const;   // false: only the curves flagged red (the on-screen summary)
     /// What changed from the boot recorded before `boot` (curves, events), as text lines.
     QString comparedWithPrevious(const QJsonObject &boot) const;
+    QString compareBoots(const QJsonObject &before, const QJsonObject &after) const;
+    bool uniqueBootPrefix(const QString &id) const;
+    void compareSelectedBoots();
     void saveReport();
 
     QLabel *info_;

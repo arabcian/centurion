@@ -20,7 +20,15 @@ int main() {
 
     CHECK(parseTraffic("not json").isEmpty());
     CHECK(parseTraffic("{}").isEmpty());
-    CHECK(parseTraffic(R"({"days":{"d":{"p":{"tx":"x"}}}})").value(QStringLiteral("d")).value(QStringLiteral("p")).tx == 0);
+    CHECK(!decodeTraffic(R"({"version":1,"days":{"2026-10-29":{"p":{"tx":"x","rx":0,"conns":1}}}})").valid);
+    CHECK(!decodeTraffic(R"({"version":2,"days":{}})").valid);
+    CHECK(!decodeTraffic(R"({"version":1,"days":{"bad":{}}})").valid);
+    CHECK(decodeTraffic(R"({"version":1,"days":{}})").valid);
+    const auto exact = decodeTraffic(R"({"version":1,"days":{"2026-10-29":{"p":{"tx":9223372036854775807,"rx":0,"conns":1}}}})");
+    CHECK(exact.valid && exact.days.first().first().tx == std::numeric_limits<qint64>::max());
+    CHECK(rankTraffic(days, QStringLiteral("2026-10-29"), QStringLiteral("2026-10-30")).first() == QStringLiteral("firefox"));
+    CHECK(sumTraffic(days.first(), {QStringLiteral("firefox")}).tx == 5);
+    CHECK(rankTraffic(days, QStringLiteral("2026-10-30"), QStringLiteral("2026-10-30")).size() == 1);
 
     const auto maximum=std::numeric_limits<qint64>::max();
     CHECK(addTrafficCounter(maximum-5,10)==maximum);
