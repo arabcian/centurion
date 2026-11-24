@@ -297,9 +297,17 @@ fn read_bounded(path: &Path, cap: u64, lines: Option<usize>, whole: bool) -> (&'
     if !before.is_file() { return ("unreadable", None); }
     if whole && before.len() > cap { return ("too large", None); }
     let start = before.len().saturating_sub(cap);
-    if file.seek(SeekFrom::Start(start)).is_err() { return ("unreadable", None); }
+    let mut partial_first_line = false;
+    if start > 0 {
+        let mut previous = [0];
+        if file.seek(SeekFrom::Start(start - 1)).is_err() || file.read_exact(&mut previous).is_err() {
+            return ("unreadable", None);
+        }
+        partial_first_line = previous[0] != b'\n';
+    }
+    let limit = if whole { cap + 1 } else { before.len() - start };
     let mut bytes = Vec::new();
-    if (&mut file).take(cap + 1).read_to_end(&mut bytes).is_err() { return ("unreadable", None); }
+    if (&mut file).take(limit).read_to_end(&mut bytes).is_err() { return ("unreadable", None); }
     if whole {
         let Ok(after) = file.metadata() else { return ("unreadable", None); };
         if bytes.len() as u64 > cap { return ("too large", None); }
@@ -307,8 +315,8 @@ fn read_bounded(path: &Path, cap: u64, lines: Option<usize>, whole: bool) -> (&'
             return ("unreadable", None);
         }
     } else {
-        bytes.truncate(cap as usize);
-        if start > 0 {
+        if bytes.len() as u64 != limit { return ("unreadable", None); }
+        if partial_first_line {
             // Never export a partial first log line whose identity key may have been cut away.
             let Some(newline) = bytes.iter().position(|&b| b == b'\n') else { return ("too large", None); };
             bytes.drain(..=newline);
@@ -694,6 +702,10 @@ mod tests {
         assert_ne!(fetch(&path, 8, None).0, "included");
         std::fs::write(&path, "secret-prefix\ncomplete\npartial").unwrap();
         assert_eq!(fetch(&path, 18, None).1.as_deref(), Some("complete\n"));
+        let complete = "first\nlast\n";
+        std::fs::write(&path, format!("prior\n{complete}")).unwrap();
+        assert_eq!(fetch(&path, complete.len() as u64, None).1.as_deref(), Some(complete));
+        assert_eq!(fetch(&path, complete.len() as u64 - 1, None).1.as_deref(), Some("last\n"));
         let link = root.join("link"); std::os::unix::fs::symlink(&path, &link).unwrap();
         assert_eq!(fetch(&link, 32, None).0, "unreadable");
         std::fs::remove_dir_all(root).unwrap();

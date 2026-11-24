@@ -102,12 +102,17 @@ static QList<LogLine> tailOf(const QString &name, int max) {
         QFile f;
         if (!openRegular(f, stateDir() + QLatin1Char('/') + file)) continue;
         const qint64 size = f.size(), start = std::max<qint64>(0, size - (4LL << 20));
-        if (size < 0 || !f.seek(start)) continue;
+        if (size < 0) continue;
+        char previous = '\n';
+        if (start > 0 && (!f.seek(start - 1) || !f.getChar(&previous))) continue;
         const auto bytes = f.read(size - start);
-        if (f.error() != QFileDevice::NoError) continue;
-        qsizetype pos = start ? bytes.indexOf('\n') : -1;
-        if (start && pos < 0) continue;
-        ++pos;
+        if (f.error() != QFileDevice::NoError || bytes.size() != size - start) continue;
+        qsizetype pos = 0;
+        if (previous != '\n') {
+            const auto firstNewline = bytes.indexOf('\n');
+            if (firstNewline < 0) continue;
+            pos = firstNewline + 1;
+        }
         while (pos < bytes.size()) {
             const auto end = bytes.indexOf('\n', pos);
             if (end < 0) break; // never parse an incomplete record

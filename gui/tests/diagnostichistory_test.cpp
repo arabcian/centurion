@@ -1,4 +1,5 @@
 #include "../src/diagnostichistorydata.h"
+#include "../src/diagsources.h"
 #include <QCoreApplication>
 #include <QTemporaryDir>
 #include <cstdlib>
@@ -26,5 +27,20 @@ int main(int argc,char **argv) {
     auto invalid=snapshot;invalid.insert("records",QJsonArray{QJsonArray{QStringLiteral("row")}});CHECK(!validSnapshot(invalid));
     CHECK(save(dir.path(),report.code,QJsonArray{a,a,b,c}));archive=load(dir.path());CHECK(archive.entries.size()==2&&archive.rejected==2);
     CHECK(save(dir.path(),QStringLiteral("WRONG"),QJsonArray{b}));archive=load(dir.path());CHECK(archive.entries.size()==2&&archive.rejected==3);
+    qputenv("XDG_STATE_HOME", dir.path().toUtf8());
+    CHECK(QDir().mkpath(diagsrc::stateDir()));
+    const QByteArray event = "2026-01-01 10:00:00 boot=example seq=42 warn [1.2] complete line\n";
+    const QByteArray padding((4 << 20) - event.size() - 1, 'x');
+    const auto writeLog = [&](const QByteArray &prefix) {
+        QFile f(diagsrc::stateDir() + QStringLiteral("/kernel.log"));
+        const QByteArray data = prefix + event + padding + '\n';
+        return f.open(QIODevice::WriteOnly) && f.write(data) == data.size();
+    };
+    CHECK(writeLog("previous\n"));
+    const auto complete = diagsrc::savedKernel();
+    CHECK(complete.size() == 1 && complete.first().seq == 42);
+    // A valid-looking suffix still belongs to a partial first record.
+    CHECK(writeLog("previous "));
+    CHECK(diagsrc::savedKernel().isEmpty());
     return EXIT_SUCCESS;
 }
