@@ -18,6 +18,7 @@ int main() {
  assert(overlapMHz(*a,*c)==0); assert(overlapMHz(*ht,*a)==0);
  assert(!channelRange(5955,5985,80)); assert(!channelRange(5180,5210,320));
  assert(!channelRange(5180,5200,80)); assert(!channelRange(2437,2437,80));
+ assert(!channelRange(5180,5190,80));
  assert(!channelRange(2412,2402,40)); assert(!channelRange(5180,5210.5,80));
  assert(!channelRange(NAN,5210,80)); assert(!channelRange(5180,INFINITY,80));
  auto exact=ageFromSnapshot(5,1234,1400,1500,1800); assert(exact.observed && exact.ms==566);

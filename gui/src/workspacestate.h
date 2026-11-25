@@ -4,6 +4,7 @@
 #include <QHeaderView>
 #include <QCoreApplication>
 #include <memory>
+#include <optional>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -32,6 +33,25 @@ inline QJsonObject read(const QString &path) {
 inline void write(const QString &path, const QJsonObject &obj) {
     const auto bytes = QJsonDocument(obj).toJson(QJsonDocument::Compact);
     if (bytes.size() <= 32768) settings().setValue(path, bytes);
+}
+inline auto deferredWrite(QTimer *timer, const QString &path) {
+    timer->setSingleShot(true);
+    timer->setInterval(350);
+    const auto pending = std::make_shared<std::optional<QJsonObject>>();
+    const auto flush = [pending, path] {
+        if (!pending->has_value()) return;
+        write(path, **pending);
+        pending->reset();
+    };
+    QObject::connect(timer, &QTimer::timeout, timer, flush);
+    // Flush the cached snapshot before child objects are destroyed.
+    QObject::connect(timer->parent(), &QObject::destroyed, timer, flush);
+    if (auto *app = QCoreApplication::instance())
+        QObject::connect(app, &QCoreApplication::aboutToQuit, timer, flush);
+    return [pending, timer](const QJsonObject &snapshot) {
+        *pending = snapshot;
+        timer->start();
+    };
 }
 inline std::vector<int> integers(const QJsonValue &value) {
     std::vector<int> result;
@@ -77,26 +97,16 @@ inline void rememberHeader(QTreeWidget *tree, const QString &path, bool allowSor
     }
     restoreHeader(tree, obj, allowSort);
     tree->header()->setSectionsMovable(true);
-    auto *timer = new QTimer(tree); timer->setSingleShot(true); timer->setInterval(350);
-    struct Pending { QJsonObject snapshot; bool dirty = false; };
-    const auto pending = std::make_shared<Pending>();
-    const auto flush = [pending,path] {
-        if (!pending->dirty) return;
-        write(path,pending->snapshot); pending->dirty = false;
-    };
-    const auto changed = [tree,timer,pending,allowSort] {
-        pending->snapshot = captureHeader(tree);
-        if (!allowSort) {pending->snapshot.remove("sort"); pending->snapshot.remove("descending");}
-        pending->dirty = true; timer->start();
+    auto *timer = new QTimer(tree);
+    const auto save = deferredWrite(timer, path);
+    const auto changed = [tree, save, allowSort] {
+        auto snapshot = captureHeader(tree);
+        if (!allowSort) { snapshot.remove("sort"); snapshot.remove("descending"); }
+        save(snapshot);
     };
     QObject::connect(tree->header(), &QHeaderView::sectionResized, timer, changed);
     QObject::connect(tree->header(), &QHeaderView::sectionMoved, timer, changed);
     if (allowSort) QObject::connect(tree->header(), &QHeaderView::sortIndicatorChanged, timer, changed);
-    QObject::connect(timer, &QTimer::timeout, timer, flush);
-    // QObject::destroyed runs before its children are deleted. Flush the cached
-    // snapshot without dereferencing the partially destroyed QWidget.
-    QObject::connect(tree, &QObject::destroyed, timer, flush);
-    if (auto *app = QCoreApplication::instance()) QObject::connect(app, &QCoreApplication::aboutToQuit, timer, flush);
 }
 inline void restoreSelection(QTreeWidget *tree, const QString &id, int role) {
     if (id.isEmpty()) return;
@@ -109,7 +119,7 @@ inline void restoreSelection(QTreeWidget *tree, const QString &id, int role) {
     }
     if (!match || !match->flags().testFlag(Qt::ItemIsSelectable)) return;
     for (auto *item = match; item; item = item->parent()) {
-        if (item->isHidden()) return;
+        if (item->isHidden() || !item->flags().testFlag(Qt::ItemIsEnabled)) return;
     }
     tree->setCurrentItem(match);
     tree->scrollToItem(match);
@@ -121,9 +131,11 @@ inline void rememberSplitter(QSplitter *splitter, const QString &path) {
     if (workspacefields::split(saved, splitter->count())) {
         QList<int> sizes; for (int v : saved) sizes.append(v); splitter->setSizes(sizes);
     }
-    QObject::connect(splitter,&QSplitter::splitterMoved,splitter,[splitter,path]{
+    auto *timer = new QTimer(splitter);
+    const auto save = deferredWrite(timer, path);
+    QObject::connect(splitter,&QSplitter::splitterMoved,timer,[splitter,save]{
         QJsonArray sizes; for (int n : splitter->sizes()) sizes.append(n);
-        if (workspacefields::split(integers(sizes),splitter->count())) write(path,QJsonObject{{"sizes",sizes}});
+        if (workspacefields::split(integers(sizes),splitter->count())) save(QJsonObject{{"sizes",sizes}});
     });
 }
 }

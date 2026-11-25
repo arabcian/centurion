@@ -14,12 +14,14 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
+#include <QStringDecoder>
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
 
 namespace diagsrc {
 
@@ -156,6 +158,8 @@ std::array<LogFileCoverage, 2> scanSavedLog(
     if (!maxBytesPerFile) return files;
     const QString path = savedLogPath(source);
     const QByteArray dayPrefix = day.isEmpty() ? QByteArray() : (day + QLatin1Char(' ')).toLatin1();
+    std::optional<std::pair<dev_t, ino_t>> scanned;
+    QStringDecoder decoder(QStringDecoder::Utf8, QStringDecoder::Flag::Stateless);
     for (int index = 0; index < 2; ++index) {
         const bool rotated = index == 0;
         const QString file = rotated ? path + QStringLiteral(".1") : path;
@@ -169,12 +173,15 @@ std::array<LogFileCoverage, 2> scanSavedLog(
         coverage.state = LogFileState::Unreadable;
         struct stat before{}, after{};
         if (::fstat(f.handle(), &before) != 0 || before.st_size < 0) continue;
+        const auto identity = std::pair{before.st_dev, before.st_ino};
+        if (scanned && *scanned == identity) continue;
         const qint64 size = before.st_size, start = std::max<qint64>(0, size - maxBytesPerFile);
         char previous = '\n';
         if (start > 0 && (!f.seek(start - 1) || !f.getChar(&previous))) continue;
         const auto bytes = f.read(size - start);
         if (f.error() != QFileDevice::NoError || bytes.size() != size - start
             || ::fstat(f.handle(), &after) != 0 || !sameVersion(before, after)) continue;
+        scanned = identity;
         coverage.state = LogFileState::Read;
         coverage.omittedBytes = start;
         coverage.incompleteTail = !bytes.isEmpty() && !bytes.endsWith('\n');
@@ -190,7 +197,10 @@ std::array<LogFileCoverage, 2> scanSavedLog(
             const QByteArrayView record(bytes.constData() + pos, end - pos);
             pos = end + 1;
             if (!dayPrefix.isEmpty() && !record.startsWith(dayPrefix)) continue;
-            if (record.size() > 8192 || !visit(QString::fromUtf8(record.data(), record.size()).trimmed(), rotated))
+            if (record.size() > 8192) { ++coverage.rejectedLines; continue; }
+            decoder.resetState();
+            const QString text = decoder(record);
+            if (decoder.hasError() || !visit(text.trimmed(), rotated))
                 ++coverage.rejectedLines;
         }
     }

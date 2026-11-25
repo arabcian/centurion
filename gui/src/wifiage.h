@@ -50,12 +50,18 @@ inline Age ageFromSnapshot(std::optional<Tick> seen, std::optional<Tick> observe
     return {age(seen, elapsed(dumpValid ? dump : receipt, now)), false};
 }
 struct Range { int low, high, center, width, bandIndex; };
+inline bool vht80Center(double center) {
+    return center == 5210 || center == 5290 || center == 5530 || center == 5610 ||
+        center == 5690 || center == 5775 || center == 5855;
+}
 // Validate the helper's advertised contiguous interval independently. Never
 // treat a primary-channel marker, arbitrary width, or 80+80 as a known range.
 inline std::optional<Range> channelRange(double primary, double center, double width) {
     const int b = band(primary);
     if (b < 0 || b == 2 || band(center) != b || !std::isfinite(width)) return {};
     if (width != 20 && width != 40 && (b != 1 || (width != 80 && width != 160))) return {};
+    if (width == 80 && !vht80Center(center)) return {};
+    if (width == 160 && center != 5250 && center != 5570 && center != 5815) return {};
     const auto delta = std::abs(primary-center);
     if (delta > width/2-10 || std::fmod(width/2-10-delta,20) != 0) return {};
     const int lo = static_cast<int>(center-width/2), hi = static_cast<int>(center+width/2);
@@ -69,11 +75,7 @@ inline int overlapMHz(const Range &a, const Range &b) {
 }
 struct Ranges { Range first; std::optional<Range> second; };
 inline std::optional<Ranges> split80Ranges(double primary, double firstCenter, double secondCenter) {
-    const auto validCenter = [](double center) {
-        return center == 5210 || center == 5290 || center == 5530 || center == 5610 ||
-            center == 5690 || center == 5775 || center == 5855;
-    };
-    if (!validCenter(firstCenter) || !validCenter(secondCenter) || std::abs(firstCenter-secondCenter) <= 80) return {};
+    if (!vht80Center(firstCenter) || !vht80Center(secondCenter) || std::abs(firstCenter-secondCenter) <= 80) return {};
     const auto first = channelRange(primary, firstCenter, 80);
     const auto second = channelRange(secondCenter - 30, secondCenter, 80);
     if (!first || !second) return {};

@@ -4,6 +4,7 @@
 #include <QTemporaryDir>
 #include <cstdlib>
 #include <iostream>
+#include <unistd.h>
 #define CHECK(x) do {if(!(x)){std::cerr<<"line "<<__LINE__<<" failed\n";return EXIT_FAILURE;}}while(false)
 using namespace diagnostichistory;
 static bool save(const QString &dir,const QString &code,const QJsonArray &entries) {
@@ -96,5 +97,15 @@ int main(int argc,char **argv) {
     CHECK(diagsrc::clearSavedLog(kernel));
     CHECK(QFile::link(diagsrc::savedLogPath(diagsrc::SavedLog::Health), path));
     CHECK(!diagsrc::appendSavedLog(kernel, "rejected\n", 4));
+    CHECK(diagsrc::clearSavedLog(kernel));
+    const auto kernelPath = QFile::encodeName(path);
+    const auto rotatedPath = kernelPath + ".1";
+    CHECK(put(QStringLiteral("kernel.log"), event + "2026-01-01 10:00:00 boot=example seq=43 warn [1.2] invalid "
+              + QByteArray(1, char(0xff)) + '\n'));
+    CHECK(::link(kernelPath.constData(), rotatedPath.constData()) == 0);
+    const auto aliased = diagsrc::savedLog(kernel, 10);
+    CHECK(aliased.lines.size() == 1 && aliased.lines.first().seq == 42);
+    CHECK(aliased.files.at(0).rejectedLines == 1);
+    CHECK(aliased.files.at(1).state == diagsrc::LogFileState::Unreadable);
     return EXIT_SUCCESS;
 }

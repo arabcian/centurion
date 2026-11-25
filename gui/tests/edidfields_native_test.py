@@ -28,6 +28,8 @@ int main(){
  auto modes=progressiveTimings(timing); assert(modes.size()==2 && modes[0].offset==54 && modes[1].offset==132);
  assert(modes[0].hActive==2560 && modes[0].vActive==1600 && modes[0].hBlank==160 && modes[0].vBlank==160);
  assert(std::abs(modes[0].refreshHz()-60.0)<0.01);
+ timing[254]=1;fix(timing,1);assert(!trusted(inspect(timing)));
+ timing[254]=0;fix(timing,1);
  timing[54+17]|=0x80;fix(timing,0);assert(progressiveTimings(timing).size()==1);
  timing[132+3]=0;fix(timing,1);assert(progressiveTimings(timing).empty());
  dtd(132);fix(timing,1);assert(progressiveTimings(timing).size()==1);

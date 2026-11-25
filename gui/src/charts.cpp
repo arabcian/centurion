@@ -618,6 +618,12 @@ void DayBars::setDays(const QVector<Day> &days) {
     const QString first = narrowed ? days_.at(begin_).date : QString();
     const QString last = narrowed ? days_.at(end_ - 1).date : QString();
     days_ = days;
+    maxTotal_ = 1;
+    for (const auto &day : days_) {
+        qint64 total = 0;
+        for (const int value : day.kinds) total += std::max(0, value);
+        maxTotal_ = std::max(maxTotal_, total);
+    }
     if (narrowed) {
         const auto begin = std::lower_bound(days_.cbegin(), days_.cend(), first,
             [](const Day &day, const QString &date) { return day.date < date; });
@@ -670,13 +676,6 @@ void DayBars::paintEvent(QPaintEvent *) {
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF r = plotRect();
     if (r.width()<=0 || r.height()<=0) return;
-    qint64 maxTotal = 1;
-    for(qsizetype i=begin_;i<end_;++i) {
-        const Day &d=days_.at(i);
-        qint64 total = 0;
-        for (int n : d.kinds) total += std::max(0,n);
-        maxTotal = std::max(maxTotal, total);
-    }
     if(end_<=begin_)return;
     const double colW = r.width() / (end_-begin_);
     const double barW = std::max(0.0, colW * 0.7);
@@ -686,7 +685,7 @@ void DayBars::paintEvent(QPaintEvent *) {
         double yBottom = r.bottom();
         for (auto it = d.kinds.cbegin(); it != d.kinds.cend(); ++it) {
             if (it.value() <= 0) continue;
-            const double h = r.height() * it.value() / maxTotal;
+            const double h = r.height() * it.value() / maxTotal_;
             p.setPen(Qt::NoPen);
             p.setBrush(colorOf(it.key()));
             p.drawRect(QRectF(x, yBottom - h, barW, h));

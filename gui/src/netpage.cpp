@@ -608,6 +608,9 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                 const auto f = o.value(QStringLiteral("freq")); const auto sig = o.value(QStringLiteral("signal_dbm"));
                 const auto age = ageOf(o); const auto range = wifiRange(o);
                 const bool validFreq = f.isDouble() && wifiage::band(f.toDouble()) >= 0;
+                const auto channel = o.value(QStringLiteral("channel")).toInteger(-1);
+                const bool signalValid = wifiSignal(sig);
+                const double unknownSort = std::numeric_limits<double>::infinity();
                 QString width = tr("Unknown"), centers = width, source = width;
                 if (range) {
                     width = range->second ? QStringLiteral("80 + 80 MHz") : QStringLiteral("%1 MHz").arg(range->first.width);
@@ -616,16 +619,16 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                     source = range->second ? QStringLiteral("VHT operation") : str(o.value(QStringLiteral("channel_range")).toObject(),"source");
                 }
                 auto *item = new SortItem({str(o,"ssid").isEmpty() ? tr("(hidden network)") : str(o,"ssid"), str(o,"bssid"), validFreq ? str(o,"band") : tr("Unknown"),
-                    o.value(QStringLiteral("channel")).isDouble() ? QString::number(o.value(QStringLiteral("channel")).toInt()) : tr("Unknown"),
-                    validFreq ? QString::number(f.toInt()) : tr("Unknown"), wifiSignal(sig) ? QString::number(sig.toDouble()) + QStringLiteral(" dBm") : tr("Unknown"),
+                    channel > 0 ? QString::number(channel) : tr("Unknown"),
+                    validFreq ? QString::number(f.toInt()) : tr("Unknown"), signalValid ? QString::number(sig.toDouble()) + QStringLiteral(" dBm") : tr("Unknown"),
                     ageText(age), !age.ms ? tr("Unknown") : *age.ms >= wifiage::staleMs ? tr("Stale (≥ 60 s)") : age.observed ? tr("Observed within 60 s") : tr("Age bound below 60 s"),
                     width, centers, source, overlapText(o)});
-                if (validFreq) item->setData(4, SortRole, f.toDouble());
-                if (age.ms) item->setData(6, SortRole, static_cast<qulonglong>(*age.ms));
-                if (range) {
-                    item->setData(8, SortRole, range->first.width + (range->second ? range->second->width : 0));
-                    item->setData(9, SortRole, range->first.center);
-                }
+                item->setData(3, SortRole, channel > 0 ? double(channel) : unknownSort);
+                item->setData(4, SortRole, validFreq ? f.toDouble() : unknownSort);
+                item->setData(5, SortRole, signalValid ? sig.toDouble() : unknownSort);
+                item->setData(6, SortRole, age.ms ? double(*age.ms) : unknownSort);
+                item->setData(8, SortRole, range ? double(range->first.width + (range->second ? range->second->width : 0)) : unknownSort);
+                item->setData(9, SortRole, range ? double(range->first.center) : unknownSort);
                 tree->addTopLevelItem(item);
             }
             tree->setSortingEnabled(true);

@@ -137,7 +137,10 @@ void redactPrivateFields(Report &report) {
         QStringLiteral("uuid"), QStringLiteral("machine id"), QStringLiteral("boot id"), QStringLiteral("boot kimliği"), QStringLiteral("host"), QStringLiteral("ssid"), QStringLiteral("mac adresi"),
         QStringLiteral("disk uuid"), QStringLiteral("device uuid"), QStringLiteral("gpu uuid"), QStringLiteral("partition uuid"),
         QStringLiteral("partuuid"), QStringLiteral("machine-id"), QStringLiteral("boot-id"), QStringLiteral("serial number field"),
-        QStringLiteral("mountpoint"), QStringLiteral("mount point"), QStringLiteral("mountpoints"), QStringLiteral("bağlama noktası")};
+        QStringLiteral("mountpoint"), QStringLiteral("mount point"), QStringLiteral("mountpoints"), QStringLiteral("bağlama noktası"),
+        QStringLiteral("password"), QStringLiteral("api key"), QStringLiteral("private key"), QStringLiteral("authorization"),
+        QStringLiteral("proxy-authorization"), QStringLiteral("cookie"), QStringLiteral("set-cookie"),
+        QStringLiteral("session token"), QStringLiteral("access token"), QStringLiteral("client secret")};
     for (auto &table : report.tables)
         for (qsizetype i=0; i<table.headers.size(); ++i)
             if (privateHeaders.contains(table.headers[i].simplified().toLower()))

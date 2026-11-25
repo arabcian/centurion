@@ -280,6 +280,7 @@ void open(QWidget *owner) {
     const auto key=workspace::key(theme::experimentalEnabled(),QStringLiteral("health/cross-boot-history"));
     workspace::rememberSplitter(split,key+QStringLiteral("/split"));
     const auto saved = workspace::read(key);
+    showCoverage->setChecked(saved.value("show_log_coverage").toBool());
     desiredSelection = saved.value("selected_record").toString();
     for (const auto &value : saved.value("collapsed_groups").toArray()) {
         const auto id = value.toString();
@@ -317,6 +318,7 @@ void open(QWidget *owner) {
                                       {"boot_id", boots->currentData(exactBootRole).toString()},
                                       {"compare_first", left->currentData(recordIdentityRole).toString()},
                                       {"compare_second", right->currentData(recordIdentityRole).toString()},
+                                      {"show_log_coverage", showCoverage->isChecked()},
                                       {"collapsed_groups", collapsed},
                                       {"selected_record", desiredSelection}});
 }

@@ -40,8 +40,12 @@ inline Inspection inspect(std::span<const std::uint8_t> data) {
                     field(base+pos,len,Kind::CtaData,data[base+pos]>>5); pos+=len;
                 }
                 std::size_t pos=end;
-                for (;pos+18<=127;pos+=18) field(base+pos,18,(data[base+pos]||data[base+pos+1])?Kind::DetailedTiming:Kind::Padding);
-                field(base+pos,127-pos,Kind::Padding);
+                for (; pos + 18 <= 127 && (data[base + pos] || data[base + pos + 1]); pos += 18)
+                    field(base + pos, 18, Kind::DetailedTiming);
+                const bool zeroPadding = std::all_of(data.begin() + base + pos, data.begin() + base + 127,
+                    [](auto byte) { return byte == 0; });
+                structure &= zeroPadding;
+                field(base + pos, 127 - pos, zeroPadding ? Kind::Padding : Kind::Unknown);
             }
         } else if (b) { field(base,1,Kind::ExtensionHeader,data[base]); field(base+1,126,Kind::Unknown); }
         field(base+127,1,Kind::Checksum);

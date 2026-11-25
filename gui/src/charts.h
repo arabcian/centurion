@@ -100,6 +100,7 @@ private:
     void updateAccessibleRange();
 
     QVector<Day> days_;
+    qint64 maxTotal_ = 1;
     qsizetype begin_=0,end_=0;
     QString selected_;
 };
