@@ -26779,6 +26779,18 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>Saving…</source>
             <translation>Kaydediliyor…</translation>
         </message>
+        <message>
+            <source>Modules loaded at boot (OpenRC, /etc/conf.d/modules)</source>
+            <translation>Açılışta yüklenen modüller (OpenRC, /etc/conf.d/modules)</translation>
+        </message>
+        <message>
+            <source>Gentoo / OpenRC: modules="…" lists the modules the modules service loads at boot, module_&lt;name&gt;_args="…" their options. OpenRC reads the file as a shell script, so only plain NAME="value" lines are accepted.</source>
+            <translation>Gentoo / OpenRC: modules="…" modules servisinin açılışta yüklediği modülleri, module_&lt;ad&gt;_args="…" ise seçeneklerini listeler. OpenRC bu dosyayı kabuk betiği olarak okuduğu için yalnızca düz AD="değer" satırları kabul edilir.</translation>
+        </message>
+        <message>
+            <source>A file in /etc/modprobe.d. Takes effect the next time the module loads; for drivers in the initramfs, regenerate it (dracut) and reboot.</source>
+            <translation>/etc/modprobe.d içindeki bir dosya. Modül bir sonraki yüklenişinde geçerli olur; initramfs içindeki sürücüler için initramfs'i yeniden oluşturun (dracut) ve yeniden başlatın.</translation>
+        </message>
     </context>
     <context>
         <name>PipewireConfig</name>

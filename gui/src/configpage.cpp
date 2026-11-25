@@ -10,6 +10,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFileInfo>
 #include <QDirIterator>
 #include <QFile>
 #include <QFontDatabase>
@@ -36,7 +37,7 @@
 #include <vector>
 
 // Must match CONFS in crates/centurion-helpers/src/sysadmin.rs.
-enum class Kind { Sysctl, Modprobe, ModulesLoad, Udev, Fstab };
+enum class Kind { Sysctl, Modprobe, ModulesLoad, Udev, Fstab, ShellVars };
 
 struct ConfigPage::File {
     const char *id, *path, *label, *note;
@@ -133,9 +134,37 @@ const ConfigPage::File FILES[] = {
     {"fstab", "/etc/fstab", QT_TRANSLATE_NOOP("ConfigPage", "Filesystems mounted at boot (fstab)"),
      QT_TRANSLATE_NOOP("ConfigPage", "Checked with findmnt --verify before it is saved; nothing is mounted. A wrong entry can still stop the machine "
                                      "from booting normally: keep a live USB at hand when changing the root or boot lines."), Kind::Fstab},
+    {"openrc_modules", "/etc/conf.d/modules", QT_TRANSLATE_NOOP("ConfigPage", "Modules loaded at boot (OpenRC, /etc/conf.d/modules)"),
+     QT_TRANSLATE_NOOP("ConfigPage", "Gentoo / OpenRC: modules=\"…\" lists the modules the modules service loads at boot, module_<name>_args=\"…\" "
+                                     "their options. OpenRC reads the file as a shell script, so only plain NAME=\"value\" lines are accepted."), Kind::ShellVars},
 };
-const ConfigPage::File *files() { return FILES; }
-int fileCount() { return int(std::size(FILES)); }
+
+// Same rule as sysadmin::modprobe_d_name_ok: a plain *.conf name, not Centurion's own drop-in.
+bool modprobeDName(const QString &n) {
+    static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\.conf$"));
+    return re.match(n).hasMatch() && !n.contains(QLatin1String("..")) && n != QLatin1String("centurion-user.conf");
+}
+
+// The fixed files, minus /etc/conf.d/modules where OpenRC is not used, plus every other existing *.conf in
+// /etc/modprobe.d (id "modprobe_d.<name>"; the helper re-checks the name and that the file exists).
+const std::vector<ConfigPage::File> &list() {
+    static std::vector<ConfigPage::File> all;
+    static QList<QByteArray> strings;  // keeps the dynamic ids, paths and labels alive
+    if (!all.empty()) return all;
+    for (const ConfigPage::File &f : FILES)
+        if (f.kind != Kind::ShellVars || QFileInfo(QLatin1String(f.path)).isFile()) all.push_back(f);
+    const QFileInfoList entries = QDir(QStringLiteral("/etc/modprobe.d")).entryInfoList({QStringLiteral("*.conf")}, QDir::Files | QDir::NoSymLinks, QDir::Name);
+    for (const QFileInfo &fi : entries) {
+        if (!modprobeDName(fi.fileName()) || all.size() >= 200) continue;
+        strings << ("modprobe_d." + fi.fileName().toUtf8()) << fi.absoluteFilePath().toUtf8() << ("modprobe.d: " + fi.fileName().toUtf8());
+        all.push_back({strings.at(strings.size() - 3).constData(), strings.at(strings.size() - 2).constData(), strings.last().constData(),
+                       QT_TRANSLATE_NOOP("ConfigPage", "A file in /etc/modprobe.d. Takes effect the next time the module loads; for drivers in the initramfs, regenerate it (dracut) and reboot."),
+                       Kind::Modprobe});
+    }
+    return all;
+}
+const ConfigPage::File *files() { return list().data(); }
+int fileCount() { return int(list().size()); }
 
 }  // namespace
 

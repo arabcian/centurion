@@ -3,7 +3,8 @@
 //!   - one-shot actions (TRIM, drop caches, a SMART self-test, load / unload a module);
 //!   - a fixed table of runtime sysfs knobs, each with its own value check (`sysfs_set`);
 //!   - per-device power switches (rfkill, USB / PCI runtime PM) whose device name is shape-checked;
-//!   - a fixed list of configuration files (`CONFS`): validated, backed up, written atomically.
+//!   - a fixed list of configuration files (`CONFS`), plus the existing *.conf files of /etc/modprobe.d named by
+//!     file name only (`modprobe_d.<name>`): validated, backed up, written atomically.
 //! Nothing in a request names a path or a program.
 
 use serde_json::{json, Value};
@@ -18,7 +19,7 @@ const KEEP_BACKUPS: usize = 10;
 const BIN_DIRS: &[&str] = &["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Kind { Sysctl, Modprobe, ModulesLoad, Udev, Fstab }
+pub enum Kind { Sysctl, Modprobe, ModulesLoad, Udev, Fstab, ShellVars }
 
 pub struct Conf { pub id: &'static str, pub path: &'static str, pub kind: Kind, pub dropin: bool }
 
@@ -31,9 +32,47 @@ pub const CONFS: &[Conf] = &[
     Conf { id: "udev", path: "/etc/udev/rules.d/99-centurion-user.rules", kind: Kind::Udev, dropin: true },
     Conf { id: "sysctl_conf", path: "/etc/sysctl.conf", kind: Kind::Sysctl, dropin: false },
     Conf { id: "fstab", path: "/etc/fstab", kind: Kind::Fstab, dropin: false },
+    // Gentoo / OpenRC: modules loaded at boot and their arguments (modules="…", module_<name>_args="…").
+    Conf { id: "openrc_modules", path: "/etc/conf.d/modules", kind: Kind::ShellVars, dropin: false },
 ];
 
-pub fn conf(id: &str) -> Option<&'static Conf> { CONFS.iter().find(|c| c.id == id) }
+/// Prefix of the ids of other files in /etc/modprobe.d: "modprobe_d." + the file name.
+pub const MODPROBE_D_PREFIX: &str = "modprobe_d.";
+
+/// A file name in /etc/modprobe.d that may be edited: "<name>.conf", no path, not Centurion's own drop-in.
+pub fn modprobe_d_name_ok(n: &str) -> bool {
+    n.len() <= 69 && n.ends_with(".conf") && n.len() > 5 && n != "centurion-user.conf"
+        && n.as_bytes()[0].is_ascii_alphanumeric()
+        && n.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) && !n.contains("..")
+}
+
+pub fn conf(id: &str) -> Option<&'static Conf> {
+    if let Some(c) = CONFS.iter().find(|c| c.id == id) { return Some(c); }
+    // Another existing regular file of /etc/modprobe.d. Only its name travels in the request; it is never
+    // created or removed here. Leaked once: the helper answers one request and exits.
+    let name = id.strip_prefix(MODPROBE_D_PREFIX).filter(|n| modprobe_d_name_ok(n))?;
+    let path = format!("/etc/modprobe.d/{name}");
+    if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) { return None; }
+    Some(Box::leak(Box::new(Conf { id: Box::leak(id.to_owned().into_boxed_str()), path: Box::leak(path.into_boxed_str()),
+                                   kind: Kind::Modprobe, dropin: false })))
+}
+
+/// One shell assignment that OpenRC's `source` cannot turn into a command: NAME="text" without $, `, \ or ";
+/// NAME='text'; or NAME=word of plain characters. A trailing # comment is allowed.
+fn shell_assignment_ok(line: &str) -> bool {
+    let Some((name, rest)) = line.split_once('=') else { return false };
+    let mut nb = name.bytes();
+    if !nb.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') || !nb.all(|b| b.is_ascii_alphanumeric() || b == b'_') { return false; }
+    let tail = |t: &str| { let t = t.trim(); t.is_empty() || t.starts_with('#') };
+    match rest.as_bytes().first() {
+        Some(b'"') => rest[1..].split_once('"').is_some_and(|(v, t)| !v.contains(['$', '`', '\\']) && tail(t)),
+        Some(b'\'') => rest[1..].split_once('\'').is_some_and(|(_, t)| tail(t)),
+        _ => {
+            let (v, t) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            v.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.,:/+=-".contains(&b)) && tail(t)
+        }
+    }
+}
 
 fn module_name_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && !s.starts_with('-') && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
@@ -68,6 +107,9 @@ pub fn validate(kind: Kind, text: &str) -> Result<(), String> {
             Kind::ModulesLoad => if !module_name_ok(line) { return bad("expected one module name per line") },
             Kind::Fstab => if line.split_whitespace().count() < 4 { return bad("an fstab entry has at least 4 fields") },
             Kind::Udev => {}
+            Kind::ShellVars => if !shell_assignment_ok(line) {
+                return bad("expected NAME=\"value\" (no $, `, \\ or ; : OpenRC reads this file as a shell script)")
+            },
         }
     }
     Ok(())
@@ -249,6 +291,7 @@ fn after_write(c: &Conf) -> String {
         Kind::Modprobe => "saved: takes effect the next time the module loads (a reboot for drivers in the initramfs, after regenerating it)".into(),
         Kind::ModulesLoad => "saved: the modules load at the next boot".into(),
         Kind::Fstab => "saved and verified with findmnt --verify; nothing was mounted or unmounted".into(),
+        Kind::ShellVars => "saved: OpenRC's modules service loads them at the next boot (rc-service modules restart loads them now)".into(),
     }
 }
 
@@ -386,6 +429,22 @@ mod tests {
         assert!(validate(Kind::Fstab, "UUID=x / ext4 defaults 0 1").is_ok());
         assert!(validate(Kind::Fstab, "UUID=x /").is_err());
         assert!(validate(Kind::Udev, "a\0b").is_err());
+        // /etc/conf.d/modules is sourced by OpenRC as root: plain assignments only.
+        assert!(validate(Kind::ShellVars, "# c\nmodules=\"zenpower ryzen_smu\"\nmodule_nvidia_args='NVreg_X=1'\nmodules_6_12=\"a\" # c\nx=a,b\n").is_ok());
+        for bad in ["modules=\"$(reboot)\"", "modules=\"`id`\"", "modules=a; reboot", "modules=\"a\"; reboot", "rm -rf /",
+                    "1x=\"a\"", "modules=\"a", "m='a'b", "modules=a&&b", "modules=\"a\\\"\""] {
+            assert!(validate(Kind::ShellVars, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn modprobe_d_names() {
+        for good in ["nvidia.conf", "blacklist-nouveau.conf", "amd_pstate.conf", "99-local.conf"] { assert!(modprobe_d_name_ok(good), "{good}"); }
+        for bad in ["../passwd.conf", "a/b.conf", ".conf", ".hidden.conf", "x.conf.bak", "centurion-user.conf", "x..conf", "", "a b.conf"] {
+            assert!(!modprobe_d_name_ok(bad), "{bad}");
+        }
+        assert!(conf("modprobe_d.../../etc/passwd").is_none() && conf("modprobe_d.does-not-exist-centurion.conf").is_none());
+        assert_eq!(conf("openrc_modules").map(|c| c.kind), Some(Kind::ShellVars));
     }
 
     #[test]
