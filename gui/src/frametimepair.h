@@ -16,4 +16,13 @@ inline std::optional<Comparison> compare(const frametime::Log &a,const frametime
     const auto percent=[](double a,double b){return 100.0*(b/a-1.0);};
     return Comparison{x,y,{percent(x.mean,y.mean),percent(x.p50,y.p50),percent(x.p95,y.p95),percent(x.p99,y.p99),percent(x.fps,y.fps)}};
 }
+// Average speed and stutter can move in opposite directions; both are reported, neither hides the other.
+// `threshold` (%): smaller frametime changes count as unchanged. delta: mean, p50, p95, p99, fps (B vs A, %).
+enum class Direction { Consistent, MeanBetterTailWorse, MeanWorseTailBetter };
+inline Direction direction(const Comparison &c,double threshold=1.0) {
+    const double mean=c.delta[0],tail=c.delta[3];
+    if(mean<=-threshold && tail>=threshold) return Direction::MeanBetterTailWorse;
+    if(mean>=threshold && tail<=-threshold) return Direction::MeanWorseTailBetter;
+    return Direction::Consistent;
+}
 }

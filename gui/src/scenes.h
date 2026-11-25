@@ -14,6 +14,7 @@
 // Files (per user):
 //   ~/.config/centurion/scenes/<name>.json
 //   ~/.config/centurion/scenes.json      {"auto", "on_ac", "on_battery"}
+#include "sceneapplysummary.h"
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QMap>
@@ -111,7 +112,8 @@ public:
 
     /// Applies a saved scene. While one is running, the latest request is
     /// queued and runs right after (an AC flip mid-apply is never lost).
-    void apply(const QString &name);
+    /// `trigger` says why (manual, tray, shortcut, dbus, power: AC, resume: battery, ...); kept with the apply record.
+    void apply(const QString &name, const QString &trigger = QStringLiteral("manual"));
     // Starts only when idle; no name-based matching or replaceable pending request.
     // Callback reports the main transaction outcome (deferred GPU work is separate).
     bool applyTracked(const QString &name, std::uint64_t cpuLease,
@@ -125,6 +127,9 @@ public:
     bool busy() const { return busy_; }
     bool operationActive() const;
     QString lastOutcome() const { return lastOutcome_; }
+    /// Why the last (or running) apply started, and the latest state of each of its components.
+    QString lastTrigger() const { return trigger_; }
+    const sceneapplysummary::Summary &lastComponents() const { return summary_; }
     /// Active scene (applied by the GUI or by centurion-gamemode at game start/exit).
     QString active() const { return scenes::activeScene(); }
 
@@ -172,7 +177,7 @@ private:
     void resumeTick();
     bool armResumeFd();
     void resumePass();
-    void applyForSource(bool onAc);
+    void applyForSource(bool onAc, const QString &why = QStringLiteral("power"));
     void startupApply();
     void gpuDeferredFire();
     void helper(const QString &name, const QJsonObject &req, Done done,
@@ -187,6 +192,8 @@ private:
     std::uint64_t trackedCpuLease_ = 0;
     std::function<void(const QString &)> trackedDone_;
     QString current_, pending_;
+    QString trigger_, nextTrigger_, pendingTrigger_;
+    sceneapplysummary::Summary summary_;
     QString transactionId_, gpuDeferTransactionId_, lastOutcome_;
     QString stepDisposition_;
     bool incomplete_ = false;

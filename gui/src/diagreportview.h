@@ -23,6 +23,8 @@ public:
     /// A line in place of a report (before the first run, while one runs, or when it could not run).
     void setMessage(const QString &text);
     const diag::Report &report() const { return report_; }
+    /// Sets the findings/readings search from outside (Evidence Lab incident focus).
+    void setFilterText(const QString &text);
 
 Q_SIGNALS:
     /// A finding's fix button changed the system: the owner reads the report again.

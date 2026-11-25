@@ -4,10 +4,14 @@
 #include "diagreportview.h"
 #include "diagsources.h"
 #include "evidencereports.h"
+#include "incidentfocus.h"
 #include "privileged.h"
 
+#include <QComboBox>
 #include <QHBoxLayout>
+#include <QSettings>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -29,6 +33,19 @@ HealthEvidencePage::HealthEvidencePage(QWidget *parent) : QWidget(parent) {
     status_->setWordWrap(true);
     status_->setProperty("role", "muted");
     layout->addWidget(status_);
+    // Incident focus: one subject followed through all five reports, kept across tabs, rescans and restarts.
+    auto *focusRow = new QHBoxLayout;
+    focusRow->addWidget(new QLabel(tr("Incident focus:")));
+    focus_ = new QComboBox;
+    focus_->setEditable(true);
+    focus_->setMinimumContentsLength(18);
+    focus_->setToolTip(tr("A CPU, PCI address, Xid code or any text. Every report below is filtered by it, so the same incident is "
+                          "read in each tool. Suggestions come from the last scan."));
+    focus_->lineEdit()->setPlaceholderText(tr("e.g. CPU 5, 01:00.0, Xid 79"));
+    focusRow->addWidget(focus_, 1);
+    auto *clearFocus = new QPushButton(tr("Clear focus"));
+    focusRow->addWidget(clearFocus);
+    layout->addLayout(focusRow);
     tabs_ = new QTabWidget(this);
     const QStringList names = {tr("H02 · Machine Checks"), tr("H03 · PCIe Errors"), tr("H04 · NVIDIA Xid"), tr("H05 · F2FS"), tr("H09 · Wi-Fi / Bluetooth")};
     for (int i = 0; i < 5; ++i) {
@@ -38,6 +55,20 @@ HealthEvidencePage::HealthEvidencePage(QWidget *parent) : QWidget(parent) {
     }
     layout->addWidget(tabs_, 1);
     connect(scan_, &QPushButton::clicked, this, [this] { collect(); });
+    connect(focus_, &QComboBox::currentTextChanged, this, [this](const QString &t) {
+        applyFocus();
+        QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+            .setValue(QStringLiteral("health/evidenceFocus"), t.trimmed());
+    });
+    connect(clearFocus, &QPushButton::clicked, this, [this] { focus_->setEditText(QString()); });
+    focus_->setEditText(QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"))
+                            .value(QStringLiteral("health/evidenceFocus")).toString());
+}
+
+void HealthEvidencePage::applyFocus() {
+    const QString filter = incidentfocus::filterFor(focus_->currentText());
+    for (auto *v : views_) v->setFilterText(filter);
+    status_->setToolTip(filter.isEmpty() ? QString() : tr("Reports filtered by the incident focus \"%1\".").arg(filter));
 }
 
 void HealthEvidencePage::collect() {
@@ -69,6 +100,17 @@ void HealthEvidencePage::display(const QJsonObject &r) {
     status_->setText(tr("Boot %1 · %2 classified event(s) read (the newest 300 at most).%3")
                          .arg(r.value(QStringLiteral("boot_id")).toString().left(8)).arg(r.value(QStringLiteral("event_count")).toInt())
                          .arg(err.isEmpty() ? QString() : tr(" AER sample not saved: %1").arg(err)));
+    // Suggestions for the focus from what this scan reported; the current focus is kept and re-applied.
+    QString all;
+    for (auto *v : views_) all += v->report().toText() + QLatin1Char('\n');
+    {
+        const QString keep = focus_->currentText();
+        const QSignalBlocker block(focus_);
+        focus_->clear();
+        focus_->addItems(incidentfocus::candidates(all));
+        focus_->setEditText(keep);
+    }
+    applyFocus();
     for (int i = 0; i < 5; ++i) {
         const diag::Level l = views_[i]->report().verdict();
         tabs_->setTabText(i, tabs_->tabText(i).section(QStringLiteral(" ●"), 0, 0) + (l >= diag::Level::Review ? QStringLiteral(" ●") : QString()));

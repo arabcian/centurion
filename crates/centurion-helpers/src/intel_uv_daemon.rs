@@ -324,6 +324,34 @@ fn fully_applied(v: &Value) -> bool {
     v["ok"] == true && v["results"].as_array().is_some_and(|rs| rs.iter().all(|r| r["ok"] == true))
 }
 
+/// Context-transition journal: the last full applies (boot, power-source switch, resume, scene) with each
+/// field's read-back result, readable by the GUI (Intel Undervolt → Context transitions).
+pub const TRANSITIONS_FILE: &str = "/run/centurion/intel-uv-transitions.json";
+const TRANSITIONS_KEPT: usize = 20;
+
+/// One journal entry. `intel_uv::apply` reads every written field back; a field that the firmware refused
+/// (lock bit, MSR writes blocked) carries its reason, and `locked` marks it so the GUI can say so plainly.
+pub fn transition_entry(t: u64, event: &str, source: &str, v: &Value) -> Value {
+    let fields: Vec<Value> = v["results"].as_array().into_iter().flatten().map(|r| {
+        let msg = r["message"].as_str().unwrap_or("");
+        let lower = msg.to_ascii_lowercase();
+        json!({"what": r["what"], "ok": r["ok"] == true, "message": msg,
+               "locked": r["ok"] != true && (lower.contains("locked") || lower.contains("lockdown") || lower.contains("blocked"))})
+    }).collect();
+    let mut e = json!({"t": t, "event": event, "source": source, "ok": fully_applied(v), "fields": fields});
+    if let Some(err) = v["error"].as_str() { e["error"] = json!(err); }
+    e
+}
+
+fn record_transition(journal: &mut Vec<Value>, event: &str, source: &str, v: &Value) {
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    journal.push(transition_entry(t, event, source, v));
+    if journal.len() > TRANSITIONS_KEPT { journal.remove(0); }
+    if crate::secure_dir("/run/centurion").is_ok() {
+        let _ = crate::write_root_file(TRANSITIONS_FILE, json!({"version": 1, "entries": journal}).to_string().as_bytes());
+    }
+}
+
 fn report(tag: &str, v: &Value, periodic: bool) {
     use std::sync::Mutex;
     static SEEN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
@@ -383,6 +411,8 @@ pub fn run_daemon() -> i32 {
     let mut hold = load_hold();
     let mut hold_live = true;  // the held profile is in the hardware (false after a resume)
     let mut alarm_saved: Option<u64> = None;  // MSR_PKG_POWER_LIMIT from before the alarm (Some = active)
+    let mut journal: Vec<Value> = Vec::new();
+    let mut why = "boot";  // what caused the next full apply (journal)
     eprintln!("centurion-intel-uv: daemon started ({}{})", if cfg.is_some() { "config loaded" } else { "no config yet" },
               if hold.is_some() { ", a scene holds the CPU profile" } else { "" });
 
@@ -408,7 +438,7 @@ pub fn run_daemon() -> i32 {
             }
         }
         let s = suspended_s();
-        if s - slept > 1.0 { eprintln!("centurion-intel-uv: resume detected, re-applying"); applied = None; hold_live = false; }
+        if s - slept > 1.0 { eprintln!("centurion-intel-uv: resume detected, re-applying"); applied = None; hold_live = false; why = "resume"; }
         slept = s;
 
         let interval = cfg.as_ref().map(|c| c.interval_ms).unwrap_or(5000);
@@ -420,6 +450,8 @@ pub fn run_daemon() -> i32 {
                 if !hold_live {
                     let result = intel_uv::apply(p);
                     report("SCENE", &result, true);
+                    record_transition(&mut journal, if why == "resume" { "resume" } else { "scene" }, if ac { "AC" } else { "BATTERY" }, &result);
+                    why = "scene";
                     hold_live = fully_applied(&result);
                 } else if reapply {
                     let part = intel_uv::periodic_part(p);
@@ -436,10 +468,12 @@ pub fn run_daemon() -> i32 {
             let src = if ac { "AC" } else { "BATTERY" };
             match c.for_source(ac) {
                 Some(_) if applied != Some(ac) => {
-                    if applied.is_some() { eprintln!("centurion-intel-uv: power source → {src}"); }
+                    if applied.is_some() { eprintln!("centurion-intel-uv: power source → {src}"); if why != "resume" { why = "power source"; } }
                     if let Some(full) = c.full_apply(ac) {
                         let result = intel_uv::apply(&full);
                         report(src, &result, true);
+                        record_transition(&mut journal, why, src, &result);
+                        why = "power source";
                         if fully_applied(&result) { applied = Some(ac); }
                     } else { applied = Some(ac); }
                 }
@@ -526,6 +560,23 @@ pub fn apply_boot() -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transition_entry_marks_firmware_locks() {
+        let v = serde_json::json!({"ok": true, "results": [
+            {"what": "core", "ok": true, "message": "-80 mV"},
+            {"what": "pl1", "ok": false, "message": "MSR_PKG_POWER_LIMIT is locked by firmware (bit 63)"},
+            {"what": "cache", "ok": false, "message": "readback -50 mV ≠ requested -80 mV"}]});
+        let e = super::transition_entry(7, "resume", "BATTERY", &v);
+        assert_eq!(e["event"], "resume");
+        assert_eq!(e["ok"], false);
+        assert_eq!(e["fields"][0]["locked"], false);
+        assert_eq!(e["fields"][1]["locked"], true);
+        assert_eq!(e["fields"][2]["locked"], false);
+        let bad = super::transition_entry(1, "boot", "AC", &serde_json::json!({"ok": false, "error": "not an Intel CPU"}));
+        assert_eq!(bad["error"], "not an Intel CPU");
+        assert_eq!(bad["fields"].as_array().unwrap().len(), 0);
+    }
+
     use super::*;
 
     #[test]

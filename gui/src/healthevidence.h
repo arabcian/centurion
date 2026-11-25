@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class DiagReportView;
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QTabWidget;
@@ -18,6 +19,8 @@ public:
 private:
     void collect();
     void display(const QJsonObject &reply);
+    void applyFocus();
+    QComboBox *focus_ = nullptr;
     QTabWidget *tabs_ = nullptr;
     QPushButton *scan_ = nullptr;
     QLabel *status_ = nullptr;

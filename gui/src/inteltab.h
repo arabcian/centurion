@@ -40,6 +40,7 @@ protected:
     void hideEvent(QHideEvent *e) override;
 
 private:
+    void showTransitions();
     struct Row { QString key; QCheckBox *on; QDoubleSpinBox *val; QLabel *cur; };
     struct PlRow { QCheckBox *on; QDoubleSpinBox *w, *s; QLabel *cur; };
 

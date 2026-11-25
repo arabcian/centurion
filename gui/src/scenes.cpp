@@ -487,7 +487,7 @@ SceneEngine::SceneEngine(MainWindow *win) : QObject(win), win_(win), auto_(loadA
         if (!auto_.enabled || auto_.paused) return;
         Q_EMIT finished(QString(), true, {QStringLiteral("power source is stable again — applying the scene for it")});
         if (const auto now = onAc()) ac_ = now;
-        if (ac_) applyForSource(*ac_);
+        if (ac_) applyForSource(*ac_, QStringLiteral("power source stable again"));
     });
     ac_ = onAc();
     // No automatic scenes in install.sh's PGO training run (it uses the real
@@ -558,7 +558,7 @@ void SceneEngine::startupApply() {
     // X11 session managers announce logout/shutdown here before the app is
     // killed; SIGTERM/SIGHUP end in aboutToQuit (main.cpp).
     connect(qGuiApp, &QGuiApplication::commitDataRequest, this, [markOk](QSessionManager &) { markOk(); });
-    applyForSource(*ac_);
+    applyForSource(*ac_, QStringLiteral("login"));
 }
 
 bool SceneEngine::setAuto(const Auto &a, QString *err) {
@@ -566,7 +566,7 @@ bool SceneEngine::setAuto(const Auto &a, QString *err) {
     if (!saveAuto(a, err)) return false;
     auto_ = a;
     retuneResume();
-    if (a.enabled && !wasOn && ac_) applyForSource(*ac_);
+    if (a.enabled && !wasOn && ac_) applyForSource(*ac_, QStringLiteral("auto-switch enabled"));
     return true;
 }
 
@@ -580,7 +580,7 @@ bool SceneEngine::setPaused(bool on, QString *err) {
     Q_EMIT finished(QString(), true, {on ? QStringLiteral("scenes paused — no automatic scene changes until resumed")
                                          : QStringLiteral("scenes resumed")});
     // Resuming catches up with the current power source.
-    if (!on && auto_.enabled && ac_) applyForSource(*ac_);
+    if (!on && auto_.enabled && ac_) applyForSource(*ac_, QStringLiteral("scenes resumed"));
     return true;
 }
 
@@ -670,7 +670,7 @@ void SceneEngine::resumePass() {
     if (const auto now = onAc()) {
         if (!ac_ || *now != *ac_) { ac_ = now; candidate_.reset(); debounce_->stop(); Q_EMIT powerSourceChanged(*ac_); }
     }
-    if (ac_) applyForSource(*ac_);
+    if (ac_) applyForSource(*ac_, QStringLiteral("resume from sleep"));
     if (resumePassesLeft_ > 0) resumePass_->start(RESUME_REPASS_MS);
 }
 
@@ -754,7 +754,7 @@ void SceneEngine::pollPower(bool timerTick) {
         calDeferred_ = false;
         if (auto_.enabled && !auto_.paused && ac_) {
             Q_EMIT finished(QString(), true, {QStringLiteral("calibration finished — applying the scene for the power source")});
-            applyForSource(*ac_);
+            applyForSource(*ac_, QStringLiteral("calibration finished"));
         }
     }
     // Safety net for the event-driven suspend detector, on a tick that runs anyway.
@@ -809,7 +809,7 @@ void SceneEngine::commitPowerChange(bool onAc) {
                                                                "(check the charger and cable; a charger weaker than the AC scene's power limits can do this)").arg(flips_.size())});
             // Hold on the conservative side: the battery scene's limits are the ones a marginal charger can sustain,
             // and the machine must not sit in the AC scene while the source is actually the battery.
-            if (activeScene() != auto_.onBattery) applyForSource(false);
+            if (activeScene() != auto_.onBattery) applyForSource(false, QStringLiteral("power source flapping"));
         }
         return;
     }
@@ -838,7 +838,7 @@ void SceneEngine::checkGameEnd() {
         if (gameGoneReads_ < STABLE_READS) return;
         gameGoneReads_ = 0;
         deferred_ = false;
-        if (auto_.enabled && ac_) applyForSource(*ac_);
+        if (auto_.enabled && ac_) applyForSource(*ac_, QStringLiteral("game ended"));
         return;
     }
     // Game scene still set with no game left: give a normal POST time to
@@ -867,7 +867,7 @@ void SceneEngine::checkGameEnd() {
                     [this, target](const privileged::Result &) { if (validName(target) && !auto_.paused) apply(target); }, 120000);
 }
 
-void SceneEngine::applyForSource(bool onAc) {
+void SceneEngine::applyForSource(bool onAc, const QString &why) {
     if (sceneplan::sourceAction(auto_.paused,false,false,true,false,false)==sceneplan::SourceAction::Paused) { deferred_ = false; return; }
     if (sceneplan::sourceAction(false,calibrationHold(),false,true,false,false)==sceneplan::SourceAction::CalibrationDeferred) {
         if (!calDeferred_) Q_EMIT finished(QString(), true, {QStringLiteral("a calibration is measuring — scene switch deferred until it ends")});
@@ -898,11 +898,12 @@ void SceneEngine::applyForSource(bool onAc) {
         return;
     }
     nextAuto_ = true;
-    apply(n);
+    apply(n, QString::fromStdString(sceneapplysummary::trigger(why.toStdString(), onAc ? "on AC" : "on battery")));
 }
 
-void SceneEngine::apply(const QString &name) {
-    if (busy_) { pending_ = name; pendingAuto_ = std::exchange(nextAuto_, false); return; }
+void SceneEngine::apply(const QString &name, const QString &trigger) {
+    if (busy_) { pending_ = name; pendingTrigger_ = trigger; pendingAuto_ = std::exchange(nextAuto_, false); return; }
+    nextTrigger_ = trigger;
     const auto s = load(name);
     if (!s) {
         nextAuto_ = false;
@@ -919,6 +920,7 @@ bool SceneEngine::applyTracked(const QString &name, std::uint64_t cpuLease, std:
     const auto s = load(name);
     if (!s) return false;
     nextAuto_ = false;
+    nextTrigger_ = QStringLiteral("co-search: restore prior scene");
     trackedCpuLease_ = cpuLease;
     trackedDone_ = std::move(done);
     start(*s);
@@ -1129,6 +1131,7 @@ bool SceneEngine::operationActive() const {
 }
 
 void SceneEngine::emitStep(const QString &step, const QString &state, const QString &detail) {
+    summary_.record(step.toStdString(), state.toStdString(), detail.toStdString());
     Q_EMIT transactionState(transactionId_, current_, step, state, detail);
     Q_EMIT stepState(step, state, detail);
 }
@@ -1141,6 +1144,9 @@ void SceneEngine::start(const Scene &s) {
     priorScene_.clear();
     current_ = s.name;
     autoApply_ = std::exchange(nextAuto_, false);
+    trigger_ = std::exchange(nextTrigger_, QString());
+    if (trigger_.isEmpty()) trigger_ = QStringLiteral("manual");
+    summary_ = {};
     expectedProfile_ = s.platformProfile;
     verify_->stop();
     // A new scene cancels the GPU curve an earlier one still has pending (here or in centurion-gamemode).
@@ -1517,11 +1523,16 @@ void SceneEngine::finish() {
     if (tx.open(QIODevice::Append | QIODevice::Text)) {
         QFile bootIdFile(QStringLiteral("/proc/sys/kernel/random/boot_id"));
         const QString currentBootId = bootIdFile.open(QIODevice::ReadOnly) ? QString::fromUtf8(bootIdFile.readAll()).trimmed() : QString();
+        QJsonArray componentsJson;
+        for (const auto &part : summary_.items())
+            componentsJson.append(QJsonObject{{"step", QString::fromStdString(part.step)}, {"state", QString::fromStdString(part.state)},
+                                              {"detail", QString::fromStdString(part.detail).left(512)}});
         const QJsonObject record{{"boot", currentBootId}, {"t", double(QDateTime::currentSecsSinceEpoch())}, {"scene", current_},
                                  {"previous", priorScene_}, {"ok", ok_}, {"rolled_back", false},
                                  {"transaction_id", transactionId_}, {"outcome", lastOutcome_},
                                  {"partial", !ok_ || incomplete_}, {"game_took_over", gameOwns},
-                                 {"steps", QJsonArray::fromStringList(log_)}};
+                                 {"steps", QJsonArray::fromStringList(log_)},
+                                 {"trigger", trigger_}, {"components", componentsJson}};
         tx.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
     }
     const QString outcomeReceipt = lastOutcome_;
@@ -1541,7 +1552,7 @@ void SceneEngine::finish() {
         const QString n = std::exchange(pending_, QString());
         nextAuto_ = std::exchange(pendingAuto_, false);
         if (nextAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { nextAuto_ = false; deferred_ = true; return; }
-        apply(n);
+        apply(n, std::exchange(pendingTrigger_, QString()));
         return;
     }
     if (ok_ && published) armVerify();
@@ -1558,6 +1569,7 @@ void SceneEngine::gpuDeferredFire() {
     auto report = [this, name, scene, id](bool ok, const QString &m) {
         const QString state = !ok ? QStringLiteral("deferred_failed") : m == QStringLiteral("applied") ? QStringLiteral("deferred_returned_unverified") : QStringLiteral("deferred_skipped");
         const bool published = finishGpuPending(id, !ok || state == QStringLiteral("deferred_skipped"));
+        if (transactionId_ == id) summary_.record("GPU curve", state.toStdString(), m.toStdString());
         Q_EMIT transactionState(id, scene, QStringLiteral("GPU curve"), state, m);
         if (transactionId_ != id || !published) return;
         Q_EMIT finished(QString(), ok, {(ok ? QString() : QStringLiteral("✗ "))
@@ -1592,5 +1604,5 @@ void SceneEngine::verifyPass() {
     Q_EMIT finished(QString(), true, {QStringLiteral("the firmware changed the power profile to %1 after the switch — applying '%2' again")
                                           .arg(HomeTab::profileLabel(*cur), current_)});
     nextAuto_ = false;  // one retry only: it is not verified again
-    apply(current_);
+    apply(current_, QStringLiteral("verify: firmware changed the power profile"));
 }

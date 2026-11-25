@@ -8,6 +8,7 @@
 #include "abverify.h"
 #include "insights.h"
 #include "optimizetab.h"
+#include "abcoverage.h"
 #include "profilediff.h"
 #include "frametime.h"
 #include "frametimepair.h"
@@ -778,7 +779,10 @@ void OptimizeTab::buildUi() {
             const auto index=items.first()->data(Qt::UserRole).toLongLong();
             if(index<0 || index>=verification.size()) return;
             const auto r=verification.at(index).toObject();
-            QStringList lines{tr("Recorded context: %1").arg(profilediff::display(contexts.value(r.value("cx").toString()))),
+            QStringList lines{tr("Coverage:")};
+            for (const auto &l : abcoverage::lines(abcoverage::of(r))) lines << QStringLiteral("  ") + l;
+            lines << tr("Recorded context: %1").arg(profilediff::display(contexts.value(r.value("cx").toString())));
+            lines += QStringList{
                 tr("Nominal 95% interval: %1").arg(profilediff::display(r.value("ci95"))),
                 tr("Skipped settings: %1").arg(profilediff::display(r.value("skipped"))),
                 tr("OOM counts: %1").arg(profilediff::display(r.value("oom_kills"))),
@@ -3531,7 +3535,11 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
     table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     for (int c = 3; c < table->columnCount() - 1; ++c) table->horizontalHeader()->setSectionResizeMode(c, QHeaderView::ResizeToContents);
     table->horizontalHeader()->setSectionResizeMode(table->columnCount() - 1, QHeaderView::Stretch);
-    auto add = [table, rich, &dec, &scores](const QString &key, const QString &g, const QString &name, const QString &val, const QString &reason, bool changes) {
+    // What-if: the user's current weights for this goal against the weights this report was computed with.
+    const QJsonObject reportWeights = d.value(QStringLiteral("weights")).toObject();
+    QJsonObject nowWeights = reportWeights;
+    if (const QJsonObject w = autotuneWeights(goal); !w.isEmpty()) for (auto it = w.begin(); it != w.end(); ++it) nowWeights[it.key()] = it.value();
+    auto add = [table, rich, &dec, &scores, reportWeights, nowWeights](const QString &key, const QString &g, const QString &name, const QString &val, const QString &reason, bool changes) {
         const int r = table->rowCount();
         table->insertRow(r);
         auto *a = new QTableWidgetItem(g), *b = new QTableWidgetItem(name), *c = new QTableWidgetItem(val), *e = new QTableWidgetItem(reason);
@@ -3545,8 +3553,27 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
         const QJsonObject o = dec.value(key);
         auto *s = new QTableWidgetItem(autotunereport::badge(o.value(QStringLiteral("source")).toString()));
         auto *k = new QTableWidgetItem(autotunereport::confidence(o));
-        const QString trace = autotunereport::scoreTrace(scores.value(key).toArray());
-        for (auto *it : {s, k}) it->setToolTip(trace.isEmpty() ? reason : QStringLiteral("Scores (value → U): ") + trace);
+        const QJsonArray traceArr = scores.value(key).toArray();
+        const QString trace = autotunereport::scoreTrace(traceArr);
+        QString tip = trace.isEmpty() ? reason : QStringLiteral("Scores (value → U): ") + trace;
+        // One row per candidate: what it does to latency, throughput and power (before weighting).
+        for (const auto &cv : traceArr) {
+            const QJsonObject co = cv.toObject();
+            if (const QString t = autotunereport::tradeoff(co); !t.isEmpty()) {
+                const QJsonValue v = co.value(QStringLiteral("value"));
+                tip += QStringLiteral("\n  %1: %2").arg(v.isString() ? v.toString() : QString::number(v.toDouble(), 'g', 12), t);
+            }
+        }
+        if (nowWeights != reportWeights) {
+            const int w = autotunereport::winnerUnder(traceArr, nowWeights);
+            const QString by = autotunereport::decidingObjective(traceArr, reportWeights, nowWeights);
+            if (w >= 0 && !by.isEmpty()) {
+                const QJsonValue v = traceArr.at(w).toObject().value(QStringLiteral("value"));
+                tip += QStringLiteral("\nWith your current weights: %1 would win (decided by the %2 weight).")
+                           .arg(v.isString() ? v.toString() : QString::number(v.toDouble(), 'g', 12), by);
+            }
+        }
+        for (auto *it : {s, k}) it->setToolTip(tip);
         table->setItem(r, 3, s); table->setItem(r, 4, k); table->setItem(r, 5, e);
     };
     int changing = 0;
@@ -4500,7 +4527,13 @@ void OptimizeTab::showFrametimePair() {
         const auto &a=comparison->a,&b=comparison->b;
         const auto metric=[&](const QString &label,double x,double y,int i){add(label,QString::number(x,'f',3),QString::number(y,'f',3),QString::number(comparison->delta[i],'f',2));};
         metric(tr("Mean frametime (ms)"),a.mean,b.mean,0);metric(tr("P50 (ms)"),a.p50,b.p50,1);metric(tr("P95 (ms)"),a.p95,b.p95,2);metric(tr("P99 (ms)"),a.p99,b.p99,3);metric(tr("FPS (1000 / mean ms)"),a.fps,b.fps,4);
-        status->setText(tr("Descriptive differences only. Negative frametime and positive FPS changes indicate lower observed frame times. Repeated controlled runs are required to assess variability or causation. No data has been written to calibration."));
+        QString verdict;
+        switch(frametimepair::direction(*comparison)){
+        case frametimepair::Direction::MeanBetterTailWorse: verdict=tr("Average frame time improved (%1 %), but P99 got worse (%2 %): more stutter despite the higher average speed. ").arg(comparison->delta[0],0,'f',1).arg(comparison->delta[3],0,'f',1); break;
+        case frametimepair::Direction::MeanWorseTailBetter: verdict=tr("Average frame time got worse (%1 %), but P99 improved (%2 %): fewer stutters at a lower average speed. ").arg(comparison->delta[0],0,'f',1).arg(comparison->delta[3],0,'f',1); break;
+        default: break;
+        }
+        status->setText(verdict+tr("Descriptive differences only. Negative frametime and positive FPS changes indicate lower observed frame times. Repeated controlled runs are required to assess variability or causation. No data has been written to calibration."));
     };
     for(int i=0;i<2;++i){auto *row=new QHBoxLayout;auto *pick=new QPushButton(i==0?tr("Select Reference A…"):tr("Select Candidate B…"));descriptions[i]=new QLabel(tr("No log selected"));descriptions[i]->setTextFormat(Qt::PlainText);descriptions[i]->setWordWrap(true);row->addWidget(pick);row->addWidget(descriptions[i],1);layout->addLayout(row);
         connect(pick,&QPushButton::clicked,&dlg,[&,i]{const auto path=QFileDialog::getOpenFileName(&dlg,tr("Open frametime log"),QDir::homePath(),tr("Frametime logs (*.csv *.txt);;All files (*)"));if(path.isEmpty())return;

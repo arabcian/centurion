@@ -108,6 +108,7 @@ fn worker(j: Job, ks: &[Kernel], refs: &[u64], sh: &Shared, abort: &AtomicBool) 
     let mut n = 0u64;
     let mut rng = (j.cpu as u64) << 32 ^ j.start.duration_since(j.t0).as_nanos() as u64;
     let halted = || STOP.load(Ordering::Relaxed) || abort.load(Ordering::Relaxed);
+    sh.idle_ms.lock().unwrap().remove(&j.cpu);
     // The wake kernel has its own reference block after the steady kernels.
     let wake = ks.len();
     let mut run = |k: usize, n: &mut u64| -> bool {
@@ -136,6 +137,7 @@ fn worker(j: Job, ks: &[Kernel], refs: &[u64], sh: &Shared, abort: &AtomicBool) 
             while !halted() && Instant::now() < end {
                 let (idle, busy) = wake_pulse(&mut rng, long_idle);
                 long_idle = !long_idle;
+                sh.idle_ms.lock().unwrap().insert(j.cpu, idle.as_millis() as u64);
                 // Sleep once so cancellation polling does not wake this core mid-pause.
                 std::thread::sleep(idle.min(end.saturating_duration_since(Instant::now())));
                 let burst_end = end.min(Instant::now() + busy);
@@ -356,6 +358,8 @@ mod tests {
         assert_eq!(wrong.len(), 1);
         assert_eq!((wrong[0].1, wrong[0].2), (cpu, index as u64));
         assert_eq!(wrong[0].3 ^ wrong[0].4, 1);
+        // The wait before the failing wake burst is kept for the error line.
+        assert!(sh.idle_ms.lock().unwrap().contains_key(&cpu));
     }
 
     #[test]

@@ -34,6 +34,7 @@ Q_SIGNALS:
     void alert(const QString &title, const QString &message);
 
 private:
+    double tempMin_ = 1e9, tempMax_ = -1e9;  // CPU temperature range seen during the running test
     void start();
     void launch();
     void finished(int exitCode, bool crashed);

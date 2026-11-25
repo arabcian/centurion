@@ -270,6 +270,10 @@ fn read_regular(path: &Path, cap: u64) -> Option<String> {
 pub struct Fx { pub lat: f64, pub thr: f64, pub pwr: f64, pub mem: f64, pub risk: f64 }
 
 impl Fx {
+    /// Per-objective effects for the report's score trace (GUI: trade-off row and weight what-if).
+    fn to_json(self) -> Value {
+        json!({"latency": round2(self.lat), "throughput": round2(self.thr), "power": round2(self.pwr), "footprint": round2(self.mem), "stability": round2(self.risk)})
+    }
     fn u(&self, w: &Weights) -> f64 {
         w.latency * self.lat + w.throughput * self.thr + w.power * self.pwr + w.footprint * self.mem + w.stability * self.risk
     }
@@ -1030,11 +1034,12 @@ impl<'a> Rules<'a> {
     /// Index of the winning alternative, None = the reference stays.
     fn pick(&mut self, key: &str, reference: &Cand, alts: &[Cand]) -> Option<usize> {
         let base = self.u(reference);
-        let mut trace = vec![json!({"value": if reference.value.is_null() { json!("(leave)") } else { reference.value.clone() }, "u": round2(base)})];
+        let mut trace = vec![json!({"value": if reference.value.is_null() { json!("(leave)") } else { reference.value.clone() }, "u": round2(base),
+                                    "fx": reference.fx.to_json(), "modesty": round2(MODESTY * reference.dev)})];
         let mut best: Option<(f64, usize)> = None;
         for (i, c) in alts.iter().enumerate() {
             let u = self.u(c);
-            trace.push(json!({"value": c.value, "u": round2(u)}));
+            trace.push(json!({"value": c.value, "u": round2(u), "fx": c.fx.to_json(), "modesty": round2(MODESTY * c.dev)}));
             if best.map_or(true, |(b, _)| u > b) { best = Some((u, i)); }
         }
         self.scores.insert(key.to_owned(), Value::Array(trace));

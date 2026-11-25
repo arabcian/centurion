@@ -79,6 +79,7 @@ private:
     QTimer *liveTimer_, *trialTimer_;
     int trialLeft_ = 0;
     bool busy_ = false;
+    bool reverting_ = false;  // the running apply is a trial revert: verify by read-back
     bool dpmPending_ = false; // at most one read worker, including after dialog closure
 
     // Form (null when the card lacks the control)

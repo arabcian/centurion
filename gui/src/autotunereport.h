@@ -17,4 +17,17 @@ QString confidence(const QJsonObject &decision);
 QHash<QString, QString> changedSinceLast(const QJsonObject &report);
 // Score trace "madvise 0.00 → always -0.30" (value → U).
 QString scoreTrace(const QJsonArray &trace);
+
+// Trade-off row of one candidate in a score trace: "latency +0.10 · throughput −0.02 · power +0.05".
+// Empty for traces from before per-objective effects were recorded.
+QString tradeoff(const QJsonObject &candidate);
+
+// What-if for one knob: the trace's winner under `weights` (keys as Weights::KEYS: latency, throughput, power,
+// footprint, stability). U = Σ weight × effect − modesty, the helper's own formula. Index into `trace`
+// (0 = reference), -1 without per-objective effects.
+int winnerUnder(const QJsonArray &trace, const QJsonObject &weights);
+
+// Why the winner changes between two weight sets: the objective whose weight change moved the
+// new winner's lead over the old winner the most ("power"); empty when the winner stays.
+QString decidingObjective(const QJsonArray &trace, const QJsonObject &before, const QJsonObject &after);
 }

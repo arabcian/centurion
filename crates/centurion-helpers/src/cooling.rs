@@ -121,6 +121,12 @@ pub fn summarise(samples: &[Sample], start_temp: f64) -> Option<Metrics> {
     })
 }
 
+/// Seconds the die spent within `PINNED_MARGIN_C` of the firmware temperature target: the part of the run the
+/// firmware was likely holding the clock back. Sample spacing is taken from the timestamps (last sample: none).
+pub fn secs_at_limit(samples: &[Sample], limit_c: f64) -> f64 {
+    samples.windows(2).filter(|w| w[0].temp >= limit_c - PINNED_MARGIN_C).map(|w| (w[1].t - w[0].t).max(0.0)).sum()
+}
+
 /// Everything a run's meaning depends on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Context {
@@ -423,6 +429,10 @@ mod tests {
         assert_eq!(r.fan_rpm, Some(3000.0));
         assert_eq!(r.mhz, None);
         assert!(summarise(&[], 45.0).is_none());
+        let at = |t: f64, temp: f64| Sample { t, temp, fan: None, fans: vec![], mhz: None };
+        let s = [at(0.0, 80.0), at(1.0, 94.0), at(2.0, 95.0), at(4.0, 90.0), at(5.0, 96.0)];
+        assert_eq!(secs_at_limit(&s, 95.0), 3.0);
+        assert_eq!(secs_at_limit(&[], 95.0), 0.0);
     }
 
     #[test]

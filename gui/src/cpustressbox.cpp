@@ -1,4 +1,5 @@
 #include "cpustressbox.h"
+#include "stresscoverage.h"
 
 #include "curvepage.h"
 #include "optimizetab.h"
@@ -288,6 +289,11 @@ QJsonObject CpuStressBox::record(const QString &verdict) const {
                   {"transitions", plan_.args.contains(QStringLiteral("--transitions"))}, {"preset", presetHeld_},
                   {"vendor", sysinfo::isAmd() ? "amd" : sysinfo::isIntel() ? "intel" : "other"},
                   {"curve", curve_}, {"cpu", run_state_.cpu}};
+    // Coverage of the run (stresscoverage): CPUs under test and the temperature range seen.
+    QJsonArray cpus;
+    for (int c : run_state_.cpus) cpus.append(c);
+    if (!cpus.isEmpty()) o[QStringLiteral("cpus")] = cpus;
+    if (tempMin_ <= tempMax_) { o[QStringLiteral("temp_min")] = tempMin_; o[QStringLiteral("temp_max")] = tempMax_; }
     if (!profileHash_.isEmpty()) o[QStringLiteral("profile_hash")] = profileHash_;
     return o;
 }
@@ -301,6 +307,7 @@ void CpuStressBox::launch() {
         if (f.open(QIODevice::ReadOnly) && f.size() < 256 * 1024) profileHash_ = cpustress::profileHash(f.readAll());
     }
     run_state_ = {};
+    tempMin_ = 1e9; tempMax_ = -1e9;
     partial_.clear();
     faults_ = 0;
     faultCpus_.clear();
@@ -334,6 +341,7 @@ void CpuStressBox::tick() {
     if (!proc_) return;
     const qint64 s = elapsed_.elapsed() / 1000;
     if (s >= totalSeconds() + STUCK_GRACE_S) proc_->kill();  // recorded as not finished
+    if (const auto t = sysinfo::cpuTempC()) { tempMin_ = std::min(tempMin_, *t); tempMax_ = std::max(tempMax_, *t); }
     QString text = runMode_ == cpustress::Mode::PerCore
         ? tr("Per-core test: %1 of about %2 min, %3 of %4 cores done").arg(s / 60).arg(totalSeconds() / 60)
               .arg(run_state_.done.size()).arg(info_.cores.size() * cycles_n_)
@@ -447,6 +455,9 @@ void CpuStressBox::fill() {
             badNames.isEmpty() ? QStringLiteral("-") : tr("CPU %1").arg(badNames.join(QStringLiteral(", "))),
             o.value(QStringLiteral("curve")).toString()});
         if (!bad.isEmpty()) it->setToolTip(5, cpuList(bad));
+        // What a pass covered; a short scan is marked so it is not read as long verification.
+        it->setToolTip(1, stresscoverage::describe(o));
+        if (stresscoverage::kind(o) == stresscoverage::Kind::ShortScan) it->setText(1, it->text(1) + QStringLiteral(" · ") + tr("short scan"));
         const char *color = v == QLatin1String("pass") ? theme::OK : (v == QLatin1String("fail") || v == QLatin1String("crashed")) ? theme::DANGER : theme::MUTED;
         it->setForeground(4, QColor(QLatin1String(color)));
         results_->addTopLevelItem(it);

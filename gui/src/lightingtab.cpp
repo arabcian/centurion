@@ -1,4 +1,8 @@
 #include "lightingtab.h"
+#include "spectrumzone4.h"
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QMessageBox>
 #include "lightingpreview.h"
 #include <QHideEvent>
 #include "theme.h"
@@ -442,6 +446,11 @@ void LightingTab::buildUi() {
     paintRow->addWidget(paintColor_);
     auto *savedColors = new QPushButton(tr("Saved Colors…"));
     paintRow->addWidget(savedColors);
+    auto *zonePreview = new QPushButton(tr("4-zone preview…"));
+    zonePreview->setToolTip(tr("How this profile would look on a 4-zone RGB keyboard: the static key colours averaged over four "
+                               "column bands. Animated effects and random colours cannot be carried over and are counted."));
+    paintRow->addWidget(zonePreview);
+    connect(zonePreview, &QPushButton::clicked, this, &LightingTab::showZone4Preview);
     paintRow->addWidget(paintBtn);
     paintRow->addWidget(offBtn);
     paintRow->addStretch(1);
@@ -1149,4 +1158,38 @@ void LightingTab::refreshBudget() {
     revert_->setEnabled(ready_ && !busy_ && dirty());
     undo_->setEnabled(ready_ && !busy_ && editHistoryPos_ > 0);
     redo_->setEnabled(ready_ && !busy_ && editHistoryPos_ + 1 < editHistory_.size());
+}
+
+void LightingTab::showZone4Preview() {
+    using namespace spectrumzone4;
+    int dropped = 0;
+    for (const auto &e : work_) if (e.type != lighting::Static || e.colorMode != lighting::ColorList || e.colors.isEmpty()) ++dropped;
+    std::vector<Key> keys;
+    const int cols = std::max(1, map_.cols);
+    for (const auto &span : map_.spans()) {
+        if (map_.zoneOf(span.code) != lighting::Zone::Keyboard) continue;
+        std::optional<Rgb> color;
+        for (const auto &e : work_)  // later effects paint over earlier ones, as on the keyboard
+            if (e.type == lighting::Static && e.colorMode == lighting::ColorList && !e.colors.isEmpty()
+                && (e.allKeys() || e.keys.contains(span.code)))
+                color = Rgb{e.colors.first().red(), e.colors.first().green(), e.colors.first().blue()};
+        keys.push_back({(span.col + span.width / 2.0) / cols, color});
+    }
+    const auto r = convert(keys, dropped);
+    QStringList cells, hex;
+    for (int i = 0; i < 4; ++i) {
+        const QString name = r.zones[i] ? QColor(r.zones[i]->r, r.zones[i]->g, r.zones[i]->b).name() : QString();
+        hex << (name.isEmpty() ? QStringLiteral("-") : name);
+        cells << (name.isEmpty() ? tr("<td>Zone %1<br>(no static colour)</td>").arg(i + 1)
+                                 : QStringLiteral("<td style='background:%1;padding:12px'>&nbsp;</td><td>Zone %2<br>%1</td>").arg(name).arg(i + 1));
+    }
+    QMessageBox box(this);
+    box.setWindowTitle(tr("4-zone preview"));
+    box.setText(QStringLiteral("<table><tr>%1</tr></table><br>").arg(cells.join(QString()))
+                + tr("%1 keys coloured, %2 keys without a static colour, %3 effect(s) that a 4-zone keyboard cannot show.")
+                      .arg(r.keysUsed).arg(r.keysWithoutColor).arg(r.effectsDropped));
+    auto *copy = box.addButton(tr("Copy colours"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Close);
+    box.exec();
+    if (box.clickedButton() == copy) QGuiApplication::clipboard()->setText(hex.join(QLatin1Char(' ')));
 }

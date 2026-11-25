@@ -86,6 +86,8 @@ private:
     QLabel *context_, *live_, *verdict_;
     QProgressBar *bar_;
     QPushButton *run_, *cancel_, *baseline_, *forget_, *fanMax_;
+    QPushButton *compare_ = nullptr;
+    void compareSelected();
     QComboBox *length_;
     QSpinBox *remindDays_;
     LineChart *trend_;

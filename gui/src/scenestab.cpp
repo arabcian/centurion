@@ -498,6 +498,12 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     status_ = new QLabel;
     status_->setWordWrap(true);
     right->addWidget(status_);
+    // Last apply, per component: a refused GPU step does not hide the fan and CPU steps that went through.
+    lastApply_ = new QLabel;
+    lastApply_->setWordWrap(true);
+    lastApply_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    lastApply_->setVisible(false);
+    right->addWidget(lastApply_);
     right->addStretch(1);
     if (theme::experimentalEnabled()) {
         auto *work = new QSplitter(Qt::Horizontal);
@@ -587,6 +593,10 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         }
         reloadList(loaded_.name);  // marks the active scene
         updatePowerLabel();
+        updateLastApply(n);
+    });
+    connect(eng_, &SceneEngine::transactionState, this, [this](const QString &, const QString &scene, const QString &step, const QString &) {
+        if (step == QStringLiteral("GPU curve") && !eng_->busy()) updateLastApply(scene);  // deferred GPU step settles later
     });
     connect(eng_, &SceneEngine::powerSourceChanged, this, &ScenesTab::updatePowerLabel);
     connect(eng_, &SceneEngine::activeScenePartialChanged, this, [this] { reloadList(loaded_.name); });
@@ -594,6 +604,9 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         reloadList(loaded_.name);  // marks the active scene
         updatePowerLabel();
         setStatus((game ? "Game scene '" : "Scene '") + n + "' is now active (switched by centurion-gamemode).", theme::FG_DIM);
+        lastApply_->setText(tr("<b>Last apply:</b> %1<br>Trigger: %2 (centurion-gamemode; per-component results are in its own log)")
+                                .arg(n.toHtmlEscaped(), game ? tr("game start/exit") : tr("external")));
+        lastApply_->setVisible(true);
     });
 
     fillOptions();
@@ -1149,4 +1162,28 @@ void ScenesTab::updatePowerLabel() {
 void ScenesTab::setStatus(const QString &msg, const char *color) {
     status_->setText(msg);
     theme::setLiveSheet(status_, [color] { return QStringLiteral("color:%1; background:transparent;").arg(color ? color : theme::FG_DIM); });
+}
+
+void ScenesTab::updateLastApply(const QString &scene) {
+    using namespace sceneapplysummary;
+    const auto &sum = eng_->lastComponents();
+    QStringList rows;
+    for (const auto &c : sum.items()) {
+        const auto b = bucket(c.state);
+        const char *color = b == Bucket::Applied ? theme::OK : b == Bucket::Failed ? theme::DANGER : theme::WARN;
+        const QString mark = b == Bucket::Applied ? QStringLiteral("✓") : b == Bucket::Failed ? QStringLiteral("✗")
+                           : b == Bucket::Deferred ? QStringLiteral("⏳") : QStringLiteral("–");
+        QString detail = QString::fromStdString(c.detail);
+        if (detail.size() > 160) detail = detail.left(160) + QStringLiteral("…");
+        rows << QStringLiteral("<span style='color:%1'>%2</span> %3 — %4%5")
+                    .arg(QLatin1String(color), mark, QString::fromStdString(c.step).toHtmlEscaped(),
+                         scenes::outcomeLabel(QString::fromStdString(c.state)).toHtmlEscaped(),
+                         detail.isEmpty() ? QString() : QStringLiteral(": ") + detail.toHtmlEscaped());
+    }
+    QString head = tr("<b>Last apply:</b> %1 · Trigger: %2").arg(scene.toHtmlEscaped(), eng_->lastTrigger().toHtmlEscaped());
+    if (sum.mixed())
+        head += QStringLiteral("<br>") + tr("%1 component(s) applied, %2 failed — the applied ones stay in effect.")
+                                             .arg(sum.count(Bucket::Applied)).arg(sum.count(Bucket::Failed));
+    lastApply_->setText(head + (rows.isEmpty() ? QString() : QStringLiteral("<br>") + rows.join(QStringLiteral("<br>"))));
+    lastApply_->setVisible(true);
 }

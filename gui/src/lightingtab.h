@@ -108,6 +108,7 @@ private:
     void showStatus(const QString &msg, const char *color = nullptr);
     void showBanner(const QString &msg, bool offerElevate);
     void applyState(const QJsonObject &j);
+    void showZone4Preview();
     void sendSet(const QJsonObject &fields, const QString &what);
     void write();
     void factoryReset();

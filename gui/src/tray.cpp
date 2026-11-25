@@ -301,7 +301,7 @@ void Tray::rebuild() {
             a->setChecked(n == eng->active());
             connect(a, &QAction::triggered, this, [this, eng, n] {
                 if (!claimCooldown()) return;
-                eng->apply(n);
+                eng->apply(n, QStringLiteral("tray"));
                 notify(tr("Scene"), tr("Applying '%1'…").arg(n));
             });
         }

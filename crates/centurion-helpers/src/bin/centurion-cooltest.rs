@@ -134,6 +134,7 @@ fn run(seconds: u64) -> Value {
     let mut r = cool::run_json(now_epoch(), &ctx, &m, noisy, seconds);
     r["other_busy_cpus"] = json!((busy * 10.0).round() / 10.0);
     r["fans"] = json!(cool::fan_means(cool::steady_window(&samples)));
+    r["limit_secs"] = json!((cool::secs_at_limit(&samples, limit) * 10.0).round() / 10.0);
     cool::add_run(&mut runs, r.clone());
     if let Err(e) = cool::save_runs(&path, &runs) {
         return json!({"ok": false, "error": format!("the test finished but its result could not be saved: {e}")});

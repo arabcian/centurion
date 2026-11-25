@@ -37,6 +37,7 @@ jobs:
       - run: python3 gui/tests/workspacefields_native_test.py
       - run: python3 gui/tests/calibrationmath_native_test.py
       - run: python3 gui/tests/abverify_native_test.py
+      - run: python3 gui/tests/report_features_native_test.py
       - run: python3 gui/tests/operationreceipt_native_test.py
       - run: python3 gui/tests/operationlease_native_test.py
       - run: python3 gui/tests/simulationguard_native_test.py

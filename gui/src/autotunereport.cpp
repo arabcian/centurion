@@ -2,6 +2,7 @@
 
 #include <QStringList>
 #include <cmath>
+#include <optional>
 
 namespace autotunereport {
 
@@ -58,4 +59,53 @@ QString scoreTrace(const QJsonArray &trace) {
     return p.join(QStringLiteral(" → "));
 }
 
+
+static const char *const OBJECTIVES[] = {"latency", "throughput", "power", "footprint", "stability"};
+
+QString tradeoff(const QJsonObject &candidate) {
+    const QJsonObject fx = candidate.value(QStringLiteral("fx")).toObject();
+    QStringList p;
+    for (const char *k : OBJECTIVES) {
+        const QJsonValue v = fx.value(QLatin1String(k));
+        if (v.isDouble() && std::isfinite(v.toDouble()) && std::abs(v.toDouble()) >= 0.005)
+            p << QStringLiteral("%1 %2").arg(QLatin1String(k)).arg(QString::asprintf("%+.2f", v.toDouble()));
+    }
+    return p.join(QStringLiteral(" · "));
 }
+
+static std::optional<double> utility(const QJsonObject &c, const QJsonObject &w) {
+    const QJsonObject fx = c.value(QStringLiteral("fx")).toObject();
+    if (fx.isEmpty()) return std::nullopt;
+    double u = -c.value(QStringLiteral("modesty")).toDouble(0);
+    for (const char *k : OBJECTIVES) u += w.value(QLatin1String(k)).toDouble(0) * fx.value(QLatin1String(k)).toDouble(0);
+    return u;
+}
+
+int winnerUnder(const QJsonArray &trace, const QJsonObject &weights) {
+    int best = -1;
+    double bestU = 0;
+    for (int i = 0; i < trace.size(); ++i) {
+        const auto u = utility(trace.at(i).toObject(), weights);
+        if (!u) return -1;
+        if (best < 0 || *u > bestU) { best = i; bestU = *u; }
+    }
+    return best;
+}
+
+QString decidingObjective(const QJsonArray &trace, const QJsonObject &before, const QJsonObject &after) {
+    const int a = winnerUnder(trace, before), b = winnerUnder(trace, after);
+    if (a < 0 || b < 0 || a == b) return {};
+    const QJsonObject fa = trace.at(a).toObject().value(QStringLiteral("fx")).toObject();
+    const QJsonObject fb = trace.at(b).toObject().value(QStringLiteral("fx")).toObject();
+    QString which;
+    double most = 0;
+    for (const char *k : OBJECTIVES) {
+        const double dw = after.value(QLatin1String(k)).toDouble(0) - before.value(QLatin1String(k)).toDouble(0);
+        const double gain = dw * (fb.value(QLatin1String(k)).toDouble(0) - fa.value(QLatin1String(k)).toDouble(0));
+        if (gain > most) { most = gain; which = QLatin1String(k); }
+    }
+    return which;
+}
+
+}
+

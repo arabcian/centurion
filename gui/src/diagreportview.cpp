@@ -923,6 +923,11 @@ void DiagReportView::setReport(const diag::Report &r) {
     scroll_->verticalScrollBar()->setValue(oldScroll);
 }
 
+void DiagReportView::setFilterText(const QString &text) {
+    if (search_->text() != text) search_->setText(text);  // textChanged → filterReport
+    else filterReport();
+}
+
 void DiagReportView::filterReport() {
     if (!hasReport_) return;
     const QString needle = search_->text().trimmed();

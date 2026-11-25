@@ -1,5 +1,10 @@
 #include "navigationtargets.h"
 #include "inteltab.h"
+#include "uvtransitions.h"
+#include <QDialog>
+#include <QTreeWidget>
+#include <QDateTime>
+#include <QFile>
 #include "systemdiagnostics.h"
 #include "diagreportview.h"
 #include "profilediff.h"
@@ -752,8 +757,13 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     connect(bBoot, &QPushButton::clicked, this, &IntelTab::saveBoot);
     auto *bClear = new QPushButton("Clear boot");
     connect(bClear, &QPushButton::clicked, this, [this] { runOp({{"op", "clear_boot"}}); });
+    auto *bTrans = new QPushButton(tr("Context transitions…"));
+    bTrans->setToolTip(tr("What the boot service wrote at boot, on AC ↔ battery switches, after resume and for scenes, "
+                          "with each value read back. Values the firmware refused (lock bit) are marked."));
+    connect(bTrans, &QPushButton::clicked, this, &IntelTab::showTransitions);
     bootLbl_ = muted("");
     al->addWidget(bootLbl_, 1);
+    al->addWidget(bTrans);
     al->addWidget(bClear);
     al->addWidget(bBoot);
     al->addWidget(bApply);
@@ -1579,4 +1589,32 @@ void IntelTab::deleteProfile() {
         return;
     if (!QFile::remove(inteluv::profilesDir() + '/' + name + ".json")) log("Could not delete '" + name + "'.", "err");
     reloadProfiles();
+}
+
+void IntelTab::showTransitions() {
+    QFile f(QString::fromLatin1(uvtransitions::FILE_PATH));
+    const auto rows = f.open(QIODevice::ReadOnly) ? uvtransitions::parse(f.read(1 << 20)) : QList<uvtransitions::Row>();
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Context transitions"));
+    auto *lay = new QVBoxLayout(&dlg);
+    auto *tree = new QTreeWidget;
+    tree->setHeaderLabels({tr("Time"), tr("Cause"), tr("Power"), tr("Result"), tr("Not applied")});
+    tree->setRootIsDecorated(false);
+    for (const auto &r : rows) {
+        auto *it = new QTreeWidgetItem(tree);
+        it->setText(0, QDateTime::fromSecsSinceEpoch(r.t).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        it->setText(1, r.event);
+        it->setText(2, r.source);
+        it->setText(3, r.ok ? tr("%1 field(s) read back as requested").arg(r.fields)
+                            : r.locked ? tr("%1 refused by firmware lock").arg(r.locked) : tr("not fully applied"));
+        it->setForeground(3, QColor(QString::fromLatin1(r.ok ? theme::OK : theme::DANGER)));
+        it->setText(4, r.failed.join(QStringLiteral("; ")));
+        it->setToolTip(4, r.failed.join(QLatin1Char('\n')));
+    }
+    lay->addWidget(tree);
+    lay->addWidget(muted(rows.isEmpty() ? tr("No transitions recorded in this boot. The journal is written by the centurion-intel-uv service "
+                                             "(boot / resume apply), so it stays empty without it.")
+                                        : tr("Check AC → battery → sleep → resume: each row should read back as requested.")));
+    dlg.resize(900, 360);
+    dlg.exec();
 }

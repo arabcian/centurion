@@ -1,4 +1,5 @@
 #include "cosearchdialog.h"
+#include "cofirstfailure.h"
 #include "coarchive.h"
 #include "profilediff.h"
 #include "cohistory.h"
@@ -2083,7 +2084,7 @@ void CoSearchDialog::launch() {
         if (abort_) { reset(tr("Cancelled")); return; }
         begin();
     });
-    win->scenes()->apply(scene);
+    win->scenes()->apply(scene, QStringLiteral("co-search"));
 }
 
 void CoSearchDialog::step() {
@@ -2159,6 +2160,9 @@ void CoSearchDialog::runTest() {
     test_ = new QProcess(this);
     testBuf_.clear();
     testEnd_ = {};
+    testStartEv_ = {};
+    lastPhaseEv_ = {};
+    if (testIndex_ == 0) firstFailure_ = {};
     testStart_ = QDateTime::currentSecsSinceEpoch();
     testElapsed_.start();
     testDeadline_ = testStart_ + t.seconds + 120;  // allow CPU reference calculation and process startup
@@ -2187,13 +2191,26 @@ void CoSearchDialog::testOutput() {
         testBuf_.remove(0, nl + 1);
         const QString ev = o.value("ev").toString();
         if (ev == "end") testEnd_ = o;
+        else if (ev == "start") testStartEv_ = o;
         else if (ev == "core" && o.value("cpu").toInt(-1) != activeCpu_) {
             // Single-core parts: which core carries the load now, kept in the journal for a crash.
             activeCpu_ = o.value("cpu").toInt(-1);
             writeJournal();
         }
-        else if (ev == "error") logLine(log_, {}, tr("          wrong result on CPU %1").arg(o.value("cpu").toInt()).trimmed(), theme::DANGER);
+        else if (ev == "error") {
+            if (firstFailure_.isEmpty()) {
+                // Kept with the attempt so the first failure can be reproduced: core, CO value, kernel, seed, idle wait.
+                QList<QList<int>> coreCpus;
+                for (const auto &c : search_->cores()) coreCpus << c.cpus;
+                firstFailure_ = cofirstfailure::build(testStartEv_, o, lastPhaseEv_, coreCpus, trial_->perCore,
+                                                      trial_->allCore.value_or(0), trial_->tests[testIndex_].args);
+                logLine(log_, {}, tr("          first wrong result: %1").arg(cofirstfailure::describe(firstFailure_)), theme::DANGER);
+            } else {
+                logLine(log_, {}, tr("          wrong result on CPU %1").arg(o.value("cpu").toInt()).trimmed(), theme::DANGER);
+            }
+        }
         else if (ev == "phase") {
+            lastPhaseEv_ = o;
             const QJsonValue mhz = o.value("mhz_max");
             if (mhz.isDouble() && search_->perCoreSearching())  // a single core under test: its peak boost
                 for (int i = 0; i < trial_->perCore.size(); ++i)
@@ -2336,6 +2353,7 @@ void CoSearchDialog::finishTrial(const Outcome &o) {
     QJsonObject attempt{{"t", double(testStart_)}, {"what", trial_->what}, {"pass", o.pass}, {"cpus", cpus}, {"decision", int(trial_->reason)}, {"planned_seconds", trial_->seconds()}};
     if (probed >= 0) { attempt["core"] = probed; attempt["value"] = trial_->perCore[probed]; }  // the row's history tooltip
     for (auto it = trialEvidence_.constBegin(); it != trialEvidence_.constEnd(); ++it) attempt[it.key()] = it.value();
+    if (!firstFailure_.isEmpty()) attempt["first_failure"] = std::exchange(firstFailure_, QJsonObject());
     attempt["observed_result"] = o.interrupted ? "interrupted" : o.pass ? "pass" : "fail";
     attempt["resolved_ms"] = QDateTime::currentMSecsSinceEpoch();
     attempts_.append(attempt);

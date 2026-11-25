@@ -1,5 +1,6 @@
 #include "navigationtargets.h"
 #include "nvidiatab.h"
+#include "vfcoverage.h"
 #include "profilediff.h"
 #include "trialbar.h"
 #include "privileged.h"
@@ -491,6 +492,27 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *bFit = new QPushButton("Fit");
     bFit->setObjectName("btnMini");
     bFit->setToolTip(tr("Show the whole curve (key: 0)"));
+    auto *bObserve = new QPushButton(tr("Record used region"));
+    bObserve->setObjectName("btnMini");
+    bObserve->setCheckable(true);
+    bObserve->setToolTip(tr("While on, the graphics clock is sampled every second (also with the window hidden) and each sample is "
+                            "attributed to the curve point that reaches it. Play a game, then look at the green bands: stability seen "
+                            "in that session covers those points only. Turning it on clears the previous recording."));
+    connect(bObserve, &QPushButton::toggled, this, [this](bool on) {
+        if (!observeTimer_) {
+            observeTimer_ = new QTimer(this);
+            observeTimer_->setInterval(1000);
+            connect(observeTimer_, &QTimer::timeout, this, &NvidiaTab::sampleObserved);
+        }
+        if (on) { observed_ = {}; vf_->setObservedCounts({}); observeTimer_->start(); log(tr("Recording the used curve region…")); }
+        else {
+            observeTimer_->stop();
+            log(tr("Used region: %1 sample(s) on %2 curve point(s), points %3–%4.").arg(observed_.samples).arg(observed_.observedPoints())
+                    .arg(observed_.lowest()).arg(observed_.highest()));
+        }
+    });
+    gb->addWidget(bObserve);
+    gb->addSpacing(4);
     gb->addWidget(lbl("Zoom", theme::MUTED));
     gb->addWidget(zoomSl);
     gb->addWidget(zoomLbl);
@@ -1594,4 +1616,15 @@ void NvidiaTab::reportClamping(const QVector<QPointF> &baseBefore, const QHash<i
     }
     log(QStringLiteral("ℹ️ The driver stores offsets down to %1 MHz but never runs a point more than ~1000 MHz below its stock "
                        "clock. Core cap holds the flat top instead (flatten fills it in; Apply Offsets and the profile include it).").arg(lowestGot));
+}
+
+void NvidiaTab::sampleObserved() {
+    if (!nvml_ || vf_->points().isEmpty()) return;
+    const auto clock = nvml_->clock(0);
+    if (!clock) return;
+    std::vector<double> mhz;
+    mhz.reserve(vf_->points().size());
+    for (const auto &pt : vf_->points()) mhz.push_back(pt.y());
+    observed_ = vfcoverage::add(observed_, mhz, double(*clock));
+    vf_->setObservedCounts(QVector<int>(observed_.counts.begin(), observed_.counts.end()));
 }

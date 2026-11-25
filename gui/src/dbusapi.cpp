@@ -54,7 +54,7 @@ void DbusApi::ApplyScene(const QString &name) {
         sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("no scene named '%1'").arg(name));
         return;
     }
-    win_->scenes()->apply(name);
+    win_->scenes()->apply(name, QStringLiteral("dbus"));
 }
 
 QStringList DbusApi::PowerProfiles() { return win_->home()->offeredProfiles(); }

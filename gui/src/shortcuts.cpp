@@ -205,7 +205,7 @@ void GlobalShortcuts::onActivated(const QDBusMessage &m) {
     if (a.size() < 2 || a.at(0).value<QDBusObjectPath>().path() != session_) return;
     const QString id = a.at(1).toString();
     if (!id.startsWith(QLatin1String("scene:"))) return;
-    if (const QString name = id.mid(6); scenes::names().contains(name)) eng_->apply(name);
+    if (const QString name = id.mid(6); scenes::names().contains(name)) eng_->apply(name, QStringLiteral("shortcut"));
 }
 
 void GlobalShortcuts::onShortcutsChanged(const QDBusMessage &m) {

@@ -1,4 +1,5 @@
 #pragma once
+#include "vfcoverage.h"
 // NVIDIA Curve Optimizer tab — port of nvcurve_gui.py (embedded mode).
 // Reads/applies the V/F curve, memory offset and VRAM lock through
 // nvcurve-root-helper; live stats via NVML (dlopen, only while visible).
@@ -108,6 +109,9 @@ private:
     void stopSensorStream();
 
     VfCurveWidget *vf_;
+    QTimer *observeTimer_ = nullptr;
+    vfcoverage::Coverage observed_;
+    void sampleObserved();
     QLabel *temp_, *power_, *clock_, *memClock_, *hotspot_, *vram_, *throttle_;
     QComboBox *powerMizer_ = nullptr;
     QLabel *selLabel_, *voltLabel_, *freqLabel_, *offLabel_;

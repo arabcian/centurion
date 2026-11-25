@@ -128,7 +128,7 @@ void DriftWatch::onDescribe(const QJsonObject &d, bool snapshot) {
 
 void DriftWatch::reapply() {
     const QString scene = scenes::activeScene();
-    if (!scene.isEmpty() && scenes::gameSessions() == 0) win_->scenes()->apply(scene);
+    if (!scene.isEmpty() && scenes::gameSessions() == 0) win_->scenes()->apply(scene, QStringLiteral("drift watch"));
     else if (!preset_.isEmpty()) win_->optimize()->applyNamedPreset(preset_);
     last_.clear();
     Q_EMIT drift({}, {});

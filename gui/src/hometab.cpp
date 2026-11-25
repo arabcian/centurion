@@ -2012,7 +2012,13 @@ void HomeTab::applyProfile(const QString &profile) {
             showStatus(tr("Requested %1, but the firmware settled on %2.").arg(profileLabel(profile), profileLabel(effective)));
             rebuild();
         } else {
-            showStatus(tr("Power profile set to %1.").arg(profileLabel(effective)));
+            // Takes effect now: confirm by reading the profile back instead of trusting the helper's reply.
+            const auto readBack = pp::currentProfile(handler_);
+            if (readBack && *readBack == effective)
+                showStatus(tr("Power profile set to %1 — in effect now (read back).").arg(profileLabel(effective)));
+            else
+                showStatus(tr("Power profile set to %1, but the read-back shows %2.")
+                               .arg(profileLabel(effective), readBack ? profileLabel(*readBack) : tr("nothing readable")));
             if (QPushButton *b = buttons_.value(effective)) b->setChecked(true);
             updateDescription(effective);
         }

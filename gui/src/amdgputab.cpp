@@ -1,5 +1,7 @@
 #include "navigationtargets.h"
 #include "amdgputab.h"
+#include "fieldverify.h"
+#include <utility>
 #include "charts.h"
 #include <QDateTime>
 #include "privileged.h"
@@ -763,7 +765,7 @@ void AmdGpuTab::apply(const QJsonObject &settings, bool trial) {
         setBusy(false);
         snap_ = read(*card());
         if (!r.ok()) {
-            status(QStringLiteral("✗ ") + r.message(), theme::DANGER);
+            status((std::exchange(reverting_, false) ? QStringLiteral("✗ Revert failed: ") : QStringLiteral("✗ ")) + r.message(), theme::DANGER);
             fill(settingsOf(snap_));
             return;
         }
@@ -771,6 +773,18 @@ void AmdGpuTab::apply(const QJsonObject &settings, bool trial) {
         for (const QJsonValue &v : r.json.value(QStringLiteral("applied")).toArray()) done << v.toString();
         status(QStringLiteral("✓ ") + done.join(QStringLiteral(" · ")), theme::OK);
         fill(settingsOf(snap_));
+        if (std::exchange(reverting_, false)) {
+            // Revert: read the driver's values back instead of trusting the helper's reply.
+            const auto v = fieldverify::compare(before_, settingsOf(snap_));
+            if (v.allMatched())
+                status(QStringLiteral("✓ Reverted — read back: %1 field(s) match the previous settings").arg(v.matched.size()), theme::OK);
+            else
+                status(QStringLiteral("Reverted, read back: %1 match · differ: %2 · not readable (driver reset?): %3")
+                           .arg(v.matched.size())
+                           .arg(v.differs.isEmpty() ? QStringLiteral("none") : v.differs.join(QStringLiteral(", ")),
+                                v.unreadable.isEmpty() ? QStringLiteral("none") : v.unreadable.join(QStringLiteral(", "))),
+                       theme::WARN);
+        }
         if (trial) startTrial();
     });
 }
@@ -802,6 +816,7 @@ void AmdGpuTab::endTrial(bool keep) {
         return;
     }
     status(QStringLiteral("Reverting to the previous settings…"), theme::WARN);
+    reverting_ = true;
     apply(before_, false);
 }
 

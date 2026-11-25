@@ -1,5 +1,6 @@
 #include "insights.h"
 #include "coolingpage.h"
+#include "coolcompare.h"
 #include "charts.h"
 #include "theme.h"
 #include <QColor>
@@ -211,6 +212,7 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     table_->setHeaderLabels({tr("Date"), tr("CPU Temperature"), tr("Fan"), tr("Clock"), tr("Started at"), tr("Compared with the Baseline"), tr("Duration (s)")});
     table_->setRootIsDecorated(false);
     table_->setAlternatingRowColors(true);
+    table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     for (int i = 0; i < 5; ++i) table_->header()->setSectionResizeMode(i, QHeaderView::ResizeToContents);
     table_->header()->setStretchLastSection(true);
     root->addWidget(table_, 1);
@@ -219,6 +221,11 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
     baseline_ = new QPushButton(tr("Use the latest run as baseline"));
     baseline_->setToolTip(tr("Make the newest clean run the reference for these firmware settings, e.g. after cleaning the fans."));
     forget_ = new QPushButton(tr("Forget results for these settings"));
+    compare_ = new QPushButton(tr("Compare two runs"));
+    compare_->setToolTip(tr("Select two runs (e.g. one per fan curve) to see temperature, fan speed, time at the temperature limit and "
+                            "clock (the work done) side by side. Only runs under the same settings, both clean, with the same length "
+                            "and a similar starting temperature are compared."));
+    foot->addWidget(compare_);
     foot->addStretch(1);
     foot->addWidget(baseline_);
     foot->addWidget(forget_);
@@ -238,6 +245,7 @@ CoolingPage::CoolingPage(QWidget *parent) : QWidget(parent) {
                              "A changed power limit or temperature target starts a new baseline, since it changes how much heat the load makes.")));
 
     connect(run_, &QPushButton::clicked, this, &CoolingPage::start);
+    connect(compare_, &QPushButton::clicked, this, &CoolingPage::compareSelected);
     connect(fanMax_, &QPushButton::clicked, this, &CoolingPage::fanMaxStart);
     connect(cancel_, &QPushButton::clicked, this, [this] {
         if (fanTesting_) fanStop(true);
@@ -343,6 +351,7 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
         it->setText(3, showNumber(r,"mhz",2,0.001,QStringLiteral(" GHz")));
         it->setText(4, showNumber(r,"start_temp",0,1,QStringLiteral(" °C")));
         it->setText(6,showNumber(r,"secs",0));it->setToolTip(0,profilediff::display(r.value("ctx")));
+        it->setData(0, Qt::UserRole, r.toVariantMap());
         const bool noisy = r.value(QStringLiteral("noisy")).toBool();
         if (!noisy) anyClean = true;
         if (r.value(QStringLiteral("baseline")).toBool()) it->setText(5, tr("baseline"));
@@ -362,6 +371,7 @@ void CoolingPage::fillStatus(const QJsonObject &s) {
         it->setText(3, showNumber(r,"mhz",2,0.001,QStringLiteral(" GHz")));
         it->setText(4, showNumber(r,"start_temp",0,1,QStringLiteral(" °C")));
         it->setText(6,showNumber(r,"secs",0));it->setToolTip(0,profilediff::display(r.value("ctx")));
+        it->setData(0, Qt::UserRole, r.toVariantMap());
         QStringList diff;
         for (const QJsonValue &d : r.value(QStringLiteral("differs")).toArray()) {
             const QJsonObject o = d.toObject();
@@ -609,4 +619,39 @@ void CoolingPage::fanCheckRestore(int tries, std::function<void(bool)> done) {
     for (const auto &p : std::as_const(fanPrev_))
         if (now.value(p.first, -1) != p.second) { done(false); return; }
     done(true);
+}
+
+void CoolingPage::compareSelected() {
+    const auto items = table_->selectedItems();
+    if (items.size() != 2) {
+        QMessageBox::information(this, tr("Compare two runs"), tr("Select exactly two runs in the table (Ctrl+click)."));
+        return;
+    }
+    // Older run first, so the differences read "then → now".
+    QJsonObject a = QJsonObject::fromVariantMap(items.at(0)->data(0, Qt::UserRole).toMap());
+    QJsonObject b = QJsonObject::fromVariantMap(items.at(1)->data(0, Qt::UserRole).toMap());
+    if (a.value("t").toDouble() > b.value("t").toDouble()) std::swap(a, b);
+    const QString why = coolcompare::blocker(a, b);
+    if (!why.isEmpty()) {
+        const QString text = why == QLatin1String("context") ? tr("they were measured under different firmware settings (power profile, power source or limits)")
+                           : why == QLatin1String("noisy") ? tr("other programs were busy during one of them")
+                           : why == QLatin1String("duration") ? tr("they ran for different lengths")
+                           : why == QLatin1String("start_temp") ? tr("they started more than %1 °C apart").arg(coolcompare::MAX_START_DIFF_C, 0, 'f', 0)
+                           : tr("one of them lacks a temperature reading");
+        QMessageBox::information(this, tr("Compare two runs"), tr("These runs are not compared: %1.").arg(text));
+        return;
+    }
+    const auto d = *coolcompare::compare(a, b);
+    const auto when = [](const QJsonObject &r) { return QDateTime::fromSecsSinceEpoch(qint64(r.value("t").toDouble())).toString(QStringLiteral("yyyy-MM-dd HH:mm")); };
+    const auto val = [](const std::optional<double> &v, const QString &unit, int dec) { return v ? QString::asprintf("%+.*f", dec, *v) + unit : tr("not recorded"); };
+    QMessageBox::information(this, tr("Compare two runs"),
+        tr("<b>%1 → %2</b> (same settings, same load, start %3 °C vs %4 °C)<br><br>"
+           "Steady temperature: %5<br>Peak temperature: %6<br>Fan speed: %7<br>"
+           "Time at the temperature limit: %8<br>Clock (work done): %9<br><br>"
+           "<span style='color:%10'>A cooler curve that costs clock or adds time at the limit is a performance trade, not a free gain. "
+           "Runs before this version have no time-at-limit figure.</span>")
+            .arg(when(a), when(b))
+            .arg(a.value("start_temp").toDouble(), 0, 'f', 0).arg(b.value("start_temp").toDouble(), 0, 'f', 0)
+            .arg(val(d.steadyTemp, tr(" °C"), 1), val(d.maxTemp, tr(" °C"), 1), val(d.fanRpm, tr(" rpm"), 0),
+                 val(d.limitSecs, tr(" s"), 1), val(d.mhzPct, tr(" %"), 1), QLatin1String(theme::FG_DIM)));
 }

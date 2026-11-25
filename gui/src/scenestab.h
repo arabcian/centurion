@@ -89,6 +89,8 @@ private:
     class QPushButton *pause_ = nullptr;
     QComboBox *onAc_, *onBattery_;
     QLabel *power_, *status_, *empty_;
+    QLabel *lastApply_ = nullptr;
+    void updateLastApply(const QString &scene);
 
     scenes::Scene loaded_;           // as last saved / loaded
     QMap<QString, int> firmware_;    // editor copy of the firmware snapshot

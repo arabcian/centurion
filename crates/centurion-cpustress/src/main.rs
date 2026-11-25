@@ -17,7 +17,8 @@
 //!   {"ev":"start","mode","load","seconds","cycles","transitions","cpus":[...]}
 //!   {"ev":"core","t","cpu","cycle"}                     percore: the thread moved to this CPU
 //!   {"ev":"progress","t","chunks","errors"[,"cpu"]}       at most once per second
-//!   {"ev":"error","t","cpu","seed","expected","actual"}   a chunk that differs from the reference (at most 200 lines)
+//!   {"ev":"error","t","cpu","seed","kernel_index","data_seed","expected","actual"[,"idle_ms"]}   a chunk that differs from
+//!       the reference (at most 200 lines); `idle_ms`: --load co, the pause before the failing wake burst
 //!   {"ev":"core_end","t","cpu","chunks","errors"[,"skipped"]}
 //!   {"ev":"phase","t","cycle","phase","kernel","mhz_avg","mhz_max"[,"cpu"]}   --load co: a phase just ended
 //!   {"ev":"end","status":"pass|fail|stopped|init_failed","t","chunks","errors","failed":[cpu...],"msg"}
@@ -113,7 +114,12 @@ type Wrong = (f64, usize, u64, u64, u64);
 
 /// What the workers report; the main thread prints it.
 #[derive(Default)]
-struct Shared { chunks: AtomicU64, errors: AtomicU64, wrong: Mutex<Vec<Wrong>> }
+struct Shared {
+    chunks: AtomicU64, errors: AtomicU64, wrong: Mutex<Vec<Wrong>>,
+    /// --load co: the idle pause (ms) before the latest wake burst on each CPU, so a wrong wake chunk is reported
+    /// with the wait that preceded it. Absent outside the wake phase.
+    idle_ms: Mutex<std::collections::HashMap<usize, u64>>,
+}
 
 /// Runs chunks pinned to `cpu` until `until`, the stop flag or the first wrong chunk. Pauses after each chunk
 /// from `pause_from` on (transitions). Returns the chunks done, or why the CPU could not be used.
@@ -195,7 +201,11 @@ impl Printer {
             if !self.failed.contains(&cpu) { self.failed.push(cpu); }
             if self.lines < MAX_ERROR_LINES {
                 self.lines += 1;
-                emit(&json!({"ev": "error", "t": t, "cpu": cpu, "seed": seed, "expected": format!("0x{exp:016x}"), "actual": format!("0x{act:016x}")}));
+                // `seed` is the reference index: kernel * NSEEDS + data seed (one kernel outside --load co).
+                let mut v = json!({"ev": "error", "t": t, "cpu": cpu, "seed": seed, "kernel_index": seed / NSEEDS, "data_seed": seed % NSEEDS,
+                                   "expected": format!("0x{exp:016x}"), "actual": format!("0x{act:016x}")});
+                if let Some(ms) = sh.idle_ms.lock().unwrap().get(&cpu) { v["idle_ms"] = json!(ms); }
+                emit(&v);
             }
         }
     }

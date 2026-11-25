@@ -12,6 +12,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
 
 ### Added
+- Product-report follow-ups (docs/REPORT_FEATURES_2026-11-25.md):
+  - Scenes: every apply records its trigger (manual, tray, shortcut, D-Bus, power source, login, resume, game end,
+    CO Search, …) and the final state of each component; the Scenes tab shows them under *Last apply*, so a refused
+    GPU step no longer hides the fan and CPU steps that went through. Both are kept in `scene-transactions.jsonl`.
+  - Home: a power-profile change is confirmed by reading the profile back.
+  - Health → Cooling: *Compare two runs* (e.g. one per fan curve) under equal conditions — steady / peak temperature,
+    fan speed, clock and the new *time at the temperature limit* figure that `centurion-cooltest` now records.
+  - Firmware: BIOS CPU overclocking values are compared with the firmware's read-back on the first start after the
+    reboot (requested = read back, limited by firmware, or unreadable).
+  - Lighting (Spectrum): *4-zone preview* of the profile, with what a 4-zone keyboard cannot show.
+  - Ryzen CO Search: the first wrong result of a trial is kept with its core, CO value, kernel, data seed, the idle
+    wait before the failing wake burst and the test command; `centurion-cpustress` error lines carry
+    `kernel_index`, `data_seed` and `idle_ms`.
+  - Intel Undervolt: *Context transitions* — the boot service journals every full apply (boot, AC ↔ battery,
+    resume, scene) with each field's read-back and marks values refused by a firmware lock.
+  - NVIDIA Curve: *Record used region* marks the curve points the GPU actually ran at during a session.
+  - AMD GPU: a trial revert reads the driver's values back and lists matched / different / unreadable fields.
+  - Autotune report: per-candidate latency / throughput / power trade-off and, with changed weights, which
+    candidate would win and which weight decided it.
+  - ABBA history: a coverage block (blocks done of planned, exclusions, measured and unmeasurable objectives,
+    decision interval).
+  - Frametime comparison: says so when the average improves but P99 gets worse, or the reverse.
+  - CPU test history: tested CPUs, load, temperature range and duration per result; short scans are labelled.
+  - Evidence Lab: an *incident focus* filters all five reports by one CPU / PCI address / Xid and is kept across
+    tabs, rescans and restarts.
 - Scheduling-domain rows: `imbalance_pct`, `min_interval`, `max_interval` and `busy_factor` of the MC (one cache
   domain) and PKG (balancing between CCDs) levels, written to every CPU's domain in debugfs `sched/domains/`. The
   level is found by the domain's `name`, so the rows follow the topology; measured by the Scheduler calibration.

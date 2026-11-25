@@ -119,6 +119,8 @@ private:
     cosearch::Outcome outcome_;
     QByteArray testBuf_;
     QJsonObject testEnd_;
+    QJsonObject testStartEv_, lastPhaseEv_;
+    QJsonObject firstFailure_;  // first wrong result of the running trial (cofirstfailure)
     QString expectedCurve_;              // CurvePage::currentState("cpu") while the trial's offsets are applied
     int trialNo_ = 0;
     int hardReboots_ = 0;              // suspected reboots in this search, shown when resuming

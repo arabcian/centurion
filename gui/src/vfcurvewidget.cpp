@@ -132,11 +132,17 @@ void VfCurveWidget::wheelEvent(QWheelEvent *e) {
 void VfCurveWidget::setPoints(const QVector<QPointF> &pts) {
     const bool reshaped = pts.size() != pts_.size();
     invalidPoints_.clear();
+    if (pts.size() != pts_.size()) observed_.clear();
     pts_ = pts;
     if (reshaped) { sel_.clear(); cur_ = 0; anchor_ = 0; band_ = false; fitAxes(); }
     else if (dragIndex_ < 0 && !groupDrag_) applyView();  // keep edited points in frame
     update();
     Q_EMIT selectionChanged();
+}
+
+void VfCurveWidget::setObservedCounts(const QVector<int> &counts) {
+    observed_ = counts.size() == pts_.size() ? counts : QVector<int>();
+    update();
 }
 
 void VfCurveWidget::setInvalidPoints(const QSet<int> &indices) {
@@ -348,6 +354,20 @@ void VfCurveWidget::paintEvent(QPaintEvent *) {
         p.setPen(QPen(C(theme::FG), 2));
         p.setBrush(sel_.contains(hover_) ? C(theme::WARN) : C(theme::ACCENT));
         p.drawEllipse(toPixel(pts_[hover_]), 7.5, 7.5);
+    }
+    // Observed in a recorded session: a vertical band behind each curve point the GPU actually ran at,
+    // stronger where it ran longer. Stability evidence from that session covers these points only.
+    if (!observed_.isEmpty()) {
+        const int peak = *std::max_element(observed_.cbegin(), observed_.cend());
+        for (int i = 0; i < observed_.size() && peak > 0; ++i) {
+            if (observed_[i] <= 0) continue;
+            const double x = toPixel(pts_[i]).x();
+            const double left = i > 0 ? (x + toPixel(pts_[i - 1]).x()) / 2 : x - 3;
+            const double right = i + 1 < pts_.size() ? (x + toPixel(pts_[i + 1]).x()) / 2 : x + 3;
+            QColor fill = C(theme::OK);
+            fill.setAlpha(25 + 70 * observed_[i] / peak);
+            p.fillRect(QRectF(QPointF(left, r.top()), QPointF(std::max(right, left + 1), r.bottom())), fill);
+        }
     }
     // Cross markers remain distinct from editable selection, even without colour.
     p.setPen(QPen(C(theme::DANGER), 2.5));

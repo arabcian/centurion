@@ -3,6 +3,13 @@
 #include <QFontMetrics>
 #include <memory>
 #include "fwattrtab.h"
+#include "nextbootcheck.h"
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QSaveFile>
+#include <map>
 #include "systemdiagnostics.h"
 #include "diagreportview.h"
 #include <QDateTime>
@@ -44,6 +51,57 @@
 
 // CENTURION_FWATTR_BASE: dev-only override for rendering against a fake tree. The
 // helper still refuses any path outside /sys/class/firmware-attributes.
+
+// ── next-boot values: requested vs firmware read-back after the reboot ──────
+static QString nextBootFile() {
+    const QString base = qEnvironmentVariableIsEmpty("XDG_STATE_HOME") ? QDir::homePath() + QStringLiteral("/.local/state")
+                                                                       : qEnvironmentVariable("XDG_STATE_HOME");
+    return base + QStringLiteral("/centurion/fw-nextboot.json");
+}
+static QString bootId() {
+    QFile f(QStringLiteral("/proc/sys/kernel/random/boot_id"));
+    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).trimmed() : QString();
+}
+static void savePendingNextBoot(const QJsonObject &vals) {
+    QFile old(nextBootFile());
+    QJsonObject o = old.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(old.readAll()).object() : QJsonObject();
+    old.close();
+    QJsonObject req = o.value(QStringLiteral("boot")).toString() == bootId() ? o.value(QStringLiteral("requested")).toObject() : QJsonObject();
+    for (auto it = vals.begin(); it != vals.end(); ++it) req[it.key()] = it.value();
+    QDir().mkpath(QFileInfo(nextBootFile()).absolutePath());
+    QSaveFile f(nextBootFile());
+    if (!f.open(QIODevice::WriteOnly)) return;
+    f.write(QJsonDocument(QJsonObject{{"boot", bootId()}, {"requested", req}}).toJson(QJsonDocument::Compact));
+    f.commit();
+}
+/// `tunes`: the helper's fw_oc read ({key: {"value"}}). Empty = nothing pending.
+static QString pendingNextBootReport(const QJsonObject &tunes) {
+    QFile f(nextBootFile());
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+    std::map<std::string, int64_t> want, got;
+    const QJsonObject req = o.value(QStringLiteral("requested")).toObject();
+    for (auto it = req.begin(); it != req.end(); ++it) want[it.key().toStdString()] = it.value().toInteger();
+    for (auto it = tunes.begin(); it != tunes.end(); ++it)
+        if (it.value().toObject().value(QStringLiteral("value")).isDouble())
+            got[it.key().toStdString()] = it.value().toObject().value(QStringLiteral("value")).toInteger();
+    const auto rows = nextbootcheck::check(want, o.value(QStringLiteral("boot")).toString().toStdString(), bootId().toStdString(), got);
+    QStringList parts;
+    for (const auto &r : rows) {
+        const QString key = QString::fromStdString(r.key);
+        const QString rb = r.readBack ? QString::number(*r.readBack) : QStringLiteral("unreadable");
+        switch (r.state) {
+        case nextbootcheck::State::Pending: parts << QStringLiteral("%1: %2 requested, applies at next boot").arg(key).arg(r.requested); break;
+        case nextbootcheck::State::Matched: parts << QStringLiteral("%1: %2 requested = %3 read back ✓").arg(key).arg(r.requested).arg(rb); break;
+        case nextbootcheck::State::Limited: parts << QStringLiteral("%1: %2 requested, firmware reads %3 (limited by firmware)").arg(key).arg(r.requested).arg(rb); break;
+        case nextbootcheck::State::Unreadable: parts << QStringLiteral("%1: %2 requested, read-back unavailable").arg(key).arg(r.requested); break;
+        }
+    }
+    if (!rows.empty() && nextbootcheck::settled(rows)) QFile::remove(nextBootFile());
+    return parts.join(QStringLiteral(" · "));
+}
+
 static const QString BASE = qEnvironmentVariableIsSet("CENTURION_FWATTR_BASE")
     ? qEnvironmentVariable("CENTURION_FWATTR_BASE") : QStringLiteral("/sys/class/firmware-attributes");
 
@@ -183,7 +241,9 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
     banner_->hide();
     lay->addWidget(banner_);
 
-    // Firmware CPU OC (LENOVO_CPU_METHOD via legion-gpu-helper). Same store as the
+    // Firmware CPU OC (LENOVO_CPU_METHOD via legion-gpu-helper).
+    // Values written here are remembered with this boot's id; on the first start after the reboot the
+    // firmware's read-back is compared with them (nextbootcheck), so a limited value shows at once. Same store as the
     // BIOS setup page; applied by the firmware at the next boot.
     {
         auto *oc = new QGroupBox(QStringLiteral("CPU Overclocking (Firmware, Next Boot)"));
@@ -243,8 +303,10 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
                     privileged::run(privileged::helperPath(privileged::FIRMWARE_HELPER),
                                     QJsonObject{{"op", "set_fw_oc_many"}, {"values", vals}}, this,
                                     [spins, note, vals, dirty](const privileged::Result &r) {
-                        if (r.ok())
+                        if (r.ok()) {
                             for (const auto &[k, sb] : *spins) if (vals.contains(k)) sb->setProperty("stored", sb->value());
+                            savePendingNextBoot(vals);
+                        }
                         note->setText(r.ok() ? QStringLiteral("%1 change(s) saved — reboot to apply").arg(vals.size())
                                              : QStringLiteral("Failed: ") + r.message());
                         dirty();
@@ -256,6 +318,7 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
             ol->addWidget(note);
             note->setText(mode == 0 ? QStringLiteral("OC is disabled in BIOS setup — values are ignored")
                                     : QStringLiteral("Takes effect after reboot"));
+            if (const QString check = pendingNextBootReport(t); !check.isEmpty()) note->setText(check);
             oc->show();
         });
     }
