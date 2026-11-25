@@ -2087,6 +2087,14 @@ pub const HOME_KERNEL: &[&str] = &[
     "sched.numa_scan_delay_ms", "sched.numa_hot_threshold_ms",
 ];
 
+/// Takes the System tools rows (HOME_*) out of `values` and returns their keys. Autotune never sets
+/// them; an "Auto …" preset stored by an older version may still hold some, and they must not be applied.
+pub fn strip_home(values: &mut Map<String, Value>) -> Vec<String> {
+    let keys: Vec<String> = values.keys().filter(|k| !home(k).is_empty()).cloned().collect();
+    for k in &keys { values.remove(k); }
+    keys
+}
+
 /// Which System tools page shows this row instead of the Optimizations tab ("" = Optimizations).
 pub fn home(key: &str) -> &'static str {
     if HOME_NETWORK.contains(&key) { "network" }

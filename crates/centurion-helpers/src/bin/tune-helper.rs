@@ -992,9 +992,21 @@ fn valid_preset(p: &Value) -> Option<String> {
     p.as_str().filter(|s| !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_alphanumeric() || " _-.".contains(c))).map(str::to_owned)
 }
 
+/// An Autotune preset never touches the System tools rows (network / storage / kernel tuning pages):
+/// an "Auto …" preset saved by an older version that still holds some has them taken out here.
+fn strip_auto_home(preset: &Value, values: &mut Map<String, Value>) -> Vec<String> {
+    if preset.as_str().is_some_and(autotune::is_auto_preset) { tune::strip_home(values) } else { Vec::new() }
+}
+fn note_stripped(mut out: Value, stripped: Vec<String>) -> Value {
+    if !stripped.is_empty() && out.is_object() { out["skipped_home_rows"] = json!(stripped); }
+    out
+}
+
 fn op_apply(req: &Value) -> Value {
     let Some(values) = req["values"].as_object() else { return json!({"ok": false, "error": "values must be an object"}) };
-    apply_with(values, req, false)
+    let mut values = values.clone();
+    let stripped = strip_auto_home(&req["preset"], &mut values);
+    note_stripped(apply_with(&values, req, false), stripped)
 }
 
 fn obsolete_restore_ok(restored: &Value) -> bool {
@@ -1470,10 +1482,11 @@ fn op_apply_preset(req: &Value, scene_apply: bool) -> Value {
         None if req["preset"].is_null() && (scene_apply || (mode == "manual" && req["replace"].as_bool() == Some(true))) => Map::new(),
         None => return json!({"ok": false, "error": "preset must be a name"}),
     };
+    let stripped = strip_auto_home(&req["preset"], &mut values);
     let parked = if mode == "game" && req["soft_park"].as_bool().unwrap_or(false) { tune::soft_park_values(&mut values) } else { None };
     let mut r = apply_with(&values, req, scene_apply);
     if let (Some(role), true) = (parked, r.is_object()) { r["parked"] = json!(role); }
-    r
+    note_stripped(r, stripped)
 }
 
 /// tune-helper only: validates and stores presets (all-or-nothing). One preset {name, values} or a batch {presets: {name: values}}.
@@ -1684,7 +1697,8 @@ fn op_boot() -> Value {
         return json!({"ok": true, "applied": false, "message": "boot preset held: a calibration is scheduled for this boot (it applies the preset when done)", "boot_wake_errors":wake_errs});
     }
     let Some(b) = boot_preset() else { return json!({"ok": true, "applied": false, "message": "no boot preset", "boot_wake_errors":wake_errs}) };
-    let Some(values) = b["values"].as_object().cloned() else { return json!({"ok": false, "error": "boot preset has no values", "boot_wake_errors":wake_errs}) };
+    let Some(mut values) = b["values"].as_object().cloned() else { return json!({"ok": false, "error": "boot preset has no values", "boot_wake_errors":wake_errs}) };
+    let stripped = strip_auto_home(&b["preset"], &mut values);
     let base = autotune::Pressure::sample();
     let mut out = locked(|st| {
         st.preset = valid_preset(&b["preset"]);
@@ -1695,7 +1709,7 @@ fn op_boot() -> Value {
     out["boot_preset_name"] = json!(valid_preset(&b["preset"]));
     out["boot_requested"] = json!(values.keys().collect::<Vec<_>>());
     out["boot_wake_errors"] = json!(wake_errs);
-    guard_after(out, base)
+    guard_after(note_stripped(out, stripped), base)
 }
 
 /// Every goal's default weights in `Weights::KEYS` order (read-only: the GUI used to keep a copy).

@@ -95,6 +95,9 @@ impl Goal {
     }
 }
 
+/// A preset name Autotune writes ("Auto Gaming", …).
+pub fn is_auto_preset(name: &str) -> bool { Goal::ALL.iter().any(|g| g.preset_name() == name) }
+
 /// Objective weights. The goal gives the defaults; the user (GUI / CLI /
 /// scene) may override each one. Stability never drops below 0.5: weights
 /// shift trade-offs, hard constraints are not for sale.
@@ -3488,6 +3491,27 @@ mod tests {
         assert_eq!(history_last(&path, Goal::Desktop).unwrap()["rows"], 99);
         assert!(history_last(&path, Goal::PowerSave).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No goal ever writes a System tools row (network / storage / kernel tuning pages), and the stored
+    /// "Auto …" names are recognised so an older preset can have such rows taken out before it is applied.
+    #[test]
+    fn autotune_never_sets_system_tools_rows() {
+        let p = legion();
+        for g in Goal::ALL {
+            let w = Weights::for_goal(g);
+            let out = assemble(g, &p, w, decide_full(g, &p, w));
+            let values = out["preset"]["values"].as_object().unwrap();
+            assert!(!values.is_empty(), "{g:?}");
+            for k in values.keys() { assert_eq!(tune::home(k), "", "{g:?} sets {k}"); }
+            assert!(is_auto_preset(g.preset_name()));
+        }
+        assert!(!is_auto_preset("Gaming") && !is_auto_preset("auto gaming"));
+        let mut old = serde_json::Map::new();
+        old.insert("net.busy_poll".into(), json!(50));
+        old.insert("vm.swappiness".into(), json!(10));
+        assert_eq!(tune::strip_home(&mut old), vec!["net.busy_poll".to_string()]);
+        assert!(old.contains_key("vm.swappiness") && !old.contains_key("net.busy_poll"));
     }
 
     #[test]

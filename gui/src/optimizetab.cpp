@@ -3837,6 +3837,10 @@ static bool verifiedAutotunePreset(const QString &name, const QJsonObject &value
 void OptimizeTab::applySelected(const QString &home) {
     QJsonObject values = collectValues();
     if (!home.isEmpty()) for (const Row &r : rows_) if (r.home != home) values.remove(r.key);
+    // An Autotune preset never sets System tools rows; one saved by an older version may still hold some
+    // (tune-helper drops them too).
+    if (home.isEmpty() && presetObject(loadedPreset_).value(QStringLiteral("autotune")).isObject())
+        for (const Row &r : rows_) if (!r.home.isEmpty()) values.remove(r.key);
     if (values.isEmpty()) { QMessageBox::information(this, "Apply", "No row is checked."); return; }
     QStringList risky;
     for (const Row &r : rows_) if (values.contains(r.key) && r.caution && differs(r)) risky << "• " + r.label + " → " + (r.combo ? r.combo->currentText() : editorValue(r));
